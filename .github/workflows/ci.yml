@@ -560,6 +560,21 @@ jobs:
           LD_LIBRARY_PATH=target/debug timeout 60 /tmp/run_scenarios_c_adapter \
             crates/tst-integration/tests/fixtures/scenarios
 
+      - name: C examples compile (every bindings/c/examples/**/*.c links)
+        # scripts/check/c/examples-compile.sh compiles + links every C
+        # teaching example with the flags their headers document
+        # (-Wall -Werror) against the all-features cdylib and the header
+        # cbindgen emitted for it (target/debug/include/tstrans.h — the
+        # committed bindings/c/include/tstrans.h is the srt,rtp rendering
+        # and would trip the udp/tcp/hls/rist examples' #error guards).
+        # Until 2026-09-06 only the scenario adapter above was ever
+        # compiled; a header change could silently break the other
+        # examples. The script's own `cargo build -p tst-c --all-features`
+        # is a warm no-op after the all-features build above. Linux-only
+        # for the same reasons as the scenario adapter step.
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/check/c/examples-compile.sh
+
       - name: Public-API ratchet (no unintended SemVer breaks)
         # Checks tst-core, tst-pipeline, and tst-srt against the committed
         # public-api.txt baselines. tst-c is excluded: its ABI surface is a

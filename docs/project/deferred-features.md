@@ -1250,22 +1250,33 @@ the trigger that would unblock it.
 
 ## SRT URL `mode=listener` / `mode=rendezvous` dispatch
 
-- **Status:** Deferred. The URL parser at `tst-srt/src/url.rs`
-  rejects `mode=listener` and `mode=rendezvous` with a
-  ts-transformer-specific error; only `mode=caller` is accepted.
-  The URL surface is sender-only today.
-- **Why deferred:** The receiver-side C ABI surface is the
-  current P0 work item (see project ROADMAP). Listener-side URL
-  dispatch is naturally part of that plan: the receiver C entry
-  points are what need `mode=listener` URLs to bind a passive
-  socket and accept incoming connections. Landing parser-only
-  support today (accepting the keyword without dispatching it)
-  creates a half-implemented feature that crashes or silently
-  misroutes when a caller actually uses it.
-- **Trigger to revisit:** Receiver C ABI surface plan begins.
-  That plan's URL dispatch will reuse the existing `parse`
-  function and route on `mode` to either the existing caller
-  path or new listener / rendezvous paths.
+- **Status:** Partially resolved (entry refreshed 2026-09-06; the
+  earlier text predated the receiver C ABI). The URL parser at
+  `crates/tst-srt/src/url.rs` accepts `mode=caller` (the default) and
+  `mode=listener`; `mode=rendezvous` is still rejected with
+  `UrlError::UnsupportedMode`. Listener dispatch is wired on every
+  RECEIVER entry point: the C `tst_*receiver_open` family routes a
+  `?mode=listener` URL through the listener path and the
+  `_open_listener` variants force it regardless of the URL. It is NOT
+  wired on the sender side: every `tst_*sender_open` in the C ABI
+  (plain, mux, raw, and the managed variants) dials out as an SRT
+  caller, and a `?mode=listener` URL handed to one parses fine but then
+  fails at connect time (address lookup on the empty host,
+  `TST_E_TRANSPORT`) rather than at validation. The Rust API is
+  unaffected — build a `Listener`, wrap the accepted `Socket` in
+  `SrtTransport`, as `examples/sending/srt_serve_ts_file.rs` does.
+- **Why deferred (sender side):** a listener-mode sender is the
+  "player dials in" shape (VLC, ffplay and `srt-live-transmit` default
+  to caller mode), which is real but has had no C or binding consumer
+  ask for it; the receiver side was the P0 need. A sender
+  `_open_listener` family is a small additive C-ABI change mirroring
+  the receiver's once someone needs it. Rendezvous needs both ends'
+  cooperation and has no consumer.
+- **Trigger to revisit:** a C or binding consumer that must serve a
+  stream to a caller-mode player — the shape
+  `bindings/c/examples/sending/send_srt_ts_file.c` documents as
+  unavailable and works around by dialling a listening receiver. For
+  rendezvous: a deployment with symmetric NAT on both ends.
 
 ## Media over QUIC (MoQ) transport target
 

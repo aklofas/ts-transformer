@@ -93,6 +93,27 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`CMAKE_SYSTEM_NAME=iOS`) for `*-apple-ios*` targets. Gated by the manual
   `apple-ios` GitHub Actions workflow (`macos-14`). C-ABI path; the UniFFI
   Swift binding + SPM package remain deferred to `tst-uniffi`.
+- **Seven new C teaching examples** under `bindings/c/examples/`, the
+  C twins of the sender-side Rust examples that had none:
+  `sending/send_srt.c` (TS-bytes SRT sender from a URL + a walk through
+  the URL error vocabulary — also fills the `send_<proto>` grid's missing
+  SRT entry), `sending/send_srt_encrypted.c` (passphrase/AES-256 send +
+  receive in one process, all via URL keys), `sending/send_srt_ts_file.c`
+  (PCR-paced relay of a recorded `.ts` — the caller-mode counterpart of
+  `srt_serve_ts_file.rs`, since the C sender family is caller-only),
+  `operations/managed_reconnect.c` and
+  `operations/managed_reconnect_background.c` (`tst_managed_mux_sender_t`
+  against a deliberately flaky peer in Blocking and Background modes,
+  with `tst_reconnect_policy_t` built knob by knob and the reconnect
+  stats printed live), `muxing/mux_to_file.c` and
+  `muxing/mux_h265_with_klv.c` (the standalone `tst_muxer_t` to a file;
+  both produce output byte-identical to their Rust twins). Every example
+  cites its Rust twin and documents the C-ABI differences that shape it.
+- **`scripts/check/c/examples-compile.sh` + a CI step**: every
+  `bindings/c/examples/**/*.c` is now compiled and linked with
+  `-Wall -Werror` against the all-features cdylib on the linux-x86_64
+  leg. Until now only the scenario adapter was built; the other examples
+  could rot against a header change unnoticed.
 
 ### Changed
 
@@ -178,6 +199,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `srt_accept`; the key only bounds recv on a connected/accepted socket
   (and sets what accepted sockets inherit). Also: `mode=listener` is
   accepted, not rejected — only `mode=rendezvous` is unsupported.
+- `examples/sending/sender_from_url.rs`'s "unsupported key" row used
+  `?conntimeo=`, which the parser has accepted since the connect-timeout
+  URL key landed, so the example printed "unexpectedly parsed OK" for
+  that case; it now uses `?transtype=`, a key that is still deliberately
+  unexposed. The new C twin `send_srt.c` mirrors the corrected table.
 
 ---
 

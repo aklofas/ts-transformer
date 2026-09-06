@@ -80,7 +80,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ("missing port", "srt://1.2.3.4"),
         ("userinfo", "srt://op:hunter2@1.2.3.4:9000"),
         ("unsupported mode", "srt://1.2.3.4:9000?mode=rendezvous"),
-        ("unsupported key", "srt://1.2.3.4:9000?conntimeo=5000"),
+        ("unsupported key", "srt://1.2.3.4:9000?transtype=file"),
         ("unknown key", "srt://1.2.3.4:9000?lattency=100"),
         ("invalid value", "srt://1.2.3.4:9000?latency=200ms"),
         ("option validation", "srt://1.2.3.4:9000?pbkeylen=15"),
