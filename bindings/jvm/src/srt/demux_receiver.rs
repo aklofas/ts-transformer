@@ -130,8 +130,7 @@ fn build_from_url(
         }
     };
 
-    let inner = make_receiver(socket, opts);
-    REGISTRY.insert(inner) as jlong
+    register(make_receiver(socket, opts))
 }
 
 /// Build a `JniDemuxReceiver` from an already-connected `Socket` (with or without
@@ -150,6 +149,17 @@ fn make_receiver(
         inner,
         sink_error: Arc::new(Mutex::new(None)),
     }
+}
+
+/// Register the receiver, capturing its cancel target BEFORE the box goes into
+/// the registry so `nCancelHandle` never needs the resource lock a parked `nNext`
+/// holds. A fresh `SrtTransport` always has a cancel handle.
+fn register(jdr: JniDemuxReceiver) -> jlong {
+    let target = jdr
+        .inner
+        .cancel_handle()
+        .expect("a fresh SrtTransport always returns Some(cancel_handle)");
+    REGISTRY.insert_with_target(jdr, target) as jlong
 }
 
 /// `DemuxReceiver.nFromUrl(url)` — bind a listener-mode SRT receiver, accept one
@@ -339,8 +349,9 @@ pub extern "system" fn Java_org_tstrans_srt_DemuxReceiver_nAddByteSink<'local>(
 }
 
 /// `nCancelHandle(handle)` — return a shareable cancel handle that wakes a thread
-/// parked in `nNext`. Throws `IllegalStateException` if the transport doesn't
-/// expose one (an invariant breach for a live SrtTransport).
+/// parked in `nNext`. Lock-free: the target was captured at registration, so this
+/// returns promptly even while another thread is parked in `nNext` on the same
+/// handle. Throws `IllegalStateException` on a closed handle.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_org_tstrans_srt_DemuxReceiver_nCancelHandle(
     mut env: JNIEnv<'_>,
@@ -348,21 +359,14 @@ pub extern "system" fn Java_org_tstrans_srt_DemuxReceiver_nCancelHandle(
     handle: jlong,
 ) -> jlong {
     crate::panic::jni_catch(&mut env, 0, |env| {
-        let Some(maybe_arc) = REGISTRY.with(handle as u64, |jdr| jdr.inner.cancel_handle()) else {
-            crate::error::throw_closed(env, "DemuxReceiver");
-            return 0;
-        };
-        match maybe_arc {
-            Some(arc) => JniCancel {
-                inner: arc,
+        match REGISTRY.cancel_target(handle as u64) {
+            Some(inner) => JniCancel {
+                inner,
                 flag: AtomicBool::new(false),
             }
             .into_handle(),
             None => {
-                let _ = env.throw_new(
-                    "java/lang/IllegalStateException",
-                    "SrtTransport did not return a cancel handle",
-                );
+                crate::error::throw_closed(env, "DemuxReceiver");
                 0
             }
         }
@@ -523,7 +527,7 @@ pub extern "system" fn Java_org_tstrans_srt_Socket_nIntoDemuxReceiver(
             crate::error::throw_closed(env, "Socket");
             return 0;
         };
-        REGISTRY.insert(make_receiver(socket, None)) as jlong
+        register(make_receiver(socket, None))
     })
 }
 
@@ -562,6 +566,6 @@ pub extern "system" fn Java_org_tstrans_srt_Socket_nIntoDemuxReceiverWithConfig(
         ) else {
             return 0;
         };
-        REGISTRY.insert(make_receiver(socket, Some(opts))) as jlong
+        register(make_receiver(socket, Some(opts)))
     })
 }

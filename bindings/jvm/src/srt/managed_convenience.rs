@@ -920,10 +920,25 @@ fn build_demux_from_url(
             ManagedDemuxReceiverConfig::default(),
         ),
     };
-    REGISTRY_DEMUX.insert(JniManagedDemuxReceiver {
-        inner: receiver,
-        factory_attempts: attempts,
-    }) as jlong
+    // Capture the cancel target BEFORE the receiver is boxed: it lives outside
+    // the registry's resource lock, so `nCancelHandle` returns while `nNext` is
+    // parked (including a listener-mode re-accept). The managed handle follows
+    // reconnects, so one capture at open is enough. Mirrors tst-py, which fails
+    // construction rather than exposing a receiver with no cancel path.
+    let Some(target) = receiver.cancel_handle() else {
+        let _ = env.throw_new(
+            "java/lang/IllegalStateException",
+            "ManagedDemuxReceiver constructed without a live cancel handle",
+        );
+        return 0;
+    };
+    REGISTRY_DEMUX.insert_with_target(
+        JniManagedDemuxReceiver {
+            inner: receiver,
+            factory_attempts: attempts,
+        },
+        target,
+    ) as jlong
 }
 
 /// `ManagedDemuxReceiver.nFromUrl(url, ...policyArgs...)` — default demux options.
@@ -1057,8 +1072,10 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nNext<'local>(
 }
 
 /// `nCancelHandle(handle)` — return a shareable cancel handle that wakes a thread
-/// parked in `nNext`. Throws `IllegalStateException` if the inner is
-/// mid-reconnect at the time of the call (no live cancel handle).
+/// parked in `nNext`. Lock-free: the target was captured at open, so this returns
+/// promptly even while another thread is parked in `nNext` (a blocked receive or
+/// a listener-mode re-accept) and regardless of reconnect state. Throws
+/// `IllegalStateException` on a closed handle.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nCancelHandle(
     mut env: JNIEnv<'_>,
@@ -1066,23 +1083,14 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nCancelHandle(
     handle: jlong,
 ) -> jlong {
     crate::panic::jni_catch(&mut env, 0, |env| {
-        let Some(maybe_arc) =
-            REGISTRY_DEMUX.with(handle as u64, |jstruct| jstruct.inner.cancel_handle())
-        else {
-            crate::error::throw_closed(env, "ManagedDemuxReceiver");
-            return 0;
-        };
-        match maybe_arc {
-            Some(arc) => JniCancel {
-                inner: arc,
+        match REGISTRY_DEMUX.cancel_target(handle as u64) {
+            Some(inner) => JniCancel {
+                inner,
                 flag: AtomicBool::new(false),
             }
             .into_handle(),
             None => {
-                let _ = env.throw_new(
-                    "java/lang/IllegalStateException",
-                    "ManagedDemuxReceiver did not return a cancel handle (mid-reconnect)",
-                );
+                crate::error::throw_closed(env, "ManagedDemuxReceiver");
                 0
             }
         }
