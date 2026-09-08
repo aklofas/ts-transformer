@@ -682,22 +682,24 @@ deliberate ergonomic adaptations for each language's idiom.
 
 Nightly GitHub Actions workflow `.github/workflows/sanitizers.yml`
 (trigger: `schedule: '0 3 * * *'` UTC + on-demand `workflow_dispatch`)
-runs three sanitizer jobs. The workflow file is the source of truth for
-this section; the current scope is:
+runs four sanitizer jobs, all hard-gating. The workflow file is the
+source of truth for this section; the current scope is:
 
-- **AddressSanitizer + ThreadSanitizer, hard-gated:** the six pure-Rust
-  crates — `tst-core`, `tst-pipeline`, `tst-rtp`, `tst-udp`, `tst-tcp`,
-  `tst-hls` — run their test suites under ASan and under TSan in
-  separate jobs (sanitizers can't combine in a single binary).
-- **Native AddressSanitizer, phase-in (soft-fail):** `tst-srt`,
-  `tst-rist`, and `tst-c` run under ASan with the vendored native
-  libraries (libsrt, librist, mbedTLS) themselves compiled
-  `-fsanitize=address` via the `TST_NATIVE_SANITIZER` build hook. This
-  job is currently `continue-on-error` during its dated phase-in window
-  and is scheduled to become hard-gating after 2026-08-19.
-- **No native ThreadSanitizer job exists yet** — a native-TSan twin is
-  planned but has not landed. JVM and Python memory-sanitizer coverage
-  is likewise deferred; see
+- **AddressSanitizer + ThreadSanitizer, pure-Rust crates:** the six
+  pure-Rust crates — `tst-core`, `tst-pipeline`, `tst-rtp`, `tst-udp`,
+  `tst-tcp`, `tst-hls` — run their test suites under ASan and under
+  TSan in separate jobs (sanitizers can't combine in a single binary).
+- **Native AddressSanitizer + ThreadSanitizer, native-linking crates:**
+  `tst-srt`, `tst-rist`, and `tst-c` run under ASan and under TSan with
+  the vendored native libraries (libsrt, librist, mbedTLS) themselves
+  compiled `-fsanitize=address` / `-fsanitize=thread` via the
+  `TST_NATIVE_SANITIZER` build hook. The native ASan job has been
+  hard-gating since 2026-08-19 and the native TSan job since
+  2026-09-09, each after a dated phase-in window of job-level-green
+  nightlies. Known librist-internal races are suppressed by exact
+  function name in `.sanitizer-suppressions/tsan.txt`, with the
+  harvest evidence recorded inline.
+- JVM and Python memory-sanitizer coverage is deferred; see
   [deferred-features](/docs/project/deferred-features.md).
 
 ## Fuzzing
