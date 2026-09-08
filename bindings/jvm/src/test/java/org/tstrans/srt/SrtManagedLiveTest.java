@@ -640,8 +640,8 @@ class SrtManagedLiveTest {
                 "srt://127.0.0.1:" + port + "?mode=caller&latency=" + LATENCY_MS,
                 fastPolicy())) {
             // Hard no-hang safety net (same as SrtManagedReconnectTest): a cancel
-            // handle obtained BEFORE iterating — the documented happy-path moment
-            // (the transport is live; mid-reconnect it can be momentarily absent).
+            // handle obtained BEFORE iterating so the watchdog is armed before the
+            // loop can stall (it may equally be obtained mid-iteration).
             // The watchdog converts any unforeseen stall into a prompt CLOSED
             // end-of-iteration + a clean assertion failure, never a wedged worker.
             CancelHandle cancel = rx.cancelHandle();

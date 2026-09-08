@@ -83,15 +83,20 @@ pub(super) fn h264_receiver_handle_from_rtsp_session(
     insert_receiver(receiver, Some(control))
 }
 
-/// Extract the cancel handle, register it as the registry cancel hook, and
-/// return the boxed handle as `jlong`.
+/// Extract the cancel handle, register it as BOTH the registry cancel hook (fired
+/// by `close`) and the lock-free `nCancelHandle` target (readable while `recvAu`
+/// holds the resource lock), and return the boxed handle as `jlong`.
 fn insert_receiver(receiver: H264Receiver, rtsp: Option<JniRtspControl>) -> jlong {
-    let cancel = receiver.cancel_handle();
+    // Coerce Arc<RtpCancelHandle> to Arc<dyn TransportCancel + Send + Sync>
+    // (RtpCancelHandle implements TransportCancel).
+    let cancel: Arc<dyn tst_core::transport::TransportCancel + Send + Sync> =
+        receiver.cancel_handle();
+    let hook = Arc::clone(&cancel);
     let slot = JniH264Receiver {
         inner: receiver,
         rtsp,
     };
-    REGISTRY.insert_with_cancel(slot, Some(Box::new(move || cancel.cancel()))) as jlong
+    REGISTRY.insert_full(slot, Some(Box::new(move || hook.cancel())), Some(cancel)) as jlong
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -483,15 +488,13 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nCancelHandle(
     handle: jlong,
 ) -> jlong {
     crate::panic::jni_catch(&mut env, 0, |env| {
-        let Some(cancel_arc) = REGISTRY.with(handle as u64, |jdr| jdr.inner.cancel_handle()) else {
+        // Lock-free: the target was captured at registration (see
+        // `insert_receiver`), so this returns while `recvAu` is parked.
+        let Some(inner) = REGISTRY.cancel_target(handle as u64) else {
             crate::error::throw_closed(env, "H264Receiver");
             return 0;
         };
-        // Coerce Arc<RtpCancelHandle> to Arc<dyn TransportCancel + Send + Sync>
-        // (RtpCancelHandle implements TransportCancel).
-        let erased: std::sync::Arc<dyn tst_core::transport::TransportCancel + Send + Sync> =
-            cancel_arc;
-        crate::rtp::JniRtpCancel { inner: erased }.into_handle()
+        crate::rtp::JniRtpCancel { inner }.into_handle()
     })
 }
 

@@ -45,11 +45,14 @@ import org.tstrans.mpegts.DemuxEvent;
  * wake it a rescue peer is connected to release the accept, the thread is
  * joined, and the test fails with a clear message.
  *
- * <p>The cancel handle is obtained BEFORE the reader starts iterating (same as
- * {@code SrtManagedReconnectTest}): on the JVM, {@code cancelHandle()} takes
+ * <p>Two timings of {@code cancelHandle()} are covered. Obtained BEFORE the
+ * reader iterates is the historical happy path. Obtained MID-ITERATION, while
+ * the reader is parked in the re-accept, is the ROADMAP "JVM cancelHandle()
+ * blocks while a native receive is in flight" rider: the native used to take
  * the receiver's registry lease, which {@code nNext} holds for the whole
- * duration of a native receive — asking for it mid-iteration blocks until
- * the receive returns, which during a re-accept is exactly never.
+ * duration of a native receive, so the call waited for a receive that — during
+ * a re-accept — never returns. The cancel target is now captured at open and
+ * read without that lease, so the call must return promptly.
  */
 class SrtManagedListenerCancelTest {
     private static final int LATENCY_MS = 120;
@@ -72,6 +75,21 @@ class SrtManagedListenerCancelTest {
     @Test
     @Timeout(60) // safety net: a wedge fails instead of hanging the suite
     void cancelWakesManagedListenerParkedInReaccept() throws Exception {
+        runCancelScenario(false);
+    }
+
+    @Test
+    @Timeout(60)
+    void cancelHandleObtainedWhileParkedInReacceptReturnsPromptly() throws Exception {
+        runCancelScenario(true);
+    }
+
+    /**
+     * @param obtainHandleMidIteration {@code false}: main takes the cancel handle
+     *     before the reader iterates; {@code true}: the reader iterates at once and
+     *     main takes the handle only after the reader is parked in the re-accept.
+     */
+    private void runCancelScenario(boolean obtainHandleMidIteration) throws Exception {
         assumeTrue(isLinux(),
             "SRT live-socket test gated to Linux (same as the Rust/C twins)");
         int port = freeUdpPort();
@@ -112,7 +130,7 @@ class SrtManagedListenerCancelTest {
 
         ManagedMuxSender sender = connectSender(callerUrl, 5_000);
         ManagedDemuxReceiver rx = rxFuture.get(5, TimeUnit.SECONDS);
-        CancelHandle cancel = rx.cancelHandle(); // before any receive is in flight
+        CancelHandle cancel = obtainHandleMidIteration ? null : rx.cancelHandle();
         startIterating.countDown();
 
         // A few frames so the link is genuinely up before the peer drops.
@@ -130,6 +148,42 @@ class SrtManagedListenerCancelTest {
         dropper.setDaemon(true);
         dropper.start();
         Thread.sleep(1_000);
+
+        if (obtainHandleMidIteration) {
+            // The reader is now parked in the factory's re-accept with no peer in
+            // sight. Ask for the handle from here, bounded: before the fix this
+            // call blocked behind the reader's registry lease until a peer showed
+            // up. Off-thread so a regression fails the assertion instead of
+            // wedging main.
+            CompletableFuture<CancelHandle> handleFuture = CompletableFuture.supplyAsync(
+                rx::cancelHandle, r -> {
+                    Thread t = new Thread(r, "cancel-handle-getter");
+                    t.setDaemon(true);
+                    t.start();
+                });
+            long h0 = System.nanoTime();
+            try {
+                cancel = handleFuture.get(2, TimeUnit.SECONDS);
+            } catch (TimeoutException te) {
+                // Rescue, best-effort: a new peer releases the accept, which frees
+                // the lease the getter is queued on; cancel through whatever handle
+                // we can get so the daemon reader ends. Any failure inside the
+                // rescue must not mask the verdict below.
+                try {
+                    ManagedMuxSender rescue = connectSender(callerUrl, 5_000);
+                    handleFuture.get(5, TimeUnit.SECONDS).cancel();
+                    endFuture.get(5, TimeUnit.SECONDS);
+                    rescue.close();
+                } catch (Exception ignored) {
+                    // see above
+                }
+                fail("cancelHandle() blocked for >2 s behind the reader parked in re-accept");
+                return;
+            }
+            long handleMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - h0);
+            assertTrue(handleMs < 1_000,
+                "cancelHandle() took " + handleMs + " ms while a receive was in flight");
+        }
 
         long t0 = System.nanoTime();
         cancel.cancel();

@@ -244,14 +244,21 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedSender_nFromUrl(
         };
 
         let managed = ManagedTransport::new(initial, factory, policy);
-        // Snapshot the stats handle BEFORE moving `managed` into the shell
-        // (same pattern as `cancel_handle` / the convenience wrappers).
+        // Snapshot the stats handle and the cancel target BEFORE moving `managed`
+        // into the shell (same pattern as the convenience wrappers). The target
+        // lives outside the registry's resource lock so `nCancelHandle` returns
+        // while `send` is parked; `ManagedTransport::cancel_handle` is always Some.
         let stats_handle = managed.stats_handle();
+        let target = tst_core::transport::Transport::cancel_handle(&managed)
+            .expect("ManagedTransport::cancel_handle is always Some");
         let inner = PlSender::new(managed, SenderConfig::default());
-        REGISTRY_SENDER.insert(JniManagedSender {
-            inner,
-            stats_handle,
-        }) as jlong
+        REGISTRY_SENDER.insert_with_target(
+            JniManagedSender {
+                inner,
+                stats_handle,
+            },
+            target,
+        ) as jlong
     })
 }
 
@@ -322,27 +329,17 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedSender_nCancelHandle(
     _class: JClass<'_>,
     handle: jlong,
 ) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
-        // Closed handle → 0 (no throw, matching the original contract).
-        let Some(maybe_arc) =
-            REGISTRY_SENDER.with(handle as u64, |jstruct| jstruct.inner.cancel_handle())
-        else {
-            return 0;
-        };
-        match maybe_arc {
-            Some(arc) => JniCancel {
-                inner: arc,
+    crate::panic::jni_catch(&mut env, 0, |_env| {
+        // Lock-free: the target was captured at registration, so this returns
+        // even while `send` is parked on the resource lock. Closed handle → 0
+        // (no throw, matching the original contract).
+        match REGISTRY_SENDER.cancel_target(handle as u64) {
+            Some(inner) => JniCancel {
+                inner,
                 flag: AtomicBool::new(false),
             }
             .into_handle(),
-            None => {
-                // ManagedTransport::cancel_handle is documented as always Some.
-                let _ = env.throw_new(
-                    "java/lang/IllegalStateException",
-                    "ManagedTransport did not return a cancel handle",
-                );
-                0
-            }
+            None => 0,
         }
     })
 }
@@ -544,10 +541,17 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedReceiver_nFromUrl(
 
         let managed =
             ManagedRecvTransport::new_with_factory_cancel(initial, factory, policy, factory_cancel);
-        // Snapshot the reconnect counter BEFORE moving `managed` into the shell.
+        // Snapshot the reconnect counter and the cancel target BEFORE moving
+        // `managed` into the shell. The target lives outside the registry's
+        // resource lock so `nCancelHandle` returns while `recvBytes` is parked
+        // (including a listener-mode re-accept); the managed handle follows
+        // reconnects, so one capture at open is enough.
         let reconnects = managed.reconnects_handle();
+        let target = tst_core::transport::RecvTransport::cancel_handle(&managed)
+            .expect("ManagedRecvTransport::cancel_handle is always Some");
         let inner = PlReceiver::new(managed, ReceiverConfig::default());
-        REGISTRY_RECEIVER.insert(JniManagedReceiver { inner, reconnects }) as jlong
+        REGISTRY_RECEIVER.insert_with_target(JniManagedReceiver { inner, reconnects }, target)
+            as jlong
     })
 }
 
@@ -607,26 +611,17 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedReceiver_nCancelHandle(
     _class: JClass<'_>,
     handle: jlong,
 ) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
-        // Closed handle → 0 (no throw, matching the original contract).
-        let Some(maybe_arc) =
-            REGISTRY_RECEIVER.with(handle as u64, |jstruct| jstruct.inner.cancel_handle())
-        else {
-            return 0;
-        };
-        match maybe_arc {
-            Some(arc) => JniCancel {
-                inner: arc,
+    crate::panic::jni_catch(&mut env, 0, |_env| {
+        // Lock-free: the target was captured at registration, so this returns
+        // even while `recvBytes` is parked on the resource lock. Closed handle →
+        // 0 (no throw, matching the original contract).
+        match REGISTRY_RECEIVER.cancel_target(handle as u64) {
+            Some(inner) => JniCancel {
+                inner,
                 flag: AtomicBool::new(false),
             }
             .into_handle(),
-            None => {
-                let _ = env.throw_new(
-                    "java/lang/IllegalStateException",
-                    "ManagedRecvTransport did not return a cancel handle",
-                );
-                0
-            }
+            None => 0,
         }
     })
 }

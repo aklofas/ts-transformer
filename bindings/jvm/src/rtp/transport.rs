@@ -10,14 +10,13 @@
 //! `Transport`/`RecvTransport` trait methods — exactly as tst-py's
 //! `bindings/python/src/rtp/transport.rs` does.
 
-use std::sync::Arc;
 use std::sync::LazyLock;
 use std::time::Duration;
 
 use jni::JNIEnv;
 use jni::objects::{JByteArray, JClass, JObject, JString};
 use jni::sys::{jbyteArray, jint, jlong, jobject};
-use tst_core::transport::{RecvTransport, Transport, TransportCancel};
+use tst_core::transport::{RecvTransport, Transport};
 use tst_rtp::builder::RtpRecvSocketBuilder;
 use tst_rtp::{RtpRecvTransport, RtpSocketBuilder, RtpTransport, StreamEndReasonHandle};
 
@@ -28,12 +27,10 @@ use crate::jutil::build_socket_stats;
 
 struct JniRtpSender {
     inner: RtpTransport,
-    cancel: Arc<dyn TransportCancel + Send + Sync>,
 }
 
 struct JniRtpReceiver {
     inner: RtpRecvTransport,
-    cancel: Arc<dyn TransportCancel + Send + Sync>,
     /// Pulled from `inner.end_reason_handle()` at construction — cheap to
     /// clone, independent of `inner`'s lifetime within this struct. Read by
     /// `nEndReason`/`nEndDetail` while the registry entry is live; `nClose`
@@ -119,13 +116,17 @@ pub extern "system" fn Java_org_tstrans_rtp_Sender_nFromUrl(
                 return 0;
             }
         };
+        // One cancel handle, two registry roles: the close hook (wakes a parked
+        // `send` on `close()`) and the lock-free target `nCancelHandle` reads
+        // while that same `send` holds the resource lock.
         let cancel = inner
             .cancel_handle()
             .expect("RtpTransport always returns Some(cancel_handle)");
         let cancel_for_hook = cancel.clone();
-        REGISTRY_SENDER.insert_with_cancel(
-            JniRtpSender { inner, cancel },
+        REGISTRY_SENDER.insert_full(
+            JniRtpSender { inner },
             Some(Box::new(move || cancel_for_hook.cancel())),
+            Some(cancel),
         ) as jlong
     })
 }
@@ -182,14 +183,10 @@ pub extern "system" fn Java_org_tstrans_rtp_Sender_nCancelHandle(
     handle: jlong,
 ) -> jlong {
     crate::panic::jni_catch(&mut env, 0, |_env| {
+        // Lock-free (see the registration comment); closed handle → 0.
         REGISTRY_SENDER
-            .with(handle as u64, |w| {
-                JniRtpCancel {
-                    inner: w.cancel.clone(),
-                }
-                .into_handle()
-            })
-            .unwrap_or(0)
+            .cancel_target(handle as u64)
+            .map_or(0, |inner| JniRtpCancel { inner }.into_handle())
     })
 }
 
@@ -248,16 +245,18 @@ pub extern "system" fn Java_org_tstrans_rtp_Receiver_nFromUrl(
         let cancel_for_hook = cancel.clone();
         // Pulled BEFORE `inner` is boxed into the registry entry alongside
         // it — same construction-time-capture shape as `cancel` above (and
-        // the D5 `stats_handle` precedent in srt::managed_basic).
+        // the D5 `stats_handle` precedent in srt::managed_basic). `cancel`
+        // serves as both the close hook and the lock-free `nCancelHandle`
+        // target (readable while `recv` holds the resource lock).
         let end_reason = inner.end_reason_handle();
-        REGISTRY_RECEIVER.insert_with_cancel(
+        REGISTRY_RECEIVER.insert_full(
             JniRtpReceiver {
                 inner,
-                cancel,
                 end_reason,
                 scratch: vec![0u8; scratch_len],
             },
             Some(Box::new(move || cancel_for_hook.cancel())),
+            Some(cancel),
         ) as jlong
     })
 }
@@ -383,14 +382,10 @@ pub extern "system" fn Java_org_tstrans_rtp_Receiver_nCancelHandle(
     handle: jlong,
 ) -> jlong {
     crate::panic::jni_catch(&mut env, 0, |_env| {
+        // Lock-free (see the registration comment); closed handle → 0.
         REGISTRY_RECEIVER
-            .with(handle as u64, |w| {
-                JniRtpCancel {
-                    inner: w.cancel.clone(),
-                }
-                .into_handle()
-            })
-            .unwrap_or(0)
+            .cancel_target(handle as u64)
+            .map_or(0, |inner| JniRtpCancel { inner }.into_handle())
     })
 }
 

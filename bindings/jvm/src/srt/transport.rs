@@ -103,8 +103,27 @@ pub extern "system" fn Java_org_tstrans_srt_Sender_nFromUrl(
 
         let transport = SrtTransport::new(socket);
         let inner = PlSender::new(transport, SenderConfig::default());
-        REGISTRY_SENDER.insert(inner) as jlong
+        register_sender(inner)
     })
+}
+
+/// Register a plain `Sender` shell, capturing its cancel target BEFORE the shell
+/// is boxed so `nCancelHandle` never needs the resource lock (a `send` parked on
+/// backpressure holds it). A fresh `SrtTransport` always has a cancel handle.
+pub(super) fn register_sender(inner: PlSender<SrtTransport>) -> jlong {
+    let target = inner
+        .cancel_handle()
+        .expect("a fresh SrtTransport always returns Some(cancel_handle)");
+    REGISTRY_SENDER.insert_with_target(inner, target) as jlong
+}
+
+/// `Receiver` twin of [`register_sender`]: the target is read lock-free while
+/// `recvBytes()` is parked.
+pub(super) fn register_receiver(inner: PlReceiver<SrtTransport>) -> jlong {
+    let target = inner
+        .cancel_handle()
+        .expect("a fresh SrtTransport always returns Some(cancel_handle)");
+    REGISTRY_RECEIVER.insert_with_target(inner, target) as jlong
 }
 
 /// Send pre-muxed TS bytes. Throws `SrtException` on transport/framing failure.
@@ -173,27 +192,17 @@ pub extern "system" fn Java_org_tstrans_srt_Sender_nCancelHandle(
     _class: JClass<'_>,
     handle: jlong,
 ) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
-        // Closed handle → 0 (no throw, matching the original contract).
-        let Some(maybe_arc) = REGISTRY_SENDER.with(handle as u64, |inner| inner.cancel_handle())
-        else {
-            return 0;
-        };
-        match maybe_arc {
-            Some(arc) => JniCancel {
-                inner: arc,
+    crate::panic::jni_catch(&mut env, 0, |_env| {
+        // Lock-free: the target was captured at registration, so this returns
+        // even while `send` is parked on the resource lock. Closed handle → 0
+        // (no throw, matching the original contract).
+        match REGISTRY_SENDER.cancel_target(handle as u64) {
+            Some(inner) => JniCancel {
+                inner,
                 flag: AtomicBool::new(false),
             }
             .into_handle(),
-            None => {
-                // A live SrtTransport always yields a cancel handle (tst-py uses
-                // `.expect()` here). Treat absence as an unchecked invariant breach.
-                let _ = env.throw_new(
-                    "java/lang/IllegalStateException",
-                    "SrtTransport did not return a cancel handle",
-                );
-                0
-            }
+            None => 0,
         }
     })
 }
@@ -348,7 +357,7 @@ pub extern "system" fn Java_org_tstrans_srt_Receiver_nFromUrl(
 
         let transport = SrtTransport::new(socket);
         let inner = PlReceiver::new(transport, ReceiverConfig::default());
-        REGISTRY_RECEIVER.insert(inner) as jlong
+        register_receiver(inner)
     })
 }
 
@@ -397,27 +406,17 @@ pub extern "system" fn Java_org_tstrans_srt_Receiver_nCancelHandle(
     _class: JClass<'_>,
     handle: jlong,
 ) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
-        // Closed handle → 0 (no throw, matching the original contract).
-        let Some(maybe_arc) = REGISTRY_RECEIVER.with(handle as u64, |inner| inner.cancel_handle())
-        else {
-            return 0;
-        };
-        match maybe_arc {
-            Some(arc) => JniCancel {
-                inner: arc,
+    crate::panic::jni_catch(&mut env, 0, |_env| {
+        // Lock-free: the target was captured at registration, so this returns
+        // even while `recvBytes` is parked on the resource lock. Closed handle →
+        // 0 (no throw, matching the original contract).
+        match REGISTRY_RECEIVER.cancel_target(handle as u64) {
+            Some(inner) => JniCancel {
+                inner,
                 flag: AtomicBool::new(false),
             }
             .into_handle(),
-            None => {
-                // A live SrtTransport always yields a cancel handle (tst-py uses
-                // `.expect()` here). Treat absence as an unchecked invariant breach.
-                let _ = env.throw_new(
-                    "java/lang/IllegalStateException",
-                    "SrtTransport did not return a cancel handle",
-                );
-                0
-            }
+            None => 0,
         }
     })
 }

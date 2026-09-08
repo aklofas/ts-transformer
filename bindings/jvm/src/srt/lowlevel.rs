@@ -82,11 +82,18 @@ impl TransportCancel for LowLevelSrtCancel {
 // contract.
 
 /// Register a `Listener`, wiring the cancel hook from its independent
-/// `SrtCancelHandle` adapter (held by the registry entry, fired by `close`).
+/// `SrtCancelHandle` adapter (held by the registry entry, fired by `close`). The
+/// same adapter is the entry's lock-free cancel target, so `nCancelHandle`
+/// returns while an `accept` is parked on the resource lock.
 fn register_listener(listener: SrtListener) -> u64 {
     let cancel: Arc<dyn TransportCancel + Send + Sync> =
         Arc::new(LowLevelSrtCancel(listener.cancel_handle()));
-    REGISTRY_LISTENER.insert_with_cancel(listener, Some(Box::new(move || cancel.cancel())))
+    let hook = Arc::clone(&cancel);
+    REGISTRY_LISTENER.insert_full(
+        listener,
+        Some(Box::new(move || hook.cancel())),
+        Some(cancel),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -565,7 +572,7 @@ pub extern "system" fn Java_org_tstrans_srt_Socket_nIntoSender(
         };
         let transport = SrtTransport::new(socket);
         let sender = PlSender::new(transport, SenderConfig::default());
-        super::transport::REGISTRY_SENDER.insert(sender) as jlong
+        super::transport::register_sender(sender)
     })
 }
 
@@ -587,7 +594,7 @@ pub extern "system" fn Java_org_tstrans_srt_Socket_nIntoReceiver(
         };
         let transport = SrtTransport::new(socket);
         let receiver = PlReceiver::new(transport, ReceiverConfig::default());
-        super::transport::REGISTRY_RECEIVER.insert(receiver) as jlong
+        super::transport::register_receiver(receiver)
     })
 }
 
@@ -733,16 +740,12 @@ pub extern "system" fn Java_org_tstrans_srt_Listener_nCancelHandle(
     handle: jlong,
 ) -> jlong {
     crate::panic::jni_catch(&mut env, 0, |_env| {
-        // Lease + derive a fresh independent `SrtCancelHandle` from the listener.
-        // `cancel()` closes the SRTSOCKET (waking a parked accept) WITHOUT freeing
-        // the Listener — the sanctioned cross-thread wake. Mirrors tst-py's
-        // PyCancelHandle. The lease here is brief (no blocking op), so it does not
-        // contend meaningfully with a parked accept.
-        let cancel: Option<Arc<dyn TransportCancel + Send + Sync>> =
-            REGISTRY_LISTENER.with(handle as u64, |listener| {
-                Arc::new(LowLevelSrtCancel(listener.cancel_handle()))
-                    as Arc<dyn TransportCancel + Send + Sync>
-            });
+        // The listener's independent `SrtCancelHandle` adapter, captured at
+        // registration and read WITHOUT the resource lock — a parked `accept`
+        // holds that lock, and this is exactly the call that must wake it.
+        // `cancel()` closes the SRTSOCKET WITHOUT freeing the Listener — the
+        // sanctioned cross-thread wake. Mirrors tst-py's PyCancelHandle.
+        let cancel = REGISTRY_LISTENER.cancel_target(handle as u64);
         match cancel {
             Some(inner) => JniCancel {
                 inner,
