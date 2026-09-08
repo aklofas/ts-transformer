@@ -192,16 +192,10 @@ jobs:
   tsan-native:
     name: TSan (native-linking crates, nightly)
     runs-on: ubuntu-latest
-    # Phase-in: soft-fail SCHEDULED nightlies until 2026-09-09 (~3 weeks)
-    # while the TSan'd native builds + suppression set prove stable on
-    # runners, then DELETE this line. workflow_dispatch runs stay
-    # hard-fail so pre-merge suppression-edit verification gets an honest
-    # run-level verdict (job-level continue-on-error otherwise marks the
-    # run green even when this job fails — check JOB conclusions on
-    # nightlies). Tracked as a dated checkbox in ROADMAP.md (same hygiene
-    # as the asan-native phase-in, closed on time 2026-08-19 — the
-    # undated PR-#58-era phase-in drifted 7 weeks).
-    continue-on-error: ${{ github.event_name == 'schedule' }}
+    # Hard-gating since 2026-09-09 (phase-in closed on time after five
+    # consecutive job-level-green nightlies from the 2026-09-04 tst-rist
+    # stats-callback fix onward). A red here is a real finding or a new
+    # native race to harvest, not a rerun case.
     steps:
       - uses: actions/checkout@v5
         with:

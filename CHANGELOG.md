@@ -126,6 +126,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **CI: nightly native ThreadSanitizer job now hard-gates.** The
+  `tsan-native` job in `sanitizers.yml` (tst-srt / tst-rist / tst-c
+  with libsrt, librist and mbedTLS compiled `-fsanitize=thread`) has
+  dropped its scheduled-run `continue-on-error` after its dated phase-in
+  closed with five consecutive job-level-green nightlies. All four
+  sanitizer jobs are now gating; `docs/reference/compatibility.md`'s
+  sanitizer section was also refreshed — it still described the native
+  ASan job as soft-fail and claimed no native TSan job existed.
 - **Maintainer tool binaries renamed to kebab-case.** The ten `[[bin]]`
   targets that regenerate or inspect fixtures — `gen-synthetic-fixtures`,
   `gen-subtitle-fixtures`, `gen-h266-fixtures`, `gen-av1-fixtures`,
