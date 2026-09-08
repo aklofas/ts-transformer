@@ -70,8 +70,10 @@
 //!   because the resource lock is exactly what a parked `recv`/`accept`/`send` holds
 //!   — resolving the handle under it made the cross-thread stop unobtainable while
 //!   the op it is meant to stop was in flight. Captured at construction, before the
-//!   resource is boxed. Orthogonal to the hook: srt types register a target with no
-//!   hook (their `close()` still waits for a parked op), rtp types register both.
+//!   resource is boxed. Orthogonal to the hook: the srt sender/receiver shells
+//!   register a target with no hook (their `close()` still waits for a parked op);
+//!   the srt `Listener` and the rtp types register both (their `close()` wakes the
+//!   parked op through the hook).
 //!
 //! The cancel-handle classes (`JniCancel`, `JniRtpCancel`, `JniRtspCancel`,
 //! `JniRtspServerCancel`) are themselves cancel *targets* — they hold an
