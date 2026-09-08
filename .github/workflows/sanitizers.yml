@@ -194,8 +194,10 @@ jobs:
     runs-on: ubuntu-latest
     # Hard-gating since 2026-09-08 (phase-in closed a day early after five
     # consecutive job-level-green nightlies from the 2026-09-04 tst-rist
-    # stats-callback fix onward). A red here is a real finding or a new
-    # native race to harvest, not a rerun case.
+    # stats-callback fix onward). Treat a red here as a sanitizer finding
+    # or a new native race to harvest — scope-check the log before any
+    # rerun; only an infra failure (apt outage, cache error, GitHub
+    # incident) is a rerun case.
     steps:
       - uses: actions/checkout@v5
         with:
