@@ -695,7 +695,7 @@ source of truth for this section; the current scope is:
   compiled `-fsanitize=address` / `-fsanitize=thread` via the
   `TST_NATIVE_SANITIZER` build hook. The native ASan job has been
   hard-gating since 2026-08-19 and the native TSan job since
-  2026-09-09, each after a dated phase-in window of job-level-green
+  2026-09-08, each after a dated phase-in window of job-level-green
   nightlies. Known librist-internal races are suppressed by exact
   function name in `.sanitizer-suppressions/tsan.txt`, with the
   harvest evidence recorded inline.
