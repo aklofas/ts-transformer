@@ -153,6 +153,22 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **JVM: `cancelHandle()` no longer blocks behind an in-flight native call
+  on the same object.** Every srt and rtp `cancelHandle()` native resolved
+  the handle under the receiver's/sender's registry lease — the same lock a
+  parked `next()` / `recvBytes()` / `recvAu()` / `accept()` / backpressured
+  `sendBytes()` holds for the whole native call — so the sanctioned
+  cross-thread stop could only be armed *before* iterating; asked for
+  mid-iteration it waited for the blocked call to return (for a
+  listener-mode `ManagedDemuxReceiver` parked in its reconnect re-accept:
+  never). The cancel target is now captured when the object is opened and
+  read without the lease. Affected: srt `Sender` / `Receiver` /
+  `DemuxReceiver` / `ManagedSender` / `ManagedReceiver` /
+  `ManagedDemuxReceiver` / `Listener`, rtp `Sender` / `Receiver` /
+  `H264Receiver`. `ManagedDemuxReceiver.cancelHandle()` also no longer
+  throws `IllegalStateException` mid-reconnect (its handle follows the
+  managed transport across reconnects since 0.6.0's cancellable re-accept
+  work); its only throw is now the closed-receiver case.
 - **tst-rist: stats callback registered before `rist_start`.** Both
   `RistTransport` and `RistRecvTransport` registered the librist stats
   callback *after* starting the session. librist 0.2.20's protocol

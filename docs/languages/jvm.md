@@ -955,7 +955,10 @@ cancel.cancel();  // wakes tx.sendBytes() → throws SrtException(BROKEN or CLOS
 ```
 
 `CancelHandle` is safe to share across threads. The first `cancel()` call
-closes the underlying libsrt socket; subsequent calls are no-ops.
+closes the underlying libsrt socket; subsequent calls are no-ops. Obtaining
+the handle is itself safe from another thread at any time — `cancelHandle()`
+returns promptly even while `sendBytes` / `recvBytes` / `next()` / `accept()`
+is parked on the same object, so it need not be taken before iterating.
 
 ### SRT-specific Gotchas
 

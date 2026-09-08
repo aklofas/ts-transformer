@@ -185,17 +185,17 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
 
     /**
      * Return a shareable cancel handle. Calling {@link CancelHandle#cancel()}
-     * wakes a thread parked in iteration; that pull then ends or throws.
+     * wakes a thread parked in iteration — a blocked receive, the reconnect
+     * backoff, or a listener-mode re-accept — and that pull then ends or throws.
      *
-     * <p><b>Mid-reconnect:</b> unlike the other managed shells, this receiver's
-     * cancel handle is sourced from the inner managed transport on each call, which
-     * is momentarily absent while a reconnect is in flight. If you call this exactly
-     * during a reconnect window the call throws {@link IllegalStateException}; obtain
-     * the handle before starting iteration (when the transport is live), or retry.
+     * <p>Safe to call from another thread at any time while the receiver is open,
+     * including while iteration is parked and while a reconnect is in flight: the
+     * cancel target is captured when the receiver is opened and follows the
+     * managed transport across reconnects, so this call never waits for an
+     * in-flight native receive.
      *
      * @return a new {@link CancelHandle}
-     * @throws IllegalStateException if the receiver is closed, or if the inner
-     *     transport is momentarily absent because a reconnect is in flight
+     * @throws IllegalStateException if the receiver is closed
      */
     public CancelHandle cancelHandle() {
         ensureOpen("ManagedDemuxReceiver is closed");
@@ -287,9 +287,7 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
      * blocks until that call returns — it acquires the receiver's resource lock,
      * which the parked recv holds. Unlike the rtp receiver, srt {@code close()}
      * does NOT itself wake a parked recv; to unblock it from another thread, call
-     * {@link #cancelHandle()}{@code .cancel()} first. (Note {@code cancelHandle()}
-     * sources the handle from the inner managed transport and throws while a
-     * reconnect is in flight; obtain it before iterating.)
+     * {@link #cancelHandle()}{@code .cancel()} first.
      */
     @Override public void close() { super.close(); }
 
