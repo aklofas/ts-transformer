@@ -126,6 +126,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **CI: the `#[non_exhaustive]` count guard now matches the attribute
+  position only.** The rail's pattern was unanchored, so every comment
+  or doc mention of the attribute counted too — 128 phantom lines that
+  moved the baseline whenever a doc edit mentioned it (the 313→314 bump
+  on 2026-09-02 was one). Baseline re-measured at the real attribute
+  count; no attribute was added or removed. The pre-push runner's copy
+  of the check uses the same anchored pattern.
 - **CI: nightly native ThreadSanitizer job now hard-gates.** The
   `tsan-native` job in `sanitizers.yml` (tst-srt / tst-rist / tst-c
   with libsrt, librist and mbedTLS compiled `-fsanitize=thread`) has
@@ -177,6 +184,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   methods; `__all__` was declared but empty in five stubs and missing
   from `rist`. The `BytesLike` alias is now private (`_BytesLike`) as in
   the core stubs. No runtime change.
+- **JVM: `KlvUnknownField` lists are read under a per-item JNI local
+  frame.** The shared `read_unknown_list` helper (every typed KLV set's
+  encode path reads its `unknown` list through it) minted about five
+  local references per entry and released none until the native
+  returned, unlike every sibling list reader in the bindings. A long
+  unknown list therefore grew the JNI local-reference table for the
+  whole call. HotSpot grows that table silently (a 20 000-entry probe
+  raised no `-Xcheck:jni` warning on JDK 17), so the cost was memory
+  during the call, never a crash or a wrong result. Each entry now runs
+  in its own frame, keeping the live count flat; a 1000-entry
+  order-and-content round-trip test pins that no reference escapes the
+  per-item frame.
 - **JVM: `cancelHandle()` no longer blocks behind an in-flight native call
   on the same object.** Every srt and rtp `cancelHandle()` native resolved
   the handle under the receiver's/sender's registry lease — the same lock a

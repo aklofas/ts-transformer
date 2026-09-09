@@ -95,6 +95,7 @@ class LastSeenMicrosTest {
         assumeTrue(isLinux(), "srt live-socket loopback gated to Linux");
 
         AtomicReference<Boolean> stop = new AtomicReference<>(false);
+        CountDownLatch observed = new CountDownLatch(1);
         try (DemuxReceiver rx = connectedReceiver(stop)) {
             // The sender daemon is already streaming, but nothing has been pulled
             // through recvEvent() yet — the demuxer's per-stream stats are only
@@ -104,18 +105,44 @@ class LastSeenMicrosTest {
             assertNull(rx.lastSeenMicros(0x1FFF),
                 "lastSeenMicros must be null for an unrecognized PID");
 
+            // Hard no-hang safety net, the same shape as the managed test below:
+            // JUnit's @Timeout cannot interrupt a thread parked in a native
+            // recv, so a daemon watchdog cancels through a handle obtained
+            // BEFORE iterating. A starved receiver then fails the Video
+            // assertion loudly instead of wedging the gating runner.
+            CancelHandle cancel = rx.cancelHandle();
+            Thread watchdog = new Thread(() -> {
+                try {
+                    if (!observed.await(TIMEOUT_SEC - 3, TimeUnit.SECONDS)) {
+                        cancel.cancel();
+                    }
+                } catch (InterruptedException ignored) {
+                    Thread.currentThread().interrupt();
+                }
+            }, "last-seen-micros-watchdog");
+            watchdog.setDaemon(true);
+            watchdog.start();
+
             // The first demuxed event is typically a ProgramMap (PAT/PMT), not a
             // Video sample — pull until a Video event on the configured PID
             // arrives (bounded so a real regression fails instead of hanging).
             DemuxEvent.Video videoEvent = null;
             int pulled = 0;
-            for (DemuxEvent e : rx) {
-                pulled++;
-                if (e instanceof DemuxEvent.Video v) {
-                    videoEvent = v;
-                    break;
+            try {
+                for (DemuxEvent e : rx) {
+                    pulled++;
+                    if (e instanceof DemuxEvent.Video v) {
+                        videoEvent = v;
+                        break;
+                    }
+                    if (pulled >= 20) break;
                 }
-                if (pulled >= 20) break;
+            } catch (RuntimeException re) {
+                // A watchdog cancel surfaces as CLOSED/BROKEN; let the Video
+                // assertion below report the starvation instead.
+                if (!isCleanEndOfStream(re)) throw re;
+            } finally {
+                observed.countDown(); // always release the watchdog
             }
             assertNotNull(videoEvent, "expected a Video event on the configured PID");
 
