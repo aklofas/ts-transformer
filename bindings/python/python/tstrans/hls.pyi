@@ -12,15 +12,29 @@ mypy --strict clean.
 
 from __future__ import annotations
 
+import abc
+
 from enum import IntEnum
-from typing import Any, Union
+from typing import Any, Union, final
 
 # A bytes-like input — `bytes`, `bytearray`, `memoryview`, NumPy uint8, or
 # any object implementing the buffer protocol. Concrete extraction happens
 # in Rust via a two-path fast/fallback pattern.
-BytesLike = Union[bytes, bytearray, memoryview, Any]
+_BytesLike = Union[bytes, bytearray, memoryview, Any]
 
-__all__: list[str]
+__all__: list[str] = [
+    "Publisher",
+    "PublisherStats",
+    "HlsPublisher",
+    "HlsPublisherBuilder",
+    "HlsServerHandle",
+    "MuxPublisher",
+    "MuxPublisherStats",
+    "HlsMode",
+    "HlsStats",
+    "HlsError",
+    "HlsErrorKind",
+]
 
 # ---------------------------------------------------------------------------
 # HlsErrorKind / HlsError — re-exported from tstrans.exceptions
@@ -55,6 +69,7 @@ class HlsError(Exception):
 # ---------------------------------------------------------------------------
 
 
+@final
 class HlsMode:
     """HLS playlist mode. Mirrors ``tst_hls::HlsMode``.
 
@@ -75,6 +90,7 @@ class HlsMode:
 # ---------------------------------------------------------------------------
 
 
+@final
 class PublisherStats:
     """Frozen universal stats snapshot. Mirrors
     ``tst_core::publisher::PublisherStats``.
@@ -92,13 +108,12 @@ class PublisherStats:
     last_segment_duration_us: int | None
     """Duration of the most recent completed segment, in microseconds."""
 
-    def __init__(
-        self,
+    def __new__(cls,
         segments_written: int,
         bytes_written: int,
         current_segment_age_us: int | None = ...,
         last_segment_duration_us: int | None = ...,
-    ) -> None: ...
+    ) -> PublisherStats: ...
     def __repr__(self) -> str: ...
 
 
@@ -107,6 +122,7 @@ class PublisherStats:
 # ---------------------------------------------------------------------------
 
 
+@final
 class HlsStats:
     """Frozen HLS-specific stats snapshot. Mirrors ``tst_hls::HlsStats``.
 
@@ -125,13 +141,12 @@ class HlsStats:
     overdue (keyframe-driven flow only). A persistently non-zero value means
     the upstream GOP length exceeds the configured cap."""
 
-    def __init__(
-        self,
+    def __new__(cls,
         segments_written: int,
         bytes_pushed_total: int,
         open_segment_bytes: int,
         forced_cuts: int,
-    ) -> None: ...
+    ) -> HlsStats: ...
     def __repr__(self) -> str: ...
 
 
@@ -140,7 +155,7 @@ class HlsStats:
 # ---------------------------------------------------------------------------
 
 
-class Publisher:
+class Publisher(abc.ABC):
     """Abstract base class for byte-sink publishers.
 
     Mirrors the Rust ``tst_core::publisher::Publisher`` trait. Direct
@@ -148,20 +163,24 @@ class Publisher:
     methods. ``HlsPublisher`` is a registered virtual subclass.
     """
 
-    def push_ts(self, ts_bytes: BytesLike) -> None:
+    @abc.abstractmethod
+    def push_ts(self, ts_bytes: _BytesLike) -> None:
         """Push MPEG-TS bytes for the current segment (multiple of 188)."""
         ...
 
+    @abc.abstractmethod
     def cut_segment(self) -> None:
         """Hint that the next ``push_ts`` should start a new segment."""
         ...
 
     def cut_segment_with_duration(self, media_duration_us: int) -> None: ...
 
+    @abc.abstractmethod
     def finish(self) -> None:
         """Flush, write the terminal playlist, tear down the sink."""
         ...
 
+    @abc.abstractmethod
     def stats(self) -> PublisherStats:
         """Snapshot of publisher health."""
         ...
@@ -172,6 +191,7 @@ class Publisher:
 # ---------------------------------------------------------------------------
 
 
+@final
 class HlsPublisher:
     """HLS publisher: segments MPEG-TS to disk + serves an HTTP playlist.
 
@@ -186,7 +206,7 @@ class HlsPublisher:
         """Return a fresh builder. Chain setters then call ``.build()``."""
         ...
 
-    def push_ts(self, ts_bytes: BytesLike) -> None:
+    def push_ts(self, ts_bytes: _BytesLike) -> None:
         """Push pre-muxed MPEG-TS bytes (multiple of 188).
 
         Raises ``HlsError(kind=UNALIGNED_PUSH_TS)`` for a non-188-multiple,
@@ -247,6 +267,7 @@ class HlsPublisher:
 # ---------------------------------------------------------------------------
 
 
+@final
 class HlsServerHandle:
     """Live HTTP server serving a finished HLS playlist + its segments.
 
@@ -294,6 +315,7 @@ class HlsServerHandle:
 # ---------------------------------------------------------------------------
 
 
+@final
 class HlsPublisherBuilder:
     """Builder for ``HlsPublisher``. All setters return ``self`` for chaining."""
 
@@ -364,6 +386,7 @@ class HlsPublisherBuilder:
 # ---------------------------------------------------------------------------
 
 
+@final
 class MuxPublisherStats:
     """Frozen ``MuxPublisher`` shell stats. Mirrors
     ``tst_pipeline::MuxPublisherStats``."""
@@ -383,6 +406,7 @@ class MuxPublisherStats:
 # ---------------------------------------------------------------------------
 
 
+@final
 class MuxPublisher:
     """Owns a muxer + an ``HlsPublisher``; push elementary streams.
 
@@ -404,20 +428,20 @@ class MuxPublisher:
         ...
 
     def send_video(
-        self, nal: BytesLike, *, pts: Any, key_frame: bool = ...
+        self, nal: _BytesLike, *, pts: Any, key_frame: bool = ...
     ) -> None:
         """Push one video access unit (Annex-B). Auto-cuts on ``key_frame``."""
         ...
 
-    def send_klv(self, klv: BytesLike, *, pts: Any, stream_index: int = ...) -> None:
+    def send_klv(self, klv: _BytesLike, *, pts: Any, stream_index: int = ...) -> None:
         """Push one KLV blob. ``stream_index`` selects the KLV stream."""
         ...
 
-    def send_audio(self, frames: BytesLike, *, pts: Any) -> None:
+    def send_audio(self, frames: _BytesLike, *, pts: Any) -> None:
         """Push one or more pre-framed audio frames."""
         ...
 
-    def send_subtitle(self, payload: BytesLike, *, pts: Any) -> None:
+    def send_subtitle(self, payload: _BytesLike, *, pts: Any) -> None:
         """Push one subtitle payload."""
         ...
 

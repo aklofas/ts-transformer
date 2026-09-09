@@ -13,14 +13,23 @@ mypy --strict clean.
 from __future__ import annotations
 
 from enum import IntEnum
-from typing import Any, Union
+from types import TracebackType
+from typing import Any, Optional, Type, Union, final
 
 # A bytes-like input — `bytes`, `bytearray`, `memoryview`, NumPy uint8,
 # or any object implementing the buffer protocol. Concrete extraction
 # happens in Rust via a two-path fast/fallback pattern.
-BytesLike = Union[bytes, bytearray, memoryview, Any]
+_BytesLike = Union[bytes, bytearray, memoryview, Any]
 
-__all__: list[str]
+__all__: list[str] = [
+    "Transport",
+    "RecvTransport",
+    "TransportBuilder",
+    "RecvTransportBuilder",
+    "SocketStats",
+    "UdpError",
+    "UdpErrorKind",
+]
 
 # ---------------------------------------------------------------------------
 # UdpErrorKind / UdpError — re-exported from tstrans.exceptions
@@ -54,6 +63,7 @@ class UdpError(Exception):
 # ---------------------------------------------------------------------------
 
 
+@final
 class SocketStats:
     """Frozen cumulative stats snapshot for a single UDP transport handle.
 
@@ -83,6 +93,7 @@ class SocketStats:
 # ---------------------------------------------------------------------------
 
 
+@final
 class Transport:
     """Raw UDP sender wrapping ``tst_udp::UdpTransport``.
 
@@ -96,7 +107,7 @@ class Transport:
         """Return a fresh builder. Chain setters then call ``.build()``."""
         ...
 
-    def send(self, payload: BytesLike) -> None:
+    def send(self, payload: _BytesLike) -> None:
         """Send one datagram payload.
 
         Accepts ``bytes``, ``bytearray``, ``memoryview``, or any
@@ -127,7 +138,12 @@ class Transport:
         ...
 
     def __enter__(self) -> Transport: ...
-    def __exit__(self, *args: object) -> bool: ...
+    def __exit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc: Optional[BaseException],
+        tb: Optional[TracebackType],
+    ) -> bool: ...
     def __repr__(self) -> str: ...
 
 
@@ -136,6 +152,7 @@ class Transport:
 # ---------------------------------------------------------------------------
 
 
+@final
 class TransportBuilder:
     """Builder for ``Transport``. All setters return ``self`` for chaining."""
 
@@ -181,6 +198,7 @@ class TransportBuilder:
 # ---------------------------------------------------------------------------
 
 
+@final
 class RecvTransport:
     """Raw UDP receiver wrapping ``tst_udp::UdpRecvTransport``.
 
@@ -242,7 +260,12 @@ class RecvTransport:
         ...
 
     def __enter__(self) -> RecvTransport: ...
-    def __exit__(self, *args: object) -> bool: ...
+    def __exit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc: Optional[BaseException],
+        tb: Optional[TracebackType],
+    ) -> bool: ...
     def __repr__(self) -> str: ...
 
 
@@ -251,6 +274,7 @@ class RecvTransport:
 # ---------------------------------------------------------------------------
 
 
+@final
 class RecvTransportBuilder:
     """Builder for ``RecvTransport``. All setters return ``self``
     for chaining."""

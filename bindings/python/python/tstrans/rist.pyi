@@ -7,16 +7,30 @@ Available when tstrans was built with the ``rist`` cargo feature
 from __future__ import annotations
 
 from enum import IntEnum
-from typing import Self
+from types import TracebackType
+from typing import Optional, Self, Type, final
 
 from .exceptions import RistError as RistError
 from .exceptions import RistErrorKind as RistErrorKind
+
+__all__: list[str] = [
+    "RistProfile",
+    "RistStats",
+    "EncryptionKey",
+    "Transport",
+    "TransportBuilder",
+    "RecvTransport",
+    "RecvTransportBuilder",
+    "RistError",
+    "RistErrorKind",
+]
 
 # ---------------------------------------------------------------------------
 # Enums
 # ---------------------------------------------------------------------------
 
 
+@final
 class RistProfile(IntEnum):
     """RIST protocol profile.
 
@@ -33,6 +47,7 @@ class RistProfile(IntEnum):
 # ---------------------------------------------------------------------------
 
 
+@final
 class RistStats:
     """Cumulative stats snapshot returned by Transport/RecvTransport.stats()."""
 
@@ -51,6 +66,7 @@ class RistStats:
 # ---------------------------------------------------------------------------
 
 
+@final
 class EncryptionKey:
     """AES pre-shared key for RIST encryption.
 
@@ -79,6 +95,7 @@ class EncryptionKey:
 # ---------------------------------------------------------------------------
 
 
+@final
 class Transport:
     """RIST sender. Construct via ``Transport.builder()``."""
 
@@ -106,9 +123,15 @@ class Transport:
         ...
 
     def __enter__(self) -> Self: ...
-    def __exit__(self, *args: object) -> bool: ...
+    def __exit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc: Optional[BaseException],
+        tb: Optional[TracebackType],
+    ) -> bool: ...
 
 
+@final
 class TransportBuilder:
     """Builder for ``Transport``. Chain setter calls, then call ``.build()``."""
 
@@ -132,7 +155,7 @@ class TransportBuilder:
         """RTCP CNAME for this sender."""
         ...
 
-    def encryption(self, k: EncryptionKey) -> Self:
+    def encryption(self, key: EncryptionKey) -> Self:
         """AES encryption key. Forces profile to ``MAIN``."""
         ...
 
@@ -167,6 +190,7 @@ class TransportBuilder:
 # ---------------------------------------------------------------------------
 
 
+@final
 class RecvTransport:
     """RIST receiver. Construct via ``RecvTransport.builder()``."""
 
@@ -206,9 +230,15 @@ class RecvTransport:
         ...
 
     def __enter__(self) -> Self: ...
-    def __exit__(self, *args: object) -> bool: ...
+    def __exit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc: Optional[BaseException],
+        tb: Optional[TracebackType],
+    ) -> bool: ...
 
 
+@final
 class RecvTransportBuilder:
     """Builder for ``RecvTransport``. Chain setter calls, then call ``.build()``."""
 
@@ -232,7 +262,7 @@ class RecvTransportBuilder:
         """RTCP CNAME for this receiver."""
         ...
 
-    def encryption(self, k: EncryptionKey) -> Self:
+    def encryption(self, key: EncryptionKey) -> Self:
         """AES decryption key. Forces profile to ``MAIN``."""
         ...
 

@@ -9,7 +9,7 @@
 # Method extraction is from source files (not the built extension) so the
 # ratchet runs without maturin. The Rust side reads the `pub trait
 # Publisher { ... }` block in crates/tst-core/src/publisher/mod.rs; the
-# Python side reads the `class Publisher:` block in
+# Python side reads the `class Publisher(abc.ABC):` block in
 # bindings/python/python/tstrans/hls.pyi.
 
 set -euo pipefail
@@ -32,10 +32,10 @@ rust_methods=$(awk '
   }
 ' "$RUST_FILE" | sort -u)
 
-# Python ABC methods: `def <name>(` lines inside the `class Publisher:`
+# Python ABC methods: `def <name>(` lines inside the `class Publisher(abc.ABC):`
 # block (terminated by the next top-level `class `). Dunders are skipped.
 py_methods=$(awk '
-  /^class Publisher:/ { in_cls = 1; next }
+  /^class Publisher(\(abc\.ABC\))?:/ { in_cls = 1; next }
   in_cls && /^class / { in_cls = 0 }
   in_cls && /^    def [a-z_]+\(/ {
     line = $0
