@@ -131,8 +131,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   or doc mention of the attribute counted too — 128 phantom lines that
   moved the baseline whenever a doc edit mentioned it (the 313→314 bump
   on 2026-09-02 was one). Baseline re-measured at the real attribute
-  count; no attribute was added or removed. The pre-push runner's copy
-  of the check uses the same anchored pattern.
+  count; no attribute was added or removed.
 - **CI: nightly native ThreadSanitizer job now hard-gates.** The
   `tsan-native` job in `sanitizers.yml` (tst-srt / tst-rist / tst-c
   with libsrt, librist and mbedTLS compiled `-fsanitize=thread`) has

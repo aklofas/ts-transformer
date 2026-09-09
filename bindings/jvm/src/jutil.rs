@@ -209,7 +209,7 @@ pub fn read_unknown_list(
     is_typed: impl Fn(u32) -> bool,
 ) -> jni::errors::Result<Vec<OwnedRawField>> {
     let size = env.call_method(list, "size", "()I", &[])?.i()?;
-    let mut out = Vec::new();
+    let mut out = Vec::with_capacity(size.max(0) as usize);
     for i in 0..size {
         // Per-item local frame, like every other list reader in this module:
         // each entry mints ~5 refs (List.get, the ByteBuffer, its duplicate,
