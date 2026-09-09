@@ -22,6 +22,7 @@ from typing import (
     Tuple,
     Type,
     Union,
+    final,
 )
 
 # Cross-module types are imported from the `tstrans.mpegts` stub, which
@@ -42,9 +43,29 @@ from tstrans.mpegts import (
 # A bytes-like input — `bytes`, `bytearray`, `memoryview`, NumPy uint8,
 # or any object implementing the buffer protocol. Concrete extraction
 # happens in Rust via a two-path fast/fallback pattern (audit #10).
-BytesLike = Union[bytes, bytearray, memoryview, Any]
+_BytesLike = Union[bytes, bytearray, memoryview, Any]
 
-__all__: list[str]
+__all__: list[str] = [
+    "Sender",
+    "Receiver",
+    "SocketStats",
+    "SrtStats",
+    "CancelHandle",
+    "Builder",
+    "Socket",
+    "Listener",
+    "MuxSender",
+    "DemuxReceiver",
+    "BackoffStrategy",
+    "OverflowPolicy",
+    "ReconnectPolicy",
+    "ReconnectMode",
+    "ManagedTransportStats",
+    "ManagedSender",
+    "ManagedReceiver",
+    "ManagedMuxSender",
+    "ManagedDemuxReceiver",
+]
 
 # ---------------------------------------------------------------------------
 # T2 — transport types (Sender / Receiver / SocketStats / SrtStats /
@@ -52,6 +73,7 @@ __all__: list[str]
 # ---------------------------------------------------------------------------
 
 
+@final
 class SocketStats:
     """Frozen wire-level statistics snapshot. Mirror of
     `tst_core::transport::SocketStats`. All fields are integer-valued.
@@ -82,6 +104,7 @@ class SocketStats:
     def __repr__(self) -> str: ...
 
 
+@final
 class SrtStats:
     """Frozen mirror of `tst_srt::Stats` — the libsrt-flavored 17-field
     stats struct. Exposes the SRT-rich fields that don't fit the
@@ -119,6 +142,7 @@ class SrtStats:
     def __repr__(self) -> str: ...
 
 
+@final
 class CancelHandle:
     """Transport-side cancel handle for `Sender` / `Receiver` /
     `Listener` / `MuxSender` / `DemuxReceiver`. Calling `.cancel()`
@@ -138,6 +162,7 @@ class CancelHandle:
     def __repr__(self) -> str: ...
 
 
+@final
 class Sender:
     """Python SRT sender wrapping `tst_pipeline::Sender<SrtTransport>`.
 
@@ -149,7 +174,7 @@ class Sender:
 
     @staticmethod
     def from_url(url: str) -> Sender: ...
-    def send_bytes(self, data: BytesLike) -> None: ...
+    def send_bytes(self, data: _BytesLike) -> None: ...
     def flush(self) -> None: ...
     def cancel_handle(self) -> CancelHandle: ...
     def socket_stats(self) -> SocketStats: ...
@@ -166,6 +191,7 @@ class Sender:
     def __repr__(self) -> str: ...
 
 
+@final
 class Receiver:
     """Python SRT receiver wrapping `tst_pipeline::Receiver<SrtTransport>`.
 
@@ -199,6 +225,7 @@ class Receiver:
 # ---------------------------------------------------------------------------
 
 
+@final
 class Builder:
     """Hybrid fluent + kwargs SRT URL constructor.
 
@@ -216,8 +243,7 @@ class Builder:
     (listener) → `Listener`.
     """
 
-    def __init__(
-        self,
+    def __new__(cls,
         url: str,
         *,
         latency_ms: Optional[int] = ...,
@@ -227,7 +253,7 @@ class Builder:
         connect_timeout_ms: Optional[int] = ...,
         recv_timeout_ms: Optional[int] = ...,
         send_timeout_ms: Optional[int] = ...,
-    ) -> None: ...
+    ) -> Builder: ...
 
     # Mode setters — chainable.
     def caller(self) -> Builder: ...
@@ -254,6 +280,7 @@ class Builder:
     def __repr__(self) -> str: ...
 
 
+@final
 class Socket:
     """Low-level SRT socket handle. Returned by `Builder.connect()`
     (caller mode) and `Listener.accept()` (listener-side accepted
@@ -293,6 +320,7 @@ class Socket:
     def __repr__(self) -> str: ...
 
 
+@final
 class Listener:
     """Bound SRT listener. Returned by `Builder.listen()` (or
     constructed indirectly via `Receiver.from_url`).
@@ -327,6 +355,7 @@ class Listener:
 # ---------------------------------------------------------------------------
 
 
+@final
 class MuxSender:
     """Convenience wrapper — `Sender` + `Muxer` constructed together.
 
@@ -346,27 +375,27 @@ class MuxSender:
     # Send surface — single stream.
     def send_video(
         self,
-        nal: BytesLike,
+        nal: _BytesLike,
         *,
         pts: Pts90khz,
         key_frame: bool = ...,
     ) -> None: ...
     def send_klv(
         self,
-        klv: BytesLike,
+        klv: _BytesLike,
         *,
         pts: Pts90khz,
         metadata_service_id: int = ...,
     ) -> None: ...
-    def send_audio(self, adts: BytesLike, *, pts: Pts90khz) -> None: ...
-    def send_subtitle(self, payload: BytesLike, *, pts: Pts90khz) -> None: ...
-    def send_data(self, data: BytesLike, *, pts: Pts90khz) -> None: ...
+    def send_audio(self, adts: _BytesLike, *, pts: Pts90khz) -> None: ...
+    def send_subtitle(self, payload: _BytesLike, *, pts: Pts90khz) -> None: ...
+    def send_data(self, data: _BytesLike, *, pts: Pts90khz) -> None: ...
 
     # Send surface — multi-stream variants (explicit handle).
     def send_video_to(
         self,
         handle: VideoStreamHandle,
-        nal: BytesLike,
+        nal: _BytesLike,
         *,
         pts: Pts90khz,
         key_frame: bool = ...,
@@ -374,7 +403,7 @@ class MuxSender:
     def send_klv_to(
         self,
         handle: KlvStreamHandle,
-        klv: BytesLike,
+        klv: _BytesLike,
         *,
         pts: Pts90khz,
         metadata_service_id: int = ...,
@@ -382,21 +411,21 @@ class MuxSender:
     def send_audio_to(
         self,
         handle: AudioStreamHandle,
-        adts: BytesLike,
+        adts: _BytesLike,
         *,
         pts: Pts90khz,
     ) -> None: ...
     def send_subtitle_to(
         self,
         handle: SubtitleStreamHandle,
-        payload: BytesLike,
+        payload: _BytesLike,
         *,
         pts: Pts90khz,
     ) -> None: ...
     def send_data_to(
         self,
         handle: DataStreamHandle,
-        data: BytesLike,
+        data: _BytesLike,
         *,
         pts: Pts90khz,
     ) -> None: ...
@@ -421,6 +450,7 @@ class MuxSender:
     def __repr__(self) -> str: ...
 
 
+@final
 class DemuxReceiver:
     """Convenience wrapper — `Receiver` + `Demuxer` constructed together.
 
@@ -470,6 +500,7 @@ class DemuxReceiver:
 # ---------------------------------------------------------------------------
 
 
+@final
 class BackoffStrategy:
     """Backoff strategy for reconnect attempts.
 
@@ -496,6 +527,7 @@ class BackoffStrategy:
     def __repr__(self) -> str: ...
 
 
+@final
 class OverflowPolicy:
     """What `ManagedTransport` does when the gap buffer is full and a
     new message arrives during an outage. IntEnum-shaped PyClass.
@@ -512,6 +544,7 @@ class OverflowPolicy:
     REJECT: OverflowPolicy
 
 
+@final
 class ReconnectMode:
     """Where `ManagedTransport` runs its reconnect loop after the inner
     transport breaks. IntEnum-shaped PyClass — compare with `==`, not
@@ -530,6 +563,7 @@ class ReconnectMode:
     BACKGROUND: ReconnectMode
 
 
+@final
 class ReconnectPolicy:
     """Tuning for `ManagedSender` / `ManagedReceiver` /
     `ManagedMuxSender` / `ManagedDemuxReceiver` reconnect behavior.
@@ -544,15 +578,14 @@ class ReconnectPolicy:
     Raises `ValueError` if `gap_buffer_capacity == 0`.
     """
 
-    def __init__(
-        self,
+    def __new__(cls,
         *,
         max_attempts: Optional[int] = ...,
         backoff: Optional[BackoffStrategy] = ...,
         gap_buffer_capacity: int = ...,
         overflow_policy: OverflowPolicy = ...,
         mode: ReconnectMode = ...,
-    ) -> None: ...
+    ) -> ReconnectPolicy: ...
     @property
     def max_attempts(self) -> Optional[int]: ...
     @property
@@ -566,6 +599,7 @@ class ReconnectPolicy:
     def __repr__(self) -> str: ...
 
 
+@final
 class ManagedTransportStats:
     """Snapshot of `ManagedSender` / `ManagedMuxSender` reconnect/gap
     telemetry. Returned by `reconnect_stats()`. Frozen, `get_all`-shaped
@@ -590,6 +624,7 @@ class ManagedTransportStats:
 # ---------------------------------------------------------------------------
 
 
+@final
 class ManagedSender:
     """Auto-reconnect SRT sender — wraps `tst_pipeline::Sender
     <ManagedTransport<SrtTransport>>`. On any Broken/Closed event from
@@ -608,7 +643,7 @@ class ManagedSender:
         *,
         policy: Optional[ReconnectPolicy] = ...,
     ) -> ManagedSender: ...
-    def send_bytes(self, data: BytesLike) -> None: ...
+    def send_bytes(self, data: _BytesLike) -> None: ...
     def flush(self) -> None: ...
     def cancel_handle(self) -> CancelHandle: ...
     def socket_stats(self) -> SocketStats: ...
@@ -626,6 +661,7 @@ class ManagedSender:
     def __repr__(self) -> str: ...
 
 
+@final
 class ManagedReceiver:
     """Auto-reconnect SRT receiver — wraps `tst_pipeline::Receiver
     <ManagedRecvTransport<SrtTransport>>`. On any Broken/Closed event
@@ -672,6 +708,7 @@ class ManagedReceiver:
 # ---------------------------------------------------------------------------
 
 
+@final
 class ManagedMuxSender:
     """Auto-reconnect MuxSender — wraps `MuxSender<ManagedTransport
     <SrtTransport>>`. Construct via `ManagedMuxSender.from_url(url,
@@ -694,27 +731,27 @@ class ManagedMuxSender:
     # Send surface — single stream.
     def send_video(
         self,
-        nal: BytesLike,
+        nal: _BytesLike,
         *,
         pts: Pts90khz,
         key_frame: bool = ...,
     ) -> None: ...
     def send_klv(
         self,
-        klv: BytesLike,
+        klv: _BytesLike,
         *,
         pts: Pts90khz,
         metadata_service_id: int = ...,
     ) -> None: ...
-    def send_audio(self, adts: BytesLike, *, pts: Pts90khz) -> None: ...
-    def send_subtitle(self, payload: BytesLike, *, pts: Pts90khz) -> None: ...
-    def send_data(self, data: BytesLike, *, pts: Pts90khz) -> None: ...
+    def send_audio(self, adts: _BytesLike, *, pts: Pts90khz) -> None: ...
+    def send_subtitle(self, payload: _BytesLike, *, pts: Pts90khz) -> None: ...
+    def send_data(self, data: _BytesLike, *, pts: Pts90khz) -> None: ...
 
     # Send surface — multi-stream variants.
     def send_video_to(
         self,
         handle: VideoStreamHandle,
-        nal: BytesLike,
+        nal: _BytesLike,
         *,
         pts: Pts90khz,
         key_frame: bool = ...,
@@ -722,7 +759,7 @@ class ManagedMuxSender:
     def send_klv_to(
         self,
         handle: KlvStreamHandle,
-        klv: BytesLike,
+        klv: _BytesLike,
         *,
         pts: Pts90khz,
         metadata_service_id: int = ...,
@@ -730,21 +767,21 @@ class ManagedMuxSender:
     def send_audio_to(
         self,
         handle: AudioStreamHandle,
-        adts: BytesLike,
+        adts: _BytesLike,
         *,
         pts: Pts90khz,
     ) -> None: ...
     def send_subtitle_to(
         self,
         handle: SubtitleStreamHandle,
-        payload: BytesLike,
+        payload: _BytesLike,
         *,
         pts: Pts90khz,
     ) -> None: ...
     def send_data_to(
         self,
         handle: DataStreamHandle,
-        data: BytesLike,
+        data: _BytesLike,
         *,
         pts: Pts90khz,
     ) -> None: ...
@@ -771,6 +808,7 @@ class ManagedMuxSender:
     def __repr__(self) -> str: ...
 
 
+@final
 class ManagedDemuxReceiver:
     """Auto-reconnect DemuxReceiver — wraps `ManagedDemuxReceiver
     <SrtTransport>`. Construct via `ManagedDemuxReceiver.from_url(url,

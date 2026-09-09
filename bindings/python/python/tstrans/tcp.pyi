@@ -13,14 +13,25 @@ mypy --strict clean.
 from __future__ import annotations
 
 from enum import IntEnum
-from typing import Any, Union
+from types import TracebackType
+from typing import Any, Optional, Type, Union, final
 
 # A bytes-like input -- `bytes`, `bytearray`, `memoryview`, NumPy uint8,
 # or any object implementing the buffer protocol. Concrete extraction
 # happens in Rust via a two-path fast/fallback pattern.
-BytesLike = Union[bytes, bytearray, memoryview, Any]
+_BytesLike = Union[bytes, bytearray, memoryview, Any]
 
-__all__: list[str]
+__all__: list[str] = [
+    "Transport",
+    "TransportBuilder",
+    "Listener",
+    "ListenerBuilder",
+    "SocketStats",
+    "TlsConfig",
+    "ClientCert",
+    "TcpError",
+    "TcpErrorKind",
+]
 
 # ---------------------------------------------------------------------------
 # TcpErrorKind / TcpError -- re-exported from tstrans.exceptions
@@ -56,6 +67,7 @@ class TcpError(Exception):
 # ---------------------------------------------------------------------------
 
 
+@final
 class SocketStats:
     """Frozen cumulative stats snapshot for a TCP transport handle.
 
@@ -85,6 +97,7 @@ class SocketStats:
 # ---------------------------------------------------------------------------
 
 
+@final
 class ClientCert:
     """Client certificate for mutual TLS authentication.
 
@@ -98,10 +111,11 @@ class ClientCert:
     key_pem: bytes
     """PEM-encoded private key. Treat as sensitive."""
 
-    def __init__(self, cert_pem: bytes, key_pem: bytes) -> None: ...
+    def __new__(cls, cert_pem: bytes, key_pem: bytes) -> ClientCert: ...
     def __repr__(self) -> str: ...
 
 
+@final
 class TlsConfig:
     """TLS configuration for ``tcps://`` transports.
 
@@ -118,13 +132,12 @@ class TlsConfig:
     client_cert: ClientCert | None
     """Optional client certificate for mutual TLS."""
 
-    def __init__(
-        self,
-        ca_pem: bytes = b"",
+    def __new__(cls,
+        ca_pem: Optional[bytes] = None,
         *,
         verify_hostname: bool = True,
         client_cert: ClientCert | None = None,
-    ) -> None: ...
+    ) -> TlsConfig: ...
     def __repr__(self) -> str: ...
 
 
@@ -133,6 +146,7 @@ class TlsConfig:
 # ---------------------------------------------------------------------------
 
 
+@final
 class Transport:
     """Raw TCP transport wrapping ``tst_tcp::TcpTransport``.
 
@@ -151,7 +165,7 @@ class Transport:
         """Return a fresh builder. Chain setters then call ``.build()``."""
         ...
 
-    def send(self, payload: BytesLike) -> None:
+    def send(self, payload: _BytesLike) -> None:
         """Send a payload over the TCP connection.
 
         Accepts ``bytes``, ``bytearray``, ``memoryview``, or any
@@ -205,7 +219,12 @@ class Transport:
         ...
 
     def __enter__(self) -> Transport: ...
-    def __exit__(self, *args: object) -> bool: ...
+    def __exit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc: Optional[BaseException],
+        tb: Optional[TracebackType],
+    ) -> bool: ...
     def __repr__(self) -> str: ...
 
 
@@ -214,6 +233,7 @@ class Transport:
 # ---------------------------------------------------------------------------
 
 
+@final
 class TransportBuilder:
     """Builder for ``Transport``. All setters return ``self`` for chaining."""
 
@@ -281,6 +301,7 @@ class TransportBuilder:
 # ---------------------------------------------------------------------------
 
 
+@final
 class Listener:
     """TCP listener wrapping ``tst_tcp::TcpListener``.
 
@@ -327,7 +348,12 @@ class Listener:
         ...
 
     def __enter__(self) -> Listener: ...
-    def __exit__(self, *args: object) -> bool: ...
+    def __exit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc: Optional[BaseException],
+        tb: Optional[TracebackType],
+    ) -> bool: ...
     def __repr__(self) -> str: ...
 
 
@@ -336,6 +362,7 @@ class Listener:
 # ---------------------------------------------------------------------------
 
 
+@final
 class ListenerBuilder:
     """Builder for ``Listener``. All setters return ``self`` for chaining."""
 

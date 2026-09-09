@@ -1059,8 +1059,9 @@ jobs:
           maturin develop --release
 
       - name: check-py-stubtest
-        # Verifies the core .pyi stubs (io/codec/klv/mpegts) match the
-        # maturin-built runtime surface. Runs here (not as a pure-grep
+        # Verifies every .pyi stub (core io/codec/klv/mpegts + the six
+        # transport modules) matches the maturin-built runtime surface.
+        # Runs here (not as a pure-grep
         # pre-push ratchet) because stubtest needs the built extension +
         # mypy in the venv. The script skips gracefully on an unbuilt tree.
         run: bash scripts/check/python/stubtest.sh

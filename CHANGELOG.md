@@ -161,6 +161,22 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Python: the six transport `.pyi` stubs (`srt`/`rtp`/`udp`/`tcp`/`hls`/
+  `rist`) now match the runtime, and the stubtest rail covers them.** The
+  rail had checked only the four core modules since v0.2.0, and the
+  transport stubs had drifted to 294 `mypy stubtest` findings. Most were
+  mechanical (every PyO3 class is now `@final`; constructors are stubbed
+  as `__new__`, which is what PyO3 exposes), but several were real
+  signature drift a type checker would have enforced wrongly: the
+  `__exit__` methods on the udp/tcp/rist context managers took `*args`;
+  `rtp.MuxSender.send_audio`/`send_audio_to` named the payload `frames`
+  (runtime: `adts`); `rist.*Builder.encryption` named its argument `k`
+  (runtime: `key`); `tcp.TlsConfig(ca_pem=...)` defaulted to `b""`
+  (runtime: `None`); `rtp.H264DepayConfig`'s keyword arguments are all
+  optional at runtime; `hls.Publisher` is an ABC with four abstract
+  methods; `__all__` was declared but empty in five stubs and missing
+  from `rist`. The `BytesLike` alias is now private (`_BytesLike`) as in
+  the core stubs. No runtime change.
 - **JVM: `cancelHandle()` no longer blocks behind an in-flight native call
   on the same object.** Every srt and rtp `cancelHandle()` native resolved
   the handle under the receiver's/sender's registry lease — the same lock a

@@ -24,6 +24,7 @@ from typing import (
     Tuple,
     Type,
     Union,
+    final,
 )
 
 # Cross-module types are imported from the `tstrans.mpegts` stub, which
@@ -44,9 +45,39 @@ from tstrans.mpegts import (
 # A bytes-like input — `bytes`, `bytearray`, `memoryview`, NumPy uint8,
 # or any object implementing the buffer protocol. Concrete extraction
 # happens in Rust via a two-path fast/fallback pattern (audit #10).
-BytesLike = Union[bytes, bytearray, memoryview, Any]
+_BytesLike = Union[bytes, bytearray, memoryview, Any]
 
-__all__: list[str]
+__all__: list[str] = [
+    "StreamEndReason",
+    "Sender",
+    "Receiver",
+    "SocketStats",
+    "CancelHandle",
+    "MuxSender",
+    "DemuxReceiver",
+    "RtspClient",
+    "RtspSession",
+    "RtspClientConfig",
+    "RtspStats",
+    "RtspCancelHandle",
+    "BasicAuth",
+    "DigestAuth",
+    "DigestAlgorithm",
+    "TransportPref",
+    "RtspVersion",
+    "RtspServer",
+    "MountHandle",
+    "ServerStats",
+    "MountStats",
+    "RtspServerCancelHandle",
+    "RtspServerConfig",
+    "ParameterSetInjection",
+    "H264DepayConfig",
+    "H264AccessUnit",
+    "H264DepayStats",
+    "RtpStats",
+    "H264Receiver",
+]
 
 # ---------------------------------------------------------------------------
 # T20 — RTP transport (Sender / Receiver / SocketStats / CancelHandle)
@@ -69,6 +100,7 @@ class StreamEndReason(enum.IntEnum):
     CANCELLED = 6
 
 
+@final
 class SocketStats:
     """Frozen wire-level statistics snapshot. Mirror of
     `tst_core::transport::SocketStats`. All fields are integer-valued.
@@ -99,6 +131,7 @@ class SocketStats:
     def __repr__(self) -> str: ...
 
 
+@final
 class CancelHandle:
     """Transport-side cancel handle for `Sender` / `Receiver`. Calling
     `.cancel()` wakes a thread parked in `.send()` / `.recv()` within
@@ -109,6 +142,7 @@ class CancelHandle:
     def __repr__(self) -> str: ...
 
 
+@final
 class Sender:
     """Python RTP sender wrapping `tst_rtp::RtpTransport`.
 
@@ -117,14 +151,13 @@ class Sender:
     the transport picks a random one.
     """
 
-    def __init__(
-        self,
+    def __new__(cls,
         url: str,
         *,
         pkt_size: int = ...,
         ssrc: Optional[int] = ...,
-    ) -> None: ...
-    def send(self, ts_bytes: BytesLike) -> None: ...
+    ) -> Sender: ...
+    def send(self, ts_bytes: _BytesLike) -> None: ...
     def stats(self) -> SocketStats: ...
     def cancel_handle(self) -> CancelHandle: ...
     def close(self) -> None: ...
@@ -138,6 +171,7 @@ class Sender:
     def __repr__(self) -> str: ...
 
 
+@final
 class Receiver:
     """Python RTP receiver wrapping `tst_rtp::RtpRecvTransport`.
 
@@ -151,7 +185,7 @@ class Receiver:
     while the session is still live. Readable after `close()`.
     """
 
-    def __init__(self, url: str) -> None: ...
+    def __new__(cls, url: str) -> Receiver: ...
     def recv(self, timeout_ms: Optional[int] = ...) -> bytes: ...
     def stats(self) -> SocketStats: ...
     def cancel_handle(self) -> CancelHandle: ...
@@ -173,6 +207,7 @@ class Receiver:
 # ---------------------------------------------------------------------------
 
 
+@final
 class RtspVersion:
     """Wire-time RTSP version preference (IntEnum-shaped PyClass).
 
@@ -184,6 +219,7 @@ class RtspVersion:
     V2_0: RtspVersion
 
 
+@final
 class TransportPref:
     """Transport preference at SETUP time (IntEnum-shaped PyClass).
 
@@ -196,6 +232,7 @@ class TransportPref:
     TCP: TransportPref
 
 
+@final
 class DigestAlgorithm:
     """Digest authentication algorithm selector (IntEnum-shaped PyClass).
 
@@ -207,6 +244,7 @@ class DigestAlgorithm:
     SHA256: DigestAlgorithm
 
 
+@final
 class BasicAuth:
     """HTTP Basic auth credentials per RFC 7617. Frozen.
 
@@ -217,12 +255,11 @@ class BasicAuth:
     reads the realm from the peer's 401.
     """
 
-    def __init__(
-        self,
+    def __new__(cls,
         user: str,
         password: str,
         realm: str | None = None,
-    ) -> None: ...
+    ) -> BasicAuth: ...
     @property
     def user(self) -> str: ...
     @property
@@ -230,6 +267,7 @@ class BasicAuth:
     def __repr__(self) -> str: ...
 
 
+@final
 class DigestAuth:
     """HTTP Digest auth credentials per RFC 7616 (MD5 + SHA-256) and
     RFC 2617 (legacy MD5). Frozen.
@@ -239,13 +277,12 @@ class DigestAuth:
     `BasicAuth.realm`.
     """
 
-    def __init__(
-        self,
+    def __new__(cls,
         user: str,
         password: str,
         algorithm: DigestAlgorithm = ...,
         realm: str | None = None,
-    ) -> None: ...
+    ) -> DigestAuth: ...
     @property
     def user(self) -> str: ...
     @property
@@ -255,6 +292,7 @@ class DigestAuth:
     def __repr__(self) -> str: ...
 
 
+@final
 class RtspClientConfig:
     """RTSP client connection configuration. Frozen PyClass dataclass.
 
@@ -265,8 +303,7 @@ class RtspClientConfig:
     platform native trust roots are used when it is `None`.
     """
 
-    def __init__(
-        self,
+    def __new__(cls,
         url: str,
         *,
         auth: Optional[Union[BasicAuth, DigestAuth]] = ...,
@@ -275,7 +312,7 @@ class RtspClientConfig:
         tls_root_certs_pem: Optional[bytes] = ...,
         keepalive: bool = ...,
         rtsp_version: RtspVersion = ...,
-    ) -> None: ...
+    ) -> RtspClientConfig: ...
     @property
     def url(self) -> str: ...
     @property
@@ -293,6 +330,7 @@ class RtspClientConfig:
     def __repr__(self) -> str: ...
 
 
+@final
 class RtspStats:
     """RTSP session stats snapshot. Reserved — all fields always report
     zero until RTCP session stats land; see
@@ -314,6 +352,7 @@ class RtspStats:
     def __repr__(self) -> str: ...
 
 
+@final
 class RtspCancelHandle:
     """RTSP control-plane cancel handle. Frozen. Flipping `.cancel()`
     breaks any in-flight `connect` / `pause` / `play` / `teardown` out
@@ -325,6 +364,7 @@ class RtspCancelHandle:
     def __repr__(self) -> str: ...
 
 
+@final
 class RtspClient:
     """Static facade. `connect(config)` runs OPTIONS / DESCRIBE / SETUP
     / PLAY and returns a live `RtspSession` for MPEG-TS streams.
@@ -339,6 +379,7 @@ class RtspClient:
     def connect_h264(config: RtspClientConfig) -> RtspSession: ...
 
 
+@final
 class RtspSession:
     """Live RTSP session — server is in PLAY state. Methods drive
     `pause` / `play` / `teardown` and expose RTCP-derived stats.
@@ -380,6 +421,7 @@ class RtspSession:
 # ---------------------------------------------------------------------------
 
 
+@final
 class RtspServerCancelHandle:
     """Cross-thread hard-cancel handle for an `RtspServer`. Frozen.
 
@@ -392,6 +434,7 @@ class RtspServerCancelHandle:
     def __repr__(self) -> str: ...
 
 
+@final
 class ServerStats:
     """Frozen snapshot of aggregate `RtspServer` stats."""
 
@@ -406,6 +449,7 @@ class ServerStats:
     def __repr__(self) -> str: ...
 
 
+@final
 class MountStats:
     """Frozen snapshot of per-mount stats."""
 
@@ -420,6 +464,7 @@ class MountStats:
     def __repr__(self) -> str: ...
 
 
+@final
 class MountHandle:
     """Public mount surface returned by `RtspServer.add_unicast_mount` /
     `add_multicast_mount`. Cloneable (Arc-shared); multiple holders can
@@ -439,27 +484,27 @@ class MountHandle:
     # Push surface — single stream (lone configured stream of each kind).
     def push_video(
         self,
-        nal: BytesLike,
+        nal: _BytesLike,
         *,
         pts: Pts90khz,
         key_frame: bool = ...,
     ) -> None: ...
     def push_klv(
         self,
-        klv: BytesLike,
+        klv: _BytesLike,
         *,
         pts: Pts90khz,
         metadata_service_id: int = ...,
     ) -> None: ...
-    def push_audio(self, frames: BytesLike, *, pts: Pts90khz) -> None: ...
-    def push_subtitle(self, payload: BytesLike, *, pts: Pts90khz) -> None: ...
-    def push_data(self, data: BytesLike, *, pts: Pts90khz) -> None: ...
+    def push_audio(self, frames: _BytesLike, *, pts: Pts90khz) -> None: ...
+    def push_subtitle(self, payload: _BytesLike, *, pts: Pts90khz) -> None: ...
+    def push_data(self, data: _BytesLike, *, pts: Pts90khz) -> None: ...
 
     # Push surface — multi-stream (explicit handle).
     def push_video_to(
         self,
         handle: VideoStreamHandle,
-        nal: BytesLike,
+        nal: _BytesLike,
         *,
         pts: Pts90khz,
         key_frame: bool = ...,
@@ -467,7 +512,7 @@ class MountHandle:
     def push_klv_to(
         self,
         handle: KlvStreamHandle,
-        klv: BytesLike,
+        klv: _BytesLike,
         *,
         pts: Pts90khz,
         metadata_service_id: int = ...,
@@ -475,21 +520,21 @@ class MountHandle:
     def push_audio_to(
         self,
         handle: AudioStreamHandle,
-        frames: BytesLike,
+        frames: _BytesLike,
         *,
         pts: Pts90khz,
     ) -> None: ...
     def push_subtitle_to(
         self,
         handle: SubtitleStreamHandle,
-        payload: BytesLike,
+        payload: _BytesLike,
         *,
         pts: Pts90khz,
     ) -> None: ...
     def push_data_to(
         self,
         handle: DataStreamHandle,
-        data: BytesLike,
+        data: _BytesLike,
         *,
         pts: Pts90khz,
     ) -> None: ...
@@ -536,6 +581,7 @@ class RtspServerConfig:
     def __post_init__(self) -> None: ...
 
 
+@final
 class RtspServer:
     """Sync RTSP server. Construct via `RtspServer.start(config)`.
 
@@ -587,6 +633,7 @@ class RtspServer:
 # ---------------------------------------------------------------------------
 
 
+@final
 class MuxSender:
     """Convenience wrapper — `Sender` + `Muxer` constructed together.
 
@@ -596,38 +643,37 @@ class MuxSender:
     muxer + transport work via `py.allow_threads()`.
     """
 
-    def __init__(
-        self,
+    def __new__(cls,
         url: str,
         program_config: MuxerProgramConfig,
         *,
         pkt_size: int = ...,
-    ) -> None: ...
+    ) -> MuxSender: ...
 
     # Send surface — single stream.
     def send_video(
         self,
-        nal: BytesLike,
+        nal: _BytesLike,
         *,
         pts: Pts90khz,
         key_frame: bool = ...,
     ) -> None: ...
     def send_klv(
         self,
-        klv: BytesLike,
+        klv: _BytesLike,
         *,
         pts: Pts90khz,
         metadata_service_id: int = ...,
     ) -> None: ...
-    def send_audio(self, frames: BytesLike, *, pts: Pts90khz) -> None: ...
-    def send_subtitle(self, payload: BytesLike, *, pts: Pts90khz) -> None: ...
-    def send_data(self, data: BytesLike, *, pts: Pts90khz) -> None: ...
+    def send_audio(self, adts: _BytesLike, *, pts: Pts90khz) -> None: ...
+    def send_subtitle(self, payload: _BytesLike, *, pts: Pts90khz) -> None: ...
+    def send_data(self, data: _BytesLike, *, pts: Pts90khz) -> None: ...
 
     # Send surface — multi-stream variants.
     def send_video_to(
         self,
         handle: VideoStreamHandle,
-        nal: BytesLike,
+        nal: _BytesLike,
         *,
         pts: Pts90khz,
         key_frame: bool = ...,
@@ -635,7 +681,7 @@ class MuxSender:
     def send_klv_to(
         self,
         handle: KlvStreamHandle,
-        klv: BytesLike,
+        klv: _BytesLike,
         *,
         pts: Pts90khz,
         metadata_service_id: int = ...,
@@ -643,21 +689,21 @@ class MuxSender:
     def send_audio_to(
         self,
         handle: AudioStreamHandle,
-        frames: BytesLike,
+        adts: _BytesLike,
         *,
         pts: Pts90khz,
     ) -> None: ...
     def send_subtitle_to(
         self,
         handle: SubtitleStreamHandle,
-        payload: BytesLike,
+        payload: _BytesLike,
         *,
         pts: Pts90khz,
     ) -> None: ...
     def send_data_to(
         self,
         handle: DataStreamHandle,
-        data: BytesLike,
+        data: _BytesLike,
         *,
         pts: Pts90khz,
     ) -> None: ...
@@ -681,6 +727,7 @@ class MuxSender:
     def __repr__(self) -> str: ...
 
 
+@final
 class DemuxReceiver:
     """Convenience wrapper — `Receiver` + `Demuxer` constructed together.
 
@@ -698,12 +745,11 @@ class DemuxReceiver:
     while the session is still live. Readable after `close()`.
     """
 
-    def __init__(
-        self,
+    def __new__(cls,
         url: str,
         *,
         demux_config: Optional[DemuxerConfig] = ...,
-    ) -> None: ...
+    ) -> DemuxReceiver: ...
     def __iter__(self) -> Iterator[DemuxEvent]: ...
     def __next__(self) -> DemuxEvent: ...
     # Register a fan-out callback invoked with every 188-byte TS packet
@@ -731,6 +777,7 @@ class DemuxReceiver:
 # ---------------------------------------------------------------------------
 
 
+@final
 class ParameterSetInjection:
     """Controls whether out-of-band SPS/PPS are injected before IDR frames
     (IntEnum-shaped PyClass). Mirrors `tst_rtp::ParameterSetInjection`.
@@ -743,6 +790,7 @@ class ParameterSetInjection:
     BEFORE_IDR: ParameterSetInjection
 
 
+@final
 class H264DepayConfig:
     """H.264 depacketizer configuration. Frozen.
 
@@ -753,14 +801,13 @@ class H264DepayConfig:
     type 8 = PPS). Last SPS and PPS each win when multiple are provided.
     """
 
-    def __init__(
-        self,
+    def __new__(cls,
         *,
-        payload_type: int = ...,
-        parameter_set_injection: ParameterSetInjection = ...,
-        initial_parameter_sets: List[bytes] = ...,
-        max_au_bytes: int = ...,
-    ) -> None: ...
+        payload_type: Optional[int] = None,
+        parameter_set_injection: Optional[ParameterSetInjection] = None,
+        initial_parameter_sets: Optional[List[bytes]] = None,
+        max_au_bytes: Optional[int] = None,
+    ) -> H264DepayConfig: ...
     @property
     def payload_type(self) -> int: ...
     @property
@@ -772,6 +819,7 @@ class H264DepayConfig:
     def __repr__(self) -> str: ...
 
 
+@final
 class H264AccessUnit:
     """A fully reassembled H.264 Access Unit. Frozen.
 
@@ -789,6 +837,7 @@ class H264AccessUnit:
     def __repr__(self) -> str: ...
 
 
+@final
 class H264DepayStats:
     """RFC 6184 depacketizer counters. Frozen snapshot.
 
@@ -808,6 +857,7 @@ class H264DepayStats:
     def __repr__(self) -> str: ...
 
 
+@final
 class RtpStats:
     """RTP protocol–level statistics snapshot. Frozen.
 
@@ -820,6 +870,7 @@ class RtpStats:
     def __repr__(self) -> str: ...
 
 
+@final
 class H264Receiver:
     """Blocking H.264-over-RTP receiver (RFC 6184).
 
