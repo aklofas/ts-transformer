@@ -211,25 +211,35 @@ pub fn read_unknown_list(
     let size = env.call_method(list, "size", "()I", &[])?.i()?;
     let mut out = Vec::new();
     for i in 0..size {
-        let item = env
-            .call_method(list, "get", "(I)Ljava/lang/Object;", &[JValue::Int(i)])?
-            .l()?;
-        let tag_long = env.call_method(&item, "tag", "()J", &[])?.j()?;
-        // KLV BER-OID tags are u32; a Java `long` tag outside 0..=u32::MAX is
-        // out-of-range for a real field. Fail-closed (skip) rather than
-        // truncating it into a different tag value.
-        let Ok(tag) = u32::try_from(tag_long) else {
-            continue;
-        };
-        if is_typed(tag) {
-            continue; // typed field wins; drop this unknown entry
+        // Per-item local frame, like every other list reader in this module:
+        // each entry mints ~5 refs (List.get, the ByteBuffer, its duplicate,
+        // the byte[] behind read_byte_buffer) and nothing below returns a
+        // ref, so the frame can reclaim them all before the next entry.
+        let field =
+            env.with_local_frame(8, |env| -> jni::errors::Result<Option<OwnedRawField>> {
+                let item = env
+                    .call_method(list, "get", "(I)Ljava/lang/Object;", &[JValue::Int(i)])?
+                    .l()?;
+                let tag_long = env.call_method(&item, "tag", "()J", &[])?.j()?;
+                // KLV BER-OID tags are u32; a Java `long` tag outside 0..=u32::MAX is
+                // out-of-range for a real field. Fail-closed (skip) rather than
+                // truncating it into a different tag value.
+                let Ok(tag) = u32::try_from(tag_long) else {
+                    return Ok(None);
+                };
+                if is_typed(tag) {
+                    return Ok(None); // typed field wins; drop this unknown entry
+                }
+                let buf_obj = env
+                    .call_method(&item, "value", "()Ljava/nio/ByteBuffer;", &[])?
+                    .l()?;
+                // Use read_byte_buffer to honour position/limit and support direct buffers.
+                let value = read_byte_buffer(env, &buf_obj)?;
+                Ok(Some(OwnedRawField { tag, value }))
+            })?;
+        if let Some(field) = field {
+            out.push(field);
         }
-        let buf_obj = env
-            .call_method(&item, "value", "()Ljava/nio/ByteBuffer;", &[])?
-            .l()?;
-        // Use read_byte_buffer to honour position/limit and support direct buffers.
-        let value = read_byte_buffer(env, &buf_obj)?;
-        out.push(OwnedRawField { tag, value });
     }
     Ok(out)
 }

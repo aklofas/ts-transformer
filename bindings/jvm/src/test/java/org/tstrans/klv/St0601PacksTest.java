@@ -628,6 +628,46 @@ class St0601PacksTest {
     }
 
     @Test
+    void longUnknownListRoundTripsWithPerItemLocalFrame()
+            throws KlvDecodeException, KlvEncodeException {
+        // Regression for the last per-item JNI loop in jutil without its
+        // own local frame: read_unknown_list minted ~5 local refs per
+        // KlvUnknownField (List.get, tag(), value(), duplicate(), the byte[]
+        // for read_byte_buffer) and freed none until the native returned.
+        // Every sibling list reader (read_long_list, the st0601/st0903 list
+        // walkers, the codec NAL/OBU list readers) wraps each iteration in
+        // with_local_frame; this one was inherited by EVERY typed KLV set's
+        // encode path. HotSpot grows the local-ref table silently (measured:
+        // 20 000 entries, ~100k live refs, no -Xcheck:jni warning on JDK 17),
+        // so the leak is NOT observable from Java — this test instead pins
+        // the frame change's own hazard: a ref that escaped the popped
+        // per-item frame would corrupt or drop an entry, and 1000 entries
+        // checked for ORDER and CONTENT catch that.
+        List<KlvUnknownField> many = new ArrayList<>();
+        for (int i = 0; i < 1000; i++) {
+            // Tags above the ST 0601 typed range (1..=143) and clear of the
+            // deprecated-tag stand-ins; each value carries its own index so
+            // the round trip proves ORDER and CONTENT, not just the count.
+            many.add(new KlvUnknownField(1000L + i,
+                    ByteBuffer.wrap(new byte[] {(byte) (i >> 8), (byte) i})));
+        }
+        UasDatalinkLs rec = new UasDatalinkLs.Builder()
+                .universalLabel(ByteBuffer.wrap(UL))
+                .unknown(many)
+                .build();
+        byte[] encoded = Klv.encodeUasDatalink(rec);
+        UasDatalinkLs back = Klv.decodeUasDatalink(encoded);
+        assertEquals(1000, back.unknown().size());
+        for (int i = 0; i < 1000; i++) {
+            KlvUnknownField f = back.unknown().get(i);
+            assertEquals(1000L + i, f.tag(), "unknown tag order at index " + i);
+            byte[] v = readByteBuffer(f.value());
+            assertEquals((byte) (i >> 8), v[0], "value high byte at index " + i);
+            assertEquals((byte) i, v[1], "value low byte at index " + i);
+        }
+    }
+
+    @Test
     void deprecatedTag66AndStandInTag200StayUntyped() throws KlvDecodeException, KlvEncodeException {
         // 66 (deprecated-forever) and 200 (out of range) are the durable
         // unknown-tag test stand-ins — encoding must NOT reject them.
