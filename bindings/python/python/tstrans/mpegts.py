@@ -1082,6 +1082,10 @@ class DemuxerConfig:
       `DemuxError` (kind `SYNC_LOSS`) before any bytes are consumed;
       feed in smaller chunks and drain events between feeds, or raise
       this ceiling. Default is 4 MiB (`4 * 1024 * 1024`).
+    - `unwrap_timestamps` — opt-in PTS/DTS unwrap onto a continuous
+      per-PID timeline that carries across the 33-bit rollover;
+      **default `False`**. See the field docstring below for the
+      accumulator model.
 
     `link_klv` and `treat_as` overrides (per-PID PMT-bypass knobs)
     remain Rust-only today; open an issue if your use case needs them.
@@ -1121,6 +1125,22 @@ class DemuxerConfig:
     # ceiling raise DemuxError (kind SYNC_LOSS) before any bytes are
     # consumed; feed in smaller chunks, or raise this value.
     sync_buf_cap: int = _DEFAULT_SYNC_BUF_CAP
+    # Unwrap the demuxer's raw 33-bit 90 kHz PTS/DTS onto a continuous
+    # timeline that carries across the rollover, per PID. Default False:
+    # off, PTS/DTS pass through as the raw wire value in 0..2^33.
+    # When True, a per-PID accumulator carries each sample's signed
+    # wrap-aware delta from the previous raw value onto the previous
+    # unwrapped value, so crossing the rollover grows the offset by a
+    # full `1 << 33` while a genuine backward step — an out-of-order
+    # arrival, including a pre-wrap value delivered after the wrap —
+    # steps back by its true distance instead of being mistaken for
+    # another wrap. PIDs of the same program stay directly comparable
+    # on the one continuous timeline (independent programs never
+    # cross-anchor). The accumulator resets alongside all other per-PID
+    # parse state on a resync (e.g. a reconnect), restarting the
+    # unwrap timeline. Mirrors Rust's
+    # `tst_core::mpegts::demux::DemuxerConfig::unwrap_timestamps`.
+    unwrap_timestamps: bool = False
 
     def __post_init__(self) -> None:
         # F10 — fail-fast on primitive-shape violations at construction.
@@ -1196,6 +1216,11 @@ class DemuxerConfig:
             )
         if self.sync_buf_cap <= 0:
             raise ValueError(f"sync_buf_cap must be > 0; got {self.sync_buf_cap}")
+        if not isinstance(self.unwrap_timestamps, bool):
+            raise TypeError(
+                f"unwrap_timestamps must be bool; "
+                f"got {type(self.unwrap_timestamps).__name__}"
+            )
 
 
 # Re-export NalUnit / Obu / ObuExtension so callers can import them

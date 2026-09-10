@@ -49,3 +49,18 @@ def test_sync_buf_cap_permits_whole_file_feed():
     cfg = tstrans.mpegts.DemuxerConfig(sync_buf_cap=16 * 1024 * 1024)
     d2 = tstrans.mpegts.Demuxer(cfg)
     d2.feed(data)  # must not raise
+
+
+def test_unwrap_timestamps_default_false():
+    cfg = DemuxerConfig()
+    assert cfg.unwrap_timestamps is False
+
+
+def test_unwrap_timestamps_accepted():
+    cfg = DemuxerConfig(unwrap_timestamps=True)
+    assert cfg.unwrap_timestamps is True
+
+
+def test_unwrap_timestamps_non_bool_rejected():
+    with pytest.raises(TypeError, match="unwrap_timestamps"):
+        DemuxerConfig(unwrap_timestamps=1)
