@@ -1733,6 +1733,29 @@ the trigger that would unblock it.
   test, and add a Simple-profile IPv6 loopback round-trip test
   alongside the existing Main-profile one.
 
+## RIST: IPv6 receiver bind on Windows
+
+- **Status:** Not supported. An IPv6 `rist://@[addr]:port` receiver
+  fails on Windows with `RistError::PeerCreateFailed`; the
+  `ipv6_loopback_round_trip` test skips there. IPv6 RIST *senders* work
+  on Windows, and every IPv4 path is unaffected, as are IPv6 receivers
+  on Linux and macOS.
+- **Why deferred:** The failure is inside vendored librist 0.2.20, past
+  the point this crate controls. `rist_parse_address2` accepts the
+  bracketed URL (so the endpoint rendering is correct), and
+  `rist_peer_create` then returns non-zero immediately when opening the
+  IPv6 bind socket — a Windows-only socket-layer limitation in librist,
+  not a host-capability one: a plain `UdpSocket::bind("[::1]:0")` probe
+  succeeds on the same runner. Diagnosing it means debugging librist's
+  Windows `udpsocket_open_bind` under MSVC, and any fix is an upstream
+  C patch that would have to be carried across vendor bumps. This sits
+  alongside the pre-existing IPv6-multicast-on-Windows gate.
+- **Trigger to revisit:** A librist release that fixes IPv6 receiver
+  binds on Windows, or a maintainer-run MSVC debugging pass that
+  isolates the failing socket call (an upstream-report candidate). On
+  that bump: drop the `cfg!(windows)` skip in `ipv6_loopback_round_trip`
+  and confirm the round trip on the Windows CI leg.
+
 ## RTP H.264 depayloader (RFC 6184)
 
 - **Status:** Shipped — v0.2.x (PRs #94 / #95 / #96). The
