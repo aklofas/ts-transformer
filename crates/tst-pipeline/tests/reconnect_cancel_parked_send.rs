@@ -25,8 +25,8 @@ use tst_pipeline::{
 
 /// How long a parked send is given to actually park.
 const PARK_DEADLINE: Duration = Duration::from_secs(5);
-/// How long the cancel gets to return. Post-fix it is lock-free and returns
-/// in microseconds; pre-fix it never returns at all.
+/// How long the cancel gets to return. Post-fix it never waits on the send
+/// mutex and returns in microseconds; pre-fix it never returns at all.
 const CANCEL_DEADLINE: Duration = Duration::from_secs(2);
 
 /// One-way gate a parked send waits on. `open()` releases every waiter and
@@ -193,13 +193,24 @@ fn wait_for(deadline: Duration, mut f: impl FnMut() -> bool) -> bool {
 
 /// Fire `cancel` on its own thread; report whether it returned in time.
 ///
-/// The handle is deliberately detached rather than joined: when the cancel is
-/// stuck behind the send mutex it never returns, and joining it here would
-/// hang the test instead of failing it. The caller releases the gate straight
-/// after, which lets the stuck thread finish and exit on its own.
+/// The thread is deliberately not joined while it may still be running: when
+/// the cancel is stuck behind the send mutex it never returns, and joining it
+/// there would hang the test instead of failing it. The caller releases the
+/// gate straight after, which lets the stuck thread finish and exit on its own.
+///
+/// Once the thread HAS finished, it is joined after all — that join cannot
+/// block — so a panicking `cancel()` is re-raised here instead of being
+/// reported as a prompt, successful cancel (`is_finished()` alone is true for
+/// a panicked thread too).
 fn cancel_completes(cancel: Arc<dyn TransportCancel + Send + Sync>, deadline: Duration) -> bool {
     let handle = std::thread::spawn(move || cancel.cancel());
-    wait_for(deadline, || handle.is_finished())
+    if !wait_for(deadline, || handle.is_finished()) {
+        return false;
+    }
+    if let Err(panic) = handle.join() {
+        std::panic::resume_unwind(panic);
+    }
+    true
 }
 
 /// The direct path: `send_managed` parks inside the inner send while holding

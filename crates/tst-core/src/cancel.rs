@@ -3,6 +3,9 @@
 //!
 //! **Stability: Stable** — see the
 //! [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
+//! That tier is the module's; [`CancelSlot`] is the one item that diverges
+//! from it and is **Provisional**, as its own docs and the table's `cancel`
+//! row both record.
 //!
 //! [`SrtCancelHandle`] wraps a libsrt `SRTSOCKET` (or any other integer
 //! handle) plus a caller-supplied closer closure. Calling `cancel()` from
