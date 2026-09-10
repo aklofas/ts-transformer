@@ -1,5 +1,21 @@
 pub mod tst_core
 pub mod tst_core::cancel
+pub struct tst_core::cancel::CancelSlot
+impl tst_core::cancel::CancelSlot
+pub fn tst_core::cancel::CancelSlot::cancel(&self)
+pub fn tst_core::cancel::CancelSlot::clear(&self)
+pub fn tst_core::cancel::CancelSlot::install(&self, alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>)
+pub fn tst_core::cancel::CancelSlot::is_cancelled(&self) -> bool
+pub fn tst_core::cancel::CancelSlot::new() -> Self
+impl core::default::Default for tst_core::cancel::CancelSlot
+pub fn tst_core::cancel::CancelSlot::default() -> tst_core::cancel::CancelSlot
+impl !core::marker::Freeze for tst_core::cancel::CancelSlot
+impl core::marker::Send for tst_core::cancel::CancelSlot
+impl core::marker::Sync for tst_core::cancel::CancelSlot
+impl core::marker::Unpin for tst_core::cancel::CancelSlot
+impl core::marker::UnsafeUnpin for tst_core::cancel::CancelSlot
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::cancel::CancelSlot
+impl core::panic::unwind_safe::UnwindSafe for tst_core::cancel::CancelSlot
 pub struct tst_core::cancel::SrtCancelHandle
 impl tst_core::cancel::SrtCancelHandle
 pub fn tst_core::cancel::SrtCancelHandle::cancel(&self)
@@ -7478,6 +7494,22 @@ impl core::marker::Unpin for tst_core::url::common::UrlError
 impl core::marker::UnsafeUnpin for tst_core::url::common::UrlError
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::url::common::UrlError
 impl core::panic::unwind_safe::UnwindSafe for tst_core::url::common::UrlError
+pub struct tst_core::CancelSlot
+impl tst_core::cancel::CancelSlot
+pub fn tst_core::cancel::CancelSlot::cancel(&self)
+pub fn tst_core::cancel::CancelSlot::clear(&self)
+pub fn tst_core::cancel::CancelSlot::install(&self, alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>)
+pub fn tst_core::cancel::CancelSlot::is_cancelled(&self) -> bool
+pub fn tst_core::cancel::CancelSlot::new() -> Self
+impl core::default::Default for tst_core::cancel::CancelSlot
+pub fn tst_core::cancel::CancelSlot::default() -> tst_core::cancel::CancelSlot
+impl !core::marker::Freeze for tst_core::cancel::CancelSlot
+impl core::marker::Send for tst_core::cancel::CancelSlot
+impl core::marker::Sync for tst_core::cancel::CancelSlot
+impl core::marker::Unpin for tst_core::cancel::CancelSlot
+impl core::marker::UnsafeUnpin for tst_core::cancel::CancelSlot
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::cancel::CancelSlot
+impl core::panic::unwind_safe::UnwindSafe for tst_core::cancel::CancelSlot
 pub struct tst_core::ParsedUrl<'a>
 pub tst_core::ParsedUrl::host: &'a str
 pub tst_core::ParsedUrl::password: core::option::Option<&'a str>
