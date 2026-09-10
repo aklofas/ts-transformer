@@ -257,8 +257,18 @@ let managed = ManagedRecvTransport::new_with_factory_cancel(initial, factory, Re
 // `managed.cancel_handle()` now wakes the re-accept as well as a live recv.
 ```
 
-The C ABI's `tst_managed_*_open_listener` family and the Python
-`ManagedDemuxReceiver` in listener mode are wired this way internally,
-so their `_cancel` / `cancel()` cover the re-accept window. The one
-accept that stays uncancellable is the very first one inside a listener
-open, before any handle exists.
+The C ABI's `tst_managed_*_open_listener` family, both Python managed
+receivers (`ManagedReceiver` and `ManagedDemuxReceiver`) and both JVM
+ones are wired this way internally, so their `_cancel` / `cancel()` /
+`cancelHandle().cancel()` cover the re-accept window. The one accept that
+stays uncancellable is the very first one inside a listener open, before
+any handle exists.
+
+The bindings do not each hand-roll the sequence above:
+`tst_srt::Listener::accept_one_cancellable(&cfg, addr, &slot)` is that
+whole bind → install → accept → clear → classify body behind one call,
+and every SRT listener factory in the C, Python and JVM bindings goes
+through it. Reach for it rather than the long form whenever your factory
+binds and accepts exactly once; write the long form only when you need
+something in the middle of it (a different `ListenerConfig` per attempt,
+say, or per-phase error mapping).
