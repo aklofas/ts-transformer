@@ -49,23 +49,6 @@ static REGISTRY_LISTENER: LazyLock<HandleRegistry<SrtListener>> =
     LazyLock::new(HandleRegistry::new);
 
 // ---------------------------------------------------------------------------
-// LowLevelSrtCancel adapter
-// ---------------------------------------------------------------------------
-//
-// `Listener::cancel_handle()` returns a concrete `tst_core::SrtCancelHandle`,
-// not an `Arc<dyn TransportCancel>`. We need a thin adapter to fit it into
-// `JniCancel::inner: Arc<dyn TransportCancel + Send + Sync>`. This mirrors
-// tst-py's `LowLevelSrtCancel` in `bindings/python/src/srt/transport.rs`.
-
-struct LowLevelSrtCancel(tst_core::SrtCancelHandle);
-
-impl TransportCancel for LowLevelSrtCancel {
-    fn cancel(&self) {
-        self.0.cancel();
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Listener registration
 // ---------------------------------------------------------------------------
 //
@@ -82,12 +65,11 @@ impl TransportCancel for LowLevelSrtCancel {
 // contract.
 
 /// Register a `Listener`, wiring the cancel hook from its independent
-/// `SrtCancelHandle` adapter (held by the registry entry, fired by `close`). The
-/// same adapter is the entry's lock-free cancel target, so `nCancelHandle`
-/// returns while an `accept` is parked on the resource lock.
+/// `SrtCancelHandle` (held by the registry entry, fired by `close`). The same
+/// handle is the entry's lock-free cancel target, so `nCancelHandle` returns
+/// while an `accept` is parked on the resource lock.
 fn register_listener(listener: SrtListener) -> u64 {
-    let cancel: Arc<dyn TransportCancel + Send + Sync> =
-        Arc::new(LowLevelSrtCancel(listener.cancel_handle()));
+    let cancel: Arc<dyn TransportCancel + Send + Sync> = Arc::new(listener.cancel_handle());
     let hook = Arc::clone(&cancel);
     REGISTRY_LISTENER.insert_full(
         listener,
@@ -740,7 +722,7 @@ pub extern "system" fn Java_org_tstrans_srt_Listener_nCancelHandle(
     handle: jlong,
 ) -> jlong {
     crate::panic::jni_catch(&mut env, 0, |_env| {
-        // The listener's independent `SrtCancelHandle` adapter, captured at
+        // The listener's independent `SrtCancelHandle`, captured at
         // registration and read WITHOUT the resource lock — a parked `accept`
         // holds that lock, and this is exactly the call that must wake it.
         // `cancel()` closes the SRTSOCKET WITHOUT freeing the Listener — the

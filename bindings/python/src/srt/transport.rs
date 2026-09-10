@@ -692,31 +692,14 @@ impl PyReceiver {
     }
 }
 
-/// Adapter: wraps a concrete `tst_core::SrtCancelHandle` (returned by
-/// `Socket::cancel_handle` / `Listener::cancel_handle`) as a
-/// `TransportCancel` so it can be stored in `PyCancelHandle`'s
-/// trait-erased `Arc<dyn TransportCancel + Send + Sync>` slot.
-///
-/// The internal `SrtCancel` adapter inside `tst-srt::transport` is
-/// crate-private; this is the same shape, local to the binding so we
-/// don't reach across crate boundaries for it.
-struct LowLevelSrtCancel(tst_core::SrtCancelHandle);
-
-impl TransportCancel for LowLevelSrtCancel {
-    fn cancel(&self) {
-        self.0.cancel();
-    }
-}
-
 impl PyCancelHandle {
     /// Build a `PyCancelHandle` from a concrete `SrtCancelHandle` (the
-    /// type `Listener::cancel_handle()` returns directly). Wraps it in a
-    /// thin `TransportCancel` adapter so the rest of the binding can
-    /// treat it like any other transport's cancel handle.
+    /// type `Listener::cancel_handle()` returns directly). `SrtCancelHandle`
+    /// is itself a `TransportCancel`, so it drops straight into the
+    /// trait-erased slot the rest of the binding uses.
     pub(crate) fn from_concrete(inner: tst_core::SrtCancelHandle) -> Self {
-        let adapter: Arc<dyn TransportCancel + Send + Sync> = Arc::new(LowLevelSrtCancel(inner));
         Self {
-            inner: adapter,
+            inner: Arc::new(inner) as Arc<dyn TransportCancel + Send + Sync>,
             flag: AtomicBool::new(false),
         }
     }
