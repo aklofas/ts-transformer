@@ -857,6 +857,7 @@ pub fn test_clear_last_error() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::{vec, vec::Vec};
 
     #[test]
     fn set_then_get_roundtrips() {

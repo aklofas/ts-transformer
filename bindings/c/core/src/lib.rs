@@ -20,6 +20,13 @@
 
 extern crate alloc;
 
+// The host `cargo test` binary always links std (libtest needs it); this lets
+// the unit tests of the no_std feature plane reach `std::fs`/`std::path` for
+// fixture reads without touching the library's own no_std proof — the MCU
+// builds in CI are plain `cargo build`, where this line is compiled out.
+#[cfg(test)]
+extern crate std;
+
 // ---------------------------------------------------------------------------
 // C primitive type aliases
 //

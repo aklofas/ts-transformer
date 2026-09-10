@@ -467,6 +467,7 @@ mod tests {
         h.close();
     }
 
+    #[cfg(feature = "std")] // exercises catch_unwind; no_std has no unwinding
     #[test]
     fn panic_in_inner_closure_is_caught() {
         use crate::error::clear_last_error_for_test;
@@ -480,6 +481,7 @@ mod tests {
         assert_eq!(rc2, TstError::Closed as i32);
     }
 
+    #[cfg(feature = "std")] // exercises catch_unwind; no_std has no unwinding
     #[test]
     fn panic_in_inner_ref_closure_is_caught() {
         use crate::error::clear_last_error_for_test;
@@ -517,6 +519,7 @@ mod tests {
         assert_eq!(unsafe { tst_get_last_error() }, 0);
     }
 
+    #[cfg(feature = "std")] // exercises catch_unwind; no_std has no unwinding
     #[test]
     fn with_inner_ref_silent_panic_is_caught_without_recording() {
         use crate::error::{clear_last_error_for_test, tst_get_last_error};
