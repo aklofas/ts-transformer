@@ -2028,8 +2028,8 @@ the trigger that would unblock it.
 - **Status:** Rust-only (unchanged); ABI 0.21 (2026-09-02) shipped
   without it — the piggy-back clause of the original trigger lapsed by
   decision 2026-09-09. `MuxSenderError`/`SenderError` carry
-  `input_consumed`; Unreleased, first release will be v0.4.0. The C ABI,
-  Python, and JVM send errors expose only the error kind.
+  `input_consumed`, shipped in v0.4.0. The C ABI, Python, and JVM send
+  errors expose only the error kind.
 - **Why deferred:** the C surface needs an ABI minor bump for a new error
   field; Python/JVM callers are steered to the `Managed*` wrappers, where
   the question does not arise. No binding consumer has asked.
@@ -2086,6 +2086,15 @@ the trigger that would unblock it.
   bridge installs from `JNI_OnLoad`, the one guaranteed one-time
   native-library entry point (Python's installs from the `_native`
   module-init hook).
+- **Parity, recv side (2026-09-10):** the managed-SRT analogue of that
+  end-reason surface — `tst_pipeline::RecvEndReason`, which the C ABI
+  0.21 folds onto its existing `TstStreamEndReason` — now has its own
+  Python (`srt.ManagedDemuxReceiver.end_reason()` returning
+  `srt.RecvEndReason`) and JVM (`ManagedDemuxReceiver.endReason()`
+  returning `org.tstrans.srt.RecvEndReason`) mirrors, as does the
+  demuxer's `unwrap_timestamps` / `unwrapTimestamps(boolean)` knob.
+  Neither contract is Rust/C-only any more; see the parity matrix in
+  [binding-authors.md](/docs/reference/binding-authors.md).
 
 ## ASan under the JVM test suite (tst-jni)
 

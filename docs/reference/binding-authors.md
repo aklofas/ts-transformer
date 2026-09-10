@@ -528,7 +528,7 @@ follow-up:
 | Capability | Rust core | C (`tst-c`) | Python (`tst-py`) | JVM (`tst-jni`) |
 |---|---|---|---|---|
 | Continuous-timestamp unwrap across the 33-bit rollover (`DemuxerConfig::unwrap_timestamps`) | ✅ | ✅ `tst_demux_config_set_unwrap_timestamps` | ✅ `DemuxerConfig.unwrap_timestamps` | ✅ `DemuxerConfig.Builder.unwrapTimestamps(boolean)` |
-| Managed-receiver end reason (`ManagedDemuxReceiver::end_reason()` → `RecvEndReason`) | ✅ | ✅ `tst_managed_demux_receiver_end_reason` | ✅ `ManagedDemuxReceiver.end_reason() -> Optional[RecvEndReason]` | ✅ `ManagedDemuxReceiver.endReason()` → `RecvEndReason` or `null` |
+| Managed-receiver end reason (`ManagedDemuxReceiver::end_reason_handle()` → `RecvEndReasonHandle` → `RecvEndReason`) | ✅ | ✅ `tst_managed_demux_receiver_end_reason` | ✅ `ManagedDemuxReceiver.end_reason() -> Optional[RecvEndReason]` | ✅ `ManagedDemuxReceiver.endReason()` → `RecvEndReason` or `null` |
 
 **Notes on specific cells.**
 

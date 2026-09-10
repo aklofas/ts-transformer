@@ -1191,13 +1191,20 @@ re-accept parked with no peer in sight — and the iterator ends with
 **Why did a managed session end? (`endReason()`)** Once the receive loop has
 stopped for good, `rx.endReason()` (on `ManagedDemuxReceiver` only — none of
 the other three managed shells expose it) answers with a `RecvEndReason`
-member: `END_OF_STREAM` (the peer sent a clean SRT end-of-stream),
-`RECONNECT_EXHAUSTED` (the `ReconnectPolicy`'s `maxAttempts` budget ran
-out), or `CANCELLED` (`cancelHandle().cancel()` fired) — or `null` before
-any of those, including while a reconnect is still in progress. It exists
-specifically to tell a caller-initiated cancel apart from a
-budget-exhausted give-up, which otherwise both surface identically as
-`SrtException(CLOSED)` from the iterator.
+member — or `null` before any ending, including while a reconnect is still
+in progress. Two of its three members are reachable on the managed-SRT path
+today: `RECONNECT_EXHAUSTED` (the `ReconnectPolicy`'s `maxAttempts` budget
+ran out — also what a plain peer close reports under a zero-retry policy,
+since a peer FIN reaches the reconnect decorator as a retryable break) and
+`CANCELLED` (`cancelHandle().cancel()` fired; a bare `close()` does not wake
+a parked receive, so it records nothing on its own). `END_OF_STREAM` is
+reserved for a future receive transport that can signal a clean end distinct
+from budget exhaustion. The surface exists specifically to tell a
+caller-initiated cancel apart from a budget-exhausted give-up, which
+otherwise both surface identically as `SrtException(CLOSED)` from the
+iterator. It reads a lock-free cell captured when the receiver is opened, so
+it answers while another thread is parked in `next()` and keeps answering
+after `close()`.
 
 ### Stats drifts on the managed shells
 
