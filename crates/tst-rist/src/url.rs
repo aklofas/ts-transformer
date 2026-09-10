@@ -59,7 +59,7 @@ pub enum RistUrlError {
     #[error("aes-type must be 128, 192, or 256; got {0}")]
     BadAesType(u32),
     #[error(
-        "aes-type given without secret; RIST encryption needs both (secret alone defaults to AES-256)"
+        "aes-type given without secret; aes-type only selects the key size for a secret (a secret without aes-type defaults to AES-256)"
     )]
     AesTypeWithoutSecret,
     #[error("URL parse failed: {0}")]

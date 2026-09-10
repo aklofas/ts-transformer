@@ -361,13 +361,12 @@ fn ipv6_loopback_round_trip() {
 /// this exact profile+URL combination segfaults the whole test process (see
 /// the task report for the gdb-verified repro), so there is no "assert it
 /// panics" fallback here — the guard is the only safe way to exercise this.
+///
+/// No `ipv6_loopback_available()` probe: the guard refuses before any socket
+/// bind or librist context creation, and `[::1]` is parsed as a literal, so
+/// this runs identically on hosts with IPv6 loopback disabled.
 #[test]
 fn ipv6_simple_profile_listen_is_refused() {
-    if !ipv6_loopback_available() {
-        eprintln!("skipping: IPv6 loopback unavailable on this host");
-        return;
-    }
-
     let bind_url = format!("rist://@[::1]:{PORT_V6_SIMPLE_REFUSED}");
     let result = RistRecvTransportBuilder::new(&bind_url)
         .unwrap()
