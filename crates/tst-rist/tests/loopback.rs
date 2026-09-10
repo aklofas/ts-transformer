@@ -20,7 +20,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use tst_core::transport::{RecvTransport, Transport, TransportError};
-use tst_rist::{EncryptionKey, RistProfile, RistRecvTransportBuilder, RistTransportBuilder};
+use tst_rist::{
+    EncryptionKey, RistErrorKind, RistProfile, RistRecvTransportBuilder, RistTransportBuilder,
+};
 
 /// Serializes RIST loopback tests within this test binary. (Cross-binary
 /// serialization isn't needed because each test in this file uses a distinct
@@ -40,6 +42,13 @@ const PORT_SIMPLE: u16 = 33010;
 const PORT_AES: u16 = 33013;
 const PORT_OVERSIZE: u16 = 33016;
 const PORT_V6: u16 = 33022;
+/// Never actually bound — the guard under test returns `Err` before librist
+/// touches a socket. Must be EVEN: an odd port trips librist's own "port
+/// must be even" check first (Simple profile) and returns gracefully
+/// *without* reaching the buggy RTCP-peer path this guard exists for, which
+/// would make this test pass for the wrong reason both with and without
+/// the guard.
+const PORT_V6_SIMPLE_REFUSED: u16 = 33024;
 
 /// 188 bytes of arbitrary payload — one MPEG-TS packet's worth.
 fn synthetic_ts_packet(seq_byte: u8) -> [u8; 188] {
@@ -340,6 +349,37 @@ fn ipv6_loopback_round_trip() {
             "received payload did not match any sent packet: {:?}",
             &got[..8.min(got.len())]
         );
+    }
+}
+
+/// Vendored librist 0.2.20's Simple-profile receiver-side RTCP-peer creation
+/// dereferences the new peer before its own null check (`rist.c`'s
+/// `rist_receiver_peer_create`), and that null case is reachable for an IPv6
+/// bind — SIGSEGV. `listen_with_config` must refuse this combination BEFORE
+/// any librist call (never reaching `rist_receiver_create`), not let the
+/// process crash. This must NOT be run without the guard: prior to the fix,
+/// this exact profile+URL combination segfaults the whole test process (see
+/// the task report for the gdb-verified repro), so there is no "assert it
+/// panics" fallback here — the guard is the only safe way to exercise this.
+#[test]
+fn ipv6_simple_profile_listen_is_refused() {
+    if !ipv6_loopback_available() {
+        eprintln!("skipping: IPv6 loopback unavailable on this host");
+        return;
+    }
+
+    let bind_url = format!("rist://@[::1]:{PORT_V6_SIMPLE_REFUSED}");
+    let result = RistRecvTransportBuilder::new(&bind_url)
+        .unwrap()
+        .profile(RistProfile::Simple)
+        .listen();
+    match result {
+        Err(err) => assert_eq!(
+            err.kind(),
+            RistErrorKind::InvalidConfig,
+            "got {err:?}, expected InvalidConfig"
+        ),
+        Ok(_) => panic!("Simple-profile IPv6 receiver bind must be refused, not attempted"),
     }
 }
 

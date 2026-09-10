@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use tst_core::transport::{RecvTransport, TransportError};
 
-use crate::config::RistConfig;
+use crate::config::{RistConfig, RistProfile};
 use crate::error::RistError;
 use crate::init::ensure_init;
 use crate::stats::{OnDrop, RistStats};
@@ -90,6 +90,24 @@ impl RistRecvTransport {
         #[cfg(not(feature = "mbedtls"))]
         if cfg.encryption.is_some() {
             return Err(RistError::EncryptionDisabled);
+        }
+
+        // Vendored librist 0.2.20's Simple-profile receiver-side RTCP-peer
+        // creation dereferences the new peer before checking it for null
+        // (rist.c's rist_receiver_peer_create); that null case is reachable
+        // for an IPv6 bind (the RTCP peer's re-derived bind URL fails to
+        // come up as IPv6), which SIGSEGVs the whole process. Refuse here,
+        // before any librist call, rather than let the process crash.
+        // Caller/sender side is unaffected — rist_sender_peer_create
+        // null-checks before dereferencing — so only the receiver bind is
+        // guarded.
+        if cfg.profile == RistProfile::Simple && url.addr.is_ipv6() {
+            return Err(RistError::InvalidConfig(
+                "IPv6 bind is not supported in the Simple profile: vendored librist 0.2.20 \
+                 dereferences the RTCP peer before its null check (rist.c \
+                 rist_receiver_peer_create); use RistProfile::Main"
+                    .into(),
+            ));
         }
 
         let profile = rist_profile_to_c(cfg.profile);
