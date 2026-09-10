@@ -27,6 +27,9 @@
 //! - Encryption (Main Profile only, requires `mbedtls` feature):
 //!   `?aes-type=128|192|256&secret=<psk>` — forces Main Profile; returns
 //!   `TST_E_RIST_ENCRYPTION_DISABLED (-41)` when mbedtls is disabled.
+//!   `?secret=` alone also forces Main Profile and selects AES-256
+//!   (librist's own default); `?aes-type=` alone is rejected at parse,
+//!   since a cipher without a PSK would configure a plaintext link.
 
 pub mod sender;
 pub mod receiver;
