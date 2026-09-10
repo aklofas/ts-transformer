@@ -509,3 +509,265 @@ fn independent_programs_do_not_share_an_anchor() {
          value, never inherit program 1's epoch"
     );
 }
+
+/// Test H (CORR-06 follow-up) — the program's running reference is the
+/// LAST value emitted on any of its PIDs, not the highest one. When the
+/// sample immediately preceding a late PID's debut is itself a reordered
+/// pre-wrap arrival (`WRAP-50` delivered after `100`), the reference is
+/// back below the boundary — and the newcomer's wrap-aware distance from
+/// it must still land it in the post-wrap epoch its wire instant belongs
+/// to. Anchoring at the newcomer's own raw value instead would strand it
+/// a full `1 << 33` below the video frame it was sampled with.
+#[test]
+fn late_starting_pid_anchors_through_a_reordered_reference_sample() {
+    let cfg = {
+        let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+        prog.add_video(0x100, VideoCodec::H264);
+        prog.add_klv(
+            0x101,
+            KlvStreamType::PrivateData,
+            /* carries_pts= */ true,
+        );
+        let mut b = MuxerConfig::builder();
+        b.add_program(prog.build());
+        b.build().unwrap()
+    };
+    let mut mux = Muxer::new(cfg).unwrap();
+    let au = minimal_h264_au();
+    let klv = minimal_klv();
+
+    // Drain after each push so the wire order is unambiguous: the video
+    // PID crosses the boundary and then delivers a late pre-wrap sample,
+    // all before the KLV PID's very first sample.
+    let mut ts_buf = Vec::new();
+    for pts in [WRAP - 100, 100, WRAP - 50] {
+        mux.push_video(&au, Pts90khz::new(pts), true).unwrap();
+        ts_buf.extend_from_slice(&drain(&mut mux));
+    }
+    mux.push_klv(&klv, Pts90khz::new(100), 0x00).unwrap();
+    ts_buf.extend_from_slice(&drain(&mut mux));
+
+    let events = demux_all(&ts_buf, true);
+    assert_eq!(
+        video_pts(&events, 0x100),
+        vec![WRAP - 100, WRAP + 100, WRAP - 50],
+        "test setup: the program's reference must end on the reordered \
+         pre-wrap sample (WRAP-50, WRAP-50)"
+    );
+    assert_eq!(
+        klv_pts(&events, 0x101),
+        vec![WRAP + 100],
+        "the newcomer's first sample sits +150 ticks from the reordered \
+         reference, which places it back above the boundary alongside the \
+         video frame it was sampled with"
+    );
+}
+
+// ── CORR-07 topology fixtures ───────────────────────────────────────────
+//
+// The `Muxer` always writes PSI at version 0, so it cannot express the PMT
+// version bump a PID removal/re-addition needs. These builders hand-write
+// the PAT/PMT sections instead; the elementary packets (and therefore every
+// wire PTS value under test) still come from real muxer output, with the
+// muxer's own PSI filtered back out by `strip_psi`.
+
+/// Build a PAT section (table_id 0x00). `programs` is `(program_number,
+/// pmt_pid)`.
+fn build_pat_section(version: u8, programs: &[(u16, u16)]) -> Vec<u8> {
+    let section_length = 5 + 4 * programs.len() + 4;
+    let mut s = Vec::with_capacity(3 + section_length);
+    s.push(0x00); // table_id = PAT
+    s.push(0xB0 | ((section_length >> 8) as u8 & 0x0F)); // ssi=1, reserved, length hi
+    s.push((section_length & 0xFF) as u8);
+    s.extend_from_slice(&1u16.to_be_bytes()); // transport_stream_id
+    s.push(0xC1 | ((version & 0x1F) << 1)); // reserved | version | current_next=1
+    s.push(0x00); // section_number
+    s.push(0x00); // last_section_number
+    for &(pn, pid) in programs {
+        s.extend_from_slice(&pn.to_be_bytes());
+        s.push(0xE0 | ((pid >> 8) as u8 & 0x1F));
+        s.push((pid & 0xFF) as u8);
+    }
+    append_crc(&mut s);
+    s
+}
+
+/// Build a PMT section (table_id 0x02). `streams` is `(stream_type,
+/// elementary_pid, es_info_descriptor_bytes)`.
+fn build_pmt_section(
+    program_number: u16,
+    pcr_pid: u16,
+    version: u8,
+    streams: &[(u8, u16, &[u8])],
+) -> Vec<u8> {
+    let stream_loop_len: usize = streams.iter().map(|(_, _, d)| 5 + d.len()).sum();
+    let section_length = 9 + stream_loop_len + 4;
+    let mut s = Vec::with_capacity(3 + section_length);
+    s.push(0x02); // table_id = PMT
+    s.push(0xB0 | ((section_length >> 8) as u8 & 0x0F));
+    s.push((section_length & 0xFF) as u8);
+    s.extend_from_slice(&program_number.to_be_bytes());
+    s.push(0xC1 | ((version & 0x1F) << 1));
+    s.push(0x00); // section_number
+    s.push(0x00); // last_section_number
+    s.push(0xE0 | ((pcr_pid >> 8) as u8 & 0x1F));
+    s.push((pcr_pid & 0xFF) as u8);
+    s.push(0xF0); // reserved | program_info_length hi
+    s.push(0x00); // program_info_length lo (no program descriptors)
+    for &(stream_type, pid, descriptors) in streams {
+        s.push(stream_type);
+        s.push(0xE0 | ((pid >> 8) as u8 & 0x1F));
+        s.push((pid & 0xFF) as u8);
+        s.push(0xF0 | ((descriptors.len() >> 8) as u8 & 0x0F));
+        s.push((descriptors.len() & 0xFF) as u8);
+        s.extend_from_slice(descriptors);
+    }
+    append_crc(&mut s);
+    s
+}
+
+/// Append the CRC-32/MPEG-2 trailer over everything written so far.
+fn append_crc(section: &mut Vec<u8>) {
+    let crc = tst_core::mpegts::common::crc32::crc32_mpeg2(section);
+    section.extend_from_slice(&crc.to_be_bytes());
+}
+
+/// Wrap a PSI section into one 188-byte TS packet (PUSI, payload-only).
+///
+/// `cc` must advance across successive packets on the same PID or the
+/// demuxer's duplicate suppression swallows the second one.
+fn psi_packet(pid: u16, section: &[u8], cc: u8) -> Vec<u8> {
+    let mut pkt = vec![0xFFu8; 188];
+    pkt[0] = 0x47; // sync byte
+    pkt[1] = 0x40 | ((pid >> 8) as u8 & 0x1F); // PUSI + PID hi
+    pkt[2] = (pid & 0xFF) as u8;
+    pkt[3] = 0x10 | (cc & 0x0F); // payload-only + continuity counter
+    pkt[4] = 0x00; // pointer_field
+    let end = 5 + section.len();
+    assert!(end <= 188, "section too large for one TS packet");
+    pkt[5..end].copy_from_slice(section);
+    pkt
+}
+
+/// Drop every packet the muxer wrote on the PAT PID or `pmt_pid`, leaving
+/// only elementary-stream packets for the hand-built topology to describe.
+fn strip_psi(ts: &[u8], pmt_pid: u16) -> Vec<u8> {
+    assert_eq!(ts.len() % 188, 0, "muxer output must be whole TS packets");
+    let mut out = Vec::with_capacity(ts.len());
+    for pkt in ts.chunks_exact(188) {
+        let pid = (u16::from(pkt[1] & 0x1F) << 8) | u16::from(pkt[2]);
+        if pid != 0x0000 && pid != pmt_pid {
+            out.extend_from_slice(pkt);
+        }
+    }
+    out
+}
+
+/// Test I (CORR-07) — a PID removed from the PMT and re-added after the
+/// program's wire clock has wrapped must anchor its first post-re-add
+/// sample onto the PROGRAM's running clock, never onto the accumulator its
+/// dead predecessor left behind. Here the stale entry is more than half a
+/// 33-bit epoch old, so replaying it strands the sample a full `1 << 33`
+/// below its siblings — the same hazard a replacement stream reusing the
+/// PID would hit.
+#[test]
+fn pid_removed_and_readded_across_a_wrap_anchors_to_the_program_clock() {
+    const PMT_PID: u16 = 0x1000;
+    /// Registration descriptor `KLVA` — byte-for-byte what the muxer's own
+    /// PMT writes for a `KlvStreamType::PrivateData` stream, and what makes
+    /// the demuxer classify stream_type 0x06 as asynchronous KLV.
+    const KLVA: &[u8] = &[0x05, 0x04, b'K', b'L', b'V', b'A'];
+    let video: (u8, u16, &[u8]) = (0x1B, 0x100, &[]);
+    let klv_es: (u8, u16, &[u8]) = (0x06, 0x101, KLVA);
+
+    let cfg = {
+        let mut prog = MuxerProgramConfigBuilder::new(1, PMT_PID);
+        prog.add_video(0x100, VideoCodec::H264);
+        prog.add_klv(
+            0x101,
+            KlvStreamType::PrivateData,
+            /* carries_pts= */ true,
+        );
+        let mut b = MuxerConfig::builder();
+        b.add_program(prog.build());
+        b.build().unwrap()
+    };
+    let mut mux = Muxer::new(cfg).unwrap();
+    let au = minimal_h264_au();
+    let klv = minimal_klv();
+
+    // v0 topology: both PIDs present.
+    let mut ts = Vec::new();
+    ts.extend_from_slice(&psi_packet(
+        0x0000,
+        &build_pat_section(0, &[(1, PMT_PID)]),
+        0,
+    ));
+    ts.extend_from_slice(&psi_packet(
+        PMT_PID,
+        &build_pmt_section(1, 0x100, 0, &[video, klv_es]),
+        0,
+    ));
+
+    // Both PIDs start at raw 0. The KLV PES carries a bounded
+    // `PES_packet_length`, so its sample — and its accumulator entry —
+    // completes on the wire before the next PMT arrives.
+    mux.push_video(&au, Pts90khz::new(0), true).unwrap();
+    ts.extend_from_slice(&strip_psi(&drain(&mut mux), PMT_PID));
+    mux.push_klv(&klv, Pts90khz::new(0), 0x00).unwrap();
+    ts.extend_from_slice(&strip_psi(&drain(&mut mux), PMT_PID));
+
+    // v1 topology: PID 0x101 is gone.
+    ts.extend_from_slice(&psi_packet(
+        PMT_PID,
+        &build_pmt_section(1, 0x100, 1, &[video]),
+        1,
+    ));
+
+    // The video PID carries program 1 past the 33-bit boundary in steps
+    // small enough to stay unambiguous (each well under half an epoch).
+    // The trailing step exists so the wrapped sample (raw 410_065_408) is
+    // EMITTED — and therefore published to the program clock — before the
+    // KLV PID resumes; video PES is length-unbounded and only finalises on
+    // the next PUSI for that PID.
+    for pts in [
+        3_000_000_000i64,
+        6_000_000_000,
+        9_000_000_000 - WRAP,
+        9_090_000_000 - WRAP,
+    ] {
+        mux.push_video(&au, Pts90khz::new(pts), true).unwrap();
+        ts.extend_from_slice(&strip_psi(&drain(&mut mux), PMT_PID));
+    }
+
+    // v2 topology: PID 0x101 is back, resuming at the wire instant the
+    // video PID has already unwrapped to 9_000_000_000.
+    ts.extend_from_slice(&psi_packet(
+        PMT_PID,
+        &build_pmt_section(1, 0x100, 2, &[video, klv_es]),
+        2,
+    ));
+    mux.push_klv(&klv, Pts90khz::new(9_000_000_000 - WRAP), 0x00)
+        .unwrap();
+    ts.extend_from_slice(&strip_psi(&drain(&mut mux), PMT_PID));
+
+    let events = demux_all(&ts, true);
+    assert_eq!(
+        video_pts(&events, 0x100),
+        vec![
+            0,
+            3_000_000_000,
+            6_000_000_000,
+            9_000_000_000,
+            9_090_000_000
+        ],
+        "test setup: the surviving video PID must carry program 1 across the wrap"
+    );
+    assert_eq!(
+        klv_pts(&events, 0x101),
+        vec![0, 9_000_000_000],
+        "the re-added PID's first sample must anchor onto its program's \
+         running clock; replaying the accumulator left behind before the \
+         removal lands it one full epoch low, at 410_065_408"
+    );
+}

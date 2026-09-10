@@ -133,9 +133,11 @@ pub struct Demuxer {
     /// Per-PID PTS/DTS unwrap accumulator — see [`UnwrapState`].
     /// Populated and consulted only when
     /// [`DemuxerConfig::unwrap_timestamps`] is `true`; stays empty (and
-    /// inert) otherwise. See `pes_emit.rs::unwrap_pts` /
-    /// `unwrap_dts_with_pts` / `unwrap_secondary_ts`. Cleared on
-    /// [`Self::reset_sync`] alongside `last_pts_by_pid`.
+    /// inert) otherwise. See [`Self::unwrap_pts`] /
+    /// [`Self::unwrap_dts_with_pts`] / [`Self::unwrap_secondary_ts`].
+    /// Cleared on [`Self::reset_sync`] alongside `last_pts_by_pid`, and
+    /// per PID by [`Self::drop_elementary_pid_state`] when a PID leaves
+    /// the topology.
     pub(super) unwrap_state: HashMap<u16, UnwrapState>,
     /// Per-PROGRAM unwrap reference, keyed by `program_number` — the most
     /// recent `(raw, unwrapped)` pair emitted on ANY PID of that program.
@@ -150,7 +152,9 @@ pub struct Demuxer {
     /// yet) contribute nothing here and anchor at their raw value.
     /// Populated and consulted only when
     /// [`DemuxerConfig::unwrap_timestamps`] is `true`; cleared alongside
-    /// `unwrap_state` on [`Self::reset_sync`].
+    /// `unwrap_state` on [`Self::reset_sync`], and dropped for a program
+    /// that leaves the PAT (its reference is unreachable, and a later
+    /// program re-using the number owns a different time base).
     pub(super) program_clock: HashMap<u16, UnwrapState>,
     pub(super) pes: Reassembler,
     pub(super) queue: VecDeque<DemuxEvent>,

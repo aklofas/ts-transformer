@@ -330,6 +330,11 @@ impl super::demuxer::Demuxer {
                 if let Some(pcr_pid) = tracker.pcr_pid {
                     self.last_pcr_by_pid.remove(&pcr_pid);
                 }
+                // CORR-07: the per-program unwrap reference is keyed by
+                // program_number, so it is unreachable once the program is
+                // gone — and a later program re-using the number must not
+                // anchor its first sample onto this one's epoch.
+                self.program_clock.remove(&tracker.program_number);
                 // Free the PSI assembly buffer + PMT-PID continuity state.
                 self.psi_assemblers.remove(&pmt_pid);
                 self.cc_by_pid.remove(&pmt_pid);
@@ -371,6 +376,10 @@ impl super::demuxer::Demuxer {
         self.last_pkt_raw_by_pid.remove(&pid);
         self.last_pcr_by_pid.remove(&pid);
         self.last_pts_by_pid.remove(&pid);
+        // CORR-07: the opt-in unwrap accumulator is per-PID timeline state.
+        // A replacement stream reusing this PID must anchor on its program's
+        // clock, not inherit the dead stream's epoch.
+        self.unwrap_state.remove(&pid);
         self.pes.remove_pid(pid);
         self.stats_per_stream.remove(&pid);
         self.stream_codec_counters.remove(&pid);
@@ -659,6 +668,10 @@ impl super::demuxer::Demuxer {
             self.dup_by_pid.remove(&pid);
             self.last_pkt_raw_by_pid.remove(&pid);
             self.last_pts_by_pid.remove(&pid);
+            // CORR-07: same reasoning as the removal path — a PID whose kind
+            // changed carries a different stream, so its unwrap accumulator
+            // belongs to the old timeline.
+            self.unwrap_state.remove(&pid);
         }
 
         // DA-DEMUX-2: capture the old PCR PID before the mutable tracker borrow.
@@ -854,6 +867,7 @@ mod tests {
     use super::super::event::{DemuxEvent, NonConformantIssue, PsiSyntaxKind};
     use super::super::strict::StrictMode;
     use super::super::types::DemuxerConfig;
+    use crate::mpegts::common::Pts90khz;
     use crate::mpegts::common::crc32::crc32_mpeg2;
     use alloc::vec::Vec;
 
@@ -1379,6 +1393,114 @@ mod tests {
         assert!(
             !demux.cc_by_pid.contains_key(&0x0101),
             "cc_by_pid entry for PID 0x0101 must be removed on kind change"
+        );
+    }
+
+    // CORR-07: the opt-in PTS/DTS unwrap accumulator is per-PID state and must
+    // follow the same topology cleanup as `last_pts_by_pid` / `cc_by_pid`. A
+    // PID whose stream left the PAT/PMT can be reused by an unrelated
+    // replacement stream; inheriting the dead stream's epoch would splice two
+    // timelines together.
+    #[test]
+    fn drop_elementary_pid_state_clears_unwrap_state() {
+        let cfg = DemuxerConfig::builder().unwrap_timestamps(true).build();
+        let mut demux = Demuxer::with_config(cfg);
+
+        // Drive PID 0x0100 across the 33-bit boundary so it holds a
+        // non-trivial accumulator entry (one full epoch above its raw value).
+        let _ = demux.unwrap_pts(0x0100, Pts90khz::new((1i64 << 33) - 100));
+        let _ = demux.unwrap_pts(0x0100, Pts90khz::new(100));
+        assert!(
+            demux.unwrap_state.contains_key(&0x0100),
+            "test setup: PID 0x0100 should hold an unwrap accumulator entry"
+        );
+
+        demux.drop_elementary_pid_state(0x0100);
+
+        assert!(
+            demux.unwrap_state.get(&0x0100).is_none(),
+            "the unwrap accumulator for a PID dropped from the topology must be \
+             removed alongside its other per-PID state"
+        );
+    }
+
+    // CORR-07: a PID that persists across a PMT version bump but changes stream
+    // kind carries a different stream on the same PID — its unwrap accumulator
+    // must be flushed with the rest of its per-PID state (DA-DEMUX-3).
+    #[test]
+    fn pmt_persisting_pid_with_kind_change_clears_unwrap_state() {
+        let pat = build_pat_section(1, 0, &[(1, 0x1000)]);
+        let pat_pkt = wrap_section_in_ts_packet(0x0000, &pat);
+
+        // First PMT v0: PID 0x0101 as video (stream_type 0x1B).
+        let pmt_v0 = build_pmt_section(1, 0x0101, 0, &[(0x1B, 0x0101)]);
+        let pmt_v0_pkt = wrap_section_in_ts_packet(0x1000, &pmt_v0);
+
+        let cfg = DemuxerConfig::builder().unwrap_timestamps(true).build();
+        let mut demux = Demuxer::with_config(cfg);
+        demux.feed(&pat_pkt).unwrap();
+        demux.feed(&pmt_v0_pkt).unwrap();
+
+        // Seed the accumulator directly — driving it through a completed PES is
+        // the wire test's job (`tests/mpegts/pts_unwrap.rs`); only the
+        // topology-cleanup edge is under test here.
+        let _ = demux.unwrap_pts(0x0101, Pts90khz::new(900_000));
+        assert!(
+            demux.unwrap_state.contains_key(&0x0101),
+            "test setup: PID 0x0101 should hold an unwrap accumulator entry"
+        );
+
+        // Second PMT v1: same PID 0x0101 but now audio (stream_type 0x03).
+        // CC=1 so this isn't swallowed as a duplicate of the v0 PMT on this PID.
+        let pmt_v1 = build_pmt_section(1, 0x0101, 1, &[(0x03, 0x0101)]);
+        let pmt_v1_pkt = wrap_section_in_ts_packet_cc(0x1000, &pmt_v1, 1);
+        demux.feed(&pmt_v1_pkt).unwrap();
+
+        assert!(
+            demux.unwrap_state.get(&0x0101).is_none(),
+            "the unwrap accumulator for PID 0x0101 must be flushed on kind change"
+        );
+    }
+
+    // CORR-07: the per-PROGRAM unwrap reference is keyed by program_number, so
+    // it becomes unreachable once the program leaves the PAT. A later program
+    // re-using that number must not anchor its first sample onto the dead
+    // program's epoch.
+    #[test]
+    fn pat_program_removal_clears_the_program_clock() {
+        let pat_v0 = build_pat_section(1, 0, &[(1, 0x1000)]);
+        let pat_v0_pkt = wrap_section_in_ts_packet(0x0000, &pat_v0);
+        let pmt_v0 = build_pmt_section(1, 0x0101, 0, &[(0x1B, 0x0101)]);
+        let pmt_v0_pkt = wrap_section_in_ts_packet(0x1000, &pmt_v0);
+
+        let cfg = DemuxerConfig::builder().unwrap_timestamps(true).build();
+        let mut demux = Demuxer::with_config(cfg);
+        demux.feed(&pat_v0_pkt).unwrap();
+        demux.feed(&pmt_v0_pkt).unwrap();
+
+        // One sample on program 1's video PID establishes both the per-PID
+        // accumulator and program 1's running clock.
+        let _ = demux.unwrap_pts(0x0101, Pts90khz::new(900_000));
+        assert!(
+            demux.program_clock.contains_key(&1),
+            "test setup: program 1 should hold a running unwrap reference"
+        );
+
+        // PAT v1 drops program 1 (program 2 takes its place on a new PMT PID).
+        // CC=1 so this isn't swallowed as a duplicate of the v0 PAT.
+        let pat_v1 = build_pat_section(1, 1, &[(2, 0x1100)]);
+        let pat_v1_pkt = wrap_section_in_ts_packet_cc(0x0000, &pat_v1, 1);
+        demux.feed(&pat_v1_pkt).unwrap();
+
+        assert!(
+            demux.program_clock.get(&1).is_none(),
+            "the running unwrap reference for a program removed from the PAT \
+             must be dropped with the program"
+        );
+        assert!(
+            demux.unwrap_state.get(&0x0101).is_none(),
+            "the removed program's elementary PIDs must lose their unwrap \
+             accumulators too"
         );
     }
 }
