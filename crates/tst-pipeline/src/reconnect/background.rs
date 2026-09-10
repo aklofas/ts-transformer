@@ -10,6 +10,10 @@
 //! 4. The worker holds `gap` across one inner send during drain — this
 //!    pins the front message so a concurrent `DropOldest` eviction can't
 //!    pop the message in flight (clone-then-pop would desync the queue).
+//! 5. The worker publishes each fresh inner's wake handle into the shared
+//!    `active` cancel slot (and clears it on tear-down) so a cancel can
+//!    reach a drain send without taking `inner` — see the same invariant
+//!    in `reconnect::mod`'s type docs.
 
 use std::sync::atomic::Ordering;
 use std::sync::atomic::{AtomicBool, AtomicU64};
@@ -17,6 +21,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use tracing::{info, warn};
+use tst_core::cancel::CancelSlot;
 use tst_core::transport::{Transport, TransportError};
 
 use super::{GapBuffer, ReconnectPolicy};
@@ -113,6 +118,10 @@ pub(crate) struct WorkerCtx<T: Transport> {
     pub(crate) shutdown: Arc<Shutdown>,
     pub(crate) shared: Arc<ManagedShared>,
     pub(crate) policy: ReconnectPolicy,
+    /// The wrapper's cancel slot: the worker publishes each inner it
+    /// installs and clears it when one is torn down, so a cancel reaches a
+    /// parked drain send without touching `inner` (invariant 5).
+    pub(crate) active: Arc<CancelSlot>,
 }
 
 enum DrainStep {
@@ -247,6 +256,11 @@ pub(crate) fn worker_run<T: Transport>(ctx: WorkerCtx<T>) {
             Ok(t) => t,
             Err(_) => continue 'reconnect,
         };
+        // Take the wake handle before the transport moves into the mutex;
+        // publish it after the lock drops, so the slot's own firing (a
+        // cancel that landed while the factory was building) never runs
+        // under `inner`.
+        let new_cancel = new_inner.cancel_handle();
         {
             let Ok(mut guard) = ctx.inner.lock() else {
                 // Inner lock poisoned — unrecoverable from a worker with
@@ -262,6 +276,9 @@ pub(crate) fn worker_run<T: Transport>(ctx: WorkerCtx<T>) {
                 return;
             };
             *guard = Some(new_inner);
+        }
+        if let Some(h) = new_cancel {
+            ctx.active.install(h);
         }
         ctx.shared
             .reconnect_successes
@@ -333,7 +350,11 @@ pub(crate) fn worker_run<T: Transport>(ctx: WorkerCtx<T>) {
                         Err(_) => {
                             // Broken / Closed / unknown-future — rebuild.
                             // Front message stays queued for the retry.
+                            // Un-publish the dead inner's wake handle with
+                            // the inner it belongs to; the next successful
+                            // install republishes.
                             *transport_guard = None;
+                            ctx.active.clear();
                             DrainStep::Broken
                         }
                     }
