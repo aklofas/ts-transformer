@@ -272,6 +272,22 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Tooling: the bare no_std test plane of `tst-c-core` compiles, passes,
+  and is gated in CI.** `cargo test -p tst-c-core --no-default-features`
+  had 43 compile errors — test modules assumed the std prelude (`vec!`,
+  `Vec`, `std::fs`) and four config tests called the std-only
+  sender-config and reconnect-policy builders — and no CI job ever built
+  that target: the workspace-wide `--no-default-features` test unifies
+  `std` back on through tst-c / tst-py / tst-jni, and the MCU legs build
+  the library only. The test modules now import from `alloc`, the crate
+  links `std` under `cfg(test)` only (the MCU builds are unaffected), the
+  four builder tests moved into `config/builders.rs` under its existing
+  `std` gate, the ten panic-isolation tests are `std`-gated (the no_std
+  `ffi_catch` is a documented pass-through — there is no unwinding to
+  catch), and `critical-section`'s std implementation is a dev-dependency
+  so the host binary links. The `no-std-baremetal` job and the local
+  pre-push runner now run that test target, single-threaded because the
+  no_std last-error slot is one process-global static by design.
 - **Tooling: `scripts/check/python/stubtest.sh` no longer passes vacuously
   from a linked `git worktree`, and the embedded QEMU crates build from
   one.** The stub rail keyed everything on `bindings/python/.venv` under

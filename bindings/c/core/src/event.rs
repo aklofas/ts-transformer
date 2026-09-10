@@ -1636,6 +1636,7 @@ fn obu_to_c(o: &tst_core::mpegts::demux::Obu) -> TstObu {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
     use tst_core::mpegts::common::{Pts90khz, StreamTypeCode};
     use tst_core::mpegts::demux::{
         AudioCodec, DemuxEvent, MetadataKind, SamplePayload, StreamId, StreamKind, SubtitleCodec,

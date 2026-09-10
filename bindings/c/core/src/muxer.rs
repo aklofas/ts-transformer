@@ -1006,6 +1006,7 @@ pub unsafe extern "C" fn tst_muxer_close(p: *mut TstMuxer) {
 mod tests {
     use super::*;
     use crate::config::*;
+    use alloc::vec;
 
     #[test]
     fn open_with_default_config_succeeds() {

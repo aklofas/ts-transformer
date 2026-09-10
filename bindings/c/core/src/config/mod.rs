@@ -189,65 +189,6 @@ mod tests {
     }
 
     #[test]
-    fn ts_sender_config_lifecycle() {
-        unsafe {
-            let p = tst_sender_config_new();
-            assert_eq!(
-                tst_sender_config_set_framing_mode(p, TstTsFramingMode::Strict),
-                0,
-            );
-            assert_eq!(tst_sender_config_set_max_unsynced_bytes(p, 1024), 0);
-            tst_sender_config_free(p);
-        }
-    }
-
-    #[test]
-    fn reconnect_policy_lifecycle() {
-        unsafe {
-            let p = tst_reconnect_policy_new();
-            assert_eq!(tst_reconnect_policy_set_max_attempts(p, -1), 0); // forever
-            assert_eq!(
-                tst_reconnect_policy_set_backoff_exponential_ms(p, 100, 5_000),
-                0,
-            );
-            assert_eq!(tst_reconnect_policy_set_gap_buffer_capacity(p, 128), 0);
-            assert_eq!(
-                tst_reconnect_policy_set_overflow_policy(p, TstOverflowPolicy::Reject),
-                0,
-            );
-            assert_eq!(
-                tst_reconnect_policy_set_mode(p, TstReconnectMode::Background),
-                0,
-            );
-            tst_reconnect_policy_free(p);
-        }
-    }
-
-    #[test]
-    fn reconnect_policy_set_mode_updates_inner() {
-        unsafe {
-            let p = tst_reconnect_policy_new();
-            // Default is Blocking (mirrors tst_pipeline::ReconnectPolicy::default()).
-            assert_eq!((*p).inner.mode, tst_pipeline::ReconnectMode::Blocking);
-            assert_eq!(
-                tst_reconnect_policy_set_mode(p, TstReconnectMode::Background),
-                0,
-            );
-            assert_eq!((*p).inner.mode, tst_pipeline::ReconnectMode::Background);
-            tst_reconnect_policy_free(p);
-        }
-    }
-
-    #[test]
-    fn reconnect_policy_set_mode_null_returns_invalid_config() {
-        unsafe {
-            let rc =
-                tst_reconnect_policy_set_mode(core::ptr::null_mut(), TstReconnectMode::Background);
-            assert!(rc < 0);
-        }
-    }
-
-    #[test]
     fn null_pointer_setters_return_invalid_config() {
         unsafe {
             assert_ne!(

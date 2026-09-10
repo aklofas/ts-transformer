@@ -101,7 +101,9 @@ pub(crate) fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> all
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::{TstError, clear_last_error_for_test, tst_get_last_error};
+    #[cfg(feature = "std")]
+    use crate::error::TstError;
+    use crate::error::{clear_last_error_for_test, tst_get_last_error};
 
     #[test]
     fn no_panic_returns_closure_value() {
@@ -111,6 +113,7 @@ mod tests {
         assert_eq!(unsafe { tst_get_last_error() }, 0);
     }
 
+    #[cfg(feature = "std")] // exercises catch_unwind; no_std has no unwinding
     #[test]
     fn panic_returns_default_and_records_last_error() {
         clear_last_error_for_test();
@@ -122,6 +125,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "std")] // exercises catch_unwind; no_std has no unwinding
     #[test]
     fn panic_with_formatted_string_payload_captures_detail() {
         clear_last_error_for_test();
@@ -132,6 +136,7 @@ mod tests {
         assert!(msg.contains("dynamic-42"), "got: {msg}");
     }
 
+    #[cfg(feature = "std")] // exercises catch_unwind; no_std has no unwinding
     #[test]
     fn null_ptr_default_for_pointer_returns() {
         clear_last_error_for_test();
@@ -144,6 +149,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "std")] // exercises catch_unwind; no_std has no unwinding
     #[test]
     fn unit_default_for_void_returns() {
         clear_last_error_for_test();
@@ -161,6 +167,7 @@ mod tests {
     /// Integration-test-level coverage was considered but would require
     /// an exposed panic-injection hook; the unit test captures the same
     /// property without leaking internals.
+    #[cfg(feature = "std")] // exercises catch_unwind; no_std has no unwinding
     #[test]
     fn open_path_simulated_panic_is_caught() {
         clear_last_error_for_test();
@@ -185,6 +192,7 @@ mod tests {
     /// The C-side observable is: `_close` returns control normally,
     /// `_cancel` returns -10, and `tst_get_last_error()` reads
     /// `PanicCaught` afterward.
+    #[cfg(feature = "std")] // exercises catch_unwind; no_std has no unwinding
     #[test]
     fn close_path_simulated_panic_returns_unit_and_records() {
         clear_last_error_for_test();
@@ -199,6 +207,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "std")] // exercises catch_unwind; no_std has no unwinding
     #[test]
     fn cancel_path_simulated_panic_returns_internal_and_records() {
         clear_last_error_for_test();

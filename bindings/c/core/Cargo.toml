@@ -45,3 +45,11 @@ thiserror    = { workspace = true }
 secrecy      = { workspace = true, optional = true }
 critical-section = "1"
 spin         = { version = "0.9", default-features = false, features = ["spin_mutex"] }
+
+[dev-dependencies]
+# The no_std plane's last-error slot (error.rs) runs on critical-section, which
+# ships no implementation of its own: on a real MCU the firmware glue supplies
+# one, and the host `cargo test -p tst-c-core --no-default-features` binary
+# gets the crate's std implementation from here. Dev-only, so the library's
+# MCU builds stay implementation-free.
+critical-section = { version = "1", features = ["std"] }

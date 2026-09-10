@@ -810,6 +810,17 @@ jobs:
       - name: cargo build (tst-c-core offline C-ABI core rlib, riscv32imac-unknown-none-elf)
         run: cargo build -p tst-c-core --no-default-features --target riscv32imac-unknown-none-elf
 
+      # The MCU builds above prove the LIBRARY is no_std; this host run proves
+      # the no_std plane's unit tests still compile and pass. It is the only
+      # place that test target gets built: `cargo test --workspace
+      # --no-default-features` unifies `std` back on through tst-c / tst-py /
+      # tst-jni, so a regression here is invisible to every other job.
+      # Single-threaded because the no_std last-error slot is one
+      # process-global critical-section static (single-core bare-metal by
+      # design) that cargo's parallel test threads would otherwise share.
+      - name: cargo test (tst-c-core, --no-default-features, host)
+        run: cargo test -p tst-c-core --no-default-features -- --test-threads=1
+
       # gcc-arm-none-eabi already bundles the C++ cross-compiler (arm-none-eabi-g++);
       # there is no standalone g++-arm-none-eabi apt package. libstdc++-arm-none-eabi-newlib
       # adds the bare-metal C++ standard library needed by the S0 exceptions gate.
