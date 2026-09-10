@@ -12,7 +12,7 @@ use crate::config::{EncryptionKey, RistConfig, RistProfile};
 use crate::error::RistError;
 use crate::init::{GLOBAL_LOGGING, ensure_init};
 use crate::stats::{OnDrop, RistStats};
-use crate::url::RistUrl;
+use crate::url::{RistUrl, native_endpoint};
 
 /// Send-side RIST transport.
 ///
@@ -76,7 +76,7 @@ impl RistTransport {
         });
 
         // ===== Parse peer URL into peer_config =====
-        let peer_url_str = format!("rist://{}:{}", url.addr, url.port);
+        let peer_url_str = native_endpoint(url, false);
         let peer_url_c = CString::new(peer_url_str.clone())
             .map_err(|e| RistError::InvalidConfig(format!("bad peer URL: {e}")))?;
 

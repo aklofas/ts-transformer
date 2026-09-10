@@ -191,6 +191,18 @@ fn parse_bool(key: &str, value: &str) -> Result<bool, RistUrlError> {
     })
 }
 
+/// Render the endpoint librist parses (`rist_parse_address2`). `SocketAddr`'s
+/// `Display` brackets IPv6, which librist's `udpsocket_parse_url` requires —
+/// a bare `::1:9000` splits at the first colon into host "" + port 0.
+pub(crate) fn native_endpoint(url: &RistUrl, bind: bool) -> String {
+    let sa = std::net::SocketAddr::new(url.addr, url.port);
+    if bind {
+        format!("rist://@{sa}")
+    } else {
+        format!("rist://{sa}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -275,5 +287,15 @@ mod tests {
             matches!(e, RistUrlError::BadQueryValue { ref key, .. } if key == "secret"),
             "got {e:?}"
         );
+    }
+
+    #[test]
+    fn native_endpoint_brackets_ipv6() {
+        let u = RistUrl::parse("rist://[::1]:9000").unwrap();
+        assert_eq!(native_endpoint(&u, false), "rist://[::1]:9000");
+        assert_eq!(native_endpoint(&u, true), "rist://@[::1]:9000");
+        let v4 = RistUrl::parse("rist://127.0.0.1:9000").unwrap();
+        assert_eq!(native_endpoint(&v4, false), "rist://127.0.0.1:9000");
+        assert_eq!(native_endpoint(&v4, true), "rist://@127.0.0.1:9000");
     }
 }

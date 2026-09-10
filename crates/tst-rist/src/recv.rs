@@ -13,7 +13,7 @@ use crate::error::RistError;
 use crate::init::ensure_init;
 use crate::stats::{OnDrop, RistStats};
 use crate::transport::{apply_peer_overrides, global_logging_ptr, rist_profile_to_c};
-use crate::url::RistUrl;
+use crate::url::{RistUrl, native_endpoint};
 
 /// Default per-`recv_bytes` poll interval in milliseconds. Short enough that
 /// `close()` from another thread (via `alive` swap) is observed quickly.
@@ -108,7 +108,7 @@ impl RistRecvTransport {
         });
 
         // ===== Parse bind URL into peer_config =====
-        let bind_url_str = format!("rist://@{}:{}", url.addr, url.port);
+        let bind_url_str = native_endpoint(url, true);
         let bind_url_c = CString::new(bind_url_str.clone())
             .map_err(|e| RistError::InvalidConfig(format!("bad bind URL: {e}")))?;
 
