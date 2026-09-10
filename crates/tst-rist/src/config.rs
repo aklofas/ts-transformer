@@ -194,6 +194,19 @@ mod tests {
     }
 
     #[test]
+    fn merge_from_url_secret_alone_yields_aes256_encryption() {
+        let u = RistUrl::parse("rist://1.2.3.4:8000?secret=s").unwrap();
+        let mut cfg = RistConfig::default();
+        cfg.merge_from_url(&u);
+        let k = cfg
+            .encryption
+            .as_ref()
+            .expect("secret alone must configure encryption");
+        assert_eq!(k.size_bits, 256);
+        assert_eq!(cfg.profile, RistProfile::Main);
+    }
+
+    #[test]
     fn encryption_key_builder() {
         let k = EncryptionKey::aes256("abc").rotation(1000);
         assert_eq!(k.size_bits, 256);

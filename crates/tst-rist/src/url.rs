@@ -58,6 +58,10 @@ pub enum RistUrlError {
     },
     #[error("aes-type must be 128, 192, or 256; got {0}")]
     BadAesType(u32),
+    #[error(
+        "aes-type given without secret; RIST encryption needs both (secret alone defaults to AES-256)"
+    )]
+    AesTypeWithoutSecret,
     #[error("URL parse failed: {0}")]
     Parse(#[from] tst_core::url::common::UrlError),
 }
@@ -123,6 +127,13 @@ impl RistUrl {
                     }
                 }
                 "secret" => {
+                    if value.is_empty() {
+                        return Err(RistUrlError::BadQueryValue {
+                            key: key.to_string(),
+                            value: String::new(),
+                            detail: "must be non-empty".into(),
+                        });
+                    }
                     secret = Some(RistSecret::new(value));
                 }
                 "cname" => {
@@ -139,6 +150,12 @@ impl RistUrl {
                 }
                 _ => {}
             }
+        }
+
+        match (aes_type, &secret) {
+            (Some(_), None) => return Err(RistUrlError::AesTypeWithoutSecret),
+            (None, Some(_)) => aes_type = Some(256), // librist's own default for a secret without a key size
+            _ => {}
         }
 
         Ok(Self {
@@ -236,5 +253,27 @@ mod tests {
             RistUrl::parse("udp://host:8000"),
             Err(RistUrlError::BadScheme(_))
         ));
+    }
+
+    #[test]
+    fn secret_alone_defaults_aes_type_to_256() {
+        let u = RistUrl::parse("rist://127.0.0.1:9000?secret=example").unwrap();
+        assert_eq!(u.aes_type, Some(256));
+        assert!(u.secret.is_some());
+    }
+
+    #[test]
+    fn aes_type_without_secret_is_rejected() {
+        let e = RistUrl::parse("rist://127.0.0.1:9000?aes-type=256").unwrap_err();
+        assert!(matches!(e, RistUrlError::AesTypeWithoutSecret), "got {e:?}");
+    }
+
+    #[test]
+    fn empty_secret_is_rejected() {
+        let e = RistUrl::parse("rist://127.0.0.1:9000?secret=").unwrap_err();
+        assert!(
+            matches!(e, RistUrlError::BadQueryValue { ref key, .. } if key == "secret"),
+            "got {e:?}"
+        );
     }
 }
