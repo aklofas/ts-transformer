@@ -226,6 +226,7 @@ pub(crate) fn build_demuxer_config(
     }
     let sync_cap: usize = cfg.getattr(intern!(py, "sync_buf_cap"))?.extract()?;
     opts.sync_buf_cap = Some(sync_cap);
+    opts.unwrap_timestamps = cfg.getattr(intern!(py, "unwrap_timestamps"))?.extract()?;
 
     Ok(opts)
 }

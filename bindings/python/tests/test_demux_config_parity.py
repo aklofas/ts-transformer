@@ -320,3 +320,99 @@ def test_io_parse_file_threads_av1_carriage(tmp_path: Path) -> None:
     assert not saw_wrong_stream_id, (
         "io.parse_file must thread av1_carriage from config → demuxer"
     )
+
+
+# ---------------------------------------------------------------------------
+# unwrap_timestamps — dataclass shape + wire-level parity
+#
+# Mirrors the Rust wire test
+# `crates/tst-core/tests/mpegts/pts_unwrap.rs::
+# reordered_pts_across_wrap_does_not_double_the_epoch`: mux a real TS with
+# `Muxer` so the raw 33-bit wire PTS values land exactly where a real
+# encoder would put them, then demux with the knob on and off.
+# ---------------------------------------------------------------------------
+
+_WRAP = 1 << 33  # H.222.0 §2.4.3.6 33-bit PTS/DTS rollover boundary
+
+
+def test_demuxer_config_unwrap_timestamps_defaults_to_false() -> None:
+    cfg = DemuxerConfig()
+    assert cfg.unwrap_timestamps is False
+
+
+def test_demuxer_config_accepts_unwrap_timestamps_kwarg() -> None:
+    cfg = DemuxerConfig(unwrap_timestamps=True)
+    assert cfg.unwrap_timestamps is True
+
+
+def test_demuxer_accepts_config_with_unwrap_timestamps() -> None:
+    Demuxer(DemuxerConfig(unwrap_timestamps=True))
+
+
+def _minimal_h264_au() -> bytes:
+    # Annex-B: AUD (nal_type=9) + IDR (nal_type=5). The raw-first demuxer
+    # doesn't parse the AU contents — any bytes round-trip.
+    return bytes(
+        [0x00, 0x00, 0x00, 0x01, 0x09, 0x10, 0x00, 0x00, 0x00, 0x01, 0x65, 0xAA, 0xBB, 0xCC]
+    )
+
+
+def _wrap_crossing_reordered_ts() -> bytes:
+    """Mux a 4-sample video stream whose composition order straddles the
+    33-bit PTS wrap: two pre-wrap values (`WRAP-100`, `WRAP-50`)
+    interleaved with two post-wrap ones (`100`, `200`) — i.e. the
+    pre-wrap `WRAP-50` is delivered late, after the wrap has already
+    been observed. Same sequence as the Rust wire test."""
+    program = MuxerProgramConfigBuilder(program_number=1, pmt_pid=0x1000)
+    program.add_video(pid=0x100, codec=VideoCodec.H264)
+    builder = MuxerConfig.builder()
+    builder.add_program(program.build())
+    mux = Muxer(builder.build())
+    au = _minimal_h264_au()
+    for raw in (_WRAP - 100, 100, _WRAP - 50, 200):
+        mux.push_video(au, pts=Pts90khz(raw), key_frame=True)
+
+    out = bytearray()
+    buf = bytearray(1316)
+    while True:
+        n = mux.pull(buf)
+        if n == 0:
+            break
+        out.extend(buf[:n])
+    return bytes(out)
+
+
+def _video_pts_ticks(ts_bytes: bytes, *, unwrap: bool) -> list[int]:
+    """Ordered raw `pts.raw` (ticks) of every video Sample on PID 0x100."""
+    demux = Demuxer(DemuxerConfig(unwrap_timestamps=unwrap))
+    demux.feed(ts_bytes)
+    demux.flush()
+    pts: list[int] = []
+    while True:
+        ev = demux.next_event()
+        if ev is None:
+            break
+        if isinstance(ev, _VideoEvent) and ev.stream.pid == 0x100:
+            pts.append(ev.pts.raw)
+    return pts
+
+
+def test_unwrap_timestamps_off_preserves_raw_wire_values_across_reorder() -> None:
+    """Default off: byte-for-byte today's behavior — the raw wire values
+    come through unchanged, reorder and all."""
+    ts = _wrap_crossing_reordered_ts()
+    assert _video_pts_ticks(ts, unwrap=False) == [
+        _WRAP - 100,
+        100,
+        _WRAP - 50,
+        200,
+    ]
+
+
+def test_unwrap_timestamps_on_unwraps_reorder_without_doubling_the_epoch() -> None:
+    """Opt-in: each sample lands in the epoch its signed 33-bit delta
+    implies; a second epoch (2*WRAP) would mean the reorder was mistaken
+    for a wrap."""
+    ts = _wrap_crossing_reordered_ts()
+    got = _video_pts_ticks(ts, unwrap=True)
+    assert got == [_WRAP - 100, _WRAP + 100, _WRAP - 50, _WRAP + 200]
