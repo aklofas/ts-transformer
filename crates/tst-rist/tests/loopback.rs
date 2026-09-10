@@ -284,8 +284,19 @@ fn oversize_foreign_block_delivered_not_dropped() {
 /// the full repro. Main Profile multiplexes RTCP into the data socket and
 /// never takes that path, so it exercises the bracket fix without tripping
 /// the unrelated crash.
+///
+/// Not run on Windows: vendored librist 0.2.20 parses the bracketed bind URL
+/// fine but `rist_peer_create` then refuses the IPv6 receiver bind there,
+/// returning `PeerCreateFailed` immediately (the OS-level `[::1]` probe below
+/// still succeeds, so this is librist's socket layer, not host capability).
+/// IPv6 senders and all IPv4 paths are unaffected. See the RIST IPv6
+/// receiver-bind entry in `docs/project/deferred-features.md`.
 #[test]
 fn ipv6_loopback_round_trip() {
+    if cfg!(windows) {
+        eprintln!("skipping: librist 0.2.20 cannot bind an IPv6 receiver peer on Windows");
+        return;
+    }
     if !ipv6_loopback_available() {
         eprintln!("skipping: IPv6 loopback unavailable on this host");
         return;

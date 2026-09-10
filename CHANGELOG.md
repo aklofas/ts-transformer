@@ -354,7 +354,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   leading `::` into an empty host and fell back to `0.0.0.0:0`, and the
   socket silently came up on the wrong family and port. Both sites now
   render through one `SocketAddr`-based helper, which brackets an IPv6
-  literal.
+  literal. IPv6 *receivers* still do not come up on Windows — librist
+  accepts the bracketed URL and then fails the bind in
+  `rist_peer_create` — so that combination returns `PeerCreateFailed`
+  there; IPv6 senders and all IPv4 paths work on every platform. See
+  `docs/project/deferred-features.md`.
 
 ---
 
