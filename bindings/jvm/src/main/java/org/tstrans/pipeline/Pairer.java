@@ -52,7 +52,8 @@ public final class Pairer extends NativeHandle {
             dx != null ? dx.av1Carriage().ordinal() : 0,
             dx != null ? dx.auCellCapPerPid() : 0L,
             dx != null && dx.lenientPsiReassembly(),
-            dx != null ? dx.syncBufCap() : 0L));
+            dx != null ? dx.syncBufCap() : 0L,
+            dx != null && dx.unwrapTimestamps()));
     }
 
     /** Feed TS bytes; returns the pairing outputs produced. @throws DemuxException on non-conformant input. */
@@ -101,7 +102,8 @@ public final class Pairer extends NativeHandle {
         boolean buffered, long maxLagNanos, long toleranceNanos,
         long maxBufferedKlv, long maxBufferedVideo,
         boolean hasDemuxerConfig, int strict, long pesCapPerPid, long pesCapTotal,
-        boolean cfi, int av1, long auCellCap, boolean lenientPsi, long syncBufCap);
+        boolean cfi, int av1, long auCellCap, boolean lenientPsi, long syncBufCap,
+        boolean unwrapTimestamps);
     private static native Object nFeed(long handle, byte[] bytes) throws DemuxException;
     private static native Object nFlush(long handle);
     private static native PairerStats nStats(long handle);

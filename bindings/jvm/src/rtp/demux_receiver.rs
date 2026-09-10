@@ -179,6 +179,7 @@ pub extern "system" fn Java_org_tstrans_rtp_DemuxReceiver_nFromUrlWithConfig<'lo
     au_cell_cap: jlong,
     lenient_psi: jboolean,
     sync_buf_cap: jlong,
+    unwrap_timestamps: jboolean,
 ) -> jlong {
     crate::panic::jni_catch(&mut env, 0, |env| {
         let Some(opts) = build_demux_config_from_args(
@@ -191,6 +192,7 @@ pub extern "system" fn Java_org_tstrans_rtp_DemuxReceiver_nFromUrlWithConfig<'lo
             au_cell_cap,
             lenient_psi,
             sync_buf_cap,
+            unwrap_timestamps,
         ) else {
             return 0;
         };

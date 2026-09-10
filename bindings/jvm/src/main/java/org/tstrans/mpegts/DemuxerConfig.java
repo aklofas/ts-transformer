@@ -1,7 +1,7 @@
 package org.tstrans.mpegts;
 
 /**
- * Configuration for {@link Demuxer}. Mirrors {@code tstrans.mpegts.DemuxerConfig} (8 knobs).
+ * Configuration for {@link Demuxer}. Mirrors {@code tstrans.mpegts.DemuxerConfig} (9 knobs).
  *
  * <p>An immutable value object built via {@link #builder()}. Defaults match
  * {@code tst_core::mpegts::demux::DemuxerConfig::default()}.
@@ -23,6 +23,7 @@ public final class DemuxerConfig {
     private final long auCellCapPerPid;    // 0 = use Rust default (1 MiB)
     private final boolean lenientPsiReassembly;
     private final long syncBufCap;         // 0 = use Rust default (4 MiB)
+    private final boolean unwrapTimestamps; // default false
 
     private DemuxerConfig(Builder b) {
         this.strictMode = b.strictMode;
@@ -33,6 +34,7 @@ public final class DemuxerConfig {
         this.auCellCapPerPid = b.auCellCapPerPid;
         this.lenientPsiReassembly = b.lenientPsiReassembly;
         this.syncBufCap = b.syncBufCap;
+        this.unwrapTimestamps = b.unwrapTimestamps;
     }
 
     public static Builder builder() { return new Builder(); }
@@ -48,6 +50,7 @@ public final class DemuxerConfig {
     public long auCellCapPerPid() { return auCellCapPerPid; }
     public boolean lenientPsiReassembly() { return lenientPsiReassembly; }
     public long syncBufCap() { return syncBufCap; }
+    public boolean unwrapTimestamps() { return unwrapTimestamps; }
 
     /** Fluent builder for {@link DemuxerConfig}. Defaults match {@code tst_core}'s. */
     public static final class Builder {
@@ -59,6 +62,7 @@ public final class DemuxerConfig {
         private long auCellCapPerPid = 0;
         private boolean lenientPsiReassembly = false;
         private long syncBufCap = 0;
+        private boolean unwrapTimestamps = false;
 
         public Builder strictMode(StrictMode v) { this.strictMode = v; return this; }
         /** Per-PID PES cap in bytes; {@code 0} = use the Rust default. Rejects negatives. */
@@ -77,6 +81,24 @@ public final class DemuxerConfig {
          * or raise this ceiling. Rejects negatives.
          */
         public Builder syncBufCap(long v) { this.syncBufCap = requireNonNegativeCap(v, "syncBufCap"); return this; }
+        /**
+         * Unwrap the raw 33-bit 90 kHz PTS/DTS onto a continuous timeline that carries
+         * across the rollover ({@code 1 << 33} ticks, ~26.5 h; ITU-T H.222.0 §2.4.3.6).
+         * Default {@code false} — {@link DemuxEvent} carries the raw wire value. When
+         * {@code true}, a per-PID accumulator carries each sample's signed wrap-aware
+         * delta from the previous raw value onto the previous unwrapped value, so
+         * crossing the rollover grows the PID's offset by a full {@code 1 << 33} while
+         * a genuine backward step — an out-of-order arrival, including a pre-wrap PTS
+         * delivered <i>after</i> the wrap — steps back by its true distance instead of
+         * being mistaken for another wrap (the emitted value is then allowed to be
+         * non-monotonic, correctly reflecting the reorder). The timeline is never
+         * rebased to zero, so PIDs <b>of the same program</b> stay directly comparable
+         * for the whole session (this is what lets a consumer pair KLV to video by PTS
+         * across the rollover); independent programs are never cross-anchored. The
+         * accumulators reset alongside all other per-PID parse state on a sync reset, so
+         * a reconnect or topology change restarts the unwrap timeline.
+         */
+        public Builder unwrapTimestamps(boolean v) { this.unwrapTimestamps = v; return this; }
 
         public DemuxerConfig build() { return new DemuxerConfig(this); }
 
