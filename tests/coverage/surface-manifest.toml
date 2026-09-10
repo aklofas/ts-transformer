@@ -5306,6 +5306,97 @@ tier = "A"
 [[surface]]
 kind = "rust"
 crate = "tst-core"
+item = "tst_core::cancel::CancelSlot"
+owning_tests = ["crates/tst-core/src/cancel.rs", "crates/tst-pipeline/tests/managed_receive_cancel_factory.rs", "crates/tst-pipeline/tests/reconnect_cancel_parked_send.rs"]
+# The latched, replaceable cancel target the managed wrappers publish their
+# inner transport's cancel handle through; re-exported by tst-pipeline as the
+# type alias FactoryCancel. Reached from the C ABI / Python / JVM managed
+# shells, never as a binding symbol of its own.
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::cancel::CancelSlot::new"
+owning_tests = ["crates/tst-core/src/cancel.rs", "crates/tst-pipeline/tests/managed_receive_cancel_factory.rs", "crates/tst-pipeline/tests/reconnect_cancel_parked_send.rs"]
+# The latched, replaceable cancel target the managed wrappers publish their
+# inner transport's cancel handle through; re-exported by tst-pipeline as the
+# type alias FactoryCancel. Reached from the C ABI / Python / JVM managed
+# shells, never as a binding symbol of its own.
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::cancel::CancelSlot::install"
+owning_tests = ["crates/tst-core/src/cancel.rs", "crates/tst-pipeline/tests/managed_receive_cancel_factory.rs", "crates/tst-pipeline/tests/reconnect_cancel_parked_send.rs"]
+# The latched, replaceable cancel target the managed wrappers publish their
+# inner transport's cancel handle through; re-exported by tst-pipeline as the
+# type alias FactoryCancel. Reached from the C ABI / Python / JVM managed
+# shells, never as a binding symbol of its own.
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::cancel::CancelSlot::clear"
+owning_tests = ["crates/tst-core/src/cancel.rs", "crates/tst-pipeline/tests/managed_receive_cancel_factory.rs", "crates/tst-pipeline/tests/reconnect_cancel_parked_send.rs"]
+# The latched, replaceable cancel target the managed wrappers publish their
+# inner transport's cancel handle through; re-exported by tst-pipeline as the
+# type alias FactoryCancel. Reached from the C ABI / Python / JVM managed
+# shells, never as a binding symbol of its own.
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::cancel::CancelSlot::cancel"
+owning_tests = ["crates/tst-core/src/cancel.rs", "crates/tst-pipeline/tests/managed_receive_cancel_factory.rs", "crates/tst-pipeline/tests/reconnect_cancel_parked_send.rs"]
+# The latched, replaceable cancel target the managed wrappers publish their
+# inner transport's cancel handle through; re-exported by tst-pipeline as the
+# type alias FactoryCancel. Reached from the C ABI / Python / JVM managed
+# shells, never as a binding symbol of its own.
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::cancel::CancelSlot::is_cancelled"
+owning_tests = ["crates/tst-core/src/cancel.rs", "crates/tst-pipeline/tests/managed_receive_cancel_factory.rs", "crates/tst-pipeline/tests/reconnect_cancel_parked_send.rs"]
+# The latched, replaceable cancel target the managed wrappers publish their
+# inner transport's cancel handle through; re-exported by tst-pipeline as the
+# type alias FactoryCancel. Reached from the C ABI / Python / JVM managed
+# shells, never as a binding symbol of its own.
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::CancelSlot"
+owning_tests = ["crates/tst-core/src/cancel.rs", "crates/tst-pipeline/tests/managed_receive_cancel_factory.rs", "crates/tst-pipeline/tests/reconnect_cancel_parked_send.rs"]
+# The latched, replaceable cancel target the managed wrappers publish their
+# inner transport's cancel handle through; re-exported by tst-pipeline as the
+# type alias FactoryCancel. Reached from the C ABI / Python / JVM managed
+# shells, never as a binding symbol of its own.
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
 item = "tst_core::SrtCancelHandle"
 owning_tests = ["crates/tst-srt/tests/loopback/cancellation_loopback.rs"]
 bindings = ["java:org.tstrans.srt.CancelHandle"]
@@ -6057,9 +6148,11 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::FactoryCancel"
 owning_tests = ["crates/tst-pipeline/tests/managed_receive_cancel_factory.rs"]
-# Used internally by the C ABI / Python / JVM managed listener factories (no
-# direct binding symbol); their parity tests: tst-c receiving::managed_listener_cancel,
-# tst-py test_srt_managed_listener_cancel.py, JVM SrtManagedListenerCancelTest.
+# Type alias of tst_core::cancel::CancelSlot (the items are catalogued under
+# tst-core). Used internally by the C ABI / Python / JVM managed listener
+# factories (no direct binding symbol); their parity tests: tst-c
+# receiving::managed_listener_cancel, tst-py test_srt_managed_listener_cancel.py,
+# JVM SrtManagedListenerCancelTest.
 bindings = []
 scenario_ids = []
 tier = "A"
@@ -6069,69 +6162,11 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::managed_receive::FactoryCancel"
 owning_tests = ["crates/tst-pipeline/tests/managed_receive_cancel_factory.rs"]
-# Used internally by the C ABI / Python / JVM managed listener factories (no
-# direct binding symbol); their parity tests: tst-c receiving::managed_listener_cancel,
-# tst-py test_srt_managed_listener_cancel.py, JVM SrtManagedListenerCancelTest.
-bindings = []
-scenario_ids = []
-tier = "A"
-
-[[surface]]
-kind = "rust"
-crate = "tst-pipeline"
-item = "tst_pipeline::managed_receive::FactoryCancel::new"
-owning_tests = ["crates/tst-pipeline/tests/managed_receive_cancel_factory.rs"]
-# Used internally by the C ABI / Python / JVM managed listener factories (no
-# direct binding symbol); their parity tests: tst-c receiving::managed_listener_cancel,
-# tst-py test_srt_managed_listener_cancel.py, JVM SrtManagedListenerCancelTest.
-bindings = []
-scenario_ids = []
-tier = "A"
-
-[[surface]]
-kind = "rust"
-crate = "tst-pipeline"
-item = "tst_pipeline::managed_receive::FactoryCancel::install"
-owning_tests = ["crates/tst-pipeline/tests/managed_receive_cancel_factory.rs"]
-# Used internally by the C ABI / Python / JVM managed listener factories (no
-# direct binding symbol); their parity tests: tst-c receiving::managed_listener_cancel,
-# tst-py test_srt_managed_listener_cancel.py, JVM SrtManagedListenerCancelTest.
-bindings = []
-scenario_ids = []
-tier = "A"
-
-[[surface]]
-kind = "rust"
-crate = "tst-pipeline"
-item = "tst_pipeline::managed_receive::FactoryCancel::clear"
-owning_tests = ["crates/tst-pipeline/tests/managed_receive_cancel_factory.rs"]
-# Used internally by the C ABI / Python / JVM managed listener factories (no
-# direct binding symbol); their parity tests: tst-c receiving::managed_listener_cancel,
-# tst-py test_srt_managed_listener_cancel.py, JVM SrtManagedListenerCancelTest.
-bindings = []
-scenario_ids = []
-tier = "A"
-
-[[surface]]
-kind = "rust"
-crate = "tst-pipeline"
-item = "tst_pipeline::managed_receive::FactoryCancel::cancel"
-owning_tests = ["crates/tst-pipeline/tests/managed_receive_cancel_factory.rs"]
-# Used internally by the C ABI / Python / JVM managed listener factories (no
-# direct binding symbol); their parity tests: tst-c receiving::managed_listener_cancel,
-# tst-py test_srt_managed_listener_cancel.py, JVM SrtManagedListenerCancelTest.
-bindings = []
-scenario_ids = []
-tier = "A"
-
-[[surface]]
-kind = "rust"
-crate = "tst-pipeline"
-item = "tst_pipeline::managed_receive::FactoryCancel::is_cancelled"
-owning_tests = ["crates/tst-pipeline/tests/managed_receive_cancel_factory.rs"]
-# Used internally by the C ABI / Python / JVM managed listener factories (no
-# direct binding symbol); their parity tests: tst-c receiving::managed_listener_cancel,
-# tst-py test_srt_managed_listener_cancel.py, JVM SrtManagedListenerCancelTest.
+# Type alias of tst_core::cancel::CancelSlot (the items are catalogued under
+# tst-core). Used internally by the C ABI / Python / JVM managed listener
+# factories (no direct binding symbol); their parity tests: tst-c
+# receiving::managed_listener_cancel, tst-py test_srt_managed_listener_cancel.py,
+# JVM SrtManagedListenerCancelTest.
 bindings = []
 scenario_ids = []
 tier = "A"
@@ -6599,8 +6634,8 @@ item = "tst_pipeline::managed_receive::ManagedRecvTransport"
 reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
 
 [[exempt]]
-item = "tst_pipeline::managed_receive::FactoryCancel::default"
-reason = "derive(Default); exercised through FactoryCancel::new in managed_receive_cancel_factory.rs"
+item = "tst_core::cancel::CancelSlot::default"
+reason = "derive(Default); exercised through CancelSlot::new in crates/tst-core/src/cancel.rs"
 
 [[exempt]]
 item = "tst_pipeline::mux_publisher::MuxPublisher"
