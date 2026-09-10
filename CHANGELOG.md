@@ -179,7 +179,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   helper, so an offset reported by `st0601::decode`, `decode_unchecked`,
   `decode_strict`, `decode_strict_compliance` or
   `st0806::decode_standalone` indexes the caller's own buffer, exactly
-  as the strict path's offsets already did. `st0806::decode`, which
+  as the strict path's offsets already did. The one remaining hard-coded
+  `offset: 0` — the ST 0601 Tag 1 (checksum) value-length mismatch,
+  raised on every entry point including the strict ones — now reports
+  the checksum value's own position in the caller's buffer.
+  `st0806::decode`, which
   takes a bare local-set body with no envelope in front of it, keeps
   body-relative offsets by construction. No API change.
 - **Python: the six transport `.pyi` stubs (`srt`/`rtp`/`udp`/`tcp`/`hls`/

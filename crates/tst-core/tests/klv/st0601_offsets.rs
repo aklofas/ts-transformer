@@ -85,6 +85,36 @@ fn permissive_reports_absolute_offset_for_truncated_value() {
 }
 
 #[test]
+fn tag1_length_mismatch_reports_absolute_value_offset() {
+    // Tag 1 (checksum) must carry exactly 2 value bytes. Here it declares
+    // len=1, so the mismatch is reported against the value's own start:
+    // body offset 2 (tag byte, length byte, then value), i.e.
+    // absolute offset = 17 (UL + outer length byte) + 2 = 19.
+    // Checked on both the verifying and the permissive entry points —
+    // the Tag 1 arm runs before any checksum verification.
+    let buf = st0601_plus(&[0x01, 0x01, 0xAA]);
+    for (name, e) in [
+        ("decode", st0601::decode(&buf).unwrap_err()),
+        (
+            "decode_unchecked",
+            st0601::decode_unchecked(&buf).unwrap_err(),
+        ),
+    ] {
+        assert!(
+            matches!(
+                e,
+                KlvDecodeError::Truncated {
+                    offset: 19,
+                    needed: 2,
+                    have: 1
+                }
+            ),
+            "{name} {e:?}"
+        );
+    }
+}
+
+#[test]
 fn st0806_decode_standalone_reports_absolute_offset() {
     // Same MalformedLength shape as the ST 0601 repro, wrapped in the
     // RVT LS's own UL instead: field 1 tag=2 len=1 value=[0x41] (3
