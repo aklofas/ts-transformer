@@ -186,6 +186,8 @@ impl core::clone::Clone for tst_tcp::transport::TcpCancelHandle
 pub fn tst_tcp::transport::TcpCancelHandle::clone(&self) -> tst_tcp::transport::TcpCancelHandle
 impl core::fmt::Debug for tst_tcp::transport::TcpCancelHandle
 pub fn tst_tcp::transport::TcpCancelHandle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl tst_core::transport::TransportCancel for tst_tcp::transport::TcpCancelHandle
+pub fn tst_tcp::transport::TcpCancelHandle::cancel(&self)
 impl core::marker::Freeze for tst_tcp::transport::TcpCancelHandle
 impl core::marker::Send for tst_tcp::transport::TcpCancelHandle
 impl core::marker::Sync for tst_tcp::transport::TcpCancelHandle
@@ -201,12 +203,14 @@ pub fn tst_tcp::transport::TcpTransport::connect_with_config(&tst_tcp::url::TcpU
 pub fn tst_tcp::transport::TcpTransport::peer(&self) -> core::net::socket_addr::SocketAddr
 pub fn tst_tcp::transport::TcpTransport::stats(&self) -> tst_tcp::stats::TcpStats
 impl tst_core::transport::RecvTransport for tst_tcp::transport::TcpTransport
+pub fn tst_tcp::transport::TcpTransport::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_tcp::transport::TcpTransport::close(&mut self)
 pub fn tst_tcp::transport::TcpTransport::is_alive(&self) -> bool
 pub fn tst_tcp::transport::TcpTransport::max_payload(&self) -> usize
 pub fn tst_tcp::transport::TcpTransport::recv_bytes(&mut self, &mut [u8]) -> core::result::Result<usize, tst_core::transport::TransportError>
 pub fn tst_tcp::transport::TcpTransport::socket_stats(&self) -> core::option::Option<tst_core::transport::SocketStats>
 impl tst_core::transport::Transport for tst_tcp::transport::TcpTransport
+pub fn tst_tcp::transport::TcpTransport::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_tcp::transport::TcpTransport::close(&mut self)
 pub fn tst_tcp::transport::TcpTransport::is_alive(&self) -> bool
 pub fn tst_tcp::transport::TcpTransport::max_payload(&self) -> usize
@@ -306,6 +310,8 @@ impl core::clone::Clone for tst_tcp::transport::TcpCancelHandle
 pub fn tst_tcp::transport::TcpCancelHandle::clone(&self) -> tst_tcp::transport::TcpCancelHandle
 impl core::fmt::Debug for tst_tcp::transport::TcpCancelHandle
 pub fn tst_tcp::transport::TcpCancelHandle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl tst_core::transport::TransportCancel for tst_tcp::transport::TcpCancelHandle
+pub fn tst_tcp::transport::TcpCancelHandle::cancel(&self)
 impl core::marker::Freeze for tst_tcp::transport::TcpCancelHandle
 impl core::marker::Send for tst_tcp::transport::TcpCancelHandle
 impl core::marker::Sync for tst_tcp::transport::TcpCancelHandle
@@ -377,12 +383,14 @@ pub fn tst_tcp::transport::TcpTransport::connect_with_config(&tst_tcp::url::TcpU
 pub fn tst_tcp::transport::TcpTransport::peer(&self) -> core::net::socket_addr::SocketAddr
 pub fn tst_tcp::transport::TcpTransport::stats(&self) -> tst_tcp::stats::TcpStats
 impl tst_core::transport::RecvTransport for tst_tcp::transport::TcpTransport
+pub fn tst_tcp::transport::TcpTransport::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_tcp::transport::TcpTransport::close(&mut self)
 pub fn tst_tcp::transport::TcpTransport::is_alive(&self) -> bool
 pub fn tst_tcp::transport::TcpTransport::max_payload(&self) -> usize
 pub fn tst_tcp::transport::TcpTransport::recv_bytes(&mut self, &mut [u8]) -> core::result::Result<usize, tst_core::transport::TransportError>
 pub fn tst_tcp::transport::TcpTransport::socket_stats(&self) -> core::option::Option<tst_core::transport::SocketStats>
 impl tst_core::transport::Transport for tst_tcp::transport::TcpTransport
+pub fn tst_tcp::transport::TcpTransport::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_tcp::transport::TcpTransport::close(&mut self)
 pub fn tst_tcp::transport::TcpTransport::is_alive(&self) -> bool
 pub fn tst_tcp::transport::TcpTransport::max_payload(&self) -> usize
