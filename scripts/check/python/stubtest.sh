@@ -67,9 +67,12 @@ if [ -z "$native" ]; then
   exit 1
 fi
 
-# Staleness: the Rust sources feeding the module are newer than the build.
-newer=$(find "$ROOT/bindings/python/src" "$ROOT/crates" -path '*/vendor' -prune -o \
-          \( -name '*.rs' -o -name Cargo.toml \) -newer "$native" -print 2>/dev/null | wc -l)
+# Staleness: the Rust inputs feeding the module (tst-py's own crate incl.
+# its Cargo.toml/build.rs, every library crate, the lockfile) are newer than
+# the build.
+newer=$(find "$ROOT/bindings/python" "$ROOT/crates" "$ROOT/Cargo.lock" \
+          \( -path '*/vendor' -o -path '*/.venv' -o -path '*/target' \) -prune -o \
+          \( -name '*.rs' -o -name Cargo.toml -o -name Cargo.lock \) -newer "$native" -print 2>/dev/null | wc -l)
 if [ "$newer" -gt 0 ]; then
   echo "WARNING: $native is older than $newer Rust source file(s);"
   echo "         if the findings below look like drift, rebuild first:"
