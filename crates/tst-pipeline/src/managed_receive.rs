@@ -309,6 +309,12 @@ impl<R: RecvTransport> RecvTransport for ManagedRecvTransport<R> {
         // - explicit_close || cancelled → caller-initiated → ExplicitClose.
         // - closed only (set by budget-exhausted path) → Closed (peer-EOS-ish).
         if self.explicit_close || self.cancelled.load(std::sync::atomic::Ordering::Acquire) {
+            // Latch on the way out: a cancel that landed between calls set
+            // only the shared flag, so without this `is_alive()` would keep
+            // reporting live for a receiver that can never deliver again.
+            // Same pair the mid-loop cancel check below latches.
+            self.closed = true;
+            self.explicit_close = true;
             return Err(TransportError::ExplicitClose);
         }
         if self.closed {
@@ -454,6 +460,10 @@ impl<R: RecvTransport> RecvTransport for ManagedRecvTransport<R> {
         self.closed = true;
         self.explicit_close = true;
         self.shutdown.signal();
+        // Un-publish the inner's wake handle, same as the tear-down site in
+        // `recv_bytes`: this inner is being closed right here, so nothing
+        // reachable through the slot can still need waking.
+        self.active.clear();
         if let Some(t) = self.inner.as_mut() {
             t.close();
         }
@@ -818,5 +828,41 @@ mod tests {
         let h = managed.cancel_handle().expect("cancellable inner -> Some");
         h.cancel();
         assert!(cancelled.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    /// A cancel that lands while nobody is inside `recv_bytes` is only seen
+    /// by the entry gate on the next call. That gate must latch the local
+    /// flags as well as report — otherwise every later call keeps returning
+    /// `ExplicitClose` while `is_alive()` goes on claiming the stream is
+    /// live, which is exactly backwards for a caller polling liveness.
+    #[test]
+    fn managed_recv_entry_gate_latches_closed_on_prior_cancel() {
+        let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let inner = CancellableRecv {
+            cancelled: cancelled.clone(),
+        };
+        let cancelled_cl = cancelled.clone();
+        let factory = Box::new(move || -> Result<CancellableRecv, TransportError> {
+            Ok(CancellableRecv {
+                cancelled: cancelled_cl.clone(),
+            })
+        });
+        let mut managed = ManagedRecvTransport::new(inner, factory, fast_policy(Some(2)));
+
+        managed
+            .cancel_handle()
+            .expect("cancellable inner -> Some")
+            .cancel();
+
+        let mut buf = [0u8; 8];
+        assert_eq!(
+            managed.recv_bytes(&mut buf).unwrap_err(),
+            TransportError::ExplicitClose,
+            "a prior cancel is caller-initiated, not peer-EOS"
+        );
+        assert!(
+            !managed.is_alive(),
+            "the entry gate must latch closed, not merely report ExplicitClose"
+        );
     }
 }
