@@ -12,6 +12,11 @@ use std::time::Duration;
 use tst_core::transport::{Transport, TransportCancel, TransportError};
 use tst_pipeline::{BackoffStrategy, ManagedTransport, ReconnectPolicy};
 
+/// What the mock reports as `max_payload`: one SRT TS bundle (7 × 188-byte
+/// packets), the ceiling the real transports advertise — large enough that
+/// the wrapper's size pre-check never rejects the test's single packet.
+const MAX_PAYLOAD: usize = 7 * 188;
+
 /// Both ends of the mid-factory race in one type, because
 /// `ManagedTransport<T>` rebuilds its inner from the same `T`: `dead: true`
 /// breaks on the first send and sends the wrapper into its reconnect loop;
@@ -44,7 +49,7 @@ impl Transport for RaceInner {
     }
 
     fn max_payload(&self) -> usize {
-        1316
+        MAX_PAYLOAD
     }
 
     fn is_alive(&self) -> bool {

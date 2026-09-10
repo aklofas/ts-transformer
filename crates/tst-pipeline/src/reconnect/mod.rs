@@ -737,11 +737,15 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                     // Same shape as the receive side's post-install check and
                     // the background worker's loop-top `closed` check.
                     if self.closed.load(std::sync::atomic::Ordering::Acquire) {
-                        if let Ok(mut guard) = self.inner.lock() {
-                            if let Some(mut t) = guard.take() {
-                                t.close();
-                            }
+                        // Recover on poison rather than skip: the slot is a
+                        // plain `Option` a panic can never leave half-updated,
+                        // and the fresh inner must be closed on this path
+                        // regardless of how an earlier holder exited.
+                        let mut guard = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+                        if let Some(mut t) = guard.take() {
+                            t.close();
                         }
+                        drop(guard);
                         return Err(TransportError::Closed);
                     }
                     self.shared
