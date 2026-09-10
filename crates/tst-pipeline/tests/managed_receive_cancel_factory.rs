@@ -4,7 +4,7 @@
 //! `FactoryCancel` slot; the managed transport's own cancel fires that
 //! slot, and the factory then reports `ExplicitClose`.
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 use tst_core::transport::{RecvTransport, TransportCancel, TransportError};
@@ -105,6 +105,114 @@ fn cancel_wakes_a_factory_parked_on_its_installed_handle() {
     assert!(
         elapsed < Duration::from_secs(1),
         "cancel took {elapsed:?} to reach the parked factory"
+    );
+    assert!(
+        !managed.is_alive(),
+        "managed transport must latch closed after cancel"
+    );
+}
+
+/// Both ends of the mid-factory race in one type, because
+/// `ManagedRecvTransport<R>` rebuilds its inner from the same `R`:
+/// `dead: true` breaks on the first read and sends the wrapper into its
+/// reconnect loop; `dead: false` is the healthy connection the factory
+/// hands back *after* the cancel already landed. It would happily serve
+/// bytes — only the wrapper can decide not to read from it. Its
+/// `cancel_handle()` latches `cancelled`, which is what the test checks
+/// the wrapper fired.
+struct RaceInner {
+    cancelled: Arc<AtomicBool>,
+    dead: bool,
+}
+
+impl RecvTransport for RaceInner {
+    fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
+        if self.dead {
+            return Err(TransportError::Broken {
+                msg: "dead on arrival".into(),
+                errno_code: None,
+            });
+        }
+        buf[0] = 1;
+        Ok(1)
+    }
+
+    fn max_payload(&self) -> usize {
+        1316
+    }
+
+    fn is_alive(&self) -> bool {
+        !self.dead && !self.cancelled.load(Ordering::SeqCst)
+    }
+
+    fn cancel_handle(&self) -> Option<Arc<dyn TransportCancel + Send + Sync>> {
+        Some(Arc::new(FlagCancel(Arc::clone(&self.cancelled))))
+    }
+}
+
+struct FlagCancel(Arc<AtomicBool>);
+
+impl TransportCancel for FlagCancel {
+    fn cancel(&self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
+/// CORR-02: a cancel that lands *while the factory runs* must not be lost.
+/// The factory here succeeds after the cancel, so the wrapper holds a
+/// perfectly healthy fresh connection that the caller has already asked it
+/// to abandon: it must fire that connection's wake handle and report the
+/// caller-initiated close instead of delivering its bytes.
+#[test]
+fn factory_success_after_cancel_is_not_delivered() {
+    let fresh_flag = Arc::new(AtomicBool::new(false));
+    // The managed transport's own cancel handle, handed to the factory
+    // closure through a cell because it only exists after construction.
+    let handle_cell: Arc<Mutex<Option<Arc<dyn TransportCancel + Send + Sync>>>> =
+        Arc::new(Mutex::new(None));
+
+    let cell = Arc::clone(&handle_cell);
+    let flag = Arc::clone(&fresh_flag);
+    let factory: Box<dyn FnMut() -> Result<RaceInner, TransportError> + Send> =
+        Box::new(move || {
+            // Cancel lands while the factory is "accepting": after this
+            // returns, the wrapper must NOT read from the fresh connection.
+            cell.lock()
+                .unwrap()
+                .as_ref()
+                .expect("cancel handle installed before the first recv")
+                .cancel();
+            Ok(RaceInner {
+                cancelled: Arc::clone(&flag),
+                dead: false,
+            })
+        });
+
+    let policy = ReconnectPolicy {
+        max_attempts: Some(3),
+        backoff: BackoffStrategy::Constant(Duration::ZERO),
+        ..Default::default()
+    };
+    // The initial inner carries its OWN flag: `fresh_flag` must only be
+    // reachable through the connection the factory built, or the assertion
+    // below would pass on the pre-fix code.
+    let initial = RaceInner {
+        cancelled: Arc::new(AtomicBool::new(false)),
+        dead: true,
+    };
+    let mut managed = ManagedRecvTransport::new(initial, factory, policy);
+    *handle_cell.lock().unwrap() = managed.cancel_handle();
+
+    let mut buf = [0u8; 16];
+    let result = managed.recv_bytes(&mut buf);
+
+    assert!(
+        matches!(result, Err(TransportError::ExplicitClose)),
+        "bytes from a connection built after the cancel were delivered: {result:?}"
+    );
+    assert!(
+        fresh_flag.load(Ordering::SeqCst),
+        "the fresh inner's cancel handle must have fired"
     );
     assert!(
         !managed.is_alive(),

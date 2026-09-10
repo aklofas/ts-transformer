@@ -352,9 +352,9 @@ impl<T: Transport + 'static> ManagedTransport<T> {
     /// if the internal gap-buffer mutex has been poisoned by a previous panic.
     /// The poison signals a corrupted gap-buffer invariant (length tracking,
     /// ring cursors); proceeding would silently drop queued bytes. Caught by
-    /// `tst-c`'s `ffi_catch` as `TST_E_PANIC_CAUGHT` (-11). Recoverable-path
-    /// lock poisons (inner_cancel, inner-transport mutex) instead return
-    /// `Err(TransportError::Broken { .. })` — see Task 3 sites.
+    /// `tst-c`'s `ffi_catch` as `TST_E_PANIC_CAUGHT` (-11). The
+    /// recoverable-path lock poison (the inner-transport mutex) instead
+    /// returns `Err(TransportError::Broken { .. })` — see Task 3 sites.
     fn send_managed(&self, bytes: &[u8]) -> Result<(), TransportError> {
         if self.closed.load(std::sync::atomic::Ordering::Acquire) {
             return Err(TransportError::Closed);
