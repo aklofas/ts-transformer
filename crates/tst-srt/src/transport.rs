@@ -223,9 +223,9 @@ impl Transport for SrtTransport {
     }
 
     fn cancel_handle(&self) -> Option<Arc<dyn TransportCancel + Send + Sync>> {
-        self.socket.as_ref().map(|s| {
-            Arc::new(SrtCancel(s.cancel_handle())) as Arc<dyn TransportCancel + Send + Sync>
-        })
+        self.socket
+            .as_ref()
+            .map(|s| Arc::new(s.cancel_handle()) as Arc<dyn TransportCancel + Send + Sync>)
     }
 
     fn socket_stats(&self) -> Option<SocketStats> {
@@ -324,15 +324,6 @@ impl tst_core::transport::RecvTransport for SrtTransport {
 impl Drop for SrtTransport {
     fn drop(&mut self) {
         self.close();
-    }
-}
-
-/// Adapter: wraps `tst_core::SrtCancelHandle` as a `TransportCancel`.
-struct SrtCancel(tst_core::SrtCancelHandle);
-
-impl TransportCancel for SrtCancel {
-    fn cancel(&self) {
-        self.0.cancel();
     }
 }
 
