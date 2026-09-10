@@ -95,9 +95,7 @@ impl<'a> Iter<'a> {
         let (tag, after_tag) = match read_ber_oid(rest) {
             Ok(v) => v,
             Err(mut e) => {
-                if let KlvDecodeError::Truncated { offset, .. } = &mut e {
-                    *offset += start;
-                }
+                crate::klv::length::rebase_offset(&mut e, start);
                 self.finished = true;
                 return Some(Err(e));
             }
@@ -106,9 +104,7 @@ impl<'a> Iter<'a> {
         let (len, after_len) = match read_ber(after_tag) {
             Ok(v) => v,
             Err(mut e) => {
-                if let KlvDecodeError::Truncated { offset, .. } = &mut e {
-                    *offset += start + consumed_tag;
-                }
+                crate::klv::length::rebase_offset(&mut e, start + consumed_tag);
                 self.finished = true;
                 return Some(Err(e));
             }
@@ -252,5 +248,35 @@ mod tests {
         let f = it.next().unwrap().unwrap();
         assert_eq!(f.tag, 0x80);
         assert_eq!(f.value, &[0x42]);
+    }
+
+    #[test]
+    fn malformed_length_offset_is_body_absolute() {
+        // item 1: tag 5, len 1, 'A'   → 3 bytes;  item 2: tag 6, len byte 0x80 (indefinite)
+        let body = [0x05, 0x01, 0x41, 0x06, 0x80];
+        let mut it = Iter::local_set(&body);
+        assert!(it.next().unwrap().is_ok());
+        let e = it.next().unwrap().unwrap_err();
+        assert!(
+            matches!(e, KlvDecodeError::MalformedLength { offset: 4 }),
+            "got {e:?}"
+        );
+    }
+
+    #[test]
+    fn malformed_tag_offset_is_body_absolute() {
+        // item 1: tag 5, len 1, 'A' → 3 bytes; item 2: 6 continuation-set BER-OID
+        // bytes with no terminator (read_ber_oid's u32 path rejects >5 bytes) —
+        // same continuation-bit shape as `ber_oid_truncated_continuation` in
+        // length.rs, just long enough to hit the length cap instead of running
+        // out of buffer.
+        let body = [0x05, 0x01, 0x41, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80];
+        let mut it = Iter::local_set(&body);
+        assert!(it.next().unwrap().is_ok());
+        let e = it.next().unwrap().unwrap_err();
+        assert!(
+            matches!(e, KlvDecodeError::MalformedTag { offset: 3 }),
+            "got {e:?}"
+        );
     }
 }
