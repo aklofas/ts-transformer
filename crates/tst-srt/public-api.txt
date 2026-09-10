@@ -585,6 +585,7 @@ pub mod tst_srt::listener
 pub struct tst_srt::listener::Listener
 impl tst_srt::listener::Listener
 pub fn tst_srt::listener::Listener::accept(&mut self) -> core::result::Result<(tst_srt::socket::Socket, core::net::socket_addr::SocketAddr), tst_srt::error::AcceptError>
+pub fn tst_srt::listener::Listener::accept_one_cancellable(&tst_srt::config::ListenerConfig, &str, &tst_core::cancel::CancelSlot) -> core::result::Result<tst_srt::transport::SrtTransport, tst_core::transport::TransportError>
 pub fn tst_srt::listener::Listener::accept_timeout(&mut self, core::time::Duration) -> core::result::Result<(tst_srt::socket::Socket, core::net::socket_addr::SocketAddr), tst_srt::error::AcceptError>
 pub fn tst_srt::listener::Listener::bind_with(&tst_srt::config::ListenerConfig, impl std::net::socket_addr::ToSocketAddrs) -> core::result::Result<Self, tst_srt::error::BindError>
 pub fn tst_srt::listener::Listener::cancel_handle(&self) -> tst_core::cancel::SrtCancelHandle
@@ -1276,6 +1277,7 @@ impl !core::panic::unwind_safe::UnwindSafe for tst_srt::url::UrlError
 pub struct tst_srt::Listener
 impl tst_srt::listener::Listener
 pub fn tst_srt::listener::Listener::accept(&mut self) -> core::result::Result<(tst_srt::socket::Socket, core::net::socket_addr::SocketAddr), tst_srt::error::AcceptError>
+pub fn tst_srt::listener::Listener::accept_one_cancellable(&tst_srt::config::ListenerConfig, &str, &tst_core::cancel::CancelSlot) -> core::result::Result<tst_srt::transport::SrtTransport, tst_core::transport::TransportError>
 pub fn tst_srt::listener::Listener::accept_timeout(&mut self, core::time::Duration) -> core::result::Result<(tst_srt::socket::Socket, core::net::socket_addr::SocketAddr), tst_srt::error::AcceptError>
 pub fn tst_srt::listener::Listener::bind_with(&tst_srt::config::ListenerConfig, impl std::net::socket_addr::ToSocketAddrs) -> core::result::Result<Self, tst_srt::error::BindError>
 pub fn tst_srt::listener::Listener::cancel_handle(&self) -> tst_core::cancel::SrtCancelHandle
