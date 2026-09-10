@@ -829,9 +829,12 @@ impl PyManagedDemuxReceiver {
     /// reconnect; consumers should drop per-stream caches on receipt
     /// and rebuild from the next `ProgramMap`.
     ///
-    /// Raises `StopIteration` on clean EOF; `SrtError` on transport-side
-    /// failure (reconnect budget exhausted); `DemuxError` on demuxer
-    /// failure.
+    /// Raises `StopIteration` on a clean end of stream — which includes an
+    /// exhausted reconnect budget: the decorator's give-up reaches the shell
+    /// as `EndOfStream`, so iteration ends cleanly and `end_reason()` reports
+    /// `RecvEndReason.RECONNECT_EXHAUSTED`. Raises `SrtError` on a
+    /// transport-side failure the decorator did not absorb (a cancel arrives
+    /// as `SrtError(CLOSED)`); `DemuxError` on demuxer failure.
     fn __next__(&self, py: Python<'_>) -> PyResult<PyObject> {
         let inner = self.inner.clone();
         let res: Result<Option<DemuxEvent>, tst_pipeline::DemuxReceiverError> =
