@@ -964,6 +964,16 @@ jobs:
       - name: check-fuzz-targets (manifest matches fuzz dirs)
         run: bash scripts/check/repo/fuzz-targets.sh
 
+      # The three fuzz crates are separate workspaces, so the root
+      # `cargo fmt --all -- --check` in the build job never sees them; two of
+      # them had drifted unformatted before this step existed. Same nightly
+      # toolchain the compile checks below use.
+      - name: cargo fmt --check (fuzz workspaces)
+        run: |
+          for d in crates/tst-core/fuzz crates/tst-srt/fuzz crates/tst-rtp/fuzz; do
+            (cd "$d" && cargo +nightly fmt --all -- --check)
+          done
+
       # `cargo +nightly fuzz check` (compile-only) catches fuzz-target
       # rot when a public API change breaks one. Compile-only because
       # corpus replay on every PR would burn CI minutes for low
