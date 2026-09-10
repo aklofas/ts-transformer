@@ -718,25 +718,29 @@ def test_recv_end_reason_cancelled_after_close_while_parked() -> None:
     time.sleep(0.3)
     assert receiver.end_reason() is None, "recorded a reason before the stream ended"
 
-    # From the main thread, with the iterator parked: close() must return
-    # (it cancels first, so it never waits for data that will not come).
-    receiver.close()
-    t.join(timeout=5.0)
-    if t.is_alive():
-        # Rescue: the peer is still connected, so a frame unparks the recv
-        # and lets the daemon thread finish rather than sitting in a native
-        # read at interpreter exit.
-        sender.send_video(NAL_IDR, pts=Pts90khz.from_raw(0), key_frame=True)
+    try:
+        # From the main thread, with the iterator parked: close() must return
+        # (it cancels first, so it never waits for data that will not come).
+        receiver.close()
         t.join(timeout=5.0)
-        sender.close()
-        pytest.fail("close() did not end the parked iteration within 5 s")
+        if t.is_alive():
+            # Rescue: the peer is still connected, so a frame unparks the
+            # recv and lets the daemon thread finish rather than sitting in
+            # a native read at interpreter exit.
+            sender.send_video(NAL_IDR, pts=Pts90khz.from_raw(0), key_frame=True)
+            t.join(timeout=5.0)
+            pytest.fail("close() did not end the parked iteration within 5 s")
 
-    assert outcome.get("end") == "SrtError", f"iteration ended via {outcome}"
-    assert outcome.get("kind") == SrtErrorKind.CLOSED, f"unexpected kind: {outcome}"
-    assert receiver.end_reason() == tstrans.srt.RecvEndReason.CANCELLED, (
-        f"expected CANCELLED, got {receiver.end_reason()!r}"
-    )
-    sender.close()
+        assert outcome.get("end") == "SrtError", f"iteration ended via {outcome}"
+        assert outcome.get("kind") == SrtErrorKind.CLOSED, f"unexpected kind: {outcome}"
+        assert receiver.end_reason() == tstrans.srt.RecvEndReason.CANCELLED, (
+            f"expected CANCELLED, got {receiver.end_reason()!r}"
+        )
+    finally:
+        # Both endpoints on every path (both close() calls are idempotent),
+        # so a failed assertion cannot leak a socket into the next test.
+        sender.close()
+        receiver.close()
 
 
 def test_recv_end_reason_reconnect_exhausted_on_peer_close() -> None:
