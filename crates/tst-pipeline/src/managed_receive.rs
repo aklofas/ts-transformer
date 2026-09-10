@@ -463,6 +463,14 @@ impl<R: RecvTransport> RecvTransport for ManagedRecvTransport<R> {
         // Un-publish the inner's wake handle, same as the tear-down site in
         // `recv_bytes`: this inner is being closed right here, so nothing
         // reachable through the slot can still need waking.
+        //
+        // DELIBERATE ASYMMETRY with the send-side
+        // `ManagedTransport::close` (`reconnect/mod.rs`), which does NOT
+        // clear: its clear sites are exactly the ones that retire the inner
+        // (`*guard = None`), and close leaves the inner in place, so its slot
+        // goes on mirroring it. Ours is terminal — the flags latched above
+        // make the entry gate refuse every later `recv_bytes`, so this inner
+        // is never read again. Don't "fix" either side to match the other.
         self.active.clear();
         if let Some(t) = self.inner.as_mut() {
             t.close();

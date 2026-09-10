@@ -816,6 +816,13 @@ impl<T: Transport + 'static> Transport for ManagedTransport<T> {
                 let _ = h.join();
             }
         }
+        // DELIBERATE ASYMMETRY with `ManagedRecvTransport::close`
+        // (`managed_receive.rs`), which DOES `self.active.clear()`: it closes
+        // AND retires its inner, so the slot would outlive what it wakes. Here
+        // the inner stays in the guard (only `close()`d), and the slot's
+        // invariant is that it mirrors `inner` — the only clear sites are the
+        // ones that set `*guard = None`. Don't "fix" this to match.
+        //
         // Mutex-poisoning policy (silent no-op on poison): close on a poisoned
         // state is naturally a no-op — the inner transport is already in an
         // unknown state and close-attempt would compound the problem. The
