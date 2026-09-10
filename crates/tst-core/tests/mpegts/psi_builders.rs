@@ -9,6 +9,12 @@
 /// pmt_pid)`.
 pub(crate) fn build_pat_section(version: u8, programs: &[(u16, u16)]) -> Vec<u8> {
     let section_length = 5 + 4 * programs.len() + 4;
+    // 12-bit field: a silent truncation would still CRC-check, so refuse
+    // loudly instead of handing a test a malformed section.
+    assert!(
+        section_length <= 0x0FFF,
+        "PAT section_length {section_length} exceeds the 12-bit field"
+    );
     let mut s = Vec::with_capacity(3 + section_length);
     s.push(0x00); // table_id = PAT
     s.push(0xB0 | ((section_length >> 8) as u8 & 0x0F)); // ssi=1, reserved, length hi
@@ -36,6 +42,10 @@ pub(crate) fn build_pmt_section(
 ) -> Vec<u8> {
     let stream_loop_len: usize = streams.iter().map(|(_, _, d)| 5 + d.len()).sum();
     let section_length = 9 + stream_loop_len + 4;
+    assert!(
+        section_length <= 0x0FFF,
+        "PMT section_length {section_length} exceeds the 12-bit field"
+    );
     let mut s = Vec::with_capacity(3 + section_length);
     s.push(0x02); // table_id = PMT
     s.push(0xB0 | ((section_length >> 8) as u8 & 0x0F));
