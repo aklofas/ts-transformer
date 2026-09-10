@@ -28,18 +28,33 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   nal_len, length_size }`.
 - **`DemuxerConfig::unwrap_timestamps`** (default `false`) +
   `DemuxerConfigBuilder::unwrap_timestamps` — opt-in per-PID unwrap of
-  the demuxer's raw 33-bit 90 kHz PTS/DTS into a monotonic `i64`
-  timeline, applied uniformly to `DemuxEvent::Sample` and
-  `DemuxEvent::Metadata`. The offset is never rebased to zero, so a
-  video PID and a KLV PID sharing one wire clock stay directly
-  comparable across the ~26.5 h rollover — this is what lets a consumer
-  pair KLV to video frames by PTS on a long-running stream. DTS
-  unwraps against its own PES's PTS rather than the shared per-PID
-  offset, so a DTS that straddles the wrap boundary (DTS still
-  pre-wrap while its PES's PTS has already wrapped) lands in the
-  correct epoch instead of over-shifting by a full `1 << 33`. The
-  accumulator resets alongside the rest of the per-PID parse state on
-  `Demuxer::reset_sync` — a reconnect restarts the unwrap timeline.
+  the demuxer's raw 33-bit 90 kHz PTS/DTS onto a continuous `i64`
+  timeline that carries across the ~26.5 h rollover, applied uniformly
+  to `DemuxEvent::Sample` and `DemuxEvent::Metadata`. Each sample's
+  signed wrap-aware delta accumulates onto the previous unwrapped
+  value, so a genuine out-of-order arrival — including a pre-wrap PTS
+  delivered *after* the wrap — steps back by its true distance instead
+  of being read as a second wrap (the emitted timeline is continuous,
+  and non-monotonic exactly where the wire is reordered). The timeline
+  is never rebased to zero, so a video PID and a KLV PID **of the same
+  program** stay directly comparable across the rollover — this is what
+  lets a consumer pair KLV to video frames by PTS on a long-running
+  stream. A PID whose first sample arrives after its program's clock
+  has already wrapped anchors onto that program's running clock rather
+  than landing a full `1 << 33` below its siblings; independent
+  programs are never cross-anchored, each carrying its own time base
+  (ITU-T H.222.0 §2.4.3.5). DTS unwraps against its own PES's PTS
+  rather than the PID's derived offset, so a DTS that straddles the
+  wrap boundary (DTS still pre-wrap while its PES's PTS has already
+  wrapped) lands in the correct epoch instead of over-shifting by a
+  full `1 << 33`; a DTS on a PES that carries no PTS (spec-illegal,
+  defensively tolerated) reuses the PID's current derived offset, so
+  one following a reordered pre-wrap PTS is emitted pre-wrap. The
+  accumulators — per-PID and per-program alike — reset alongside the
+  rest of the per-PID parse state on `Demuxer::reset_sync` (a reconnect
+  restarts the unwrap timeline), and are dropped for a PID that leaves
+  the PMT or a program that leaves the PAT so a re-used number never
+  inherits a stale epoch.
 - **`tst-pipeline` recv-side stream-end reason** — `RecvEndReason`
   (`EndOfStream` / `ReconnectExhausted` / `Cancelled`) +
   `RecvEndReasonHandle` (first-writer-wins, readable after the owning
