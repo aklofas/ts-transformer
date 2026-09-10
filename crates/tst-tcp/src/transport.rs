@@ -5,7 +5,7 @@ use std::net::{SocketAddr, TcpStream};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tst_core::transport::{RecvTransport, SocketStats, Transport, TransportError};
+use tst_core::transport::{RecvTransport, SocketStats, Transport, TransportCancel, TransportError};
 
 use crate::config::SocketConfig;
 use crate::error::TcpError;
@@ -86,6 +86,12 @@ impl TcpCancelHandle {
     /// `true` if [`Self::cancel`] has been called on any clone of this handle.
     pub fn is_cancelled(&self) -> bool {
         !self.alive.load(Ordering::Acquire)
+    }
+}
+
+impl TransportCancel for TcpCancelHandle {
+    fn cancel(&self) {
+        TcpCancelHandle::cancel(self)
     }
 }
 
@@ -338,6 +344,10 @@ impl Transport for TcpTransport {
         self.inner.shutdown();
     }
 
+    fn cancel_handle(&self) -> Option<Arc<dyn TransportCancel + Send + Sync>> {
+        Some(Arc::new(self.cancel_handle()))
+    }
+
     fn socket_stats(&self) -> Option<SocketStats> {
         Some(self.stats.to_socket_stats())
     }
@@ -389,6 +399,10 @@ impl RecvTransport for TcpTransport {
     fn close(&mut self) {
         self.alive.store(false, Ordering::Release);
         self.inner.shutdown();
+    }
+
+    fn cancel_handle(&self) -> Option<Arc<dyn TransportCancel + Send + Sync>> {
+        Some(Arc::new(self.cancel_handle()))
     }
 
     fn socket_stats(&self) -> Option<SocketStats> {
