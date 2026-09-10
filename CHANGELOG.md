@@ -204,10 +204,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - **CI: the three fuzz workspaces are rustfmt-checked.** They are separate
-  cargo workspaces, so the root `cargo fmt --check` never saw them and two
-  had drifted; the `fuzz-smoke` job (and the local pre-push runner's fuzz
-  phase) now run `cargo +nightly fmt --check` in each before the
-  compile checks. The drifted targets are reformatted in the same change.
+  cargo workspaces, so the root `cargo fmt --all -- --check` never saw them
+  and two had drifted; the `fuzz-smoke` job (and the local pre-push
+  runner's fuzz phase) now run `cargo fmt --all -- --check` with the
+  repo's pinned 1.85 toolchain in each of them before the nightly compile
+  checks. The drifted targets are reformatted in the same change.
 - **CI: the `#[non_exhaustive]` count guard now matches the attribute
   position only.** The rail's pattern was unanchored, so every comment
   or doc mention of the attribute counted too — 128 phantom lines that
