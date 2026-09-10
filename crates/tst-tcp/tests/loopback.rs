@@ -183,3 +183,77 @@ fn cancel_handle_unblocks_parked_recv() {
         result
     );
 }
+
+/// CORR-11: a peer that closes cleanly (FIN) must leave the transport dead.
+///
+/// `recv_bytes` reports the EOF as `Broken`, so the connection is over — but
+/// before the fix only the *send* path stored `alive = false`, leaving
+/// `is_alive()` reporting `true` after an observed terminal failure. Managed
+/// wrappers poll `is_alive()` to decide when to rebuild, so a stale `true`
+/// keeps a dead receiver in service.
+#[test]
+fn peer_eof_marks_transport_dead() {
+    let (mut client, server) = loopback_pair();
+    // Orderly close: the peer sends FIN, so the next read returns Ok(0).
+    drop(server);
+
+    let mut buf = [0u8; 188];
+    let result = client.recv_bytes(&mut buf);
+    assert!(
+        matches!(result, Err(TransportError::Broken { .. })),
+        "expected Broken on peer EOF, got {result:?}"
+    );
+    assert!(
+        !RecvTransport::is_alive(&client),
+        "peer EOF must mark the transport dead"
+    );
+    assert!(
+        !Transport::is_alive(&client),
+        "the send-side view of liveness must agree after a peer EOF"
+    );
+}
+
+/// CORR-11 twin: a *fatal read error* (not a clean EOF) must also leave the
+/// transport dead. `SO_LINGER 0` on the peer turns its close into an RST, so
+/// the client's next read fails with `ECONNRESET` — the terminal `Err(e)` arm
+/// of `recv_bytes` rather than the `Ok(0)` arm covered above.
+#[test]
+fn fatal_read_error_marks_transport_dead() {
+    let (mut client, server) = loopback_pair();
+    socket2::SockRef::from(&server)
+        .set_linger(Some(Duration::ZERO))
+        .expect("SO_LINGER 0 on the peer socket");
+    // Closing a SO_LINGER-0 socket sends RST instead of FIN.
+    drop(server);
+
+    // Watchdog: `recv_bytes` retries its ~100 ms poll indefinitely, so if the
+    // RST never materialises the read would park forever. Cancelling after 3 s
+    // turns that into `Closed`, which fails the `Broken` assertion below
+    // instead of hanging the test binary until nextest kills it.
+    let (done_tx, done_rx) = mpsc::channel::<()>();
+    let handle = client.cancel_handle();
+    let watchdog = thread::spawn(move || {
+        if done_rx.recv_timeout(Duration::from_secs(3)).is_err() {
+            handle.cancel();
+        }
+    });
+
+    let mut buf = [0u8; 188];
+    let result = client.recv_bytes(&mut buf);
+    let _ = done_tx.send(());
+    watchdog.join().unwrap();
+
+    match &result {
+        Err(TransportError::Broken { msg, .. }) => {
+            assert!(
+                msg.contains("read error"),
+                "expected a fatal read, got {msg}"
+            );
+        }
+        other => panic!("expected Broken(read error) after the peer's RST, got {other:?}"),
+    }
+    assert!(
+        !RecvTransport::is_alive(&client),
+        "a fatal read error must mark the transport dead"
+    );
+}
