@@ -137,6 +137,21 @@ pub struct Demuxer {
     /// `unwrap_dts_with_pts` / `unwrap_secondary_ts`. Cleared on
     /// [`Self::reset_sync`] alongside `last_pts_by_pid`.
     pub(super) unwrap_state: HashMap<u16, UnwrapState>,
+    /// Per-PROGRAM unwrap reference, keyed by `program_number` — the most
+    /// recent `(raw, unwrapped)` pair emitted on ANY PID of that program.
+    /// A PID's FIRST sample anchors against its program's reference rather
+    /// than at its own raw value, so a PID that starts flowing after the
+    /// program's 33-bit clock has already wrapped lands in the epoch its
+    /// siblings are already in (see [`Self::anchor_first_sample`]).
+    ///
+    /// Keyed per program because each program carries its own time base
+    /// (ITU-T H.222.0 §2.4.3.5) — programs are never cross-anchored. PIDs
+    /// with no owning program (PSI, or a PID whose PMT hasn't been parsed
+    /// yet) contribute nothing here and anchor at their raw value.
+    /// Populated and consulted only when
+    /// [`DemuxerConfig::unwrap_timestamps`] is `true`; cleared alongside
+    /// `unwrap_state` on [`Self::reset_sync`].
+    pub(super) program_clock: HashMap<u16, UnwrapState>,
     pub(super) pes: Reassembler,
     pub(super) queue: VecDeque<DemuxEvent>,
     pub(super) bytes_since_sync: usize,
@@ -246,6 +261,7 @@ impl Demuxer {
             last_pcr_by_pid: HashMap::new(),
             last_pts_by_pid: HashMap::new(),
             unwrap_state: HashMap::new(),
+            program_clock: HashMap::new(),
             pes: Reassembler::new(cap_per_pid, cap_total),
             queue: VecDeque::new(),
             bytes_since_sync: 0,
@@ -637,17 +653,50 @@ impl Demuxer {
         self.pid_to_program.get(&pid).copied().unwrap_or(0)
     }
 
+    /// Pick the unwrapped value for a PID's very FIRST observed sample.
+    ///
+    /// If the PID's program already has a reference (some sibling PID has
+    /// emitted an unwrapped PTS), the first sample is placed at that
+    /// reference's wrap-aware distance from it — so a PID that starts
+    /// flowing after the program's 33-bit clock has wrapped joins the
+    /// epoch its siblings are already in instead of sitting `1 << 33`
+    /// below them. Otherwise the raw value anchors the timeline as-is.
+    ///
+    /// Only the PID's OWN program is consulted: each program carries its
+    /// own time base (ITU-T H.222.0 §2.4.3.5), so a PID is never anchored
+    /// against an unrelated program's clock, and a PID with no owning
+    /// program (PSI, or a PMT not yet parsed) always anchors at raw.
+    fn anchor_first_sample(&self, pid: u16, raw_ticks: i64) -> i64 {
+        let Some(&prog) = self.pid_to_program.get(&pid) else {
+            return raw_ticks;
+        };
+        match self.program_clock.get(&prog) {
+            Some(reference) => {
+                reference
+                    .last_unwrapped
+                    .saturating_add(crate::mpegts::common::pts_diff_33bit(
+                        raw_ticks as u64,
+                        reference.last_raw as u64,
+                    ))
+            }
+            None => raw_ticks,
+        }
+    }
+
     /// Unwrap a raw 33-bit PTS (or a KLV Metadata PTS — same clock, same
     /// accumulator) for `pid` into a monotonic `i64` timeline, advancing
     /// the per-PID accumulator. Only called when
     /// `options.unwrap_timestamps` is `true` and a genuine (non-
     /// synthesized) PTS was observed.
     ///
-    /// The first observed value for a PID anchors the timeline (emitted
-    /// value == the raw value). Each subsequent value accumulates its
-    /// signed wrap-aware delta from the previous RAW value onto the
-    /// previous UNWRAPPED value:
-    /// `unwrapped = last_unwrapped + pts_diff_33bit(raw, last_raw)`.
+    /// The first observed value for a PID is placed by
+    /// [`Self::anchor_first_sample`]: at its program's running clock when
+    /// a sibling PID has already established one, otherwise at the raw
+    /// value. Each subsequent value accumulates its signed wrap-aware
+    /// delta from the previous RAW value onto the previous UNWRAPPED
+    /// value: `unwrapped = last_unwrapped + pts_diff_33bit(raw, last_raw)`.
+    /// Every emitted value also refreshes the PID's program reference so
+    /// the next late-starting sibling anchors against it.
     /// The timeline is never rebased to zero — see
     /// [`DemuxerConfig::unwrap_timestamps`](crate::mpegts::demux::DemuxerConfig::unwrap_timestamps)
     /// for why that matters for cross-PID (video vs. KLV) comparability.
@@ -668,25 +717,22 @@ impl Demuxer {
         raw: crate::mpegts::common::Pts90khz,
     ) -> crate::mpegts::common::Pts90khz {
         let raw_ticks = raw.as_ticks();
-        let Some(state) = self.unwrap_state.get(&pid).copied() else {
-            self.unwrap_state.insert(
-                pid,
-                UnwrapState {
-                    last_raw: raw_ticks,
-                    last_unwrapped: raw_ticks,
-                },
-            );
-            return crate::mpegts::common::Pts90khz::new(raw_ticks);
+        let unwrapped = match self.unwrap_state.get(&pid).copied() {
+            Some(state) => {
+                let delta =
+                    crate::mpegts::common::pts_diff_33bit(raw_ticks as u64, state.last_raw as u64);
+                state.last_unwrapped.saturating_add(delta)
+            }
+            None => self.anchor_first_sample(pid, raw_ticks),
         };
-        let delta = crate::mpegts::common::pts_diff_33bit(raw_ticks as u64, state.last_raw as u64);
-        let unwrapped = state.last_unwrapped.saturating_add(delta);
-        self.unwrap_state.insert(
-            pid,
-            UnwrapState {
-                last_raw: raw_ticks,
-                last_unwrapped: unwrapped,
-            },
-        );
+        let entry = UnwrapState {
+            last_raw: raw_ticks,
+            last_unwrapped: unwrapped,
+        };
+        self.unwrap_state.insert(pid, entry);
+        if let Some(&prog) = self.pid_to_program.get(&pid) {
+            self.program_clock.insert(prog, entry);
+        }
         crate::mpegts::common::Pts90khz::new(unwrapped)
     }
 
@@ -696,9 +742,11 @@ impl Demuxer {
     /// This distinction matters exactly at a wrap: the 33-bit boundary
     /// can fall BETWEEN one AU's DTS and PTS (DTS ≤ PTS always, so DTS
     /// can still be in the pre-wrap epoch while PTS has already
-    /// wrapped). Applying [`Self::unwrap_pts`]'s just-advanced offset
-    /// directly to the DTS would then put it a full `1 << 33` epoch too
-    /// high — this method instead measures the DTS's wrap-aware
+    /// wrapped). Applying this PES's own derived offset
+    /// (`unwrapped_pts - pts_raw` — the `1 << 33` gap
+    /// [`Self::unwrap_pts`] just opened for the wrapped PTS) directly to
+    /// the DTS would then put it a full `1 << 33` epoch too high —
+    /// this method instead measures the DTS's wrap-aware
     /// distance from its own PES's raw PTS (via
     /// [`crate::mpegts::common::pts_diff_33bit`]) and adds that to the
     /// *unwrapped* PTS, so the result lands in the correct epoch
@@ -847,6 +895,7 @@ impl Demuxer {
         // `DemuxerConfig::unwrap_timestamps`) — stale offsets from the
         // dead connection must not splice into the new one's epoch.
         self.unwrap_state.clear();
+        self.program_clock.clear();
         // Drop all in-flight PES reassembly state. A new reassembler
         // with the same caps replaces it (Reassembler exposes no
         // public reset method; constructing fresh is the canonical
@@ -3875,10 +3924,53 @@ mod tests {
     fn unwrap_pts_is_per_pid() {
         let mut d = Demuxer::new();
         let _ = d.unwrap_pts(0x100, Pts90khz::new(500_000));
-        // A different PID's first observation anchors independently —
-        // untouched by PID 0x100's already-established state.
+        // Neither PID is owned by a known program here (no PMT parsed),
+        // so the second PID's first observation anchors at its own raw
+        // value — untouched by PID 0x100's already-established state.
         let out = d.unwrap_pts(0x200, Pts90khz::new(1_000));
         assert_eq!(out.as_ticks(), 1_000);
+    }
+
+    #[test]
+    fn unwrap_pts_first_sample_anchors_to_its_programs_clock() {
+        let mut d = Demuxer::new();
+        d.pid_to_program.insert(0x100, 1);
+        d.pid_to_program.insert(0x101, 1);
+
+        // PID 0x100 establishes program 1's timeline and wraps.
+        let raw1 = (1i64 << 33) - 100;
+        let _ = d.unwrap_pts(0x100, Pts90khz::new(raw1));
+        let wrapped = d.unwrap_pts(0x100, Pts90khz::new(100));
+        assert_eq!(wrapped.as_ticks(), (1i64 << 33) + 100);
+
+        // PID 0x101's FIRST sample, at the same post-wrap raw instant,
+        // joins the program's epoch rather than anchoring at raw 100.
+        let out = d.unwrap_pts(0x101, Pts90khz::new(100));
+        assert_eq!(out.as_ticks(), (1i64 << 33) + 100);
+        assert_eq!(
+            d.unwrap_state.get(&0x101),
+            Some(&UnwrapState {
+                last_raw: 100,
+                last_unwrapped: (1i64 << 33) + 100,
+            })
+        );
+    }
+
+    #[test]
+    fn unwrap_pts_first_sample_never_anchors_across_programs() {
+        let mut d = Demuxer::new();
+        d.pid_to_program.insert(0x100, 1);
+        d.pid_to_program.insert(0x200, 2);
+
+        // Program 1 wraps; program 2 has no timeline of its own yet.
+        let raw1 = (1i64 << 33) - 100;
+        let _ = d.unwrap_pts(0x100, Pts90khz::new(raw1));
+        let _ = d.unwrap_pts(0x100, Pts90khz::new(100));
+
+        // Each program carries its own time base (H.222.0 §2.4.3.5) —
+        // program 2 must anchor at raw, not inherit program 1's epoch.
+        let out = d.unwrap_pts(0x200, Pts90khz::new(100));
+        assert_eq!(out.as_ticks(), 100);
     }
 
     #[test]

@@ -300,6 +300,13 @@ fn reordered_pts_across_wrap_does_not_double_the_epoch() {
     }
     let ts_buf = drain(&mut mux);
 
+    // Default off: byte-for-byte today's behavior — the raw wire values
+    // come through unchanged, reorder and all.
+    assert_eq!(
+        video_pts(&demux_all(&ts_buf, false), 0x100),
+        vec![WRAP - 100, 100, WRAP - 50, 200]
+    );
+
     let got = video_pts(&demux_all(&ts_buf, true), 0x100);
     assert_eq!(
         got,
@@ -392,4 +399,113 @@ fn video_and_klv_pids_share_one_wrap_aware_clock() {
     );
     assert_eq!(video[1], WRAP + shared_raw2);
     assert!(video[1] > video[0] && klv_out[1] > klv_out[0]);
+}
+
+/// Test F (CORR-06) — a PID whose FIRST sample arrives after the
+/// program's wire clock has already wrapped must anchor onto the
+/// program's running timeline, not at its own raw (post-wrap, small)
+/// value. Video on PID 0x100 crosses the boundary first (`W-100` then
+/// `100`); the KLV PID 0x101 in the SAME program starts flowing only at
+/// the shared post-wrap instant `100`. Anchoring it at raw would strand
+/// it a full epoch BELOW the video sample it was sampled with, breaking
+/// the cross-PID comparability the knob documents.
+#[test]
+fn late_starting_pid_anchors_to_its_programs_running_clock() {
+    let cfg = {
+        let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+        prog.add_video(0x100, VideoCodec::H264);
+        prog.add_klv(
+            0x101,
+            KlvStreamType::PrivateData,
+            /* carries_pts= */ true,
+        );
+        let mut b = MuxerConfig::builder();
+        b.add_program(prog.build());
+        b.build().unwrap()
+    };
+    let mut mux = Muxer::new(cfg).unwrap();
+    let au = minimal_h264_au();
+    let klv = minimal_klv();
+
+    // Drain after each push so the wire order is unambiguous: both video
+    // samples (and therefore the program's wrap) precede the KLV PID's
+    // very first sample.
+    let mut ts_buf = Vec::new();
+    mux.push_video(&au, Pts90khz::new(WRAP - 100), true)
+        .unwrap();
+    ts_buf.extend_from_slice(&drain(&mut mux));
+    mux.push_video(&au, Pts90khz::new(100), true).unwrap();
+    ts_buf.extend_from_slice(&drain(&mut mux));
+    mux.push_klv(&klv, Pts90khz::new(100), 0x00).unwrap();
+    ts_buf.extend_from_slice(&drain(&mut mux));
+
+    let events = demux_all(&ts_buf, true);
+    let video = video_pts(&events, 0x100);
+    let klv_out = klv_pts(&events, 0x101);
+
+    assert_eq!(
+        video,
+        vec![WRAP - 100, WRAP + 100],
+        "test setup: the video PID must establish the program's post-wrap epoch first"
+    );
+    assert_eq!(
+        klv_out,
+        vec![WRAP + 100],
+        "a late-starting PID must anchor onto its program's running clock, \
+         not one epoch below it at its own raw value"
+    );
+    assert_eq!(
+        klv_out[0], video[1],
+        "KLV sampled at the same wire instant as the video frame must compare equal"
+    );
+
+    // Knob off: byte-for-byte today's behavior — raw wire values only.
+    let off = demux_all(&ts_buf, false);
+    assert_eq!(video_pts(&off, 0x100), vec![WRAP - 100, 100]);
+    assert_eq!(klv_pts(&off, 0x101), vec![100]);
+}
+
+/// Test G (CORR-06 control) — programs are independent time bases
+/// (ITU-T H.222.0 §2.4.3.5), so the per-program anchor must NEVER cross
+/// program boundaries. Program 1's video wraps; program 2's video then
+/// starts for the first time at a small raw value. Program 2 must anchor
+/// at its own raw value — inheriting program 1's epoch would invent a
+/// ~26.5 h offset out of thin air.
+#[test]
+fn independent_programs_do_not_share_an_anchor() {
+    let cfg = {
+        let mut prog1 = MuxerProgramConfigBuilder::new(1, 0x1000);
+        prog1.add_video(0x1011, VideoCodec::H264);
+        let mut prog2 = MuxerProgramConfigBuilder::new(2, 0x1100);
+        prog2.add_video(0x1111, VideoCodec::H264);
+        let mut b = MuxerConfig::builder();
+        b.add_program(prog1.build());
+        b.add_program(prog2.build());
+        b.build().unwrap()
+    };
+    let mut mux = Muxer::new(cfg).unwrap();
+    let au = minimal_h264_au();
+    let p1_video = mux.video_handles_for_program(1).unwrap()[0];
+    let p2_video = mux.video_handles_for_program(2).unwrap()[0];
+
+    // Program 1 wraps; only afterwards does program 2 emit anything.
+    let mut ts_buf = Vec::new();
+    mux.push_video_to(p1_video, &au, Pts90khz::new(WRAP - 100), true)
+        .unwrap();
+    ts_buf.extend_from_slice(&drain(&mut mux));
+    mux.push_video_to(p1_video, &au, Pts90khz::new(100), true)
+        .unwrap();
+    ts_buf.extend_from_slice(&drain(&mut mux));
+    mux.push_video_to(p2_video, &au, Pts90khz::new(100), true)
+        .unwrap();
+    ts_buf.extend_from_slice(&drain(&mut mux));
+
+    let events = demux_all(&ts_buf, true);
+    assert_eq!(video_pts(&events, 0x1011), vec![WRAP - 100, WRAP + 100]);
+    assert_eq!(
+        video_pts(&events, 0x1111),
+        vec![100],
+        "program 2 has its own time base — it must anchor at its own raw \
+         value, never inherit program 1's epoch"
+    );
 }

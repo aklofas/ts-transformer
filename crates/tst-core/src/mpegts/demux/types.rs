@@ -211,18 +211,32 @@ pub struct DemuxerConfig {
     ///
     /// When `true`, a per-PID accumulator carries each sample's signed
     /// wrap-aware delta from the previous raw value onto the previous
-    /// unwrapped value. A forward wrap therefore advances the timeline
-    /// by a full `1 << 33`, while a genuine backward step — an
-    /// out-of-order arrival, including a pre-wrap PTS delivered *after*
-    /// the wrap — steps back by its true distance instead of being
-    /// mistaken for another wrap (the emitted value is then allowed to
-    /// be non-monotonic, correctly reflecting the reorder). The first
-    /// observed PTS on a PID anchors the timeline (emitted value == the
-    /// raw value). The timeline is never rebased to zero, so a video PID
-    /// and a KLV PID sharing one 33-bit wire clock stay directly
-    /// comparable across the whole session — this is what lets a
-    /// consumer pair KLV to video frames by PTS on a long-running stream
-    /// that crosses the rollover.
+    /// unwrapped value. Crossing the rollover therefore grows the PID's
+    /// derived offset (`emitted - raw`) by a full `1 << 33` while the
+    /// emitted value itself moves only by the samples' true distance,
+    /// and a genuine backward step — an out-of-order arrival, including
+    /// a pre-wrap PTS delivered *after* the wrap — steps back by its
+    /// true distance instead of being mistaken for another wrap (the
+    /// emitted value is then allowed to be non-monotonic, correctly
+    /// reflecting the reorder).
+    ///
+    /// The timeline is never rebased to zero, so PIDs **of the same
+    /// program** stay directly comparable across the whole session —
+    /// this is what lets a consumer pair KLV to video frames by PTS on a
+    /// long-running stream that crosses the rollover. The first PTS
+    /// observed on a PID anchors that PID: at the raw value when the
+    /// program has no running timeline yet, otherwise onto the
+    /// program's, so a PID whose first sample arrives after the
+    /// program's clock has wrapped is placed in the epoch its siblings
+    /// are already in rather than a full `1 << 33` below them.
+    /// Independent programs are never cross-anchored — each program
+    /// carries its own time base (ITU-T H.222.0 §2.4.3.5).
+    ///
+    /// Accumulation saturates rather than overflowing: the full `i64`
+    /// range spans about `2^31` rollovers (~6.5 million years of wall
+    /// clock at 90 kHz), and a timeline anchored somewhere in
+    /// `0..2^33` still has roughly half of that ahead of it — the
+    /// saturation is a formality, not a reachable operating point.
     ///
     /// DTS unwraps against its own PES's PTS rather than the shared
     /// per-PID offset, so a DTS that straddles the wrap boundary (DTS
@@ -232,7 +246,8 @@ pub struct DemuxerConfig {
     /// [`NonConformantIssue::MissingRequiredPts`](crate::mpegts::demux::NonConformantIssue::MissingRequiredPts))
     /// is never fed to the accumulator.
     ///
-    /// The accumulator resets alongside all other per-PID parse state on
+    /// The accumulators — per-PID and per-program alike — reset
+    /// alongside all other per-PID parse state on
     /// [`Demuxer::reset_sync`](crate::mpegts::demux::Demuxer::reset_sync)
     /// — a reconnect restarts the unwrap timeline.
     ///
