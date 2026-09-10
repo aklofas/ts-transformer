@@ -41,8 +41,9 @@ import org.tstrans.mpegts.DemuxerConfig;
  *
  * <p><b>Thread safety:</b> a single {@code ManagedDemuxReceiver} is NOT
  * thread-safe and is deliberately NOT {@code synchronized}. Iterate from one
- * thread; the only sanctioned cross-thread operation is {@link #cancelHandle()}'s
- * {@code cancel()}, which wakes a thread parked in iteration.
+ * thread; the sanctioned cross-thread operations are {@link #cancelHandle()}'s
+ * {@code cancel()} and {@link #close()}, both of which wake a thread parked in
+ * iteration.
  *
  * <p><b>Stats:</b> both {@link #socketStats()} and {@link #srtStats()} return a
  * {@link SocketStats} — {@code srtStats()} returns the SAME value as
@@ -286,14 +287,16 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
     }
 
     /**
-     * Close the receiver. Closes the underlying libsrt socket and stops further
-     * reconnects. Idempotent — subsequent calls are no-ops.
+     * Close the receiver. Cancels first — fires the same cancel target
+     * {@link #cancelHandle()} hands out — then closes the underlying libsrt
+     * socket and stops further reconnects. Idempotent — subsequent calls are
+     * no-ops.
      *
-     * <p>If a thread is parked in iteration ({@code next()}), {@code close()}
-     * blocks until that call returns — it acquires the receiver's resource lock,
-     * which the parked recv holds. Unlike the rtp receiver, srt {@code close()}
-     * does NOT itself wake a parked recv; to unblock it from another thread, call
-     * {@link #cancelHandle()}{@code .cancel()} first.
+     * <p>If another thread is parked in iteration ({@code next()}), the cancel
+     * wakes it: that iteration ends with {@code SrtException(CLOSED)} and records
+     * {@link RecvEndReason#CANCELLED}, and {@code close()} completes as soon as
+     * the parked call has released the receiver. Same contract as the C ABI's
+     * {@code tst_managed_demux_receiver_close} and tst-py's {@code close()}.
      */
     @Override public void close() { super.close(); }
 
@@ -304,8 +307,9 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
      * <p>Recorded once, first-writer-wins, by the iteration itself at the moment
      * it observes the terminal condition — so read it <em>after</em> iteration
      * ends to learn why: {@link RecvEndReason#CANCELLED} when
-     * {@link #cancelHandle()}{@code .cancel()} stopped it (a bare {@link #close()}
-     * does not wake a parked recv, so it records nothing on its own),
+     * {@link #cancelHandle()}{@code .cancel()} or a {@link #close()} from another
+     * thread stopped it ({@code close()} cancels first; a close with no iteration
+     * in flight ends nothing and so records nothing),
      * {@link RecvEndReason#RECONNECT_EXHAUSTED} when the
      * {@link ReconnectPolicy} budget ran out. See {@link RecvEndReason} for why
      * {@link RecvEndReason#END_OF_STREAM} does not occur here.

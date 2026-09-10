@@ -203,6 +203,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **JVM: `ManagedDemuxReceiver.close()` and `ManagedReceiver.close()` now
+  cancel first.** Both used to take the receiver's resource lock and wait
+  for a `next()` / `recvBytes()` parked on another thread to return on its
+  own — with a silent peer, forever — and a bare `close()` therefore never
+  recorded an end reason. They now fire the receiver's cancel target
+  before taking that lock, so the parked call ends promptly with
+  `SrtException(CLOSED)` and `ManagedDemuxReceiver` records
+  `RecvEndReason.CANCELLED`, which `endReason()` keeps reporting after
+  `close()`. This is the contract the C ABI
+  (`tst_managed_*_receiver_close`) and tst-py's `close()` already had; the
+  JVM was the odd one out. A `close()` with no receive in flight is
+  unchanged. Parity tests on both bindings.
 - **CI: the `#[non_exhaustive]` count guard now matches the attribute
   position only.** The rail's pattern was unanchored, so every comment
   or doc mention of the attribute counted too — 128 phantom lines that

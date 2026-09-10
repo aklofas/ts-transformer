@@ -544,8 +544,14 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedReceiver_nFromUrl(
         let target = tst_core::transport::RecvTransport::cancel_handle(&managed)
             .expect("ManagedRecvTransport::cancel_handle is always Some");
         let inner = PlReceiver::new(managed, ReceiverConfig::default());
-        REGISTRY_RECEIVER.insert_with_target(JniManagedReceiver { inner, reconnects }, target)
-            as jlong
+        // Cancel-on-close: `nClose` fires `target` before taking the resource
+        // lock, so a `recvBytes()` parked on another thread ends with CLOSED
+        // instead of holding `close()` hostage (tst-py / C ABI contract).
+        REGISTRY_RECEIVER.insert_cancel_on_close(
+            JniManagedReceiver { inner, reconnects },
+            target,
+            None,
+        ) as jlong
     })
 }
 

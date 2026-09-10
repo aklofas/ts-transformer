@@ -636,7 +636,9 @@ Two of the three members are reachable on the managed-SRT path today:
 `RECONNECT_EXHAUSTED` (the reconnect budget ran out — also what a plain
 peer close reports under a zero-retry policy, because a peer FIN reaches
 the reconnect decorator as a retryable break) and `CANCELLED` (you fired
-`cancel_handle()` or `close()`). `END_OF_STREAM` is reserved for a future
+`cancel_handle()`, or called `close()` from another thread while `__next__`
+was parked — `close()` cancels first, the same contract as the JVM and C
+receivers). `END_OF_STREAM` is reserved for a future
 transport that can signal a clean end-of-stream distinct from budget
 exhaustion. The value is recorded first-writer-wins and read from a
 lock-free cell captured at construction, so `end_reason()` still answers

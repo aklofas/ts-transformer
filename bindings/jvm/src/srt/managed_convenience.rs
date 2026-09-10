@@ -931,14 +931,18 @@ fn build_demux_from_url(
     // reason: `nEndReason` must read it without the resource lock a parked
     // `nNext` holds, and `nClose` must still have it once the entry is gone.
     let end_reason = receiver.end_reason_handle();
-    REGISTRY_DEMUX.insert_with_target_and_end_reason(
+    // Cancel-on-close: `nClose` fires `target` before taking the resource lock,
+    // so a `next()` parked on another thread ends with CLOSED (recording
+    // CANCELLED) instead of holding `close()` hostage — the contract tst-py and
+    // the C ABI's `tst_managed_demux_receiver_close` already have.
+    REGISTRY_DEMUX.insert_cancel_on_close(
         JniManagedDemuxReceiver {
             inner: receiver,
             factory_attempts: attempts,
             end_reason: end_reason.clone(),
         },
         target,
-        end_reason,
+        Some(end_reason),
     ) as jlong
 }
 
