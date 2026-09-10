@@ -55,7 +55,7 @@ use pyo3::types::PyBytes;
 
 use tst_core::transport::{Transport, TransportCancel, TransportError};
 use tst_pipeline::{
-    ManagedRecvTransport, ManagedTransport, Receiver as PlReceiver, ReceiverConfig,
+    FactoryCancel, ManagedRecvTransport, ManagedTransport, Receiver as PlReceiver, ReceiverConfig,
     Sender as PlSender, SenderConfig,
 };
 use tst_srt::{Listener, ListenerConfig, Socket, SocketConfig, SrtTransport, SrtUrl, url::Mode};
@@ -99,7 +99,16 @@ fn build_sender_transport(url: &str) -> Result<SrtTransport, TransportError> {
 /// Build a fresh listener-mode `SrtTransport` from a URL string. Used
 /// by the recv-side reconnect factory: every Broken/Closed event
 /// re-binds and re-accepts one incoming SRT handshake.
-fn build_receiver_transport(url: &str) -> Result<SrtTransport, TransportError> {
+///
+/// `slot` is the shared [`FactoryCancel`] the managed transport's cancel
+/// handle fires: `Listener::accept_one_cancellable` publishes the
+/// listener's wake handle into it around the accept, so a `cancel()`
+/// reaches a re-accept parked with no peer in sight instead of waiting
+/// for one to happen along.
+fn build_receiver_transport(
+    url: &str,
+    slot: &FactoryCancel,
+) -> Result<SrtTransport, TransportError> {
     let parsed = SrtUrl::parse(url).map_err(|e| TransportError::Broken {
         msg: format!("managed receiver factory: URL parse failed: {e}"),
         errno_code: None,
@@ -120,16 +129,7 @@ fn build_receiver_transport(url: &str) -> Result<SrtTransport, TransportError> {
     } else {
         crate::util::join_host_port(&parsed.host, parsed.port)
     };
-    let mut listener =
-        Listener::bind_with(&cfg, addr.as_str()).map_err(|e| TransportError::Broken {
-            msg: format!("managed receiver factory: bind failed: {e}"),
-            errno_code: None,
-        })?;
-    let (socket, _peer) = listener.accept().map_err(|e| TransportError::Broken {
-        msg: format!("managed receiver factory: accept failed: {e}"),
-        errno_code: None,
-    })?;
-    Ok(SrtTransport::new(socket))
+    Listener::accept_one_cancellable(&cfg, addr.as_str(), slot)
 }
 
 // ---------------------------------------------------------------------------
@@ -456,11 +456,19 @@ impl PyManagedReceiver {
         let policy_inner = policy.map(|p| p.inner.clone()).unwrap_or_default();
         let url_owned = url.to_string();
 
-        // Initial bind+accept. The `ManagedRecvTransport::new` takes
-        // an already-connected inner + a factory; the factory will
+        // Slot the reconnect factory publishes its listener wake handle
+        // into while it is parked in a re-accept; the managed transport's
+        // cancel handle fires it. The INITIAL accept below shares the same
+        // slot but stays uncancellable in practice — the cancel handle
+        // that could fire it does not exist until this constructor
+        // returns. Same shape as `ManagedDemuxReceiver`.
+        let factory_cancel = Arc::new(FactoryCancel::new());
+
+        // Initial bind+accept. `ManagedRecvTransport` takes an
+        // already-connected inner + a factory; the factory will
         // re-bind+re-accept on later breaks.
         let initial = py
-            .allow_threads(|| build_receiver_transport(&url_owned))
+            .allow_threads(|| build_receiver_transport(&url_owned, &factory_cancel))
             .map_err(|e| transport_error_to_pyerr(py, e))?;
 
         // FnMut closure for the recv-side factory. `ManagedRecvTransport`
@@ -468,10 +476,16 @@ impl PyManagedReceiver {
         // it lives entirely behind `&mut self` on the recv path).
         let factory: Box<dyn FnMut() -> Result<SrtTransport, TransportError> + Send> = {
             let url_for_factory = url_owned.clone();
-            Box::new(move || build_receiver_transport(&url_for_factory))
+            let fc = Arc::clone(&factory_cancel);
+            Box::new(move || build_receiver_transport(&url_for_factory, &fc))
         };
 
-        let managed = ManagedRecvTransport::new(initial, factory, policy_inner);
+        let managed = ManagedRecvTransport::new_with_factory_cancel(
+            initial,
+            factory,
+            policy_inner,
+            factory_cancel,
+        );
         let reconnects = managed.reconnects_handle();
 
         // Snapshot a cancel handle BEFORE moving managed into the
