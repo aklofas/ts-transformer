@@ -27,11 +27,14 @@ pub(crate) struct StartCode {
 /// Locate every Annex-B start code (`00 00 01` or `00 00 00 01`) in `buf`.
 ///
 /// The scan is greedy left-to-right and non-overlapping: each match
-/// consumes its own prefix bytes before the walk resumes. A 3-byte code
-/// is preferred at any position where both widths would match, so a run
-/// of more than three leading zeros (e.g. `00 00 00 00 01`) yields a
+/// consumes its own prefix bytes before the walk resumes. A run of more
+/// than three leading zeros (e.g. `00 00 00 00 01`) therefore yields a
 /// single code whose `prefix_start` skips the surplus zeros rather than
-/// attributing them to the prefix.
+/// attributing them to the prefix: neither width matches at the first
+/// zero of the run (the 3-byte form wants `01` where a `00` sits, and
+/// the 4-byte form wants it one byte further on), so the walk advances
+/// a byte and the 4-byte form matches there, leaving the surplus zero
+/// outside the prefix.
 pub(crate) fn start_codes(buf: &[u8]) -> Vec<StartCode> {
     let mut out = Vec::new();
     let mut i = 0;
