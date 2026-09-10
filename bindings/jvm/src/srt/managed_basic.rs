@@ -98,6 +98,10 @@ fn listener_bind_target(url: &str) -> Result<(String, ListenerConfig), Transport
     Ok((addr, cfg))
 }
 
+/// Bind a listener + accept one peer for the INITIAL open. The bare
+/// `accept()` here is deliberate and cannot be otherwise: `nFromUrl` has not
+/// returned yet, so no cancel handle exists to reach it with. Every
+/// re-accept goes through [`build_receiver_transport_cancellable`] instead.
 fn build_receiver_transport(url: &str) -> Result<SrtTransport, TransportError> {
     let (addr, cfg) = listener_bind_target(url)?;
     let mut listener =

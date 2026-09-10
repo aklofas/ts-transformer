@@ -17,8 +17,9 @@ import org.tstrans.SrtException;
 import org.tstrans.mpegts.DemuxEvent;
 
 /**
- * {@code cancel()} must wake a listener-mode {@link ManagedDemuxReceiver} whose
- * reconnect is parked in the re-accept after its peer disconnected.
+ * {@code cancel()} must wake a listener-mode {@link ManagedDemuxReceiver} — or
+ * its basic-bytes sibling {@link ManagedReceiver} — whose reconnect is parked in
+ * the re-accept after its peer disconnected.
  *
  * <p>JVM mirror of tst-c's {@code loopback_cancel_wakes_managed_listener_parked_in_reaccept}
  * and tst-py's {@code test_cancel_wakes_managed_listener_parked_in_reaccept}
@@ -53,6 +54,14 @@ import org.tstrans.mpegts.DemuxEvent;
  * duration of a native receive, so the call waited for a receive that — during
  * a re-accept — never returns. The cancel target is now captured at open and
  * read without that lease, so the call must return promptly.
+ *
+ * <p>{@link #cancelWakesManagedReceiverParkedInReaccept()} runs the same
+ * choreography against {@link ManagedReceiver}, the basic-bytes wrapper over
+ * {@code Receiver<ManagedRecvTransport<SrtTransport>>}. Its reconnect factory
+ * shares the {@code FactoryCancel} slot with the demux twin, but that is a
+ * separate JNI constructor and nothing pinned it: tst-py's matching wrapper was
+ * found still on the plain, uncancellable factory (deep-review CORR-05), so the
+ * JVM sibling gets its own regression lock here.
  */
 class SrtManagedListenerCancelTest {
     private static final int LATENCY_MS = 120;
@@ -206,6 +215,117 @@ class SrtManagedListenerCancelTest {
         assertTrue(wokeMs < 2_000, "cancel took " + wokeMs + " ms to wake the parked re-accept");
         assertTrue(end instanceof SrtException,
             "expected the iteration to end with SrtException(CLOSED), got " + end);
+        assertEquals(SrtException.Kind.CLOSED, ((SrtException) end).kind(),
+            "a caller-initiated cancel surfaces as CLOSED");
+        rx.close();
+    }
+
+    /**
+     * The {@link ManagedReceiver} twin of
+     * {@link #cancelWakesManagedListenerParkedInReaccept()}: a listener-mode
+     * basic-bytes managed receiver parked in its reconnect re-accept must be
+     * woken by {@code cancel()}.
+     *
+     * <p>The handle is taken BEFORE the reader starts receiving, which is the
+     * pattern the class doc recommends and the one a caller can always rely on.
+     * Same daemon-thread + rescue-peer shape as the demux twin, for the same
+     * reason: a JUnit {@code @Timeout} cannot interrupt a blocked native accept.
+     */
+    @Test
+    @Timeout(60) // safety net: a wedge fails instead of hanging the suite
+    void cancelWakesManagedReceiverParkedInReaccept() throws Exception {
+        assumeTrue(isLinux(),
+            "SRT live-socket test gated to Linux (same as the Rust/C twins)");
+        int port = freeUdpPort();
+        String listenUrl = "srt://:" + port + "?mode=listener&latency=" + LATENCY_MS;
+        String callerUrl = "srt://127.0.0.1:" + port + "?latency=" + LATENCY_MS;
+
+        CompletableFuture<ManagedReceiver> rxFuture = new CompletableFuture<>();
+        // How the receive loop ended: the throwable that stopped it.
+        CompletableFuture<Throwable> endFuture = new CompletableFuture<>();
+        // Released by main once it holds the cancel handle (see the class doc).
+        CountDownLatch startReceiving = new CountDownLatch(1);
+        // Raised by the reader on its first delivered TS packet, so the peer drop
+        // below happens against a link that has genuinely carried data.
+        CountDownLatch firstPacket = new CountDownLatch(1);
+
+        Thread reader = new Thread(() -> {
+            ManagedReceiver rx;
+            try {
+                rx = ManagedReceiver.fromUrl(listenUrl); // blocks until a peer connects
+            } catch (Exception ex) {
+                rxFuture.completeExceptionally(ex);
+                endFuture.complete(ex);
+                return;
+            }
+            rxFuture.complete(rx);
+            try {
+                startReceiving.await();
+                for (;;) {
+                    rx.recvBytes();
+                    firstPacket.countDown();
+                }
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                endFuture.complete(ie);
+            } catch (RuntimeException | SrtException e) {
+                endFuture.complete(e);
+            }
+        });
+        reader.setDaemon(true);
+        reader.start();
+
+        ManagedMuxSender sender = connectSender(callerUrl, 5_000);
+        ManagedReceiver rx = rxFuture.get(5, TimeUnit.SECONDS);
+        // Obtained before any receive is in flight — the handle a caller keeps
+        // for the whole session; it must survive every later reconnect.
+        CancelHandle cancel = rx.cancelHandle();
+        startReceiving.countDown();
+
+        // Keep frames flowing until a packet has actually been delivered, rather
+        // than sending a fixed few and hoping TSBPD released them in time (the
+        // starved-receiver flake class SrtManagedLiveTest documents).
+        for (int i = 0; i < 100 && firstPacket.getCount() > 0; i++) {
+            sender.sendVideo(syntheticH264Idr(), i * 3000L, i == 0);
+            Thread.sleep(20);
+        }
+        assertTrue(firstPacket.await(5, TimeUnit.SECONDS),
+            "the managed receiver never delivered a packet before the peer drop");
+
+        // Peer drop: the managed receiver re-enters its factory (bind + accept)
+        // after the default 100 ms backoff and parks there with no peer in sight.
+        // Close on a side daemon thread: libsrt's srt_close LINGERS.
+        Thread dropper = new Thread(sender::close);
+        dropper.setDaemon(true);
+        dropper.start();
+        Thread.sleep(1_000);
+
+        long t0 = System.nanoTime();
+        cancel.cancel();
+
+        Throwable end;
+        try {
+            end = endFuture.get(3, TimeUnit.SECONDS);
+        } catch (TimeoutException te) {
+            // Rescue: a new peer releases the accept so the daemon thread can be
+            // joined; the cancel already latched, so the reader then exits. Any
+            // failure inside the rescue must not mask the verdict.
+            try {
+                ManagedMuxSender rescue = connectSender(callerUrl, 5_000);
+                endFuture.get(5, TimeUnit.SECONDS);
+                rescue.close();
+            } catch (Exception ignored) {
+                // see above
+            }
+            fail("cancel() did not wake the managed receiver parked in re-accept within 3 s");
+            return;
+        }
+        long wokeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
+        reader.join(TimeUnit.SECONDS.toMillis(2));
+
+        assertTrue(wokeMs < 2_000, "cancel took " + wokeMs + " ms to wake the parked re-accept");
+        assertTrue(end instanceof SrtException,
+            "expected the receive loop to end with SrtException(CLOSED), got " + end);
         assertEquals(SrtException.Kind.CLOSED, ((SrtException) end).kind(),
             "a caller-initiated cancel surfaces as CLOSED");
         rx.close();
