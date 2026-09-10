@@ -336,9 +336,12 @@ pub const SRT_TS_BUNDLE_BYTES: usize = SRT_TS_BUNDLE_PACKETS * TS_PACKET_SIZE;
 /// 33-bit values that wrap to 0 at the H.222.0 §2.4.3.7 rollover
 /// (≈ every 26.5 h of 90 kHz). The one exception: when the opt-in
 /// [`DemuxerConfig::unwrap_timestamps`](crate::mpegts::demux::DemuxerConfig::unwrap_timestamps)
-/// is enabled, the demuxer's per-PID accumulator DOES use this function
-/// to detect wraps and accumulate a monotonic `i64` timeline, and the
-/// emitted pts/dts are monotonic rather than wrapping.
+/// is enabled, the demuxer's per-PID accumulator DOES use this function:
+/// it adds each sample's signed delta onto the previous unwrapped value,
+/// so the emitted `i64` pts/dts carry across the rollover instead of
+/// wrapping. The result is not monotonic by construction — a genuine
+/// out-of-order arrival yields a negative delta and steps the emitted
+/// value back by its true distance.
 pub fn pts_diff_33bit(now: u64, last: u64) -> i64 {
     const RANGE: u64 = 1u64 << 33;
     const HALF: u64 = 1u64 << 32;

@@ -688,7 +688,7 @@ impl Demuxer {
     }
 
     /// Unwrap a raw 33-bit PTS (or a KLV Metadata PTS — same clock, same
-    /// accumulator) for `pid` into a monotonic `i64` timeline, advancing
+    /// accumulator) for `pid` onto a continuous `i64` timeline, advancing
     /// the per-PID accumulator. Only called when
     /// `options.unwrap_timestamps` is `true` and a genuine (non-
     /// synthesized) PTS was observed.
@@ -3873,11 +3873,11 @@ mod tests {
     }
 
     #[test]
-    fn unwrap_pts_forward_progress_within_epoch_does_not_bump_offset() {
+    fn unwrap_pts_forward_progress_within_epoch_leaves_derived_offset_at_zero() {
         let mut d = Demuxer::new();
         let _ = d.unwrap_pts(0x100, Pts90khz::new(1_000));
         let out = d.unwrap_pts(0x100, Pts90khz::new(91_000));
-        assert_eq!(out.as_ticks(), 91_000, "no wrap — offset stays 0");
+        assert_eq!(out.as_ticks(), 91_000, "no wrap — derived offset stays 0");
         assert_eq!(
             d.unwrap_state.get(&0x100),
             Some(&UnwrapState {
@@ -3911,8 +3911,8 @@ mod tests {
         let mut d = Demuxer::new();
         let _ = d.unwrap_pts(0x100, Pts90khz::new(100_000));
         // A modest backward step (e.g. an out-of-order arrival) is not a
-        // wrap — offset stays 0 and the emitted value is non-monotonic,
-        // which correctly reflects the reorder.
+        // wrap — the derived offset stays 0 and the emitted value is
+        // non-monotonic, which correctly reflects the reorder.
         let out = d.unwrap_pts(0x100, Pts90khz::new(99_000));
         assert_eq!(out.as_ticks(), 99_000);
         assert_eq!(

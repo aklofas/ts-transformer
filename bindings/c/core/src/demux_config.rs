@@ -473,12 +473,17 @@ pub unsafe extern "C" fn tst_demux_config_set_lenient_psi_reassembly(
     })
 }
 
-/// Enable the opt-in monotonic PTS/DTS unwrap. `enable` is read as a C
-/// `bool` (any non-zero value enables). Default is `false` (raw wire
-/// PTS/DTS, matching today's behavior). See
+/// Enable the opt-in PTS/DTS unwrap. `enable` is read as a C `bool`
+/// (any non-zero value enables). Default is `false` (raw wire PTS/DTS,
+/// matching today's behavior). See
 /// `tst_core::mpegts::demux::DemuxerConfig::unwrap_timestamps` for the
-/// full unwrap semantics (per-PID monotonic timeline, DTS unwrapped
-/// against its own PES's PTS, reset on reconnect).
+/// full unwrap semantics: a per-PID accumulator adds each sample's
+/// signed wrap-aware delta onto the previous unwrapped value, so a
+/// genuine reorder steps back by its true distance instead of being
+/// read as another wrap; PIDs of the same program stay comparable
+/// because a PID starting late anchors onto its program's running
+/// clock; DTS unwraps against its own PES's PTS; and the state resets
+/// on reconnect and on PID/program topology changes.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` on null `cfg`.
 #[unsafe(no_mangle)]
