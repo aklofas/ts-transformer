@@ -133,7 +133,10 @@ pub fn decode_standalone(bytes: &[u8]) -> Result<RvtLs, KlvDecodeError> {
     // aborting the standalone CRC check here.
     let mut declared_crc: Option<(u32, usize)> = None; // (value, offset of value bytes within `bytes`)
     for r in Iter::local_set(body) {
-        let f = r?;
+        let f = r.map_err(|mut e| {
+            crate::klv::length::rebase_offset(&mut e, body_offset);
+            e
+        })?;
         if f.tag == 1 && f.value.len() == 4 {
             let mut a = [0u8; 4];
             a.copy_from_slice(f.value);
