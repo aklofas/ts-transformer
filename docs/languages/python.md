@@ -605,19 +605,6 @@ hand it to the thread that will do the cancelling — `recv_bytes` holds
 the object's mutable borrow for the whole blocking call, so asking for
 the handle while one is parked raises `RuntimeError: Already borrowed`.
 
-**Why did a managed session end?** `end_reason()` (on `ManagedDemuxReceiver`
-only — none of the other three managed shells expose it) answers with a
-`RecvEndReason` member once the receive loop has stopped for good:
-`END_OF_STREAM` (the peer sent a clean SRT end-of-stream),
-`RECONNECT_EXHAUSTED` (the `ReconnectPolicy`'s `max_attempts` budget ran
-out), or `CANCELLED` (`cancel_handle().cancel()` fired). Returns `None`
-before any of those — including while a reconnect is still in progress,
-which is not itself an ending. This is the recv-side analogue of the RTP
-`StreamEndReason` covered above: it exists specifically to tell a
-caller-initiated cancel apart from a budget-exhausted give-up, which
-otherwise both surface identically as `SrtError(CLOSED)` from the
-iterator.
-
 **Stats drift on the managed shells** (mirrors the JVM binding):
 `ManagedSender.srt_stats()` and `ManagedReceiver.srt_stats()` raise
 `SrtError(IO)` today — the managed transport exposes no SRT-rich shape, so
@@ -630,8 +617,10 @@ invocation. `ManagedDemuxReceiver.last_seen_micros(pid)` works the same
 as the plain `DemuxReceiver` above.
 
 **Why did the managed stream end?** `ManagedDemuxReceiver.end_reason()`
-returns a `tstrans.srt.RecvEndReason` once the receive session has ended,
-or `None` while it is still live:
+(only this shell exposes it — not `ManagedReceiver`, `ManagedSender`, or
+`ManagedMuxSender`) returns a `tstrans.srt.RecvEndReason` once the receive
+session has ended, or `None` while it is still live — including mid-reconnect,
+which is not itself an ending:
 
 ```python
 from tstrans.srt import ManagedDemuxReceiver, RecvEndReason
