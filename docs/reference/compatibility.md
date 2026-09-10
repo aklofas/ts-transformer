@@ -704,13 +704,13 @@ source of truth for this section; the current scope is:
 
 ## Fuzzing
 
-31 cargo-fuzz harnesses live in-tree (26 in `tst-core`, 4 in `tst-rtp`,
+32 cargo-fuzz harnesses live in-tree (27 in `tst-core`, 4 in `tst-rtp`,
 1 in `tst-srt`; inventory ground truth is
 `tests/coverage/fuzz-targets.toml`). CI compile-checks the harnesses
 nightly; deeper runs are local (`cargo +nightly fuzz run <target>`).
 
 OSS-Fuzz status: **onboarding artifacts exist under `oss-fuzz/`
-(Dockerfile + build script bundling all 31 harnesses), but the project
+(Dockerfile + build script bundling all 32 harnesses), but the project
 is not yet enrolled upstream — there is no continuous OSS-Fuzz fleet
 coverage today.** Enrollment is a planned maintainer-driven PR to
 `google/oss-fuzz`; the bundle requires a fresh local verification run

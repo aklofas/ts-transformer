@@ -11,7 +11,7 @@
 > updated figures (expect 15 targets / 13 seed corpora / 3 dicts).
 
 > **Subsequent change (2026-08-18):** the workspace fuzz inventory has since
-> grown to **31 targets** (26 in `tst-core`, 4 in `tst-rtp`, 1 in `tst-srt`
+> grown to **32 targets** (27 in `tst-core`, 4 in `tst-rtp`, 1 in `tst-srt`
 > — ground truth: `tests/coverage/fuzz-targets.toml` /
 > `find crates -path '*fuzz/fuzz_targets/*.rs'`). `build.sh` was updated the
 > same day to build + bundle all three crates and to hard-fail on any

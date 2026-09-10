@@ -45,12 +45,12 @@ git commit -m "Add ts-transformer project"
 git push origin main
 ```
 
-The PR review by Google's OSS-Fuzz maintainers usually completes within 1-2 business days if `check_build` passes locally. After merge, the OSS-Fuzz fleet starts fuzzing all bundled targets within 24 hours (currently 31: 26 in `tst-core`, 4 in `tst-rtp`, 1 in `tst-srt` — `build.sh` asserts the shipped-driver count against the `fuzz_targets/*.rs` inventory so this figure cannot silently drift).
+The PR review by Google's OSS-Fuzz maintainers usually completes within 1-2 business days if `check_build` passes locally. After merge, the OSS-Fuzz fleet starts fuzzing all bundled targets within 24 hours (currently 32: 27 in `tst-core`, 4 in `tst-rtp`, 1 in `tst-srt` — `build.sh` asserts the shipped-driver count against the `fuzz_targets/*.rs` inventory so this figure cannot silently drift).
 
 > **Status (2026-08-18):** submission has NOT happened yet — the project is
 > not enrolled upstream and there is no continuous OSS-Fuzz coverage today.
 > The last local `helper.py` verification (see `VERIFICATION.md`) predates
-> the target-inventory expansion to 31; re-run the full
+> the target-inventory expansion to 32; re-run the full
 > build_image/build_fuzzers/check_build/run_fuzzer sequence above before
 > opening the upstream PR.
 
