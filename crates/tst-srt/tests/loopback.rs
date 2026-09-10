@@ -22,6 +22,8 @@ mod getaddrinfo_walk;
 mod handshake;
 #[path = "loopback/ipv6_loopback.rs"]
 mod ipv6_loopback;
+#[path = "loopback/listener_accept_one_cancellable.rs"]
+mod listener_accept_one_cancellable;
 #[path = "loopback/listener_accept_timeout.rs"]
 mod listener_accept_timeout;
 #[path = "loopback/listener_cancel.rs"]
