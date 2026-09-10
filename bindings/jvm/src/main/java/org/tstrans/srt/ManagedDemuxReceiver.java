@@ -304,7 +304,8 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
      * <p>Recorded once, first-writer-wins, by the iteration itself at the moment
      * it observes the terminal condition — so read it <em>after</em> iteration
      * ends to learn why: {@link RecvEndReason#CANCELLED} when
-     * {@link #cancelHandle()}{@code .cancel()} or {@link #close()} stopped it,
+     * {@link #cancelHandle()}{@code .cancel()} stopped it (a bare {@link #close()}
+     * does not wake a parked recv, so it records nothing on its own),
      * {@link RecvEndReason#RECONNECT_EXHAUSTED} when the
      * {@link ReconnectPolicy} budget ran out. See {@link RecvEndReason} for why
      * {@link RecvEndReason#END_OF_STREAM} does not occur here.

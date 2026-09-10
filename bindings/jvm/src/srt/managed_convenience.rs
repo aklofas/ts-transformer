@@ -1227,9 +1227,8 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nEndReason(
 /// before `nativeClose` runs, and the registry entry (with its end-reason slot)
 /// is permanently removed by `REGISTRY_DEMUX.close`, so there is no handle left
 /// for a follow-up `nEndReason`. `-1` when nothing was recorded, including the
-/// double-close no-op — `ManagedDemuxReceiver.nativeClose` only overwrites its
-/// cached reason when this returns a mapped value, so the first close's verdict
-/// survives a second one.
+/// double-close no-op — which `NativeHandle.close()`'s `getAndSet(0)` already
+/// makes unreachable from Java: `nativeClose` runs at most once per receiver.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nClose(
     mut env: JNIEnv<'_>,

@@ -48,8 +48,10 @@ public enum RecvEndReason {
      *  {@link ReconnectPolicy} budget: the peer never came back within
      *  {@code maxAttempts}. */
     RECONNECT_EXHAUSTED,
-    /** The caller explicitly closed the receiver or fired its
-     *  {@link CancelHandle} — not a wire-level failure. */
+    /** The caller fired the receiver's {@link CancelHandle} — not a wire-level
+     *  failure. A bare {@link ManagedDemuxReceiver#close()} does not record this:
+     *  srt {@code close()} waits for a parked recv instead of waking it, so the
+     *  cancel handle is what actually stops an iteration in flight. */
     CANCELLED;
 
     /**

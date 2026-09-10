@@ -87,16 +87,21 @@ public final class DemuxerConfig {
          * Default {@code false} — {@link DemuxEvent} carries the raw wire value. When
          * {@code true}, a per-PID accumulator carries each sample's signed wrap-aware
          * delta from the previous raw value onto the previous unwrapped value, so
-         * crossing the rollover grows the PID's offset by a full {@code 1 << 33} while
-         * a genuine backward step — an out-of-order arrival, including a pre-wrap PTS
-         * delivered <i>after</i> the wrap — steps back by its true distance instead of
-         * being mistaken for another wrap (the emitted value is then allowed to be
-         * non-monotonic, correctly reflecting the reorder). The timeline is never
-         * rebased to zero, so PIDs <b>of the same program</b> stay directly comparable
-         * for the whole session (this is what lets a consumer pair KLV to video by PTS
-         * across the rollover); independent programs are never cross-anchored. The
-         * accumulators reset alongside all other per-PID parse state on a sync reset, so
-         * a reconnect or topology change restarts the unwrap timeline.
+         * crossing the rollover grows the PID's offset (the emitted value minus the raw
+         * wire value) by a full {@code 1 << 33} while a genuine backward step — an
+         * out-of-order arrival, including a pre-wrap PTS delivered <i>after</i> the wrap
+         * — steps back by its true distance instead of being mistaken for another wrap
+         * (the emitted value is then allowed to be non-monotonic, correctly reflecting
+         * the reorder). The timeline is never rebased to zero, so PIDs <b>of the same
+         * program</b> stay directly comparable for the whole session (this is what lets
+         * a consumer pair KLV to video by PTS across the rollover). The first PTS seen
+         * on a PID anchors it: at the raw value when its program has no running timeline
+         * yet, otherwise onto the program's — so a PID whose first sample arrives after
+         * its program's clock has wrapped is placed in the epoch its siblings are already
+         * in rather than a full {@code 1 << 33} below them. Independent programs are
+         * never cross-anchored (each carries its own time base, ITU-T H.222.0 §2.4.3.5).
+         * The accumulators reset alongside all other per-PID parse state on a sync reset,
+         * so a reconnect or topology change restarts the unwrap timeline.
          */
         public Builder unwrapTimestamps(boolean v) { this.unwrapTimestamps = v; return this; }
 

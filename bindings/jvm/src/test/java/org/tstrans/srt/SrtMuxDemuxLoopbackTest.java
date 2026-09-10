@@ -17,6 +17,7 @@ import org.tstrans.SrtException;
 import org.tstrans.TestSupport;
 import org.tstrans.mpegts.DemuxEvent;
 import org.tstrans.mpegts.Demuxer;
+import org.tstrans.mpegts.DemuxerConfig;
 import org.tstrans.mpegts.Muxer;
 import org.tstrans.mpegts.MuxerConfig;
 
@@ -144,7 +145,11 @@ class SrtMuxDemuxLoopbackTest {
                 // accept(null) = srt_accept directly (infinite wait); avoids the
                 // accept-timeout epoll interaction (see SrtLoopbackScenarioTest).
                 sock = listener.accept(null);
-                rx = sock.intoDemuxReceiver();
+                // Take the config overload with an all-defaults config: same
+                // behavior as the no-arg form, but it runs the wider
+                // `nIntoDemuxReceiverWithConfig` native, which otherwise has no
+                // live-socket coverage anywhere in the suite.
+                rx = sock.intoDemuxReceiver(DemuxerConfig.builder().build());
 
                 // Register the byte sink BEFORE iterating: it fires per 188-byte
                 // TS packet ahead of the demuxer. Keep it cheap (just record).

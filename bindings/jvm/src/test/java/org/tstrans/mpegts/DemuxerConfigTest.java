@@ -139,7 +139,10 @@ class DemuxerConfigTest {
         }
 
         // Default off: byte-for-byte today's behavior — raw wire values, reorder and all.
-        assertEquals(List.of(WRAP - 100, 100L, WRAP - 50, 200L), videoPts(ts, null),
+        // Feed a *built* default config (not the no-config constructor) so this leg runs
+        // through the same 9-argument native as the on leg, marshalling `false`.
+        assertEquals(List.of(WRAP - 100, 100L, WRAP - 50, 200L),
+            videoPts(ts, DemuxerConfig.builder().build()),
             "with the knob off the demuxer must emit the raw 33-bit wire PTS unchanged");
 
         // On: each sample lands in the epoch its signed 33-bit delta implies.
@@ -158,10 +161,10 @@ class DemuxerConfigTest {
         return acc.toByteArray();
     }
 
-    /** Feed {@code ts} through a fresh demuxer ({@code cfg}, or defaults when null) and collect video PTS in order. */
+    /** Feed {@code ts} through a fresh demuxer configured by {@code cfg} and collect video PTS in order. */
     private static List<Long> videoPts(byte[] ts, DemuxerConfig cfg) throws Exception {
         List<Long> out = new ArrayList<>();
-        try (Demuxer d = cfg == null ? new Demuxer() : new Demuxer(cfg)) {
+        try (Demuxer d = new Demuxer(cfg)) {
             d.feed(ts);
             d.flush();
             for (DemuxEvent ev : d) {
