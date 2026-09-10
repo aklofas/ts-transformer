@@ -510,14 +510,27 @@ fn independent_programs_do_not_share_an_anchor() {
     );
 }
 
-/// Test H (CORR-06 follow-up) — the program's running reference is the
-/// LAST value emitted on any of its PIDs, not the highest one. When the
-/// sample immediately preceding a late PID's debut is itself a reordered
-/// pre-wrap arrival (`WRAP-50` delivered after `100`), the reference is
-/// back below the boundary — and the newcomer's wrap-aware distance from
-/// it must still land it in the post-wrap epoch its wire instant belongs
-/// to. Anchoring at the newcomer's own raw value instead would strand it
-/// a full `1 << 33` below the video frame it was sampled with.
+/// Test H (CORR-06 follow-up) — the program's running reference is simply
+/// the LAST value emitted on any of its PIDs, so it can legitimately sit
+/// BELOW the 33-bit boundary after the program has already crossed it.
+/// The KLV PID delivers `WRAP-50` late, after `100`; its PES is
+/// length-BOUNDED, so each sample completes on the wire as it is written
+/// and the reference genuinely ends on `(WRAP-50, WRAP-50)` before the
+/// video PID debuts. (The reorder cannot ride the video PID for this:
+/// video PES is length-unbounded, so its last AU only finalises at
+/// `flush()` — after the newcomer has already anchored.)
+///
+/// What this pins is that the newcomer anchors *through* that below-the-
+/// boundary reference rather than at its own raw value:
+/// `pts_diff_33bit(100, WRAP-50) = +150` carries it back up to `WRAP+100`.
+/// It is deliberately NOT a case that distinguishes one reference from
+/// another — signed modular accumulation is path-independent while every
+/// gap stays under half an epoch, so anchoring off the earlier
+/// `(100, WRAP+100)` reference yields the same answer, and no newcomer
+/// value at this scale could separate them. The mutation it does catch is
+/// dropping the program anchor entirely (`anchor_first_sample` returning
+/// `raw_ticks`), which strands the newcomer at `100` — a full `1 << 33`
+/// below the KLV sample it was captured with.
 #[test]
 fn late_starting_pid_anchors_through_a_reordered_reference_sample() {
     let cfg = {
@@ -536,30 +549,31 @@ fn late_starting_pid_anchors_through_a_reordered_reference_sample() {
     let au = minimal_h264_au();
     let klv = minimal_klv();
 
-    // Drain after each push so the wire order is unambiguous: the video
-    // PID crosses the boundary and then delivers a late pre-wrap sample,
-    // all before the KLV PID's very first sample.
+    // Drain after each push so the wire order is unambiguous: the KLV PID
+    // crosses the boundary and then delivers its late pre-wrap sample, all
+    // before the video PID's very first sample.
     let mut ts_buf = Vec::new();
     for pts in [WRAP - 100, 100, WRAP - 50] {
-        mux.push_video(&au, Pts90khz::new(pts), true).unwrap();
+        mux.push_klv(&klv, Pts90khz::new(pts), 0x00).unwrap();
         ts_buf.extend_from_slice(&drain(&mut mux));
     }
-    mux.push_klv(&klv, Pts90khz::new(100), 0x00).unwrap();
+    mux.push_video(&au, Pts90khz::new(100), true).unwrap();
     ts_buf.extend_from_slice(&drain(&mut mux));
 
     let events = demux_all(&ts_buf, true);
     assert_eq!(
-        video_pts(&events, 0x100),
+        klv_pts(&events, 0x101),
         vec![WRAP - 100, WRAP + 100, WRAP - 50],
-        "test setup: the program's reference must end on the reordered \
-         pre-wrap sample (WRAP-50, WRAP-50)"
+        "test setup: every KLV sample emits as it is written, so the program \
+         reference standing when the video PID debuts is the reordered \
+         (WRAP-50, WRAP-50)"
     );
     assert_eq!(
-        klv_pts(&events, 0x101),
+        video_pts(&events, 0x100),
         vec![WRAP + 100],
-        "the newcomer's first sample sits +150 ticks from the reordered \
-         reference, which places it back above the boundary alongside the \
-         video frame it was sampled with"
+        "the newcomer sits +150 ticks from the reordered reference, which \
+         carries it back above the boundary alongside the KLV sample it was \
+         captured with; anchoring at its own raw value leaves it at 100"
     );
 }
 
