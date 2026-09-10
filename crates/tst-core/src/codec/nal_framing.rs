@@ -381,6 +381,14 @@ mod tests {
                 vec![0x00, 0x00, 0x01, 0x41, 0x00, 0x00],
                 4,
             ),
+            (
+                // Back-to-back start codes: the first delimits a
+                // zero-length NAL, which must still be sized and written
+                // as a bare length prefix with no body.
+                "adjacent start codes (empty NAL)",
+                vec![0x00, 0x00, 0x01, 0x00, 0x00, 0x01, 0x41],
+                4,
+            ),
             ("no start code at all", vec![0x01, 0x02, 0x03, 0x04], 4),
             ("invalid length_size", three_nal_annexb(), 3),
         ]
