@@ -43,7 +43,8 @@ public final class Demuxer extends NativeHandle implements Iterable<DemuxEvent> 
         setHandle(nOpenWithConfig(
             cfg.strictMode().ordinal(), cfg.pesCapPerPid(), cfg.pesCapTotal(),
             cfg.cfiTolerance(), cfg.av1Carriage().ordinal(),
-            cfg.auCellCapPerPid(), cfg.lenientPsiReassembly(), cfg.syncBufCap()));
+            cfg.auCellCapPerPid(), cfg.lenientPsiReassembly(), cfg.syncBufCap(),
+            cfg.unwrapTimestamps()));
     }
 
     /** Feed TS bytes. @throws DemuxException on non-conformant input. */
@@ -90,7 +91,8 @@ public final class Demuxer extends NativeHandle implements Iterable<DemuxEvent> 
 
     private static native long nOpen();
     private static native long nOpenWithConfig(int strict, long pesCapPerPid, long pesCapTotal,
-            boolean cfi, int av1, long auCellCap, boolean lenientPsi, long syncBufCap);
+            boolean cfi, int av1, long auCellCap, boolean lenientPsi, long syncBufCap,
+            boolean unwrapTimestamps);
     private static native void nFeed(long handle, byte[] bytes) throws DemuxException;
     private static native void nFlush(long handle);
     private static native DemuxEvent nNextEvent(long handle) throws DemuxException;

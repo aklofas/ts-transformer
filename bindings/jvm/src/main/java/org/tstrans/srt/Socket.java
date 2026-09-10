@@ -142,7 +142,8 @@ public final class Socket extends NativeHandle {
             demuxConfig.strictMode().ordinal(), demuxConfig.pesCapPerPid(),
             demuxConfig.pesCapTotal(), demuxConfig.cfiTolerance(),
             demuxConfig.av1Carriage().ordinal(), demuxConfig.auCellCapPerPid(),
-            demuxConfig.lenientPsiReassembly(), demuxConfig.syncBufCap());
+            demuxConfig.lenientPsiReassembly(), demuxConfig.syncBufCap(),
+            demuxConfig.unwrapTimestamps());
         return new DemuxReceiver(h);
     }
 
@@ -224,7 +225,7 @@ public final class Socket extends NativeHandle {
 
     private static native long nIntoDemuxReceiverWithConfig(long handle, int strict,
         long pesCapPerPid, long pesCapTotal, boolean cfi, int av1, long auCellCap,
-        boolean lenientPsi, long syncBufCap) throws SrtException;
+        boolean lenientPsi, long syncBufCap, boolean unwrapTimestamps) throws SrtException;
 
     private static native HostPort nLocalAddr(long handle) throws SrtException;
 

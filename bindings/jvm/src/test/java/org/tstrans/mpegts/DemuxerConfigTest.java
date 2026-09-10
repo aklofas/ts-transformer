@@ -1,7 +1,11 @@
 package org.tstrans.mpegts;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.tstrans.TestSupport.syntheticH264Idr;
+import java.io.ByteArrayOutputStream;
 import java.nio.file.*;
+import java.util.ArrayList;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.tstrans.DemuxException;
 
@@ -97,5 +101,73 @@ class DemuxerConfigTest {
         try (Demuxer d = new Demuxer(cfg)) {
             assertDoesNotThrow(() -> d.feed(data));
         }
+    }
+
+    /** The 33-bit PTS rollover boundary (ITU-T H.222.0 §2.4.3.6). */
+    private static final long WRAP = 1L << 33;
+
+    @Test
+    void unwrapTimestampsDefaultsOffAndIsSettable() {
+        // Default must mirror tst_core's `DemuxerConfig::default()` (false).
+        assertFalse(DemuxerConfig.builder().build().unwrapTimestamps(),
+            "unwrapTimestamps must default to false, matching the Rust default");
+        assertTrue(DemuxerConfig.builder().unwrapTimestamps(true).build().unwrapTimestamps(),
+            "builder must carry the set value onto the built config");
+    }
+
+    /**
+     * Wire parity with the core
+     * {@code mpegts::pts_unwrap::reordered_pts_across_wrap_does_not_double_the_epoch}
+     * test: a composition order straddling the rollover ({@code WRAP-100}, {@code 100},
+     * {@code WRAP-50}, {@code 200} — the pre-wrap {@code WRAP-50} arrives LATE, after
+     * the wrap has been observed) must, with the knob on, place each sample in the
+     * epoch its signed 33-bit delta implies. A second epoch ({@code 2*WRAP}) would mean
+     * the reorder was mistaken for another wrap. With the knob off the raw wire values
+     * come through unchanged.
+     */
+    @Test
+    void unwrapTimestampsCarriesPtsAcrossTheWrap() throws Exception {
+        MuxerConfig muxCfg = MuxerConfig.builder()
+            .addVideo(0x100, VideoCodec.H264)
+            .build();
+        byte[] ts;
+        try (Muxer m = new Muxer(muxCfg)) {
+            for (long pts : new long[] {WRAP - 100, 100, WRAP - 50, 200}) {
+                m.pushVideo(syntheticH264Idr(), pts, true);
+            }
+            ts = drain(m);
+        }
+
+        // Default off: byte-for-byte today's behavior — raw wire values, reorder and all.
+        assertEquals(List.of(WRAP - 100, 100L, WRAP - 50, 200L), videoPts(ts, null),
+            "with the knob off the demuxer must emit the raw 33-bit wire PTS unchanged");
+
+        // On: each sample lands in the epoch its signed 33-bit delta implies.
+        DemuxerConfig unwrap = DemuxerConfig.builder().unwrapTimestamps(true).build();
+        assertEquals(List.of(WRAP - 100, WRAP + 100, WRAP - 50, WRAP + 200), videoPts(ts, unwrap),
+            "each sample must land in the epoch its signed 33-bit delta implies; "
+                + "a second epoch (2*WRAP) means the reorder was mistaken for a wrap");
+    }
+
+    /** Drain every TS byte the muxer has queued. */
+    private static byte[] drain(Muxer m) {
+        ByteArrayOutputStream acc = new ByteArrayOutputStream();
+        byte[] buf = new byte[8192];
+        int n;
+        while ((n = m.pull(buf)) > 0) acc.write(buf, 0, n);
+        return acc.toByteArray();
+    }
+
+    /** Feed {@code ts} through a fresh demuxer ({@code cfg}, or defaults when null) and collect video PTS in order. */
+    private static List<Long> videoPts(byte[] ts, DemuxerConfig cfg) throws Exception {
+        List<Long> out = new ArrayList<>();
+        try (Demuxer d = cfg == null ? new Demuxer() : new Demuxer(cfg)) {
+            d.feed(ts);
+            d.flush();
+            for (DemuxEvent ev : d) {
+                if (ev instanceof DemuxEvent.Video v) out.add(v.pts());
+            }
+        }
+        return out;
     }
 }

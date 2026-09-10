@@ -91,7 +91,8 @@ public final class DemuxReceiver extends NativeHandle implements Iterable<DemuxE
             demuxConfig.strictMode().ordinal(), demuxConfig.pesCapPerPid(),
             demuxConfig.pesCapTotal(), demuxConfig.cfiTolerance(),
             demuxConfig.av1Carriage().ordinal(), demuxConfig.auCellCapPerPid(),
-            demuxConfig.lenientPsiReassembly(), demuxConfig.syncBufCap());
+            demuxConfig.lenientPsiReassembly(), demuxConfig.syncBufCap(),
+            demuxConfig.unwrapTimestamps());
         if (h == 0) {
             throw new SrtException(SrtException.Kind.IO,
                 "nFromUrlWithConfig returned 0 without throwing");
@@ -264,7 +265,7 @@ public final class DemuxReceiver extends NativeHandle implements Iterable<DemuxE
     private static native long nFromUrl(String url) throws SrtException;
     private static native long nFromUrlWithConfig(String url, int strict, long pesCapPerPid,
         long pesCapTotal, boolean cfi, int av1, long auCellCap, boolean lenientPsi,
-        long syncBufCap) throws SrtException;
+        long syncBufCap, boolean unwrapTimestamps) throws SrtException;
     private static native DemuxEvent nNext(long handle) throws SrtException, DemuxException;
     private static native void nAddByteSink(long handle, Consumer<byte[]> callback);
     private static native long nCancelHandle(long handle);

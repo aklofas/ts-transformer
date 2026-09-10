@@ -78,4 +78,23 @@ class SrtConvenienceTest {
         );
         assertEquals(SrtException.Kind.CONFIG_INVALID, e.kind());
     }
+
+    /**
+     * {@code DemuxReceiver.fromUrl(url, DemuxerConfig)} routes through
+     * {@code nFromUrlWithConfig} — the flattened-args native NOT otherwise
+     * exercised by this file's malformed-URL checks. A malformed URL fails at
+     * parse time before any bind, so this stays socket-free while still driving
+     * every arg across the JNI boundary: the native crashes/misbehaves rather
+     * than cleanly throwing if the Java declaration and Rust fn arg lists drift.
+     * Mirrors {@code SrtManagedTest.managedDemuxReceiverWithConfigRejectsMalformedUrl}.
+     */
+    @Test
+    void demuxReceiverWithConfigRejectsMalformedUrl() {
+        var cfg = org.tstrans.mpegts.DemuxerConfig.builder().unwrapTimestamps(true).build();
+        var e = assertThrows(
+            SrtException.class,
+            () -> DemuxReceiver.fromUrl("not-a-url", cfg)
+        );
+        assertEquals(SrtException.Kind.CONFIG_INVALID, e.kind());
+    }
 }

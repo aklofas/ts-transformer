@@ -72,7 +72,7 @@ public final class RtspSession extends NativeHandle {
     /** Consume the data plane with default demux options. See {@link #intoDemuxReceiver(DemuxerConfig)}. */
     public DemuxReceiver intoDemuxReceiver() throws RtspException {
         ensureOpen("RtspSession is closed");
-        long h = nIntoDemuxReceiver(peekHandle(), false, 0, 0L, 0L, false, 0, 0L, false, 0L);
+        long h = nIntoDemuxReceiver(peekHandle(), false, 0, 0L, 0L, false, 0, 0L, false, 0L, false);
         if (h == 0) {
             throw new RtspException(RtspException.Kind.PROTOCOL,
                 "nIntoDemuxReceiver returned 0 without throwing");
@@ -105,7 +105,8 @@ public final class RtspSession extends NativeHandle {
             demuxConfig.strictMode().ordinal(), demuxConfig.pesCapPerPid(),
             demuxConfig.pesCapTotal(), demuxConfig.cfiTolerance(),
             demuxConfig.av1Carriage().ordinal(), demuxConfig.auCellCapPerPid(),
-            demuxConfig.lenientPsiReassembly(), demuxConfig.syncBufCap());
+            demuxConfig.lenientPsiReassembly(), demuxConfig.syncBufCap(),
+            demuxConfig.unwrapTimestamps());
         if (h == 0) {
             throw new RtspException(RtspException.Kind.PROTOCOL,
                 "nIntoDemuxReceiver returned 0 without throwing");
@@ -190,7 +191,8 @@ public final class RtspSession extends NativeHandle {
     private static native long nCancelHandle(long handle);
     private static native long nIntoDemuxReceiver(long handle, boolean withConfig,
         int strict, long pesCapPerPid, long pesCapTotal, boolean cfi, int av1,
-        long auCellCap, boolean lenientPsi, long syncBufCap) throws RtspException;
+        long auCellCap, boolean lenientPsi, long syncBufCap,
+        boolean unwrapTimestamps) throws RtspException;
     private static native long nIntoH264Receiver(long handle) throws RtspException;
     private static native boolean nIsTornDown(long handle);
     private static native void nClose(long handle);
