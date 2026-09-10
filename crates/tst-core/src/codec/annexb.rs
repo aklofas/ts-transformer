@@ -20,8 +20,8 @@ use alloc::vec::Vec;
 /// (immediately after).
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct StartCode {
-    pub prefix_start: usize,
-    pub data_start: usize,
+    pub(crate) prefix_start: usize,
+    pub(crate) data_start: usize,
 }
 
 /// Locate every Annex-B start code (`00 00 01` or `00 00 00 01`) in `buf`.
