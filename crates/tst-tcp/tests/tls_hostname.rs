@@ -255,10 +255,22 @@ fn tcps_explicit_close_loopback_ends_the_peer_read() {
 
     let observed =
         observed.expect("peer read did not end within 2 s of an explicit close() on the client");
-    assert!(
-        matches!(observed, Err(TransportError::Broken { .. })),
-        "peer read must end with Broken (close_notify EOF), got {observed:?}"
-    );
+    // Isolate `close_notify` from the socket shutdown that follows it: a clean
+    // TLS close reaches the server as rustls's `Ok(0)`, which `recv_bytes` maps
+    // to `Broken { "peer closed connection", errno: None }`. A bare socket
+    // shutdown with no `close_notify` would still end the read, but through
+    // rustls's `UnexpectedEof` error and the "read error: …" arm — so a Broken
+    // of any shape is not enough to prove the alert was sent.
+    match observed {
+        Err(TransportError::Broken { msg, errno_code }) => {
+            assert_eq!(
+                msg, "peer closed connection",
+                "peer read must end through the clean close_notify (Ok(0)) arm"
+            );
+            assert_eq!(errno_code, None, "a clean close_notify carries no errno");
+        }
+        other => panic!("peer read must end with Broken (close_notify EOF), got {other:?}"),
+    }
 }
 
 /// The two edges of the same close path: closing a TLS transport *before* the
