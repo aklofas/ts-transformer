@@ -14,6 +14,7 @@ ManagedDemuxReceiver, SocketStats, SrtStats, CancelHandle) live in
 
 from __future__ import annotations
 
+import enum
 from typing import (
     Any,
     Callable,
@@ -46,6 +47,7 @@ from tstrans.mpegts import (
 _BytesLike = Union[bytes, bytearray, memoryview, Any]
 
 __all__: list[str] = [
+    "RecvEndReason",
     "Sender",
     "Receiver",
     "SocketStats",
@@ -66,6 +68,31 @@ __all__: list[str] = [
     "ManagedMuxSender",
     "ManagedDemuxReceiver",
 ]
+
+# ---------------------------------------------------------------------------
+# Managed receive-session end reason
+# ---------------------------------------------------------------------------
+
+
+class RecvEndReason(enum.IntEnum):
+    """Why a managed SRT receive session ended. Mirrors
+    `tst_pipeline::RecvEndReason` 1:1, in Rust declaration order.
+
+    Returned by `ManagedDemuxReceiver.end_reason()`; `None` means the
+    stream hasn't ended yet (or ended through a path this arc doesn't
+    instrument). A dedicated type, not `tstrans.rtp.StreamEndReason` —
+    the two are different types in Rust.
+
+    Only `RECONNECT_EXHAUSTED` and `CANCELLED` are reachable on the
+    managed-SRT path today; `END_OF_STREAM` is reserved for a future
+    transport able to signal a clean EOS distinct from reconnect-budget
+    exhaustion.
+    """
+
+    END_OF_STREAM = 1
+    RECONNECT_EXHAUSTED = 2
+    CANCELLED = 3
+
 
 # ---------------------------------------------------------------------------
 # T2 — transport types (Sender / Receiver / SocketStats / SrtStats /
@@ -829,6 +856,12 @@ class ManagedDemuxReceiver:
     `policy.mode` is send-side only: `ReconnectMode.BACKGROUND` on a
     policy handed here logs a warning and this receiver reconnects on
     the caller's thread anyway (behaves as `ReconnectMode.BLOCKING`).
+
+    `end_reason()` reports why the receive session ended
+    (`RecvEndReason`), or `None` while it is still live. It reads a
+    lock-free cell captured at construction, so it stays answerable
+    after `close()` and is safe to poll from a watchdog thread while
+    another thread iterates.
     """
 
     @staticmethod
@@ -845,6 +878,7 @@ class ManagedDemuxReceiver:
     def srt_stats(self) -> SocketStats: ...
     def reconnect_attempts(self) -> int: ...
     def last_seen_micros(self, pid: int) -> Optional[int]: ...
+    def end_reason(self) -> Optional[RecvEndReason]: ...
     def close(self) -> None: ...
     def is_alive(self) -> bool: ...
     def __enter__(self) -> ManagedDemuxReceiver: ...

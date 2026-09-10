@@ -45,7 +45,7 @@ use tst_core::transport::{TransportCancel, TransportError};
 use tst_pipeline::{
     FactoryCancel, ManagedDemuxReceiver as RustManagedDemuxReceiver, ManagedDemuxReceiverConfig,
     ManagedRecvTransport, ManagedTransport, MuxSender as RustMuxSender, MuxSenderError,
-    MuxSenderErrorSource,
+    MuxSenderErrorSource, RecvEndReasonHandle,
 };
 use tst_srt::{Listener, ListenerConfig, Socket, SocketConfig, SrtTransport, SrtUrl, url::Mode};
 
@@ -648,6 +648,9 @@ impl PyManagedMuxSender {
 /// side and the receiver reconnects on the caller's thread anyway
 /// (i.e. it behaves as `ReconnectMode.BLOCKING`).
 ///
+/// `end_reason()` reports why the receive session ended
+/// (`tstrans.srt.RecvEndReason`), or `None` while it is still live.
+///
 /// Use as a context manager for guaranteed cleanup:
 /// ```python
 /// from tstrans.srt import ManagedDemuxReceiver, ReconnectPolicy
@@ -676,6 +679,14 @@ pub(crate) struct PyManagedDemuxReceiver {
     /// Reconnect-attempt counter — bumped from inside the factory closure
     /// on every invocation. Symmetric with `PyManagedMuxSender`.
     factory_attempts: Arc<AtomicU64>,
+    /// Handle onto the receiver's [`tst_pipeline::RecvEndReasonHandle`],
+    /// captured at construction BEFORE the receiver moves into `inner` —
+    /// the obtain-before-move pattern every binding uses for
+    /// shell-wrapped state (mirrors `crate::rtp::demux_receiver`'s
+    /// `end_reason` field, and the C binding's `end_reason` box field).
+    /// Independent of `inner`'s lifetime, so `end_reason()` keeps
+    /// answering after `close()` has dropped the receiver.
+    end_reason: RecvEndReasonHandle,
 }
 
 #[pymethods]
@@ -785,6 +796,11 @@ impl PyManagedDemuxReceiver {
                 ManagedDemuxReceiverConfig::default(),
             ),
         };
+        // Pulled BEFORE `receiver` moves into `inner` below — see the
+        // `end_reason` field doc for why (obtain-before-move: the handle
+        // outlives the receiver, so `end_reason()` still answers after
+        // `close()`).
+        let end_reason = receiver.end_reason_handle();
         // `ManagedDemuxReceiver::cancel_handle` may legitimately return
         // None if the inner is mid-reconnect at construction. With a
         // freshly-built inner that's not the case, but defend with a
@@ -800,6 +816,7 @@ impl PyManagedDemuxReceiver {
             inner: Arc::new(Mutex::new(Some(receiver))),
             cancel,
             factory_attempts: attempts,
+            end_reason,
         })
     }
 
@@ -926,6 +943,32 @@ impl PyManagedDemuxReceiver {
         Ok(last_seen
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_micros() as u64))
+    }
+
+    /// Why this receive session ended — a `tstrans.srt.RecvEndReason`
+    /// member, or `None` while the stream is still live (or if it ended
+    /// through a path this arc doesn't instrument).
+    ///
+    /// Recorded first-writer-wins by the underlying
+    /// `tst_pipeline::ManagedDemuxReceiver`, so it survives `close()`:
+    /// the handle was captured at construction, independent of `inner`.
+    /// Reads a lock-free `OnceLock` cell — it never touches the `inner`
+    /// mutex, so it is safe to call from a watchdog thread while another
+    /// thread is parked in `__next__` (no `allow_threads` needed, and no
+    /// GIL↔Mutex ordering to respect).
+    ///
+    /// Only two of the three variants are reachable on the managed-SRT
+    /// path today: `RECONNECT_EXHAUSTED` (the reconnect budget ran out —
+    /// a peer FIN arrives as a retryable break, so this is also what a
+    /// peer close under a zero-retry policy reports) and `CANCELLED`
+    /// (caller fired `cancel_handle()` or `close()`). `END_OF_STREAM` is
+    /// reserved for a future transport that can signal a clean EOS
+    /// distinct from budget exhaustion.
+    fn end_reason(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+        match self.end_reason.get() {
+            Some(r) => crate::srt::end_reason::recv_end_reason_to_py(py, &r),
+            None => Ok(None),
+        }
     }
 
     /// Close the receiver. Fires the cancel handle BEFORE acquiring the

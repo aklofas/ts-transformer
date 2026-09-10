@@ -629,6 +629,32 @@ success count (excludes the initial accept); `ManagedMuxSender` and
 invocation. `ManagedDemuxReceiver.last_seen_micros(pid)` works the same
 as the plain `DemuxReceiver` above.
 
+**Why did the managed stream end?** `ManagedDemuxReceiver.end_reason()`
+returns a `tstrans.srt.RecvEndReason` once the receive session has ended,
+or `None` while it is still live:
+
+```python
+from tstrans.srt import ManagedDemuxReceiver, RecvEndReason
+
+with ManagedDemuxReceiver.from_url("srt://:7000?mode=listener") as rx:
+    for event in rx:
+        ...
+    if rx.end_reason() is RecvEndReason.RECONNECT_EXHAUSTED:
+        print("peer never came back within the policy budget")
+```
+
+Two of the three members are reachable on the managed-SRT path today:
+`RECONNECT_EXHAUSTED` (the reconnect budget ran out — also what a plain
+peer close reports under a zero-retry policy, because a peer FIN reaches
+the reconnect decorator as a retryable break) and `CANCELLED` (you fired
+`cancel_handle()` or `close()`). `END_OF_STREAM` is reserved for a future
+transport that can signal a clean end-of-stream distinct from budget
+exhaustion. The value is recorded first-writer-wins and read from a
+lock-free cell captured at construction, so `end_reason()` still answers
+after `close()` and is safe to poll from a watchdog thread while another
+thread iterates. This is a dedicated enum, not `tstrans.rtp.StreamEndReason`
+— the RTP and SRT reasons are different types with different members.
+
 **Background reconnect** (`ReconnectMode`): pass `mode=ReconnectMode.BACKGROUND`
 on the `ReconnectPolicy` handed to `ManagedSender` / `ManagedMuxSender` to
 move the reconnect loop off the caller's thread — a dedicated per-outage
