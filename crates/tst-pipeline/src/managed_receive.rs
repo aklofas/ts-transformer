@@ -71,9 +71,10 @@
 
 use crate::reconnect::background::Shutdown;
 use crate::reconnect::{ReconnectMode, ReconnectPolicy};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
 use tracing::{debug, info, warn};
+use tst_core::cancel::CancelSlot;
 use tst_core::transport::RecvTransport;
 use tst_core::transport::TransportError;
 
@@ -109,11 +110,11 @@ pub type FactoryCancel = tst_core::cancel::CancelSlot;
 ///
 /// # Lock poisoning policy (post-Wave-4.B)
 ///
-/// - **`inner_cancel` lock** (used to snapshot the inner transport's cancel
-///   handle): `recv_bytes` returns `TransportError::Broken { .. }` if the
-///   lock has been poisoned by a previous panic.
-/// - **`cancel_handle().cancel()`** uses `.lock().ok()` and silently no-ops
-///   on poison (cancel is best-effort; the closed flag is already latched).
+/// - **`active` cancel slot** (publishes the live inner's cancel handle):
+///   [`CancelSlot`] recovers its own lock on poison — its state is two plain
+///   fields no panic can leave half-written, and cancel is best-effort by
+///   contract — so neither `recv_bytes` nor `cancel_handle().cancel()` can
+///   fail here.
 /// - **No gap lock**: gap-accumulator is `ManagedTransport`-only (send side).
 pub struct ManagedRecvTransport<R: RecvTransport> {
     /// Currently-live inner transport. `None` between a tear-down and a
@@ -136,10 +137,15 @@ pub struct ManagedRecvTransport<R: RecvTransport> {
     /// Shared latched-close, set by the cancel handle from any thread.
     /// Read at every loop iteration in `recv_bytes`.
     cancelled: Arc<std::sync::atomic::AtomicBool>,
-    /// Most-recently-built inner's cancel handle, snapshotted on each
-    /// successful build. Held in an Arc<Mutex<>> so the cancel handle
-    /// (separate object) can read without owning &mut self.
-    inner_cancel: Arc<Mutex<Option<Arc<dyn tst_core::transport::TransportCancel + Send + Sync>>>>,
+    /// The cancel handle that can currently unblock this receiver: the live
+    /// inner's, installed at construction and re-installed on each
+    /// successful rebuild, cleared when the inner is torn down. Held in an
+    /// `Arc<CancelSlot>` so the cancel handle (a separate object) can fire it
+    /// without owning `&mut self`. The slot latches, so a cancel that lands
+    /// while the factory is building the next inner still fires that inner's
+    /// handle the moment it is published — the caller never ends up reading
+    /// from a connection they already asked to abandon.
+    active: Arc<CancelSlot>,
     /// Number of times the factory has been successfully invoked to
     /// rebuild a fresh inner transport (does NOT include the
     /// initial `new()` inner). Higher-level shells
@@ -226,9 +232,10 @@ impl<R: RecvTransport> ManagedRecvTransport<R> {
                 "ReconnectMode::Background is send-side only; this receiver reconnects on the caller's thread",
             );
         }
-        let inner_cancel: Arc<
-            Mutex<Option<Arc<dyn tst_core::transport::TransportCancel + Send + Sync>>>,
-        > = Arc::new(Mutex::new(inner.cancel_handle()));
+        let active = Arc::new(CancelSlot::new());
+        if let Some(h) = inner.cancel_handle() {
+            active.install(h);
+        }
         let last_live_max_payload = inner.max_payload();
         Self {
             inner: Some(inner),
@@ -237,7 +244,7 @@ impl<R: RecvTransport> ManagedRecvTransport<R> {
             closed: false,
             explicit_close: false,
             cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            inner_cancel,
+            active,
             reconnects: Arc::new(AtomicU64::new(0)),
             reconnecting: Arc::new(AtomicBool::new(false)),
             last_live_max_payload,
@@ -367,21 +374,29 @@ impl<R: RecvTransport> RecvTransport for ManagedRecvTransport<R> {
                 }
                 match (self.factory)() {
                     Ok(t) => {
-                        // Plan B mutex sweep (recoverable path): poisoned
-                        // inner_cancel lock means a previous panic left the
-                        // cancel-snapshot in an unknown state. Route to
-                        // TransportError::Broken with a site-specific
-                        // message so the shell can map to TransportBroken
-                        // kind (→ TST_E_TRANSPORT -8). Precedent: plan #45
-                        // (.lock().ok() on MuxSender::close cancel path).
-                        let mut guard = self.inner_cancel.lock().map_err(|_| {
-                            TransportError::Broken { msg:
-                                "managed_receive: inner_cancel lock poisoned during cancel install"
-                                    .into(),
-                            errno_code: None }
-                        })?;
-                        *guard = t.cancel_handle();
-                        drop(guard);
+                        // Publish the fresh transport's wake handle BEFORE
+                        // anyone reads from it. The slot latches, so if a
+                        // cancel landed while the factory was building `t`
+                        // this fires that handle at once instead of
+                        // retaining a target nobody will ever consult.
+                        if let Some(h) = t.cancel_handle() {
+                            self.active.install(h);
+                        }
+                        // …and then honor the cancel ourselves. Without this
+                        // the cancel would be silently lost: it fired against
+                        // whatever was installed at the time (nothing —
+                        // the previous inner was torn down before the
+                        // factory ran) and the caller would go on to receive
+                        // from a connection they already asked to abandon.
+                        if self.cancelled.load(std::sync::atomic::Ordering::Acquire) {
+                            // `t` is dropped here, never stored and never
+                            // read from, so `inner` stays `None`. Latch both
+                            // flags: closed for is_alive(); explicit_close so
+                            // re-entry reports the caller-initiated close.
+                            self.closed = true;
+                            self.explicit_close = true;
+                            return Err(TransportError::ExplicitClose);
+                        }
                         self.last_live_max_payload = t.max_payload();
                         self.inner = Some(t);
                         self.reconnecting.store(false, Ordering::Release);
@@ -406,7 +421,11 @@ impl<R: RecvTransport> RecvTransport for ManagedRecvTransport<R> {
                 Err(TransportError::Closed) | Err(TransportError::Broken { .. }) => {
                     // Transport is dead. Drop it; next loop iteration
                     // reconnects via the factory under the configured backoff.
+                    // Un-publish its cancel handle with the inner it belongs
+                    // to — nothing can be woken until the factory installs
+                    // the replacement.
                     self.inner = None;
+                    self.active.clear();
                     self.reconnecting.store(true, Ordering::Release);
                     continue;
                 }
@@ -443,9 +462,9 @@ impl<R: RecvTransport> RecvTransport for ManagedRecvTransport<R> {
     fn cancel_handle(&self) -> Option<Arc<dyn tst_core::transport::TransportCancel + Send + Sync>> {
         Some(Arc::new(ManagedRecvCancel {
             cancelled: self.cancelled.clone(),
-            inner_cancel: self.inner_cancel.clone(),
             shutdown: Arc::clone(&self.shutdown),
             factory_cancel: self.factory_cancel.clone(),
+            active: Arc::clone(&self.active),
         }))
     }
 
@@ -459,13 +478,16 @@ impl<R: RecvTransport> RecvTransport for ManagedRecvTransport<R> {
 
 struct ManagedRecvCancel {
     cancelled: Arc<std::sync::atomic::AtomicBool>,
-    inner_cancel: Arc<Mutex<Option<Arc<dyn tst_core::transport::TransportCancel + Send + Sync>>>>,
     shutdown: Arc<Shutdown>,
     factory_cancel: Option<Arc<FactoryCancel>>,
+    active: Arc<CancelSlot>,
 }
 
 impl tst_core::transport::TransportCancel for ManagedRecvCancel {
     fn cancel(&self) {
+        // Latch FIRST, so the recv loop sees the cancel however far along it
+        // is: whichever of the three wakes below lands, the loop rechecks
+        // this flag before it does anything else with the transport.
         self.cancelled
             .store(true, std::sync::atomic::Ordering::Release);
         // Wake a backoff wait and a factory parked in re-accept; both are
@@ -474,10 +496,10 @@ impl tst_core::transport::TransportCancel for ManagedRecvCancel {
         if let Some(fc) = &self.factory_cancel {
             fc.cancel();
         }
-        let inner = self.inner_cancel.lock().ok().and_then(|mut g| g.take());
-        if let Some(c) = inner {
-            c.cancel();
-        }
+        // Wake a parked recv, and latch the slot so an inner published
+        // after this point (the factory was mid-build) is cancelled on
+        // arrival rather than parked on.
+        self.active.cancel();
     }
 }
 
