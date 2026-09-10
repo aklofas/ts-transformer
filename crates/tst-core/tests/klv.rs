@@ -19,6 +19,8 @@ mod proptest;
 mod st0102_via_st0601;
 #[path = "klv/st0601.rs"]
 mod st0601;
+#[path = "klv/st0601_offsets.rs"]
+mod st0601_offsets;
 #[path = "klv/st0903_standalone_ul.rs"]
 mod st0903_standalone_ul;
 #[path = "klv/st0903_via_st0601.rs"]

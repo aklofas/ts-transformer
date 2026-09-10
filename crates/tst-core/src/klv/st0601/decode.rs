@@ -290,7 +290,10 @@ fn decode_inner(
     let mut tags_seen: Vec<u32> = Vec::new();
 
     for r in Iter::local_set(body) {
-        let f = r?;
+        let f = r.map_err(|mut e| {
+            crate::klv::length::rebase_offset(&mut e, body_offset);
+            e
+        })?;
         if f.tag == 1 {
             // Checksum: capture for later verification.
             if f.value.len() != 2 {
