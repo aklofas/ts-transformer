@@ -141,14 +141,19 @@ fn cancel_handle_is_visible_through_both_transport_traits() {
 /// Watchdog: 3 s.
 #[test]
 fn cancel_handle_unblocks_parked_recv() {
-    // Set up a silent peer: accept the connection but send nothing.
+    // Set up a silent peer: accept the connection but send nothing. The peer
+    // holds its socket open until the test releases it through `release_tx`,
+    // so recv_bytes cannot be unblocked by a connection-close event — and the
+    // peer thread is joined on every path instead of being left to sleep out
+    // a fixed window past the end of the test.
     let peer_listener = StdTcpListener::bind("127.0.0.1:0").unwrap();
     let port = peer_listener.local_addr().unwrap().port();
-    let _peer = thread::spawn(move || {
-        // Accept and hold the socket open so recv_bytes isn't unblocked by a
-        // connection-close event.
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+    let peer = thread::spawn(move || {
         let (_sock, _) = peer_listener.accept().unwrap();
-        thread::sleep(Duration::from_secs(10));
+        // Either the release arrives (the test is done) or the test binary is
+        // gone (sender dropped); both end the hold. `_sock` drops here.
+        let _ = release_rx.recv();
     });
 
     let mut transport = TcpTransport::connect(&format!("tcp://127.0.0.1:{port}")).unwrap();
@@ -172,6 +177,11 @@ fn cancel_handle_unblocks_parked_recv() {
     let result = rx
         .recv_timeout(Duration::from_secs(3))
         .expect("recv_bytes did not unblock within watchdog period after cancel");
+
+    // Release the held peer socket and join the peer before judging, so a
+    // failing assertion never leaves the thread parked.
+    let _ = release_tx.send(());
+    peer.join().expect("peer thread panicked");
 
     // The transport must report it is no longer alive.
     assert!(
