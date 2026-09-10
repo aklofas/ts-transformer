@@ -333,6 +333,14 @@ pub(crate) fn codec_parse_error_to_pyerr(
                 ("length_size", length_size.into_py(py)),
             ],
         ),
+        // Not reachable from Python: `BufferTooSmall` is raised only by
+        // the Rust write-into-a-caller-buffer entry points
+        // (`annexb_to_length_prefixed_into`), which have no Python
+        // binding — every Python conversion returns a fresh `bytes`.
+        // Mapped explicitly anyway (rather than left to the wildcard) so
+        // the `pyarm` coverage rail stays honest, and to `ENGINE_ERROR`
+        // rather than a new kind, since no Python caller can observe it.
+        CodecParseError::BufferTooSmall { .. } => ("ENGINE_ERROR", vec![]),
         // Catch-all for #[non_exhaustive] additions not yet mapped:
         _ => ("ENGINE_ERROR", vec![]),
     };

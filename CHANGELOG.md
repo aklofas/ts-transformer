@@ -23,9 +23,17 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (header byte(s) included, ready for
   `CMVideoFormatDescriptionCreateFrom{H264,HEVC}ParameterSets` and
   equivalents) directly out of a `Sample`'s raw Annex-B bytes — no
-  manual header reconstruction needed. Two additive `CodecParseError`
-  variants, `InvalidLengthSize { got }` and `NalLengthOverflow {
-  nal_len, length_size }`.
+  manual header reconstruction needed. Callers that already own an
+  output buffer can skip the intermediate `Vec` entirely:
+  `annexb_to_length_prefixed_len(annexb, length_size)` reports the byte
+  count the conversion needs and `annexb_to_length_prefixed_into(annexb,
+  length_size, out)` writes straight into `out`, returning the bytes
+  written — both allocation-free, and both accepting and rejecting
+  exactly what `annexb_to_length_prefixed` does. Three additive
+  `CodecParseError` variants, `InvalidLengthSize { got }`,
+  `NalLengthOverflow { nal_len, length_size }` and `BufferTooSmall {
+  needed, have }` (the last raised only by `..._into`, which leaves the
+  caller's buffer untouched when it refuses).
 - **`DemuxerConfig::unwrap_timestamps`** (default `false`) +
   `DemuxerConfigBuilder::unwrap_timestamps` — opt-in per-PID unwrap of
   the demuxer's raw 33-bit 90 kHz PTS/DTS onto a continuous `i64`

@@ -346,6 +346,21 @@ pub enum CodecParseError {
     /// `u32::MAX` for display if the true length somehow exceeds it.
     #[error("NAL length {nal_len} exceeds what a {length_size}-byte length prefix can encode")]
     NalLengthOverflow { nal_len: u32, length_size: u8 },
+
+    /// A caller-supplied output buffer is shorter than the conversion
+    /// needs. Raised only by the write-into-a-caller-buffer entry points
+    /// ([`crate::codec::nal_framing::annexb_to_length_prefixed_into`]);
+    /// the buffer is left untouched, and `needed` is the exact size that
+    /// would have succeeded — the same number
+    /// [`crate::codec::nal_framing::annexb_to_length_prefixed_len`]
+    /// reports.
+    ///
+    /// `usize` rather than the byte counts elsewhere in this enum: these
+    /// are Rust slice lengths, not bitstream fields, and this variant is
+    /// Rust-only — the C ABI's two-call idiom signals the same condition
+    /// as `TST_E_BUFFER_FULL` plus a `size_t` out-parameter.
+    #[error("output buffer too small: needed {needed} bytes, have {have}")]
+    BufferTooSmall { needed: usize, have: usize },
 }
 
 /// Read the ITU-T H.273 colour_primaries / transfer_characteristics /

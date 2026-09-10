@@ -17,8 +17,9 @@
 //! matching the widths ISO/IEC 14496-15's `NALUnitLength` field allows.
 
 use crate::codec::CodecParseError;
-use crate::codec::annexb::start_codes;
+use crate::codec::annexb::nals;
 use crate::mpegts::demux::VideoCodec;
+use alloc::vec;
 use alloc::vec::Vec;
 
 /// Validate a `length_size` argument, returning the maximum NAL byte
@@ -51,6 +52,11 @@ fn max_encodable_len(length_size: u8) -> Result<u32, CodecParseError> {
 /// scans Annex B. An `annexb` with no start code at all yields an empty
 /// `Vec`.
 ///
+/// Callers that already own an output buffer — the C ABI among them —
+/// should use [`annexb_to_length_prefixed_len`] to size it and
+/// [`annexb_to_length_prefixed_into`] to fill it; this function is those
+/// two over a freshly allocated `Vec`.
+///
 /// # C ABI
 ///
 /// `tst_annexb_to_length_prefixed` — see `bindings/c/include/tstrans.h`.
@@ -58,42 +64,136 @@ pub fn annexb_to_length_prefixed(
     annexb: &[u8],
     length_size: u8,
 ) -> Result<Vec<u8>, CodecParseError> {
-    let max_len = max_encodable_len(length_size)?;
-    let starts = start_codes(annexb);
-    let mut out = Vec::new();
-    for win in starts.windows(2) {
-        let nal = &annexb[win[0].data_start..win[1].prefix_start];
-        write_length_prefixed_nal(&mut out, nal, length_size, max_len)?;
-    }
-    if let Some(&last) = starts.last() {
-        let nal = &annexb[last.data_start..annexb.len()];
-        write_length_prefixed_nal(&mut out, nal, length_size, max_len)?;
-    }
+    let needed = annexb_to_length_prefixed_len(annexb, length_size)?;
+    let mut out = vec![0u8; needed];
+    // Sizing already accepted this input, so the write cannot fail: the
+    // buffer is exactly `needed` bytes and every NAL re-validates to the
+    // same lengths. `?` rather than an `unwrap` so a future divergence
+    // between the two walks surfaces as an error, not a panic.
+    write_nals(annexb, length_size, &mut out)?;
     Ok(out)
 }
 
-fn write_length_prefixed_nal(
-    out: &mut Vec<u8>,
+/// Byte length [`annexb_to_length_prefixed`] would produce for the same
+/// arguments, without building the output.
+///
+/// Rejects exactly what [`annexb_to_length_prefixed`] rejects and with
+/// the same error, so it can be used as a pure sizing pass ahead of an
+/// [`annexb_to_length_prefixed_into`] call — that pairing is what the C
+/// ABI's two-call idiom is built on.
+///
+/// Allocation-free.
+pub fn annexb_to_length_prefixed_len(
+    annexb: &[u8],
+    length_size: u8,
+) -> Result<usize, CodecParseError> {
+    let max_len = max_encodable_len(length_size)?;
+    let mut total: usize = 0;
+    for nal in nals(annexb) {
+        let one = length_prefixed_nal_len(nal, length_size, max_len)?;
+        // Unreachable in practice — a length-prefixed rendering is at
+        // most 4/3 the size of its Annex-B input (a 4-byte prefix
+        // replacing a 3-byte start code is the worst case, and a NAL
+        // needs at least its start code's 3 bytes), so the total is
+        // bounded by 4/3 * isize::MAX. Checked anyway rather than left
+        // to wrap.
+        total = total
+            .checked_add(one)
+            .ok_or(CodecParseError::NalLengthOverflow {
+                nal_len: saturating_u32(nal.len()),
+                length_size,
+            })?;
+    }
+    Ok(total)
+}
+
+/// Write what [`annexb_to_length_prefixed`] would return into `out`,
+/// returning the number of bytes written (always the same number
+/// [`annexb_to_length_prefixed_len`] reports for the same arguments).
+///
+/// Rejects exactly what [`annexb_to_length_prefixed`] rejects and with
+/// the same error. An `out` shorter than the conversion needs is
+/// [`CodecParseError::BufferTooSmall`] carrying the required size; `out`
+/// is left completely unmodified on every error path, and bytes beyond
+/// the returned count are never touched on success.
+///
+/// Allocation-free.
+pub fn annexb_to_length_prefixed_into(
+    annexb: &[u8],
+    length_size: u8,
+    out: &mut [u8],
+) -> Result<usize, CodecParseError> {
+    let needed = annexb_to_length_prefixed_len(annexb, length_size)?;
+    if out.len() < needed {
+        return Err(CodecParseError::BufferTooSmall {
+            needed,
+            have: out.len(),
+        });
+    }
+    write_nals(annexb, length_size, &mut out[..needed])
+}
+
+/// Byte length of one NAL's length-prefixed rendering, or
+/// [`CodecParseError::NalLengthOverflow`] if `length_size` bytes cannot
+/// encode it. Cannot overflow: `nal.len()` is at most `isize::MAX`.
+fn length_prefixed_nal_len(
     nal: &[u8],
     length_size: u8,
     max_len: u32,
-) -> Result<(), CodecParseError> {
-    let len = nal.len();
-    if len as u64 > max_len as u64 {
+) -> Result<usize, CodecParseError> {
+    if nal.len() as u64 > max_len as u64 {
         return Err(CodecParseError::NalLengthOverflow {
-            nal_len: len.min(u32::MAX as usize) as u32,
+            nal_len: saturating_u32(nal.len()),
             length_size,
         });
     }
-    let len = len as u32;
-    match length_size {
-        1 => out.push(len as u8),
-        2 => out.extend_from_slice(&(len as u16).to_be_bytes()),
-        4 => out.extend_from_slice(&len.to_be_bytes()),
-        _ => unreachable!("length_size validated by max_encodable_len before this is called"),
+    Ok(length_size as usize + nal.len())
+}
+
+/// `len` as a `u32`, saturating — for the `nal_len` diagnostic field on
+/// [`CodecParseError::NalLengthOverflow`], which is `u32` and is only
+/// ever populated on the path where the length is already too large.
+fn saturating_u32(len: usize) -> u32 {
+    len.min(u32::MAX as usize) as u32
+}
+
+/// Write the length-prefixed rendering of `annexb` into `out`, returning
+/// the bytes written.
+///
+/// Callers size `out` with [`annexb_to_length_prefixed_len`] first, so
+/// the capacity check here is a belt-and-braces guard against the two
+/// walks disagreeing — never the primary error report (that is
+/// [`annexb_to_length_prefixed_into`]'s up-front check, which leaves
+/// `out` untouched). Because it stops at the first NAL that does not
+/// fit, the `needed` it reports on that unreachable path is a lower
+/// bound rather than the full requirement.
+fn write_nals(annexb: &[u8], length_size: u8, out: &mut [u8]) -> Result<usize, CodecParseError> {
+    let max_len = max_encodable_len(length_size)?;
+    let width = length_size as usize;
+    let mut written = 0usize;
+    for nal in nals(annexb) {
+        let one = length_prefixed_nal_len(nal, length_size, max_len)?;
+        // Subtract rather than add: `written <= out.len()` is the loop
+        // invariant, so this cannot overflow the way `written + one`
+        // could for a pathologically large NAL.
+        if one > out.len() - written {
+            return Err(CodecParseError::BufferTooSmall {
+                needed: written.saturating_add(one),
+                have: out.len(),
+            });
+        }
+        let end = written + one;
+        let len = nal.len() as u32;
+        match length_size {
+            1 => out[written] = len as u8,
+            2 => out[written..written + 2].copy_from_slice(&(len as u16).to_be_bytes()),
+            4 => out[written..written + 4].copy_from_slice(&len.to_be_bytes()),
+            _ => unreachable!("length_size validated by max_encodable_len before this is called"),
+        }
+        out[written + width..end].copy_from_slice(nal);
+        written = end;
     }
-    out.extend_from_slice(nal);
-    Ok(())
+    Ok(written)
 }
 
 /// Convert a length-prefixed buffer (each NAL preceded by a `length_size`-
@@ -199,16 +299,8 @@ pub fn extract_parameter_sets(annexb: &[u8], codec: VideoCodec) -> ParameterSets
         VideoCodec::H264 | VideoCodec::H265 => {}
     }
 
-    let starts = start_codes(annexb);
-    for win in starts.windows(2) {
-        classify_parameter_set(
-            &annexb[win[0].data_start..win[1].prefix_start],
-            codec,
-            &mut sets,
-        );
-    }
-    if let Some(&last) = starts.last() {
-        classify_parameter_set(&annexb[last.data_start..annexb.len()], codec, &mut sets);
+    for nal in nals(annexb) {
+        classify_parameter_set(nal, codec, &mut sets);
     }
     sets
 }
@@ -253,6 +345,141 @@ mod tests {
             0x00, 0x00, 0x01, // 3-byte start code
             0x65, 0xDD, 0xEE, // NAL 2: header 0x65 + 2 payload bytes (len 3)
         ]
+    }
+
+    /// Every Annex-B shape the three sizing/writing entry points have to
+    /// agree on, paired with the `length_size` each is exercised at. The
+    /// 70,000-byte NAL at `length_size = 2` is the overflow row: it is the
+    /// only member whose `Vec` conversion fails, so it pins that `_len`
+    /// and `_into` refuse exactly what the `Vec` path refuses.
+    fn agreement_corpus() -> Vec<(&'static str, Vec<u8>, u8)> {
+        let mut big_nal = vec![0x00, 0x00, 0x00, 0x01, 0x65];
+        big_nal.extend(core::iter::repeat(0xAA).take(70_000));
+
+        let mut leading_garbage = vec![0xDE, 0xAD, 0xBE, 0xEF];
+        leading_garbage.extend_from_slice(&[0x00, 0x00, 0x00, 0x01, 0x67, 0x01]);
+
+        vec![
+            ("empty", Vec::new(), 4),
+            (
+                "one NAL, 3-byte start code",
+                vec![0x00, 0x00, 0x01, 0x67, 0xAA, 0xBB],
+                4,
+            ),
+            (
+                "one NAL, 4-byte start code",
+                vec![0x00, 0x00, 0x00, 0x01, 0x67, 0xAA, 0xBB],
+                4,
+            ),
+            ("three NALs, mixed widths", three_nal_annexb(), 4),
+            ("three NALs, 1-byte length prefix", three_nal_annexb(), 1),
+            ("three NALs, 2-byte length prefix", three_nal_annexb(), 2),
+            ("70,000-byte NAL at length_size 2", big_nal, 2),
+            ("bytes before the first start code", leading_garbage, 4),
+            (
+                "trailing zero run that is not a start code",
+                vec![0x00, 0x00, 0x01, 0x41, 0x00, 0x00],
+                4,
+            ),
+            ("no start code at all", vec![0x01, 0x02, 0x03, 0x04], 4),
+            ("invalid length_size", three_nal_annexb(), 3),
+        ]
+    }
+
+    /// Three NALs: 4-byte, 3-byte and 4-byte start codes, bodies of 4, 3
+    /// and 2 bytes.
+    fn three_nal_annexb() -> Vec<u8> {
+        vec![
+            0x00, 0x00, 0x00, 0x01, // 4-byte start code
+            0x67, 0xAA, 0xBB, 0xCC, // NAL 1 (len 4)
+            0x00, 0x00, 0x01, // 3-byte start code
+            0x65, 0xDD, 0xEE, // NAL 2 (len 3)
+            0x00, 0x00, 0x00, 0x01, // 4-byte start code
+            0x68, 0xFF, // NAL 3 (len 2)
+        ]
+    }
+
+    /// `_len` and `_into` must be indistinguishable from the `Vec` path:
+    /// same acceptance, same byte count, same bytes. Written as one sweep
+    /// over the corpus so a new shape only has to be added in one place.
+    #[test]
+    fn len_and_into_agree_with_the_vec_path() {
+        for (name, annexb, length_size) in agreement_corpus() {
+            let vec_result = annexb_to_length_prefixed(&annexb, length_size);
+            let len_result = annexb_to_length_prefixed_len(&annexb, length_size);
+
+            match (&vec_result, &len_result) {
+                (Ok(v), Ok(n)) => assert_eq!(v.len(), *n, "{name}: _len disagrees with vec.len()"),
+                (Err(ve), Err(le)) => {
+                    assert_eq!(ve, le, "{name}: _len raised a different error");
+                    // The error path must also be reproduced by _into,
+                    // with a buffer large enough that capacity cannot be
+                    // the cause.
+                    let mut out = vec![0u8; 1024];
+                    assert_eq!(
+                        annexb_to_length_prefixed_into(&annexb, length_size, &mut out).as_ref(),
+                        Err(ve),
+                        "{name}: _into raised a different error"
+                    );
+                    continue;
+                }
+                _ => panic!("{name}: _len and the vec path disagree on success/failure"),
+            }
+
+            let expected = vec_result.unwrap();
+            let needed = len_result.unwrap();
+
+            // Exactly-sized buffer: writes the whole rendering, reports it.
+            let mut exact = vec![0u8; needed];
+            assert_eq!(
+                annexb_to_length_prefixed_into(&annexb, length_size, &mut exact),
+                Ok(needed),
+                "{name}: _into into an exactly-sized buffer"
+            );
+            assert_eq!(exact, expected, "{name}: _into wrote different bytes");
+
+            // Oversized buffer: writes the same prefix, leaves the tail alone.
+            let mut roomy = vec![0xCDu8; needed + 8];
+            assert_eq!(
+                annexb_to_length_prefixed_into(&annexb, length_size, &mut roomy),
+                Ok(needed),
+                "{name}: _into into an oversized buffer"
+            );
+            assert_eq!(&roomy[..needed], &expected[..], "{name}: oversized prefix");
+            assert_eq!(&roomy[needed..], &[0xCDu8; 8], "{name}: tail was touched");
+
+            // One byte short: refuses, naming the true requirement, and
+            // leaves the caller's buffer completely unchanged.
+            if needed > 0 {
+                let mut short = vec![0xCDu8; needed - 1];
+                assert_eq!(
+                    annexb_to_length_prefixed_into(&annexb, length_size, &mut short),
+                    Err(CodecParseError::BufferTooSmall {
+                        needed,
+                        have: needed - 1,
+                    }),
+                    "{name}: _into with one byte too few"
+                );
+                assert_eq!(
+                    short,
+                    vec![0xCDu8; needed - 1],
+                    "{name}: a refused _into wrote into the buffer"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn nal_exceeding_two_byte_length_size_overflows() {
+        let mut annexb = vec![0x00, 0x00, 0x00, 0x01, 0x65];
+        annexb.extend(core::iter::repeat(0xAA).take(70_000));
+        assert_eq!(
+            annexb_to_length_prefixed_len(&annexb, 2).unwrap_err(),
+            CodecParseError::NalLengthOverflow {
+                nal_len: 70_001,
+                length_size: 2,
+            }
+        );
     }
 
     #[test]

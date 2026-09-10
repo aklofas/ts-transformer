@@ -36,30 +36,104 @@ pub(crate) struct StartCode {
 /// a byte and the 4-byte form matches there, leaving the surplus zero
 /// outside the prefix.
 pub(crate) fn start_codes(buf: &[u8]) -> Vec<StartCode> {
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i + 3 <= buf.len() {
-        if buf[i] == 0 && buf[i + 1] == 0 {
-            if buf[i + 2] == 1 {
-                out.push(StartCode {
-                    prefix_start: i,
-                    data_start: i + 3,
-                });
-                i += 3;
-                continue;
-            }
-            if i + 4 <= buf.len() && buf[i + 2] == 0 && buf[i + 3] == 1 {
-                out.push(StartCode {
-                    prefix_start: i,
-                    data_start: i + 4,
-                });
-                i += 4;
-                continue;
-            }
-        }
-        i += 1;
+    StartCodes::new(buf).collect()
+}
+
+/// Lazy form of [`start_codes`]: the same walk, yielding each match as it
+/// is found instead of collecting. This is the actual scanner — the
+/// `Vec`-returning [`start_codes`] is a `collect()` over it, kept for the
+/// one consumer that needs random access to the match list
+/// (`mpegts::demux::payload::split_nals`, which pairs each match with the
+/// next to slice offsets out of a shared buffer).
+struct StartCodes<'a> {
+    buf: &'a [u8],
+    /// Index of the next byte the walk will examine.
+    pos: usize,
+}
+
+impl<'a> StartCodes<'a> {
+    fn new(buf: &'a [u8]) -> Self {
+        Self { buf, pos: 0 }
     }
-    out
+}
+
+impl Iterator for StartCodes<'_> {
+    type Item = StartCode;
+
+    fn next(&mut self) -> Option<StartCode> {
+        let buf = self.buf;
+        while self.pos + 3 <= buf.len() {
+            let i = self.pos;
+            if buf[i] == 0 && buf[i + 1] == 0 {
+                if buf[i + 2] == 1 {
+                    self.pos = i + 3;
+                    return Some(StartCode {
+                        prefix_start: i,
+                        data_start: i + 3,
+                    });
+                }
+                if i + 4 <= buf.len() && buf[i + 2] == 0 && buf[i + 3] == 1 {
+                    self.pos = i + 4;
+                    return Some(StartCode {
+                        prefix_start: i,
+                        data_start: i + 4,
+                    });
+                }
+            }
+            self.pos = i + 1;
+        }
+        None
+    }
+}
+
+/// Iterate the NAL bodies of an Annex-B buffer: each item is the byte
+/// slice between one start code's `data_start` and the next start code's
+/// `prefix_start` (or the end of `buf` for the last NAL).
+///
+/// Allocation-free — it holds one [`StartCodes`] walk and one lookahead
+/// match, so callers that only need the NAL bytes (not their offsets)
+/// can size or convert a buffer without materializing a match list.
+/// Bytes before the first start code are not part of any NAL and are
+/// skipped; a `buf` with no start code at all yields nothing.
+pub(crate) fn nals(buf: &[u8]) -> Nals<'_> {
+    let mut codes = StartCodes::new(buf);
+    let current = codes.next();
+    Nals {
+        buf,
+        codes,
+        current,
+    }
+}
+
+/// Iterator returned by [`nals`].
+pub(crate) struct Nals<'a> {
+    buf: &'a [u8],
+    codes: StartCodes<'a>,
+    /// The start code whose NAL body the next `next()` call will yield;
+    /// `None` once the walk is exhausted.
+    current: Option<StartCode>,
+}
+
+impl<'a> Iterator for Nals<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<&'a [u8]> {
+        let current = self.current?;
+        // This NAL ends where the following start code's prefix begins;
+        // the last NAL runs to the end of the buffer.
+        let end = match self.codes.next() {
+            Some(next) => {
+                let end = next.prefix_start;
+                self.current = Some(next);
+                end
+            }
+            None => {
+                self.current = None;
+                self.buf.len()
+            }
+        };
+        Some(&self.buf[current.data_start..end])
+    }
 }
 
 #[cfg(test)]
@@ -125,5 +199,61 @@ mod tests {
     #[test]
     fn buffer_without_any_start_code_yields_none() {
         assert_eq!(scan(&[0x01, 0x02, 0x03, 0x04]), []);
+    }
+
+    /// `nals` must slice exactly what pairing consecutive `start_codes`
+    /// entries would: body runs from `data_start` to the NEXT match's
+    /// `prefix_start`, so no inter-NAL prefix bytes bleed into a body.
+    fn nal_bodies(buf: &[u8]) -> Vec<&[u8]> {
+        nals(buf).collect()
+    }
+
+    #[test]
+    fn nals_yields_each_body_without_start_code_bytes() {
+        let buf = [
+            0x00, 0x00, 0x00, 0x01, 0x67, 0xAA, // NAL 1, 4-byte prefix
+            0x00, 0x00, 0x01, 0x65, 0xBB, 0xCC, // NAL 2, 3-byte prefix
+        ];
+        assert_eq!(
+            nal_bodies(&buf),
+            vec![&[0x67, 0xAA][..], &[0x65, 0xBB, 0xCC][..]]
+        );
+    }
+
+    #[test]
+    fn nals_drops_bytes_before_the_first_start_code() {
+        let buf = [0xDE, 0xAD, 0x00, 0x00, 0x01, 0x41];
+        assert_eq!(nal_bodies(&buf), vec![&[0x41][..]]);
+    }
+
+    #[test]
+    fn nals_yields_an_empty_body_for_back_to_back_start_codes() {
+        let buf = [0x00, 0x00, 0x01, 0x00, 0x00, 0x01, 0x41];
+        assert_eq!(nal_bodies(&buf), vec![&[][..], &[0x41][..]]);
+    }
+
+    #[test]
+    fn nals_yields_nothing_without_a_start_code() {
+        assert_eq!(nal_bodies(&[]), Vec::<&[u8]>::new());
+        assert_eq!(nal_bodies(&[0x01, 0x02, 0x03]), Vec::<&[u8]>::new());
+    }
+
+    /// The lazy walk and the collected one are the same walk: pairing
+    /// `start_codes` by hand must reproduce `nals` byte for byte.
+    #[test]
+    fn nals_matches_pairing_start_codes_by_hand() {
+        let buf = [
+            0xFF, 0x00, 0x00, 0x00, 0x00, 0x01, 0x67, 0xAA, 0x00, 0x00, 0x01, 0x65, 0x00, 0x00,
+            0x00, 0x01, 0x68, 0x00, 0x00,
+        ];
+        let codes = start_codes(&buf);
+        let mut expected: Vec<&[u8]> = codes
+            .windows(2)
+            .map(|w| &buf[w[0].data_start..w[1].prefix_start])
+            .collect();
+        if let Some(&last) = codes.last() {
+            expected.push(&buf[last.data_start..]);
+        }
+        assert_eq!(nal_bodies(&buf), expected);
     }
 }
