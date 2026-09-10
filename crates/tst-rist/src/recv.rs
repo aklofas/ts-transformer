@@ -97,7 +97,8 @@ impl RistRecvTransport {
         // (rist.c's rist_receiver_peer_create); that null case is reachable
         // for an IPv6 bind (the RTCP peer's re-derived bind URL fails to
         // come up as IPv6), which SIGSEGVs the whole process. Refuse here,
-        // before any librist call, rather than let the process crash.
+        // before any librist context or peer creation, rather than let the
+        // process crash.
         // Caller/sender side is unaffected — rist_sender_peer_create
         // null-checks before dereferencing — so only the receiver bind is
         // guarded.
@@ -413,6 +414,31 @@ mod tests {
         t.close();
         assert!(t.ctx_is_null());
         t.close(); // must not panic / double-free
+    }
+
+    /// The Simple-profile IPv6 receiver-bind guard returns before any librist
+    /// context or peer creation, so this runs everywhere — no socket is opened
+    /// and the vendored-librist null-deref is never reached.
+    #[test]
+    fn refuses_simple_profile_ipv6_bind() {
+        use crate::error::RistErrorKind;
+
+        let r = RistRecvTransport::listen("rist://@[::1]:33024?profile=simple");
+        match r {
+            Err(e) => {
+                assert_eq!(
+                    e.kind(),
+                    RistErrorKind::InvalidConfig,
+                    "got {e:?}, expected InvalidConfig"
+                );
+                // Not the '@'-missing InvalidConfig — this must be the guard.
+                assert!(
+                    e.to_string().contains("Simple profile"),
+                    "expected the Simple-profile guard message, got: {e}"
+                );
+            }
+            Ok(_) => panic!("Simple-profile IPv6 bind must be refused, not attempted"),
+        }
     }
 
     #[test]

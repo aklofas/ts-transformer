@@ -356,8 +356,8 @@ fn ipv6_loopback_round_trip() {
 /// dereferences the new peer before its own null check (`rist.c`'s
 /// `rist_receiver_peer_create`), and that null case is reachable for an IPv6
 /// bind — SIGSEGV. `listen_with_config` must refuse this combination BEFORE
-/// any librist call (never reaching `rist_receiver_create`), not let the
-/// process crash. This must NOT be run without the guard: prior to the fix,
+/// any librist context or peer creation (never reaching `rist_receiver_create`),
+/// not let the process crash. This must NOT be run without the guard: prior to the fix,
 /// this exact profile+URL combination segfaults the whole test process (see
 /// the task report for the gdb-verified repro), so there is no "assert it
 /// panics" fallback here — the guard is the only safe way to exercise this.
