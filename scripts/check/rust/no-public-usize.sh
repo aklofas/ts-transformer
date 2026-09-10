@@ -53,6 +53,8 @@ ALLOWLIST_PATTERNS=(
     'pub payload_consumed: usize'                           # mpegts/mux/ts.rs WriteResult (pub(crate))
     'pub raw_header_len: usize'                             # codec/aac/adts.rs Header (pub(super))
     'pub byte_length: usize'                                # klv/st0601/tags.rs LinearRange (pub(crate))
+    'pub prefix_start: usize'                               # codec/annexb.rs StartCode (pub(crate))
+    'pub data_start: usize'                                 # codec/annexb.rs StartCode (pub(crate))
 )
 
 violations=0
