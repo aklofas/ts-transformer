@@ -91,18 +91,21 @@ pub fn annexb_to_length_prefixed_len(
     let mut total: usize = 0;
     for nal in nals(annexb) {
         let one = length_prefixed_nal_len(nal, length_size, max_len)?;
-        // Unreachable in practice — a length-prefixed rendering is at
-        // most 4/3 the size of its Annex-B input (a 4-byte prefix
-        // replacing a 3-byte start code is the worst case, and a NAL
-        // needs at least its start code's 3 bytes), so the total is
-        // bounded by 4/3 * isize::MAX. Checked anyway rather than left
-        // to wrap.
-        total = total
-            .checked_add(one)
-            .ok_or(CodecParseError::NalLengthOverflow {
-                nal_len: saturating_u32(nal.len()),
-                length_size,
-            })?;
+        // Cannot overflow: a length-prefixed rendering is at most 4/3 the
+        // size of its Annex-B input (a 4-byte prefix replacing a 3-byte
+        // start code is the worst case, and every NAL consumes its own
+        // bytes on both sides), so the total is bounded by
+        // 4/3 * isize::MAX — comfortably inside `usize`. Left as a plain
+        // add rather than a `checked_add`: there is no error in
+        // `CodecParseError` that honestly describes a total-length
+        // overflow, and inventing one would put a misleading message
+        // ("NAL length N exceeds ...") on a state the slice-length
+        // invariant already rules out. Debug builds — the `nal_framing`
+        // fuzz target among them — still trap on overflow, and
+        // `write_nals` re-checks every NAL against the real buffer, so
+        // even a wrapped total would surface as `BufferTooSmall` rather
+        // than a bad write.
+        total += one;
     }
     Ok(total)
 }
