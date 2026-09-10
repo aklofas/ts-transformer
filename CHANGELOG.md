@@ -243,6 +243,38 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **TCP: `TcpCancelHandle` is reachable through
+  `Transport::cancel_handle` / `RecvTransport::cancel_handle`, so generic
+  shells and the managed wrappers can cancel a parked TCP receive.**
+  `TcpTransport` had carried an inherent `cancel_handle()` since the
+  crate landed, but neither trait impl overrode the trait method, so
+  both kept returning the default `None`. Everything that reaches for
+  cancellation generically — the `tst-pipeline` shells' own
+  `cancel_handle()`, and the managed wrappers, which arm their cancel
+  slot from the inner transport's trait method — therefore saw a TCP
+  transport as uncancellable: a cross-thread stop of a thread parked in
+  `recv_bytes` was only possible for a caller that had kept the concrete
+  `TcpTransport` and taken the inherent handle before moving it into the
+  shell. Both trait impls now return the handle, and `TcpCancelHandle`
+  implements `tst_core::transport::TransportCancel`.
+- **TCP: peer EOF and fatal read errors now mark the transport dead
+  (`is_alive()` false).** `recv_bytes` returned `Broken` on an orderly
+  peer FIN and on an unrecoverable read error, but left the liveness
+  flag set, so `is_alive()` kept answering `true` for a stream that
+  could never deliver another byte — an asymmetry with the send path,
+  which has always marked dead on its terminal outcomes. Both terminal
+  recv arms now clear the flag before returning; the retryable
+  `WouldBlock`/`TimedOut` poll is untouched.
+- **TCP (`tcps://`): explicit `close()` sends `close_notify` and shuts
+  the socket instead of waiting for drop.** The plaintext arm of the
+  transport's shutdown had always called `shutdown(Both)`, but the TLS
+  arm left the session to `StreamOwned`'s drop, so a caller that closed
+  a `tcps://` transport and kept it alive gave its peer neither
+  `close_notify` nor a FIN — the peer could stay parked on a read
+  indefinitely. The TLS arm now queues `close_notify`, makes one
+  non-blocking attempt to flush it, and shuts the socket down in both
+  directions; it never loops and never waits for the peer's own
+  `close_notify`, so a wedged peer cannot stall `close()`.
 - **KLV: permissive `st0601::decode` / `st0806::decode` reported
   malformed-tag/length offsets relative to the item slice (offset 0)
   where the strict decoders report buffer-absolute offsets; both now
