@@ -68,6 +68,11 @@ import org.tstrans.mpegts.DemuxerConfig;
 public final class ManagedDemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> {
     static { NativeLoader.load(); }
 
+    // Populated by nativeClose from nClose's close-time ordinal (see
+    // endReason()'s javadoc for why: once closed, peekHandle() is 0 and the
+    // native registry entry is gone for good).
+    private volatile RecvEndReason closedEndReason;
+
     /** Package-private constructor from a native handle. */
     ManagedDemuxReceiver(long h) { setHandle(h); }
 
@@ -293,6 +298,46 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
     @Override public void close() { super.close(); }
 
     /**
+     * Why this receiver's stream ended, or {@code null} while it is still live
+     * (or if it ended through a path {@code tst-pipeline} does not instrument).
+     *
+     * <p>Recorded once, first-writer-wins, by the iteration itself at the moment
+     * it observes the terminal condition — so read it <em>after</em> iteration
+     * ends to learn why: {@link RecvEndReason#CANCELLED} when
+     * {@link #cancelHandle()}{@code .cancel()} or {@link #close()} stopped it,
+     * {@link RecvEndReason#RECONNECT_EXHAUSTED} when the
+     * {@link ReconnectPolicy} budget ran out. See {@link RecvEndReason} for why
+     * {@link RecvEndReason#END_OF_STREAM} does not occur here.
+     *
+     * <p><b>Non-blocking, unlike the other getters.</b> {@link #socketStats()}
+     * and {@link #lastSeenMicros(int)} take the internal resource lock a parked
+     * {@code next()} holds and therefore wait for it; this call does not. The
+     * end-reason cell is captured when the receiver is opened and read without
+     * that lock, so it stays answerable from another thread while iteration is
+     * parked — including in a listener-mode re-accept, which may never return on
+     * its own.
+     *
+     * <p><b>After {@link #close()}</b> this keeps returning the recorded reason:
+     * {@code close()} captures it in the same native call that tears the
+     * receiver down, because the native registry entry is gone afterwards.
+     * Unlike every other accessor on this class, it does not throw once closed.
+     *
+     * <p><b>Cross-thread close race:</b> a concurrent call from another thread
+     * while {@link #close()} is in flight may briefly observe {@code null} —
+     * {@code close()} claims the handle (so this method switches to the cached
+     * snapshot) before the native teardown that computes that snapshot
+     * completes. Read it from the thread that closed, or after {@code close()}
+     * returns.
+     *
+     * @return the recorded reason, or {@code null}
+     */
+    public RecvEndReason endReason() {
+        long h = peekHandle();
+        if (h == 0) return closedEndReason;
+        return RecvEndReason.fromWireOrdinal(nEndReason(h));
+    }
+
+    /**
      * Return {@code true} while the receiver owns a live transport.
      *
      * @return liveness state of the underlying SRT socket
@@ -302,7 +347,12 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
         return nIsAlive(peekHandle());
     }
 
-    @Override protected void nativeClose(long h) { nClose(h); }
+    @Override protected void nativeClose(long h) {
+        // Runs at most once per receiver: NativeHandle.close() only calls this for
+        // the caller that atomically claimed a non-zero handle. `-1` (nothing was
+        // recorded) maps to null, which is what the field already held.
+        closedEndReason = RecvEndReason.fromWireOrdinal(nClose(h));
+    }
 
     // --- Natives ---
 
@@ -323,6 +373,7 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
     private static native SocketStats nSrtStats(long handle);
     private static native long nReconnectAttempts(long handle);
     private static native long nLastSeenMicros(long handle, int pid);
-    private static native void nClose(long handle);
+    private static native int nEndReason(long handle);
+    private static native int nClose(long handle);
     private static native boolean nIsAlive(long handle);
 }
