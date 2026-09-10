@@ -246,6 +246,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_rist::transport::RistTransp
 impl core::panic::unwind_safe::UnwindSafe for tst_rist::transport::RistTransport
 pub mod tst_rist::url
 #[non_exhaustive] pub enum tst_rist::url::RistUrlError
+pub tst_rist::url::RistUrlError::AesTypeWithoutSecret
 pub tst_rist::url::RistUrlError::BadAesType(u32)
 pub tst_rist::url::RistUrlError::BadHost(alloc::string::String)
 pub tst_rist::url::RistUrlError::BadQueryValue
@@ -371,6 +372,7 @@ impl core::marker::UnsafeUnpin for tst_rist::config::RistProfile
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rist::config::RistProfile
 impl core::panic::unwind_safe::UnwindSafe for tst_rist::config::RistProfile
 #[non_exhaustive] pub enum tst_rist::RistUrlError
+pub tst_rist::RistUrlError::AesTypeWithoutSecret
 pub tst_rist::RistUrlError::BadAesType(u32)
 pub tst_rist::RistUrlError::BadHost(alloc::string::String)
 pub tst_rist::RistUrlError::BadQueryValue
