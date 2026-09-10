@@ -105,6 +105,11 @@ fn build_sender_transport(url: &str) -> Result<SrtTransport, TransportError> {
 /// listener's wake handle into it around the accept, so a `cancel()`
 /// reaches a re-accept parked with no peer in sight instead of waiting
 /// for one to happen along.
+///
+/// The helper's `bind:` / `accept:` failures are re-wrapped with the
+/// `managed receiver factory:` prefix every error out of this function
+/// wears, so the URL-parse and mode errors above stay in the same voice
+/// (same wrapper the JVM basic factory applies).
 fn build_receiver_transport(
     url: &str,
     slot: &FactoryCancel,
@@ -129,7 +134,13 @@ fn build_receiver_transport(
     } else {
         crate::util::join_host_port(&parsed.host, parsed.port)
     };
-    Listener::accept_one_cancellable(&cfg, addr.as_str(), slot)
+    Listener::accept_one_cancellable(&cfg, addr.as_str(), slot).map_err(|e| match e {
+        TransportError::Broken { msg, errno_code } => TransportError::Broken {
+            msg: format!("managed receiver factory: {msg}"),
+            errno_code,
+        },
+        other => other,
+    })
 }
 
 // ---------------------------------------------------------------------------
