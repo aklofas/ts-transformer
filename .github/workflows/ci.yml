@@ -966,12 +966,16 @@ jobs:
 
       # The three fuzz crates are separate workspaces, so the root
       # `cargo fmt --all -- --check` in the build job never sees them; two of
-      # them had drifted unformatted before this step existed. Same nightly
-      # toolchain the compile checks below use.
-      - name: cargo fmt --check (fuzz workspaces)
+      # them had drifted unformatted before this step existed. Formats with
+      # the repo's pinned stable toolchain (rust-toolchain.toml: 1.85), not
+      # the nightly this job installs: that nightly is `--profile minimal`
+      # (no rustfmt), and a rolling nightly rustfmt would make the check
+      # drift over time. Only the fuzz COMPILE needs nightly.
+      - name: cargo fmt --check (fuzz workspaces, pinned toolchain)
         run: |
+          rustup toolchain install 1.85 --profile minimal --component rustfmt --no-self-update
           for d in crates/tst-core/fuzz crates/tst-srt/fuzz crates/tst-rtp/fuzz; do
-            (cd "$d" && cargo +nightly fmt --all -- --check)
+            (cd "$d" && cargo +1.85 fmt --all -- --check)
           done
 
       # `cargo +nightly fuzz check` (compile-only) catches fuzz-target
