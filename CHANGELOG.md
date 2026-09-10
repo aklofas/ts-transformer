@@ -406,7 +406,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   inner transport out of that same mutex, so the one call it was asked to
   interrupt was the one it queued behind — a cancel could not land until the
   blocked send returned on its own. The live inner's handle is now published
-  through a lock-free `CancelSlot`, so `cancel()` fires it without touching
+  through a `CancelSlot`, whose own lock is held only to read the target out
+  and is never held across I/O, so `cancel()` fires it without ever waiting on
   the send lock. Pinned by `crates/tst-pipeline/tests/reconnect_cancel_parked_send.rs`,
   whose mock parks inside `send_bytes` until its cancel handle wakes it.
 - **Managed receiver (`ManagedRecvTransport`): a cancel that landed while the
