@@ -356,6 +356,39 @@ impl Transport for TcpTransport {
     }
 }
 
+/// What the receive loop does with a failed `read`.
+///
+/// Split out of `recv_bytes` so the classification is unit-testable: the
+/// read itself goes straight at `InnerStream` with no injectable seam, and
+/// `EINTR` in particular cannot be provoked deterministically from a plain
+/// socket. This mirrors what `write_loop` gets from its scripted writer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RecvAction {
+    /// Transient — poll again; the transport stays alive.
+    Retry,
+    /// Terminal — report `Broken` and latch the transport dead.
+    Fatal,
+}
+
+/// Classify a failed receive-side `read` by its [`std::io::ErrorKind`].
+///
+/// `WouldBlock` / `TimedOut` are the read-deadline poll ticking over.
+/// `Interrupted` is `EINTR` — a signal landed on the thread parked in
+/// `read` (which is exactly what the SIGINT-handler shutdown pattern the
+/// docs steer callers toward delivers). `std`'s `TcpStream::read` surfaces
+/// it rather than retrying internally, and the send path's `write_loop`
+/// already retries it, so the receive path does too — otherwise a signal
+/// meant to be handled and resumed would latch the transport permanently
+/// dead. Everything else is terminal.
+pub(crate) fn classify_recv_error(kind: std::io::ErrorKind) -> RecvAction {
+    match kind {
+        std::io::ErrorKind::WouldBlock
+        | std::io::ErrorKind::TimedOut
+        | std::io::ErrorKind::Interrupted => RecvAction::Retry,
+        _ => RecvAction::Fatal,
+    }
+}
+
 impl RecvTransport for TcpTransport {
     fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
         loop {
@@ -378,15 +411,12 @@ impl RecvTransport for TcpTransport {
                     self.stats.bytes_received = self.stats.bytes_received.saturating_add(n as u64);
                     return Ok(n);
                 }
-                Err(e)
-                    if e.kind() == std::io::ErrorKind::WouldBlock
-                        || e.kind() == std::io::ErrorKind::TimedOut =>
-                {
+                Err(e) if classify_recv_error(e.kind()) == RecvAction::Retry => {
                     continue;
                 }
                 Err(e) => {
-                    // Fatal read (anything that is not the retryable
-                    // WouldBlock/TimedOut poll above) — same terminal contract
+                    // Fatal read (anything `classify_recv_error` does not send
+                    // back through the retry arm above) — same terminal contract
                     // as the EOF arm: report Broken *and* mark the transport
                     // dead so is_alive() cannot claim otherwise.
                     self.alive.store(false, Ordering::Release);
@@ -419,6 +449,45 @@ impl RecvTransport for TcpTransport {
 
     fn socket_stats(&self) -> Option<SocketStats> {
         Some(self.stats.to_socket_stats())
+    }
+}
+
+#[cfg(test)]
+mod recv_classify_tests {
+    use super::{RecvAction, classify_recv_error};
+    use std::io::ErrorKind;
+
+    #[test]
+    fn wouldblock_and_timedout_retry() {
+        // The read-deadline poll ticking over: transient by construction.
+        assert_eq!(
+            classify_recv_error(ErrorKind::WouldBlock),
+            RecvAction::Retry
+        );
+        assert_eq!(classify_recv_error(ErrorKind::TimedOut), RecvAction::Retry);
+    }
+
+    #[test]
+    fn interrupted_retries_like_the_send_path() {
+        // EINTR: a signal landed on the thread parked in `read`. `write_loop`
+        // retries it; treating it as fatal here would latch `alive = false`
+        // and kill the transport for good on a signal meant to be resumed.
+        assert_eq!(
+            classify_recv_error(ErrorKind::Interrupted),
+            RecvAction::Retry
+        );
+    }
+
+    #[test]
+    fn genuine_failures_are_fatal() {
+        for kind in [
+            ErrorKind::ConnectionReset,
+            ErrorKind::ConnectionAborted,
+            ErrorKind::BrokenPipe,
+            ErrorKind::NotConnected,
+        ] {
+            assert_eq!(classify_recv_error(kind), RecvAction::Fatal, "{kind:?}");
+        }
     }
 }
 
