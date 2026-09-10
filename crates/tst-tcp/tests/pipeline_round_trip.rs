@@ -17,13 +17,17 @@
 //! aligned 0x47-framed data and will lock, allowing the demuxer to emit a
 //! ProgramMap event.
 
+use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::DemuxEvent;
 use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
-use tst_pipeline::{DemuxReceiver, MuxSender, ShellErrorKind};
+use tst_pipeline::{
+    BackoffStrategy, DemuxReceiver, ManagedRecvTransport, MuxSender, ReconnectPolicy,
+    RecvTransport, ShellErrorKind, TransportError,
+};
 use tst_tcp::{TcpListener, TcpTransport};
 
 /// Minimal Annex-B H.264 AUD + IDR — just enough for the muxer to accept and
@@ -142,4 +146,85 @@ fn mux_via_tcp_demux_round_trip_recovers_program_map() {
         .expect("receiver thread did not report within 3 s");
 
     assert!(ok, "DemuxReceiver did not emit a ProgramMap event");
+}
+
+/// E4: a `ManagedRecvTransport<TcpTransport>` parked in `recv_bytes` against
+/// a real (silent) TCP peer must be cancellable from another thread.
+///
+/// Before E1 wired `TcpTransport::cancel_handle` through the trait-level
+/// `Transport`/`RecvTransport` overrides, `ManagedRecvTransport` — which can
+/// only reach the inner through `dyn RecvTransport` — got `None` back from
+/// `inner.cancel_handle()` at construction and never installed a wake handle
+/// in its `CancelSlot`. A `cancel()` afterwards latched the managed
+/// wrapper's own flag but had nothing to fire against the parked inner read,
+/// so the recv thread would never unblock.
+///
+/// The managed wrapper maps *every* caller-initiated cancel/close to
+/// `TransportError::ExplicitClose` — regardless of what the inner transport
+/// itself reports (a bare `TcpTransport::recv_bytes` returns `Closed` on
+/// cancel; see `loopback.rs`'s `cancel_handle_unblocks_parked_recv`). See the
+/// entry-gate + post-inner-call handling in
+/// `tst_pipeline::managed_receive::ManagedRecvTransport::recv_bytes`.
+#[test]
+fn managed_tcp_recv_cancel_unblocks_parked_read() {
+    // Silent peer: accept the connection and hold it open without reading
+    // or writing anything, so the parked recv has no data/EOF/RST to react
+    // to -- only an explicit cancel can unblock it.
+    let peer_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = peer_listener.local_addr().unwrap().port();
+    let _peer = thread::spawn(move || {
+        let (_sock, _) = peer_listener.accept().unwrap();
+        thread::sleep(Duration::from_secs(10));
+    });
+
+    let inner = TcpTransport::connect(&format!("tcp://127.0.0.1:{port}")).expect("connect");
+
+    // The factory is never actually invoked in this test: cancelling a
+    // parked receive is caller-initiated and short-circuits to
+    // ExplicitClose before any reconnect attempt is made. max_attempts: 0
+    // plus a zero backoff keep the policy inert if that assumption is ever
+    // wrong, rather than hanging the test on a real reconnect loop.
+    let factory: Box<dyn FnMut() -> Result<TcpTransport, TransportError> + Send> = Box::new(|| {
+        Err(TransportError::Broken {
+            msg: "factory should not run in this test".into(),
+            errno_code: None,
+        })
+    });
+    let policy = ReconnectPolicy {
+        max_attempts: Some(0),
+        backoff: BackoffStrategy::Constant(Duration::ZERO),
+        ..Default::default()
+    };
+
+    let mut managed = ManagedRecvTransport::new(inner, factory, policy);
+
+    // Obtain the cancel handle BEFORE moving `managed` into the receiving
+    // thread -- this mirrors real usage, where a caller elsewhere holds the
+    // handle while a separate loop owns the transport.
+    let handle = managed
+        .cancel_handle()
+        .expect("ManagedRecvTransport::cancel_handle is unconditionally Some");
+
+    let (tx, rx) = mpsc::channel::<Result<usize, TransportError>>();
+    let recv_thread = thread::spawn(move || {
+        let mut buf = vec![0u8; 1024];
+        let result = managed.recv_bytes(&mut buf);
+        let _ = tx.send(result);
+    });
+
+    // Give the recv thread time to park inside the inner TCP read.
+    thread::sleep(Duration::from_millis(100));
+
+    handle.cancel();
+
+    let result = rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("cancel did not unblock the parked managed receive within 1 s");
+    recv_thread.join().unwrap();
+
+    assert_eq!(
+        result,
+        Err(TransportError::ExplicitClose),
+        "managed cancel of a parked TCP read must surface ExplicitClose"
+    );
 }
