@@ -46,8 +46,11 @@ impl InnerStream {
                 let _ = s.shutdown(std::net::Shutdown::Both);
             }
             #[cfg(feature = "tls")]
-            Self::Tls(_) => {
-                // TLS shutdown handled in TlsStream's StreamOwned/socket drop.
+            Self::Tls(s) => {
+                // Send close_notify and shut the socket here rather than
+                // leaving it to Drop: a caller that closes but retains the
+                // transport would otherwise keep the peer parked on a read.
+                s.shutdown();
             }
         }
     }
