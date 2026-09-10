@@ -20,7 +20,7 @@ use super::tags::TAGS;
 
 /// By-value adapter over [`rebase_offset`] for the `map_err` chains below:
 /// rebase a slice-relative decode-error offset to an absolute `raw` offset.
-fn rebased(mut e: KlvDecodeError, base: usize) -> KlvDecodeError {
+fn rebase_error_offset(mut e: KlvDecodeError, base: usize) -> KlvDecodeError {
     rebase_offset(&mut e, base);
     e
 }
@@ -104,7 +104,7 @@ pub fn patch(raw: &[u8], edits: &UasDatalinkLs) -> Result<Vec<u8>, KlvPatchError
         }));
     }
     let ul = &raw[..16];
-    let (declared_len, after_len) = read_ber(&raw[16..]).map_err(|e| rebased(e, 16))?;
+    let (declared_len, after_len) = read_ber(&raw[16..]).map_err(|e| rebase_error_offset(e, 16))?;
     let len_bytes = &raw[16..raw.len() - after_len.len()];
     let body_offset = raw.len() - after_len.len();
     if after_len.len() < declared_len {
@@ -134,10 +134,11 @@ pub fn patch(raw: &[u8], edits: &UasDatalinkLs) -> Result<Vec<u8>, KlvPatchError
     let mut pos = 0usize;
     while pos < body.len() {
         let rest = &body[pos..];
-        let (tag, after_tag) = read_ber_oid(rest).map_err(|e| rebased(e, body_offset + pos))?;
+        let (tag, after_tag) =
+            read_ber_oid(rest).map_err(|e| rebase_error_offset(e, body_offset + pos))?;
         let consumed_tag = rest.len() - after_tag.len();
-        let (vlen, after_vlen) =
-            read_ber(after_tag).map_err(|e| rebased(e, body_offset + pos + consumed_tag))?;
+        let (vlen, after_vlen) = read_ber(after_tag)
+            .map_err(|e| rebase_error_offset(e, body_offset + pos + consumed_tag))?;
         let header_len = rest.len() - after_vlen.len();
         if after_vlen.len() < vlen {
             return Err(KlvPatchError::Decode(KlvDecodeError::Truncated {
