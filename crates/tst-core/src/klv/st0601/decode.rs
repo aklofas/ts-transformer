@@ -296,17 +296,21 @@ fn decode_inner(
         })?;
         if f.tag == 1 {
             // Checksum: capture for later verification.
+            // Byte offset of f.value within buf — used both to report a
+            // buffer-absolute `Truncated.offset` below and to bound the
+            // checksum coverage span. `f.value` is always a subslice of
+            // `body`, itself a subslice of `buf`, so the subtraction is
+            // in-range even when the value is empty.
+            let value_offset_in_buf =
+                (f.value.as_ptr() as usize).wrapping_sub(buf.as_ptr() as usize);
             if f.value.len() != 2 {
                 return Err(KlvDecodeError::Truncated {
-                    offset: 0,
+                    offset: value_offset_in_buf,
                     needed: 2,
                     have: f.value.len(),
                 });
             }
             let cksum = u16::from_be_bytes([f.value[0], f.value[1]]);
-            // Compute the byte offset of f.value within buf for checksum coverage.
-            let value_offset_in_buf =
-                (f.value.as_ptr() as usize).wrapping_sub(buf.as_ptr() as usize);
             declared_checksum = Some((cksum, value_offset_in_buf));
             continue;
         }
