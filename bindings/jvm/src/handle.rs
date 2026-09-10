@@ -260,13 +260,27 @@ impl<T> HandleRegistry<T> {
     /// `endReason()` both have to answer while `nNext` is parked on the resource
     /// lock. No close hook (the srt model: `close()` waits for the parked op).
     /// Capture BOTH at construction, before the resource is boxed.
-    pub(crate) fn insert_with_target_and_end_reason(
+    /// Register a receiver whose `close` cancels first: `target` backs the public
+    /// `cancelHandle()` natives AND is fired by [`HandleRegistry::close`] before
+    /// the resource lock is taken, so a `recv` parked on the same handle from
+    /// another thread unparks (recording its end reason on the way out, when it
+    /// has a cell) instead of holding `close` hostage. This is the contract the
+    /// C ABI's `tst_managed_*_receiver_close` and tst-py's `close()` share; the
+    /// srt managed receivers register through here to match them. `end_reason`
+    /// is `None` for a type that records no end reason.
+    pub(crate) fn insert_cancel_on_close(
         &self,
         resource: T,
         target: CancelTarget,
-        end_reason: RecvEndReasonHandle,
+        end_reason: Option<RecvEndReasonHandle>,
     ) -> u64 {
-        self.insert_entry(resource, None, Some(target), Some(end_reason))
+        let hook = Arc::clone(&target);
+        self.insert_entry(
+            resource,
+            Some(Box::new(move || hook.cancel())),
+            Some(target),
+            end_reason,
+        )
     }
 
     /// The one place an [`Entry`] is built — every `insert*` funnels here so a new
@@ -719,7 +733,7 @@ mod tests {
         let reg: HandleRegistry<u64> = HandleRegistry::new();
         let target: Arc<dyn tst_core::transport::TransportCancel + Send + Sync> =
             Arc::new(NoopCancel);
-        let id = reg.insert_with_target_and_end_reason(7, target, RecvEndReasonHandle::default());
+        let id = reg.insert_cancel_on_close(7, target, Some(RecvEndReasonHandle::default()));
 
         // Park an op on the resource lock (a blocked recv in production).
         let entry = reg.lease(id).unwrap();
@@ -772,7 +786,7 @@ mod tests {
 
         let target: Arc<dyn tst_core::transport::TransportCancel + Send + Sync> =
             Arc::new(NoopCancel);
-        let id = reg.insert_with_target_and_end_reason(2, target, RecvEndReasonHandle::default());
+        let id = reg.insert_cancel_on_close(2, target, Some(RecvEndReasonHandle::default()));
         reg.close(id);
         assert!(
             reg.end_reason(id).is_none(),

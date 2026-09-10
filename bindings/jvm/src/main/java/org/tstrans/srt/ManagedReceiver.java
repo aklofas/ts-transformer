@@ -17,7 +17,9 @@ import org.tstrans.SrtException;
  * (does NOT include the initial bind+accept).
  *
  * <p><b>Thread safety:</b> a single {@code ManagedReceiver} is NOT thread-safe.
- * Use one per thread, or guard with external synchronisation.
+ * Use one per thread, or guard with external synchronisation. The sanctioned
+ * cross-thread calls are {@link #cancelHandle()}'s {@code cancel()} and
+ * {@link #close()}, both of which wake a thread parked in {@link #recvBytes}.
  *
  * <p><b>Closing:</b> use try-with-resources or call {@link #close()} explicitly.
  * After close, further calls throw {@code IllegalStateException}.
@@ -174,15 +176,12 @@ public final class ManagedReceiver extends NativeHandle {
     }
 
     /**
-     * Close the receiver, tearing down the inner shell (which flips the cancel
-     * flag so any in-flight reconnect exits). Idempotent.
-     *
-     * <p>If a thread is parked in {@link #recvBytes}, {@code close()} blocks until
-     * that call returns — it acquires the receiver's resource lock, which the
-     * parked recv holds, and only then tears down (so the cancel flag is flipped
-     * AFTER the lock is acquired, not before). Unlike the rtp receiver, srt
-     * {@code close()} does NOT itself wake a parked recv; to unblock it from
-     * another thread, call {@link #cancelHandle()}{@code .cancel()} first.
+     * Close the receiver. Cancels first — fires the same cancel target
+     * {@link #cancelHandle()} hands out, so any in-flight reconnect exits and a
+     * {@link #recvBytes} parked on another thread ends promptly with
+     * {@code SrtException(CLOSED)} — then tears down the inner shell.
+     * Idempotent. Same contract as the C ABI's {@code tst_managed_receiver_close}
+     * and tst-py's {@code close()}.
      */
     @Override public void close() { super.close(); }
 

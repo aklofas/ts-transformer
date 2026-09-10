@@ -1196,8 +1196,10 @@ in progress. Two of its three members are reachable on the managed-SRT path
 today: `RECONNECT_EXHAUSTED` (the `ReconnectPolicy`'s `maxAttempts` budget
 ran out — also what a plain peer close reports under a zero-retry policy,
 since a peer FIN reaches the reconnect decorator as a retryable break) and
-`CANCELLED` (`cancelHandle().cancel()` fired; a bare `close()` does not wake
-a parked receive, so it records nothing on its own). `END_OF_STREAM` is
+`CANCELLED` (`cancelHandle().cancel()` fired, or `close()` was called from
+another thread while `next()` was parked — `close()` cancels first, so the
+parked iteration ends with `SrtException(CLOSED)`; a `close()` with no
+iteration in flight ends nothing and records nothing). `END_OF_STREAM` is
 reserved for a future receive transport that can signal a clean end distinct
 from budget exhaustion. The surface exists specifically to tell a
 caller-initiated cancel apart from a budget-exhausted give-up, which
