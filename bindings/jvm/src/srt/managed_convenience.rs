@@ -89,6 +89,11 @@ fn connect_srt(host: &str, port: u16, cfg: &SocketConfig) -> Result<SrtTransport
 }
 
 /// Bind a listener + accept one peer; return the accepted `SrtTransport`.
+///
+/// Used for the INITIAL open only. The bare `accept()` here is deliberate and
+/// cannot be otherwise: the constructor has not returned yet, so no cancel
+/// handle exists to reach it with. Every re-accept goes through
+/// [`listen_srt_cancellable`] instead.
 fn listen_srt(host: &str, port: u16, cfg: &ListenerConfig) -> Result<SrtTransport, TransportError> {
     let bind_host = if host.is_empty() { "0.0.0.0" } else { host };
     let addr = if host.contains(':') && !host.starts_with('[') {
