@@ -39,6 +39,7 @@ static SERIAL: Mutex<()> = Mutex::new(());
 const PORT_SIMPLE: u16 = 33010;
 const PORT_AES: u16 = 33013;
 const PORT_OVERSIZE: u16 = 33016;
+const PORT_V6: u16 = 33022;
 
 /// 188 bytes of arbitrary payload — one MPEG-TS packet's worth.
 fn synthetic_ts_packet(seq_byte: u8) -> [u8; 188] {
@@ -255,4 +256,97 @@ fn oversize_foreign_block_delivered_not_dropped() {
         collected[0], block,
         "delivered block must be byte-identical"
     );
+}
+
+/// IPv6 round-trip through the CORR-09 fix: `native_endpoint` renders the
+/// peer/bind URL via `SocketAddr`'s `Display`, which brackets IPv6, so
+/// librist's `udpsocket_parse_url` sees `[::1]:port` instead of splitting a
+/// bare `::1:port` at the first colon into host "" + port 0.
+///
+/// Uses `RistProfile::Main`, NOT `Simple` (unlike the sibling v4 test this
+/// one mirrors) — Simple Profile's receiver-side RTCP-peer creation has a
+/// separate, pre-existing librist bug that SIGSEGVs when binding an IPv6
+/// address (`rist.c`'s `rist_receiver_peer_create` dereferences the RTCP
+/// peer's `peer_ssrc` field before its own null check, and the RTCP peer's
+/// re-derived bind URL fails to come up as IPv6). That bug is orthogonal to
+/// CORR-09 (it reproduces with a hand-built bracketed URL too, and the
+/// sender side's `rist_sender_peer_create` has no equivalent bug — it checks
+/// for null first) and out of scope for this fix; see the task report for
+/// the full repro. Main Profile multiplexes RTCP into the data socket and
+/// never takes that path, so it exercises the bracket fix without tripping
+/// the unrelated crash.
+#[test]
+fn ipv6_loopback_round_trip() {
+    if !ipv6_loopback_available() {
+        eprintln!("skipping: IPv6 loopback unavailable on this host");
+        return;
+    }
+
+    let _serial = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
+    let port = PORT_V6;
+    let bind_url = format!("rist://@[::1]:{port}");
+    let connect_url = format!("rist://[::1]:{port}");
+
+    let recv = RistRecvTransportBuilder::new(&bind_url)
+        .unwrap()
+        .profile(RistProfile::Main)
+        .listen()
+        .expect("listen");
+
+    let (tx_payloads, rx_payloads) = mpsc::channel::<Vec<Vec<u8>>>();
+    let _recv_thread = thread::spawn(move || {
+        // librist's unencrypted Main-profile handshake is comparable to
+        // Simple's ~500ms; give 8s overall for safety on slow CI runners.
+        let collected = drain_n(recv, 5, Duration::from_secs(8));
+        let _ = tx_payloads.send(collected);
+    });
+
+    // Connect after the listener thread is running. Sleep gives the
+    // recv-side a head-start to fully bind before we initiate.
+    thread::sleep(Duration::from_millis(200));
+    let mut send = RistTransportBuilder::new(&connect_url)
+        .unwrap()
+        .profile(RistProfile::Main)
+        .connect()
+        .expect("connect");
+
+    // Sleep again to let the librist handshake settle.
+    thread::sleep(Duration::from_millis(600));
+
+    let pkts: Vec<[u8; 188]> = (1..=5).map(|i| synthetic_ts_packet(i as u8)).collect();
+    for p in &pkts {
+        send.send_bytes(p).expect("send");
+    }
+
+    let collected = rx_payloads
+        .recv_timeout(Duration::from_secs(10))
+        .expect("recv thread didn't return in time");
+
+    // librist's first few packets sometimes go missing during the
+    // handshake settling phase. Accept any 3+ of the 5 reaching us — the
+    // test is verifying the data-plane works, not that librist is
+    // lossless across the first packet boundary.
+    assert!(
+        collected.len() >= 3,
+        "expected at least 3 of 5 packets; got {}",
+        collected.len()
+    );
+
+    // Each collected payload should be one of the originals (any order).
+    for got in &collected {
+        let matched = pkts.iter().any(|orig| got.as_slice() == orig.as_slice());
+        assert!(
+            matched,
+            "received payload did not match any sent packet: {:?}",
+            &got[..8.min(got.len())]
+        );
+    }
+}
+
+/// Some CI environments disable IPv6 loopback (`ip6_disabled`, unprivileged
+/// containers without a v6 stack). Probe by trying to bind a UDP socket; if
+/// that fails, skip the test. Same probe as
+/// `crates/tst-srt/tests/loopback/ipv6_loopback.rs`.
+fn ipv6_loopback_available() -> bool {
+    std::net::UdpSocket::bind("[::1]:0").is_ok()
 }
