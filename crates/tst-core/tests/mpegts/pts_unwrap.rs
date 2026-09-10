@@ -15,6 +15,8 @@ use tst_core::mpegts::mux::{
     KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec,
 };
 
+use crate::psi_builders::{build_pat_section, build_pmt_section, psi_packet};
+
 /// Mirrors `crates/tst-interop/src/profiles.rs`'s `PTS_ROLLOVER_START`: 5 s
 /// (450,000 ticks at 90 kHz) below the 33-bit PTS wraparound boundary
 /// (`1 << 33`, ITU-T H.222.0 §2.4.3.6).
@@ -580,88 +582,10 @@ fn late_starting_pid_anchors_through_a_reordered_reference_sample() {
 // ── CORR-07 topology fixtures ───────────────────────────────────────────
 //
 // The `Muxer` always writes PSI at version 0, so it cannot express the PMT
-// version bump a PID removal/re-addition needs. These builders hand-write
-// the PAT/PMT sections instead; the elementary packets (and therefore every
-// wire PTS value under test) still come from real muxer output, with the
-// muxer's own PSI filtered back out by `strip_psi`.
-
-/// Build a PAT section (table_id 0x00). `programs` is `(program_number,
-/// pmt_pid)`.
-fn build_pat_section(version: u8, programs: &[(u16, u16)]) -> Vec<u8> {
-    let section_length = 5 + 4 * programs.len() + 4;
-    let mut s = Vec::with_capacity(3 + section_length);
-    s.push(0x00); // table_id = PAT
-    s.push(0xB0 | ((section_length >> 8) as u8 & 0x0F)); // ssi=1, reserved, length hi
-    s.push((section_length & 0xFF) as u8);
-    s.extend_from_slice(&1u16.to_be_bytes()); // transport_stream_id
-    s.push(0xC1 | ((version & 0x1F) << 1)); // reserved | version | current_next=1
-    s.push(0x00); // section_number
-    s.push(0x00); // last_section_number
-    for &(pn, pid) in programs {
-        s.extend_from_slice(&pn.to_be_bytes());
-        s.push(0xE0 | ((pid >> 8) as u8 & 0x1F));
-        s.push((pid & 0xFF) as u8);
-    }
-    append_crc(&mut s);
-    s
-}
-
-/// Build a PMT section (table_id 0x02). `streams` is `(stream_type,
-/// elementary_pid, es_info_descriptor_bytes)`.
-fn build_pmt_section(
-    program_number: u16,
-    pcr_pid: u16,
-    version: u8,
-    streams: &[(u8, u16, &[u8])],
-) -> Vec<u8> {
-    let stream_loop_len: usize = streams.iter().map(|(_, _, d)| 5 + d.len()).sum();
-    let section_length = 9 + stream_loop_len + 4;
-    let mut s = Vec::with_capacity(3 + section_length);
-    s.push(0x02); // table_id = PMT
-    s.push(0xB0 | ((section_length >> 8) as u8 & 0x0F));
-    s.push((section_length & 0xFF) as u8);
-    s.extend_from_slice(&program_number.to_be_bytes());
-    s.push(0xC1 | ((version & 0x1F) << 1));
-    s.push(0x00); // section_number
-    s.push(0x00); // last_section_number
-    s.push(0xE0 | ((pcr_pid >> 8) as u8 & 0x1F));
-    s.push((pcr_pid & 0xFF) as u8);
-    s.push(0xF0); // reserved | program_info_length hi
-    s.push(0x00); // program_info_length lo (no program descriptors)
-    for &(stream_type, pid, descriptors) in streams {
-        s.push(stream_type);
-        s.push(0xE0 | ((pid >> 8) as u8 & 0x1F));
-        s.push((pid & 0xFF) as u8);
-        s.push(0xF0 | ((descriptors.len() >> 8) as u8 & 0x0F));
-        s.push((descriptors.len() & 0xFF) as u8);
-        s.extend_from_slice(descriptors);
-    }
-    append_crc(&mut s);
-    s
-}
-
-/// Append the CRC-32/MPEG-2 trailer over everything written so far.
-fn append_crc(section: &mut Vec<u8>) {
-    let crc = tst_core::mpegts::common::crc32::crc32_mpeg2(section);
-    section.extend_from_slice(&crc.to_be_bytes());
-}
-
-/// Wrap a PSI section into one 188-byte TS packet (PUSI, payload-only).
-///
-/// `cc` must advance across successive packets on the same PID or the
-/// demuxer's duplicate suppression swallows the second one.
-fn psi_packet(pid: u16, section: &[u8], cc: u8) -> Vec<u8> {
-    let mut pkt = vec![0xFFu8; 188];
-    pkt[0] = 0x47; // sync byte
-    pkt[1] = 0x40 | ((pid >> 8) as u8 & 0x1F); // PUSI + PID hi
-    pkt[2] = (pid & 0xFF) as u8;
-    pkt[3] = 0x10 | (cc & 0x0F); // payload-only + continuity counter
-    pkt[4] = 0x00; // pointer_field
-    let end = 5 + section.len();
-    assert!(end <= 188, "section too large for one TS packet");
-    pkt[5..end].copy_from_slice(section);
-    pkt
-}
+// version bump a PID removal/re-addition needs. The shared `psi_builders`
+// hand-write the PAT/PMT sections instead; the elementary packets (and
+// therefore every wire PTS value under test) still come from real muxer
+// output, with the muxer's own PSI filtered back out by `strip_psi`.
 
 /// Drop every packet the muxer wrote on the PAT PID or `pmt_pid`, leaving
 /// only elementary-stream packets for the hand-built topology to describe.

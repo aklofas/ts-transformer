@@ -10,77 +10,26 @@
 //! `StrictMode::Full` additionally converts the mismatch into a fatal
 //! `DemuxError::StrictRejection`.
 
+use crate::psi_builders;
 use tst_core::error::DemuxError;
-use tst_core::mpegts::common::crc32::crc32_mpeg2;
 use tst_core::mpegts::demux::{DemuxEvent, Demuxer, DemuxerConfig, NonConformantIssue, StrictMode};
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Packet / section builders (self-contained, mirrors demux_strict.rs helpers)
+// Section builders (shared `psi_builders`) + a multi-packet section packer
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Build a valid-CRC PAT section for one program.
-///
-/// Declares `program_number` on PMT PID `pmt_pid`. Returns raw section bytes
-/// (table_id .. CRC32 inclusive).
+/// A valid-CRC PAT section declaring `program_number` on PMT PID `pmt_pid`.
 fn build_pat_section(program_number: u16, pmt_pid: u16) -> Vec<u8> {
-    // section_length = 5 (fixed post-length fields) + 4 (one program entry) + 4 (CRC) = 13
-    let section_length: u16 = 13;
-    let mut sec = Vec::with_capacity(17);
-    sec.push(0x00); // table_id = PAT
-    sec.push(0xB0 | (((section_length >> 8) & 0x0F) as u8));
-    sec.push((section_length & 0xFF) as u8);
-    sec.push(0x00); // transport_stream_id high
-    sec.push(0x01); // transport_stream_id low
-    sec.push(0xC1); // reserved + version=0 + current_next_indicator=1
-    sec.push(0x00); // section_number
-    sec.push(0x00); // last_section_number
-    // Program entry
-    sec.push((program_number >> 8) as u8);
-    sec.push((program_number & 0xFF) as u8);
-    sec.push(0xE0 | ((pmt_pid >> 8) as u8 & 0x1F));
-    sec.push((pmt_pid & 0xFF) as u8);
-    let crc = crc32_mpeg2(&sec);
-    sec.push((crc >> 24) as u8);
-    sec.push((crc >> 16) as u8);
-    sec.push((crc >> 8) as u8);
-    sec.push(crc as u8);
-    sec
+    psi_builders::build_pat_section(0, &[(program_number, pmt_pid)])
 }
 
-/// Build a valid-CRC PMT section with a single H.264 video elementary stream.
+/// A valid-CRC PMT section with a single H.264 (0x1B) elementary stream.
 ///
 /// `program_number` goes into the PMT body's `program_number` field — caller
 /// sets this to a value that may differ from the PAT's declared number to
 /// trigger REF-PSI-01.
 fn build_pmt_section(program_number: u16, pcr_pid: u16, video_pid: u16) -> Vec<u8> {
-    // section_length = 9 (fixed body after section_length field) + 5 (one ES entry) + 4 (CRC)
-    // = 18; section_length covers from program_number to end of CRC.
-    let section_length: u16 = 18;
-    let mut sec = Vec::with_capacity(21);
-    sec.push(0x02); // table_id = PMT
-    sec.push(0xB0 | (((section_length >> 8) & 0x0F) as u8));
-    sec.push((section_length & 0xFF) as u8);
-    sec.push((program_number >> 8) as u8);
-    sec.push((program_number & 0xFF) as u8);
-    sec.push(0xC1); // reserved + version=0 + current_next_indicator=1
-    sec.push(0x00); // section_number
-    sec.push(0x00); // last_section_number
-    sec.push(0xE0 | ((pcr_pid >> 8) as u8 & 0x1F));
-    sec.push((pcr_pid & 0xFF) as u8);
-    sec.push(0xF0); // program_info_length high (reserved + 0)
-    sec.push(0x00); // program_info_length low
-    // ES entry: H.264 (0x1B) on video_pid, no descriptors
-    sec.push(0x1B);
-    sec.push(0xE0 | ((video_pid >> 8) as u8 & 0x1F));
-    sec.push((video_pid & 0xFF) as u8);
-    sec.push(0xF0); // ES_info_length high
-    sec.push(0x00); // ES_info_length low
-    let crc = crc32_mpeg2(&sec);
-    sec.push((crc >> 24) as u8);
-    sec.push((crc >> 16) as u8);
-    sec.push((crc >> 8) as u8);
-    sec.push(crc as u8);
-    sec
+    psi_builders::build_pmt_section(program_number, pcr_pid, 0, &[(0x1B, video_pid, &[])])
 }
 
 /// Pack a raw PSI section into one or more 188-byte TS packets on `pid`.
