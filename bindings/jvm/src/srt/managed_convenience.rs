@@ -54,7 +54,7 @@ use tst_core::transport::TransportError;
 use tst_pipeline::{
     ManagedDemuxReceiver as RustManagedDemuxReceiver, ManagedDemuxReceiverConfig,
     ManagedRecvTransport, ManagedTransport, MuxSender as RustMuxSender, MuxSenderError,
-    MuxSenderErrorSource,
+    MuxSenderErrorSource, RecvEndReasonHandle,
 };
 use tst_srt::{Listener, ListenerConfig, Socket, SocketConfig, SrtTransport, SrtUrl, url::Mode};
 
@@ -792,6 +792,12 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nIsAlive(
 struct JniManagedDemuxReceiver {
     inner: RustManagedDemuxReceiver<SrtTransport>,
     factory_attempts: Arc<AtomicU64>,
+    /// Clone of the receiver's `RecvEndReasonHandle`, captured at construction
+    /// (obtain-before-move — the same shape as the cancel target). The *live*
+    /// reads go through the registry's lock-free slot, which holds another clone
+    /// of this same cell; this copy is what `nClose` snapshots from, since by
+    /// then the registry entry is gone. See `super::recv_end_reason`.
+    end_reason: RecvEndReasonHandle,
 }
 
 /// Per-type leased-handle registry for `org.tstrans.srt.ManagedDemuxReceiver`. No
@@ -921,12 +927,18 @@ fn build_demux_from_url(
         );
         return 0;
     };
-    REGISTRY_DEMUX.insert_with_target(
+    // Same obtain-before-move discipline as the cancel target, and for the same
+    // reason: `nEndReason` must read it without the resource lock a parked
+    // `nNext` holds, and `nClose` must still have it once the entry is gone.
+    let end_reason = receiver.end_reason_handle();
+    REGISTRY_DEMUX.insert_with_target_and_end_reason(
         JniManagedDemuxReceiver {
             inner: receiver,
             factory_attempts: attempts,
+            end_reason: end_reason.clone(),
         },
         target,
+        end_reason,
     ) as jlong
 }
 
@@ -1186,19 +1198,55 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nReconnectAttem
     })
 }
 
+/// `nEndReason(handle)` — why the receive stream ended, as the wire ordinal (see
+/// `super::recv_end_reason`); `-1` if it has not ended yet, or on a
+/// closed/absent handle (the closed case never reaches this native —
+/// `ManagedDemuxReceiver.endReason()` reads the Java-side snapshot once
+/// `peekHandle()` is 0).
+///
+/// Reads the registry's lock-free end-reason slot, NOT `REGISTRY_DEMUX.with` —
+/// `nNext` holds the resource lease for the whole duration of a native receive,
+/// and during a listener-mode re-accept that receive can park indefinitely. Same
+/// reasoning, and the same slot mechanism, as `nCancelHandle` above.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nEndReason(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+) -> jint {
+    crate::panic::jni_catch(&mut env, -1, |_env| {
+        super::recv_end_reason::recv_end_reason_ordinal(REGISTRY_DEMUX.end_reason(handle as u64))
+    })
+}
+
 /// `nClose(handle)` — close the underlying transport and drop the box. No-op on a
 /// zero handle so a double `close()` is safe.
+///
+/// Returns the close-time end-reason ordinal, computed here from the shell this
+/// call already exclusively owns: `NativeHandle.close()` zeroes the Java handle
+/// before `nativeClose` runs, and the registry entry (with its end-reason slot)
+/// is permanently removed by `REGISTRY_DEMUX.close`, so there is no handle left
+/// for a follow-up `nEndReason`. `-1` when nothing was recorded, including the
+/// double-close no-op — `ManagedDemuxReceiver.nativeClose` only overwrites its
+/// cached reason when this returns a mapped value, so the first close's verdict
+/// survives a second one.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nClose(
     mut env: JNIEnv<'_>,
     _class: JClass<'_>,
     handle: jlong,
-) {
-    crate::panic::jni_catch(&mut env, (), |_env| {
+) -> jint {
+    crate::panic::jni_catch(&mut env, -1, |_env| {
         // Atomic + idempotent: the winning close gets the shell back for teardown.
-        if let Some(mut jstruct) = REGISTRY_DEMUX.close(handle as u64) {
+        // Read the reason AFTER `inner.close()` so a reason recorded by the
+        // teardown itself is included.
+        let reason = if let Some(mut jstruct) = REGISTRY_DEMUX.close(handle as u64) {
             jstruct.inner.close();
-        }
+            jstruct.end_reason.get()
+        } else {
+            None
+        };
+        super::recv_end_reason::recv_end_reason_ordinal(reason)
     })
 }
 

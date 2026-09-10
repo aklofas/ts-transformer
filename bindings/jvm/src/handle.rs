@@ -74,6 +74,19 @@
 //!   register a target with no hook (their `close()` still waits for a parked op);
 //!   the srt `Listener` and the rtp types register both (their `close()` wakes the
 //!   parked op through the hook).
+//! - **Lock-free end-reason cell.** Same shape, same reason, for the recv-side
+//!   stream-end record: an entry can carry the resource's
+//!   [`RecvEndReasonHandle`] OUTSIDE the resource mutex ([`Entry::end_reason`],
+//!   read via [`HandleRegistry::end_reason`]). `RecvEndReasonHandle` is an
+//!   `Arc<OnceLock<_>>` in which every clone observes the same cell, so a clone
+//!   captured at construction answers for the resource without ever touching it.
+//!   Only `org.tstrans.srt.ManagedDemuxReceiver` registers one today; its
+//!   `endReason()` must answer while `nNext` is parked on the resource lock
+//!   (including a listener-mode re-accept that never returns on its own) — the
+//!   exact bind `cancelHandle()` was in before the lock-free target slot. `close`
+//!   neither reads nor writes it: the per-type `nClose` snapshots the reason off
+//!   the resource it exclusively owns, because the entry (and with it this slot)
+//!   is gone once `close` returns.
 //!
 //! The cancel-handle classes (`JniCancel`, `JniRtpCancel`, `JniRtspCancel`,
 //! `JniRtspServerCancel`) are themselves cancel *targets* — they hold an
@@ -87,6 +100,7 @@ use std::sync::{Arc, Mutex};
 
 use jni::JNIEnv;
 use jni::sys::jlong;
+use tst_pipeline::{RecvEndReason, RecvEndReasonHandle};
 
 /// An optional cross-thread cancel hook fired by [`HandleRegistry::close`] *before*
 /// the resource is taken, so a parked native op (a blocked `recv`/`accept`) wakes
@@ -113,6 +127,11 @@ pub(crate) struct Entry<T> {
     /// out while a parked op holds that mutex. `close` does NOT fire it (that is
     /// `cancel`'s job); it only backs the public `cancelHandle()` natives.
     cancel_target: Option<CancelTarget>,
+    /// The resource's stream-end record, captured at construction and kept OUTSIDE
+    /// `resource`'s mutex for the same reason as `cancel_target`, so
+    /// [`HandleRegistry::end_reason`] can read it while a parked recv holds that
+    /// mutex. `None` for every type that records no end reason.
+    end_reason: Option<RecvEndReasonHandle>,
 }
 
 impl<T> Entry<T> {
@@ -233,10 +252,37 @@ impl<T> HandleRegistry<T> {
         cancel: Option<CancelHook>,
         cancel_target: Option<CancelTarget>,
     ) -> u64 {
+        self.insert_entry(resource, cancel, cancel_target, None)
+    }
+
+    /// Register a resource with a lock-free cancel target AND a lock-free end-reason
+    /// cell — `org.tstrans.srt.ManagedDemuxReceiver`, whose `cancelHandle()` and
+    /// `endReason()` both have to answer while `nNext` is parked on the resource
+    /// lock. No close hook (the srt model: `close()` waits for the parked op).
+    /// Capture BOTH at construction, before the resource is boxed.
+    pub(crate) fn insert_with_target_and_end_reason(
+        &self,
+        resource: T,
+        target: CancelTarget,
+        end_reason: RecvEndReasonHandle,
+    ) -> u64 {
+        self.insert_entry(resource, None, Some(target), Some(end_reason))
+    }
+
+    /// The one place an [`Entry`] is built — every `insert*` funnels here so a new
+    /// side slot cannot be silently forgotten by one of them.
+    fn insert_entry(
+        &self,
+        resource: T,
+        cancel: Option<CancelHook>,
+        cancel_target: Option<CancelTarget>,
+        end_reason: Option<RecvEndReasonHandle>,
+    ) -> u64 {
         let entry = Arc::new(Entry {
             resource: Mutex::new(Some(resource)),
             cancel,
             cancel_target,
+            end_reason,
         });
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let id = inner.next_id;
@@ -272,6 +318,17 @@ impl<T> HandleRegistry<T> {
     /// is parked on the same handle from another thread.
     pub(crate) fn cancel_target(&self, id: u64) -> Option<CancelTarget> {
         self.lease(id).and_then(|e| e.cancel_target.clone())
+    }
+
+    /// Read the entry's recorded [`RecvEndReason`] WITHOUT touching the resource
+    /// lock — only the registry table lock, held for a hash lookup. `None` means
+    /// "nothing to report", folding three cases the caller need not distinguish:
+    /// `0`/an absent/closed id, an entry registered without an end-reason cell, and
+    /// a live stream that has not ended yet. This is what lets `endReason()` answer
+    /// while `next()` is parked on the same handle from another thread.
+    pub(crate) fn end_reason(&self, id: u64) -> Option<RecvEndReason> {
+        self.lease(id)
+            .and_then(|e| e.end_reason.as_ref().and_then(RecvEndReasonHandle::get))
     }
 
     /// Lease `id` and run `f` on the resource under its lock — the common A2 path,
@@ -642,6 +699,85 @@ mod tests {
             "closed entry has no target"
         );
         assert!(reg.cancel_target(0).is_none(), "0 sentinel");
+    }
+
+    /// The end-reason twin of
+    /// [`cancel_target_is_readable_while_resource_lock_is_held`]: `endReason()`
+    /// must answer while a parked recv owns the resource mutex. Routing the read
+    /// through [`HandleRegistry::with`] instead — the shape every other getter on
+    /// these types uses — hangs here until the parked op returns, which during a
+    /// listener-mode re-accept can be never; that regression is what the deadline
+    /// below catches.
+    ///
+    /// Scope: this proves the *lock-free* property only. It cannot assert a
+    /// recorded value, because `RecvEndReasonHandle::record` is `pub(crate)` to
+    /// `tst-pipeline` and only a real receive path can populate the cell — the
+    /// recorded values (`CANCELLED` / `RECONNECT_EXHAUSTED`) are pinned end-to-end
+    /// by `org.tstrans.srt.SrtManagedTest`'s live-socket group.
+    #[test]
+    fn end_reason_is_readable_while_resource_lock_is_held() {
+        let reg: HandleRegistry<u64> = HandleRegistry::new();
+        let target: Arc<dyn tst_core::transport::TransportCancel + Send + Sync> =
+            Arc::new(NoopCancel);
+        let id = reg.insert_with_target_and_end_reason(7, target, RecvEndReasonHandle::default());
+
+        // Park an op on the resource lock (a blocked recv in production).
+        let entry = reg.lease(id).unwrap();
+        let held = Arc::new(std::sync::Barrier::new(2));
+        let release = Arc::new(std::sync::Barrier::new(2));
+        let (h, rel) = (held.clone(), release.clone());
+        let parked = thread::spawn(move || {
+            entry
+                .with(|_v| {
+                    h.wait();
+                    rel.wait();
+                })
+                .unwrap();
+        });
+        held.wait(); // resource lock is now held by the parked op
+
+        // The whole point: this read must NOT wait on that lock.
+        let got = thread::spawn(move || reg.end_reason(id));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !got.is_finished() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "end_reason blocked behind the parked op's resource lock"
+            );
+            thread::yield_now();
+        }
+        assert_eq!(
+            got.join().unwrap(),
+            None,
+            "a live stream that has not ended reports no reason"
+        );
+
+        release.wait();
+        parked.join().unwrap();
+    }
+
+    /// A `0`/absent/closed id and an entry with no cell must all fold to `None`
+    /// rather than panicking. The closed case is load-bearing: it is precisely why
+    /// the per-type `nClose` has to snapshot the reason off the resource it owns
+    /// instead of querying the registry afterwards.
+    #[test]
+    fn end_reason_is_none_for_plain_insert_absent_and_closed_ids() {
+        let reg: HandleRegistry<u64> = HandleRegistry::new();
+        assert!(reg.end_reason(0).is_none(), "0 sentinel");
+        assert!(reg.end_reason(999).is_none(), "absent id");
+        assert!(
+            reg.end_reason(reg.insert(1)).is_none(),
+            "plain insert registers no cell"
+        );
+
+        let target: Arc<dyn tst_core::transport::TransportCancel + Send + Sync> =
+            Arc::new(NoopCancel);
+        let id = reg.insert_with_target_and_end_reason(2, target, RecvEndReasonHandle::default());
+        reg.close(id);
+        assert!(
+            reg.end_reason(id).is_none(),
+            "a closed entry is gone from the table, cell and all"
+        );
     }
 
     #[test]

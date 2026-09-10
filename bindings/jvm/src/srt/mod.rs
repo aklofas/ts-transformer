@@ -6,6 +6,7 @@ mod lowlevel;
 mod managed_basic;
 mod managed_convenience;
 mod mux_sender;
+mod recv_end_reason;
 mod stats;
 mod transport;
 
