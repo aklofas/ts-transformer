@@ -361,6 +361,10 @@ impl RecvTransport for TcpTransport {
             }
             match self.inner.read(buf) {
                 Ok(0) => {
+                    // Peer EOF is terminal: nothing more will ever arrive on
+                    // this stream, so the transport must stop reporting alive
+                    // (the send path already marks dead on its terminal arms).
+                    self.alive.store(false, Ordering::Release);
                     return Err(TransportError::Broken {
                         msg: "peer closed connection".into(),
                         errno_code: None,
@@ -378,6 +382,11 @@ impl RecvTransport for TcpTransport {
                     continue;
                 }
                 Err(e) => {
+                    // Fatal read (anything that is not the retryable
+                    // WouldBlock/TimedOut poll above) — same terminal contract
+                    // as the EOF arm: report Broken *and* mark the transport
+                    // dead so is_alive() cannot claim otherwise.
+                    self.alive.store(false, Ordering::Release);
                     self.stats.recv_errors = self.stats.recv_errors.saturating_add(1);
                     return Err(TransportError::Broken {
                         msg: format!("read error: {e}"),
