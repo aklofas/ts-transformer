@@ -164,6 +164,25 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   which the 1.85 toolchain lacks; behavior identical). The 11 published
   manifests drop their explicit `readme` keys (cargo infers them), and the
   GitHub Actions majors moved off the deprecated Node 20 runtime.
+- **RIST: encryption intent is resolved at URL parse.** `?aes-type=`
+  without `?secret=` is now rejected with
+  `RistUrlError::AesTypeWithoutSecret` — it was accepted and then
+  silently dropped, so a URL that named a cipher configured a
+  **plaintext** link. `?secret=` alone now selects AES-256 (librist's
+  own default) and promotes the session to the Main profile, instead of
+  being ignored for the same reason. Both halves together behave as
+  before. A URL that previously configured plaintext by accident will
+  now either fail to parse or actually encrypt — check any deployment
+  passing only one of the two keys.
+- **RIST: an IPv6 bind in the Simple profile is refused with
+  `InvalidConfig`.** Vendored librist 0.2.20's
+  `rist_receiver_peer_create` dereferences the Simple-profile RTCP peer
+  before its own null check, and that null case is reachable for an
+  IPv6 receiver bind — the process SIGSEGVs. `RistRecvTransport`
+  refuses the combination before any librist context or peer creation
+  and names the librist version in the message; use the Main profile
+  for IPv6 receivers. The sender/caller path null-checks correctly and
+  is unaffected. See `docs/project/deferred-features.md`.
 
 ### Fixed
 
@@ -294,6 +313,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `join_host_port` that re-brackets an IPv6 literal (the JVM binding's
   helper shape; Python already did this). Found by review on this PR's
   new cancellable listen helper, which had inherited the bug.
+- **RIST: IPv6 endpoints reached librist unbracketed.** Both the caller
+  connect and the receiver bind rendered their native URL as a bare
+  `rist://{addr}:{port}`, so an IPv6 literal arrived as
+  `rist://@::1:9000`; librist's `udpsocket_parse_url` misparsed the
+  leading `::` into an empty host and fell back to `0.0.0.0:0`, and the
+  socket silently came up on the wrong family and port. Both sites now
+  render through one `SocketAddr`-based helper, which brackets an IPv6
+  literal.
 
 ---
 
