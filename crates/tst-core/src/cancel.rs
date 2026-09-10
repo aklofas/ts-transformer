@@ -4,12 +4,12 @@
 //! **Stability: Stable** — see the
 //! [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
 //!
-//! Wraps a libsrt `SRTSOCKET` (or any other integer handle) plus a
-//! caller-supplied closer closure. Calling `cancel()` from any thread
-//! atomically swaps the handle to a sentinel and invokes the closer
-//! exactly once. Subsequent `cancel()` calls are no-ops.
+//! [`SrtCancelHandle`] wraps a libsrt `SRTSOCKET` (or any other integer
+//! handle) plus a caller-supplied closer closure. Calling `cancel()` from
+//! any thread atomically swaps the handle to a sentinel and invokes the
+//! closer exactly once. Subsequent `cancel()` calls are no-ops.
 //!
-//! Used by `srt::Socket` and `srt::Listener` so a thread parked in
+//! It is used by `srt::Socket` and `srt::Listener` so a thread parked in
 //! `srt_sendmsg` / `srt_recvmsg` / `srt_accept` can be woken from
 //! another thread by closing the underlying SRT handle. Per libsrt's
 //! semantics, closing a socket that another thread is parked on causes
@@ -391,6 +391,17 @@ mod cancel_slot_tests {
 
         slot.cancel(); // would deadlock if the target fired under the lock
         assert!(target.1.load(Ordering::SeqCst));
+
+        // `install()` fires targets too — into an already-cancelled slot —
+        // and that firing has its own outside-the-lock requirement. Pinned
+        // separately: the assertion above passes even if only `cancel()`
+        // fires outside the guard.
+        let late = Arc::new(Reenter(Arc::clone(&slot), AtomicBool::new(false)));
+        slot.install(late.clone()); // would deadlock if install() fired under the lock
+        assert!(
+            late.1.load(Ordering::SeqCst),
+            "install() into a cancelled slot did not fire the target"
+        );
     }
 
     #[test]
