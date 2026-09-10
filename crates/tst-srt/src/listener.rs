@@ -7,10 +7,14 @@ use crate::init::ensure_initialized;
 use crate::socket::{
     Socket, apply_listener_config, duration_to_ms, make_cancel_handle, read_bool, set_bool, set_int,
 };
+use crate::transport::SrtTransport;
 use os_socketaddr::OsSocketAddr;
 use std::ffi::c_int;
 use std::net::{SocketAddr, ToSocketAddrs};
+use std::sync::Arc;
 use std::time::Duration;
+use tst_core::cancel::CancelSlot;
+use tst_core::transport::TransportError;
 
 const SRT_INVALID_SOCK: srt_sys::SRTSOCKET = -1;
 
@@ -397,6 +401,61 @@ impl Listener {
     /// listener socket without freeing the listener itself. Idempotent.
     pub fn cancel_handle(&self) -> tst_core::SrtCancelHandle {
         self.cancel.clone()
+    }
+
+    /// Bind `addr`, accept **one** connection, and return it as an
+    /// [`SrtTransport`] — with the accept reachable by `slot.cancel()` from
+    /// another thread.
+    ///
+    /// This is the single home of the bind → install → accept → clear →
+    /// classify sequence every managed listener-mode factory needs. A
+    /// managed receiver in listener mode re-runs its factory after a peer
+    /// disconnects, and that factory parks in [`accept`](Self::accept)
+    /// until the next peer shows up; without a published cancel target the
+    /// caller's `cancel` cannot reach it. So the listener's
+    /// [`cancel_handle`](Self::cancel_handle) goes into `slot` around the
+    /// accept: firing the slot closes the listening socket, the accept
+    /// returns, and this reports [`TransportError::ExplicitClose`] so the
+    /// caller surfaces a caller-initiated close rather than a fault.
+    ///
+    /// Order of checks: bail before binding if the slot is already
+    /// cancelled (no socket for a cancelled caller); after the accept, any
+    /// error while the slot is cancelled is the cancel
+    /// ([`AcceptError::ListenerClosed`] today — not depended on), not a
+    /// transport fault. The listener is dropped on return — single-accept
+    /// semantics, matching the connection-oriented shape of the binding
+    /// entry points that call this.
+    ///
+    /// # Errors
+    ///
+    /// - [`TransportError::ExplicitClose`] — the slot was cancelled before
+    ///   or during the accept.
+    /// - [`TransportError::Broken`] — bind or accept fault. `errno_code` is
+    ///   `None`: these are not libsrt `MJ_*` errnos in the typed sense, so
+    ///   the message carries the detail.
+    pub fn accept_one_cancellable(
+        cfg: &ListenerConfig,
+        addr: &str,
+        slot: &CancelSlot,
+    ) -> Result<SrtTransport, TransportError> {
+        if slot.is_cancelled() {
+            return Err(TransportError::ExplicitClose);
+        }
+        let mut listener = Self::bind_with(cfg, addr).map_err(|e| TransportError::Broken {
+            msg: format!("bind: {e}"),
+            errno_code: None,
+        })?;
+        slot.install(Arc::new(listener.cancel_handle()));
+        let accepted = listener.accept();
+        slot.clear();
+        match accepted {
+            Ok((socket, _peer)) => Ok(SrtTransport::new(socket)),
+            Err(_) if slot.is_cancelled() => Err(TransportError::ExplicitClose),
+            Err(e) => Err(TransportError::Broken {
+                msg: format!("accept: {e}"),
+                errno_code: None,
+            }),
+        }
     }
 }
 
