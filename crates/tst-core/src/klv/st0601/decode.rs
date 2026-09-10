@@ -150,7 +150,13 @@ pub fn decode_strict_compliance(buf: &[u8]) -> Result<UasDatalinkLs, KlvDecodeEr
             have: buf.len(),
         });
     }
-    let (declared_len, after_len) = read_ber_strict(&buf[16..])?;
+    // The outer length is read from `buf[16..]`, so its errors come back
+    // slice-relative — rebase by the UL length to keep every offset this
+    // decoder reports indexed against the caller's own buffer.
+    let (declared_len, after_len) = read_ber_strict(&buf[16..]).map_err(|mut e| {
+        crate::klv::length::rebase_offset(&mut e, 16);
+        e
+    })?;
     if after_len.len() < declared_len {
         return Err(KlvDecodeError::Truncated {
             offset: buf.len() - after_len.len(),
@@ -260,8 +266,13 @@ fn decode_inner(
         });
     }
 
-    // Outer BER length
-    let (declared_len, after_len) = read_ber(&buf[16..])?;
+    // Outer BER length. Read from `buf[16..]`, so its errors come back
+    // slice-relative — rebase by the UL length to keep every offset this
+    // decoder reports indexed against the caller's own buffer.
+    let (declared_len, after_len) = read_ber(&buf[16..]).map_err(|mut e| {
+        crate::klv::length::rebase_offset(&mut e, 16);
+        e
+    })?;
     let body_offset = buf.len() - after_len.len();
     if after_len.len() < declared_len {
         return Err(KlvDecodeError::Truncated {

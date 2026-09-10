@@ -27,7 +27,13 @@ pub fn decode(buf: &[u8]) -> Result<PrecisionTimeStampPack, KlvDecodeError> {
             found: label,
         });
     }
-    let (declared_len, after_len) = read_ber(&buf[16..])?;
+    // Read from `buf[16..]`, so the outer length's own errors come back
+    // slice-relative — rebase by the UL length to keep every offset this
+    // decoder reports indexed against the caller's own buffer.
+    let (declared_len, after_len) = read_ber(&buf[16..]).map_err(|mut e| {
+        crate::klv::length::rebase_offset(&mut e, 16);
+        e
+    })?;
     if declared_len != 9 {
         return Err(KlvDecodeError::BadTimeStampPackLength { got: declared_len });
     }

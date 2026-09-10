@@ -115,7 +115,13 @@ pub fn decode_standalone(bytes: &[u8]) -> Result<RvtLs, KlvDecodeError> {
         });
     }
 
-    let (declared_len, after_len) = read_ber(&bytes[16..])?;
+    // Read from `bytes[16..]`, so the outer length's own errors come back
+    // slice-relative — rebase by the UL length to keep every offset this
+    // decoder reports indexed against the caller's own buffer.
+    let (declared_len, after_len) = read_ber(&bytes[16..]).map_err(|mut e| {
+        crate::klv::length::rebase_offset(&mut e, 16);
+        e
+    })?;
     let body_offset = bytes.len() - after_len.len();
     if after_len.len() < declared_len {
         return Err(KlvDecodeError::Truncated {

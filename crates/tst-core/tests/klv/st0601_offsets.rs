@@ -4,9 +4,17 @@
 //! length + body), not just within the local-set body. Report repro:
 //! 16-byte ST 0601 UL + `05 05 01 41 06 80` — strict reported
 //! `MalformedLength { offset: 21 }`, permissive reported `offset: 0`.
+//!
+//! The second group covers the *envelope's own* BER length — the byte
+//! immediately after the 16-byte UL. It is read from `buf[16..]`, so
+//! without a rebase every error against it reported a slice-relative
+//! `offset: 0`, indistinguishable from a genuine offset-0 error. ST 0605
+//! rides along here (same envelope shape, same two-line fix) even though
+//! its body is a fixed pack rather than a local set.
 
 use tst_core::error::KlvDecodeError;
 use tst_core::klv::st0601;
+use tst_core::klv::st0605;
 use tst_core::klv::st0806;
 use tst_core::klv::universal_label::UniversalLabel;
 
@@ -125,5 +133,82 @@ fn st0806_decode_standalone_reports_absolute_offset() {
     assert!(
         matches!(p, KlvDecodeError::MalformedLength { offset: 21 }),
         "permissive {p:?}"
+    );
+}
+
+// --- The envelope's own BER length (the byte at buf[16]) ---------------
+
+/// A 16-byte UL followed by `0x80` — the BER long-form flag with a
+/// zero length-of-length, i.e. "indefinite length", which KLV forbids.
+/// The offending byte is the first one after the UL, so every decoder
+/// that reads its outer length from `buf[16..]` must report
+/// `MalformedLength { offset: 16 }`.
+fn ul_plus_indefinite_length(ul: UniversalLabel) -> Vec<u8> {
+    let mut v = ul.0.to_vec();
+    v.push(0x80);
+    v
+}
+
+#[test]
+fn st0601_decode_reports_absolute_offset_for_malformed_envelope_length() {
+    let buf = ul_plus_indefinite_length(UniversalLabel::ST_0601_LS);
+    let e = st0601::decode(&buf).unwrap_err();
+    assert!(
+        matches!(e, KlvDecodeError::MalformedLength { offset: 16 }),
+        "{e:?}"
+    );
+}
+
+#[test]
+fn st0601_decode_unchecked_reports_absolute_offset_for_malformed_envelope_length() {
+    let buf = ul_plus_indefinite_length(UniversalLabel::ST_0601_LS);
+    let e = st0601::decode_unchecked(&buf).unwrap_err();
+    assert!(
+        matches!(e, KlvDecodeError::MalformedLength { offset: 16 }),
+        "{e:?}"
+    );
+}
+
+#[test]
+fn st0601_decode_strict_reports_absolute_offset_for_malformed_envelope_length() {
+    // `decode_strict` shares `decode`'s permissive outer-length read but
+    // additionally requires the ST 0601 family UL, which this buffer has.
+    let buf = ul_plus_indefinite_length(UniversalLabel::ST_0601_LS);
+    let e = st0601::decode_strict(&buf).unwrap_err();
+    assert!(
+        matches!(e, KlvDecodeError::MalformedLength { offset: 16 }),
+        "{e:?}"
+    );
+}
+
+#[test]
+fn st0601_decode_strict_compliance_reports_absolute_offset_for_malformed_envelope_length() {
+    // This one reads the outer length through `read_ber_strict`, a
+    // separate call site from the other three.
+    let buf = ul_plus_indefinite_length(UniversalLabel::ST_0601_LS);
+    let e = st0601::decode_strict_compliance(&buf).unwrap_err();
+    assert!(
+        matches!(e, KlvDecodeError::MalformedLength { offset: 16 }),
+        "{e:?}"
+    );
+}
+
+#[test]
+fn st0806_decode_standalone_reports_absolute_offset_for_malformed_envelope_length() {
+    let buf = ul_plus_indefinite_length(st0806::RVT_LS_UL);
+    let e = st0806::decode_standalone(&buf).unwrap_err();
+    assert!(
+        matches!(e, KlvDecodeError::MalformedLength { offset: 16 }),
+        "{e:?}"
+    );
+}
+
+#[test]
+fn st0605_decode_reports_absolute_offset_for_malformed_envelope_length() {
+    let buf = ul_plus_indefinite_length(UniversalLabel::PRECISION_TIMESTAMP_PACK_UL);
+    let e = st0605::decode(&buf).unwrap_err();
+    assert!(
+        matches!(e, KlvDecodeError::MalformedLength { offset: 16 }),
+        "{e:?}"
     );
 }
