@@ -461,7 +461,10 @@ impl PyManagedReceiver {
         // cancel handle fires it. The INITIAL accept below shares the same
         // slot but stays uncancellable in practice — the cancel handle
         // that could fire it does not exist until this constructor
-        // returns. Same shape as `ManagedDemuxReceiver`.
+        // returns. `ManagedDemuxReceiver` is wired to the same slot, but
+        // it reaches that same place by forking the helper: a plain
+        // `listen_srt` for the initial accept, `listen_srt_cancellable`
+        // for the factory. Here one helper serves both calls.
         let factory_cancel = Arc::new(FactoryCancel::new());
 
         // Initial bind+accept. `ManagedRecvTransport` takes an
@@ -490,8 +493,11 @@ impl PyManagedReceiver {
 
         // Snapshot a cancel handle BEFORE moving managed into the
         // Receiver shell. ManagedRecvTransport's cancel_handle returns
-        // an Arc<dyn TransportCancel> that closes the current inner
-        // and latches the wrapper's cancelled flag.
+        // an Arc<dyn TransportCancel> that latches the wrapper's
+        // cancelled flag and then wakes every place a reconnect can be
+        // parked: it signals the interruptible backoff wait, fires the
+        // `factory_cancel` slot above (waking a factory sitting in
+        // re-accept), and closes the current inner.
         let cancel = <ManagedRecvTransport<SrtTransport> as tst_core::transport::RecvTransport>
             ::cancel_handle(&managed)
             .expect("ManagedRecvTransport::cancel_handle is documented as always Some");

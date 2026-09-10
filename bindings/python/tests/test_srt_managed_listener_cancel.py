@@ -30,6 +30,8 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
+from typing import TypeVar
 
 import pytest
 
@@ -44,14 +46,22 @@ NAL_IDR = b"\x00\x00\x00\x01\x65\xBB"
 # One 188-byte TS packet for the raw-bytes `ManagedReceiver` peer below.
 TS_PACKET = b"\x47" + b"\x00" * 187
 
+_Sender = TypeVar("_Sender")
 
-def _connect_sender(caller_url: str, budget_s: float) -> srt.ManagedMuxSender:
-    """Connect a caller, retrying while the listener is between binds."""
+
+def _connect_sender(open_sender: Callable[[], _Sender], budget_s: float) -> _Sender:
+    """Connect a caller, retrying while the listener is between binds.
+
+    `open_sender` is the zero-argument constructor for whichever sender the
+    test needs — `ManagedMuxSender` (pushes frames) or `ManagedSender`
+    (pushes raw TS bytes). Both raise `SrtError` while the listener is
+    unbound, which is exactly what this loop rides out.
+    """
     deadline = time.monotonic() + budget_s
     last: BaseException | None = None
     while time.monotonic() < deadline:
         try:
-            return srt.ManagedMuxSender.from_url(caller_url, _video_only_program())
+            return open_sender()
         except SrtError as exc:  # listener not (re)bound yet
             last = exc
             time.sleep(0.05)
@@ -76,7 +86,9 @@ def test_cancel_wakes_managed_listener_parked_in_reaccept() -> None:
     accept_t.start()
     time.sleep(0.1)
 
-    sender = _connect_sender(caller_url, 5.0)
+    sender = _connect_sender(
+        lambda: srt.ManagedMuxSender.from_url(caller_url, _video_only_program()), 5.0
+    )
     accept_t.join(timeout=5.0)
     if rx_err:
         sender.close()
@@ -120,7 +132,9 @@ def test_cancel_wakes_managed_listener_parked_in_reaccept() -> None:
 
     if iter_t.is_alive():
         # Rescue so the daemon thread is not left parked in native accept.
-        rescue = _connect_sender(caller_url, 5.0)
+        rescue = _connect_sender(
+            lambda: srt.ManagedMuxSender.from_url(caller_url, _video_only_program()), 5.0
+        )
         iter_t.join(timeout=5.0)
         rescue.close()
         pytest.fail("cancel() did not wake the managed listener parked in re-accept within 3 s")
@@ -129,21 +143,6 @@ def test_cancel_wakes_managed_listener_parked_in_reaccept() -> None:
     assert outcome.get("end") == "SrtError", f"iteration ended via {outcome}"
     assert outcome.get("kind") == SrtErrorKind.CLOSED, f"unexpected SrtError kind: {outcome}"
     rx.close()
-
-
-def _connect_basic_sender(caller_url: str, budget_s: float) -> srt.ManagedSender:
-    """`_connect_sender` for the raw-bytes surface — same retry-while-the-
-    listener-is-between-binds loop, but a `ManagedSender` so the peer can
-    push plain TS packets that `ManagedReceiver.recv_bytes` reads back."""
-    deadline = time.monotonic() + budget_s
-    last: BaseException | None = None
-    while time.monotonic() < deadline:
-        try:
-            return srt.ManagedSender.from_url(caller_url)
-        except SrtError as exc:  # listener not (re)bound yet
-            last = exc
-            time.sleep(0.05)
-    pytest.fail(f"caller could not connect within {budget_s}s: {last}")
 
 
 def test_managed_receiver_cancel_wakes_reaccept() -> None:
@@ -171,7 +170,7 @@ def test_managed_receiver_cancel_wakes_reaccept() -> None:
     accept_t.start()
     time.sleep(0.1)
 
-    sender = _connect_basic_sender(caller_url, 5.0)
+    sender = _connect_sender(lambda: srt.ManagedSender.from_url(caller_url), 5.0)
     accept_t.join(timeout=5.0)
     if rx_err:
         sender.close()
@@ -224,7 +223,7 @@ def test_managed_receiver_cancel_wakes_reaccept() -> None:
         # Rescue so the daemon thread is not left parked in native accept:
         # the connect unparks the accept, and the already-latched cancel then
         # ends the pump on the next loop check.
-        rescue = _connect_basic_sender(caller_url, 5.0)
+        rescue = _connect_sender(lambda: srt.ManagedSender.from_url(caller_url), 5.0)
         pump_t.join(timeout=5.0)
         rescue.close()
         pytest.fail("cancel() did not wake the ManagedReceiver parked in re-accept within 3 s")
