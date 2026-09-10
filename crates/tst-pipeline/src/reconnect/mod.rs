@@ -727,6 +727,23 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                     if let Some(h) = new_cancel {
                         self.active.install(h);
                     }
+                    // Honor a cancel that landed while the factory ran. The
+                    // slot latched, so the install above already fired the
+                    // fresh inner's wake handle; without this check the drain
+                    // below would still write the gap buffer through a
+                    // connection the caller has asked to abandon (and a real
+                    // socket, closed by that cancel, would turn the
+                    // caller-initiated close into a wire-looking `Broken`).
+                    // Same shape as the receive side's post-install check and
+                    // the background worker's loop-top `closed` check.
+                    if self.closed.load(std::sync::atomic::Ordering::Acquire) {
+                        if let Ok(mut guard) = self.inner.lock() {
+                            if let Some(mut t) = guard.take() {
+                                t.close();
+                            }
+                        }
+                        return Err(TransportError::Closed);
+                    }
                     self.shared
                         .reconnect_successes
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);

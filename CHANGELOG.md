@@ -278,6 +278,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`ManagedTransport` (send side): a cancel that lands while the reconnect
+  factory is running is honored instead of lost.** The blocking reconnect
+  path installed the fresh connection's wake handle into the already
+  cancelled slot (which fired it) but then drained the gap buffer through
+  that connection anyway: a mock that accepts bytes had them delivered,
+  and a real socket closed by the cancel turned the caller-initiated close
+  into a wire-looking `Broken("transport broken during drain")`. After the
+  install the path now re-checks the close latch, closes the fresh inner,
+  and reports `TransportError::Closed` — the same post-install check the
+  receive side gained under CORR-02 and the background worker already had
+  at its loop top. Regression test `managed_send_cancel_factory.rs` (red
+  on the previous code: the send returned `Ok(())`).
 - **Tooling: the bare no_std test plane of `tst-c-core` compiles, passes,
   and is gated in CI.** `cargo test -p tst-c-core --no-default-features`
   had 43 compile errors — test modules assumed the std prelude (`vec!`,
