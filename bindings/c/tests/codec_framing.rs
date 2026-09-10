@@ -117,7 +117,10 @@ fn annexb_to_length_prefixed_succeeds_with_right_sized_buffer() {
 fn annexb_to_length_prefixed_rejects_invalid_length_size() {
     let annexb = sps_pps_idr_annexb();
     unsafe {
-        let mut out_len: usize = 0;
+        // Sentinel: an invalid `length_size` must leave `*out_len` alone
+        // (documented), so a caller cannot mistake the rejection for a
+        // size query that happened to answer.
+        let mut out_len: usize = 0xDEAD_BEEF;
         let mut out_buf = [0u8; 64];
         let rc = tst_annexb_to_length_prefixed(
             annexb.as_ptr(),
@@ -129,6 +132,117 @@ fn annexb_to_length_prefixed_rejects_invalid_length_size() {
         );
         assert_eq!(rc, TstError::InvalidConfig as i32);
         assert_eq!(tst_get_last_error(), TstError::InvalidConfig as i32);
+        assert_eq!(out_len, 0xDEAD_BEEF, "out_len was written on rejection");
+
+        // Same rule on the query path (`out == NULL`): the size is never
+        // reported for a `length_size` that cannot be encoded at all.
+        let mut query_len: usize = 0xDEAD_BEEF;
+        let rc_query = tst_annexb_to_length_prefixed(
+            annexb.as_ptr(),
+            annexb.len(),
+            3,
+            std::ptr::null_mut(),
+            0,
+            &mut query_len,
+        );
+        assert_eq!(rc_query, TstError::InvalidConfig as i32);
+        assert_eq!(query_len, 0xDEAD_BEEF);
+    }
+}
+
+#[test]
+fn annexb_to_length_prefixed_nal_too_large_for_prefix_leaves_out_len_untouched() {
+    // One 70,001-byte NAL: fine for a 4-byte length prefix, far too large
+    // for a 2-byte one (max 65,535).
+    let mut annexb = vec![0x00, 0x00, 0x00, 0x01, 0x65];
+    annexb.extend(std::iter::repeat(0xAA).take(70_000));
+
+    unsafe {
+        let mut out_len: usize = 0xDEAD_BEEF; // sentinel — must survive
+        let rc = tst_annexb_to_length_prefixed(
+            annexb.as_ptr(),
+            annexb.len(),
+            2,
+            std::ptr::null_mut(), // query path: the overflow is found while sizing
+            0,
+            &mut out_len,
+        );
+        assert_eq!(rc, TstError::TooLarge as i32, "{}", last_error_msg());
+        assert_eq!(out_len, 0xDEAD_BEEF, "out_len was written on overflow");
+
+        // The same input at `length_size = 4` is representable, so the
+        // rejection above is about the prefix width, not the input.
+        let mut ok_len: usize = 0;
+        let rc_ok = tst_annexb_to_length_prefixed(
+            annexb.as_ptr(),
+            annexb.len(),
+            4,
+            std::ptr::null_mut(),
+            0,
+            &mut ok_len,
+        );
+        assert_eq!(rc_ok, TstError::BufferFull as i32);
+        assert_eq!(ok_len, 4 + 70_001);
+    }
+}
+
+#[test]
+fn annexb_to_length_prefixed_zero_required_size_still_queries_then_writes() {
+    // No start code at all -> no NALs -> a zero-byte rendering. The
+    // documented idiom still runs: the query reports BUFFER_FULL with
+    // `*out_len == 0`, and the follow-up write succeeds with 0 bytes.
+    let annexb = [0xDEu8, 0xAD, 0xBE, 0xEF];
+
+    unsafe {
+        let mut out_len: usize = 0xDEAD_BEEF;
+        let rc = tst_annexb_to_length_prefixed(
+            annexb.as_ptr(),
+            annexb.len(),
+            4,
+            std::ptr::null_mut(),
+            0,
+            &mut out_len,
+        );
+        assert_eq!(rc, TstError::BufferFull as i32, "{}", last_error_msg());
+        assert_eq!(out_len, 0);
+
+        let mut out_buf = [0xCDu8; 4];
+        let mut written: usize = 0xDEAD_BEEF;
+        let rc2 = tst_annexb_to_length_prefixed(
+            annexb.as_ptr(),
+            annexb.len(),
+            4,
+            out_buf.as_mut_ptr(),
+            out_buf.len(),
+            &mut written,
+        );
+        assert_eq!(rc2, 0, "{}", last_error_msg());
+        assert_eq!(written, 0);
+        assert_eq!(out_buf, [0xCDu8; 4], "a zero-byte write touched the buffer");
+    }
+}
+
+#[test]
+fn annexb_to_length_prefixed_writes_nothing_past_the_reported_count() {
+    let annexb = sps_pps_idr_annexb();
+
+    unsafe {
+        // Buffer is larger than the 24 bytes the conversion needs: the
+        // tail must survive, since the C contract only promises
+        // `*out_len` bytes are written.
+        let mut out_buf = [0xCDu8; 40];
+        let mut out_len: usize = 0;
+        let rc = tst_annexb_to_length_prefixed(
+            annexb.as_ptr(),
+            annexb.len(),
+            4,
+            out_buf.as_mut_ptr(),
+            out_buf.len(),
+            &mut out_len,
+        );
+        assert_eq!(rc, 0, "{}", last_error_msg());
+        assert_eq!(out_len, 24);
+        assert_eq!(&out_buf[24..], &[0xCDu8; 16], "wrote past *out_len");
     }
 }
 

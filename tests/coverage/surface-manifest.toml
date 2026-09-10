@@ -2062,6 +2062,14 @@ item = "tst_core::codec::nal_framing::annexb_to_length_prefixed"
 reason = "new 2026-09-02, tst-core only (Apple/VideoToolbox PoC arc); no binding wraps it yet — graduate to [[surface]] when a later task in the arc binds it"
 
 [[exempt]]
+item = "tst_core::codec::nal_framing::annexb_to_length_prefixed_len"
+reason = "new 2026-09-09; the sizing half of annexb_to_length_prefixed, with no binding symbol of its own — the C ABI reaches it through tst_annexb_to_length_prefixed's size query, so it is covered by that helper's row, not a separate one"
+
+[[exempt]]
+item = "tst_core::codec::nal_framing::annexb_to_length_prefixed_into"
+reason = "new 2026-09-09; the writing half of annexb_to_length_prefixed, with no binding symbol of its own — the C ABI reaches it through tst_annexb_to_length_prefixed's write call, so it is covered by that helper's row, not a separate one"
+
+[[exempt]]
 item = "tst_core::codec::nal_framing::length_prefixed_to_annexb"
 reason = "new 2026-09-02, tst-core only (Apple/VideoToolbox PoC arc); no binding wraps it yet — graduate to [[surface]] when a later task in the arc binds it"
 

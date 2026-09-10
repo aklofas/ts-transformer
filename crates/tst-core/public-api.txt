@@ -1032,6 +1032,8 @@ impl core::marker::UnsafeUnpin for tst_core::codec::nal_framing::ParameterSets
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::codec::nal_framing::ParameterSets
 impl core::panic::unwind_safe::UnwindSafe for tst_core::codec::nal_framing::ParameterSets
 pub fn tst_core::codec::nal_framing::annexb_to_length_prefixed(&[u8], u8) -> core::result::Result<alloc::vec::Vec<u8>, tst_core::codec::CodecParseError>
+pub fn tst_core::codec::nal_framing::annexb_to_length_prefixed_into(&[u8], u8, &mut [u8]) -> core::result::Result<usize, tst_core::codec::CodecParseError>
+pub fn tst_core::codec::nal_framing::annexb_to_length_prefixed_len(&[u8], u8) -> core::result::Result<usize, tst_core::codec::CodecParseError>
 pub fn tst_core::codec::nal_framing::extract_parameter_sets(&[u8], tst_core::mpegts::demux::event::VideoCodec) -> tst_core::codec::nal_framing::ParameterSets
 pub fn tst_core::codec::nal_framing::length_prefixed_to_annexb(&[u8], u8) -> core::result::Result<alloc::vec::Vec<u8>, tst_core::codec::CodecParseError>
 pub mod tst_core::codec::util
@@ -1061,6 +1063,9 @@ impl core::panic::unwind_safe::UnwindSafe for tst_core::codec::ChromaFormat
 pub tst_core::codec::CodecParseError::BadSyncWord
 pub tst_core::codec::CodecParseError::BadSyncWord::expected: u16
 pub tst_core::codec::CodecParseError::BadSyncWord::found: u16
+pub tst_core::codec::CodecParseError::BufferTooSmall
+pub tst_core::codec::CodecParseError::BufferTooSmall::have: usize
+pub tst_core::codec::CodecParseError::BufferTooSmall::needed: usize
 pub tst_core::codec::CodecParseError::DanglingSpsReference
 pub tst_core::codec::CodecParseError::DanglingSpsReference::sps_id: u8
 pub tst_core::codec::CodecParseError::DanglingVpsReference

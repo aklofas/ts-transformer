@@ -1,8 +1,9 @@
 //! `tst_annexb_to_length_prefixed` / `tst_param_sets_*` — Annex B ↔
 //! length-prefixed NAL conversion and parameter-set extraction.
 //!
-//! Wraps `tst_core::codec::nal_framing::{annexb_to_length_prefixed,
-//! extract_parameter_sets}`. Apple's VideoToolbox (and the ISO/IEC
+//! Wraps `tst_core::codec::nal_framing::{annexb_to_length_prefixed_len,
+//! annexb_to_length_prefixed_into, extract_parameter_sets}`. Apple's
+//! VideoToolbox (and the ISO/IEC
 //! 14496-15 AVCC/HVCC sample formats it expects) wants H.264/H.265 NALs
 //! length-prefixed rather than Annex-B start-code-delimited, and wants
 //! parameter sets (VPS/SPS/PPS) handed to
@@ -29,11 +30,15 @@ use crate::error::{TstError, set_last_error};
 // ---------------------------------------------------------------------------
 
 /// Map a [`CodecParseError`] raised by
-/// [`nal_framing::annexb_to_length_prefixed`] to a `TstError` and record
-/// it. Only [`CodecParseError::InvalidLengthSize`] and
-/// [`CodecParseError::NalLengthOverflow`] can ever be produced by that
-/// function (see its doc) — the wildcard arm exists only to satisfy
-/// `#[non_exhaustive]` match exhaustiveness and is not expected to fire.
+/// [`nal_framing::annexb_to_length_prefixed_len`] /
+/// [`nal_framing::annexb_to_length_prefixed_into`] to a `TstError` and
+/// record it. Only [`CodecParseError::InvalidLengthSize`] and
+/// [`CodecParseError::NalLengthOverflow`] can ever reach it: those two
+/// are all the sizing pass can raise (see its doc), and the one extra
+/// error the writing pass has — [`CodecParseError::BufferTooSmall`] — is
+/// pre-empted by the `out_cap` check that guards it. The wildcard arm
+/// exists only to satisfy `#[non_exhaustive]` match exhaustiveness and
+/// is not expected to fire.
 fn record_nal_framing_error(e: &CodecParseError) -> i32 {
     let code = match e {
         CodecParseError::InvalidLengthSize { .. } => TstError::InvalidConfig,
@@ -91,21 +96,31 @@ pub unsafe extern "C" fn tst_annexb_to_length_prefixed(
                 Ok(s) => s,
                 Err(rc) => return rc,
             };
-        let converted = match nal_framing::annexb_to_length_prefixed(annexb_slice, length_size) {
-            Ok(v) => v,
+        // Sizing pass only — no output is built here, so the query call
+        // of the two-call idiom costs one scan of `annexb` and no
+        // allocation. Errors leave `*out_len` untouched, as documented.
+        let needed = match nal_framing::annexb_to_length_prefixed_len(annexb_slice, length_size) {
+            Ok(n) => n,
             Err(e) => return record_nal_framing_error(&e),
         };
 
-        let needed = converted.len();
         if out.is_null() || out_cap < needed {
             *out_len_ref = needed;
             return TstError::BufferFull as i32;
         }
+        // Only the `needed` bytes this call will actually write are
+        // materialized as a slice, even when the caller offers more.
         let out_slice = match unsafe { crate::ffi_slice::ffi_slice_mut(out, needed, "out") } {
             Ok(s) => s,
             Err(rc) => return rc,
         };
-        out_slice.copy_from_slice(&converted);
+        // Writes straight into the caller's buffer — no intermediate
+        // `Vec` to fill and copy out of.
+        if let Err(e) =
+            nal_framing::annexb_to_length_prefixed_into(annexb_slice, length_size, out_slice)
+        {
+            return record_nal_framing_error(&e);
+        }
         *out_len_ref = needed;
         0
     })
