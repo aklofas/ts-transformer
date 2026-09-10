@@ -1134,9 +1134,14 @@ class DemuxerConfig:
     # full `1 << 33` while a genuine backward step — an out-of-order
     # arrival, including a pre-wrap value delivered after the wrap —
     # steps back by its true distance instead of being mistaken for
-    # another wrap. PIDs of the same program stay directly comparable
-    # on the one continuous timeline (independent programs never
-    # cross-anchor). The accumulator resets alongside all other per-PID
+    # another wrap. A PID's FIRST sample anchors onto its program's
+    # running clock when a sibling PID has already established one
+    # (otherwise at its own raw value), so same-program PIDs land in
+    # the same epoch and stay directly comparable across the rollover —
+    # this is what lets a consumer pair KLV to video by PTS. Each
+    # program carries its own time base (H.222.0 §2.4.3.5), so
+    # independent programs are never cross-anchored. The accumulators —
+    # per-PID and per-program alike — reset alongside all other per-PID
     # parse state on a resync (e.g. a reconnect), restarting the
     # unwrap timeline. Mirrors Rust's
     # `tst_core::mpegts::demux::DemuxerConfig::unwrap_timestamps`.
