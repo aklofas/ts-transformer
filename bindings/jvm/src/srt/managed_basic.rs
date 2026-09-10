@@ -115,33 +115,23 @@ fn build_receiver_transport(url: &str) -> Result<SrtTransport, TransportError> {
 /// [`build_receiver_transport`] for the RECONNECT factory: the listener's
 /// cancel handle is published into the shared `FactoryCancel` slot around
 /// the accept, so `cancel()` on the managed receiver can wake a re-accept
-/// parked with no peer in sight (mirror of `tst-c`'s
-/// `listen_srt_cancellable`; the initial open above stays plain because no
-/// handle exists yet to cancel it with).
+/// parked with no peer in sight (the initial open above stays plain because
+/// no handle exists yet to cancel it with). That lifecycle lives in
+/// [`Listener::accept_one_cancellable`] (shared with the C and Python
+/// managed listener factories); here it is wrapped only to keep the
+/// `managed receiver factory:` prefix every error out of this module wears.
 fn build_receiver_transport_cancellable(
     url: &str,
     cancel: &tst_pipeline::FactoryCancel,
 ) -> Result<SrtTransport, TransportError> {
-    if cancel.is_cancelled() {
-        return Err(TransportError::ExplicitClose);
-    }
     let (addr, cfg) = listener_bind_target(url)?;
-    let mut listener =
-        Listener::bind_with(&cfg, addr.as_str()).map_err(|e| TransportError::Broken {
-            msg: format!("managed receiver factory: bind failed: {e}"),
-            errno_code: None,
-        })?;
-    cancel.install(Arc::new(listener.cancel_handle()));
-    let accepted = listener.accept();
-    cancel.clear();
-    match accepted {
-        Ok((socket, _peer)) => Ok(SrtTransport::new(socket)),
-        Err(_) if cancel.is_cancelled() => Err(TransportError::ExplicitClose),
-        Err(e) => Err(TransportError::Broken {
-            msg: format!("managed receiver factory: accept failed: {e}"),
-            errno_code: None,
-        }),
-    }
+    Listener::accept_one_cancellable(&cfg, addr.as_str(), cancel).map_err(|e| match e {
+        TransportError::Broken { msg, errno_code } => TransportError::Broken {
+            msg: format!("managed receiver factory: {msg}"),
+            errno_code,
+        },
+        other => other,
+    })
 }
 
 // -----------------------------------------------------------------------

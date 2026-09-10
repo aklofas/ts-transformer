@@ -122,39 +122,23 @@ fn listen_srt(host: &str, port: u16, cfg: &ListenerConfig) -> Result<SrtTranspor
 
 /// [`listen_srt`] for the reconnect factory: the listener's cancel handle
 /// is published into the shared `FactoryCancel` slot around the accept so
-/// `cancel()` can reach a re-accept parked with no peer in sight. Mirror
-/// of `tst-c`'s `listen_srt_cancellable`.
+/// `cancel()` can reach a re-accept parked with no peer in sight. That
+/// lifecycle lives in [`Listener::accept_one_cancellable`] (shared with the
+/// C and JVM managed listener factories); this wrapper only renders the
+/// bind address the way `listen_srt` above does.
 fn listen_srt_cancellable(
     host: &str,
     port: u16,
     cfg: &ListenerConfig,
     cancel: &FactoryCancel,
 ) -> Result<SrtTransport, TransportError> {
-    if cancel.is_cancelled() {
-        return Err(TransportError::ExplicitClose);
-    }
     let bind_host = if host.is_empty() { "0.0.0.0" } else { host };
     let addr = if host.contains(':') && !host.starts_with('[') {
         format!("[{bind_host}]:{port}")
     } else {
         format!("{bind_host}:{port}")
     };
-    let mut listener =
-        Listener::bind_with(cfg, addr.as_str()).map_err(|e| TransportError::Broken {
-            msg: format!("bind: {e}"),
-            errno_code: None,
-        })?;
-    cancel.install(Arc::new(listener.cancel_handle()));
-    let accepted = listener.accept();
-    cancel.clear();
-    match accepted {
-        Ok((socket, _peer)) => Ok(SrtTransport::new(socket)),
-        Err(_) if cancel.is_cancelled() => Err(TransportError::ExplicitClose),
-        Err(e) => Err(TransportError::Broken {
-            msg: format!("accept: {e}"),
-            errno_code: None,
-        }),
-    }
+    Listener::accept_one_cancellable(cfg, addr.as_str(), cancel)
 }
 
 // ---------------------------------------------------------------------------
