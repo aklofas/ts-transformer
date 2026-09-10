@@ -32,6 +32,29 @@ impl TlsStream {
             Self::Server(s) => s.write(buf),
         }
     }
+
+    /// Best-effort TLS shutdown: queue a `close_notify` alert, make one attempt
+    /// to flush it, then shut the TCP socket down in both directions.
+    ///
+    /// Every step is deliberately best-effort and non-blocking on the peer:
+    /// `write_tls` is called exactly once (never looped) and we never wait for
+    /// the peer's own `close_notify`, so a wedged or already-gone peer cannot
+    /// stall `Transport::close`. If that single write cannot flush the alert,
+    /// the socket shutdown that follows still gives the peer an EOF.
+    pub(crate) fn shutdown(&mut self) {
+        match self {
+            Self::Client(s) => {
+                s.conn.send_close_notify();
+                let _ = s.conn.write_tls(&mut s.sock);
+                let _ = s.sock.shutdown(std::net::Shutdown::Both);
+            }
+            Self::Server(s) => {
+                s.conn.send_close_notify();
+                let _ = s.conn.write_tls(&mut s.sock);
+                let _ = s.sock.shutdown(std::net::Shutdown::Both);
+            }
+        }
+    }
 }
 
 /// Build a TLS-wrapped TcpTransport (caller side).

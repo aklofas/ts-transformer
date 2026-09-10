@@ -17,9 +17,11 @@
 
 #![cfg(feature = "tls")]
 
+use std::sync::mpsc;
 use std::thread;
+use std::time::Duration;
 
-use tst_core::transport::{RecvTransport, Transport};
+use tst_core::transport::{RecvTransport, Transport, TransportError};
 use tst_tcp::config::SocketConfig;
 use tst_tcp::url::TcpUrl;
 use tst_tcp::{TcpListener, TcpTransport};
@@ -184,4 +186,113 @@ fn tcps_ip_dial_against_dns_only_cert_loopback_fails() {
         error_observed,
         "IP-literal dial against a dnsName-only cert must fail on first I/O"
     );
+}
+
+// ---------------------------------------------------------------------------
+// CORR-10: explicit close on a TLS transport is visible to the peer
+// ---------------------------------------------------------------------------
+
+/// `Transport::close` on a `tcps://` transport must terminate the peer's read,
+/// even while the transport itself is still alive in scope.
+///
+/// The TLS arm of `InnerStream::shutdown` used to be empty ("handled in the
+/// StreamOwned/socket drop"), which made `close()` a no-op on the wire: a
+/// caller that closes but retains the transport (a pipeline shell holding it
+/// in a struct, a reconnect wrapper parking a dead leg) left the peer parked
+/// on a read until the transport was eventually dropped. Closing must send
+/// `close_notify` and shut the socket at the point of the call.
+///
+/// Every wait is bounded and the server thread is joined on all paths.
+/// Test name contains "loopback" for nextest network group membership.
+#[test]
+fn tcps_explicit_close_loopback_ends_the_peer_read() {
+    let (_dir, cert_path, key_path) = gen_dns_only_cert();
+    let ca_path = cert_path.clone();
+
+    let listener = TcpListener::from_url(&format!(
+        "tcps://127.0.0.1:0?listen=1&cert={}&key={}",
+        cert_path.display(),
+        key_path.display(),
+    ))
+    .expect("TLS listener bind");
+    let port = listener.local_addr().expect("local_addr after bind").port();
+
+    // Server: accept, consume the client's first payload (which is what drives
+    // the lazy handshake to completion) and report readiness, then park on a
+    // second read. That second read is the observation point — it must end
+    // once the client calls close(), not run out the 2 s deadline below.
+    let (ready_tx, ready_rx) = mpsc::channel::<()>();
+    let (result_tx, result_rx) = mpsc::channel::<Result<usize, TransportError>>();
+    let srv = thread::spawn(move || {
+        let mut conn = listener.accept_blocking().expect("server accept");
+        let mut buf = [0u8; 4];
+        let n = conn.recv_bytes(&mut buf).expect("server recv ping");
+        assert_eq!(n, 4, "server must see the full 4-byte ping");
+        let _ = ready_tx.send(());
+        let mut after = [0u8; 16];
+        let _ = result_tx.send(conn.recv_bytes(&mut after));
+    });
+
+    let dial_url = format!("tcps://localhost:{port}?ca={}", ca_path.display());
+    let parsed = TcpUrl::parse(&dial_url).expect("URL parse");
+    let mut client =
+        TcpTransport::connect_with_config(&parsed, &SocketConfig::default()).expect("tcps connect");
+    client.send_bytes(b"ping").expect("client send");
+    ready_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("server did not complete the TLS handshake");
+
+    // THE POINT: close explicitly, but keep `client` alive in scope so the
+    // socket cannot be closed by Drop instead.
+    Transport::close(&mut client);
+
+    let observed = result_rx.recv_timeout(Duration::from_secs(2));
+
+    // Release the server thread on the failing path too (it is still parked on
+    // its second read there): dropping the client closes the socket for real.
+    drop(client);
+    srv.join().expect("server thread panicked");
+
+    let observed =
+        observed.expect("peer read did not end within 2 s of an explicit close() on the client");
+    assert!(
+        matches!(observed, Err(TransportError::Broken { .. })),
+        "peer read must end with Broken (close_notify EOF), got {observed:?}"
+    );
+}
+
+/// The two edges of the same close path: closing a TLS transport *before* the
+/// lazy handshake has run (no keys yet, so `send_close_notify` has nothing to
+/// encrypt) and closing twice (the socket is already shut down the second
+/// time). Both must be quiet no-ops — `close()` is reached from the C ABI and
+/// the bindings, where a panic would abort the caller's process.
+#[test]
+fn tcps_close_loopback_before_handshake_and_twice_is_quiet() {
+    let (_dir, cert_path, key_path) = gen_dns_only_cert();
+    let ca_path = cert_path.clone();
+
+    let listener = TcpListener::from_url(&format!(
+        "tcps://127.0.0.1:0?listen=1&cert={}&key={}",
+        cert_path.display(),
+        key_path.display(),
+    ))
+    .expect("TLS listener bind");
+    let port = listener.local_addr().expect("local_addr after bind").port();
+
+    // The server only has to complete the TCP accept; the handshake never runs.
+    let srv = thread::spawn(move || {
+        let _ = listener.accept_blocking();
+    });
+
+    let dial_url = format!("tcps://localhost:{port}?ca={}", ca_path.display());
+    let parsed = TcpUrl::parse(&dial_url).expect("URL parse");
+    let mut client = TcpTransport::connect_with_config(&parsed, &SocketConfig::default())
+        .expect("tcps connect (handshake is lazy — not yet triggered)");
+
+    Transport::close(&mut client);
+    Transport::close(&mut client);
+    assert!(!Transport::is_alive(&client), "close() must mark dead");
+
+    drop(client);
+    let _ = srv.join();
 }
