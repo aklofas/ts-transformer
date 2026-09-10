@@ -159,6 +159,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   by us" from "the transport faulted". Targets always fire outside the
   slot's internal lock, so a target may re-enter the slot without
   deadlocking. `std`-only (it holds a `std::sync::Mutex`).
+- **`tst_srt::Listener::accept_one_cancellable`** — bind plus one accept
+  reachable through a `CancelSlot`, for reconnect factories that do
+  exactly that: it returns `ExplicitClose` if the slot is already
+  cancelled, binds, installs the listener's cancel handle, accepts,
+  clears the slot, and reports a cancel-induced accept failure as
+  `ExplicitClose` rather than `Broken`. Host/port rendering and
+  per-binding error conversion stay with the caller (it takes an
+  already-rendered `&str`). The C, Python and JVM SRT listener factories
+  now share it — four byte-identical copies of that sequence collapse
+  into calls, and Python's basic `ManagedReceiver` factory (which had no
+  such sequence at all) becomes a fifth caller. Recipe in
+  `docs/reference/srt-cancel-handle.md`.
 
 ### Changed
 
@@ -382,6 +394,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (tst-c) and the `managed_receive_cancel_*` tests (tst-pipeline). The
   first accept inside a listener open, before any handle exists, is
   unchanged (still uncancellable).
+- **Python `srt.ManagedReceiver` (listener mode): `cancel()` now wakes a
+  reconnect parked in accept.** The fix above reached the C ABI and
+  Python's `ManagedDemuxReceiver`, but the raw-bytes `ManagedReceiver`
+  kept the plain bind + `accept()` factory — so the same `cancel()` that
+  promptly ends a parked `ManagedDemuxReceiver` iteration left a parked
+  `ManagedReceiver.recv_bytes` waiting for a peer that might never
+  arrive. Its factory now installs the listener's handle into the same
+  `FactoryCancel` slot, and `recv_bytes` raises `SrtError(CLOSED)`
+  promptly. The C and JVM bindings were audited for the same gap and
+  were already correct; the JVM's coverage is now pinned by a test.
+  Pinned on the Python side by
+  `test_managed_receiver_cancel_wakes_reaccept`.
 - **C ABI: IPv6 `srt://` opens never resolved.** `SrtUrl` strips the
   brackets from an IPv6 host, and the C ABI's caller connect and both
   listener binds re-joined it as a bare `{host}:{port}` (`::1:9000`),

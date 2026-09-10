@@ -574,7 +574,15 @@ accepts `mode=caller` too — it re-dials in caller mode and re-binds +
 re-accepts in listener mode. `cancel_handle().cancel()` reaches every
 phase of that reconnect: a live receive, the backoff wait between
 attempts, and a re-accept parked with no peer in sight (the iterator
-raises `SrtError(CLOSED)` promptly in all three).
+raises `SrtError(CLOSED)` promptly in all three). `ManagedReceiver`, the
+raw-bytes sibling, covers the same three phases — a parked `recv_bytes`
+raises `SrtError(CLOSED)` just as promptly. The one accept neither class
+can cancel is the *first* one, inside `from_url` itself: the handle that
+would fire it does not exist until the constructor returns. Take
+`ManagedReceiver.cancel_handle()` *before* the first `recv_bytes` and
+hand it to the thread that will do the cancelling — `recv_bytes` holds
+the object's mutable borrow for the whole blocking call, so asking for
+the handle while one is parked raises `RuntimeError: Already borrowed`.
 
 **Stats drift on the managed shells** (mirrors the JVM binding):
 `ManagedSender.srt_stats()` and `ManagedReceiver.srt_stats()` raise
