@@ -278,6 +278,37 @@ fn dts_straddling_the_wrap_stays_below_unwrapped_pts() {
     );
 }
 
+/// Test E (CORR-04) — a REORDERED pre-wrap PTS arriving after the wrap
+/// must not be pushed into a second epoch. `W-50` arrives numerically
+/// LARGER than the preceding (already-wrapped, small) `100`, so a
+/// detector that only bumps a running offset when `raw < last_raw`
+/// leaves the just-bumped offset applied to it — emitting `2W-50` and
+/// then compounding into `2W+200` on the next sample. Signed modular
+/// accumulation onto the previous UNWRAPPED value keeps every sample in
+/// the epoch its wrap-aware delta actually places it in.
+#[test]
+fn reordered_pts_across_wrap_does_not_double_the_epoch() {
+    let mut mux = Muxer::new(single_video_cfg(0x100)).unwrap();
+    let au = minimal_h264_au();
+
+    // Composition order straddling the boundary: two pre-wrap values
+    // (`WRAP-100`, `WRAP-50`) interleaved with two post-wrap ones
+    // (`100`, `200`) — i.e. the pre-wrap `WRAP-50` is delivered late,
+    // after the wrap has already been observed.
+    for pts in [WRAP - 100, 100, WRAP - 50, 200] {
+        mux.push_video(&au, Pts90khz::new(pts), true).unwrap();
+    }
+    let ts_buf = drain(&mut mux);
+
+    let got = video_pts(&demux_all(&ts_buf, true), 0x100);
+    assert_eq!(
+        got,
+        vec![WRAP - 100, WRAP + 100, WRAP - 50, WRAP + 200],
+        "each sample must land in the epoch its signed 33-bit delta implies; \
+         a second epoch (2*WRAP) means the reorder was mistaken for a wrap"
+    );
+}
+
 /// Locate the PES start (`00 00 01 <stream_id>`) and clear `PTS_DTS_flags`
 /// (top 2 bits of byte 7) + zero `header_data_length` (byte 8), so the
 /// parsed PES has no PTS. Mirrors

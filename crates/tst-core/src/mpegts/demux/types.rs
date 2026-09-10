@@ -209,17 +209,20 @@ pub struct DemuxerConfig {
     /// value in `0..2^33` that wraps to 0 at the H.222.0 §2.4.3.6
     /// rollover boundary (~26.5 h at 90 kHz).
     ///
-    /// When `true`, a per-PID accumulator adds `1 << 33` to a running
-    /// offset on each detected forward wrap (a genuine small backward
-    /// step — e.g. an out-of-order arrival — is not a wrap and does not
-    /// bump the offset; the emitted value is then allowed to be
-    /// non-monotonic, correctly reflecting the reorder). The first
+    /// When `true`, a per-PID accumulator carries each sample's signed
+    /// wrap-aware delta from the previous raw value onto the previous
+    /// unwrapped value. A forward wrap therefore advances the timeline
+    /// by a full `1 << 33`, while a genuine backward step — an
+    /// out-of-order arrival, including a pre-wrap PTS delivered *after*
+    /// the wrap — steps back by its true distance instead of being
+    /// mistaken for another wrap (the emitted value is then allowed to
+    /// be non-monotonic, correctly reflecting the reorder). The first
     /// observed PTS on a PID anchors the timeline (emitted value == the
-    /// raw value); every subsequent value is `offset + raw`. The offset
-    /// is never rebased to zero, so a video PID and a KLV PID sharing
-    /// one 33-bit wire clock stay directly comparable across the whole
-    /// session — this is what lets a consumer pair KLV to video frames
-    /// by PTS on a long-running stream that crosses the rollover.
+    /// raw value). The timeline is never rebased to zero, so a video PID
+    /// and a KLV PID sharing one 33-bit wire clock stay directly
+    /// comparable across the whole session — this is what lets a
+    /// consumer pair KLV to video frames by PTS on a long-running stream
+    /// that crosses the rollover.
     ///
     /// DTS unwraps against its own PES's PTS rather than the shared
     /// per-PID offset, so a DTS that straddles the wrap boundary (DTS
