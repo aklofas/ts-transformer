@@ -208,6 +208,19 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and names the librist version in the message; use the Main profile
   for IPv6 receivers. The sender/caller path null-checks correctly and
   is unaffected. See `docs/project/deferred-features.md`.
+- **Internal: one Annex-B start-code scanner, and the C length-prefix
+  helper stops building its output twice.** `tst-core` carried two
+  byte-identical private start-code scanners, one in
+  `codec::nal_framing` and one in the demuxer's payload splitter; a
+  single private implementation now serves both. On the C side,
+  `tst_annexb_to_length_prefixed` used to run the whole conversion once
+  to learn the output size and a second time to fill the caller's
+  buffer — it now counts on the size query
+  (`annexb_to_length_prefixed_len`) and writes straight into the
+  caller's buffer (`annexb_to_length_prefixed_into`), so a successful
+  call materializes the converted bytes exactly once and allocates no
+  intermediate `Vec`. No public Rust signature, C declaration or
+  observable behavior changes.
 
 ### Fixed
 
