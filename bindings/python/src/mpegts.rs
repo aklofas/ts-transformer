@@ -168,7 +168,7 @@ impl PyDemuxer {
 /// Constructs a `DemuxerConfig` field-by-field rather than chaining
 /// the `DemuxerConfigBuilder` setters: that lets us set
 /// `lenient_psi_reassembly` (which has no dedicated builder method
-/// today) and keep the dispatch shape uniform across the 6 bridged
+/// today) and keep the dispatch shape uniform across the 9 bridged
 /// knobs, mirroring how the C wrapper's `build_options()` assembles
 /// its `DemuxerConfig`.
 fn build_demuxer(py: Python<'_>, config: Option<&Bound<'_, PyAny>>) -> PyResult<Demuxer> {
