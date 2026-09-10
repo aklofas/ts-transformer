@@ -1713,13 +1713,15 @@ the trigger that would unblock it.
   `local_port + 1` and dereferences it *before* its own null check, so
   a failed RTCP-peer creation is a null dereference rather than an
   error return. That failure is reachable on IPv6 because the RTCP
-  peer's bind address is derived from the scheme-prefixed `p->url`
-  (`rist://@[::1]:9000`) rather than a clean `host:port`; re-parsing
-  that string truncates it after the closing `]`, so the RTCP peer
-  tries to re-bind the data peer's own address instead of `port + 1`.
-  On IPv4 the duplicate bind happens to succeed; on IPv6 it fails, and
-  the missing null check turns a graceful failure into a SIGSEGV that
-  takes down the whole process. The sender path is unaffected —
+  peer's URL is rebuilt from `p->url`, which librist's URL parser
+  clobbered in place when it parsed the data peer: the closing `]` and
+  the port were overwritten with NUL, so the stored string is
+  `rist://@[::1` and the rebuilt RTCP URL `rist://@[::1:9001` has no
+  closing bracket. The parser rejects it, RTCP-peer creation returns
+  null, and the missing null check turns that graceful failure into a
+  SIGSEGV that takes down the whole process (verified under gdb at
+  `rist.c:1276`). On IPv4 the clobbered `rist://@127.0.0.1` re-parses
+  fine, so the RTCP peer correctly binds `port + 1`. The sender path is unaffected —
   `rist_sender_peer_create` null-checks before dereferencing. Fixing
   this properly means patching vendored upstream C in two places (the
   null-check ordering *and* the RTCP address derivation) and carrying
