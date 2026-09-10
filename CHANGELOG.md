@@ -33,7 +33,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `CodecParseError` variants, `InvalidLengthSize { got }`,
   `NalLengthOverflow { nal_len, length_size }` and `BufferTooSmall {
   needed, have }` (the last raised only by `..._into`, which leaves the
-  caller's buffer untouched when it refuses).
+  caller's buffer untouched when it refuses). Internally the two
+  consumers of Annex-B start-code scanning — this module and the
+  demuxer's payload splitter — now share one private implementation
+  instead of carrying byte-identical copies, and the C helper
+  `tst_annexb_to_length_prefixed` counts on the size query and writes
+  straight into the caller's buffer rather than running the whole
+  conversion twice. No public Rust signature, C declaration or
+  observable behavior changes.
 - New fuzz target `nal_framing` covering the converters above and
   `extract_parameter_sets` (32 fuzz targets total across the workspace).
 - **`DemuxerConfig::unwrap_timestamps`** (default `false`) +
@@ -149,6 +156,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `TransportCancel` so a listener's handle can be installed directly.
   Recipe in `docs/reference/srt-cancel-handle.md`. Now a type alias of
   `tst_core::cancel::CancelSlot` (next entry) — same name, same methods.
+  Consolidating on it also retired three private `SrtCancel` newtype
+  adapters in `tst-srt`, the Python binding and the JVM binding, which
+  existed only to re-wrap an `SrtCancelHandle` as a `TransportCancel` —
+  the handle implements the trait directly now.
 - **`tst_core::cancel::CancelSlot`** (Provisional) — the latched,
   replaceable cancel target behind the entry above, lifted into `tst-core`
   because both managed wrappers need it, not just the receive-side
@@ -237,9 +248,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   **plaintext** link. `?secret=` alone now selects AES-256 (librist's
   own default) and promotes the session to the Main profile, instead of
   being ignored for the same reason. Both halves together behave as
-  before. A URL that previously configured plaintext by accident will
-  now either fail to parse or actually encrypt — check any deployment
-  passing only one of the two keys.
+  before. `?secret=` with an empty value is now rejected too
+  (`RistUrlError::BadQueryValue`), where it used to build an empty PSK
+  that the same silent-drop path then discarded. A URL that previously
+  configured plaintext by accident will now either fail to parse or
+  actually encrypt — check any deployment passing only one of the two
+  keys.
 - **RIST: an IPv6 bind in the Simple profile is refused with
   `InvalidConfig`.** Vendored librist 0.2.20's
   `rist_receiver_peer_create` dereferences the Simple-profile RTCP peer
@@ -249,27 +263,6 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and names the librist version in the message; use the Main profile
   for IPv6 receivers. The sender/caller path null-checks correctly and
   is unaffected. See `docs/project/deferred-features.md`.
-- **Internal: one Annex-B start-code scanner, and the C length-prefix
-  helper stops building its output twice.** `tst-core` carried two
-  byte-identical private start-code scanners, one in
-  `codec::nal_framing` and one in the demuxer's payload splitter; a
-  single private implementation now serves both. On the C side,
-  `tst_annexb_to_length_prefixed` used to run the whole conversion once
-  to learn the output size and a second time to fill the caller's
-  buffer — it now counts on the size query
-  (`annexb_to_length_prefixed_len`) and writes straight into the
-  caller's buffer (`annexb_to_length_prefixed_into`), so a successful
-  call materializes the converted bytes exactly once and allocates no
-  intermediate `Vec`. No public Rust signature, C declaration or
-  observable behavior changes.
-- **`tst_pipeline::FactoryCancel` is now a type alias of
-  `tst_core::cancel::CancelSlot`** — source-compatible (`FactoryCancel`
-  keeps its name, path and every method; it was added earlier in this
-  same unreleased cycle and has never shipped in a release). Internally
-  this also retired three private `SrtCancel` newtype adapters in
-  `tst-srt`, the Python binding and the JVM binding, which existed only
-  to re-wrap an `SrtCancelHandle` as a `TransportCancel` — the handle
-  implements the trait directly now.
 - **Docs: the input-consumption binding detail is re-deferred with a
   demand-only trigger.** `MuxSenderError`/`SenderError`'s
   `input_consumed` is still Rust-only; the original deferral offered to
@@ -327,9 +320,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `offset: 0` — the ST 0601 Tag 1 (checksum) value-length mismatch,
   raised on every entry point including the strict ones — now reports
   the checksum value's own position in the caller's buffer.
-  `st0806::decode`, which
-  takes a bare local-set body with no envelope in front of it, keeps
-  body-relative offsets by construction. No API change.
+  A malformed *outer* BER length — the byte immediately after the
+  16-byte UL — is rebased by the UL length too, on every entry point
+  above and on `st0605::decode`. `st0806::decode`, which takes a bare
+  local-set body with no envelope in front of it, keeps body-relative
+  offsets by construction. No API change.
 - **Python: the six transport `.pyi` stubs (`srt`/`rtp`/`udp`/`tcp`/`hls`/
   `rist`) now match the runtime, and the stubtest rail covers them.** The
   rail had checked only the four core modules since v0.2.0, and the
