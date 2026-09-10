@@ -147,7 +147,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   already-cancelled slot fires immediately, so a cancel that lands between
   bind and install is never lost. `SrtCancelHandle` now implements
   `TransportCancel` so a listener's handle can be installed directly.
-  Recipe in `docs/reference/srt-cancel-handle.md`.
+  Recipe in `docs/reference/srt-cancel-handle.md`. Now a type alias of
+  `tst_core::cancel::CancelSlot` (next entry) — same name, same methods.
+- **`tst_core::cancel::CancelSlot`** (Provisional) — the latched,
+  replaceable cancel target behind the entry above, lifted into `tst-core`
+  because both managed wrappers need it, not just the receive-side
+  factory: `install` publishes the handle that can currently unblock a
+  worker, `clear` drops it, `cancel` latches and fires whatever is
+  installed (an `install` after a cancel fires immediately), and
+  `is_cancelled` lets a worker back from a blocking call tell "cancelled
+  by us" from "the transport faulted". Targets always fire outside the
+  slot's internal lock, so a target may re-enter the slot without
+  deadlocking. `std`-only (it holds a `std::sync::Mutex`).
 
 ### Changed
 
@@ -221,6 +232,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   call materializes the converted bytes exactly once and allocates no
   intermediate `Vec`. No public Rust signature, C declaration or
   observable behavior changes.
+- **`tst_pipeline::FactoryCancel` is now a type alias of
+  `tst_core::cancel::CancelSlot`** — source-compatible (`FactoryCancel`
+  keeps its name, path and every method; it was added earlier in this
+  same unreleased cycle and has never shipped in a release). Internally
+  this also retired three private `SrtCancel` newtype adapters in
+  `tst-srt`, the Python binding and the JVM binding, which existed only
+  to re-wrap an `SrtCancelHandle` as a `TransportCancel` — the handle
+  implements the trait directly now.
 
 ### Fixed
 
@@ -382,6 +401,27 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `rist_peer_create` — so that combination returns `PeerCreateFailed`
   there; IPv6 senders and all IPv4 paths work on every platform. See
   `docs/project/deferred-features.md`.
+- **Managed sender (`ManagedTransport`): `cancel()` no longer waits on the
+  mutex a blocking `send_bytes` holds.** The cancel handle used to read the
+  inner transport out of that same mutex, so the one call it was asked to
+  interrupt was the one it queued behind — a cancel could not land until the
+  blocked send returned on its own. The live inner's handle is now published
+  through a lock-free `CancelSlot`, so `cancel()` fires it without touching
+  the send lock. Pinned by `crates/tst-pipeline/tests/reconnect_cancel_parked_send.rs`,
+  whose mock parks inside `send_bytes` until its cancel handle wakes it.
+- **Managed receiver (`ManagedRecvTransport`): a cancel that landed while the
+  reconnect factory was running is honored before the fresh connection is
+  read.** The cancel had nothing to fire in that window (the old inner was
+  gone, the new one not yet stored), so it was lost and the next `recv_bytes`
+  blocked on the connection the factory had just produced. The reconnect now
+  installs the new transport's handle into the latched slot and re-checks the
+  cancel flag before returning, so the call ends in `ExplicitClose`.
+- **Managed receiver: `is_alive()` is false after `cancel()` even when no
+  receive was in flight.** A cancel that landed between calls was seen only by
+  the next call's entry gate, which returned `ExplicitClose` without latching
+  the closed state — so every subsequent call kept failing while `is_alive()`
+  reported `true` forever. The entry gate now latches closed the same way the
+  mid-loop cancel check does.
 
 ---
 
