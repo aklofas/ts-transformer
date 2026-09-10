@@ -5318,6 +5318,18 @@ tier = "A"
 
 [[surface]]
 kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::listener::Listener::accept_one_cancellable"
+owning_tests = ["crates/tst-srt/tests/loopback/listener_accept_one_cancellable.rs"]
+# Bind + one accept reachable through a CancelSlot — the body every SRT
+# listener reconnect factory used to copy. Called by the C, Python and JVM
+# listener factories, never exposed as a binding symbol of its own.
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
 crate = "tst-core"
 item = "tst_core::cancel::CancelSlot::new"
 owning_tests = ["crates/tst-core/src/cancel.rs", "crates/tst-pipeline/tests/managed_receive_cancel_factory.rs", "crates/tst-pipeline/tests/reconnect_cancel_parked_send.rs"]
