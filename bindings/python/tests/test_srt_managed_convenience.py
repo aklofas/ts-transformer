@@ -25,6 +25,7 @@ from typing import Optional, Tuple
 import pytest
 
 import tstrans
+import tstrans.rtp
 import tstrans.srt
 from tstrans.exceptions import SrtError, SrtErrorKind
 from tstrans.mpegts import (
@@ -72,12 +73,18 @@ def _fast_policy() -> ReconnectPolicy:
 
 def _make_managed_pair(
     port: int,
+    *,
+    rx_policy: Optional[ReconnectPolicy] = None,
 ) -> Tuple[ManagedMuxSender, ManagedDemuxReceiver]:
     """Spawn a listener-mode ManagedDemuxReceiver on a background
     thread; once it's accepting, connect a caller-mode ManagedMuxSender.
 
+    `rx_policy` overrides the receiver's `ReconnectPolicy` (the sender
+    always uses `_fast_policy()`); defaults to `_fast_policy()`.
+
     Returns (mux_sender, demux_receiver). Callers must close both.
     """
+    rx_policy = rx_policy if rx_policy is not None else _fast_policy()
     listener_url = f"srt://:{port}?mode=listener"
     caller_url = f"srt://127.0.0.1:{port}?mode=caller"
 
@@ -86,7 +93,7 @@ def _make_managed_pair(
 
     def accept_worker() -> None:
         try:
-            r = ManagedDemuxReceiver.from_url(listener_url, policy=_fast_policy())
+            r = ManagedDemuxReceiver.from_url(listener_url, policy=rx_policy)
             rx_box.append(r)
         except BaseException as exc:  # noqa: BLE001
             rx_err.append(exc)
@@ -573,3 +580,175 @@ def test_push_data_round_trips_payload_fidelity() -> None:
         # not the demuxer's no-PTS substitute of 0.
         assert s.pts.raw != 0
         assert s.pts.raw in pushed_pts
+
+
+# --------------------------------------------------------------------------- #
+# Test 6: RecvEndReason — why a managed receive session ended                  #
+# --------------------------------------------------------------------------- #
+#
+# `ManagedDemuxReceiver.end_reason()` mirrors
+# `tst_pipeline::ManagedDemuxReceiver::end_reason_handle()`. Only two of the
+# three variants are reachable on the managed-SRT path today (see
+# `crates/tst-pipeline/src/reconnect/recv_end_reason.rs`):
+#
+#   * RECONNECT_EXHAUSTED — the reconnect decorator gave up. A peer FIN
+#     surfaces as `TransportError::Broken`, which the decorator retries, so
+#     with a zero-retry policy the very first peer close exhausts the budget
+#     immediately and iteration ends via StopIteration.
+#   * CANCELLED — the caller fired the cancel handle / closed the receiver.
+#
+# END_OF_STREAM is deliberately unreachable here: the Rust rustdoc states it
+# is "not produced by the managed-SRT path today" and is kept for a future
+# `RecvTransport` that can signal a clean EOS distinct from budget exhaustion.
+
+
+def _zero_retry_policy() -> ReconnectPolicy:
+    """Give-up-immediately policy: the first transport break exhausts the
+    budget without ever invoking the reconnect factory.
+
+    `max_attempts=0` means `next_delay(1)` returns None (attempt 1 > 0), so
+    `ManagedRecvTransport` never re-binds — which is what keeps this test
+    from parking in an uninterruptible listener re-accept.
+    """
+    return ReconnectPolicy(max_attempts=0, backoff=BackoffStrategy.constant(ms=0))
+
+
+def test_recv_end_reason_enum_mirrors_rust() -> None:
+    """`tstrans.srt.RecvEndReason` mirrors `tst_pipeline::RecvEndReason`
+    1:1 in declaration order, and is exported from the module."""
+    assert "RecvEndReason" in tstrans.srt.__all__
+    assert [m.name for m in tstrans.srt.RecvEndReason] == [
+        "END_OF_STREAM",
+        "RECONNECT_EXHAUSTED",
+        "CANCELLED",
+    ]
+    # Distinct from the RTP-side enum — Q8 ruled a dedicated type, because
+    # the two are different types in Rust (SOURCE WINS).
+    assert tstrans.srt.RecvEndReason is not tstrans.rtp.StreamEndReason
+    # No member is falsy: `None` already means "hasn't ended", so a
+    # zero-valued member would make `if rx.end_reason():` ambiguous.
+    assert all(int(m) > 0 for m in tstrans.srt.RecvEndReason)
+
+
+def test_recv_end_reason_none_on_fresh_receiver() -> None:
+    """(a) A live receiver that has not ended reports `None`."""
+    port = _free_tcp_port()
+    sender, receiver = _make_managed_pair(port)
+    try:
+        assert receiver.end_reason() is None
+    finally:
+        sender.close()
+        receiver.close()
+
+
+def test_recv_end_reason_cancelled_after_cancel_while_parked() -> None:
+    """(b) `cancel()` on a receiver parked in `recv_event` ends iteration
+    with `SrtError(CLOSED)` and records `CANCELLED`."""
+    port = _free_tcp_port()
+    sender, receiver = _make_managed_pair(port)
+
+    outcome: dict[str, object] = {}
+
+    def iterator() -> None:
+        try:
+            for _ev in receiver:
+                pass
+            outcome["end"] = "StopIteration"
+        except SrtError as exc:
+            outcome["end"] = "SrtError"
+            outcome["kind"] = exc.kind
+        except BaseException as exc:  # noqa: BLE001
+            outcome["end"] = type(exc).__name__
+
+    t = threading.Thread(target=iterator, daemon=True)
+    t.start()
+    # Park the receiver inside recv_event before cancelling.
+    time.sleep(0.3)
+    assert receiver.end_reason() is None, "recorded a reason before the stream ended"
+
+    receiver.cancel_handle().cancel()
+    t.join(timeout=5.0)
+    if t.is_alive():
+        # Rescue: the peer is still connected, so a frame unparks the recv
+        # and lets the daemon thread finish rather than sitting in a native
+        # read at interpreter exit.
+        sender.send_video(NAL_IDR, pts=Pts90khz.from_raw(0), key_frame=True)
+        t.join(timeout=5.0)
+        sender.close()
+        pytest.fail("cancel() did not end the parked iteration within 5 s")
+
+    assert outcome.get("end") == "SrtError", f"iteration ended via {outcome}"
+    assert outcome.get("kind") == SrtErrorKind.CLOSED, f"unexpected kind: {outcome}"
+    # Asserted BEFORE close() so the recorded reason is unambiguously the
+    # one the cancelled recv observed, not something teardown wrote.
+    assert receiver.end_reason() == tstrans.srt.RecvEndReason.CANCELLED, (
+        f"expected CANCELLED, got {receiver.end_reason()!r}"
+    )
+    sender.close()
+    receiver.close()
+    # Survives close(): the handle was captured before the receiver moved
+    # into the wrapper, so it outlives the receiver itself.
+    assert receiver.end_reason() == tstrans.srt.RecvEndReason.CANCELLED
+
+
+def test_recv_end_reason_reconnect_exhausted_on_peer_close() -> None:
+    """(c) Peer sends then closes, receiver has a zero-retry policy →
+    iteration ends cleanly (StopIteration) and records
+    `RECONNECT_EXHAUSTED`.
+
+    Per `recv_end_reason.rs`, a peer FIN reaches the decorator as
+    `TransportError::Broken`; with no retry budget left that becomes the
+    shell's `EndOfStream`, which the managed receiver records as
+    RECONNECT_EXHAUSTED (NOT END_OF_STREAM — that variant is documented as
+    unreachable on this path).
+    """
+    port = _free_tcp_port()
+    sender, receiver = _make_managed_pair(port, rx_policy=_zero_retry_policy())
+
+    outcome: dict[str, object] = {}
+
+    def iterator() -> None:
+        try:
+            for _ev in receiver:
+                pass
+            outcome["end"] = "StopIteration"
+        except SrtError as exc:
+            outcome["end"] = "SrtError"
+            outcome["kind"] = exc.kind
+        except BaseException as exc:  # noqa: BLE001
+            outcome["end"] = type(exc).__name__
+
+    t = threading.Thread(target=iterator, daemon=True)
+    t.start()
+    # Park the receiver inside recv_event, then send real payload so the
+    # session is genuinely live before the peer goes away.
+    time.sleep(0.3)
+    for i in range(8):
+        sender.send_video(
+            NAL_IDR, pts=Pts90khz.from_raw(i * 3000), key_frame=(i % 4 == 0)
+        )
+    time.sleep(0.3)
+
+    # Peer close: with max_attempts=0 the decorator gives up on the first
+    # break instead of re-entering the (uninterruptible) listener accept.
+    sender.close()
+    t.join(timeout=10.0)
+    if t.is_alive():
+        # Rescue so a regression cannot wedge the run.
+        receiver.cancel_handle().cancel()
+        t.join(timeout=5.0)
+        receiver.close()
+        pytest.fail("peer close did not end iteration within 10 s")
+
+    assert outcome.get("end") == "StopIteration", (
+        f"budget exhaustion must surface as a clean stream end; got {outcome}"
+    )
+    # Asserted BEFORE close(), which would itself be a Cancelled-shaped
+    # signal — first-writer-wins means this must already read EXHAUSTED.
+    assert receiver.end_reason() == tstrans.srt.RecvEndReason.RECONNECT_EXHAUSTED, (
+        f"expected RECONNECT_EXHAUSTED, got {receiver.end_reason()!r}"
+    )
+    receiver.close()
+    # First-writer-wins: a later close() must not clobber the recorded
+    # reason with CANCELLED.
+    assert receiver.end_reason() == tstrans.srt.RecvEndReason.RECONNECT_EXHAUSTED

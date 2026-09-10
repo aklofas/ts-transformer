@@ -11,6 +11,7 @@
 //! - `demux_receiver`: DemuxReceiver convenience wrapper
 //! - `policy`:         ReconnectPolicy, BackoffStrategy, OverflowPolicy
 //! - `managed`:        ManagedSender, ManagedReceiver, ManagedMuxSender, ManagedDemuxReceiver
+//! - `end_reason`:     RecvEndReason conversion for ManagedDemuxReceiver.end_reason()
 //!
 //! Error mapping lives in `crate::srt::errors` — typed `*_to_pyerr` helpers
 //! consolidate every Rust enum that flows through the surface (UrlError /
@@ -18,6 +19,7 @@
 //! the 8-variant `SrtErrorKind`.
 
 pub(crate) mod demux_receiver;
+pub(crate) mod end_reason;
 pub(crate) mod errors;
 mod lowlevel;
 pub(crate) mod managed_basic;
