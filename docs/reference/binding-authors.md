@@ -517,6 +517,33 @@ cell's claim matches the compiled binding — is a future enhancement noted in t
 2026-06-15 codebase audit's "checked artifact" recommendation; it is deferred
 pending a tooling decision on how to express cross-binding coverage assertions.
 
+## Demux-config / managed-receiver-lifecycle parity matrix
+
+The two receive-side capabilities added by ABI 0.21's managed-receiver
+lifecycle parity (`tst_managed_demux_receiver_end_reason`) and demuxer-config
+bridge (`tst_demux_config_set_unwrap_timestamps`) — see the ABI 21 history
+entry above — reached full Python/JVM parity in the same-arc bindings
+follow-up:
+
+| Capability | Rust core | C (`tst-c`) | Python (`tst-py`) | JVM (`tst-jni`) |
+|---|---|---|---|---|
+| Continuous-timestamp unwrap across the 33-bit rollover (`DemuxerConfig::unwrap_timestamps`) | ✅ | ✅ `tst_demux_config_set_unwrap_timestamps` | ✅ `DemuxerConfig.unwrap_timestamps` | ✅ `DemuxerConfig.Builder.unwrapTimestamps(boolean)` |
+| Managed-receiver end reason (`ManagedDemuxReceiver::end_reason()` → `RecvEndReason`) | ✅ | ✅ `tst_managed_demux_receiver_end_reason` | ✅ `ManagedDemuxReceiver.end_reason() -> Optional[RecvEndReason]` | ✅ `ManagedDemuxReceiver.endReason()` → `RecvEndReason` or `null` |
+
+**Notes on specific cells.**
+
+- **C reuses the ABI 20 enum; Python/JVM define a distinct one.** The C
+  getter maps `tst-pipeline`'s `RecvEndReason` (`EndOfStream` /
+  `ReconnectExhausted` / `Cancelled`) onto the shared `TstStreamEndReason`
+  enum the RTP surface already uses, to avoid adding a second wire enum
+  (see the ABI 21 history entry's "Managed-receiver lifecycle" bullet).
+  Python's `tstrans.srt.RecvEndReason` and JVM's `org.tstrans.srt.RecvEndReason`
+  are each a standalone three-member enum (`END_OF_STREAM` /
+  `RECONNECT_EXHAUSTED` / `CANCELLED`) rather than a reuse of
+  `StreamEndReason` — the two concepts (RTP session-death reasons vs.
+  SRT managed-receiver-lifecycle reasons) have different member sets and
+  no binding shares one type between them.
+
 ## C stats-getter naming
 
 The C ABI stats getter symbols (`tst_mux_sender_get_stats`,

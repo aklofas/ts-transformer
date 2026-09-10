@@ -294,6 +294,27 @@ from tstrans.mpegts import Demuxer, DemuxerConfig
 d = Demuxer(DemuxerConfig(sync_buf_cap=64 * 1024 * 1024))  # 64 MiB
 ```
 
+**Continuous timestamps across the 33-bit rollover.** `DemuxerConfig.unwrap_timestamps`
+(default `False`) opts a `Demuxer` into unwrapping the raw 33-bit 90 kHz
+PTS/DTS onto a continuous per-program timeline instead of emitting the raw
+wire value (which wraps every ~26.5 h):
+
+```python
+from tstrans.mpegts import Demuxer, DemuxerConfig
+
+d = Demuxer(DemuxerConfig(unwrap_timestamps=True))
+```
+
+Each sample's signed wrap-aware delta accumulates onto the previous
+unwrapped value for its PID, so a genuine out-of-order arrival steps back
+by its true distance instead of being mistaken for another wrap. PIDs of
+the same program share one running clock and stay directly comparable
+across the rollover — this is what lets a consumer pair KLV to video by
+PTS on a long-running stream — while independent programs are never
+cross-anchored. The accumulators reset alongside the rest of the per-PID
+parse state on a sync reset, so a `ManagedDemuxReceiver` reconnect (see
+below) restarts the unwrap timeline from the next `ProgramMap`.
+
 ## Transmux: edit metadata, copy everything else
 
 `tstrans.io.transmux` bridges a demuxer and a muxer: iterate the source's
@@ -583,6 +604,19 @@ would fire it does not exist until the constructor returns. Take
 hand it to the thread that will do the cancelling — `recv_bytes` holds
 the object's mutable borrow for the whole blocking call, so asking for
 the handle while one is parked raises `RuntimeError: Already borrowed`.
+
+**Why did a managed session end?** `end_reason()` (on `ManagedDemuxReceiver`
+only — none of the other three managed shells expose it) answers with a
+`RecvEndReason` member once the receive loop has stopped for good:
+`END_OF_STREAM` (the peer sent a clean SRT end-of-stream),
+`RECONNECT_EXHAUSTED` (the `ReconnectPolicy`'s `max_attempts` budget ran
+out), or `CANCELLED` (`cancel_handle().cancel()` fired). Returns `None`
+before any of those — including while a reconnect is still in progress,
+which is not itself an ending. This is the recv-side analogue of the RTP
+`StreamEndReason` covered above: it exists specifically to tell a
+caller-initiated cancel apart from a budget-exhausted give-up, which
+otherwise both surface identically as `SrtError(CLOSED)` from the
+iterator.
 
 **Stats drift on the managed shells** (mirrors the JVM binding):
 `ManagedSender.srt_stats()` and `ManagedReceiver.srt_stats()` raise

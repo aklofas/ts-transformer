@@ -2025,14 +2025,16 @@ the trigger that would unblock it.
 
 ## Input-consumption detail on binding send errors
 
-- **Status:** Rust-only. `MuxSenderError`/`SenderError` carry
+- **Status:** Rust-only (unchanged); ABI 0.21 (2026-09-02) shipped
+  without it — the piggy-back clause of the original trigger lapsed by
+  decision 2026-09-09. `MuxSenderError`/`SenderError` carry
   `input_consumed`; Unreleased, first release will be v0.4.0. The C ABI,
   Python, and JVM send errors expose only the error kind.
 - **Why deferred:** the C surface needs an ABI minor bump for a new error
   field; Python/JVM callers are steered to the `Managed*` wrappers, where
   the question does not arise. No binding consumer has asked.
 - **Trigger to revisit:** a binding consumer hand-rolling retry on the
-  bare shell, or the next planned C ABI bump (piggy-back the field).
+  bare `Sender`/`MuxSender` shell asks for it.
 
 ## HLS: keyframe-driven-intent signal (segment-0 mid-GOP window)
 

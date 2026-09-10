@@ -227,7 +227,7 @@ try (Demuxer d = new Demuxer(cfg)) {
 }
 ```
 
-The 7 config knobs:
+The 9 config knobs:
 
 | Knob | Type | Default | Effect |
 |---|---|---|---|
@@ -238,8 +238,21 @@ The 7 config knobs:
 | `auCellCapPerPid` | `long` | `0` (Rust default) | Per-PID AU-cell reassembly byte cap. |
 | `av1Carriage` | `Av1CarriageMode` | `MPEG2_TS_BINDING` | AV1 carriage: `MPEG2_TS_BINDING` or `INTEROP_RAW_OBU`. |
 | `lenientPsiReassembly` | `boolean` | `false` | Relax PSI section reassembly. |
+| `syncBufCap` | `long` | `0` (Rust default, 4 MiB) | Pre-sync ingress buffer ceiling in bytes; a `feed()` call larger than this throws `DemuxException` (kind `SYNC_LOSS`) before consuming any bytes. |
+| `unwrapTimestamps` | `boolean` | `false` | Unwrap the raw 33-bit 90 kHz PTS/DTS onto a continuous per-program timeline that carries across the ~26.5 h rollover, instead of emitting the raw wire value. |
 
 A `long` knob of `0` means "use the Rust core's default cap."
+
+**Continuous timestamps across the rollover.** With `unwrapTimestamps(true)`,
+each sample's signed wrap-aware delta accumulates onto the previous
+unwrapped value for its PID, so a genuine out-of-order arrival steps back
+by its true distance instead of being mistaken for another wrap. PIDs of
+the same program share one running clock and stay directly comparable
+across the rollover — this is what lets a consumer pair KLV to video by
+PTS on a long-running stream — while independent programs are never
+cross-anchored. The accumulators reset alongside the rest of the per-PID
+parse state on a sync reset, so a `ManagedDemuxReceiver` reconnect (see
+below) restarts the unwrap timeline from the next `ProgramMap`.
 
 ### The `DemuxEvent` hierarchy
 
@@ -1174,6 +1187,17 @@ mode it re-binds and re-accepts. `cancelHandle().cancel()` reaches every phase
 of that reconnect — a live receive, the backoff wait between attempts, and a
 re-accept parked with no peer in sight — and the iterator ends with
 `SrtException(CLOSED)` promptly in all three.
+
+**Why did a managed session end? (`endReason()`)** Once the receive loop has
+stopped for good, `rx.endReason()` (on `ManagedDemuxReceiver` only — none of
+the other three managed shells expose it) answers with a `RecvEndReason`
+member: `END_OF_STREAM` (the peer sent a clean SRT end-of-stream),
+`RECONNECT_EXHAUSTED` (the `ReconnectPolicy`'s `maxAttempts` budget ran
+out), or `CANCELLED` (`cancelHandle().cancel()` fired) — or `null` before
+any of those, including while a reconnect is still in progress. It exists
+specifically to tell a caller-initiated cancel apart from a
+budget-exhausted give-up, which otherwise both surface identically as
+`SrtException(CLOSED)` from the iterator.
 
 ### Stats drifts on the managed shells
 
