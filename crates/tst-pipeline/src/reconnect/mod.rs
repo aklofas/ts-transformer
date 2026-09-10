@@ -127,6 +127,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::thread;
 use tracing::{debug, info, warn};
+use tst_core::cancel::CancelSlot;
 use tst_core::mpegts::common::SRT_TS_BUNDLE_BYTES;
 use tst_core::transport::{Transport, TransportCancel, TransportError};
 
@@ -254,6 +255,11 @@ impl ManagedStatsHandle {
 ///    exit path).
 /// 4. The worker holds `gap` across a single inner send during drain —
 ///    deliberate, pins the front message against `DropOldest` eviction.
+/// 5. The cancel path takes NEITHER lock: it fires the `active` cancel
+///    slot, which publishes the live inner's wake handle. A cancel is only
+///    useful while a send is in flight — i.e. exactly while `inner` is
+///    held — so reading the handle out of `inner` would queue the cancel
+///    behind the call it was asked to interrupt.
 ///
 /// # Closing
 ///
@@ -278,8 +284,9 @@ impl ManagedStatsHandle {
 ///   - `close`: silent no-op; the `closed` flag is already latched before
 ///     the lock attempt, so all subsequent operations exit cleanly — no
 ///     panic.
-///   - `cancel_handle`: clones `Arc`s only — no `inner` lock taken,
-///     poison-immune by construction.
+///   - `cancel_handle` (and the returned handle's `cancel()`): clones
+///     `Arc`s only — no `inner` lock taken, poison-immune by construction.
+///     The `active` cancel slot it fires recovers its own lock on poison.
 ///   - `socket_stats`: returns `None` on poison (pre-existing
 ///     shape; `lock().ok()` silently swallows the error the same way
 ///     `None` inner is handled).
@@ -308,6 +315,14 @@ pub struct ManagedTransport<T: Transport> {
     /// per outage — spawned on break, exits when the gap drains or the
     /// budget exhausts.
     bg_thread: Mutex<Option<thread::JoinHandle<()>>>,
+    /// The cancel handle that can currently unblock a send: the live
+    /// inner's, installed at construction and on every successful rebuild
+    /// (either mode), cleared when the inner is torn down. Published here
+    /// rather than read back out of `inner` because every send path holds
+    /// `inner` across the inner `send_bytes` — see locking invariant 5.
+    /// The slot latches, so a cancel racing a reconnect fires the fresh
+    /// inner's handle the moment it is installed.
+    active: Arc<CancelSlot>,
 }
 
 impl<T: Transport + 'static> ManagedTransport<T> {
@@ -316,6 +331,10 @@ impl<T: Transport + 'static> ManagedTransport<T> {
         F: Fn() -> Result<T, TransportError> + Send + Sync + 'static,
     {
         let gap = GapBuffer::new(policy.gap_buffer_capacity, policy.overflow_policy);
+        let active = Arc::new(CancelSlot::new());
+        if let Some(h) = inner.cancel_handle() {
+            active.install(h);
+        }
         Self {
             inner: Arc::new(Mutex::new(Some(inner))),
             factory: Arc::new(factory),
@@ -325,6 +344,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
             shutdown: Arc::new(Shutdown::new()),
             shared: Arc::new(ManagedShared::default()),
             bg_thread: Mutex::new(None),
+            active,
         }
     }
 
@@ -615,7 +635,11 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                 Err(TransportError::Broken { errno_code, .. }) => {
                     // D5 follow-up: forward inner errno_code; the wrapper
                     // doesn't have its own SRT origin.
+                    // Un-publish the dead inner's wake handle along with the
+                    // inner it belongs to: nothing can be woken until the
+                    // reconnect installs the replacement.
                     *transport_guard = None;
+                    self.active.clear();
                     return Err(TransportError::Broken {
                         msg: "transport broken during drain".into(),
                         errno_code,
@@ -625,6 +649,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                     // Inner reported Closed (no errno surface) — surface as
                     // Broken so the caller's shell maps to TransportBroken.
                     *transport_guard = None;
+                    self.active.clear();
                     return Err(TransportError::Broken {
                         msg: "transport broken during drain".into(),
                         errno_code: None,
@@ -683,6 +708,11 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             match (self.factory)() {
                 Ok(new_inner) => {
+                    // Take the wake handle before the transport moves into
+                    // the mutex; publish it after the lock drops, so the
+                    // slot's own firing (a cancel that landed while the
+                    // factory was building) never runs under `inner`.
+                    let new_cancel = new_inner.cancel_handle();
                     // Plan B mutex sweep (recoverable path): poisoned inner
                     // lock means a previous panic left the wrapper in an
                     // unknown state. Route to TransportError::Broken; the
@@ -694,6 +724,9 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                     })?;
                     *guard = Some(new_inner);
                     drop(guard);
+                    if let Some(h) = new_cancel {
+                        self.active.install(h);
+                    }
                     self.shared
                         .reconnect_successes
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -728,6 +761,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
             shutdown: Arc::clone(&self.shutdown),
             shared: Arc::clone(&self.shared),
             policy: self.policy.clone(),
+            active: Arc::clone(&self.active),
         };
         *slot = Some(thread::spawn(move || background::worker_run(ctx)));
     }
@@ -795,13 +829,10 @@ impl<T: Transport + 'static> Transport for ManagedTransport<T> {
     }
 
     fn cancel_handle(&self) -> Option<Arc<dyn TransportCancel + Send + Sync>> {
-        let inner = self.inner.clone();
-        let closed = self.closed.clone();
-        let shutdown = self.shutdown.clone();
         Some(Arc::new(ManagedCancel {
-            inner,
-            closed,
-            shutdown,
+            closed: Arc::clone(&self.closed),
+            shutdown: Arc::clone(&self.shutdown),
+            active: Arc::clone(&self.active),
         }))
     }
 
@@ -831,30 +862,28 @@ impl<T: Transport> Drop for ManagedTransport<T> {
     }
 }
 
-struct ManagedCancel<T: Transport + 'static> {
-    inner: Arc<Mutex<Option<T>>>,
+struct ManagedCancel {
     closed: Arc<std::sync::atomic::AtomicBool>,
     shutdown: Arc<Shutdown>,
+    active: Arc<CancelSlot>,
 }
 
-impl<T: Transport + 'static> TransportCancel for ManagedCancel<T> {
+impl TransportCancel for ManagedCancel {
     fn cancel(&self) {
         // Latch closed first so the reconnect loop exits next iteration.
         self.closed
             .store(true, std::sync::atomic::Ordering::Release);
+        // Wake a backoff wait (either mode); a no-op when nothing waits.
         self.shutdown.signal();
-        // Then cancel the current inner if any. We re-acquire the inner
-        // mutex briefly to grab a cancel-handle from it, then release;
-        // we do NOT hold the inner mutex while invoking cancel (which
-        // could call srt_close — sub-millisecond, but still better off
-        // the lock).
-        let inner_cancel = {
-            let guard = self.inner.lock().ok();
-            guard.and_then(|g| g.as_ref().and_then(|t| t.cancel_handle()))
-        };
-        if let Some(c) = inner_cancel {
-            c.cancel();
-        }
+        // Then wake whatever the live inner is parked in. The handle comes
+        // from the `active` slot, never from the `inner` mutex: every send
+        // path holds `inner` across the inner `send_bytes`, so a cancel
+        // that had to read the inner out of that mutex would queue behind
+        // the very call it was asked to interrupt (locking invariant 5).
+        // The slot also latches, so an inner installed after this point (a
+        // reconnect was mid-flight) is cancelled on arrival instead of
+        // being parked on.
+        self.active.cancel();
     }
 }
 
