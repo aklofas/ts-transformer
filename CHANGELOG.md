@@ -171,6 +171,24 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   into calls, and Python's basic `ManagedReceiver` factory (which had no
   such sequence at all) becomes a fifth caller. Recipe in
   `docs/reference/srt-cancel-handle.md`.
+- **Python: `DemuxerConfig.unwrap_timestamps`** (default `False`) —
+  mirrors the Rust knob above through every `DemuxerConfig` consumer in
+  `tstrans`; **`srt.ManagedDemuxReceiver.end_reason()`** returns a
+  `srt.RecvEndReason` (`END_OF_STREAM` / `RECONNECT_EXHAUSTED` /
+  `CANCELLED`, an `IntEnum` like `rtp.StreamEndReason`) once the receive
+  session has ended, `None` while it is still live. The reason is read
+  from a lock-free cell captured at construction, so it answers while
+  another thread is parked in `__next__` and keeps answering after
+  `close()`.
+- **JVM: `DemuxerConfig.Builder.unwrapTimestamps(boolean)`** (default
+  `false`) — carried through all seven config-taking demux natives;
+  **`ManagedDemuxReceiver.endReason()`** returns an
+  `org.tstrans.srt.RecvEndReason` (`END_OF_STREAM` /
+  `RECONNECT_EXHAUSTED` / `CANCELLED`) or `null` while the session is
+  live. It takes no registry lease, so it answers while another thread is
+  parked in `next()`, and `close()` snapshots the reason in the same
+  native call that tears the receiver down so it stays readable
+  afterwards.
 
 ### Changed
 
@@ -252,6 +270,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `tst-srt`, the Python binding and the JVM binding, which existed only
   to re-wrap an `SrtCancelHandle` as a `TransportCancel` — the handle
   implements the trait directly now.
+- **Docs: the input-consumption binding detail is re-deferred with a
+  demand-only trigger.** `MuxSenderError`/`SenderError`'s
+  `input_consumed` is still Rust-only; the original deferral offered to
+  piggy-back it on the next C ABI bump, and ABI 0.21 shipped without it,
+  so `docs/project/deferred-features.md` now records the lapsed clause
+  and triggers on a binding consumer asking instead.
 
 ### Fixed
 
