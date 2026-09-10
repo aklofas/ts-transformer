@@ -167,17 +167,18 @@ fn mux_via_tcp_demux_round_trip_recovers_program_map() {
 /// `tst_pipeline::managed_receive::ManagedRecvTransport::recv_bytes`.
 #[test]
 fn managed_tcp_recv_cancel_unblocks_parked_read() {
-    // Silent peer: accept the connection and hold it open without reading
-    // or writing anything, so the parked recv has no data/EOF/RST to react
-    // to -- only an explicit cancel can unblock it.
+    // Silent peer: connect first (the kernel completes the handshake into
+    // the listen backlog without anyone calling accept), then accept
+    // synchronously and hold the peer socket in a local for the rest of the
+    // test. No background thread and no timed sleep to keep it alive -- the
+    // connection simply stays open, reading and writing nothing, so the
+    // parked recv has no data/EOF/RST to react to and only an explicit
+    // cancel can unblock it.
     let peer_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = peer_listener.local_addr().unwrap().port();
-    let _peer = thread::spawn(move || {
-        let (_sock, _) = peer_listener.accept().unwrap();
-        thread::sleep(Duration::from_secs(10));
-    });
 
     let inner = TcpTransport::connect(&format!("tcp://127.0.0.1:{port}")).expect("connect");
+    let (_peer_sock, _) = peer_listener.accept().expect("accept");
 
     // The factory is never actually invoked in this test: cancelling a
     // parked receive is caller-initiated and short-circuits to
