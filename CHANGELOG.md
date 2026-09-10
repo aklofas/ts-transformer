@@ -167,6 +167,21 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **KLV: permissive `st0601::decode` / `st0806::decode` reported
+  malformed-tag/length offsets relative to the item slice (offset 0)
+  where the strict decoders report buffer-absolute offsets; both now
+  agree.** The local-set iterator rebased only `Truncated` to the body
+  origin, leaving `MalformedTag` / `MalformedLength` / `NonCanonicalTag`
+  / `NonCanonicalLength` sitting at the erroring item's own slice
+  origin, and the enveloped decoders then propagated that body-relative
+  offset without accounting for the 16-byte UL plus BER length in front
+  of the body. Both hops now route through the shared `rebase_offset`
+  helper, so an offset reported by `st0601::decode`, `decode_unchecked`,
+  `decode_strict`, `decode_strict_compliance` or
+  `st0806::decode_standalone` indexes the caller's own buffer, exactly
+  as the strict path's offsets already did. `st0806::decode`, which
+  takes a bare local-set body with no envelope in front of it, keeps
+  body-relative offsets by construction. No API change.
 - **Python: the six transport `.pyi` stubs (`srt`/`rtp`/`udp`/`tcp`/`hls`/
   `rist`) now match the runtime, and the stubtest rail covers them.** The
   rail had checked only the four core modules since v0.2.0, and the
