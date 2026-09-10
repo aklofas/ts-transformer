@@ -31,8 +31,9 @@ fuzz_target!(|data: &[u8]| {
                 RtspFrameBoundary::NonUtf8Headers { skip } => {
                     buf.drain(..skip);
                 }
-                RtspFrameBoundary::BadContentLength { .. }
-                | RtspFrameBoundary::LengthOverflow => break,
+                RtspFrameBoundary::BadContentLength { .. } | RtspFrameBoundary::LengthOverflow => {
+                    break;
+                }
                 RtspFrameBoundary::Complete { len } => {
                     buf.drain(..len);
                 }

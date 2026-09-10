@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use tst_rtp::{H264DepayConfig, H264Depacketizer, RtpHeader};
+use tst_rtp::{H264Depacketizer, H264DepayConfig, RtpHeader};
 
 // Interpret the input as a packet sequence: [1 flag byte][2 seq][4 ts][1 len][len payload]…
 // The flag byte's low bit is the marker, bit 1 selects one of two SSRCs (exercises the

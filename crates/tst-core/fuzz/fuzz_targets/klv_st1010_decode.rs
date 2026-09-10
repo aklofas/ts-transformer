@@ -22,7 +22,11 @@ fuzz_target!(|data: &[u8]| {
     // [-1.0, 1.0] range (encode_sdcc_flp_mode2 rejects out-of-range
     // values; a foreign producer's IEEE correlations can legally exceed
     // that band, which is out of round-trip scope here).
-    if pack.correlations.iter().any(|&r| !(-1.0..=1.0).contains(&r)) {
+    if pack
+        .correlations
+        .iter()
+        .any(|&r| !(-1.0..=1.0).contains(&r))
+    {
         return;
     }
     let Ok(bytes) = encode_sdcc_flp_mode2(&pack.std_devs, &pack.correlations, 2) else {
