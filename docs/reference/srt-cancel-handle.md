@@ -197,6 +197,28 @@ above. See the **Sync vs. async** section in
 - [Graceful shutdown from another thread via `SrtCancelHandle`](/docs/cookbook/operations/graceful-shutdown.md) — the cookbook recipe.
 - [`guides/pipeline.md`](/docs/guides/pipeline.md) — Pipeline shell composition (where `cancel_handle()` lives).
 
+## Managed wrappers: `CancelSlot`
+
+`SrtCancelHandle` wraps *one* fixed socket. A managed wrapper has no such
+fixed target: which handle can unblock its worker changes every time the
+worker moves on — from a live socket to a reconnect factory to the next
+socket. `tst_core::cancel::CancelSlot` is the primitive that bridges the
+two. It is a latched, replaceable cancel target: a worker `install`s the
+handle that can currently unblock it before it blocks and `clear`s it
+afterwards, and `cancel()` fires whatever is installed at that moment.
+Because it latches, an `install` that lands *after* a cancel fires
+immediately instead of parking on a target nobody will reach again.
+
+`ManagedTransport` and `ManagedRecvTransport` both publish their live
+inner transport's cancel handle through such a slot, which is what makes
+two guarantees hold: **cancel never waits on a blocked send or receive**
+— the handle comes out of the slot, never out of the mutex the blocking
+call holds — and **a cancel that lands during a reconnect is honored
+before the fresh connection is read**, because the reconnect installs the
+new inner into the already-latched slot. `tst_pipeline::FactoryCancel`
+is the name factories use for the same type (it is a type alias of
+`CancelSlot`), and it is what the listener-mode wiring below plugs in.
+
 ## Managed receivers in listener mode
 
 A listener-mode `ManagedRecvTransport` re-runs its factory after a peer
