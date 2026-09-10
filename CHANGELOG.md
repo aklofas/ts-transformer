@@ -272,6 +272,24 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Tooling: `scripts/check/python/stubtest.sh` no longer passes vacuously
+  from a linked `git worktree`, and the embedded QEMU crates build from
+  one.** The stub rail keyed everything on `bindings/python/.venv` under
+  the tree being checked; a worktree has no venv there, so it printed
+  SKIP and exited 0 — the pre-push sweep passed with the stubs unchecked.
+  It now falls back to the main checkout's venv for the interpreter,
+  imports `tstrans` from the checked tree (so the stubs under test are the
+  ones being pushed), fails loudly when that tree has no built native
+  module, and warns when the module is older than the Rust sources
+  feeding it (a stale build reports real drift as a false failure). SKIP
+  remains only when no venv with mypy exists anywhere. Separately,
+  `embedded/baremetal-qemu` and `embedded/baremetal-qemu-c` carry an
+  empty `[workspace]` table (as `freertos-srt/example/host` already did):
+  the root manifest's `exclude` is relative to the root it lives in, so
+  from a worktree nested inside the checkout cargo walked past the
+  worktree's root and bound both crates to the parent checkout's
+  workspace ("current package believes it's in a workspace when it's
+  not"), which made every embedded gate unrunnable there.
 - **TCP: `TcpCancelHandle` is reachable through
   `Transport::cancel_handle` / `RecvTransport::cancel_handle`, so generic
   shells and the managed wrappers can cancel a parked TCP receive.**

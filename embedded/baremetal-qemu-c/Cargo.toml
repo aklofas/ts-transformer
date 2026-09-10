@@ -5,6 +5,15 @@ edition = "2021"
 publish = false
 description = "no_std staticlib glue: libtstrans_firmware.a (tst-c-core offline surface) for the C-firmware QEMU embedded test, excluded from the workspace"
 
+# Empty [workspace] table detaches this package from the main ts-transformer
+# workspace. The root Cargo.toml also lists it under `exclude`, but that path
+# is relative to the root it lives in: from a nested `git worktree` (e.g.
+# .claude/worktrees/<x>/) cargo walked past the worktree's excluded root and
+# bound the crate to the PARENT checkout's workspace ("current package
+# believes it's in a workspace when it's not"), so no embedded gate could run
+# there. Same shape as embedded/freertos-srt/example/host.
+[workspace]
+
 [lib]
 name = "tstrans_firmware"
 crate-type = ["staticlib"]
