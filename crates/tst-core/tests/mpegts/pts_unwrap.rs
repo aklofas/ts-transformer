@@ -1,5 +1,5 @@
 //! Wire-level integration tests for the opt-in
-//! `DemuxerConfig::unwrap_timestamps` monotonic PTS/DTS unwrap knob
+//! `DemuxerConfig::unwrap_timestamps` PTS/DTS unwrap knob
 //! (default off). Drives `Muxer` to produce real TS bytes so the raw
 //! 33-bit wire PTS values land exactly where a real encoder would put
 //! them, then demuxes with the knob on and off.

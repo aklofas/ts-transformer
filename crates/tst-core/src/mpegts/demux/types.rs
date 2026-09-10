@@ -198,8 +198,8 @@ pub struct DemuxerConfig {
     /// empirical proof the CFI bug is dominant in real traffic; we do
     /// not have equivalent evidence for PSI reassembly violations.)
     pub cfi_tolerance: bool,
-    /// Unwrap the demuxer's raw 33-bit 90 kHz PTS/DTS into a monotonic
-    /// `i64` timeline, per PID.
+    /// Unwrap the demuxer's raw 33-bit 90 kHz PTS/DTS onto a continuous
+    /// `i64` timeline that carries across the rollover, per PID.
     ///
     /// **Default `false`** — off. When `false`,
     /// [`DemuxEvent::Sample`](crate::mpegts::demux::DemuxEvent::Sample)
@@ -380,7 +380,7 @@ impl DemuxerConfigBuilder {
         self
     }
 
-    /// Enable the opt-in monotonic PTS/DTS unwrap. See
+    /// Enable the opt-in PTS/DTS unwrap. See
     /// [`DemuxerConfig::unwrap_timestamps`].
     pub fn unwrap_timestamps(mut self, enable: bool) -> Self {
         self.options.unwrap_timestamps = enable;

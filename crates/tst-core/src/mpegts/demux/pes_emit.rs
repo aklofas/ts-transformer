@@ -175,7 +175,7 @@ impl super::demuxer::Demuxer {
             self.last_pts_by_pid
                 .insert(pes.pid, observed_pts.as_ticks());
         }
-        // Opt-in monotonic PTS/DTS unwrap (`DemuxerConfig::unwrap_timestamps`,
+        // Opt-in PTS/DTS unwrap (`DemuxerConfig::unwrap_timestamps`,
         // default off — the branch below is skipped entirely and `pts`/`dts`
         // stay exactly as computed above, so the default emit path is
         // byte-for-byte unchanged). `pts` and `dts` are shadowed here, once,
