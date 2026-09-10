@@ -84,6 +84,8 @@ mod mux_proptest;
 mod mux_shorthand_multi_program;
 #[path = "mpegts/mux_subtitle.rs"]
 mod mux_subtitle;
+#[path = "mpegts/psi_builders.rs"]
+mod psi_builders;
 #[path = "mpegts/psi_proptest.rs"]
 mod psi_proptest;
 #[path = "mpegts/pts_unwrap.rs"]
