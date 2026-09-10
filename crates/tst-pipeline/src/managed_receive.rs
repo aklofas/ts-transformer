@@ -72,7 +72,7 @@
 use crate::reconnect::background::Shutdown;
 use crate::reconnect::{ReconnectMode, ReconnectPolicy};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex};
 use tracing::{debug, info, warn};
 use tst_core::transport::RecvTransport;
 use tst_core::transport::TransportError;
@@ -82,84 +82,24 @@ use tst_core::transport::TransportError;
 /// `Listener::accept()` until a peer shows up and nothing else can reach
 /// that listener.
 ///
-/// The factory calls [`install`](Self::install) with the handle that can
-/// unblock it (a `Listener::cancel_handle()`) right before blocking and
-/// [`clear`](Self::clear) right after. The managed transport's own cancel
-/// handle calls [`cancel`](Self::cancel), which fires whatever is installed
-/// and latches, so an `install` that lands after the cancel fires the handle
-/// immediately — closing the race where the cancel arrives between the
-/// factory's bind and its install. Once cancelled, the factory should
-/// return `TransportError::ExplicitClose` and the managed transport reports
-/// the caller-initiated close on its next turn.
+/// The factory calls [`install`](tst_core::cancel::CancelSlot::install) with
+/// the handle that can unblock it (a `Listener::cancel_handle()`) right
+/// before blocking and [`clear`](tst_core::cancel::CancelSlot::clear) right
+/// after. The managed transport's own cancel handle calls
+/// [`cancel`](tst_core::cancel::CancelSlot::cancel), which fires whatever is
+/// installed and latches, so an `install` that lands after the cancel fires
+/// the handle immediately — closing the race where the cancel arrives
+/// between the factory's bind and its install. Once cancelled, the factory
+/// should return `TransportError::ExplicitClose` and the managed transport
+/// reports the caller-initiated close on its next turn.
 ///
 /// Share one `Arc<FactoryCancel>` between the factory closure and
 /// [`ManagedRecvTransport::new_with_factory_cancel`].
-#[derive(Default)]
-pub struct FactoryCancel {
-    state: Mutex<FactoryCancelState>,
-}
-
-#[derive(Default)]
-struct FactoryCancelState {
-    cancelled: bool,
-    handle: Option<Arc<dyn tst_core::transport::TransportCancel + Send + Sync>>,
-}
-
-impl FactoryCancel {
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Publish the handle that can wake the factory's current blocking
-    /// call. Fires it at once if [`cancel`](Self::cancel) already ran.
-    pub fn install(&self, handle: Arc<dyn tst_core::transport::TransportCancel + Send + Sync>) {
-        let fire_now = {
-            let mut s = self.lock();
-            if s.cancelled {
-                true
-            } else {
-                s.handle = Some(Arc::clone(&handle));
-                false
-            }
-        };
-        // Outside the lock: the handle may close a socket.
-        if fire_now {
-            handle.cancel();
-        }
-    }
-
-    /// Forget the installed handle (the blocking call returned).
-    pub fn clear(&self) {
-        self.lock().handle = None;
-    }
-
-    /// Latch cancelled and fire the installed handle, if any.
-    pub fn cancel(&self) {
-        let handle = {
-            let mut s = self.lock();
-            s.cancelled = true;
-            s.handle.take()
-        };
-        if let Some(h) = handle {
-            h.cancel();
-        }
-    }
-
-    /// `true` once [`cancel`](Self::cancel) has run. A factory checks this
-    /// before binding (skip the whole attempt) and after its blocking call
-    /// returns with an error (report `ExplicitClose`, not a transport fault).
-    #[must_use]
-    pub fn is_cancelled(&self) -> bool {
-        self.lock().cancelled
-    }
-
-    // Recover on poison: the state is two plain fields, never left
-    // half-updated by a panic; cancel is best-effort by contract.
-    fn lock(&self) -> MutexGuard<'_, FactoryCancelState> {
-        self.state.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-}
+///
+/// This is an alias for the neutral [`tst_core::cancel::CancelSlot`]
+/// primitive; the name is kept because the factory protocol above is what
+/// this slot means to a managed receiver.
+pub type FactoryCancel = tst_core::cancel::CancelSlot;
 
 /// Receive-side reconnect decorator.
 ///

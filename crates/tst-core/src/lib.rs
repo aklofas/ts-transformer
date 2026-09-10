@@ -79,6 +79,8 @@ pub mod shared;
 pub mod transport;
 pub mod url;
 
+#[cfg(feature = "std")]
+pub use cancel::CancelSlot;
 pub use cancel::SrtCancelHandle;
 pub use error::{
     CotError, DemuxError, KlvDecodeError, KlvEncodeError, KlvFieldError, KlvPatchError, MuxError,
