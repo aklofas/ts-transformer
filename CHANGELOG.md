@@ -34,6 +34,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `NalLengthOverflow { nal_len, length_size }` and `BufferTooSmall {
   needed, have }` (the last raised only by `..._into`, which leaves the
   caller's buffer untouched when it refuses).
+- New fuzz target `nal_framing` covering the converters above and
+  `extract_parameter_sets` (32 fuzz targets total across the workspace).
 - **`DemuxerConfig::unwrap_timestamps`** (default `false`) +
   `DemuxerConfigBuilder::unwrap_timestamps` — opt-in per-PID unwrap of
   the demuxer's raw 33-bit 90 kHz PTS/DTS onto a continuous `i64`

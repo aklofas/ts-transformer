@@ -201,5 +201,12 @@ test              = false
 doc               = false
 bench             = false
 
+[[bin]]
+name              = "nal_framing"
+path              = "fuzz_targets/nal_framing.rs"
+test              = false
+doc               = false
+bench             = false
+
 [workspace]
 members = []

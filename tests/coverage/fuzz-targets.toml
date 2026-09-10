@@ -92,6 +92,10 @@ name = "mux_push_video"
 
 [[target]]
 crate = "tst-core"
+name = "nal_framing"
+
+[[target]]
+crate = "tst-core"
 name = "parse_av1_sequence_header"
 
 [[target]]
