@@ -1,5 +1,6 @@
 //! ES payload parsers: H.264 / H.265 NAL split, KLV unwrap.
 
+use crate::codec::annexb::start_codes;
 use crate::codec::av1::decode::leb128::read_leb128;
 use crate::mpegts::demux::event::{
     Av1ObuHeaderKind, NalHeaderKind, NalUnit, NonConformantIssue, Obu, ObuExtension, VideoCodec,
@@ -27,7 +28,7 @@ pub fn split_nals(
     let mut out = Vec::new();
     let mut issues = Vec::new();
     let bytes: &[u8] = es_payload;
-    let starts = find_start_codes(bytes);
+    let starts = start_codes(bytes);
     for win in starts.windows(2) {
         // `data_start` is the offset of the first NAL byte after this NAL's
         // start-code prefix; `prefix_start` of the next entry is where the
@@ -47,42 +48,6 @@ pub fn split_nals(
         }
     }
     (out, issues)
-}
-
-/// Offsets of one Annex-B start-code occurrence: where the prefix starts
-/// (run of 00s plus 01) and where the NAL data begins (immediately after).
-#[derive(Debug, Clone, Copy)]
-struct StartCode {
-    prefix_start: usize,
-    data_start: usize,
-}
-
-/// Locate every Annex-B start code (`00 00 01` or `00 00 00 01`) in `buf`.
-fn find_start_codes(buf: &[u8]) -> Vec<StartCode> {
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i + 3 <= buf.len() {
-        if buf[i] == 0 && buf[i + 1] == 0 {
-            if buf[i + 2] == 1 {
-                out.push(StartCode {
-                    prefix_start: i,
-                    data_start: i + 3,
-                });
-                i += 3;
-                continue;
-            }
-            if i + 4 <= buf.len() && buf[i + 2] == 0 && buf[i + 3] == 1 {
-                out.push(StartCode {
-                    prefix_start: i,
-                    data_start: i + 4,
-                });
-                i += 4;
-                continue;
-            }
-        }
-        i += 1;
-    }
-    out
 }
 
 /// Parse a single NAL unit at `es_payload[nal_start..nal_end]`.
@@ -785,7 +750,7 @@ mod tests {
     fn h264_single_nal_3byte_start() {
         // Single NAL preceded by the 3-byte start code — exercises the
         // trailing-NAL branch of split_nals where the inner-NAL loop
-        // doesn't fire. Locks in the fix for the find_start_codes
+        // doesn't fire. Locks in the fix for the start_codes
         // slice-boundary bug (NAL bytes must NOT include any next-NAL
         // prefix bytes — there's no next NAL here).
         let buf = SharedBytes::from_vec(vec![0x00, 0x00, 0x01, 0x67, 0xAA, 0xBB]);
@@ -805,7 +770,7 @@ mod tests {
 
     #[test]
     fn split_nals_empty_input() {
-        // Empty input produces no NALs. find_start_codes returns vec![],
+        // Empty input produces no NALs. start_codes returns vec![],
         // both the inner-window loop and the trailing-NAL branch no-op.
         let empty = SharedBytes::from_vec(vec![]);
         let (nals_264, issues_264) = split_nals(&empty, VideoCodec::H264);

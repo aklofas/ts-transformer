@@ -17,48 +17,9 @@
 //! matching the widths ISO/IEC 14496-15's `NALUnitLength` field allows.
 
 use crate::codec::CodecParseError;
+use crate::codec::annexb::start_codes;
 use crate::mpegts::demux::VideoCodec;
 use alloc::vec::Vec;
-
-/// Offsets of one Annex-B start-code occurrence: where the prefix starts
-/// (the run of `00`s plus the trailing `01`) and where the NAL data begins
-/// (immediately after). Mirrors the same-shaped helper in
-/// `mpegts::demux::payload`, kept as a private local copy here rather than
-/// exported from there — this module has no other reason to depend on
-/// demux internals.
-#[derive(Debug, Clone, Copy)]
-struct StartCode {
-    prefix_start: usize,
-    data_start: usize,
-}
-
-/// Locate every Annex-B start code (`00 00 01` or `00 00 00 01`) in `buf`.
-fn find_start_codes(buf: &[u8]) -> Vec<StartCode> {
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i + 3 <= buf.len() {
-        if buf[i] == 0 && buf[i + 1] == 0 {
-            if buf[i + 2] == 1 {
-                out.push(StartCode {
-                    prefix_start: i,
-                    data_start: i + 3,
-                });
-                i += 3;
-                continue;
-            }
-            if i + 4 <= buf.len() && buf[i + 2] == 0 && buf[i + 3] == 1 {
-                out.push(StartCode {
-                    prefix_start: i,
-                    data_start: i + 4,
-                });
-                i += 4;
-                continue;
-            }
-        }
-        i += 1;
-    }
-    out
-}
 
 /// Validate a `length_size` argument, returning the maximum NAL byte
 /// length it can encode.
@@ -98,7 +59,7 @@ pub fn annexb_to_length_prefixed(
     length_size: u8,
 ) -> Result<Vec<u8>, CodecParseError> {
     let max_len = max_encodable_len(length_size)?;
-    let starts = find_start_codes(annexb);
+    let starts = start_codes(annexb);
     let mut out = Vec::new();
     for win in starts.windows(2) {
         let nal = &annexb[win[0].data_start..win[1].prefix_start];
@@ -238,7 +199,7 @@ pub fn extract_parameter_sets(annexb: &[u8], codec: VideoCodec) -> ParameterSets
         VideoCodec::H264 | VideoCodec::H265 => {}
     }
 
-    let starts = find_start_codes(annexb);
+    let starts = start_codes(annexb);
     for win in starts.windows(2) {
         classify_parameter_set(
             &annexb[win[0].data_start..win[1].prefix_start],
