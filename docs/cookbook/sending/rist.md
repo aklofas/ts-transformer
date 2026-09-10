@@ -60,12 +60,17 @@ doesn't carry encryption.
 | `profile=simple\|main`   | RIST profile override                                |
 | `bandwidth=N`            | kbps target throughput cap                           |
 | `buffer=N`               | Recovery buffer in milliseconds                      |
-| `aes-type=128\|192\|256` | AES key size (forces Main profile)                   |
-| `secret=...`             | AES PSK (URL-encoded)                                |
+| `aes-type=128\|192\|256` | AES key size; needs `secret` too (else rejected)     |
+| `secret=...`             | AES PSK (URL-encoded); alone selects AES-256         |
 | `cname=...`              | RTCP CNAME identifier                                |
 | `recovery_maxbitrate=N`  | Retransmit bandwidth cap (kbps)                      |
 | `session_timeout=N`      | Receiver session timeout (ms)                        |
 | `compression=1`          | Enable NULL-packet deletion                          |
+
+Either encryption key forces the Main profile. `secret` on its own is
+enough — it selects AES-256, librist's own default. `aes-type` on its own
+is rejected at parse: naming a cipher without a PSK used to be accepted
+and then silently configure a **plaintext** link.
 
 ## Verify with ffmpeg
 

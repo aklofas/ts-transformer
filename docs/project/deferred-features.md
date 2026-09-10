@@ -1698,6 +1698,41 @@ the trigger that would unblock it.
   object), or the Python bindings need to lift the documented single-
   thread recv/close contract for these transports.
 
+## RIST: IPv6 receiver bind in the Simple profile
+
+- **Status:** Refused. `RistRecvTransport::listen` (and every builder
+  path that reaches `listen_with_config`) returns
+  `RistError::InvalidConfig` for an IPv6 bind address in the Simple
+  profile, before any librist context or peer creation. Main-profile
+  IPv6 receivers work, and IPv6 *senders* work in both profiles. The
+  refusal is new with the change that made IPv6 endpoints reach librist
+  correctly bracketed at all — before that, an IPv6 RIST URL silently
+  resolved to `0.0.0.0:0` and never reached the affected code.
+- **Why deferred:** The bug is in vendored librist 0.2.20, not in this
+  crate. `rist_receiver_peer_create` creates a second RTCP peer at
+  `local_port + 1` and dereferences it *before* its own null check, so
+  a failed RTCP-peer creation is a null dereference rather than an
+  error return. That failure is reachable on IPv6 because the RTCP
+  peer's bind address is derived from the scheme-prefixed `p->url`
+  (`rist://@[::1]:9000`) rather than a clean `host:port`; re-parsing
+  that string truncates it after the closing `]`, so the RTCP peer
+  tries to re-bind the data peer's own address instead of `port + 1`.
+  On IPv4 the duplicate bind happens to succeed; on IPv6 it fails, and
+  the missing null check turns a graceful failure into a SIGSEGV that
+  takes down the whole process. The sender path is unaffected —
+  `rist_sender_peer_create` null-checks before dereferencing. Fixing
+  this properly means patching vendored upstream C in two places (the
+  null-check ordering *and* the RTCP address derivation) and carrying
+  the patch across vendor bumps; refusing the one broken combination is
+  a smaller, honest surface. The refusal message names the librist
+  version, so it must be re-checked and refreshed at the next vendor
+  bump.
+- **Trigger to revisit:** An upstream librist release that fixes both
+  halves (this is an upstream-report candidate — a maintainer files it).
+  On that bump: drop the guard in `listen_with_config`, drop its unit
+  test, and add a Simple-profile IPv6 loopback round-trip test
+  alongside the existing Main-profile one.
+
 ## RTP H.264 depayloader (RFC 6184)
 
 - **Status:** Shipped — v0.2.x (PRs #94 / #95 / #96). The
