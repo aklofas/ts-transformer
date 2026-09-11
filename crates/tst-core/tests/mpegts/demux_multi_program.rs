@@ -33,13 +33,13 @@ fn pmt_packet_for_test(
     streams: &[(u8, u16)],
     version: u8,
 ) -> Vec<u8> {
-    let streams: Vec<(u8, u16, &[u8])> = streams
+    let with_descriptors: Vec<(u8, u16, &[u8])> = streams
         .iter()
         .map(|&(st, pid)| (st, pid, &[][..]))
         .collect();
     psi_packet(
         pmt_pid,
-        &build_pmt_section(program_number, pcr_pid, version, &streams),
+        &build_pmt_section(program_number, pcr_pid, version, &with_descriptors),
         0,
     )
 }
