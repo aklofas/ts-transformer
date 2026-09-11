@@ -24,6 +24,7 @@ pub(crate) fn build_pat_section(version: u8, programs: &[(u16, u16)]) -> Vec<u8>
     s.push(0x00); // section_number
     s.push(0x00); // last_section_number
     for &(pn, pid) in programs {
+        assert!(pid <= 0x1FFF, "PMT PID {pid:#06x} exceeds the 13-bit field");
         s.extend_from_slice(&pn.to_be_bytes());
         s.push(0xE0 | ((pid >> 8) as u8 & 0x1F));
         s.push((pid & 0xFF) as u8);
@@ -40,6 +41,10 @@ pub(crate) fn build_pmt_section(
     version: u8,
     streams: &[(u8, u16, &[u8])],
 ) -> Vec<u8> {
+    assert!(
+        pcr_pid <= 0x1FFF,
+        "PCR PID {pcr_pid:#06x} exceeds the 13-bit field"
+    );
     let stream_loop_len: usize = streams.iter().map(|(_, _, d)| 5 + d.len()).sum();
     let section_length = 9 + stream_loop_len + 4;
     assert!(
@@ -59,6 +64,15 @@ pub(crate) fn build_pmt_section(
     s.push(0xF0); // reserved | program_info_length hi
     s.push(0x00); // program_info_length lo (no program descriptors)
     for &(stream_type, pid, descriptors) in streams {
+        assert!(
+            pid <= 0x1FFF,
+            "elementary PID {pid:#06x} exceeds the 13-bit field"
+        );
+        assert!(
+            descriptors.len() <= 0x0FFF,
+            "ES_info_length {} exceeds the 12-bit field",
+            descriptors.len()
+        );
         s.push(stream_type);
         s.push(0xE0 | ((pid >> 8) as u8 & 0x1F));
         s.push((pid & 0xFF) as u8);
