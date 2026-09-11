@@ -203,18 +203,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- **CI: the three fuzz workspaces are rustfmt-checked.** They are separate
-  cargo workspaces, so the root `cargo fmt --all -- --check` never saw them
-  and two had drifted; the `fuzz-smoke` job (and the local pre-push
-  runner's fuzz phase) now run `cargo fmt --all -- --check` with the
-  repo's pinned 1.85 toolchain in each of them before the nightly compile
-  checks. The drifted targets are reformatted in the same change.
 - **CI: the `#[non_exhaustive]` count guard now matches the attribute
   position only.** The rail's pattern was unanchored, so every comment
   or doc mention of the attribute counted too — 128 phantom lines that
   moved the baseline whenever a doc edit mentioned it (the 313→314 bump
   on 2026-09-02 was one). Baseline re-measured at the real attribute
   count; no attribute was added or removed.
+- **CI: the three fuzz workspaces are rustfmt-checked.** They are separate
+  cargo workspaces, so the root `cargo fmt --all -- --check` never saw them
+  and two had drifted; the `fuzz-smoke` job (and the local pre-push
+  runner's fuzz phase) now run `cargo fmt --all -- --check` with the
+  repo's pinned 1.85 toolchain in each of them before the nightly compile
+  checks. The drifted targets are reformatted in the same change.
 - **CI: nightly native ThreadSanitizer job now hard-gates.** The
   `tsan-native` job in `sanitizers.yml` (tst-srt / tst-rist / tst-c
   with libsrt, librist and mbedTLS compiled `-fsanitize=thread`) has
