@@ -365,6 +365,65 @@ def test_cancel_handle_cross_thread() -> None:
     receiver.close()
 
 
+def test_close_while_recv_parked_cancels_first() -> None:
+    """`close()` from another thread while `recv_bytes()` is parked cancels
+    first: it returns promptly (no `RuntimeError: Already borrowed`, no wait
+    behind the parked recv) and the parked call ends with `SrtError(BROKEN)`
+    — the plain cancel handle closes the libsrt socket, so the parked
+    `srt_recvmsg` fails with a connection error. The contract shared with
+    the JVM plain `Receiver.close()` and the C ABI's receiver close."""
+    port = _free_tcp_port()
+    sender, receiver = _make_loopback_pair(port)
+    captured: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            # Block until a packet arrives — none will; the close under
+            # test must end this call.
+            receiver.recv_bytes(max_len=1316)
+        except BaseException as exc:  # noqa: BLE001
+            captured.append(exc)
+
+    w = threading.Thread(target=worker, daemon=True)
+    w.start()
+    # Let the worker park inside the native receive.
+    time.sleep(0.3)
+
+    # close() on its own thread with a bounded join: a regression to
+    # waiting behind the parked recv fails the verdict below instead of
+    # hanging the test.
+    close_err: list[BaseException] = []
+
+    def closer() -> None:
+        try:
+            receiver.close()
+        except BaseException as exc:  # noqa: BLE001
+            close_err.append(exc)
+
+    c = threading.Thread(target=closer, daemon=True)
+    try:
+        c.start()
+        c.join(timeout=5.0)
+        w.join(timeout=5.0)
+        if c.is_alive() or w.is_alive():
+            # Rescue: the peer is still connected, so a packet unparks the
+            # recv and lets the daemon threads finish rather than sitting in
+            # a native read at interpreter exit.
+            sender.send_bytes(b"\x47" + bytes(187))
+            w.join(timeout=5.0)
+            c.join(timeout=5.0)
+            pytest.fail("close() did not end the parked recv_bytes() within 5 s")
+        assert not close_err, f"close() raised {close_err!r}"
+        assert len(captured) == 1, f"expected one error; got {captured!r}"
+        err = captured[0]
+        assert isinstance(err, SrtError), f"parked recv ended with {err!r}"
+        assert err.kind == SrtErrorKind.BROKEN, f"unexpected kind: {err.kind!r}"
+        assert not receiver.is_alive()
+    finally:
+        sender.close()
+        receiver.close()
+
+
 def test_cancel_handle_is_independently_clonable() -> None:
     """Each call to `cancel_handle()` returns a fresh wrapper with its
     own `is_cancelled()` observation, but they all forward `.cancel()`
