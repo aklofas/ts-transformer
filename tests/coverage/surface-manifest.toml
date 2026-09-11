@@ -5971,6 +5971,30 @@ bindings = []
 scenario_ids = []
 tier = "A"
 
+# BrokenCause (2026-09-11, the tst-tcp clean-EOF discriminator): the derived
+# PartialEq is what the two tst-tcp peer-close tests assert on (assert_eq! on
+# the `cause` field of the Broken they observe).
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::transport::BrokenCause::eq"
+owning_tests = ["crates/tst-tcp/tests/loopback.rs", "crates/tst-tcp/tests/tls_hostname.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[exempt]]
+item = "tst_core::transport::BrokenCause::clone"
+reason = "derive impl for BrokenCause (a Copy type); exercised transitively via the derived TransportError::clone on every Broken clone in the tst-pipeline fixture tests — no in-tree call site clones a BrokenCause directly"
+
+[[exempt]]
+item = "tst_core::transport::BrokenCause::default"
+reason = "derive impl (#[default] Unspecified) so the cause has a conventional zero value; every in-tree producer names its cause explicitly, no call site uses Default"
+
+[[exempt]]
+item = "tst_core::transport::BrokenCause::fmt"
+reason = "derive impl for BrokenCause; Debug bound required by assert_eq! failure-message formatting in the tst-tcp peer-close tests and by TransportError's derived Debug"
+
 [[exempt]]
 item = "tst_core::transport::TransportError::clone"
 reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
