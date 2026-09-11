@@ -464,6 +464,12 @@ cancel.cancel()   # wakes tx.send_bytes() → SrtError(BROKEN | CLOSED)
 `is_cancelled()` is per-clone, but `cancel()` on any clone wakes the shared
 socket.
 
+`Receiver.close()` and `DemuxReceiver.close()` cancel first: calling either
+from another thread while `recv_bytes()` / `__next__` is parked wakes that
+call (it raises `SrtError(BROKEN)` — the cancel closes the socket under it)
+and returns promptly. The managed shells surface the same close as
+`SrtError(CLOSED)`.
+
 ### SRT convenience (`MuxSender` / `DemuxReceiver`)
 
 `MuxSender` bundles a `Muxer` + an SRT `Sender`: send encoded elementary

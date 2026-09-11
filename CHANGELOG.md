@@ -304,6 +304,20 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Python: `tstrans.srt.Receiver.close()` from another thread while
+  `recv_bytes()` was parked raised `RuntimeError: Already borrowed`.**
+  `recv_bytes` held the object's PyO3 mutable borrow for the whole blocking
+  call, so the cancel-first `close()` — and `socket_stats()` /
+  `srt_stats()` / `is_alive()` — could not run concurrently at all; the
+  "cancel first so a parked recv unparks" path was unreachable. The
+  receiver now keeps its shell in a shared slot and borrows immutably, the
+  shape `DemuxReceiver` already had: `close()` cancels, then takes the
+  slot, and the parked `recv_bytes()` ends with `SrtError(BROKEN)`;
+  `is_alive()` reports `True` while a receive is parked; the stats getters
+  wait for the parked call (GIL released) instead of raising. Found by the
+  parity test for the JVM change above. `ManagedReceiver.recv_bytes` keeps
+  the mutable borrow; its documented pattern (take `cancel_handle()` before
+  the first receive) is unchanged.
 - **`ManagedTransport` (send side): a cancel that lands while the reconnect
   factory is running is honored instead of lost.** The blocking reconnect
   path installed the fresh connection's wake handle into the already

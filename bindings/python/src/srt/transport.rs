@@ -38,8 +38,8 @@
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use pyo3::Py;
 use pyo3::prelude::*;
@@ -475,7 +475,12 @@ impl PySender {
 /// T3).
 #[pyclass(name = "Receiver", module = "tstrans.srt")]
 pub(crate) struct PyReceiver {
-    inner: Option<PlReceiver<SrtTransport>>,
+    /// Shared slot so every method borrows `self` immutably: a `recv_bytes`
+    /// parked on another thread holds this lock (GIL released), and `close()`
+    /// fires `cancel` BEFORE taking it. With a `&mut self` receive, a
+    /// cross-thread `close()` tripped PyO3's borrow check (`RuntimeError:
+    /// Already borrowed`) instead of waking the parked call.
+    inner: Arc<Mutex<Option<PlReceiver<SrtTransport>>>>,
     /// Trait-erased cancel handle pulled from the transport at
     /// construction. Shared with any Python-side `CancelHandle` clones.
     cancel: Arc<dyn TransportCancel + Send + Sync>,
@@ -525,7 +530,7 @@ impl PyReceiver {
             })?;
         let inner = PlReceiver::new(transport, ReceiverConfig::default());
         Ok(Self {
-            inner: Some(inner),
+            inner: Arc::new(Mutex::new(Some(inner))),
             cancel,
         })
     }
@@ -551,16 +556,18 @@ impl PyReceiver {
     /// after the first packet so the call is deterministic; richer
     /// drain semantics can land later if profiling shows value.
     #[pyo3(signature = (max_len = 1500))]
-    fn recv_bytes(&mut self, py: Python<'_>, max_len: usize) -> PyResult<Py<PyBytes>> {
-        let inner = self
-            .inner
-            .as_mut()
-            .ok_or_else(|| make_srt_error(py, "CLOSED", "receiver is closed"))?;
+    fn recv_bytes(&self, py: Python<'_>, max_len: usize) -> PyResult<Py<PyBytes>> {
         let cap = max_len.max(188);
         // Receive one packet (188 bytes). Releases the GIL while
         // parked. SRT live mode delivers in 188-byte units, so a
-        // single next_packet is the natural quantum.
-        let pkt = py.allow_threads(|| inner.next_packet());
+        // single next_packet is the natural quantum. The inner lock is
+        // held for the whole park; `close()` cancels before taking it.
+        let inner = self.inner.clone();
+        let pkt = py.allow_threads(move || {
+            let mut guard = inner.lock().unwrap_or_else(|e| e.into_inner());
+            guard.as_mut().map(|r| r.next_packet())
+        });
+        let pkt = pkt.ok_or_else(|| make_srt_error(py, "CLOSED", "receiver is closed"))?;
         let bytes = pkt.map_err(|e| match e.source {
             tst_pipeline::receiver::ReceiverErrorSource::Transport(t) => {
                 transport_error_to_pyerr(py, t)
@@ -587,41 +594,55 @@ impl PyReceiver {
 
     /// Snapshot of the scheme-neutral 16-field wire stats.
     fn socket_stats(&self, py: Python<'_>) -> PyResult<Py<PySocketStats>> {
-        let inner = self
-            .inner
-            .as_ref()
-            .ok_or_else(|| make_srt_error(py, "CLOSED", "receiver is closed"))?;
-        let core = inner.socket_stats().unwrap_or_default();
+        // GIL released while waiting for the inner lock (a parked
+        // recv_bytes holds it until data or a cancel arrives).
+        let inner = self.inner.clone();
+        let core = py.allow_threads(move || {
+            let guard = inner.lock().unwrap_or_else(|e| e.into_inner());
+            guard.as_ref().map(|r| r.socket_stats().unwrap_or_default())
+        });
+        let core = core.ok_or_else(|| make_srt_error(py, "CLOSED", "receiver is closed"))?;
         Py::new(py, PySocketStats::from_core(core))
     }
 
     /// Snapshot of the SRT-rich 17-field stats.
     fn srt_stats(&self, py: Python<'_>) -> PyResult<Py<PySrtStats>> {
-        let inner = self
-            .inner
-            .as_ref()
-            .ok_or_else(|| make_srt_error(py, "CLOSED", "receiver is closed"))?;
-        let stats = inner
-            .transport()
-            .stats()
+        let inner = self.inner.clone();
+        let stats = py.allow_threads(move || {
+            let guard = inner.lock().unwrap_or_else(|e| e.into_inner());
+            guard.as_ref().map(|r| r.transport().stats())
+        });
+        let stats = stats
+            .ok_or_else(|| make_srt_error(py, "CLOSED", "receiver is closed"))?
             .map_err(|e| io_error_to_pyerr(py, e))?;
         Py::new(py, PySrtStats::from_srt(&stats))
     }
 
     /// Close the receiver. After close, further `.recv_bytes()` calls
-    /// raise `SrtError(kind=CLOSED)`. Idempotent.
-    fn close(&mut self) {
-        // Flip cancel first so any parked .recv on a different thread
-        // unparks promptly.
+    /// raise `SrtError(kind=CLOSED)`. Idempotent. Fires the cancel handle
+    /// BEFORE acquiring the inner lock so a concurrent `recv_bytes()`
+    /// parked on another thread unparks promptly (with `SrtError(BROKEN)`
+    /// — the cancel closes the socket under it).
+    fn close(&self, py: Python<'_>) {
         self.cancel.cancel();
-        if let Some(mut r) = self.inner.take() {
-            r.close();
-        }
+        let inner = self.inner.clone();
+        py.allow_threads(move || {
+            let mut guard = inner.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(mut r) = guard.take() {
+                r.close();
+            }
+        });
     }
 
     /// `True` while the receiver owns a live transport.
     fn is_alive(&self) -> bool {
-        self.inner.as_ref().is_some_and(|r| r.is_alive())
+        match self.inner.try_lock() {
+            Ok(g) => g.as_ref().is_some_and(|r| r.is_alive()),
+            // Lock currently held by a parked recv_bytes — the receiver
+            // is still alive (the parked recv hasn't released the
+            // inner). Same optimistic shape as DemuxReceiver.
+            Err(_) => true,
+        }
     }
 
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -629,19 +650,21 @@ impl PyReceiver {
     }
 
     fn __exit__(
-        &mut self,
+        &self,
+        py: Python<'_>,
         _exc_type: &Bound<'_, PyAny>,
         _exc_value: &Bound<'_, PyAny>,
         _traceback: &Bound<'_, PyAny>,
     ) -> bool {
-        self.close();
+        self.close(py);
         false
     }
 
     fn __repr__(&self) -> String {
-        match &self.inner {
-            Some(_) => "Receiver(open)".to_string(),
-            None => "Receiver(closed)".to_string(),
+        if self.is_alive() {
+            "Receiver(open)".to_string()
+        } else {
+            "Receiver(closed)".to_string()
         }
     }
 }
@@ -686,7 +709,7 @@ impl PyReceiver {
             .expect("SrtTransport with a live socket always returns Some(cancel_handle)");
         let inner = PlReceiver::new(transport, ReceiverConfig::default());
         Self {
-            inner: Some(inner),
+            inner: Arc::new(Mutex::new(Some(inner))),
             cancel,
         }
     }
