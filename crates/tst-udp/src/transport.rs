@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use tst_core::net::udp_socket::{apply_multicast_send_knobs, bind_udp_socket, set_socket_buffers};
-use tst_core::transport::{SocketStats, Transport, TransportError};
+use tst_core::transport::{BrokenCause, SocketStats, Transport, TransportError};
 
 use crate::config::SocketConfig;
 use crate::error::UdpError;
@@ -143,6 +143,7 @@ impl Transport for UdpTransport {
                 Err(TransportError::Broken {
                     msg: format!("send error: {e}"),
                     errno_code: e.raw_os_error(),
+                    cause: BrokenCause::Unspecified,
                 })
             }
         }

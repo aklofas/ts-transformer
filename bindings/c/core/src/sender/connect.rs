@@ -5,7 +5,7 @@
 //! an `SrtTransport`. The plain senders use the result directly; the
 //! managed senders capture (host, port, cfg) in the reconnect closure.
 
-use tst_pipeline::TransportError;
+use tst_pipeline::{BrokenCause, TransportError};
 use tst_srt::SrtTransport;
 use tst_srt::{Socket, SocketConfig};
 
@@ -36,6 +36,7 @@ pub(crate) fn connect_srt(
         TransportError::Broken {
             msg: format!("connect: {e}"),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         }
     })?;
     Ok(SrtTransport::new(socket))

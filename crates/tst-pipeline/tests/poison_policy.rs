@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use tst_core::transport::{RecvTransport, Transport, TransportCancel, TransportError};
+use tst_core::transport::{BrokenCause, RecvTransport, Transport, TransportCancel, TransportError};
 use tst_pipeline::reconnect::{BackoffStrategy, ReconnectPolicy};
 use tst_pipeline::{ManagedRecvTransport, ManagedTransport};
 
@@ -206,6 +206,7 @@ fn poisoned_inner_lock_returns_broken_not_panic() {
         .map_err(|_| TransportError::Broken {
             msg: "test: pattern-only".into(),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         })
         .map(|g| *g);
 
@@ -252,6 +253,7 @@ fn successful_reconnect_does_not_deadlock() {
                 Err(TransportError::Broken {
                     msg: "simulated one-shot break".into(),
                     errno_code: None,
+                    cause: BrokenCause::Unspecified,
                 })
             } else {
                 Ok(())

@@ -68,7 +68,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use sha2::{Digest, Sha256};
-use tst_core::transport::{RecvTransport, SocketStats, Transport, TransportCancel, TransportError};
+use tst_core::transport::{
+    BrokenCause, RecvTransport, SocketStats, Transport, TransportCancel, TransportError,
+};
 
 /// Default `SRTO_RCVTIMEO` applied to every SRT socket/listener this
 /// module builds, unless the URL's `x-recvtimeout` overrides it.
@@ -325,6 +327,7 @@ impl RecvTransport for BoundedUdpRecv {
             Err(e) => Err(TransportError::Broken {
                 msg: e.to_string(),
                 errno_code: None,
+                cause: BrokenCause::Unspecified,
             }),
         }
     }

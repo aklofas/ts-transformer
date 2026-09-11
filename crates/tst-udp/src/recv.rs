@@ -8,7 +8,7 @@ use tst_core::net::udp_socket::{
     CANCEL_POLL_INTERVAL, apply_multicast_recv_join, bind_udp_socket, bind_udp_socket_multicast,
     set_socket_buffers,
 };
-use tst_core::transport::{RecvTransport, SocketStats, TransportError};
+use tst_core::transport::{BrokenCause, RecvTransport, SocketStats, TransportError};
 
 use crate::config::SocketConfig;
 use crate::error::UdpError;
@@ -170,6 +170,7 @@ impl RecvTransport for UdpRecvTransport {
                 .map_err(|e| TransportError::Broken {
                     msg: format!("failed to restore cancel-poll timeout: {e}"),
                     errno_code: e.raw_os_error(),
+                    cause: BrokenCause::Unspecified,
                 })?;
             self.applied_timeout = CANCEL_POLL_INTERVAL;
         }
@@ -195,6 +196,7 @@ impl RecvTransport for UdpRecvTransport {
                     return Err(TransportError::Broken {
                         msg: format!("recv error: {e}"),
                         errno_code: e.raw_os_error(),
+                        cause: BrokenCause::Unspecified,
                     });
                 }
             }

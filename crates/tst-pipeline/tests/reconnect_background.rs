@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use tst_core::transport::{Transport, TransportError};
+use tst_core::transport::{BrokenCause, Transport, TransportError};
 use tst_pipeline::{
     BackoffStrategy, ManagedTransport, OverflowPolicy, ReconnectMode, ReconnectPolicy,
 };
@@ -43,6 +43,7 @@ impl Transport for ScriptedTransport {
             return Err(TransportError::Broken {
                 msg: "dead".into(),
                 errno_code: None,
+                cause: BrokenCause::Unspecified,
             });
         }
         match self
@@ -65,6 +66,7 @@ impl Transport for ScriptedTransport {
                 Err(TransportError::Broken {
                     msg: "scripted break".into(),
                     errno_code: None,
+                    cause: BrokenCause::Unspecified,
                 })
             }
         }
@@ -126,6 +128,7 @@ impl Rig {
                 Err(TransportError::Broken {
                     msg: "factory down".into(),
                     errno_code: None,
+                    cause: BrokenCause::Unspecified,
                 })
             } else {
                 Ok(ScriptedTransport {

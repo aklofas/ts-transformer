@@ -1,4 +1,5 @@
 pub mod tst_pipeline
+pub use tst_pipeline::BrokenCause
 pub use tst_pipeline::RecvTransport
 pub use tst_pipeline::SrtCancelHandle
 pub use tst_pipeline::Transport

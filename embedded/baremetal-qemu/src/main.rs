@@ -49,7 +49,7 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
-use tst_core::transport::{Transport, TransportError};
+use tst_core::transport::{BrokenCause, Transport, TransportError};
 use tst_pipeline::MuxSender;
 
 use smoltcp::iface::{Config, Interface, SocketHandle, SocketSet};
@@ -236,7 +236,7 @@ impl Transport for SmoltcpUdpTransport {
                 .send_slice(msg, self.endpoint)
                 .map_err(|_| TransportError::Broken {
                     msg: String::from("udp send_slice failed"),
-                    errno_code: None,
+                    errno_code: None, cause: BrokenCause::Unspecified,
                 })?;
         }
         // 16 polls is generous: the first send needs a couple of passes for

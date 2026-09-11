@@ -637,7 +637,7 @@ jobs:
           # lines across ~47 files that drifted the baseline on doc edits
           # (the 313->314 bump above was one). 186 is the real attribute
           # count, measured fresh on this tree.
-          BASELINE=186
+          BASELINE=187
           OBSERVED=$(rg -c '^\s*#\[non_exhaustive\]' crates/ bindings/ --type rust | awk -F: '{sum += $2} END {print sum}')
           if [ "$OBSERVED" -lt "$BASELINE" ]; then
             echo "non_exhaustive count regressed: expected >= $BASELINE, observed $OBSERVED" >&2

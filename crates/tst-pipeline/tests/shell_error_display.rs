@@ -3,7 +3,7 @@
 use std::error::Error;
 
 use tst_core::error::MuxError;
-use tst_core::transport::TransportError;
+use tst_core::transport::{BrokenCause, TransportError};
 use tst_pipeline::{
     DemuxReceiverError, MuxSenderError, MuxSenderErrorSource, RawReceiverError, RawSenderError,
     ReceiverError, SenderError, ShellError, ShellErrorKind,
@@ -96,6 +96,7 @@ fn raw_receiver_broken_displays_as_transport_broken() {
     let err = RawReceiverError::from(TransportError::Broken {
         msg: "test".into(),
         errno_code: None,
+        cause: BrokenCause::Unspecified,
     });
     let display = format!("{err}");
     assert!(display.contains("TransportBroken"), "{display}");

@@ -33,7 +33,7 @@
 //!
 //! - Factory closure errors must map into `TransportError`, NOT
 //!   `PyErr`. We route `ConnectError`/`BindError`/`AcceptError` /
-//!   `UrlError` to `TransportError::Broken { msg, errno_code: None }`
+//!   `UrlError` to `TransportError::Broken { msg, errno_code: None , cause: BrokenCause::Unspecified}`
 //!   pragmatically so the reconnect loop treats them as a recoverable
 //!   transport breakage and applies backoff.
 //!
@@ -53,7 +53,7 @@ use pyo3::Py;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
-use tst_core::transport::{Transport, TransportCancel, TransportError};
+use tst_core::transport::{BrokenCause, Transport, TransportCancel, TransportError};
 use tst_pipeline::{
     FactoryCancel, ManagedRecvTransport, ManagedTransport, Receiver as PlReceiver, ReceiverConfig,
     Sender as PlSender, SenderConfig,
@@ -76,6 +76,7 @@ fn build_sender_transport(url: &str) -> Result<SrtTransport, TransportError> {
     let parsed = SrtUrl::parse(url).map_err(|e| TransportError::Broken {
         msg: format!("managed sender factory: URL parse failed: {e}"),
         errno_code: None,
+        cause: BrokenCause::Unspecified,
     })?;
     if parsed.mode != Mode::Caller {
         return Err(TransportError::Broken {
@@ -84,6 +85,7 @@ fn build_sender_transport(url: &str) -> Result<SrtTransport, TransportError> {
                 parsed.mode
             ),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         });
     }
     let mut cfg = SocketConfig::default();
@@ -92,6 +94,7 @@ fn build_sender_transport(url: &str) -> Result<SrtTransport, TransportError> {
     let socket = Socket::connect_with(&cfg, addr.as_str()).map_err(|e| TransportError::Broken {
         msg: format!("managed sender factory: connect failed: {e}"),
         errno_code: None,
+        cause: BrokenCause::Unspecified,
     })?;
     Ok(SrtTransport::new(socket))
 }
@@ -117,6 +120,7 @@ fn build_receiver_transport(
     let parsed = SrtUrl::parse(url).map_err(|e| TransportError::Broken {
         msg: format!("managed receiver factory: URL parse failed: {e}"),
         errno_code: None,
+        cause: BrokenCause::Unspecified,
     })?;
     if parsed.mode != Mode::Listener {
         return Err(TransportError::Broken {
@@ -125,6 +129,7 @@ fn build_receiver_transport(
                 parsed.mode
             ),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         });
     }
     let mut cfg = ListenerConfig::default();
@@ -135,9 +140,14 @@ fn build_receiver_transport(
         crate::util::join_host_port(&parsed.host, parsed.port)
     };
     Listener::accept_one_cancellable(&cfg, addr.as_str(), slot).map_err(|e| match e {
-        TransportError::Broken { msg, errno_code } => TransportError::Broken {
+        TransportError::Broken {
+            msg,
+            errno_code,
+            cause,
+        } => TransportError::Broken {
             msg: format!("managed receiver factory: {msg}"),
             errno_code,
+            cause,
         },
         other => other,
     })

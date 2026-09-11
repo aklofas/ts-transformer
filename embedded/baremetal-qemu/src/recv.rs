@@ -47,7 +47,7 @@ use smoltcp::wire::{IpAddress, IpEndpoint};
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{DemuxEvent, SamplePayload};
 use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
-use tst_core::transport::{RecvTransport, TransportError};
+use tst_core::transport::{BrokenCause, RecvTransport, TransportError};
 use tst_pipeline::{DemuxReceiver, MuxSender, ShellErrorKind};
 
 /// Number of `synthetic_h264_idr()` AUs check 4 pushes on the send side —
@@ -161,7 +161,7 @@ impl RecvTransport for LoopbackRecvTransport {
                     Err(_) => {
                         return Err(TransportError::Broken {
                             msg: String::from("udp loopback recv: send_slice failed"),
-                            errno_code: None,
+                            errno_code: None, cause: BrokenCause::Unspecified,
                         });
                     }
                 }
@@ -197,7 +197,7 @@ impl RecvTransport for LoopbackRecvTransport {
             // dequeued the datagram (`remaining` would never reach 0).
             Err(_) => Err(TransportError::Broken {
                 msg: String::from("udp loopback recv: recv_slice failed after can_recv() was true"),
-                errno_code: None,
+                errno_code: None, cause: BrokenCause::Unspecified,
             }),
         }
     }

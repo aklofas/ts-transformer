@@ -36,7 +36,7 @@
 //! a loopback SRT connection per kind.
 
 use tst_core::error::{DemuxError, MuxError};
-use tst_core::transport::TransportError;
+use tst_core::transport::{BrokenCause, TransportError};
 use tst_pipeline::sender::TsFramingError;
 use tst_pipeline::{
     DemuxReceiverError, MuxSenderError, RawReceiverError, RawSenderError, ReceiverError,
@@ -132,6 +132,7 @@ fn mux_sender_transport_broken_returns_transport_code() {
     let e = MuxSenderError::from(TransportError::Broken {
         msg: "socket reset".into(),
         errno_code: None,
+        cause: BrokenCause::Unspecified,
     });
     let rc = test_record_shell_error(&e);
     assert_eq!(rc, TST_E_TRANSPORT, "MuxSender TransportBroken: wrong code");
@@ -202,6 +203,7 @@ fn sender_transport_broken_returns_transport_code() {
     let e = SenderError::from(TransportError::Broken {
         msg: "link down".into(),
         errno_code: None,
+        cause: BrokenCause::Unspecified,
     });
     let rc = test_record_shell_error(&e);
     assert_eq!(rc, TST_E_TRANSPORT, "Sender TransportBroken: wrong code");
@@ -252,6 +254,7 @@ fn raw_sender_transport_broken_returns_transport_code() {
     let e = RawSenderError::from(TransportError::Broken {
         msg: "raw socket broken".into(),
         errno_code: None,
+        cause: BrokenCause::Unspecified,
     });
     let rc = test_record_shell_error(&e);
     assert_eq!(rc, TST_E_TRANSPORT, "RawSender TransportBroken: wrong code");
@@ -316,6 +319,7 @@ fn demux_receiver_transport_broken_returns_transport_code() {
     let e = DemuxReceiverError::from(TransportError::Broken {
         msg: "recv socket error".into(),
         errno_code: None,
+        cause: BrokenCause::Unspecified,
     });
     let rc = test_record_shell_error(&e);
     assert_eq!(
@@ -369,6 +373,7 @@ fn receiver_transport_broken_returns_transport_code() {
     let e = ReceiverError::from(TransportError::Broken {
         msg: "ts recv broken".into(),
         errno_code: None,
+        cause: BrokenCause::Unspecified,
     });
     let rc = test_record_shell_error(&e);
     assert_eq!(rc, TST_E_TRANSPORT, "Receiver TransportBroken: wrong code");
@@ -412,6 +417,7 @@ fn raw_receiver_transport_broken_returns_transport_code() {
     let e = RawReceiverError::from(TransportError::Broken {
         msg: "raw recv broken".into(),
         errno_code: None,
+        cause: BrokenCause::Unspecified,
     });
     let rc = test_record_shell_error(&e);
     assert_eq!(

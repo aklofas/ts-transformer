@@ -112,6 +112,7 @@ fn managed_socket_stats_forwards_when_alive_and_none_after_close() {
         Err(tst_core::transport::TransportError::Broken {
             msg: "reconnect not exercised by this test".into(),
             errno_code: None,
+            cause: tst_core::transport::BrokenCause::Unspecified,
         })
     };
     let mut managed = ManagedTransport::new(initial_transport, factory, ReconnectPolicy::default());

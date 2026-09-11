@@ -2351,3 +2351,25 @@ the trigger that would unblock it.
   (and get retired from the pre-release battery) versus which stay
   pre-release-only (corpus- or fuzzing-dependent steps that don't fit
   the interop matrix's synthetic-traffic, real-tool shape).
+
+## `BrokenCause` (clean-EOF discriminator) bindings parity (C / Python / JVM)
+
+- **Status:** Deferred. `TransportError::Broken` carries a structured
+  `cause: BrokenCause` (`CleanEof` for a peer FIN / TLS `close_notify`
+  observed as a zero-length read on `tst-tcp`, `Unspecified` otherwise)
+  in Rust only. The C ABI folds `Broken` into `TST_E_TRANSPORT` with the
+  message in the last-error string, and the Python / JVM `BROKEN` kinds
+  carry only the message, so a binding caller still cannot tell a clean
+  peer close from a read error without parsing that string.
+- **Why deferred:** the field was added additively so the Rust surface
+  could drop its string assertion without changing reconnect or
+  end-reason behavior; no binding consumer has asked for the
+  distinction, and the shells already turn a clean end of stream into
+  their own end-of-stream signal on every path a binding consumer
+  actually iterates.
+- **Trigger to revisit:** the first C / Python / JVM consumer of a plain
+  `tcp://` / `tcps://` receiver that needs to branch on a clean peer
+  close. The exposure is additive on every surface: a C getter beside
+  `tst_get_last_error_str` (or a dedicated errno-style code), a `cause`
+  attribute on the Python `BROKEN` error, and a field on the JVM
+  exception — no new error kinds.

@@ -86,5 +86,7 @@ pub use error::{
     CotError, DemuxError, KlvDecodeError, KlvEncodeError, KlvFieldError, KlvPatchError, MuxError,
 };
 pub use klv::st0601::UasDatalinkLs;
-pub use transport::{RecvTransport, SocketStats, Transport, TransportCancel, TransportError};
+pub use transport::{
+    BrokenCause, RecvTransport, SocketStats, Transport, TransportCancel, TransportError,
+};
 pub use url::{ParsedUrl, UrlError};

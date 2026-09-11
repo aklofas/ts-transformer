@@ -5,7 +5,9 @@ use std::net::{SocketAddr, TcpStream};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tst_core::transport::{RecvTransport, SocketStats, Transport, TransportCancel, TransportError};
+use tst_core::transport::{
+    BrokenCause, RecvTransport, SocketStats, Transport, TransportCancel, TransportError,
+};
 
 use crate::config::SocketConfig;
 use crate::error::TcpError;
@@ -258,6 +260,7 @@ fn write_loop<W: FnMut(&[u8]) -> std::io::Result<usize>>(
                     TransportError::Broken {
                         msg: "write returned 0 (peer closed mid-message)".to_string(),
                         errno_code: None,
+                        cause: BrokenCause::Unspecified,
                     },
                     true,
                 ));
@@ -288,6 +291,7 @@ fn write_loop<W: FnMut(&[u8]) -> std::io::Result<usize>>(
                             msg.len()
                         ),
                         errno_code: e.raw_os_error(),
+                        cause: BrokenCause::Unspecified,
                     },
                     true,
                 ));
@@ -297,6 +301,7 @@ fn write_loop<W: FnMut(&[u8]) -> std::io::Result<usize>>(
                     TransportError::Broken {
                         msg: format!("write error: {e}"),
                         errno_code: e.raw_os_error(),
+                        cause: BrokenCause::Unspecified,
                     },
                     true,
                 ));
@@ -404,6 +409,7 @@ impl RecvTransport for TcpTransport {
                     return Err(TransportError::Broken {
                         msg: "peer closed connection".into(),
                         errno_code: None,
+                        cause: BrokenCause::CleanEof,
                     });
                 }
                 Ok(n) => {
@@ -424,6 +430,7 @@ impl RecvTransport for TcpTransport {
                     return Err(TransportError::Broken {
                         msg: format!("read error: {e}"),
                         errno_code: e.raw_os_error(),
+                        cause: BrokenCause::Unspecified,
                     });
                 }
             }

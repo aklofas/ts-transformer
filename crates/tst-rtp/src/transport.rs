@@ -17,7 +17,9 @@ use tst_core::net::udp_socket::{
     CANCEL_POLL_INTERVAL, apply_multicast_recv_join, apply_multicast_send_knobs,
     bind_udp_socket_multicast,
 };
-use tst_core::transport::{RecvTransport, SocketStats, Transport, TransportCancel, TransportError};
+use tst_core::transport::{
+    BrokenCause, RecvTransport, SocketStats, Transport, TransportCancel, TransportError,
+};
 
 use crate::cancel::RtpCancelHandle;
 use crate::clock::RtpClock;
@@ -346,6 +348,7 @@ impl Transport for RtpTransport {
                     return Err(TransportError::Broken {
                         msg: format!("UDP send failed: {e}"),
                         errno_code: e.raw_os_error(),
+                        cause: BrokenCause::Unspecified,
                     });
                 }
             }
@@ -520,6 +523,7 @@ impl Source {
                         return Err(TransportError::Broken {
                             msg: format!("UDP recv failed: {e}"),
                             errno_code: e.raw_os_error(),
+                            cause: BrokenCause::Unspecified,
                         });
                     }
                 }
@@ -554,6 +558,7 @@ impl Source {
                                     scratch.len()
                                 ),
                                 errno_code: None,
+                                cause: BrokenCause::Unspecified,
                             });
                         }
                         let n = packet.len();
@@ -568,6 +573,7 @@ impl Source {
                         return Err(TransportError::Broken {
                             msg: MPSC_PUMP_DISCONNECTED.to_string(),
                             errno_code: None,
+                            cause: BrokenCause::Unspecified,
                         });
                     }
                 }
@@ -1167,6 +1173,7 @@ impl RtpRecvTransport {
                 return Err(TransportError::Broken {
                     msg: format!("recv buf too small: {} < {}", buf.len(), payload.len()),
                     errno_code: None,
+                    cause: BrokenCause::Unspecified,
                 });
             }
             // DA-RTP-5: RFC 2250 shape guard — payload must be non-empty,

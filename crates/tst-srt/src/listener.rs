@@ -14,7 +14,7 @@ use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
 use std::time::Duration;
 use tst_core::cancel::CancelSlot;
-use tst_core::transport::TransportError;
+use tst_core::transport::{BrokenCause, TransportError};
 
 const SRT_INVALID_SOCK: srt_sys::SRTSOCKET = -1;
 
@@ -444,6 +444,7 @@ impl Listener {
         let mut listener = Self::bind_with(cfg, addr).map_err(|e| TransportError::Broken {
             msg: format!("bind: {e}"),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         })?;
         slot.install(Arc::new(listener.cancel_handle()));
         let accepted = listener.accept();
@@ -454,6 +455,7 @@ impl Listener {
             Err(e) => Err(TransportError::Broken {
                 msg: format!("accept: {e}"),
                 errno_code: None,
+                cause: BrokenCause::Unspecified,
             }),
         }
     }

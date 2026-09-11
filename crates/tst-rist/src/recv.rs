@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tst_core::transport::{RecvTransport, TransportError};
+use tst_core::transport::{BrokenCause, RecvTransport, TransportError};
 
 use crate::config::{RistConfig, RistProfile};
 use crate::error::RistError;
@@ -236,6 +236,7 @@ impl RecvTransport for RistRecvTransport {
             return Err(TransportError::Broken {
                 msg: format!("rist_receiver_data_read2 returned {rc}"),
                 errno_code: Some(rc),
+                cause: BrokenCause::Unspecified,
             });
         }
         if rc == 0 || block.is_null() {

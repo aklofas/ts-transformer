@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tst_core::transport::{Transport, TransportError};
+use tst_core::transport::{BrokenCause, Transport, TransportError};
 
 use crate::config::{EncryptionKey, RistConfig, RistProfile};
 use crate::error::RistError;
@@ -197,6 +197,7 @@ impl Transport for RistTransport {
             return Err(TransportError::Broken {
                 msg: format!("rist_sender_data_write returned {rc}"),
                 errno_code: Some(rc),
+                cause: BrokenCause::Unspecified,
             });
         }
 

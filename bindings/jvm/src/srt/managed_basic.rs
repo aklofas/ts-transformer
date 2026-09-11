@@ -26,7 +26,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use jni::JNIEnv;
 use jni::objects::{JByteArray, JClass, JObject, JString};
 use jni::sys::{jboolean, jbyteArray, jint, jlong};
-use tst_core::transport::TransportError;
+use tst_core::transport::{BrokenCause, TransportError};
 use tst_pipeline::receiver::ReceiverErrorSource;
 use tst_pipeline::sender::SenderErrorSource;
 use tst_pipeline::{
@@ -52,6 +52,7 @@ fn build_sender_transport(url: &str) -> Result<SrtTransport, TransportError> {
     let parsed = SrtUrl::parse(url).map_err(|e| TransportError::Broken {
         msg: format!("managed sender factory: URL parse failed: {e}"),
         errno_code: None,
+        cause: BrokenCause::Unspecified,
     })?;
     if parsed.mode != Mode::Caller {
         return Err(TransportError::Broken {
@@ -60,6 +61,7 @@ fn build_sender_transport(url: &str) -> Result<SrtTransport, TransportError> {
                 parsed.mode
             ),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         });
     }
     let mut cfg = SocketConfig::default();
@@ -68,6 +70,7 @@ fn build_sender_transport(url: &str) -> Result<SrtTransport, TransportError> {
     let socket = Socket::connect_with(&cfg, addr.as_str()).map_err(|e| TransportError::Broken {
         msg: format!("managed sender factory: connect failed: {e}"),
         errno_code: None,
+        cause: BrokenCause::Unspecified,
     })?;
     Ok(SrtTransport::new(socket))
 }
@@ -78,6 +81,7 @@ fn listener_bind_target(url: &str) -> Result<(String, ListenerConfig), Transport
     let parsed = SrtUrl::parse(url).map_err(|e| TransportError::Broken {
         msg: format!("managed receiver factory: URL parse failed: {e}"),
         errno_code: None,
+        cause: BrokenCause::Unspecified,
     })?;
     if parsed.mode != Mode::Listener {
         return Err(TransportError::Broken {
@@ -86,6 +90,7 @@ fn listener_bind_target(url: &str) -> Result<(String, ListenerConfig), Transport
                 parsed.mode
             ),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         });
     }
     let mut cfg = ListenerConfig::default();
@@ -108,10 +113,12 @@ fn build_receiver_transport(url: &str) -> Result<SrtTransport, TransportError> {
         Listener::bind_with(&cfg, addr.as_str()).map_err(|e| TransportError::Broken {
             msg: format!("managed receiver factory: bind failed: {e}"),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         })?;
     let (socket, _peer) = listener.accept().map_err(|e| TransportError::Broken {
         msg: format!("managed receiver factory: accept failed: {e}"),
         errno_code: None,
+        cause: BrokenCause::Unspecified,
     })?;
     Ok(SrtTransport::new(socket))
 }
@@ -130,9 +137,14 @@ fn build_receiver_transport_cancellable(
 ) -> Result<SrtTransport, TransportError> {
     let (addr, cfg) = listener_bind_target(url)?;
     Listener::accept_one_cancellable(&cfg, addr.as_str(), cancel).map_err(|e| match e {
-        TransportError::Broken { msg, errno_code } => TransportError::Broken {
+        TransportError::Broken {
+            msg,
+            errno_code,
+            cause,
+        } => TransportError::Broken {
             msg: format!("managed receiver factory: {msg}"),
             errno_code,
+            cause,
         },
         other => other,
     })

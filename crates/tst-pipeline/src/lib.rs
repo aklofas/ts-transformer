@@ -150,7 +150,9 @@ pub use sender::{
 pub use shell_error::{ShellError, ShellErrorKind};
 
 // Re-export the core trait types for caller convenience.
-pub use tst_core::transport::{RecvTransport, Transport, TransportCancel, TransportError};
+pub use tst_core::transport::{
+    BrokenCause, RecvTransport, Transport, TransportCancel, TransportError,
+};
 
 // Re-export the concrete SRT cross-thread shutdown primitive at the
 // crate root so FFI binding authors (`tst-jni`, `tst-uniffi`,

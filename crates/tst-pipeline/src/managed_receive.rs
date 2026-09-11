@@ -527,6 +527,7 @@ mod tests {
     use crate::reconnect::{BackoffStrategy, ReconnectPolicy};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
+    use tst_core::transport::BrokenCause;
 
     /// Mock `RecvTransport` that returns `Ok(n)` for the first
     /// `ok_until_calls` `recv_bytes` calls (each writing one byte), then
@@ -546,6 +547,7 @@ mod tests {
                 Err(TransportError::Broken {
                     msg: "flaky test transport".into(),
                     errno_code: None,
+                    cause: BrokenCause::Unspecified,
                 })
             }
         }
@@ -607,6 +609,7 @@ mod tests {
             Err(TransportError::Broken {
                 msg: "factory always fails".into(),
                 errno_code: None,
+                cause: BrokenCause::Unspecified,
             })
         });
 
@@ -715,6 +718,7 @@ mod tests {
                 Err(TransportError::Broken {
                     msg: "cancelled".into(),
                     errno_code: None,
+                    cause: BrokenCause::Unspecified,
                 })
             } else {
                 Ok(0)
@@ -753,6 +757,7 @@ mod tests {
                 Err(TransportError::Broken {
                     msg: "ceiling test transport".into(),
                     errno_code: None,
+                    cause: BrokenCause::Unspecified,
                 })
             }
         }
@@ -774,6 +779,7 @@ mod tests {
             Err(TransportError::Broken {
                 msg: "factory always fails".into(),
                 errno_code: None,
+                cause: BrokenCause::Unspecified,
             })
         });
         let initial = CeilingRecv {

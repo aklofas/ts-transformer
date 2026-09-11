@@ -11,8 +11,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 use tracing_test::traced_test;
 use tst_pipeline::{
-    BackoffStrategy, ManagedRecvTransport, ReconnectMode, ReconnectPolicy, RecvTransport,
-    TransportError,
+    BackoffStrategy, BrokenCause, ManagedRecvTransport, ReconnectMode, ReconnectPolicy,
+    RecvTransport, TransportError,
 };
 
 /// Mock `RecvTransport` whose every `recv_bytes` returns `Broken` so the
@@ -27,6 +27,7 @@ impl RecvTransport for AlwaysBrokenRecv {
         Err(TransportError::Broken {
             msg: "always broken (test)".into(),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         })
     }
 
@@ -50,6 +51,7 @@ fn receiver_reconnect_emits_info_on_attempt_and_warn_on_give_up() {
         Err(TransportError::Broken {
             msg: "test factory always fails".into(),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         })
     });
 
@@ -99,6 +101,7 @@ fn receiver_background_mode_warns_and_behaves_as_blocking() {
         Err(TransportError::Broken {
             msg: "test factory always fails".into(),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         })
     });
 
