@@ -151,10 +151,18 @@ fn cancel_handle_unblocks_parked_recv() {
     let (release_tx, release_rx) = mpsc::channel::<()>();
     let peer = thread::spawn(move || {
         let (_sock, _) = peer_listener.accept().unwrap();
-        // Either the release arrives (the test is done) or the test binary is
-        // gone (sender dropped); both end the hold. `_sock` drops here.
+        // Either the release arrives (the guard below fired) or the sender
+        // was dropped by an unwinding test; both end the hold, and `_sock`
+        // drops here.
         let _ = release_rx.recv();
     });
+    // Released and joined when this scope ends — AFTER the assertions below,
+    // so the peer's own close can never feed the state under test, and on
+    // every path, so a failing assertion never leaves the thread parked.
+    let _peer_guard = HeldPeer {
+        release: Some(release_tx),
+        thread: Some(peer),
+    };
 
     let mut transport = TcpTransport::connect(&format!("tcp://127.0.0.1:{port}")).unwrap();
     let handle = transport.cancel_handle();
@@ -178,11 +186,6 @@ fn cancel_handle_unblocks_parked_recv() {
         .recv_timeout(Duration::from_secs(3))
         .expect("recv_bytes did not unblock within watchdog period after cancel");
 
-    // Release the held peer socket and join the peer before judging, so a
-    // failing assertion never leaves the thread parked.
-    let _ = release_tx.send(());
-    peer.join().expect("peer thread panicked");
-
     // The transport must report it is no longer alive.
     assert!(
         matches!(
@@ -192,6 +195,30 @@ fn cancel_handle_unblocks_parked_recv() {
         "expected Closed/ExplicitClose after cancel, got {:?}",
         result
     );
+}
+
+/// A silent peer's release-and-join, run by `Drop` so it happens at scope
+/// end on every path: after the assertions on success, during unwinding on
+/// failure. Signals the peer to drop its held socket, then joins it.
+struct HeldPeer {
+    release: Option<mpsc::Sender<()>>,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+impl Drop for HeldPeer {
+    fn drop(&mut self) {
+        if let Some(tx) = self.release.take() {
+            let _ = tx.send(());
+        }
+        if let Some(t) = self.thread.take() {
+            // A panicking peer during an already-unwinding test would abort
+            // the process; report it only on the non-panicking path.
+            let joined = t.join();
+            if !thread::panicking() {
+                joined.expect("peer thread panicked");
+            }
+        }
+    }
 }
 
 /// CORR-11: a peer that closes cleanly (FIN) must leave the transport dead.
