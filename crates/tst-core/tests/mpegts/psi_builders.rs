@@ -95,6 +95,7 @@ pub(crate) fn append_crc(section: &mut Vec<u8>) {
 /// `cc` must advance across successive packets on the same PID or the
 /// demuxer's duplicate suppression swallows the second one.
 pub(crate) fn psi_packet(pid: u16, section: &[u8], cc: u8) -> Vec<u8> {
+    assert!(pid <= 0x1FFF, "PID {pid:#06x} exceeds the 13-bit field");
     let mut pkt = vec![0xFFu8; 188];
     pkt[0] = 0x47; // sync byte
     pkt[1] = 0x40 | ((pid >> 8) as u8 & 0x1F); // PUSI + PID hi
