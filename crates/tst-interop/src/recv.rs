@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use tst_core::transport::{RecvTransport, TransportError};
+use tst_core::transport::{BrokenCause, RecvTransport, TransportError};
 use tst_pipeline::{
     DemuxReceiver, ManagedDemuxReceiver, ManagedDemuxReceiverConfig, ManagedRecvTransport,
     ReconnectPolicy, ShellError, ShellErrorKind,
@@ -253,6 +253,7 @@ pub fn run_managed(
         let raw = transport::make_recv(&dial_url).map_err(|e| TransportError::Broken {
             msg: e,
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         })?;
         Ok(Teeing::with_tap(raw, Arc::clone(&tap_for_factory)))
     });

@@ -145,7 +145,10 @@ pub enum TransportError {
     /// wrapper to do so).
     ///
     /// See [`Self::Backpressure`] for the `errno_code` semantics — same
-    /// rules apply here.
+    /// rules apply here. `cause` is the structured discriminator for the
+    /// one case callers routinely need to tell apart without parsing
+    /// `msg`: a clean end of stream versus a wire failure (see
+    /// [`BrokenCause`]).
     #[error("transport broken: {msg}")]
     Broken {
         /// Human-readable diagnostic detail.
@@ -153,6 +156,9 @@ pub enum TransportError {
         /// Wire-level transport errno code; `None` when the
         /// implementation doesn't expose one.
         errno_code: Option<i32>,
+        /// Why the transport broke. [`BrokenCause::Unspecified`] unless the
+        /// producer can vouch for a finer classification.
+        cause: BrokenCause,
     },
 
     /// Transport was already closed.
@@ -188,6 +194,32 @@ pub enum TransportError {
     ExplicitClose,
 }
 
+/// Why a [`TransportError::Broken`] was raised.
+///
+/// Lets a caller act differently on a clean end of stream than on a wire
+/// failure without parsing the error's `msg`. It does **not** change how the
+/// error is handled by the shells: `Broken` stays the retryable reconnect
+/// trigger for `ManagedTransport` / `ManagedRecvTransport` whatever the
+/// cause, and the pipeline shells map it to the same `ShellErrorKind`.
+///
+/// `#[non_exhaustive]`: match with a wildcard arm; further causes may be
+/// added without a major bump.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum BrokenCause {
+    /// No finer classification — a read or write failure, a zero-length
+    /// write mid-message, an exhausted reconnect budget, … Read `msg` and
+    /// `errno_code` for the detail.
+    #[default]
+    Unspecified,
+    /// The peer ended the stream cleanly: a zero-length read — a TCP FIN, or
+    /// on `tcps://` a TLS `close_notify` — with nothing lost. The stream is
+    /// simply over. Producer today: `tst-tcp`'s `TcpTransport::recv_bytes`.
+    /// A zero-length *write* is not a clean EOF (the stream is desynced
+    /// mid-message) and stays [`Self::Unspecified`].
+    CleanEof,
+}
+
 #[cfg(feature = "std")]
 impl TransportError {
     /// True when this error carries an OS errno identifying a refused
@@ -221,11 +253,13 @@ mod error_tests {
         let e = TransportError::Broken {
             msg: "send error".into(),
             errno_code: Some(refused),
+            cause: BrokenCause::Unspecified,
         };
         assert!(e.is_connection_refused());
         let none = TransportError::Broken {
             msg: "x".into(),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         };
         assert!(!none.is_connection_refused());
         assert!(!TransportError::Closed.is_connection_refused());

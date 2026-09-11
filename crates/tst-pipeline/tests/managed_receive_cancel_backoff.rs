@@ -7,7 +7,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
-use tst_core::transport::{RecvTransport, TransportError};
+use tst_core::transport::{BrokenCause, RecvTransport, TransportError};
 use tst_pipeline::{BackoffStrategy, ManagedRecvTransport, ReconnectPolicy};
 
 struct DeadInner;
@@ -17,6 +17,7 @@ impl RecvTransport for DeadInner {
         Err(TransportError::Broken {
             msg: "dead on arrival".into(),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         })
     }
 
@@ -39,6 +40,7 @@ fn cancel_interrupts_the_backoff_wait() {
             Err(TransportError::Broken {
                 msg: "peer still down".into(),
                 errno_code: None,
+                cause: BrokenCause::Unspecified,
             })
         });
 

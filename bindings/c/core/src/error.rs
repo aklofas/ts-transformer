@@ -548,7 +548,9 @@ pub(crate) fn record_transport_error(e: &TransportError) {
             TstError::Transport,
             alloc::format!("backpressure: {s}{}", errno_suffix(errno_code)),
         ),
-        TransportError::Broken { msg: s, errno_code } => (
+        TransportError::Broken {
+            msg: s, errno_code, ..
+        } => (
             TstError::Transport,
             alloc::format!("broken: {s}{}", errno_suffix(errno_code)),
         ),
@@ -858,6 +860,7 @@ pub fn test_clear_last_error() {
 mod tests {
     use super::*;
     use alloc::{vec, vec::Vec};
+    use tst_pipeline::BrokenCause;
 
     #[test]
     fn set_then_get_roundtrips() {
@@ -1208,6 +1211,7 @@ mod tests {
                 TransportError::Broken {
                     msg: "test".into(),
                     errno_code: None,
+                    cause: BrokenCause::Unspecified,
                 },
                 TstError::Transport,
             ),
@@ -1274,6 +1278,7 @@ mod tests {
         record_transport_error(&TransportError::Broken {
             msg: "synthetic".into(),
             errno_code: Some(0),
+            cause: BrokenCause::Unspecified,
         });
         let s_ptr = unsafe { tst_get_last_error_str() };
         let msg = unsafe { core::ffi::CStr::from_ptr(s_ptr) }
@@ -1289,6 +1294,7 @@ mod tests {
         record_transport_error(&TransportError::Broken {
             msg: "synthetic".into(),
             errno_code: Some(2),
+            cause: BrokenCause::Unspecified,
         });
         let s_ptr = unsafe { tst_get_last_error_str() };
         let msg = unsafe { core::ffi::CStr::from_ptr(s_ptr) }

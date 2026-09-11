@@ -129,7 +129,7 @@ use std::thread;
 use tracing::{debug, info, warn};
 use tst_core::cancel::CancelSlot;
 use tst_core::mpegts::common::SRT_TS_BUNDLE_BYTES;
-use tst_core::transport::{Transport, TransportCancel, TransportError};
+use tst_core::transport::{BrokenCause, Transport, TransportCancel, TransportError};
 
 /// Snapshot of `ManagedTransport`'s reconnect/gap telemetry.
 ///
@@ -407,6 +407,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                 return Err(TransportError::Broken {
                     msg,
                     errno_code: None,
+                    cause: BrokenCause::Unspecified,
                 });
             }
         }
@@ -422,6 +423,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
             .map_err(|_| TransportError::Broken {
                 msg: "reconnect: inner lock poisoned during size pre-check".into(),
                 errno_code: None,
+                cause: BrokenCause::Unspecified,
             })?
             .as_ref()
             .map(|t| t.max_payload())
@@ -510,6 +512,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
             let mut transport_guard = self.inner.lock().map_err(|_| TransportError::Broken {
                 msg: "reconnect: inner lock poisoned during in-line send peek".into(),
                 errno_code: None,
+                cause: BrokenCause::Unspecified,
             })?;
             if let Some(transport) = transport_guard.as_mut() {
                 match transport.send_bytes(bytes) {
@@ -609,6 +612,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
         let mut transport_guard = self.inner.lock().map_err(|_| TransportError::Broken {
             msg: "reconnect: inner lock poisoned during drain peek".into(),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         })?;
         let Some(transport) = transport_guard.as_mut() else {
             return Ok(()); // can't drain without a transport
@@ -632,9 +636,11 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                         errno_code,
                     });
                 }
-                Err(TransportError::Broken { errno_code, .. }) => {
-                    // D5 follow-up: forward inner errno_code; the wrapper
-                    // doesn't have its own SRT origin.
+                Err(TransportError::Broken {
+                    errno_code, cause, ..
+                }) => {
+                    // D5 follow-up: forward inner errno_code (and its cause);
+                    // the wrapper doesn't have its own SRT origin.
                     // Un-publish the dead inner's wake handle along with the
                     // inner it belongs to: nothing can be woken until the
                     // reconnect installs the replacement.
@@ -643,6 +649,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                     return Err(TransportError::Broken {
                         msg: "transport broken during drain".into(),
                         errno_code,
+                        cause,
                     });
                 }
                 Err(TransportError::Closed) => {
@@ -653,6 +660,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                     return Err(TransportError::Broken {
                         msg: "transport broken during drain".into(),
                         errno_code: None,
+                        cause: BrokenCause::Unspecified,
                     });
                 }
                 Err(e) => return Err(e),
@@ -682,6 +690,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                 return Err(TransportError::Broken {
                     msg: format!("reconnect gave up after {max} attempts"),
                     errno_code: None,
+                    cause: BrokenCause::Unspecified,
                 });
             };
             info!(
@@ -721,6 +730,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                     let mut guard = self.inner.lock().map_err(|_| TransportError::Broken {
                         msg: "reconnect: inner lock poisoned during new-inner install".into(),
                         errno_code: None,
+                        cause: BrokenCause::Unspecified,
                     })?;
                     *guard = Some(new_inner);
                     drop(guard);
@@ -945,6 +955,7 @@ mod cancel_tests {
                 Err(TransportError::Broken {
                     msg: "cancelled".into(),
                     errno_code: None,
+                    cause: BrokenCause::Unspecified,
                 })
             } else {
                 Ok(())
@@ -995,6 +1006,7 @@ mod cancel_tests {
             Err(TransportError::Broken {
                 msg: "".into(),
                 errno_code: None,
+                cause: BrokenCause::Unspecified,
             })
         };
         let mut managed = ManagedTransport::new(NoopT, factory, ReconnectPolicy::default());
@@ -1039,6 +1051,7 @@ mod cancel_tests {
             Err(TransportError::Broken {
                 msg: "test factory always fails".into(),
                 errno_code: None,
+                cause: BrokenCause::Unspecified,
             })
         };
         let managed = ManagedTransport::new(inner, factory, ReconnectPolicy::default());
@@ -1105,6 +1118,7 @@ mod cancel_tests {
             Err(TransportError::Broken {
                 msg: "always broken".into(),
                 errno_code: None,
+                cause: BrokenCause::Unspecified,
             })
         }
         fn max_payload(&self) -> usize {
@@ -1126,6 +1140,7 @@ mod cancel_tests {
             Err(TransportError::Broken {
                 msg: "factory down".into(),
                 errno_code: None,
+                cause: BrokenCause::Unspecified,
             })
         };
         let policy = ReconnectPolicy {
@@ -1174,6 +1189,7 @@ mod cancel_tests {
                 Err(TransportError::Broken {
                     msg: "factory down".into(),
                     errno_code: None,
+                    cause: BrokenCause::Unspecified,
                 })
             } else {
                 Ok(CancellableMock {

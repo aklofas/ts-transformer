@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 use tst_core::mpegts::demux::DemuxEvent;
-use tst_core::transport::{RecvTransport, TransportError};
+use tst_core::transport::{BrokenCause, RecvTransport, TransportError};
 use tst_pipeline::{
     BackoffStrategy, ManagedDemuxReceiver, ManagedDemuxReceiverConfig, ManagedRecvTransport,
     ReconnectPolicy, RecvEndReason,
@@ -137,6 +137,7 @@ fn connection_drops_mid_ts_packet_reconnect_resyncs_cleanly() {
         on_exhaust: TransportError::Broken {
             msg: "phase 1 ended (test)".into(),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         },
     };
 
@@ -152,6 +153,7 @@ fn connection_drops_mid_ts_packet_reconnect_resyncs_cleanly() {
                 on_exhaust: TransportError::Broken {
                     msg: "phase 2 ended (test)".into(),
                     errno_code: None,
+                    cause: BrokenCause::Unspecified,
                 },
             })
         } else {
@@ -159,6 +161,7 @@ fn connection_drops_mid_ts_packet_reconnect_resyncs_cleanly() {
             Err(TransportError::Broken {
                 msg: "no more rebuilds".into(),
                 errno_code: None,
+                cause: BrokenCause::Unspecified,
             })
         }
     });
@@ -201,6 +204,7 @@ fn reconnect_event_is_observable_via_public_api() {
         on_exhaust: TransportError::Broken {
             msg: "phase 1 ended".into(),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         },
     };
 
@@ -219,12 +223,14 @@ fn reconnect_event_is_observable_via_public_api() {
                 on_exhaust: TransportError::Broken {
                     msg: "phase 2 ended".into(),
                     errno_code: None,
+                    cause: BrokenCause::Unspecified,
                 },
             })
         } else {
             Err(TransportError::Broken {
                 msg: "stop".into(),
                 errno_code: None,
+                cause: BrokenCause::Unspecified,
             })
         }
     });
@@ -298,6 +304,7 @@ fn reconnect_during_in_flight_psi_drops_partial_state() {
         on_exhaust: TransportError::Broken {
             msg: "phase 1 end".into(),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         },
     };
 
@@ -312,12 +319,14 @@ fn reconnect_during_in_flight_psi_drops_partial_state() {
                 on_exhaust: TransportError::Broken {
                     msg: "phase 2 end".into(),
                     errno_code: None,
+                    cause: BrokenCause::Unspecified,
                 },
             })
         } else {
             Err(TransportError::Broken {
                 msg: "exhaust".into(),
                 errno_code: None,
+                cause: BrokenCause::Unspecified,
             })
         }
     });
@@ -418,6 +427,7 @@ fn clean_reconnect_drops_first_post_reconnect_packet() {
         on_exhaust: TransportError::Broken {
             msg: "phase 1 ended (clean boundary)".into(),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         },
     };
 
@@ -445,12 +455,14 @@ fn clean_reconnect_drops_first_post_reconnect_packet() {
                 on_exhaust: TransportError::Broken {
                     msg: "phase 2 ended".into(),
                     errno_code: None,
+                    cause: BrokenCause::Unspecified,
                 },
             })
         } else {
             Err(TransportError::Broken {
                 msg: "no more rebuilds".into(),
                 errno_code: None,
+                cause: BrokenCause::Unspecified,
             })
         }
     });
@@ -531,6 +543,7 @@ fn end_reason_reconnect_exhausted_on_budget_giveup() {
         on_exhaust: TransportError::Broken {
             msg: "peer gone (test)".into(),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         },
     };
     // Factory never succeeds — with max_attempts=1 the budget exhausts on
@@ -539,6 +552,7 @@ fn end_reason_reconnect_exhausted_on_budget_giveup() {
         Err(TransportError::Broken {
             msg: "peer never returns".into(),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         })
     });
     let managed = ManagedRecvTransport::new(inner, factory, fast_policy(Some(1)));
@@ -578,12 +592,14 @@ fn end_reason_cancelled_on_caller_cancel() {
         on_exhaust: TransportError::Broken {
             msg: "unused (test)".into(),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         },
     };
     let factory = Box::new(|| -> Result<ScriptedInner, TransportError> {
         Err(TransportError::Broken {
             msg: "unused (test)".into(),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         })
     });
     let managed = ManagedRecvTransport::new(inner, factory, fast_policy(Some(5)));
@@ -631,12 +647,14 @@ fn end_reason_none_while_live() {
         on_exhaust: TransportError::Broken {
             msg: "unused (test)".into(),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         },
     };
     let factory = Box::new(|| -> Result<ScriptedInner, TransportError> {
         Err(TransportError::Broken {
             msg: "unused (test)".into(),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         })
     });
     let managed = ManagedRecvTransport::new(inner, factory, fast_policy(Some(5)));
@@ -666,12 +684,14 @@ fn end_reason_first_writer_wins_across_repeated_terminal_calls() {
         on_exhaust: TransportError::Broken {
             msg: "peer gone (test)".into(),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         },
     };
     let factory = Box::new(|| -> Result<ScriptedInner, TransportError> {
         Err(TransportError::Broken {
             msg: "peer never returns".into(),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         })
     });
     let managed = ManagedRecvTransport::new(inner, factory, fast_policy(Some(1)));
@@ -751,6 +771,7 @@ fn reconnecting_flag_true_during_outage_false_after_rebuild_latched_after_giveup
         on_exhaust: TransportError::Broken {
             msg: "phase 1 ended (test)".into(),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         },
     };
 
@@ -773,12 +794,14 @@ fn reconnecting_flag_true_during_outage_false_after_rebuild_latched_after_giveup
                 on_exhaust: TransportError::Broken {
                     msg: "phase 2 ended (test)".into(),
                     errno_code: None,
+                    cause: BrokenCause::Unspecified,
                 },
             })
         } else {
             Err(TransportError::Broken {
                 msg: "peer gone for good (test)".into(),
                 errno_code: None,
+                cause: BrokenCause::Unspecified,
             })
         }
     });

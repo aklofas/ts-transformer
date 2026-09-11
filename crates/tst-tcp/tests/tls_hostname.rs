@@ -21,7 +21,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use tst_core::transport::{RecvTransport, Transport, TransportError};
+use tst_core::transport::{BrokenCause, RecvTransport, Transport, TransportError};
 use tst_tcp::config::SocketConfig;
 use tst_tcp::url::TcpUrl;
 use tst_tcp::{TcpListener, TcpTransport};
@@ -257,14 +257,17 @@ fn tcps_explicit_close_loopback_ends_the_peer_read() {
         observed.expect("peer read did not end within 2 s of an explicit close() on the client");
     // Isolate `close_notify` from the socket shutdown that follows it: a clean
     // TLS close reaches the server as rustls's `Ok(0)`, which `recv_bytes` maps
-    // to `Broken { msg: "peer closed connection", errno_code: None }`. A bare socket
-    // shutdown with no `close_notify` would still end the read, but through
-    // rustls's `UnexpectedEof` error and the "read error: …" arm — so a Broken
-    // of any shape is not enough to prove the alert was sent.
+    // to `Broken { cause: BrokenCause::CleanEof, .. }`. A bare socket shutdown
+    // with no `close_notify` would still end the read, but through rustls's
+    // `UnexpectedEof` error and the "read error: …" arm (`cause: Unspecified`)
+    // — so a Broken of any shape is not enough to prove the alert was sent.
     match observed {
-        Err(TransportError::Broken { msg, errno_code }) => {
+        Err(TransportError::Broken {
+            cause, errno_code, ..
+        }) => {
             assert_eq!(
-                msg, "peer closed connection",
+                cause,
+                BrokenCause::CleanEof,
                 "peer read must end through the clean close_notify (Ok(0)) arm"
             );
             assert_eq!(

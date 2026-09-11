@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use sha2::{Digest, Sha256};
 use tst_core::codec::misp_time::MispTimestamp;
 use tst_core::mpegts::common::Pts90khz;
-use tst_core::transport::{Transport, TransportError};
+use tst_core::transport::{BrokenCause, Transport, TransportError};
 use tst_pipeline::{ManagedTransport, MuxSender, ReconnectPolicy};
 
 use crate::cli::write_json;
@@ -244,6 +244,7 @@ pub fn run_managed(
         transport::make_send(&dial_url).map_err(|e| TransportError::Broken {
             msg: e,
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         })
     };
     let policy = ReconnectPolicy {

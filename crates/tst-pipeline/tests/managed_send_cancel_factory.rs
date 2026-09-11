@@ -9,7 +9,7 @@
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tst_core::transport::{Transport, TransportCancel, TransportError};
+use tst_core::transport::{BrokenCause, Transport, TransportCancel, TransportError};
 use tst_pipeline::{BackoffStrategy, ManagedTransport, ReconnectPolicy};
 
 /// What the mock reports as `max_payload`: one SRT TS bundle (7 × 188-byte
@@ -37,6 +37,7 @@ impl Transport for RaceInner {
             return Err(TransportError::Broken {
                 msg: "dead on arrival".into(),
                 errno_code: None,
+                cause: BrokenCause::Unspecified,
             });
         }
         // Deliberately ignores `cancelled`: a real socket would fail here

@@ -6871,11 +6871,33 @@ impl core::marker::UnsafeUnpin for tst_core::shared::SharedBytes
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::shared::SharedBytes
 impl core::panic::unwind_safe::UnwindSafe for tst_core::shared::SharedBytes
 pub mod tst_core::transport
+#[non_exhaustive] pub enum tst_core::transport::BrokenCause
+pub tst_core::transport::BrokenCause::CleanEof
+pub tst_core::transport::BrokenCause::Unspecified
+impl core::clone::Clone for tst_core::transport::BrokenCause
+pub fn tst_core::transport::BrokenCause::clone(&self) -> tst_core::transport::BrokenCause
+impl core::cmp::Eq for tst_core::transport::BrokenCause
+impl core::cmp::PartialEq for tst_core::transport::BrokenCause
+pub fn tst_core::transport::BrokenCause::eq(&self, &tst_core::transport::BrokenCause) -> bool
+impl core::default::Default for tst_core::transport::BrokenCause
+pub fn tst_core::transport::BrokenCause::default() -> tst_core::transport::BrokenCause
+impl core::fmt::Debug for tst_core::transport::BrokenCause
+pub fn tst_core::transport::BrokenCause::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_core::transport::BrokenCause
+impl core::marker::StructuralPartialEq for tst_core::transport::BrokenCause
+impl core::marker::Freeze for tst_core::transport::BrokenCause
+impl core::marker::Send for tst_core::transport::BrokenCause
+impl core::marker::Sync for tst_core::transport::BrokenCause
+impl core::marker::Unpin for tst_core::transport::BrokenCause
+impl core::marker::UnsafeUnpin for tst_core::transport::BrokenCause
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::transport::BrokenCause
+impl core::panic::unwind_safe::UnwindSafe for tst_core::transport::BrokenCause
 #[non_exhaustive] pub enum tst_core::transport::TransportError
 pub tst_core::transport::TransportError::Backpressure
 pub tst_core::transport::TransportError::Backpressure::errno_code: core::option::Option<i32>
 pub tst_core::transport::TransportError::Backpressure::msg: alloc::string::String
 pub tst_core::transport::TransportError::Broken
+pub tst_core::transport::TransportError::Broken::cause: tst_core::transport::BrokenCause
 pub tst_core::transport::TransportError::Broken::errno_code: core::option::Option<i32>
 pub tst_core::transport::TransportError::Broken::msg: alloc::string::String
 pub tst_core::transport::TransportError::Closed
@@ -7092,6 +7114,27 @@ pub fn tst_core::url::is_multicast_v4(core::net::ip_addr::Ipv4Addr) -> bool
 pub fn tst_core::url::is_multicast_v6(core::net::ip_addr::Ipv6Addr) -> bool
 pub fn tst_core::url::parse_host_port(&str) -> core::result::Result<(core::net::ip_addr::IpAddr, u16), tst_core::url::common::UrlError>
 pub fn tst_core::url::parse_url(&str) -> core::result::Result<tst_core::url::common::ParsedUrl<'_>, tst_core::url::common::UrlError>
+#[non_exhaustive] pub enum tst_core::BrokenCause
+pub tst_core::BrokenCause::CleanEof
+pub tst_core::BrokenCause::Unspecified
+impl core::clone::Clone for tst_core::transport::BrokenCause
+pub fn tst_core::transport::BrokenCause::clone(&self) -> tst_core::transport::BrokenCause
+impl core::cmp::Eq for tst_core::transport::BrokenCause
+impl core::cmp::PartialEq for tst_core::transport::BrokenCause
+pub fn tst_core::transport::BrokenCause::eq(&self, &tst_core::transport::BrokenCause) -> bool
+impl core::default::Default for tst_core::transport::BrokenCause
+pub fn tst_core::transport::BrokenCause::default() -> tst_core::transport::BrokenCause
+impl core::fmt::Debug for tst_core::transport::BrokenCause
+pub fn tst_core::transport::BrokenCause::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_core::transport::BrokenCause
+impl core::marker::StructuralPartialEq for tst_core::transport::BrokenCause
+impl core::marker::Freeze for tst_core::transport::BrokenCause
+impl core::marker::Send for tst_core::transport::BrokenCause
+impl core::marker::Sync for tst_core::transport::BrokenCause
+impl core::marker::Unpin for tst_core::transport::BrokenCause
+impl core::marker::UnsafeUnpin for tst_core::transport::BrokenCause
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::transport::BrokenCause
+impl core::panic::unwind_safe::UnwindSafe for tst_core::transport::BrokenCause
 #[non_exhaustive] pub enum tst_core::CotError
 pub tst_core::CotError::MissingField
 pub tst_core::CotError::MissingField::name: &'static str
@@ -7436,6 +7479,7 @@ pub tst_core::TransportError::Backpressure
 pub tst_core::TransportError::Backpressure::errno_code: core::option::Option<i32>
 pub tst_core::TransportError::Backpressure::msg: alloc::string::String
 pub tst_core::TransportError::Broken
+pub tst_core::TransportError::Broken::cause: tst_core::transport::BrokenCause
 pub tst_core::TransportError::Broken::errno_code: core::option::Option<i32>
 pub tst_core::TransportError::Broken::msg: alloc::string::String
 pub tst_core::TransportError::Closed

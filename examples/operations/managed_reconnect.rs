@@ -18,7 +18,8 @@ use std::time::Duration;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::MuxerConfig;
 use tst_pipeline::{
-    BackoffStrategy, ManagedTransport, MuxSender, OverflowPolicy, ReconnectPolicy, TransportError,
+    BackoffStrategy, BrokenCause, ManagedTransport, MuxSender, OverflowPolicy, ReconnectPolicy,
+    TransportError,
 };
 use tst_srt::SrtTransport;
 use tst_srt::{ListenerBuilder, SocketBuilder};
@@ -190,6 +191,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     // `Socket::connect` directly should fish out the typed
                     // error and map it to a meaningful code.
                     errno_code: None,
+                    cause: BrokenCause::Unspecified,
                 })?;
         Ok(SrtTransport::new(socket))
     };

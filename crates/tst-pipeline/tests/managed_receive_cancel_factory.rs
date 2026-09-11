@@ -7,7 +7,7 @@
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
-use tst_core::transport::{RecvTransport, TransportCancel, TransportError};
+use tst_core::transport::{BrokenCause, RecvTransport, TransportCancel, TransportError};
 use tst_pipeline::{BackoffStrategy, FactoryCancel, ManagedRecvTransport, ReconnectPolicy};
 
 /// Inner transport that is dead on arrival: the first recv reports
@@ -19,6 +19,7 @@ impl RecvTransport for DeadInner {
         Err(TransportError::Broken {
             msg: "dead on arrival".into(),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         })
     }
 
@@ -131,6 +132,7 @@ impl RecvTransport for RaceInner {
             return Err(TransportError::Broken {
                 msg: "dead on arrival".into(),
                 errno_code: None,
+                cause: BrokenCause::Unspecified,
             });
         }
         buf[0] = 1;

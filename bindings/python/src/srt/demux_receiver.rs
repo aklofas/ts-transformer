@@ -43,7 +43,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
 use tst_core::mpegts::demux::DemuxEvent;
-use tst_core::transport::{TransportCancel, TransportError};
+use tst_core::transport::{BrokenCause, TransportCancel, TransportError};
 use tst_pipeline::{
     DemuxReceiver as RustDemuxReceiver, DemuxReceiverError, DemuxReceiverErrorSource,
 };
@@ -281,6 +281,7 @@ impl PyDemuxReceiver {
                     return Err(DemuxReceiverError::from(TransportError::Broken {
                         msg: "DemuxReceiver inner lock poisoned".into(),
                         errno_code: None,
+                        cause: BrokenCause::Unspecified,
                     }));
                 }
             };

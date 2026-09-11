@@ -41,7 +41,7 @@ use pyo3::Py;
 use pyo3::prelude::*;
 
 use tst_core::mpegts::demux::DemuxEvent;
-use tst_core::transport::{TransportCancel, TransportError};
+use tst_core::transport::{BrokenCause, TransportCancel, TransportError};
 use tst_pipeline::{
     FactoryCancel, ManagedDemuxReceiver as RustManagedDemuxReceiver, ManagedDemuxReceiverConfig,
     ManagedRecvTransport, ManagedTransport, MuxSender as RustMuxSender, MuxSenderError,
@@ -95,6 +95,7 @@ fn connect_srt(host: &str, port: u16, cfg: &SocketConfig) -> Result<SrtTransport
     let socket = Socket::connect_with(&cfg, addr.as_str()).map_err(|e| TransportError::Broken {
         msg: format!("connect: {e}"),
         errno_code: None,
+        cause: BrokenCause::Unspecified,
     })?;
     Ok(SrtTransport::new(socket))
 }
@@ -112,10 +113,12 @@ fn listen_srt(host: &str, port: u16, cfg: &ListenerConfig) -> Result<SrtTranspor
         Listener::bind_with(cfg, addr.as_str()).map_err(|e| TransportError::Broken {
             msg: format!("bind: {e}"),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         })?;
     let (socket, _peer) = listener.accept().map_err(|e| TransportError::Broken {
         msg: format!("accept: {e}"),
         errno_code: None,
+        cause: BrokenCause::Unspecified,
     })?;
     Ok(SrtTransport::new(socket))
 }
@@ -846,6 +849,7 @@ impl PyManagedDemuxReceiver {
                             TransportError::Broken {
                                 msg: "ManagedDemuxReceiver inner lock poisoned".into(),
                                 errno_code: None,
+                                cause: BrokenCause::Unspecified,
                             },
                         ));
                     }

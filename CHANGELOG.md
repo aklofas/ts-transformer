@@ -200,6 +200,23 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   parked in `next()`, and `close()` snapshots the reason in the same
   native call that tears the receiver down so it stays readable
   afterwards.
+- **`tst_core::transport::BrokenCause`** — a structured discriminator on
+  `TransportError::Broken` (new `cause` field, re-exported from the
+  `tst_core` and `tst_pipeline` roots): `CleanEof` when the peer ended
+  the stream cleanly (a zero-length read — a TCP FIN, or on `tcps://` a
+  TLS `close_notify`), `Unspecified` otherwise. `tst-tcp`'s
+  `TcpTransport::recv_bytes` is the one producer today; every other
+  `Broken` carries `Unspecified`, including the `tst-tcp` write helper's
+  zero-length write (the stream is desynced mid-message, not cleanly
+  over) and rustls's `UnexpectedEof` (a socket shutdown with no
+  `close_notify`). Before this, the message string
+  `"peer closed connection"` was the only way to tell a clean peer close
+  from a read error (both carry `errno_code: None`). Reconnect and
+  end-reason behavior are unchanged: `Broken` remains the managed
+  wrappers' reconnect trigger whatever the cause. `#[non_exhaustive]`
+  (match with a wildcard arm); the `Broken` variant was already
+  `#[non_exhaustive]`, so `..` patterns keep compiling. Not yet exposed
+  through the C / Python / JVM bindings (see deferred-features).
 
 ### Changed
 

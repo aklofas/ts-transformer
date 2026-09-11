@@ -6,7 +6,7 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
-use tst_core::transport::{Transport, TransportError};
+use tst_core::transport::{BrokenCause, Transport, TransportError};
 
 /// Appends every chunk verbatim to a file. Post-close sends return
 /// [`TransportError::Closed`] per the trait contract. A fatal write error
@@ -88,6 +88,7 @@ impl Transport for FileTransport {
             return Err(TransportError::Broken {
                 msg: format!("file write failed: {e}"),
                 errno_code: e.raw_os_error(),
+                cause: BrokenCause::Unspecified,
             });
         }
         self.bytes_sent = self.bytes_sent.saturating_add(msg.len() as u64);

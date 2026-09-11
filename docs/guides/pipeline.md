@@ -725,7 +725,10 @@ The receive surface distinguishes three end-of-stream signals:
   into `Ok(None)` after first calling `Demuxer::flush()` to recover
   any trailing PES. Loop callers do not see `Closed` as an `Err`.
 - **`Err` whose `source` is `DemuxReceiverErrorSource::Transport(TransportError::Broken { .. })`** (`kind = ShellErrorKind::TransportBroken`). Peer-
-  initiated cleanup or unrecoverable link. `SrtTransport` collapses
+  initiated cleanup or unrecoverable link. On `tst-tcp` a clean peer
+  FIN (or TLS `close_notify`) is also `Broken`, marked
+  `cause: BrokenCause::CleanEof` so a caller can tell it from a read
+  error without parsing the message. `SrtTransport` collapses
   these into one `Broken` surface by design — it lets a managed-receive
   decorator distinguish a self-initiated close (`Closed`) from a peer-
   initiated break (`Broken`). On `Broken` the demuxer is NOT auto-

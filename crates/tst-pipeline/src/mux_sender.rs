@@ -62,7 +62,7 @@ use tst_core::mpegts::mux::{
     AudioStreamHandle, DataStreamHandle, KlvStreamHandle, Muxer, MuxerConfig, SubtitleStreamHandle,
     VideoStreamHandle,
 };
-use tst_core::transport::{Transport, TransportError};
+use tst_core::transport::{BrokenCause, Transport, TransportError};
 
 use crate::mutex::ShellMutex;
 use crate::shell_error::ShellErrorKind;
@@ -241,6 +241,7 @@ fn lock_poisoned(site: &'static str) -> MuxSenderError {
     MuxSenderError::from(TransportError::Broken {
         msg: alloc::format!("mux_sender: inner lock poisoned during {site}"),
         errno_code: None,
+        cause: BrokenCause::Unspecified,
     })
 }
 
@@ -2103,6 +2104,7 @@ mod multi_stream_tests {
             Err(TransportError::Broken {
                 msg: "cancelled".into(),
                 errno_code: None,
+                cause: BrokenCause::Unspecified,
             })
         }
         fn max_payload(&self) -> usize {
@@ -2293,6 +2295,7 @@ mod cancel_tests {
                     return Err(TransportError::Broken {
                         msg: "cancelled".into(),
                         errno_code: None,
+                        cause: BrokenCause::Unspecified,
                     });
                 }
                 std::thread::sleep(std::time::Duration::from_millis(1));
@@ -2300,6 +2303,7 @@ mod cancel_tests {
             Err(TransportError::Broken {
                 msg: "test timeout (cancel never fired)".into(),
                 errno_code: None,
+                cause: BrokenCause::Unspecified,
             })
         }
         fn max_payload(&self) -> usize {
@@ -2657,6 +2661,7 @@ mod cancel_tests {
                 return Err(TransportError::Broken {
                     msg: "cancelled".into(),
                     errno_code: None,
+                    cause: BrokenCause::Unspecified,
                 });
             }
             if s.reject_sends {

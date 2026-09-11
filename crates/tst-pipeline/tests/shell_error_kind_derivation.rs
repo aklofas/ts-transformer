@@ -11,7 +11,7 @@
 //! catches the missing match arm before this test runs.
 
 use tst_core::error::{DemuxError, MuxError};
-use tst_core::transport::TransportError;
+use tst_core::transport::{BrokenCause, TransportError};
 use tst_pipeline::sender::TsFramingError;
 use tst_pipeline::{
     DemuxReceiverError, MuxSenderError, RawReceiverError, RawSenderError, ReceiverError,
@@ -386,6 +386,7 @@ fn transport_broken_routes_to_transport_broken_in_senders() {
         TransportError::Broken {
             msg: "test".into(),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         },
         ShellErrorKind::TransportBroken,
     );
@@ -429,6 +430,7 @@ fn transport_broken_routes_to_transport_broken_in_receivers() {
         TransportError::Broken {
             msg: "test".into(),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         },
         ShellErrorKind::TransportBroken,
     );

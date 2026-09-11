@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
-use tst_core::transport::{Transport, TransportCancel, TransportError};
+use tst_core::transport::{BrokenCause, Transport, TransportCancel, TransportError};
 use tst_pipeline::{
     BackoffStrategy, ManagedTransport, OverflowPolicy, ReconnectMode, ReconnectPolicy,
 };
@@ -82,6 +82,7 @@ impl Transport for Mock {
             Behavior::Break => Err(TransportError::Broken {
                 msg: "inner is down".into(),
                 errno_code: None,
+                cause: BrokenCause::Unspecified,
             }),
             Behavior::Park => {
                 self.entered.store(true, Ordering::SeqCst);
@@ -145,6 +146,7 @@ fn dead_factory() -> impl Fn() -> Result<Mock, TransportError> + Send + Sync + '
         Err(TransportError::Broken {
             msg: "factory down".into(),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         })
     }
 }

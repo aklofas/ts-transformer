@@ -8,7 +8,7 @@
 //! port are not handled — single-accept matches the connection-oriented
 //! shape of every other entry point in `tst-c`.
 
-use tst_pipeline::{FactoryCancel, TransportError};
+use tst_pipeline::{BrokenCause, FactoryCancel, TransportError};
 use tst_srt::Listener;
 use tst_srt::SrtTransport;
 use tst_srt::config::ListenerConfig;
@@ -38,11 +38,13 @@ pub(crate) fn listen_srt(
         TransportError::Broken {
             msg: format!("bind: {e}"),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         }
     })?;
     let (socket, _peer) = listener.accept().map_err(|e| TransportError::Broken {
         msg: format!("accept: {e}"),
         errno_code: None,
+        cause: BrokenCause::Unspecified,
     })?;
     Ok(SrtTransport::new(socket))
 }

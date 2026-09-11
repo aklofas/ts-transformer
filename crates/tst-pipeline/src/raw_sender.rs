@@ -304,6 +304,7 @@ impl<T: Transport> Drop for RawSender<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tst_core::transport::BrokenCause;
     use tst_core::transport::{Transport, TransportError};
 
     struct MemTransport {
@@ -319,6 +320,7 @@ mod tests {
                 Err(TransportError::Broken {
                     msg: "test".into(),
                     errno_code: None,
+                    cause: BrokenCause::Unspecified,
                 })
             }
         }
@@ -434,6 +436,7 @@ mod tests {
         let err: RawSenderError = TransportError::Broken {
             msg: "test".into(),
             errno_code: Some(2),
+            cause: BrokenCause::Unspecified,
         }
         .into();
         assert_eq!(err.errno_code(), Some(2));

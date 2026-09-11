@@ -25,7 +25,7 @@ use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::DemuxEvent;
 use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
 use tst_pipeline::{
-    BackoffStrategy, DemuxReceiver, ManagedRecvTransport, MuxSender, ReconnectPolicy,
+    BackoffStrategy, BrokenCause, DemuxReceiver, ManagedRecvTransport, MuxSender, ReconnectPolicy,
     RecvTransport, ShellErrorKind, TransportError,
 };
 use tst_tcp::{TcpListener, TcpTransport};
@@ -189,6 +189,7 @@ fn managed_tcp_recv_cancel_unblocks_parked_read() {
         Err(TransportError::Broken {
             msg: "factory should not run in this test".into(),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         })
     });
     let policy = ReconnectPolicy {

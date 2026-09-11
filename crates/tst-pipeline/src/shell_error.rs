@@ -279,6 +279,7 @@ pub(crate) fn kind_from_framing(e: &TsFramingError) -> ShellErrorKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tst_core::transport::BrokenCause;
 
     #[test]
     fn kind_from_mux_invalid_config_is_config_invalid() {
@@ -385,6 +386,7 @@ mod tests {
         let bk = TransportError::Broken {
             msg: "test".into(),
             errno_code: Some(2),
+            cause: BrokenCause::Unspecified,
         };
         assert_eq!(errno_code_from_transport(&bk), Some(2));
 

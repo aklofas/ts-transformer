@@ -7,7 +7,7 @@
 use crate::Socket;
 use crate::error::{SendError, SrtErrno};
 use std::sync::Arc;
-use tst_core::transport::{SocketStats, Transport, TransportCancel, TransportError};
+use tst_core::transport::{BrokenCause, SocketStats, Transport, TransportCancel, TransportError};
 
 /// SRT live-mode wire ceiling for a single message payload — the
 /// maximum value libsrt accepts for `SRTO_PAYLOADSIZE`. The option is
@@ -171,6 +171,7 @@ impl Transport for SrtTransport {
                 Err(TransportError::Broken {
                     msg: "connection broken".into(),
                     errno_code: Some(SrtErrno::Connection.raw_code()),
+                    cause: BrokenCause::Unspecified,
                 })
             }
             Err(SendError::System(e)) => {
@@ -181,6 +182,7 @@ impl Transport for SrtTransport {
                     // is the honest signal; bindings should treat
                     // None+Broken as "wire-level cause not exposed."
                     errno_code: None,
+                    cause: BrokenCause::Unspecified,
                 })
             }
             Err(SendError::Other { kind, message }) => {
@@ -201,6 +203,7 @@ impl Transport for SrtTransport {
                     Err(TransportError::Broken {
                         msg: message,
                         errno_code,
+                        cause: BrokenCause::Unspecified,
                     })
                 }
             }
@@ -255,6 +258,7 @@ impl tst_core::transport::RecvTransport for SrtTransport {
                 Err(TransportError::Broken {
                     msg: "connection broken".into(),
                     errno_code: Some(SrtErrno::Connection.raw_code()),
+                    cause: BrokenCause::Unspecified,
                 })
             }
             Err(RecvError::BufferTooSmall {
@@ -270,6 +274,7 @@ impl tst_core::transport::RecvTransport for SrtTransport {
                     // Caller-misconfiguration shape, not a libsrt errno;
                     // pass None to keep the signal honest.
                     errno_code: None,
+                    cause: BrokenCause::Unspecified,
                 })
             }
             Err(other) => {
@@ -286,6 +291,7 @@ impl tst_core::transport::RecvTransport for SrtTransport {
                 Err(TransportError::Broken {
                     msg: other.to_string(),
                     errno_code,
+                    cause: BrokenCause::Unspecified,
                 })
             }
         }
@@ -446,10 +452,12 @@ mod tests {
         let err = TransportError::Broken {
             msg: "test".into(),
             errno_code: Some(SrtErrno::Connection.raw_code()),
+            cause: BrokenCause::Unspecified,
         };
         if let TransportError::Broken {
             msg: _,
             errno_code: Some(c),
+            cause: BrokenCause::Unspecified,
         } = err
         {
             assert_eq!(c, 2, "Broken should carry SRT Connection major (2)");

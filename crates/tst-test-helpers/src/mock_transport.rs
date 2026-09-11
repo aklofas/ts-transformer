@@ -3,7 +3,7 @@
 //! integration tests.
 
 use std::sync::{Arc, Mutex, MutexGuard};
-use tst_core::{Transport, TransportError};
+use tst_core::{BrokenCause, Transport, TransportError};
 
 #[derive(Debug, Clone)]
 pub enum FailMode {
@@ -78,6 +78,7 @@ impl Transport for MockTransport {
                 return Err(TransportError::Broken {
                     msg: "mock broken".into(),
                     errno_code: None,
+                    cause: BrokenCause::Unspecified,
                 });
             }
             FailMode::BackpressureForN(n) if *n > 0 => {

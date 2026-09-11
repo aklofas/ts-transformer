@@ -6,7 +6,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use tst_core::transport::{RecvTransport, Transport, TransportError};
+use tst_core::transport::{BrokenCause, RecvTransport, Transport, TransportError};
 use tst_tcp::TcpListener;
 use tst_tcp::TcpTransport;
 
@@ -242,10 +242,21 @@ fn peer_eof_marks_transport_dead() {
 
     let mut buf = [0u8; 188];
     let result = client.recv_bytes(&mut buf);
-    assert!(
-        matches!(result, Err(TransportError::Broken { .. })),
-        "expected Broken on peer EOF, got {result:?}"
-    );
+    // The structured discriminator: a peer FIN is a *clean* end of stream, and
+    // callers must be able to tell it from a read error without parsing `msg`.
+    match &result {
+        Err(TransportError::Broken {
+            cause, errno_code, ..
+        }) => {
+            assert_eq!(
+                *cause,
+                BrokenCause::CleanEof,
+                "a peer FIN must be reported as a clean EOF"
+            );
+            assert_eq!(*errno_code, None, "a clean EOF carries no errno_code");
+        }
+        other => panic!("expected Broken on peer EOF, got {other:?}"),
+    }
     assert!(
         !RecvTransport::is_alive(&client),
         "peer EOF must mark the transport dead"
@@ -287,10 +298,17 @@ fn fatal_read_error_marks_transport_dead() {
     watchdog.join().unwrap();
 
     match &result {
-        Err(TransportError::Broken { msg, .. }) => {
+        Err(TransportError::Broken { msg, cause, .. }) => {
             assert!(
                 msg.contains("read error"),
                 "expected a fatal read, got {msg}"
+            );
+            // An RST is not a clean end of stream: the discriminator must stay
+            // at its default so callers cannot mistake it for a peer FIN.
+            assert_eq!(
+                *cause,
+                BrokenCause::Unspecified,
+                "a fatal read error must not claim a clean EOF"
             );
         }
         other => panic!("expected Broken(read error) after the peer's RST, got {other:?}"),

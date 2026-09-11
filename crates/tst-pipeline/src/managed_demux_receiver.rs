@@ -547,7 +547,7 @@ mod tests {
     use super::*;
     use crate::reconnect::{BackoffStrategy, ReconnectPolicy};
     use std::time::Duration;
-    use tst_core::transport::{RecvTransport, TransportError};
+    use tst_core::transport::{BrokenCause, RecvTransport, TransportError};
 
     /// Build a policy with zero backoff so tests don't sleep.
     fn fast_policy(max_attempts: Option<u32>) -> ReconnectPolicy {
@@ -591,6 +591,7 @@ mod tests {
                         Err(TransportError::Broken {
                             msg: "scripted exhaust".into(),
                             errno_code: None,
+                            cause: BrokenCause::Unspecified,
                         })
                     } else {
                         Err(TransportError::Closed)
@@ -646,6 +647,7 @@ mod tests {
             Err(TransportError::Broken {
                 msg: "no reconnect for this test".into(),
                 errno_code: None,
+                cause: BrokenCause::Unspecified,
             })
         });
         // max_attempts=Some(0) → budget rejected on first attempt;
@@ -711,6 +713,7 @@ mod tests {
                 Err(TransportError::Broken {
                     msg: "no more rebuilds".into(),
                     errno_code: None,
+                    cause: BrokenCause::Unspecified,
                 })
             }
         });
@@ -792,6 +795,7 @@ mod tests {
                 Err(TransportError::Broken {
                     msg: "factory exhausted".into(),
                     errno_code: None,
+                    cause: BrokenCause::Unspecified,
                 })
             }
         });
@@ -841,6 +845,7 @@ mod tests {
             Err(TransportError::Broken {
                 msg: "no reconnect".into(),
                 errno_code: None,
+                cause: BrokenCause::Unspecified,
             })
         });
         let managed = ManagedRecvTransport::new(inner, factory, fast_policy(Some(0)));

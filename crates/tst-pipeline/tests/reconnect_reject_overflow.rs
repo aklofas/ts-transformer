@@ -13,7 +13,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 use tst_pipeline::reconnect::OverflowPolicy;
-use tst_pipeline::{BackoffStrategy, ManagedTransport, ReconnectPolicy, Transport, TransportError};
+use tst_pipeline::{
+    BackoffStrategy, BrokenCause, ManagedTransport, ReconnectPolicy, Transport, TransportError,
+};
 
 /// Mock `Transport` whose every `send_bytes` returns `Broken` so the
 /// `ManagedTransport` decorator is forced into the reconnect path, where
@@ -28,6 +30,7 @@ impl Transport for AlwaysBroken {
         Err(TransportError::Broken {
             msg: "always broken (test)".into(),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         })
     }
 
@@ -51,6 +54,7 @@ fn reject_policy_surfaces_backpressure_when_gap_full() {
         Err(TransportError::Broken {
             msg: "factory always fails".into(),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         })
     };
     // max_attempts: Some(1) + zero backoff keeps each send fast: one
@@ -99,6 +103,7 @@ fn drop_oldest_policy_does_not_surface_backpressure_on_overflow() {
         Err(TransportError::Broken {
             msg: "factory always fails".into(),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         })
     };
     let policy = ReconnectPolicy {

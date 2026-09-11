@@ -9,7 +9,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 use tracing_test::traced_test;
-use tst_pipeline::{BackoffStrategy, ManagedTransport, ReconnectPolicy, Transport, TransportError};
+use tst_pipeline::{
+    BackoffStrategy, BrokenCause, ManagedTransport, ReconnectPolicy, Transport, TransportError,
+};
 
 /// Mock `Transport` whose every `send_bytes` returns `Broken` so the
 /// `ManagedTransport` decorator is forced into the reconnect path.
@@ -23,6 +25,7 @@ impl Transport for AlwaysBroken {
         Err(TransportError::Broken {
             msg: "always broken (test)".into(),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         })
     }
 
@@ -48,6 +51,7 @@ fn sender_reconnect_emits_info_on_attempt_and_warn_on_give_up() {
         Err(TransportError::Broken {
             msg: "test factory always fails".into(),
             errno_code: None,
+            cause: BrokenCause::Unspecified,
         })
     };
 

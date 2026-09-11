@@ -36,13 +36,13 @@
 //! some transports) — this fix does not introduce a new risk category, it
 //! just applies the same accepted behavior to more termination reasons.
 
-use tst_core::TransportError;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{DemuxEvent, SamplePayload};
 use tst_core::mpegts::mux::{
     AudioCodec, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec,
 };
 use tst_core::transport::RecvTransport;
+use tst_core::{BrokenCause, TransportError};
 use tst_pipeline::{DemuxReceiver, DemuxReceiverErrorSource, ShellErrorKind};
 
 /// Minimal valid Annex-B H.264 AU (AUD + IDR slice), 14 bytes. `marker`
@@ -102,6 +102,7 @@ impl TerminalAfterPackets {
             terminal: TransportError::Broken {
                 msg: "simulated socket break".into(),
                 errno_code: None,
+                cause: BrokenCause::Unspecified,
             },
         }
     }
@@ -119,9 +120,14 @@ impl RecvTransport for TerminalAfterPackets {
     fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
         if self.pos >= self.packets.len() {
             return Err(match &self.terminal {
-                TransportError::Broken { msg, errno_code } => TransportError::Broken {
+                TransportError::Broken {
+                    msg,
+                    errno_code,
+                    cause,
+                } => TransportError::Broken {
                     msg: msg.clone(),
                     errno_code: *errno_code,
+                    cause: *cause,
                 },
                 TransportError::ExplicitClose => TransportError::ExplicitClose,
                 other => panic!("unexpected terminal fixture: {other:?}"),
