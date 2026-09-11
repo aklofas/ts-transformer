@@ -203,6 +203,20 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **JVM: the plain srt `DemuxReceiver.close()` and `Receiver.close()` now
+  cancel first.** Both used to take the receiver's resource lock and wait
+  for a `next()` / `recvBytes()` parked on another thread to return on its
+  own — with a silent peer, forever — and their javadoc told callers to
+  fire `cancelHandle().cancel()` first. They now fire the receiver's cancel
+  target before taking that lock (the registry hook the managed pair
+  adopted in the next entry), so the parked call ends promptly. On the
+  plain shells that end surfaces as `SrtException(BROKEN)`, not `CLOSED`:
+  the plain cancel closes the libsrt socket under the parked receive, which
+  fails with a connection error, whereas the managed shells map their own
+  cancel to `CLOSED`. The plain shells record no end reason. This is the
+  contract tst-py's `DemuxReceiver.close()` / `Receiver.close()` and the C
+  ABI's `tst_demux_receiver_close` already had. A `close()` with no
+  receive in flight is unchanged. JUnit + pytest parity tests.
 - **JVM: `ManagedDemuxReceiver.close()` and `ManagedReceiver.close()` now
   cancel first.** Both used to take the receiver's resource lock and wait
   for a `next()` / `recvBytes()` parked on another thread to return on its

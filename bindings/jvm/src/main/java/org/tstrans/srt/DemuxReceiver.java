@@ -241,10 +241,12 @@ public final class DemuxReceiver extends NativeHandle implements Iterable<DemuxE
      * subsequent calls are no-ops.
      *
      * <p>If a thread is parked in iteration ({@code next()}), {@code close()}
-     * blocks until that call returns — it acquires the receiver's resource lock,
-     * which the parked recv holds. Unlike the rtp receiver, srt {@code close()}
-     * does NOT itself wake a parked recv; to unblock it from another thread, call
-     * {@link #cancelHandle()}{@code .cancel()} first.
+     * cancels first: it fires the receiver's cancel target before taking the
+     * resource lock the parked recv holds, so that iteration ends promptly with
+     * {@code SrtException(BROKEN)} — the cancel closes the libsrt socket under
+     * it; the managed {@link ManagedDemuxReceiver} surfaces the same close as
+     * {@code CLOSED} — and {@code close()} returns without waiting for data.
+     * Same contract as the rtp receiver and the Python / C twins.
      */
     @Override public void close() { super.close(); }
 

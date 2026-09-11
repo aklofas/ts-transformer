@@ -118,12 +118,17 @@ pub(super) fn register_sender(inner: PlSender<SrtTransport>) -> jlong {
 }
 
 /// `Receiver` twin of [`register_sender`]: the target is read lock-free while
-/// `recvBytes()` is parked.
+/// `recvBytes()` is parked. Unlike the sender, the receiver registers
+/// cancel-on-close: `nClose` fires `target` before taking the resource lock, so
+/// a `recvBytes()` parked on another thread ends promptly (with
+/// `SrtException(BROKEN)` — the plain cancel closes the socket under the parked
+/// recv) instead of holding `close()` hostage. The contract tst-py's plain
+/// `Receiver.close()` already states.
 pub(super) fn register_receiver(inner: PlReceiver<SrtTransport>) -> jlong {
     let target = inner
         .cancel_handle()
         .expect("a fresh SrtTransport always returns Some(cancel_handle)");
-    REGISTRY_RECEIVER.insert_with_target(inner, target) as jlong
+    REGISTRY_RECEIVER.insert_cancel_on_close(inner, target, None) as jlong
 }
 
 /// Send pre-muxed TS bytes. Throws `SrtException` on transport/framing failure.

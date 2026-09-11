@@ -573,6 +573,56 @@ def test_demux_receiver_context_manager_closes_cleanly() -> None:
         sender.close()
 
 
+def test_demux_receiver_close_while_next_parked_cancels_first() -> None:
+    """`close()` from another thread while `__next__` is parked cancels
+    first: it returns promptly and the parked iteration ends with
+    `SrtError(BROKEN)` (the plain cancel handle closes the libsrt socket;
+    the managed shell is the one that maps its own cancel to CLOSED). The
+    contract shared with the JVM plain `DemuxReceiver.close()` and the C
+    ABI's `tst_demux_receiver_close`."""
+    port = _free_tcp_port()
+    sender, receiver = _make_mux_demux_pair(port)
+    outcome: dict[str, object] = {}
+
+    def iterator() -> None:
+        try:
+            for _ev in receiver:
+                pass
+            outcome["end"] = "StopIteration"
+        except SrtError as exc:
+            outcome["end"] = "SrtError"
+            outcome["kind"] = exc.kind
+        except BaseException as exc:  # noqa: BLE001
+            outcome["end"] = type(exc).__name__
+
+    t = threading.Thread(target=iterator, daemon=True)
+    t.start()
+    # Park the iterator inside recv_event before closing; the peer is
+    # connected and silent, so only a cancel can end that receive.
+    time.sleep(0.3)
+
+    # close() on its own thread with a bounded join: a regression to
+    # waiting behind the parked recv fails the verdict below instead of
+    # hanging the test.
+    c = threading.Thread(target=receiver.close, daemon=True)
+    try:
+        c.start()
+        c.join(timeout=5.0)
+        t.join(timeout=5.0)
+        if c.is_alive() or t.is_alive():
+            # Rescue: a frame from the still-connected peer unparks the recv
+            # so the daemon threads do not sit in a native read at exit.
+            sender.send_video(NAL_IDR, pts=Pts90khz.from_raw(0), key_frame=True)
+            t.join(timeout=5.0)
+            c.join(timeout=5.0)
+            pytest.fail("close() did not end the parked iteration within 5 s")
+        assert outcome.get("end") == "SrtError", f"iteration ended via {outcome}"
+        assert outcome.get("kind") == SrtErrorKind.BROKEN, f"unexpected kind: {outcome}"
+    finally:
+        sender.close()
+        receiver.close()
+
+
 def test_demux_receiver_iter_returns_self() -> None:
     port = _free_tcp_port()
     sender, receiver = _make_mux_demux_pair(port)
