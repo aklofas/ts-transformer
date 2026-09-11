@@ -144,8 +144,9 @@ fn cancel_handle_unblocks_parked_recv() {
     // Set up a silent peer: accept the connection but send nothing. The peer
     // holds its socket open until the test releases it through `release_tx`,
     // so recv_bytes cannot be unblocked by a connection-close event — and the
-    // peer thread is joined on every path instead of being left to sleep out
-    // a fixed window past the end of the test.
+    // peer is released on every path (and joined when the test passes)
+    // instead of being left to sleep out a fixed window past the end of the
+    // test.
     let peer_listener = StdTcpListener::bind("127.0.0.1:0").unwrap();
     let port = peer_listener.local_addr().unwrap().port();
     let (release_tx, release_rx) = mpsc::channel::<()>();
@@ -156,9 +157,10 @@ fn cancel_handle_unblocks_parked_recv() {
         // drops here.
         let _ = release_rx.recv();
     });
-    // Released and joined when this scope ends — AFTER the assertions below,
-    // so the peer's own close can never feed the state under test, and on
-    // every path, so a failing assertion never leaves the thread parked.
+    // Released when this scope ends — AFTER the assertions below, so the
+    // peer's own close can never feed the state under test, and on every
+    // path, so a failing assertion never leaves the thread parked; joined
+    // too when the test passes (see `HeldPeer`).
     let _peer_guard = HeldPeer {
         release: Some(release_tx),
         thread: Some(peer),
@@ -197,9 +199,10 @@ fn cancel_handle_unblocks_parked_recv() {
     );
 }
 
-/// A silent peer's release-and-join, run by `Drop` so it happens at scope
-/// end on every path: after the assertions on success, during unwinding on
-/// failure. Signals the peer to drop its held socket, then joins it.
+/// A silent peer's cleanup, run by `Drop` so it happens at scope end: after
+/// the assertions on success, during unwinding on failure. Always signals
+/// the peer to drop its held socket; joins it only on the non-panicking
+/// path (see the comment in `drop`).
 struct HeldPeer {
     release: Option<mpsc::Sender<()>>,
     thread: Option<thread::JoinHandle<()>>,
