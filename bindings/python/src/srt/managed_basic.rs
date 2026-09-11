@@ -33,7 +33,7 @@
 //!
 //! - Factory closure errors must map into `TransportError`, NOT
 //!   `PyErr`. We route `ConnectError`/`BindError`/`AcceptError` /
-//!   `UrlError` to `TransportError::Broken { msg, errno_code: None , cause: BrokenCause::Unspecified}`
+//!   `UrlError` to `TransportError::Broken { msg, errno_code: None, cause: BrokenCause::Unspecified}`
 //!   pragmatically so the reconnect loop treats them as a recoverable
 //!   transport breakage and applies backoff.
 //!
