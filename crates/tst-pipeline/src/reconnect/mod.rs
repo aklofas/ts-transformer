@@ -741,11 +741,13 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                         // plain `Option` a panic can never leave half-updated,
                         // and the fresh inner must be closed on this path
                         // regardless of how an earlier holder exited.
-                        let mut guard = self.inner.lock().unwrap_or_else(|p| p.into_inner());
-                        if let Some(mut t) = guard.take() {
+                        let fresh = self.inner.lock().unwrap_or_else(|p| p.into_inner()).take();
+                        // Close outside the lock: an inner's close may block
+                        // (libsrt lingers) and must never hold `inner` while
+                        // it does — the same rule every send path follows.
+                        if let Some(mut t) = fresh {
                             t.close();
                         }
-                        drop(guard);
                         return Err(TransportError::Closed);
                     }
                     self.shared
