@@ -990,6 +990,13 @@ is parked on the same object, so it need not be taken before iterating.
   thread parked in `sendBytes` or `recvBytes`; that call throws
   `SrtException(BROKEN)` or `SrtException(CLOSED)`. Catch both if your code
   must distinguish a cancel from a peer hangup.
+- **`Receiver.close()` / `DemuxReceiver.close()` cancel first.** Calling
+  either from another thread while `recvBytes()` / `next()` is parked wakes
+  that call — it throws `SrtException(BROKEN)`, because the plain cancel
+  closes the libsrt socket under the parked receive — and `close()` returns
+  promptly. The managed pair (`ManagedReceiver` / `ManagedDemuxReceiver`)
+  does the same but surfaces `CLOSED` and records `RecvEndReason.CANCELLED`.
+  A `close()` with nothing parked simply closes.
 - **JDK-17 byte-copy posture.** `sendBytes` copies the supplied array across
   the JNI boundary; `recvBytes` returns a heap `byte[]` copy. A zero-copy
   path using FFM `MemorySegment` is deferred to a JDK-22+ release.

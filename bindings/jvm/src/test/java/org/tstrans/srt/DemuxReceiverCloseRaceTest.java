@@ -7,6 +7,7 @@ import static org.tstrans.TestSupport.isLinux;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -26,7 +27,10 @@ import org.tstrans.mpegts.VideoCodec;
  * the other srt live-socket tests.
  *
  * <p>The point under test is the leased {@code HandleRegistry}: a native call that races
- * {@code close()} either runs or throws a clean {@link IllegalStateException} — never UB.
+ * {@code close()} either runs or throws a clean {@link IllegalStateException} — never UB. Case
+ * (b) also pins the cancel-first {@code close()} contract ten times over: {@code close()} alone
+ * must wake the parked {@code next()} (the single-shot kind assertion lives in
+ * {@link SrtPlainCloseCancelsFirstTest}).
  */
 final class DemuxReceiverCloseRaceTest {
 
@@ -129,8 +133,9 @@ final class DemuxReceiverCloseRaceTest {
             AtomicReference<Boolean> stop = new AtomicReference<>(false);
             DemuxReceiver rx = connectedReceiver(stop);
 
-            // Pre-obtain a cancel handle so a watchdog can ALWAYS unwedge a parked next(),
-            // independent of the close() under test (the registry guarantees safety either way).
+            // Pre-obtain a cancel handle for RESCUE ONLY: if close() regresses to waiting behind
+            // the parked next(), the watchdog unparks the daemon reader after the verdict has
+            // already failed. It is never the wake under test.
             CancelHandle watchdog = rx.cancelHandle();
 
             CompletableFuture<Throwable> iterResult = new CompletableFuture<>();
@@ -159,20 +164,21 @@ final class DemuxReceiverCloseRaceTest {
             // Give the iterator time to receive some events then park in next().
             Thread.sleep(300);
 
-            // srt's close() is NOT itself a recv-interruptor (the srt DemuxReceiver has no cancel
-            // hook on its registry entry — the sanctioned wake is the separate CancelHandle). A
-            // parked next() holds the resource lock, so close() blocks acquiring it until recv
-            // unwinds. We therefore RACE close() (on its own thread) against the watchdog
-            // cancel() (which wakes the parked recv): the registry guarantees this is memory-safe
-            // for any interleaving — close() either completes after recv releases, or finds the
-            // entry already gone. Neither order is UB.
+            // close() cancels first: the registry entry's close-time hook fires the receiver's
+            // cancel target BEFORE taking the resource lock the parked next() holds, so close()
+            // alone unwedges the iteration and returns. The bounded get is the assertion — a
+            // regression to the old wait-behind-the-parked-recv contract fails here instead of
+            // pinning the test until @Timeout.
             CompletableFuture<Void> closed = CompletableFuture.runAsync(rx::close);
-
-            // Wake the parked recv so it (and hence close()) can unwind.
-            watchdog.cancel();
+            try {
+                closed.get(8, TimeUnit.SECONDS);
+            } catch (TimeoutException te) {
+                watchdog.cancel();
+                fail("close() blocked for >8 s behind the parked next() instead of cancelling it"
+                    + " (run " + i + ")");
+            }
 
             Throwable result = iterResult.get(8, TimeUnit.SECONDS);
-            closed.get(8, TimeUnit.SECONDS);
             watchdog.close();
             stop.set(true);
             assertNull(result, "iterator saw an unexpected failure (run " + i + ")");

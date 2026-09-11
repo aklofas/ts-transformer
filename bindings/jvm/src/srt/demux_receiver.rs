@@ -154,12 +154,19 @@ fn make_receiver(
 /// Register the receiver, capturing its cancel target BEFORE the box goes into
 /// the registry so `nCancelHandle` never needs the resource lock a parked `nNext`
 /// holds. A fresh `SrtTransport` always has a cancel handle.
+///
+/// Cancel-on-close: `nClose` fires `target` before taking the resource lock, so
+/// a `next()` parked on another thread ends promptly (with `SrtException(BROKEN)`
+/// — the plain cancel closes the socket under the parked recv) instead of
+/// holding `close()` hostage. The contract tst-py's `DemuxReceiver.close()` and
+/// the C ABI's `tst_demux_receiver_close` already have; no end-reason cell on
+/// the plain shell.
 fn register(jdr: JniDemuxReceiver) -> jlong {
     let target = jdr
         .inner
         .cancel_handle()
         .expect("a fresh SrtTransport always returns Some(cancel_handle)");
-    REGISTRY.insert_with_target(jdr, target) as jlong
+    REGISTRY.insert_cancel_on_close(jdr, target, None) as jlong
 }
 
 /// `DemuxReceiver.nFromUrl(url)` — bind a listener-mode SRT receiver, accept one
