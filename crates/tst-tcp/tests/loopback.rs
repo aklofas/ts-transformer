@@ -211,12 +211,15 @@ impl Drop for HeldPeer {
             let _ = tx.send(());
         }
         if let Some(t) = self.thread.take() {
-            // A panicking peer during an already-unwinding test would abort
-            // the process; report it only on the non-panicking path.
-            let joined = t.join();
-            if !thread::panicking() {
-                joined.expect("peer thread panicked");
+            // Join only on the non-panicking path. During unwinding the peer
+            // may never have left `accept()` (the client's connect is what
+            // releases it), so a join there could turn an assertion failure
+            // into a hung test run; the release above plus the dropped sender
+            // let it exit on its own instead.
+            if thread::panicking() {
+                return;
             }
+            t.join().expect("peer thread panicked");
         }
     }
 }
