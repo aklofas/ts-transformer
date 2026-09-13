@@ -444,12 +444,24 @@ impl Transport for GracefulRistClose {
 pub(crate) struct TeeState {
     bytes: u64,
     hasher: Sha256,
+    /// Shared across every reconnect of a `recv --managed` session (one
+    /// `TeeState`, rebuilt transports — see [`Teeing::with_tap`]'s own
+    /// doc comment), so a broken connection's leftover partial-packet
+    /// `carry` must never bleed into the replacement connection's bytes.
+    /// `recv.rs`'s managed factory calls [`crate::rawts::Reader::
+    /// resync`] on this field (and clears `reader_error` below) right
+    /// after building each fresh transport, before its first byte is
+    /// fed — the accumulated `WireSummary` and PAT-learned PID map carry
+    /// forward untouched; only the in-flight carry is reset.
     reader: crate::rawts::Reader,
     /// First error `reader.feed` returned, if any — a captured stream
     /// that fell out of 188-byte packet alignment (sync loss) partway
     /// through. Recorded rather than propagated immediately so the tee
     /// keeps counting bytes/hashing normally; the caller (`recv.rs`)
     /// surfaces it as a `rawts_sync_loss` failure once the capture ends.
+    /// Cleared on every managed reconnect alongside `reader.resync()` —
+    /// a fresh connection deserves a fresh chance to stay in sync, not a
+    /// sticky failure carried over from the connection that just broke.
     reader_error: Option<String>,
 }
 
@@ -577,6 +589,22 @@ impl<T: RecvTransport> RecvTransport for Teeing<T> {
 /// (unlike `tee_tally`): it only locks and reads the counter.
 pub(crate) fn tee_bytes_so_far(tap: &Arc<Mutex<TeeState>>) -> u64 {
     tap.lock().expect("tee mutex poisoned").bytes
+}
+
+/// Reset the tap's raw-TS reader for a fresh reconnect — see
+/// [`TeeState`]'s own doc comment on its `reader` field for exactly what
+/// this does (clears the in-flight `carry` and any sticky
+/// `reader_error`; keeps the accumulated `WireSummary` and PAT-learned
+/// PID map) and why.
+/// `recv.rs`'s managed factory calls this once per reconnect, right
+/// after building the replacement transport and before its first byte
+/// is fed. Safe to call while the pipeline shell still owns its clone —
+/// like `tee_bytes_so_far`, it only locks briefly, it doesn't consume
+/// the tap.
+pub(crate) fn tee_resync(tap: &Arc<Mutex<TeeState>>) {
+    let mut s = tap.lock().expect("tee mutex poisoned");
+    s.reader.resync();
+    s.reader_error = None;
 }
 
 /// Read back the final `(bytes, sha256_hex, wire, reader_error)` from a

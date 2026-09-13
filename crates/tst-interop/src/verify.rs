@@ -156,6 +156,15 @@ pub(crate) fn klv_set_hash(record_digests: &[String]) -> String {
 /// run are held to the identical bar.
 pub(crate) const NOMINAL_COUNT_SLACK: f64 = 0.7;
 
+/// The minimum acceptable count for a `per_sec`-Hz signal over
+/// `seconds`, requiring at least `slack` (e.g. `0.7` = 70%) of the
+/// nominal total. Shared by `Tally::finish`'s whole-capture floors
+/// (video AUs, KLV records) and [`crate::oracles::program_accounting`]'s
+/// per-program floors — one formula, not two copies that could drift.
+pub(crate) fn min_count(per_sec: u32, seconds: f64, slack: f64) -> u64 {
+    (per_sec as f64 * seconds * slack).floor() as u64
+}
+
 /// Per-program media counts — [`Tally::feed`] tallies these off each
 /// event's `StreamId::program_number`, alongside (not instead of) the
 /// whole-capture totals, so [`crate::oracles::check`]'s per-program
@@ -381,7 +390,7 @@ impl Tally {
         let inv = profiles::invariants(p);
         let mut failures = Vec::new();
 
-        let min_video_aus = (inv.min_video_aus_per_sec as f64 * seconds * slack).floor() as u64;
+        let min_video_aus = min_count(inv.min_video_aus_per_sec, seconds, slack);
         if self.video_aus < min_video_aus {
             failures.push(format!(
                 "video AUs: got {}, want >= {min_video_aus} ({} fps x {seconds}s x {:.0}% slack)",
@@ -403,7 +412,7 @@ impl Tally {
             }
         }
 
-        let min_klv_records = (inv.min_klv_per_sec as f64 * seconds * slack).floor() as u64;
+        let min_klv_records = min_count(inv.min_klv_per_sec, seconds, slack);
         if self.klv_records < min_klv_records {
             failures.push(format!(
                 "KLV records: got {}, want >= {min_klv_records} ({} Hz x {seconds}s x {:.0}% slack)",
@@ -594,9 +603,19 @@ mod tests {
     /// for the test's profile/duration instead.
     fn wire_for(name: &str, seconds: f64) -> WireSummary {
         let p = profiles::by_name(name).unwrap_or_else(|| panic!("profile {name} must exist"));
+        // Six call sites share this helper and two use a different
+        // `seconds` for the same profile name — naming by profile + pid
+        // alone collided under plain `cargo test` (single process, all
+        // tests share one pid). Profile + seconds + pid + wall-clock
+        // nanos (report.rs's tempdir-test convention) makes every call a
+        // distinct file regardless of process model.
         let path = std::env::temp_dir().join(format!(
-            "tst-interop-verify-wire-{name}-{}.ts",
-            std::process::id()
+            "tst-interop-verify-wire-{name}-{seconds}-{}-{}.ts",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time moves forward")
+                .as_nanos()
         ));
         crate::r#gen::run(p, seconds, &path).expect("gen::run must succeed");
         let wire = rawts::summarize_file(&path).expect("summarize_file must succeed");
