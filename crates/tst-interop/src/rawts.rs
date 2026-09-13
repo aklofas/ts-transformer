@@ -41,6 +41,91 @@ pub struct PesShape {
     pub first_payload_prefix: Option<[u8; 4]>,
 }
 
+/// Per-packet header facts, decoded statelessly — the classification the
+/// corruption tap (`corrupt.rs`) and the tee coordinate need without
+/// owning a `Reader`. Mirrors exactly the header parsing `Reader::packet`
+/// does (§2.4.3.2 / §2.4.3.5); kept as one function so the two can never
+/// disagree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PacketInfo {
+    pub pid: u16,
+    pub pusi: bool,
+    /// adaptation_field_control (2 bits).
+    pub afc: u8,
+    pub has_payload: bool,
+    /// adaptation_field_length, 0 when there is no adaptation field.
+    pub af_len: usize,
+    /// Byte offset of the first payload byte (188 when there is none).
+    pub payload_off: usize,
+    pub pcr_base: Option<u64>,
+    pub cc: u8,
+}
+
+pub fn classify_packet(p: &[u8; PKT]) -> Result<PacketInfo, String> {
+    if p[0] != SYNC {
+        return Err(format!("sync byte 0x{:02x}, want 0x47", p[0]));
+    }
+    let pusi = p[1] & 0x40 != 0;
+    let pid = (u16::from(p[1] & 0x1F) << 8) | u16::from(p[2]);
+    let afc = (p[3] >> 4) & 0x3;
+    let cc = p[3] & 0x0F;
+    let mut af_len = 0;
+    let mut pcr_base = None;
+    let mut off = 4;
+    if afc & 0x2 != 0 {
+        af_len = usize::from(p[4]);
+        if 5 + af_len > PKT {
+            return Err(format!(
+                "adaptation field length {af_len} does not fit in a {PKT}-byte packet"
+            ));
+        }
+        if af_len > 0 && p[5] & 0x10 != 0 {
+            // The PCR flag claims 6 bytes (program_clock_reference_
+            // base + _extension, §2.4.3.5) follow the flags byte, so
+            // the adaptation field must be at least 1 (flags) + 6
+            // bytes long. A PCR flag on a shorter adaptation field is
+            // malformed — reading `p[6..12]` anyway would silently
+            // read bytes outside the declared field (padding, or the
+            // next field entirely) as if they were PCR.
+            if af_len < 7 {
+                return Err(format!(
+                    "adaptation field: PCR flag set but adaptation_field_length {af_len} < 7"
+                ));
+            }
+            // program_clock_reference_base: 33 bits, §2.4.3.5.
+            let b = &p[6..12];
+            pcr_base = Some(
+                (u64::from(b[0]) << 25)
+                    | (u64::from(b[1]) << 17)
+                    | (u64::from(b[2]) << 9)
+                    | (u64::from(b[3]) << 1)
+                    | u64::from(b[4] >> 7),
+            );
+        }
+        off = 5 + af_len;
+    }
+    let has_payload = afc & 0x1 != 0 && off < PKT;
+    Ok(PacketInfo {
+        pid,
+        pusi,
+        afc,
+        has_payload,
+        af_len,
+        payload_off: if has_payload { off } else { PKT },
+        pcr_base,
+        cc,
+    })
+}
+
+/// One sync-recovery event recorded by a [`Reader`] in resync mode.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Resync {
+    /// `Reader::packets()` at the moment the hunt started.
+    pub at_packets: u64,
+    pub pcr_base: Option<u64>,
+    pub skipped_bytes: usize,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct WireSummary {
     pub programs: BTreeMap<u16, Program>,
@@ -56,6 +141,9 @@ pub struct Reader {
     /// PMT PID -> program_number, learned from the PAT.
     pmt_pids: BTreeMap<u16, u16>,
     carry: Vec<u8>,
+    resync_mode: bool,
+    resyncs: Vec<Resync>,
+    last_pcr: Option<u64>,
 }
 
 impl Default for Reader {
@@ -70,20 +158,99 @@ impl Reader {
             summary: WireSummary::default(),
             pmt_pids: BTreeMap::new(),
             carry: Vec::new(),
+            resync_mode: false,
+            resyncs: Vec::new(),
+            last_pcr: None,
         }
+    }
+
+    pub fn packets(&self) -> u64 {
+        self.summary.packets
+    }
+
+    pub fn last_pcr(&self) -> Option<u64> {
+        self.last_pcr
+    }
+
+    pub fn is_pmt_pid(&self, pid: u16) -> bool {
+        self.pmt_pids.contains_key(&pid)
+    }
+
+    pub fn set_resync_mode(&mut self, on: bool) {
+        self.resync_mode = on;
+    }
+
+    pub fn resyncs(&self) -> &[Resync] {
+        &self.resyncs
     }
 
     pub fn feed(&mut self, bytes: &[u8]) -> Result<(), String> {
         self.carry.extend_from_slice(bytes);
-        let whole = self.carry.len() - self.carry.len() % PKT;
         let mut off = 0;
-        while off < whole {
+        while off + PKT <= self.carry.len() {
+            if self.resync_mode {
+                let ahead_ok = off + PKT >= self.carry.len() || self.carry[off + PKT] == SYNC;
+                if self.carry[off] != SYNC || !ahead_ok {
+                    // `off` is either garbage outright, or a sync byte whose
+                    // claimed 188-byte span runs into a byte that is not a
+                    // sync byte — typically because an earlier packet lost
+                    // bytes (truncation), so every packet after it now
+                    // "starts" 188 bytes too early. Either way we cannot
+                    // trust reading a whole packet from `off` without first
+                    // checking whether a genuinely confirmed packet start
+                    // sits CLOSER than `off + PKT`: if one does, `off` was
+                    // itself bogus (a splice of the truncated packet's real
+                    // header with the next real packet's leading bytes) and
+                    // must be abandoned too, not merely skipped past.
+                    let start = off;
+                    let mut k = off + 1;
+                    let mut found = None;
+                    while k + PKT <= self.carry.len() {
+                        if self.carry[k] == SYNC
+                            && (k + PKT >= self.carry.len() || self.carry[k + PKT] == SYNC)
+                        {
+                            found = Some(k);
+                            break;
+                        }
+                        k += 1;
+                    }
+                    match found {
+                        // `off` itself was never trustworthy (not even a
+                        // sync byte), or the nearest confirmed packet start
+                        // sits inside `off`'s own claimed 188-byte span:
+                        // abandon `off` and resync onto it.
+                        Some(k) if self.carry[off] != SYNC || k < off + PKT => {
+                            self.resyncs.push(Resync {
+                                at_packets: self.summary.packets,
+                                pcr_base: self.last_pcr,
+                                skipped_bytes: k - start,
+                            });
+                            off = k;
+                            continue;
+                        }
+                        // `off` is a sync byte and nothing closer contradicts
+                        // it — any corruption starts cleanly at `off + PKT`
+                        // (e.g. inserted garbage) and the next iteration's
+                        // own check finds it there.
+                        Some(_) => {}
+                        None => {
+                            if self.carry[off] != SYNC {
+                                break; // keep the tail in carry; decide on the next feed
+                            }
+                            // Not enough buffered data yet to confirm or
+                            // refute `off` — accept it optimistically,
+                            // matching the hunt's own "or is the last whole
+                            // packet in the carry" leniency.
+                        }
+                    }
+                }
+            }
             let pkt: [u8; PKT] = self.carry[off..off + PKT].try_into().expect("PKT bytes");
             self.packet(&pkt)
                 .map_err(|e| format!("packet {}: {e}", self.summary.packets))?;
             off += PKT;
         }
-        self.carry.drain(..whole);
+        self.carry.drain(..off);
         Ok(())
     }
 
@@ -94,13 +261,24 @@ impl Reader {
     /// trailing fragment means the capture was cut off mid-packet
     /// (e.g. a live recv session closing between transport reads), and
     /// callers surface that as an explicit failure rather than silently
-    /// discarding it.
-    pub fn finish(self) -> Result<WireSummary, String> {
+    /// discarding it. In resync mode, that same trailing fragment is
+    /// instead recorded as one final [`Resync`] — the whole point of
+    /// resync mode is to keep going through corruption/truncation rather
+    /// than fail the feed.
+    pub fn finish(mut self) -> Result<WireSummary, String> {
         if !self.carry.is_empty() {
-            return Err(format!(
-                "{} trailing byte(s) short of a {PKT}-byte packet",
-                self.carry.len()
-            ));
+            if self.resync_mode {
+                self.resyncs.push(Resync {
+                    at_packets: self.summary.packets,
+                    pcr_base: self.last_pcr,
+                    skipped_bytes: self.carry.len(),
+                });
+            } else {
+                return Err(format!(
+                    "{} trailing byte(s) short of a {PKT}-byte packet",
+                    self.carry.len()
+                ));
+            }
         }
         Ok(self.summary)
     }
@@ -121,65 +299,31 @@ impl Reader {
     }
 
     fn packet(&mut self, p: &[u8; PKT]) -> Result<(), String> {
-        if p[0] != SYNC {
-            return Err(format!("sync byte 0x{:02x}, want 0x47", p[0]));
-        }
-        let pusi = p[1] & 0x40 != 0;
-        let pid = (u16::from(p[1] & 0x1F) << 8) | u16::from(p[2]);
-        let afc = (p[3] >> 4) & 0x3;
+        let info = classify_packet(p)?;
         self.summary.packets += 1;
-        *self.summary.packets_per_pid.entry(pid).or_insert(0) += 1;
-
-        let mut off = 4;
-        if afc & 0x2 != 0 {
-            let af_len = usize::from(p[4]);
-            if 5 + af_len > PKT {
-                return Err(format!(
-                    "adaptation field length {af_len} does not fit in a {PKT}-byte packet"
-                ));
-            }
-            if af_len > 0 && p[5] & 0x10 != 0 {
-                // The PCR flag claims 6 bytes (program_clock_reference_
-                // base + _extension, §2.4.3.5) follow the flags byte, so
-                // the adaptation field must be at least 1 (flags) + 6
-                // bytes long. A PCR flag on a shorter adaptation field is
-                // malformed — reading `p[6..12]` anyway would silently
-                // read bytes outside the declared field (padding, or the
-                // next field entirely) as if they were PCR.
-                if af_len < 7 {
-                    return Err(format!(
-                        "adaptation field: PCR flag set but adaptation_field_length {af_len} < 7"
-                    ));
-                }
-                // program_clock_reference_base: 33 bits, §2.4.3.5.
-                let b = &p[6..12];
-                let base = (u64::from(b[0]) << 25)
-                    | (u64::from(b[1]) << 17)
-                    | (u64::from(b[2]) << 9)
-                    | (u64::from(b[3]) << 1)
-                    | u64::from(b[4] >> 7);
-                self.summary.pcr.entry(pid).or_default().push(base);
-            }
-            off = 5 + af_len;
+        *self.summary.packets_per_pid.entry(info.pid).or_insert(0) += 1;
+        if let Some(base) = info.pcr_base {
+            self.summary.pcr.entry(info.pid).or_default().push(base);
+            self.last_pcr = Some(base);
         }
-        if afc & 0x1 == 0 || off >= PKT {
+        if !info.has_payload {
             return Ok(());
         }
-        let payload = &p[off..];
-        if pid == PAT_PID {
-            if pusi {
+        let payload = &p[info.payload_off..];
+        if info.pid == PAT_PID {
+            if info.pusi {
                 self.pat(payload)?;
             }
             return Ok(());
         }
-        if let Some(&program_number) = self.pmt_pids.get(&pid) {
-            if pusi {
-                self.pmt(pid, program_number, payload)?;
+        if let Some(&program_number) = self.pmt_pids.get(&info.pid) {
+            if info.pusi {
+                self.pmt(info.pid, program_number, payload)?;
             }
             return Ok(());
         }
-        if pusi && payload.len() >= 9 && payload[..3] == [0, 0, 1] {
-            self.pes(pid, payload)?;
+        if info.pusi && payload.len() >= 9 && payload[..3] == [0, 0, 1] {
+            self.pes(info.pid, payload)?;
         }
         Ok(())
     }
@@ -536,5 +680,100 @@ mod tests {
         let mut r = Reader::new();
         let e = r.feed(&pkt).unwrap_err();
         assert!(e.contains('7'), "{e}");
+    }
+
+    #[test]
+    fn classify_packet_reports_pid_pusi_pcr_and_payload_offset() {
+        let p = crate::profiles::by_name("baseline").unwrap();
+        let path =
+            std::env::temp_dir().join(format!("tst-interop-rawts-cls-{}.ts", std::process::id()));
+        crate::r#gen::run(p, 1.0, &path).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        let first: [u8; PKT] = bytes[..PKT].try_into().unwrap();
+        let info = classify_packet(&first).unwrap();
+        assert_eq!(info.pid, 0, "first packet of a fresh mux is the PAT");
+        assert!(info.pusi);
+        assert!(info.has_payload);
+        assert_eq!(info.payload_off, 4);
+        // Find a PCR-bearing packet and check the base decodes.
+        let pcr_pkt = bytes
+            .chunks_exact(PKT)
+            .find(|c| c[3] & 0x20 != 0 && c[4] > 0 && c[5] & 0x10 != 0)
+            .unwrap();
+        let info = classify_packet(pcr_pkt.try_into().unwrap()).unwrap();
+        assert!(info.pcr_base.is_some());
+        assert_eq!(info.payload_off, 5 + usize::from(pcr_pkt[4]));
+        let mut bad = first;
+        bad[0] = 0x00;
+        assert!(classify_packet(&bad).unwrap_err().contains("sync"));
+    }
+
+    #[test]
+    fn reader_exposes_packet_count_last_pcr_and_pmt_pids() {
+        let p = crate::profiles::by_name("baseline").unwrap();
+        let path =
+            std::env::temp_dir().join(format!("tst-interop-rawts-acc-{}.ts", std::process::id()));
+        crate::r#gen::run(p, 1.0, &path).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        let mut r = Reader::new();
+        assert_eq!(r.packets(), 0);
+        assert_eq!(r.last_pcr(), None);
+        r.feed(&bytes).unwrap();
+        assert_eq!(r.packets() as usize, bytes.len() / PKT);
+        assert!(r.last_pcr().is_some());
+        assert!(r.is_pmt_pid(0x1000));
+        assert!(!r.is_pmt_pid(0x1011));
+    }
+
+    #[test]
+    fn resync_mode_hunts_forward_and_records_each_resync() {
+        let p = crate::profiles::by_name("baseline").unwrap();
+        let path =
+            std::env::temp_dir().join(format!("tst-interop-rawts-hunt-{}.ts", std::process::id()));
+        crate::r#gen::run(p, 2.0, &path).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        // Truncate packet 5 to 100 bytes and insert 37 garbage bytes after packet 20.
+        let mut bad = Vec::new();
+        for (i, pkt) in bytes.chunks_exact(PKT).enumerate() {
+            if i == 5 {
+                bad.extend_from_slice(&pkt[..100]);
+            } else {
+                bad.extend_from_slice(pkt);
+            }
+            if i == 20 {
+                bad.extend(std::iter::repeat(0x55u8).take(37));
+            }
+        }
+        let mut r = Reader::new();
+        r.set_resync_mode(true);
+        for chunk in bad.chunks(1316) {
+            r.feed(chunk).unwrap();
+        }
+        assert_eq!(r.resyncs().len(), 2, "{:?}", r.resyncs());
+        assert_eq!(r.resyncs()[0].at_packets, 5);
+        assert_eq!(r.resyncs()[0].skipped_bytes, 100);
+        assert_eq!(r.resyncs()[1].at_packets, 20);
+        assert_eq!(r.resyncs()[1].skipped_bytes, 37);
+        // Every other packet was accepted.
+        let s = r.finish().unwrap();
+        assert_eq!(s.packets as usize, bytes.len() / PKT - 1);
+    }
+
+    #[test]
+    fn resync_mode_treats_a_trailing_partial_packet_as_a_resync_not_an_error() {
+        let p = crate::profiles::by_name("baseline").unwrap();
+        let path =
+            std::env::temp_dir().join(format!("tst-interop-rawts-tail-{}.ts", std::process::id()));
+        crate::r#gen::run(p, 1.0, &path).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        let mut r = Reader::new();
+        r.set_resync_mode(true);
+        r.feed(&bytes[..3 * PKT + 50]).unwrap();
+        let s = r.finish().unwrap();
+        assert_eq!(s.packets, 3);
     }
 }
