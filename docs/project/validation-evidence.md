@@ -249,7 +249,7 @@ which measured that same sender at 0.1 KiB/hour over its final 24 hours:
 the residual was warm-up convergence toward a steady-state plateau, not
 growth.
 
-The soak rail was tightened on 2026-09-13 (PR #TBD-H): `report soak` now
+The soak rail was tightened on 2026-09-13 (PR #211): `report soak` now
 judges a run against a configured duration and RSS cadence
 (`soak-config.json`), requires ≥90 % of the cadence-implied post-warmup
 samples per process with no gap over three cadences, and fails on any
