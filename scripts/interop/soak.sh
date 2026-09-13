@@ -332,6 +332,19 @@ echo "soak: building tst-interop (release)..." >&2
 (cd "$REPO_ROOT" && SRT_FORCE_VENDORED=1 RIST_FORCE_VENDORED=1 cargo build --release -p tst-interop)
 BIN="$REPO_ROOT/target/release/tst-interop"
 
+# Fail fast on a declared config that could never pass its own
+# completeness verdicts (e.g. an `--hours` value small enough that the
+# fixed sampler end slack and warmup consume the whole run) — the same
+# `parse_soak_config` checks `report soak` always runs, invoked here
+# before any worker launches rather than only discovered hours later at
+# teardown. See `report soak --config FILE --validate-only`'s own doc
+# comment in main.rs.
+"$BIN" report soak --config "$OUTDIR/soak-config.json" --validate-only || {
+  echo "soak: soak-config.json failed validation (see above) — refusing to launch a run \
+that could never pass its own completeness verdicts" >&2
+  exit 2
+}
+
 declare -A PIDS
 
 # record_pid <role> <pid> — writes both the tracking array entry and
@@ -559,21 +572,20 @@ fi
 # Wait for the run to finish
 # ---------------------------------------------------------------------
 #
-# `recv`'s own exit code reflects its VerifyReport's `pass` (0/1), a
-# legitimate outcome this script doesn't treat as a hard failure —
-# `report soak`'s `recv_invariants_<leg>` verdict is the real judge of
-# that number, computed from the JSON, not this process's exit code.
-# `send`/`proxy` exiting nonzero is unexpected (send retries forever
-# under `--managed`; proxy has no failure path once bound) — every
-# worker's exit status is recorded below in exits.json and judged by
-# `report soak`'s `worker_exits` verdict (including a death inside the
-# supervisor's end-grace window above, which this script itself never
-# polls for), but this script still proceeds to build the report
-# regardless of what it finds: discarding hours of already-collected
-# evidence over one process's exit code would be a worse outcome than
-# a report that names the problem. (On the fail-fast path above, the
-# freshly-killed workers reap here too — nonzero, so their status
-# lands in exits.json as well.)
+# `recv`'s own exit code reflects its VerifyReport's `pass` (0/1) — a
+# verify-failing recv now fails the run TWICE over: `report soak`'s
+# `recv_invariants_<leg>` verdict judges the JSON content, and this
+# process's own nonzero exit status, recorded below in exits.json, also
+# fails `worker_exits` (an empty `expected_worker_exits` means every
+# role must exit 0). `send`/`proxy` exiting nonzero is unexpected (send
+# retries forever under `--managed`; proxy has no failure path once
+# bound) and is likewise judged purely through `worker_exits`. This
+# script still proceeds to build the report regardless of what it
+# finds: discarding hours of already-collected evidence over one
+# process's exit code would be a worse outcome than a report that names
+# the problem. (On the fail-fast path above, the freshly-killed workers
+# reap here too — nonzero, so their status lands in exits.json as
+# well.)
 declare -A EXIT_STATUS
 for role in "${ALL_ROLES[@]}"; do
   rc=0

@@ -875,6 +875,16 @@ fn run_report_render(args: &[String]) -> ! {
 /// `--rist-outage-period-s` flag) — omit all three for a single-leg
 /// (srt-only) run, e.g. a local smoke test.
 ///
+/// `report soak --config FILE --validate-only` (no other flag accepted)
+/// parses and validates `soak-config.json` alone — `soak.sh` calls this
+/// right after writing that file, at launch, so a config that could
+/// never pass `duration_coverage`/`rss_sample_coverage_*` (e.g. an
+/// `--hours` value so small the sampler's end slack and warmup consume
+/// the whole run) fails fast instead of only being discovered hours
+/// later when the real `report soak` invocation runs at teardown. Same
+/// validation `parse_soak_config` always runs — one source of truth.
+/// Exits 0 if the config is valid, 2 otherwise.
+///
 /// Exits 1 iff the resulting `SoakResults::overall_pass` is false, 2 on
 /// a usage/IO/parse error.
 fn run_report_soak(args: &[String]) -> ! {
@@ -890,6 +900,7 @@ fn run_report_soak(args: &[String]) -> ! {
     let mut rist_send_report: Option<PathBuf> = None;
     let mut rss_slope_threshold: Option<f64> = None;
     let mut out: Option<PathBuf> = None;
+    let mut validate_only = false;
 
     let mut i = 0;
     while i < args.len() {
@@ -986,8 +997,51 @@ fn run_report_soak(args: &[String]) -> ! {
                 out = Some(PathBuf::from(require_value(args, i, "report soak: --out")));
                 i += 2;
             }
+            "--validate-only" => {
+                validate_only = true;
+                i += 1;
+            }
             other => {
                 eprintln!("report soak: unknown argument: {other}");
+                std::process::exit(2);
+            }
+        }
+    }
+
+    if validate_only {
+        let other_flag_given = rss.is_some()
+            || exits.is_some()
+            || proxy_stats.is_some()
+            || recv_report.is_some()
+            || send_report.is_some()
+            || outage_period_s.is_some()
+            || rist_proxy_stats.is_some()
+            || rist_recv_report.is_some()
+            || rist_send_report.is_some()
+            || rss_slope_threshold.is_some()
+            || out.is_some();
+        if other_flag_given {
+            eprintln!("report soak: --validate-only accepts no flag other than --config");
+            std::process::exit(2);
+        }
+        let config = config.unwrap_or_else(|| {
+            eprintln!("report soak: --validate-only requires --config");
+            std::process::exit(2);
+        });
+        let text = std::fs::read_to_string(&config).unwrap_or_else(|e| {
+            eprintln!("report soak: read {}: {e}", config.display());
+            std::process::exit(2);
+        });
+        match report::soak::parse_soak_config(&text) {
+            Ok(_) => {
+                eprintln!(
+                    "report soak: --validate-only: {} is valid",
+                    config.display()
+                );
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("report soak: {e}");
                 std::process::exit(2);
             }
         }
