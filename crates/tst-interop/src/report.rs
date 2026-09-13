@@ -851,16 +851,36 @@ pub mod soak {
     use crate::proxy::ProxyStats;
     use crate::report_types::{CellMetrics, VerifyReport};
 
-    /// Warmup excluded from the RSS regression, in seconds: 30 minutes
-    /// for a full-length run, or `run_duration_s / 6` for a shorter one
-    /// (a `--hours 1` smoke's own post-warmup window would otherwise be
-    /// near-empty against a flat 30-minute floor) — whichever is
-    /// smaller.
+    /// Absolute ceiling on the warmup excluded from the RSS regression,
+    /// in seconds. The actual warmup is `min(MAX_WARMUP_S,
+    /// config.expected_duration_s * config.warmup_fraction)` — 30
+    /// minutes for a full-length run, or a fraction of the DECLARED run
+    /// length for a shorter one (a `--hours 1` smoke's own post-warmup
+    /// window would otherwise be near-empty against a flat 30-minute
+    /// floor) — whichever is smaller. Derived from the declared config
+    /// rather than the observed sample span so a truncated run doesn't
+    /// also shrink its own warmup exclusion.
     const MAX_WARMUP_S: f64 = 30.0 * 60.0;
-    const WARMUP_DURATION_FRACTION: f64 = 1.0 / 6.0;
 
     const KNOWN_LEGS: [&str; 2] = ["srt", "rist"];
     const KNOWN_PROCESSES: [&str; 3] = ["send", "proxy", "recv"];
+
+    /// Every worker `soak.sh` reaps into `exits.json` (the sampler is
+    /// killed by the script itself and is deliberately not a worker
+    /// here).
+    const WORKER_ROLES: [&str; 6] = [
+        "srt-send",
+        "srt-proxy",
+        "srt-recv",
+        "rist-send",
+        "rist-proxy",
+        "rist-recv",
+    ];
+    /// Fraction of the cadence-implied post-warmup sample count a
+    /// process must actually have.
+    const MIN_SAMPLE_COVERAGE: f64 = 0.9;
+    /// Largest tolerated gap between consecutive samples, in cadences.
+    const MAX_GAP_CADENCES: f64 = 3.0;
 
     /// One `elapsed_s,leg,process,pid,rss_kb` row from `soak.sh`'s RSS
     /// sampler. `rss_kb: None` means `/proc/<pid>/status` couldn't be
@@ -1142,6 +1162,17 @@ pub mod soak {
         pub samples_used: usize,
     }
 
+    /// Per-(leg, process) post-warmup sampling coverage.
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct RssCoverage {
+        pub leg: String,
+        pub process: String,
+        pub expected_samples: u64,
+        pub observed_samples: u64,
+        pub largest_gap_s: f64,
+        pub pass: bool,
+    }
+
     /// One (leg, process) that disappeared from `/proc` mid-run — see
     /// [`RssSample::rss_kb`].
     #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1188,10 +1219,13 @@ pub mod soak {
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct SoakResults {
         pub run_duration_s: f64,
+        pub expected_duration_s: f64,
         pub warmup_s: f64,
         pub rss_slope_threshold_kb_per_hour: Option<f64>,
         pub rss_slopes: Vec<RssSlope>,
+        pub coverage: Vec<RssCoverage>,
         pub process_exits: Vec<ProcessExit>,
+        pub worker_exits: BTreeMap<String, i32>,
         pub legs: Vec<LegResult>,
         pub verdicts: Vec<SoakVerdict>,
         /// `true` iff every non-[`SoakVerdict::provisional`] verdict
@@ -1221,6 +1255,11 @@ pub mod soak {
         /// were supplied.
         pub legs: Vec<(String, LegArtifacts)>,
         pub rss_slope_threshold_kb_per_hour: Option<f64>,
+        /// The run's declared parameters (`soak-config.json`) — judged
+        /// against, never derived from, the artifacts on disk.
+        pub config: SoakConfig,
+        /// Worker role -> exit status, from `exits.json`.
+        pub worker_exits: BTreeMap<String, i32>,
     }
 
     /// Compute every verdict from already-parsed inputs — no I/O. [`run`]
@@ -1247,6 +1286,8 @@ pub mod soak {
             rss_samples,
             legs,
             rss_slope_threshold_kb_per_hour,
+            config,
+            worker_exits,
         } = inputs;
 
         if rss_samples.is_empty() {
@@ -1271,7 +1312,32 @@ pub mod soak {
             }
             (max_t - min_t).max(0.0)
         };
-        let warmup_s = MAX_WARMUP_S.min(run_duration_s * WARMUP_DURATION_FRACTION);
+        let warmup_s = MAX_WARMUP_S.min(config.expected_duration_s * config.warmup_fraction);
+
+        // The run's own declared achievable window: `soak.sh`'s sampler
+        // deliberately stops `sampler_end_slack_s` before the nominal
+        // deadline (see `RssSample`'s doc), so the longest RSS span a
+        // healthy run can ever produce is `expected_duration_s -
+        // sampler_end_slack_s`, not `expected_duration_s` itself.
+        let achievable_span_s = config.expected_duration_s - config.sampler_end_slack_s;
+        let mut verdicts = Vec::new();
+        {
+            // Two cadences of slack: the sampler's first tick lands at
+            // t≈0 and its last up to one tick short of the achievable
+            // end.
+            let min_span_s = achievable_span_s - 2.0 * config.rss_cadence_s;
+            verdicts.push(SoakVerdict {
+                name: "duration_coverage".to_string(),
+                pass: run_duration_s >= min_span_s,
+                provisional: false,
+                detail: format!(
+                    "observed RSS span {run_duration_s:.0}s against a configured {:.0}s run \
+                     (achievable {achievable_span_s:.0}s after the sampler's {:.0}s end slack; \
+                     minimum accepted {min_span_s:.0}s)",
+                    config.expected_duration_s, config.sampler_end_slack_s
+                ),
+            });
+        }
 
         let process_exits: Vec<ProcessExit> = rss_samples
             .iter()
@@ -1286,7 +1352,10 @@ pub mod soak {
 
         // Post-warmup (leg, process) -> (elapsed_s, rss_kb) points.
         // BTreeMap keeps iteration (and so `rss_slopes`' output order)
-        // sorted by (leg, process) without a separate sort step.
+        // sorted by (leg, process) without a separate sort step. Each
+        // group's own points are sorted by elapsed time below —
+        // `rss_samples` isn't guaranteed to arrive in timestamp order,
+        // and the gap computation over `windows(2)` needs it to be.
         let mut groups: BTreeMap<(String, String), Vec<(f64, f64)>> = BTreeMap::new();
         for s in &rss_samples {
             if s.elapsed_s < warmup_s {
@@ -1298,6 +1367,9 @@ pub mod soak {
                     .or_default()
                     .push((s.elapsed_s, kb as f64));
             }
+        }
+        for points in groups.values_mut() {
+            points.sort_by(|a, b| a.0.total_cmp(&b.0));
         }
         // Every `(leg, process)` combination this run is SUPPOSED to
         // have RSS evidence for — one entry per `KNOWN_PROCESSES` value
@@ -1319,9 +1391,69 @@ pub mod soak {
             }
         }
 
+        // Per-(leg, process) sampling-density check, computed BEFORE
+        // slopes: a group with too few post-warmup samples (or too
+        // large a gap between consecutive ones) can't support a
+        // trustworthy regression, so it's excluded from `rss_slopes`
+        // below rather than silently reporting a slope built from a
+        // couple of stray points.
+        let expected_samples = ((achievable_span_s - warmup_s) / config.rss_cadence_s)
+            .floor()
+            .max(0.0) as u64;
+        let min_samples = (expected_samples as f64 * MIN_SAMPLE_COVERAGE).ceil() as u64;
+        let max_gap_s = MAX_GAP_CADENCES * config.rss_cadence_s;
+        let mut coverage: Vec<RssCoverage> = Vec::new();
+        for ((leg, process), points) in &groups {
+            let mut largest_gap_s = 0.0f64;
+            for w in points.windows(2) {
+                largest_gap_s = largest_gap_s.max(w[1].0 - w[0].0);
+            }
+            let distinct_ts = points
+                .iter()
+                .map(|(t, _)| t.to_bits())
+                .collect::<std::collections::BTreeSet<_>>()
+                .len();
+            let pass =
+                distinct_ts >= 2 && points.len() as u64 >= min_samples && largest_gap_s < max_gap_s;
+            coverage.push(RssCoverage {
+                leg: leg.clone(),
+                process: process.clone(),
+                expected_samples,
+                observed_samples: points.len() as u64,
+                largest_gap_s,
+                pass,
+            });
+            verdicts.push(SoakVerdict {
+                name: format!("rss_sample_coverage_{leg}_{process}"),
+                pass,
+                provisional: false,
+                detail: format!(
+                    "{} post-warmup sample(s) ({} distinct timestamps) against {expected_samples} \
+                     expected at a {:.0}s cadence (minimum {min_samples}); largest gap {largest_gap_s:.0}s \
+                     (maximum {max_gap_s:.0}s)",
+                    points.len(),
+                    distinct_ts,
+                    config.rss_cadence_s
+                ),
+            });
+        }
+
+        // Only groups whose coverage passed get a regression computed
+        // over them — a slope from a handful of sparse or gappy points
+        // isn't evidence of anything.
+        let covered: std::collections::BTreeSet<(String, String)> = coverage
+            .iter()
+            .filter(|c| c.pass)
+            .map(|c| (c.leg.clone(), c.process.clone()))
+            .collect();
         let rss_slopes: Vec<RssSlope> = groups
             .into_iter()
+            .filter(|(key, _)| covered.contains(key))
             .map(|((leg, process), points)| {
+                debug_assert!(
+                    points.len() >= 2,
+                    "a coverage-passed group must have at least 2 samples"
+                );
                 let samples_used = points.len();
                 let slope_kb_per_hour = linear_regression_slope(&points) * 3600.0;
                 RssSlope {
@@ -1333,7 +1465,6 @@ pub mod soak {
             })
             .collect();
 
-        let mut verdicts = Vec::new();
         for (leg, process) in &missing_data {
             verdicts.push(SoakVerdict {
                 name: format!("rss_data_present_{leg}_{process}"),
@@ -1376,6 +1507,29 @@ pub mod soak {
                     process_exits.len(),
                     process_exits
                 )
+            },
+        });
+
+        let mut exit_problems: Vec<String> = Vec::new();
+        for role in WORKER_ROLES {
+            match worker_exits.get(role) {
+                None => exit_problems.push(format!("{role}: no exit status recorded")),
+                Some(&status) => {
+                    let expected = config.expected_worker_exits.get(role).copied().unwrap_or(0);
+                    if status != expected {
+                        exit_problems.push(format!("{role}: exit {status} (expected {expected})"));
+                    }
+                }
+            }
+        }
+        verdicts.push(SoakVerdict {
+            name: "worker_exits".to_string(),
+            pass: exit_problems.is_empty(),
+            provisional: false,
+            detail: if exit_problems.is_empty() {
+                "every worker exited with its expected status".to_string()
+            } else {
+                exit_problems.join("; ")
             },
         });
 
@@ -1475,10 +1629,13 @@ pub mod soak {
 
         Ok(SoakResults {
             run_duration_s,
+            expected_duration_s: config.expected_duration_s,
             warmup_s,
             rss_slope_threshold_kb_per_hour,
             rss_slopes,
+            coverage,
             process_exits,
+            worker_exits,
             legs: leg_results,
             verdicts,
             overall_pass,
@@ -1569,10 +1726,37 @@ pub mod soak {
             ));
         }
 
+        // TEMPORARY until Task 3 wires --config/--exits: there is no
+        // soak-config.json / exits.json to read yet, so derive an
+        // honest stand-in — a declared duration equal to what the
+        // samples themselves span (so duration_coverage can't fail
+        // against a number this call never had), the real sampler
+        // cadence, and every worker recorded as a clean exit.
+        let expected_duration_s = {
+            let mut min_t = f64::INFINITY;
+            let mut max_t = f64::NEG_INFINITY;
+            for s in &rss_samples {
+                min_t = min_t.min(s.elapsed_s);
+                max_t = max_t.max(s.elapsed_s);
+            }
+            (max_t - min_t).max(0.0)
+        };
+        let config = SoakConfig {
+            expected_duration_s,
+            rss_cadence_s: 30.0,
+            warmup_fraction: 1.0 / 6.0,
+            sampler_end_slack_s: 0.0,
+            expected_worker_exits: BTreeMap::new(),
+        };
+        let worker_exits: BTreeMap<String, i32> =
+            WORKER_ROLES.iter().map(|r| (r.to_string(), 0)).collect();
+
         let results = build_soak_results(SoakInputs {
             rss_samples,
             legs,
             rss_slope_threshold_kb_per_hour,
+            config,
+            worker_exits,
         })?;
 
         let json = serde_json::to_string_pretty(&results).expect("SoakResults always serializes");
@@ -1648,6 +1832,174 @@ pub mod soak {
             vec![("srt".to_string(), artifacts)]
         }
 
+        /// A config whose expected duration matches a synthetic series that
+        /// spans `span_s` at `cadence_s` — the sampler-slack term is 0 so
+        /// `span == expected` is the fully-covered case.
+        fn cfg(span_s: f64, cadence_s: f64) -> SoakConfig {
+            SoakConfig {
+                expected_duration_s: span_s,
+                rss_cadence_s: cadence_s,
+                warmup_fraction: 1.0 / 6.0,
+                sampler_end_slack_s: 0.0,
+                expected_worker_exits: BTreeMap::new(),
+            }
+        }
+
+        fn six_clean_exits() -> BTreeMap<String, i32> {
+            [
+                "srt-send",
+                "srt-proxy",
+                "srt-recv",
+                "rist-send",
+                "rist-proxy",
+                "rist-recv",
+            ]
+            .into_iter()
+            .map(|r| (r.to_string(), 0))
+            .collect()
+        }
+
+        /// 3 processes x `n` samples every `cadence_s`, all flat.
+        fn flat_series(n: usize, cadence_s: f64) -> Vec<RssSample> {
+            let mut s = Vec::new();
+            for i in 0..n {
+                let t = i as f64 * cadence_s;
+                s.push(rss_row("srt", "send", t, Some(50_000)));
+                s.push(rss_row("srt", "proxy", t, Some(20_000)));
+                s.push(rss_row("srt", "recv", t, Some(50_000)));
+            }
+            s
+        }
+
+        fn verdict<'a>(r: &'a SoakResults, name: &str) -> &'a SoakVerdict {
+            r.verdicts
+                .iter()
+                .find(|v| v.name == name)
+                .unwrap_or_else(|| panic!("verdict {name} must be present: {:?}", r.verdicts))
+        }
+
+        fn inputs(
+            samples: Vec<RssSample>,
+            config: SoakConfig,
+            exits: BTreeMap<String, i32>,
+        ) -> SoakInputs {
+            SoakInputs {
+                rss_samples: samples,
+                legs: one_leg(LegArtifacts {
+                    proxy_stats: proxy_stats(1000, 0, 0.0, None, 0),
+                    recv_report: passing_recv_report(1000),
+                    send_metrics: cell_metrics(1000),
+                    outage_period_s: None,
+                }),
+                rss_slope_threshold_kb_per_hour: None,
+                config,
+                worker_exits: exits,
+            }
+        }
+
+        #[test]
+        fn fully_covered_run_passes_every_completeness_verdict() {
+            // 121 samples at 30s = 3600s span, expected 3600.
+            let r = build_soak_results(inputs(
+                flat_series(121, 30.0),
+                cfg(3600.0, 30.0),
+                six_clean_exits(),
+            ))
+            .unwrap();
+            assert!(verdict(&r, "duration_coverage").pass);
+            assert!(verdict(&r, "rss_sample_coverage_srt_send").pass);
+            assert!(verdict(&r, "worker_exits").pass);
+            assert!(r.overall_pass, "{:?}", r.verdicts);
+        }
+
+        #[test]
+        fn run_truncated_at_forty_percent_fails_duration_coverage() {
+            // Series spans 1440s of an expected 3600s.
+            let r = build_soak_results(inputs(
+                flat_series(49, 30.0),
+                cfg(3600.0, 30.0),
+                six_clean_exits(),
+            ))
+            .unwrap();
+            let v = verdict(&r, "duration_coverage");
+            assert!(!v.pass, "{}", v.detail);
+            assert!(!v.provisional);
+            assert!(!r.overall_pass);
+            assert_eq!(r.expected_duration_s, 3600.0);
+        }
+
+        #[test]
+        fn one_sample_per_process_fails_sample_coverage_and_skips_slope() {
+            let mut samples = flat_series(1, 30.0);
+            // Put the one sample past warmup so it is the only post-warmup point.
+            for s in &mut samples {
+                s.elapsed_s = 3000.0;
+            }
+            let r =
+                build_soak_results(inputs(samples, cfg(3600.0, 30.0), six_clean_exits())).unwrap();
+            let v = verdict(&r, "rss_sample_coverage_srt_send");
+            assert!(!v.pass, "{}", v.detail);
+            assert!(
+                r.rss_slopes.is_empty(),
+                "slope must not be computed from a single sample: {:?}",
+                r.rss_slopes
+            );
+            assert!(r.verdicts.iter().all(|v| !v.name.starts_with("rss_slope_")));
+            assert!(!r.overall_pass);
+        }
+
+        #[test]
+        fn ten_minute_gap_in_an_otherwise_complete_series_fails_sample_coverage() {
+            let mut samples = flat_series(121, 30.0);
+            // Drop every sample in (1800, 2400) — a 600s hole after warmup.
+            samples.retain(|s| !(s.elapsed_s > 1800.0 && s.elapsed_s < 2400.0));
+            let r =
+                build_soak_results(inputs(samples, cfg(3600.0, 30.0), six_clean_exits())).unwrap();
+            let v = verdict(&r, "rss_sample_coverage_srt_send");
+            assert!(!v.pass, "{}", v.detail);
+            assert!(v.detail.contains("largest gap"), "{}", v.detail);
+            let c = r.coverage.iter().find(|c| c.process == "send").unwrap();
+            assert!(c.largest_gap_s >= 600.0);
+        }
+
+        #[test]
+        fn nonzero_worker_exit_fails_worker_exits_verdict() {
+            let mut exits = six_clean_exits();
+            exits.insert("srt-send".to_string(), 137);
+            let r = build_soak_results(inputs(flat_series(121, 30.0), cfg(3600.0, 30.0), exits))
+                .unwrap();
+            let v = verdict(&r, "worker_exits");
+            assert!(!v.pass);
+            assert!(
+                v.detail.contains("srt-send") && v.detail.contains("137"),
+                "{}",
+                v.detail
+            );
+            assert!(!r.overall_pass);
+        }
+
+        #[test]
+        fn expected_nonzero_exit_listed_in_config_passes() {
+            let mut exits = six_clean_exits();
+            exits.insert("srt-send".to_string(), 137);
+            let mut config = cfg(3600.0, 30.0);
+            config
+                .expected_worker_exits
+                .insert("srt-send".to_string(), 137);
+            let r = build_soak_results(inputs(flat_series(121, 30.0), config, exits)).unwrap();
+            assert!(verdict(&r, "worker_exits").pass);
+        }
+
+        #[test]
+        fn missing_worker_role_in_exits_fails() {
+            let mut exits = six_clean_exits();
+            exits.remove("rist-recv");
+            let r = build_soak_results(inputs(flat_series(121, 30.0), cfg(3600.0, 30.0), exits))
+                .unwrap();
+            let v = verdict(&r, "worker_exits");
+            assert!(!v.pass && v.detail.contains("rist-recv"), "{}", v.detail);
+        }
+
         // (a) flat RSS -> pass (and, with no threshold set, provisional).
         // Samples cover all 3 processes (not just "send") so the
         // per-combination data-presence check (see `missing_data`) has
@@ -1671,6 +2023,8 @@ pub mod soak {
                     outage_period_s: None,
                 }),
                 rss_slope_threshold_kb_per_hour: None,
+                config: cfg(1140.0, 60.0),
+                worker_exits: six_clean_exits(),
             })
             .expect("non-empty rss_samples must not error");
 
@@ -1719,6 +2073,8 @@ pub mod soak {
                     outage_period_s: None,
                 }),
                 rss_slope_threshold_kb_per_hour: None,
+                config: cfg(35940.0, 60.0),
+                worker_exits: six_clean_exits(),
             };
 
             let no_threshold =
@@ -1777,6 +2133,8 @@ pub mod soak {
                     outage_period_s: None,
                 }),
                 rss_slope_threshold_kb_per_hour: None,
+                config: cfg(0.0, 30.0),
+                worker_exits: six_clean_exits(),
             })
             .expect("non-empty rss_samples must not error");
 
@@ -1804,11 +2162,14 @@ pub mod soak {
         fn drop_rate_matching_configured_outage_passes() {
             let total = 100_000u64;
             let dropped = (total as f64 * 0.02).round() as u64;
-            // All 3 processes present (not just "send") — this test
-            // asserts `overall_pass`, so it must clear the
-            // per-combination data-presence check too.
+            // All 3 processes present at a real 300s cadence (not just
+            // "send", and not just the two endpoints) — this test
+            // asserts `overall_pass`, so it must clear both the
+            // per-combination data-presence check AND the new
+            // duration/sample-coverage checks too.
             let mut samples = Vec::new();
-            for t in [0.0, 3600.0] {
+            for i in 0..=12 {
+                let t = i as f64 * 300.0;
                 samples.push(rss_row("srt", "send", t, Some(1000)));
                 samples.push(rss_row("srt", "proxy", t, Some(1000)));
                 samples.push(rss_row("srt", "recv", t, Some(1000)));
@@ -1822,6 +2183,8 @@ pub mod soak {
                     outage_period_s: Some(3600),
                 }),
                 rss_slope_threshold_kb_per_hour: None,
+                config: cfg(3600.0, 300.0),
+                worker_exits: six_clean_exits(),
             })
             .expect("non-empty rss_samples must not error");
 
@@ -1865,6 +2228,8 @@ pub mod soak {
                     outage_period_s: Some(21600),
                 }),
                 rss_slope_threshold_kb_per_hour: None,
+                config: cfg(3542.0, 30.0),
+                worker_exits: six_clean_exits(),
             })
             .expect("non-empty rss_samples must not error");
 
@@ -1897,6 +2262,8 @@ pub mod soak {
                     outage_period_s: Some(21600),
                 }),
                 rss_slope_threshold_kb_per_hour: None,
+                config: cfg(259200.0, 30.0),
+                worker_exits: six_clean_exits(),
             })
             .expect("non-empty rss_samples must not error");
 
@@ -1933,6 +2300,8 @@ pub mod soak {
                     outage_period_s: None,
                 }),
                 rss_slope_threshold_kb_per_hour: None,
+                config: cfg(0.0, 30.0),
+                worker_exits: six_clean_exits(),
             })
             .expect("non-empty rss_samples must not error");
 
@@ -1961,11 +2330,17 @@ pub mod soak {
         fn small_n_two_x_drop_rate_deviation_still_passes() {
             let total = 50u64;
             let dropped = 2u64; // 4% observed vs 2% configured, same ratio as the large-n test above
-            let samples = vec![
-                rss_row("srt", "send", 0.0, Some(1000)),
-                rss_row("srt", "proxy", 0.0, Some(1000)),
-                rss_row("srt", "recv", 0.0, Some(1000)),
-            ];
+            // A short but dense RSS series (this test asserts
+            // `overall_pass`, so it must also clear duration/sample
+            // coverage — not just the drop-rate check it's actually
+            // about).
+            let mut samples = Vec::new();
+            for i in 0..=3 {
+                let t = i as f64 * 60.0;
+                samples.push(rss_row("srt", "send", t, Some(1000)));
+                samples.push(rss_row("srt", "proxy", t, Some(1000)));
+                samples.push(rss_row("srt", "recv", t, Some(1000)));
+            }
             let results = build_soak_results(SoakInputs {
                 rss_samples: samples,
                 legs: one_leg(LegArtifacts {
@@ -1975,6 +2350,8 @@ pub mod soak {
                     outage_period_s: None,
                 }),
                 rss_slope_threshold_kb_per_hour: None,
+                config: cfg(180.0, 60.0),
+                worker_exits: six_clean_exits(),
             })
             .expect("non-empty rss_samples must not error");
 
@@ -2012,6 +2389,8 @@ pub mod soak {
                     outage_period_s: None,
                 }),
                 rss_slope_threshold_kb_per_hour: None,
+                config: cfg(0.0, 30.0),
+                worker_exits: six_clean_exits(),
             })
             .expect("non-empty rss_samples must not error");
 
@@ -2056,6 +2435,8 @@ pub mod soak {
                 rss_samples: samples,
                 legs: Vec::new(),
                 rss_slope_threshold_kb_per_hour: None,
+                config: cfg(30.0, 30.0),
+                worker_exits: six_clean_exits(),
             })
             .expect("non-empty rss_samples must not error");
             let v = results
@@ -2077,6 +2458,8 @@ pub mod soak {
                 rss_samples: samples,
                 legs: Vec::new(),
                 rss_slope_threshold_kb_per_hour: None,
+                config: cfg(30.0, 30.0),
+                worker_exits: six_clean_exits(),
             })
             .expect("non-empty rss_samples must not error");
             assert_eq!(results.process_exits.len(), 1);
@@ -2233,6 +2616,8 @@ pub mod soak {
                     outage_period_s: None,
                 }),
                 rss_slope_threshold_kb_per_hour: None,
+                config: cfg(0.0, 30.0),
+                worker_exits: six_clean_exits(),
             })
             .expect_err("empty rss_samples must be a hard error, not a vacuous pass");
             assert!(err.contains("zero data rows"), "{err}");
@@ -2264,6 +2649,8 @@ pub mod soak {
                     outage_period_s: None,
                 }),
                 rss_slope_threshold_kb_per_hour: None,
+                config: cfg(1140.0, 60.0),
+                worker_exits: six_clean_exits(),
             })
             .expect("non-empty rss_samples must not error");
 
@@ -2294,18 +2681,23 @@ pub mod soak {
             );
         }
 
-        /// (Folds Minor 6) Exactly one post-warmup sample per process —
-        /// distinct from the entirely-missing case above: this data IS
-        /// present, just too thin for a real regression.
-        /// `linear_regression_slope`'s `n < 2.0` guard must return
-        /// `0.0` without dividing by zero, and a single present sample
-        /// must NOT trip the new `rss_data_present_*` missing-data
-        /// check (that check is about zero samples, not "not enough for
-        /// a confident slope").
+        /// (Folds Minor 6; contract updated by the completeness-verdicts
+        /// wave) Exactly one post-warmup sample per process — distinct
+        /// from the entirely-missing case above: this data IS present,
+        /// just too thin for a real regression. Under the OLD contract
+        /// this regressed to a 0.0 slope; under the NEW one, a single
+        /// post-warmup sample can't clear `rss_sample_coverage_*`
+        /// (fewer than 2 distinct timestamps), so it's reported as
+        /// missing evidence — no `rss_slope_*` verdict at all — rather
+        /// than a (misleadingly confident-looking) flat 0.0 slope. A
+        /// single present sample must still NOT trip the OLDER,
+        /// separate `rss_data_present_*` missing-data check (that one
+        /// is about zero samples, not "not enough for a confident
+        /// slope").
         #[test]
-        fn single_post_warmup_sample_regresses_to_zero_without_dividing_by_zero() {
-            // Two ticks per process: one at t=0 (pre-warmup, established
-            // run_duration_s=6000 -> warmup_s=min(1800, 1000)=1000s,
+        fn single_post_warmup_sample_is_missing_evidence_not_zero_slope() {
+            // Two ticks per process: one at t=0 (pre-warmup, with a
+            // declared 6000s run -> warmup_s=min(1800, 1000)=1000s,
             // excluding it) and one at t=6000 (post-warmup, the lone
             // surviving sample).
             let mut samples = Vec::new();
@@ -2322,25 +2714,31 @@ pub mod soak {
                     outage_period_s: None,
                 }),
                 rss_slope_threshold_kb_per_hour: None,
+                config: cfg(6000.0, 6000.0),
+                worker_exits: six_clean_exits(),
             })
             .expect("non-empty rss_samples must not error");
 
-            assert_eq!(
-                results.rss_slopes.len(),
-                3,
-                "all 3 processes must be present"
+            assert!(
+                results.rss_slopes.is_empty(),
+                "a single post-warmup sample must not produce a slope: {:?}",
+                results.rss_slopes
             );
-            for slope in &results.rss_slopes {
-                assert_eq!(
-                    slope.samples_used, 1,
-                    "{}/{} should have exactly 1 post-warmup sample",
-                    slope.leg, slope.process
-                );
-                assert_eq!(
-                    slope.slope_kb_per_hour, 0.0,
-                    "n<2 must regress to 0.0, never divide by zero"
-                );
+            for process in ["send", "proxy", "recv"] {
+                let v = results
+                    .verdicts
+                    .iter()
+                    .find(|v| v.name == format!("rss_sample_coverage_srt_{process}"))
+                    .unwrap_or_else(|| panic!("coverage verdict for {process} must be present"));
+                assert!(!v.pass, "{}", v.detail);
             }
+            assert!(
+                !results
+                    .verdicts
+                    .iter()
+                    .any(|v| v.name.starts_with("rss_slope_")),
+                "no rss_slope_* verdict must be emitted when coverage fails"
+            );
             assert!(
                 !results
                     .verdicts
@@ -2348,6 +2746,7 @@ pub mod soak {
                     .any(|v| v.name.starts_with("rss_data_present_")),
                 "a single present sample is not 'missing data'"
             );
+            assert!(!results.overall_pass);
         }
 
         #[test]
