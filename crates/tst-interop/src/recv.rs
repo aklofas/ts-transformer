@@ -16,7 +16,6 @@ use tst_pipeline::{
 
 use crate::cli::write_json;
 use crate::profiles::{self, Profile};
-use crate::rawts::WireSummary;
 use crate::report_types::VerifyReport;
 use crate::transport::{self, Teeing};
 use crate::verify::{self, Tally, VerifyMode};
@@ -162,18 +161,20 @@ pub fn recv_over_transport(
     // have no other owner.
     drop(rx);
 
+    // Read the tap BEFORE `finish` — its `wire` (the tee's own
+    // `rawts::Reader`, fed every byte `recv_bytes` returned) is what
+    // `finish` checks the wire-level oracles against; a captured stream
+    // that fell out of 188-byte packet alignment surfaces here as
+    // `reader_error`, added below as an explicit failure rather than
+    // silently dropped.
+    let (bytes, stream_sha256, wire, reader_error) = transport::tee_tally(tap);
+
     let mode = if strict {
         VerifyMode::Strict
     } else {
         VerifyMode::Lossy
     };
-    let mut report = tally.finish(
-        expect,
-        seconds,
-        verify::NOMINAL_COUNT_SLACK,
-        mode,
-        &WireSummary::default(),
-    );
+    let mut report = tally.finish(expect, seconds, verify::NOMINAL_COUNT_SLACK, mode, &wire);
     // `Tally`'s own bytes/stream_sha256 fields were never fed (we never
     // called `note_bytes` on it) — the `Teeing` tap captured the exact
     // bytes at the transport boundary instead, which is the
@@ -181,9 +182,12 @@ pub fn recv_over_transport(
     // the demuxer's internal packet-alignment chunking). Overwrite the
     // two fields `finish` computed from the unfed (empty) hasher with
     // the real tally.
-    let (bytes, stream_sha256) = transport::tee_tally(tap);
     report.metrics.bytes = bytes;
     report.metrics.stream_sha256 = stream_sha256;
+    if let Some(e) = reader_error {
+        report.failures.push(format!("rawts_sync_loss: {e}"));
+        report.pass = false;
+    }
     Ok(report)
 }
 
@@ -386,22 +390,23 @@ pub fn run_managed(
     // handle), so it's never in the way here.
     drop(rx);
 
+    // Read the tap BEFORE `finish` — see `recv_over_transport`'s doc
+    // comment for why.
+    let (bytes, stream_sha256, wire, reader_error) = transport::tee_tally(tap);
+
     let mode = if strict {
         VerifyMode::Strict
     } else {
         VerifyMode::Lossy
     };
-    let mut report = tally.finish(
-        expect,
-        seconds,
-        verify::NOMINAL_COUNT_SLACK,
-        mode,
-        &WireSummary::default(),
-    );
-    let (bytes, stream_sha256) = transport::tee_tally(tap);
+    let mut report = tally.finish(expect, seconds, verify::NOMINAL_COUNT_SLACK, mode, &wire);
     report.metrics.bytes = bytes;
     report.metrics.stream_sha256 = stream_sha256;
     report.reconnects = Some(reconnects);
+    if let Some(e) = reader_error {
+        report.failures.push(format!("rawts_sync_loss: {e}"));
+        report.pass = false;
+    }
 
     if let Some(target) = json_out {
         write_json(target, &report)?;

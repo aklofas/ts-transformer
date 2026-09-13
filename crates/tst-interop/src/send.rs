@@ -192,7 +192,11 @@ pub fn send_over_transport(
     // also requires the `Teeing` — owned by `sender`'s inner transport
     // state — to have no other owner, which `drop` satisfies too.)
     drop(sender);
-    let (bytes, stream_sha256) = transport::tee_tally(tap);
+    // The send side never feeds `Teeing`'s raw-TS reader (only the
+    // `RecvTransport` impl does — see `transport::TeeState`'s doc
+    // comment), so the wire summary/reader-error here are always
+    // empty/`None`; nothing on this path needs them.
+    let (bytes, stream_sha256, _wire, _reader_error) = transport::tee_tally(tap);
 
     Ok(CellMetrics {
         video_aus,

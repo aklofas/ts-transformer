@@ -23,6 +23,7 @@ use tst_core::mpegts::demux::{
     DemuxEvent, Demuxer, MetadataKind, SamplePayload, VideoCodec as DemuxVideoCodec,
 };
 
+use crate::oracles;
 use crate::profiles::{self, Profile};
 use crate::rawts::{self, WireSummary};
 use crate::report_types::{CellMetrics, VerifyReport};
@@ -155,6 +156,19 @@ pub(crate) fn klv_set_hash(record_digests: &[String]) -> String {
 /// run are held to the identical bar.
 pub(crate) const NOMINAL_COUNT_SLACK: f64 = 0.7;
 
+/// Per-program media counts — [`Tally::feed`] tallies these off each
+/// event's `StreamId::program_number`, alongside (not instead of) the
+/// whole-capture totals, so [`crate::oracles::check`]'s per-program
+/// accounting oracle can catch a program whose media is missing even
+/// when the whole-capture totals still clear their floor (a two-program
+/// capture where only program 1's media ever arrived).
+#[derive(Clone, Copy, Default)]
+pub struct ProgramCounts {
+    pub video_aus: u64,
+    pub klv_records: u64,
+    pub audio_frames: u64,
+}
+
 /// Accumulates wire-format facts from a stream of [`DemuxEvent`]s.
 pub struct Tally {
     video_aus: u64,
@@ -177,6 +191,8 @@ pub struct Tally {
     /// library code the soak means to measure.
     track_klv_digests: bool,
     audio_frames: u64,
+    /// Per-`program_number` media counts — see [`ProgramCounts`].
+    per_program: BTreeMap<u16, ProgramCounts>,
     programs_seen: BTreeSet<u16>,
     /// Distinct video codecs observed across all `Sample` events. Normally
     /// a singleton (one codec per profile); tracked as a set so an
@@ -217,6 +233,7 @@ impl Tally {
             klv_digests: Vec::new(),
             track_klv_digests: true,
             audio_frames: 0,
+            per_program: BTreeMap::new(),
             programs_seen: BTreeSet::new(),
             video_codecs_seen: HashSet::new(),
             klv_carriage_seen: HashSet::new(),
@@ -265,6 +282,10 @@ impl Tally {
                         ..
                     } => {
                         self.video_aus += 1;
+                        self.per_program
+                            .entry(stream.program_number)
+                            .or_default()
+                            .video_aus += 1;
                         self.video_codecs_seen.insert(*codec);
                         if *random_access_indicator {
                             self.keyframes += 1;
@@ -280,6 +301,10 @@ impl Tally {
                     }
                     SamplePayload::Audio { .. } => {
                         self.audio_frames += 1;
+                        self.per_program
+                            .entry(stream.program_number)
+                            .or_default()
+                            .audio_frames += 1;
                     }
                     SamplePayload::Subtitle { .. } | SamplePayload::Unknown { .. } => {}
                 }
@@ -292,6 +317,10 @@ impl Tally {
             } => {
                 self.record_pts(stream.pid, *pts);
                 self.klv_records += 1;
+                self.per_program
+                    .entry(stream.program_number)
+                    .or_default()
+                    .klv_records += 1;
                 if self.track_klv_digests {
                     self.klv_digests.push(to_hex(&Sha256::digest(payload)));
                 }
@@ -338,8 +367,9 @@ impl Tally {
     /// `NonConformant` always fails, in either mode.
     ///
     /// `wire` is the independent [`rawts`] reader's summary of the same
-    /// bytes, alongside the tst-core-demuxed `Tally` — consumed by a
-    /// later task's wire-level oracles; accepted and unused here.
+    /// bytes, alongside the tst-core-demuxed `Tally` — checked by
+    /// [`oracles::check`]'s six wire-level oracles, parameterized by
+    /// `p`'s [`profiles::Invariants`].
     pub fn finish(
         self,
         p: &Profile,
@@ -348,7 +378,6 @@ impl Tally {
         mode: VerifyMode,
         wire: &WireSummary,
     ) -> VerifyReport {
-        let _ = wire;
         let inv = profiles::invariants(p);
         let mut failures = Vec::new();
 
@@ -431,6 +460,16 @@ impl Tally {
                 self.first_discontinuity.as_deref().unwrap_or("?")
             ));
         }
+
+        failures.extend(oracles::check(
+            p,
+            &inv,
+            wire,
+            &self.per_program,
+            seconds,
+            slack,
+            mode,
+        ));
 
         let metrics = CellMetrics {
             video_aus: self.video_aus,
@@ -542,6 +581,28 @@ mod tests {
     const PROGRAM: u16 = 1;
     const FPS_STEP_TICKS: i64 = 3_000; // 90_000 / 30 fps
     const KLV_STEP_TICKS: i64 = 9_000; // 90_000 / 10 Hz
+
+    /// A real `WireSummary` for profile `name`/`seconds`, built via
+    /// `gen::run` and `rawts::summarize_file`. The `Tally`-level tests
+    /// below feed hand-built `DemuxEvent`s (deliberately not a real
+    /// captured stream: custom PIDs, injected discontinuities/
+    /// mismatches) into a `Tally`, but `Tally::finish` also runs
+    /// `oracles::check` against the `WireSummary` passed in — an empty
+    /// `WireSummary::default()` would trip the wire-level oracles (e.g.
+    /// a missing-PMT failure) regardless of what a given test actually
+    /// means to exercise, so this builds a genuinely conformant capture
+    /// for the test's profile/duration instead.
+    fn wire_for(name: &str, seconds: f64) -> WireSummary {
+        let p = profiles::by_name(name).unwrap_or_else(|| panic!("profile {name} must exist"));
+        let path = std::env::temp_dir().join(format!(
+            "tst-interop-verify-wire-{name}-{}.ts",
+            std::process::id()
+        ));
+        crate::r#gen::run(p, seconds, &path).expect("gen::run must succeed");
+        let wire = rawts::summarize_file(&path).expect("summarize_file must succeed");
+        let _ = std::fs::remove_file(&path);
+        wire
+    }
 
     fn program_map_event() -> DemuxEvent {
         DemuxEvent::ProgramMap(ProgramMap {
@@ -682,6 +743,7 @@ mod tests {
 
     #[test]
     fn strict_mode_fails_on_a_discontinuity_lossy_counts_it() {
+        let wire = wire_for("baseline", 3.0);
         for (mode, expect_pass) in [(VerifyMode::Strict, false), (VerifyMode::Lossy, true)] {
             let mut t = healthy_baseline_tally();
             t.feed(&discontinuity_event());
@@ -690,7 +752,7 @@ mod tests {
                 3.0,
                 NOMINAL_COUNT_SLACK,
                 mode,
-                &WireSummary::default(),
+                &wire,
             );
             assert_eq!(r.pass, expect_pass, "{mode:?}: {:?}", r.failures);
             assert_eq!(r.metrics.discontinuities, 1);
@@ -708,6 +770,7 @@ mod tests {
 
     #[test]
     fn nonconformant_fails_in_both_modes() {
+        let wire = wire_for("baseline", 3.0);
         for mode in [VerifyMode::Strict, VerifyMode::Lossy] {
             let mut t = healthy_baseline_tally();
             t.feed(&nonconformant_event());
@@ -716,7 +779,7 @@ mod tests {
                 3.0,
                 NOMINAL_COUNT_SLACK,
                 mode,
-                &WireSummary::default(),
+                &wire,
             );
             assert!(!r.pass);
             assert_eq!(r.metrics.nonconformant, 1);
@@ -741,7 +804,7 @@ mod tests {
             2.0,
             NOMINAL_COUNT_SLACK,
             VerifyMode::Lossy,
-            &WireSummary::default(),
+            &wire_for("baseline", 2.0),
         );
 
         assert!(
@@ -772,7 +835,7 @@ mod tests {
             2.0,
             NOMINAL_COUNT_SLACK,
             VerifyMode::Lossy,
-            &WireSummary::default(),
+            &wire_for("baseline", 2.0),
         );
 
         assert!(!report.pass);
@@ -790,16 +853,12 @@ mod tests {
     #[test]
     fn tally_fails_wrong_klv_bytes() {
         let p = profiles::by_name("baseline").expect("baseline profile must exist");
+        let wire = wire_for("baseline", 2.0);
 
         let mut expected = Tally::new();
         feed_two_seconds_baseline(&mut expected);
-        let expected_report = expected.finish(
-            p,
-            2.0,
-            NOMINAL_COUNT_SLACK,
-            VerifyMode::Lossy,
-            &WireSummary::default(),
-        );
+        let expected_report =
+            expected.finish(p, 2.0, NOMINAL_COUNT_SLACK, VerifyMode::Lossy, &wire);
 
         let mut tampered = Tally::new();
         tampered.feed(&program_map_event());
@@ -812,13 +871,8 @@ mod tests {
             // different bytes.
             tampered.feed(&klv_event(i as i64 * KLV_STEP_TICKS, i + 1000));
         }
-        let tampered_report = tampered.finish(
-            p,
-            2.0,
-            NOMINAL_COUNT_SLACK,
-            VerifyMode::Lossy,
-            &WireSummary::default(),
-        );
+        let tampered_report =
+            tampered.finish(p, 2.0, NOMINAL_COUNT_SLACK, VerifyMode::Lossy, &wire);
 
         // Counts/invariants alone can't see the swap (same cadence, same
         // record count) — the set fingerprint is what catches it. Actual
@@ -837,6 +891,7 @@ mod tests {
     #[test]
     fn tally_pts_rollover_aware() {
         let p = profiles::by_name("baseline").expect("baseline profile must exist");
+        let wire = wire_for("baseline", 2.0);
 
         // (a) Crossing the 2^33 wrap with per-frame deltas must NOT count
         // as a violation.
@@ -848,13 +903,7 @@ mod tests {
             let pts = raw.rem_euclid(WRAP); // the wire value wraps at 2^33
             wrapping.feed(&video_event(pts, i == 0));
         }
-        let report = wrapping.finish(
-            p,
-            2.0,
-            NOMINAL_COUNT_SLACK,
-            VerifyMode::Lossy,
-            &WireSummary::default(),
-        );
+        let report = wrapping.finish(p, 2.0, NOMINAL_COUNT_SLACK, VerifyMode::Lossy, &wire);
         assert!(
             report.metrics.pts_monotonic,
             "small per-frame deltas across the 2^33 wrap must be accepted"
@@ -865,13 +914,7 @@ mod tests {
         let mut violated = Tally::new();
         violated.feed(&video_event(200_000, true));
         violated.feed(&video_event(20_000, false)); // ~2s backwards
-        let report = violated.finish(
-            p,
-            2.0,
-            NOMINAL_COUNT_SLACK,
-            VerifyMode::Lossy,
-            &WireSummary::default(),
-        );
+        let report = violated.finish(p, 2.0, NOMINAL_COUNT_SLACK, VerifyMode::Lossy, &wire);
         assert!(
             !report.metrics.pts_monotonic,
             "a 2s backwards jump must be flagged as non-monotonic"
@@ -907,7 +950,7 @@ mod tests {
             2.0,
             NOMINAL_COUNT_SLACK,
             VerifyMode::Lossy,
-            &WireSummary::default(),
+            &wire_for("av1-klv-a", 2.0),
         );
 
         assert!(report.pass, "failures: {:?}", report.failures);
@@ -940,7 +983,7 @@ mod tests {
             2.0,
             NOMINAL_COUNT_SLACK,
             VerifyMode::Lossy,
-            &WireSummary::default(),
+            &wire_for("baseline", 2.0),
         );
 
         assert!(!report.pass);
@@ -971,7 +1014,7 @@ mod tests {
             2.0,
             NOMINAL_COUNT_SLACK,
             VerifyMode::Lossy,
-            &WireSummary::default(),
+            &wire_for("klv-sync", 2.0),
         );
 
         assert!(!report.pass);
@@ -1001,7 +1044,7 @@ mod tests {
             2.0,
             NOMINAL_COUNT_SLACK,
             VerifyMode::Lossy,
-            &WireSummary::default(),
+            &wire_for("klv-sync", 2.0),
         );
 
         assert!(report.pass, "failures: {:?}", report.failures);
@@ -1013,25 +1056,23 @@ mod tests {
     /// call `Tally::feed` directly on hand-built events). Mux a small real
     /// TS file and drive it through `verify_file` end to end to cover that
     /// remaining path.
+    ///
+    /// Built from `mux_setup::build_config` (not a hand-rolled
+    /// `MuxerConfig` on this module's own `VIDEO_PID`/`KLV_PID` sentinel
+    /// PIDs) — `oracles::check`'s wire-level oracles now read `Invariants
+    /// ::programs`, which is derived from `mux_setup`'s real PID
+    /// constants, so a genuine `verify_file` pass needs a capture actually
+    /// muxed onto those PIDs.
     #[test]
     fn verify_file_passes_a_real_muxed_capture() {
-        use tst_core::mpegts::mux::{
-            KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder,
-            VideoCodec as MuxVideoCodec,
-        };
+        use tst_core::mpegts::mux::Muxer;
 
-        let cfg = {
-            let mut prog = MuxerProgramConfigBuilder::new(PROGRAM, 0x1000);
-            prog.add_video(VIDEO_PID, MuxVideoCodec::H264);
-            prog.add_klv(KLV_PID, KlvStreamType::PrivateData, false);
-            let mut b = MuxerConfig::builder();
-            b.add_program(prog.build());
-            b.build().expect("minimal single-program config must build")
-        };
+        let p = profiles::by_name("baseline").expect("baseline profile must exist");
+        let cfg = crate::mux_setup::build_config(p);
         let mut mux = Muxer::new(cfg).expect("muxer must construct");
 
         for i in 0..60u32 {
-            let (au, keyframe) = fixtures::video_au(crate::profiles::VideoCodec::H264, i);
+            let (au, keyframe) = fixtures::video_au(p.video, i);
             mux.push_video(&au, Pts90khz::new(i as i64 * FPS_STEP_TICKS), keyframe)
                 .expect("push_video must succeed");
         }
@@ -1058,7 +1099,6 @@ mod tests {
         ));
         std::fs::write(&path, &ts_bytes).expect("write temp TS file");
 
-        let p = profiles::by_name("baseline").expect("baseline profile must exist");
         let result = verify_file(&path, p, 2.0);
         let _ = std::fs::remove_file(&path);
         let report = result.expect("verify_file must succeed reading the file");

@@ -24,11 +24,11 @@ use crate::schedule::{self, Event, PTS_HZ};
 /// video frame and `90_000 / p.klv_hz` ticks per KLV record, both from
 /// `p.start_pts_ticks`, with no wall-clock sleeps — every event for the
 /// whole `seconds` window is computed up front, sorted into ascending PTS
-/// order, then pushed and drained in one pass. Audio (when
-/// `p.audio`) is paced 1:1 with video, sharing its PTS — real AAC framing
-/// runs at ~43 Hz for 1024-sample frames at 44.1 kHz, but nothing
-/// downstream checks audio cadence (only presence), so pairing with video
-/// keeps this generator's pacing loop simple.
+/// order, then pushed and drained in one pass. Audio (when `p.audio`)
+/// runs on its own cadence — real AAC framing at 1024 samples/frame and
+/// `schedule::AUDIO_SAMPLE_RATE_HZ` (48 kHz) — independent of the video
+/// frame rate; see `schedule::build_schedule`'s doc comment and
+/// `oracles::audio`, which checks that cadence on the wire.
 ///
 /// `two-program` profiles push the same video AU / KLV record onto every
 /// configured program's handles at the same PTS — the "duplicate the
