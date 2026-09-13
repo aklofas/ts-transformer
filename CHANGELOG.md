@@ -647,7 +647,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   everywhere (CI, a branch dispatch, and a local run alike — no
   warn-only mode), not just a warning. `expectations.toml` is rejected
   outright if two rows can both match the same (cell, profile) without
-  distinct `failure_contains` strings. `run-matrix.sh --allowed-skips
+  distinct `failure_contains` strings, and now every `expected_unsupported`
+  row must carry one — every documented-gap row names the exact failure
+  text it absorbs, so an unrelated regression on the same cell can never
+  be silently swallowed. `run-matrix.sh --allowed-skips
   <ids|globs>` is a local-only escape hatch for a box missing a peer
   tool; `interop.yml` never sets it, so a CI run must produce the full
   declared census for real.

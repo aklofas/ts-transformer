@@ -151,13 +151,16 @@ pub struct Expectation {
     pub verdict: ExpectVerdict,
     pub reason: String,
     pub reference: Option<String>,
-    /// Optional substring narrowing: when set, this expectation only
-    /// matches a `FAIL` whose failures text contains it (see the
-    /// private `find_expectation` helper's doc comment for the exact
-    /// matching rule). Never applied to a `PASS` staleness lookup — an
+    /// Substring narrowing: when set, this expectation only matches a
+    /// `FAIL` whose failures text contains it (see the private
+    /// `find_expectation` helper's doc comment for the exact matching
+    /// rule). Never applied to a `PASS` staleness lookup — an
     /// expectation is checked for staleness by `(cell, profile)` alone,
     /// regardless of what failure text it was originally written to
-    /// match.
+    /// match. Mandatory on an `ExpectVerdict::ExpectedUnsupported` row
+    /// (enforced by `ExpectBuilder::finish` — a documented gap must
+    /// name the failure text it absorbs); optional on a `KnownFlaky`
+    /// row, which by definition has no single mechanism string.
     pub failure_contains: Option<String>,
 }
 
@@ -233,6 +236,12 @@ impl ExpectBuilder {
         let reason = self.reason.ok_or_else(|| {
             format!("expectations block ending at line {end_line}: missing required key `reason`")
         })?;
+        if verdict == ExpectVerdict::ExpectedUnsupported && self.failure_contains.is_none() {
+            return Err(format!(
+                "expectations block ending at line {end_line}: expected_unsupported rows must \
+                 carry failure_contains (name the failure text this row absorbs)"
+            ));
+        }
         Ok(Expectation {
             cell,
             profile,
@@ -4071,6 +4080,7 @@ profile = \"baseline\"
 verdict = \"expected_unsupported\"
 reason = \"mpv lacks async KLV support\"
 ref = \"TICKET-123\"
+failure_contains = \"no async KLV\"
 
 [[expect]]
 cell = \"srt/flaky\"
@@ -4085,8 +4095,26 @@ reason = \"intermittent timeout\"
         assert_eq!(parsed[0].reference.as_deref(), Some("TICKET-123"));
         assert_eq!(parsed[1].verdict, ExpectVerdict::KnownFlaky);
         assert_eq!(parsed[1].reference, None);
-        assert_eq!(parsed[0].failure_contains, None);
+        assert_eq!(parsed[0].failure_contains.as_deref(), Some("no async KLV"));
         assert_eq!(parsed[1].failure_contains, None);
+    }
+
+    #[test]
+    fn expected_unsupported_row_without_failure_contains_is_rejected() {
+        let text = "[[expect]]\ncell = \"decode/mpv\"\nprofile = \"baseline\"\n\
+                    verdict = \"expected_unsupported\"\nreason = \"mpv lacks async KLV support\"\n";
+        let err = parse_expectations(text).unwrap_err();
+        assert!(err.contains("failure_contains"), "{err}");
+    }
+
+    #[test]
+    fn known_flaky_row_may_omit_failure_contains() {
+        let text = "[[expect]]\ncell = \"srt/flaky\"\nprofile = \"baseline\"\n\
+                    verdict = \"known_flaky\"\nreason = \"intermittent timeout\"\n";
+        let parsed =
+            parse_expectations(text).expect("known_flaky rows have no single mechanism string");
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].failure_contains, None);
     }
 
     #[test]
@@ -4174,8 +4202,8 @@ failure_contains = \"stream_sha256 mismatch\"
 
     #[test]
     fn two_rows_on_the_same_cell_without_distinct_failure_contains_are_rejected() {
-        let text = "[[expect]]\ncell = \"decode/mpv/audio\"\nprofile = \"audio\"\nverdict = \"expected_unsupported\"\nreason = \"a\"\n\n\
-                    [[expect]]\ncell = \"decode/mpv/*\"\nprofile = \"audio\"\nverdict = \"expected_unsupported\"\nreason = \"b\"\n";
+        let text = "[[expect]]\ncell = \"decode/mpv/audio\"\nprofile = \"audio\"\nverdict = \"expected_unsupported\"\nreason = \"a\"\nfailure_contains = \"x\"\n\n\
+                    [[expect]]\ncell = \"decode/mpv/*\"\nprofile = \"audio\"\nverdict = \"expected_unsupported\"\nreason = \"b\"\nfailure_contains = \"x\"\n";
         let e = parse_expectations(text).unwrap_err();
         assert!(
             e.contains("ambiguous") && e.contains("decode/mpv/audio") && e.contains("decode/mpv/*"),
@@ -4192,8 +4220,8 @@ failure_contains = \"stream_sha256 mismatch\"
 
     #[test]
     fn same_cell_different_profile_is_not_ambiguous() {
-        let text = "[[expect]]\ncell = \"decode/vlc/audio\"\nprofile = \"audio\"\nverdict = \"expected_unsupported\"\nreason = \"a\"\n\n\
-                    [[expect]]\ncell = \"decode/vlc/audio\"\nprofile = \"baseline\"\nverdict = \"expected_unsupported\"\nreason = \"b\"\n";
+        let text = "[[expect]]\ncell = \"decode/vlc/audio\"\nprofile = \"audio\"\nverdict = \"expected_unsupported\"\nreason = \"a\"\nfailure_contains = \"x\"\n\n\
+                    [[expect]]\ncell = \"decode/vlc/audio\"\nprofile = \"baseline\"\nverdict = \"expected_unsupported\"\nreason = \"b\"\nfailure_contains = \"y\"\n";
         assert_eq!(parse_expectations(text).unwrap().len(), 2);
     }
 
@@ -4243,14 +4271,20 @@ failure_contains = \"stream_sha256 mismatch\"
         .expect("write cell a");
         fs::write(
             cells_dir.join("b.json"),
-            serde_json::to_string(&raw_cell("decode/mpv", "baseline", RawVerdict::Fail)).unwrap(),
+            serde_json::to_string(&raw_cell_with_failures(
+                "decode/mpv",
+                "baseline",
+                RawVerdict::Fail,
+                &["mpv lacks async KLV support"],
+            ))
+            .unwrap(),
         )
         .expect("write cell b");
 
         let expectations_path = dir.join("expectations.toml");
         fs::write(
             &expectations_path,
-            "[[expect]]\ncell = \"decode/mpv\"\nprofile = \"baseline\"\nverdict = \"expected_unsupported\"\nreason = \"gap\"\n",
+            "[[expect]]\ncell = \"decode/mpv\"\nprofile = \"baseline\"\nverdict = \"expected_unsupported\"\nreason = \"gap\"\nfailure_contains = \"async KLV support\"\n",
         )
         .expect("write expectations");
 
