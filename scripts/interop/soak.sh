@@ -98,6 +98,9 @@
 #
 # Expected outputs under `--outdir`:
 #   rss.csv            - elapsed_s,leg,process,pid,rss_kb (6 PIDs, 3 process names, both legs)
+#   soak-config.json   - the run's declared parameters, written BEFORE any
+#                         evidence exists (`report soak`'s `--config`)
+#   exits.json          - every worker's reaped exit status (`report soak`'s `--exits`)
 #   srt/{proxy-stats,recv-report,send-report}.json  - klv_set_sha256 is `null` in both
 #   rist/{proxy-stats,recv-report,send-report}.json   report/send JSONs (--no-klv-digest;
 #                                                      counts/every other field unaffected)
@@ -156,6 +159,12 @@
 # dry-runs (not this script) — see this task's own report for why
 # that's an accepted, well-understood trade-off ahead of the real 72h
 # run, which DOES reach the schedule's outage windows for real.
+#
+# `--hours N` (decimal allowed, e.g. 0.05 for a 3-minute drill): fast
+# enough to exercise the whole launch/supervisor/report path end-to-end
+# without waiting out even the 1h smoke above — long enough for a
+# handful of sampler ticks, too short for any real RSS-slope or outage
+# signal (both stay provisional at that length, same as any sub-72h run).
 #
 # Validated on linux-x86_64; linux-aarch64 is expected to work (no
 # arch-specific code: pure Rust + bash + /proc) but hasn't been
@@ -217,21 +226,15 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# The `^[0-9]+$` regex check must come BEFORE any arithmetic comparison
-# on these values: bash's `[[ ... -gt ... ]]`/`$(( ))` both treat a
-# leading-zero literal ("08") as octal, and "08"/"09" aren't valid octal
-# digits — `[[ "08" -gt 0 ]]` fails with "value too great for base"
-# instead of the clean usage error a caller who zero-pads (e.g.
-# `--hours 08`) would expect. Mirrors lib.sh's `cell_timeout`'s own
-# `10#` guard for exactly this reason. Once the regex confirms
-# all-digits, the `10#` prefix on the actual arithmetic below forces
-# base-10 interpretation regardless of leading zeros.
-[[ "$HOURS" =~ ^[0-9]+$ ]] || {
-  echo "soak.sh: --hours must be a positive integer, got: $HOURS" >&2
-  exit 2
-}
-[[ $((10#$HOURS)) -gt 0 ]] || {
-  echo "soak.sh: --hours must be a positive integer, got: $HOURS" >&2
+# --hours accepts a decimal (e.g. `0.05` = 3 minutes) so a drill can
+# exercise the whole supervisor/report path in minutes rather than
+# hours — bash's own integer arithmetic can't validate or consume that,
+# so both the format check and the positivity check below shell out to
+# `awk`, and every downstream use of $HOURS (TOTAL_SECONDS, the
+# full-length slope-default check) does too, rather than bash's
+# `$(( ))`/`10#` integer path used elsewhere in this script.
+[[ "$HOURS" =~ ^[0-9]+(\.[0-9]+)?$ ]] && awk -v h="$HOURS" 'BEGIN{exit !(h>0)}' || {
+  echo "soak.sh: --hours must be a positive number, got: $HOURS" >&2
   exit 2
 }
 [[ "$SEED" =~ ^[0-9]+$ ]] || {
@@ -244,7 +247,7 @@ done
 # header's "RSS-slope gate" paragraph for the 200 KiB/h derivation and
 # why short runs stay provisional (plateau convergence dominates their
 # post-warmup window).
-if [[ -z "$RSS_SLOPE_THRESHOLD" && $((10#$HOURS)) -ge 72 ]]; then
+if [[ -z "$RSS_SLOPE_THRESHOLD" ]] && awk -v h="$HOURS" 'BEGIN{exit !(h>=72)}'; then
   RSS_SLOPE_THRESHOLD=200
 fi
 
@@ -269,7 +272,7 @@ event() {
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*" >>"$EVENTS_LOG"
 }
 
-TOTAL_SECONDS=$((10#$HOURS * 3600))
+TOTAL_SECONDS=$(awk -v h="$HOURS" 'BEGIN{printf "%d", h*3600}')
 # Outage schedule (srt leg only — see this file's header). Kept as
 # separate numeric/unit-suffixed forms rather than duplicating "6h"
 # and "21600" independently: OUTAGE_PERIOD_S is the single source of
@@ -315,6 +318,15 @@ PROXY_ADDR_POLL_TIMEOUT_S=10
 # both proxies' `--run-seconds` gain this much extra margin, so neither
 # fix alone has to carry the full burden.
 SAMPLER_END_SLACK_S=35
+
+# Declared BEFORE any evidence exists — `report soak` judges the run
+# against these, never against what the artifacts happen to span
+# (release-gate audit RLS-B09).
+RSS_CADENCE_S=30
+jq -n --argjson dur "$TOTAL_SECONDS" --argjson cad "$RSS_CADENCE_S" \
+  --argjson slack "$SAMPLER_END_SLACK_S" \
+  '{expected_duration_s: $dur, rss_cadence_s: $cad, warmup_fraction: 0.1667,
+    sampler_end_slack_s: $slack, expected_worker_exits: {}}' >"$OUTDIR/soak-config.json"
 
 echo "soak: building tst-interop (release)..." >&2
 (cd "$REPO_ROOT" && SRT_FORCE_VENDORED=1 RIST_FORCE_VENDORED=1 cargo build --release -p tst-interop)
@@ -491,7 +503,7 @@ sample_rss_loop() {
       fi
       printf '%s,%s,%s,%s,%s\n' "$elapsed" "$leg" "$process" "$pid" "$rss_kb" >>"$out"
     done
-    sleep 30
+    sleep "$RSS_CADENCE_S"
   done
 }
 
@@ -552,20 +564,39 @@ fi
 # `report soak`'s `recv_invariants_<leg>` verdict is the real judge of
 # that number, computed from the JSON, not this process's exit code.
 # `send`/`proxy` exiting nonzero is unexpected (send retries forever
-# under `--managed`; proxy has no failure path once bound) and is
-# logged loudly, but this script still proceeds to build the report —
-# discarding hours of already-collected evidence over one process's
-# exit code would be a worse outcome than a report that names the
-# problem. (On the fail-fast path above, the freshly-killed workers
-# reap here too — nonzero, so they land in FAILED_ROLES as well.)
-FAILED_ROLES=()
-for role in srt-recv srt-proxy srt-send rist-recv rist-proxy rist-send; do
-  wait "${PIDS[$role]}" || {
-    echo "soak: $role (pid ${PIDS[$role]}) exited nonzero — see logs/$role.log" >&2
-    event "EXIT-NONZERO role=$role pid=${PIDS[$role]}"
-    FAILED_ROLES+=("$role")
-  }
+# under `--managed`; proxy has no failure path once bound) — every
+# worker's exit status is recorded below in exits.json and judged by
+# `report soak`'s `worker_exits` verdict (including a death inside the
+# supervisor's end-grace window above, which this script itself never
+# polls for), but this script still proceeds to build the report
+# regardless of what it finds: discarding hours of already-collected
+# evidence over one process's exit code would be a worse outcome than
+# a report that names the problem. (On the fail-fast path above, the
+# freshly-killed workers reap here too — nonzero, so their status
+# lands in exits.json as well.)
+declare -A EXIT_STATUS
+for role in "${ALL_ROLES[@]}"; do
+  rc=0
+  wait "${PIDS[$role]}" || rc=$?
+  EXIT_STATUS[$role]=$rc
+  if [[ $rc -ne 0 ]]; then
+    echo "soak: $role (pid ${PIDS[$role]}) exited $rc — see logs/$role.log" >&2
+    event "EXIT-NONZERO role=$role pid=${PIDS[$role]} status=$rc"
+  fi
 done
+# Every worker's exit status, for `report soak`'s worker_exits verdict —
+# a nonzero exit anywhere, INCLUDING inside the end-grace window the
+# supervisor deliberately stops polling, fails the run through the
+# report rather than only through this script's summary line.
+{
+  printf '{'
+  sep=''
+  for role in "${ALL_ROLES[@]}"; do
+    printf '%s"%s": %d' "$sep" "$role" "${EXIT_STATUS[$role]}"
+    sep=', '
+  done
+  printf '}\n'
+} >"$OUTDIR/exits.json"
 
 # Stop the sampler now rather than waiting out its own up-to-30s tail
 # past the leg processes' shared deadline.
@@ -580,6 +611,8 @@ echo "soak: generating soak-results.json..." >&2
 REPORT_ARGS=(
   report soak
   --rss "$RSS_CSV"
+  --config "$OUTDIR/soak-config.json"
+  --exits "$OUTDIR/exits.json"
   --proxy-stats "$OUTDIR/srt/proxy-stats.json"
   --recv-report "$OUTDIR/srt/recv-report.json"
   --send-report "$OUTDIR/srt/send-report.json"
@@ -599,7 +632,7 @@ REPORT_RC=0
   echo "outdir: $OUTDIR"
   echo "hours: $HOURS  seed: $SEED  outage_period_s: $OUTAGE_PERIOD_S  outage_dur_s: $OUTAGE_DUR_S"
   echo "loss_pct: $LOSS_PCT  jitter_ms: $JITTER_MS  delay_ms: $DELAY_MS  reorder: $REORDER  au_sizes: realistic"
-  echo "failed process exits: ${FAILED_ROLES[*]:-none}"
+  echo "worker exits: $(cat "$OUTDIR/exits.json")"
   [[ -z "$PREMATURE_DEATH" ]] || echo "PREMATURE DEATH: $PREMATURE_DEATH (fail-fast — see soak-FAILED + soak-events.log)"
   echo
   # On the fail-fast path `report soak` typically exits 2 with no
@@ -607,8 +640,8 @@ REPORT_RC=0
   # summary must still get written rather than dying here under
   # `pipefail` on the missing file.
   if [[ -s "$OUTDIR/soak-results.json" ]]; then
-    jq '{overall_pass, run_duration_s, warmup_s, rss_slope_threshold_kb_per_hour,
-         rss_slopes, process_exits, legs, limitations}' "$OUTDIR/soak-results.json"
+    jq '{overall_pass, run_duration_s, expected_duration_s, warmup_s, rss_slope_threshold_kb_per_hour,
+         rss_slopes, coverage, process_exits, worker_exits, legs, limitations}' "$OUTDIR/soak-results.json"
   else
     echo "no soak-results.json (report soak rc=$REPORT_RC — run did not produce a complete artifact set)"
   fi
