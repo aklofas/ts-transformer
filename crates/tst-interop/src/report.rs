@@ -132,6 +132,14 @@ pub struct Results {
     pub meta: serde_json::Value,
     pub cells: Vec<MergedCell>,
     pub summary: Summary,
+    /// Set by [`merge`] from the `--inventory` file it validated the run
+    /// against. `None` only for a `Results` built directly by
+    /// [`build_results`] rather than through `merge`'s file-driven
+    /// wrapper (e.g. in tests) — a real `results.json` written by `merge`
+    /// always has this set. `#[serde(default)]` so an older `results.json`
+    /// written before this field existed still deserializes.
+    #[serde(default)]
+    pub inventory: Option<InventorySummary>,
 }
 
 /// One `[[expect]]` block from the expectations file.
@@ -449,6 +457,7 @@ pub fn build_results(
         meta,
         cells,
         summary,
+        inventory: None,
     }
 }
 
@@ -588,23 +597,29 @@ pub fn check_inventory(raw_cells: &[RawCell], inv: &Inventory) -> Result<(), Str
     }
 }
 
-/// `report merge --cells-dir DIR --expectations FILE --meta FILE --out
-/// results.json`: read every per-cell JSON file in `cells_dir`, apply
-/// `expectations_path`'s expectations, embed `meta_path`'s contents
-/// verbatim, and write the result to `out_path`. Returns the same
-/// [`Results`] that was written — the caller decides the process exit
-/// code from `results.summary.fail` (see the module doc).
+/// `report merge --cells-dir DIR --expectations FILE --meta FILE
+/// --inventory FILE --out results.json`: read every per-cell JSON file
+/// in `cells_dir`, apply `expectations_path`'s expectations, embed
+/// `meta_path`'s contents verbatim, validate the produced cells against
+/// `inventory_path`'s declared multiset (see [`check_inventory`]), and
+/// write the result to `out_path`. Returns the same [`Results`] that was
+/// written — the caller decides the process exit code from
+/// `results.summary.fail` and `results.summary.stale_expectations` (see
+/// the module doc).
 ///
 /// Errors (rather than returning an empty, trivially-all-PASS
-/// [`Results`]) if `cells_dir` contains zero `*.json` files — the same
-/// "never silently absorbed" property the module doc describes for
-/// individual failures also has to hold for the degenerate case of an
-/// orchestrator that crashed before writing any cell at all, or a
-/// `--cells-dir` typo.
+/// [`Results`]) if `cells_dir` contains zero `*.json` files, or if the
+/// produced cells don't exactly match `inventory_path`'s declared
+/// multiset — the same "never silently absorbed" property the module
+/// doc describes for individual failures also has to hold for the
+/// degenerate case of an orchestrator that crashed before writing any
+/// cell at all, a `--cells-dir` typo, or a run that silently dropped or
+/// duplicated cells. Neither error writes `out_path`.
 pub fn merge(
     cells_dir: &Path,
     expectations_path: &Path,
     meta_path: &Path,
+    inventory_path: &Path,
     out_path: &Path,
 ) -> Result<Results, String> {
     let expectations_text = fs::read_to_string(expectations_path)
@@ -617,6 +632,10 @@ pub fn merge(
     let meta: serde_json::Value = serde_json::from_str(&meta_text)
         .map_err(|e| format!("parse {}: {e}", meta_path.display()))?;
 
+    let inventory_text = fs::read_to_string(inventory_path)
+        .map_err(|e| format!("read {}: {e}", inventory_path.display()))?;
+    let inventory = parse_inventory(&inventory_text)?;
+
     let raw_cells = read_cells_dir(cells_dir)?;
     if raw_cells.is_empty() {
         return Err(format!(
@@ -626,7 +645,14 @@ pub fn merge(
             cells_dir.display()
         ));
     }
-    let results = build_results(raw_cells, &expectations, meta);
+    check_inventory(&raw_cells, &inventory)?;
+
+    let mut results = build_results(raw_cells, &expectations, meta);
+    results.inventory = Some(InventorySummary {
+        shape: inventory.shape.clone(),
+        declared_cells: inventory.cells.len(),
+        allowed_skips: inventory.allowed_skips.clone(),
+    });
 
     let json = serde_json::to_string_pretty(&results).expect("Results always serializes");
     fs::write(out_path, json).map_err(|e| format!("write {}: {e}", out_path.display()))?;
@@ -688,6 +714,14 @@ pub fn render_markdown(results: &Results) -> String {
 
     let mut out = String::new();
     writeln!(out, "# Interop Report").unwrap();
+    if let Some(inv) = &results.inventory {
+        writeln!(
+            out,
+            "Inventory: {} ({} declared cells)",
+            inv.shape, inv.declared_cells
+        )
+        .unwrap();
+    }
     writeln!(out).unwrap();
 
     writeln!(out, "**Meta**").unwrap();
@@ -3819,6 +3853,7 @@ mod tests {
                     reason: "historic gap, now fixed".to_string(),
                 }],
             },
+            inventory: None,
         };
 
         let golden = "\
@@ -3857,6 +3892,22 @@ mod tests {
 
         let rendered = render_markdown(&results);
         assert_eq!(rendered, golden, "rendered markdown:\n{rendered}");
+
+        // A `Some` inventory renders its own line — the `None` case above
+        // must stay byte-identical to the golden text.
+        let with_inventory = Results {
+            inventory: Some(InventorySummary {
+                shape: SHAPE_SUBSET.to_string(),
+                declared_cells: 3,
+                allowed_skips: Vec::new(),
+            }),
+            ..results.clone()
+        };
+        let rendered_with_inventory = render_markdown(&with_inventory);
+        assert!(
+            rendered_with_inventory.contains("Inventory: subset (3 declared cells)"),
+            "expected an Inventory line when inventory is Some:\n{rendered_with_inventory}"
+        );
     }
 
     #[test]
@@ -3889,6 +3940,7 @@ mod tests {
                 stale_expectations: Vec::new(),
             },
             cells,
+            inventory: None,
         };
 
         let rendered = render_markdown(&results);
@@ -3929,6 +3981,7 @@ mod tests {
                 stale_expectations: Vec::new(),
             },
             cells,
+            inventory: None,
         };
 
         let rendered = render_markdown(&results);
@@ -4120,13 +4173,31 @@ failure_contains = \"stream_sha256 mismatch\"
         let meta_path = dir.join("meta.json");
         fs::write(&meta_path, r#"{"host": "test-host"}"#).expect("write meta");
 
+        let inventory_path = dir.join("inventory.json");
+        fs::write(
+            &inventory_path,
+            serde_json::to_string(&inventory(
+                &[("decode/ffmpeg", "baseline"), ("decode/mpv", "baseline")],
+                &[],
+            ))
+            .unwrap(),
+        )
+        .expect("write inventory");
+
         let out_path = dir.join("results.json");
-        let results = merge(&cells_dir, &expectations_path, &meta_path, &out_path)
-            .expect("merge must succeed");
+        let results = merge(
+            &cells_dir,
+            &expectations_path,
+            &meta_path,
+            &inventory_path,
+            &out_path,
+        )
+        .expect("merge must succeed");
 
         assert_eq!(results.summary.fail, 0);
         assert_eq!(results.summary.pass, 1);
         assert_eq!(results.summary.expected_unsupported, 1);
+        assert_eq!(results.inventory.as_ref().unwrap().declared_cells, 2);
         assert!(out_path.exists());
 
         let md_path = dir.join("results.md");
@@ -4174,9 +4245,22 @@ failure_contains = \"stream_sha256 mismatch\"
         let meta_path = dir.join("meta.json");
         fs::write(&meta_path, r#"{"host": "test-host"}"#).expect("write meta");
 
+        let inventory_path = dir.join("inventory.json");
+        fs::write(
+            &inventory_path,
+            serde_json::to_string(&inventory(&[], &[])).unwrap(),
+        )
+        .expect("write inventory");
+
         let out_path = dir.join("results.json");
-        let err = merge(&cells_dir, &expectations_path, &meta_path, &out_path)
-            .expect_err("merge over zero cell files must be an error, not a clean empty report");
+        let err = merge(
+            &cells_dir,
+            &expectations_path,
+            &meta_path,
+            &inventory_path,
+            &out_path,
+        )
+        .expect_err("merge over zero cell files must be an error, not a clean empty report");
 
         assert!(
             err.contains(&cells_dir.display().to_string()),
@@ -4186,6 +4270,66 @@ failure_contains = \"stream_sha256 mismatch\"
             !out_path.exists(),
             "merge must not write --out on this error path"
         );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// An inventory mismatch is a hard `merge` error, same shape as the
+    /// empty-`--cells-dir` case above: no `--out` written, no silently
+    /// short-produced report.
+    #[test]
+    fn merge_with_inventory_mismatch_is_a_hard_error_and_writes_nothing() {
+        let dir = std::env::temp_dir().join(format!(
+            "tst-interop-report-merge-inv-mismatch-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time moves forward")
+                .as_nanos()
+        ));
+        let cells_dir = dir.join("cells");
+        fs::create_dir_all(&cells_dir).expect("create cells dir");
+
+        // ONE produced cell...
+        fs::write(
+            cells_dir.join("a.json"),
+            serde_json::to_string(&raw_cell("decode/ffmpeg", "baseline", RawVerdict::Pass))
+                .unwrap(),
+        )
+        .expect("write cell a");
+
+        let expectations_path = dir.join("expectations.toml");
+        fs::write(&expectations_path, "# no expectations\n").expect("write expectations");
+
+        let meta_path = dir.join("meta.json");
+        fs::write(&meta_path, r#"{"host": "test-host"}"#).expect("write meta");
+
+        // ...but an inventory declaring TWO.
+        let inventory_path = dir.join("inventory.json");
+        fs::write(
+            &inventory_path,
+            serde_json::to_string(&inventory(
+                &[("decode/ffmpeg", "baseline"), ("decode/mpv", "baseline")],
+                &[],
+            ))
+            .unwrap(),
+        )
+        .expect("write inventory");
+
+        let out_path = dir.join("results.json");
+        let e = merge(
+            &cells_dir,
+            &expectations_path,
+            &meta_path,
+            &inventory_path,
+            &out_path,
+        )
+        .unwrap_err();
+        assert!(
+            e.contains("inventory mismatch") && e.contains("missing"),
+            "{e}"
+        );
+        assert!(!out_path.exists());
 
         let _ = fs::remove_dir_all(&dir);
     }
