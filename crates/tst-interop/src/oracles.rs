@@ -12,7 +12,7 @@ use tst_core::mpegts::mux::Av1CarriageMode;
 
 use crate::profiles::{Invariants, KlvMode, Profile};
 use crate::rawts::WireSummary;
-use crate::verify::{ProgramCounts, VerifyMode};
+use crate::verify::{self, ProgramCounts, VerifyMode};
 
 const PTS_WRAP: u64 = 1 << 33;
 const PCR_LOWER_SLACK_MS: f64 = 0.5;
@@ -52,8 +52,8 @@ fn program_accounting(
     slack: f64,
 ) -> Vec<String> {
     let mut f = Vec::new();
-    let min_video = (inv.min_video_aus_per_sec as f64 * seconds * slack).floor() as u64;
-    let min_klv = (inv.min_klv_per_sec as f64 * seconds * slack).floor() as u64;
+    let min_video = verify::min_count(inv.min_video_aus_per_sec, seconds, slack);
+    let min_klv = verify::min_count(inv.min_klv_per_sec, seconds, slack);
     for ep in &inv.programs {
         let n = ep.program_number;
         let c = per_program.get(&n).copied().unwrap_or_default();
@@ -87,16 +87,27 @@ fn program_accounting(
 /// AAC frame at the expected sample rate; the frame count and median
 /// PTS step match that rate's real cadence (1024 samples/frame).
 fn audio(inv: &Invariants, wire: &WireSummary, seconds: f64) -> Vec<String> {
-    let Some(expected_rate) = inv.audio_sample_rate_hz else {
-        return Vec::new();
-    };
-    let Some(pid) = inv.programs[0].audio_pid else {
+    // `audio_sample_rate_hz` and `programs[0].audio_pid` are both
+    // `p.audio.then_some(..)` in `profiles::invariants` — always Some
+    // together or None together — so one combined gate covers both
+    // instead of two sequential (and, given that coupling, effectively
+    // redundant) early returns.
+    let (Some(expected_rate), Some(pid)) = (inv.audio_sample_rate_hz, inv.programs[0].audio_pid)
+    else {
         return Vec::new();
     };
     let mut f = Vec::new();
     match wire.pes.get(&pid).and_then(|s| s.first_payload_prefix) {
-        // ADTS syncword 0xFFF (ISO/IEC 13818-7 §6.2.1); profile bits in byte 2.
-        Some(pfx) if pfx[0] == 0xFF && pfx[1] & 0xF0 == 0xF0 => {
+        // ADTS syncword 0xFFF (ISO/IEC 13818-7 §6.2.1) plus `layer == 00`
+        // (byte 1, bits 2-1): ADTS AAC always sets layer to 0, so this is
+        // what distinguishes a real AAC-ADTS header from an MPEG-1/2
+        // Layer II/III frame, which shares the same 0xFFF syncword and
+        // ID bit but sets a nonzero layer — without this check an
+        // MPEG-audio frame with a coincidentally-matching sample-rate
+        // index byte would misread as a passing ADTS header. Profile
+        // (ID) bit is byte 1 bit 3, not checked here (both MPEG-2 and
+        // MPEG-4 ADTS are accepted).
+        Some(pfx) if pfx[0] == 0xFF && pfx[1] & 0xF0 == 0xF0 && pfx[1] & 0x06 == 0 => {
             let rate_index = (pfx[2] >> 2) & 0x0F;
             let rate = adts_sample_rate(rate_index);
             if rate != Some(expected_rate) {
@@ -202,6 +213,12 @@ fn pcr_interval(inv: &Invariants, wire: &WireSummary, mode: VerifyMode) -> Vec<S
         let min = iv.iter().cloned().fold(f64::INFINITY, f64::min);
         iv.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let max = *iv.last().unwrap();
+        // The upper-middle element for an even count (not an
+        // average-of-two) — deliberate: an average could land BELOW
+        // `lower` even when no individual interval actually did (e.g.
+        // one very short catch-up interval dragging a two-value average
+        // down), which would defeat the whole point of gating on the
+        // median instead of the min.
         let median = iv[iv.len() / 2];
         let upper_observed = match mode {
             VerifyMode::Strict => max,
@@ -300,7 +317,7 @@ fn pmt_streams(p: &Profile, inv: &Invariants, wire: &WireSummary) -> Vec<String>
     for ep in &inv.programs {
         let Some(prog) = wire.programs.get(&ep.program_number) else {
             f.push(format!(
-                "pmt_stream_type_program_{}: no PMT seen",
+                "pmt_missing_program_{}: no PMT seen",
                 ep.program_number
             ));
             continue;
@@ -507,6 +524,48 @@ mod tests {
         );
     }
 
+    #[test]
+    fn audio_codec_adts_flags_rate_index_mismatch_and_rejects_non_aac_layer() {
+        let inv = profiles::invariants(profiles::by_name("audio").unwrap());
+        let good_pts: Vec<u64> = (0..141).map(|i| i as u64 * 1920).collect();
+
+        // Valid ADTS syncword + layer, but sample_rate_index 4 = 44.1kHz,
+        // not the `audio` profile's expected 48kHz (index 3).
+        let wrong_rate = audio(
+            &inv,
+            &audio_wire([0xFF, 0xF9, 0x10, 0x80], good_pts.clone()),
+            3.0,
+        );
+        assert!(
+            wrong_rate
+                .iter()
+                .any(|f| f.starts_with("audio_codec_adts") && f.contains("44100")),
+            "{wrong_rate:?}"
+        );
+
+        // MPEG-1 Layer II shares the 0xFFF syncword and can even share a
+        // valid-looking sample-rate-index byte — only the layer bits
+        // (00 vs 10 here) tell them apart, so this must still fail.
+        let mpeg1_layer2 = audio(
+            &inv,
+            &audio_wire([0xFF, 0xFD, 0x50, 0x80], good_pts.clone()),
+            3.0,
+        );
+        assert!(
+            mpeg1_layer2
+                .iter()
+                .any(|f| f.starts_with("audio_codec_adts")),
+            "{mpeg1_layer2:?}"
+        );
+
+        // A real ADTS header (layer 00) at the correct rate must pass.
+        let real_adts = audio(&inv, &audio_wire([0xFF, 0xF9, 0x4C, 0x80], good_pts), 3.0);
+        assert!(
+            !real_adts.iter().any(|f| f.starts_with("audio_codec_adts")),
+            "{real_adts:?}"
+        );
+    }
+
     fn wire_with_pcr(pid: u16, ticks: &[u64]) -> WireSummary {
         WireSummary {
             pcr: BTreeMap::from([(pid, ticks.to_vec())]),
@@ -569,6 +628,41 @@ mod tests {
             "{strict:?}"
         );
         assert!(pcr_interval(&inv, &wire, VerifyMode::Lossy).is_empty());
+    }
+
+    #[test]
+    fn pcr_interval_reports_missing_pcr_and_insufficient_samples() {
+        let inv = profiles::invariants(profiles::by_name("baseline").unwrap());
+
+        // The program's PMT declares a PCR PID, but the wire never
+        // actually carried a PCR on it.
+        let no_pcr = WireSummary {
+            programs: BTreeMap::from([(
+                1,
+                Program {
+                    program_number: 1,
+                    pmt_pid: 0x1000,
+                    pcr_pid: 0x1011,
+                    streams: Vec::new(),
+                },
+            )]),
+            ..Default::default()
+        };
+        let f = pcr_interval(&inv, &no_pcr, VerifyMode::Strict);
+        assert!(
+            f.iter()
+                .any(|s| s.starts_with("pcr_interval") && s.contains("no PCR")),
+            "{f:?}"
+        );
+
+        // Exactly one PCR sample on the wire — zero intervals to measure.
+        let one_pcr = wire_with_pcr(0x1011, &[0]);
+        let f = pcr_interval(&inv, &one_pcr, VerifyMode::Strict);
+        assert!(
+            f.iter()
+                .any(|s| s.starts_with("pcr_interval") && s.contains("only 1 PCR")),
+            "{f:?}"
+        );
     }
 
     fn wire_with_pes(pid: u16, stream_id: u8, prefix: [u8; 4]) -> WireSummary {
@@ -736,5 +830,41 @@ mod tests {
             ],
         );
         assert!(pmt_streams(sync, &inv_sync, &sync_ok).is_empty());
+    }
+
+    #[test]
+    fn pmt_streams_reports_missing_program_and_wrong_audio_stream_type() {
+        let audio_profile = profiles::by_name("audio").unwrap();
+        let inv = profiles::invariants(audio_profile);
+
+        // No PMT at all for program 1.
+        let no_pmt = WireSummary::default();
+        let f = pmt_streams(audio_profile, &inv, &no_pmt);
+        assert!(
+            f.iter().any(|s| s.starts_with("pmt_missing_program_1")),
+            "{f:?}"
+        );
+
+        // PMT present, video/KLV correct, but the audio PID's
+        // stream_type isn't 0x0F (AAC ADTS) — 0x03 here (MPEG-1 audio).
+        let audio_pid = inv.programs[0]
+            .audio_pid
+            .expect("audio profile must have an audio PID");
+        let wrong_audio_type = wire_with_program(
+            1,
+            0x1000,
+            0x1011,
+            vec![
+                stream(0x1011, 0x1B, None, &[]),
+                stream(0x1031, 0x06, Some(*b"KLVA"), &[0x05]),
+                stream(audio_pid, 0x03, None, &[]),
+            ],
+        );
+        let f = pmt_streams(audio_profile, &inv, &wrong_audio_type);
+        assert!(
+            f.iter()
+                .any(|s| s.starts_with(&format!("pmt_stream_type_{audio_pid}"))),
+            "{f:?}"
+        );
     }
 }

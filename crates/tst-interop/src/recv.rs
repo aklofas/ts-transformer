@@ -282,6 +282,14 @@ pub fn run_managed(
             errno_code: None,
             cause: BrokenCause::Unspecified,
         })?;
+        // A successfully-dialed replacement transport starts delivering
+        // bytes at a fresh packet boundary of its own — any partial
+        // packet still sitting in the shared tap's raw-TS reader (from
+        // the connection that just broke) can never be validly
+        // completed by it, and a sync-loss error latched from that same
+        // dead connection shouldn't follow the new one either. See
+        // `transport::tee_resync`'s own doc comment.
+        transport::tee_resync(&tap_for_factory);
         Ok(Teeing::with_tap(raw, Arc::clone(&tap_for_factory)))
     });
 

@@ -91,6 +91,21 @@ impl Reader {
         self.summary
     }
 
+    /// Clear the in-flight byte carry (a partial trailing packet left
+    /// over from whatever connection just broke) without discarding the
+    /// accumulated [`WireSummary`] or the PAT-learned PMT-PID map. A
+    /// managed reconnect's replacement transport starts delivering bytes
+    /// at a fresh packet boundary of its own — bytes still sitting in
+    /// `carry` from the connection that just died can never be validly
+    /// completed by bytes from the new one (they aren't even
+    /// guaranteed to be the same TS multiplex position), so feeding them
+    /// together would corrupt packet sync rather than merely delay it.
+    /// Call this once per reconnect, before the replacement transport's
+    /// first `feed`.
+    pub fn resync(&mut self) {
+        self.carry.clear();
+    }
+
     fn packet(&mut self, p: &[u8; PKT]) -> Result<(), String> {
         if p[0] != SYNC {
             return Err(format!("sync byte 0x{:02x}, want 0x47", p[0]));
@@ -364,5 +379,29 @@ mod tests {
         let mut r = Reader::new();
         let e = r.feed(&bad).unwrap_err();
         assert!(e.contains("sync"), "{e}");
+    }
+
+    #[test]
+    fn resync_discards_a_stale_partial_packet_without_losing_the_summary() {
+        let p = crate::profiles::by_name("baseline").unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "tst-interop-rawts-resync-{}.ts",
+            std::process::id()
+        ));
+        crate::r#gen::run(p, 2.0, &path).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+
+        let mut r = Reader::new();
+        // A partial packet (100 bytes < 188) left over from a connection
+        // that just broke — never completes on its own.
+        r.feed(&bytes[..100]).unwrap();
+        r.resync();
+        // A whole, independent valid stream from the "reconnected"
+        // transport must feed clean (no sync-loss error) and its packet
+        // count must reflect only THIS stream — the discarded partial
+        // packet contributed nothing.
+        r.feed(&bytes).unwrap();
+        assert_eq!(r.finish().packets as usize, bytes.len() / 188);
     }
 }
