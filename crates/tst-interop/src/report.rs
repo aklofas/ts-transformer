@@ -321,7 +321,43 @@ pub fn parse_expectations(text: &str) -> Result<Vec<Expectation>, String> {
     if let Some(builder) = current.take() {
         out.push(builder.finish(last_line)?);
     }
+    reject_ambiguous(&out)?;
     Ok(out)
+}
+
+/// Can `a` and `b` (exact ids or trailing-`*` prefix globs) both match
+/// one cell id?
+fn patterns_overlap(a: &str, b: &str) -> bool {
+    match (a.strip_suffix('*'), b.strip_suffix('*')) {
+        (None, None) => a == b,
+        (Some(pa), None) => b.starts_with(pa),
+        (None, Some(pb)) => a.starts_with(pb),
+        (Some(pa), Some(pb)) => pa.starts_with(pb) || pb.starts_with(pa),
+    }
+}
+
+/// Reject a table where two rows could both claim the same (cell,
+/// profile) — first-match-wins would then silently decide which
+/// documented mechanism a failure gets attributed to. Two rows may
+/// share a cell only when each carries a DIFFERENT `failure_contains`.
+fn reject_ambiguous(expectations: &[Expectation]) -> Result<(), String> {
+    for (i, a) in expectations.iter().enumerate() {
+        for b in &expectations[i + 1..] {
+            if a.profile != b.profile || !patterns_overlap(&a.cell, &b.cell) {
+                continue;
+            }
+            let distinct = matches!((&a.failure_contains, &b.failure_contains),
+                (Some(x), Some(y)) if x != y);
+            if !distinct {
+                return Err(format!(
+                    "ambiguous expectations: cell {:?} and cell {:?} (profile {:?}) can both match one \
+                     cell; give each a distinct failure_contains or remove one",
+                    a.cell, b.cell, a.profile
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------
@@ -4134,6 +4170,54 @@ failure_contains = \"stream_sha256 mismatch\"
         let text = "[[expect]]\nnot a key value line at all\n";
         let err = parse_expectations(text).unwrap_err();
         assert!(err.contains("line 2"), "{err}");
+    }
+
+    #[test]
+    fn two_rows_on_the_same_cell_without_distinct_failure_contains_are_rejected() {
+        let text = "[[expect]]\ncell = \"decode/mpv/audio\"\nprofile = \"audio\"\nverdict = \"expected_unsupported\"\nreason = \"a\"\n\n\
+                    [[expect]]\ncell = \"decode/mpv/*\"\nprofile = \"audio\"\nverdict = \"expected_unsupported\"\nreason = \"b\"\n";
+        let e = parse_expectations(text).unwrap_err();
+        assert!(
+            e.contains("ambiguous") && e.contains("decode/mpv/audio") && e.contains("decode/mpv/*"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn two_rows_on_the_same_cell_with_distinct_failure_contains_are_allowed() {
+        let text = "[[expect]]\ncell = \"srt/us-to-tsp\"\nprofile = \"baseline\"\nverdict = \"expected_unsupported\"\nreason = \"a\"\nfailure_contains = \"tail loss\"\n\n\
+                    [[expect]]\ncell = \"srt/us-to-tsp\"\nprofile = \"baseline\"\nverdict = \"expected_unsupported\"\nreason = \"b\"\nfailure_contains = \"KLV\"\n";
+        assert_eq!(parse_expectations(text).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn same_cell_different_profile_is_not_ambiguous() {
+        let text = "[[expect]]\ncell = \"decode/vlc/audio\"\nprofile = \"audio\"\nverdict = \"expected_unsupported\"\nreason = \"a\"\n\n\
+                    [[expect]]\ncell = \"decode/vlc/audio\"\nprofile = \"baseline\"\nverdict = \"expected_unsupported\"\nreason = \"b\"\n";
+        assert_eq!(parse_expectations(text).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn patterns_overlap_rules() {
+        assert!(patterns_overlap("a/b", "a/b"));
+        assert!(!patterns_overlap("a/b", "a/c"));
+        assert!(patterns_overlap("a/*", "a/b"));
+        assert!(patterns_overlap("a/b/*", "a/*"));
+        assert!(!patterns_overlap("a/*", "b/*"));
+    }
+
+    #[test]
+    fn live_expectations_table_parses() {
+        let text = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../scripts/interop/expectations.toml"
+        ));
+        let parsed = parse_expectations(text).expect("the live expectations table must parse");
+        assert!(
+            parsed.len() >= 65,
+            "expected at least 65 rows, got {}",
+            parsed.len()
+        );
     }
 
     // --- File-driven merge/render round trip ---
