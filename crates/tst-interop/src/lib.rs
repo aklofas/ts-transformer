@@ -21,6 +21,7 @@ pub mod impair;
 pub mod mux_setup;
 pub mod profiles;
 pub mod proxy;
+pub mod rawts;
 pub mod recv;
 pub mod report;
 pub mod report_types;
