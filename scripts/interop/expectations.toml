@@ -21,8 +21,9 @@
 #
 # `expected_unsupported`: this (cell, profile) pair is known to fail and
 # is not expected to ever pass — if it starts passing, `report merge`
-# flags the expectation as stale (a warning, never fatal) so it can be
-# removed.
+# flags the expectation as stale and FAILS THE MERGE (exit nonzero, no
+# results.json written) — a stale row is a real drift finding, not a
+# warning, and the fix is to remove it in the same change.
 #
 # `known_flaky`: this (cell, profile) pair intermittently fails; a FAIL
 # is reported non-fatally (labeled KNOWN-FLAKY in the rendered report)
@@ -45,11 +46,16 @@
 # Matching rules: `cell` may only use `*` as a trailing prefix-match glob
 # (e.g. "decode/*" — never mid-string); `profile` is always an exact
 # match, never a glob; `failure_contains`, when present, is always a
-# literal substring match, never a glob or regex. If more than one
-# `[[expect]]` block matches the same (cell, profile[, failure text]),
-# the FIRST one in this file wins — keep blocks for the same
-# cell/profile pattern non-overlapping, or ordered so the intended one
-# comes first.
+# literal substring match, never a glob or regex.
+#
+# Ambiguity rejection: `parse_expectations` REJECTS the whole file (a
+# hard error, before any cell is even read) if two blocks share a
+# `profile` and their `cell` patterns overlap (equal, or one a
+# prefix-glob of the other) unless both carry a `failure_contains` and
+# the two strings differ. First-match-wins is not how this file is
+# read — an ambiguous pair must be resolved by giving each block a
+# distinct `failure_contains` (the genuinely-two-reasons case this key
+# exists for) or by removing/narrowing one of the blocks.
 #
 # Every real row below is authored from actual run-log evidence (a full
 # --profiles run at --seconds 8, all 12 profiles, every peer tool

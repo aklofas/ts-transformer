@@ -45,20 +45,30 @@ Output layout under `--outdir`:
 ```
 DIR/
   meta.json        # host, date, seconds-per-cell, tool versions
+  inventory.json    # declared {id, profile} multiset + shape (see "Inventory and shape" below)
   cells/*.json      # one RawCell JSON per cell (see report.rs's doc comment)
   logs/*.log        # combined (our side + peer side) log per cell
   work/*             # generated source .ts files, per-cell captures, intermediate metrics
-  results.json      # `report merge`'s output (expectations-applied)
+  results.json      # `report merge`'s output (expectations-applied, inventory-checked)
   results.md        # `report render`'s markdown table, same shape as the published evidence page
 ```
 
-Exit code is `report merge`'s: 0 iff every `FAIL` matched a row in
-`expectations.toml`. That file now carries a real row for every genuine gap
-this matrix has surfaced (73 as of task 12, see "Known, already-evidenced
-gaps" below) — running the full matrix exits 0. Any *new* `FAIL` an
-expectations row doesn't already cover still exits nonzero: see
-`report.rs`'s module doc for why an unmatched `FAIL` must never be silently
-absorbed.
+Exit code is `report merge`'s: 0 iff every produced cell exactly matches
+`inventory.json`'s declared multiset (see "Inventory and shape" below) AND
+every `FAIL` matched a row in `expectations.toml`. That file now carries a
+real row for every genuine gap this matrix has surfaced (73 as of task 12,
+see "Known, already-evidenced gaps" below) — running the full matrix exits
+0. Any *new* `FAIL` an expectations row doesn't already cover still exits
+nonzero: see `report.rs`'s module doc for why an unmatched `FAIL` must
+never be silently absorbed. Two more ways `report merge` now fails
+nonzero, both load-bearing since this arc: an `expected_unsupported` row
+whose (cell, profile) actually `PASS`ed this run — a *stale* row, reported
+as `stale_expectations` and fatal everywhere (no `--strict` flag, no
+warn-only mode: CI, a branch dispatch, and a local run all reject it the
+same way) — and `expectations.toml` itself failing to parse because two
+`[[expect]]` blocks can both match the same (cell, profile) without
+distinct `failure_contains` strings (see the file's own header comment
+for the exact rule).
 
 ## Cell id / tier / direction conventions
 
@@ -100,6 +110,33 @@ absorbed.
     project's own pre-release decoder-compatibility check.
     Also used for every format-axis `analyze/*` cell (a structural/
     counter assertion, not a byte- or profile-invariant comparison).
+
+### Inventory and shape
+
+Before running any cell, `run-matrix.sh` makes a declare pass — every cell
+shape is invoked once per `--profiles` entry with `DECLARE_ONLY=1`, which
+records the id it would run and returns immediately without touching the
+network — and writes the resulting exact `{id, profile}` multiset to
+`inventory.json` in `--outdir`. That file's `shape` field is `full-157`
+iff `--cells` is the default `*` and `--profiles` is the default full
+12-profile list; any narrowing of either flag makes it `subset`.
+`inventory.json` also carries `cells_glob`, `profiles`, `allowed_skips`,
+and the peer tool versions probed at declare time. `tst-interop report
+merge --inventory inventory.json` then compares the cells actually
+produced against this declared multiset **exactly** — missing,
+duplicate, or extra cells, and any `SKIPPED_TOOL_MISSING` cell whose id
+isn't in `allowed_skips`, are all hard merge errors (exit 2, no
+`results.json` written), not silent absorption into a smaller census.
+The merged `results.json` records the inventory it was checked against
+under `.inventory` (`shape`, `declared_cells`, `allowed_skips`), and
+`results.md` gets a matching `Inventory:` line. `--allowed-skips LIST`
+is a local escape hatch for a box missing a peer tool (a comma-separated
+list of exact cell ids or `prefix/*` globs); `interop.yml` never passes
+it, so a CI run must produce every declared cell for real. Because
+`shape` and `declared_cells` are part of the same fail-closed check as
+everything else, **the published evidence page may only cite a
+`full-157` run** — a `subset` run (any `--cells`/`--profiles` narrowing)
+proves less than the advertised census and isn't evidence of it.
 
 ## Known, already-evidenced gaps (read before re-chasing these)
 
