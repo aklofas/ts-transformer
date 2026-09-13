@@ -12,8 +12,13 @@
 //! ([`Verdict::ExpectedUnsupported`]) when it matches a specific,
 //! human-authored entry in the expectations file. Everything else that
 //! fails stays [`Verdict::Fail`], which is what [`merge`]'s caller checks
-//! (`results.summary.fail > 0`) to decide the process exit code — there
-//! is no other path to a passing run.
+//! (`results.summary.fail > 0`) to decide the process exit code — but
+//! that isn't the only way a run fails: a stale `expected_unsupported`
+//! row (one whose cell actually `PASS`ed — see `results.summary.
+//! stale_expectations`) fails the run too (exit 1), and `merge` itself
+//! returns an `Err` (exit 2, no `results.json` written at all) when the
+//! produced cells don't exactly match the declared `--inventory`
+//! multiset (see [`check_inventory`]).
 //!
 //! Expectations are read from a small hand-rolled TOML-shaped format (see
 //! [`parse_expectations`]) rather than a real TOML crate — the workspace
@@ -115,8 +120,12 @@ pub struct Summary {
     pub total: usize,
     pub pass: usize,
     /// Cells whose `FAIL` matched no expectation — see the module doc's
-    /// load-bearing property. `merge`'s caller exits nonzero iff this is
-    /// nonzero.
+    /// load-bearing property. `merge`'s CLI caller (`main.rs`) exits
+    /// nonzero (1) if this is nonzero OR `stale_expectations` is
+    /// non-empty — either alone is enough to fail the run, so this
+    /// field is not by itself the whole exit-code story (an inventory
+    /// mismatch fails even earlier, via `merge`'s own `Err`, exit 2,
+    /// before a `Summary` is even produced).
     pub fail: usize,
     pub expected_unsupported: usize,
     pub skipped_tool_missing: usize,
@@ -384,8 +393,16 @@ fn cell_pattern_matches(pattern: &str, id: &str) -> bool {
 }
 
 /// First expectation (in file order) whose `cell` pattern and exact
-/// `profile` both match. Ambiguous multi-match expectations files are
-/// the expectations author's problem, not merge's — file order wins.
+/// `profile` both match. Ambiguity is NOT resolved by file order here —
+/// [`parse_expectations`]'s [`reject_ambiguous`] pass already rejected
+/// (hard parse error) any table where two rows share a `profile` and
+/// overlapping `cell` patterns, unless both carry a distinct
+/// `failure_contains`. So by the time this function runs, two rows can
+/// only share a (cell, profile) when `failure_text` (the `FAIL`-matching
+/// call site) picks between them by substring — file order only matters
+/// as an arbitrary tie-break on the `PASS`-staleness call site
+/// (`failure_text: None`), where `failure_contains` is never applied and
+/// both surviving rows would otherwise match identically.
 ///
 /// `failure_text` distinguishes the two call sites in [`build_results`]:
 /// - `Some(joined_failures)` (the `FAIL`-matching path): an expectation
@@ -439,11 +456,22 @@ pub fn build_results(
                 let matched = find_expectation(expectations, &raw.id, &raw.profile, None);
                 if let Some(exp) = matched {
                     if exp.verdict == ExpectVerdict::ExpectedUnsupported {
-                        stale.push(StaleExpectation {
-                            cell: exp.cell.clone(),
-                            profile: exp.profile.clone(),
-                            reason: exp.reason.clone(),
+                        // A glob row (e.g. "decode/*") can match more
+                        // than one raw cell id at the same profile — if
+                        // several of them PASS, that's the same
+                        // expectations-file ROW going stale once, not
+                        // once per matching cell. Dedupe by the row's
+                        // own (cell pattern, profile) identity.
+                        let already_flagged = stale.iter().any(|s: &StaleExpectation| {
+                            s.cell == exp.cell && s.profile == exp.profile
                         });
+                        if !already_flagged {
+                            stale.push(StaleExpectation {
+                                cell: exp.cell.clone(),
+                                profile: exp.profile.clone(),
+                                reason: exp.reason.clone(),
+                            });
+                        }
                     }
                     // A `known_flaky` expectation matching a PASS is
                     // normal (see the module + type docs) — no stale
@@ -561,7 +589,15 @@ pub struct Inventory {
     pub tools: serde_json::Value,
 }
 
-/// What the merged report records about its inventory.
+/// What the merged report records about its inventory. Deliberately
+/// smaller than [`Inventory`] — it omits `cells` (the merge already
+/// proved they match, one-for-one, `raw_cells`; re-listing them here
+/// would just duplicate `results.cells`), `cells_glob`/`profiles` (raw
+/// orchestration inputs, not evidence-page-relevant), and `tools` (a
+/// spec §5.1 deviation from `Inventory`'s own shape: `results.meta.tools`
+/// — embedded verbatim from `merge`'s `--meta` file — already carries
+/// the tool versions, so this struct doesn't duplicate them a second
+/// time under a different path).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InventorySummary {
     pub shape: String,
@@ -572,12 +608,25 @@ pub struct InventorySummary {
 pub const SHAPE_FULL: &str = "full-157";
 pub const SHAPE_SUBSET: &str = "subset";
 
+/// The declared cell count a `full-157` inventory must have — the number
+/// embedded in [`SHAPE_FULL`]'s own name, enforced here so a caller can't
+/// claim the advertised full census while actually declaring some other
+/// count under that label.
+pub const FULL_SHAPE_CELL_COUNT: usize = 157;
+
 pub fn parse_inventory(text: &str) -> Result<Inventory, String> {
     let inv: Inventory = serde_json::from_str(text).map_err(|e| format!("inventory.json: {e}"))?;
     if inv.shape != SHAPE_FULL && inv.shape != SHAPE_SUBSET {
         return Err(format!(
             "inventory.json: shape must be {SHAPE_FULL:?} or {SHAPE_SUBSET:?}, got {:?}",
             inv.shape
+        ));
+    }
+    if inv.shape == SHAPE_FULL && inv.cells.len() != FULL_SHAPE_CELL_COUNT {
+        return Err(format!(
+            "inventory.json: shape {SHAPE_FULL:?} must declare exactly {FULL_SHAPE_CELL_COUNT} \
+             cells, got {}",
+            inv.cells.len()
         ));
     }
     Ok(inv)
@@ -850,7 +899,7 @@ pub fn render_markdown(results: &Results) -> String {
         for s in &results.summary.stale_expectations {
             writeln!(
                 out,
-                "- `{}` (profile `{}`): {} — matched cell now PASSes; consider removing.",
+                "- `{}` (profile `{}`): {} — STALE, merge FAILED: matched cell now PASSes; remove this row.",
                 s.cell, s.profile, s.reason
             )
             .unwrap();
@@ -3492,6 +3541,16 @@ mod tests {
         assert!(e.contains("shape"), "{e}");
     }
 
+    #[test]
+    fn parse_inventory_rejects_full_shape_with_wrong_count() {
+        let e = parse_inventory(
+            r#"{"shape":"full-157","seconds_per_cell":10,"cells_glob":"*","profiles":[],"cells":[{"id":"a","profile":"baseline"}],"allowed_skips":[],"tools":{}}"#,
+        )
+        .unwrap_err();
+        assert!(e.contains("157"), "{e}");
+        assert!(e.contains('1'), "{e}"); // the actual declared count, 1, should be named
+    }
+
     fn expectation(cell: &str, profile: &str, verdict: ExpectVerdict, reason: &str) -> Expectation {
         Expectation {
             cell: cell.to_string(),
@@ -3740,6 +3799,31 @@ mod tests {
         assert_eq!(results.cells[0].verdict, Verdict::Pass);
     }
 
+    #[test]
+    fn glob_row_matching_two_passing_cells_is_one_stale_entry_not_two() {
+        let raw = vec![
+            raw_cell("decode/mpv", "baseline", RawVerdict::Pass),
+            raw_cell("decode/ffmpeg", "baseline", RawVerdict::Pass),
+        ];
+        let exp = expectation(
+            "decode/*",
+            "baseline",
+            ExpectVerdict::ExpectedUnsupported,
+            "decode gap",
+        );
+        let results = build_results(raw, &[exp], serde_json::json!({}));
+
+        // Both decode/mpv and decode/ffmpeg PASS and both match the same
+        // "decode/*" row — that's one row gone stale, not two.
+        assert_eq!(
+            results.summary.stale_expectations.len(),
+            1,
+            "{:?}",
+            results.summary.stale_expectations
+        );
+        assert_eq!(results.summary.stale_expectations[0].cell, "decode/*");
+    }
+
     // (e) glob decode/* matches decode/mpv.
     #[test]
     fn glob_pattern_matches_prefix() {
@@ -3932,7 +4016,7 @@ mod tests {
 
 **Stale expectations**
 
-- `decode/old` (profile `baseline`): historic gap, now fixed — matched cell now PASSes; consider removing.
+- `decode/old` (profile `baseline`): historic gap, now fixed — STALE, merge FAILED: matched cell now PASSes; remove this row.
 ";
 
         let rendered = render_markdown(&results);
