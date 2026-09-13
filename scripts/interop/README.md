@@ -68,7 +68,11 @@ warn-only mode: CI, a branch dispatch, and a local run all reject it the
 same way) — and `expectations.toml` itself failing to parse because two
 `[[expect]]` blocks can both match the same (cell, profile) without
 distinct `failure_contains` strings (see the file's own header comment
-for the exact rule).
+for the exact rule). `failure_contains` is mandatory on
+`expected_unsupported` rows (a row absorbs only the failure it names,
+so an unrelated regression on the same cell can never be silently
+swallowed); `known_flaky` rows may omit it, since a flake has no single
+mechanism string by definition.
 
 ## Cell id / tier / direction conventions
 

@@ -82,7 +82,7 @@ fn report_merge_with_stale_expectation_exits_1_and_prints_error() {
     let expectations_path = dir.join("expectations.toml");
     std::fs::write(
         &expectations_path,
-        "[[expect]]\ncell = \"decode/ffmpeg\"\nprofile = \"baseline\"\nverdict = \"expected_unsupported\"\nreason = \"gap\"\n",
+        "[[expect]]\ncell = \"decode/ffmpeg\"\nprofile = \"baseline\"\nverdict = \"expected_unsupported\"\nreason = \"gap\"\nfailure_contains = \"gap\"\n",
     )
     .expect("write expectations");
 
