@@ -315,8 +315,9 @@ fn rtsp_serve_round_trip_via_own_client() {
     // Obtain the cancel handle BEFORE moving recv_transport into the
     // worker thread — see the module doc's "real gap" section.
     let cancel = recv_transport.cancel_handle();
-    let recv_handle =
-        thread::spawn(move || recv::recv_over_transport(recv_transport, profile, SECONDS, false));
+    let recv_handle = thread::spawn(move || {
+        recv::recv_over_transport(recv_transport, profile, SECONDS, false, false)
+    });
     let report = join_with_external_cancel(
         recv_handle,
         cancel,

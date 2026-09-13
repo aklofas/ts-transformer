@@ -36,6 +36,14 @@ pub struct CellMetrics {
     /// Whole-capture sha256 — the byte-transparent tier (bit-for-bit
     /// identity), independent of and stricter than every other field here.
     pub stream_sha256: String,
+    /// `Discontinuity`/`NonConformant` demux events seen; Strict mode
+    /// fails on either, Lossy fails on `nonconformant` only.
+    #[serde(default)]
+    pub discontinuities: u64,
+    /// `Discontinuity`/`NonConformant` demux events seen; Strict mode
+    /// fails on either, Lossy fails on `nonconformant` only.
+    #[serde(default)]
+    pub nonconformant: u64,
 }
 
 /// Outcome of checking one [`CellMetrics`] tally against a

@@ -78,7 +78,9 @@ fn udp_baseline_loopback_round_trips_and_matches() {
     let recv_transport = transport::make_recv(&url).expect("bind udp recv");
     let recv_handle = {
         let seconds = SECONDS;
-        thread::spawn(move || recv::recv_over_transport(recv_transport, profile, seconds, false))
+        thread::spawn(move || {
+            recv::recv_over_transport(recv_transport, profile, seconds, false, false)
+        })
     };
 
     let send_metrics = send::run(profile, &url, SECONDS, None, false, AuSizeMode::Compact)
@@ -137,7 +139,9 @@ fn no_klv_digest_true_yields_null_hash_with_counts_unchanged() {
     let recv_transport = transport::make_recv(&url).expect("bind udp recv");
     let recv_handle = {
         let seconds = SECONDS;
-        thread::spawn(move || recv::recv_over_transport(recv_transport, profile, seconds, true))
+        thread::spawn(move || {
+            recv::recv_over_transport(recv_transport, profile, seconds, true, false)
+        })
     };
 
     let send_metrics = send::run(profile, &url, SECONDS, None, true, AuSizeMode::Compact)
@@ -265,7 +269,7 @@ fn srt_baseline_loopback_round_trips_and_matches() {
     // the resulting race instead.
     let recv_handle = {
         let recv_url = recv_url.clone();
-        thread::spawn(move || recv::run(&recv_url, profile, SECONDS, None, false))
+        thread::spawn(move || recv::run(&recv_url, profile, SECONDS, None, false, false))
     };
 
     let send_metrics = send_with_retry(profile, &send_url, SECONDS, Duration::from_secs(5));
@@ -304,7 +308,7 @@ fn srt_realistic_au_sizes_round_trip_and_match() {
 
     let recv_handle = {
         let recv_url = recv_url.clone();
-        thread::spawn(move || recv::run(&recv_url, profile, SECONDS, None, false))
+        thread::spawn(move || recv::run(&recv_url, profile, SECONDS, None, false, false))
     };
 
     let send_metrics = send_with_retry_sized(
@@ -393,7 +397,7 @@ fn srt_managed_recv_returns_after_peer_never_reconnects() {
     // that only governs before the first successful event.
     let recv_handle = {
         let recv_url = recv_url.clone();
-        thread::spawn(move || recv::run_managed(&recv_url, profile, 0.1, None, false))
+        thread::spawn(move || recv::run_managed(&recv_url, profile, 0.1, None, false, false))
     };
 
     // One short, real send: connects once, pushes a handful of AUs,

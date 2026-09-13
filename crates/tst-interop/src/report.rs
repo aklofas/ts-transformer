@@ -2109,6 +2109,8 @@ pub mod soak {
                 misp_sei_seen: false,
                 bytes: 0,
                 stream_sha256: String::new(),
+                discontinuities: 0,
+                nonconformant: 0,
             }
         }
 

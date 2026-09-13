@@ -333,8 +333,16 @@ run_peer_send_recv() {
   echo "--- us: recv (listening on $our_url) ---" >>"$log"
 
   local recv_json="$WORK/$(slug "$id")-recv.json"
+  # --strict only for the transparent (byte-identical) tier: a lossy/
+  # remux tier is allowed to carry Discontinuity events (impairment,
+  # re-encode boundaries), but a transparent cell must be lossless end
+  # to end, so a Discontinuity there is itself a failure worth catching
+  # (NonConformant always fails, in either mode — see verify::VerifyMode).
+  local -a strict=()
+  [[ "$tier" == "transparent" ]] && strict=(--strict)
   timeout --kill-after=5 "${budget}s" \
     "$BIN" recv --url "$our_url" --expect "$PROFILE" --seconds "$SECONDS_ARG" --json "$recv_json" \
+    "${strict[@]}" \
     >>"$log" 2>&1 &
   local recv_pid=$!
   sleep "$SETTLE"

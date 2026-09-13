@@ -15,10 +15,11 @@ use tst_pipeline::{
 };
 
 use crate::cli::write_json;
-use crate::profiles::Profile;
+use crate::profiles::{self, Profile};
+use crate::rawts::WireSummary;
 use crate::report_types::VerifyReport;
 use crate::transport::{self, Teeing};
-use crate::verify::{self, Tally};
+use crate::verify::{self, Tally, VerifyMode};
 
 /// How long to wait for the FIRST demuxed event before giving up
 /// entirely — the sender never connected or never sent anything at all
@@ -48,15 +49,21 @@ type ManagedRecvFactory =
 /// `CellMetrics::klv_set_sha256` needs — that field comes back `None`
 /// instead. See its own doc comment for why a multi-day soak run needs
 /// this.
+///
+/// `strict` selects `verify::VerifyMode::Strict` (a `Discontinuity` event
+/// fails the check) over the default `Lossy` (a `Discontinuity` is only
+/// counted) — see `VerifyMode`'s own doc comment. Either way a
+/// `NonConformant` event always fails.
 pub fn run(
     url: &str,
     expect: &Profile,
     seconds: f64,
     json_out: Option<&str>,
     no_klv_digest: bool,
+    strict: bool,
 ) -> Result<VerifyReport, String> {
     let transport = transport::make_recv(url)?;
-    let report = recv_over_transport(transport, expect, seconds, no_klv_digest)?;
+    let report = recv_over_transport(transport, expect, seconds, no_klv_digest, strict)?;
     if let Some(target) = json_out {
         write_json(target, &report)?;
     }
@@ -93,9 +100,13 @@ pub fn recv_over_transport(
     expect: &Profile,
     seconds: f64,
     no_klv_digest: bool,
+    strict: bool,
 ) -> Result<VerifyReport, String> {
     let (teeing, tap) = Teeing::new(transport);
-    let mut rx = DemuxReceiver::new(teeing);
+    // Built per-profile, not `DemuxReceiver::new` — see
+    // `profiles::demuxer_config`'s doc comment for why a default-config
+    // demuxer silently mis-tallies `av1-klv-a`.
+    let mut rx = DemuxReceiver::with_demux_options(teeing, profiles::demuxer_config(expect));
 
     let mut deadline = Instant::now() + NO_DATA_TIMEOUT;
     let mut streaming = false;
@@ -151,7 +162,18 @@ pub fn recv_over_transport(
     // have no other owner.
     drop(rx);
 
-    let mut report = tally.finish(expect, seconds, verify::NOMINAL_COUNT_SLACK);
+    let mode = if strict {
+        VerifyMode::Strict
+    } else {
+        VerifyMode::Lossy
+    };
+    let mut report = tally.finish(
+        expect,
+        seconds,
+        verify::NOMINAL_COUNT_SLACK,
+        mode,
+        &WireSummary::default(),
+    );
     // `Tally`'s own bytes/stream_sha256 fields were never fed (we never
     // called `note_bytes` on it) — the `Teeing` tap captured the exact
     // bytes at the transport boundary instead, which is the
@@ -237,6 +259,7 @@ pub fn run_managed(
     seconds: f64,
     json_out: Option<&str>,
     no_klv_digest: bool,
+    strict: bool,
 ) -> Result<VerifyReport, String> {
     let initial_raw = transport::make_recv(url)?;
     let (initial_teed, tap) = Teeing::new(initial_raw);
@@ -263,7 +286,13 @@ pub fn run_managed(
         ..ReconnectPolicy::default()
     };
     let managed = ManagedRecvTransport::new(initial_teed, factory, policy);
-    let mut rx = ManagedDemuxReceiver::new(managed, ManagedDemuxReceiverConfig::default());
+    // Built per-profile, not `ManagedDemuxReceiver::new` — see
+    // `profiles::demuxer_config`'s doc comment.
+    let mut rx = ManagedDemuxReceiver::with_demux_options(
+        managed,
+        profiles::demuxer_config(expect),
+        ManagedDemuxReceiverConfig::default(),
+    );
 
     // Shared deadline: the main thread (below) moves it once streaming
     // starts; the watcher thread polls it and cancels once it passes.
@@ -357,7 +386,18 @@ pub fn run_managed(
     // handle), so it's never in the way here.
     drop(rx);
 
-    let mut report = tally.finish(expect, seconds, verify::NOMINAL_COUNT_SLACK);
+    let mode = if strict {
+        VerifyMode::Strict
+    } else {
+        VerifyMode::Lossy
+    };
+    let mut report = tally.finish(
+        expect,
+        seconds,
+        verify::NOMINAL_COUNT_SLACK,
+        mode,
+        &WireSummary::default(),
+    );
     let (bytes, stream_sha256) = transport::tee_tally(tap);
     report.metrics.bytes = bytes;
     report.metrics.stream_sha256 = stream_sha256;
