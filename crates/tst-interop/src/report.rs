@@ -957,6 +957,63 @@ pub mod soak {
         Ok(samples)
     }
 
+    /// `soak.sh`'s declared run parameters, written to `soak-config.json`
+    /// at launch — BEFORE any evidence exists — so `report soak` judges the
+    /// run against what was configured, never against what the artifacts
+    /// happen to contain (release-gate audit RLS-B09).
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct SoakConfig {
+        pub expected_duration_s: f64,
+        pub rss_cadence_s: f64,
+        /// `warmup_s = min(MAX_WARMUP_S, expected_duration_s * warmup_fraction)`.
+        pub warmup_fraction: f64,
+        /// The sampler deliberately stops this many seconds before the
+        /// nominal deadline (`soak.sh`'s `SAMPLER_END_SLACK_S`), so the
+        /// achievable RSS span is `expected_duration_s - sampler_end_slack_s`.
+        pub sampler_end_slack_s: f64,
+        /// Worker role -> exit status that is expected for this run
+        /// (normally empty; a drill that kills a role on purpose lists it).
+        #[serde(default)]
+        pub expected_worker_exits: BTreeMap<String, i32>,
+    }
+
+    pub fn parse_soak_config(text: &str) -> Result<SoakConfig, String> {
+        let cfg: SoakConfig =
+            serde_json::from_str(text).map_err(|e| format!("soak-config.json: {e}"))?;
+        if !(cfg.expected_duration_s.is_finite() && cfg.expected_duration_s > 0.0) {
+            return Err(format!(
+                "soak-config.json: expected_duration_s must be finite and > 0, got {}",
+                cfg.expected_duration_s
+            ));
+        }
+        if !(cfg.rss_cadence_s.is_finite() && cfg.rss_cadence_s > 0.0) {
+            return Err(format!(
+                "soak-config.json: rss_cadence_s must be finite and > 0, got {}",
+                cfg.rss_cadence_s
+            ));
+        }
+        if !(cfg.warmup_fraction.is_finite() && (0.0..1.0).contains(&cfg.warmup_fraction)) {
+            return Err(format!(
+                "soak-config.json: warmup_fraction must be in [0, 1), got {}",
+                cfg.warmup_fraction
+            ));
+        }
+        if !(cfg.sampler_end_slack_s.is_finite() && cfg.sampler_end_slack_s >= 0.0) {
+            return Err(format!(
+                "soak-config.json: sampler_end_slack_s must be finite and >= 0, got {}",
+                cfg.sampler_end_slack_s
+            ));
+        }
+        Ok(cfg)
+    }
+
+    /// `soak.sh`'s `exits.json`: `{ "<role>": <exit status>, ... }` for every
+    /// worker it reaped (the six leg processes; never the sampler, which the
+    /// script itself kills on schedule).
+    pub fn parse_worker_exits(text: &str) -> Result<BTreeMap<String, i32>, String> {
+        serde_json::from_str(text).map_err(|e| format!("exits.json: {e}"))
+    }
+
     /// Ordinary-least-squares slope of `points` (x, y) pairs — used here
     /// as KB of RSS per second of elapsed wall-clock time. Returns `0.0`
     /// for fewer than 2 points or a degenerate (all-same-x) input rather
@@ -2291,6 +2348,44 @@ pub mod soak {
                     .any(|v| v.name.starts_with("rss_data_present_")),
                 "a single present sample is not 'missing data'"
             );
+        }
+
+        #[test]
+        fn parses_soak_config_json() {
+            let cfg = parse_soak_config(
+                r#"{"expected_duration_s": 259200, "rss_cadence_s": 30, "warmup_fraction": 0.1667,
+                    "sampler_end_slack_s": 35, "expected_worker_exits": {}}"#,
+            )
+            .expect("valid config parses");
+            assert_eq!(cfg.expected_duration_s, 259200.0);
+            assert_eq!(cfg.rss_cadence_s, 30.0);
+            assert!(cfg.expected_worker_exits.is_empty());
+        }
+
+        #[test]
+        fn soak_config_rejects_nonpositive_duration_or_cadence() {
+            let e = parse_soak_config(
+                r#"{"expected_duration_s": 0, "rss_cadence_s": 30, "warmup_fraction": 0.1,
+                    "sampler_end_slack_s": 35, "expected_worker_exits": {}}"#,
+            )
+            .unwrap_err();
+            assert!(e.contains("expected_duration_s"), "{e}");
+            let e = parse_soak_config(
+                r#"{"expected_duration_s": 100, "rss_cadence_s": -1, "warmup_fraction": 0.1,
+                    "sampler_end_slack_s": 35, "expected_worker_exits": {}}"#,
+            )
+            .unwrap_err();
+            assert!(e.contains("rss_cadence_s"), "{e}");
+        }
+
+        #[test]
+        fn parses_worker_exits_json() {
+            let exits = parse_worker_exits(r#"{"srt-send": 0, "srt-recv": 1, "rist-proxy": 143}"#)
+                .expect("valid exits parse");
+            assert_eq!(exits["srt-recv"], 1);
+            assert_eq!(exits.len(), 3);
+            assert!(parse_worker_exits("{}").unwrap().is_empty());
+            assert!(parse_worker_exits("not json").is_err());
         }
     }
 }
