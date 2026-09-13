@@ -23,6 +23,7 @@
 #
 # Usage:
 #   run-matrix.sh --outdir DIR [--seconds N] [--cells GLOB] [--profiles LIST]
+#                 [--allowed-skips LIST]
 #
 #   --outdir DIR      required. Cell JSON -> DIR/cells/*.json, per-cell
 #                      combined (us + peer) logs -> DIR/logs/*.log,
@@ -51,6 +52,20 @@
 #                      doesn't already cover more precisely). Pass a
 #                      short list (e.g. "baseline,h266-klv") for a
 #                      faster local iteration loop.
+#   --allowed-skips LIST  comma-separated list of cell ids this run
+#                      tolerates as SKIPPED_TOOL_MISSING without failing
+#                      the inventory check (default: none). Each entry
+#                      is either an exact declared cell id or a pattern
+#                      ending in a single trailing "*" (e.g.
+#                      "decode/gst-play/*" to tolerate a box without
+#                      gst-play-1.0 across every profile); an exact
+#                      entry that doesn't match a declared cell id is a
+#                      usage error (exit 2). The expanded, exact id list
+#                      is what actually lands in inventory.json's
+#                      `allowed_skips` — a local escape hatch for a box
+#                      missing a peer tool. `interop.yml` never sets
+#                      this (CI asserts the full census, not a
+#                      tolerated subset of it).
 #
 # Before running anything, a declare pass calls every cell shape once
 # per --profiles entry with DECLARE_ONLY=1 (each shape records the id
@@ -78,6 +93,7 @@ OUTDIR=""
 SECONDS_ARG=10
 CELLS_GLOB="*"
 PROFILES_ARG="$ALL_PROFILE_NAMES"
+ALLOWED_SKIPS_ARG=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -97,8 +113,12 @@ while [[ $# -gt 0 ]]; do
       PROFILES_ARG=$2
       shift 2
       ;;
+    --allowed-skips)
+      ALLOWED_SKIPS_ARG=$2
+      shift 2
+      ;;
     -h | --help)
-      sed -n '2,68p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,83p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
@@ -1081,15 +1101,55 @@ for PROFILE in "${PROFILE_LIST[@]}"; do
 done
 unset DECLARE_ONLY
 
+# ---------------------------------------------------------------------
+# --allowed-skips expansion: turn each exact-id/trailing-* pattern into
+# the exact set of declared cell ids it matches. An exact (non-glob)
+# pattern that matches no declared id is a usage error (exit 2) — a
+# typo'd or since-renamed cell id must never silently become a no-op
+# skip declaration; a glob is allowed to match zero (e.g. a defensive
+# "decode/gst-play/*" passed before every profile's decode cells exist
+# in a --cells-narrowed run).
+# ---------------------------------------------------------------------
+ALLOWED_SKIPS_JSON='[]'
+if [[ -n "$ALLOWED_SKIPS_ARG" ]]; then
+  declared_ids=$(cut -f1 "$INVENTORY_TSV" | sort -u)
+  allowed_skip_ids_file="$WORK/allowed-skips.txt"
+  : >"$allowed_skip_ids_file"
+  IFS=',' read -r -a allowed_skip_patterns <<<"$ALLOWED_SKIPS_ARG"
+  for pattern in "${allowed_skip_patterns[@]}"; do
+    if [[ ! "$pattern" =~ ^[^*]+\*?$ ]]; then
+      echo "run-matrix: --allowed-skips entry '$pattern' is malformed — each entry must be an exact cell id or end in a single trailing '*'" >&2
+      exit 2
+    fi
+    is_glob=0
+    [[ "$pattern" == *'*' ]] && is_glob=1
+    matched_any=0
+    while IFS= read -r id; do
+      [[ -z "$id" ]] && continue
+      case "$id" in
+        $pattern)
+          printf '%s\n' "$id" >>"$allowed_skip_ids_file"
+          matched_any=1
+          ;;
+      esac
+    done <<<"$declared_ids"
+    if [[ $is_glob -eq 0 && $matched_any -eq 0 ]]; then
+      echo "run-matrix: FATAL: --allowed-skips entry '$pattern' is not a declared cell id" >&2
+      exit 2
+    fi
+  done
+  ALLOWED_SKIPS_JSON=$(sort -u "$allowed_skip_ids_file" | jq -R . | jq -s .)
+fi
+
 SHAPE=subset
 [[ "$CELLS_GLOB" == "*" && "$PROFILES_ARG" == "$ALL_PROFILE_NAMES" ]] && SHAPE=full-157
 jq -n --arg shape "$SHAPE" --arg seconds "$SECONDS_ARG" --arg cells_glob "$CELLS_GLOB" \
   --arg profiles "$PROFILES_ARG" --rawfile tsv "$INVENTORY_TSV" \
-  --argjson tools "$(tool_versions_json)" \
+  --argjson tools "$(tool_versions_json)" --argjson allowed_skips "$ALLOWED_SKIPS_JSON" \
   '{shape: $shape, seconds_per_cell: ($seconds | tonumber), cells_glob: $cells_glob,
     profiles: ($profiles | split(",")),
     cells: ($tsv | split("\n") | map(select(length > 0)) | map(split("\t") | {id: .[0], profile: .[1]})),
-    allowed_skips: [], tools: $tools}' >"$OUTDIR/inventory.json"
+    allowed_skips: $allowed_skips, tools: $tools}' >"$OUTDIR/inventory.json"
 declared=$(jq '.cells | length' "$OUTDIR/inventory.json")
 echo "run-matrix: declared $declared cell(s), shape=$SHAPE" >&2
 if [[ "$SHAPE" == "full-157" && "$declared" != "157" ]]; then
@@ -1145,8 +1205,17 @@ timeout --kill-after=5 "${REPORT_TIMEOUT}s" \
   --inventory "$OUTDIR/inventory.json" \
   --out "$OUTDIR/results.json" || merge_rc=$?
 
-timeout --kill-after=5 "${REPORT_TIMEOUT}s" \
-  "$BIN" report render --in "$OUTDIR/results.json" --out "$OUTDIR/results.md"
+# Only render if merge actually wrote results.json — merge (see above)
+# writes nothing on any exit-2 error (usage/IO/parse/inventory
+# mismatch), so a bare, unguarded render call here would itself fail
+# reading a nonexistent file and, under this script's `set -e`, abort
+# BEFORE the "(exit $merge_rc)" echo/exit below ever runs, masking the
+# documented merge_rc-carries-the-exit-code contract with whatever
+# unrelated exit code render's own IO error happened to use.
+if [[ -s "$OUTDIR/results.json" ]]; then
+  timeout --kill-after=5 "${REPORT_TIMEOUT}s" \
+    "$BIN" report render --in "$OUTDIR/results.json" --out "$OUTDIR/results.md"
+fi
 
 echo "run-matrix: wrote $OUTDIR/results.json + $OUTDIR/results.md (exit $merge_rc)" >&2
 exit "$merge_rc"
