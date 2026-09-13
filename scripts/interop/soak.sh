@@ -272,7 +272,7 @@ event() {
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*" >>"$EVENTS_LOG"
 }
 
-TOTAL_SECONDS=$(awk -v h="$HOURS" 'BEGIN{printf "%d", h*3600}')
+TOTAL_SECONDS=$(awk -v h="$HOURS" 'BEGIN{printf "%d", h*3600 + 0.5}')
 # Outage schedule (srt leg only — see this file's header). Kept as
 # separate numeric/unit-suffixed forms rather than duplicating "6h"
 # and "21600" independently: OUTAGE_PERIOD_S is the single source of

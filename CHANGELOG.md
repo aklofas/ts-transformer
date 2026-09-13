@@ -228,10 +228,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `duration_coverage` (the RSS series must span the configured duration
   minus the sampler's end slack and two cadences), `rss_sample_coverage_
   <leg>_<process>` (at least 90% of the cadence-implied post-warmup
-  sample count per process, with no gap over three cadences — a series
-  under two distinct timestamps fails outright and skips that process's
-  slope verdict), and `worker_exits` (every exit status must be `0`
-  unless the role is listed in `expected_worker_exits`). `soak.sh --hours`
+  sample count per process, with the gap between consecutive samples
+  strictly under three cadences (`< 3 × cadence`) — a series under two
+  distinct timestamps fails outright and skips that process's slope
+  verdict), and `worker_exits` (every exit status must be `0` unless the
+  role is listed in `expected_worker_exits`). `soak.sh --hours`
   now also accepts a decimal (`--hours 0.05` for a ~3-minute drill).
 
 ### Changed
