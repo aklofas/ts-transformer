@@ -28,6 +28,7 @@ pub enum KlvMode {
 }
 
 /// One canonical MPEG-TS/KLV stream shape.
+#[derive(Clone, Copy, Debug)]
 pub struct Profile {
     pub name: &'static str,
     pub video: VideoCodec,
@@ -244,6 +245,25 @@ const PROFILES: &[Profile] = &[
 /// All 12 canonical profiles, in registry order.
 pub fn all() -> &'static [Profile] {
     PROFILES
+}
+
+/// Build the `Demuxer` config a conformant receiver of `p`'s traffic must
+/// use.
+///
+/// The audit finding this closes: a default-constructed `Demuxer` assumes
+/// `Av1CarriageMode::Mpeg2TsBinding`, but `av1-klv-a` deliberately carries
+/// AV1 the `InteropRawObu` way (PES `stream_id=0xE0`, raw OBUs — see that
+/// profile's own `av1_mode`). Demuxing `av1-klv-a`'s traffic with a
+/// default-config `Demuxer` therefore makes every access unit non-
+/// conformant (`NonConformantIssue::Av1WrongStreamId`) — silently, before
+/// this crate started counting/gating those events. Every demuxer this
+/// crate builds must come from this function, not `Demuxer::new()`/
+/// `DemuxerConfig::default()`, so each profile is demuxed the way it was
+/// muxed.
+pub fn demuxer_config(p: &Profile) -> tst_core::mpegts::demux::DemuxerConfig {
+    tst_core::mpegts::demux::DemuxerConfig::builder()
+        .av1_carriage(p.av1_mode.unwrap_or_default())
+        .build()
 }
 
 /// Look up a profile by its `name`.

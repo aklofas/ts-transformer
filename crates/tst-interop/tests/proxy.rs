@@ -717,7 +717,7 @@ fn srt_round_trip_through_lossy_proxy_recovers_via_retransmission() {
     let recv_url = format!("srt://127.0.0.1:{listener_port}?mode=listener");
     let recv_handle = {
         let recv_url = recv_url.clone();
-        thread::spawn(move || recv::run(&recv_url, profile, SECONDS, None, false))
+        thread::spawn(move || recv::run(&recv_url, profile, SECONDS, None, false, false))
     };
 
     let cfg = ImpairConfig {

@@ -24,7 +24,22 @@ use tst_core::mpegts::demux::{
 };
 
 use crate::profiles::{self, Profile};
+use crate::rawts::{self, WireSummary};
 use crate::report_types::{CellMetrics, VerifyReport};
+
+/// Whether a captured cell may carry `Discontinuity` events and still
+/// pass. Both modes fail on `NonConformant` — that always indicates the
+/// demuxer rejected something as spec-non-compliant, never merely
+/// "traffic was interrupted." `Lossy` is for cells expected to survive a
+/// scheduled outage/impairment (a discontinuity there is normal, expected
+/// noise); `Strict` is for cells that must be lossless end to end (e.g.
+/// the byte-transparent tier — see `run-matrix.sh`'s `run_peer_send_recv`,
+/// which passes `recv --strict` there).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VerifyMode {
+    Strict,
+    Lossy,
+}
 
 /// Map `profiles::VideoCodec` (this crate's own profile-shape enum) to
 /// `tst_core`'s demux-side codec enum, for comparing a profile's expected
@@ -177,6 +192,14 @@ pub struct Tally {
     last_pts_by_pid: BTreeMap<u16, u64>,
     bytes: u64,
     stream_hasher: Sha256,
+    discontinuities: u64,
+    nonconformant: u64,
+    /// `Debug`-formatted `DiscontinuityKind` of the first `Discontinuity`
+    /// event fed, if any.
+    first_discontinuity: Option<String>,
+    /// `Display`-formatted `NonConformantIssue` of the first
+    /// `NonConformant` event fed, if any.
+    first_nonconformant: Option<String>,
 }
 
 impl Default for Tally {
@@ -202,6 +225,10 @@ impl Tally {
             last_pts_by_pid: BTreeMap::new(),
             bytes: 0,
             stream_hasher: Sha256::new(),
+            discontinuities: 0,
+            nonconformant: 0,
+            first_discontinuity: None,
+            first_nonconformant: None,
         }
     }
 
@@ -270,9 +297,17 @@ impl Tally {
                 }
                 self.klv_carriage_seen.insert(klv_carriage_of(kind));
             }
-            DemuxEvent::Discontinuity { .. }
-            | DemuxEvent::NonConformant { .. }
-            | DemuxEvent::ReconnectDiscontinuity => {}
+            DemuxEvent::Discontinuity { kind, .. } => {
+                self.discontinuities += 1;
+                self.first_discontinuity
+                    .get_or_insert_with(|| format!("{kind:?}"));
+            }
+            DemuxEvent::NonConformant { issue, .. } => {
+                self.nonconformant += 1;
+                self.first_nonconformant
+                    .get_or_insert_with(|| issue.to_string());
+            }
+            DemuxEvent::ReconnectDiscontinuity => {}
         }
     }
 
@@ -298,8 +333,22 @@ impl Tally {
 
     /// Check the tally against `p`'s invariants for a `seconds`-long
     /// capture, requiring at least `slack` (e.g. `0.7` = 70%) of each
-    /// nominal per-second count.
-    pub fn finish(self, p: &Profile, seconds: f64, slack: f64) -> VerifyReport {
+    /// nominal per-second count. `mode` governs whether a `Discontinuity`
+    /// event fails the check (`Strict`) or is merely counted (`Lossy`);
+    /// `NonConformant` always fails, in either mode.
+    ///
+    /// `wire` is the independent [`rawts`] reader's summary of the same
+    /// bytes, alongside the tst-core-demuxed `Tally` — consumed by a
+    /// later task's wire-level oracles; accepted and unused here.
+    pub fn finish(
+        self,
+        p: &Profile,
+        seconds: f64,
+        slack: f64,
+        mode: VerifyMode,
+        wire: &WireSummary,
+    ) -> VerifyReport {
+        let _ = wire;
         let inv = profiles::invariants(p);
         let mut failures = Vec::new();
 
@@ -368,6 +417,21 @@ impl Tally {
             failures.push("expected a MISP ST 0604 SEI timestamp, none observed".to_string());
         }
 
+        if self.nonconformant > 0 {
+            failures.push(format!(
+                "nonconformant_event: {} event(s), first: {}",
+                self.nonconformant,
+                self.first_nonconformant.as_deref().unwrap_or("?")
+            ));
+        }
+        if mode == VerifyMode::Strict && self.discontinuities > 0 {
+            failures.push(format!(
+                "discontinuity_event: {} event(s), first: {}",
+                self.discontinuities,
+                self.first_discontinuity.as_deref().unwrap_or("?")
+            ));
+        }
+
         let metrics = CellMetrics {
             video_aus: self.video_aus,
             keyframes: self.keyframes,
@@ -381,6 +445,8 @@ impl Tally {
             misp_sei_seen: self.misp_sei_seen,
             bytes: self.bytes,
             stream_sha256: to_hex(&self.stream_hasher.finalize()),
+            discontinuities: self.discontinuities,
+            nonconformant: self.nonconformant,
         };
 
         VerifyReport {
@@ -408,8 +474,15 @@ const READ_CHUNK_PACKETS: usize = 512;
 /// `seconds`-long capture.
 pub fn verify_file(path: &Path, p: &Profile, seconds: f64) -> io::Result<VerifyReport> {
     let mut file = File::open(path)?;
-    let mut demux = Demuxer::new();
+    // Built per-profile (never `Demuxer::new()`/`DemuxerConfig::default()`)
+    // — see `profiles::demuxer_config`'s doc comment for the av1-klv-a
+    // finding this closes.
+    let mut demux = Demuxer::with_config(profiles::demuxer_config(p));
     let mut tally = Tally::new();
+    // Independent wire-level reader, fed the exact same bytes as the
+    // demuxer — see `rawts`'s module doc for why it shares no code with
+    // `Demuxer`.
+    let mut wire_reader = rawts::Reader::new();
 
     let mut read_buf = [0u8; TS_PACKET_LEN * READ_CHUNK_PACKETS];
     let mut carry: Vec<u8> = Vec::new();
@@ -427,6 +500,9 @@ pub fn verify_file(path: &Path, p: &Profile, seconds: f64) -> io::Result<VerifyR
         demux
             .feed(&carry[..aligned_len])
             .map_err(io::Error::other)?;
+        wire_reader
+            .feed(&carry[..aligned_len])
+            .map_err(io::Error::other)?;
         carry.drain(..aligned_len);
     }
     if !carry.is_empty() {
@@ -435,6 +511,7 @@ pub fn verify_file(path: &Path, p: &Profile, seconds: f64) -> io::Result<VerifyR
         // cover every byte read.
         tally.note_bytes(&carry);
         demux.feed(&carry).map_err(io::Error::other)?;
+        wire_reader.feed(&carry).map_err(io::Error::other)?;
     }
 
     // Canonical end-of-stream signal — see `demux_to_events.rs`'s doc
@@ -445,7 +522,8 @@ pub fn verify_file(path: &Path, p: &Profile, seconds: f64) -> io::Result<VerifyR
         tally.feed(&ev);
     }
 
-    Ok(tally.finish(p, seconds, NOMINAL_COUNT_SLACK))
+    let wire = wire_reader.finish();
+    Ok(tally.finish(p, seconds, NOMINAL_COUNT_SLACK, VerifyMode::Strict, &wire))
 }
 
 #[cfg(test)]
@@ -453,7 +531,10 @@ mod tests {
     use super::*;
     use crate::fixtures;
     use tst_core::mpegts::au_cell::CellFragmentIndication;
-    use tst_core::mpegts::demux::{MetadataKind, ProgramMap, StreamId, StreamKind, VideoCodec};
+    use tst_core::mpegts::demux::{
+        DiscontinuityKind, MetadataKind, NonConformantIssue, ProgramMap, StreamId, StreamKind,
+        VideoCodec,
+    };
     use tst_core::shared::SharedBytes;
 
     const VIDEO_PID: u16 = 0x0100;
@@ -553,13 +634,115 @@ mod tests {
         }
     }
 
+    /// A `Tally` fed 3 seconds of clean baseline-shaped traffic (90 video
+    /// AUs @ 30fps with a keyframe on the first, 30 KLV records @ 10Hz,
+    /// one program) — passes `baseline`'s invariants outright, with zero
+    /// `Discontinuity`/`NonConformant` events, so a test can `feed` one
+    /// more event on top and attribute any resulting failure to exactly
+    /// that event.
+    fn healthy_baseline_tally() -> Tally {
+        let mut t = Tally::new();
+        t.feed(&program_map_event());
+        for i in 0..90u32 {
+            t.feed(&video_event(i as i64 * FPS_STEP_TICKS, i == 0));
+        }
+        for i in 0..30u32 {
+            t.feed(&klv_event(i as i64 * KLV_STEP_TICKS, i));
+        }
+        t
+    }
+
+    fn nonconformant_event() -> DemuxEvent {
+        DemuxEvent::NonConformant {
+            stream: StreamId {
+                pid: VIDEO_PID,
+                kind: StreamKind::Video(VideoCodec::H264),
+                program_number: PROGRAM,
+            },
+            issue: NonConformantIssue::Av1WrongStreamId {
+                pid: VIDEO_PID,
+                observed: 0xE0,
+            },
+        }
+    }
+
+    fn discontinuity_event() -> DemuxEvent {
+        DemuxEvent::Discontinuity {
+            stream: StreamId {
+                pid: VIDEO_PID,
+                kind: StreamKind::Video(VideoCodec::H264),
+                program_number: PROGRAM,
+            },
+            kind: DiscontinuityKind::ContinuityJump {
+                expected: 3,
+                observed: 5,
+            },
+        }
+    }
+
+    #[test]
+    fn strict_mode_fails_on_a_discontinuity_lossy_counts_it() {
+        for (mode, expect_pass) in [(VerifyMode::Strict, false), (VerifyMode::Lossy, true)] {
+            let mut t = healthy_baseline_tally();
+            t.feed(&discontinuity_event());
+            let r = t.finish(
+                profiles::by_name("baseline").unwrap(),
+                3.0,
+                NOMINAL_COUNT_SLACK,
+                mode,
+                &WireSummary::default(),
+            );
+            assert_eq!(r.pass, expect_pass, "{mode:?}: {:?}", r.failures);
+            assert_eq!(r.metrics.discontinuities, 1);
+            if !expect_pass {
+                assert!(
+                    r.failures
+                        .iter()
+                        .any(|f| f.starts_with("discontinuity_event")),
+                    "{:?}",
+                    r.failures
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn nonconformant_fails_in_both_modes() {
+        for mode in [VerifyMode::Strict, VerifyMode::Lossy] {
+            let mut t = healthy_baseline_tally();
+            t.feed(&nonconformant_event());
+            let r = t.finish(
+                profiles::by_name("baseline").unwrap(),
+                3.0,
+                NOMINAL_COUNT_SLACK,
+                mode,
+                &WireSummary::default(),
+            );
+            assert!(!r.pass);
+            assert_eq!(r.metrics.nonconformant, 1);
+            assert!(
+                r.failures
+                    .iter()
+                    .any(|f| f.starts_with("nonconformant_event")),
+                "{:?}",
+                r.failures
+            );
+        }
+    }
+
     #[test]
     fn tally_passes_matching_profile() {
         let p = profiles::by_name("baseline").expect("baseline profile must exist");
         let mut t = Tally::new();
         feed_two_seconds_baseline(&mut t);
 
-        let report = t.finish(p, 2.0, NOMINAL_COUNT_SLACK);
+        let report = t.finish(
+            p,
+            2.0,
+            NOMINAL_COUNT_SLACK,
+            VerifyMode::Lossy,
+            &WireSummary::default(),
+        );
 
         assert!(
             report.pass,
@@ -584,7 +767,13 @@ mod tests {
         }
         // No KLV events fed at all.
 
-        let report = t.finish(p, 2.0, NOMINAL_COUNT_SLACK);
+        let report = t.finish(
+            p,
+            2.0,
+            NOMINAL_COUNT_SLACK,
+            VerifyMode::Lossy,
+            &WireSummary::default(),
+        );
 
         assert!(!report.pass);
         assert_eq!(report.metrics.klv_records, 0);
@@ -604,7 +793,13 @@ mod tests {
 
         let mut expected = Tally::new();
         feed_two_seconds_baseline(&mut expected);
-        let expected_report = expected.finish(p, 2.0, NOMINAL_COUNT_SLACK);
+        let expected_report = expected.finish(
+            p,
+            2.0,
+            NOMINAL_COUNT_SLACK,
+            VerifyMode::Lossy,
+            &WireSummary::default(),
+        );
 
         let mut tampered = Tally::new();
         tampered.feed(&program_map_event());
@@ -617,7 +812,13 @@ mod tests {
             // different bytes.
             tampered.feed(&klv_event(i as i64 * KLV_STEP_TICKS, i + 1000));
         }
-        let tampered_report = tampered.finish(p, 2.0, NOMINAL_COUNT_SLACK);
+        let tampered_report = tampered.finish(
+            p,
+            2.0,
+            NOMINAL_COUNT_SLACK,
+            VerifyMode::Lossy,
+            &WireSummary::default(),
+        );
 
         // Counts/invariants alone can't see the swap (same cadence, same
         // record count) — the set fingerprint is what catches it. Actual
@@ -647,7 +848,13 @@ mod tests {
             let pts = raw.rem_euclid(WRAP); // the wire value wraps at 2^33
             wrapping.feed(&video_event(pts, i == 0));
         }
-        let report = wrapping.finish(p, 2.0, NOMINAL_COUNT_SLACK);
+        let report = wrapping.finish(
+            p,
+            2.0,
+            NOMINAL_COUNT_SLACK,
+            VerifyMode::Lossy,
+            &WireSummary::default(),
+        );
         assert!(
             report.metrics.pts_monotonic,
             "small per-frame deltas across the 2^33 wrap must be accepted"
@@ -658,7 +865,13 @@ mod tests {
         let mut violated = Tally::new();
         violated.feed(&video_event(200_000, true));
         violated.feed(&video_event(20_000, false)); // ~2s backwards
-        let report = violated.finish(p, 2.0, NOMINAL_COUNT_SLACK);
+        let report = violated.finish(
+            p,
+            2.0,
+            NOMINAL_COUNT_SLACK,
+            VerifyMode::Lossy,
+            &WireSummary::default(),
+        );
         assert!(
             !report.metrics.pts_monotonic,
             "a 2s backwards jump must be flagged as non-monotonic"
@@ -689,7 +902,13 @@ mod tests {
             t.feed(&klv_event(i as i64 * KLV_STEP_TICKS, i));
         }
 
-        let report = t.finish(p, 2.0, NOMINAL_COUNT_SLACK);
+        let report = t.finish(
+            p,
+            2.0,
+            NOMINAL_COUNT_SLACK,
+            VerifyMode::Lossy,
+            &WireSummary::default(),
+        );
 
         assert!(report.pass, "failures: {:?}", report.failures);
         assert_eq!(report.metrics.video_aus, 60);
@@ -716,7 +935,13 @@ mod tests {
             t.feed(&klv_event(i as i64 * KLV_STEP_TICKS, i));
         }
 
-        let report = t.finish(p, 2.0, NOMINAL_COUNT_SLACK);
+        let report = t.finish(
+            p,
+            2.0,
+            NOMINAL_COUNT_SLACK,
+            VerifyMode::Lossy,
+            &WireSummary::default(),
+        );
 
         assert!(!report.pass);
         assert!(
@@ -741,7 +966,13 @@ mod tests {
             t.feed(&klv_event(i as i64 * KLV_STEP_TICKS, i)); // async-shaped
         }
 
-        let report = t.finish(p, 2.0, NOMINAL_COUNT_SLACK);
+        let report = t.finish(
+            p,
+            2.0,
+            NOMINAL_COUNT_SLACK,
+            VerifyMode::Lossy,
+            &WireSummary::default(),
+        );
 
         assert!(!report.pass);
         assert!(
@@ -765,7 +996,13 @@ mod tests {
             t.feed(&klv_sync_event(i as i64 * KLV_STEP_TICKS, i));
         }
 
-        let report = t.finish(p, 2.0, NOMINAL_COUNT_SLACK);
+        let report = t.finish(
+            p,
+            2.0,
+            NOMINAL_COUNT_SLACK,
+            VerifyMode::Lossy,
+            &WireSummary::default(),
+        );
 
         assert!(report.pass, "failures: {:?}", report.failures);
         assert_eq!(report.metrics.klv_records, 20);

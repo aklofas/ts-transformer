@@ -208,6 +208,10 @@ pub fn send_over_transport(
         misp_sei_seen,
         bytes,
         stream_sha256,
+        // The send side never runs anything through a `Demuxer` — these
+        // are demux-event tallies, meaningless (always zero) here.
+        discontinuities: 0,
+        nonconformant: 0,
     })
 }
 

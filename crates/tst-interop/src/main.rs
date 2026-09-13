@@ -333,7 +333,7 @@ fn run_send(args: &[String]) -> ! {
 }
 
 /// `recv --url URL --expect PROFILE --seconds N [--json OUT]
-/// [--managed] [--no-klv-digest]`
+/// [--managed] [--no-klv-digest] [--strict]`
 ///
 /// Builds a live transport from `URL` and receives `N` seconds of
 /// traffic from it, checking the result against `PROFILE`'s invariants.
@@ -358,6 +358,11 @@ fn run_send(args: &[String]) -> ! {
 /// rationale (`soak.sh` passes it on both sides of both legs);
 /// `VerifyReport.metrics.klv_set_sha256` comes back `null` instead of
 /// the hash, everything else unaffected.
+///
+/// `--strict` additionally fails the check on any `Discontinuity` demux
+/// event — for lossless transparent-tier cells; default `Lossy` counts
+/// them (in `VerifyReport.metrics.discontinuities`) without failing.
+/// `NonConformant` events always fail, in either mode.
 fn run_recv(args: &[String]) -> ! {
     let mut url: Option<String> = None;
     let mut expect: Option<String> = None;
@@ -365,6 +370,7 @@ fn run_recv(args: &[String]) -> ! {
     let mut json_out: Option<String> = None;
     let mut managed = false;
     let mut no_klv_digest = false;
+    let mut strict = false;
 
     let mut i = 0;
     while i < args.len() {
@@ -393,6 +399,10 @@ fn run_recv(args: &[String]) -> ! {
                 no_klv_digest = true;
                 i += 1;
             }
+            "--strict" => {
+                strict = true;
+                i += 1;
+            }
             other => {
                 eprintln!("recv: unknown argument: {other}");
                 std::process::exit(2);
@@ -418,9 +428,23 @@ fn run_recv(args: &[String]) -> ! {
     });
 
     let report = if managed {
-        recv::run_managed(&url, profile, seconds, json_out.as_deref(), no_klv_digest)
+        recv::run_managed(
+            &url,
+            profile,
+            seconds,
+            json_out.as_deref(),
+            no_klv_digest,
+            strict,
+        )
     } else {
-        recv::run(&url, profile, seconds, json_out.as_deref(), no_klv_digest)
+        recv::run(
+            &url,
+            profile,
+            seconds,
+            json_out.as_deref(),
+            no_klv_digest,
+            strict,
+        )
     }
     .unwrap_or_else(|e| {
         eprintln!("recv: {e}");
