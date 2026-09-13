@@ -98,15 +98,28 @@ mechanism string by definition.
 - **`tier`**: what the cell asserts, beyond `tst-interop verify`/`recv`
   reporting `pass`:
   - `transparent` — the capture must be **byte-for-byte identical** to
-    what was sent (`stream_sha256` equality). Used for `tsp` (a pure
-    relay/dump tool with no re-encoding path) and `gst` (`srtsrc`/
-    `srtsink` are raw byte pass-throughs in this pipeline shape).
+    what was sent (`stream_sha256` equality), plus `tst-interop verify
+    --strict`: any `NonConformant` or `Discontinuity` event on the
+    capture fails the cell. Used for `tsp` (a pure relay/dump tool with
+    no re-encoding path) and `gst` (`srtsrc`/`srtsink` are raw byte
+    pass-throughs in this pipeline shape).
   - `remux` — the capture only has to satisfy `tst-interop verify`'s
     profile invariants (video AU/KLV-record counts within the documented
-    70% slack, correct codec/carriage, monotonic PTS, etc.) — used for
-    `ffmpeg`/`gst`-decode/HLS/RTSP cells, where the peer actively
-    re-packetizes (HLS segmenting, RTSP interleaving) or is known to touch
-    PES framing (see the KLV-PTS finding below).
+    70% slack, correct codec/carriage, monotonic PTS, etc.) **plus the
+    demuxer-independent wire oracles** (`crates/tst-interop/src/oracles.rs`,
+    read straight off the bytes by the naive raw-TS parser in
+    `rawts.rs`: PMT stream types/descriptors, PCR cadence, AV1
+    carriage-mode discrimination, per-program media accounting, an
+    actually-observed PTS wrap for `pts-rollover`, and the audio
+    codec/cadence checks) — run in `VerifyMode::Lossy`, so discontinuities
+    are counted rather than fatal but a `NonConformant` event still fails
+    the cell. Used for `ffmpeg`/`gst`-decode/HLS/RTSP cells, where the peer
+    actively re-packetizes (HLS segmenting, RTSP interleaving) or is known
+    to touch PES framing (see the KLV-PTS finding below). See
+    `docs/project/validation-evidence.md`'s "What each profile's oracle
+    proves" table for the full oracle-to-profile mapping, and
+    `crates/tst-interop/tests/mutations.rs` for the proof each oracle
+    actually bites (one mutation per oracle, offline, no network).
   - `n/a` — decode-only probes (`rtsp-serve/vlc-probe`, every format-axis
     `decode/*` cell) with no capture file to compare against anything;
     PASS means "no error/fatal marker in the peer's own log" (plus mpv's
