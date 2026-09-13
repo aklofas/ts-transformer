@@ -11,8 +11,7 @@
 //! streams sharing a `stream_type` byte never conflate their counts.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::fs::File;
-use std::io::{self, Read};
+use std::io;
 use std::path::Path;
 
 use sha2::{Digest, Sha256};
@@ -511,17 +510,25 @@ impl Tally {
     }
 }
 
-/// Bytes read per `File::read` call, aligned to whole 188-byte TS packets
-/// before being handed to the `Demuxer` — `Demuxer::feed` itself
-/// tolerates arbitrary slicing, but feeding whole packets keeps this
-/// driver's behavior predictable and easy to reason about.
-const TS_PACKET_LEN: usize = 188;
-const READ_CHUNK_PACKETS: usize = 512;
-
-/// Demux `path` and check it against `p`'s invariants for a
-/// `seconds`-long capture.
-pub fn verify_file(path: &Path, p: &Profile, seconds: f64) -> io::Result<VerifyReport> {
-    let mut file = File::open(path)?;
+/// Demux `bytes` and check them against `p`'s invariants for a
+/// `seconds`-long capture under `mode`, without touching the filesystem.
+///
+/// Never fails via `Result` — mutation tests deliberately feed corrupted
+/// bytes (see `tests/mutations.rs`), and a `Result`-returning verifier
+/// would be awkward for that call shape: every mutation-test call site
+/// would need to unwrap/expect on a value that's *expected* to report
+/// failure, not to error. A `Demuxer`/`rawts::Reader` feed error
+/// (`DemuxError::Unrecoverable` and friends — see
+/// `tst_core::error::DemuxError`) instead turns into a `pass: false`
+/// report carrying a `demux_error`/`rawts_sync_loss` failure string,
+/// alongside whatever `Tally`/`WireSummary` state accumulated before the
+/// error. `verify_file` is the thin file-reading wrapper around this.
+pub fn verify_bytes_with_mode(
+    bytes: &[u8],
+    p: &Profile,
+    seconds: f64,
+    mode: VerifyMode,
+) -> VerifyReport {
     // Built per-profile (never `Demuxer::new()`/`DemuxerConfig::default()`)
     // — see `profiles::demuxer_config`'s doc comment for the av1-klv-a
     // finding this closes.
@@ -532,46 +539,47 @@ pub fn verify_file(path: &Path, p: &Profile, seconds: f64) -> io::Result<VerifyR
     // `Demuxer`.
     let mut wire_reader = rawts::Reader::new();
 
-    let mut read_buf = [0u8; TS_PACKET_LEN * READ_CHUNK_PACKETS];
-    let mut carry: Vec<u8> = Vec::new();
-    loop {
-        let n = file.read(&mut read_buf)?;
-        if n == 0 {
-            break;
-        }
-        carry.extend_from_slice(&read_buf[..n]);
-        let aligned_len = carry.len() - (carry.len() % TS_PACKET_LEN);
-        if aligned_len == 0 {
-            continue;
-        }
-        tally.note_bytes(&carry[..aligned_len]);
-        demux
-            .feed(&carry[..aligned_len])
-            .map_err(io::Error::other)?;
-        wire_reader
-            .feed(&carry[..aligned_len])
-            .map_err(io::Error::other)?;
-        carry.drain(..aligned_len);
-    }
-    if !carry.is_empty() {
-        // Trailing bytes short of a full packet — not expected from a
-        // well-formed TS file, but still counted so `bytes`/`stream_sha256`
-        // cover every byte read.
-        tally.note_bytes(&carry);
-        demux.feed(&carry).map_err(io::Error::other)?;
-        wire_reader.feed(&carry).map_err(io::Error::other)?;
-    }
+    tally.note_bytes(bytes);
+    let demux_err = demux.feed(bytes).err();
+    let wire_err = wire_reader.feed(bytes).err();
 
     // Canonical end-of-stream signal — see `demux_to_events.rs`'s doc
     // comment: without this the last access unit of every stream is left
-    // sitting in the reassembler and silently dropped.
+    // sitting in the reassembler and silently dropped. Drained even after
+    // a feed error above: whatever the demuxer managed to reassemble
+    // before losing sync is still real signal for the tally.
     demux.flush();
     while let Some(ev) = demux.next_event() {
         tally.feed(&ev);
     }
 
     let wire = wire_reader.finish();
-    Ok(tally.finish(p, seconds, NOMINAL_COUNT_SLACK, VerifyMode::Strict, &wire))
+    let mut report = tally.finish(p, seconds, NOMINAL_COUNT_SLACK, mode, &wire);
+    if let Some(e) = demux_err {
+        report.pass = false;
+        report.failures.push(format!("demux_error: {e}"));
+    }
+    if let Some(e) = wire_err {
+        report.pass = false;
+        report.failures.push(format!("rawts_sync_loss: {e}"));
+    }
+    report
+}
+
+/// Demux `path` and check it against `p`'s invariants for a
+/// `seconds`-long capture. Thin wrapper: reads the whole file, then
+/// delegates to [`verify_bytes_with_mode`] in [`VerifyMode::Strict`]. The
+/// `io::Result` here covers only the file read itself — a demux/wire-
+/// reader error surfaces inside the returned `VerifyReport` instead (see
+/// `verify_bytes_with_mode`'s doc comment).
+pub fn verify_file(path: &Path, p: &Profile, seconds: f64) -> io::Result<VerifyReport> {
+    let bytes = std::fs::read(path)?;
+    Ok(verify_bytes_with_mode(
+        &bytes,
+        p,
+        seconds,
+        VerifyMode::Strict,
+    ))
 }
 
 #[cfg(test)]
