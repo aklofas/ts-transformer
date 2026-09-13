@@ -52,6 +52,16 @@
 #                      short list (e.g. "baseline,h266-klv") for a
 #                      faster local iteration loop.
 #
+# Before running anything, a declare pass calls every cell shape once
+# per --profiles entry with DECLARE_ONLY=1 (each shape records the id
+# it WOULD run and returns immediately) and writes the resulting exact
+# {id, profile} multiset to DIR/inventory.json, whose `shape` field is
+# "full-157" iff --cells is the default "*" AND --profiles is the
+# default full 12-profile list, else "subset". `tst-interop report
+# merge` is handed this file via --inventory and hard-fails (exit 2, no
+# results.json written) if the cells actually produced don't exactly
+# match the declared multiset (missing/duplicate/extra/undeclared skip).
+#
 # Exit code: `tst-interop report merge`'s (0 iff every FAIL matched an
 # expectations.toml entry — see that file's header for the grammar).
 #
@@ -88,7 +98,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     -h | --help)
-      sed -n '2,54p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,68p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
@@ -184,6 +194,7 @@ run_send_peer_recv() {
   local -a peer_cmd=("$@")
 
   cell_selected "$id" || return 0
+  if [[ -n "${DECLARE_ONLY:-}" ]]; then declare_cell "$id"; return 0; fi
   if ! have "$peer"; then
     emit_skipped "$id" "$peer" send "$tier" "$peer not installed on this box"
     return 0
@@ -273,6 +284,7 @@ run_peer_send_recv() {
   local -a peer_cmd=("$@")
 
   cell_selected "$id" || return 0
+  if [[ -n "${DECLARE_ONLY:-}" ]]; then declare_cell "$id"; return 0; fi
   if ! have "$peer"; then
     emit_skipped "$id" "$peer" recv "$tier" "$peer not installed on this box"
     return 0
@@ -363,6 +375,7 @@ run_serve_peer_pull() {
   local -a peer_cmd=("$@")
 
   cell_selected "$id" || return 0
+  if [[ -n "${DECLARE_ONLY:-}" ]]; then declare_cell "$id"; return 0; fi
   if ! have "$peer"; then
     emit_skipped "$id" "$peer" send "$tier" "$peer not installed on this box"
     return 0
@@ -438,6 +451,7 @@ run_serve_peer_probe() {
   local -a peer_cmd=("$@")
 
   cell_selected "$id" || return 0
+  if [[ -n "${DECLARE_ONLY:-}" ]]; then declare_cell "$id"; return 0; fi
   if ! have "$peer"; then
     emit_skipped "$id" "$peer" send n/a "$peer not installed on this box"
     return 0
@@ -514,6 +528,7 @@ run_analyze_ffprobe() {
   local profile=$1
   local id="analyze/ffprobe/$profile"
   cell_selected "$id" || return 0
+  if [[ -n "${DECLARE_ONLY:-}" ]]; then declare_cell "$id"; return 0; fi
   echo "run-matrix: cell $id" >&2
   if ! have ffprobe; then
     emit_skipped "$id" ffprobe n/a n/a "ffprobe not installed on this box"
@@ -565,6 +580,7 @@ run_analyze_counter_probe() {
   local -a cmd=("$@")
   local id="analyze/$id_suffix"
   cell_selected "$id" || return 0
+  if [[ -n "${DECLARE_ONLY:-}" ]]; then declare_cell "$id"; return 0; fi
   echo "run-matrix: cell $id" >&2
   if ! have "$tool"; then
     emit_skipped "$id" "$tool" n/a n/a "$tool not installed on this box"
@@ -610,6 +626,7 @@ run_decode_probe() {
   local id="decode/$player/$profile"
 
   cell_selected "$id" || return 0
+  if [[ -n "${DECLARE_ONLY:-}" ]]; then declare_cell "$id"; return 0; fi
   echo "run-matrix: cell $id" >&2
   # gst-play's real binary is gst-play-1.0 (matches the invocation this
   # project's own pre-release decoder-compatibility check uses); the
@@ -867,6 +884,7 @@ rtsp_cells() {
   # capture); expect flakiness (VLC's --sout RTSP serving is fiddly) —
   # wired as `known_flaky` in expectations.toml starting Task 12.
   cell_selected "rtsp-consume/vlc-serve-ffmpeg-pull" || return 0
+  if [[ -n "${DECLARE_ONLY:-}" ]]; then declare_cell "rtsp-consume/vlc-serve-ffmpeg-pull"; return 0; fi
   if ! have cvlc || ! have ffmpeg; then
     local missing="cvlc and/or ffmpeg"
     emit_skipped "rtsp-consume/vlc-serve-ffmpeg-pull" "vlc+ffmpeg" n/a remux \
@@ -1017,9 +1035,67 @@ srt_live_cells_for_profile() {
     tsp -I file "$GEN_FILE" -P regulate -O srt --caller "127.0.0.1:$port" --linger 5
 }
 
+# run_axes_for_profile — every cell shape the current $PROFILE's
+# iteration calls, both axes: transport (baseline only) + format.
+# Shared by the declare pass below (DECLARE_ONLY=1, every shape records
+# its id and returns before doing any real work) and the real execution
+# loop, so a cell can never be declared by one path and produced by a
+# different one.
+run_axes_for_profile() {
+  # Transport axis stays pinned to "baseline" regardless of how many
+  # profiles --profiles lists — matches the ~25-cell transport-axis
+  # inventory task 11 built and verified (8 PASS/17 FAIL/0 SKIPPED);
+  # scaling it by profile too would multiply that count by up to 12x
+  # for no new signal the format axis below doesn't already cover more
+  # precisely (analyze/decode/srt-live are the per-profile probes).
+  if [[ "$PROFILE" == "baseline" ]]; then
+    srt_cells; udp_cells; rist_cells; tcp_cells; hls_cells; rtsp_cells
+  fi
+
+  # Format axis: every listed profile.
+  analyze_cells_for_profile "$PROFILE"
+  decode_cells_for_profile "$PROFILE"
+  srt_live_cells_for_profile "$PROFILE"
+}
+
 # ---------------------------------------------------------------------
 # Run every axis, once per --profiles entry
 # ---------------------------------------------------------------------
+
+IFS=',' read -r -a PROFILE_LIST <<<"$PROFILES_ARG"
+
+# ---------------------------------------------------------------------
+# Declare pass: enumerate every cell this run WILL produce, before any
+# runs. GEN_FILE/GEN_STREAM_SHA are set empty so call-site argument
+# expansion under `set -u` is well-defined; no shape reads them before
+# its DECLARE_ONLY early-return.
+# ---------------------------------------------------------------------
+INVENTORY_TSV="$WORK/inventory.tsv"
+: >"$INVENTORY_TSV"
+DECLARE_ONLY=1
+GEN_FILE=""
+GEN_STREAM_SHA=""
+for PROFILE in "${PROFILE_LIST[@]}"; do
+  export PROFILE
+  run_axes_for_profile
+done
+unset DECLARE_ONLY
+
+SHAPE=subset
+[[ "$CELLS_GLOB" == "*" && "$PROFILES_ARG" == "$ALL_PROFILE_NAMES" ]] && SHAPE=full-157
+jq -n --arg shape "$SHAPE" --arg seconds "$SECONDS_ARG" --arg cells_glob "$CELLS_GLOB" \
+  --arg profiles "$PROFILES_ARG" --rawfile tsv "$INVENTORY_TSV" \
+  --argjson tools "$(tool_versions_json)" \
+  '{shape: $shape, seconds_per_cell: ($seconds | tonumber), cells_glob: $cells_glob,
+    profiles: ($profiles | split(",")),
+    cells: ($tsv | split("\n") | map(select(length > 0)) | map(split("\t") | {id: .[0], profile: .[1]})),
+    allowed_skips: [], tools: $tools}' >"$OUTDIR/inventory.json"
+declared=$(jq '.cells | length' "$OUTDIR/inventory.json")
+echo "run-matrix: declared $declared cell(s), shape=$SHAPE" >&2
+if [[ "$SHAPE" == "full-157" && "$declared" != "157" ]]; then
+  echo "run-matrix: FATAL: full shape declared $declared cells, expected 157 — a cell shape changed without this check being updated" >&2
+  exit 2
+fi
 
 # Same per-seconds budget the per-cell shapes use — gen/verify here do
 # real work proportional to --seconds (this scales correctly even for a
@@ -1028,7 +1104,6 @@ srt_live_cells_for_profile() {
 # with cell *count*, not stream duration).
 bootstrap_budget=$(cell_timeout "$SECONDS_ARG")
 
-IFS=',' read -r -a PROFILE_LIST <<<"$PROFILES_ARG"
 for PROFILE in "${PROFILE_LIST[@]}"; do
   export PROFILE
   echo "run-matrix: profile=$PROFILE seconds=$SECONDS_ARG cells=$CELLS_GLOB" >&2
@@ -1053,25 +1128,7 @@ for PROFILE in "${PROFILE_LIST[@]}"; do
   fi
   export GEN_FILE GEN_STREAM_SHA
 
-  # Transport axis stays pinned to "baseline" regardless of how many
-  # profiles --profiles lists — matches the ~25-cell transport-axis
-  # inventory task 11 built and verified (8 PASS/17 FAIL/0 SKIPPED);
-  # scaling it by profile too would multiply that count by up to 12x
-  # for no new signal the format axis below doesn't already cover more
-  # precisely (analyze/decode/srt-live are the per-profile probes).
-  if [[ "$PROFILE" == "baseline" ]]; then
-    srt_cells
-    udp_cells
-    rist_cells
-    tcp_cells
-    hls_cells
-    rtsp_cells
-  fi
-
-  # Format axis: every listed profile.
-  analyze_cells_for_profile "$PROFILE"
-  decode_cells_for_profile "$PROFILE"
-  srt_live_cells_for_profile "$PROFILE"
+  run_axes_for_profile
 done
 
 # ---------------------------------------------------------------------
@@ -1085,6 +1142,7 @@ timeout --kill-after=5 "${REPORT_TIMEOUT}s" \
   --cells-dir "$CELLS_DIR" \
   --expectations "$SCRIPT_DIR/expectations.toml" \
   --meta "$OUTDIR/meta.json" \
+  --inventory "$OUTDIR/inventory.json" \
   --out "$OUTDIR/results.json" || merge_rc=$?
 
 timeout --kill-after=5 "${REPORT_TIMEOUT}s" \
