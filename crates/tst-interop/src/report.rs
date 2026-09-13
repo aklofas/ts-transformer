@@ -551,7 +551,16 @@ pub fn check_inventory(raw_cells: &[RawCell], inv: &Inventory) -> Result<(), Str
     for (cell, &n) in &declared {
         match produced.get(cell).copied().unwrap_or(0) {
             0 => problems.push(format!("missing: {} ({})", cell.id, cell.profile)),
-            m if m > n => problems.push(format!("duplicate: {} ({}) x{m}", cell.id, cell.profile)),
+            m if m < n => problems.push(format!(
+                "missing: {} ({}) x{} (declared {n}, produced {m})",
+                cell.id,
+                cell.profile,
+                n - m
+            )),
+            m if m > n => problems.push(format!(
+                "duplicate: {} ({}) x{m} (declared {n})",
+                cell.id, cell.profile
+            )),
             _ => {}
         }
     }
@@ -3343,6 +3352,17 @@ mod tests {
             e.contains("duplicate") && e.contains("udp/us-to-tsp"),
             "{e}"
         );
+    }
+
+    #[test]
+    fn inventory_underproduced_multiplicity_is_an_error() {
+        let cells = vec![raw_cell("udp/us-to-tsp", "baseline", RawVerdict::Pass)];
+        let inv = inventory(
+            &[("udp/us-to-tsp", "baseline"), ("udp/us-to-tsp", "baseline")],
+            &[],
+        );
+        let e = check_inventory(&cells, &inv).unwrap_err();
+        assert!(e.contains("missing") && e.contains("udp/us-to-tsp"), "{e}");
     }
 
     #[test]
