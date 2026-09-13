@@ -1699,6 +1699,8 @@ pub mod soak {
     #[allow(clippy::too_many_arguments)]
     pub fn run(
         rss_path: &Path,
+        config_path: &Path,
+        exits_path: &Path,
         srt_proxy_stats_path: &Path,
         srt_recv_report_path: &Path,
         srt_send_report_path: &Path,
@@ -1708,6 +1710,8 @@ pub mod soak {
         out_path: &Path,
     ) -> Result<SoakResults, String> {
         let rss_samples = parse_rss_csv(&read_to_string(rss_path)?)?;
+        let config = parse_soak_config(&read_to_string(config_path)?)?;
+        let worker_exits = parse_worker_exits(&read_to_string(exits_path)?)?;
 
         let mut legs = vec![(
             "srt".to_string(),
@@ -1725,31 +1729,6 @@ pub mod soak {
                 read_leg_artifacts(proxy_stats_path, recv_report_path, send_report_path, None)?,
             ));
         }
-
-        // TEMPORARY until Task 3 wires --config/--exits: there is no
-        // soak-config.json / exits.json to read yet, so derive an
-        // honest stand-in — a declared duration equal to what the
-        // samples themselves span (so duration_coverage can't fail
-        // against a number this call never had), the real sampler
-        // cadence, and every worker recorded as a clean exit.
-        let expected_duration_s = {
-            let mut min_t = f64::INFINITY;
-            let mut max_t = f64::NEG_INFINITY;
-            for s in &rss_samples {
-                min_t = min_t.min(s.elapsed_s);
-                max_t = max_t.max(s.elapsed_s);
-            }
-            (max_t - min_t).max(0.0)
-        };
-        let config = SoakConfig {
-            expected_duration_s,
-            rss_cadence_s: 30.0,
-            warmup_fraction: 1.0 / 6.0,
-            sampler_end_slack_s: 0.0,
-            expected_worker_exits: BTreeMap::new(),
-        };
-        let worker_exits: BTreeMap<String, i32> =
-            WORKER_ROLES.iter().map(|r| (r.to_string(), 0)).collect();
 
         let results = build_soak_results(SoakInputs {
             rss_samples,
@@ -2494,6 +2473,19 @@ pub mod soak {
             )
             .expect("write rss.csv");
 
+            let config_path = dir.join("soak-config.json");
+            std::fs::write(
+                &config_path,
+                serde_json::to_string(&cfg(30.0, 60.0)).unwrap(),
+            )
+            .expect("write soak-config.json");
+            let exits_path = dir.join("exits.json");
+            std::fs::write(
+                &exits_path,
+                serde_json::to_string(&six_clean_exits()).unwrap(),
+            )
+            .expect("write exits.json");
+
             let proxy_path = dir.join("proxy-stats.json");
             std::fs::write(
                 &proxy_path,
@@ -2516,6 +2508,8 @@ pub mod soak {
             let out_path = dir.join("soak-results.json");
             let results = run(
                 &rss_path,
+                &config_path,
+                &exits_path,
                 &proxy_path,
                 &recv_path,
                 &send_path,
@@ -2558,6 +2552,19 @@ pub mod soak {
             std::fs::write(&rss_path, "elapsed_s,leg,process,pid,rss_kb\n")
                 .expect("write header-only rss.csv");
 
+            let config_path = dir.join("soak-config.json");
+            std::fs::write(
+                &config_path,
+                serde_json::to_string(&cfg(30.0, 60.0)).unwrap(),
+            )
+            .expect("write soak-config.json");
+            let exits_path = dir.join("exits.json");
+            std::fs::write(
+                &exits_path,
+                serde_json::to_string(&six_clean_exits()).unwrap(),
+            )
+            .expect("write exits.json");
+
             let proxy_path = dir.join("proxy-stats.json");
             std::fs::write(
                 &proxy_path,
@@ -2580,6 +2587,8 @@ pub mod soak {
             let out_path = dir.join("soak-results.json");
             let err = run(
                 &rss_path,
+                &config_path,
+                &exits_path,
                 &proxy_path,
                 &recv_path,
                 &send_path,
@@ -2596,6 +2605,78 @@ pub mod soak {
             assert!(
                 !out_path.exists(),
                 "run must not write --out on this error path"
+            );
+
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+
+        /// `report soak` judges a run against a DECLARED config — if
+        /// that file is missing, there is nothing to judge against, so
+        /// `run` must error (naming the missing path) and write no
+        /// `--out`, exactly like the other precondition failures above.
+        #[test]
+        fn run_without_config_file_is_a_hard_error() {
+            let dir = std::env::temp_dir().join(format!(
+                "tst-interop-soak-no-config-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .expect("time moves forward")
+                    .as_nanos()
+            ));
+            std::fs::create_dir_all(&dir).expect("create temp dir");
+
+            let rss_path = dir.join("rss.csv");
+            std::fs::write(
+                &rss_path,
+                "elapsed_s,leg,process,pid,rss_kb\n0,srt,send,1,1000\n30,srt,send,2,1000\n",
+            )
+            .expect("write rss.csv");
+
+            let exits_path = dir.join("exits.json");
+            std::fs::write(
+                &exits_path,
+                serde_json::to_string(&six_clean_exits()).unwrap(),
+            )
+            .expect("write exits.json");
+
+            let proxy_path = dir.join("proxy-stats.json");
+            std::fs::write(
+                &proxy_path,
+                serde_json::to_string(&proxy_stats(1000, 0, 0.0, None, 0)).unwrap(),
+            )
+            .expect("write proxy stats");
+            let recv_path = dir.join("recv-report.json");
+            std::fs::write(
+                &recv_path,
+                serde_json::to_string(&passing_recv_report(1000)).unwrap(),
+            )
+            .expect("write recv report");
+            let send_path = dir.join("send-report.json");
+            std::fs::write(
+                &send_path,
+                serde_json::to_string(&cell_metrics(1000)).unwrap(),
+            )
+            .expect("write send report");
+
+            let out_path = dir.join("soak-results.json");
+            let err = run(
+                &rss_path,
+                &dir.join("missing-config.json"),
+                &exits_path,
+                &proxy_path,
+                &recv_path,
+                &send_path,
+                21600,
+                None,
+                None,
+                &out_path,
+            )
+            .unwrap_err();
+            assert!(err.contains("missing-config.json"), "{err}");
+            assert!(
+                !out_path.exists(),
+                "no results may be written on a config error"
             );
 
             let _ = std::fs::remove_dir_all(&dir);

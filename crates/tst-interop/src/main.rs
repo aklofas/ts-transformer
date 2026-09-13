@@ -858,8 +858,8 @@ fn run_report_render(args: &[String]) -> ! {
     std::process::exit(0);
 }
 
-/// `report soak --rss FILE --proxy-stats FILE --recv-report FILE
-/// --send-report FILE --outage-period-s N
+/// `report soak --rss FILE --config FILE --exits FILE --proxy-stats FILE
+/// --recv-report FILE --send-report FILE --outage-period-s N
 /// [--rist-proxy-stats FILE --rist-recv-report FILE --rist-send-report FILE]
 /// [--rss-slope-threshold-kb-per-hour F] --out FILE`
 ///
@@ -879,6 +879,8 @@ fn run_report_render(args: &[String]) -> ! {
 /// a usage/IO/parse error.
 fn run_report_soak(args: &[String]) -> ! {
     let mut rss: Option<PathBuf> = None;
+    let mut config: Option<PathBuf> = None;
+    let mut exits: Option<PathBuf> = None;
     let mut proxy_stats: Option<PathBuf> = None;
     let mut recv_report: Option<PathBuf> = None;
     let mut send_report: Option<PathBuf> = None;
@@ -894,6 +896,22 @@ fn run_report_soak(args: &[String]) -> ! {
         match args[i].as_str() {
             "--rss" => {
                 rss = Some(PathBuf::from(require_value(args, i, "report soak: --rss")));
+                i += 2;
+            }
+            "--config" => {
+                config = Some(PathBuf::from(require_value(
+                    args,
+                    i,
+                    "report soak: --config",
+                )));
+                i += 2;
+            }
+            "--exits" => {
+                exits = Some(PathBuf::from(require_value(
+                    args,
+                    i,
+                    "report soak: --exits",
+                )));
                 i += 2;
             }
             "--proxy-stats" => {
@@ -979,6 +997,14 @@ fn run_report_soak(args: &[String]) -> ! {
         eprintln!("report soak: --rss is required");
         std::process::exit(2);
     });
+    let config = config.unwrap_or_else(|| {
+        eprintln!("report soak: --config is required");
+        std::process::exit(2);
+    });
+    let exits = exits.unwrap_or_else(|| {
+        eprintln!("report soak: --exits is required");
+        std::process::exit(2);
+    });
     let proxy_stats = proxy_stats.unwrap_or_else(|| {
         eprintln!("report soak: --proxy-stats is required");
         std::process::exit(2);
@@ -1023,6 +1049,8 @@ fn run_report_soak(args: &[String]) -> ! {
 
     let results = report::soak::run(
         &rss,
+        &config,
+        &exits,
         &proxy_stats,
         &recv_report,
         &send_report,
