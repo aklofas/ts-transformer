@@ -426,6 +426,45 @@ similar at a glance:
    programs' full 480 video AUs / 160 KLV records were pushed correctly
    first.
 
+## Multi-day soak (`soak.sh`)
+
+`soak.sh` is the other half of this arc's published evidence: a long-running
+two-leg (SRT + RIST) endurance run through an impaired proxy, judged by
+`tst-interop report soak` rather than by the cell-based matrix above. See
+`soak.sh`'s own header comment for the full topology, prerequisites, and the
+detached-launch recipe (`setsid`/`nohup` + `disown` — never a supervising
+tool/session wrapper, which can enforce its own lifetime cap short of the
+run's actual duration). `--hours` accepts a decimal (e.g. `--hours 0.05` for
+a ~3-minute drill), not just whole hours.
+
+`soak.sh` writes two additional declaration/observation files under
+`--outdir` that `report soak` now requires:
+
+- **`soak-config.json`** — the run's declared parameters, written before any
+  worker is launched: `expected_duration_s`, `rss_cadence_s`,
+  `warmup_fraction`, `sampler_end_slack_s`, `expected_worker_exits`.
+  `report soak --config <file>` is mandatory; a missing file is a hard
+  error, not a fallback to inference.
+- **`exits.json`** — one reaped exit status per worker role (`srt-send`,
+  `srt-proxy`, `srt-recv`, `rist-send`, `rist-proxy`, `rist-recv`,
+  `rss-sampler`), written at teardown, including any worker that died
+  inside the supervisor's end-of-run grace window. `report soak --exits
+  <file>` is likewise mandatory.
+
+Those two files feed three new verdicts in `soak-results.json`:
+
+- **`duration_coverage`** — the RSS series must span at least
+  `expected_duration_s` minus the sampler's end slack and two cadences,
+  so a real run that ended early (a truncated series) fails here.
+- **`rss_sample_coverage_<leg>_<process>`** — each process needs at least
+  90% of the cadence-implied post-warmup sample count with no gap larger
+  than three cadences; a series with fewer than two distinct timestamps
+  fails outright, and the corresponding `rss_slope_<leg>_<process>` verdict
+  is reported as skipped rather than computed.
+- **`worker_exits`** — every status in `exits.json` must be `0` unless the
+  role is listed in `expected_worker_exits`; a missing `exits.json` fails
+  the run.
+
 ## Peer command-line notes (deviations from the plan's starting sketches)
 
 - **`tsp -I file ... -O <srt|rist|ip> ...` needs `-P regulate` inserted**

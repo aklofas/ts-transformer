@@ -249,6 +249,22 @@ which measured that same sender at 0.1 KiB/hour over its final 24 hours:
 the residual was warm-up convergence toward a steady-state plateau, not
 growth.
 
+The soak rail was tightened on 2026-09-13 (PR #TBD-H): `report soak` now
+judges a run against a configured duration and RSS cadence
+(`soak-config.json`), requires ≥90 % of the cadence-implied post-warmup
+samples per process with no gap over three cadences, and fails on any
+nonzero worker exit (`exits.json`) — the published 72-hour run above
+predates that rail; the next long run will be judged under it. A 1-hour
+smoke on 2026-09-13 (seed 1) passed every new verdict: `duration_coverage`
+PASS (3542 s observed against a 3600 s expected duration), all six
+`rss_sample_coverage_<leg>_<process>` verdicts PASS at 98/98 samples each
+(largest gap 31 s), and `worker_exits` PASS with all six roles exiting 0.
+Two kill drills on the same day confirmed the failure paths: a sender
+killed inside the end-grace window leaves no report artifact, so `report
+soak` refuses to write `soak-results.json` and the run exits 2; a sender
+killed earlier trips the supervisor's fail-fast (`soak-FAILED`) with every
+worker's status recorded in `exits.json`.
+
 ### The 72-hour run (2026-08-05 → 2026-08-08, seed 1)
 
 **Overall PASS — zero process exits, all twelve scheduled outage windows
