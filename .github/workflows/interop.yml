@@ -208,22 +208,30 @@ jobs:
 
       - name: Assert census completeness
         # Fail-closed inventory check (release-gate audit RLS-B08 quick
-        # win): `report merge` exits 0 on whatever subset of cell JSONs it
-        # finds, so a silently truncated run (missing peer, dropped cell
-        # subset, profile-list drift) could otherwise publish a smaller
-        # census as green. The advertised shape is 157 cells with ZERO
-        # tool-missing skips (the 12 gst-play cells were the last skip
-        # class, enabled 2026-08-20 — see the peer-tools install step);
-        # anything else fails this job. (Full per-cell-identity inventory
-        # enforcement is tracked as harness-hardening backlog.)
+        # win): `report merge --inventory` enforces the per-cell identity
+        # multiset (missing/duplicate/extra cells, undeclared skips, and
+        # stale expectation rows all fail the merge itself, before this
+        # step ever runs — see crates/tst-interop/src/report.rs); this
+        # step is the second line, re-checking the merged report's own
+        # numbers so a `report merge` that somehow wrote a truncated
+        # census still can't slip through as green. The advertised shape
+        # is the full 157-cell census with ZERO tool-missing skips (the
+        # 12 gst-play cells were the last skip class, enabled 2026-08-20
+        # — see the peer-tools install step) and ZERO stale expectation
+        # rows; anything else fails this job.
         run: |
+          shape=$(jq -r '.inventory.shape' "$RUNNER_TEMP/interop/results.json")
+          declared=$(jq '.inventory.declared_cells' "$RUNNER_TEMP/interop/results.json")
+          skips=$(jq '.inventory.allowed_skips | length' "$RUNNER_TEMP/interop/results.json")
           total=$(jq '.summary.total' "$RUNNER_TEMP/interop/results.json")
           skipped=$(jq '.summary.skipped_tool_missing' "$RUNNER_TEMP/interop/results.json")
-          if [ "$total" != "157" ] || [ "$skipped" != "0" ]; then
-            echo "::error::census mismatch: total=$total (want 157) skipped=$skipped (want 0)"
+          stale=$(jq '.summary.stale_expectations | length' "$RUNNER_TEMP/interop/results.json")
+          if [ "$shape" != "full-157" ] || [ "$declared" != "157" ] || [ "$skips" != "0" ] \
+             || [ "$total" != "157" ] || [ "$skipped" != "0" ] || [ "$stale" != "0" ]; then
+            echo "::error::census mismatch: shape=$shape declared=$declared allowed_skips=$skips total=$total skipped=$skipped stale=$stale"
             exit 1
           fi
-          echo "census complete: 157 cells, 0 tool-missing skips"
+          echo "census complete: full-157 declared and produced, 0 skips, 0 stale rows"
 
       - name: Publish step summary
         # Re-render with --github-summary so the verdict table appears
@@ -258,6 +266,7 @@ jobs:
           path: |
             ${{ runner.temp }}/interop/results.json
             ${{ runner.temp }}/interop/results.md
+            ${{ runner.temp }}/interop/inventory.json
             ${{ runner.temp }}/interop/cells
             ${{ runner.temp }}/interop/logs
           retention-days: 90

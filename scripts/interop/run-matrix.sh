@@ -1197,6 +1197,12 @@ done
 
 echo "run-matrix: merging cell results..." >&2
 merge_rc=0
+# A reused --outdir from a prior failed run may still hold that run's
+# results.json; without this, a merge that fails below would leave the
+# stale file in place for the render guard's `[[ -s results.json ]]`
+# check (and any caller reading it) to find and mistake for this run's
+# output.
+rm -f "$OUTDIR/results.json"
 timeout --kill-after=5 "${REPORT_TIMEOUT}s" \
   "$BIN" report merge \
   --cells-dir "$CELLS_DIR" \
