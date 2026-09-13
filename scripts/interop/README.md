@@ -56,7 +56,7 @@ DIR/
 Exit code is `report merge`'s: 0 iff every produced cell exactly matches
 `inventory.json`'s declared multiset (see "Inventory and shape" below) AND
 every `FAIL` matched a row in `expectations.toml`. That file now carries a
-real row for every genuine gap this matrix has surfaced (73 as of task 12,
+real row for every genuine gap this matrix has surfaced (65 as of task 12,
 see "Known, already-evidenced gaps" below) — running the full matrix exits
 0. Any *new* `FAIL` an expectations row doesn't already cover still exits
 nonzero: see `report.rs`'s module doc for why an unmatched `FAIL` must
@@ -137,10 +137,14 @@ under `.inventory` (`shape`, `declared_cells`, `allowed_skips`), and
 is a local escape hatch for a box missing a peer tool (a comma-separated
 list of exact cell ids or `prefix/*` globs); `interop.yml` never passes
 it, so a CI run must produce every declared cell for real. Because
-`shape` and `declared_cells` are part of the same fail-closed check as
-everything else, **the published evidence page may only cite a
-`full-157` run** — a `subset` run (any `--cells`/`--profiles` narrowing)
-proves less than the advertised census and isn't evidence of it.
+`shape`, `declared_cells`, and `allowed_skips` are all part of the same
+fail-closed check as everything else, **the published evidence page may
+only cite a `full-157` run with an empty `allowed_skips`** — a `subset`
+run (any `--cells`/`--profiles` narrowing) proves less than the
+advertised census and isn't evidence of it, and a `full-157` run that
+used `--allowed-skips` to tolerate a missing peer tool didn't actually
+produce the full census either (`interop.yml` enforces both: it asserts
+`allowed_skips | length == 0` alongside `shape == "full-157"`).
 
 ## Known, already-evidenced gaps (read before re-chasing these)
 

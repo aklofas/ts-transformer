@@ -648,9 +648,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   warn-only mode), not just a warning. `expectations.toml` is rejected
   outright if two rows can both match the same (cell, profile) without
   distinct `failure_contains` strings, and now every `expected_unsupported`
-  row must carry one — every documented-gap row names the exact failure
-  text it absorbs, so an unrelated regression on the same cell can never
-  be silently swallowed. `run-matrix.sh --allowed-skips
+  row must carry one — every `expected_unsupported` row names the exact
+  failure text it absorbs, so an unrelated regression on the same cell
+  can never be silently swallowed under that row (the one `known_flaky`
+  row, `rtsp-consume/vlc-serve-ffmpeg-pull`, is exempt and still absorbs
+  any failure on that cell — a flaky peer-to-peer probe with no
+  `tst-interop` transport leg of its own). `run-matrix.sh --allowed-skips
   <ids|globs>` is a local-only escape hatch for a box missing a peer
   tool; `interop.yml` never sets it, so a CI run must produce the full
   declared census for real.

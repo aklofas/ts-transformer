@@ -163,6 +163,14 @@ CELLS_DIR="$OUTDIR/cells"
 LOGS_DIR="$OUTDIR/logs"
 WORK="$OUTDIR/work"
 
+# A reused --outdir may still hold *.json cell files from an earlier,
+# differently-scoped run (e.g. a prior full run, or a prior --cells
+# narrowing). Without clearing them, check_inventory would see a
+# leftover file and treat it as "produced" for a cell this run never
+# actually executed — "produced" must mean "written by THIS run", not
+# "exists in this directory".
+rm -f "$CELLS_DIR"/*.json
+
 # Settle time between binding/starting the listening side of a cell and
 # starting its peer — every scheme here binds/listens near-instantly
 # once its process starts (confirmed for SRT/RIST/TCP/UDP/HLS/RTSP

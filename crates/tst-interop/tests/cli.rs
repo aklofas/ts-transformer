@@ -133,6 +133,41 @@ fn report_merge_with_stale_expectation_exits_1_and_prints_error() {
 }
 
 #[test]
+fn report_merge_without_inventory_exits_2_and_names_the_flag() {
+    // --inventory is mandatory (spec §5.1) — a merge invocation that
+    // omits it must be rejected before ever touching --cells-dir, not
+    // silently treated as an unchecked run. Covers the same required-flag
+    // contract exercised for --cells-dir/--expectations/--meta/--out
+    // elsewhere in main.rs, which had no direct test of its own.
+    let output = Command::new(env!("CARGO_BIN_EXE_tst-interop"))
+        .args([
+            "report",
+            "merge",
+            "--cells-dir",
+            "does-not-matter",
+            "--expectations",
+            "does-not-matter.toml",
+            "--meta",
+            "does-not-matter.json",
+            "--out",
+            "does-not-matter.json",
+        ])
+        .output()
+        .expect("spawn tst-interop binary");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a missing --inventory must exit 2, stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("--inventory"),
+        "stderr must name the missing flag, got: {stderr}"
+    );
+}
+
+#[test]
 fn send_profile_followed_by_another_flag_names_profile() {
     let output = Command::new(env!("CARGO_BIN_EXE_tst-interop"))
         .args(["send", "--profile", "--url", "udp://127.0.0.1:1"])
