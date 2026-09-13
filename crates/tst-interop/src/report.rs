@@ -867,7 +867,11 @@ pub mod soak {
 
     /// Every worker `soak.sh` reaps into `exits.json` (the sampler is
     /// killed by the script itself and is deliberately not a worker
-    /// here).
+    /// here). The `worker_exits` verdict below only REQUIRES a role's
+    /// entry when its leg is present in `legs` (a single-leg srt-only
+    /// run, e.g. a local smoke test, never launches the `rist-*` three)
+    /// — but a key outside this whole set, for ANY run, is always an
+    /// unconditional failure, never silently ignored.
     const WORKER_ROLES: [&str; 6] = [
         "srt-send",
         "srt-proxy",
@@ -1029,6 +1033,44 @@ pub mod soak {
                 "soak-config.json: sampler_end_slack_s ({}) must be less than expected_duration_s ({}) — \
                  otherwise the achievable RSS span is non-positive before a single sample is examined",
                 cfg.sampler_end_slack_s, cfg.expected_duration_s
+            ));
+        }
+        // `duration_coverage`'s own passing bound (see `build_soak_results`)
+        // is `run_duration_s >= expected_duration_s - sampler_end_slack_s -
+        // 2*rss_cadence_s`. If that right-hand side is <= 0 every observed
+        // span (which is always >= 0) passes vacuously — a short `--hours`
+        // combined with the fixed 35s sampler slack can reach this (e.g.
+        // 72s / cadence 30 / slack 35: 72 - 35 - 60 = -23). Caught here, at
+        // config-declaration time, rather than only showing up as a
+        // silent, uninformative pass.
+        let min_span_s =
+            cfg.expected_duration_s - cfg.sampler_end_slack_s - 2.0 * cfg.rss_cadence_s;
+        if min_span_s <= 0.0 {
+            return Err(format!(
+                "soak-config.json: expected_duration_s ({}) minus sampler_end_slack_s ({}) minus \
+                 2 * rss_cadence_s ({}) = {min_span_s} <= 0 — every run would pass duration_coverage \
+                 vacuously (any observed span is >= 0)",
+                cfg.expected_duration_s, cfg.sampler_end_slack_s, cfg.rss_cadence_s
+            ));
+        }
+        // Same vacuous-pass hazard on the sample-coverage side:
+        // `rss_sample_coverage_*` needs >= 2 distinct timestamps to
+        // compute a gap at all (see `build_soak_results`'s `distinct_ts >=
+        // 2` check) — below that, `min_samples` (90% of `expected_samples`,
+        // itself possibly 0 or 1) can never meaningfully gate anything, so
+        // reject a config whose OWN implied expected-sample count already
+        // can't reach 2.
+        let warmup_s = MAX_WARMUP_S.min(cfg.expected_duration_s * cfg.warmup_fraction);
+        let expected_samples = ((cfg.expected_duration_s - cfg.sampler_end_slack_s - warmup_s)
+            / cfg.rss_cadence_s)
+            .floor();
+        if expected_samples < 2.0 {
+            return Err(format!(
+                "soak-config.json: implied post-warmup sample count is {expected_samples} (< 2) from \
+                 expected_duration_s ({}), sampler_end_slack_s ({}), warmup {warmup_s}s (min(1800, \
+                 expected_duration_s * warmup_fraction)), and rss_cadence_s ({}) — no run of this \
+                 length could ever pass rss_sample_coverage",
+                cfg.expected_duration_s, cfg.sampler_end_slack_s, cfg.rss_cadence_s
             ));
         }
         for role in cfg.expected_worker_exits.keys() {
@@ -1524,8 +1566,28 @@ pub mod soak {
             },
         });
 
+        // `worker_exits` judges the DECLARED `exits.json` this function
+        // was handed — it never runs at all if `run()`'s earlier
+        // `read_leg_artifacts` call already hard-errored because a killed
+        // worker never wrote its own per-leg report file (send-report/
+        // recv-report/proxy-stats). Both paths end in a nonzero process
+        // exit, but only this verdict names which role and status failed;
+        // the hard-error path is a bare "No such file" (see
+        // `SoakResults::limitations`'s last entry).
+        //
+        // A single-leg (srt-only) run — e.g. a local smoke test, or any
+        // invocation that omits the three `--rist-*` flags per
+        // `run`'s own doc comment — never launches the `rist-*` trio at
+        // all, so only the roles whose leg is actually present in
+        // `legs` are required. The same scoping `missing_data` above
+        // already applies to RSS/leg checks.
+        let required_roles = WORKER_ROLES.iter().copied().filter(|role| {
+            legs.iter()
+                .any(|(leg_name, _)| role.starts_with(leg_name.as_str()))
+        });
+
         let mut exit_problems: Vec<String> = Vec::new();
-        for role in WORKER_ROLES {
+        for role in required_roles {
             match worker_exits.get(role) {
                 None => exit_problems.push(format!("{role}: no exit status recorded")),
                 Some(&status) => {
@@ -1683,6 +1745,11 @@ pub mod soak {
                  this run's 0.1pp tolerance floor. A small drop_rate_consistent_with_impairment \
                  excess on that leg specifically is this known, benign model artifact to rule \
                  out first, not automatically a library regression."
+                    .to_string(),
+                "A worker killed before it writes its own per-leg report artifact (send-report/\
+                 recv-report/proxy-stats) makes report soak hard-error (exit 2) instead of \
+                 reaching this function and producing a worker_exits verdict at all — both \
+                 outcomes are nonzero, but only the latter names which role and status failed."
                     .to_string(),
             ],
         })
@@ -1992,12 +2059,32 @@ pub mod soak {
 
         #[test]
         fn missing_worker_role_in_exits_fails() {
+            // `inputs()` builds a single-leg (srt-only) run via `one_leg`,
+            // so the removed role must be one of the srt-* three — a
+            // missing rist-* role is legitimately not required here (see
+            // `single_leg_run_requires_only_that_legs_roles` below).
             let mut exits = six_clean_exits();
-            exits.remove("rist-recv");
+            exits.remove("srt-recv");
             let r = build_soak_results(inputs(flat_series(121, 30.0), cfg(3600.0, 30.0), exits))
                 .unwrap();
             let v = verdict(&r, "worker_exits");
-            assert!(!v.pass && v.detail.contains("rist-recv"), "{}", v.detail);
+            assert!(!v.pass && v.detail.contains("srt-recv"), "{}", v.detail);
+        }
+
+        /// A single-leg (srt-only) run — e.g. a local smoke test — never
+        /// launches the `rist-*` trio at all, so `worker_exits` must not
+        /// require their presence in `exits.json`; only the srt-* three
+        /// (the leg actually present in `legs`) are required.
+        #[test]
+        fn single_leg_run_requires_only_that_legs_roles() {
+            let exits: BTreeMap<String, i32> = [("srt-send", 0), ("srt-proxy", 0), ("srt-recv", 0)]
+                .into_iter()
+                .map(|(r, s)| (r.to_string(), s))
+                .collect();
+            let r = build_soak_results(inputs(flat_series(121, 30.0), cfg(3600.0, 30.0), exits))
+                .unwrap();
+            let v = verdict(&r, "worker_exits");
+            assert!(v.pass, "{}", v.detail);
         }
 
         /// A key in `exits.json` that isn't one of the six `WORKER_ROLES`
@@ -2516,7 +2603,7 @@ pub mod soak {
             let config_path = dir.join("soak-config.json");
             std::fs::write(
                 &config_path,
-                serde_json::to_string(&cfg(30.0, 60.0)).unwrap(),
+                serde_json::to_string(&cfg(180.0, 30.0)).unwrap(),
             )
             .expect("write soak-config.json");
             let exits_path = dir.join("exits.json");
@@ -2595,7 +2682,7 @@ pub mod soak {
             let config_path = dir.join("soak-config.json");
             std::fs::write(
                 &config_path,
-                serde_json::to_string(&cfg(30.0, 60.0)).unwrap(),
+                serde_json::to_string(&cfg(180.0, 30.0)).unwrap(),
             )
             .expect("write soak-config.json");
             let exits_path = dir.join("exits.json");
@@ -2717,6 +2804,79 @@ pub mod soak {
             assert!(
                 !out_path.exists(),
                 "no results may be written on a config error"
+            );
+
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+
+        /// Twin of the test above for `--exits`: `report soak` judges a
+        /// run against DECLARED worker exit statuses too — if that file
+        /// is missing, `run` must error (naming the missing path) and
+        /// write no `--out`, exactly like a missing `--config`.
+        #[test]
+        fn run_without_exits_file_is_a_hard_error() {
+            let dir = std::env::temp_dir().join(format!(
+                "tst-interop-soak-no-exits-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .expect("time moves forward")
+                    .as_nanos()
+            ));
+            std::fs::create_dir_all(&dir).expect("create temp dir");
+
+            let rss_path = dir.join("rss.csv");
+            std::fs::write(
+                &rss_path,
+                "elapsed_s,leg,process,pid,rss_kb\n0,srt,send,1,1000\n30,srt,send,2,1000\n",
+            )
+            .expect("write rss.csv");
+
+            let config_path = dir.join("soak-config.json");
+            std::fs::write(
+                &config_path,
+                r#"{"expected_duration_s": 3600, "rss_cadence_s": 30, "warmup_fraction": 0.1667,
+                    "sampler_end_slack_s": 35, "expected_worker_exits": {}}"#,
+            )
+            .expect("write soak-config.json");
+
+            let proxy_path = dir.join("proxy-stats.json");
+            std::fs::write(
+                &proxy_path,
+                serde_json::to_string(&proxy_stats(1000, 0, 0.0, None, 0)).unwrap(),
+            )
+            .expect("write proxy stats");
+            let recv_path = dir.join("recv-report.json");
+            std::fs::write(
+                &recv_path,
+                serde_json::to_string(&passing_recv_report(1000)).unwrap(),
+            )
+            .expect("write recv report");
+            let send_path = dir.join("send-report.json");
+            std::fs::write(
+                &send_path,
+                serde_json::to_string(&cell_metrics(1000)).unwrap(),
+            )
+            .expect("write send report");
+
+            let out_path = dir.join("soak-results.json");
+            let err = run(
+                &rss_path,
+                &config_path,
+                &dir.join("missing-exits.json"),
+                &proxy_path,
+                &recv_path,
+                &send_path,
+                21600,
+                None,
+                None,
+                &out_path,
+            )
+            .unwrap_err();
+            assert!(err.contains("missing-exits.json"), "{err}");
+            assert!(
+                !out_path.exists(),
+                "no results may be written on an exits error"
             );
 
             let _ = std::fs::remove_dir_all(&dir);
@@ -2923,6 +3083,65 @@ pub mod soak {
             .unwrap_err();
             assert!(
                 e.contains("sampler_end_slack_s") && e.contains("expected_duration_s"),
+                "{e}"
+            );
+        }
+
+        /// A config can pass the previous test's simple `slack <
+        /// duration` check yet still leave `duration_coverage`'s minimum
+        /// accepted span (`expected_duration_s - sampler_end_slack_s -
+        /// 2*rss_cadence_s`) at or below zero, which passes vacuously —
+        /// this is `--hours 0.02` (72s) at the real 30s/35s cadence/slack
+        /// soak.sh always uses: 72 - 35 - 60 = -23.
+        #[test]
+        fn soak_config_rejects_run_shorter_than_slack_plus_two_cadences() {
+            let e = parse_soak_config(
+                r#"{"expected_duration_s": 72, "rss_cadence_s": 30, "warmup_fraction": 0.1,
+                    "sampler_end_slack_s": 35, "expected_worker_exits": {}}"#,
+            )
+            .unwrap_err();
+            assert!(
+                e.contains("expected_duration_s")
+                    && e.contains("sampler_end_slack_s")
+                    && e.contains("rss_cadence_s"),
+                "{e}"
+            );
+            assert!(e.contains("72"), "{e}");
+            // The real smoke config (3600/30/0.1667/35) must still validate.
+            parse_soak_config(
+                r#"{"expected_duration_s": 3600, "rss_cadence_s": 30, "warmup_fraction": 0.1667,
+                    "sampler_end_slack_s": 35, "expected_worker_exits": {}}"#,
+            )
+            .expect("the real smoke config must still validate");
+            // The `cfg(1140.0, 60.0)` test helper's parameters, run through
+            // the real parser, must still validate too.
+            parse_soak_config(
+                r#"{"expected_duration_s": 1140, "rss_cadence_s": 60, "warmup_fraction": 0.16666666666666666,
+                    "sampler_end_slack_s": 0, "expected_worker_exits": {}}"#,
+            )
+            .expect("the cfg(1140.0, 60.0) helper's parameters must still validate");
+        }
+
+        /// A config can leave `min_span_s` comfortably positive yet still
+        /// imply fewer than 2 post-warmup samples once the warmup window
+        /// (`min(1800, expected_duration_s * warmup_fraction)`) and the
+        /// cadence are accounted for — `rss_sample_coverage_*` needs >= 2
+        /// distinct timestamps to compute a gap at all.
+        #[test]
+        fn soak_config_rejects_fewer_than_two_implied_post_warmup_samples() {
+            // duration 1000, cadence 400, slack 0: min_span = 1000-0-800 =
+            // 200 > 0 (passes the duration check), but warmup_s =
+            // min(1800, 1000*0.5) = 500, so expected_samples =
+            // floor((1000-0-500)/400) = 1 < 2.
+            let e = parse_soak_config(
+                r#"{"expected_duration_s": 1000, "rss_cadence_s": 400, "warmup_fraction": 0.5,
+                    "sampler_end_slack_s": 0, "expected_worker_exits": {}}"#,
+            )
+            .unwrap_err();
+            assert!(
+                e.contains("expected_duration_s")
+                    && e.contains("rss_cadence_s")
+                    && e.contains("warmup"),
                 "{e}"
             );
         }

@@ -460,9 +460,9 @@ Those two files feed three new verdicts in `soak-results.json`:
 - **`rss_sample_coverage_<leg>_<process>`** — each process needs at least
   90% of the cadence-implied post-warmup sample count with the gap between
   consecutive samples strictly under three cadences (`< 3 × cadence`); a
-  series with fewer than two distinct timestamps fails outright, and the
-  corresponding `rss_slope_<leg>_<process>` verdict is reported as skipped
-  rather than computed.
+  series with fewer than two distinct timestamps fails outright, and no
+  `rss_slope_<leg>_<process>` verdict is emitted for that process at all —
+  the coverage verdict above is the one that fails.
 - **`worker_exits`** — every status in `exits.json` must be `0` unless the
   role is listed in `expected_worker_exits`; a missing `exits.json` fails
   the run.

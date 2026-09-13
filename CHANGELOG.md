@@ -217,23 +217,6 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (match with a wildcard arm); the `Broken` variant was already
   `#[non_exhaustive]`, so `..` patterns keep compiling. Not yet exposed
   through the C / Python / JVM bindings (see deferred-features).
-- **Tooling: `tst-interop report soak` completeness verdicts.** `soak.sh`
-  now writes a declared `soak-config.json` at launch
-  (`expected_duration_s`, `rss_cadence_s`, `warmup_fraction`,
-  `sampler_end_slack_s`, `expected_worker_exits`) and an `exits.json` at
-  teardown recording every worker role's reaped exit status, including a
-  death inside the supervisor's end-of-run grace window. `report soak
-  --config <file> --exits <file>` is now mandatory (both missing files
-  are hard errors) and adds three verdicts to `soak-results.json`:
-  `duration_coverage` (the RSS series must span the configured duration
-  minus the sampler's end slack and two cadences), `rss_sample_coverage_
-  <leg>_<process>` (at least 90% of the cadence-implied post-warmup
-  sample count per process, with the gap between consecutive samples
-  strictly under three cadences (`< 3 × cadence`) — a series under two
-  distinct timestamps fails outright and skips that process's slope
-  verdict), and `worker_exits` (every exit status must be `0` unless the
-  role is listed in `expected_worker_exits`). `soak.sh --hours`
-  now also accepts a decimal (`--hours 0.05` for a ~3-minute drill).
 
 ### Changed
 
@@ -624,6 +607,31 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the closed state — so every subsequent call kept failing while `is_alive()`
   reported `true` forever. The entry gate now latches closed the same way the
   mid-loop cancel check does.
+
+### Testing
+
+- **Tooling: `tst-interop report soak` completeness verdicts.** `soak.sh`
+  now writes a declared `soak-config.json` at launch
+  (`expected_duration_s`, `rss_cadence_s`, `warmup_fraction`,
+  `sampler_end_slack_s`, `expected_worker_exits`) and an `exits.json` at
+  teardown recording every worker role's reaped exit status, including a
+  death inside the supervisor's end-of-run grace window. `report soak
+  --config <file> --exits <file>` is now mandatory (both missing files
+  are hard errors) and adds three verdicts to `soak-results.json`:
+  `duration_coverage` (the RSS series must span the configured duration
+  minus the sampler's end slack and two cadences), `rss_sample_coverage_
+  <leg>_<process>` (at least 90% of the cadence-implied post-warmup
+  sample count per process, with the gap between consecutive samples
+  strictly under three cadences (`< 3 × cadence`) — a series under two
+  distinct timestamps fails outright and skips that process's slope
+  verdict), and `worker_exits` (every exit status must be `0` unless the
+  role is listed in `expected_worker_exits`, scoped to the legs actually
+  present in a run). `report soak --config FILE --validate-only` runs the
+  same config checks alone, before any worker launches — `soak.sh` calls
+  it right after writing `soak-config.json` so an `--hours` value too
+  small to ever pass `duration_coverage`/`rss_sample_coverage_*` fails
+  fast instead of only being discovered at teardown. `soak.sh --hours`
+  now also accepts a decimal (`--hours 0.05` for a ~3-minute drill).
 
 ---
 

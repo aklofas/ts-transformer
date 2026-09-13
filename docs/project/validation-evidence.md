@@ -252,7 +252,8 @@ growth.
 The soak rail was tightened on 2026-09-13 (PR #211): `report soak` now
 judges a run against a configured duration and RSS cadence
 (`soak-config.json`), requires ≥90 % of the cadence-implied post-warmup
-samples per process with no gap over three cadences, and fails on any
+samples per process with the gap between consecutive samples strictly
+under three cadences, and fails on any
 nonzero worker exit (`exits.json`) — the published 72-hour run above
 predates that rail; the next long run will be judged under it. A 1-hour
 smoke on 2026-09-13 (seed 1) passed every new verdict: `duration_coverage`
