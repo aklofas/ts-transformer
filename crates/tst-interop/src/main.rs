@@ -699,18 +699,22 @@ fn run_report(args: &[String]) -> ! {
     }
 }
 
-/// `report merge --cells-dir DIR --expectations FILE --meta FILE --out
-/// results.json`
+/// `report merge --cells-dir DIR --expectations FILE --meta FILE
+/// --inventory FILE --out results.json`
 ///
 /// Reads every per-cell JSON file in `--cells-dir`, applies
-/// `--expectations`, embeds `--meta` verbatim, and writes `--out`. Exits
-/// 1 iff any cell's `FAIL` matched no expectation (see
-/// `tst_interop::report`'s module doc for why this is the load-bearing
-/// property of the whole subcommand); exits 2 on a usage/IO/parse error.
+/// `--expectations`, embeds `--meta` verbatim, validates the produced
+/// cells against `--inventory`'s declared multiset, and writes `--out`.
+/// Exits 1 iff any FAIL matched no expectation OR any expectation row is
+/// stale (see `tst_interop::report`'s module doc for why the FAIL case
+/// is the load-bearing property of the whole subcommand); exits 2 on a
+/// usage/IO/parse error, including an inventory mismatch — in every exit-2
+/// case, `--out` is not written.
 fn run_report_merge(args: &[String]) -> ! {
     let mut cells_dir: Option<PathBuf> = None;
     let mut expectations: Option<PathBuf> = None;
     let mut meta: Option<PathBuf> = None;
+    let mut inventory: Option<PathBuf> = None;
     let mut out: Option<PathBuf> = None;
 
     let mut i = 0;
@@ -740,6 +744,14 @@ fn run_report_merge(args: &[String]) -> ! {
                 )));
                 i += 2;
             }
+            "--inventory" => {
+                inventory = Some(PathBuf::from(require_value(
+                    args,
+                    i,
+                    "report merge: --inventory",
+                )));
+                i += 2;
+            }
             "--out" => {
                 out = Some(PathBuf::from(require_value(args, i, "report merge: --out")));
                 i += 2;
@@ -763,19 +775,24 @@ fn run_report_merge(args: &[String]) -> ! {
         eprintln!("report merge: --meta is required");
         std::process::exit(2);
     });
+    let inventory = inventory.unwrap_or_else(|| {
+        eprintln!("report merge: --inventory is required");
+        std::process::exit(2);
+    });
     let out = out.unwrap_or_else(|| {
         eprintln!("report merge: --out is required");
         std::process::exit(2);
     });
 
-    let results = report::merge(&cells_dir, &expectations, &meta, &out).unwrap_or_else(|e| {
-        eprintln!("report merge: {e}");
-        std::process::exit(2);
-    });
+    let results =
+        report::merge(&cells_dir, &expectations, &meta, &inventory, &out).unwrap_or_else(|e| {
+            eprintln!("report merge: {e}");
+            std::process::exit(2);
+        });
 
     for stale in &results.summary.stale_expectations {
         eprintln!(
-            "report merge: WARNING stale expectation: cell={} profile={} reason={}",
+            "report merge: ERROR stale expectation: cell={} profile={} reason={}",
             stale.cell, stale.profile, stale.reason
         );
     }
@@ -789,7 +806,13 @@ fn run_report_merge(args: &[String]) -> ! {
         results.summary.skipped_tool_missing
     );
 
-    std::process::exit(if results.summary.fail > 0 { 1 } else { 0 });
+    std::process::exit(
+        if results.summary.fail > 0 || !results.summary.stale_expectations.is_empty() {
+            1
+        } else {
+            0
+        },
+    );
 }
 
 /// `report render --in results.json --out results.md [--github-summary]`

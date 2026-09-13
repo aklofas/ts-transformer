@@ -632,6 +632,31 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   small to ever pass `duration_coverage`/`rss_sample_coverage_*` fails
   fast instead of only being discovered at teardown. `soak.sh --hours`
   now also accepts a decimal (`--hours 0.05` for a ~3-minute drill).
+- **Tooling: the interop matrix fails closed.** `run-matrix.sh` now makes
+  a declare pass before running any cell and writes the exact `{id,
+  profile}` multiset it intends to produce to `inventory.json`, whose
+  `shape` field is `full-157` only when neither `--cells` nor
+  `--profiles` narrowed the run (otherwise `subset`). `tst-interop report
+  merge --inventory <file>` is now mandatory and compares the produced
+  cells against that declared multiset exactly: a missing, duplicate, or
+  extra cell, or a `SKIPPED_TOOL_MISSING` cell whose id isn't in the
+  inventory's `allowed_skips`, is a hard merge error (exit nonzero, no
+  `results.json` written) instead of a silently-truncated census passing
+  as green. An `expected_unsupported` expectations row whose (cell,
+  profile) actually passed is now a *stale* row that fails the merge
+  everywhere (CI, a branch dispatch, and a local run alike — no
+  warn-only mode), not just a warning. `expectations.toml` is rejected
+  outright if two rows can both match the same (cell, profile) without
+  distinct `failure_contains` strings, and now every `expected_unsupported`
+  row must carry one — every `expected_unsupported` row names the exact
+  failure text it absorbs, so an unrelated regression on the same cell
+  can never be silently swallowed under that row (the one `known_flaky`
+  row, `rtsp-consume/vlc-serve-ffmpeg-pull`, is exempt and still absorbs
+  any failure on that cell — a flaky peer-to-peer probe with no
+  `tst-interop` transport leg of its own). `run-matrix.sh --allowed-skips
+  <ids|globs>` is a local-only escape hatch for a box missing a peer
+  tool; `interop.yml` never sets it, so a CI run must produce the full
+  declared census for real.
 
 ---
 

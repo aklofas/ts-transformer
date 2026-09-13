@@ -23,6 +23,7 @@
 #
 # Usage:
 #   run-matrix.sh --outdir DIR [--seconds N] [--cells GLOB] [--profiles LIST]
+#                 [--allowed-skips LIST]
 #
 #   --outdir DIR      required. Cell JSON -> DIR/cells/*.json, per-cell
 #                      combined (us + peer) logs -> DIR/logs/*.log,
@@ -51,6 +52,36 @@
 #                      doesn't already cover more precisely). Pass a
 #                      short list (e.g. "baseline,h266-klv") for a
 #                      faster local iteration loop.
+#   --allowed-skips LIST  comma-separated list of cell ids this run
+#                      tolerates as SKIPPED_TOOL_MISSING without failing
+#                      the inventory check (default: none). Each entry
+#                      is either an exact declared cell id or a pattern
+#                      ending in a single trailing "*" (e.g.
+#                      "decode/gst-play/*" to tolerate a box without
+#                      gst-play-1.0 across every profile); entries may
+#                      only use letters, digits, ".", "_", "/", "-" plus
+#                      that one optional trailing "*" — no other shell
+#                      or glob metacharacters ("?", "[...]", etc.) are
+#                      accepted, so an "exact" entry can never
+#                      accidentally match more than the one id it
+#                      spells (malformed entries are a usage error, exit
+#                      2). An exact entry that doesn't match a declared
+#                      cell id is also a usage error (exit 2). The
+#                      expanded, exact id list is what actually lands in
+#                      inventory.json's `allowed_skips` — a local escape
+#                      hatch for a box missing a peer tool. `interop.yml`
+#                      never sets this (CI asserts the full census, not
+#                      a tolerated subset of it).
+#
+# Before running anything, a declare pass calls every cell shape once
+# per --profiles entry with DECLARE_ONLY=1 (each shape records the id
+# it WOULD run and returns immediately) and writes the resulting exact
+# {id, profile} multiset to DIR/inventory.json, whose `shape` field is
+# "full-157" iff --cells is the default "*" AND --profiles is the
+# default full 12-profile list, else "subset". `tst-interop report
+# merge` is handed this file via --inventory and hard-fails (exit 2, no
+# results.json written) if the cells actually produced don't exactly
+# match the declared multiset (missing/duplicate/extra/undeclared skip).
 #
 # Exit code: `tst-interop report merge`'s (0 iff every FAIL matched an
 # expectations.toml entry — see that file's header for the grammar).
@@ -68,6 +99,7 @@ OUTDIR=""
 SECONDS_ARG=10
 CELLS_GLOB="*"
 PROFILES_ARG="$ALL_PROFILE_NAMES"
+ALLOWED_SKIPS_ARG=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -87,8 +119,12 @@ while [[ $# -gt 0 ]]; do
       PROFILES_ARG=$2
       shift 2
       ;;
+    --allowed-skips)
+      ALLOWED_SKIPS_ARG=$2
+      shift 2
+      ;;
     -h | --help)
-      sed -n '2,54p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,89p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
@@ -126,6 +162,14 @@ mkdir -p "$OUTDIR/cells" "$OUTDIR/logs" "$OUTDIR/work"
 CELLS_DIR="$OUTDIR/cells"
 LOGS_DIR="$OUTDIR/logs"
 WORK="$OUTDIR/work"
+
+# A reused --outdir may still hold *.json cell files from an earlier,
+# differently-scoped run (e.g. a prior full run, or a prior --cells
+# narrowing). Without clearing them, check_inventory would see a
+# leftover file and treat it as "produced" for a cell this run never
+# actually executed — "produced" must mean "written by THIS run", not
+# "exists in this directory".
+rm -f "$CELLS_DIR"/*.json
 
 # Settle time between binding/starting the listening side of a cell and
 # starting its peer — every scheme here binds/listens near-instantly
@@ -184,6 +228,7 @@ run_send_peer_recv() {
   local -a peer_cmd=("$@")
 
   cell_selected "$id" || return 0
+  if [[ -n "${DECLARE_ONLY:-}" ]]; then declare_cell "$id"; return 0; fi
   if ! have "$peer"; then
     emit_skipped "$id" "$peer" send "$tier" "$peer not installed on this box"
     return 0
@@ -273,6 +318,7 @@ run_peer_send_recv() {
   local -a peer_cmd=("$@")
 
   cell_selected "$id" || return 0
+  if [[ -n "${DECLARE_ONLY:-}" ]]; then declare_cell "$id"; return 0; fi
   if ! have "$peer"; then
     emit_skipped "$id" "$peer" recv "$tier" "$peer not installed on this box"
     return 0
@@ -363,6 +409,7 @@ run_serve_peer_pull() {
   local -a peer_cmd=("$@")
 
   cell_selected "$id" || return 0
+  if [[ -n "${DECLARE_ONLY:-}" ]]; then declare_cell "$id"; return 0; fi
   if ! have "$peer"; then
     emit_skipped "$id" "$peer" send "$tier" "$peer not installed on this box"
     return 0
@@ -438,6 +485,7 @@ run_serve_peer_probe() {
   local -a peer_cmd=("$@")
 
   cell_selected "$id" || return 0
+  if [[ -n "${DECLARE_ONLY:-}" ]]; then declare_cell "$id"; return 0; fi
   if ! have "$peer"; then
     emit_skipped "$id" "$peer" send n/a "$peer not installed on this box"
     return 0
@@ -514,6 +562,7 @@ run_analyze_ffprobe() {
   local profile=$1
   local id="analyze/ffprobe/$profile"
   cell_selected "$id" || return 0
+  if [[ -n "${DECLARE_ONLY:-}" ]]; then declare_cell "$id"; return 0; fi
   echo "run-matrix: cell $id" >&2
   if ! have ffprobe; then
     emit_skipped "$id" ffprobe n/a n/a "ffprobe not installed on this box"
@@ -565,6 +614,7 @@ run_analyze_counter_probe() {
   local -a cmd=("$@")
   local id="analyze/$id_suffix"
   cell_selected "$id" || return 0
+  if [[ -n "${DECLARE_ONLY:-}" ]]; then declare_cell "$id"; return 0; fi
   echo "run-matrix: cell $id" >&2
   if ! have "$tool"; then
     emit_skipped "$id" "$tool" n/a n/a "$tool not installed on this box"
@@ -610,6 +660,7 @@ run_decode_probe() {
   local id="decode/$player/$profile"
 
   cell_selected "$id" || return 0
+  if [[ -n "${DECLARE_ONLY:-}" ]]; then declare_cell "$id"; return 0; fi
   echo "run-matrix: cell $id" >&2
   # gst-play's real binary is gst-play-1.0 (matches the invocation this
   # project's own pre-release decoder-compatibility check uses); the
@@ -867,6 +918,7 @@ rtsp_cells() {
   # capture); expect flakiness (VLC's --sout RTSP serving is fiddly) —
   # wired as `known_flaky` in expectations.toml starting Task 12.
   cell_selected "rtsp-consume/vlc-serve-ffmpeg-pull" || return 0
+  if [[ -n "${DECLARE_ONLY:-}" ]]; then declare_cell "rtsp-consume/vlc-serve-ffmpeg-pull"; return 0; fi
   if ! have cvlc || ! have ffmpeg; then
     local missing="cvlc and/or ffmpeg"
     emit_skipped "rtsp-consume/vlc-serve-ffmpeg-pull" "vlc+ffmpeg" n/a remux \
@@ -1017,9 +1069,113 @@ srt_live_cells_for_profile() {
     tsp -I file "$GEN_FILE" -P regulate -O srt --caller "127.0.0.1:$port" --linger 5
 }
 
+# run_axes_for_profile — every cell shape the current $PROFILE's
+# iteration calls, both axes: transport (baseline only) + format.
+# Shared by the declare pass below (DECLARE_ONLY=1, every shape records
+# its id and returns before doing any real work) and the real execution
+# loop, so a cell can never be declared by one path and produced by a
+# different one.
+run_axes_for_profile() {
+  # Transport axis stays pinned to "baseline" regardless of how many
+  # profiles --profiles lists — matches the ~25-cell transport-axis
+  # inventory task 11 built and verified (8 PASS/17 FAIL/0 SKIPPED);
+  # scaling it by profile too would multiply that count by up to 12x
+  # for no new signal the format axis below doesn't already cover more
+  # precisely (analyze/decode/srt-live are the per-profile probes).
+  if [[ "$PROFILE" == "baseline" ]]; then
+    srt_cells; udp_cells; rist_cells; tcp_cells; hls_cells; rtsp_cells
+  fi
+
+  # Format axis: every listed profile.
+  analyze_cells_for_profile "$PROFILE"
+  decode_cells_for_profile "$PROFILE"
+  srt_live_cells_for_profile "$PROFILE"
+}
+
 # ---------------------------------------------------------------------
 # Run every axis, once per --profiles entry
 # ---------------------------------------------------------------------
+
+IFS=',' read -r -a PROFILE_LIST <<<"$PROFILES_ARG"
+
+# ---------------------------------------------------------------------
+# Declare pass: enumerate every cell this run WILL produce, before any
+# runs. GEN_FILE/GEN_STREAM_SHA are set empty so call-site argument
+# expansion under `set -u` is well-defined; no shape reads them before
+# its DECLARE_ONLY early-return.
+# ---------------------------------------------------------------------
+INVENTORY_TSV="$WORK/inventory.tsv"
+: >"$INVENTORY_TSV"
+DECLARE_ONLY=1
+GEN_FILE=""
+GEN_STREAM_SHA=""
+for PROFILE in "${PROFILE_LIST[@]}"; do
+  export PROFILE
+  run_axes_for_profile
+done
+unset DECLARE_ONLY
+
+# ---------------------------------------------------------------------
+# --allowed-skips expansion: turn each exact-id/trailing-* pattern into
+# the exact set of declared cell ids it matches. An exact (non-glob)
+# pattern that matches no declared id is a usage error (exit 2) — a
+# typo'd or since-renamed cell id must never silently become a no-op
+# skip declaration; a glob is allowed to match zero (e.g. a defensive
+# "decode/gst-play/*" passed before every profile's decode cells exist
+# in a --cells-narrowed run).
+# ---------------------------------------------------------------------
+ALLOWED_SKIPS_JSON='[]'
+if [[ -n "$ALLOWED_SKIPS_ARG" ]]; then
+  declared_ids=$(cut -f1 "$INVENTORY_TSV" | sort -u)
+  allowed_skip_ids_file="$WORK/allowed-skips.txt"
+  : >"$allowed_skip_ids_file"
+  IFS=',' read -r -a allowed_skip_patterns <<<"$ALLOWED_SKIPS_ARG"
+  for pattern in "${allowed_skip_patterns[@]}"; do
+    # Only cell-id characters plus one optional trailing "*" — no other
+    # shell/glob metacharacters ("?", "[...]", etc). The old
+    # `^[^*]+\*?$` check let those through unnoticed: bash's `case`
+    # pattern matching below still treats "?" and "[...]" as globs, so
+    # an "exact" (non-"*"-terminated) entry like "udp/?s-to-tsp" could
+    # silently match more than the one declared id it appears to name.
+    if [[ ! "$pattern" =~ ^[A-Za-z0-9._/-]+\*?$ ]]; then
+      echo "run-matrix: --allowed-skips entry '$pattern' is malformed — each entry must be an exact cell id or an id prefix ending in a single trailing '*', using only letters, digits, '.', '_', '/', '-' (no shell/glob metacharacters such as '?' or '[...]')" >&2
+      exit 2
+    fi
+    is_glob=0
+    [[ "$pattern" == *'*' ]] && is_glob=1
+    matched_any=0
+    while IFS= read -r id; do
+      [[ -z "$id" ]] && continue
+      case "$id" in
+        $pattern)
+          printf '%s\n' "$id" >>"$allowed_skip_ids_file"
+          matched_any=1
+          ;;
+      esac
+    done <<<"$declared_ids"
+    if [[ $is_glob -eq 0 && $matched_any -eq 0 ]]; then
+      echo "run-matrix: FATAL: --allowed-skips entry '$pattern' is not a declared cell id" >&2
+      exit 2
+    fi
+  done
+  ALLOWED_SKIPS_JSON=$(sort -u "$allowed_skip_ids_file" | jq -R . | jq -s .)
+fi
+
+SHAPE=subset
+[[ "$CELLS_GLOB" == "*" && "$PROFILES_ARG" == "$ALL_PROFILE_NAMES" ]] && SHAPE=full-157
+jq -n --arg shape "$SHAPE" --arg seconds "$SECONDS_ARG" --arg cells_glob "$CELLS_GLOB" \
+  --arg profiles "$PROFILES_ARG" --rawfile tsv "$INVENTORY_TSV" \
+  --argjson tools "$(tool_versions_json)" --argjson allowed_skips "$ALLOWED_SKIPS_JSON" \
+  '{shape: $shape, seconds_per_cell: ($seconds | tonumber), cells_glob: $cells_glob,
+    profiles: ($profiles | split(",")),
+    cells: ($tsv | split("\n") | map(select(length > 0)) | map(split("\t") | {id: .[0], profile: .[1]})),
+    allowed_skips: $allowed_skips, tools: $tools}' >"$OUTDIR/inventory.json"
+declared=$(jq '.cells | length' "$OUTDIR/inventory.json")
+echo "run-matrix: declared $declared cell(s), shape=$SHAPE" >&2
+if [[ "$SHAPE" == "full-157" && "$declared" != "157" ]]; then
+  echo "run-matrix: FATAL: full shape declared $declared cells, expected 157 — a cell shape changed without this check being updated" >&2
+  exit 2
+fi
 
 # Same per-seconds budget the per-cell shapes use — gen/verify here do
 # real work proportional to --seconds (this scales correctly even for a
@@ -1028,7 +1184,6 @@ srt_live_cells_for_profile() {
 # with cell *count*, not stream duration).
 bootstrap_budget=$(cell_timeout "$SECONDS_ARG")
 
-IFS=',' read -r -a PROFILE_LIST <<<"$PROFILES_ARG"
 for PROFILE in "${PROFILE_LIST[@]}"; do
   export PROFILE
   echo "run-matrix: profile=$PROFILE seconds=$SECONDS_ARG cells=$CELLS_GLOB" >&2
@@ -1053,25 +1208,7 @@ for PROFILE in "${PROFILE_LIST[@]}"; do
   fi
   export GEN_FILE GEN_STREAM_SHA
 
-  # Transport axis stays pinned to "baseline" regardless of how many
-  # profiles --profiles lists — matches the ~25-cell transport-axis
-  # inventory task 11 built and verified (8 PASS/17 FAIL/0 SKIPPED);
-  # scaling it by profile too would multiply that count by up to 12x
-  # for no new signal the format axis below doesn't already cover more
-  # precisely (analyze/decode/srt-live are the per-profile probes).
-  if [[ "$PROFILE" == "baseline" ]]; then
-    srt_cells
-    udp_cells
-    rist_cells
-    tcp_cells
-    hls_cells
-    rtsp_cells
-  fi
-
-  # Format axis: every listed profile.
-  analyze_cells_for_profile "$PROFILE"
-  decode_cells_for_profile "$PROFILE"
-  srt_live_cells_for_profile "$PROFILE"
+  run_axes_for_profile
 done
 
 # ---------------------------------------------------------------------
@@ -1080,15 +1217,40 @@ done
 
 echo "run-matrix: merging cell results..." >&2
 merge_rc=0
+# A reused --outdir from a prior failed run may still hold that run's
+# results.json; without this, a merge that fails below would leave the
+# stale file in place for the render guard's `[[ -s results.json ]]`
+# check (and any caller reading it) to find and mistake for this run's
+# output.
+rm -f "$OUTDIR/results.json"
 timeout --kill-after=5 "${REPORT_TIMEOUT}s" \
   "$BIN" report merge \
   --cells-dir "$CELLS_DIR" \
   --expectations "$SCRIPT_DIR/expectations.toml" \
   --meta "$OUTDIR/meta.json" \
+  --inventory "$OUTDIR/inventory.json" \
   --out "$OUTDIR/results.json" || merge_rc=$?
 
-timeout --kill-after=5 "${REPORT_TIMEOUT}s" \
-  "$BIN" report render --in "$OUTDIR/results.json" --out "$OUTDIR/results.md"
+# Only render if merge actually wrote results.json — merge (see above)
+# writes nothing on any exit-2 error (usage/IO/parse/inventory
+# mismatch), so a bare, unguarded render call here would itself fail
+# reading a nonexistent file and, under this script's `set -e`, abort
+# BEFORE the "(exit $merge_rc)" echo/exit below ever runs, masking the
+# documented merge_rc-carries-the-exit-code contract with whatever
+# unrelated exit code render's own IO error happened to use.
+if [[ -s "$OUTDIR/results.json" ]]; then
+  timeout --kill-after=5 "${REPORT_TIMEOUT}s" \
+    "$BIN" report render --in "$OUTDIR/results.json" --out "$OUTDIR/results.md"
+fi
 
-echo "run-matrix: wrote $OUTDIR/results.json + $OUTDIR/results.md (exit $merge_rc)" >&2
+# Truthful either way: results.json only exists here if merge wrote it
+# (and, per the guard above, render then succeeded on it too — a render
+# failure would have aborted the script before this line under `set
+# -e`), so a failed merge (no file) is reported as such instead of
+# unconditionally claiming both files were written.
+if [[ -s "$OUTDIR/results.json" ]]; then
+  echo "run-matrix: wrote $OUTDIR/results.json + $OUTDIR/results.md (exit $merge_rc)" >&2
+else
+  echo "run-matrix: no results.json written (report merge exit $merge_rc)" >&2
+fi
 exit "$merge_rc"

@@ -17,39 +17,52 @@
 #   verdict = "expected_unsupported"     # or "known_flaky"
 #   reason = "mpv has no async KLV support (see linked ticket)"
 #   ref = "https://example.invalid/TICKET-123"       # optional
-#   failure_contains = "some substring"              # optional, see below
+#   failure_contains = "some substring"              # mandatory on expected_unsupported, see below
 #
 # `expected_unsupported`: this (cell, profile) pair is known to fail and
 # is not expected to ever pass — if it starts passing, `report merge`
-# flags the expectation as stale (a warning, never fatal) so it can be
-# removed.
+# flags the expectation as stale and FAILS THE RUN (exit 1) — a stale
+# row is a real drift finding, not a warning, and the fix is to remove
+# it in the same change. `results.json` IS still written in this case
+# (with the stale row listed under `summary.stale_expectations`), so
+# the offending row can be found and removed; this is different from an
+# inventory mismatch (missing/duplicate/extra/undeclared-skip cell),
+# which is exit 2 with no `results.json` written at all.
 #
 # `known_flaky`: this (cell, profile) pair intermittently fails; a FAIL
 # is reported non-fatally (labeled KNOWN-FLAKY in the rendered report)
 # and a PASS is simply normal — never flagged stale.
 #
-# `failure_contains` (optional): narrows this block to only match a
-# `FAIL` whose failures text (the raw cell's `failures` array, joined
-# with "; ") contains this substring. A `FAIL` on the same (cell,
-# profile) whose text does NOT contain it is not matched by this block —
-# it falls through to a later block (if any matches) or, if none do,
-# surfaces as an unexpected FAIL. Use this whenever a (cell, profile)
-# pair can genuinely fail for more than one distinct, already-understood
-# reason and a plain (cell, profile) match would blanket over a
-# DIFFERENT failure mode than the one this block's `reason` describes.
-# Omit it (the common case) to match any FAIL on the (cell, profile)
-# pair regardless of text, exactly as before this key existed. Never
-# applied to a PASS staleness check — an expectation is checked for
+# `failure_contains`: narrows this block to only match a `FAIL` whose
+# failures text (the raw cell's `failures` array, joined with "; ")
+# contains this substring. A `FAIL` on the same (cell, profile) whose
+# text does NOT contain it is not matched by this block — it falls
+# through to a later block (if any matches) or, if none do, surfaces as
+# an unexpected FAIL. Use this whenever a (cell, profile) pair can
+# genuinely fail for more than one distinct, already-understood reason
+# and a plain (cell, profile) match would blanket over a DIFFERENT
+# failure mode than the one this block's `reason` describes.
+# **Mandatory on every `expected_unsupported` row** (`parse_expectations`
+# rejects one without it — a documented gap must name the failure text
+# it absorbs, so an unrelated regression on the same cell can never be
+# silently swallowed); optional on a `known_flaky` row, which by
+# definition has no single mechanism string to name. Never applied to a
+# PASS staleness check either way — an expectation is checked for
 # staleness by (cell, profile) alone.
 #
 # Matching rules: `cell` may only use `*` as a trailing prefix-match glob
 # (e.g. "decode/*" — never mid-string); `profile` is always an exact
 # match, never a glob; `failure_contains`, when present, is always a
-# literal substring match, never a glob or regex. If more than one
-# `[[expect]]` block matches the same (cell, profile[, failure text]),
-# the FIRST one in this file wins — keep blocks for the same
-# cell/profile pattern non-overlapping, or ordered so the intended one
-# comes first.
+# literal substring match, never a glob or regex.
+#
+# Ambiguity rejection: `parse_expectations` REJECTS the whole file (a
+# hard error, before any cell is even read) if two blocks share a
+# `profile` and their `cell` patterns overlap (equal, or one a
+# prefix-glob of the other) unless both carry a `failure_contains` and
+# the two strings differ. First-match-wins is not how this file is
+# read — an ambiguous pair must be resolved by giving each block a
+# distinct `failure_contains` (the genuinely-two-reasons case this key
+# exists for) or by removing/narrowing one of the blocks.
 #
 # Every real row below is authored from actual run-log evidence (a full
 # --profiles run at --seconds 8, all 12 profiles, every peer tool
@@ -147,12 +160,14 @@ cell = "rist/us-to-ffmpeg"
 profile = "baseline"
 verdict = "expected_unsupported"
 reason = "Peer-side (ffmpeg/librist-input-path) issue, not a tst-interop send-side one: ffmpeg either registers a peer/flow that goes dead (RIST) or successfully probes the stream but never writes a byte before being force-killed (UDP) — reproduces identically with -fflags nobuffer and longer settle times, so it isn't a startup-race artifact of this harness's own timing. The identical send calls against tsp listeners on the same two transports, same run, PASS byte-perfect. See README.md's 'Known, already-evidenced gaps' item 3. Verified on ffmpeg 6.1.1."
+failure_contains = "peer produced no (or empty) output file"
 
 [[expect]]
 cell = "udp/us-to-ffmpeg"
 profile = "baseline"
 verdict = "expected_unsupported"
 reason = "Peer-side (ffmpeg/librist-input-path) issue, not a tst-interop send-side one: ffmpeg either registers a peer/flow that goes dead (RIST) or successfully probes the stream but never writes a byte before being force-killed (UDP) — reproduces identically with -fflags nobuffer and longer settle times, so it isn't a startup-race artifact of this harness's own timing. The identical send calls against tsp listeners on the same two transports, same run, PASS byte-perfect. See README.md's 'Known, already-evidenced gaps' item 3. Verified on ffmpeg 6.1.1."
+failure_contains = "peer produced no (or empty) output file"
 
 [[expect]]
 cell = "rtsp-consume/vlc-serve-ffmpeg-pull"
@@ -165,12 +180,14 @@ cell = "rtsp-serve/vlc-probe"
 profile = "baseline"
 verdict = "expected_unsupported"
 reason = "VLC 'main decoder error: buffer deadlock prevented' — this codebase's synthetic H.264 fixture only builds a real, decodable SPS/PPS/IDR on keyframes (every 30th frame); every inter-frame AU is filler bytes wrapped in a bare NAL header, which VLC's decoder cannot handle over an RTSP session. The decode/vlc/* format-axis cells (task 12) reproduce the identical 'buffer deadlock prevented' message on a bare local file with no transport at all, corroborating that this is about the synthetic fixture's filler content, not the RTSP wire protocol. See README.md's 'Known, already-evidenced gaps' item 5."
+failure_contains = "main decoder error: buffer deadlock prevented"
 
 [[expect]]
 cell = "rtsp-serve/ffmpeg-pull"
 profile = "baseline"
 verdict = "expected_unsupported"
 reason = "Two independent, already-evidenced gaps compound on this cell: (1) the async-KLV payload-truncation finding (this same reason applies on every ffmpeg -c copy cell touching this codebase's KLV PID — see item 1), and (2) a real video-AU shortfall (149/240, just under the 70% floor) plausibly from RTSP's TCP-interleaved SETUP/PLAY handshake costing more startup time than a direct SRT/TCP connect. Left as an expectation rather than special-cased with a longer --seconds for RTSP specifically — that would diverge this one cell's timing from every other cell's shared --seconds budget for a margin call this close to the floor. See README.md's 'Known, already-evidenced gaps' item 5. Verified on ffmpeg 6.1.1."
+failure_contains = "KLV records: got 0"
 
 [[expect]]
 cell = "srt-live/us-to-ffmpeg/baseline"
@@ -359,130 +376,152 @@ cell = "decode/mpv/av1-klv-a"
 profile = "av1-klv-a"
 verdict = "expected_unsupported"
 reason = "mpv --vo=null --frames=10 --ao=null genuinely attempts track selection (unlike this cell's earlier --no-video invocation), but this codebase's AV1 carriage (PMT stream_type 0x06) is never classified as a video track by mpv's ffmpeg-based demuxer — same root cause as the AV1-in-TS PID-misclassification gap documented elsewhere in this file and in README.md. mpv prints the deterministic 'No video or audio streams selected.'. See scripts/interop/lib.sh's MPV_NO_STREAMS_SELECTED doc comment."
+failure_contains = "mpv selected no stream at all"
 
 [[expect]]
 cell = "decode/mpv/av1-klv-b"
 profile = "av1-klv-b"
 verdict = "expected_unsupported"
 reason = "mpv --vo=null --frames=10 --ao=null genuinely attempts track selection (unlike this cell's earlier --no-video invocation), but this codebase's AV1 carriage (PMT stream_type 0x06) is never classified as a video track by mpv's ffmpeg-based demuxer — same root cause as the AV1-in-TS PID-misclassification gap documented elsewhere in this file and in README.md. mpv prints the deterministic 'No video or audio streams selected.'. See scripts/interop/lib.sh's MPV_NO_STREAMS_SELECTED doc comment."
+failure_contains = "mpv selected no stream at all"
 
 [[expect]]
 cell = "decode/mpv/h266-klv"
 profile = "h266-klv"
 verdict = "expected_unsupported"
 reason = "mpv --vo=null --frames=10 --ao=null identifies the H.266/VVC video track (unlike this cell's earlier --no-video invocation, which never got that far) but reports 'Failed to initialize a decoder for codec 'vvc''. — this box's mpv build has no working VVC decoder at all, a distinct finding from ffmpeg's own separate vps_id=0 rejection (see the srt-live/h266-klv rows). With no decoder to hand the track to, mpv still ends up printing 'No video or audio streams selected.'. See scripts/interop/lib.sh's MPV_NO_STREAMS_SELECTED doc comment."
+failure_contains = "Failed to initialize a decoder for codec 'vvc'"
 
 [[expect]]
 cell = "decode/vlc/audio"
 profile = "audio"
 verdict = "expected_unsupported"
 reason = "VLC 'main decoder error: buffer deadlock prevented' on a bare local file, no transport involved — corroborates the rtsp-serve/vlc-probe transport-axis finding (this codebase's synthetic H.264/H.265 fixtures only build real, decodable SPS/PPS/IDR on keyframes; every inter-frame AU is filler bytes VLC's decoder cannot handle). Affects every H.264/H.265 profile (VLC never even attempts video decode on the H.266/AV1 profiles, so those PASS this cell — see decode/mpv's contrasting failure on those same profiles for the H.266/AV1-specific findings)."
+failure_contains = "main decoder error: buffer deadlock prevented"
 
 [[expect]]
 cell = "decode/vlc/baseline"
 profile = "baseline"
 verdict = "expected_unsupported"
 reason = "VLC 'main decoder error: buffer deadlock prevented' on a bare local file, no transport involved — corroborates the rtsp-serve/vlc-probe transport-axis finding (this codebase's synthetic H.264/H.265 fixtures only build real, decodable SPS/PPS/IDR on keyframes; every inter-frame AU is filler bytes VLC's decoder cannot handle). Affects every H.264/H.265 profile (VLC never even attempts video decode on the H.266/AV1 profiles, so those PASS this cell — see decode/mpv's contrasting failure on those same profiles for the H.266/AV1-specific findings)."
+failure_contains = "main decoder error: buffer deadlock prevented"
 
 [[expect]]
 cell = "decode/vlc/h265-klv"
 profile = "h265-klv"
 verdict = "expected_unsupported"
 reason = "VLC 'main decoder error: buffer deadlock prevented' on a bare local file, no transport involved — corroborates the rtsp-serve/vlc-probe transport-axis finding (this codebase's synthetic H.264/H.265 fixtures only build real, decodable SPS/PPS/IDR on keyframes; every inter-frame AU is filler bytes VLC's decoder cannot handle). Affects every H.264/H.265 profile (VLC never even attempts video decode on the H.266/AV1 profiles, so those PASS this cell — see decode/mpv's contrasting failure on those same profiles for the H.266/AV1-specific findings)."
+failure_contains = "main decoder error: buffer deadlock prevented"
 
 [[expect]]
 cell = "decode/vlc/klv-sync"
 profile = "klv-sync"
 verdict = "expected_unsupported"
 reason = "VLC 'main decoder error: buffer deadlock prevented' on a bare local file, no transport involved — corroborates the rtsp-serve/vlc-probe transport-axis finding (this codebase's synthetic H.264/H.265 fixtures only build real, decodable SPS/PPS/IDR on keyframes; every inter-frame AU is filler bytes VLC's decoder cannot handle). Affects every H.264/H.265 profile (VLC never even attempts video decode on the H.266/AV1 profiles, so those PASS this cell — see decode/mpv's contrasting failure on those same profiles for the H.266/AV1-specific findings)."
+failure_contains = "main decoder error: buffer deadlock prevented"
 
 [[expect]]
 cell = "decode/vlc/misp"
 profile = "misp"
 verdict = "expected_unsupported"
 reason = "VLC 'main decoder error: buffer deadlock prevented' on a bare local file, no transport involved — corroborates the rtsp-serve/vlc-probe transport-axis finding (this codebase's synthetic H.264/H.265 fixtures only build real, decodable SPS/PPS/IDR on keyframes; every inter-frame AU is filler bytes VLC's decoder cannot handle). Affects every H.264/H.265 profile (VLC never even attempts video decode on the H.266/AV1 profiles, so those PASS this cell — see decode/mpv's contrasting failure on those same profiles for the H.266/AV1-specific findings)."
+failure_contains = "main decoder error: buffer deadlock prevented"
 
 [[expect]]
 cell = "decode/vlc/pcr-sparse"
 profile = "pcr-sparse"
 verdict = "expected_unsupported"
 reason = "VLC 'main decoder error: buffer deadlock prevented' on a bare local file, no transport involved — corroborates the rtsp-serve/vlc-probe transport-axis finding (this codebase's synthetic H.264/H.265 fixtures only build real, decodable SPS/PPS/IDR on keyframes; every inter-frame AU is filler bytes VLC's decoder cannot handle). Affects every H.264/H.265 profile (VLC never even attempts video decode on the H.266/AV1 profiles, so those PASS this cell — see decode/mpv's contrasting failure on those same profiles for the H.266/AV1-specific findings)."
+failure_contains = "main decoder error: buffer deadlock prevented"
 
 [[expect]]
 cell = "decode/vlc/pcr-tight"
 profile = "pcr-tight"
 verdict = "expected_unsupported"
 reason = "VLC 'main decoder error: buffer deadlock prevented' on a bare local file, no transport involved — corroborates the rtsp-serve/vlc-probe transport-axis finding (this codebase's synthetic H.264/H.265 fixtures only build real, decodable SPS/PPS/IDR on keyframes; every inter-frame AU is filler bytes VLC's decoder cannot handle). Affects every H.264/H.265 profile (VLC never even attempts video decode on the H.266/AV1 profiles, so those PASS this cell — see decode/mpv's contrasting failure on those same profiles for the H.266/AV1-specific findings)."
+failure_contains = "main decoder error: buffer deadlock prevented"
 
 [[expect]]
 cell = "decode/vlc/pts-rollover"
 profile = "pts-rollover"
 verdict = "expected_unsupported"
 reason = "VLC 'main decoder error: buffer deadlock prevented' on a bare local file, no transport involved — corroborates the rtsp-serve/vlc-probe transport-axis finding (this codebase's synthetic H.264/H.265 fixtures only build real, decodable SPS/PPS/IDR on keyframes; every inter-frame AU is filler bytes VLC's decoder cannot handle). Affects every H.264/H.265 profile (VLC never even attempts video decode on the H.266/AV1 profiles, so those PASS this cell — see decode/mpv's contrasting failure on those same profiles for the H.266/AV1-specific findings)."
+failure_contains = "main decoder error: buffer deadlock prevented"
 
 [[expect]]
 cell = "decode/vlc/two-program"
 profile = "two-program"
 verdict = "expected_unsupported"
 reason = "VLC 'main decoder error: buffer deadlock prevented' on a bare local file, no transport involved — corroborates the rtsp-serve/vlc-probe transport-axis finding (this codebase's synthetic H.264/H.265 fixtures only build real, decodable SPS/PPS/IDR on keyframes; every inter-frame AU is filler bytes VLC's decoder cannot handle). Affects every H.264/H.265 profile (VLC never even attempts video decode on the H.266/AV1 profiles, so those PASS this cell — see decode/mpv's contrasting failure on those same profiles for the H.266/AV1-specific findings)."
+failure_contains = "main decoder error: buffer deadlock prevented"
 
 [[expect]]
 cell = "srt-live/ffmpeg-to-us/av1-klv-a"
 profile = "av1-klv-a"
 verdict = "expected_unsupported"
 reason = "ffmpeg's default (no -map 0) auto-stream-selection excludes both of this profile's PIDs: this codebase's AV1 carriage uses PMT stream_type 0x06 (PES-private-data), the same generic classification as this codebase's own KLV PrivateData convention — ffmpeg's stderr confirms ('Stream 0, codec bin_data, is muxed as a private data stream and may not be recognized upon reading'), and with neither PID auto-selected, ffmpeg refuses to even open its output ('Output file does not contain any stream', exit 234) — its SRT connection never establishes, so tst-interop recv times out on accept. Matches the plan's expected 'AV1-in-TS vs several tools' gap; this cell's peer command (srt-live/ffmpeg-to-us's shape) intentionally mirrors the transport-axis srt/ffmpeg-to-us cell verbatim (task 11), which never surfaced this because baseline's H.264 video auto-selects fine even without -map 0 — only an all-private-data profile like AV1 hits it. Verified on ffmpeg 6.1.1."
+failure_contains = "peer exit 234"
 
 [[expect]]
 cell = "srt-live/us-to-ffmpeg/av1-klv-a"
 profile = "av1-klv-a"
 verdict = "expected_unsupported"
 reason = "ffmpeg's live (non-seekable) mpegts demux hits a hard 'Error during demuxing: Input/output error' partway through this profile's dual private-data-PID (AV1 video + KLV, both stream_type 0x06) SRT stream, even with -map 0 present — this codebase's own send side confirms it pushed the full 240 video AUs / 80 KLV records correctly before ffmpeg's demuxer aborts. Not reproduced on the file-based srt-live/ffmpeg-to-us direction for this profile (a different, already-documented gap there) nor on any single-PID-per-type profile's live-listen direction — plausibly ffmpeg's mpegts demuxer being less robust reading two ambiguously-classified private data PIDs from a live socket than from a seekable file. Verified on ffmpeg 6.1.1."
+failure_contains = "video AUs: got 0"
 
 [[expect]]
 cell = "srt-live/ffmpeg-to-us/av1-klv-b"
 profile = "av1-klv-b"
 verdict = "expected_unsupported"
 reason = "ffmpeg's default (no -map 0) auto-stream-selection excludes both of this profile's PIDs: this codebase's AV1 carriage uses PMT stream_type 0x06 (PES-private-data), the same generic classification as this codebase's own KLV PrivateData convention — ffmpeg's stderr confirms ('Stream 0, codec bin_data, is muxed as a private data stream and may not be recognized upon reading'), and with neither PID auto-selected, ffmpeg refuses to even open its output ('Output file does not contain any stream', exit 234) — its SRT connection never establishes, so tst-interop recv times out on accept. Matches the plan's expected 'AV1-in-TS vs several tools' gap; this cell's peer command (srt-live/ffmpeg-to-us's shape) intentionally mirrors the transport-axis srt/ffmpeg-to-us cell verbatim (task 11), which never surfaced this because baseline's H.264 video auto-selects fine even without -map 0 — only an all-private-data profile like AV1 hits it. Verified on ffmpeg 6.1.1."
+failure_contains = "peer exit 234"
 
 [[expect]]
 cell = "srt-live/us-to-ffmpeg/av1-klv-b"
 profile = "av1-klv-b"
 verdict = "expected_unsupported"
 reason = "ffmpeg's live (non-seekable) mpegts demux hits a hard 'Error during demuxing: Input/output error' partway through this profile's dual private-data-PID (AV1 video + KLV, both stream_type 0x06) SRT stream, even with -map 0 present — this codebase's own send side confirms it pushed the full 240 video AUs / 80 KLV records correctly before ffmpeg's demuxer aborts. Not reproduced on the file-based srt-live/ffmpeg-to-us direction for this profile (a different, already-documented gap there) nor on any single-PID-per-type profile's live-listen direction — plausibly ffmpeg's mpegts demuxer being less robust reading two ambiguously-classified private data PIDs from a live socket than from a seekable file. Verified on ffmpeg 6.1.1."
+failure_contains = "video AUs: got 0"
 
 [[expect]]
 cell = "srt-live/us-to-ffmpeg/h266-klv"
 profile = "h266-klv"
 verdict = "expected_unsupported"
 reason = "ffmpeg's stderr explicitly rejects this codebase's H.266/VVC VPS: 'vps_video_parameter_set_id out of range: 0, but must be in [1,15]' on every parsed unit, including keyframes — the VPS RBSP bytes are tst-core's own tested vps_main10 fixture (crates/tst-interop/src/fixtures.rs's h266_au, byte 0's top 4 bits = vps_video_parameter_set_id = 0). H.266/VVC (unlike HEVC) reserves vps_id=0 to mean a single-layer bitstream with no VPS referenced — plausibly ffmpeg's VVC parser (recently added, still maturing) doesn't implement that special case, though this was not independently verified against the H.266 V4 spec text in this session. Either way ffmpeg never establishes valid codec parameters for the PID and writes/receives nothing at all ('Output file is empty, nothing was encoded' / zero video AUs on the recv side) — a total failure, not merely the KLV-payload-truncation finding above. Potential library follow-up: confirm vps_id=0's H.266 spec meaning and consider whether tst-core's own fixture should use a nonzero id for broader third-party-decoder compatibility (out of scope for this scripts-only task — not changed here). Verified on ffmpeg 6.1.1."
+failure_contains = "video AUs: got 0"
 
 [[expect]]
 cell = "srt-live/ffmpeg-to-us/h266-klv"
 profile = "h266-klv"
 verdict = "expected_unsupported"
 reason = "ffmpeg's stderr explicitly rejects this codebase's H.266/VVC VPS: 'vps_video_parameter_set_id out of range: 0, but must be in [1,15]' on every parsed unit, including keyframes — the VPS RBSP bytes are tst-core's own tested vps_main10 fixture (crates/tst-interop/src/fixtures.rs's h266_au, byte 0's top 4 bits = vps_video_parameter_set_id = 0). H.266/VVC (unlike HEVC) reserves vps_id=0 to mean a single-layer bitstream with no VPS referenced — plausibly ffmpeg's VVC parser (recently added, still maturing) doesn't implement that special case, though this was not independently verified against the H.266 V4 spec text in this session. Either way ffmpeg never establishes valid codec parameters for the PID and writes/receives nothing at all ('Output file is empty, nothing was encoded' / zero video AUs on the recv side) — a total failure, not merely the KLV-payload-truncation finding above. Potential library follow-up: confirm vps_id=0's H.266 spec meaning and consider whether tst-core's own fixture should use a nonzero id for broader third-party-decoder compatibility (out of scope for this scripts-only task — not changed here). Verified on ffmpeg 6.1.1."
+failure_contains = "video AUs: got 0"
 
 [[expect]]
 cell = "srt-live/us-to-ffmpeg/audio"
 profile = "audio"
 verdict = "expected_unsupported"
 reason = "ffmpeg cannot determine this codebase's AAC-ADTS stream's sample rate quickly enough over a live (non-seekable, default analyzeduration=0/probesize) SRT source to open its mpegts output at all: 'Could not find codec parameters for stream 2 (Audio: aac ... unspecified sample rate' / 'sample rate not set' / 'Could not write header (incorrect codec parameters?)' — ffmpeg's SRT connection never fully opens either direction, so the failure surfaces as a total capture/receive failure (video+audio+KLV all zero) rather than the KLV-specific finding above. Reproduces identically whichever side ffmpeg is on (listener or sender) — an ffmpeg live-source auto-probe limitation with this codebase's particular AAC-ADTS framing, not specific to KLV at all. Verified on ffmpeg 6.1.1."
+failure_contains = "our send failed"
 
 [[expect]]
 cell = "srt-live/ffmpeg-to-us/audio"
 profile = "audio"
 verdict = "expected_unsupported"
 reason = "ffmpeg cannot determine this codebase's AAC-ADTS stream's sample rate quickly enough over a live (non-seekable, default analyzeduration=0/probesize) SRT source to open its mpegts output at all: 'Could not find codec parameters for stream 2 (Audio: aac ... unspecified sample rate' / 'sample rate not set' / 'Could not write header (incorrect codec parameters?)' — ffmpeg's SRT connection never fully opens either direction, so the failure surfaces as a total capture/receive failure (video+audio+KLV all zero) rather than the KLV-specific finding above. Reproduces identically whichever side ffmpeg is on (listener or sender) — an ffmpeg live-source auto-probe limitation with this codebase's particular AAC-ADTS framing, not specific to KLV at all. Verified on ffmpeg 6.1.1."
+failure_contains = "expected audio frames, got none"
 
 [[expect]]
 cell = "srt-live/us-to-ffmpeg/two-program"
 profile = "two-program"
 verdict = "expected_unsupported"
 reason = "Same live-demux 'Error during demuxing: Input/output error' this codebase's send side confirms it correctly pushed both programs' full 480 video AUs / 160 KLV records before ffmpeg's demuxer aborts partway through (see the av1-klv-a/b reason on this same direction for the single-program case's PID-ambiguity theory — here the shared factor is a live source with a more complex PSI topology than the single-program baseline case, this time 2 full programs/4 PIDs rather than 2 ambiguous private-data PIDs), landing at only 1 of 2 programs captured in addition to the usual KLV-payload-truncation finding on the PID it does capture. Verified on ffmpeg 6.1.1."
+failure_contains = "programs seen: got 1, want 2"
 
 [[expect]]
 cell = "srt-live/ffmpeg-to-us/two-program"
 profile = "two-program"
 verdict = "expected_unsupported"
 reason = "This direction's peer command (mirrored verbatim from the transport-axis srt/ffmpeg-to-us cell, task 11) has no -map 0: ffmpeg's default auto-stream-selection picks only its single best-ranked video stream, silently dropping this profile's second program entirely (never surfaced on task 11's baseline-only single-program testing) — on top of the usual KLV-payload-truncation finding on whichever program's data does get through. Verified on ffmpeg 6.1.1."
+failure_contains = "programs seen: got 1, want 2"
 

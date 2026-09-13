@@ -12,8 +12,13 @@
 //! ([`Verdict::ExpectedUnsupported`]) when it matches a specific,
 //! human-authored entry in the expectations file. Everything else that
 //! fails stays [`Verdict::Fail`], which is what [`merge`]'s caller checks
-//! (`results.summary.fail > 0`) to decide the process exit code — there
-//! is no other path to a passing run.
+//! (`results.summary.fail > 0`) to decide the process exit code — but
+//! that isn't the only way a run fails: a stale `expected_unsupported`
+//! row (one whose cell actually `PASS`ed — see `results.summary.
+//! stale_expectations`) fails the run too (exit 1), and `merge` itself
+//! returns an `Err` (exit 2, no `results.json` written at all) when the
+//! produced cells don't exactly match the declared `--inventory`
+//! multiset (see [`check_inventory`]).
 //!
 //! Expectations are read from a small hand-rolled TOML-shaped format (see
 //! [`parse_expectations`]) rather than a real TOML crate — the workspace
@@ -115,8 +120,12 @@ pub struct Summary {
     pub total: usize,
     pub pass: usize,
     /// Cells whose `FAIL` matched no expectation — see the module doc's
-    /// load-bearing property. `merge`'s caller exits nonzero iff this is
-    /// nonzero.
+    /// load-bearing property. `merge`'s CLI caller (`main.rs`) exits
+    /// nonzero (1) if this is nonzero OR `stale_expectations` is
+    /// non-empty — either alone is enough to fail the run, so this
+    /// field is not by itself the whole exit-code story (an inventory
+    /// mismatch fails even earlier, via `merge`'s own `Err`, exit 2,
+    /// before a `Summary` is even produced).
     pub fail: usize,
     pub expected_unsupported: usize,
     pub skipped_tool_missing: usize,
@@ -132,6 +141,14 @@ pub struct Results {
     pub meta: serde_json::Value,
     pub cells: Vec<MergedCell>,
     pub summary: Summary,
+    /// Set by [`merge`] from the `--inventory` file it validated the run
+    /// against. `None` only for a `Results` built directly by
+    /// [`build_results`] rather than through `merge`'s file-driven
+    /// wrapper (e.g. in tests) — a real `results.json` written by `merge`
+    /// always has this set. `#[serde(default)]` so an older `results.json`
+    /// written before this field existed still deserializes.
+    #[serde(default)]
+    pub inventory: Option<InventorySummary>,
 }
 
 /// One `[[expect]]` block from the expectations file.
@@ -143,13 +160,16 @@ pub struct Expectation {
     pub verdict: ExpectVerdict,
     pub reason: String,
     pub reference: Option<String>,
-    /// Optional substring narrowing: when set, this expectation only
-    /// matches a `FAIL` whose failures text contains it (see the
-    /// private `find_expectation` helper's doc comment for the exact
-    /// matching rule). Never applied to a `PASS` staleness lookup — an
+    /// Substring narrowing: when set, this expectation only matches a
+    /// `FAIL` whose failures text contains it (see the private
+    /// `find_expectation` helper's doc comment for the exact matching
+    /// rule). Never applied to a `PASS` staleness lookup — an
     /// expectation is checked for staleness by `(cell, profile)` alone,
     /// regardless of what failure text it was originally written to
-    /// match.
+    /// match. Mandatory on an `ExpectVerdict::ExpectedUnsupported` row
+    /// (enforced by `ExpectBuilder::finish` — a documented gap must
+    /// name the failure text it absorbs); optional on a `KnownFlaky`
+    /// row, which by definition has no single mechanism string.
     pub failure_contains: Option<String>,
 }
 
@@ -225,6 +245,12 @@ impl ExpectBuilder {
         let reason = self.reason.ok_or_else(|| {
             format!("expectations block ending at line {end_line}: missing required key `reason`")
         })?;
+        if verdict == ExpectVerdict::ExpectedUnsupported && self.failure_contains.is_none() {
+            return Err(format!(
+                "expectations block ending at line {end_line}: expected_unsupported rows must \
+                 carry failure_contains (name the failure text this row absorbs)"
+            ));
+        }
         Ok(Expectation {
             cell,
             profile,
@@ -313,7 +339,43 @@ pub fn parse_expectations(text: &str) -> Result<Vec<Expectation>, String> {
     if let Some(builder) = current.take() {
         out.push(builder.finish(last_line)?);
     }
+    reject_ambiguous(&out)?;
     Ok(out)
+}
+
+/// Can `a` and `b` (exact ids or trailing-`*` prefix globs) both match
+/// one cell id?
+fn patterns_overlap(a: &str, b: &str) -> bool {
+    match (a.strip_suffix('*'), b.strip_suffix('*')) {
+        (None, None) => a == b,
+        (Some(pa), None) => b.starts_with(pa),
+        (None, Some(pb)) => a.starts_with(pb),
+        (Some(pa), Some(pb)) => pa.starts_with(pb) || pb.starts_with(pa),
+    }
+}
+
+/// Reject a table where two rows could both claim the same (cell,
+/// profile) — first-match-wins would then silently decide which
+/// documented mechanism a failure gets attributed to. Two rows may
+/// share a cell only when each carries a DIFFERENT `failure_contains`.
+fn reject_ambiguous(expectations: &[Expectation]) -> Result<(), String> {
+    for (i, a) in expectations.iter().enumerate() {
+        for b in &expectations[i + 1..] {
+            if a.profile != b.profile || !patterns_overlap(&a.cell, &b.cell) {
+                continue;
+            }
+            let distinct = matches!((&a.failure_contains, &b.failure_contains),
+                (Some(x), Some(y)) if x != y);
+            if !distinct {
+                return Err(format!(
+                    "ambiguous expectations: cell {:?} and cell {:?} (profile {:?}) can both match one \
+                     cell; give each a distinct failure_contains or remove one",
+                    a.cell, b.cell, a.profile
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------
@@ -331,8 +393,16 @@ fn cell_pattern_matches(pattern: &str, id: &str) -> bool {
 }
 
 /// First expectation (in file order) whose `cell` pattern and exact
-/// `profile` both match. Ambiguous multi-match expectations files are
-/// the expectations author's problem, not merge's — file order wins.
+/// `profile` both match. Ambiguity is NOT resolved by file order here —
+/// [`parse_expectations`]'s [`reject_ambiguous`] pass already rejected
+/// (hard parse error) any table where two rows share a `profile` and
+/// overlapping `cell` patterns, unless both carry a distinct
+/// `failure_contains`. So by the time this function runs, two rows can
+/// only share a (cell, profile) when `failure_text` (the `FAIL`-matching
+/// call site) picks between them by substring — file order only matters
+/// as an arbitrary tie-break on the `PASS`-staleness call site
+/// (`failure_text: None`), where `failure_contains` is never applied and
+/// both surviving rows would otherwise match identically.
 ///
 /// `failure_text` distinguishes the two call sites in [`build_results`]:
 /// - `Some(joined_failures)` (the `FAIL`-matching path): an expectation
@@ -386,11 +456,22 @@ pub fn build_results(
                 let matched = find_expectation(expectations, &raw.id, &raw.profile, None);
                 if let Some(exp) = matched {
                     if exp.verdict == ExpectVerdict::ExpectedUnsupported {
-                        stale.push(StaleExpectation {
-                            cell: exp.cell.clone(),
-                            profile: exp.profile.clone(),
-                            reason: exp.reason.clone(),
+                        // A glob row (e.g. "decode/*") can match more
+                        // than one raw cell id at the same profile — if
+                        // several of them PASS, that's the same
+                        // expectations-file ROW going stale once, not
+                        // once per matching cell. Dedupe by the row's
+                        // own (cell pattern, profile) identity.
+                        let already_flagged = stale.iter().any(|s: &StaleExpectation| {
+                            s.cell == exp.cell && s.profile == exp.profile
                         });
+                        if !already_flagged {
+                            stale.push(StaleExpectation {
+                                cell: exp.cell.clone(),
+                                profile: exp.profile.clone(),
+                                reason: exp.reason.clone(),
+                            });
+                        }
                     }
                     // A `known_flaky` expectation matching a PASS is
                     // normal (see the module + type docs) — no stale
@@ -449,6 +530,7 @@ pub fn build_results(
         meta,
         cells,
         summary,
+        inventory: None,
     }
 }
 
@@ -480,23 +562,158 @@ fn read_cells_dir(dir: &Path) -> Result<Vec<RawCell>, String> {
     Ok(cells)
 }
 
-/// `report merge --cells-dir DIR --expectations FILE --meta FILE --out
-/// results.json`: read every per-cell JSON file in `cells_dir`, apply
-/// `expectations_path`'s expectations, embed `meta_path`'s contents
-/// verbatim, and write the result to `out_path`. Returns the same
-/// [`Results`] that was written — the caller decides the process exit
-/// code from `results.summary.fail` (see the module doc).
+/// One (id, profile) pair `run-matrix.sh` DECLARED it would run, written
+/// to `inventory.json` before the first cell executes.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct InventoryCell {
+    pub id: String,
+    pub profile: String,
+}
+
+/// `inventory.json`: the exact cell multiset a run intends to produce,
+/// plus the knobs that shaped it. `shape` is `full-157` only when no
+/// `--cells`/`--profiles` narrowing was given (the advertised census);
+/// anything else is `subset` and the evidence page may not cite it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Inventory {
+    pub shape: String,
+    pub seconds_per_cell: u64,
+    pub cells_glob: String,
+    pub profiles: Vec<String>,
+    pub cells: Vec<InventoryCell>,
+    /// Cell ids whose `SKIPPED_TOOL_MISSING` is tolerated (local runs on
+    /// a box missing a peer). `interop.yml` never sets this.
+    #[serde(default)]
+    pub allowed_skips: Vec<String>,
+    #[serde(default)]
+    pub tools: serde_json::Value,
+}
+
+/// What the merged report records about its inventory. Deliberately
+/// smaller than [`Inventory`] — it omits `cells` (the merge already
+/// proved they match, one-for-one, `raw_cells`; re-listing them here
+/// would just duplicate `results.cells`), `cells_glob`/`profiles` (raw
+/// orchestration inputs, not evidence-page-relevant), and `tools` (a
+/// spec §5.1 deviation from `Inventory`'s own shape: `results.meta.tools`
+/// — embedded verbatim from `merge`'s `--meta` file — already carries
+/// the tool versions, so this struct doesn't duplicate them a second
+/// time under a different path).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InventorySummary {
+    pub shape: String,
+    pub declared_cells: usize,
+    pub allowed_skips: Vec<String>,
+}
+
+pub const SHAPE_FULL: &str = "full-157";
+pub const SHAPE_SUBSET: &str = "subset";
+
+/// The declared cell count a `full-157` inventory must have — the number
+/// embedded in [`SHAPE_FULL`]'s own name, enforced here so a caller can't
+/// claim the advertised full census while actually declaring some other
+/// count under that label.
+pub const FULL_SHAPE_CELL_COUNT: usize = 157;
+
+pub fn parse_inventory(text: &str) -> Result<Inventory, String> {
+    let inv: Inventory = serde_json::from_str(text).map_err(|e| format!("inventory.json: {e}"))?;
+    if inv.shape != SHAPE_FULL && inv.shape != SHAPE_SUBSET {
+        return Err(format!(
+            "inventory.json: shape must be {SHAPE_FULL:?} or {SHAPE_SUBSET:?}, got {:?}",
+            inv.shape
+        ));
+    }
+    if inv.shape == SHAPE_FULL && inv.cells.len() != FULL_SHAPE_CELL_COUNT {
+        return Err(format!(
+            "inventory.json: shape {SHAPE_FULL:?} must declare exactly {FULL_SHAPE_CELL_COUNT} \
+             cells, got {}",
+            inv.cells.len()
+        ));
+    }
+    Ok(inv)
+}
+
+/// Compare the produced cells against the declared inventory as an exact
+/// multiset: every declared (id, profile) exactly once, nothing else, and
+/// no `SKIPPED_TOOL_MISSING` outside `allowed_skips`. Reports EVERY
+/// problem in one error so a broken run is diagnosed in one read.
+pub fn check_inventory(raw_cells: &[RawCell], inv: &Inventory) -> Result<(), String> {
+    let mut declared: BTreeMap<InventoryCell, usize> = BTreeMap::new();
+    for c in &inv.cells {
+        *declared.entry(c.clone()).or_insert(0) += 1;
+    }
+    let mut produced: BTreeMap<InventoryCell, usize> = BTreeMap::new();
+    for c in raw_cells {
+        *produced
+            .entry(InventoryCell {
+                id: c.id.clone(),
+                profile: c.profile.clone(),
+            })
+            .or_insert(0) += 1;
+    }
+    let mut problems = Vec::new();
+    for (cell, &n) in &declared {
+        match produced.get(cell).copied().unwrap_or(0) {
+            0 => problems.push(format!("missing: {} ({})", cell.id, cell.profile)),
+            m if m < n => problems.push(format!(
+                "missing: {} ({}) x{} (declared {n}, produced {m})",
+                cell.id,
+                cell.profile,
+                n - m
+            )),
+            m if m > n => problems.push(format!(
+                "duplicate: {} ({}) x{m} (declared {n})",
+                cell.id, cell.profile
+            )),
+            _ => {}
+        }
+    }
+    for cell in produced.keys() {
+        if !declared.contains_key(cell) {
+            problems.push(format!("extra: {} ({})", cell.id, cell.profile));
+        }
+    }
+    for c in raw_cells {
+        if c.verdict == RawVerdict::SkippedToolMissing
+            && !inv.allowed_skips.iter().any(|s| s == &c.id)
+        {
+            problems.push(format!("undeclared skip: {} ({})", c.id, c.profile));
+        }
+    }
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "inventory mismatch ({} declared, {} produced): {}",
+            inv.cells.len(),
+            raw_cells.len(),
+            problems.join("; ")
+        ))
+    }
+}
+
+/// `report merge --cells-dir DIR --expectations FILE --meta FILE
+/// --inventory FILE --out results.json`: read every per-cell JSON file
+/// in `cells_dir`, apply `expectations_path`'s expectations, embed
+/// `meta_path`'s contents verbatim, validate the produced cells against
+/// `inventory_path`'s declared multiset (see [`check_inventory`]), and
+/// write the result to `out_path`. Returns the same [`Results`] that was
+/// written — the caller decides the process exit code from
+/// `results.summary.fail` and `results.summary.stale_expectations` (see
+/// the module doc).
 ///
 /// Errors (rather than returning an empty, trivially-all-PASS
-/// [`Results`]) if `cells_dir` contains zero `*.json` files — the same
-/// "never silently absorbed" property the module doc describes for
-/// individual failures also has to hold for the degenerate case of an
-/// orchestrator that crashed before writing any cell at all, or a
-/// `--cells-dir` typo.
+/// [`Results`]) if `cells_dir` contains zero `*.json` files, or if the
+/// produced cells don't exactly match `inventory_path`'s declared
+/// multiset — the same "never silently absorbed" property the module
+/// doc describes for individual failures also has to hold for the
+/// degenerate case of an orchestrator that crashed before writing any
+/// cell at all, a `--cells-dir` typo, or a run that silently dropped or
+/// duplicated cells. Neither error writes `out_path`.
 pub fn merge(
     cells_dir: &Path,
     expectations_path: &Path,
     meta_path: &Path,
+    inventory_path: &Path,
     out_path: &Path,
 ) -> Result<Results, String> {
     let expectations_text = fs::read_to_string(expectations_path)
@@ -509,6 +726,10 @@ pub fn merge(
     let meta: serde_json::Value = serde_json::from_str(&meta_text)
         .map_err(|e| format!("parse {}: {e}", meta_path.display()))?;
 
+    let inventory_text = fs::read_to_string(inventory_path)
+        .map_err(|e| format!("read {}: {e}", inventory_path.display()))?;
+    let inventory = parse_inventory(&inventory_text)?;
+
     let raw_cells = read_cells_dir(cells_dir)?;
     if raw_cells.is_empty() {
         return Err(format!(
@@ -518,7 +739,14 @@ pub fn merge(
             cells_dir.display()
         ));
     }
-    let results = build_results(raw_cells, &expectations, meta);
+    check_inventory(&raw_cells, &inventory)?;
+
+    let mut results = build_results(raw_cells, &expectations, meta);
+    results.inventory = Some(InventorySummary {
+        shape: inventory.shape.clone(),
+        declared_cells: inventory.cells.len(),
+        allowed_skips: inventory.allowed_skips.clone(),
+    });
 
     let json = serde_json::to_string_pretty(&results).expect("Results always serializes");
     fs::write(out_path, json).map_err(|e| format!("write {}: {e}", out_path.display()))?;
@@ -580,6 +808,14 @@ pub fn render_markdown(results: &Results) -> String {
 
     let mut out = String::new();
     writeln!(out, "# Interop Report").unwrap();
+    if let Some(inv) = &results.inventory {
+        writeln!(
+            out,
+            "Inventory: {} ({} declared cells)",
+            inv.shape, inv.declared_cells
+        )
+        .unwrap();
+    }
     writeln!(out).unwrap();
 
     writeln!(out, "**Meta**").unwrap();
@@ -663,7 +899,7 @@ pub fn render_markdown(results: &Results) -> String {
         for s in &results.summary.stale_expectations {
             writeln!(
                 out,
-                "- `{}` (profile `{}`): {} — matched cell now PASSes; consider removing.",
+                "- `{}` (profile `{}`): {} — STALE, merge FAILED: matched cell now PASSes; remove this row.",
                 s.cell, s.profile, s.reason
             )
             .unwrap();
@@ -3190,6 +3426,131 @@ mod tests {
         }
     }
 
+    fn inventory(cells: &[(&str, &str)], allowed_skips: &[&str]) -> Inventory {
+        Inventory {
+            shape: "subset".to_string(),
+            seconds_per_cell: 10,
+            cells_glob: "*".to_string(),
+            profiles: vec!["baseline".to_string()],
+            cells: cells
+                .iter()
+                .map(|(id, p)| InventoryCell {
+                    id: id.to_string(),
+                    profile: p.to_string(),
+                })
+                .collect(),
+            allowed_skips: allowed_skips.iter().map(|s| s.to_string()).collect(),
+            tools: serde_json::json!({}),
+        }
+    }
+
+    #[test]
+    fn inventory_exact_match_passes() {
+        let cells = vec![
+            raw_cell("udp/us-to-tsp", "baseline", RawVerdict::Pass),
+            raw_cell("udp/tsp-to-us", "baseline", RawVerdict::Fail),
+        ];
+        let inv = inventory(
+            &[("udp/us-to-tsp", "baseline"), ("udp/tsp-to-us", "baseline")],
+            &[],
+        );
+        check_inventory(&cells, &inv).expect("exact multiset must pass");
+    }
+
+    #[test]
+    fn inventory_missing_cell_is_an_error_naming_it() {
+        let cells = vec![raw_cell("udp/us-to-tsp", "baseline", RawVerdict::Pass)];
+        let inv = inventory(
+            &[("udp/us-to-tsp", "baseline"), ("udp/tsp-to-us", "baseline")],
+            &[],
+        );
+        let e = check_inventory(&cells, &inv).unwrap_err();
+        assert!(e.contains("missing") && e.contains("udp/tsp-to-us"), "{e}");
+    }
+
+    #[test]
+    fn inventory_duplicate_cell_is_an_error() {
+        let cells = vec![
+            raw_cell("udp/us-to-tsp", "baseline", RawVerdict::Pass),
+            raw_cell("udp/us-to-tsp", "baseline", RawVerdict::Pass),
+        ];
+        let inv = inventory(&[("udp/us-to-tsp", "baseline")], &[]);
+        let e = check_inventory(&cells, &inv).unwrap_err();
+        assert!(
+            e.contains("duplicate") && e.contains("udp/us-to-tsp"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn inventory_underproduced_multiplicity_is_an_error() {
+        let cells = vec![raw_cell("udp/us-to-tsp", "baseline", RawVerdict::Pass)];
+        let inv = inventory(
+            &[("udp/us-to-tsp", "baseline"), ("udp/us-to-tsp", "baseline")],
+            &[],
+        );
+        let e = check_inventory(&cells, &inv).unwrap_err();
+        assert!(e.contains("missing") && e.contains("udp/us-to-tsp"), "{e}");
+    }
+
+    #[test]
+    fn inventory_extra_cell_is_an_error() {
+        let cells = vec![
+            raw_cell("udp/us-to-tsp", "baseline", RawVerdict::Pass),
+            raw_cell("srt/us-to-tsp", "baseline", RawVerdict::Pass),
+        ];
+        let inv = inventory(&[("udp/us-to-tsp", "baseline")], &[]);
+        let e = check_inventory(&cells, &inv).unwrap_err();
+        assert!(e.contains("extra") && e.contains("srt/us-to-tsp"), "{e}");
+    }
+
+    #[test]
+    fn inventory_same_id_different_profile_is_a_distinct_cell() {
+        let cells = vec![raw_cell("decode/mpv/audio", "audio", RawVerdict::Pass)];
+        let inv = inventory(&[("decode/mpv/audio", "baseline")], &[]);
+        let e = check_inventory(&cells, &inv).unwrap_err();
+        assert!(e.contains("missing") && e.contains("extra"), "{e}");
+    }
+
+    #[test]
+    fn undeclared_skip_is_an_error_but_an_allowed_skip_passes() {
+        let cells = vec![raw_cell(
+            "decode/mpv/baseline",
+            "baseline",
+            RawVerdict::SkippedToolMissing,
+        )];
+        let inv = inventory(&[("decode/mpv/baseline", "baseline")], &[]);
+        let e = check_inventory(&cells, &inv).unwrap_err();
+        assert!(
+            e.contains("undeclared skip") && e.contains("decode/mpv/baseline"),
+            "{e}"
+        );
+        let inv = inventory(
+            &[("decode/mpv/baseline", "baseline")],
+            &["decode/mpv/baseline"],
+        );
+        check_inventory(&cells, &inv).expect("declared skip passes");
+    }
+
+    #[test]
+    fn parse_inventory_rejects_unknown_shape() {
+        let e = parse_inventory(
+            r#"{"shape":"bogus","seconds_per_cell":10,"cells_glob":"*","profiles":[],"cells":[],"allowed_skips":[],"tools":{}}"#,
+        )
+        .unwrap_err();
+        assert!(e.contains("shape"), "{e}");
+    }
+
+    #[test]
+    fn parse_inventory_rejects_full_shape_with_wrong_count() {
+        let e = parse_inventory(
+            r#"{"shape":"full-157","seconds_per_cell":10,"cells_glob":"*","profiles":[],"cells":[{"id":"a","profile":"baseline"}],"allowed_skips":[],"tools":{}}"#,
+        )
+        .unwrap_err();
+        assert!(e.contains("157"), "{e}");
+        assert!(e.contains('1'), "{e}"); // the actual declared count, 1, should be named
+    }
+
     fn expectation(cell: &str, profile: &str, verdict: ExpectVerdict, reason: &str) -> Expectation {
         Expectation {
             cell: cell.to_string(),
@@ -3438,6 +3799,31 @@ mod tests {
         assert_eq!(results.cells[0].verdict, Verdict::Pass);
     }
 
+    #[test]
+    fn glob_row_matching_two_passing_cells_is_one_stale_entry_not_two() {
+        let raw = vec![
+            raw_cell("decode/mpv", "baseline", RawVerdict::Pass),
+            raw_cell("decode/ffmpeg", "baseline", RawVerdict::Pass),
+        ];
+        let exp = expectation(
+            "decode/*",
+            "baseline",
+            ExpectVerdict::ExpectedUnsupported,
+            "decode gap",
+        );
+        let results = build_results(raw, &[exp], serde_json::json!({}));
+
+        // Both decode/mpv and decode/ffmpeg PASS and both match the same
+        // "decode/*" row — that's one row gone stale, not two.
+        assert_eq!(
+            results.summary.stale_expectations.len(),
+            1,
+            "{:?}",
+            results.summary.stale_expectations
+        );
+        assert_eq!(results.summary.stale_expectations[0].cell, "decode/*");
+    }
+
     // (e) glob decode/* matches decode/mpv.
     #[test]
     fn glob_pattern_matches_prefix() {
@@ -3596,6 +3982,7 @@ mod tests {
                     reason: "historic gap, now fixed".to_string(),
                 }],
             },
+            inventory: None,
         };
 
         let golden = "\
@@ -3629,11 +4016,27 @@ mod tests {
 
 **Stale expectations**
 
-- `decode/old` (profile `baseline`): historic gap, now fixed — matched cell now PASSes; consider removing.
+- `decode/old` (profile `baseline`): historic gap, now fixed — STALE, merge FAILED: matched cell now PASSes; remove this row.
 ";
 
         let rendered = render_markdown(&results);
         assert_eq!(rendered, golden, "rendered markdown:\n{rendered}");
+
+        // A `Some` inventory renders its own line — the `None` case above
+        // must stay byte-identical to the golden text.
+        let with_inventory = Results {
+            inventory: Some(InventorySummary {
+                shape: SHAPE_SUBSET.to_string(),
+                declared_cells: 3,
+                allowed_skips: Vec::new(),
+            }),
+            ..results.clone()
+        };
+        let rendered_with_inventory = render_markdown(&with_inventory);
+        assert!(
+            rendered_with_inventory.contains("Inventory: subset (3 declared cells)"),
+            "expected an Inventory line when inventory is Some:\n{rendered_with_inventory}"
+        );
     }
 
     #[test]
@@ -3666,6 +4069,7 @@ mod tests {
                 stale_expectations: Vec::new(),
             },
             cells,
+            inventory: None,
         };
 
         let rendered = render_markdown(&results);
@@ -3706,6 +4110,7 @@ mod tests {
                 stale_expectations: Vec::new(),
             },
             cells,
+            inventory: None,
         };
 
         let rendered = render_markdown(&results);
@@ -3759,6 +4164,7 @@ profile = \"baseline\"
 verdict = \"expected_unsupported\"
 reason = \"mpv lacks async KLV support\"
 ref = \"TICKET-123\"
+failure_contains = \"no async KLV\"
 
 [[expect]]
 cell = \"srt/flaky\"
@@ -3773,8 +4179,26 @@ reason = \"intermittent timeout\"
         assert_eq!(parsed[0].reference.as_deref(), Some("TICKET-123"));
         assert_eq!(parsed[1].verdict, ExpectVerdict::KnownFlaky);
         assert_eq!(parsed[1].reference, None);
-        assert_eq!(parsed[0].failure_contains, None);
+        assert_eq!(parsed[0].failure_contains.as_deref(), Some("no async KLV"));
         assert_eq!(parsed[1].failure_contains, None);
+    }
+
+    #[test]
+    fn expected_unsupported_row_without_failure_contains_is_rejected() {
+        let text = "[[expect]]\ncell = \"decode/mpv\"\nprofile = \"baseline\"\n\
+                    verdict = \"expected_unsupported\"\nreason = \"mpv lacks async KLV support\"\n";
+        let err = parse_expectations(text).unwrap_err();
+        assert!(err.contains("failure_contains"), "{err}");
+    }
+
+    #[test]
+    fn known_flaky_row_may_omit_failure_contains() {
+        let text = "[[expect]]\ncell = \"srt/flaky\"\nprofile = \"baseline\"\n\
+                    verdict = \"known_flaky\"\nreason = \"intermittent timeout\"\n";
+        let parsed =
+            parse_expectations(text).expect("known_flaky rows have no single mechanism string");
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].failure_contains, None);
     }
 
     #[test]
@@ -3860,6 +4284,54 @@ failure_contains = \"stream_sha256 mismatch\"
         assert!(err.contains("line 2"), "{err}");
     }
 
+    #[test]
+    fn two_rows_on_the_same_cell_without_distinct_failure_contains_are_rejected() {
+        let text = "[[expect]]\ncell = \"decode/mpv/audio\"\nprofile = \"audio\"\nverdict = \"expected_unsupported\"\nreason = \"a\"\nfailure_contains = \"x\"\n\n\
+                    [[expect]]\ncell = \"decode/mpv/*\"\nprofile = \"audio\"\nverdict = \"expected_unsupported\"\nreason = \"b\"\nfailure_contains = \"x\"\n";
+        let e = parse_expectations(text).unwrap_err();
+        assert!(
+            e.contains("ambiguous") && e.contains("decode/mpv/audio") && e.contains("decode/mpv/*"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn two_rows_on_the_same_cell_with_distinct_failure_contains_are_allowed() {
+        let text = "[[expect]]\ncell = \"srt/us-to-tsp\"\nprofile = \"baseline\"\nverdict = \"expected_unsupported\"\nreason = \"a\"\nfailure_contains = \"tail loss\"\n\n\
+                    [[expect]]\ncell = \"srt/us-to-tsp\"\nprofile = \"baseline\"\nverdict = \"expected_unsupported\"\nreason = \"b\"\nfailure_contains = \"KLV\"\n";
+        assert_eq!(parse_expectations(text).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn same_cell_different_profile_is_not_ambiguous() {
+        let text = "[[expect]]\ncell = \"decode/vlc/audio\"\nprofile = \"audio\"\nverdict = \"expected_unsupported\"\nreason = \"a\"\nfailure_contains = \"x\"\n\n\
+                    [[expect]]\ncell = \"decode/vlc/audio\"\nprofile = \"baseline\"\nverdict = \"expected_unsupported\"\nreason = \"b\"\nfailure_contains = \"y\"\n";
+        assert_eq!(parse_expectations(text).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn patterns_overlap_rules() {
+        assert!(patterns_overlap("a/b", "a/b"));
+        assert!(!patterns_overlap("a/b", "a/c"));
+        assert!(patterns_overlap("a/*", "a/b"));
+        assert!(patterns_overlap("a/b/*", "a/*"));
+        assert!(!patterns_overlap("a/*", "b/*"));
+    }
+
+    #[test]
+    fn live_expectations_table_parses() {
+        let text = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../scripts/interop/expectations.toml"
+        ));
+        let parsed = parse_expectations(text).expect("the live expectations table must parse");
+        assert!(
+            parsed.len() >= 65,
+            "expected at least 65 rows, got {}",
+            parsed.len()
+        );
+    }
+
     // --- File-driven merge/render round trip ---
 
     #[test]
@@ -3883,27 +4355,51 @@ failure_contains = \"stream_sha256 mismatch\"
         .expect("write cell a");
         fs::write(
             cells_dir.join("b.json"),
-            serde_json::to_string(&raw_cell("decode/mpv", "baseline", RawVerdict::Fail)).unwrap(),
+            serde_json::to_string(&raw_cell_with_failures(
+                "decode/mpv",
+                "baseline",
+                RawVerdict::Fail,
+                &["mpv lacks async KLV support"],
+            ))
+            .unwrap(),
         )
         .expect("write cell b");
 
         let expectations_path = dir.join("expectations.toml");
         fs::write(
             &expectations_path,
-            "[[expect]]\ncell = \"decode/mpv\"\nprofile = \"baseline\"\nverdict = \"expected_unsupported\"\nreason = \"gap\"\n",
+            "[[expect]]\ncell = \"decode/mpv\"\nprofile = \"baseline\"\nverdict = \"expected_unsupported\"\nreason = \"gap\"\nfailure_contains = \"async KLV support\"\n",
         )
         .expect("write expectations");
 
         let meta_path = dir.join("meta.json");
         fs::write(&meta_path, r#"{"host": "test-host"}"#).expect("write meta");
 
+        let inventory_path = dir.join("inventory.json");
+        fs::write(
+            &inventory_path,
+            serde_json::to_string(&inventory(
+                &[("decode/ffmpeg", "baseline"), ("decode/mpv", "baseline")],
+                &[],
+            ))
+            .unwrap(),
+        )
+        .expect("write inventory");
+
         let out_path = dir.join("results.json");
-        let results = merge(&cells_dir, &expectations_path, &meta_path, &out_path)
-            .expect("merge must succeed");
+        let results = merge(
+            &cells_dir,
+            &expectations_path,
+            &meta_path,
+            &inventory_path,
+            &out_path,
+        )
+        .expect("merge must succeed");
 
         assert_eq!(results.summary.fail, 0);
         assert_eq!(results.summary.pass, 1);
         assert_eq!(results.summary.expected_unsupported, 1);
+        assert_eq!(results.inventory.as_ref().unwrap().declared_cells, 2);
         assert!(out_path.exists());
 
         let md_path = dir.join("results.md");
@@ -3951,9 +4447,22 @@ failure_contains = \"stream_sha256 mismatch\"
         let meta_path = dir.join("meta.json");
         fs::write(&meta_path, r#"{"host": "test-host"}"#).expect("write meta");
 
+        let inventory_path = dir.join("inventory.json");
+        fs::write(
+            &inventory_path,
+            serde_json::to_string(&inventory(&[], &[])).unwrap(),
+        )
+        .expect("write inventory");
+
         let out_path = dir.join("results.json");
-        let err = merge(&cells_dir, &expectations_path, &meta_path, &out_path)
-            .expect_err("merge over zero cell files must be an error, not a clean empty report");
+        let err = merge(
+            &cells_dir,
+            &expectations_path,
+            &meta_path,
+            &inventory_path,
+            &out_path,
+        )
+        .expect_err("merge over zero cell files must be an error, not a clean empty report");
 
         assert!(
             err.contains(&cells_dir.display().to_string()),
@@ -3963,6 +4472,66 @@ failure_contains = \"stream_sha256 mismatch\"
             !out_path.exists(),
             "merge must not write --out on this error path"
         );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// An inventory mismatch is a hard `merge` error, same shape as the
+    /// empty-`--cells-dir` case above: no `--out` written, no silently
+    /// short-produced report.
+    #[test]
+    fn merge_with_inventory_mismatch_is_a_hard_error_and_writes_nothing() {
+        let dir = std::env::temp_dir().join(format!(
+            "tst-interop-report-merge-inv-mismatch-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time moves forward")
+                .as_nanos()
+        ));
+        let cells_dir = dir.join("cells");
+        fs::create_dir_all(&cells_dir).expect("create cells dir");
+
+        // ONE produced cell...
+        fs::write(
+            cells_dir.join("a.json"),
+            serde_json::to_string(&raw_cell("decode/ffmpeg", "baseline", RawVerdict::Pass))
+                .unwrap(),
+        )
+        .expect("write cell a");
+
+        let expectations_path = dir.join("expectations.toml");
+        fs::write(&expectations_path, "# no expectations\n").expect("write expectations");
+
+        let meta_path = dir.join("meta.json");
+        fs::write(&meta_path, r#"{"host": "test-host"}"#).expect("write meta");
+
+        // ...but an inventory declaring TWO.
+        let inventory_path = dir.join("inventory.json");
+        fs::write(
+            &inventory_path,
+            serde_json::to_string(&inventory(
+                &[("decode/ffmpeg", "baseline"), ("decode/mpv", "baseline")],
+                &[],
+            ))
+            .unwrap(),
+        )
+        .expect("write inventory");
+
+        let out_path = dir.join("results.json");
+        let e = merge(
+            &cells_dir,
+            &expectations_path,
+            &meta_path,
+            &inventory_path,
+            &out_path,
+        )
+        .unwrap_err();
+        assert!(
+            e.contains("inventory mismatch") && e.contains("missing"),
+            "{e}"
+        );
+        assert!(!out_path.exists());
 
         let _ = fs::remove_dir_all(&dir);
     }
