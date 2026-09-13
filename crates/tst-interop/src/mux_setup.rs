@@ -24,17 +24,17 @@ use crate::profiles::{KlvMode, Profile, VideoCodec};
 /// Program 1's PIDs — the same conventional values `MuxerConfig::default()`
 /// and the mux examples use (`examples/muxing/mux_to_file.rs`,
 /// `mux_av1_with_klv.rs`).
-const PROG1_PMT_PID: u16 = 0x1000;
-const PROG1_VIDEO_PID: u16 = 0x1011;
-const PROG1_KLV_PID: u16 = 0x1031;
-const PROG1_AUDIO_PID: u16 = 0x1041;
+pub(crate) const PROG1_PMT_PID: u16 = 0x1000;
+pub(crate) const PROG1_VIDEO_PID: u16 = 0x1011;
+pub(crate) const PROG1_KLV_PID: u16 = 0x1031;
+pub(crate) const PROG1_AUDIO_PID: u16 = 0x1041;
 
 /// Program 2's PIDs, for `two-program` — a clean 0x100 stride off program
 /// 1's range (`examples/muxing/repack_two_programs.rs`'s renumbering
 /// scheme), so the two programs' PIDs never collide.
-const PROG2_PMT_PID: u16 = 0x1100;
-const PROG2_VIDEO_PID: u16 = 0x1111;
-const PROG2_KLV_PID: u16 = 0x1131;
+pub(crate) const PROG2_PMT_PID: u16 = 0x1100;
+pub(crate) const PROG2_VIDEO_PID: u16 = 0x1111;
+pub(crate) const PROG2_KLV_PID: u16 = 0x1131;
 
 fn mux_video_codec(c: VideoCodec) -> MuxVideoCodec {
     match c {

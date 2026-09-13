@@ -1,0 +1,706 @@
+//! Wire-level, demuxer-independent oracles (spec §6.3). Every failure
+//! string starts with its verdict name so mutation tests can assert on
+//! it. Each oracle consumes the raw [`WireSummary`] (never tst-core's
+//! `Demuxer` output — see `rawts`'s own module doc for why that
+//! independence is the point) alongside the demux-side per-program
+//! [`ProgramCounts`], both parameterized by a profile's
+//! [`profiles::Invariants`].
+
+use std::collections::BTreeMap;
+
+use tst_core::mpegts::mux::Av1CarriageMode;
+
+use crate::profiles::{Invariants, KlvMode, Profile};
+use crate::rawts::WireSummary;
+use crate::verify::{ProgramCounts, VerifyMode};
+
+const PTS_WRAP: u64 = 1 << 33;
+const PCR_LOWER_SLACK_MS: f64 = 0.5;
+const PCR_UPPER_SLACK_MS: f64 = 1.0;
+const AUDIO_CADENCE_TOLERANCE: f64 = 0.10;
+const AUDIO_PTS_STEP_TOLERANCE: f64 = 0.05;
+const AAC_SAMPLES_PER_FRAME: f64 = 1024.0;
+
+/// Run all six wire-level oracles and concatenate their failures.
+pub fn check(
+    p: &Profile,
+    inv: &Invariants,
+    wire: &WireSummary,
+    per_program: &BTreeMap<u16, ProgramCounts>,
+    seconds: f64,
+    slack: f64,
+    mode: VerifyMode,
+) -> Vec<String> {
+    let mut f = Vec::new();
+    f.extend(program_accounting(inv, wire, per_program, seconds, slack));
+    f.extend(audio(inv, wire, seconds));
+    f.extend(pcr_interval(inv, wire, mode));
+    f.extend(av1_carriage(inv, wire));
+    f.extend(pts_wrap(p, inv, wire, seconds));
+    f.extend(pmt_streams(p, inv, wire));
+    f
+}
+
+/// Oracle 1: per-program video AU / KLV record counts each clear
+/// `slack` of nominal, and every program's media PIDs actually carry
+/// packets on the wire.
+fn program_accounting(
+    inv: &Invariants,
+    wire: &WireSummary,
+    per_program: &BTreeMap<u16, ProgramCounts>,
+    seconds: f64,
+    slack: f64,
+) -> Vec<String> {
+    let mut f = Vec::new();
+    let min_video = (inv.min_video_aus_per_sec as f64 * seconds * slack).floor() as u64;
+    let min_klv = (inv.min_klv_per_sec as f64 * seconds * slack).floor() as u64;
+    for ep in &inv.programs {
+        let n = ep.program_number;
+        let c = per_program.get(&n).copied().unwrap_or_default();
+        if c.video_aus < min_video {
+            f.push(format!(
+                "program_{n}_video_floor: got {} AUs, want >= {min_video}",
+                c.video_aus
+            ));
+        }
+        if c.klv_records < min_klv {
+            f.push(format!(
+                "program_{n}_klv_floor: got {} records, want >= {min_klv}",
+                c.klv_records
+            ));
+        }
+        let pk = |pid: u16| wire.packets_per_pid.get(&pid).copied().unwrap_or(0);
+        if pk(ep.video_pid) == 0 || pk(ep.klv_pid) == 0 {
+            f.push(format!(
+                "program_{n}_wire_media: video PID 0x{:04x} {} pkts, KLV PID 0x{:04x} {} pkts",
+                ep.video_pid,
+                pk(ep.video_pid),
+                ep.klv_pid,
+                pk(ep.klv_pid)
+            ));
+        }
+    }
+    f
+}
+
+/// Oracle 2: on the audio PID, the raw PES payload starts with an ADTS
+/// AAC frame at the expected sample rate; the frame count and median
+/// PTS step match that rate's real cadence (1024 samples/frame).
+fn audio(inv: &Invariants, wire: &WireSummary, seconds: f64) -> Vec<String> {
+    let Some(expected_rate) = inv.audio_sample_rate_hz else {
+        return Vec::new();
+    };
+    let Some(pid) = inv.programs[0].audio_pid else {
+        return Vec::new();
+    };
+    let mut f = Vec::new();
+    match wire.pes.get(&pid).and_then(|s| s.first_payload_prefix) {
+        // ADTS syncword 0xFFF (ISO/IEC 13818-7 §6.2.1); profile bits in byte 2.
+        Some(pfx) if pfx[0] == 0xFF && pfx[1] & 0xF0 == 0xF0 => {
+            let rate_index = (pfx[2] >> 2) & 0x0F;
+            let rate = adts_sample_rate(rate_index);
+            if rate != Some(expected_rate) {
+                f.push(format!(
+                    "audio_codec_adts: sample_rate_index {rate_index} = {rate:?} Hz, want {expected_rate}"
+                ));
+            }
+        }
+        other => f.push(format!(
+            "audio_codec_adts: first audio PES payload {other:?} is not an ADTS frame"
+        )),
+    }
+    let frames = wire.pts.get(&pid).map(|v| v.len()).unwrap_or(0) as f64;
+    let expected_frames = seconds * expected_rate as f64 / AAC_SAMPLES_PER_FRAME;
+    if (frames - expected_frames).abs() > expected_frames * AUDIO_CADENCE_TOLERANCE {
+        f.push(format!(
+            "audio_cadence: {frames} frames, want {expected_frames:.0} ± {:.0}%",
+            AUDIO_CADENCE_TOLERANCE * 100.0
+        ));
+    }
+    if let Some(v) = wire.pts.get(&pid) {
+        let mut steps: Vec<f64> = v
+            .windows(2)
+            .map(|w| (w[1] as f64 - w[0] as f64))
+            .filter(|s| *s > 0.0)
+            .collect();
+        if !steps.is_empty() {
+            steps.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let median = steps[steps.len() / 2];
+            let want = AAC_SAMPLES_PER_FRAME * 90_000.0 / expected_rate as f64;
+            if (median - want).abs() > want * AUDIO_PTS_STEP_TOLERANCE {
+                f.push(format!(
+                    "audio_pts_step: median {median:.0} ticks, want {want:.0} ± {:.0}%",
+                    AUDIO_PTS_STEP_TOLERANCE * 100.0
+                ));
+            }
+        }
+    }
+    f
+}
+
+fn adts_sample_rate(index: u8) -> Option<u32> {
+    [
+        96_000, 88_200, 64_000, 48_000, 44_100, 32_000, 24_000, 22_050, 16_000, 12_000, 11_025,
+        8_000, 7_350,
+    ]
+    .get(usize::from(index))
+    .copied()
+}
+
+/// Oracle 3: PCR cadence — every interval on each program's PCR PID is
+/// bounded below by the configured interval (minus a small tolerance)
+/// and above by the configured interval plus one frame period (plus a
+/// small tolerance); the upper bound applies to every interval in
+/// `Strict` and to the median in `Lossy` (loss widens gaps, never
+/// narrows them).
+fn pcr_interval(inv: &Invariants, wire: &WireSummary, mode: VerifyMode) -> Vec<String> {
+    let mut f = Vec::new();
+    let lower = inv.pcr_interval_ms as f64 - PCR_LOWER_SLACK_MS;
+    let upper = inv.pcr_interval_ms as f64 + inv.frame_period_ms + PCR_UPPER_SLACK_MS;
+    for ep in &inv.programs {
+        let Some(prog) = wire.programs.get(&ep.program_number) else {
+            continue;
+        };
+        let Some(pcrs) = wire.pcr.get(&prog.pcr_pid) else {
+            f.push(format!(
+                "pcr_interval: no PCR on program {}'s PCR PID 0x{:04x}",
+                ep.program_number, prog.pcr_pid
+            ));
+            continue;
+        };
+        // PCR's base field is the same 33-bit modulus as PES PTS (ITU-T
+        // H.222.0 V9 §2.4.3.5) — `pts-rollover`'s capture wraps it too,
+        // so the delta must be computed wrap-aware (forward distance mod
+        // 2^33), not by plain subtraction.
+        let mut iv: Vec<f64> = pcrs
+            .windows(2)
+            .map(|w| ((w[1] + PTS_WRAP - w[0]) % PTS_WRAP) as f64 / 90.0)
+            .collect();
+        if iv.len() < 2 {
+            f.push(format!(
+                "pcr_interval: only {} PCR(s) on PID 0x{:04x}",
+                pcrs.len(),
+                prog.pcr_pid
+            ));
+            continue;
+        }
+        let min = iv.iter().cloned().fold(f64::INFINITY, f64::min);
+        iv.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let max = *iv.last().unwrap();
+        let median = iv[iv.len() / 2];
+        let upper_observed = match mode {
+            VerifyMode::Strict => max,
+            VerifyMode::Lossy => median,
+        };
+        if min < lower || upper_observed > upper {
+            f.push(format!(
+                "pcr_interval: PID 0x{:04x} min {min:.3} / median {median:.3} / max {max:.3} ms, want [{lower:.1}, {upper:.1}] ({} mode) for a configured {} ms",
+                prog.pcr_pid,
+                if mode == VerifyMode::Strict {
+                    "every interval, Strict"
+                } else {
+                    "median, Lossy"
+                },
+                inv.pcr_interval_ms
+            ));
+        }
+    }
+    f
+}
+
+/// Oracle 4: on the AV1 PID, mode B (`Mpeg2TsBinding`) carries PES
+/// `stream_id=0xBD` with `ts_open_bitstream_unit` framing
+/// (`00 00 01` prefix); mode A (`InteropRawObu`) carries `stream_id=
+/// 0xE0` with a raw OBU header (forbidden bit clear, `obu_type` a
+/// temporal delimiter / sequence header / frame header).
+fn av1_carriage(inv: &Invariants, wire: &WireSummary) -> Vec<String> {
+    let Some(mode) = inv.av1_mode else {
+        return Vec::new();
+    };
+    let pid = inv.programs[0].video_pid;
+    let Some(shape) = wire.pes.get(&pid) else {
+        return vec![format!(
+            "av1_carriage_wire: no PES on video PID 0x{pid:04x}"
+        )];
+    };
+    let pfx = shape.first_payload_prefix.unwrap_or([0; 4]);
+    let ok = match mode {
+        Av1CarriageMode::Mpeg2TsBinding => {
+            shape.stream_ids.iter().all(|&s| s == 0xBD) && pfx[..3] == [0, 0, 1]
+        }
+        Av1CarriageMode::InteropRawObu => {
+            let obu_type = (pfx[0] >> 3) & 0x0F;
+            shape.stream_ids.iter().all(|&s| s == 0xE0)
+                && pfx[0] & 0x80 == 0
+                && matches!(obu_type, 1 | 2 | 6)
+        }
+        _ => false,
+    };
+    if ok {
+        Vec::new()
+    } else {
+        vec![format!(
+            "av1_carriage_wire: mode {mode:?}, stream_ids {:?}, payload prefix {:02x?}",
+            shape.stream_ids, pfx
+        )]
+    }
+}
+
+/// Oracle 5: `pts-rollover` must show at least one raw-PTS wrap
+/// (consecutive-PTS decrease of more than half the 33-bit modulus) on
+/// the video PID when its window crosses 2^33; every other profile must
+/// show none.
+fn pts_wrap(p: &Profile, inv: &Invariants, wire: &WireSummary, seconds: f64) -> Vec<String> {
+    let expect_wrap = p.start_pts_ticks + (seconds * 90_000.0) as u64 > PTS_WRAP;
+    let pid = inv.programs[0].video_pid;
+    let decreases = wire
+        .pts
+        .get(&pid)
+        .map(|v| {
+            v.windows(2)
+                .filter(|w| w[0] > w[1] && w[0] - w[1] > PTS_WRAP / 2)
+                .count()
+        })
+        .unwrap_or(0);
+    match (expect_wrap, decreases) {
+        (true, 0) => vec![format!(
+            "pts_wrap_observed: window {seconds}s from start {} crosses 2^33 but no raw PTS wrap was seen on PID 0x{pid:04x}",
+            p.start_pts_ticks
+        )],
+        (false, n) if n > 0 => vec![format!(
+            "pts_wrap_unexpected: {n} raw PTS wrap(s) on PID 0x{pid:04x} in a window that never reaches 2^33"
+        )],
+        _ => Vec::new(),
+    }
+}
+
+/// Oracle 6: every PMT ES entry's `stream_type` matches
+/// `Invariants::{video,klv}_stream_type` (audio always `0x0F`); the KLV
+/// PID carries a `KLVA` registration descriptor (plus `metadata`
+/// (0x26) + `metadata_STD` (0x27) descriptors for sync carriage); the
+/// AV1 PID carries an `AV01` registration descriptor.
+fn pmt_streams(p: &Profile, inv: &Invariants, wire: &WireSummary) -> Vec<String> {
+    let mut f = Vec::new();
+    for ep in &inv.programs {
+        let Some(prog) = wire.programs.get(&ep.program_number) else {
+            f.push(format!(
+                "pmt_stream_type_program_{}: no PMT seen",
+                ep.program_number
+            ));
+            continue;
+        };
+        let find = |pid: u16| prog.streams.iter().find(|s| s.pid == pid);
+        // video
+        match find(ep.video_pid) {
+            None => f.push(format!(
+                "pmt_stream_type_{}: video PID absent from PMT",
+                ep.video_pid
+            )),
+            Some(s) => {
+                if s.stream_type != inv.video_stream_type {
+                    f.push(format!(
+                        "pmt_stream_type_{}: 0x{:02x}, want 0x{:02x}",
+                        ep.video_pid, s.stream_type, inv.video_stream_type
+                    ));
+                }
+                if inv.av1_mode.is_some() && s.registration != Some(*b"AV01") {
+                    f.push(format!(
+                        "pmt_descriptor_{}: AV01 registration missing ({:?})",
+                        ep.video_pid, s.registration
+                    ));
+                }
+            }
+        }
+        // klv
+        match find(ep.klv_pid) {
+            None => f.push(format!(
+                "pmt_stream_type_{}: KLV PID absent from PMT",
+                ep.klv_pid
+            )),
+            Some(s) => {
+                if s.stream_type != inv.klv_stream_type {
+                    f.push(format!(
+                        "pmt_stream_type_{}: 0x{:02x}, want 0x{:02x}",
+                        ep.klv_pid, s.stream_type, inv.klv_stream_type
+                    ));
+                }
+                if s.registration != Some(*b"KLVA") {
+                    f.push(format!(
+                        "pmt_descriptor_{}: KLVA registration missing ({:?})",
+                        ep.klv_pid, s.registration
+                    ));
+                }
+                if p.klv == KlvMode::Sync
+                    && !(s.descriptor_tags.contains(&0x26) && s.descriptor_tags.contains(&0x27))
+                {
+                    f.push(format!(
+                        "pmt_descriptor_{}: sync KLV needs metadata (0x26) + metadata_STD (0x27) descriptors, got {:02x?}",
+                        ep.klv_pid, s.descriptor_tags
+                    ));
+                }
+            }
+        }
+        if let Some(apid) = ep.audio_pid {
+            match find(apid) {
+                Some(s) if s.stream_type == 0x0F => {}
+                Some(s) => f.push(format!(
+                    "pmt_stream_type_{apid}: 0x{:02x}, want 0x0f (AAC ADTS)",
+                    s.stream_type
+                )),
+                None => f.push(format!("pmt_stream_type_{apid}: audio PID absent from PMT")),
+            }
+        }
+    }
+    f
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use super::*;
+    use crate::profiles;
+    use crate::rawts::{PesShape, Program, Stream};
+
+    fn stream(
+        pid: u16,
+        stream_type: u8,
+        registration: Option<[u8; 4]>,
+        descriptor_tags: &[u8],
+    ) -> Stream {
+        Stream {
+            pid,
+            stream_type,
+            registration,
+            descriptor_tags: descriptor_tags.to_vec(),
+        }
+    }
+
+    fn program_counts(entries: &[(u16, u64, u64, u64)]) -> BTreeMap<u16, ProgramCounts> {
+        entries
+            .iter()
+            .map(|&(pn, video, klv, audio)| {
+                (
+                    pn,
+                    ProgramCounts {
+                        video_aus: video,
+                        klv_records: klv,
+                        audio_frames: audio,
+                    },
+                )
+            })
+            .collect()
+    }
+
+    /// Two programs (`two-program`'s real PIDs), all four media PIDs
+    /// carrying nonzero traffic — a wire the per-program floor checks
+    /// alone can distinguish (no `_wire_media` noise).
+    fn two_program_wire() -> WireSummary {
+        WireSummary {
+            packets_per_pid: BTreeMap::from([
+                (0x1011, 100),
+                (0x1031, 100),
+                (0x1111, 100),
+                (0x1131, 100),
+            ]),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn program_accounting_fails_when_program_2_has_no_media() {
+        let inv = profiles::invariants(profiles::by_name("two-program").unwrap());
+        let wire = two_program_wire();
+        let seconds = 3.0;
+        let slack = crate::verify::NOMINAL_COUNT_SLACK;
+
+        let empty_prog2 = program_counts(&[(1, 90, 30, 0), (2, 0, 0, 0)]);
+        let f = program_accounting(&inv, &wire, &empty_prog2, seconds, slack);
+        assert!(
+            f.iter().any(|s| s.starts_with("program_2_video_floor")),
+            "{f:?}"
+        );
+        assert!(
+            f.iter().any(|s| s.starts_with("program_2_klv_floor")),
+            "{f:?}"
+        );
+
+        let healthy = program_counts(&[(1, 90, 30, 0), (2, 90, 30, 0)]);
+        let f2 = program_accounting(&inv, &wire, &healthy, seconds, slack);
+        assert!(f2.is_empty(), "{f2:?}");
+    }
+
+    #[test]
+    fn program_wire_media_fails_when_program_2_pids_carry_no_packets() {
+        let inv = profiles::invariants(profiles::by_name("two-program").unwrap());
+        let mut wire = two_program_wire();
+        wire.packets_per_pid.remove(&0x1111);
+        let counts = program_counts(&[(1, 90, 30, 0), (2, 90, 30, 0)]);
+        let f = program_accounting(
+            &inv,
+            &wire,
+            &counts,
+            3.0,
+            crate::verify::NOMINAL_COUNT_SLACK,
+        );
+        assert!(
+            f.iter().any(|s| s.starts_with("program_2_wire_media")),
+            "{f:?}"
+        );
+    }
+
+    fn audio_wire(prefix: [u8; 4], pts: Vec<u64>) -> WireSummary {
+        WireSummary {
+            pes: BTreeMap::from([(
+                0x1041,
+                PesShape {
+                    stream_ids: BTreeSet::new(),
+                    first_payload_prefix: Some(prefix),
+                },
+            )]),
+            pts: BTreeMap::from([(0x1041, pts)]),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn audio_oracles_check_adts_cadence_and_pts_step() {
+        let inv = profiles::invariants(profiles::by_name("audio").unwrap());
+        let good_prefix = [0xFF, 0xF9, 0x0C, 0x00];
+        let good_pts: Vec<u64> = (0..141).map(|i| i as u64 * 1920).collect();
+
+        assert!(audio(&inv, &audio_wire(good_prefix, good_pts.clone()), 3.0).is_empty());
+
+        let one_frame = audio(&inv, &audio_wire(good_prefix, vec![0]), 3.0);
+        assert!(
+            one_frame.iter().any(|f| f.starts_with("audio_cadence")),
+            "{one_frame:?}"
+        );
+
+        let bad_codec = audio(&inv, &audio_wire([0x00, 0, 0, 0], good_pts.clone()), 3.0);
+        assert!(
+            bad_codec.iter().any(|f| f.starts_with("audio_codec_adts")),
+            "{bad_codec:?}"
+        );
+
+        let bad_step_pts: Vec<u64> = (0..141).map(|i| i as u64 * 3000).collect();
+        let bad_step = audio(&inv, &audio_wire(good_prefix, bad_step_pts), 3.0);
+        assert!(
+            bad_step.iter().any(|f| f.starts_with("audio_pts_step")),
+            "{bad_step:?}"
+        );
+    }
+
+    fn wire_with_pcr(pid: u16, ticks: &[u64]) -> WireSummary {
+        WireSummary {
+            pcr: BTreeMap::from([(pid, ticks.to_vec())]),
+            programs: BTreeMap::from([(
+                1,
+                Program {
+                    program_number: 1,
+                    pmt_pid: 0x1000,
+                    pcr_pid: pid,
+                    streams: Vec::new(),
+                },
+            )]),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn pcr_interval_is_bounded_below_by_config_and_above_by_config_plus_frame_period() {
+        let tight = profiles::invariants(profiles::by_name("pcr-tight").unwrap());
+        let pass = wire_with_pcr(0x1011, &[0, 3000, 6000]); // 33.333ms x2
+        assert!(pcr_interval(&tight, &pass, VerifyMode::Strict).is_empty());
+        let fail = wire_with_pcr(0x1011, &[0, 6000, 12000]); // 66.667ms x2
+        let f = pcr_interval(&tight, &fail, VerifyMode::Strict);
+        assert!(f.iter().any(|s| s.starts_with("pcr_interval")), "{f:?}");
+
+        let sparse = profiles::invariants(profiles::by_name("pcr-sparse").unwrap());
+        let too_low = wire_with_pcr(0x1011, &[0, 6000, 12000]); // 66.667ms x2 < 99.5ms lower bound
+        let f = pcr_interval(&sparse, &too_low, VerifyMode::Strict);
+        assert!(f.iter().any(|s| s.starts_with("pcr_interval")), "{f:?}");
+        let pass2 = wire_with_pcr(0x1011, &[0, 9000, 18000]); // 100ms x2
+        assert!(pcr_interval(&sparse, &pass2, VerifyMode::Strict).is_empty());
+    }
+
+    #[test]
+    fn pcr_lossy_mode_uses_median_for_the_upper_bound() {
+        let inv = profiles::invariants(profiles::by_name("baseline").unwrap());
+        // Five 66.667ms intervals, one 133.333ms gap.
+        let wire = wire_with_pcr(0x1011, &[0, 6000, 12000, 18000, 30000, 36000, 42000]);
+        let strict = pcr_interval(&inv, &wire, VerifyMode::Strict);
+        assert!(
+            strict.iter().any(|s| s.starts_with("pcr_interval")),
+            "{strict:?}"
+        );
+        assert!(pcr_interval(&inv, &wire, VerifyMode::Lossy).is_empty());
+    }
+
+    fn wire_with_pes(pid: u16, stream_id: u8, prefix: [u8; 4]) -> WireSummary {
+        WireSummary {
+            pes: BTreeMap::from([(
+                pid,
+                PesShape {
+                    stream_ids: BTreeSet::from([stream_id]),
+                    first_payload_prefix: Some(prefix),
+                },
+            )]),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn av1_carriage_wire_checks_stream_id_and_prefix_per_mode() {
+        let inv_b = profiles::invariants(profiles::by_name("av1-klv-b").unwrap());
+        let pass_b = wire_with_pes(0x1011, 0xBD, [0, 0, 1, 0x12]);
+        assert!(av1_carriage(&inv_b, &pass_b).is_empty());
+        let fail_b = wire_with_pes(0x1011, 0xE0, [0x12, 0, 0, 0]);
+        let f = av1_carriage(&inv_b, &fail_b);
+        assert!(
+            f.iter().any(|s| s.starts_with("av1_carriage_wire")),
+            "{f:?}"
+        );
+
+        let inv_a = profiles::invariants(profiles::by_name("av1-klv-a").unwrap());
+        let pass_a = wire_with_pes(0x1011, 0xE0, [0x12, 0, 0, 0]);
+        assert!(av1_carriage(&inv_a, &pass_a).is_empty());
+        let fail_a = wire_with_pes(0x1011, 0xBD, [0, 0, 1, 0x12]);
+        let f = av1_carriage(&inv_a, &fail_a);
+        assert!(
+            f.iter().any(|s| s.starts_with("av1_carriage_wire")),
+            "{f:?}"
+        );
+    }
+
+    fn wire_with_pts(pid: u16, pts: Vec<u64>) -> WireSummary {
+        WireSummary {
+            pts: BTreeMap::from([(pid, pts)]),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn pts_wrap_expected_iff_window_crosses_2_33() {
+        const WRAP: u64 = 1u64 << 33;
+        let p_roll = profiles::by_name("pts-rollover").unwrap();
+        let inv_roll = profiles::invariants(p_roll);
+
+        let wraps = wire_with_pts(0x1011, vec![WRAP - 100, 50]);
+        assert!(pts_wrap(p_roll, &inv_roll, &wraps, 7.0).is_empty());
+
+        let no_wrap = wire_with_pts(0x1011, vec![100, 200, 300]);
+        let f = pts_wrap(p_roll, &inv_roll, &no_wrap, 7.0);
+        assert!(
+            f.iter().any(|s| s.starts_with("pts_wrap_observed")),
+            "{f:?}"
+        );
+
+        let p_base = profiles::by_name("baseline").unwrap();
+        let inv_base = profiles::invariants(p_base);
+        let unexpected = wire_with_pts(0x1011, vec![WRAP - 100, 50]);
+        let f = pts_wrap(p_base, &inv_base, &unexpected, 3.0);
+        assert!(
+            f.iter().any(|s| s.starts_with("pts_wrap_unexpected")),
+            "{f:?}"
+        );
+
+        let short_window = wire_with_pts(0x1011, vec![100, 200, 300]);
+        assert!(pts_wrap(p_roll, &inv_roll, &short_window, 3.0).is_empty());
+    }
+
+    fn wire_with_program(
+        program_number: u16,
+        pmt_pid: u16,
+        pcr_pid: u16,
+        streams: Vec<Stream>,
+    ) -> WireSummary {
+        WireSummary {
+            programs: BTreeMap::from([(
+                program_number,
+                Program {
+                    program_number,
+                    pmt_pid,
+                    pcr_pid,
+                    streams,
+                },
+            )]),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn pmt_stream_types_and_descriptors_match_the_profile() {
+        let baseline = profiles::by_name("baseline").unwrap();
+        let inv = profiles::invariants(baseline);
+
+        let ok = wire_with_program(
+            1,
+            0x1000,
+            0x1011,
+            vec![
+                stream(0x1011, 0x1B, None, &[]),
+                stream(0x1031, 0x06, Some(*b"KLVA"), &[0x05]),
+            ],
+        );
+        assert!(pmt_streams(baseline, &inv, &ok).is_empty());
+
+        let wrong_video_type = wire_with_program(
+            1,
+            0x1000,
+            0x1011,
+            vec![
+                stream(0x1011, 0x24, None, &[]),
+                stream(0x1031, 0x06, Some(*b"KLVA"), &[0x05]),
+            ],
+        );
+        let f = pmt_streams(baseline, &inv, &wrong_video_type);
+        assert!(
+            f.iter().any(|s| s.starts_with("pmt_stream_type_4113")),
+            "{f:?}"
+        );
+
+        let missing_klv_registration = wire_with_program(
+            1,
+            0x1000,
+            0x1011,
+            vec![
+                stream(0x1011, 0x1B, None, &[]),
+                stream(0x1031, 0x06, None, &[]),
+            ],
+        );
+        let f = pmt_streams(baseline, &inv, &missing_klv_registration);
+        assert!(
+            f.iter().any(|s| s.starts_with("pmt_descriptor_4145")),
+            "{f:?}"
+        );
+
+        let sync = profiles::by_name("klv-sync").unwrap();
+        let inv_sync = profiles::invariants(sync);
+        let missing_sync_tags = wire_with_program(
+            1,
+            0x1000,
+            0x1011,
+            vec![
+                stream(0x1011, 0x1B, None, &[]),
+                stream(0x1031, 0x15, Some(*b"KLVA"), &[]),
+            ],
+        );
+        let f = pmt_streams(sync, &inv_sync, &missing_sync_tags);
+        assert!(
+            f.iter().any(|s| s.starts_with("pmt_descriptor_4145")),
+            "{f:?}"
+        );
+
+        let sync_ok = wire_with_program(
+            1,
+            0x1000,
+            0x1011,
+            vec![
+                stream(0x1011, 0x1B, None, &[]),
+                stream(0x1031, 0x15, Some(*b"KLVA"), &[0x26, 0x27]),
+            ],
+        );
+        assert!(pmt_streams(sync, &inv_sync, &sync_ok).is_empty());
+    }
+}

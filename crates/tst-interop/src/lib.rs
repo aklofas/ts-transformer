@@ -19,6 +19,7 @@ pub mod fixtures;
 pub mod r#gen;
 pub mod impair;
 pub mod mux_setup;
+pub mod oracles;
 pub mod profiles;
 pub mod proxy;
 pub mod rawts;

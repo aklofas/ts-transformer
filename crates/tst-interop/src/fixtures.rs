@@ -301,13 +301,15 @@ fn triangle_wave(seq: u32) -> f64 {
 /// Build a single 7-byte-header ADTS AAC frame (no CRC). Header layout
 /// lifted verbatim from `make_adts_buf` in
 /// `crates/tst-core/benches/codec_parsers.rs:105-140` (MPEG-2 ID, AAC-LC
-/// profile, 44.1 kHz, stereo, 1 raw data block) — the same bit layout
-/// `codec::aac::frames` parses. Body bytes vary with `seq` so consecutive
-/// frames differ on the wire.
+/// profile, 48 kHz, stereo, 1 raw data block) — the same bit layout
+/// `codec::aac::frames` parses, and the rate `schedule::AUDIO_SAMPLE_RATE_HZ`
+/// paces frames at (1024 samples/frame ⇒ `oracles::audio`'s cadence
+/// check). Body bytes vary with `seq` so consecutive frames differ on the
+/// wire.
 pub fn aac_frame(seq: u32) -> Vec<u8> {
     const BODY_LEN: usize = 100;
     const FRAME_LEN: u32 = 7 + BODY_LEN as u32;
-    const SAMPLE_RATE_INDEX: u8 = 4; // 44100 Hz
+    const SAMPLE_RATE_INDEX: u8 = 3; // 48000 Hz
     const CHANNEL_CONFIG: u8 = 2; // stereo
 
     let mut h = [0u8; 7];
@@ -535,7 +537,7 @@ mod tests {
     }
 
     #[test]
-    fn aac_frame_parses_as_one_lc_stereo_44100_frame() {
+    fn aac_frame_parses_as_one_lc_stereo_48000_frame() {
         let a = aac_frame(1);
         let b = aac_frame(2);
         assert_ne!(a, b, "frames for different seq must differ on the wire");
@@ -546,7 +548,7 @@ mod tests {
             .expect("frame should parse")
             .expect("frame should parse");
         assert_eq!(frame.profile, tst_core::codec::aac::AacProfile::Lc);
-        assert_eq!(frame.sample_rate_hz, 44_100);
+        assert_eq!(frame.sample_rate_hz, 48_000);
         assert_eq!(frame.channel_configuration, 2);
         assert!(frames.next().is_none(), "buffer holds exactly one frame");
     }

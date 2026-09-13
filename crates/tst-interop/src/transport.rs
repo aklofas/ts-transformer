@@ -435,9 +435,22 @@ impl Transport for GracefulRistClose {
 }
 
 /// Shared running tally a [`Teeing`] wrapper accumulates.
+///
+/// `reader`/`reader_error` are only ever fed on the [`RecvTransport`]
+/// side (see that impl's `recv_bytes`) — a send-side `Teeing` (`send.rs`)
+/// never touches them, so [`tee_tally`]'s returned [`WireSummary`] comes
+/// back empty (zero packets) for a send-side tap, which is fine: nothing
+/// reads it there.
 pub(crate) struct TeeState {
     bytes: u64,
     hasher: Sha256,
+    reader: crate::rawts::Reader,
+    /// First error `reader.feed` returned, if any — a captured stream
+    /// that fell out of 188-byte packet alignment (sync loss) partway
+    /// through. Recorded rather than propagated immediately so the tee
+    /// keeps counting bytes/hashing normally; the caller (`recv.rs`)
+    /// surfaces it as a `rawts_sync_loss` failure once the capture ends.
+    reader_error: Option<String>,
 }
 
 impl TeeState {
@@ -445,6 +458,8 @@ impl TeeState {
         Self {
             bytes: 0,
             hasher: Sha256::new(),
+            reader: crate::rawts::Reader::new(),
+            reader_error: None,
         }
     }
 }
@@ -532,6 +547,11 @@ impl<T: RecvTransport> RecvTransport for Teeing<T> {
         let mut s = self.tap.lock().expect("tee mutex poisoned");
         s.bytes += n as u64;
         s.hasher.update(&buf[..n]);
+        if s.reader_error.is_none() {
+            if let Err(e) = s.reader.feed(&buf[..n]) {
+                s.reader_error = Some(e);
+            }
+        }
         Ok(n)
     }
     fn max_payload(&self) -> usize {
@@ -559,15 +579,27 @@ pub(crate) fn tee_bytes_so_far(tap: &Arc<Mutex<TeeState>>) -> u64 {
     tap.lock().expect("tee mutex poisoned").bytes
 }
 
-/// Read back the final `(bytes, sha256_hex)` from a tap handle returned
-/// by [`Teeing::new`]. Call only after the pipeline shell that owned
-/// the `Teeing` has been dropped (releasing its clone of the tap) —
-/// panics otherwise, since a live writer means the tally isn't final
-/// yet.
-pub(crate) fn tee_tally(tap: Arc<Mutex<TeeState>>) -> (u64, String) {
+/// Read back the final `(bytes, sha256_hex, wire, reader_error)` from a
+/// tap handle returned by [`Teeing::new`]. Call only after the pipeline
+/// shell that owned the `Teeing` has been dropped (releasing its clone
+/// of the tap) — panics otherwise, since a live writer means the tally
+/// isn't final yet.
+///
+/// `wire` is the [`crate::rawts::Reader`]'s summary of the same bytes —
+/// empty (zero packets) for a send-side tap, which never feeds it (see
+/// [`TeeState`]'s doc comment). `reader_error` is `Some` iff that reader
+/// ever fell out of 188-byte packet alignment.
+pub(crate) fn tee_tally(
+    tap: Arc<Mutex<TeeState>>,
+) -> (u64, String, crate::rawts::WireSummary, Option<String>) {
     let state = Arc::try_unwrap(tap)
         .unwrap_or_else(|_| panic!("tee_tally: tap still has another owner (shell not dropped?)"))
         .into_inner()
         .expect("tee mutex poisoned");
-    (state.bytes, crate::verify::to_hex(&state.hasher.finalize()))
+    (
+        state.bytes,
+        crate::verify::to_hex(&state.hasher.finalize()),
+        state.reader.finish(),
+        state.reader_error,
+    )
 }

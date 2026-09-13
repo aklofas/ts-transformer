@@ -10,6 +10,8 @@
 
 use tst_core::mpegts::mux::Av1CarriageMode;
 
+use crate::{mux_setup, schedule};
+
 /// Video codec carried on a profile's video PID.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum VideoCodec {
@@ -49,6 +51,18 @@ pub struct Profile {
     pub klv_hz: u32,
 }
 
+/// One program's expected PIDs, for the wire-level oracles in
+/// [`crate::oracles`] — derived from [`mux_setup`]'s PID constants, the
+/// same ones `mux_setup::build_config` actually wires up, so a captured
+/// stream is checked against the PIDs it was really muxed onto.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExpectedProgram {
+    pub program_number: u16,
+    pub video_pid: u16,
+    pub klv_pid: u16,
+    pub audio_pid: Option<u16>,
+}
+
 /// Wire-format oracle a captured stream must satisfy for a [`Profile`] to be
 /// considered conformant.
 pub struct Invariants {
@@ -61,6 +75,21 @@ pub struct Invariants {
     pub min_video_aus_per_sec: u32,
     pub min_klv_per_sec: u32,
     pub expect_misp_sei: bool,
+    /// Configured PCR interval — the oracle's *lower* bound; see
+    /// [`crate::oracles`]'s PCR cadence rule.
+    pub pcr_interval_ms: u32,
+    /// `1000.0 / p.fps` — the slack the PCR cadence oracle's *upper*
+    /// bound adds on top of `pcr_interval_ms` (the muxer only stamps PCR
+    /// on a content packet, so the observed interval can overshoot the
+    /// configured one by up to one frame period).
+    pub frame_period_ms: f64,
+    /// `Some` only when `p.video == VideoCodec::Av1` — the AV1 carriage
+    /// oracle is a no-op for every other profile.
+    pub av1_mode: Option<Av1CarriageMode>,
+    /// Expected AAC sample rate, `Some` iff `p.audio`.
+    pub audio_sample_rate_hz: Option<u32>,
+    /// PIDs of every program this profile mixes onto the wire.
+    pub programs: Vec<ExpectedProgram>,
 }
 
 const FPS: u32 = 30;
@@ -292,6 +321,20 @@ pub fn invariants(p: &Profile) -> Invariants {
         KlvMode::Sync => 0x15,
         KlvMode::Async | KlvMode::AsyncWithMisp => 0x06,
     };
+    let mut programs = vec![ExpectedProgram {
+        program_number: 1,
+        video_pid: mux_setup::PROG1_VIDEO_PID,
+        klv_pid: mux_setup::PROG1_KLV_PID,
+        audio_pid: p.audio.then_some(mux_setup::PROG1_AUDIO_PID),
+    }];
+    if p.programs == 2 {
+        programs.push(ExpectedProgram {
+            program_number: 2,
+            video_pid: mux_setup::PROG2_VIDEO_PID,
+            klv_pid: mux_setup::PROG2_KLV_PID,
+            audio_pid: None,
+        });
+    }
     Invariants {
         video_stream_type,
         klv_stream_type,
@@ -300,6 +343,11 @@ pub fn invariants(p: &Profile) -> Invariants {
         min_video_aus_per_sec: p.fps,
         min_klv_per_sec: p.klv_hz,
         expect_misp_sei: matches!(p.klv, KlvMode::AsyncWithMisp),
+        pcr_interval_ms: p.pcr_interval_ms,
+        frame_period_ms: 1000.0 / p.fps as f64,
+        av1_mode: p.av1_mode,
+        audio_sample_rate_hz: p.audio.then_some(schedule::AUDIO_SAMPLE_RATE_HZ),
+        programs,
     }
 }
 
