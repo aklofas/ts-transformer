@@ -1024,6 +1024,20 @@ pub mod soak {
                 cfg.sampler_end_slack_s
             ));
         }
+        if cfg.sampler_end_slack_s >= cfg.expected_duration_s {
+            return Err(format!(
+                "soak-config.json: sampler_end_slack_s ({}) must be less than expected_duration_s ({}) — \
+                 otherwise the achievable RSS span is non-positive before a single sample is examined",
+                cfg.sampler_end_slack_s, cfg.expected_duration_s
+            ));
+        }
+        for role in cfg.expected_worker_exits.keys() {
+            if !WORKER_ROLES.contains(&role.as_str()) {
+                return Err(format!(
+                    "soak-config.json: expected_worker_exits has unknown role {role:?} (want one of {WORKER_ROLES:?})"
+                ));
+            }
+        }
         Ok(cfg)
     }
 
@@ -1430,7 +1444,7 @@ pub mod soak {
                 detail: format!(
                     "{} post-warmup sample(s) ({} distinct timestamps) against {expected_samples} \
                      expected at a {:.0}s cadence (minimum {min_samples}); largest gap {largest_gap_s:.0}s \
-                     (maximum {max_gap_s:.0}s)",
+                     (must be strictly under {max_gap_s:.0}s)",
                     points.len(),
                     distinct_ts,
                     config.rss_cadence_s
@@ -1520,6 +1534,13 @@ pub mod soak {
                         exit_problems.push(format!("{role}: exit {status} (expected {expected})"));
                     }
                 }
+            }
+        }
+        for (role, &status) in &worker_exits {
+            if !WORKER_ROLES.contains(&role.as_str()) {
+                exit_problems.push(format!(
+                    "unknown role {role} in exits.json (status {status})"
+                ));
             }
         }
         verdicts.push(SoakVerdict {
@@ -1977,6 +1998,25 @@ pub mod soak {
                 .unwrap();
             let v = verdict(&r, "worker_exits");
             assert!(!v.pass && v.detail.contains("rist-recv"), "{}", v.detail);
+        }
+
+        /// A key in `exits.json` that isn't one of the six `WORKER_ROLES`
+        /// must fail `worker_exits` rather than being silently ignored —
+        /// otherwise an unknown role's nonzero status (a renamed worker, a
+        /// typo, a future seventh role) never surfaces anywhere.
+        #[test]
+        fn unknown_role_in_exits_json_fails_worker_exits() {
+            let mut exits = six_clean_exits();
+            exits.insert("bogus-role".to_string(), 137);
+            let r = build_soak_results(inputs(flat_series(121, 30.0), cfg(3600.0, 30.0), exits))
+                .unwrap();
+            let v = verdict(&r, "worker_exits");
+            assert!(
+                !v.pass && v.detail.contains("bogus-role") && v.detail.contains("137"),
+                "{}",
+                v.detail
+            );
+            assert!(!r.overall_pass);
         }
 
         // (a) flat RSS -> pass (and, with no threshold set, provisional).
@@ -2856,6 +2896,49 @@ pub mod soak {
             )
             .unwrap_err();
             assert!(e.contains("rss_cadence_s"), "{e}");
+        }
+
+        /// `sampler_end_slack_s >= expected_duration_s` makes the
+        /// achievable RSS span non-positive (it is `expected_duration_s`
+        /// minus the slack minus two cadences) before a single sample is
+        /// even examined — every real run would fail `duration_coverage`
+        /// unconditionally, so this is a config error, not a run outcome.
+        #[test]
+        fn soak_config_rejects_slack_that_consumes_the_run() {
+            let e = parse_soak_config(
+                r#"{"expected_duration_s": 180, "rss_cadence_s": 30, "warmup_fraction": 0.1,
+                    "sampler_end_slack_s": 180, "expected_worker_exits": {}}"#,
+            )
+            .unwrap_err();
+            assert!(
+                e.contains("sampler_end_slack_s") && e.contains("expected_duration_s"),
+                "{e}"
+            );
+            assert!(e.contains("180"), "{e}");
+            // Strictly greater than is rejected too.
+            let e = parse_soak_config(
+                r#"{"expected_duration_s": 180, "rss_cadence_s": 30, "warmup_fraction": 0.1,
+                    "sampler_end_slack_s": 200, "expected_worker_exits": {}}"#,
+            )
+            .unwrap_err();
+            assert!(
+                e.contains("sampler_end_slack_s") && e.contains("expected_duration_s"),
+                "{e}"
+            );
+        }
+
+        /// A key in `expected_worker_exits` outside the six `WORKER_ROLES`
+        /// is a config typo (a renamed role, a misspelled one) that must
+        /// be rejected at parse time rather than silently doing nothing —
+        /// the entry would never match anything in `exits.json` either.
+        #[test]
+        fn soak_config_rejects_unknown_expected_role() {
+            let e = parse_soak_config(
+                r#"{"expected_duration_s": 3600, "rss_cadence_s": 30, "warmup_fraction": 0.1,
+                    "sampler_end_slack_s": 35, "expected_worker_exits": {"bogus-role": 137}}"#,
+            )
+            .unwrap_err();
+            assert!(e.contains("bogus-role"), "{e}");
         }
 
         #[test]
