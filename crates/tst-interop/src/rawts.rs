@@ -87,8 +87,22 @@ impl Reader {
         Ok(())
     }
 
-    pub fn finish(self) -> WireSummary {
-        self.summary
+    /// Consume the reader and return the accumulated [`WireSummary`] —
+    /// `Err` iff a trailing partial packet (fewer than 188 bytes) is
+    /// still sitting in the carry, naming how many bytes short it is. A
+    /// well-formed capture is always a whole number of TS packets; a
+    /// trailing fragment means the capture was cut off mid-packet
+    /// (e.g. a live recv session closing between transport reads), and
+    /// callers surface that as an explicit failure rather than silently
+    /// discarding it.
+    pub fn finish(self) -> Result<WireSummary, String> {
+        if !self.carry.is_empty() {
+            return Err(format!(
+                "{} trailing byte(s) short of a {PKT}-byte packet",
+                self.carry.len()
+            ));
+        }
+        Ok(self.summary)
     }
 
     /// Clear the in-flight byte carry (a partial trailing packet left
@@ -119,7 +133,24 @@ impl Reader {
         let mut off = 4;
         if afc & 0x2 != 0 {
             let af_len = usize::from(p[4]);
+            if 5 + af_len > PKT {
+                return Err(format!(
+                    "adaptation field length {af_len} does not fit in a {PKT}-byte packet"
+                ));
+            }
             if af_len > 0 && p[5] & 0x10 != 0 {
+                // The PCR flag claims 6 bytes (program_clock_reference_
+                // base + _extension, §2.4.3.5) follow the flags byte, so
+                // the adaptation field must be at least 1 (flags) + 6
+                // bytes long. A PCR flag on a shorter adaptation field is
+                // malformed — reading `p[6..12]` anyway would silently
+                // read bytes outside the declared field (padding, or the
+                // next field entirely) as if they were PCR.
+                if af_len < 7 {
+                    return Err(format!(
+                        "adaptation field: PCR flag set but adaptation_field_length {af_len} < 7"
+                    ));
+                }
                 // program_clock_reference_base: 33 bits, §2.4.3.5.
                 let b = &p[6..12];
                 let base = (u64::from(b[0]) << 25)
@@ -153,12 +184,33 @@ impl Reader {
         Ok(())
     }
 
-    /// One PSI section starting at a pointer field; single-packet sections only.
+    /// One PSI section starting at a pointer field; single-packet
+    /// sections only. `body` (once returned) is always exactly `len`
+    /// bytes and always at least 9 (`table_id_ext(2) + version/
+    /// current_next(1) + section_number(1) + last_section_number(1) +
+    /// CRC32(4)` — the minimum shape of ANY PSI section, PAT or PMT,
+    /// even with zero loop entries), so callers can rely on indices
+    /// `0..9` existing without their own length check.
     fn section(payload: &[u8]) -> Result<(u8, &[u8]), String> {
-        let ptr = usize::from(payload[0]);
-        let sec = payload.get(1 + ptr..).ok_or("pointer field past packet")?;
+        const SECTION_HEADER_MIN: usize = 9;
+        let &ptr_byte = payload.first().ok_or("PSI section: empty payload")?;
+        let sec = payload
+            .get(1 + usize::from(ptr_byte)..)
+            .ok_or("PSI section: pointer field past packet")?;
+        if sec.len() < 3 {
+            return Err(format!(
+                "PSI section: {} header byte(s) after the pointer field, want >= 3",
+                sec.len()
+            ));
+        }
         let table_id = sec[0];
         let len = (usize::from(sec[1] & 0x0F) << 8) | usize::from(sec[2]);
+        if len < SECTION_HEADER_MIN {
+            return Err(format!(
+                "PSI section_length {len}, want >= {SECTION_HEADER_MIN} (table_id_ext + \
+                 version/current_next + section_number + last_section_number + CRC32)"
+            ));
+        }
         let body = sec
             .get(3..3 + len)
             .ok_or("PSI section spans packets (unsupported)")?;
@@ -170,6 +222,16 @@ impl Reader {
         let (tid, body) = Self::section(payload)?;
         if tid != 0 {
             return Err(format!("PAT table_id 0x{tid:02x}"));
+        }
+        // Redundant with `section()`'s own >= 9 minimum today (a PAT's
+        // minimum shape IS the generic PSI minimum: 5 header bytes + 4
+        // CRC bytes, zero program entries), but named explicitly so a
+        // PAT-shaped error survives independently of that shared check.
+        if body.len() < 5 + 4 {
+            return Err(format!(
+                "PAT section {} byte(s), want >= 9 (5 header + CRC32)",
+                body.len()
+            ));
         }
         let loop_bytes = &body[5..body.len() - 4];
         for e in loop_bytes.chunks_exact(4) {
@@ -187,8 +249,22 @@ impl Reader {
         if tid != 2 {
             return Err(format!("PMT table_id 0x{tid:02x}"));
         }
+        // `body[5..9]` (PCR_PID + program_info_length) is covered by
+        // `section()`'s own >= 9 minimum; `info_len` is only known AFTER
+        // reading those bytes, so the program-info + ES loop + CRC space
+        // needs its own check here — a PMT declaring more program-info
+        // bytes than the section actually has room for must not silently
+        // slice into (or past) the CRC.
         let pcr_pid = (u16::from(body[5] & 0x1F) << 8) | u16::from(body[6]);
         let info_len = (usize::from(body[7] & 0x0F) << 8) | usize::from(body[8]);
+        let min_len = 9 + info_len + 4;
+        if body.len() < min_len {
+            return Err(format!(
+                "PMT section {} byte(s), want >= {min_len} (5 header + pcr_pid + \
+                 program_info_length + {info_len} program_info byte(s) + CRC32)",
+                body.len()
+            ));
+        }
         let es = &body[9 + info_len..body.len() - 4];
         let mut streams = Vec::new();
         let mut k = 0;
@@ -263,7 +339,7 @@ pub fn summarize_file(path: &Path) -> io::Result<WireSummary> {
     let bytes = std::fs::read(path)?;
     let mut r = Reader::new();
     r.feed(&bytes).map_err(io::Error::other)?;
-    Ok(r.finish())
+    r.finish().map_err(io::Error::other)
 }
 
 #[cfg(test)]
@@ -373,7 +449,7 @@ mod tests {
         for chunk in bytes.chunks(101) {
             r.feed(chunk).unwrap();
         }
-        assert_eq!(r.finish().packets as usize, bytes.len() / 188);
+        assert_eq!(r.finish().unwrap().packets as usize, bytes.len() / 188);
         let mut bad = bytes.clone();
         bad[188 * 5] = 0x00;
         let mut r = Reader::new();
@@ -402,6 +478,63 @@ mod tests {
         // count must reflect only THIS stream — the discarded partial
         // packet contributed nothing.
         r.feed(&bytes).unwrap();
-        assert_eq!(r.finish().packets as usize, bytes.len() / 188);
+        assert_eq!(r.finish().unwrap().packets as usize, bytes.len() / 188);
+    }
+
+    #[test]
+    fn finish_rejects_a_trailing_partial_packet() {
+        let p = crate::profiles::by_name("baseline").unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "tst-interop-rawts-trailing-{}.ts",
+            std::process::id()
+        ));
+        crate::r#gen::run(p, 2.0, &path).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        let cut = 3 * PKT + 100;
+        assert!(bytes.len() > cut, "fixture too short for this test");
+
+        let mut r = Reader::new();
+        r.feed(&bytes[..cut]).unwrap();
+        let e = r.finish().unwrap_err();
+        assert!(e.contains("trailing"), "{e}");
+    }
+
+    #[test]
+    fn feed_rejects_a_pat_pointer_field_past_the_payload() {
+        // A minimal PID-0 (PAT) packet, PUSI set, adaptation_field_control
+        // = payload-only (afc=01 -> byte 3 = 0x10), pointer_field = 255 —
+        // nowhere near valid for a 184-byte payload, so `section()` must
+        // reject it rather than reading (or panicking on) bytes past the
+        // packet.
+        let mut pkt = [0xFFu8; PKT];
+        pkt[0] = SYNC;
+        pkt[1] = 0x40; // PUSI set, PID high bits = 0
+        pkt[2] = 0x00; // PID low byte = 0 (PAT)
+        pkt[3] = 0x10; // afc = payload only
+        pkt[4] = 0xFF; // pointer_field = 255
+
+        let mut r = Reader::new();
+        let e = r.feed(&pkt).unwrap_err();
+        assert!(e.contains("pointer field"), "{e}");
+    }
+
+    #[test]
+    fn feed_rejects_a_pcr_flag_with_a_too_short_adaptation_field() {
+        // adaptation_field_control = adaptation-field-only (afc=10 ->
+        // byte 3 = 0x20), adaptation_field_length = 3 (too short to hold
+        // the flags byte + a 6-byte PCR), PCR flag set anyway — malformed,
+        // must error rather than reading past the declared field.
+        let mut pkt = [0xFFu8; PKT];
+        pkt[0] = SYNC;
+        pkt[1] = 0x00;
+        pkt[2] = 0x11; // an arbitrary non-PAT/PMT PID
+        pkt[3] = 0x20; // afc = adaptation field only
+        pkt[4] = 3; // adaptation_field_length
+        pkt[5] = 0x10; // PCR flag set
+
+        let mut r = Reader::new();
+        let e = r.feed(&pkt).unwrap_err();
+        assert!(e.contains('7'), "{e}");
     }
 }

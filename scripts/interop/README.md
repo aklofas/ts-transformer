@@ -111,9 +111,15 @@ mechanism string by definition.
     `rawts.rs`: PMT stream types/descriptors, PCR cadence, AV1
     carriage-mode discrimination, per-program media accounting, an
     actually-observed PTS wrap for `pts-rollover`, and the audio
-    codec/cadence checks) — run in `VerifyMode::Lossy`, so discontinuities
-    are counted rather than fatal but a `NonConformant` event still fails
-    the cell. Used for `ffmpeg`/`gst`-decode/HLS/RTSP cells, where the peer
+    codec/cadence checks) — the mode depends on which side captured the
+    bytes: an offline `tst-interop verify --file` cell (`send` direction,
+    e.g. `us-to-ffmpeg`) always runs `VerifyMode::Strict` — a peer-written
+    file is lossless by construction, so a `Discontinuity` found in it is
+    a real finding, not tolerable noise — while a live `tst-interop recv`
+    cell without `--strict` (`recv` direction, e.g. `ffmpeg-to-us`) runs
+    `VerifyMode::Lossy`, so a `Discontinuity` there is counted rather than
+    fatal. Either way a `NonConformant` event fails the cell. Used for
+    `ffmpeg`/`gst`-decode/HLS/RTSP cells, where the peer
     actively re-packetizes (HLS segmenting, RTSP interleaving) or is known
     to touch PES framing (see the KLV-PTS finding below). See
     `docs/project/validation-evidence.md`'s "What each profile's oracle

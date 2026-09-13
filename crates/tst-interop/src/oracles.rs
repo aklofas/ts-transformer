@@ -72,7 +72,7 @@ fn program_accounting(
         let pk = |pid: u16| wire.packets_per_pid.get(&pid).copied().unwrap_or(0);
         if pk(ep.video_pid) == 0 || pk(ep.klv_pid) == 0 {
             f.push(format!(
-                "program_{n}_wire_media: video PID 0x{:04x} {} pkts, KLV PID 0x{:04x} {} pkts",
+                "program_{n}_wire_media: video PID {} {} pkts, KLV PID {} {} pkts",
                 ep.video_pid,
                 pk(ep.video_pid),
                 ep.klv_pid,
@@ -183,12 +183,15 @@ fn pcr_interval(inv: &Invariants, wire: &WireSummary, mode: VerifyMode) -> Vec<S
     let lower = inv.pcr_interval_ms as f64 - PCR_LOWER_SLACK_MS;
     let upper = inv.pcr_interval_ms as f64 + inv.frame_period_ms + PCR_UPPER_SLACK_MS;
     for ep in &inv.programs {
+        // A missing program here is `pmt_streams`'s job to report (as
+        // `pmt_missing_program_<n>`) — skip it silently rather than
+        // duplicate that finding under a second, unrelated verdict name.
         let Some(prog) = wire.programs.get(&ep.program_number) else {
             continue;
         };
         let Some(pcrs) = wire.pcr.get(&prog.pcr_pid) else {
             f.push(format!(
-                "pcr_interval: no PCR on program {}'s PCR PID 0x{:04x}",
+                "pcr_interval: no PCR on program {}'s PCR PID {}",
                 ep.program_number, prog.pcr_pid
             ));
             continue;
@@ -202,11 +205,16 @@ fn pcr_interval(inv: &Invariants, wire: &WireSummary, mode: VerifyMode) -> Vec<S
             .windows(2)
             .map(|w| ((w[1] + PTS_WRAP - w[0]) % PTS_WRAP) as f64 / 90.0)
             .collect();
-        if iv.len() < 2 {
+        // A single measurable interval (2 PCR samples) is already enough
+        // to check against the bounds below — min == median == max, a
+        // degenerate but valid sample, not a reason to skip the check.
+        // Only zero intervals (0 or 1 PCR samples total) is insufficient.
+        if iv.is_empty() {
             f.push(format!(
-                "pcr_interval: only {} PCR(s) on PID 0x{:04x}",
-                pcrs.len(),
-                prog.pcr_pid
+                "pcr_interval: only {} interval(s) on PID {} ({} PCR sample(s)), need >= 1",
+                iv.len(),
+                prog.pcr_pid,
+                pcrs.len()
             ));
             continue;
         }
@@ -226,7 +234,7 @@ fn pcr_interval(inv: &Invariants, wire: &WireSummary, mode: VerifyMode) -> Vec<S
         };
         if median < lower || upper_observed > upper {
             f.push(format!(
-                "pcr_interval: PID 0x{:04x} min {min:.3} / median {median:.3} / max {max:.3} ms, want median >= {lower:.1} and {} <= {upper:.1} ({} mode), for a configured {} ms",
+                "pcr_interval: PID {} min {min:.3} / median {median:.3} / max {max:.3} ms, want median >= {lower:.1} and {} <= {upper:.1} ({} mode), for a configured {} ms",
                 prog.pcr_pid,
                 if mode == VerifyMode::Strict { "max" } else { "median" },
                 if mode == VerifyMode::Strict {
@@ -252,9 +260,7 @@ fn av1_carriage(inv: &Invariants, wire: &WireSummary) -> Vec<String> {
     };
     let pid = inv.programs[0].video_pid;
     let Some(shape) = wire.pes.get(&pid) else {
-        return vec![format!(
-            "av1_carriage_wire: no PES on video PID 0x{pid:04x}"
-        )];
+        return vec![format!("av1_carriage_wire: no PES on video PID {pid}")];
     };
     let pfx = shape.first_payload_prefix.unwrap_or([0; 4]);
     let ok = match mode {
@@ -297,11 +303,11 @@ fn pts_wrap(p: &Profile, inv: &Invariants, wire: &WireSummary, seconds: f64) -> 
         .unwrap_or(0);
     match (expect_wrap, decreases) {
         (true, 0) => vec![format!(
-            "pts_wrap_observed: window {seconds}s from start {} crosses 2^33 but no raw PTS wrap was seen on PID 0x{pid:04x}",
+            "pts_wrap_observed: window {seconds}s from start {} crosses 2^33 but no raw PTS wrap was seen on PID {pid}",
             p.start_pts_ticks
         )],
         (false, n) if n > 0 => vec![format!(
-            "pts_wrap_unexpected: {n} raw PTS wrap(s) on PID 0x{pid:04x} in a window that never reaches 2^33"
+            "pts_wrap_unexpected: {n} raw PTS wrap(s) on PID {pid} in a window that never reaches 2^33"
         )],
         _ => Vec::new(),
     }
@@ -409,16 +415,15 @@ mod tests {
         }
     }
 
-    fn program_counts(entries: &[(u16, u64, u64, u64)]) -> BTreeMap<u16, ProgramCounts> {
+    fn program_counts(entries: &[(u16, u64, u64)]) -> BTreeMap<u16, ProgramCounts> {
         entries
             .iter()
-            .map(|&(pn, video, klv, audio)| {
+            .map(|&(pn, video, klv)| {
                 (
                     pn,
                     ProgramCounts {
                         video_aus: video,
                         klv_records: klv,
-                        audio_frames: audio,
                     },
                 )
             })
@@ -447,7 +452,7 @@ mod tests {
         let seconds = 3.0;
         let slack = crate::verify::NOMINAL_COUNT_SLACK;
 
-        let empty_prog2 = program_counts(&[(1, 90, 30, 0), (2, 0, 0, 0)]);
+        let empty_prog2 = program_counts(&[(1, 90, 30), (2, 0, 0)]);
         let f = program_accounting(&inv, &wire, &empty_prog2, seconds, slack);
         assert!(
             f.iter().any(|s| s.starts_with("program_2_video_floor")),
@@ -458,7 +463,7 @@ mod tests {
             "{f:?}"
         );
 
-        let healthy = program_counts(&[(1, 90, 30, 0), (2, 90, 30, 0)]);
+        let healthy = program_counts(&[(1, 90, 30), (2, 90, 30)]);
         let f2 = program_accounting(&inv, &wire, &healthy, seconds, slack);
         assert!(f2.is_empty(), "{f2:?}");
     }
@@ -468,7 +473,7 @@ mod tests {
         let inv = profiles::invariants(profiles::by_name("two-program").unwrap());
         let mut wire = two_program_wire();
         wire.packets_per_pid.remove(&0x1111);
-        let counts = program_counts(&[(1, 90, 30, 0), (2, 90, 30, 0)]);
+        let counts = program_counts(&[(1, 90, 30), (2, 90, 30)]);
         let f = program_accounting(
             &inv,
             &wire,
@@ -660,9 +665,15 @@ mod tests {
         let f = pcr_interval(&inv, &one_pcr, VerifyMode::Strict);
         assert!(
             f.iter()
-                .any(|s| s.starts_with("pcr_interval") && s.contains("only 1 PCR")),
+                .any(|s| s.starts_with("pcr_interval") && s.contains("interval")),
             "{f:?}"
         );
+
+        // Exactly TWO PCR samples — one measurable interval — must be
+        // enough to pass: min == median == max, a degenerate but valid
+        // sample, not "insufficient data".
+        let two_pcr = wire_with_pcr(0x1011, &[0, 3600]); // 40.0ms, baseline's exact configured interval
+        assert!(pcr_interval(&inv, &two_pcr, VerifyMode::Strict).is_empty());
     }
 
     fn wire_with_pes(pid: u16, stream_id: u8, prefix: [u8; 4]) -> WireSummary {

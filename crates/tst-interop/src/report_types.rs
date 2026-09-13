@@ -36,12 +36,14 @@ pub struct CellMetrics {
     /// Whole-capture sha256 — the byte-transparent tier (bit-for-bit
     /// identity), independent of and stricter than every other field here.
     pub stream_sha256: String,
-    /// `Discontinuity`/`NonConformant` demux events seen; Strict mode
-    /// fails on either, Lossy fails on `nonconformant` only.
+    /// `Discontinuity` demux events seen. Always counted; only fatal to
+    /// `pass` in `VerifyMode::Strict` (`VerifyMode::Lossy` counts it and
+    /// moves on — see `verify::VerifyMode`'s own doc comment).
     #[serde(default)]
     pub discontinuities: u64,
-    /// `Discontinuity`/`NonConformant` demux events seen; Strict mode
-    /// fails on either, Lossy fails on `nonconformant` only.
+    /// `NonConformant` demux events seen. Always counted, and always
+    /// fatal to `pass` — unlike `discontinuities`, this fails the check
+    /// in both `VerifyMode::Strict` and `VerifyMode::Lossy`.
     #[serde(default)]
     pub nonconformant: u64,
 }
