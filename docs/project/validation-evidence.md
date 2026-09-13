@@ -191,7 +191,7 @@ version, and root-cause argument behind each one.
 
 ### What each profile's oracle proves
 
-Since 2026-09-13 (PR #TBD-F) `tst-interop verify`/`recv` check every profile
+Since 2026-09-13 (PR #213) `tst-interop verify`/`recv` check every profile
 against demuxer-independent wire facts read by a deliberately naive
 raw-TS parser (`crates/tst-interop/src/rawts.rs`) in addition to the
 demuxed tallies, and every oracle has a mutation test that removes the
