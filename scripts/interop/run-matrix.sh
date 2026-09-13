@@ -58,14 +58,20 @@
 #                      is either an exact declared cell id or a pattern
 #                      ending in a single trailing "*" (e.g.
 #                      "decode/gst-play/*" to tolerate a box without
-#                      gst-play-1.0 across every profile); an exact
-#                      entry that doesn't match a declared cell id is a
-#                      usage error (exit 2). The expanded, exact id list
-#                      is what actually lands in inventory.json's
-#                      `allowed_skips` — a local escape hatch for a box
-#                      missing a peer tool. `interop.yml` never sets
-#                      this (CI asserts the full census, not a
-#                      tolerated subset of it).
+#                      gst-play-1.0 across every profile); entries may
+#                      only use letters, digits, ".", "_", "/", "-" plus
+#                      that one optional trailing "*" — no other shell
+#                      or glob metacharacters ("?", "[...]", etc.) are
+#                      accepted, so an "exact" entry can never
+#                      accidentally match more than the one id it
+#                      spells (malformed entries are a usage error, exit
+#                      2). An exact entry that doesn't match a declared
+#                      cell id is also a usage error (exit 2). The
+#                      expanded, exact id list is what actually lands in
+#                      inventory.json's `allowed_skips` — a local escape
+#                      hatch for a box missing a peer tool. `interop.yml`
+#                      never sets this (CI asserts the full census, not
+#                      a tolerated subset of it).
 #
 # Before running anything, a declare pass calls every cell shape once
 # per --profiles entry with DECLARE_ONLY=1 (each shape records the id
@@ -118,7 +124,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     -h | --help)
-      sed -n '2,83p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,89p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
@@ -1117,8 +1123,14 @@ if [[ -n "$ALLOWED_SKIPS_ARG" ]]; then
   : >"$allowed_skip_ids_file"
   IFS=',' read -r -a allowed_skip_patterns <<<"$ALLOWED_SKIPS_ARG"
   for pattern in "${allowed_skip_patterns[@]}"; do
-    if [[ ! "$pattern" =~ ^[^*]+\*?$ ]]; then
-      echo "run-matrix: --allowed-skips entry '$pattern' is malformed — each entry must be an exact cell id or end in a single trailing '*'" >&2
+    # Only cell-id characters plus one optional trailing "*" — no other
+    # shell/glob metacharacters ("?", "[...]", etc). The old
+    # `^[^*]+\*?$` check let those through unnoticed: bash's `case`
+    # pattern matching below still treats "?" and "[...]" as globs, so
+    # an "exact" (non-"*"-terminated) entry like "udp/?s-to-tsp" could
+    # silently match more than the one declared id it appears to name.
+    if [[ ! "$pattern" =~ ^[A-Za-z0-9._/-]+\*?$ ]]; then
+      echo "run-matrix: --allowed-skips entry '$pattern' is malformed — each entry must be an exact cell id or an id prefix ending in a single trailing '*', using only letters, digits, '.', '_', '/', '-' (no shell/glob metacharacters such as '?' or '[...]')" >&2
       exit 2
     fi
     is_glob=0
@@ -1223,5 +1235,14 @@ if [[ -s "$OUTDIR/results.json" ]]; then
     "$BIN" report render --in "$OUTDIR/results.json" --out "$OUTDIR/results.md"
 fi
 
-echo "run-matrix: wrote $OUTDIR/results.json + $OUTDIR/results.md (exit $merge_rc)" >&2
+# Truthful either way: results.json only exists here if merge wrote it
+# (and, per the guard above, render then succeeded on it too — a render
+# failure would have aborted the script before this line under `set
+# -e`), so a failed merge (no file) is reported as such instead of
+# unconditionally claiming both files were written.
+if [[ -s "$OUTDIR/results.json" ]]; then
+  echo "run-matrix: wrote $OUTDIR/results.json + $OUTDIR/results.md (exit $merge_rc)" >&2
+else
+  echo "run-matrix: no results.json written (report merge exit $merge_rc)" >&2
+fi
 exit "$merge_rc"

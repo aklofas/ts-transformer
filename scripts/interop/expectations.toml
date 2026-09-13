@@ -21,9 +21,13 @@
 #
 # `expected_unsupported`: this (cell, profile) pair is known to fail and
 # is not expected to ever pass — if it starts passing, `report merge`
-# flags the expectation as stale and FAILS THE MERGE (exit nonzero, no
-# results.json written) — a stale row is a real drift finding, not a
-# warning, and the fix is to remove it in the same change.
+# flags the expectation as stale and FAILS THE RUN (exit 1) — a stale
+# row is a real drift finding, not a warning, and the fix is to remove
+# it in the same change. `results.json` IS still written in this case
+# (with the stale row listed under `summary.stale_expectations`), so
+# the offending row can be found and removed; this is different from an
+# inventory mismatch (missing/duplicate/extra/undeclared-skip cell),
+# which is exit 2 with no `results.json` written at all.
 #
 # `known_flaky`: this (cell, profile) pair intermittently fails; a FAIL
 # is reported non-fatally (labeled KNOWN-FLAKY in the rendered report)
