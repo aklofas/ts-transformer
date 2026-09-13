@@ -480,6 +480,105 @@ fn read_cells_dir(dir: &Path) -> Result<Vec<RawCell>, String> {
     Ok(cells)
 }
 
+/// One (id, profile) pair `run-matrix.sh` DECLARED it would run, written
+/// to `inventory.json` before the first cell executes.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct InventoryCell {
+    pub id: String,
+    pub profile: String,
+}
+
+/// `inventory.json`: the exact cell multiset a run intends to produce,
+/// plus the knobs that shaped it. `shape` is `full-157` only when no
+/// `--cells`/`--profiles` narrowing was given (the advertised census);
+/// anything else is `subset` and the evidence page may not cite it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Inventory {
+    pub shape: String,
+    pub seconds_per_cell: u64,
+    pub cells_glob: String,
+    pub profiles: Vec<String>,
+    pub cells: Vec<InventoryCell>,
+    /// Cell ids whose `SKIPPED_TOOL_MISSING` is tolerated (local runs on
+    /// a box missing a peer). `interop.yml` never sets this.
+    #[serde(default)]
+    pub allowed_skips: Vec<String>,
+    #[serde(default)]
+    pub tools: serde_json::Value,
+}
+
+/// What the merged report records about its inventory.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InventorySummary {
+    pub shape: String,
+    pub declared_cells: usize,
+    pub allowed_skips: Vec<String>,
+}
+
+pub const SHAPE_FULL: &str = "full-157";
+pub const SHAPE_SUBSET: &str = "subset";
+
+pub fn parse_inventory(text: &str) -> Result<Inventory, String> {
+    let inv: Inventory = serde_json::from_str(text).map_err(|e| format!("inventory.json: {e}"))?;
+    if inv.shape != SHAPE_FULL && inv.shape != SHAPE_SUBSET {
+        return Err(format!(
+            "inventory.json: shape must be {SHAPE_FULL:?} or {SHAPE_SUBSET:?}, got {:?}",
+            inv.shape
+        ));
+    }
+    Ok(inv)
+}
+
+/// Compare the produced cells against the declared inventory as an exact
+/// multiset: every declared (id, profile) exactly once, nothing else, and
+/// no `SKIPPED_TOOL_MISSING` outside `allowed_skips`. Reports EVERY
+/// problem in one error so a broken run is diagnosed in one read.
+pub fn check_inventory(raw_cells: &[RawCell], inv: &Inventory) -> Result<(), String> {
+    let mut declared: BTreeMap<InventoryCell, usize> = BTreeMap::new();
+    for c in &inv.cells {
+        *declared.entry(c.clone()).or_insert(0) += 1;
+    }
+    let mut produced: BTreeMap<InventoryCell, usize> = BTreeMap::new();
+    for c in raw_cells {
+        *produced
+            .entry(InventoryCell {
+                id: c.id.clone(),
+                profile: c.profile.clone(),
+            })
+            .or_insert(0) += 1;
+    }
+    let mut problems = Vec::new();
+    for (cell, &n) in &declared {
+        match produced.get(cell).copied().unwrap_or(0) {
+            0 => problems.push(format!("missing: {} ({})", cell.id, cell.profile)),
+            m if m > n => problems.push(format!("duplicate: {} ({}) x{m}", cell.id, cell.profile)),
+            _ => {}
+        }
+    }
+    for cell in produced.keys() {
+        if !declared.contains_key(cell) {
+            problems.push(format!("extra: {} ({})", cell.id, cell.profile));
+        }
+    }
+    for c in raw_cells {
+        if c.verdict == RawVerdict::SkippedToolMissing
+            && !inv.allowed_skips.iter().any(|s| s == &c.id)
+        {
+            problems.push(format!("undeclared skip: {} ({})", c.id, c.profile));
+        }
+    }
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "inventory mismatch ({} declared, {} produced): {}",
+            inv.cells.len(),
+            raw_cells.len(),
+            problems.join("; ")
+        ))
+    }
+}
+
 /// `report merge --cells-dir DIR --expectations FILE --meta FILE --out
 /// results.json`: read every per-cell JSON file in `cells_dir`, apply
 /// `expectations_path`'s expectations, embed `meta_path`'s contents
@@ -3188,6 +3287,110 @@ mod tests {
             metrics: None,
             log: format!("{id}.log"),
         }
+    }
+
+    fn inventory(cells: &[(&str, &str)], allowed_skips: &[&str]) -> Inventory {
+        Inventory {
+            shape: "subset".to_string(),
+            seconds_per_cell: 10,
+            cells_glob: "*".to_string(),
+            profiles: vec!["baseline".to_string()],
+            cells: cells
+                .iter()
+                .map(|(id, p)| InventoryCell {
+                    id: id.to_string(),
+                    profile: p.to_string(),
+                })
+                .collect(),
+            allowed_skips: allowed_skips.iter().map(|s| s.to_string()).collect(),
+            tools: serde_json::json!({}),
+        }
+    }
+
+    #[test]
+    fn inventory_exact_match_passes() {
+        let cells = vec![
+            raw_cell("udp/us-to-tsp", "baseline", RawVerdict::Pass),
+            raw_cell("udp/tsp-to-us", "baseline", RawVerdict::Fail),
+        ];
+        let inv = inventory(
+            &[("udp/us-to-tsp", "baseline"), ("udp/tsp-to-us", "baseline")],
+            &[],
+        );
+        check_inventory(&cells, &inv).expect("exact multiset must pass");
+    }
+
+    #[test]
+    fn inventory_missing_cell_is_an_error_naming_it() {
+        let cells = vec![raw_cell("udp/us-to-tsp", "baseline", RawVerdict::Pass)];
+        let inv = inventory(
+            &[("udp/us-to-tsp", "baseline"), ("udp/tsp-to-us", "baseline")],
+            &[],
+        );
+        let e = check_inventory(&cells, &inv).unwrap_err();
+        assert!(e.contains("missing") && e.contains("udp/tsp-to-us"), "{e}");
+    }
+
+    #[test]
+    fn inventory_duplicate_cell_is_an_error() {
+        let cells = vec![
+            raw_cell("udp/us-to-tsp", "baseline", RawVerdict::Pass),
+            raw_cell("udp/us-to-tsp", "baseline", RawVerdict::Pass),
+        ];
+        let inv = inventory(&[("udp/us-to-tsp", "baseline")], &[]);
+        let e = check_inventory(&cells, &inv).unwrap_err();
+        assert!(
+            e.contains("duplicate") && e.contains("udp/us-to-tsp"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn inventory_extra_cell_is_an_error() {
+        let cells = vec![
+            raw_cell("udp/us-to-tsp", "baseline", RawVerdict::Pass),
+            raw_cell("srt/us-to-tsp", "baseline", RawVerdict::Pass),
+        ];
+        let inv = inventory(&[("udp/us-to-tsp", "baseline")], &[]);
+        let e = check_inventory(&cells, &inv).unwrap_err();
+        assert!(e.contains("extra") && e.contains("srt/us-to-tsp"), "{e}");
+    }
+
+    #[test]
+    fn inventory_same_id_different_profile_is_a_distinct_cell() {
+        let cells = vec![raw_cell("decode/mpv/audio", "audio", RawVerdict::Pass)];
+        let inv = inventory(&[("decode/mpv/audio", "baseline")], &[]);
+        let e = check_inventory(&cells, &inv).unwrap_err();
+        assert!(e.contains("missing") && e.contains("extra"), "{e}");
+    }
+
+    #[test]
+    fn undeclared_skip_is_an_error_but_an_allowed_skip_passes() {
+        let cells = vec![raw_cell(
+            "decode/mpv/baseline",
+            "baseline",
+            RawVerdict::SkippedToolMissing,
+        )];
+        let inv = inventory(&[("decode/mpv/baseline", "baseline")], &[]);
+        let e = check_inventory(&cells, &inv).unwrap_err();
+        assert!(
+            e.contains("undeclared skip") && e.contains("decode/mpv/baseline"),
+            "{e}"
+        );
+        let inv = inventory(
+            &[("decode/mpv/baseline", "baseline")],
+            &["decode/mpv/baseline"],
+        );
+        check_inventory(&cells, &inv).expect("declared skip passes");
+    }
+
+    #[test]
+    fn parse_inventory_rejects_unknown_shape() {
+        let e = parse_inventory(
+            r#"{"shape":"bogus","seconds_per_cell":10,"cells_glob":"*","profiles":[],"cells":[],"allowed_skips":[],"tools":{}}"#,
+        )
+        .unwrap_err();
+        assert!(e.contains("shape"), "{e}");
     }
 
     fn expectation(cell: &str, profile: &str, verdict: ExpectVerdict, reason: &str) -> Expectation {
