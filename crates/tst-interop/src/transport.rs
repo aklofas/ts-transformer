@@ -607,19 +607,29 @@ pub(crate) fn tee_resync(tap: &Arc<Mutex<TeeState>>) {
     s.reader_error = None;
 }
 
-/// Read back the final `(bytes, sha256_hex, wire, reader_error)` from a
-/// tap handle returned by [`Teeing::new`]. Call only after the pipeline
-/// shell that owned the `Teeing` has been dropped (releasing its clone
-/// of the tap) — panics otherwise, since a live writer means the tally
-/// isn't final yet.
+/// Read back the final `(bytes, sha256_hex, wire_result, reader_error)`
+/// from a tap handle returned by [`Teeing::new`]. Call only after the
+/// pipeline shell that owned the `Teeing` has been dropped (releasing
+/// its clone of the tap) — panics otherwise, since a live writer means
+/// the tally isn't final yet.
 ///
-/// `wire` is the [`crate::rawts::Reader`]'s summary of the same bytes —
-/// empty (zero packets) for a send-side tap, which never feeds it (see
-/// [`TeeState`]'s doc comment). `reader_error` is `Some` iff that reader
-/// ever fell out of 188-byte packet alignment.
+/// `wire_result` is the [`crate::rawts::Reader`]'s summary of the same
+/// bytes — `Ok` with an empty (zero-packet) summary for a send-side tap,
+/// which never feeds it (see [`TeeState`]'s doc comment); `Err` iff the
+/// capture ended with a trailing partial packet still in the reader's
+/// carry (`crate::rawts::Reader::finish`'s own contract). `reader_error`
+/// is `Some` iff that reader ever fell out of 188-byte packet alignment
+/// mid-capture — a distinct failure from a trailing partial packet, and
+/// the two can both be `Some`/`Err` at once (a feed error leaves
+/// whatever it hadn't yet drained sitting in `carry` too).
 pub(crate) fn tee_tally(
     tap: Arc<Mutex<TeeState>>,
-) -> (u64, String, crate::rawts::WireSummary, Option<String>) {
+) -> (
+    u64,
+    String,
+    Result<crate::rawts::WireSummary, String>,
+    Option<String>,
+) {
     let state = Arc::try_unwrap(tap)
         .unwrap_or_else(|_| panic!("tee_tally: tap still has another owner (shell not dropped?)"))
         .into_inner()

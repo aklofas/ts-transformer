@@ -16,6 +16,7 @@ use tst_pipeline::{
 
 use crate::cli::write_json;
 use crate::profiles::{self, Profile};
+use crate::rawts::WireSummary;
 use crate::report_types::VerifyReport;
 use crate::transport::{self, Teeing};
 use crate::verify::{self, Tally, VerifyMode};
@@ -38,6 +39,22 @@ const POST_START_GRACE: Duration = Duration::from_secs(2);
 /// `type_complexity` lint).
 type ManagedRecvFactory =
     Box<dyn FnMut() -> Result<Teeing<Box<dyn RecvTransport>>, TransportError> + Send>;
+
+/// Split `tee_tally`'s wire result into a usable [`WireSummary`]
+/// (falling back to an empty default) and an optional trailing-bytes
+/// error string, shared by [`recv_over_transport`] and [`run_managed`]
+/// so callers can still run the wire-level oracles against whatever
+/// packets DID parse cleanly while still surfacing a truncated final
+/// packet as an explicit `rawts_trailing_bytes` failure rather than
+/// losing it silently.
+fn wire_and_trailing_bytes_error(
+    wire_result: Result<WireSummary, String>,
+) -> (WireSummary, Option<String>) {
+    match wire_result {
+        Ok(w) => (w, None),
+        Err(e) => (WireSummary::default(), Some(e)),
+    }
+}
 
 /// Build a transport from `url`, receive `seconds` of `expect`'s
 /// traffic from it, and check the result against `expect`'s
@@ -166,8 +183,10 @@ pub fn recv_over_transport(
     // `finish` checks the wire-level oracles against; a captured stream
     // that fell out of 188-byte packet alignment surfaces here as
     // `reader_error`, added below as an explicit failure rather than
-    // silently dropped.
-    let (bytes, stream_sha256, wire, reader_error) = transport::tee_tally(tap);
+    // silently dropped. A trailing partial packet at the very end of the
+    // capture (`wire_result` an `Err`) is handled the same way.
+    let (bytes, stream_sha256, wire_result, reader_error) = transport::tee_tally(tap);
+    let (wire, trailing_bytes_error) = wire_and_trailing_bytes_error(wire_result);
 
     let mode = if strict {
         VerifyMode::Strict
@@ -186,6 +205,10 @@ pub fn recv_over_transport(
     report.metrics.stream_sha256 = stream_sha256;
     if let Some(e) = reader_error {
         report.failures.push(format!("rawts_sync_loss: {e}"));
+        report.pass = false;
+    }
+    if let Some(e) = trailing_bytes_error {
+        report.failures.push(format!("rawts_trailing_bytes: {e}"));
         report.pass = false;
     }
     Ok(report)
@@ -400,7 +423,8 @@ pub fn run_managed(
 
     // Read the tap BEFORE `finish` — see `recv_over_transport`'s doc
     // comment for why.
-    let (bytes, stream_sha256, wire, reader_error) = transport::tee_tally(tap);
+    let (bytes, stream_sha256, wire_result, reader_error) = transport::tee_tally(tap);
+    let (wire, trailing_bytes_error) = wire_and_trailing_bytes_error(wire_result);
 
     let mode = if strict {
         VerifyMode::Strict
@@ -413,6 +437,10 @@ pub fn run_managed(
     report.reconnects = Some(reconnects);
     if let Some(e) = reader_error {
         report.failures.push(format!("rawts_sync_loss: {e}"));
+        report.pass = false;
+    }
+    if let Some(e) = trailing_bytes_error {
+        report.failures.push(format!("rawts_trailing_bytes: {e}"));
         report.pass = false;
     }
 

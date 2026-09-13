@@ -657,31 +657,33 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   <ids|globs>` is a local-only escape hatch for a box missing a peer
   tool; `interop.yml` never sets it, so a CI run must produce the full
   declared census for real.
-- **Tooling: interop verifier wire oracles.** `tst-interop verify`/`recv`
-  now check every profile against demuxer-independent wire facts, not
-  just the demuxed tallies: a deliberately naive raw-TS reader
-  (`crates/tst-interop/src/rawts.rs`, no `tst-core` dependency) parses
-  PAT/PMT sections, PCR, and PES headers straight off the bytes, and six
-  oracles (`crates/tst-interop/src/oracles.rs`) check it — per-program
-  video/KLV accounting, AAC codec+cadence, PCR interval bounds (the
-  muxer's legitimate PCR-only catch-up packets are accounted for as a
-  median-only lower bound), AV1 carriage-mode (A vs. B) discrimination,
-  an actually-observed PTS wrap for `pts-rollover`, and PMT stream-type/
-  descriptor conformance. `VerifyMode::{Strict, Lossy}` replaces a single
-  fixed fatality rule: `Strict` (`verify_file`, and the interop matrix's
-  `transparent`-tier cells) fails on any `NonConformant` or
-  `Discontinuity` event; `Lossy` (live `recv`, and `remux`-tier cells)
-  fails only on `NonConformant` and counts discontinuities into
-  `CellMetrics`. Each profile now builds its demuxer with the same
-  binding mode the matrix exercises rather than a fixed default. The
-  `audio` profile's generator now emits frames at the real AAC cadence
-  (`sample_rate / 1024` Hz, 48 kHz, independent of the video clock)
-  instead of one frame per video frame, so its PTS step is a clean 1920
-  ticks — the `audio` profile's wire output and its `expectations.toml`
-  rows are re-validated by the branch dispatch. Every oracle has a
-  matching mutation test (`crates/tst-interop/tests/mutations.rs`, ten
-  tests) that removes the property it checks and asserts the oracle's
-  named failure fires.
+- **Tooling: interop verifier wire oracles.** `tst-interop verify`/`recv` now
+  check every profile against demuxer-independent wire facts, not just the
+  demuxed tallies: a deliberately naive raw-TS reader
+  (`crates/tst-interop/src/rawts.rs`, no `tst-core` dependency) parses PAT/PMT
+  sections, PCR, and PES headers straight off the bytes, and six oracles
+  (`crates/tst-interop/src/oracles.rs`) check it — per-program video/KLV
+  accounting, AAC codec+cadence, PCR interval bounds (the muxer's legitimate
+  PCR-only catch-up packets are accounted for as a median-only lower bound), AV1
+  carriage-mode (A vs. B) discrimination, an actually-observed PTS wrap for
+  `pts-rollover`, and PMT stream-type/descriptor conformance.
+  `VerifyMode::{Strict, Lossy}` replaces a single fixed fatality rule: `Strict`
+  — used unconditionally by `verify_file` (every peer-captured file the matrix
+  checks offline, including the `transparent`-tier cells and the
+  `send`-direction half of `remux`-tier cells, e.g. `us-to-ffmpeg`: a
+  peer-written file is lossless by construction, so a `Discontinuity` in it is a
+  real finding) — fails on any `NonConformant` or `Discontinuity` event; `Lossy`
+  — live `recv` without `--strict`, i.e. the `recv`-direction half of
+  `remux`-tier cells (e.g. `ffmpeg-to-us`) — fails only on `NonConformant` and
+  counts discontinuities into `CellMetrics`. Each profile now builds its demuxer
+  with the same binding mode the matrix exercises rather than a fixed default.
+  The `audio` profile's generator now emits frames at the real AAC cadence
+  (`sample_rate / 1024` Hz, 48 kHz, independent of the video clock) instead of
+  one frame per video frame, so its PTS step is a clean 1920 ticks — the `audio`
+  profile's wire output and its `expectations.toml` rows are re-validated by the
+  branch dispatch. Every oracle has a matching mutation test
+  (`crates/tst-interop/tests/mutations.rs`, ten tests) that removes the property
+  it checks and asserts the oracle's named failure fires.
 
 ---
 

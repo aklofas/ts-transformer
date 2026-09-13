@@ -203,7 +203,7 @@ property and asserts the named failure (`crates/tst-interop/tests/mutations.rs`)
 | two-program | video + KLV counts per program_number, packets on both programs' media PIDs | `program_{1,2}_{video,klv}_floor`, `program_{1,2}_wire_media` |
 | audio | ADTS syncword + 48 kHz index in the raw PES payload, `sample_rate/1024` frames/s ±10 %, 1920-tick PTS step ±5 % | `audio_codec_adts`, `audio_cadence`, `audio_pts_step` |
 | av1-klv-a / av1-klv-b | PES stream_id 0xE0 + raw OBU header vs 0xBD + `00 00 01` `ts_open_bitstream_unit` framing (the PMT is identical in both modes) | `av1_carriage_wire` |
-| pcr-tight / pcr-sparse | every PCR interval ≥ 1 ms / ≥ 100 ms and ≤ configured + one frame period, PCR median interval ≥ configured | `pcr_interval` |
+| pcr-tight / pcr-sparse | PCR median interval ≥ 1 ms / ≥ 100 ms; every interval ≤ configured + one frame period in Strict cells (the muxer's PCR-only catch-up packets are a legitimate minority) | `pcr_interval` |
 | pts-rollover | at least one raw PES PTS wrap observed | `pts_wrap_observed` |
 | klv-sync | stream_type 0x15 + metadata (0x26) and metadata_STD (0x27) descriptors | `pmt_stream_type_*`, `pmt_descriptor_*` |
 

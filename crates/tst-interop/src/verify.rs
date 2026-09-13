@@ -174,7 +174,6 @@ pub(crate) fn min_count(per_sec: u32, seconds: f64, slack: f64) -> u64 {
 pub struct ProgramCounts {
     pub video_aus: u64,
     pub klv_records: u64,
-    pub audio_frames: u64,
 }
 
 /// Accumulates wire-format facts from a stream of [`DemuxEvent`]s.
@@ -309,10 +308,6 @@ impl Tally {
                     }
                     SamplePayload::Audio { .. } => {
                         self.audio_frames += 1;
-                        self.per_program
-                            .entry(stream.program_number)
-                            .or_default()
-                            .audio_frames += 1;
                     }
                     SamplePayload::Subtitle { .. } | SamplePayload::Unknown { .. } => {}
                 }
@@ -553,7 +548,10 @@ pub fn verify_bytes_with_mode(
         tally.feed(&ev);
     }
 
-    let wire = wire_reader.finish();
+    let (wire, trailing_bytes_err) = match wire_reader.finish() {
+        Ok(w) => (w, None),
+        Err(e) => (WireSummary::default(), Some(e)),
+    };
     let mut report = tally.finish(p, seconds, NOMINAL_COUNT_SLACK, mode, &wire);
     if let Some(e) = demux_err {
         report.pass = false;
@@ -562,6 +560,10 @@ pub fn verify_bytes_with_mode(
     if let Some(e) = wire_err {
         report.pass = false;
         report.failures.push(format!("rawts_sync_loss: {e}"));
+    }
+    if let Some(e) = trailing_bytes_err {
+        report.pass = false;
+        report.failures.push(format!("rawts_trailing_bytes: {e}"));
     }
     report
 }
