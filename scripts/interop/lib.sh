@@ -446,3 +446,12 @@ emit_skipped() {
   printf 'SKIPPED_TOOL_MISSING: %s\n' "$reason" >"$logfile"
   emit_cell "$id" "$peer" "$direction" "$tier" SKIPPED_TOOL_MISSING "$logfile" - "$reason"
 }
+
+# declare_cell <id> — inventory pass (run-matrix.sh sets DECLARE_ONLY=1
+# and calls every cell shape once per profile BEFORE executing anything;
+# each shape records the id it WOULD run and returns). `report merge
+# --inventory` later compares the produced cells against this exact
+# multiset (release-gate audit RLS-B08).
+declare_cell() {
+  printf '%s\t%s\n' "$1" "$PROFILE" >>"$INVENTORY_TSV"
+}
