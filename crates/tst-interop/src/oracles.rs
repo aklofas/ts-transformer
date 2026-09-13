@@ -4,7 +4,7 @@
 //! `Demuxer` output — see `rawts`'s own module doc for why that
 //! independence is the point) alongside the demux-side per-program
 //! [`ProgramCounts`], both parameterized by a profile's
-//! [`profiles::Invariants`].
+//! [`Invariants`].
 
 use std::collections::BTreeMap;
 
@@ -131,7 +131,7 @@ fn audio(inv: &Invariants, wire: &WireSummary, seconds: f64) -> Vec<String> {
     if let Some(v) = wire.pts.get(&pid) {
         let mut steps: Vec<f64> = v
             .windows(2)
-            .map(|w| (w[1] as f64 - w[0] as f64))
+            .map(|w| w[1] as f64 - w[0] as f64)
             .filter(|s| *s > 0.0)
             .collect();
         if !steps.is_empty() {

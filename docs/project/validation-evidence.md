@@ -51,7 +51,7 @@ one of four verdicts:
 
 | Verdict | Meaning |
 | --- | --- |
-| **PASS** | The cell's tier requirement held: a byte-for-byte match against the source (`transparent` tier, used for pure-relay tools/paths), or `tst-interop verify`'s profile invariants (`remux` tier, used where the peer legitimately re-packetizes: video/KLV/audio event counts within a documented slack, correct video codec and KLV carriage kind, program count, rollover-aware monotonic PTS — count-and-kind checks; deeper per-profile properties such as PCR cadence, AV1 carriage-mode discrimination on the wire, per-program media accounting, and an actually-observed PTS wrap are NOT yet independently verified and are tracked as harness-hardening backlog), or no error in the peer's own log (`n/a` tier, used for decode-only probes). |
+| **PASS** | The cell's tier requirement held: a byte-for-byte match against the source (`transparent` tier, used for pure-relay tools/paths), or `tst-interop verify`'s profile invariants **and demuxer-independent wire oracles** (`remux` tier, used where the peer legitimately re-packetizes: video/KLV/audio event counts within a documented slack, correct video codec and KLV carriage kind, program count, rollover-aware monotonic PTS, plus per-profile wire-level properties — PCR cadence, AV1 carriage-mode discrimination, per-program media accounting, and an actually-observed PTS wrap, read directly off the bytes by a naive raw-TS parser independent of the demuxer under test — see "What each profile's oracle proves" below), or no error in the peer's own log (`n/a` tier, used for decode-only probes). |
 | **EXPECTED-UNSUPPORTED** | A `FAIL` that matches a row in `expectations.toml` — a known, already-investigated gap (see below). |
 | **KNOWN-FLAKY** | A `FAIL` (or PASS) matching a row marked flaky rather than reliably-reproducing. |
 | **SKIPPED** | The peer tool wasn't installed on the runner. Never a silent pass. |
@@ -188,6 +188,24 @@ the transport-axis and multi-mechanism findings, or in the relevant
 format-axis decode findings (the 12 `decode/mpv/*` and `decode/vlc/*`
 rows). Read either source for the exact reproduction command, tool
 version, and root-cause argument behind each one.
+
+### What each profile's oracle proves
+
+Since 2026-09-13 (PR #TBD-F) `tst-interop verify`/`recv` check every profile
+against demuxer-independent wire facts read by a deliberately naive
+raw-TS parser (`crates/tst-interop/src/rawts.rs`) in addition to the
+demuxed tallies, and every oracle has a mutation test that removes the
+property and asserts the named failure (`crates/tst-interop/tests/mutations.rs`).
+
+| Profile | Independently verified on the wire | Oracle names |
+| --- | --- | --- |
+| all | PMT stream_type per PID, KLVA/AV01 registration, PCR median interval ≥ configured, every interval ≤ configured + one frame period (the muxer's PCR-only catch-up packets are a legitimate minority), no unexpected 33-bit PTS wrap, `NonConformant` fatal, `Discontinuity` fatal offline / counted live | `pmt_stream_type_*`, `pmt_descriptor_*`, `pcr_interval`, `pts_wrap_unexpected`, `nonconformant_event`, `discontinuity_event` |
+| two-program | video + KLV counts per program_number, packets on both programs' media PIDs | `program_{1,2}_{video,klv}_floor`, `program_{1,2}_wire_media` |
+| audio | ADTS syncword + 48 kHz index in the raw PES payload, `sample_rate/1024` frames/s ±10 %, 1920-tick PTS step ±5 % | `audio_codec_adts`, `audio_cadence`, `audio_pts_step` |
+| av1-klv-a / av1-klv-b | PES stream_id 0xE0 + raw OBU header vs 0xBD + `00 00 01` `ts_open_bitstream_unit` framing (the PMT is identical in both modes) | `av1_carriage_wire` |
+| pcr-tight / pcr-sparse | every PCR interval ≥ 1 ms / ≥ 100 ms and ≤ configured + one frame period, PCR median interval ≥ configured | `pcr_interval` |
+| pts-rollover | at least one raw PES PTS wrap observed | `pts_wrap_observed` |
+| klv-sync | stream_type 0x15 + metadata (0x26) and metadata_STD (0x27) descriptors | `pmt_stream_type_*`, `pmt_descriptor_*` |
 
 ## Soak evidence
 

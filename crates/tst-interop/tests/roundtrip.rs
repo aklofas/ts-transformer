@@ -1,6 +1,8 @@
 //! All-profile self-roundtrip: `gen` each canonical profile's synthetic
 //! traffic to a temp `.ts` file, then `verify::verify_file` it against
-//! that same profile's invariants.
+//! that same profile's invariants — `verify_file` runs in `VerifyMode::Strict`
+//! and now also runs the demuxer-independent wire oracles (`oracles.rs`)
+//! against a raw-TS parse of the same bytes, not just the demuxed tallies.
 //!
 //! This is the zero-third-party-tools harness gate — every profile must
 //! generate and verify clean here before any transport/tool cell
