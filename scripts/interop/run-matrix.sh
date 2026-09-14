@@ -126,6 +126,15 @@ require_value() {
     echo "run-matrix.sh: $1 requires a value" >&2
     exit 2
   }
+  # A `--`-prefixed value is always a mistyped flag, never a real value:
+  # no option this script takes accepts one (paths, a positive integer, a
+  # glob, and comma lists of profile names / cell ids). Without this check
+  # `--outdir --seconds 5` would set OUTDIR to the literal `--seconds` and
+  # then fail on `5` — an error naming the wrong token.
+  [[ $2 != --* ]] || {
+    echo "run-matrix.sh: $1 requires a value, got the flag '$2'" >&2
+    exit 2
+  }
 }
 
 while [[ $# -gt 0 ]]; do
