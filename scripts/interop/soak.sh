@@ -307,53 +307,76 @@ done
   echo "soak.sh: --hours must be a positive number, got: $HOURS" >&2
   exit 2
 }
+# Canonicalize + bound-check every user-supplied integer WITHOUT bash
+# arithmetic, BEFORE anything does arithmetic on it.
+#
+# Two independent hazards, both of which bit this script during review:
+#
+#   - A leading zero is an ordinary way to type a number, and the three
+#     consumers each read it differently: bash's `$(( ))` reads it as
+#     OCTAL (so `--seed 08` used to abort the launch under `set -e` with
+#     "value too great for base"), `jq --argjson` accepts and silently
+#     normalizes it even though RFC 8259 forbids it in a JSON number, and
+#     the proxy's Rust parser normalizes too. The declared value in
+#     soak-config.json must be the SAME literal the proxy is launched
+#     with, since `schedule_declared_<leg>` compares them — so it is
+#     normalized once, here, rather than relying on two of three
+#     consumers being lenient.
+#   - Bash arithmetic is SIGNED 64-bit, so a value the Rust side accepts
+#     can wrap negative on the way through: `$((10#18446744073709551615))`
+#     is `-1`, and `$((10#99999999999999999999))` is 7766279631452241919.
+#     Either would reach the proxy as a number nobody typed, and the
+#     resulting error would name that number rather than the input.
+#
+# So: strip leading zeros as a STRING, then compare by length and
+# lexicographically (exact for digit strings of any size). Only after
+# this is the arithmetic further down safe by construction. Each cap is
+# the field's real Rust type, narrowed where this script's own
+# arithmetic needs headroom.
+canon_int() { # <value> <max> <flag-name> -> canonical value on stdout
+  local v=$1 max=$2 flag=$3
+  v=$(printf '%s' "$v" | sed -E 's/^0+([0-9])/\1/')
+  if [[ ${#v} -gt ${#max} ]] || { [[ ${#v} -eq ${#max} ]] && [[ "$v" > "$max" ]]; }; then
+    echo "soak.sh: $flag must be <= $max, got: $1" >&2
+    return 2
+  fi
+  printf '%s' "$v"
+}
+
 [[ "$SEED" =~ ^[0-9]+$ ]] || {
   echo "soak.sh: --seed must be a non-negative integer, got: $SEED" >&2
   exit 2
 }
-[[ "$SCHEDULE_PHASES" =~ ^[0-9]+$ ]] && [[ "$SCHEDULE_PHASES" -gt 0 ]] || {
+# u64 on the Rust side, minus room for the `SEED + 1` / `SEED + 2` the
+# per-leg corruption seeds need — the one place arithmetic is unavoidable.
+SEED=$(canon_int "$SEED" 9223372036854775805 --seed)
+
+[[ "$SCHEDULE_PHASES" =~ ^[0-9]+$ ]] || {
   echo "soak.sh: --schedule-phases must be a positive integer, got: $SCHEDULE_PHASES" >&2
   exit 2
 }
+# `ScheduleEcho::phases` is a u32; anything larger could never reach the
+# proxy anyway, and would wrap here first.
+SCHEDULE_PHASES=$(canon_int "$SCHEDULE_PHASES" 4294967295 --schedule-phases)
+[[ "$SCHEDULE_PHASES" -gt 0 ]] || {
+  echo "soak.sh: --schedule-phases must be a positive integer, got: $SCHEDULE_PHASES" >&2
+  exit 2
+}
+
 if [[ -n "$SCHEDULE_PHASE_S" ]]; then
-  [[ "$SCHEDULE_PHASE_S" =~ ^[0-9]+$ ]] && [[ "$SCHEDULE_PHASE_S" -gt 0 ]] || {
+  [[ "$SCHEDULE_PHASE_S" =~ ^[0-9]+$ ]] || {
+    echo "soak.sh: --schedule-phase-s must be a positive integer (seconds), got: $SCHEDULE_PHASE_S" >&2
+    exit 2
+  }
+  # `ScheduleEcho::phase_s` is a u64; capped at i64::MAX because this
+  # script compares it arithmetically below.
+  SCHEDULE_PHASE_S=$(canon_int "$SCHEDULE_PHASE_S" 9223372036854775807 --schedule-phase-s)
+  [[ "$SCHEDULE_PHASE_S" -gt 0 ]] || {
     echo "soak.sh: --schedule-phase-s must be a positive integer (seconds), got: $SCHEDULE_PHASE_S" >&2
     exit 2
   }
 fi
 
-# Canonicalize every user-supplied integer to base 10, ONCE, the moment
-# it has been validated. A leading zero is a perfectly ordinary way to
-# type a number and the validators above deliberately accept it, but it
-# then reaches three consumers that each read it differently: bash's
-# `$(( ))` reads it as OCTAL (so `--seed 08` aborts the launch under
-# `set -e` with "value too great for base"), `jq --argjson` currently
-# accepts it and silently normalizes even though RFC 8259 forbids a
-# leading zero in a JSON number, and the proxy's own Rust parser
-# normalizes too. Relying on two of those three being lenient is not
-# something this script should do — and the declared value in
-# soak-config.json must be the SAME literal the proxy was launched with,
-# since `schedule_declared_<leg>` compares them. One normalization here
-# makes every downstream use exact.
-#
-# The seed is stripped as a STRING, not via `$((10#...))`: bash arithmetic
-# is signed 64-bit, so a seed above 2^63-1 — which the Rust side accepts
-# happily, the field is a `u64` — would silently come back NEGATIVE
-# (`$((10#18446744073709551615))` is `-1`). Range-check it instead, and
-# only then is the arithmetic that derives the per-leg corruption seeds
-# (`SEED + 1` / `SEED + 2`) safe, which is why the cap leaves room for +2.
-# A soak seed is a reproducibility label; refusing the top two of 2^63
-# values with a clear message costs nothing and beats launching a 72-hour
-# run on a number nobody chose.
-SEED=$(printf '%s' "$SEED" | sed -E 's/^0+([0-9])/\1/')
-MAX_SEED=9223372036854775805 # 2^63-1, minus room for the +2 above
-if [[ ${#SEED} -gt ${#MAX_SEED} ]] ||
-  { [[ ${#SEED} -eq ${#MAX_SEED} ]] && [[ "$SEED" > "$MAX_SEED" ]]; }; then
-  echo "soak.sh: --seed must be <= $MAX_SEED (this script's arithmetic is signed 64-bit), got: $SEED" >&2
-  exit 2
-fi
-SCHEDULE_PHASES=$((10#$SCHEDULE_PHASES))
-[[ -z "$SCHEDULE_PHASE_S" ]] || SCHEDULE_PHASE_S=$((10#$SCHEDULE_PHASE_S))
 # NON-EMPTINESS ONLY. This guard exists to catch `--profile ''`, which
 # would otherwise reach the launch commands as an empty string. It
 # deliberately does NOT check that the value is `auto` or a known profile
