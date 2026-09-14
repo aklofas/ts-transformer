@@ -201,11 +201,26 @@ fn no_klv_digest_true_yields_null_hash_with_counts_unchanged() {
     );
 }
 
+/// A scratch path for one test's corruption log. Process id plus the
+/// clock, because `cargo test` runs a binary's tests in ONE process and
+/// two of them here write logs.
+fn corruption_log_path(tag: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "tst-interop-corrupt-{tag}-{}-{}.jsonl",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time moves forward")
+            .as_nanos()
+    ))
+}
+
 /// `send` with a corruption tap writes a log with a header and at least
 /// one injection, reports the tap's stats in its metrics, and the
 /// receiver — WITHOUT the log — fails on the unexplained damage. (The
-/// positive "recv WITH the log passes" case is a live round trip of its
-/// own; this one pins that the damage is real and that the evidence to
+/// positive "recv WITH the log passes" case is
+/// `udp_recv_with_the_corruption_log_passes_and_explains_the_damage`
+/// below; this one pins that the damage is real and that the evidence to
 /// judge it lands on disk.)
 ///
 /// udp so it stays cheap and byte-transparent: every corrupted byte the
@@ -227,10 +242,7 @@ fn udp_send_with_corruption_writes_a_log_and_recv_without_it_fails() {
 
     let profile = profiles::by_name("baseline").expect("baseline profile must exist");
     let url = format!("udp://127.0.0.1:{}", free_port());
-    let log_path = std::env::temp_dir().join(format!(
-        "tst-interop-corrupt-log-{}.jsonl",
-        std::process::id()
-    ));
+    let log_path = corruption_log_path("nolog");
 
     let recv_transport = transport::make_recv(&url).expect("bind udp recv");
     let recv_handle = {
@@ -303,6 +315,188 @@ fn udp_send_with_corruption_writes_a_log_and_recv_without_it_fails() {
     assert!(
         report.metrics.corruption_attribution.is_none(),
         "a receiver given no log judges no corruption"
+    );
+}
+
+/// The positive twin: the same corrupted stream, judged WITH the log,
+/// passes — and the receiver accounts for every injection the sender
+/// made.
+///
+/// The receiver starts FIRST, before the log file exists at all, which
+/// is both the arrangement `soak.sh` uses and the one that makes the
+/// judgement sound (a receiver that joins late cannot place a coordinate
+/// anchored before the stream's first PCR — see `recv::run`'s doc
+/// comment). Proving that the receiver waits for a file its peer has not
+/// created yet is half the point of this test.
+#[test]
+fn udp_recv_with_the_corruption_log_passes_and_explains_the_damage() {
+    use tst_interop::corrupt::parse_corrupt;
+
+    let profile = profiles::by_name("baseline").expect("baseline profile must exist");
+    let url = format!("udp://127.0.0.1:{}", free_port());
+    let log_path = corruption_log_path("withlog");
+    assert!(!log_path.exists(), "the sender has not run yet");
+
+    let recv_transport = transport::make_recv(&url).expect("bind udp recv");
+    let recv_handle = {
+        let seconds = SECONDS;
+        let log_path = log_path.clone();
+        thread::spawn(move || {
+            recv::recv_over_transport(
+                recv_transport,
+                profile,
+                seconds,
+                false,
+                false,
+                Some(&log_path),
+            )
+        })
+    };
+
+    let cfg = parse_corrupt("rate=10000,min_gap=1000,classes=truncate", 9)
+        .expect("the corruption spec must parse");
+    let metrics = send::run(
+        profile,
+        &url,
+        SECONDS,
+        None,
+        false,
+        AuSizeMode::Compact,
+        Some((cfg, log_path.clone())),
+    )
+    .expect("udp send must succeed");
+
+    let report = join_with_timeout(recv_handle, Duration::from_secs(20))
+        .expect("recv_over_transport must return");
+    let _ = std::fs::remove_file(&log_path);
+
+    let stats = metrics
+        .corruption
+        .expect("send metrics carry the tap stats");
+    assert!(stats.injections > 0, "the tap must have injected something");
+    let a = report
+        .metrics
+        .corruption_attribution
+        .expect("a judged capture carries its attribution");
+    assert_eq!(
+        a.injected, stats.injections,
+        "the receiver must account for every injection the sender logged"
+    );
+    assert_eq!(a.resolved, a.injected, "and place every one of them: {a:?}");
+    assert!(
+        a.resyncs > 0 && a.attributed_events == a.events,
+        "the damage must produce events, all of them explained: {a:?}"
+    );
+    assert!(
+        report.pass,
+        "explained corruption must not fail the capture: {:?}",
+        report.failures
+    );
+}
+
+/// The receiver must keep reading the log for the WHOLE capture, not
+/// snapshot it at startup: the sender appends to that same file as it
+/// runs, and injections it records after the receiver started are the
+/// normal case in any run longer than a few seconds.
+///
+/// Driven deterministically rather than by racing a real tap. The stream
+/// is clean, the log starts as a bare header, and a line is appended
+/// mid-capture; if the receiver never re-read the file its attribution
+/// would report `injected: 0`. The appended injection carries no PCR
+/// anchor, so it also pins the other half of the rule — an anchorless
+/// coordinate arriving after the receiver has passed its own first PCR
+/// is stranded (counted `unresolved`) instead of being blamed on a
+/// receiver that could not have placed it.
+#[test]
+fn udp_recv_picks_up_injections_appended_after_it_started() {
+    use std::io::Write as _;
+
+    let profile = profiles::by_name("baseline").expect("baseline profile must exist");
+    let url = format!("udp://127.0.0.1:{}", free_port());
+    let log_path = corruption_log_path("growing");
+
+    // A real tap's header line, so the receiver validates exactly what a
+    // live sender would have written.
+    std::fs::write(
+        &log_path,
+        b"{\"header\":{\"tap_version\":1,\"seed\":3,\"rate_per_10k\":5,\"min_gap\":1000,\
+          \"classes\":[\"drop\"],\"attribution_window\":500,\"recovery_bound\":600}}\n",
+    )
+    .expect("write the header");
+
+    let recv_transport = transport::make_recv(&url).expect("bind udp recv");
+    let recv_handle = {
+        let seconds = SECONDS;
+        let log_path = log_path.clone();
+        thread::spawn(move || {
+            recv::recv_over_transport(
+                recv_transport,
+                profile,
+                seconds,
+                false,
+                false,
+                Some(&log_path),
+            )
+        })
+    };
+
+    // Appended a third of the way in — after the receiver has opened the
+    // log and seen PCRs of its own, and well before it stops reading.
+    let appender = {
+        let log_path = log_path.clone();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_secs_f64(SECONDS / 3.0));
+            let mut f = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&log_path)
+                .expect("append to the log");
+            f.write_all(
+                b"{\"injection\":{\"ordinal\":7,\"coord\":{\"pcr_base\":null,\"since_pcr\":7},\
+                  \"class\":\"drop\",\"pid\":4113,\"offsets\":[],\"before\":[],\"after\":[],\
+                  \"detectable\":false,\"psi\":false,\"pes_start\":false}}\n",
+            )
+            .expect("write the injection line");
+            f.flush().expect("flush the injection line");
+        })
+    };
+
+    let send_metrics = send::run(
+        profile,
+        &url,
+        SECONDS,
+        None,
+        false,
+        AuSizeMode::Compact,
+        None,
+    )
+    .expect("udp send must succeed");
+
+    join_with_timeout(appender, Duration::from_secs(10));
+    let report = join_with_timeout(recv_handle, Duration::from_secs(20))
+        .expect("recv_over_transport must return");
+    let _ = std::fs::remove_file(&log_path);
+
+    let a = report
+        .metrics
+        .corruption_attribution
+        .expect("a judged capture carries its attribution");
+    assert_eq!(
+        a.injected, 1,
+        "the receiver must have re-read the log it opened empty: {a:?}"
+    );
+    assert_eq!(
+        a.unresolved, 1,
+        "an anchorless coordinate arriving mid-capture cannot be placed: {a:?}"
+    );
+    assert!(
+        a.undetected.is_empty() && a.unrecovered.is_empty(),
+        "and an injection that was never placed is never judged: {a:?}"
+    );
+    // The stream itself was clean, so nothing else should have failed.
+    assert!(
+        report.pass,
+        "recv failures: {:?} (send pushed {} AUs)",
+        report.failures, send_metrics.video_aus
     );
 }
 
