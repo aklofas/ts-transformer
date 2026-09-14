@@ -811,7 +811,7 @@ pub fn parse_schedule(s: &str) -> Option<(u64, u32, u64)> {
 /// obviously-bad input fails with a usage error instead of an allocator
 /// death.
 ///
-/// Both [`generate_schedule`](crate::impair::generate_schedule) and
+/// Both [`crate::impair::generate_schedule`] and
 /// [`ProxyStats::phases`] allocate one entry PER PHASE, eagerly, before a
 /// single packet is relayed — so an unbounded `u32` here means
 /// `phases=4294967295` tries for hundreds of gigabytes and takes the box
