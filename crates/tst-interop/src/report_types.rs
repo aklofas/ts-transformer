@@ -58,9 +58,10 @@ pub struct CellMetrics {
     /// judged without one (every interop matrix cell, and every soak cell
     /// until the corruption tap is switched on).
     ///
-    /// `recv` is the only SUBCOMMAND that takes a corruption log; the
-    /// `verify` subcommand has no such flag. Offline, the same
-    /// judgement is reachable from Rust through
+    /// `recv` is the only subcommand that READS a corruption log —
+    /// `send --corruption-log` is the other half of the pair and WRITES
+    /// one, and the `verify` subcommand has no such flag at all.
+    /// Offline, the same judgement is reachable from Rust through
     /// `verify::verify_bytes_with_corruption`, which is how this crate's
     /// own round-trip and mutation tests exercise it.
     ///
