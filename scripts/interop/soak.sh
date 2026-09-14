@@ -799,8 +799,28 @@ record_pid srt-send $!
 # rist leg: send -> proxy (impairment, NO outage) -> recv
 # ---------------------------------------------------------------------
 
+# librist recovery buffer (`RistConfig::buffer` -> librist's
+# `recovery_length_min`), in milliseconds, for BOTH ends of this leg.
+# Same derivation and the same number as SRT_LATENCY_MS above: the
+# generated schedule's worst case is a 300ms reorder hold + 40ms jitter +
+# 60ms base delay = 400ms of one-way delay, plus room for a couple of
+# retransmission rounds over an RTT the same base delay inflates to
+# ~200ms.
+#
+# tst-rist's default is 200ms — under the one-way delay on its own, and
+# the srt leg's counterpart was the one that got sized. Found on this
+# arc's 1-hour smoke: with the default, librist auto-scaled its flow
+# buffer down to 450ms, logged 148 "Dropped N late packets" and 49
+# "Dropped N packets due to buffers being full" errors, and this leg's
+# receiver reported 155 events no injection explained — against ZERO on
+# the srt leg over the same schedule and the same hour. Late-dropped
+# packets are real, unrecoverable loss no retransmission can undo, which
+# is exactly the mis-sizing SRT_LATENCY_MS documents. The fix is to size
+# the receiver for the link being emulated, NOT to relax any verdict.
+RIST_BUFFER_MS=$SRT_LATENCY_MS
+
 RIST_RECV_PORT=$(free_port)
-"$BIN" recv --url "rist://@0.0.0.0:$RIST_RECV_PORT" --expect "$RIST_PROFILE" \
+"$BIN" recv --url "rist://@0.0.0.0:$RIST_RECV_PORT?buffer=$RIST_BUFFER_MS" --expect "$RIST_PROFILE" \
   --seconds "$TOTAL_SECONDS" --json "$OUTDIR/rist/recv-report.json" --no-klv-digest \
   "${KLV_ARGS[@]}" "${RIST_RECV_CORRUPT_ARGS[@]}" \
   >"$OUTDIR/logs/rist-recv.log" 2>&1 &
@@ -818,7 +838,7 @@ RIST_PROXY_RUN_SECONDS=$((TOTAL_SECONDS + SAMPLER_END_SLACK_S))
 record_pid rist-proxy $!
 RIST_PROXY_ADDR=$(wait_for_bound_addr "$RIST_PROXY_STDOUT")
 
-"$BIN" send --profile "$RIST_PROFILE" --url "rist://$RIST_PROXY_ADDR" \
+"$BIN" send --profile "$RIST_PROFILE" --url "rist://$RIST_PROXY_ADDR?buffer=$RIST_BUFFER_MS" \
   --seconds "$TOTAL_SECONDS" --json "$OUTDIR/rist/send-report.json" --no-klv-digest \
   --au-sizes realistic "${KLV_ARGS[@]}" "${RIST_SEND_CORRUPT_ARGS[@]}" \
   >"$OUTDIR/logs/rist-send.log" 2>&1 &
