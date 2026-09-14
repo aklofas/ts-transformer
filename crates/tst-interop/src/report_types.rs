@@ -54,12 +54,18 @@ pub struct CellMetrics {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub corruption: Option<crate::corrupt::CorruptionStats>,
     /// What the receiver's evidence said about a corruption log supplied
-    /// with `recv --corruption-log` (or, offline,
-    /// `verify::verify_bytes_with_corruption`), or
-    /// `None` when the capture was judged without one (every interop
-    /// matrix cell, and every soak cell until the corruption tap is
-    /// switched on). See `crate::corrupt`'s module doc for how a
-    /// sender-side injection is matched to a receiver-side event at all.
+    /// with `recv --corruption-log`, or `None` when the capture was
+    /// judged without one (every interop matrix cell, and every soak cell
+    /// until the corruption tap is switched on).
+    ///
+    /// `recv` is the only SUBCOMMAND that takes a corruption log; the
+    /// `verify` subcommand has no such flag. Offline, the same
+    /// judgement is reachable from Rust through
+    /// `verify::verify_bytes_with_corruption`, which is how this crate's
+    /// own round-trip and mutation tests exercise it.
+    ///
+    /// See `crate::corrupt`'s module doc for how a sender-side injection
+    /// is matched to a receiver-side event at all.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub corruption_attribution: Option<crate::corrupt::AttributionReport>,
     /// What the rich-KLV decode oracles made of this capture's ST 0601

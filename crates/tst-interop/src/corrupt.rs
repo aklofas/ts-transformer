@@ -99,7 +99,7 @@ const TAP_VERSION: u32 = 1;
 /// **A cap on a list must never become a cap on a JUDGEMENT.** The
 /// verdicts read the counters, never `len()`; see
 /// [`AttributionReport::unexplained_total`].
-const MAX_SAMPLES: usize = 64;
+pub const MAX_SAMPLES: usize = 64;
 
 /// Injections retired below [`Attribution`]'s `lo` cursor before their
 /// accounting is folded into the running counters and their per-injection
@@ -107,7 +107,7 @@ const MAX_SAMPLES: usize = 64;
 /// prefix is removed with one memmove per batch instead of per injection;
 /// the batch size is the entire bound on how much of the log the engine
 /// holds once a run is under way.
-const PRUNE_BATCH: usize = 1024;
+pub const PRUNE_BATCH: usize = 1024;
 
 // ============================================================
 // Classes, config, parsing
@@ -1679,7 +1679,7 @@ impl Attribution {
     ///
     /// One case cannot be carried over honestly. An injection whose
     /// coordinate has no PCR anchor (`pcr_base: None`) means "before the
-    /// stream's first PCR", and [`Attribution::new`] resolves it against
+    /// stream's first PCR", and [`Attribution::strict`] and [`Attribution::lossy`] resolve it against
     /// receiver ordinal 0 — sound only for a receiver that was listening
     /// from the stream's first packet. Once this attribution has seen a
     /// PCR, the receiver is demonstrably past that point, so an anchorless
@@ -2871,7 +2871,7 @@ mod tests {
 
     /// Before the first PCR there is nothing to strand against, so an
     /// anchorless injection appended then still resolves at ordinal 0 —
-    /// the same treatment `Attribution::new` gives it.
+    /// the same treatment the constructors give it.
     #[test]
     fn an_anchorless_injection_appended_before_any_pcr_still_resolves() {
         let hdr = LogHeader {
