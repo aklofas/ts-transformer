@@ -116,29 +116,47 @@ ALLOWED_SKIPS_ARG=""
 # tools are built for. See the --au-sizes note in the header.
 AU_SIZES=realistic
 
+# Every value-taking flag below reads $2. Under `set -u` a flag given as
+# the last argument would otherwise abort with the shell's own bare
+# "$2: unbound variable" at exit 1 — one guard in front of all of them
+# keeps that an actionable usage error at exit 2, like every other
+# argument mistake this script diagnoses.
+require_value() {
+  [[ $# -ge 2 ]] || {
+    echo "run-matrix.sh: $1 requires a value" >&2
+    exit 2
+  }
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --outdir)
+      require_value "$@"
       OUTDIR=$2
       shift 2
       ;;
     --seconds)
+      require_value "$@"
       SECONDS_ARG=$2
       shift 2
       ;;
     --cells)
+      require_value "$@"
       CELLS_GLOB=$2
       shift 2
       ;;
     --profiles)
+      require_value "$@"
       PROFILES_ARG=$2
       shift 2
       ;;
     --allowed-skips)
+      require_value "$@"
       ALLOWED_SKIPS_ARG=$2
       shift 2
       ;;
     --au-sizes)
+      require_value "$@"
       AU_SIZES=$2
       shift 2
       ;;
