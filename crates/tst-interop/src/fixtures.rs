@@ -298,6 +298,389 @@ fn triangle_wave(seq: u32) -> f64 {
     tri as f64
 }
 
+// ============================================================================
+// Rich ST 0601 records (spec §5.3)
+// ============================================================================
+
+/// Salt mixed into the run seed before drawing the rich presence
+/// schedule, so the KLV schedule is statistically independent of every
+/// other seeded component of the same run (impairment, corruption, AU
+/// sizes) even though all of them share one run seed. The digits spell
+/// the two standards this generator speaks plus the tag that nests one
+/// inside the other: 0601, 0102, 48.
+pub const KLV_SALT: u64 = 0x5EC0_0601_0102_0048;
+
+/// Per-record `timestamp_us` step in rich mode — 10 Hz, i.e.
+/// `seq * 100_000` µs. Rich mode times records at the real soak KLV
+/// cadence (the compact record's 1 s step is a fixture artifact), so a
+/// receiver can invert a decoded timestamp back to the sender's `seq`
+/// with [`rich_seq_of_timestamp`].
+pub const RICH_TS_STEP_US: u64 = 100_000;
+
+/// Epoch for rich-mode timestamps — the same base value
+/// [`klv_record`] uses (`gen_synthetic_fixtures.rs::minimal()`).
+pub const RICH_TS_BASE_US: u64 = 1_700_000_000_000_000;
+
+/// How many records one core-only record falls in, on average: the
+/// schedule reserves one `seq` residue in 50 for a record that carries
+/// nothing but [`RICH_CORE_TAGS`], so a receiver-side oracle has to cope
+/// with a legitimately sparse record rather than assuming every record
+/// carries the same tag set.
+const CORE_ONLY_PERIOD: u32 = 50;
+
+/// Which ST 0601 tag set the KLV generator emits.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum KlvSet {
+    /// The original 4-tag, 50-byte record — byte-identical to what
+    /// [`klv_record`] has always produced. The 157-cell interop matrix's
+    /// expectations were validated against these exact bytes, so this
+    /// stays the default everywhere.
+    Compact,
+    /// A realistic ~32-tag record: the same walking core, plus six
+    /// optional tag groups that come and go on a seeded schedule, plus a
+    /// nested ST 0102 security set. Exercises the demuxer/decoder against
+    /// records whose tag set varies record to record, which is what a
+    /// real ST 0601 producer emits.
+    Rich,
+}
+
+impl KlvSet {
+    /// Inverse of the wire names used on the command line (`compact` /
+    /// `rich`). Case-sensitive, like [`crate::corrupt::Class::parse`].
+    #[must_use]
+    pub fn parse(s: &str) -> Option<KlvSet> {
+        match s {
+            "compact" => Some(KlvSet::Compact),
+            "rich" => Some(KlvSet::Rich),
+            _ => None,
+        }
+    }
+}
+
+/// The optional ST 0601 tag groups a rich record carries on a seeded
+/// schedule (spec §5.3). Each group is all-or-nothing: a record either
+/// carries every tag of the group or none of them, which is how a real
+/// producer behaves (a platform either has a pose solution this frame or
+/// it does not).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
+pub enum RichGroup {
+    Pose,
+    Optics,
+    Frame,
+    Target,
+    Identity,
+    Security,
+}
+
+impl RichGroup {
+    /// Every group, in declaration order. This order is load-bearing:
+    /// [`rich_presence`] draws one phase per group in exactly this
+    /// sequence, so reordering the enum would silently reshuffle every
+    /// seed's schedule.
+    pub const ALL: [RichGroup; 6] = [
+        RichGroup::Pose,
+        RichGroup::Optics,
+        RichGroup::Frame,
+        RichGroup::Target,
+        RichGroup::Identity,
+        RichGroup::Security,
+    ];
+}
+
+/// Tags every rich record carries, no matter the schedule: Checksum (1),
+/// Precision Time Stamp (2), Platform Heading (5), Sensor Lat/Lon/Alt
+/// (13/14/15) and UAS LS Version (65).
+///
+/// Tag 1 is on the list because `st0601::encode_to_vec` appends a
+/// checksum to every record it writes and `st0601::decode` validates it,
+/// so it is always on the wire even though no model field holds it.
+pub const RICH_CORE_TAGS: [u8; 7] = [1, 2, 5, 13, 14, 15, 65];
+
+/// The tags belonging to `g`. Kept adjacent to [`observed_tags`]'s
+/// field table so the two stay diffable by eye — they are the two halves
+/// of the census oracle's identity (declared presence == observed tags).
+#[must_use]
+pub fn rich_group_tags(g: RichGroup) -> &'static [u8] {
+    match g {
+        // Platform pitch/roll + sensor relative az/el/roll.
+        RichGroup::Pose => &[6, 7, 18, 19, 20],
+        // Sensor H/V field of view, slant range, target width.
+        RichGroup::Optics => &[16, 17, 21, 22],
+        // Frame centre lat/lon/elev + the eight corner offsets.
+        RichGroup::Frame => &[23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33],
+        // Target location lat/lon/elev + platform ground speed.
+        RichGroup::Target => &[40, 41, 42, 56],
+        // Mission id, tail number, platform designation, image source.
+        RichGroup::Identity => &[3, 4, 10, 11],
+        // Nested ST 0102 security local set.
+        RichGroup::Security => &[48],
+    }
+}
+
+/// How often `g` recurs, in records. Fixed per group (never drawn), so
+/// the *rate* each group appears at is a property of the generator and
+/// only the *offset* varies with the seed: pose and frame geometry every
+/// record, optics every other, target every third, security every fifth,
+/// identity every tenth — the shape a real producer emits, where the
+/// slow-changing descriptive tags are sent far less often than the
+/// per-frame geometry.
+fn rich_group_period(g: RichGroup) -> u32 {
+    match g {
+        RichGroup::Pose => 1,
+        RichGroup::Optics => 2,
+        RichGroup::Frame => 1,
+        RichGroup::Target => 3,
+        RichGroup::Identity => 10,
+        RichGroup::Security => 5,
+    }
+}
+
+/// Which tags the rich record at `seq` carries, as a pure function of
+/// `(seed, seq)` — no state, no clock, so a sender and a receiver-side
+/// oracle can compute the same answer independently and a replay of the
+/// same run reproduces it exactly.
+///
+/// **Draw order (part of the determinism contract — changing it changes
+/// every seed's schedule):** from `XorShift64::new(seed ^ KLV_SALT)`,
+/// draw one phase per group in [`RichGroup::ALL`] order, then the
+/// core-only phase. Every group's phase is drawn unconditionally,
+/// including the period-1 groups whose phase can only be 0, so the
+/// period table and the draw order stay independent of each other.
+///
+/// A group is present iff `seq % period == phase`; a record whose `seq`
+/// hits the core-only residue carries [`RICH_CORE_TAGS`] alone.
+#[must_use]
+pub fn rich_presence(seed: u64, seq: u32) -> std::collections::BTreeSet<u8> {
+    let mut rng = XorShift64::new(seed ^ KLV_SALT);
+    let mut phases = [0u32; RichGroup::ALL.len()];
+    for (slot, g) in phases.iter_mut().zip(RichGroup::ALL) {
+        *slot = (rng.next_u64() % u64::from(rich_group_period(g))) as u32;
+    }
+    let core_only_phase = (rng.next_u64() % u64::from(CORE_ONLY_PERIOD)) as u32;
+
+    let mut tags: std::collections::BTreeSet<u8> = RICH_CORE_TAGS.into_iter().collect();
+    if seq % CORE_ONLY_PERIOD == core_only_phase {
+        return tags;
+    }
+    for (phase, g) in phases.into_iter().zip(RichGroup::ALL) {
+        if seq % rich_group_period(g) == phase {
+            tags.extend(rich_group_tags(g).iter().copied());
+        }
+    }
+    tags
+}
+
+/// The tag ids a decoded record actually carries — the observed half of
+/// the census oracle whose declared half is [`rich_presence`]. Covers
+/// exactly the tags the rich generator can set (core + all six groups);
+/// tags outside that set are ignored, so this is not a general-purpose
+/// "what's in this record" helper.
+#[must_use]
+pub fn observed_tags(rec: &UasDatalinkLs) -> std::collections::BTreeSet<u8> {
+    // Mirrors RICH_CORE_TAGS and rich_group_tags above, in the same
+    // order — keep the two adjacent and diff them whenever either moves.
+    let present = [
+        // Core, minus Tag 1: the checksum has no model field (encode
+        // appends it, decode validates and consumes it), so a record
+        // that decoded at all carries it.
+        (2, rec.timestamp_us.is_some()),
+        (5, rec.platform_heading_deg.is_some()),
+        (13, rec.sensor_lat_deg.is_some()),
+        (14, rec.sensor_lon_deg.is_some()),
+        (15, rec.sensor_alt_m.is_some()),
+        (65, rec.uas_ls_version.is_some()),
+        // Pose
+        (6, rec.platform_pitch_deg.is_some()),
+        (7, rec.platform_roll_deg.is_some()),
+        (18, rec.sensor_rel_az_deg.is_some()),
+        (19, rec.sensor_rel_el_deg.is_some()),
+        (20, rec.sensor_rel_roll_deg.is_some()),
+        // Optics
+        (16, rec.sensor_hfov_deg.is_some()),
+        (17, rec.sensor_vfov_deg.is_some()),
+        (21, rec.slant_range_m.is_some()),
+        (22, rec.target_width_m.is_some()),
+        // Frame
+        (23, rec.frame_center_lat_deg.is_some()),
+        (24, rec.frame_center_lon_deg.is_some()),
+        (25, rec.frame_center_elev_m.is_some()),
+        (26, rec.corner_lat_offset_p1_deg.is_some()),
+        (27, rec.corner_lon_offset_p1_deg.is_some()),
+        (28, rec.corner_lat_offset_p2_deg.is_some()),
+        (29, rec.corner_lon_offset_p2_deg.is_some()),
+        (30, rec.corner_lat_offset_p3_deg.is_some()),
+        (31, rec.corner_lon_offset_p3_deg.is_some()),
+        (32, rec.corner_lat_offset_p4_deg.is_some()),
+        (33, rec.corner_lon_offset_p4_deg.is_some()),
+        // Target
+        (40, rec.target_location_lat_deg.is_some()),
+        (41, rec.target_location_lon_deg.is_some()),
+        (42, rec.target_location_elev_m.is_some()),
+        (56, rec.platform_ground_speed.is_some()),
+        // Identity
+        (3, rec.mission_id.is_some()),
+        (4, rec.platform_tail_number.is_some()),
+        (10, rec.platform_designation.is_some()),
+        (11, rec.image_source_sensor.is_some()),
+        // Security
+        (48, rec.security_local_set.is_some()),
+    ];
+    let mut out: std::collections::BTreeSet<u8> = std::iter::once(1u8).collect();
+    out.extend(present.iter().filter(|(_, p)| *p).map(|(t, _)| *t));
+    out
+}
+
+/// Map the `0..=1` walk parameter into `[min, max]`, stopping 5 % of the
+/// span short of both ends.
+///
+/// This is the run-1 rule generalised: soak run 1 died 14.5 h in because
+/// an unbounded latitude walk crossed Tag 13's +90 encode max. Every
+/// numeric tag the rich generator sets goes through here, so no tag can
+/// ever reach its own encode limit however long the run goes — and the
+/// 5 % margin means a later rounding or unit tweak has room to be wrong
+/// without becoming a mid-soak panic.
+fn walk(w: f64, min: f64, max: f64) -> f64 {
+    let margin = (max - min) * 0.05;
+    min + margin + w * (max - min - 2.0 * margin)
+}
+
+/// Build the rich ST 0601 record for `(seed, seq)` — see [`KlvSet::Rich`]
+/// and [`rich_presence`]. Returns raw KLV LS bytes on the same
+/// "caller passes unwrapped LS bytes" contract as [`klv_record`].
+///
+/// # Errors
+/// Returns the encoder's message (which names the offending tag) rather
+/// than panicking. Every numeric field is walked through [`walk`] and so
+/// should be structurally incapable of going out of range; surfacing a
+/// failure as `Err` instead of an `expect` is what keeps a generator bug
+/// from killing a 72 h soak the way run 1's did.
+pub fn klv_record_rich(seed: u64, seq: u32) -> Result<Vec<u8>, String> {
+    let tags = rich_presence(seed, seq);
+    let has = |t: u8| tags.contains(&t);
+    // The same bounded triangle the compact record walks, normalised to
+    // 0..=1 so one parameter drives every tag: all values sweep their
+    // ranges together and turn around together, which keeps the record
+    // self-consistent (a frame centre that tracks the sensor position)
+    // instead of looking like independent noise per tag.
+    let w = triangle_wave(seq) / 10_000.0;
+
+    let mut rec = UasDatalinkLs {
+        timestamp_us: Some(RICH_TS_BASE_US + u64::from(seq) * RICH_TS_STEP_US),
+        platform_heading_deg: Some(walk(w, 0.0, 360.0)),
+        sensor_lat_deg: Some(38.0 + w),
+        sensor_lon_deg: Some(-121.5 - w),
+        sensor_alt_m: Some(walk(w, -900.0, 19_000.0)),
+        uas_ls_version: Some(19),
+        ..Default::default()
+    };
+
+    if has(6) {
+        rec.platform_pitch_deg = Some(walk(w, -20.0, 20.0));
+        rec.platform_roll_deg = Some(walk(w, -50.0, 50.0));
+        rec.sensor_rel_az_deg = Some(walk(w, 0.0, 360.0));
+        rec.sensor_rel_el_deg = Some(walk(w, -180.0, 180.0));
+        rec.sensor_rel_roll_deg = Some(walk(w, 0.0, 360.0));
+    }
+    if has(16) {
+        rec.sensor_hfov_deg = Some(walk(w, 0.0, 180.0));
+        rec.sensor_vfov_deg = Some(walk(w, 0.0, 180.0));
+        rec.slant_range_m = Some(walk(w, 0.0, 5_000_000.0));
+        rec.target_width_m = Some(walk(w, 0.0, 10_000.0));
+    }
+    if has(23) {
+        rec.frame_center_lat_deg = Some(38.0 + w);
+        rec.frame_center_lon_deg = Some(-121.5 - w);
+        rec.frame_center_elev_m = Some(walk(w, -900.0, 19_000.0));
+        // The four corner offsets bracket the frame centre the way a
+        // real footprint's do — (+,+) (+,-) (-,-) (-,+) walking the quad
+        // — rather than all sharing one sign, which would collapse the
+        // "footprint" onto a single diagonal.
+        let d = walk(w, -0.075, 0.075);
+        rec.corner_lat_offset_p1_deg = Some(d);
+        rec.corner_lon_offset_p1_deg = Some(d);
+        rec.corner_lat_offset_p2_deg = Some(d);
+        rec.corner_lon_offset_p2_deg = Some(-d);
+        rec.corner_lat_offset_p3_deg = Some(-d);
+        rec.corner_lon_offset_p3_deg = Some(-d);
+        rec.corner_lat_offset_p4_deg = Some(-d);
+        rec.corner_lon_offset_p4_deg = Some(d);
+    }
+    if has(40) {
+        rec.target_location_lat_deg = Some(38.0 + w);
+        rec.target_location_lon_deg = Some(-121.5 - w);
+        rec.target_location_elev_m = Some(walk(w, -900.0, 19_000.0));
+        rec.platform_ground_speed = Some(walk(w, 0.0, 255.0));
+    }
+    if has(3) {
+        // Every string is far inside ST 0601's 127-byte UTF-8 cap, and
+        // the mission id cycles rather than growing with `seq`.
+        rec.mission_id = Some(format!("MISSION-{:04}", seq % 10_000));
+        rec.platform_tail_number = Some("N0TST".into());
+        rec.platform_designation = Some("SYNTH-UAS".into());
+        rec.image_source_sensor = Some("EO".into());
+    }
+    if has(48) {
+        rec.security_local_set = Some(security_set(seq)?);
+    }
+
+    encode_to_vec(&rec).map_err(|e| format!("rich record seq {seq}: {e}"))
+}
+
+/// The nested ST 0102 security local set carried in ST 0601 Tag 48.
+/// Field shapes (the `//US` classifying-country spelling, the plain
+/// two-letter object country code that Tag 13 re-encodes as UTF-16, the
+/// version number) are exactly those of
+/// `klv::st0102::tests::round_trip_with_unknown_tag_preserved`, so the
+/// set decodes with no `field_errors` and passes ST 0102 strict
+/// compliance (tags 1, 2, 3, 12, 13 and 22 are all present).
+fn security_set(seq: u32) -> Result<Vec<u8>, String> {
+    use tst_core::klv::st0102::{
+        ClassifyingCountryCodingMethod, ObjectCountryCodingMethod, SecurityClassification,
+        SecurityLs,
+    };
+    let sec = SecurityLs {
+        security_classification: Some(SecurityClassification::Unclassified),
+        classifying_country_coding_method: Some(ClassifyingCountryCodingMethod::Iso3166TwoLetter),
+        classifying_country: Some("//US".into()),
+        caveats: Some("SYNTHETIC".into()),
+        releasing_instructions: Some("NONE".into()),
+        object_country_coding_method: Some(ObjectCountryCodingMethod::Iso3166TwoLetter),
+        object_country_codes: Some("US".into()),
+        version: Some(12),
+        ..Default::default()
+    };
+    tst_core::klv::st0102::encode_to_vec(&sec)
+        .map_err(|e| format!("rich record seq {seq}: nested ST 0102 set: {e}"))
+}
+
+/// Dispatch on the configured [`KlvSet`]: `Compact` reproduces
+/// [`klv_record`] byte for byte (ignoring `seed` — the compact record has
+/// no seeded component), `Rich` builds [`klv_record_rich`].
+///
+/// # Errors
+/// Propagates [`klv_record_rich`]'s encode failure. `Compact` is
+/// infallible but shares the signature so callers have one call site.
+pub fn klv_record_for(set: KlvSet, seed: u64, seq: u32) -> Result<Vec<u8>, String> {
+    match set {
+        KlvSet::Compact => Ok(klv_record(seq)),
+        KlvSet::Rich => klv_record_rich(seed, seq),
+    }
+}
+
+/// Recover the sender's `seq` from a rich record's decoded
+/// `timestamp_us`. `None` if the stamp predates [`RICH_TS_BASE_US`], is
+/// off the [`RICH_TS_STEP_US`] grid, or is further out than a `u32` of
+/// records — any of which means the record did not come from
+/// [`klv_record_rich`].
+#[must_use]
+pub fn rich_seq_of_timestamp(ts_us: u64) -> Option<u32> {
+    let offset = ts_us.checked_sub(RICH_TS_BASE_US)?;
+    if offset % RICH_TS_STEP_US != 0 {
+        return None;
+    }
+    u32::try_from(offset / RICH_TS_STEP_US).ok()
+}
+
 /// Build a single 7-byte-header ADTS AAC frame (no CRC). Header layout
 /// lifted verbatim from `make_adts_buf` in
 /// `crates/tst-core/benches/codec_parsers.rs:105-140` (MPEG-2 ID, AAC-LC
@@ -376,6 +759,182 @@ mod tests {
                 "seq {seq}: lon {lon} out of range"
             );
         }
+    }
+
+    #[test]
+    fn rich_presence_is_deterministic_and_core_is_always_present() {
+        for seq in [0u32, 1, 49, 50, 999, 2_591_999] {
+            let a = rich_presence(9, seq);
+            assert_eq!(a, rich_presence(9, seq));
+            for t in RICH_CORE_TAGS {
+                assert!(a.contains(&t), "seq {seq} missing core tag {t}");
+            }
+        }
+        assert_ne!(
+            rich_presence(9, 7),
+            rich_presence(10, 7),
+            "seed changes the schedule"
+        );
+    }
+
+    #[test]
+    fn rich_presence_has_core_only_records_and_every_group_appears() {
+        let mut core_only = 0;
+        let mut seen: std::collections::BTreeSet<RichGroup> = Default::default();
+        for seq in 0..5_000u32 {
+            let p = rich_presence(1, seq);
+            if p.iter().all(|t| RICH_CORE_TAGS.contains(t)) {
+                core_only += 1;
+            }
+            for g in RichGroup::ALL {
+                if rich_group_tags(g).iter().all(|t| p.contains(t)) {
+                    seen.insert(g);
+                }
+            }
+        }
+        assert!(
+            (50..=150).contains(&core_only),
+            "~1 in 50 core-only, got {core_only}/5000"
+        );
+        assert_eq!(seen.len(), 6);
+    }
+
+    #[test]
+    fn rich_record_decodes_with_the_declared_tag_set_and_a_nested_security_set() {
+        use tst_core::klv::{st0102, st0601};
+        for seq in [0u32, 3, 50, 777] {
+            let bytes = klv_record_rich(1, seq).unwrap();
+            let rec = st0601::decode(&bytes).unwrap();
+            assert!(rec.field_errors.is_empty(), "{:?}", rec.field_errors);
+            let expect = rich_presence(1, seq);
+            // A rich record carries a materially larger tag set than the
+            // compact one: measured 128..=212 bytes across seeds against
+            // compact's 50 (a core-only record is 54, hence the gate).
+            // Stated against the compact record rather than a magic floor
+            // so the claim survives either generator's field set moving;
+            // the ceiling catches runaway growth, e.g. a string field
+            // that starts scaling with `seq`.
+            assert!(bytes.len() <= 400, "seq {seq}: {} bytes", bytes.len());
+            if expect.len() > RICH_CORE_TAGS.len() {
+                assert!(
+                    bytes.len() > 2 * klv_record(seq).len(),
+                    "seq {seq}: rich {} bytes vs compact {}",
+                    bytes.len(),
+                    klv_record(seq).len()
+                );
+            }
+            // Presence check on a representative field per group + core.
+            assert_eq!(rec.platform_pitch_deg.is_some(), expect.contains(&6));
+            assert_eq!(rec.sensor_hfov_deg.is_some(), expect.contains(&16));
+            assert_eq!(rec.corner_lat_offset_p1_deg.is_some(), expect.contains(&26));
+            assert_eq!(rec.target_location_lat_deg.is_some(), expect.contains(&40));
+            assert_eq!(rec.mission_id.is_some(), expect.contains(&3));
+            assert_eq!(rec.security_local_set.is_some(), expect.contains(&48));
+            assert_eq!(rich_seq_of_timestamp(rec.timestamp_us.unwrap()), Some(seq));
+            if let Some(sec) = &rec.security_local_set {
+                let s = st0102::decode(sec).unwrap();
+                assert!(s.field_errors.is_empty());
+                assert!(s.security_classification.is_some());
+            }
+        }
+    }
+
+    /// The census oracle's exact identity (Task 10 consumes both halves):
+    /// the tags a rich record actually carries on the wire are precisely
+    /// the tags its seeded presence schedule declared, with no drift
+    /// between the two tag lists.
+    #[test]
+    fn observed_tags_of_a_rich_record_equal_its_declared_presence() {
+        for seed in [1u64, 77] {
+            for seq in [0u32, 1, 3, 50, 777, 4_999, 2_591_999] {
+                let rec = tst_core::klv::st0601::decode(&klv_record_rich(seed, seq).unwrap())
+                    .expect("rich record must decode");
+                assert_eq!(
+                    observed_tags(&rec),
+                    rich_presence(seed, seq),
+                    "seed {seed} seq {seq}"
+                );
+            }
+        }
+    }
+
+    /// The run-1 rule applied to every rich tag: a 72h soak at 10 Hz needs
+    /// 2_592_000 records; sweep every triangle extreme plus a prime stride
+    /// plus 10_000 seeded random seqs, for two seeds. Any encode error is
+    /// a generator bug (out-of-range walk), caught here, never in a soak.
+    #[test]
+    fn rich_record_encodes_across_a_full_72h_soak_seq_range() {
+        let mut rng = XorShift64::new(4242);
+        for seed in [1u64, 77] {
+            for seq in (0..3_000_000u32).step_by(997) {
+                klv_record_rich(seed, seq).unwrap_or_else(|e| panic!("seed {seed} seq {seq}: {e}"));
+            }
+            for seq in [0u32, 10_000, 20_000, 520_001, 2_591_999] {
+                klv_record_rich(seed, seq).unwrap();
+            }
+            for _ in 0..10_000 {
+                let seq = (rng.next_u64() % 3_000_000) as u32;
+                klv_record_rich(seed, seq).unwrap();
+            }
+        }
+    }
+
+    /// The run-1 rule has to bite at the walk's *turnaround* points —
+    /// `w == 0` (seq 0) and `w == 1` (seq 10_000) — where a range bug
+    /// hides. Group presence is seeded, so sweeping a single seed at
+    /// those seqs silently leaves every absent group unchecked: the
+    /// sweep above can pass while a group that never happened to be
+    /// scheduled at an extreme carries an out-of-range walk. Sweep
+    /// seeds instead, and assert every group was genuinely exercised at
+    /// both extremes before believing the encodes proved anything.
+    #[test]
+    fn every_rich_group_encodes_at_both_triangle_extremes() {
+        for seq in [0u32, 10_000] {
+            let mut covered: std::collections::BTreeSet<RichGroup> = Default::default();
+            for seed in 0..200u64 {
+                klv_record_rich(seed, seq).unwrap_or_else(|e| panic!("seed {seed} seq {seq}: {e}"));
+                let p = rich_presence(seed, seq);
+                for g in RichGroup::ALL {
+                    if rich_group_tags(g).iter().all(|t| p.contains(t)) {
+                        covered.insert(g);
+                    }
+                }
+            }
+            assert_eq!(
+                covered.len(),
+                RichGroup::ALL.len(),
+                "seq {seq}: only {covered:?} were exercised at this extreme"
+            );
+        }
+    }
+
+    #[test]
+    fn compact_dispatch_is_byte_identical_to_klv_record() {
+        for seq in [0u32, 1, 520_001] {
+            assert_eq!(
+                klv_record_for(KlvSet::Compact, 99, seq).unwrap(),
+                klv_record(seq)
+            );
+        }
+    }
+
+    #[test]
+    fn klv_set_parses_its_wire_names_and_rejects_anything_else() {
+        assert_eq!(KlvSet::parse("compact"), Some(KlvSet::Compact));
+        assert_eq!(KlvSet::parse("rich"), Some(KlvSet::Rich));
+        assert_eq!(KlvSet::parse("Rich"), None);
+        assert_eq!(KlvSet::parse(""), None);
+    }
+
+    #[test]
+    fn rich_seq_of_timestamp_rejects_off_grid_and_pre_base_stamps() {
+        assert_eq!(rich_seq_of_timestamp(RICH_TS_BASE_US), Some(0));
+        assert_eq!(
+            rich_seq_of_timestamp(RICH_TS_BASE_US + 7 * RICH_TS_STEP_US),
+            Some(7)
+        );
+        assert_eq!(rich_seq_of_timestamp(RICH_TS_BASE_US - 1), None);
+        assert_eq!(rich_seq_of_timestamp(RICH_TS_BASE_US + 1), None);
     }
 
     #[test]
