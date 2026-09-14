@@ -126,4 +126,19 @@ pub struct VerifyReport {
     /// of "how many times the sender reconnected," only "how many times
     /// this recv rebuilt its own transport."
     pub reconnects: Option<u64>,
+    /// The [`crate::profiles::Profile`] this capture was judged against,
+    /// set by `recv` from its own `--expect`. `None` for an offline
+    /// `verify` (whose caller already knows which profile it asked for,
+    /// and whose per-cell JSON the interop matrix reads through
+    /// `report merge`'s own declared inventory) and for an archived
+    /// report written before this field existed — hence
+    /// `#[serde(default)]`.
+    ///
+    /// Exists so `report soak` can check a leg's recv report against the
+    /// profile `soak-config.json` DECLARED for that leg: without it, a
+    /// harness bug that sent one profile's traffic while the config
+    /// claimed another would produce a fully-passing run whose published
+    /// evidence names the wrong wire shape.
+    #[serde(default)]
+    pub profile: Option<String>,
 }

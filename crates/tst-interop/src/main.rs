@@ -28,6 +28,9 @@ Subcommands:
   verify    Verify interop test results
   proxy     UDP impairment relay (loss/dup/reorder/jitter/scheduled outage)
   report    Generate interop report
+  pick-profiles --seed N --legs K
+            Print K distinct profile names, drawn deterministically from
+            the seed (soak.sh --profile auto's per-leg selection)
 
 Options:
   -h, --help   Show this help message"
@@ -119,6 +122,7 @@ fn main() {
         "verify" => run_verify(&args[2..]),
         "proxy" => run_proxy(&args[2..]),
         "report" => run_report(&args[2..]),
+        "pick-profiles" => run_pick_profiles(&args[2..]),
         _ => {
             eprintln!("Unknown subcommand: {}", subcommand);
             println!("{}", usage());
@@ -970,6 +974,73 @@ fn run_proxy(args: &[String]) -> ! {
         }
         Err(e) => {
             eprintln!("proxy: {e}");
+            std::process::exit(2);
+        }
+    }
+}
+
+/// `pick-profiles --seed N --legs K`
+///
+/// Prints `K` distinct profile names, one per line, drawn
+/// deterministically from `N` (see `profiles::pick`). Exists so
+/// `soak.sh --profile auto` can select a per-leg profile without
+/// reimplementing this crate's PRNG in bash — the shell reads the lines,
+/// and the same seed reproduces the same run. Exits 0 on success, 2 on a
+/// usage error (including `--legs` larger than the registry).
+fn run_pick_profiles(args: &[String]) -> ! {
+    let mut seed: Option<u64> = None;
+    let mut legs: Option<usize> = None;
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--seed" => {
+                let raw = require_value(args, i, "pick-profiles: --seed");
+                seed = Some(raw.parse().unwrap_or_else(|e| {
+                    eprintln!(
+                        "pick-profiles: --seed must be a non-negative integer, got '{raw}': {e}"
+                    );
+                    std::process::exit(2);
+                }));
+                i += 2;
+            }
+            "--legs" => {
+                let raw = require_value(args, i, "pick-profiles: --legs");
+                legs = Some(raw.parse().unwrap_or_else(|e| {
+                    eprintln!("pick-profiles: --legs must be a positive integer, got '{raw}': {e}");
+                    std::process::exit(2);
+                }));
+                i += 2;
+            }
+            other => {
+                eprintln!("pick-profiles: unknown argument: {other}");
+                std::process::exit(2);
+            }
+        }
+    }
+
+    let seed = seed.unwrap_or_else(|| {
+        eprintln!("pick-profiles: --seed is required");
+        std::process::exit(2);
+    });
+    let legs = legs.unwrap_or_else(|| {
+        eprintln!("pick-profiles: --legs is required");
+        std::process::exit(2);
+    });
+    if legs == 0 {
+        eprintln!("pick-profiles: --legs must be at least 1");
+        std::process::exit(2);
+    }
+
+    match profiles::pick(seed, legs) {
+        Ok(names) => {
+            for name in names {
+                println!("{name}");
+            }
+            std::process::exit(0);
+        }
+        Err(e) => {
+            eprintln!("pick-profiles: {e}");
             std::process::exit(2);
         }
     }

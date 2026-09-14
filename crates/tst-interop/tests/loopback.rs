@@ -137,6 +137,15 @@ fn udp_baseline_loopback_round_trips_and_matches() {
         send_metrics.bytes, recv_report.metrics.bytes,
         "sent and received byte counts must match"
     );
+    // A live `recv` stamps the profile it judged against — `report
+    // soak`'s `profile_declared_<leg>` verdict is built entirely on this
+    // field, and a report that silently carries `None` would turn that
+    // verdict into an unfalsifiable pass.
+    assert_eq!(
+        recv_report.profile.as_deref(),
+        Some("baseline"),
+        "a live recv must record the profile it judged against"
+    );
 }
 
 /// (Fix-round regression) `--no-klv-digest` (`no_klv_digest: true` at
@@ -907,5 +916,13 @@ fn srt_managed_recv_returns_after_peer_never_reconnects() {
         "expected 1..={} AUs tallied from the one real connection, got {}",
         send_metrics.video_aus,
         report.metrics.video_aus
+    );
+    // The managed path stamps the judged profile too — `soak.sh`'s srt
+    // leg is a `recv --managed` capture, and `report soak`'s
+    // `profile_declared_srt` verdict reads exactly this field.
+    assert_eq!(
+        report.profile.as_deref(),
+        Some("baseline"),
+        "a managed recv must record the profile it judged against"
     );
 }

@@ -1008,6 +1008,9 @@ impl Tally {
             // the same way it patches `metrics.bytes`/`stream_sha256`
             // in from the `Teeing` tap post-hoc.
             reconnects: None,
+            // Same post-hoc shape: `recv` stamps its `--expect` here, an
+            // offline `verify` leaves it unset (see the field's own doc).
+            profile: None,
         }
     }
 }

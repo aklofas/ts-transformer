@@ -357,6 +357,9 @@ pub fn recv_over_transport(
     // the real tally.
     report.metrics.bytes = bytes;
     report.metrics.stream_sha256 = stream_sha256;
+    // Which profile this capture was judged against, for `report soak`'s
+    // `profile_declared_<leg>` check — see `VerifyReport::profile`.
+    report.profile = Some(expect.name.to_string());
     if let Some(e) = reader_error {
         report.failures.push(format!("rawts_sync_loss: {e}"));
         report.pass = false;
@@ -609,6 +612,8 @@ pub fn run_managed(
     report.metrics.bytes = bytes;
     report.metrics.stream_sha256 = stream_sha256;
     report.reconnects = Some(reconnects);
+    // See `recv_over_transport`'s own stamp above.
+    report.profile = Some(expect.name.to_string());
     if let Some(e) = reader_error {
         report.failures.push(format!("rawts_sync_loss: {e}"));
         report.pass = false;

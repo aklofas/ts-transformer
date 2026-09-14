@@ -1243,6 +1243,47 @@ pub mod soak {
         /// the tap was off.
         #[serde(default)]
         pub corruption: bool,
+        /// Per-leg declaration of what `soak.sh` launched that leg with:
+        /// which stream profile, and which impairment schedule (if any).
+        /// Keyed by leg name (`"srt"`/`"rist"`).
+        ///
+        /// `#[serde(default)]` so an archived pre-realism config still
+        /// parses; a leg with no entry yields passing
+        /// `profile_declared_<leg>`/`schedule_declared_<leg>` verdicts
+        /// saying so, rather than failing evidence that predates the
+        /// declaration.
+        #[serde(default)]
+        pub legs: BTreeMap<String, LegDeclaration>,
+    }
+
+    /// What one leg of a soak run was DECLARED to be — written before the
+    /// run starts, checked against the run's own artifacts afterwards.
+    ///
+    /// The profile half closes a specific hole: `soak.sh` passes the
+    /// profile name to `send --profile` and to `recv --expect`
+    /// independently, so a harness bug could run (and pass) one shape
+    /// while the published evidence claims another. The schedule half does
+    /// the same for the impairment the proxy actually ran.
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct LegDeclaration {
+        /// A [`crate::profiles`] name — rejected at parse time if unknown.
+        pub profile: String,
+        /// The `--schedule seed=,phases=,phase_s=` this leg's proxy was
+        /// launched with, or `None` for a fixed-impairment run.
+        #[serde(default)]
+        pub schedule: Option<ScheduleDeclaration>,
+    }
+
+    /// The declared half of a leg's impairment schedule — compared field
+    /// for field against the proxy's own [`crate::proxy::ScheduleEcho`].
+    /// The generated phase table isn't declared: it is a pure function of
+    /// `seed` and `phases` (see [`crate::impair::generate_schedule`]), so
+    /// checking the three inputs checks the table.
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct ScheduleDeclaration {
+        pub seed: u64,
+        pub phases: u32,
+        pub phase_s: u64,
     }
 
     pub fn parse_soak_config(text: &str) -> Result<SoakConfig, String> {
@@ -1321,6 +1362,24 @@ pub mod soak {
             if !WORKER_ROLES.contains(&role.as_str()) {
                 return Err(format!(
                     "soak-config.json: expected_worker_exits has unknown role {role:?} (want one of {WORKER_ROLES:?})"
+                ));
+            }
+        }
+        // Same reasoning as the unknown-role check above: a declaration
+        // keyed by a leg this report never judges, or naming a profile
+        // that doesn't exist, would silently verify nothing at all — and
+        // `soak.sh` validates its config before launching a multi-day run
+        // precisely so a typo surfaces now rather than at teardown.
+        for (leg, decl) in &cfg.legs {
+            if !KNOWN_LEGS.contains(&leg.as_str()) {
+                return Err(format!(
+                    "soak-config.json: legs has unknown leg {leg:?} (want one of {KNOWN_LEGS:?})"
+                ));
+            }
+            if crate::profiles::by_name(&decl.profile).is_none() {
+                return Err(format!(
+                    "soak-config.json: legs.{leg}.profile {:?} is not a known profile",
+                    decl.profile
                 ));
             }
         }
@@ -2016,6 +2075,113 @@ pub mod soak {
                 },
             });
 
+            // `profile_declared`/`schedule_declared` check the run against
+            // what `soak-config.json` said it would be, the same
+            // declared-before-evidence stance `duration_coverage` and
+            // `worker_exits` take. Both are cheap and both close a silent
+            // mis-publication: a run that exercised a different wire shape
+            // (or a different impairment) than its own evidence page
+            // claims would otherwise pass every other verdict.
+            let declared = config.legs.get(leg_name.as_str());
+            let (profile_pass, profile_detail) = match declared {
+                None => (
+                    true,
+                    format!("{leg_name}: no declaration (pre-realism config)"),
+                ),
+                Some(d) => match &artifacts.recv_report.profile {
+                    Some(observed) if *observed == d.profile => (
+                        true,
+                        format!("{leg_name}: recv judged the declared profile {observed:?}"),
+                    ),
+                    Some(observed) => (
+                        false,
+                        format!(
+                            "{leg_name}: config declared profile {:?} but the recv report was \
+                             judged against {observed:?}",
+                            d.profile
+                        ),
+                    ),
+                    None => (
+                        false,
+                        format!(
+                            "{leg_name}: config declared profile {:?} but the recv report carries \
+                             no profile (an offline `verify` report, or one written before `recv` \
+                             stamped it)",
+                            d.profile
+                        ),
+                    ),
+                },
+            };
+            verdicts.push(SoakVerdict {
+                name: format!("profile_declared_{leg_name}"),
+                pass: profile_pass,
+                provisional: false,
+                detail: profile_detail,
+            });
+
+            // The echo carries the generated phase table too, but only its
+            // three inputs are declared — the table is a pure function of
+            // them (`impair::generate_schedule`), so matching the inputs
+            // matches the table.
+            let declared_schedule = declared.and_then(|d| d.schedule.as_ref());
+            let echoed_schedule =
+                artifacts
+                    .proxy_stats
+                    .config
+                    .schedule
+                    .as_ref()
+                    .map(|s| ScheduleDeclaration {
+                        seed: s.seed,
+                        phases: s.phases,
+                        phase_s: s.phase_s,
+                    });
+            let (schedule_pass, schedule_detail) = match (declared_schedule, &echoed_schedule) {
+                (None, None) => (
+                    true,
+                    format!(
+                        "{leg_name}: no schedule declared and the proxy ran in fixed-impairment \
+                         mode"
+                    ),
+                ),
+                (Some(d), Some(e)) if d == e => (
+                    true,
+                    format!(
+                        "{leg_name}: proxy ran the declared schedule (seed {}, {} phase(s) of {}s)",
+                        e.seed, e.phases, e.phase_s
+                    ),
+                ),
+                (Some(d), Some(e)) => (
+                    false,
+                    format!(
+                        "{leg_name}: config declared schedule seed {} / {} phase(s) / {}s but the \
+                         proxy echoed seed {} / {} phase(s) / {}s",
+                        d.seed, d.phases, d.phase_s, e.seed, e.phases, e.phase_s
+                    ),
+                ),
+                (Some(d), None) => (
+                    false,
+                    format!(
+                        "{leg_name}: config declared schedule seed {} / {} phase(s) / {}s but the \
+                         proxy ran in fixed-impairment mode (no schedule echo)",
+                        d.seed, d.phases, d.phase_s
+                    ),
+                ),
+                (None, Some(e)) => (
+                    false,
+                    format!(
+                        "{leg_name}: proxy ran schedule seed {} / {} phase(s) / {}s that the \
+                         config never declared",
+                        e.seed, e.phases, e.phase_s
+                    ),
+                ),
+            };
+            verdicts.push(SoakVerdict {
+                name: format!("schedule_declared_{leg_name}"),
+                pass: schedule_pass,
+                provisional: false,
+                detail: schedule_detail,
+            });
+
             // `corruption_attributed`/`corruption_detected`/`corruption_recovered`
             // judge the recv side's `AttributionReport` (present iff the
             // capture was made with `recv --corruption-log`). Declared-off
@@ -2375,6 +2541,7 @@ pub mod soak {
                 failures: Vec::new(),
                 metrics: cell_metrics(video_aus),
                 reconnects: None,
+                profile: None,
             }
         }
 
@@ -2403,6 +2570,7 @@ pub mod soak {
                 sampler_end_slack_s: 0.0,
                 expected_worker_exits: BTreeMap::new(),
                 corruption: false,
+                legs: BTreeMap::new(),
             }
         }
 
@@ -3914,6 +4082,236 @@ pub mod soak {
                 .find(|v| v.name == "corruption_attributed_srt")
                 .unwrap();
             assert!(v.pass && v.detail.contains("disabled"));
+        }
+
+        /// Declare a profile (and optionally a schedule) for the `srt` leg
+        /// of a [`healthy_inputs`] run.
+        fn declare_srt(
+            inputs: &mut SoakInputs,
+            profile: &str,
+            schedule: Option<ScheduleDeclaration>,
+        ) {
+            inputs.config.legs.insert(
+                "srt".to_string(),
+                LegDeclaration {
+                    profile: profile.to_string(),
+                    schedule,
+                },
+            );
+        }
+
+        /// Give the `srt` leg's proxy stats a real scheduled-mode echo:
+        /// the generated table for `(seed, phases)` plus per-phase
+        /// counters whose drop counts match each phase's own `loss_pct`,
+        /// so the co-resident `drop_rate_consistent_with_impairment_srt`
+        /// verdict stays passing and these tests probe only the
+        /// declaration check.
+        fn echo_srt_schedule(inputs: &mut SoakInputs, seed: u64, phases: u32, phase_s: u64) {
+            const PER_PHASE_PACKETS: u64 = 100_000;
+            let table = crate::impair::generate_schedule(seed, phases);
+            inputs.legs[0].1.proxy_stats.config.schedule = Some(crate::proxy::ScheduleEcho {
+                seed,
+                phases,
+                phase_s,
+                table: table.clone(),
+            });
+            inputs.legs[0].1.proxy_stats.phases = table
+                .iter()
+                .map(|p| {
+                    let dropped = (PER_PHASE_PACKETS as f64 * p.loss_pct / 100.0).round() as u64;
+                    crate::proxy::PhaseCounters {
+                        index: p.index,
+                        forwarded: PER_PHASE_PACKETS - dropped,
+                        dropped,
+                        duped: 0,
+                    }
+                })
+                .collect();
+            let stats = &mut inputs.legs[0].1.proxy_stats;
+            stats.forwarded = stats.phases.iter().map(|c| c.forwarded).sum();
+            stats.dropped = stats.phases.iter().map(|c| c.dropped).sum();
+        }
+
+        #[test]
+        fn profile_declared_passes_when_the_recv_report_names_the_declared_profile() {
+            let mut inputs = healthy_inputs();
+            declare_srt(&mut inputs, "h265-klv", None);
+            inputs.legs[0].1.recv_report.profile = Some("h265-klv".to_string());
+            let r = build_soak_results(inputs).unwrap();
+            let v = verdict(&r, "profile_declared_srt");
+            assert!(v.pass && !v.provisional, "{}", v.detail);
+            assert!(v.detail.contains("h265-klv"), "{}", v.detail);
+            assert!(r.overall_pass, "{:?}", r.verdicts);
+        }
+
+        /// The hole this verdict exists for: a run that exercised one wire
+        /// shape while its own declared evidence claims another.
+        #[test]
+        fn profile_declared_fails_when_recv_judged_a_different_profile() {
+            let mut inputs = healthy_inputs();
+            declare_srt(&mut inputs, "h265-klv", None);
+            inputs.legs[0].1.recv_report.profile = Some("baseline".to_string());
+            let r = build_soak_results(inputs).unwrap();
+            let v = verdict(&r, "profile_declared_srt");
+            assert!(!v.pass && !v.provisional, "{}", v.detail);
+            assert!(
+                v.detail.contains("h265-klv") && v.detail.contains("baseline"),
+                "{}",
+                v.detail
+            );
+            assert!(!r.overall_pass);
+        }
+
+        /// A declared profile with a recv report that carries none is a
+        /// harness mismatch, not a silent pass.
+        #[test]
+        fn profile_declared_fails_when_the_recv_report_carries_no_profile() {
+            let mut inputs = healthy_inputs();
+            declare_srt(&mut inputs, "baseline", None);
+            inputs.legs[0].1.recv_report.profile = None;
+            let r = build_soak_results(inputs).unwrap();
+            let v = verdict(&r, "profile_declared_srt");
+            assert!(!v.pass, "{}", v.detail);
+            assert!(v.detail.contains("no profile"), "{}", v.detail);
+        }
+
+        /// An archived config predating the declaration passes, saying so.
+        #[test]
+        fn profile_declared_passes_undeclared_with_a_named_detail() {
+            let inputs = healthy_inputs(); // no `legs` entries at all
+            let r = build_soak_results(inputs).unwrap();
+            let v = verdict(&r, "profile_declared_srt");
+            assert!(v.pass && !v.provisional, "{}", v.detail);
+            assert!(v.detail.contains("no declaration"), "{}", v.detail);
+        }
+
+        #[test]
+        fn schedule_declared_passes_when_the_proxy_echo_matches() {
+            let mut inputs = healthy_inputs();
+            declare_srt(
+                &mut inputs,
+                "baseline",
+                Some(ScheduleDeclaration {
+                    seed: 3,
+                    phases: 4,
+                    phase_s: 153,
+                }),
+            );
+            inputs.legs[0].1.recv_report.profile = Some("baseline".to_string());
+            echo_srt_schedule(&mut inputs, 3, 4, 153);
+            let r = build_soak_results(inputs).unwrap();
+            let v = verdict(&r, "schedule_declared_srt");
+            assert!(v.pass && !v.provisional, "{}", v.detail);
+            assert!(r.overall_pass, "{:?}", r.verdicts);
+        }
+
+        #[test]
+        fn schedule_declared_fails_on_any_differing_field() {
+            for (seed, phases, phase_s) in [(4u64, 4u32, 153u64), (3, 5, 153), (3, 4, 200)] {
+                let mut inputs = healthy_inputs();
+                declare_srt(
+                    &mut inputs,
+                    "baseline",
+                    Some(ScheduleDeclaration {
+                        seed: 3,
+                        phases: 4,
+                        phase_s: 153,
+                    }),
+                );
+                // Stamped so `profile_declared_srt` passes and this run's
+                // only failing verdict is the schedule one.
+                inputs.legs[0].1.recv_report.profile = Some("baseline".to_string());
+                echo_srt_schedule(&mut inputs, seed, phases, phase_s);
+                let r = build_soak_results(inputs).unwrap();
+                let v = verdict(&r, "schedule_declared_srt");
+                assert!(!v.pass, "echo {seed}/{phases}/{phase_s}: {}", v.detail);
+                assert!(!r.overall_pass);
+                assert_eq!(
+                    r.verdicts
+                        .iter()
+                        .filter(|v| !v.provisional && !v.pass)
+                        .map(|v| v.name.as_str())
+                        .collect::<Vec<_>>(),
+                    vec!["schedule_declared_srt"],
+                    "only the schedule verdict may fail here"
+                );
+            }
+        }
+
+        /// Both one-sided cases: a declared schedule the proxy never ran,
+        /// and a schedule the proxy ran that nothing declared.
+        #[test]
+        fn schedule_declared_fails_when_only_one_side_has_a_schedule() {
+            let mut declared_only = healthy_inputs();
+            declare_srt(
+                &mut declared_only,
+                "baseline",
+                Some(ScheduleDeclaration {
+                    seed: 3,
+                    phases: 4,
+                    phase_s: 153,
+                }),
+            );
+            declared_only.legs[0].1.recv_report.profile = Some("baseline".to_string());
+            let r = build_soak_results(declared_only).unwrap();
+            let v = verdict(&r, "schedule_declared_srt");
+            assert!(!v.pass, "{}", v.detail);
+            assert!(v.detail.contains("fixed-impairment"), "{}", v.detail);
+
+            let mut echoed_only = healthy_inputs();
+            echo_srt_schedule(&mut echoed_only, 3, 4, 153);
+            let r = build_soak_results(echoed_only).unwrap();
+            let v = verdict(&r, "schedule_declared_srt");
+            assert!(!v.pass, "{}", v.detail);
+            assert!(v.detail.contains("never declared"), "{}", v.detail);
+        }
+
+        /// Neither side has one: the fixed-impairment run, which passes.
+        #[test]
+        fn schedule_declared_passes_when_neither_side_has_a_schedule() {
+            let mut inputs = healthy_inputs();
+            declare_srt(&mut inputs, "baseline", None);
+            inputs.legs[0].1.recv_report.profile = Some("baseline".to_string());
+            let r = build_soak_results(inputs).unwrap();
+            let v = verdict(&r, "schedule_declared_srt");
+            assert!(v.pass && !v.provisional, "{}", v.detail);
+            assert!(r.overall_pass, "{:?}", r.verdicts);
+        }
+
+        /// A declaration naming a profile that doesn't exist can never
+        /// match any recv report, so it is a config typo — caught at parse
+        /// time, before a multi-day run launches against it.
+        #[test]
+        fn soak_config_rejects_an_unknown_declared_profile_or_leg() {
+            let e = parse_soak_config(
+                r#"{"expected_duration_s": 3600, "rss_cadence_s": 30, "warmup_fraction": 0.1,
+                    "sampler_end_slack_s": 35, "legs": {"srt": {"profile": "nope"}}}"#,
+            )
+            .unwrap_err();
+            assert!(e.contains("nope") && e.contains("legs.srt.profile"), "{e}");
+
+            let e = parse_soak_config(
+                r#"{"expected_duration_s": 3600, "rss_cadence_s": 30, "warmup_fraction": 0.1,
+                    "sampler_end_slack_s": 35, "legs": {"quic": {"profile": "baseline"}}}"#,
+            )
+            .unwrap_err();
+            assert!(e.contains("quic"), "{e}");
+
+            // The real shape soak.sh writes must validate.
+            let cfg = parse_soak_config(
+                r#"{"expected_duration_s": 3600, "rss_cadence_s": 30, "warmup_fraction": 0.1667,
+                    "sampler_end_slack_s": 35, "expected_worker_exits": {}, "corruption": true,
+                    "legs": {"srt": {"profile": "misp", "schedule": {"seed": 3, "phases": 4, "phase_s": 900}},
+                             "rist": {"profile": "audio", "schedule": null}}}"#,
+            )
+            .expect("soak.sh's own config shape must validate");
+            assert_eq!(cfg.legs["srt"].profile, "misp");
+            assert_eq!(
+                cfg.legs["srt"].schedule.as_ref().unwrap().phases,
+                4,
+                "the declared schedule must survive the round trip"
+            );
+            assert!(cfg.legs["rist"].schedule.is_none());
         }
     }
 }

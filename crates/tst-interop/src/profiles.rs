@@ -10,6 +10,7 @@
 
 use tst_core::mpegts::mux::Av1CarriageMode;
 
+use crate::impair::XorShift64;
 use crate::{mux_setup, schedule};
 
 /// Video codec carried on a profile's video PID.
@@ -300,6 +301,73 @@ pub fn by_name(n: &str) -> Option<&'static Profile> {
     PROFILES.iter().find(|p| p.name == n)
 }
 
+/// Salt mixed into the seed before drawing profiles, for the same reason
+/// [`crate::impair::SCHEDULE_SALT`] exists: `soak.sh` passes ONE `--seed`
+/// to the impairment engine, the impairment schedule, the corruption tap
+/// AND this draw, and unsalted they would all walk correlated state
+/// trajectories (the profile picked would be a function of the first
+/// impairment decisions). Changing this constant re-draws every seed's
+/// profiles — archived soak evidence quotes its seed, not its profile
+/// names, so the mapping from seed to profiles must stay stable.
+pub const PROFILE_SALT: u64 = 0x9F0F_11E5_0000_0A11;
+
+/// Draw `count` DISTINCT profile names deterministically from `seed` —
+/// `soak.sh --profile auto`'s per-leg selection, exposed to it through
+/// the `pick-profiles` subcommand so the shell never reimplements
+/// [`XorShift64`].
+///
+/// Each slot draws an index into [`all`] and re-rolls until it lands on a
+/// name no earlier slot took, so the returned names are distinct: two legs
+/// running the same profile would halve the shape coverage one soak run
+/// buys. The re-roll loop is bounded (see `MAX_DRAWS` below) rather than
+/// unbounded — a bounded loop cannot wedge a 72h run's launch even if the
+/// generator were somehow degenerate.
+///
+/// # Errors
+///
+/// `count` greater than the registry size, which no draw could satisfy
+/// distinctly, and the (unreachable in practice) exhausted-draw-budget
+/// case.
+pub fn pick(seed: u64, count: usize) -> Result<Vec<&'static str>, String> {
+    let profiles = all();
+    if count > profiles.len() {
+        return Err(format!(
+            "pick: asked for {count} distinct profile(s) but the registry has only {}",
+            profiles.len()
+        ));
+    }
+    /// Draw attempts allowed per slot before giving up. Every slot has at
+    /// least one acceptable index left (`count <= profiles.len()` is
+    /// checked above), so the expected number of re-rolls is small; this
+    /// is purely the "never spin forever" bound.
+    const MAX_DRAWS: usize = 1000;
+
+    let mut rng = XorShift64::new(seed ^ PROFILE_SALT);
+    let mut picked: Vec<&'static str> = Vec::with_capacity(count);
+    while picked.len() < count {
+        let mut drawn = None;
+        for _ in 0..MAX_DRAWS {
+            let idx = (rng.next_u64() % profiles.len() as u64) as usize;
+            let name = profiles[idx].name;
+            if !picked.contains(&name) {
+                drawn = Some(name);
+                break;
+            }
+        }
+        match drawn {
+            Some(name) => picked.push(name),
+            None => {
+                return Err(format!(
+                    "pick: {MAX_DRAWS} draws for slot {} all landed on an already-picked profile \
+                     (seed {seed})",
+                    picked.len()
+                ));
+            }
+        }
+    }
+    Ok(picked)
+}
+
 /// Derive the wire-format invariants a captured stream must satisfy for `p`
 /// to be considered conformant.
 ///
@@ -398,6 +466,60 @@ mod tests {
         let tight = by_name("pcr-tight").expect("pcr-tight profile must exist");
         let sparse = by_name("pcr-sparse").expect("pcr-sparse profile must exist");
         assert!(tight.pcr_interval_ms < sparse.pcr_interval_ms);
+    }
+
+    /// The seed->profiles mapping is archived evidence's only record of
+    /// which shapes a soak run exercised (the run quotes its seed), so the
+    /// draw must be reproducible from the seed alone.
+    #[test]
+    fn pick_is_deterministic_for_a_seed() {
+        for seed in [0u64, 1, 3, 7, 42, u64::MAX] {
+            let a = pick(seed, 2).expect("2 distinct profiles must be drawable");
+            let b = pick(seed, 2).expect("2 distinct profiles must be drawable");
+            assert_eq!(a, b, "seed {seed} must draw the same profiles every time");
+        }
+        // Different seeds must not all collapse onto one answer.
+        let distinct: std::collections::BTreeSet<Vec<&str>> =
+            (0u64..32).map(|s| pick(s, 2).unwrap()).collect();
+        assert!(
+            distinct.len() > 1,
+            "32 seeds drew a single profile pair: {distinct:?}"
+        );
+    }
+
+    #[test]
+    fn pick_returns_distinct_registered_names() {
+        for seed in 0u64..64 {
+            let names = pick(seed, 2).expect("2 distinct profiles must be drawable");
+            assert_eq!(names.len(), 2);
+            assert_ne!(names[0], names[1], "seed {seed} drew a duplicate pair");
+            for n in &names {
+                assert!(by_name(n).is_some(), "seed {seed} drew unknown profile {n}");
+            }
+        }
+    }
+
+    /// The whole registry is drawable at once (the boundary case), and one
+    /// more than that is an error rather than a wedged re-roll loop.
+    #[test]
+    fn pick_handles_the_registry_size_boundary() {
+        let n = all().len();
+        let every = pick(9, n).expect("the whole registry must be drawable distinctly");
+        assert_eq!(every.len(), n);
+        let mut sorted = every.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(
+            sorted.len(),
+            n,
+            "a full draw must be a permutation: {every:?}"
+        );
+
+        let e = pick(9, n + 1).unwrap_err();
+        assert!(
+            e.contains(&format!("{}", n + 1)) && e.contains("registry"),
+            "{e}"
+        );
     }
 
     #[test]
