@@ -10,6 +10,7 @@
 //! actually elapsed on the wall clock before firing — matching how a
 //! real sender paces traffic to the stream's own clock.
 
+use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -20,6 +21,7 @@ use tst_core::transport::{BrokenCause, Transport, TransportError};
 use tst_pipeline::{ManagedTransport, MuxSender, ReconnectPolicy};
 
 use crate::cli::write_json;
+use crate::corrupt::{CorruptConfig, Corrupter};
 use crate::fixtures::{self, AuSizeMode};
 use crate::mux_setup;
 use crate::profiles::{KlvMode, Profile, VideoCodec};
@@ -45,6 +47,10 @@ use crate::verify;
 /// original tiny fixtures every interop-matrix cell uses) or
 /// `Realistic` (GOP-structured multi-KB AUs, the soak's true-bandwidth
 /// mode); see [`AuSizeMode`].
+///
+/// `corrupt` turns on the seeded corruption tap (`crate::corrupt`),
+/// writing its JSONL evidence log to the given path — see
+/// [`send_over_transport`] for where the tap sits in the stack and why.
 pub fn run(
     p: &Profile,
     url: &str,
@@ -52,9 +58,10 @@ pub fn run(
     json_out: Option<&str>,
     no_klv_digest: bool,
     au_sizes: AuSizeMode,
+    corrupt: Option<(CorruptConfig, PathBuf)>,
 ) -> Result<CellMetrics, String> {
     let transport = transport::make_send(url)?;
-    let metrics = send_over_transport(p, transport, seconds, no_klv_digest, au_sizes)?;
+    let metrics = send_over_transport(p, transport, seconds, no_klv_digest, au_sizes, corrupt)?;
     if let Some(target) = json_out {
         write_json(target, &metrics)?;
     }
@@ -65,16 +72,41 @@ pub fn run(
 /// constructed transport (e.g. this crate's `tests/loopback.rs`) can
 /// drive the same push loop without going through `--url` parsing
 /// twice.
+///
+/// With `corrupt` set, the stack is
+/// `MuxSender -> Corrupter -> Teeing -> transport`: the tap sits ABOVE
+/// the tee on purpose, so `bytes`/`stream_sha256` describe the corrupted
+/// bytes that actually went on the wire rather than the clean ones the
+/// muxer produced. A receiver's own tee hashes the same thing, so the
+/// two sides stay comparable — and the sent-side digest stops being a
+/// claim about what was sent and becomes one about what was transmitted,
+/// which is the only claim the receiver can check.
 pub fn send_over_transport(
     p: &Profile,
     transport: Box<dyn Transport>,
     seconds: f64,
     no_klv_digest: bool,
     au_sizes: AuSizeMode,
+    corrupt: Option<(CorruptConfig, PathBuf)>,
 ) -> Result<CellMetrics, String> {
     let cfg = mux_setup::build_config(p);
     let (teeing, tap) = Teeing::new(transport);
-    let sender = MuxSender::new(teeing, cfg).map_err(|e| format!("MuxSender::new: {e}"))?;
+    // Held past the `MuxSender` that owns the tap itself: the tap's
+    // counters live behind an `Arc`, which is the only way to read them
+    // back once the sender (and with it the `Corrupter`) has been
+    // dropped. See `Corrupter::stats_handle`.
+    let mut corruption_stats = None;
+    let tapped: Box<dyn Transport> = match corrupt {
+        Some((corrupt_cfg, log_path)) => {
+            let log = std::fs::File::create(&log_path)
+                .map_err(|e| format!("creating the corruption log {}: {e}", log_path.display()))?;
+            let tap = Corrupter::new(teeing, corrupt_cfg, Box::new(std::io::BufWriter::new(log)))?;
+            corruption_stats = Some(tap.stats_handle());
+            Box::new(tap)
+        }
+        None => Box::new(teeing),
+    };
+    let sender = MuxSender::new(tapped, cfg).map_err(|e| format!("MuxSender::new: {e}"))?;
 
     // Handles must come from THIS sender's live muxer, not a throwaway
     // one — see mux_setup.rs's doc comment for why build_config doesn't
@@ -219,6 +251,9 @@ pub fn send_over_transport(
         // Attribution is a RECEIVER-side judgement of the corruption log
         // this side writes; the sender has no events to judge.
         corruption_attribution: None,
+        // Read AFTER `drop(sender)` above, so the numbers are final: the
+        // tap updates them as packets flow and has no flush step.
+        corruption: corruption_stats.map(|h| h.lock().expect("corruption stats mutex").clone()),
     })
 }
 
@@ -248,6 +283,7 @@ pub fn run_managed(
     json_out: Option<&str>,
     no_klv_digest: bool,
     au_sizes: AuSizeMode,
+    corrupt: Option<(CorruptConfig, PathBuf)>,
 ) -> Result<CellMetrics, String> {
     let initial = transport::make_send(url)?;
     let dial_url = url.to_string();
@@ -264,7 +300,10 @@ pub fn run_managed(
     };
     let managed: Box<dyn Transport> = Box::new(ManagedTransport::new(initial, factory, policy));
 
-    let metrics = send_over_transport(p, managed, seconds, no_klv_digest, au_sizes)?;
+    // The tap wraps the MANAGED transport, so one continuous corruption
+    // stream (and one log) spans every reconnect — a fresh tap per
+    // connection would restart its PRNG and re-emit a header line.
+    let metrics = send_over_transport(p, managed, seconds, no_klv_digest, au_sizes, corrupt)?;
     if let Some(target) = json_out {
         write_json(target, &metrics)?;
     }

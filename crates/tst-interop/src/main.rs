@@ -168,7 +168,8 @@ fn run_gen(args: &[String]) -> ! {
 }
 
 /// `send --profile NAME --url URL --seconds N [--json OUT] [--managed]
-/// [--no-klv-digest] [--au-sizes compact|realistic]`
+/// [--no-klv-digest] [--au-sizes compact|realistic]
+/// [--corrupt SPEC --corruption-log PATH] [--seed N]`
 ///
 /// Builds a live transport from `URL` and pushes `N` seconds of profile
 /// `NAME`'s synthetic MPEG-TS/KLV traffic through it, paced to real
@@ -206,6 +207,23 @@ fn run_gen(args: &[String]) -> ! {
 /// byte-identical to what this subcommand has always sent, so every
 /// interop-matrix invocation is unaffected. See
 /// `fixtures::AuSizeMode`.
+///
+/// `--corrupt SPEC` turns on the seeded corruption tap between the muxer
+/// and the wire: `rate=PER_10K[,min_gap=PKTS][,classes=a+b+c]` (see
+/// `corrupt::parse_corrupt`, which rejects a typo rather than silently
+/// degrading to "no corruption"). `--corruption-log PATH` is REQUIRED
+/// with it and names the JSONL evidence file the tap writes — one line
+/// per injection, which a `recv --corruption-log PATH` peer reads back
+/// to judge whether the receiver noticed. Requiring the path rather than
+/// defaulting one is deliberate: corruption nobody recorded is
+/// indistinguishable from a library bug. Both flags are rejected (exit
+/// 2) for the `hls://`/`rtsp://` serve schemes, which have no
+/// `Transport` to wrap.
+///
+/// `--seed N` (default 0) is the run seed the tap draws from, salted so
+/// its stream is independent of every other seeded component sharing the
+/// same number. The same seed, config and input bytes produce a
+/// byte-identical wire and a byte-identical log.
 fn run_send(args: &[String]) -> ! {
     let mut profile: Option<String> = None;
     let mut url: Option<String> = None;
@@ -214,6 +232,9 @@ fn run_send(args: &[String]) -> ! {
     let mut managed = false;
     let mut no_klv_digest = false;
     let mut au_sizes = AuSizeMode::Compact;
+    let mut corrupt_spec: Option<String> = None;
+    let mut corruption_log: Option<PathBuf> = None;
+    let mut seed: u64 = 0;
 
     let mut i = 0;
     while i < args.len() {
@@ -255,6 +276,26 @@ fn run_send(args: &[String]) -> ! {
                 };
                 i += 2;
             }
+            "--corrupt" => {
+                corrupt_spec = Some(require_value(args, i, "send: --corrupt"));
+                i += 2;
+            }
+            "--corruption-log" => {
+                corruption_log = Some(PathBuf::from(require_value(
+                    args,
+                    i,
+                    "send: --corruption-log",
+                )));
+                i += 2;
+            }
+            "--seed" => {
+                let raw = require_value(args, i, "send: --seed");
+                seed = raw.parse::<u64>().unwrap_or_else(|e| {
+                    eprintln!("send: --seed must be a non-negative integer, got '{raw}': {e}");
+                    std::process::exit(2);
+                });
+                i += 2;
+            }
             other => {
                 eprintln!("send: unknown argument: {other}");
                 std::process::exit(2);
@@ -279,9 +320,40 @@ fn run_send(args: &[String]) -> ! {
         std::process::exit(2);
     });
 
+    // A log with no tap would be an empty file nobody wrote to, and a
+    // tap with no log would corrupt a stream whose damage nothing could
+    // ever explain. Both directions are usage errors.
+    let corrupt = match (corrupt_spec, corruption_log) {
+        (Some(spec), Some(path)) => {
+            let cfg = tst_interop::corrupt::parse_corrupt(&spec, seed).unwrap_or_else(|e| {
+                eprintln!("send: {e}");
+                std::process::exit(2);
+            });
+            Some((cfg, path))
+        }
+        (Some(_), None) => {
+            eprintln!(
+                "send: --corrupt requires --corruption-log PATH (corruption nobody recorded cannot be judged)"
+            );
+            std::process::exit(2);
+        }
+        (None, Some(_)) => {
+            eprintln!("send: --corruption-log is only meaningful with --corrupt SPEC");
+            std::process::exit(2);
+        }
+        (None, None) => None,
+    };
+
     // hls:// / rtsp:// (+ TLS variants) are serve (bind) modes — branch
     // out before the connect-side transport path below.
     if let Some(scheme) = serve::serve_scheme_of(&url) {
+        if corrupt.is_some() {
+            eprintln!(
+                "send: --corrupt is not supported for {url} (hls/rtsp serve their own sessions \
+                 — there is no Transport for the tap to wrap)"
+            );
+            std::process::exit(2);
+        }
         if managed {
             eprintln!(
                 "send: --managed is not meaningful for {url} (hls/rtsp are serve/bind modes, \
@@ -309,6 +381,7 @@ fn run_send(args: &[String]) -> ! {
             json_out.as_deref(),
             no_klv_digest,
             au_sizes,
+            corrupt,
         )
     } else {
         send::run(
@@ -318,6 +391,7 @@ fn run_send(args: &[String]) -> ! {
             json_out.as_deref(),
             no_klv_digest,
             au_sizes,
+            corrupt,
         )
     }
     .unwrap_or_else(|e| {

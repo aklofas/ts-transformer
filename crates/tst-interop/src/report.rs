@@ -2111,6 +2111,7 @@ pub mod soak {
                 stream_sha256: String::new(),
                 discontinuities: 0,
                 nonconformant: 0,
+                corruption: None,
                 corruption_attribution: None,
             }
         }

@@ -102,6 +102,7 @@ fn send_with_retry(
             None,
             false,
             tst_interop::fixtures::AuSizeMode::Compact,
+            None,
         ) {
             Ok(metrics) => return metrics,
             Err(e) => {
