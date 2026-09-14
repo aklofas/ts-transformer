@@ -145,6 +145,12 @@ pub struct Phase {
     pub burst: bool,
     /// Inclusive `(lo, hi)` bounds of a burst's run length: `(3, 8)` in a
     /// burst phase, `(1, 1)` otherwise.
+    ///
+    /// Invariant: `lo >= 1` and `lo <= hi`. Out-of-range values are
+    /// **clamped, never panicked on** — [`Engine::decide`] raises `lo` to
+    /// `1` and then `hi` to `lo`. A `Phase` can arrive by `Deserialize`
+    /// from a hand-edited or corrupted stats file, and a long soak run
+    /// must not die on one.
     pub burst_run: (u32, u32),
     /// The threshold the per-packet loss draw is actually compared
     /// against: `loss_pct` in a non-burst phase, and
@@ -394,7 +400,11 @@ impl Engine {
                 // number of draws per decision depend on the outcome and
                 // break the replay contract. `loss_roll` is in
                 // `[0, 100)`, so `loss_roll * 1e6` is well inside `u32`.
-                let (lo, hi) = p.burst_run;
+                // Clamp rather than trust: see the `burst_run` invariant.
+                // `hi - lo + 1` would panic on a deserialized `(8, 3)`, and
+                // a run length of 0 would underflow below.
+                let lo = p.burst_run.0.max(1);
+                let hi = p.burst_run.1.max(lo);
                 let run = lo + ((loss_roll * 1e6) as u32 % (hi - lo + 1));
                 // This packet is the first drop of the run.
                 self.burst_left = run.saturating_sub(1);
@@ -742,5 +752,90 @@ mod tests {
             runs.iter().filter(|&&r| (3..=8).contains(&r)).count() * 10 >= runs.len() * 8,
             "most runs are a single burst: {runs:?}"
         );
+    }
+
+    /// An empty schedule falls back to the fixed-mode phase, so the engine
+    /// always has a phase to decide against — and the fallback is exactly
+    /// fixed mode, not merely "something that doesn't panic".
+    #[test]
+    fn an_empty_schedule_falls_back_to_the_fixed_mode_phase() {
+        let cfg = ImpairConfig {
+            loss_pct: 3.0,
+            dup_pct: 1.0,
+            reorder_pct: 2.0,
+            reorder_hold: 150,
+            jitter_ms_max: 10,
+            base_delay_ms: 25,
+            seed: 99,
+            outage_period_s: None,
+            outage_dur_s: 0,
+        };
+        let mut fallback = Engine::with_schedule(cfg, vec![], 100);
+        assert_eq!(fallback.phases().len(), 1);
+        assert_eq!(fallback.phases()[0], Phase::from_fixed(&cfg));
+        assert_eq!(fallback.phase_index(50), 0);
+        assert_eq!(fallback.phase_index(u64::MAX), 0, "one phase: always 0");
+
+        let mut fixed = Engine::new(cfg);
+        let from_fallback: Vec<Action> = (0..500u64).map(|i| fallback.decide(i * 3)).collect();
+        let from_fixed: Vec<Action> = (0..500u64).map(|i| fixed.decide(i * 3)).collect();
+        assert_eq!(from_fallback, from_fixed);
+        // Non-vacuous: the config impairs, so the sequences aren't all
+        // identical `Forward { delay_ms: 25 }`.
+        assert!(from_fixed.iter().any(|a| matches!(a, Action::Drop)));
+    }
+
+    /// A zero-second phase length is degenerate config (every phase is
+    /// already in the past); `phase_index` clamps to the last phase
+    /// instead of dividing by zero.
+    #[test]
+    fn a_zero_length_phase_clamps_to_the_last_phase_without_panicking() {
+        let phases = generate_schedule(4, 5);
+        let last = phases.len() - 1;
+        let mut e = Engine::with_schedule(
+            ImpairConfig {
+                loss_pct: 2.0,
+                seed: 2,
+                ..ImpairConfig::default()
+            },
+            phases,
+            0,
+        );
+        for t in [0u64, 1, 999, 100_000, u64::MAX] {
+            assert_eq!(e.phase_index(t), last, "elapsed {t}");
+        }
+        // And deciding against it is panic-free for a long stretch.
+        let drops = (0..1_000u64)
+            .filter(|&i| matches!(e.decide(i * 7), Action::Drop))
+            .count();
+        assert!(drops > 0, "the last phase's loss should still fire");
+    }
+
+    /// A `Phase` deserialized from a hand-edited or corrupted stats file
+    /// can carry a nonsensical `burst_run`; the engine clamps it instead
+    /// of panicking on `hi - lo + 1` or underflowing a zero run length.
+    #[test]
+    fn a_malformed_burst_run_is_clamped_not_panicked_on() {
+        for bad in [(8u32, 3u32), (0u32, 0u32)] {
+            let mut phases = generate_schedule(6, 1);
+            phases[0].burst = true;
+            phases[0].burst_run = bad;
+            phases[0].loss_pct = 5.0;
+            phases[0].draw_pct = 5.0;
+            let mut e = Engine::with_schedule(
+                ImpairConfig {
+                    seed: 13,
+                    ..ImpairConfig::default()
+                },
+                phases,
+                3600,
+            );
+            let drops = (0..1_000u64)
+                .filter(|&i| matches!(e.decide(i), Action::Drop))
+                .count();
+            // Non-vacuous: the burst branch really was taken, so the clamp
+            // really was exercised — not 1000 harmless forwards.
+            assert!(drops > 0, "burst branch never fired for burst_run {bad:?}");
+        }
     }
 }
