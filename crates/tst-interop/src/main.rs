@@ -20,8 +20,11 @@ fn usage() -> String {
 Subcommands:
   gen       Generate synthetic test fixtures
   send      Send test data to endpoint (hls:// and rtsp:// URLs BIND and
-            serve instead of connecting — see `send`'s own doc comment)
-  recv      Receive test data from endpoint
+            serve instead of connecting — see `send`'s own doc comment;
+            --corrupt rate=N[,min_gap=N][,classes=a+b] --corruption-log PATH
+            [--seed N] turn on the seeded TS corruption tap)
+  recv      Receive test data from endpoint (--corruption-log PATH judges the
+            capture against a `send --corrupt` peer's log — start recv FIRST)
   verify    Verify interop test results
   proxy     UDP impairment relay (loss/dup/reorder/jitter/scheduled outage)
   report    Generate interop report

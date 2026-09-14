@@ -54,7 +54,8 @@ pub struct CellMetrics {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub corruption: Option<crate::corrupt::CorruptionStats>,
     /// What the receiver's evidence said about a corruption log supplied
-    /// with `recv --corruption-log` / `verify --corruption-log`, or
+    /// with `recv --corruption-log` (or, offline,
+    /// `verify::verify_bytes_with_corruption`), or
     /// `None` when the capture was judged without one (every interop
     /// matrix cell, and every soak cell until the corruption tap is
     /// switched on). See `crate::corrupt`'s module doc for how a

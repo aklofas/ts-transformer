@@ -531,6 +531,250 @@ Those two files feed three new verdicts in `soak-results.json`:
   role is listed in `expected_worker_exits`; a missing `exits.json` fails
   the run.
 
+## Corruption tap (`send --corrupt`)
+
+`send --corrupt` wraps the sender's `Transport` in a seeded tap that damages
+the muxer's own output on its way to the wire and writes one JSONL line per
+injection to `--corruption-log`. A `recv --corruption-log <same file>` peer
+reads that log back and judges what the receiver made of the damage: did
+every error event have a cause, did the receiver notice everything it was
+required to, did the stream produce media again afterwards.
+
+The two halves are joined by the FILE, never by process memory. A receiver
+can therefore only ever "know" about an injection through the same evidence
+a human would read, and the same judgement can be made live (`recv`) or
+offline from an archived capture plus its log
+(`verify::verify_bytes_with_corruption`).
+
+**Corruption is a soak and offline-test feature: no matrix cell injects.**
+`run-matrix.sh` never passes `--corrupt`, so all 157 cells run a pristine
+stream and the census is unaffected by anything in this section.
+
+### Grammar
+
+```bash
+tst-interop send --profile P --url URL --seconds N \
+  --corrupt rate=PER_10K[,min_gap=PKTS][,classes=a+b+c] \
+  --corruption-log PATH [--seed N]
+
+tst-interop recv --url URL --expect P --seconds N --corruption-log PATH
+```
+
+- **`rate=PER_10K`** (required) — per-ten-thousand chance that an eligible
+  packet is corrupted, so `rate=5` is 0.05 %. `rate=10000` means "every
+  eligible packet", which combined with `min_gap` is how the offline tests
+  force exactly one injection at a known place.
+- **`min_gap=PKTS`** (default `1000`) — floor on the packet distance between
+  two injections. It must be `>= 2 x ATTRIBUTION_WINDOW` (1000) and
+  `> RECOVERY_BOUND` (600), validated at parse: closer than that, an error
+  event could legitimately belong to either of two injections and the report
+  would be guessing, so the tap refuses to run rather than produce an
+  ambiguous verdict.
+- **`classes=a+b+c`** (default: all seven) — `+`-separated, not comma-
+  separated, because the spec string itself is split on commas. Weights are
+  re-normalised over whatever subset is named.
+- **`--seed N`** (default `0`) — the run seed, salted with `CORRUPT_SALT` so
+  the tap's PRNG stream is independent of every other seeded component
+  sharing the same number (the impairment proxy, the AU-size factory). Same
+  seed + same config + same input bytes produce a byte-identical wire and a
+  byte-identical log; nothing in the tap reads the clock.
+- **`--corruption-log PATH`** is REQUIRED with `--corrupt`, and pointless
+  without it (both are rejected). Corruption nobody recorded is
+  indistinguishable from a library bug, and defaulting a path would let a
+  run destroy its own evidence by overwriting the previous one.
+
+Every parse error is fatal (exit 2): an unknown key, an unknown class, a
+missing `rate=`, an out-of-range value. A typo must not silently degrade
+into "no corruption", which would make a whole soak run's evidence vacuous
+while still reporting PASS.
+
+Both flags are rejected for the `hls://` and `rtsp://` serve schemes, which
+have no connect-mode `Transport` to wrap.
+
+### Classes and detectability
+
+| Class | What goes on the wire | `detectable` |
+|---|---|---|
+| `body_flip` | 1-4 payload bytes XOR-flipped (adaptation-field bytes on a payload-less packet) | only when a flipped offset lands inside a PAT/PMT section's body-or-CRC span; otherwise never |
+| `header` | one of four sub-kinds: sync byte destroyed, PID rewritten to 0x1FFE, continuity counter advanced by +2..+7, `adaptation_field_length` overrun. On a PAT/PMT packet only the sync-byte sub-kind is used | always |
+| `truncate` | only the first 40..=187 bytes of the packet | always |
+| `garbage` | the packet, then 1..=300 inserted bytes, never 0x47 | always |
+| `drop` | nothing | only on a media PID, and only on a packet that carries payload |
+| `dup` | the packet twice, back to back | never |
+| `psi_flip` | one byte flipped inside a PAT/PMT section body, CRC left intact | always |
+
+`detectable` means "a conformant receiver is REQUIRED to notice this", and
+it is the only thing the `corruption_detected` verdict judges. It is
+deliberately under-claimed rather than over-claimed: an event that lands
+inside an injection's attribution window is attributed regardless of the
+flag, so claiming less costs nothing, while claiming more would fail a
+conformant receiver for damage it was never obliged to report. The
+per-class reasoning, all of it measured rather than assumed:
+
+- **`body_flip` is only detectable under a CRC.** The only range of a
+  transport stream a receiver is guaranteed to checksum is a PSI section's
+  body and CRC-32. Everything else on a PAT/PMT packet is 0xFF stuffing
+  (a PAT here is 17 bytes of section and 167 of padding), and everything on
+  a media packet is picture bytes or loosely-validated PES header fields.
+  A flip at the PAT's `table_id` or `section_length` produces zero demux
+  events — the section is discarded before the CRC is ever reached — while a
+  flip one byte later, the first body byte, produces `PsiChecksumMismatch`.
+- **`body_flip` never touches a PES header.** On a packet that starts a PES,
+  the draw range begins after the optional-header bytes. tst-core's PES
+  parser accepts `stream_id`, `PES_packet_length`, `header_data_length` and
+  33 of the 40 PTS bits as-is, so a flip there is undetectable by contract —
+  yet it silently rewrites a PTS or a stream id, and the WIRE oracles read
+  those same bytes structurally (`pts_wrap_unexpected`, `av1_carriage_wire`).
+  The run would then fail for damage the tap itself declared nobody has to
+  notice. Corrupting the picture is what "body" means; corrupting the timing
+  is a different experiment, and not one this harness can judge.
+- **`header` on a PAT/PMT packet uses the sync-byte sub-kind only.** A CC
+  jump on PID 0 produces no demux event at all (tst-core reports continuity
+  jumps only for a resolved elementary stream); a rewritten PID just makes
+  the section not arrive, and the next repetition of the table covers for
+  it; an `adaptation_field_length` overrun needs an adaptation field, which
+  this harness's PSI packets do not have. The sub-kind is still DRAWN on
+  that path, so the PRNG stream does not depend on which PID the draw landed
+  on — only the arm taken changes.
+- **`drop` is detectable only on a payload-carrying media packet.** A
+  dropped packet is noticed as a continuity jump and nothing else. H.222.0
+  section 2.4.3.3 advances the counter only on packets that carry payload,
+  so dropping one of this muxer's PCR-only catch-up packets leaves the
+  counter sequence intact, and a lost PAT/PMT repetition is covered by the
+  next one.
+- **`dup` is never detectable.** A repeated packet with the same continuity
+  counter is legal (section 2.4.3.3 allows one duplicate); a receiver that
+  says nothing about it is conformant.
+- **`psi_flip` leaves the CRC intact on purpose**, so the section genuinely
+  fails its checksum. It is only schedulable on a PAT/PMT packet that
+  carries one complete section; a draw that fires elsewhere keeps the class
+  pending until the next PSI packet rather than being spent on a packet that
+  cannot carry it.
+
+### Log format
+
+One JSONL file: a header line, then one line per injection, appended as the
+run proceeds and flushed per line so a reader tailing it is never more than
+one injection behind.
+
+```jsonc
+{"header":{"tap_version":1,"seed":7,"rate_per_10k":5,"min_gap":1000,
+           "classes":["body_flip", ...],"attribution_window":500,
+           "recovery_bound":600}}
+{"injection":{"ordinal":41234,"coord":{"pcr_base":8123456789,"since_pcr":37},
+              "class":"psi_flip","pid":0,"offsets":[9],
+              "before":[71,64,0,...],"after":[71,64,0,...],
+              "detectable":true,"psi":true,"pes_start":false}}
+```
+
+The load-bearing field is `coord`, not `ordinal`. Sender byte offsets and
+packet ordinals are useless at the receiver — the transport loses,
+duplicates and reorders, and the corruption itself changes the wire length —
+so every injection is logged at a **PCR coordinate**: the most recent PCR
+base seen strictly BEFORE the packet, plus the number of packets since the
+packet that carried it. PCR bases travel in the stream, so both ends can
+name the same instant with no shared clock, and anchoring to the previous
+base rather than the packet's own means the anchor survives an injection
+that destroys the very packet it lands on. `ordinal` is informational.
+
+Reading fails closed: a line that is neither a header nor an injection, a
+missing header, a second header, or a `tap_version` this build does not
+understand is an error naming the line.
+
+### Verdicts
+
+`recv --corruption-log` (and the offline equivalent) adds
+`metrics.corruption_attribution` to the report plus three verdicts, enforced
+in `Strict` and `Lossy` alike:
+
+- **`corruption_attributed`** — every error event the receiver surfaced
+  (non-conformance, discontinuity, raw-reader resync) lies inside some
+  resolved injection's attribution window. An unexplained event fails this
+  verdict, so a demuxer that invents errors still fails a corrupted run.
+- **`corruption_detected`** — every injection flagged `detectable` produced
+  at least one event of the kind its class implies inside that window
+  (`header`/`truncate`/`garbage` -> resync, continuity jump or a plain
+  non-conformance; `drop` -> continuity jump; `psi_flip` and a PSI
+  `body_flip` -> PSI checksum or a non-conformance).
+- **`corruption_recovered`** — media (`Sample` or `Metadata`) arrived again
+  within `RECOVERY_BOUND` packets. On the affected PID for the classes that
+  damage one stream; on ANY PID for `truncate` and `garbage`, which break
+  packet sync for the whole multiplex, and for any injection on a PSI PID,
+  which carries no media of its own and would otherwise wait forever.
+
+Constants, echoed into the report so an archived run is self-describing:
+`ATTRIBUTION_WINDOW = 500` packets, `RECOVERY_BOUND = 600` packets,
+`DEFAULT_MIN_GAP = 1000` packets.
+
+Two things the verdicts deliberately do NOT do:
+
+- An injection that never resolved is never judged, and one whose recovery
+  window runs past the end of the capture is not judged for recovery. Absent
+  evidence is not evidence of a failure.
+- The whole-capture count floors are scaled by `(1 - injected_fraction)`, and
+  events an injection explains are subtracted before the existing
+  `nonconformant_event` / `discontinuity_event` fatality rules apply. A run
+  that deliberately destroyed part of its own stream cannot be held to a
+  clean run's arithmetic — but everything the log does not explain keeps
+  failing exactly as it did before.
+
+An injection whose PCR anchor the receiver never saw (the packet carrying it
+was destroyed) resolves against the NEXT base instead, with a wider window
+to cover the error, and only while that base is within four PCR intervals of
+its own. Beyond that bound it stays unresolved rather than being pinned to
+the wrong place — which is what keeps a reconnect outage, where the sender
+logs on through a gap the receiver never saw, from reporting a whole
+outage's worth of injections as undetected.
+
+### Receiver side
+
+`recv --corruption-log PATH` changes three things beyond adding the verdicts:
+
+- The file **need not exist when `recv` starts** and is **tailed** for the
+  whole capture, so injections the sender records while the receive loop is
+  already running are judged too.
+- The independent raw reader (`rawts`) runs in **resync mode**: on a bad sync
+  byte it hunts forward for the next 0x47 confirmed at a 188 stride, records
+  a resync with its coordinate, and carries on. Without this, deliberately
+  destroyed packets would latch a `rawts_sync_loss` failure that says nothing
+  beyond "the tap did its job".
+- That reader also **checks each PAT/PMT section's CRC-32** and discards a
+  section that fails it, counting it in `psi_crc_rejected`. Measured before
+  the check existed: a CRC-failed PAT registered a bogus PMT PID and then
+  poisoned 600 later sections.
+
+**Start `recv` before `send`.** A receiver that joins a stream already in
+progress may misjudge injections the sender logged before the stream's first
+PCR: those coordinates carry no anchor and mean "this many packets from the
+start of the stream", a position a late joiner never saw and cannot compute.
+Injections appended after this receiver has seen its own first PCR are
+stranded rather than guessed at — counted `unresolved`, never judged — but
+ones already in the log when it opened are taken at face value.
+
+### In a soak run
+
+`report soak` mirrors each leg's attribution as
+`corruption_{attributed,detected,recovered}_<leg>`, gated by the
+`corruption` flag in `soak-config.json`:
+
+- **declared off** — three passing "corruption tap disabled" verdicts, so a
+  corruption-free run's `soak-results.json` is not cluttered with failures
+  for a check that was never meant to run. This is what an archived
+  pre-tap run deserialises to, and what a soak run produces until `soak.sh`
+  turns the tap on.
+- **declared on, attribution present** — the three real verdicts, each
+  quoting its counts and first offender.
+- **declared on, no attribution** — three FAILING verdicts. The tap was
+  declared but `recv` never got a `--corruption-log`, which is a harness
+  mismatch that must fail loud rather than read as "no corruption observed".
+
+`send`'s own stats JSON carries the sent-side counterpart in
+`metrics.corruption`: packets seen, injections, how many were detectable,
+per-class counts, and bytes in/out. Its `passthrough_unclassified` counter is
+always 0 for this harness's own muxer output — a non-zero value means
+something upstream emitted a malformed packet and the run's evidence is not
+trustworthy.
+
 ## Peer command-line notes (deviations from the plan's starting sketches)
 
 - **`tsp -I file ... -O <srt|rist|ip> ...` needs `-P regulate` inserted**
