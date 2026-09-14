@@ -90,10 +90,24 @@ pub const MAX_APPROX_TICKS: u64 = 4 * 9000;
 /// `Default`); readers refuse a version they do not understand.
 const TAP_VERSION: u32 = 1;
 
-/// Cap on [`AttributionReport::unexplained_events`]. The count is kept in
-/// full by `events - attributed_events`; only the human-readable sample is
-/// bounded, so a badly-broken run cannot produce a gigabyte of report.
-const MAX_UNEXPLAINED: usize = 64;
+/// Cap on each of [`AttributionReport`]'s human-readable sample lists
+/// (`unexplained_events`, `undetected`, `unrecovered`). Every one of them
+/// has an uncapped counter beside it, so a badly-broken run is still
+/// counted in full — only the quoted examples are bounded, and a
+/// multi-day run cannot turn a report into a gigabyte of strings.
+///
+/// **A cap on a list must never become a cap on a JUDGEMENT.** The
+/// verdicts read the counters, never `len()`; see
+/// [`AttributionReport::unexplained_total`].
+const MAX_SAMPLES: usize = 64;
+
+/// Injections retired below [`Attribution`]'s `lo` cursor before their
+/// accounting is folded into the running counters and their per-injection
+/// state dropped. Batched rather than one at a time so the retained
+/// prefix is removed with one memmove per batch instead of per injection;
+/// the batch size is the entire bound on how much of the log the engine
+/// holds once a run is under way.
+const PRUNE_BATCH: usize = 1024;
 
 // ============================================================
 // Classes, config, parsing
@@ -1250,9 +1264,28 @@ pub struct AttributionReport {
     /// Attributed events whose signal was a discontinuity
     /// (`ContinuityJump` / `OtherDiscontinuity`).
     pub attributed_discontinuities: u64,
-    /// Sample of events no injection explains (capped; the true count is
-    /// `events - attributed_events`).
+    /// Sample of events no injection explains and no transport-loss
+    /// excusal covers — capped at [`MAX_SAMPLES`]. The true count is
+    /// [`unexplained_total`](Self::unexplained_total); never judge a run
+    /// by this list's length.
     pub unexplained_events: Vec<String>,
+    /// Uncapped count of unexplained `Resync` events. A resync is the one
+    /// signal with no second detection path — it is not a `DemuxEvent`,
+    /// and in resync mode it does not surface as `rawts_sync_loss` either
+    /// — so it must never be lost behind a sample cap.
+    #[serde(default)]
+    pub unexplained_resyncs: u64,
+    /// Uncapped count of unexplained discontinuity-family events that
+    /// were NOT excused as transport loss (always the whole family under
+    /// strict judgement; always zero under lossy, where the excusal takes
+    /// them all — see [`unexplained_transport_loss`](Self::unexplained_transport_loss)).
+    #[serde(default)]
+    pub unexplained_discontinuities: u64,
+    /// Uncapped count of unexplained non-conformance-family events
+    /// (`PsiChecksum` / `MalformedPes` / `OtherNonConformant`). Never
+    /// excused in either tier: a lost packet does not forge a bad CRC.
+    #[serde(default)]
+    pub unexplained_nonconformant: u64,
     /// First UNEXPLAINED event of each family, uncapped and
     /// first-writer-wins. A verifier's surviving
     /// `nonconformant_event`/`discontinuity_event` failures quote these:
@@ -1261,16 +1294,26 @@ pub struct AttributionReport {
     /// point a reader at evidence the report has already accounted for.
     pub first_unexplained_nonconformant: Option<String>,
     pub first_unexplained_discontinuity: Option<String>,
-    /// Injections a conformant receiver had to notice, and did not.
+    /// Sample of injections a conformant receiver had to notice and did
+    /// not — capped at [`MAX_SAMPLES`];
+    /// [`undetected_count`](Self::undetected_count) is the true number.
     pub undetected: Vec<String>,
-    /// Injections the stream never produced media after.
+    /// Uncapped count of the same.
+    #[serde(default)]
+    pub undetected_count: u64,
+    /// Sample of injections the stream never produced media after —
+    /// capped at [`MAX_SAMPLES`];
+    /// [`unrecovered_count`](Self::unrecovered_count) is the true number.
     pub unrecovered: Vec<String>,
+    /// Uncapped count of the same.
+    #[serde(default)]
+    pub unrecovered_count: u64,
     /// Injections that would have landed in [`undetected`](Self::undetected)
     /// but were excused as lost in transit — a `ContinuityJump` inside
     /// their attribution window says the transport itself dropped packets
     /// there, and a corrupted packet the network never delivered cannot be
     /// noticed by its damage. Only ever nonzero for a report finished with
-    /// transport-loss excusal on (see [`Attribution::finish_with`]).
+    /// transport-loss excusal on (see [`Attribution::lossy`]).
     #[serde(default)]
     pub undetected_lost: u64,
     /// Same excusal, for [`unrecovered`](Self::unrecovered): media that a
@@ -1278,7 +1321,7 @@ pub struct AttributionReport {
     /// recover.
     #[serde(default)]
     pub unrecovered_lost: u64,
-    /// Unexplained events dropped from
+    /// Unexplained events kept out of
     /// [`unexplained_events`](Self::unexplained_events) as transport loss
     /// rather than corruption — discontinuity-family signals under
     /// transport-loss excusal. Recorded so `events - attributed_events`
@@ -1289,6 +1332,21 @@ pub struct AttributionReport {
     pub injected_fraction: f64,
     pub attribution_window: u64,
     pub recovery_bound: u64,
+}
+
+impl AttributionReport {
+    /// Unexplained events that are corruption evidence — every
+    /// unattributed event except the ones transport-loss excusal took.
+    ///
+    /// **This, not `unexplained_events.len()`, is what a verdict must
+    /// gate on.** The list is a capped sample: a run that produced
+    /// thousands of unexplained events shows sixty-four of them, and a
+    /// check reading the list's length would read a badly-broken run as
+    /// a mildly-broken one.
+    #[must_use]
+    pub fn unexplained_total(&self) -> u64 {
+        self.unexplained_resyncs + self.unexplained_discontinuities + self.unexplained_nonconformant
+    }
 }
 
 #[derive(Clone, Copy, Default)]
@@ -1311,7 +1369,7 @@ struct InjState {
     /// the PID the injection targeted. Evidence that packets went missing
     /// around here for a reason the corruption log cannot own: an
     /// impairment proxy's loss, an SRT/RIST buffer overrun, a reconnect
-    /// after an outage. See [`Attribution::finish_with`] for what it
+    /// after an outage. See [`Attribution::lossy`] for what it
     /// excuses.
     cc_jump_in_window: bool,
 }
@@ -1325,9 +1383,43 @@ struct InjState {
 /// over the injection list instead of rescanning it per event — a 72-hour
 /// soak produces millions of events against a quarter-million injections,
 /// and the quadratic form of that scan would not finish.
+/// The half of a logged [`Injection`] the attribution engine reads.
+///
+/// Deliberately not the `Injection` itself. That carries `before`/`after`
+/// byte images of every corrupted packet (up to ~500 bytes each), and a
+/// 72-hour run logs a quarter of a million of them — state an engine that
+/// only ever looks at the class, the PID and two flags has no business
+/// holding onto. `Copy`, so retiring one costs nothing.
+#[derive(Clone, Copy, Debug)]
+struct Tracked {
+    coord: Coord,
+    class: Class,
+    pid: u16,
+    detectable: bool,
+    psi: bool,
+}
+
+impl From<&Injection> for Tracked {
+    fn from(i: &Injection) -> Tracked {
+        Tracked {
+            coord: i.coord,
+            class: i.class,
+            pid: i.pid,
+            detectable: i.detectable,
+            psi: i.psi,
+        }
+    }
+}
+
 pub struct Attribution {
-    inj: Vec<Injection>,
+    /// Injections still in play, i.e. from `base` onwards. Everything
+    /// before `base` has been judged into the counters below and dropped
+    /// — see [`Attribution::prune`].
+    inj: Vec<Tracked>,
     st: Vec<InjState>,
+    /// Absolute index of `inj[0]`. Every cursor below is absolute, so
+    /// they survive pruning unchanged.
+    base: usize,
     window: u64,
     recovery_bound: u64,
     /// First injection whose windows may still be open.
@@ -1337,16 +1429,39 @@ pub struct Attribution {
     /// First injection not yet resolved; resolution runs front-to-back
     /// because logged coordinates are in stream order.
     next_unresolved: usize,
+    /// Whether an unexplained discontinuity-family signal is charged to
+    /// the corruption tap or written off as transport loss. Fixed at
+    /// construction, not at `finish`: a multi-day run cannot keep every
+    /// unexplained event around waiting to be classified, and the tier is
+    /// a property of the capture (`VerifyMode`), known before the first
+    /// byte arrives. See [`Attribution::lossy`].
+    excuse_transport_loss: bool,
     events: u64,
     attributed_events: u64,
     attributed_nonconformant: u64,
     attributed_discontinuities: u64,
     resyncs: u64,
-    /// Unexplained events, each kept with the signal that produced it so
-    /// [`Attribution::finish_with`] can decide per family whether it is
-    /// corruption evidence or transport loss. The report itself carries
-    /// only the strings.
-    unexplained: Vec<(Signal, String)>,
+    /// Injections ever added, across `new` and every `append` — `inj.len()`
+    /// no longer answers this once pruning starts.
+    logged: u64,
+    // Per-injection verdicts, accumulated as injections retire (and, at
+    // `finish`, over whatever is still retained).
+    detectable: u64,
+    resolved: u64,
+    unresolved: u64,
+    undetected_count: u64,
+    unrecovered_count: u64,
+    undetected_lost: u64,
+    unrecovered_lost: u64,
+    undetected_samples: Vec<String>,
+    unrecovered_samples: Vec<String>,
+    // Unexplained-event verdicts. The counts are per family and uncapped;
+    // only `unexplained_samples` is bounded.
+    unexplained_resyncs: u64,
+    unexplained_discontinuities: u64,
+    unexplained_nonconformant: u64,
+    unexplained_transport_loss: u64,
+    unexplained_samples: Vec<String>,
     first_unexplained_nc: Option<String>,
     first_unexplained_disc: Option<String>,
     /// Whether any PCR has been seen yet — decides whether an injection
@@ -1367,7 +1482,7 @@ fn ticks_ahead(a: u64, b: u64) -> u64 {
 /// Signals a conformant receiver must produce for a given injection.
 /// `true` for classes whose observable effect is not pinned to one signal
 /// (any event inside the window then counts as having noticed).
-fn expects(inj: &Injection, sig: Signal) -> bool {
+fn expects(inj: &Tracked, sig: Signal) -> bool {
     match inj.class {
         // All three destroy packet framing: the reader resyncs, or the
         // packet vanishes from its PID and the CC jumps. An
@@ -1392,7 +1507,7 @@ fn expects(inj: &Injection, sig: Signal) -> bool {
     }
 }
 
-fn describe(inj: &Injection, at: u64) -> String {
+fn describe(inj: &Tracked, at: u64) -> String {
     format!(
         "{} on pid 0x{:04x} at packet {at}",
         inj.class.name(),
@@ -1401,11 +1516,58 @@ fn describe(inj: &Injection, at: u64) -> String {
 }
 
 impl Attribution {
-    /// Build from a parsed log. Injections logged before the stream's
-    /// first PCR carry no base and resolve immediately, against receiver
-    /// ordinal 0.
+    /// Build from a parsed log, judging every finding strictly. Use for
+    /// an offline capture (`verify`, and `recv --strict` on a transparent
+    /// cell): there is no transport between a file and its verifier, so
+    /// nothing is written off as transport loss.
+    ///
+    /// Injections logged before the stream's first PCR carry no base and
+    /// resolve immediately, against receiver ordinal 0.
     #[must_use]
-    pub fn new(injections: Vec<Injection>, header: &LogHeader) -> Self {
+    pub fn strict(injections: Vec<Injection>, header: &LogHeader) -> Self {
+        Self::build(injections, header, false)
+    }
+
+    /// Build from a parsed log, writing UNEXPLAINED DISCONTINUITIES off
+    /// as transport loss rather than charging them to the corruption tap.
+    ///
+    /// Use for a live capture that crossed a real impaired link
+    /// (`VerifyMode::Lossy`). That tier's whole contract is that packets
+    /// go missing for reasons the sender never logged — an impairment
+    /// proxy's loss, an SRT/RIST buffer overrun, the gap a reconnect
+    /// leaves after an outage — and the engine has no way to tell such a
+    /// gap from one the tap caused. With this:
+    ///
+    /// - Unexplained `ContinuityJump`/`OtherDiscontinuity` signals are
+    ///   not corruption evidence at all. They are already counted in the
+    ///   verifier's own `discontinuities`, which is exactly what the
+    ///   lossy contract says to do with them, and they land in
+    ///   [`AttributionReport::unexplained_transport_loss`] instead.
+    ///   Unexplained `Resync`/`PsiChecksum`/`MalformedPes`/
+    ///   `OtherNonConformant` still fail: a lost packet does not forge a
+    ///   bad CRC or a malformed PES header.
+    /// - An undetected or unrecovered injection with a FOREIGN
+    ///   `ContinuityJump` in its window is excused into
+    ///   [`AttributionReport::undetected_lost`] /
+    ///   [`AttributionReport::unrecovered_lost`]: a corrupted packet the
+    ///   network then threw away cannot be noticed by its damage, and
+    ///   media the same gap swallowed is not the injection failing to
+    ///   recover. Foreign is load-bearing — an injection's OWN jump never
+    ///   excuses it (see [`Attribution::on_signal`]), or a `Drop`, whose
+    ///   only observable is a continuity jump, would arrive pre-excused
+    ///   and never have to recover at all.
+    ///
+    /// The excusal is applied as each event arrives, not at `finish`.
+    /// Deciding late would mean holding every unexplained event for the
+    /// length of the run, and a bounded hold would then let a run's
+    /// excused events crowd out the one signal — an unexplained resync —
+    /// that has no second detection path.
+    #[must_use]
+    pub fn lossy(injections: Vec<Injection>, header: &LogHeader) -> Self {
+        Self::build(injections, header, true)
+    }
+
+    fn build(injections: Vec<Injection>, header: &LogHeader, excuse_transport_loss: bool) -> Self {
         let st = injections
             .iter()
             .map(|i| InjState {
@@ -1417,23 +1579,75 @@ impl Attribution {
             })
             .collect();
         Attribution {
-            inj: injections,
+            logged: injections.len() as u64,
+            inj: injections.iter().map(Tracked::from).collect(),
             st,
+            base: 0,
             window: header.attribution_window,
             recovery_bound: header.recovery_bound,
             lo: 0,
             hi: 0,
             next_unresolved: 0,
+            excuse_transport_loss,
             events: 0,
             attributed_events: 0,
             attributed_nonconformant: 0,
             attributed_discontinuities: 0,
             resyncs: 0,
-            unexplained: Vec::new(),
+            detectable: 0,
+            resolved: 0,
+            unresolved: 0,
+            undetected_count: 0,
+            unrecovered_count: 0,
+            undetected_lost: 0,
+            unrecovered_lost: 0,
+            undetected_samples: Vec::new(),
+            unrecovered_samples: Vec::new(),
+            unexplained_resyncs: 0,
+            unexplained_discontinuities: 0,
+            unexplained_nonconformant: 0,
+            unexplained_transport_loss: 0,
+            unexplained_samples: Vec::new(),
             first_unexplained_nc: None,
             first_unexplained_disc: None,
             seen_pcr: false,
         }
+    }
+
+    /// Whether this attribution writes unexplained discontinuities off as
+    /// transport loss — i.e. whether it was built by
+    /// [`Attribution::lossy`]. Read by `verify::Tally::finish` to check
+    /// that the tier the capture is being judged in is the tier the
+    /// attribution was built for.
+    #[must_use]
+    pub fn excuses_transport_loss(&self) -> bool {
+        self.excuse_transport_loss
+    }
+
+    /// Injections whose per-injection state is still held. Bounded by
+    /// [`PRUNE_BATCH`] plus whatever the sender has logged ahead of the
+    /// receiver's current position; exposed so a test can assert the
+    /// bound rather than infer it.
+    #[must_use]
+    pub fn retained(&self) -> usize {
+        self.inj.len()
+    }
+
+    /// One past the last absolute injection index.
+    fn end(&self) -> usize {
+        self.base + self.inj.len()
+    }
+
+    fn tracked(&self, i: usize) -> &Tracked {
+        &self.inj[i - self.base]
+    }
+
+    fn state(&self, i: usize) -> &InjState {
+        &self.st[i - self.base]
+    }
+
+    fn state_mut(&mut self, i: usize) -> &mut InjState {
+        &mut self.st[i - self.base]
     }
 
     /// Add injections the sender logged AFTER this attribution was built —
@@ -1462,8 +1676,9 @@ impl Attribution {
                 stranded: anchorless && self.seen_pcr,
                 ..InjState::default()
             };
-            self.inj.push(i);
+            self.inj.push(Tracked::from(&i));
             self.st.push(st);
+            self.logged += 1;
         }
     }
 
@@ -1479,9 +1694,9 @@ impl Attribution {
     /// injection stays unresolved and is never judged.
     pub fn on_pcr(&mut self, pcr_base: u64, at: u64) {
         self.seen_pcr = true;
-        while self.next_unresolved < self.inj.len() {
+        while self.next_unresolved < self.end() {
             let i = self.next_unresolved;
-            let Some(b) = self.inj[i].coord.pcr_base else {
+            let Some(b) = self.tracked(i).coord.pcr_base else {
                 // Resolved at construction.
                 self.next_unresolved += 1;
                 continue;
@@ -1498,36 +1713,117 @@ impl Attribution {
                     // Permanently unresolvable — every later base is
                     // further still — so advance past it rather than
                     // stalling the cursor on it.
-                    self.st[i].stranded = true;
+                    self.state_mut(i).stranded = true;
                     self.next_unresolved += 1;
                     continue;
                 }
             }
             // Saturating: a corrupt log must not panic the verifier.
-            self.st[i].resolved_at = Some(at.saturating_add(self.inj[i].coord.since_pcr));
-            self.st[i].approx = b != pcr_base;
+            let since = self.tracked(i).coord.since_pcr;
+            let st = self.state_mut(i);
+            st.resolved_at = Some(at.saturating_add(since));
+            st.approx = b != pcr_base;
             self.next_unresolved += 1;
         }
     }
 
-    /// Move the scan cursors up to event ordinal `at`.
+    /// Move the scan cursors up to event ordinal `at`, then retire what
+    /// they have left behind.
     fn advance(&mut self, at: u64) {
         // A stranded injection has no position at all, so it must not park
         // the cursor: injections logged AFTER an outage resolve normally
         // and still need to be reachable.
-        while self.hi < self.st.len()
-            && (self.st[self.hi].stranded || self.st[self.hi].resolved_at.is_some_and(|r| r <= at))
+        while self.hi < self.end()
+            && (self.state(self.hi).stranded
+                || self.state(self.hi).resolved_at.is_some_and(|r| r <= at))
         {
             self.hi += 1;
         }
         let span = self.window.max(self.recovery_bound) + APPROX_SLACK;
         while self.lo < self.hi
-            && (self.st[self.lo].stranded
-                || self.st[self.lo]
+            && (self.state(self.lo).stranded
+                || self
+                    .state(self.lo)
                     .resolved_at
                     .is_some_and(|r| r.saturating_add(span) < at))
         {
             self.lo += 1;
+        }
+        self.prune();
+    }
+
+    /// Fold injections both cursors have passed into the running
+    /// counters and drop their per-injection state.
+    ///
+    /// Safe to do at all because the two cursors only ever move forward
+    /// and nothing below them is ever read again: `lo` advances only past
+    /// an injection that is STRANDED (a terminal state — it can never be
+    /// resolved, so it can never be judged) or RESOLVED with every window
+    /// closed, and `next_unresolved` is the only other index into the
+    /// list. Retiring at the minimum of the two keeps both valid.
+    ///
+    /// Without this the engine holds every injection of the run: a
+    /// 72-hour soak logs a quarter of a million of them, and even reduced
+    /// to [`Tracked`] that is state growing with the capture, on the same
+    /// process the run's own `rss_slope_*_recv` verdict gates at 200
+    /// KiB/h.
+    ///
+    /// `next_unresolved` only moves when [`Attribution::on_pcr`] is fed,
+    /// so a receiver that stopped seeing PCRs entirely would stop
+    /// retiring. That is not a memory hazard worth guarding: a capture
+    /// with no PCR resolves no coordinate at all, and its whole
+    /// corruption verdict is already `unresolved`.
+    fn prune(&mut self) {
+        let keep_from = self.lo.min(self.next_unresolved);
+        let n = keep_from - self.base;
+        if n < PRUNE_BATCH {
+            return;
+        }
+        for k in 0..n {
+            let (inj, st) = (self.inj[k], self.st[k]);
+            // A retired injection's recovery window is necessarily closed:
+            // `lo` only passed it once `resolved_at + max(window,
+            // recovery_bound) + APPROX_SLACK < at`, and `at` is a receiver
+            // ordinal, so it is at most the capture's final packet count.
+            self.judge(&inj, &st, true);
+        }
+        self.inj.drain(..n);
+        self.st.drain(..n);
+        self.base = keep_from;
+    }
+
+    /// Fold one injection's verdict into the running counters.
+    /// `recovery_window_closed` says whether the capture ran far enough
+    /// past it to hold it to a recovery obligation at all.
+    fn judge(&mut self, inj: &Tracked, st: &InjState, recovery_window_closed: bool) {
+        if inj.detectable {
+            self.detectable += 1;
+        }
+        let Some(r) = st.resolved_at else {
+            self.unresolved += 1;
+            return;
+        };
+        self.resolved += 1;
+        let lost = self.excuse_transport_loss && st.cc_jump_in_window;
+        if inj.detectable && !st.detected {
+            if lost {
+                self.undetected_lost += 1;
+            } else {
+                self.undetected_count += 1;
+                if self.undetected_samples.len() < MAX_SAMPLES {
+                    self.undetected_samples.push(describe(inj, r));
+                }
+            }
+        }
+        if !st.recovered && recovery_window_closed {
+            if lost {
+                self.unrecovered_lost += 1;
+            } else {
+                self.unrecovered_count += 1;
+                if self.unrecovered_samples.len() < MAX_SAMPLES {
+                    self.unrecovered_samples.push(describe(inj, r));
+                }
+            }
         }
     }
 
@@ -1546,10 +1842,10 @@ impl Attribution {
     /// advances the cursors, so it is usable from read-only queries that
     /// run after some `on_*` call has already positioned them.
     fn window_contains(&self, i: usize, at: u64) -> bool {
-        let Some(r) = self.st[i].resolved_at else {
+        let Some(r) = self.state(i).resolved_at else {
             return false;
         };
-        let w = if self.st[i].approx {
+        let w = if self.state(i).approx {
             self.window + APPROX_SLACK
         } else {
             self.window
@@ -1588,8 +1884,8 @@ impl Attribution {
         self.advance(at);
         (self.lo..self.hi).rev().any(|i| {
             self.window_contains(i, at)
-                && (self.inj[i].pid == pid
-                    || matches!(self.inj[i].class, Class::Truncate | Class::Garbage))
+                && (self.tracked(i).pid == pid
+                    || matches!(self.tracked(i).class, Class::Truncate | Class::Garbage))
         })
     }
 
@@ -1624,7 +1920,7 @@ impl Attribution {
     /// Like the `on_*` methods this expects non-decreasing `at`.
     pub fn truncation_explains(&mut self, at: u64) -> bool {
         self.hit(at)
-            .is_some_and(|i| self.inj[i].class == Class::Truncate)
+            .is_some_and(|i| self.tracked(i).class == Class::Truncate)
     }
 
     /// An error-class event surfaced at receiver ordinal `at` (`pid` is
@@ -1657,7 +1953,7 @@ impl Attribution {
         if sig == Signal::ContinuityJump {
             for i in self.lo..self.hi {
                 if Some(i) != attributed_to && self.window_contains(i, at) {
-                    self.st[i].cc_jump_in_window = true;
+                    self.state_mut(i).cc_jump_in_window = true;
                 }
             }
         }
@@ -1673,25 +1969,44 @@ impl Attribution {
                     }
                     Signal::Resync => {}
                 }
-                if expects(&self.inj[i], sig) {
-                    self.st[i].detected = true;
+                if expects(self.tracked(i), sig) {
+                    self.state_mut(i).detected = true;
                 }
             }
+            // Unexplained. Which family it belongs to — and therefore
+            // whether transport-loss excusal takes it — is decided HERE,
+            // not at `finish`.
+            //
+            // Deciding late was a hole with teeth. The sample list is
+            // capped, and a lossy multi-day run produces excused
+            // continuity jumps by the thousand: they would fill the cap
+            // within the first minutes, after which a genuinely
+            // unexplained RESYNC — the one signal with no second
+            // detection path, since it is not a `DemuxEvent` and resync
+            // mode suppresses `rawts_sync_loss` — would be dropped on the
+            // floor and the run would pass. Excused events now consume no
+            // cap budget, and each family is counted without a cap.
             None => {
                 let text = format!("{sig:?} on pid {pid:?} at packet {at}");
                 match sig {
                     Signal::PsiChecksum | Signal::MalformedPes | Signal::OtherNonConformant => {
                         self.first_unexplained_nc
                             .get_or_insert_with(|| text.clone());
+                        self.unexplained_nonconformant += 1;
                     }
                     Signal::ContinuityJump | Signal::OtherDiscontinuity => {
                         self.first_unexplained_disc
                             .get_or_insert_with(|| text.clone());
+                        if self.excuse_transport_loss {
+                            self.unexplained_transport_loss += 1;
+                            return;
+                        }
+                        self.unexplained_discontinuities += 1;
                     }
-                    Signal::Resync => {}
+                    Signal::Resync => self.unexplained_resyncs += 1,
                 }
-                if self.unexplained.len() < MAX_UNEXPLAINED {
-                    self.unexplained.push((sig, text));
+                if self.unexplained_samples.len() < MAX_SAMPLES {
+                    self.unexplained_samples.push(text);
                 }
             }
         }
@@ -1702,10 +2017,10 @@ impl Attribution {
     pub fn on_media(&mut self, at: u64, pid: u16) {
         self.advance(at);
         for i in self.lo..self.hi {
-            if self.st[i].recovered {
+            if self.state(i).recovered {
                 continue;
             }
-            let Some(r) = self.st[i].resolved_at else {
+            let Some(r) = self.state(i).resolved_at else {
                 continue;
             };
             if at < r || at > r.saturating_add(self.recovery_bound) {
@@ -1722,10 +2037,10 @@ impl Attribution {
             // unrecovered no matter how healthy the stream was. What
             // recovery means there is that the multiplex kept delivering —
             // which is exactly media on any PID.
-            let any_pid =
-                self.inj[i].psi || matches!(self.inj[i].class, Class::Garbage | Class::Truncate);
-            if any_pid || self.inj[i].pid == pid {
-                self.st[i].recovered = true;
+            let any_pid = self.tracked(i).psi
+                || matches!(self.tracked(i).class, Class::Garbage | Class::Truncate);
+            if any_pid || self.tracked(i).pid == pid {
+                self.state_mut(i).recovered = true;
             }
         }
     }
@@ -1736,111 +2051,44 @@ impl Attribution {
     /// is not judged for recovery, and an injection that never resolved is
     /// not judged at all — absent evidence is not evidence of a failure.
     ///
-    /// Judges every injection strictly; [`Attribution::finish_with`] is the
-    /// form that can excuse transport loss.
+    /// Whether findings are judged strictly or with transport-loss
+    /// excusal was fixed when this attribution was built
+    /// ([`Attribution::strict`] / [`Attribution::lossy`]).
     #[must_use]
-    pub fn finish(self, packets_total: u64) -> AttributionReport {
-        self.finish_with(packets_total, false)
-    }
-
-    /// [`Attribution::finish`], optionally excusing what a LOSSY transport
-    /// did to the capture rather than blaming it on the corruption tap.
-    ///
-    /// `excuse_transport_loss` belongs on exactly one caller: a verifier
-    /// running in `VerifyMode::Lossy`, i.e. one judging a live capture that
-    /// crossed a real impaired link. That mode's whole contract is that
-    /// packets go missing for reasons the sender never logged — an
-    /// impairment proxy's loss, an SRT/RIST buffer overrun, the gap a
-    /// reconnect leaves after an outage window — and the attribution engine
-    /// has no way to tell such a gap from one the tap caused. With it set:
-    ///
-    /// - Unexplained DISCONTINUITY-family signals (`ContinuityJump`,
-    ///   `OtherDiscontinuity`) are not corruption evidence at all. They are
-    ///   already counted in the verifier's own `discontinuities`, which is
-    ///   exactly what the Lossy contract says to do with them, and they
-    ///   drop out of `unexplained_events` into
-    ///   [`unexplained_transport_loss`](AttributionReport::unexplained_transport_loss).
-    ///   Unexplained `Resync`/`PsiChecksum`/`MalformedPes`/
-    ///   `OtherNonConformant` still fail: a lost packet does not forge a
-    ///   bad CRC or a malformed PES header.
-    /// - An undetected or unrecovered injection with a FOREIGN
-    ///   `ContinuityJump` in its window is excused into
-    ///   [`undetected_lost`](AttributionReport::undetected_lost) /
-    ///   [`unrecovered_lost`](AttributionReport::unrecovered_lost): a
-    ///   corrupted packet the network then threw away cannot be noticed by
-    ///   its damage, and media the same gap swallowed is not the injection
-    ///   failing to recover. Foreign is load-bearing — an injection's OWN
-    ///   jump never excuses it (see [`Attribution::on_signal`]), or a
-    ///   `Drop`, whose only observable is a continuity jump, would arrive
-    ///   pre-excused and never have to recover at all.
-    ///
-    /// `Strict` (the offline-file path, and `recv --strict`) passes `false`
-    /// and is unchanged — there is no transport between a file and its
-    /// verifier, so every one of these IS a real finding there.
-    #[must_use]
-    pub fn finish_with(self, packets_total: u64, excuse_transport_loss: bool) -> AttributionReport {
-        let mut detectable = 0;
-        let mut resolved = 0;
-        let mut unresolved = 0;
-        let mut undetected = Vec::new();
-        let mut unrecovered = Vec::new();
-        let mut undetected_lost = 0;
-        let mut unrecovered_lost = 0;
-        for (inj, st) in self.inj.iter().zip(&self.st) {
-            if inj.detectable {
-                detectable += 1;
-            }
-            let Some(r) = st.resolved_at else {
-                unresolved += 1;
-                continue;
-            };
-            resolved += 1;
-            let lost = excuse_transport_loss && st.cc_jump_in_window;
-            if inj.detectable && !st.detected {
-                if lost {
-                    undetected_lost += 1;
-                } else {
-                    undetected.push(describe(inj, r));
-                }
-            }
-            if !st.recovered && r.saturating_add(self.recovery_bound) <= packets_total {
-                if lost {
-                    unrecovered_lost += 1;
-                } else {
-                    unrecovered.push(describe(inj, r));
-                }
-            }
-        }
-        let mut unexplained_transport_loss = 0;
-        let mut unexplained_events = Vec::with_capacity(self.unexplained.len());
-        for (sig, text) in self.unexplained {
-            let transport_loss = excuse_transport_loss
-                && matches!(sig, Signal::ContinuityJump | Signal::OtherDiscontinuity);
-            if transport_loss {
-                unexplained_transport_loss += 1;
-            } else {
-                unexplained_events.push(text);
-            }
+    pub fn finish(mut self, packets_total: u64) -> AttributionReport {
+        // Everything already retired has been judged (`Attribution::judge`
+        // via `prune`); this folds in whatever is still retained.
+        for k in 0..self.inj.len() {
+            let (inj, st) = (self.inj[k], self.st[k]);
+            let closed = st
+                .resolved_at
+                .is_some_and(|r| r.saturating_add(self.recovery_bound) <= packets_total);
+            self.judge(&inj, &st, closed);
         }
         AttributionReport {
-            injected: self.inj.len() as u64,
-            detectable,
-            resolved,
-            unresolved,
+            injected: self.logged,
+            detectable: self.detectable,
+            resolved: self.resolved,
+            unresolved: self.unresolved,
             events: self.events,
             attributed_events: self.attributed_events,
             attributed_nonconformant: self.attributed_nonconformant,
             attributed_discontinuities: self.attributed_discontinuities,
-            unexplained_events,
+            unexplained_events: self.unexplained_samples,
+            unexplained_resyncs: self.unexplained_resyncs,
+            unexplained_discontinuities: self.unexplained_discontinuities,
+            unexplained_nonconformant: self.unexplained_nonconformant,
             first_unexplained_nonconformant: self.first_unexplained_nc,
             first_unexplained_discontinuity: self.first_unexplained_disc,
-            undetected,
-            unrecovered,
-            undetected_lost,
-            unrecovered_lost,
-            unexplained_transport_loss,
+            undetected: self.undetected_samples,
+            undetected_count: self.undetected_count,
+            unrecovered: self.unrecovered_samples,
+            unrecovered_count: self.unrecovered_count,
+            undetected_lost: self.undetected_lost,
+            unrecovered_lost: self.unrecovered_lost,
+            unexplained_transport_loss: self.unexplained_transport_loss,
             resyncs: self.resyncs,
-            injected_fraction: self.inj.len() as f64 / packets_total.max(1) as f64,
+            injected_fraction: self.logged as f64 / packets_total.max(1) as f64,
             attribution_window: self.window,
             recovery_bound: self.recovery_bound,
         }
@@ -2360,7 +2608,7 @@ mod tests {
     fn a_psi_injection_recovers_on_media_from_any_pid() {
         let mut psi_inj = inj(1000, 0, Class::PsiFlip, 0, true);
         psi_inj.psi = true;
-        let mut a = Attribution::new(vec![psi_inj], &hdr());
+        let mut a = Attribution::strict(vec![psi_inj], &hdr());
         a.on_pcr(1000, 5000);
         a.on_signal(5010, Some(0), Signal::PsiChecksum);
         a.on_media(5020, 0x1011); // an elementary stream, not pid 0
@@ -2370,7 +2618,7 @@ mod tests {
         // A MEDIA-PID injection still has to be answered on its own PID:
         // the relaxation is scoped to PSI, not a blanket "any event
         // anywhere counts".
-        let mut a = Attribution::new(vec![inj(1000, 0, Class::Drop, 0x1011, true)], &hdr());
+        let mut a = Attribution::strict(vec![inj(1000, 0, Class::Drop, 0x1011, true)], &hdr());
         a.on_pcr(1000, 5000);
         a.on_signal(5010, Some(0x1011), Signal::ContinuityJump);
         a.on_media(5020, 0x1100);
@@ -2383,7 +2631,7 @@ mod tests {
     /// move any of the counters an event would.
     #[test]
     fn only_a_truncation_explains_a_derived_anomaly() {
-        let mut a = Attribution::new(vec![inj(1000, 10, Class::Truncate, 0x1011, true)], &hdr());
+        let mut a = Attribution::strict(vec![inj(1000, 10, Class::Truncate, 0x1011, true)], &hdr());
         a.on_pcr(1000, 5000); // resolves to receiver ordinal 5010
         assert!(!a.truncation_explains(5009), "before the injection");
         assert!(a.truncation_explains(5010), "at the injection");
@@ -2406,7 +2654,7 @@ mod tests {
         // the only one that misaligns the byte stream, so it is the only
         // one whose window may contain a PTS that was never a timestamp.
         for class in Class::ALL.iter().filter(|&&c| c != Class::Truncate) {
-            let mut a = Attribution::new(vec![inj(1000, 10, *class, 0x1011, true)], &hdr());
+            let mut a = Attribution::strict(vec![inj(1000, 10, *class, 0x1011, true)], &hdr());
             a.on_pcr(1000, 5000);
             assert!(
                 !a.truncation_explains(5010),
@@ -2572,7 +2820,7 @@ mod tests {
             pes_start: false,
         };
 
-        let mut a = Attribution::new(vec![mk(Some(100), 2)], &hdr);
+        let mut a = Attribution::strict(vec![mk(Some(100), 2)], &hdr);
         a.on_pcr(100, 10);
         a.on_signal(13, Some(0x1011), Signal::ContinuityJump);
         a.on_media(20, 0x1011);
@@ -2611,7 +2859,7 @@ mod tests {
             attribution_window: ATTRIBUTION_WINDOW,
             recovery_bound: RECOVERY_BOUND,
         };
-        let mut a = Attribution::new(Vec::new(), &hdr);
+        let mut a = Attribution::strict(Vec::new(), &hdr);
         a.append(vec![Injection {
             ordinal: 0,
             coord: Coord {
@@ -2699,9 +2947,159 @@ mod tests {
         }
     }
 
+    /// C2, the regression this exists for: on a lossy multi-day run the
+    /// excused continuity jumps must not be able to crowd an unexplained
+    /// RESYNC out of the evidence.
+    ///
+    /// A resync is the one signal with no second detection path — it is
+    /// not a `DemuxEvent`, and resync mode is exactly what suppresses the
+    /// `rawts_sync_loss` failure that would otherwise catch it — so if
+    /// the sample cap swallows it, `corruption_attributed` passes a run
+    /// whose receiver lost packet sync for reasons nothing explains.
+    #[test]
+    fn excused_jumps_never_crowd_out_an_unexplained_resync() {
+        let mut a = Attribution::lossy(vec![inj(1000, 10, Class::Header, 0x1011, true)], &hdr());
+        a.on_pcr(1000, 5000);
+        // Comfortably more excusable jumps than the sample cap, none of
+        // them inside any injection's window.
+        for k in 0..(MAX_SAMPLES as u64 * 4) {
+            a.on_signal(20_000 + k, Some(0x1011), Signal::ContinuityJump);
+        }
+        a.on_signal(90_000, None, Signal::Resync);
+        let r = a.finish(100_000);
+
+        assert_eq!(r.unexplained_transport_loss, MAX_SAMPLES as u64 * 4);
+        assert_eq!(r.unexplained_resyncs, 1);
+        assert_eq!(
+            r.unexplained_total(),
+            1,
+            "the resync is the only corruption evidence here: {r:?}"
+        );
+        assert!(
+            r.unexplained_events.iter().any(|e| e.contains("Resync")),
+            "and it must be quotable in the failure: {:?}",
+            r.unexplained_events
+        );
+    }
+
+    /// The uncapped counters keep counting after the sample list stops.
+    /// A verdict reading `unexplained_events.len()` would report 64 for
+    /// any run above the cap, which is how a badly-broken run reads as a
+    /// mildly-broken one.
+    #[test]
+    fn unexplained_counts_are_uncapped_while_the_sample_list_is_capped() {
+        let mut a = Attribution::strict(vec![], &hdr());
+        let n = MAX_SAMPLES as u64 * 10;
+        for k in 0..n {
+            a.on_signal(1000 + k, Some(0x1011), Signal::PsiChecksum);
+        }
+        let r = a.finish(100_000);
+        assert_eq!(r.unexplained_events.len(), MAX_SAMPLES);
+        assert_eq!(r.unexplained_nonconformant, n);
+        assert_eq!(r.unexplained_total(), n);
+    }
+
+    /// The same cap/count split for the per-injection verdicts (I4):
+    /// `undetected`/`unrecovered` are samples, `*_count` are the truth.
+    #[test]
+    fn undetected_and_unrecovered_lists_are_capped_and_their_counts_are_not() {
+        let n = MAX_SAMPLES as u64 * 3;
+        // Detectable injections, spaced past every window, none of which
+        // ever produces an event or any media afterwards.
+        let log: Vec<Injection> = (0..n)
+            .map(|k| inj(1000, 10 + k * 2000, Class::Drop, 0x1011, true))
+            .collect();
+        let mut a = Attribution::strict(log, &hdr());
+        a.on_pcr(1000, 0);
+        // Walk the cursors past every window so the retirement path does
+        // the counting, not just the final sweep.
+        a.on_media(10 + n * 2000 + 10_000, 0x2222);
+        let r = a.finish(10 + n * 2000 + 20_000);
+
+        assert_eq!(r.undetected_count, n);
+        assert_eq!(r.unrecovered_count, n);
+        assert_eq!(r.undetected.len(), MAX_SAMPLES);
+        assert_eq!(r.unrecovered.len(), MAX_SAMPLES);
+    }
+
+    /// C1, the memory half: the engine must stop holding the log.
+    ///
+    /// A 72-hour soak logs a quarter of a million injections, each
+    /// carrying `before`/`after` byte images, against a receive process
+    /// whose own `rss_slope_*_recv` verdict gates at 200 KiB/h. Retained
+    /// state has to be bounded by the window the cursors are actually
+    /// working in, not by the length of the run.
+    #[test]
+    fn a_long_run_retires_injections_instead_of_accumulating_them() {
+        let n = 20_000u64;
+        let mut a = Attribution::strict(vec![], &hdr());
+        let mut peak = 0usize;
+        for k in 0..n {
+            let at = 10 + k * 2000;
+            a.append(vec![inj(1000, at, Class::Drop, 0x1011, true)]);
+            // A live receiver feeds every PCR it decodes, which is what
+            // turns a logged coordinate into a receiver position — and
+            // therefore what lets the resolution cursor move on.
+            a.on_pcr(1000, 0);
+            // One event per injection, inside its own window, which is
+            // what walks the scan cursors forward.
+            a.on_signal(at + 5, Some(0x1011), Signal::ContinuityJump);
+            a.on_media(at + 10, 0x1011);
+            peak = peak.max(a.retained());
+        }
+        assert!(
+            peak <= PRUNE_BATCH + 16,
+            "retained {peak} injections at peak against a {PRUNE_BATCH}-injection prune batch"
+        );
+
+        // …and the verdict is unchanged by the pruning: every one of them
+        // was detected and recovered.
+        let r = a.finish(10 + n * 2000 + 10_000);
+        assert_eq!(r.injected, n);
+        assert_eq!(r.resolved, n);
+        assert_eq!(r.undetected_count, 0, "{:?}", r.undetected);
+        assert_eq!(r.unrecovered_count, 0, "{:?}", r.unrecovered);
+    }
+
+    /// Pruning must not change a verdict. The same event stream is judged
+    /// twice — once long enough to retire most of the log, once short
+    /// enough that nothing retires — and the two reports must agree on
+    /// every counter.
+    #[test]
+    fn retiring_injections_does_not_change_the_verdict() {
+        let judge = |n: u64| {
+            let log: Vec<Injection> = (0..n)
+                .map(|k| inj(1000, 10 + k * 2000, Class::Drop, 0x1011, true))
+                .collect();
+            let mut a = Attribution::strict(log, &hdr());
+            a.on_pcr(1000, 0);
+            for k in 0..n {
+                let at = 10 + k * 2000;
+                // Every third injection is left with no event at all, so
+                // both the passing and the failing paths are exercised.
+                if k % 3 != 0 {
+                    a.on_signal(at + 5, Some(0x1011), Signal::ContinuityJump);
+                }
+                a.on_media(at + 10, 0x1011);
+            }
+            a.finish(10 + n * 2000 + 10_000)
+        };
+        // Below the batch nothing is ever retired; well above it, most of
+        // the log is. Both must produce the arithmetically exact verdict.
+        for n in [100u64, PRUNE_BATCH as u64 * 3] {
+            let r = judge(n);
+            assert_eq!(r.injected, n, "n={n}: {r:?}");
+            assert_eq!(r.resolved, n, "n={n}: {r:?}");
+            assert_eq!(r.detectable, n, "n={n}: {r:?}");
+            // Exactly the every-third injections that got no event.
+            assert_eq!(r.undetected_count, n.div_ceil(3), "n={n}: {r:?}");
+            assert_eq!(r.unrecovered_count, 0, "n={n}: {r:?}");
+        }
+    }
+
     #[test]
     fn attribution_explains_events_inside_the_window_and_flags_the_rest() {
-        let mut a = Attribution::new(vec![inj(1000, 10, Class::Header, 0x1011, true)], &hdr());
+        let mut a = Attribution::strict(vec![inj(1000, 10, Class::Header, 0x1011, true)], &hdr());
         a.on_pcr(1000, 5000); // injection resolves to receiver ordinal 5010
         a.on_signal(5020, Some(0x1011), Signal::ContinuityJump); // explained
         a.on_media(5100, 0x1011); // recovered
@@ -2722,8 +3120,13 @@ mod tests {
     /// file has no transport to lose anything.
     #[test]
     fn lossy_excuses_an_unexplained_continuity_jump_and_strict_does_not() {
-        let build = || {
-            let mut a = Attribution::new(vec![inj(1000, 10, Class::Header, 0x1011, true)], &hdr());
+        let build = |lossy: bool| {
+            let log = vec![inj(1000, 10, Class::Header, 0x1011, true)];
+            let mut a = if lossy {
+                Attribution::lossy(log, &hdr())
+            } else {
+                Attribution::strict(log, &hdr())
+            };
             a.on_pcr(1000, 5000); // resolves to receiver ordinal 5010
             a.on_signal(5020, Some(0x1011), Signal::ContinuityJump); // explained
             a.on_media(5100, 0x1011);
@@ -2732,7 +3135,7 @@ mod tests {
             a
         };
 
-        let lossy = build().finish_with(10_000, true);
+        let lossy = build(true).finish(10_000);
         assert!(
             lossy.unexplained_events.is_empty(),
             "a transport gap is not corruption evidence: {:?}",
@@ -2744,8 +3147,9 @@ mod tests {
         assert_eq!(lossy.events, 2);
         assert_eq!(lossy.attributed_events, 1);
 
-        let strict = build().finish_with(10_000, false);
+        let strict = build(false).finish(10_000);
         assert_eq!(strict.unexplained_events.len(), 1);
+        assert_eq!(strict.unexplained_discontinuities, 1);
         assert_eq!(strict.unexplained_transport_loss, 0);
     }
 
@@ -2760,10 +3164,11 @@ mod tests {
             Signal::OtherNonConformant,
             Signal::Resync,
         ] {
-            let mut a = Attribution::new(vec![inj(1000, 10, Class::Header, 0x1011, true)], &hdr());
+            let mut a =
+                Attribution::lossy(vec![inj(1000, 10, Class::Header, 0x1011, true)], &hdr());
             a.on_pcr(1000, 5000);
             a.on_signal(9000, Some(0x1011), sig);
-            let r = a.finish_with(10_000, true);
+            let r = a.finish(10_000);
             assert_eq!(
                 r.unexplained_events.len(),
                 1,
@@ -2778,11 +3183,11 @@ mod tests {
     /// Without this the whole corruption suite would go vacuous.
     #[test]
     fn lossy_without_a_cc_jump_in_the_window_still_reports_undetected() {
-        let mut a = Attribution::new(vec![inj(1000, 10, Class::PsiFlip, 0, true)], &hdr());
+        let mut a = Attribution::lossy(vec![inj(1000, 10, Class::PsiFlip, 0, true)], &hdr());
         a.on_pcr(1000, 5000);
         // A jump far outside the window explains nothing about it.
         a.on_signal(9000, Some(0x1011), Signal::ContinuityJump);
-        let r = a.finish_with(10_000, true);
+        let r = a.finish(10_000);
         assert_eq!(r.undetected.len(), 1, "{r:?}");
         assert_eq!(r.undetected_lost, 0);
     }
@@ -2795,12 +3200,12 @@ mod tests {
     /// stream recovering.
     #[test]
     fn an_injections_own_cc_jump_does_not_excuse_its_recovery() {
-        let mut a = Attribution::new(vec![inj(1000, 10, Class::Drop, 0x1011, true)], &hdr());
+        let mut a = Attribution::lossy(vec![inj(1000, 10, Class::Drop, 0x1011, true)], &hdr());
         a.on_pcr(1000, 5000); // resolves to 5010
         // Its own jump, inside its own window, attributed to it.
         a.on_signal(5100, Some(0x1011), Signal::ContinuityJump);
         // No media on 0x1011 afterwards, so it never recovers.
-        let r = a.finish_with(10_000, true);
+        let r = a.finish(10_000);
         assert_eq!(r.attributed_events, 1, "the jump IS attributed: {r:?}");
         assert_eq!(
             r.unrecovered.len(),
@@ -2821,14 +3226,16 @@ mod tests {
         // Two injections 100 packets apart: deliberately closer than
         // `min_gap` so their windows overlap and the newer one can own a
         // jump that also falls inside the older one's window.
-        let build = || {
-            let mut a = Attribution::new(
-                vec![
-                    inj(1000, 10, Class::PsiFlip, 0, true),
-                    inj(1000, 110, Class::Drop, 0x1011, true),
-                ],
-                &hdr(),
-            );
+        let build = |lossy: bool| {
+            let log = vec![
+                inj(1000, 10, Class::PsiFlip, 0, true),
+                inj(1000, 110, Class::Drop, 0x1011, true),
+            ];
+            let mut a = if lossy {
+                Attribution::lossy(log, &hdr())
+            } else {
+                Attribution::strict(log, &hdr())
+            };
             a.on_pcr(1000, 5000); // resolve to 5010 and 5110
             // Inside BOTH windows; `hit` gives it to the newer (the Drop),
             // so the PsiFlip sees it as foreign.
@@ -2839,7 +3246,7 @@ mod tests {
         // The psi_flip is detectable and expects a PsiChecksum event it
         // never got, so it is BOTH undetected and unrecovered — one
         // fixture covering both excused counters.
-        let lossy = build().finish_with(10_000, true);
+        let lossy = build(true).finish(10_000);
         assert_eq!(
             (lossy.undetected_lost, lossy.unrecovered_lost),
             (1, 1),
@@ -2860,7 +3267,7 @@ mod tests {
         );
 
         // Strict excuses neither, as always.
-        let strict = build().finish_with(10_000, false);
+        let strict = build(false).finish(10_000);
         assert_eq!(strict.undetected.len(), 1, "{strict:?}");
         assert_eq!(strict.unrecovered.len(), 2, "{strict:?}");
         assert_eq!((strict.undetected_lost, strict.unrecovered_lost), (0, 0));
@@ -2871,7 +3278,7 @@ mod tests {
     /// Garbage on any PID (both destroy framing multiplex-wide).
     #[test]
     fn explains_damage_covers_same_pid_any_class_and_framing_classes_anywhere() {
-        let mut a = Attribution::new(
+        let mut a = Attribution::strict(
             vec![
                 inj(1000, 10, Class::BodyFlip, 0x1031, false),
                 inj(2000, 10, Class::Truncate, 0x1011, true),
@@ -2900,7 +3307,7 @@ mod tests {
 
     #[test]
     fn attribution_flags_undetected_and_unrecovered_injections() {
-        let mut a = Attribution::new(
+        let mut a = Attribution::strict(
             vec![
                 inj(1000, 10, Class::PsiFlip, 0, true),
                 inj(2000, 0, Class::Dup, 0x1011, false),
@@ -2922,7 +3329,7 @@ mod tests {
     #[test]
     fn attribution_resolves_an_unseen_pcr_base_to_the_next_seen_one_wrap_aware() {
         let near_wrap = (1u64 << 33) - 10;
-        let mut a = Attribution::new(
+        let mut a = Attribution::strict(
             vec![inj(near_wrap, 3, Class::Truncate, 0x1011, true)],
             &hdr(),
         );
@@ -2942,7 +3349,7 @@ mod tests {
         // Just inside the bound: the logged anchor base never arrived (the
         // corruption destroyed the packet carrying it), but the next base
         // is close enough to place the injection approximately.
-        let mut a = Attribution::new(vec![inj(2000, 0, Class::Header, 0x1011, true)], &hdr());
+        let mut a = Attribution::strict(vec![inj(2000, 0, Class::Header, 0x1011, true)], &hdr());
         a.on_pcr(2000 + MAX_APPROX_TICKS, 5000);
         a.on_signal(5010, Some(0x1011), Signal::ContinuityJump);
         a.on_media(5020, 0x1011);
@@ -2955,7 +3362,7 @@ mod tests {
         // pile every injection logged during the outage onto this one
         // ordinal and report all but one as undetected, so the injection
         // stays unresolved and is judged for nothing.
-        let mut a = Attribution::new(vec![inj(2000, 0, Class::Header, 0x1011, true)], &hdr());
+        let mut a = Attribution::strict(vec![inj(2000, 0, Class::Header, 0x1011, true)], &hdr());
         a.on_pcr(2000 + MAX_APPROX_TICKS + 1, 5000);
         let r = a.finish(10_000);
         assert_eq!((r.resolved, r.unresolved), (0, 1));
@@ -2966,7 +3373,7 @@ mod tests {
     fn a_stranded_injection_does_not_block_the_ones_after_it() {
         // The cursor must step over an injection it can never place, or
         // everything logged after the outage becomes unattributable too.
-        let mut a = Attribution::new(
+        let mut a = Attribution::strict(
             vec![
                 inj(2000, 0, Class::Header, 0x1011, true),
                 inj(2000 + 2 * MAX_APPROX_TICKS, 0, Class::Header, 0x1011, true),
@@ -2989,7 +3396,7 @@ mod tests {
         // An adaptation-field-length overrun (a `header` sub-kind) is
         // reported as a plain non-conformance, not a resync, so it must
         // still count as having noticed the injection.
-        let mut a = Attribution::new(vec![inj(1000, 0, Class::Header, 0x1011, true)], &hdr());
+        let mut a = Attribution::strict(vec![inj(1000, 0, Class::Header, 0x1011, true)], &hdr());
         a.on_pcr(1000, 5000);
         a.on_signal(5010, Some(0x1011), Signal::OtherNonConformant);
         a.on_media(5020, 0x1011);
@@ -3000,7 +3407,7 @@ mod tests {
         // A flipped pointer field or section length surfaces as a
         // table-id/section-length non-conformance before the CRC is
         // reached.
-        let mut a = Attribution::new(vec![inj(1000, 0, Class::PsiFlip, 0, true)], &hdr());
+        let mut a = Attribution::strict(vec![inj(1000, 0, Class::PsiFlip, 0, true)], &hdr());
         a.on_pcr(1000, 5000);
         a.on_signal(5010, Some(0), Signal::OtherNonConformant);
         a.on_media(5020, 0);
@@ -3010,7 +3417,7 @@ mod tests {
         // But the sets are not wide open: a dropped packet is a continuity
         // jump and nothing else, so a resync must not be mistaken for
         // having noticed it.
-        let mut a = Attribution::new(vec![inj(1000, 0, Class::Drop, 0x1011, true)], &hdr());
+        let mut a = Attribution::strict(vec![inj(1000, 0, Class::Drop, 0x1011, true)], &hdr());
         a.on_pcr(1000, 5000);
         a.on_signal(5010, None, Signal::Resync);
         a.on_media(5020, 0x1011);
@@ -3024,7 +3431,7 @@ mod tests {
 
     #[test]
     fn attribution_reports_an_injection_whose_window_never_arrived_as_unresolved() {
-        let a = Attribution::new(vec![inj(1000, 0, Class::Header, 0x1011, true)], &hdr());
+        let a = Attribution::strict(vec![inj(1000, 0, Class::Header, 0x1011, true)], &hdr());
         let r = a.finish(100);
         assert_eq!(r.unresolved, 1);
         assert!(

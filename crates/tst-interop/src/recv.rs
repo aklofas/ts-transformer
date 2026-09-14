@@ -82,6 +82,7 @@ fn attach_corruption_log(
     tally: &mut Tally,
     tap: &Arc<Mutex<transport::TeeState>>,
     path: &Path,
+    strict: bool,
 ) -> Result<corrupt::LogTail, String> {
     let deadline = Instant::now() + NO_DATA_TIMEOUT;
     let mut tail = loop {
@@ -97,7 +98,15 @@ fn attach_corruption_log(
         }
     };
     let injections = tail.poll()?;
-    tally.attach_attribution(corrupt::Attribution::new(injections, tail.header()));
+    // The tier is fixed here rather than at `Tally::finish`: a lossy
+    // capture's excusal has to be applied as each event arrives (see
+    // `corrupt::Attribution::lossy`). It must agree with the
+    // `VerifyMode` this loop finishes in, which `Tally::finish` asserts.
+    tally.attach_attribution(if strict {
+        corrupt::Attribution::strict(injections, tail.header())
+    } else {
+        corrupt::Attribution::lossy(injections, tail.header())
+    });
     transport::tee_set_resync_mode(tap, true);
     Ok(tail)
 }
@@ -271,7 +280,7 @@ pub fn recv_over_transport(
         tally.disable_klv_digest_tracking();
     }
     let mut tail = match corruption_log {
-        Some(path) => Some(attach_corruption_log(&mut tally, &tap, path)?),
+        Some(path) => Some(attach_corruption_log(&mut tally, &tap, path, strict)?),
         None => None,
     };
     let start = Instant::now();
@@ -537,7 +546,7 @@ pub fn run_managed(
     // outage. A reconnect itself is deliberately NOT recorded as a
     // recovery: the sender's corruption is not what broke the link.
     let mut tail = match corruption_log {
-        Some(path) => Some(attach_corruption_log(&mut tally, &tap, path)?),
+        Some(path) => Some(attach_corruption_log(&mut tally, &tap, path, strict)?),
         None => None,
     };
     let start = Instant::now();
