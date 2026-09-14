@@ -369,7 +369,9 @@ can check the run did what it said it would.
 - **Distinct per-leg stream profiles.** The two legs draw two different
   profiles from the seed instead of both running `baseline` forever, so a
   long run also covers a codec/carriage/cadence shape the 157-cell matrix
-  only sees for five seconds at a time.
+  only sees for five seconds at a time. Four profiles have been drawn and
+  soak-exercised so far: `klv-sync` and `audio` at seed 3, `baseline` and
+  `pcr-sparse` at seed 7.
 - **Sender-side corruption on both legs**, each with its own seed offset and
   its own injection log, read back by that leg's own receiver.
 - **Rich ST 0601 KLV on both legs** — a record of up to 36 tags (mean about
