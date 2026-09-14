@@ -838,34 +838,43 @@ impl Tally {
             }
         }
 
-        // Rich-KLV verdicts (spec §5.5) — see `Tally::judge_rich`. All
-        // three stay silent in compact mode, where the counters are zero
-        // by construction.
-        let unclean = self.rich.decode_errors + self.rich.field_error_records;
-        if unclean > 0 {
-            failures.push(format!(
-                "klv_rich_decode_clean: {unclean} record(s) failed to decode or carried field \
-                 errors, first: {}",
-                self.rich_first_decode.as_deref().unwrap_or("?")
-            ));
-        }
-        if self.rich.census_mismatches > 0 {
-            failures.push(format!(
-                "klv_rich_census: {} record(s) whose tag set != rich_presence(seed, seq), first: {}",
-                self.rich.census_mismatches,
-                self.rich_first_census.as_deref().unwrap_or("?")
-            ));
-        }
-        let security_bad = self
-            .rich
-            .security_expected
-            .saturating_sub(self.rich.security_ok);
-        if security_bad > 0 {
-            failures.push(format!(
-                "klv_rich_security_nested: {security_bad} record(s) expected a valid ST 0102 set, \
-                 first: {}",
-                self.rich_first_security.as_deref().unwrap_or("?")
-            ));
+        // Rich-KLV verdicts (spec §5.5) — see `Tally::judge_rich`.
+        //
+        // Gated on the MODE, not on the counters being zero. The counters
+        // can only move in rich mode, so the two conditions agree for any
+        // caller that honours `set_klv_expect`'s "call before the first
+        // event" contract — but the metrics block below keys off the mode,
+        // and a report carrying a `klv_rich_*` failure with no
+        // `metrics.klv_rich` beside it would be unreadable. One condition
+        // decides both.
+        if self.klv_expect.set == KlvSet::Rich {
+            let unclean = self.rich.decode_errors + self.rich.field_error_records;
+            if unclean > 0 {
+                failures.push(format!(
+                    "klv_rich_decode_clean: {unclean} record(s) failed to decode or carried field \
+                     errors, first: {}",
+                    self.rich_first_decode.as_deref().unwrap_or("?")
+                ));
+            }
+            if self.rich.census_mismatches > 0 {
+                failures.push(format!(
+                    "klv_rich_census: {} record(s) whose tag set != rich_presence(seed, seq), \
+                     first: {}",
+                    self.rich.census_mismatches,
+                    self.rich_first_census.as_deref().unwrap_or("?")
+                ));
+            }
+            let security_bad = self
+                .rich
+                .security_expected
+                .saturating_sub(self.rich.security_ok);
+            if security_bad > 0 {
+                failures.push(format!(
+                    "klv_rich_security_nested: {security_bad} record(s) expected a valid ST 0102 \
+                     set, first: {}",
+                    self.rich_first_security.as_deref().unwrap_or("?")
+                ));
+            }
         }
 
         if inv.audio_expected && self.audio_frames == 0 {
@@ -1237,6 +1246,80 @@ pub mod testing {
 
 #[cfg(test)]
 mod tests {
+    /// A `klv_rich_*` failure with no `metrics.klv_rich` block beside it
+    /// would be unreadable, so `finish()` keys both off ONE condition —
+    /// the mode, not whether the counters happen to be non-zero.
+    ///
+    /// Pinned through the only sequence that can make the two disagree:
+    /// judge a bad rich record, then set the expectation back to compact
+    /// before finishing. `set_klv_expect` documents against that call
+    /// order and nothing in-tree does it; the point is that the report
+    /// stays self-consistent even when a caller gets it wrong. The
+    /// counter assert is what keeps the test honest — without it, this
+    /// would pass just as well if the record had been judged as nothing
+    /// at all.
+    #[test]
+    fn a_compact_finish_emits_no_rich_verdict_even_with_rich_counters_set() {
+        let p = profiles::by_name("baseline").expect("baseline profile must exist");
+        let mut t = Tally::new();
+        t.set_klv_expect(KlvExpect {
+            set: KlvSet::Rich,
+            seed: 5,
+        });
+        // Eight zero bytes are not an ST 0601 record: no UL, no checksum.
+        t.feed(&testing::klv_event_on(KLV_PID, 0, vec![0u8; 8]));
+        assert_eq!(t.rich.decode_errors, 1, "the record must have been judged");
+
+        t.set_klv_expect(KlvExpect::compact());
+        let report = t.finish(
+            p,
+            0.1,
+            NOMINAL_COUNT_SLACK,
+            VerifyMode::Strict,
+            &WireSummary::default(),
+        );
+
+        assert!(
+            !report.failures.iter().any(|f| f.starts_with("klv_rich_")),
+            "compact finish must emit no rich verdict: {:?}",
+            report.failures
+        );
+        assert!(
+            report.metrics.klv_rich.is_none(),
+            "and no rich metrics block either: {:?}",
+            report.metrics.klv_rich
+        );
+    }
+
+    /// The other half of the pairing above: in rich mode the same bad
+    /// record produces BOTH the verdict and the metrics block.
+    #[test]
+    fn a_rich_finish_emits_the_verdict_and_the_metrics_together() {
+        let r = testing::judge_records(
+            &[vec![0u8; 8]],
+            KlvExpect {
+                set: KlvSet::Rich,
+                seed: 5,
+            },
+        );
+        assert!(
+            r.failures
+                .iter()
+                .any(|f| f.starts_with("klv_rich_decode_clean")),
+            "{:?}",
+            r.failures
+        );
+        assert_eq!(
+            r.metrics
+                .klv_rich
+                .as_ref()
+                .map(|m| m.decode_errors)
+                .unwrap_or_default(),
+            1,
+            "the metrics block must be there and must count the record"
+        );
+    }
+
     use super::*;
     use crate::fixtures;
     use tst_core::mpegts::au_cell::CellFragmentIndication;
