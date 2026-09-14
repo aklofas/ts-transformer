@@ -74,6 +74,7 @@ use std::time::{Duration, Instant};
 
 use tst_core::transport::{RecvTransport, TransportCancel};
 use tst_interop::fixtures::{AuSizeMode, KlvSet};
+use tst_interop::report_types::VerifyReport;
 use tst_interop::verify::KlvExpect;
 use tst_interop::{profiles, recv, serve, verify};
 use tst_rtp::RtspClient;
@@ -177,27 +178,24 @@ fn http_get_raw(addr: SocketAddr, path: &str) -> (String, Vec<u8>) {
     (header, body)
 }
 
-/// HLS: serve `baseline` on an ephemeral port, poll `/playlist.m3u8`
-/// until it reaches its terminal (`#EXT-X-ENDLIST`) form (written by
-/// `finish_serving` — see `serve.rs`'s module doc), fetch every segment
-/// it lists in playlist order, concatenate the raw bytes, and
-/// `verify_file` the result against `baseline`'s invariants.
-#[test]
-fn hls_serve_round_trip_matches_baseline() {
+/// HLS: serve `baseline` at `au_sizes` on an ephemeral port, poll
+/// `/playlist.m3u8` until it reaches its terminal (`#EXT-X-ENDLIST`)
+/// form (written by `finish_serving` — see `serve.rs`'s module doc),
+/// fetch every segment it lists in playlist order, concatenate the raw
+/// bytes, and `verify_file` the result against `baseline`'s invariants.
+///
+/// Returns the report so the two round trips below — one per
+/// [`AuSizeMode`] — can assert on it. They differ only in the size
+/// regime served, so the whole serve/pull/verify body lives here rather
+/// than being copied once per mode.
+fn hls_serve_round_trip(au_sizes: AuSizeMode) -> VerifyReport {
     let profile = profiles::by_name("baseline").expect("baseline profile must exist");
     let bind_addr: SocketAddr = format!("127.0.0.1:{}", free_tcp_port())
         .parse()
         .expect("bind_addr must parse");
 
     let handle = thread::spawn(move || {
-        serve::run_hls(
-            profile,
-            bind_addr,
-            SECONDS,
-            KlvSet::Compact,
-            0,
-            AuSizeMode::Compact,
-        )
+        serve::run_hls(profile, bind_addr, SECONDS, KlvSet::Compact, 0, au_sizes)
     });
 
     wait_for_accept(bind_addr, Duration::from_secs(5));
@@ -251,12 +249,6 @@ fn hls_serve_round_trip_matches_baseline() {
     let _ = std::fs::remove_file(&path);
     let report = result.expect("verify_file must succeed reading the fetched capture");
 
-    assert!(
-        report.pass,
-        "HLS-served capture failed verification: {:?}",
-        report.failures
-    );
-
     // See the module doc: don't wait for the lingering server thread —
     // only surface its result if it already finished (a fast failure).
     if handle.is_finished() {
@@ -265,6 +257,43 @@ fn hls_serve_round_trip_matches_baseline() {
             .expect("serve thread panicked")
             .expect("run_hls must succeed");
     }
+
+    report
+}
+
+#[test]
+fn hls_serve_round_trip_matches_baseline() {
+    let report = hls_serve_round_trip(AuSizeMode::Compact);
+    assert!(
+        report.pass,
+        "HLS-served capture failed verification: {:?}",
+        report.failures
+    );
+}
+
+/// The same HLS serve round trip at [`AuSizeMode::Realistic`]: one
+/// keyframe now spans hundreds of TS packets, so this is the gate that
+/// the serve path still segments and packs correctly when an access
+/// unit no longer fits in a packet or two — the compact fixtures never
+/// reach that code.
+///
+/// The byte floor is the regime assert: the compact capture is a few
+/// tens of KB over the same [`SECONDS`] window, so clearing 300 KB
+/// proves the realistic payload actually reached the wire rather than
+/// `au_sizes` being dropped somewhere along the serve path.
+#[test]
+fn hls_serve_round_trip_at_realistic_sizes() {
+    let report = hls_serve_round_trip(AuSizeMode::Realistic);
+    assert!(
+        report.pass,
+        "realistic-size HLS-served capture failed verification: {:?}",
+        report.failures
+    );
+    assert!(
+        report.metrics.bytes > 300_000,
+        "realistic mode must change the size regime, got {} bytes",
+        report.metrics.bytes
+    );
 }
 
 /// Connect our own `RtspClient` against the server `serve::run_rtsp`
