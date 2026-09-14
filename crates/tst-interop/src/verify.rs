@@ -790,27 +790,32 @@ impl Tally {
         // `Lossy` means the capture crossed a real impaired transport, so
         // packets go missing for reasons the sender never logged and the
         // attribution must not read those gaps as corruption findings —
-        // see `Attribution::finish_with`. `Strict` judges a file, where
+        // see `Attribution::lossy`. `Strict` judges a file, where
         // there is no transport to blame and every finding stands.
-        let excuse_transport_loss = mode == VerifyMode::Lossy;
+        // The tier is chosen when the attribution is BUILT (the excusal
+        // has to be applied as each event arrives — see
+        // `Attribution::lossy`), so the only thing left to do here is
+        // confirm that the capture is being judged in the tier it was
+        // built for. A mismatch would mean a Lossy run judged by a strict
+        // attribution, or the reverse; both are wiring mistakes, and both
+        // would otherwise pass quietly.
+        if let Some(a) = self.attribution.as_ref() {
+            assert_eq!(
+                a.excuses_transport_loss(),
+                mode == VerifyMode::Lossy,
+                "attribution built for the wrong verify tier"
+            );
+        }
         let attribution = self
             .attribution
             .take()
-            .map(|a| a.finish_with(wire.packets, excuse_transport_loss))
+            .map(|a| a.finish(wire.packets))
             .inspect(|rep| {
-                if !rep.unexplained_events.is_empty() {
-                    // The count must match the LIST it quotes. `events -
-                    // attributed_events` counts every event no injection
-                    // explained, including the discontinuity-family ones
-                    // Lossy already excused and removed from the list — so
-                    // subtract those too, and say how many they were, the
-                    // same way `report soak`'s sibling string does.
-                    // Otherwise a run reads "38 unexplained event(s)" while
-                    // holding a list of one.
-                    let unexplained = rep
-                        .events
-                        .saturating_sub(rep.attributed_events)
-                        .saturating_sub(rep.unexplained_transport_loss);
+                // Every count here is the UNCAPPED one. The lists beside
+                // them are bounded samples, so gating on a list's length
+                // would read a run with ten thousand findings as one with
+                // sixty-four.
+                if rep.unexplained_total() > 0 {
                     let excused = if rep.unexplained_transport_loss > 0 {
                         format!(
                             " ({} excused as transport loss)",
@@ -820,26 +825,26 @@ impl Tally {
                         String::new()
                     };
                     failures.push(format!(
-                        "corruption_attributed: {unexplained} unexplained event(s){excused}, \
-                         first: {}",
-                        rep.unexplained_events[0]
+                        "corruption_attributed: {} unexplained event(s){excused}, first: {:?}",
+                        rep.unexplained_total(),
+                        rep.unexplained_events.first()
                     ));
                 }
-                if !rep.undetected.is_empty() {
+                if rep.undetected_count > 0 {
                     failures.push(format!(
                         "corruption_detected: {} detectable injection(s) produced no event, \
-                         first: {}",
-                        rep.undetected.len(),
-                        rep.undetected[0]
+                         first: {:?}",
+                        rep.undetected_count,
+                        rep.undetected.first()
                     ));
                 }
-                if !rep.unrecovered.is_empty() {
+                if rep.unrecovered_count > 0 {
                     failures.push(format!(
                         "corruption_recovered: {} injection(s) with no media within {} packets, \
-                         first: {}",
-                        rep.unrecovered.len(),
+                         first: {:?}",
+                        rep.unrecovered_count,
                         rep.recovery_bound,
-                        rep.unrecovered[0]
+                        rep.unrecovered.first()
                     ));
                 }
             });
@@ -1140,7 +1145,12 @@ pub fn verify_bytes_with_corruption(
     // `Demuxer`.
     let mut wire_reader = rawts::Reader::new();
     if let Some((hdr, injections)) = log {
-        tally.attach_attribution(corrupt::Attribution::new(injections.clone(), hdr));
+        // Built for the tier this capture is judged in — the excusal is
+        // applied per event, not at `finish` (see `Attribution::lossy`).
+        tally.attach_attribution(match mode {
+            VerifyMode::Strict => corrupt::Attribution::strict(injections.clone(), hdr),
+            VerifyMode::Lossy => corrupt::Attribution::lossy(injections.clone(), hdr),
+        });
         wire_reader.set_resync_mode(true);
     }
 
@@ -1577,6 +1587,20 @@ mod tests {
     /// these tests use a short one so the recovery verdict is exercised.
     const TEST_RECOVERY_BOUND: u64 = 50;
 
+    /// An attribution built for `mode`'s tier — the pairing
+    /// `Tally::finish` asserts, since a lossy capture's transport-loss
+    /// excusal is applied as each event arrives rather than at the end.
+    fn attribution_for(
+        mode: VerifyMode,
+        log: Vec<crate::corrupt::Injection>,
+        hdr: &crate::corrupt::LogHeader,
+    ) -> crate::corrupt::Attribution {
+        match mode {
+            VerifyMode::Strict => crate::corrupt::Attribution::strict(log, hdr),
+            VerifyMode::Lossy => crate::corrupt::Attribution::lossy(log, hdr),
+        }
+    }
+
     fn corruption_header() -> crate::corrupt::LogHeader {
         crate::corrupt::LogHeader {
             tap_version: 1,
@@ -1652,7 +1676,7 @@ mod tests {
         let logged = |class: Class| {
             let mut i = injection_at(class, VIDEO_PID, 0);
             i.detectable = false;
-            Attribution::new(vec![i], &corruption_header())
+            Attribution::lossy(vec![i], &corruption_header())
         };
 
         // No corruption log: unchanged, the break fails the capture.
@@ -1688,7 +1712,7 @@ mod tests {
 
         // (a) explained + detected + recovered -> no corruption failures.
         let mut t = healthy_baseline_tally();
-        let mut a = Attribution::new(vec![inj.clone()], &hdr);
+        let mut a = Attribution::lossy(vec![inj.clone()], &hdr);
         a.on_signal(10, Some(VIDEO_PID), Signal::ContinuityJump);
         a.on_media(50, VIDEO_PID);
         t.attach_attribution(a);
@@ -1714,7 +1738,7 @@ mod tests {
         // still fails here.
         let unexplained = |sig, mode| {
             let mut t = healthy_baseline_tally();
-            let mut a = Attribution::new(vec![inj.clone()], &hdr);
+            let mut a = attribution_for(mode, vec![inj.clone()], &hdr);
             a.on_signal(10, Some(VIDEO_PID), Signal::ContinuityJump);
             a.on_media(50, VIDEO_PID);
             a.on_signal(5000, Some(VIDEO_PID), sig);
@@ -1741,7 +1765,7 @@ mod tests {
         // (c) no signal at all -> corruption_detected; no media ->
         // corruption_recovered.
         let mut t = healthy_baseline_tally();
-        t.attach_attribution(Attribution::new(vec![inj], &hdr));
+        t.attach_attribution(Attribution::lossy(vec![inj], &hdr));
         let r = t.finish(
             profiles::by_name("baseline").unwrap(),
             2.0,
@@ -1771,7 +1795,7 @@ mod tests {
         let hdr = corruption_header();
         let inj = injection_at(Class::Drop, VIDEO_PID, 0);
         let mut t = Tally::new();
-        t.attach_attribution(Attribution::new(vec![inj], &hdr));
+        t.attach_attribution(Attribution::lossy(vec![inj], &hdr));
         t.feed_at(&program_map_event(), 1);
         t.feed_at(&discontinuity_event(), 5); // ContinuityJump on VIDEO_PID
         t.feed_at(&video_event(3000, true), 40);
@@ -1808,7 +1832,7 @@ mod tests {
         let wire = wire_for("baseline", 2.0);
 
         let mut t = healthy_baseline_tally();
-        let mut a = Attribution::new(vec![injection_at(Class::Header, VIDEO_PID, 3)], &hdr);
+        let mut a = Attribution::lossy(vec![injection_at(Class::Header, VIDEO_PID, 3)], &hdr);
         // One unexplained non-conformance (survives the excusal) and two
         // unexplained continuity jumps (excused), all outside the window.
         a.on_signal(5000, Some(VIDEO_PID), Signal::OtherNonConformant);
@@ -1869,7 +1893,7 @@ mod tests {
         let judge = |inj: crate::corrupt::Injection, at: u64| {
             let mut t = Tally::new();
             t.set_klv_expect(rich);
-            t.attach_attribution(Attribution::new(vec![inj], &hdr));
+            t.attach_attribution(Attribution::lossy(vec![inj], &hdr));
             t.feed_at(&testing::klv_event_on(KLV_PID, 9_000, damaged.clone()), at);
             t.finish(p, 2.0, NOMINAL_COUNT_SLACK, VerifyMode::Lossy, &wire)
         };
@@ -1919,7 +1943,7 @@ mod tests {
         let wire = wire_for("baseline", 2.0);
 
         let mut t = healthy_baseline_tally();
-        t.attach_attribution(Attribution::new(
+        t.attach_attribution(Attribution::lossy(
             vec![injection_at(Class::PsiFlip, VIDEO_PID, 0)],
             &hdr,
         ));
@@ -1942,7 +1966,7 @@ mod tests {
 
         // Same event, no injection anywhere near it -> still fatal.
         let mut t = healthy_baseline_tally();
-        t.attach_attribution(Attribution::new(
+        t.attach_attribution(Attribution::lossy(
             vec![injection_at(Class::PsiFlip, VIDEO_PID, 0)],
             &hdr,
         ));
@@ -1974,7 +1998,7 @@ mod tests {
         use crate::corrupt::{Attribution, Class};
         let hdr = corruption_header();
         let mut t = healthy_baseline_tally();
-        t.attach_attribution(Attribution::new(
+        t.attach_attribution(Attribution::lossy(
             vec![injection_at(Class::PsiFlip, VIDEO_PID, 0)],
             &hdr,
         ));
@@ -2008,7 +2032,7 @@ mod tests {
         use crate::corrupt::{Attribution, Class};
         let hdr = corruption_header();
         let mut t = healthy_baseline_tally();
-        t.attach_attribution(Attribution::new(
+        t.attach_attribution(Attribution::strict(
             vec![injection_at(Class::Drop, VIDEO_PID, 0)],
             &hdr,
         ));
@@ -2066,7 +2090,7 @@ mod tests {
         use crate::corrupt::{Attribution, Class};
         let hdr = corruption_header();
         let mut t = Tally::new();
-        t.attach_attribution(Attribution::new(
+        t.attach_attribution(Attribution::lossy(
             vec![injection_at(Class::Truncate, VIDEO_PID, 2)],
             &hdr,
         ));

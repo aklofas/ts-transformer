@@ -108,7 +108,7 @@ fn judge_in(
 /// `VerifyMode::Lossy` only because that is the mode a live soak leg uses.
 /// There is no transport between `tap` and `judge` here, so nothing can be
 /// lost in transit and the Lossy transport-loss excusal
-/// (`Attribution::finish_with`) must stay completely inert.
+/// (`Attribution::lossy`) must stay completely inert.
 ///
 /// Without this, that excusal could quietly hollow the whole suite out:
 /// `undetected`/`unrecovered`/`unexplained_events` would keep coming back
@@ -406,7 +406,7 @@ fn withheld_garbage_line_is_unexplained() {
 /// unexplained continuity jump is not corruption evidence at all, because
 /// the transport itself loses packets and nothing distinguishes a gap the
 /// tap made and hid from a gap the network made
-/// (`Attribution::finish_with`). So on a live lossy leg a withheld `drop`
+/// (`Attribution::lossy`). So on a live lossy leg a withheld `drop`
 /// line is, by construction, not catchable, and asserting otherwise here
 /// would assert something the engine cannot deliver.
 ///

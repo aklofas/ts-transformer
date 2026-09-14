@@ -2260,33 +2260,28 @@ pub mod soak {
                         }
                     }
                     Some(a) => {
+                        // Every count below is the report's UNCAPPED
+                        // counter, never the length of the sample list
+                        // beside it. Those lists stop at `MAX_SAMPLES`,
+                        // so a check reading `len()` would tell the
+                        // reader of a 72-hour leg that it had 64
+                        // unexplained events when it had thousands — and,
+                        // worse, would PASS once the cap was full of
+                        // events the lossy tier had already excused.
                         verdicts.push(mk(
                             "corruption_attributed",
-                            a.unexplained_events.is_empty(),
+                            a.unexplained_total() == 0,
                             format!(
-                                "{leg_name}: {} event(s), {} attributed, {} unexplained (first: \
-                                 {:?}), {} excused as transport loss; {} injected / {} resolved / \
-                                 {} unresolved",
+                                "{leg_name}: {} event(s), {} attributed, {} unexplained ({} \
+                                 resync / {} discontinuity / {} non-conformance; first: {:?}), {} \
+                                 excused as transport loss; {} injected / {} resolved / {} \
+                                 unresolved",
                                 a.events,
                                 a.attributed_events,
-                                // The TRUE count, not `unexplained_events.len()`:
-                                // that Vec is a capped SAMPLE (`MAX_UNEXPLAINED`),
-                                // so on a badly-broken run it stops counting while
-                                // the real number keeps climbing, and a reader of
-                                // `soak-results.json` would be told a 72-hour leg
-                                // had 64 unexplained events when it had thousands.
-                                //
-                                // BOTH subtractions are needed. The verdict passes
-                                // on `unexplained_events.is_empty()`, and Lossy mode
-                                // removes the discontinuity-family events it excused
-                                // from that list — so without the second subtraction
-                                // a PASSING verdict would read "2 unexplained (first:
-                                // None), 2 excused as transport loss", contradicting
-                                // itself. `verify`'s own failure string does exactly
-                                // this; the two must stay the same number.
-                                a.events
-                                    .saturating_sub(a.attributed_events)
-                                    .saturating_sub(a.unexplained_transport_loss),
+                                a.unexplained_total(),
+                                a.unexplained_resyncs,
+                                a.unexplained_discontinuities,
+                                a.unexplained_nonconformant,
                                 a.unexplained_events.first(),
                                 a.unexplained_transport_loss,
                                 a.injected,
@@ -2296,23 +2291,23 @@ pub mod soak {
                         ));
                         verdicts.push(mk(
                             "corruption_detected",
-                            a.undetected.is_empty(),
+                            a.undetected_count == 0,
                             format!(
                                 "{leg_name}: {} detectable injection(s), {} undetected (first: \
                                  {:?}), {} excused as lost in transit",
                                 a.detectable,
-                                a.undetected.len(),
+                                a.undetected_count,
                                 a.undetected.first(),
                                 a.undetected_lost
                             ),
                         ));
                         verdicts.push(mk(
                             "corruption_recovered",
-                            a.unrecovered.is_empty(),
+                            a.unrecovered_count == 0,
                             format!(
                                 "{leg_name}: {} unrecovered within {} packets (first: {:?}), {} \
                                  excused as lost in transit",
-                                a.unrecovered.len(),
+                                a.unrecovered_count,
                                 a.recovery_bound,
                                 a.unrecovered.first(),
                                 a.unrecovered_lost
@@ -4093,8 +4088,11 @@ pub mod soak {
             let a = crate::corrupt::AttributionReport {
                 injected: 3,
                 unexplained_events: vec!["x".into()],
+                unexplained_nonconformant: 1,
                 undetected: vec!["y".into()],
+                undetected_count: 1,
                 unrecovered: vec!["z".into()],
+                unrecovered_count: 1,
                 ..Default::default()
             };
             inputs.legs[0].1.recv_report.metrics.corruption_attribution = Some(a);
@@ -4109,12 +4107,13 @@ pub mod soak {
             assert!(!r.overall_pass);
         }
 
-        /// The `corruption_attributed` detail must report the TRUE number
-        /// of unexplained events, not the length of the capped sample.
-        /// `AttributionReport::unexplained_events` stops growing at
-        /// `MAX_UNEXPLAINED`, so on a long leg the two numbers diverge
-        /// without bound, and a reader of `soak-results.json` would size
-        /// the damage from the cap instead of from the run.
+        /// The `corruption_attributed` verdict must PASS/FAIL on, and
+        /// report, the TRUE number of unexplained events rather than the
+        /// length of the capped sample. `AttributionReport::
+        /// unexplained_events` stops growing at `MAX_SAMPLES`, so on a
+        /// long leg the two numbers diverge without bound: a reader of
+        /// `soak-results.json` would size the damage from the cap instead
+        /// of from the run.
         #[test]
         fn corruption_attributed_detail_reports_the_true_unexplained_count() {
             let mut inputs = healthy_inputs();
@@ -4126,6 +4125,7 @@ pub mod soak {
                 events: 1000,
                 attributed_events: 500,
                 unexplained_events: vec!["first one".into(), "second one".into()],
+                unexplained_nonconformant: 500,
                 ..Default::default()
             };
             inputs.legs[0].1.recv_report.metrics.corruption_attribution = Some(a);
@@ -4148,6 +4148,37 @@ pub mod soak {
             );
             // The quoted example still comes from the sample.
             assert!(v.detail.contains("first one"), "{}", v.detail);
+        }
+
+        /// The shape a long lossy leg actually produces: the sample list
+        /// is EMPTY (the run's excused continuity jumps used to fill it,
+        /// and a sample that never had room for the real finding stays
+        /// empty) while the uncapped counters say something was
+        /// unexplained. Gating on the list would pass this run.
+        #[test]
+        fn corruption_attributed_fails_on_a_counted_finding_with_an_empty_sample() {
+            let mut inputs = healthy_inputs();
+            inputs.config.corruption = true;
+            let a = crate::corrupt::AttributionReport {
+                injected: 5000,
+                resolved: 5000,
+                events: 12_000,
+                attributed_events: 8_000,
+                unexplained_events: vec![],
+                unexplained_resyncs: 1,
+                unexplained_transport_loss: 3_999,
+                ..Default::default()
+            };
+            inputs.legs[0].1.recv_report.metrics.corruption_attribution = Some(a);
+            let r = build_soak_results(inputs).unwrap();
+            let v = r
+                .verdicts
+                .iter()
+                .find(|v| v.name == "corruption_attributed_srt")
+                .unwrap();
+            assert!(!v.pass, "{}", v.detail);
+            assert!(v.detail.contains("1 resync"), "{}", v.detail);
+            assert!(!r.overall_pass);
         }
 
         /// A PASSING `corruption_attributed` must not claim unexplained
