@@ -58,25 +58,74 @@ fn wire_and_trailing_bytes_error(
     }
 }
 
-/// Read `path`'s corruption log, attach it to `tally` as the judge of
+/// Open `path`'s corruption log, attach it to `tally` as the judge of
 /// this capture, and put the tee's raw reader into sync-recovery mode —
 /// shared by both receive loops, and called BEFORE either reads its
-/// first byte.
+/// first byte. Returns the tail for the loop to keep polling.
 ///
-/// Resync mode is the load-bearing half: a capture whose sender
-/// deliberately truncated packets WILL fall out of 188-byte alignment,
-/// and without it the reader latches that as a `rawts_sync_loss` failure
-/// — a verdict that only restates the premise. In resync mode each
-/// recovery is recorded instead, and fed to the attribution as evidence
-/// that the receiver noticed (`corrupt::Signal::Resync`).
+/// **The log may not exist yet.** The SENDER creates it, and a receiver
+/// that must be running first (so that it does not miss the start of the
+/// stream — see `run`'s doc comment) will therefore reach this before
+/// there is anything to open. So it retries until the file exists AND
+/// carries a complete header line, bounded by the same
+/// [`NO_DATA_TIMEOUT`] budget the receive loop gives the stream itself,
+/// and reports the last failure if the budget runs out.
+///
+/// Resync mode is the load-bearing half of the attach: a capture whose
+/// sender deliberately truncated packets WILL fall out of 188-byte
+/// alignment, and without it the reader latches that as a
+/// `rawts_sync_loss` failure — a verdict that only restates the premise.
+/// In resync mode each recovery is recorded instead, and fed to the
+/// attribution as evidence that the receiver noticed
+/// (`corrupt::Signal::Resync`).
 fn attach_corruption_log(
     tally: &mut Tally,
     tap: &Arc<Mutex<transport::TeeState>>,
     path: &Path,
-) -> Result<(), String> {
-    let (header, injections) = corrupt::read_log(path)?;
-    tally.attach_attribution(corrupt::Attribution::new(injections, &header));
+) -> Result<corrupt::LogTail, String> {
+    let deadline = Instant::now() + NO_DATA_TIMEOUT;
+    let mut tail = loop {
+        match corrupt::LogTail::open(path) {
+            Ok(t) => break t,
+            Err(e) if Instant::now() >= deadline => {
+                return Err(format!(
+                    "waited {NO_DATA_TIMEOUT:?} for the sender to write {}: {e}",
+                    path.display()
+                ));
+            }
+            Err(_) => thread::sleep(Duration::from_millis(200)),
+        }
+    };
+    let injections = tail.poll()?;
+    tally.attach_attribution(corrupt::Attribution::new(injections, tail.header()));
     transport::tee_set_resync_mode(tap, true);
+    Ok(tail)
+}
+
+/// Fold any injections the sender has logged since the last look into
+/// `tally`'s attribution.
+///
+/// **Called before stamping EVERY event, not on a timer.** A periodic
+/// poll looks cheaper and is wrong: the tap writes and flushes an
+/// injection's log line BEFORE the corrupted bytes it describes leave the
+/// sender (`corrupt::Corrupter`'s `transform` logs, then `emit` sends),
+/// so a poll taken at the moment an event surfaces is guaranteed to see
+/// the line that explains it, while a poll up to a second stale is not.
+/// Measured, not theorised: a one-second interval made the positive
+/// round-trip test fail roughly one run in five, the injection arriving
+/// after the event it explained had already been judged unexplained.
+/// The cost is one `read` per demux event — at soak rates a few dozen a
+/// second, almost always returning zero bytes.
+///
+/// A log-read failure is surfaced, not swallowed: the log IS the
+/// evidence, and a judgement made against half of it would be a quieter
+/// kind of wrong than an error.
+fn poll_corruption_log(
+    tally: &mut Tally,
+    tail: Option<&mut corrupt::LogTail>,
+) -> Result<(), String> {
+    let Some(tail) = tail else { return Ok(()) };
+    tally.append_injections(tail.poll()?);
     Ok(())
 }
 
@@ -123,9 +172,23 @@ fn drain_final_wire_evidence(tally: &mut Tally, tap: &Arc<Mutex<transport::TeeSt
 /// counted) — see `VerifyMode`'s own doc comment. Either way a
 /// `NonConformant` event always fails.
 ///
-/// `corruption_log` names the JSONL log a `send --corrupt` peer wrote,
-/// turning the capture into a judgement OF that corruption — see
-/// [`attach_corruption_log`] and `crate::corrupt`'s module doc.
+/// `corruption_log` names the JSONL log a `send --corrupt` peer is
+/// writing, turning the capture into a judgement OF that corruption —
+/// see [`attach_corruption_log`] and `crate::corrupt`'s module doc. The
+/// file need not exist yet; the log is read incrementally for the whole
+/// capture, so injections the sender records while this receive loop is
+/// already running are judged too.
+///
+/// **Start the receiver FIRST.** A receiver that joins a stream already
+/// in progress may misjudge injections the sender logged before the
+/// stream's first PCR: those coordinates carry no PCR anchor and mean
+/// "this many packets from the START of the stream", which is a position
+/// a late joiner never saw and cannot compute. Injections appended after
+/// this receiver has seen its own first PCR are stranded rather than
+/// guessed at (`corrupt::Attribution::append`), so they are counted
+/// `unresolved` and never judged — but ones already in the log when it
+/// opened are taken at face value. `soak.sh` starts `recv` before `send`
+/// for exactly this reason.
 pub fn run(
     url: &str,
     expect: &Profile,
@@ -196,9 +259,10 @@ pub fn recv_over_transport(
     if no_klv_digest {
         tally.disable_klv_digest_tracking();
     }
-    if let Some(path) = corruption_log {
-        attach_corruption_log(&mut tally, &tap, path)?;
-    }
+    let mut tail = match corruption_log {
+        Some(path) => Some(attach_corruption_log(&mut tally, &tap, path)?),
+        None => None,
+    };
     let start = Instant::now();
     let mut events_seen: u64 = 0;
     let mut last_heartbeat = Instant::now();
@@ -229,6 +293,11 @@ pub fn recv_over_transport(
                     deadline = Instant::now() + Duration::from_secs_f64(seconds) + POST_START_GRACE;
                 }
                 events_seen += 1;
+                // New injections BEFORE this event is stamped — and
+                // before `drain_wire_evidence` notes a PCR, so one logged
+                // with no PCR anchor is still placeable (see
+                // `corrupt::Attribution::append`).
+                poll_corruption_log(&mut tally, tail.as_mut())?;
                 let at = drain_wire_evidence(&mut tally, &tap);
                 tally.feed_at(&ev, at);
             }
@@ -242,8 +311,10 @@ pub fn recv_over_transport(
             },
         }
     }
-    // Whatever the reader learned after the last event it stamped — the
-    // tail of a capture is exactly where a final recovery lives.
+    // Everything the sender logged after the last poll, then whatever the
+    // reader learned after the last event it stamped — the tail of a
+    // capture is exactly where a final injection and a final recovery live.
+    poll_corruption_log(&mut tally, tail.as_mut())?;
     drain_final_wire_evidence(&mut tally, &tap);
     // Explicit drop before reading the tee tally back — `tee_tally`
     // requires the `Teeing` (owned by `rx`'s inner transport state) to
@@ -448,9 +519,10 @@ pub fn run_managed(
     // `rawts::Reader::resync`), so coordinates stay continuous across an
     // outage. A reconnect itself is deliberately NOT recorded as a
     // recovery: the sender's corruption is not what broke the link.
-    if let Some(path) = corruption_log {
-        attach_corruption_log(&mut tally, &tap, path)?;
-    }
+    let mut tail = match corruption_log {
+        Some(path) => Some(attach_corruption_log(&mut tally, &tap, path)?),
+        None => None,
+    };
     let start = Instant::now();
     let mut events_seen: u64 = 0;
     let mut last_heartbeat = Instant::now();
@@ -481,6 +553,9 @@ pub fn run_managed(
                     *d = Instant::now() + Duration::from_secs_f64(seconds) + POST_START_GRACE;
                 }
                 events_seen += 1;
+                // See `recv_over_transport`'s loop for why the tail is
+                // polled before the event is stamped.
+                poll_corruption_log(&mut tally, tail.as_mut())?;
                 let at = drain_wire_evidence(&mut tally, &tap);
                 tally.feed_at(&ev, at);
             }
@@ -494,6 +569,7 @@ pub fn run_managed(
             },
         }
     }
+    poll_corruption_log(&mut tally, tail.as_mut())?;
     drain_final_wire_evidence(&mut tally, &tap);
 
     let reconnects = rx.reconnects_count();

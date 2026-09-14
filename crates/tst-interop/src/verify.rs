@@ -395,6 +395,15 @@ impl Tally {
         self.attribution = Some(a);
     }
 
+    /// Add injections the sender logged after [`Tally::attach_attribution`]
+    /// — a live receiver polls its [`corrupt::LogTail`] as the run
+    /// proceeds and hands the new ones here. Inert without an attribution.
+    pub fn append_injections(&mut self, injections: Vec<Injection>) {
+        if let Some(a) = self.attribution.as_mut() {
+            a.append(injections);
+        }
+    }
+
     /// Hand the raw reader's sync recoveries to the attribution, skipping
     /// the ones already fed. `resyncs` is the reader's CUMULATIVE list
     /// (`rawts::Reader::resyncs`), so a live loop can simply call this
@@ -639,18 +648,44 @@ impl Tally {
         };
         let unexplained_nc = self.nonconformant.saturating_sub(attributed_nc);
         let unexplained_disc = self.discontinuities.saturating_sub(attributed_disc);
+        // And the event these failures QUOTE must be an unexplained one.
+        // `first_nonconformant`/`first_discontinuity` record the first
+        // event of their class whether or not the log explains it, so on
+        // an attributed run they routinely name an event the report has
+        // already accounted for — pointing a reader at the wrong evidence
+        // while the count says something is still wrong. The attribution
+        // records the first UNEXPLAINED event of each family for exactly
+        // this; the tally's own field is the fallback when there is no
+        // attribution (or, defensively, when the two disagree).
+        let first_unexplained = |from_attribution: Option<&String>, from_tally: Option<&str>| {
+            from_attribution
+                .map(String::as_str)
+                .or(from_tally)
+                .unwrap_or("?")
+                .to_string()
+        };
         if unexplained_nc > 0 {
             failures.push(format!(
                 "nonconformant_event: {} event(s), first: {}",
                 unexplained_nc,
-                self.first_nonconformant.as_deref().unwrap_or("?")
+                first_unexplained(
+                    attribution
+                        .as_ref()
+                        .and_then(|r| r.first_unexplained_nonconformant.as_ref()),
+                    self.first_nonconformant.as_deref(),
+                )
             ));
         }
         if mode == VerifyMode::Strict && unexplained_disc > 0 {
             failures.push(format!(
                 "discontinuity_event: {} event(s), first: {}",
                 unexplained_disc,
-                self.first_discontinuity.as_deref().unwrap_or("?")
+                first_unexplained(
+                    attribution
+                        .as_ref()
+                        .and_then(|r| r.first_unexplained_discontinuity.as_ref()),
+                    self.first_discontinuity.as_deref(),
+                )
             ));
         }
 
@@ -1223,6 +1258,76 @@ mod tests {
                 .any(|f| f.starts_with("nonconformant_event")),
             "{:?}",
             r.failures
+        );
+    }
+
+    /// The surviving `nonconformant_event` failure must quote an
+    /// UNEXPLAINED event. Two non-conformances, the first inside an
+    /// injection's window and the second nowhere near one: the count says
+    /// 1 and the `first:` text must describe the SECOND — quoting the
+    /// explained one would send a reader to evidence the report has
+    /// already accounted for.
+    #[test]
+    fn the_surviving_failure_quotes_an_unexplained_event_not_the_first_one() {
+        use crate::corrupt::{Attribution, Class};
+        let hdr = corruption_header();
+        let mut t = healthy_baseline_tally();
+        t.attach_attribution(Attribution::new(
+            vec![injection_at(Class::PsiFlip, VIDEO_PID, 0)],
+            &hdr,
+        ));
+        // Explained: inside the window of the injection at ordinal 0.
+        t.feed_at(&nonconformant_event(), 5);
+        // Unexplained: far past it.
+        t.feed_at(&nonconformant_event(), 7000);
+        let r = t.finish(
+            profiles::by_name("baseline").unwrap(),
+            2.0,
+            NOMINAL_COUNT_SLACK,
+            VerifyMode::Lossy,
+            &wire_for("baseline", 2.0),
+        );
+        assert_eq!(r.metrics.nonconformant, 2, "both are still COUNTED");
+        let failure = r
+            .failures
+            .iter()
+            .find(|f| f.starts_with("nonconformant_event"))
+            .unwrap_or_else(|| panic!("expected the failure: {:?}", r.failures));
+        assert!(failure.contains("1 event(s)"), "{failure}");
+        assert!(
+            failure.contains("at packet 7000"),
+            "must quote the UNEXPLAINED event: {failure}"
+        );
+    }
+
+    /// Same rule for the Strict-mode discontinuity failure.
+    #[test]
+    fn the_surviving_discontinuity_failure_also_quotes_an_unexplained_event() {
+        use crate::corrupt::{Attribution, Class};
+        let hdr = corruption_header();
+        let mut t = healthy_baseline_tally();
+        t.attach_attribution(Attribution::new(
+            vec![injection_at(Class::Drop, VIDEO_PID, 0)],
+            &hdr,
+        ));
+        t.feed_at(&discontinuity_event(), 4);
+        t.feed_at(&discontinuity_event(), 8000);
+        let r = t.finish(
+            profiles::by_name("baseline").unwrap(),
+            2.0,
+            NOMINAL_COUNT_SLACK,
+            VerifyMode::Strict,
+            &wire_for("baseline", 2.0),
+        );
+        let failure = r
+            .failures
+            .iter()
+            .find(|f| f.starts_with("discontinuity_event"))
+            .unwrap_or_else(|| panic!("expected the failure: {:?}", r.failures));
+        assert!(failure.contains("1 event(s)"), "{failure}");
+        assert!(
+            failure.contains("at packet 8000"),
+            "must quote the UNEXPLAINED event: {failure}"
         );
     }
 

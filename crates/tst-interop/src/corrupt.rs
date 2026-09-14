@@ -369,11 +369,32 @@ enum LogLine {
     Injection(Injection),
 }
 
-/// Read a corruption log file (header + injections).
+/// Read a corruption log file (header + injections) in one shot — the
+/// OFFLINE reader, for a log whose sender has already finished. A live
+/// receiver reads a log that is still being appended to and must use
+/// [`LogTail`] instead.
 pub fn read_log(path: &Path) -> Result<(LogHeader, Vec<Injection>), String> {
     let text = std::fs::read_to_string(path)
         .map_err(|e| format!("corruption log {}: {e}", path.display()))?;
     parse_log(&text).map_err(|e| format!("corruption log {}: {e}", path.display()))
+}
+
+/// Parse one non-blank log line. `Ok(None)` for a blank line.
+fn parse_line(n: usize, line: &str) -> Result<Option<LogLine>, String> {
+    let line = line.trim();
+    if line.is_empty() {
+        return Ok(None);
+    }
+    let parsed: LogLine = serde_json::from_str(line).map_err(|e| format!("line {n}: {e}"))?;
+    if let LogLine::Header(h) = &parsed {
+        if h.tap_version != TAP_VERSION {
+            return Err(format!(
+                "line {n}: tap_version {} (this build reads {TAP_VERSION})",
+                h.tap_version
+            ));
+        }
+    }
+    Ok(Some(parsed))
 }
 
 /// Parse a corruption log's text. Fails closed: a line that is neither a
@@ -383,29 +404,18 @@ pub fn parse_log(text: &str) -> Result<(LogHeader, Vec<Injection>), String> {
     let mut header: Option<LogHeader> = None;
     let mut injections = Vec::new();
     for (n, line) in text.lines().enumerate() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let parsed: LogLine =
-            serde_json::from_str(line).map_err(|e| format!("line {}: {e}", n + 1))?;
-        match parsed {
-            LogLine::Header(h) => {
+        let n = n + 1;
+        match parse_line(n, line)? {
+            None => continue,
+            Some(LogLine::Header(h)) => {
                 if header.is_some() {
-                    return Err(format!("line {}: a second header line", n + 1));
-                }
-                if h.tap_version != TAP_VERSION {
-                    return Err(format!(
-                        "line {}: tap_version {} (this build reads {TAP_VERSION})",
-                        n + 1,
-                        h.tap_version
-                    ));
+                    return Err(format!("line {n}: a second header line"));
                 }
                 header = Some(h);
             }
-            LogLine::Injection(i) => {
+            Some(LogLine::Injection(i)) => {
                 if header.is_none() {
-                    return Err(format!("line {}: injection before the header line", n + 1));
+                    return Err(format!("line {n}: injection before the header line"));
                 }
                 injections.push(i);
             }
@@ -413,6 +423,134 @@ pub fn parse_log(text: &str) -> Result<(LogHeader, Vec<Injection>), String> {
     }
     let header = header.ok_or_else(|| "no header line".to_string())?;
     Ok((header, injections))
+}
+
+/// Incremental reader for a corruption log that is STILL BEING WRITTEN.
+///
+/// A live receiver and the sender it is judging run at the same time, so
+/// the log the receiver must read is a file the sender appends to for the
+/// whole run. Reading it once at startup — which is all a receiver could
+/// do with [`read_log`] — yields the header and whatever handful of
+/// injections happened to be on disk at that instant; every injection
+/// after that would surface as an unexplained event and fail the run.
+///
+/// So the receiver polls this instead. Each [`LogTail::poll`] returns the
+/// injections appended since the previous call, in order, and a line the
+/// sender has only half-written is held back until the rest of it lands
+/// (the tap flushes per line, so a torn line is a narrow window, not an
+/// error). Feed what comes back to [`Attribution::append`].
+///
+/// Waiting for the file to EXIST is the caller's job: the sender creates
+/// it, and which process starts first is the caller's arrangement to
+/// make, not something a reader can paper over by blocking.
+#[derive(Debug)]
+pub struct LogTail {
+    file: std::fs::File,
+    path: std::path::PathBuf,
+    header: LogHeader,
+    /// Bytes read but not yet terminated by a newline.
+    carry: Vec<u8>,
+    /// 1-based number of the next line, for error messages that name the
+    /// same line the offline parser would.
+    next_line: usize,
+}
+
+impl LogTail {
+    /// Open `path` and consume its header line, leaving everything after
+    /// it for the first [`LogTail::poll`]. Fails if the file cannot be
+    /// read, if its first line is not a header this build understands, or
+    /// if no complete line has been written yet (the sender created the
+    /// file microseconds ago — the caller retries).
+    pub fn open(path: &Path) -> Result<LogTail, String> {
+        let name = || format!("corruption log {}", path.display());
+        let file = std::fs::File::open(path).map_err(|e| format!("{}: {e}", name()))?;
+        let mut tail = LogTail {
+            file,
+            path: path.to_path_buf(),
+            // Replaced below; a placeholder keeps `read_more` usable.
+            header: LogHeader {
+                tap_version: TAP_VERSION,
+                seed: 0,
+                rate_per_10k: 0,
+                min_gap: 0,
+                classes: Vec::new(),
+                attribution_window: ATTRIBUTION_WINDOW,
+                recovery_bound: RECOVERY_BOUND,
+            },
+            carry: Vec::new(),
+            next_line: 1,
+        };
+        tail.read_more()?;
+        match tail.next_complete_line()? {
+            Some(LogLine::Header(h)) => {
+                tail.header = h;
+                Ok(tail)
+            }
+            Some(LogLine::Injection(_)) => {
+                Err(format!("{}: injection before the header line", name()))
+            }
+            None => Err(format!("{}: no header line yet", name())),
+        }
+    }
+
+    /// The header the log declared — the attribution window and recovery
+    /// bound an [`Attribution`] must judge by.
+    #[must_use]
+    pub fn header(&self) -> &LogHeader {
+        &self.header
+    }
+
+    /// Injections appended since the previous call, in log order.
+    pub fn poll(&mut self) -> Result<Vec<Injection>, String> {
+        self.read_more()?;
+        let mut out = Vec::new();
+        while let Some(line) = self.next_complete_line()? {
+            match line {
+                LogLine::Injection(i) => out.push(i),
+                LogLine::Header(_) => {
+                    return Err(format!(
+                        "corruption log {}: a second header line",
+                        self.path.display()
+                    ));
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Append everything readable right now to `carry`.
+    fn read_more(&mut self) -> Result<(), String> {
+        use std::io::Read;
+        let mut buf = [0u8; 64 * 1024];
+        loop {
+            match self.file.read(&mut buf) {
+                Ok(0) => return Ok(()),
+                Ok(n) => self.carry.extend_from_slice(&buf[..n]),
+                Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(e) => {
+                    return Err(format!("corruption log {}: {e}", self.path.display()));
+                }
+            }
+        }
+    }
+
+    /// Take the next NEWLINE-TERMINATED line out of `carry`, parsed. A
+    /// trailing unterminated line stays put for a later poll.
+    fn next_complete_line(&mut self) -> Result<Option<LogLine>, String> {
+        while let Some(nl) = self.carry.iter().position(|&b| b == b'\n') {
+            let raw: Vec<u8> = self.carry.drain(..=nl).collect();
+            let n = self.next_line;
+            self.next_line += 1;
+            let text = std::str::from_utf8(&raw[..raw.len() - 1])
+                .map_err(|e| format!("corruption log {}: line {n}: {e}", self.path.display()))?;
+            if let Some(parsed) = parse_line(n, text)
+                .map_err(|e| format!("corruption log {}: {e}", self.path.display()))?
+            {
+                return Ok(Some(parsed));
+            }
+        }
+        Ok(None)
+    }
 }
 
 // ============================================================
@@ -626,6 +764,7 @@ impl<T: Transport> Corrupter<T> {
                 })
             }
             Class::Header => {
+                let psi = self.is_psi_pid(info.pid);
                 let mut offsets = Vec::new();
                 let mut kind = None;
                 for _ in 0..8 {
@@ -647,9 +786,34 @@ impl<T: Transport> Corrupter<T> {
                     kind = Some(k);
                     break;
                 }
-                // A sync-byte flip is valid on every packet, so it is the
-                // fallback if the re-rolls kept landing on CC.
-                match kind.unwrap_or(0) {
+                // On a PAT/PMT packet only the sync byte is used. The other
+                // three sub-kinds are INVISIBLE there, which would make the
+                // tap manufacture failures against a conformant receiver:
+                //
+                // - A continuity_counter jump is only ever reported for a
+                //   resolved elementary stream (`tst_core`'s
+                //   `mpegts::demux::sync_ingress` looks the PID up and
+                //   drops the event when it finds nothing), and a PSI PID
+                //   is not one. Measured: a CC jump on PID 0 produces no
+                //   demux event at all.
+                // - Rewriting the PID moves the packet off the PSI PID
+                //   entirely, so the section simply never arrives — the
+                //   next repetition of the table covers for it, and a
+                //   receiver has nothing to report.
+                // - An adaptation_field_length overrun is only reachable
+                //   when the packet HAS an adaptation field, which this
+                //   harness's PSI packets do not.
+                //
+                // A destroyed sync byte, by contrast, is caught
+                // deterministically by the raw reader as a resync. The
+                // sub-kind is still DRAWN above on this path, so the PRNG
+                // stream does not depend on which PID the draw landed on;
+                // only the arm taken changes. On media PIDs all four
+                // sub-kinds stay in play.
+                let kind = if psi { 0 } else { kind.unwrap_or(0) };
+                // A sync-byte flip is valid on every packet, so it is also
+                // the fallback if the re-rolls kept landing on CC.
+                match kind {
                     0 => {
                         let x = 1 + (self.rng.next_u64() % 255) as u8;
                         p[0] = 0x47 ^ x;
@@ -1010,6 +1174,14 @@ pub struct AttributionReport {
     /// Sample of events no injection explains (capped; the true count is
     /// `events - attributed_events`).
     pub unexplained_events: Vec<String>,
+    /// First UNEXPLAINED event of each family, uncapped and
+    /// first-writer-wins. A verifier's surviving
+    /// `nonconformant_event`/`discontinuity_event` failures quote these:
+    /// the first event of a class and the first UNEXPLAINED event of it
+    /// are routinely different events, and naming the explained one would
+    /// point a reader at evidence the report has already accounted for.
+    pub first_unexplained_nonconformant: Option<String>,
+    pub first_unexplained_discontinuity: Option<String>,
     /// Injections a conformant receiver had to notice, and did not.
     pub undetected: Vec<String>,
     /// Injections the stream never produced media after.
@@ -1064,6 +1236,12 @@ pub struct Attribution {
     attributed_discontinuities: u64,
     resyncs: u64,
     unexplained: Vec<String>,
+    first_unexplained_nc: Option<String>,
+    first_unexplained_disc: Option<String>,
+    /// Whether any PCR has been seen yet — decides whether an injection
+    /// APPENDED mid-capture can still trust its ordinal-0 anchor. See
+    /// [`Attribution::append`].
+    seen_pcr: bool,
 }
 
 /// How far `a` is ahead of `b` on the 33-bit PCR-base circle. A PCR base
@@ -1141,6 +1319,40 @@ impl Attribution {
             attributed_discontinuities: 0,
             resyncs: 0,
             unexplained: Vec::new(),
+            first_unexplained_nc: None,
+            first_unexplained_disc: None,
+            seen_pcr: false,
+        }
+    }
+
+    /// Add injections the sender logged AFTER this attribution was built —
+    /// what a live receiver's [`LogTail`] hands back as the run proceeds.
+    ///
+    /// They arrive in log order, which is stream order, so they extend the
+    /// list past every cursor and the forward scan stays valid.
+    ///
+    /// One case cannot be carried over honestly. An injection whose
+    /// coordinate has no PCR anchor (`pcr_base: None`) means "before the
+    /// stream's first PCR", and [`Attribution::new`] resolves it against
+    /// receiver ordinal 0 — sound only for a receiver that was listening
+    /// from the stream's first packet. Once this attribution has seen a
+    /// PCR, the receiver is demonstrably past that point, so an anchorless
+    /// injection appended now belongs to a part of the stream it can no
+    /// longer place: it is stranded instead, counted `unresolved` and
+    /// never judged. Absent evidence is not evidence of a failure.
+    pub fn append(&mut self, injections: Vec<Injection>) {
+        for i in injections {
+            let anchorless = i.coord.pcr_base.is_none();
+            let st = InjState {
+                resolved_at: match (anchorless, self.seen_pcr) {
+                    (true, false) => Some(i.coord.since_pcr),
+                    _ => None,
+                },
+                stranded: anchorless && self.seen_pcr,
+                ..InjState::default()
+            };
+            self.inj.push(i);
+            self.st.push(st);
         }
     }
 
@@ -1155,6 +1367,7 @@ impl Attribution {
     /// the receiver was not listening (a reconnect outage), so the
     /// injection stays unresolved and is never judged.
     pub fn on_pcr(&mut self, pcr_base: u64, at: u64) {
+        self.seen_pcr = true;
         while self.next_unresolved < self.inj.len() {
             let i = self.next_unresolved;
             let Some(b) = self.inj[i].coord.pcr_base else {
@@ -1245,9 +1458,20 @@ impl Attribution {
                 }
             }
             None => {
+                let text = format!("{sig:?} on pid {pid:?} at packet {at}");
+                match sig {
+                    Signal::PsiChecksum | Signal::MalformedPes | Signal::OtherNonConformant => {
+                        self.first_unexplained_nc
+                            .get_or_insert_with(|| text.clone());
+                    }
+                    Signal::ContinuityJump | Signal::OtherDiscontinuity => {
+                        self.first_unexplained_disc
+                            .get_or_insert_with(|| text.clone());
+                    }
+                    Signal::Resync => {}
+                }
                 if self.unexplained.len() < MAX_UNEXPLAINED {
-                    self.unexplained
-                        .push(format!("{sig:?} on pid {pid:?} at packet {at}"));
+                    self.unexplained.push(text);
                 }
             }
         }
@@ -1315,6 +1539,8 @@ impl Attribution {
             attributed_nonconformant: self.attributed_nonconformant,
             attributed_discontinuities: self.attributed_discontinuities,
             unexplained_events: self.unexplained,
+            first_unexplained_nonconformant: self.first_unexplained_nc,
+            first_unexplained_discontinuity: self.first_unexplained_disc,
             undetected,
             unrecovered,
             resyncs: self.resyncs,
@@ -1430,6 +1656,67 @@ mod tests {
             classes: classes.to_vec(),
             seed: 7,
         }
+    }
+
+    /// On a PAT/PMT packet the `Header` class must use ONLY the sync-byte
+    /// sub-kind, because the other three are invisible to a receiver
+    /// there (see the `Class::Header` arm's own comment) and an
+    /// invisible-but-`detectable` injection makes the report fail a
+    /// conformant library.
+    ///
+    /// Driven over a stream of nothing but PAT packets rather than a
+    /// normal capture: PSI is ~1% of a real multiplex, so with `min_gap`
+    /// at its 1000-packet floor a normal stream would have to run for
+    /// minutes before an injection happened to land on one, and the test
+    /// would pass vacuously long before that.
+    #[test]
+    fn header_class_on_a_psi_packet_only_ever_kills_the_sync_byte() {
+        let b = baseline_bytes(2.0, "psihdr");
+        let pat: [u8; PKT] = b[..PKT].try_into().unwrap();
+        assert_eq!(
+            crate::rawts::classify_packet(&pat).unwrap().pid,
+            0,
+            "the generator emits the PAT first"
+        );
+        let mut stream = Vec::with_capacity(PKT * 5000);
+        for _ in 0..5000 {
+            stream.extend_from_slice(&pat);
+        }
+
+        let (_, text, _) = run_tap(&stream, cfg(&[Class::Header], 10_000, 1000));
+        let (_, inj) = parse_log(&text).unwrap();
+        assert!(inj.len() >= 4, "{} injection(s)", inj.len());
+        for i in &inj {
+            assert_eq!(i.pid, 0);
+            assert_eq!(
+                i.offsets,
+                vec![0],
+                "sub-kind {:?} on a PSI packet",
+                i.offsets
+            );
+            assert_ne!(i.after[0], 0x47, "the sync byte must actually be gone");
+        }
+    }
+
+    /// The flip side: on MEDIA PIDs all four sub-kinds stay in play, so
+    /// the PSI rule above cannot have quietly collapsed the class into
+    /// "always kill the sync byte" everywhere.
+    #[test]
+    fn header_class_on_media_packets_still_uses_every_sub_kind() {
+        let b = baseline_bytes(600.0, "mediahdr");
+        let (_, text, _) = run_tap(&b, cfg(&[Class::Header], 10_000, 1000));
+        let (_, inj) = parse_log(&text).unwrap();
+        let media: Vec<&Injection> = inj
+            .iter()
+            .filter(|i| !matches!(i.pid, 0 | 0x1000))
+            .collect();
+        assert!(media.len() >= 8, "{} media injection(s)", media.len());
+        let shapes: std::collections::BTreeSet<Vec<usize>> =
+            media.iter().map(|i| i.offsets.clone()).collect();
+        assert!(
+            shapes.len() >= 2,
+            "every media injection took the same sub-kind: {shapes:?}"
+        );
     }
 
     #[test]
@@ -1680,6 +1967,175 @@ mod tests {
             assert!(e.contains(want), "{e}");
         }
         assert!(parse_log("").unwrap_err().contains("no header"));
+    }
+
+    /// `LogTail` must read a file that is STILL GROWING: only complete
+    /// lines, never the same injection twice, and a half-written line
+    /// held back until the rest of it lands.
+    #[test]
+    fn log_tail_reads_a_growing_file_one_complete_line_at_a_time() {
+        use std::io::Write as _;
+
+        // 60s (~3600 packets) so `min_gap`'s 1000-packet floor still
+        // leaves several injections to hand out one at a time.
+        let b = baseline_bytes(60.0, "tail");
+        let (_, text, _) = run_tap(&b, cfg(&Class::ALL, 10_000, 1000));
+        let mut lines = text.lines();
+        let header = lines.next().unwrap().to_string();
+        let injections: Vec<String> = lines.map(str::to_string).collect();
+        assert!(injections.len() >= 2, "need two injections to tail");
+
+        let path = std::env::temp_dir().join(format!(
+            "tst-interop-corrupt-tail-{}-{}.jsonl",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut f = std::fs::File::create(&path).unwrap();
+        writeln!(f, "{header}").unwrap();
+        f.flush().unwrap();
+
+        let mut tail = LogTail::open(&path).unwrap();
+        assert_eq!(tail.header().tap_version, TAP_VERSION);
+        assert!(tail.poll().unwrap().is_empty(), "nothing appended yet");
+
+        writeln!(f, "{}", injections[0]).unwrap();
+        f.flush().unwrap();
+        let first = tail.poll().unwrap();
+        assert_eq!(first.len(), 1);
+        assert!(tail.poll().unwrap().is_empty(), "no injection twice");
+
+        // A torn line: the sender is mid-write. Nothing is returned until
+        // the newline lands, and then the whole line parses.
+        let (head, rest) = injections[1].split_at(injections[1].len() / 2);
+        write!(f, "{head}").unwrap();
+        f.flush().unwrap();
+        assert!(tail.poll().unwrap().is_empty(), "a torn line is held back");
+        writeln!(f, "{rest}").unwrap();
+        f.flush().unwrap();
+        let second = tail.poll().unwrap();
+        assert_eq!(second.len(), 1);
+        assert!(
+            second[0].ordinal > first[0].ordinal,
+            "injections come back in log order"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// `LogTail::open` fails closed on a file with no complete header
+    /// line yet — the caller's cue to wait and retry, not to proceed with
+    /// an empty judgement.
+    #[test]
+    fn log_tail_open_refuses_a_headerless_file() {
+        let path = std::env::temp_dir().join(format!(
+            "tst-interop-corrupt-tail-empty-{}.jsonl",
+            std::process::id()
+        ));
+        std::fs::write(&path, b"").unwrap();
+        let e = LogTail::open(&path).unwrap_err();
+        assert!(e.contains("no header line yet"), "{e}");
+        // A header line without its newline is not a line yet either.
+        std::fs::write(&path, b"{\"header\":{").unwrap();
+        assert!(LogTail::open(&path).is_err());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// An injection appended mid-capture is judged like any other once a
+    /// later PCR places it — but one whose coordinate has NO PCR anchor
+    /// arrives too late to be placed at all, and must be left unresolved
+    /// rather than blamed on a receiver that never saw that part of the
+    /// stream.
+    #[test]
+    fn appended_injections_resolve_forward_and_anchorless_ones_strand() {
+        let hdr = LogHeader {
+            tap_version: TAP_VERSION,
+            seed: 1,
+            rate_per_10k: 5,
+            min_gap: 1000,
+            classes: Class::ALL.to_vec(),
+            attribution_window: ATTRIBUTION_WINDOW,
+            recovery_bound: RECOVERY_BOUND,
+        };
+        let mk = |pcr_base: Option<u64>, since: u64| Injection {
+            ordinal: 0,
+            coord: Coord {
+                pcr_base,
+                since_pcr: since,
+            },
+            class: Class::Drop,
+            pid: 0x1011,
+            offsets: vec![],
+            before: vec![],
+            after: vec![],
+            detectable: true,
+            psi: false,
+            pes_start: false,
+        };
+
+        let mut a = Attribution::new(vec![mk(Some(100), 2)], &hdr);
+        a.on_pcr(100, 10);
+        a.on_signal(13, Some(0x1011), Signal::ContinuityJump);
+        a.on_media(20, 0x1011);
+
+        // Appended after the capture is under way: anchored at a base
+        // still to come, and at none at all.
+        a.append(vec![mk(Some(200), 3), mk(None, 0)]);
+        a.on_pcr(200, 500);
+        a.on_signal(504, Some(0x1011), Signal::ContinuityJump);
+        a.on_media(510, 0x1011);
+
+        let rep = a.finish(2000);
+        assert_eq!(rep.injected, 3);
+        assert_eq!(rep.resolved, 2, "both anchored injections placed");
+        assert_eq!(rep.unresolved, 1, "the anchorless late arrival is not");
+        assert_eq!(rep.attributed_events, 2);
+        assert!(rep.undetected.is_empty(), "{rep:?}");
+        assert!(
+            rep.unexplained_events.is_empty(),
+            "{:?}",
+            rep.unexplained_events
+        );
+    }
+
+    /// Before the first PCR there is nothing to strand against, so an
+    /// anchorless injection appended then still resolves at ordinal 0 —
+    /// the same treatment `Attribution::new` gives it.
+    #[test]
+    fn an_anchorless_injection_appended_before_any_pcr_still_resolves() {
+        let hdr = LogHeader {
+            tap_version: TAP_VERSION,
+            seed: 1,
+            rate_per_10k: 5,
+            min_gap: 1000,
+            classes: Class::ALL.to_vec(),
+            attribution_window: ATTRIBUTION_WINDOW,
+            recovery_bound: RECOVERY_BOUND,
+        };
+        let mut a = Attribution::new(Vec::new(), &hdr);
+        a.append(vec![Injection {
+            ordinal: 0,
+            coord: Coord {
+                pcr_base: None,
+                since_pcr: 4,
+            },
+            class: Class::Drop,
+            pid: 0x1011,
+            offsets: vec![],
+            before: vec![],
+            after: vec![],
+            detectable: true,
+            psi: false,
+            pes_start: false,
+        }]);
+        a.on_signal(6, Some(0x1011), Signal::ContinuityJump);
+        a.on_media(10, 0x1011);
+        let rep = a.finish(2000);
+        assert_eq!(rep.resolved, 1);
+        assert_eq!(rep.unresolved, 0);
+        assert_eq!(rep.attributed_events, 1);
+        assert!(rep.undetected.is_empty(), "{rep:?}");
     }
 
     #[test]

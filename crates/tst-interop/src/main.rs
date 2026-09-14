@@ -450,6 +450,12 @@ fn run_send(args: &[String]) -> ! {
 /// log must be the one written by the sender feeding THIS capture; a log
 /// from a different run shares no packet coordinates and every verdict
 /// would be noise.
+///
+/// The file need not exist when `recv` starts — it waits for the sender
+/// to create it — and is re-read throughout the capture, so injections
+/// logged while this process is already running are judged too. START
+/// `recv` BEFORE `send`: see `recv::run`'s doc comment for what a
+/// receiver that joins mid-stream can and cannot place.
 fn run_recv(args: &[String]) -> ! {
     let mut url: Option<String> = None;
     let mut expect: Option<String> = None;
