@@ -470,7 +470,13 @@ impl TeeState {
         Self {
             bytes: 0,
             hasher: Sha256::new(),
-            reader: crate::rawts::Reader::new(),
+            // A tee only ever wraps a LIVE transport, and a live capture
+            // can run for days — so its per-PID timestamp series keep a
+            // bounded sample rather than every value
+            // (`crate::rawts::Retention`). Counts, wrap counts and the
+            // interval min/max stay exact; only a median becomes a
+            // sample median, which no oracle's tolerance can tell apart.
+            reader: crate::rawts::Reader::with_retention(crate::rawts::Retention::Bounded),
             reader_error: None,
         }
     }
