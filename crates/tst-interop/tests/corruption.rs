@@ -116,6 +116,37 @@ fn assert_failure_starting_with(r: &VerifyReport, prefix: &str) {
     );
 }
 
+/// Pin the run out of the VACUOUS REGIME before judging it.
+///
+/// `Attribution::finish` declines to judge recovery for an injection whose
+/// window runs past the end of the capture — correctly, since absent
+/// evidence is not evidence of a failure. But that means a capture which
+/// shortened for any reason (a change to [`SECONDS`], to a profile's
+/// packet rate, or to `min_gap`) would silently turn every
+/// `unrecovered.is_empty()` assertion, and the recovery half of every
+/// `r.pass`, into a tautology — the suite would still be green while
+/// testing nothing. So pin both halves explicitly: more than one injection
+/// landed, and the first one's whole recovery window lies inside the
+/// capture.
+fn assert_recovery_is_judged(wire: &[u8], injections: &[Injection], what: &str) {
+    // Floor: truncation shortens the wire and inserted garbage lengthens
+    // it, so this is a proxy for the reader's packet count, not an
+    // identity. Being a floor is what makes it safe here.
+    let packets = (wire.len() / 188) as u64;
+    assert!(
+        injections.len() >= 2,
+        "{what}: only {} injection(s) landed in {packets} packets — at least two are \
+         needed for the sweep to mean anything",
+        injections.len()
+    );
+    assert!(
+        injections[0].ordinal + RECOVERY_BOUND <= packets,
+        "{what}: the injection at packet {} plus the {RECOVERY_BOUND}-packet recovery \
+         bound runs past this {packets}-packet capture, so recovery is not judged at all",
+        injections[0].ordinal
+    );
+}
+
 // ============================================================
 // Positive controls: every class, judged under its own log
 // ============================================================
@@ -128,10 +159,7 @@ fn class_is_attributed(class: Class) {
     let p = baseline();
     let bytes = gen_bytes(p, class.name());
     let (wire, header, injections) = tap(&bytes, &forced(class), SEED);
-    assert!(
-        !injections.is_empty(),
-        "{class:?}: nothing was injected in {SECONDS}s — the test would be vacuous"
-    );
+    assert_recovery_is_judged(&wire, &injections, &format!("{class:?}"));
     let detectable = injections.iter().filter(|i| i.detectable).count();
 
     let r = judge(&wire, p, Some(&(header, injections.clone())));
@@ -220,7 +248,7 @@ fn every_class_on_every_profile_is_attributed() {
     for p in profiles::all() {
         let bytes = gen_bytes(p, p.name);
         let (wire, header, injections) = tap(&bytes, "rate=300,min_gap=1000", 3);
-        assert!(!injections.is_empty(), "{}: nothing injected", p.name);
+        assert_recovery_is_judged(&wire, &injections, p.name);
         let r = judge(&wire, p, Some(&(header, injections.clone())));
         assert!(
             r.pass,
@@ -243,10 +271,7 @@ fn every_class_is_attributed_across_a_seed_sweep() {
     for class in Class::ALL {
         for seed in 1..=24u64 {
             let (wire, header, injections) = tap(&bytes, &forced(class), seed);
-            assert!(
-                !injections.is_empty(),
-                "{class:?} seed {seed}: nothing injected"
-            );
+            assert_recovery_is_judged(&wire, &injections, &format!("{class:?} seed {seed}"));
             let r = judge(&wire, p, Some(&(header, injections.clone())));
             assert!(
                 r.pass,
@@ -279,6 +304,7 @@ fn header_every_media_sub_kind_is_attributed() {
     let mut shapes: std::collections::BTreeMap<Vec<usize>, u32> = Default::default();
     for seed in 1..=64u64 {
         let (wire, header, injections) = tap(&bytes, &forced(Class::Header), seed);
+        assert_recovery_is_judged(&wire, &injections, &format!("seed {seed}"));
         for i in injections.iter().filter(|i| !matches!(i.pid, 0 | 0x1000)) {
             *shapes.entry(i.offsets.clone()).or_default() += 1;
         }

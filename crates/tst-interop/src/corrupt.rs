@@ -728,10 +728,44 @@ impl<T: Transport> Corrupter<T> {
                 // Payload bytes only; a packet with no payload still has
                 // adaptation-field bytes past the 4-byte header worth
                 // flipping.
-                let lo = if info.has_payload {
-                    info.payload_off.max(4)
-                } else {
+                //
+                // On a packet that STARTS a PES, the flip also skips the
+                // PES header. A flip there is undetectable by contract —
+                // tst-core's PES parser accepts `stream_id`,
+                // `PES_packet_length`, `header_data_length` and 33 of the
+                // 40 PTS bits as-is (see `sensitive_span`) — yet it
+                // silently rewrites a PTS or a stream_id, and the WIRE
+                // ORACLES read those same bytes structurally: a PTS the
+                // parser shrugs at makes `pts_wrap_unexpected` fire, and a
+                // rewritten stream_id makes `av1_carriage_wire` fire. The
+                // run would then fail for damage the tap itself declared
+                // nobody has to notice. Corrupting the picture is what
+                // "body" means; corrupting the timing is a different
+                // experiment, and not one this harness can judge.
+                let lo = if !info.has_payload {
                     4
+                } else if pes_start(pkt, info) {
+                    // §2.4.3.7: 3-byte start code, stream_id,
+                    // PES_packet_length(2), two flag bytes, then
+                    // header_data_length and that many optional bytes.
+                    // The elementary-stream payload starts after all of
+                    // it.
+                    match pkt.get(info.payload_off + 8) {
+                        Some(&hdr_len) => {
+                            let es = info.payload_off + 9 + usize::from(hdr_len);
+                            // A header that fills the packet leaves no ES
+                            // payload to flip. Fall back to the last four
+                            // bytes rather than skipping the injection:
+                            // the draw below must consume the same number
+                            // of PRNG values on every path or the whole
+                            // stream of decisions would depend on packet
+                            // shape.
+                            if es < PKT { es } else { PKT - 4 }
+                        }
+                        None => PKT - 4,
+                    }
+                } else {
+                    info.payload_off.max(4)
                 };
                 let n = 1 + (self.rng.next_u64() % 4) as usize;
                 let mut offsets: Vec<usize> = Vec::with_capacity(n);
@@ -1483,17 +1517,28 @@ impl Attribution {
         })
     }
 
-    /// Whether some injection explains an anomaly observed at receiver
+    /// Whether a TRUNCATION explains an anomaly observed at receiver
     /// ordinal `at`, WITHOUT recording it as an event.
     ///
-    /// For evidence that is not an error event the receiver reported, but
-    /// a derived measurement that went wrong: a PTS that steps backwards
-    /// because a body flip landed in a PES header, say. Such a flip is
-    /// deliberately not `detectable` — tst-core's PES parser accepts 33 of
-    /// the 40 PTS bits as-is (see [`sensitive_span`]) — so a receiver that
-    /// silently carries the damaged value is conformant, and the harness
-    /// must not fail it for an invariant the tap itself broke. An anomaly
-    /// no injection explains still counts, exactly as before.
+    /// One class, for one measured reason. [`Class::Truncate`] drops a
+    /// non-multiple of 188 bytes, so from that point the byte stream is
+    /// MISALIGNED and stays misaligned until a parser hunts a new
+    /// 188-stride lock. During that hunt it can lock onto a 0x47 that is
+    /// live media payload and read the bytes after it as a PES header —
+    /// yielding a "PTS" that was never a timestamp. That is the
+    /// truncation doing exactly what it is for, not a timing defect, and
+    /// a receiver that re-locks and carries on is behaving correctly.
+    ///
+    /// No other class can do it. [`Class::Garbage`] inserts bytes but
+    /// never emits 0x47, precisely so it cannot fake a packet start;
+    /// every other class preserves packet length and therefore alignment.
+    /// Measured over 6 profiles × 7 classes × 40 seeds: 42 PTS
+    /// monotonicity breaks, all 42 from `truncate`, none from anything
+    /// else. So the exception stays pinned to the one class rather than
+    /// excusing derived anomalies in general — a PTS defect inside a body
+    /// flip's, drop's, dup's, header's or psi_flip's window still fails
+    /// the run, and after the `BodyFlip` draw range was moved past the PES
+    /// header no flip can manufacture one anyway.
     ///
     /// Deliberately NOT routed through [`Attribution::on_signal`]: that
     /// would inflate `attributed_events` with something the receiver never
@@ -1501,8 +1546,9 @@ impl Attribution {
     /// event tallies would then excuse one real event per anomaly.
     ///
     /// Like the `on_*` methods this expects non-decreasing `at`.
-    pub fn explains(&mut self, at: u64) -> bool {
-        self.hit(at).is_some()
+    pub fn truncation_explains(&mut self, at: u64) -> bool {
+        self.hit(at)
+            .is_some_and(|i| self.inj[i].class == Class::Truncate)
     }
 
     /// An error-class event surfaced at receiver ordinal `at` (`pid` is
@@ -1883,6 +1929,57 @@ mod tests {
         assert_eq!(w.len(), b.len());
     }
 
+    /// A body flip must never land inside a PES header.
+    ///
+    /// The bytes there are undetectable by contract (tst-core's PES
+    /// parser accepts `stream_id`, `PES_packet_length`,
+    /// `header_data_length` and 33 of the 40 PTS bits as-is) but they are
+    /// read STRUCTURALLY by the wire oracles, so a flip that silently
+    /// rewrites a PTS or a stream_id fails the capture for damage the tap
+    /// itself declared nobody has to notice. Measured before this rule:
+    /// `pts_wrap_unexpected` on 5 seeds and `av1_carriage_wire` on 3,
+    /// across a 6-profile × 7-class × 40-seed sweep.
+    ///
+    /// Swept over 64 seeds rather than one because the offset is a PRNG
+    /// draw; the assertion that PES-start injections actually occurred is
+    /// what stops the sweep passing vacuously.
+    #[test]
+    fn a_body_flip_never_lands_in_a_pes_header() {
+        let b = baseline_bytes(300.0, "bfpes");
+        let mut pes_starts = 0;
+        for seed in 1..=64u64 {
+            let (_, text, _) = run_tap(
+                &b,
+                CorruptConfig {
+                    seed,
+                    ..cfg(&[Class::BodyFlip], 10_000, 1000)
+                },
+            );
+            let (_, inj) = parse_log(&text).unwrap();
+            for i in inj.iter().filter(|i| i.pes_start) {
+                pes_starts += 1;
+                let pkt: [u8; PKT] = i.before[..].try_into().expect("a whole packet is logged");
+                let info = crate::rawts::classify_packet(&pkt).unwrap();
+                // §2.4.3.7: the ES payload begins after the 9 fixed PES
+                // header bytes plus `header_data_length` optional ones.
+                let es = info.payload_off + 9 + usize::from(pkt[info.payload_off + 8]);
+                for &o in &i.offsets {
+                    assert!(
+                        o >= es,
+                        "seed {seed}: offset {o} is inside the PES header \
+                         (payload_off {}, ES payload starts at {es})",
+                        info.payload_off
+                    );
+                }
+            }
+        }
+        assert!(
+            pes_starts >= 8,
+            "only {pes_starts} PES-start injection(s) across 64 seeds — the rule above \
+             is barely exercised"
+        );
+    }
+
     /// A body flip is only claimed detectable when it lands under a
     /// section CRC. This pins the one span that decides that.
     #[test]
@@ -2096,26 +2193,40 @@ mod tests {
     }
 
     /// A derived anomaly (a PTS that stepped backwards) is asked about,
-    /// not fed in: inside an injection's window it is explained, outside
-    /// it is not, and asking must not move any of the counters an event
-    /// would.
+    /// not fed in — and only a TRUNCATION answers for it. Asking must not
+    /// move any of the counters an event would.
     #[test]
-    fn explains_answers_without_recording_an_event() {
-        let mut a = Attribution::new(vec![inj(1000, 10, Class::BodyFlip, 0x1011, false)], &hdr());
+    fn only_a_truncation_explains_a_derived_anomaly() {
+        let mut a = Attribution::new(vec![inj(1000, 10, Class::Truncate, 0x1011, true)], &hdr());
         a.on_pcr(1000, 5000); // resolves to receiver ordinal 5010
-        assert!(!a.explains(5009), "before the injection");
-        assert!(a.explains(5010), "at the injection");
+        assert!(!a.truncation_explains(5009), "before the injection");
+        assert!(a.truncation_explains(5010), "at the injection");
         assert!(
-            a.explains(5010 + ATTRIBUTION_WINDOW),
-            "last packet in window"
+            a.truncation_explains(5010 + ATTRIBUTION_WINDOW),
+            "last packet in the window"
         );
-        assert!(!a.explains(5011 + ATTRIBUTION_WINDOW), "past the window");
+        assert!(
+            !a.truncation_explains(5011 + ATTRIBUTION_WINDOW),
+            "past the window"
+        );
         let r = a.finish(10_000);
         assert_eq!(
             (r.events, r.attributed_events, r.attributed_discontinuities),
             (0, 0, 0),
             "asking is not an event"
         );
+
+        // Every other class leaves the anomaly unexplained: truncation is
+        // the only one that misaligns the byte stream, so it is the only
+        // one whose window may contain a PTS that was never a timestamp.
+        for class in Class::ALL.iter().filter(|&&c| c != Class::Truncate) {
+            let mut a = Attribution::new(vec![inj(1000, 10, *class, 0x1011, true)], &hdr());
+            a.on_pcr(1000, 5000);
+            assert!(
+                !a.truncation_explains(5010),
+                "{class:?} must not excuse a derived anomaly"
+            );
+        }
     }
 
     #[test]

@@ -17,6 +17,32 @@ const PKT: usize = 188;
 const SYNC: u8 = 0x47;
 const PAT_PID: u16 = 0;
 
+/// CRC-32/MPEG-2 over `bytes` — ITU-T H.222.0 Annex A: generator
+/// polynomial 0x04C11DB7, initial value 0xFFFFFFFF, MSB-first, with
+/// neither input nor output reflection and no final XOR.
+///
+/// Written out here rather than borrowed from `tst_core::mpegts` on
+/// purpose. This reader exists to check the demuxer (see the module doc),
+/// and sharing its checksum would be sharing a way to be wrong: a bug in
+/// one implementation would make both ends agree on a corrupt table. The
+/// bit-at-a-time form is deliberate too — a PAT or PMT is a couple of
+/// dozen bytes a few times a second, so a 1 KiB lookup table would buy
+/// nothing and hide the polynomial.
+fn crc32_mpeg2(bytes: &[u8]) -> u32 {
+    let mut crc = 0xFFFF_FFFFu32;
+    for &b in bytes {
+        crc ^= u32::from(b) << 24;
+        for _ in 0..8 {
+            crc = if crc & 0x8000_0000 != 0 {
+                (crc << 1) ^ 0x04C1_1DB7
+            } else {
+                crc << 1
+            };
+        }
+    }
+    crc
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stream {
     pub pid: u16,
@@ -138,6 +164,11 @@ pub struct WireSummary {
     pub pes: BTreeMap<u16, PesShape>,
     pub packets_per_pid: BTreeMap<u16, u64>,
     pub packets: u64,
+    /// PSI sections discarded because their CRC-32 did not check out —
+    /// see [`Reader::section`]. Zero on any capture this harness
+    /// generates; non-zero means something damaged a PAT or PMT in
+    /// flight, which is exactly what the corruption tap does on purpose.
+    pub psi_crc_rejected: u64,
 }
 
 pub struct Reader {
@@ -418,7 +449,26 @@ impl Reader {
     /// CRC32(4)` — the minimum shape of ANY PSI section, PAT or PMT,
     /// even with zero loop entries), so callers can rely on indices
     /// `0..9` existing without their own length check.
-    fn section(payload: &[u8]) -> Result<(u8, &[u8]), String> {
+    ///
+    /// `Ok(None)` means the section's CRC-32 did not check out and the
+    /// section must be IGNORED — not treated as an error. The distinction
+    /// is load-bearing:
+    ///
+    /// - Ignoring, rather than trusting, is what stops one damaged byte
+    ///   from poisoning the reader for the rest of a capture. A flip in a
+    ///   PAT's program loop rewrites a PMT PID; trusting it registers
+    ///   whatever PID that lands on — which in a two-program multiplex is
+    ///   a real ELEMENTARY STREAM — as a PMT PID, after which every one
+    ///   of that stream's packets fails to parse as a PSI section.
+    /// - Ignoring, rather than erroring, is what stops it from being
+    ///   mistaken for a sync loss. Packet framing is untouched; only the
+    ///   section's contents are unusable. An `Err` here would make the
+    ///   resync-mode caller record a [`Resync`] and skip a perfectly
+    ///   well-framed packet.
+    ///
+    /// Discarding a CRC-failed table is also just what a PSI filter does:
+    /// the next repetition of the table carries the same information.
+    fn section<'a>(&mut self, payload: &'a [u8]) -> Result<Option<(u8, &'a [u8])>, String> {
         const SECTION_HEADER_MIN: usize = 9;
         let &ptr_byte = payload.first().ok_or("PSI section: empty payload")?;
         let sec = payload
@@ -441,12 +491,23 @@ impl Reader {
         let body = sec
             .get(3..3 + len)
             .ok_or("PSI section spans packets (unsupported)")?;
+        // The CRC covers the whole section: the 3-byte header through the
+        // last byte before the trailer. `len >= 9` above guarantees the
+        // split below has both halves.
+        let (covered, trailer) = sec[..3 + len].split_at(3 + len - 4);
+        let declared = u32::from_be_bytes(trailer.try_into().expect("4 trailer bytes"));
+        if crc32_mpeg2(covered) != declared {
+            self.summary.psi_crc_rejected += 1;
+            return Ok(None);
+        }
         // body = [table_id_ext(2), ver/cni(1), sec_num(1), last_sec(1), ..., crc(4)]
-        Ok((table_id, body))
+        Ok(Some((table_id, body)))
     }
 
     fn pat(&mut self, payload: &[u8]) -> Result<(), String> {
-        let (tid, body) = Self::section(payload)?;
+        let Some((tid, body)) = self.section(payload)? else {
+            return Ok(());
+        };
         if tid != 0 {
             return Err(format!("PAT table_id 0x{tid:02x}"));
         }
@@ -472,7 +533,9 @@ impl Reader {
     }
 
     fn pmt(&mut self, pmt_pid: u16, program_number: u16, payload: &[u8]) -> Result<(), String> {
-        let (tid, body) = Self::section(payload)?;
+        let Some((tid, body)) = self.section(payload)? else {
+            return Ok(());
+        };
         if tid != 2 {
             return Err(format!("PMT table_id 0x{tid:02x}"));
         }
@@ -584,6 +647,70 @@ mod tests {
         let s = summarize_file(&path).unwrap();
         let _ = std::fs::remove_file(&path);
         s
+    }
+
+    /// Bytes of `profile`/`seconds`, straight from the generator.
+    fn bytes_of(profile: &str, seconds: f64, tag: &str) -> Vec<u8> {
+        let p = crate::profiles::by_name(profile).unwrap();
+        let path =
+            std::env::temp_dir().join(format!("tst-interop-rawts-{tag}-{}.ts", std::process::id()));
+        crate::r#gen::run(p, seconds, &path).unwrap();
+        let b = std::fs::read(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        b
+    }
+
+    /// A clean capture must have ZERO rejected sections. Without this the
+    /// CRC check below would pass just as well if `crc32_mpeg2` always
+    /// disagreed: "rejects a damaged table" and "rejects every table" look
+    /// identical from the damaged side.
+    #[test]
+    fn a_clean_capture_rejects_no_psi_section() {
+        let s = summary_of("two-program", 3.0);
+        assert_eq!(s.psi_crc_rejected, 0);
+        assert_eq!(s.programs.len(), 2, "both PMTs were accepted");
+    }
+
+    /// One flipped byte in a PAT's program loop must not be trusted.
+    ///
+    /// In `two-program`, PAT byte 16 is the low byte of program 1's PMT
+    /// PID (0x1000). Flipping it to 0x1031 names a PID that is a real
+    /// ELEMENTARY STREAM in this multiplex — so a reader that trusted the
+    /// CRC-failed table would register 0x1031 as a PMT PID and then fail
+    /// to parse every one of that stream's 600 packets as a PSI section,
+    /// skipping each one. Measured before the CRC check existed: 600
+    /// resyncs and 6000 of 6600 packets counted.
+    ///
+    /// The section is IGNORED instead: the PID map is untouched, packet
+    /// framing is unaffected so nothing resyncs, every packet is counted,
+    /// and the discard is reported rather than hidden.
+    #[test]
+    fn a_crc_failed_pat_is_ignored_and_poisons_nothing() {
+        let mut bytes = bytes_of("two-program", 60.0, "crcpat");
+        let packets = bytes.len() / PKT;
+        assert_eq!(packets, 6600);
+        assert_eq!(
+            classify_packet(bytes[..PKT].try_into().unwrap())
+                .unwrap()
+                .pid,
+            0
+        );
+        bytes[16] ^= 0x31;
+
+        let mut r = Reader::new();
+        r.set_resync_mode(true);
+        r.feed(&bytes).unwrap();
+        assert!(
+            !r.is_pmt_pid(0x1031),
+            "an elementary stream must not become a PMT PID"
+        );
+        assert_eq!(r.resyncs().len(), 0, "framing is intact: no sync was lost");
+        let s = r.finish().unwrap();
+        assert_eq!(s.packets, packets as u64, "no packet was skipped");
+        assert_eq!(s.psi_crc_rejected, 1, "exactly the damaged PAT");
+        // The undamaged PAT repetitions still carry the real topology.
+        assert_eq!(s.programs.len(), 2);
+        assert_eq!(s.programs[&1].pmt_pid, 0x1000);
     }
 
     #[test]
