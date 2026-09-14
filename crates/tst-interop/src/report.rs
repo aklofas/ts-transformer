@@ -2249,9 +2249,18 @@ pub mod soak {
                                 // the real number keeps climbing, and a reader of
                                 // `soak-results.json` would be told a 72-hour leg
                                 // had 64 unexplained events when it had thousands.
-                                // `verify`'s own failure string already reports the
-                                // subtraction; this is the same number.
-                                a.events.saturating_sub(a.attributed_events),
+                                //
+                                // BOTH subtractions are needed. The verdict passes
+                                // on `unexplained_events.is_empty()`, and Lossy mode
+                                // removes the discontinuity-family events it excused
+                                // from that list — so without the second subtraction
+                                // a PASSING verdict would read "2 unexplained (first:
+                                // None), 2 excused as transport loss", contradicting
+                                // itself. `verify`'s own failure string does exactly
+                                // this; the two must stay the same number.
+                                a.events
+                                    .saturating_sub(a.attributed_events)
+                                    .saturating_sub(a.unexplained_transport_loss),
                                 a.unexplained_events.first(),
                                 a.unexplained_transport_loss,
                                 a.injected,
@@ -4061,6 +4070,49 @@ pub mod soak {
             );
             // The quoted example still comes from the sample.
             assert!(v.detail.contains("first one"), "{}", v.detail);
+        }
+
+        /// A PASSING `corruption_attributed` must not claim unexplained
+        /// events in its own detail. Lossy mode removes the
+        /// discontinuity-family events it excused from
+        /// `unexplained_events` (which is what the verdict passes on) but
+        /// leaves them inside `events - attributed_events`, so the
+        /// displayed count has to subtract `unexplained_transport_loss`
+        /// too or the string contradicts the verdict beside it. This is
+        /// the exact shape a real soak leg produced: 251 events, 249
+        /// attributed, 2 excused.
+        #[test]
+        fn a_passing_corruption_attributed_detail_reports_zero_unexplained() {
+            let mut inputs = healthy_inputs();
+            inputs.config.corruption = true;
+            let a = crate::corrupt::AttributionReport {
+                injected: 287,
+                resolved: 287,
+                events: 251,
+                attributed_events: 249,
+                // Empty: Lossy moved both leftovers to the counter below.
+                unexplained_events: vec![],
+                unexplained_transport_loss: 2,
+                ..Default::default()
+            };
+            inputs.legs[0].1.recv_report.metrics.corruption_attribution = Some(a);
+            let r = build_soak_results(inputs).unwrap();
+            let v = r
+                .verdicts
+                .iter()
+                .find(|v| v.name == "corruption_attributed_srt")
+                .unwrap();
+            assert!(v.pass, "{}", v.detail);
+            assert!(
+                v.detail.contains("0 unexplained"),
+                "a passing verdict must report zero unexplained: {}",
+                v.detail
+            );
+            assert!(
+                v.detail.contains("2 excused as transport loss"),
+                "the excused events must still be named: {}",
+                v.detail
+            );
         }
 
         #[test]
