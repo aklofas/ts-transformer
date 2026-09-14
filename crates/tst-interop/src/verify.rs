@@ -799,12 +799,27 @@ impl Tally {
         // built for. A mismatch would mean a Lossy run judged by a strict
         // attribution, or the reverse; both are wiring mistakes, and both
         // would otherwise pass quietly.
+        //
+        // Recorded as a failure, never asserted: this runs at the end of
+        // a capture that may have taken three days, and a panic there
+        // throws away every other verdict the run earned — including the
+        // evidence a reader would need to see the wiring bug for what it
+        // is. Failing the report says the same thing and keeps the
+        // artifact.
         if let Some(a) = self.attribution.as_ref() {
-            assert_eq!(
-                a.excuses_transport_loss(),
-                mode == VerifyMode::Lossy,
-                "attribution built for the wrong verify tier"
-            );
+            let want_lossy = mode == VerifyMode::Lossy;
+            if a.excuses_transport_loss() != want_lossy {
+                failures.push(format!(
+                    "corruption_tier: capture judged in {mode:?} but its attribution was built \
+                     for {} — transport-loss excusal is applied as each event arrives, so the \
+                     two cannot be reconciled after the fact",
+                    if a.excuses_transport_loss() {
+                        "Lossy"
+                    } else {
+                        "Strict"
+                    }
+                ));
+            }
         }
         let attribution = self
             .attribution
@@ -830,19 +845,19 @@ impl Tally {
                         rep.unexplained_events.first()
                     ));
                 }
-                if rep.undetected_count > 0 {
+                if rep.undetected_total() > 0 {
                     failures.push(format!(
                         "corruption_detected: {} detectable injection(s) produced no event, \
                          first: {:?}",
-                        rep.undetected_count,
+                        rep.undetected_total(),
                         rep.undetected.first()
                     ));
                 }
-                if rep.unrecovered_count > 0 {
+                if rep.unrecovered_total() > 0 {
                     failures.push(format!(
                         "corruption_recovered: {} injection(s) with no media within {} packets, \
                          first: {:?}",
-                        rep.unrecovered_count,
+                        rep.unrecovered_total(),
                         rep.recovery_bound,
                         rep.unrecovered.first()
                     ));
@@ -2054,6 +2069,64 @@ mod tests {
         assert!(
             failure.contains("at packet 8000"),
             "must quote the UNEXPLAINED event: {failure}"
+        );
+    }
+
+    /// An attribution built for the wrong tier is a wiring bug, and it
+    /// FAILS the report rather than panicking. A panic at the end of a
+    /// three-day capture would throw away every other verdict the run
+    /// earned, including the evidence a reader needs to recognise the bug.
+    #[test]
+    fn a_capture_judged_in_the_wrong_tier_fails_instead_of_panicking() {
+        use crate::corrupt::{Attribution, Class};
+        let hdr = corruption_header();
+        let inj = injection_at(Class::Header, VIDEO_PID, 3);
+        let wire = wire_for("baseline", 2.0);
+
+        for (mode, attribution) in [
+            (
+                VerifyMode::Lossy,
+                Attribution::strict(vec![inj.clone()], &hdr),
+            ),
+            (VerifyMode::Strict, Attribution::lossy(vec![inj], &hdr)),
+        ] {
+            let mut t = healthy_baseline_tally();
+            t.attach_attribution(attribution);
+            let r = t.finish(
+                profiles::by_name("baseline").unwrap(),
+                2.0,
+                NOMINAL_COUNT_SLACK,
+                mode,
+                &wire,
+            );
+            let f = r
+                .failures
+                .iter()
+                .find(|f| f.starts_with("corruption_tier"))
+                .unwrap_or_else(|| {
+                    panic!("{mode:?} must report a tier mismatch: {:?}", r.failures)
+                });
+            assert!(!r.pass, "{f}");
+        }
+
+        // …and the matched pairs stay clean, so the check is not simply
+        // always-on.
+        let mut t = healthy_baseline_tally();
+        t.attach_attribution(Attribution::lossy(
+            vec![injection_at(Class::Header, VIDEO_PID, 3)],
+            &hdr,
+        ));
+        let r = t.finish(
+            profiles::by_name("baseline").unwrap(),
+            2.0,
+            NOMINAL_COUNT_SLACK,
+            VerifyMode::Lossy,
+            &wire,
+        );
+        assert!(
+            !r.failures.iter().any(|f| f.starts_with("corruption_tier")),
+            "{:?}",
+            r.failures
         );
     }
 

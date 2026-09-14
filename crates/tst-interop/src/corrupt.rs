@@ -213,11 +213,11 @@ impl CorruptConfig {
     /// `min_gap` also funds the window's BACKWARD half. An attribution
     /// window is `[r - backward_reach, r + ATTRIBUTION_WINDOW]`, and
     /// `Attribution::backward_reach` clamps its own extension to
-    /// `min_gap - (ATTRIBUTION_WINDOW + APPROX_SLACK)` so consecutive
-    /// windows stay disjoint whatever `since_pcr` turns out to be. At
-    /// this floor that budget is 1000 - 628 = 372 packets, which is why
-    /// the floor cannot be lowered without narrowing the backward half
-    /// too.
+    /// `min_gap - (ATTRIBUTION_WINDOW + APPROX_SLACK) - 1` so consecutive
+    /// windows stay disjoint whatever `since_pcr` turns out to be — the
+    /// `- 1` because both window edges are inclusive. At this floor that
+    /// budget is 1000 - 628 - 1 = 371 packets, which is why the floor
+    /// cannot be lowered without narrowing the backward half too.
     pub fn validate(&self) -> Result<(), String> {
         if self.rate_per_10k == 0 {
             return Err(
@@ -1367,7 +1367,45 @@ impl AttributionReport {
     /// a mildly-broken one.
     #[must_use]
     pub fn unexplained_total(&self) -> u64 {
-        self.unexplained_resyncs + self.unexplained_discontinuities + self.unexplained_nonconformant
+        Self::judged(
+            self.unexplained_resyncs
+                + self.unexplained_discontinuities
+                + self.unexplained_nonconformant,
+            &self.unexplained_events,
+        )
+    }
+
+    /// Injections a conformant receiver had to notice and did not,
+    /// uncapped — the count a verdict gates on, not
+    /// `undetected.len()`.
+    #[must_use]
+    pub fn undetected_total(&self) -> u64 {
+        Self::judged(self.undetected_count, &self.undetected)
+    }
+
+    /// Injections the stream never produced media after, uncapped.
+    #[must_use]
+    pub fn unrecovered_total(&self) -> u64 {
+        Self::judged(self.unrecovered_count, &self.unrecovered)
+    }
+
+    /// Reconcile an uncapped counter with the sample list beside it.
+    ///
+    /// The counters are `#[serde(default)]`, so a report written BEFORE
+    /// they existed deserializes with every one of them zero while its
+    /// sample list still holds real findings. Gating on the counter alone
+    /// would then read such a report as clean and pass a run that failed
+    /// — verified against this arc's own 1-hour smoke artifacts, where
+    /// re-judging them under the new counters flipped both
+    /// `corruption_detected_*` failures to passes while the verdict
+    /// detail still quoted the finding.
+    ///
+    /// A sample list can never be LONGER than the true count (it is a
+    /// prefix of it, capped at [`MAX_SAMPLES`]), so the larger of the two
+    /// is the honest answer for a report of either vintage: the counter
+    /// for a current one, the list length for an archived one.
+    fn judged(count: u64, sample: &[String]) -> u64 {
+        count.max(sample.len() as u64)
     }
 }
 
@@ -1780,12 +1818,20 @@ impl Attribution {
     ///
     /// CLAMPED, because windows must stay disjoint: two injections are
     /// `min_gap` apart, so extending one backwards by more than
-    /// `min_gap - (window + APPROX_SLACK)` would let it overlap its
+    /// `min_gap - (window + APPROX_SLACK) - 1` would let it overlap its
     /// predecessor's, and `hit` would hand an event to the newer of the
     /// two — exactly the ambiguity [`CorruptConfig::validate`]'s `min_gap`
     /// floor exists to prevent. The clamp keeps the invariant true for
     /// ANY valid config rather than resting on a bound `since_pcr`
     /// happens to obey.
+    ///
+    /// The `- 1` is load-bearing. [`Attribution::window_contains`] is
+    /// INCLUSIVE at both ends, so without it a predecessor's forward edge
+    /// `rA + window + APPROX_SLACK` and a successor's lower edge
+    /// `rB - reach` land on the same packet, and that one packet sits in
+    /// both windows. `APPROX_SLACK` is in the budget unconditionally
+    /// because the predecessor may have resolved approximately, which is
+    /// what widens its forward edge.
     ///
     /// The bound is not "one PCR interval": `since_pcr` counts packets
     /// since the last packet that CARRIED a PCR, and the muxer's PCR
@@ -1794,12 +1840,13 @@ impl Attribution {
     /// reached 302 packets on a 40 ms-PCR profile and 393 on a 100 ms
     /// one — roughly 2.3 nominal intervals — against the ~130 a
     /// one-interval model predicts. At the default `min_gap` of 1000 the
-    /// clamp is 372, which covers every injection in that run bar 4 of
+    /// clamp is 371, which covers every injection in that run bar 4 of
     /// 3026.
     fn backward_reach(&self, i: usize) -> u64 {
         let budget = self
             .min_gap
-            .saturating_sub(self.window.saturating_add(APPROX_SLACK));
+            .saturating_sub(self.window.saturating_add(APPROX_SLACK))
+            .saturating_sub(1);
         self.tracked(i).coord.since_pcr.min(budget)
     }
 
@@ -3126,34 +3173,63 @@ mod tests {
     #[test]
     fn a_wide_anchor_span_cannot_reach_into_its_predecessors_window() {
         let h = hdr();
-        let big = 400; // wider than the 372 the default min_gap allows
-        assert!(big > h.min_gap - (h.attribution_window + APPROX_SLACK));
+        let budget = h.min_gap - (h.attribution_window + APPROX_SLACK) - 1;
+
+        // The worst case for disjointness, built deliberately: the
+        // PREDECESSOR resolves APPROXIMATELY, which widens its forward
+        // edge by APPROX_SLACK, and the SUCCESSOR carries a `since_pcr`
+        // wider than the budget, which is what the clamp has to cut back.
+        // Anchoring the first at a base the receiver never saw (1000)
+        // and delivering a LATER one (1090) is what makes it approx.
+        let wide = budget + 200;
         let mut a = Attribution::strict(
             vec![
                 inj(1000, 10, Class::Header, 0x1011, true),
-                inj(1000, 10 + h.min_gap, Class::Header, 0x1011, true),
+                inj(2000, wide, Class::Header, 0x1011, true),
             ],
             &h,
         );
-        // Give the SECOND injection the wide span by resolving both off
-        // one anchor: r = 5010 and r = 5010 + min_gap.
-        a.on_pcr(1000, 5000);
-
-        // The first injection's window ends at 5010 + 500 = 5510. The
-        // second resolves at 6010; unclamped, a 400-packet reach would
-        // open its window at 5610 — still clear here — so the invariant
-        // is asserted directly on the reach instead of on one fixture.
-        let reach = a.backward_reach(1);
+        // The predecessor's own base (1000) never arrives; the next one
+        // does, so it resolves approximately to 5010 with a forward edge
+        // widened by APPROX_SLACK.
+        a.on_pcr(1090, 5000);
+        // The successor resolves exactly, and — as two real consecutive
+        // injections always are — exactly `min_gap` further down the
+        // stream: 5010 + 1000 = 6010.
+        a.on_pcr(2000, 6010 - wide);
         assert!(
-            reach <= h.min_gap - (h.attribution_window + APPROX_SLACK),
-            "reach {reach} would let consecutive windows overlap"
+            a.state(0).approx,
+            "the predecessor must resolve approximately"
         );
+        assert!(!a.state(1).approx, "and the successor exactly");
+        assert_eq!(a.state(0).resolved_at, Some(5010));
+        assert_eq!(a.state(1).resolved_at, Some(6010));
 
-        // And the disjointness it buys: no event is ever covered twice.
-        for at in 5000..7100u64 {
+        // The clamp bit at all: the declared span really is wider than
+        // the reach the config can fund.
+        let reach = a.backward_reach(1);
+        assert!(reach < wide, "the wide span must be clamped, got {reach}");
+
+        // Both edges of `window_contains` are inclusive, so the budget
+        // has to leave one packet between a widened forward edge and the
+        // next window's lower edge. Sweep every ordinal either window can
+        // touch and require that none is covered twice.
+        let (lo0, hi1) = (
+            a.window_lo(0).unwrap(),
+            a.state(1).resolved_at.unwrap() + h.attribution_window,
+        );
+        for at in lo0..=hi1 {
             let covered = (0..2).filter(|&i| a.window_contains(i, at)).count();
             assert!(covered <= 1, "packet {at} covered by {covered} windows");
         }
+        // …and the sweep is not vacuous: the two windows really do come
+        // within a packet or two of each other.
+        let gap = a.window_lo(1).unwrap()
+            - (a.state(0).resolved_at.unwrap() + h.attribution_window + APPROX_SLACK);
+        assert!(
+            gap <= 2,
+            "windows must be adjacent for this to test anything, gap {gap}"
+        );
     }
 
     /// Ruling B. An attributed continuity jump excuses an injection ONLY
