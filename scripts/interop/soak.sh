@@ -338,12 +338,18 @@ fi
 SEED=$((10#$SEED))
 SCHEDULE_PHASES=$((10#$SCHEDULE_PHASES))
 [[ -z "$SCHEDULE_PHASE_S" ]] || SCHEDULE_PHASE_S=$((10#$SCHEDULE_PHASE_S))
-# `auto` is checked here; a named profile is checked against the registry
-# right after the build, by the same `pick-profiles`-adjacent binary that
-# owns the registry (bash has no business holding a second copy of the
-# profile list — see run-matrix.sh's own stance on duplicated inventories).
+# NON-EMPTINESS ONLY. This guard exists to catch `--profile ''`, which
+# would otherwise reach the launch commands as an empty string. It
+# deliberately does NOT check that the value is `auto` or a known profile
+# name: bash has no business holding a second copy of the profile
+# registry (see run-matrix.sh's own stance on duplicated inventories).
+# `auto` is acted on further down (the `pick-profiles` branch); a NAMED
+# profile is rejected before any worker launches by `report soak
+# --validate-only`, which checks the declaration this script writes
+# against the registry ("legs.srt.profile \"X\" is not a known profile",
+# exit 2), and again by `send --profile` / `recv --expect`.
 [[ -n "$PROFILE" ]] || {
-  echo "soak.sh: --profile must be 'auto' or a profile name" >&2
+  echo "soak.sh: --profile requires a value ('auto' or a profile name)" >&2
   exit 2
 }
 [[ -n "$OUTDIR" ]] || OUTDIR="$HOME/interop-soak-$(date -u +%Y%m%dT%H%M%SZ)"
