@@ -152,6 +152,12 @@ pub fn classify_packet(p: &[u8; PKT]) -> Result<PacketInfo, String> {
 pub struct Resync {
     /// `Reader::packets()` at the moment the hunt started.
     pub at_packets: u64,
+    /// The most recent PCR base DECODED from the wire before this
+    /// recovery — see [`Reader::last_pcr`], including the case where the
+    /// packet carrying it was itself skipped. Diagnostic only:
+    /// `corrupt::Attribution` places events by `at_packets` and resolves
+    /// coordinates from [`Reader::take_pcr_events`], and never reads this
+    /// field, so it cannot shift any corruption verdict.
     pub pcr_base: Option<u64>,
     pub skipped_bytes: usize,
 }
@@ -211,6 +217,16 @@ impl Reader {
     }
 
     /// Most recent PCR base seen on ANY PID.
+    ///
+    /// "Seen" means decoded from the wire, which in resync mode includes
+    /// a base read off a packet that was afterwards SKIPPED for a
+    /// malformed payload: the adaptation field carrying the clock parsed
+    /// cleanly even though the rest of the packet did not, and the same
+    /// base is kept in `WireSummary::pcr` for the PCR-interval oracle.
+    /// Only ordinal-keyed state is rolled back on that path — the packet
+    /// counter and [`Reader::take_pcr_events`] — so this value can be
+    /// newer than the last base with a `take_pcr_events` entry. See the
+    /// error arm of [`Reader::feed`] for why.
     pub fn last_pcr(&self) -> Option<u64> {
         self.last_pcr
     }
@@ -339,6 +355,32 @@ impl Reader {
                     // accepted packet is about to claim that ordinal
                     // itself.
                     self.pcr_events.truncate(pcr_events_before);
+                    // The rollback stops there, ON PURPOSE. Exactly the
+                    // two pieces of state whose MEANING is ordinal-based
+                    // are undone; everything else `packet()` recorded
+                    // before it failed — `last_pcr`, `summary.pcr`,
+                    // `summary.pts`, `summary.packets_per_pid`, the PES
+                    // shape's `stream_ids` — is a reading of what was
+                    // genuinely on the wire and stays.
+                    //
+                    // It has to stay. Those series feed the wire oracles:
+                    // `oracles::pcr_interval` reads `summary.pcr` and
+                    // bounds the MAX interval in `Strict` mode, so
+                    // discarding one real, correctly-decoded PCR base
+                    // would double one interval and manufacture an oracle
+                    // failure on precisely the corrupted captures this
+                    // mode exists to judge. A packet whose adaptation
+                    // field parsed cleanly and whose PES payload did not
+                    // still carried that clock reading.
+                    //
+                    // The asymmetry is therefore not an oversight: an
+                    // ordinal that no longer names a counted packet is
+                    // unusable, a clock sample from a skipped packet is
+                    // not. Note that `Attribution` never reads
+                    // `Resync::pcr_base` — it resolves coordinates from
+                    // `take_pcr_events()`, which IS rolled back here — so
+                    // no attribution verdict can be shifted by the base
+                    // recorded below.
                     self.resyncs.push(Resync {
                         at_packets: before,
                         pcr_base: self.last_pcr,
