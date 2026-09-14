@@ -2207,7 +2207,16 @@ pub mod soak {
                     base_delay_ms: 0,
                     outage_period_s,
                     outage_dur_s,
+                    schedule: None,
                 },
+                // Fixed mode: one phase carrying the whole run, the shape
+                // `proxy::run` writes for a non-scheduled relay.
+                phases: vec![crate::proxy::PhaseCounters {
+                    index: 0,
+                    forwarded,
+                    dropped,
+                    duped: 0,
+                }],
             }
         }
 
