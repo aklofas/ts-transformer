@@ -8,7 +8,7 @@
 //! generate and verify clean here before any transport/tool cell
 //! (later tasks) can be trusted to mean anything.
 
-use tst_interop::fixtures::KlvSet;
+use tst_interop::fixtures::{AuSizeMode, KlvSet};
 use tst_interop::verify::KlvExpect;
 use tst_interop::{r#gen, profiles, verify};
 
@@ -36,7 +36,7 @@ fn assert_profile_roundtrips(name: &str, seconds: f64) {
         std::process::id()
     ));
 
-    let result = r#gen::run(p, seconds, &path, KlvSet::Compact, 0)
+    let result = r#gen::run(p, seconds, &path, KlvSet::Compact, 0, AuSizeMode::Compact)
         .and_then(|()| verify::verify_file(&path, p, seconds));
     let _ = std::fs::remove_file(&path);
 
@@ -64,17 +64,18 @@ fn baseline_rich_klv_roundtrips() {
     let p = profiles::by_name("baseline").expect("baseline profile must exist");
     let path = std::env::temp_dir().join(format!("tst-interop-rt-rich-{}.ts", std::process::id()));
 
-    let result = r#gen::run(p, SECONDS, &path, KlvSet::Rich, 5).and_then(|()| {
-        verify::verify_file_with(
-            &path,
-            p,
-            SECONDS,
-            KlvExpect {
-                set: KlvSet::Rich,
-                seed: 5,
-            },
-        )
-    });
+    let result =
+        r#gen::run(p, SECONDS, &path, KlvSet::Rich, 5, AuSizeMode::Compact).and_then(|()| {
+            verify::verify_file_with(
+                &path,
+                p,
+                SECONDS,
+                KlvExpect {
+                    set: KlvSet::Rich,
+                    seed: 5,
+                },
+            )
+        });
     let _ = std::fs::remove_file(&path);
 
     let report = result.expect("gen/verify IO error");
@@ -138,6 +139,50 @@ fn pcr_sparse_roundtrips() {
 #[test]
 fn pts_rollover_roundtrips() {
     assert_profile_roundtrips("pts-rollover", PTS_ROLLOVER_SECONDS);
+}
+
+/// The same all-profile gate at [`AuSizeMode::Realistic`]: GOP-structured
+/// AU sizes (keyframes tens of KB, inter frames single-digit KB) instead of
+/// the compact fixtures' tens of bytes. This is the size regime the matrix
+/// runner now runs in, so every profile has to verify clean there too — a
+/// keyframe spanning hundreds of TS packets exercises PES packetization
+/// bursts, PCR catch-up insertion and the demuxer's reassembly path that
+/// the one-or-two-packet compact AUs never reach.
+///
+/// The byte floor is the regime assert: 3s of compact traffic is a few tens
+/// of KB, so anything above 300 KB proves the realistic payload actually
+/// reached the wire rather than the call silently falling back to compact.
+#[test]
+fn every_profile_roundtrips_at_realistic_sizes() {
+    for p in profiles::all() {
+        let seconds = if p.name == "pts-rollover" {
+            PTS_ROLLOVER_SECONDS
+        } else {
+            SECONDS
+        };
+        let path = std::env::temp_dir().join(format!(
+            "tst-interop-rt-real-{}-{}.ts",
+            p.name,
+            std::process::id()
+        ));
+
+        let result = r#gen::run(p, seconds, &path, KlvSet::Compact, 0, AuSizeMode::Realistic)
+            .and_then(|()| verify::verify_file(&path, p, seconds));
+        let _ = std::fs::remove_file(&path);
+
+        let report = result.unwrap_or_else(|e| panic!("{}: gen/verify IO error: {e}", p.name));
+        assert!(
+            report.pass,
+            "{}: realistic-size verify failures: {:?}",
+            p.name, report.failures
+        );
+        assert!(
+            report.metrics.bytes > 300_000,
+            "{}: realistic mode must change the size regime, got {} bytes",
+            p.name,
+            report.metrics.bytes
+        );
+    }
 }
 
 /// Drift guard: every profile in the registry must have a dedicated test

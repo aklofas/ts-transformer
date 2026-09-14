@@ -12,7 +12,7 @@ use tst_core::codec::misp_time::MispTimestamp;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::Muxer;
 
-use crate::fixtures::{self, KlvSet};
+use crate::fixtures::{self, AuSizeMode, KlvSet};
 use crate::mux_setup;
 use crate::profiles::{KlvMode, Profile, VideoCodec};
 use crate::schedule::{self, Event, PTS_HZ};
@@ -40,12 +40,19 @@ use crate::schedule::{self, Event, PTS_HZ};
 /// against those exact bytes) or [`KlvSet::Rich`], whose per-record tag
 /// set varies on a schedule seeded by `klv_seed`. `klv_seed` is ignored
 /// by `Compact`, which has no seeded component.
+///
+/// `au_sizes` picks the video AU size regime: [`AuSizeMode::Compact`]
+/// (tens of bytes per AU — byte-identical to what this function wrote
+/// before the parameter existed) or [`AuSizeMode::Realistic`]
+/// (GOP-structured keyframes/inter frames, ~1.7 Mb/s at 30 fps). See
+/// [`fixtures::video_au_sized`].
 pub fn run(
     p: &Profile,
     seconds: f64,
     out_path: &Path,
     klv: KlvSet,
     klv_seed: u64,
+    au_sizes: AuSizeMode,
 ) -> io::Result<()> {
     let cfg = mux_setup::build_config(p);
     let mut mux = Muxer::new(cfg).expect("mux_setup::build_config always returns a valid config");
@@ -64,7 +71,7 @@ pub fn run(
         let pts = Pts90khz::new(pts_ticks);
         match event {
             Event::Video { frame_idx } => {
-                let (au, keyframe) = fixtures::video_au(p.video, frame_idx);
+                let (au, keyframe) = fixtures::video_au_sized(p.video, frame_idx, au_sizes);
                 for &handle in &video_handles {
                     if p.klv == KlvMode::AsyncWithMisp {
                         // ST 0604 SEI carriage is H.264/H.265-only; the

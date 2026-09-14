@@ -38,13 +38,22 @@ bash scripts/interop/run-matrix.sh --outdir /tmp/interop-run \
 
 # Shorter cells for a fast local loop, longer for more margin on a loaded box:
 bash scripts/interop/run-matrix.sh --outdir /tmp/interop-run --seconds 5
+
+# Compact (tens-of-bytes) access units, to reproduce a pre-realism run:
+bash scripts/interop/run-matrix.sh --outdir /tmp/interop-run --au-sizes compact
 ```
+
+Every cell runs at `--au-sizes realistic` by default: GOP-structured
+access units (keyframes tens of KB, inter frames single-digit KB,
+~1.7 Mb/s at 30 fps) rather than the tens-of-bytes fixtures, so the
+traffic real peer tools see has a real encoder's size regime. The
+regime a run used is recorded in its `meta.json`.
 
 Output layout under `--outdir`:
 
 ```
 DIR/
-  meta.json        # host, date, seconds-per-cell, tool versions
+  meta.json        # host, date, seconds-per-cell, AU size mode, tool versions
   inventory.json    # declared {id, profile} multiset + shape (see "Inventory and shape" below)
   cells/*.json      # one RawCell JSON per cell (see report.rs's doc comment)
   logs/*.log        # combined (our side + peer side) log per cell

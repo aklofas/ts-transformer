@@ -685,7 +685,15 @@ mod tests {
             "tst-interop-rawts-{profile}-{}.ts",
             std::process::id()
         ));
-        crate::r#gen::run(p, seconds, &path, crate::fixtures::KlvSet::Compact, 0).unwrap();
+        crate::r#gen::run(
+            p,
+            seconds,
+            &path,
+            crate::fixtures::KlvSet::Compact,
+            0,
+            crate::fixtures::AuSizeMode::Compact,
+        )
+        .unwrap();
         let s = summarize_file(&path).unwrap();
         let _ = std::fs::remove_file(&path);
         s
@@ -696,7 +704,15 @@ mod tests {
         let p = crate::profiles::by_name(profile).unwrap();
         let path =
             std::env::temp_dir().join(format!("tst-interop-rawts-{tag}-{}.ts", std::process::id()));
-        crate::r#gen::run(p, seconds, &path, crate::fixtures::KlvSet::Compact, 0).unwrap();
+        crate::r#gen::run(
+            p,
+            seconds,
+            &path,
+            crate::fixtures::KlvSet::Compact,
+            0,
+            crate::fixtures::AuSizeMode::Compact,
+        )
+        .unwrap();
         let b = std::fs::read(&path).unwrap();
         let _ = std::fs::remove_file(&path);
         b
@@ -843,7 +859,15 @@ mod tests {
         let p = crate::profiles::by_name("baseline").unwrap();
         let path =
             std::env::temp_dir().join(format!("tst-interop-rawts-pcrat-{}.ts", std::process::id()));
-        crate::r#gen::run(p, 2.0, &path, crate::fixtures::KlvSet::Compact, 0).unwrap();
+        crate::r#gen::run(
+            p,
+            2.0,
+            &path,
+            crate::fixtures::KlvSet::Compact,
+            0,
+            crate::fixtures::AuSizeMode::Compact,
+        )
+        .unwrap();
         let bytes = std::fs::read(&path).unwrap();
         let _ = std::fs::remove_file(&path);
 
@@ -879,7 +903,15 @@ mod tests {
         let p = crate::profiles::by_name("baseline").unwrap();
         let path =
             std::env::temp_dir().join(format!("tst-interop-rawts-chunk-{}.ts", std::process::id()));
-        crate::r#gen::run(p, 2.0, &path, crate::fixtures::KlvSet::Compact, 0).unwrap();
+        crate::r#gen::run(
+            p,
+            2.0,
+            &path,
+            crate::fixtures::KlvSet::Compact,
+            0,
+            crate::fixtures::AuSizeMode::Compact,
+        )
+        .unwrap();
         let bytes = std::fs::read(&path).unwrap();
         let _ = std::fs::remove_file(&path);
         let mut r = Reader::new();
@@ -901,7 +933,15 @@ mod tests {
             "tst-interop-rawts-resync-{}.ts",
             std::process::id()
         ));
-        crate::r#gen::run(p, 2.0, &path, crate::fixtures::KlvSet::Compact, 0).unwrap();
+        crate::r#gen::run(
+            p,
+            2.0,
+            &path,
+            crate::fixtures::KlvSet::Compact,
+            0,
+            crate::fixtures::AuSizeMode::Compact,
+        )
+        .unwrap();
         let bytes = std::fs::read(&path).unwrap();
         let _ = std::fs::remove_file(&path);
 
@@ -925,7 +965,15 @@ mod tests {
             "tst-interop-rawts-trailing-{}.ts",
             std::process::id()
         ));
-        crate::r#gen::run(p, 2.0, &path, crate::fixtures::KlvSet::Compact, 0).unwrap();
+        crate::r#gen::run(
+            p,
+            2.0,
+            &path,
+            crate::fixtures::KlvSet::Compact,
+            0,
+            crate::fixtures::AuSizeMode::Compact,
+        )
+        .unwrap();
         let bytes = std::fs::read(&path).unwrap();
         let _ = std::fs::remove_file(&path);
         let cut = 3 * PKT + 100;
@@ -980,7 +1028,15 @@ mod tests {
         let p = crate::profiles::by_name("baseline").unwrap();
         let path =
             std::env::temp_dir().join(format!("tst-interop-rawts-cls-{}.ts", std::process::id()));
-        crate::r#gen::run(p, 1.0, &path, crate::fixtures::KlvSet::Compact, 0).unwrap();
+        crate::r#gen::run(
+            p,
+            1.0,
+            &path,
+            crate::fixtures::KlvSet::Compact,
+            0,
+            crate::fixtures::AuSizeMode::Compact,
+        )
+        .unwrap();
         let bytes = std::fs::read(&path).unwrap();
         let _ = std::fs::remove_file(&path);
         let first: [u8; PKT] = bytes[..PKT].try_into().unwrap();
@@ -1007,7 +1063,15 @@ mod tests {
         let p = crate::profiles::by_name("baseline").unwrap();
         let path =
             std::env::temp_dir().join(format!("tst-interop-rawts-acc-{}.ts", std::process::id()));
-        crate::r#gen::run(p, 1.0, &path, crate::fixtures::KlvSet::Compact, 0).unwrap();
+        crate::r#gen::run(
+            p,
+            1.0,
+            &path,
+            crate::fixtures::KlvSet::Compact,
+            0,
+            crate::fixtures::AuSizeMode::Compact,
+        )
+        .unwrap();
         let bytes = std::fs::read(&path).unwrap();
         let _ = std::fs::remove_file(&path);
         let mut r = Reader::new();
@@ -1025,7 +1089,15 @@ mod tests {
         let p = crate::profiles::by_name("baseline").unwrap();
         let path =
             std::env::temp_dir().join(format!("tst-interop-rawts-hunt-{}.ts", std::process::id()));
-        crate::r#gen::run(p, 2.0, &path, crate::fixtures::KlvSet::Compact, 0).unwrap();
+        crate::r#gen::run(
+            p,
+            2.0,
+            &path,
+            crate::fixtures::KlvSet::Compact,
+            0,
+            crate::fixtures::AuSizeMode::Compact,
+        )
+        .unwrap();
         let bytes = std::fs::read(&path).unwrap();
         let _ = std::fs::remove_file(&path);
         // Truncate packet 5 to 100 bytes and insert 37 garbage bytes after packet 20.
@@ -1060,7 +1132,15 @@ mod tests {
         let p = crate::profiles::by_name("baseline").unwrap();
         let path =
             std::env::temp_dir().join(format!("tst-interop-rawts-tail-{}.ts", std::process::id()));
-        crate::r#gen::run(p, 1.0, &path, crate::fixtures::KlvSet::Compact, 0).unwrap();
+        crate::r#gen::run(
+            p,
+            1.0,
+            &path,
+            crate::fixtures::KlvSet::Compact,
+            0,
+            crate::fixtures::AuSizeMode::Compact,
+        )
+        .unwrap();
         let bytes = std::fs::read(&path).unwrap();
         let _ = std::fs::remove_file(&path);
         let mut r = Reader::new();
@@ -1082,7 +1162,15 @@ mod tests {
             "tst-interop-rawts-malformed-{}.ts",
             std::process::id()
         ));
-        crate::r#gen::run(p, 2.0, &path, crate::fixtures::KlvSet::Compact, 0).unwrap();
+        crate::r#gen::run(
+            p,
+            2.0,
+            &path,
+            crate::fixtures::KlvSet::Compact,
+            0,
+            crate::fixtures::AuSizeMode::Compact,
+        )
+        .unwrap();
         let bytes = std::fs::read(&path).unwrap();
         let _ = std::fs::remove_file(&path);
         let mut bad = bytes.clone();

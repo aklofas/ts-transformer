@@ -19,7 +19,7 @@
 //! into the same `Tally` the wire path uses. See its own doc comment for
 //! what it does and does not judge.
 
-use tst_interop::fixtures::KlvSet;
+use tst_interop::fixtures::{AuSizeMode, KlvSet};
 use tst_interop::r#gen;
 use tst_interop::profiles;
 use tst_interop::report_types::VerifyReport;
@@ -43,7 +43,8 @@ fn gen_rich(tag: &str) -> Vec<u8> {
             .expect("time moves forward")
             .as_nanos()
     ));
-    r#gen::run(p, SECONDS, &path, KlvSet::Rich, SEED).expect("gen::run must succeed");
+    r#gen::run(p, SECONDS, &path, KlvSet::Rich, SEED, AuSizeMode::Compact)
+        .expect("gen::run must succeed");
     let bytes = std::fs::read(&path).expect("read the generated capture");
     let _ = std::fs::remove_file(&path);
     bytes
@@ -231,7 +232,8 @@ fn rich_sync_carriage_records_decode_without_stripping() {
             .expect("time moves forward")
             .as_nanos()
     ));
-    r#gen::run(p, SECONDS, &path, KlvSet::Rich, SEED).expect("gen::run must succeed");
+    r#gen::run(p, SECONDS, &path, KlvSet::Rich, SEED, AuSizeMode::Compact)
+        .expect("gen::run must succeed");
     let bytes = std::fs::read(&path).expect("read the generated capture");
     let _ = std::fs::remove_file(&path);
 

@@ -1423,8 +1423,15 @@ mod tests {
                 .expect("time moves forward")
                 .as_nanos()
         ));
-        crate::r#gen::run(p, seconds, &path, crate::fixtures::KlvSet::Compact, 0)
-            .expect("gen::run must succeed");
+        crate::r#gen::run(
+            p,
+            seconds,
+            &path,
+            crate::fixtures::KlvSet::Compact,
+            0,
+            crate::fixtures::AuSizeMode::Compact,
+        )
+        .expect("gen::run must succeed");
         let wire = rawts::summarize_file(&path).expect("summarize_file must succeed");
         let _ = std::fs::remove_file(&path);
         wire
@@ -2119,8 +2126,15 @@ mod tests {
         // trivially and proves nothing about PCR alignment. Offline
         // generation has no sleeps, so the longer window is still
         // milliseconds.
-        crate::r#gen::run(p, 30.0, &path, crate::fixtures::KlvSet::Compact, 0)
-            .expect("gen::run must succeed");
+        crate::r#gen::run(
+            p,
+            30.0,
+            &path,
+            crate::fixtures::KlvSet::Compact,
+            0,
+            crate::fixtures::AuSizeMode::Compact,
+        )
+        .expect("gen::run must succeed");
         let clean = std::fs::read(&path).expect("read the generated capture");
         let _ = std::fs::remove_file(&path);
 
