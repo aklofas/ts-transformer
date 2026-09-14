@@ -774,13 +774,18 @@ impl<T: Transport> Corrupter<T> {
                     if k == 3 && info.afc & 0x2 == 0 {
                         k = 2;
                     }
-                    // A continuity_counter jump on a packet carrying no
-                    // payload is not a discontinuity at all (§2.4.3.3: the
-                    // counter only advances on packets with payload), so
-                    // it would be undetectable by construction. Re-roll
-                    // the SUB-KIND — never the class, which is already
+                    // Sub-kinds 1 and 2 are both noticed as a continuity
+                    // jump on the packet's own PID — 2 by rewriting the
+                    // counter, 1 by moving the packet off the PID so the
+                    // counter appears to skip one — and §2.4.3.3 advances
+                    // the counter only on packets that CARRY PAYLOAD. On
+                    // an adaptation-field-only packet (this harness's
+                    // muxer emits PCR-only catch-up packets — see
+                    // `mux/scheduling.rs`) neither leaves a trace, so both
+                    // would be undetectable by construction. Re-roll the
+                    // SUB-KIND — never the class, which is already
                     // committed by the weighted draw.
-                    if k == 2 && !info.has_payload {
+                    if matches!(k, 1 | 2) && !info.has_payload {
                         continue;
                     }
                     kind = Some(k);
@@ -885,7 +890,23 @@ impl<T: Transport> Corrupter<T> {
                 wire: Vec::new(),
                 after: Vec::new(),
                 offsets: Vec::new(),
-                detectable: true,
+                // A dropped packet is noticed as a continuity jump and
+                // nothing else (see `expects`), so it is only detectable
+                // where a continuity jump is actually reportable — the
+                // same two conditions the `Header` class already applies
+                // to its continuity-counter sub-kind:
+                //
+                // - On a MEDIA PID. A jump is only ever reported for a
+                //   resolved elementary stream, and a lost PAT/PMT
+                //   repetition is covered by the next one, so a conformant
+                //   receiver has nothing to say about either.
+                // - On a packet WITH PAYLOAD. §2.4.3.3 advances the
+                //   counter only on packets that carry payload, so
+                //   dropping an adaptation-field-only packet (this
+                //   harness's muxer emits PCR-only catch-up packets — see
+                //   `mux/scheduling.rs`) leaves the counter sequence
+                //   intact and there is no jump to report.
+                detectable: !self.is_psi_pid(info.pid) && info.has_payload,
             }),
             Class::Dup => {
                 let mut wire = p.to_vec();
@@ -1051,12 +1072,37 @@ fn pes_start(p: &[u8; PKT], info: &crate::rawts::PacketInfo) -> bool {
 }
 
 /// The byte range of a packet whose corruption a conformant receiver MUST
-/// notice — the only range in a transport stream covered by a checksum.
+/// notice — the only range of a transport stream a receiver is guaranteed
+/// to checksum.
 ///
-/// That is a PSI packet's pointer field through the end of its section
-/// CRC32, and nothing else. Everything after the section is stuffing (a
-/// PAT in this harness's own multiplex is 17 bytes of section and 167
-/// bytes of 0xFF).
+/// That is a PSI section's BODY and CRC32, and nothing else. Everything
+/// after the section is stuffing (a PAT in this harness's own multiplex is
+/// 17 bytes of section and 167 bytes of 0xFF), and everything before the
+/// body — the pointer field and the 3-byte section header — is read to
+/// FIND the section, so damaging it makes a receiver discard the section
+/// before it ever reaches the CRC:
+///
+/// - A flipped `table_id` is a `TableIdMismatch`, and a flipped
+///   `section_length` a `SectionTooLong`/`SectionTooShort`/`Truncated` (or
+///   an assembler still waiting for continuation bytes that never come).
+///   `tst_core`'s `mpegts::demux::psi` raises all of those BEFORE the CRC
+///   check, and `psi_topology`'s `handle_pat_section`/`handle_pmt_section`
+///   surface only `CrcMismatch` as an event — every other parse error is
+///   dropped, which is the ordinary behaviour of a PSI filter skipping a
+///   table it does not recognise.
+/// - A flipped pointer field redirects the section start into this
+///   harness's 0xFF stuffing, where `table_id == 0xFF` takes the same
+///   silent path.
+///
+/// Measured, not assumed: a flip at the PAT's `table_id` and one at its
+/// `section_length` each produce zero demux events, while a flip one byte
+/// later — the first body byte — produces `PsiChecksumMismatch`. Claiming
+/// the header detectable would fail a conformant receiver.
+///
+/// This is [`psi_body_range`] plus the CRC: that function deliberately
+/// stops short of the CRC so a [`Class::PsiFlip`] leaves the checksum
+/// intact and the section genuinely fails it; here the CRC bytes belong in
+/// the span, because flipping one of them also fails the checksum.
 ///
 /// A PES header deliberately does NOT count, even though it is "syntax":
 /// tst-core's PES parser (`mpegts/demux/pes.rs`) validates only the start
@@ -1082,9 +1128,8 @@ fn sensitive_span(
     }
     let sec = info.payload_off + 1 + usize::from(*p.get(info.payload_off)?);
     let len = (usize::from(*p.get(sec + 1)? & 0x0F) << 8) | usize::from(*p.get(sec + 2)?);
-    // The pointer field itself counts: redirect it and the section starts
-    // in the wrong place.
-    Some((info.payload_off, (sec + 3 + len).min(PKT)))
+    let (lo, hi) = (sec + 3, (sec + 3 + len).min(PKT));
+    (lo < hi).then_some((lo, hi))
 }
 
 /// Byte range of a PSI section's body, excluding the 3-byte section header
@@ -1420,17 +1465,12 @@ impl Attribution {
         }
     }
 
-    /// An error-class event surfaced at receiver ordinal `at` (`pid` is
-    /// `None` for a resync, which is not attributable to a PID).
-    pub fn on_signal(&mut self, at: u64, pid: Option<u16>, sig: Signal) {
-        self.events += 1;
-        if sig == Signal::Resync {
-            self.resyncs += 1;
-        }
+    /// Index of the resolved injection whose attribution window contains
+    /// `at`, newest first — the closest preceding injection is the one
+    /// that explains something happening at `at`, if any does.
+    fn hit(&mut self, at: u64) -> Option<usize> {
         self.advance(at);
-        // Newest first: the closest preceding injection is the one that
-        // explains an event, if any does.
-        let hit = (self.lo..self.hi).rev().find(|&i| {
+        (self.lo..self.hi).rev().find(|&i| {
             let Some(r) = self.st[i].resolved_at else {
                 return false;
             };
@@ -1440,8 +1480,39 @@ impl Attribution {
                 self.window
             };
             r <= at && at - r <= w
-        });
-        match hit {
+        })
+    }
+
+    /// Whether some injection explains an anomaly observed at receiver
+    /// ordinal `at`, WITHOUT recording it as an event.
+    ///
+    /// For evidence that is not an error event the receiver reported, but
+    /// a derived measurement that went wrong: a PTS that steps backwards
+    /// because a body flip landed in a PES header, say. Such a flip is
+    /// deliberately not `detectable` — tst-core's PES parser accepts 33 of
+    /// the 40 PTS bits as-is (see [`sensitive_span`]) — so a receiver that
+    /// silently carries the damaged value is conformant, and the harness
+    /// must not fail it for an invariant the tap itself broke. An anomaly
+    /// no injection explains still counts, exactly as before.
+    ///
+    /// Deliberately NOT routed through [`Attribution::on_signal`]: that
+    /// would inflate `attributed_events` with something the receiver never
+    /// reported, and a verifier subtracting those counts from its own
+    /// event tallies would then excuse one real event per anomaly.
+    ///
+    /// Like the `on_*` methods this expects non-decreasing `at`.
+    pub fn explains(&mut self, at: u64) -> bool {
+        self.hit(at).is_some()
+    }
+
+    /// An error-class event surfaced at receiver ordinal `at` (`pid` is
+    /// `None` for a resync, which is not attributable to a PID).
+    pub fn on_signal(&mut self, at: u64, pid: Option<u16>, sig: Signal) {
+        self.events += 1;
+        if sig == Signal::Resync {
+            self.resyncs += 1;
+        }
+        match self.hit(at) {
             Some(i) => {
                 self.attributed_events += 1;
                 match sig {
@@ -1494,7 +1565,16 @@ impl Attribution {
             // Truncation and inserted garbage break packet sync for the
             // whole multiplex, so media on ANY PID proves recovery; the
             // other classes damage one PID and must be answered on it.
-            let any_pid = matches!(self.inj[i].class, Class::Garbage | Class::Truncate);
+            //
+            // A PAT/PMT PID is the exception to "answered on it": it
+            // carries no media at all. `Sample`/`Metadata` events only
+            // ever name an elementary stream, so an injection on a PSI PID
+            // would wait forever for media on PID 0 and be reported
+            // unrecovered no matter how healthy the stream was. What
+            // recovery means there is that the multiplex kept delivering —
+            // which is exactly media on any PID.
+            let any_pid =
+                self.inj[i].psi || matches!(self.inj[i].class, Class::Garbage | Class::Truncate);
             if any_pid || self.inj[i].pid == pid {
                 self.st[i].recovered = true;
             }
@@ -1810,17 +1890,32 @@ mod tests {
         let b = baseline_bytes(2.0, "span");
         let pkt_at = |n: usize| -> [u8; 188] { b[n * 188..][..188].try_into().unwrap() };
 
-        // The PAT: pointer field through the end of the CRC. Everything
-        // after it is 0xFF stuffing, where a flip is invisible.
+        // The PAT: section body through the end of the CRC. Everything
+        // after it is 0xFF stuffing, where a flip is invisible — and
+        // everything BEFORE it (pointer field, table_id, section_length)
+        // is read to find the section, so a flip there makes the receiver
+        // discard it before the CRC is ever checked. See
+        // `sensitive_span`'s own doc comment for the measured evidence.
         let pat = pkt_at(0);
         let info = crate::rawts::classify_packet(&pat).unwrap();
         assert_eq!(info.pid, 0, "first packet of a fresh mux is the PAT");
         let (lo, hi) = sensitive_span(&pat, &info, true).unwrap();
-        assert_eq!(lo, info.payload_off);
+        // pointer field at payload_off (0 here), then the 3-byte section
+        // header, then the body.
+        assert_eq!(
+            lo,
+            info.payload_off + 1 + usize::from(pat[info.payload_off]) + 3
+        );
         assert!(hi < 188, "a PAT section is far shorter than its payload");
         assert!(
             pat[hi..].iter().all(|&x| x == 0xFF),
             "stuffing past the CRC"
+        );
+        // The three header bytes and the pointer field sit OUTSIDE the
+        // span: a flip there is not required to be noticed.
+        assert!(
+            (info.payload_off..lo).len() == 4,
+            "pointer field + 3-byte section header are excluded"
         );
 
         // No video packet has a required-to-notice span, PES start or
@@ -1908,13 +2003,119 @@ mod tests {
         let (w, text, _) = run_tap(&b, cfg(&[Class::Drop], 10_000, 1000));
         let (_, inj) = parse_log(&text).unwrap();
         assert_eq!(w.len(), b.len() - 188 * inj.len());
-        assert!(inj[0].detectable);
+        // The forced first injection lands on packet 0, which is the PAT —
+        // where a drop is invisible. Detectability is
+        // `drop_is_detectable_only_on_a_payload_carrying_media_packet`'s
+        // subject; this test is about the wire arithmetic.
+        assert_eq!(inj[0].pid, 0);
+        assert!(!inj[0].detectable);
         let (w, text, _) = run_tap(&b, cfg(&[Class::Dup], 10_000, 1000));
         let (_, inj) = parse_log(&text).unwrap();
         assert_eq!(w.len(), b.len() + 188 * inj.len());
         assert!(!inj[0].detectable);
         let o = inj[0].ordinal as usize;
         assert_eq!(&w[o * 188..(o + 1) * 188], &w[(o + 1) * 188..(o + 2) * 188]);
+    }
+
+    /// A dropped packet is only ever noticed as a continuity jump, so it
+    /// is only `detectable` where a continuity jump can exist: on a media
+    /// PID, on a packet that carries payload. Claiming otherwise fails a
+    /// conformant receiver for staying silent about a lost PAT repetition
+    /// or a lost PCR-only catch-up packet, neither of which a receiver is
+    /// required — or in tst-core's case even able — to report.
+    ///
+    /// Driven over the `audio` profile because its third stream is what
+    /// makes the muxer emit adaptation-field-only catch-up packets on a
+    /// media PID (`mux/scheduling.rs`'s `pcr_only_due`); the assertion
+    /// below that all three shapes occurred is what keeps this from
+    /// passing vacuously.
+    #[test]
+    fn drop_is_detectable_only_on_a_payload_carrying_media_packet() {
+        let p = crate::profiles::by_name("audio").unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "tst-interop-corrupt-dropdet-{}.ts",
+            std::process::id()
+        ));
+        crate::r#gen::run(p, 300.0, &path).unwrap();
+        let b = std::fs::read(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+
+        let (_, text, _) = run_tap(&b, cfg(&[Class::Drop], 10_000, 1000));
+        let (_, inj) = parse_log(&text).unwrap();
+        let (mut psi, mut af_only, mut with_payload) = (0, 0, 0);
+        for i in &inj {
+            let pkt: [u8; PKT] = i.before[..].try_into().expect("a whole packet is logged");
+            let info = crate::rawts::classify_packet(&pkt).unwrap();
+            let is_psi = matches!(i.pid, 0 | 0x1000);
+            assert_eq!(
+                i.detectable,
+                !is_psi && info.has_payload,
+                "pid {:#06x} has_payload {} -> detectable {}",
+                i.pid,
+                info.has_payload,
+                i.detectable
+            );
+            match (is_psi, info.has_payload) {
+                (true, _) => psi += 1,
+                (false, false) => af_only += 1,
+                (false, true) => with_payload += 1,
+            }
+        }
+        assert!(
+            psi > 0 && af_only > 0 && with_payload > 0,
+            "all three shapes must occur or the assertion above is vacuous: \
+             psi {psi}, af-only {af_only}, with-payload {with_payload}"
+        );
+    }
+
+    /// A PAT/PMT PID carries no media, so "media on the injected PID"
+    /// can never arrive there — `Sample`/`Metadata` events only ever name
+    /// an elementary stream. Recovery from a PSI injection is therefore
+    /// proved by media on ANY PID, or every psi_flip in a soak run would
+    /// be reported unrecovered against a perfectly healthy stream.
+    #[test]
+    fn a_psi_injection_recovers_on_media_from_any_pid() {
+        let mut psi_inj = inj(1000, 0, Class::PsiFlip, 0, true);
+        psi_inj.psi = true;
+        let mut a = Attribution::new(vec![psi_inj], &hdr());
+        a.on_pcr(1000, 5000);
+        a.on_signal(5010, Some(0), Signal::PsiChecksum);
+        a.on_media(5020, 0x1011); // an elementary stream, not pid 0
+        let r = a.finish(10_000);
+        assert!(r.unrecovered.is_empty(), "{:?}", r.unrecovered);
+
+        // A MEDIA-PID injection still has to be answered on its own PID:
+        // the relaxation is scoped to PSI, not a blanket "any event
+        // anywhere counts".
+        let mut a = Attribution::new(vec![inj(1000, 0, Class::Drop, 0x1011, true)], &hdr());
+        a.on_pcr(1000, 5000);
+        a.on_signal(5010, Some(0x1011), Signal::ContinuityJump);
+        a.on_media(5020, 0x1100);
+        let r = a.finish(10_000);
+        assert_eq!(r.unrecovered.len(), 1, "media on a different PID");
+    }
+
+    /// A derived anomaly (a PTS that stepped backwards) is asked about,
+    /// not fed in: inside an injection's window it is explained, outside
+    /// it is not, and asking must not move any of the counters an event
+    /// would.
+    #[test]
+    fn explains_answers_without_recording_an_event() {
+        let mut a = Attribution::new(vec![inj(1000, 10, Class::BodyFlip, 0x1011, false)], &hdr());
+        a.on_pcr(1000, 5000); // resolves to receiver ordinal 5010
+        assert!(!a.explains(5009), "before the injection");
+        assert!(a.explains(5010), "at the injection");
+        assert!(
+            a.explains(5010 + ATTRIBUTION_WINDOW),
+            "last packet in window"
+        );
+        assert!(!a.explains(5011 + ATTRIBUTION_WINDOW), "past the window");
+        let r = a.finish(10_000);
+        assert_eq!(
+            (r.events, r.attributed_events, r.attributed_discontinuities),
+            (0, 0, 0),
+            "asking is not an event"
+        );
     }
 
     #[test]
