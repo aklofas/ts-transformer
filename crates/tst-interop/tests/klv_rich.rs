@@ -255,3 +255,63 @@ fn rich_sync_carriage_records_decode_without_stripping() {
     assert_eq!(m.decode_errors, 0, "{m:?}");
     assert_eq!(m.census_mismatches, 0, "{m:?}");
 }
+
+/// An ST 0601 tag the model does not type must still fail the census.
+///
+/// This is the hole a review found in the first cut: `observed_tags`
+/// read only the typed fields, so a record carrying a tag the decoder
+/// has no field for parked it in `rec.unknown` and the census compared
+/// two sets that both silently omitted it — a record with an extra tag
+/// PASSED the oracle whose whole claim is "the wire's tag set equals the
+/// declared schedule".
+///
+/// The mutation re-encodes rather than flipping bytes on purpose: ST
+/// 0601 Tag 1 is a checksum over the record and `st0601::decode`
+/// verifies it, so a tag injected into muxed bytes would fail
+/// `klv_rich_decode_clean` first and never reach the census. Re-encoding
+/// recomputes the checksum, which is what makes this record the awkward
+/// case — structurally perfect, schedule-wrong.
+#[test]
+fn an_unknown_tag_fails_the_census() {
+    use tst_core::klv::st0601;
+    use tst_core::klv::{OwnedRawField, st0601::UasDatalinkLs};
+    use tst_interop::fixtures::{klv_record_rich, observed_tags};
+
+    let clean = klv_record_rich(SEED, 1).expect("rich record");
+    let mut rec: UasDatalinkLs = st0601::decode(&clean).expect("record decodes");
+    assert!(
+        rec.unknown.is_empty(),
+        "the generator emits no unknown tags"
+    );
+
+    // Tag 200 is outside ST 0601's assigned range, so the decoder parks
+    // it in `unknown` instead of giving it a field — exactly the shape
+    // the old observed set could not see.
+    rec.unknown.push(OwnedRawField {
+        tag: 200,
+        value: vec![0xAB],
+    });
+    let bytes = st0601::encode_to_vec(&rec).expect("the record with an extra tag re-encodes");
+
+    let decoded = st0601::decode(&bytes).expect("it must still decode cleanly — checksum and all");
+    assert!(
+        observed_tags(&decoded).contains(&200),
+        "the observed set must carry the unknown tag, or the census cannot see it"
+    );
+
+    let r = tst_interop::verify::testing::judge_records(
+        &[bytes],
+        KlvExpect {
+            set: KlvSet::Rich,
+            seed: SEED,
+        },
+    );
+    fails_with(&r, "klv_rich_census");
+    assert!(
+        !r.failures
+            .iter()
+            .any(|f| f.contains("klv_rich_decode_clean")),
+        "the record is well-formed — only the census may fail it: {:?}",
+        r.failures
+    );
+}
