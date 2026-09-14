@@ -335,7 +335,23 @@ fi
 # soak-config.json must be the SAME literal the proxy was launched with,
 # since `schedule_declared_<leg>` compares them. One normalization here
 # makes every downstream use exact.
-SEED=$((10#$SEED))
+#
+# The seed is stripped as a STRING, not via `$((10#...))`: bash arithmetic
+# is signed 64-bit, so a seed above 2^63-1 — which the Rust side accepts
+# happily, the field is a `u64` — would silently come back NEGATIVE
+# (`$((10#18446744073709551615))` is `-1`). Range-check it instead, and
+# only then is the arithmetic that derives the per-leg corruption seeds
+# (`SEED + 1` / `SEED + 2`) safe, which is why the cap leaves room for +2.
+# A soak seed is a reproducibility label; refusing the top two of 2^63
+# values with a clear message costs nothing and beats launching a 72-hour
+# run on a number nobody chose.
+SEED=$(printf '%s' "$SEED" | sed -E 's/^0+([0-9])/\1/')
+MAX_SEED=9223372036854775805 # 2^63-1, minus room for the +2 above
+if [[ ${#SEED} -gt ${#MAX_SEED} ]] ||
+  { [[ ${#SEED} -eq ${#MAX_SEED} ]] && [[ "$SEED" > "$MAX_SEED" ]]; }; then
+  echo "soak.sh: --seed must be <= $MAX_SEED (this script's arithmetic is signed 64-bit), got: $SEED" >&2
+  exit 2
+fi
 SCHEDULE_PHASES=$((10#$SCHEDULE_PHASES))
 [[ -z "$SCHEDULE_PHASE_S" ]] || SCHEDULE_PHASE_S=$((10#$SCHEDULE_PHASE_S))
 # NON-EMPTINESS ONLY. This guard exists to catch `--profile ''`, which
