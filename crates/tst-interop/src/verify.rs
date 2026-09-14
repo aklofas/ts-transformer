@@ -194,7 +194,7 @@ pub(crate) const NOMINAL_COUNT_SLACK: f64 = 0.7;
 /// The minimum acceptable count for a `per_sec`-Hz signal over
 /// `seconds`, requiring at least `slack` (e.g. `0.7` = 70%) of the
 /// nominal total. Shared by `Tally::finish`'s whole-capture floors
-/// (video AUs, KLV records) and [`crate::oracles::program_accounting`]'s
+/// (video AUs, KLV records) and the private `oracles::program_accounting`'s
 /// per-program floors — one formula, not two copies that could drift.
 pub(crate) fn min_count(per_sec: u32, seconds: f64, slack: f64) -> u64 {
     (per_sec as f64 * seconds * slack).floor() as u64

@@ -438,9 +438,9 @@ impl Transport for GracefulRistClose {
 ///
 /// `reader`/`reader_error` are only ever fed on the [`RecvTransport`]
 /// side (see that impl's `recv_bytes`) — a send-side `Teeing` (`send.rs`)
-/// never touches them, so [`tee_tally`]'s returned [`WireSummary`] comes
-/// back empty (zero packets) for a send-side tap, which is fine: nothing
-/// reads it there.
+/// never touches them, so [`tee_tally`]'s returned
+/// [`WireSummary`](crate::rawts::WireSummary) comes back empty (zero
+/// packets) for a send-side tap, which is fine: nothing reads it there.
 pub(crate) struct TeeState {
     bytes: u64,
     hasher: Sha256,
