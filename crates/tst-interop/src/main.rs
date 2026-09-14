@@ -333,7 +333,7 @@ fn run_send(args: &[String]) -> ! {
 }
 
 /// `recv --url URL --expect PROFILE --seconds N [--json OUT]
-/// [--managed] [--no-klv-digest] [--strict]`
+/// [--managed] [--no-klv-digest] [--strict] [--corruption-log PATH]`
 ///
 /// Builds a live transport from `URL` and receives `N` seconds of
 /// traffic from it, checking the result against `PROFILE`'s invariants.
@@ -363,6 +363,19 @@ fn run_send(args: &[String]) -> ! {
 /// event — for lossless transparent-tier cells; default `Lossy` counts
 /// them (in `VerifyReport.metrics.discontinuities`) without failing.
 /// `NonConformant` events always fail, in either mode.
+///
+/// `--corruption-log PATH` reads the JSONL log a `send --corrupt` peer
+/// wrote and judges this capture AGAINST it: the report gains
+/// `metrics.corruption_attribution` plus the `corruption_attributed` /
+/// `corruption_detected` / `corruption_recovered` verdicts (did every
+/// error event have a cause, did the receiver notice every injection it
+/// was required to, did the stream produce media again afterwards), and
+/// the whole-capture count floors are discounted by the injected
+/// fraction. Deliberately destroyed packets also stop failing the
+/// capture as raw sync loss — they are the premise, not the finding. The
+/// log must be the one written by the sender feeding THIS capture; a log
+/// from a different run shares no packet coordinates and every verdict
+/// would be noise.
 fn run_recv(args: &[String]) -> ! {
     let mut url: Option<String> = None;
     let mut expect: Option<String> = None;
@@ -371,6 +384,7 @@ fn run_recv(args: &[String]) -> ! {
     let mut managed = false;
     let mut no_klv_digest = false;
     let mut strict = false;
+    let mut corruption_log: Option<PathBuf> = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -402,6 +416,14 @@ fn run_recv(args: &[String]) -> ! {
             "--strict" => {
                 strict = true;
                 i += 1;
+            }
+            "--corruption-log" => {
+                corruption_log = Some(PathBuf::from(require_value(
+                    args,
+                    i,
+                    "recv: --corruption-log",
+                )));
+                i += 2;
             }
             other => {
                 eprintln!("recv: unknown argument: {other}");
@@ -435,6 +457,7 @@ fn run_recv(args: &[String]) -> ! {
             json_out.as_deref(),
             no_klv_digest,
             strict,
+            corruption_log.as_deref(),
         )
     } else {
         recv::run(
@@ -444,6 +467,7 @@ fn run_recv(args: &[String]) -> ! {
             json_out.as_deref(),
             no_klv_digest,
             strict,
+            corruption_log.as_deref(),
         )
     }
     .unwrap_or_else(|e| {

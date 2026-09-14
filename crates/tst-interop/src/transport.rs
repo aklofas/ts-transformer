@@ -591,6 +591,76 @@ pub(crate) fn tee_bytes_so_far(tap: &Arc<Mutex<TeeState>>) -> u64 {
     tap.lock().expect("tee mutex poisoned").bytes
 }
 
+/// Where the tap's raw-TS reader currently stands — the receive-side
+/// coordinate `recv.rs` stamps every demux event with, so an error event
+/// can be placed against a corruption log's packet coordinates (see
+/// `crate::corrupt`'s module doc). Read live, between `recv_event` calls;
+/// like [`tee_bytes_so_far`] it only locks briefly and doesn't consume
+/// the tap.
+pub(crate) struct TeeCoord {
+    /// Packets the reader has accepted so far — the event's coordinate.
+    pub packets: u64,
+    /// How many sync recoveries it has recorded so far. Only a COUNT:
+    /// [`tee_resyncs`] copies the events themselves, so the caller polls
+    /// this cheap number every event and copies only when it grows.
+    pub resyncs: usize,
+}
+
+pub(crate) fn tee_coord(tap: &Arc<Mutex<TeeState>>) -> TeeCoord {
+    let s = tap.lock().expect("tee mutex poisoned");
+    TeeCoord {
+        packets: s.reader.packets(),
+        resyncs: s.reader.resyncs().len(),
+    }
+}
+
+/// Turn the tap reader's sync-recovery mode on or off — see
+/// [`crate::rawts::Reader::set_resync_mode`]. `recv.rs` turns it on for a
+/// capture being judged against a corruption log, BEFORE the first byte:
+/// deliberately-corrupted packets are exactly what would otherwise latch
+/// `reader_error` and fail the whole capture as `rawts_sync_loss`,
+/// whereas here each recovery is evidence to be attributed instead.
+pub(crate) fn tee_set_resync_mode(tap: &Arc<Mutex<TeeState>>, on: bool) {
+    tap.lock()
+        .expect("tee mutex poisoned")
+        .reader
+        .set_resync_mode(on);
+}
+
+/// PCR bases the tap's reader decoded since the last call, each with the
+/// packet ordinal it was carried at — see
+/// [`crate::rawts::Reader::take_pcr_events`]. Drained (not peeked), so a
+/// caller must fold every returned pair into its attribution.
+pub(crate) fn tee_drain_pcrs(tap: &Arc<Mutex<TeeState>>) -> Vec<(u64, u64)> {
+    tap.lock()
+        .expect("tee mutex poisoned")
+        .reader
+        .take_pcr_events()
+}
+
+/// Copy of the tap reader's sync-recovery events so far — populated only
+/// in resync mode (see [`tee_set_resync_mode`]). A copy rather than a
+/// borrow because the reader lives behind the tap's mutex; the list is
+/// one entry per recovery, which a corrupted capture produces at the
+/// injection rate (single digits per minute), not per packet.
+pub(crate) fn tee_resyncs(tap: &Arc<Mutex<TeeState>>) -> Vec<crate::rawts::Resync> {
+    tap.lock()
+        .expect("tee mutex poisoned")
+        .reader
+        .resyncs()
+        .to_vec()
+}
+
+/// The tap reader's trailing-partial-packet recovery, if any — see
+/// [`crate::rawts::Reader::trailing_resync`]. Must be read BEFORE
+/// [`tee_tally`], which consumes the reader.
+pub(crate) fn tee_trailing_resync(tap: &Arc<Mutex<TeeState>>) -> Option<crate::rawts::Resync> {
+    tap.lock()
+        .expect("tee mutex poisoned")
+        .reader
+        .trailing_resync()
+}
+
 /// Reset the tap's raw-TS reader for a fresh reconnect — see
 /// [`TeeState`]'s own doc comment on its `reader` field for exactly what
 /// this does (clears the in-flight `carry` and any sticky

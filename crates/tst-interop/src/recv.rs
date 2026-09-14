@@ -4,6 +4,7 @@
 //! [`Profile`]'s invariants — the live-capture counterpart to
 //! `verify::verify_file`'s offline-file check.
 
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -15,6 +16,7 @@ use tst_pipeline::{
 };
 
 use crate::cli::write_json;
+use crate::corrupt;
 use crate::profiles::{self, Profile};
 use crate::rawts::WireSummary;
 use crate::report_types::VerifyReport;
@@ -56,6 +58,56 @@ fn wire_and_trailing_bytes_error(
     }
 }
 
+/// Read `path`'s corruption log, attach it to `tally` as the judge of
+/// this capture, and put the tee's raw reader into sync-recovery mode —
+/// shared by both receive loops, and called BEFORE either reads its
+/// first byte.
+///
+/// Resync mode is the load-bearing half: a capture whose sender
+/// deliberately truncated packets WILL fall out of 188-byte alignment,
+/// and without it the reader latches that as a `rawts_sync_loss` failure
+/// — a verdict that only restates the premise. In resync mode each
+/// recovery is recorded instead, and fed to the attribution as evidence
+/// that the receiver noticed (`corrupt::Signal::Resync`).
+fn attach_corruption_log(
+    tally: &mut Tally,
+    tap: &Arc<Mutex<transport::TeeState>>,
+    path: &Path,
+) -> Result<(), String> {
+    let (header, injections) = corrupt::read_log(path)?;
+    tally.attach_attribution(corrupt::Attribution::new(injections, &header));
+    transport::tee_set_resync_mode(tap, true);
+    Ok(())
+}
+
+/// Fold everything the tee's raw reader has learned since the last call
+/// into `tally`'s attribution, and return the receive-side packet
+/// coordinate to stamp the event that is about to be fed.
+///
+/// PCR bases first (they are what resolve a logged coordinate to a
+/// receiver position at all), then any new sync recoveries — read via
+/// the cheap count in [`transport::TeeCoord`] so the recovery LIST is
+/// only copied when it has actually grown, rather than once per event.
+fn drain_wire_evidence(tally: &mut Tally, tap: &Arc<Mutex<transport::TeeState>>) -> u64 {
+    let coord = transport::tee_coord(tap);
+    tally.note_pcrs(&transport::tee_drain_pcrs(tap));
+    if coord.resyncs > tally.resyncs_fed() {
+        tally.note_resyncs(&transport::tee_resyncs(tap));
+    }
+    coord.packets
+}
+
+/// Final sweep of the same evidence once the receive loop has ended,
+/// including the one recovery the reader's own list never holds (a
+/// trailing partial packet — `rawts::Reader::trailing_resync`). Must run
+/// before `transport::tee_tally`, which consumes the reader.
+fn drain_final_wire_evidence(tally: &mut Tally, tap: &Arc<Mutex<transport::TeeState>>) {
+    drain_wire_evidence(tally, tap);
+    if let Some(t) = transport::tee_trailing_resync(tap) {
+        tally.note_trailing_resync(&t);
+    }
+}
+
 /// Build a transport from `url`, receive `seconds` of `expect`'s
 /// traffic from it, and check the result against `expect`'s
 /// invariants. Writes the same [`VerifyReport`] as JSON to `json_out`
@@ -70,6 +122,10 @@ fn wire_and_trailing_bytes_error(
 /// fails the check) over the default `Lossy` (a `Discontinuity` is only
 /// counted) — see `VerifyMode`'s own doc comment. Either way a
 /// `NonConformant` event always fails.
+///
+/// `corruption_log` names the JSONL log a `send --corrupt` peer wrote,
+/// turning the capture into a judgement OF that corruption — see
+/// [`attach_corruption_log`] and `crate::corrupt`'s module doc.
 pub fn run(
     url: &str,
     expect: &Profile,
@@ -77,9 +133,17 @@ pub fn run(
     json_out: Option<&str>,
     no_klv_digest: bool,
     strict: bool,
+    corruption_log: Option<&Path>,
 ) -> Result<VerifyReport, String> {
     let transport = transport::make_recv(url)?;
-    let report = recv_over_transport(transport, expect, seconds, no_klv_digest, strict)?;
+    let report = recv_over_transport(
+        transport,
+        expect,
+        seconds,
+        no_klv_digest,
+        strict,
+        corruption_log,
+    )?;
     if let Some(target) = json_out {
         write_json(target, &report)?;
     }
@@ -117,6 +181,7 @@ pub fn recv_over_transport(
     seconds: f64,
     no_klv_digest: bool,
     strict: bool,
+    corruption_log: Option<&Path>,
 ) -> Result<VerifyReport, String> {
     let (teeing, tap) = Teeing::new(transport);
     // Built per-profile, not `DemuxReceiver::new` — see
@@ -130,6 +195,9 @@ pub fn recv_over_transport(
     let mut tally = Tally::new();
     if no_klv_digest {
         tally.disable_klv_digest_tracking();
+    }
+    if let Some(path) = corruption_log {
+        attach_corruption_log(&mut tally, &tap, path)?;
     }
     let start = Instant::now();
     let mut events_seen: u64 = 0;
@@ -161,7 +229,8 @@ pub fn recv_over_transport(
                     deadline = Instant::now() + Duration::from_secs_f64(seconds) + POST_START_GRACE;
                 }
                 events_seen += 1;
-                tally.feed(&ev);
+                let at = drain_wire_evidence(&mut tally, &tap);
+                tally.feed_at(&ev, at);
             }
             Ok(None) => break,
             Err(e) => match e.kind() {
@@ -173,6 +242,9 @@ pub fn recv_over_transport(
             },
         }
     }
+    // Whatever the reader learned after the last event it stamped — the
+    // tail of a capture is exactly where a final recovery lives.
+    drain_final_wire_evidence(&mut tally, &tap);
     // Explicit drop before reading the tee tally back — `tee_tally`
     // requires the `Teeing` (owned by `rx`'s inner transport state) to
     // have no other owner.
@@ -287,6 +359,7 @@ pub fn run_managed(
     json_out: Option<&str>,
     no_klv_digest: bool,
     strict: bool,
+    corruption_log: Option<&Path>,
 ) -> Result<VerifyReport, String> {
     let initial_raw = transport::make_recv(url)?;
     let (initial_teed, tap) = Teeing::new(initial_raw);
@@ -369,6 +442,15 @@ pub fn run_managed(
     if no_klv_digest {
         tally.disable_klv_digest_tracking();
     }
+    // Before the first byte — and it survives every reconnect: the
+    // factory's `tee_resync` clears only the in-flight carry, never the
+    // reader's recovery mode, its recovery list or its packet count (see
+    // `rawts::Reader::resync`), so coordinates stay continuous across an
+    // outage. A reconnect itself is deliberately NOT recorded as a
+    // recovery: the sender's corruption is not what broke the link.
+    if let Some(path) = corruption_log {
+        attach_corruption_log(&mut tally, &tap, path)?;
+    }
     let start = Instant::now();
     let mut events_seen: u64 = 0;
     let mut last_heartbeat = Instant::now();
@@ -399,7 +481,8 @@ pub fn run_managed(
                     *d = Instant::now() + Duration::from_secs_f64(seconds) + POST_START_GRACE;
                 }
                 events_seen += 1;
-                tally.feed(&ev);
+                let at = drain_wire_evidence(&mut tally, &tap);
+                tally.feed_at(&ev, at);
             }
             Ok(None) => break,
             Err(e) => match e.kind() {
@@ -411,6 +494,7 @@ pub fn run_managed(
             },
         }
     }
+    drain_final_wire_evidence(&mut tally, &tap);
 
     let reconnects = rx.reconnects_count();
     // Explicit drop before reading the tee tally back — `tee_tally`

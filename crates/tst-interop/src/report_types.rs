@@ -46,6 +46,14 @@ pub struct CellMetrics {
     /// in both `VerifyMode::Strict` and `VerifyMode::Lossy`.
     #[serde(default)]
     pub nonconformant: u64,
+    /// What the receiver's evidence said about a corruption log supplied
+    /// with `recv --corruption-log` / `verify --corruption-log`, or
+    /// `None` when the capture was judged without one (every interop
+    /// matrix cell, and every soak cell until the corruption tap is
+    /// switched on). See `crate::corrupt`'s module doc for how a
+    /// sender-side injection is matched to a receiver-side event at all.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corruption_attribution: Option<crate::corrupt::AttributionReport>,
 }
 
 /// Outcome of checking one [`CellMetrics`] tally against a
