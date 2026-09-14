@@ -321,6 +321,23 @@ if [[ -n "$SCHEDULE_PHASE_S" ]]; then
     exit 2
   }
 fi
+
+# Canonicalize every user-supplied integer to base 10, ONCE, the moment
+# it has been validated. A leading zero is a perfectly ordinary way to
+# type a number and the validators above deliberately accept it, but it
+# then reaches three consumers that each read it differently: bash's
+# `$(( ))` reads it as OCTAL (so `--seed 08` aborts the launch under
+# `set -e` with "value too great for base"), `jq --argjson` currently
+# accepts it and silently normalizes even though RFC 8259 forbids a
+# leading zero in a JSON number, and the proxy's own Rust parser
+# normalizes too. Relying on two of those three being lenient is not
+# something this script should do — and the declared value in
+# soak-config.json must be the SAME literal the proxy was launched with,
+# since `schedule_declared_<leg>` compares them. One normalization here
+# makes every downstream use exact.
+SEED=$((10#$SEED))
+SCHEDULE_PHASES=$((10#$SCHEDULE_PHASES))
+[[ -z "$SCHEDULE_PHASE_S" ]] || SCHEDULE_PHASE_S=$((10#$SCHEDULE_PHASE_S))
 # `auto` is checked here; a named profile is checked against the registry
 # right after the build, by the same `pick-profiles`-adjacent binary that
 # owns the registry (bash has no business holding a second copy of the
@@ -391,15 +408,11 @@ REORDER="1,200" # 1%, held 200ms — several packet intervals at this traffic's 
 # would inject at the same stream offsets, and a single systematic
 # attribution bug could then look like agreement between two independent
 # legs.
-# `10#` on every arithmetic use of a user-supplied integer: bash reads a
-# leading-zero literal as OCTAL, so `--seed 08` would abort the whole
-# launch under `set -e` with "value too great for base" rather than
-# running. The validators above deliberately still accept a leading zero
-# (it is a perfectly ordinary way to type a number); forcing base 10 here
-# is what makes accepting it safe. Same for `--schedule-phases` below.
+# `$SEED` is already base-10 canonical (normalized at validation, above),
+# so plain arithmetic is safe here.
 CORRUPT_SPEC="rate=5,min_gap=1000"
-SRT_CORRUPT_SEED=$((10#$SEED + 1))
-RIST_CORRUPT_SEED=$((10#$SEED + 2))
+SRT_CORRUPT_SEED=$((SEED + 1))
+RIST_CORRUPT_SEED=$((SEED + 2))
 
 # Default the phase length so the declared phases tile the whole run
 # (12 phases over 72h = one new link condition every 6h). Integer
@@ -409,7 +422,7 @@ RIST_CORRUPT_SEED=$((10#$SEED + 2))
 # floor of 1 keeps a very short drill (`--hours 0.02` with 12 phases)
 # from asking the proxy for `phase_s=0s`, which it rejects.
 if [[ -z "$SCHEDULE_PHASE_S" ]]; then
-  SCHEDULE_PHASE_S=$((10#$TOTAL_SECONDS / 10#$SCHEDULE_PHASES))
+  SCHEDULE_PHASE_S=$((TOTAL_SECONDS / SCHEDULE_PHASES))
   [[ "$SCHEDULE_PHASE_S" -ge 1 ]] || SCHEDULE_PHASE_S=1
 fi
 # How close to the nominal deadline a worker death stops being treated
