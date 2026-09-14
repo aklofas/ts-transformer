@@ -779,6 +779,142 @@ always 0 for this harness's own muxer output — a non-zero value means
 something upstream emitted a malformed packet and the run's evidence is not
 trustworthy.
 
+## Rich ST 0601 mode (`--klv-set rich`)
+
+`--klv-set rich` swaps the 4-tag fixture record for a realistic ST 0601 record
+whose tag set varies from record to record on a seeded schedule, carrying a
+nested ST 0102 security set. It exists because a producer that emits the same
+four tags forever exercises one decode path forever: the rich record is what
+makes a capture prove the decoder handles a tag set that MOVES.
+
+The flag is accepted by `gen`, `send` (the `hls://` / `rtsp://` serve modes
+included), `recv` and `verify`, paired with `--klv-seed N` (default `0`).
+**Sender and receiver must be told the same pair.** A receiver cannot infer
+either from the wire, and a mismatched seed is a real failure rather than a
+configuration nuisance: it means the records on the wire are not the ones the
+sender was supposed to emit.
+
+**The matrix stays compact: no cell sends rich records.** `--klv-set` defaults
+to `compact` everywhere and `run-matrix.sh` never passes it, so all 157 cells
+carry the byte-identical 4-tag, 50-byte record their expectations were
+validated against. That matters most for the `KLV records: got 0` expectation
+rows above: they document third-party peers dropping or mangling KLV carriage
+FOR THAT EXACT RECORD, with byte-level evidence pinned to its bytes, so moving
+those cells to rich records would invalidate every one of them. Rich mode is a
+soak and offline-test feature.
+
+### Grammar
+
+```bash
+tst-interop gen    --profile P --seconds N --out out.ts  --klv-set rich --klv-seed 7
+tst-interop send   --profile P --url URL --seconds N     --klv-set rich --klv-seed 7
+tst-interop recv   --url URL --expect P --seconds N      --klv-set rich --klv-seed 7
+tst-interop verify --file out.ts --expect P --seconds N  --klv-set rich --klv-seed 7
+```
+
+### What a rich record carries
+
+Seven core tags on every record, whatever the schedule says: **1** Checksum,
+**2** Precision Time Stamp, **5** Platform Heading, **13/14/15** Sensor
+Lat/Lon/Alt, **65** UAS LS Version. Tag 1 is on that list because
+`st0601::encode_to_vec` appends a checksum to every record it writes and
+`st0601::decode` validates it, so it is always on the wire even though no model
+field holds it.
+
+On top of the core, six groups come and go. A group is **all-or-nothing** — a
+record carries every tag of the group or none of them, the way a real platform
+either has a pose solution this frame or does not:
+
+| Group | Period | Tags |
+|---|---|---|
+| Pose | every record | 6, 7 platform pitch/roll; 18, 19, 20 sensor relative az/el/roll |
+| Frame | every record | 23, 24, 25 frame centre lat/lon/elev; 26-33 the four corner offsets |
+| Optics | every 2nd | 16, 17 sensor H/V field of view; 21 slant range; 22 target width |
+| Target | every 3rd | 40, 41, 42 target location lat/lon/elev; 56 platform ground speed |
+| Security | every 5th | 48 — a nested ST 0102 security local set |
+| Identity | every 10th | 3 mission id; 4 tail number; 10 platform designation; 11 image source |
+
+The PERIODS are fixed properties of the generator, never drawn from the seed:
+the slow-changing descriptive tags are sent far less often than the per-frame
+geometry, which is the shape a real producer emits. Only each group's PHASE —
+its offset within the period — comes from the seed.
+
+That is up to 36 tags on one record. Measured sizes: 128-212 bytes for a record
+carrying groups, 54 for a core-only one, against the compact record's 50.
+
+### The seeded schedule
+
+`fixtures::rich_presence(seed, seq)` is a pure function — no state, no clock —
+so the sender and a receiver-side oracle compute the same answer independently,
+and a replay of the same run reproduces it exactly:
+
+1. Seed the PRNG with `seed ^ KLV_SALT`, so the KLV schedule is statistically
+   independent of every other seeded component sharing the same run seed (the
+   impairment proxy, the corruption tap, the AU-size factory).
+2. Draw one phase per group in `RichGroup::ALL` order, every group
+   unconditionally — including the period-1 groups whose phase can only be `0`,
+   so the period table and the draw order stay independent of each other.
+3. Draw the core-only phase, modulo 50.
+4. One `seq` residue in 50 is reserved for a record that carries the seven core
+   tags and **nothing else**, so a receiver-side oracle has to cope with a
+   legitimately sparse record instead of assuming every record carries the same
+   tag set. Otherwise a group is present iff `seq % period == phase`.
+
+The draw order is part of the determinism contract: reordering `RichGroup::ALL`
+or inserting a draw silently reshuffles every seed's schedule.
+
+### The timestamp grid
+
+Rich records are stamped at the real soak KLV cadence, 10 Hz (the compact
+record's 1 s step is a fixture artifact):
+
+```
+timestamp_us = 1_700_000_000_000_000 + seq * 100_000
+```
+
+The grid is the point. `fixtures::rich_seq_of_timestamp` inverts a decoded
+stamp back to the sender's `seq`, so a receiver knows which schedule entry the
+record in its hand was supposed to satisfy — with no side channel, and with no
+assumption that records arrived in order or arrived at all. A stamp that is
+missing, pre-epoch, or off the 100 000 µs grid names no `seq` and is itself a
+census mismatch, not a reason to skip the check.
+
+Every numeric field is walked through a helper that stops 5 % short of the
+tag's encode range at both ends, so no tag can reach its own limit however long
+a run goes. That is the run-1 rule generalised to every tag the rich generator
+sets: an unbounded latitude walk crossed Tag 13's +90 encode max 14.5 h into
+the first 72 h soak and panicked both senders.
+
+### The three verdicts
+
+A capture judged with `--klv-set rich` gains `metrics.klv_rich` and three
+verdicts. All three are decode-based — every record goes through the real
+`tst_core::klv::st0601` decoder, the same code a consumer would use, not
+through a private parser written to agree with the generator.
+
+- **`klv_rich_decode_clean`** — every record decoded, and none carried a
+  `field_errors` entry. Proves the bytes that survived the transport are still
+  a well-formed ST 0601 set: a truncated record, a damaged BER length, a tag
+  whose bytes no longer make sense all land here.
+- **`klv_rich_census`** — every record's observed tag set equals
+  `rich_presence(seed, seq)` for the `seq` its own timestamp names. This is
+  what makes the mode more than a decoder smoke test: a producer that dropped a
+  whole tag group, or shipped one record's tags under another record's
+  timestamp, still decodes cleanly. Checking against a schedule the receiver
+  computes INDEPENDENTLY from `(seed, seq)` is what catches it, and the failure
+  text names the missing and the unexpected tags.
+- **`klv_rich_security_nested`** — wherever the schedule demanded Tag 48, the
+  nested ST 0102 set decoded with no field errors and carried a security
+  classification. Proves the nesting survived intact: a Tag 48 carrying bytes
+  no ST 0102 decoder accepts is worse than a missing one, not better, so both
+  fail this same verdict.
+
+`metrics.klv_rich` carries the cumulative counters (`records`,
+`decode_errors`, `field_error_records`, `census_mismatches`,
+`security_expected`, `security_ok`) plus `first_problem`, describing the first
+record to trip any of the three — so a report holds one concrete example
+alongside the totals. A compact capture carries no `klv_rich` block at all.
+
 ## Peer command-line notes (deviations from the plan's starting sketches)
 
 - **`tsp -I file ... -O <srt|rist|ip> ...` needs `-P regulate` inserted**

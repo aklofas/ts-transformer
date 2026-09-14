@@ -641,6 +641,39 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   PMT PID and poisoning every later section. Harness only: no library crate
   is touched, and no interop-matrix cell injects, so the 157-cell census is
   unchanged.
+- **Tooling: `tst-interop` rich ST 0601 sender mode.** `--klv-set
+  compact|rich` plus `--klv-seed N` on `gen`, `send` (the `hls://` /
+  `rtsp://` serve modes included), `recv` and `verify` swap the 4-tag,
+  50-byte fixture record for a realistic ST 0601 record of up to 36 tags:
+  the same walking core (checksum, precision time stamp, platform heading,
+  sensor lat/lon/alt, LS version) plus six all-or-nothing tag groups — pose,
+  frame geometry, optics, target location, identity strings, and a nested
+  ST 0102 security local set under Tag 48 — that come and go on a seeded
+  schedule. The per-group periods are fixed properties of the generator
+  (pose and frame geometry every record; optics, target, security and
+  identity every 2nd, 3rd, 5th and 10th), so only each group's phase is
+  drawn from the seed, and one `seq` residue in 50 is reserved for a record
+  carrying the core tags alone — a receiver-side oracle has to cope with a
+  legitimately sparse record rather than assume every record looks the same.
+  Records are stamped
+  on a 10 Hz grid off a fixed epoch so a receiver can invert a decoded
+  timestamp back to the sender's record number with no side channel, and
+  every numeric field walks a range that stops 5 % short of the tag's encode
+  limits at both ends, so no tag can reach its own limit however long a run
+  goes (the rule soak run 1 died for, generalised). A receiver told the same
+  `--klv-set rich --klv-seed N` gains `metrics.klv_rich` and three
+  decode-based verdicts, each run through the real `klv::st0601` decoder:
+  `klv_rich_decode_clean` (every record decodes with no field errors),
+  `klv_rich_census` (every record's observed tag set equals the presence
+  schedule that seed declares for the `seq` its own timestamp names — which
+  is what catches a dropped tag group, or one record's tags shipped under
+  another record's timestamp, both of which decode cleanly) and
+  `klv_rich_security_nested` (wherever the schedule demanded Tag 48, the
+  nested ST 0102 set decodes with no field errors and a security
+  classification). `compact` is the default everywhere and `run-matrix.sh`
+  never passes `--klv-set`, so all 157 cells still carry byte-identical
+  records and the census is unchanged. Harness only: no library crate is
+  touched.
 - **Tooling: `tst-interop report soak` completeness verdicts.** `soak.sh`
   now writes a declared `soak-config.json` at launch
   (`expected_duration_s`, `rss_cadence_s`, `warmup_fraction`,
