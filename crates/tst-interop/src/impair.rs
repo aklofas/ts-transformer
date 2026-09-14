@@ -106,6 +106,129 @@ pub struct ImpairConfig {
     pub outage_dur_s: u64,
 }
 
+/// Salt mixed into the seed before generating a phase schedule, so a run's
+/// schedule and its per-packet decision stream are driven by two
+/// independent generators: `Engine`'s own RNG is `XorShift64::new(seed)`
+/// and the schedule's is `XorShift64::new(seed ^ SCHEDULE_SALT)`. Without
+/// the salt the two would share a state trajectory and the schedule would
+/// be correlated with the first few packet decisions.
+pub const SCHEDULE_SALT: u64 = 0x5C4E_D01E_0000_0D0D;
+
+/// Mean run length of a burst drawn uniformly from `(3, 8)` — `(3+8)/2`.
+/// A burst phase divides its configured `loss_pct` by this to get the
+/// per-packet draw threshold, so that firing one burst of ~5.5 drops per
+/// crossing reproduces the configured *effective* loss rate rather than
+/// 5.5× it. See [`Phase::draw_pct`].
+const BURST_MEAN_RUN: f64 = 5.5;
+
+/// One phase of a scheduled impairment run: the impairment knobs that are
+/// in force for one `phase_s`-long slice of the wall clock. A scheduled
+/// run walks through a `Vec<Phase>` as time passes, which is what makes a
+/// soak exercise a *changing* link rather than one fixed impairment level.
+///
+/// `Serialize`/`Deserialize` because the proxy echoes the schedule it ran
+/// into its stats file, so a run's evidence records the exact phases that
+/// produced it.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Phase {
+    /// Position of this phase in the schedule, `0`-based.
+    pub index: u32,
+    /// The *effective* loss rate (percent) this phase targets — the
+    /// fraction of packets expected to be dropped once burst runs are
+    /// accounted for. This is the number to compare an observed drop rate
+    /// against; it is NOT the threshold the RNG draw is compared with
+    /// (that is [`draw_pct`](Self::draw_pct)).
+    pub loss_pct: f64,
+    /// Whether losses in this phase arrive in bursts (consecutive runs of
+    /// drops, as a real congested or fading link loses packets) rather
+    /// than independently per packet.
+    pub burst: bool,
+    /// Inclusive `(lo, hi)` bounds of a burst's run length: `(3, 8)` in a
+    /// burst phase, `(1, 1)` otherwise.
+    pub burst_run: (u32, u32),
+    /// The threshold the per-packet loss draw is actually compared
+    /// against: `loss_pct` in a non-burst phase, and
+    /// `loss_pct / BURST_MEAN_RUN` in a burst phase — because each
+    /// crossing there costs ~5.5 packets instead of one.
+    pub draw_pct: f64,
+    /// Per-phase override of [`ImpairConfig::jitter_ms_max`].
+    pub jitter_ms_max: u32,
+    /// Per-phase override of [`ImpairConfig::reorder_pct`].
+    pub reorder_pct: f64,
+    /// Per-phase override of [`ImpairConfig::reorder_hold`].
+    pub reorder_hold: u32,
+    /// Per-phase override of [`ImpairConfig::base_delay_ms`].
+    pub base_delay_ms: u32,
+}
+
+impl Phase {
+    /// The single implicit phase of a fixed-mode run: the config's own
+    /// knobs, never bursty, drawing directly against `loss_pct`. Keeping
+    /// fixed mode expressible as a one-phase schedule is what lets
+    /// [`Engine::decide`] have exactly one code path — and the fixed-mode
+    /// decision sequence is pinned by
+    /// `fixed_mode_decision_sequence_is_unchanged`.
+    fn from_fixed(cfg: &ImpairConfig) -> Self {
+        Phase {
+            index: 0,
+            loss_pct: cfg.loss_pct,
+            burst: false,
+            burst_run: (1, 1),
+            draw_pct: cfg.loss_pct,
+            jitter_ms_max: cfg.jitter_ms_max,
+            reorder_pct: cfg.reorder_pct,
+            reorder_hold: cfg.reorder_hold,
+            base_delay_ms: cfg.base_delay_ms,
+        }
+    }
+}
+
+/// Generate a deterministic `phases`-long impairment schedule from `seed`.
+///
+/// **Determinism contract.** The generator is
+/// `XorShift64::new(seed ^ SCHEDULE_SALT)` and each phase consumes
+/// **exactly six** [`XorShift64::next_f64`] draws, in this fixed order:
+///
+/// 1. `loss`    — `0.5 + r * 3.5`   → `0.5..4.0` percent effective loss
+/// 2. `burst`   — `r < 0.3`         → ~30% of phases are bursty
+/// 3. `jitter`  — `5 + (r * 36)`    → `5..=40` ms
+/// 4. `reorder` — `r * 2.0`         → `0.0..2.0` percent
+/// 5. `hold`    — `100 + (r * 201)` → `100..=300` ms
+/// 6. `delay`   — `10 + (r * 51)`   → `10..=60` ms
+///
+/// Changing that order, the draw count, or any range changes every
+/// schedule ever generated — archived evidence quotes its seed, not its
+/// phases, so the mapping from seed to schedule must stay stable.
+pub fn generate_schedule(seed: u64, phases: u32) -> Vec<Phase> {
+    let mut rng = XorShift64::new(seed ^ SCHEDULE_SALT);
+    (0..phases)
+        .map(|index| {
+            let loss_pct = 0.5 + rng.next_f64() * 3.5;
+            let burst = rng.next_f64() < 0.3;
+            let jitter_ms_max = 5 + (rng.next_f64() * 36.0) as u32;
+            let reorder_pct = rng.next_f64() * 2.0;
+            let reorder_hold = 100 + (rng.next_f64() * 201.0) as u32;
+            let base_delay_ms = 10 + (rng.next_f64() * 51.0) as u32;
+            let (burst_run, draw_pct) = if burst {
+                ((3, 8), loss_pct / BURST_MEAN_RUN)
+            } else {
+                ((1, 1), loss_pct)
+            };
+            Phase {
+                index,
+                loss_pct,
+                burst,
+                burst_run,
+                draw_pct,
+                jitter_ms_max,
+                reorder_pct,
+                reorder_hold,
+                base_delay_ms,
+            }
+        })
+        .collect()
+}
+
 /// One decision for a single packet.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
@@ -120,15 +243,74 @@ pub enum Action {
 
 /// Deterministic per-packet impairment decision engine. See the module
 /// doc for the determinism contract.
+///
+/// An engine always runs a schedule of one or more [`Phase`]s: fixed mode
+/// ([`Engine::new`]) is the degenerate one-phase case whose phase never
+/// ends, and scheduled mode ([`Engine::with_schedule`]) walks the phases
+/// on the wall clock the caller supplies.
 pub struct Engine {
     rng: XorShift64,
     cfg: ImpairConfig,
+    phases: Vec<Phase>,
+    /// Wall-clock duration of one phase, in milliseconds.
+    phase_ms: u64,
+    /// Drops still owed to an in-flight burst run, not counting the drop
+    /// that started it. `0` outside a burst.
+    burst_left: u32,
 }
 
 impl Engine {
+    /// Fixed-mode engine: the config's knobs apply for the whole run, as
+    /// one implicit phase that never ends.
     pub fn new(cfg: ImpairConfig) -> Self {
-        let rng = XorShift64::new(cfg.seed);
-        Engine { rng, cfg }
+        // `u64::MAX / 1000` seconds is ~584 million years; multiplied back
+        // up in `with_schedule` it saturates near `u64::MAX`, so
+        // `phase_index` is 0 for every `elapsed_ms` a real run can reach.
+        Engine::with_schedule(cfg, vec![Phase::from_fixed(&cfg)], u64::MAX / 1000)
+    }
+
+    /// Scheduled engine: `phases` in force for `phase_s` seconds each,
+    /// clamping to the last phase once the schedule is exhausted.
+    ///
+    /// `cfg`'s `dup_pct`, `seed` and outage fields still apply across
+    /// every phase — duplication and outages model the transport and the
+    /// link coming and going, not the varying link quality a phase
+    /// describes. An empty `phases` falls back to the fixed-mode phase so
+    /// the engine always has one to decide against.
+    pub fn with_schedule(cfg: ImpairConfig, phases: Vec<Phase>, phase_s: u64) -> Self {
+        let phases = if phases.is_empty() {
+            vec![Phase::from_fixed(&cfg)]
+        } else {
+            phases
+        };
+        Engine {
+            rng: XorShift64::new(cfg.seed),
+            cfg,
+            phases,
+            phase_ms: phase_s.saturating_mul(1000),
+            burst_left: 0,
+        }
+    }
+
+    /// The phases this engine walks. Always non-empty.
+    pub fn phases(&self) -> &[Phase] {
+        &self.phases
+    }
+
+    /// Index into [`phases`](Self::phases) in force at `elapsed_ms`,
+    /// clamped to the last phase so a run that outlives its schedule
+    /// simply stays on the final phase rather than panicking.
+    ///
+    /// Takes `&self` — like [`in_outage`](Self::in_outage) it never
+    /// touches the RNG, so it can be probed freely.
+    pub fn phase_index(&self, elapsed_ms: u64) -> usize {
+        let last = (self.phases.len() - 1) as u64;
+        if self.phase_ms == 0 {
+            // Degenerate config: zero-length phases are all already in the
+            // past at any `elapsed_ms`, so the clamp is the whole answer.
+            return last as usize;
+        }
+        (elapsed_ms / self.phase_ms).min(last) as usize
     }
 
     /// Whether `elapsed_ms` falls inside an outage window. Windows repeat
@@ -159,13 +341,21 @@ impl Engine {
     ///
     /// Precedence (first match wins): **outage** (all packets Drop, and
     /// no RNG draw happens — outage models a total link failure, which
-    /// pre-empts every other per-packet impairment) — then
-    /// **duplication** — then **loss** — then **reorder** — then
-    /// **jitter**. Outside of outage, all four RNG draws (dup, loss,
-    /// reorder, jitter) happen unconditionally and in that fixed order on
-    /// every call, so the draw pattern per decision never depends on
-    /// which branch ultimately wins — this keeps the sequence easy to
-    /// reason about and replay.
+    /// pre-empts every other per-packet impairment) — then an
+    /// **in-flight burst run** — then **duplication** — then **loss** —
+    /// then **reorder** — then **jitter**. Outside of outage, all four
+    /// RNG draws (dup, loss, reorder, jitter) happen unconditionally and
+    /// in that fixed order on every call, so the draw pattern per
+    /// decision never depends on which branch ultimately wins — this
+    /// keeps the sequence easy to reason about and replay.
+    ///
+    /// The impairment levels come from the [`Phase`] in force at
+    /// `elapsed_ms`; only `dup_pct` and the outage windows are per-run.
+    ///
+    /// A burst run pre-empts duplication: once a burst is in flight every
+    /// packet it covers is dropped, so a packet cannot be duplicated
+    /// while the link is in the middle of losing a run. It still performs
+    /// its four draws first, so bursts never perturb the draw sequence.
     pub fn decide(&mut self, elapsed_ms: u64) -> Action {
         if self.in_outage(elapsed_ms) {
             return Action::Drop;
@@ -176,22 +366,39 @@ impl Engine {
         let reorder_roll = self.rng.next_f64() * 100.0;
         let jitter_roll = self.rng.next_f64();
 
-        let jitter_delay = ((jitter_roll * (self.cfg.jitter_ms_max as f64 + 1.0)) as u32)
-            .min(self.cfg.jitter_ms_max);
-        let reorder_bump = if reorder_roll < self.cfg.reorder_pct {
-            self.cfg.reorder_hold
+        let p = self.phases[self.phase_index(elapsed_ms)];
+
+        let jitter_delay =
+            ((jitter_roll * (p.jitter_ms_max as f64 + 1.0)) as u32).min(p.jitter_ms_max);
+        let reorder_bump = if reorder_roll < p.reorder_pct {
+            p.reorder_hold
         } else {
             0
         };
-        let delay_ms = self
-            .cfg
+        let delay_ms = p
             .base_delay_ms
             .saturating_add(jitter_delay)
             .saturating_add(reorder_bump);
 
+        if self.burst_left > 0 {
+            self.burst_left -= 1;
+            return Action::Drop;
+        }
+
         if dup_roll < self.cfg.dup_pct {
             Action::DupForward { delay_ms }
-        } else if loss_roll < self.cfg.loss_pct {
+        } else if loss_roll < p.draw_pct {
+            if p.burst {
+                // Run length comes from the low digits of the loss draw
+                // that just fired — NOT a fresh draw, which would make the
+                // number of draws per decision depend on the outcome and
+                // break the replay contract. `loss_roll` is in
+                // `[0, 100)`, so `loss_roll * 1e6` is well inside `u32`.
+                let (lo, hi) = p.burst_run;
+                let run = lo + ((loss_roll * 1e6) as u32 % (hi - lo + 1));
+                // This packet is the first drop of the run.
+                self.burst_left = run.saturating_sub(1);
+            }
             Action::Drop
         } else {
             Action::Forward { delay_ms }
@@ -417,6 +624,123 @@ mod tests {
         assert_eq!(
             hex,
             "41b14964082f8aa911bbceee178f7806c6dd5d5d4884aa66d4b2fa66a6502360"
+        );
+    }
+
+    /// A schedule is a pure function of its seed, differs between seeds,
+    /// and every generated phase lands inside the documented ranges.
+    #[test]
+    fn generate_schedule_is_deterministic_and_in_range() {
+        let a = generate_schedule(9, 6);
+        assert_eq!(a, generate_schedule(9, 6));
+        assert_ne!(a, generate_schedule(10, 6));
+        assert_eq!(a.len(), 6);
+        for (i, p) in a.iter().enumerate() {
+            assert_eq!(p.index as usize, i);
+            assert!((0.5..=4.0).contains(&p.loss_pct));
+            assert!((5..=40).contains(&p.jitter_ms_max));
+            assert!((0.0..=2.0).contains(&p.reorder_pct));
+            assert!((100..=300).contains(&p.reorder_hold));
+            assert!((10..=60).contains(&p.base_delay_ms));
+            if p.burst {
+                assert_eq!(p.burst_run, (3, 8));
+                assert!((p.draw_pct - p.loss_pct / 5.5).abs() < 1e-9);
+            } else {
+                assert_eq!(p.burst_run, (1, 1));
+                assert_eq!(p.draw_pct, p.loss_pct);
+            }
+        }
+        assert!(
+            a.iter().any(|p| p.burst) || generate_schedule(11, 6).iter().any(|p| p.burst),
+            "p=0.3 per phase: some seed bursts"
+        );
+    }
+
+    /// The engine switches phases on the caller's wall clock, each phase
+    /// reproduces its own effective loss rate (including the burst phase,
+    /// whose `draw_pct` is pre-divided by the mean run length), and
+    /// `phase_index` clamps past the end of the schedule.
+    #[test]
+    fn scheduled_engine_switches_phase_on_the_wall_clock_and_matches_each_phase_rate() {
+        let mut phases = generate_schedule(3, 3);
+        phases[0].burst = false;
+        phases[0].burst_run = (1, 1);
+        phases[0].loss_pct = 1.0;
+        phases[0].draw_pct = 1.0;
+        phases[1].burst = true;
+        phases[1].burst_run = (3, 8);
+        phases[1].loss_pct = 4.0;
+        phases[1].draw_pct = 4.0 / 5.5;
+        phases[2].burst = false;
+        phases[2].burst_run = (1, 1);
+        phases[2].loss_pct = 0.5;
+        phases[2].draw_pct = 0.5;
+        let mut e = Engine::with_schedule(
+            ImpairConfig {
+                seed: 5,
+                ..ImpairConfig::default()
+            },
+            phases.clone(),
+            100,
+        );
+        let mut drops = [0u64; 3];
+        let n = 200_000u64;
+        for k in 0..3u64 {
+            for i in 0..n {
+                let t = k * 100_000 + (i % 100_000);
+                if matches!(e.decide(t), Action::Drop) {
+                    drops[k as usize] += 1;
+                }
+            }
+        }
+        for k in 0..3 {
+            let pct = drops[k] as f64 / n as f64 * 100.0;
+            assert!(
+                (pct - phases[k].loss_pct).abs() <= phases[k].loss_pct * 0.15 + 0.1,
+                "phase {k}: observed {pct}% vs {}%",
+                phases[k].loss_pct
+            );
+        }
+        assert_eq!(e.phase_index(250_000), 2);
+        assert_eq!(e.phase_index(999_999_999), 2, "clamped to the last phase");
+    }
+
+    /// Burst-phase drops arrive in consecutive runs, not independently —
+    /// the whole point of burst mode.
+    #[test]
+    fn burst_drops_come_in_runs_of_3_to_8() {
+        let mut phases = generate_schedule(3, 1);
+        phases[0].burst = true;
+        phases[0].burst_run = (3, 8);
+        phases[0].loss_pct = 2.0;
+        phases[0].draw_pct = 2.0 / 5.5;
+        let mut e = Engine::with_schedule(
+            ImpairConfig {
+                seed: 8,
+                ..ImpairConfig::default()
+            },
+            phases,
+            3600,
+        );
+        let seq: Vec<bool> = (0..100_000u64)
+            .map(|i| matches!(e.decide(i), Action::Drop))
+            .collect();
+        let mut runs = Vec::new();
+        let mut cur = 0;
+        for d in seq {
+            if d {
+                cur += 1
+            } else if cur > 0 {
+                runs.push(cur);
+                cur = 0
+            }
+        }
+        assert!(!runs.is_empty());
+        // Adjacent bursts can merge; every run is at least 3.
+        assert!(runs.iter().all(|&r| r >= 3), "{runs:?}");
+        assert!(
+            runs.iter().filter(|&&r| (3..=8).contains(&r)).count() * 10 >= runs.len() * 8,
+            "most runs are a single burst: {runs:?}"
         );
     }
 }
