@@ -1504,10 +1504,19 @@ pub mod soak {
         pub expected_outage_windows: u64,
         pub proxy_forwarded: u64,
         pub proxy_dropped: u64,
+        /// The effective (phase-integrated) expected drop rate, as a
+        /// percentage — `expected_drop_fraction * 100.0`. For a
+        /// fixed-mode run (no schedule) this is exactly the configured
+        /// `loss_pct`; for a scheduled run it's the traffic-weighted
+        /// average across `phases` phases.
         pub loss_pct: f64,
         pub observed_drop_fraction: f64,
         pub expected_drop_fraction: f64,
         pub drop_fraction_tolerance: f64,
+        /// How many phases the drop-rate verdict integrated over — `1`
+        /// for fixed mode or a pre-schedule stats file, `table.len()`
+        /// for a scheduled run.
+        pub phases: usize,
         pub recv_pass: bool,
         pub recv_failures: Vec<String>,
         pub send_video_aus: u64,
@@ -1868,35 +1877,103 @@ pub mod soak {
         let mut leg_results = Vec::new();
         for (leg_name, artifacts) in &legs {
             let outage_dur_s = artifacts.proxy_stats.config.outage_dur_s;
-            let loss_pct = artifacts.proxy_stats.config.loss_pct;
             let outage_windows =
                 expected_outage_windows(run_duration_s, artifacts.outage_period_s, outage_dur_s);
-            let total = artifacts.proxy_stats.forwarded + artifacts.proxy_stats.dropped;
-            let expected = expected_drop_fraction(loss_pct);
-            let tolerance = drop_rate_tolerance(expected, total);
-            let observed = if total == 0 {
-                0.0
-            } else {
-                artifacts.proxy_stats.dropped as f64 / total as f64
+
+            // Phase-integrated expectation (spec §6.2). Fixed mode is the
+            // one-phase case: the schedule echo is absent, `rates` is a
+            // single-element vec built from `expected_drop_fraction`
+            // (kept as a named helper for that one-rate case), and
+            // `phases` is a single counter carrying the run's whole
+            // total — so the loop below reduces to the old
+            // `loss_pct × total` computation exactly.
+            let rates: Vec<f64> = match &artifacts.proxy_stats.config.schedule {
+                Some(s) => s.table.iter().map(|p| p.loss_pct / 100.0).collect(),
+                None => vec![expected_drop_fraction(
+                    artifacts.proxy_stats.config.loss_pct,
+                )],
             };
-            let drop_pass = total != 0 && (observed - expected).abs() <= tolerance;
+            let counters: Vec<(u64, u64)> = if artifacts.proxy_stats.phases.is_empty() {
+                // Pre-feature stats file (`#[serde(default)]`): no
+                // per-phase split was recorded — fall back to the
+                // totals, judged as one phase, exactly as before.
+                vec![(
+                    artifacts.proxy_stats.forwarded,
+                    artifacts.proxy_stats.dropped,
+                )]
+            } else {
+                artifacts
+                    .proxy_stats
+                    .phases
+                    .iter()
+                    .map(|c| (c.forwarded, c.dropped))
+                    .collect()
+            };
+            let phase_count = counters.len();
+            let total: u64 = counters.iter().map(|(f, d)| f + d).sum();
+            let total_forwarded: u64 = counters.iter().map(|(f, _)| f).sum();
+            let total_dropped: u64 = counters.iter().map(|(_, d)| d).sum();
+
+            let (drop_pass, expected, tolerance, observed, drop_detail) = if rates.len()
+                != counters.len()
+            {
+                // A malformed artifact (e.g. hand-edited or truncated
+                // stats JSON whose phase-counter count doesn't match its
+                // own schedule echo) must fail loud, never panic and
+                // never silently fall back to a partial computation.
+                (
+                    false,
+                    0.0,
+                    0.0,
+                    0.0,
+                    format!(
+                        "{leg_name}: malformed artifact — {} phase rate(s) in the schedule echo \
+                         but {} phase counter(s) recorded",
+                        rates.len(),
+                        phase_count
+                    ),
+                )
+            } else if total == 0 {
+                (
+                    false,
+                    0.0,
+                    0.0,
+                    0.0,
+                    format!("{leg_name}: proxy observed zero packets — no traffic crossed it"),
+                )
+            } else {
+                let expected_drops: f64 = counters
+                    .iter()
+                    .zip(&rates)
+                    .map(|((f, d), r)| (f + d) as f64 * r)
+                    .sum();
+                let expected = expected_drops / total as f64;
+                let tolerance = drop_rate_tolerance(expected, total);
+                let observed = total_dropped as f64 / total as f64;
+                let pass = (observed - expected).abs() <= tolerance;
+                (
+                    pass,
+                    expected,
+                    tolerance,
+                    observed,
+                    format!(
+                        "{leg_name}: observed {:.2}%, expected {:.2}% ± {:.2}pp over {} phase(s) \
+                         ({} forwarded, {} dropped)",
+                        observed * 100.0,
+                        expected * 100.0,
+                        tolerance * 100.0,
+                        phase_count,
+                        total_forwarded,
+                        total_dropped
+                    ),
+                )
+            };
 
             verdicts.push(SoakVerdict {
                 name: format!("drop_rate_consistent_with_impairment_{leg_name}"),
                 pass: drop_pass,
                 provisional: false,
-                detail: if total == 0 {
-                    format!("{leg_name}: proxy observed zero packets — no traffic crossed it")
-                } else {
-                    format!(
-                        "{leg_name}: observed {:.2}%, expected {:.2}% ± {:.2}pp ({} forwarded, {} dropped)",
-                        observed * 100.0,
-                        expected * 100.0,
-                        tolerance * 100.0,
-                        artifacts.proxy_stats.forwarded,
-                        artifacts.proxy_stats.dropped
-                    )
-                },
+                detail: drop_detail,
             });
 
             let observed_reconnects = artifacts.recv_report.reconnects;
@@ -2046,10 +2123,11 @@ pub mod soak {
                 expected_outage_windows: outage_windows,
                 proxy_forwarded: artifacts.proxy_stats.forwarded,
                 proxy_dropped: artifacts.proxy_stats.dropped,
-                loss_pct,
+                loss_pct: expected * 100.0,
                 observed_drop_fraction: observed,
                 expected_drop_fraction: expected,
                 drop_fraction_tolerance: tolerance,
+                phases: phase_count,
                 recv_pass: artifacts.recv_report.pass,
                 recv_failures: artifacts.recv_report.failures.clone(),
                 send_video_aus: artifacts.send_metrics.video_aus,
@@ -2218,6 +2296,57 @@ pub mod soak {
                     duped: 0,
                 }],
             }
+        }
+
+        /// One phase of a synthetic schedule for [`scheduled_stats`] — only
+        /// `index` and `loss_pct` vary across the tests below; the rest
+        /// (burst shape, jitter/reorder/delay overrides) are irrelevant to
+        /// the drop-rate verdict, which reads only `loss_pct`.
+        fn phase(index: u32, loss: f64) -> crate::impair::Phase {
+            crate::impair::Phase {
+                index,
+                loss_pct: loss,
+                burst: false,
+                burst_run: (1, 1),
+                draw_pct: loss,
+                jitter_ms_max: 0,
+                reorder_pct: 0.0,
+                reorder_hold: 0,
+                base_delay_ms: 0,
+            }
+        }
+
+        /// A scheduled-mode `ProxyStats`: `counts[i] = (forwarded,
+        /// dropped)` for phase `i`, `losses[i]` is that phase's
+        /// `loss_pct` in the echoed schedule table. Built on top of
+        /// [`proxy_stats`] (its own `loss_pct`/`schedule`/`phases` are
+        /// discarded and replaced) so the two fixtures can't drift apart
+        /// on the fields they share.
+        fn scheduled_stats(counts: &[(u64, u64)], losses: &[f64]) -> ProxyStats {
+            let total_forwarded = counts.iter().map(|c| c.0).sum();
+            let total_dropped = counts.iter().map(|c| c.1).sum();
+            let mut s = proxy_stats(total_forwarded, total_dropped, 0.0, None, 0);
+            s.config.schedule = Some(crate::proxy::ScheduleEcho {
+                seed: 1,
+                phases: losses.len() as u32,
+                phase_s: 60,
+                table: losses
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &l)| phase(i as u32, l))
+                    .collect(),
+            });
+            s.phases = counts
+                .iter()
+                .enumerate()
+                .map(|(i, &(f, d))| crate::proxy::PhaseCounters {
+                    index: i as u32,
+                    forwarded: f,
+                    dropped: d,
+                    duped: 0,
+                })
+                .collect();
+            s
         }
 
         fn cell_metrics(video_aus: u64) -> CellMetrics {
@@ -2798,6 +2927,132 @@ pub mod soak {
             );
             assert!(!v.provisional);
             assert!(!results.overall_pass);
+        }
+
+        // Phase-integrated drop-rate verdict (spec §6.2): a scheduled
+        // run's expected drop rate is the traffic-weighted average of
+        // each phase's own `loss_pct` over that phase's own
+        // (forwarded+dropped) share, not one constant rate applied to
+        // the whole run's total.
+
+        #[test]
+        fn phase_integrated_drop_verdict_passes_a_consistent_four_phase_run() {
+            // losses 1/4/2/0.5 % over 100k packets each, observed exactly
+            // on-rate.
+            let st = scheduled_stats(
+                &[
+                    (99_000, 1_000),
+                    (96_000, 4_000),
+                    (98_000, 2_000),
+                    (99_500, 500),
+                ],
+                &[1.0, 4.0, 2.0, 0.5],
+            );
+            let mut inputs = healthy_inputs();
+            inputs.legs[0].1.proxy_stats = st;
+            let r = build_soak_results(inputs).unwrap();
+            let v = r
+                .verdicts
+                .iter()
+                .find(|v| v.name == "drop_rate_consistent_with_impairment_srt")
+                .unwrap();
+            assert!(v.pass, "{}", v.detail);
+            assert!(v.detail.contains("4 phase"), "{}", v.detail);
+        }
+
+        #[test]
+        fn phase_integrated_drop_verdict_fails_when_one_phase_doubles_its_drops() {
+            let st = scheduled_stats(
+                &[
+                    (99_000, 1_000),
+                    (92_000, 8_000), // phase 1's drops doubled: 4% -> 8%
+                    (98_000, 2_000),
+                    (99_500, 500),
+                ],
+                &[1.0, 4.0, 2.0, 0.5],
+            );
+            let mut inputs = healthy_inputs();
+            inputs.legs[0].1.proxy_stats = st;
+            let r = build_soak_results(inputs).unwrap();
+            assert!(
+                !r.verdicts
+                    .iter()
+                    .find(|v| v.name == "drop_rate_consistent_with_impairment_srt")
+                    .unwrap()
+                    .pass
+            );
+        }
+
+        #[test]
+        fn one_phase_schedule_is_judged_like_fixed_mode() {
+            // loss_pct 2.0 in the echo, matching the one-phase schedule's
+            // own loss_pct below, so the two fixtures describe the same
+            // impairment via the two different mechanisms.
+            let fixed = proxy_stats(98_000, 2_000, 2.0, None, 0);
+            let sched = scheduled_stats(&[(98_000, 2_000)], &[2.0]);
+            let mut a = healthy_inputs();
+            a.legs[0].1.proxy_stats = fixed;
+            let mut b = healthy_inputs();
+            b.legs[0].1.proxy_stats = sched;
+            let ra = build_soak_results(a).unwrap();
+            let rb = build_soak_results(b).unwrap();
+            let la = &ra.legs[0];
+            let lb = &rb.legs[0];
+            assert_eq!(
+                (la.expected_drop_fraction, la.drop_fraction_tolerance),
+                (lb.expected_drop_fraction, lb.drop_fraction_tolerance)
+            );
+            assert_eq!((la.phases, lb.phases), (1, 1));
+        }
+
+        /// A stats file written before per-phase counting existed
+        /// (`phases` empty, `config.schedule` absent — exactly what
+        /// `#[serde(default)]` produces for that vintage of JSON) must be
+        /// judged exactly as before: totals against the one configured
+        /// `loss_pct`, one phase.
+        #[test]
+        fn pre_feature_stats_file_falls_back_to_totals_against_configured_loss_pct() {
+            let mut st = proxy_stats(98_000, 2_000, 2.0, None, 0);
+            assert!(st.config.schedule.is_none());
+            // Simulate the actual pre-feature shape: `#[serde(default)]`
+            // leaves `phases` empty on a stats file written before
+            // per-phase counting existed (the `proxy_stats` fixture above
+            // always populates one entry, the shape `proxy::run` writes
+            // today).
+            st.phases.clear();
+            let mut inputs = healthy_inputs();
+            inputs.legs[0].1.proxy_stats = st;
+            let r = build_soak_results(inputs).unwrap();
+            let v = r
+                .verdicts
+                .iter()
+                .find(|v| v.name == "drop_rate_consistent_with_impairment_srt")
+                .unwrap();
+            assert!(v.pass, "{}", v.detail);
+            assert!(v.detail.contains("1 phase"), "{}", v.detail);
+            assert_eq!(r.legs[0].phases, 1);
+            assert!((r.legs[0].expected_drop_fraction - 0.02).abs() < 1e-9);
+        }
+
+        /// A malformed artifact — a schedule echo whose phase-rate count
+        /// doesn't match its own phase-counter count (e.g. hand-edited or
+        /// truncated stats JSON) — must fail loud with a message naming
+        /// the mismatch, never panic and never silently fall back to a
+        /// partial computation.
+        #[test]
+        fn mismatched_phase_rate_and_counter_lengths_fails_loud_not_panics() {
+            let mut st = scheduled_stats(&[(99_000, 1_000), (96_000, 4_000)], &[1.0, 4.0]);
+            st.phases.pop(); // 2 rates in the schedule echo, 1 counter left
+            let mut inputs = healthy_inputs();
+            inputs.legs[0].1.proxy_stats = st;
+            let r = build_soak_results(inputs).unwrap();
+            let v = r
+                .verdicts
+                .iter()
+                .find(|v| v.name == "drop_rate_consistent_with_impairment_srt")
+                .unwrap();
+            assert!(!v.pass, "{}", v.detail);
+            assert!(v.detail.contains("malformed"), "{}", v.detail);
         }
 
         /// (Important fix regression) The SAME 2x relative deviation
