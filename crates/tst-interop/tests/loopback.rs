@@ -83,8 +83,16 @@ fn udp_baseline_loopback_round_trips_and_matches() {
         })
     };
 
-    let send_metrics = send::run(profile, &url, SECONDS, None, false, AuSizeMode::Compact)
-        .expect("udp send must succeed");
+    let send_metrics = send::run(
+        profile,
+        &url,
+        SECONDS,
+        None,
+        false,
+        AuSizeMode::Compact,
+        None,
+    )
+    .expect("udp send must succeed");
 
     let recv_report = join_with_timeout(recv_handle, Duration::from_secs(10))
         .expect("recv_over_transport must succeed");
@@ -144,8 +152,16 @@ fn no_klv_digest_true_yields_null_hash_with_counts_unchanged() {
         })
     };
 
-    let send_metrics = send::run(profile, &url, SECONDS, None, true, AuSizeMode::Compact)
-        .expect("udp send must succeed");
+    let send_metrics = send::run(
+        profile,
+        &url,
+        SECONDS,
+        None,
+        true,
+        AuSizeMode::Compact,
+        None,
+    )
+    .expect("udp send must succeed");
 
     let recv_report = join_with_timeout(recv_handle, Duration::from_secs(10))
         .expect("recv_over_transport must succeed");
@@ -185,6 +201,111 @@ fn no_klv_digest_true_yields_null_hash_with_counts_unchanged() {
     );
 }
 
+/// `send` with a corruption tap writes a log with a header and at least
+/// one injection, reports the tap's stats in its metrics, and the
+/// receiver — WITHOUT the log — fails on the unexplained damage. (The
+/// positive "recv WITH the log passes" case is a live round trip of its
+/// own; this one pins that the damage is real and that the evidence to
+/// judge it lands on disk.)
+///
+/// udp so it stays cheap and byte-transparent: every corrupted byte the
+/// sender emits is a corrupted byte the receiver sees, with no transport
+/// retransmission in between to muddy what the log should explain.
+///
+/// `classes=truncate` rather than anything seed-dependent. Truncation is
+/// the one class whose damage is guaranteed regardless of which packet
+/// it lands on — a short packet shifts every packet boundary after it,
+/// so the raw reader must lose sync — whereas a `header` injection's
+/// sub-kind is drawn from the PRNG and only some of those sub-kinds are
+/// visible to a `Lossy` receiver at all (a continuity-counter flip on a
+/// PAT/PMT PID produces no demux event whatsoever, measured while
+/// writing this test). Pinning a seed that happens to draw a visible
+/// sub-kind would make this test hostage to the tap's PRNG draw order.
+#[test]
+fn udp_send_with_corruption_writes_a_log_and_recv_without_it_fails() {
+    use tst_interop::corrupt::{Class, parse_corrupt, read_log};
+
+    let profile = profiles::by_name("baseline").expect("baseline profile must exist");
+    let url = format!("udp://127.0.0.1:{}", free_port());
+    let log_path = std::env::temp_dir().join(format!(
+        "tst-interop-corrupt-log-{}.jsonl",
+        std::process::id()
+    ));
+
+    let recv_transport = transport::make_recv(&url).expect("bind udp recv");
+    let recv_handle = {
+        let seconds = SECONDS;
+        thread::spawn(move || {
+            recv::recv_over_transport(recv_transport, profile, seconds, false, false, None)
+        })
+    };
+
+    // `rate=10000` corrupts every eligible packet, so `min_gap` (whose
+    // 1000-packet floor the config validator enforces) alone sets the
+    // count — exactly one injection over a ~180-packet 3s capture,
+    // independent of the seed.
+    let cfg = parse_corrupt("rate=10000,min_gap=1000,classes=truncate", 5)
+        .expect("the corruption spec must parse");
+    let metrics = send::run(
+        profile,
+        &url,
+        SECONDS,
+        None,
+        false,
+        AuSizeMode::Compact,
+        Some((cfg, log_path.clone())),
+    )
+    .expect("udp send must succeed");
+
+    let report = join_with_timeout(recv_handle, Duration::from_secs(10))
+        .expect("recv_over_transport must return");
+
+    let (hdr, inj) = read_log(&log_path).expect("the tap's log must parse");
+    let _ = std::fs::remove_file(&log_path);
+
+    assert_eq!(hdr.classes, vec![Class::Truncate]);
+    assert_eq!(inj.len(), 1, "one injection per min_gap over this capture");
+    let stats = metrics
+        .corruption
+        .expect("send metrics carry the tap stats");
+    assert_eq!(
+        stats.injections as usize,
+        inj.len(),
+        "the counter and the log must agree on how many injections happened"
+    );
+    assert_eq!(
+        stats.packets_seen,
+        stats.bytes_in / 188,
+        "the tap must have seen the muxer's whole stream, packet-aligned"
+    );
+    assert!(
+        stats.bytes_out < stats.bytes_in,
+        "truncation must have removed bytes from the wire: {stats:?}"
+    );
+    assert_eq!(
+        metrics.bytes, stats.bytes_out,
+        "the tee sits BELOW the tap, so the reported byte count is the \
+         corrupted wire's, not the muxer's"
+    );
+    assert!(
+        !report.pass,
+        "unexplained truncation must fail the receiver: {:?}",
+        report.failures
+    );
+    assert!(
+        report
+            .failures
+            .iter()
+            .any(|f| f.starts_with("rawts_sync_loss")),
+        "and it must fail BECAUSE packet sync was lost, not incidentally: {:?}",
+        report.failures
+    );
+    assert!(
+        report.metrics.corruption_attribution.is_none(),
+        "a receiver given no log judges no corruption"
+    );
+}
+
 /// Retry `send::run` on a bounded budget. A failed SRT `connect()`
 /// attempt (e.g. because the listener hasn't bound yet — see the
 /// module doc's synchronization note) fails before any data is pushed,
@@ -210,7 +331,7 @@ fn send_with_retry_sized(
 ) -> tst_interop::report_types::CellMetrics {
     let deadline = Instant::now() + budget;
     loop {
-        match send::run(profile, url, seconds, None, false, au_sizes) {
+        match send::run(profile, url, seconds, None, false, au_sizes, None) {
             Ok(metrics) => return metrics,
             Err(e) => {
                 assert!(

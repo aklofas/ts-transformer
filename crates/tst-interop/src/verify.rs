@@ -679,6 +679,8 @@ impl Tally {
             stream_sha256: to_hex(&self.stream_hasher.finalize()),
             discontinuities: self.discontinuities,
             nonconformant: self.nonconformant,
+            // A verifier never runs the tap; it only judges its log.
+            corruption: None,
             corruption_attribution: attribution,
         };
 

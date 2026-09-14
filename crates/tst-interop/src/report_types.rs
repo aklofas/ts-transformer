@@ -46,6 +46,13 @@ pub struct CellMetrics {
     /// in both `VerifyMode::Strict` and `VerifyMode::Lossy`.
     #[serde(default)]
     pub nonconformant: u64,
+    /// Sender-side corruption tap counters (`send --corrupt`), `None`
+    /// when the tap was off. The SENT side of the same run the receiver
+    /// judges via `corruption_attribution` below: this says what was
+    /// deliberately done to the stream, that says what the receiver made
+    /// of it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corruption: Option<crate::corrupt::CorruptionStats>,
     /// What the receiver's evidence said about a corruption log supplied
     /// with `recv --corruption-log` / `verify --corruption-log`, or
     /// `None` when the capture was judged without one (every interop
