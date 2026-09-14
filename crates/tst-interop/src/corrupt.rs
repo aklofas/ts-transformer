@@ -765,8 +765,34 @@ impl<T: Transport> Corrupter<T> {
                 // nobody has to notice. Corrupting the picture is what
                 // "body" means; corrupting the timing is a different
                 // experiment, and not one this harness can judge.
+                //
+                // On a PSI packet the flip skips the section HEADER for
+                // the mirror-image reason. tst-core's `parse_pat` /
+                // `parse_pmt` check `table_id` and `section_length`
+                // BEFORE the CRC, and `psi_topology.rs`'s
+                // `Err(_) => return` arm drops every one of those
+                // rejections silently — only `CrcMismatch` and
+                // `MultiSectionUnsupported` become `NonConformant`
+                // events. So a flip that lands on the pointer field, the
+                // table_id or either section_length byte takes the whole
+                // section out of play, and any OTHER byte the same
+                // injection flipped can never be observed either.
+                //
+                // Measured, not theorised: the 1-hour re-smoke on main
+                // `6f0fbeb7` failed `corruption_detected` on exactly this
+                // shape — injection ordinal 2938545, a `body_flip` on the
+                // PMT PID with offsets [5, 14, 118, 161], where 5 IS the
+                // table_id (0x02 -> 0xd5). Offset 14 sits inside the
+                // CRC'd span and made the injection `detectable`, but the
+                // receiver had already dropped the section on the
+                // table_id and nothing could surface. The tap was
+                // over-claiming, so the tap is what changes.
                 let lo = if !info.has_payload {
                     4
+                } else if let Some(body) =
+                    psi_section_body_start(pkt, info, self.is_psi_pid(info.pid))
+                {
+                    body
                 } else if pes_start(pkt, info) {
                     // §2.4.3.7: 3-byte start code, stream_id,
                     // PES_packet_length(2), two flag bytes, then
@@ -1187,6 +1213,35 @@ fn sensitive_span(
     let len = (usize::from(*p.get(sec + 1)? & 0x0F) << 8) | usize::from(*p.get(sec + 2)?);
     let (lo, hi) = (sec + 3, (sec + 3 + len).min(PKT));
     (lo < hi).then_some((lo, hi))
+}
+
+/// First byte of a PSI section's BODY — one past the 3-byte section
+/// header (`table_id`, then the two `section_syntax_indicator` /
+/// `section_length` bytes), which itself starts one past the pointer
+/// field.
+///
+/// `None` for anything that is not the start of a section on a PSI PID,
+/// and for the degenerate case where the header would run off the end of
+/// the packet — callers fall back to their ordinary range there rather
+/// than skipping the injection, because the draw must consume the same
+/// number of PRNG values on every path.
+///
+/// Used by [`Class::BodyFlip`] to keep its flips off the bytes a decoder
+/// reads to FIND the section. Deliberately a different question from
+/// [`sensitive_span`], which answers "would a flip here be noticed" and
+/// therefore spans the body AND the CRC: this one answers "may a flip
+/// land here at all".
+fn psi_section_body_start(
+    p: &[u8; PKT],
+    info: &crate::rawts::PacketInfo,
+    psi: bool,
+) -> Option<usize> {
+    if !psi || !info.has_payload || !info.pusi {
+        return None;
+    }
+    let sec = info.payload_off + 1 + usize::from(*p.get(info.payload_off)?);
+    let body = sec.checked_add(3)?;
+    (body < PKT).then_some(body)
 }
 
 /// Byte range of a PSI section's body, excluding the 3-byte section header
@@ -3119,6 +3174,102 @@ mod tests {
             psi: false,
             pes_start: false,
         }
+    }
+
+    /// The exact PMT packet that failed `corruption_detected` on the
+    /// 1-hour re-smoke of main `6f0fbeb7` — injection ordinal 2938545,
+    /// reconstructed byte for byte from that run's `corruption.jsonl`.
+    ///
+    /// 37 meaningful bytes then 151 of 0xFF stuffing: a 4-byte TS header,
+    /// a zero pointer field, and a 29-byte PMT section (`table_id` 0x02
+    /// at offset 5) carrying the video and KLV elementary streams.
+    fn resmoke_pmt_packet() -> [u8; PKT] {
+        let mut p = [0xffu8; PKT];
+        p[..37].copy_from_slice(&[
+            0x47, 0x50, 0x00, 0x14, 0x00, 0x02, 0xb0, 0x1d, 0x00, 0x01, 0xc1, 0x00, 0x00, 0xf0,
+            0x11, 0xf0, 0x00, 0x1b, 0xf0, 0x11, 0xf0, 0x00, 0x06, 0xf0, 0x31, 0xf0, 0x06, 0x05,
+            0x04, 0x4b, 0x4c, 0x56, 0x41, 0x44, 0x55, 0x53, 0x36,
+        ]);
+        p
+    }
+
+    /// A `body_flip` on a PSI packet must never touch the bytes a decoder
+    /// reads to FIND the section — the pointer field, the `table_id`, or
+    /// either `section_length` byte.
+    ///
+    /// The re-smoke's failing injection flipped offset 5, which is the
+    /// `table_id`. tst-core's `parse_pmt` rejects that before it ever
+    /// reaches the CRC, and `psi_topology.rs` drops such a rejection
+    /// silently (only `CrcMismatch` and `MultiSectionUnsupported` become
+    /// `NonConformant` events) — so the same injection's flip at offset
+    /// 14, inside the CRC'd span and therefore `detectable`, could never
+    /// be observed. The tap was over-claiming.
+    #[test]
+    fn a_psi_body_flip_never_lands_on_the_section_header() {
+        let pkt = resmoke_pmt_packet();
+        let info = crate::rawts::classify_packet(&pkt).expect("the reconstructed packet parses");
+        assert!(info.pusi, "it carries a section start");
+        let sec = info.payload_off + 1 + usize::from(pkt[info.payload_off]);
+        assert_eq!(sec, 5, "pointer field 0, so the section starts at 5");
+        assert_eq!(pkt[sec], 0x02, "and byte 5 really is the PMT table_id");
+
+        let body = psi_section_body_start(&pkt, &info, true).expect("a PSI section body");
+        assert_eq!(body, sec + 3, "one past table_id + section_length");
+
+        // And the same rule through the real tap, over 64 seeds of
+        // generated traffic, so the PSI PIDs are learned from the PAT the
+        // way a live run learns them.
+        let b = baseline_bytes(300.0, "bfpsi");
+        let mut psi_flips = 0;
+        for seed in 1..=64u64 {
+            let (_, text, _) = run_tap(
+                &b,
+                CorruptConfig {
+                    seed,
+                    ..cfg(&[Class::BodyFlip], 10_000, 1000)
+                },
+            );
+            let (_, inj) = parse_log(&text).unwrap();
+            for i in inj.iter().filter(|i| i.psi) {
+                psi_flips += 1;
+                let pkt: [u8; PKT] = i.before[..].try_into().expect("a whole packet is logged");
+                let info = crate::rawts::classify_packet(&pkt).unwrap();
+                let Some(body) = psi_section_body_start(&pkt, &info, true) else {
+                    continue; // a section continuation, not a start
+                };
+                for &o in &i.offsets {
+                    assert!(
+                        o >= body,
+                        "seed {seed}: offset {o} is in the section header \
+                         (section at {}, body at {body})",
+                        info.payload_off + 1 + usize::from(pkt[info.payload_off])
+                    );
+                }
+            }
+        }
+        assert!(
+            psi_flips >= 8,
+            "only {psi_flips} PSI body flips across 64 seeds — the sweep is too thin to mean much"
+        );
+    }
+
+    /// The other half: the flip is still DETECTABLE when it lands inside
+    /// the CRC'd span. Narrowing the draw range must not have narrowed
+    /// what the tap claims a receiver has to notice — offset 14, the very
+    /// byte the re-smoke's injection also hit, still counts.
+    #[test]
+    fn a_psi_body_flip_inside_the_crc_span_is_still_detectable() {
+        let pkt = resmoke_pmt_packet();
+        let info = crate::rawts::classify_packet(&pkt).expect("parses");
+        let span = sensitive_span(&pkt, &info, true).expect("a PSI sensitive span");
+        assert!(
+            (span.0..span.1).contains(&14),
+            "offset 14 is inside the CRC'd span {span:?}"
+        );
+        // …and the span still starts at the section body and ends past
+        // the CRC, unchanged by this fix.
+        assert_eq!(span.0, 8, "body start");
+        assert_eq!(span.1, 5 + 3 + 29, "through the end of the CRC");
     }
 
     /// Ruling A. Under transport loss an injection's own evidence can
