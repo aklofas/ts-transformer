@@ -165,7 +165,7 @@ pub struct WireSummary {
     pub packets_per_pid: BTreeMap<u16, u64>,
     pub packets: u64,
     /// PSI sections discarded because their CRC-32 did not check out —
-    /// see [`Reader::section`]. Zero on any capture this harness
+    /// see `Reader::section` (private). Zero on any capture this harness
     /// generates; non-zero means something damaged a PAT or PMT in
     /// flight, which is exactly what the corruption tap does on purpose.
     pub psi_crc_rejected: u64,
