@@ -1973,9 +1973,35 @@ pub mod soak {
             let total_forwarded: u64 = counters.iter().map(|(f, _)| f).sum();
             let total_dropped: u64 = counters.iter().map(|(_, d)| d).sum();
 
-            let (drop_pass, expected, tolerance, observed, drop_detail) = if rates.len()
-                != counters.len()
-            {
+            // The per-phase split and the top-level totals are incremented
+            // together at every site in `proxy::run`, so when a phases
+            // array is present the two MUST reconcile. They are
+            // independent fields in the JSON, though, so a hand-edited or
+            // partially-written artifact can disagree — and since the
+            // computation above reads only the per-phase sums, a
+            // disagreement would otherwise go unnoticed and yield a rate
+            // computed from numbers the file itself contradicts. Same
+            // fail-loud stance as the length check below.
+            let totals_reconcile = artifacts.proxy_stats.phases.is_empty()
+                || (total_forwarded == artifacts.proxy_stats.forwarded
+                    && total_dropped == artifacts.proxy_stats.dropped);
+
+            let (drop_pass, expected, tolerance, observed, drop_detail) = if !totals_reconcile {
+                (
+                    false,
+                    0.0,
+                    0.0,
+                    0.0,
+                    format!(
+                        "{leg_name}: malformed artifact — per-phase counters sum to {}/{} \
+                         (forwarded/dropped) but the top-level totals say {}/{}",
+                        total_forwarded,
+                        total_dropped,
+                        artifacts.proxy_stats.forwarded,
+                        artifacts.proxy_stats.dropped
+                    ),
+                )
+            } else if rates.len() != counters.len() {
                 // A malformed artifact (e.g. hand-edited or truncated
                 // stats JSON whose phase-counter count doesn't match its
                 // own schedule echo) must fail loud, never panic and
@@ -3235,6 +3261,58 @@ pub mod soak {
                 .unwrap();
             assert!(!v.pass, "{}", v.detail);
             assert!(v.detail.contains("malformed"), "{}", v.detail);
+        }
+
+        /// The same fail-loud stance for the OTHER way a stats artifact
+        /// can contradict itself: per-phase counters that do not sum to
+        /// the top-level totals. `proxy::run` increments both together at
+        /// every site, so they always reconcile on a real run — but they
+        /// are independent JSON fields, and the rate above is computed
+        /// from the per-phase sums ALONE, so without this check a
+        /// hand-edited or partially-written file would yield a confident
+        /// rate the file itself contradicts.
+        #[test]
+        fn phase_counters_that_dont_sum_to_the_totals_fail_loud() {
+            let mut st = scheduled_stats(&[(99_000, 1_000), (96_000, 4_000)], &[1.0, 4.0]);
+            // Phases still sum to 195_000/5_000; claim something else.
+            st.forwarded = 1;
+            st.dropped = 2;
+            let mut inputs = healthy_inputs();
+            inputs.legs[0].1.proxy_stats = st;
+            let r = build_soak_results(inputs).unwrap();
+            let v = r
+                .verdicts
+                .iter()
+                .find(|v| v.name == "drop_rate_consistent_with_impairment_srt")
+                .unwrap();
+            assert!(!v.pass, "{}", v.detail);
+            assert!(v.detail.contains("malformed"), "{}", v.detail);
+            assert!(
+                v.detail.contains("195000") && v.detail.contains("5000"),
+                "the detail must name the per-phase sums: {}",
+                v.detail
+            );
+        }
+
+        /// Anti-vacuity for the check above: a PRE-FEATURE stats file
+        /// (empty `phases`, top-level totals only) must still be judged
+        /// normally, not swept up as malformed. `#[serde(default)]` makes
+        /// that shape deserializable on purpose.
+        #[test]
+        fn a_stats_file_with_no_phase_split_is_not_malformed() {
+            let mut inputs = healthy_inputs();
+            // The pre-feature shape: totals only, no per-phase split.
+            // `#[serde(default)]` is what makes such a file deserialize,
+            // and the reconciliation check must not fire on it.
+            inputs.legs[0].1.proxy_stats.phases.clear();
+            let r = build_soak_results(inputs).unwrap();
+            let v = r
+                .verdicts
+                .iter()
+                .find(|v| v.name == "drop_rate_consistent_with_impairment_srt")
+                .unwrap();
+            assert!(v.pass, "{}", v.detail);
+            assert!(!v.detail.contains("malformed"), "{}", v.detail);
         }
 
         /// (Important fix regression) The SAME 2x relative deviation
