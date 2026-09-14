@@ -1217,14 +1217,19 @@ fn sensitive_span(
 
 /// First byte of a PSI section's BODY — one past the 3-byte section
 /// header (`table_id`, then the two `section_syntax_indicator` /
-/// `section_length` bytes), which itself starts one past the pointer
-/// field.
+/// `section_length` bytes).
+///
+/// The section itself starts at `payload_off + 1 + pointer_field`
+/// (H.222.0 §2.4.4.1): the payload's first byte is the `pointer_field`,
+/// and its VALUE is how many further bytes of the previous section's tail
+/// stand between it and this one. This harness's generator always emits a
+/// zero pointer, but the arithmetic is the general one.
 ///
 /// `None` for anything that is not the start of a section on a PSI PID,
-/// and for the degenerate case where the header would run off the end of
-/// the packet — callers fall back to their ordinary range there rather
-/// than skipping the injection, because the draw must consume the same
-/// number of PRNG values on every path.
+/// and for the degenerate case where the packet leaves no body byte at
+/// all after that header — callers fall back to their ordinary range
+/// there rather than skipping the injection, because the draw must
+/// consume the same number of PRNG values on every path.
 ///
 /// Used by [`Class::BodyFlip`] to keep its flips off the bytes a decoder
 /// reads to FIND the section. Deliberately a different question from
