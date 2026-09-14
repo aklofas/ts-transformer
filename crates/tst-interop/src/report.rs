@@ -1999,7 +1999,15 @@ pub mod soak {
                                  {:?}); {} injected / {} resolved / {} unresolved",
                                 a.events,
                                 a.attributed_events,
-                                a.unexplained_events.len(),
+                                // The TRUE count, not `unexplained_events.len()`:
+                                // that Vec is a capped SAMPLE (`MAX_UNEXPLAINED`),
+                                // so on a badly-broken run it stops counting while
+                                // the real number keeps climbing, and a reader of
+                                // `soak-results.json` would be told a 72-hour leg
+                                // had 64 unexplained events when it had thousands.
+                                // `verify`'s own failure string already reports the
+                                // subtraction; this is the same number.
+                                a.events.saturating_sub(a.attributed_events),
                                 a.unexplained_events.first(),
                                 a.injected,
                                 a.resolved,
@@ -3574,6 +3582,47 @@ pub mod soak {
                 assert!(!r.verdicts.iter().find(|v| v.name == n).unwrap().pass);
             }
             assert!(!r.overall_pass);
+        }
+
+        /// The `corruption_attributed` detail must report the TRUE number
+        /// of unexplained events, not the length of the capped sample.
+        /// `AttributionReport::unexplained_events` stops growing at
+        /// `MAX_UNEXPLAINED`, so on a long leg the two numbers diverge
+        /// without bound, and a reader of `soak-results.json` would size
+        /// the damage from the cap instead of from the run.
+        #[test]
+        fn corruption_attributed_detail_reports_the_true_unexplained_count() {
+            let mut inputs = healthy_inputs();
+            inputs.config.corruption = true;
+            // A sample truncated at 2 entries standing in for 500 real
+            // unexplained events (1000 seen, 500 attributed).
+            let a = crate::corrupt::AttributionReport {
+                injected: 40,
+                events: 1000,
+                attributed_events: 500,
+                unexplained_events: vec!["first one".into(), "second one".into()],
+                ..Default::default()
+            };
+            inputs.legs[0].1.recv_report.metrics.corruption_attribution = Some(a);
+            let r = build_soak_results(inputs).unwrap();
+            let v = r
+                .verdicts
+                .iter()
+                .find(|v| v.name == "corruption_attributed_srt")
+                .unwrap();
+            assert!(!v.pass, "{}", v.detail);
+            assert!(
+                v.detail.contains("500 unexplained"),
+                "detail must name the true count, not the sample length: {}",
+                v.detail
+            );
+            assert!(
+                !v.detail.contains("2 unexplained"),
+                "detail must not report the capped sample length: {}",
+                v.detail
+            );
+            // The quoted example still comes from the sample.
+            assert!(v.detail.contains("first one"), "{}", v.detail);
         }
 
         #[test]
