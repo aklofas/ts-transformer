@@ -162,11 +162,237 @@ pub struct Resync {
     pub skipped_bytes: usize,
 }
 
+/// The 33-bit modulus both PCR bases and PES PTS values count on (ITU-T
+/// H.222.0 V9 §2.4.3.5). Spelled out here rather than imported from
+/// `oracles.rs` for the same reason this module carries its own CRC: an
+/// independent reader that borrowed a constant from the code it checks
+/// would be sharing a way to be wrong.
+const TS_MODULUS: u64 = 1 << 33;
+
+/// How much of a per-PID timestamp series a [`Reader`] keeps.
+///
+/// A capture's derived statistics (interval min/median/max, step median,
+/// wrap count) need consecutive DELTAS, not the timestamps themselves,
+/// and every one of them except the median is exactly computable from a
+/// running counter. Only the median needs a sample of the deltas — and
+/// how big that sample is allowed to get is the difference between the
+/// two variants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Retention {
+    /// Keep every delta, so every statistic including the median is
+    /// exact. The offline path ([`summarize_file`], `verify`'s own
+    /// reader) already holds the whole capture in memory, so bounding it
+    /// would buy nothing and would make an offline verdict depend on a
+    /// sample.
+    #[default]
+    Full,
+    /// Keep a bounded uniform sample of the deltas
+    /// ([`SAMPLE_CAP`] per PID). A live receiver runs for days: at soak
+    /// rates the unbounded form grew this reader's state by ~1.5-3 MiB
+    /// per hour per process, which on its own would fail the 72-hour
+    /// run's own 200 KiB/h `rss_slope_*` gate.
+    ///
+    /// Only the MEDIAN accessors become estimates; counts, wrap counts
+    /// and the forward-interval min/max stay exact, so
+    /// `VerifyMode::Strict`'s "every interval within bounds" rule (which
+    /// reads the max) is unaffected by the bound.
+    Bounded,
+}
+
+/// Deltas a [`Retention::Bounded`] series keeps per PID. 4096 `i64`s is
+/// 32 KiB per series — constant for the life of the process, against a
+/// sample large enough that a median drawn from it lands within a
+/// fraction of a percent of the exact one at any capture length.
+const SAMPLE_CAP: usize = 4096;
+
+/// Consecutive-delta statistics for one PID's timestamp series (PCR
+/// bases, or PES PTS values), accumulated in constant memory.
+///
+/// Fed one raw 33-bit timestamp at a time, in arrival order. Every
+/// statistic the wire oracles ask for is derived from the delta between
+/// consecutive values, in one of two readings:
+///
+/// - the WRAP-AWARE FORWARD distance (`delta mod 2^33`), which is what a
+///   PCR interval is — a clock that wrapped did not go backwards;
+/// - the RAW SIGNED delta, whose sign is the whole signal for a PTS
+///   rollover and whose positive values are the frame-to-frame step an
+///   audio cadence check measures.
+///
+/// Both are recoverable from the signed delta, so one sample serves both
+/// and a [`Retention::Bounded`] series costs one [`SAMPLE_CAP`] buffer.
+#[derive(Debug, Clone)]
+pub struct TimestampSeries {
+    count: u64,
+    last: Option<u64>,
+    /// Reservoir of raw signed deltas — every delta under
+    /// [`Retention::Full`], a uniform sample of them under
+    /// [`Retention::Bounded`].
+    sample: Vec<i64>,
+    /// Deltas OFFERED, which is `count - 1` and may exceed
+    /// `sample.len()`.
+    deltas: u64,
+    fwd_min: u64,
+    fwd_max: u64,
+    /// Consecutive pairs that went backwards by more than half the
+    /// modulus: a raw timestamp rollover, counted exactly in both
+    /// retention modes.
+    wraps: u64,
+    retention: Retention,
+    /// Reservoir-sampling state. Seeded per PID from a fixed constant so
+    /// a bounded run is as reproducible as an unbounded one.
+    rng: u64,
+}
+
+impl TimestampSeries {
+    fn new(retention: Retention, pid: u16) -> Self {
+        TimestampSeries {
+            count: 0,
+            last: None,
+            sample: Vec::new(),
+            deltas: 0,
+            fwd_min: u64::MAX,
+            fwd_max: 0,
+            wraps: 0,
+            retention,
+            // Golden-ratio odd constant, salted by the PID: distinct
+            // per-PID streams, identical from run to run.
+            rng: 0x9E37_79B9_7F4A_7C15 ^ u64::from(pid).wrapping_mul(0x0100_0000_01B3),
+        }
+    }
+
+    /// Build a series directly from a list of timestamps, bypassing a
+    /// [`Reader`] — how the oracle unit tests state a PCR or PTS series
+    /// they want checked.
+    #[cfg(test)]
+    pub(crate) fn from_values(retention: Retention, pid: u16, values: &[u64]) -> Self {
+        let mut s = TimestampSeries::new(retention, pid);
+        for &v in values {
+            s.push(v);
+        }
+        s
+    }
+
+    /// Record one timestamp. Values are 33-bit by construction (both
+    /// carriers mask to 33 bits before they reach here).
+    fn push(&mut self, value: u64) {
+        self.count += 1;
+        let Some(prev) = self.last.replace(value) else {
+            return;
+        };
+        let delta = value as i64 - prev as i64;
+        self.deltas += 1;
+        let fwd = delta.rem_euclid(TS_MODULUS as i64) as u64;
+        self.fwd_min = self.fwd_min.min(fwd);
+        self.fwd_max = self.fwd_max.max(fwd);
+        if delta < 0 && delta.unsigned_abs() > TS_MODULUS / 2 {
+            self.wraps += 1;
+        }
+        self.retain(delta);
+    }
+
+    /// Vitter's Algorithm R: the first [`SAMPLE_CAP`] deltas are kept
+    /// outright, and the k-th one after that replaces a uniformly chosen
+    /// existing entry with probability `cap/k` — which leaves the buffer
+    /// a uniform sample of everything offered, not merely of the most
+    /// recent stretch. That distinction is the point on a multi-day run:
+    /// a sliding window would report the median of the last few minutes
+    /// and call it the median of the capture.
+    fn retain(&mut self, delta: i64) {
+        if self.retention == Retention::Full || self.sample.len() < SAMPLE_CAP {
+            self.sample.push(delta);
+            return;
+        }
+        // xorshift64*, deterministic and adequate for a reservoir.
+        self.rng ^= self.rng << 13;
+        self.rng ^= self.rng >> 7;
+        self.rng ^= self.rng << 17;
+        let j = (self.rng % self.deltas) as usize;
+        if j < SAMPLE_CAP {
+            self.sample[j] = delta;
+        }
+    }
+
+    /// Timestamps recorded.
+    #[must_use]
+    pub fn count(&self) -> u64 {
+        self.count
+    }
+
+    /// Consecutive deltas measured — `count - 1`, or 0 for an empty
+    /// series.
+    #[must_use]
+    pub fn intervals(&self) -> u64 {
+        self.deltas
+    }
+
+    /// Consecutive pairs that rolled the 33-bit counter over.
+    #[must_use]
+    pub fn wraps(&self) -> u64 {
+        self.wraps
+    }
+
+    /// Smallest wrap-aware forward delta, exact in both retention modes.
+    #[must_use]
+    pub fn forward_min(&self) -> Option<u64> {
+        (self.deltas > 0).then_some(self.fwd_min)
+    }
+
+    /// Largest wrap-aware forward delta, exact in both retention modes —
+    /// so a `Strict` "every interval is within bounds" check is exact
+    /// even on a bounded series.
+    #[must_use]
+    pub fn forward_max(&self) -> Option<u64> {
+        (self.deltas > 0).then_some(self.fwd_max)
+    }
+
+    /// Median wrap-aware forward delta. Exact under
+    /// [`Retention::Full`]; a sample median under [`Retention::Bounded`].
+    #[must_use]
+    pub fn forward_median(&self) -> Option<f64> {
+        Self::median(self.sample.iter().map(|&d| {
+            let fwd = d.rem_euclid(TS_MODULUS as i64) as u64;
+            fwd as f64
+        }))
+    }
+
+    /// Median of the POSITIVE raw deltas — the frame-to-frame step of a
+    /// series that does not wrap within the capture. `None` when no
+    /// positive delta was sampled.
+    #[must_use]
+    pub fn positive_step_median(&self) -> Option<f64> {
+        Self::median(self.sample.iter().filter(|&&d| d > 0).map(|&d| d as f64))
+    }
+
+    /// Upper-middle element of an even-length sample, deliberately not
+    /// an average of the middle two: an average can land outside the
+    /// range of any single observation, which is exactly what a check
+    /// gating on "the typical interval" must not do.
+    fn median(values: impl Iterator<Item = f64>) -> Option<f64> {
+        let mut v: Vec<f64> = values.collect();
+        if v.is_empty() {
+            return None;
+        }
+        v.sort_by(|a, b| a.partial_cmp(b).expect("finite deltas"));
+        Some(v[v.len() / 2])
+    }
+
+    /// Deltas currently retained — the reservoir's occupancy, never more
+    /// than [`SAMPLE_CAP`] under [`Retention::Bounded`]. Exposed so a
+    /// test can assert the bound holds.
+    #[must_use]
+    pub fn retained(&self) -> usize {
+        self.sample.len()
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct WireSummary {
     pub programs: BTreeMap<u16, Program>,
-    pub pcr: BTreeMap<u16, Vec<u64>>,
-    pub pts: BTreeMap<u16, Vec<u64>>,
+    /// Per-PID PCR-base series. See [`TimestampSeries`] — the raw bases
+    /// are not kept, only the statistics the oracles ask for.
+    pub pcr: BTreeMap<u16, TimestampSeries>,
+    /// Per-PID PES PTS series, same treatment as [`pcr`](Self::pcr).
+    pub pts: BTreeMap<u16, TimestampSeries>,
     pub pes: BTreeMap<u16, PesShape>,
     pub packets_per_pid: BTreeMap<u16, u64>,
     pub packets: u64,
@@ -185,6 +411,8 @@ pub struct Reader {
     resync_mode: bool,
     resyncs: Vec<Resync>,
     last_pcr: Option<u64>,
+    /// Applied to every [`TimestampSeries`] this reader creates.
+    retention: Retention,
     /// `(pcr_base, packet ordinal of the packet that carried it)` for
     /// every PCR decoded since the last [`Reader::take_pcr_events`] —
     /// see that method's doc comment for why the ordinal is kept here
@@ -199,7 +427,16 @@ impl Default for Reader {
 }
 
 impl Reader {
+    /// A reader that keeps every timestamp delta
+    /// ([`Retention::Full`]) — the offline default.
     pub fn new() -> Self {
+        Self::with_retention(Retention::Full)
+    }
+
+    /// A reader whose per-PID timestamp series follow `retention`. A
+    /// live receive loop passes [`Retention::Bounded`]: it is fed every
+    /// byte of a multi-day capture and must not grow with it.
+    pub fn with_retention(retention: Retention) -> Self {
         Self {
             summary: WireSummary::default(),
             pmt_pids: BTreeMap::new(),
@@ -207,6 +444,7 @@ impl Reader {
             resync_mode: false,
             resyncs: Vec::new(),
             last_pcr: None,
+            retention,
             pcr_events: Vec::new(),
         }
     }
@@ -456,7 +694,12 @@ impl Reader {
         self.summary.packets += 1;
         *self.summary.packets_per_pid.entry(info.pid).or_insert(0) += 1;
         if let Some(base) = info.pcr_base {
-            self.summary.pcr.entry(info.pid).or_default().push(base);
+            let retention = self.retention;
+            self.summary
+                .pcr
+                .entry(info.pid)
+                .or_insert_with(|| TimestampSeries::new(retention, info.pid))
+                .push(base);
             self.last_pcr = Some(base);
             // `packets` was incremented just above, so this packet's own
             // 0-based ordinal is one less — see `take_pcr_events`.
@@ -644,6 +887,7 @@ impl Reader {
 
     fn pes(&mut self, pid: u16, payload: &[u8]) -> Result<(), String> {
         let stream_id = payload[3];
+        let retention = self.retention;
         let shape = self.summary.pes.entry(pid).or_default();
         shape.stream_ids.insert(stream_id);
         // §2.4.3.7: byte 6 = '10' + flags, byte 7 = PTS_DTS_flags.., byte 8 = header_data_length.
@@ -656,7 +900,11 @@ impl Reader {
                 | (u64::from((q[2] >> 1) & 0x7F) << 15)
                 | (u64::from(q[3]) << 7)
                 | u64::from(q[4] >> 1);
-            self.summary.pts.entry(pid).or_default().push(pts);
+            self.summary
+                .pts
+                .entry(pid)
+                .or_insert_with(|| TimestampSeries::new(retention, pid))
+                .push(pts);
         }
         if shape.first_payload_prefix.is_none() {
             if let Some(d) = payload.get(9 + hdr_len..9 + hdr_len + 4) {
@@ -679,12 +927,24 @@ mod tests {
     use super::*;
     use std::collections::BTreeSet;
 
+    /// Per-process counter that keeps two concurrently-running tests
+    /// from picking the same scratch path. Two of these helpers' callers
+    /// ask for the same profile, and cargo runs tests in parallel, so a
+    /// path keyed only on the profile name has one test reading the file
+    /// another is still writing.
+    static SCRATCH_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    fn scratch_path(tag: &str) -> std::path::PathBuf {
+        let n = SCRATCH_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "tst-interop-rawts-{tag}-{}-{n}.ts",
+            std::process::id()
+        ))
+    }
+
     fn summary_of(profile: &str, seconds: f64) -> WireSummary {
         let p = crate::profiles::by_name(profile).unwrap();
-        let path = std::env::temp_dir().join(format!(
-            "tst-interop-rawts-{profile}-{}.ts",
-            std::process::id()
-        ));
+        let path = scratch_path(profile);
         crate::r#gen::run(
             p,
             seconds,
@@ -699,11 +959,79 @@ mod tests {
         s
     }
 
+    /// A [`Retention::Bounded`] series must stop growing while every
+    /// statistic that is not a median stays exactly what an unbounded one
+    /// would report. This is the whole memory argument for a multi-day
+    /// receive loop, asserted directly: `SAMPLE_CAP * 8` bytes and not a
+    /// byte more, no matter how long the capture runs.
+    #[test]
+    fn a_bounded_series_caps_its_sample_and_keeps_its_counters_exact() {
+        const N: u64 = 200_000;
+        let step = 1_800u64;
+        let values: Vec<u64> = (0..N).map(|i| (i * step) % TS_MODULUS).collect();
+        let bounded = TimestampSeries::from_values(Retention::Bounded, 0x1011, &values);
+        let full = TimestampSeries::from_values(Retention::Full, 0x1011, &values);
+
+        assert!(
+            bounded.retained() <= SAMPLE_CAP,
+            "retained {} deltas, cap is {SAMPLE_CAP}",
+            bounded.retained()
+        );
+        assert_eq!(full.retained(), (N - 1) as usize, "Full keeps everything");
+        // Exact in both modes: counts, wrap count, and the forward
+        // min/max `VerifyMode::Strict` gates every interval on.
+        assert_eq!(bounded.count(), full.count());
+        assert_eq!(bounded.intervals(), full.intervals());
+        assert_eq!(bounded.wraps(), full.wraps());
+        assert_eq!(bounded.forward_min(), full.forward_min());
+        assert_eq!(bounded.forward_max(), full.forward_max());
+        // The two medians are the same statistic drawn from a sample
+        // rather than the population — on a steady cadence they agree
+        // exactly, which is the case every oracle actually meets.
+        assert_eq!(bounded.forward_median(), full.forward_median());
+        assert_eq!(bounded.positive_step_median(), full.positive_step_median());
+    }
+
+    /// The bound must not change a verdict. Every wire oracle is run
+    /// twice over the same capture — once off a `Full` reader, once off a
+    /// `Bounded` one — and must produce identical failure lists, in both
+    /// verify modes, for a profile whose PCR cadence, audio cadence and
+    /// PTS rollover exercise all four series statistics.
+    #[test]
+    fn bounded_retention_does_not_change_any_wire_oracle_verdict() {
+        for profile in ["baseline", "audio", "pts-rollover"] {
+            let bytes = bytes_of(profile, 7.0, &format!("bounded-{profile}"));
+            let summarize = |retention| {
+                let mut r = Reader::with_retention(retention);
+                r.feed(&bytes).unwrap();
+                r.finish().unwrap()
+            };
+            let full = summarize(Retention::Full);
+            let bounded = summarize(Retention::Bounded);
+            let p = crate::profiles::by_name(profile).unwrap();
+            let inv = crate::profiles::invariants(p);
+            // The per-program demux counts the oracles also read are
+            // irrelevant here (identical for both readers by
+            // construction), so an empty map keeps the comparison on the
+            // wire half, which is the half retention touches.
+            let per_program = BTreeMap::new();
+            for mode in [
+                crate::verify::VerifyMode::Strict,
+                crate::verify::VerifyMode::Lossy,
+            ] {
+                assert_eq!(
+                    crate::oracles::check(p, &inv, &full, &per_program, 7.0, 0.7, mode),
+                    crate::oracles::check(p, &inv, &bounded, &per_program, 7.0, 0.7, mode),
+                    "{profile} in {mode:?}"
+                );
+            }
+        }
+    }
+
     /// Bytes of `profile`/`seconds`, straight from the generator.
     fn bytes_of(profile: &str, seconds: f64, tag: &str) -> Vec<u8> {
         let p = crate::profiles::by_name(profile).unwrap();
-        let path =
-            std::env::temp_dir().join(format!("tst-interop-rawts-{tag}-{}.ts", std::process::id()));
+        let path = scratch_path(tag);
         crate::r#gen::run(
             p,
             seconds,
@@ -786,8 +1114,8 @@ mod tests {
         assert_eq!(s.pes[&0x1011].stream_ids, BTreeSet::from([0xE0]));
         assert_eq!(s.pes[&0x1011].first_payload_prefix, Some([0, 0, 0, 1]));
         assert_eq!(s.pes[&0x1031].stream_ids, BTreeSet::from([0xBD]));
-        assert_eq!(s.pts[&0x1011].len(), 90);
-        assert_eq!(s.pcr[&0x1011].len(), 45);
+        assert_eq!(s.pts[&0x1011].count(), 90);
+        assert_eq!(s.pcr[&0x1011].count(), 45);
         assert_eq!(s.packets, 180);
     }
 
@@ -844,9 +1172,9 @@ mod tests {
     #[test]
     fn pts_rollover_stream_shows_one_raw_pts_decrease_at_seven_seconds() {
         let s = summary_of("pts-rollover", 7.0);
-        let v = &s.pts[&0x1011];
-        let decreases = v.windows(2).filter(|w| w[1] < w[0]).count();
-        assert_eq!(decreases, 1);
+        // The series counts a rollover exactly (a property of one
+        // consecutive pair), which is what the `pts_wrap` oracle reads.
+        assert_eq!(s.pts[&0x1011].wraps(), 1);
     }
 
     /// `take_pcr_events` must report each base against the ordinal of the

@@ -120,7 +120,7 @@ fn audio(inv: &Invariants, wire: &WireSummary, seconds: f64) -> Vec<String> {
             "audio_codec_adts: first audio PES payload {other:?} is not an ADTS frame"
         )),
     }
-    let frames = wire.pts.get(&pid).map(|v| v.len()).unwrap_or(0) as f64;
+    let frames = wire.pts.get(&pid).map_or(0, |s| s.count()) as f64;
     let expected_frames = seconds * expected_rate as f64 / AAC_SAMPLES_PER_FRAME;
     if (frames - expected_frames).abs() > expected_frames * AUDIO_CADENCE_TOLERANCE {
         f.push(format!(
@@ -128,22 +128,17 @@ fn audio(inv: &Invariants, wire: &WireSummary, seconds: f64) -> Vec<String> {
             AUDIO_CADENCE_TOLERANCE * 100.0
         ));
     }
-    if let Some(v) = wire.pts.get(&pid) {
-        let mut steps: Vec<f64> = v
-            .windows(2)
-            .map(|w| w[1] as f64 - w[0] as f64)
-            .filter(|s| *s > 0.0)
-            .collect();
-        if !steps.is_empty() {
-            steps.sort_by(|a, b| a.partial_cmp(b).unwrap());
-            let median = steps[steps.len() / 2];
-            let want = AAC_SAMPLES_PER_FRAME * 90_000.0 / expected_rate as f64;
-            if (median - want).abs() > want * AUDIO_PTS_STEP_TOLERANCE {
-                f.push(format!(
-                    "audio_pts_step: median {median:.0} ticks, want {want:.0} ± {:.0}%",
-                    AUDIO_PTS_STEP_TOLERANCE * 100.0
-                ));
-            }
+    // The median of the positive consecutive PTS steps, over every step
+    // on an offline capture and over a bounded uniform sample of them on
+    // a live one (`rawts::Retention`) — either way the same statistic,
+    // against the same ±tolerance.
+    if let Some(median) = wire.pts.get(&pid).and_then(|s| s.positive_step_median()) {
+        let want = AAC_SAMPLES_PER_FRAME * 90_000.0 / expected_rate as f64;
+        if (median - want).abs() > want * AUDIO_PTS_STEP_TOLERANCE {
+            f.push(format!(
+                "audio_pts_step: median {median:.0} ticks, want {want:.0} ± {:.0}%",
+                AUDIO_PTS_STEP_TOLERANCE * 100.0
+            ));
         }
     }
     f
@@ -199,35 +194,39 @@ fn pcr_interval(inv: &Invariants, wire: &WireSummary, mode: VerifyMode) -> Vec<S
         // PCR's base field is the same 33-bit modulus as PES PTS (ITU-T
         // H.222.0 V9 §2.4.3.5 defines both the PCR base and the PTS/DTS
         // fields as 33-bit binary counters at 90 kHz) — `pts-rollover`'s
-        // capture wraps it too, so the delta must be computed wrap-aware
-        // (forward distance mod 2^33), not by plain subtraction.
-        let mut iv: Vec<f64> = pcrs
-            .windows(2)
-            .map(|w| ((w[1] + PTS_WRAP - w[0]) % PTS_WRAP) as f64 / 90.0)
-            .collect();
+        // capture wraps it too, so `rawts` measures every interval as a
+        // wrap-aware forward distance (mod 2^33), not a plain
+        // subtraction.
+        //
         // A single measurable interval (2 PCR samples) is already enough
         // to check against the bounds below — min == median == max, a
         // degenerate but valid sample, not a reason to skip the check.
         // Only zero intervals (0 or 1 PCR samples total) is insufficient.
-        if iv.is_empty() {
+        let (Some(min_ticks), Some(max_ticks), Some(median_ticks)) = (
+            pcrs.forward_min(),
+            pcrs.forward_max(),
+            pcrs.forward_median(),
+        ) else {
             f.push(format!(
                 "pcr_interval: only {} interval(s) on PID {} ({} PCR sample(s)), need >= 1",
-                iv.len(),
+                pcrs.intervals(),
                 prog.pcr_pid,
-                pcrs.len()
+                pcrs.count()
             ));
             continue;
-        }
-        let min = iv.iter().cloned().fold(f64::INFINITY, f64::min);
-        iv.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        let max = *iv.last().unwrap();
+        };
+        let min = min_ticks as f64 / 90.0;
+        // `forward_max` is a running maximum, exact in both retention
+        // modes — so `Strict`'s "every interval within bounds" reading
+        // below stays exact on a live capture too.
+        let max = max_ticks as f64 / 90.0;
         // The upper-middle element for an even count (not an
         // average-of-two) — deliberate: an average could land BELOW
         // `lower` even when no individual interval actually did (e.g.
         // one very short catch-up interval dragging a two-value average
         // down), which would defeat the whole point of gating on the
         // median instead of the min.
-        let median = iv[iv.len() / 2];
+        let median = median_ticks / 90.0;
         let upper_observed = match mode {
             VerifyMode::Strict => max,
             VerifyMode::Lossy => median,
@@ -292,15 +291,10 @@ fn av1_carriage(inv: &Invariants, wire: &WireSummary) -> Vec<String> {
 fn pts_wrap(p: &Profile, inv: &Invariants, wire: &WireSummary, seconds: f64) -> Vec<String> {
     let expect_wrap = p.start_pts_ticks + (seconds * 90_000.0) as u64 > PTS_WRAP;
     let pid = inv.programs[0].video_pid;
-    let decreases = wire
-        .pts
-        .get(&pid)
-        .map(|v| {
-            v.windows(2)
-                .filter(|w| w[0] > w[1] && w[0] - w[1] > PTS_WRAP / 2)
-                .count()
-        })
-        .unwrap_or(0);
+    // Counted exactly by the reader as each PTS arrives, under either
+    // retention mode: a rollover is a property of one consecutive pair,
+    // not of the series a median is drawn from.
+    let decreases = wire.pts.get(&pid).map_or(0, |s| s.wraps());
     match (expect_wrap, decreases) {
         (true, 0) => vec![format!(
             "pts_wrap_observed: window {seconds}s from start {} crosses 2^33 but no raw PTS wrap was seen on PID {pid}",
@@ -399,7 +393,7 @@ mod tests {
 
     use super::*;
     use crate::profiles;
-    use crate::rawts::{PesShape, Program, Stream};
+    use crate::rawts::{self, PesShape, Program, Stream};
 
     fn stream(
         pid: u16,
@@ -496,7 +490,10 @@ mod tests {
                     first_payload_prefix: Some(prefix),
                 },
             )]),
-            pts: BTreeMap::from([(0x1041, pts)]),
+            pts: BTreeMap::from([(
+                0x1041,
+                rawts::TimestampSeries::from_values(rawts::Retention::Full, 0x1041, &pts),
+            )]),
             ..Default::default()
         }
     }
@@ -573,7 +570,10 @@ mod tests {
 
     fn wire_with_pcr(pid: u16, ticks: &[u64]) -> WireSummary {
         WireSummary {
-            pcr: BTreeMap::from([(pid, ticks.to_vec())]),
+            pcr: BTreeMap::from([(
+                pid,
+                rawts::TimestampSeries::from_values(rawts::Retention::Full, pid, ticks),
+            )]),
             programs: BTreeMap::from([(
                 1,
                 Program {
@@ -714,7 +714,10 @@ mod tests {
 
     fn wire_with_pts(pid: u16, pts: Vec<u64>) -> WireSummary {
         WireSummary {
-            pts: BTreeMap::from([(pid, pts)]),
+            pts: BTreeMap::from([(
+                pid,
+                rawts::TimestampSeries::from_values(rawts::Retention::Full, pid, &pts),
+            )]),
             ..Default::default()
         }
     }
