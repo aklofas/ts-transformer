@@ -30,8 +30,8 @@
 use std::sync::{Arc, Mutex};
 use tst_core::transport::Transport;
 use tst_interop::corrupt::{
-    ATTRIBUTION_WINDOW, Class, Corrupter, Injection, LogHeader, RECOVERY_BOUND, parse_corrupt,
-    parse_log,
+    ATTRIBUTION_WINDOW, AttributionReport, Class, Corrupter, Injection, LogHeader, RECOVERY_BOUND,
+    parse_corrupt, parse_log,
     testing::{VecTransport, VecWriter},
 };
 use tst_interop::fixtures::KlvSet;
@@ -92,14 +92,35 @@ fn tap(bytes: &[u8], spec: &str, seed: u64) -> (Vec<u8>, LogHeader, Vec<Injectio
 }
 
 fn judge(wire: &[u8], p: &Profile, log: Option<&(LogHeader, Vec<Injection>)>) -> VerifyReport {
-    verify_bytes_with_corruption(
-        wire,
-        p,
-        SECONDS,
-        VerifyMode::Lossy,
-        KlvExpect::compact(),
-        log,
-    )
+    judge_in(VerifyMode::Lossy, wire, p, log)
+}
+
+fn judge_in(
+    mode: VerifyMode,
+    wire: &[u8],
+    p: &Profile,
+    log: Option<&(LogHeader, Vec<Injection>)>,
+) -> VerifyReport {
+    verify_bytes_with_corruption(wire, p, SECONDS, mode, KlvExpect::compact(), log)
+}
+
+/// Every positive control in this file judges an OFFLINE byte buffer, in
+/// `VerifyMode::Lossy` only because that is the mode a live soak leg uses.
+/// There is no transport between `tap` and `judge` here, so nothing can be
+/// lost in transit and the Lossy transport-loss excusal
+/// (`Attribution::finish_with`) must stay completely inert.
+///
+/// Without this, that excusal could quietly hollow the whole suite out:
+/// `undetected`/`unrecovered`/`unexplained_events` would keep coming back
+/// empty while real findings drained into the `*_lost` counters instead,
+/// and every assertion above would still pass.
+fn assert_transport_loss_excusal_is_inert(a: &AttributionReport, ctx: &str) {
+    assert_eq!(a.undetected_lost, 0, "{ctx}: offline capture, {a:?}");
+    assert_eq!(a.unrecovered_lost, 0, "{ctx}: offline capture, {a:?}");
+    assert_eq!(
+        a.unexplained_transport_loss, 0,
+        "{ctx}: offline capture, {a:?}"
+    );
 }
 
 /// Force `class` on every eligible packet, at the `min_gap` floor.
@@ -185,6 +206,7 @@ fn class_is_attributed(class: Class) {
         "{class:?}: {:?}",
         a.unexplained_events
     );
+    assert_transport_loss_excusal_is_inert(&a, &format!("{class:?}"));
     // A class with a detectable injection must have produced evidence, or
     // "nothing went wrong" and "nothing happened" would look the same.
     if detectable > 0 {
@@ -243,6 +265,7 @@ fn a_body_flip_under_a_section_crc_is_noticed() {
     assert!(r.pass, "{:?}", r.failures);
     let a = r.metrics.corruption_attribution.expect("attribution");
     assert!(a.undetected.is_empty(), "{:?}", a.undetected);
+    assert_transport_loss_excusal_is_inert(&a, "body_flip under a CRC");
     assert!(
         a.attributed_nonconformant > 0,
         "a flip under a CRC must surface as a non-conformance: {a:?}"
@@ -346,6 +369,10 @@ fn header_every_media_sub_kind_is_attributed() {
 /// than `remove(0)` (the forced first injection lands on the PAT, where
 /// several classes are invisible), and hence `dup`'s separate test below.
 fn withholding_a_log_line_is_caught(class: Class) {
+    withholding_a_log_line_is_caught_in(VerifyMode::Lossy, class);
+}
+
+fn withholding_a_log_line_is_caught_in(mode: VerifyMode, class: Class) {
     let p = baseline();
     let bytes = gen_bytes(p, &format!("wh-{}", class.name()));
     let (wire, header, mut injections) = tap(&bytes, &forced(class), SEED);
@@ -355,7 +382,7 @@ fn withholding_a_log_line_is_caught(class: Class) {
         .unwrap_or_else(|| panic!("{class:?}: no detectable injection to withhold"));
     injections.remove(at);
 
-    let r = judge(&wire, p, Some(&(header, injections)));
+    let r = judge_in(mode, &wire, p, Some(&(header, injections)));
     assert_failure_starting_with(&r, "corruption_attributed");
 }
 
@@ -371,9 +398,59 @@ fn withheld_truncate_line_is_unexplained() {
 fn withheld_garbage_line_is_unexplained() {
     withholding_a_log_line_is_caught(Class::Garbage);
 }
+/// `Drop` is judged in STRICT mode, alone among the classes here, and the
+/// reason is a real property rather than a test convenience.
+///
+/// A dropped packet's only observable is a continuity jump. In
+/// `VerifyMode::Lossy` — the mode a LIVE capture is judged in — an
+/// unexplained continuity jump is not corruption evidence at all, because
+/// the transport itself loses packets and nothing distinguishes a gap the
+/// tap made and hid from a gap the network made
+/// (`Attribution::finish_with`). So on a live lossy leg a withheld `drop`
+/// line is, by construction, not catchable, and asserting otherwise here
+/// would assert something the engine cannot deliver.
+///
+/// Strict is where the claim holds and where it matters: an offline file
+/// has no transport to lose anything, so the jump is unexplained and the
+/// report says so. Every other class survives Lossy unchanged — they
+/// surface as resyncs or non-conformances, which no packet loss can forge.
 #[test]
-fn withheld_drop_line_is_unexplained() {
-    withholding_a_log_line_is_caught(Class::Drop);
+fn withheld_drop_line_is_unexplained_in_strict_mode() {
+    withholding_a_log_line_is_caught_in(VerifyMode::Strict, Class::Drop);
+}
+
+/// The Lossy half of the same statement, asserted rather than left
+/// implicit: the identical withheld `drop` line produces NO
+/// `corruption_attributed` failure once transport loss is on the table,
+/// and the jump is still counted as a discontinuity.
+#[test]
+fn withheld_drop_line_is_excused_as_transport_loss_in_lossy_mode() {
+    let p = baseline();
+    let bytes = gen_bytes(p, "wh-drop-lossy");
+    let (wire, header, mut injections) = tap(&bytes, &forced(Class::Drop), SEED);
+    let at = injections
+        .iter()
+        .position(|i| i.detectable)
+        .expect("drop injections are detectable");
+    injections.remove(at);
+
+    let r = judge(&wire, p, Some(&(header, injections)));
+    assert!(
+        !r.failures
+            .iter()
+            .any(|f| f.starts_with("corruption_attributed")),
+        "{:?}",
+        r.failures
+    );
+    let a = r.metrics.corruption_attribution.expect("attribution");
+    assert!(
+        a.unexplained_transport_loss > 0,
+        "the withheld drop's jump must be recorded as excused, not vanish: {a:?}"
+    );
+    assert!(
+        r.metrics.discontinuities > 0,
+        "and still counted as a discontinuity"
+    );
 }
 #[test]
 fn withheld_psi_flip_line_is_unexplained() {

@@ -2239,7 +2239,8 @@ pub mod soak {
                             a.unexplained_events.is_empty(),
                             format!(
                                 "{leg_name}: {} event(s), {} attributed, {} unexplained (first: \
-                                 {:?}); {} injected / {} resolved / {} unresolved",
+                                 {:?}), {} excused as transport loss; {} injected / {} resolved / \
+                                 {} unresolved",
                                 a.events,
                                 a.attributed_events,
                                 // The TRUE count, not `unexplained_events.len()`:
@@ -2252,6 +2253,7 @@ pub mod soak {
                                 // subtraction; this is the same number.
                                 a.events.saturating_sub(a.attributed_events),
                                 a.unexplained_events.first(),
+                                a.unexplained_transport_loss,
                                 a.injected,
                                 a.resolved,
                                 a.unresolved
@@ -2262,20 +2264,23 @@ pub mod soak {
                             a.undetected.is_empty(),
                             format!(
                                 "{leg_name}: {} detectable injection(s), {} undetected (first: \
-                                 {:?})",
+                                 {:?}), {} excused as lost in transit",
                                 a.detectable,
                                 a.undetected.len(),
-                                a.undetected.first()
+                                a.undetected.first(),
+                                a.undetected_lost
                             ),
                         ));
                         verdicts.push(mk(
                             "corruption_recovered",
                             a.unrecovered.is_empty(),
                             format!(
-                                "{leg_name}: {} unrecovered within {} packets (first: {:?})",
+                                "{leg_name}: {} unrecovered within {} packets (first: {:?}), {} \
+                                 excused as lost in transit",
                                 a.unrecovered.len(),
                                 a.recovery_bound,
-                                a.unrecovered.first()
+                                a.unrecovered.first(),
+                                a.unrecovered_lost
                             ),
                         ));
                     }

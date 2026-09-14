@@ -97,6 +97,18 @@ pub struct KlvRichMetrics {
     /// Of those, how many carried a nested ST 0102 set that decoded with
     /// no field errors and a security classification.
     pub security_ok: u64,
+    /// Records the sender's corruption tap plausibly damaged — an
+    /// injection's attribution window covered them — which the three
+    /// oracles above therefore SKIPPED. They still count in
+    /// [`records`](Self::records): the record was delivered and demuxed,
+    /// it simply cannot be held to a content contract about bytes the
+    /// sender deliberately rewrote. Always 0 without a corruption log.
+    ///
+    /// All three oracles skip together, not just the decode one: damage
+    /// that leaves a record decodable can still cost it a tag, which would
+    /// otherwise surface as a census or security failure instead.
+    #[serde(default)]
+    pub damaged_by_injection: u64,
     /// The first record to trip any of the three oracles, described.
     pub first_problem: Option<String>,
 }
