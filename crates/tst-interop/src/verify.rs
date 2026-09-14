@@ -439,13 +439,25 @@ impl Tally {
                 }
                 self.klv_carriage_seen.insert(klv_carriage_of(kind));
                 if self.klv_expect.set == KlvSet::Rich {
+                    // Ask BEFORE decoding whether the sender's own tap
+                    // damaged this record: the three rich oracles judge
+                    // what a conformant PRODUCER must emit, and bytes the
+                    // tap deliberately rewrote are not the producer's
+                    // doing. `route_to_attribution` has already run
+                    // `on_media(at, pid)` for this event, so the
+                    // attribution's cursors are positioned at `at` and
+                    // this read-only query needs no advance of its own.
+                    let damaged = self
+                        .attribution
+                        .as_mut()
+                        .is_some_and(|a| a.explains_damage(at, stream.pid));
                     // `payload` is the bare KLV LS in BOTH carriages: the
                     // demuxer peels the 5-byte Metadata_AU_cell header off
                     // a sync-carriage record before emitting it (see
                     // `MetadataKind::KlvSyncAuCell`'s doc comment, and
                     // `tests/klv_rich.rs`'s sync round trip, which is what
                     // holds that contract in place).
-                    self.judge_rich(payload);
+                    self.judge_rich(payload, damaged);
                 }
             }
             DemuxEvent::Discontinuity { kind, .. } => {
@@ -483,10 +495,23 @@ impl Tally {
     /// tags under another record's timestamp, still decodes cleanly.
     /// Checking against a schedule the receiver computes INDEPENDENTLY
     /// from `(seed, seq)` is what catches that.
-    fn judge_rich(&mut self, payload: &[u8]) {
+    ///
+    /// `damaged` says an injection's window covers this record (see
+    /// [`corrupt::Attribution::explains_damage`]). Such a record still
+    /// counts as delivered, and all three oracles skip it: they ask what a
+    /// conformant producer emitted, and these bytes are not what the
+    /// producer emitted. Skipping only the decode oracle would be worse
+    /// than useless — damage that leaves a record decodable but a tag
+    /// short would then fail the census oracle instead, which is the same
+    /// false positive wearing a different name.
+    fn judge_rich(&mut self, payload: &[u8], damaged: bool) {
         use tst_core::klv::{st0102, st0601};
 
         self.rich.records += 1;
+        if damaged {
+            self.rich.damaged_by_injection += 1;
+            return;
+        }
         let n = self.rich.records;
 
         let rec = match st0601::decode(payload) {
@@ -764,10 +789,16 @@ impl Tally {
         // arithmetic as a clean one — the missing media is the point of
         // the run, not a regression — so the injected fraction is
         // discounted from the slack before any floor is computed.
+        // `Lossy` means the capture crossed a real impaired transport, so
+        // packets go missing for reasons the sender never logged and the
+        // attribution must not read those gaps as corruption findings —
+        // see `Attribution::finish_with`. `Strict` judges a file, where
+        // there is no transport to blame and every finding stands.
+        let excuse_transport_loss = mode == VerifyMode::Lossy;
         let attribution = self
             .attribution
             .take()
-            .map(|a| a.finish(wire.packets))
+            .map(|a| a.finish_with(wire.packets, excuse_transport_loss))
             .inspect(|rep| {
                 if !rep.unexplained_events.is_empty() {
                     failures.push(format!(
@@ -847,19 +878,29 @@ impl Tally {
         // and a report carrying a `klv_rich_*` failure with no
         // `metrics.klv_rich` beside it would be unreadable. One condition
         // decides both.
+        //
+        // Every rich failure says how many records the oracles never
+        // judged, so a reader can tell "3 of 6000 records are wrong" from
+        // "3 are wrong and 200 more were never examined".
         if self.klv_expect.set == KlvSet::Rich {
+            let skipped = self.rich.damaged_by_injection;
+            let damaged_note = if skipped > 0 {
+                format!(" ({skipped} record(s) skipped as injection-damaged)")
+            } else {
+                String::new()
+            };
             let unclean = self.rich.decode_errors + self.rich.field_error_records;
             if unclean > 0 {
                 failures.push(format!(
                     "klv_rich_decode_clean: {unclean} record(s) failed to decode or carried field \
-                     errors, first: {}",
+                     errors{damaged_note}, first: {}",
                     self.rich_first_decode.as_deref().unwrap_or("?")
                 ));
             }
             if self.rich.census_mismatches > 0 {
                 failures.push(format!(
-                    "klv_rich_census: {} record(s) whose tag set != rich_presence(seed, seq), \
-                     first: {}",
+                    "klv_rich_census: {} record(s) whose tag set != rich_presence(seed, \
+                     seq){damaged_note}, first: {}",
                     self.rich.census_mismatches,
                     self.rich_first_census.as_deref().unwrap_or("?")
                 ));
@@ -871,7 +912,7 @@ impl Tally {
             if security_bad > 0 {
                 failures.push(format!(
                     "klv_rich_security_nested: {security_bad} record(s) expected a valid ST 0102 \
-                     set, first: {}",
+                     set{damaged_note}, first: {}",
                     self.rich_first_security.as_deref().unwrap_or("?")
                 ));
             }
@@ -1640,27 +1681,37 @@ mod tests {
         );
         assert!(r.metrics.corruption_attribution.is_some());
 
-        // (b) an unexplained discontinuity -> corruption_attributed.
-        let mut t = healthy_baseline_tally();
-        let mut a = Attribution::new(vec![inj.clone()], &hdr);
-        a.on_signal(10, Some(VIDEO_PID), Signal::ContinuityJump);
-        a.on_media(50, VIDEO_PID);
-        a.on_signal(5000, Some(VIDEO_PID), Signal::ContinuityJump);
-        t.attach_attribution(a);
-        let r = t.finish(
-            profiles::by_name("baseline").unwrap(),
-            2.0,
-            NOMINAL_COUNT_SLACK,
-            VerifyMode::Lossy,
-            &wire,
-        );
-        assert!(
+        // (b) an unexplained NON-CONFORMANCE -> corruption_attributed.
+        // Deliberately not a discontinuity: in Lossy an unexplained
+        // continuity jump is transport loss, not corruption evidence (see
+        // the Strict/Lossy pair below). A bad CRC or a malformed PES
+        // header is something no amount of packet loss can forge, so it
+        // still fails here.
+        let unexplained = |sig, mode| {
+            let mut t = healthy_baseline_tally();
+            let mut a = Attribution::new(vec![inj.clone()], &hdr);
+            a.on_signal(10, Some(VIDEO_PID), Signal::ContinuityJump);
+            a.on_media(50, VIDEO_PID);
+            a.on_signal(5000, Some(VIDEO_PID), sig);
+            t.attach_attribution(a);
+            let r = t.finish(
+                profiles::by_name("baseline").unwrap(),
+                2.0,
+                NOMINAL_COUNT_SLACK,
+                mode,
+                &wire,
+            );
             r.failures
                 .iter()
-                .any(|f| f.starts_with("corruption_attributed")),
-            "{:?}",
-            r.failures
-        );
+                .any(|f| f.starts_with("corruption_attributed"))
+        };
+        assert!(unexplained(Signal::OtherNonConformant, VerifyMode::Lossy));
+
+        // And the discontinuity half of the same verdict: fatal in
+        // Strict, where there is no transport to have lost the packet,
+        // and excused in Lossy, where there is.
+        assert!(unexplained(Signal::ContinuityJump, VerifyMode::Strict));
+        assert!(!unexplained(Signal::ContinuityJump, VerifyMode::Lossy));
 
         // (c) no signal at all -> corruption_detected; no media ->
         // corruption_recovered.
@@ -1718,6 +1769,78 @@ mod tests {
             "{:?}",
             r.failures
         );
+    }
+
+    /// A rich ST 0601 record the sender's own tap damaged must not be
+    /// reported as a PRODUCER defect: the three rich oracles ask what a
+    /// conformant generator emitted, and these are not the bytes it
+    /// emitted. Such a record is counted in `damaged_by_injection`,
+    /// skipped by all three oracles, and still counted in `records` —
+    /// it was delivered, it just cannot be held to a content contract.
+    ///
+    /// The same damaged record with no injection anywhere near it still
+    /// fails `klv_rich_decode_clean`, which is what keeps this from being
+    /// a blanket excuse.
+    #[test]
+    fn a_rich_record_an_injection_damaged_is_skipped_not_failed() {
+        use crate::corrupt::{Attribution, Class};
+        let hdr = corruption_header();
+        let wire = wire_for("baseline", 2.0);
+        let p = profiles::by_name("baseline").unwrap();
+        let rich = KlvExpect {
+            set: KlvSet::Rich,
+            seed: 0,
+        };
+
+        // A real rich record, then truncated mid-field — the exact shape
+        // the live soak hit ("buffer truncated at offset N").
+        let mut damaged = fixtures::klv_record_rich(0, 0).expect("rich record encodes");
+        damaged.truncate(damaged.len() / 2);
+
+        // `since_pcr` places an injection at a receiver ordinal directly,
+        // with no `on_pcr` needed; the event is fed inside its window.
+        let judge = |inj: crate::corrupt::Injection, at: u64| {
+            let mut t = Tally::new();
+            t.set_klv_expect(rich);
+            t.attach_attribution(Attribution::new(vec![inj], &hdr));
+            t.feed_at(&testing::klv_event_on(KLV_PID, 9_000, damaged.clone()), at);
+            t.finish(p, 2.0, NOMINAL_COUNT_SLACK, VerifyMode::Lossy, &wire)
+        };
+        let decode_failed = |r: &VerifyReport| {
+            r.failures
+                .iter()
+                .any(|f| f.starts_with("klv_rich_decode_clean"))
+        };
+
+        // Rule one: same PID, ANY class.
+        let r = judge(injection_at(Class::BodyFlip, KLV_PID, 0), 10);
+        let m = r.metrics.klv_rich.clone().expect("rich block");
+        assert_eq!(m.damaged_by_injection, 1, "{m:?}");
+        assert_eq!(m.records, 1, "a skipped record is still a delivered one");
+        assert_eq!(m.decode_errors, 0, "{m:?}");
+        assert!(!decode_failed(&r), "{:?}", r.failures);
+
+        // Rule two: a framing class on ANOTHER PID — truncation
+        // misaligns the whole multiplex, so the damage is not confined to
+        // the PID it hit.
+        let r = judge(injection_at(Class::Truncate, VIDEO_PID, 0), 10);
+        let m = r.metrics.klv_rich.clone().expect("rich block");
+        assert_eq!(m.damaged_by_injection, 1, "{m:?}");
+        assert!(!decode_failed(&r), "{:?}", r.failures);
+
+        // Neither rule: a body flip on ANOTHER PID explains nothing here.
+        let r = judge(injection_at(Class::BodyFlip, VIDEO_PID, 0), 10);
+        let m = r.metrics.klv_rich.clone().expect("rich block");
+        assert_eq!(m.damaged_by_injection, 0, "{m:?}");
+        assert_eq!(m.decode_errors, 1, "{m:?}");
+        assert!(decode_failed(&r), "{:?}", r.failures);
+
+        // Out of window entirely: the same record, still fatal, and the
+        // failure string says how many were skipped (none).
+        let r = judge(injection_at(Class::Truncate, KLV_PID, 50_000), 10);
+        let m = r.metrics.klv_rich.clone().expect("rich block");
+        assert_eq!(m.damaged_by_injection, 0, "{m:?}");
+        assert!(decode_failed(&r), "{:?}", r.failures);
     }
 
     /// The non-conformance an injection explains stops failing the
