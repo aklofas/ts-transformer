@@ -702,9 +702,13 @@ in `Strict` and `Lossy` alike:
   packet sync for the whole multiplex, and for any injection on a PSI PID,
   which carries no media of its own and would otherwise wait forever.
 
-Constants, echoed into the report so an archived run is self-describing:
-`ATTRIBUTION_WINDOW = 500` packets, `RECOVERY_BOUND = 600` packets,
-`DEFAULT_MIN_GAP = 1000` packets.
+Constants: `ATTRIBUTION_WINDOW = 500` packets, `RECOVERY_BOUND = 600`
+packets, `DEFAULT_MIN_GAP = 1000` packets, and `MAX_APPROX_TICKS = 4 × 9000`
+= 36 000 ticks of the 90 kHz clock, four 100 ms PCR intervals — the bound on
+approximate resolution described below. The realized `min_gap`, attribution
+window and recovery bound are all echoed into the log header, and the latter
+two into the report as well, so an archived run is self-describing;
+`MAX_APPROX_TICKS` is compile-time only.
 
 Two things the verdicts deliberately do NOT do:
 
