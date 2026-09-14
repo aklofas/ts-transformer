@@ -19,9 +19,11 @@ use sha2::{Digest, Sha256};
 use tst_core::codec::misp_time;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{
-    DemuxEvent, Demuxer, MetadataKind, SamplePayload, VideoCodec as DemuxVideoCodec,
+    DemuxEvent, Demuxer, DiscontinuityKind, MetadataKind, NonConformantIssue, SamplePayload,
+    VideoCodec as DemuxVideoCodec,
 };
 
+use crate::corrupt::{self, Injection, LogHeader};
 use crate::oracles;
 use crate::profiles::{self, Profile};
 use crate::rawts::{self, WireSummary};
@@ -223,6 +225,13 @@ pub struct Tally {
     /// `Display`-formatted `NonConformantIssue` of the first
     /// `NonConformant` event fed, if any.
     first_nonconformant: Option<String>,
+    /// Judge for a capture whose sender ran a corruption tap — `None`
+    /// (the default) for every other capture, and then nothing about
+    /// this tally's behaviour changes. See [`Tally::attach_attribution`].
+    attribution: Option<corrupt::Attribution>,
+    /// How many of the raw reader's (cumulative) sync recoveries have
+    /// already been handed to `attribution` — see [`Tally::note_resyncs`].
+    resyncs_fed: usize,
 }
 
 impl Default for Tally {
@@ -253,6 +262,8 @@ impl Tally {
             nonconformant: 0,
             first_discontinuity: None,
             first_nonconformant: None,
+            attribution: None,
+            resyncs_fed: 0,
         }
     }
 
@@ -268,8 +279,31 @@ impl Tally {
         self.track_klv_digests = false;
     }
 
-    /// Fold one demuxed event into the tally.
+    /// Fold one demuxed event into the tally, at no particular position
+    /// in the capture — [`Tally::feed_at`] with a coordinate of 0.
+    ///
+    /// Every caller that has no corruption log to judge against uses
+    /// this: the coordinate is only ever read by an attached
+    /// [`corrupt::Attribution`], so feeding a constant is not a
+    /// degradation, it is the absence of a question.
     pub fn feed(&mut self, ev: &DemuxEvent) {
+        self.feed_at(ev, 0);
+    }
+
+    /// Fold one demuxed event into the tally, recording that it surfaced
+    /// at receiver packet ordinal `at`.
+    ///
+    /// `at` matters only when an [`corrupt::Attribution`] is attached, in
+    /// which case error-class events are offered to it as signals and
+    /// media events as evidence of recovery. Callers must pass
+    /// non-decreasing `at` values (the attribution engine keeps a sliding
+    /// cursor rather than rescanning), which is what a receiver
+    /// stamping events with a monotonically growing packet count
+    /// naturally produces.
+    pub fn feed_at(&mut self, ev: &DemuxEvent, at: u64) {
+        if self.attribution.is_some() {
+            self.route_to_attribution(ev, at);
+        }
         match ev {
             DemuxEvent::ProgramMap(m) => {
                 self.programs_seen.insert(m.program_number);
@@ -343,6 +377,106 @@ impl Tally {
         }
     }
 
+    // ------------------------------------------------------------
+    // Corruption attribution (spec §4.3). Everything in this section
+    // is inert unless `attach_attribution` was called.
+    // ------------------------------------------------------------
+
+    /// Judge this capture against a sender-side corruption log.
+    ///
+    /// From here on, every event fed through [`Tally::feed_at`] is also
+    /// offered to `a`, and [`Tally::finish`] turns its verdict into the
+    /// `corruption_attributed`/`corruption_detected`/`corruption_recovered`
+    /// failures plus `CellMetrics::corruption_attribution`. Call before
+    /// the first event: an attribution that missed the start of the
+    /// capture would report the injections it never saw evidence for as
+    /// undetected.
+    pub fn attach_attribution(&mut self, a: corrupt::Attribution) {
+        self.attribution = Some(a);
+    }
+
+    /// Hand the raw reader's sync recoveries to the attribution, skipping
+    /// the ones already fed. `resyncs` is the reader's CUMULATIVE list
+    /// (`rawts::Reader::resyncs`), so a live loop can simply call this
+    /// whenever the list has grown.
+    pub fn note_resyncs(&mut self, resyncs: &[rawts::Resync]) {
+        let Some(a) = self.attribution.as_mut() else {
+            self.resyncs_fed = resyncs.len();
+            return;
+        };
+        for r in resyncs.iter().skip(self.resyncs_fed) {
+            // A resync is not attributable to a PID: sync was lost for
+            // the whole multiplex, not for one stream in it.
+            a.on_signal(r.at_packets, None, corrupt::Signal::Resync);
+        }
+        self.resyncs_fed = self.resyncs_fed.max(resyncs.len());
+    }
+
+    /// How many sync recoveries [`Tally::note_resyncs`] has already
+    /// consumed — lets a live loop compare against the reader's cheap
+    /// recovery COUNT and skip copying the list when it has not grown.
+    #[must_use]
+    pub fn resyncs_fed(&self) -> usize {
+        self.resyncs_fed
+    }
+
+    /// Hand the raw reader's FINAL recovery — the trailing partial packet
+    /// `rawts::Reader::trailing_resync` describes — to the attribution.
+    /// Separate from [`Tally::note_resyncs`] because the reader's
+    /// cumulative list deliberately never holds it, so there is no index
+    /// to make the call idempotent: callers feed it exactly once, at the
+    /// end of the capture.
+    pub fn note_trailing_resync(&mut self, r: &rawts::Resync) {
+        if let Some(a) = self.attribution.as_mut() {
+            a.on_signal(r.at_packets, None, corrupt::Signal::Resync);
+        }
+    }
+
+    /// Hand the raw reader's freshly-decoded `(pcr_base, at)` pairs to the
+    /// attribution, which is how a logged coordinate becomes a receiver
+    /// position at all (see `corrupt::Attribution::on_pcr`). Already
+    /// drained by the caller, so unlike [`Tally::note_resyncs`] this must
+    /// be called with each batch exactly once.
+    pub fn note_pcrs(&mut self, pcrs: &[(u64, u64)]) {
+        if let Some(a) = self.attribution.as_mut() {
+            for &(base, at) in pcrs {
+                a.on_pcr(base, at);
+            }
+        }
+    }
+
+    /// Offer one event to the attached attribution: an error-class event
+    /// as a signal, a media event as evidence of recovery, anything else
+    /// (a PMT, a reconnect marker) not at all.
+    fn route_to_attribution(&mut self, ev: &DemuxEvent, at: u64) {
+        let Some(a) = self.attribution.as_mut() else {
+            return;
+        };
+        match ev {
+            DemuxEvent::Sample { stream, .. } | DemuxEvent::Metadata { stream, .. } => {
+                a.on_media(at, stream.pid);
+            }
+            DemuxEvent::Discontinuity { stream, kind } => {
+                let sig = match kind {
+                    DiscontinuityKind::ContinuityJump { .. } => corrupt::Signal::ContinuityJump,
+                    _ => corrupt::Signal::OtherDiscontinuity,
+                };
+                a.on_signal(at, Some(stream.pid), sig);
+            }
+            DemuxEvent::NonConformant { stream, issue } => {
+                let sig = match issue {
+                    NonConformantIssue::PsiChecksumMismatch { .. } => corrupt::Signal::PsiChecksum,
+                    NonConformantIssue::MalformedPes { .. } | NonConformantIssue::PusiMidPes => {
+                        corrupt::Signal::MalformedPes
+                    }
+                    _ => corrupt::Signal::OtherNonConformant,
+                };
+                a.on_signal(at, Some(stream.pid), sig);
+            }
+            DemuxEvent::ProgramMap(_) | DemuxEvent::ReconnectDiscontinuity => {}
+        }
+    }
+
     fn record_pts(&mut self, pid: u16, pts: Pts90khz) {
         let now = pts.as_ticks() as u64;
         if let Some(&last) = self.last_pts_by_pid.get(&pid) {
@@ -374,7 +508,7 @@ impl Tally {
     /// [`oracles::check`]'s six wire-level oracles, parameterized by
     /// `p`'s [`profiles::Invariants`].
     pub fn finish(
-        self,
+        mut self,
         p: &Profile,
         seconds: f64,
         slack: f64,
@@ -383,6 +517,47 @@ impl Tally {
     ) -> VerifyReport {
         let inv = profiles::invariants(p);
         let mut failures = Vec::new();
+
+        // Corruption verdicts first: they also SCALE the count floors
+        // below. A capture whose sender deliberately destroyed 0.5% of
+        // its packets cannot be held to the same "70% of nominal"
+        // arithmetic as a clean one — the missing media is the point of
+        // the run, not a regression — so the injected fraction is
+        // discounted from the slack before any floor is computed.
+        let attribution = self
+            .attribution
+            .take()
+            .map(|a| a.finish(wire.packets))
+            .inspect(|rep| {
+                if !rep.unexplained_events.is_empty() {
+                    failures.push(format!(
+                        "corruption_attributed: {} unexplained event(s), first: {}",
+                        rep.events.saturating_sub(rep.attributed_events),
+                        rep.unexplained_events[0]
+                    ));
+                }
+                if !rep.undetected.is_empty() {
+                    failures.push(format!(
+                        "corruption_detected: {} detectable injection(s) produced no event, \
+                         first: {}",
+                        rep.undetected.len(),
+                        rep.undetected[0]
+                    ));
+                }
+                if !rep.unrecovered.is_empty() {
+                    failures.push(format!(
+                        "corruption_recovered: {} injection(s) with no media within {} packets, \
+                         first: {}",
+                        rep.unrecovered.len(),
+                        rep.recovery_bound,
+                        rep.unrecovered[0]
+                    ));
+                }
+            });
+        let slack = match &attribution {
+            Some(rep) => slack * (1.0 - rep.injected_fraction),
+            None => slack,
+        };
 
         let min_video_aus = min_count(inv.min_video_aus_per_sec, seconds, slack);
         if self.video_aus < min_video_aus {
@@ -449,17 +624,32 @@ impl Tally {
             failures.push("expected a MISP ST 0604 SEI timestamp, none observed".to_string());
         }
 
-        if self.nonconformant > 0 {
+        // Events a corruption log EXPLAINS are subtracted before the
+        // existing fatality rules apply: the deliberate PSI flip a
+        // `corruption_attributed` verdict already accounts for must not
+        // also fail the report as a library non-conformance, or no run
+        // with the tap enabled could ever pass. Everything the log does
+        // not explain keeps failing exactly as before (`saturating_sub`
+        // because the two counts come from independent paths — an
+        // attribution driven directly in a unit test can legitimately
+        // hold more attributed events than this tally ever saw).
+        let (attributed_nc, attributed_disc) = match &attribution {
+            Some(rep) => (rep.attributed_nonconformant, rep.attributed_discontinuities),
+            None => (0, 0),
+        };
+        let unexplained_nc = self.nonconformant.saturating_sub(attributed_nc);
+        let unexplained_disc = self.discontinuities.saturating_sub(attributed_disc);
+        if unexplained_nc > 0 {
             failures.push(format!(
                 "nonconformant_event: {} event(s), first: {}",
-                self.nonconformant,
+                unexplained_nc,
                 self.first_nonconformant.as_deref().unwrap_or("?")
             ));
         }
-        if mode == VerifyMode::Strict && self.discontinuities > 0 {
+        if mode == VerifyMode::Strict && unexplained_disc > 0 {
             failures.push(format!(
                 "discontinuity_event: {} event(s), first: {}",
-                self.discontinuities,
+                unexplained_disc,
                 self.first_discontinuity.as_deref().unwrap_or("?")
             ));
         }
@@ -489,6 +679,7 @@ impl Tally {
             stream_sha256: to_hex(&self.stream_hasher.finalize()),
             discontinuities: self.discontinuities,
             nonconformant: self.nonconformant,
+            corruption_attribution: attribution,
         };
 
         VerifyReport {
@@ -524,6 +715,37 @@ pub fn verify_bytes_with_mode(
     seconds: f64,
     mode: VerifyMode,
 ) -> VerifyReport {
+    verify_bytes_with_corruption(bytes, p, seconds, mode, None)
+}
+
+/// How many bytes of a capture [`verify_bytes_with_corruption`] hands to
+/// the demuxer at a time. 1316 = 7 × 188, the classic UDP/SRT transport
+/// payload — the same granularity a live receiver's coordinates are
+/// stamped at, so an offline judgement of a captured file and a live
+/// judgement of the same stream place their events identically rather
+/// than differing by whatever chunking the file reader happened to use.
+const VERIFY_CHUNK: usize = 7 * 188;
+
+/// [`verify_bytes_with_mode`], additionally judging the capture against a
+/// sender-side corruption log (`log`, as returned by
+/// [`corrupt::read_log`]).
+///
+/// With a log, two things change. The wire reader runs in sync-recovery
+/// mode — deliberately destroyed packets would otherwise latch a
+/// `rawts_sync_loss` failure that says nothing more than "the tap did its
+/// job" — and every demuxed event is stamped with the reader's packet
+/// ordinal, which is what lets an error event be matched to the injection
+/// that caused it (see [`Tally::attach_attribution`] and `corrupt`'s
+/// module doc). Without one, this is byte-for-byte the old behaviour: the
+/// chunking below changes nothing a `Demuxer` observes, since it buffers
+/// across feeds.
+pub fn verify_bytes_with_corruption(
+    bytes: &[u8],
+    p: &Profile,
+    seconds: f64,
+    mode: VerifyMode,
+    log: Option<&(LogHeader, Vec<Injection>)>,
+) -> VerifyReport {
     // Built per-profile (never `Demuxer::new()`/`DemuxerConfig::default()`)
     // — see `profiles::demuxer_config`'s doc comment for the av1-klv-a
     // finding this closes.
@@ -533,10 +755,29 @@ pub fn verify_bytes_with_mode(
     // demuxer — see `rawts`'s module doc for why it shares no code with
     // `Demuxer`.
     let mut wire_reader = rawts::Reader::new();
+    if let Some((hdr, injections)) = log {
+        tally.attach_attribution(corrupt::Attribution::new(injections.clone(), hdr));
+        wire_reader.set_resync_mode(true);
+    }
 
     tally.note_bytes(bytes);
-    let demux_err = demux.feed(bytes).err();
-    let wire_err = wire_reader.feed(bytes).err();
+    let mut demux_err = None;
+    let mut wire_err = None;
+    for chunk in bytes.chunks(VERIFY_CHUNK) {
+        if demux_err.is_none() {
+            demux_err = demux.feed(chunk).err();
+        }
+        if wire_err.is_none() {
+            wire_err = wire_reader.feed(chunk).err();
+        }
+        // Drain as we go, so each event carries the reader's position at
+        // the time it surfaced rather than the position at end-of-file.
+        tally.note_pcrs(&wire_reader.take_pcr_events());
+        tally.note_resyncs(wire_reader.resyncs());
+        while let Some(ev) = demux.next_event() {
+            tally.feed_at(&ev, wire_reader.packets());
+        }
+    }
 
     // Canonical end-of-stream signal — see `demux_to_events.rs`'s doc
     // comment: without this the last access unit of every stream is left
@@ -545,7 +786,13 @@ pub fn verify_bytes_with_mode(
     // before losing sync is still real signal for the tally.
     demux.flush();
     while let Some(ev) = demux.next_event() {
-        tally.feed(&ev);
+        tally.feed_at(&ev, wire_reader.packets());
+    }
+    tally.note_resyncs(wire_reader.resyncs());
+    // A trailing partial packet is a recovery event too, and the only
+    // one `resyncs()` never holds — see `Reader::trailing_resync`.
+    if let Some(t) = wire_reader.trailing_resync() {
+        tally.note_trailing_resync(&t);
     }
 
     let (wire, trailing_bytes_err) = match wire_reader.finish() {
@@ -768,6 +1015,371 @@ mod tests {
                 observed: 5,
             },
         }
+    }
+
+    /// A 2-second `baseline` capture is ~120 TS packets (compact AU
+    /// fixtures — see `rawts`'s own tests), so the production
+    /// `RECOVERY_BOUND` of 600 packets would run past the end of every
+    /// capture in this module and `Attribution::finish` would (correctly)
+    /// decline to judge recovery at all. The bound is a header field, not
+    /// a constant, precisely so a judge reads the value the tap recorded;
+    /// these tests use a short one so the recovery verdict is exercised.
+    const TEST_RECOVERY_BOUND: u64 = 50;
+
+    fn corruption_header() -> crate::corrupt::LogHeader {
+        crate::corrupt::LogHeader {
+            tap_version: 1,
+            seed: 1,
+            rate_per_10k: 5,
+            min_gap: 1000,
+            classes: crate::corrupt::Class::ALL.to_vec(),
+            attribution_window: crate::corrupt::ATTRIBUTION_WINDOW,
+            recovery_bound: TEST_RECOVERY_BOUND,
+        }
+    }
+
+    /// One logged injection of `class` on `pid`, landing `since_pcr`
+    /// packets into the stream (before its first PCR, so it resolves at
+    /// construction against receiver ordinal `since_pcr` — no `on_pcr`
+    /// call needed to place it).
+    fn injection_at(
+        class: crate::corrupt::Class,
+        pid: u16,
+        since_pcr: u64,
+    ) -> crate::corrupt::Injection {
+        crate::corrupt::Injection {
+            ordinal: 0,
+            coord: crate::corrupt::Coord {
+                pcr_base: None,
+                since_pcr,
+            },
+            class,
+            pid,
+            offsets: vec![0],
+            before: vec![],
+            after: vec![],
+            detectable: true,
+            psi: false,
+            pes_start: false,
+        }
+    }
+
+    #[test]
+    fn tally_with_attribution_reports_the_three_verdict_strings() {
+        use crate::corrupt::{Attribution, Class, Signal};
+        let hdr = corruption_header();
+        let inj = injection_at(Class::Header, VIDEO_PID, 3);
+        let wire = wire_for("baseline", 2.0);
+
+        // (a) explained + detected + recovered -> no corruption failures.
+        let mut t = healthy_baseline_tally();
+        let mut a = Attribution::new(vec![inj.clone()], &hdr);
+        a.on_signal(10, Some(VIDEO_PID), Signal::ContinuityJump);
+        a.on_media(50, VIDEO_PID);
+        t.attach_attribution(a);
+        let r = t.finish(
+            profiles::by_name("baseline").unwrap(),
+            2.0,
+            NOMINAL_COUNT_SLACK,
+            VerifyMode::Lossy,
+            &wire,
+        );
+        assert!(
+            !r.failures.iter().any(|f| f.starts_with("corruption_")),
+            "{:?}",
+            r.failures
+        );
+        assert!(r.metrics.corruption_attribution.is_some());
+
+        // (b) an unexplained discontinuity -> corruption_attributed.
+        let mut t = healthy_baseline_tally();
+        let mut a = Attribution::new(vec![inj.clone()], &hdr);
+        a.on_signal(10, Some(VIDEO_PID), Signal::ContinuityJump);
+        a.on_media(50, VIDEO_PID);
+        a.on_signal(5000, Some(VIDEO_PID), Signal::ContinuityJump);
+        t.attach_attribution(a);
+        let r = t.finish(
+            profiles::by_name("baseline").unwrap(),
+            2.0,
+            NOMINAL_COUNT_SLACK,
+            VerifyMode::Lossy,
+            &wire,
+        );
+        assert!(
+            r.failures
+                .iter()
+                .any(|f| f.starts_with("corruption_attributed")),
+            "{:?}",
+            r.failures
+        );
+
+        // (c) no signal at all -> corruption_detected; no media ->
+        // corruption_recovered.
+        let mut t = healthy_baseline_tally();
+        t.attach_attribution(Attribution::new(vec![inj], &hdr));
+        let r = t.finish(
+            profiles::by_name("baseline").unwrap(),
+            2.0,
+            NOMINAL_COUNT_SLACK,
+            VerifyMode::Lossy,
+            &wire,
+        );
+        assert!(
+            r.failures
+                .iter()
+                .any(|f| f.starts_with("corruption_detected")),
+            "{:?}",
+            r.failures
+        );
+        assert!(
+            r.failures
+                .iter()
+                .any(|f| f.starts_with("corruption_recovered")),
+            "{:?}",
+            r.failures
+        );
+    }
+
+    #[test]
+    fn feed_at_routes_error_events_and_media_into_the_attribution() {
+        use crate::corrupt::{Attribution, Class};
+        let hdr = corruption_header();
+        let inj = injection_at(Class::Drop, VIDEO_PID, 0);
+        let mut t = Tally::new();
+        t.attach_attribution(Attribution::new(vec![inj], &hdr));
+        t.feed_at(&program_map_event(), 1);
+        t.feed_at(&discontinuity_event(), 5); // ContinuityJump on VIDEO_PID
+        t.feed_at(&video_event(3000, true), 40);
+        feed_two_seconds_baseline(&mut t);
+        let r = t.finish(
+            profiles::by_name("baseline").unwrap(),
+            2.0,
+            NOMINAL_COUNT_SLACK,
+            VerifyMode::Lossy,
+            &wire_for("baseline", 2.0),
+        );
+        let a = r.metrics.corruption_attribution.unwrap();
+        assert_eq!(a.attributed_events, 1);
+        assert_eq!(a.attributed_discontinuities, 1);
+        assert!(a.undetected.is_empty() && a.unrecovered.is_empty(), "{a:?}");
+        // The discontinuity the log explains must not ALSO fail the
+        // report as an unexplained one.
+        assert!(
+            !r.failures.iter().any(|f| f.starts_with("discontinuity")),
+            "{:?}",
+            r.failures
+        );
+    }
+
+    /// The non-conformance an injection explains stops failing the
+    /// report; an unexplained one still fails, in both modes.
+    #[test]
+    fn an_attributed_nonconformance_no_longer_fails_the_report() {
+        use crate::corrupt::{Attribution, Class};
+        let hdr = corruption_header();
+        let wire = wire_for("baseline", 2.0);
+
+        let mut t = healthy_baseline_tally();
+        t.attach_attribution(Attribution::new(
+            vec![injection_at(Class::PsiFlip, VIDEO_PID, 0)],
+            &hdr,
+        ));
+        t.feed_at(&nonconformant_event(), 5);
+        let r = t.finish(
+            profiles::by_name("baseline").unwrap(),
+            2.0,
+            NOMINAL_COUNT_SLACK,
+            VerifyMode::Lossy,
+            &wire,
+        );
+        assert_eq!(r.metrics.nonconformant, 1, "still COUNTED, just explained");
+        assert!(
+            !r.failures
+                .iter()
+                .any(|f| f.starts_with("nonconformant_event")),
+            "{:?}",
+            r.failures
+        );
+
+        // Same event, no injection anywhere near it -> still fatal.
+        let mut t = healthy_baseline_tally();
+        t.attach_attribution(Attribution::new(
+            vec![injection_at(Class::PsiFlip, VIDEO_PID, 0)],
+            &hdr,
+        ));
+        t.feed_at(&nonconformant_event(), 5000);
+        let r = t.finish(
+            profiles::by_name("baseline").unwrap(),
+            2.0,
+            NOMINAL_COUNT_SLACK,
+            VerifyMode::Lossy,
+            &wire,
+        );
+        assert!(
+            r.failures
+                .iter()
+                .any(|f| f.starts_with("nonconformant_event")),
+            "{:?}",
+            r.failures
+        );
+    }
+
+    /// Without an attribution nothing about the existing fatality
+    /// changes — the corruption verdicts are opt-in evidence, not a new
+    /// default leniency.
+    #[test]
+    fn no_attribution_leaves_every_existing_verdict_alone() {
+        let wire = wire_for("baseline", 2.0);
+        let mut t = healthy_baseline_tally();
+        t.feed_at(&nonconformant_event(), 7);
+        let r = t.finish(
+            profiles::by_name("baseline").unwrap(),
+            2.0,
+            NOMINAL_COUNT_SLACK,
+            VerifyMode::Lossy,
+            &wire,
+        );
+        assert!(r.metrics.corruption_attribution.is_none());
+        assert!(
+            r.failures
+                .iter()
+                .any(|f| f.starts_with("nonconformant_event")),
+            "{:?}",
+            r.failures
+        );
+    }
+
+    /// A resync recorded by the raw reader is a signal like any other —
+    /// and `note_resyncs` must be idempotent, since the live loop polls
+    /// the (cumulative) list repeatedly.
+    #[test]
+    fn note_resyncs_feeds_each_recovery_exactly_once() {
+        use crate::corrupt::{Attribution, Class};
+        let hdr = corruption_header();
+        let mut t = Tally::new();
+        t.attach_attribution(Attribution::new(
+            vec![injection_at(Class::Truncate, VIDEO_PID, 2)],
+            &hdr,
+        ));
+        let resyncs = vec![rawts::Resync {
+            at_packets: 4,
+            pcr_base: None,
+            skipped_bytes: 188,
+        }];
+        t.note_resyncs(&resyncs);
+        t.note_resyncs(&resyncs); // already fed: must not double-count
+        t.feed_at(&video_event(0, true), 10);
+        feed_two_seconds_baseline(&mut t);
+        let r = t.finish(
+            profiles::by_name("baseline").unwrap(),
+            2.0,
+            NOMINAL_COUNT_SLACK,
+            VerifyMode::Lossy,
+            &wire_for("baseline", 2.0),
+        );
+        let a = r.metrics.corruption_attribution.unwrap();
+        assert_eq!(a.resyncs, 1);
+        assert_eq!(a.events, 1);
+        assert_eq!(a.attributed_events, 1);
+        assert!(a.undetected.is_empty(), "{a:?}");
+    }
+
+    /// End to end offline, over a genuinely corrupted stream: generate a
+    /// clean capture, push it through the real tap, then judge the
+    /// damaged bytes against the log the tap wrote.
+    ///
+    /// Two things must hold, and neither is visible in the `Tally`-level
+    /// tests above. Sync loss caused by the tap must be attributed
+    /// rather than reported as `rawts_sync_loss` (the reader is in
+    /// resync mode) — and every injection must RESOLVE, which only works
+    /// if the receive-side PCR ordinals line up with the coordinates the
+    /// tap logged. An off-by-one in either direction leaves injections
+    /// unresolved, so `resolved == injected` is the real assertion here.
+    #[test]
+    fn verify_with_a_corruption_log_resolves_and_attributes_real_damage() {
+        use crate::corrupt::{self, Corrupter, parse_corrupt, testing};
+        use std::sync::{Arc, Mutex};
+        use tst_core::transport::Transport;
+
+        let p = profiles::by_name("baseline").expect("baseline profile must exist");
+        let path = std::env::temp_dir().join(format!(
+            "tst-interop-verify-corrupt-{}-{}.ts",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time moves forward")
+                .as_nanos()
+        ));
+        // 30s (~1800 packets) rather than the 3s the other tests use:
+        // `min_gap`'s floor is 1000 packets (`CorruptConfig::validate`),
+        // and a capture that fits only ONE injection would place it
+        // before the stream's first PCR, where a coordinate resolves
+        // trivially and proves nothing about PCR alignment. Offline
+        // generation has no sleeps, so the longer window is still
+        // milliseconds.
+        crate::r#gen::run(p, 30.0, &path).expect("gen::run must succeed");
+        let clean = std::fs::read(&path).expect("read the generated capture");
+        let _ = std::fs::remove_file(&path);
+
+        // `rate=10000` corrupts every eligible packet, so `min_gap`
+        // alone decides the count. Truncation is the class that actually
+        // breaks packet framing, which is what exercises resync mode.
+        let cfg = parse_corrupt("rate=10000,min_gap=1000,classes=truncate", 7)
+            .expect("the spec must parse");
+        let wire = Arc::new(Mutex::new(Vec::new()));
+        let log = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let mut tap = Corrupter::new(
+            testing::VecTransport(Arc::clone(&wire)),
+            cfg,
+            Box::new(testing::VecWriter(Arc::clone(&log))),
+        )
+        .expect("the tap must build");
+        for chunk in clean.chunks(1316) {
+            tap.send_bytes(chunk)
+                .expect("the in-memory sink never fails");
+        }
+        drop(tap);
+        let damaged = wire.lock().expect("wire mutex").clone();
+        let log_text = String::from_utf8(log.lock().expect("log mutex").clone())
+            .expect("the log is JSON text");
+        let parsed = corrupt::parse_log(&log_text).expect("the tap's own log must parse");
+        assert!(!parsed.1.is_empty(), "the tap must have injected something");
+        assert_ne!(damaged, clean, "the tap must have changed the wire");
+
+        assert!(
+            parsed.1.iter().any(|i| i.coord.pcr_base.is_some()),
+            "at least one injection must be anchored to a real PCR"
+        );
+
+        let r = verify_bytes_with_corruption(&damaged, p, 30.0, VerifyMode::Lossy, Some(&parsed));
+        let a = r
+            .metrics
+            .corruption_attribution
+            .expect("a judged capture carries its attribution");
+        assert_eq!(a.injected, parsed.1.len() as u64);
+        assert_eq!(
+            a.resolved, a.injected,
+            "every injection's coordinate must resolve against the receive-side PCRs: {a:?}"
+        );
+        assert!(
+            a.resyncs > 0,
+            "truncation must cost the raw reader packet sync: {a:?}"
+        );
+        assert!(
+            !r.failures.iter().any(|f| f.starts_with("rawts_sync_loss")),
+            "sync loss the log explains must not fail the capture: {:?}",
+            r.failures
+        );
+        assert!(
+            a.attributed_events > 0,
+            "the events this damage produced must be attributed to it: {a:?}"
+        );
+
+        // The same damaged bytes with NO log: the sync loss is
+        // unexplained and fails the capture, as it always has.
+        let blind = verify_bytes_with_mode(&damaged, p, 30.0, VerifyMode::Lossy);
+        assert!(!blind.pass, "{:?}", blind.failures);
+        assert!(blind.metrics.corruption_attribution.is_none());
     }
 
     #[test]

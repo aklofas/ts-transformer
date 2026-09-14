@@ -148,6 +148,11 @@ pub struct Reader {
     resync_mode: bool,
     resyncs: Vec<Resync>,
     last_pcr: Option<u64>,
+    /// `(pcr_base, packet ordinal of the packet that carried it)` for
+    /// every PCR decoded since the last [`Reader::take_pcr_events`] —
+    /// see that method's doc comment for why the ordinal is kept here
+    /// rather than re-derived by a caller polling [`Reader::last_pcr`].
+    pcr_events: Vec<(u64, u64)>,
 }
 
 impl Default for Reader {
@@ -165,6 +170,7 @@ impl Reader {
             resync_mode: false,
             resyncs: Vec::new(),
             last_pcr: None,
+            pcr_events: Vec::new(),
         }
     }
 
@@ -176,6 +182,24 @@ impl Reader {
     /// Most recent PCR base seen on ANY PID.
     pub fn last_pcr(&self) -> Option<u64> {
         self.last_pcr
+    }
+
+    /// Take every `(pcr_base, at)` decoded since the previous call, where
+    /// `at` is the 0-based ordinal of the packet that CARRIED the base
+    /// (i.e. [`Reader::packets`] as it read immediately before that
+    /// packet was counted).
+    ///
+    /// A caller could almost derive this by polling [`Reader::last_pcr`]
+    /// and noticing when it changes — but only to the granularity of
+    /// whatever it feeds, and a live receiver feeds whole transport reads
+    /// (up to 7 packets each), so the ordinal it would attach could be
+    /// off by up to that many packets. `crate::corrupt::Attribution`
+    /// converts these pairs into receiver positions for logged corruption
+    /// coordinates, and an off-by-a-chunk anchor there silently shifts
+    /// every attribution window, so the exact ordinal is recorded at the
+    /// moment the PCR is decoded instead.
+    pub fn take_pcr_events(&mut self) -> Vec<(u64, u64)> {
+        std::mem::take(&mut self.pcr_events)
     }
 
     /// Whether `pid` is a PMT PID — learned from the PAT.
@@ -261,6 +285,7 @@ impl Reader {
             }
             let pkt: [u8; PKT] = self.carry[off..off + PKT].try_into().expect("PKT bytes");
             let before = self.summary.packets;
+            let pcr_events_before = self.pcr_events.len();
             if let Err(e) = self.packet(&pkt) {
                 if self.resync_mode {
                     // `off` passed the hunt-mode header check above (its
@@ -276,6 +301,13 @@ impl Reader {
                     // right for downstream corruption verdicts to attribute
                     // the event correctly.
                     self.summary.packets = before;
+                    // Same rollback for a PCR this skipped packet may
+                    // already have recorded (the PCR is decoded before
+                    // the PSI parse that failed): its ordinal named a
+                    // packet that is no longer counted, and the next
+                    // accepted packet is about to claim that ordinal
+                    // itself.
+                    self.pcr_events.truncate(pcr_events_before);
                     self.resyncs.push(Resync {
                         at_packets: before,
                         pcr_base: self.last_pcr,
@@ -353,6 +385,9 @@ impl Reader {
         if let Some(base) = info.pcr_base {
             self.summary.pcr.entry(info.pid).or_default().push(base);
             self.last_pcr = Some(base);
+            // `packets` was incremented just above, so this packet's own
+            // 0-based ordinal is one less — see `take_pcr_events`.
+            self.pcr_events.push((base, self.summary.packets - 1));
         }
         if !info.has_payload {
             return Ok(());
@@ -627,6 +662,47 @@ mod tests {
         let v = &s.pts[&0x1011];
         let decreases = v.windows(2).filter(|w| w[1] < w[0]).count();
         assert_eq!(decreases, 1);
+    }
+
+    /// `take_pcr_events` must report each base against the ordinal of the
+    /// packet that CARRIED it, independently of how the bytes were
+    /// chunked into `feed`. Checked against `classify_packet` walked over
+    /// the same bytes packet by packet — the `Reader`'s own streaming
+    /// bookkeeping compared to a flat, chunk-free enumeration.
+    #[test]
+    fn take_pcr_events_stamps_each_base_at_its_own_packet_ordinal() {
+        let p = crate::profiles::by_name("baseline").unwrap();
+        let path =
+            std::env::temp_dir().join(format!("tst-interop-rawts-pcrat-{}.ts", std::process::id()));
+        crate::r#gen::run(p, 2.0, &path).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+
+        let want: Vec<(u64, u64)> = bytes
+            .chunks_exact(PKT)
+            .enumerate()
+            .filter_map(|(i, c)| {
+                let pkt: [u8; PKT] = c.try_into().expect("PKT bytes");
+                classify_packet(&pkt)
+                    .expect("generated packets classify")
+                    .pcr_base
+                    .map(|b| (b, i as u64))
+            })
+            .collect();
+        assert!(!want.is_empty(), "the baseline profile carries PCRs");
+
+        // Odd chunk size on purpose: a PCR packet routinely straddles two
+        // feeds, which is exactly the case a "did last_pcr change since
+        // the previous feed" diff would mis-stamp.
+        let mut r = Reader::new();
+        let mut got = Vec::new();
+        for chunk in bytes.chunks(101) {
+            r.feed(chunk).unwrap();
+            got.extend(r.take_pcr_events());
+        }
+        assert_eq!(got, want);
+        // Drained: everything was taken, nothing is reported twice.
+        assert!(r.take_pcr_events().is_empty());
     }
 
     #[test]

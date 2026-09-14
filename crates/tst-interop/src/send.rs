@@ -216,6 +216,9 @@ pub fn send_over_transport(
         // are demux-event tallies, meaningless (always zero) here.
         discontinuities: 0,
         nonconformant: 0,
+        // Attribution is a RECEIVER-side judgement of the corruption log
+        // this side writes; the sender has no events to judge.
+        corruption_attribution: None,
     })
 }
 
