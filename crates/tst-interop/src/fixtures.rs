@@ -336,11 +336,11 @@ pub enum KlvSet {
     /// expectations were validated against these exact bytes, so this
     /// stays the default everywhere.
     Compact,
-    /// A realistic ~32-tag record: the same walking core, plus six
-    /// optional tag groups that come and go on a seeded schedule, plus a
-    /// nested ST 0102 security set. Exercises the demuxer/decoder against
-    /// records whose tag set varies record to record, which is what a
-    /// real ST 0601 producer emits.
+    /// A realistic record of up to 36 tags (mean ~27): the same walking
+    /// core, plus six optional tag groups that come and go on a seeded
+    /// schedule, plus a nested ST 0102 security set. Exercises the
+    /// demuxer/decoder against records whose tag set varies record to
+    /// record, which is what a real ST 0601 producer emits.
     Rich,
 }
 
@@ -550,10 +550,17 @@ pub fn observed_tags(rec: &UasDatalinkLs) -> std::collections::BTreeSet<u32> {
 ///
 /// This is the run-1 rule generalised: soak run 1 died 14.5 h in because
 /// an unbounded latitude walk crossed Tag 13's +90 encode max. Every
-/// numeric tag the rich generator sets goes through here, so no tag can
-/// ever reach its own encode limit however long the run goes — and the
-/// 5 % margin means a later rounding or unit tweak has room to be wrong
-/// without becoming a mid-soak panic.
+/// numeric tag the rich generator sets whose range is its ENCODE range
+/// goes through here, so it can never reach its own limit however long
+/// the run goes — and the 5 % margin means a later rounding or unit
+/// tweak has room to be wrong without becoming a mid-soak panic.
+///
+/// The sensor latitude and longitude are the deliberate exceptions.
+/// Sweeping them across their full ±90 / ±180 encode ranges would put
+/// the platform on the other side of the planet every few minutes; they
+/// instead track a 1°-wide window around a fixed origin, which is
+/// bounded far more tightly than this function would bound them and is
+/// the same shape the compact record's own fix used.
 fn walk(w: f64, min: f64, max: f64) -> f64 {
     let margin = (max - min) * 0.05;
     min + margin + w * (max - min - 2.0 * margin)
@@ -565,10 +572,12 @@ fn walk(w: f64, min: f64, max: f64) -> f64 {
 ///
 /// # Errors
 /// Returns the encoder's message (which names the offending tag) rather
-/// than panicking. Every numeric field is walked through `walk` and so
-/// should be structurally incapable of going out of range; surfacing a
-/// failure as `Err` instead of an `expect` is what keeps a generator bug
-/// from killing a 72 h soak the way run 1's did.
+/// than panicking. Every numeric field is bounded by construction —
+/// through the `walk` helper for the tags whose range is their encode
+/// range, and by a 1°-wide window around a fixed origin for the sensor
+/// latitude and longitude — so none should be capable of going out of
+/// range; surfacing a failure as `Err` instead of an `expect` is what keeps a
+/// generator bug from killing a 72 h soak the way run 1's did.
 pub fn klv_record_rich(seed: u64, seq: u32) -> Result<Vec<u8>, String> {
     let tags = rich_presence(seed, seq);
     let has = |t: u8| tags.contains(&u32::from(t));

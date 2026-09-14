@@ -155,7 +155,8 @@ fn main() {
 /// success, 2 on usage/IO error.
 ///
 /// `--klv-set rich` (default `compact`) swaps the 4-tag fixture record
-/// for a ~32-tag ST 0601 record carrying a nested ST 0102 security set,
+/// for an ST 0601 record of up to 36 tags (mean ~27) carrying a nested
+/// ST 0102 security set,
 /// whose tag set varies record to record on a schedule seeded by
 /// `--klv-seed N` (default 0). The default is byte-identical to what
 /// this subcommand has always written, so every interop-matrix cell is

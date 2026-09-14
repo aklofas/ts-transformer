@@ -372,9 +372,9 @@ can check the run did what it said it would.
   only sees for five seconds at a time.
 - **Sender-side corruption on both legs**, each with its own seed offset and
   its own injection log, read back by that leg's own receiver.
-- **Rich ST 0601 KLV on both legs** — a ~32-tag record carrying a nested
-  ST 0102 security set on a seeded presence schedule, rather than the
-  matrix's 4-tag minimal record.
+- **Rich ST 0601 KLV on both legs** — a record of up to 36 tags (mean about
+  27) carrying a nested ST 0102 security set on a seeded presence schedule,
+  rather than the matrix's 4-tag minimal record.
 
 The verdict document gains four families on top of the existing ones. Two
 are declaration checks — `profile_declared_<leg>` and
