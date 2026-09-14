@@ -376,14 +376,24 @@ can check the run did what it said it would.
   27) carrying a nested ST 0102 security set on a seeded presence schedule,
   rather than the matrix's 4-tag minimal record.
 
-The verdict document gains four families on top of the existing ones. Two
-are declaration checks — `profile_declared_<leg>` and
-`schedule_declared_<leg>` — which fail a run whose proxy or receiver did not
-actually run what the config declared, so a drift between the recipe and the
-run cannot pass unnoticed. The third is the drop-rate verdict, now
-integrated over the echoed phase table rather than compared against one flat
-rate, and failing loud on a stats file whose phase counters disagree with its
-own schedule echo. The fourth is the corruption family described above.
+The verdict document gains three groups on top of the existing ones. The
+first is four declaration checks — `profile_declared_<leg>`,
+`schedule_declared_<leg>`, `corruption_declared_<leg>` and
+`klv_declared_<leg>` — which fail a run whose proxy, sender or receiver did
+not actually run what the config declared, so a drift between the recipe and
+the run cannot pass unnoticed. Each is worth its own check because each
+failure is silent: a leg declared rich whose receiver was launched in
+compact mode, for instance, produces no rich-KLV block at all, and every
+rich-KLV verdict is then skipped rather than failed. The second is the
+drop-rate verdict, now integrated over the echoed phase table rather than
+compared against one flat rate, and failing loud on a stats file whose phase
+counters disagree with its own schedule echo. The third is the corruption
+family described above, together with `corruption_coverage_<leg>`: the three
+finding verdicts all pass on an empty finding list, so a leg whose tap
+injected nothing would pass every one of them while proving nothing, and the
+coverage verdict is what requires the injections to have happened, the
+receiver to have ingested the whole log, and at least nine in ten of them to
+have been placed on the receiver's own timeline.
 
 Two attribution rules keep those verdicts honest on a link that really does
 lose packets. A live capture is judged in the lossy tier, where an
