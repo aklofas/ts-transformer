@@ -1634,22 +1634,34 @@ impl Attribution {
         if sig == Signal::Resync {
             self.resyncs += 1;
         }
+        let attributed_to = self.hit(at);
         // A continuity jump is the one signal that also means "packets
-        // went missing here", so it is recorded against EVERY injection
-        // whose window contains it, not just the newest one `hit` picks.
-        // Under a valid config the windows cannot overlap (`min_gap >= 2 *
-        // ATTRIBUTION_WINDOW`), so in practice this marks at most one —
-        // but a hand-built attribution in a test can overlap them, and
-        // marking only the newest would silently under-record.
+        // went missing here", so it is recorded against every injection
+        // whose window contains it — EXCEPT the injection it is attributed
+        // to.
+        //
+        // That exception is the whole point. An injection's own jump is
+        // its own damage surfacing; it cannot also be evidence that the
+        // network swallowed that same injection. Without the exception a
+        // `Drop` would excuse itself: its only observable IS a continuity
+        // jump, so every drop would arrive pre-excused and its recovery
+        // obligation would evaporate. A jump from an OUTAGE or from
+        // another injection still excuses, which is what this flag is for.
+        //
+        // `hit` picks the newest covering injection, so the loop can still
+        // mark an older one whose window also covers `at`. Under a valid
+        // config windows cannot overlap (`min_gap >= 2 *
+        // ATTRIBUTION_WINDOW`) and only an `approx` resolution's widened
+        // window reaches this at all, but marking solely the newest would
+        // silently under-record when they do overlap.
         if sig == Signal::ContinuityJump {
-            self.advance(at);
             for i in self.lo..self.hi {
-                if self.window_contains(i, at) {
+                if Some(i) != attributed_to && self.window_contains(i, at) {
                     self.st[i].cc_jump_in_window = true;
                 }
             }
         }
-        match self.hit(at) {
+        match attributed_to {
             Some(i) => {
                 self.attributed_events += 1;
                 match sig {
@@ -1751,13 +1763,16 @@ impl Attribution {
     ///   Unexplained `Resync`/`PsiChecksum`/`MalformedPes`/
     ///   `OtherNonConformant` still fail: a lost packet does not forge a
     ///   bad CRC or a malformed PES header.
-    /// - An undetected or unrecovered injection with a `ContinuityJump` in
-    ///   its window is excused into
+    /// - An undetected or unrecovered injection with a FOREIGN
+    ///   `ContinuityJump` in its window is excused into
     ///   [`undetected_lost`](AttributionReport::undetected_lost) /
     ///   [`unrecovered_lost`](AttributionReport::unrecovered_lost): a
     ///   corrupted packet the network then threw away cannot be noticed by
     ///   its damage, and media the same gap swallowed is not the injection
-    ///   failing to recover.
+    ///   failing to recover. Foreign is load-bearing — an injection's OWN
+    ///   jump never excuses it (see [`Attribution::on_signal`]), or a
+    ///   `Drop`, whose only observable is a continuity jump, would arrive
+    ///   pre-excused and never have to recover at all.
     ///
     /// `Strict` (the offline-file path, and `recv --strict`) passes `false`
     /// and is unchanged — there is no transport between a file and its
@@ -2742,41 +2757,6 @@ mod tests {
         }
     }
 
-    /// Transport-loss excusal, the injection half. A corrupted packet the
-    /// network then threw away cannot be noticed by its damage, and media
-    /// the same gap swallowed is not the injection failing to recover — so
-    /// in Lossy both land in the `*_lost` counters rather than the failing
-    /// lists. `Strict` still reports both.
-    #[test]
-    fn lossy_excuses_undetected_and_unrecovered_when_a_cc_jump_shares_the_window() {
-        // `PsiFlip` is detectable and expects a PsiChecksum/
-        // OtherNonConformant event, NOT a ContinuityJump — so the jump
-        // inside its window never marks it detected, which is exactly the
-        // shape this excusal is for. It also needs media on its own PID to
-        // count as recovered, and PID 0 never carries any, so it goes
-        // unrecovered too.
-        let build = || {
-            let mut a = Attribution::new(vec![inj(1000, 10, Class::PsiFlip, 0, true)], &hdr());
-            a.on_pcr(1000, 5000); // resolves to 5010
-            // A gap inside the window, on a DIFFERENT pid: transport loss
-            // is not confined to the injected PID.
-            a.on_signal(5100, Some(0x1031), Signal::ContinuityJump);
-            a
-        };
-
-        let lossy = build().finish_with(10_000, true);
-        assert!(lossy.undetected.is_empty(), "{:?}", lossy.undetected);
-        assert!(lossy.unrecovered.is_empty(), "{:?}", lossy.unrecovered);
-        assert_eq!(lossy.undetected_lost, 1);
-        assert_eq!(lossy.unrecovered_lost, 1);
-
-        let strict = build().finish_with(10_000, false);
-        assert_eq!(strict.undetected.len(), 1);
-        assert_eq!(strict.unrecovered.len(), 1);
-        assert_eq!(strict.undetected_lost, 0);
-        assert_eq!(strict.unrecovered_lost, 0);
-    }
-
     /// The excusal is evidence-driven, not blanket: with NO continuity
     /// jump in its window, an undetected injection still fails in Lossy.
     /// Without this the whole corruption suite would go vacuous.
@@ -2789,6 +2769,85 @@ mod tests {
         let r = a.finish_with(10_000, true);
         assert_eq!(r.undetected.len(), 1, "{r:?}");
         assert_eq!(r.undetected_lost, 0);
+    }
+
+    /// An injection's OWN continuity jump is its own damage surfacing, not
+    /// evidence that the network ate it, so it must not excuse that
+    /// injection's recovery obligation. `Drop` is the class this protects:
+    /// its only observable IS a continuity jump, so a self-excusing rule
+    /// would let every drop arrive pre-excused and never have to show the
+    /// stream recovering.
+    #[test]
+    fn an_injections_own_cc_jump_does_not_excuse_its_recovery() {
+        let mut a = Attribution::new(vec![inj(1000, 10, Class::Drop, 0x1011, true)], &hdr());
+        a.on_pcr(1000, 5000); // resolves to 5010
+        // Its own jump, inside its own window, attributed to it.
+        a.on_signal(5100, Some(0x1011), Signal::ContinuityJump);
+        // No media on 0x1011 afterwards, so it never recovers.
+        let r = a.finish_with(10_000, true);
+        assert_eq!(r.attributed_events, 1, "the jump IS attributed: {r:?}");
+        assert_eq!(
+            r.unrecovered.len(),
+            1,
+            "a drop keeps its full recovery obligation: {r:?}"
+        );
+        assert_eq!(r.unrecovered_lost, 0, "{r:?}");
+    }
+
+    /// The other half of the same rule: a jump from a DIFFERENT injection
+    /// still excuses. `hit` attributes a jump to the newest covering
+    /// injection, so an older one whose window also covers it is excused —
+    /// which needs overlapping windows, the case a real tap config forbids
+    /// (`min_gap >= 2 * ATTRIBUTION_WINDOW`) but an `approx` resolution's
+    /// widened window can still produce.
+    #[test]
+    fn a_foreign_cc_jump_in_the_window_still_excuses() {
+        // Two injections 100 packets apart: deliberately closer than
+        // `min_gap` so their windows overlap and the newer one can own a
+        // jump that also falls inside the older one's window.
+        let build = || {
+            let mut a = Attribution::new(
+                vec![
+                    inj(1000, 10, Class::PsiFlip, 0, true),
+                    inj(1000, 110, Class::Drop, 0x1011, true),
+                ],
+                &hdr(),
+            );
+            a.on_pcr(1000, 5000); // resolve to 5010 and 5110
+            // Inside BOTH windows; `hit` gives it to the newer (the Drop),
+            // so the PsiFlip sees it as foreign.
+            a.on_signal(5200, Some(0x1011), Signal::ContinuityJump);
+            a
+        };
+
+        // The psi_flip is detectable and expects a PsiChecksum event it
+        // never got, so it is BOTH undetected and unrecovered — one
+        // fixture covering both excused counters.
+        let lossy = build().finish_with(10_000, true);
+        assert_eq!(
+            (lossy.undetected_lost, lossy.unrecovered_lost),
+            (1, 1),
+            "the psi_flip is excused by the drop's foreign jump: {lossy:?}"
+        );
+        assert!(
+            lossy.undetected.is_empty(),
+            "nothing else was undetected: {lossy:?}"
+        );
+        assert_eq!(
+            lossy.unrecovered.len(),
+            1,
+            "and the drop itself is NOT excused by its own jump: {lossy:?}"
+        );
+        assert!(
+            lossy.unrecovered[0].contains("drop"),
+            "the surviving one must be the drop: {lossy:?}"
+        );
+
+        // Strict excuses neither, as always.
+        let strict = build().finish_with(10_000, false);
+        assert_eq!(strict.undetected.len(), 1, "{strict:?}");
+        assert_eq!(strict.unrecovered.len(), 2, "{strict:?}");
+        assert_eq!((strict.undetected_lost, strict.unrecovered_lost), (0, 0));
     }
 
     /// `explains_damage` answers for a content oracle, records nothing,

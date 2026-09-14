@@ -443,10 +443,8 @@ impl Tally {
                     // damaged this record: the three rich oracles judge
                     // what a conformant PRODUCER must emit, and bytes the
                     // tap deliberately rewrote are not the producer's
-                    // doing. `route_to_attribution` has already run
-                    // `on_media(at, pid)` for this event, so the
-                    // attribution's cursors are positioned at `at` and
-                    // this read-only query needs no advance of its own.
+                    // doing. See `Attribution::explains_damage` for what
+                    // counts as damage and why it takes `&mut self`.
                     let damaged = self
                         .attribution
                         .as_mut()
@@ -801,9 +799,29 @@ impl Tally {
             .map(|a| a.finish_with(wire.packets, excuse_transport_loss))
             .inspect(|rep| {
                 if !rep.unexplained_events.is_empty() {
+                    // The count must match the LIST it quotes. `events -
+                    // attributed_events` counts every event no injection
+                    // explained, including the discontinuity-family ones
+                    // Lossy already excused and removed from the list — so
+                    // subtract those too, and say how many they were, the
+                    // same way `report soak`'s sibling string does.
+                    // Otherwise a run reads "38 unexplained event(s)" while
+                    // holding a list of one.
+                    let unexplained = rep
+                        .events
+                        .saturating_sub(rep.attributed_events)
+                        .saturating_sub(rep.unexplained_transport_loss);
+                    let excused = if rep.unexplained_transport_loss > 0 {
+                        format!(
+                            " ({} excused as transport loss)",
+                            rep.unexplained_transport_loss
+                        )
+                    } else {
+                        String::new()
+                    };
                     failures.push(format!(
-                        "corruption_attributed: {} unexplained event(s), first: {}",
-                        rep.events.saturating_sub(rep.attributed_events),
+                        "corruption_attributed: {unexplained} unexplained event(s){excused}, \
+                         first: {}",
                         rep.unexplained_events[0]
                     ));
                 }
@@ -1768,6 +1786,48 @@ mod tests {
             !r.failures.iter().any(|f| f.starts_with("discontinuity")),
             "{:?}",
             r.failures
+        );
+    }
+
+    /// The `corruption_attributed` failure's COUNT must describe the list
+    /// it quotes. `events - attributed_events` includes the
+    /// discontinuity-family events Lossy excused and removed from that
+    /// list, so without subtracting them a run reads "3 unexplained
+    /// event(s)" while holding a list of one.
+    #[test]
+    fn the_unexplained_count_excludes_events_excused_as_transport_loss() {
+        use crate::corrupt::{Attribution, Class, Signal};
+        let hdr = corruption_header();
+        let wire = wire_for("baseline", 2.0);
+
+        let mut t = healthy_baseline_tally();
+        let mut a = Attribution::new(vec![injection_at(Class::Header, VIDEO_PID, 3)], &hdr);
+        // One unexplained non-conformance (survives the excusal) and two
+        // unexplained continuity jumps (excused), all outside the window.
+        a.on_signal(5000, Some(VIDEO_PID), Signal::OtherNonConformant);
+        a.on_signal(6000, Some(VIDEO_PID), Signal::ContinuityJump);
+        a.on_signal(7000, Some(VIDEO_PID), Signal::ContinuityJump);
+        t.attach_attribution(a);
+        let r = t.finish(
+            profiles::by_name("baseline").unwrap(),
+            2.0,
+            NOMINAL_COUNT_SLACK,
+            VerifyMode::Lossy,
+            &wire,
+        );
+
+        let rep = r.metrics.corruption_attribution.as_ref().expect("report");
+        assert_eq!(rep.unexplained_events.len(), 1, "{rep:?}");
+        assert_eq!(rep.unexplained_transport_loss, 2, "{rep:?}");
+
+        let f = r
+            .failures
+            .iter()
+            .find(|f| f.starts_with("corruption_attributed"))
+            .unwrap_or_else(|| panic!("expected the failure: {:?}", r.failures));
+        assert!(
+            f.contains("1 unexplained event(s)") && f.contains("(2 excused as transport loss)"),
+            "{f}"
         );
     }
 
