@@ -294,6 +294,17 @@ fn udp_rich_klv_loopback_round_trips() {
         send_metrics.stream_sha256, recv_report.metrics.stream_sha256,
         "UDP loopback must be byte-transparent for rich records too"
     );
+    // The LIVE receive path must run the rich oracles, not just carry
+    // the expectation — `tests/klv_rich.rs` proves the oracles bite, this
+    // proves `recv_over_transport` actually reaches them.
+    let m = recv_report
+        .metrics
+        .klv_rich
+        .expect("a rich recv must report rich metrics");
+    assert!(m.records > 0, "{m:?}");
+    assert_eq!(m.decode_errors, 0, "{m:?}");
+    assert_eq!(m.census_mismatches, 0, "{m:?}");
+    assert_eq!(m.security_ok, m.security_expected, "{m:?}");
 }
 
 /// A scratch path for one test's corruption log. Process id plus the
