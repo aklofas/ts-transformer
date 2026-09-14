@@ -73,7 +73,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use tst_core::transport::{RecvTransport, TransportCancel};
-use tst_interop::fixtures::KlvSet;
+use tst_interop::fixtures::{AuSizeMode, KlvSet};
 use tst_interop::verify::KlvExpect;
 use tst_interop::{profiles, recv, serve, verify};
 use tst_rtp::RtspClient;
@@ -189,8 +189,16 @@ fn hls_serve_round_trip_matches_baseline() {
         .parse()
         .expect("bind_addr must parse");
 
-    let handle =
-        thread::spawn(move || serve::run_hls(profile, bind_addr, SECONDS, KlvSet::Compact, 0));
+    let handle = thread::spawn(move || {
+        serve::run_hls(
+            profile,
+            bind_addr,
+            SECONDS,
+            KlvSet::Compact,
+            0,
+            AuSizeMode::Compact,
+        )
+    });
 
     wait_for_accept(bind_addr, Duration::from_secs(5));
 
@@ -293,7 +301,15 @@ fn rtsp_serve_round_trip_via_own_client() {
     const MOUNT: &str = "/live";
 
     let handle = thread::spawn(move || {
-        serve::run_rtsp(profile, bind_addr, MOUNT, SECONDS, KlvSet::Compact, 0)
+        serve::run_rtsp(
+            profile,
+            bind_addr,
+            MOUNT,
+            SECONDS,
+            KlvSet::Compact,
+            0,
+            AuSizeMode::Compact,
+        )
     });
 
     wait_for_accept(bind_addr, Duration::from_secs(5));

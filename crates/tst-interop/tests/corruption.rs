@@ -34,7 +34,7 @@ use tst_interop::corrupt::{
     parse_corrupt, parse_log,
     testing::{VecTransport, VecWriter},
 };
-use tst_interop::fixtures::KlvSet;
+use tst_interop::fixtures::{AuSizeMode, KlvSet};
 use tst_interop::profiles::Profile;
 use tst_interop::report_types::VerifyReport;
 use tst_interop::verify::{KlvExpect, VerifyMode, verify_bytes_with_corruption};
@@ -63,7 +63,7 @@ fn gen_bytes(p: &Profile, tag: &str) -> Vec<u8> {
         "tst-interop-corruption-{tag}-{}.ts",
         std::process::id()
     ));
-    r#gen::run(p, SECONDS, &path, KlvSet::Compact, 0).expect("gen::run");
+    r#gen::run(p, SECONDS, &path, KlvSet::Compact, 0, AuSizeMode::Compact).expect("gen::run");
     let bytes = std::fs::read(&path).expect("read the generated capture");
     let _ = std::fs::remove_file(&path);
     bytes

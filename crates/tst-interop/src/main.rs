@@ -77,6 +77,19 @@ fn parse_klv_set(raw: &str, context: &str) -> KlvSet {
     })
 }
 
+/// Parse an `--au-sizes compact|realistic` value, or exit 2 naming the
+/// subcommand. `context` is the subcommand name (e.g. `"gen"`).
+fn parse_au_sizes(raw: &str, context: &str) -> AuSizeMode {
+    match raw {
+        "compact" => AuSizeMode::Compact,
+        "realistic" => AuSizeMode::Realistic,
+        other => {
+            eprintln!("{context}: --au-sizes must be 'compact' or 'realistic', got '{other}'");
+            std::process::exit(2);
+        }
+    }
+}
+
 /// Parse a `--klv-seed N` value, or exit 2 naming the subcommand.
 fn parse_klv_seed(raw: &str, context: &str) -> u64 {
     raw.parse::<u64>().unwrap_or_else(|e| {
@@ -134,7 +147,8 @@ fn main() {
 }
 
 /// `gen --profile NAME --seconds N --out PATH
-/// [--klv-set compact|rich] [--klv-seed N]`
+/// [--klv-set compact|rich] [--klv-seed N]
+/// [--au-sizes compact|realistic]`
 ///
 /// Generates `N` seconds of profile `NAME`'s synthetic MPEG-TS/KLV traffic
 /// (offline pacing, no transport) and writes it to `PATH`. Exits 0 on
@@ -147,12 +161,20 @@ fn main() {
 /// this subcommand has always written, so every interop-matrix cell is
 /// unaffected. A receiver judging a rich capture must be told the same
 /// `--klv-set`/`--klv-seed` — see `recv`/`verify`.
+///
+/// `--au-sizes realistic` (default `compact`) swaps the tens-of-bytes
+/// video AUs for GOP-structured ones (keyframes tens of KB, inter
+/// frames single-digit KB — see `fixtures::AuSizeMode`). The default is
+/// byte-identical to what this subcommand has always written; the
+/// matrix runner passes `realistic` so its cells exercise a real
+/// encoder's size regime.
 fn run_gen(args: &[String]) -> ! {
     let mut profile: Option<String> = None;
     let mut seconds: Option<f64> = None;
     let mut out: Option<PathBuf> = None;
     let mut klv_set = KlvSet::Compact;
     let mut klv_seed: u64 = 0;
+    let mut au_sizes = AuSizeMode::Compact;
 
     let mut i = 0;
     while i < args.len() {
@@ -175,6 +197,10 @@ fn run_gen(args: &[String]) -> ! {
             }
             "--klv-seed" => {
                 klv_seed = parse_klv_seed(&require_value(args, i, "gen: --klv-seed"), "gen");
+                i += 2;
+            }
+            "--au-sizes" => {
+                au_sizes = parse_au_sizes(&require_value(args, i, "gen: --au-sizes"), "gen");
                 i += 2;
             }
             other => {
@@ -201,7 +227,7 @@ fn run_gen(args: &[String]) -> ! {
         std::process::exit(2);
     });
 
-    if let Err(e) = r#gen::run(p, seconds, &out, klv_set, klv_seed) {
+    if let Err(e) = r#gen::run(p, seconds, &out, klv_set, klv_seed, au_sizes) {
         eprintln!("gen: {e}");
         std::process::exit(2);
     }
@@ -318,16 +344,7 @@ fn run_send(args: &[String]) -> ! {
                 i += 1;
             }
             "--au-sizes" => {
-                au_sizes = match require_value(args, i, "send: --au-sizes").as_str() {
-                    "compact" => AuSizeMode::Compact,
-                    "realistic" => AuSizeMode::Realistic,
-                    other => {
-                        eprintln!(
-                            "send: --au-sizes must be 'compact' or 'realistic', got '{other}'"
-                        );
-                        std::process::exit(2);
-                    }
-                };
+                au_sizes = parse_au_sizes(&require_value(args, i, "send: --au-sizes"), "send");
                 i += 2;
             }
             "--klv-set" => {
@@ -424,8 +441,12 @@ fn run_send(args: &[String]) -> ! {
             std::process::exit(2);
         }
         let result = match scheme {
-            serve::ServeScheme::Hls => serve::run_hls_url(p, &url, seconds, klv_set, klv_seed),
-            serve::ServeScheme::Rtsp => serve::run_rtsp_url(p, &url, seconds, klv_set, klv_seed),
+            serve::ServeScheme::Hls => {
+                serve::run_hls_url(p, &url, seconds, klv_set, klv_seed, au_sizes)
+            }
+            serve::ServeScheme::Rtsp => {
+                serve::run_rtsp_url(p, &url, seconds, klv_set, klv_seed, au_sizes)
+            }
         };
         if let Err(e) = result {
             eprintln!("send: {e}");

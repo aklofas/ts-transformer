@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 
 use tst_core::mpegts::mux::Av1CarriageMode;
-use tst_interop::fixtures::KlvSet;
+use tst_interop::fixtures::{AuSizeMode, KlvSet};
 use tst_interop::profiles::{self, Profile};
 use tst_interop::report_types::VerifyReport;
 use tst_interop::{r#gen, verify};
@@ -16,7 +16,7 @@ const PKT: usize = 188;
 fn gen_to_temp(p: &Profile, seconds: f64, tag: &str) -> PathBuf {
     let path =
         std::env::temp_dir().join(format!("tst-interop-mut-{tag}-{}.ts", std::process::id()));
-    r#gen::run(p, seconds, &path, KlvSet::Compact, 0).expect("gen");
+    r#gen::run(p, seconds, &path, KlvSet::Compact, 0, AuSizeMode::Compact).expect("gen");
     path
 }
 

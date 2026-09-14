@@ -38,7 +38,7 @@ use tst_hls::{HlsMode, HlsPublisherBuilder};
 use tst_pipeline::MuxPublisher;
 use tst_rtp::RtspServer;
 
-use crate::fixtures::{self, KlvSet};
+use crate::fixtures::{self, AuSizeMode, KlvSet};
 use crate::mux_setup;
 use crate::profiles::{KlvMode, Profile, VideoCodec};
 use crate::schedule::{self, Event, PTS_HZ};
@@ -94,14 +94,15 @@ fn unique_suffix() -> u128 {
 /// this function pushes video. `MISP` (`KlvMode::AsyncWithMisp`, the
 /// `misp` profile) IS supported — `MuxPublisher::send_video_misp` exists.
 ///
-/// `klv`/`klv_seed` pick the ST 0601 record factory — see `gen::run`'s
-/// doc comment.
+/// `klv`/`klv_seed` pick the ST 0601 record factory and `au_sizes` the
+/// video AU size regime — see `gen::run`'s doc comment for both.
 pub fn run_hls(
     p: &Profile,
     bind_addr: SocketAddr,
     seconds: f64,
     klv: KlvSet,
     klv_seed: u64,
+    au_sizes: AuSizeMode,
 ) -> Result<(), String> {
     let out_dir = std::env::temp_dir().join(format!(
         "tst-interop-hls-serve-{}-{}",
@@ -109,7 +110,7 @@ pub fn run_hls(
         unique_suffix(),
     ));
 
-    let result = run_hls_inner(p, bind_addr, seconds, &out_dir, klv, klv_seed);
+    let result = run_hls_inner(p, bind_addr, seconds, &out_dir, klv, klv_seed, au_sizes);
     // Best-effort cleanup on every path (success or error): the segments
     // + playlist HlsPublisherBuilder wrote under out_dir have already
     // been fully served (or never will be, on an error exit) by the
@@ -128,6 +129,7 @@ fn run_hls_inner(
     out_dir: &Path,
     klv: KlvSet,
     klv_seed: u64,
+    au_sizes: AuSizeMode,
 ) -> Result<(), String> {
     let publisher = HlsPublisherBuilder::new()
         .bind(bind_addr)
@@ -153,7 +155,7 @@ fn run_hls_inner(
         let pts = Pts90khz::new(pts_ticks);
         match event {
             Event::Video { frame_idx } => {
-                let (au, keyframe) = fixtures::video_au(p.video, frame_idx);
+                let (au, keyframe) = fixtures::video_au_sized(p.video, frame_idx, au_sizes);
                 if p.klv == KlvMode::AsyncWithMisp {
                     // Mirrors gen.rs/send.rs's own guard: MISP profiles
                     // are always H.264 in the registry today.
@@ -208,8 +210,8 @@ fn run_hls_inner(
 /// Blocks for `seconds` (wall-clock paced push), then keeps the server up
 /// for `LINGER` before calling `stop()`.
 ///
-/// `klv`/`klv_seed` pick the ST 0601 record factory — see `gen::run`'s
-/// doc comment.
+/// `klv`/`klv_seed` pick the ST 0601 record factory and `au_sizes` the
+/// video AU size regime — see `gen::run`'s doc comment for both.
 ///
 /// # Scope
 /// `MountHandle` (`tst_rtp::rtsp::server::mount::MountHandle`) mirrors
@@ -225,6 +227,7 @@ pub fn run_rtsp(
     seconds: f64,
     klv: KlvSet,
     klv_seed: u64,
+    au_sizes: AuSizeMode,
 ) -> Result<(), String> {
     if p.klv == KlvMode::AsyncWithMisp {
         return Err(format!(
@@ -259,7 +262,7 @@ pub fn run_rtsp(
         let pts = Pts90khz::new(pts_ticks);
         match event {
             Event::Video { frame_idx } => {
-                let (au, keyframe) = fixtures::video_au(p.video, frame_idx);
+                let (au, keyframe) = fixtures::video_au_sized(p.video, frame_idx, au_sizes);
                 for &handle in &video_handles {
                     mount_handle
                         .push_video_to(handle, &au, pts, keyframe)
@@ -327,6 +330,7 @@ pub fn run_hls_url(
     seconds: f64,
     klv: KlvSet,
     klv_seed: u64,
+    au_sizes: AuSizeMode,
 ) -> Result<(), String> {
     let parsed = tst_hls::HlsUrl::parse(url).map_err(|e| format!("hls url {url}: {e}"))?;
     if parsed.tls {
@@ -335,7 +339,7 @@ pub fn run_hls_url(
         );
     }
     let bind_addr = SocketAddr::new(parsed.addr, parsed.port);
-    run_hls(p, bind_addr, seconds, klv, klv_seed)
+    run_hls(p, bind_addr, seconds, klv, klv_seed, au_sizes)
 }
 
 /// Parse an `rtsp://` URL's bind address + mount path and serve `p` over
@@ -348,6 +352,7 @@ pub fn run_rtsp_url(
     seconds: f64,
     klv: KlvSet,
     klv_seed: u64,
+    au_sizes: AuSizeMode,
 ) -> Result<(), String> {
     let parsed = tst_rtp::RtspUrl::parse(url).map_err(|e| format!("rtsp url {url}: {e}"))?;
     if parsed.scheme() == tst_rtp::RtspScheme::Rtsps {
@@ -370,5 +375,5 @@ pub fn run_rtsp_url(
         .parse()
         .map_err(|e| format!("rtsp url {url}: host '{host}' is not a literal IP: {e}"))?;
     let bind_addr = SocketAddr::new(ip, parsed.port);
-    run_rtsp(p, bind_addr, &parsed.path, seconds, klv, klv_seed)
+    run_rtsp(p, bind_addr, &parsed.path, seconds, klv, klv_seed, au_sizes)
 }

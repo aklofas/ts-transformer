@@ -23,7 +23,7 @@
 #
 # Usage:
 #   run-matrix.sh --outdir DIR [--seconds N] [--cells GLOB] [--profiles LIST]
-#                 [--allowed-skips LIST]
+#                 [--allowed-skips LIST] [--au-sizes compact|realistic]
 #
 #   --outdir DIR      required. Cell JSON -> DIR/cells/*.json, per-cell
 #                      combined (us + peer) logs -> DIR/logs/*.log,
@@ -72,6 +72,17 @@
 #                      hatch for a box missing a peer tool. `interop.yml`
 #                      never sets this (CI asserts the full census, not
 #                      a tolerated subset of it).
+#   --au-sizes MODE    video access-unit size regime, "compact" or
+#                      "realistic" (default "realistic"). Passed to every
+#                      `gen` and `send` this script runs, so the whole
+#                      matrix exchanges GOP-structured AUs — keyframes
+#                      tens of KB, inter frames single-digit KB, ~1.7 Mb/s
+#                      at 30 fps — rather than the tens-of-bytes fixtures.
+#                      That is the regime real peer tools are built for: a
+#                      keyframe spanning hundreds of TS packets exercises
+#                      PES packetization bursts, PCR catch-up insertion
+#                      and reassembly that the compact AUs never reach.
+#                      Pass "compact" to reproduce a pre-realism run.
 #
 # Before running anything, a declare pass calls every cell shape once
 # per --profiles entry with DECLARE_ONLY=1 (each shape records the id
@@ -100,6 +111,10 @@ SECONDS_ARG=10
 CELLS_GLOB="*"
 PROFILES_ARG="$ALL_PROFILE_NAMES"
 ALLOWED_SKIPS_ARG=""
+# Realistic by default: the matrix's whole point is evidence against real
+# peer tools, and a tools-facing run should exchange the AU sizes those
+# tools are built for. See the --au-sizes note in the header.
+AU_SIZES=realistic
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -123,8 +138,12 @@ while [[ $# -gt 0 ]]; do
       ALLOWED_SKIPS_ARG=$2
       shift 2
       ;;
+    --au-sizes)
+      AU_SIZES=$2
+      shift 2
+      ;;
     -h | --help)
-      sed -n '2,89p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,100p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
@@ -140,6 +159,13 @@ done
 }
 [[ "$SECONDS_ARG" =~ ^[0-9]+$ && "$SECONDS_ARG" -gt 0 ]] || {
   echo "run-matrix.sh: --seconds must be a positive integer, got: $SECONDS_ARG" >&2
+  exit 2
+}
+# Caught here rather than left to the driver: an unrecognized value would
+# otherwise fail every `gen`/`send` in the run, one confusing cell at a
+# time, minutes apart.
+[[ "$AU_SIZES" == compact || "$AU_SIZES" == realistic ]] || {
+  echo "run-matrix.sh: --au-sizes must be 'compact' or 'realistic', got: $AU_SIZES" >&2
   exit 2
 }
 
@@ -200,9 +226,10 @@ jq -n \
   --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   --arg seconds "$SECONDS_ARG" \
   --arg cells_glob "$CELLS_GLOB" \
+  --arg au_sizes "$AU_SIZES" \
   --argjson tools "$(tool_versions_json)" \
   '{host: $host, date: $date, seconds_per_cell: ($seconds | tonumber),
-    cells_glob: $cells_glob, tools: $tools}' \
+    cells_glob: $cells_glob, au_sizes: $au_sizes, tools: $tools}' \
   >"$OUTDIR/meta.json"
 
 # ---------------------------------------------------------------------
@@ -256,6 +283,7 @@ run_send_peer_recv() {
   local send_rc=0
   timeout --kill-after=3 "${budget}s" \
     "$BIN" send --profile "$PROFILE" --url "$our_url" --seconds "$SECONDS_ARG" --json "$send_json" \
+    --au-sizes "$AU_SIZES" \
     >>"$log" 2>&1 || send_rc=$?
 
   local peer_rc=0
@@ -434,6 +462,7 @@ run_serve_peer_pull() {
 
   timeout --kill-after=5 "${sbudget}s" \
     "$BIN" send --profile "$PROFILE" --url "$our_serve_url" --seconds "$SECONDS_ARG" \
+    --au-sizes "$AU_SIZES" \
     >>"$log" 2>&1 &
   local serve_pid=$!
   sleep 2 # bind + mux/HTTP-server setup
@@ -510,6 +539,7 @@ run_serve_peer_probe() {
 
   timeout --kill-after=5 "${sbudget}s" \
     "$BIN" send --profile "$PROFILE" --url "$our_serve_url" --seconds "$SECONDS_ARG" \
+    --au-sizes "$AU_SIZES" \
     >>"$log" 2>&1 &
   local serve_pid=$!
   sleep 2
@@ -1194,11 +1224,11 @@ bootstrap_budget=$(cell_timeout "$SECONDS_ARG")
 
 for PROFILE in "${PROFILE_LIST[@]}"; do
   export PROFILE
-  echo "run-matrix: profile=$PROFILE seconds=$SECONDS_ARG cells=$CELLS_GLOB" >&2
+  echo "run-matrix: profile=$PROFILE seconds=$SECONDS_ARG cells=$CELLS_GLOB au-sizes=$AU_SIZES" >&2
 
   GEN_FILE="$WORK/gensrc-$PROFILE.ts"
   timeout --kill-after=5 "${bootstrap_budget}s" \
-    "$BIN" gen --profile "$PROFILE" --seconds "$SECONDS_ARG" --out "$GEN_FILE"
+    "$BIN" gen --profile "$PROFILE" --seconds "$SECONDS_ARG" --out "$GEN_FILE" --au-sizes "$AU_SIZES"
   GEN_VERIFY_JSON="$WORK/gensrc-$PROFILE-verify.json"
   timeout --kill-after=5 "${bootstrap_budget}s" \
     "$BIN" verify --file "$GEN_FILE" --expect "$PROFILE" --seconds "$SECONDS_ARG" --json "$GEN_VERIFY_JSON"
