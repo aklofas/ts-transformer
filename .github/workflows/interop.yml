@@ -219,6 +219,13 @@ jobs:
         # 12 gst-play cells were the last skip class, enabled 2026-08-20
         # — see the peer-tools install step) and ZERO stale expectation
         # rows; anything else fails this job.
+        #
+        # `au_sizes` is checked alongside them because the census alone
+        # cannot tell the two AU-size modes apart: a matrix run at the
+        # old fixed `compact` sizes produces exactly the same 157/92/0/65
+        # numbers as one at the `realistic` GOP-structured sizes this
+        # evidence is published as, so a silent regression to compact
+        # would go unnoticed in the very numbers meant to attest to it.
         run: |
           shape=$(jq -r '.inventory.shape' "$RUNNER_TEMP/interop/results.json")
           declared=$(jq '.inventory.declared_cells' "$RUNNER_TEMP/interop/results.json")
@@ -226,12 +233,14 @@ jobs:
           total=$(jq '.summary.total' "$RUNNER_TEMP/interop/results.json")
           skipped=$(jq '.summary.skipped_tool_missing' "$RUNNER_TEMP/interop/results.json")
           stale=$(jq '.summary.stale_expectations | length' "$RUNNER_TEMP/interop/results.json")
+          au_sizes=$(jq -r '.meta.au_sizes' "$RUNNER_TEMP/interop/results.json")
           if [ "$shape" != "full-157" ] || [ "$declared" != "157" ] || [ "$skips" != "0" ] \
-             || [ "$total" != "157" ] || [ "$skipped" != "0" ] || [ "$stale" != "0" ]; then
-            echo "::error::census mismatch: shape=$shape declared=$declared allowed_skips=$skips total=$total skipped=$skipped stale=$stale"
+             || [ "$total" != "157" ] || [ "$skipped" != "0" ] || [ "$stale" != "0" ] \
+             || [ "$au_sizes" != "realistic" ]; then
+            echo "::error::census mismatch: shape=$shape declared=$declared allowed_skips=$skips total=$total skipped=$skipped stale=$stale au_sizes=$au_sizes"
             exit 1
           fi
-          echo "census complete: full-157 declared and produced, 0 skips, 0 stale rows"
+          echo "census complete: full-157 declared and produced at realistic AU sizes, 0 skips, 0 stale rows"
 
       - name: Publish step summary
         # Re-render with --github-summary so the verdict table appears
