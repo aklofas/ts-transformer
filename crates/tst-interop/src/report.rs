@@ -1099,6 +1099,23 @@ pub mod soak {
     const MAX_WARMUP_S: f64 = 30.0 * 60.0;
 
     const KNOWN_LEGS: [&str; 2] = ["srt", "rist"];
+
+    /// The per-leg corruption verdict family, in the order it is
+    /// emitted. Named once so the tap-disabled and no-attribution arms
+    /// cannot drift from the judged arm — a verdict missing from one of
+    /// them would simply not appear in `soak-results.json` for that kind
+    /// of run, which reads as "not applicable" rather than "not checked".
+    const CORRUPTION_VERDICTS: [&str; 4] = [
+        "corruption_attributed",
+        "corruption_detected",
+        "corruption_recovered",
+        "corruption_coverage",
+    ];
+
+    /// Floor on the fraction of a leg's injections that must resolve to a
+    /// receiver position for `corruption_coverage_<leg>` to pass. See
+    /// that verdict's own comment for why it is not 100%.
+    const CORRUPTION_RESOLVED_FLOOR: f64 = 0.9;
     const KNOWN_PROCESSES: [&str; 3] = ["send", "proxy", "recv"];
 
     /// Every worker `soak.sh` reaps into `exits.json` (the sampler is
@@ -2230,11 +2247,7 @@ pub mod soak {
                 detail,
             };
             if !config.corruption {
-                for n in [
-                    "corruption_attributed",
-                    "corruption_detected",
-                    "corruption_recovered",
-                ] {
+                for n in CORRUPTION_VERDICTS {
                     verdicts.push(mk(
                         n,
                         true,
@@ -2244,11 +2257,7 @@ pub mod soak {
             } else {
                 match corr {
                     None => {
-                        for n in [
-                            "corruption_attributed",
-                            "corruption_detected",
-                            "corruption_recovered",
-                        ] {
+                        for n in CORRUPTION_VERDICTS {
                             verdicts.push(mk(
                                 n,
                                 false,
@@ -2311,6 +2320,55 @@ pub mod soak {
                                 a.recovery_bound,
                                 a.unrecovered.first(),
                                 a.unrecovered_lost
+                            ),
+                        ));
+
+                        // The three verdicts above all pass on an EMPTY
+                        // finding list, so a leg that injected nothing —
+                        // a tap that silently did no work, a receiver
+                        // that never ingested the log, a sender killed
+                        // before its first injection — passes every one
+                        // of them while proving nothing. This is the
+                        // verdict that makes them mean something:
+                        // injections actually happened, the receiver read
+                        // the whole log, and most of them were placed on
+                        // the receiver's own timeline.
+                        //
+                        // The 90% resolution floor rather than 100%:
+                        // injections logged during an outage window
+                        // resolve against a PCR anchor the receiver never
+                        // saw and are deliberately STRANDED rather than
+                        // guessed at (`corrupt::Attribution::on_pcr`), so
+                        // a run with outages legitimately leaves a few
+                        // unresolved. A leg resolving less than nine in
+                        // ten is not absorbing outages, it is failing to
+                        // follow the stream.
+                        let sender = artifacts.send_metrics.corruption.as_ref();
+                        let sent = sender.map_or(0, |c| c.injections);
+                        let resolved_frac = if a.injected == 0 {
+                            0.0
+                        } else {
+                            a.resolved as f64 / a.injected as f64
+                        };
+                        let ingested = sent > 0 && a.injected == sent;
+                        verdicts.push(mk(
+                            "corruption_coverage",
+                            ingested && resolved_frac >= CORRUPTION_RESOLVED_FLOOR,
+                            format!(
+                                "{leg_name}: sender logged {sent} injection(s){}, receiver ingested \
+                                 {} of them, {} resolved to a receiver position ({:.1}%, floor \
+                                 {:.0}%)",
+                                match sender {
+                                    Some(_) => String::new(),
+                                    None =>
+                                        " (send report carries no corruption block — sender ran \
+                                          without --corrupt?)"
+                                            .to_string(),
+                                },
+                                a.injected,
+                                a.resolved,
+                                resolved_frac * 100.0,
+                                CORRUPTION_RESOLVED_FLOOR * 100.0
                             ),
                         ));
                     }
@@ -4148,6 +4206,83 @@ pub mod soak {
             );
             // The quoted example still comes from the sample.
             assert!(v.detail.contains("first one"), "{}", v.detail);
+        }
+
+        /// Build a corruption-enabled run whose SRT leg logged `sent`
+        /// injections, of which the receiver ingested `ingested` and
+        /// resolved `resolved`.
+        fn corruption_inputs(sent: u64, ingested: u64, resolved: u64) -> SoakInputs {
+            let mut inputs = healthy_inputs();
+            inputs.config.corruption = true;
+            inputs.legs[0].1.send_metrics.corruption = Some(crate::corrupt::CorruptionStats {
+                injections: sent,
+                ..Default::default()
+            });
+            inputs.legs[0].1.recv_report.metrics.corruption_attribution =
+                Some(crate::corrupt::AttributionReport {
+                    injected: ingested,
+                    resolved,
+                    ..Default::default()
+                });
+            inputs
+        }
+
+        /// The three corruption verdicts all pass on an empty finding
+        /// list, so a run that injected NOTHING passes all of them while
+        /// proving nothing at all. `corruption_coverage` is what stops
+        /// that, and it has to fail on a tap that did no work.
+        #[test]
+        fn corruption_coverage_fails_a_run_with_no_injections() {
+            let r = build_soak_results(corruption_inputs(0, 0, 0)).unwrap();
+            let v = verdict(&r, "corruption_coverage_srt");
+            assert!(!v.pass, "{}", v.detail);
+            assert!(!v.provisional);
+            // …while the three finding verdicts do pass vacuously, which
+            // is exactly why this one exists.
+            assert!(verdict(&r, "corruption_attributed_srt").pass);
+            assert!(!r.overall_pass);
+        }
+
+        /// A receiver that read only part of the sender's log judges only
+        /// part of the run, and every finding verdict would still pass.
+        #[test]
+        fn corruption_coverage_fails_when_the_receiver_missed_injections() {
+            let r = build_soak_results(corruption_inputs(500, 480, 480)).unwrap();
+            let v = verdict(&r, "corruption_coverage_srt");
+            assert!(!v.pass, "{}", v.detail);
+            assert!(v.detail.contains("500"), "{}", v.detail);
+            assert!(!r.overall_pass);
+        }
+
+        /// Ingested in full but mostly unresolved: the receiver has the
+        /// log and cannot place it on its own timeline, so the findings
+        /// are drawn from a fraction of the injections.
+        #[test]
+        fn corruption_coverage_fails_when_most_injections_never_resolved() {
+            let r = build_soak_results(corruption_inputs(500, 500, 400)).unwrap();
+            let v = verdict(&r, "corruption_coverage_srt");
+            assert!(!v.pass, "{}", v.detail);
+            assert!(v.detail.contains("80.0%"), "{}", v.detail);
+        }
+
+        /// A healthy leg: every injection ingested, all but a handful
+        /// resolved (outage-era strandings are expected and bounded).
+        #[test]
+        fn corruption_coverage_passes_a_healthy_leg() {
+            let r = build_soak_results(corruption_inputs(500, 500, 480)).unwrap();
+            let v = verdict(&r, "corruption_coverage_srt");
+            assert!(v.pass, "{}", v.detail);
+            assert!(v.detail.contains("96.0%"), "{}", v.detail);
+        }
+
+        /// A run declared tap-off still emits the whole family, so a
+        /// reader diffing two runs' verdict sets sees the same names.
+        #[test]
+        fn a_tap_disabled_run_still_emits_the_coverage_verdict() {
+            let r = build_soak_results(healthy_inputs()).unwrap();
+            let v = verdict(&r, "corruption_coverage_srt");
+            assert!(v.pass, "{}", v.detail);
+            assert!(v.detail.contains("disabled"), "{}", v.detail);
         }
 
         /// The shape a long lossy leg actually produces: the sample list
