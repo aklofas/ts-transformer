@@ -38,7 +38,8 @@
 # reproducible from its seed alone, and every derived choice is also
 # DECLARED in `soak-config.json` before launch so `report soak` can check
 # the run actually did what it said it would (`profile_declared_<leg>` /
-# `schedule_declared_<leg>`).
+# `schedule_declared_<leg>` / `corruption_declared_<leg>` /
+# `klv_declared_<leg>`).
 #
 #   - Per-leg stream profile (`--profile auto`, the default): the two
 #     legs run two DISTINCT profiles drawn from the seed by
@@ -65,10 +66,10 @@
 #     offset and its own `corruption.jsonl`, so the two taps never
 #     produce the same damage at the same offsets.
 #   - Rich KLV (always, both legs): `--klv-set rich --klv-seed $SEED`
-#     replaces the 4-tag fixture record with a ~32-tag ST 0601 record
-#     carrying a nested ST 0102 security set on a seeded presence
-#     schedule, so the run exercises real metadata density rather than
-#     the matrix's minimal record.
+#     replaces the 4-tag fixture record with an ST 0601 record of up to
+#     36 tags (mean ~27) carrying a nested ST 0102 security set on a
+#     seeded presence schedule, so the run exercises real metadata
+#     density rather than the matrix's minimal record.
 #
 # Every long-running process's stdout/stderr is redirected to
 # `--outdir/logs/*.log`; each PID is additionally recorded under
@@ -459,6 +460,41 @@ CORRUPT_SPEC="rate=5,min_gap=1000"
 SRT_CORRUPT_SEED=$((SEED + 1))
 RIST_CORRUPT_SEED=$((SEED + 2))
 
+# The KLV set both ends of both legs run. Named here, above the config
+# write, because the run DECLARES it (see `klv_declared_<leg>`): a leg
+# whose receiver was launched in compact mode runs no rich-KLV oracle at
+# all, and every rich verdict would be skipped rather than failed.
+KLV_SET=rich
+
+# $CORRUPT_SPEC broken out for the declaration below. Mirrors
+# `corrupt::parse_corrupt`'s grammar: comma-separated key=value, classes
+# `+`-separated, an absent `classes=` meaning all seven, an absent
+# `min_gap=` meaning corrupt.rs's DEFAULT_MIN_GAP. This is deliberately a
+# re-derivation, not a second source of truth — `report soak` compares
+# what is declared here against the spec the SENDER wrote into its own
+# corruption log header, so a mistake in this block fails
+# `corruption_declared_<leg>` loudly on the first run rather than
+# publishing a spec the run did not use.
+CORRUPT_RATE=""
+CORRUPT_MIN_GAP=1000
+CORRUPT_CLASSES="body_flip+header+truncate+garbage+drop+dup+psi_flip"
+IFS=',' read -r -a CORRUPT_SPEC_PARTS <<<"$CORRUPT_SPEC"
+for part in "${CORRUPT_SPEC_PARTS[@]}"; do
+  case "$part" in
+    rate=*) CORRUPT_RATE="${part#rate=}" ;;
+    min_gap=*) CORRUPT_MIN_GAP="${part#min_gap=}" ;;
+    classes=*) CORRUPT_CLASSES="${part#classes=}" ;;
+    *)
+      echo "soak: cannot declare corruption spec part '$part' (CORRUPT_SPEC=$CORRUPT_SPEC)" >&2
+      exit 2
+      ;;
+  esac
+done
+if [[ -z "$CORRUPT_RATE" ]]; then
+  echo "soak: CORRUPT_SPEC ($CORRUPT_SPEC) has no rate=" >&2
+  exit 2
+fi
+
 # Default the phase length so the declared phases tile the whole run
 # (12 phases over 72h = one new link condition every 6h). Integer
 # division deliberately: a run that outlives `phases * phase_s` simply
@@ -543,8 +579,12 @@ echo "soak: profiles — srt=$SRT_PROFILE rist=$RIST_PROFILE (--profile $PROFILE
 RSS_CADENCE_S=30
 if [[ "$CORRUPT" -eq 1 ]]; then
   CORRUPTION_DECL=true
+  CORRUPTION_SPEC_DECL=$(jq -n --argjson rate "$CORRUPT_RATE" \
+    --argjson min_gap "$CORRUPT_MIN_GAP" --arg classes "$CORRUPT_CLASSES" \
+    '{rate_per_10k: $rate, min_gap: $min_gap, classes: ($classes | split("+"))}')
 else
   CORRUPTION_DECL=false
+  CORRUPTION_SPEC_DECL=null
 fi
 if [[ "$FIXED_IMPAIRMENT" -eq 1 ]]; then
   SCHEDULE_DECL=null
@@ -556,13 +596,17 @@ fi
 jq -n --argjson dur "$TOTAL_SECONDS" --argjson cad "$RSS_CADENCE_S" \
   --argjson slack "$SAMPLER_END_SLACK_S" \
   --argjson corruption "$CORRUPTION_DECL" \
+  --argjson corruption_spec "$CORRUPTION_SPEC_DECL" \
   --arg srt_profile "$SRT_PROFILE" --arg rist_profile "$RIST_PROFILE" \
   --argjson schedule "$SCHEDULE_DECL" \
+  --arg klv_set "$KLV_SET" --argjson klv_seed "$SEED" \
   '{expected_duration_s: $dur, rss_cadence_s: $cad, warmup_fraction: 0.1667,
     sampler_end_slack_s: $slack, expected_worker_exits: {},
-    corruption: $corruption,
-    legs: {srt: {profile: $srt_profile, schedule: $schedule},
-           rist: {profile: $rist_profile, schedule: $schedule}}}' >"$OUTDIR/soak-config.json"
+    corruption: $corruption, corruption_spec: $corruption_spec,
+    legs: {srt: {profile: $srt_profile, schedule: $schedule,
+                 klv_set: $klv_set, klv_seed: $klv_seed},
+           rist: {profile: $rist_profile, schedule: $schedule,
+                  klv_set: $klv_set, klv_seed: $klv_seed}}}' >"$OUTDIR/soak-config.json"
 
 # Fail fast on a declared config that could never pass its own
 # completeness verdicts (e.g. an `--hours` value small enough that the
@@ -654,7 +698,7 @@ fi
 # record's tag set against `fixtures::rich_presence(seed, seq)`, and a
 # receiver holding a different seed would judge every record against the
 # wrong schedule.
-KLV_ARGS=(--klv-set rich --klv-seed "$SEED")
+KLV_ARGS=(--klv-set "$KLV_SET" --klv-seed "$SEED")
 
 # ---------------------------------------------------------------------
 # srt leg: send --managed -> proxy (impairment + outage) -> recv

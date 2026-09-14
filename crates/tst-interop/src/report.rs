@@ -1105,11 +1105,12 @@ pub mod soak {
     /// cannot drift from the judged arm — a verdict missing from one of
     /// them would simply not appear in `soak-results.json` for that kind
     /// of run, which reads as "not applicable" rather than "not checked".
-    const CORRUPTION_VERDICTS: [&str; 4] = [
+    const CORRUPTION_VERDICTS: [&str; 5] = [
         "corruption_attributed",
         "corruption_detected",
         "corruption_recovered",
         "corruption_coverage",
+        "corruption_declared",
     ];
 
     /// Floor on the fraction of a leg's injections that must resolve to a
@@ -1260,6 +1261,18 @@ pub mod soak {
         /// the tap was off.
         #[serde(default)]
         pub corruption: bool,
+        /// The tap spec `soak.sh` passed to `send --corrupt`, declared
+        /// before launch and checked afterwards against the spec the
+        /// receiver's own attribution report read out of the sender's log
+        /// header. Run-wide because `soak.sh` gives both legs the same
+        /// spec (only the seed differs per leg).
+        ///
+        /// `#[serde(default)]` so an archived config that declared
+        /// `corruption: true` without a spec still parses; that yields a
+        /// passing `corruption_declared_<leg>` saying the config predates
+        /// the declaration, rather than failing evidence retroactively.
+        #[serde(default)]
+        pub corruption_spec: Option<CorruptionDeclaration>,
         /// Per-leg declaration of what `soak.sh` launched that leg with:
         /// which stream profile, and which impairment schedule (if any).
         /// Keyed by leg name (`"srt"`/`"rist"`).
@@ -1289,6 +1302,35 @@ pub mod soak {
         /// launched with, or `None` for a fixed-impairment run.
         #[serde(default)]
         pub schedule: Option<ScheduleDeclaration>,
+        /// The `--klv-set` this leg's sender and receiver were launched
+        /// with (`"compact"` / `"rich"`) — rejected at parse time if
+        /// unknown. Closes the same hole `profile` does: the flag is
+        /// passed to `send` and to `recv` independently, so a harness bug
+        /// could run one set while the published evidence claims the
+        /// other, and a rich run whose receiver judged in compact mode
+        /// would quietly run NO rich-KLV oracle at all.
+        #[serde(default)]
+        pub klv_set: Option<String>,
+        /// The `--klv-seed` both ends were given. Recorded for
+        /// provenance, not checked: nothing in a recv report carries the
+        /// seed back, and a wrong one is already fatal by another route —
+        /// the presence schedule would not match, and every record would
+        /// count as a census mismatch.
+        #[serde(default)]
+        pub klv_seed: Option<u64>,
+    }
+
+    /// The declared half of the corruption tap's configuration, compared
+    /// field for field against the spec the receiver's attribution report
+    /// read out of the sender's own log header. The seed is not declared
+    /// here: `soak.sh` derives a distinct one per leg from the run seed,
+    /// and the log header's copy is what the receiver already judges
+    /// against.
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct CorruptionDeclaration {
+        pub rate_per_10k: u32,
+        pub min_gap: u64,
+        pub classes: Vec<crate::corrupt::Class>,
     }
 
     /// The declared half of a leg's impairment schedule — compared field
@@ -1399,6 +1441,28 @@ pub mod soak {
                     decl.profile
                 ));
             }
+            if let Some(set) = &decl.klv_set {
+                if crate::fixtures::KlvSet::parse(set).is_none() {
+                    return Err(format!(
+                        "soak-config.json: legs.{leg}.klv_set {set:?} is not a known KLV set \
+                         (want \"compact\" or \"rich\")"
+                    ));
+                }
+            }
+        }
+        // Reject a declared tap spec the tap itself would refuse, at
+        // declaration time rather than after a multi-day run has produced
+        // evidence nothing can judge. Same rule, from the same code:
+        // `CorruptConfig::validate` is what `send --corrupt` enforces.
+        if let Some(spec) = &cfg.corruption_spec {
+            crate::corrupt::CorruptConfig {
+                rate_per_10k: spec.rate_per_10k,
+                min_gap: spec.min_gap,
+                classes: spec.classes.clone(),
+                seed: 0,
+            }
+            .validate()
+            .map_err(|e| format!("soak-config.json: corruption_spec: {e}"))?;
         }
         Ok(cfg)
     }
@@ -2225,6 +2289,58 @@ pub mod soak {
                 detail: schedule_detail,
             });
 
+            // Third declaration check, same stance as the two above. A
+            // rich run whose receiver was launched in compact mode runs
+            // NO rich-KLV oracle at all: `klv_rich` comes back `None`,
+            // every rich verdict is skipped, and the run passes while
+            // checking none of the content contract the evidence page
+            // says it checks. The observable is exactly that block's
+            // presence.
+            let observed_rich = artifacts.recv_report.metrics.klv_rich.is_some();
+            let (klv_pass, klv_detail) = match declared.and_then(|d| d.klv_set.as_deref()) {
+                None => (
+                    true,
+                    format!("{leg_name}: no KLV set declared (pre-realism config)"),
+                ),
+                Some("rich") if observed_rich => {
+                    let rich = artifacts.recv_report.metrics.klv_rich.as_ref();
+                    (
+                        true,
+                        format!(
+                            "{leg_name}: declared rich and recv judged {} record(s) against the \
+                             rich oracles (seed {:?})",
+                            rich.map_or(0, |r| r.records),
+                            declared.and_then(|d| d.klv_seed)
+                        ),
+                    )
+                }
+                Some("rich") => (
+                    false,
+                    format!(
+                        "{leg_name}: config declared the rich KLV set but the recv report carries \
+                         no klv_rich block — the receiver judged this leg in compact mode, so no \
+                         rich-KLV oracle ran"
+                    ),
+                ),
+                Some("compact") if observed_rich => (
+                    false,
+                    format!(
+                        "{leg_name}: config declared the compact KLV set but the recv report \
+                         carries a klv_rich block"
+                    ),
+                ),
+                Some(other) => (
+                    !observed_rich,
+                    format!("{leg_name}: declared KLV set {other:?}"),
+                ),
+            };
+            verdicts.push(SoakVerdict {
+                name: format!("klv_declared_{leg_name}"),
+                pass: klv_pass,
+                provisional: false,
+                detail: klv_detail,
+            });
+
             // `corruption_attributed`/`corruption_detected`/`corruption_recovered`
             // judge the recv side's `AttributionReport` (present iff the
             // capture was made with `recv --corruption-log`). Declared-off
@@ -2371,6 +2487,58 @@ pub mod soak {
                                 CORRUPTION_RESOLVED_FLOOR * 100.0
                             ),
                         ));
+
+                        // And the declaration half: the spec the receiver
+                        // read out of the sender's log header must be the
+                        // spec the config said this run would inject. A
+                        // run that quietly injected at a tenth of the
+                        // declared rate, or from a narrower class set,
+                        // would otherwise pass every verdict above while
+                        // its published evidence described a different
+                        // experiment.
+                        let observed = CorruptionDeclaration {
+                            rate_per_10k: a.rate_per_10k,
+                            min_gap: a.min_gap,
+                            classes: a.classes.clone(),
+                        };
+                        let (spec_pass, spec_detail) = match &config.corruption_spec {
+                            None => (
+                                true,
+                                format!(
+                                    "{leg_name}: no corruption spec declared (pre-realism config); \
+                                     the sender's log header says rate {}/10k, min_gap {}, {} \
+                                     class(es)",
+                                    observed.rate_per_10k,
+                                    observed.min_gap,
+                                    observed.classes.len()
+                                ),
+                            ),
+                            Some(d) if *d == observed => (
+                                true,
+                                format!(
+                                    "{leg_name}: sender injected the declared spec (rate {}/10k, \
+                                     min_gap {}, {} class(es))",
+                                    d.rate_per_10k,
+                                    d.min_gap,
+                                    d.classes.len()
+                                ),
+                            ),
+                            Some(d) => (
+                                false,
+                                format!(
+                                    "{leg_name}: config declared rate {}/10k, min_gap {}, classes \
+                                     {:?} but the sender's log header says rate {}/10k, min_gap \
+                                     {}, classes {:?}",
+                                    d.rate_per_10k,
+                                    d.min_gap,
+                                    d.classes,
+                                    observed.rate_per_10k,
+                                    observed.min_gap,
+                                    observed.classes
+                                ),
+                            ),
+                        };
+                        verdicts.push(mk("corruption_declared", spec_pass, spec_detail));
                     }
                 }
             }
@@ -2663,6 +2831,7 @@ pub mod soak {
                 sampler_end_slack_s: 0.0,
                 expected_worker_exits: BTreeMap::new(),
                 corruption: false,
+                corruption_spec: None,
                 legs: BTreeMap::new(),
             }
         }
@@ -4275,6 +4444,173 @@ pub mod soak {
             assert!(v.detail.contains("96.0%"), "{}", v.detail);
         }
 
+        fn spec(
+            rate: u32,
+            min_gap: u64,
+            classes: &[crate::corrupt::Class],
+        ) -> CorruptionDeclaration {
+            CorruptionDeclaration {
+                rate_per_10k: rate,
+                min_gap,
+                classes: classes.to_vec(),
+            }
+        }
+
+        /// The spec in the sender's own log header must be the spec the
+        /// config declared. A run that quietly injected at a different
+        /// rate, or from a narrower class set, passes every finding
+        /// verdict while its published evidence describes a different
+        /// experiment.
+        #[test]
+        fn corruption_declared_matches_the_log_header_spec() {
+            let classes = crate::corrupt::Class::ALL.to_vec();
+            let mut inputs = corruption_inputs(500, 500, 500);
+            inputs.config.corruption_spec = Some(spec(5, 1000, &classes));
+            let attr = inputs.legs[0]
+                .1
+                .recv_report
+                .metrics
+                .corruption_attribution
+                .as_mut()
+                .unwrap();
+            attr.rate_per_10k = 5;
+            attr.min_gap = 1000;
+            attr.classes = classes;
+            let r = build_soak_results(inputs).unwrap();
+            let v = verdict(&r, "corruption_declared_srt");
+            assert!(v.pass, "{}", v.detail);
+            assert!(!v.provisional);
+        }
+
+        #[test]
+        fn corruption_declared_fails_on_a_rate_the_sender_did_not_use() {
+            let classes = crate::corrupt::Class::ALL.to_vec();
+            let mut inputs = corruption_inputs(500, 500, 500);
+            inputs.config.corruption_spec = Some(spec(5, 1000, &classes));
+            let attr = inputs.legs[0]
+                .1
+                .recv_report
+                .metrics
+                .corruption_attribution
+                .as_mut()
+                .unwrap();
+            attr.rate_per_10k = 50;
+            attr.min_gap = 1000;
+            attr.classes = classes;
+            let r = build_soak_results(inputs).unwrap();
+            let v = verdict(&r, "corruption_declared_srt");
+            assert!(!v.pass, "{}", v.detail);
+            assert!(v.detail.contains("50/10k"), "{}", v.detail);
+            assert!(!r.overall_pass);
+        }
+
+        #[test]
+        fn corruption_declared_fails_on_a_narrower_class_set() {
+            let mut inputs = corruption_inputs(500, 500, 500);
+            inputs.config.corruption_spec = Some(spec(5, 1000, &crate::corrupt::Class::ALL));
+            let attr = inputs.legs[0]
+                .1
+                .recv_report
+                .metrics
+                .corruption_attribution
+                .as_mut()
+                .unwrap();
+            attr.rate_per_10k = 5;
+            attr.min_gap = 1000;
+            attr.classes = vec![crate::corrupt::Class::BodyFlip];
+            let r = build_soak_results(inputs).unwrap();
+            assert!(!verdict(&r, "corruption_declared_srt").pass);
+        }
+
+        /// An archived config that declared the tap on but carried no
+        /// spec is not retroactively a failure.
+        #[test]
+        fn corruption_declared_passes_an_undeclared_spec() {
+            let r = build_soak_results(corruption_inputs(500, 500, 500)).unwrap();
+            let v = verdict(&r, "corruption_declared_srt");
+            assert!(v.pass, "{}", v.detail);
+            assert!(
+                v.detail.contains("no corruption spec declared"),
+                "{}",
+                v.detail
+            );
+        }
+
+        /// A leg declared `rich` whose receiver judged it in compact mode
+        /// ran no rich-KLV oracle at all — and every rich verdict is
+        /// skipped rather than failed, so nothing else catches it.
+        #[test]
+        fn klv_declared_fails_a_rich_leg_with_no_rich_block() {
+            let mut inputs = healthy_inputs();
+            declare_srt(&mut inputs, "baseline", None);
+            inputs.config.legs.get_mut("srt").unwrap().klv_set = Some("rich".into());
+            assert!(inputs.legs[0].1.recv_report.metrics.klv_rich.is_none());
+            let r = build_soak_results(inputs).unwrap();
+            let v = verdict(&r, "klv_declared_srt");
+            assert!(!v.pass, "{}", v.detail);
+            assert!(!v.provisional);
+            assert!(!r.overall_pass);
+        }
+
+        #[test]
+        fn klv_declared_passes_a_rich_leg_that_was_judged_rich() {
+            let mut inputs = healthy_inputs();
+            declare_srt(&mut inputs, "baseline", None);
+            let leg = inputs.config.legs.get_mut("srt").unwrap();
+            leg.klv_set = Some("rich".into());
+            leg.klv_seed = Some(3);
+            inputs.legs[0].1.recv_report.metrics.klv_rich =
+                Some(crate::report_types::KlvRichMetrics {
+                    records: 6110,
+                    ..Default::default()
+                });
+            let r = build_soak_results(inputs).unwrap();
+            let v = verdict(&r, "klv_declared_srt");
+            assert!(v.pass, "{}", v.detail);
+            assert!(v.detail.contains("6110"), "{}", v.detail);
+        }
+
+        /// The other direction: a compact declaration with a rich block
+        /// is just as much a drift between the recipe and the run.
+        #[test]
+        fn klv_declared_fails_a_compact_leg_that_was_judged_rich() {
+            let mut inputs = healthy_inputs();
+            declare_srt(&mut inputs, "baseline", None);
+            inputs.config.legs.get_mut("srt").unwrap().klv_set = Some("compact".into());
+            inputs.legs[0].1.recv_report.metrics.klv_rich =
+                Some(crate::report_types::KlvRichMetrics::default());
+            let r = build_soak_results(inputs).unwrap();
+            assert!(!verdict(&r, "klv_declared_srt").pass);
+        }
+
+        #[test]
+        fn parse_soak_config_rejects_an_unknown_klv_set_and_an_invalid_spec() {
+            let base = |extra: &str| {
+                format!(
+                    r#"{{"expected_duration_s":3600,"rss_cadence_s":30,"warmup_fraction":0.1667,
+                        "sampler_end_slack_s":35{extra}}}"#
+                )
+            };
+            let bad_set = base(r#","legs":{"srt":{"profile":"baseline","klv_set":"lavish"}}"#);
+            let e = parse_soak_config(&bad_set).unwrap_err();
+            assert!(e.contains("lavish"), "{e}");
+
+            let bad_spec = base(
+                r#","corruption":true,"corruption_spec":{"rate_per_10k":0,"min_gap":1000,"classes":["drop"]}"#,
+            );
+            let e = parse_soak_config(&bad_spec).unwrap_err();
+            assert!(e.contains("corruption_spec"), "{e}");
+
+            // …and the well-formed pair parses.
+            let ok = base(
+                r#","corruption":true,"corruption_spec":{"rate_per_10k":5,"min_gap":1000,"classes":["drop","body_flip"]},"legs":{"srt":{"profile":"baseline","klv_set":"rich","klv_seed":3}}"#,
+            );
+            let cfg = parse_soak_config(&ok).unwrap();
+            assert_eq!(cfg.corruption_spec.unwrap().rate_per_10k, 5);
+            assert_eq!(cfg.legs["srt"].klv_set.as_deref(), Some("rich"));
+            assert_eq!(cfg.legs["srt"].klv_seed, Some(3));
+        }
+
         /// A run declared tap-off still emits the whole family, so a
         /// reader diffing two runs' verdict sets sees the same names.
         #[test]
@@ -4397,6 +4733,8 @@ pub mod soak {
                 LegDeclaration {
                     profile: profile.to_string(),
                     schedule,
+                    klv_set: None,
+                    klv_seed: None,
                 },
             );
         }

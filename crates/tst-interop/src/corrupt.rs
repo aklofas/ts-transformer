@@ -1332,6 +1332,19 @@ pub struct AttributionReport {
     pub injected_fraction: f64,
     pub attribution_window: u64,
     pub recovery_bound: u64,
+    /// The tap spec the sender's log header declares, carried through so
+    /// a report can be checked against what the run was CONFIGURED to
+    /// inject rather than only against what it happens to contain — see
+    /// `report soak`'s `corruption_declared_<leg>` verdict.
+    /// `#[serde(default)]` so an archived pre-realism report still
+    /// deserializes (as a zero rate, which that verdict reads as "the
+    /// report predates the declaration").
+    #[serde(default)]
+    pub rate_per_10k: u32,
+    #[serde(default)]
+    pub min_gap: u64,
+    #[serde(default)]
+    pub classes: Vec<Class>,
 }
 
 impl AttributionReport {
@@ -1422,6 +1435,11 @@ pub struct Attribution {
     base: usize,
     window: u64,
     recovery_bound: u64,
+    /// The sender's declared tap spec, carried from the log header into
+    /// the report unchanged.
+    rate_per_10k: u32,
+    min_gap: u64,
+    classes: Vec<Class>,
     /// First injection whose windows may still be open.
     lo: usize,
     /// One past the last injection resolved at or before the latest event.
@@ -1585,6 +1603,9 @@ impl Attribution {
             base: 0,
             window: header.attribution_window,
             recovery_bound: header.recovery_bound,
+            rate_per_10k: header.rate_per_10k,
+            min_gap: header.min_gap,
+            classes: header.classes.clone(),
             lo: 0,
             hi: 0,
             next_unresolved: 0,
@@ -2091,6 +2112,9 @@ impl Attribution {
             injected_fraction: self.logged as f64 / packets_total.max(1) as f64,
             attribution_window: self.window,
             recovery_bound: self.recovery_bound,
+            rate_per_10k: self.rate_per_10k,
+            min_gap: self.min_gap,
+            classes: self.classes,
         }
     }
 }
