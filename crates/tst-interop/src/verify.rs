@@ -314,7 +314,7 @@ impl Tally {
                 payload,
                 ..
             } => {
-                self.record_pts(stream.pid, *pts);
+                self.record_pts(stream.pid, *pts, at);
                 match payload {
                     SamplePayload::Video {
                         codec,
@@ -352,7 +352,7 @@ impl Tally {
                 kind,
                 payload,
             } => {
-                self.record_pts(stream.pid, *pts);
+                self.record_pts(stream.pid, *pts, at);
                 self.klv_records += 1;
                 self.per_program
                     .entry(stream.program_number)
@@ -486,10 +486,25 @@ impl Tally {
         }
     }
 
-    fn record_pts(&mut self, pid: u16, pts: Pts90khz) {
+    /// Fold one sample's PTS into the per-PID monotonicity check. `at` is
+    /// the receiver packet ordinal the sample surfaced at, used only to
+    /// ask an attached attribution whether a break is explained.
+    fn record_pts(&mut self, pid: u16, pts: Pts90khz, at: u64) {
         let now = pts.as_ticks() as u64;
         if let Some(&last) = self.last_pts_by_pid.get(&pid) {
-            if !pts_is_monotonic_step(now, last) {
+            // A PTS that steps backwards is a derived anomaly, not an
+            // event the receiver reported, so it is asked about rather
+            // than fed in (see `corrupt::Attribution::explains`). Under a
+            // corruption log a body flip in a PES header rewrites a PTS
+            // silently — the tap marks such a flip undetectable precisely
+            // because tst-core accepts 33 of the 40 PTS bits as-is — and
+            // failing the capture for carrying the value the tap wrote
+            // would contradict the tap's own contract. A break no
+            // injection explains, and every break on a capture with no
+            // corruption log at all, fails exactly as before.
+            if !pts_is_monotonic_step(now, last)
+                && !self.attribution.as_mut().is_some_and(|a| a.explains(at))
+            {
                 self.pts_monotonic = false;
             }
         }
@@ -1099,6 +1114,67 @@ mod tests {
             psi: false,
             pes_start: false,
         }
+    }
+
+    /// A PTS that steps backwards is a DERIVED anomaly, not an event the
+    /// receiver reported, so it is asked about rather than fed in. Under a
+    /// corruption log a body flip in a PES header rewrites a PTS silently
+    /// — the tap marks such a flip undetectable precisely because
+    /// tst-core accepts 33 of the 40 PTS bits as-is (see `sensitive_span`)
+    /// — and failing the capture for faithfully carrying the value the tap
+    /// wrote would contradict the tap's own contract. A break outside
+    /// every injection's window, and every break on a capture with no log
+    /// at all, still fails exactly as before.
+    #[test]
+    fn a_backwards_pts_step_is_excused_only_inside_an_injection_window() {
+        use crate::corrupt::{Attribution, Class};
+        let wire = wire_for("baseline", 3.0);
+        let p = profiles::by_name("baseline").unwrap();
+
+        // 3 s of clean baseline traffic at receiver ordinal 0, then one
+        // video AU whose PTS goes backwards, at ordinal `break_at`.
+        let run = |attribution: Option<Attribution>, break_at: u64| {
+            let mut t = Tally::new();
+            if let Some(a) = attribution {
+                t.attach_attribution(a);
+            }
+            t.feed_at(&program_map_event(), 0);
+            for i in 0..90u32 {
+                t.feed_at(&video_event(i as i64 * FPS_STEP_TICKS, i == 0), 0);
+            }
+            for i in 0..30u32 {
+                t.feed_at(&klv_event(i as i64 * KLV_STEP_TICKS, i), 0);
+            }
+            t.feed_at(&video_event(0, false), break_at);
+            t.finish(p, 3.0, NOMINAL_COUNT_SLACK, VerifyMode::Lossy, &wire)
+        };
+        let pts_failed = |r: &VerifyReport| {
+            r.failures
+                .iter()
+                .any(|f| f.starts_with("PTS non-monotonic"))
+        };
+
+        // No corruption log: unchanged: the break fails the capture.
+        assert!(pts_failed(&run(None, 10)));
+
+        // An undetectable body flip resolving at receiver ordinal 0. A
+        // break 10 packets later is inside its 500-packet window.
+        let flip = || {
+            let mut i = injection_at(Class::BodyFlip, VIDEO_PID, 0);
+            i.detectable = false;
+            Attribution::new(vec![i], &corruption_header())
+        };
+        let r = run(Some(flip()), 10);
+        assert!(
+            r.failures.is_empty(),
+            "an explained break fails nothing: {:?}",
+            r.failures
+        );
+
+        // Past the window the same break fails again — the log excuses
+        // the damage it can account for, not PTS handling in general.
+        let r = run(Some(flip()), crate::corrupt::ATTRIBUTION_WINDOW + 1);
+        assert!(pts_failed(&r), "{:?}", r.failures);
     }
 
     #[test]
