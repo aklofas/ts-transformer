@@ -391,9 +391,15 @@ REORDER="1,200" # 1%, held 200ms — several packet intervals at this traffic's 
 # would inject at the same stream offsets, and a single systematic
 # attribution bug could then look like agreement between two independent
 # legs.
+# `10#` on every arithmetic use of a user-supplied integer: bash reads a
+# leading-zero literal as OCTAL, so `--seed 08` would abort the whole
+# launch under `set -e` with "value too great for base" rather than
+# running. The validators above deliberately still accept a leading zero
+# (it is a perfectly ordinary way to type a number); forcing base 10 here
+# is what makes accepting it safe. Same for `--schedule-phases` below.
 CORRUPT_SPEC="rate=5,min_gap=1000"
-SRT_CORRUPT_SEED=$((SEED + 1))
-RIST_CORRUPT_SEED=$((SEED + 2))
+SRT_CORRUPT_SEED=$((10#$SEED + 1))
+RIST_CORRUPT_SEED=$((10#$SEED + 2))
 
 # Default the phase length so the declared phases tile the whole run
 # (12 phases over 72h = one new link condition every 6h). Integer
@@ -403,7 +409,7 @@ RIST_CORRUPT_SEED=$((SEED + 2))
 # floor of 1 keeps a very short drill (`--hours 0.02` with 12 phases)
 # from asking the proxy for `phase_s=0s`, which it rejects.
 if [[ -z "$SCHEDULE_PHASE_S" ]]; then
-  SCHEDULE_PHASE_S=$((TOTAL_SECONDS / SCHEDULE_PHASES))
+  SCHEDULE_PHASE_S=$((10#$TOTAL_SECONDS / 10#$SCHEDULE_PHASES))
   [[ "$SCHEDULE_PHASE_S" -ge 1 ]] || SCHEDULE_PHASE_S=1
 fi
 # How close to the nominal deadline a worker death stops being treated
