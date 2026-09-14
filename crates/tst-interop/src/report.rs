@@ -1235,6 +1235,14 @@ pub mod soak {
         /// (normally empty; a drill that kills a role on purpose lists it).
         #[serde(default)]
         pub expected_worker_exits: BTreeMap<String, i32>,
+        /// Whether this run's senders were launched with `send --corrupt`
+        /// (`soak.sh`'s corruption tap). `#[serde(default)]` so archived
+        /// pre-corruption-tap configs still parse as `false` rather than
+        /// failing to deserialize. Gates whether the `corruption_*_<leg>`
+        /// verdicts judge a real attribution report or just record that
+        /// the tap was off.
+        #[serde(default)]
+        pub corruption: bool,
     }
 
     pub fn parse_soak_config(text: &str) -> Result<SoakConfig, String> {
@@ -1504,6 +1512,11 @@ pub mod soak {
         pub recv_failures: Vec<String>,
         pub send_video_aus: u64,
         pub recv_video_aus: u64,
+        /// `AttributionReport::injected` from the recv report's
+        /// `corruption_attribution`, or `None` when the config didn't
+        /// declare `corruption` or the recv report carries no attribution.
+        #[serde(default)]
+        pub corruption_injected: Option<u64>,
     }
 
     /// The full `soak-results.json` document: [`build_soak_results`]'s
@@ -1926,6 +1939,98 @@ pub mod soak {
                 },
             });
 
+            // `corruption_attributed`/`corruption_detected`/`corruption_recovered`
+            // judge the recv side's `AttributionReport` (present iff the
+            // capture was made with `recv --corruption-log`). Declared-off
+            // (`!config.corruption`) yields passing "disabled" verdicts so a
+            // corruption-free run's `soak-results.json` isn't cluttered with
+            // failures for a check that was never meant to run; declared-on
+            // with no attribution present is a real config/harness mismatch
+            // (the tap was declared but recv never got a `--corruption-log`)
+            // and fails loud rather than silently reading as "no corruption
+            // observed".
+            let corr = artifacts
+                .recv_report
+                .metrics
+                .corruption_attribution
+                .as_ref();
+            let mk = |name: &str, pass: bool, detail: String| SoakVerdict {
+                name: format!("{name}_{leg_name}"),
+                pass,
+                provisional: false,
+                detail,
+            };
+            if !config.corruption {
+                for n in [
+                    "corruption_attributed",
+                    "corruption_detected",
+                    "corruption_recovered",
+                ] {
+                    verdicts.push(mk(
+                        n,
+                        true,
+                        format!("{leg_name}: corruption tap disabled in soak-config.json"),
+                    ));
+                }
+            } else {
+                match corr {
+                    None => {
+                        for n in [
+                            "corruption_attributed",
+                            "corruption_detected",
+                            "corruption_recovered",
+                        ] {
+                            verdicts.push(mk(
+                                n,
+                                false,
+                                format!(
+                                    "{leg_name}: corruption declared but recv report carries no \
+                                     attribution (recv ran without --corruption-log?)"
+                                ),
+                            ));
+                        }
+                    }
+                    Some(a) => {
+                        verdicts.push(mk(
+                            "corruption_attributed",
+                            a.unexplained_events.is_empty(),
+                            format!(
+                                "{leg_name}: {} event(s), {} attributed, {} unexplained (first: \
+                                 {:?}); {} injected / {} resolved / {} unresolved",
+                                a.events,
+                                a.attributed_events,
+                                a.unexplained_events.len(),
+                                a.unexplained_events.first(),
+                                a.injected,
+                                a.resolved,
+                                a.unresolved
+                            ),
+                        ));
+                        verdicts.push(mk(
+                            "corruption_detected",
+                            a.undetected.is_empty(),
+                            format!(
+                                "{leg_name}: {} detectable injection(s), {} undetected (first: \
+                                 {:?})",
+                                a.detectable,
+                                a.undetected.len(),
+                                a.undetected.first()
+                            ),
+                        ));
+                        verdicts.push(mk(
+                            "corruption_recovered",
+                            a.unrecovered.is_empty(),
+                            format!(
+                                "{leg_name}: {} unrecovered within {} packets (first: {:?})",
+                                a.unrecovered.len(),
+                                a.recovery_bound,
+                                a.unrecovered.first()
+                            ),
+                        ));
+                    }
+                }
+            }
+
             leg_results.push(LegResult {
                 leg: leg_name.clone(),
                 outage_period_s: artifacts.outage_period_s,
@@ -1941,6 +2046,7 @@ pub mod soak {
                 recv_failures: artifacts.recv_report.failures.clone(),
                 send_video_aus: artifacts.send_metrics.video_aus,
                 recv_video_aus: artifacts.recv_report.metrics.video_aus,
+                corruption_injected: corr.map(|a| a.injected),
             });
         }
 
@@ -2149,6 +2255,7 @@ pub mod soak {
                 warmup_fraction: 1.0 / 6.0,
                 sampler_end_slack_s: 0.0,
                 expected_worker_exits: BTreeMap::new(),
+                corruption: false,
             }
         }
 
@@ -2202,6 +2309,16 @@ pub mod soak {
                 config,
                 worker_exits: exits,
             }
+        }
+
+        /// A fully-covered, fully-clean single-leg (`"srt"`) run — every
+        /// verdict `inputs()` can produce on its own already passes. Tests
+        /// that only care about one additional verdict (e.g. the
+        /// corruption ones below) start from this and mutate just the
+        /// field(s) they're probing, rather than re-deriving a passing
+        /// baseline by hand.
+        fn healthy_inputs() -> SoakInputs {
+            inputs(flat_series(121, 30.0), cfg(3600.0, 30.0), six_clean_exits())
         }
 
         #[test]
@@ -3408,6 +3525,81 @@ pub mod soak {
             assert_eq!(exits.len(), 3);
             assert!(parse_worker_exits("{}").unwrap().is_empty());
             assert!(parse_worker_exits("not json").is_err());
+        }
+
+        #[test]
+        fn corruption_verdicts_pass_from_a_clean_attribution_report() {
+            let mut inputs = healthy_inputs();
+            inputs.config.corruption = true;
+            let a = crate::corrupt::AttributionReport {
+                injected: 12,
+                detectable: 10,
+                resolved: 12,
+                ..Default::default()
+            };
+            inputs.legs[0].1.recv_report.metrics.corruption_attribution = Some(a);
+            let r = build_soak_results(inputs).unwrap();
+            for n in [
+                "corruption_attributed_srt",
+                "corruption_detected_srt",
+                "corruption_recovered_srt",
+            ] {
+                let v = r
+                    .verdicts
+                    .iter()
+                    .find(|v| v.name == n)
+                    .unwrap_or_else(|| panic!("{n} missing"));
+                assert!(v.pass && !v.provisional, "{n}: {}", v.detail);
+            }
+        }
+
+        #[test]
+        fn corruption_verdicts_fail_on_unexplained_undetected_unrecovered() {
+            let mut inputs = healthy_inputs();
+            inputs.config.corruption = true;
+            let a = crate::corrupt::AttributionReport {
+                injected: 3,
+                unexplained_events: vec!["x".into()],
+                undetected: vec!["y".into()],
+                unrecovered: vec!["z".into()],
+                ..Default::default()
+            };
+            inputs.legs[0].1.recv_report.metrics.corruption_attribution = Some(a);
+            let r = build_soak_results(inputs).unwrap();
+            for n in [
+                "corruption_attributed_srt",
+                "corruption_detected_srt",
+                "corruption_recovered_srt",
+            ] {
+                assert!(!r.verdicts.iter().find(|v| v.name == n).unwrap().pass);
+            }
+            assert!(!r.overall_pass);
+        }
+
+        #[test]
+        fn corruption_declared_but_no_attribution_in_the_recv_report_fails() {
+            let mut inputs = healthy_inputs();
+            inputs.config.corruption = true;
+            inputs.legs[0].1.recv_report.metrics.corruption_attribution = None;
+            let r = build_soak_results(inputs).unwrap();
+            let v = r
+                .verdicts
+                .iter()
+                .find(|v| v.name == "corruption_attributed_srt")
+                .unwrap();
+            assert!(!v.pass && v.detail.contains("no attribution"));
+        }
+
+        #[test]
+        fn corruption_off_in_config_yields_passing_disabled_verdicts() {
+            let inputs = healthy_inputs(); // corruption: false
+            let r = build_soak_results(inputs).unwrap();
+            let v = r
+                .verdicts
+                .iter()
+                .find(|v| v.name == "corruption_attributed_srt")
+                .unwrap();
+            assert!(v.pass && v.detail.contains("disabled"));
         }
     }
 }
