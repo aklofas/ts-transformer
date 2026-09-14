@@ -209,6 +209,15 @@ impl CorruptConfig {
     /// bound, an error event could legitimately belong to either, and the
     /// report would be guessing. Rather than produce an ambiguous verdict
     /// the tap refuses to run.
+    ///
+    /// `min_gap` also funds the window's BACKWARD half. An attribution
+    /// window is `[r - backward_reach, r + ATTRIBUTION_WINDOW]`, and
+    /// `Attribution::backward_reach` clamps its own extension to
+    /// `min_gap - (ATTRIBUTION_WINDOW + APPROX_SLACK)` so consecutive
+    /// windows stay disjoint whatever `since_pcr` turns out to be. At
+    /// this floor that budget is 1000 - 628 = 372 packets, which is why
+    /// the floor cannot be lowered without narrowing the backward half
+    /// too.
     pub fn validate(&self) -> Result<(), String> {
         if self.rate_per_10k == 0 {
             return Err(
@@ -1748,15 +1757,72 @@ impl Attribution {
         }
     }
 
+    /// How far BEFORE its resolved position an injection's own evidence
+    /// may surface.
+    ///
+    /// `resolved_at` is `ord(anchor PCR) + since_pcr`: a receiver ordinal
+    /// plus a SENDER-side packet count. That sum is only exact if every
+    /// packet between the anchor and the injection also reached the
+    /// receiver. Under transport loss it over-shoots by however many of
+    /// them went missing, so the injected packet's true receiver ordinal
+    /// lies somewhere in `[r - since_pcr, r]` — the lower end being the
+    /// degenerate case where the whole span was lost. A forward-only
+    /// window (`r <= at`) therefore rejects an injection's OWN event
+    /// whenever the backward displacement exceeds the demuxer's forward
+    /// lateness, and the injection is reported undetected for damage the
+    /// receiver noticed perfectly well.
+    ///
+    /// Measured on the arc's 1-hour smoke: 3 of 1738 detectable
+    /// injections across two legs. Rare because the displacement usually
+    /// loses to the lateness `ATTRIBUTION_WINDOW` was sized for, but the
+    /// rate scales with run length and loss — order 100-200 over 72
+    /// hours.
+    ///
+    /// CLAMPED, because windows must stay disjoint: two injections are
+    /// `min_gap` apart, so extending one backwards by more than
+    /// `min_gap - (window + APPROX_SLACK)` would let it overlap its
+    /// predecessor's, and `hit` would hand an event to the newer of the
+    /// two — exactly the ambiguity [`CorruptConfig::validate`]'s `min_gap`
+    /// floor exists to prevent. The clamp keeps the invariant true for
+    /// ANY valid config rather than resting on a bound `since_pcr`
+    /// happens to obey.
+    ///
+    /// The bound is not "one PCR interval": `since_pcr` counts packets
+    /// since the last packet that CARRIED a PCR, and the muxer's PCR
+    /// cadence is not perfectly regular (`pcr_only_due` catch-up packets,
+    /// and the PCR PID's own push rate). Measured on the same smoke, it
+    /// reached 302 packets on a 40 ms-PCR profile and 393 on a 100 ms
+    /// one — roughly 2.3 nominal intervals — against the ~130 a
+    /// one-interval model predicts. At the default `min_gap` of 1000 the
+    /// clamp is 372, which covers every injection in that run bar 4 of
+    /// 3026.
+    fn backward_reach(&self, i: usize) -> u64 {
+        let budget = self
+            .min_gap
+            .saturating_sub(self.window.saturating_add(APPROX_SLACK));
+        self.tracked(i).coord.since_pcr.min(budget)
+    }
+
+    /// First receiver ordinal injection `i`'s window covers, or `None`
+    /// when it has no resolved position at all.
+    fn window_lo(&self, i: usize) -> Option<u64> {
+        let r = self.state(i).resolved_at?;
+        Some(r.saturating_sub(self.backward_reach(i)))
+    }
+
     /// Move the scan cursors up to event ordinal `at`, then retire what
     /// they have left behind.
     fn advance(&mut self, at: u64) {
         // A stranded injection has no position at all, so it must not park
         // the cursor: injections logged AFTER an outage resolve normally
         // and still need to be reachable.
+        //
+        // The test is the window's LOWER edge, not `resolved_at`: an
+        // injection resolved past `at` can still cover `at` through
+        // `backward_reach`, and a cursor keyed on `resolved_at <= at`
+        // would leave it outside the scan range entirely.
         while self.hi < self.end()
-            && (self.state(self.hi).stranded
-                || self.state(self.hi).resolved_at.is_some_and(|r| r <= at))
+            && (self.state(self.hi).stranded || self.window_lo(self.hi).is_some_and(|lo| lo <= at))
         {
             self.hi += 1;
         }
@@ -1871,7 +1937,12 @@ impl Attribution {
         } else {
             self.window
         };
-        r <= at && at - r <= w
+        // `[r - backward_reach, r + w]`. The backward half absorbs the
+        // transport loss `resolved_at` cannot see (see `backward_reach`);
+        // the forward half is the demuxer lateness the window was always
+        // sized for.
+        let lo = r.saturating_sub(self.backward_reach(i));
+        lo <= at && at <= r.saturating_add(w)
     }
 
     /// Whether an injection plausibly DAMAGED the bytes a receiver-side
@@ -1973,9 +2044,36 @@ impl Attribution {
         // silently under-record when they do overlap.
         if sig == Signal::ContinuityJump {
             for i in self.lo..self.hi {
-                if Some(i) != attributed_to && self.window_contains(i, at) {
-                    self.state_mut(i).cc_jump_in_window = true;
+                if !self.window_contains(i, at) {
+                    continue;
                 }
+                // An injection's own jump is its own damage surfacing —
+                // but ONLY for a class whose expected signals include a
+                // continuity jump. There the jump IS the detection, and
+                // letting it also excuse would pre-excuse every `Drop`,
+                // whose only observable is exactly that jump, so no drop
+                // would ever have to show the stream recovering.
+                //
+                // For a class whose expected signals EXCLUDE it — a
+                // `PsiFlip`, or a `BodyFlip` on a PSI packet, both of
+                // which have to answer with a bad CRC or a
+                // non-conformance — an attributed continuity jump means
+                // something else entirely: the packet carrying the
+                // injection went missing in transit, so the damage never
+                // reached the receiver to be noticed. That is the
+                // transport-loss evidence `undetected_lost` exists for.
+                //
+                // Measured on the arc's 1-hour smoke: a PSI body flip on
+                // the srt leg whose corrupted PMT packet the proxy
+                // dropped. The receiver emitted a `ContinuityJump` on
+                // PID 0x1000, `on_signal` attributed it to that very
+                // injection, `expects` rejected it, and the old blanket
+                // exclusion then kept it out of `undetected_lost` too —
+                // so the run failed for damage nobody could have seen.
+                if Some(i) == attributed_to && expects(self.tracked(i), Signal::ContinuityJump) {
+                    continue;
+                }
+                self.state_mut(i).cc_jump_in_window = true;
             }
         }
         match attributed_to {
@@ -2657,7 +2755,12 @@ mod tests {
     fn only_a_truncation_explains_a_derived_anomaly() {
         let mut a = Attribution::strict(vec![inj(1000, 10, Class::Truncate, 0x1011, true)], &hdr());
         a.on_pcr(1000, 5000); // resolves to receiver ordinal 5010
-        assert!(!a.truncation_explains(5009), "before the injection");
+        // The window opens at `r - since_pcr` (see `backward_reach`), not
+        // at `r`: with `since_pcr = 10` the injected packet's true
+        // receiver ordinal is somewhere in 5000..=5010, depending on how
+        // much of that span the transport lost.
+        assert!(!a.truncation_explains(4999), "before the window opens");
+        assert!(a.truncation_explains(5000), "earliest the injection can be");
         assert!(a.truncation_explains(5010), "at the injection");
         assert!(
             a.truncation_explains(5010 + ATTRIBUTION_WINDOW),
@@ -2968,6 +3071,139 @@ mod tests {
             detectable,
             psi: false,
             pes_start: false,
+        }
+    }
+
+    /// Ruling A. Under transport loss an injection's own evidence can
+    /// surface BEFORE `resolved_at`, because that ordinal is a receiver
+    /// count plus a sender-side offset and the packets between the two
+    /// are exactly what the network may have eaten. A forward-only window
+    /// rejects it and reports the injection undetected for damage the
+    /// receiver noticed perfectly well.
+    ///
+    /// Measured live: 2 of 429 detectable `garbage`/`header` injections
+    /// on the arc's 1-hour rist leg, whose 100 ms PCR cadence gives the
+    /// widest `since_pcr` spans.
+    #[test]
+    fn an_injections_own_event_may_surface_before_its_resolved_position() {
+        // since_pcr 40: 25 of those 40 packets were lost in transit, so
+        // the injected packet actually arrived at receiver ordinal 4975
+        // while its coordinate resolves to 5000.
+        let mut a = Attribution::strict(vec![inj(1000, 40, Class::Garbage, 0x1011, true)], &hdr());
+        a.on_pcr(1000, 4960);
+        a.on_signal(4975, None, Signal::Resync);
+        a.on_media(5100, 0x1011);
+        let r = a.finish(10_000);
+
+        assert_eq!(r.attributed_events, 1, "{r:?}");
+        assert_eq!(r.undetected_count, 0, "{:?}", r.undetected);
+        assert_eq!(r.unexplained_total(), 0, "{:?}", r.unexplained_events);
+    }
+
+    /// The backward half is bounded by the injection's OWN `since_pcr`,
+    /// not by the whole window: an event further back than the anchor
+    /// span can reach is still unattributable.
+    #[test]
+    fn the_backward_reach_stops_at_the_anchor_span() {
+        let mut a = Attribution::strict(vec![inj(1000, 40, Class::Garbage, 0x1011, true)], &hdr());
+        a.on_pcr(1000, 4960); // resolves to 5000, window opens at 4960
+        a.on_signal(4959, None, Signal::Resync);
+        let r = a.finish(10_000);
+        assert_eq!(r.attributed_events, 0, "{r:?}");
+        assert_eq!(r.unexplained_resyncs, 1, "{r:?}");
+    }
+
+    /// The clamp that keeps windows disjoint. Two injections one
+    /// `min_gap` apart must not both cover one event, or `hit` would hand
+    /// it to the newer and rob the older of its detection — the exact
+    /// ambiguity `CorruptConfig::validate`'s `min_gap` floor exists to
+    /// prevent.
+    ///
+    /// `since_pcr` really does reach this far: measured at 302 packets on
+    /// a 40 ms-PCR profile and 393 on a 100 ms one over the arc's 1-hour
+    /// smoke, against the ~130 a one-PCR-interval model predicts. So the
+    /// bound has to come from `min_gap`, not from a cadence assumption.
+    #[test]
+    fn a_wide_anchor_span_cannot_reach_into_its_predecessors_window() {
+        let h = hdr();
+        let big = 400; // wider than the 372 the default min_gap allows
+        assert!(big > h.min_gap - (h.attribution_window + APPROX_SLACK));
+        let mut a = Attribution::strict(
+            vec![
+                inj(1000, 10, Class::Header, 0x1011, true),
+                inj(1000, 10 + h.min_gap, Class::Header, 0x1011, true),
+            ],
+            &h,
+        );
+        // Give the SECOND injection the wide span by resolving both off
+        // one anchor: r = 5010 and r = 5010 + min_gap.
+        a.on_pcr(1000, 5000);
+
+        // The first injection's window ends at 5010 + 500 = 5510. The
+        // second resolves at 6010; unclamped, a 400-packet reach would
+        // open its window at 5610 — still clear here — so the invariant
+        // is asserted directly on the reach instead of on one fixture.
+        let reach = a.backward_reach(1);
+        assert!(
+            reach <= h.min_gap - (h.attribution_window + APPROX_SLACK),
+            "reach {reach} would let consecutive windows overlap"
+        );
+
+        // And the disjointness it buys: no event is ever covered twice.
+        for at in 5000..7100u64 {
+            let covered = (0..2).filter(|&i| a.window_contains(i, at)).count();
+            assert!(covered <= 1, "packet {at} covered by {covered} windows");
+        }
+    }
+
+    /// Ruling B. An attributed continuity jump excuses an injection ONLY
+    /// for a class whose expected signals exclude one — there the jump
+    /// means the datagram carrying the injection was lost in transit, so
+    /// the damage never reached the receiver to be noticed.
+    #[test]
+    fn an_attributed_cc_jump_excuses_a_class_that_does_not_expect_one() {
+        let build = |lossy: bool| {
+            let log = vec![inj(1000, 10, Class::PsiFlip, 0, true)];
+            let mut a = if lossy {
+                Attribution::lossy(log, &hdr())
+            } else {
+                Attribution::strict(log, &hdr())
+            };
+            a.on_pcr(1000, 5000);
+            // Its own jump, inside its own window, attributed to it — and
+            // NOT a signal `expects` accepts for a psi_flip.
+            a.on_signal(5100, Some(0), Signal::ContinuityJump);
+            a.on_media(5200, 0x1011);
+            a.finish(10_000)
+        };
+
+        let lossy = build(true);
+        assert_eq!(lossy.attributed_events, 1, "the jump is attributed");
+        assert_eq!(lossy.undetected_lost, 1, "{lossy:?}");
+        assert_eq!(lossy.undetected_count, 0, "{:?}", lossy.undetected);
+
+        // Strict has no transport to blame, so the finding stands.
+        let strict = build(false);
+        assert_eq!(strict.undetected_count, 1, "{strict:?}");
+        assert_eq!(strict.undetected_lost, 0, "{strict:?}");
+    }
+
+    /// The other half of Ruling B, and the reason the blanket exclusion
+    /// existed: for a class whose expected signals INCLUDE a continuity
+    /// jump, its own jump is the detection and must never also excuse it.
+    #[test]
+    fn an_attributed_cc_jump_still_detects_a_class_that_expects_one() {
+        for class in [Class::Drop, Class::Header, Class::Truncate, Class::Garbage] {
+            let mut a = Attribution::lossy(vec![inj(1000, 10, class, 0x1011, true)], &hdr());
+            a.on_pcr(1000, 5000);
+            a.on_signal(5100, Some(0x1011), Signal::ContinuityJump);
+            a.on_media(5200, 0x1011);
+            let r = a.finish(10_000);
+            assert_eq!(r.undetected_count, 0, "{class:?}: {r:?}");
+            assert_eq!(
+                r.undetected_lost, 0,
+                "{class:?}: excused, not detected: {r:?}"
+            );
         }
     }
 
