@@ -50,7 +50,14 @@ const SEED: u64 = 11;
 /// PAT's CRC-covered section body. Most seeds land in the ~167 bytes of
 /// 0xFF stuffing that follow a 17-byte PAT section instead, where a flip
 /// is invisible and `detectable` is correctly `false`.
-const BODY_FLIP_PSI_SEED: u64 = 15;
+///
+/// Re-pinned from 15 when PSI body flips stopped drawing from the section
+/// HEADER (pointer field / table_id / section_length — bytes a decoder
+/// rejects pre-CRC and silently, so a flip there can never be noticed).
+/// Narrowing the draw range changes which offsets every seed produces on
+/// a PSI packet, so the old pin no longer lands under a CRC. Nothing
+/// about the property under test changed.
+const BODY_FLIP_PSI_SEED: u64 = 19;
 
 fn baseline() -> &'static Profile {
     profiles::by_name("baseline").expect("the baseline profile exists")
