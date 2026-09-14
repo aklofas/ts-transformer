@@ -610,6 +610,37 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Testing
 
+- **Tooling: `tst-interop` sender-side corruption tap.** `tst-interop send
+  --corrupt rate=PER_10K[,min_gap=PKTS][,classes=a+b+c] --corruption-log
+  PATH [--seed N]` wraps the sender's transport in a seeded tap that damages
+  the muxer's own output on its way to the wire, in seven classes
+  (`body_flip`, `header`, `truncate`, `garbage`, `drop`, `dup`, `psi_flip`),
+  and writes one JSONL line per injection. Each line is stamped with a PCR
+  coordinate — the last PCR base seen before the packet plus the packets
+  since it — rather than a sender byte offset, so a receiver can name the
+  same instant with no shared clock and a transport that loses, duplicates
+  or reorders cannot shift the frame. A `tst-interop recv --corruption-log
+  <same file>` peer tails that log for the whole capture and judges the
+  capture AGAINST it, adding `metrics.corruption_attribution` and three
+  verdicts: `corruption_attributed` (every error event the receiver
+  surfaced lies inside some injection's 500-packet attribution window),
+  `corruption_detected` (every injection a conformant receiver was required
+  to notice produced an event of the kind its class implies) and
+  `corruption_recovered` (media arrived again within 600 packets). Events an
+  injection explains are subtracted before the existing
+  `nonconformant_event`/`discontinuity_event` fatality rules apply, and the
+  whole-capture count floors are scaled by the injected fraction, so a run
+  that deliberately destroyed part of its own stream is judged on what the
+  log does NOT explain. `report soak` mirrors the three verdicts per leg,
+  gated by a `corruption` flag in `soak-config.json`: declared-off yields
+  passing "disabled" verdicts, declared-on with no attribution present fails
+  loud rather than reading as "no corruption observed". The independent raw
+  TS reader gains a sync-recovery mode (a destroyed sync byte is a recorded
+  resync, not a latched `rawts_sync_loss` failure) and a PAT/PMT CRC-32
+  check, so a corrupted section is discarded instead of registering a bogus
+  PMT PID and poisoning every later section. Harness only: no library crate
+  is touched, and no interop-matrix cell injects, so the 157-cell census is
+  unchanged.
 - **Tooling: `tst-interop report soak` completeness verdicts.** `soak.sh`
   now writes a declared `soak-config.json` at launch
   (`expected_duration_s`, `rss_cadence_s`, `warmup_fraction`,

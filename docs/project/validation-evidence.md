@@ -225,6 +225,21 @@ fixtures, so the soak measures endurance under a real encoder's traffic
 shape and burst pattern. `tst-interop report soak` renders a pass/fail
 verdict plus RSS-growth slopes per process.
 
+`tst-interop` also carries a sender-side corruption tap (`send --corrupt`)
+that deliberately damages the muxer's own output on its way to the wire —
+flipped bytes, destroyed headers, truncated and duplicated and dropped
+packets, damaged PAT/PMT sections — and records every injection to a JSONL
+log the receiving side reads back. A receiver judged against that log
+answers three questions that a clean run cannot ask: did every error event
+it reported have a cause (`corruption_attributed`), did it notice every
+injection a conformant receiver is required to notice
+(`corruption_detected`), and did the stream produce media again afterwards
+(`corruption_recovered`). The verdicts exist and are enforced offline today;
+the next 72-hour soak run will carry them end to end, and its numbers will
+be published here alongside the loss and RSS figures below. None of the
+157 interop-matrix cells inject corruption — the census above is a pristine
+stream throughout.
+
 **One-hour smoke run (2026-08-03, seed 1, `recv --managed` now on the SRT
 leg) — both legs PASS, zero crashes.** (This smoke predates the
 realistic-AU-size and base-delay knobs — it ran compact fixtures over a
