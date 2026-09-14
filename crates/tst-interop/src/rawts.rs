@@ -203,7 +203,7 @@ pub enum Retention {
 /// 32 KiB per series — constant for the life of the process, against a
 /// sample large enough that a median drawn from it lands within a
 /// fraction of a percent of the exact one at any capture length.
-const SAMPLE_CAP: usize = 4096;
+pub const SAMPLE_CAP: usize = 4096;
 
 /// Consecutive-delta statistics for one PID's timestamp series (PCR
 /// bases, or PES PTS values), accumulated in constant memory.

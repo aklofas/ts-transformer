@@ -117,8 +117,11 @@ pub const SCHEDULE_SALT: u64 = 0x5C4E_D01E_0000_0D0D;
 /// Mean run length of a burst drawn uniformly from `(3, 8)` — `(3+8)/2`.
 /// A burst phase divides its configured `loss_pct` by this to get the
 /// per-packet draw threshold, so that firing one burst of ~5.5 drops per
-/// crossing reproduces the configured *effective* loss rate rather than
-/// 5.5× it. See [`Phase::draw_pct`].
+/// crossing approximately reproduces the configured *effective* loss
+/// rate rather than 5.5× it. Approximately, not exactly: see
+/// [`generate_schedule`]'s "A burst phase lands slightly under its
+/// configured loss" for the residual and why it is left alone. Also
+/// [`Phase::draw_pct`].
 const BURST_MEAN_RUN: f64 = 5.5;
 
 /// One phase of a scheduled impairment run: the impairment knobs that are
@@ -205,6 +208,26 @@ impl Phase {
 /// Changing that order, the draw count, or any range changes every
 /// schedule ever generated — archived evidence quotes its seed, not its
 /// phases, so the mapping from seed to schedule must stay stable.
+///
+/// # A burst phase lands slightly under its configured loss
+///
+/// A burst phase draws at `q = loss_pct / BURST_MEAN_RUN` and each
+/// crossing costs a whole run of ~5.5 packets, but the packets inside a
+/// run are dropped WITHOUT a draw of their own. Between two runs the
+/// engine therefore forwards `1/q - 1` packets rather than `1/q`, so the
+/// realised loss is `5.5q / (1 + 4.5q)`, not `5.5q` — between 0.7 % low
+/// (at `loss_pct` 0.5) and 3.2 % low (at 4.0) in relative terms, i.e. at
+/// most 0.13 percentage points.
+///
+/// Left uncorrected deliberately. Correcting `draw_pct` would change the
+/// impairment every existing seed produces, and the bias is an order of
+/// magnitude inside the band `report soak`'s
+/// `drop_rate_consistent_with_impairment_<leg>` allows: that verdict
+/// integrates the expectation over the whole phase table (roughly 30 %
+/// of phases burst), which puts the run-level bias near 0.013
+/// percentage points against a 0.1-point tolerance floor. If a future
+/// change tightens that floor, correct this rather than widening the
+/// floor: `q = L / (5.5 - 4.5L)` with `L` the loss FRACTION.
 pub fn generate_schedule(seed: u64, phases: u32) -> Vec<Phase> {
     let mut rng = XorShift64::new(seed ^ SCHEDULE_SALT);
     (0..phases)
