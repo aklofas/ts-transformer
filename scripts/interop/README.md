@@ -975,15 +975,19 @@ trustworthy.
 ### On a lossy leg
 
 A live soak capture verifies in `VerifyMode::Lossy`, where packets go missing
-for reasons the log never recorded. `Attribution::finish_with` then excuses
-exactly two things, and records each in its own counter so nothing vanishes
-silently: an unexplained DISCONTINUITY-family signal moves to
-`unexplained_transport_loss` (non-conformances and resyncs still fail), and
-an undetected or unrecovered injection with a FOREIGN continuity jump in its
-window moves to `undetected_lost` / `unrecovered_lost` (an injection's own
-jump never excuses itself). `corruption_attributed`'s count subtracts the
-excused events and names them, so the number it quotes always matches the
-list it shows. Offline `verify` is always `Strict` and sees none of this.
+for reasons the log never recorded. An attribution built with
+`Attribution::lossy` then excuses exactly two things, and records each in its
+own counter so nothing vanishes silently: an unexplained DISCONTINUITY-family
+signal moves to `unexplained_transport_loss` (non-conformances and resyncs
+still fail), and an undetected or unrecovered injection with a FOREIGN
+continuity jump in its window moves to `undetected_lost` /
+`unrecovered_lost`. An injection's own jump excuses it only when a continuity
+jump is NOT one of the signals its class had to produce — for a `drop` or a
+`header` the jump IS the detection, so it never also excuses.
+`corruption_attributed` gates on an uncapped per-family count, not on the
+capped sample list beside it, and its detail names the excused events so the
+number it quotes always reconciles with the list it shows. Offline `verify` is
+always `Strict` and sees none of this.
 
 The rich-KLV oracles separately skip a record an injection damaged
 (`explains_damage`), counting it in `KlvRichMetrics.damaged_by_injection`;

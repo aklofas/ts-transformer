@@ -53,7 +53,7 @@ fn baseline_roundtrips() {
     assert_profile_roundtrips("baseline", SECONDS);
 }
 
-/// The same gate for `--klv-set rich`: a ~32-tag ST 0601 record with a
+/// The same gate for `--klv-set rich`: an ST 0601 record of up to 36 tags with a
 /// nested ST 0102 security set, whose tag set varies record to record on
 /// a seeded schedule (`fixtures::rich_presence`). Rich records are an
 /// order of magnitude larger than the compact ones every other test here

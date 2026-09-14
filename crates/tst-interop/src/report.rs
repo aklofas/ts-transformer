@@ -1117,6 +1117,13 @@ pub mod soak {
     /// receiver position for `corruption_coverage_<leg>` to pass. See
     /// that verdict's own comment for why it is not 100%.
     const CORRUPTION_RESOLVED_FLOOR: f64 = 0.9;
+
+    /// Floor on the fraction of the SENDER's logged injections the
+    /// receiver must have ingested. Tighter than the resolution floor
+    /// because ingestion is a file read the receiver controls, not
+    /// something the network can take away — but still a floor, because
+    /// one missed tail read at teardown must not fail a 72-hour run.
+    const CORRUPTION_INGESTED_FLOOR: f64 = 0.99;
     const KNOWN_PROCESSES: [&str; 3] = ["send", "proxy", "recv"];
 
     /// Every worker `soak.sh` reaps into `exits.json` (the sampler is
@@ -2416,23 +2423,23 @@ pub mod soak {
                         ));
                         verdicts.push(mk(
                             "corruption_detected",
-                            a.undetected_count == 0,
+                            a.undetected_total() == 0,
                             format!(
                                 "{leg_name}: {} detectable injection(s), {} undetected (first: \
                                  {:?}), {} excused as lost in transit",
                                 a.detectable,
-                                a.undetected_count,
+                                a.undetected_total(),
                                 a.undetected.first(),
                                 a.undetected_lost
                             ),
                         ));
                         verdicts.push(mk(
                             "corruption_recovered",
-                            a.unrecovered_count == 0,
+                            a.unrecovered_total() == 0,
                             format!(
                                 "{leg_name}: {} unrecovered within {} packets (first: {:?}), {} \
                                  excused as lost in transit",
-                                a.unrecovered_count,
+                                a.unrecovered_total(),
                                 a.recovery_bound,
                                 a.unrecovered.first(),
                                 a.unrecovered_lost
@@ -2459,6 +2466,15 @@ pub mod soak {
                         // unresolved. A leg resolving less than nine in
                         // ten is not absorbing outages, it is failing to
                         // follow the stream.
+                        // Both halves are FLOORS, not equalities. The
+                        // ingested one used to demand `a.injected ==
+                        // sent`, which over 72 hours would fail a whole
+                        // run on one missed tail read — the receiver
+                        // drains the log once more after its loop ends,
+                        // but a single unlucky interleaving at teardown
+                        // is not evidence of anything. A leg that read 99
+                        // of every 100 injections judged the run; one
+                        // that read 90 did not.
                         let sender = artifacts.send_metrics.corruption.as_ref();
                         let sent = sender.map_or(0, |c| c.injections);
                         let resolved_frac = if a.injected == 0 {
@@ -2466,14 +2482,24 @@ pub mod soak {
                         } else {
                             a.resolved as f64 / a.injected as f64
                         };
-                        let ingested = sent > 0 && a.injected == sent;
+                        let ingested_frac = if sent == 0 {
+                            0.0
+                        } else {
+                            a.injected as f64 / sent as f64
+                        };
+                        // Ceiling, so the floor cannot be met by rounding
+                        // on a small run: 99% of 101 needs 100, not 99.
+                        let min_ingested = (sent as f64 * CORRUPTION_INGESTED_FLOOR).ceil() as u64;
+                        let pass = sent > 0
+                            && a.injected >= min_ingested
+                            && resolved_frac >= CORRUPTION_RESOLVED_FLOOR;
                         verdicts.push(mk(
                             "corruption_coverage",
-                            ingested && resolved_frac >= CORRUPTION_RESOLVED_FLOOR,
+                            pass,
                             format!(
                                 "{leg_name}: sender logged {sent} injection(s){}, receiver ingested \
-                                 {} of them, {} resolved to a receiver position ({:.1}%, floor \
-                                 {:.0}%)",
+                                 {} of them ({:.1}%, floor {:.0}% = {min_ingested}), {} resolved to \
+                                 a receiver position ({:.1}%, floor {:.0}%)",
                                 match sender {
                                     Some(_) => String::new(),
                                     None =>
@@ -2482,6 +2508,8 @@ pub mod soak {
                                             .to_string(),
                                 },
                                 a.injected,
+                                ingested_frac * 100.0,
+                                CORRUPTION_INGESTED_FLOOR * 100.0,
                                 a.resolved,
                                 resolved_frac * 100.0,
                                 CORRUPTION_RESOLVED_FLOOR * 100.0
@@ -4442,6 +4470,74 @@ pub mod soak {
             let v = verdict(&r, "corruption_coverage_srt");
             assert!(v.pass, "{}", v.detail);
             assert!(v.detail.contains("96.0%"), "{}", v.detail);
+        }
+
+        /// The ingested half is a FLOOR, not an equality. Over 72 hours a
+        /// single unlucky interleaving at teardown must not fail the
+        /// whole run — but a leg that read nine injections in ten did not
+        /// judge it.
+        #[test]
+        fn corruption_coverage_tolerates_a_short_tail_read_but_not_a_gap() {
+            // 99.5% ingested: one injection missed out of 200.
+            let ok = build_soak_results(corruption_inputs(200, 199, 199)).unwrap();
+            let v = verdict(&ok, "corruption_coverage_srt");
+            assert!(v.pass, "{}", v.detail);
+            assert!(v.detail.contains("99.5%"), "{}", v.detail);
+
+            // 98%: four missed out of 200, which is a gap, not a tail.
+            let bad = build_soak_results(corruption_inputs(200, 196, 196)).unwrap();
+            let v = verdict(&bad, "corruption_coverage_srt");
+            assert!(!v.pass, "{}", v.detail);
+            assert!(v.detail.contains("98.0%"), "{}", v.detail);
+            assert!(!bad.overall_pass);
+        }
+
+        /// The counters the verdicts gate on are `#[serde(default)]`, so
+        /// a recv report written BEFORE this wave deserializes with every
+        /// one of them zero while its sample list still holds real
+        /// findings. Judging on the counter alone would read such a
+        /// report as clean — verified against this arc's own 1-hour smoke
+        /// artifacts, where re-judging them flipped both
+        /// `corruption_detected_*` failures to passes while the detail
+        /// still quoted the finding.
+        #[test]
+        fn a_pre_wave_report_with_no_counters_is_still_judged_by_its_findings() {
+            // Exactly what serde produces for an archived report: the
+            // lists are present, every new counter defaults to 0.
+            let archived: crate::corrupt::AttributionReport = serde_json::from_str(
+                r#"{"injected":500,"detectable":400,"resolved":500,"unresolved":0,
+                    "events":100,"attributed_events":100,"attributed_nonconformant":0,
+                    "attributed_discontinuities":0,
+                    "unexplained_events":["OtherNonConformant on pid Some(4113) at packet 7"],
+                    "first_unexplained_nonconformant":null,
+                    "first_unexplained_discontinuity":null,
+                    "undetected":["body_flip on pid 0x1000 at packet 2938427"],
+                    "unrecovered":["drop on pid 0x1011 at packet 99"],
+                    "resyncs":0,"injected_fraction":0.0,
+                    "attribution_window":500,"recovery_bound":600}"#,
+            )
+            .expect("archived report deserializes");
+            assert_eq!(archived.undetected_count, 0, "the counter really is absent");
+            assert_eq!(archived.undetected_total(), 1, "but the finding is not");
+
+            let mut inputs = corruption_inputs(500, 500, 500);
+            inputs.legs[0].1.recv_report.metrics.corruption_attribution = Some(archived);
+            let r = build_soak_results(inputs).unwrap();
+            for name in [
+                "corruption_detected_srt",
+                "corruption_recovered_srt",
+                "corruption_attributed_srt",
+            ] {
+                let v = verdict(&r, name);
+                assert!(
+                    !v.pass,
+                    "{name} must fail on an archived finding: {}",
+                    v.detail
+                );
+                // …and say so with the same number it judged on.
+                assert!(v.detail.contains(" 1 "), "{name}: {}", v.detail);
+            }
+            assert!(!r.overall_pass);
         }
 
         fn spec(
