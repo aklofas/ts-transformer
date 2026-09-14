@@ -801,11 +801,29 @@ pub fn parse_schedule(s: &str) -> Option<(u64, u32, u64)> {
         }
     }
     let (seed, phases, phase_s) = (seed?, phases?, phase_s?);
-    if phases == 0 || phase_s == 0 {
+    if phases == 0 || phase_s == 0 || phases > MAX_SCHEDULE_PHASES {
         return None;
     }
     Some((seed, phases, phase_s))
 }
+
+/// Upper bound on `--schedule phases=`, enforced at parse so an
+/// obviously-bad input fails with a usage error instead of an allocator
+/// death.
+///
+/// Both [`generate_schedule`](crate::impair::generate_schedule) and
+/// [`ProxyStats::phases`] allocate one entry PER PHASE, eagerly, before a
+/// single packet is relayed — so an unbounded `u32` here means
+/// `phases=4294967295` tries for hundreds of gigabytes and takes the box
+/// down rather than printing a usage line.
+///
+/// A million is chosen to be unarguably generous rather than tight: the
+/// finest granularity anything real could want is one phase per second,
+/// and a 72-hour run at that rate needs 259,200 — so this leaves roughly
+/// 4x headroom over the most fine-grained schedule imaginable while
+/// bounding the two allocations to a few tens of megabytes. `soak.sh`'s
+/// own default is 12.
+pub const MAX_SCHEDULE_PHASES: u32 = 1_000_000;
 
 /// Parse a `--run-seconds` argument, rejecting anything that isn't a
 /// strictly positive integer (mirrors `cli::parse_seconds`'s reject-
@@ -870,6 +888,28 @@ mod tests {
         assert_eq!(parse_run_seconds("0"), None);
         assert_eq!(parse_run_seconds("-1"), None);
         assert_eq!(parse_run_seconds("abc"), None);
+    }
+
+    /// An absurd `phases=` must fail as a usage error, not as an
+    /// allocator death: `generate_schedule` and `ProxyStats::phases` both
+    /// allocate one entry per phase eagerly, so `phases=4294967295` would
+    /// ask for hundreds of gigabytes before relaying a single packet.
+    #[test]
+    fn parse_schedule_rejects_an_absurd_phase_count() {
+        assert_eq!(parse_schedule("seed=4,phases=4294967295,phase_s=600"), None);
+        assert_eq!(
+            parse_schedule(&format!(
+                "seed=4,phases={},phase_s=600",
+                MAX_SCHEDULE_PHASES + 1
+            )),
+            None
+        );
+        // The bound itself is accepted — an off-by-one here would make
+        // the constant's documented headroom a lie.
+        assert_eq!(
+            parse_schedule(&format!("seed=4,phases={MAX_SCHEDULE_PHASES},phase_s=600")),
+            Some((4, MAX_SCHEDULE_PHASES, 600))
+        );
     }
 
     #[test]
