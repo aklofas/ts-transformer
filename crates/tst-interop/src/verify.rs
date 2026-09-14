@@ -295,7 +295,7 @@ enum RichOracle {
 }
 
 /// ST 0601 Tag 48, the nested ST 0102 security local set.
-const SECURITY_TAG: u8 = 48;
+const SECURITY_TAG: u32 = 48;
 
 impl Default for Tally {
     fn default() -> Self {
@@ -531,8 +531,8 @@ impl Tally {
         let observed = fixtures::observed_tags(&rec);
         if observed != expected {
             self.rich.census_mismatches += 1;
-            let missing: Vec<u8> = expected.difference(&observed).copied().collect();
-            let extra: Vec<u8> = observed.difference(&expected).copied().collect();
+            let missing: Vec<u32> = expected.difference(&observed).copied().collect();
+            let extra: Vec<u32> = observed.difference(&expected).copied().collect();
             self.note_rich_problem(
                 RichOracle::Census,
                 format!(

@@ -450,7 +450,7 @@ fn rich_group_period(g: RichGroup) -> u32 {
 /// A group is present iff `seq % period == phase`; a record whose `seq`
 /// hits the core-only residue carries [`RICH_CORE_TAGS`] alone.
 #[must_use]
-pub fn rich_presence(seed: u64, seq: u32) -> std::collections::BTreeSet<u8> {
+pub fn rich_presence(seed: u64, seq: u32) -> std::collections::BTreeSet<u32> {
     let mut rng = XorShift64::new(seed ^ KLV_SALT);
     let mut phases = [0u32; RichGroup::ALL.len()];
     for (slot, g) in phases.iter_mut().zip(RichGroup::ALL) {
@@ -458,28 +458,42 @@ pub fn rich_presence(seed: u64, seq: u32) -> std::collections::BTreeSet<u8> {
     }
     let core_only_phase = (rng.next_u64() % u64::from(CORE_ONLY_PERIOD)) as u32;
 
-    let mut tags: std::collections::BTreeSet<u8> = RICH_CORE_TAGS.into_iter().collect();
+    let mut tags: std::collections::BTreeSet<u32> =
+        RICH_CORE_TAGS.into_iter().map(u32::from).collect();
     if seq % CORE_ONLY_PERIOD == core_only_phase {
         return tags;
     }
     for (phase, g) in phases.into_iter().zip(RichGroup::ALL) {
         if seq % rich_group_period(g) == phase {
-            tags.extend(rich_group_tags(g).iter().copied());
+            tags.extend(rich_group_tags(g).iter().copied().map(u32::from));
         }
     }
     tags
 }
 
 /// The tag ids a decoded record actually carries — the observed half of
-/// the census oracle whose declared half is [`rich_presence`]. Covers
-/// exactly the tags the rich generator can set (core + all six groups);
-/// tags outside that set are ignored, so this is not a general-purpose
-/// "what's in this record" helper.
+/// the census oracle whose declared half is [`rich_presence`].
+///
+/// Two sources, because the decoder splits the wire's tags across two
+/// places: the typed fields the rich generator can set (core + all six
+/// groups), and `rec.unknown`, the pass-through list holding every tag
+/// the ST 0601 model does not type. The unknown list is folded in
+/// UNFILTERED so an extra tag cannot slip past the census by being one
+/// the decoder has no field for — the oracle's claim is that the wire's
+/// tag set EQUALS the declared schedule, and a tag nobody declared is a
+/// mismatch whether or not it has a name.
+///
+/// Still not a general-purpose "what's in this record" helper: a tag the
+/// model TYPES but the generator never sets (say Tag 8, platform true
+/// airspeed) lands in its own field and is not read here. That gap is
+/// unreachable from the wire — ST 0601 Tag 1 is a checksum over the
+/// record, and `st0601::decode` verifies it, so any tag added, removed
+/// or substituted in transit fails `klv_rich_decode_clean` first.
 #[must_use]
-pub fn observed_tags(rec: &UasDatalinkLs) -> std::collections::BTreeSet<u8> {
+pub fn observed_tags(rec: &UasDatalinkLs) -> std::collections::BTreeSet<u32> {
     // Mirrors RICH_CORE_TAGS and rich_group_tags above, in the same
     // order — keep the two adjacent and diff them whenever either moves.
-    let present = [
+    let present: &[(u32, bool)] = &[
         // Core, minus Tag 1: the checksum has no model field (encode
         // appends it, decode validates and consumes it), so a record
         // that decoded at all carries it.
@@ -525,8 +539,9 @@ pub fn observed_tags(rec: &UasDatalinkLs) -> std::collections::BTreeSet<u8> {
         // Security
         (48, rec.security_local_set.is_some()),
     ];
-    let mut out: std::collections::BTreeSet<u8> = std::iter::once(1u8).collect();
+    let mut out: std::collections::BTreeSet<u32> = std::iter::once(1u32).collect();
     out.extend(present.iter().filter(|(_, p)| *p).map(|(t, _)| *t));
+    out.extend(rec.unknown.iter().map(|f| f.tag));
     out
 }
 
@@ -556,7 +571,7 @@ fn walk(w: f64, min: f64, max: f64) -> f64 {
 /// from killing a 72 h soak the way run 1's did.
 pub fn klv_record_rich(seed: u64, seq: u32) -> Result<Vec<u8>, String> {
     let tags = rich_presence(seed, seq);
-    let has = |t: u8| tags.contains(&t);
+    let has = |t: u8| tags.contains(&u32::from(t));
     // The same bounded triangle the compact record walks, normalised to
     // 0..=1 so one parameter drives every tag: all values sweep their
     // ranges together and turn around together, which keeps the record
@@ -767,7 +782,7 @@ mod tests {
             let a = rich_presence(9, seq);
             assert_eq!(a, rich_presence(9, seq));
             for t in RICH_CORE_TAGS {
-                assert!(a.contains(&t), "seq {seq} missing core tag {t}");
+                assert!(a.contains(&u32::from(t)), "seq {seq} missing core tag {t}");
             }
         }
         assert_ne!(
@@ -783,11 +798,16 @@ mod tests {
         let mut seen: std::collections::BTreeSet<RichGroup> = Default::default();
         for seq in 0..5_000u32 {
             let p = rich_presence(1, seq);
-            if p.iter().all(|t| RICH_CORE_TAGS.contains(t)) {
+            if p.iter()
+                .all(|t| RICH_CORE_TAGS.iter().any(|c| u32::from(*c) == *t))
+            {
                 core_only += 1;
             }
             for g in RichGroup::ALL {
-                if rich_group_tags(g).iter().all(|t| p.contains(t)) {
+                if rich_group_tags(g)
+                    .iter()
+                    .all(|t| p.contains(&u32::from(*t)))
+                {
                     seen.insert(g);
                 }
             }
@@ -895,7 +915,10 @@ mod tests {
                 klv_record_rich(seed, seq).unwrap_or_else(|e| panic!("seed {seed} seq {seq}: {e}"));
                 let p = rich_presence(seed, seq);
                 for g in RichGroup::ALL {
-                    if rich_group_tags(g).iter().all(|t| p.contains(t)) {
+                    if rich_group_tags(g)
+                        .iter()
+                        .all(|t| p.contains(&u32::from(*t)))
+                    {
                         covered.insert(g);
                     }
                 }
