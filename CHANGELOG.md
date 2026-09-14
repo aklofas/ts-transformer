@@ -674,6 +674,47 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   never passes `--klv-set`, so all 157 cells still carry byte-identical
   records and the census is unchanged. Harness only: no library crate is
   touched.
+- **Tooling: seeded impairment schedule and per-leg profile selection in the
+  soak.** A soak run no longer holds one impairment level against one stream
+  shape for its whole duration. `tst-interop proxy --schedule
+  seed=N,phases=K,phase_s=S` walks a phase table that is a pure function of
+  those three inputs — per phase, 0.5-4 % loss (~30 % of phases dropping in
+  bursts of 3-8 consecutive packets, drawing against `loss_pct / 5.5` so a
+  bursty and a smooth phase at the same rate lose the same fraction), 5-40 ms
+  jitter, 0-2 % reorder held 100-300 ms, and 10-60 ms of base delay — and
+  echoes the table plus per-phase forwarded/dropped counters into its stats
+  file. `soak.sh` drives both proxies from it (`--schedule-phases`, default
+  12, `--schedule-phase-s`, default the run length divided by the phase
+  count), draws two DISTINCT stream profiles from the seed via the new
+  `tst-interop pick-profiles --seed N --legs K` (`--profile NAME` pins both
+  legs instead), and turns the corruption tap and rich ST 0601 KLV on by
+  default on both legs; `--fixed-impairment` and `--no-corrupt` are the
+  bisect forms, `--profile NAME` the reproduction form. Both derived choices
+  are declared in `soak-config.json` before any worker launches and checked
+  by two new verdicts, `profile_declared_<leg>` (against the receiver's own
+  profile stamp) and `schedule_declared_<leg>` (against the proxy's echo),
+  so a run that did not do what its config said cannot pass;
+  `drop_rate_consistent_with_impairment_<leg>` now integrates the expectation
+  over the echoed phase table and fails loud on a stats file whose phase
+  counters disagree with its own schedule echo. Two attribution rules keep
+  those verdicts honest against a link that really loses packets: in
+  `VerifyMode::Lossy` only (offline `verify` stays `Strict` and byte-for-byte
+  unchanged) an unexplained discontinuity-family signal is counted as
+  `unexplained_transport_loss` rather than charged to the tap, and an
+  undetected or unrecovered injection with a FOREIGN continuity jump in its
+  window moves to `undetected_lost`/`unrecovered_lost` — an injection's own
+  jump never excuses it, or a `drop`, whose only observable IS a continuity
+  jump, would arrive pre-excused; unexplained resyncs, PSI-checksum and
+  malformed-PES signals still fail, because lost packets cannot forge them.
+  Separately the three rich-KLV oracles skip a record an injection
+  demonstrably damaged (`Attribution::explains_damage`), counting it in
+  `KlvRichMetrics.damaged_by_injection` and naming the skipped count in every
+  rich failure string. The SRT leg now also sets `?latency=1200`, sized from
+  the schedule's documented worst case: libsrt's default 120 ms TSBPD budget
+  is smaller than the link this schedule emulates, so packets arriving past
+  their play time were being dropped as loss no injection could explain.
+  Harness only: no library crate is touched, and no interop-matrix cell runs
+  a schedule, so the 157-cell census is unchanged.
 - **Tooling: `tst-interop report soak` completeness verdicts.** `soak.sh`
   now writes a declared `soak-config.json` at launch
   (`expected_duration_s`, `rss_cadence_s`, `warmup_fraction`,

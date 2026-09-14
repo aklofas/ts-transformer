@@ -26,7 +26,9 @@ Subcommands:
   recv      Receive test data from endpoint (--corruption-log PATH judges the
             capture against a `send --corrupt` peer's log — start recv FIRST)
   verify    Verify interop test results
-  proxy     UDP impairment relay (loss/dup/reorder/jitter/scheduled outage)
+  proxy     UDP impairment relay (loss/dup/reorder/jitter/scheduled outage;
+            --schedule seed=N,phases=K,phase_s=DUR walks a seeded phase
+            table instead of one fixed impairment level)
   report    Generate interop report
   pick-profiles --seed N --legs K
             Print K distinct profile names, drawn deterministically from
