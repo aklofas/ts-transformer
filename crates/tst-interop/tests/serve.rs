@@ -73,6 +73,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use tst_core::transport::{RecvTransport, TransportCancel};
+use tst_interop::fixtures::KlvSet;
+use tst_interop::verify::KlvExpect;
 use tst_interop::{profiles, recv, serve, verify};
 use tst_rtp::RtspClient;
 
@@ -187,7 +189,8 @@ fn hls_serve_round_trip_matches_baseline() {
         .parse()
         .expect("bind_addr must parse");
 
-    let handle = thread::spawn(move || serve::run_hls(profile, bind_addr, SECONDS));
+    let handle =
+        thread::spawn(move || serve::run_hls(profile, bind_addr, SECONDS, KlvSet::Compact, 0));
 
     wait_for_accept(bind_addr, Duration::from_secs(5));
 
@@ -289,7 +292,9 @@ fn rtsp_serve_round_trip_via_own_client() {
         .expect("bind_addr must parse");
     const MOUNT: &str = "/live";
 
-    let handle = thread::spawn(move || serve::run_rtsp(profile, bind_addr, MOUNT, SECONDS));
+    let handle = thread::spawn(move || {
+        serve::run_rtsp(profile, bind_addr, MOUNT, SECONDS, KlvSet::Compact, 0)
+    });
 
     wait_for_accept(bind_addr, Duration::from_secs(5));
 
@@ -316,7 +321,15 @@ fn rtsp_serve_round_trip_via_own_client() {
     // worker thread — see the module doc's "real gap" section.
     let cancel = recv_transport.cancel_handle();
     let recv_handle = thread::spawn(move || {
-        recv::recv_over_transport(recv_transport, profile, SECONDS, false, false, None)
+        recv::recv_over_transport(
+            recv_transport,
+            profile,
+            SECONDS,
+            false,
+            false,
+            KlvExpect::compact(),
+            None,
+        )
     });
     let report = join_with_external_cancel(
         recv_handle,

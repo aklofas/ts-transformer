@@ -1749,7 +1749,7 @@ mod tests {
             "tst-interop-corrupt-{tag}-{}.ts",
             std::process::id()
         ));
-        crate::r#gen::run(p, seconds, &path).unwrap();
+        crate::r#gen::run(p, seconds, &path, crate::fixtures::KlvSet::Compact, 0).unwrap();
         let b = std::fs::read(&path).unwrap();
         let _ = std::fs::remove_file(&path);
         b
@@ -2133,7 +2133,7 @@ mod tests {
             "tst-interop-corrupt-dropdet-{}.ts",
             std::process::id()
         ));
-        crate::r#gen::run(p, 300.0, &path).unwrap();
+        crate::r#gen::run(p, 300.0, &path, crate::fixtures::KlvSet::Compact, 0).unwrap();
         let b = std::fs::read(&path).unwrap();
         let _ = std::fs::remove_file(&path);
 

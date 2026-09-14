@@ -57,6 +57,7 @@ use std::time::{Duration, Instant};
 
 use tst_interop::impair::ImpairConfig;
 use tst_interop::report_types::CellMetrics;
+use tst_interop::verify::KlvExpect;
 use tst_interop::{profiles, proxy, recv, send};
 
 /// Ask the OS for an unused port via a throwaway UDP bind — mirrors
@@ -102,6 +103,8 @@ fn send_with_retry(
             None,
             false,
             tst_interop::fixtures::AuSizeMode::Compact,
+            tst_interop::fixtures::KlvSet::Compact,
+            0,
             None,
         ) {
             Ok(metrics) => return metrics,
@@ -718,7 +721,18 @@ fn srt_round_trip_through_lossy_proxy_recovers_via_retransmission() {
     let recv_url = format!("srt://127.0.0.1:{listener_port}?mode=listener");
     let recv_handle = {
         let recv_url = recv_url.clone();
-        thread::spawn(move || recv::run(&recv_url, profile, SECONDS, None, false, false, None))
+        thread::spawn(move || {
+            recv::run(
+                &recv_url,
+                profile,
+                SECONDS,
+                None,
+                false,
+                false,
+                KlvExpect::compact(),
+                None,
+            )
+        })
     };
 
     let cfg = ImpairConfig {

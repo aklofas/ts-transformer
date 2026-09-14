@@ -62,6 +62,43 @@ pub struct CellMetrics {
     /// sender-side injection is matched to a receiver-side event at all.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub corruption_attribution: Option<crate::corrupt::AttributionReport>,
+    /// What the rich-KLV decode oracles made of this capture's ST 0601
+    /// records, or `None` when the capture was judged in the default
+    /// `--klv-set compact` mode (every interop matrix cell), where there
+    /// is no seeded presence schedule to check a record against. See
+    /// [`KlvRichMetrics`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub klv_rich: Option<KlvRichMetrics>,
+}
+
+/// Per-record findings of the three rich-KLV oracles (spec §5.5), filled
+/// in only for a capture judged with `--klv-set rich`.
+///
+/// The counters are cumulative over the capture; `first_problem`
+/// describes the FIRST record that tripped any of the three, so a report
+/// carries one concrete example alongside the totals.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct KlvRichMetrics {
+    /// ST 0601 records offered to the oracles — every `Metadata` event
+    /// the capture produced while in rich mode.
+    pub records: u64,
+    /// Records `klv::st0601::decode` rejected outright.
+    pub decode_errors: u64,
+    /// Records that decoded but carried at least one `field_errors`
+    /// entry (a tag whose bytes the decoder could not make sense of).
+    pub field_error_records: u64,
+    /// Records whose observed tag set differed from
+    /// `fixtures::rich_presence(seed, seq)` — including records whose
+    /// `timestamp_us` is missing or off the rich cadence grid, since
+    /// without it there is no `seq` to check the presence schedule at.
+    pub census_mismatches: u64,
+    /// Records the presence schedule said must carry ST 0601 Tag 48.
+    pub security_expected: u64,
+    /// Of those, how many carried a nested ST 0102 set that decoded with
+    /// no field errors and a security classification.
+    pub security_ok: u64,
+    /// The first record to trip any of the three oracles, described.
+    pub first_problem: Option<String>,
 }
 
 /// Outcome of checking one [`CellMetrics`] tally against a

@@ -21,7 +21,7 @@ use crate::profiles::{self, Profile};
 use crate::rawts::WireSummary;
 use crate::report_types::VerifyReport;
 use crate::transport::{self, Teeing};
-use crate::verify::{self, Tally, VerifyMode};
+use crate::verify::{self, KlvExpect, Tally, VerifyMode};
 
 /// How long to wait for the FIRST demuxed event before giving up
 /// entirely — the sender never connected or never sent anything at all
@@ -190,6 +190,11 @@ fn drain_final_wire_evidence(tally: &mut Tally, tap: &Arc<Mutex<transport::TeeSt
 /// `unresolved` and never judged — but ones already in the log when it
 /// opened are taken at face value. `soak.sh` starts `recv` before `send`
 /// for exactly this reason.
+///
+/// `klv` says which KLV record set the sender generated — see
+/// [`crate::verify::KlvExpect`]. `KlvExpect::compact()` (the default)
+/// leaves the rich decode oracles off.
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     url: &str,
     expect: &Profile,
@@ -197,6 +202,7 @@ pub fn run(
     json_out: Option<&str>,
     no_klv_digest: bool,
     strict: bool,
+    klv: KlvExpect,
     corruption_log: Option<&Path>,
 ) -> Result<VerifyReport, String> {
     let transport = transport::make_recv(url)?;
@@ -206,6 +212,7 @@ pub fn run(
         seconds,
         no_klv_digest,
         strict,
+        klv,
         corruption_log,
     )?;
     if let Some(target) = json_out {
@@ -239,12 +246,14 @@ pub fn run(
 /// to start) and is re-anchored to `seconds + POST_START_GRACE`
 /// once the first event arrives, so a slow connection setup doesn't eat
 /// into the profile's own capture window.
+#[allow(clippy::too_many_arguments)]
 pub fn recv_over_transport(
     transport: Box<dyn RecvTransport>,
     expect: &Profile,
     seconds: f64,
     no_klv_digest: bool,
     strict: bool,
+    klv: KlvExpect,
     corruption_log: Option<&Path>,
 ) -> Result<VerifyReport, String> {
     let (teeing, tap) = Teeing::new(transport);
@@ -257,6 +266,7 @@ pub fn recv_over_transport(
     let mut streaming = false;
     let mut closed = false;
     let mut tally = Tally::new();
+    tally.set_klv_expect(klv);
     if no_klv_digest {
         tally.disable_klv_digest_tracking();
     }
@@ -424,6 +434,7 @@ pub fn recv_over_transport(
 /// `ManagedDemuxReceiver::reconnects_count()`'s value at the end of the
 /// capture — see that field's own doc comment (`report_types.rs`) for
 /// exactly what it does and doesn't count.
+#[allow(clippy::too_many_arguments)]
 pub fn run_managed(
     url: &str,
     expect: &Profile,
@@ -431,6 +442,7 @@ pub fn run_managed(
     json_out: Option<&str>,
     no_klv_digest: bool,
     strict: bool,
+    klv: KlvExpect,
     corruption_log: Option<&Path>,
 ) -> Result<VerifyReport, String> {
     let initial_raw = transport::make_recv(url)?;
@@ -511,6 +523,7 @@ pub fn run_managed(
 
     let mut streaming = false;
     let mut tally = Tally::new();
+    tally.set_klv_expect(klv);
     if no_klv_digest {
         tally.disable_klv_digest_tracking();
     }

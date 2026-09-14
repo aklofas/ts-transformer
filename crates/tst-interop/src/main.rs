@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
 use tst_interop::cli;
-use tst_interop::fixtures::AuSizeMode;
+use tst_interop::fixtures::{AuSizeMode, KlvSet};
 use tst_interop::r#gen;
 use tst_interop::impair::ImpairConfig;
 use tst_interop::profiles;
@@ -12,7 +12,7 @@ use tst_interop::recv;
 use tst_interop::report;
 use tst_interop::send;
 use tst_interop::serve;
-use tst_interop::verify;
+use tst_interop::verify::{self, KlvExpect};
 
 fn usage() -> String {
     "usage: tst-interop <subcommand> [options...]
@@ -62,6 +62,24 @@ fn require_value(args: &[String], i: usize, context: &str) -> String {
     }
 }
 
+/// Parse a `--klv-set compact|rich` value, or exit 2 naming the
+/// subcommand. `context` is the subcommand name (e.g. `"gen"`), so the
+/// error reads the same way `--au-sizes`'s does.
+fn parse_klv_set(raw: &str, context: &str) -> KlvSet {
+    KlvSet::parse(raw).unwrap_or_else(|| {
+        eprintln!("{context}: --klv-set must be 'compact' or 'rich', got '{raw}'");
+        std::process::exit(2);
+    })
+}
+
+/// Parse a `--klv-seed N` value, or exit 2 naming the subcommand.
+fn parse_klv_seed(raw: &str, context: &str) -> u64 {
+    raw.parse::<u64>().unwrap_or_else(|e| {
+        eprintln!("{context}: --klv-seed must be a non-negative integer, got '{raw}': {e}");
+        std::process::exit(2);
+    })
+}
+
 /// Wires `tracing` events (e.g. `tst_pipeline::managed_receive`'s /
 /// `tst_pipeline::managed_demux_receiver`'s reconnect-attempt logs) to
 /// stderr, gated by `RUST_LOG` (silent — no subscriber overhead beyond
@@ -109,15 +127,26 @@ fn main() {
     }
 }
 
-/// `gen --profile NAME --seconds N --out PATH`
+/// `gen --profile NAME --seconds N --out PATH
+/// [--klv-set compact|rich] [--klv-seed N]`
 ///
 /// Generates `N` seconds of profile `NAME`'s synthetic MPEG-TS/KLV traffic
 /// (offline pacing, no transport) and writes it to `PATH`. Exits 0 on
 /// success, 2 on usage/IO error.
+///
+/// `--klv-set rich` (default `compact`) swaps the 4-tag fixture record
+/// for a ~32-tag ST 0601 record carrying a nested ST 0102 security set,
+/// whose tag set varies record to record on a schedule seeded by
+/// `--klv-seed N` (default 0). The default is byte-identical to what
+/// this subcommand has always written, so every interop-matrix cell is
+/// unaffected. A receiver judging a rich capture must be told the same
+/// `--klv-set`/`--klv-seed` — see `recv`/`verify`.
 fn run_gen(args: &[String]) -> ! {
     let mut profile: Option<String> = None;
     let mut seconds: Option<f64> = None;
     let mut out: Option<PathBuf> = None;
+    let mut klv_set = KlvSet::Compact;
+    let mut klv_seed: u64 = 0;
 
     let mut i = 0;
     while i < args.len() {
@@ -132,6 +161,14 @@ fn run_gen(args: &[String]) -> ! {
             }
             "--out" => {
                 out = Some(PathBuf::from(require_value(args, i, "gen: --out")));
+                i += 2;
+            }
+            "--klv-set" => {
+                klv_set = parse_klv_set(&require_value(args, i, "gen: --klv-set"), "gen");
+                i += 2;
+            }
+            "--klv-seed" => {
+                klv_seed = parse_klv_seed(&require_value(args, i, "gen: --klv-seed"), "gen");
                 i += 2;
             }
             other => {
@@ -158,7 +195,7 @@ fn run_gen(args: &[String]) -> ! {
         std::process::exit(2);
     });
 
-    if let Err(e) = r#gen::run(p, seconds, &out) {
+    if let Err(e) = r#gen::run(p, seconds, &out, klv_set, klv_seed) {
         eprintln!("gen: {e}");
         std::process::exit(2);
     }
@@ -172,6 +209,7 @@ fn run_gen(args: &[String]) -> ! {
 
 /// `send --profile NAME --url URL --seconds N [--json OUT] [--managed]
 /// [--no-klv-digest] [--au-sizes compact|realistic]
+/// [--klv-set compact|rich] [--klv-seed N]
 /// [--corrupt SPEC --corruption-log PATH] [--seed N]`
 ///
 /// Builds a live transport from `URL` and pushes `N` seconds of profile
@@ -211,6 +249,11 @@ fn run_gen(args: &[String]) -> ! {
 /// interop-matrix invocation is unaffected. See
 /// `fixtures::AuSizeMode`.
 ///
+/// `--klv-set rich` / `--klv-seed N` pick the ST 0601 record factory —
+/// see `gen`'s own doc comment. Forwarded unchanged to the `hls://` /
+/// `rtsp://` serve modes below. Independent of `--seed` (the corruption
+/// tap's), so a run can vary one without disturbing the other.
+///
 /// `--corrupt SPEC` turns on the seeded corruption tap between the muxer
 /// and the wire: `rate=PER_10K[,min_gap=PKTS][,classes=a+b+c]` (see
 /// `corrupt::parse_corrupt`, which rejects a typo rather than silently
@@ -235,6 +278,8 @@ fn run_send(args: &[String]) -> ! {
     let mut managed = false;
     let mut no_klv_digest = false;
     let mut au_sizes = AuSizeMode::Compact;
+    let mut klv_set = KlvSet::Compact;
+    let mut klv_seed: u64 = 0;
     let mut corrupt_spec: Option<String> = None;
     let mut corruption_log: Option<PathBuf> = None;
     let mut seed: u64 = 0;
@@ -277,6 +322,14 @@ fn run_send(args: &[String]) -> ! {
                         std::process::exit(2);
                     }
                 };
+                i += 2;
+            }
+            "--klv-set" => {
+                klv_set = parse_klv_set(&require_value(args, i, "send: --klv-set"), "send");
+                i += 2;
+            }
+            "--klv-seed" => {
+                klv_seed = parse_klv_seed(&require_value(args, i, "send: --klv-seed"), "send");
                 i += 2;
             }
             "--corrupt" => {
@@ -365,8 +418,8 @@ fn run_send(args: &[String]) -> ! {
             std::process::exit(2);
         }
         let result = match scheme {
-            serve::ServeScheme::Hls => serve::run_hls_url(p, &url, seconds),
-            serve::ServeScheme::Rtsp => serve::run_rtsp_url(p, &url, seconds),
+            serve::ServeScheme::Hls => serve::run_hls_url(p, &url, seconds, klv_set, klv_seed),
+            serve::ServeScheme::Rtsp => serve::run_rtsp_url(p, &url, seconds, klv_set, klv_seed),
         };
         if let Err(e) = result {
             eprintln!("send: {e}");
@@ -384,6 +437,8 @@ fn run_send(args: &[String]) -> ! {
             json_out.as_deref(),
             no_klv_digest,
             au_sizes,
+            klv_set,
+            klv_seed,
             corrupt,
         )
     } else {
@@ -394,6 +449,8 @@ fn run_send(args: &[String]) -> ! {
             json_out.as_deref(),
             no_klv_digest,
             au_sizes,
+            klv_set,
+            klv_seed,
             corrupt,
         )
     }
@@ -410,7 +467,8 @@ fn run_send(args: &[String]) -> ! {
 }
 
 /// `recv --url URL --expect PROFILE --seconds N [--json OUT]
-/// [--managed] [--no-klv-digest] [--strict] [--corruption-log PATH]`
+/// [--managed] [--no-klv-digest] [--strict]
+/// [--klv-set compact|rich] [--klv-seed N] [--corruption-log PATH]`
 ///
 /// Builds a live transport from `URL` and receives `N` seconds of
 /// traffic from it, checking the result against `PROFILE`'s invariants.
@@ -441,6 +499,15 @@ fn run_send(args: &[String]) -> ! {
 /// them (in `VerifyReport.metrics.discontinuities`) without failing.
 /// `NonConformant` events always fail, in either mode.
 ///
+/// `--klv-set rich` / `--klv-seed N` must MATCH what the sender's
+/// `gen`/`send` used: the report then gains `metrics.klv_rich` plus the
+/// `klv_rich_decode_clean` / `klv_rich_census` /
+/// `klv_rich_security_nested` verdicts, which decode every ST 0601
+/// record and check its tag set against the presence schedule that seed
+/// declares. A mismatched seed is a real failure, not a configuration
+/// nuisance — it means the records on the wire are not the ones the
+/// sender was supposed to emit.
+///
 /// `--corruption-log PATH` reads the JSONL log a `send --corrupt` peer
 /// wrote and judges this capture AGAINST it: the report gains
 /// `metrics.corruption_attribution` plus the `corruption_attributed` /
@@ -467,6 +534,8 @@ fn run_recv(args: &[String]) -> ! {
     let mut managed = false;
     let mut no_klv_digest = false;
     let mut strict = false;
+    let mut klv_set = KlvSet::Compact;
+    let mut klv_seed: u64 = 0;
     let mut corruption_log: Option<PathBuf> = None;
 
     let mut i = 0;
@@ -500,6 +569,14 @@ fn run_recv(args: &[String]) -> ! {
                 strict = true;
                 i += 1;
             }
+            "--klv-set" => {
+                klv_set = parse_klv_set(&require_value(args, i, "recv: --klv-set"), "recv");
+                i += 2;
+            }
+            "--klv-seed" => {
+                klv_seed = parse_klv_seed(&require_value(args, i, "recv: --klv-seed"), "recv");
+                i += 2;
+            }
             "--corruption-log" => {
                 corruption_log = Some(PathBuf::from(require_value(
                     args,
@@ -532,6 +609,10 @@ fn run_recv(args: &[String]) -> ! {
         std::process::exit(2);
     });
 
+    let klv = KlvExpect {
+        set: klv_set,
+        seed: klv_seed,
+    };
     let report = if managed {
         recv::run_managed(
             &url,
@@ -540,6 +621,7 @@ fn run_recv(args: &[String]) -> ! {
             json_out.as_deref(),
             no_klv_digest,
             strict,
+            klv,
             corruption_log.as_deref(),
         )
     } else {
@@ -550,6 +632,7 @@ fn run_recv(args: &[String]) -> ! {
             json_out.as_deref(),
             no_klv_digest,
             strict,
+            klv,
             corruption_log.as_deref(),
         )
     }
@@ -567,17 +650,23 @@ fn run_recv(args: &[String]) -> ! {
     std::process::exit(if report.pass { 0 } else { 1 });
 }
 
-/// `verify --file F --expect PROFILE --seconds N [--json OUT]`
+/// `verify --file F --expect PROFILE --seconds N [--json OUT]
+/// [--klv-set compact|rich] [--klv-seed N]`
 ///
 /// Demuxes `F` and checks it against `PROFILE`'s invariants for an
 /// `N`-second capture. Exits 0 on pass, 1 on fail, 2 on usage/IO error.
 /// `--json OUT` additionally writes the full `VerifyReport` as JSON to
 /// `OUT` (or stdout, if `OUT` is `-`).
+///
+/// `--klv-set rich` / `--klv-seed N` must match what generated `F` — see
+/// `recv`'s own doc comment for what the rich verdicts check.
 fn run_verify(args: &[String]) -> ! {
     let mut file: Option<PathBuf> = None;
     let mut expect: Option<String> = None;
     let mut seconds: Option<f64> = None;
     let mut json_out: Option<String> = None;
+    let mut klv_set = KlvSet::Compact;
+    let mut klv_seed: u64 = 0;
 
     let mut i = 0;
     while i < args.len() {
@@ -596,6 +685,14 @@ fn run_verify(args: &[String]) -> ! {
             }
             "--json" => {
                 json_out = Some(require_value(args, i, "verify: --json"));
+                i += 2;
+            }
+            "--klv-set" => {
+                klv_set = parse_klv_set(&require_value(args, i, "verify: --klv-set"), "verify");
+                i += 2;
+            }
+            "--klv-seed" => {
+                klv_seed = parse_klv_seed(&require_value(args, i, "verify: --klv-seed"), "verify");
                 i += 2;
             }
             other => {
@@ -622,7 +719,16 @@ fn run_verify(args: &[String]) -> ! {
         std::process::exit(2);
     });
 
-    let report = verify::verify_file(&file, profile, seconds).unwrap_or_else(|e| {
+    let report = verify::verify_file_with(
+        &file,
+        profile,
+        seconds,
+        KlvExpect {
+            set: klv_set,
+            seed: klv_seed,
+        },
+    )
+    .unwrap_or_else(|e| {
         eprintln!("verify: {e}");
         std::process::exit(2);
     });
