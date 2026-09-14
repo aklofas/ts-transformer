@@ -1,0 +1,1730 @@
+//! Seeded sender-side TS corruption tap (spec §4.1) and the receiver-side
+//! attribution engine that judges what the corruption did (spec §4.3).
+//!
+//! The two halves are deliberately split by a FILE, not by a shared
+//! in-memory object: [`Corrupter`] wraps the send-side [`Transport`] and
+//! writes one JSONL line per injection; [`Attribution`] reads that log
+//! back and matches it against the error events a receiver actually
+//! surfaced. Nothing is carried across in process memory, so the same
+//! judgement can be made live (`recv`), offline (`verify` over a capture),
+//! or days later from an archived soak directory — and a receiver can
+//! never "know" about an injection except through the same evidence a
+//! human would read.
+//!
+//! # Why a packet-coordinate instead of a byte offset
+//!
+//! Sender byte offsets are useless at the receiver: the transport loses,
+//! duplicates and reorders, and the corruption itself changes the wire
+//! length (truncation, inserted garbage). Every injection is therefore
+//! logged at a [`Coord`] — the most recent PCR base seen *before* the
+//! packet, plus the number of packets since that PCR packet. PCR bases are
+//! carried in the stream itself, so both ends can name the same instant
+//! without a shared clock, and a receiver resolves a coordinate the moment
+//! it sees that base (or, if the injection destroyed the packet carrying
+//! it, the first base after it — see [`Attribution::on_pcr`]).
+//!
+//! Determinism is the other invariant: given the same seed, the same
+//! config and the same input bytes, the tap emits byte-identical wire
+//! output and a byte-identical log. Nothing here reads the clock.
+
+use std::collections::BTreeMap;
+use std::io::Write;
+use std::path::Path;
+use std::sync::{Arc, Mutex};
+
+use serde::{Deserialize, Serialize};
+use tst_core::transport::{SocketStats, Transport, TransportCancel, TransportError};
+
+use crate::impair::XorShift64;
+use crate::rawts::{Reader, classify_packet};
+
+const PKT: usize = 188;
+
+/// Mixed into the run seed so the tap's PRNG stream is independent of every
+/// other seeded component that shares the same run seed (the impairment
+/// proxy's `Engine`, the generator's AU sizes). Without a per-component
+/// salt, two components seeded identically would draw the same numbers and
+/// their "independent" decisions would correlate.
+pub const CORRUPT_SALT: u64 = 0xC0FF_EE00_0BAD_F00D;
+
+/// How many receiver packets after a resolved injection an error event may
+/// surface and still be blamed on it (spec §4.3). Wide enough to cover a
+/// demuxer that only notices at the next PES/section boundary, narrow
+/// enough that an unrelated event a second later is not silently excused.
+pub const ATTRIBUTION_WINDOW: u64 = 500;
+
+/// How many receiver packets after a resolved injection the stream must
+/// have produced media again for the injection to count as recovered-from
+/// (spec §4.3).
+pub const RECOVERY_BOUND: u64 = 600;
+
+/// Default `min_gap` — the floor on the packet distance between two
+/// injections. Keeping injections farther apart than
+/// [`ATTRIBUTION_WINDOW`] + [`RECOVERY_BOUND`] is what makes attribution
+/// unambiguous: at most one injection's window can ever contain a given
+/// event.
+pub const DEFAULT_MIN_GAP: u64 = 1000;
+
+/// Extra attribution slack granted to an injection whose PCR base the
+/// receiver never saw, so it resolved against the *next* base instead. The
+/// error is then bounded by one PCR interval; 128 packets is comfortably
+/// more than the ≤100 ms interval H.222.0 §2.4.2.2 allows at any bitrate
+/// this harness generates.
+const APPROX_SLACK: u64 = 128;
+
+/// Format version of the JSONL log. Bump when a field's MEANING changes
+/// (adding a field does not need a bump — serde fills the rest from
+/// `Default`); readers refuse a version they do not understand.
+const TAP_VERSION: u32 = 1;
+
+/// Cap on [`AttributionReport::unexplained_events`]. The count is kept in
+/// full by `events - attributed_events`; only the human-readable sample is
+/// bounded, so a badly-broken run cannot produce a gigabyte of report.
+const MAX_UNEXPLAINED: usize = 64;
+
+// ============================================================
+// Classes, config, parsing
+// ============================================================
+
+/// One corruption class — what the tap does to a packet it selects.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Class {
+    /// Flip 1-4 bytes of the packet payload.
+    BodyFlip,
+    /// Corrupt the 4-byte TS header (sync byte, PID, continuity counter,
+    /// or adaptation-field length).
+    Header,
+    /// Emit only the first 40..=187 bytes of the packet.
+    Truncate,
+    /// Emit the packet, then a run of 1..=300 non-sync bytes after it.
+    Garbage,
+    /// Emit nothing for this packet.
+    Drop,
+    /// Emit the packet twice.
+    Dup,
+    /// Flip one byte inside a PAT/PMT section body, never its CRC.
+    PsiFlip,
+}
+
+/// Relative selection weights. Body flips are the most common real-world
+/// corruption (a bit error anywhere in the 184-byte payload is ~46× more
+/// likely than one in the 4-byte header), and header damage is the next
+/// most common; the structural classes are rarer but individually much
+/// more disruptive, so they are kept at equal small weights rather than
+/// scaled by probability.
+const WEIGHTS: [(Class, u32); 7] = [
+    (Class::BodyFlip, 30),
+    (Class::Header, 20),
+    (Class::Truncate, 10),
+    (Class::Garbage, 10),
+    (Class::Drop, 10),
+    (Class::Dup, 10),
+    (Class::PsiFlip, 10),
+];
+
+impl Class {
+    /// Every class, in selection-weight order. The default class set.
+    pub const ALL: [Class; 7] = [
+        Class::BodyFlip,
+        Class::Header,
+        Class::Truncate,
+        Class::Garbage,
+        Class::Drop,
+        Class::Dup,
+        Class::PsiFlip,
+    ];
+
+    /// Inverse of [`Class::name`].
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Class> {
+        Class::ALL.iter().copied().find(|c| c.name() == s)
+    }
+
+    /// Snake-case wire name — the spelling used on the command line, in
+    /// the JSONL log, and in [`CorruptionStats::per_class`].
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Class::BodyFlip => "body_flip",
+            Class::Header => "header",
+            Class::Truncate => "truncate",
+            Class::Garbage => "garbage",
+            Class::Drop => "drop",
+            Class::Dup => "dup",
+            Class::PsiFlip => "psi_flip",
+        }
+    }
+}
+
+/// Tap configuration. `seed` is supplied by the caller (the run seed), not
+/// parsed from the spec string, so every seeded component of a run shares
+/// one number.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CorruptConfig {
+    /// Per-10 000 chance that an eligible packet is corrupted. `10_000`
+    /// means "every eligible packet", which combined with `min_gap` is how
+    /// the unit tests force exactly one injection.
+    pub rate_per_10k: u32,
+    /// Floor on the packet distance between consecutive injections.
+    pub min_gap: u64,
+    /// Classes to draw from; weights are re-normalised over this subset.
+    pub classes: Vec<Class>,
+    /// Run seed (salted with [`CORRUPT_SALT`] before use).
+    pub seed: u64,
+}
+
+impl CorruptConfig {
+    /// Reject configurations whose evidence could not be judged.
+    ///
+    /// The `min_gap` floor is the load-bearing one: with two injections
+    /// closer together than one attribution window plus one recovery
+    /// bound, an error event could legitimately belong to either, and the
+    /// report would be guessing. Rather than produce an ambiguous verdict
+    /// the tap refuses to run.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.rate_per_10k == 0 {
+            return Err(
+                "--corrupt: rate=0 means no corruption at all; omit --corrupt instead".into(),
+            );
+        }
+        if self.rate_per_10k > 10_000 {
+            return Err(format!(
+                "--corrupt: rate={} is out of range (1..=10000 per ten thousand packets)",
+                self.rate_per_10k
+            ));
+        }
+        if self.min_gap < 2 * ATTRIBUTION_WINDOW || self.min_gap <= RECOVERY_BOUND {
+            return Err(format!(
+                "--corrupt: min_gap={} is too small; it must be >= {} (2 * attribution window) \
+                 and > {} (recovery bound) so at most one injection can explain any event",
+                self.min_gap,
+                2 * ATTRIBUTION_WINDOW,
+                RECOVERY_BOUND
+            ));
+        }
+        if self.classes.is_empty() {
+            return Err("--corrupt: classes= listed no classes".into());
+        }
+        Ok(())
+    }
+}
+
+/// Parse `rate=PER_10K[,min_gap=PKTS][,classes=a+b+c]`.
+///
+/// Classes are `+`-separated, not comma-separated: the spec string itself
+/// is split on commas, so a comma inside a value would be unparseable.
+/// Unknown keys, a missing `rate=`, and any out-of-range value are all
+/// errors — a typo must not silently degrade into "no corruption", which
+/// would make a whole soak run's evidence vacuous.
+pub fn parse_corrupt(s: &str, seed: u64) -> Result<CorruptConfig, String> {
+    let mut rate = None;
+    let mut min_gap = DEFAULT_MIN_GAP;
+    let mut classes = Class::ALL.to_vec();
+    for part in s.split(',') {
+        let (key, val) = part.split_once('=').ok_or_else(|| {
+            format!("--corrupt: `{part}` is not key=value (rate=N,min_gap=N,classes=a+b)")
+        })?;
+        match key {
+            "rate" => {
+                rate = Some(
+                    val.parse::<u32>()
+                        .map_err(|e| format!("--corrupt: rate={val}: {e}"))?,
+                );
+            }
+            "min_gap" => {
+                min_gap = val
+                    .parse::<u64>()
+                    .map_err(|e| format!("--corrupt: min_gap={val}: {e}"))?;
+            }
+            "classes" => {
+                classes = val
+                    .split('+')
+                    .map(|c| {
+                        Class::parse(c).ok_or_else(|| {
+                            format!(
+                                "--corrupt: unknown class `{c}` (one of: {})",
+                                Class::ALL
+                                    .iter()
+                                    .map(|c| c.name())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            )
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+            }
+            _ => return Err(format!("--corrupt: unknown key `{key}`")),
+        }
+    }
+    let cfg = CorruptConfig {
+        rate_per_10k: rate.ok_or_else(|| "--corrupt: rate= is required".to_string())?,
+        min_gap,
+        classes,
+        seed,
+    };
+    cfg.validate()?;
+    Ok(cfg)
+}
+
+// ============================================================
+// Log types
+// ============================================================
+
+/// Wrap-aware PCR coordinate of a packet.
+///
+/// `pcr_base` is the most recent PCR base seen **strictly before** this
+/// packet, and `since_pcr` counts packets from the packet that carried
+/// that base (so the packet immediately after a PCR packet has
+/// `since_pcr == 1`). Anchoring to the *previous* base rather than the
+/// packet's own is deliberate: an injection may destroy the very packet it
+/// lands on, and a coordinate whose anchor the receiver can never see
+/// would have to be resolved approximately. Before the stream's first PCR,
+/// `pcr_base` is `None` and `since_pcr` is the packet ordinal itself.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Coord {
+    pub pcr_base: Option<u64>,
+    pub since_pcr: u64,
+}
+
+/// One logged injection — everything a reader needs to judge whether the
+/// receiver noticed, without re-deriving anything from the wire.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Injection {
+    /// Sender packet ordinal (informational: it does not survive the
+    /// network, so [`Coord`] is what attribution actually uses).
+    pub ordinal: u64,
+    pub coord: Coord,
+    pub class: Class,
+    /// PID of the packet touched. For [`Class::Garbage`], the PID of the
+    /// packet *after* which the bytes were inserted.
+    pub pid: u16,
+    /// Byte offsets within the 188-byte packet that changed; empty for
+    /// [`Class::Garbage`], [`Class::Drop`] and [`Class::Dup`], which
+    /// change no byte of the packet itself.
+    pub offsets: Vec<usize>,
+    /// The original packet.
+    pub before: Vec<u8>,
+    /// What went on the wire in its place: the mutated packet, the
+    /// truncated prefix, the inserted garbage run, or nothing (drop).
+    pub after: Vec<u8>,
+    /// Whether a conformant receiver is REQUIRED to notice. A duplicated
+    /// packet, or a flip in a payload byte no parser inspects, may be
+    /// invisible by design — those are logged but never counted against
+    /// the library.
+    pub detectable: bool,
+    /// The packet was a PAT or PMT.
+    pub psi: bool,
+    /// PUSI was set and the payload started with a PES start code.
+    pub pes_start: bool,
+}
+
+/// First JSONL line of the log — `{"header":{...}}`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LogHeader {
+    pub tap_version: u32,
+    pub seed: u64,
+    pub rate_per_10k: u32,
+    pub min_gap: u64,
+    pub classes: Vec<Class>,
+    pub attribution_window: u64,
+    pub recovery_bound: u64,
+}
+
+/// Counters for the whole tap run.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct CorruptionStats {
+    pub packets_seen: u64,
+    pub injections: u64,
+    pub detectable: u64,
+    pub per_class: BTreeMap<String, u64>,
+    pub bytes_in: u64,
+    pub bytes_out: u64,
+    /// Packets the tap could not classify and therefore passed through
+    /// untouched. Always `0` for this harness's own muxer output; a
+    /// non-zero value means something upstream already emitted a
+    /// malformed packet, which would invalidate the run's evidence.
+    pub passthrough_unclassified: u64,
+}
+
+/// One line of the JSONL log. Serde's external tagging renders this as
+/// exactly `{"header":{…}}` / `{"injection":{…}}`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum LogLine {
+    Header(LogHeader),
+    Injection(Injection),
+}
+
+/// Read a corruption log file (header + injections).
+pub fn read_log(path: &Path) -> Result<(LogHeader, Vec<Injection>), String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("corruption log {}: {e}", path.display()))?;
+    parse_log(&text).map_err(|e| format!("corruption log {}: {e}", path.display()))
+}
+
+/// Parse a corruption log's text. Fails closed: a line that is neither a
+/// header nor an injection, a missing header, or a tap version this build
+/// does not understand is an error naming the line.
+pub fn parse_log(text: &str) -> Result<(LogHeader, Vec<Injection>), String> {
+    let mut header: Option<LogHeader> = None;
+    let mut injections = Vec::new();
+    for (n, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let parsed: LogLine =
+            serde_json::from_str(line).map_err(|e| format!("line {}: {e}", n + 1))?;
+        match parsed {
+            LogLine::Header(h) => {
+                if header.is_some() {
+                    return Err(format!("line {}: a second header line", n + 1));
+                }
+                if h.tap_version != TAP_VERSION {
+                    return Err(format!(
+                        "line {}: tap_version {} (this build reads {TAP_VERSION})",
+                        n + 1,
+                        h.tap_version
+                    ));
+                }
+                header = Some(h);
+            }
+            LogLine::Injection(i) => {
+                if header.is_none() {
+                    return Err(format!("line {}: injection before the header line", n + 1));
+                }
+                injections.push(i);
+            }
+        }
+    }
+    let header = header.ok_or_else(|| "no header line".to_string())?;
+    Ok((header, injections))
+}
+
+// ============================================================
+// The tap
+// ============================================================
+
+/// What one mutation produced.
+struct Mutation {
+    /// Bytes that replace the original packet on the wire (empty for a
+    /// drop, two packets for a dup, packet+garbage for a garbage run).
+    wire: Vec<u8>,
+    /// Bytes recorded as [`Injection::after`].
+    after: Vec<u8>,
+    offsets: Vec<usize>,
+    detectable: bool,
+}
+
+/// Sender-side corruption tap: a [`Transport`] adapter that mutates whole
+/// 188-byte TS packets on their way to the real transport and logs exactly
+/// what it did.
+///
+/// # Input invariant
+///
+/// `send_bytes` expects a whole number of 188-byte packets — which is what
+/// `MuxSender` always produces. A non-multiple tail is passed through
+/// untouched (and trips a `debug_assert`), so a mis-framed caller degrades
+/// to "no corruption" rather than to garbage.
+///
+/// One push may leave as more than one: the tap can grow a message
+/// (duplication, garbage insertion) past the inner transport's
+/// `max_payload`, so the output is split into several `send_bytes` calls
+/// of at most that size, cut on packet boundaries wherever the content
+/// still has them.
+///
+/// # Error contract
+///
+/// An error from the inner transport propagates unchanged, but
+/// [`TransportError::Backpressure`]'s "the bytes were not consumed, retry
+/// the same slice" contract does NOT survive the tap: by the time a later
+/// slice is refused, earlier slices of the same push are already on the
+/// wire and the tap's PRNG has advanced. Callers of a corrupted sender
+/// must treat any send error as fatal to the run — which is what the soak
+/// harness does.
+pub struct Corrupter<T: Transport> {
+    inner: T,
+    cfg: CorruptConfig,
+    rng: XorShift64,
+    /// Fed the ORIGINAL bytes of every packet, in non-resync mode, purely
+    /// to learn the PAT's PMT PIDs. It never sees a mutated byte, so it
+    /// cannot be knocked out by the corruption it is helping to place.
+    reader: Reader,
+    /// Sender packet ordinal of the next packet.
+    ordinal: u64,
+    /// Most recent PCR base seen strictly before the next packet.
+    base: Option<u64>,
+    /// Packets since the packet that carried `base` (or since the start of
+    /// the stream while `base` is `None`).
+    since: u64,
+    last_injection: Option<u64>,
+    /// A [`Class::PsiFlip`] drawn on a packet that was not PAT/PMT, held
+    /// until one arrives. Re-drawing a different class instead would bias
+    /// the mix away from `psi_flip` by exactly the fraction of non-PSI
+    /// packets — i.e. almost all of them.
+    pending_psi: Option<Class>,
+    log: Box<dyn Write + Send>,
+    stats: Arc<Mutex<CorruptionStats>>,
+}
+
+impl<T: Transport> Corrupter<T> {
+    /// Wrap `inner`, writing the log header line immediately so a log file
+    /// is self-describing even if the sender dies before the first
+    /// injection.
+    pub fn new(inner: T, cfg: CorruptConfig, log: Box<dyn Write + Send>) -> Result<Self, String> {
+        cfg.validate()?;
+        let mut me = Corrupter {
+            inner,
+            rng: XorShift64::new(cfg.seed ^ CORRUPT_SALT),
+            reader: Reader::new(),
+            ordinal: 0,
+            base: None,
+            since: 0,
+            last_injection: None,
+            pending_psi: None,
+            log,
+            stats: Arc::new(Mutex::new(CorruptionStats::default())),
+            cfg,
+        };
+        let header = LogHeader {
+            tap_version: TAP_VERSION,
+            seed: me.cfg.seed,
+            rate_per_10k: me.cfg.rate_per_10k,
+            min_gap: me.cfg.min_gap,
+            classes: me.cfg.classes.clone(),
+            attribution_window: ATTRIBUTION_WINDOW,
+            recovery_bound: RECOVERY_BOUND,
+        };
+        me.write_line(&LogLine::Header(header))
+            .map_err(|e| format!("writing the corruption log header: {e}"))?;
+        Ok(me)
+    }
+
+    /// Snapshot of the counters.
+    #[must_use]
+    pub fn stats(&self) -> CorruptionStats {
+        self.stats.lock().expect("corruption stats mutex").clone()
+    }
+
+    /// The live counters. Kept up to date as packets flow, so a caller that
+    /// no longer owns the tap (it was moved into a `MuxSender` that has
+    /// since been dropped) can still read the final numbers.
+    #[must_use]
+    pub fn stats_handle(&self) -> Arc<Mutex<CorruptionStats>> {
+        Arc::clone(&self.stats)
+    }
+
+    /// Unwrap the inner transport.
+    ///
+    /// There is deliberately no `Drop` impl to flush anything here: every
+    /// log line is flushed as it is written and the stats live behind the
+    /// `Arc`, so a tap that is dropped (or leaked, or killed mid-run)
+    /// leaves complete evidence either way.
+    pub fn into_inner(self) -> T {
+        self.inner
+    }
+
+    fn write_line(&mut self, line: &LogLine) -> std::io::Result<()> {
+        let json = serde_json::to_string(line).expect("log line serializes");
+        self.log.write_all(json.as_bytes())?;
+        self.log.write_all(b"\n")?;
+        // Flushed per line, not per run: a soak sender can be killed at
+        // any moment and the log must still explain every injection that
+        // reached the wire.
+        self.log.flush()
+    }
+
+    fn is_psi_pid(&self, pid: u16) -> bool {
+        pid == 0 || self.reader.is_pmt_pid(pid)
+    }
+
+    /// Weighted draw over the configured subset (weights re-normalise).
+    fn pick_class(&mut self) -> Class {
+        let eligible: Vec<(Class, u32)> = WEIGHTS
+            .iter()
+            .copied()
+            .filter(|(c, _)| self.cfg.classes.contains(c))
+            .collect();
+        let total: u32 = eligible.iter().map(|(_, w)| w).sum();
+        let mut x = (self.rng.next_u64() % u64::from(total)) as u32;
+        for &(c, w) in &eligible {
+            if x < w {
+                return c;
+            }
+            x -= w;
+        }
+        eligible
+            .last()
+            .expect("validate() guarantees a non-empty class set")
+            .0
+    }
+
+    /// Apply `class` to `pkt`. `None` means "not applicable to this
+    /// packet" — only [`Class::PsiFlip`] can say that, and only when the
+    /// PSI packet turns out not to carry a single complete section; the
+    /// caller then keeps the class pending. No PRNG draw happens on that
+    /// path, so the decision stays deterministic.
+    fn mutate(
+        &mut self,
+        class: Class,
+        pkt: &[u8; PKT],
+        info: &crate::rawts::PacketInfo,
+    ) -> Option<Mutation> {
+        let mut p = *pkt;
+        match class {
+            Class::BodyFlip => {
+                // Payload bytes only; a packet with no payload still has
+                // adaptation-field bytes past the 4-byte header worth
+                // flipping.
+                let lo = if info.has_payload {
+                    info.payload_off.max(4)
+                } else {
+                    4
+                };
+                let n = 1 + (self.rng.next_u64() % 4) as usize;
+                let mut offsets: Vec<usize> = Vec::with_capacity(n);
+                for _ in 0..n {
+                    // Both draws happen even when the offset repeats, so
+                    // the PRNG stream does not depend on the collision.
+                    let o = lo + (self.rng.next_u64() % (PKT - lo) as u64) as usize;
+                    let x = 1 + (self.rng.next_u64() % 255) as u8;
+                    if offsets.contains(&o) {
+                        continue;
+                    }
+                    offsets.push(o);
+                    p[o] ^= x;
+                }
+                offsets.sort_unstable();
+                // Only a flip that lands in a structure something PARSES
+                // can be called detectable. A PAT/PMT packet is ~90%
+                // 0xFF stuffing and a PES-start packet is mostly access-
+                // unit bytes; a flip there corrupts the picture but
+                // breaks no syntax, and claiming otherwise would make a
+                // conformant receiver fail the run.
+                let detectable = sensitive_span(pkt, info, self.is_psi_pid(info.pid))
+                    .is_some_and(|(lo, hi)| offsets.iter().any(|&o| (lo..hi).contains(&o)));
+                Some(Mutation {
+                    wire: p.to_vec(),
+                    after: p.to_vec(),
+                    offsets,
+                    detectable,
+                })
+            }
+            Class::Header => {
+                let mut offsets = Vec::new();
+                let mut kind = None;
+                for _ in 0..8 {
+                    let mut k = self.rng.next_u64() % 4;
+                    // Sub-kind 3 rewrites the adaptation_field_length,
+                    // which only exists when there IS an adaptation field.
+                    if k == 3 && info.afc & 0x2 == 0 {
+                        k = 2;
+                    }
+                    // A continuity_counter jump on a packet carrying no
+                    // payload is not a discontinuity at all (§2.4.3.3: the
+                    // counter only advances on packets with payload), so
+                    // it would be undetectable by construction. Re-roll
+                    // the SUB-KIND — never the class, which is already
+                    // committed by the weighted draw.
+                    if k == 2 && !info.has_payload {
+                        continue;
+                    }
+                    kind = Some(k);
+                    break;
+                }
+                // A sync-byte flip is valid on every packet, so it is the
+                // fallback if the re-rolls kept landing on CC.
+                match kind.unwrap_or(0) {
+                    0 => {
+                        let x = 1 + (self.rng.next_u64() % 255) as u8;
+                        p[0] = 0x47 ^ x;
+                        offsets.push(0);
+                    }
+                    1 => {
+                        // 0x1FFE: unassigned, and deliberately not 0x1FFF
+                        // (the null PID), which a demuxer would silently
+                        // discard instead of reporting.
+                        p[1] = (p[1] & 0xE0) | 0x1F;
+                        p[2] = 0xFE;
+                        offsets.extend([1, 2]);
+                    }
+                    2 => {
+                        // +2..+7 — never +1 (which would look correct) and
+                        // never +0 (a legal duplicate).
+                        let cc = (info.cc + 2 + (self.rng.next_u64() % 6) as u8) & 0x0F;
+                        p[3] = (p[3] & 0xF0) | cc;
+                        offsets.push(3);
+                    }
+                    _ => {
+                        // 184..187: 5 + af_len then overruns the 188-byte
+                        // packet, which every conformant parser must reject.
+                        p[4] = 184 + (self.rng.next_u64() % 4) as u8;
+                        offsets.push(4);
+                    }
+                }
+                Some(Mutation {
+                    wire: p.to_vec(),
+                    after: p.to_vec(),
+                    offsets,
+                    detectable: true,
+                })
+            }
+            Class::Truncate => {
+                // 40 bytes minimum so the header and a little payload
+                // survive: a receiver must resync, not merely see a short
+                // read it could mistake for the end of the stream.
+                let n = 40 + (self.rng.next_u64() % 148) as usize;
+                let wire = p[..n].to_vec();
+                Some(Mutation {
+                    after: wire.clone(),
+                    wire,
+                    offsets: Vec::new(),
+                    detectable: true,
+                })
+            }
+            Class::Garbage => {
+                let n = 1 + (self.rng.next_u64() % 300) as usize;
+                let mut g = Vec::with_capacity(n);
+                for _ in 0..n {
+                    let b = ((self.rng.next_u64() % 255) as u8).wrapping_add(1);
+                    // Never 0x47: inserted garbage must not fake a packet
+                    // start, or the receiver would resync onto it and the
+                    // damage would be a different class than the one
+                    // logged.
+                    g.push(if b == 0x47 { 0x48 } else { b });
+                }
+                let mut wire = p.to_vec();
+                wire.extend_from_slice(&g);
+                Some(Mutation {
+                    wire,
+                    after: g,
+                    offsets: Vec::new(),
+                    detectable: true,
+                })
+            }
+            Class::Drop => Some(Mutation {
+                wire: Vec::new(),
+                after: Vec::new(),
+                offsets: Vec::new(),
+                detectable: true,
+            }),
+            Class::Dup => {
+                let mut wire = p.to_vec();
+                wire.extend_from_slice(&p);
+                Some(Mutation {
+                    wire,
+                    after: p.to_vec(),
+                    offsets: Vec::new(),
+                    // A repeated packet with the same continuity counter is
+                    // LEGAL (§2.4.3.3 allows one duplicate); a receiver that
+                    // says nothing is conformant.
+                    detectable: false,
+                })
+            }
+            Class::PsiFlip => {
+                let (lo, hi) = psi_body_range(&p, info)?;
+                let o = lo + (self.rng.next_u64() % (hi - lo) as u64) as usize;
+                let x = 1 + (self.rng.next_u64() % 255) as u8;
+                p[o] ^= x;
+                Some(Mutation {
+                    wire: p.to_vec(),
+                    after: p.to_vec(),
+                    offsets: vec![o],
+                    // The CRC is left intact on purpose, so the section
+                    // fails its checksum — a silent CRC "fix" would make
+                    // the corruption invisible and the evidence worthless.
+                    detectable: true,
+                })
+            }
+        }
+    }
+
+    /// Mutate a whole push and return the bytes to put on the wire.
+    fn transform(&mut self, msg: &[u8]) -> Vec<u8> {
+        debug_assert!(
+            msg.len() % PKT == 0,
+            "corruption tap expects whole TS packets, got {} bytes",
+            msg.len()
+        );
+        let mut out = Vec::with_capacity(msg.len() + 512);
+        // Cloned so the guard borrows the Arc, not `self` — the loop below
+        // needs `&mut self` for the PRNG, the reader and the log.
+        let stats_arc = Arc::clone(&self.stats);
+        let mut stats = stats_arc.lock().expect("corruption stats mutex");
+        let mut packets = msg.chunks_exact(PKT);
+        for chunk in packets.by_ref() {
+            let pkt: [u8; PKT] = chunk.try_into().expect("chunks_exact(188)");
+            stats.packets_seen += 1;
+            let ordinal = self.ordinal;
+            self.ordinal += 1;
+
+            let Ok(info) = classify_packet(&pkt) else {
+                stats.passthrough_unclassified += 1;
+                out.extend_from_slice(&pkt);
+                continue;
+            };
+            // The reader only ever sees pristine bytes. A feed error is
+            // impossible for this harness's own muxer output, but if one
+            // happened the failing packet would stay in the reader's carry
+            // and poison every later feed, so clear it.
+            if self.reader.feed(&pkt).is_err() {
+                self.reader.resync();
+            }
+            let coord = Coord {
+                pcr_base: self.base,
+                since_pcr: self.since,
+            };
+            match info.pcr_base {
+                Some(b) => {
+                    self.base = Some(b);
+                    self.since = 1;
+                }
+                None => self.since += 1,
+            }
+
+            let mut class = None;
+            if self.pending_psi.is_some() {
+                if self.is_psi_pid(info.pid) {
+                    class = self.pending_psi.take();
+                }
+            } else if self
+                .last_injection
+                .is_none_or(|l| ordinal - l >= self.cfg.min_gap)
+                && self.rng.next_u64() % 10_000 < u64::from(self.cfg.rate_per_10k)
+            {
+                let picked = self.pick_class();
+                if picked == Class::PsiFlip && !self.is_psi_pid(info.pid) {
+                    self.pending_psi = Some(picked);
+                } else {
+                    class = Some(picked);
+                }
+            }
+
+            let Some(class) = class else {
+                out.extend_from_slice(&pkt);
+                continue;
+            };
+            let Some(m) = self.mutate(class, &pkt, &info) else {
+                // PSI packet without a usable single section — wait for
+                // the next one.
+                self.pending_psi = Some(class);
+                out.extend_from_slice(&pkt);
+                continue;
+            };
+            out.extend_from_slice(&m.wire);
+            let injection = Injection {
+                ordinal,
+                coord,
+                class,
+                pid: info.pid,
+                offsets: m.offsets,
+                before: pkt.to_vec(),
+                after: m.after,
+                detectable: m.detectable,
+                psi: self.is_psi_pid(info.pid),
+                pes_start: pes_start(&pkt, &info),
+            };
+            stats.injections += 1;
+            if injection.detectable {
+                stats.detectable += 1;
+            }
+            *stats.per_class.entry(class.name().to_string()).or_insert(0) += 1;
+            self.last_injection = Some(ordinal);
+            if let Err(e) = self.write_line(&LogLine::Injection(injection)) {
+                // Losing a line cannot be repaired here, and must not stop
+                // the run. It fails LOUD rather than silent: the receiver
+                // will report the resulting event as unexplained, which is
+                // a FAIL verdict.
+                tracing::error!("corruption log write failed at packet {ordinal}: {e}");
+            }
+        }
+        out.extend_from_slice(packets.remainder());
+        stats.bytes_in += msg.len() as u64;
+        stats.bytes_out += out.len() as u64;
+        out
+    }
+
+    fn emit(&mut self, out: &[u8]) -> Result<(), TransportError> {
+        if out.is_empty() {
+            return Ok(());
+        }
+        let max = self.inner.max_payload();
+        // Cut on a packet boundary where the budget allows one, so a
+        // normal push stays one push and only a grown one splits.
+        let cut = if max >= PKT {
+            (max / PKT) * PKT
+        } else {
+            max.max(1)
+        };
+        for slice in out.chunks(cut) {
+            self.inner.send_bytes(slice)?;
+        }
+        Ok(())
+    }
+}
+
+/// PUSI set and the payload starting with a PES start code (§2.4.3.7).
+fn pes_start(p: &[u8; PKT], info: &crate::rawts::PacketInfo) -> bool {
+    info.pusi && info.has_payload && p[info.payload_off..].starts_with(&[0, 0, 1])
+}
+
+/// The byte range of a packet whose corruption a conformant receiver MUST
+/// notice — the part covered by a checksum or by syntax someone parses.
+///
+/// For a PSI packet that is the pointer field through the end of the
+/// section's CRC32; everything after it is stuffing (a PAT in this
+/// harness's own multiplex is 17 bytes of section and 167 bytes of 0xFF).
+/// For a PES-start packet it is the PES header through the end of the
+/// optional header; the access-unit bytes after it carry no syntax the
+/// container layer checks. Every other packet has no such range: a flipped
+/// payload byte is simply corrupt media.
+///
+/// `None` means "nothing here is required to be noticed", which is the
+/// honest answer for most of a transport stream.
+fn sensitive_span(
+    p: &[u8; PKT],
+    info: &crate::rawts::PacketInfo,
+    psi: bool,
+) -> Option<(usize, usize)> {
+    if !info.has_payload || !info.pusi {
+        return None;
+    }
+    if psi {
+        let sec = info.payload_off + 1 + usize::from(*p.get(info.payload_off)?);
+        let len = (usize::from(*p.get(sec + 1)? & 0x0F) << 8) | usize::from(*p.get(sec + 2)?);
+        // The pointer field itself counts: redirect it and the section
+        // starts in the wrong place.
+        return Some((info.payload_off, (sec + 3 + len).min(PKT)));
+    }
+    if !pes_start(p, info) {
+        return None;
+    }
+    // §2.4.3.7: payload[8] is PES_header_data_length, so the header runs
+    // to payload[9 + that].
+    let hdr = usize::from(*p.get(info.payload_off + 8)?);
+    Some((info.payload_off, (info.payload_off + 9 + hdr).min(PKT)))
+}
+
+/// Byte range of a PSI section's body, excluding the 3-byte section header
+/// and the trailing CRC32. `None` when the packet does not carry the start
+/// of a single complete section.
+fn psi_body_range(p: &[u8; PKT], info: &crate::rawts::PacketInfo) -> Option<(usize, usize)> {
+    if !info.has_payload || !info.pusi {
+        return None;
+    }
+    let sec = info.payload_off + 1 + usize::from(*p.get(info.payload_off)?);
+    let len = (usize::from(*p.get(sec + 1)? & 0x0F) << 8) | usize::from(*p.get(sec + 2)?);
+    // 9 = table_id_ext(2) + version/current_next(1) + section_number(1) +
+    // last_section_number(1) + CRC32(4): the minimum any PSI section can be.
+    if len < 9 {
+        return None;
+    }
+    let lo = sec + 3;
+    let hi = lo + len - 4;
+    if hi > PKT || lo >= hi {
+        return None;
+    }
+    Some((lo, hi))
+}
+
+impl<T: Transport> Transport for Corrupter<T> {
+    fn send_bytes(&mut self, msg: &[u8]) -> Result<(), TransportError> {
+        let out = self.transform(msg);
+        self.emit(&out)
+    }
+
+    /// The INNER transport's budget: the sender upstream must keep sizing
+    /// its pushes for the real wire, and the tap splits its own (possibly
+    /// larger) output afterwards.
+    fn max_payload(&self) -> usize {
+        self.inner.max_payload()
+    }
+
+    fn is_alive(&self) -> bool {
+        self.inner.is_alive()
+    }
+
+    fn close(&mut self) {
+        let _ = self.log.flush();
+        self.inner.close();
+    }
+
+    fn cancel_handle(&self) -> Option<Arc<dyn TransportCancel + Send + Sync>> {
+        self.inner.cancel_handle()
+    }
+
+    fn socket_stats(&self) -> Option<SocketStats> {
+        self.inner.socket_stats()
+    }
+}
+
+// ============================================================
+// Attribution
+// ============================================================
+
+/// Receiver-side error-event kinds the attribution engine understands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Signal {
+    /// The raw reader lost and regained packet sync.
+    Resync,
+    ContinuityJump,
+    OtherDiscontinuity,
+    PsiChecksum,
+    MalformedPes,
+    OtherNonConformant,
+}
+
+/// What the receiver's evidence says about the injections.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct AttributionReport {
+    pub injected: u64,
+    pub detectable: u64,
+    pub resolved: u64,
+    pub unresolved: u64,
+    pub events: u64,
+    pub attributed_events: u64,
+    /// Attributed events whose signal was a non-conformance
+    /// (`PsiChecksum` / `MalformedPes` / `OtherNonConformant`).
+    pub attributed_nonconformant: u64,
+    /// Attributed events whose signal was a discontinuity
+    /// (`ContinuityJump` / `OtherDiscontinuity`).
+    pub attributed_discontinuities: u64,
+    /// Sample of events no injection explains (capped; the true count is
+    /// `events - attributed_events`).
+    pub unexplained_events: Vec<String>,
+    /// Injections a conformant receiver had to notice, and did not.
+    pub undetected: Vec<String>,
+    /// Injections the stream never produced media after.
+    pub unrecovered: Vec<String>,
+    pub resyncs: u64,
+    pub injected_fraction: f64,
+    pub attribution_window: u64,
+    pub recovery_bound: u64,
+}
+
+#[derive(Clone, Copy, Default)]
+struct InjState {
+    /// Receiver packet ordinal this injection landed at, once its PCR
+    /// anchor has been seen.
+    resolved_at: Option<u64>,
+    detected: bool,
+    recovered: bool,
+    /// Resolved against a LATER base than the one logged (the logged one
+    /// never arrived), so the position is approximate.
+    approx: bool,
+}
+
+/// Matches receiver events against a corruption log. Pure: no I/O, no
+/// clock, and no knowledge of the receiver beyond the three `on_*` calls.
+///
+/// All three `on_*` methods expect monotonically non-decreasing `at`
+/// values (receiver packet ordinals), which is how a receiver naturally
+/// produces them. Internally that lets the engine keep a sliding cursor
+/// over the injection list instead of rescanning it per event — a 72-hour
+/// soak produces millions of events against a quarter-million injections,
+/// and the quadratic form of that scan would not finish.
+pub struct Attribution {
+    inj: Vec<Injection>,
+    st: Vec<InjState>,
+    window: u64,
+    recovery_bound: u64,
+    /// First injection whose windows may still be open.
+    lo: usize,
+    /// One past the last injection resolved at or before the latest event.
+    hi: usize,
+    /// First injection not yet resolved; resolution runs front-to-back
+    /// because logged coordinates are in stream order.
+    next_unresolved: usize,
+    events: u64,
+    attributed_events: u64,
+    attributed_nonconformant: u64,
+    attributed_discontinuities: u64,
+    resyncs: u64,
+    unexplained: Vec<String>,
+}
+
+/// True when `a` is at or after `b` on the 33-bit PCR-base circle. A PCR
+/// base wraps every ~26.5 hours, so a plain `>=` would mis-order every
+/// coordinate straddling a wrap; the standard half-space test treats
+/// anything within 2^32 ahead as "after".
+fn after_or_eq(a: u64, b: u64) -> bool {
+    a.wrapping_sub(b) & ((1 << 33) - 1) < (1 << 32)
+}
+
+/// Signals a conformant receiver must produce for a given injection.
+/// `true` for classes whose observable effect is not pinned to one signal
+/// (any event inside the window then counts as having noticed).
+fn expects(inj: &Injection, sig: Signal) -> bool {
+    match inj.class {
+        // All three destroy packet framing: either the reader resyncs, or
+        // the packet vanishes from its PID and the CC jumps.
+        Class::Header | Class::Truncate | Class::Garbage => {
+            matches!(sig, Signal::Resync | Signal::ContinuityJump)
+        }
+        Class::Drop => matches!(sig, Signal::ContinuityJump),
+        Class::PsiFlip => matches!(sig, Signal::PsiChecksum),
+        Class::BodyFlip if inj.psi => matches!(sig, Signal::PsiChecksum),
+        Class::BodyFlip if inj.pes_start => {
+            matches!(sig, Signal::MalformedPes | Signal::OtherNonConformant)
+        }
+        _ => true,
+    }
+}
+
+fn describe(inj: &Injection, at: u64) -> String {
+    format!(
+        "{} on pid 0x{:04x} at packet {at}",
+        inj.class.name(),
+        inj.pid
+    )
+}
+
+impl Attribution {
+    /// Build from a parsed log. Injections logged before the stream's
+    /// first PCR carry no base and resolve immediately, against receiver
+    /// ordinal 0.
+    #[must_use]
+    pub fn new(injections: Vec<Injection>, header: &LogHeader) -> Self {
+        let st = injections
+            .iter()
+            .map(|i| InjState {
+                resolved_at: match i.coord.pcr_base {
+                    None => Some(i.coord.since_pcr),
+                    Some(_) => None,
+                },
+                ..InjState::default()
+            })
+            .collect();
+        Attribution {
+            inj: injections,
+            st,
+            window: header.attribution_window,
+            recovery_bound: header.recovery_bound,
+            lo: 0,
+            hi: 0,
+            next_unresolved: 0,
+            events: 0,
+            attributed_events: 0,
+            attributed_nonconformant: 0,
+            attributed_discontinuities: 0,
+            resyncs: 0,
+            unexplained: Vec::new(),
+        }
+    }
+
+    /// The receiver saw `pcr_base` on the packet at receiver ordinal `at`.
+    ///
+    /// Resolves every injection anchored at that base, plus any anchored
+    /// at a base that never arrived — the corruption may have destroyed
+    /// the packet carrying it — for which this is the first base at or
+    /// after the anchor. Those resolve approximately and are given one
+    /// PCR interval of extra attribution window.
+    pub fn on_pcr(&mut self, pcr_base: u64, at: u64) {
+        while self.next_unresolved < self.inj.len() {
+            let i = self.next_unresolved;
+            let Some(b) = self.inj[i].coord.pcr_base else {
+                // Resolved at construction.
+                self.next_unresolved += 1;
+                continue;
+            };
+            if b != pcr_base && !after_or_eq(pcr_base, b) {
+                // Anchored at a base still in the future; so is every
+                // later injection, because logged coordinates are ordered.
+                break;
+            }
+            // Saturating: a corrupt log must not panic the verifier.
+            self.st[i].resolved_at = Some(at.saturating_add(self.inj[i].coord.since_pcr));
+            self.st[i].approx = b != pcr_base;
+            self.next_unresolved += 1;
+        }
+    }
+
+    /// Move the scan cursors up to event ordinal `at`.
+    fn advance(&mut self, at: u64) {
+        while self.hi < self.st.len() && self.st[self.hi].resolved_at.is_some_and(|r| r <= at) {
+            self.hi += 1;
+        }
+        let span = self.window.max(self.recovery_bound) + APPROX_SLACK;
+        while self.lo < self.hi
+            && self.st[self.lo]
+                .resolved_at
+                .is_some_and(|r| r.saturating_add(span) < at)
+        {
+            self.lo += 1;
+        }
+    }
+
+    /// An error-class event surfaced at receiver ordinal `at` (`pid` is
+    /// `None` for a resync, which is not attributable to a PID).
+    pub fn on_signal(&mut self, at: u64, pid: Option<u16>, sig: Signal) {
+        self.events += 1;
+        if sig == Signal::Resync {
+            self.resyncs += 1;
+        }
+        self.advance(at);
+        // Newest first: the closest preceding injection is the one that
+        // explains an event, if any does.
+        let hit = (self.lo..self.hi).rev().find(|&i| {
+            let Some(r) = self.st[i].resolved_at else {
+                return false;
+            };
+            let w = if self.st[i].approx {
+                self.window + APPROX_SLACK
+            } else {
+                self.window
+            };
+            r <= at && at - r <= w
+        });
+        match hit {
+            Some(i) => {
+                self.attributed_events += 1;
+                match sig {
+                    Signal::PsiChecksum | Signal::MalformedPes | Signal::OtherNonConformant => {
+                        self.attributed_nonconformant += 1;
+                    }
+                    Signal::ContinuityJump | Signal::OtherDiscontinuity => {
+                        self.attributed_discontinuities += 1;
+                    }
+                    Signal::Resync => {}
+                }
+                if expects(&self.inj[i], sig) {
+                    self.st[i].detected = true;
+                }
+            }
+            None => {
+                if self.unexplained.len() < MAX_UNEXPLAINED {
+                    self.unexplained
+                        .push(format!("{sig:?} on pid {pid:?} at packet {at}"));
+                }
+            }
+        }
+    }
+
+    /// A Sample/Metadata event on `pid` surfaced at receiver ordinal `at` —
+    /// evidence the stream recovered from whatever preceded it.
+    pub fn on_media(&mut self, at: u64, pid: u16) {
+        self.advance(at);
+        for i in self.lo..self.hi {
+            if self.st[i].recovered {
+                continue;
+            }
+            let Some(r) = self.st[i].resolved_at else {
+                continue;
+            };
+            if at < r || at > r.saturating_add(self.recovery_bound) {
+                continue;
+            }
+            // Truncation and inserted garbage break packet sync for the
+            // whole multiplex, so media on ANY PID proves recovery; the
+            // other classes damage one PID and must be answered on it.
+            let any_pid = matches!(self.inj[i].class, Class::Garbage | Class::Truncate);
+            if any_pid || self.inj[i].pid == pid {
+                self.st[i].recovered = true;
+            }
+        }
+    }
+
+    /// Final verdict over a capture of `packets_total` receiver packets.
+    ///
+    /// An injection whose recovery window runs past the end of the capture
+    /// is not judged for recovery, and an injection that never resolved is
+    /// not judged at all — absent evidence is not evidence of a failure.
+    #[must_use]
+    pub fn finish(self, packets_total: u64) -> AttributionReport {
+        let mut detectable = 0;
+        let mut resolved = 0;
+        let mut unresolved = 0;
+        let mut undetected = Vec::new();
+        let mut unrecovered = Vec::new();
+        for (inj, st) in self.inj.iter().zip(&self.st) {
+            if inj.detectable {
+                detectable += 1;
+            }
+            let Some(r) = st.resolved_at else {
+                unresolved += 1;
+                continue;
+            };
+            resolved += 1;
+            if inj.detectable && !st.detected {
+                undetected.push(describe(inj, r));
+            }
+            if !st.recovered && r.saturating_add(self.recovery_bound) <= packets_total {
+                unrecovered.push(describe(inj, r));
+            }
+        }
+        AttributionReport {
+            injected: self.inj.len() as u64,
+            detectable,
+            resolved,
+            unresolved,
+            events: self.events,
+            attributed_events: self.attributed_events,
+            attributed_nonconformant: self.attributed_nonconformant,
+            attributed_discontinuities: self.attributed_discontinuities,
+            unexplained_events: self.unexplained,
+            undetected,
+            unrecovered,
+            resyncs: self.resyncs,
+            injected_fraction: self.inj.len() as f64 / packets_total.max(1) as f64,
+            attribution_window: self.window,
+            recovery_bound: self.recovery_bound,
+        }
+    }
+}
+
+// ============================================================
+// Test support (shared with the crate's integration tests)
+// ============================================================
+
+/// In-memory sinks the tap's tests drive it over. Public so the crate's
+/// integration-test binaries can use the same ones the unit tests do;
+/// hidden from the docs because nothing outside the test tree should.
+#[doc(hidden)]
+pub mod testing {
+    use super::{Arc, Mutex, Transport, TransportError, Write};
+
+    /// Collects every byte the tap sends, flattened.
+    pub struct VecTransport(pub Arc<Mutex<Vec<u8>>>);
+
+    impl Transport for VecTransport {
+        fn send_bytes(&mut self, msg: &[u8]) -> Result<(), TransportError> {
+            self.0
+                .lock()
+                .expect("VecTransport mutex")
+                .extend_from_slice(msg);
+            Ok(())
+        }
+        fn max_payload(&self) -> usize {
+            1316
+        }
+        fn is_alive(&self) -> bool {
+            true
+        }
+        fn close(&mut self) {}
+    }
+
+    /// Collects the tap's JSONL log.
+    pub struct VecWriter(pub Arc<Mutex<Vec<u8>>>);
+
+    impl Write for VecWriter {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("VecWriter mutex").extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// In-memory transport that records every `send_bytes` payload
+    /// separately — the per-push view the splitting test needs.
+    struct Capture(Arc<Mutex<Vec<Vec<u8>>>>);
+    impl Transport for Capture {
+        fn send_bytes(&mut self, msg: &[u8]) -> Result<(), TransportError> {
+            self.0.lock().unwrap().push(msg.to_vec());
+            Ok(())
+        }
+        fn max_payload(&self) -> usize {
+            1316
+        }
+        fn is_alive(&self) -> bool {
+            true
+        }
+        fn close(&mut self) {}
+    }
+
+    fn baseline_bytes(seconds: f64, tag: &str) -> Vec<u8> {
+        let p = crate::profiles::by_name("baseline").unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "tst-interop-corrupt-{tag}-{}.ts",
+            std::process::id()
+        ));
+        crate::r#gen::run(p, seconds, &path).unwrap();
+        let b = std::fs::read(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        b
+    }
+
+    /// Push `bytes` through a `Corrupter` in 1316-byte pushes; return (wire bytes, log text, stats).
+    fn run_tap(bytes: &[u8], cfg: CorruptConfig) -> (Vec<u8>, String, CorruptionStats) {
+        let sink = Arc::new(Mutex::new(Vec::new()));
+        let log = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let mut tap = Corrupter::new(
+            Capture(Arc::clone(&sink)),
+            cfg,
+            Box::new(testing::VecWriter(Arc::clone(&log))),
+        )
+        .unwrap();
+        for chunk in bytes.chunks(1316) {
+            tap.send_bytes(chunk).unwrap();
+        }
+        let stats = tap.stats();
+        drop(tap);
+        let wire: Vec<u8> = sink.lock().unwrap().iter().flatten().copied().collect();
+        let text = String::from_utf8(log.lock().unwrap().clone()).unwrap();
+        (wire, text, stats)
+    }
+
+    fn cfg(classes: &[Class], rate: u32, min_gap: u64) -> CorruptConfig {
+        CorruptConfig {
+            rate_per_10k: rate,
+            min_gap,
+            classes: classes.to_vec(),
+            seed: 7,
+        }
+    }
+
+    #[test]
+    fn parse_corrupt_accepts_the_documented_grammar_and_rejects_bad_gaps() {
+        let c = parse_corrupt("rate=5,min_gap=1000", 3).unwrap();
+        assert_eq!(
+            c,
+            CorruptConfig {
+                rate_per_10k: 5,
+                min_gap: 1000,
+                classes: Class::ALL.to_vec(),
+                seed: 3
+            }
+        );
+        let c = parse_corrupt("rate=50,min_gap=1200,classes=header+psi_flip", 3).unwrap();
+        assert_eq!(c.classes, vec![Class::Header, Class::PsiFlip]);
+        assert!(
+            parse_corrupt("rate=5,min_gap=999", 3).is_err(),
+            "min_gap < 2*window"
+        );
+        assert!(parse_corrupt("rate=5,min_gap=1000,classes=bogus", 3).is_err());
+        assert!(
+            parse_corrupt("rate=0,min_gap=1000", 3).is_err(),
+            "rate 0 is 'disabled', reject"
+        );
+        assert!(parse_corrupt("min_gap=1000", 3).is_err(), "rate required");
+        assert!(
+            parse_corrupt("rate=5,min_gap=1000,bogus=1", 3).is_err(),
+            "unknown keys fail closed"
+        );
+    }
+
+    #[test]
+    fn same_seed_same_input_gives_byte_identical_wire_and_log() {
+        let b = baseline_bytes(6.0, "det");
+        let (w1, l1, _) = run_tap(&b, cfg(&Class::ALL, 200, 1000));
+        let (w2, l2, _) = run_tap(&b, cfg(&Class::ALL, 200, 1000));
+        assert_eq!(w1, w2);
+        assert_eq!(l1, l2);
+        let (w3, _, _) = run_tap(
+            &b,
+            CorruptConfig {
+                seed: 8,
+                ..cfg(&Class::ALL, 200, 1000)
+            },
+        );
+        assert_ne!(w1, w3);
+    }
+
+    #[test]
+    fn log_header_then_one_line_per_injection_and_min_gap_is_honored() {
+        // 60 s of baseline is 3600 packets (the profile muxes 60 packets
+        // per second — see `rawts`'s own 180-packets-in-3 s assertion), so
+        // a 5% rate with a 1000-packet floor lands ~3 injections.
+        let b = baseline_bytes(60.0, "gap");
+        let (_, text, stats) = run_tap(&b, cfg(&Class::ALL, 500, 1000));
+        let (hdr, inj) = parse_log(&text).unwrap();
+        assert_eq!(hdr.min_gap, 1000);
+        assert_eq!(inj.len() as u64, stats.injections);
+        assert!(
+            stats.injections >= 2,
+            "3600 packets at 5% -> expect >= 2 with gap 1000: {stats:?}"
+        );
+        for w in inj.windows(2) {
+            assert!(w[1].ordinal - w[0].ordinal >= 1000, "{:?}", w);
+        }
+    }
+
+    /// Each class, forced (rate 10_000 = every eligible packet, min_gap
+    /// 1000 so exactly one injection lands in the first ~1000 packets),
+    /// produces the documented wire mutation.
+    #[test]
+    fn body_flip_changes_only_bytes_past_the_header() {
+        let b = baseline_bytes(6.0, "bf");
+        let (w, text, _) = run_tap(&b, cfg(&[Class::BodyFlip], 10_000, 1000));
+        let (_, inj) = parse_log(&text).unwrap();
+        let i = &inj[0];
+        assert_eq!(i.class, Class::BodyFlip);
+        assert!(i.offsets.iter().all(|&o| (4..188).contains(&o)));
+        let orig = &b[i.ordinal as usize * 188..][..188];
+        let got = &w[i.ordinal as usize * 188..][..188];
+        assert_eq!(&orig[..4], &got[..4]);
+        assert_ne!(orig, got);
+        assert_eq!(w.len(), b.len());
+    }
+
+    /// A body flip is only claimed detectable when it lands on syntax
+    /// something parses. This pins the two spans that decide that.
+    #[test]
+    fn sensitive_span_covers_parsed_syntax_not_stuffing_or_media() {
+        let b = baseline_bytes(2.0, "span");
+        let pkt_at = |n: usize| -> [u8; 188] { b[n * 188..][..188].try_into().unwrap() };
+
+        // The PAT: pointer field through the end of the CRC. Everything
+        // after it is 0xFF stuffing, where a flip is invisible.
+        let pat = pkt_at(0);
+        let info = crate::rawts::classify_packet(&pat).unwrap();
+        assert_eq!(info.pid, 0, "first packet of a fresh mux is the PAT");
+        let (lo, hi) = sensitive_span(&pat, &info, true).unwrap();
+        assert_eq!(lo, info.payload_off);
+        assert!(hi < 188, "a PAT section is far shorter than its payload");
+        assert!(
+            pat[hi..].iter().all(|&x| x == 0xFF),
+            "stuffing past the CRC"
+        );
+
+        // Video PID: a PES start's span ends at the end of the PES header,
+        // far short of the access-unit bytes that follow it.
+        let mut starts = 0;
+        let mut first_video = None;
+        for n in 0..b.len() / 188 {
+            let pkt = pkt_at(n);
+            let info = crate::rawts::classify_packet(&pkt).unwrap();
+            if info.pid != 0x1011 {
+                continue;
+            }
+            first_video.get_or_insert((pkt, info));
+            let Some((lo, hi)) = sensitive_span(&pkt, &info, false) else {
+                assert!(!pes_start(&pkt, &info), "a PES start must have a span");
+                continue;
+            };
+            assert!(pes_start(&pkt, &info));
+            assert!(lo < hi && hi < 188, "PES header span {lo}..{hi}");
+            starts += 1;
+        }
+        assert!(starts > 0, "baseline carries video PES starts");
+
+        // The same packet without its payload-unit-start flag carries no
+        // header to damage, so nothing in it is required to be noticed.
+        let (mut pkt, _) = first_video.expect("baseline carries video packets");
+        pkt[1] &= !0x40;
+        let info = crate::rawts::classify_packet(&pkt).unwrap();
+        assert_eq!(sensitive_span(&pkt, &info, false), None);
+    }
+
+    #[test]
+    fn header_class_is_always_detectable_and_keeps_packet_length() {
+        let b = baseline_bytes(6.0, "hdr");
+        let (w, text, _) = run_tap(&b, cfg(&[Class::Header], 10_000, 1000));
+        let (_, inj) = parse_log(&text).unwrap();
+        assert!(inj[0].detectable);
+        assert!(inj[0].offsets.iter().all(|&o| o <= 4));
+        assert_eq!(w.len(), b.len());
+    }
+
+    #[test]
+    fn truncate_shortens_the_wire_by_the_cut() {
+        let b = baseline_bytes(6.0, "tr");
+        let (w, text, _) = run_tap(&b, cfg(&[Class::Truncate], 10_000, 1000));
+        let (_, inj) = parse_log(&text).unwrap();
+        let cut = 188 - inj[0].after.len();
+        assert!((1..=148).contains(&cut), "emit 40..=187 bytes");
+        assert_eq!(
+            w.len(),
+            b.len() - inj.iter().map(|i| 188 - i.after.len()).sum::<usize>()
+        );
+    }
+
+    #[test]
+    fn garbage_inserts_1_to_300_non_sync_bytes_and_splits_oversize_pushes() {
+        let b = baseline_bytes(6.0, "gb");
+        let sink = Arc::new(Mutex::new(Vec::new()));
+        let mut tap = Corrupter::new(
+            Capture(Arc::clone(&sink)),
+            cfg(&[Class::Garbage], 10_000, 1000),
+            Box::new(std::io::sink()),
+        )
+        .unwrap();
+        for chunk in b.chunks(1316) {
+            tap.send_bytes(chunk).unwrap();
+        }
+        let stats = tap.stats();
+        let pushes = sink.lock().unwrap().clone();
+        assert!(
+            pushes.iter().all(|p| p.len() <= 1316),
+            "every push <= max_payload"
+        );
+        assert!(stats.bytes_out > stats.bytes_in);
+        assert!(stats.bytes_out - stats.bytes_in <= 300 * stats.injections);
+        let wire: Vec<u8> = pushes.iter().flatten().copied().collect();
+        // No inserted byte is 0x47 (garbage never fakes a sync).
+        let mut r = crate::rawts::Reader::new();
+        r.set_resync_mode(true);
+        r.feed(&wire).unwrap();
+        assert_eq!(r.resyncs().len() as u64, stats.injections);
+    }
+
+    #[test]
+    fn drop_removes_and_dup_repeats_a_packet() {
+        let b = baseline_bytes(6.0, "dd");
+        let (w, text, _) = run_tap(&b, cfg(&[Class::Drop], 10_000, 1000));
+        let (_, inj) = parse_log(&text).unwrap();
+        assert_eq!(w.len(), b.len() - 188 * inj.len());
+        assert!(inj[0].detectable);
+        let (w, text, _) = run_tap(&b, cfg(&[Class::Dup], 10_000, 1000));
+        let (_, inj) = parse_log(&text).unwrap();
+        assert_eq!(w.len(), b.len() + 188 * inj.len());
+        assert!(!inj[0].detectable);
+        let o = inj[0].ordinal as usize;
+        assert_eq!(&w[o * 188..(o + 1) * 188], &w[(o + 1) * 188..(o + 2) * 188]);
+    }
+
+    #[test]
+    fn psi_flip_defers_until_a_pat_or_pmt_packet_and_never_touches_the_crc() {
+        let b = baseline_bytes(6.0, "psi");
+        let (w, text, _) = run_tap(&b, cfg(&[Class::PsiFlip], 10_000, 1000));
+        let (_, inj) = parse_log(&text).unwrap();
+        assert!(!inj.is_empty());
+        for i in &inj {
+            assert!(i.psi && i.detectable && matches!(i.pid, 0 | 0x1000));
+            let pkt = &w[i.ordinal as usize * 188..][..188];
+            let info = crate::rawts::classify_packet(pkt.try_into().unwrap()).unwrap();
+            // Section body = after pointer field + 3-byte header, excluding the 4 CRC bytes.
+            let sec = info.payload_off + 1 + usize::from(pkt[info.payload_off]);
+            let len = (usize::from(pkt[sec + 1] & 0x0F) << 8) | usize::from(pkt[sec + 2]);
+            let body = sec + 3..sec + 3 + len - 4;
+            assert!(i.offsets.iter().all(|o| body.contains(o)), "{i:?}");
+        }
+    }
+
+    #[test]
+    fn read_log_round_trips_and_the_parser_fails_closed() {
+        let b = baseline_bytes(6.0, "rt");
+        let (_, text, _) = run_tap(&b, cfg(&Class::ALL, 10_000, 1000));
+        let path = std::env::temp_dir().join(format!(
+            "tst-interop-corrupt-rt-{}.jsonl",
+            std::process::id()
+        ));
+        std::fs::write(&path, &text).unwrap();
+        let from_file = read_log(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        let from_text = parse_log(&text).unwrap();
+        assert_eq!(from_file.1, from_text.1);
+        assert!(!from_file.1.is_empty());
+
+        let mut lines = text.lines();
+        let header = lines.next().unwrap();
+        let injection = lines.next().expect("at least one injection");
+        // Every rejection names the offending line.
+        for (bad, want) in [
+            (format!("{header}\n{header}"), "line 2"),
+            (injection.to_string(), "line 1"),
+            (format!("{header}\nnot json"), "line 2"),
+            (
+                header.replace("\"tap_version\":1", "\"tap_version\":2"),
+                "line 1",
+            ),
+        ] {
+            let e = parse_log(&bad).unwrap_err();
+            assert!(e.contains(want), "{e}");
+        }
+        assert!(parse_log("").unwrap_err().contains("no header"));
+    }
+
+    // ---- Attribution ----
+
+    fn hdr() -> LogHeader {
+        LogHeader {
+            tap_version: 1,
+            seed: 1,
+            rate_per_10k: 5,
+            min_gap: 1000,
+            classes: Class::ALL.to_vec(),
+            attribution_window: ATTRIBUTION_WINDOW,
+            recovery_bound: RECOVERY_BOUND,
+        }
+    }
+    fn inj(coord_pcr: u64, since: u64, class: Class, pid: u16, detectable: bool) -> Injection {
+        Injection {
+            ordinal: 0,
+            coord: Coord {
+                pcr_base: Some(coord_pcr),
+                since_pcr: since,
+            },
+            class,
+            pid,
+            offsets: vec![],
+            before: vec![],
+            after: vec![],
+            detectable,
+            psi: false,
+            pes_start: false,
+        }
+    }
+
+    #[test]
+    fn attribution_explains_events_inside_the_window_and_flags_the_rest() {
+        let mut a = Attribution::new(vec![inj(1000, 10, Class::Header, 0x1011, true)], &hdr());
+        a.on_pcr(1000, 5000); // injection resolves to receiver ordinal 5010
+        a.on_signal(5020, Some(0x1011), Signal::ContinuityJump); // explained
+        a.on_media(5100, 0x1011); // recovered
+        a.on_signal(9000, Some(0x1011), Signal::ContinuityJump); // unexplained
+        let r = a.finish(10_000);
+        assert_eq!(r.attributed_events, 1);
+        assert_eq!(r.attributed_discontinuities, 1);
+        assert_eq!(r.unexplained_events.len(), 1);
+        assert!(r.undetected.is_empty() && r.unrecovered.is_empty());
+        assert_eq!(r.resolved, 1);
+    }
+
+    #[test]
+    fn attribution_flags_undetected_and_unrecovered_injections() {
+        let mut a = Attribution::new(
+            vec![
+                inj(1000, 10, Class::PsiFlip, 0, true),
+                inj(2000, 0, Class::Dup, 0x1011, false),
+            ],
+            &hdr(),
+        );
+        a.on_pcr(1000, 5000);
+        a.on_pcr(2000, 7000);
+        a.on_media(7100, 0x1011); // dup recovered (no detection required)
+        let r = a.finish(10_000);
+        assert_eq!(r.undetected.len(), 1, "psi_flip had no PsiChecksum event");
+        assert_eq!(
+            r.unrecovered.len(),
+            1,
+            "psi_flip (pid 0) never saw media after it"
+        );
+    }
+
+    #[test]
+    fn attribution_resolves_an_unseen_pcr_base_to_the_next_seen_one_wrap_aware() {
+        let near_wrap = (1u64 << 33) - 10;
+        let mut a = Attribution::new(
+            vec![inj(near_wrap, 3, Class::Truncate, 0x1011, true)],
+            &hdr(),
+        );
+        a.on_pcr(5, 8000); // wrapped past 2^33; first base "at or after" near_wrap
+        a.on_signal(8010, None, Signal::Resync);
+        a.on_media(8020, 0x1011);
+        let r = a.finish(9000);
+        assert_eq!(r.resolved, 1);
+        assert_eq!(r.resyncs, 1);
+        assert!(
+            r.unexplained_events.is_empty() && r.undetected.is_empty() && r.unrecovered.is_empty()
+        );
+    }
+
+    #[test]
+    fn attribution_reports_an_injection_whose_window_never_arrived_as_unresolved() {
+        let a = Attribution::new(vec![inj(1000, 0, Class::Header, 0x1011, true)], &hdr());
+        let r = a.finish(100);
+        assert_eq!(r.unresolved, 1);
+        assert!(
+            r.undetected.is_empty(),
+            "an unresolved injection is not judged"
+        );
+    }
+}

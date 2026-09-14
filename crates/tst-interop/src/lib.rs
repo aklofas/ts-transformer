@@ -12,6 +12,7 @@
 pub(crate) const HEARTBEAT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
 
 pub mod cli;
+pub mod corrupt;
 pub mod fixtures;
 // `gen` is a reserved keyword since the 2024 edition (future generator
 // syntax) — the module still lives at `src/gen.rs` / is invoked as the
