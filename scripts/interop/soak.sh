@@ -12,9 +12,8 @@
 # module doc for the verdict shapes this run's evidence feeds):
 #   - `srt` leg: `tst-interop send --managed` (SRT, wrapped in
 #     `tst_pipeline::ManagedTransport` so a transport break reconnects)
-#     -> impairment proxy (2% loss, 20ms jitter over a 30ms base delay,
-#     1% reorder, a seeded RNG, and a 90s full-drop outage window every
-#     6h) -> `tst-interop
+#     -> impairment proxy (a seeded PHASE SCHEDULE — see "Realism knobs"
+#     below — plus a 90s full-drop outage window every 6h) -> `tst-interop
 #     recv --managed` (`ManagedRecvTransport`/`ManagedDemuxReceiver` —
 #     a listener-mode SRT recv otherwise accepts exactly ONE connection
 #     for its whole process lifetime, so without this flag the FIRST
@@ -22,7 +21,7 @@
 #     keeps retrying forever on the other end). BOTH sides must survive
 #     each outage window and reconnect once it closes.
 #   - `rist` leg: the same shape over RIST, through a SECOND impaired
-#     proxy with the SAME continuous impairment but NO outage window.
+#     proxy on the SAME schedule but with NO outage window.
 #     One outage-driven reconnect assertion (the srt leg) is enough —
 #     adding a second would double this run's flake surface (two
 #     independent outage/reconnect state machines to reason about) for
@@ -31,6 +30,45 @@
 #     data loss, not a reconnect exercise. The rist leg's job here is
 #     purely "does sustained loss/jitter/reorder over many hours behave
 #     the same as it does over a five-second interop-matrix cell."
+#
+# # Realism knobs
+#
+# A soak run is not one fixed impairment against one fixed stream shape.
+# Everything below is derived from the single `--seed`, so a run is fully
+# reproducible from its seed alone, and every derived choice is also
+# DECLARED in `soak-config.json` before launch so `report soak` can check
+# the run actually did what it said it would (`profile_declared_<leg>` /
+# `schedule_declared_<leg>`).
+#
+#   - Per-leg stream profile (`--profile auto`, the default): the two
+#     legs run two DISTINCT profiles drawn from the seed by
+#     `tst-interop pick-profiles --seed N --legs 2` (see
+#     `profiles::pick`) instead of both running `baseline` forever, so a
+#     long run also covers a codec/carriage/cadence shape the short
+#     interop matrix only sees for seconds at a time. `--profile NAME`
+#     pins BOTH legs to one named profile — that is the reproduction
+#     form (bisecting a failure a drawn profile exposed).
+#   - Impairment schedule (the default): each proxy walks a seeded
+#     `--schedule` of `--schedule-phases` phases, each in force for
+#     `--schedule-phase-s` seconds, varying loss (0.5-4%, ~30% of phases
+#     bursty), jitter, reorder and base delay per phase — a link whose
+#     conditions CHANGE, which is what a multi-day run is for. The
+#     phase table is a pure function of (seed, phases), echoed into each
+#     proxy's stats file. `--fixed-impairment` reverts to the old single
+#     fixed level (`--loss/--jitter/--delay/--reorder` below) — the
+#     bisect form for "is this failure the schedule's doing?".
+#   - Sender corruption tap (on by default; `--no-corrupt` turns it off,
+#     the other bisect form): each sender deliberately damages a small,
+#     logged fraction of its own packets, and the matching receiver reads
+#     that log and must account for every injection — see
+#     `crates/tst-interop/src/corrupt.rs`. Each leg gets its own seed
+#     offset and its own `corruption.jsonl`, so the two taps never
+#     produce the same damage at the same offsets.
+#   - Rich KLV (always, both legs): `--klv-set rich --klv-seed $SEED`
+#     replaces the 4-tag fixture record with a ~32-tag ST 0601 record
+#     carrying a nested ST 0102 security set on a seeded presence
+#     schedule, so the run exercises real metadata density rather than
+#     the matrix's minimal record.
 #
 # Every long-running process's stdout/stderr is redirected to
 # `--outdir/logs/*.log`; each PID is additionally recorded under
@@ -104,6 +142,9 @@
 #   srt/{proxy-stats,recv-report,send-report}.json  - klv_set_sha256 is `null` in both
 #   rist/{proxy-stats,recv-report,send-report}.json   report/send JSONs (--no-klv-digest;
 #                                                      counts/every other field unaffected)
+#   {srt,rist}/corruption.jsonl - the sender's own log of every injection it
+#                         made, read back by that leg's receiver (absent
+#                         under --no-corrupt)
 #   logs/*.log          - one file per launched process (each send/recv beats a
 #                         one-line "heartbeat" into its log every 60s — counters +
 #                         wire bytes — so a dead process is findable to the minute)
@@ -192,6 +233,15 @@ HOURS=72
 OUTDIR=""
 SEED=1
 RSS_SLOPE_THRESHOLD=""
+# See the header's "Realism knobs" section for what each of these does
+# and which one to reach for when bisecting a failure.
+PROFILE=auto
+CORRUPT=1
+FIXED_IMPAIRMENT=0
+SCHEDULE_PHASES=12
+# Empty = derive from TOTAL_SECONDS / SCHEDULE_PHASES once --hours is
+# known (both are parsed below, in either order).
+SCHEDULE_PHASE_S=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -205,6 +255,26 @@ while [[ $# -gt 0 ]]; do
       ;;
     --seed)
       SEED=$2
+      shift 2
+      ;;
+    --profile)
+      PROFILE=$2
+      shift 2
+      ;;
+    --no-corrupt)
+      CORRUPT=0
+      shift
+      ;;
+    --fixed-impairment)
+      FIXED_IMPAIRMENT=1
+      shift
+      ;;
+    --schedule-phases)
+      SCHEDULE_PHASES=$2
+      shift 2
+      ;;
+    --schedule-phase-s)
+      SCHEDULE_PHASE_S=$2
       shift 2
       ;;
     --rss-slope-threshold-kb-per-hour)
@@ -239,6 +309,24 @@ done
 }
 [[ "$SEED" =~ ^[0-9]+$ ]] || {
   echo "soak.sh: --seed must be a non-negative integer, got: $SEED" >&2
+  exit 2
+}
+[[ "$SCHEDULE_PHASES" =~ ^[0-9]+$ ]] && [[ "$SCHEDULE_PHASES" -gt 0 ]] || {
+  echo "soak.sh: --schedule-phases must be a positive integer, got: $SCHEDULE_PHASES" >&2
+  exit 2
+}
+if [[ -n "$SCHEDULE_PHASE_S" ]]; then
+  [[ "$SCHEDULE_PHASE_S" =~ ^[0-9]+$ ]] && [[ "$SCHEDULE_PHASE_S" -gt 0 ]] || {
+    echo "soak.sh: --schedule-phase-s must be a positive integer (seconds), got: $SCHEDULE_PHASE_S" >&2
+    exit 2
+  }
+fi
+# `auto` is checked here; a named profile is checked against the registry
+# right after the build, by the same `pick-profiles`-adjacent binary that
+# owns the registry (bash has no business holding a second copy of the
+# profile list — see run-matrix.sh's own stance on duplicated inventories).
+[[ -n "$PROFILE" ]] || {
+  echo "soak.sh: --profile must be 'auto' or a profile name" >&2
   exit 2
 }
 [[ -n "$OUTDIR" ]] || OUTDIR="$HOME/interop-soak-$(date -u +%Y%m%dT%H%M%SZ)"
@@ -280,6 +368,12 @@ TOTAL_SECONDS=$(awk -v h="$HOURS" 'BEGIN{printf "%d", h*3600 + 0.5}')
 # soak`'s `--outage-period-s` are built from it.
 OUTAGE_PERIOD_S=21600 # 6h
 OUTAGE_DUR_S=90
+# The four FIXED-impairment knobs. Used only under --fixed-impairment:
+# the default run drives both proxies from a seeded --schedule instead,
+# whose phases override all four per phase (which is why the proxy
+# refuses to accept them together). Kept — rather than deleted — because
+# "is this failure the schedule's doing?" is a question a long run will
+# eventually raise, and the old single-level shape is the answer to it.
 LOSS_PCT=2
 JITTER_MS=20
 # Constant one-way base delay on top of the jitter — a realistic WAN
@@ -287,6 +381,31 @@ JITTER_MS=20
 # over loopback's ~0ms, which no real link has).
 DELAY_MS=30
 REORDER="1,200" # 1%, held 200ms — several packet intervals at this traffic's rate
+# Sender corruption tap (see the header's "Realism knobs"): 5 injections
+# per 10,000 packets, no two closer than 1000 packets. The gap is the
+# load-bearing half — `corrupt::CorruptConfig::validate` refuses a gap
+# short enough for two injections to both plausibly explain one receiver
+# event, and an ambiguous attribution would make the corruption verdicts
+# unfalsifiable. Each leg draws from its OWN seed (`SEED + 1` / `SEED +
+# 2`) so the two taps damage different packets: the same seed on both
+# would inject at the same stream offsets, and a single systematic
+# attribution bug could then look like agreement between two independent
+# legs.
+CORRUPT_SPEC="rate=5,min_gap=1000"
+SRT_CORRUPT_SEED=$((SEED + 1))
+RIST_CORRUPT_SEED=$((SEED + 2))
+
+# Default the phase length so the declared phases tile the whole run
+# (12 phases over 72h = one new link condition every 6h). Integer
+# division deliberately: a run that outlives `phases * phase_s` simply
+# stays on the last phase (`impair::Engine::phase_index`), which is the
+# right behaviour for the remainder seconds this truncation leaves. The
+# floor of 1 keeps a very short drill (`--hours 0.02` with 12 phases)
+# from asking the proxy for `phase_s=0s`, which it rejects.
+if [[ -z "$SCHEDULE_PHASE_S" ]]; then
+  SCHEDULE_PHASE_S=$((TOTAL_SECONDS / SCHEDULE_PHASES))
+  [[ "$SCHEDULE_PHASE_S" -ge 1 ]] || SCHEDULE_PHASE_S=1
+fi
 # How close to the nominal deadline a worker death stops being treated
 # as a mid-run failure — see the header's "Supervisor fail-fast" note.
 SUPERVISOR_GRACE_S=120
@@ -319,18 +438,67 @@ PROXY_ADDR_POLL_TIMEOUT_S=10
 # fix alone has to carry the full burden.
 SAMPLER_END_SLACK_S=35
 
-# Declared BEFORE any evidence exists — `report soak` judges the run
-# against these, never against what the artifacts happen to span
-# (release-gate audit RLS-B09).
-RSS_CADENCE_S=30
-jq -n --argjson dur "$TOTAL_SECONDS" --argjson cad "$RSS_CADENCE_S" \
-  --argjson slack "$SAMPLER_END_SLACK_S" \
-  '{expected_duration_s: $dur, rss_cadence_s: $cad, warmup_fraction: 0.1667,
-    sampler_end_slack_s: $slack, expected_worker_exits: {}}' >"$OUTDIR/soak-config.json"
-
+# The build comes BEFORE the config declaration (it used to follow it)
+# because the declaration now includes the drawn per-leg profiles, and
+# `pick-profiles` — the one place that owns the seed-to-profile mapping
+# — lives in the binary being built. The invariant the declaration
+# actually needs is unchanged and still holds: the config is written
+# before any EVIDENCE exists, i.e. before a single worker launches.
 echo "soak: building tst-interop (release)..." >&2
 (cd "$REPO_ROOT" && SRT_FORCE_VENDORED=1 RIST_FORCE_VENDORED=1 cargo build --release -p tst-interop)
 BIN="$REPO_ROOT/target/release/tst-interop"
+
+# Per-leg profile draw. `auto` asks the binary for two DISTINCT names
+# derived from this run's seed; a named profile pins both legs (the
+# reproduction form). `pick-profiles` exits 2 on an impossible draw, and
+# an unknown NAME is caught either by `report soak --validate-only`
+# below (which rejects a declaration naming a profile the registry
+# doesn't have) or by `send`/`recv` themselves — bash never holds its
+# own copy of the profile list.
+if [[ "$PROFILE" == "auto" ]]; then
+  mapfile -t PICKED < <("$BIN" pick-profiles --seed "$SEED" --legs 2)
+  [[ ${#PICKED[@]} -eq 2 ]] || {
+    echo "soak.sh: pick-profiles did not return two profile names (got: ${PICKED[*]-none})" >&2
+    exit 2
+  }
+  SRT_PROFILE=${PICKED[0]}
+  RIST_PROFILE=${PICKED[1]}
+else
+  SRT_PROFILE=$PROFILE
+  RIST_PROFILE=$PROFILE
+fi
+echo "soak: profiles — srt=$SRT_PROFILE rist=$RIST_PROFILE (--profile $PROFILE, seed $SEED)" >&2
+
+# Declared BEFORE any evidence exists — `report soak` judges the run
+# against these, never against what the artifacts happen to span
+# (release-gate audit RLS-B09). `legs` carries the same declare-then-
+# check stance one level down: which profile each leg was launched with,
+# and which impairment schedule its proxy was given (`null` under
+# --fixed-impairment), checked afterwards against the recv report's own
+# `profile` field and the proxy's own schedule echo.
+RSS_CADENCE_S=30
+if [[ "$CORRUPT" -eq 1 ]]; then
+  CORRUPTION_DECL=true
+else
+  CORRUPTION_DECL=false
+fi
+if [[ "$FIXED_IMPAIRMENT" -eq 1 ]]; then
+  SCHEDULE_DECL=null
+else
+  SCHEDULE_DECL=$(jq -n --argjson seed "$SEED" --argjson phases "$SCHEDULE_PHASES" \
+    --argjson phase_s "$SCHEDULE_PHASE_S" \
+    '{seed: $seed, phases: $phases, phase_s: $phase_s}')
+fi
+jq -n --argjson dur "$TOTAL_SECONDS" --argjson cad "$RSS_CADENCE_S" \
+  --argjson slack "$SAMPLER_END_SLACK_S" \
+  --argjson corruption "$CORRUPTION_DECL" \
+  --arg srt_profile "$SRT_PROFILE" --arg rist_profile "$RIST_PROFILE" \
+  --argjson schedule "$SCHEDULE_DECL" \
+  '{expected_duration_s: $dur, rss_cadence_s: $cad, warmup_fraction: 0.1667,
+    sampler_end_slack_s: $slack, expected_worker_exits: {},
+    corruption: $corruption,
+    legs: {srt: {profile: $srt_profile, schedule: $schedule},
+           rist: {profile: $rist_profile, schedule: $schedule}}}' >"$OUTDIR/soak-config.json"
 
 # Fail fast on a declared config that could never pass its own
 # completeness verdicts (e.g. an `--hours` value small enough that the
@@ -379,6 +547,52 @@ wait_for_bound_addr() {
 }
 
 # ---------------------------------------------------------------------
+# Shared launch arguments
+# ---------------------------------------------------------------------
+#
+# Both legs are launched from the same assembled arrays rather than two
+# hand-kept copies of the same flags: the only thing that legitimately
+# differs between them is the srt leg's `--outage`/`--managed` and each
+# leg's own profile, seed offset and log path.
+
+# The seeded phase schedule (default) or the four fixed knobs. `proxy`
+# REFUSES the two together — a schedule overrides loss/jitter/reorder/
+# delay per phase, so accepting both would silently run something other
+# than what was typed — which is exactly why this is one array rather
+# than two independently-passed sets of flags. `--seed` and the srt
+# leg's `--outage` are per-run, not per-phase, and stay outside it.
+if [[ "$FIXED_IMPAIRMENT" -eq 1 ]]; then
+  IMPAIR_ARGS=(--loss "$LOSS_PCT" --jitter "$JITTER_MS" --delay "$DELAY_MS" --reorder "$REORDER")
+else
+  IMPAIR_ARGS=(--schedule "seed=$SEED,phases=$SCHEDULE_PHASES,phase_s=${SCHEDULE_PHASE_S}s")
+fi
+
+# Corruption tap arguments, per leg and per side — empty under
+# --no-corrupt. `send --corrupt` without `--corruption-log` (and the
+# reverse) is a deliberate usage error, so the two always travel
+# together; the receiver's log path is the same file its own sender
+# writes, which is the whole attribution mechanism.
+SRT_CORRUPT_LOG="$OUTDIR/srt/corruption.jsonl"
+RIST_CORRUPT_LOG="$OUTDIR/rist/corruption.jsonl"
+SRT_SEND_CORRUPT_ARGS=()
+SRT_RECV_CORRUPT_ARGS=()
+RIST_SEND_CORRUPT_ARGS=()
+RIST_RECV_CORRUPT_ARGS=()
+if [[ "$CORRUPT" -eq 1 ]]; then
+  SRT_SEND_CORRUPT_ARGS=(--corrupt "$CORRUPT_SPEC" --corruption-log "$SRT_CORRUPT_LOG" --seed "$SRT_CORRUPT_SEED")
+  SRT_RECV_CORRUPT_ARGS=(--corruption-log "$SRT_CORRUPT_LOG")
+  RIST_SEND_CORRUPT_ARGS=(--corrupt "$CORRUPT_SPEC" --corruption-log "$RIST_CORRUPT_LOG" --seed "$RIST_CORRUPT_SEED")
+  RIST_RECV_CORRUPT_ARGS=(--corruption-log "$RIST_CORRUPT_LOG")
+fi
+
+# Rich KLV, both sides of both legs. A receiver MUST be told the same
+# --klv-set/--klv-seed its sender used: the rich oracles check each
+# record's tag set against `fixtures::rich_presence(seed, seq)`, and a
+# receiver holding a different seed would judge every record against the
+# wrong schedule.
+KLV_ARGS=(--klv-set rich --klv-seed "$SEED")
+
+# ---------------------------------------------------------------------
 # srt leg: send --managed -> proxy (impairment + outage) -> recv
 # ---------------------------------------------------------------------
 #
@@ -400,6 +614,26 @@ wait_for_bound_addr() {
 # and every later window (starting at `OUTAGE_PERIOD_S`, `2 *
 # OUTAGE_PERIOD_S`, ...) is exactly the outage this run means to
 # exercise a real mid-stream reconnect against.
+# SRT receive latency (TSBPD budget), in milliseconds, for BOTH ends of
+# this leg's connection. libsrt's 120ms default is SMALLER than the
+# impairment this run deliberately applies, and a packet that arrives
+# past its play time is DROPPED by TSBPD — real, unrecoverable loss that
+# no retransmission can undo. The generated schedule's per-phase ranges
+# (see `impair::generate_schedule`'s determinism contract) top out at a
+# 300ms reorder hold + 40ms jitter + 60ms base delay = 400ms of
+# worst-case one-way delay, and SRT additionally needs room for a couple
+# of retransmission rounds over an RTT that the same base delay inflates
+# to ~200ms. 1200ms covers both with margin.
+#
+# Found empirically on this task's own 10-minute validation run: with the
+# default budget the srt leg logged 43 `RCV-DROPPED` warnings and its
+# receiver reported 38 unattributable `ContinuityJump` events — gaps the
+# corruption tap could not explain because nothing in the corruption log
+# caused them. Before the tap was switched on, those same gaps were
+# merely counted (the soak verifies in `Lossy` mode), which is why this
+# mis-sizing went unnoticed until now. The fix is to size the receiver
+# for the link being emulated, NOT to relax any verdict.
+SRT_LATENCY_MS=1200
 SRT_PROXY_WARMUP_S=$((OUTAGE_DUR_S + 30))
 # + SAMPLER_END_SLACK_S: see that constant's own doc comment — keeps
 # this proxy alive past the sampler's last tick instead of exiting a
@@ -410,7 +644,7 @@ SRT_RECV_PORT=$(free_port)
 
 SRT_PROXY_STDOUT="$OUTDIR/logs/srt-proxy.stdout"
 "$BIN" proxy --listen 127.0.0.1:0 --forward "127.0.0.1:$SRT_RECV_PORT" \
-  --loss "$LOSS_PCT" --jitter "$JITTER_MS" --delay "$DELAY_MS" --reorder "$REORDER" --seed "$SEED" \
+  "${IMPAIR_ARGS[@]}" --seed "$SEED" \
   --outage "period=${OUTAGE_PERIOD_S}s,dur=${OUTAGE_DUR_S}s" \
   --stats-json "$OUTDIR/srt/proxy-stats.json" --run-seconds "$SRT_PROXY_RUN_SECONDS" \
   >"$SRT_PROXY_STDOUT" 2>"$OUTDIR/logs/srt-proxy.log" &
@@ -430,9 +664,15 @@ sleep "$SRT_PROXY_WARMUP_S"
 # interop-matrix cells run-matrix.sh drives do NOT pass this flag —
 # their transparent-tier byte comparisons need the hash, and their runs
 # are seconds long, so the accumulation never mattered there.
-"$BIN" recv --url "srt://:$SRT_RECV_PORT?mode=listener" --expect baseline \
+#
+# The receiver starts BEFORE its sender on both legs — it must not miss
+# the start of the stream, and under --corrupt it additionally waits
+# (bounded by recv's own 15s no-data budget) for the sender to create
+# the corruption log it is going to read. The $SETTLE between them is
+# comfortably inside that budget.
+"$BIN" recv --url "srt://:$SRT_RECV_PORT?mode=listener&latency=$SRT_LATENCY_MS" --expect "$SRT_PROFILE" \
   --seconds "$TOTAL_SECONDS" --json "$OUTDIR/srt/recv-report.json" --no-klv-digest \
-  --managed \
+  --managed "${KLV_ARGS[@]}" "${SRT_RECV_CORRUPT_ARGS[@]}" \
   >"$OUTDIR/logs/srt-recv.log" 2>&1 &
 record_pid srt-recv $!
 sleep "$SETTLE"
@@ -441,9 +681,9 @@ sleep "$SETTLE"
 # AUs at ~1.7 Mb/s — the soak measures endurance under a real encoder's
 # traffic shape, not the interop matrix's tiny compact fixtures. See
 # `fixtures::AuSizeMode`.
-"$BIN" send --profile baseline --url "srt://$SRT_PROXY_ADDR" --managed \
+"$BIN" send --profile "$SRT_PROFILE" --url "srt://$SRT_PROXY_ADDR?latency=$SRT_LATENCY_MS" --managed \
   --seconds "$TOTAL_SECONDS" --json "$OUTDIR/srt/send-report.json" --no-klv-digest \
-  --au-sizes realistic \
+  --au-sizes realistic "${KLV_ARGS[@]}" "${SRT_SEND_CORRUPT_ARGS[@]}" \
   >"$OUTDIR/logs/srt-send.log" 2>&1 &
 record_pid srt-send $!
 
@@ -452,8 +692,9 @@ record_pid srt-send $!
 # ---------------------------------------------------------------------
 
 RIST_RECV_PORT=$(free_port)
-"$BIN" recv --url "rist://@0.0.0.0:$RIST_RECV_PORT" --expect baseline \
+"$BIN" recv --url "rist://@0.0.0.0:$RIST_RECV_PORT" --expect "$RIST_PROFILE" \
   --seconds "$TOTAL_SECONDS" --json "$OUTDIR/rist/recv-report.json" --no-klv-digest \
+  "${KLV_ARGS[@]}" "${RIST_RECV_CORRUPT_ARGS[@]}" \
   >"$OUTDIR/logs/rist-recv.log" 2>&1 &
 record_pid rist-recv $!
 sleep "$SETTLE"
@@ -463,15 +704,15 @@ RIST_PROXY_STDOUT="$OUTDIR/logs/rist-proxy.stdout"
 # --run-seconds above.
 RIST_PROXY_RUN_SECONDS=$((TOTAL_SECONDS + SAMPLER_END_SLACK_S))
 "$BIN" proxy --listen 127.0.0.1:0 --forward "127.0.0.1:$RIST_RECV_PORT" \
-  --loss "$LOSS_PCT" --jitter "$JITTER_MS" --delay "$DELAY_MS" --reorder "$REORDER" --seed "$SEED" \
+  "${IMPAIR_ARGS[@]}" --seed "$SEED" \
   --stats-json "$OUTDIR/rist/proxy-stats.json" --run-seconds "$RIST_PROXY_RUN_SECONDS" \
   >"$RIST_PROXY_STDOUT" 2>"$OUTDIR/logs/rist-proxy.log" &
 record_pid rist-proxy $!
 RIST_PROXY_ADDR=$(wait_for_bound_addr "$RIST_PROXY_STDOUT")
 
-"$BIN" send --profile baseline --url "rist://$RIST_PROXY_ADDR" \
+"$BIN" send --profile "$RIST_PROFILE" --url "rist://$RIST_PROXY_ADDR" \
   --seconds "$TOTAL_SECONDS" --json "$OUTDIR/rist/send-report.json" --no-klv-digest \
-  --au-sizes realistic \
+  --au-sizes realistic "${KLV_ARGS[@]}" "${RIST_SEND_CORRUPT_ARGS[@]}" \
   >"$OUTDIR/logs/rist-send.log" 2>&1 &
 record_pid rist-send $!
 
@@ -643,7 +884,17 @@ REPORT_RC=0
   echo "=== soak summary ==="
   echo "outdir: $OUTDIR"
   echo "hours: $HOURS  seed: $SEED  outage_period_s: $OUTAGE_PERIOD_S  outage_dur_s: $OUTAGE_DUR_S"
-  echo "loss_pct: $LOSS_PCT  jitter_ms: $JITTER_MS  delay_ms: $DELAY_MS  reorder: $REORDER  au_sizes: realistic"
+  echo "profiles: srt=$SRT_PROFILE rist=$RIST_PROFILE (--profile $PROFILE)  klv_set: rich  au_sizes: realistic"
+  if [[ "$FIXED_IMPAIRMENT" -eq 1 ]]; then
+    echo "impairment: FIXED  loss_pct: $LOSS_PCT  jitter_ms: $JITTER_MS  delay_ms: $DELAY_MS  reorder: $REORDER"
+  else
+    echo "impairment: SCHEDULE seed=$SEED phases=$SCHEDULE_PHASES phase_s=$SCHEDULE_PHASE_S"
+  fi
+  if [[ "$CORRUPT" -eq 1 ]]; then
+    echo "corruption: $CORRUPT_SPEC  seeds: srt=$SRT_CORRUPT_SEED rist=$RIST_CORRUPT_SEED"
+  else
+    echo "corruption: disabled (--no-corrupt)"
+  fi
   echo "worker exits: $(cat "$OUTDIR/exits.json")"
   [[ -z "$PREMATURE_DEATH" ]] || echo "PREMATURE DEATH: $PREMATURE_DEATH (fail-fast — see soak-FAILED + soak-events.log)"
   echo
