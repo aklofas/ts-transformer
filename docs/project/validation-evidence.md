@@ -19,7 +19,9 @@ SRT_FORCE_VENDORED=1 RIST_FORCE_VENDORED=1 cargo build --release -p tst-interop
 
 # Full transport + format matrix (157 cells; ~8s/cell locally is what
 # produced the census below — see scripts/interop/README.md for the
-# full cell/tier/profile vocabulary and per-axis `--cells` filtering):
+# full cell/tier/profile vocabulary and per-axis `--cells` filtering).
+# Every cell runs realistic access-unit sizes by default; pass
+# `--au-sizes compact` to reproduce a pre-2026-09-14 run instead:
 bash scripts/interop/run-matrix.sh --outdir /tmp/interop-run --seconds 8
 
 # One-hour soak smoke (the same shape as the 72-hour run below, at
@@ -49,6 +51,20 @@ rollover, AAC audio, and a two-program stream). Each (transport-or-probe,
 peer, direction, profile) combination is one "cell," and every cell gets
 one of four verdicts:
 
+Since 2026-09-14 every cell carries **realistic access-unit sizes**: the
+generator draws a GOP-structured stream — 28-52 KiB keyframes and 2-10 KiB
+inter frames on 30-frame GOPs, roughly 1.7 Mb/s of elementary stream at
+30 fps — so a single keyframe spans on the order of 160-290 transport
+packets rather than the one or two the previous tens-of-bytes fixtures
+produced. That is the regime in which a peer tool's PES reassembly,
+`payload_unit_start_indicator` handling, continuity counters and buffer
+model are actually exercised; a multi-packet access unit is the shape a
+real encoder emits, and the census below is the first one measured under
+it. The compact regime is still reachable with `--au-sizes compact`, and
+it remains the regime the crate's own offline unit and round-trip tests
+use, where a fixture's value is being small and byte-exact rather than
+representative.
+
 | Verdict | Meaning |
 | --- | --- |
 | **PASS** | The cell's tier requirement held: a byte-for-byte match against the source (`transparent` tier, used for pure-relay tools/paths), or `tst-interop verify`'s profile invariants **and demuxer-independent wire oracles** (`remux` tier, used where the peer legitimately re-packetizes: video/KLV/audio event counts within a documented slack, correct video codec and KLV carriage kind, program count, rollover-aware monotonic PTS, plus per-profile wire-level properties — PCR cadence, AV1 carriage-mode discrimination, per-program media accounting, and an actually-observed PTS wrap, read directly off the bytes by a naive raw-TS parser independent of the demuxer under test — see "What each profile's oracle proves" below), or no error in the peer's own log (`n/a` tier, used for decode-only probes). |
@@ -57,19 +73,35 @@ one of four verdicts:
 | **SKIPPED** | The peer tool wasn't installed on the runner. Never a silent pass. |
 
 **Current census: 157 cells — 92 PASS, 0 FAIL, 65 EXPECTED-UNSUPPORTED, 0
-SKIPPED.** The predecessor census (80 / 0 / 65 / 12 — identical except
-that the 12 `decode/gst-play` cells were SKIPPED while `gst-play-1.0` was
-deliberately withheld from the runner pending a first evidenced local
-run) first reproduced byte-identically across four independent full local
-runs plus a public CI run — five runs total, across two hosts, two
-different `--seconds`-per-cell settings (8 locally, 10 in CI), and two
-different TSDuck point releases (3.43-4549 locally, 3.44-4676 in CI) —
-and then on every verified run through the 0.5.1 release gate. The
-gst-play cells were enabled 2026-08-20 after that local evidence run
-(all 12 now PASS; the harvested filler-AU noise phrasings and the
-enablement rationale live in `scripts/interop/lib.sh` and the workflow's
-peer-tools step), and the 92-PASS census reproduced identically on the
-dev box and the CI run cited below.
+SKIPPED — measured at realistic access-unit sizes, and identical to the
+census the same matrix produced at compact sizes.** Every one of the 92
+passing cells still passes on roughly six times the payload per access
+unit, and every one of the 65 documented gaps reproduced on the mechanism
+its `expectations.toml` row already names: the 2026-09-14 re-validation
+added no expectation row, edited none, and `report merge` reported no
+stale row (a documented gap that has started passing). That the census
+survived the size change is itself the evidence — the accepted
+nonconformances are peer-tool properties, not artifacts of unusually
+small access units, and this codebase's own PES framing and PSI signaling
+hold when a keyframe has to be split across hundreds of transport packets
+instead of fitting in one.
+
+Provenance: the re-validation ran twice. On the dev box the full matrix
+exits 0 at **80 PASS / 0 FAIL / 65 EXPECTED-UNSUPPORTED / 12 SKIPPED** —
+that box has no `gst-play-1.0`, so its 12 `decode/gst-play` cells are
+declared as allowed skips (`--allowed-skips 'decode/gst-play/*'`) rather
+than silently missing. The CI runner installs that tool and reports the
+full 92-PASS census; the dispatch run is cited below. Before the move to
+realistic sizes, the 92-PASS census had reproduced identically on the dev
+box and in CI since 2026-08-20, and its predecessor (80 / 0 / 65 / 12,
+from when `gst-play-1.0` was deliberately withheld from the runner
+pending a first evidenced local run) reproduced byte-identically across
+four independent full local runs plus a public CI run — five runs, two
+hosts, two `--seconds`-per-cell settings (8 locally, 10 in CI), two
+TSDuck point releases (3.43-4549 locally, 3.44-4676 in CI) — and then on
+every verified run through the 0.5.1 release gate. The gst-play
+enablement rationale and its harvested filler-AU noise phrasings live in
+`scripts/interop/lib.sh` and the workflow's peer-tools step.
 `report merge`'s exit code is 0 iff every `FAIL` matched a documented
 `expectations.toml` row; any new, undocumented `FAIL` still exits nonzero —
 an unexpected failure is never silently absorbed into the census.
@@ -217,11 +249,12 @@ under the same impairment with no outage (RIST has no managed
 reconnect wrapper in this codebase, so its job is purely "does sustained
 loss/jitter/reorder behave the same over hours as it does over a
 five-second matrix cell"). Both legs' senders run `--au-sizes realistic`
-— GOP-structured video AUs (keyframes tens of KB, inter frames a few KB,
-~1.7 Mb/s at 30 fps) rather than the interop matrix's tiny compact
-fixtures, so the soak measures endurance under a real encoder's traffic
-shape and burst pattern. `tst-interop report soak` renders a pass/fail
-verdict plus RSS-growth slopes per process.
+— the same GOP-structured regime the interop matrix now runs (28-52 KiB
+keyframes, 2-10 KiB inter frames, ~1.7 Mb/s at 30 fps) — so the soak
+measures endurance under a real encoder's traffic shape and burst
+pattern, and the two evidence bodies on this page are measured on the
+same stream. `tst-interop report soak` renders a pass/fail verdict plus
+RSS-growth slopes per process.
 
 The impairment itself changed shape on 2026-09-14 (see "The current soak
 shape" below). Every published run on this page so far used the previous
@@ -455,13 +488,17 @@ retained offline by the maintainer.
 is the accepted-nonconformances record: every `FAIL` this matrix has ever
 produced either has a row here, backed by a run that actually reproduced
 that exact failure, or it's an unresolved regression that fails the CI job.
-Two verdict kinds:
+The whole file was re-validated on 2026-09-14 against the realistic
+access-unit regime described above, and came through unchanged: every row
+still reproduced, and none went stale. Two verdict kinds:
 
 - **`expected_unsupported`** — this (cell, profile) pair is known to fail
   and isn't expected to ever pass. If it starts passing, `report merge`
-  flags it as a stale expectation (a warning, never fatal) so it can be
-  removed — this is how a fixed gap surfaces for cleanup rather than
-  silently lingering as a row nobody re-checks.
+  reports it as a stale expectation and exits nonzero, so the row has to
+  be removed — this is how a fixed gap surfaces for cleanup rather than
+  silently lingering as a row nobody re-checks. Staleness is fatal
+  everywhere, with no warn-only mode: a local run, a branch dispatch and
+  the CI job all reject it the same way.
 - **`known_flaky`** — this pair intermittently fails; a `FAIL` is reported
   non-fatally and a `PASS` is simply normal, never flagged stale.
 

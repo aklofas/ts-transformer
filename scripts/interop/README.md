@@ -43,11 +43,27 @@ bash scripts/interop/run-matrix.sh --outdir /tmp/interop-run --seconds 5
 bash scripts/interop/run-matrix.sh --outdir /tmp/interop-run --au-sizes compact
 ```
 
-Every cell runs at `--au-sizes realistic` by default: GOP-structured
-access units (keyframes tens of KB, inter frames single-digit KB,
-~1.7 Mb/s at 30 fps) rather than the tens-of-bytes fixtures, so the
-traffic real peer tools see has a real encoder's size regime. The
-regime a run used is recorded in its `meta.json`.
+`--au-sizes` picks the video access-unit size regime, and every cell runs
+`realistic` by default:
+
+- **`realistic`** (default) — GOP-structured access units on 30-frame
+  GOPs: keyframes 28-52 KiB, inter frames 2-10 KiB, drawn per frame from
+  a PRNG seeded by the frame index alone (same frame index → identical
+  bytes, forever, so a run is still bit-reproducible). That averages
+  ~217 KB/s ≈ 1.7 Mb/s of elementary stream at 30 fps, and puts a single
+  keyframe across roughly 160-290 transport packets instead of the one or
+  two a compact fixture occupies. That is the point of the regime: a peer
+  tool's PES reassembly, `payload_unit_start_indicator` handling,
+  continuity counters and buffer model only get exercised once an access
+  unit spans many packets. The filler rides inside one NAL/OBU and is
+  remapped to non-zero bytes, so it can never contain an accidental
+  Annex-B start code; AV1 sizes become genuine multi-byte LEB128.
+- **`compact`** — the pre-2026-09-14 tens-of-bytes fixtures. Use it to
+  reproduce an older run. It also remains the regime the crate's own
+  offline unit and round-trip tests use, where being small and
+  byte-exact matters more than being representative.
+
+The regime a run used is recorded in its `meta.json` (`au_sizes`).
 
 Output layout under `--outdir`:
 
@@ -175,6 +191,18 @@ produce the full census either (`interop.yml` enforces both: it asserts
 `allowed_skips | length == 0` alongside `shape == "full-157"`).
 
 ## Known, already-evidenced gaps (read before re-chasing these)
+
+**The move to realistic access-unit sizes added no gap.** All 157 cells
+were re-run at `--au-sizes realistic` on 2026-09-14 and the census came
+out identical to the compact-size one: no new `FAIL`, so no row was added
+to `expectations.toml`, no row's `failure_contains` had to be widened,
+and `report merge` flagged nothing stale — every documented gap below
+still reproduces on the mechanism its row already names, at roughly six
+times the payload per access unit. Read that as evidence about the gaps
+themselves: they are properties of the peer tools, not artifacts of
+unusually small access units. The sections below are therefore unchanged
+by the size regime, and each still carries the tool version it was
+harvested against.
 
 **Transport axis** (the 25 `srt`/`udp`/`rist`/`tcp`/`hls`/`rtsp-*` cells,
 run against the `baseline` profile only): a full local run (`--seconds 8`,

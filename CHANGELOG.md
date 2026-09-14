@@ -715,6 +715,28 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   their play time were being dropped as loss no injection could explain.
   Harness only: no library crate is touched, and no interop-matrix cell runs
   a schedule, so the 157-cell census is unchanged.
+- **Tooling: the interop matrix runs realistic access-unit sizes.**
+  `--au-sizes compact|realistic` on `tst-interop gen` and `send` (the
+  `hls://` / `rtsp://` serve modes included) picks the video access-unit
+  size regime, and `run-matrix.sh` gained the same flag and now defaults
+  every one of its 157 cells to `realistic`: GOP-structured access units
+  on 30-frame GOPs, keyframes 28-52 KiB and inter frames 2-10 KiB drawn
+  per frame from a PRNG seeded by the frame index alone, averaging
+  ~1.7 Mb/s of elementary stream at 30 fps. A keyframe therefore spans
+  roughly 160-290 transport packets instead of the one or two the
+  previous tens-of-bytes fixtures occupied, which is what puts a peer
+  tool's PES reassembly, `payload_unit_start_indicator` handling,
+  continuity counters and buffer model under load at all. The filler
+  rides inside a single NAL/OBU with every byte remapped non-zero (no
+  accidental Annex-B start code) and AV1 sizes become genuine multi-byte
+  LEB128; the regime a run used is recorded in its `meta.json`. All 157
+  cells were re-validated under it: the census is unchanged at 157 / 92 /
+  0 / 65 / 0, no `expectations.toml` row was added, edited or reported
+  stale, so every documented peer-tool gap reproduces on the mechanism it
+  already names at roughly six times the payload. `compact` remains
+  available for reproducing an older run, and remains the regime the
+  crate's own offline tests use. Harness only: no library crate is
+  touched.
 - **Tooling: `tst-interop report soak` completeness verdicts.** `soak.sh`
   now writes a declared `soak-config.json` at launch
   (`expected_duration_s`, `rss_cadence_s`, `warmup_fraction`,
