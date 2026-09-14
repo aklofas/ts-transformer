@@ -91,7 +91,13 @@ exits 0 at **80 PASS / 0 FAIL / 65 EXPECTED-UNSUPPORTED / 12 SKIPPED** —
 that box has no `gst-play-1.0`, so its 12 `decode/gst-play` cells are
 declared as allowed skips (`--allowed-skips 'decode/gst-play/*'`) rather
 than silently missing. The CI runner installs that tool and reports the
-full 92-PASS census; the dispatch run is cited below. Before the move to
+full 92-PASS census:
+[run 34830892357](https://github.com/aklofas/ts-transformer/actions/runs/34830892357)
+(`workflow_dispatch`, 2026-09-14, `--seconds 10`, `au_sizes: realistic`,
+shape `full-157` with an empty allowed-skip list and an empty
+`stale_expectations`) — a second host, a different seconds-per-cell
+setting, and a different TSDuck point release (3.44-4676 against the dev
+box's 3.43-4549) reaching the same verdict on every cell. Before the move to
 realistic sizes, the 92-PASS census had reproduced identically on the dev
 box and in CI since 2026-08-20, and its predecessor (80 / 0 / 65 / 12,
 from when `gst-play-1.0` was deliberately withheld from the runner
@@ -114,12 +120,15 @@ local dev-box state, no vendored corpus) via
 weekly on a schedule (Mondays 05:00 UTC), on every `workflow_dispatch`, and
 on any PR touching `crates/tst-interop/`, `scripts/interop/`, or the
 workflow file itself. The verified run cited above is
-[run 33359181955](https://github.com/aklofas/ts-transformer/actions/runs/33359181955)
-(the 2026-08-31 weekly `schedule` run at `73ae1ced`, completed `success`
-with the census-completeness assert, the
-157 / 92 / 0 / 65 / 0 census, and 157 per-cell result records with
-zero `FAIL` and no expectation drift: all 65 documented-gap rows
-reproduced. The gst-play-enablement run
+[run 34830892357](https://github.com/aklofas/ts-transformer/actions/runs/34830892357)
+(the 2026-09-14 `workflow_dispatch` — the first public run at realistic
+access-unit sizes — completed `success` with the census-completeness
+assert, the 157 / 92 / 0 / 65 / 0 census, and 157 per-cell result records
+with zero `FAIL` and no expectation drift: all 65 documented-gap rows
+reproduced. The last compact-size run,
+[33359181955](https://github.com/aklofas/ts-transformer/actions/runs/33359181955)
+(the 2026-08-31 weekly `schedule` run at `73ae1ced`, same census), the
+gst-play-enablement run
 [32400751057](https://github.com/aklofas/ts-transformer/actions/runs/32400751057)
 (`pull_request`, 2026-08-20 — the first 92-PASS census run), the
 0.5.1 release-gate run
