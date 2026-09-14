@@ -383,4 +383,40 @@ mod tests {
             assert_eq!(engine.decide(i * 7), Action::Forward { delay_ms: 0 });
         }
     }
+
+    /// Fixed-mode replay pin: the decision sequence for seed 1 +
+    /// `soak.sh`'s impairment constants must stay byte-identical forever.
+    /// Archived soak evidence is only reproducible from seed + config if
+    /// this exact sequence replays, so any change to the engine that
+    /// perturbs fixed-mode decisions — a reordered draw, an extra draw,
+    /// a changed threshold comparison — breaks this test by design.
+    ///
+    /// The expected digest was captured on the unmodified engine (before
+    /// the phase-schedule work) by running this exact loop and copying
+    /// the observed hex in; see the commit that introduced it.
+    #[test]
+    fn fixed_mode_decision_sequence_is_unchanged() {
+        use sha2::Digest;
+        let cfg = ImpairConfig {
+            loss_pct: 2.0,
+            dup_pct: 0.0,
+            reorder_pct: 1.0,
+            reorder_hold: 200,
+            jitter_ms_max: 20,
+            base_delay_ms: 30,
+            seed: 1,
+            outage_period_s: Some(21600),
+            outage_dur_s: 90,
+        };
+        let mut e = Engine::new(cfg);
+        let mut h = sha2::Sha256::new();
+        for i in 0..200_000u64 {
+            h.update(format!("{:?}", e.decide(100_000 + i * 3)).as_bytes());
+        }
+        let hex = crate::verify::to_hex(&h.finalize());
+        assert_eq!(
+            hex,
+            "41b14964082f8aa911bbceee178f7806c6dd5d5d4884aa66d4b2fa66a6502360"
+        );
+    }
 }
