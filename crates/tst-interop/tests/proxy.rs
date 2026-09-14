@@ -1,6 +1,7 @@
 //! Integration tests for `proxy::run`: transparent relay (byte
-//! transparency at loss=0), scheduled outage windows, resilience to an
-//! unwritable stats path, and an end-to-end SRT-through-proxy cell
+//! transparency at loss=0), scheduled outage windows, phase-scheduled
+//! impairment (the echoed phase table and per-phase counters), resilience
+//! to an unwritable stats path, and an end-to-end SRT-through-proxy cell
 //! (SRT's own retransmission recovering from a lossy/jittered link).
 //!
 //! # nextest group placement
@@ -20,10 +21,13 @@
 //! hard kill; 40s on Windows via the platform override) instead of the
 //! default profile's 30s/2 (60s) global safety net.
 //!
-//! The other three tests ([`transparent_relay_preserves_order_and_bytes`],
+//! Every other test here ([`transparent_relay_preserves_order_and_bytes`],
 //! [`outage_windows_produce_periodic_gaps`],
-//! [`unwritable_stats_path_does_not_fail_the_relay`]) are left unmatched
-//! (default group, full parallelism): all three use ephemeral OS-assigned
+//! [`scheduled_proxy_echoes_its_phase_table_and_per_phase_counters`],
+//! [`fixed_mode_proxy_records_one_phase_and_no_schedule`],
+//! [`unwritable_stats_path_does_not_fail_the_relay`], and the two
+//! subprocess argument-validation cells) is left unmatched
+//! (default group, full parallelism): they use ephemeral OS-assigned
 //! ports (no cross-test port contention) and are written with generous
 //! tolerances (or no wall-clock assertion at all) rather than tight
 //! timing checks, so ordinary CPU contention from sibling tests shouldn't
@@ -125,10 +129,15 @@ fn send_with_retry(
 /// line. Also returns the proxy's stop flag: set it to end the relay
 /// promptly once a test's traffic is done (tests that simply wait out
 /// `run_seconds` ignore it).
+///
+/// `schedule` mirrors `proxy::run`'s own parameter: `None` is fixed mode
+/// (`cfg`'s knobs for the whole run), `Some((seed, phases, phase_s))`
+/// runs the generated phase schedule.
 fn spawn_proxy(
     listen: SocketAddr,
     forward: SocketAddr,
     cfg: ImpairConfig,
+    schedule: Option<(u64, u32, u64)>,
     stats_json: Option<PathBuf>,
     run_seconds: u64,
 ) -> (
@@ -145,6 +154,7 @@ fn spawn_proxy(
                 listen,
                 forward,
                 cfg,
+                schedule,
                 stats_json,
                 Some(run_seconds),
                 Some(Box::new(move |addr| {
@@ -187,6 +197,7 @@ fn transparent_relay_preserves_order_and_bytes() {
         "127.0.0.1:0".parse().unwrap(),
         dest_addr,
         ImpairConfig::default(),
+        None,
         None,
         30,
     );
@@ -310,6 +321,7 @@ fn spoofed_third_party_datagram_does_not_hijack_the_return_path() {
         dest_addr,
         ImpairConfig::default(),
         None,
+        None,
         3,
     );
 
@@ -394,6 +406,7 @@ fn client_relearns_after_a_genuine_quiet_period() {
         "127.0.0.1:0".parse().unwrap(),
         dest_addr,
         ImpairConfig::default(),
+        None,
         None,
         10,
     );
@@ -504,6 +517,7 @@ fn outage_windows_produce_periodic_gaps() {
         "127.0.0.1:0".parse().unwrap(),
         dest_addr,
         cfg,
+        None,
         Some(stats_path.clone()),
         8,
     );
@@ -624,6 +638,274 @@ fn outage_windows_produce_periodic_gaps() {
     let _ = std::fs::remove_file(&stats_path);
 }
 
+/// A process-and-time unique temp path for a stats JSON — mirrors the
+/// expression the outage-window test above builds inline (this file's
+/// convention is small local helpers, and the two scheduled-mode tests
+/// below both need one).
+fn unique_stats_path(tag: &str) -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "tst-interop-proxy-{tag}-stats-{}-{}.json",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock before UNIX_EPOCH")
+            .as_nanos(),
+    ))
+}
+
+/// Drain `sock` on its own thread until `stop` is set, returning how many
+/// datagrams landed. Neither scheduled-mode test below asserts on arrival
+/// timing or content (they assert on the proxy's own counters), but the
+/// destination must still be drained while traffic flows so nothing piles
+/// up in its kernel receive buffer.
+fn spawn_drain(sock: UdpSocket, stop: Arc<AtomicBool>) -> thread::JoinHandle<usize> {
+    thread::spawn(move || {
+        let mut buf = [0u8; 64];
+        let mut seen = 0usize;
+        while !stop.load(Ordering::Relaxed) {
+            match sock.recv(&mut buf) {
+                Ok(_) => seen += 1,
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) => {}
+                Err(e) => panic!("recv error: {e}"),
+            }
+        }
+        seen
+    })
+}
+
+/// Scheduled mode (`--schedule seed=9,phases=2,phase_s=1`): the proxy
+/// must echo the exact phase table it ran into its stats JSON, and split
+/// its own totals across one counter per phase.
+///
+/// Two 1-second phases under ~3s of traffic guarantees the phase boundary
+/// is crossed (phase 0 covers elapsed `[0,1s)`, phase 1 everything after
+/// — `Engine::phase_index` clamps to the last phase), which is what makes
+/// "both phases saw traffic" a real assertion rather than a tautology.
+///
+/// Deliberately NOT asserting exact drop counts per phase: the number of
+/// packets that land in each phase depends on wall-clock pacing, so only
+/// the engine's DECISIONS are seeded-deterministic here, not how many of
+/// them each phase gets. The invariant that matters — and the one Task
+/// 14's soak verdicts will lean on — is that every counted packet lands
+/// in exactly one phase, i.e. the per-phase sums reproduce the totals.
+///
+/// Left out of the `network` nextest group (its name matches no
+/// `test(...)` filter) per this file's module doc: ephemeral port, no
+/// wall-clock-shape assertion, ~3s of traffic against the default
+/// profile's 60s safety net.
+#[test]
+fn scheduled_proxy_echoes_its_phase_table_and_per_phase_counters() {
+    let dest_sock = UdpSocket::bind("127.0.0.1:0").expect("bind destination socket");
+    dest_sock
+        .set_read_timeout(Some(Duration::from_millis(200)))
+        .expect("set_read_timeout");
+    let dest_addr = dest_sock.local_addr().expect("destination local_addr");
+
+    let stats_path = unique_stats_path("scheduled");
+
+    // (schedule seed, phase count, seconds per phase). The schedule seed
+    // is its own key, independent of the engine seed below — see
+    // `impair::SCHEDULE_SALT`.
+    const SCHED_SEED: u64 = 9;
+    const PHASES: u32 = 2;
+    const PHASE_S: u64 = 1;
+
+    let cfg = ImpairConfig {
+        seed: 1,
+        ..ImpairConfig::default()
+    };
+    let (proxy_addr, proxy_handle, proxy_stop) = spawn_proxy(
+        "127.0.0.1:0".parse().unwrap(),
+        dest_addr,
+        cfg,
+        Some((SCHED_SEED, PHASES, PHASE_S)),
+        Some(stats_path.clone()),
+        30,
+    );
+
+    let drain_stop = Arc::new(AtomicBool::new(false));
+    let drainer = spawn_drain(dest_sock, Arc::clone(&drain_stop));
+
+    // 200 pkt/s for ~3s, paced against an ABSOLUTE schedule (the
+    // transparent-relay test's pattern: a late wakeup is absorbed by the
+    // following iterations instead of accumulating).
+    const PACE: Duration = Duration::from_millis(5);
+    const TOTAL: u32 = 600;
+    let sender = UdpSocket::bind("127.0.0.1:0").expect("bind sender socket");
+    let send_start = Instant::now();
+    for i in 0..TOTAL {
+        sender
+            .send_to(&i.to_le_bytes(), proxy_addr)
+            .expect("send datagram to proxy");
+        let target = PACE * (i + 1);
+        let elapsed = send_start.elapsed();
+        if target > elapsed {
+            thread::sleep(target - elapsed);
+        }
+    }
+    // Let the proxy finish deciding the tail before stopping it: it
+    // breaks out of its loop at the top, so datagrams still sitting in
+    // its socket buffer would never be counted at all. The schedule's own
+    // worst-case delay (base <=60ms + jitter <=40ms + reorder hold
+    // <=300ms) is comfortably inside this.
+    thread::sleep(Duration::from_millis(600));
+
+    proxy_stop.store(true, Ordering::Relaxed);
+    let stats =
+        join_with_timeout(proxy_handle, Duration::from_secs(10)).expect("proxy::run must succeed");
+    drain_stop.store(true, Ordering::Relaxed);
+    let delivered = join_with_timeout(drainer, Duration::from_secs(5));
+
+    // Non-vacuity floor, deliberately loose (this is not a throughput
+    // test): the run must have actually relayed a substantial share of
+    // the traffic, so the per-phase assertions below aren't about a
+    // handful of packets.
+    assert!(
+        stats.forwarded + stats.dropped >= (TOTAL / 2) as u64,
+        "expected most of the {TOTAL} datagrams to be decided, got forwarded={} dropped={} (delivered={delivered})",
+        stats.forwarded,
+        stats.dropped,
+    );
+
+    assert_eq!(
+        stats.phases.len(),
+        PHASES as usize,
+        "one counter per scheduled phase"
+    );
+    for (i, p) in stats.phases.iter().enumerate() {
+        assert_eq!(p.index as usize, i, "phase counters are position-indexed");
+        assert!(
+            p.forwarded + p.dropped > 0,
+            "phase {i} saw no traffic — the ~3s send window must straddle both 1s phases: {:?}",
+            stats.phases
+        );
+    }
+    assert_eq!(
+        stats.phases.iter().map(|p| p.forwarded).sum::<u64>(),
+        stats.forwarded,
+        "per-phase forwarded must sum to the total"
+    );
+    assert_eq!(
+        stats.phases.iter().map(|p| p.dropped).sum::<u64>(),
+        stats.dropped,
+        "per-phase dropped must sum to the total"
+    );
+    assert_eq!(
+        stats.phases.iter().map(|p| p.duped).sum::<u64>(),
+        stats.duped,
+        "per-phase duped must sum to the total"
+    );
+
+    let json = std::fs::read_to_string(&stats_path).expect("read stats json written at exit");
+    let parsed: proxy::ProxyStats = serde_json::from_str(&json).expect("stats json must parse");
+    let echo = parsed
+        .config
+        .schedule
+        .as_ref()
+        .expect("a scheduled run must echo its schedule");
+    assert_eq!(
+        (echo.seed, echo.phases, echo.phase_s),
+        (SCHED_SEED, PHASES, PHASE_S)
+    );
+    assert_eq!(echo.table.len(), PHASES as usize);
+    assert_eq!(
+        echo.table,
+        tst_interop::impair::generate_schedule(SCHED_SEED, PHASES),
+        "the echoed table must be exactly what this seed generates"
+    );
+    assert_eq!(
+        parsed.phases, stats.phases,
+        "stats file must match proxy::run's own returned per-phase counters"
+    );
+    assert_eq!(parsed.forwarded, stats.forwarded);
+    assert_eq!(parsed.dropped, stats.dropped);
+
+    let _ = std::fs::remove_file(&stats_path);
+}
+
+/// Fixed mode (no `--schedule`) writes NO schedule echo and exactly one
+/// phase counter carrying the whole run — the degenerate one-phase shape
+/// `impair::Engine::new` already models internally, now visible in the
+/// stats file. `report soak`'s one-phase path relies on this shape.
+#[test]
+fn fixed_mode_proxy_records_one_phase_and_no_schedule() {
+    let dest_sock = UdpSocket::bind("127.0.0.1:0").expect("bind destination socket");
+    dest_sock
+        .set_read_timeout(Some(Duration::from_millis(200)))
+        .expect("set_read_timeout");
+    let dest_addr = dest_sock.local_addr().expect("destination local_addr");
+
+    let stats_path = unique_stats_path("fixed");
+
+    const TOTAL: u32 = 20;
+    let (proxy_addr, proxy_handle, proxy_stop) = spawn_proxy(
+        "127.0.0.1:0".parse().unwrap(),
+        dest_addr,
+        ImpairConfig::default(),
+        None,
+        Some(stats_path.clone()),
+        30,
+    );
+
+    // Transparent config: every datagram is forwarded, so the proxy is
+    // known to have decided all of them once the destination has seen all
+    // of them — the sender-driven end condition the transparent-relay
+    // test uses, rather than a fixed sleep.
+    let receiver = thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut seen = 0u32;
+        let mut buf = [0u8; 64];
+        while seen < TOTAL {
+            assert!(Instant::now() < deadline, "only {seen}/{TOTAL} relayed");
+            match dest_sock.recv(&mut buf) {
+                Ok(_) => seen += 1,
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) => {}
+                Err(e) => panic!("recv error: {e}"),
+            }
+        }
+        seen
+    });
+
+    let sender = UdpSocket::bind("127.0.0.1:0").expect("bind sender socket");
+    for i in 0..TOTAL {
+        sender
+            .send_to(&i.to_le_bytes(), proxy_addr)
+            .expect("send datagram to proxy");
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(join_with_timeout(receiver, Duration::from_secs(15)), TOTAL);
+
+    proxy_stop.store(true, Ordering::Relaxed);
+    let stats =
+        join_with_timeout(proxy_handle, Duration::from_secs(10)).expect("proxy::run must succeed");
+
+    assert_eq!(stats.forwarded, TOTAL as u64);
+    assert_eq!(stats.dropped, 0);
+    assert_eq!(stats.phases.len(), 1, "fixed mode is one implicit phase");
+    assert_eq!(stats.phases[0].index, 0);
+    assert_eq!(stats.phases[0].forwarded, stats.forwarded);
+    assert_eq!(stats.phases[0].dropped, stats.dropped);
+    assert_eq!(stats.phases[0].duped, stats.duped);
+
+    let json = std::fs::read_to_string(&stats_path).expect("read stats json written at exit");
+    let parsed: proxy::ProxyStats = serde_json::from_str(&json).expect("stats json must parse");
+    assert!(
+        parsed.config.schedule.is_none(),
+        "a fixed-mode run must not claim a schedule it never ran"
+    );
+    assert_eq!(parsed.phases, stats.phases);
+
+    let _ = std::fs::remove_file(&stats_path);
+}
+
 /// A `stats_json` whose containing directory doesn't exist must not
 /// turn an otherwise-successful relay into a failure — see `proxy::run`'s
 /// module doc's "Stats" section. This exercises `run`'s FINAL (at-exit)
@@ -663,6 +945,7 @@ fn unwritable_stats_path_does_not_fail_the_relay() {
         "127.0.0.1:0".parse().unwrap(),
         dest_addr,
         ImpairConfig::default(),
+        None,
         Some(stats_path.clone()),
         2,
     );
@@ -742,8 +1025,14 @@ fn srt_round_trip_through_lossy_proxy_recovers_via_retransmission() {
         ..ImpairConfig::default()
     };
     let forward_addr: SocketAddr = format!("127.0.0.1:{listener_port}").parse().unwrap();
-    let (proxy_addr, proxy_handle, _proxy_stop) =
-        spawn_proxy("127.0.0.1:0".parse().unwrap(), forward_addr, cfg, None, 15);
+    let (proxy_addr, proxy_handle, _proxy_stop) = spawn_proxy(
+        "127.0.0.1:0".parse().unwrap(),
+        forward_addr,
+        cfg,
+        None,
+        None,
+        15,
+    );
 
     let send_url = format!("srt://127.0.0.1:{}", proxy_addr.port());
     let send_metrics = send_with_retry(profile, &send_url, SECONDS, Duration::from_secs(10));
@@ -864,6 +1153,78 @@ fn stats_json_missing_value_exits_with_usage_error() {
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("stats-json"),
         "usage error should name the flag, got: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// `--schedule` overrides loss/jitter/reorder/delay per phase, so passing
+/// one of those alongside it must be a usage error naming the offending
+/// flag — NOT a silently ignored knob on a run that may be hours long.
+/// Drives the real binary (argument validation calls `std::process::exit`,
+/// so it can't be unit-tested in-process).
+#[test]
+fn schedule_combined_with_a_fixed_impairment_flag_exits_with_usage_error() {
+    let output = Command::new(env!("CARGO_BIN_EXE_tst-interop"))
+        .args([
+            "proxy",
+            "--listen",
+            "127.0.0.1:0",
+            "--forward",
+            "127.0.0.1:1",
+            "--run-seconds",
+            "1",
+            "--schedule",
+            "seed=7,phases=2,phase_s=1",
+            "--loss",
+            "2",
+        ])
+        .output()
+        .expect("spawn tst-interop binary");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "--schedule with --loss must exit 2, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--loss") && stderr.contains("--schedule"),
+        "usage error should name both conflicting flags, got: {stderr}"
+    );
+}
+
+/// Positive control for the exclusion above: `--schedule` WITH the knobs
+/// that stay per-run (`--dup`, `--seed`, `--outage`) is a valid
+/// combination and must run normally — without this, a check that simply
+/// rejected `--schedule` outright would satisfy the test above.
+#[test]
+fn schedule_combined_with_per_run_knobs_is_accepted() {
+    let output = Command::new(env!("CARGO_BIN_EXE_tst-interop"))
+        .args([
+            "proxy",
+            "--listen",
+            "127.0.0.1:0",
+            "--forward",
+            "127.0.0.1:1",
+            "--run-seconds",
+            "1",
+            "--schedule",
+            "seed=7,phases=2,phase_s=1",
+            "--dup",
+            "1",
+            "--seed",
+            "3",
+            "--outage",
+            "period=10s,dur=1s",
+        ])
+        .output()
+        .expect("spawn tst-interop binary");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "a scheduled run with only per-run knobs must succeed, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 }

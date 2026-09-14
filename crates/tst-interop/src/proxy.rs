@@ -73,9 +73,27 @@
 //! the high-water mark has moved past it, both count (a real receiver
 //! really does see two additional out-of-order deliveries).
 //!
+//! # Fixed vs. scheduled impairment
+//!
+//! [`run`]'s `schedule` parameter picks which shape of impairment the
+//! relay applies. `None` is FIXED mode: the [`ImpairConfig`]'s knobs hold
+//! for the whole run. `Some((seed, phases, phase_s))` is SCHEDULED mode:
+//! [`crate::impair::generate_schedule`] derives a phase table from `seed`
+//! and the engine walks it on this relay's own wall clock, so a long run
+//! exercises a link whose quality CHANGES (including bursty-loss phases)
+//! rather than one fixed impairment level. Either way the engine runs a
+//! non-empty phase list — fixed mode is the degenerate one-phase case —
+//! so both modes produce the same stats SHAPE (see below), and a reader
+//! never has to special-case one of them.
+//!
 //! # Stats
 //!
-//! [`ProxyStats`] is written to `stats_json` (if given) every
+//! [`ProxyStats`] carries the run's totals, a [`ConfigEcho`] of the
+//! impairment it was configured with (including, in scheduled mode, the
+//! full [`ScheduleEcho`] table that actually ran), and a
+//! [`PhaseCounters`] split of those totals — one entry per phase, so a
+//! scheduled run's evidence shows what each phase did rather than only a
+//! whole-run average. It is written to `stats_json` (if given) every
 //! `STATS_INTERVAL` and once more, unconditionally, right before
 //! [`run`] returns — atomically (write to a sibling `.tmp` path, then
 //! `rename`) so a concurrent reader never observes a half-written file.
@@ -91,7 +109,7 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use crate::impair::{Action, Engine, ImpairConfig};
+use crate::impair::{Action, Engine, ImpairConfig, Phase, generate_schedule};
 
 /// `recv_from` timeout granularity — short enough that the deadline
 /// check and the delayed-send heap drain both run often, long enough to
@@ -154,11 +172,42 @@ const BUF_SIZE: usize = 65536;
 /// not a property to rely on outside that context.
 const CLIENT_RELEARN_GRACE: Duration = Duration::from_secs(2);
 
+/// The phase schedule a scheduled run was driven by, echoed into
+/// [`ConfigEcho`].
+///
+/// The seed alone would be enough to regenerate `table` — that is
+/// [`generate_schedule`]'s documented determinism contract — but an
+/// archived stats file should be readable as evidence on its own, without
+/// re-running this binary against the exact revision that produced it.
+/// Echoing both means a later reader can also CHECK the contract still
+/// holds (the scheduled-mode integration test does exactly that).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScheduleEcho {
+    /// The `seed=` half of `--schedule` — the SCHEDULE's own seed, which
+    /// is deliberately not [`ImpairConfig::seed`]: [`generate_schedule`]
+    /// salts it (`impair::SCHEDULE_SALT`) so the same number can be
+    /// passed to both without the phase table correlating with the
+    /// per-packet decision stream.
+    pub seed: u64,
+    /// How many phases were REQUESTED. Equal to `table.len()` for every
+    /// shape `parse_schedule` accepts; they can only differ for a
+    /// degenerate `phases: 0` passed straight to [`run`] by an in-process
+    /// caller, which the engine normalises to its one fixed-mode phase
+    /// (the CLI rejects that input outright).
+    pub phases: u32,
+    /// Wall-clock seconds each phase is in force. A run that outlives
+    /// `phases * phase_s` stays on the last phase (see
+    /// [`Engine::phase_index`]).
+    pub phase_s: u64,
+    /// The generated phases themselves, exactly as the engine ran them.
+    pub table: Vec<Phase>,
+}
+
 /// Per-field mirror of [`ImpairConfig`], echoed into [`ProxyStats`].
 /// `ImpairConfig` itself doesn't derive `Serialize`/`Deserialize` (this
 /// module doesn't modify `impair.rs`), so this is a small hand-written
 /// adapter rather than an upstream derive.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ConfigEcho {
     pub loss_pct: f64,
     pub dup_pct: f64,
@@ -173,6 +222,19 @@ pub struct ConfigEcho {
     pub base_delay_ms: u32,
     pub outage_period_s: Option<u64>,
     pub outage_dur_s: u64,
+    /// The phase schedule, for a run started with `--schedule`; `None`
+    /// for a fixed-mode run (whose impairment is fully described by the
+    /// fields above). `#[serde(default)]` for the same reason
+    /// `base_delay_ms` has one: stats JSON written before scheduled mode
+    /// existed still deserializes, and absent means what those runs
+    /// were — no schedule.
+    ///
+    /// Set by [`run`], not by [`From<&ImpairConfig>`](ConfigEcho::from):
+    /// the schedule isn't part of `ImpairConfig` at all (the engine takes
+    /// it separately), so a `ConfigEcho` built from a config alone
+    /// correctly claims no schedule.
+    #[serde(default)]
+    pub schedule: Option<ScheduleEcho>,
 }
 
 impl From<&ImpairConfig> for ConfigEcho {
@@ -186,8 +248,27 @@ impl From<&ImpairConfig> for ConfigEcho {
             base_delay_ms: cfg.base_delay_ms,
             outage_period_s: cfg.outage_period_s,
             outage_dur_s: cfg.outage_dur_s,
+            schedule: None,
         }
     }
+}
+
+/// One phase's share of [`ProxyStats`]'s totals. There is exactly one
+/// entry per phase the engine walked — and a fixed-mode run walks exactly
+/// one (it IS the degenerate one-phase schedule, see [`Engine::new`]), so
+/// this vector is never empty and a one-phase file is not a special case
+/// for a reader.
+///
+/// Every counted packet is attributed to exactly one phase — the one in
+/// force when its decision was made — so summing any field across this
+/// vector reproduces the matching total.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct PhaseCounters {
+    /// Position in [`ScheduleEcho::table`] (and in this vector).
+    pub index: u32,
+    pub forwarded: u64,
+    pub dropped: u64,
+    pub duped: u64,
 }
 
 /// Running counters + config echo — [`run`]'s return value and the
@@ -208,6 +289,14 @@ pub struct ProxyStats {
     pub reordered: u64,
     pub seed: u64,
     pub config: ConfigEcho,
+    /// Per-phase split of `forwarded`/`dropped`/`duped` — see
+    /// [`PhaseCounters`]. `#[serde(default)]` so stats JSON written
+    /// before per-phase counting existed still deserializes; an empty
+    /// vector there means "no per-phase split recorded", which is
+    /// exactly what those runs have (as opposed to a run whose phases
+    /// all counted zero, which still writes one entry per phase).
+    #[serde(default)]
+    pub phases: Vec<PhaseCounters>,
 }
 
 /// One queued (decided-forward, not-yet-due) relayed packet.
@@ -326,10 +415,23 @@ fn write_stats_atomic(path: &Path, stats: &ProxyStats) -> Result<(), String> {
 /// worse, racing it (`run_seconds` then serves purely as a safety net).
 /// Queued delayed packets are flushed exactly as on the `run_seconds`
 /// exit.
+///
+/// `schedule`, if given as `(schedule_seed, phases, phase_s)`, runs the
+/// relay in SCHEDULED mode: [`generate_schedule`] builds `phases` phases
+/// from `schedule_seed` and each is in force for `phase_s` seconds, so
+/// the link's quality CHANGES over the run instead of staying at one
+/// fixed level (the phases override `cfg`'s loss/jitter/reorder/delay;
+/// `cfg`'s `dup_pct`, `seed` and outage windows stay per-run — see
+/// [`Engine::with_schedule`]). `None` is fixed mode: `cfg`'s knobs for
+/// the whole run. Either way the schedule actually run is echoed into
+/// [`ConfigEcho::schedule`] and the totals are split per phase into
+/// [`ProxyStats::phases`].
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     listen: SocketAddr,
     forward: SocketAddr,
     cfg: ImpairConfig,
+    schedule: Option<(u64, u32, u64)>,
     stats_json: Option<PathBuf>,
     run_seconds: Option<u64>,
     on_bound: Option<Box<dyn FnOnce(SocketAddr) + Send>>,
@@ -348,7 +450,12 @@ pub fn run(
         hook(bound_addr);
     }
 
-    let mut engine = Engine::new(cfg);
+    let mut engine = match schedule {
+        Some((schedule_seed, phases, phase_s)) => {
+            Engine::with_schedule(cfg, generate_schedule(schedule_seed, phases), phase_s)
+        }
+        None => Engine::new(cfg),
+    };
     let run_start = Instant::now();
     let deadline = run_seconds.map(|s| run_start + Duration::from_secs(s));
 
@@ -362,13 +469,37 @@ pub fn run(
     let mut next_order: u64 = 0;
     let mut max_sent_order: Option<u64> = None;
 
+    let mut config = ConfigEcho::from(&cfg);
+    if let Some((schedule_seed, phases, phase_s)) = schedule {
+        config.schedule = Some(ScheduleEcho {
+            seed: schedule_seed,
+            phases,
+            phase_s,
+            // The engine's own phases, not a second `generate_schedule`
+            // call: what gets echoed is then what actually ran, even for
+            // an input the engine normalised (an empty schedule falls
+            // back to the fixed-mode phase).
+            table: engine.phases().to_vec(),
+        });
+    }
+
     let mut stats = ProxyStats {
         forwarded: 0,
         dropped: 0,
         duped: 0,
         reordered: 0,
         seed: cfg.seed,
-        config: ConfigEcho::from(&cfg),
+        config,
+        // One counter per phase the engine will actually walk (always at
+        // least one), indexed by POSITION — which is exactly what
+        // `Engine::phase_index` returns below, so the indexing at the
+        // decide site can never be out of bounds.
+        phases: (0..engine.phases().len())
+            .map(|index| PhaseCounters {
+                index: index as u32,
+                ..PhaseCounters::default()
+            })
+            .collect(),
     };
 
     let mut last_stats_write = Instant::now();
@@ -441,14 +572,28 @@ pub fn run(
                         }
                     }
                     let elapsed_ms = run_start.elapsed().as_millis() as u64;
+                    // Attribute this packet to the phase in force at the
+                    // instant it was DECIDED (not when a delayed copy is
+                    // eventually sent — the impairment it got came from
+                    // this phase). `phase_index` never touches the RNG,
+                    // so reading it before `decide` doesn't perturb the
+                    // decision sequence; it is clamped to the last phase,
+                    // so it always indexes `stats.phases` in bounds.
+                    let phase = engine.phase_index(elapsed_ms);
                     let order_key = next_order;
                     next_order += 1;
                     match engine.decide(elapsed_ms) {
                         Action::Drop => {
+                            // Includes outage-window drops: an outage is
+                            // part of what the link did during that
+                            // phase, so it belongs in that phase's
+                            // counters like any other drop.
                             stats.dropped += 1;
+                            stats.phases[phase].dropped += 1;
                         }
                         Action::Forward { delay_ms } => {
                             stats.forwarded += 1;
+                            stats.phases[phase].forwarded += 1;
                             queue_delayed(
                                 &mut heap,
                                 &mut next_seq,
@@ -462,6 +607,8 @@ pub fn run(
                         Action::DupForward { delay_ms } => {
                             stats.forwarded += 1;
                             stats.duped += 1;
+                            stats.phases[phase].forwarded += 1;
+                            stats.phases[phase].duped += 1;
                             for _ in 0..2 {
                                 queue_delayed(
                                     &mut heap,
@@ -624,6 +771,42 @@ pub fn parse_outage(s: &str) -> Option<(u64, u64)> {
     Some((period?, dur?))
 }
 
+/// Parse `--schedule seed=N,phases=K,phase_s=DUR` (`DUR` an integer with
+/// an optional `h`/`m`/`s` unit suffix — see `parse_duration_unit`) into
+/// `(schedule_seed, phases, phase_s)`, the triple [`run`] takes.
+///
+/// All three keys are required, and `phases`/`phase_s` must be nonzero,
+/// for the same reason [`parse_outage`] requires both of its keys: every
+/// rejected shape here would otherwise be accepted as something QUIETLY
+/// different from what was asked for, rather than erroring.
+/// `phases=0` would make [`Engine::with_schedule`] fall back to the
+/// fixed-mode phase (a run that looks scheduled but isn't), and
+/// `phase_s=0` makes [`Engine::phase_index`] clamp to the LAST phase at
+/// every instant (a schedule that never advances) — both are silent
+/// misconfigurations of a run that may be hours long.
+///
+/// `seed` is the SCHEDULE's seed, independent of `--seed` (the engine's);
+/// see [`ScheduleEcho::seed`].
+pub fn parse_schedule(s: &str) -> Option<(u64, u32, u64)> {
+    let mut seed: Option<u64> = None;
+    let mut phases: Option<u32> = None;
+    let mut phase_s: Option<u64> = None;
+    for part in s.split(',') {
+        let (key, val) = part.split_once('=')?;
+        match key {
+            "seed" => seed = Some(val.parse().ok()?),
+            "phases" => phases = Some(val.parse().ok()?),
+            "phase_s" => phase_s = Some(parse_duration_unit(val)?),
+            _ => return None,
+        }
+    }
+    let (seed, phases, phase_s) = (seed?, phases?, phase_s?);
+    if phases == 0 || phase_s == 0 {
+        return None;
+    }
+    Some((seed, phases, phase_s))
+}
+
 /// Parse a `--run-seconds` argument, rejecting anything that isn't a
 /// strictly positive integer (mirrors `cli::parse_seconds`'s reject-
 /// degenerate-shapes style for the integer/duration case).
@@ -687,5 +870,55 @@ mod tests {
         assert_eq!(parse_run_seconds("0"), None);
         assert_eq!(parse_run_seconds("-1"), None);
         assert_eq!(parse_run_seconds("abc"), None);
+    }
+
+    #[test]
+    fn parse_schedule_accepts_the_grammar_and_rejects_partial_keys() {
+        assert_eq!(
+            parse_schedule("seed=4,phases=6,phase_s=600"),
+            Some((4, 6, 600))
+        );
+        assert_eq!(
+            parse_schedule("seed=4,phases=6,phase_s=2h"),
+            Some((4, 6, 7200))
+        );
+        assert_eq!(
+            parse_schedule("seed=4,phases=6,phase_s=10m"),
+            Some((4, 6, 600))
+        );
+        // Every key is required: a missing one would silently produce a
+        // different run shape than the caller asked for (see
+        // `parse_schedule`'s own doc comment).
+        assert_eq!(parse_schedule("seed=4,phase_s=600"), None);
+        assert_eq!(parse_schedule("phases=6,phase_s=600"), None);
+        assert_eq!(parse_schedule("seed=4,phases=6"), None);
+        // Degenerate counts are rejected rather than silently reinterpreted.
+        assert_eq!(parse_schedule("seed=4,phases=0,phase_s=600"), None);
+        assert_eq!(parse_schedule("seed=4,phases=6,phase_s=0"), None);
+        // Unknown/malformed shapes.
+        assert_eq!(parse_schedule("seed=4,phases=6,phase_s=600,bogus=1"), None);
+        assert_eq!(parse_schedule("seed=4,phases=six,phase_s=600"), None);
+        assert_eq!(parse_schedule("seed=-1,phases=6,phase_s=600"), None);
+        assert_eq!(parse_schedule(""), None);
+    }
+
+    /// A stats file written BEFORE scheduled mode existed (no `phases`
+    /// array, no `config.schedule`) must still deserialize — archived
+    /// soak evidence is read back by `report soak`, and a new optional
+    /// field must not invalidate it. Pins the `#[serde(default)]`s.
+    #[test]
+    fn stats_json_from_before_scheduled_mode_still_deserializes() {
+        let legacy = r#"{
+            "forwarded": 10, "dropped": 2, "duped": 1, "reordered": 0, "seed": 7,
+            "config": {
+                "loss_pct": 2.0, "dup_pct": 0.0, "reorder_pct": 1.0,
+                "reorder_hold": 200, "jitter_ms_max": 20, "base_delay_ms": 30,
+                "outage_period_s": 21600, "outage_dur_s": 90
+            }
+        }"#;
+        let parsed: ProxyStats = serde_json::from_str(legacy).expect("legacy stats must parse");
+        assert_eq!(parsed.forwarded, 10);
+        assert!(parsed.config.schedule.is_none());
+        assert!(parsed.phases.is_empty());
     }
 }

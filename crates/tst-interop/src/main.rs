@@ -751,11 +751,23 @@ fn run_verify(args: &[String]) -> ! {
 
 /// `proxy --listen ADDR --forward ADDR [--loss PCT] [--dup PCT]
 /// [--reorder PCT,HOLD_MS] [--jitter MS] [--delay MS] [--seed N]
-/// [--outage period=DUR,dur=DUR] [--stats-json PATH] [--run-seconds N]`
+/// [--outage period=DUR,dur=DUR] [--schedule seed=N,phases=K,phase_s=DUR]
+/// [--stats-json PATH] [--run-seconds N]`
 ///
 /// `--delay` is a constant base delay applied to every non-dropped
 /// packet (a link's one-way WAN latency), on top of which `--jitter`
 /// varies — see `ImpairConfig::base_delay_ms`.
+///
+/// `--schedule` switches the relay from ONE fixed impairment level to a
+/// seeded sequence of `K` phases, each in force for `phase_s` (a link
+/// whose quality changes over a long run — see `proxy::run`). It is
+/// therefore mutually exclusive with the four flags it would override
+/// (`--loss`, `--jitter`, `--reorder`, `--delay`): passing both is a
+/// usage error (exit 2) rather than a silently ignored flag. `--dup`,
+/// `--seed` and `--outage` stay per-run and combine freely with it.
+/// `--schedule`'s own `seed=` is the SCHEDULE's seed, separate from
+/// `--seed` (the per-packet engine's) — the two are salted apart, so
+/// passing the same number to both is fine.
 ///
 /// Binds a UDP impairment relay at `--listen` (an ephemeral `:0` port is
 /// printed as `{"listening": "..."}` on stdout as soon as it's bound —
@@ -780,6 +792,11 @@ fn run_proxy(args: &[String]) -> ! {
     let mut outage_dur_s = 0u64;
     let mut stats_json: Option<PathBuf> = None;
     let mut run_seconds: Option<u64> = None;
+    let mut schedule: Option<(u64, u32, u64)> = None;
+    // Which of the four per-phase-overridden impairment flags were
+    // actually passed — named, so the mutual-exclusion error below can
+    // say which one conflicts instead of just that something did.
+    let mut fixed_flags: Vec<&str> = Vec::new();
 
     let bad_arg = |flag: &str, expected: &str| -> ! {
         eprintln!("proxy: --{flag} must be {expected}");
@@ -810,6 +827,7 @@ fn run_proxy(args: &[String]) -> ! {
                     .get(i + 1)
                     .and_then(|s| proxy::parse_percent(s))
                     .unwrap_or_else(|| bad_arg("loss", "a percent in 0..=100"));
+                fixed_flags.push("--loss");
                 i += 2;
             }
             "--dup" => {
@@ -826,6 +844,7 @@ fn run_proxy(args: &[String]) -> ! {
                     .unwrap_or_else(|| bad_arg("reorder", "PCT,HOLD_MS (e.g. 1,200)"));
                 reorder_pct = pct;
                 reorder_hold = hold;
+                fixed_flags.push("--reorder");
                 i += 2;
             }
             "--jitter" => {
@@ -833,6 +852,7 @@ fn run_proxy(args: &[String]) -> ! {
                     .get(i + 1)
                     .and_then(|s| s.parse().ok())
                     .unwrap_or_else(|| bad_arg("jitter", "a non-negative integer (milliseconds)"));
+                fixed_flags.push("--jitter");
                 i += 2;
             }
             "--delay" => {
@@ -840,6 +860,7 @@ fn run_proxy(args: &[String]) -> ! {
                     .get(i + 1)
                     .and_then(|s| s.parse().ok())
                     .unwrap_or_else(|| bad_arg("delay", "a non-negative integer (milliseconds)"));
+                fixed_flags.push("--delay");
                 i += 2;
             }
             "--seed" => {
@@ -858,6 +879,20 @@ fn run_proxy(args: &[String]) -> ! {
                     });
                 outage_period_s = Some(period);
                 outage_dur_s = dur;
+                i += 2;
+            }
+            "--schedule" => {
+                schedule = Some(
+                    args.get(i + 1)
+                        .and_then(|s| proxy::parse_schedule(s))
+                        .unwrap_or_else(|| {
+                            bad_arg(
+                                "schedule",
+                                "seed=N,phases=K,phase_s=DUR with K and DUR nonzero \
+                                 (e.g. seed=7,phases=6,phase_s=10m)",
+                            )
+                        }),
+                );
                 i += 2;
             }
             "--stats-json" => {
@@ -892,6 +927,18 @@ fn run_proxy(args: &[String]) -> ! {
         std::process::exit(2);
     });
 
+    // A scheduled run's phases OVERRIDE loss/jitter/reorder/delay, so
+    // accepting both would silently ignore whatever the caller typed for
+    // them — refuse instead of quietly running something else.
+    if schedule.is_some() && !fixed_flags.is_empty() {
+        eprintln!(
+            "proxy: --schedule sets loss/jitter/reorder/delay per phase, so it cannot be \
+             combined with {} (--dup, --seed and --outage stay per-run and are fine)",
+            fixed_flags.join(", ")
+        );
+        std::process::exit(2);
+    }
+
     let cfg = ImpairConfig {
         loss_pct,
         dup_pct,
@@ -904,7 +951,16 @@ fn run_proxy(args: &[String]) -> ! {
         outage_dur_s,
     };
 
-    match proxy::run(listen, forward, cfg, stats_json, run_seconds, None, None) {
+    match proxy::run(
+        listen,
+        forward,
+        cfg,
+        schedule,
+        stats_json,
+        run_seconds,
+        None,
+        None,
+    ) {
         Ok(stats) => {
             eprintln!(
                 "proxy: forwarded={} dropped={} duped={} reordered={}",
