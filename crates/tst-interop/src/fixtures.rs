@@ -550,7 +550,7 @@ fn walk(w: f64, min: f64, max: f64) -> f64 {
 ///
 /// # Errors
 /// Returns the encoder's message (which names the offending tag) rather
-/// than panicking. Every numeric field is walked through [`walk`] and so
+/// than panicking. Every numeric field is walked through `walk` and so
 /// should be structurally incapable of going out of range; surfacing a
 /// failure as `Err` instead of an `expect` is what keeps a generator bug
 /// from killing a 72 h soak the way run 1's did.
