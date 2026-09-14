@@ -404,18 +404,22 @@ skip a record an injection demonstrably damaged, counting it separately so
 every failure string reports how many records went unexamined. Offline
 verification remains in the strict tier and sees neither excusal.
 
-**Smoke evidence (2026-09-14, local, seed 3).** Two ten-minute runs over a
-four-phase schedule each passed all 31 verdicts with `overall_pass: true`,
-drawing `klv-sync` on the SRT leg and `audio` on the RIST leg. Attribution
-was complete on both legs and in both runs — 267 injections, all resolved,
-against 211 events, all attributed, on SRT; 287 injections, all resolved,
-against 249 attributed events on RIST — with zero undetected and zero
-unrecovered injections throughout. One of the two runs additionally excused
+**Smoke evidence (2026-09-14, local, seed 3).** One ten-minute configuration
+over a four-phase schedule, run twice at identical settings, passed all 31
+verdicts the harness emitted at the time with `overall_pass: true` on both
+occasions, drawing `klv-sync` on the SRT leg and `audio` on the RIST leg. A
+separate three-minute run with the tap off, one fixed impairment and the
+`baseline` profile on both legs covered the disabled path. Attribution was
+complete on both legs and in both ten-minute runs — 267 injections, all
+resolved, against 211 events, all attributed, on SRT; 287 injections, all
+resolved, against 249 attributed events on RIST — with zero undetected and
+zero unrecovered injections throughout. One of the two additionally excused
 2 RIST events as transport loss, which is the lossy-tier rule firing on live
 timing rather than on anything seeded, so it is expected to vary run to run.
 Of about 6,100 rich KLV records per leg, 236 (SRT) and 223 (RIST) were
-skipped as injection-damaged in both runs, identically, and the rest decoded
-clean with no census mismatches and every expected nested security set valid.
+skipped as injection-damaged in both runs, identically — which is the tap
+behaving deterministically for a fixed seed — and the rest decoded clean
+with no census mismatches and every expected nested security set valid.
 Observed drop rates tracked the phase-integrated expectation on both legs
 (2.55 % against 2.59 % on SRT, 2.35 % against 2.48 % on RIST). Ten minutes is
 a smoke, not endurance evidence: it proves the wiring, the declarations and
