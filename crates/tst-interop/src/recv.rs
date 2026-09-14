@@ -174,7 +174,8 @@ fn drain_final_wire_evidence(tally: &mut Tally, tap: &Arc<Mutex<transport::TeeSt
 ///
 /// `corruption_log` names the JSONL log a `send --corrupt` peer is
 /// writing, turning the capture into a judgement OF that corruption —
-/// see [`attach_corruption_log`] and `crate::corrupt`'s module doc. The
+/// see `attach_corruption_log` (private) and `crate::corrupt`'s module
+/// doc. The
 /// file need not exist yet; the log is read incrementally for the whole
 /// capture, so injections the sender records while this receive loop is
 /// already running are judged too.
