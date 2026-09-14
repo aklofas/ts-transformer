@@ -531,6 +531,161 @@ Those two files feed three new verdicts in `soak-results.json`:
   role is listed in `expected_worker_exits`; a missing `exits.json` fails
   the run.
 
+### Realism knobs
+
+A soak run is not one fixed impairment level against one fixed stream shape.
+Everything below is derived from the single `--seed`, so a run reproduces
+from its seed alone, and every derived choice is also DECLARED in
+`soak-config.json` before launch so `report soak` can check the run did what
+it said it would.
+
+| flag | default | what it does |
+|---|---|---|
+| `--profile auto\|NAME` | `auto` | `auto` draws two DISTINCT profiles from the seed, one per leg. `NAME` pins both legs to one profile. |
+| `--schedule-phases K` | `12` | Phases in the seeded impairment schedule both proxies walk. |
+| `--schedule-phase-s S` | `TOTAL_SECONDS / K` (floor 1) | Seconds each phase stays in force. |
+| `--fixed-impairment` | off | Reverts both proxies to the old single fixed level (`--loss`/`--jitter`/`--delay`/`--reorder`). |
+| `--no-corrupt` | tap on | Turns off the per-leg sender corruption tap. |
+
+Corruption and rich ST 0601 KLV are **on by default** on both legs. The tap
+runs at `rate=5,min_gap=1000` with per-leg seed offsets (`SEED+1` on srt,
+`SEED+2` on rist) writing one `corruption.jsonl` per leg, read back by that
+leg's own receiver. Rich KLV runs `--klv-set rich --klv-seed $SEED` on send
+AND recv of both legs.
+
+`--profile NAME` is the REPRODUCTION form (bisecting a failure a drawn
+profile exposed). `--no-corrupt` and `--fixed-impairment` are the two BISECT
+forms — "is this the tap's doing?" and "is this the schedule's doing?".
+
+#### The impairment schedule
+
+Each proxy takes `--schedule seed=$SEED,phases=K,phase_s=Ss` instead of the
+four fixed knobs, and walks a phase table that is a pure function of
+`(seed, phases)` — echoed into that proxy's stats JSON, with one set of
+forwarded/dropped counters PER PHASE. The generator is
+`XorShift64::new(seed ^ SCHEDULE_SALT)`; `SCHEDULE_SALT` exists because one
+`--seed` feeds the impairment engine, this schedule, the corruption tap and
+the profile draw, and unsalted they would walk correlated trajectories.
+
+Each phase consumes exactly six draws, in this fixed order:
+
+| # | field | range |
+|---|---|---|
+| 1 | `loss` | 0.5–4.0 % effective loss |
+| 2 | `burst` | `r < 0.3`, so ~30 % of phases are bursty |
+| 3 | `jitter` | 5–40 ms |
+| 4 | `reorder` | 0.0–2.0 % |
+| 5 | `reorder_hold` | 100–300 ms |
+| 6 | `base_delay` | 10–60 ms |
+
+A bursty phase drops in consecutive runs of 3–8 packets, and divides its
+`loss_pct` by the mean run length (5.5) to get the per-packet draw
+threshold — so a burst phase and a non-burst phase at the same `loss_pct`
+lose the same FRACTION of packets, they just lose them in different shapes.
+
+Changing the draw order, the draw count or any range re-generates every
+schedule ever produced. Archived evidence quotes its seed, not its phase
+table, so that mapping must stay stable. A pinned unit test replays the
+seed-1 fixed-mode decision sequence against a SHA-256 for exactly this
+reason.
+
+Seed 3 over 4 phases, as an illustration (this is the table the WP's own
+verification soaks ran):
+
+| phase | loss % | burst | jitter ms | reorder % | hold ms | delay ms |
+|---|---|---|---|---|---|---|
+| 0 | 2.72 | yes | 6 | 1.49 | 233 | 47 |
+| 1 | 2.15 | no | 26 | 0.15 | 222 | 53 |
+| 2 | 1.73 | yes | 25 | 0.22 | 267 | 48 |
+| 3 | 3.32 | no | 19 | 0.70 | 173 | 37 |
+
+**The srt leg sets `?latency=1200` on both ends**, sized from that table's
+documented worst case: a 300 ms reorder hold plus 40 ms of jitter plus 60 ms
+of base delay is 400 ms, plus retransmission headroom over an RTT the base
+delay itself inflates. libsrt's default 120 ms TSBPD budget is SMALLER than
+the link this schedule emulates, and a packet delivered past its play time is
+dropped by TSBPD as loss no injection can explain. That mis-sizing was
+invisible until the schedule and the corruption tap first ran together.
+
+#### The per-leg profile draw
+
+`--profile auto` runs `tst-interop pick-profiles --seed N --legs 2`
+(`profiles::pick`), which draws distinct profiles from
+`XorShift64::new(seed ^ PROFILE_SALT)`, re-rolling duplicates under a bounded
+draw budget and erroring if the registry holds fewer profiles than legs. A
+long run then also covers a codec/carriage/cadence shape the short interop
+matrix only sees for five seconds at a time. Seed 3 draws `klv-sync` (srt)
+and `audio` (rist); seed 1 draws `audio` and `av1-klv-b`. `PROFILE_SALT` is
+likewise load-bearing and likewise frozen.
+
+#### The declarations, and the phase-integrated drop verdict
+
+`soak-config.json` gains a `corruption` flag and a `legs` map — one
+`LegDeclaration { profile, schedule: { seed, phases, phase_s } }` per leg,
+written before any worker launches. `parse_soak_config` rejects an unknown
+profile name AND an unknown leg key, and `soak.sh` runs `report soak
+--validate-only` before launch so a typo surfaces then rather than 72 hours
+later. Two new non-provisional verdicts check the run against them:
+
+- **`profile_declared_<leg>`** — the recv report's own `profile` stamp must
+  equal the declaration. No declaration passes ("pre-realism config");
+  declared-but-recv-carries-none fails.
+- **`schedule_declared_<leg>`** — the declaration must match the proxy's own
+  schedule echo on `(seed, phases, phase_s)`. Both absent passes (fixed-
+  impairment mode). Either side alone fails. Only the three INPUTS are
+  compared, because the phase table is a pure function of them.
+
+`drop_rate_consistent_with_impairment_<leg>` now integrates over the echoed
+phase table instead of one flat rate: expected drops are
+`Σ (forwarded+dropped)ᵢ × rateᵢ` over the per-phase counters, divided by the
+total. The verdict detail names the phase count, so a one-phase reading is
+`--fixed-impairment` and a twelve-phase reading is the schedule. A stats
+file whose phase-counter count disagrees with its own schedule echo fails
+LOUD as a malformed artifact — it never falls back to a partial computation.
+
+#### Lossy-mode transport loss
+
+A soak leg crosses a real impaired link, so the receiver verifies in
+`VerifyMode::Lossy` and packets go missing for reasons the corruption log
+never recorded: the proxy's own configured loss, an SRT/RIST buffer overrun,
+the gap a reconnect leaves behind an outage window. The attribution engine
+cannot tell such a gap from one the tap made, so in Lossy mode — and ONLY
+there; offline `verify` is Strict and byte-for-byte unchanged — it excuses
+two narrow things:
+
+- An unexplained **discontinuity-family** signal (`ContinuityJump`,
+  `OtherDiscontinuity`) moves out of `unexplained_events` into
+  `unexplained_transport_loss`. It stays counted in the verifier's own
+  `discontinuities`, which is what the Lossy contract already said to do
+  with it. An unexplained `Resync`, `PsiChecksum`, `MalformedPes` or
+  `OtherNonConformant` still FAILS: a lost packet does not forge a bad CRC
+  or a malformed PES header.
+- An undetected or unrecovered injection with a **foreign** continuity jump
+  in its window moves to `undetected_lost` / `unrecovered_lost`. Foreign is
+  load-bearing: an injection's OWN jump never excuses it, or a `drop` —
+  whose only observable IS a continuity jump — would arrive pre-excused and
+  its recovery obligation would evaporate.
+
+What that costs is one mutation, honestly: a WITHHELD `drop` log line is not
+catchable on a lossy leg by construction, because nothing distinguishes a gap
+the tap made and hid from a gap the network made. The mutation test is now an
+honest pair, strict-catches / lossy-excuses. The other six classes surface as
+resyncs or non-conformances that no packet loss can forge, and their withheld-
+line mutations still bite in Lossy.
+
+Separately, the rich-KLV oracles skip a record an injection DAMAGED, via
+`Attribution::explains_damage(at, pid)` — true when the receiver ordinal lies
+in the window of a resolved injection that either targeted that PID or was a
+`truncate`/`garbage` on any PID (those misalign the whole multiplex). Such a
+record still counts in `records` and in the new
+`KlvRichMetrics.damaged_by_injection`, and all three rich failure strings say
+how many were skipped, so a reader can tell "3 of 6000 records are wrong"
+from "3 are wrong and 200 more were never examined". An unexplained rich
+decode error still fails `klv_rich_decode_clean`. Without this, the tap's
+1-2 KLV-PID hits per ten minutes would scale to several hundred guaranteed
+rich-KLV failures over 72 hours, and the arc's headline soak could not pass
+with its own default settings.
+
 ## Corruption tap (`send --corrupt`)
 
 `send --corrupt` wraps the sender's `Transport` in a seeded tap that damages
@@ -684,8 +839,9 @@ understand is an error naming the line.
 ### Verdicts
 
 `recv --corruption-log` (and the offline equivalent) adds
-`metrics.corruption_attribution` to the report plus three verdicts, enforced
-in `Strict` and `Lossy` alike:
+`metrics.corruption_attribution` to the report plus three verdicts. All three
+are enforced in `Strict` and `Lossy` alike; `Lossy` differs only in the two
+narrow transport-loss excusals described at the end of this section:
 
 - **`corruption_attributed`** — every error event the receiver surfaced
   (non-conformance, discontinuity, raw-reader resync) lies inside some
@@ -778,6 +934,25 @@ per-class counts, and bytes in/out. Its `passthrough_unclassified` counter is
 always 0 for this harness's own muxer output — a non-zero value means
 something upstream emitted a malformed packet and the run's evidence is not
 trustworthy.
+
+### On a lossy leg
+
+A live soak capture verifies in `VerifyMode::Lossy`, where packets go missing
+for reasons the log never recorded. `Attribution::finish_with` then excuses
+exactly two things, and records each in its own counter so nothing vanishes
+silently: an unexplained DISCONTINUITY-family signal moves to
+`unexplained_transport_loss` (non-conformances and resyncs still fail), and
+an undetected or unrecovered injection with a FOREIGN continuity jump in its
+window moves to `undetected_lost` / `unrecovered_lost` (an injection's own
+jump never excuses itself). `corruption_attributed`'s count subtracts the
+excused events and names them, so the number it quotes always matches the
+list it shows. Offline `verify` is always `Strict` and sees none of this.
+
+The rich-KLV oracles separately skip a record an injection damaged
+(`explains_damage`), counting it in `KlvRichMetrics.damaged_by_injection`;
+all three rich failure strings then say how many records were skipped. Both
+mechanisms are described in full under "Lossy-mode transport loss" in the
+soak section above.
 
 ## Rich ST 0601 mode (`--klv-set rich`)
 

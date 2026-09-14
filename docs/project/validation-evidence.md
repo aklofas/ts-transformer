@@ -210,12 +210,10 @@ property and asserts the named failure (`crates/tst-interop/tests/mutations.rs`)
 ## Soak evidence
 
 `soak.sh` runs two concurrent, hours-long legs of `tst-interop` pushing
-synthetic MPEG-TS/KLV traffic through an impaired proxy (2% loss, 20ms
-jitter over a 30ms base link delay, 1% reorder held 200ms, seeded
-deterministically): an SRT leg
+synthetic MPEG-TS/KLV traffic through an impaired proxy: an SRT leg
 wrapped in `tst_pipeline::ManagedTransport` (so it must reconnect across a
 90-second full-drop outage window injected every 6 hours) and a RIST leg
-under the same continuous impairment with no outage (RIST has no managed
+under the same impairment with no outage (RIST has no managed
 reconnect wrapper in this codebase, so its job is purely "does sustained
 loss/jitter/reorder behave the same over hours as it does over a
 five-second matrix cell"). Both legs' senders run `--au-sizes realistic`
@@ -224,6 +222,13 @@ five-second matrix cell"). Both legs' senders run `--au-sizes realistic`
 fixtures, so the soak measures endurance under a real encoder's traffic
 shape and burst pattern. `tst-interop report soak` renders a pass/fail
 verdict plus RSS-growth slopes per process.
+
+The impairment itself changed shape on 2026-09-14 (see "The current soak
+shape" below). Every published run on this page so far used the previous
+**fixed-impairment** shape — one level held for the whole run: 2 % loss,
+20 ms jitter over a 30 ms base link delay, 1 % reorder held 200 ms, seeded
+deterministically, both legs on the `baseline` profile with no corruption
+injected. Those numbers are what the 2026-08-05 run's tables below mean.
 
 `tst-interop` also carries a sender-side corruption tap (`send --corrupt`)
 that deliberately damages the muxer's own output on its way to the wire —
@@ -234,9 +239,9 @@ answers three questions that a clean run cannot ask: did every error event
 it reported have a cause (`corruption_attributed`), did it notice every
 injection a conformant receiver is required to notice
 (`corruption_detected`), and did the stream produce media again afterwards
-(`corruption_recovered`). The verdicts exist and are enforced offline today;
-the next 72-hour soak run will carry them end to end, and its numbers will
-be published here alongside the loss and RSS figures below. None of the
+(`corruption_recovered`). The tap is now **on by default on both soak legs**;
+the next 72-hour run will carry these verdicts end to end and its numbers
+will be published here alongside the loss and RSS figures below. None of the
 157 interop-matrix cells inject corruption — the census above is a pristine
 stream throughout.
 
@@ -298,6 +303,82 @@ killed inside the end-grace window leaves no report artifact, so `report
 soak` refuses to write `soak-results.json` and the run exits 2; a sender
 killed earlier trips the supervisor's fail-fast (`soak-FAILED`) with every
 worker's status recorded in `exits.json`.
+
+### The current soak shape (2026-09-14)
+
+Everything in this subsection describes how the NEXT long run will be
+configured and judged. No 72-hour run has yet been executed under it; the
+numbers published further down all come from the fixed-impairment shape.
+
+A soak run no longer holds one impairment level against one stream shape for
+its whole duration. Every choice below is derived from the single `--seed`,
+so a run still reproduces from its seed alone, and every derived choice is
+also DECLARED in `soak-config.json` before any worker launches so the report
+can check the run did what it said it would.
+
+- **A seeded phase schedule.** Both proxies walk twelve phases by default,
+  each in force for an equal slice of the run, varying loss (0.5–4 %, with
+  roughly 30 % of phases dropping in bursts of 3–8 consecutive packets),
+  jitter (5–40 ms), reorder (0–2 %, held 100–300 ms) and base link delay
+  (10–60 ms). The phase table is a pure function of the seed and the phase
+  count, echoed into each proxy's stats file with per-phase
+  forwarded/dropped counters. A multi-day run now exercises a link whose
+  conditions CHANGE rather than one synthetic average.
+- **Distinct per-leg stream profiles.** The two legs draw two different
+  profiles from the seed instead of both running `baseline` forever, so a
+  long run also covers a codec/carriage/cadence shape the 157-cell matrix
+  only sees for five seconds at a time.
+- **Sender-side corruption on both legs**, each with its own seed offset and
+  its own injection log, read back by that leg's own receiver.
+- **Rich ST 0601 KLV on both legs** — a ~32-tag record carrying a nested
+  ST 0102 security set on a seeded presence schedule, rather than the
+  matrix's 4-tag minimal record.
+
+The verdict document gains four families on top of the existing ones. Two
+are declaration checks — `profile_declared_<leg>` and
+`schedule_declared_<leg>` — which fail a run whose proxy or receiver did not
+actually run what the config declared, so a drift between the recipe and the
+run cannot pass unnoticed. The third is the drop-rate verdict, now
+integrated over the echoed phase table rather than compared against one flat
+rate, and failing loud on a stats file whose phase counters disagree with its
+own schedule echo. The fourth is the corruption family described above.
+
+Two attribution rules keep those verdicts honest on a link that really does
+lose packets. A live capture is judged in the lossy tier, where an
+unexplained continuity gap is excused as transport loss rather than charged
+to the corruption tap (non-conformances and resyncs are never excused, and an
+injection's own gap never excuses that injection); and the rich-KLV oracles
+skip a record an injection demonstrably damaged, counting it separately so
+every failure string reports how many records went unexamined. Offline
+verification remains in the strict tier and sees neither excusal.
+
+**Smoke evidence (2026-09-14, local, seed 3).** Two ten-minute runs over a
+four-phase schedule each passed all 31 verdicts with `overall_pass: true`,
+drawing `klv-sync` on the SRT leg and `audio` on the RIST leg. Attribution
+was complete on both legs and in both runs — 267 injections, all resolved,
+against 211 events, all attributed, on SRT; 287 injections, all resolved,
+against 249 attributed events on RIST — with zero undetected and zero
+unrecovered injections throughout. One of the two runs additionally excused
+2 RIST events as transport loss, which is the lossy-tier rule firing on live
+timing rather than on anything seeded, so it is expected to vary run to run.
+Of about 6,100 rich KLV records per leg, 236 (SRT) and 223 (RIST) were
+skipped as injection-damaged in both runs, identically, and the rest decoded
+clean with no census mismatches and every expected nested security set valid.
+Observed drop rates tracked the phase-integrated expectation on both legs
+(2.55 % against 2.59 % on SRT, 2.35 % against 2.48 % on RIST). Ten minutes is
+a smoke, not endurance evidence: it proves the wiring, the declarations and
+the oracles work together end to end, and nothing about multi-day behaviour.
+
+The first run with the schedule and the corruption tap enabled together
+exposed a real sizing bug in the harness, worth recording because it is
+exactly what this shape exists to find: libsrt's default 120 ms TSBPD budget
+is smaller than the link the schedule emulates (up to 300 ms of reorder hold
+on top of 60 ms of base delay), so packets arriving past their play time were
+dropped as loss no injection could explain — 38 unexplained continuity jumps
+against 43 `RCV-DROPPED` warnings in the receiver's own log. The SRT leg now
+sets a 1200 ms latency sized from the schedule's documented worst case, after
+which the same run logged zero such warnings. No verdict was relaxed to
+accommodate it.
 
 ### The 72-hour run (2026-08-05 → 2026-08-08, seed 1)
 
