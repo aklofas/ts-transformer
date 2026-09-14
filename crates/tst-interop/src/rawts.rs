@@ -61,6 +61,10 @@ pub struct PacketInfo {
     pub cc: u8,
 }
 
+/// Parses one 188-byte packet's fixed header and adaptation field,
+/// entirely independent of any [`Reader`] state — `Err` on anything
+/// malformed (bad sync byte, an adaptation field that overruns the
+/// packet, or a PCR flag on a too-short adaptation field).
 pub fn classify_packet(p: &[u8; PKT]) -> Result<PacketInfo, String> {
     if p[0] != SYNC {
         return Err(format!("sync byte 0x{:02x}, want 0x47", p[0]));
@@ -164,22 +168,32 @@ impl Reader {
         }
     }
 
+    /// Packets accepted so far.
     pub fn packets(&self) -> u64 {
         self.summary.packets
     }
 
+    /// Most recent PCR base seen on ANY PID.
     pub fn last_pcr(&self) -> Option<u64> {
         self.last_pcr
     }
 
+    /// Whether `pid` is a PMT PID — learned from the PAT.
     pub fn is_pmt_pid(&self, pid: u16) -> bool {
         self.pmt_pids.contains_key(&pid)
     }
 
+    /// Turns resync (sync-recovery) mode on or off. When on, `feed` hunts
+    /// past corrupted or truncated packets instead of failing the whole
+    /// feed, recording each recovery as a [`Resync`] (see
+    /// [`Reader::resyncs`]).
     pub fn set_resync_mode(&mut self, on: bool) {
         self.resync_mode = on;
     }
 
+    /// Resync events recorded so far — populated only in resync mode.
+    /// Does not include a trailing partial packet still sitting in the
+    /// carry; see [`Reader::trailing_resync`] for that.
     pub fn resyncs(&self) -> &[Resync] {
         &self.resyncs
     }
@@ -246,41 +260,75 @@ impl Reader {
                 }
             }
             let pkt: [u8; PKT] = self.carry[off..off + PKT].try_into().expect("PKT bytes");
-            self.packet(&pkt)
-                .map_err(|e| format!("packet {}: {e}", self.summary.packets))?;
+            let before = self.summary.packets;
+            if let Err(e) = self.packet(&pkt) {
+                if self.resync_mode {
+                    // `off` passed the hunt-mode header check above (its
+                    // sync byte and next-packet lookahead both looked
+                    // fine) but the packet's own internals are malformed —
+                    // e.g. an adaptation_field_length that overruns the
+                    // packet, or a PSI section error. `Reader::packet` may
+                    // have partially mutated state before hitting the
+                    // error (a PSI error happens after `packets` is
+                    // already incremented), so roll the counter back to
+                    // `before`: this one packet is skipped, not counted,
+                    // and every OTHER packet's count still needs to be
+                    // right for downstream corruption verdicts to attribute
+                    // the event correctly.
+                    self.summary.packets = before;
+                    self.resyncs.push(Resync {
+                        at_packets: before,
+                        pcr_base: self.last_pcr,
+                        skipped_bytes: PKT,
+                    });
+                } else {
+                    return Err(format!("packet {}: {e}", self.summary.packets));
+                }
+            }
             off += PKT;
         }
         self.carry.drain(..off);
         Ok(())
     }
 
-    /// Consume the reader and return the accumulated [`WireSummary`] —
-    /// `Err` iff a trailing partial packet (fewer than 188 bytes) is
-    /// still sitting in the carry, naming how many bytes short it is. A
-    /// well-formed capture is always a whole number of TS packets; a
-    /// trailing fragment means the capture was cut off mid-packet
-    /// (e.g. a live recv session closing between transport reads), and
-    /// callers surface that as an explicit failure rather than silently
-    /// discarding it. In resync mode, that same trailing fragment is
-    /// instead recorded as one final [`Resync`] — the whole point of
-    /// resync mode is to keep going through corruption/truncation rather
-    /// than fail the feed.
-    pub fn finish(mut self) -> Result<WireSummary, String> {
-        if !self.carry.is_empty() {
-            if self.resync_mode {
-                self.resyncs.push(Resync {
-                    at_packets: self.summary.packets,
-                    pcr_base: self.last_pcr,
-                    skipped_bytes: self.carry.len(),
-                });
-            } else {
-                return Err(format!(
-                    "{} trailing byte(s) short of a {PKT}-byte packet",
-                    self.carry.len()
-                ));
-            }
+    /// Return the accumulated [`WireSummary`] — `Err` iff a trailing
+    /// partial packet (fewer than 188 bytes) is still sitting in the
+    /// carry, naming how many bytes short it is. A well-formed capture
+    /// is always a whole number of TS packets; a trailing fragment means
+    /// the capture was cut off mid-packet (e.g. a live recv session
+    /// closing between transport reads), and callers surface that as an
+    /// explicit failure rather than silently discarding it. In resync
+    /// mode, that same trailing fragment is tolerated instead of failing
+    /// the feed — the whole point of resync mode is to keep going
+    /// through corruption/truncation rather than fail. This consumes the
+    /// reader, so call [`Reader::trailing_resync`] first if you need that
+    /// final recovery event's fields.
+    pub fn finish(self) -> Result<WireSummary, String> {
+        if !self.carry.is_empty() && !self.resync_mode {
+            return Err(format!(
+                "{} trailing byte(s) short of a {PKT}-byte packet",
+                self.carry.len()
+            ));
         }
         Ok(self.summary)
+    }
+
+    /// Preview of the [`Resync`] that `finish` will silently tolerate for
+    /// a trailing partial packet still sitting in the carry — `None`
+    /// unless resync mode is on AND a trailing fragment is present.
+    /// `finish` consumes the reader, so this is the only way to inspect
+    /// that final recovery event's fields; call it before `finish`, not
+    /// after. Not recorded in [`Reader::resyncs`] (which only holds
+    /// recoveries `feed` made while it still owned the reader).
+    pub fn trailing_resync(&self) -> Option<Resync> {
+        if self.carry.is_empty() || !self.resync_mode {
+            return None;
+        }
+        Some(Resync {
+            at_packets: self.summary.packets,
+            pcr_base: self.last_pcr,
+            skipped_bytes: self.carry.len(),
+        })
     }
 
     /// Clear the in-flight byte carry (a partial trailing packet left
@@ -773,7 +821,47 @@ mod tests {
         let mut r = Reader::new();
         r.set_resync_mode(true);
         r.feed(&bytes[..3 * PKT + 50]).unwrap();
+        let last_pcr_before = r.last_pcr();
+        let trailing = r.trailing_resync().expect("non-empty carry in resync mode");
+        assert_eq!(trailing.at_packets, 3);
+        assert_eq!(trailing.skipped_bytes, 50);
+        assert_eq!(trailing.pcr_base, last_pcr_before);
         let s = r.finish().unwrap();
         assert_eq!(s.packets, 3);
+    }
+
+    #[test]
+    fn resync_mode_records_a_malformed_packet_as_a_resync_and_continues() {
+        let p = crate::profiles::by_name("baseline").unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "tst-interop-rawts-malformed-{}.ts",
+            std::process::id()
+        ));
+        crate::r#gen::run(p, 2.0, &path).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        let mut bad = bytes.clone();
+        // Packet 7 (0-based): force the adaptation-field bit on and claim
+        // an adaptation_field_length that overruns the 188-byte packet
+        // (5 + 200 > 188) — malformed, but the sync byte is untouched, so
+        // the resync-hunt's own byte/lookahead check accepts `off` as a
+        // normal packet start and only the deeper `classify_packet` parse
+        // catches it.
+        bad[7 * PKT + 3] |= 0x20;
+        bad[7 * PKT + 4] = 200;
+        let mut r = Reader::new();
+        r.set_resync_mode(true);
+        for chunk in bad.chunks(1316) {
+            r.feed(chunk).unwrap();
+        }
+        assert_eq!(r.resyncs().len(), 1, "{:?}", r.resyncs());
+        assert_eq!(r.resyncs()[0].at_packets, 7);
+        assert_eq!(r.resyncs()[0].skipped_bytes, PKT);
+        let s = r.finish().unwrap();
+        assert_eq!(s.packets as usize, bytes.len() / PKT - 1);
+
+        let mut r = Reader::new();
+        let e = r.feed(&bad).unwrap_err();
+        assert!(e.contains("adaptation field length"), "{e}");
     }
 }
