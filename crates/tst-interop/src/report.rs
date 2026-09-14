@@ -2227,6 +2227,7 @@ pub mod soak {
                 nonconformant: 0,
                 corruption: None,
                 corruption_attribution: None,
+                klv_rich: None,
             }
         }
 

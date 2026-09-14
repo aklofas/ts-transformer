@@ -34,9 +34,10 @@ use tst_interop::corrupt::{
     parse_log,
     testing::{VecTransport, VecWriter},
 };
+use tst_interop::fixtures::KlvSet;
 use tst_interop::profiles::Profile;
 use tst_interop::report_types::VerifyReport;
-use tst_interop::verify::{VerifyMode, verify_bytes_with_corruption};
+use tst_interop::verify::{KlvExpect, VerifyMode, verify_bytes_with_corruption};
 use tst_interop::{r#gen, profiles};
 
 /// 30 s of the compact baseline = 1800 packets. See the module doc.
@@ -62,7 +63,7 @@ fn gen_bytes(p: &Profile, tag: &str) -> Vec<u8> {
         "tst-interop-corruption-{tag}-{}.ts",
         std::process::id()
     ));
-    r#gen::run(p, SECONDS, &path).expect("gen::run");
+    r#gen::run(p, SECONDS, &path, KlvSet::Compact, 0).expect("gen::run");
     let bytes = std::fs::read(&path).expect("read the generated capture");
     let _ = std::fs::remove_file(&path);
     bytes
@@ -91,7 +92,14 @@ fn tap(bytes: &[u8], spec: &str, seed: u64) -> (Vec<u8>, LogHeader, Vec<Injectio
 }
 
 fn judge(wire: &[u8], p: &Profile, log: Option<&(LogHeader, Vec<Injection>)>) -> VerifyReport {
-    verify_bytes_with_corruption(wire, p, SECONDS, VerifyMode::Lossy, log)
+    verify_bytes_with_corruption(
+        wire,
+        p,
+        SECONDS,
+        VerifyMode::Lossy,
+        KlvExpect::compact(),
+        log,
+    )
 }
 
 /// Force `class` on every eligible packet, at the `min_gap` floor.

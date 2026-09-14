@@ -12,7 +12,7 @@ use tst_core::codec::misp_time::MispTimestamp;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::Muxer;
 
-use crate::fixtures;
+use crate::fixtures::{self, KlvSet};
 use crate::mux_setup;
 use crate::profiles::{KlvMode, Profile, VideoCodec};
 use crate::schedule::{self, Event, PTS_HZ};
@@ -33,7 +33,20 @@ use crate::schedule::{self, Event, PTS_HZ};
 /// `two-program` profiles push the same video AU / KLV record onto every
 /// configured program's handles at the same PTS — the "duplicate the
 /// video+KLV pair in program 2" shape.
-pub fn run(p: &Profile, seconds: f64, out_path: &Path) -> io::Result<()> {
+///
+/// `klv`/`klv_seed` pick the ST 0601 record factory: [`KlvSet::Compact`]
+/// (the default everywhere, and byte-identical to what this function has
+/// always written — the 157-cell matrix's expectations were validated
+/// against those exact bytes) or [`KlvSet::Rich`], whose per-record tag
+/// set varies on a schedule seeded by `klv_seed`. `klv_seed` is ignored
+/// by `Compact`, which has no seeded component.
+pub fn run(
+    p: &Profile,
+    seconds: f64,
+    out_path: &Path,
+    klv: KlvSet,
+    klv_seed: u64,
+) -> io::Result<()> {
     let cfg = mux_setup::build_config(p);
     let mut mux = Muxer::new(cfg).expect("mux_setup::build_config always returns a valid config");
     // Handles must come from THIS muxer, not a throwaway one built from a
@@ -71,7 +84,8 @@ pub fn run(p: &Profile, seconds: f64, out_path: &Path) -> io::Result<()> {
                 }
             }
             Event::Klv { seq } => {
-                let record = fixtures::klv_record(seq);
+                let record =
+                    fixtures::klv_record_for(klv, klv_seed, seq).map_err(io::Error::other)?;
                 for &handle in &klv_handles {
                     mux.push_klv_to(handle, &record, pts, 0x00)
                         .map_err(io::Error::other)?;

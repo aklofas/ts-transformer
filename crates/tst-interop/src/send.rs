@@ -22,7 +22,7 @@ use tst_pipeline::{ManagedTransport, MuxSender, ReconnectPolicy};
 
 use crate::cli::write_json;
 use crate::corrupt::{CorruptConfig, Corrupter};
-use crate::fixtures::{self, AuSizeMode};
+use crate::fixtures::{self, AuSizeMode, KlvSet};
 use crate::mux_setup;
 use crate::profiles::{KlvMode, Profile, VideoCodec};
 use crate::report_types::CellMetrics;
@@ -48,9 +48,14 @@ use crate::verify;
 /// `Realistic` (GOP-structured multi-KB AUs, the soak's true-bandwidth
 /// mode); see [`AuSizeMode`].
 ///
+/// `klv`/`klv_seed` pick the ST 0601 record factory — see `gen::run`'s
+/// doc comment; `Compact` is the default and keeps every interop-matrix
+/// cell's bytes exactly as they were.
+///
 /// `corrupt` turns on the seeded corruption tap (`crate::corrupt`),
 /// writing its JSONL evidence log to the given path — see
 /// [`send_over_transport`] for where the tap sits in the stack and why.
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     p: &Profile,
     url: &str,
@@ -58,10 +63,21 @@ pub fn run(
     json_out: Option<&str>,
     no_klv_digest: bool,
     au_sizes: AuSizeMode,
+    klv: KlvSet,
+    klv_seed: u64,
     corrupt: Option<(CorruptConfig, PathBuf)>,
 ) -> Result<CellMetrics, String> {
     let transport = transport::make_send(url)?;
-    let metrics = send_over_transport(p, transport, seconds, no_klv_digest, au_sizes, corrupt)?;
+    let metrics = send_over_transport(
+        p,
+        transport,
+        seconds,
+        no_klv_digest,
+        au_sizes,
+        klv,
+        klv_seed,
+        corrupt,
+    )?;
     if let Some(target) = json_out {
         write_json(target, &metrics)?;
     }
@@ -81,12 +97,15 @@ pub fn run(
 /// two sides stay comparable — and the sent-side digest stops being a
 /// claim about what was sent and becomes one about what was transmitted,
 /// which is the only claim the receiver can check.
+#[allow(clippy::too_many_arguments)]
 pub fn send_over_transport(
     p: &Profile,
     transport: Box<dyn Transport>,
     seconds: f64,
     no_klv_digest: bool,
     au_sizes: AuSizeMode,
+    klv: KlvSet,
+    klv_seed: u64,
     corrupt: Option<(CorruptConfig, PathBuf)>,
 ) -> Result<CellMetrics, String> {
     let cfg = mux_setup::build_config(p);
@@ -186,7 +205,7 @@ pub fn send_over_transport(
                 }
             }
             Event::Klv { seq } => {
-                let record = fixtures::klv_record(seq);
+                let record = fixtures::klv_record_for(klv, klv_seed, seq)?;
                 for &handle in &klv_handles {
                     sender
                         .send_klv_to(handle, &record, pts, 0x00)
@@ -254,6 +273,10 @@ pub fn send_over_transport(
         // Read AFTER `drop(sender)` above, so the numbers are final: the
         // tap updates them as packets flow and has no flush step.
         corruption: corruption_stats.map(|h| h.lock().expect("corruption stats mutex").clone()),
+        // The rich-KLV oracles are a RECEIVER-side judgement of decoded
+        // records; the sender builds the records and has nothing to
+        // judge.
+        klv_rich: None,
     })
 }
 
@@ -276,6 +299,7 @@ pub fn send_over_transport(
 /// worse failure mode than retrying indefinitely against a proxy
 /// address that's known to still be alive (it's discarding packets, not
 /// gone).
+#[allow(clippy::too_many_arguments)]
 pub fn run_managed(
     p: &Profile,
     url: &str,
@@ -283,6 +307,8 @@ pub fn run_managed(
     json_out: Option<&str>,
     no_klv_digest: bool,
     au_sizes: AuSizeMode,
+    klv: KlvSet,
+    klv_seed: u64,
     corrupt: Option<(CorruptConfig, PathBuf)>,
 ) -> Result<CellMetrics, String> {
     let initial = transport::make_send(url)?;
@@ -303,7 +329,16 @@ pub fn run_managed(
     // The tap wraps the MANAGED transport, so one continuous corruption
     // stream (and one log) spans every reconnect — a fresh tap per
     // connection would restart its PRNG and re-emit a header line.
-    let metrics = send_over_transport(p, managed, seconds, no_klv_digest, au_sizes, corrupt)?;
+    let metrics = send_over_transport(
+        p,
+        managed,
+        seconds,
+        no_klv_digest,
+        au_sizes,
+        klv,
+        klv_seed,
+        corrupt,
+    )?;
     if let Some(target) = json_out {
         write_json(target, &metrics)?;
     }

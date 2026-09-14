@@ -24,10 +24,11 @@ use tst_core::mpegts::demux::{
 };
 
 use crate::corrupt::{self, Injection, LogHeader};
+use crate::fixtures::KlvSet;
 use crate::oracles;
 use crate::profiles::{self, Profile};
 use crate::rawts::{self, WireSummary};
-use crate::report_types::{CellMetrics, VerifyReport};
+use crate::report_types::{CellMetrics, KlvRichMetrics, VerifyReport};
 
 /// Whether a captured cell may carry `Discontinuity` events and still
 /// pass. Both modes fail on `NonConformant` — that always indicates the
@@ -41,6 +42,39 @@ use crate::report_types::{CellMetrics, VerifyReport};
 pub enum VerifyMode {
     Strict,
     Lossy,
+}
+
+/// Which KLV record set the capture under judgement was generated with,
+/// and — for [`KlvSet::Rich`] — the seed its presence schedule was drawn
+/// from. A receiver cannot infer either from the wire: the rich census
+/// oracle checks a decoded record's tag set against
+/// `fixtures::rich_presence(seed, seq)`, which is only computable by
+/// someone told the same `(set, seed)` the sender used.
+///
+/// [`KlvExpect::compact`] is the default everywhere — the 157-cell
+/// interop matrix generates and judges compact records, and a compact
+/// capture has no presence schedule to check at all.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct KlvExpect {
+    pub set: KlvSet,
+    pub seed: u64,
+}
+
+impl KlvExpect {
+    /// The default expectation: compact records, no seeded schedule.
+    #[must_use]
+    pub fn compact() -> Self {
+        KlvExpect {
+            set: KlvSet::Compact,
+            seed: 0,
+        }
+    }
+}
+
+impl Default for KlvExpect {
+    fn default() -> Self {
+        Self::compact()
+    }
 }
 
 /// Map `profiles::VideoCodec` (this crate's own profile-shape enum) to
@@ -232,6 +266,9 @@ pub struct Tally {
     /// How many of the raw reader's (cumulative) sync recoveries have
     /// already been handed to `attribution` — see [`Tally::note_resyncs`].
     resyncs_fed: usize,
+    /// What KLV record set this capture is expected to carry. Compact
+    /// (the default) means `CellMetrics::klv_rich` comes back `None`.
+    klv_expect: KlvExpect,
 }
 
 impl Default for Tally {
@@ -264,7 +301,16 @@ impl Tally {
             first_nonconformant: None,
             attribution: None,
             resyncs_fed: 0,
+            klv_expect: KlvExpect::compact(),
         }
+    }
+
+    /// Tell this tally which KLV record set the capture carries. Call
+    /// before the first event — a rich expectation set partway through
+    /// would judge only the records that arrived after it, while
+    /// `KlvRichMetrics::records` implies it saw them all.
+    pub fn set_klv_expect(&mut self, expect: KlvExpect) {
+        self.klv_expect = expect;
     }
 
     /// Stop accumulating per-record KLV digests — see
@@ -736,6 +782,10 @@ impl Tally {
             // A verifier never runs the tap; it only judges its log.
             corruption: None,
             corruption_attribution: attribution,
+            // A compact capture has no presence schedule to judge, so it
+            // carries no rich block at all — `Some(..)` here is the
+            // report's own record that the rich oracles ran.
+            klv_rich: (self.klv_expect.set == KlvSet::Rich).then(KlvRichMetrics::default),
         };
 
         VerifyReport {
@@ -771,7 +821,7 @@ pub fn verify_bytes_with_mode(
     seconds: f64,
     mode: VerifyMode,
 ) -> VerifyReport {
-    verify_bytes_with_corruption(bytes, p, seconds, mode, None)
+    verify_bytes_with_corruption(bytes, p, seconds, mode, KlvExpect::compact(), None)
 }
 
 /// How many bytes of a capture [`verify_bytes_with_corruption`] hands to
@@ -795,11 +845,16 @@ const VERIFY_CHUNK: usize = 7 * 188;
 /// module doc). Without one, this is byte-for-byte the old behaviour: the
 /// chunking below changes nothing a `Demuxer` observes, since it buffers
 /// across feeds.
+///
+/// `klv` says which KLV record set the capture was generated with — see
+/// [`KlvExpect`]. [`KlvExpect::compact`] leaves the rich oracles off,
+/// which is every caller that has not been told otherwise.
 pub fn verify_bytes_with_corruption(
     bytes: &[u8],
     p: &Profile,
     seconds: f64,
     mode: VerifyMode,
+    klv: KlvExpect,
     log: Option<&(LogHeader, Vec<Injection>)>,
 ) -> VerifyReport {
     // Built per-profile (never `Demuxer::new()`/`DemuxerConfig::default()`)
@@ -807,6 +862,7 @@ pub fn verify_bytes_with_corruption(
     // finding this closes.
     let mut demux = Demuxer::with_config(profiles::demuxer_config(p));
     let mut tally = Tally::new();
+    tally.set_klv_expect(klv);
     // Independent wire-level reader, fed the exact same bytes as the
     // demuxer — see `rawts`'s module doc for why it shares no code with
     // `Demuxer`.
@@ -878,12 +934,26 @@ pub fn verify_bytes_with_corruption(
 /// reader error surfaces inside the returned `VerifyReport` instead (see
 /// `verify_bytes_with_mode`'s doc comment).
 pub fn verify_file(path: &Path, p: &Profile, seconds: f64) -> io::Result<VerifyReport> {
+    verify_file_with(path, p, seconds, KlvExpect::compact())
+}
+
+/// [`verify_file`], for a capture generated with a non-default KLV record
+/// set — see [`KlvExpect`]. Same `VerifyMode::Strict` offline check;
+/// `verify_file` is this with [`KlvExpect::compact`].
+pub fn verify_file_with(
+    path: &Path,
+    p: &Profile,
+    seconds: f64,
+    klv: KlvExpect,
+) -> io::Result<VerifyReport> {
     let bytes = std::fs::read(path)?;
-    Ok(verify_bytes_with_mode(
+    Ok(verify_bytes_with_corruption(
         &bytes,
         p,
         seconds,
         VerifyMode::Strict,
+        klv,
+        None,
     ))
 }
 
@@ -930,7 +1000,8 @@ mod tests {
                 .expect("time moves forward")
                 .as_nanos()
         ));
-        crate::r#gen::run(p, seconds, &path).expect("gen::run must succeed");
+        crate::r#gen::run(p, seconds, &path, crate::fixtures::KlvSet::Compact, 0)
+            .expect("gen::run must succeed");
         let wire = rawts::summarize_file(&path).expect("summarize_file must succeed");
         let _ = std::fs::remove_file(&path);
         wire
@@ -1507,7 +1578,8 @@ mod tests {
         // trivially and proves nothing about PCR alignment. Offline
         // generation has no sleeps, so the longer window is still
         // milliseconds.
-        crate::r#gen::run(p, 30.0, &path).expect("gen::run must succeed");
+        crate::r#gen::run(p, 30.0, &path, crate::fixtures::KlvSet::Compact, 0)
+            .expect("gen::run must succeed");
         let clean = std::fs::read(&path).expect("read the generated capture");
         let _ = std::fs::remove_file(&path);
 
@@ -1541,7 +1613,14 @@ mod tests {
             "at least one injection must be anchored to a real PCR"
         );
 
-        let r = verify_bytes_with_corruption(&damaged, p, 30.0, VerifyMode::Lossy, Some(&parsed));
+        let r = verify_bytes_with_corruption(
+            &damaged,
+            p,
+            30.0,
+            VerifyMode::Lossy,
+            KlvExpect::compact(),
+            Some(&parsed),
+        );
         let a = r
             .metrics
             .corruption_attribution

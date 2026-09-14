@@ -38,7 +38,7 @@ use tst_hls::{HlsMode, HlsPublisherBuilder};
 use tst_pipeline::MuxPublisher;
 use tst_rtp::RtspServer;
 
-use crate::fixtures;
+use crate::fixtures::{self, KlvSet};
 use crate::mux_setup;
 use crate::profiles::{KlvMode, Profile, VideoCodec};
 use crate::schedule::{self, Event, PTS_HZ};
@@ -93,14 +93,23 @@ fn unique_suffix() -> u128 {
 /// `MuxPublisherError::Mux(MuxError::AmbiguousTarget)` the first time
 /// this function pushes video. `MISP` (`KlvMode::AsyncWithMisp`, the
 /// `misp` profile) IS supported — `MuxPublisher::send_video_misp` exists.
-pub fn run_hls(p: &Profile, bind_addr: SocketAddr, seconds: f64) -> Result<(), String> {
+///
+/// `klv`/`klv_seed` pick the ST 0601 record factory — see `gen::run`'s
+/// doc comment.
+pub fn run_hls(
+    p: &Profile,
+    bind_addr: SocketAddr,
+    seconds: f64,
+    klv: KlvSet,
+    klv_seed: u64,
+) -> Result<(), String> {
     let out_dir = std::env::temp_dir().join(format!(
         "tst-interop-hls-serve-{}-{}",
         std::process::id(),
         unique_suffix(),
     ));
 
-    let result = run_hls_inner(p, bind_addr, seconds, &out_dir);
+    let result = run_hls_inner(p, bind_addr, seconds, &out_dir, klv, klv_seed);
     // Best-effort cleanup on every path (success or error): the segments
     // + playlist HlsPublisherBuilder wrote under out_dir have already
     // been fully served (or never will be, on an error exit) by the
@@ -117,6 +126,8 @@ fn run_hls_inner(
     bind_addr: SocketAddr,
     seconds: f64,
     out_dir: &Path,
+    klv: KlvSet,
+    klv_seed: u64,
 ) -> Result<(), String> {
     let publisher = HlsPublisherBuilder::new()
         .bind(bind_addr)
@@ -159,7 +170,7 @@ fn run_hls_inner(
                 }
             }
             Event::Klv { seq } => {
-                let record = fixtures::klv_record(seq);
+                let record = fixtures::klv_record_for(klv, klv_seed, seq)?;
                 shell
                     .send_klv(&record, pts, 0x00)
                     .map_err(|e| format!("send_klv: {e}"))?;
@@ -197,6 +208,9 @@ fn run_hls_inner(
 /// Blocks for `seconds` (wall-clock paced push), then keeps the server up
 /// for `LINGER` before calling `stop()`.
 ///
+/// `klv`/`klv_seed` pick the ST 0601 record factory — see `gen::run`'s
+/// doc comment.
+///
 /// # Scope
 /// `MountHandle` (`tst_rtp::rtsp::server::mount::MountHandle`) mirrors
 /// `MuxSender`'s handle-targeted `push_*_to` family — including
@@ -209,6 +223,8 @@ pub fn run_rtsp(
     bind_addr: SocketAddr,
     mount: &str,
     seconds: f64,
+    klv: KlvSet,
+    klv_seed: u64,
 ) -> Result<(), String> {
     if p.klv == KlvMode::AsyncWithMisp {
         return Err(format!(
@@ -251,7 +267,7 @@ pub fn run_rtsp(
                 }
             }
             Event::Klv { seq } => {
-                let record = fixtures::klv_record(seq);
+                let record = fixtures::klv_record_for(klv, klv_seed, seq)?;
                 for &handle in &klv_handles {
                     mount_handle
                         .push_klv_to(handle, &record, pts, 0x00)
@@ -305,7 +321,13 @@ pub fn serve_scheme_of(url: &str) -> Option<ServeScheme> {
 /// Parse an `hls://` URL's bind address and serve `p` over it for
 /// `seconds`. `hlss://` (TLS) is rejected — this crate's serve modes
 /// don't wire cert/key options through the CLI.
-pub fn run_hls_url(p: &Profile, url: &str, seconds: f64) -> Result<(), String> {
+pub fn run_hls_url(
+    p: &Profile,
+    url: &str,
+    seconds: f64,
+    klv: KlvSet,
+    klv_seed: u64,
+) -> Result<(), String> {
     let parsed = tst_hls::HlsUrl::parse(url).map_err(|e| format!("hls url {url}: {e}"))?;
     if parsed.tls {
         return Err(
@@ -313,14 +335,20 @@ pub fn run_hls_url(p: &Profile, url: &str, seconds: f64) -> Result<(), String> {
         );
     }
     let bind_addr = SocketAddr::new(parsed.addr, parsed.port);
-    run_hls(p, bind_addr, seconds)
+    run_hls(p, bind_addr, seconds, klv, klv_seed)
 }
 
 /// Parse an `rtsp://` URL's bind address + mount path and serve `p` over
 /// it for `seconds`. `rtsps://` (TLS) is rejected for the same reason as
 /// [`run_hls_url`]. The URL's path becomes the mount path; a URL with no
 /// path is rejected (a serve needs a mount to register).
-pub fn run_rtsp_url(p: &Profile, url: &str, seconds: f64) -> Result<(), String> {
+pub fn run_rtsp_url(
+    p: &Profile,
+    url: &str,
+    seconds: f64,
+    klv: KlvSet,
+    klv_seed: u64,
+) -> Result<(), String> {
     let parsed = tst_rtp::RtspUrl::parse(url).map_err(|e| format!("rtsp url {url}: {e}"))?;
     if parsed.scheme() == tst_rtp::RtspScheme::Rtsps {
         return Err(
@@ -342,5 +370,5 @@ pub fn run_rtsp_url(p: &Profile, url: &str, seconds: f64) -> Result<(), String> 
         .parse()
         .map_err(|e| format!("rtsp url {url}: host '{host}' is not a literal IP: {e}"))?;
     let bind_addr = SocketAddr::new(ip, parsed.port);
-    run_rtsp(p, bind_addr, &parsed.path, seconds)
+    run_rtsp(p, bind_addr, &parsed.path, seconds, klv, klv_seed)
 }

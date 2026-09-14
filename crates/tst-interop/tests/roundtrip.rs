@@ -8,6 +8,8 @@
 //! generate and verify clean here before any transport/tool cell
 //! (later tasks) can be trusted to mean anything.
 
+use tst_interop::fixtures::KlvSet;
+use tst_interop::verify::KlvExpect;
 use tst_interop::{r#gen, profiles, verify};
 
 /// Seconds of synthetic traffic per profile. Long enough to clear the
@@ -34,8 +36,8 @@ fn assert_profile_roundtrips(name: &str, seconds: f64) {
         std::process::id()
     ));
 
-    let result =
-        r#gen::run(p, seconds, &path).and_then(|()| verify::verify_file(&path, p, seconds));
+    let result = r#gen::run(p, seconds, &path, KlvSet::Compact, 0)
+        .and_then(|()| verify::verify_file(&path, p, seconds));
     let _ = std::fs::remove_file(&path);
 
     let report = result.unwrap_or_else(|e| panic!("{name}: gen/verify IO error: {e}"));
@@ -49,6 +51,38 @@ fn assert_profile_roundtrips(name: &str, seconds: f64) {
 #[test]
 fn baseline_roundtrips() {
     assert_profile_roundtrips("baseline", SECONDS);
+}
+
+/// The same gate for `--klv-set rich`: a ~32-tag ST 0601 record with a
+/// nested ST 0102 security set, whose tag set varies record to record on
+/// a seeded schedule (`fixtures::rich_presence`). Rich records are an
+/// order of magnitude larger than the compact ones every other test here
+/// uses, so this is also the gate that the KLV PID's own PES packing
+/// still carries a full record per PTS at the profile's 10 Hz cadence.
+#[test]
+fn baseline_rich_klv_roundtrips() {
+    let p = profiles::by_name("baseline").expect("baseline profile must exist");
+    let path = std::env::temp_dir().join(format!("tst-interop-rt-rich-{}.ts", std::process::id()));
+
+    let result = r#gen::run(p, SECONDS, &path, KlvSet::Rich, 5).and_then(|()| {
+        verify::verify_file_with(
+            &path,
+            p,
+            SECONDS,
+            KlvExpect {
+                set: KlvSet::Rich,
+                seed: 5,
+            },
+        )
+    });
+    let _ = std::fs::remove_file(&path);
+
+    let report = result.expect("gen/verify IO error");
+    assert!(report.pass, "rich verify failures: {:?}", report.failures);
+    assert!(
+        report.metrics.klv_rich.is_some(),
+        "a rich-mode judgement must report a rich-KLV block"
+    );
 }
 
 #[test]
