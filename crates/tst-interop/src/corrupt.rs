@@ -72,6 +72,19 @@ pub const DEFAULT_MIN_GAP: u64 = 1000;
 /// this harness generates.
 const APPROX_SLACK: u64 = 128;
 
+/// How far ahead of an injection's own PCR base a later base may be and
+/// still resolve it approximately — four 100 ms PCR intervals in 90 kHz
+/// ticks (H.222.0 §2.4.2.2 caps the interval at 100 ms).
+///
+/// Without this bound a reconnect outage silently corrupts the verdict:
+/// the sender keeps logging through it while the receiver sees nothing, so
+/// the first PCR after the outage would resolve every injection logged
+/// during it to that one receiver ordinal — and all but one would then be
+/// reported `undetected` against a receiver that never had the chance to
+/// see them. Beyond the bound an injection stays unresolved instead, which
+/// means it is never judged.
+pub const MAX_APPROX_TICKS: u64 = 4 * 9000;
+
 /// Format version of the JSONL log. Bump when a field's MEANING changes
 /// (adding a field does not need a bump — serde fills the rest from
 /// `Default`); readers refuse a version they do not understand.
@@ -596,12 +609,13 @@ impl<T: Transport> Corrupter<T> {
                     p[o] ^= x;
                 }
                 offsets.sort_unstable();
-                // Only a flip that lands in a structure something PARSES
-                // can be called detectable. A PAT/PMT packet is ~90%
-                // 0xFF stuffing and a PES-start packet is mostly access-
-                // unit bytes; a flip there corrupts the picture but
-                // breaks no syntax, and claiming otherwise would make a
-                // conformant receiver fail the run.
+                // Only a flip that lands under a CRC can be called
+                // detectable. A PAT/PMT packet is ~90% 0xFF stuffing,
+                // and everything outside a PSI section is media bytes or
+                // loosely-validated PES header fields; a flip there
+                // corrupts the picture but breaks no syntax anything
+                // checks, and claiming otherwise would make a conformant
+                // receiver fail the run.
                 let detectable = sensitive_span(pkt, info, self.is_psi_pid(info.pid))
                     .is_some_and(|(lo, hi)| offsets.iter().any(|&o| (lo..hi).contains(&o)));
                 Some(Mutation {
@@ -764,11 +778,14 @@ impl<T: Transport> Corrupter<T> {
                 out.extend_from_slice(&pkt);
                 continue;
             };
-            // The reader only ever sees pristine bytes. A feed error is
+            // PAT/PMT packets only: the PAT->PMT map is all this reader
+            // is for, and feeding it the whole stream would accumulate
+            // every PCR and PTS of a 72-hour soak in its summary. The
+            // reader only ever sees pristine bytes; a feed error is
             // impossible for this harness's own muxer output, but if one
-            // happened the failing packet would stay in the reader's carry
-            // and poison every later feed, so clear it.
-            if self.reader.feed(&pkt).is_err() {
+            // happened the failing packet would stay in its carry and
+            // poison every later feed, so clear it.
+            if self.is_psi_pid(info.pid) && self.reader.feed(&pkt).is_err() {
                 self.reader.resync();
             }
             let coord = Coord {
@@ -870,40 +887,40 @@ fn pes_start(p: &[u8; PKT], info: &crate::rawts::PacketInfo) -> bool {
 }
 
 /// The byte range of a packet whose corruption a conformant receiver MUST
-/// notice — the part covered by a checksum or by syntax someone parses.
+/// notice — the only range in a transport stream covered by a checksum.
 ///
-/// For a PSI packet that is the pointer field through the end of the
-/// section's CRC32; everything after it is stuffing (a PAT in this
-/// harness's own multiplex is 17 bytes of section and 167 bytes of 0xFF).
-/// For a PES-start packet it is the PES header through the end of the
-/// optional header; the access-unit bytes after it carry no syntax the
-/// container layer checks. Every other packet has no such range: a flipped
-/// payload byte is simply corrupt media.
+/// That is a PSI packet's pointer field through the end of its section
+/// CRC32, and nothing else. Everything after the section is stuffing (a
+/// PAT in this harness's own multiplex is 17 bytes of section and 167
+/// bytes of 0xFF).
 ///
-/// `None` means "nothing here is required to be noticed", which is the
-/// honest answer for most of a transport stream.
+/// A PES header deliberately does NOT count, even though it is "syntax":
+/// tst-core's PES parser (`mpegts/demux/pes.rs`) validates only the start
+/// code, the '10' marker bits, `PTS_DTS_flags` and the PTS prefix/marker
+/// bits — `stream_id`, `PES_packet_length`, `header_data_length` and 33 of
+/// the 40 PTS bits are all accepted as-is. Roughly half the header is
+/// therefore silently tolerated, and claiming it detectable would
+/// manufacture failures against a conformant receiver. Under-claiming
+/// costs nothing: an event inside the attribution window is still
+/// attributed regardless of `detectable`.
+///
+/// `psi` cannot be derived from the packet alone (a PMT PID is learned
+/// from the PAT), so the caller supplies it. `None` means "nothing here is
+/// required to be noticed", which is the honest answer for nearly every
+/// packet in a transport stream.
 fn sensitive_span(
     p: &[u8; PKT],
     info: &crate::rawts::PacketInfo,
     psi: bool,
 ) -> Option<(usize, usize)> {
-    if !info.has_payload || !info.pusi {
+    if !psi || !info.has_payload || !info.pusi {
         return None;
     }
-    if psi {
-        let sec = info.payload_off + 1 + usize::from(*p.get(info.payload_off)?);
-        let len = (usize::from(*p.get(sec + 1)? & 0x0F) << 8) | usize::from(*p.get(sec + 2)?);
-        // The pointer field itself counts: redirect it and the section
-        // starts in the wrong place.
-        return Some((info.payload_off, (sec + 3 + len).min(PKT)));
-    }
-    if !pes_start(p, info) {
-        return None;
-    }
-    // §2.4.3.7: payload[8] is PES_header_data_length, so the header runs
-    // to payload[9 + that].
-    let hdr = usize::from(*p.get(info.payload_off + 8)?);
-    Some((info.payload_off, (info.payload_off + 9 + hdr).min(PKT)))
+    let sec = info.payload_off + 1 + usize::from(*p.get(info.payload_off)?);
+    let len = (usize::from(*p.get(sec + 1)? & 0x0F) << 8) | usize::from(*p.get(sec + 2)?);
+    // The pointer field itself counts: redirect it and the section starts
+    // in the wrong place.
+    Some((info.payload_off, (sec + 3 + len).min(PKT)))
 }
 
 /// Byte range of a PSI section's body, excluding the 3-byte section header
@@ -1013,6 +1030,11 @@ struct InjState {
     /// Resolved against a LATER base than the one logged (the logged one
     /// never arrived), so the position is approximate.
     approx: bool,
+    /// Its anchor base fell more than `MAX_APPROX_TICKS` behind the first
+    /// base the receiver saw afterwards, so it can never be placed. Kept
+    /// distinct from "not resolved yet" so the scan cursors can move past
+    /// it instead of stalling on it forever.
+    stranded: bool,
 }
 
 /// Matches receiver events against a corruption log. Pure: no I/O, no
@@ -1044,12 +1066,13 @@ pub struct Attribution {
     unexplained: Vec<String>,
 }
 
-/// True when `a` is at or after `b` on the 33-bit PCR-base circle. A PCR
-/// base wraps every ~26.5 hours, so a plain `>=` would mis-order every
-/// coordinate straddling a wrap; the standard half-space test treats
-/// anything within 2^32 ahead as "after".
-fn after_or_eq(a: u64, b: u64) -> bool {
-    a.wrapping_sub(b) & ((1 << 33) - 1) < (1 << 32)
+/// How far `a` is ahead of `b` on the 33-bit PCR-base circle. A PCR base
+/// wraps every ~26.5 hours, so plain subtraction would mis-order every
+/// coordinate straddling a wrap; by the standard half-space convention a
+/// result below 2^32 means "ahead", and anything larger means `a` is
+/// really behind `b`.
+fn ticks_ahead(a: u64, b: u64) -> u64 {
+    a.wrapping_sub(b) & ((1 << 33) - 1)
 }
 
 /// Signals a conformant receiver must produce for a given injection.
@@ -1057,17 +1080,25 @@ fn after_or_eq(a: u64, b: u64) -> bool {
 /// (any event inside the window then counts as having noticed).
 fn expects(inj: &Injection, sig: Signal) -> bool {
     match inj.class {
-        // All three destroy packet framing: either the reader resyncs, or
-        // the packet vanishes from its PID and the CC jumps.
-        Class::Header | Class::Truncate | Class::Garbage => {
-            matches!(sig, Signal::Resync | Signal::ContinuityJump)
-        }
+        // All three destroy packet framing: the reader resyncs, or the
+        // packet vanishes from its PID and the CC jumps. An
+        // adaptation-field-length overrun (one of the `Header` sub-kinds)
+        // is instead reported as a plain non-conformance, so that counts
+        // too.
+        Class::Header | Class::Truncate | Class::Garbage => matches!(
+            sig,
+            Signal::Resync | Signal::ContinuityJump | Signal::OtherNonConformant
+        ),
         Class::Drop => matches!(sig, Signal::ContinuityJump),
-        Class::PsiFlip => matches!(sig, Signal::PsiChecksum),
-        Class::BodyFlip if inj.psi => matches!(sig, Signal::PsiChecksum),
-        Class::BodyFlip if inj.pes_start => {
-            matches!(sig, Signal::MalformedPes | Signal::OtherNonConformant)
+        // A broken section usually fails its CRC, but a flipped pointer
+        // field or section-length can surface as a table-id / section
+        // -length non-conformance before the CRC is ever reached.
+        Class::PsiFlip => matches!(sig, Signal::PsiChecksum | Signal::OtherNonConformant),
+        Class::BodyFlip if inj.psi => {
+            matches!(sig, Signal::PsiChecksum | Signal::OtherNonConformant)
         }
+        // Everything else — a non-PSI body flip, a duplicate — is never
+        // `detectable`, so this arm only decides a flag nothing reads.
         _ => true,
     }
 }
@@ -1118,8 +1149,11 @@ impl Attribution {
     /// Resolves every injection anchored at that base, plus any anchored
     /// at a base that never arrived — the corruption may have destroyed
     /// the packet carrying it — for which this is the first base at or
-    /// after the anchor. Those resolve approximately and are given one
-    /// PCR interval of extra attribution window.
+    /// after the anchor, and which is within [`MAX_APPROX_TICKS`] of it.
+    /// Those resolve approximately and are given one PCR interval of extra
+    /// attribution window. An anchor further behind than that is stranded:
+    /// the receiver was not listening (a reconnect outage), so the
+    /// injection stays unresolved and is never judged.
     pub fn on_pcr(&mut self, pcr_base: u64, at: u64) {
         while self.next_unresolved < self.inj.len() {
             let i = self.next_unresolved;
@@ -1128,10 +1162,22 @@ impl Attribution {
                 self.next_unresolved += 1;
                 continue;
             };
-            if b != pcr_base && !after_or_eq(pcr_base, b) {
-                // Anchored at a base still in the future; so is every
-                // later injection, because logged coordinates are ordered.
-                break;
+            let ahead = ticks_ahead(pcr_base, b);
+            if b != pcr_base {
+                if ahead >= 1 << 32 {
+                    // Anchored at a base still in the future; so is every
+                    // later injection, because logged coordinates are
+                    // ordered.
+                    break;
+                }
+                if ahead > MAX_APPROX_TICKS {
+                    // Permanently unresolvable — every later base is
+                    // further still — so advance past it rather than
+                    // stalling the cursor on it.
+                    self.st[i].stranded = true;
+                    self.next_unresolved += 1;
+                    continue;
+                }
             }
             // Saturating: a corrupt log must not panic the verifier.
             self.st[i].resolved_at = Some(at.saturating_add(self.inj[i].coord.since_pcr));
@@ -1142,14 +1188,20 @@ impl Attribution {
 
     /// Move the scan cursors up to event ordinal `at`.
     fn advance(&mut self, at: u64) {
-        while self.hi < self.st.len() && self.st[self.hi].resolved_at.is_some_and(|r| r <= at) {
+        // A stranded injection has no position at all, so it must not park
+        // the cursor: injections logged AFTER an outage resolve normally
+        // and still need to be reachable.
+        while self.hi < self.st.len()
+            && (self.st[self.hi].stranded || self.st[self.hi].resolved_at.is_some_and(|r| r <= at))
+        {
             self.hi += 1;
         }
         let span = self.window.max(self.recovery_bound) + APPROX_SLACK;
         while self.lo < self.hi
-            && self.st[self.lo]
-                .resolved_at
-                .is_some_and(|r| r.saturating_add(span) < at)
+            && (self.st[self.lo].stranded
+                || self.st[self.lo]
+                    .resolved_at
+                    .is_some_and(|r| r.saturating_add(span) < at))
         {
             self.lo += 1;
         }
@@ -1464,10 +1516,10 @@ mod tests {
         assert_eq!(w.len(), b.len());
     }
 
-    /// A body flip is only claimed detectable when it lands on syntax
-    /// something parses. This pins the two spans that decide that.
+    /// A body flip is only claimed detectable when it lands under a
+    /// section CRC. This pins the one span that decides that.
     #[test]
-    fn sensitive_span_covers_parsed_syntax_not_stuffing_or_media() {
+    fn sensitive_span_covers_the_psi_section_and_nothing_else() {
         let b = baseline_bytes(2.0, "span");
         let pkt_at = |n: usize| -> [u8; 188] { b[n * 188..][..188].try_into().unwrap() };
 
@@ -1484,33 +1536,31 @@ mod tests {
             "stuffing past the CRC"
         );
 
-        // Video PID: a PES start's span ends at the end of the PES header,
-        // far short of the access-unit bytes that follow it.
-        let mut starts = 0;
-        let mut first_video = None;
+        // No video packet has a required-to-notice span, PES start or
+        // not: tst-core's PES parser tolerates most of the header, and
+        // nothing at all checks the access-unit bytes after it.
+        let (mut starts, mut video) = (0, 0);
         for n in 0..b.len() / 188 {
             let pkt = pkt_at(n);
             let info = crate::rawts::classify_packet(&pkt).unwrap();
             if info.pid != 0x1011 {
                 continue;
             }
-            first_video.get_or_insert((pkt, info));
-            let Some((lo, hi)) = sensitive_span(&pkt, &info, false) else {
-                assert!(!pes_start(&pkt, &info), "a PES start must have a span");
-                continue;
-            };
-            assert!(pes_start(&pkt, &info));
-            assert!(lo < hi && hi < 188, "PES header span {lo}..{hi}");
-            starts += 1;
+            video += 1;
+            starts += usize::from(pes_start(&pkt, &info));
+            assert_eq!(sensitive_span(&pkt, &info, false), None, "packet {n}");
         }
-        assert!(starts > 0, "baseline carries video PES starts");
+        assert!(
+            starts > 0,
+            "{starts} PES starts among {video} video packets"
+        );
 
-        // The same packet without its payload-unit-start flag carries no
-        // header to damage, so nothing in it is required to be noticed.
-        let (mut pkt, _) = first_video.expect("baseline carries video packets");
-        pkt[1] &= !0x40;
-        let info = crate::rawts::classify_packet(&pkt).unwrap();
-        assert_eq!(sensitive_span(&pkt, &info, false), None);
+        // A PSI packet still needs PUSI: a section continuation carries no
+        // section header to locate.
+        let mut pat = pkt_at(0);
+        pat[1] &= !0x40;
+        let info = crate::rawts::classify_packet(&pat).unwrap();
+        assert_eq!(sensitive_span(&pat, &info, true), None);
     }
 
     #[test]
@@ -1632,6 +1682,38 @@ mod tests {
         assert!(parse_log("").unwrap_err().contains("no header"));
     }
 
+    #[test]
+    fn psi_flip_drawn_on_a_media_packet_defers_to_the_next_psi_packet() {
+        let b = baseline_bytes(60.0, "defer");
+        let pid_at = |n: usize| -> u16 {
+            crate::rawts::classify_packet(b[n * 188..][..188].try_into().unwrap())
+                .unwrap()
+                .pid
+        };
+        let is_psi = |n: usize| matches!(pid_at(n), 0 | 0x1000);
+
+        let (_, text, _) = run_tap(&b, cfg(&[Class::PsiFlip], 10_000, 1000));
+        let (_, inj) = parse_log(&text).unwrap();
+        assert!(inj.len() >= 2, "{} injection(s)", inj.len());
+        // Whatever packet the draw fired on, every injection landed on a
+        // PAT or PMT packet.
+        for i in &inj {
+            assert!(i.psi && matches!(i.pid, 0 | 0x1000), "{i:?}");
+            assert!(is_psi(i.ordinal as usize), "ordinal {}", i.ordinal);
+        }
+        // The first draw fires at ordinal 0, which IS the PAT.
+        assert_eq!(inj[0].ordinal, 0);
+        // The second can only fire at ordinal >= min_gap, and that packet
+        // is media — so the class was held and landed on the next PAT/PMT
+        // instead of being re-drawn away.
+        assert!(!is_psi(1000), "vacuous unless packet 1000 carries media");
+        let next_psi = (1000..b.len() / 188)
+            .find(|&n| is_psi(n))
+            .expect("a PSI packet follows packet 1000");
+        assert!(next_psi > 1000);
+        assert_eq!(inj[1].ordinal as usize, next_psi);
+    }
+
     // ---- Attribution ----
 
     fn hdr() -> LogHeader {
@@ -1714,6 +1796,91 @@ mod tests {
         assert_eq!(r.resyncs, 1);
         assert!(
             r.unexplained_events.is_empty() && r.undetected.is_empty() && r.unrecovered.is_empty()
+        );
+    }
+
+    #[test]
+    fn approximate_resolution_is_bounded_so_an_outage_strands_an_injection() {
+        // Just inside the bound: the logged anchor base never arrived (the
+        // corruption destroyed the packet carrying it), but the next base
+        // is close enough to place the injection approximately.
+        let mut a = Attribution::new(vec![inj(2000, 0, Class::Header, 0x1011, true)], &hdr());
+        a.on_pcr(2000 + MAX_APPROX_TICKS, 5000);
+        a.on_signal(5010, Some(0x1011), Signal::ContinuityJump);
+        a.on_media(5020, 0x1011);
+        let r = a.finish(10_000);
+        assert_eq!((r.resolved, r.unresolved), (1, 0));
+        assert!(r.undetected.is_empty() && r.unrecovered.is_empty());
+
+        // One tick further — a reconnect outage, through which the sender
+        // kept logging and the receiver saw nothing. Resolving here would
+        // pile every injection logged during the outage onto this one
+        // ordinal and report all but one as undetected, so the injection
+        // stays unresolved and is judged for nothing.
+        let mut a = Attribution::new(vec![inj(2000, 0, Class::Header, 0x1011, true)], &hdr());
+        a.on_pcr(2000 + MAX_APPROX_TICKS + 1, 5000);
+        let r = a.finish(10_000);
+        assert_eq!((r.resolved, r.unresolved), (0, 1));
+        assert!(r.undetected.is_empty() && r.unrecovered.is_empty());
+    }
+
+    #[test]
+    fn a_stranded_injection_does_not_block_the_ones_after_it() {
+        // The cursor must step over an injection it can never place, or
+        // everything logged after the outage becomes unattributable too.
+        let mut a = Attribution::new(
+            vec![
+                inj(2000, 0, Class::Header, 0x1011, true),
+                inj(2000 + 2 * MAX_APPROX_TICKS, 0, Class::Header, 0x1011, true),
+            ],
+            &hdr(),
+        );
+        a.on_pcr(2000 + 2 * MAX_APPROX_TICKS, 5000); // strands #0, resolves #1
+        a.on_signal(5010, Some(0x1011), Signal::ContinuityJump);
+        let r = a.finish(10_000);
+        assert_eq!((r.resolved, r.unresolved), (1, 1));
+        assert_eq!(
+            r.attributed_events, 1,
+            "the surviving injection is reachable"
+        );
+        assert!(r.undetected.is_empty());
+    }
+
+    #[test]
+    fn expected_signal_sets_cover_the_non_conformance_shapes() {
+        // An adaptation-field-length overrun (a `header` sub-kind) is
+        // reported as a plain non-conformance, not a resync, so it must
+        // still count as having noticed the injection.
+        let mut a = Attribution::new(vec![inj(1000, 0, Class::Header, 0x1011, true)], &hdr());
+        a.on_pcr(1000, 5000);
+        a.on_signal(5010, Some(0x1011), Signal::OtherNonConformant);
+        a.on_media(5020, 0x1011);
+        let r = a.finish(10_000);
+        assert!(r.undetected.is_empty(), "{:?}", r.undetected);
+        assert_eq!(r.attributed_nonconformant, 1);
+
+        // A flipped pointer field or section length surfaces as a
+        // table-id/section-length non-conformance before the CRC is
+        // reached.
+        let mut a = Attribution::new(vec![inj(1000, 0, Class::PsiFlip, 0, true)], &hdr());
+        a.on_pcr(1000, 5000);
+        a.on_signal(5010, Some(0), Signal::OtherNonConformant);
+        a.on_media(5020, 0);
+        let r = a.finish(10_000);
+        assert!(r.undetected.is_empty(), "{:?}", r.undetected);
+
+        // But the sets are not wide open: a dropped packet is a continuity
+        // jump and nothing else, so a resync must not be mistaken for
+        // having noticed it.
+        let mut a = Attribution::new(vec![inj(1000, 0, Class::Drop, 0x1011, true)], &hdr());
+        a.on_pcr(1000, 5000);
+        a.on_signal(5010, None, Signal::Resync);
+        a.on_media(5020, 0x1011);
+        let r = a.finish(10_000);
+        assert_eq!(
+            r.undetected.len(),
+            1,
+            "a resync does not prove a drop was seen"
         );
     }
 
