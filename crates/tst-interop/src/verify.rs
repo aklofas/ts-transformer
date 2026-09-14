@@ -24,7 +24,7 @@ use tst_core::mpegts::demux::{
 };
 
 use crate::corrupt::{self, Injection, LogHeader};
-use crate::fixtures::KlvSet;
+use crate::fixtures::{self, KlvSet};
 use crate::oracles;
 use crate::profiles::{self, Profile};
 use crate::rawts::{self, WireSummary};
@@ -269,7 +269,33 @@ pub struct Tally {
     /// What KLV record set this capture is expected to carry. Compact
     /// (the default) means `CellMetrics::klv_rich` comes back `None`.
     klv_expect: KlvExpect,
+    /// What the rich oracles made of the records so far — see
+    /// [`KlvRichMetrics`]. Untouched unless `klv_expect.set` is
+    /// [`KlvSet::Rich`].
+    rich: KlvRichMetrics,
+    /// The first offender of EACH rich oracle, kept separately from
+    /// `KlvRichMetrics::first_problem` (which holds the first problem of
+    /// any kind) so each of the three failure strings quotes an example
+    /// of its own verdict. A shared "first problem" would have a
+    /// `klv_rich_census` failure quoting a decode error — the same
+    /// wrong-evidence trap `finish`'s `first_unexplained` closure exists
+    /// to avoid for the corruption verdicts.
+    rich_first_decode: Option<String>,
+    rich_first_census: Option<String>,
+    rich_first_security: Option<String>,
 }
+
+/// Which of the three rich oracles a problem belongs to — see
+/// [`Tally::note_rich_problem`].
+#[derive(Clone, Copy)]
+enum RichOracle {
+    Decode,
+    Census,
+    Security,
+}
+
+/// ST 0601 Tag 48, the nested ST 0102 security local set.
+const SECURITY_TAG: u8 = 48;
 
 impl Default for Tally {
     fn default() -> Self {
@@ -302,6 +328,10 @@ impl Tally {
             attribution: None,
             resyncs_fed: 0,
             klv_expect: KlvExpect::compact(),
+            rich: KlvRichMetrics::default(),
+            rich_first_decode: None,
+            rich_first_census: None,
+            rich_first_security: None,
         }
     }
 
@@ -408,6 +438,15 @@ impl Tally {
                     self.klv_digests.push(to_hex(&Sha256::digest(payload)));
                 }
                 self.klv_carriage_seen.insert(klv_carriage_of(kind));
+                if self.klv_expect.set == KlvSet::Rich {
+                    // `payload` is the bare KLV LS in BOTH carriages: the
+                    // demuxer peels the 5-byte Metadata_AU_cell header off
+                    // a sync-carriage record before emitting it (see
+                    // `MetadataKind::KlvSyncAuCell`'s doc comment, and
+                    // `tests/klv_rich.rs`'s sync round trip, which is what
+                    // holds that contract in place).
+                    self.judge_rich(payload);
+                }
             }
             DemuxEvent::Discontinuity { kind, .. } => {
                 self.discontinuities += 1;
@@ -420,6 +459,133 @@ impl Tally {
                     .get_or_insert_with(|| issue.to_string());
             }
             DemuxEvent::ReconnectDiscontinuity => {}
+        }
+    }
+
+    // ------------------------------------------------------------
+    // Rich-KLV decode oracles (spec §5.5). Inert unless
+    // `set_klv_expect` was called with `KlvSet::Rich`.
+    // ------------------------------------------------------------
+
+    /// Judge one demuxed KLV record (bare LS bytes) against what the
+    /// rich generator must have produced.
+    ///
+    /// Three independent questions, one pass over the record:
+    /// 1. does it decode cleanly (`klv_rich_decode_clean`),
+    /// 2. does its tag set equal `rich_presence(seed, seq)` for the
+    ///    `seq` its own timestamp names (`klv_rich_census`),
+    /// 3. and where the schedule demanded Tag 48, does the nested
+    ///    ST 0102 set decode into a real security classification
+    ///    (`klv_rich_security_nested`).
+    ///
+    /// The census is what makes this more than a decoder smoke test: a
+    /// producer that dropped a whole tag group, or shipped one record's
+    /// tags under another record's timestamp, still decodes cleanly.
+    /// Checking against a schedule the receiver computes INDEPENDENTLY
+    /// from `(seed, seq)` is what catches that.
+    fn judge_rich(&mut self, payload: &[u8]) {
+        use tst_core::klv::{st0102, st0601};
+
+        self.rich.records += 1;
+        let n = self.rich.records;
+
+        let rec = match st0601::decode(payload) {
+            Ok(rec) => rec,
+            Err(e) => {
+                self.rich.decode_errors += 1;
+                self.note_rich_problem(RichOracle::Decode, format!("record {n}: {e}"));
+                return;
+            }
+        };
+        if let Some(first) = rec.field_errors.first() {
+            self.rich.field_error_records += 1;
+            self.note_rich_problem(
+                RichOracle::Decode,
+                format!(
+                    "record {n}: {} field error(s), first: {first}",
+                    rec.field_errors.len()
+                ),
+            );
+        }
+
+        // Rich timestamps are on a fixed cadence off a fixed epoch
+        // precisely so a receiver can invert one back to the sender's
+        // `seq` — without that there is no schedule to check against, so
+        // a stamp that names no `seq` IS a census mismatch, not a reason
+        // to skip the check.
+        let Some(seq) = rec.timestamp_us.and_then(fixtures::rich_seq_of_timestamp) else {
+            self.rich.census_mismatches += 1;
+            self.note_rich_problem(
+                RichOracle::Census,
+                format!(
+                    "record {n}: timestamp {:?} names no rich seq (missing, pre-epoch, or off the \
+                     {}us grid)",
+                    rec.timestamp_us,
+                    fixtures::RICH_TS_STEP_US
+                ),
+            );
+            return;
+        };
+
+        let expected = fixtures::rich_presence(self.klv_expect.seed, seq);
+        let observed = fixtures::observed_tags(&rec);
+        if observed != expected {
+            self.rich.census_mismatches += 1;
+            let missing: Vec<u8> = expected.difference(&observed).copied().collect();
+            let extra: Vec<u8> = observed.difference(&expected).copied().collect();
+            self.note_rich_problem(
+                RichOracle::Census,
+                format!(
+                    "record {n} (seq {seq}): missing tags {missing:?}, unexpected tags {extra:?}"
+                ),
+            );
+        }
+
+        if expected.contains(&SECURITY_TAG) {
+            self.rich.security_expected += 1;
+            // A nested set is only "there" if it decodes into something
+            // usable — a Tag 48 carrying bytes no ST 0102 decoder
+            // accepts is worse than a missing one, not better, so both
+            // land in the same verdict.
+            let problem = match rec.security_local_set.as_deref() {
+                None => Some(format!("no Tag {SECURITY_TAG} on the record")),
+                Some(bytes) => match st0102::decode(bytes) {
+                    Err(e) => Some(format!("nested ST 0102 set does not decode: {e}")),
+                    Ok(s) => match (s.field_errors.first(), s.security_classification) {
+                        (Some(first), _) => Some(format!(
+                            "nested ST 0102 set carries {} field error(s), first: {first}",
+                            s.field_errors.len()
+                        )),
+                        (None, None) => Some(
+                            "nested ST 0102 set carries no security classification".to_string(),
+                        ),
+                        (None, Some(_)) => None,
+                    },
+                },
+            };
+            match problem {
+                None => self.rich.security_ok += 1,
+                Some(detail) => self.note_rich_problem(
+                    RichOracle::Security,
+                    format!("record {n} (seq {seq}): {detail}"),
+                ),
+            }
+        }
+    }
+
+    /// Record `detail` as the first problem of `which` (if it is), and as
+    /// the metrics' first problem of any kind (if it is).
+    fn note_rich_problem(&mut self, which: RichOracle, detail: String) {
+        let slot = match which {
+            RichOracle::Decode => &mut self.rich_first_decode,
+            RichOracle::Census => &mut self.rich_first_census,
+            RichOracle::Security => &mut self.rich_first_security,
+        };
+        if slot.is_none() {
+            *slot = Some(detail.clone());
+        }
+        if self.rich.first_problem.is_none() {
+            self.rich.first_problem = Some(detail);
         }
     }
 
@@ -672,6 +838,36 @@ impl Tally {
             }
         }
 
+        // Rich-KLV verdicts (spec §5.5) — see `Tally::judge_rich`. All
+        // three stay silent in compact mode, where the counters are zero
+        // by construction.
+        let unclean = self.rich.decode_errors + self.rich.field_error_records;
+        if unclean > 0 {
+            failures.push(format!(
+                "klv_rich_decode_clean: {unclean} record(s) failed to decode or carried field \
+                 errors, first: {}",
+                self.rich_first_decode.as_deref().unwrap_or("?")
+            ));
+        }
+        if self.rich.census_mismatches > 0 {
+            failures.push(format!(
+                "klv_rich_census: {} record(s) whose tag set != rich_presence(seed, seq), first: {}",
+                self.rich.census_mismatches,
+                self.rich_first_census.as_deref().unwrap_or("?")
+            ));
+        }
+        let security_bad = self
+            .rich
+            .security_expected
+            .saturating_sub(self.rich.security_ok);
+        if security_bad > 0 {
+            failures.push(format!(
+                "klv_rich_security_nested: {security_bad} record(s) expected a valid ST 0102 set, \
+                 first: {}",
+                self.rich_first_security.as_deref().unwrap_or("?")
+            ));
+        }
+
         if inv.audio_expected && self.audio_frames == 0 {
             failures.push("expected audio frames, got none".to_string());
         } else if !inv.audio_expected && self.audio_frames > 0 {
@@ -764,6 +960,14 @@ impl Tally {
             mode,
         ));
 
+        // A compact capture has no presence schedule to judge, so it
+        // carries no rich block at all — `Some(..)` is the report's own
+        // record that the rich oracles ran over these records.
+        let klv_rich = match self.klv_expect.set {
+            KlvSet::Rich => Some(std::mem::take(&mut self.rich)),
+            KlvSet::Compact => None,
+        };
+
         let metrics = CellMetrics {
             video_aus: self.video_aus,
             keyframes: self.keyframes,
@@ -782,10 +986,7 @@ impl Tally {
             // A verifier never runs the tap; it only judges its log.
             corruption: None,
             corruption_attribution: attribution,
-            // A compact capture has no presence schedule to judge, so it
-            // carries no rich block at all — `Some(..)` here is the
-            // report's own record that the rich oracles ran.
-            klv_rich: (self.klv_expect.set == KlvSet::Rich).then(KlvRichMetrics::default),
+            klv_rich,
         };
 
         VerifyReport {
@@ -957,6 +1158,83 @@ pub fn verify_file_with(
     ))
 }
 
+/// Entry points into the verification core that exist only so tests can
+/// reach a judgement no real capture can be made to produce. Not part of
+/// this crate's CLI surface; nothing outside a test calls any of it.
+#[doc(hidden)]
+pub mod testing {
+    use super::*;
+    use tst_core::mpegts::demux::{StreamId, StreamKind};
+
+    /// PTS step between synthetic records — 10 Hz, the rich generator's
+    /// own cadence. Any monotonic step would do; matching the generator
+    /// keeps a reader from wondering whether the value is load-bearing.
+    const KLV_STEP_TICKS: i64 = 9_000;
+
+    /// A bare-LS (async-carriage) KLV `Metadata` event on `pid` carrying
+    /// `payload`, stamped at `pts_ticks` in program 1.
+    pub fn klv_event_on(pid: u16, pts_ticks: i64, payload: Vec<u8>) -> DemuxEvent {
+        DemuxEvent::Metadata {
+            stream: StreamId {
+                pid,
+                kind: StreamKind::KlvAsync,
+                program_number: 1,
+            },
+            pts: Pts90khz::new(pts_ticks),
+            kind: MetadataKind::KlvAsync,
+            payload,
+        }
+    }
+
+    /// Judge `records` (raw ST 0601 LS bytes, exactly as a demuxer hands
+    /// them over) against `expect`'s rich oracles, with no capture
+    /// involved.
+    ///
+    /// **Only the three `klv_rich_*` verdicts are meaningful here, and
+    /// only they can fail.** The synthetic events carry no video, no
+    /// audio, no PMT and no wire bytes, so every other check
+    /// [`Tally::finish`] runs would fail for reasons that have nothing to
+    /// do with the records under test; those failures are dropped and
+    /// `pass` is recomputed from what survives. Feeding a fabricated
+    /// `WireSummary` instead would mean inventing a whole conformant
+    /// capture to get the same three answers.
+    ///
+    /// This exists because two of the three oracles cannot be provoked by
+    /// editing a muxed capture: re-encoding one record changes its
+    /// length, so PES lengths, continuity counters and the PCR schedule
+    /// all move with it, and the result is no longer the stream whose
+    /// records were under test. Mutations that CAN be made on the wire
+    /// (a flipped payload byte, a mismatched seed) go through the real
+    /// path in `tests/klv_rich.rs`, not through here.
+    pub fn judge_records(records: &[Vec<u8>], expect: KlvExpect) -> VerifyReport {
+        const PID: u16 = 0x0101;
+
+        let p = profiles::by_name("baseline").expect("the baseline profile must exist");
+        let mut tally = Tally::new();
+        tally.set_klv_expect(expect);
+        for (i, record) in records.iter().enumerate() {
+            tally.feed(&klv_event_on(
+                PID,
+                i as i64 * KLV_STEP_TICKS,
+                record.clone(),
+            ));
+        }
+        // 0.1s so the count floors round down to zero — belt and braces
+        // next to the filter below, which is what actually guarantees a
+        // caller sees nothing but rich verdicts.
+        let mut report = tally.finish(
+            p,
+            0.1,
+            NOMINAL_COUNT_SLACK,
+            VerifyMode::Strict,
+            &WireSummary::default(),
+        );
+        report.failures.retain(|f| f.starts_with("klv_rich_"));
+        report.pass = report.failures.is_empty();
+        report
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1040,16 +1318,10 @@ mod tests {
     }
 
     fn klv_event_on(pid: u16, pts_ticks: i64, seq: u32) -> DemuxEvent {
-        DemuxEvent::Metadata {
-            stream: StreamId {
-                pid,
-                kind: StreamKind::KlvAsync,
-                program_number: PROGRAM,
-            },
-            pts: Pts90khz::new(pts_ticks),
-            kind: MetadataKind::KlvAsync,
-            payload: fixtures::klv_record(seq),
-        }
+        // Same builder `testing::judge_records` feeds — one definition of
+        // "an async-carriage KLV event", so a change to that shape can't
+        // leave the two halves of this module disagreeing.
+        testing::klv_event_on(pid, pts_ticks, fixtures::klv_record(seq))
     }
 
     fn klv_event(pts_ticks: i64, seq: u32) -> DemuxEvent {
