@@ -167,9 +167,29 @@ impl RistTransport {
 }
 
 impl Transport for RistTransport {
+    /// Send one block via `rist_sender_data_write`.
+    ///
+    /// Error mapping (librist return-code namespace, see `WriteOutcome`):
+    /// - empty `msg` → [`TransportError::TooLarge`] `{ len: 0, max }` (librist
+    ///   refuses zero-length blocks; an input error, the transport stays alive
+    ///   and nothing was sent);
+    /// - `rc == -2` (sender queue full) → [`TransportError::Backpressure`]
+    ///   `{ errno_code: Some(-2) }`, transport alive, `msg` NOT consumed —
+    ///   retry it later;
+    /// - any other `rc < 0` → [`TransportError::Broken`] `{ errno_code:
+    ///   Some(rc) }` and the transport is latched dead.
     fn send_bytes(&mut self, msg: &[u8]) -> Result<(), TransportError> {
         if !self.alive.load(Ordering::Acquire) {
             return Err(TransportError::Closed);
+        }
+        // librist returns -1 for `payload_len <= 0` with the context still
+        // usable. Reject it here as an input error so the -1 never reaches
+        // the fatal arm below (CORR-04).
+        if msg.is_empty() {
+            return Err(TransportError::TooLarge {
+                len: 0,
+                max: self.pkt_size,
+            });
         }
         if msg.len() > self.pkt_size {
             return Err(TransportError::TooLarge {
@@ -192,13 +212,27 @@ impl Transport for RistTransport {
         };
 
         let rc = unsafe { rist_sys::rist_sender_data_write(self.ctx, &block) };
-        if rc < 0 {
-            self.alive.store(false, Ordering::Release);
-            return Err(TransportError::Broken {
-                msg: format!("rist_sender_data_write returned {rc}"),
-                errno_code: Some(rc),
-                cause: BrokenCause::Unspecified,
-            });
+        match classify_write_rc(rc) {
+            WriteOutcome::Sent => {}
+            WriteOutcome::QueueFull => {
+                // One packet dropped by librist; the context is healthy. Do
+                // NOT latch `alive` — a latched Broken would make
+                // ManagedTransport rist_destroy + rebuild the context, losing
+                // the recovery buffer and every peer for one dropped packet.
+                return Err(TransportError::Backpressure {
+                    msg: "rist_sender_data_write returned -2 (sender queue full, packet dropped)"
+                        .into(),
+                    errno_code: Some(rc),
+                });
+            }
+            WriteOutcome::Fatal(rc) => {
+                self.alive.store(false, Ordering::Release);
+                return Err(TransportError::Broken {
+                    msg: format!("rist_sender_data_write returned {rc}"),
+                    errno_code: Some(rc),
+                    cause: BrokenCause::Unspecified,
+                });
+            }
         }
 
         if let Ok(mut s) = self.stats.lock() {
@@ -264,6 +298,33 @@ pub(crate) fn global_logging_ptr() -> *mut rist_sys::rist_logging_settings {
         .get()
         .map(|p| p.0)
         .unwrap_or(std::ptr::null_mut())
+}
+
+/// Outcome of one `rist_sender_data_write` call, classified from its return
+/// code. librist's namespace (`rist.c` `rist_sender_data_write`, `udp.c`
+/// `rist_sender_enqueue`):
+///
+/// - `>= 0` — the block was enqueued; the value is the payload length.
+/// - `-2` — the sender queue is full and THIS block was dropped. The context
+///   is healthy and the next write may succeed ("decrease bitrate, buffer
+///   time length or increase packet size" in librist's own log line).
+/// - any other negative — fatal: null/non-sender context, zero-length or
+///   oversize payload, `USE_SEQ` with split mode, no peers. After
+///   `connect_with_config` the only reachable one is the zero-length payload,
+///   which `send_bytes` rejects before calling librist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WriteOutcome {
+    Sent,
+    QueueFull,
+    Fatal(i32),
+}
+
+pub(crate) fn classify_write_rc(rc: i32) -> WriteOutcome {
+    match rc {
+        -2 => WriteOutcome::QueueFull,
+        rc if rc < 0 => WriteOutcome::Fatal(rc),
+        _ => WriteOutcome::Sent,
+    }
 }
 
 /// Apply [`RistConfig`] overlays onto the parsed `rist_peer_config`. Shared
@@ -368,8 +429,9 @@ impl RistTransport {
         self.ctx.is_null()
     }
 
-    /// Force the alive flag to false, simulating what the error paths do (e.g.
-    /// after `rist_sender_data_write` returns a negative code). Does NOT touch ctx.
+    /// Force the alive flag to false, simulating what the fatal error path does
+    /// (`rist_sender_data_write` returning a negative code other than `-2`).
+    /// Does NOT touch ctx.
     pub(crate) fn force_dead_for_test(&self) {
         self.alive.store(false, Ordering::Release);
     }
@@ -503,5 +565,48 @@ mod tests {
         assert_eq!(buf[5], 0);
         // Verify the rest is zeroed (we explicitly zeroed before copy).
         assert_eq!(buf[15], 0);
+    }
+
+    /// CORR-04 (a): librist refuses a zero-length block with `-1`. That is an
+    /// INPUT error — the context is untouched — so it must surface as the
+    /// `TooLarge`-class input error and leave the transport alive, not as a
+    /// latched `Broken` that makes `ManagedTransport` tear the context down.
+    #[test]
+    fn empty_payload_is_an_input_error_not_a_broken_latch() {
+        let mut t = match RistTransport::connect("rist://127.0.0.1:19004") {
+            Ok(t) => t,
+            Err(_) => return, // librist not available or port unusable — skip
+        };
+        let err = t
+            .send_bytes(&[])
+            .expect_err("empty payload must be refused");
+        assert!(
+            matches!(err, TransportError::TooLarge { len: 0, max } if max == t.max_payload()),
+            "empty payload must be TooLarge {{ len: 0, max: pkt_size }}, got {err:?}"
+        );
+        assert!(
+            t.is_alive(),
+            "an input error must not latch the transport dead"
+        );
+        // The refusal consumed nothing: a real block is still accepted (UDP
+        // send needs no peer to answer; librist returns the payload length).
+        t.send_bytes(&[0x47u8; 188])
+            .expect("send after the empty-payload refusal must succeed");
+    }
+
+    /// librist's `rist_sender_data_write` return-code namespace (rist.c:617-716
+    /// and udp.c `rist_sender_enqueue`): `-2` = sender queue full, ONE packet
+    /// dropped, context healthy; any other negative = fatal; `>= 0` = the
+    /// payload length that was enqueued. `-2` cannot be forced from a test
+    /// (524,288-entry queue drained by the protocol thread regardless of a
+    /// peer), so the mapping is pinned here and guarded live in
+    /// tests/loopback.rs `send_burst_without_receiver_never_latches_broken`.
+    #[test]
+    fn classify_write_rc_maps_librist_namespace() {
+        assert_eq!(classify_write_rc(-2), WriteOutcome::QueueFull);
+        assert_eq!(classify_write_rc(-1), WriteOutcome::Fatal(-1));
+        assert_eq!(classify_write_rc(-3), WriteOutcome::Fatal(-3));
+        assert_eq!(classify_write_rc(0), WriteOutcome::Sent);
+        assert_eq!(classify_write_rc(1316), WriteOutcome::Sent);
     }
 }
