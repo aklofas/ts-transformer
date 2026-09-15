@@ -1657,7 +1657,7 @@ pub mod soak {
     /// renewal process (Q11) — see `impair::Engine::decide`: outside a
     /// burst every packet first rolls duplication (`dup_pct`), then
     /// loss (`draw_pct`); a hit drops a run of `R ~ U[lo, hi]` packets
-    /// (`burst_run`, `(1, 1)` when not bursty), the rest of the run
+    /// (`burst_run` when `burst`, otherwise `(1, 1)`), the rest of the run
     /// without a draw. With `q` the per-packet fire probability, `G` the
     /// geometric run of forwards before a fire (`E[G] = (1-q)/q`,
     /// `Var[G] = (1-q)/q²`), `m`/`v` the run mean/variance:
@@ -1680,7 +1680,12 @@ pub mod soak {
         var_rate: f64,
     }
 
-    fn renewal_model(draw_pct: f64, dup_pct: f64, burst_run: (u32, u32)) -> PhaseModel {
+    fn renewal_model(
+        draw_pct: f64,
+        dup_pct: f64,
+        burst: bool,
+        burst_run: (u32, u32),
+    ) -> PhaseModel {
         let q = (draw_pct / 100.0).clamp(0.0, 1.0) * (1.0 - (dup_pct / 100.0).clamp(0.0, 1.0));
         if q <= 0.0 {
             return PhaseModel {
@@ -1688,9 +1693,17 @@ pub mod soak {
                 var_rate: 0.0,
             };
         }
+        // `Engine::decide` reads `burst_run` ONLY under `if p.burst`, so a
+        // phase that is not bursty drops exactly one packet per fire
+        // whatever its `burst_run` says — which a hand-edited or
+        // deserialized artifact can perfectly well disagree with. Key on
+        // the same flag the engine keys on, or the expectation models a
+        // burst the engine never ran.
+        let (lo, hi) = if burst { burst_run } else { (1, 1) };
         // Same clamp as `Engine::decide`: lo >= 1, hi >= lo.
-        let lo = f64::from(burst_run.0.max(1));
-        let hi = f64::from(burst_run.1.max(burst_run.0.max(1)));
+        let lo_u = lo.max(1);
+        let lo = f64::from(lo_u);
+        let hi = f64::from(hi.max(lo_u));
         let m = (lo + hi) / 2.0;
         let v = ((hi - lo + 1.0).powi(2) - 1.0) / 12.0;
         let e_x = (1.0 - q) / q + m;
@@ -2159,20 +2172,21 @@ pub mod soak {
             // rate taken from the engine's own renewal process rather
             // than its configured `loss_pct` (Q11). Fixed mode is the
             // one-phase case: the schedule echo is absent, the model is
-            // built from the config's `loss_pct` with non-burst runs
-            // (where the renewal rate IS that fraction, scaled by the
-            // dup gate), and `phases` is a single counter carrying the
-            // run's whole total.
+            // built from the config's `loss_pct` as a NON-burst phase
+            // (fixed mode never bursts, and there the renewal rate IS
+            // that fraction scaled by the dup gate), and `phases` is a
+            // single counter carrying the run's whole total.
             let dup_pct = artifacts.proxy_stats.config.dup_pct;
             let models: Vec<PhaseModel> = match &artifacts.proxy_stats.config.schedule {
                 Some(s) => s
                     .table
                     .iter()
-                    .map(|ph| renewal_model(ph.draw_pct, dup_pct, ph.burst_run))
+                    .map(|ph| renewal_model(ph.draw_pct, dup_pct, ph.burst, ph.burst_run))
                     .collect(),
                 None => vec![renewal_model(
                     artifacts.proxy_stats.config.loss_pct,
                     dup_pct,
+                    false,
                     (1, 1),
                 )],
             };
@@ -2776,11 +2790,16 @@ pub mod soak {
                             run_duration_s,
                             config.expected_duration_s,
                         );
+                        // Same expression `excusal_budget` uses, `.max(0.0)`
+                        // included, so the detail can never quote hours the
+                        // budget was not computed from.
                         let budget_hours = if run_duration_s > 0.0 {
                             run_duration_s
                         } else {
                             config.expected_duration_s
-                        } / 3600.0;
+                        }
+                        .max(0.0)
+                            / 3600.0;
                         let excused =
                             a.unexplained_transport_loss + a.undetected_lost + a.unrecovered_lost;
                         let unexplained_disc = artifacts
@@ -3908,6 +3927,33 @@ pub mod soak {
             );
         }
 
+        /// `Engine::decide` consults `burst_run` only under `if p.burst`,
+        /// so a phase carrying a burst run WITHOUT the flag drops exactly
+        /// one packet per fire. Keying the model on `burst_run` alone
+        /// would have expected 10.1 % where the engine realises 2 %.
+        #[test]
+        fn drop_rate_ignores_a_burst_run_on_a_phase_that_is_not_bursty() {
+            let n = 10_000_000u64;
+            let dropped = 200_000u64; // 2.0%: one drop per fire
+            let mut stats = scheduled_stats(&[(n - dropped, dropped)], &[2.0]);
+            {
+                let ph = &mut stats.config.schedule.as_mut().unwrap().table[0];
+                ph.burst = false;
+                ph.burst_run = (3, 8); // stale/hand-edited: the engine ignores it
+                ph.draw_pct = 2.0;
+            }
+            let mut inputs = healthy_inputs();
+            inputs.legs[0].1.proxy_stats = stats;
+            let r = build_soak_results(inputs).unwrap();
+            let v = verdict(&r, "drop_rate_consistent_with_impairment_srt");
+            assert!(v.pass, "{}", v.detail);
+            assert!(
+                (r.legs[0].expected_drop_fraction - 0.02).abs() < 1e-12,
+                "{:?}",
+                r.legs[0]
+            );
+        }
+
         /// The renewal model reduces to the binomial one for a non-burst
         /// phase, so fixed-mode verdicts are unchanged.
         #[test]
@@ -4901,6 +4947,31 @@ pub mod soak {
             // Control: the same 100/101 WITHOUT the latch is the tolerated tail read.
             let r = build_soak_results(corruption_inputs(101, 100, 100)).unwrap();
             assert!(verdict(&r, "corruption_coverage_srt").pass);
+
+            // The close-time shape (`Corrupter::close`'s final flush
+            // failing on a buffering writer): every line the receiver saw
+            // parsed and resolved, so ingestion is a PERFECT 101/101 and
+            // no ratio can reveal the loss. The latch is the only
+            // evidence, and it must still fail the verdict.
+            let mut inputs = corruption_inputs(101, 101, 101);
+            inputs.legs[0]
+                .1
+                .send_metrics
+                .corruption
+                .as_mut()
+                .unwrap()
+                .log_write_failed = true;
+            let r = build_soak_results(inputs).unwrap();
+            let v = verdict(&r, "corruption_coverage_srt");
+            assert!(!v.pass, "{}", v.detail);
+            assert!(v.detail.contains("100.0%"), "{}", v.detail);
+            assert!(
+                v.detail
+                    .contains("sender reported a corruption-log write failure"),
+                "{}",
+                v.detail
+            );
+            assert!(!r.overall_pass);
         }
 
         /// The counters the verdicts gate on are `#[serde(default)]`, so
