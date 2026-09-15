@@ -608,6 +608,34 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reported `true` forever. The entry gate now latches closed the same way the
   mid-loop cancel check does.
 
+### Fixed — core (WP-2)
+
+- (pending)
+
+### Fixed — pipeline (WP-3)
+
+- (pending)
+
+### Fixed — rtp (WP-4a)
+
+- (pending)
+
+### Fixed — tcp/udp (WP-4b)
+
+- (pending)
+
+### Fixed — rist/hls (WP-4c)
+
+- (pending)
+
+### Fixed — python (WP-5)
+
+- (pending)
+
+### Fixed — jvm (WP-6)
+
+- (pending)
+
 ### Testing
 
 - **Tooling: `tst-interop` sender-side corruption tap.** `tst-interop send
@@ -811,6 +839,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   branch dispatch. Every oracle has a matching mutation test
   (`crates/tst-interop/tests/mutations.rs`, ten tests) that removes the property
   it checks and asserts the oracle's named failure fires.
+
+### Testing — interop harness (WP-7a)
+
+- (pending)
+
+### Testing — interop harness (WP-7b)
+
+- (pending)
+
+### Testing — CI/rails (WP-8)
+
+- (pending)
 
 ---
 
