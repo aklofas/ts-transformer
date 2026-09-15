@@ -668,3 +668,45 @@ def test_rtp_receiver_close_from_other_thread_while_recv_parked() -> None:
         assert rx.end_reason() is not None  # Cancelled — recorded by close()
     finally:
         rx.close()
+
+
+# --------------------------------------------------------------------------- #
+# rtp.MuxSender                                                               #
+# --------------------------------------------------------------------------- #
+
+
+def test_rtp_mux_sender_close_from_other_thread_during_send_video() -> None:
+    from tstrans.exceptions import RtpError, RtpErrorKind
+    from tstrans.mpegts import Pts90khz
+    import tstrans.rtp as rtp
+
+    sink, port = _udp_sink()
+    tx = rtp.MuxSender(f"rtp://127.0.0.1:{port}", _video_only_program())
+    stop = threading.Event()
+    outcome: dict[str, object] = {}
+    pts = [0]
+
+    def send_one() -> None:
+        tx.send_video(NAL_IDR, pts=Pts90khz.from_raw(pts[0]), key_frame=True)
+        pts[0] += 3000
+
+    def worker() -> None:
+        outcome.update(_spin_sender(send_one, stop))
+
+    w = threading.Thread(target=worker, daemon=True)
+    w.start()
+    time.sleep(0.1)
+    try:
+        c, errs = _close_on_thread(tx)
+        stop.set()
+        w.join(5.0)
+        _assert_close_ok(c, errs, "rtp.MuxSender")
+        assert not w.is_alive(), "send loop did not end after close()"
+        exc = outcome.get("exc")
+        assert isinstance(exc, RtpError), f"send loop ended with {exc!r}"
+        assert exc.kind in (RtpErrorKind.CANCELLED, RtpErrorKind.TRANSPORT), exc.kind
+        assert "closed" in repr(tx)
+    finally:
+        stop.set()
+        tx.close()
+        sink.close()

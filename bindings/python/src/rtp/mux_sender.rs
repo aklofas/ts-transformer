@@ -23,6 +23,8 @@
 //!   `Py<PyBytes>` strong ref pinning the slice lives on the caller's
 //!   Python frame, so GC can't collect it while we hold the borrowed
 //!   `&[u8]` without the GIL.
+//! - `Arc<Mutex<Option<_>>>` slot + `&self` methods (the cross-thread
+//!   close shape of PR #209): `close()` cancels before taking the slot.
 //!
 //! Error mapping:
 //! - `tst_pipeline::MuxSenderError` carrying a `Mux(MuxError)`        → `MuxError`
@@ -32,9 +34,12 @@
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
+use std::sync::{Arc, Mutex};
+
 use pyo3::Py;
 use pyo3::prelude::*;
 
+use tst_core::transport::TransportCancel;
 use tst_pipeline::{MuxSender as RustMuxSender, MuxSenderError, MuxSenderErrorSource};
 use tst_rtp::{RtpSocketBuilder, RtpTransport};
 
@@ -94,12 +99,18 @@ fn mux_sender_error_to_pyerr(py: Python<'_>, e: MuxSenderError) -> PyErr {
 /// ```
 #[pyclass(name = "MuxSender", module = "tstrans.rtp")]
 pub struct PyMuxSender {
-    /// `Option` so `close()` / `__exit__` can drop the inner sender
-    /// while keeping the PyClass instance addressable for repeated
-    /// no-op closes. Direct ownership (no `Arc`) because the push
-    /// methods all take `&self` on `tst_pipeline::MuxSender` (which
-    /// internally holds a `Mutex<Inner>`).
-    inner: Option<RustMuxSender<RtpTransport>>,
+    /// Shared slot (PR #209 shape): every push holds it with the GIL
+    /// released; `close()` fires `cancel` BEFORE taking it, so a push in
+    /// flight on another thread ends with `RtpError(CANCELLED)` instead
+    /// of the close raising `RuntimeError: Already borrowed`. `Option` so
+    /// `close()` / `__exit__` can drop the inner sender while keeping the
+    /// PyClass addressable for repeated no-op closes.
+    inner: Arc<Mutex<Option<RustMuxSender<RtpTransport>>>>,
+    /// `tst_pipeline::MuxSender::cancel_handle()` snapshot — always
+    /// `Some` for an `RtpTransport`. Fired first by `close()`; not
+    /// exposed to Python (see `docs/languages/python.md`, the rtp
+    /// `MuxSender` has no `cancel_handle()` — use `close()`).
+    cancel: Arc<dyn TransportCancel + Send + Sync>,
 }
 
 #[pymethods]
@@ -136,8 +147,12 @@ impl PyMuxSender {
         // 3. Hand transport + config to the pipeline shell.
         let sender =
             RustMuxSender::new(transport, muxer_cfg).map_err(|e| mux_error_to_pyerr(py, e))?;
+        let cancel = sender
+            .cancel_handle()
+            .expect("RtpTransport always returns Some(cancel_handle)");
         Ok(Self {
-            inner: Some(sender),
+            inner: Arc::new(Mutex::new(Some(sender))),
+            cancel,
         })
     }
 
@@ -160,15 +175,14 @@ impl PyMuxSender {
         pts: &Bound<'_, PyAny>,
         key_frame: bool,
     ) -> PyResult<()> {
-        let inner = self
-            .inner
-            .as_ref()
-            .ok_or_else(|| make_rtp_error(py, "TRANSPORT", "MuxSender is closed"))?;
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, nal)?;
         let slice = coerced.as_bytes();
-        let res = py.allow_threads(|| inner.send_video(slice, rust_pts, key_frame));
-        res.map_err(|e| mux_sender_error_to_pyerr(py, e))
+        crate::util::with_slot(py, &self.inner, |s| {
+            s.send_video(slice, rust_pts, key_frame)
+        })
+        .ok_or_else(|| make_rtp_error(py, "TRANSPORT", "MuxSender is closed"))?
+        .map_err(|e| mux_sender_error_to_pyerr(py, e))
     }
 
     /// Send one KLV blob onto the lone configured KLV stream.
@@ -181,18 +195,17 @@ impl PyMuxSender {
         pts: &Bound<'_, PyAny>,
         metadata_service_id: u8,
     ) -> PyResult<()> {
-        let inner = self
-            .inner
-            .as_ref()
-            .ok_or_else(|| make_rtp_error(py, "TRANSPORT", "MuxSender is closed"))?;
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, klv)?;
         let slice = coerced.as_bytes();
         // Note: `tst_pipeline::MuxSender::send_klv` takes
         // (klv, pts, metadata_service_id). The single-stream convenience
         // routes through the muxer's auto-target dispatcher.
-        let res = py.allow_threads(|| inner.send_klv(slice, rust_pts, metadata_service_id));
-        res.map_err(|e| mux_sender_error_to_pyerr(py, e))
+        crate::util::with_slot(py, &self.inner, |s| {
+            s.send_klv(slice, rust_pts, metadata_service_id)
+        })
+        .ok_or_else(|| make_rtp_error(py, "TRANSPORT", "MuxSender is closed"))?
+        .map_err(|e| mux_sender_error_to_pyerr(py, e))
     }
 
     /// Send one encoded audio frame onto the lone configured audio
@@ -206,15 +219,12 @@ impl PyMuxSender {
         adts: &Bound<'_, PyAny>,
         pts: &Bound<'_, PyAny>,
     ) -> PyResult<()> {
-        let inner = self
-            .inner
-            .as_ref()
-            .ok_or_else(|| make_rtp_error(py, "TRANSPORT", "MuxSender is closed"))?;
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, adts)?;
         let slice = coerced.as_bytes();
-        let res = py.allow_threads(|| inner.send_audio(slice, rust_pts));
-        res.map_err(|e| mux_sender_error_to_pyerr(py, e))
+        crate::util::with_slot(py, &self.inner, |s| s.send_audio(slice, rust_pts))
+            .ok_or_else(|| make_rtp_error(py, "TRANSPORT", "MuxSender is closed"))?
+            .map_err(|e| mux_sender_error_to_pyerr(py, e))
     }
 
     /// Send one subtitle payload onto the lone configured subtitle
@@ -226,15 +236,12 @@ impl PyMuxSender {
         payload: &Bound<'_, PyAny>,
         pts: &Bound<'_, PyAny>,
     ) -> PyResult<()> {
-        let inner = self
-            .inner
-            .as_ref()
-            .ok_or_else(|| make_rtp_error(py, "TRANSPORT", "MuxSender is closed"))?;
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, payload)?;
         let slice = coerced.as_bytes();
-        let res = py.allow_threads(|| inner.send_subtitle(slice, rust_pts));
-        res.map_err(|e| mux_sender_error_to_pyerr(py, e))
+        crate::util::with_slot(py, &self.inner, |s| s.send_subtitle(slice, rust_pts))
+            .ok_or_else(|| make_rtp_error(py, "TRANSPORT", "MuxSender is closed"))?
+            .map_err(|e| mux_sender_error_to_pyerr(py, e))
     }
 
     /// Send one data payload onto the lone configured data stream.
@@ -252,15 +259,12 @@ impl PyMuxSender {
         data: &Bound<'_, PyAny>,
         pts: &Bound<'_, PyAny>,
     ) -> PyResult<()> {
-        let inner = self
-            .inner
-            .as_ref()
-            .ok_or_else(|| make_rtp_error(py, "TRANSPORT", "MuxSender is closed"))?;
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, data)?;
         let slice = coerced.as_bytes();
-        let res = py.allow_threads(|| inner.send_data(slice, rust_pts));
-        res.map_err(|e| mux_sender_error_to_pyerr(py, e))
+        crate::util::with_slot(py, &self.inner, |s| s.send_data(slice, rust_pts))
+            .ok_or_else(|| make_rtp_error(py, "TRANSPORT", "MuxSender is closed"))?
+            .map_err(|e| mux_sender_error_to_pyerr(py, e))
     }
 
     // ── Send family — handle-targeted variants ────────────────────────────
@@ -275,17 +279,15 @@ impl PyMuxSender {
         pts: &Bound<'_, PyAny>,
         key_frame: bool,
     ) -> PyResult<()> {
-        let inner = self
-            .inner
-            .as_ref()
-            .ok_or_else(|| make_rtp_error(py, "TRANSPORT", "MuxSender is closed"))?;
         let rust_pts = py_pts90khz(pts)?;
         let handle_inner = handle.0;
         let coerced = crate::util::coerce_bytes_like(py, nal)?;
         let slice = coerced.as_bytes();
-        let res =
-            py.allow_threads(|| inner.send_video_to(handle_inner, slice, rust_pts, key_frame));
-        res.map_err(|e| mux_sender_error_to_pyerr(py, e))
+        crate::util::with_slot(py, &self.inner, |s| {
+            s.send_video_to(handle_inner, slice, rust_pts, key_frame)
+        })
+        .ok_or_else(|| make_rtp_error(py, "TRANSPORT", "MuxSender is closed"))?
+        .map_err(|e| mux_sender_error_to_pyerr(py, e))
     }
 
     /// Send to a specific KLV stream handle.
@@ -298,18 +300,15 @@ impl PyMuxSender {
         pts: &Bound<'_, PyAny>,
         metadata_service_id: u8,
     ) -> PyResult<()> {
-        let inner = self
-            .inner
-            .as_ref()
-            .ok_or_else(|| make_rtp_error(py, "TRANSPORT", "MuxSender is closed"))?;
         let rust_pts = py_pts90khz(pts)?;
         let handle_inner = handle.0;
         let coerced = crate::util::coerce_bytes_like(py, klv)?;
         let slice = coerced.as_bytes();
-        let res = py.allow_threads(|| {
-            inner.send_klv_to(handle_inner, slice, rust_pts, metadata_service_id)
-        });
-        res.map_err(|e| mux_sender_error_to_pyerr(py, e))
+        crate::util::with_slot(py, &self.inner, |s| {
+            s.send_klv_to(handle_inner, slice, rust_pts, metadata_service_id)
+        })
+        .ok_or_else(|| make_rtp_error(py, "TRANSPORT", "MuxSender is closed"))?
+        .map_err(|e| mux_sender_error_to_pyerr(py, e))
     }
 
     /// Send to a specific audio stream handle.
@@ -321,16 +320,15 @@ impl PyMuxSender {
         adts: &Bound<'_, PyAny>,
         pts: &Bound<'_, PyAny>,
     ) -> PyResult<()> {
-        let inner = self
-            .inner
-            .as_ref()
-            .ok_or_else(|| make_rtp_error(py, "TRANSPORT", "MuxSender is closed"))?;
         let rust_pts = py_pts90khz(pts)?;
         let handle_inner = handle.0;
         let coerced = crate::util::coerce_bytes_like(py, adts)?;
         let slice = coerced.as_bytes();
-        let res = py.allow_threads(|| inner.send_audio_to(handle_inner, slice, rust_pts));
-        res.map_err(|e| mux_sender_error_to_pyerr(py, e))
+        crate::util::with_slot(py, &self.inner, |s| {
+            s.send_audio_to(handle_inner, slice, rust_pts)
+        })
+        .ok_or_else(|| make_rtp_error(py, "TRANSPORT", "MuxSender is closed"))?
+        .map_err(|e| mux_sender_error_to_pyerr(py, e))
     }
 
     /// Send to a specific subtitle stream handle.
@@ -342,16 +340,15 @@ impl PyMuxSender {
         payload: &Bound<'_, PyAny>,
         pts: &Bound<'_, PyAny>,
     ) -> PyResult<()> {
-        let inner = self
-            .inner
-            .as_ref()
-            .ok_or_else(|| make_rtp_error(py, "TRANSPORT", "MuxSender is closed"))?;
         let rust_pts = py_pts90khz(pts)?;
         let handle_inner = handle.0;
         let coerced = crate::util::coerce_bytes_like(py, payload)?;
         let slice = coerced.as_bytes();
-        let res = py.allow_threads(|| inner.send_subtitle_to(handle_inner, slice, rust_pts));
-        res.map_err(|e| mux_sender_error_to_pyerr(py, e))
+        crate::util::with_slot(py, &self.inner, |s| {
+            s.send_subtitle_to(handle_inner, slice, rust_pts)
+        })
+        .ok_or_else(|| make_rtp_error(py, "TRANSPORT", "MuxSender is closed"))?
+        .map_err(|e| mux_sender_error_to_pyerr(py, e))
     }
 
     /// Send to a specific data stream handle. Same pass-through
@@ -364,16 +361,15 @@ impl PyMuxSender {
         data: &Bound<'_, PyAny>,
         pts: &Bound<'_, PyAny>,
     ) -> PyResult<()> {
-        let inner = self
-            .inner
-            .as_ref()
-            .ok_or_else(|| make_rtp_error(py, "TRANSPORT", "MuxSender is closed"))?;
         let rust_pts = py_pts90khz(pts)?;
         let handle_inner = handle.0;
         let coerced = crate::util::coerce_bytes_like(py, data)?;
         let slice = coerced.as_bytes();
-        let res = py.allow_threads(|| inner.send_data_to(handle_inner, slice, rust_pts));
-        res.map_err(|e| mux_sender_error_to_pyerr(py, e))
+        crate::util::with_slot(py, &self.inner, |s| {
+            s.send_data_to(handle_inner, slice, rust_pts)
+        })
+        .ok_or_else(|| make_rtp_error(py, "TRANSPORT", "MuxSender is closed"))?
+        .map_err(|e| mux_sender_error_to_pyerr(py, e))
     }
 
     // ── Handle getters ────────────────────────────────────────────────────
@@ -383,52 +379,37 @@ impl PyMuxSender {
     // ctor is also the only program).
 
     /// First configured video stream handle, or `None`.
-    fn video_handle(&self) -> Option<PyVideoStreamHandle> {
-        let inner = self.inner.as_ref()?;
-        inner
-            .video_handles()
-            .into_iter()
-            .next()
+    fn video_handle(&self, py: Python<'_>) -> Option<PyVideoStreamHandle> {
+        crate::util::with_slot(py, &self.inner, |s| s.video_handles().into_iter().next())
+            .flatten()
             .map(PyVideoStreamHandle)
     }
 
     /// First configured KLV stream handle, or `None`.
-    fn klv_handle(&self) -> Option<PyKlvStreamHandle> {
-        let inner = self.inner.as_ref()?;
-        inner
-            .klv_handles()
-            .into_iter()
-            .next()
+    fn klv_handle(&self, py: Python<'_>) -> Option<PyKlvStreamHandle> {
+        crate::util::with_slot(py, &self.inner, |s| s.klv_handles().into_iter().next())
+            .flatten()
             .map(PyKlvStreamHandle)
     }
 
     /// First configured audio stream handle, or `None`.
-    fn audio_handle(&self) -> Option<PyAudioStreamHandle> {
-        let inner = self.inner.as_ref()?;
-        inner
-            .audio_handles()
-            .into_iter()
-            .next()
+    fn audio_handle(&self, py: Python<'_>) -> Option<PyAudioStreamHandle> {
+        crate::util::with_slot(py, &self.inner, |s| s.audio_handles().into_iter().next())
+            .flatten()
             .map(PyAudioStreamHandle)
     }
 
     /// First configured subtitle stream handle, or `None`.
-    fn subtitle_handle(&self) -> Option<PySubtitleStreamHandle> {
-        let inner = self.inner.as_ref()?;
-        inner
-            .subtitle_handles()
-            .into_iter()
-            .next()
+    fn subtitle_handle(&self, py: Python<'_>) -> Option<PySubtitleStreamHandle> {
+        crate::util::with_slot(py, &self.inner, |s| s.subtitle_handles().into_iter().next())
+            .flatten()
             .map(PySubtitleStreamHandle)
     }
 
     /// First configured data stream handle, or `None`.
-    fn data_handle(&self) -> Option<PyDataStreamHandle> {
-        let inner = self.inner.as_ref()?;
-        inner
-            .data_handles()
-            .into_iter()
-            .next()
+    fn data_handle(&self, py: Python<'_>) -> Option<PyDataStreamHandle> {
+        crate::util::with_slot(py, &self.inner, |s| s.data_handles().into_iter().next())
+            .flatten()
             .map(PyDataStreamHandle)
     }
 
@@ -437,31 +418,18 @@ impl PyMuxSender {
     /// Tuple of `(SocketStats, MuxerStats)`. `SocketStats` reflects the
     /// underlying RTP transport's wire-level counters; `MuxerStats`
     /// reflects the inner Rust `Muxer`'s programs / packets-emitted
-    /// totals. Returns zeroed defaults if the sender is closed.
+    /// totals. Raises `RtpError(TRANSPORT)` if the sender is closed.
+    /// Waits (GIL released) for a push in flight on another thread.
     fn stats(&self, py: Python<'_>) -> PyResult<(Py<PySocketStats>, Py<PyMuxerStats>)> {
-        let inner = self
-            .inner
-            .as_ref()
-            .ok_or_else(|| make_rtp_error(py, "TRANSPORT", "MuxSender is closed"))?;
-        // The pipeline shell wraps a `Muxer` but only exposes a
-        // composite `MuxSenderStats`. We surface the two underlying
-        // snapshots directly — the SocketStats from the transport, and
-        // a fresh MuxerStats built from the pipeline stats projection.
-        let sock = inner.socket_stats().unwrap_or_default();
-        let pipe = inner.stats();
-        // Re-wrap as `tst_core::mpegts::stats::MuxerStats` so the
-        // existing `PyMuxerStats` constructor pattern works. The
-        // pipeline shell already mirrors programs_configured /
-        // per_stream from the inner muxer; we synthesise the
-        // ts_packets/bytes_emitted from packets_sent / bytes_sent
-        // (which the pipeline tracks per transport handoff).
+        let (sock, pipe) = crate::util::with_slot(py, &self.inner, |s| {
+            (s.socket_stats().unwrap_or_default(), s.stats())
+        })
+        .ok_or_else(|| make_rtp_error(py, "TRANSPORT", "MuxSender is closed"))?;
         // Project tst-pipeline's MuxSenderStats back onto the
         // tst-core::mpegts::stats::MuxerStats shape Python already
         // surfaces via `Muxer.stats()`. `subtitle_streams_configured`
         // isn't tracked by the pipeline shell (only by the inner
-        // `Muxer`), so we default it to 0; the underlying Rust muxer
-        // hasn't exposed its own snapshot to the pipeline at the trait
-        // boundary in Wave A.
+        // `Muxer`), so we default it to 0.
         let mux_stats = tst_core::mpegts::mux::MuxerStats {
             ts_packets_emitted: pipe.packets_sent,
             ts_bytes_emitted: pipe.bytes_sent,
@@ -476,12 +444,13 @@ impl PyMuxSender {
 
     // ── Lifecycle ──────────────────────────────────────────────────────────
 
-    /// Close the sender. Drains any pending bytes (best-effort), then
-    /// drops the underlying RTP transport. Idempotent.
-    fn close(&mut self) {
-        if let Some(s) = self.inner.take() {
-            s.close();
-        }
+    /// Close the sender. Fires the transport's cancel BEFORE taking the
+    /// slot (a push in flight on another thread ends with
+    /// `RtpError(CANCELLED)`), then drops the underlying RTP transport
+    /// (the pipeline `MuxSender::close` is itself cancel-first). Idempotent.
+    fn close(&self, py: Python<'_>) {
+        self.cancel.cancel();
+        crate::util::close_slot(py, &self.inner, |s| s.close());
     }
 
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -489,19 +458,21 @@ impl PyMuxSender {
     }
 
     fn __exit__(
-        &mut self,
+        &self,
+        py: Python<'_>,
         _exc_type: &Bound<'_, PyAny>,
         _exc_value: &Bound<'_, PyAny>,
         _traceback: &Bound<'_, PyAny>,
     ) -> bool {
-        self.close();
+        self.close(py);
         false // do not suppress exceptions
     }
 
     fn __repr__(&self) -> String {
-        match &self.inner {
-            Some(_) => "MuxSender(open)".to_string(),
-            None => "MuxSender(closed)".to_string(),
+        if crate::util::slot_alive(&self.inner, |_| true) {
+            "MuxSender(open)".to_string()
+        } else {
+            "MuxSender(closed)".to_string()
         }
     }
 }
