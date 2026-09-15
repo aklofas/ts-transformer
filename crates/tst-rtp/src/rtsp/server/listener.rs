@@ -169,7 +169,12 @@ pub(crate) async fn run_listener(state: Arc<ServerState>) -> Result<(), RtspServ
                                             tracing::warn!(
                                                 target: "tst_rtp::server",
                                                 peer = %peer,
-                                                timeout_ms = handshake_timeout.as_millis() as u64,
+                                                // `duration_ms_saturating`, not a bare
+                                                // `as_millis() as u64`: the latter
+                                                // silently truncates for a Duration
+                                                // past ~584 million years — see its
+                                                // doc comment.
+                                                timeout_ms = crate::rtsp::client::duration_ms_saturating(handshake_timeout),
                                                 "TLS handshake deadline elapsed; dropping connection"
                                             );
                                         }
