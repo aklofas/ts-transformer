@@ -316,10 +316,21 @@ impl Demuxer {
             .options
             .sync_buf_cap
             .unwrap_or(super::sync_ingress::MAX_SYNC_BUF_BYTES);
+        // The ceiling bounds LIVE bytes (this call's input plus any
+        // unaligned residue) — never the consumed prefix that
+        // `compact_sync_buf` reclaims lazily below its 1 MiB floor. When
+        // the projected total would trip the cap only because of that
+        // dead prefix, reclaim it first so a cap below the floor (a
+        // documented, binding-exposed knob) accepts steady aligned feeds
+        // (CORR-01).
+        if self.sync_consumed > 0 && self.sync_buf.len().saturating_add(bytes.len()) > cap {
+            self.sync_buf.drain(..self.sync_consumed);
+            self.sync_consumed = 0;
+        }
         let projected = self.sync_buf.len().checked_add(bytes.len());
         if projected.is_none_or(|n| n > cap) {
-            // Report what the total would have been (saturating, so the
-            // checked-add-overflow case still yields a meaningful figure).
+            // Report what the live total would have been (saturating, so
+            // the checked-add-overflow case still yields a meaningful figure).
             let observed = self.sync_buf.len().saturating_add(bytes.len());
             // Defensive: once the cap is exceeded, the parser is in a known-bad
             // state and we should release the buffered bytes. Subsequent
@@ -1064,6 +1075,25 @@ mod tests {
         let mut d = Demuxer::with_config(cfg);
         d.feed(&data)
             .expect("raised ceiling must accept a whole-file feed");
+    }
+
+    /// CORR-01 (deep review #4): the ceiling must be measured against
+    /// LIVE bytes. Consumed-but-uncompacted bytes below the 1 MiB
+    /// compaction floor used to count toward it, so any cap under 1 MiB
+    /// rejected ordinary aligned TS every ~cap/188 packets and dropped
+    /// that feed's bytes.
+    #[test]
+    fn sync_buf_cap_below_compaction_floor_accepts_steady_packet_feeds() {
+        let cfg = DemuxerConfig::builder().sync_buf_cap(64 * 1024).build();
+        let mut d = Demuxer::with_config(cfg);
+        let pkt = null_ts_packet();
+        for i in 0..1000 {
+            d.feed(&pkt).unwrap_or_else(|e| panic!("feed #{i}: {e}"));
+        }
+        assert!(
+            d.sync_buf.len() - d.sync_consumed < 188,
+            "no live residue expected after aligned feeds"
+        );
     }
 
     #[test]
