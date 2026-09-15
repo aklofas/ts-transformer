@@ -13,9 +13,13 @@
 //! both `Transport` and `RecvTransport`. `MuxSender<TcpTransport>` uses
 //! the `Transport` side for sending.
 //!
-//! **No C-side cancel yet:** `TcpTransport` has a `cancel_handle()`, but there
-//! is no `tst_tcp_mux_sender_cancel` entry point to reach it. `_close`
-//! simply drops the handle.
+//! **Cancel:** the Rust `TcpTransport` exposes `cancel_handle()` (since
+//! PR #198) but the C ABI has no `tst_tcp_mux_sender_cancel` entry point
+//! yet (additive candidate, ABI 0.22) — `_close` simply drops the handle.
+//! Consequence since deep review #4 WP-4b: a `push_*` call against a peer
+//! that has stopped reading blocks until the peer resumes, the peer
+//! resets the connection, or this handle is closed from the same thread
+//! — it no longer returns `TST_E_TRANSPORT` after ~100 ms.
 
 use std::os::raw::c_char;
 

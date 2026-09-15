@@ -13,9 +13,10 @@
 //! both `Transport` and `RecvTransport`. `DemuxReceiver<TcpTransport>` uses
 //! the `RecvTransport` side. Construction uses `TcpTransportBuilder::from_url`.
 //!
-//! **No C-side cancel yet:** `TcpTransport` has a `cancel_handle()`, but there
-//! is no `tst_tcp_demux_receiver_cancel` entry point to reach it. `_close`
-//! simply drops the handle. Without a caller-cancel path there is no
+//! **Cancel:** the Rust `TcpTransport` exposes `cancel_handle()` (since
+//! PR #198) but the C ABI has no `tst_tcp_demux_receiver_cancel` entry
+//! point yet (additive candidate, ABI 0.22) — `_close` simply drops the
+//! handle. Without a caller-reachable cancel path there is no
 //! `TST_E_CLOSED`-vs-`TST_E_END_OF_STREAM` discrimination: a graceful
 //! transport close maps to `TST_E_END_OF_STREAM`.
 
