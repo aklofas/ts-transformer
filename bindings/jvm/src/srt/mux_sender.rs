@@ -13,7 +13,11 @@
 //! `MuxSender<SrtTransport>`; per-call methods lease via `REGISTRY.with` (every
 //! `MuxSender::send_*`/`stats`/`is_alive` takes `&self`, serialising internally
 //! via its own `Mutex<Inner>`), so concurrent pushes from multiple Java threads
-//! are sound. `nClose` takes + drops via `REGISTRY.close`.
+//! are sound. `nClose` takes + drops via `REGISTRY.close`, which fires the
+//! shell's cancel target BEFORE taking that resource lock (see [`register`]),
+//! so a `send*` parked on another thread — libsrt's `srt_sendmsg` blocked on a
+//! full send buffer — ends with `SrtException(BROKEN)` instead of holding
+//! `close()` hostage.
 //! `Socket::nIntoMuxSender` CONSUMES a `Socket` (via `REGISTRY_SOCKET.close`) and
 //! returns a fresh handle.
 //!
@@ -59,6 +63,22 @@ fn throw_mux_sender_error(env: &mut JNIEnv, e: &MuxSenderError) {
         // generic SrtException(IO) with the Display message preserved.
         _ => throw_srt(env, "IO", &e.to_string()),
     }
+}
+
+/// Register a plain `MuxSender`, capturing its cancel target BEFORE the shell
+/// is boxed so `nCancelHandle` never needs the resource lock a parked send
+/// holds. Cancel-on-close: `nClose` fires `target` before taking the resource
+/// lock, so a `send*` parked on another thread (libsrt's blocking `srt_sendmsg`
+/// on a full send buffer) ends promptly with `SrtException(BROKEN)` — the plain
+/// cancel closes the socket under the parked send — instead of holding
+/// `close()` hostage. The contract the C ABI's `tst_mux_sender_close` and the
+/// plain srt receivers (`demux_receiver.rs::register`) already have. A fresh
+/// `SrtTransport` always has a cancel handle.
+fn register(sender: Inner) -> jlong {
+    let target = sender
+        .cancel_handle()
+        .expect("a fresh SrtTransport always returns Some(cancel_handle)");
+    REGISTRY.insert_cancel_on_close(sender, target, None) as jlong
 }
 
 /// Build a `MuxSender<SrtTransport>` from a parsed caller-mode URL + a built
@@ -108,7 +128,7 @@ fn build_from_url(
     };
 
     match RustMuxSender::new(SrtTransport::new(socket), cfg) {
-        Ok(sender) => REGISTRY.insert(sender) as jlong,
+        Ok(sender) => register(sender),
         Err(e) => {
             throw_mux_error(env, &e);
             0
@@ -663,7 +683,7 @@ pub extern "system" fn Java_org_tstrans_srt_Socket_nIntoMuxSender<'local>(
         };
 
         match RustMuxSender::new(SrtTransport::new(socket), cfg) {
-            Ok(sender) => REGISTRY.insert(sender) as jlong,
+            Ok(sender) => register(sender),
             Err(e) => {
                 throw_mux_error(env, &e);
                 0

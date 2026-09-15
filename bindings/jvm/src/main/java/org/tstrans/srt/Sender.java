@@ -134,7 +134,9 @@ public final class Sender extends NativeHandle {
     }
 
     /**
-     * Close the sender. Best-effort flushes any buffered partial bundle, then
+     * Close the sender. Cancels the socket first, so a {@link #sendBytes} parked
+     * on another thread ends with {@code SrtException(BROKEN)} and this call
+     * returns promptly; then best-effort flushes any buffered partial bundle and
      * closes the underlying libsrt socket. Idempotent — subsequent calls are
      * no-ops. After close, further {@link #sendBytes}/{@link #flush} calls
      * throw {@code IllegalStateException}.

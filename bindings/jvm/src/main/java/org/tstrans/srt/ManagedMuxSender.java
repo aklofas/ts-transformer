@@ -400,8 +400,12 @@ public final class ManagedMuxSender extends NativeHandle {
     }
 
     /**
-     * Close the sender. Best-effort drains any pending bytes, then drops the
-     * underlying managed transport. Idempotent — subsequent calls are no-ops.
+     * Close the sender. Cancels the managed transport first, so a {@code send*}
+     * parked on another thread — in a live send, the reconnect backoff, or a
+     * re-dial — ends with {@code SrtException(CLOSED)} and this call returns
+     * promptly instead of waiting out the reconnect budget; then best-effort
+     * drains any pending bytes and drops the transport. Idempotent —
+     * subsequent calls are no-ops.
      */
     @Override public void close() { super.close(); }
 

@@ -343,8 +343,12 @@ public final class MuxSender extends NativeHandle {
     }
 
     /**
-     * Close the sender. Best-effort drains any pending bytes, then drops the
-     * underlying SRT transport. Idempotent — subsequent calls are no-ops.
+     * Close the sender. Cancels the transport first, so a {@code send*} parked
+     * on another thread (libsrt blocked on a full send buffer) ends with
+     * {@code SrtException(BROKEN)} and this call returns promptly; then
+     * best-effort drains any pending bytes and drops the underlying SRT
+     * transport. Idempotent — subsequent calls are no-ops. A {@code close()}
+     * with nothing parked simply closes.
      */
     @Override public void close() { super.close(); }
 
