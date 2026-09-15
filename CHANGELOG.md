@@ -681,34 +681,6 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed — pipeline (WP-3)
 
-- (pending)
-
-### Fixed — rtp (WP-4a)
-
-- (pending)
-
-### Fixed — tcp/udp (WP-4b)
-
-- (pending)
-
-### Fixed — rist/hls (WP-4c)
-
-- (pending)
-
-### Fixed — python (WP-5)
-
-- (pending)
-
-### Fixed — jvm (WP-6)
-
-- (pending)
-
-### Fixed — core (WP-2)
-
-- (pending)
-
-### Fixed — pipeline (WP-3)
-
 - **`ManagedTransport` (send side): `close()` and `Drop` now wake a
   background worker parked inside the inner transport's `send_bytes`.**
   Both stored the close latch and signalled the backoff wait, but only
@@ -742,11 +714,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   cancel-first, every managed close used to drop that AU. The managed
   shell is now a thin wrapper over `DemuxReceiver<ManagedRecvTransport<R>>`
   (one flush/terminal-error contract) and gains **`add_byte_sink`**
-  (additive), with the same per-packet fan-out contract as the plain
-  shell; the first post-reconnect packet, discarded before parsing, is
-  not shown to sinks. Public signatures, reconnect-discontinuity
-  semantics (reset + `ReconnectDiscontinuity` + first-packet drop) and
-  `RecvEndReason` recording are unchanged.
+  (additive), with the same per-packet fan-out contract as the plain shell;
+  the first post-reconnect packet, discarded before parsing, is not shown to
+  sinks, and the shell now also flushes pending PES reassembly on
+  `TransportBroken`, not only `Closed`. Public signatures and reconnect-
+  discontinuity semantics (reset + `ReconnectDiscontinuity` + first-packet
+  drop) are unchanged; which `RecvEndReason` is recorded for which terminal
+  condition is also unchanged, but it is now recorded when the deferred
+  terminal result is returned, after any flushed samples.
 
 ### Fixed — rtp (WP-4a)
 
@@ -765,18 +740,6 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - (pending)
 
 ### Fixed — jvm (WP-6)
-
-- (pending)
-
-### Testing — interop harness (WP-7a)
-
-- (pending)
-
-### Testing — interop harness (WP-7b)
-
-- (pending)
-
-### Testing — CI/rails (WP-8)
 
 - (pending)
 
