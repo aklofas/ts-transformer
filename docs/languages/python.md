@@ -449,10 +449,11 @@ it.
 
 ### Cancellation
 
-`Sender` / `Receiver` / `Listener` (and the `DemuxReceiver` shell) expose
-`cancel_handle()`; calling `.cancel()` from another thread wakes a thread
-parked in `send_bytes` / `recv_bytes` / `accept` within ~3–10 ms,
-surfacing `SrtError(BROKEN)` or `SrtError(CLOSED)`:
+Every SRT shell exposes `cancel_handle()` — `Sender` / `Receiver` /
+`Listener`, `MuxSender` / `DemuxReceiver`, and the four `Managed*`
+shells; calling `.cancel()` from another thread wakes a thread parked in
+`send_bytes` / `send_video` / `recv_bytes` / `accept` / `__next__` within
+~3–10 ms, surfacing `SrtError(BROKEN)` or `SrtError(CLOSED)`:
 
 ```python
 tx = Sender.from_url("srt://host:9000?mode=caller")
@@ -464,11 +465,25 @@ cancel.cancel()   # wakes tx.send_bytes() → SrtError(BROKEN | CLOSED)
 `is_cancelled()` is per-clone, but `cancel()` on any clone wakes the shared
 socket.
 
-`Receiver.close()` and `DemuxReceiver.close()` cancel first: calling either
-from another thread while `recv_bytes()` / `__next__` is parked wakes that
-call (it raises `SrtError(BROKEN)` — the cancel closes the socket under it)
-and returns promptly. The managed shells surface the same close as
-`SrtError(CLOSED)`.
+**Closing from another thread.** Every `tstrans.srt` shell's `close()`
+cancels first, then frees the object, so it is safe to call from a
+thread other than the one parked in a blocking call: the parked call ends
+promptly and `close()` returns without waiting behind it. What the parked
+call raises is the shell's cancel kind: the plain shells (`Sender`,
+`Receiver`, `MuxSender`, `DemuxReceiver`, `Listener`) surface
+`SrtError(BROKEN)` or `SrtError(CLOSED)` — the cancel closes the libsrt
+socket under the call and libsrt reports it either way — while the four
+`Managed*` shells always surface `SrtError(CLOSED)` (the managed wrapper
+latches its own close flag before the socket goes). The same holds for
+`tstrans.rtp` (`RtpError(CANCELLED)`; `H264Receiver.recv_au()` returns
+`None`), `tstrans.tcp` (`TcpError(CLOSED)`), and `tstrans.udp` /
+`tstrans.rist` (`UdpError(CLOSED)` / `RistError(CLOSED)`, see below).
+
+A cancel-first `close()` is abortive by design: for the raw-bytes
+`Sender`, a partial 7-packet bundle still in the framing buffer is not
+delivered — call `flush()` first when the tail matters. (`MuxSender`
+already closed cancel-first; on the Rust side `finish()` is the lossless
+alternative.)
 
 ### SRT convenience (`MuxSender` / `DemuxReceiver`)
 
@@ -605,11 +620,10 @@ raises `SrtError(CLOSED)` promptly in all three). `ManagedReceiver`, the
 raw-bytes sibling, covers the same three phases — a parked `recv_bytes`
 raises `SrtError(CLOSED)` just as promptly. The one accept neither class
 can cancel is the *first* one, inside `from_url` itself: the handle that
-would fire it does not exist until the constructor returns. Take
-`ManagedReceiver.cancel_handle()` *before* the first `recv_bytes` and
-hand it to the thread that will do the cancelling — `recv_bytes` holds
-the object's mutable borrow for the whole blocking call, so asking for
-the handle while one is parked raises `RuntimeError: Already borrowed`.
+would fire it does not exist until the constructor returns. `cancel_handle()` can be obtained at any time, including while another
+thread is parked in `recv_bytes` — every method borrows the object
+immutably — and `close()` from that other thread is equivalent to
+`cancel()` followed by freeing the shell.
 
 **Stats drift on the managed shells** (mirrors the JVM binding):
 `ManagedSender.srt_stats()` and `ManagedReceiver.srt_stats()` raise
@@ -776,6 +790,18 @@ def watchdog(rx, pid, stop_event):
             print(f"pid {pid:#x} has gone quiet")
         time.sleep(1.0)
 ```
+
+One caveat: `last_seen_micros()` reads the receiver's per-stream stats
+under the same lock the iterating thread holds for the whole of a
+blocking `next()`. The watchdog above therefore waits (with the GIL
+released — other threads keep running) until the next event, timeout, or
+cancel lets the iterator release that lock, and a receiver that has gone
+completely quiet with no `?recv_timeout=` makes the poll block for as
+long as the silence lasts. Give the receiver a `?recv_timeout=` deadline
+(the iterator then raises `RtpError(TIMEOUT)` / `SrtError(WOULD_BLOCK)`
+every `<ms>` and the lock cycles), or poll `last_seen_micros()` from the
+consuming thread between events. The `end_reason()` getters, by contrast,
+are lock-free and safe to poll from a watchdog at any time.
 
 The same method exists on `tstrans.srt.DemuxReceiver` and
 `tstrans.srt.ManagedDemuxReceiver`.
@@ -1022,7 +1048,10 @@ with RecvTransport.builder().bind_url("udp://@239.0.0.1:5000").build() as rx:
 `recv()` returns `(payload, sender_addr)` — the address string is
 currently always `""`. Use `udp://@group:port` (the `@` prefix) on
 `bind_url` for a multicast join; `RecvTransport.local_addr_port()` reads
-back an ephemeral port when you bind `:0`.
+back an ephemeral port when you bind `:0`. `close()` from another thread
+ends a parked `recv()` with `UdpError(CLOSED)` within about 100 ms (the
+binding slices the kernel wait into short polls and checks a stop flag
+between them — the Rust crate itself has no cancel handle).
 
 ### TCP (`tstrans.tcp`)
 
@@ -1051,6 +1080,14 @@ listeners serve TLS via `Listener.builder().bind("host:0").tls(cert,
 key)` (PEM file paths). `Listener.builder().bind("host:0")` plus
 `local_port()` gives you an ephemeral port.
 
+`recv(buf)` refuses an empty `bytearray` with `ValueError`, and keeps
+`buf` exported while it blocks: a resize of `buf` from another thread in
+that window raises `BufferError` there, and the received bytes always
+land in the buffer at the length you passed. `Listener.close()` and
+`Transport.close()` are safe from another thread — a parked
+`accept_blocking()` / `recv()` ends with `TcpError(CLOSED)` within
+~100 ms.
+
 ### RIST (`tstrans.rist`)
 
 ```python
@@ -1075,6 +1112,10 @@ convention); omit it on the sender's `url`. Mixing them up raises
 each force `RistProfile.MAIN` (the profile that carries encryption); the
 default is `RistProfile.SIMPLE`. Both transports return a `RistStats`
 snapshot from `stats()`.
+
+`close()` from another thread ends a parked `recv()` with
+`RistError(CLOSED)` within about 100 ms (a stop flag checked between the
+librist 100 ms poll windows).
 
 ## HLS publisher (`tstrans.hls`)
 

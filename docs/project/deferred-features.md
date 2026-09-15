@@ -1337,11 +1337,14 @@ mean **Deferred**. An entry whose feature has shipped must never read
   `tst-udp` and `tst-rist` have no equivalent. Both `recv_bytes` and
   `close` take `&mut self`, so calling `close()` while a `recv` is in
   flight is not possible in safe Rust — there is no race-free way to
-  interrupt a live receive from another thread. Cooperative shutdown
-  requires a finite per-call timeout plus a caller-side stop flag checked
-  between calls. The Python bindings document this explicitly: "there is
-  no race-free way to interrupt a live recv(); close() is only safe to
-  call after recv() returns."
+  interrupt a live receive from another thread.
+  Cooperative shutdown in Rust requires a finite per-call timeout plus a
+  caller-side stop flag checked between calls. The Python bindings
+  implement exactly that loop internally: `tstrans.udp.RecvTransport` and
+  `tstrans.rist.RecvTransport` poll in ≤100 ms slices and their `close()`
+  ends a parked `recv()` from another thread with `CLOSED`, so the
+  single-thread recv/close contract is lifted for Python only; the Rust
+  crates are unchanged.
 - **Why deferred:** Cooperative timeout-based shutdown covers the
   operational need for graceful teardown. A cancel handle is permanent
   public API on two crates plus up to three binding mirrors; no consumer
@@ -1352,8 +1355,7 @@ mean **Deferred**. An entry whose feature has shipped must never read
 - **Trigger to revisit:** A consumer needs to interrupt a parked
   UDP or RIST receive from a thread that does not own the transport
   (for example, a signal handler that cannot reach the transport
-  object), or the Python bindings need to lift the documented single-
-  thread recv/close contract for these transports.
+  object).
 
 ## UDP multicast: IPv6 interface selection by name / scope-id
 

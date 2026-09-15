@@ -308,7 +308,7 @@ filtering by kind is not the issue).
 
 ## UDP / RIST receive cancellation
 
-**A UDP or RIST `recv` blocks forever and cannot be stopped from another thread**
+**A UDP or RIST `recv` blocks forever and cannot be stopped from another thread (Rust)**
 
 **Symptom:** a thread parked in `UdpRecvTransport::recv_bytes` (or the
 Python equivalent) does not return when another thread tries to shut it
@@ -316,21 +316,22 @@ down. SRT, RTP, and TCP expose a cloneable cancel handle
 (`SrtCancelHandle` / `RtpCancelHandle` / `TcpCancelHandle`) that can be
 fired from any thread; UDP and RIST have no equivalent.
 
-**Diagnosis:** there is no race-free way to interrupt a live UDP or RIST
-receive from another thread. Both `recv_bytes` and `close()` take `&mut
-self`, so they cannot be called concurrently in safe Rust — calling
-`close()` from another thread while `recv` is in flight is not possible
-without unsafe code, and wrapping the transport in a `Mutex` just
-reproduces the GIL-freeze shape (the mutex blocks the closer until the
-recv finishes, so nothing is gained). The supported shutdown pattern is
-cooperative: pass a finite per-call timeout and check a stop flag between
-calls. See the [deferred-features entry](/docs/project/deferred-features.md)
-for the deferral rationale.
+**Diagnosis:** the Rust crates have no cancel handle for UDP or RIST: both
+`recv_bytes` and `close()` take `&mut self`, so in Rust the supported
+shutdown is cooperative — a finite per-call timeout plus a stop flag
+checked between calls (`recv_timeout` on `UdpRecvTransport`; the 100 ms
+`Backpressure` poll on `RistRecvTransport`). The Python bindings build
+that loop in: `tstrans.udp.RecvTransport.recv()` and
+`tstrans.rist.RecvTransport.recv()` poll in ≤100 ms slices and `close()`
+from another thread ends the parked call with `UdpError(CLOSED)` /
+`RistError(CLOSED)`. See the [deferred-features
+entry](/docs/project/deferred-features.md) for the Rust-side rationale.
 
-**Fix:** use `recv_timeout` (UDP Rust) or `timeout_ms` (Python UDP/RIST)
-for a bounded per-call deadline, and check a stop flag in the caller loop.
-The owning thread calls `close()` once it decides to stop, between `recv`
-calls:
+**Fix (Rust):** use `recv_timeout` (UDP) or catch `Backpressure` (RIST)
+for a bounded per-call deadline, and check a stop flag in the caller
+loop. **Fix (Python):** call `close()` from the stopping thread; or keep
+`timeout_ms` for a bounded deadline as before. The Rust owning thread
+calls `close()` once it decides to stop, between `recv` calls:
 
 ```rust,ignore
 use std::sync::atomic::{AtomicBool, Ordering};
