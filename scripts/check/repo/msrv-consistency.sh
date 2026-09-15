@@ -67,7 +67,7 @@ sites() {
 # ---------------------------------------------------------------------------
 run_check() {
   local pinned
-  pinned="$(sed -nE 's/^channel[[:space:]]*=[[:space:]]*"([0-9]+\.[0-9]+(\.[0-9]+)?)".*/\1/p' "$TOOLCHAIN_FILE" | head -1)"
+  pinned="$(sed -nE 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"([0-9]+\.[0-9]+(\.[0-9]+)?)".*/\1/p' "$TOOLCHAIN_FILE" | head -1)"
   if [ -z "$pinned" ]; then
     echo "FAIL: could not read a numeric channel from $TOOLCHAIN_FILE (a 'stable'/'nightly' channel is not an MSRV pin)" >&2
     return 1
@@ -134,7 +134,7 @@ self_test() {
   # sed only (no GNU `0,/re/`, no `-i`).
   plant() {
     local f="$tmp/tree/$1" pinned esc
-    pinned="$(sed -nE 's/^channel[[:space:]]*=[[:space:]]*"([0-9.]+)".*/\1/p' "$tmp/tree/rust-toolchain.toml")"
+    pinned="$(sed -nE 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"([0-9.]+)".*/\1/p' "$tmp/tree/rust-toolchain.toml")"
     esc="$(printf '%s' "$pinned" | sed 's/\./\\./g')"
     sed "s/$esc/9.99/g" "$f" > "$f.new"
     mv "$f.new" "$f"

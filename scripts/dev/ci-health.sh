@@ -78,6 +78,16 @@ if [ -z "${CI_HEALTH_RUNS_JSON:-}" ]; then
 fi
 # "name:count;name:count" sorted by count desc — the per-job rerun table.
 rerun_jobs="$(sort "$tmp/rerun-jobs.txt" | uniq -c | sort -rn | awk '{c=$1; $1=""; sub(/^ /,""); printf "%s%s:%d", (NR>1?";":""), $0, c}')"
+# Human-readable display only: in offline mode (CI_HEALTH_RUNS_JSON) the jobs
+# endpoint is never queried, so an empty $rerun_jobs means "not computed", not
+# "zero reruns" — say so instead of printing "none" (Copilot review, PR #224).
+# The CSV field itself stays the raw (possibly empty) $rerun_jobs — a prose
+# string there would break machine parsing of docs/project/ci-health.csv.
+if [ -n "${CI_HEALTH_RUNS_JSON:-}" ]; then
+  rerun_jobs_display="unavailable (offline mode — no jobs API query)"
+else
+  rerun_jobs_display="${rerun_jobs:-none}"
+fi
 
 # ---- 3. report --------------------------------------------------------------
 {
@@ -87,10 +97,14 @@ rerun_jobs="$(sort "$tmp/rerun-jobs.txt" | uniq -c | sort -rn | awk '{c=$1; $1="
   echo "  rerun runs (attempt>1): $rerun_runs"
   echo "  wedges (> ${WEDGE_MIN} min):  $wedges"
   echo "  unrecovered failures:  $unrecovered"
-  echo "  rerun jobs:            ${rerun_jobs:-none}"
+  echo "  rerun jobs:            $rerun_jobs_display"
   echo
   echo "  per-workflow:"
-  jq -r 'group_by(.name) | .[] | "    \(.[0].name): \(length) runs, \([.[] | select(.run_attempt > 1)] | length) reruns, \([.[] | select(.conclusion == "failure")] | length) failures, max \(map(.minutes) | max) min"' "$tmp/runs.json"
+  # jq's group_by assumes sorted input (it groups by contiguous run, not by
+  # equal key across the whole array) — sort_by first, or identically-named
+  # workflows split into multiple bogus groups if they weren't adjacent in
+  # the API's newest-first ordering (Copilot review, PR #224).
+  jq -r 'sort_by(.name) | group_by(.name) | .[] | "    \(.[0].name): \(length) runs, \([.[] | select(.run_attempt > 1)] | length) reruns, \([.[] | select(.conclusion == "failure")] | length) failures, max \(map(.minutes) | max) min"' "$tmp/runs.json"
 } | tee "$tmp/report.txt"
 
 sort "$tmp/rerun-jobs.txt" | uniq -c | while read -r count name; do
