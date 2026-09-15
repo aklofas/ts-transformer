@@ -29,9 +29,9 @@ fn cancel_handle(&self) -> Option<Arc<dyn TransportCancel + Send + Sync>>;
 ```
 
 `Option` because a transport may not support cancellation (a pure
-in-memory test mock returns `None`). All real transports — `SrtTransport`,
-`SrtRecvTransport`, and `ManagedTransport` decorating either of them —
-return `Some`.
+in-memory test mock returns `None`). All real transports — `SrtTransport`
+(implements both `Transport` and `RecvTransport`) and `ManagedTransport`
+decorating it — return `Some`.
 
 `tst-srt`'s `Socket::cancel_handle()` and `Listener::cancel_handle()`
 return the concrete `SrtCancelHandle` struct directly (no `Option`); these
@@ -233,7 +233,7 @@ attempts.
 
 ```rust,ignore
 use std::sync::Arc;
-use tst_pipeline::{FactoryCancel, ManagedRecvTransport, ReconnectPolicy, TransportError};
+use tst_pipeline::{BrokenCause, FactoryCancel, ManagedRecvTransport, ReconnectPolicy, TransportError};
 use tst_srt::{ListenerBuilder, SrtTransport};
 
 let factory_cancel = Arc::new(FactoryCancel::new());
@@ -243,14 +243,14 @@ let factory = Box::new(move || -> Result<SrtTransport, TransportError> {
         return Err(TransportError::ExplicitClose);
     }
     let mut listener = ListenerBuilder::new().bind("0.0.0.0:9000")
-        .map_err(|e| TransportError::Broken { msg: e.to_string(), errno_code: None })?;
+        .map_err(|e| TransportError::Broken { msg: e.to_string(), errno_code: None, cause: BrokenCause::Unspecified })?;
     fc.install(Arc::new(listener.cancel_handle()));   // `SrtCancelHandle: TransportCancel`
     let accepted = listener.accept();
     fc.clear();
     match accepted {
         Ok((socket, _peer)) => Ok(SrtTransport::new(socket)),
         Err(_) if fc.is_cancelled() => Err(TransportError::ExplicitClose),
-        Err(e) => Err(TransportError::Broken { msg: e.to_string(), errno_code: None }),
+        Err(e) => Err(TransportError::Broken { msg: e.to_string(), errno_code: None, cause: BrokenCause::Unspecified }),
     }
 });
 let managed = ManagedRecvTransport::new_with_factory_cancel(initial, factory, ReconnectPolicy::default(), factory_cancel);

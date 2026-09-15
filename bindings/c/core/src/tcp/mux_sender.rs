@@ -13,8 +13,8 @@
 //! both `Transport` and `RecvTransport`. `MuxSender<TcpTransport>` uses
 //! the `Transport` side for sending.
 //!
-//! **No cancel:** the TCP transport does not expose a `cancel_handle()`,
-//! so there is no `tst_tcp_mux_sender_cancel` entry point. `_close`
+//! **No C-side cancel yet:** `TcpTransport` has a `cancel_handle()`, but there
+//! is no `tst_tcp_mux_sender_cancel` entry point to reach it. `_close`
 //! simply drops the handle.
 
 use std::os::raw::c_char;

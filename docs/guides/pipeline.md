@@ -260,9 +260,14 @@ internally where their thread-safety contract requires it.
   wire (bare transports also map a caller-initiated close to `Closed`).
 - `TooLarge { len, max }` — message exceeds `max_payload`. Caller is
   responsible for chunking on their own framing semantics.
-- `ExplicitClose` — caller invoked `close()` / `cancel()`. Today produced
-  only by `ManagedRecvTransport::recv_bytes` when its own cancel signal
-  fires; bare `SrtTransport` maps caller-close to `Closed` instead.
+- `ExplicitClose` — caller invoked `close()` / `cancel()`. Produced by
+  `ManagedRecvTransport` (its own cancel signal, before or during a
+  reconnect), by the RTP transports (`RtpTransport` / `RtpRecvTransport`
+  when their cancel handle fires under a parked call), and by
+  `tst_srt::Listener::accept_one_cancellable` (cancelled before or during
+  the accept). Bare `SrtTransport` does not produce it: a cancel closes the
+  socket under the parked call, which surfaces as `Broken`; bare
+  `TcpTransport` surfaces a cancel as `Closed`.
 
 Implement `Transport` for any byte sink that isn't an SRT socket: UDP,
 file, in-memory test harness, named pipe, TCP, your own protocol. The

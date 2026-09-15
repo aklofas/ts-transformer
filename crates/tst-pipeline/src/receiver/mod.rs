@@ -143,7 +143,7 @@ pub struct ReceiverConfig {}
 ///
 /// `Receiver` can produce: `Backpressure`, `TransportBroken`, `Closed`,
 /// `EndOfStream`. `Backpressure` is produced when the underlying transport
-/// (e.g. `SrtRecvTransport`) returns `TransportError::Backpressure` on a
+/// (e.g. `SrtTransport`) returns `TransportError::Backpressure` on a
 /// recv timeout. `InputMalformed` is reachable only via `DemuxReceiver`
 /// (which adds the demuxer layer on top); plain `Receiver` is
 /// byte-pass-through and doesn't validate TS structure.

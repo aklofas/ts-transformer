@@ -9,7 +9,8 @@
 > - The full set of supported SRT URL query parameters
 > - How `SrtCancelHandle` lets you cancel blocking I/O from another thread
 > - How `ManagedTransport` wraps a Socket for automatic reconnect
-> - When to use `SrtTransport` vs `SrtRecvTransport`
+> - Why `SrtTransport` implements both `Transport` and `RecvTransport` —
+>   sender vs. receiver is a preset choice, not a type choice
 
 ## Introduction
 
@@ -233,7 +234,9 @@ sender preset internally.
   setting a passphrase against that build fails at handshake.
 - Both peers must agree on passphrase and key length. A mismatch
   surfaces as `ConnectError::Rejected { reason: RejectReason::BadSecret, .. }`
-  on the caller and `AcceptError::PeerRejected` on the listener.
+  on the caller; the listener sees nothing — libsrt rejects the handshake
+  before `accept()` returns (the `AcceptError::PeerRejected` variant exists
+  but nothing produces it today).
 
 Paired listener and caller, mirroring
 [examples/encrypted_send_recv.rs](/examples/sending/encrypted_send_recv.rs):
@@ -454,7 +457,7 @@ Recovery summary:
 | --- | --- | --- |
 | `RecvError::TimedOut` | Yes | Continue / retry |
 | `RecvError::ConnectionBroken` | No | Close, re-bind / re-connect |
-| `SendError::QueueFull` | Yes | Backoff / retry |
+| `SendError::Other { kind: SrtErrno::Async, .. }` | Yes | Send buffer full (libsrt `EASYNCSND`) — backoff / retry. `SrtTransport` maps it to `TransportError::Backpressure`. (`SendError::QueueFull` exists but is never produced.) |
 | `SendError::ConnectionBroken` | No | Reconnect (consider `ManagedTransport`) |
 | `ConnectError::TimedOut` | Yes | Retry with longer timeout |
 | `ConnectError::Rejected { reason: BadSecret, .. }` | No | Verify passphrase match |

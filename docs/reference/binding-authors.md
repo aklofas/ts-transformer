@@ -36,7 +36,14 @@ let mut sender: BoxedMuxSender = MuxSender::new(transport, config)?;
 
 ### Java / Kotlin (JNI)
 
-Binding shape: opaque handle backed by `jlong` pointing at a `Box<BoxedMuxSender>`.
+Binding shape: the Java object holds a `long` handle **id**, not a pointer.
+The native side keeps the shell in a process-wide `HandleRegistry<T>`
+(`bindings/jvm/src/handle.rs`); every native call takes a short lease on
+the entry, so a use-after-close is a lookup miss (an
+`IllegalStateException`) rather than a dangling dereference, and `close()`
+cancels first (a receive parked in native code unparks) before it removes
+the entry. The sketch below is illustrative; the shipped classes live under
+`org.tstrans.*`.
 
 ```kotlin
 class MuxSender private constructor(private val handle: Long) : AutoCloseable {
@@ -56,27 +63,13 @@ MuxSender.open(url, config).use { sender ->
 }
 ```
 
-### Swift (UniFFI)
+### Swift / Kotlin (UniFFI)
 
-Binding shape: opaque struct with `deinit` calling close.
-
-```swift
-public class MuxSender {
-    private var handle: OpaquePointer?
-
-    public init(url: String, config: MuxerConfig) throws {
-        self.handle = try tst_mux_sender_open_url(url, config.toNative())
-    }
-    public func sendVideo(payload: Data, pts: Int64) throws {
-        try tst_mux_sender_send_video(handle, payload, pts)
-    }
-    deinit { tst_mux_sender_close(handle) }
-}
-
-// Swift idiomatic usage: defer { } block
-let sender = try MuxSender(url: url, config: config)
-defer { /* sender deinit closes automatically */ }
-```
+Not shipped. The planned `tst-uniffi` crate wraps the Rust crates directly
+(not the C ABI) over a binding-shared layer extracted from `tst-pipeline`;
+its shape — sync methods plus a cancel-token object, `ReconnectMode::Background`
+by default for managed senders, per-call receive timeouts — is decided in
+the tst-uniffi brainstorm and recorded here when it lands.
 
 ### Python (PyO3)
 
@@ -103,8 +96,8 @@ Binding shape: opaque handle (`tst_mux_sender_t *`) with explicit
 `tst_*_close`. See `bindings/c/include/tstrans.h` for the full ABI.
 
 ```c
-tst_mux_sender_t *sender = NULL;
-if (tst_mux_sender_open_url(url, &config, &sender) != TST_OK) { /* error */ }
+struct tst_mux_sender_t *sender = tst_mux_sender_open(url, &config);
+if (sender == NULL) { /* tst_get_last_error_str() describes the failure */ }
 tst_mux_sender_send_video(sender, payload, payload_len, pts_ticks);
 tst_mux_sender_close(sender);
 ```
@@ -191,8 +184,12 @@ above).
 
 ## Cancel handles
 
-Every long-lived shell exposes `cancel_handle()` returning a `SrtCancelHandle`
-that's `Send + Sync` and one-shot. Bindings should expose this as a
+Every long-lived shell exposes `cancel_handle()` returning
+`Option<Arc<dyn TransportCancel + Send + Sync>>` — `Some` for SRT
+(`SrtCancelHandle`), RTP (`RtpCancelHandle`) and TCP (`TcpCancelHandle`),
+`None` for UDP and RIST today (see "Cross-thread receive cancellation for
+UDP / RIST" in deferred-features.md). A handle is `Send + Sync` and
+one-shot. Bindings should expose it as a
 language-native shutdown primitive (e.g. Kotlin `Job.cancel()` analog,
 Swift `Task.cancel()` analog, Python `threading.Event`-shaped). See
 `docs/reference/srt-cancel-handle.md` for the full pattern.
