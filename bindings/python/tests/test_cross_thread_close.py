@@ -621,9 +621,17 @@ def test_rtp_sender_close_from_other_thread_during_send() -> None:
         w.join(5.0)
         _assert_close_ok(c, errs, "rtp.Sender")
         assert not w.is_alive(), "send loop did not end after close()"
-        exc = outcome.get("exc")
-        assert isinstance(exc, RtpError), f"send loop ended with {exc!r}"
-        assert exc.kind in (RtpErrorKind.CANCELLED, RtpErrorKind.TRANSPORT), exc.kind
+        # The worker loop only checks `stop` between iterations, so whether
+        # it happens to attempt one more send before noticing `stop` is a
+        # scheduling race, not a guarantee `send()` makes — on a loaded CI
+        # runner the worker can legitimately see `stop` first and exit
+        # clean, leaving `outcome` empty. `close()` above already
+        # returned, which deterministically guarantees the slot is empty;
+        # call `send()` directly to prove a post-close send is rejected
+        # without depending on the worker's own timing.
+        with pytest.raises(RtpError) as ei:
+            tx.send(RTP_BUNDLE)
+        assert ei.value.kind in (RtpErrorKind.CANCELLED, RtpErrorKind.TRANSPORT), ei.value.kind
         assert "closed" in repr(tx)
     finally:
         stop.set()
@@ -703,9 +711,15 @@ def test_rtp_mux_sender_close_from_other_thread_during_send_video() -> None:
         w.join(5.0)
         _assert_close_ok(c, errs, "rtp.MuxSender")
         assert not w.is_alive(), "send loop did not end after close()"
-        exc = outcome.get("exc")
-        assert isinstance(exc, RtpError), f"send loop ended with {exc!r}"
-        assert exc.kind in (RtpErrorKind.CANCELLED, RtpErrorKind.TRANSPORT), exc.kind
+        # See the identical comment in test_rtp_sender_close_from_other_
+        # thread_during_send: whether the worker attempts one more send
+        # before noticing `stop` is a scheduling race, not a guarantee.
+        # `close()` already returned, so the slot is deterministically
+        # empty; call `send_video()` directly to prove a post-close send
+        # is rejected without depending on the worker's own timing.
+        with pytest.raises(RtpError) as ei:
+            send_one()
+        assert ei.value.kind in (RtpErrorKind.CANCELLED, RtpErrorKind.TRANSPORT), ei.value.kind
         assert "closed" in repr(tx)
     finally:
         stop.set()
@@ -792,9 +806,18 @@ def test_udp_transport_close_from_other_thread_during_send() -> None:
         w.join(5.0)
         _assert_close_ok(c, errs, "udp.Transport")
         assert not w.is_alive(), "send loop did not end after close()"
-        exc = outcome.get("exc")
-        assert isinstance(exc, UdpError), f"send loop ended with {exc!r}"
-        assert exc.kind == UdpErrorKind.CLOSED, exc.kind
+        # See the identical comment in test_rtp_sender_close_from_other_
+        # thread_during_send: whether the worker attempts one more send
+        # before noticing `stop` is a scheduling race, not a guarantee —
+        # `udp.Transport` has no cancel handle at all (send() never
+        # parks), so there is even less reason to expect the worker to
+        # land another send before `stop` becomes visible to it. `close()`
+        # already returned, so the slot is deterministically empty; call
+        # `send()` directly to prove a post-close send is rejected without
+        # depending on the worker's own timing.
+        with pytest.raises(UdpError) as ei:
+            tx.send(TS_BUNDLE)
+        assert ei.value.kind == UdpErrorKind.CLOSED, ei.value.kind
         assert "closed" in repr(tx)
     finally:
         stop.set()
