@@ -44,11 +44,17 @@ fn tagged_stream() -> Vec<u8> {
 
 /// A peer that accepts, pins a tiny receive buffer, stalls for `stall`, then
 /// reads everything to EOF and hands the bytes back.
-fn stalling_peer(stall: Duration) -> (u16, mpsc::Receiver<Vec<u8>>) {
+///
+/// Returns the spawned thread's `JoinHandle` alongside the channel: if setup
+/// (`accept`/`set_recv_buffer_size`) panics, `tx` is dropped without ever
+/// sending, and a caller that only waits on `rx` sees a generic "did not
+/// hand back the stream" timeout with no hint why. Joining the handle after
+/// `rx` gives up re-raises the peer's actual panic message instead.
+fn stalling_peer(stall: Duration) -> (u16, mpsc::Receiver<Vec<u8>>, thread::JoinHandle<()>) {
     let listener = StdTcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let (tx, rx) = mpsc::channel::<Vec<u8>>();
-    thread::spawn(move || {
+    let handle = thread::spawn(move || {
         let (mut sock, _) = listener.accept().unwrap();
         socket2::SockRef::from(&sock)
             .set_recv_buffer_size(2048)
@@ -60,7 +66,20 @@ fn stalling_peer(stall: Duration) -> (u16, mpsc::Receiver<Vec<u8>>) {
         let _ = sock.read_to_end(&mut got);
         let _ = tx.send(got);
     });
-    (port, rx)
+    (port, rx, handle)
+}
+
+/// `rx.recv_timeout` came back empty (either it genuinely timed out, or the
+/// peer thread panicked mid-setup and dropped `tx` without sending). Join
+/// the peer thread — by this point it has either sent and is finishing, or
+/// has already panicked and finished — and re-raise its panic if it had
+/// one, so the real root cause surfaces instead of a generic timeout
+/// message.
+fn peer_panic_or(handle: thread::JoinHandle<()>, msg: &str) -> ! {
+    match handle.join() {
+        Err(panic_payload) => std::panic::resume_unwind(panic_payload),
+        Ok(()) => panic!("{msg}"),
+    }
 }
 
 /// CORR-22 / Q6 RED: a peer that stops reading for 500 ms (five write
@@ -70,7 +89,7 @@ fn stalling_peer(stall: Duration) -> (u16, mpsc::Receiver<Vec<u8>>) {
 /// the `expect` below fires.
 #[test]
 fn partial_write_stall_loopback_stream_stays_contiguous() {
-    let (port, got_rx) = stalling_peer(Duration::from_millis(500));
+    let (port, got_rx, peer_handle) = stalling_peer(Duration::from_millis(500));
     let url = format!("tcp://127.0.0.1:{port}?sndbuf=4096");
     let mut send = TcpTransport::connect(&url).expect("connect");
     let handle = send.cancel_handle();
@@ -114,9 +133,10 @@ fn partial_write_stall_loopback_stream_stays_contiguous() {
     sender.join().unwrap();
     outcome.expect("send_bytes must complete once the peer resumes reading");
 
-    let got = got_rx
-        .recv_timeout(Duration::from_secs(5))
-        .expect("peer did not hand back the stream");
+    let got = match got_rx.recv_timeout(Duration::from_secs(5)) {
+        Ok(got) => got,
+        Err(_) => peer_panic_or(peer_handle, "peer did not hand back the stream"),
+    };
     assert_eq!(got.len(), expected.len(), "byte count differs");
     assert!(
         got == expected,
@@ -152,8 +172,11 @@ fn partial_write_stall_loopback_stream_stays_contiguous() {
 /// the loop is bounded by `cancel()` either way.
 #[test]
 fn partial_write_stall_loopback_cancel_unblocks_parked_send() {
-    // A 60 s stall is "never" for this test; the thread is detached.
-    let (port, _got_rx) = stalling_peer(Duration::from_secs(60));
+    // A 60 s stall is "never" for this test; the thread (and its handle) is
+    // detached — this test never inspects the peer's received bytes, so a
+    // peer-setup panic (same narrow accept/SO_RCVBUF path as the other
+    // test) has nothing here to silently swallow.
+    let (port, _got_rx, _peer_handle) = stalling_peer(Duration::from_secs(60));
     let url = format!("tcp://127.0.0.1:{port}?sndbuf=4096");
     let mut send = TcpTransport::connect(&url).expect("connect");
     let handle = send.cancel_handle();

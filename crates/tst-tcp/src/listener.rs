@@ -120,7 +120,12 @@ impl TcpListener {
     /// Cancellable: [`Self::cancel_handle`] / [`Self::close`] drop the alive
     /// flag and a parked accept returns [`TcpError::Closed`] at its next
     /// [`ACCEPT_POLL_INTERVAL`] poll (~5 ms); every later call returns it at
-    /// the entry check.
+    /// the entry check. A close that lands after a connection has already
+    /// been pulled off the kernel backlog but before this method returns is
+    /// also caught (a re-check right after `accept()` succeeds) — the
+    /// accepted socket is dropped and this still returns
+    /// [`TcpError::Closed`], so a caller never receives a stream after its
+    /// `close()`/`cancel()` call has returned on another thread.
     ///
     /// **Accept latency ceiling:** unlike `recv_bytes`/`send_bytes`, whose
     /// `SO_RCVTIMEO`/`SO_SNDTIMEO` wake the thread the instant data or
@@ -156,6 +161,17 @@ impl TcpListener {
                 Err(e) => return Err(TcpError::Io(e)),
             }
         };
+        // A close()/cancel() can land in the gap between the loop's `alive`
+        // check and `accept()` returning a connection that was already
+        // sitting in the kernel's backlog — `accept()` never blocks on a
+        // pending connection, so that gap is real, not just theoretical.
+        // Re-check here so a racing close still gets what it promised
+        // (a parked OR a just-unblocked accept never hands out a stream)
+        // instead of silently accepting one more peer after `close()`
+        // returned on another thread. `sock`'s drop closes the fd.
+        if !self.alive.load(Ordering::Acquire) {
+            return Err(TcpError::Closed);
+        }
         // The listening socket is non-blocking only so the loop above can
         // observe `alive`. The accepted stream must NOT be: `apply_knobs`'
         // read/write timeouts are meaningless on a non-blocking socket and
@@ -194,7 +210,27 @@ impl TcpListener {
 mod accepted_stream_mode_tests {
     use super::TcpListener;
     use crate::transport::InnerStream;
-    use std::os::fd::AsRawFd;
+    use std::io;
+    use std::os::fd::{AsRawFd, RawFd};
+
+    /// `fcntl(F_GETFL)` returns -1 on error (with `errno` set) — and -1 has
+    /// every bit set, `O_NONBLOCK` included, so a caller that only checks
+    /// `flags & O_NONBLOCK` without first ruling out -1 can read an fcntl
+    /// failure as "non-blocking" (a false pass) or, for an `== 0` assertion,
+    /// as "not non-blocking" (a false fail) — either way the wrong signal.
+    /// Fail loudly on the error case instead of trusting -1 as data.
+    fn get_flags(fd: RawFd) -> libc::c_int {
+        // SAFETY: F_GETFL takes no argument and only reads the descriptor's
+        // status flags; the caller owns `fd` for the duration of this call.
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        assert_ne!(
+            flags,
+            -1,
+            "fcntl(F_GETFL) failed: {}",
+            io::Error::last_os_error()
+        );
+        flags
+    }
 
     /// The listening socket is non-blocking (the cancel poll needs it); the
     /// accepted stream must be blocking or the transports' 100 ms socket
@@ -208,9 +244,7 @@ mod accepted_stream_mode_tests {
         let _peer = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
         let accepted = listener.accept_blocking().unwrap();
 
-        // SAFETY: F_GETFL takes no argument and only reads the descriptor's
-        // status flags; the fd is owned by `listener` for the whole call.
-        let listen_flags = unsafe { libc::fcntl(listener.inner.as_raw_fd(), libc::F_GETFL) };
+        let listen_flags = get_flags(listener.inner.as_raw_fd());
         assert!(
             listen_flags & libc::O_NONBLOCK != 0,
             "listener must poll non-blocking"
@@ -222,8 +256,7 @@ mod accepted_stream_mode_tests {
         let InnerStream::Plain(stream) = &accepted.inner else {
             panic!("plain listener must hand back a plain stream");
         };
-        // SAFETY: as above — read-only query on a descriptor `accepted` owns.
-        let flags = unsafe { libc::fcntl(stream.as_raw_fd(), libc::F_GETFL) };
+        let flags = get_flags(stream.as_raw_fd());
         assert_eq!(
             flags & libc::O_NONBLOCK,
             0,
