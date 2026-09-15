@@ -381,6 +381,14 @@ pub struct CorruptionStats {
     /// non-zero value means something upstream already emitted a
     /// malformed packet, which would invalidate the run's evidence.
     pub passthrough_unclassified: u64,
+    /// A log line could not be written or flushed. Latched for the run:
+    /// the missing injection may be one the receiver had no obligation
+    /// to notice (a `Dup`), so nothing downstream would otherwise reveal
+    /// that the evidence is incomplete. `report soak` fails
+    /// `corruption_coverage_<leg>` on it regardless of the ingestion
+    /// floor. `#[serde(default)]` so archived send reports still parse.
+    #[serde(default)]
+    pub log_write_failed: bool,
 }
 
 /// One line of the JSONL log. Serde's external tagging renders this as
@@ -1118,9 +1126,11 @@ impl<T: Transport> Corrupter<T> {
             self.last_injection = Some(ordinal);
             if let Err(e) = self.write_line(&LogLine::Injection(injection)) {
                 // Losing a line cannot be repaired here, and must not stop
-                // the run. It fails LOUD rather than silent: the receiver
-                // will report the resulting event as unexplained, which is
-                // a FAIL verdict.
+                // the run — but it must not be silent either. A missing
+                // DETECTABLE injection surfaces later as an unexplained
+                // event; a missing `Dup` or body flip never would, so the
+                // stats carry the failure for `report soak` to fail on.
+                stats.log_write_failed = true;
                 tracing::error!("corruption log write failed at packet {ordinal}: {e}");
             }
         }
@@ -2547,6 +2557,77 @@ mod tests {
             classes: classes.to_vec(),
             seed: 7,
         }
+    }
+
+    /// A log writer that refuses exactly one whole line: the `nth`
+    /// JSON write (1 = the header, 2 = the first injection). `write_line`
+    /// writes the JSON then the newline, so failing the JSON write drops
+    /// the whole line cleanly — no torn line, no trace in the file.
+    struct FailOneLine {
+        inner: testing::VecWriter,
+        nth: usize,
+        lines: usize,
+    }
+    impl Write for FailOneLine {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            if b != b"\n" {
+                self.lines += 1;
+                if self.lines == self.nth {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::BrokenPipe,
+                        "disk full",
+                    ));
+                }
+            }
+            self.inner.write(b)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.inner.flush()
+        }
+    }
+
+    /// X-CORR-05 (E05): a lost injection line is not necessarily an
+    /// unexplained event later — a `Dup` obliges the receiver to notice
+    /// nothing — so the tap must latch the failure into its own stats
+    /// rather than rely on the receiver to trip over the gap.
+    #[test]
+    fn corruption_log_write_failure_is_latched_in_the_stats() {
+        let b = baseline_bytes(6.0, "log-fail");
+        let sink = Arc::new(Mutex::new(Vec::new()));
+        let log = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let mut tap = Corrupter::new(
+            Capture(Arc::clone(&sink)),
+            cfg(&[Class::Dup], 10_000, 1000),
+            Box::new(FailOneLine {
+                inner: testing::VecWriter(Arc::clone(&log)),
+                nth: 2,
+                lines: 0,
+            }),
+        )
+        .unwrap();
+        for chunk in b.chunks(1316) {
+            tap.send_bytes(chunk).unwrap();
+        }
+        let stats = tap.stats();
+        // `garbage_inserts_1_to_300_non_sync_bytes…` proves 6 s of compact
+        // baseline yields at least one injection at this rate/min_gap;
+        // the failing line is the FIRST injection's (JSON write #2), so
+        // one injection is all the latch needs.
+        assert!(
+            stats.injections >= 1,
+            "6 s of baseline at min_gap 1000 injects at least once"
+        );
+        let text = String::from_utf8(log.lock().unwrap().clone()).unwrap();
+        let (_, logged) = parse_log(&text).expect("the surviving lines still parse");
+        assert_eq!(
+            logged.len() as u64,
+            stats.injections - 1,
+            "exactly one line is missing"
+        );
+        assert!(
+            stats.log_write_failed,
+            "the tap must record that a line was lost: {stats:?}"
+        );
     }
 
     /// On a PAT/PMT packet the `Header` class must use ONLY the sync-byte
