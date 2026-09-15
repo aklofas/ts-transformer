@@ -381,6 +381,28 @@ public final class ManagedMuxSender extends NativeHandle {
     }
 
     /**
+     * Return a shareable cancel handle. Calling {@link CancelHandle#cancel()}
+     * latches the managed wrapper's close flag (preventing further reconnects)
+     * and wakes a thread parked in any {@code send*} — a live send, the
+     * reconnect backoff, or a re-dial; that send then throws
+     * {@code SrtException(CLOSED)}.
+     *
+     * <p>Safe to call from another thread at any time while the sender is open,
+     * including while a send is parked and while a reconnect is in flight: the
+     * cancel target is captured when the sender is opened and follows the
+     * managed transport across reconnects, so this call never waits for an
+     * in-flight native send.
+     *
+     * @return a new {@link CancelHandle}
+     * @throws IllegalStateException if the sender is closed
+     */
+    public CancelHandle cancelHandle() {
+        ensureOpen("ManagedMuxSender is closed");
+        long ch = nCancelHandle(peekHandle());
+        return new CancelHandle(ch);
+    }
+
+    /**
      * Reconnect/gap telemetry: attempts, successes, current gap-buffer depth, and
      * drop counters. Always readable — unlike {@link #stats()}, it does not
      * require a live inner transport (the counters live in a side channel that
@@ -463,6 +485,7 @@ public final class ManagedMuxSender extends NativeHandle {
     private static native TransportStats nStats(long handle);
     private static native long nReconnectAttempts(long handle);
     private static native ManagedTransportStats nReconnectStats(long handle) throws SrtException;
+    private static native long nCancelHandle(long handle);
     private static native void nClose(long handle);
     private static native boolean nIsAlive(long handle);
 }

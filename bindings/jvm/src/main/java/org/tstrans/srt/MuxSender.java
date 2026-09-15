@@ -327,6 +327,27 @@ public final class MuxSender extends NativeHandle {
         return raw < 0 ? Optional.empty() : Optional.of(DataStreamHandle.fromRaw(raw));
     }
 
+    // ── Cancellation ──────────────────────────────────────────────────────
+
+    /**
+     * Return a shareable cancel handle. Calling {@link CancelHandle#cancel()}
+     * wakes a thread parked in any {@code send*} (libsrt blocked on a full send
+     * buffer); that send then throws {@code SrtException(BROKEN)} — the plain
+     * cancel closes the underlying socket, after which the sender is dead.
+     *
+     * <p>Safe to call from another thread at any time while the sender is open,
+     * including while a send is parked: the cancel target is captured when the
+     * sender is opened, so this call never waits for an in-flight native send.
+     *
+     * @return a new {@link CancelHandle}
+     * @throws IllegalStateException if the sender is closed
+     */
+    public CancelHandle cancelHandle() {
+        ensureOpen("MuxSender is closed");
+        long ch = nCancelHandle(peekHandle());
+        return new CancelHandle(ch);
+    }
+
     // ── Stats + lifecycle ─────────────────────────────────────────────────
 
     /**
@@ -401,6 +422,7 @@ public final class MuxSender extends NativeHandle {
     private static native long nDataHandle(long handle);
 
     private static native TransportStats nStats(long handle);
+    private static native long nCancelHandle(long handle);
     private static native void nClose(long handle);
     private static native boolean nIsAlive(long handle);
 }
