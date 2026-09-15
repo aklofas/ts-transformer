@@ -1,26 +1,30 @@
 #![no_main]
 
-//! Fuzz target — end-to-end demuxer panic-freedom, now with:
-//!
-//! * **StrictMode coverage**: first input byte selects one of the 4 modes
-//!   (Off / TimingOnly / DescriptorsOnly / Full) via bits [1:0].
-//! * **cfi_tolerance**: first input byte bit [2] sets the flag.
-//! * **flush coverage**: `flush()` is called after the feed loop and its
-//!   output is drained, exercising `drain_partial` → `parse_complete` →
-//!   `handle_complete_pes`.
+//! Fuzz target — end-to-end demuxer panic-freedom across the config knobs
+//! and feed shapes the review found unfuzzed (CORR-01 lived in the
+//! `sync_buf_cap` path; `unwrap_timestamps`, chunked `feed`, `feed_aligned`
+//! and `reset_sync` were never driven).
 //!
 //! # Input layout
 //!
 //! ```text
 //! [0]     selector byte
 //!           bits [1:0] → StrictMode: 0=Off 1=TimingOnly 2=DescriptorsOnly 3=Full
-//!           bit  [2]   → cfi_tolerance: 0=false 1=true
-//! [1..]   MPEG-TS packet bytes forwarded to Demuxer::feed
+//!           bit  [2]   → cfi_tolerance
+//!           bit  [3]   → unwrap_timestamps
+//!           bit  [4]   → sync_buf_cap: 0 = default (4 MiB), 1 = 4 KiB
+//!                        (far below the 1 MiB compaction floor)
+//!           bits [6:5] → feed shape: 0 = one `feed` of the whole payload
+//!                        1 = `feed` in 188-byte chunks
+//!                        2 = `feed` in 7-byte chunks (never packet-aligned)
+//!                        3 = `feed_aligned` on every full 188-byte chunk
+//!           bit  [7]   → call `reset_sync` after the first half of the chunks
+//! [1..]   MPEG-TS packet bytes
 //! ```
 //!
-//! StrictMode::Full causes `feed` to return early `Err(StrictRejection)` on
-//! non-conformant input — that is normal and is treated as panic-freedom
-//! (discarded). Only panics count as failures.
+//! Errors from `feed` / `feed_aligned` (`StrictRejection`, `Unrecoverable`,
+//! `SyncBufExhausted`, a non-0x47 first byte) are normal outcomes and are
+//! discarded. Only panics count as failures.
 
 use libfuzzer_sys::fuzz_target;
 use tst_core::mpegts::demux::{Demuxer, DemuxerConfig, StrictMode};
@@ -34,29 +38,50 @@ fuzz_target!(|data: &[u8]| {
     let selector = data[0];
     let payload = &data[1..];
 
-    // Derive StrictMode from bits [1:0] — all 4 variants reachable.
     let strict = match selector & 0b11 {
         0 => StrictMode::Off,
         1 => StrictMode::TimingOnly,
         2 => StrictMode::DescriptorsOnly,
         _ => StrictMode::Full, // 3
     };
-
-    // Derive cfi_tolerance from bit [2].
     let cfi_tolerance = (selector >> 2) & 1 == 1;
+    let unwrap_timestamps = (selector >> 3) & 1 == 1;
+    let small_cap = (selector >> 4) & 1 == 1;
+    let shape = (selector >> 5) & 0b11;
+    let reset_midway = (selector >> 7) & 1 == 1;
 
-    let cfg = DemuxerConfig::builder()
+    let mut builder = DemuxerConfig::builder()
         .strict(strict)
         .cfi_tolerance(cfi_tolerance)
-        .build();
-    let mut d = Demuxer::with_config(cfg);
+        .unwrap_timestamps(unwrap_timestamps);
+    if small_cap {
+        builder = builder.sync_buf_cap(4 * 1024);
+    }
+    let mut d = Demuxer::with_config(builder.build());
 
-    // Feed arbitrary bytes; StrictRejection is a normal outcome, not a panic.
-    let _ = d.feed(payload);
-    while d.next_event().is_some() {}
+    if shape == 0 {
+        let _ = d.feed(payload);
+        while d.next_event().is_some() {}
+    } else {
+        let chunk = if shape == 2 { 7 } else { 188 };
+        let chunks: Vec<&[u8]> = payload.chunks(chunk).collect();
+        let half = chunks.len() / 2;
+        for (i, c) in chunks.iter().enumerate() {
+            if reset_midway && i == half {
+                d.reset_sync();
+            }
+            if shape == 3 {
+                // Only full 188-byte chunks qualify; the tail is skipped.
+                if let Ok(pkt) = <&[u8; 188]>::try_from(*c) {
+                    let _ = d.feed_aligned(pkt);
+                }
+            } else {
+                let _ = d.feed(c);
+            }
+            while d.next_event().is_some() {}
+        }
+    }
 
-    // Call flush() to exercise drain_partial → parse_complete →
-    // handle_complete_pes on any partial PES that was buffered during feed.
     // flush() is infallible — it must never panic.
     d.flush();
     while d.next_event().is_some() {}
