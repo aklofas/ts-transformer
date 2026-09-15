@@ -18,7 +18,7 @@ mod recv_end_reason;
 pub use gap_buffer::{GapBuffer, OverflowPolicy};
 pub use recv_end_reason::{RecvEndReason, RecvEndReasonHandle};
 
-use background::{ManagedShared, Shutdown};
+use background::{Install, ManagedShared, Shutdown, install_fresh_inner};
 
 use std::time::Duration;
 
@@ -720,54 +720,42 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             match (self.factory)() {
                 Ok(new_inner) => {
-                    // Take the wake handle before the transport moves into
-                    // the mutex; publish it after the lock drops, so the
-                    // slot's own firing (a cancel that landed while the
-                    // factory was building) never runs under `inner`.
-                    let new_cancel = new_inner.cancel_handle();
-                    // Plan B mutex sweep (recoverable path): poisoned inner
-                    // lock means a previous panic left the wrapper in an
-                    // unknown state. Route to TransportError::Broken; the
-                    // caller's shell propagates the error and may surface
-                    // a TST_E_TRANSPORT (-8). Precedent: plan #45.
-                    let mut guard = self.inner.lock().map_err(|_| TransportError::Broken {
-                        msg: "reconnect: inner lock poisoned during new-inner install".into(),
-                        errno_code: None,
-                        cause: BrokenCause::Unspecified,
-                    })?;
-                    *guard = Some(new_inner);
-                    drop(guard);
-                    if let Some(h) = new_cancel {
-                        self.active.install(h);
-                    }
-                    // Honor a cancel that landed while the factory ran. The
-                    // slot latched, so the install above already fired the
-                    // fresh inner's wake handle; without this check the drain
-                    // below would still write the gap buffer through a
-                    // connection the caller has asked to abandon (and a real
-                    // socket, closed by that cancel, would turn the
-                    // caller-initiated close into a wire-looking `Broken`).
-                    // Same shape as the receive side's post-install check and
-                    // the background worker's loop-top `closed` check.
-                    if self.closed.load(std::sync::atomic::Ordering::Acquire) {
-                        // Recover on poison rather than skip: the slot is a
-                        // plain `Option` a panic can never leave half-updated,
-                        // and the fresh inner must be closed on this path
-                        // regardless of how an earlier holder exited.
-                        let fresh = self.inner.lock().unwrap_or_else(|p| p.into_inner()).take();
-                        // Close outside the lock: an inner's close may block
-                        // (libsrt lingers) and must never hold `inner` while
-                        // it does — the same rule every send path follows.
-                        if let Some(mut t) = fresh {
-                            t.close();
+                    match install_fresh_inner(
+                        &self.inner,
+                        &self.active,
+                        &self.closed,
+                        &self.shared,
+                        new_inner,
+                    ) {
+                        Install::Installed => {}
+                        Install::Closed => return Err(TransportError::Closed),
+                        // Plan B mutex sweep (recoverable path): poisoned
+                        // inner lock means a previous panic left the wrapper
+                        // in an unknown state. Route to TransportError::Broken;
+                        // the caller's shell propagates the error and may
+                        // surface a TST_E_TRANSPORT (-8). Precedent: plan #45.
+                        Install::InnerPoisoned => {
+                            return Err(TransportError::Broken {
+                                msg: "reconnect: inner lock poisoned during new-inner install"
+                                    .into(),
+                                errno_code: None,
+                                cause: BrokenCause::Unspecified,
+                            });
                         }
+                    }
+                    // Drain the gap buffer, then re-check the latch (CORR-11):
+                    // a cancel that lands DURING this drain makes a real
+                    // socket fail the in-flight send with a wire-looking
+                    // `Broken` — the caller asked for the close, so report
+                    // the close. (Same guard as the receive side's post-error
+                    // `cancelled` check.) A cancel that lands after a fully
+                    // successful drain also reports `Closed`: the next call
+                    // would anyway, via send_managed's entry gate.
+                    let drained = self.drain_gap_if_alive();
+                    if self.closed.load(std::sync::atomic::Ordering::Acquire) {
                         return Err(TransportError::Closed);
                     }
-                    self.shared
-                        .reconnect_successes
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    // Drain gap buffer.
-                    return self.drain_gap_if_alive();
+                    return drained;
                 }
                 Err(_) => {
                     continue; // try again

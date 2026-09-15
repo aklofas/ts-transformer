@@ -140,3 +140,100 @@ fn factory_success_after_cancel_is_not_drained_into() {
         "managed transport must latch closed after cancel"
     );
 }
+
+/// The fresh inner for the mid-DRAIN race: its first `send_bytes` fires
+/// the managed cancel handle (the cancel lands while the post-reconnect
+/// gap drain is writing through it) and then fails the way a real
+/// socket fails once its cancel handle has closed it — `Broken`. `dead:
+/// true` is the construction-time inner that breaks on the first send and
+/// sends the wrapper into its reconnect loop.
+struct DrainRaceInner {
+    handle: Arc<Mutex<Option<Arc<dyn TransportCancel + Send + Sync>>>>,
+    fired: Arc<AtomicBool>,
+    dead: bool,
+}
+
+impl Transport for DrainRaceInner {
+    fn send_bytes(&mut self, _msg: &[u8]) -> Result<(), TransportError> {
+        if self.dead {
+            return Err(TransportError::Broken {
+                msg: "dead on arrival".into(),
+                errno_code: None,
+                cause: BrokenCause::Unspecified,
+            });
+        }
+        if !self.fired.swap(true, Ordering::SeqCst) {
+            self.handle
+                .lock()
+                .unwrap()
+                .as_ref()
+                .expect("cancel handle installed before the first send")
+                .cancel();
+        }
+        Err(TransportError::Broken {
+            msg: "socket closed by the cancel".into(),
+            errno_code: None,
+            cause: BrokenCause::Unspecified,
+        })
+    }
+
+    fn max_payload(&self) -> usize {
+        MAX_PAYLOAD
+    }
+
+    fn is_alive(&self) -> bool {
+        !self.dead
+    }
+
+    fn close(&mut self) {}
+}
+
+/// CORR-11: a cancel that lands DURING the post-reconnect gap drain — one
+/// step after the mid-factory window the test above closes — made the
+/// wrapper report the drain's `Broken("transport broken during drain")`
+/// instead of the caller-initiated `Closed`. Bindings map the two to
+/// different kinds, so a watchdog cancel surfaced as a transport fault.
+#[test]
+fn cancel_during_post_reconnect_drain_reports_closed() {
+    let handle_cell: Arc<Mutex<Option<Arc<dyn TransportCancel + Send + Sync>>>> =
+        Arc::new(Mutex::new(None));
+    let fired = Arc::new(AtomicBool::new(false));
+
+    let cell = Arc::clone(&handle_cell);
+    let fired_cl = Arc::clone(&fired);
+    let factory = move || {
+        Ok(DrainRaceInner {
+            handle: Arc::clone(&cell),
+            fired: Arc::clone(&fired_cl),
+            dead: false,
+        })
+    };
+
+    let policy = ReconnectPolicy {
+        max_attempts: Some(3),
+        backoff: BackoffStrategy::Constant(Duration::ZERO),
+        ..Default::default()
+    };
+    let initial = DrainRaceInner {
+        handle: Arc::new(Mutex::new(None)),
+        fired: Arc::new(AtomicBool::new(false)),
+        dead: true,
+    };
+    let mut managed = ManagedTransport::new(initial, factory, policy);
+    *handle_cell.lock().unwrap() = managed.cancel_handle();
+
+    let result = managed.send_bytes(&[0x47; 188]);
+
+    assert!(
+        fired.load(Ordering::SeqCst),
+        "test setup: the fresh inner's first drain send must have fired the cancel"
+    );
+    assert!(
+        matches!(result, Err(TransportError::Closed)),
+        "a cancel that landed mid-drain must surface as the caller-initiated close, got {result:?}"
+    );
+    assert!(
+        !managed.is_alive(),
+        "managed transport must latch closed after cancel"
+    );
+}

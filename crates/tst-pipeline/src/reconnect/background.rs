@@ -124,6 +124,75 @@ pub(crate) struct WorkerCtx<T: Transport> {
     pub(crate) active: Arc<CancelSlot>,
 }
 
+/// Outcome of [`install_fresh_inner`].
+pub(crate) enum Install {
+    /// The fresh inner is installed, its wake handle published, and the
+    /// success counted. The caller may drain into it.
+    Installed,
+    /// A cancel/close latched `closed` while the factory ran: the fresh
+    /// inner was installed (so the latched slot fired its handle), then
+    /// taken back out and closed outside the lock. Nothing was counted
+    /// and nothing may be drained.
+    Closed,
+    /// The inner lock is poisoned; nothing was installed. Each caller
+    /// reports this in its own idiom (inline: `Broken`; worker: abnormal
+    /// give-up).
+    InnerPoisoned,
+}
+
+/// The one post-factory install sequence shared by the inline path
+/// (`ManagedTransport::reconnect_and_drain`) and [`worker_run`], so a
+/// cancel that lands while the factory runs is answered identically on
+/// both: take the wake handle → install under `inner` → publish the
+/// handle after the lock drops → honour a latched close (close the fresh
+/// inner OUTSIDE the lock) → count the success. Before this the worker
+/// counted the success first and left the (already socket-cancelled)
+/// fresh inner installed; the inline path neither counted nor kept it.
+pub(crate) fn install_fresh_inner<T: Transport>(
+    inner: &Mutex<Option<T>>,
+    active: &CancelSlot,
+    closed: &AtomicBool,
+    shared: &ManagedShared,
+    new_inner: T,
+) -> Install {
+    // Take the wake handle before the transport moves into the mutex;
+    // publish it after the lock drops, so the slot's own firing (a
+    // cancel that landed while the factory was building) never runs
+    // under `inner`.
+    let new_cancel = new_inner.cancel_handle();
+    {
+        let Ok(mut guard) = inner.lock() else {
+            return Install::InnerPoisoned;
+        };
+        *guard = Some(new_inner);
+    }
+    if let Some(h) = new_cancel {
+        active.install(h);
+    }
+    // Honor a cancel that landed while the factory ran. The slot latched,
+    // so the install above already fired the fresh inner's wake handle;
+    // without this check the drain would still write the gap buffer
+    // through a connection the caller has asked to abandon (and a real
+    // socket, closed by that cancel, would turn the caller-initiated close
+    // into a wire-looking `Broken`).
+    if closed.load(Ordering::Acquire) {
+        // Recover on poison rather than skip: the slot is a plain `Option`
+        // a panic can never leave half-updated, and the fresh inner must
+        // be closed on this path regardless of how an earlier holder
+        // exited.
+        let fresh = inner.lock().unwrap_or_else(|p| p.into_inner()).take();
+        // Close outside the lock: an inner's close may block (libsrt
+        // lingers) and must never hold `inner` while it does — the same
+        // rule every send path follows.
+        if let Some(mut t) = fresh {
+            t.close();
+        }
+        return Install::Closed;
+    }
+    shared.reconnect_successes.fetch_add(1, Ordering::Relaxed);
+    Install::Installed
+}
+
 enum DrainStep {
     Sent,
     Empty,
@@ -256,13 +325,13 @@ pub(crate) fn worker_run<T: Transport>(ctx: WorkerCtx<T>) {
             Ok(t) => t,
             Err(_) => continue 'reconnect,
         };
-        // Take the wake handle before the transport moves into the mutex;
-        // publish it after the lock drops, so the slot's own firing (a
-        // cancel that landed while the factory was building) never runs
-        // under `inner`.
-        let new_cancel = new_inner.cancel_handle();
-        {
-            let Ok(mut guard) = ctx.inner.lock() else {
+        match install_fresh_inner(&ctx.inner, &ctx.active, &ctx.closed, &ctx.shared, new_inner) {
+            Install::Installed => {}
+            // close()/cancel() landed while the factory ran: the fresh
+            // inner is already closed and nothing may be drained into it.
+            // The guard clears bg_active on the way out.
+            Install::Closed => return,
+            Install::InnerPoisoned => {
                 // Inner lock poisoned — unrecoverable from a worker with
                 // no caller. Surface as an abnormal give-up so the next
                 // send reports Broken instead of queuing forever. Store
@@ -274,15 +343,8 @@ pub(crate) fn worker_run<T: Transport>(ctx: WorkerCtx<T>) {
                 ctx.shared.gave_up_abnormal.store(true, Ordering::Release);
                 ctx.shared.gave_up.store(true, Ordering::Release);
                 return;
-            };
-            *guard = Some(new_inner);
+            }
         }
-        if let Some(h) = new_cancel {
-            ctx.active.install(h);
-        }
-        ctx.shared
-            .reconnect_successes
-            .fetch_add(1, Ordering::Relaxed);
         attempt = 0; // fresh budget for any subsequent break
 
         // ---- drain phase ----
