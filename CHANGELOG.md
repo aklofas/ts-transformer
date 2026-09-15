@@ -703,43 +703,6 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - (pending)
 
-### Testing — interop harness (WP-7a)
-
-- **`wire_vs_demux_<pid>` oracle** (`tst-interop verify`/`recv`): per media
-  PID, the demuxer's `Sample`/`Metadata` count is held to the raw reader's
-  independent PES-start count (`rawts::WireSummary::pes_starts_per_pid`,
-  spec-legal duplicates excluded), short by at most the events the capture
-  itself explains (attributed injections; under `Lossy` also its own
-  discontinuities and non-conformances) plus a fixed per-PID boundary
-  allowance — one PSI repetition interval of units at that PID's rate (what a
-  demuxer cannot emit before it has PAT + PMT: measured at 3 video AUs,
-  1 KLV record and 5 audio frames on a 100 ms-PSI profile) plus the one
-  access unit left unflushed at teardown. Closes the class where a demuxer
-  silently losing ≤ 30 % of access units cleared every count floor
-  (`NOMINAL_COUNT_SLACK` = 70 % is a floor, now stated on the evidence page).
-  Mutation: every 4th KLV record rejected by the demuxer.
-- **Corruption attribution is PID- and class-constrained**: an injection
-  explains a receiver signal only when the signal is inside its window AND
-  of a class it can cause AND on the PID it damaged (framing-wide
-  truncation/garbage/sync-byte damage and PSI checksum failures reach every
-  PID; a resync carries none). The transport-loss excusal follows the same
-  rule. A class-incompatible or foreign-PID signal inside a window is now
-  unexplained rather than attributed. The three framing-destroying classes
-  now also expect a `MalformedPes`, which any of them can produce by leaving
-  a decoder reading a PES header off bytes that are not one.
-- **`AttributionReport::{detected_by_demux, detected_by_reader_only,
-  detected_by_reader_only_per_class}`** (additive, serde-default): detection
-  credit split between the receiver's own demux events and the harness's
-  raw-reader resyncs; `report soak`'s `corruption_detected_<leg>` detail
-  prints both.
-- **`corruption_excusal_budget_<leg>`** soak verdict: under lossy judgement
-  `unexplained_transport_loss + undetected_lost + unrecovered_lost` and the
-  demuxer's unexplained discontinuities must each stay within
-  `K × expected_outage_windows + 8` (K = the leg profile's media PIDs).
-- `rawts::PesShape::prefix_mismatches`: the ADTS and AV1 carriage oracles now
-  judge every PES on the PID, not the first; the audio-cadence mutation
-  asserts `1 frames, want 141`, not merely that the verdict fired.
-
 ### Testing
 
 - **Tooling: `tst-interop` sender-side corruption tap.** `tst-interop send
@@ -946,7 +909,40 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Testing — interop harness (WP-7a)
 
-- (pending)
+- **`wire_vs_demux_<pid>` oracle** (`tst-interop verify`/`recv`): per media
+  PID, the demuxer's `Sample`/`Metadata` count is held to the raw reader's
+  independent PES-start count (`rawts::WireSummary::pes_starts_per_pid`,
+  spec-legal duplicates excluded), short by at most the events the capture
+  itself explains (attributed injections; under `Lossy` also its own
+  discontinuities and non-conformances) plus a fixed per-PID boundary
+  allowance — one PSI repetition interval of units at that PID's rate (what a
+  demuxer cannot emit before it has PAT + PMT: measured at 3 video AUs,
+  1 KLV record and 5 audio frames on a 100 ms-PSI profile) plus the one
+  access unit left unflushed at teardown. Closes the class where a demuxer
+  silently losing ≤ 30 % of access units cleared every count floor
+  (`NOMINAL_COUNT_SLACK` = 70 % is a floor, now stated on the evidence page).
+  Mutation: every 4th KLV record rejected by the demuxer.
+- **Corruption attribution is PID- and class-constrained**: an injection
+  explains a receiver signal only when the signal is inside its window AND
+  of a class it can cause AND on the PID it damaged (framing-wide
+  truncation/garbage/sync-byte damage and PSI checksum failures reach every
+  PID; a resync carries none). The transport-loss excusal follows the same
+  rule. A class-incompatible or foreign-PID signal inside a window is now
+  unexplained rather than attributed. The three framing-destroying classes
+  now also expect a `MalformedPes`, which any of them can produce by leaving
+  a decoder reading a PES header off bytes that are not one.
+- **`AttributionReport::{detected_by_demux, detected_by_reader_only,
+  detected_by_reader_only_per_class}`** (additive, serde-default): detection
+  credit split between the receiver's own demux events and the harness's
+  raw-reader resyncs; `report soak`'s `corruption_detected_<leg>` detail
+  prints both.
+- **`corruption_excusal_budget_<leg>`** soak verdict: under lossy judgement
+  `unexplained_transport_loss + undetected_lost + unrecovered_lost` and the
+  demuxer's unexplained discontinuities must each stay within
+  `K × expected_outage_windows + 8` (K = the leg profile's media PIDs).
+- `rawts::PesShape::prefix_mismatches`: the ADTS and AV1 carriage oracles now
+  judge every PES on the PID, not the first; the audio-cadence mutation
+  asserts `1 frames, want 141`, not merely that the verdict fired.
 
 ### Testing — interop harness (WP-7b)
 
