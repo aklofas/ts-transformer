@@ -1390,6 +1390,20 @@ pub struct AttributionReport {
     /// recover.
     #[serde(default)]
     pub unrecovered_lost: u64,
+    /// Detectable injections the receiver's OWN demuxer reported (a
+    /// `Discontinuity` / `NonConformant` event inside the window).
+    #[serde(default)]
+    pub detected_by_demux: u64,
+    /// Detectable injections noticed ONLY by the harness's raw-TS reader
+    /// ([`Signal::Resync`], which is not a `DemuxEvent`): garbage runs and
+    /// destroyed sync bytes that tst-core re-syncs past without an event,
+    /// by design. Reported separately so the evidence page does not
+    /// credit the receiver with the harness's own detection (META-13).
+    #[serde(default)]
+    pub detected_by_reader_only: u64,
+    /// The same, per class name ([`Class::name`]).
+    #[serde(default)]
+    pub detected_by_reader_only_per_class: BTreeMap<String, u64>,
     /// Unexplained events kept out of
     /// [`unexplained_events`](Self::unexplained_events) as transport loss
     /// rather than corruption — discontinuity-family signals under
@@ -1491,6 +1505,11 @@ struct InjState {
     /// loss, an SRT/RIST buffer overrun, a reconnect after an outage. See
     /// [`Attribution::lossy`] for what it excuses.
     cc_jump_in_window: bool,
+    /// Set when a NON-[`Signal::Resync`] signal detected this injection,
+    /// i.e. when the receiver's own demuxer reported it rather than only
+    /// the harness's raw reader. See
+    /// [`AttributionReport::detected_by_reader_only`].
+    detected_by_demux: bool,
 }
 
 /// Matches receiver events against a corruption log. Pure: no I/O, no
@@ -1584,6 +1603,9 @@ pub struct Attribution {
     unrecovered_count: u64,
     undetected_lost: u64,
     unrecovered_lost: u64,
+    detected_by_demux: u64,
+    detected_by_reader_only: u64,
+    detected_by_reader_only_per_class: BTreeMap<String, u64>,
     undetected_samples: Vec<String>,
     unrecovered_samples: Vec<String>,
     // Unexplained-event verdicts. The counts are per family and uncapped;
@@ -1764,6 +1786,9 @@ impl Attribution {
             unrecovered_count: 0,
             undetected_lost: 0,
             unrecovered_lost: 0,
+            detected_by_demux: 0,
+            detected_by_reader_only: 0,
+            detected_by_reader_only_per_class: BTreeMap::new(),
             undetected_samples: Vec::new(),
             unrecovered_samples: Vec::new(),
             unexplained_resyncs: 0,
@@ -2044,6 +2069,20 @@ impl Attribution {
                 }
             }
         }
+        // META-13: split the detection credit. A `Resync` is the
+        // harness's raw reader noticing; everything else is the
+        // receiver's own demuxer.
+        if inj.detectable && st.detected {
+            if st.detected_by_demux {
+                self.detected_by_demux += 1;
+            } else {
+                self.detected_by_reader_only += 1;
+                *self
+                    .detected_by_reader_only_per_class
+                    .entry(inj.class.name().to_string())
+                    .or_insert(0) += 1;
+            }
+        }
         if !st.recovered && recovery_window_closed {
             if lost {
                 self.unrecovered_lost += 1;
@@ -2257,6 +2296,12 @@ impl Attribution {
                     Signal::Resync => {}
                 }
                 self.state_mut(i).detected = true;
+                // META-13: a resync is the harness's own raw reader
+                // losing and regaining packet sync, not a `DemuxEvent`.
+                // Only the other signals are the receiver reporting.
+                if sig != Signal::Resync {
+                    self.state_mut(i).detected_by_demux = true;
+                }
             }
             // Unexplained. Which family it belongs to — and therefore
             // whether transport-loss excusal takes it — is decided HERE,
@@ -2371,6 +2416,9 @@ impl Attribution {
             unrecovered_count: self.unrecovered_count,
             undetected_lost: self.undetected_lost,
             unrecovered_lost: self.unrecovered_lost,
+            detected_by_demux: self.detected_by_demux,
+            detected_by_reader_only: self.detected_by_reader_only,
+            detected_by_reader_only_per_class: self.detected_by_reader_only_per_class,
             unexplained_transport_loss: self.unexplained_transport_loss,
             resyncs: self.resyncs,
             injected_fraction: self.logged as f64 / packets_total.max(1) as f64,
@@ -3637,6 +3685,38 @@ mod tests {
             sync_byte(vec![3]).attributed_events,
             0,
             "a CC rewrite is PID-local"
+        );
+    }
+
+    /// META-13: a resync is the HARNESS's raw reader noticing, not the
+    /// receiver. A garbage run detected only by a resync is counted
+    /// apart from a drop the demuxer itself reported.
+    #[test]
+    fn detection_credit_splits_reader_resyncs_from_demux_events() {
+        let mut a = Attribution::strict(
+            vec![
+                inj(1000, 10, Class::Garbage, 0x1011, true),
+                inj(1000, 2010, Class::Drop, 0x1011, true),
+                inj(1000, 4010, Class::Garbage, 0x1011, true),
+            ],
+            &hdr(),
+        );
+        a.on_pcr(1000, 5000);
+        a.on_signal(5015, None, Signal::Resync); // garbage #1: reader only
+        a.on_media(5100, 0x1011);
+        a.on_signal(7015, Some(0x1011), Signal::ContinuityJump); // drop: demux
+        a.on_media(7100, 0x1011);
+        a.on_signal(9012, None, Signal::Resync); // garbage #2: reader …
+        a.on_signal(9015, Some(0x1011), Signal::ContinuityJump); // … then demux too
+        a.on_media(9100, 0x1011);
+        let r = a.finish(20_000);
+        assert_eq!(r.undetected_count, 0, "{r:?}");
+        assert_eq!(r.detected_by_demux, 2, "{r:?}");
+        assert_eq!(r.detected_by_reader_only, 1, "{r:?}");
+        assert_eq!(
+            r.detected_by_reader_only_per_class.get("garbage"),
+            Some(&1),
+            "{r:?}"
         );
     }
 
