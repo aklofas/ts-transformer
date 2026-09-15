@@ -6,7 +6,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tst_core::net::udp_socket::CANCEL_POLL_INTERVAL;
+use tst_core::net::udp_socket::ACCEPT_POLL_INTERVAL;
 
 use crate::config::SocketConfig;
 use crate::error::TcpError;
@@ -29,7 +29,9 @@ pub struct TcpListener {
     inner: StdTcpListener,
     config: SocketConfig,
     /// Dropped by [`Self::close`] / [`TcpCancelHandle::cancel`]; polled by
-    /// [`Self::accept_blocking`] every [`CANCEL_POLL_INTERVAL`].
+    /// [`Self::accept_blocking`] every [`ACCEPT_POLL_INTERVAL`] (shorter than
+    /// the `CANCEL_POLL_INTERVAL` the recv/send paths use — see that
+    /// constant's doc for why).
     alive: Arc<AtomicBool>,
     #[cfg(feature = "tls")]
     tls_config: Option<Arc<rustls::ServerConfig>>,
@@ -117,7 +119,17 @@ impl TcpListener {
     ///
     /// Cancellable: [`Self::cancel_handle`] / [`Self::close`] drop the alive
     /// flag and a parked accept returns [`TcpError::Closed`] at its next
-    /// ~100 ms poll; every later call returns it at the entry check.
+    /// [`ACCEPT_POLL_INTERVAL`] poll (~5 ms); every later call returns it at
+    /// the entry check.
+    ///
+    /// **Accept latency ceiling:** unlike `recv_bytes`/`send_bytes`, whose
+    /// `SO_RCVTIMEO`/`SO_SNDTIMEO` wake the thread the instant data or
+    /// buffer space is available (the timeout only bounds the *cancel*
+    /// check, not the I/O itself), a non-blocking `accept()` loop has no
+    /// such wakeup — every pending connection waits out the current sleep
+    /// before the next attempt notices it. So a connection can sit for up
+    /// to one [`ACCEPT_POLL_INTERVAL`] tick (~5 ms worst case) before this
+    /// call returns it, even though the peer's SYN completed instantly.
     pub fn accept_blocking(&self) -> Result<TcpTransport, TcpError> {
         let (sock, peer) = loop {
             if !self.alive.load(Ordering::Acquire) {
@@ -126,10 +138,19 @@ impl TcpListener {
             match self.inner.accept() {
                 Ok(pair) => break pair,
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                    // Nothing pending: sleep one poll tick, then re-check
-                    // the flag — the same cadence the transports' socket
-                    // timeouts give a parked recv/send.
-                    std::thread::sleep(CANCEL_POLL_INTERVAL);
+                    // Nothing pending: sleep one short poll tick, then
+                    // re-check the flag. ACCEPT_POLL_INTERVAL (5 ms), not
+                    // CANCEL_POLL_INTERVAL (100 ms): a parked recv/send
+                    // wakes on its own via SO_RCVTIMEO/SO_SNDTIMEO the
+                    // instant something arrives, but this loop's own sleep
+                    // IS the only thing standing between an already-landed
+                    // connection and this call noticing it, so it has to be
+                    // short enough that the added latency doesn't eat into
+                    // a caller's own I/O deadline on the freshly accepted
+                    // connection (CORR-12 review: a TLS handshake's first
+                    // write occasionally raced past its ~100 ms deadline
+                    // when this used the 100 ms interval).
+                    std::thread::sleep(ACCEPT_POLL_INTERVAL);
                 }
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => { /* EINTR: retry */ }
                 Err(e) => return Err(TcpError::Io(e)),
@@ -159,10 +180,11 @@ impl TcpListener {
     }
 
     /// Close the listener from any thread: a parked `accept_blocking` returns
-    /// [`TcpError::Closed`] within ~100 ms and every later call returns it
-    /// immediately. Idempotent. The OS socket stays bound until `self` is
-    /// dropped (std cannot shut a listener down explicitly), so bind the
-    /// next listener on a fresh port or drop this one first.
+    /// [`TcpError::Closed`] within ~5 ms ([`ACCEPT_POLL_INTERVAL`]) and every
+    /// later call returns it immediately. Idempotent. The OS socket stays
+    /// bound until `self` is dropped (std cannot shut a listener down
+    /// explicitly), so bind the next listener on a fresh port or drop this
+    /// one first.
     pub fn close(&self) {
         self.alive.store(false, Ordering::Release);
     }

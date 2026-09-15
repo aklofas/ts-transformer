@@ -78,9 +78,10 @@ impl InnerStream {
 /// - a send that has already committed a partial prefix keeps writing the
 ///   remainder and observes the flag at its next ~100 ms write-timeout tick,
 ///   returning `Closed` (the prefix stays on the wire; the transport is dead);
-/// - a parked `accept_blocking` observes the flag at its next ~100 ms poll
-///   and returns [`crate::error::TcpError::Closed`]; later accepts return it
-///   at their entry check.
+/// - a parked `accept_blocking` observes the flag at its next ~5 ms poll
+///   (`ACCEPT_POLL_INTERVAL`, shorter than the ~100 ms above — see that
+///   constant's doc for why) and returns [`crate::error::TcpError::Closed`];
+///   later accepts return it at their entry check.
 ///
 /// `TcpCancelHandle` is `Clone + Send + Sync`; multiple holders can race
 /// `cancel()` safely (the flag is an `Arc<AtomicBool>`, idempotent).

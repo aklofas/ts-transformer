@@ -6828,6 +6828,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_core::net::io_classify::Sen
 impl core::panic::unwind_safe::UnwindSafe for tst_core::net::io_classify::SendClass
 pub fn tst_core::net::io_classify::classify_send_error(&core::io::error::Error) -> tst_core::net::io_classify::SendClass
 pub mod tst_core::net::udp_socket
+pub const tst_core::net::udp_socket::ACCEPT_POLL_INTERVAL: core::time::Duration
 pub const tst_core::net::udp_socket::CANCEL_POLL_INTERVAL: core::time::Duration
 pub const tst_core::net::udp_socket::MCAST_DEFAULT_TTL: u8
 pub fn tst_core::net::udp_socket::apply_multicast_iface(&std::net::udp::UdpSocket, core::net::ip_addr::IpAddr, &str) -> core::io::error::Result<()>
