@@ -22,17 +22,17 @@
 #![allow(
     unsafe_op_in_unsafe_fn,
     clippy::useless_conversion,
-    // PyO3 #[pymethods] requires `&mut self` even for handle-consuming
-    // `into_*` calls — true `self` by-value isn't supported. The
-    // consumption is enforced via `Option::take`.
+    // PyO3 `into_*` methods take `&self` (the slot is a `Mutex<Option<_>>`;
+    // the consumption is enforced via `Option::take`) — clippy still flags
+    // the `into_` prefix on a borrowing receiver.
     clippy::wrong_self_convention,
     // PyO3 #[new] constructors accept kwargs as positional Rust
     // parameters; this surface has more than 7 user-facing kwargs.
     clippy::too_many_arguments
 )]
 
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use pyo3::Py;
@@ -439,14 +439,29 @@ impl PyBuilder {
 /// teardown; the destructor closes too.
 #[pyclass(name = "Socket", module = "tstrans.srt")]
 pub(crate) struct PySocket {
-    inner: Option<SrtSocket>,
+    /// `&self` everywhere (cross-thread `close()` / getters never trip
+    /// PyO3's borrow check); a plain `Mutex` suffices because no `Socket`
+    /// method releases the GIL — nothing ever holds this lock across a
+    /// park. `Option` so the `into_*` promotions and `close()` can take
+    /// the handle.
+    inner: Mutex<Option<SrtSocket>>,
 }
 
 impl PySocket {
     pub(crate) fn wrap(socket: SrtSocket) -> Self {
         Self {
-            inner: Some(socket),
+            inner: Mutex::new(Some(socket)),
         }
+    }
+
+    /// Take the libsrt handle for a consuming promotion; `CLOSED` once
+    /// it has been consumed or closed.
+    fn take_socket(&self, py: Python<'_>) -> PyResult<SrtSocket> {
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+            .ok_or_else(|| make_srt_error(py, "CLOSED", "socket is closed"))
     }
 }
 
@@ -455,22 +470,14 @@ impl PySocket {
     /// Consume this socket and produce a `Sender`. The socket handle
     /// moves into the new Sender — subsequent calls on `self` raise
     /// `SrtError(kind=CLOSED)`.
-    fn into_sender(&mut self, py: Python<'_>) -> PyResult<PySender> {
-        let socket = self
-            .inner
-            .take()
-            .ok_or_else(|| make_srt_error(py, "CLOSED", "socket is closed"))?;
-        Ok(PySender::from_socket(socket))
+    fn into_sender(&self, py: Python<'_>) -> PyResult<PySender> {
+        Ok(PySender::from_socket(self.take_socket(py)?))
     }
 
     /// Consume this socket and produce a `Receiver`. Same consumption
     /// semantics as `into_sender`.
-    fn into_receiver(&mut self, py: Python<'_>) -> PyResult<PyReceiver> {
-        let socket = self
-            .inner
-            .take()
-            .ok_or_else(|| make_srt_error(py, "CLOSED", "socket is closed"))?;
-        Ok(PyReceiver::from_socket(socket))
+    fn into_receiver(&self, py: Python<'_>) -> PyResult<PyReceiver> {
+        Ok(PyReceiver::from_socket(self.take_socket(py)?))
     }
 
     /// Consume this socket and produce a `MuxSender` for the given
@@ -481,14 +488,11 @@ impl PySocket {
     /// Raises `MuxError(CONFIG_INVALID)` if the program config fails the
     /// muxer's validation.
     fn into_mux_sender(
-        &mut self,
+        &self,
         py: Python<'_>,
         program_config: PyRef<'_, crate::mux::PyMuxerProgramConfig>,
     ) -> PyResult<crate::srt::mux_sender::PyMuxSender> {
-        let socket = self
-            .inner
-            .take()
-            .ok_or_else(|| make_srt_error(py, "CLOSED", "socket is closed"))?;
+        let socket = self.take_socket(py)?;
         crate::srt::mux_sender::PyMuxSender::from_pipeline_mux(py, socket, &program_config)
     }
 
@@ -498,14 +502,11 @@ impl PySocket {
     /// `into_mux_sender`.
     #[pyo3(signature = (*, demux_config = None))]
     fn into_demux_receiver(
-        &mut self,
+        &self,
         py: Python<'_>,
         demux_config: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<crate::srt::demux_receiver::PyDemuxReceiver> {
-        let socket = self
-            .inner
-            .take()
-            .ok_or_else(|| make_srt_error(py, "CLOSED", "socket is closed"))?;
+        let socket = self.take_socket(py)?;
         match demux_config {
             None => Ok(crate::srt::demux_receiver::PyDemuxReceiver::from_pipeline_demux(socket)),
             Some(cfg) => {
@@ -522,8 +523,8 @@ impl PySocket {
     /// Local bound address as `(host, port)`. Useful when the URL
     /// requested port 0 (kernel-pick).
     fn local_addr(&self, py: Python<'_>) -> PyResult<(String, u16)> {
-        let socket = self
-            .inner
+        let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let socket = guard
             .as_ref()
             .ok_or_else(|| make_srt_error(py, "CLOSED", "socket is closed"))?;
         let addr = socket.local_addr().map_err(|e| io_error_to_pyerr(py, e))?;
@@ -533,8 +534,8 @@ impl PySocket {
     /// Peer address as `(host, port)`. Errors if the socket isn't
     /// connected (e.g., a fresh bind without accept).
     fn peer_addr(&self, py: Python<'_>) -> PyResult<(String, u16)> {
-        let socket = self
-            .inner
+        let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let socket = guard
             .as_ref()
             .ok_or_else(|| make_srt_error(py, "CLOSED", "socket is closed"))?;
         let addr = socket.peer_addr().map_err(|e| io_error_to_pyerr(py, e))?;
@@ -544,14 +545,18 @@ impl PySocket {
     /// Stream ID negotiated at handshake, if any.
     fn stream_id(&self) -> Option<String> {
         self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
             .as_ref()
             .and_then(|s| s.stream_id().map(String::from))
     }
 
     /// Close the socket. Subsequent `into_sender` / `into_receiver`
-    /// calls raise `SrtError(kind=CLOSED)`. Idempotent.
-    fn close(&mut self) {
-        if let Some(socket) = self.inner.take() {
+    /// calls raise `SrtError(kind=CLOSED)`. Idempotent; safe from any
+    /// thread.
+    fn close(&self) {
+        let taken = self.inner.lock().unwrap_or_else(|e| e.into_inner()).take();
+        if let Some(socket) = taken {
             // SrtSocket::close consumes self and is documented as always-Ok.
             let _ = socket.close();
         }
@@ -559,7 +564,10 @@ impl PySocket {
 
     /// `True` while this socket still owns the libsrt handle.
     fn is_alive(&self) -> bool {
-        self.inner.is_some()
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some()
     }
 
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -567,7 +575,7 @@ impl PySocket {
     }
 
     fn __exit__(
-        &mut self,
+        &self,
         _exc_type: &Bound<'_, PyAny>,
         _exc_value: &Bound<'_, PyAny>,
         _traceback: &Bound<'_, PyAny>,
@@ -577,9 +585,10 @@ impl PySocket {
     }
 
     fn __repr__(&self) -> String {
-        match &self.inner {
-            Some(_) => "Socket(open)".to_string(),
-            None => "Socket(closed)".to_string(),
+        if self.is_alive() {
+            "Socket(open)".to_string()
+        } else {
+            "Socket(closed)".to_string()
         }
     }
 }
@@ -597,10 +606,15 @@ impl PySocket {
 /// `SrtError`.
 #[pyclass(name = "Listener", module = "tstrans.srt")]
 pub(crate) struct PyListener {
-    inner: Option<SrtListener>,
+    /// Shared slot (PR #209 shape): a parked `accept()` / `__next__` holds
+    /// it with the GIL released; `close()` fires `cancel_src` BEFORE
+    /// taking it, so the parked accept ends with `SrtError(CLOSED)`
+    /// instead of the close raising `RuntimeError: Already borrowed`.
+    inner: Arc<Mutex<Option<SrtListener>>>,
     /// Concrete handle from `Listener::cancel_handle()` (NOT
     /// `Arc<dyn TransportCancel>` — see plan defect #5 in the T3 brief).
-    /// Cloned for each Python-side `CancelHandle` produced.
+    /// Cloned for each Python-side `CancelHandle` produced; fired first by
+    /// `close()`.
     cancel_src: tst_core::SrtCancelHandle,
 }
 
@@ -608,7 +622,7 @@ impl PyListener {
     pub(crate) fn wrap(listener: SrtListener) -> Self {
         let cancel_src = listener.cancel_handle();
         Self {
-            inner: Some(listener),
+            inner: Arc::new(Mutex::new(Some(listener))),
             cancel_src,
         }
     }
@@ -619,17 +633,16 @@ impl PyListener {
     /// Block until an incoming peer completes the SRT handshake, then
     /// return the accepted `Socket`. With `timeout_ms=None` blocks
     /// indefinitely; with `timeout_ms=N` raises `SrtError(TIMEOUT)`
-    /// after `N` ms. Releases the GIL while parked.
+    /// after `N` ms. Releases the GIL while parked; a `close()` (or
+    /// `cancel_handle().cancel()`) from another thread ends the park
+    /// with `SrtError(CLOSED)`.
     #[pyo3(signature = (timeout_ms = None))]
-    fn accept(&mut self, py: Python<'_>, timeout_ms: Option<u64>) -> PyResult<PySocket> {
-        let listener = self
-            .inner
-            .as_mut()
-            .ok_or_else(|| make_srt_error(py, "CLOSED", "listener is closed"))?;
-        let result = py.allow_threads(|| match timeout_ms {
-            None => listener.accept(),
-            Some(ms) => listener.accept_timeout(Duration::from_millis(ms)),
-        });
+    fn accept(&self, py: Python<'_>, timeout_ms: Option<u64>) -> PyResult<PySocket> {
+        let result = crate::util::with_slot(py, &self.inner, |l| match timeout_ms {
+            None => l.accept(),
+            Some(ms) => l.accept_timeout(Duration::from_millis(ms)),
+        })
+        .ok_or_else(|| make_srt_error(py, "CLOSED", "listener is closed"))?;
         let (socket, _peer) = result.map_err(|e| accept_error_to_pyerr(py, e))?;
         Ok(PySocket::wrap(socket))
     }
@@ -644,28 +657,32 @@ impl PyListener {
 
     /// Local bound address as `(host, port)`. Useful when the URL
     /// requested port 0 (kernel-pick) — the bound port reads back via
-    /// libsrt's `getsockname`.
+    /// libsrt's `getsockname`. Waits (GIL released) for a parked accept on
+    /// another thread to release the slot.
     fn local_addr(&self, py: Python<'_>) -> PyResult<(String, u16)> {
-        let listener = self
-            .inner
-            .as_ref()
-            .ok_or_else(|| make_srt_error(py, "CLOSED", "listener is closed"))?;
-        let addr = listener
-            .local_addr()
+        let addr = crate::util::with_slot(py, &self.inner, |l| l.local_addr())
+            .ok_or_else(|| make_srt_error(py, "CLOSED", "listener is closed"))?
             .map_err(|e| io_error_to_pyerr(py, e))?;
         Ok((addr.ip().to_string(), addr.port()))
     }
 
-    /// Close the listener. Idempotent.
-    fn close(&mut self) {
-        if let Some(listener) = self.inner.take() {
-            let _ = listener.close();
-        }
+    /// Close the listener. Fires the cancel handle BEFORE taking the
+    /// slot (a parked `accept()` on another thread ends with
+    /// `SrtError(CLOSED)`; an iterating `for sock in listener` loop ends
+    /// with `StopIteration`), then frees the libsrt listener on this
+    /// thread — the ordering `tst_srt::Listener::close` documents.
+    /// Idempotent.
+    fn close(&self, py: Python<'_>) {
+        self.cancel_src.cancel();
+        crate::util::close_slot(py, &self.inner, |l| {
+            let _ = l.close();
+        });
     }
 
-    /// `True` while this listener still owns the libsrt handle.
+    /// `True` while this listener still owns the libsrt handle (an accept
+    /// parked on another thread counts as alive).
     fn is_alive(&self) -> bool {
-        self.inner.is_some()
+        crate::util::slot_alive(&self.inner, |_| true)
     }
 
     /// `__iter__` returns self — the listener IS its own iterator. Each
@@ -675,12 +692,9 @@ impl PyListener {
         slf
     }
 
-    fn __next__(&mut self, py: Python<'_>) -> PyResult<PySocket> {
-        let listener = self
-            .inner
-            .as_mut()
+    fn __next__(&self, py: Python<'_>) -> PyResult<PySocket> {
+        let result = crate::util::with_slot(py, &self.inner, |l| l.accept())
             .ok_or_else(|| PyStopIteration::new_err(()))?;
-        let result = py.allow_threads(|| listener.accept());
         match result {
             Ok((socket, _peer)) => Ok(PySocket::wrap(socket)),
             Err(AcceptError::ListenerClosed) => Err(PyStopIteration::new_err(())),
@@ -693,19 +707,21 @@ impl PyListener {
     }
 
     fn __exit__(
-        &mut self,
+        &self,
+        py: Python<'_>,
         _exc_type: &Bound<'_, PyAny>,
         _exc_value: &Bound<'_, PyAny>,
         _traceback: &Bound<'_, PyAny>,
     ) -> bool {
-        self.close();
+        self.close(py);
         false
     }
 
     fn __repr__(&self) -> String {
-        match &self.inner {
-            Some(_) => "Listener(open)".to_string(),
-            None => "Listener(closed)".to_string(),
+        if self.is_alive() {
+            "Listener(open)".to_string()
+        } else {
+            "Listener(closed)".to_string()
         }
     }
 }
