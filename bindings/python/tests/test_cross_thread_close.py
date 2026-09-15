@@ -64,3 +64,62 @@ def _spin_sender(send_one: Callable[[], None], stop: threading.Event) -> dict[st
     except BaseException as exc:  # noqa: BLE001
         outcome["exc"] = exc
     return outcome
+
+
+# --------------------------------------------------------------------------- #
+# srt.Sender                                                                  #
+# --------------------------------------------------------------------------- #
+
+
+def _srt_pair(port: int):
+    """Listener-mode `srt.Receiver` on a thread + caller-mode `srt.Sender`
+    (the `_make_loopback_pair` shape from test_srt_transport.py)."""
+    import tstrans.srt as srt
+
+    box: list[srt.Receiver] = []
+    errs: list[BaseException] = []
+
+    def accept_worker() -> None:
+        try:
+            box.append(srt.Receiver.from_url(f"srt://:{port}?mode=listener"))
+        except BaseException as exc:  # noqa: BLE001
+            errs.append(exc)
+
+    t = threading.Thread(target=accept_worker, daemon=True)
+    t.start()
+    time.sleep(0.1)
+    sender = srt.Sender.from_url(f"srt://127.0.0.1:{port}?mode=caller")
+    t.join(5.0)
+    if errs or not box:
+        sender.close()
+        pytest.fail(f"srt listener did not accept: {errs!r}")
+    return sender, box[0]
+
+
+def test_srt_sender_close_from_other_thread_during_send() -> None:
+    from tstrans.exceptions import SrtError, SrtErrorKind
+
+    sender, receiver = _srt_pair(_free_tcp_port())
+    stop = threading.Event()
+    outcome: dict[str, object] = {}
+
+    def worker() -> None:
+        outcome.update(_spin_sender(lambda: sender.send_bytes(TS_BUNDLE), stop))
+
+    w = threading.Thread(target=worker, daemon=True)
+    w.start()
+    time.sleep(0.1)  # the worker is now cycling through send_bytes
+    try:
+        c, errs = _close_on_thread(sender)
+        stop.set()
+        w.join(5.0)
+        _assert_close_ok(c, errs, "srt.Sender")
+        assert not w.is_alive(), "send loop did not end after close()"
+        exc = outcome.get("exc")
+        assert isinstance(exc, SrtError), f"send loop ended with {exc!r}"
+        assert exc.kind in (SrtErrorKind.CLOSED, SrtErrorKind.BROKEN), exc.kind
+        assert not sender.is_alive()
+    finally:
+        stop.set()
+        sender.close()
+        receiver.close()

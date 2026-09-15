@@ -4,6 +4,8 @@
 //! Mirrors the `tstrans.rtp` binding shape:
 //! - Per-direction concrete PyClass (not generic over `T: Transport`).
 //! - GIL released around `connect`/`bind+accept`/`send`/`recv`.
+//! - Every wrapper borrows `&self` over an `Arc<Mutex<Option<_>>>` slot;
+//!   `close()` cancels before taking it (the cross-thread close contract).
 //! - Bytes-like extraction follows audit-backlog #10's two-path pattern:
 //!   fast `&[u8]` for real `bytes`, fallback through `builtins.bytes(x)`
 //!   for `bytearray` / `memoryview` (gated under PyO3's abi3-py310
@@ -253,6 +255,19 @@ impl PyCancelHandle {
     }
 }
 
+/// Map a `tst_pipeline::sender::SenderError` (raised by `Sender::send_ts` /
+/// `flush`) to `SrtError`: transport failures keep their kind, framing
+/// rejections are `CONFIG_INVALID`, anything else `IO`.
+pub(crate) fn sender_error_to_pyerr(py: Python<'_>, e: tst_pipeline::sender::SenderError) -> PyErr {
+    match e.source {
+        tst_pipeline::sender::SenderErrorSource::Transport(t) => transport_error_to_pyerr(py, t),
+        tst_pipeline::sender::SenderErrorSource::Framing(f) => {
+            make_srt_error(py, "CONFIG_INVALID", &f.to_string())
+        }
+        _ => make_srt_error(py, "IO", &e.to_string()),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // PySender — wraps tst_pipeline::Sender<tst_srt::SrtTransport>
 // ---------------------------------------------------------------------------
@@ -265,7 +280,13 @@ impl PyCancelHandle {
 /// streamid, mss, payloadsize, etc.
 #[pyclass(name = "Sender", module = "tstrans.srt")]
 pub(crate) struct PySender {
-    inner: Option<PlSender<SrtTransport>>,
+    /// Shared slot so every method borrows `self` immutably: a `send_bytes`
+    /// in flight on another thread holds this lock (GIL released), and
+    /// `close()` fires `cancel` BEFORE taking it. With a `&mut self` send, a
+    /// cross-thread `close()` tripped PyO3's borrow check (`RuntimeError:
+    /// Already borrowed`) instead of ending the in-flight call. Same shape
+    /// as `PyReceiver` below (PR #209).
+    inner: Arc<Mutex<Option<PlSender<SrtTransport>>>>,
     /// Trait-erased cancel handle pulled from the transport at
     /// construction. Shared with any Python-side `CancelHandle` clones;
     /// calling `.cancel()` here closes the paired libsrt socket and
@@ -311,7 +332,7 @@ impl PySender {
             .cancel_handle()
             .expect("SrtTransport with a live socket always returns Some(cancel_handle)");
         Ok(Self {
-            inner: Some(inner),
+            inner: Arc::new(Mutex::new(Some(inner))),
             cancel,
         })
     }
@@ -320,38 +341,19 @@ impl PySender {
     /// bytes-like input (`bytes`, `bytearray`, `memoryview`, numpy
     /// uint8). Releases the GIL during the underlying `srt_sendmsg2`
     /// call so other Python threads can run while this thread blocks
-    /// on the kernel.
-    fn send_bytes(&mut self, py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<()> {
-        let inner = self
-            .inner
-            .as_mut()
-            .ok_or_else(|| make_srt_error(py, "CLOSED", "sender is closed"))?;
-        // Fast path: real `bytes` extracts to a zero-copy &[u8].
-        if let Ok(slice) = data.extract::<&[u8]>() {
-            let res = py.allow_threads(|| inner.send_ts(slice));
-            return res.map_err(|e| match e.source {
-                tst_pipeline::sender::SenderErrorSource::Transport(t) => {
-                    transport_error_to_pyerr(py, t)
-                }
-                tst_pipeline::sender::SenderErrorSource::Framing(f) => {
-                    make_srt_error(py, "CONFIG_INVALID", &f.to_string())
-                }
-                _ => make_srt_error(py, "IO", &e.to_string()),
-            });
-        }
-        // Fallback for bytearray / memoryview / numpy etc.
+    /// on the kernel. The slot lock is held for the call; a concurrent
+    /// `close()` cancels first, so the call ends with
+    /// `SrtError(BROKEN | CLOSED)` instead of blocking the close.
+    fn send_bytes(&self, py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<()> {
+        // `coerce_bytes_like` is zero-copy for real `bytes` and one copy
+        // for bytearray / memoryview / numpy — the former two-path code
+        // folded into one call.
         let coerced = crate::util::coerce_bytes_like(py, data)?;
         let slice: &[u8] = coerced.as_bytes();
-        let res = py.allow_threads(|| inner.send_ts(slice));
-        res.map_err(|e| match e.source {
-            tst_pipeline::sender::SenderErrorSource::Transport(t) => {
-                transport_error_to_pyerr(py, t)
-            }
-            tst_pipeline::sender::SenderErrorSource::Framing(f) => {
-                make_srt_error(py, "CONFIG_INVALID", &f.to_string())
-            }
-            _ => make_srt_error(py, "IO", &e.to_string()),
-        })
+        match crate::util::with_slot(py, &self.inner, |s| s.send_ts(slice)) {
+            None => Err(make_srt_error(py, "CLOSED", "sender is closed")),
+            Some(res) => res.map_err(|e| sender_error_to_pyerr(py, e)),
+        }
     }
 
     /// Flush any buffered partial TS bundle. `Sender::send_ts` bundles
@@ -359,24 +361,15 @@ impl PySender {
     /// to the SRT socket; sending fewer than 7 packets leaves a
     /// partial bundle stuck in the framing buffer until `flush()` is
     /// called (or until enough additional packets arrive to fill the
-    /// bundle).
+    /// bundle). Call it before `close()` when the tail matters —
+    /// `close()` cancels first and does not drain the framing buffer.
     ///
     /// Releases the GIL during the underlying transport send.
-    fn flush(&mut self, py: Python<'_>) -> PyResult<()> {
-        let inner = self
-            .inner
-            .as_mut()
-            .ok_or_else(|| make_srt_error(py, "CLOSED", "sender is closed"))?;
-        let res = py.allow_threads(|| inner.flush());
-        res.map_err(|e| match e.source {
-            tst_pipeline::sender::SenderErrorSource::Transport(t) => {
-                transport_error_to_pyerr(py, t)
-            }
-            tst_pipeline::sender::SenderErrorSource::Framing(f) => {
-                make_srt_error(py, "CONFIG_INVALID", &f.to_string())
-            }
-            _ => make_srt_error(py, "IO", &e.to_string()),
-        })
+    fn flush(&self, py: Python<'_>) -> PyResult<()> {
+        match crate::util::with_slot(py, &self.inner, |s| s.flush()) {
+            None => Err(make_srt_error(py, "CLOSED", "sender is closed")),
+            Some(res) => res.map_err(|e| sender_error_to_pyerr(py, e)),
+        }
     }
 
     /// Return a shareable cancel handle. Calling `.cancel()` on the
@@ -395,48 +388,42 @@ impl PySender {
     }
 
     /// Snapshot of the scheme-neutral 16-field wire stats (matches
-    /// `tstrans.rtp.SocketStats`). For SRT-specific extras, use
-    /// `srt_stats()`.
+    /// `tstrans.rtp.SocketStats`). Waits (GIL released) for an in-flight
+    /// `send_bytes` on another thread to release the slot.
     fn socket_stats(&self, py: Python<'_>) -> PyResult<Py<PySocketStats>> {
-        let inner = self
-            .inner
-            .as_ref()
-            .ok_or_else(|| make_srt_error(py, "CLOSED", "sender is closed"))?;
-        let core = inner.socket_stats().unwrap_or_default();
+        let core =
+            crate::util::with_slot(py, &self.inner, |s| s.socket_stats().unwrap_or_default())
+                .ok_or_else(|| make_srt_error(py, "CLOSED", "sender is closed"))?;
         Py::new(py, PySocketStats::from_core(core))
     }
 
     /// Snapshot of the SRT-rich 17-field stats. Includes RTT, the
     /// symmetric send/recv-side byte-loss split, and libsrt's bandwidth
-    /// estimate (`mbps_estimated_bandwidth`).
+    /// estimate (`mbps_estimated_bandwidth`). `IoError::SocketClosed`
+    /// means the transport was torn down mid-send; surfaces as CLOSED.
     fn srt_stats(&self, py: Python<'_>) -> PyResult<Py<PySrtStats>> {
-        let inner = self
-            .inner
-            .as_ref()
-            .ok_or_else(|| make_srt_error(py, "CLOSED", "sender is closed"))?;
-        // Reach through the new `Sender::transport()` accessor (added
-        // by this task) to call `SrtTransport::stats()` (also added by
-        // this task). `IoError::SocketClosed` means the transport was
-        // torn down mid-send; surface as CLOSED so callers can tell
-        // it apart from the more general IO catchall.
-        let stats = inner
-            .transport()
-            .stats()
+        let stats = crate::util::with_slot(py, &self.inner, |s| s.transport().stats())
+            .ok_or_else(|| make_srt_error(py, "CLOSED", "sender is closed"))?
             .map_err(|e| io_error_to_pyerr(py, e))?;
         Py::new(py, PySrtStats::from_srt(&stats))
     }
 
-    /// Close the sender. After close, further `.send_bytes()` calls
-    /// raise `SrtError(kind=CLOSED)`. Idempotent.
-    fn close(&mut self) {
-        if let Some(mut t) = self.inner.take() {
-            t.close();
-        }
+    /// Close the sender. Fires the cancel handle BEFORE taking the slot
+    /// so a `send_bytes()` in flight on another thread ends promptly
+    /// (with `SrtError(BROKEN | CLOSED)` — the cancel closes the libsrt
+    /// socket under it) instead of blocking the close. A partial bundle
+    /// still in the framing buffer is not delivered; call `flush()`
+    /// first when that matters. After close, further `.send_bytes()`
+    /// calls raise `SrtError(kind=CLOSED)`. Idempotent.
+    fn close(&self, py: Python<'_>) {
+        self.cancel.cancel();
+        crate::util::close_slot(py, &self.inner, |mut s| s.close());
     }
 
-    /// `True` while the sender owns a live transport.
+    /// `True` while the sender owns a live transport (a send in flight on
+    /// another thread counts as live).
     fn is_alive(&self) -> bool {
-        self.inner.as_ref().is_some_and(|s| s.is_alive())
+        crate::util::slot_alive(&self.inner, |s| s.is_alive())
     }
 
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -444,19 +431,21 @@ impl PySender {
     }
 
     fn __exit__(
-        &mut self,
+        &self,
+        py: Python<'_>,
         _exc_type: &Bound<'_, PyAny>,
         _exc_value: &Bound<'_, PyAny>,
         _traceback: &Bound<'_, PyAny>,
     ) -> bool {
-        self.close();
+        self.close(py);
         false
     }
 
     fn __repr__(&self) -> String {
-        match &self.inner {
-            Some(_) => "Sender(open)".to_string(),
-            None => "Sender(closed)".to_string(),
+        if crate::util::slot_alive(&self.inner, |_| true) {
+            "Sender(open)".to_string()
+        } else {
+            "Sender(closed)".to_string()
         }
     }
 }
@@ -693,7 +682,7 @@ impl PySender {
             .cancel_handle()
             .expect("SrtTransport with a live socket always returns Some(cancel_handle)");
         Self {
-            inner: Some(inner),
+            inner: Arc::new(Mutex::new(Some(inner))),
             cancel,
         }
     }
