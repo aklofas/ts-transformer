@@ -37,6 +37,12 @@ pub struct DemuxerStats {
     /// PES sample for. Increments on the first `SamplePayload::Subtitle`
     /// event per PID; resets to zero on `reset_stats`.
     pub subtitle_streams_seen: u32,
+    /// Number of times the opt-in PTS/DTS unwrap
+    /// ([`DemuxerConfig::unwrap_timestamps`]) re-anchored a dormant PID
+    /// onto its program's running clock instead of trusting the PID's
+    /// own (ambiguous) 33-bit delta — see the "Dormant PIDs" paragraph on
+    /// that field. Zero while the knob is off. Resets on `reset_stats`.
+    pub unwrap_reanchors: u64,
     /// Per-PID counters. Keys are PIDs. Entries are created on first event
     /// for a given PID; PSI PIDs (0x0000 for PAT, the PMT PID) are added
     /// with fixed "PAT"/"PMT" labels when a `ProgramMap` event fires.
@@ -237,6 +243,20 @@ pub struct DemuxerConfig {
     /// are already in rather than a full `1 << 33` below them.
     /// Independent programs are never cross-anchored — each program
     /// carries its own time base (ITU-T H.222.0 §2.4.3.5).
+    ///
+    /// **Dormant PIDs.** A PID's own signed 33-bit delta is unambiguous
+    /// only while its silence stays under half an epoch (`1 << 32`
+    /// ticks, ~13.3 h at 90 kHz). A PID that falls silent for longer
+    /// while its siblings keep flowing is re-anchored onto the
+    /// program's running clock — when that clock is fresher than the
+    /// PID's last sample and places the new sample more than half an
+    /// epoch from it — and each such re-anchor is counted in
+    /// [`DemuxerStats::unwrap_reanchors`]. A PID silent for more than
+    /// half an epoch with **no** flowing sibling has no evidence to
+    /// re-anchor against and may land a full `1 << 33` low: that is the
+    /// bound on the whole-session comparability above. Short reorders
+    /// are untouched — siblings advancing by less than half an epoch
+    /// imply a small gap, and the sample keeps its own backward step.
     ///
     /// Accumulation saturates rather than overflowing: the full `i64`
     /// range spans about `2^31` rollovers (~6.5 million years of wall

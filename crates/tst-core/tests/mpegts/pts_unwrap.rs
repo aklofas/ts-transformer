@@ -709,3 +709,125 @@ fn pid_removed_and_readded_across_a_wrap_anchors_to_the_program_clock() {
          removal lands it one full epoch low, at 410_065_408"
     );
 }
+
+/// Test J (X-CORR-08, review experiment E08) — a PID that stays silent
+/// for more than half a 33-bit epoch while its siblings keep advancing
+/// must rejoin the program's epoch, not land one epoch below it. Both
+/// PIDs of one program start at raw 0; the video PID advances through
+/// `2^31` and `2^32` in steps that are each under half an epoch; the KLV
+/// PID then emits `2^32 + 100` after being silent since 0. Its own signed
+/// 33-bit delta reads that as `-2^32 + 100`; the program clock — fresher,
+/// and implying a gap of more than half an epoch — is the evidence that
+/// places it at `2^32 + 100`.
+#[test]
+fn dormant_pid_reanchors_onto_its_programs_running_clock() {
+    const HALF: i64 = 1i64 << 32;
+    let cfg = {
+        let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+        prog.add_video(0x100, VideoCodec::H264);
+        prog.add_klv(
+            0x101,
+            KlvStreamType::PrivateData,
+            /* carries_pts= */ true,
+        );
+        let mut b = MuxerConfig::builder();
+        b.add_program(prog.build());
+        b.build().unwrap()
+    };
+    let mut mux = Muxer::new(cfg).unwrap();
+    let au = minimal_h264_au();
+    let klv = minimal_klv();
+
+    // Drain after each push so the wire order is unambiguous. The KLV PES
+    // is length-bounded and completes as it is written; video PES is
+    // length-unbounded and only finalises on the next PUSI, so the
+    // trailing video step exists to get the `2^32` sample EMITTED — and
+    // published to the program clock — before the KLV PID resumes.
+    let mut ts_buf = Vec::new();
+    mux.push_klv(&klv, Pts90khz::new(0), 0x00).unwrap();
+    ts_buf.extend_from_slice(&drain(&mut mux));
+    for pts in [0, HALF / 2, HALF, HALF + 90_000] {
+        mux.push_video(&au, Pts90khz::new(pts), true).unwrap();
+        ts_buf.extend_from_slice(&drain(&mut mux));
+    }
+    mux.push_klv(&klv, Pts90khz::new(HALF + 100), 0x00).unwrap();
+    ts_buf.extend_from_slice(&drain(&mut mux));
+
+    let cfg = DemuxerConfig::builder().unwrap_timestamps(true).build();
+    let mut d = Demuxer::with_config(cfg);
+    d.feed(&ts_buf).unwrap();
+    d.flush();
+    let events: Vec<DemuxEvent> = std::iter::from_fn(|| d.next_event()).collect();
+
+    assert_eq!(
+        video_pts(&events, 0x100),
+        vec![0, HALF / 2, HALF, HALF + 90_000],
+        "test setup: every video step is under half an epoch and the 2^32 \
+         sample must be emitted before the KLV PID resumes"
+    );
+    assert_eq!(
+        klv_pts(&events, 0x101),
+        vec![0, HALF + 100],
+        "a PID dormant for more than half an epoch must rejoin its program's \
+         epoch; its own 33-bit delta alone reads the sample as -2^32 + 100"
+    );
+    assert_eq!(
+        d.stats().unwrap_reanchors,
+        1,
+        "exactly one re-anchor, counted"
+    );
+
+    // Knob off: raw wire values, unchanged.
+    let off = demux_all(&ts_buf, false);
+    assert_eq!(klv_pts(&off, 0x101), vec![0, HALF + 100]);
+}
+
+/// Test K (X-CORR-08 control) — a genuinely reordered late sample on a
+/// PID whose siblings advanced by far less than half an epoch keeps its
+/// own signed delta: the program clock implies only a small gap, so no
+/// re-anchor fires, the sample steps back by its true distance, and the
+/// counter stays at zero.
+#[test]
+fn reordered_late_sample_does_not_trigger_a_reanchor() {
+    let cfg = {
+        let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+        prog.add_video(0x100, VideoCodec::H264);
+        prog.add_klv(
+            0x101,
+            KlvStreamType::PrivateData,
+            /* carries_pts= */ true,
+        );
+        let mut b = MuxerConfig::builder();
+        b.add_program(prog.build());
+        b.build().unwrap()
+    };
+    let mut mux = Muxer::new(cfg).unwrap();
+    let au = minimal_h264_au();
+    let klv = minimal_klv();
+
+    let mut ts_buf = Vec::new();
+    mux.push_klv(&klv, Pts90khz::new(90_000), 0x00).unwrap();
+    ts_buf.extend_from_slice(&drain(&mut mux));
+    for pts in [90_000, 180_000, 270_000] {
+        mux.push_video(&au, Pts90khz::new(pts), true).unwrap();
+        ts_buf.extend_from_slice(&drain(&mut mux));
+    }
+    // Late KLV sample: 1_000 ticks BEFORE its own previous one, while the
+    // siblings have advanced by 90_000 (the 180_000 sample is emitted).
+    mux.push_klv(&klv, Pts90khz::new(89_000), 0x00).unwrap();
+    ts_buf.extend_from_slice(&drain(&mut mux));
+
+    let cfg = DemuxerConfig::builder().unwrap_timestamps(true).build();
+    let mut d = Demuxer::with_config(cfg);
+    d.feed(&ts_buf).unwrap();
+    d.flush();
+    let events: Vec<DemuxEvent> = std::iter::from_fn(|| d.next_event()).collect();
+
+    assert_eq!(video_pts(&events, 0x100), vec![90_000, 180_000, 270_000]);
+    assert_eq!(
+        klv_pts(&events, 0x101),
+        vec![90_000, 89_000],
+        "a short reorder keeps its own backward step — no re-anchor"
+    );
+    assert_eq!(d.stats().unwrap_reanchors, 0);
+}
