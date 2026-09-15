@@ -17,14 +17,18 @@ impl RtspClient {
     ///   or reading the response.
     /// - [`RtspError::BadResponse`] (or another variant) surfaced by
     ///   the response reader if the server replies malformed bytes.
+    /// - [`RtspError::Timeout`] when the response deadline
+    ///   (`RtspClientBuilder::request_timeout`, default 10 s) elapses;
+    ///   `session_id` is still cleared.
     pub fn teardown(&mut self) -> Result<(), RtspError> {
-        self.teardown_with_deadline(None)
+        let deadline = self.request_timeout.map(|t| std::time::Instant::now() + t);
+        self.teardown_with_deadline(deadline)
     }
 
     /// Variant of [`Self::teardown`] with an optional response deadline.
     /// When `deadline` elapses with no TEARDOWN response, returns
-    /// [`RtspError::Io`] with [`std::io::ErrorKind::TimedOut`] but still
-    /// clears `session_id` (so callers know not to retry teardown).
+    /// [`RtspError::Timeout`] but still clears `session_id` (so callers
+    /// know not to retry teardown).
     ///
     /// Called from `Drop for RtspClient` with a ~500 ms deadline so the
     /// destructor stays bounded even when the peer silently half-closed
@@ -110,8 +114,8 @@ mod tests {
         let elapsed = t0.elapsed();
 
         assert!(
-            matches!(r, Err(RtspError::Io(std::io::ErrorKind::TimedOut))),
-            "expected Io(TimedOut), got {r:?}"
+            matches!(r, Err(RtspError::Timeout)),
+            "expected Timeout, got {r:?}"
         );
         // Lower bound: the deadline was actually honored as a wait, not
         // an instant bail. Upper bound: generous CI slack, but far below

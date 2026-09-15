@@ -79,12 +79,14 @@ pub enum RtspError {
     #[error("RTSP session expired or was closed by server")]
     SessionExpired,
 
-    /// Server's `Session: ...;timeout=N` interval elapsed without a
-    /// successful keepalive ping. Distinct from
-    /// [`RtspError::SessionExpired`] in that the timeout fired locally
-    /// (we never got a response) rather than receiving an explicit
-    /// session-not-found status.
-    #[error("RTSP session timed out (no response to keepalive)")]
+    /// A request's response deadline elapsed
+    /// (`RtspClientBuilder::request_timeout`, default 10 s; also the 500 ms
+    /// bound `Drop` puts on its best-effort TEARDOWN). The request was
+    /// written; whether the server acted on it is unknown, and its late
+    /// response may still be in the socket — treat the control connection
+    /// as indeterminate and build a fresh client. Distinct from
+    /// [`RtspError::SessionExpired`], which is the server's explicit 454.
+    #[error("RTSP request timed out waiting for the server's response")]
     Timeout,
 
     /// Caller invoked `RtspCancelHandle::cancel` (lands Wave B) mid-request.

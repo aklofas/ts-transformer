@@ -195,6 +195,7 @@ pub struct RtspClientBuilder {
     keepalive_interval_override: Option<Duration>,
     connect_timeout: Duration,
     read_timeout: Duration,
+    request_timeout: Option<Duration>,
     user_agent: String,
     #[cfg(feature = "tls")]
     tls_root_certs: Option<rustls::RootCertStore>,
@@ -220,6 +221,7 @@ impl RtspClientBuilder {
             keepalive_interval_override: None,
             connect_timeout: Duration::from_secs(10),
             read_timeout: Duration::from_millis(100),
+            request_timeout: Some(Duration::from_secs(10)),
             user_agent: "tst-rtp/0.1".into(),
             #[cfg(feature = "tls")]
             tls_root_certs: None,
@@ -307,6 +309,23 @@ impl RtspClientBuilder {
         self
     }
 
+    /// Per-request response deadline: how long `options()` / `describe()` /
+    /// `setup_*()` / `play()` / `pause()` / `get_parameter()` / `teardown()`
+    /// wait for the server's reply once the request is written. Expiry
+    /// returns [`RtspError::Timeout`]. `None` disables the deadline (the
+    /// pre-`request_timeout` behaviour: a silent server parks the call
+    /// until the cancel handle fires). Default 10 s, the same as
+    /// [`Self::connect_timeout`].
+    ///
+    /// After a `Timeout` treat the control connection as indeterminate and
+    /// build a fresh client: the late response, if it ever arrives, is still
+    /// in the socket and the non-interleaved read path does not match
+    /// responses by CSeq.
+    pub fn request_timeout(mut self, t: Option<Duration>) -> Self {
+        self.request_timeout = t;
+        self
+    }
+
     /// Override the rustls root certificate store for `rtsps://`
     /// connections. Default: webpki-roots / system roots per the `tls`
     /// module's policy.
@@ -363,6 +382,7 @@ impl RtspClientBuilder {
         let params = ConnectParams {
             connect_timeout: self.connect_timeout,
             read_timeout: self.read_timeout,
+            request_timeout: self.request_timeout,
             user_agent: self.user_agent,
         };
         #[cfg(feature = "tls")]
@@ -705,6 +725,19 @@ mod tests {
             .unwrap()
             .transport_preference(RtspTransportPref::ForceTcp);
         assert_eq!(b.url.transport_preference, RtspTransportPref::ForceTcp);
+    }
+
+    #[test]
+    fn rtsp_client_builder_request_timeout_defaults_to_ten_seconds() {
+        let b = RtspClientBuilder::new("rtsp://127.0.0.1:1/x").unwrap();
+        assert_eq!(b.request_timeout, Some(Duration::from_secs(10)));
+        assert_eq!(
+            ConnectParams::default().request_timeout,
+            Some(Duration::from_secs(10)),
+            "the bare connect() entry points must carry the same default"
+        );
+        let b = b.request_timeout(None);
+        assert_eq!(b.request_timeout, None);
     }
 }
 

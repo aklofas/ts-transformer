@@ -147,6 +147,10 @@ pub struct RtspClient {
     /// to `"tst-rtp/0.1"` when using the bare `connect`/`connect_with`
     /// entry points.
     pub(crate) user_agent: String,
+    /// Per-request response deadline
+    /// ([`crate::RtspClientBuilder::request_timeout`]); `None` = unbounded.
+    /// Applied by `send_and_read` and `teardown`.
+    pub(crate) request_timeout: Option<Duration>,
     /// JoinHandle for the rtsp-keepalive thread — joined in [`Drop`].
     /// `None` when keepalive is disabled or hasn't been spawned yet.
     pub(crate) keepalive_thread: Option<std::thread::JoinHandle<()>>,
@@ -319,6 +323,9 @@ pub(crate) struct ConnectParams {
     pub(crate) connect_timeout: Duration,
     /// Per-read socket timeout (cancel/interleaved-frame poll interval).
     pub(crate) read_timeout: Duration,
+    /// Per-request response deadline (`RtspClientBuilder::request_timeout`);
+    /// `None` = unbounded.
+    pub(crate) request_timeout: Option<Duration>,
     /// `User-Agent:` header value sent on every outbound request.
     pub(crate) user_agent: String,
 }
@@ -328,6 +335,7 @@ impl Default for ConnectParams {
         Self {
             connect_timeout: Duration::from_secs(10),
             read_timeout: Duration::from_millis(100),
+            request_timeout: Some(Duration::from_secs(10)),
             user_agent: "tst-rtp/0.1".into(),
         }
     }
@@ -465,6 +473,7 @@ impl RtspClient {
             keepalive_interval_shared: None,
             keepalive_interval_overridden: false,
             user_agent: params.user_agent,
+            request_timeout: params.request_timeout,
             keepalive_thread: None,
             pump_state: None,
             auth: Arc::new(Mutex::new(AuthState::default())),

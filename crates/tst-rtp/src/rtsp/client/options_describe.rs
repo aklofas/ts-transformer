@@ -269,16 +269,19 @@ impl RtspClient {
         &mut self,
         request_bytes: &[u8],
     ) -> Result<RtspResponse, RtspError> {
-        self.send_and_read_with_deadline(request_bytes, None)
+        // `RtspClientBuilder::request_timeout` (CORR-26): every request
+        // method funnels through here, so this one line is the producer of
+        // `RtspError::Timeout`. `None` keeps the unbounded pre-knob wait.
+        let deadline = self.request_timeout.map(|t| std::time::Instant::now() + t);
+        self.send_and_read_with_deadline(request_bytes, deadline)
     }
 
     /// Variant of [`Self::send_and_read`] with an optional hard deadline,
     /// honored on BOTH read paths. When `deadline` elapses with no
-    /// complete response, returns [`RtspError::Io`] with
-    /// [`std::io::ErrorKind::TimedOut`]. Deadline granularity is one
-    /// read-poll cycle (~100 ms — the stream read timeout set in
-    /// [`RtspClient::connect_with`]) on the non-pump path, one `ctrl_rx`
-    /// poll on the pump path.
+    /// complete response, returns [`RtspError::Timeout`]. Deadline
+    /// granularity is one read-poll cycle (~100 ms — the stream read
+    /// timeout set in [`RtspClient::connect_with`]) on the non-pump path,
+    /// one `ctrl_rx` poll on the pump path.
     pub(crate) fn send_and_read_with_deadline(
         &mut self,
         request_bytes: &[u8],
@@ -297,7 +300,7 @@ impl RtspClient {
                 return Err(RtspError::LocalCancel);
             }
             if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
-                return Err(RtspError::Io(std::io::ErrorKind::TimedOut));
+                return Err(RtspError::Timeout);
             }
             match s.read(&mut chunk) {
                 Ok(0) => return Err(RtspError::Io(std::io::ErrorKind::UnexpectedEof)),
@@ -371,7 +374,7 @@ impl RtspClient {
 
     /// Pump-active variant of [`Self::send_and_read`] with an optional
     /// hard deadline. When `deadline` elapses with no matching response,
-    /// returns [`RtspError::Io`] with [`std::io::ErrorKind::TimedOut`].
+    /// returns [`RtspError::Timeout`].
     ///
     /// Used by [`Self::teardown`] from within `Drop`: if the server has
     /// silently half-closed (no FIN on the wire — e.g. when
@@ -427,7 +430,7 @@ impl RtspClient {
             }
             if let Some(d) = deadline {
                 if std::time::Instant::now() >= d {
-                    return Err(RtspError::Io(std::io::ErrorKind::TimedOut));
+                    return Err(RtspError::Timeout);
                 }
             }
             match pump
