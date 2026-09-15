@@ -1299,7 +1299,19 @@ impl<T: Transport> Transport for Corrupter<T> {
     }
 
     fn close(&mut self) {
-        let _ = self.log.flush();
+        if let Err(e) = self.log.flush() {
+            // Same latch as the per-line write arm (X-CORR-05): a
+            // buffering writer can hold a whole line until this final
+            // flush, so a failure HERE loses evidence exactly like a
+            // failure there — and a lost `Dup` line is one the receiver
+            // had no obligation to notice, so nothing downstream would
+            // otherwise reveal that the log is incomplete.
+            self.stats
+                .lock()
+                .expect("corruption stats mutex")
+                .log_write_failed = true;
+            tracing::error!("corruption log flush failed at close: {e}");
+        }
         self.inner.close();
     }
 
@@ -2584,6 +2596,78 @@ mod tests {
         fn flush(&mut self) -> std::io::Result<()> {
             self.inner.flush()
         }
+    }
+
+    /// A log writer whose WRITES always succeed and whose `flush` fails
+    /// only after `arm`ing — the close-time shape. `write_line` flushes
+    /// per line, so leaving it disarmed until the run is over is what
+    /// isolates `Corrupter::close`'s own flush.
+    struct FailFlushOnClose {
+        inner: testing::VecWriter,
+        armed: Arc<Mutex<bool>>,
+    }
+    impl Write for FailFlushOnClose {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.inner.write(b)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            if *self.armed.lock().unwrap() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "disk full",
+                ));
+            }
+            self.inner.flush()
+        }
+    }
+
+    /// X-CORR-05, close-time half: a buffering writer can hold a whole
+    /// line until the final flush, so `Corrupter::close` discarding that
+    /// flush error loses evidence exactly like the per-line write arm
+    /// would. It must latch the same flag — and `report soak` must fail
+    /// `corruption_coverage` on it even though every line the receiver
+    /// DID read parses and resolves.
+    #[test]
+    fn a_close_time_flush_failure_is_latched_and_fails_coverage() {
+        let b = baseline_bytes(6.0, "close-flush");
+        let sink = Arc::new(Mutex::new(Vec::new()));
+        let log = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let armed = Arc::new(Mutex::new(false));
+        let mut tap = Corrupter::new(
+            Capture(Arc::clone(&sink)),
+            cfg(&[Class::Dup], 10_000, 1000),
+            Box::new(FailFlushOnClose {
+                inner: testing::VecWriter(Arc::clone(&log)),
+                armed: Arc::clone(&armed),
+            }),
+        )
+        .unwrap();
+        for chunk in b.chunks(1316) {
+            tap.send_bytes(chunk).unwrap();
+        }
+        // Every per-line flush succeeded, so nothing is latched yet.
+        assert!(
+            !tap.stats().log_write_failed,
+            "the run itself wrote cleanly: {:?}",
+            tap.stats()
+        );
+        let injections = tap.stats().injections;
+        assert!(injections >= 1, "6 s of baseline injects at least once");
+
+        *armed.lock().unwrap() = true;
+        tap.close();
+
+        let stats = tap.stats();
+        assert!(
+            stats.log_write_failed,
+            "the tap must record that the final flush failed: {stats:?}"
+        );
+        // …and the log on disk still looks complete, which is exactly why
+        // the latch has to carry the failure rather than the receiver
+        // tripping over a gap.
+        let text = String::from_utf8(log.lock().unwrap().clone()).unwrap();
+        let (_, logged) = parse_log(&text).expect("the written lines still parse");
+        assert_eq!(logged.len() as u64, injections);
     }
 
     /// X-CORR-05 (E05): a lost injection line is not necessarily an
