@@ -5,20 +5,20 @@
 //!
 //! Composition: `ManagedRecvTransport<R> → Receiver → Demuxer`. Unlike
 //! the byte-level [`ManagedRecvTransport`] used directly under
-//! `Receiver` / [`DemuxReceiver`][crate::DemuxReceiver],
+//! `Receiver` / [`DemuxReceiver`],
 //! this shell knows about BOTH the reconnect signal AND the sync /
 //! demux state, and resets the latter when the former fires.
 //!
-//! # Why a new shell instead of pushing this into ManagedRecvTransport
+//! # How it composes
 //!
-//! `ManagedRecvTransport` returns `Ok(bytes)` from `recv_bytes` after
-//! a reconnect with no out-of-band signal — the [`RecvTransport`] trait
-//! has no shape for "the byte you're getting is from a fresh
-//! connection." Higher-level shells that own only the
-//! [`RecvTransport`] trait reference cannot detect the boundary.
-//! `ManagedDemuxReceiver` solves this by owning the `ManagedRecvTransport`
-//! as a CONCRETE type and polling
-//! [`ManagedRecvTransport::reconnects_count`] between events.
+//! `ManagedDemuxReceiver` IS a [`DemuxReceiver`]`<`[`ManagedRecvTransport`]`<R>>`
+//! with the reconnect-epoch observer installed: it snapshots the
+//! transport's `reconnects_handle()` / `reconnecting_handle()` before the
+//! transport moves into the inner shell, hands the counter to the inner
+//! shell's epoch observer, and records the [`RecvEndReason`] from the
+//! inner shell's terminal results. Everything else — the stream-end
+//! flush on `EndOfStream` **and** `Closed`, the deferred terminal error,
+//! byte sinks, stats — is the plain shell's, one contract for both.
 //!
 //! # The bug this fixes
 //!
@@ -41,7 +41,7 @@
 //!   from a different version of the PAT/PMT.
 //! - Continuity counters carry over → bogus CC jump events fire.
 //!
-//! `ManagedDemuxReceiver` calls [`Receiver::reset_sync`] and
+//! `ManagedDemuxReceiver` calls [`crate::receiver::Receiver::reset_sync`] and
 //! [`tst_core::mpegts::demux::Demuxer::reset_sync`] when the reconnect
 //! counter rises, then queues a [`DemuxEvent::ReconnectDiscontinuity`]
 //! event for the next `recv_event` call so the consumer sees the
@@ -50,10 +50,10 @@
 //! # Data-loss budget on reconnect
 //!
 //! After the underlying [`ManagedRecvTransport`] reconnects, the FIRST
-//! aligned 188-byte TS packet returned by [`Receiver::next_packet`]
+//! aligned 188-byte TS packet returned by [`crate::receiver::Receiver::next_packet`]
 //! after the reconnect boundary is **discarded** by this shell before
 //! it reaches the demuxer. The shell additionally clears the syncer's
-//! buffer (via [`Receiver::reset_sync`]), which drops any bytes already
+//! buffer (via [`crate::receiver::Receiver::reset_sync`]), which drops any bytes already
 //! pulled from the transport but not yet emitted as aligned packets —
 //! in practice on the order of one SRT payload (~1316 bytes ≈ 7 TS
 //! packets at worst) of buffered bytes are lost at the moment of
@@ -92,17 +92,17 @@
 //!
 //! # Closing
 //!
-//! Mirrors [`DemuxReceiver`][crate::DemuxReceiver]'s shutdown patterns
+//! Mirrors [`DemuxReceiver`]'s shutdown patterns
 //! (Drop / `close()` / cross-thread `cancel_handle().cancel()`).
 
-use crate::demux_receiver::DemuxReceiverError;
+use crate::demux_receiver::{ByteSink, DemuxReceiver, DemuxReceiverError};
 use crate::managed_receive::ManagedRecvTransport;
-use crate::receiver::{Receiver, ReceiverConfig, ReceiverErrorSource};
 use crate::reconnect::{RecvEndReason, RecvEndReasonHandle};
+use crate::shell_error::ShellErrorKind;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tracing::{info, info_span};
-use tst_core::mpegts::demux::{DemuxEvent, Demuxer, DemuxerConfig};
+use tst_core::mpegts::demux::{DemuxEvent, DemuxerConfig};
 use tst_core::transport::RecvTransport;
 
 /// Construction parameters for [`ManagedDemuxReceiver`].
@@ -120,13 +120,11 @@ use tst_core::transport::RecvTransport;
 #[derive(Debug, Default, Clone)]
 pub struct ManagedDemuxReceiverConfig {}
 
-/// Reconnect-aware full receive shell.
-///
-/// Owns a [`ManagedRecvTransport`] (byte-level reconnect) wrapped in a
-/// [`Receiver`] (TS sync recovery) plus a [`Demuxer`] (PSI/PES parse).
-/// Between event emissions, polls the reconnect counter; on a fresh
-/// transport rebuild, drops sync/demux state and surfaces the boundary
-/// to the caller as a [`DemuxEvent::ReconnectDiscontinuity`] event.
+/// Reconnect-aware full receive shell: a [`DemuxReceiver`] over a
+/// [`ManagedRecvTransport`] with reconnect detection wired into the
+/// sync/demux state. Between event emissions the inner shell polls the
+/// reconnect counter; on a fresh transport rebuild it drops sync/demux
+/// state and surfaces the boundary as [`DemuxEvent::ReconnectDiscontinuity`].
 ///
 /// # Usage
 ///
@@ -153,30 +151,13 @@ pub struct ManagedDemuxReceiverConfig {}
 /// }
 /// ```
 pub struct ManagedDemuxReceiver<R: RecvTransport> {
-    ts: Receiver<ManagedRecvTransport<R>>,
-    demux: Demuxer,
-    /// Shared handle to the underlying `ManagedRecvTransport`'s
-    /// reconnect counter. Snapshotted in `new()` so the shell can poll
-    /// it without an accessor on `Receiver` (which would expose its
-    /// inner transport publicly).
+    inner: DemuxReceiver<ManagedRecvTransport<R>>,
+    /// The transport's reconnect counter, snapshotted before the transport
+    /// moved into `inner` (which exposes no transport accessor). Backs
+    /// [`Self::reconnects_count`] / [`Self::reconnects_handle`].
     reconnects: Arc<AtomicU64>,
-    /// Reconnect counter snapshot from the last loop iteration. When
-    /// the live counter rises above this value the shell knows a
-    /// reconnect just fired since the previous `recv_event` and resets
-    /// sync/demux state.
-    last_reconnects: u64,
-    /// Set when a reconnect was detected mid-loop; consumed by the next
-    /// `recv_event` to yield `DemuxEvent::ReconnectDiscontinuity` before
-    /// any post-reconnect events. Stored as `bool` rather than queued
-    /// directly into the demuxer's `queue` because the demuxer's queue
-    /// is cleared by `reset_sync` and we want the event to survive that
-    /// clear.
-    pending_reconnect_event: bool,
-    /// Shared flag mirroring the inner [`ManagedRecvTransport`]'s
-    /// "connection currently absent" state. Snapshotted in `new()` /
-    /// `with_demux_options()` the same way as `reconnects` — `Receiver`
-    /// doesn't expose its inner transport publicly, so this is the only
-    /// way to read it after construction. Backs [`Self::reconnecting`].
+    /// The transport's "connection currently absent" flag, snapshotted
+    /// the same way. Backs [`Self::reconnecting`].
     reconnect_in_progress: Arc<AtomicBool>,
     /// Shared, first-writer-wins record of why this receiver's stream
     /// ended — see [`RecvEndReason`]. [`Self::end_reason_handle`] hands
@@ -192,8 +173,8 @@ impl<R: RecvTransport> std::fmt::Debug for ManagedDemuxReceiver<R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ManagedDemuxReceiver")
             .field("is_alive", &self.is_alive())
-            .field("last_reconnects", &self.last_reconnects)
-            .field("pending_reconnect_event", &self.pending_reconnect_event)
+            .field("reconnects", &self.reconnects_count())
+            .field("reconnecting", &self.reconnecting())
             .field("transport_kind", &std::any::type_name::<R>())
             .finish()
     }
@@ -202,27 +183,8 @@ impl<R: RecvTransport> std::fmt::Debug for ManagedDemuxReceiver<R> {
 impl<R: RecvTransport> ManagedDemuxReceiver<R> {
     /// Wrap a [`ManagedRecvTransport`] with default demuxer options
     /// (lenient mode).
-    pub fn new(transport: ManagedRecvTransport<R>, _config: ManagedDemuxReceiverConfig) -> Self {
-        let span = info_span!(
-            target: "tst_pipeline::managed_demux_receiver",
-            "managed_demux_receiver",
-            transport_kind = std::any::type_name::<R>(),
-        );
-        let _enter = span.enter();
-        info!("ManagedDemuxReceiver opened");
-        drop(_enter);
-        let reconnects = transport.reconnects_handle();
-        let reconnect_in_progress = transport.reconnecting_handle();
-        Self {
-            ts: Receiver::new(transport, ReceiverConfig::default()),
-            demux: Demuxer::new(),
-            reconnects,
-            last_reconnects: 0,
-            pending_reconnect_event: false,
-            reconnect_in_progress,
-            end_reason: RecvEndReasonHandle::default(),
-            _span: std::panic::AssertUnwindSafe(span),
-        }
+    pub fn new(transport: ManagedRecvTransport<R>, config: ManagedDemuxReceiverConfig) -> Self {
+        Self::with_demux_options(transport, DemuxerConfig::default(), config)
     }
 
     /// Wrap a [`ManagedRecvTransport`] with custom demuxer options
@@ -242,16 +204,23 @@ impl<R: RecvTransport> ManagedDemuxReceiver<R> {
         drop(_enter);
         let reconnects = transport.reconnects_handle();
         let reconnect_in_progress = transport.reconnecting_handle();
+        let mut inner = DemuxReceiver::with_demux_options(transport, options);
+        inner.set_reconnect_epoch(Arc::clone(&reconnects));
         Self {
-            ts: Receiver::new(transport, ReceiverConfig::default()),
-            demux: Demuxer::with_config(options),
+            inner,
             reconnects,
-            last_reconnects: 0,
-            pending_reconnect_event: false,
             reconnect_in_progress,
             end_reason: RecvEndReasonHandle::default(),
             _span: std::panic::AssertUnwindSafe(span),
         }
+    }
+
+    /// Register a byte-fanout sink — see [`DemuxReceiver::add_byte_sink`]
+    /// for the contract. One managed-shell addition: the first aligned
+    /// packet after a reconnect is discarded before parsing (the
+    /// data-loss budget above) and is not shown to sinks either.
+    pub fn add_byte_sink(&mut self, sink: ByteSink) {
+        self.inner.add_byte_sink(sink);
     }
 
     /// Pull one [`DemuxEvent`].
@@ -267,123 +236,49 @@ impl<R: RecvTransport> ManagedDemuxReceiver<R> {
     /// Returns [`DemuxReceiverError`] (same shape as plain
     /// `DemuxReceiver` — variants identical). Reconnect is NOT an
     /// error: it surfaces in-band as a `ReconnectDiscontinuity` event.
-    /// Terminal closes (budget exhausted, peer EOS, or caller cancel)
-    /// surface as `Ok(None)` after the demuxer's final `flush` drain,
-    /// matching `DemuxReceiver::recv_event` semantics.
+    /// Reconnect-budget exhaustion surfaces as `Ok(None)` after the
+    /// demuxer's final `flush` drain; a caller cancel/close surfaces as
+    /// `Err(e)` with `e.kind == Closed`, likewise after the flush drain —
+    /// exactly `DemuxReceiver::recv_event`'s "Stream-end flush" contract.
+    /// Both record the [`RecvEndReason`].
     pub fn recv_event(&mut self) -> Result<Option<DemuxEvent>, DemuxReceiverError> {
-        loop {
-            // Step 1: yield a pending reconnect-discontinuity event first.
-            // This must precede the demuxer's own queue drain — after a
-            // reset_sync that queue is empty, but a future variant of this
-            // shell might leave non-reconnect events in flight; ordering
-            // the discontinuity event first prevents post-reconnect events
-            // from being yielded before the boundary marker.
-            if self.pending_reconnect_event {
-                self.pending_reconnect_event = false;
-                return Ok(Some(DemuxEvent::ReconnectDiscontinuity));
+        let result = self.inner.recv_event();
+        match &result {
+            // On the managed-SRT path a clean EOS arises ONLY from
+            // ManagedRecvTransport's reconnect-budget-exhausted `Closed`
+            // — the inner SRT transport never emits a clean EOS itself (a
+            // peer FIN surfaces as `Broken`, which the decorator retries).
+            // So "the stream ended here" == "reconnect gave up".
+            // First-writer-wins, so a plain EOS path added later can
+            // still populate EndOfStream without this site changing.
+            Ok(None) => self.end_reason.record(RecvEndReason::ReconnectExhausted),
+            // Closed-kind on the receive side means the decorator's
+            // ExplicitClose — caller-initiated close()/cancel(), not a
+            // wire-level failure.
+            Err(e) if e.kind == ShellErrorKind::Closed => {
+                self.end_reason.record(RecvEndReason::Cancelled)
             }
-
-            // Step 2: fast path — demuxer already has a queued event.
-            if let Some(e) = self.demux.next_event() {
-                return Ok(Some(e));
-            }
-
-            // Step 3: pull the next aligned 188-byte packet from the
-            // sync layer. This is where a reconnect manifests: the
-            // underlying ManagedRecvTransport rebuilds the inner
-            // transport, then returns Ok from recv_bytes — the syncer
-            // sees the bytes-since-last-call rise but has no way to
-            // know they came from a new connection. Detect via the
-            // reconnect counter BEFORE feeding any new bytes to the
-            // syncer.
-            //
-            // Race note: a reconnect that happens during a recv block
-            // is not detected here UNTIL the next recv returns, at
-            // which point the count check below picks it up.
-            let pkt = match self.ts.next_packet() {
-                Ok(p) => p,
-                Err(e) if e.kind == crate::shell_error::ShellErrorKind::EndOfStream => {
-                    // On the managed-SRT path this arises ONLY from
-                    // ManagedRecvTransport's reconnect-budget-exhausted
-                    // `Closed` — the inner SRT transport never emits a
-                    // clean EOS itself (a peer FIN surfaces as `Broken`,
-                    // which the decorator retries). So "the stream ended
-                    // here" == "reconnect gave up"; record accordingly.
-                    // First-writer-wins, so a plain (non-managed) EOS
-                    // path added in the future can still populate
-                    // RecvEndReason::EndOfStream without this site
-                    // needing to change.
-                    self.end_reason.record(RecvEndReason::ReconnectExhausted);
-                    // Stream end: same shape as DemuxReceiver — flush
-                    // any partial PES then drain remaining events.
-                    self.demux.flush();
-                    if let Some(ev) = self.demux.next_event() {
-                        return Ok(Some(ev));
-                    }
-                    return Ok(None);
-                }
-                Err(e) => {
-                    if e.kind == crate::shell_error::ShellErrorKind::Closed {
-                        // Closed-kind on the receive side means the
-                        // decorator's ExplicitClose — caller-initiated
-                        // close()/cancel(), not a wire-level failure.
-                        self.end_reason.record(RecvEndReason::Cancelled);
-                    }
-                    let ReceiverErrorSource::Transport(te) = e.source;
-                    return Err(te.into());
-                }
-            };
-
-            // Step 4: now that we've taken a packet, check whether a
-            // reconnect fired since the last loop iteration. If so,
-            // DROP this packet (it's from the new connection's first
-            // recv but the syncer may have buffered tail bytes from
-            // the dead connection AHEAD of it — easier to discard
-            // this one packet and let the syncer re-align cleanly
-            // than to surgically separate dead-tail from
-            // fresh-leading). Reset state and queue the discontinuity.
-            //
-            // Note: this check sits AFTER next_packet rather than
-            // before because reconnect can fire DURING a single
-            // next_packet call (multiple recv_bytes loops over a
-            // single packet boundary). Polling after we've drained
-            // one packet's worth of bytes ensures we observe the
-            // post-reconnect state.
-            let current = self.reconnects.load(Ordering::Acquire);
-            if current > self.last_reconnects {
-                self.last_reconnects = current;
-                self.ts.reset_sync();
-                self.demux.reset_sync();
-                self.pending_reconnect_event = true;
-                // Drop the just-read packet; the syncer is now clean
-                // and will re-lock on the next post-reconnect bytes.
-                continue;
-            }
-
-            // Step 5: steady-state path — feed the aligned packet to
-            // the demuxer and loop to pull whatever events it produced.
-            self.demux
-                .feed_aligned(&pkt)
-                .map_err(DemuxReceiverError::from)?;
+            _ => {}
         }
+        result
     }
 
     /// Advisory liveness check. Delegates to the underlying transport.
     #[must_use]
     pub fn is_alive(&self) -> bool {
-        self.ts.is_alive()
+        self.inner.is_alive()
     }
 
     /// Close the underlying transport. Idempotent.
     pub fn close(&mut self) {
-        self.ts.close();
+        self.inner.close();
     }
 
     /// Cross-thread cancel handle for the underlying managed transport.
     pub fn cancel_handle(
         &self,
     ) -> Option<Arc<dyn tst_core::transport::TransportCancel + Send + Sync>> {
-        self.ts.cancel_handle()
+        self.inner.cancel_handle()
     }
 
     /// Total number of times the underlying transport has been rebuilt
@@ -468,29 +363,14 @@ impl<R: RecvTransport> ManagedDemuxReceiver<R> {
         self.end_reason.clone()
     }
 
-    /// Snapshot the current counters. Mirrors
-    /// [`DemuxReceiver::stats`](crate::DemuxReceiver::stats) — composes
-    /// transport-layer byte/packet counts from the inner [`Receiver`]
-    /// with demux-layer event counts from the inner [`Demuxer`].
+    /// Snapshot the current counters — [`DemuxReceiver::stats`].
     pub fn stats(&self) -> crate::demux_receiver::DemuxReceiverStats {
-        let ts = self.ts.stats();
-        let dx = self.demux.stats();
-        crate::demux_receiver::DemuxReceiverStats {
-            bytes_received: ts.bytes_received,
-            packets_received: ts.packets_received,
-            program_maps_seen: dx.program_maps_seen,
-            pmt_versions_seen: dx.pmt_versions_seen,
-            discontinuities: dx.discontinuities,
-            nonconformant: dx.nonconformant,
-            per_stream: dx.per_stream,
-        }
+        self.inner.stats()
     }
 
-    /// Reset all counters to zero. Delegates to both the inner
-    /// [`Receiver`] and the inner [`Demuxer`].
+    /// Reset all counters to zero — [`DemuxReceiver::reset_stats`].
     pub fn reset_stats(&mut self) {
-        self.ts.reset_stats();
-        self.demux.reset_stats();
+        self.inner.reset_stats();
     }
 
     /// Wire-level transport stats sourced from the inner
@@ -498,20 +378,17 @@ impl<R: RecvTransport> ManagedDemuxReceiver<R> {
     /// has no live inner socket (e.g. mid-reconnect or after terminal
     /// close).
     pub fn socket_stats(&self) -> Option<tst_core::transport::SocketStats> {
-        self.ts.socket_stats()
+        self.inner.socket_stats()
     }
 
-    /// Per-PID codec-specific counters. Mirrors
-    /// [`DemuxReceiver::stream_codec_stats`](crate::DemuxReceiver::stream_codec_stats) —
-    /// delegates to the inner
-    /// [`tst_core::mpegts::demux::Demuxer::stream_codec_stats`]. The
-    /// demuxer's per-PID state is independent of the live socket, so
+    /// Per-PID codec-specific counters — [`DemuxReceiver::stream_codec_stats`];
+    /// the demuxer's per-PID state is independent of the live socket, so
     /// results don't vary across reconnect.
     pub fn stream_codec_stats(
         &self,
         pid: u16,
     ) -> Option<tst_core::mpegts::stats::StreamCodecStats> {
-        self.demux.stream_codec_stats(pid)
+        self.inner.stream_codec_stats(pid)
     }
 }
 
