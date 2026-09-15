@@ -67,7 +67,7 @@ representative.
 
 | Verdict | Meaning |
 | --- | --- |
-| **PASS** | The cell's tier requirement held: a byte-for-byte match against the source (`transparent` tier, used for pure-relay tools/paths), or `tst-interop verify`'s profile invariants **and demuxer-independent wire oracles** (`remux` tier, used where the peer legitimately re-packetizes: video/KLV/audio event counts within a documented slack, correct video codec and KLV carriage kind, program count, rollover-aware monotonic PTS, plus per-profile wire-level properties — PCR cadence, AV1 carriage-mode discrimination, per-program media accounting, and an actually-observed PTS wrap, read directly off the bytes by a naive raw-TS parser independent of the demuxer under test — see "What each profile's oracle proves" below), or no error in the peer's own log (`n/a` tier, used for decode-only probes). |
+| **PASS** | The cell's tier requirement held: a byte-for-byte match against the source (`transparent` tier, used for pure-relay tools/paths), or `tst-interop verify`'s profile invariants **and demuxer-independent wire oracles** (`remux` tier, used where the peer legitimately re-packetizes: video/KLV/audio event counts at or above a documented floor (`NOMINAL_COUNT_SLACK` = 70 % of nominal, the allowance for captures truncated at either end) **and, per media PID, the demuxer's event count against the raw reader's independent PES-start count (`wire_vs_demux_<pid>`: short by at most the events the capture itself explains — attributed injections, plus under lossy judgement its own discontinuities and non-conformances — and a fixed per-PID boundary allowance for the units a demuxer cannot emit before it has acquired PAT + PMT or after the capture's last PES; the check that makes the 70 % number a floor rather than the bar)**, correct video codec and KLV carriage kind, program count, rollover-aware monotonic PTS, plus per-profile wire-level properties — PCR cadence, AV1 carriage-mode discrimination, per-program media accounting, and an actually-observed PTS wrap, read directly off the bytes by a naive raw-TS parser independent of the demuxer under test — see "What each profile's oracle proves" below), or no error in the peer's own log (`n/a` tier, used for decode-only probes). |
 | **EXPECTED-UNSUPPORTED** | A `FAIL` that matches a row in `expectations.toml` — a known, already-investigated gap (see below). |
 | **KNOWN-FLAKY** | A `FAIL` (or PASS) matching a row marked flaky rather than reliably-reproducing. |
 | **SKIPPED** | The peer tool wasn't installed on the runner. Never a silent pass. |
@@ -240,7 +240,7 @@ property and asserts the named failure (`crates/tst-interop/tests/mutations.rs`)
 
 | Profile | Independently verified on the wire | Oracle names |
 | --- | --- | --- |
-| all | PMT stream_type per PID, KLVA/AV01 registration, PCR median interval ≥ configured, every interval ≤ configured + one frame period (the muxer's PCR-only catch-up packets are a legitimate minority), no unexpected 33-bit PTS wrap, `NonConformant` fatal, `Discontinuity` fatal offline / counted live | `pmt_stream_type_*`, `pmt_descriptor_*`, `pcr_interval`, `pts_wrap_unexpected`, `nonconformant_event`, `discontinuity_event` |
+| all | PMT stream_type per PID, KLVA/AV01 registration, PCR median interval ≥ configured; in Strict cells (offline `verify`, `recv --strict`) additionally every interval ≤ configured + one frame period (the muxer's PCR-only catch-up packets are a legitimate minority) — Lossy live cells judge the median only; demuxer event count per media PID ≥ the raw reader's PES-start count (minus explained events and the per-PID boundary allowance); no unexpected 33-bit PTS wrap, `NonConformant` fatal, `Discontinuity` fatal offline / counted live | `pmt_stream_type_*`, `pmt_descriptor_*`, `pcr_interval`, `wire_vs_demux_*`, `pts_wrap_unexpected`, `nonconformant_event`, `discontinuity_event` |
 | two-program | video + KLV counts per program_number, packets on both programs' media PIDs | `program_{1,2}_{video,klv}_floor`, `program_{1,2}_wire_media` |
 | audio | ADTS syncword + 48 kHz index in the raw PES payload, `sample_rate/1024` frames/s ±10 %, 1920-tick PTS step ±5 % | `audio_codec_adts`, `audio_cadence`, `audio_pts_step` |
 | av1-klv-a / av1-klv-b | PES stream_id 0xE0 + raw OBU header vs 0xBD + `00 00 01` `ts_open_bitstream_unit` framing (the PMT is identical in both modes) | `av1_carriage_wire` |
@@ -278,9 +278,14 @@ flipped bytes, destroyed headers, truncated and duplicated and dropped
 packets, damaged PAT/PMT sections — and records every injection to a JSONL
 log the receiving side reads back. A receiver judged against that log
 answers three questions that a clean run cannot ask: did every error event
-it reported have a cause (`corruption_attributed`), did it notice every
-injection a conformant receiver is required to notice
-(`corruption_detected`), and did the stream produce media again afterwards
+it reported have a cause (`corruption_attributed`), did every injection a
+conformant receiver is required to notice produce a signal
+(`corruption_detected`) — reported in two halves, injections the receiver's
+own demuxer reported (`detected_by_demux`) and injections only the harness's
+raw-TS reader caught as a sync loss (`detected_by_reader_only`: garbage runs
+and destroyed sync bytes, which tst-core re-syncs past without an event by
+design), so the receiver is credited only with what it reported itself —
+and did the stream produce media again afterwards
 (`corruption_recovered`). The tap is now **on by default on both soak legs**;
 the next 72-hour run will carry these verdicts end to end and its numbers
 will be published here alongside the loss and RSS figures below. None of the

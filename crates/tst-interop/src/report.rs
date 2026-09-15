@@ -2426,11 +2426,15 @@ pub mod soak {
                             a.undetected_total() == 0,
                             format!(
                                 "{leg_name}: {} detectable injection(s), {} undetected (first: \
-                                 {:?}), {} excused as lost in transit",
+                                 {:?}), {} excused as lost in transit; {} noticed by the demuxer, \
+                                 {} only by the harness's raw reader ({:?})",
                                 a.detectable,
                                 a.undetected_total(),
                                 a.undetected.first(),
-                                a.undetected_lost
+                                a.undetected_lost,
+                                a.detected_by_demux,
+                                a.detected_by_reader_only,
+                                a.detected_by_reader_only_per_class
                             ),
                         ));
                         verdicts.push(mk(
@@ -4470,6 +4474,35 @@ pub mod soak {
             let v = verdict(&r, "corruption_coverage_srt");
             assert!(v.pass, "{}", v.detail);
             assert!(v.detail.contains("96.0%"), "{}", v.detail);
+        }
+
+        /// META-13: the detected verdict's detail names both halves of
+        /// the credit, so a reader can see what the receiver reported vs
+        /// what only the harness's raw reader caught.
+        #[test]
+        fn corruption_detected_detail_splits_demux_from_reader_credit() {
+            let mut inputs = corruption_inputs(500, 500, 480);
+            let a = inputs.legs[0]
+                .1
+                .recv_report
+                .metrics
+                .corruption_attribution
+                .as_mut()
+                .unwrap();
+            a.detectable = 400;
+            a.detected_by_demux = 350;
+            a.detected_by_reader_only = 50;
+            a.detected_by_reader_only_per_class = BTreeMap::from([("garbage".to_string(), 50)]);
+            let r = build_soak_results(inputs).unwrap();
+            let v = verdict(&r, "corruption_detected_srt");
+            assert!(v.pass, "{}", v.detail);
+            assert!(
+                v.detail
+                    .contains("350 noticed by the demuxer, 50 only by the harness's raw reader"),
+                "{}",
+                v.detail
+            );
+            assert!(v.detail.contains("\"garbage\": 50"), "{}", v.detail);
         }
 
         /// The ingested half is a FLOOR, not an equality. Over 72 hours a
