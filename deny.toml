@@ -1,0 +1,94 @@
+# cargo-deny configuration (deep-review-4 META-11).
+#
+# Two checks run in CI (ci.yml job `deny`) and locally:
+#   cargo install cargo-deny --locked && cargo deny check advisories licenses
+# `bans` and `sources` are deliberately NOT enabled: there is no decision yet
+# on duplicate-version policy or registry restrictions; add them as their own
+# change when one is made.
+#
+# The vendored native libraries are NOT visible to cargo-deny (they are
+# git submodules compiled by srt-sys/rist-sys build.rs, not crates):
+# libsrt = MPL-2.0, librist = BSD-2-Clause, mbedTLS = Apache-2.0 — see
+# docs/reference/compatibility.md for their versions.
+
+[graph]
+# Resolve the full feature surface so an optional dependency (tls, rist, …)
+# cannot slip past the check by being off in the default resolution.
+all-features = true
+
+[advisories]
+version = 2
+db-path = "$CARGO_HOME/advisory-db"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+# A yanked crate in Cargo.lock is an error: it means the pinned version was
+# withdrawn for a reason we have not read.
+yanked = "deny"
+# Unmaintained advisories fail only for crates the workspace depends on
+# DIRECTLY; a transitive unmaintained dep is our upstream's call and is
+# reported as a warning in the log.
+unmaintained = "workspace"
+# Ignore entries must carry a reason + date, e.g.
+#   { id = "RUSTSEC-YYYY-NNNN", reason = "…", }   # added 2026-MM-DD
+ignore = [
+    # pyo3 0.22.6 (tst-py). Both fixes are BREAKING for a 0.x crate (0.22 ->
+    # 0.24.1 / 0.29.0): the whole tst-py binding is pinned to PyO3 0.22 by
+    # deliberate design (abi3-py310, Rust-2024 patterns — see
+    # reference_pyo3_0_22_rust_2024_patterns), and a binding-crate major-version
+    # bump is out of scope for a rails/CI-hygiene change (deep-review-4 WP-8
+    # touches no Rust code). Neither advisory is reachable from this crate's
+    # own usage: `PyString::from_object` (RUSTSEC-2025-0020) is never called on
+    # attacker-controlled, non-UTF8-terminated input here, and
+    # `PyCFunction::new_closure` (RUSTSEC-2026-0177) is not used at all —
+    # tst-py exposes functions via `#[pyfunction]`, not runtime closures.
+    { id = "RUSTSEC-2025-0020", reason = "pyo3 0.22.6 is a deliberate pin (abi3-py310); fix requires an unreleased-here 0.24+ major bump, out of scope for WP-8 (no Rust code)" },   # added 2026-09-15
+    { id = "RUSTSEC-2026-0177", reason = "pyo3 0.22.6 is a deliberate pin (abi3-py310); fix requires an unreleased-here 0.29+ major bump; tst-py never calls PyCFunction::new_closure" },   # added 2026-09-15
+    # rustls-pemfile 2.2.0 (direct dep of tst-hls/tst-jni/tst-py/tst-rtp/tst-tcp,
+    # for loading TLS cert/key PEM files). Unmaintained advisory, no CVE — the
+    # advisory's own text says "No safe upgrade is available!"; migrating to
+    # rustls-pki-types' PemObject trait is a source-code change across five
+    # crates, out of scope for WP-8 (no Rust code).
+    { id = "RUSTSEC-2025-0134", reason = "no safe upgrade exists (per the advisory); the rustls-pki-types::PemObject migration is a source change across 5 crates, out of scope for a rails/CI-hygiene WP" },   # added 2026-09-15
+    # time 0.3.41 (dev-dependency only, via rcgen — self-signed test cert
+    # generation in tst-rtp/tst-tcp dev-deps, never shipped). The fix (>=0.3.47)
+    # requires rustc 1.88 (`cargo update` reports "requires Rust 1.88.0"),
+    # breaking the workspace's pinned 1.85 MSRV (rust-toolchain.toml) — bumping
+    # the toolchain is its own decision, out of scope for a rails/CI-hygiene
+    # WP. The advisory's DoS is a stack-exhaustion bug in RFC 2822 DATE
+    # parsing; rcgen only ever calls time's formatting/construction path to
+    # generate certificate validity fields, never the RFC 2822 parser, and
+    # never on attacker-controlled input.
+    { id = "RUSTSEC-2026-0009", reason = "fix requires rustc 1.88, breaking the pinned 1.85 MSRV; dev-dependency only (rcgen test-cert generation), never exercises the affected RFC 2822 parse path" },   # added 2026-09-15
+]
+
+[licenses]
+version = 2
+# Allowlist derived from `cargo metadata --all-features` on 2026-09-14
+# (265 registry crates). Every dual/multi-licensed crate is satisfied by
+# MIT or Apache-2.0; the single-license tails are ISC (rustls-webpki,
+# untrusted, libloading), BSD-3-Clause (bindgen, subtle), Zlib (foldhash),
+# Apache-2.0 WITH LLVM-exception (target-lexicon), and the two AND
+# expressions `Apache-2.0 AND ISC` (ring) and
+# `(MIT OR Apache-2.0) AND Unicode-3.0` (unicode-ident) — hence ISC and
+# Unicode-3.0 in the list. BSD-2-Clause appears only inside OR expressions
+# today (zerocopy) but is a permissive license this project accepts.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+]
+# cbindgen is MPL-2.0 (file-level copyleft; it is a BUILD dependency of
+# tst-c and never links into a shipped artifact). Scoped exception rather
+# than a global MPL-2.0 allow so a runtime MPL dependency still trips the
+# check and forces a decision.
+exceptions = [
+    { allow = ["MPL-2.0"], crate = "cbindgen" },
+]
+confidence-threshold = 0.8
+# tst-integration, tst-interop and examples carry no `license` key and are
+# publish = false; they are the workspace's own test scaffolding.
+private = { ignore = true }

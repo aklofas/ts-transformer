@@ -1291,3 +1291,19 @@ jobs:
         # binary (see bindings/c/tests/MOVEMENT_MAP.md); build that binary
         # and filter to its tests — the per-mode counts above are unchanged.
         run: cargo test -p tst-c ${{ matrix.cargo_flags }} --test abi feature_matrix_compile
+
+  deny:
+    name: cargo-deny (advisories + licenses)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Dependency-advisory + license gate (deep-review-4 META-11). Reads
+    # Cargo.lock and the RustSec advisory DB only — no build, no submodules
+    # (the vendored native libs are not crates; see deny.toml's header).
+    # Policy lives in deny.toml; `bans`/`sources` are intentionally off.
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories licenses
+          rust-version: "1.85"
