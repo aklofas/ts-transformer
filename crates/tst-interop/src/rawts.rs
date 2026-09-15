@@ -448,6 +448,10 @@ pub struct Reader {
     resync_mode: bool,
     resyncs: Vec<Resync>,
     last_pcr: Option<u64>,
+    /// Garbage bytes already dropped from the carry since the last
+    /// accepted packet — see the no-candidate arm of [`Reader::feed`].
+    /// Folded into the next [`Resync`].
+    pending_skipped: usize,
     /// Applied to every [`TimestampSeries`] this reader creates.
     retention: Retention,
     /// `(pcr_base, packet ordinal of the packet that carried it)` for
@@ -486,6 +490,7 @@ impl Reader {
             resync_mode: false,
             resyncs: Vec::new(),
             last_pcr: None,
+            pending_skipped: 0,
             retention,
             pcr_events: Vec::new(),
             last_pkt: BTreeMap::new(),
@@ -589,8 +594,9 @@ impl Reader {
                             self.resyncs.push(Resync {
                                 at_packets: self.summary.packets,
                                 pcr_base: self.last_pcr,
-                                skipped_bytes: k - start,
+                                skipped_bytes: self.pending_skipped + (k - start),
                             });
+                            self.pending_skipped = 0;
                             off = k;
                             continue;
                         }
@@ -601,7 +607,20 @@ impl Reader {
                         Some(_) => {}
                         None => {
                             if self.carry[off] != SYNC {
-                                break; // keep the tail in carry; decide on the next feed
+                                // Confirmed garbage up to the last 187
+                                // bytes — a candidate 0x47 in that suffix
+                                // cannot be confirmed until a whole
+                                // packet follows it, so only the suffix
+                                // may wait for the next feed. Everything
+                                // before it is dropped NOW and counted,
+                                // never retained and rescanned: a long
+                                // malformed stream would otherwise grow
+                                // the carry without bound (and made the
+                                // harness's RSS look like a library leak).
+                                let keep_from = self.carry.len().saturating_sub(PKT - 1).max(off);
+                                self.pending_skipped += keep_from - off;
+                                off = keep_from;
+                                break;
                             }
                             // Not enough buffered data yet to confirm or
                             // refute `off` — accept it optimistically,
@@ -609,6 +628,23 @@ impl Reader {
                             // packet in the carry" leniency.
                         }
                     }
+                }
+                if self.pending_skipped > 0 {
+                    // `off` is about to be read as a packet while garbage
+                    // dropped on an earlier feed is still uncounted: the
+                    // retained ≤ 187-byte suffix began at a candidate sync
+                    // byte that a later feed then confirmed, so the hunt
+                    // above never ran and never recorded the recovery.
+                    // Record it here — those bytes cost sync just as much
+                    // as the ones the hunt walks past, and leaving the
+                    // count pending would bolt it onto an unrelated later
+                    // recovery instead.
+                    self.resyncs.push(Resync {
+                        at_packets: self.summary.packets,
+                        pcr_base: self.last_pcr,
+                        skipped_bytes: self.pending_skipped,
+                    });
+                    self.pending_skipped = 0;
                 }
             }
             let pkt: [u8; PKT] = self.carry[off..off + PKT].try_into().expect("PKT bytes");
@@ -713,7 +749,7 @@ impl Reader {
         Some(Resync {
             at_packets: self.summary.packets,
             pcr_base: self.last_pcr,
-            skipped_bytes: self.carry.len(),
+            skipped_bytes: self.pending_skipped + self.carry.len(),
         })
     }
 
@@ -730,6 +766,7 @@ impl Reader {
     /// first `feed`.
     pub fn resync(&mut self) {
         self.carry.clear();
+        self.pending_skipped = 0;
     }
 
     fn packet(&mut self, p: &[u8; PKT]) -> Result<(), String> {
@@ -1675,5 +1712,73 @@ mod tests {
         let mut r = Reader::new();
         let e = r.feed(&bad).unwrap_err();
         assert!(e.contains("adaptation field length"), "{e}");
+    }
+
+    /// X-CORR-06A (E06): garbage with no sync candidate used to be kept
+    /// in the carry and rescanned on every feed — 10 000 x 1316 bytes of
+    /// 0x55 retained 13 160 000 bytes. Only the <= 187-byte suffix that
+    /// could still complete a packet may survive a feed, and the bytes
+    /// thrown away must still be counted in the recovery that follows.
+    #[test]
+    fn resync_mode_bounds_the_carry_on_confirmed_garbage_and_counts_it() {
+        const CHUNKS: usize = 10_000;
+        let garbage = [0x55u8; 1316];
+        let mut r = Reader::with_retention(Retention::Bounded);
+        r.set_resync_mode(true);
+        for _ in 0..CHUNKS {
+            r.feed(&garbage).unwrap();
+            assert!(
+                r.carry.len() < PKT,
+                "carry holds {} bytes; only a partial-packet suffix may survive a feed",
+                r.carry.len()
+            );
+        }
+        // Now three clean packets: the hunt confirms the first and the
+        // recovery names every garbage byte ever fed.
+        let clean = bytes_of("baseline", 1.0, "carry-bound");
+        r.feed(&clean[..3 * PKT]).unwrap();
+        assert_eq!(r.resyncs().len(), 1, "{:?}", r.resyncs());
+        assert_eq!(r.resyncs()[0].at_packets, 0);
+        assert_eq!(r.resyncs()[0].skipped_bytes, CHUNKS * 1316);
+        assert_eq!(r.packets(), 3);
+        assert!(r.carry.is_empty());
+    }
+
+    /// The retained suffix may itself BEGIN at a real packet start that
+    /// only a later feed can confirm — the hunt never runs for it, so the
+    /// recovery has to be recorded where the packet is accepted. Feeding
+    /// exactly `n` garbage bytes plus the packet's first 187 puts the
+    /// boundary at `carry.len() - 187` on the nose.
+    #[test]
+    fn garbage_dropped_before_a_suffix_that_turns_out_to_be_a_packet_is_still_recorded() {
+        let clean = bytes_of("baseline", 1.0, "suffix-start");
+        let mut r = Reader::new();
+        r.set_resync_mode(true);
+        let mut first = vec![0x55u8; 1000];
+        first.extend_from_slice(&clean[..PKT - 1]);
+        r.feed(&first).unwrap();
+        assert_eq!(r.carry.len(), PKT - 1, "the clean prefix is what survived");
+        assert_eq!(r.carry[0], SYNC, "…and it starts at a packet boundary");
+        assert!(r.resyncs().is_empty(), "nothing is confirmed yet");
+
+        r.feed(&clean[PKT - 1..]).unwrap();
+        assert_eq!(r.resyncs().len(), 1, "{:?}", r.resyncs());
+        assert_eq!(r.resyncs()[0].at_packets, 0);
+        assert_eq!(r.resyncs()[0].skipped_bytes, 1000);
+        assert_eq!(r.packets() as usize, clean.len() / PKT);
+    }
+
+    /// The trailing recovery counts discarded garbage too.
+    #[test]
+    fn trailing_resync_includes_garbage_already_discarded() {
+        let mut r = Reader::new();
+        r.set_resync_mode(true);
+        r.feed(&[0x55u8; 1316]).unwrap();
+        r.feed(&[0x55u8; 100]).unwrap();
+        let t = r
+            .trailing_resync()
+            .expect("garbage is a trailing fragment in resync mode");
+        assert_eq!(t.skipped_bytes, 1416);
+        assert!(r.carry.len() < PKT);
     }
 }
