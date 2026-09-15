@@ -428,6 +428,7 @@ impl std::fmt::Debug for ServerAuthConfig {
 /// - `fanout_capacity`: 256 frames (broadcast channel size; slow peers
 ///   drop oldest beyond this)
 /// - `graceful_shutdown_drain`: 100 ms
+/// - `tls_handshake_timeout`: 30 s (`rtsps://` only)
 /// - No auth, no TLS — caller adds via `auth_*()` / `tls_cert()`.
 #[cfg(feature = "rtsp-server")]
 pub struct RtspServerBuilder {
@@ -441,6 +442,8 @@ pub struct RtspServerBuilder {
     pub(crate) tls_cert_path: Option<PathBuf>,
     #[cfg(feature = "rtsp-server-tls")]
     pub(crate) tls_key_path: Option<PathBuf>,
+    #[cfg(feature = "rtsp-server-tls")]
+    pub(crate) tls_handshake_timeout: Duration,
 }
 
 #[cfg(feature = "rtsp-server")]
@@ -475,6 +478,8 @@ impl RtspServerBuilder {
             tls_cert_path: None,
             #[cfg(feature = "rtsp-server-tls")]
             tls_key_path: None,
+            #[cfg(feature = "rtsp-server-tls")]
+            tls_handshake_timeout: Duration::from_secs(30),
         }
     }
 
@@ -569,6 +574,19 @@ impl RtspServerBuilder {
     pub fn tls_cert(&mut self, cert_chain_pem: PathBuf, key_pem: PathBuf) -> &mut Self {
         self.tls_cert_path = Some(cert_chain_pem);
         self.tls_key_path = Some(key_pem);
+        self
+    }
+
+    /// Deadline for the TLS handshake on an `rtsps://` bind. An accepted TCP
+    /// connection that has not completed its handshake within `t` is dropped
+    /// and its `max_sessions` slot released. Without a deadline a silent
+    /// connect (no ClientHello, ever) held its slot until the peer went away:
+    /// `max_sessions` such connects — no credentials needed — wedged the
+    /// server at its cap for good. Defaults to 30 s, the same bound the
+    /// request loop applies to an idle read.
+    #[cfg(feature = "rtsp-server-tls")]
+    pub fn tls_handshake_timeout(&mut self, t: Duration) -> &mut Self {
+        self.tls_handshake_timeout = t;
         self
     }
 

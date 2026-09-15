@@ -137,14 +137,19 @@ pub(crate) async fn run_listener(state: Arc<ServerState>) -> Result<(), RtspServ
                         {
                             let cfg = tls_config.clone();
                             if let Some(cfg) = cfg {
+                                let handshake_timeout = state.builder.tls_handshake_timeout;
                                 tokio::spawn(async move {
                                     // `slot` is moved into this task so the reserved
-                                    // slot is released (its `Drop` fires) on BOTH the
-                                    // handshake-failure path and the normal session
-                                    // path.
+                                    // slot is released (its `Drop` fires) on the
+                                    // handshake-failure path, the handshake-timeout
+                                    // path AND the normal session path.
                                     let _slot = slot;
-                                    match cfg.accept(tcp).await {
-                                        Ok(tls_stream) => {
+                                    // Bounded handshake (CORR-06): a peer that connects
+                                    // and never sends a ClientHello used to park this
+                                    // task — and its slot — forever; `max_sessions`
+                                    // such connects wedged the server at its cap.
+                                    match tokio::time::timeout(handshake_timeout, cfg.accept(tcp)).await {
+                                        Ok(Ok(tls_stream)) => {
                                             if let Err(e) = crate::rtsp::server::session::handle_connection_tls(st, tls_stream, peer).await {
                                                 tracing::warn!(
                                                     target: "tst_rtp::server",
@@ -153,11 +158,19 @@ pub(crate) async fn run_listener(state: Arc<ServerState>) -> Result<(), RtspServ
                                                 );
                                             }
                                         }
-                                        Err(e) => {
+                                        Ok(Err(e)) => {
                                             tracing::warn!(
                                                 target: "tst_rtp::server",
                                                 peer = %peer, error = ?e,
                                                 "TLS handshake failed"
+                                            );
+                                        }
+                                        Err(_elapsed) => {
+                                            tracing::warn!(
+                                                target: "tst_rtp::server",
+                                                peer = %peer,
+                                                timeout_ms = handshake_timeout.as_millis() as u64,
+                                                "TLS handshake deadline elapsed; dropping connection"
                                             );
                                         }
                                     }
