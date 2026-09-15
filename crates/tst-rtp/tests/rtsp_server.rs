@@ -41,5 +41,7 @@ mod session_keepalive;
 mod shutdown;
 #[path = "rtsp_server/tls.rs"]
 mod tls;
+#[path = "rtsp_server/tls_handshake_timeout.rs"]
+mod tls_handshake_timeout;
 #[path = "rtsp_server/oom_guard.rs"]
 mod oom_guard;
