@@ -78,3 +78,55 @@ fn user_agent_is_sent_in_requests() {
         "custom User-Agent not found in OPTIONS request; got:\n{received}"
     );
 }
+
+/// CORR-26: `request_timeout` bounds the wait for a response. The peer
+/// accepts the TCP connection and never answers — before the fix
+/// `describe()` parked forever (the only deadline in the client was the
+/// 500 ms TEARDOWN bound inside `Drop`) and `RtspError::Timeout` had no
+/// producer at all.
+///
+/// Bounded by a watchdog on a pre-obtained cancel handle so the RED cannot
+/// hang CI: without the fix the watchdog fires at 5 s, the call ends
+/// `LocalCancel`, and the assertion below fails. With the fix the call ends
+/// `Timeout` at ~300 ms and the watchdog is released before it fires.
+#[test]
+fn request_timeout_bounds_a_silent_peer() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+    let server = std::thread::spawn(move || {
+        if let Ok((sock, _)) = listener.accept() {
+            // Accept and hold: no read, no reply, no FIN until the client
+            // side has finished asserting.
+            let _ = done_rx.recv_timeout(Duration::from_secs(30));
+            drop(sock);
+        }
+    });
+
+    let url = format!("rtsp://127.0.0.1:{port}/x");
+    let mut client = tst_rtp::RtspClientBuilder::new(&url)
+        .unwrap()
+        .no_auto_keepalive(true)
+        .request_timeout(Some(Duration::from_millis(300)))
+        .connect()
+        .unwrap();
+    let cancel = client.cancel_handle();
+    let (wd_tx, wd_rx) = std::sync::mpsc::channel::<()>();
+    let watchdog = std::thread::spawn(move || {
+        if wd_rx.recv_timeout(Duration::from_secs(5)).is_err() {
+            cancel.cancel();
+        }
+    });
+
+    let err = client.describe().err();
+    let _ = wd_tx.send(());
+    assert!(
+        matches!(err, Some(tst_rtp::RtspError::Timeout)),
+        "expected RtspError::Timeout after the 300 ms request deadline, got {err:?}"
+    );
+
+    let _ = done_tx.send(());
+    drop(client);
+    watchdog.join().unwrap();
+    server.join().unwrap();
+}
