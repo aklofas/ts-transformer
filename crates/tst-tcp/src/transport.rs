@@ -626,7 +626,10 @@ mod write_loop_tests {
         }
         let partial = io::Error::new(io::ErrorKind::TimedOut, "wsaetimedout");
         let r = write_loop(&msg, &live(), scripted(vec![Ok(100), Err(partial), Ok(88)]));
-        assert!(r.is_ok(), "TimedOut with progress must keep writing, got {r:?}");
+        assert!(
+            r.is_ok(),
+            "TimedOut with progress must keep writing, got {r:?}"
+        );
     }
 
     #[test]

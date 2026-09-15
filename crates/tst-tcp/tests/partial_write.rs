@@ -121,7 +121,10 @@ fn partial_write_stall_loopback_stream_stays_contiguous() {
     assert!(
         got == expected,
         "stream is not contiguous: first mismatch at offset {}",
-        got.iter().zip(&expected).position(|(a, b)| a != b).unwrap_or(got.len())
+        got.iter()
+            .zip(&expected)
+            .position(|(a, b)| a != b)
+            .unwrap_or(got.len())
     );
 }
 
