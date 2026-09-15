@@ -49,7 +49,7 @@ use std::sync::Mutex;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::intern;
 use pyo3::prelude::*;
-use pyo3::types::PyBytes;
+use pyo3::types::{PyBytes, PyMemoryView};
 
 use tst_core::transport::{RecvTransport, Transport, TransportError};
 use tst_tcp::error::{TcpError, TcpErrorKind};
@@ -255,14 +255,34 @@ impl PyTcpTransport {
     /// (`Transport.builder().pkt_size(N)` controls the sender cap, which
     /// defaults to 64 KiB).
     ///
+    /// `buf` is exported for the duration of the call: a resize of the
+    /// same bytearray from another thread while this call is blocked
+    /// raises `BufferError` in that thread, and the bytes land in the
+    /// unchanged buffer. An empty `buf` raises `ValueError` before any
+    /// socket read (a zero-length read would otherwise be indistinguishable
+    /// from peer EOF).
+    ///
     /// Raises `TcpError(kind=CLOSED)` if the transport has been closed.
     /// Raises `TcpError(kind=IO)` on connection errors (including peer close).
     ///
     /// Releases the GIL while blocking on kernel recv.
     fn recv(&self, py: Python<'_>, buf: &Bound<'_, pyo3::types::PyByteArray>) -> PyResult<usize> {
+        let buf_len = buf.len();
+        if buf_len == 0 {
+            return Err(PyValueError::new_err(
+                "recv(): destination bytearray is empty; pass a buffer of at least 1 byte",
+            ));
+        }
+        // Pin the destination's length across the GIL release: a memoryview
+        // over the bytearray holds a buffer export, and CPython refuses to
+        // resize an exported bytearray (`BufferError: Existing exports of
+        // data: object cannot be re-sized`). `pyo3::buffer::PyBuffer` would
+        // be the direct export, but it is compiled out under abi3-py310
+        // (`any(not(Py_LIMITED_API), Py_3_11)`); `PyMemoryView_FromObject`
+        // is in the stable ABI.
+        let export = PyMemoryView::from_bound(buf.as_any())?;
         // We need an owned buffer to cross the allow_threads boundary --
         // `PyByteArray` is a Python object and is !Send.
-        let buf_len = buf.len();
         let mut owned = vec![0u8; buf_len];
         // Two-step: compute inside allow_threads, map error after.
         let result: Result<usize, TcpTransportErr> = py.allow_threads(|| {
@@ -272,14 +292,25 @@ impl PyTcpTransport {
                 .recv_bytes(owned.as_mut_slice())
                 .map_err(TcpTransportErr::from)
         });
-        let n = result.map_err(|e| e.into_pyerr(py))?;
-        // Copy the received bytes back into the Python bytearray.
-        // Safety: we hold the GIL; no other Python thread can resize or alias
-        // this bytearray concurrently (PyO3 0.22 requires `unsafe` for the
-        // raw bytes_mut accessor since PyByteArray is a Python-managed object).
-        let dest = unsafe { buf.as_bytes_mut() };
-        dest[..n].copy_from_slice(&owned[..n]);
-        Ok(n)
+        let copied = result.and_then(|n| {
+            // Unreachable while the export is live; a real check, not a
+            // debug assert, because the copy below is `unsafe`.
+            if buf.len() != buf_len {
+                return Err(TcpTransportErr::Io(
+                    "recv(): destination bytearray changed length during the call".into(),
+                ));
+            }
+            // Safety: we hold the GIL; the only other reference to this
+            // bytearray's storage is our own memoryview export, which no
+            // Python code can reach.
+            let dest = unsafe { buf.as_bytes_mut() };
+            dest[..n].copy_from_slice(&owned[..n]);
+            Ok(n)
+        });
+        // Release the export explicitly (dropping the Bound would too, but
+        // this makes "resizable again once recv() returns" deterministic).
+        export.call_method0(intern!(py, "release"))?;
+        copied.map_err(|e| e.into_pyerr(py))
     }
 
     /// Peer address as a `"host:port"` string. Returns `""` if the transport
