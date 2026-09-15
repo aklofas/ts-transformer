@@ -39,6 +39,7 @@ jobs:
   asan:
     name: ASan (pure-Rust crates, nightly)
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
         with:
@@ -101,6 +102,7 @@ jobs:
   asan-native:
     name: ASan (native-linking crates, nightly)
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     # Hard-fail since 2026-08-19 (phase-in complete: 21/22 nightly greens;
     # the one red was a peer-drop-before-option-read test race, fixed in the
     # same PR that removed the soft-fail).
@@ -192,6 +194,7 @@ jobs:
   tsan-native:
     name: TSan (native-linking crates, nightly)
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     # Hard-gating since 2026-09-08 (phase-in closed a day early after five
     # consecutive job-level-green nightlies from the 2026-09-04 tst-rist
     # stats-callback fix onward). Treat a red here as a sanitizer finding
@@ -269,6 +272,7 @@ jobs:
   tsan:
     name: TSan (pure-Rust crates, nightly)
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
         with:

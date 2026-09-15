@@ -55,6 +55,7 @@ jobs:
   version-preflight:
     name: version preflight (REL-01)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
         # No submodules: the rail only reads version strings from tracked files.
@@ -68,6 +69,7 @@ jobs:
   linux-wheel:
     name: wheel (linux-${{ matrix.target }})
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     needs: version-preflight
     strategy:
       fail-fast: false
@@ -163,6 +165,7 @@ jobs:
   macos-wheel:
     name: wheel (macos-${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
     needs: version-preflight
     strategy:
       fail-fast: false
@@ -233,6 +236,7 @@ jobs:
   windows-wheel:
     name: wheel (windows-x86_64)
     runs-on: windows-latest
+    timeout-minutes: 45
     needs: version-preflight
     # Best-effort: tst-c has windows-msvc compile+link only (runtime
     # tests deferred — see project_plan_65). The tst-py wheel may build
@@ -281,6 +285,7 @@ jobs:
   sdist:
     name: sdist
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: version-preflight
     steps:
       - uses: actions/checkout@v5
@@ -311,6 +316,7 @@ jobs:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: [linux-wheel, macos-wheel, windows-wheel, sdist]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment:
       name: pypi
       url: https://pypi.org/project/tstrans/

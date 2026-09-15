@@ -51,6 +51,7 @@ jobs:
   publish:
     name: ordered publish (11 crates)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # Every crate's crates.io Trusted Publishing config names this
     # environment (the OIDC claim carries it). No protection rules — the
     # tag is the gate. NOTE: the environment binds ALL runs of this job,
