@@ -400,7 +400,18 @@ pub(crate) fn classify_recv_error(kind: std::io::ErrorKind) -> RecvAction {
 }
 
 impl RecvTransport for TcpTransport {
+    /// Receive into `buf`. An **empty** `buf` is a documented no-op: it
+    /// returns `Ok(0)` without touching the socket or the liveness flag.
+    /// `TcpStream::read(&mut [])` returns `Ok(0)` on an open peer, and the
+    /// `Ok(0)` arm below is the peer-EOF discriminator — letting an empty
+    /// read reach it would report a clean EOF (`Broken { cause: CleanEof }`)
+    /// and latch the transport dead while the peer is still connected
+    /// (X-CORR-07). The guard sits above `InnerStream`, so `tcps://` follows
+    /// the same rule.
     fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
         loop {
             if !self.alive.load(Ordering::Acquire) {
                 return Err(TransportError::Closed);

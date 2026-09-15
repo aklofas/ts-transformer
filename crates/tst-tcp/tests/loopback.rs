@@ -318,3 +318,30 @@ fn fatal_read_error_marks_transport_dead() {
         "a fatal read error must mark the transport dead"
     );
 }
+
+/// X-CORR-07 / Q5 (E07): an empty destination must be a no-op, not a fake
+/// EOF. `TcpStream::read(&mut [])` returns `Ok(0)` on an OPEN peer, and the
+/// `Ok(0)` arm of `recv_bytes` used to read that as a peer FIN — latching
+/// `alive = false` and returning `Broken { cause: CleanEof }` while the peer
+/// was still connected and about to send.
+#[test]
+fn empty_recv_does_not_fake_eof() {
+    let (mut client, mut server) = loopback_pair();
+
+    let r = client.recv_bytes(&mut []);
+    assert!(
+        matches!(r, Ok(0)),
+        "an empty destination must be an Ok(0) no-op, got {r:?}"
+    );
+    assert!(
+        RecvTransport::is_alive(&client),
+        "an empty receive must not touch liveness"
+    );
+
+    // The peer is still open: a real payload arrives on the next call.
+    server.write_all(&[0x47u8; 188]).unwrap();
+    let mut buf = [0u8; 1024];
+    let n = client.recv_bytes(&mut buf).expect("real payload after the empty call");
+    assert_eq!(n, 188);
+    assert!(buf[..n].iter().all(|&b| b == 0x47));
+}
