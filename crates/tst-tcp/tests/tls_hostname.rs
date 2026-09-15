@@ -237,7 +237,21 @@ fn tcps_explicit_close_loopback_ends_the_peer_read() {
     let parsed = TcpUrl::parse(&dial_url).expect("URL parse");
     let mut client =
         TcpTransport::connect_with_config(&parsed, &SocketConfig::default()).expect("tcps connect");
-    client.send_bytes(b"ping").expect("client send");
+    // Retry a zero-progress Backpressure: it is the documented, retryable
+    // outcome of Transport::send_bytes (the slice is intact), and this send
+    // is what drives the lazy TLS handshake — completing it can need more
+    // than one 100 ms write-timeout tick if the server's own accept happens
+    // to land inside its (also ~100 ms) non-blocking poll window (CORR-12).
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        match client.send_bytes(b"ping") {
+            Ok(()) => break,
+            Err(TransportError::Backpressure { .. }) if std::time::Instant::now() < deadline => {
+                continue;
+            }
+            Err(e) => panic!("client send: {e:?}"),
+        }
+    }
     ready_rx
         .recv_timeout(Duration::from_secs(5))
         .expect("server did not complete the TLS handshake");
