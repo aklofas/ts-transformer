@@ -5807,6 +5807,10 @@ scenario_ids = []
 tier = "A"
 
 [[exempt]]
+item = "tst_core::net::udp_socket::ACCEPT_POLL_INTERVAL"
+reason = "CORR-12 fix-round-1 (2026-09-14, WP-4b): shorter accept-poll cadence for TcpListener::accept_blocking, consumed by crates/tst-tcp/src/listener.rs; not directly value-asserted by any test (the tst-tcp listener tests assert cancel/accept behaviour completes within a bounded window, not this exact constant), matching CANCEL_POLL_INTERVAL's own treatment below"
+
+[[exempt]]
 item = "tst_core::net::udp_socket::CANCEL_POLL_INTERVAL"
 reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
 

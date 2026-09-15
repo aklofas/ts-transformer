@@ -23,6 +23,22 @@ use std::time::Duration;
 /// close/cancel flags get checked at most this often during a blocking call.
 pub const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
+/// Poll interval for a non-blocking `accept()` loop (e.g.
+/// `tst_tcp::listener::TcpListener::accept_blocking`) — shorter than
+/// [`CANCEL_POLL_INTERVAL`] on purpose. Unlike a parked `recv`/`send`, whose
+/// cadence comes from `SO_RCVTIMEO`/`SO_SNDTIMEO` (the OS wakes the thread
+/// the instant data/window is available, so the *timeout* value only bounds
+/// the cancel-check latency, not the data latency), a non-blocking `accept()`
+/// loop has no such wakeup: every connection that lands has to wait out the
+/// current sleep before the next `accept()` attempt notices it. At
+/// `CANCEL_POLL_INTERVAL` (100 ms) that put up to ~100 ms of latency on
+/// every accept, tight enough to occasionally blow a caller's own ~100 ms
+/// I/O deadline (observed: a TLS handshake's first write, CORR-12 review).
+/// 5 ms keeps an idle listener's wakeup cost negligible (200 Hz) while
+/// cutting worst-case accept latency 20×; a cancel is still observed within
+/// one tick either way.
+pub const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(5);
+
 /// Bind a UDP socket at `local` and apply the cancel-poll read/write timeouts.
 pub fn bind_udp_socket(local: SocketAddr) -> io::Result<UdpSocket> {
     let socket = UdpSocket::bind(local)?;

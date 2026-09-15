@@ -825,11 +825,15 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **TCP: `TcpListener::accept_blocking` is cancellable.** New
   `TcpListener::cancel_handle() -> TcpCancelHandle` and
   `TcpListener::close(&self)`: the listening socket polls non-blocking on a
-  100 ms cadence against an alive flag, a parked accept returns
-  `TcpError::Closed` within one tick of a cancel or close, and accepted
-  streams are explicitly set back to blocking mode (BSD/macOS and Windows
-  inherit `O_NONBLOCK` across `accept`; Linux does not). Before this there
-  was no cancel path on the listener at any layer.
+  5 ms cadence (`ACCEPT_POLL_INTERVAL` — shorter than the 100 ms
+  `CANCEL_POLL_INTERVAL` the recv/send paths use, since a non-blocking
+  accept loop has no `SO_RCVTIMEO`-style wakeup of its own: the sleep
+  interval directly bounds accept latency, not just the cancel check)
+  against an alive flag, a parked accept returns `TcpError::Closed` within
+  one tick of a cancel or close, and accepted streams are explicitly set
+  back to blocking mode (BSD/macOS and Windows inherit `O_NONBLOCK` across
+  `accept`; Linux does not). Before this there was no cancel path on the
+  listener at any layer.
 
 ### Testing
 
