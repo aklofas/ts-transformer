@@ -201,3 +201,119 @@ def test_tcp_stats_close_not_gil_blocked_with_parked_recv() -> None:
     # Cleanup.
     srv.close()
     peer_t.join(timeout=1.0)
+
+
+# ─────────────────────────────────────────────────────────────────────────── #
+# X-E03: the destination bytearray is resized while recv() is parked
+# ─────────────────────────────────────────────────────────────────────────── #
+
+
+def test_tcp_recv_resize_during_park_is_refused_and_data_lands_intact() -> None:
+    """While thread A is parked in `recv(buf)` (GIL released), thread B
+    shrinks `buf` to zero and only THEN the peer sends. Before the fix the
+    resize succeeded and A's post-read copy into the (now empty) buffer hit
+    a Rust bounds panic (PyO3 `PanicException`) — with the bytes already
+    consumed from the socket. Now A holds a buffer export across the park:
+    B's resize raises `BufferError` and A returns the bytes into the
+    unchanged buffer."""
+    srv, port = _bind_silent_peer()
+    payload = b"\x47" + bytes(range(1, 100))  # 100 bytes
+    accepted: list[socket.socket] = []
+    peer_may_send = threading.Event()
+
+    def peer() -> None:
+        conn, _ = srv.accept()
+        accepted.append(conn)
+        peer_may_send.wait(timeout=_OVERALL_WATCHDOG_S)
+        conn.sendall(payload)
+        time.sleep(1.0)
+        conn.close()
+
+    peer_t = threading.Thread(target=peer, daemon=True)
+    peer_t.start()
+
+    transport = tcp.Transport.builder().url(f"tcp://127.0.0.1:{port}").build()
+    buf = bytearray(4096)
+    recv_result: list[object] = []
+    recv_started = threading.Event()
+
+    def recv_thread() -> None:
+        recv_started.set()
+        try:
+            n = transport.recv(buf)
+            recv_result.append(("ok", n))
+        except TcpError as exc:
+            recv_result.append(("err", exc))
+        except BaseException as exc:  # noqa: BLE001 — PyO3's PanicException is a BaseException
+            recv_result.append(("other", exc))
+
+    recv_t = threading.Thread(target=recv_thread, daemon=True)
+    recv_t.start()
+    assert recv_started.wait(timeout=3.0)
+    time.sleep(0.2)  # A is parked inside recv_bytes with the GIL released
+
+    resize_err: list[BaseException] = []
+
+    def resizer() -> None:
+        try:
+            buf.clear()  # → resize to 0
+        except BaseException as exc:  # noqa: BLE001
+            resize_err.append(exc)
+
+    rt = threading.Thread(target=resizer, daemon=True)
+    rt.start()
+    rt.join(2.0)
+    peer_may_send.set()  # peer-gated: data arrives only after the resize attempt
+
+    recv_t.join(timeout=5.0)
+    if recv_t.is_alive():
+        transport.close()  # rescue cancel so teardown never hangs
+        recv_t.join(timeout=5.0)
+    try:
+        assert resize_err and isinstance(resize_err[0], BufferError), (
+            f"resize during a parked recv must raise BufferError; got {resize_err!r}"
+        )
+        assert recv_result, "recv thread recorded no result"
+        kind, value = recv_result[0]
+        assert kind == "ok", f"recv ended with ({kind}, {value!r})"
+        assert value == len(payload)
+        assert len(buf) == 4096
+        assert bytes(buf[: len(payload)]) == payload
+        # The export is released once recv() returns: resizing works again.
+        buf.clear()
+        assert len(buf) == 0
+    finally:
+        transport.close()
+        for c in accepted:
+            c.close()
+        srv.close()
+
+
+def test_tcp_recv_empty_destination_raises_value_error_before_io() -> None:
+    """`recv(bytearray())` is a caller error, refused before any socket
+    read — it must neither fake a clean EOF nor consume input."""
+    srv, port = _bind_silent_peer()
+    accepted: list[socket.socket] = []
+
+    def peer() -> None:
+        conn, _ = srv.accept()
+        accepted.append(conn)
+        time.sleep(_OVERALL_WATCHDOG_S)
+        conn.close()
+
+    peer_t = threading.Thread(target=peer, daemon=True)
+    peer_t.start()
+    transport = tcp.Transport.builder().url(f"tcp://127.0.0.1:{port}").build()
+    try:
+        with pytest.raises(ValueError):
+            transport.recv(bytearray())
+        # Still usable: a real read into a real buffer works afterwards.
+        assert accepted or peer_t.join(2.0) is None
+        accepted[0].sendall(b"\x47" * 188)
+        buf = bytearray(1024)
+        assert transport.recv(buf) == 188
+    finally:
+        transport.close()
+        for c in accepted:
+            c.close()
+        srv.close()

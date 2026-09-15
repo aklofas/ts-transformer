@@ -192,8 +192,14 @@ class Transport:
 
         Releases the GIL while blocking on kernel recv.
 
+        ``buf`` is exported for the duration of the call: resizing it from
+        another thread while ``recv()`` is blocked raises ``BufferError``
+        in that thread, and the received bytes land in the unchanged buffer.
+
         Raises
         ------
+        ValueError
+            If ``buf`` is empty (refused before any socket read).
         TcpError(kind=CLOSED)
             If the transport has been closed.
         TcpError(kind=IO)
