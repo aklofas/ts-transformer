@@ -2520,7 +2520,9 @@ pub mod soak {
                         // Ceiling, so the floor cannot be met by rounding
                         // on a small run: 99% of 101 needs 100, not 99.
                         let min_ingested = (sent as f64 * CORRUPTION_INGESTED_FLOOR).ceil() as u64;
+                        let log_failed = sender.is_some_and(|c| c.log_write_failed);
                         let pass = sent > 0
+                            && !log_failed
                             && a.injected >= min_ingested
                             && resolved_frac >= CORRUPTION_RESOLVED_FLOOR;
                         verdicts.push(mk(
@@ -2531,6 +2533,10 @@ pub mod soak {
                                  {} of them ({:.1}%, floor {:.0}% = {min_ingested}), {} resolved to \
                                  a receiver position ({:.1}%, floor {:.0}%)",
                                 match sender {
+                                    Some(c) if c.log_write_failed =>
+                                        " (sender reported a corruption-log write failure — the \
+                                          log is incomplete)"
+                                            .to_string(),
                                     Some(_) => String::new(),
                                     None =>
                                         " (send report carries no corruption block — sender ran \
@@ -4583,6 +4589,35 @@ pub mod soak {
             assert!(!v.pass, "{}", v.detail);
             assert!(v.detail.contains("98.0%"), "{}", v.detail);
             assert!(!bad.overall_pass);
+        }
+
+        /// X-CORR-05: 100 of 101 ingested clears the 99 % floor, so an
+        /// interior write failure passed `corruption_coverage` as if it
+        /// were a teardown tail read. The sender's own latch must fail it.
+        #[test]
+        fn corruption_coverage_fails_when_the_sender_lost_a_log_line() {
+            let mut inputs = corruption_inputs(101, 100, 100);
+            inputs.legs[0]
+                .1
+                .send_metrics
+                .corruption
+                .as_mut()
+                .unwrap()
+                .log_write_failed = true;
+            let r = build_soak_results(inputs).unwrap();
+            let v = verdict(&r, "corruption_coverage_srt");
+            assert!(!v.pass, "{}", v.detail);
+            assert!(
+                v.detail
+                    .contains("sender reported a corruption-log write failure"),
+                "{}",
+                v.detail
+            );
+            assert!(!r.overall_pass);
+
+            // Control: the same 100/101 WITHOUT the latch is the tolerated tail read.
+            let r = build_soak_results(corruption_inputs(101, 100, 100)).unwrap();
+            assert!(verdict(&r, "corruption_coverage_srt").pass);
         }
 
         /// The counters the verdicts gate on are `#[serde(default)]`, so
