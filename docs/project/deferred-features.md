@@ -1955,6 +1955,22 @@ mean **Deferred**. An entry whose feature has shipped must never read
   attribute on the Python `BROKEN` error, and a field on the JVM
   exception — no new error kinds.
 
+## `DemuxerStats::unwrap_reanchors` at the C / Python / JVM stats mirrors
+
+- **Status:** Deferred. The Rust `DemuxerStats` gained
+  `unwrap_reanchors: u64` (deep review #4 arc 1, WP-2): the number of
+  times the opt-in `unwrap_timestamps` re-anchored a dormant PID onto its
+  program clock. The Python `Demuxer.stats()` / `Pairer.demuxer_stats()`
+  dicts, the JVM `DemuxerStats` record and the C `TstDemuxReceiverStats`
+  do not carry it.
+- **Why deferred:** the arc's constraint is no binding-surface change
+  (C ABI stays 0.21). The counter is diagnostic and only meaningful with
+  `unwrap_timestamps` on; every binding already exposes that knob.
+- **Trigger to revisit:** Arc 2's binding-shared stats projection, or
+  the first binding consumer pairing KLV to video across a rollover who
+  needs to know a re-anchor happened. Additive on every surface (one
+  dict key, one record field, one C struct field behind a size bump).
+
 ## Resolved (historical)
 
 Entries whose feature shipped. Kept for the record (dates, PR numbers, the decision that closed them); nothing below is a deferral. Moved out of the ledger proper on 2026-09-14 (deep review #4, DEBT-02).
