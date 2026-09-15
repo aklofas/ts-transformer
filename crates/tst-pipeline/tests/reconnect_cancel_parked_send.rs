@@ -393,7 +393,15 @@ fn close_wakes_background_drain() {
         managed.close();
     });
     let closed_in_time = wait_for(CANCEL_DEADLINE, || closer.is_finished());
-    let cancel_fired_before_rescue = park_cancelled.load(Ordering::SeqCst);
+    // Bounded poll, not a single load: `is_finished()` (unlike `join()`) is
+    // not documented to synchronize-with the finished thread's prior writes,
+    // so a single read right after it flips true is not guaranteed to
+    // observe `park_cancelled`'s store on every platform. The gate is still
+    // closed at this point, so — unlike the Drop test, where this same
+    // pattern is load-bearing — this loop cannot be satisfied by the rescue;
+    // it only closes the visibility gap.
+    let cancel_fired_before_rescue =
+        wait_for(CANCEL_DEADLINE, || park_cancelled.load(Ordering::SeqCst));
 
     gate.open(); // rescue: release the worker on every path so the join below is bounded
     let _ = closer.join();
