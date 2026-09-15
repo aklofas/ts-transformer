@@ -12,8 +12,8 @@
 //! `Transport` and `RecvTransport`. The role is determined by which pipeline
 //! shell consumes it. Here `Sender<TcpTransport>` uses it as a sender.
 //!
-//! **No cancel:** the TCP transport does not expose a `cancel_handle()`,
-//! so there is no `tst_tcp_sender_cancel` entry point and no cancel /
+//! **No C-side cancel yet:** `TcpTransport` has a `cancel_handle()`, but there
+//! is no `tst_tcp_sender_cancel` entry point and no cancel /
 //! `was_cancelled` side-channel. `_close` simply drops the handle.
 
 use std::os::raw::c_char;

@@ -17,7 +17,7 @@
 When you need to put MISB-typed metadata onto an MPEG-TS — sensor pose,
 platform telemetry, security marking, target tracks — `tst_core::klv` is the
 bidirectional codec. It covers the MISB ST 0601 UAS Datalink Local Set, the
-ST 0102 Security Metadata Universal Set, the ST 0605 Precision Time Stamp Pack,
+ST 0102 Security Metadata Local Set, the ST 0605 Precision Time Stamp Pack,
 and the ST 0903 VMTI Local Set, all layered on a generic SMPTE KLV substrate
 (Universal Labels, BER lengths, IMAPB, checksum, pack iteration). MPEG-TS
 sync-metadata AU cell carriage lives at `mpegts::au_cell` (per
@@ -25,9 +25,10 @@ ITU-T H.222.0 V9 § 2.12.4.2) — the muxer auto-wraps for
 `KlvStreamType::SynchronousMetadata` streams.
 
 What this module is *not*: a TS demuxer. Pulling KLV out of a captured
-`.ts` file is done with FFmpeg / Bento4 / `cargo run -p tst-examples --example extract_klv`
-(see Section 11). TS demux in the Rust core is on the deferred list — see
-[`mpegts::demux`](/docs/project/deferred-features.md) in `deferred-features.md`.
+`.ts` file is `tst_core::mpegts::demux` (`DemuxEvent::Metadata` — see the
+[demux guide](/docs/guides/mpegts-demux.md)), or
+`cargo run -p tst-examples --example extract_klv` (see "Working with real
+captures" below).
 
 > **Python:** `tstrans` ships `py.typed` type stubs for the core `io`/`codec`/`klv`/`mpegts` modules, so editors and `mypy` resolve these types directly.
 
@@ -40,10 +41,13 @@ the published ST 0601 mandatory-field rules.
 
 ```
 typed:    klv::st0601 (UAS Datalink LS, 142 of 143 items typed or structured)
+          klv::st0102 (Security Metadata LS)
           klv::st0605 (Precision Time Stamp Pack)
           klv::st0806 (RVT — Remote Video Terminal Local Set)
+          klv::st0903 (VMTI LS + VTargetPack)
           klv::st0805 (KLV → Cursor-on-Target conversion)
           klv::st1010 (SDCC-FLP — error covariance pack)
+          klv::st1204 (MIIS Core Identifier)
 
 substrate: klv::pack            (Iter, RawField, OwnedRawField)
            klv::length          (BER short/long, BER-OID)
@@ -281,10 +285,13 @@ box.
 `encode_with(&record, &EncodeConfig, &mut [u8]) -> Result<usize, KlvEncodeError>`
 is the in-place form for callers who want to control the output buffer
 or override the Universal Label or version byte. `EncodeConfig` carries
-two fields: `universal_label: UniversalLabel` (defaults to
-`UniversalLabel::ST_0601_LS`) and `version: u8` (the Tag 65 value, default
+three fields: `universal_label: UniversalLabel` (defaults to
+`UniversalLabel::ST_0601_LS`), `version: u8` (the Tag 65 value, default
 `19` = ST 0601.19; decoupled from the UL's byte 13, which is `0x00` on the
-canonical label per §6.2). Pre-size the output buffer
+canonical label per §6.2), and `out_of_range_policy: OutOfRangePolicy`
+(default `Error`: a ranged value outside its mapping fails the encode;
+`Indicator` emits the tag's spec-defined Out-of-Range sentinel instead).
+Pre-size the output buffer
 with `encoded_len(&record)` if you want to allocate exactly.
 
 ```rust,no_run
@@ -695,13 +702,19 @@ Sync streams (`SynchronousMetadata`) consume it.
 
 ### Multi-cell (fragmented) AUs
 
-The demuxer detects fragmented AUs (CFI != Complete) and emits
-`NonConformantIssue::MultiCellAu { pid, dropped_bytes }` as a
-detect-only event. **Reassembly is not implemented** — the partial
-payload is dropped. ST 0601 records fit well below the fragmentation
-threshold; consumers don't see this in the wild yet, but the
-observability hook lands so upstream senders that fragment surface
-in telemetry.
+The demuxer reassembles fragmented AUs (H.222.0 §2.12.4.2 Table 2-157):
+`First` / `Middle` / `Last` cells accumulate per PID until `Last`
+completes the AU, then one `Metadata` event is emitted with
+`MetadataKind::KlvSyncAuCell { was_reassembled: true, cell_count, .. }`;
+several complete cells inside one PES each emit their own event. A
+broken sequence surfaces as `NonConformantIssue::MultiCellAu { pid,
+dropped_bytes, reason }` with `reason: MultiCellAuReason` one of
+`Orphan` / `SequenceGap` / `ConcurrentFirst` / `Overflow` /
+`OverflowTotal` / `TooManyPids`; the per-PID accumulation buffer is
+capped by `DemuxerConfig::au_cell_cap_per_pid` (default 1 MiB), with
+`au_cell_cap_total` and `au_cell_max_in_flight_pids` bounding the
+aggregate across PIDs. ST 0601 records fit well below the fragmentation
+threshold, so on real streams this path is idle.
 
 ## Wire-format details: PES `stream_id`
 
@@ -742,31 +755,36 @@ as KLV.
 
 ## Substrate walking
 
-The lowest-level decode entry point is `klv::pack::Iter::local_set(body)`,
-which iterates raw `RawField<'a> { tag, value }` triples without
-committing to typed parsing. Useful for debugging, for custom local
-sets, and for gateway translation that just shuffles tags between
-producers.
+There is no public raw-field iterator today (`klv::pack::Iter` is
+crate-private); the public substrate is the pair of BER readers in
+`klv::length` plus the `RawField` / `OwnedRawField` value types. A
+`(tag, len, value)` walk over a Local Set body is a few lines on top of
+them — useful for debugging, custom local sets, and gateway translation
+that just shuffles tags between producers:
 
 ```rust,no_run
-use tst_core::klv::Iter;
-use tst_core::klv::length::read_ber;
+use tst_core::klv::RawField;
+use tst_core::klv::length::{read_ber, read_ber_oid};
 
 fn dump_fields(buf: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
     // Skip the 16-byte UL, then read the outer BER length to find the body.
-    let (_outer_len, body) = read_ber(&buf[16..])?;
-    for r in Iter::local_set(body) {
-        let f = r?;
+    let (outer_len, rest) = read_ber(&buf[16..])?;
+    let mut body = &rest[..outer_len];
+    while !body.is_empty() {
+        let (tag, after_tag) = read_ber_oid(body)?;
+        let (len, after_len) = read_ber(after_tag)?;
+        let f = RawField { tag, value: &after_len[..len] };
         println!("tag={} len={} value={:02X?}", f.tag, f.value.len(), f.value);
+        body = &after_len[len..];
     }
     Ok(())
 }
 ```
 
-`RawField<'a>` borrows `value` from the input buffer (zero-alloc).
-Switch to `OwnedRawField` (via `OwnedRawField::from(field)`) when you
-need to stash a parsed field beyond the lifetime of the input — `Iter`
-is happy to feed either side.
+`RawField<'a>` borrows `value` from the input buffer (zero-alloc); the
+typed decoders hand unknown tags back as `OwnedRawField` (for example
+`UasDatalinkLs.unknown`), and `OwnedRawField::from(&field)` converts
+when you need to stash a field beyond the input's lifetime.
 
 ## Bounded numeric encoding
 
@@ -786,8 +804,9 @@ based on the spec — callers don't normally call either directly.
   working with custom local sets or future ST 0601 tags that adopt
   IMAPB can call it directly: `klv::imapb::encode_imapb(&params, value,
   out)` / `klv::imapb::decode_imapb(&params, bytes)` with
-  `ImapbParams { min, max, length }`. No tag in the current typed
-  ST 0601 table uses IMAPB.
+  `ImapbParams { min, max, length }`. The typed ST 0601 table uses it for the
+  extended-range items (the Item 96 / 103 / 104 / 105 twins and Item 112 —
+  see "Typed ST 0601" above); `tags.rs` carries an `Encoding::Imapb` arm.
 
 A concrete example: ST 0601 Tag 5 (Platform Heading) is a `LinearRange`
 mapping of `0..360°` into 2 bytes unsigned. The step size is
@@ -854,9 +873,6 @@ Each item below maps to an entry in
 - `serde` integration for typed records — wire format and JSON aren't
   isomorphic; needs an explicit decision on unknown-tag representation.
   See [project/deferred-features.md](/docs/project/deferred-features.md).
-- `no_std` support — every shipping target has `std`; flipping to
-  `no_std` means replacing `Vec` / `String` / `format!` with allocator
-  equivalents. See [project/deferred-features.md](/docs/project/deferred-features.md).
 - Streaming / chunked decode — today is buffer-in / buffer-out; a
   growable streaming decoder lands behind an explicit consumer ask.
   See [project/deferred-features.md](/docs/project/deferred-features.md).

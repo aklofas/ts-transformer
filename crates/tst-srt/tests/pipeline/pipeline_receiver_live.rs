@@ -93,7 +93,7 @@ fn end_to_end_sender_to_receiver() {
         //   2. Iterator returns `Some(Err(_))` where source is
         //      `DemuxReceiverErrorSource::Transport(Broken(_))` — peer hangup.
         //      libsrt typically signals sender-side close as a Broken receive on
-        //      the peer (see `SrtRecvTransport::recv_bytes` in `transport.rs`). Treat that as a
+        //      the peer (see `SrtTransport::recv_bytes` in `transport.rs`). Treat that as a
         //      clean stream end here: the sender did its job and any events
         //      already queued in the demuxer have been delivered.
         //

@@ -22,10 +22,12 @@
 //! Common query params for caller-side handles: `?nodelay=1`, `?rcvbuf=N`,
 //! `?sndbuf=N`, `?pkt_size=N`, `?connect_timeout=Ns`.
 //!
-//! **No cancel:** the TCP transport does not expose a `cancel_handle()`, so
-//! there are no `tst_tcp_*_cancel` entry points. To unblock a thread parked
-//! in a data-path call, close the handle from the same thread (or rely on the
-//! socket's read/write behavior). This is the same contract as the UDP module.
+//! **No C-side cancel yet:** `TcpTransport` does expose a cross-thread
+//! `cancel_handle()` (`TcpCancelHandle`), but this module has no
+//! `tst_tcp_*_cancel` entry points to reach it (additive ABI work, not yet
+//! requested). To unblock a thread parked in a data-path call, close the
+//! handle from the same thread (or rely on the socket's read/write
+//! behavior) — the same contract the UDP module has today.
 
 pub mod sender;
 pub mod receiver;

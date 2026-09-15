@@ -53,7 +53,7 @@
  *   /tmp/recv_ts_to_file out.ts
  *
  * Closest Rust analog: examples/receiving/srt_listener_to_file.rs
- * (Rust uses a Receiver to surface bytes over a SrtRecvTransport; the C
+ * (Rust uses a Receiver to surface bytes over a SrtTransport; the C
  * side here drives the equivalent shape through the C ABI).
  * The C version is more verbose because there is no RAII,
  * and because C readers may have less context about what the safe

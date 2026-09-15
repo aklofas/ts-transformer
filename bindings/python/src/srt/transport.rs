@@ -22,7 +22,7 @@
 //! is its own connection; for a listener that hosts many peers, callers
 //! should use the lower-level `Listener` PyClass (T3) and iterate.
 //!
-//! There is NO separate `SrtRecvTransport` in the Rust crate —
+//! There is NO separate receive-only transport type in the Rust crate —
 //! `tst_srt::SrtTransport` implements both `Transport` (send) and
 //! `RecvTransport` (recv). Construction is identical for both
 //! directions; the only difference is which `tst_pipeline::Sender` /

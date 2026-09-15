@@ -45,9 +45,8 @@ change without notice.
 Before privatizing a public item, the implementer must:
 
 1. Grep `bindings/c/core/src/` for use sites of the item.
-2. Read the `tst-jni` design (outside the published repo at
-   `~/Projects/ts-transformer/docs/specs/2026-05-27-tst-jni-design.md`)
-   to confirm the planned JVM bindings don't need the item through a
+2. Read the JVM binding ([`docs/languages/jvm.md`](/docs/languages/jvm.md)
+   and `bindings/jvm/src/`) to confirm it does not reach the item through a
    canonical workflow.
 3. Grep `crates/tst-core/fuzz/fuzz_targets/`, `crates/tst-core/tests/`,
    and `examples/` for cross-crate uses.

@@ -7,7 +7,7 @@
 //! 95% port of `bindings/python/src/rtp/demux_receiver.rs`. Differences:
 //!
 //! - Inner transport: `SrtTransport` instead of `RtpRecvTransport`.
-//!   `tst-srt` does NOT have a separate `SrtRecvTransport` —
+//!   `tst-srt` does NOT have a separate receive-only transport type —
 //!   `SrtTransport` implements both `Transport` and `RecvTransport`.
 //! - URL dispatch: `SrtUrl::parse` + `Listener::bind_with` + one-shot
 //!   `accept` instead of `RtpRecvSocketBuilder::from_url`. Mirrors the

@@ -13,8 +13,8 @@
 //! `RecvTransport` side. Construction uses `TcpTransportBuilder::from_url`
 //! (same as the sender path — role is determined by the pipeline shell).
 //!
-//! **No cancel:** the TCP transport does not expose a `cancel_handle()`,
-//! so there is no `tst_tcp_receiver_cancel` entry point. `_close` simply
+//! **No C-side cancel yet:** `TcpTransport` has a `cancel_handle()`, but there
+//! is no `tst_tcp_receiver_cancel` entry point to reach it. `_close` simply
 //! drops the handle. Without a caller-cancel path, a graceful transport
 //! close maps to `TST_E_END_OF_STREAM`.
 

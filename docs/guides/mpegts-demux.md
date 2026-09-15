@@ -157,9 +157,11 @@ This pre-sync buffer is capped at **4 MiB** by default. A single-shot
 `feed` call of a large `.ts` file that exceeds this ceiling will return
 an error before any events are emitted. The fix is either to raise the
 ceiling via `DemuxerConfig::sync_buf_cap`, or to chunk the input and
-drain events between chunks — the sync lock is acquired on the first
-call that provides at least one full 188-byte packet, and subsequent
-calls bypass the pre-sync buffer entirely. The chunk-and-drain loop is
+drain events between chunks. Every `feed` call appends to one internal
+buffer (`sync_buf`), parses whole 188-byte packets out of it and compacts
+what it consumed — before and after sync lock alike — so the ceiling
+bounds the *unparsed backlog*, and a chunked feed keeps that backlog at
+one chunk. The chunk-and-drain loop is
 the recommended pattern for file replay regardless of file size, because
 it avoids allocating the entire file in the demuxer's queue at once:
 
@@ -285,7 +287,7 @@ ambiguous.
 
 | Method | What it does | When to reach for it |
 | --- | --- | --- |
-| `sync_buf_cap(bytes)` | Maximum pre-sync ingress buffer. Default 4 MiB. Exceeding this returns `DemuxError::SyncBufExhausted` before sync lock is acquired. | Single-shot `feed` of a large `.ts` file (> 4 MiB). Prefer the chunk-and-drain loop instead; see the "Sync-ingress ceiling" note above. |
+| `sync_buf_cap(bytes)` | Maximum bytes the demuxer holds unparsed across `feed` calls (the same buffer serves before and after sync lock). Default 4 MiB. A `feed` whose bytes would push the backlog past the cap returns `DemuxError::SyncBufExhausted` without copying them. | Single-shot `feed` of a large `.ts` file (> 4 MiB). Prefer the chunk-and-drain loop instead; see the "Sync-ingress ceiling" note above. |
 | `link_klv(klv_pid, video_pid)` | Force a `KlvLink` between two PIDs regardless of what the PMT declares. Surfaces as `LinkSource::Override` in the `klv_links` table. | The encoder doesn't emit `metadata_descriptor`, your topology has multiple video PIDs, and you know which KLV PID feeds which video. |
 | `treat_as(pid, kind)` | Override the demuxer's PMT-derived `StreamKind` for one PID. | Encoder advertises wrong `stream_type`; you know the real shape of the bytes. |
 | `pes_cap_per_pid(bytes)` | Maximum PES reassembly buffer per PID. Default 4 MiB. Exceeding this emits `Discontinuity::PesOversize { pid }` and drops the partial PES. | Memory-tight environments, or paranoia against runaway PES from a malformed encoder. |
@@ -361,13 +363,16 @@ kept for non-exhaustive-enum binary-compatibility parity only.)
 drops the partial bytes, emits `Discontinuity::PesOversize { pid }` (or
 `PesTotalOversize`), and resumes on the next PUSI for that PID.
 
-**Garbage prefix bytes (HUNT/VERIFY/LOCKED).** When a stream starts
-mid-flight or recovers from severe loss, the bytes leading the next TS
-packet boundary aren't TS-aligned. The demuxer's syncer state machine
-scans for `0x47`, then verifies the candidate is real by checking
-that bytes 188 ahead is also `0x47` (VERIFY), then transitions to
-LOCKED and parses packets normally. If it can't find a sync byte
-within `SYNC_SEARCH_WINDOW` (~6 KiB) it returns
+**Garbage prefix bytes (scan / N-of-M confirm / locked).** When a stream
+starts mid-flight or recovers from severe loss, the bytes leading the next
+TS packet boundary aren't TS-aligned. The demuxer scans for `0x47`; a
+candidate reached by scanning (as opposed to the next packet boundary)
+must pass an N-of-M stride check — at least 5 of the next 7 positions at
++188, +376, … also carry `0x47` (`SYNC_REACQ_N` / `SYNC_REACQ_M`, ffmpeg's
+`mpegts_resync` values) — before the demuxer locks; a stray `0x47` inside a
+payload is rejected and the scan continues. If more than
+`SYNC_SEARCH_WINDOW` (32 packets, 6016 bytes) pass without a confirmed sync
+it returns
 `DemuxError::Unrecoverable` — that's the "this isn't TS at all"
 signal.
 
@@ -379,8 +384,9 @@ Strict (`TimingOnly` or `Full`) converts to `StrictRejection`.
 **PCR jumps.** A PCR-bearing packet's clock jumps more than one second
 relative to the previous. The demuxer emits
 `NonConformantIssue::PcrAnomaly { delta }` (delta in 27 MHz ticks)
-and continues. Stream-monotonic backward PTS more than one second is
-also flagged as `PcrAnomaly` (delta carries the negative diff).
+and continues. A per-PID backward PTS step of more than one second
+(90 000 ticks, computed 33-bit-wrap-aware) is a separate variant,
+`NonConformantIssue::PtsAnomaly { delta }` (delta in 90 kHz ticks, negative).
 
 ## What gets parsed vs. passed through
 

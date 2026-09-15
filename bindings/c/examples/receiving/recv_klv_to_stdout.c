@@ -4,8 +4,9 @@
  * record to stdout with a PTS + sequence_number prefix.
  *
  * Why this example:
- *   Demonstrates the KLV byte flow without pulling in typed KLV
- *   decode (which is its own future plan). Useful as a building
+ *   Demonstrates the raw KLV byte flow without typed decode (for the
+ *   typed ST 0601 path see the tst_st0601_* family, ABI 0.21, as used by
+ *   receiving/recv_srt_events.c). Useful as a building
  *   block for: external KLV parsers, KLV-tap-and-forward shims,
  *   tools that pipe KLV records to a separate process for
  *   ST 0601 / ST 0903 decoding.
