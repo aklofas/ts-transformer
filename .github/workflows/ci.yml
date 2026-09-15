@@ -409,6 +409,14 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/release-version-consistency.sh --self-test && bash scripts/check/repo/release-version-consistency.sh
 
+      - name: check-msrv-consistency (every pinned-toolchain site == rust-toolchain.toml)
+        # deep-review-4 DEBT-19: the MSRV is repeated at ~30 literal sites
+        # (workflows, crate manifests, embedded gate scripts, doc claims).
+        # Self-test first (planted drift must fail), then the tree. Gated to
+        # linux-x86_64 — the sources are platform-independent.
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/check/repo/msrv-consistency.sh --self-test && bash scripts/check/repo/msrv-consistency.sh
+
       - name: cargo fmt --check
         run: cargo fmt --all -- --check
 
