@@ -301,28 +301,11 @@ where
         // assumes a buffer beginning with an RTSP message); pipelined requests
         // are drained one at a time by the inner parse loop below, so the head
         // is always either an in-progress request or empty.
-        let cap_rejection = match crate::rtsp::message::rtsp_frame_decision(&buf) {
-            crate::rtsp::message::RtspFraming::HeadersTooLong => Some("headers exceed maximum"),
-            crate::rtsp::message::RtspFraming::BadContentLength(detail) => Some(detail),
-            // NeedMore / Complete: not a cap rejection.
-            _ => None,
-        };
+        //
         // NeedMore / Complete fall through to parse complete request(s) below:
         // a complete request is parsed + drained; NeedMore loops back to read
         // more (bounded: header ≤ 64 KiB, body ≤ 1 MiB).
-        if let Some(detail) = cap_rejection {
-            tracing::warn!(
-                target: "tst_rtp::server",
-                peer = %peer,
-                buf_len = buf.len(),
-                detail,
-                "request exceeded RTSP header/body caps; sending 413 and closing"
-            );
-            let response_413 =
-                b"RTSP/1.0 413 Request Entity Too Large\r\nContent-Length: 0\r\n\r\n";
-            let mut guard = write_half.lock().await;
-            let _ = guard.write_all(response_413).await;
-            let _ = guard.shutdown().await;
+        if reject_if_over_cap(&buf, peer, &write_half).await {
             return Ok(());
         }
 
@@ -332,10 +315,12 @@ where
         // `SET_PARAMETER` no longer wedges every request queued behind it
         // until the idle timeout. An incomplete frame loops back to read.
         // `while let`, not `loop { match … }`: every non-`Complete` framing
-        // outcome (`NeedMore`, plus `HeadersTooLong` / `BadContentLength` on
-        // a pipelined head — the cap check at the top of the outer loop
-        // answers 413 after the next read, same as before this loop
-        // existed) means "stop draining, read more".
+        // outcome means "stop draining"; `NeedMore` then loops back to read
+        // more, while `HeadersTooLong` / `BadContentLength` on a pipelined
+        // head is caught by the `reject_if_over_cap` call right after this
+        // loop, so an already-buffered oversized second request gets its
+        // 413 immediately rather than waiting on another socket read (or
+        // the idle timeout) that may never come.
         while let RtspFraming::Complete { total_len } =
             crate::rtsp::message::rtsp_frame_decision(&buf)
         {
@@ -429,9 +414,54 @@ where
                 return Ok(());
             }
         }
+
+        // The drain loop above stops at the first non-`Complete` framing
+        // outcome. If that's a cap violation on the new buffer head (a
+        // pipelined request whose entirety already arrived in this read,
+        // e.g. reqA + an oversized reqB in one packet), answer 413 now
+        // instead of waiting for another socket read — which, for a
+        // client that has moved on to awaiting reqA's response, may not
+        // come until the idle timeout.
+        if reject_if_over_cap(&buf, peer, &write_half).await {
+            return Ok(());
+        }
     }
     tracing::info!(target: "tst_rtp::server", peer = %peer, "session closed");
     Ok(())
+}
+
+/// Check the buffer head against the RTSP framing caps (64 KiB headers /
+/// 1 MiB body — see [`crate::rtsp::message::rtsp_frame_decision`]) and, on
+/// a violation, answer `413 Request Entity Too Large` and shut the write
+/// half. Returns `true` when the caller must close the session (a
+/// violation was answered), `false` when the buffer head is within caps
+/// (`NeedMore` or `Complete` — nothing to do here either way).
+async fn reject_if_over_cap<W: AsyncWrite + Unpin>(
+    buf: &[u8],
+    peer: SocketAddr,
+    write_half: &AsyncMutex<W>,
+) -> bool {
+    let cap_rejection = match crate::rtsp::message::rtsp_frame_decision(buf) {
+        RtspFraming::HeadersTooLong => Some("headers exceed maximum"),
+        RtspFraming::BadContentLength(detail) => Some(detail),
+        // NeedMore / Complete: not a cap rejection.
+        _ => None,
+    };
+    let Some(detail) = cap_rejection else {
+        return false;
+    };
+    tracing::warn!(
+        target: "tst_rtp::server",
+        peer = %peer,
+        buf_len = buf.len(),
+        detail,
+        "request exceeded RTSP header/body caps; sending 413 and closing"
+    );
+    let response_413 = b"RTSP/1.0 413 Request Entity Too Large\r\nContent-Length: 0\r\n\r\n";
+    let mut guard = write_half.lock().await;
+    let _ = guard.write_all(response_413).await;
+    let _ = guard.shutdown().await;
+    true
 }
 
 /// Wire bytes for an [`crate::rtsp::message::UnparseableRequestReply`]:
