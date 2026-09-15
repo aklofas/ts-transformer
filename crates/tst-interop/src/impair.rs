@@ -219,15 +219,11 @@ impl Phase {
 /// (at `loss_pct` 0.5) and 3.2 % low (at 4.0) in relative terms, i.e. at
 /// most 0.13 percentage points.
 ///
-/// Left uncorrected deliberately. Correcting `draw_pct` would change the
-/// impairment every existing seed produces, and the bias is an order of
-/// magnitude inside the band `report soak`'s
-/// `drop_rate_consistent_with_impairment_<leg>` allows: that verdict
-/// integrates the expectation over the whole phase table (roughly 30 %
-/// of phases burst), which puts the run-level bias near 0.013
-/// percentage points against a 0.1-point tolerance floor. If a future
-/// change tightens that floor, correct this rather than widening the
-/// floor: `q = L / (5.5 - 4.5L)` with `L` the loss FRACTION.
+/// Left uncorrected deliberately (archived seeds must reproduce).
+/// `report soak` computes its expectation from this same renewal process
+/// (`report.rs` `renewal_model`), so the bias never reaches a verdict;
+/// correct `draw_pct` only if the engine's own rate is ever the number
+/// wanted: `q = L / (5.5 - 4.5L)` with `L` the loss FRACTION.
 pub fn generate_schedule(seed: u64, phases: u32) -> Vec<Phase> {
     let mut rng = XorShift64::new(seed ^ SCHEDULE_SALT);
     (0..phases)

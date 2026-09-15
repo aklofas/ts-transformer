@@ -1604,56 +1604,78 @@ pub mod soak {
         first_past_end.saturating_sub(first_reachable)
     }
 
-    /// Fraction of packets the proxy's CONTINUOUS configured impairment
-    /// (`loss_pct`) predicts it will drop. Deliberately does NOT add an
-    /// outage-coverage term — see the module doc's "Known telemetry
-    /// limitations" section for the empirical finding on why an
-    /// outage's true impact shows up as reduced sender throughput, not
-    /// proxy-visible drops, once a `ManagedTransport` sender is in the
-    /// picture.
-    fn expected_drop_fraction(loss_pct: f64) -> f64 {
-        loss_pct / 100.0
+    /// What one phase of the impairment engine realises, from its
+    /// renewal process (Q11) — see `impair::Engine::decide`: outside a
+    /// burst every packet first rolls duplication (`dup_pct`), then
+    /// loss (`draw_pct`); a hit drops a run of `R ~ U[lo, hi]` packets
+    /// (`burst_run`, `(1, 1)` when not bursty), the rest of the run
+    /// without a draw. With `q` the per-packet fire probability, `G` the
+    /// geometric run of forwards before a fire (`E[G] = (1-q)/q`,
+    /// `Var[G] = (1-q)/q²`), `m`/`v` the run mean/variance:
+    /// cycle `X = G + R`, reward `R`, long-run drop fraction
+    /// `p = m / E[X] = m q / (1 - q + m q)` — `5.5q / (1 + 4.5q)` for the
+    /// (3, 8) burst runs, exactly `q` for `(1, 1)` — and per-packet
+    /// variance rate `Var(R - pX) / E[X] = ((1-p)² v + p² Var[G]) / E[X]`
+    /// (renewal-reward CLT), which is `q(1-q)` — the binomial term — for
+    /// a non-burst phase and larger for a burst one (each fire drops ~m
+    /// correlated packets).
+    ///
+    /// Deliberately does NOT add an outage-coverage term: outage-window
+    /// drops are counted apart and excluded from the comparison — see
+    /// `proxy::PhaseCounters::outage_dropped`.
+    #[derive(Clone, Copy, Debug)]
+    struct PhaseModel {
+        /// Expected drop fraction.
+        p: f64,
+        /// Variance of the drop COUNT per packet.
+        var_rate: f64,
     }
 
-    /// Standard-error multiplier for [`drop_rate_tolerance`]'s binomial
-    /// term. ~6 standard errors of a binomial proportion is generous
-    /// enough that ordinary sampling noise at any packet volume this
-    /// soak actually pushes (thousands to tens of millions over a 72h
-    /// run) won't false-positive, while still catching a genuine
-    /// multiple-of-the-configured-rate regression (e.g. observed 4%
-    /// against a configured 2%) instead of silently absorbing it — the
-    /// flat `max(3pp, expected*30%)` band this replaced did NOT scale
-    /// down with volume, so a real 2x regression at high packet counts
-    /// could sit comfortably inside a fixed few-percentage-point band
-    /// forever, no matter how many packets confirmed it.
+    fn renewal_model(draw_pct: f64, dup_pct: f64, burst_run: (u32, u32)) -> PhaseModel {
+        let q = (draw_pct / 100.0).clamp(0.0, 1.0) * (1.0 - (dup_pct / 100.0).clamp(0.0, 1.0));
+        if q <= 0.0 {
+            return PhaseModel {
+                p: 0.0,
+                var_rate: 0.0,
+            };
+        }
+        // Same clamp as `Engine::decide`: lo >= 1, hi >= lo.
+        let lo = f64::from(burst_run.0.max(1));
+        let hi = f64::from(burst_run.1.max(burst_run.0.max(1)));
+        let m = (lo + hi) / 2.0;
+        let v = ((hi - lo + 1.0).powi(2) - 1.0) / 12.0;
+        let e_x = (1.0 - q) / q + m;
+        let var_g = (1.0 - q) / (q * q);
+        let p = m / e_x;
+        let var_rate = ((1.0 - p).powi(2) * v + p * p * var_g) / e_x;
+        PhaseModel { p, var_rate }
+    }
+
+    /// Standard-error multiplier for [`drop_rate_tolerance`]. ~6 standard
+    /// errors is generous enough that sampling noise at any packet volume
+    /// this soak pushes won't false-positive, while a genuine
+    /// multiple-of-the-configured-rate regression still fails — the flat
+    /// `max(3pp, expected*30%)` band this replaced did NOT scale down
+    /// with volume, so a real 2x regression at high packet counts could
+    /// sit comfortably inside a fixed few-percentage-point band forever.
     const DROP_RATE_TOLERANCE_SIGMA: f64 = 6.0;
 
-    /// Absolute floor on the tolerance band, applied regardless of the
-    /// binomial term above. Exists only to keep
-    /// [`drop_rate_tolerance`]'s output finite and sane in the
-    /// degenerate `n == 0` case (a genuine 0-packet division would
+    /// Absolute floor on the tolerance band (0.1 percentage points): keeps
+    /// the band finite for `n == 0` (a genuine 0-packet division would
     /// otherwise propagate `inf`/`NaN` into `LegResult::
     /// drop_fraction_tolerance`'s JSON, which `serde_json` can't
-    /// serialize) — deliberately much smaller than the old flat 3
-    /// percentage-point floor so it doesn't itself become the binding
-    /// constraint at realistic-to-large packet counts, where the
-    /// binomial term alone is already far tighter.
-    const DROP_RATE_TOLERANCE_FLOOR: f64 = 0.001; // 0.1 percentage points
+    /// serialize) and absorbs model residue at packet counts where the
+    /// statistical term is smaller than that.
+    const DROP_RATE_TOLERANCE_FLOOR: f64 = 0.001;
 
-    /// Tolerance band for the observed-vs-expected drop-fraction
-    /// comparison: `DROP_RATE_TOLERANCE_SIGMA` standard errors of a
-    /// binomial proportion with success probability `expected` over `n`
-    /// trials (`n` = total packets the proxy decided on), floored at
-    /// [`DROP_RATE_TOLERANCE_FLOOR`]. Scales down as `n` grows — unlike
-    /// the flat percentage band this replaced, a 72h run's much larger
-    /// packet count tightens the check rather than leaving it exactly
-    /// as loose as a five-second interop-matrix cell would need.
-    fn drop_rate_tolerance(expected: f64, n: u64) -> f64 {
-        if n == 0 {
-            return DROP_RATE_TOLERANCE_FLOOR;
-        }
-        let variance = (expected * (1.0 - expected) / n as f64).max(0.0);
-        let sigma = variance.sqrt();
+    /// `DROP_RATE_TOLERANCE_SIGMA` standard errors of the observed drop
+    /// FRACTION (`sigma` = sqrt(Σ nᵢ·var_rateᵢ) / N from the per-phase
+    /// renewal models), floored at [`DROP_RATE_TOLERANCE_FLOOR`]. Scales
+    /// down as the packet count grows — unlike the flat percentage band
+    /// this replaced, a 72h run's much larger packet count tightens the
+    /// check rather than leaving it exactly as loose as a five-second
+    /// interop-matrix cell would need.
+    fn drop_rate_tolerance(sigma: f64) -> f64 {
         (DROP_RATE_TOLERANCE_SIGMA * sigma).max(DROP_RATE_TOLERANCE_FLOOR)
     }
 
@@ -1709,10 +1731,10 @@ pub mod soak {
         pub proxy_forwarded: u64,
         pub proxy_dropped: u64,
         /// The effective (phase-integrated) expected drop rate, as a
-        /// percentage — `expected_drop_fraction * 100.0`. For a
-        /// fixed-mode run (no schedule) this is exactly the configured
-        /// `loss_pct`; for a scheduled run it's the traffic-weighted
-        /// average across `phases` phases.
+        /// percentage — `expected_drop_fraction * 100.0`: the engine's
+        /// realised (renewal) rate, packet-weighted across phases. For a
+        /// fixed-mode run (no schedule) that is exactly the configured
+        /// `loss_pct` scaled by `1 − dup_pct`.
         pub loss_pct: f64,
         pub observed_drop_fraction: f64,
         pub expected_drop_fraction: f64,
@@ -2084,17 +2106,25 @@ pub mod soak {
             let outage_windows =
                 expected_outage_windows(run_duration_s, artifacts.outage_period_s, outage_dur_s);
 
-            // Phase-integrated expectation (spec §6.2). Fixed mode is the
-            // one-phase case: the schedule echo is absent, `rates` is a
-            // single-element vec built from `expected_drop_fraction`
-            // (kept as a named helper for that one-rate case), and
-            // `phases` is a single counter carrying the run's whole
-            // total — so the loop below reduces to the old
-            // `loss_pct × total` computation exactly.
-            let rates: Vec<f64> = match &artifacts.proxy_stats.config.schedule {
-                Some(s) => s.table.iter().map(|p| p.loss_pct / 100.0).collect(),
-                None => vec![expected_drop_fraction(
+            // Phase-integrated expectation (spec §6.2), each phase's
+            // rate taken from the engine's own renewal process rather
+            // than its configured `loss_pct` (Q11). Fixed mode is the
+            // one-phase case: the schedule echo is absent, the model is
+            // built from the config's `loss_pct` with non-burst runs
+            // (where the renewal rate IS that fraction, scaled by the
+            // dup gate), and `phases` is a single counter carrying the
+            // run's whole total.
+            let dup_pct = artifacts.proxy_stats.config.dup_pct;
+            let models: Vec<PhaseModel> = match &artifacts.proxy_stats.config.schedule {
+                Some(s) => s
+                    .table
+                    .iter()
+                    .map(|ph| renewal_model(ph.draw_pct, dup_pct, ph.burst_run))
+                    .collect(),
+                None => vec![renewal_model(
                     artifacts.proxy_stats.config.loss_pct,
+                    dup_pct,
+                    (1, 1),
                 )],
             };
             let counters: Vec<(u64, u64)> = if artifacts.proxy_stats.phases.is_empty() {
@@ -2146,7 +2176,7 @@ pub mod soak {
                         artifacts.proxy_stats.dropped
                     ),
                 )
-            } else if rates.len() != counters.len() {
+            } else if models.len() != counters.len() {
                 // A malformed artifact (e.g. hand-edited or truncated
                 // stats JSON whose phase-counter count doesn't match its
                 // own schedule echo) must fail loud, never panic and
@@ -2159,7 +2189,7 @@ pub mod soak {
                     format!(
                         "{leg_name}: malformed artifact — {} phase rate(s) in the schedule echo \
                          but {} phase counter(s) recorded",
-                        rates.len(),
+                        models.len(),
                         phase_count
                     ),
                 )
@@ -2174,11 +2204,16 @@ pub mod soak {
             } else {
                 let expected_drops: f64 = counters
                     .iter()
-                    .zip(&rates)
-                    .map(|((f, d), r)| (f + d) as f64 * r)
+                    .zip(&models)
+                    .map(|((f, d), m)| (f + d) as f64 * m.p)
+                    .sum();
+                let variance: f64 = counters
+                    .iter()
+                    .zip(&models)
+                    .map(|((f, d), m)| (f + d) as f64 * m.var_rate)
                     .sum();
                 let expected = expected_drops / total as f64;
-                let tolerance = drop_rate_tolerance(expected, total);
+                let tolerance = drop_rate_tolerance(variance.sqrt() / total as f64);
                 let observed = total_dropped as f64 / total as f64;
                 let pass = (observed - expected).abs() <= tolerance;
                 (
@@ -3714,6 +3749,81 @@ pub mod soak {
                 v.detail
             );
             assert!(results.overall_pass);
+        }
+
+        fn burst_phase(index: u32, loss: f64) -> crate::impair::Phase {
+            crate::impair::Phase {
+                burst: true,
+                burst_run: (3, 8),
+                draw_pct: loss / 5.5,
+                ..phase(index, loss)
+            }
+        }
+
+        /// One long 4 % burst phase at 10 M packets: the engine's realised
+        /// rate is 5.5q/(1+4.5q) = 3.8732 % (impair.rs), 0.127 pp under
+        /// the configured 4 % — past the 0.1 pp floor once n makes the
+        /// statistical term small. Healthy engine, false FAIL today.
+        #[test]
+        fn drop_rate_one_phase_burst_run_matches_the_renewal_expectation() {
+            let n = 10_000_000u64;
+            let dropped = 387_324u64; // round(n x 0.04 / 1.0327273)
+            let mut stats = scheduled_stats(&[(n - dropped, dropped)], &[4.0]);
+            stats.config.schedule.as_mut().unwrap().table[0] = burst_phase(0, 4.0);
+            let mut inputs = healthy_inputs();
+            inputs.legs[0].1.proxy_stats = stats;
+            let r = build_soak_results(inputs).unwrap();
+            let v = verdict(&r, "drop_rate_consistent_with_impairment_srt");
+            assert!(v.pass, "{}", v.detail);
+            assert!(v.detail.contains("expected 3.87%"), "{}", v.detail);
+            let leg = &r.legs[0];
+            assert!(
+                (leg.expected_drop_fraction - 0.038732).abs() < 1e-5,
+                "{leg:?}"
+            );
+            // Burst-aware tolerance: never below the binomial one.
+            let binomial = 6.0 * (0.038732 * (1.0 - 0.038732) / n as f64).sqrt();
+            assert!(
+                leg.drop_fraction_tolerance >= binomial.max(0.001),
+                "{leg:?}"
+            );
+        }
+
+        /// A short clean phase followed by a burst phase the run sat in
+        /// for ten times longer (the schedule clamps to its last phase):
+        /// the mixture is packet-weighted, and the burst share is what
+        /// the engine actually realises.
+        #[test]
+        fn drop_rate_last_phase_dominated_burst_run_matches_the_renewal_expectation() {
+            let mut stats = scheduled_stats(&[(995_000, 5_000), (9_612_676, 387_324)], &[0.5, 4.0]);
+            stats.config.schedule.as_mut().unwrap().table[1] = burst_phase(1, 4.0);
+            let mut inputs = healthy_inputs();
+            inputs.legs[0].1.proxy_stats = stats;
+            let r = build_soak_results(inputs).unwrap();
+            let v = verdict(&r, "drop_rate_consistent_with_impairment_srt");
+            assert!(v.pass, "{}", v.detail);
+            assert!(
+                (r.legs[0].expected_drop_fraction - 392_324.0 / 11_000_000.0).abs() < 1e-6,
+                "{:?}",
+                r.legs[0]
+            );
+        }
+
+        /// The renewal model reduces to the binomial one for a non-burst
+        /// phase, so fixed-mode verdicts are unchanged.
+        #[test]
+        fn drop_rate_fixed_mode_keeps_the_binomial_tolerance() {
+            let n = 1_000_000u64;
+            let mut inputs = healthy_inputs();
+            inputs.legs[0].1.proxy_stats = proxy_stats(n - 20_000, 20_000, 2.0, None, 0);
+            let r = build_soak_results(inputs).unwrap();
+            let leg = &r.legs[0];
+            assert!((leg.expected_drop_fraction - 0.02).abs() < 1e-12, "{leg:?}");
+            let binomial = (6.0 * (0.02_f64 * 0.98 / n as f64).sqrt()).max(0.001);
+            assert!(
+                (leg.drop_fraction_tolerance - binomial).abs() < 1e-9,
+                "{leg:?}"
+            );
         }
 
         /// The `n == 0` degenerate case must still produce a FINITE
