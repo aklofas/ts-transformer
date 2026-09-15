@@ -26,7 +26,14 @@ pub(crate) fn parse(
         if aspect_ratio_idc == 255 {
             let w = br.read_u(16)?;
             let h = br.read_u(16)?;
-            sample_aspect_ratio = Some(Rational { num: w, den: h });
+            // H.265 §E.3.1: a zero sar_width / sar_height means the sample
+            // aspect ratio is unspecified. Never surface `Rational { den: 0 }`
+            // (÷0 hazard for consumers) — mirrors h264/decode.rs.
+            sample_aspect_ratio = if w != 0 && h != 0 {
+                Some(Rational { num: w, den: h })
+            } else {
+                None
+            };
         }
     }
 
@@ -118,4 +125,56 @@ pub(crate) fn parse(
     };
 
     Ok(VuiOut { frame_rate, color })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::codec::test_util::BitWriter;
+
+    /// VUI with only `aspect_ratio_info_present_flag = 1`,
+    /// `aspect_ratio_idc = 255` (Extended_SAR) and the given
+    /// `sar_width` / `sar_height`; every later presence flag is 0.
+    fn vui_with_extended_sar(w: u32, h: u32) -> Vec<u8> {
+        let mut bw = BitWriter::new();
+        bw.write(1, 1); // aspect_ratio_info_present_flag
+        bw.write(255, 8); // aspect_ratio_idc = Extended_SAR
+        bw.write(u64::from(w), 16); // sar_width
+        bw.write(u64::from(h), 16); // sar_height
+        bw.write(0, 1); // overscan_info_present_flag
+        bw.write(0, 1); // video_signal_type_present_flag
+        bw.write(0, 1); // chroma_loc_info_present_flag
+        bw.write(0, 1); // neutral_chroma_indication_flag
+        bw.write(0, 1); // field_seq_flag
+        bw.write(0, 1); // frame_field_info_present_flag
+        bw.write(0, 1); // default_display_window_flag
+        bw.write(0, 1); // vui_timing_info_present_flag
+        bw.end_rbsp();
+        bw.bytes
+    }
+
+    /// CORR-16: H.265 §E.3.1 — a zero `sar_width` / `sar_height` means
+    /// "unspecified"; the parser used to surface `Rational { den: 0 }`,
+    /// a ÷0 hazard for every consumer. Mirrors the H.264 guard.
+    #[test]
+    fn extended_sar_with_zero_height_is_unspecified_not_div_by_zero() {
+        let bytes = vui_with_extended_sar(16, 0);
+        let mut br = BitReader::new(&bytes);
+        let out = parse(&mut br, 0).unwrap();
+        let color = out
+            .color
+            .expect("aspect_ratio_info_present builds ColorInfo");
+        assert_eq!(color.sample_aspect_ratio, None);
+    }
+
+    #[test]
+    fn extended_sar_with_nonzero_dims_round_trips() {
+        let bytes = vui_with_extended_sar(16, 11);
+        let mut br = BitReader::new(&bytes);
+        let out = parse(&mut br, 0).unwrap();
+        assert_eq!(
+            out.color.unwrap().sample_aspect_ratio,
+            Some(Rational { num: 16, den: 11 })
+        );
+    }
 }
