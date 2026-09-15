@@ -269,6 +269,14 @@ pub struct PhaseCounters {
     pub forwarded: u64,
     pub dropped: u64,
     pub duped: u64,
+    /// Of `dropped`, the packets decided inside an outage window
+    /// ([`crate::impair::Engine::in_outage`]). A sub-count, so `dropped`
+    /// still reconciles with the top-level total; `report soak` excludes
+    /// these from the impairment-rate comparison, whose expectation
+    /// models continuous loss only. `#[serde(default)]` for stats files
+    /// written before it.
+    #[serde(default)]
+    pub outage_dropped: u64,
 }
 
 /// Running counters + config echo — [`run`]'s return value and the
@@ -590,6 +598,16 @@ pub fn run(
                             // counters like any other drop.
                             stats.dropped += 1;
                             stats.phases[phase].dropped += 1;
+                            // …but `report soak` compares the observed
+                            // rate against a CONTINUOUS-loss expectation,
+                            // which an outage window (an unconditional
+                            // drop) is no part of, so it is also counted
+                            // apart. `in_outage` is pure (no RNG), so
+                            // asking after `decide` does not perturb the
+                            // sequence.
+                            if engine.in_outage(elapsed_ms) {
+                                stats.phases[phase].outage_dropped += 1;
+                            }
                         }
                         Action::Forward { delay_ms } => {
                             stats.forwarded += 1;
@@ -960,5 +978,14 @@ mod tests {
         assert_eq!(parsed.forwarded, 10);
         assert!(parsed.config.schedule.is_none());
         assert!(parsed.phases.is_empty());
+    }
+
+    /// A stats file from before `outage_dropped` existed still parses,
+    /// as zero.
+    #[test]
+    fn phase_counters_without_outage_dropped_still_deserialize() {
+        let c: PhaseCounters =
+            serde_json::from_str(r#"{"index":0,"forwarded":10,"dropped":2,"duped":0}"#).unwrap();
+        assert_eq!(c.outage_dropped, 0);
     }
 }
