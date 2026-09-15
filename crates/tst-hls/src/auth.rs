@@ -30,7 +30,17 @@ pub(crate) fn check_basic_auth(
     let Some((user, pass)) = s.split_once(':') else {
         return false;
     };
-    user == expected_user && pass == expected_pass
+    // Constant-time comparison for both user and pass — same shape as
+    // tst-rtp's RTSP `verify_basic`. The two `Choice`s are combined with `&`
+    // BEFORE converting to `bool` so subtle's optimizer barriers cover the
+    // whole check. Length-timing residual: slice `ct_eq` short-circuits on a
+    // length mismatch, so an observer can learn whether the submitted
+    // credential LENGTH matches; lengths are not treated as secret here
+    // (accepted residual, same as tst-rtp).
+    use subtle::ConstantTimeEq;
+    let ok = user.as_bytes().ct_eq(expected_user.as_bytes())
+        & pass.as_bytes().ct_eq(expected_pass.as_bytes());
+    bool::from(ok)
 }
 
 #[cfg(test)]
@@ -66,6 +76,30 @@ mod tests {
     #[test]
     fn wrong_scheme_rejected() {
         let h = format!("Bearer {}", b64("alice:s3cret"));
+        assert!(!check_basic_auth("alice", "s3cret", Some(&h)));
+    }
+
+    /// subtle's slice `ct_eq` returns `Choice(0)` when lengths differ (no
+    /// panic, no early `true`); pin that a length mismatch on either field
+    /// still rejects.
+    #[test]
+    fn mismatched_length_password_rejected() {
+        let h = format!("Basic {}", b64("alice:s3cretXX"));
+        assert!(!check_basic_auth("alice", "s3cret", Some(&h)));
+        let h = format!("Basic {}", b64("alice:s3c"));
+        assert!(!check_basic_auth("alice", "s3cret", Some(&h)));
+    }
+
+    #[test]
+    fn mismatched_length_user_rejected() {
+        let h = format!("Basic {}", b64("alicia:s3cret"));
+        assert!(!check_basic_auth("alice", "s3cret", Some(&h)));
+    }
+
+    #[test]
+    fn empty_password_only_matches_empty() {
+        let h = format!("Basic {}", b64("alice:"));
+        assert!(check_basic_auth("alice", "", Some(&h)));
         assert!(!check_basic_auth("alice", "s3cret", Some(&h)));
     }
 }
