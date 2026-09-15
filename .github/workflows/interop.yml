@@ -26,6 +26,10 @@ on:
       - 'crates/tst-interop/**'
       - 'scripts/interop/**'
       - '.github/workflows/interop.yml'
+      # deep-review-4 META-12: a demux/mux change used to reach main before
+      # ffmpeg/tsduck/GStreamer saw it (Monday cron). ~25 min warm; the
+      # census assert (157/92/0/65/0) now gates those PRs too.
+      - 'crates/tst-core/src/mpegts/**'
 
 permissions:
   contents: read

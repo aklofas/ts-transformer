@@ -1,8 +1,8 @@
 name: sanitizers
 
-# Sanitizers (ASan, TSan) run nightly + on-demand. NOT on every PR — the
-# per-job runtime + sanitizer noise is too disruptive for the PR feedback
-# loop. Two scopes:
+# Sanitizers (ASan, TSan) run nightly + on-demand, plus `tsan-native` on
+# PRs that touch the native-linking crates or the managed reconnect paths
+# (see `on.pull_request.paths`). Two scopes:
 #
 #   * asan / tsan — the pure-Rust crates: tst-core, tst-pipeline, tst-rtp,
 #     tst-udp, tst-tcp, tst-hls.
@@ -28,6 +28,26 @@ on:
     # surface on the morning of the following workday without competing
     # with PR-driven CI for GHA capacity.
     - cron: '0 3 * * *'
+  # PR path (deep-review-4 META-12): a race in tst-srt/tst-rist/tst-tcp or
+  # the managed reconnect paths used to reach main before TSan ever saw it
+  # (the #183 stats-callback race sat red four nights). Only `tsan-native`
+  # runs on pull_request — the other three jobs are `if`-gated below and
+  # keep running nightly. Hard-gating: there is no continue-on-error in
+  # this file (removed with PRs #159/#190) and none is added for PRs.
+  # ~10 min warm. The sys crates are listed so a vendor bump PR runs it
+  # without a manual dispatch (the vendor-bump rail still reminds to
+  # dispatch the full nightly set).
+  pull_request:
+    branches: [main]
+    paths:
+      - 'crates/tst-srt/**'
+      - 'crates/tst-rist/**'
+      - 'crates/tst-tcp/**'
+      - 'crates/tst-pipeline/src/reconnect/**'
+      - 'crates/srt-sys/**'
+      - 'crates/rist-sys/**'
+      - '.sanitizer-suppressions/**'
+      - '.github/workflows/sanitizers.yml'
 
 permissions:
   contents: read
@@ -40,6 +60,8 @@ jobs:
     name: ASan (pure-Rust crates, nightly)
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # Nightly + dispatch only; the PR path runs tsan-native alone (see on:).
+    if: github.event_name != 'pull_request'
     steps:
       - uses: actions/checkout@v5
         with:
@@ -103,6 +125,8 @@ jobs:
     name: ASan (native-linking crates, nightly)
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # Nightly + dispatch only; the PR path runs tsan-native alone (see on:).
+    if: github.event_name != 'pull_request'
     # Hard-fail since 2026-08-19 (phase-in complete: 21/22 nightly greens;
     # the one red was a peer-drop-before-option-read test race, fixed in the
     # same PR that removed the soft-fail).
@@ -273,6 +297,8 @@ jobs:
     name: TSan (pure-Rust crates, nightly)
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # Nightly + dispatch only; the PR path runs tsan-native alone (see on:).
+    if: github.event_name != 'pull_request'
     steps:
       - uses: actions/checkout@v5
         with:
