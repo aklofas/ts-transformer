@@ -65,6 +65,15 @@ pub struct PesShape {
     pub stream_ids: BTreeSet<u8>,
     /// First 4 payload bytes after the PES header of the FIRST PES seen.
     pub first_payload_prefix: Option<[u8; 4]>,
+    /// PES whose first TWO payload bytes differ from
+    /// [`first_payload_prefix`](Self::first_payload_prefix)'s — every
+    /// carriage this crate muxes keeps those constant across PES
+    /// (Annex-B / binding `00 00`, raw-OBU temporal delimiter `12 00`,
+    /// ADTS `FF Fx`, async KLV UL `06 0E`), so on the video and audio
+    /// PIDs a nonzero count means a later PES does not look like the
+    /// first. A sync-KLV PID's AU-cell header varies by design and
+    /// nothing judges the count there.
+    pub prefix_mismatches: u64,
 }
 
 /// Per-packet header facts, decoded statelessly — the classification the
@@ -928,9 +937,11 @@ impl Reader {
                 .or_insert_with(|| TimestampSeries::new(retention, pid))
                 .push(pts);
         }
-        if shape.first_payload_prefix.is_none() {
-            if let Some(d) = payload.get(9 + hdr_len..9 + hdr_len + 4) {
-                shape.first_payload_prefix = Some([d[0], d[1], d[2], d[3]]);
+        if let Some(d) = payload.get(9 + hdr_len..9 + hdr_len + 4) {
+            match shape.first_payload_prefix {
+                None => shape.first_payload_prefix = Some([d[0], d[1], d[2], d[3]]),
+                Some(first) if first[..2] != d[..2] => shape.prefix_mismatches += 1,
+                Some(_) => {}
             }
         }
         Ok(())

@@ -129,6 +129,19 @@ fn audio(inv: &Invariants, wire: &WireSummary, seconds: f64) -> Vec<String> {
             "audio_codec_adts: first audio PES payload {other:?} is not an ADTS frame"
         )),
     }
+    // …and the same check over every LATER PES on the PID: an ADTS
+    // syncword is constant, so one that stops looking like the first is
+    // damage the first-PES check alone would sail past.
+    if let Some(n) = wire
+        .pes
+        .get(&pid)
+        .map(|s| s.prefix_mismatches)
+        .filter(|&n| n > 0)
+    {
+        f.push(format!(
+            "audio_codec_adts: {n} later PES payload(s) on PID {pid} do not start like the first"
+        ));
+    }
     let frames = wire.pts.get(&pid).map_or(0, |s| s.count()) as f64;
     let expected_frames = seconds * expected_rate as f64 / AAC_SAMPLES_PER_FRAME;
     if (frames - expected_frames).abs() > expected_frames * AUDIO_CADENCE_TOLERANCE {
@@ -283,14 +296,24 @@ fn av1_carriage(inv: &Invariants, wire: &WireSummary) -> Vec<String> {
         }
         _ => false,
     };
-    if ok {
-        Vec::new()
-    } else {
-        vec![format!(
+    let mut f = Vec::new();
+    if !ok {
+        f.push(format!(
             "av1_carriage_wire: mode {mode:?}, stream_ids {:?}, payload prefix {:02x?}",
             shape.stream_ids, pfx
-        )]
+        ));
     }
+    // The prefix check above reads the FIRST PES only; this holds every
+    // later one to the same opening bytes (`00 00` for the binding's
+    // `ts_open_bitstream_unit`, `12 00` for a raw-OBU temporal
+    // delimiter), so carriage that degrades mid-capture is caught too.
+    if shape.prefix_mismatches > 0 {
+        f.push(format!(
+            "av1_carriage_wire: {} later PES payload(s) on PID {pid} do not start like the first",
+            shape.prefix_mismatches
+        ));
+    }
+    f
 }
 
 /// Oracle 5: `pts-rollover` must show at least one raw-PTS wrap
@@ -599,6 +622,7 @@ mod tests {
                 PesShape {
                     stream_ids: BTreeSet::new(),
                     first_payload_prefix: Some(prefix),
+                    prefix_mismatches: 0,
                 },
             )]),
             pts: BTreeMap::from([(
@@ -794,6 +818,7 @@ mod tests {
                 PesShape {
                     stream_ids: BTreeSet::from([stream_id]),
                     first_payload_prefix: Some(prefix),
+                    prefix_mismatches: 0,
                 },
             )]),
             ..Default::default()
