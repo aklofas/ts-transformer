@@ -26,6 +26,7 @@
 //! variant, forward-compat catch-all → `SrtException(IO)`.
 
 use std::sync::LazyLock;
+use std::sync::atomic::AtomicBool;
 
 use jni::JNIEnv;
 use jni::objects::{JBooleanArray, JByteArray, JClass, JIntArray, JObject, JString, JValue};
@@ -45,6 +46,7 @@ use crate::jutil::{
 use crate::mpegts::build_muxer_stats;
 use crate::mpegts::muxer::{build_muxer_config_from_arrays, throw_mux_error};
 
+use super::JniCancel;
 use super::errors::{connect_error, throw_srt, transport_error};
 
 type Inner = RustMuxSender<SrtTransport>;
@@ -584,6 +586,34 @@ pub extern "system" fn Java_org_tstrans_srt_MuxSender_nStats<'local>(
         match build_transport_stats(env, &sock_obj, &mux_obj) {
             Ok(o) => o,
             Err(_) => JObject::null(),
+        }
+    })
+}
+
+// ── Cancellation ───────────────────────────────────────────────────────────
+
+/// `nCancelHandle(handle)` — return a shareable cancel handle that wakes a
+/// thread parked in any `nSend*`. Lock-free: the target was captured at
+/// registration ([`register`]), so this returns promptly even while another
+/// thread is parked in a send on the same handle. Throws
+/// `IllegalStateException` on a closed handle.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_tstrans_srt_MuxSender_nCancelHandle(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+) -> jlong {
+    crate::panic::jni_catch(&mut env, 0, |env| {
+        match REGISTRY.cancel_target(handle as u64) {
+            Some(inner) => JniCancel {
+                inner,
+                flag: AtomicBool::new(false),
+            }
+            .into_handle(),
+            None => {
+                crate::error::throw_closed(env, "MuxSender");
+                0
+            }
         }
     })
 }

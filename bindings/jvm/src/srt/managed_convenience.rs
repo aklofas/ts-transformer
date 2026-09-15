@@ -774,6 +774,33 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nReconnectStats<'lo
     })
 }
 
+/// `nCancelHandle(handle)` — return a shareable cancel handle that wakes a
+/// thread parked in any `nSend*`: a live send, the Blocking reconnect's
+/// backoff wait, or a re-dial. Lock-free: the target was captured at open, so
+/// this returns promptly even while another thread is parked in a send on the
+/// same handle and regardless of reconnect state (the `ManagedCancel` follows
+/// reconnects). Throws `IllegalStateException` on a closed handle.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nCancelHandle(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+) -> jlong {
+    crate::panic::jni_catch(&mut env, 0, |env| {
+        match REGISTRY_MUX.cancel_target(handle as u64) {
+            Some(inner) => JniCancel {
+                inner,
+                flag: AtomicBool::new(false),
+            }
+            .into_handle(),
+            None => {
+                crate::error::throw_closed(env, "ManagedMuxSender");
+                0
+            }
+        }
+    })
+}
+
 /// `nClose(handle)` — drop the boxed sender (best-effort drain + close). No-op on
 /// a zero handle so a double `close()` is safe.
 #[unsafe(no_mangle)]
