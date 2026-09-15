@@ -60,8 +60,10 @@ const TS_PACKET_SIZE: usize = 188;
 #[must_use]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtpUrl {
-    /// Destination/source host as written in the URL (literal IP or
-    /// domain). Parsed to `IpAddr` lazily by the transport when needed.
+    /// A literal IPv4/IPv6 address. Hostnames parse here but are rejected
+    /// by `RtpTransport::connect_with` / `listen_with`
+    /// (`ConnectError::HostNotLiteral`); resolve names yourself and pass
+    /// the literal.
     pub host: String,
     /// Port.
     pub port: u16,
