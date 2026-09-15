@@ -772,6 +772,34 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - (pending)
 
+### Fixed — jvm
+
+- **`org.tstrans.srt` senders: `close()` cancels first.** `MuxSender`,
+  `ManagedMuxSender`, `Sender` and `ManagedSender` were registered in the
+  JNI handle registry without the close-time cancel hook the receivers (and
+  the rtp senders) have, so a `close()` from another thread queued behind a
+  parked send: for the managed shells that meant waiting out the entire
+  reconnect budget (the default policy's ten attempts of up to ten seconds)
+  while `sendVideo()` sat in the Blocking reconnect's backoff; for the plain
+  shells it meant waiting on a peer that never read. All four now fire the
+  shell's cancel target before taking the resource lock — the contract
+  `Receiver`/`DemuxReceiver` and their managed twins adopted in 0.6.0's
+  follow-ups and the C ABI's `tst_*_sender_close` has always had. The parked
+  send ends with `SrtException(CLOSED)` on the managed shells and
+  `SrtException(BROKEN)` on the plain ones (the plain cancel closes the
+  socket under the send), and `close()` returns promptly. `close()` stays the
+  prompt, lossy shutdown; there is no lossless `finish()` on the JVM yet.
+- **`MuxSender.cancelHandle()` / `ManagedMuxSender.cancelHandle()`** — the
+  two srt senders that exposed no cross-thread cancel now do (additive;
+  `IllegalStateException` after `close()`). The handle is obtainable while a
+  send is parked (the target is read lock-free) and `cancel()` ends that send
+  with the kinds above.
+- **`srt/demux_receiver.rs` module doc claimed the byte-sink upcall holds
+  "NO Rust lock".** It runs under the handle's registry resource lock for the
+  whole `next()` call; the doc now says so and names the re-entrancy
+  deadlock the user guide's "never re-enter the receiver" rule prevents.
+  Documentation only — no behaviour change.
+
 ### Testing
 
 - **Tooling: `tst-interop` sender-side corruption tap.** `tst-interop send
