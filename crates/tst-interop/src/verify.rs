@@ -869,11 +869,12 @@ impl Tally {
                 }
             });
         // What the wire-vs-demux oracle may subtract — see
-        // `oracles::wire_vs_demux`. Attributed injections in both tiers;
-        // the capture's own discontinuity/non-conformance tallies only
-        // under Lossy, where each is a PES the demuxer legitimately
-        // abandoned. Under Strict those events are failures in their own
-        // right (below), not an excuse for a missing access unit.
+        // `oracles::wire_vs_demux`. `attributed_events` (receiver signals
+        // the attribution explained) in both tiers; the capture's own
+        // discontinuity/non-conformance tallies only under Lossy, where
+        // each is a PES the demuxer legitimately abandoned. Under Strict
+        // those events are failures in their own right (below), not an
+        // excuse for a missing access unit.
         let explained = attribution.as_ref().map_or(0, |rep| rep.attributed_events)
             + match mode {
                 VerifyMode::Strict => 0,
