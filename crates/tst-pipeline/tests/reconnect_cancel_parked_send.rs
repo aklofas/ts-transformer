@@ -348,3 +348,115 @@ fn cancel_completes_while_the_background_worker_drain_is_parked() {
         "the cancel fired a stale handle, not the transport the worker installed"
     );
 }
+
+/// X-CORR-01, close half: `close()` joins the background worker, so a
+/// worker parked inside an inner `send_bytes` (holding `inner` and
+/// `gap`) has to be woken by close itself — the shutdown signal only
+/// interrupts a backoff wait, not a transport call. Before the fix,
+/// close() stored `closed`, signalled, and joined: the join never
+/// completed until the test's rescue gate released the worker, and the
+/// inner's cancel handle never fired at all.
+///
+/// Shape: close runs on its own thread with a bounded wait (a hung join
+/// surfaces as `closed_in_time == false`, never as a wedged test), the
+/// rescue gate is opened on every path AFTER the verdict is captured, and
+/// the verdict is "did the live inner's cancel fire BEFORE the rescue".
+#[test]
+fn close_wakes_background_drain() {
+    let gate = Arc::new(Gate::new());
+    let entered = Arc::new(AtomicBool::new(false));
+    let park_cancelled = Arc::new(AtomicBool::new(false));
+    let calls = Arc::new(AtomicU32::new(0));
+    let mut managed = ManagedTransport::new(
+        broken_inner(),
+        park_factory(
+            Arc::clone(&gate),
+            Arc::clone(&entered),
+            Arc::clone(&park_cancelled),
+            Arc::clone(&calls),
+        ),
+        policy(ReconnectMode::Background),
+    );
+
+    managed
+        .send_bytes(b"x")
+        .expect("background mode accepts into the gap buffer");
+    assert!(
+        wait_for(PARK_DEADLINE, || entered.load(Ordering::SeqCst)),
+        "the background worker never parked in drain"
+    );
+
+    // close() on an owned thread: it must wake the parked drain send by
+    // itself and return; a close that waits on the rescue gate is the bug.
+    let closer = std::thread::spawn(move || {
+        let mut managed = managed;
+        managed.close();
+    });
+    let closed_in_time = wait_for(CANCEL_DEADLINE, || closer.is_finished());
+    let cancel_fired_before_rescue = park_cancelled.load(Ordering::SeqCst);
+
+    gate.open(); // rescue: release the worker on every path so the join below is bounded
+    let _ = closer.join();
+
+    assert!(
+        cancel_fired_before_rescue,
+        "close() never fired the live inner's cancel handle — the worker was released only by the test's rescue gate"
+    );
+    assert!(
+        closed_in_time,
+        "close() blocked on the worker join behind the parked drain send"
+    );
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "exactly one reconnect: the drain that parked is the one under test"
+    );
+}
+
+/// X-CORR-01, Drop half: `Drop` is signal-and-detach (it must never
+/// block), so the detached worker only ever exits if something wakes its
+/// parked inner send. Before the fix Drop signalled shutdown and fired
+/// nothing — the worker kept its Arcs and its transport, parked forever
+/// (until the test's rescue gate). The verdict is the same as for close:
+/// the live inner's cancel handle fires before the rescue gate opens.
+#[test]
+fn drop_wakes_background_drain() {
+    let gate = Arc::new(Gate::new());
+    let entered = Arc::new(AtomicBool::new(false));
+    let park_cancelled = Arc::new(AtomicBool::new(false));
+    let calls = Arc::new(AtomicU32::new(0));
+    let mut managed = ManagedTransport::new(
+        broken_inner(),
+        park_factory(
+            Arc::clone(&gate),
+            Arc::clone(&entered),
+            Arc::clone(&park_cancelled),
+            Arc::clone(&calls),
+        ),
+        policy(ReconnectMode::Background),
+    );
+
+    managed
+        .send_bytes(b"x")
+        .expect("background mode accepts into the gap buffer");
+    assert!(
+        wait_for(PARK_DEADLINE, || entered.load(Ordering::SeqCst)),
+        "the background worker never parked in drain"
+    );
+
+    // Drop on an owned thread: it must return promptly (non-blocking
+    // contract) AND wake the detached worker's parked send.
+    let dropper = std::thread::spawn(move || drop(managed));
+    let dropped_in_time = wait_for(CANCEL_DEADLINE, || dropper.is_finished());
+    // Drop detaches, so give the wake a bounded window to land.
+    let woke_before_rescue = wait_for(CANCEL_DEADLINE, || park_cancelled.load(Ordering::SeqCst));
+
+    gate.open(); // rescue: the detached worker exits on its own once released
+    let _ = dropper.join();
+
+    assert!(dropped_in_time, "Drop must never block");
+    assert!(
+        woke_before_rescue,
+        "Drop signalled shutdown but never fired the live inner's cancel handle — the detached worker stayed parked until the rescue gate"
+    );
+}
