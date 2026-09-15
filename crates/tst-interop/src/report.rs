@@ -2127,26 +2127,38 @@ pub mod soak {
                     (1, 1),
                 )],
             };
-            let counters: Vec<(u64, u64)> = if artifacts.proxy_stats.phases.is_empty() {
+            // `(forwarded, dropped, outage_dropped)` per phase. The
+            // third is a SUB-COUNT of the second, so the totals still
+            // reconcile against the top-level pair; the drop-rate
+            // verdict below judges `dropped - outage_dropped` over
+            // `forwarded + dropped - outage_dropped`, because the
+            // expectation models continuous loss only and an outage
+            // window drops unconditionally.
+            let counters: Vec<(u64, u64, u64)> = if artifacts.proxy_stats.phases.is_empty() {
                 // Pre-feature stats file (`#[serde(default)]`): no
                 // per-phase split was recorded — fall back to the
                 // totals, judged as one phase, exactly as before.
                 vec![(
                     artifacts.proxy_stats.forwarded,
                     artifacts.proxy_stats.dropped,
+                    0,
                 )]
             } else {
                 artifacts
                     .proxy_stats
                     .phases
                     .iter()
-                    .map(|c| (c.forwarded, c.dropped))
+                    .map(|c| (c.forwarded, c.dropped, c.outage_dropped))
                     .collect()
             };
             let phase_count = counters.len();
-            let total: u64 = counters.iter().map(|(f, d)| f + d).sum();
-            let total_forwarded: u64 = counters.iter().map(|(f, _)| f).sum();
-            let total_dropped: u64 = counters.iter().map(|(_, d)| d).sum();
+            let total_forwarded: u64 = counters.iter().map(|(f, _, _)| f).sum();
+            let total_dropped: u64 = counters.iter().map(|(_, d, _)| d).sum();
+            let total_outage: u64 = counters.iter().map(|(_, _, o)| o).sum();
+            // Outage-window drops leave BOTH the numerator and the
+            // denominator: a packet the proxy blackholed for the window
+            // was never offered to the continuous-loss process at all.
+            let total: u64 = counters.iter().map(|(f, d, o)| f + d - o.min(d)).sum();
 
             // The per-phase split and the top-level totals are incremented
             // together at every site in `proxy::run`, so when a phases
@@ -2160,6 +2172,11 @@ pub mod soak {
             let totals_reconcile = artifacts.proxy_stats.phases.is_empty()
                 || (total_forwarded == artifacts.proxy_stats.forwarded
                     && total_dropped == artifacts.proxy_stats.dropped);
+            // `outage_dropped` is a sub-count of `dropped` at the one
+            // site that writes it, so a phase claiming more of them than
+            // drops is a hand-edited or truncated artifact — fail loud
+            // rather than compute a negative packet total from it.
+            let outage_consistent = counters.iter().all(|(_, d, o)| o <= d);
 
             let (drop_pass, expected, tolerance, observed, drop_detail) = if !totals_reconcile {
                 (
@@ -2174,6 +2191,17 @@ pub mod soak {
                         total_dropped,
                         artifacts.proxy_stats.forwarded,
                         artifacts.proxy_stats.dropped
+                    ),
+                )
+            } else if !outage_consistent {
+                (
+                    false,
+                    0.0,
+                    0.0,
+                    0.0,
+                    format!(
+                        "{leg_name}: malformed artifact — a phase records more outage-window \
+                         drops than drops"
                     ),
                 )
             } else if models.len() != counters.len() {
@@ -2205,16 +2233,16 @@ pub mod soak {
                 let expected_drops: f64 = counters
                     .iter()
                     .zip(&models)
-                    .map(|((f, d), m)| (f + d) as f64 * m.p)
+                    .map(|((f, d, o), m)| (f + d - o) as f64 * m.p)
                     .sum();
                 let variance: f64 = counters
                     .iter()
                     .zip(&models)
-                    .map(|((f, d), m)| (f + d) as f64 * m.var_rate)
+                    .map(|((f, d, o), m)| (f + d - o) as f64 * m.var_rate)
                     .sum();
                 let expected = expected_drops / total as f64;
                 let tolerance = drop_rate_tolerance(variance.sqrt() / total as f64);
-                let observed = total_dropped as f64 / total as f64;
+                let observed = (total_dropped - total_outage) as f64 / total as f64;
                 let pass = (observed - expected).abs() <= tolerance;
                 (
                     pass,
@@ -2223,13 +2251,14 @@ pub mod soak {
                     observed,
                     format!(
                         "{leg_name}: observed {:.2}%, expected {:.2}% ± {:.2}pp over {} phase(s) \
-                         ({} forwarded, {} dropped)",
+                         ({} forwarded, {} dropped, {} outage-window drop(s) excluded)",
                         observed * 100.0,
                         expected * 100.0,
                         tolerance * 100.0,
                         phase_count,
                         total_forwarded,
-                        total_dropped
+                        total_dropped,
+                        total_outage
                     ),
                 )
             };
@@ -2885,6 +2914,7 @@ pub mod soak {
                     forwarded,
                     dropped,
                     duped: 0,
+                    outage_dropped: 0,
                 }],
             }
         }
@@ -2935,6 +2965,7 @@ pub mod soak {
                     forwarded: f,
                     dropped: d,
                     duped: 0,
+                    outage_dropped: 0,
                 })
                 .collect();
             s
@@ -3823,6 +3854,49 @@ pub mod soak {
             assert!(
                 (leg.drop_fraction_tolerance - binomial).abs() < 1e-9,
                 "{leg:?}"
+            );
+        }
+
+        /// CORR-31(c): outage-window drops enter the observed rate but not
+        /// the expectation (the module doc's own "watch item"). Counted
+        /// apart, they leave both `d` and `n`.
+        #[test]
+        fn outage_window_drops_are_excluded_from_the_drop_rate_verdict() {
+            let n = 10_000_000u64;
+            let build = |outage_dropped: u64| {
+                let mut stats = proxy_stats(n - 230_000, 230_000, 2.0, Some(21_600), 90);
+                stats.phases[0].outage_dropped = outage_dropped;
+                let mut inputs = healthy_inputs();
+                inputs.legs[0].1.proxy_stats = stats;
+                inputs.legs[0].1.outage_period_s = Some(21_600);
+                build_soak_results(inputs).unwrap()
+            };
+            // 2.0 % continuous + 0.3 % of outage drops.
+            let r = build(30_000);
+            let v = verdict(&r, "drop_rate_consistent_with_impairment_srt");
+            assert!(v.pass, "{}", v.detail);
+            assert!(
+                v.detail.contains("30000 outage-window drop(s) excluded"),
+                "{}",
+                v.detail
+            );
+            assert!(
+                (r.legs[0].observed_drop_fraction - 200_000.0 / 9_970_000.0).abs() < 1e-9,
+                "{:?}",
+                r.legs[0]
+            );
+            // Reverse control: the same excess with nothing attributed to
+            // an outage is still an unexplained 0.3 pp and still fails.
+            let r = build(0);
+            let v = verdict(&r, "drop_rate_consistent_with_impairment_srt");
+            assert!(!v.pass, "{}", v.detail);
+            // Malformed: more outage drops than drops.
+            let r = build(230_001);
+            let v = verdict(&r, "drop_rate_consistent_with_impairment_srt");
+            assert!(
+                !v.pass && v.detail.contains("malformed artifact"),
+                "{}",
+                v.detail
             );
         }
 
@@ -5219,6 +5293,7 @@ pub mod soak {
                         forwarded: PER_PHASE_PACKETS - dropped,
                         dropped,
                         duped: 0,
+                        outage_dropped: 0,
                     }
                 })
                 .collect();
