@@ -98,12 +98,18 @@ pub struct DemuxerConfig {
     /// concurrent high-bitrate PIDs; tune down to bound multi-PID flood
     /// memory growth in adversarial-input scenarios.
     pub pes_cap_total: Option<usize>,
-    /// Ceiling on the demuxer's pre-sync ingress buffer, in bytes. This bounds
-    /// how many bytes a single `feed` call (plus any unconsumed residue) may
-    /// hold before sync-scan; a whole-file feed larger than the ceiling is
-    /// rejected with [`crate::error::DemuxError::SyncBufExhausted`]. `None`
-    /// uses the 4 MiB default. Distinct from `pes_cap_*`, which bound PES
-    /// *reassembly*.
+    /// Ceiling on the demuxer's pre-sync ingress buffer, in bytes. It
+    /// bounds the *live* bytes the buffer may hold after a `feed` call:
+    /// that call's input plus any residue not yet aligned into whole
+    /// 188-byte packets (at most 187 bytes plus an unconfirmed resync
+    /// candidate on a well-formed stream). Bytes already consumed as
+    /// packets never count toward it, so any value comfortably above one
+    /// call's input works — including values far below the buffer's
+    /// internal 1 MiB compaction floor. A single `feed` larger than the
+    /// ceiling (a whole-file feed) is rejected with
+    /// [`crate::error::DemuxError::SyncBufExhausted`] and the buffered
+    /// bytes are dropped. `None` uses the 4 MiB default. Distinct from
+    /// `pes_cap_*`, which bound PES *reassembly*.
     pub sync_buf_cap: Option<usize>,
     pub klv_link_overrides: Vec<(u16, u16)>,
     pub stream_kind_overrides: BTreeMap<u16, StreamKind>,
