@@ -495,3 +495,89 @@ def test_srt_managed_mux_sender_cancel_handle_wakes_blocking_backoff() -> None:
         assert handle.is_cancelled()
     finally:
         tx.close()
+
+
+# --------------------------------------------------------------------------- #
+# srt.Listener / srt.Socket                                                   #
+# --------------------------------------------------------------------------- #
+
+
+def test_srt_listener_close_from_other_thread_while_accept_parked() -> None:
+    from tstrans.exceptions import SrtError, SrtErrorKind
+    import tstrans.srt as srt
+
+    port = _free_tcp_port()
+    lst = srt.Builder(f"srt://127.0.0.1:{port}?mode=listener").listen()
+    captured: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            lst.accept()
+        except BaseException as exc:  # noqa: BLE001
+            captured.append(exc)
+
+    w = threading.Thread(target=worker, daemon=True)
+    w.start()
+    time.sleep(0.3)
+    try:
+        c, errs = _close_on_thread(lst)
+        w.join(5.0)
+        if w.is_alive():
+            # Rescue: a caller connect unparks the accept.
+            rescue = srt.Builder(f"srt://127.0.0.1:{port}").connect()
+            w.join(5.0)
+            rescue.close()
+        _assert_close_ok(c, errs, "srt.Listener")
+        assert not w.is_alive(), "close() did not end the parked accept()"
+        assert len(captured) == 1, f"expected one error; got {captured!r}"
+        err = captured[0]
+        assert isinstance(err, SrtError), f"parked accept ended with {err!r}"
+        assert err.kind == SrtErrorKind.CLOSED, err.kind
+        assert not lst.is_alive()
+    finally:
+        lst.close()
+
+
+def test_srt_socket_close_and_getters_from_other_thread_do_not_raise() -> None:
+    """Keepalive, not a regression test: `Socket` has no call that parks with
+    its borrow held, so the `&mut self` shape never raised here. It pins the
+    uniform `&self` contract after the conversion (getters and `close()`
+    from a second thread, then the consuming `into_*` raises CLOSED)."""
+    from tstrans.exceptions import SrtError, SrtErrorKind
+    import tstrans.srt as srt
+
+    port = _free_tcp_port()
+    lst = srt.Builder(f"srt://127.0.0.1:{port}?mode=listener").listen()
+    box: list[srt.Socket] = []
+
+    def accept_worker() -> None:
+        box.append(lst.accept(timeout_ms=5000))
+
+    t = threading.Thread(target=accept_worker, daemon=True)
+    t.start()
+    caller = srt.Builder(f"srt://127.0.0.1:{port}").connect()
+    t.join(6.0)
+    assert box, "listener did not accept"
+    sock = box[0]
+    errs: list[BaseException] = []
+
+    def other_thread() -> None:
+        try:
+            sock.local_addr()
+            sock.peer_addr()
+            sock.stream_id()
+            assert sock.is_alive()
+            sock.close()
+        except BaseException as exc:  # noqa: BLE001
+            errs.append(exc)
+
+    o = threading.Thread(target=other_thread, daemon=True)
+    o.start()
+    o.join(5.0)
+    assert not errs, f"second-thread use raised {errs!r}"
+    assert not sock.is_alive()
+    with pytest.raises(SrtError) as ei:
+        sock.into_sender()
+    assert ei.value.kind == SrtErrorKind.CLOSED
+    caller.close()
+    lst.close()
