@@ -119,6 +119,7 @@ jobs:
     name: assemble fat JAR
     needs: [build] # all four gating platforms must pass
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
         # no submodules: assembly does not build native code

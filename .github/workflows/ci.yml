@@ -656,6 +656,7 @@ jobs:
   test-linux-musl:
     name: test (linux-musl-x86_64, no-libsrt crates)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       RUSTUP_TOOLCHAIN: "1.85"
     steps:
@@ -699,6 +700,7 @@ jobs:
   tst-rtp-client-only:
     name: test (tst-rtp client-only plane, linux-x86_64)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # The tokio-free client-only feature plane (`--no-default-features
     # --features tls`) is what the planned tst-uniffi mobile binding
     # consumes (the PR #151 `rtsp-server` gate). No other CI job compiles
@@ -764,6 +766,7 @@ jobs:
   no-std-baremetal:
     name: no_std bare-metal (compile + QEMU runtime)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       RUSTUP_TOOLCHAIN: "1.85"
     steps:
@@ -949,6 +952,7 @@ jobs:
   fuzz-smoke:
     name: fuzz smoke (nightly, compile only)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
         with:
@@ -1009,6 +1013,7 @@ jobs:
   python-core:
     name: tst-py default tests
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     # Default (non-pandas) pytest suite. Phase 0/1 didn't add a python
     # CI job; Phase 6 added `python-pandas-extra` for the optional extra;
     # this job (added via audit #1, 2026-05-24) closes the gap by running
@@ -1117,6 +1122,7 @@ jobs:
   python-pandas-extra:
     name: tst-py with [pandas] extra
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     # Sibling to `python-core`: same venv recipe, plus numpy + pandas to
     # exercise the `tstrans.pandas` adapters. The missing-extra
     # test file (test_pandas_missing_extra.py) runs unconditionally in this
@@ -1190,6 +1196,7 @@ jobs:
   tst-c-feature-matrix:
     name: tst-c feature matrix (linux-x86_64)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # Builds tst-c in all four feature-flag combinations and runs the
     # `feature_matrix_compile` integration test in each mode. Catches:
     #  1. Compile failures when features are toggled off (e.g., srt-only
