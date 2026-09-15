@@ -21,7 +21,14 @@ const AUDIO_CADENCE_TOLERANCE: f64 = 0.10;
 const AUDIO_PTS_STEP_TOLERANCE: f64 = 0.05;
 const AAC_SAMPLES_PER_FRAME: f64 = 1024.0;
 
-/// Run all six wire-level oracles and concatenate their failures.
+/// Run all seven wire-level oracles and concatenate their failures.
+/// `explained` is how many demuxed events a corruption log and the
+/// capture's own discontinuity/non-conformance tallies account for —
+/// see [`wire_vs_demux`].
+// Each parameter is a distinct fact one of the seven oracles needs, all
+// of them already owned by the single caller (`verify::Tally::finish`) —
+// a struct here would only move the same list one line up.
+#[allow(clippy::too_many_arguments)]
 pub fn check(
     p: &Profile,
     inv: &Invariants,
@@ -30,6 +37,7 @@ pub fn check(
     seconds: f64,
     slack: f64,
     mode: VerifyMode,
+    explained: u64,
 ) -> Vec<String> {
     let mut f = Vec::new();
     f.extend(program_accounting(inv, wire, per_program, seconds, slack));
@@ -38,6 +46,7 @@ pub fn check(
     f.extend(av1_carriage(inv, wire));
     f.extend(pts_wrap(p, inv, wire, seconds));
     f.extend(pmt_streams(p, inv, wire));
+    f.extend(wire_vs_demux(p, inv, wire, per_program, mode, explained));
     f
 }
 
@@ -387,6 +396,107 @@ fn pmt_streams(p: &Profile, inv: &Invariants, wire: &WireSummary) -> Vec<String>
     f
 }
 
+/// Oracle 7 (deep review #4 CORR-07, Q10): per media PID, the demuxer's
+/// event count against the raw reader's independent PES-start count.
+///
+/// [`crate::verify::NOMINAL_COUNT_SLACK`] (70 % of nominal) is a floor
+/// for truncated captures, not a count check: a demuxer silently
+/// dropping one access unit in four clears it. This is the count check.
+/// The wire side is [`WireSummary::pes_starts_per_pid`] (one per PES
+/// start, duplicates excluded); the demux side is the per-program tally
+/// of `Sample` / `Metadata` events, keyed by the program the profile
+/// muxes each PID into — this crate's muxer emits exactly one PES per
+/// video AU, KLV record and ADTS frame, and the demuxer emits exactly
+/// one event per PES it accepts.
+///
+/// `demux >= wire - explained - boundary`, per PID:
+///
+/// - `explained` is what the capture itself accounts for: the attributed
+///   injection count when a corruption log is attached (a truncated or
+///   dropped PES-start packet costs the demuxer the access unit while
+///   the wire may still show its start) plus, under `Lossy`, every
+///   `Discontinuity` and `NonConformant` the capture recorded — each is
+///   a place the demuxer legitimately gave up on a PES. Under `Strict`
+///   (offline `verify`, `recv --strict` on a transparent cell) those
+///   events are failures in their own right, not an excuse for a missing
+///   access unit. Loss that produced NO event is exactly what this
+///   oracle catches; `verify::Tally::finish` computes the term.
+/// - `boundary` is what no demuxer can be held to at the EDGES of a
+///   capture, independent of loss: everything that arrives before it has
+///   acquired PAT + PMT, plus the one access unit still sitting in the
+///   reassembler when the capture ends. The head half is not slack, it
+///   is measured — dropping a baseline capture's opening PAT costs the
+///   demuxer exactly 3 video AUs, 1 KLV record and 5 audio frames (one
+///   `psi_interval_ms` at each PID's own rate) and produces NO event of
+///   any kind, because until the tables arrive it does not know those
+///   PIDs exist. A live receiver that joins mid-stream lands in the same
+///   place, and so does a corruption tap damaging the opening tables
+///   (packet 0 of a fresh mux is the PAT). Both halves are per-PID and
+///   CONSTANT in the length of the capture, so a demuxer losing a fixed
+///   fraction of access units is still caught on anything long enough to
+///   matter.
+///
+/// Only the lower bound is checked: more events than PES starts would
+/// be a duplication defect, not the silent-loss class this closes, and
+/// hand-fed tallies in this crate's own tests routinely stack an extra
+/// event on a generated wire.
+fn wire_vs_demux(
+    p: &Profile,
+    inv: &Invariants,
+    wire: &WireSummary,
+    per_program: &BTreeMap<u16, ProgramCounts>,
+    mode: VerifyMode,
+    explained: u64,
+) -> Vec<String> {
+    let mut f = Vec::new();
+    // One PSI repetition interval of units at `rate_hz`, plus the one
+    // unflushed unit at teardown — see this function's doc comment.
+    let boundary = |rate_hz: f64| -> u64 {
+        (f64::from(p.psi_interval_ms) / 1000.0 * rate_hz).ceil() as u64 + 1
+    };
+    for ep in &inv.programs {
+        let c = per_program
+            .get(&ep.program_number)
+            .copied()
+            .unwrap_or_default();
+        let mut pids = vec![
+            (
+                ep.video_pid,
+                c.video_aus,
+                "video AUs",
+                f64::from(inv.min_video_aus_per_sec),
+            ),
+            (
+                ep.klv_pid,
+                c.klv_records,
+                "KLV records",
+                f64::from(inv.min_klv_per_sec),
+            ),
+        ];
+        if let (Some(apid), Some(rate)) = (ep.audio_pid, inv.audio_sample_rate_hz) {
+            pids.push((
+                apid,
+                c.audio_frames,
+                "audio frames",
+                f64::from(rate) / AAC_SAMPLES_PER_FRAME,
+            ));
+        }
+        for (pid, demux, what, rate_hz) in pids {
+            let wire_pes = wire.pes_starts_per_pid.get(&pid).copied().unwrap_or(0);
+            let boundary = boundary(rate_hz);
+            let floor = wire_pes.saturating_sub(explained + boundary);
+            if demux < floor {
+                f.push(format!(
+                    "wire_vs_demux_{pid}: demuxer emitted {demux} {what} but the wire carries \
+                     {wire_pes} PES start(s) on PID {pid} ({mode:?}: want >= {wire_pes} - \
+                     {explained} explained - {boundary} boundary = {floor})"
+                ));
+            }
+        }
+    }
+    f
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
@@ -418,6 +528,7 @@ mod tests {
                     ProgramCounts {
                         video_aus: video,
                         klv_records: klv,
+                        audio_frames: 0,
                     },
                 )
             })
@@ -879,6 +990,85 @@ mod tests {
             f.iter()
                 .any(|s| s.starts_with(&format!("pmt_stream_type_{audio_pid}"))),
             "{f:?}"
+        );
+    }
+    /// CORR-07 / Q10: the wire-vs-demux floors, and the exact size of
+    /// the per-PID boundary allowance they subtract.
+    ///
+    /// Every profile repeats PSI every 100 ms, so the allowance is one
+    /// tenth of a second of units plus the unflushed tail one: 4 on
+    /// `baseline`'s 30 fps video PID, 2 on its 10 Hz KLV PID, 6 on the
+    /// `audio` profile's 46.875 Hz audio PID. Pinning those numbers is
+    /// what keeps the allowance from quietly growing into slack.
+    #[test]
+    fn wire_vs_demux_holds_the_demuxer_to_the_raw_readers_pes_count() {
+        let p = profiles::by_name("baseline").unwrap();
+        let inv = profiles::invariants(p);
+        let wire = WireSummary {
+            pes_starts_per_pid: BTreeMap::from([(0x1011, 90), (0x1031, 30)]),
+            ..Default::default()
+        };
+        let counts = |video: u64, klv: u64| program_counts(&[(1, video, klv)]);
+
+        // Exact: passes in both tiers.
+        assert!(wire_vs_demux(p, &inv, &wire, &counts(90, 30), VerifyMode::Strict, 0).is_empty());
+        assert!(wire_vs_demux(p, &inv, &wire, &counts(90, 30), VerifyMode::Lossy, 0).is_empty());
+        // Exactly at the boundary allowance (4 video, 2 KLV): still clean.
+        assert!(wire_vs_demux(p, &inv, &wire, &counts(86, 28), VerifyMode::Strict, 0).is_empty());
+        assert!(wire_vs_demux(p, &inv, &wire, &counts(86, 28), VerifyMode::Lossy, 0).is_empty());
+        // One unit past it on each PID: both named, so the allowance is
+        // finite and per-PID rather than a blanket excuse.
+        let f = wire_vs_demux(p, &inv, &wire, &counts(85, 27), VerifyMode::Strict, 0);
+        assert!(
+            f.iter().any(|s| s.starts_with("wire_vs_demux_4113")),
+            "{f:?}"
+        );
+        assert!(
+            f.iter().any(|s| s.starts_with("wire_vs_demux_4145")),
+            "{f:?}"
+        );
+        // Every fourth KLV record gone: 23 of 30 clears the 70 % floor
+        // (21) and must NOT clear this one.
+        let f = wire_vs_demux(p, &inv, &wire, &counts(90, 23), VerifyMode::Strict, 0);
+        assert_eq!(f.len(), 1, "{f:?}");
+        assert!(
+            f[0].starts_with(
+                "wire_vs_demux_4145: demuxer emitted 23 KLV records but the wire carries 30"
+            ),
+            "{}",
+            f[0]
+        );
+        // Explained events widen the floor by exactly their count: the
+        // KLV floor is 30 - explained - 2, so 5 excuses 23 and 4 does not.
+        assert!(wire_vs_demux(p, &inv, &wire, &counts(90, 23), VerifyMode::Lossy, 5).is_empty());
+        assert!(!wire_vs_demux(p, &inv, &wire, &counts(90, 23), VerifyMode::Lossy, 4).is_empty());
+        // A profile with audio checks the audio PID too.
+        let p_a = profiles::by_name("audio").unwrap();
+        let inv_a = profiles::invariants(p_a);
+        let wire_a = WireSummary {
+            pes_starts_per_pid: BTreeMap::from([(0x1011, 90), (0x1031, 30), (0x1041, 141)]),
+            ..Default::default()
+        };
+        let mut c = program_counts(&[(1, 90, 30)]);
+        c.get_mut(&1).unwrap().audio_frames = 100;
+        let f = wire_vs_demux(p_a, &inv_a, &wire_a, &c, VerifyMode::Strict, 0);
+        assert!(
+            f.iter()
+                .any(|s| s.starts_with("wire_vs_demux_4161: demuxer emitted 100 audio frames")),
+            "{f:?}"
+        );
+        // …and 135 of 141 (exactly the audio allowance of 6) does not.
+        c.get_mut(&1).unwrap().audio_frames = 135;
+        assert!(
+            wire_vs_demux(p_a, &inv_a, &wire_a, &c, VerifyMode::Strict, 0).is_empty(),
+            "the audio allowance is 6 frames, not more"
+        );
+        c.get_mut(&1).unwrap().audio_frames = 134;
+        assert!(
+            wire_vs_demux(p_a, &inv_a, &wire_a, &c, VerifyMode::Strict, 0)
+                .iter()
+                .any(|s| s.starts_with("wire_vs_demux_4161")),
+            "the audio allowance is 6 frames, not more"
         );
     }
 }
