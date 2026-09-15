@@ -47,5 +47,12 @@ test              = false
 doc               = false
 bench             = false
 
+[[bin]]
+name              = "rtsp_request_decode"
+path              = "fuzz_targets/rtsp_request_decode.rs"
+test              = false
+doc               = false
+bench             = false
+
 [workspace]
 members = []
