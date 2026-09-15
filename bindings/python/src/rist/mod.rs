@@ -10,11 +10,17 @@
 //! - `RistStats` — frozen stats projection (8 fields from tst_rist::RistStats).
 //!
 //! GIL boundaries:
-//! - `send`, builder `build` / `connect` — `py.allow_threads(...)` so
-//!   concurrent Python threads remain live during network I/O.
-//! - `recv` — `py.allow_threads(...)` around the blocking recv_bytes /
-//!   timeout-poll loop.
-//! - `stats`, `close` — fast read-only / atomic; no GIL release needed.
+//! - `send`, `recv`, builder `build` / `connect`, `close`, `stats` — the
+//!   slot lock is taken inside `py.allow_threads(...)`, so concurrent
+//!   Python threads keep running during network I/O and while a getter
+//!   waits for a parked call.
+//!
+//! Cross-thread close: `tst_rist` exposes no cancel handle, so this
+//! binding owns one. `RecvTransport.recv()` already polls librist in
+//! 100 ms windows; `close()` sets a stop flag the loop checks between
+//! windows BEFORE taking the slot, so a parked `recv()` ends with
+//! `RistError(CLOSED)` within about one window. Every wrapper borrows
+//! `&self` over an `Arc<Mutex<Option<_>>>` slot (the PR #209 shape).
 //!
 //! Error mapping: `tst_rist::RistError` → `tstrans.exceptions.RistError`.
 //! `.kind` is populated from two sources: `tst_rist::RistErrorKind`'s own
@@ -37,7 +43,9 @@
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
-use pyo3::intern;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
@@ -277,7 +285,11 @@ impl From<PyRistProfile> for RistProfile {
 /// the kernel socket call blocks.
 #[pyclass(name = "Transport", module = "tstrans.rist")]
 pub(crate) struct PyRistTransport {
-    inner: Option<RistTransport>,
+    /// Shared slot (PR #209 shape): a `send` in flight on another thread
+    /// holds it with the GIL released; `close()` takes it afterwards, so
+    /// the next `send` raises `RistError(CLOSED)` instead of the close
+    /// raising `RuntimeError: Already borrowed`.
+    inner: Arc<Mutex<Option<RistTransport>>>,
 }
 
 #[pymethods]
@@ -295,44 +307,28 @@ impl PyRistTransport {
     /// the configured `pkt_size` (default 1316 bytes / 7 TS packets).
     ///
     /// Releases the GIL during the underlying socket send call.
-    fn send(&mut self, py: Python<'_>, payload: &Bound<'_, PyAny>) -> PyResult<()> {
-        let inner = self
-            .inner
-            .as_mut()
-            .ok_or_else(|| make_rist_error(py, "CLOSED", "transport closed"))?;
-        // Fast path: `bytes` → zero-copy &[u8] borrow.
-        if let Ok(slice) = payload.extract::<&[u8]>() {
-            let res = py.allow_threads(|| inner.send_bytes(slice));
-            return res.map_err(|e| transport_error_to_pyerr(py, e));
-        }
-        // Fallback: bytearray / memoryview — coerce through Python `bytes()`
-        // builtin (one C copy). Required under abi3-py310 since PyBuffer is
-        // gated on not(Py_LIMITED_API) in PyO3 0.22.
-        let coerced: Bound<'_, PyBytes> = py
-            .import_bound("builtins")?
-            .getattr(intern!(py, "bytes"))?
-            .call1((payload,))?
-            .downcast_into::<PyBytes>()?;
+    fn send(&self, py: Python<'_>, payload: &Bound<'_, PyAny>) -> PyResult<()> {
+        // Zero-copy for `bytes`; one C copy through `bytes()` otherwise
+        // (PyBuffer is unavailable under abi3-py310).
+        let coerced = crate::util::coerce_bytes_like(py, payload)?;
         let slice: &[u8] = coerced.as_bytes();
-        let res = py.allow_threads(|| inner.send_bytes(slice));
-        res.map_err(|e| transport_error_to_pyerr(py, e))
+        match crate::util::with_slot(py, &self.inner, |t| t.send_bytes(slice)) {
+            None => Err(make_rist_error(py, "CLOSED", "transport closed")),
+            Some(res) => res.map_err(|e| transport_error_to_pyerr(py, e)),
+        }
     }
 
-    /// Close the sender. Idempotent — further `.send()` calls raise
-    /// `RistError(kind=CLOSED)`.
-    fn close(&mut self) {
-        if let Some(mut t) = self.inner.take() {
-            t.close();
-        }
+    /// Close the sender. Idempotent and safe from any thread — further
+    /// `.send()` calls raise `RistError(kind=CLOSED)`.
+    fn close(&self, py: Python<'_>) {
+        crate::util::close_slot(py, &self.inner, |mut t| t.close());
     }
 
     /// Snapshot of cumulative wire-level statistics.
     fn stats(&self, py: Python<'_>) -> PyResult<Py<PyRistStats>> {
-        let inner = self
-            .inner
-            .as_ref()
+        let s = crate::util::with_slot(py, &self.inner, |t| t.stats())
             .ok_or_else(|| make_rist_error(py, "CLOSED", "transport closed"))?;
-        Py::new(py, PyRistStats::from(inner.stats()))
+        Py::new(py, PyRistStats::from(s))
     }
 
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -340,18 +336,19 @@ impl PyRistTransport {
     }
 
     fn __exit__(
-        &mut self,
+        &self,
+        py: Python<'_>,
         _exc_type: &Bound<'_, PyAny>,
         _exc_value: &Bound<'_, PyAny>,
         _traceback: &Bound<'_, PyAny>,
     ) -> bool {
-        self.close();
+        self.close(py);
         false
     }
 
-    fn __repr__(&self) -> String {
-        match &self.inner {
-            Some(t) => format!("Transport(peer={:?})", t.peer_url()),
+    fn __repr__(&self, py: Python<'_>) -> String {
+        match crate::util::with_slot(py, &self.inner, |t| t.peer_url().to_owned()) {
+            Some(peer) => format!("Transport(peer={peer:?})"),
             None => "Transport(closed)".to_string(),
         }
     }
@@ -482,7 +479,9 @@ impl PyRistTransportBuilder {
         let t = py
             .allow_threads(|| b.connect())
             .map_err(|e| map_rist_error_from_err(py, e))?;
-        Ok(PyRistTransport { inner: Some(t) })
+        Ok(PyRistTransport {
+            inner: Arc::new(Mutex::new(Some(t))),
+        })
     }
 
     fn __repr__(&self) -> String {
@@ -505,11 +504,21 @@ impl PyRistTransportBuilder {
 ///
 /// Note: librist Simple profile requires even port numbers. Use `?buffer=NNN`
 /// in the URL to set the recovery buffer size (milliseconds).
+/// Transport + reusable scratch buffer under one lock.
+struct RistRecvInner {
+    transport: RistRecvTransport,
+    scratch: Vec<u8>,
+}
+
 #[pyclass(name = "RecvTransport", module = "tstrans.rist")]
 pub(crate) struct PyRistRecvTransport {
-    inner: Option<RistRecvTransport>,
-    /// Per-recv scratch buffer; reused across calls to avoid per-recv malloc.
-    scratch: Vec<u8>,
+    /// Shared slot (PR #209 shape): a parked `recv` holds it with the GIL
+    /// released; `close()` sets `stop` BEFORE taking it, so the parked
+    /// recv ends with `RistError(CLOSED)` within one librist poll window.
+    inner: Arc<Mutex<Option<RistRecvInner>>>,
+    /// Binding-level cancel: `tst_rist` has no cancel handle, so the
+    /// poll-retry loop in `recv` checks this between windows.
+    stop: Arc<AtomicBool>,
 }
 
 #[pymethods]
@@ -531,64 +540,60 @@ impl PyRistRecvTransport {
     /// retries on `Backpressure` until the deadline passes. Actual timeout
     /// latency may exceed `timeout_ms` by up to ~100 ms.
     ///
-    /// **Cancel gap:** `RecvTransport` does not expose a `cancel_handle`.
-    /// There is no race-free way to interrupt a live `recv()` from another
-    /// thread; `close()` is only safe to call after `recv()` returns.
-    /// The recommended shutdown pattern is to pass a finite `timeout_ms`
-    /// and check a stop flag between calls rather than blocking indefinitely
-    /// with `timeout_ms=None`.
+    /// Cross-thread `close()` is supported: it sets a stop flag this loop
+    /// checks between windows, so a parked `recv()` ends with
+    /// `RistError(kind=CLOSED)` within about 100 ms.
     ///
     /// Releases the GIL while waiting on the kernel.
     #[pyo3(signature = (timeout_ms = None))]
-    fn recv(&mut self, py: Python<'_>, timeout_ms: Option<u64>) -> PyResult<Py<PyBytes>> {
-        let inner = self
-            .inner
-            .as_mut()
-            .ok_or_else(|| make_rist_error(py, "CLOSED", "transport closed"))?;
-        let scratch: &mut [u8] = self.scratch.as_mut_slice();
+    fn recv(&self, py: Python<'_>, timeout_ms: Option<u64>) -> PyResult<Py<PyBytes>> {
+        let stop = Arc::clone(&self.stop);
         let deadline =
             timeout_ms.map(|ms| std::time::Instant::now() + std::time::Duration::from_millis(ms));
-        let result: Result<usize, TransportError> = py.allow_threads(|| {
-            loop {
-                match inner.recv_bytes(scratch) {
-                    Ok(n) => return Ok(n),
-                    Err(TransportError::Backpressure { .. }) => {
-                        // 100 ms poll window expired with no data.
-                        // Check deadline if one is set; otherwise retry.
-                        if let Some(dl) = deadline {
-                            if std::time::Instant::now() >= dl {
-                                return Err(TransportError::Backpressure {
-                                    msg: "recv timed out".into(),
-                                    errno_code: None,
-                                });
-                            }
-                        }
-                        continue;
+        let result: Option<Result<Vec<u8>, TransportError>> =
+            crate::util::with_slot(py, &self.inner, move |s| {
+                loop {
+                    if stop.load(Ordering::Acquire) {
+                        return Err(TransportError::Closed);
                     }
-                    Err(other) => return Err(other),
+                    match s.transport.recv_bytes(&mut s.scratch) {
+                        Ok(n) => return Ok(s.scratch[..n].to_vec()),
+                        Err(TransportError::Backpressure { .. }) => {
+                            // 100 ms poll window expired with no data.
+                            // Check deadline if one is set; otherwise retry.
+                            if let Some(dl) = deadline {
+                                if std::time::Instant::now() >= dl {
+                                    return Err(TransportError::Backpressure {
+                                        msg: "recv timed out".into(),
+                                        errno_code: None,
+                                    });
+                                }
+                            }
+                            continue;
+                        }
+                        Err(other) => return Err(other),
+                    }
                 }
-            }
-        });
-        let n = result.map_err(|e| transport_error_to_pyerr(py, e))?;
-        let bytes = PyBytes::new_bound(py, &self.scratch[..n]).unbind();
-        Ok(bytes)
+            });
+        let bytes = result
+            .ok_or_else(|| make_rist_error(py, "CLOSED", "transport closed"))?
+            .map_err(|e| transport_error_to_pyerr(py, e))?;
+        Ok(PyBytes::new_bound(py, &bytes).unbind())
     }
 
-    /// Close the receiver. Idempotent — further `.recv()` calls raise
-    /// `RistError(kind=CLOSED)`.
-    fn close(&mut self) {
-        if let Some(mut r) = self.inner.take() {
-            r.close();
-        }
+    /// Close the receiver. Sets the stop flag BEFORE taking the slot, so a
+    /// `recv()` parked on another thread ends with `RistError(kind=CLOSED)`
+    /// within ~100 ms; further `.recv()` calls raise the same. Idempotent.
+    fn close(&self, py: Python<'_>) {
+        self.stop.store(true, Ordering::Release);
+        crate::util::close_slot(py, &self.inner, |mut s| s.transport.close());
     }
 
     /// Snapshot of cumulative wire-level statistics.
     fn stats(&self, py: Python<'_>) -> PyResult<Py<PyRistStats>> {
-        let inner = self
-            .inner
-            .as_ref()
+        let s = crate::util::with_slot(py, &self.inner, |s| s.transport.stats())
             .ok_or_else(|| make_rist_error(py, "CLOSED", "transport closed"))?;
-        Py::new(py, PyRistStats::from(inner.stats()))
+        Py::new(py, PyRistStats::from(s))
     }
 
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -596,18 +601,19 @@ impl PyRistRecvTransport {
     }
 
     fn __exit__(
-        &mut self,
+        &self,
+        py: Python<'_>,
         _exc_type: &Bound<'_, PyAny>,
         _exc_value: &Bound<'_, PyAny>,
         _traceback: &Bound<'_, PyAny>,
     ) -> bool {
-        self.close();
+        self.close(py);
         false
     }
 
-    fn __repr__(&self) -> String {
-        match &self.inner {
-            Some(r) => format!("RecvTransport(bind={:?})", r.bind_url()),
+    fn __repr__(&self, py: Python<'_>) -> String {
+        match crate::util::with_slot(py, &self.inner, |s| s.transport.bind_url().to_owned()) {
+            Some(bind) => format!("RecvTransport(bind={bind:?})"),
             None => "RecvTransport(closed)".to_string(),
         }
     }
@@ -710,8 +716,11 @@ impl PyRistRecvTransportBuilder {
             .map_err(|e| map_rist_error_from_err(py, e))?;
         let scratch_len = t.max_payload().max(65_536);
         Ok(PyRistRecvTransport {
-            inner: Some(t),
-            scratch: vec![0u8; scratch_len],
+            inner: Arc::new(Mutex::new(Some(RistRecvInner {
+                transport: t,
+                scratch: vec![0u8; scratch_len],
+            }))),
+            stop: Arc::new(AtomicBool::new(false)),
         })
     }
 

@@ -115,7 +115,7 @@ class Transport:
         ...
 
     def close(self) -> None:
-        """Close the sender. Idempotent."""
+        """Close the sender. Idempotent; safe to call from another thread."""
         ...
 
     def stats(self) -> RistStats:
@@ -209,10 +209,9 @@ class RecvTransport:
         Note: actual timeout latency may exceed ``timeout_ms`` by up to
         ~100 ms due to the internal librist poll window.
 
-        No cross-thread cancel handle: there is no race-free way to interrupt
-        a live ``recv()`` from another thread; ``close()`` is only safe to call
-        after ``recv()`` returns. Use a finite ``timeout_ms`` and check a stop
-        flag between calls for cooperative shutdown.
+        ``close()`` from another thread ends a parked ``recv()`` with
+        ``RistError(kind=CLOSED)`` within about 100 ms (a stop flag is
+        checked between the librist poll windows).
 
         Raises:
             RistError(kind=RECV_TIMEOUT): No packet within ``timeout_ms``.
@@ -222,7 +221,8 @@ class RecvTransport:
         ...
 
     def close(self) -> None:
-        """Close the receiver. Idempotent."""
+        """Close the receiver. Idempotent; from another thread it ends a
+        parked ``recv()`` with ``RistError(kind=CLOSED)``."""
         ...
 
     def stats(self) -> RistStats:
