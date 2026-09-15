@@ -756,3 +756,95 @@ def test_rtp_h264_receiver_close_from_other_thread_while_recv_au_parked() -> Non
         assert "closed" in repr(rx)
     finally:
         rx.close()
+
+
+# --------------------------------------------------------------------------- #
+# udp.Transport / udp.RecvTransport                                           #
+# --------------------------------------------------------------------------- #
+
+
+def test_udp_transport_close_from_other_thread_during_send() -> None:
+    from tstrans import udp
+    from tstrans.exceptions import UdpError, UdpErrorKind
+
+    sink, port = _udp_sink()
+    tx = udp.Transport.builder().url(f"udp://127.0.0.1:{port}").build()
+    stop = threading.Event()
+    outcome: dict[str, object] = {}
+
+    def worker() -> None:
+        outcome.update(_spin_sender(lambda: tx.send(TS_BUNDLE), stop))
+
+    w = threading.Thread(target=worker, daemon=True)
+    w.start()
+    time.sleep(0.1)
+    try:
+        c, errs = _close_on_thread(tx)
+        stop.set()
+        w.join(5.0)
+        _assert_close_ok(c, errs, "udp.Transport")
+        assert not w.is_alive(), "send loop did not end after close()"
+        exc = outcome.get("exc")
+        assert isinstance(exc, UdpError), f"send loop ended with {exc!r}"
+        assert exc.kind == UdpErrorKind.CLOSED, exc.kind
+        assert "closed" in repr(tx)
+    finally:
+        stop.set()
+        tx.close()
+        sink.close()
+
+
+def test_udp_recv_transport_close_from_other_thread_while_recv_parked() -> None:
+    from tstrans import udp
+    from tstrans.exceptions import UdpError, UdpErrorKind
+
+    rx = udp.RecvTransport.builder().bind_url("udp://127.0.0.1:0").build()
+    port = rx.local_addr_port()
+    captured: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            rx.recv(timeout_ms=None)
+        except BaseException as exc:  # noqa: BLE001
+            captured.append(exc)
+
+    w = threading.Thread(target=worker, daemon=True)
+    w.start()
+    time.sleep(0.3)
+    try:
+        t0 = time.monotonic()
+        c, errs = _close_on_thread(rx)
+        w.join(5.0)
+        woke_after = time.monotonic() - t0
+        if w.is_alive():
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.sendto(TS_PACKET, ("127.0.0.1", port))  # rescue
+            s.close()
+            w.join(5.0)
+        _assert_close_ok(c, errs, "udp.RecvTransport")
+        assert not w.is_alive(), "close() did not end the parked recv()"
+        assert woke_after < 2.0, f"close took {woke_after:.2f}s to end the parked recv"
+        assert len(captured) == 1, f"expected one error; got {captured!r}"
+        err = captured[0]
+        assert isinstance(err, UdpError), f"parked recv ended with {err!r}"
+        assert err.kind == UdpErrorKind.CLOSED, err.kind
+    finally:
+        rx.close()
+
+
+def test_udp_recv_transport_timeout_ms_still_raises_io_timed_out() -> None:
+    """The polling rewrite must keep the documented per-call deadline
+    contract: `recv(timeout_ms=N)` with no data raises `UdpError(IO)`
+    "recv timed out" after ~N ms (a 100 ms poll slice must not add a
+    full extra slice to a 50 ms deadline)."""
+    from tstrans import udp
+    from tstrans.exceptions import UdpError, UdpErrorKind
+
+    with udp.RecvTransport.builder().bind_url("udp://127.0.0.1:0").build() as rx:
+        t0 = time.monotonic()
+        with pytest.raises(UdpError) as ei:
+            rx.recv(timeout_ms=50)
+        elapsed = time.monotonic() - t0
+        assert ei.value.kind == UdpErrorKind.IO
+        assert "timed out" in str(ei.value)
+        assert elapsed < 1.0, f"50 ms deadline took {elapsed:.2f}s"

@@ -126,7 +126,7 @@ class Transport:
         ...
 
     def close(self) -> None:
-        """Close the sender. Idempotent."""
+        """Close the sender. Idempotent; safe to call from another thread."""
         ...
 
     def stats(self) -> SocketStats:
@@ -220,10 +220,9 @@ class RecvTransport:
         string is currently always ``""``; the underlying ``recv_bytes``
         API does not expose it.
 
-        No cross-thread cancel handle: there is no race-free way to interrupt
-        a live ``recv()`` from another thread; ``close()`` is only safe to call
-        after ``recv()`` returns. Use a finite ``timeout_ms`` and check a stop
-        flag between calls for cooperative shutdown.
+        ``close()`` from another thread ends a parked ``recv()`` with
+        ``UdpError(kind=CLOSED)`` within about 100 ms (the kernel wait is
+        sliced into short polls and a stop flag is checked between them).
 
         Parameters
         ----------
@@ -248,7 +247,8 @@ class RecvTransport:
         ...
 
     def close(self) -> None:
-        """Close the receiver. Idempotent."""
+        """Close the receiver. Idempotent; from another thread it ends a
+        parked ``recv()`` with ``UdpError(kind=CLOSED)``."""
         ...
 
     def stats(self) -> SocketStats:
