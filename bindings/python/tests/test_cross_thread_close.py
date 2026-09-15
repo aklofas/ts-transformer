@@ -710,3 +710,49 @@ def test_rtp_mux_sender_close_from_other_thread_during_send_video() -> None:
         stop.set()
         tx.close()
         sink.close()
+
+
+# --------------------------------------------------------------------------- #
+# rtp.H264Receiver                                                            #
+# --------------------------------------------------------------------------- #
+
+
+def test_rtp_h264_receiver_close_from_other_thread_while_recv_au_parked() -> None:
+    import tstrans.rtp as rtp
+
+    rx = rtp.H264Receiver.listen("rtp://127.0.0.1:0?pt=96")
+    outcome: dict[str, object] = {}
+
+    def worker() -> None:
+        try:
+            outcome["ret"] = rx.recv_au()
+        except BaseException as exc:  # noqa: BLE001
+            outcome["exc"] = exc
+
+    w = threading.Thread(target=worker, daemon=True)
+    w.start()
+    time.sleep(0.3)
+    try:
+        c, errs = _close_on_thread(rx)
+        w.join(5.0)
+        if w.is_alive():
+            # Rescue: a single-NAL IDR packet completes an AU and unparks.
+            host_port = rx.local_addr()
+            assert host_port is not None
+            host, port = host_port.rsplit(":", 1)
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.sendto(
+                b"\x80\xe0\x00\x01\x00\x00\x00\x00\x00\x00\x00\x01" + b"\x65\xAB\xCD",
+                (host, int(port)),
+            )
+            s.close()
+            w.join(5.0)
+        _assert_close_ok(c, errs, "rtp.H264Receiver")
+        assert not w.is_alive(), "close() did not end the parked recv_au()"
+        assert "exc" not in outcome, f"parked recv_au raised {outcome['exc']!r}"
+        # Cancel/close is EOS on this shell: recv_au() returns None.
+        assert outcome.get("ret") is None
+        assert rx.end_reason() is not None  # Cancelled, snapshotted by close()
+        assert "closed" in repr(rx)
+    finally:
+        rx.close()

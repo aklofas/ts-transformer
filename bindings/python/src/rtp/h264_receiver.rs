@@ -19,11 +19,14 @@
 //!
 //! # Handle lifetime
 //!
-//! `H264Receiver` wraps `Option<tst_rtp::H264Receiver>`.  All methods
-//! that access the inner value check `Option::as_mut`/`as_ref` and raise
-//! `RtpError(TRANSPORT, "receiver is closed")` when the option is
-//! `None`. `close()` takes the inner value (dropping it) and fires the
-//! cancel handle so any parked `recv_au` on another thread unparks promptly.
+//! `H264Receiver` keeps `tst_rtp::H264Receiver` in an
+//! `Arc<Mutex<Option<_>>>` slot and every method borrows `&self`, so a
+//! parked `recv_au` on one thread never blocks a `close()` / getter on
+//! another (a `&mut self` receive made PyO3 raise `RuntimeError: Already
+//! borrowed` there). Methods raise
+//! `RtpError(TRANSPORT, "receiver is closed")` once the slot is empty.
+//! `close()` fires the cancel handle BEFORE taking the slot, so any
+//! parked `recv_au` unparks promptly and returns `None` (EOS).
 //!
 //! # Error mapping
 //!
@@ -37,7 +40,7 @@
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use pyo3::prelude::*;
@@ -412,11 +415,13 @@ impl PyRtpStats {
 /// subsequent `recv_au()` calls raise `RtpError(TRANSPORT)`. Idempotent.
 #[pyclass(name = "H264Receiver", module = "tstrans.rtp")]
 pub struct PyH264Receiver {
-    /// Live receiver. `None` once `close()` has been called.
-    inner: Option<H264Receiver>,
+    /// Shared slot (PR #209 shape): a parked `recv_au` holds it with the
+    /// GIL released; `close()` fires `cancel` BEFORE taking it, so the
+    /// parked call returns `None` (EOS) instead of the close raising
+    /// `RuntimeError: Already borrowed`. `None` once `close()` has run.
+    inner: Arc<Mutex<Option<H264Receiver>>>,
     /// Cancel handle pulled from the receiver at construction. Held
-    /// separately so `close()` can fire it BEFORE taking `inner`, waking
-    /// any thread parked in `recv_au` within ~100ms.
+    /// outside the slot so `close()` can fire it first.
     cancel: Arc<RtpCancelHandle>,
     /// Snapshot of `H264Receiver::end_reason()` taken by `close()`.
     ///
@@ -425,10 +430,10 @@ pub struct PyH264Receiver {
     /// there is no cross-drop handle to hold onto. `close()` calls the
     /// inner receiver's own idempotent `close()` (which records
     /// `StreamEndReason::Cancelled` if nothing else already claimed the
-    /// slot, mirroring `RtpRecvTransport::close`) and reads `end_reason()`
-    /// back into this field BEFORE the receiver drops. `None` until
-    /// `close()` has run.
-    closed_end_reason: Option<StreamEndReason>,
+    /// slot) and reads `end_reason()` back into this field BEFORE the
+    /// receiver drops. `None` until `close()` has run. A `Mutex` because
+    /// `close()` now borrows `&self`.
+    closed_end_reason: Mutex<Option<StreamEndReason>>,
 }
 
 impl PyH264Receiver {
@@ -439,9 +444,29 @@ impl PyH264Receiver {
     pub(crate) fn from_h264_receiver(receiver: H264Receiver) -> Self {
         let cancel = receiver.cancel_handle();
         Self {
-            inner: Some(receiver),
+            inner: Arc::new(Mutex::new(Some(receiver))),
             cancel,
-            closed_end_reason: None,
+            closed_end_reason: Mutex::new(None),
+        }
+    }
+
+    /// Non-blocking read of the end reason: the live receiver's
+    /// `end_reason()` when the slot can be inspected, the `close()`
+    /// snapshot once closed, `None` while a `recv_au` is in flight on
+    /// another thread (the reason is not final until that call returns —
+    /// the one place this shell differs from `Receiver.end_reason()`,
+    /// which reads a lock-free handle).
+    fn current_end_reason(&self) -> Option<StreamEndReason> {
+        match self.inner.try_lock() {
+            Ok(g) => match g.as_ref() {
+                Some(r) => r.end_reason(),
+                None => self
+                    .closed_end_reason
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone(),
+            },
+            Err(_) => None,
         }
     }
 }
@@ -476,9 +501,9 @@ impl PyH264Receiver {
         };
         let cancel = receiver.cancel_handle();
         Ok(Self {
-            inner: Some(receiver),
+            inner: Arc::new(Mutex::new(Some(receiver))),
             cancel,
-            closed_end_reason: None,
+            closed_end_reason: Mutex::new(None),
         })
     }
 
@@ -486,40 +511,33 @@ impl PyH264Receiver {
     ///
     /// Blocks until a packet arrives (releasing the GIL) or EOS / error.
     ///
-    /// `timeout_ms=None` (the default) blocks indefinitely — the same
-    /// code path as before this parameter existed. `timeout_ms=N` bounds
-    /// this single call to `N` milliseconds via the one-shot
+    /// `timeout_ms=None` (the default) blocks indefinitely. `timeout_ms=N`
+    /// bounds this single call to `N` milliseconds via the one-shot
     /// `recv_au_timeout`; on expiry it raises `RtpError(TIMEOUT)` and the
     /// receiver stays open — call again to keep waiting.
     ///
     /// Returns:
     /// - `H264AccessUnit` when a complete AU is available.
-    /// - `None` at EOS (clean close, cancel, or RTSP teardown) — never
-    ///   returned to signal a timeout.
+    /// - `None` at EOS (clean close, cancel — including a `close()` from
+    ///   another thread — or RTSP teardown); never returned to signal a
+    ///   timeout.
     ///
     /// Raises:
-    /// - `RtpError(CANCELLED)` if the cancel handle was fired explicitly.
     /// - `RtpError(TIMEOUT)` if `timeout_ms` was given and no AU
     ///   completed within it — retryable, the receiver stays open.
     /// - `RtpError(TRANSPORT)` on a hard I/O error or if the receiver is
     ///   already closed.
     #[pyo3(signature = (timeout_ms = None))]
     fn recv_au(
-        &mut self,
+        &self,
         py: Python<'_>,
         timeout_ms: Option<u64>,
     ) -> PyResult<Option<Py<PyH264AccessUnit>>> {
-        let inner = self
-            .inner
-            .as_mut()
-            .ok_or_else(|| make_rtp_error(py, "TRANSPORT", "receiver is closed"))?;
-        // Release the GIL while parked on the blocking recv_au call.
-        // The inner receiver is exclusively owned here (no Arc/Mutex) so
-        // py.allow_threads is safe: no Python objects are accessed inside.
-        let result = match timeout_ms {
-            None => py.allow_threads(|| inner.recv_au()),
-            Some(ms) => py.allow_threads(|| inner.recv_au_timeout(Duration::from_millis(ms))),
-        };
+        let result = crate::util::with_slot(py, &self.inner, |r| match timeout_ms {
+            None => r.recv_au(),
+            Some(ms) => r.recv_au_timeout(Duration::from_millis(ms)),
+        })
+        .ok_or_else(|| make_rtp_error(py, "TRANSPORT", "receiver is closed"))?;
         match result {
             Ok(None) => Ok(None),
             Ok(Some(au)) => {
@@ -537,38 +555,33 @@ impl PyH264Receiver {
 
     /// Advance the iterator. Returns the next `H264AccessUnit` or raises
     /// `StopIteration` at EOS.
-    fn __next__(&mut self, py: Python<'_>) -> PyResult<Py<PyH264AccessUnit>> {
+    fn __next__(&self, py: Python<'_>) -> PyResult<Py<PyH264AccessUnit>> {
         match self.recv_au(py, None)? {
             Some(au) => Ok(au),
             None => Err(pyo3::exceptions::PyStopIteration::new_err(())),
         }
     }
 
-    /// RFC 6184 depacketizer counters (AU counts, seq gaps, etc.).
+    /// RFC 6184 depacketizer counters (AU counts, seq gaps, etc.). Waits
+    /// (GIL released) for a `recv_au` parked on another thread.
     fn depay_stats(&self, py: Python<'_>) -> PyResult<Py<PyH264DepayStats>> {
-        let inner = self
-            .inner
-            .as_ref()
+        let s = crate::util::with_slot(py, &self.inner, |r| r.depay_stats())
             .ok_or_else(|| make_rtp_error(py, "TRANSPORT", "receiver is closed"))?;
-        Py::new(py, PyH264DepayStats::from_rust(inner.depay_stats()))
+        Py::new(py, PyH264DepayStats::from_rust(s))
     }
 
     /// RTP protocol–level counters (malformed packet counter).
     fn rtp_stats(&self, py: Python<'_>) -> PyResult<Py<PyRtpStats>> {
-        let inner = self
-            .inner
-            .as_ref()
+        let s = crate::util::with_slot(py, &self.inner, |r| r.rtp_stats())
             .ok_or_else(|| make_rtp_error(py, "TRANSPORT", "receiver is closed"))?;
-        Py::new(py, PyRtpStats::from_rust(inner.rtp_stats()))
+        Py::new(py, PyRtpStats::from_rust(s))
     }
 
     /// Throughput wire-level stats (bytes/packets received).
     fn socket_stats(&self, py: Python<'_>) -> PyResult<Py<PySocketStats>> {
-        let inner = self
-            .inner
-            .as_ref()
+        let s = crate::util::with_slot(py, &self.inner, |r| r.socket_stats())
             .ok_or_else(|| make_rtp_error(py, "TRANSPORT", "receiver is closed"))?;
-        Py::new(py, PySocketStats::from_core(inner.socket_stats()))
+        Py::new(py, PySocketStats::from_core(s))
     }
 
     /// Local address the UDP socket is bound to, as `"host:port"` string.
@@ -579,11 +592,8 @@ impl PyH264Receiver {
     /// handle — matching the module's closed-handle contract — so `None`
     /// is never ambiguous between "closed" and "no UDP socket".
     fn local_addr(&self, py: Python<'_>) -> PyResult<Option<String>> {
-        let inner = self
-            .inner
-            .as_ref()
-            .ok_or_else(|| make_rtp_error(py, "TRANSPORT", "receiver is closed"))?;
-        Ok(inner.local_addr().map(|a| a.to_string()))
+        crate::util::with_slot(py, &self.inner, |r| r.local_addr().map(|a| a.to_string()))
+            .ok_or_else(|| make_rtp_error(py, "TRANSPORT", "receiver is closed"))
     }
 
     /// Return a shareable cancel handle. Calling `.cancel()` on the
@@ -599,18 +609,11 @@ impl PyH264Receiver {
     }
 
     /// Why the receive session ended, or `None` if it hasn't ended yet
-    /// (or ended through a path this arc doesn't instrument). Still
-    /// readable after `close()` — see `closed_end_reason`'s field doc.
-    ///
-    /// Reads either the live receiver's `end_reason()` (a lock-free
-    /// `Arc<OnceLock<_>>` read — no blocking, no `py.allow_threads`
-    /// needed) or, once closed, the snapshot `close()` took.
+    /// (or ended through a path this arc doesn't instrument, or a
+    /// `recv_au` is in flight on another thread — see
+    /// `current_end_reason`). Still readable after `close()`.
     fn end_reason(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
-        let reason = match &self.inner {
-            Some(inner) => inner.end_reason(),
-            None => self.closed_end_reason.clone(),
-        };
-        match reason {
+        match self.current_end_reason() {
             Some(r) => crate::rtp::end_reason::end_reason_to_py(py, &r),
             None => Ok(None),
         }
@@ -620,32 +623,26 @@ impl PyH264Receiver {
     /// `KEEPALIVE_FAILED` / `TRANSPORT_FAILED` / `PROTOCOL_ERROR`; `None`
     /// for every other reason (including "hasn't ended yet").
     fn end_detail(&self) -> Option<String> {
-        let reason = match &self.inner {
-            Some(inner) => inner.end_reason(),
-            None => self.closed_end_reason.clone(),
-        };
-        reason.and_then(|r| crate::rtp::end_reason::end_reason_detail(&r).map(str::to_owned))
+        self.current_end_reason()
+            .and_then(|r| crate::rtp::end_reason::end_reason_detail(&r).map(str::to_owned))
     }
 
-    /// Close the receiver. Idempotent. Fires the cancel handle so any
-    /// thread parked in `recv_au` unparks at the next cancel-poll tick
-    /// (~100ms), then drops the underlying source.
-    ///
-    /// Before dropping, calls the inner `H264Receiver`'s own idempotent
-    /// `close()` (records `StreamEndReason::Cancelled` unless some
-    /// earlier signal already claimed the slot) and snapshots its
-    /// `end_reason()` into `closed_end_reason` — `H264Receiver` has no
-    /// `end_reason_handle()` to keep a live cross-drop view (unlike
-    /// `RtpRecvTransport`), so this snapshot is the only way
-    /// `end_reason()` / `end_detail()` keep answering after close.
-    fn close(&mut self) {
+    /// Close the receiver. Idempotent. Fires the cancel handle BEFORE
+    /// taking the slot so a thread parked in `recv_au` unparks at the
+    /// next cancel-poll tick (~100 ms) and returns `None`; then calls the
+    /// inner `H264Receiver`'s own idempotent `close()` (records
+    /// `StreamEndReason::Cancelled` unless some earlier signal already
+    /// claimed the slot), snapshots its `end_reason()` into
+    /// `closed_end_reason`, and drops the source.
+    fn close(&self, py: Python<'_>) {
         self.cancel.cancel();
-        if let Some(mut receiver) = self.inner.take() {
+        let snapshot = &self.closed_end_reason;
+        crate::util::close_slot(py, &self.inner, |mut receiver| {
             receiver.close();
-            self.closed_end_reason = receiver.end_reason();
+            *snapshot.lock().unwrap_or_else(|e| e.into_inner()) = receiver.end_reason();
             // `receiver` drops here; its `Drop` impl's own `close()` call
             // is a no-op (idempotent, first-writer-wins already set).
-        }
+        });
     }
 
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -653,19 +650,21 @@ impl PyH264Receiver {
     }
 
     fn __exit__(
-        &mut self,
+        &self,
+        py: Python<'_>,
         _exc_type: &Bound<'_, PyAny>,
         _exc_value: &Bound<'_, PyAny>,
         _traceback: &Bound<'_, PyAny>,
     ) -> bool {
-        self.close();
+        self.close(py);
         false
     }
 
     fn __repr__(&self) -> String {
-        match &self.inner {
-            Some(_) => "H264Receiver(open)".to_string(),
-            None => "H264Receiver(closed)".to_string(),
+        if crate::util::slot_alive(&self.inner, |_| true) {
+            "H264Receiver(open)".to_string()
+        } else {
+            "H264Receiver(closed)".to_string()
         }
     }
 }
