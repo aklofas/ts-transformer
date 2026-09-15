@@ -263,14 +263,15 @@ impl ManagedStatsHandle {
 ///
 /// # Closing
 ///
-/// [`Self::close`] (via the `Transport::close` trait method) joins any
-/// active background worker before returning. That join is bounded by
-/// whatever the worker happens to be doing at the moment `close()` is
-/// called: an in-flight `factory()` call, or a single in-flight drain
-/// send — never an unbounded backoff wait (those are interruptible in
-/// both modes; cancel/close wakes them promptly). `Drop` never blocks:
-/// it signals shutdown and detaches, leaving the worker to observe the
-/// signal at its next check and exit on its own.
+/// [`Self::close`] (via the `Transport::close` trait method), `Drop`, and
+/// [`Self::cancel_handle`]'s `cancel()` all run the same terminal
+/// transition: latch closed, wake a backoff wait, and fire the live
+/// inner's wake handle. `close()` then joins any active background
+/// worker; that join is bounded by an in-flight `factory()` call at
+/// most — a drain send parked in the inner transport is interrupted by
+/// the fired handle, and backoff waits are interruptible in both modes.
+/// `Drop` never blocks: it fires the same signal and detaches, leaving
+/// the worker to observe it and exit on its own.
 ///
 /// # Lock poisoning policy (post-Wave-6.F)
 ///
@@ -798,6 +799,13 @@ impl<T: Transport + 'static> ManagedTransport<T> {
         };
         *slot = Some(thread::spawn(move || background::worker_run(ctx)));
     }
+
+    /// See the free [`terminal_signal`]: the `&self` spelling for the
+    /// `Transport::close` path. `Drop` calls the free fn directly because
+    /// its impl carries no `'static` bound.
+    fn terminal_signal(&self) {
+        terminal_signal(&self.closed, &self.shutdown, &self.active);
+    }
 }
 
 impl<T: Transport + 'static> Transport for ManagedTransport<T> {
@@ -838,9 +846,13 @@ impl<T: Transport + 'static> Transport for ManagedTransport<T> {
     }
 
     fn close(&mut self) {
-        self.closed
-            .store(true, std::sync::atomic::Ordering::Release);
-        self.shutdown.signal();
+        // Latch, wake the backoff wait, AND fire the live inner's wake
+        // handle BEFORE the join below (X-CORR-01): a worker parked inside
+        // an inner `send_bytes` only returns — so the join only completes —
+        // once that handle fires. Signalling alone left close() waiting on
+        // the transport's own timeout (or forever, for a channel/socket
+        // with none).
+        self.terminal_signal();
         // Join an active worker. Bounded: it exits at its next shutdown
         // check; an in-flight factory() call must return first — connect
         // timeouts are the factory's own knob.
@@ -896,10 +908,44 @@ impl<T: Transport> Drop for ManagedTransport<T> {
         // check (backoff waits are interruptible), and exits on its own.
         // Without this, a max_attempts: None worker would retry forever
         // after the transport is gone.
-        self.closed
-            .store(true, std::sync::atomic::Ordering::Release);
-        self.shutdown.signal();
+        //
+        // The wake handle is fired too (X-CORR-01): a worker parked
+        // inside an inner `send_bytes` has no "next check" until that
+        // send returns, and only the inner's cancel handle can return it.
+        // Non-blocking here rests on the `TransportCancel` contract (an
+        // interrupt, never a wait) — the same reliance every cross-thread
+        // `cancel()` already has.
+        terminal_signal(&self.closed, &self.shutdown, &self.active);
     }
+}
+
+/// The one terminal transition shared by `ManagedTransport::close`,
+/// its `Drop`, and `ManagedCancel::cancel` (X-CORR-01 / X-SIMP-02):
+///
+/// 1. latch `closed` — every send path and both reconnect loops exit at
+///    their next check;
+/// 2. wake a backoff wait (either mode) — a no-op when nothing waits;
+/// 3. fire the live inner's wake handle out of the `active` slot — the
+///    ONLY thing that returns a worker parked inside an inner
+///    `send_bytes` (the shutdown signal never reaches a transport call).
+///    The handle comes from the slot, never from the `inner` mutex:
+///    every send path holds `inner` across the inner `send_bytes`, so a
+///    cancel that read the inner out of that mutex would queue behind the
+///    very call it was asked to interrupt (locking invariant 5). The slot
+///    latches, so an inner installed after this point (a reconnect was
+///    mid-flight) is cancelled on arrival instead of being parked on.
+///
+/// Takes no lock of its own and fires the target outside the slot's
+/// lock, so it is safe from `Drop` provided the target honours the
+/// `TransportCancel` contract (an interrupt, not a wait).
+fn terminal_signal(
+    closed: &std::sync::atomic::AtomicBool,
+    shutdown: &Shutdown,
+    active: &CancelSlot,
+) {
+    closed.store(true, std::sync::atomic::Ordering::Release);
+    shutdown.signal();
+    active.cancel();
 }
 
 struct ManagedCancel {
@@ -910,20 +956,8 @@ struct ManagedCancel {
 
 impl TransportCancel for ManagedCancel {
     fn cancel(&self) {
-        // Latch closed first so the reconnect loop exits next iteration.
-        self.closed
-            .store(true, std::sync::atomic::Ordering::Release);
-        // Wake a backoff wait (either mode); a no-op when nothing waits.
-        self.shutdown.signal();
-        // Then wake whatever the live inner is parked in. The handle comes
-        // from the `active` slot, never from the `inner` mutex: every send
-        // path holds `inner` across the inner `send_bytes`, so a cancel
-        // that had to read the inner out of that mutex would queue behind
-        // the very call it was asked to interrupt (locking invariant 5).
-        // The slot also latches, so an inner installed after this point (a
-        // reconnect was mid-flight) is cancelled on arrival instead of
-        // being parked on.
-        self.active.cancel();
+        // Same three steps as close()/Drop — see `terminal_signal`.
+        terminal_signal(&self.closed, &self.shutdown, &self.active);
     }
 }
 
