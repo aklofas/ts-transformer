@@ -13,7 +13,7 @@
 //! `mpegts/demux/mod.rs`).
 
 use crate::mpegts::common::{pcr_diff_27mhz, pid};
-use crate::mpegts::demux::event::{DiscontinuityKind, NonConformantIssue, StreamId, StreamKind};
+use crate::mpegts::demux::event::{DiscontinuityKind, NonConformantIssue, StreamId};
 
 /// Maximum bytes the demuxer scans during sync recovery before declaring
 /// the stream unrecoverable.
@@ -125,6 +125,24 @@ impl super::demuxer::Demuxer {
         }
     }
 
+    /// Identity to attach to a PCR-carrying packet's timing issues.
+    /// Elementary PIDs resolve through `lookup_stream`; a dedicated PCR
+    /// PID (H.222.0 §2.4.4.9 lets the PCR ride a PID that carries no
+    /// elementary stream — common in broadcast and hardware muxes) has no
+    /// stream entry, so fall back to an anonymous id whose
+    /// `program_number` is the program that declared `pid` as its
+    /// `PCR_PID` (0 if none has). CORR-13.
+    pub(super) fn pcr_stream_id(&self, pid: u16) -> StreamId {
+        self.lookup_stream(pid).unwrap_or_else(|| {
+            let program_number = self
+                .programs
+                .values()
+                .find(|t| t.pcr_pid == Some(pid))
+                .map_or(0, |t| t.program_number);
+            StreamId::anonymous(pid, program_number)
+        })
+    }
+
     pub(super) fn check_pcr(&mut self, pkt: &crate::mpegts::demux::ts::TsPacket<'_>) {
         // Per ITU-T H.222.0 §2.4.3.5, each program carries its own time base
         // via its declared PCR PID. PCR comparisons MUST stay within a
@@ -140,11 +158,7 @@ impl super::demuxer::Demuxer {
         // so lenient receivers see the corruption while strict-mode timing
         // categories escalate to StrictRejection.
         if let Some(kind) = pkt.pcr_malformed {
-            let stream = self.lookup_stream(pkt.pid).unwrap_or(StreamId {
-                pid: pkt.pid,
-                kind: StreamKind::Unknown(0),
-                program_number: 0,
-            });
+            let stream = self.pcr_stream_id(pkt.pid);
             self.queue_nonconformant(stream, NonConformantIssue::PcrMalformed { kind });
         }
         // Nested if-let (not let-chain) for MSRV 1.85 — let-chains require 1.88.
@@ -152,10 +166,14 @@ impl super::demuxer::Demuxer {
             if let Some(&last) = self.last_pcr_by_pid.get(&pkt.pid) {
                 let diff = pcr_diff_27mhz(now, last);
                 if diff.abs() > PCR_ANOMALY_THRESHOLD {
-                    let issue = NonConformantIssue::PcrAnomaly { delta: diff };
-                    if let Some(stream) = self.lookup_stream(pkt.pid) {
-                        self.queue_nonconformant(stream, issue);
-                    }
+                    // Dedicated PCR PIDs have no `lookup_stream` entry —
+                    // resolve through the PMT's PCR_PID instead of
+                    // dropping the issue (CORR-13).
+                    let stream = self.pcr_stream_id(pkt.pid);
+                    self.queue_nonconformant(
+                        stream,
+                        NonConformantIssue::PcrAnomaly { delta: diff },
+                    );
                 }
             }
             self.last_pcr_by_pid.insert(pkt.pid, now);
