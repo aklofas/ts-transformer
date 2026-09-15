@@ -224,6 +224,23 @@ pub struct DigestContext<'a> {
     pub challenge: &'a DigestChallenge,
 }
 
+/// Backslash-escape a value for placement inside a `key="value"`
+/// quoted-string (RFC 7616 §3.4, `quoted-string` production shared with
+/// RFC 7230 §3.2.6): `\` becomes `\\` and `"` becomes `\"`. Both bytes must
+/// be escaped so a caller-controlled value (a percent-decoded username,
+/// CORR-21, or a caller-supplied request-URI) can never close the quoted
+/// string early or reinterpret the byte that follows it.
+fn escape_quoted_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if c == '\\' || c == '"' {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// Build the `Authorization:` header value for Digest auth per
 /// RFC 7616 §3.4. Handles both `qop=auth` (with nc + cnonce) and the
 /// older RFC 2617 no-qop variant when `challenge.qop` is None.
@@ -279,9 +296,22 @@ pub fn build_digest_response(ctx: &DigestContext<'_>) -> String {
         DigestAlgorithm::Md5Sess => "MD5-sess",
         DigestAlgorithm::Sha256Sess => "SHA-256-sess",
     };
+    // `username` (percent-decoded from the URL, CORR-21) and `uri` (the
+    // caller-supplied request-URI) are backslash-escaped per RFC 7616
+    // §3.4 quoted-string syntax before going in a `key="value"` slot —
+    // an un-escaped `"` would close the quoted string early and desync
+    // every auth-param after it; an un-escaped `\` would escape the
+    // FOLLOWING character instead of standing for itself. `realm` /
+    // `nonce` are the peer's own challenge values reflected back to that
+    // same peer, not caller input, so they stay as-is.
     let mut out = format!(
         r#"Digest username="{}", realm="{}", nonce="{}", uri="{}", response="{}", algorithm={}"#,
-        ctx.username, ctx.challenge.realm, ctx.challenge.nonce, ctx.uri, resp, algorithm_str,
+        escape_quoted_string(ctx.username),
+        ctx.challenge.realm,
+        ctx.challenge.nonce,
+        escape_quoted_string(ctx.uri),
+        resp,
+        algorithm_str,
     );
     if let Some(qop) = &qop_chosen {
         out.push_str(&format!(
@@ -573,5 +603,34 @@ mod digest_tests {
         assert!(!header.contains("nc="));
         assert!(!header.contains("cnonce="));
         assert!(header.starts_with(r#"Digest username="admin""#));
+    }
+
+    /// A username containing `"` must not close the quoted string early.
+    /// Userinfo is percent-decoded since CORR-21 (`crates/tst-core`'s
+    /// `percent_decode` + `RtspUrl::parse`), so `%22` in a URL now reaches
+    /// here as a literal `"` — before this fix the header would desync
+    /// every auth-param after `username=`.
+    #[test]
+    fn build_digest_response_escapes_quoted_string_in_username() {
+        let challenge = DigestChallenge {
+            realm: "cam".to_string(),
+            nonce: "n".to_string(),
+            opaque: None,
+            algorithm: DigestAlgorithm::Md5,
+            qop: None,
+            stale: false,
+        };
+        let pw = SecretString::new("pw".into());
+        let ctx = DigestContext {
+            username: r#"a"b"#,
+            password: &pw,
+            method: "OPTIONS",
+            uri: "rtsp://cam/h264",
+            nc: 1,
+            cnonce: "deadbeef",
+            challenge: &challenge,
+        };
+        let header = build_digest_response(&ctx);
+        assert!(header.contains(r#"username="a\"b""#), "got: {header}");
     }
 }
