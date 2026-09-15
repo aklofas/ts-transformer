@@ -6806,6 +6806,27 @@ impl core::marker::UnsafeUnpin for tst_core::mpegts::stats::StreamStats
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::stats::StreamStats
 impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::stats::StreamStats
 pub mod tst_core::net
+pub mod tst_core::net::io_classify
+pub enum tst_core::net::io_classify::SendClass
+pub tst_core::net::io_classify::SendClass::Fatal
+pub tst_core::net::io_classify::SendClass::Transient
+impl core::clone::Clone for tst_core::net::io_classify::SendClass
+pub fn tst_core::net::io_classify::SendClass::clone(&self) -> tst_core::net::io_classify::SendClass
+impl core::cmp::Eq for tst_core::net::io_classify::SendClass
+impl core::cmp::PartialEq for tst_core::net::io_classify::SendClass
+pub fn tst_core::net::io_classify::SendClass::eq(&self, &tst_core::net::io_classify::SendClass) -> bool
+impl core::fmt::Debug for tst_core::net::io_classify::SendClass
+pub fn tst_core::net::io_classify::SendClass::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_core::net::io_classify::SendClass
+impl core::marker::StructuralPartialEq for tst_core::net::io_classify::SendClass
+impl core::marker::Freeze for tst_core::net::io_classify::SendClass
+impl core::marker::Send for tst_core::net::io_classify::SendClass
+impl core::marker::Sync for tst_core::net::io_classify::SendClass
+impl core::marker::Unpin for tst_core::net::io_classify::SendClass
+impl core::marker::UnsafeUnpin for tst_core::net::io_classify::SendClass
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::net::io_classify::SendClass
+impl core::panic::unwind_safe::UnwindSafe for tst_core::net::io_classify::SendClass
+pub fn tst_core::net::io_classify::classify_send_error(&core::io::error::Error) -> tst_core::net::io_classify::SendClass
 pub mod tst_core::net::udp_socket
 pub const tst_core::net::udp_socket::CANCEL_POLL_INTERVAL: core::time::Duration
 pub const tst_core::net::udp_socket::MCAST_DEFAULT_TTL: u8
@@ -6817,6 +6838,26 @@ pub fn tst_core::net::udp_socket::bind_udp_socket_multicast(core::net::socket_ad
 pub fn tst_core::net::udp_socket::set_multicast_hops_v6(&std::net::udp::UdpSocket, u8) -> core::io::error::Result<()>
 pub fn tst_core::net::udp_socket::set_multicast_if_v4(&std::net::udp::UdpSocket, core::net::ip_addr::Ipv4Addr) -> core::io::error::Result<()>
 pub fn tst_core::net::udp_socket::set_socket_buffers<S: std::os::fd::owned::AsFd>(&S, core::option::Option<usize>, core::option::Option<usize>) -> core::io::error::Result<()>
+pub enum tst_core::net::SendClass
+pub tst_core::net::SendClass::Fatal
+pub tst_core::net::SendClass::Transient
+impl core::clone::Clone for tst_core::net::io_classify::SendClass
+pub fn tst_core::net::io_classify::SendClass::clone(&self) -> tst_core::net::io_classify::SendClass
+impl core::cmp::Eq for tst_core::net::io_classify::SendClass
+impl core::cmp::PartialEq for tst_core::net::io_classify::SendClass
+pub fn tst_core::net::io_classify::SendClass::eq(&self, &tst_core::net::io_classify::SendClass) -> bool
+impl core::fmt::Debug for tst_core::net::io_classify::SendClass
+pub fn tst_core::net::io_classify::SendClass::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_core::net::io_classify::SendClass
+impl core::marker::StructuralPartialEq for tst_core::net::io_classify::SendClass
+impl core::marker::Freeze for tst_core::net::io_classify::SendClass
+impl core::marker::Send for tst_core::net::io_classify::SendClass
+impl core::marker::Sync for tst_core::net::io_classify::SendClass
+impl core::marker::Unpin for tst_core::net::io_classify::SendClass
+impl core::marker::UnsafeUnpin for tst_core::net::io_classify::SendClass
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::net::io_classify::SendClass
+impl core::panic::unwind_safe::UnwindSafe for tst_core::net::io_classify::SendClass
+pub fn tst_core::net::classify_send_error(&core::io::error::Error) -> tst_core::net::io_classify::SendClass
 pub mod tst_core::publisher
 #[non_exhaustive] pub struct tst_core::publisher::PublisherStats
 pub tst_core::publisher::PublisherStats::bytes_written: u64

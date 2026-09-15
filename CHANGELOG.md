@@ -796,6 +796,41 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   deadlock the user guide's "never re-enter the receiver" rule prevents.
   Documentation only — no behaviour change.
 
+### Fixed — tcp/udp (WP-4b)
+
+- **TCP: a ≥ 100 ms send stall after a partial write no longer tears the
+  connection down.** `TcpTransport::send_bytes` reported
+  `Broken { "partial write then WouldBlock … stream desynced, rebuild
+  required" }` and latched the transport dead whenever the 100 ms send
+  deadline expired with part of a message already committed. The prefix the
+  kernel accepted is on the wire in order, so the stream was never
+  desynced — the teardown (and the managed reconnect that followed, which
+  opened a fresh connection mid-message) was what desynced the peer's
+  188-byte framing. The write loop now keeps writing the remainder,
+  re-checking the cancel flag at every ~100 ms tick: a zero-progress stall
+  is still `Backpressure`, a cancel mid-message returns `Closed`, and
+  `write == 0` / hard errors are still `Broken` + dead.
+- **TCP/UDP: a send deadline reported as `TimedOut` (Windows
+  `WSAETIMEDOUT`) is the poll tick, not a dead socket.** Both send paths
+  matched only `WouldBlock` (the Linux/macOS spelling) while the receive
+  paths already matched both, so a Windows send stall latched the
+  transport dead. New `tst_core::net::classify_send_error` /
+  `SendClass { Transient, Fatal }` is the one classifier both crates use.
+- **TCP: `recv_bytes` with an empty destination is an `Ok(0)` no-op.** It
+  used to reach the socket, where `read(&mut [])` returns `Ok(0)` on an
+  open peer — the same value as a peer FIN — and so reported
+  `Broken { cause: CleanEof }` and marked the transport dead while the
+  peer was still connected. The guard sits above the TLS wrapper, so
+  `tcps://` follows the same rule.
+- **TCP: `TcpListener::accept_blocking` is cancellable.** New
+  `TcpListener::cancel_handle() -> TcpCancelHandle` and
+  `TcpListener::close(&self)`: the listening socket polls non-blocking on a
+  100 ms cadence against an alive flag, a parked accept returns
+  `TcpError::Closed` within one tick of a cancel or close, and accepted
+  streams are explicitly set back to blocking mode (BSD/macOS and Windows
+  inherit `O_NONBLOCK` across `accept`; Linux does not). Before this there
+  was no cancel path on the listener at any layer.
+
 ### Testing
 
 - **Tooling: `tst-interop` sender-side corruption tap.** `tst-interop send

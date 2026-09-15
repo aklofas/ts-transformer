@@ -126,6 +126,8 @@ pub struct tst_tcp::listener::TcpListener
 impl tst_tcp::listener::TcpListener
 pub fn tst_tcp::listener::TcpListener::accept_blocking(&self) -> core::result::Result<tst_tcp::transport::TcpTransport, tst_tcp::error::TcpError>
 pub fn tst_tcp::listener::TcpListener::bind(core::net::socket_addr::SocketAddr) -> core::result::Result<Self, tst_tcp::error::TcpError>
+pub fn tst_tcp::listener::TcpListener::cancel_handle(&self) -> tst_tcp::transport::TcpCancelHandle
+pub fn tst_tcp::listener::TcpListener::close(&self)
 pub fn tst_tcp::listener::TcpListener::config_mut(&mut self) -> &mut tst_tcp::config::SocketConfig
 pub fn tst_tcp::listener::TcpListener::from_url(&str) -> core::result::Result<Self, tst_tcp::error::TcpError>
 pub fn tst_tcp::listener::TcpListener::local_addr(&self) -> core::io::error::Result<core::net::socket_addr::SocketAddr>
@@ -323,6 +325,8 @@ pub struct tst_tcp::TcpListener
 impl tst_tcp::listener::TcpListener
 pub fn tst_tcp::listener::TcpListener::accept_blocking(&self) -> core::result::Result<tst_tcp::transport::TcpTransport, tst_tcp::error::TcpError>
 pub fn tst_tcp::listener::TcpListener::bind(core::net::socket_addr::SocketAddr) -> core::result::Result<Self, tst_tcp::error::TcpError>
+pub fn tst_tcp::listener::TcpListener::cancel_handle(&self) -> tst_tcp::transport::TcpCancelHandle
+pub fn tst_tcp::listener::TcpListener::close(&self)
 pub fn tst_tcp::listener::TcpListener::config_mut(&mut self) -> &mut tst_tcp::config::SocketConfig
 pub fn tst_tcp::listener::TcpListener::from_url(&str) -> core::result::Result<Self, tst_tcp::error::TcpError>
 pub fn tst_tcp::listener::TcpListener::local_addr(&self) -> core::io::error::Result<core::net::socket_addr::SocketAddr>
