@@ -1,0 +1,40 @@
+name: ci-health
+
+# Weekly CI health snapshot (deep-review-4 META-03): rerun rate per job,
+# wedges, first-attempt failures over the last 7 days, from the Actions
+# REST API. Output = step summary + a CSV artifact (90-day retention). The
+# in-tree ledger docs/project/ci-health.csv is appended by the maintainer
+# (`bash scripts/dev/ci-health.sh --append docs/project/ci-health.csv`) at
+# closeouts — this workflow deliberately keeps `contents: read` (no bot
+# commits to main; every other workflow here is read-only too).
+
+on:
+  schedule:
+    # Mondays 06:00 UTC — after the interop cron (05:00) has queued, so the
+    # snapshot's window boundary does not split a Monday run.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  snapshot:
+    name: CI health snapshot (last 7 days)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        # No submodules: the script reads the REST API and jq only.
+
+      - name: Aggregate runs + reruns
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/dev/ci-health.sh --append ci-health-week.csv
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ci-health-${{ github.run_id }}
+          path: ci-health-week.csv
+          retention-days: 90
