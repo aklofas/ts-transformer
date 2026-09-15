@@ -286,10 +286,37 @@ fn compute_digest_response(
     response(algo, &computed_ha1, method, uri, nonce, nc, cnonce, qop)
 }
 
+/// Reverse of the client-side `escape_quoted_string` (`crate::rtsp::auth`):
+/// a `\` inside a quoted-string escapes the character that follows it
+/// (RFC 7230 §3.2.6 `quoted-pair`, shared by RFC 7616 §3.4) — drop the
+/// backslash and keep that character literally. `parse_kv_pairs`'s scanner
+/// already walks past every `\X` pair to find the closing `"`; this makes
+/// the STORED value match what the client actually meant, not the raw
+/// escaped wire bytes — e.g. a percent-decoded username `a"b` (CORR-21)
+/// arrives as `\"` inside `username="a\"b"` and must compare equal to the
+/// configured `a"b`, not the literal three bytes `a\"b`.
+fn unescape_quoted_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            if let Some(escaped) = chars.next() {
+                out.push(escaped);
+                continue;
+            }
+            // Trailing lone backslash (malformed input) — keep it as-is
+            // rather than silently dropping a byte.
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// Tokenize a Digest parameter list `key="value", key2=token, ...` into a
 /// HashMap. Tolerant of optional whitespace around `=` and `,`. Quoted
 /// values may contain commas; backslash-escapes inside quoted strings are
-/// handled per RFC 7616 §3.4.
+/// handled per RFC 7616 §3.4 — the stored value is UN-escaped (`\"` -> `"`,
+/// `\\` -> `\`), not the raw wire bytes.
 fn parse_kv_pairs(input: &str) -> std::collections::HashMap<String, String> {
     let mut out = std::collections::HashMap::new();
     let bytes = input.as_bytes();
@@ -321,7 +348,7 @@ fn parse_kv_pairs(input: &str) -> std::collections::HashMap<String, String> {
                 }
                 i += 1;
             }
-            out.insert(key, input[val_start..i].to_string());
+            out.insert(key, unescape_quoted_string(&input[val_start..i]));
             if i < bytes.len() {
                 i += 1;
             }
@@ -782,16 +809,25 @@ mod tests {
 
     #[test]
     fn parse_kv_pairs_escaped_quotes() {
-        // Parser preserves the literal backslash-escape sequences inside
-        // the quoted value — it skips over `\"` for the purpose of
-        // finding the closing `"`, but doesn't un-escape the bytes
-        // themselves. Real Authorization headers don't carry quoted
-        // strings with embedded `"`, so this is best-effort tolerance,
-        // not a faithful un-escape per RFC 7616 §3.4.
+        // The stored value is UN-escaped per RFC 7616 §3.4's quoted-pair
+        // rule: `\"` -> `"` (the scanner still uses the raw `\"` to find
+        // the correct closing `"`, but what's stored is what the client
+        // MEANT, not the wire bytes). A percent-decoded username
+        // (CORR-21) can carry a literal `"` this way.
         let m = parse_kv_pairs(r#"a="he said \"hi\"", b=ok"#);
-        // Quoted value runs `he said \"hi\"` — 14 bytes including escapes.
-        assert_eq!(m.get("a").map(String::as_str), Some(r#"he said \"hi\""#));
+        assert_eq!(m.get("a").map(String::as_str), Some(r#"he said "hi""#));
         assert_eq!(m.get("b").map(String::as_str), Some("ok"));
+    }
+
+    /// CORR-21 follow-on: a username containing `"` must round-trip
+    /// through `parse_kv_pairs` back to its real value, not the escaped
+    /// wire form — `escape_quoted_string` (`crate::rtsp::auth`, client
+    /// side) and this function are inverses.
+    #[test]
+    fn parse_kv_pairs_unescapes_quoted_username() {
+        let m = parse_kv_pairs(r#"username="a\"b", uri="rtsp://cam/x""#);
+        assert_eq!(m.get("username").map(String::as_str), Some(r#"a"b"#));
+        assert_eq!(m.get("uri").map(String::as_str), Some("rtsp://cam/x"));
     }
 
     // ── WP14 M3: combined client-build → server-verify round-trip ─────────

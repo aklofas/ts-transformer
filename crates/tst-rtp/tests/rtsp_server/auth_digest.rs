@@ -75,6 +75,34 @@ fn digest_sha256_valid_credentials_succeed() {
     server.stop().ok();
 }
 
+/// A username containing `"` must still authenticate end-to-end. The URL
+/// carries the percent-encoded form (`a%22b`); `RtspUrl::parse`
+/// percent-decodes it to the literal `a"b` (CORR-21), the client's
+/// `Authorization:` header backslash-escapes it to `username="a\"b"`
+/// (`escape_quoted_string`), and the server must UN-escape it back to
+/// `a"b` before comparing against the configured username
+/// (`parse_kv_pairs` / `unescape_quoted_string`) — before that server-side
+/// fix, the stored value stayed the literal `a\"b` and this failed.
+#[test]
+fn digest_md5_quoted_char_in_username_authenticates() {
+    let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").expect("URL parse");
+    b.auth_digest_md5("test-realm", "a\"b", SecretString::new("secret".into()));
+    let server = b.build().expect("server build");
+    let _mount = server
+        .add_mount("/live", make_muxer_cfg())
+        .expect("add_mount");
+    server.start().expect("server start");
+    let port = server.local_addr().expect("local_addr after start").port();
+    let url = format!("rtsp://a%22b:secret@127.0.0.1:{port}/live");
+    let mut client = RtspClient::connect(&url).expect("connect");
+    client.options().expect("OPTIONS");
+    let sdp = client
+        .describe()
+        .expect("DESCRIBE with a quoted-char username must authenticate");
+    assert!(!sdp.media.is_empty(), "SDP should advertise media");
+    server.stop().ok();
+}
+
 #[test]
 fn digest_md5_wrong_password_returns_auth_failed() {
     let server = server_with_digest_md5();
