@@ -94,7 +94,9 @@ impl EncryptionKey {
 #[non_exhaustive]
 pub struct RistConfig {
     pub profile: RistProfile,
-    /// Sender bandwidth cap, kbps.
+    /// Alias of [`Self::recovery_maxbitrate_kbps`] (same librist field,
+    /// `recovery_maxbitrate`). Setting both to different values fails at
+    /// connect/listen with [`crate::RistError::InvalidConfig`].
     pub bandwidth_kbps: Option<u32>,
     /// Recovery buffer.
     pub buffer: Duration,
@@ -102,7 +104,8 @@ pub struct RistConfig {
     pub encryption: Option<EncryptionKey>,
     /// RTCP CNAME.
     pub cname: Option<String>,
-    /// Retransmit bandwidth cap, kbps.
+    /// Retransmit bandwidth cap, kbps (librist `recovery_maxbitrate`).
+    /// [`Self::bandwidth_kbps`] is an alias.
     pub recovery_maxbitrate_kbps: Option<u32>,
     /// Receiver session timeout.
     pub session_timeout: Option<Duration>,

@@ -4,8 +4,11 @@
 //! - `rist://host:port` — Simple Profile sender (unicast UDP)
 //! - `rist://@host:port` — receiver bind (ffmpeg `@` convention)
 //! - `rist://239.x.x.x:port` — multicast sender
-//! - Query params: `profile`, `bandwidth`, `buffer`, `aes-type`, `secret`,
-//!   `cname`, `recovery_maxbitrate`, `session_timeout`, `compression`
+//! - Query params: `profile`, `buffer`, `aes-type`, `secret`, `cname`,
+//!   `recovery_maxbitrate` (alias `bandwidth`), `session_timeout`,
+//!   `compression`. `bandwidth` and `recovery_maxbitrate` set the same
+//!   librist field (`recovery_maxbitrate`, the retransmit-bandwidth cap in
+//!   kbps); giving both with different values is a parse error.
 
 use std::net::IpAddr;
 use std::time::Duration;
@@ -23,7 +26,8 @@ pub struct RistUrl {
     /// True if the URL had `@` prefix (recv-bind intent, ffmpeg convention).
     pub is_recv_bind: bool,
     pub profile: Option<RistProfile>,
-    /// kbps target throughput cap.
+    /// `?bandwidth=` — alias of [`Self::recovery_maxbitrate_kbps`] (same
+    /// librist field). `parse` rejects the two with different values.
     pub bandwidth_kbps: Option<u32>,
     /// Recovery buffer.
     pub buffer_ms: Option<Duration>,
@@ -33,7 +37,8 @@ pub struct RistUrl {
     pub secret: Option<RistSecret>,
     /// RTCP CNAME.
     pub cname: Option<String>,
-    /// Recovery retransmit bandwidth cap (kbps).
+    /// `?recovery_maxbitrate=` — librist `recovery_maxbitrate`, the
+    /// retransmit-bandwidth cap in kbps. `?bandwidth=` is an alias.
     pub recovery_maxbitrate_kbps: Option<u32>,
     /// Receiver session timeout in ms.
     pub session_timeout_ms: Option<u32>,
@@ -149,6 +154,22 @@ impl RistUrl {
                     compression = Some(parse_bool(key, value)?);
                 }
                 _ => {}
+            }
+        }
+
+        // `bandwidth` is an alias of `recovery_maxbitrate` (both set librist's
+        // `recovery_maxbitrate`, the retransmit-bandwidth cap). Two different
+        // values is a contradiction, not a precedence question (CORR-23).
+        if let (Some(bw), Some(rm)) = (bandwidth_kbps, recovery_maxbitrate_kbps) {
+            if bw != rm {
+                return Err(RistUrlError::BadQueryValue {
+                    key: "bandwidth".to_string(),
+                    value: bw.to_string(),
+                    detail: format!(
+                        "conflicts with recovery_maxbitrate={rm}; `bandwidth` is an alias of \
+                         `recovery_maxbitrate` (librist recovery_maxbitrate) — give one, or equal values"
+                    ),
+                });
             }
         }
 
@@ -297,5 +318,35 @@ mod tests {
         let v4 = RistUrl::parse("rist://127.0.0.1:9000").unwrap();
         assert_eq!(native_endpoint(&v4, false), "rist://127.0.0.1:9000");
         assert_eq!(native_endpoint(&v4, true), "rist://@127.0.0.1:9000");
+    }
+
+    /// CORR-23: `bandwidth` and `recovery_maxbitrate` both write librist's
+    /// `recovery_maxbitrate`. Different values must be a parse error, not
+    /// last-writer-wins.
+    #[test]
+    fn conflicting_bandwidth_and_recovery_maxbitrate_rejected() {
+        match RistUrl::parse("rist://1.2.3.4:5?bandwidth=1000&recovery_maxbitrate=5000") {
+            Err(RistUrlError::BadQueryValue { key, value, detail }) => {
+                assert_eq!(key, "bandwidth");
+                assert_eq!(value, "1000");
+                assert!(
+                    detail.contains("recovery_maxbitrate=5000"),
+                    "detail: {detail}"
+                );
+            }
+            other => panic!("expected BadQueryValue for the conflict, got {other:?}"),
+        }
+        // Order-independent.
+        assert!(matches!(
+            RistUrl::parse("rist://1.2.3.4:5?recovery_maxbitrate=5000&bandwidth=1000"),
+            Err(RistUrlError::BadQueryValue { .. })
+        ));
+    }
+
+    #[test]
+    fn equal_bandwidth_and_recovery_maxbitrate_accepted() {
+        let u = RistUrl::parse("rist://1.2.3.4:5?bandwidth=4000&recovery-maxbitrate=4000").unwrap();
+        assert_eq!(u.bandwidth_kbps, Some(4000));
+        assert_eq!(u.recovery_maxbitrate_kbps, Some(4000));
     }
 }
