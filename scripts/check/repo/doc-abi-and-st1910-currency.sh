@@ -4,10 +4,9 @@
 #
 # Four rules:
 #
-#   1. README.md, docs/, and crate-level rustdoc must not mention
-#      a stale ABI minor (`ABI version 0.0`..`0.4`). Current value is
-#      tracked by TST_ABI_VERSION_MINOR in bindings/c/core/src/lib.rs; the
-#      published docs must match.
+#   1. README.md, docs/, and crate-level rustdoc must not mention a stale
+#      ABI minor: any `ABI version 0.N` (bold or plain) with N != the
+#      TST_ABI_VERSION_MINOR in bindings/c/core/src/lib.rs.
 #
 #   2. Bare `ST 1910` (i.e. NOT followed by `.1`) must not appear in
 #      crates/ or README.md. The 2026-05-24 audit found 6 sites
@@ -29,34 +28,77 @@
 # (see feedback_bash_ratchets_macos_portability.md). Uses
 # `while IFS= read -r x; do arr+=("$x"); done < <(...)` pattern.
 
+# --self-test: build a fixture tree with a planted stale minor, expect FAIL;
+# correct it, expect OK. Runs the real script recursively via DOC_ABI_ROOT.
+if [ "${1:-}" = "--self-test" ]; then
+    set -euo pipefail
+    SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+    tmp="$(mktemp -d "${TMPDIR:-/tmp}/docabi-selftest.XXXXXX")"
+    trap 'rm -rf "$tmp"' EXIT
+    mkdir -p "$tmp/bindings/c/core/src" "$tmp/docs/languages" "$tmp/docs/reference" "$tmp/crates"
+    printf 'pub const TST_ABI_VERSION_MINOR: c_int = 21;\n' > "$tmp/bindings/c/core/src/lib.rs"
+    printf '[workspace.package]\nversion = "0.6.0"\n' > "$tmp/Cargo.toml"
+    printf '# x\n\nC ABI **0.21** today.\n' > "$tmp/README.md"
+    printf '#define TST_ABI_VERSION_MINOR 21\n#define TST_VERSION_MAJOR 0\n#define TST_VERSION_MINOR 6\n#define TST_VERSION_PATCH 0\n' > "$tmp/docs/languages/c.md"
+    printf 'ABI minor is **21** today.\n' > "$tmp/docs/reference/binding-authors.md"
+    printf '| `tst-c` | ABI version **0.20** (additive). |\n' > "$tmp/docs/reference/compatibility.md"
+    if DOC_ABI_ROOT="$tmp" bash "$SELF" >/dev/null 2>&1; then
+        echo "SELF-TEST FAIL: planted 'ABI version **0.20**' on a 0.21 tree passed" >&2; exit 1
+    fi
+    echo "  ok: planted stale bold minor fails"
+    printf '| `tst-c` | ABI version 0.20 (additive). |\n' > "$tmp/docs/reference/compatibility.md"
+    if DOC_ABI_ROOT="$tmp" bash "$SELF" >/dev/null 2>&1; then
+        echo "SELF-TEST FAIL: planted 'ABI version 0.20' on a 0.21 tree passed" >&2; exit 1
+    fi
+    echo "  ok: planted stale plain minor fails"
+    printf '| `tst-c` | ABI version **0.21** (additive). |\n' > "$tmp/docs/reference/compatibility.md"
+    if ! DOC_ABI_ROOT="$tmp" bash "$SELF" >/dev/null 2>&1; then
+        echo "SELF-TEST FAIL: current minor 0.21 rejected" >&2; exit 1
+    fi
+    echo "  ok: current minor passes"
+    echo "doc-abi-and-st1910-currency self-test: OK"
+    exit 0
+fi
+
 set -euo pipefail
 
-cd "$(dirname "$0")/../../.."
+# DOC_ABI_ROOT lets --self-test point the rail at a fixture tree.
+ROOT="${DOC_ABI_ROOT:-$(cd "$(dirname "$0")/../../.." && pwd)}"
+cd "$ROOT"
 
 FAILED=0
+
+# Current ABI minor is derived ONCE, up front — every rule below compares
+# against it. (Before 2026-09-14 rule 1 hard-coded `0\.[0-4]` and went blind
+# the day the minor reached 0.5; a stale "ABI version 0.20" then sat on a
+# 0.21 tree unnoticed — deep review #4, META-07.)
+CURRENT_MINOR=$(grep -E '^pub const TST_ABI_VERSION_MINOR' bindings/c/core/src/lib.rs | grep -oE '[0-9]+' | tail -1)
+if [ -z "$CURRENT_MINOR" ]; then
+    echo "FAIL: cannot read TST_ABI_VERSION_MINOR from bindings/c/core/src/lib.rs"
+    exit 1
+fi
 
 # -----------------------------------------------------------------------
 # Rule 1 — Stale ABI minor wording
 # -----------------------------------------------------------------------
 #
-# Search README, docs/, and any Rust crate-level rustdoc (//! lines)
-# for "ABI version 0.0", "0.1", "0.2", or "0.3".
+# Any `ABI version 0.N` (plain or **bold**) in README, docs/, or crate
+# rustdoc whose N is not the current minor is stale. Historical wording
+# ("added in ABI 0.13") does not use the "ABI version" phrase and is not
+# matched.
 ABI_HITS=()
 while IFS= read -r line; do
     ABI_HITS+=("$line")
 done < <(
-    grep -rnE 'ABI version 0\.[0-4]([^0-9]|$)' \
+    grep -rnE 'ABI version \*{0,2}0\.[0-9]+' \
         README.md docs/ crates/ 2>/dev/null \
         | { grep -v '^[^:]*\.lock:' || true; } \
-        | { grep -v 'check-doc-abi-and-st1910-currency\.sh:' || true; }
+        | { grep -vE "ABI version \*{0,2}0\.${CURRENT_MINOR}([^0-9]|\$)" || true; }
 )
 
 if [ ${#ABI_HITS[@]} -gt 0 ]; then
-    echo "FAIL: stale 'ABI version 0.[0-4]' references found:"
+    echo "FAIL: stale 'ABI version' references found (current: 0.${CURRENT_MINOR}):"
     for h in "${ABI_HITS[@]}"; do echo "  $h"; done
-    echo
-    CURRENT_MINOR=$(grep -E '^pub const TST_ABI_VERSION_MINOR' bindings/c/core/src/lib.rs | grep -oE '[0-9]+' | tail -1)
-    echo "Current ABI minor (per bindings/c/core/src/lib.rs TST_ABI_VERSION_MINOR): ${CURRENT_MINOR}"
     echo "Update each hit to the current value."
     FAILED=1
 fi
@@ -128,7 +170,6 @@ fi
 # drift silently again. Historical mentions ("added in ABI 0.1", the
 # version-history list in binding-authors.md) are deliberately NOT
 # checked — only these current-value assertion sites are.
-CURRENT_MINOR=$(grep -E '^pub const TST_ABI_VERSION_MINOR' bindings/c/core/src/lib.rs | grep -oE '[0-9]+' | tail -1)
 PKG_VERSION=$(grep -E '^version' Cargo.toml | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
 PKG_MAJOR=$(echo "$PKG_VERSION" | cut -d. -f1)
 PKG_MINOR=$(echo "$PKG_VERSION" | cut -d. -f2)
