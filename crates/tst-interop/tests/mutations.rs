@@ -234,7 +234,11 @@ fn one_audio_frame_fails_audio_cadence() {
     let bytes = std::fs::read(&path).unwrap();
     let _ = std::fs::remove_file(&path);
     let r = verify_bytes(&bytes, p, SECONDS, "audio-one");
-    assert_fails_with(&r, "audio_cadence");
+    // `schedule` yields round(3 x 48000 / 1024) = 141 frames for the full
+    // window; this 21 ms capture carries exactly one. Assert the numbers,
+    // not just the verdict name — an empty capture also "fails cadence".
+    assert_fails_with(&r, "audio_cadence: 1 frames, want 141");
+    assert_eq!(r.metrics.audio_frames, 1, "{:?}", r.failures);
 }
 
 #[test]
@@ -341,6 +345,73 @@ fn av1_binding_stream_with_video_stream_id_raises_nonconformant() {
     );
     assert_fails_with(&r, "nonconformant_event");
     assert!(r.metrics.nonconformant > 0);
+}
+
+/// Like `zero_adts_syncword`, but leaves the FIRST PES on `pid` intact.
+fn zero_adts_syncword_after_first(bytes: &[u8], pid: u16) -> Vec<u8> {
+    let mut out = bytes.to_vec();
+    let mut seen = 0;
+    for chunk in out.chunks_exact_mut(PKT) {
+        if pid_of(chunk) != pid {
+            continue;
+        }
+        if let Some(off) = pes_payload_start(chunk) {
+            seen += 1;
+            if seen == 1 {
+                continue;
+            }
+            let hdr_len = usize::from(chunk[off + 8]);
+            let d = off + 9 + hdr_len;
+            if d < PKT {
+                chunk[d] = 0x00;
+            }
+        }
+    }
+    out
+}
+
+/// F-META-04: the ADTS check used to read only the first PES, so damage
+/// to every later frame passed.
+#[test]
+fn zeroed_adts_syncword_on_every_later_pes_fails_audio_codec() {
+    let p = profiles::by_name("audio").unwrap();
+    let path = gen_to_temp(p, SECONDS, "audio-sync-later");
+    let bytes = std::fs::read(&path).unwrap();
+    let _ = std::fs::remove_file(&path);
+    let r = verify_bytes(
+        &zero_adts_syncword_after_first(&bytes, PROG1_AUDIO),
+        p,
+        SECONDS,
+        "audio-sync-later",
+    );
+    assert_fails_with(&r, "audio_codec_adts: 140 later PES payload(s)");
+}
+
+/// Same hole for AV1: set the forbidden bit of the first OBU header on
+/// every raw-OBU PES after the first (av1-klv-a carries raw OBUs on
+/// stream_id 0xE0).
+#[test]
+fn av1_raw_obu_prefix_damaged_on_every_later_pes_fails_av1_carriage() {
+    let p = profiles::by_name("av1-klv-a").unwrap();
+    let path = gen_to_temp(p, SECONDS, "av1-later");
+    let bytes = std::fs::read(&path).unwrap();
+    let _ = std::fs::remove_file(&path);
+    let mut mutated = bytes.clone();
+    let mut seen = 0;
+    for chunk in mutated.chunks_exact_mut(PKT) {
+        if pid_of(chunk) != PROG1_VIDEO {
+            continue;
+        }
+        if let Some(off) = pes_payload_start(chunk) {
+            seen += 1;
+            if seen > 1 {
+                let d = off + 9 + usize::from(chunk[off + 8]);
+                chunk[d] |= 0x80;
+            }
+        }
+    }
+    let r = verify_bytes(&mutated, p, SECONDS, "av1-later");
+    assert_fails_with(&r, "av1_carriage_wire: 89 later PES payload(s)");
 }
 
 #[test]
