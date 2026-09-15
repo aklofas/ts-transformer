@@ -156,6 +156,22 @@ pub fn classify_packet(p: &[u8; PKT]) -> Result<PacketInfo, String> {
     })
 }
 
+/// Byte-compare two packets for the §2.4.3.3 duplicate rule: identical
+/// everywhere, or identical everywhere except the 6-byte PCR field (bytes
+/// 6..12, the layout `classify_packet` assumes) when BOTH carry a PCR — a
+/// legal duplicate may refresh it. `a_has_pcr`/`b_has_pcr` come from the
+/// caller's own `PacketInfo::pcr_base.is_some()` rather than re-deriving
+/// them here, so this stays a pure byte mask. Deliberately reimplemented
+/// rather than shared with tst-core's own `pcr_masked_identical`
+/// (`demux/sync_ingress.rs`) — this module's independence from the code
+/// under test is the point (see the module doc).
+fn pcr_masked_identical(a: &[u8; PKT], b: &[u8; PKT], a_has_pcr: bool, b_has_pcr: bool) -> bool {
+    if a == b {
+        return true;
+    }
+    a_has_pcr && b_has_pcr && a[..6] == b[..6] && a[12..] == b[12..]
+}
+
 /// One sync-recovery event recorded by a [`Reader`] in resync mode.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Resync {
@@ -408,10 +424,13 @@ pub struct WireSummary {
     /// whose payload opens with the `00 00 01` PES start code. Counted
     /// for every PID, with or without a PTS (an async KLV PES may carry
     /// none, and `pts` only holds timestamped ones). A packet that
-    /// repeats the previous packet's continuity counter on its PID is a
-    /// spec-legal duplicate (§2.4.3.3) and is not counted twice — the
-    /// demuxer suppresses it too (`demux/sync_ingress.rs`), and the
-    /// corruption tap's `Dup` class emits exactly that.
+    /// repeats the previous packet's continuity counter on its PID AND is
+    /// otherwise byte-identical (PCR field exempted) is a spec-legal
+    /// duplicate (§2.4.3.3) and is not counted twice — see
+    /// `pcr_masked_identical`; the demuxer suppresses it too
+    /// (`demux/sync_ingress.rs`), and the corruption tap's `Dup` class
+    /// emits exactly that. A same-CC packet whose other bytes differ is
+    /// NOT a duplicate and counts as its own PES start.
     pub pes_starts_per_pid: BTreeMap<u16, u64>,
     pub packets: u64,
     /// PSI sections discarded because their CRC-32 did not check out —
@@ -436,9 +455,11 @@ pub struct Reader {
     /// see that method's doc comment for why the ordinal is kept here
     /// rather than re-derived by a caller polling [`Reader::last_pcr`].
     pcr_events: Vec<(u64, u64)>,
-    /// Last continuity counter seen per PID on a payload-carrying packet
-    /// — see [`WireSummary::pes_starts_per_pid`].
-    last_cc: BTreeMap<u16, u8>,
+    /// Last payload-carrying packet seen per PID, kept whole (not just its
+    /// CC) so a duplicate can be told from a same-CC packet whose other
+    /// bytes differ — see [`WireSummary::pes_starts_per_pid`] and
+    /// [`pcr_masked_identical`].
+    last_pkt: BTreeMap<u16, [u8; PKT]>,
 }
 
 impl Default for Reader {
@@ -467,7 +488,7 @@ impl Reader {
             last_pcr: None,
             retention,
             pcr_events: Vec::new(),
-            last_cc: BTreeMap::new(),
+            last_pkt: BTreeMap::new(),
         }
     }
 
@@ -733,10 +754,25 @@ impl Reader {
         let payload = &p[info.payload_off..];
         // `has_payload` is true here (the AF-only return above), so
         // §2.4.3.3 says this packet's CC advanced — unless it repeats the
-        // previous one, which makes it a spec-legal duplicate. Tracked on
-        // every payload PID (PSI included) so a later media packet on a
-        // PID that was first seen as PSI is judged against a real value.
-        let duplicate = self.last_cc.insert(info.pid, info.cc) == Some(info.cc);
+        // previous one AND is otherwise byte-identical (PCR field
+        // exempted: a legal duplicate may refresh it), which makes it a
+        // spec-legal duplicate. A same-CC packet whose other bytes differ
+        // is NOT a duplicate (non-conformant input, e.g. an encoder that
+        // forgot to advance the counter) and must still count as its own
+        // PES start. Tracked on every payload PID (PSI included) so a
+        // later media packet on a PID that was first seen as PSI is
+        // judged against a real value.
+        let duplicate = self.last_pkt.get(&info.pid).is_some_and(|prev| {
+            let prev_info = classify_packet(prev).expect("previously accepted packet");
+            prev_info.cc == info.cc
+                && pcr_masked_identical(
+                    prev,
+                    p,
+                    prev_info.pcr_base.is_some(),
+                    info.pcr_base.is_some(),
+                )
+        });
+        self.last_pkt.insert(info.pid, *p);
         if info.pid == PAT_PID {
             if info.pusi {
                 self.pat(payload)?;
@@ -1479,6 +1515,42 @@ mod tests {
             "a duplicate is not a second PES"
         );
         assert_eq!(s.packets_per_pid[&0x1011], bytes_of_pid(&bytes, 0x1011) + 1);
+    }
+
+    /// PR review finding: duplicate detection compared only the
+    /// continuity counter, so a non-conformant encoder that repeats a CC
+    /// WITHOUT repeating the packet's other bytes had its second PES
+    /// start silently swallowed — undercounting `pes_starts_per_pid` and
+    /// weakening `wire_vs_demux_*`. A same-CC packet whose payload
+    /// differs must count as its own PES start.
+    #[test]
+    fn reader_counts_a_same_cc_packet_with_different_bytes_as_a_new_pes_start() {
+        let bytes = bytes_of("baseline", 3.0, "pes-starts-non-dup");
+        let first = bytes
+            .chunks_exact(PKT)
+            .position(|c| {
+                let pkt: [u8; PKT] = c.try_into().unwrap();
+                let info = classify_packet(&pkt).unwrap();
+                info.pid == 0x1011 && info.pusi
+            })
+            .expect("a video PES start");
+        // Same CC as `first`, but flip a payload byte well past the PES
+        // header so it stays a valid PES start with different content —
+        // the "non-conformant encoder" case `pcr_masked_identical` must
+        // reject as NOT a duplicate.
+        let mut altered: [u8; PKT] = bytes[first * PKT..(first + 1) * PKT].try_into().unwrap();
+        altered[100] ^= 0x01;
+        let mut mutated = Vec::with_capacity(bytes.len() + PKT);
+        mutated.extend_from_slice(&bytes[..(first + 1) * PKT]);
+        mutated.extend_from_slice(&altered);
+        mutated.extend_from_slice(&bytes[(first + 1) * PKT..]);
+        let mut r = Reader::new();
+        r.feed(&mutated).unwrap();
+        let s = r.finish().unwrap();
+        assert_eq!(
+            s.pes_starts_per_pid[&0x1011], 91,
+            "a same-CC packet with different bytes is not a duplicate: {s:?}"
+        );
     }
 
     /// Packets on `pid` in `bytes` — the raw denominator

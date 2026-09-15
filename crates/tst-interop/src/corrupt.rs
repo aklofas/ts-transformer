@@ -1672,13 +1672,16 @@ fn expects(inj: &Tracked, sig: Signal) -> bool {
 
 /// The PID half of causality: whether `inj` can reach a signal reported
 /// on `pid`. A resync carries no PID (sync was lost for the whole
-/// multiplex) and a PSI checksum failure is the PSI PID's own; a
-/// framing-wide injection reaches everything; anything else has to
-/// land on the PID it damaged.
+/// multiplex) and a PSI checksum failure is the PSI PID's own — but only
+/// an injection that itself touched a PSI table (`inj.psi`) may claim
+/// that escape, or an injection on an unrelated media PID could explain
+/// away a PAT/PMT checksum failure it never came near; a framing-wide
+/// injection reaches everything; anything else has to land on the PID
+/// it damaged.
 fn reaches(inj: &Tracked, pid: Option<u16>, sig: Signal) -> bool {
     match pid {
         None => true,
-        Some(p) => inj.framing_wide || sig == Signal::PsiChecksum || inj.pid == p,
+        Some(p) => inj.framing_wide || (inj.psi && sig == Signal::PsiChecksum) || inj.pid == p,
     }
 }
 
@@ -3607,6 +3610,38 @@ mod tests {
         assert_eq!(r.attributed_events, 0, "{r:?}");
         assert_eq!(r.undetected_count, 1, "{r:?}");
         assert_eq!(r.unexplained_discontinuities, 1, "{r:?}");
+    }
+
+    /// PR review finding: `reaches` treated `Signal::PsiChecksum` as
+    /// PID-unconstrained for ANY injection (its own doc claimed "a PSI
+    /// checksum failure is the PSI PID's own", but the code never
+    /// checked that `inj` was itself PSI-related), so a same-window
+    /// `Drop` on an unrelated media PID could "explain" a PAT/PMT
+    /// checksum failure it never came near — `Class::Drop`'s class check
+    /// is a vacuous `_ => true` for `PsiChecksum`, so only the PID rule
+    /// can be doing the rejecting here.
+    #[test]
+    fn attribution_rejects_a_psi_checksum_signal_from_a_non_psi_injection() {
+        let mut a = Attribution::strict(vec![inj(1000, 10, Class::Drop, 0x1011, true)], &hdr());
+        a.on_pcr(1000, 5000);
+        a.on_signal(5020, Some(0), Signal::PsiChecksum);
+        a.on_media(5100, 0x1011);
+        let r = a.finish(10_000);
+        assert_eq!(r.attributed_events, 0, "{r:?}");
+        assert_eq!(r.undetected_count, 1, "{r:?}");
+        assert_eq!(r.unexplained_nonconformant, 1, "{r:?}");
+
+        // Positive control: an injection that DID touch a PSI table still
+        // gets the "PSI checksum failure is the PSI PID's own" escape.
+        let mut psi_inj = inj(1000, 10, Class::PsiFlip, 0, true);
+        psi_inj.psi = true;
+        let mut a = Attribution::strict(vec![psi_inj], &hdr());
+        a.on_pcr(1000, 5000);
+        a.on_signal(5020, Some(0), Signal::PsiChecksum);
+        a.on_media(5100, 0x1011);
+        let r = a.finish(10_000);
+        assert_eq!(r.attributed_events, 1, "{r:?}");
+        assert_eq!(r.undetected_count, 0, "{r:?}");
     }
 
     /// Same PID, wrong class: a `Drop` can only surface as a continuity

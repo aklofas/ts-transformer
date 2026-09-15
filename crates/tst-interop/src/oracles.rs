@@ -434,10 +434,11 @@ fn pmt_streams(p: &Profile, inv: &Invariants, wire: &WireSummary) -> Vec<String>
 ///
 /// `demux >= wire - explained - boundary`, per PID:
 ///
-/// - `explained` is what the capture itself accounts for: the attributed
-///   injection count when a corruption log is attached (a truncated or
-///   dropped PES-start packet costs the demuxer the access unit while
-///   the wire may still show its start) plus, under `Lossy`, every
+/// - `explained` is what the capture itself accounts for: the count of
+///   receiver signals a corruption log's attribution explains, when one
+///   is attached (a truncated or dropped PES-start packet costs the
+///   demuxer the access unit while the wire may still show its start)
+///   plus, under `Lossy`, every
 ///   `Discontinuity` and `NonConformant` the capture recorded — each is
 ///   a place the demuxer legitimately gave up on a PES. Under `Strict`
 ///   (offline `verify`, `recv --strict` on a transparent cell) those
