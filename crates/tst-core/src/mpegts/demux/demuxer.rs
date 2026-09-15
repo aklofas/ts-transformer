@@ -3161,6 +3161,54 @@ mod tests {
         buf
     }
 
+    /// CORR-13 (deep review #4): a PCR jump on a DEDICATED PCR PID — one
+    /// the PMT names as `PCR_PID` but that carries no elementary stream
+    /// (broadcast / hardware muxes, TSDuck output) — must still surface
+    /// `PcrAnomaly`. The anomaly arm only queued the issue when
+    /// `lookup_stream` knew the PID, so such streams never reported a jump
+    /// and `StrictMode::TimingOnly` could not reject the class.
+    #[test]
+    fn pcr_anomaly_surfaces_on_dedicated_pcr_pid() {
+        let mut demuxer = Demuxer::new();
+        demuxer
+            .feed(&pat_packet_with_programs(&[(1, 0x1000)], 0))
+            .unwrap();
+        demuxer
+            .feed(&pmt_packet_for_test(
+                0x1000,
+                1,
+                0x0200,
+                &[(0x1B, 0x0100)],
+                0,
+            ))
+            .unwrap();
+        while demuxer.next_event().is_some() {}
+
+        demuxer.feed(&pcr_packet_for_test(0x0200, 0)).unwrap();
+        // 2 s @ 27 MHz — twice PCR_ANOMALY_THRESHOLD.
+        demuxer
+            .feed(&pcr_packet_for_test(0x0200, 54_000_000))
+            .unwrap();
+
+        let events: Vec<_> = core::iter::from_fn(|| demuxer.next_event()).collect();
+        let anomaly = events.iter().find_map(|e| match e {
+            DemuxEvent::NonConformant {
+                stream,
+                issue: NonConformantIssue::PcrAnomaly { delta },
+            } => Some((*stream, *delta)),
+            _ => None,
+        });
+        let (stream, delta) = anomaly.unwrap_or_else(|| {
+            panic!("expected PcrAnomaly on the dedicated PCR PID, got {events:?}")
+        });
+        assert_eq!(stream.pid, 0x0200);
+        assert_eq!(
+            stream.program_number, 1,
+            "program resolved from the PMT that declared the PCR PID"
+        );
+        assert_eq!(delta, 54_000_000);
+    }
+
     #[test]
     fn pat_removed_program_clears_cc_by_pid() {
         let mut demuxer = Demuxer::new();
