@@ -310,6 +310,7 @@ impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::ext::pairing::VideoS
 pub mod tst_pipeline::managed_demux_receiver
 pub struct tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R: tst_core::transport::RecvTransport>
 impl<R: tst_core::transport::RecvTransport> tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>
+pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::add_byte_sink(&mut self, tst_pipeline::demux_receiver::ByteSink)
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::close(&mut self)
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::end_reason_handle(&self) -> tst_pipeline::RecvEndReasonHandle
@@ -1644,6 +1645,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::GapBuffer
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::GapBuffer
 pub struct tst_pipeline::ManagedDemuxReceiver<R: tst_core::transport::RecvTransport>
 impl<R: tst_core::transport::RecvTransport> tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>
+pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::add_byte_sink(&mut self, tst_pipeline::demux_receiver::ByteSink)
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::close(&mut self)
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::end_reason_handle(&self) -> tst_pipeline::RecvEndReasonHandle
