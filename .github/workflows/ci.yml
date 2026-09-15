@@ -1246,12 +1246,28 @@ jobs:
           key: cargo-tst-c-matrix-${{ matrix.name }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: cargo-tst-c-matrix-${{ matrix.name }}-
 
+      - name: Install cbindgen (pinned to Cargo.lock's cbindgen)
+        # The header rail below renders a header with the cbindgen CLI. CI
+        # never installed it before 2026-09 (deep-review-4 X-META-01), so the
+        # rail always took its weak committed-header fallback; the rail now
+        # FAILs under CI without a generator. Pinned to Cargo.lock's cbindgen
+        # 0.29.2 so the CLI renders exactly what bindings/c/build.rs renders.
+        # taiki-e/install-action has no cbindgen manifest (checked
+        # 2026-09-14), hence a source install (~1-2 min with a warm registry).
+        # One leg is enough: the rail's verdict does not depend on the
+        # matrix mode — it reads the committed header and renders its own
+        # copy from tst-c-core directly.
+        if: matrix.name == 'srt-only'
+        run: cargo install cbindgen --version 0.29.2 --locked
+
       - name: check-c-header-conditional-sections
         # Verify the committed tstrans.h contains TST_HAS_SRT + TST_HAS_RTP
-        # defines and that srt-only cbindgen output has no rtp_* leak.
-        # Runs unconditionally (header is checked regardless of feature mode)
-        # because the script operates on the committed header, not a
-        # freshly-generated one.
+        # defines and guard blocks, and that a live cbindgen render of
+        # tst-c-core succeeds with a non-trivial declaration set. Fails
+        # closed on generator failure or a missing generator (GitHub sets
+        # CI=true). Once per run (srt-only leg): the script operates on the
+        # committed header + its own render, not on this leg's build output.
+        if: matrix.name == 'srt-only'
         run: bash scripts/check/c/header-conditional-sections.sh
 
       - name: cargo build tst-c (${{ matrix.name }})
