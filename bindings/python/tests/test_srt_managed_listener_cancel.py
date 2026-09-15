@@ -180,10 +180,9 @@ def test_managed_receiver_cancel_wakes_reaccept() -> None:
         pytest.fail("ManagedReceiver listener thread did not accept within 5 s")
     rx = rx_box[0]
 
-    # Capture the cancel handle BEFORE the first `recv_bytes`: pyo3 holds the
-    # `&mut self` borrow for the whole of `recv_bytes` (GIL released, borrow
-    # not), so `cancel_handle()` — a `&self` method — would raise "Already
-    # borrowed" once the pump thread below is parked inside a recv.
+    # Capture the cancel handle before the pump starts; obtaining it later
+    # would also work now (every method borrows `&self`), the early capture
+    # just mirrors the C/JVM tests.
     cancel = rx.cancel_handle()
 
     # Receive at least once so the link is genuinely up before the peer drops.

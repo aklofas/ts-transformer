@@ -37,17 +37,17 @@
 //!   pragmatically so the reconnect loop treats them as a recoverable
 //!   transport breakage and applies backoff.
 //!
-//! Concurrency: `ManagedTransport` keeps its inner `SrtTransport` under
-//! `Arc<Mutex<Option<...>>>` internally; we wrap `PlSender
-//! <ManagedTransport<SrtTransport>>` in `Option<...>` (no extra Mutex
-//! needed) just like T2's `PySender`, since pyo3 already serializes
-//! `&mut self` access. `ManagedRecvTransport` is `&mut self` for
-//! `recv_bytes` so the same shape applies on the recv side.
+//! Concurrency: both wrappers keep their pipeline shell in an
+//! `Arc<Mutex<Option<_>>>` slot and borrow `&self` everywhere; the slot is
+//! held (GIL released) for the whole of a `send_bytes` / `recv_bytes`, and
+//! `close()` fires the managed cancel BEFORE taking it — the cross-thread
+//! close contract of PR #209, which a `&mut self` send/recv could not meet
+//! (PyO3 raised `RuntimeError: Already borrowed` on the closer).
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use pyo3::Py;
 use pyo3::prelude::*;
@@ -63,7 +63,7 @@ use tst_srt::{Listener, ListenerConfig, Socket, SocketConfig, SrtTransport, SrtU
 use crate::errors::make_srt_error;
 use crate::srt::errors::{transport_error_to_pyerr, url_error_to_pyerr};
 use crate::srt::policy::{PyManagedTransportStats, PyReconnectPolicy};
-use crate::srt::transport::{PyCancelHandle, PySocketStats, PySrtStats};
+use crate::srt::transport::{PyCancelHandle, PySocketStats, PySrtStats, sender_error_to_pyerr};
 
 /// Build a fresh caller-mode `SrtTransport` from a URL string. Used by
 /// the reconnect factory closure: every Broken/Closed event reruns
@@ -171,7 +171,8 @@ fn build_receiver_transport(
 /// outside the GIL.
 #[pyclass(name = "ManagedSender", module = "tstrans.srt")]
 pub(crate) struct PyManagedSender {
-    inner: Option<PlSender<ManagedTransport<SrtTransport>>>,
+    /// Shared slot — see the module doc; `close()` cancels before taking it.
+    inner: Arc<Mutex<Option<PlSender<ManagedTransport<SrtTransport>>>>>,
     /// Trait-erased cancel handle pulled from the `ManagedTransport` at
     /// construction. `ManagedTransport::cancel_handle` always returns
     /// `Some(...)` (it wraps both the latched-close flag and the
@@ -242,7 +243,7 @@ impl PyManagedSender {
         let stats_handle = managed.stats_handle();
         let inner = PlSender::new(managed, SenderConfig::default());
         Ok(Self {
-            inner: Some(inner),
+            inner: Arc::new(Mutex::new(Some(inner))),
             cancel,
             stats_handle,
         })
@@ -250,57 +251,25 @@ impl PyManagedSender {
 
     /// Send one pre-muxed TS-bytes chunk. Accepts any bytes-like input.
     /// Releases the GIL during the underlying transport send AND during
-    /// any reconnect/backoff sleep that runs in-line on a Broken peer.
-    fn send_bytes(&mut self, py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<()> {
-        let inner = self
-            .inner
-            .as_mut()
-            .ok_or_else(|| make_srt_error(py, "CLOSED", "managed sender is closed"))?;
-        // Fast path: real `bytes` extracts zero-copy.
-        if let Ok(slice) = data.extract::<&[u8]>() {
-            let res = py.allow_threads(|| inner.send_ts(slice));
-            return res.map_err(|e| match e.source {
-                tst_pipeline::sender::SenderErrorSource::Transport(t) => {
-                    transport_error_to_pyerr(py, t)
-                }
-                tst_pipeline::sender::SenderErrorSource::Framing(f) => {
-                    make_srt_error(py, "CONFIG_INVALID", &f.to_string())
-                }
-                _ => make_srt_error(py, "IO", &e.to_string()),
-            });
-        }
-        // Fallback for bytearray / memoryview / numpy etc.
+    /// any reconnect/backoff wait that runs in-line on a Broken peer. A
+    /// concurrent `close()` cancels first, so a send parked in the
+    /// reconnect loop ends with `SrtError(CLOSED)`.
+    fn send_bytes(&self, py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<()> {
         let coerced = crate::util::coerce_bytes_like(py, data)?;
         let slice: &[u8] = coerced.as_bytes();
-        let res = py.allow_threads(|| inner.send_ts(slice));
-        res.map_err(|e| match e.source {
-            tst_pipeline::sender::SenderErrorSource::Transport(t) => {
-                transport_error_to_pyerr(py, t)
-            }
-            tst_pipeline::sender::SenderErrorSource::Framing(f) => {
-                make_srt_error(py, "CONFIG_INVALID", &f.to_string())
-            }
-            _ => make_srt_error(py, "IO", &e.to_string()),
-        })
+        match crate::util::with_slot(py, &self.inner, |s| s.send_ts(slice)) {
+            None => Err(make_srt_error(py, "CLOSED", "managed sender is closed")),
+            Some(res) => res.map_err(|e| sender_error_to_pyerr(py, e)),
+        }
     }
 
     /// Flush any partial TS bundle held in the framing buffer. Mirrors
     /// `Sender.flush` — releases the GIL during the underlying send.
-    fn flush(&mut self, py: Python<'_>) -> PyResult<()> {
-        let inner = self
-            .inner
-            .as_mut()
-            .ok_or_else(|| make_srt_error(py, "CLOSED", "managed sender is closed"))?;
-        let res = py.allow_threads(|| inner.flush());
-        res.map_err(|e| match e.source {
-            tst_pipeline::sender::SenderErrorSource::Transport(t) => {
-                transport_error_to_pyerr(py, t)
-            }
-            tst_pipeline::sender::SenderErrorSource::Framing(f) => {
-                make_srt_error(py, "CONFIG_INVALID", &f.to_string())
-            }
-            _ => make_srt_error(py, "IO", &e.to_string()),
-        })
+    fn flush(&self, py: Python<'_>) -> PyResult<()> {
+        match crate::util::with_slot(py, &self.inner, |s| s.flush()) {
+            None => Err(make_srt_error(py, "CLOSED", "managed sender is closed")),
+            Some(res) => res.map_err(|e| sender_error_to_pyerr(py, e)),
+        }
     }
 
     /// Shareable cancel handle. Calling `.cancel()` latches the
@@ -314,42 +283,22 @@ impl PyManagedSender {
     /// Scheme-neutral wire stats from the current inner transport.
     /// Returns a fresh zeroed `SocketStats` if the inner is
     /// mid-reconnect (None), matching `ManagedTransport::socket_stats`
-    /// semantics: callers can distinguish "no socket" from "socket
-    /// with zero counters" via `is_alive()`.
+    /// semantics. Waits (GIL released) for a send in flight elsewhere.
     fn socket_stats(&self, py: Python<'_>) -> PyResult<Py<PySocketStats>> {
-        let inner = self
-            .inner
-            .as_ref()
-            .ok_or_else(|| make_srt_error(py, "CLOSED", "managed sender is closed"))?;
-        let core = inner.socket_stats().unwrap_or_default();
+        let core =
+            crate::util::with_slot(py, &self.inner, |s| s.socket_stats().unwrap_or_default())
+                .ok_or_else(|| make_srt_error(py, "CLOSED", "managed sender is closed"))?;
         Py::new(py, PySocketStats::from_core(core))
     }
 
-    /// SRT-rich 17-field stats from the current inner. Returns
-    /// `SrtError(CLOSED)` if the inner is mid-reconnect (no live
-    /// `SrtTransport` to query), distinguishing from the "all zeros"
-    /// case `socket_stats()` returns.
+    /// SRT-rich 17-field stats are not reachable through `ManagedTransport`
+    /// (no accessor on tst-pipeline — see the module doc's "API drift");
+    /// raises `SrtError(IO)` on a live sender and `SrtError(CLOSED)` on a
+    /// closed one, as before.
     fn srt_stats(&self, py: Python<'_>) -> PyResult<Py<PySrtStats>> {
-        let inner = self
-            .inner
-            .as_ref()
-            .ok_or_else(|| make_srt_error(py, "CLOSED", "managed sender is closed"))?;
-        // Reach through PlSender::transport() to the wrapped
-        // ManagedTransport; ManagedTransport has no `stats()` accessor
-        // (it doesn't know its inner is an SrtTransport), so we go
-        // through its private inner via `Transport::is_alive` /
-        // socket_stats indirection. But the symmetric path is: each
-        // call rebuilds via the `ManagedTransport`'s inner lock — not
-        // exposed publicly. So we materialize a "mid-reconnect"
-        // CLOSED error if the underlying socket_stats projects None.
-        //
-        // Pragmatic shape: if SocketStats projects something, build a
-        // PySrtStats from the SocketStats projection — caller gets the
-        // 16 fields the abstract trait surfaces. We can't fish the
-        // libsrt 17-field stats out of ManagedTransport without adding
-        // a new accessor on tst-pipeline, which is out of scope for
-        // T7 (the plan is explicit: drop accessors that don't exist).
-        let _ = inner;
+        if !crate::util::slot_alive(&self.inner, |_| true) {
+            return Err(make_srt_error(py, "CLOSED", "managed sender is closed"));
+        }
         Err(make_srt_error(
             py,
             "IO",
@@ -371,7 +320,7 @@ impl PyManagedSender {
     /// poisoned (an unwind inside another thread while holding it) —
     /// a read-only telemetry path must not panic.
     fn reconnect_stats(&self, py: Python<'_>) -> PyResult<Py<PyManagedTransportStats>> {
-        if self.inner.is_none() {
+        if !crate::util::slot_alive(&self.inner, |_| true) {
             return Err(make_srt_error(py, "CLOSED", "managed sender is closed"));
         }
         let stats = py
@@ -382,20 +331,20 @@ impl PyManagedSender {
         Py::new(py, PyManagedTransportStats::from_core(stats))
     }
 
-    /// Close. Latches the cancel flag (so any in-flight reconnect
-    /// loop exits) and tears down the inner transport. Idempotent.
-    fn close(&mut self) {
-        // Flip cancel first so any reconnect loop blocked on backoff
-        // sleep exits on the next iteration's check.
+    /// Close. Fires the managed cancel FIRST (latches the close flag so any
+    /// in-flight reconnect loop — factory or backoff wait — exits with
+    /// `TransportError::Closed`, and closes the current inner socket),
+    /// then takes the slot and tears the shell down. A `send_bytes()`
+    /// parked on another thread ends with `SrtError(CLOSED)`. Idempotent.
+    fn close(&self, py: Python<'_>) {
         self.cancel.cancel();
-        if let Some(mut t) = self.inner.take() {
-            t.close();
-        }
+        crate::util::close_slot(py, &self.inner, |mut t| t.close());
     }
 
-    /// `True` while the managed sender holds a live transport.
+    /// `True` while the managed sender holds a live transport (a send in
+    /// flight on another thread counts as live).
     fn is_alive(&self) -> bool {
-        self.inner.as_ref().is_some_and(|s| s.is_alive())
+        crate::util::slot_alive(&self.inner, |s| s.is_alive())
     }
 
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -403,19 +352,21 @@ impl PyManagedSender {
     }
 
     fn __exit__(
-        &mut self,
+        &self,
+        py: Python<'_>,
         _exc_type: &Bound<'_, PyAny>,
         _exc_value: &Bound<'_, PyAny>,
         _traceback: &Bound<'_, PyAny>,
     ) -> bool {
-        self.close();
+        self.close(py);
         false
     }
 
     fn __repr__(&self) -> String {
-        match &self.inner {
-            Some(_) => "ManagedSender(open)".to_string(),
-            None => "ManagedSender(closed)".to_string(),
+        if crate::util::slot_alive(&self.inner, |_| true) {
+            "ManagedSender(open)".to_string()
+        } else {
+            "ManagedSender(closed)".to_string()
         }
     }
 }
@@ -439,7 +390,8 @@ impl PyManagedSender {
 /// behaves as `ReconnectMode.BLOCKING`).
 #[pyclass(name = "ManagedReceiver", module = "tstrans.srt")]
 pub(crate) struct PyManagedReceiver {
-    inner: Option<PlReceiver<ManagedRecvTransport<SrtTransport>>>,
+    /// Shared slot — see the module doc; `close()` cancels before taking it.
+    inner: Arc<Mutex<Option<PlReceiver<ManagedRecvTransport<SrtTransport>>>>>,
     /// Shared handle to the `ManagedRecvTransport`'s reconnect counter.
     /// Held independently of the wrapper's lifetime so callers can
     /// read it even mid-reconnect.
@@ -525,7 +477,7 @@ impl PyManagedReceiver {
 
         let inner = PlReceiver::new(managed, ReceiverConfig::default());
         Ok(Self {
-            inner: Some(inner),
+            inner: Arc::new(Mutex::new(Some(inner))),
             reconnects,
             cancel,
             closed: Arc::new(AtomicBool::new(false)),
@@ -537,24 +489,21 @@ impl PyManagedReceiver {
     /// one-quantum semantic as T2's `Receiver.recv_bytes`).
     ///
     /// Releases the GIL during the blocking recv AND during any
-    /// in-line reconnect work (factory + backoff sleep).
+    /// in-line reconnect work (factory + backoff sleep). The slot is
+    /// held for the whole park; `close()` cancels before taking it, so a
+    /// parked call ends with `SrtError(CLOSED)`.
     #[pyo3(signature = (max_len = 1500))]
-    fn recv_bytes(&mut self, py: Python<'_>, max_len: usize) -> PyResult<Py<PyBytes>> {
-        let inner = self
-            .inner
-            .as_mut()
-            .ok_or_else(|| make_srt_error(py, "CLOSED", "managed receiver is closed"))?;
+    fn recv_bytes(&self, py: Python<'_>, max_len: usize) -> PyResult<Py<PyBytes>> {
         let _cap = max_len.max(188);
-        let pkt = py.allow_threads(|| inner.next_packet());
+        let pkt = crate::util::with_slot(py, &self.inner, |r| r.next_packet())
+            .ok_or_else(|| make_srt_error(py, "CLOSED", "managed receiver is closed"))?;
         let bytes = pkt.map_err(|e| match e.source {
             tst_pipeline::receiver::ReceiverErrorSource::Transport(t) => {
                 transport_error_to_pyerr(py, t)
             }
             _ => make_srt_error(py, "IO", &e.to_string()),
         })?;
-        let mut accumulated: Vec<u8> = Vec::with_capacity(bytes.len());
-        accumulated.extend_from_slice(&bytes);
-        Ok(PyBytes::new_bound(py, &accumulated).unbind())
+        Ok(PyBytes::new_bound(py, &bytes).unbind())
     }
 
     /// Total number of successful reconnect rebuilds. Does NOT include
@@ -573,13 +522,12 @@ impl PyManagedReceiver {
         Py::new(py, PyCancelHandle::from_arc(self.cancel.clone()))
     }
 
-    /// Scheme-neutral wire stats from the current inner transport.
+    /// Scheme-neutral wire stats from the current inner transport. Waits
+    /// (GIL released) for a recv parked on another thread.
     fn socket_stats(&self, py: Python<'_>) -> PyResult<Py<PySocketStats>> {
-        let inner = self
-            .inner
-            .as_ref()
-            .ok_or_else(|| make_srt_error(py, "CLOSED", "managed receiver is closed"))?;
-        let core = inner.socket_stats().unwrap_or_default();
+        let core =
+            crate::util::with_slot(py, &self.inner, |r| r.socket_stats().unwrap_or_default())
+                .ok_or_else(|| make_srt_error(py, "CLOSED", "managed receiver is closed"))?;
         Py::new(py, PySocketStats::from_core(core))
     }
 
@@ -587,11 +535,9 @@ impl PyManagedReceiver {
     /// `ManagedRecvTransport` today — same drift as `ManagedSender`.
     /// Use `socket_stats()` for the 16-field scheme-neutral view.
     fn srt_stats(&self, py: Python<'_>) -> PyResult<Py<PySrtStats>> {
-        let inner = self
-            .inner
-            .as_ref()
-            .ok_or_else(|| make_srt_error(py, "CLOSED", "managed receiver is closed"))?;
-        let _ = inner;
+        if !crate::util::slot_alive(&self.inner, |_| true) {
+            return Err(make_srt_error(py, "CLOSED", "managed receiver is closed"));
+        }
         Err(make_srt_error(
             py,
             "IO",
@@ -600,19 +546,21 @@ impl PyManagedReceiver {
         ))
     }
 
-    /// Close. Flips the cancel flag (any in-flight reconnect exits on
-    /// the next iteration) and tears down the inner shell.
-    fn close(&mut self) {
+    /// Close. Flips the local closed flag, fires the managed cancel (any
+    /// in-flight receive or reconnect exits with `TransportError::Closed`),
+    /// then takes the slot and tears the shell down. A `recv_bytes()`
+    /// parked on another thread ends with `SrtError(CLOSED)`. Idempotent.
+    fn close(&self, py: Python<'_>) {
         self.closed.store(true, Ordering::Release);
         self.cancel.cancel();
-        if let Some(mut r) = self.inner.take() {
-            r.close();
-        }
+        crate::util::close_slot(py, &self.inner, |mut r| r.close());
     }
 
-    /// `True` while the managed receiver holds a live shell.
+    /// `True` while the managed receiver holds a live shell (a recv parked
+    /// on another thread counts as live).
     fn is_alive(&self) -> bool {
-        !self.closed.load(Ordering::Acquire) && self.inner.as_ref().is_some_and(|r| r.is_alive())
+        !self.closed.load(Ordering::Acquire)
+            && crate::util::slot_alive(&self.inner, |r| r.is_alive())
     }
 
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -620,20 +568,22 @@ impl PyManagedReceiver {
     }
 
     fn __exit__(
-        &mut self,
+        &self,
+        py: Python<'_>,
         _exc_type: &Bound<'_, PyAny>,
         _exc_value: &Bound<'_, PyAny>,
         _traceback: &Bound<'_, PyAny>,
     ) -> bool {
-        self.close();
+        self.close(py);
         false
     }
 
     fn __repr__(&self) -> String {
         let attempts = self.reconnects.load(Ordering::Acquire);
-        match &self.inner {
-            Some(_) => format!("ManagedReceiver(open, reconnect_attempts={attempts})"),
-            None => format!("ManagedReceiver(closed, reconnect_attempts={attempts})"),
+        if crate::util::slot_alive(&self.inner, |_| true) {
+            format!("ManagedReceiver(open, reconnect_attempts={attempts})")
+        } else {
+            format!("ManagedReceiver(closed, reconnect_attempts={attempts})")
         }
     }
 }
