@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use tst_core::net::udp_socket::{apply_multicast_send_knobs, bind_udp_socket, set_socket_buffers};
+use tst_core::net::{SendClass, classify_send_error};
 use tst_core::transport::{BrokenCause, SocketStats, Transport, TransportError};
 
 use crate::config::SocketConfig;
@@ -132,9 +133,13 @@ impl Transport for UdpTransport {
                 self.stats.bytes_sent = self.stats.bytes_sent.saturating_add(msg.len() as u64);
                 Ok(())
             }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+            // The send deadline ticked over (`WouldBlock` on Linux/macOS,
+            // `TimedOut` on Windows — CORR-24) or a signal interrupted the
+            // call: the datagram was NOT consumed, so this is retryable
+            // Backpressure with the transport still alive.
+            Err(e) if classify_send_error(&e) == SendClass::Transient => {
                 Err(TransportError::Backpressure {
-                    msg: format!("send WouldBlock: {e}"),
+                    msg: format!("send deadline expired: {e}"),
                     errno_code: e.raw_os_error(),
                 })
             }

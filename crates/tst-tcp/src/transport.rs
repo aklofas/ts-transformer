@@ -5,6 +5,7 @@ use std::net::{SocketAddr, TcpStream};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use tst_core::net::{SendClass, classify_send_error};
 use tst_core::transport::{
     BrokenCause, RecvTransport, SocketStats, Transport, TransportCancel, TransportError,
 };
@@ -246,8 +247,9 @@ impl TcpTransport {
 /// to retry per the [`Transport`] contract) from a partial-prefix-then-
 /// `WouldBlock` (the prefix is already on the wire, so the *caller* must not
 /// retry the slice — but the stream itself is intact: the kernel accepted the
-/// prefix in order, and the `WouldBlock` is only the 100 ms send deadline
-/// (`apply_knobs`) ticking over). In that second case the loop keeps writing
+/// prefix in order, and the `WouldBlock` (`TimedOut` on Windows —
+/// [`classify_send_error`]) is only the 100 ms send deadline (`apply_knobs`)
+/// ticking over). In that second case the loop keeps writing
 /// `&msg[written..]`, re-checking `alive` at every tick so a cancel or close
 /// from another thread bounds the wait — the same poll shape `recv_bytes`
 /// uses. Tearing the connection down here instead is what used to desync
@@ -279,13 +281,13 @@ fn write_loop<W: FnMut(&[u8]) -> std::io::Result<usize>>(
             }
             Ok(n) => written += n,
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => { /* EINTR: retry */ }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+            Err(e) if classify_send_error(&e) == SendClass::Transient => {
                 if written == 0 {
                     // Nothing was consumed — the slice is intact and safe to
                     // retry per the Transport contract.
                     return Err((
                         TransportError::Backpressure {
-                            msg: format!("write WouldBlock: {e}"),
+                            msg: format!("write deadline expired: {e}"),
                             errno_code: e.raw_os_error(),
                         },
                         false,
@@ -586,6 +588,23 @@ mod write_loop_tests {
             }
             other => panic!("expected Closed after a mid-message cancel, got {other:?}"),
         }
+    }
+
+    /// CORR-24: `TimedOut` is what Windows reports when `SO_SNDTIMEO` expires
+    /// (`WSAETIMEDOUT`); Linux/macOS report `WouldBlock` (`EAGAIN`) for the
+    /// same event. Both are the deadline ticking over: zero progress is
+    /// `Backpressure`, progress keeps writing — never `Broken`.
+    #[test]
+    fn timed_out_is_the_deadline_tick_like_wouldblock() {
+        let msg = vec![0u8; 188];
+        let zero = io::Error::new(io::ErrorKind::TimedOut, "wsaetimedout");
+        match write_loop(&msg, &live(), scripted(vec![Err(zero)])) {
+            Err((TransportError::Backpressure { .. }, mark_dead)) => assert!(!mark_dead),
+            other => panic!("zero-progress TimedOut must be Backpressure, got {other:?}"),
+        }
+        let partial = io::Error::new(io::ErrorKind::TimedOut, "wsaetimedout");
+        let r = write_loop(&msg, &live(), scripted(vec![Ok(100), Err(partial), Ok(88)]));
+        assert!(r.is_ok(), "TimedOut with progress must keep writing, got {r:?}");
     }
 
     #[test]
