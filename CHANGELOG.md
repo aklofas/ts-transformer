@@ -801,25 +801,33 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed — python (WP-5)
 
-- **Every sender-side `close()` now cancels first and is safe from another
-  thread.** Fifteen `tstrans` classes still closed through PyO3's mutable
-  borrow — `srt.Sender` / `MuxSender` / `ManagedSender` /
-  `ManagedReceiver` / `ManagedMuxSender` / `Socket` / `Listener`,
-  `rtp.Sender` / `Receiver` / `MuxSender` / `H264Receiver`,
-  `udp.Transport` / `RecvTransport`, `rist.Transport` / `RecvTransport` —
-  so a `close()` from another thread while a call was parked (a send
-  waiting out a `ManagedMuxSender` reconnect backoff, a `recv_bytes` on a
-  silent peer, an `accept`) raised `RuntimeError: Already borrowed` and the
-  parked thread stayed parked (forever under `max_attempts=None`). All
-  fifteen now keep their shell in a shared slot and borrow immutably, the
-  shape `srt.Receiver` / the `DemuxReceiver`s / `tcp.Transport` already
-  had: `close()` fires the shell's cancel, then takes the slot, and the
-  parked call ends with the shell's cancel kind — `SrtError(CLOSED)` on
-  the managed shells and `SrtError(BROKEN | CLOSED)` on the plain ones,
-  `RtpError(CANCELLED)` (`H264Receiver.recv_au()` returns `None`),
-  `UdpError(CLOSED)` / `RistError(CLOSED)`. `is_alive()` reports `True`
-  while a call is parked; the getters wait for the parked call with the
-  GIL released instead of raising. For the raw-bytes `srt.Sender` a
+- **Every sender-side `close()` is now safe from another thread; every
+  class whose blocking call can actually park also cancels it first.**
+  Fifteen `tstrans` classes still closed through PyO3's mutable borrow —
+  `srt.Sender` / `MuxSender` / `ManagedSender` / `ManagedReceiver` /
+  `ManagedMuxSender` / `Socket` / `Listener`, `rtp.Sender` / `Receiver` /
+  `MuxSender` / `H264Receiver`, `udp.Transport` / `RecvTransport`,
+  `rist.Transport` / `RecvTransport` — so a `close()` from another thread
+  while a call was parked (a send waiting out a `ManagedMuxSender`
+  reconnect backoff, a `recv_bytes` on a silent peer, an `accept`) raised
+  `RuntimeError: Already borrowed` and the parked thread stayed parked
+  (forever under `max_attempts=None`). All fifteen now keep their shell in
+  a shared slot and borrow immutably, the shape `srt.Receiver` / the
+  `DemuxReceiver`s / `tcp.Transport` already had. For the thirteen with a
+  cancel handle (every class above except `udp.Transport` and
+  `rist.Transport`, whose `send()` is a single non-blocking syscall with
+  nothing to interrupt), `close()` fires the shell's cancel *before*
+  taking the slot, and the parked call ends with the shell's cancel kind —
+  `SrtError(CLOSED)` on the managed shells and `SrtError(BROKEN | CLOSED)`
+  on the plain ones, `RtpError(CANCELLED)` (`H264Receiver.recv_au()`
+  returns `None`), `UdpError(CLOSED)` / `RistError(CLOSED)` on
+  `RecvTransport` (a new binding-level stop flag polled between the
+  kernel/librist wait's ≤100 ms slices — see below). `udp.Transport` /
+  `rist.Transport` only needed the shared-slot borrow fix: `close()` waits
+  out the in-flight `send()` (microseconds) rather than raising.
+  `is_alive()` reports `True` while a call is parked; the getters wait for
+  the parked call with the GIL released instead of raising. For the
+  raw-bytes `srt.Sender` a
   cancel-first close no longer drains a partial framing bundle — call
   `flush()` first when the tail matters (`MuxSender` was already
   cancel-first). `docs/languages/python.md` had claimed `ManagedReceiver`
