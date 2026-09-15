@@ -7099,6 +7099,7 @@ pub fn tst_core::url::common::parse_byte_size(&str) -> core::result::Result<usiz
 pub fn tst_core::url::common::parse_host_port(&str) -> core::result::Result<(core::net::ip_addr::IpAddr, u16), tst_core::url::common::UrlError>
 pub fn tst_core::url::common::parse_int_query<T>(&str) -> core::result::Result<T, alloc::string::String> where T: core::str::traits::FromStr, <T as core::str::traits::FromStr>::Err: core::fmt::Display
 pub fn tst_core::url::common::parse_url(&str) -> core::result::Result<tst_core::url::common::ParsedUrl<'_>, tst_core::url::common::UrlError>
+pub fn tst_core::url::common::percent_decode(&str) -> core::result::Result<alloc::borrow::Cow<'_, str>, tst_core::url::common::UrlError>
 #[non_exhaustive] pub enum tst_core::url::UrlError
 pub tst_core::url::UrlError::BadPercentEncoding
 pub tst_core::url::UrlError::BadPercentEncoding::detail: alloc::string::String
