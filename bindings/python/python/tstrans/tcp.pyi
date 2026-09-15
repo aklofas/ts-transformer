@@ -350,7 +350,9 @@ class Listener:
         ...
 
     def close(self) -> None:
-        """Close the listener. Idempotent."""
+        """Close the listener. Idempotent. From another thread it ends a
+        parked ``accept_blocking()`` with ``TcpError(kind=CLOSED)`` within
+        about 100 ms."""
         ...
 
     def __enter__(self) -> Listener: ...

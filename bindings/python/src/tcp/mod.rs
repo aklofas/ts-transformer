@@ -25,7 +25,9 @@
 //! - `close`, `stats`, `peer_addr`, `repr` -> also release the GIL during
 //!   mutex acquisition; `close` fires the cancel handle first so a parked
 //!   `recv` unblocks within ≤100 ms, making the lock promptly available.
-//! - `local_port` (Listener) -> fast read, no GIL release needed.
+//! - `Listener.close` / `local_port` / `repr` -> likewise release the GIL
+//!   around the lock, and `Listener.close` fires the listener's own cancel
+//!   handle first so a parked `accept_blocking` returns within ≤100 ms.
 //!
 //! Bytes-like extraction in `Transport.send(payload)` follows the abi3-py310
 //! two-path pattern from udp/mod.rs: fast zero-copy `&[u8]` for `bytes`,
@@ -546,7 +548,14 @@ impl PyTcpTransportBuilder {
 /// remain live while waiting for a connection.
 #[pyclass(name = "Listener", module = "tstrans.tcp")]
 pub(crate) struct PyTcpListener {
+    /// Held (GIL released) by a parked `accept_blocking`; `close()` fires
+    /// `cancel` BEFORE taking it. Every method releases the GIL around the
+    /// lock so a parked accept can never freeze the interpreter.
     inner: Mutex<Option<TcpListener>>,
+    /// `TcpListener::cancel_handle()` snapshot taken at `build()`. Firing
+    /// it makes a parked `accept_blocking()` return `TcpError(CLOSED)` at
+    /// its next poll boundary (≤100 ms).
+    cancel: TcpCancelHandle,
 }
 
 #[pymethods]
@@ -561,7 +570,8 @@ impl PyTcpListener {
     /// wrapping the accepted connection.
     ///
     /// Raises `TcpError(kind=IO)` on accept failure.
-    /// Raises `TcpError(kind=CLOSED)` if the listener has been closed.
+    /// Raises `TcpError(kind=CLOSED)` if the listener has been closed —
+    /// including a `close()` from another thread while this call is parked.
     ///
     /// Releases the GIL while waiting.
     fn accept_blocking(&self, py: Python<'_>) -> PyResult<PyTcpTransport> {
@@ -582,26 +592,36 @@ impl PyTcpListener {
     /// Local bound port. Non-zero after successful `build()`.
     ///
     /// Use this to discover the ephemeral port when `.bind("127.0.0.1:0")`
-    /// was used.
+    /// was used. Waits (GIL released) for a parked `accept_blocking` on
+    /// another thread to release the lock.
     fn local_port(&self, py: Python<'_>) -> PyResult<u16> {
-        let guard = self
-            .inner
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("tcp listener mutex poisoned"))?;
-        let listener = guard
-            .as_ref()
-            .ok_or_else(|| make_tcp_error(py, "CLOSED", "listener closed"))?;
-        listener
-            .local_addr()
-            .map(|a| a.port())
-            .map_err(|e| make_tcp_error(py, "IO", &e.to_string()))
+        let result: Result<u16, TcpError> = py.allow_threads(|| {
+            let guard = self
+                .inner
+                .lock()
+                .map_err(|_| TcpError::InvalidConfig("listener mutex poisoned".into()))?;
+            let listener = guard.as_ref().ok_or(TcpError::Closed)?;
+            listener
+                .local_addr()
+                .map(|a| a.port())
+                .map_err(TcpError::Io)
+        });
+        result.map_err(|e| map_tcp_error_kind(py, e))
     }
 
-    /// Close the listener. Idempotent -- further `accept_blocking()` calls
-    /// raise `TcpError(kind=CLOSED)`.
-    fn close(&self) {
-        let mut guard = self.inner.lock().unwrap_or_else(|p| p.into_inner());
-        guard.take(); // drop the std::net::TcpListener
+    /// Close the listener. Fires the cancel handle BEFORE taking the lock,
+    /// so an `accept_blocking()` parked on another thread ends with
+    /// `TcpError(kind=CLOSED)` within ≤100 ms; then frees the listener.
+    /// Idempotent -- further `accept_blocking()` calls raise
+    /// `TcpError(kind=CLOSED)`.
+    fn close(&self, py: Python<'_>) {
+        self.cancel.cancel();
+        py.allow_threads(|| {
+            let taken = self.inner.lock().unwrap_or_else(|p| p.into_inner()).take();
+            if let Some(l) = taken {
+                l.close();
+            }
+        });
     }
 
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -610,20 +630,23 @@ impl PyTcpListener {
 
     fn __exit__(
         &self,
+        py: Python<'_>,
         _exc_type: &Bound<'_, PyAny>,
         _exc_value: &Bound<'_, PyAny>,
         _traceback: &Bound<'_, PyAny>,
     ) -> bool {
-        self.close();
+        self.close(py);
         false
     }
 
-    fn __repr__(&self) -> String {
-        let guard = self.inner.lock().unwrap_or_else(|p| p.into_inner());
-        match guard.as_ref() {
-            Some(_) => "Listener(open)".to_string(),
-            None => "Listener(closed)".to_string(),
-        }
+    fn __repr__(&self, py: Python<'_>) -> String {
+        py.allow_threads(|| {
+            let guard = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+            match guard.as_ref() {
+                Some(_) => "Listener(open)".to_string(),
+                None => "Listener(closed)".to_string(),
+            }
+        })
     }
 }
 
@@ -759,9 +782,13 @@ impl PyTcpListenerBuilder {
         });
 
         match listener {
-            Ok(l) => Ok(PyTcpListener {
-                inner: Mutex::new(Some(l)),
-            }),
+            Ok(l) => {
+                let cancel = l.cancel_handle();
+                Ok(PyTcpListener {
+                    inner: Mutex::new(Some(l)),
+                    cancel,
+                })
+            }
             Err(TcpError::Url(e)) => Err(map_tcp_url_error(py, e)),
             Err(e) => Err(map_tcp_error_kind(py, e)),
         }
