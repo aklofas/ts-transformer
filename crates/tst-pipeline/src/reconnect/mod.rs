@@ -240,7 +240,9 @@ impl ManagedStatsHandle {
 ///   own bytes are **not** queued — the caller sees the error and owns
 ///   the resend decision. [`Self::is_alive`] returns `true` while a
 ///   background worker is actively recovering (never `false`, which
-///   would read as permanently dead rather than "recovering").
+///   would read as permanently dead rather than "recovering") — and
+///   `false` once `close()` or `cancel()` has latched, regardless of
+///   what the inner transport or a still-exiting worker reports.
 ///
 /// # Locking
 ///
@@ -829,6 +831,14 @@ impl<T: Transport + 'static> Transport for ManagedTransport<T> {
     }
 
     fn is_alive(&self) -> bool {
+        // The wrapper's own latch first (CORR-10): after close()/cancel()
+        // every send returns `Closed`, whatever the inner says — a plain
+        // `SrtTransport` keeps answering `socket.is_some()` after its fd
+        // was closed by the cancel handle, and a background worker may
+        // still be winding down.
+        if self.closed.load(std::sync::atomic::Ordering::Acquire) {
+            return false;
+        }
         if self
             .shared
             .bg_active
@@ -1251,5 +1261,38 @@ mod cancel_tests {
         assert_eq!(s1.reconnect_attempts, 3, "two failures + one success");
         assert_eq!(s1.reconnect_successes, 1);
         assert_eq!(s1.gap_len, 0, "gap drained by the successful reconnect");
+    }
+
+    /// CORR-10: the wrapper latches `closed` on cancel (and every later
+    /// `send_bytes` returns `Closed`), but `is_alive()` asked only the
+    /// background flag and the inner. `NoopT` is always alive and has no
+    /// cancel handle — the exact shape of a real `SrtTransport`, whose
+    /// `is_alive` is `socket.is_some()` and stays true after the cancel
+    /// handle closes the fd.
+    #[test]
+    fn is_alive_reads_the_closed_latch_first() {
+        let factory = || -> Result<NoopT, TransportError> {
+            Err(TransportError::Broken {
+                msg: "".into(),
+                errno_code: None,
+                cause: BrokenCause::Unspecified,
+            })
+        };
+        let mut managed = ManagedTransport::new(NoopT, factory, ReconnectPolicy::default());
+        assert!(managed.is_alive(), "pre-cancel: inner is alive");
+
+        managed
+            .cancel_handle()
+            .expect("managed always hands out a handle")
+            .cancel();
+
+        assert!(
+            matches!(managed.send_bytes(b"x"), Err(TransportError::Closed)),
+            "the send path already honours the latch"
+        );
+        assert!(
+            !managed.is_alive(),
+            "cancel latched `closed`, but is_alive() still reported the inner's answer (NoopT is always alive)"
+        );
     }
 }
