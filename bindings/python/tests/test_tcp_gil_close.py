@@ -317,3 +317,60 @@ def test_tcp_recv_empty_destination_raises_value_error_before_io() -> None:
         for c in accepted:
             c.close()
         srv.close()
+
+
+# ─────────────────────────────────────────────────────────────────────────── #
+# CORR-12: Listener.close() from another thread while accept_blocking() is parked
+# ─────────────────────────────────────────────────────────────────────────── #
+
+_LISTENER_CLOSE_CHILD = r"""
+import sys, threading, time
+from tstrans import tcp
+from tstrans.exceptions import TcpError
+
+listener = tcp.Listener.builder().bind("127.0.0.1:0").build()
+result = []
+
+def accept_worker():
+    try:
+        listener.accept_blocking()
+        result.append(("ok", None))
+    except TcpError as exc:
+        result.append(("err", exc.kind.name))
+    except BaseException as exc:  # noqa: BLE001
+        result.append(("other", repr(exc)))
+
+t = threading.Thread(target=accept_worker, daemon=True)
+t.start()
+time.sleep(0.3)  # parked in accept with the GIL released
+t0 = time.monotonic()
+listener.close()  # on the base commit this blocks the interpreter for good
+t.join(3.0)
+print("close_returned_after", round(time.monotonic() - t0, 3), "result", result)
+sys.exit(0 if (result == [("err", "CLOSED")] and time.monotonic() - t0 < 2.0) else 1)
+"""
+
+
+def test_tcp_listener_close_from_other_thread_unparks_accept_blocking() -> None:
+    """`Listener.close()` must return within 2 s while another thread is
+    parked in `accept_blocking()`, and that accept must end with
+    `TcpError(CLOSED)`. Run in a child interpreter: before the fix the
+    close blocked on the listener mutex WITH the GIL held, so the whole
+    process wedged (nothing, not even a rescue connect, could run)."""
+    import subprocess
+    import sys
+
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", _LISTENER_CLOSE_CHILD],
+            capture_output=True,
+            text=True,
+            timeout=8.0,
+        )
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(
+            "child interpreter wedged: Listener.close() did not return while "
+            f"accept_blocking() was parked (stdout={exc.stdout!r})"
+        )
+    assert proc.returncode == 0, f"child failed: stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    assert "result [('err', 'CLOSED')]" in proc.stdout, proc.stdout
