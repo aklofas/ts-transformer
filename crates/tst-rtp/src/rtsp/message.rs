@@ -195,17 +195,36 @@ pub(crate) fn rtsp_frame_decision(buf: &[u8]) -> RtspFraming {
     RtspFraming::Complete { total_len }
 }
 
-/// Insert a parsed header, rejecting a duplicate `Content-Length` (a classic
-/// request-smuggling vector that a last-wins `HashMap` would otherwise hide).
+/// Insert a parsed header. A repeated name follows RFC 7230 §3.2.2 list
+/// semantics — the values are joined with `", "` — so a `WWW-Authenticate:`
+/// a camera sends as two lines (Digest + Basic, RFC 7235 §4.1) reaches
+/// `parse_challenges` as one multi-challenge string instead of last-wins
+/// (which kept whichever scheme came LAST and downgraded Digest to Basic).
+///
+/// Three headers are single-valued and a repeat is rejected outright:
+/// `Content-Length` (a classic request-smuggling vector a last-wins map
+/// would hide), `CSeq` (RFC 7826 §18.20) and `Session` (§18.49).
 fn insert_header_strict(
     headers: &mut HashMap<String, String>,
     name: String,
     value: String,
 ) -> Result<(), &'static str> {
-    if name == "content-length" && headers.contains_key("content-length") {
-        return Err("duplicate Content-Length header");
+    use std::collections::hash_map::Entry;
+    match headers.entry(name) {
+        Entry::Vacant(slot) => {
+            slot.insert(value);
+        }
+        Entry::Occupied(mut slot) => match slot.key().as_str() {
+            "content-length" => return Err("duplicate Content-Length header"),
+            "cseq" => return Err("duplicate CSeq header"),
+            "session" => return Err("duplicate Session header"),
+            _ => {
+                let joined = slot.get_mut();
+                joined.push_str(", ");
+                joined.push_str(&value);
+            }
+        },
     }
-    headers.insert(name, value);
     Ok(())
 }
 
@@ -767,6 +786,89 @@ mod tests {
         assert!(matches!(e, RtspError::BadResponse { .. }));
     }
 
+    /// CORR-05: a 401 whose `WWW-Authenticate` arrives as two header lines
+    /// (Digest first, Basic second — RFC 7235 §4.1) must not collapse to
+    /// the LAST line. Before the fix the `HashMap` insert was last-wins:
+    /// only the Basic line survived and `build_authorization` put
+    /// `user:password` on the wire base64-encoded.
+    #[test]
+    fn two_line_www_authenticate_keeps_digest() {
+        use crate::rtsp::auth::build_authorization;
+        use secrecy::SecretString;
+
+        let raw = b"RTSP/1.0 401 Unauthorized\r\n\
+                    CSeq: 2\r\n\
+                    WWW-Authenticate: Digest realm=\"r\", nonce=\"n\"\r\n\
+                    WWW-Authenticate: Basic realm=\"r\"\r\n\
+                    \r\n";
+        let (resp, _) = RtspResponse::parse(raw).unwrap();
+        let www = resp
+            .headers
+            .get("www-authenticate")
+            .expect("header present");
+        assert_eq!(www, "Digest realm=\"r\", nonce=\"n\", Basic realm=\"r\"");
+        let header = build_authorization(
+            RtspMethod::Describe,
+            "rtsp://cam/x",
+            www,
+            "u",
+            &SecretString::new("p".into()),
+            1,
+        )
+        .unwrap();
+        assert!(
+            header.starts_with("Digest "),
+            "expected Digest, got {header:?}"
+        );
+    }
+
+    /// The joined value must still yield Digest when Basic is listed FIRST:
+    /// `parse_challenges` has to recognise `Digest realm=…` as a new scheme,
+    /// not as a parameter named `Digest realm` of the Basic challenge.
+    #[test]
+    fn two_line_www_authenticate_basic_first_still_prefers_digest() {
+        use crate::rtsp::auth::build_authorization;
+        use secrecy::SecretString;
+
+        let raw = b"RTSP/1.0 401 Unauthorized\r\n\
+                    CSeq: 2\r\n\
+                    WWW-Authenticate: Basic realm=\"r\"\r\n\
+                    WWW-Authenticate: Digest realm=\"r\", nonce=\"n\"\r\n\
+                    \r\n";
+        let (resp, _) = RtspResponse::parse(raw).unwrap();
+        let www = resp.headers.get("www-authenticate").unwrap();
+        let header = build_authorization(
+            RtspMethod::Describe,
+            "rtsp://cam/x",
+            www,
+            "u",
+            &SecretString::new("p".into()),
+            1,
+        )
+        .unwrap();
+        assert!(
+            header.starts_with("Digest "),
+            "expected Digest, got {header:?}"
+        );
+    }
+
+    /// `Session` is single-valued (RFC 7826 §18.49): a repeated `Session:`
+    /// would otherwise join into an id no server issued.
+    #[test]
+    fn parse_rejects_duplicate_session() {
+        let raw = b"RTSP/1.0 200 OK\r\nCSeq: 3\r\nSession: abc\r\nSession: def\r\n\r\n";
+        let e = RtspResponse::parse(raw).unwrap_err();
+        assert!(
+            matches!(
+                e,
+                RtspError::BadResponse {
+                    detail: "duplicate Session header"
+                }
+            ),
+            "got {e:?}"
+        );
+    }
+
     // The client interleaved pump's cap-check (`pump_accumulation_exceeded`
     // -> `rtsp_frame_decision`) and its boundary scanner
     // (`scan_rtsp_message_boundary` in `rtsp::client::interleaved_pump`)
@@ -1105,5 +1207,30 @@ mod request_parse_tests {
             b"SETUP rtsp://x/y RTSP/1.0\r\nCSeq: 2\r\nContent-Length: 5\r\nContent-Length: 0\r\n\r\nHELLO";
         let e = RtspRequest::parse(raw).unwrap_err();
         assert!(matches!(e, RtspError::BadResponse { .. }));
+    }
+
+    /// CORR-05, request side: a repeated list header is joined, not last-wins.
+    #[test]
+    fn request_joins_repeated_list_header() {
+        let raw = b"OPTIONS rtsp://x/y RTSP/1.0\r\nCSeq: 1\r\nRequire: a\r\nRequire: b\r\n\r\n";
+        let (req, _) = RtspRequest::parse(raw).unwrap();
+        assert_eq!(req.headers.get("require").map(String::as_str), Some("a, b"));
+    }
+
+    /// `CSeq` is single-valued (RFC 7826 §18.20): a repeat is an error, never
+    /// a joined `"1, 2"` that would be echoed into the response.
+    #[test]
+    fn request_rejects_duplicate_cseq() {
+        let raw = b"OPTIONS rtsp://x/y RTSP/1.0\r\nCSeq: 1\r\nCSeq: 2\r\n\r\n";
+        let e = RtspRequest::parse(raw).unwrap_err();
+        assert!(
+            matches!(
+                e,
+                RtspError::BadResponse {
+                    detail: "duplicate CSeq header"
+                }
+            ),
+            "got {e:?}"
+        );
     }
 }

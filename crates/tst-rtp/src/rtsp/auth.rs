@@ -95,7 +95,20 @@ pub fn parse_challenges(www_authenticate: &str) -> Vec<AuthChallenge> {
                 }
                 continue;
             }
-            let key = www_authenticate[key_start..i].trim().to_string();
+            let key_raw = www_authenticate[key_start..i].trim();
+            // `Basic realm` / `Digest realm`: an auth-param name is a single
+            // token (RFC 7235 §2.1), so whitespace inside the would-be key
+            // means the previous challenge ended and a new `<scheme> <params>`
+            // starts at `key_start` — hand it back to the outer loop. Without
+            // this a joined `Digest …, Basic realm="r"` swallowed the second
+            // scheme into the first challenge's parameter list, and
+            // `Basic …, Digest …` kept the Digest→Basic downgrade CORR-05
+            // exists to close.
+            if key_raw.contains(char::is_whitespace) {
+                i = key_start;
+                break;
+            }
+            let key = key_raw.to_string();
             i += 1; // skip '='
             // Value: either quoted or token until comma
             if i < bytes.len() && bytes[i] == b'"' {
@@ -395,6 +408,45 @@ mod basic_tests {
             challenges[0],
             AuthChallenge::Basic {
                 realm: String::new()
+            }
+        );
+    }
+
+    /// CORR-05: a joined multi-challenge header (what the response parser
+    /// now produces from two `WWW-Authenticate` lines) must split into BOTH
+    /// challenges in either order. An auth-param name is a single token
+    /// (RFC 7235 §2.1), so whitespace inside a would-be key marks the start
+    /// of the next `<scheme> <params>`.
+    #[test]
+    fn parse_challenges_splits_basic_then_digest() {
+        let h = r#"Basic realm="r", Digest realm="r", nonce="n""#;
+        let challenges = parse_challenges(h);
+        assert_eq!(challenges.len(), 2, "got {challenges:?}");
+        assert_eq!(
+            challenges[0],
+            AuthChallenge::Basic {
+                realm: "r".to_string()
+            }
+        );
+        match &challenges[1] {
+            AuthChallenge::Digest(d) => {
+                assert_eq!(d.realm, "r");
+                assert_eq!(d.nonce, "n");
+            }
+            other => panic!("expected Digest, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_challenges_splits_digest_then_basic() {
+        let h = r#"Digest realm="r", nonce="n", Basic realm="r""#;
+        let challenges = parse_challenges(h);
+        assert_eq!(challenges.len(), 2, "got {challenges:?}");
+        assert!(matches!(challenges[0], AuthChallenge::Digest(_)));
+        assert_eq!(
+            challenges[1],
+            AuthChallenge::Basic {
+                realm: "r".to_string()
             }
         );
     }
