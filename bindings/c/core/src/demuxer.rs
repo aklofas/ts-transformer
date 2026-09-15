@@ -112,10 +112,13 @@ pub unsafe extern "C" fn tst_demuxer_open_with_config(
 /// - `TST_E_INVALID_CONFIG` (-1) — `p` is null, or `data` is null with
 ///   non-zero `len`.
 /// - `TST_E_INVALID_TS` (-3) — `DemuxError::StrictRejection`,
-///   `Unrecoverable`, `MalformedPsi`, or `MalformedPes`.
-/// - `TST_E_TOO_LARGE` (-6) — `DemuxError::SyncBufExhausted` (caller
-///   fed a pathologically large non-TS byte stream; demuxer state is
-///   cleared, subsequent feeds start fresh).
+///   `Unrecoverable` (one 6,016-byte sync-search window held no packet
+///   boundary; the scanned bytes are discarded and the next feed starts
+///   a fresh window), `MalformedPsi`, or `MalformedPes`.
+/// - `TST_E_TOO_LARGE` (-6) — `DemuxError::SyncBufExhausted` (one feed
+///   would push the pre-sync buffer past `sync_buf_cap`; the buffered
+///   bytes and this call's bytes are dropped and the next feed starts
+///   from an empty buffer).
 /// - `TST_E_CLOSED` (-7) — handle already closed.
 ///
 /// # Safety

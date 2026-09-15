@@ -850,8 +850,14 @@ mod tests {
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum DemuxError {
-    /// Byte stream is unrecoverable: too few bytes after a long sync-search
-    /// window to make progress, or repeated PSI checksum failures.
+    /// One sync-search window held no packet boundary: `Demuxer::feed`
+    /// scanned more than 32 × 188 = 6,016 bytes without a confirmed
+    /// `0x47`. The verdict covers that window only — the scanned bytes
+    /// are discarded, the counter restarts at zero and the next `feed`
+    /// starts a fresh search (no `reset_sync` needed). `feed_aligned`
+    /// returns it with `after_bytes: 0` for a packet whose first byte is
+    /// not `0x47`. PSI checksum failures never produce it — they surface
+    /// as `NonConformant` events.
     #[error("demuxer cannot recover sync after {after_bytes} bytes")]
     Unrecoverable { after_bytes: usize },
 
