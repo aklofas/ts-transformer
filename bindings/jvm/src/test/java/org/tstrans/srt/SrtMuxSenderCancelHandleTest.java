@@ -4,13 +4,13 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.tstrans.TestSupport.freeUdpPort;
 import static org.tstrans.TestSupport.isLinux;
-import static org.tstrans.TestSupport.roundtripConfig;
-import static org.tstrans.TestSupport.roundtripConfigWithData;
 import static org.tstrans.TestSupport.syntheticH264Idr;
 import static org.tstrans.srt.SrtSenderParkSupport.NON_READING_PEER_KNOBS;
 import static org.tstrans.srt.SrtSenderParkSupport.awaitParked;
+import static org.tstrans.srt.SrtSenderParkSupport.connectManagedMux;
+import static org.tstrans.srt.SrtSenderParkSupport.connectPlainMux;
 import static org.tstrans.srt.SrtSenderParkSupport.dataBlob;
-import static org.tstrans.srt.SrtSenderParkSupport.managedParkPolicy;
+import static org.tstrans.srt.SrtSenderParkSupport.peerListener;
 import static org.tstrans.srt.SrtSenderParkSupport.pump;
 
 import java.util.concurrent.CompletableFuture;
@@ -34,48 +34,6 @@ import org.tstrans.srt.SrtSenderParkSupport.Pump;
 class SrtMuxSenderCancelHandleTest {
 
     private static final int LATENCY_MS = 120;
-
-    private static CompletableFuture<Receiver> peerListener(String listenUrl) {
-        CompletableFuture<Receiver> peerFuture = new CompletableFuture<>();
-        Thread peer = new Thread(() -> {
-            try {
-                peerFuture.complete(Receiver.fromUrl(listenUrl));
-            } catch (Exception ex) {
-                peerFuture.completeExceptionally(ex);
-            }
-        }, "peer-listener");
-        peer.setDaemon(true);
-        peer.start();
-        return peerFuture;
-    }
-
-    private static ManagedMuxSender connectManagedMux(String url, long budgetMs) throws Exception {
-        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(budgetMs);
-        SrtException last = null;
-        while (System.nanoTime() < deadline) {
-            try {
-                return ManagedMuxSender.fromUrl(url, roundtripConfig(), managedParkPolicy());
-            } catch (SrtException e) {
-                last = e;
-                Thread.sleep(50);
-            }
-        }
-        throw new AssertionError("caller could not connect within " + budgetMs + " ms", last);
-    }
-
-    private static MuxSender connectPlainMux(String url, long budgetMs) throws Exception {
-        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(budgetMs);
-        SrtException last = null;
-        while (System.nanoTime() < deadline) {
-            try {
-                return MuxSender.fromUrl(url, roundtripConfigWithData());
-            } catch (SrtException e) {
-                last = e;
-                Thread.sleep(50);
-            }
-        }
-        throw new AssertionError("caller could not connect within " + budgetMs + " ms", last);
-    }
 
     /** Obtain the handle on a daemon thread with a 2 s bound — lock-free means it never waits. */
     private static CancelHandle handleWhileParked(java.util.function.Supplier<CancelHandle> get)
@@ -184,11 +142,16 @@ class SrtMuxSenderCancelHandleTest {
         String callerUrl = "srt://127.0.0.1:" + port + "?latency=" + LATENCY_MS;
 
         CompletableFuture<Receiver> peerFuture = peerListener(listenUrl);
-        MuxSender plain = connectPlainMux(callerUrl, 5_000);
-        Receiver peer = peerFuture.get(5, TimeUnit.SECONDS);
-        assertNotNull(plain.cancelHandle(), "open sender hands out a handle");
-        plain.close();
-        assertThrows(IllegalStateException.class, plain::cancelHandle);
-        peer.close();
+        // try-with-resources: `plain.close()` below is the test's own act, and
+        // `close()` is idempotent (NativeHandle#close claims the handle with a
+        // single getAndSet(0)), so the resource's closing a second time here is
+        // a no-op — but it guarantees both sockets are released even if an
+        // assertion above throws first.
+        try (MuxSender plain = connectPlainMux(callerUrl, 5_000);
+                Receiver peer = peerFuture.get(5, TimeUnit.SECONDS)) {
+            assertNotNull(plain.cancelHandle(), "open sender hands out a handle");
+            plain.close();
+            assertThrows(IllegalStateException.class, plain::cancelHandle);
+        }
     }
 }
