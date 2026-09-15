@@ -2212,8 +2212,8 @@ impl Attribution {
     ///
     /// The event is EXPLAINED by the newest injection whose window
     /// contains `at` and that can actually cause `sig` on `pid` — the
-    /// class rule ([`expects`]) and the PID rule ([`reaches`]) together,
-    /// see [`can_explain`]. An event of a class an injection cannot
+    /// class rule (`expects`) and the PID rule (`reaches`) together,
+    /// see `can_explain`. An event of a class an injection cannot
     /// cause, or on a PID it never touched, is therefore UNEXPLAINED
     /// even when it lands squarely inside that injection's window:
     /// window position is proximity, not causation.
