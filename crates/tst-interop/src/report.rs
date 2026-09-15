@@ -2168,6 +2168,11 @@ pub mod soak {
             // Outage-window drops leave BOTH the numerator and the
             // denominator: a packet the proxy blackholed for the window
             // was never offered to the continuous-loss process at all.
+            // `o.min(d)` only because this runs BEFORE the
+            // `outage_consistent` check below rejects the artifact — on
+            // every path that reaches a verdict `o <= d` already holds,
+            // and the clamp exists so a malformed file is reported as
+            // malformed rather than underflowing here.
             let total: u64 = counters.iter().map(|(f, d, o)| f + d - o.min(d)).sum();
 
             // The per-phase split and the top-level totals are incremented
