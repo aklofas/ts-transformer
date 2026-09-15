@@ -339,15 +339,23 @@ pub(crate) fn apply_peer_overrides(
     }
     let pc = unsafe { &mut *peer_config };
 
-    if let Some(bw) = cfg.bandwidth_kbps {
-        pc.recovery_maxbitrate = bw;
+    // `bandwidth_kbps` is an alias of `recovery_maxbitrate_kbps` — both are
+    // librist's `recovery_maxbitrate`. RistUrl::parse already refuses a
+    // conflicting URL; this catches the programmatic/builder route (CORR-23).
+    let recovery_maxbitrate = match (cfg.bandwidth_kbps, cfg.recovery_maxbitrate_kbps) {
+        (Some(bw), Some(rm)) if bw != rm => {
+            return Err(RistError::InvalidConfig(format!(
+                "bandwidth_kbps={bw} conflicts with recovery_maxbitrate_kbps={rm}; \
+                 they set the same librist field (recovery_maxbitrate) — give one, or equal values"
+            )));
+        }
+        (bw, rm) => bw.or(rm),
+    };
+    if let Some(kbps) = recovery_maxbitrate {
+        pc.recovery_maxbitrate = kbps;
     }
     pc.recovery_length_min = duration_millis_u32(cfg.buffer);
     pc.recovery_length_max = duration_millis_u32(cfg.buffer).max(pc.recovery_length_max);
-
-    if let Some(bw) = cfg.recovery_maxbitrate_kbps {
-        pc.recovery_maxbitrate = bw;
-    }
     if let Some(t) = cfg.session_timeout {
         pc.session_timeout = duration_millis_u32(t);
     }
@@ -608,5 +616,55 @@ mod tests {
         assert_eq!(classify_write_rc(-3), WriteOutcome::Fatal(-3));
         assert_eq!(classify_write_rc(0), WriteOutcome::Sent);
         assert_eq!(classify_write_rc(1316), WriteOutcome::Sent);
+    }
+
+    /// CORR-23 at the config layer: the builder / RistConfig expose both
+    /// knobs, so a programmatic conflict must be refused before librist sees
+    /// a last-writer-wins value.
+    #[test]
+    fn apply_peer_overrides_rejects_conflicting_bandwidth_and_recovery_maxbitrate() {
+        let mut pc: rist_sys::rist_peer_config = unsafe { std::mem::zeroed() };
+        let cfg = RistConfig {
+            bandwidth_kbps: Some(1000),
+            recovery_maxbitrate_kbps: Some(5000),
+            ..RistConfig::default()
+        };
+        match apply_peer_overrides(&mut pc, &cfg) {
+            Err(RistError::InvalidConfig(msg)) => {
+                assert!(msg.contains("bandwidth_kbps=1000"), "got: {msg}");
+                assert!(msg.contains("recovery_maxbitrate_kbps=5000"), "got: {msg}");
+            }
+            other => panic!("expected InvalidConfig, got {other:?}"),
+        }
+    }
+
+    /// The alias on its own and the canonical knob on its own both land in
+    /// `recovery_maxbitrate`; equal values are fine.
+    #[test]
+    fn apply_peer_overrides_bandwidth_is_an_alias_of_recovery_maxbitrate() {
+        let mut pc: rist_sys::rist_peer_config = unsafe { std::mem::zeroed() };
+        let cfg = RistConfig {
+            bandwidth_kbps: Some(1000),
+            ..RistConfig::default()
+        };
+        apply_peer_overrides(&mut pc, &cfg).unwrap();
+        assert_eq!(pc.recovery_maxbitrate, 1000);
+
+        let mut pc: rist_sys::rist_peer_config = unsafe { std::mem::zeroed() };
+        let cfg = RistConfig {
+            recovery_maxbitrate_kbps: Some(5000),
+            ..RistConfig::default()
+        };
+        apply_peer_overrides(&mut pc, &cfg).unwrap();
+        assert_eq!(pc.recovery_maxbitrate, 5000);
+
+        let mut pc: rist_sys::rist_peer_config = unsafe { std::mem::zeroed() };
+        let cfg = RistConfig {
+            bandwidth_kbps: Some(4000),
+            recovery_maxbitrate_kbps: Some(4000),
+            ..RistConfig::default()
+        };
+        apply_peer_overrides(&mut pc, &cfg).unwrap();
+        assert_eq!(pc.recovery_maxbitrate, 4000);
     }
 }

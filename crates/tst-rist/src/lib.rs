@@ -15,7 +15,8 @@
 //!   `tst-udp` / `tst-tcp`)
 //! - `rist://239.x.x.x:port` — multicast sender
 //! - `?profile=simple|main` — explicit profile override
-//! - `?bandwidth=N` — kbps target
+//! - `?recovery_maxbitrate=N` — retransmit-bandwidth cap, kbps (`?bandwidth=N`
+//!   is an alias; both with different values is a parse error)
 //! - `?buffer=N` — recovery buffer ms
 //! - `?aes-type=128|192|256&secret=...` — AES key (forces Main Profile)
 //! - `?cname=...` — RTCP CNAME

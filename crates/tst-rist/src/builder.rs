@@ -57,13 +57,14 @@ impl RistTransportBuilder {
         self
     }
 
-    /// Sender bandwidth cap (kbps).
+    /// Alias of [`Self::recovery_maxbitrate_kbps`] (same librist field);
+    /// setting both to different values fails at `connect()`.
     pub fn bandwidth_kbps(mut self, kbps: u32) -> Self {
         self.config.bandwidth_kbps = Some(kbps);
         self
     }
 
-    /// Retransmit bandwidth cap (kbps).
+    /// Retransmit bandwidth cap (kbps, librist `recovery_maxbitrate`).
     pub fn recovery_maxbitrate_kbps(mut self, kbps: u32) -> Self {
         self.config.recovery_maxbitrate_kbps = Some(kbps);
         self

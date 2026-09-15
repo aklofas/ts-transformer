@@ -58,12 +58,12 @@ doesn't carry encryption.
 | Param                    | Meaning                                              |
 | ------------------------ | ---------------------------------------------------- |
 | `profile=simple\|main`   | RIST profile override                                |
-| `bandwidth=N`            | kbps target throughput cap                           |
+| `bandwidth=N`            | Alias of `recovery_maxbitrate=N` (same librist field; both with different values → parse error) |
 | `buffer=N`               | Recovery buffer in milliseconds                      |
 | `aes-type=128\|192\|256` | AES key size; needs `secret` too (else rejected)     |
 | `secret=...`             | AES PSK (URL-encoded); alone selects AES-256         |
 | `cname=...`              | RTCP CNAME identifier                                |
-| `recovery_maxbitrate=N`  | Retransmit bandwidth cap (kbps)                      |
+| `recovery_maxbitrate=N`  | Retransmit bandwidth cap, kbps (librist `recovery_maxbitrate`) |
 | `session_timeout=N`      | Receiver session timeout (ms)                        |
 | `compression=1`          | Enable NULL-packet deletion                          |
 
