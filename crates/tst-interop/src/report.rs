@@ -1105,12 +1105,13 @@ pub mod soak {
     /// cannot drift from the judged arm — a verdict missing from one of
     /// them would simply not appear in `soak-results.json` for that kind
     /// of run, which reads as "not applicable" rather than "not checked".
-    const CORRUPTION_VERDICTS: [&str; 5] = [
+    const CORRUPTION_VERDICTS: [&str; 6] = [
         "corruption_attributed",
         "corruption_detected",
         "corruption_recovered",
         "corruption_coverage",
         "corruption_declared",
+        "corruption_excusal_budget",
     ];
 
     /// Floor on the fraction of a leg's injections that must resolve to a
@@ -1124,6 +1125,31 @@ pub mod soak {
     /// something the network can take away — but still a floor, because
     /// one missed tail read at teardown must not fail a 72-hour run.
     const CORRUPTION_INGESTED_FLOOR: f64 = 0.99;
+
+    /// Q12: constant term of the lossy excusal budget
+    /// `K x expected_outage_windows + C` — a handful of one-off excusals
+    /// (a stranded anchor at start-up, a teardown gap) that no outage
+    /// schedule predicts.
+    const EXCUSAL_BUDGET_BASE: u64 = 8;
+
+    /// K for the excusal budget: how many elementary-stream PIDs the
+    /// leg's profile muxes (video + KLV per program, + audio when the
+    /// profile carries it). Unknown or undeclared profile → 2, the
+    /// smallest any profile has, so an undeclared leg gets the
+    /// tightest budget rather than a free pass.
+    fn media_pids(profile: Option<&str>) -> u64 {
+        profile
+            .and_then(crate::profiles::by_name)
+            .map(|p| {
+                crate::profiles::invariants(p)
+                    .programs
+                    .iter()
+                    .map(|ep| 2 + u64::from(ep.audio_pid.is_some()))
+                    .sum()
+            })
+            .unwrap_or(2)
+    }
+
     const KNOWN_PROCESSES: [&str; 3] = ["send", "proxy", "recv"];
 
     /// Every worker `soak.sh` reaps into `exits.json` (the sampler is
@@ -2571,6 +2597,40 @@ pub mod soak {
                             ),
                         };
                         verdicts.push(mk("corruption_declared", spec_pass, spec_detail));
+
+                        // Q12: under lossy judgement the three finding
+                        // verdicts EXCUSE — undetected/unrecovered
+                        // injections with a foreign jump in their window,
+                        // and every unexplained discontinuity — so a leg
+                        // whose evidence was all excused passes them
+                        // vacuously. Both soak legs are ARQ (`?latency=` /
+                        // `?buffer=`): the transport recovers continuous
+                        // loss, and only the outage windows should leave
+                        // gaps. Budget the excusals by the schedule.
+                        let profile = artifacts.recv_report.profile.as_deref().or(config
+                            .legs
+                            .get(leg_name.as_str())
+                            .map(|d| d.profile.as_str()));
+                        let k = media_pids(profile);
+                        let budget = k * outage_windows + EXCUSAL_BUDGET_BASE;
+                        let excused =
+                            a.unexplained_transport_loss + a.undetected_lost + a.unrecovered_lost;
+                        let unexplained_disc = artifacts
+                            .recv_report
+                            .metrics
+                            .discontinuities
+                            .saturating_sub(a.attributed_discontinuities);
+                        verdicts.push(mk(
+                            "corruption_excusal_budget",
+                            excused <= budget && unexplained_disc <= budget,
+                            format!(
+                                "{leg_name}: {excused} excused ({} transport-loss events, {} \
+                                 undetected-lost, {} unrecovered-lost) and {unexplained_disc} \
+                                 unexplained discontinuities against budget {budget} (K={k} media \
+                                 PIDs x {outage_windows} outage window(s) + {EXCUSAL_BUDGET_BASE})",
+                                a.unexplained_transport_loss, a.undetected_lost, a.unrecovered_lost
+                            ),
+                        ));
                     }
                 }
             }
@@ -4660,6 +4720,97 @@ pub mod soak {
             assert!(v.pass, "{}", v.detail);
             assert!(
                 v.detail.contains("no corruption spec declared"),
+                "{}",
+                v.detail
+            );
+        }
+
+        /// CORR-31(a) / Q12: under lossy judgement every corruption verdict
+        /// passes a leg whose findings were ALL written off as transport
+        /// loss. Both soak legs are ARQ, so excusals are bounded by the
+        /// outage schedule: `K x windows + C` with K = the profile's media
+        /// PIDs and C = 8.
+        #[test]
+        fn corruption_excusal_budget_fails_a_leg_that_excused_everything() {
+            let mut inputs = corruption_inputs(500, 500, 480);
+            inputs.legs[0]
+                .1
+                .recv_report
+                .metrics
+                .corruption_attribution
+                .as_mut()
+                .unwrap()
+                .undetected_lost = 500;
+            let r = build_soak_results(inputs).unwrap();
+            for n in [
+                "attributed",
+                "detected",
+                "recovered",
+                "coverage",
+                "declared",
+            ] {
+                assert!(
+                    verdict(&r, &format!("corruption_{n}_srt")).pass,
+                    "{n} passes vacuously"
+                );
+            }
+            let v = verdict(&r, "corruption_excusal_budget_srt");
+            assert!(!v.pass, "{}", v.detail);
+            assert!(!v.provisional);
+            // No profile declared and no outage: K falls back to 2, W = 0.
+            assert!(
+                v.detail
+                    .contains("budget 8 (K=2 media PIDs x 0 outage window(s) + 8)"),
+                "{}",
+                v.detail
+            );
+            assert!(v.detail.contains("500 excused"), "{}", v.detail);
+            assert!(!r.overall_pass);
+        }
+
+        #[test]
+        fn corruption_excusal_budget_passes_inside_the_budget_and_counts_media_pids() {
+            let mut inputs = corruption_inputs(500, 500, 480);
+            {
+                let a = inputs.legs[0]
+                    .1
+                    .recv_report
+                    .metrics
+                    .corruption_attribution
+                    .as_mut()
+                    .unwrap();
+                a.undetected_lost = 3;
+                a.unrecovered_lost = 2;
+                a.unexplained_transport_loss = 3;
+            }
+            inputs.legs[0].1.recv_report.profile = Some("two-program".to_string());
+            let r = build_soak_results(inputs).unwrap();
+            let v = verdict(&r, "corruption_excusal_budget_srt");
+            assert!(v.pass, "{}", v.detail);
+            assert!(v.detail.contains("K=4 media PIDs"), "{}", v.detail);
+            assert!(v.detail.contains("8 excused"), "{}", v.detail);
+        }
+
+        /// The demuxer's own unexplained discontinuities are held to the
+        /// same budget — a demuxer emitting spurious CC jumps under lossy
+        /// judgement used to pass every corruption verdict.
+        #[test]
+        fn corruption_excusal_budget_bounds_unexplained_discontinuities() {
+            let mut inputs = corruption_inputs(500, 500, 480);
+            inputs.legs[0].1.recv_report.metrics.discontinuities = 1_000;
+            inputs.legs[0]
+                .1
+                .recv_report
+                .metrics
+                .corruption_attribution
+                .as_mut()
+                .unwrap()
+                .attributed_discontinuities = 100;
+            let r = build_soak_results(inputs).unwrap();
+            let v = verdict(&r, "corruption_excusal_budget_srt");
+            assert!(!v.pass, "{}", v.detail);
+            assert!(
+                v.detail.contains("900 unexplained discontinuit"),
                 "{}",
                 v.detail
             );
