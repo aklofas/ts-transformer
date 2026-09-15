@@ -123,3 +123,106 @@ def test_srt_sender_close_from_other_thread_during_send() -> None:
         stop.set()
         sender.close()
         receiver.close()
+
+
+# --------------------------------------------------------------------------- #
+# srt.MuxSender                                                               #
+# --------------------------------------------------------------------------- #
+
+
+def _srt_mux_sender_with_silent_peer(port: int):
+    """Listener-mode `srt.Receiver` (never reads) + caller `srt.MuxSender`."""
+    import tstrans.srt as srt
+
+    box: list[srt.Receiver] = []
+    errs: list[BaseException] = []
+
+    def accept_worker() -> None:
+        try:
+            box.append(srt.Receiver.from_url(f"srt://:{port}?mode=listener"))
+        except BaseException as exc:  # noqa: BLE001
+            errs.append(exc)
+
+    t = threading.Thread(target=accept_worker, daemon=True)
+    t.start()
+    time.sleep(0.1)
+    tx = srt.MuxSender.from_url(f"srt://127.0.0.1:{port}?mode=caller", _video_only_program())
+    t.join(5.0)
+    if errs or not box:
+        tx.close()
+        pytest.fail(f"srt listener did not accept: {errs!r}")
+    return tx, box[0]
+
+
+def test_srt_mux_sender_close_from_other_thread_during_send_video() -> None:
+    from tstrans.exceptions import SrtError, SrtErrorKind
+    from tstrans.mpegts import Pts90khz
+
+    tx, peer = _srt_mux_sender_with_silent_peer(_free_tcp_port())
+    stop = threading.Event()
+    outcome: dict[str, object] = {}
+    pts = [0]
+
+    def send_one() -> None:
+        tx.send_video(NAL_IDR, pts=Pts90khz.from_raw(pts[0]), key_frame=True)
+        pts[0] += 3000
+
+    def worker() -> None:
+        outcome.update(_spin_sender(send_one, stop))
+
+    w = threading.Thread(target=worker, daemon=True)
+    w.start()
+    time.sleep(0.1)
+    try:
+        c, errs = _close_on_thread(tx)
+        stop.set()
+        w.join(5.0)
+        _assert_close_ok(c, errs, "srt.MuxSender")
+        assert not w.is_alive(), "send loop did not end after close()"
+        exc = outcome.get("exc")
+        assert isinstance(exc, SrtError), f"send loop ended with {exc!r}"
+        assert exc.kind in (SrtErrorKind.CLOSED, SrtErrorKind.BROKEN), exc.kind
+        assert not tx.is_alive()
+    finally:
+        stop.set()
+        tx.close()
+        peer.close()
+
+
+def test_srt_mux_sender_cancel_handle_wakes_send_from_other_thread() -> None:
+    """`MuxSender.cancel_handle()` did not exist: the primary SRT sending
+    object had no cross-thread interrupt path at all (CORR-02)."""
+    from tstrans.exceptions import SrtError, SrtErrorKind
+    from tstrans.mpegts import Pts90khz
+    from tstrans.srt import CancelHandle
+
+    tx, peer = _srt_mux_sender_with_silent_peer(_free_tcp_port())
+    try:
+        handle = tx.cancel_handle()
+        assert isinstance(handle, CancelHandle)
+        assert not handle.is_cancelled()
+        stop = threading.Event()
+        outcome: dict[str, object] = {}
+
+        def worker() -> None:
+            outcome.update(
+                _spin_sender(
+                    lambda: tx.send_video(NAL_IDR, pts=Pts90khz.from_raw(0), key_frame=True),
+                    stop,
+                )
+            )
+
+        w = threading.Thread(target=worker, daemon=True)
+        w.start()
+        time.sleep(0.1)
+        handle.cancel()
+        w.join(5.0)
+        stop.set()
+        assert handle.is_cancelled()
+        assert not w.is_alive(), "cancel() did not end the send loop"
+        exc = outcome.get("exc")
+        assert isinstance(exc, SrtError), f"send loop ended with {exc!r}"
+        assert exc.kind in (SrtErrorKind.CLOSED, SrtErrorKind.BROKEN), exc.kind
+    finally:
+        tx.close()
+        peer.close()
