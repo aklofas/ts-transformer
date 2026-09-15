@@ -177,6 +177,7 @@ pub struct Demuxer {
     pub(super) pmt_versions_seen: u64,
     pub(super) discontinuities_count: u64,
     pub(super) nonconformant_count: u64,
+    pub(super) unwrap_reanchors_count: u64,
     pub(super) subtitle_streams_seen_count: u32,
     /// Per-PID counters; entries created lazily on first event per PID.
     pub(super) stats_per_stream: BTreeMap<u16, crate::mpegts::stats::StreamStats>,
@@ -275,6 +276,7 @@ impl Demuxer {
             pmt_versions_seen: 0,
             discontinuities_count: 0,
             nonconformant_count: 0,
+            unwrap_reanchors_count: 0,
             subtitle_streams_seen_count: 0,
             stats_per_stream: BTreeMap::new(),
             stream_codec_counters: BTreeMap::new(),
@@ -722,6 +724,42 @@ impl Demuxer {
         }
     }
 
+    /// Dormant-PID re-anchor (deep review #4, X-CORR-08 / Q3). A PID's own
+    /// signed 33-bit delta is unambiguous only while its silence stays
+    /// under half an epoch (`2^32` ticks, ~13.3 h at 90 kHz); past that
+    /// the signed modular difference lands a full epoch low. The program
+    /// clock — the last value emitted on ANY sibling PID — is the freshest
+    /// evidence available. Returns `Some(value)` when BOTH hold:
+    ///
+    /// 1. the program clock is fresher than this PID's last sample
+    ///    (`reference.last_unwrapped > state.last_unwrapped`), and
+    /// 2. placing the sample against that reference puts it more than
+    ///    half an epoch from the PID's own last sample — a distance the
+    ///    PID's own delta can never express.
+    ///
+    /// A genuinely reordered late sample fails (2): siblings that
+    /// advanced by less than half an epoch imply a small gap, so the
+    /// PID's own signed delta is kept and the reorder stays visible as a
+    /// backward step. Never fires for a PID with no owning program or a
+    /// program with no clock yet, and never crosses programs.
+    fn dormant_reanchor(&self, pid: u16, raw_ticks: i64, state: UnwrapState) -> Option<i64> {
+        const HALF_EPOCH: i64 = 1 << 32;
+        let prog = *self.pid_to_program.get(&pid)?;
+        let reference = self.program_clock.get(&prog)?;
+        if reference.last_unwrapped <= state.last_unwrapped {
+            return None;
+        }
+        let via_program =
+            reference
+                .last_unwrapped
+                .saturating_add(crate::mpegts::common::pts_diff_33bit(
+                    raw_ticks as u64,
+                    reference.last_raw as u64,
+                ));
+        let implied_gap = via_program.saturating_sub(state.last_unwrapped);
+        (implied_gap.abs() > HALF_EPOCH).then_some(via_program)
+    }
+
     /// Unwrap a raw 33-bit PTS (or a KLV Metadata PTS — same clock, same
     /// accumulator) for `pid` onto a continuous `i64` timeline, advancing
     /// the per-PID accumulator. Only called when
@@ -750,6 +788,11 @@ impl Demuxer {
     /// offset applied to it and strand it a full `1 << 33` too high;
     /// measuring from the predecessor instead places it back below the
     /// boundary where it belongs.
+    ///
+    /// A PID that has been silent for more than half an epoch while a
+    /// sibling kept advancing is re-anchored onto the program clock by
+    /// [`Self::dormant_reanchor`] and counted in
+    /// `DemuxerStats::unwrap_reanchors`.
     pub(super) fn unwrap_pts(
         &mut self,
         pid: u16,
@@ -757,11 +800,19 @@ impl Demuxer {
     ) -> crate::mpegts::common::Pts90khz {
         let raw_ticks = raw.as_ticks();
         let unwrapped = match self.unwrap_state.get(&pid).copied() {
-            Some(state) => {
-                let delta =
-                    crate::mpegts::common::pts_diff_33bit(raw_ticks as u64, state.last_raw as u64);
-                state.last_unwrapped.saturating_add(delta)
-            }
+            Some(state) => match self.dormant_reanchor(pid, raw_ticks, state) {
+                Some(via_program) => {
+                    self.unwrap_reanchors_count += 1;
+                    via_program
+                }
+                None => {
+                    let delta = crate::mpegts::common::pts_diff_33bit(
+                        raw_ticks as u64,
+                        state.last_raw as u64,
+                    );
+                    state.last_unwrapped.saturating_add(delta)
+                }
+            },
             None => self.anchor_first_sample(pid, raw_ticks),
         };
         let entry = UnwrapState {
@@ -891,6 +942,7 @@ impl Demuxer {
             nonconformant: self.nonconformant_count,
             programs_seen: self.programs.len() as u32,
             subtitle_streams_seen: self.subtitle_streams_seen_count,
+            unwrap_reanchors: self.unwrap_reanchors_count,
             per_stream: self.stats_per_stream.clone(),
         }
     }
@@ -981,6 +1033,7 @@ impl Demuxer {
         self.pmt_versions_seen = 0;
         self.discontinuities_count = 0;
         self.nonconformant_count = 0;
+        self.unwrap_reanchors_count = 0;
         self.subtitle_streams_seen_count = 0;
         self.subtitle_pids_seen.clear();
         self.stats_per_stream.clear();
@@ -4126,6 +4179,45 @@ mod tests {
         // program 2 must anchor at raw, not inherit program 1's epoch.
         let out = d.unwrap_pts(0x200, Pts90khz::new(100));
         assert_eq!(out.as_ticks(), 100);
+    }
+
+    /// X-CORR-08: a PID silent for more than half an epoch while a
+    /// sibling advanced must re-anchor onto the program clock (and count).
+    #[test]
+    fn unwrap_pts_dormant_pid_reanchors_onto_fresher_program_clock() {
+        const HALF: i64 = 1 << 32;
+        let mut d = Demuxer::new();
+        d.pid_to_program.insert(0x100, 1);
+        d.pid_to_program.insert(0x101, 1);
+        let _ = d.unwrap_pts(0x101, Pts90khz::new(0));
+        for pts in [0, HALF / 2, HALF] {
+            let _ = d.unwrap_pts(0x100, Pts90khz::new(pts));
+        }
+        let out = d.unwrap_pts(0x101, Pts90khz::new(HALF + 100));
+        assert_eq!(out.as_ticks(), HALF + 100);
+        assert_eq!(d.stats().unwrap_reanchors, 1);
+        assert_eq!(
+            d.unwrap_state.get(&0x101),
+            Some(&UnwrapState {
+                last_raw: HALF + 100,
+                last_unwrapped: HALF + 100,
+            })
+        );
+    }
+
+    /// X-CORR-08 control: a small reorder keeps the PID's own delta and
+    /// does not count as a re-anchor.
+    #[test]
+    fn unwrap_pts_small_reorder_keeps_own_delta_and_does_not_count() {
+        let mut d = Demuxer::new();
+        d.pid_to_program.insert(0x100, 1);
+        d.pid_to_program.insert(0x101, 1);
+        let _ = d.unwrap_pts(0x101, Pts90khz::new(1_000));
+        let _ = d.unwrap_pts(0x100, Pts90khz::new(1_000));
+        let _ = d.unwrap_pts(0x100, Pts90khz::new(2_000));
+        let out = d.unwrap_pts(0x101, Pts90khz::new(900));
+        assert_eq!(out.as_ticks(), 900);
+        assert_eq!(d.stats().unwrap_reanchors, 0);
     }
 
     #[test]
