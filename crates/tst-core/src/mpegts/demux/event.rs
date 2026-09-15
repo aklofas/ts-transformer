@@ -1037,10 +1037,18 @@ pub enum DiscontinuityKind {
 /// PTS. Exposed for diagnostic / test use; production consumers usually
 /// just compare `Pts90khz` values directly.
 ///
+/// Negative ticks clamp to [`Duration::ZERO`]: a timeline produced with
+/// [`DemuxerConfig::unwrap_timestamps`](crate::mpegts::demux::DemuxerConfig::unwrap_timestamps)
+/// can legitimately dip below zero near its anchor (a reordered sample
+/// that precedes the first observed one), while a raw wire value is
+/// never negative. Values beyond what a `Duration` can hold saturate at
+/// `u64::MAX` microseconds instead of wrapping.
+///
 /// Callers holding a raw `i64` can call [`Pts90khz::new`] to wrap; callers
 /// who want the inverse can read [`Pts90khz::as_ticks`].
 pub fn pts_to_duration(pts: Pts90khz) -> Duration {
-    Duration::from_micros((pts.as_ticks() as i128 * 1_000_000 / 90_000) as u64)
+    let ticks = i128::from(pts.as_ticks().max(0));
+    Duration::from_micros(u64::try_from(ticks * 1_000_000 / 90_000).unwrap_or(u64::MAX))
 }
 
 impl core::fmt::Display for NonConformantIssue {
@@ -1390,6 +1398,22 @@ mod tests {
         assert_eq!(
             pts_to_duration(Pts90khz::new(90_000)),
             Duration::from_secs(1)
+        );
+    }
+
+    /// CORR-17: a negative unwrapped PTS used to be cast `as u64` and
+    /// rendered as ~584,000 years.
+    #[test]
+    fn pts_to_duration_clamps_negative_ticks_to_zero() {
+        assert_eq!(pts_to_duration(Pts90khz::new(-50)), Duration::ZERO);
+        assert_eq!(pts_to_duration(Pts90khz::new(i64::MIN)), Duration::ZERO);
+    }
+
+    #[test]
+    fn pts_to_duration_saturates_instead_of_wrapping() {
+        assert_eq!(
+            pts_to_duration(Pts90khz::new(i64::MAX)),
+            Duration::from_micros(u64::MAX)
         );
     }
 
