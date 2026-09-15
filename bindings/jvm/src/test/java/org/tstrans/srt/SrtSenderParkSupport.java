@@ -1,11 +1,14 @@
 package org.tstrans.srt;
 
 import static org.junit.jupiter.api.Assertions.fail;
+import static org.tstrans.TestSupport.roundtripConfig;
+import static org.tstrans.TestSupport.roundtripConfigWithData;
 
 import java.util.Arrays;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import org.tstrans.SrtException;
 
 /**
  * Shared machinery for the sender-side cancel-first tests: park a daemon
@@ -51,6 +54,51 @@ final class SrtSenderParkSupport {
             .maxAttempts(2)
             .mode(ReconnectMode.BLOCKING)
             .build();
+    }
+
+    /** Bind a plain {@link Receiver} listener on a daemon thread; it never reads. */
+    static CompletableFuture<Receiver> peerListener(String listenUrl) {
+        CompletableFuture<Receiver> peerFuture = new CompletableFuture<>();
+        Thread peer = new Thread(() -> {
+            try {
+                peerFuture.complete(Receiver.fromUrl(listenUrl)); // blocks until a caller connects
+            } catch (Exception ex) {
+                peerFuture.completeExceptionally(ex);
+            }
+        }, "peer-listener");
+        peer.setDaemon(true);
+        peer.start();
+        return peerFuture;
+    }
+
+    /** Connect a managed mux-sender caller, retrying while the listener is between binds. */
+    static ManagedMuxSender connectManagedMux(String url, long budgetMs) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(budgetMs);
+        SrtException last = null;
+        while (System.nanoTime() < deadline) {
+            try {
+                return ManagedMuxSender.fromUrl(url, roundtripConfig(), managedParkPolicy());
+            } catch (SrtException e) {
+                last = e;
+                Thread.sleep(50);
+            }
+        }
+        throw new AssertionError("caller could not connect within " + budgetMs + " ms", last);
+    }
+
+    /** Connect a plain mux-sender caller, retrying while the listener is between binds. */
+    static MuxSender connectPlainMux(String url, long budgetMs) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(budgetMs);
+        SrtException last = null;
+        while (System.nanoTime() < deadline) {
+            try {
+                return MuxSender.fromUrl(url, roundtripConfigWithData());
+            } catch (SrtException e) {
+                last = e;
+                Thread.sleep(50);
+            }
+        }
+        throw new AssertionError("caller could not connect within " + budgetMs + " ms", last);
     }
 
     /** One send; the pump repeats it until it throws. */

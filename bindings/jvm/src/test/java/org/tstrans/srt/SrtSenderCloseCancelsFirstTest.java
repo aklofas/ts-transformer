@@ -4,14 +4,15 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.tstrans.TestSupport.freeUdpPort;
 import static org.tstrans.TestSupport.isLinux;
-import static org.tstrans.TestSupport.roundtripConfig;
-import static org.tstrans.TestSupport.roundtripConfigWithData;
 import static org.tstrans.TestSupport.syntheticH264Idr;
 import static org.tstrans.srt.SrtSenderParkSupport.NON_READING_PEER_KNOBS;
 import static org.tstrans.srt.SrtSenderParkSupport.awaitParked;
+import static org.tstrans.srt.SrtSenderParkSupport.connectManagedMux;
+import static org.tstrans.srt.SrtSenderParkSupport.connectPlainMux;
 import static org.tstrans.srt.SrtSenderParkSupport.dataBlob;
 import static org.tstrans.srt.SrtSenderParkSupport.managedParkPolicy;
 import static org.tstrans.srt.SrtSenderParkSupport.nullTsBlock;
+import static org.tstrans.srt.SrtSenderParkSupport.peerListener;
 import static org.tstrans.srt.SrtSenderParkSupport.pump;
 
 import java.util.concurrent.CompletableFuture;
@@ -47,56 +48,12 @@ class SrtSenderCloseCancelsFirstTest {
 
     private static final int LATENCY_MS = 120;
 
-    /** Bind a plain {@link Receiver} listener on a daemon thread; it never reads. */
-    private static CompletableFuture<Receiver> peerListener(String listenUrl) {
-        CompletableFuture<Receiver> peerFuture = new CompletableFuture<>();
-        Thread peer = new Thread(() -> {
-            try {
-                peerFuture.complete(Receiver.fromUrl(listenUrl)); // blocks until a caller connects
-            } catch (Exception ex) {
-                peerFuture.completeExceptionally(ex);
-            }
-        }, "peer-listener");
-        peer.setDaemon(true);
-        peer.start();
-        return peerFuture;
-    }
-
-    /** Connect a managed caller, retrying while the listener is between binds. */
-    private static ManagedMuxSender connectManagedMux(String url, long budgetMs) throws Exception {
-        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(budgetMs);
-        SrtException last = null;
-        while (System.nanoTime() < deadline) {
-            try {
-                return ManagedMuxSender.fromUrl(url, roundtripConfig(), managedParkPolicy());
-            } catch (SrtException e) {
-                last = e;
-                Thread.sleep(50);
-            }
-        }
-        throw new AssertionError("caller could not connect within " + budgetMs + " ms", last);
-    }
-
     private static ManagedSender connectManaged(String url, long budgetMs) throws Exception {
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(budgetMs);
         SrtException last = null;
         while (System.nanoTime() < deadline) {
             try {
                 return ManagedSender.fromUrl(url, managedParkPolicy());
-            } catch (SrtException e) {
-                last = e;
-                Thread.sleep(50);
-            }
-        }
-        throw new AssertionError("caller could not connect within " + budgetMs + " ms", last);
-    }
-
-    private static MuxSender connectPlainMux(String url, long budgetMs) throws Exception {
-        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(budgetMs);
-        SrtException last = null;
-        while (System.nanoTime() < deadline) {
-            try {
-                return MuxSender.fromUrl(url, roundtripConfigWithData());
             } catch (SrtException e) {
                 last = e;
                 Thread.sleep(50);
