@@ -5746,6 +5746,66 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 item = "tst_core::mpegts::stats::subtitle_codec_label"
 reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
 
+
+# io_classify (2026-09-14, WP-4b CORR-24): the shared TCP/UDP send-error
+# classifier. classify_send_error and its SendClass are consumed only via
+# the tst_core::net re-export (the send paths import
+# `tst_core::net::{SendClass, classify_send_error}`, not the io_classify
+# submodule path directly) — both paths are catalogued since cargo
+# public-api renders bare enum/fn declarations once per path.
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::net::io_classify::SendClass"
+owning_tests = ["crates/tst-core/src/net/io_classify.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::net::io_classify::SendClass::eq"
+owning_tests = ["crates/tst-core/src/net/io_classify.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[exempt]]
+item = "tst_core::net::io_classify::SendClass::clone"
+reason = "derive impl for SendClass (a Copy type); no in-tree call site clones a SendClass directly, comparisons use Copy semantics"
+
+[[exempt]]
+item = "tst_core::net::io_classify::SendClass::fmt"
+reason = "derive impl for SendClass; Debug bound required by the io_classify/write_loop_tests assert_eq! failure-message formatting"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::net::io_classify::classify_send_error"
+owning_tests = ["crates/tst-core/src/net/io_classify.rs", "crates/tst-tcp/src/transport.rs", "crates/tst-udp/src/transport.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::net::SendClass"
+owning_tests = ["crates/tst-tcp/src/transport.rs", "crates/tst-udp/src/transport.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::net::classify_send_error"
+owning_tests = ["crates/tst-tcp/src/transport.rs", "crates/tst-udp/src/transport.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
 [[exempt]]
 item = "tst_core::net::udp_socket::CANCEL_POLL_INTERVAL"
 reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
@@ -10893,6 +10953,25 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 [[exempt]]
 item = "tst_tcp::listener::TcpListener::bind"
 reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
+
+# CORR-12 (2026-09-14, WP-4b): cancellable accept_blocking.
+[[surface]]
+kind = "rust"
+crate = "tst-tcp"
+item = "tst_tcp::listener::TcpListener::cancel_handle"
+owning_tests = ["crates/tst-tcp/tests/loopback.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-tcp"
+item = "tst_tcp::listener::TcpListener::close"
+owning_tests = ["crates/tst-tcp/tests/loopback.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
 
 [[exempt]]
 item = "tst_tcp::listener::TcpListener::config_mut"
