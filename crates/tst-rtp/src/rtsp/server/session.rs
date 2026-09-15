@@ -20,7 +20,7 @@ use tokio::net::tcp::OwnedWriteHalf;
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::error::RtspServerError;
-use crate::rtsp::message::{RtspMethod, RtspRequest};
+use crate::rtsp::message::{RtspFraming, RtspMethod, RtspRequest};
 use crate::rtsp::server::ServerState;
 use crate::rtsp::server::auth::generate_nonce;
 use crate::rtsp::server::fanout::PeerDropCounter;
@@ -326,14 +326,45 @@ where
             return Ok(());
         }
 
-        // Try to parse complete request(s). If the buffer doesn't yet
-        // contain a full request (no CRLFCRLF, or Content-Length body
-        // not yet arrived), loop back to read more.
-        loop {
-            let (req, consumed) = match RtspRequest::parse(&buf) {
+        // Parse complete request(s). Framing is decided FIRST (CORR-25): a
+        // frame that is complete but does not parse is answered — 501 for a
+        // method we don't implement, 400 otherwise — and DRAINED, so a
+        // `SET_PARAMETER` no longer wedges every request queued behind it
+        // until the idle timeout. An incomplete frame loops back to read.
+        // `while let`, not `loop { match … }`: every non-`Complete` framing
+        // outcome (`NeedMore`, plus `HeadersTooLong` / `BadContentLength` on
+        // a pipelined head — the cap check at the top of the outer loop
+        // answers 413 after the next read, same as before this loop
+        // existed) means "stop draining, read more".
+        while let RtspFraming::Complete { total_len } =
+            crate::rtsp::message::rtsp_frame_decision(&buf)
+        {
+            let (req, consumed) = match RtspRequest::parse(&buf[..total_len]) {
                 Ok(t) => t,
-                Err(_) => break, // Need more bytes (or genuinely malformed; we ignore + read more).
+                Err(e) => {
+                    let reply =
+                        crate::rtsp::message::classify_unparseable_request(&buf[..total_len]);
+                    tracing::warn!(
+                        target: "tst_rtp::server",
+                        peer = %peer,
+                        error = ?e,
+                        status = reply.status,
+                        "unparseable RTSP request; answering and draining it"
+                    );
+                    buf.drain(..total_len);
+                    let bytes = unparseable_reply_bytes(&reply);
+                    let mut guard = write_half.lock().await;
+                    if let Err(e) = guard.write_all(&bytes).await {
+                        tracing::warn!(target: "tst_rtp::server", peer = %peer, error = %e, "write failed");
+                        return Ok(());
+                    }
+                    continue;
+                }
             };
+            debug_assert_eq!(
+                consumed, total_len,
+                "parser and framer disagree on the frame length"
+            );
             buf.drain(..consumed);
             let response = dispatch(&req, &state, &mut session);
             // Mirror the per-session state's `session_id` + `mount_path`
@@ -401,6 +432,26 @@ where
     }
     tracing::info!(target: "tst_rtp::server", peer = %peer, "session closed");
     Ok(())
+}
+
+/// Wire bytes for an [`crate::rtsp::message::UnparseableRequestReply`]:
+/// CSeq echoed when it was clean, `Server:` like every other response,
+/// `Content-Length: 0` so the client's framing needs no guess.
+fn unparseable_reply_bytes(reply: &crate::rtsp::message::UnparseableRequestReply) -> bytes::Bytes {
+    let mut headers = std::collections::HashMap::new();
+    if let Some(cseq) = &reply.cseq {
+        headers.insert("cseq".to_string(), cseq.clone());
+    }
+    headers.insert("server".to_string(), handlers::server_header());
+    headers.insert("content-length".to_string(), "0".to_string());
+    crate::rtsp::message::RtspResponse {
+        version: crate::url::RtspVersion::V1_0,
+        status: reply.status,
+        reason: reply.reason.to_string(),
+        headers,
+        body: bytes::Bytes::new(),
+    }
+    .encode()
 }
 
 /// Dispatch an RTSP request to the appropriate handler.

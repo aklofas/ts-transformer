@@ -195,6 +195,71 @@ pub(crate) fn rtsp_frame_decision(buf: &[u8]) -> RtspFraming {
     RtspFraming::Complete { total_len }
 }
 
+/// What the server answers when a buffer holds a COMPLETE request frame
+/// (per [`rtsp_frame_decision`]) that [`RtspRequest::parse`] nevertheless
+/// rejects: `501 Not Implemented` for a well-formed request line whose
+/// method token we do not implement (`SET_PARAMETER`, `RECORD`,
+/// `ANNOUNCE`, …), `400 Bad Request` for everything else. `cseq` echoes the
+/// request's `CSeq` only when it is present and a clean `1*DIGIT` value —
+/// never a value we would have to sanitize before putting it on the wire.
+pub(crate) struct UnparseableRequestReply {
+    pub(crate) status: u16,
+    pub(crate) reason: &'static str,
+    pub(crate) cseq: Option<String>,
+}
+
+/// Classify a complete-but-unparseable request frame. See
+/// [`UnparseableRequestReply`]. Never fails: garbage classifies as 400.
+pub(crate) fn classify_unparseable_request(frame: &[u8]) -> UnparseableRequestReply {
+    let bad_request = |cseq| UnparseableRequestReply {
+        status: 400,
+        reason: "Bad Request",
+        cseq,
+    };
+    let header_end = frame
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .unwrap_or(frame.len());
+    let Ok(header_text) = core::str::from_utf8(&frame[..header_end]) else {
+        return bad_request(None);
+    };
+    let mut lines = header_lines(header_text);
+    let request_line = lines.next().unwrap_or("");
+    // First `CSeq:` line, echoed only when it is `1*DIGIT`.
+    let mut cseq = None;
+    for line in lines {
+        let Some(colon) = line.find(':') else {
+            continue;
+        };
+        if line[..colon].trim().eq_ignore_ascii_case("cseq") {
+            let v = line[colon + 1..].trim();
+            if !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()) {
+                cseq = Some(v.to_string());
+            }
+            break;
+        }
+    }
+    let mut parts = request_line.splitn(3, ' ');
+    let method = parts.next().unwrap_or("");
+    let has_uri = parts.next().is_some_and(|u| !u.is_empty());
+    let known_version = matches!(parts.next(), Some("RTSP/1.0") | Some("RTSP/2.0"));
+    let method_is_token =
+        !method.is_empty() && method.bytes().all(|b| b.is_ascii_uppercase() || b == b'_');
+    let implemented = matches!(
+        method,
+        "OPTIONS" | "DESCRIBE" | "SETUP" | "PLAY" | "PAUSE" | "TEARDOWN" | "GET_PARAMETER"
+    );
+    if known_version && has_uri && method_is_token && !implemented {
+        UnparseableRequestReply {
+            status: 501,
+            reason: "Not Implemented",
+            cseq,
+        }
+    } else {
+        bad_request(cseq)
+    }
+}
+
 /// Insert a parsed header. A repeated name follows RFC 7230 §3.2.2 list
 /// semantics — the values are joined with `", "` — so a `WWW-Authenticate:`
 /// a camera sends as two lines (Digest + Basic, RFC 7235 §4.1) reaches
@@ -1232,5 +1297,51 @@ mod request_parse_tests {
             ),
             "got {e:?}"
         );
+    }
+
+    #[test]
+    fn classify_unimplemented_method_is_501_with_cseq() {
+        let r =
+            classify_unparseable_request(b"SET_PARAMETER rtsp://x/y RTSP/1.0\r\nCSeq: 1\r\n\r\n");
+        assert_eq!((r.status, r.reason), (501, "Not Implemented"));
+        assert_eq!(r.cseq.as_deref(), Some("1"));
+    }
+
+    #[test]
+    fn classify_garbage_request_line_is_400_with_cseq() {
+        let r = classify_unparseable_request(b"NOT AN RTSP REQUEST LINE\r\nCSeq: 7\r\n\r\n");
+        assert_eq!((r.status, r.reason), (400, "Bad Request"));
+        assert_eq!(r.cseq.as_deref(), Some("7"));
+    }
+
+    #[test]
+    fn classify_unknown_version_is_400() {
+        let r = classify_unparseable_request(b"OPTIONS rtsp://x/y RTSP/3.0\r\nCSeq: 1\r\n\r\n");
+        assert_eq!(r.status, 400);
+    }
+
+    #[test]
+    fn classify_implemented_method_that_failed_elsewhere_is_400() {
+        // Duplicate CSeq: the method is ours, the request is not well-formed.
+        let r = classify_unparseable_request(
+            b"OPTIONS rtsp://x/y RTSP/1.0\r\nCSeq: 1\r\nCSeq: 2\r\n\r\n",
+        );
+        assert_eq!(r.status, 400);
+    }
+
+    #[test]
+    fn classify_never_echoes_a_dirty_cseq() {
+        let r = classify_unparseable_request(
+            b"SET_PARAMETER rtsp://x/y RTSP/1.0\r\nCSeq: 1; evil\r\n\r\n",
+        );
+        assert_eq!(r.status, 501);
+        assert_eq!(r.cseq, None);
+    }
+
+    #[test]
+    fn classify_non_utf8_is_400_without_cseq() {
+        let r = classify_unparseable_request(b"\xff\xfe RTSP/1.0\r\nCSeq: 1\r\n\r\n");
+        assert_eq!(r.status, 400);
+        assert_eq!(r.cseq, None);
     }
 }
