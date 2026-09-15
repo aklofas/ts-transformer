@@ -770,10 +770,6 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed — jvm (WP-6)
 
-- (pending)
-
-### Fixed — jvm
-
 - **`org.tstrans.srt` senders: `close()` cancels first.** `MuxSender`,
   `ManagedMuxSender`, `Sender` and `ManagedSender` were registered in the
   JNI handle registry without the close-time cancel hook the receivers (and
