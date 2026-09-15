@@ -210,6 +210,7 @@ pub(crate) fn min_count(per_sec: u32, seconds: f64, slack: f64) -> u64 {
 pub struct ProgramCounts {
     pub video_aus: u64,
     pub klv_records: u64,
+    pub audio_frames: u64,
 }
 
 /// Accumulates wire-format facts from a stream of [`DemuxEvent`]s.
@@ -418,6 +419,10 @@ impl Tally {
                     }
                     SamplePayload::Audio { .. } => {
                         self.audio_frames += 1;
+                        self.per_program
+                            .entry(stream.program_number)
+                            .or_default()
+                            .audio_frames += 1;
                     }
                     SamplePayload::Subtitle { .. } | SamplePayload::Unknown { .. } => {}
                 }
@@ -863,6 +868,17 @@ impl Tally {
                     ));
                 }
             });
+        // What the wire-vs-demux oracle may subtract — see
+        // `oracles::wire_vs_demux`. Attributed injections in both tiers;
+        // the capture's own discontinuity/non-conformance tallies only
+        // under Lossy, where each is a PES the demuxer legitimately
+        // abandoned. Under Strict those events are failures in their own
+        // right (below), not an excuse for a missing access unit.
+        let explained = attribution.as_ref().map_or(0, |rep| rep.attributed_events)
+            + match mode {
+                VerifyMode::Strict => 0,
+                VerifyMode::Lossy => self.discontinuities + self.nonconformant,
+            };
         let slack = match &attribution {
             Some(rep) => slack * (1.0 - rep.injected_fraction),
             None => slack,
@@ -1046,6 +1062,7 @@ impl Tally {
             seconds,
             slack,
             mode,
+            explained,
         ));
 
         // A compact capture has no presence schedule to judge, so it

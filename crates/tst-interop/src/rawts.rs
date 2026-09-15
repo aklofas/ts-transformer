@@ -395,6 +395,15 @@ pub struct WireSummary {
     pub pts: BTreeMap<u16, TimestampSeries>,
     pub pes: BTreeMap<u16, PesShape>,
     pub packets_per_pid: BTreeMap<u16, u64>,
+    /// PES starts per PID — packets with `payload_unit_start_indicator`
+    /// whose payload opens with the `00 00 01` PES start code. Counted
+    /// for every PID, with or without a PTS (an async KLV PES may carry
+    /// none, and `pts` only holds timestamped ones). A packet that
+    /// repeats the previous packet's continuity counter on its PID is a
+    /// spec-legal duplicate (§2.4.3.3) and is not counted twice — the
+    /// demuxer suppresses it too (`demux/sync_ingress.rs`), and the
+    /// corruption tap's `Dup` class emits exactly that.
+    pub pes_starts_per_pid: BTreeMap<u16, u64>,
     pub packets: u64,
     /// PSI sections discarded because their CRC-32 did not check out —
     /// see `Reader::section` (private). Zero on any capture this harness
@@ -418,6 +427,9 @@ pub struct Reader {
     /// see that method's doc comment for why the ordinal is kept here
     /// rather than re-derived by a caller polling [`Reader::last_pcr`].
     pcr_events: Vec<(u64, u64)>,
+    /// Last continuity counter seen per PID on a payload-carrying packet
+    /// — see [`WireSummary::pes_starts_per_pid`].
+    last_cc: BTreeMap<u16, u8>,
 }
 
 impl Default for Reader {
@@ -446,6 +458,7 @@ impl Reader {
             last_pcr: None,
             retention,
             pcr_events: Vec::new(),
+            last_cc: BTreeMap::new(),
         }
     }
 
@@ -709,6 +722,12 @@ impl Reader {
             return Ok(());
         }
         let payload = &p[info.payload_off..];
+        // `has_payload` is true here (the AF-only return above), so
+        // §2.4.3.3 says this packet's CC advanced — unless it repeats the
+        // previous one, which makes it a spec-legal duplicate. Tracked on
+        // every payload PID (PSI included) so a later media packet on a
+        // PID that was first seen as PSI is judged against a real value.
+        let duplicate = self.last_cc.insert(info.pid, info.cc) == Some(info.cc);
         if info.pid == PAT_PID {
             if info.pusi {
                 self.pat(payload)?;
@@ -722,6 +741,9 @@ impl Reader {
             return Ok(());
         }
         if info.pusi && payload.len() >= 9 && payload[..3] == [0, 0, 1] {
+            if !duplicate {
+                *self.summary.pes_starts_per_pid.entry(info.pid).or_insert(0) += 1;
+            }
             self.pes(info.pid, payload)?;
         }
         Ok(())
@@ -1020,8 +1042,8 @@ mod tests {
                 crate::verify::VerifyMode::Lossy,
             ] {
                 assert_eq!(
-                    crate::oracles::check(p, &inv, &full, &per_program, 7.0, 0.7, mode),
-                    crate::oracles::check(p, &inv, &bounded, &per_program, 7.0, 0.7, mode),
+                    crate::oracles::check(p, &inv, &full, &per_program, 7.0, 0.7, mode, 0),
+                    crate::oracles::check(p, &inv, &bounded, &per_program, 7.0, 0.7, mode, 0),
                     "{profile} in {mode:?}"
                 );
             }
@@ -1410,6 +1432,52 @@ mod tests {
         assert!(r.last_pcr().is_some());
         assert!(r.is_pmt_pid(0x1000));
         assert!(!r.is_pmt_pid(0x1011));
+    }
+
+    /// `pes_starts_per_pid` counts one per PES start on every PID —
+    /// including the async KLV PID, whose PES may carry no PTS — and
+    /// counts a spec-legal duplicate packet once.
+    #[test]
+    fn reader_counts_pes_starts_per_pid_and_ignores_a_duplicate_packet() {
+        let bytes = bytes_of("baseline", 3.0, "pes-starts");
+        let mut r = Reader::new();
+        r.feed(&bytes).unwrap();
+        let s = r.finish().unwrap();
+        assert_eq!(s.pes_starts_per_pid[&0x1011], 90, "30 fps x 3 s");
+        assert_eq!(s.pes_starts_per_pid[&0x1031], 30, "10 Hz x 3 s");
+
+        // Duplicate the first video PES-start packet in place (same CC,
+        // same bytes): the count must not move.
+        let first = bytes
+            .chunks_exact(PKT)
+            .position(|c| {
+                let pkt: [u8; PKT] = c.try_into().unwrap();
+                let info = classify_packet(&pkt).unwrap();
+                info.pid == 0x1011 && info.pusi
+            })
+            .expect("a video PES start");
+        let mut dup = Vec::with_capacity(bytes.len() + PKT);
+        dup.extend_from_slice(&bytes[..(first + 1) * PKT]);
+        dup.extend_from_slice(&bytes[first * PKT..(first + 1) * PKT]);
+        dup.extend_from_slice(&bytes[(first + 1) * PKT..]);
+        let mut r = Reader::new();
+        r.feed(&dup).unwrap();
+        let s = r.finish().unwrap();
+        assert_eq!(
+            s.pes_starts_per_pid[&0x1011], 90,
+            "a duplicate is not a second PES"
+        );
+        assert_eq!(s.packets_per_pid[&0x1011], bytes_of_pid(&bytes, 0x1011) + 1);
+    }
+
+    /// Packets on `pid` in `bytes` — the raw denominator
+    /// `reader_counts_pes_starts_per_pid_and_ignores_a_duplicate_packet`
+    /// checks the duplicated capture against.
+    fn bytes_of_pid(bytes: &[u8], pid: u16) -> u64 {
+        bytes
+            .chunks_exact(PKT)
+            .filter(|c| classify_packet((*c).try_into().unwrap()).unwrap().pid == pid)
+            .count() as u64
     }
 
     #[test]

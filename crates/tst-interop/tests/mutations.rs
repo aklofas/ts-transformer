@@ -171,10 +171,37 @@ fn zero_adts_syncword(bytes: &[u8], pid: u16) -> Vec<u8> {
     out
 }
 
+/// Overrun `PES_header_data_length` (byte 8 of the PES header, ITU-T
+/// H.222.0 §2.4.3.7) on every `nth` PES start of `pid`. The demuxer's
+/// `parse_complete` rejects the record ("PES too short for declared
+/// header_data_length", tst-core `demux/pes.rs`) as a `MalformedPes`
+/// non-conformance and emits NO `Metadata` for it, while the packet —
+/// and its PES start — stays on the wire for the raw reader to count.
+/// KLV rather than video because a compact KLV PES is ~60 bytes, so a
+/// 255-byte header claim is guaranteed to overrun it; a video AU is
+/// kilobytes and would merely lose 255 payload bytes.
+fn overrun_pes_header_len_on_every_nth(bytes: &[u8], pid: u16, nth: usize) -> Vec<u8> {
+    let mut out = bytes.to_vec();
+    let mut seen = 0;
+    for chunk in out.chunks_exact_mut(PKT) {
+        if pid_of(chunk) != pid {
+            continue;
+        }
+        if let Some(off) = pes_payload_start(chunk) {
+            seen += 1;
+            if seen % nth == 0 {
+                chunk[off + 8] = 0xFF;
+            }
+        }
+    }
+    out
+}
+
 const SECONDS: f64 = 3.0;
 const ROLLOVER_SECONDS: f64 = 7.0;
 const PROG1_PMT: u16 = 0x1000;
 const PROG1_VIDEO: u16 = 0x1011;
+const PROG1_KLV: u16 = 0x1031;
 const PROG1_AUDIO: u16 = 0x1041;
 const PROG2_VIDEO: u16 = 0x1111;
 const PROG2_KLV: u16 = 0x1131;
@@ -336,4 +363,31 @@ fn a_dropped_video_packet_is_fatal_in_strict_and_counted_in_lossy() {
     );
     assert!(lossy.pass, "{:?}", lossy.failures);
     assert_eq!(lossy.metrics.discontinuities, 1);
+}
+
+/// CORR-07: a demuxer that silently loses one record in four stays
+/// inside the 70 % count slack (23 of 30 >= 21), so before the
+/// `wire_vs_demux_*` oracle the only failure this mutation produced was
+/// the `nonconformant_event` the demuxer happened to report. The wire
+/// oracle must fail on the COUNT, independent of any event.
+#[test]
+fn every_fourth_klv_record_lost_in_the_demuxer_fails_wire_vs_demux() {
+    let p = profiles::by_name("baseline").unwrap();
+    let path = gen_to_temp(p, SECONDS, "wire-vs-demux");
+    let bytes = std::fs::read(&path).unwrap();
+    let _ = std::fs::remove_file(&path);
+    let mutated = overrun_pes_header_len_on_every_nth(&bytes, PROG1_KLV, 4);
+    let r = verify_bytes(&mutated, p, SECONDS, "wire-vs-demux");
+    // 30 records at 10 Hz over 3 s; every 4th (7 of them) is rejected.
+    assert_eq!(r.metrics.klv_records, 23, "{:?}", r.failures);
+    // The pre-existing oracle still fires (the demuxer reported the
+    // malformed header) …
+    assert_fails_with(&r, "nonconformant_event");
+    // … and the 70 % floor does NOT (23 >= 21): that gap is the finding.
+    assert!(
+        !r.failures.iter().any(|f| f.starts_with("KLV records:")),
+        "the count floor must be the hole this oracle closes: {:?}",
+        r.failures
+    );
+    assert_fails_with(&r, &format!("wire_vs_demux_{PROG1_KLV}"));
 }
