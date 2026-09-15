@@ -30,11 +30,15 @@ network = { max-threads = 1 }
 
 [[profile.default.overrides]]
 # Windows CI runners are the slowest and most load-variable platform for the
-# loopback/network tests (known flake class: RTSP burst census + loopback
-# connects overrunning the per-test kill under runner load — see the
-# git history of docs/project/deferred-features.md). Double the network group's budget
-# there. Sets ONLY slow-timeout: test-group still resolves from the generic
-# network override below — KEEP THIS FILTER IN SYNC WITH IT.
+# loopback/network tests (known flake class: loopback connects overrunning
+# the per-test kill under runner load — see the git history of
+# docs/project/deferred-features.md). Double the network group's budget
+# there. NOTE: the RTSP max-sessions burst test is NOT a flake class — its
+# 2026-06 failures were a real cap race, fixed by the CAS reserve in the
+# accept loop (2026-08-01); a cap-assert failure there is a regression to
+# investigate, never a rerun case. Sets ONLY slow-timeout: test-group still
+# resolves from the generic network override below — KEEP THIS FILTER IN
+# SYNC WITH IT.
 platform = 'cfg(windows)'
 filter = """
     binary(loopback) | binary(loopback_multicast) | binary(pipeline_round_trip)
