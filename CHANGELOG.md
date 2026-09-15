@@ -725,7 +725,58 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed — rtp (WP-4a)
 
-- (pending)
+- **RTSP client: repeated response headers are joined, not last-wins.** A
+  401 whose `WWW-Authenticate` arrived as two lines (Digest first, Basic
+  second — RFC 7235 §4.1, common on IP cameras) kept only the LAST line
+  and the client answered with `Basic` — `user:password` base64 on the
+  wire. Both parsers now apply RFC 7230 §3.2.2 list semantics (values
+  joined with `", "`) to every repeated header except the single-valued
+  `Content-Length`, `CSeq` and `Session`, whose repeat is rejected as
+  `BadResponse`; `parse_challenges` recognises a second `<scheme>` inside
+  a joined value in either order, so Digest is preferred whenever offered.
+- **RTSP client: requests have a deadline — `RtspError::Timeout` finally
+  has a producer.** `RtspClientBuilder::request_timeout(Option<Duration>)`
+  (default 10 s, matching `connect_timeout`; `None` restores the old
+  unbounded wait) bounds every request method — `options` / `describe` /
+  `setup*` / `play` / `pause` / `get_parameter` / `teardown` — on both the
+  plain and the interleaved read paths; expiry returns
+  `RtspError::Timeout`, which the Python (`RtspError(TIMEOUT)`) and JVM
+  (`RtspException.Kind.TIMEOUT`) clients already map, so a silent server
+  no longer parks a binding call forever. The `Drop`-time TEARDOWN's
+  500 ms bound reports the same variant (was `Io(TimedOut)`). After a
+  `Timeout` build a fresh client: the late response may still be in the
+  socket.
+- **RTSP server: a complete request we cannot parse is answered and
+  drained.** `SET_PARAMETER` / `RECORD` / `ANNOUNCE` / any unknown method
+  token gets `501 Not Implemented` (a malformed request line, `400 Bad
+  Request`), with the request's `CSeq` echoed when it is a clean number,
+  and the bytes are consumed — before, the parse error was treated as
+  "need more bytes", the request stayed at the head of the read buffer and
+  every request behind it sat unanswered until the 30 s idle timeout.
+- **RTSP server: the `rtsps://` TLS handshake has a deadline.** A TCP
+  connection that never sent a ClientHello held its `max_sessions` slot
+  until the peer went away, so `max_sessions` silent connects — no
+  credentials needed — wedged the server at its cap for good. The
+  handshake is now bounded by `RtspServerBuilder::tls_handshake_timeout`
+  (default 30 s, the same bound the request loop applies to an idle read;
+  `rtsp-server-tls` builds only) and the slot is released on expiry.
+- **`rtsp://user:pass@host` credentials are percent-decoded** (`p%40ss` →
+  `p@ss`), as ffmpeg / VLC / GStreamer do — the only way to put `@ : / ? #`
+  in a URL credential, which used to be hashed verbatim into the Digest
+  response and fail as `AuthFailed` with no diagnostic. A malformed escape
+  in the userinfo is a URL syntax error. `tst_core::url::common::percent_decode`
+  is now public for the same purpose; `parse_url` itself still returns
+  userinfo verbatim.
+- **`tst_rtp::compute_rtt_us` no longer truncates.** The 16.16 s → µs
+  conversion was cast `as u32` and a wrapped subtraction on the
+  peer-controlled `last_sr` / `delay_since_last_sr` came out as a
+  plausible-looking number (~45 min); the narrowing now saturates and any
+  estimate above 60 s is `None`. The helper is still not called from
+  `ingest_rr` (`RtcpStats::rtt_us` stays 0 — see the RTCP statistics
+  deferral: the anchor is the peer's SR, and our SR carries no NTP
+  timestamp yet).
+- New fuzz target `rtsp_request_decode` for the server-side
+  `RtspRequest::parse` (33 fuzz targets total across the workspace).
 
 ### Fixed — tcp/udp (WP-4b)
 
@@ -830,61 +881,6 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   whole `next()` call; the doc now says so and names the re-entrancy
   deadlock the user guide's "never re-enter the receiver" rule prevents.
   Documentation only — no behaviour change.
-
-### Fixed — rtp (WP-4a)
-
-- **RTSP client: repeated response headers are joined, not last-wins.** A
-  401 whose `WWW-Authenticate` arrived as two lines (Digest first, Basic
-  second — RFC 7235 §4.1, common on IP cameras) kept only the LAST line
-  and the client answered with `Basic` — `user:password` base64 on the
-  wire. Both parsers now apply RFC 7230 §3.2.2 list semantics (values
-  joined with `", "`) to every repeated header except the single-valued
-  `Content-Length`, `CSeq` and `Session`, whose repeat is rejected as
-  `BadResponse`; `parse_challenges` recognises a second `<scheme>` inside
-  a joined value in either order, so Digest is preferred whenever offered.
-- **RTSP client: requests have a deadline — `RtspError::Timeout` finally
-  has a producer.** `RtspClientBuilder::request_timeout(Option<Duration>)`
-  (default 10 s, matching `connect_timeout`; `None` restores the old
-  unbounded wait) bounds every request method — `options` / `describe` /
-  `setup*` / `play` / `pause` / `get_parameter` / `teardown` — on both the
-  plain and the interleaved read paths; expiry returns
-  `RtspError::Timeout`, which the Python (`RtspError(TIMEOUT)`) and JVM
-  (`RtspException.Kind.TIMEOUT`) clients already map, so a silent server
-  no longer parks a binding call forever. The `Drop`-time TEARDOWN's
-  500 ms bound reports the same variant (was `Io(TimedOut)`). After a
-  `Timeout` build a fresh client: the late response may still be in the
-  socket.
-- **RTSP server: a complete request we cannot parse is answered and
-  drained.** `SET_PARAMETER` / `RECORD` / `ANNOUNCE` / any unknown method
-  token gets `501 Not Implemented` (a malformed request line, `400 Bad
-  Request`), with the request's `CSeq` echoed when it is a clean number,
-  and the bytes are consumed — before, the parse error was treated as
-  "need more bytes", the request stayed at the head of the read buffer and
-  every request behind it sat unanswered until the 30 s idle timeout.
-- **RTSP server: the `rtsps://` TLS handshake has a deadline.** A TCP
-  connection that never sent a ClientHello held its `max_sessions` slot
-  until the peer went away, so `max_sessions` silent connects — no
-  credentials needed — wedged the server at its cap for good. The
-  handshake is now bounded by `RtspServerBuilder::tls_handshake_timeout`
-  (default 30 s, the same bound the request loop applies to an idle read;
-  `rtsp-server-tls` builds only) and the slot is released on expiry.
-- **`rtsp://user:pass@host` credentials are percent-decoded** (`p%40ss` →
-  `p@ss`), as ffmpeg / VLC / GStreamer do — the only way to put `@ : / ? #`
-  in a URL credential, which used to be hashed verbatim into the Digest
-  response and fail as `AuthFailed` with no diagnostic. A malformed escape
-  in the userinfo is a URL syntax error. `tst_core::url::common::percent_decode`
-  is now public for the same purpose; `parse_url` itself still returns
-  userinfo verbatim.
-- **`tst_rtp::compute_rtt_us` no longer truncates.** The 16.16 s → µs
-  conversion was cast `as u32` and a wrapped subtraction on the
-  peer-controlled `last_sr` / `delay_since_last_sr` came out as a
-  plausible-looking number (~45 min); the narrowing now saturates and any
-  estimate above 60 s is `None`. The helper is still not called from
-  `ingest_rr` (`RtcpStats::rtt_us` stays 0 — see the RTCP statistics
-  deferral: the anchor is the peer's SR, and our SR carries no NTP
-  timestamp yet).
-- New fuzz target `rtsp_request_decode` for the server-side
-  `RtspRequest::parse` (33 fuzz targets total across the workspace).
 
 ### Testing
 
