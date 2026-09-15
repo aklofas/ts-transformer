@@ -24,7 +24,7 @@ const AAC_SAMPLES_PER_FRAME: f64 = 1024.0;
 /// Run all seven wire-level oracles and concatenate their failures.
 /// `explained` is how many demuxed events a corruption log and the
 /// capture's own discontinuity/non-conformance tallies account for —
-/// see [`wire_vs_demux`].
+/// see `wire_vs_demux` (private; `--document-private-items` renders it).
 // Each parameter is a distinct fact one of the seven oracles needs, all
 // of them already owned by the single caller (`verify::Tally::finish`) —
 // a struct here would only move the same list one line up.
