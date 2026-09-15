@@ -308,7 +308,8 @@ def test_tcp_recv_empty_destination_raises_value_error_before_io() -> None:
         with pytest.raises(ValueError):
             transport.recv(bytearray())
         # Still usable: a real read into a real buffer works afterwards.
-        assert accepted or peer_t.join(2.0) is None
+        peer_t.join(2.0)
+        assert accepted, "peer never accepted"
         accepted[0].sendall(b"\x47" * 188)
         buf = bytearray(1024)
         assert transport.recv(buf) == 188

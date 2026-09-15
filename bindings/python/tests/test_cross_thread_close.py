@@ -577,6 +577,7 @@ def test_srt_socket_close_and_getters_from_other_thread_do_not_raise() -> None:
     o = threading.Thread(target=other_thread, daemon=True)
     o.start()
     o.join(5.0)
+    assert not o.is_alive(), "close thread hung"
     assert not errs, f"second-thread use raised {errs!r}"
     assert not sock.is_alive()
     with pytest.raises(SrtError) as ei:
@@ -721,6 +722,15 @@ def test_rtp_h264_receiver_close_from_other_thread_while_recv_au_parked() -> Non
     import tstrans.rtp as rtp
 
     rx = rtp.H264Receiver.listen("rtp://127.0.0.1:0?pt=96")
+    # Read the bound address BEFORE the worker parks. `local_addr()` goes
+    # through the same slot a parked `recv_au` holds, so on a regression
+    # calling it from the rescue path would block the main thread inside a
+    # native mutex with the GIL released — where pytest-timeout cannot reach
+    # it, wedging the job instead of failing it. The udp / rtp / srt siblings
+    # capture their ports up front for the same reason.
+    host_port = rx.local_addr()
+    assert host_port is not None
+    host, port = host_port.rsplit(":", 1)
     outcome: dict[str, object] = {}
 
     def worker() -> None:
@@ -737,9 +747,7 @@ def test_rtp_h264_receiver_close_from_other_thread_while_recv_au_parked() -> Non
         w.join(5.0)
         if w.is_alive():
             # Rescue: a single-NAL IDR packet completes an AU and unparks.
-            host_port = rx.local_addr()
-            assert host_port is not None
-            host, port = host_port.rsplit(":", 1)
+            # Uses the address captured above — never the object under test.
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.sendto(
                 b"\x80\xe0\x00\x01\x00\x00\x00\x00\x00\x00\x00\x01" + b"\x65\xAB\xCD",
