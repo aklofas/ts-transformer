@@ -858,7 +858,69 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed — python (WP-5)
 
-- (pending)
+- **Every sender-side `close()` now cancels first and is safe from another
+  thread.** Fifteen `tstrans` classes still closed through PyO3's mutable
+  borrow — `srt.Sender` / `MuxSender` / `ManagedSender` /
+  `ManagedReceiver` / `ManagedMuxSender` / `Socket` / `Listener`,
+  `rtp.Sender` / `Receiver` / `MuxSender` / `H264Receiver`,
+  `udp.Transport` / `RecvTransport`, `rist.Transport` / `RecvTransport` —
+  so a `close()` from another thread while a call was parked (a send
+  waiting out a `ManagedMuxSender` reconnect backoff, a `recv_bytes` on a
+  silent peer, an `accept`) raised `RuntimeError: Already borrowed` and the
+  parked thread stayed parked (forever under `max_attempts=None`). All
+  fifteen now keep their shell in a shared slot and borrow immutably, the
+  shape `srt.Receiver` / the `DemuxReceiver`s / `tcp.Transport` already
+  had: `close()` fires the shell's cancel, then takes the slot, and the
+  parked call ends with the shell's cancel kind — `SrtError(CLOSED)` on
+  the managed shells and `SrtError(BROKEN | CLOSED)` on the plain ones,
+  `RtpError(CANCELLED)` (`H264Receiver.recv_au()` returns `None`),
+  `UdpError(CLOSED)` / `RistError(CLOSED)`. `is_alive()` reports `True`
+  while a call is parked; the getters wait for the parked call with the
+  GIL released instead of raising. For the raw-bytes `srt.Sender` a
+  cancel-first close no longer drains a partial framing bundle — call
+  `flush()` first when the tail matters (`MuxSender` was already
+  cancel-first). `docs/languages/python.md` had claimed `ManagedReceiver`
+  surfaced `SrtError(CLOSED)` on a cross-thread close — now true.
+- **`srt.MuxSender.cancel_handle()` and `srt.ManagedMuxSender.cancel_handle()`
+  (additive).** The two primary SRT sending objects had no cross-thread
+  interrupt path at all; both now return the same `CancelHandle` the
+  raw-bytes senders do (`tst_pipeline::MuxSender::cancel_handle`
+  underneath). `.pyi` stubs updated; `rtp.MuxSender` stays without one
+  (documented).
+- **`udp.RecvTransport.recv()` / `rist.RecvTransport.recv()` can be
+  interrupted by `close()` from another thread.** Both bindings had
+  documented "`close()` is only safe to call after `recv()` returns".
+  The kernel wait is now sliced into ≤100 ms polls (`UdpRecvTransport::
+  recv_timeout` / the existing librist 100 ms window) with a stop flag
+  `close()` sets first, so a parked `recv()` ends with `CLOSED` within
+  about one slice. Per-call `timeout_ms` semantics are unchanged
+  (`UdpError(IO)` "recv timed out" / `RistError(RECV_TIMEOUT)`). The Rust
+  crates gain no API — the tst-udp / tst-rist cancel-handle deferral
+  stands for Rust callers.
+- **`tcp.Transport.recv(buf)` no longer panics when `buf` is resized by
+  another thread while the call is blocked.** The old code read
+  `len(buf)` once, released the GIL, and copied into whatever length the
+  bytearray had afterwards — a shrink meant a Rust bounds panic
+  (`PanicException`) with the bytes already consumed from the socket.
+  `recv()` now holds a buffer export (a memoryview; `pyo3::buffer` is
+  compiled out under `abi3-py310`) across the wait, so a concurrent
+  resize raises `BufferError` in the resizing thread and the bytes land
+  in the unchanged buffer. An empty `buf` is refused with `ValueError`
+  before any socket read — a zero-length read could not be told apart
+  from peer EOF.
+- **`tcp.Listener.close()` from another thread no longer wedges the
+  interpreter.** It took the listener mutex with the GIL held while a
+  parked `accept_blocking()` owned that mutex, so every Python thread
+  froze until a peer happened to connect. It now fires the listener's
+  cancel handle (new in `tst-tcp`, see the TCP entry above), releases the
+  GIL around the lock, and the parked accept ends with `TcpError(CLOSED)`
+  within ~100 ms; `local_port()` and `repr()` release the GIL the same way.
+- **Docs:** `python.md` documents the cross-thread close contract per
+  transport, the `last_seen_micros()` watchdog caveat (it takes the
+  receiver's data-path lock; `end_reason()` is the lock-free poll), and
+  the UDP/RIST close behaviour; `troubleshooting.md` and
+  `deferred-features.md` no longer tell Python callers that a parked
+  UDP/RIST receive cannot be interrupted.
 
 ### Fixed — jvm (WP-6)
 
