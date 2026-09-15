@@ -391,3 +391,107 @@ def test_srt_managed_receiver_close_from_other_thread_while_recv_parked() -> Non
     finally:
         peer.close()
         rx.close()
+
+
+# --------------------------------------------------------------------------- #
+# srt.ManagedMuxSender                                                        #
+# --------------------------------------------------------------------------- #
+
+
+def _managed_mux_sender_after_peer_drop(port: int):
+    """Caller `ManagedMuxSender` (outage policy, 0.5 s conntimeo) whose plain
+    `srt.Receiver` peer accepted, took a few frames, then closed."""
+    import tstrans.srt as srt
+    from tstrans.mpegts import Pts90khz
+
+    accept_t, box = _plain_srt_receiver_on_thread(port)
+    tx = srt.ManagedMuxSender.from_url(
+        f"srt://127.0.0.1:{port}?mode=caller&conntimeo=500",
+        _video_only_program(),
+        policy=_outage_policy(),
+    )
+    accept_t.join(5.0)
+    if not box:
+        tx.close()
+        pytest.fail("plain srt listener did not accept the managed caller")
+    for i in range(3):
+        tx.send_video(NAL_IDR, pts=Pts90khz.from_raw(i * 3000), key_frame=(i == 0))
+    box[0].close()
+    return tx
+
+
+def _park_send_video(tx) -> tuple[threading.Thread, threading.Event, dict[str, object]]:
+    from tstrans.mpegts import Pts90khz
+
+    stop = threading.Event()
+    outcome: dict[str, object] = {}
+    progress = [0]
+
+    def worker() -> None:
+        def send_one() -> None:
+            tx.send_video(NAL_IDR, pts=Pts90khz.from_raw(0), key_frame=True)
+            progress[0] += 1
+            time.sleep(0.02)
+
+        outcome.update(_spin_sender(send_one, stop))
+
+    w = threading.Thread(target=worker, daemon=True)
+    w.start()
+    _wait_until_parked(progress, "srt.ManagedMuxSender")
+    return w, stop, outcome
+
+
+def test_srt_managed_mux_sender_close_from_other_thread_during_blocking_backoff() -> None:
+    from tstrans.exceptions import SrtError, SrtErrorKind
+
+    port = _free_tcp_port()
+    tx = _managed_mux_sender_after_peer_drop(port)
+    w, stop, outcome = _park_send_video(tx)
+    try:
+        c, errs = _close_on_thread(tx)
+        stop.set()
+        w.join(5.0)
+        if w.is_alive():
+            _t, rescue_box = _plain_srt_receiver_on_thread(port)
+            w.join(5.0)
+            for r in rescue_box:
+                r.close()
+        _assert_close_ok(c, errs, "srt.ManagedMuxSender")
+        assert not w.is_alive(), "close() did not end the send parked in the reconnect loop"
+        exc = outcome.get("exc")
+        assert isinstance(exc, SrtError), f"parked send ended with {exc!r}"
+        assert exc.kind == SrtErrorKind.CLOSED, exc.kind
+        assert not tx.is_alive()
+    finally:
+        stop.set()
+        tx.close()
+
+
+def test_srt_managed_mux_sender_cancel_handle_wakes_blocking_backoff() -> None:
+    from tstrans.exceptions import SrtError, SrtErrorKind
+    from tstrans.srt import CancelHandle
+
+    port = _free_tcp_port()
+    tx = _managed_mux_sender_after_peer_drop(port)
+    try:
+        handle = tx.cancel_handle()
+        assert isinstance(handle, CancelHandle)
+        w, stop, outcome = _park_send_video(tx)
+        t0 = time.monotonic()
+        handle.cancel()
+        w.join(5.0)
+        woke_after = time.monotonic() - t0
+        stop.set()
+        if w.is_alive():
+            _t, rescue_box = _plain_srt_receiver_on_thread(port)
+            w.join(5.0)
+            for r in rescue_box:
+                r.close()
+            pytest.fail("cancel() did not wake the send parked in the reconnect loop")
+        assert woke_after < 2.0, f"cancel took {woke_after:.2f}s"
+        exc = outcome.get("exc")
+        assert isinstance(exc, SrtError), f"parked send ended with {exc!r}"
+        assert exc.kind == SrtErrorKind.CLOSED, exc.kind
+        assert handle.is_cancelled()
+    finally:
+        tx.close()
