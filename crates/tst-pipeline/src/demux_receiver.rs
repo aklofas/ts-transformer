@@ -54,6 +54,8 @@ use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+#[cfg(feature = "std")]
+use core::sync::atomic::{AtomicU64, Ordering};
 use tracing::info_span;
 use tst_core::error::DemuxError;
 use tst_core::mpegts::demux::{DemuxEvent, Demuxer, DemuxerConfig};
@@ -64,6 +66,26 @@ use tst_core::transport::TransportError;
 /// [`DemuxReceiver::add_byte_sink`]. The callback receives one TS packet (188
 /// bytes) per call.
 pub type ByteSink = Box<dyn FnMut(&[u8]) + Send>;
+
+/// Reconnect-epoch observer installed by `ManagedDemuxReceiver` (std only:
+/// the counter it watches is `ManagedRecvTransport`'s `Arc<AtomicU64>`,
+/// and the bare-metal targets have no 64-bit atomics). `None` on the
+/// plain shell — `recv_event` then never resets or emits a
+/// `ReconnectDiscontinuity`.
+#[cfg(feature = "std")]
+struct ReconnectEpoch {
+    /// The transport's successful-rebuild counter.
+    counter: Arc<AtomicU64>,
+    /// Counter snapshot from the last loop iteration; a rise means a
+    /// reconnect fired since the previous `recv_event`.
+    last: u64,
+    /// Set when a reconnect was detected mid-loop; consumed by the next
+    /// loop turn to yield `DemuxEvent::ReconnectDiscontinuity` before any
+    /// post-reconnect event. A `bool` rather than a queued event because
+    /// `Demuxer::reset_sync` clears the demuxer's queue and the marker
+    /// must survive that clear.
+    pending: bool,
+}
 
 /// Full receive shell: `RecvTransport → Receiver → Demuxer`, with optional
 /// byte-sink fan-out.
@@ -131,6 +153,9 @@ pub struct DemuxReceiver<R: RecvTransport> {
     /// calls, and this error is returned once that queue is empty. See
     /// the "Stream-end flush" module docs.
     terminal_error: Option<DemuxReceiverError>,
+    /// See [`ReconnectEpoch`]; installed via `set_reconnect_epoch`.
+    #[cfg(feature = "std")]
+    reconnect_epoch: Option<ReconnectEpoch>,
     /// Lifetime span — see [`crate::shell_error::ShellSpan`] for the
     /// unwind-safe rationale. Private; never exposed publicly.
     _span: crate::shell_error::ShellSpan,
@@ -167,6 +192,8 @@ impl<R: RecvTransport> DemuxReceiver<R> {
             demux: Demuxer::with_config(options),
             byte_sinks: Vec::new(),
             terminal_error: None,
+            #[cfg(feature = "std")]
+            reconnect_epoch: None,
             _span: core::panic::AssertUnwindSafe(span),
         }
     }
@@ -178,6 +205,71 @@ impl<R: RecvTransport> DemuxReceiver<R> {
     /// registered; each sees the same bytes.
     pub fn add_byte_sink(&mut self, sink: ByteSink) {
         self.byte_sinks.push(sink);
+    }
+
+    /// Drop the syncer's buffered bytes and the demuxer's PSI/PES/CC state
+    /// — the reconnect boundary reset `ManagedDemuxReceiver` performs.
+    /// Available on every build; the no_std receiver shells never call it.
+    pub(crate) fn reset_for_reconnect(&mut self) {
+        self.ts.reset_sync();
+        self.demux.reset_sync();
+    }
+
+    /// Watch a transport's reconnect counter: when it rises between
+    /// packets, the just-read packet is discarded, the sync/demux state is
+    /// reset via [`Self::reset_for_reconnect`], and the next `recv_event`
+    /// yields `DemuxEvent::ReconnectDiscontinuity` first. Installed by
+    /// `ManagedDemuxReceiver` at construction; the snapshot starts at 0
+    /// (the counter is 0 for a freshly built managed transport).
+    #[cfg(feature = "std")]
+    pub(crate) fn set_reconnect_epoch(&mut self, reconnects: Arc<AtomicU64>) {
+        self.reconnect_epoch = Some(ReconnectEpoch {
+            counter: reconnects,
+            last: 0,
+            pending: false,
+        });
+    }
+
+    /// Loop-top half of the epoch observer: hand out the pending
+    /// discontinuity marker exactly once. Always `false` without an
+    /// observer (and on no_std builds, which have none).
+    #[cfg(feature = "std")]
+    fn take_pending_reconnect(&mut self) -> bool {
+        match self.reconnect_epoch.as_mut() {
+            Some(ep) if ep.pending => {
+                ep.pending = false;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    #[cfg(not(feature = "std"))]
+    fn take_pending_reconnect(&mut self) -> bool {
+        false
+    }
+
+    /// Post-`next_packet` half of the epoch observer: `true` when the
+    /// counter rose since the last turn (the marker is then armed and the
+    /// caller resets state and drops the packet it just read).
+    #[cfg(feature = "std")]
+    fn observe_reconnect(&mut self) -> bool {
+        let Some(ep) = self.reconnect_epoch.as_mut() else {
+            return false;
+        };
+        let current = ep.counter.load(Ordering::Acquire);
+        if current > ep.last {
+            ep.last = current;
+            ep.pending = true;
+            true
+        } else {
+            false
+        }
+    }
+
+    #[cfg(not(feature = "std"))]
+    fn observe_reconnect(&mut self) -> bool {
+        false
     }
 
     /// Pull one [`DemuxEvent`].
@@ -272,6 +364,13 @@ impl<R: RecvTransport> DemuxReceiver<R> {
     /// ```
     pub fn recv_event(&mut self) -> Result<Option<DemuxEvent>, DemuxReceiverError> {
         loop {
+            // Managed shells only: a reconnect detected on the previous turn
+            // is surfaced BEFORE the demuxer's queue — after the reset that
+            // queue is empty, but ordering the boundary marker first is
+            // what guarantees no post-reconnect event precedes it.
+            if self.take_pending_reconnect() {
+                return Ok(Some(DemuxEvent::ReconnectDiscontinuity));
+            }
             // Fast path: demuxer already has a queued event.
             if let Some(e) = self.demux.next_event() {
                 return Ok(Some(e));
@@ -328,6 +427,19 @@ impl<R: RecvTransport> DemuxReceiver<R> {
                     return Err(te.into());
                 }
             };
+            // Managed shells only: the reconnect check sits AFTER
+            // `next_packet` because a reconnect can fire DURING a single
+            // `next_packet` call (several `recv_bytes` over one packet
+            // boundary). If the counter rose, this packet may be spliced
+            // from dead-tail bytes plus fresh ones — drop it, reset the
+            // sync/demux state, and let the syncer re-lock on the next
+            // fresh bytes (the documented data-loss budget on reconnect).
+            // Byte sinks do not see the dropped packet: it was never
+            // parsed, and its bytes are not trustworthy.
+            if self.observe_reconnect() {
+                self.reset_for_reconnect();
+                continue;
+            }
             // Fan-out to byte sinks in registration order before demuxing.
             for sink in &mut self.byte_sinks {
                 sink(&pkt);
