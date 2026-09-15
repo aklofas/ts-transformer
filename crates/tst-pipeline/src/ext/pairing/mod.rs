@@ -38,7 +38,12 @@
 //!   videos buffered pre-wrap will force-emit as `UnpairedVideo` once
 //!   the wait window closes. Long-session callers who care about
 //!   continuity-across-wrap should either restart the pairer at the
-//!   wrap boundary or use a higher-level monotone PTS source.
+//!   wrap boundary or use a higher-level monotone PTS source. Since PR
+//!   #195 this holds only when `DemuxerConfig::unwrap_timestamps` is
+//!   `false` (the default); with it enabled — reachable here through
+//!   `PairingDemuxerConfig.demuxer` — the emitted timeline is unwrapped
+//!   and the pairer's saturating i64 arithmetic handles the extended
+//!   range.
 //!
 //! Internal arithmetic uses `saturating_add` / `saturating_sub` against
 //! `i64::MAX` so non-conformant sources feeding raw 33-bit PTS values
