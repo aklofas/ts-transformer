@@ -127,6 +127,10 @@ crate = "tst-rtp"
 name = "rtsp_message_decode"
 
 [[target]]
+crate = "tst-rtp"
+name = "rtsp_request_decode"
+
+[[target]]
 crate = "tst-srt"
 name = "url_parse"
 
