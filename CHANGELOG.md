@@ -752,7 +752,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Request`), with the request's `CSeq` echoed when it is a clean number,
   and the bytes are consumed — before, the parse error was treated as
   "need more bytes", the request stayed at the head of the read buffer and
-  every request behind it sat unanswered until the 30 s idle timeout.
+  every request behind it sat unanswered until the 30 s idle timeout. A
+  pipelined request that is over the header/body cap now gets its `413`
+  the moment it becomes the buffer head, not only on the next socket read
+  — a client that sends a valid request immediately followed by an
+  oversized one in the same write, then just waits on the first response,
+  used to get no `413` until the 30 s idle timeout closed the connection
+  out from under it.
 - **RTSP server: the `rtsps://` TLS handshake has a deadline.** A TCP
   connection that never sent a ClientHello held its `max_sessions` slot
   until the peer went away, so `max_sessions` silent connects — no
