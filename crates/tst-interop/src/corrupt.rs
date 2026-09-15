@@ -1485,12 +1485,11 @@ struct InjState {
     /// it instead of stalling on it forever.
     stranded: bool,
     /// A `ContinuityJump` landed inside this injection's attribution
-    /// window — on ANY PID, since a transport-level gap is not confined to
-    /// the PID the injection targeted. Evidence that packets went missing
-    /// around here for a reason the corruption log cannot own: an
-    /// impairment proxy's loss, an SRT/RIST buffer overrun, a reconnect
-    /// after an outage. See [`Attribution::lossy`] for what it
-    /// excuses.
+    /// window, on a PID this injection could itself have suffered a gap
+    /// on ([`reaches`]). Evidence that packets went missing around here
+    /// for a reason the corruption log cannot own: an impairment proxy's
+    /// loss, an SRT/RIST buffer overrun, a reconnect after an outage. See
+    /// [`Attribution::lossy`] for what it excuses.
     cc_jump_in_window: bool,
 }
 
@@ -1517,6 +1516,11 @@ struct Tracked {
     pid: u16,
     detectable: bool,
     psi: bool,
+    /// Damage that breaks packet framing for the whole multiplex — a
+    /// truncation, an inserted garbage run, or a header rewrite of the
+    /// sync byte (offset 0). Such an injection can surface on ANY PID;
+    /// every other class is confined to [`Tracked::pid`].
+    framing_wide: bool,
 }
 
 impl From<&Injection> for Tracked {
@@ -1527,6 +1531,8 @@ impl From<&Injection> for Tracked {
             pid: i.pid,
             detectable: i.detectable,
             psi: i.psi,
+            framing_wide: matches!(i.class, Class::Truncate | Class::Garbage)
+                || (i.class == Class::Header && i.offsets.first() == Some(&0)),
         }
     }
 }
@@ -1613,10 +1619,20 @@ fn expects(inj: &Tracked, sig: Signal) -> bool {
         // packet vanishes from its PID and the CC jumps. An
         // adaptation-field-length overrun (one of the `Header` sub-kinds)
         // is instead reported as a plain non-conformance, so that counts
-        // too.
+        // too — and so does a malformed PES, because all three can leave
+        // a decoder reading a PES header off bytes that are not one: a
+        // truncation misaligns the byte stream until a parser re-locks
+        // (see `truncation_explains`), a garbage run does the same, and
+        // an overrun adaptation-field length moves the payload offset
+        // inside an otherwise intact packet. Measured: the `truncate`
+        // positive control in `tests/corruption.rs` produces exactly one
+        // `MalformedPes` on the video PID at the re-lock.
         Class::Header | Class::Truncate | Class::Garbage => matches!(
             sig,
-            Signal::Resync | Signal::ContinuityJump | Signal::OtherNonConformant
+            Signal::Resync
+                | Signal::ContinuityJump
+                | Signal::MalformedPes
+                | Signal::OtherNonConformant
         ),
         Class::Drop => matches!(sig, Signal::ContinuityJump),
         // A broken section usually fails its CRC, but a flipped pointer
@@ -1630,6 +1646,25 @@ fn expects(inj: &Tracked, sig: Signal) -> bool {
         // `detectable`, so this arm only decides a flag nothing reads.
         _ => true,
     }
+}
+
+/// The PID half of causality: whether `inj` can reach a signal reported
+/// on `pid`. A resync carries no PID (sync was lost for the whole
+/// multiplex) and a PSI checksum failure is the PSI PID's own; a
+/// framing-wide injection reaches everything; anything else has to
+/// land on the PID it damaged.
+fn reaches(inj: &Tracked, pid: Option<u16>, sig: Signal) -> bool {
+    match pid {
+        None => true,
+        Some(p) => inj.framing_wide || sig == Signal::PsiChecksum || inj.pid == p,
+    }
+}
+
+/// Whether `inj` can be the CAUSE of `sig` on `pid`: the class rule
+/// ([`expects`]) and the PID rule ([`reaches`]) together. Position in
+/// the window is the caller's third condition.
+fn can_explain(inj: &Tracked, pid: Option<u16>, sig: Signal) -> bool {
+    expects(inj, sig) && reaches(inj, pid, sig)
 }
 
 fn describe(inj: &Tracked, at: u64) -> String {
@@ -2031,6 +2066,17 @@ impl Attribution {
             .find(|&i| self.window_contains(i, at))
     }
 
+    /// Index of the newest resolved injection whose window contains
+    /// `at` AND that can cause `sig` on `pid` — see [`can_explain`].
+    /// [`Attribution::hit`] keeps the position-only answer for
+    /// [`Attribution::truncation_explains`].
+    fn explainer(&mut self, at: u64, pid: Option<u16>, sig: Signal) -> Option<usize> {
+        self.advance(at);
+        (self.lo..self.hi)
+            .rev()
+            .find(|&i| self.window_contains(i, at) && can_explain(self.tracked(i), pid, sig))
+    }
+
     /// Whether injection `i` is resolved and its attribution window
     /// contains `at`. Takes `&self` — unlike [`Attribution::hit`] it never
     /// advances the cursors, so it is usable from read-only queries that
@@ -2124,12 +2170,20 @@ impl Attribution {
 
     /// An error-class event surfaced at receiver ordinal `at` (`pid` is
     /// `None` for a resync, which is not attributable to a PID).
+    ///
+    /// The event is EXPLAINED by the newest injection whose window
+    /// contains `at` and that can actually cause `sig` on `pid` — the
+    /// class rule ([`expects`]) and the PID rule ([`reaches`]) together,
+    /// see [`can_explain`]. An event of a class an injection cannot
+    /// cause, or on a PID it never touched, is therefore UNEXPLAINED
+    /// even when it lands squarely inside that injection's window:
+    /// window position is proximity, not causation.
     pub fn on_signal(&mut self, at: u64, pid: Option<u16>, sig: Signal) {
         self.events += 1;
         if sig == Signal::Resync {
             self.resyncs += 1;
         }
-        let attributed_to = self.hit(at);
+        let attributed_to = self.explainer(at, pid, sig);
         // A continuity jump is the one signal that also means "packets
         // went missing here", so it is recorded against every injection
         // whose window contains it — EXCEPT the injection it is attributed
@@ -2151,7 +2205,10 @@ impl Attribution {
         // silently under-record when they do overlap.
         if sig == Signal::ContinuityJump {
             for i in self.lo..self.hi {
-                if !self.window_contains(i, at) {
+                // Same causal restriction as the explanation above: a
+                // gap on a PID this injection never touched is not
+                // evidence its own packet went missing.
+                if !self.window_contains(i, at) || !reaches(self.tracked(i), pid, sig) {
                     continue;
                 }
                 // An injection's own jump is its own damage surfacing —
@@ -2177,7 +2234,11 @@ impl Attribution {
                 // injection, `expects` rejected it, and the old blanket
                 // exclusion then kept it out of `undetected_lost` too —
                 // so the run failed for damage nobody could have seen.
-                if Some(i) == attributed_to && expects(self.tracked(i), Signal::ContinuityJump) {
+                //
+                // `explainer` only ever hands back an injection whose
+                // expected signals include this one, so being the
+                // explainer IS the class check.
+                if Some(i) == attributed_to {
                     continue;
                 }
                 self.state_mut(i).cc_jump_in_window = true;
@@ -2195,9 +2256,7 @@ impl Attribution {
                     }
                     Signal::Resync => {}
                 }
-                if expects(self.tracked(i), sig) {
-                    self.state_mut(i).detected = true;
-                }
+                self.state_mut(i).detected = true;
             }
             // Unexplained. Which family it belongs to — and therefore
             // whether transport-loss excusal takes it — is decided HERE,
@@ -3388,12 +3447,19 @@ mod tests {
         );
     }
 
-    /// Ruling B. An attributed continuity jump excuses an injection ONLY
-    /// for a class whose expected signals exclude one — there the jump
-    /// means the datagram carrying the injection was lost in transit, so
-    /// the damage never reached the receiver to be noticed.
+    /// Ruling B. A continuity jump inside an injection's window, on the
+    /// PID it damaged, excuses that injection when its class does NOT
+    /// expect a jump: there the jump means the datagram carrying the
+    /// injection was lost in transit, so the damage never reached the
+    /// receiver to be noticed.
+    ///
+    /// The excusal survives X-CORR-04; the ATTRIBUTION does not. A signal
+    /// of a class the injection cannot cause is no longer explained by it
+    /// (`can_explain`), so the jump is unexplained — transport loss under
+    /// lossy judgement, a discontinuity finding under strict — while
+    /// still marking the injection's packet as plausibly missing.
     #[test]
-    fn an_attributed_cc_jump_excuses_a_class_that_does_not_expect_one() {
+    fn a_cc_jump_a_class_does_not_expect_stays_unexplained_but_still_excuses() {
         let build = |lossy: bool| {
             let log = vec![inj(1000, 10, Class::PsiFlip, 0, true)];
             let mut a = if lossy {
@@ -3410,7 +3476,11 @@ mod tests {
         };
 
         let lossy = build(true);
-        assert_eq!(lossy.attributed_events, 1, "the jump is attributed");
+        assert_eq!(
+            lossy.attributed_events, 0,
+            "class-incompatible: not explained"
+        );
+        assert_eq!(lossy.unexplained_transport_loss, 1, "{lossy:?}");
         assert_eq!(lossy.undetected_lost, 1, "{lossy:?}");
         assert_eq!(lossy.undetected_count, 0, "{:?}", lossy.undetected);
 
@@ -3418,6 +3488,7 @@ mod tests {
         let strict = build(false);
         assert_eq!(strict.undetected_count, 1, "{strict:?}");
         assert_eq!(strict.undetected_lost, 0, "{strict:?}");
+        assert_eq!(strict.unexplained_discontinuities, 1, "{strict:?}");
     }
 
     /// The other half of Ruling B, and the reason the blanket exclusion
@@ -3471,6 +3542,101 @@ mod tests {
             r.unexplained_events.iter().any(|e| e.contains("Resync")),
             "and it must be quotable in the failure: {:?}",
             r.unexplained_events
+        );
+    }
+
+    /// X-CORR-04 (E04): a continuity jump on a PID an injection never
+    /// touched is not that injection's evidence. Today `hit` places by
+    /// window position alone, so the foreign jump is "attributed" and
+    /// the `Drop` counts as detected.
+    #[test]
+    fn attribution_rejects_unrelated_pid() {
+        let mut a = Attribution::strict(vec![inj(1000, 10, Class::Drop, 0x1011, true)], &hdr());
+        a.on_pcr(1000, 5000);
+        a.on_signal(5020, Some(0x1031), Signal::ContinuityJump);
+        a.on_media(5100, 0x1011);
+        let r = a.finish(10_000);
+        assert_eq!(r.attributed_events, 0, "{r:?}");
+        assert_eq!(r.undetected_count, 1, "{r:?}");
+        assert_eq!(r.unexplained_discontinuities, 1, "{r:?}");
+    }
+
+    /// Same PID, wrong class: a `Drop` can only surface as a continuity
+    /// jump, so a malformed-PES report on its own PID inside its window
+    /// is somebody else's problem, not its detection.
+    #[test]
+    fn attribution_rejects_a_class_incompatible_signal_on_the_same_pid() {
+        let mut a = Attribution::strict(vec![inj(1000, 10, Class::Drop, 0x1011, true)], &hdr());
+        a.on_pcr(1000, 5000);
+        a.on_signal(5020, Some(0x1011), Signal::MalformedPes);
+        a.on_media(5100, 0x1011);
+        let r = a.finish(10_000);
+        assert_eq!(r.attributed_events, 0, "{r:?}");
+        assert_eq!(r.undetected_count, 1, "{r:?}");
+        assert_eq!(r.unexplained_nonconformant, 1, "{r:?}");
+    }
+
+    /// The loss-excusal follows the same rule: a jump on a foreign PID
+    /// says nothing about whether THIS injection's packet was lost, so
+    /// under lossy judgement it neither detects nor excuses a PSI flip
+    /// (whose packet would have to be missing from PID 0 to be excused).
+    #[test]
+    fn loss_excusal_needs_a_jump_on_the_injections_own_pid() {
+        let mut a = Attribution::lossy(vec![inj(1000, 10, Class::PsiFlip, 0, true)], &hdr());
+        a.on_pcr(1000, 5000);
+        a.on_signal(5020, Some(0x1031), Signal::ContinuityJump);
+        a.on_media(5100, 0x1011);
+        let r = a.finish(10_000);
+        assert_eq!(
+            r.undetected_lost, 0,
+            "a foreign jump must not excuse: {r:?}"
+        );
+        assert_eq!(r.undetected_count, 1, "{r:?}");
+        assert_eq!(r.unexplained_transport_loss, 1, "{r:?}");
+
+        // Positive control: the jump on the PSI PID itself does excuse.
+        let mut a = Attribution::lossy(vec![inj(1000, 10, Class::PsiFlip, 0, true)], &hdr());
+        a.on_pcr(1000, 5000);
+        a.on_signal(5020, Some(0), Signal::ContinuityJump);
+        a.on_media(5100, 0x1011);
+        let r = a.finish(10_000);
+        assert_eq!(r.undetected_lost, 1, "{r:?}");
+        assert_eq!(r.undetected_count, 0, "{r:?}");
+    }
+
+    /// Framing-wide classes reach every PID: a truncation, a garbage
+    /// run or a destroyed sync byte breaks the multiplex, so a jump on
+    /// any PID inside the window is theirs. A `Header` that rewrote the
+    /// CC (offset 3) is confined to its own PID.
+    #[test]
+    fn framing_wide_injections_explain_signals_on_any_pid() {
+        for class in [Class::Truncate, Class::Garbage] {
+            let mut a = Attribution::strict(vec![inj(1000, 10, class, 0x1011, true)], &hdr());
+            a.on_pcr(1000, 5000);
+            a.on_signal(5020, Some(0x1031), Signal::ContinuityJump);
+            a.on_media(5100, 0x1031);
+            let r = a.finish(10_000);
+            assert_eq!(r.attributed_events, 1, "{class:?}: {r:?}");
+            assert_eq!(r.undetected_count, 0, "{class:?}: {r:?}");
+        }
+        let sync_byte = |offsets: Vec<usize>| {
+            let mut i = inj(1000, 10, Class::Header, 0x1011, true);
+            i.offsets = offsets;
+            let mut a = Attribution::strict(vec![i], &hdr());
+            a.on_pcr(1000, 5000);
+            a.on_signal(5020, Some(0x1031), Signal::ContinuityJump);
+            a.on_media(5100, 0x1031);
+            a.finish(10_000)
+        };
+        assert_eq!(
+            sync_byte(vec![0]).attributed_events,
+            1,
+            "sync-byte header damage is framing-wide"
+        );
+        assert_eq!(
+            sync_byte(vec![3]).attributed_events,
+            0,
+            "a CC rewrite is PID-local"
         );
     }
 
@@ -3708,11 +3874,16 @@ mod tests {
     }
 
     /// The other half of the same rule: a jump from a DIFFERENT injection
-    /// still excuses. `hit` attributes a jump to the newest covering
-    /// injection, so an older one whose window also covers it is excused —
-    /// which needs overlapping windows, the case a real tap config forbids
-    /// (`min_gap >= 2 * ATTRIBUTION_WINDOW`) but an `approx` resolution's
-    /// widened window can still produce.
+    /// still excuses. `explainer` attributes a jump to the newest covering
+    /// injection that can cause it, so an older one whose window also
+    /// covers it is excused — which needs overlapping windows, the case a
+    /// real tap config forbids (`min_gap >= 2 * ATTRIBUTION_WINDOW`) but
+    /// an `approx` resolution's widened window can still produce.
+    ///
+    /// Both injections sit on the PSI PID because the excusal is
+    /// PID-constrained too (X-CORR-04): a gap on a PID an injection never
+    /// touched says nothing about whether ITS packet went missing, so
+    /// only a jump the older injection could itself have suffered counts.
     #[test]
     fn a_foreign_cc_jump_in_the_window_still_excuses() {
         // Two injections 100 packets apart: deliberately closer than
@@ -3721,7 +3892,7 @@ mod tests {
         let build = |lossy: bool| {
             let log = vec![
                 inj(1000, 10, Class::PsiFlip, 0, true),
-                inj(1000, 110, Class::Drop, 0x1011, true),
+                inj(1000, 110, Class::Drop, 0, true),
             ];
             let mut a = if lossy {
                 Attribution::lossy(log, &hdr())
@@ -3729,9 +3900,11 @@ mod tests {
                 Attribution::strict(log, &hdr())
             };
             a.on_pcr(1000, 5000); // resolve to 5010 and 5110
-            // Inside BOTH windows; `hit` gives it to the newer (the Drop),
-            // so the PsiFlip sees it as foreign.
-            a.on_signal(5200, Some(0x1011), Signal::ContinuityJump);
+            // Inside BOTH windows and on a PID both injections damaged;
+            // `explainer` gives it to the newer (the Drop, the only one of
+            // the two whose class expects a jump), so the PsiFlip sees it
+            // as foreign.
+            a.on_signal(5200, Some(0), Signal::ContinuityJump);
             a
         };
 
