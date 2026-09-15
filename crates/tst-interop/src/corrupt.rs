@@ -2937,7 +2937,7 @@ mod tests {
         let mut r = crate::rawts::Reader::new();
         r.set_resync_mode(true);
         r.feed(&wire).unwrap();
-        assert_eq!(r.resyncs().len() as u64, stats.injections);
+        assert_eq!(r.resync_count(), stats.injections);
     }
 
     #[test]
