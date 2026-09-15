@@ -703,6 +703,83 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - (pending)
 
+### Fixed — core (WP-2)
+
+- (pending)
+
+### Fixed — pipeline (WP-3)
+
+- **`ManagedTransport` (send side): `close()` and `Drop` now wake a
+  background worker parked inside the inner transport's `send_bytes`.**
+  Both stored the close latch and signalled the backoff wait, but only
+  `cancel_handle().cancel()` fired the live inner's wake handle — so a
+  `ReconnectMode::Background` worker parked in a drain send made
+  `close()` wait on the transport's own timeout (forever, for one with
+  none) and outlived a `Drop` indefinitely. `close()`, `Drop`, and the
+  cancel handle now run one shared terminal transition (latch, wake the
+  backoff wait, fire the wake handle); `Drop` stays non-blocking.
+- **`ManagedTransport::is_alive()` is `false` once `close()` or
+  `cancel()` has latched**, regardless of what the inner transport
+  reports (a plain `SrtTransport` keeps answering "alive" after its
+  socket was closed by the cancel handle). Previously every send
+  returned `Closed` while `is_alive()` — and the C/Python/JVM managed
+  senders' liveness getters — kept saying `true`.
+- **`ManagedTransport`: a cancel that lands while the post-reconnect gap
+  drain is writing through the fresh connection now reports
+  `TransportError::Closed`**, not the drain's wire-looking
+  `Broken("transport broken during drain")` (bindings map the two to
+  different kinds, so a watchdog cancel surfaced as a transport fault).
+  The inline and background reconnect paths now share one post-install
+  sequence (install → honour a latched close by closing the fresh inner
+  outside the lock → count the success), so the background worker no
+  longer counts a success for, or keeps, a connection the caller had
+  already cancelled.
+- **`ManagedDemuxReceiver` flushes pending PES reassembly on the `Closed`
+  (cancel / cross-thread close) path**, so the partial final video AU —
+  whose PES length is 0 and is only bounded by a flush — is surfaced as
+  a `Sample` before `Err(Closed)`, exactly as the plain `DemuxReceiver`
+  has done since v0.5.0. Since the Python/JVM managed receivers close
+  cancel-first, every managed close used to drop that AU. The managed
+  shell is now a thin wrapper over `DemuxReceiver<ManagedRecvTransport<R>>`
+  (one flush/terminal-error contract) and gains **`add_byte_sink`**
+  (additive), with the same per-packet fan-out contract as the plain
+  shell; the first post-reconnect packet, discarded before parsing, is
+  not shown to sinks. Public signatures, reconnect-discontinuity
+  semantics (reset + `ReconnectDiscontinuity` + first-packet drop) and
+  `RecvEndReason` recording are unchanged.
+
+### Fixed — rtp (WP-4a)
+
+- (pending)
+
+### Fixed — tcp/udp (WP-4b)
+
+- (pending)
+
+### Fixed — rist/hls (WP-4c)
+
+- (pending)
+
+### Fixed — python (WP-5)
+
+- (pending)
+
+### Fixed — jvm (WP-6)
+
+- (pending)
+
+### Testing — interop harness (WP-7a)
+
+- (pending)
+
+### Testing — interop harness (WP-7b)
+
+- (pending)
+
+### Testing — CI/rails (WP-8)
+
+- (pending)
+
 ### Testing
 
 - **Tooling: `tst-interop` sender-side corruption tap.** `tst-interop send
