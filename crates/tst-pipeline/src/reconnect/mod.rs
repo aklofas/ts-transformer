@@ -369,6 +369,12 @@ impl<T: Transport + 'static> ManagedTransport<T> {
     /// before any state mutation, so oversized messages never enter the gap
     /// buffer (where they'd block drain forever).
     ///
+    /// A cancel that lands mid-drain, right after a factory reconnect,
+    /// surfaces here as `Err(TransportError::Closed)` rather than the
+    /// drain's own wire-looking `Broken`. A cancel that instead lands after
+    /// the drain has already fully succeeded also returns `Closed` on this
+    /// call — the entry gate above would return it on the next one anyway.
+    ///
     /// # Panics
     ///
     /// Panics with `"BUG: gap lock poisoned — gap buffer is invariant-critical"`
@@ -864,7 +870,11 @@ impl<T: Transport + 'static> Transport for ManagedTransport<T> {
         // AND retires its inner, so the slot would outlive what it wakes. Here
         // the inner stays in the guard (only `close()`d), and the slot's
         // invariant is that it mirrors `inner` — the only clear sites are the
-        // ones that set `*guard = None`. Don't "fix" this to match.
+        // ones that set `*guard = None`. Don't "fix" this to match. (There is
+        // no stale handle to worry about either way: `CancelSlot::cancel`,
+        // fired just above by `terminal_signal()`, already `take()`s —
+        // consumes — whatever target was installed, so the slot carries
+        // nothing left to clear here; the asymmetry is only about `inner`.)
         //
         // Mutex-poisoning policy (silent no-op on poison): close on a poisoned
         // state is naturally a no-op — the inner transport is already in an
