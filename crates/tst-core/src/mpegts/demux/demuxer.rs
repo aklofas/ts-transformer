@@ -300,6 +300,19 @@ impl Demuxer {
     /// internal queue. Drain `next_event()` after the error to retrieve the
     /// structured issue alongside the human-readable error string.
     ///
+    /// # Errors
+    ///
+    /// `Err(DemuxError::Unrecoverable { after_bytes })` closes one
+    /// sync-search window: more than `SYNC_SEARCH_WINDOW` (32 × 188 =
+    /// 6,016) bytes were scanned without a confirmed packet boundary. The
+    /// scanned bytes are discarded and the counter restarts, so the next
+    /// `feed` starts a fresh window — no `reset_sync` is needed, and a
+    /// source that keeps sending non-TS bytes trips the verdict once per
+    /// window rather than on every call. `Err(DemuxError::SyncBufExhausted
+    /// { .. })` drops the buffered bytes and this call's input; the next
+    /// `feed` starts from an empty buffer. See
+    /// [`DemuxerConfig::sync_buf_cap`](crate::mpegts::demux::DemuxerConfig::sync_buf_cap).
+    ///
     /// # C ABI
     ///
     /// `tst_demuxer_feed` — see `bindings/c/include/tstrans.h`.
@@ -341,6 +354,7 @@ impl Demuxer {
             self.sync_buf.clear();
             self.sync_consumed = 0;
             self.is_synced = false;
+            self.bytes_since_sync = 0;
             return Err(DemuxError::SyncBufExhausted { observed, max: cap });
         }
         // Reserve up front so a partial copy can't leave the buffer in a
@@ -351,6 +365,7 @@ impl Demuxer {
             self.sync_buf.clear();
             self.sync_consumed = 0;
             self.is_synced = false;
+            self.bytes_since_sync = 0;
             return Err(DemuxError::SyncBufExhausted { observed, max: cap });
         }
         self.sync_buf.extend_from_slice(bytes);
@@ -387,13 +402,13 @@ impl Demuxer {
                     i += 1;
                 }
                 self.bytes_since_sync += i;
-                if self.bytes_since_sync > super::sync_ingress::SYNC_SEARCH_WINDOW {
-                    return Err(DemuxError::Unrecoverable {
-                        after_bytes: self.bytes_since_sync,
-                    });
-                }
+                // Consume the scanned span whatever the verdict: these
+                // bytes were searched and hold no packet start.
                 self.sync_consumed += i;
                 self.compact_sync_buf();
+                if self.bytes_since_sync > super::sync_ingress::SYNC_SEARCH_WINDOW {
+                    return Err(self.unrecoverable_window());
+                }
                 continue;
             }
             // Candidate sync byte. Only validate via N-of-M stride check
@@ -413,13 +428,11 @@ impl Demuxer {
                         // sync-search window so adversarial input
                         // still hits Unrecoverable.
                         self.bytes_since_sync += 1;
-                        if self.bytes_since_sync > super::sync_ingress::SYNC_SEARCH_WINDOW {
-                            return Err(DemuxError::Unrecoverable {
-                                after_bytes: self.bytes_since_sync,
-                            });
-                        }
                         self.sync_consumed += 1;
                         self.compact_sync_buf();
+                        if self.bytes_since_sync > super::sync_ingress::SYNC_SEARCH_WINDOW {
+                            return Err(self.unrecoverable_window());
+                        }
                         continue;
                     }
                     NofMResult::NeedMoreBytes => {
@@ -515,6 +528,17 @@ impl Demuxer {
             return Err(DemuxError::StrictRejection(format!("{fatal:?}")));
         }
         Ok(())
+    }
+
+    /// Close one sync-search window with an `Unrecoverable` verdict. The
+    /// verdict is per window: the caller has already consumed the
+    /// scanned span, and the counter restarts at zero so the next `feed`
+    /// begins a fresh search instead of re-scanning the same bytes and
+    /// re-reporting a doubled count (CORR-15).
+    fn unrecoverable_window(&mut self) -> DemuxError {
+        let after_bytes = core::mem::take(&mut self.bytes_since_sync);
+        self.is_synced = false;
+        DemuxError::Unrecoverable { after_bytes }
     }
 
     /// Pull the next available event. Returns `None` if no event is
@@ -1189,6 +1213,55 @@ mod tests {
         let big = vec![0xAA; crate::mpegts::demux::sync_ingress::SYNC_SEARCH_WINDOW * 2];
         let err = d.feed(&big).unwrap_err();
         assert!(matches!(err, DemuxError::Unrecoverable { .. }));
+    }
+
+    /// CORR-15 (deep review #4): `Unrecoverable` is a per-window verdict,
+    /// not a latch. The old path returned BEFORE consuming the scanned
+    /// span, so the next feed re-scanned it, reported a doubled count and
+    /// kept doing so forever (only `reset_sync` escaped).
+    #[test]
+    fn unrecoverable_is_per_window_and_the_next_feed_recovers() {
+        let mut d = Demuxer::new();
+        let garbage = vec![0xAAu8; 7_000];
+        let err = d.feed(&garbage).unwrap_err();
+        assert!(
+            matches!(err, DemuxError::Unrecoverable { after_bytes: 7_000 }),
+            "{err:?}"
+        );
+
+        // Valid aligned TS in the very next call must be accepted.
+        let pkt = null_ts_packet();
+        let mut ts = Vec::new();
+        for _ in 0..10 {
+            ts.extend_from_slice(&pkt);
+        }
+        d.feed(&ts)
+            .unwrap_or_else(|e| panic!("second feed after the verdict: {e}"));
+        assert_eq!(d.bytes_since_sync, 0);
+        assert!(d.is_synced);
+
+        // A later garbage window is a NEW verdict with its own count.
+        let err = d.feed(&garbage).unwrap_err();
+        assert!(
+            matches!(err, DemuxError::Unrecoverable { after_bytes: 7_000 }),
+            "{err:?}"
+        );
+    }
+
+    /// The cap path also closes the search window: a partial scan that
+    /// is then cleared by `SyncBufExhausted` must not carry its count
+    /// into the next feed.
+    #[test]
+    fn sync_buf_exhausted_resets_the_search_counter() {
+        let mut d = Demuxer::new();
+        d.feed(&[0xAAu8; 3_000]).unwrap(); // 3_000 < SYNC_SEARCH_WINDOW: Ok, counter 3_000
+        assert_eq!(d.bytes_since_sync, 3_000);
+        let oversize = vec![0xFFu8; crate::mpegts::demux::sync_ingress::MAX_SYNC_BUF_BYTES + 1];
+        assert!(matches!(
+            d.feed(&oversize).unwrap_err(),
+            DemuxError::SyncBufExhausted { .. }
+        ));
+        assert_eq!(d.bytes_since_sync, 0);
     }
 
     #[test]
