@@ -292,15 +292,23 @@ jobs:
         run: bash scripts/check/c/header-mirror-enum-export.sh
 
       - name: Check doc ABI and ST 1910 currency
-        # Plan #96 Wave D ratchet — fails on stale `ABI version 0.[0-3]`
-        # in README/docs/crate docs, on bare `ST 1910` mis-cites in
-        # README/crates (correct cite for MPEG-TS Metadata_AU_cell is
-        # H.222.0 §2.12.4.2; `ST 1910.1` with the .1 suffix is allowed
-        # everywhere since it's a distinct CMAF/HLS standard), and on
-        # `receiver-surface ... pending` wording in tst-c crate docs.
-        # Rule 4 (docs deep edit 2026-07-12) pins README / languages/c.md /
-        # binding-authors.md current-version sites to the source constants.
-        run: bash scripts/check/repo/doc-abi-and-st1910-currency.sh
+        # Plan #96 Wave D ratchet — fails on any non-current `ABI version 0.N`
+        # in README/docs/crate docs (current = TST_ABI_VERSION_MINOR; the
+        # pre-2026-09-14 regex was hard-coded to 0.[0-4] and blind above it),
+        # on bare `ST 1910` mis-cites in README/crates (correct cite for
+        # MPEG-TS Metadata_AU_cell is H.222.0 §2.12.4.2; `ST 1910.1` with the
+        # .1 suffix is allowed everywhere since it's a distinct CMAF/HLS
+        # standard), and on `receiver-surface ... pending` wording in tst-c
+        # crate docs. Rule 4 (docs deep edit 2026-07-12) pins README /
+        # languages/c.md / binding-authors.md current-version sites to the
+        # source constants. The self-test plants a stale minor first.
+        run: bash scripts/check/repo/doc-abi-and-st1910-currency.sh --self-test && bash scripts/check/repo/doc-abi-and-st1910-currency.sh
+
+      - name: Check rust.md feature-table currency
+        # Deep-review-#4 rail (META-07): every `| crate | feature |` row in
+        # docs/languages/rust.md must exist in that crate's [features]
+        # (rust.md carried a phantom tst-srt `log` feature for months).
+        run: bash scripts/check/repo/feature-table-currency.sh --self-test && bash scripts/check/repo/feature-table-currency.sh
 
       - name: Check docs internal links
         # Docs deep-edit rail (2026-07-12) — every intra-repo markdown link
