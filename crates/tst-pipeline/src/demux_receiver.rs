@@ -86,6 +86,16 @@ pub type ByteSink = Box<dyn FnMut(&[u8]) + Send>;
 /// }
 /// ```
 ///
+/// # Sync lock
+///
+/// Packets reach the demuxer through the inner [`Receiver`], which locks
+/// only after four aligned TS packets (752 bytes) and, after any sync
+/// loss, strands up to three unconfirmed trailing packets at
+/// end-of-stream — see [`Receiver`]'s "Sync lock and the trailing
+/// window". A session of fewer than four packets therefore yields no
+/// events at all, and the last access unit after a mid-stream corruption
+/// may never complete.
+///
 /// # Closing
 ///
 /// `DemuxReceiver` supports three shutdown patterns:

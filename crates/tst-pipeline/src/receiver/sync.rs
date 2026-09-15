@@ -181,12 +181,12 @@ impl Syncer {
                     // buf[head + 188 * count] is also 0x47.
                     //
                     // `need` ensures the index we're about to peek at actually
-                    // exists in the buffer before we read it. The +1 means:
-                    // after the last confirmation (count→4, lock) we also know
-                    // there is at least one byte of the first real packet in
-                    // the buffer, so the LOCKED arm won't immediately return
-                    // None on the following iteration.
-                    let need = TS_PACKET_SIZE * (count as usize + 1) + 1;
+                    // exists in the buffer before we read it: the candidate
+                    // plus `count` full strides. Exactly four packets (752
+                    // bytes) therefore lock — no extra look-ahead byte, which
+                    // used to strand a four-packet stream and the last packets
+                    // before EOF after any resync (CORR-18).
+                    let need = TS_PACKET_SIZE * (count as usize + 1);
                     if self.len < need {
                         return None;
                     }
@@ -346,9 +346,8 @@ mod tests {
         let mut bad = ts_packet(200);
         bad[0] = 0x00;
         buf.extend_from_slice(&bad);
-        // 6 more good packets after the bad one — enough for VERIFY to re-lock
-        // (needs 4 confirmations, so ≥5 packets, with the +1 byte lookahead
-        // pushing the minimum to 5 * 188 + 1 = 941 bytes = 5 full packets).
+        // 6 more good packets after the bad one — more than enough for
+        // VERIFY to re-lock (needs 4 confirmations = 4 packets = 752 bytes).
         for i in 0..6u16 {
             buf.extend_from_slice(&ts_packet(i + 100));
         }
@@ -425,5 +424,28 @@ mod tests {
             assert!(pkt.is_some(), "packet {i} should be emitted");
             assert_eq!(pkt.unwrap()[0], 0x47);
         }
+    }
+
+    /// CORR-18: four aligned packets are exactly the four confirmations
+    /// VERIFY needs. The old `+ 1` look-ahead demanded one byte of a fifth
+    /// packet, so a four-packet stream (or the last four packets before
+    /// EOF after any resync) never emitted at all.
+    #[test]
+    fn four_packets_lock_and_emit_without_a_fifth_byte() {
+        let mut s = Syncer::new();
+        let mut buf = Vec::new();
+        for i in 0..4u16 {
+            buf.extend_from_slice(&ts_packet(i));
+        }
+        s.push(&buf);
+        let mut got = 0;
+        while s.next_packet().is_some() {
+            got += 1;
+        }
+        assert_eq!(
+            got, 4,
+            "all four packets must emit once VERIFY reaches count 4"
+        );
+        assert_eq!(s.state(), SyncState::Locked);
     }
 }

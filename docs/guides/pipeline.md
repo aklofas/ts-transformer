@@ -517,8 +517,14 @@ counterpart to `Transport`).
   of NALs and KLV records out of an SRT socket."
 - **TS-aligned packets out → `Receiver`.** One 188-byte aligned TS
   packet per `next_packet` call. Internal sync recovery via the
-  HUNT/VERIFY/LOCKED state machine. Use when you want to feed bytes
-  into your own demuxer (FFmpeg, JavaCV, Bento4).
+  HUNT/VERIFY/LOCKED state machine: VERIFY locks after four aligned
+  packets (four `0x47` bytes at 188-byte strides, 752 bytes) and emits
+  nothing before that, so a session shorter than four packets yields
+  nothing, and after any sync loss the last one to three packets before
+  end-of-stream stay unconfirmed and are dropped. `ReceiverStats`
+  (`resync_events`, `bytes_skipped_for_sync`) shows when that happened.
+  Use when you want to feed bytes into your own demuxer (FFmpeg,
+  JavaCV, Bento4). `DemuxReceiver` inherits the same lock rule.
 - **One byte vec per recv → `RawReceiver`.** No TS framing, no demux —
   one transport message per `recv_one` call, returned as `Vec<u8>`.
   Use as the receive counterpart to `RawSender`, or as a building

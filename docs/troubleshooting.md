@@ -206,6 +206,12 @@ After the run, check `Sender::stats()` and inspect `bytes_skipped_for_sync` and 
 
 Fix: if the receiver is still seeing garble despite zero stats, the corruption is happening downstream of the sender — check the network path and any intermediate transcoders.
 
+**`Receiver` / `DemuxReceiver` emits nothing on a very short stream, or the last few packets after a corruption never arrive**
+
+The receive-side syncer locks only after it has seen four aligned TS packets (four `0x47` bytes at 188-byte strides — 752 bytes) and emits nothing before that. The confirmation is peek-only, so on a healthy stream nothing is lost. But a stream shorter than four packets never emits, and after any sync loss the last one to three packets before end-of-stream stay buffered awaiting confirmation and are dropped when the transport closes — on `DemuxReceiver` that can be the final access unit. `ReceiverStats::resync_events` counts each lock (initial and re-locks); `bytes_skipped_for_sync` counts what HUNT discarded.
+
+Fix: feed at least four packets per session (test fixtures included) and treat the final packets after a mid-stream corruption as best-effort. If you need every packet of a finite capture, feed the bytes to `tst_core::mpegts::demux::Demuxer::feed` directly — it accepts an initial `0x47` with no confirmation and only demands a 5-of-7 stride check after a sync loss.
+
 **Receiver sees double-wrapped KLV (legacy callers from older library versions)**
 
 If you previously passed pre-wrapped bytes to `Muxer::push_klv` for a `KlvStreamType::SynchronousMetadata` stream (older library versions where the caller had to wrap), the muxer now double-wraps. Strip the outer wrapper and let the muxer wrap once.
