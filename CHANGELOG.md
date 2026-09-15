@@ -990,7 +990,48 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Testing — CI/rails (WP-8)
 
-- (pending)
+- **Header rail fails closed.** `scripts/check/c/header-conditional-sections.sh`
+  now treats a cbindgen failure as `FAIL` (stderr preserved), requires the
+  generated header to carry a non-trivial declaration set (≥ 200 `tst_*`
+  declarations; 468 today, rendered from `tst-c-core`), reports a missing
+  generator as `SKIP` locally (never `PASS`) and as `FAIL` under `CI`.
+  Before this the `if cbindgen …` block had no failure branch, so a failing
+  generator printed `PASS`; and no workflow installed cbindgen, so CI had
+  only ever run the weak committed-header fallback. `ci.yml`'s
+  `tst-c-feature-matrix` job now installs cbindgen 0.29.2 (Cargo.lock's pin)
+  and runs the rail once. The ratchet self-test gained three negative cases
+  (failing shim on PATH, absent-under-CI, absent-locally).
+- **`timeout-minutes` on every job** in all seven pre-existing workflows (20
+  of 24 jobs had none; a hung `tst-py default tests` step burned a 6-hour
+  runner slot in 2026-09). Values: 15 for short jobs, 20 for the two Python
+  jobs and fuzz smoke, 30 for bare-metal/Apple/crates.io, 45 for wheels, 60
+  for sanitizer jobs; `build` (75), jvm `build` (75) and `interop-matrix`
+  (90) unchanged.
+- **`cargo-deny` gate** — new `ci.yml` job `deny` (`EmbarkStudios/cargo-deny-action@v2`,
+  `check advisories licenses`) with `deny.toml`: RustSec advisories (yanked =
+  deny, unmaintained direct deps = deny), license allowlist MIT / Apache-2.0
+  (incl. LLVM-exception) / BSD-2 / BSD-3 / ISC / Unicode-3.0 / Zlib, one scoped
+  exception for the MPL-2.0 build-only `cbindgen`. `bans`/`sources` not
+  enabled. The vendored native libraries are outside cargo-deny's view.
+- **PR-path sanitizers + interop.** `sanitizers.yml` runs `tsan-native` on
+  pull requests touching `crates/tst-{srt,rist,tcp}/**`,
+  `crates/tst-pipeline/src/reconnect/**`, the two sys crates or the
+  suppressions (the other three jobs stay nightly/dispatch); `interop.yml`
+  also triggers on `crates/tst-core/src/mpegts/**`. Both hard-gate.
+- **MSRV consistency rail** — `scripts/check/repo/msrv-consistency.sh`
+  asserts every pinned-toolchain literal (workspace + two crate-local
+  `rust-version`, every workflow `RUSTUP_TOOLCHAIN`/`toolchain:` input, the
+  embedded gate scripts' `--toolchain`, README badge and three doc claims —
+  45 occurrences across 18 files) equals `rust-toolchain.toml`'s channel, and
+  refuses to go blind when a site disappears; `--self-test` plants a `9.99`.
+  Wired as an explicit `ci.yml` step next to `release-version-consistency`.
+- **CI health accounting** — `scripts/dev/ci-health.sh` aggregates the
+  Actions REST API (last 7 days: runs, first-try greens, rerun runs and the
+  job names rerun, wedges > 60 min, unrecovered failures) into one CSV row +
+  `ALERT:` lines for any job rerun ≥ 2×; `.github/workflows/ci-health.yml`
+  runs it Mondays 06:00 UTC (step summary + artifact, read-only
+  permissions); the in-tree ledger `docs/project/ci-health.csv` is appended
+  by the maintainer at closeouts.
 
 ---
 
