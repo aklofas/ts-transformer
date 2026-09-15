@@ -96,7 +96,11 @@ Binding shape: opaque handle (`tst_mux_sender_t *`) with explicit
 `tst_*_close`. See `bindings/c/include/tstrans.h` for the full ABI.
 
 ```c
-struct tst_mux_sender_t *sender = tst_mux_sender_open(url, &config);
+tst_mux_config_t *cfg = tst_mux_config_new();
+tst_program_handle_t prog = tst_mux_config_add_program(cfg, 1, 0x1000);
+tst_mux_config_add_video_stream(cfg, prog, 0x1011, TST_VIDEO_CODEC_H264);
+struct tst_mux_sender_t *sender = tst_mux_sender_open(url, cfg);
+tst_mux_config_free(cfg); /* tst_mux_sender_open copies what it needs */
 if (sender == NULL) { /* tst_get_last_error_str() describes the failure */ }
 tst_mux_sender_send_video(sender, payload, payload_len, pts_ticks);
 tst_mux_sender_close(sender);
