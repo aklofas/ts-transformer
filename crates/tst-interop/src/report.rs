@@ -629,6 +629,37 @@ pub fn parse_inventory(text: &str) -> Result<Inventory, String> {
             inv.cells.len()
         ));
     }
+    // Every declared (id, profile) exactly once: the merge compares
+    // multisets, so a duplicated declaration would be satisfied by a
+    // duplicated result — 157 copies of one cell must never pass as
+    // the full census just because there are 157 of them.
+    let mut seen = std::collections::BTreeSet::new();
+    for c in &inv.cells {
+        if !seen.insert((c.id.as_str(), c.profile.as_str())) {
+            return Err(format!(
+                "inventory.json: duplicate declared cell {} ({})",
+                c.id, c.profile
+            ));
+        }
+        if crate::profiles::by_name(&c.profile).is_none() {
+            return Err(format!(
+                "inventory.json: cell {} names unknown profile {:?}",
+                c.id, c.profile
+            ));
+        }
+    }
+    if inv.shape == SHAPE_FULL {
+        let declared: std::collections::BTreeSet<&str> =
+            inv.profiles.iter().map(String::as_str).collect();
+        let canonical: std::collections::BTreeSet<&str> =
+            crate::profiles::all().iter().map(|p| p.name).collect();
+        if declared != canonical {
+            return Err(format!(
+                "inventory.json: shape {SHAPE_FULL:?} must list every profile {canonical:?}, got \
+                 {declared:?}"
+            ));
+        }
+    }
     Ok(inv)
 }
 
@@ -5411,6 +5442,66 @@ mod tests {
         .unwrap_err();
         assert!(e.contains("157"), "{e}");
         assert!(e.contains('1'), "{e}"); // the actual declared count, 1, should be named
+    }
+
+    fn inventory_json(shape: &str, cells: &[(&str, &str)], profiles: &[&str]) -> String {
+        let cells: Vec<String> = cells
+            .iter()
+            .map(|(id, p)| format!(r#"{{"id":"{id}","profile":"{p}"}}"#))
+            .collect();
+        let profiles: Vec<String> = profiles.iter().map(|p| format!("\"{p}\"")).collect();
+        format!(
+            r#"{{"shape":"{shape}","seconds_per_cell":10,"cells_glob":"*","profiles":[{}],"cells":[{}],"allowed_skips":[],"tools":{{}}}}"#,
+            profiles.join(","),
+            cells.join(",")
+        )
+    }
+
+    /// X-CORR-09 (E09): 157 declarations of ONE key satisfied the full
+    /// shape's cardinality check, and 157 produced copies of it would
+    /// have matched the multiset.
+    #[test]
+    fn parse_inventory_rejects_duplicate_declarations() {
+        let same = vec![("udp/us-to-tsp", "baseline"); 157];
+        let e = parse_inventory(&inventory_json("full-157", &same, &["baseline"])).unwrap_err();
+        assert!(
+            e.contains("duplicate declared cell") && e.contains("udp/us-to-tsp (baseline)"),
+            "{e}"
+        );
+        // Subsets are held to uniqueness too.
+        let e = parse_inventory(&inventory_json(
+            "subset",
+            &[("udp/us-to-tsp", "baseline"), ("udp/us-to-tsp", "baseline")],
+            &["baseline"],
+        ))
+        .unwrap_err();
+        assert!(e.contains("duplicate declared cell"), "{e}");
+        // Same id, different profile, is two cells.
+        parse_inventory(&inventory_json(
+            "subset",
+            &[
+                ("decode/mpv/audio", "audio"),
+                ("decode/mpv/audio", "baseline"),
+            ],
+            &["audio", "baseline"],
+        ))
+        .expect("distinct (id, profile) pairs");
+    }
+
+    #[test]
+    fn parse_inventory_rejects_unknown_profiles_and_a_partial_full_shape() {
+        let e = parse_inventory(&inventory_json(
+            "subset",
+            &[("udp/us-to-tsp", "bogus")],
+            &["bogus"],
+        ))
+        .unwrap_err();
+        assert!(e.contains("unknown profile") && e.contains("bogus"), "{e}");
+        // 157 distinct keys but a full shape that only lists one profile.
+        let ids: Vec<String> = (0..157).map(|i| format!("udp/cell-{i}")).collect();
+        let cells: Vec<(&str, &str)> = ids.iter().map(|s| (s.as_str(), "baseline")).collect();
+        let e = parse_inventory(&inventory_json("full-157", &cells, &["baseline"])).unwrap_err();
+        assert!(e.contains("must list every profile"), "{e}");
     }
 
     fn expectation(cell: &str, profile: &str, verdict: ExpectVerdict, reason: &str) -> Expectation {
