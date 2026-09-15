@@ -57,6 +57,24 @@ pub struct ReceiverStats {
 /// message; `Receiver` then feeds those bytes through the TS syncer to
 /// extract correctly-aligned 188-byte packets.
 ///
+/// # Sync lock and the trailing window
+///
+/// The syncer locks after four aligned packets — the candidate `0x47`
+/// plus three more at 188-byte strides (752 bytes) — and emits nothing
+/// before that. The confirmation is peek-only, so on a healthy stream no
+/// packet is lost; the first packet of a session (or the first after a
+/// resync) is simply delayed by three packets' worth of bytes. The cost
+/// shows at the *end* of a stream: fewer than four packets never emit,
+/// and after any sync loss the last one to three packets before
+/// end-of-stream stay buffered awaiting confirmation and are dropped
+/// when the transport closes. Feed at least four packets per session and
+/// treat the final packets after a mid-stream corruption as best-effort;
+/// [`ReceiverStats::resync_events`] and
+/// [`ReceiverStats::bytes_skipped_for_sync`] show when that happened.
+/// `tst_core::mpegts::demux::Demuxer::feed`, used directly, accepts an
+/// initial `0x47` with no confirmation and demands a 5-of-7 stride check
+/// only after a sync loss.
+///
 /// # Closing
 ///
 /// `Receiver` supports three shutdown patterns:
@@ -259,8 +277,8 @@ impl<R: RecvTransport> Receiver<R> {
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use tst_pipeline::ReceiverConfig;
     /// // The TS syncer needs four consecutive 0x47 bytes at 188-byte
-    /// // intervals to declare lock and emit the first packet — feed five
-    /// // aligned packets in one transport message to satisfy that.
+    /// // intervals (four aligned packets) to declare lock and emit the
+    /// // first packet — feed five so one is still buffered afterwards.
     /// let mut stream = Vec::new();
     /// for _ in 0..5 {
     ///     stream.push(0x47);
