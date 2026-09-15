@@ -1,7 +1,8 @@
-use super::decode::read_pack;
+use super::decode::{read_pack, read_pack_strict};
 use super::encode::{encoded_len, write_pack};
 use super::model::{PACK_TAGS, VTargetPack, VTargetPackError, pack_lookup};
 use crate::error::KlvEncodeError;
+use crate::error::KlvFieldError;
 use crate::klv::pack::OwnedRawField;
 
 #[test]
@@ -133,6 +134,45 @@ fn truncated_field_value_rejected() {
     let err = read_pack(&bytes).unwrap_err();
     assert!(matches!(
         err,
+        VTargetPackError::LengthOverrun { tag: 6, .. }
+    ));
+}
+
+#[test]
+fn lenient_read_pack_records_field_error_and_keeps_the_pack() {
+    // CORR-29(e): target_id 1, then tag 10 (centroid_lat_offset, 3-byte
+    // IMAPB) with a 1-byte value — a per-field error, not a framing
+    // error. Lenient decode keeps the pack and records the error.
+    let bytes = [0x01, 0x0A, 0x01, 0x00];
+    let (pack, consumed) = read_pack(&bytes).expect("per-field errors are recoverable");
+    assert_eq!(consumed, 4);
+    assert_eq!(pack.target_id, 1);
+    assert_eq!(pack.centroid_lat_offset, None);
+    assert_eq!(
+        pack.field_errors,
+        vec![KlvFieldError::InvalidLength {
+            tag: 10,
+            expected: 3,
+            got: 1
+        }]
+    );
+}
+
+#[test]
+fn strict_read_pack_still_rejects_a_field_error() {
+    let bytes = [0x01, 0x0A, 0x01, 0x00];
+    assert!(matches!(
+        read_pack_strict(&bytes).unwrap_err(),
+        VTargetPackError::MalformedImapb { tag: 10 }
+    ));
+}
+
+#[test]
+fn lenient_read_pack_still_rejects_framing_errors() {
+    // LengthOverrun is framing, not a field value — stays fatal.
+    let bytes = [0x01, 6, 2, 0xFF];
+    assert!(matches!(
+        read_pack(&bytes).unwrap_err(),
         VTargetPackError::LengthOverrun { tag: 6, .. }
     ));
 }

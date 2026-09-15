@@ -286,7 +286,11 @@ fn decode_vtarget_series(
         match vtarget_pack::read_pack(pack_bytes) {
             Ok((pack, _)) => targets.push(pack),
             Err(_) => {
-                // Pack-level malformation. We don't have a typed
+                // `read_pack` is itself lenient now (CORR-29e): a
+                // per-field value error lands in the pack's own
+                // `field_errors` and this arm never sees it. Only a
+                // pack-level FRAMING failure (truncated target ID,
+                // length overrun) reaches here. We don't have a typed
                 // `KlvFieldError` arm carrying the `VTargetPackError`
                 // shape, so signal via a generic field error keyed to
                 // tag 101. Strict-mode will route the typed error via
@@ -515,7 +519,10 @@ pub fn decode_strict(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
             Encoding::RawBytes => match tag {
                 13 => ls.miis_id = Some(value.to_vec()),
                 101 => {
-                    ls.targets = decode_vtarget_series_strict(value)?;
+                    // `item_start + consumed` = buffer offset of `value[0]`,
+                    // so series-internal errors report buffer-absolute
+                    // offsets (CORR-29b).
+                    ls.targets = decode_vtarget_series_strict(value, item_start + consumed)?;
                 }
                 102 => ls.algorithm_series = Some(value.to_vec()),
                 103 => ls.ontology_series = Some(value.to_vec()),
@@ -538,18 +545,26 @@ pub fn decode_strict(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
 /// Strict variant of [`decode_vtarget_series`]: framing failures and
 /// pack-level malformations abort with an `Err`. The pack-level error
 /// is routed via the typed [`KlvDecodeError::St0903InvalidVTargetPack`]
-/// arm carrying the underlying [`VTargetPackError`].
+/// arm carrying the underlying [`VTargetPackError`]. `base` is the
+/// buffer offset of `series_bytes[0]`; every offset this function
+/// surfaces is buffer-absolute.
 fn decode_vtarget_series_strict(
     series_bytes: &[u8],
+    base: usize,
 ) -> Result<Vec<vtarget_pack::VTargetPack>, KlvDecodeError> {
-    use crate::klv::length::read_ber_strict;
+    use crate::klv::length::{read_ber_strict, rebase_offset};
 
     let mut targets = Vec::new();
     let mut cursor = series_bytes;
-    let mut offset = 0usize;
+    let mut offset = base;
     while !cursor.is_empty() {
         let before_len = cursor.len();
-        let (pack_len, after_len) = read_ber_strict(cursor)?;
+        let (pack_len, after_len) = read_ber_strict(cursor).map_err(|mut e| {
+            // `read_ber_strict` reports 0 / 1 relative to `cursor` — rebase
+            // onto the pack's buffer position (CORR-29b).
+            rebase_offset(&mut e, offset);
+            e
+        })?;
         let len_consumed = before_len - after_len.len();
         cursor = after_len;
         offset += len_consumed;
@@ -563,7 +578,7 @@ fn decode_vtarget_series_strict(
         let pack_bytes = &cursor[..pack_len];
         cursor = &cursor[pack_len..];
 
-        let (pack, _) = vtarget_pack::read_pack(pack_bytes)
+        let (pack, _) = vtarget_pack::read_pack_strict(pack_bytes)
             .map_err(|reason| KlvDecodeError::St0903InvalidVTargetPack { offset, reason })?;
         targets.push(pack);
         offset += pack_len;
