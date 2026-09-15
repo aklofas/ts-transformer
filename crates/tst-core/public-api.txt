@@ -5786,6 +5786,7 @@ pub tst_core::mpegts::demux::DemuxerStats::pmt_versions_seen: u64
 pub tst_core::mpegts::demux::DemuxerStats::program_maps_seen: u64
 pub tst_core::mpegts::demux::DemuxerStats::programs_seen: u32
 pub tst_core::mpegts::demux::DemuxerStats::subtitle_streams_seen: u32
+pub tst_core::mpegts::demux::DemuxerStats::unwrap_reanchors: u64
 impl core::clone::Clone for tst_core::mpegts::demux::DemuxerStats
 pub fn tst_core::mpegts::demux::DemuxerStats::clone(&self) -> tst_core::mpegts::demux::DemuxerStats
 impl core::cmp::Eq for tst_core::mpegts::demux::DemuxerStats

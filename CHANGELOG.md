@@ -618,7 +618,66 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed — core (WP-2)
 
-- (pending)
+- **`DemuxerConfig::sync_buf_cap` below 1 MiB rejected ordinary aligned
+  TS.** The ceiling was compared against the ingress buffer *including*
+  bytes already consumed as packets, and that dead prefix is only
+  reclaimed once it reaches 1 MiB — so a 64 KiB cap failed with
+  `SyncBufExhausted` on roughly every 349th 188-byte feed and dropped
+  that feed's bytes. The check now reclaims the consumed prefix first
+  and measures live bytes only; the field's rustdoc says so.
+- **`PcrAnomaly` on a dedicated PCR PID was dropped.** A PMT `PCR_PID`
+  that carries no elementary stream (broadcast / hardware muxes, TSDuck
+  output) has no stream entry, and the anomaly arm only queued the issue
+  for known elementary PIDs. The event is now emitted with an anonymous
+  `StreamId` whose `program_number` is the program that declared the
+  PCR PID, so `StrictMode::TimingOnly` rejects the class it documents.
+- **`DemuxError::Unrecoverable` was sticky.** The verdict returned
+  before consuming the scanned span, so every later `feed` re-scanned
+  the same bytes and reported a doubled count until `reset_sync`, while
+  the pre-sync buffer kept growing toward the cap. The verdict now
+  covers one 6,016-byte search window: the scanned bytes are discarded,
+  the counter restarts, and the next feed starts fresh (`SyncBufExhausted`
+  resets the counter too). The variant's rustdoc no longer claims a
+  "repeated PSI checksum failures" producer (there is none), and the
+  `tst_demuxer_feed` header comment describes the real contract
+  (comment-only; C ABI unchanged).
+- **H.265 / H.266 VUI `Extended_SAR` with a zero `sar_width` /
+  `sar_height` produced `Rational { den: 0 }`.** Both parsers now treat
+  a zero dimension as "unspecified" (`sample_aspect_ratio: None`), as
+  the H.264 parser already did.
+- **`pts_to_duration` rendered a negative PTS as ~584,000 years.**
+  Negative ticks — reachable near the anchor of an `unwrap_timestamps`
+  timeline — now clamp to `Duration::ZERO`; out-of-range values
+  saturate instead of wrapping.
+- **`tst-pipeline` `Syncer` needed four packets *plus one byte* to
+  lock.** The VERIFY look-ahead demanded the first byte of a fifth
+  packet, so a stream shorter than five packets emitted nothing and up
+  to four trailing packets after any resync were stranded at
+  end-of-stream. Lock now needs exactly four aligned packets (752
+  bytes). `Receiver` / `DemuxReceiver` rustdoc, the pipeline guide and
+  the troubleshooting page now document the four-packet lock and the
+  (now one-to-three packet) trailing window.
+- **`unwrap_timestamps`: a PID silent for more than half an epoch
+  rejoined its program one epoch low.** A PID's own signed 33-bit delta
+  is unambiguous only while its silence stays under `2^32` ticks
+  (~13.3 h); a KLV PID dormant since raw 0 whose video sibling had
+  advanced through `2^32` came back as `-2^32 + 100` for a wire value of
+  `2^32 + 100` and then overwrote the program reference. Such a PID is
+  now re-anchored onto its program's running clock when that clock is
+  fresher than the PID's last sample and places the new sample more
+  than half an epoch from it; short reorders keep their own backward
+  step. New additive `DemuxerStats::unwrap_reanchors: u64` counts
+  re-anchors (C / Python / JVM stats mirrors deferred — see
+  `docs/project/deferred-features.md`), and the field's rustdoc states
+  the remaining bound (a dormant PID with no flowing sibling).
+- **KLV.** `st0102::decode_strict` reports the real buffer offset of a
+  duplicate tag (was always `0`); `st0903::decode_strict` reports
+  buffer-absolute offsets for non-canonical BER lengths, truncation and
+  malformed packs inside a `VTargetSeries` (were slice-relative);
+  `VTargetPack::field_errors` is now populated — lenient ST 0903 decode
+  keeps a target pack whose field fails validation and records the error
+  there instead of dropping the whole pack as `TruncatedField { tag: 101 }`
+  (strict decode still rejects; framing errors still drop the pack).
 
 ### Fixed — pipeline (WP-3)
 
