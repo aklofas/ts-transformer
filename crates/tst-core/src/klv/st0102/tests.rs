@@ -480,6 +480,17 @@ fn strict_rejects_duplicate_tag() {
 }
 
 #[test]
+fn strict_duplicate_tag_reports_the_repeat_offset() {
+    // CORR-29(a): `[1,1,1, 1,1,2]` — the second Tag 1 starts at byte 3.
+    // The dedup used to run on the offset-blind `Iter` and hard-code 0.
+    let err = decode_strict(&[1, 1, 1, 1, 1, 2]).unwrap_err();
+    assert!(
+        matches!(err, KlvDecodeError::DuplicateTag { tag: 1, offset: 3 }),
+        "{err:?}"
+    );
+}
+
+#[test]
 fn strict_preserves_unknown_tag() {
     // Required tags + a forward-compat unknown tag — strict
     // mode preserves the unknown tag rather than rejecting per

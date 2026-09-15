@@ -1,6 +1,7 @@
 //! ST 0903.6 VTargetPack decode: `read_pack` entry point.
 
 use super::model::{PackEncoding, VTargetPack, VTargetPackError, pack_lookup};
+use crate::error::KlvFieldError;
 
 /// Decode a single VTargetPack from `bytes`. Returns the decoded pack
 /// and the number of bytes consumed.
@@ -20,6 +21,17 @@ use super::model::{PackEncoding, VTargetPack, VTargetPackError, pack_lookup};
 /// Unknown / deprecated tags (e.g. 21, 102, 103) are preserved in
 /// `pack.unknown` per ST 0107.5 §6 future-proof skip rule.
 pub(crate) fn read_pack(bytes: &[u8]) -> Result<(VTargetPack, usize), VTargetPackError> {
+    read_pack_inner(bytes, /* strict = */ false)
+}
+
+/// Strict variant of [`read_pack`]: the first per-field value error
+/// aborts with the typed [`VTargetPackError`] instead of landing in
+/// `field_errors`. Framing errors abort in both modes.
+pub(crate) fn read_pack_strict(bytes: &[u8]) -> Result<(VTargetPack, usize), VTargetPackError> {
+    read_pack_inner(bytes, /* strict = */ true)
+}
+
+fn read_pack_inner(bytes: &[u8], strict: bool) -> Result<(VTargetPack, usize), VTargetPackError> {
     use crate::klv::length::{read_ber, read_ber_oid, read_ber_oid_u64};
 
     // 1. Read the leading BER-OID Target ID (u64 — up to 10 BER-OID bytes).
@@ -66,10 +78,44 @@ pub(crate) fn read_pack(bytes: &[u8]) -> Result<(VTargetPack, usize), VTargetPac
         cursor = &cursor[declared_len..];
         consumed += declared_len;
 
-        decode_field(tag, value, &mut pack)?;
+        if let Err(e) = decode_field(tag, value, &mut pack) {
+            if strict {
+                return Err(e);
+            }
+            // Lenient: record and keep walking — the sibling convention
+            // (`SecurityLs::field_errors`, `VmtiLs::field_errors`). CORR-29e.
+            pack.field_errors.push(field_error(e, value.len()));
+        }
     }
 
     Ok((pack, consumed))
+}
+
+/// Project a per-field [`VTargetPackError`] onto the shared
+/// [`KlvFieldError`] vocabulary `field_errors` carries. `got` is the
+/// field's wire value length. IMAPB failures map to `InvalidLength`
+/// against the tag's fixed IMAPB width, mirroring the top-level ST 0903
+/// walker's IMAPB mapping.
+fn field_error(e: VTargetPackError, got: usize) -> KlvFieldError {
+    match e {
+        VTargetPackError::InvalidLength { tag, expected, got } => {
+            KlvFieldError::InvalidLength { tag, expected, got }
+        }
+        VTargetPackError::MalformedImapb { tag } => KlvFieldError::InvalidLength {
+            tag,
+            // Tag 12 (`targetHae`) is 2-byte IMAPB; every other IMAPB pack
+            // tag is 3 bytes (§10.2.2.11–.17) — same table as `decode_field`.
+            expected: if tag == 12 { 2 } else { 3 },
+            got,
+        },
+        VTargetPackError::MalformedUtf8 { tag } => KlvFieldError::InvalidUtf8 { tag },
+        VTargetPackError::TruncatedField { tag } => KlvFieldError::TruncatedField { tag },
+        // Framing errors never reach here — `read_pack_inner` returns them
+        // before `decode_field` runs.
+        VTargetPackError::TruncatedTargetId | VTargetPackError::LengthOverrun { .. } => {
+            KlvFieldError::TruncatedField { tag: 0 }
+        }
+    }
 }
 
 /// Dispatch a single TLV field's value bytes to the matching

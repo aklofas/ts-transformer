@@ -11,6 +11,6 @@ pub(crate) mod model;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use decode::read_pack;
+pub(crate) use decode::{read_pack, read_pack_strict};
 pub(crate) use encode::{encoded_len, write_pack};
 pub use model::{VTargetPack, VTargetPackError};

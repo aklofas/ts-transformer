@@ -98,9 +98,19 @@ fn strict_ber_walk(buf: &[u8]) -> Result<(), KlvDecodeError> {
     use crate::klv::length::read_strict_tlv;
     let mut rest = buf;
     let mut offset = 0usize;
+    // ST 0107.5 §6.3.4: each item at most once per set. Checked here, where
+    // the item's buffer-relative start is known, so `offset` points at the
+    // repeated tag byte (CORR-29a).
+    let mut seen: hashbrown::HashSet<u32> = hashbrown::HashSet::new();
     while !rest.is_empty() {
         let item_start = offset;
-        let (_tag, len, consumed, after_len) = read_strict_tlv(rest, item_start)?;
+        let (tag, len, consumed, after_len) = read_strict_tlv(rest, item_start)?;
+        if !seen.insert(tag) {
+            return Err(KlvDecodeError::DuplicateTag {
+                tag,
+                offset: item_start,
+            });
+        }
         if len > after_len.len() {
             // Truncated value: stop the strict pre-walk and let the permissive
             // typed decode below surface it — `Iter::local_set` returns
@@ -121,16 +131,9 @@ fn decode_inner(buf: &[u8], strict: bool) -> Result<SecurityLs, KlvDecodeError> 
     }
 
     let mut record = SecurityLs::default();
-    let mut seen: hashbrown::HashSet<u32> = hashbrown::HashSet::new();
 
     for r in Iter::local_set(buf) {
         let f = r?;
-        if !seen.insert(f.tag) && strict {
-            return Err(KlvDecodeError::DuplicateTag {
-                tag: f.tag,
-                offset: 0, // Iter doesn't surface offset; non-fatal best-effort
-            });
-        }
 
         let tag_u8 = match u8::try_from(f.tag) {
             Ok(t) => t,

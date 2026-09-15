@@ -367,6 +367,47 @@ fn strict_decode_invalid_vtargetpack_rejected() {
     ));
 }
 
+#[test]
+fn strict_vtarget_series_non_canonical_length_reports_buffer_offset() {
+    // CORR-29(b): Tag 101 value = one valid pack (`04` + 4 body bytes:
+    // target_id 1, tag 4 priority len 1 value 5) followed by `81 05`, a
+    // long-form BER length whose value fits the short form. The
+    // offending byte sits at series offset 5; the series value starts at
+    // buffer offset 8 (`[4,1,6]`, `[6,1,0]`, then the `101, 8` header),
+    // so the buffer-absolute offset is 13. It used to surface as the
+    // slice-relative 0.
+    let mut bytes = minimal_strict_ls_bytes();
+    bytes.extend_from_slice(&[101, 8, 0x04, 0x01, 4, 1, 0x05, 0x81, 0x05, 0x00]);
+    let err = decode_strict(&bytes).unwrap_err();
+    assert!(
+        matches!(err, KlvDecodeError::NonCanonicalLength { offset: 13 }),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn lenient_decode_keeps_a_target_pack_with_a_field_error() {
+    // CORR-29(e): pack = target_id 1, then tag 10 (centroid_lat_offset,
+    // 3-byte IMAPB) with a 1-byte value. A per-field error must land in
+    // the pack's `field_errors`; the pack used to be dropped wholesale
+    // and reported as `TruncatedField { tag: 101 }` on the parent.
+    let mut bytes = minimal_strict_ls_bytes();
+    bytes.extend_from_slice(&[101, 5, 0x04, 0x01, 0x0A, 0x01, 0x00]);
+    let ls = decode(&bytes).unwrap();
+    assert_eq!(ls.targets.len(), 1, "{ls:?}");
+    assert_eq!(ls.targets[0].target_id, 1);
+    assert_eq!(ls.targets[0].centroid_lat_offset, None);
+    assert_eq!(
+        ls.targets[0].field_errors,
+        vec![KlvFieldError::InvalidLength {
+            tag: 10,
+            expected: 3,
+            got: 1
+        }]
+    );
+    assert!(ls.field_errors.is_empty(), "{:?}", ls.field_errors);
+}
+
 // ------------------------------------------------------------------
 // Task 7 — `encode` + `encoded_len` round-trip + canonical-bytes.
 // ------------------------------------------------------------------
