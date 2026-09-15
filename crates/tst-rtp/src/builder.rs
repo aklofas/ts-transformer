@@ -309,9 +309,12 @@ impl RtspClientBuilder {
         self
     }
 
-    /// Per-request response deadline: how long `options()` / `describe()` /
+    /// Per-request deadline: how long `options()` / `describe()` /
     /// `setup_*()` / `play()` / `pause()` / `get_parameter()` / `teardown()`
-    /// wait for the server's reply once the request is written. Expiry
+    /// have, in total, to write the request and read the complete
+    /// response. The clock starts just before the write (so a blocked
+    /// write — an unresponsive peer not draining its receive window —
+    /// counts against the budget too, not only the read wait). Expiry
     /// returns [`RtspError::Timeout`]. `None` disables the deadline (the
     /// pre-`request_timeout` behaviour: a silent server parks the call
     /// until the cancel handle fires). Default 10 s, the same as
