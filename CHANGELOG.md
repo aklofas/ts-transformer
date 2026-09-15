@@ -607,6 +607,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the closed state — so every subsequent call kept failing while `is_alive()`
   reported `true` forever. The entry gate now latches closed the same way the
   mid-loop cancel check does.
+- **`tst-tcp`: a receive interrupted by a signal (`EINTR`) is retried
+  instead of killing the transport.** The receive loop's fatal arm latched
+  `alive = false` on every error, so a signal landing on the thread parked
+  in `read` — exactly what the SIGINT-handler shutdown pattern the docs
+  recommend delivers — ended the transport for good; the send path already
+  retried it. The classification now lives in one `classify_recv_error`
+  the loop consults, with unit tests driving it directly (the plain socket
+  cannot be made to produce `EINTR` deterministically).
 
 ### Fixed — core (WP-2)
 
