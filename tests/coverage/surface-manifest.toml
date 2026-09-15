@@ -6107,6 +6107,18 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 item = "tst_core::url::common::parse_url"
 reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
 
+# percent_decode: made pub for CORR-21 (deep-review-4 WP-4a) — RtspUrl::parse
+# decodes userinfo through it since parse_url itself returns userinfo
+# verbatim on a Stable-tier module. Dedicated coverage in both crates.
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::url::common::percent_decode"
+owning_tests = ["crates/tst-core/src/url/common.rs", "crates/tst-rtp/src/url.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
 [[exempt]]
 item = "tst_core::url::common::MAX_BYTE_SIZE"
 reason = "WP13 seam: shared max byte-size constant for URL query param validation"
@@ -8098,6 +8110,19 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 [[exempt]]
 item = "tst_rtp::builder::RtspClientBuilder::read_timeout"
 reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
+
+# request_timeout: per-request response deadline (CORR-26, deep-review-4
+# WP-4a) — the producer of RtspError::Timeout. Builder default-pin in
+# builder.rs plus a live silent-peer integration test in
+# tests/rtsp_client/builder_timeouts.rs.
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::builder::RtspClientBuilder::request_timeout"
+owning_tests = ["crates/tst-rtp/src/builder.rs", "crates/tst-rtp/tests/rtsp_client/builder_timeouts.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
 
 # transport_preference: new typed SETUP-transport-preference builder
 # setter, from an integrator field report; dedicated unit test in

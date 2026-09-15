@@ -49,6 +49,7 @@ pub fn tst_rtp::builder::RtspClientBuilder::keepalive_interval(self, core::time:
 pub fn tst_rtp::builder::RtspClientBuilder::new(&str) -> core::result::Result<Self, tst_rtp::error::RtspError>
 pub fn tst_rtp::builder::RtspClientBuilder::no_auto_keepalive(self, bool) -> Self
 pub fn tst_rtp::builder::RtspClientBuilder::read_timeout(self, core::time::Duration) -> Self
+pub fn tst_rtp::builder::RtspClientBuilder::request_timeout(self, core::option::Option<core::time::Duration>) -> Self
 pub fn tst_rtp::builder::RtspClientBuilder::tcp_keepalive(self, core::time::Duration) -> Self
 pub fn tst_rtp::builder::RtspClientBuilder::transport_preference(self, tst_rtp::url::RtspTransportPref) -> Self
 pub fn tst_rtp::builder::RtspClientBuilder::user_agent(self, impl core::convert::Into<alloc::string::String>) -> Self
@@ -2700,6 +2701,7 @@ pub fn tst_rtp::builder::RtspClientBuilder::keepalive_interval(self, core::time:
 pub fn tst_rtp::builder::RtspClientBuilder::new(&str) -> core::result::Result<Self, tst_rtp::error::RtspError>
 pub fn tst_rtp::builder::RtspClientBuilder::no_auto_keepalive(self, bool) -> Self
 pub fn tst_rtp::builder::RtspClientBuilder::read_timeout(self, core::time::Duration) -> Self
+pub fn tst_rtp::builder::RtspClientBuilder::request_timeout(self, core::option::Option<core::time::Duration>) -> Self
 pub fn tst_rtp::builder::RtspClientBuilder::tcp_keepalive(self, core::time::Duration) -> Self
 pub fn tst_rtp::builder::RtspClientBuilder::transport_preference(self, tst_rtp::url::RtspTransportPref) -> Self
 pub fn tst_rtp::builder::RtspClientBuilder::user_agent(self, impl core::convert::Into<alloc::string::String>) -> Self
