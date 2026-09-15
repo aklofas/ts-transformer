@@ -248,3 +248,103 @@ fn over_cap_body_request_gets_413() {
 
     server.stop().ok();
 }
+
+/// A cap-violating request queued directly behind a valid one, both
+/// arriving in the same server-side read — a real client pipelining two
+/// requests, or a follow-up oversized request that lands right after a
+/// good one. Regression for a gap Copilot flagged reviewing PR #229
+/// (deep-review-4 WP-4a): the CORR-25 drain loop in `serve_requests`
+/// stops draining at the first non-`Complete` framing outcome and falls
+/// through to the outer loop's blocking socket read, so a
+/// `HeadersTooLong` / `BadContentLength` head already sitting in `buf`
+/// got no 413 until the NEXT read — which, once the client has sent
+/// everything it's going to send and is just awaiting responses, never
+/// comes — or the 30 s idle timeout. `reject_if_over_cap` now also runs
+/// right after the drain loop, so the oversized head is rejected the
+/// moment it becomes the buffer head instead of waiting on a read that
+/// isn't coming.
+#[test]
+fn pipelined_over_cap_head_gets_413_without_another_read() {
+    let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+    server.start().unwrap();
+    let port = server.local_addr().unwrap().port();
+
+    let mut tcp = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    tcp.set_nodelay(true).unwrap();
+    tcp.set_write_timeout(Some(Duration::from_secs(5))).unwrap();
+    tcp.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+
+    // A valid OPTIONS (CSeq 1) immediately followed, in the SAME write, by
+    // an OPTIONS whose declared body (1 MiB + 1) is just over
+    // MAX_RTSP_BODY_BYTES (mirrors over_cap_body_request_gets_413 above).
+    // Both requests together are ~90 bytes — well under the server's 4 KiB
+    // per-read chunk — so over loopback with TCP_NODELAY they land in one
+    // server-side read().
+    let over = 1024 * 1024 + 1;
+    let mut request = b"OPTIONS * RTSP/1.0\r\nCSeq: 1\r\n\r\n".to_vec();
+    request.extend_from_slice(
+        format!("OPTIONS * RTSP/1.0\r\nCSeq: 2\r\nContent-Length: {over}\r\n\r\n").as_bytes(),
+    );
+    tcp.write_all(&request).unwrap();
+
+    // Read the first (valid) response.
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 512];
+    loop {
+        let n = tcp.read(&mut chunk).expect("first OPTIONS response");
+        assert!(n > 0, "server closed before answering the first OPTIONS");
+        buf.extend_from_slice(&chunk[..n]);
+        if buf.windows(4).any(|w| w == b"\r\n\r\n") {
+            break;
+        }
+    }
+    let first = String::from_utf8_lossy(&buf);
+    assert!(
+        first.starts_with("RTSP/1.0 200 OK"),
+        "expected 200 OK for the first OPTIONS, got: {first}"
+    );
+
+    // Read the second response. The 2 s read timeout is the discriminator:
+    // pre-fix, the oversized second head sits unrejected until the 30 s
+    // idle timeout closes the connection, so this read times out. Post-fix
+    // the 413 fires immediately after the drain loop, well inside 2 s.
+    let start = Instant::now();
+    buf.clear();
+    let mut got_413 = false;
+    let mut got_close = false;
+    loop {
+        match tcp.read(&mut chunk) {
+            Ok(0) => {
+                got_close = true;
+                break;
+            }
+            Ok(n) => {
+                buf.extend_from_slice(&chunk[..n]);
+                if String::from_utf8_lossy(&buf).contains("413") {
+                    got_413 = true;
+                    break;
+                }
+                if buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            Err(e) => panic!(
+                "no response to the pipelined over-cap OPTIONS within 2 s \
+                 (pre-fix: it waits on the 30 s idle timeout instead of the \
+                 immediate 413): {e}"
+            ),
+        }
+    }
+    assert!(
+        got_413 || got_close,
+        "pipelined over-cap request must be 413'd or closed, got: {:?}",
+        String::from_utf8_lossy(&buf)
+    );
+    assert!(
+        start.elapsed() < Duration::from_secs(2),
+        "413 for the pipelined over-cap request took too long: {:?}",
+        start.elapsed()
+    );
+
+    server.stop().ok();
+}
