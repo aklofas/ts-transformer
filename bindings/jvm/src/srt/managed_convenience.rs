@@ -849,8 +849,10 @@ struct JniManagedDemuxReceiver {
     end_reason: RecvEndReasonHandle,
 }
 
-/// Per-type leased-handle registry for `org.tstrans.srt.ManagedDemuxReceiver`. No
-/// cancel hook (single-threaded; the public cancel handle wakes a parked recv).
+/// Per-type leased-handle registry for `org.tstrans.srt.ManagedDemuxReceiver`.
+/// Registered cancel-on-close (`insert_cancel_on_close`, see
+/// `build_demux_from_url` below): `nClose` fires the target before taking the
+/// resource lock, and the public cancel handle reads the same target lock-free.
 static REGISTRY_DEMUX: LazyLock<HandleRegistry<JniManagedDemuxReceiver>> =
     LazyLock::new(HandleRegistry::new);
 

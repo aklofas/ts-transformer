@@ -955,9 +955,9 @@ try (Socket sock = new Builder("srt://host:9000")
 
 ### Cancellation
 
-Obtain a `CancelHandle` from an open `Sender` or `Receiver` and call
-`cancel()` from another thread to unblock a parked `sendBytes` /
-`recvBytes` call:
+Obtain a `CancelHandle` from an open `Sender`, `Receiver`, `MuxSender` or
+`DemuxReceiver` (and their `Managed*` twins) and call `cancel()` from another
+thread to unblock a parked `sendBytes` / `send*` / `recvBytes` / `next()` call:
 
 ```java
 var tx = Sender.fromUrl("srt://host:9000?mode=caller");
@@ -967,10 +967,14 @@ var cancel = tx.cancelHandle();
 cancel.cancel();  // wakes tx.sendBytes() → throws SrtException(BROKEN or CLOSED)
 ```
 
-`CancelHandle` is safe to share across threads. The first `cancel()` call
-closes the underlying libsrt socket; subsequent calls are no-ops. Obtaining
-the handle is itself safe from another thread at any time — `cancelHandle()`
-returns promptly even while `sendBytes` / `recvBytes` / `next()` / `accept()`
+`CancelHandle` is safe to share across threads. On the plain shells the first
+`cancel()` call closes the underlying libsrt socket, so the parked call ends
+with `BROKEN` and the shell is dead afterwards; on the `Managed*` shells it
+latches the close flag and wakes whatever the reconnect loop is parked in (a
+live send/receive, the backoff wait, a re-dial or re-accept), and the parked
+call ends with `CLOSED`. Subsequent calls are no-ops. Obtaining the handle is
+itself safe from another thread at any time — `cancelHandle()` returns
+promptly even while `sendBytes` / `send*` / `recvBytes` / `next()` / `accept()`
 is parked on the same object, so it need not be taken before iterating.
 
 ### SRT-specific Gotchas
@@ -997,6 +1001,17 @@ is parked on the same object, so it need not be taken before iterating.
   promptly. The managed pair (`ManagedReceiver` / `ManagedDemuxReceiver`)
   does the same but surfaces `CLOSED` and records `RecvEndReason.CANCELLED`.
   A `close()` with nothing parked simply closes.
+- **Every srt sender's `close()` cancels first too.** `MuxSender.close()` /
+  `Sender.close()` from another thread while a `send*` / `sendBytes()` is
+  parked (libsrt blocked on a full send buffer) wakes that call — it throws
+  `SrtException(BROKEN)`, the plain-shell kind — and `close()` returns
+  promptly. `ManagedMuxSender.close()` / `ManagedSender.close()` do the same
+  for a send parked anywhere in the reconnect loop (a live send, the backoff
+  wait, a re-dial) and surface `CLOSED`, so a cross-thread close mid-outage no
+  longer waits out the whole reconnect budget. `close()` is the prompt,
+  lossy shutdown: bytes a prior transient error left pending are abandoned.
+  One binding, one contract: this is what the rtp senders and the C ABI's
+  `tst_*_sender_close` already do.
 - **JDK-17 byte-copy posture.** `sendBytes` copies the supplied array across
   the JNI boundary; `recvBytes` returns a heap `byte[]` copy. A zero-copy
   path using FFM `MemorySegment` is deferred to a JDK-22+ release.
@@ -1044,6 +1059,11 @@ try (MuxSender s = MuxSender.fromUrl(
 }
 // MuxSender has NO flush(): bytes flush per-send and again on close().
 ```
+
+`MuxSender.cancelHandle()` returns a cross-thread `CancelHandle` (see
+[Cancellation](#cancellation)); `close()` from another thread cancels first,
+so a parked `send*` ends with `SrtException(BROKEN)` instead of blocking the
+close.
 
 `sendKlv`, `sendAudio`, `sendSubtitle`, and `sendData` (raw private-data
 bytes, passed through verbatim — same PTS / ceiling semantics as
@@ -1163,6 +1183,12 @@ try (ManagedMuxSender s = ManagedMuxSender.fromUrl(
     }
 }
 ```
+
+`ManagedMuxSender.cancelHandle()` reaches every phase of the reconnect loop —
+a live send, the backoff wait between attempts, and a re-dial — and the parked
+`send*` ends with `SrtException(CLOSED)` promptly in all three. `close()` from
+another thread does the same before tearing down, so it never waits out the
+reconnect budget.
 
 ### Receive with auto-reconnect: `ManagedDemuxReceiver`
 
@@ -1403,7 +1429,8 @@ try (DemuxReceiver rx = DemuxReceiver.fromUrl("rtp://0.0.0.0:5004")) {
   `pktSize` is rejected with `IllegalArgumentException`. The payload cap per push
   is `pktSize − 12` (the RTP header is prepended by the transport).
 - The RTP `MuxSender` / `DemuxReceiver` expose **no `cancelHandle()` and no
-  `socketStats()`** (matching the Python surface) — only `stats()` (a
+  `socketStats()`** (matching the Python surface; unlike the srt `MuxSender`,
+  which does expose `cancelHandle()`) — only `stats()` (a
   `(SocketStats, MuxerStats)` snapshot). To stop a `DemuxReceiver` iteration that
   is parked waiting for the next datagram, call `close()` from another thread; it
   cancels the in-flight recv first, then frees the receiver (safe cross-thread).

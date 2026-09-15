@@ -15,11 +15,18 @@
 //! `add_byte_sink` discipline (spec §6, the load-bearing piece): the registered
 //! `Box<dyn FnMut(&[u8]) + Send>` runs on the receiver's own thread inside
 //! `recv_event`, attaches to the JVM, and upcalls a `Consumer<byte[]>`. It holds
-//! NO Java monitor and NO Rust lock across the upcall — the JVM analogue of
-//! tst-py's allow-threads-before-lock fix, trivial here because there is no GIL
-//! and `DemuxReceiver.next()`/`addByteSink()` are not `synchronized`. A callback
-//! exception is captured first-wins into `sink_error` (as a `GlobalRef`) and
-//! re-thrown from the next `nNext` after the `&mut inner` borrow ends.
+//! NO Java monitor across the upcall (`DemuxReceiver.next()`/`addByteSink()`
+//! are not `synchronized`), but it DOES run under this handle's registry
+//! resource lock: `nNext` leases the receiver for the whole `recv_event` call
+//! (`REGISTRY.with_poisoning`, below) and the sink fires inside that lease. A
+//! sink that re-enters the same `DemuxReceiver` through any leased native
+//! (`next()`, `stats()`, `socketStats()`, `lastSeenMicros()`, `addByteSink()`)
+//! therefore self-deadlocks — the user guide's "never re-enter the receiver"
+//! rule is load-bearing, not advisory. `cancelHandle()`/`isAlive()` stay
+//! lock-free and `close()` cancels before it takes that lock, so OTHER threads
+//! can still stop a receiver whose sink is running. A callback exception is
+//! captured first-wins into `sink_error` (as a `GlobalRef`) and re-thrown
+//! from the next `nNext` after the lease ends.
 
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, LazyLock, Mutex};
