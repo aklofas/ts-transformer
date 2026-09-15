@@ -70,10 +70,9 @@
 //!   because the resource lock is exactly what a parked `recv`/`accept`/`send` holds
 //!   — resolving the handle under it made the cross-thread stop unobtainable while
 //!   the op it is meant to stop was in flight. Captured at construction, before the
-//!   resource is boxed. Orthogonal to the hook: the srt sender/receiver shells
-//!   register a target with no hook (their `close()` still waits for a parked op);
-//!   the srt `Listener` and the rtp types register both (their `close()` wakes the
-//!   parked op through the hook).
+//!   resource is boxed. Every srt shell (sender and receiver, plain and
+//!   managed), the srt `Listener`, and the rtp types register both a hook and
+//!   a target (their `close()` wakes the parked op through the hook).
 //! - **Lock-free end-reason cell.** Same shape, same reason, for the recv-side
 //!   stream-end record: an entry can carry the resource's
 //!   [`RecvEndReasonHandle`] OUTSIDE the resource mutex ([`Entry::end_reason`],
@@ -234,15 +233,6 @@ impl<T> HandleRegistry<T> {
         self.insert_full(resource, cancel, None)
     }
 
-    /// Register a resource with a cross-thread cancel target readable via
-    /// [`cancel_target`](HandleRegistry::cancel_target) while an op is parked on the
-    /// resource lock. No close hook: `close` still waits for a parked op (the srt
-    /// model). Capture the target at construction, BEFORE the resource is boxed —
-    /// the whole point is never needing the resource lock to reach it.
-    pub(crate) fn insert_with_target(&self, resource: T, target: CancelTarget) -> u64 {
-        self.insert_full(resource, None, Some(target))
-    }
-
     /// Register a resource with BOTH a close-fired hook and a lock-free cancel
     /// target (the rtp receivers: `close()` wakes a parked recv AND `cancelHandle()`
     /// must not block behind one).
@@ -255,19 +245,15 @@ impl<T> HandleRegistry<T> {
         self.insert_entry(resource, cancel, cancel_target, None)
     }
 
-    /// Register a resource with a lock-free cancel target AND a lock-free end-reason
-    /// cell — `org.tstrans.srt.ManagedDemuxReceiver`, whose `cancelHandle()` and
-    /// `endReason()` both have to answer while `nNext` is parked on the resource
-    /// lock. No close hook (the srt model: `close()` waits for the parked op).
-    /// Capture BOTH at construction, before the resource is boxed.
-    /// Register a receiver whose `close` cancels first: `target` backs the public
+    /// Register a shell whose `close` cancels first: `target` backs the public
     /// `cancelHandle()` natives AND is fired by [`HandleRegistry::close`] before
     /// the resource lock is taken, so a `recv` parked on the same handle from
     /// another thread unparks (recording its end reason on the way out, when it
     /// has a cell) instead of holding `close` hostage. This is the contract the
-    /// C ABI's `tst_managed_*_receiver_close` and tst-py's `close()` share; the
-    /// srt managed receivers register through here to match them. `end_reason`
-    /// is `None` for a type that records no end reason.
+    /// C ABI's `tst_managed_*_{sender,receiver}_close` and tst-py's `close()`
+    /// share; every srt shell (senders and receivers, plain and managed)
+    /// registers through here to match them. `end_reason` is `None` for a type
+    /// that records no end reason (every sender, the plain receivers).
     pub(crate) fn insert_cancel_on_close(
         &self,
         resource: T,
@@ -658,7 +644,7 @@ mod tests {
         let reg: HandleRegistry<u64> = HandleRegistry::new();
         let target: Arc<dyn tst_core::transport::TransportCancel + Send + Sync> =
             Arc::new(NoopCancel);
-        let id = reg.insert_with_target(7, Arc::clone(&target));
+        let id = reg.insert_full(7, None, Some(Arc::clone(&target)));
 
         // Park an op on the resource lock (a blocked recv/accept in production).
         let entry = reg.lease(id).unwrap();
@@ -705,7 +691,7 @@ mod tests {
         );
         let target: Arc<dyn tst_core::transport::TransportCancel + Send + Sync> =
             Arc::new(NoopCancel);
-        let id = reg.insert_with_target(2, target);
+        let id = reg.insert_full(2, None, Some(target));
         assert!(reg.cancel_target(id).is_some());
         reg.close(id);
         assert!(

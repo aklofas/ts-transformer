@@ -161,8 +161,10 @@ public final class ManagedSender extends NativeHandle {
     }
 
     /**
-     * Close the sender. Latches the cancel flag (so any in-flight reconnect loop
-     * exits) and tears down the inner transport. Idempotent.
+     * Close the sender. Cancels first — latching the close flag so any in-flight
+     * reconnect loop exits and waking a {@link #sendBytes} parked on another
+     * thread, which ends with {@code SrtException(CLOSED)} — then tears down
+     * the inner transport. Idempotent.
      */
     @Override public void close() { super.close(); }
 

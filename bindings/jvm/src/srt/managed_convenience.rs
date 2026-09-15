@@ -155,6 +155,11 @@ struct JniManagedMuxSender {
 }
 
 /// Per-type leased-handle registry for `org.tstrans.srt.ManagedMuxSender`.
+/// Registered cancel-on-close (`insert_cancel_on_close`): `nClose` fires the
+/// shell's `ManagedCancel` before taking the resource lock, so a `send*`
+/// parked in the Blocking reconnect (a backoff wait or a re-dial) ends with
+/// `SrtException(CLOSED)` promptly — the contract the C ABI's
+/// `tst_managed_mux_sender_close` and `ManagedDemuxReceiver` already have.
 static REGISTRY_MUX: LazyLock<HandleRegistry<JniManagedMuxSender>> =
     LazyLock::new(HandleRegistry::new);
 
@@ -332,11 +337,25 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nFromUrl<'local>(
         // (same pattern as `ManagedSender`'s stats_handle capture).
         let stats_handle = managed.stats_handle();
         match RustMuxSender::new(managed, muxer_cfg) {
-            Ok(sender) => REGISTRY_MUX.insert(JniManagedMuxSender {
-                inner: sender,
-                factory_attempts: attempts,
-                stats_handle,
-            }) as jlong,
+            Ok(sender) => {
+                // Capture the cancel target BEFORE the shell is boxed: it lives
+                // outside the registry's resource lock, so `nCancelHandle` returns
+                // while a send is parked, and `nClose` fires it before taking that
+                // lock (cancel-on-close). `ManagedTransport::cancel_handle` is
+                // always Some and follows reconnects, so one capture is enough.
+                let target = sender
+                    .cancel_handle()
+                    .expect("ManagedTransport::cancel_handle is always Some");
+                REGISTRY_MUX.insert_cancel_on_close(
+                    JniManagedMuxSender {
+                        inner: sender,
+                        factory_attempts: attempts,
+                        stats_handle,
+                    },
+                    target,
+                    None,
+                ) as jlong
+            }
             Err(e) => {
                 throw_mux_error(env, &e);
                 0

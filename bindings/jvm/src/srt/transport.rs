@@ -4,7 +4,9 @@
 //! a `jlong` key into a per-type [`HandleRegistry`] over a
 //! `tst_pipeline::Sender<SrtTransport>` / `Receiver<SrtTransport>`. Handle
 //! lifecycle:
-//! - `nFromUrl` registers via `REGISTRY.insert`.
+//! - `nFromUrl` registers via [`register_sender`] / [`register_receiver`]
+//!   (`insert_cancel_on_close`: the cancel target is captured before the shell
+//!   is boxed and fired by `nClose` before the resource lock is taken).
 //! - Per-call methods lease via `REGISTRY.with` (non-consuming).
 //! - `nClose` takes + tears down via `REGISTRY.close`.
 //!
@@ -108,18 +110,22 @@ pub extern "system" fn Java_org_tstrans_srt_Sender_nFromUrl(
 }
 
 /// Register a plain `Sender` shell, capturing its cancel target BEFORE the shell
-/// is boxed so `nCancelHandle` never needs the resource lock (a `send` parked on
-/// backpressure holds it). A fresh `SrtTransport` always has a cancel handle.
+/// is boxed so `nCancelHandle` never needs the resource lock (a `send` parked in
+/// libsrt's blocking `srt_sendmsg` holds it). Cancel-on-close: `nClose` fires
+/// `target` before taking the resource lock, so a `sendBytes()` parked on
+/// another thread ends promptly (with `SrtException(BROKEN)` — the plain cancel
+/// closes the socket under the parked send) instead of holding `close()`
+/// hostage. A fresh `SrtTransport` always has a cancel handle.
 pub(super) fn register_sender(inner: PlSender<SrtTransport>) -> jlong {
     let target = inner
         .cancel_handle()
         .expect("a fresh SrtTransport always returns Some(cancel_handle)");
-    REGISTRY_SENDER.insert_with_target(inner, target) as jlong
+    REGISTRY_SENDER.insert_cancel_on_close(inner, target, None) as jlong
 }
 
 /// `Receiver` twin of [`register_sender`]: the target is read lock-free while
-/// `recvBytes()` is parked. Unlike the sender, the receiver registers
-/// cancel-on-close: `nClose` fires `target` before taking the resource lock, so
+/// `recvBytes()` is parked, and the receiver registers cancel-on-close the
+/// same way: `nClose` fires `target` before taking the resource lock, so
 /// a `recvBytes()` parked on another thread ends promptly (with
 /// `SrtException(BROKEN)` — the plain cancel closes the socket under the parked
 /// recv) instead of holding `close()` hostage. The contract tst-py's plain

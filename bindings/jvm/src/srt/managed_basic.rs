@@ -8,8 +8,12 @@
 //! factory under the configured `ReconnectPolicy`.
 //!
 //! Handle lifecycle mirrors `transport.rs`:
-//! - `nFromUrl` registers via `REGISTRY.insert` (a `JniManagedSender` on the
-//!   send side; a `JniManagedReceiver` on the recv side).
+//! - `nFromUrl` registers via `REGISTRY.insert_cancel_on_close` (a
+//!   `JniManagedSender` on the send side; a `JniManagedReceiver` on the recv
+//!   side): the `ManagedCancel` target is captured before the shell is boxed
+//!   and fired by `nClose` before the resource lock is taken, so a parked
+//!   `send`/`recv` ends with `SrtException(CLOSED)` instead of holding
+//!   `close()` for the reconnect budget.
 //! - Per-call methods lease via `REGISTRY.with` (non-consuming).
 //! - `nClose` takes + tears down via `REGISTRY.close`.
 //!
@@ -253,17 +257,20 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedSender_nFromUrl(
         // Snapshot the stats handle and the cancel target BEFORE moving `managed`
         // into the shell (same pattern as the convenience wrappers). The target
         // lives outside the registry's resource lock so `nCancelHandle` returns
-        // while `send` is parked; `ManagedTransport::cancel_handle` is always Some.
+        // while `send` is parked, and `nClose` fires it before taking that lock
+        // (cancel-on-close: a `sendBytes()` parked in the Blocking reconnect ends
+        // CLOSED); `ManagedTransport::cancel_handle` is always Some.
         let stats_handle = managed.stats_handle();
         let target = tst_core::transport::Transport::cancel_handle(&managed)
             .expect("ManagedTransport::cancel_handle is always Some");
         let inner = PlSender::new(managed, SenderConfig::default());
-        REGISTRY_SENDER.insert_with_target(
+        REGISTRY_SENDER.insert_cancel_on_close(
             JniManagedSender {
                 inner,
                 stats_handle,
             },
             target,
+            None,
         ) as jlong
     })
 }
