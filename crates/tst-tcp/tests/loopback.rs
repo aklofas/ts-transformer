@@ -342,7 +342,9 @@ fn empty_recv_does_not_fake_eof() {
     // The peer is still open: a real payload arrives on the next call.
     server.write_all(&[0x47u8; 188]).unwrap();
     let mut buf = [0u8; 1024];
-    let n = client.recv_bytes(&mut buf).expect("real payload after the empty call");
+    let n = client
+        .recv_bytes(&mut buf)
+        .expect("real payload after the empty call");
     assert_eq!(n, 188);
     assert!(buf[..n].iter().all(|&b| b == 0x47));
 }

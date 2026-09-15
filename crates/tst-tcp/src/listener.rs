@@ -189,7 +189,10 @@ mod accepted_stream_mode_tests {
         // SAFETY: F_GETFL takes no argument and only reads the descriptor's
         // status flags; the fd is owned by `listener` for the whole call.
         let listen_flags = unsafe { libc::fcntl(listener.inner.as_raw_fd(), libc::F_GETFL) };
-        assert!(listen_flags & libc::O_NONBLOCK != 0, "listener must poll non-blocking");
+        assert!(
+            listen_flags & libc::O_NONBLOCK != 0,
+            "listener must poll non-blocking"
+        );
 
         // Irrefutable (and clippy says so) when the `tls` feature is off —
         // `InnerStream` has only the `Plain` variant in that build.
@@ -199,6 +202,10 @@ mod accepted_stream_mode_tests {
         };
         // SAFETY: as above — read-only query on a descriptor `accepted` owns.
         let flags = unsafe { libc::fcntl(stream.as_raw_fd(), libc::F_GETFL) };
-        assert_eq!(flags & libc::O_NONBLOCK, 0, "accepted stream must be blocking");
+        assert_eq!(
+            flags & libc::O_NONBLOCK,
+            0,
+            "accepted stream must be blocking"
+        );
     }
 }
