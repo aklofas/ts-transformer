@@ -152,8 +152,9 @@ Public API may change between pre-1.0 releases; everything is recorded in [`CHAN
 
 ## Contributing
 
-Issues and PRs welcome — see [`docs/reference/conventions.md`](docs/reference/conventions.md)
-for code style, commit-message rules, and the public-API workflow.
+Issues and PRs welcome — start with [`CONTRIBUTING.md`](CONTRIBUTING.md)
+(toolchain, the pre-push check set, the ratchets) and
+[`docs/reference/conventions.md`](docs/reference/conventions.md) for code style.
 
 Suspected security vulnerability? Please report it privately per
 [`SECURITY.md`](SECURITY.md) instead of opening a public issue.
