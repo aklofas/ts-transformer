@@ -37,6 +37,7 @@ optional = true
 
 [dev-dependencies]
 tst-pipeline = { path = "../tst-pipeline" }
+libc = { workspace = true }
 # Self-signed cert + key generator for TLS loopback integration tests
 # (tests/tls_hostname.rs). 0.13 is the highest version verified against
 # Rust 1.85 (workspace MSRV); matches the version used in tst-rtp.
