@@ -153,5 +153,26 @@ expect "pyarm: missing arm fails"                      1 bash "$PY" --tsv "$tmp/
 expect "pyarm: match_names alias passes"                0 bash "$PY" --tsv "$tmp/pyarm_aliased.tsv"
 expect "pyarm: aliased arms w/o match_names fail"       1 bash "$PY" --tsv "$tmp/pyarm_no_alias.tsv"
 
+# ---- header rail: tool-failure fixtures (deep-review-4 X-META-01 / E12) ---
+# The rail must never print PASS when the generator failed, and must
+# distinguish "not installed locally" (SKIP, rc 0) from "not installed in
+# CI" (FAIL). Hermetic: a fixture header carries the two defines and one
+# guarded typedef block; the shim never reads the real cbindgen.toml.
+HDR="$DIR/../check/c/header-conditional-sections.sh"
+mkdir -p "$tmp/shim"
+printf '#!/bin/sh\necho "shim: cbindgen failed" >&2\nexit 1\n' > "$tmp/shim/cbindgen"
+chmod +x "$tmp/shim/cbindgen"
+cat > "$tmp/fixture.h" <<'EOF'
+#define TST_HAS_SRT 1
+#define TST_HAS_RTP 1
+#if defined(TST_HAS_RTP)
+typedef struct TstRtpFixture TstRtpFixture;
+#endif
+EOF
+
+expect "header rail: failing cbindgen shim on PATH fails closed"  1 env PATH="$tmp/shim:$PATH" CI=1 HCS_HEADER="$tmp/fixture.h" bash "$HDR"
+expect "header rail: cbindgen absent under CI fails closed"        1 env CI=1 HCS_CBINDGEN="$tmp/nonexistent-cbindgen" HCS_HEADER="$tmp/fixture.h" bash "$HDR"
+expect "header rail: cbindgen absent locally is SKIP (rc 0)"       0 env CI= HCS_CBINDGEN="$tmp/nonexistent-cbindgen" HCS_HEADER="$tmp/fixture.h" bash "$HDR"
+
 if [[ "$fail" == 0 ]]; then echo "self-test: ALL OK"; fi
 exit "$fail"
