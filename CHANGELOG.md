@@ -1044,6 +1044,17 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   them from both the observed drops and the packet total (the module doc's
   "outage-leg excess" watch item is closed; a phase with more outage drops
   than drops is a malformed artifact).
+- **Lossy excusal budget scales with run duration**
+  (`corruption_excusal_budget_<leg>`): the budget is now
+  `K × outage_windows + 8 + ceil(16/h × hours)`, `hours` taken from the
+  measured RSS span (falling back to the declared duration when the
+  sampler produced none). Measuring this arc's retained 1-hour smoke
+  artifacts showed the excusals an ARQ leg legitimately accrues are
+  per-hour residual loss, not per-outage — the rist leg excused 9 in one
+  hour with ZERO outage windows while every other corruption verdict on it
+  passed — so a fixed constant either failed a healthy 1-hour run or would
+  have been meaningless at 72 h. Both clauses (excusals and unexplained
+  discontinuities) use the same budget; the verdict still gates.
 
 ### Testing — CI/rails (WP-8)
 

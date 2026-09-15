@@ -1149,29 +1149,68 @@ pub mod soak {
     const CORRUPTION_INGESTED_FLOOR: f64 = 0.99;
 
     /// Q12: constant term of the lossy excusal budget
-    /// `K x expected_outage_windows + C` — the excusals no outage
-    /// schedule predicts: one-off ones (a stranded anchor at start-up, a
-    /// teardown gap) plus the continuous-loss residue an ARQ transport
-    /// does not fully repair.
+    /// `K x expected_outage_windows + C + ceil(R x hours)` — the strictly
+    /// ONE-OFF excusals, the ones that happen once per run however long
+    /// it is: a stranded anchor at start-up, a teardown gap. Everything
+    /// that accrues with time is [`EXCUSAL_PER_HOUR`]'s job, and
+    /// everything that accrues per outage is `K x windows`.
+    const EXCUSAL_BUDGET_BASE: u64 = 8;
+
+    /// R for the excusal budget: excusals per HOUR of run, on top of the
+    /// one-off [`EXCUSAL_BUDGET_BASE`] and the per-outage `K x windows`
+    /// term.
     ///
-    /// Re-pinned 8 -> 24 against this arc's retained 1-hour smoke runs
-    /// (`report soak` over `/tmp/soak-resmoke`, 2026-09-14, the newest
-    /// run with all six workers healthy): the `srt`/baseline leg excused
-    /// 0, the `rist`/pcr-sparse leg excused 9 (9 transport-loss events,
-    /// 9 unexplained discontinuities) against the old budget of 8 — a
-    /// healthy leg failing the verdict, with every other corruption
-    /// verdict on it passing and 0 unexplained events out of 1284.
+    /// Pinned from this arc's retained 1-hour smoke run (`report soak`
+    /// over `/tmp/soak-resmoke`, 2026-09-14 — the newest run with all six
+    /// workers healthy): the `srt`/baseline leg excused 0, the
+    /// `rist`/pcr-sparse leg excused 9 (9 transport-loss events, 9
+    /// unexplained discontinuities) in 3541 s, with ZERO outage windows,
+    /// while every other corruption verdict on that leg passed (1284
+    /// events, 1275 attributed, 0 unexplained, 1493 injected / 1493
+    /// resolved). Pinned at 16/h — the observed 9/h with ~1.8x headroom.
     ///
-    /// ★ The same measurement showed those 9 are NOT one-off: the first
-    /// sits at packet 410490, mid-run, and they are spread through the
-    /// impairment schedule rather than clustered at start-up. The driver
-    /// is therefore per-hour, and `soak.sh` always stretches the schedule
-    /// across the whole run (`phase_s = total / phases`), so a 72-hour
-    /// run should be expected to produce on the order of hundreds —
-    /// which no constant here can absorb. If the 72-hour run fails this
-    /// verdict, the fix is a duration- or packet-scaled term in the
-    /// budget formula above, NOT a bigger constant.
-    const EXCUSAL_BUDGET_BASE: u64 = 24;
+    /// ★ Why a RATE and not a bigger constant: those 9 are not one-off.
+    /// The first sits mid-run at packet 410490 and they are spread
+    /// through the impairment schedule rather than clustered at start-up
+    /// — they are the continuous-loss residue an ARQ transport does not
+    /// fully repair. `soak.sh` stretches the schedule across the whole
+    /// run (`phase_s = total / phases`), so a 72-hour run sees the same
+    /// distribution of impairment and should be expected to produce on
+    /// the order of hundreds. A constant term sized for 1 h would fail
+    /// that healthy run; one sized for 72 h would be meaningless at 1 h.
+    const EXCUSAL_PER_HOUR: u64 = 16;
+
+    /// The lossy excusal budget (Q12):
+    /// `K x expected_outage_windows + EXCUSAL_BUDGET_BASE + ceil(EXCUSAL_PER_HOUR x hours)`.
+    ///
+    /// `duration_s` is the run's MEASURED length — the RSS-sample span
+    /// `run_duration_s`, which is also what `expected_outage_windows`
+    /// counts over, so both terms describe the same window. A run whose
+    /// samples span nothing (a single sample, or a sampler that never
+    /// ticked) falls back to the declared `expected_duration_s` rather
+    /// than collapsing the rate term to zero and failing a leg for a
+    /// telemetry gap.
+    fn excusal_budget(k: u64, outage_windows: u64, duration_s: f64, declared_s: f64) -> u64 {
+        let hours = (if duration_s > 0.0 {
+            duration_s
+        } else {
+            declared_s
+        })
+        .max(0.0)
+            / 3600.0;
+        let rate = (EXCUSAL_PER_HOUR as f64 * hours).ceil();
+        // `hours` comes from measured telemetry, so clamp rather than
+        // trust it into a `u64` cast: a corrupt RSS file must not be able
+        // to mint an unbounded budget (or saturate to 0 on a NaN).
+        let rate = if rate.is_finite() {
+            rate.clamp(0.0, u64::MAX as f64) as u64
+        } else {
+            0
+        };
+        k.saturating_mul(outage_windows)
+            .saturating_add(EXCUSAL_BUDGET_BASE)
+            .saturating_add(rate)
+    }
 
     /// K for the excusal budget: how many elementary-stream PIDs the
     /// leg's profile muxes (video + KLV per program, + audio when the
@@ -2721,14 +2760,27 @@ pub mod soak {
                         // whose evidence was all excused passes them
                         // vacuously. Both soak legs are ARQ (`?latency=` /
                         // `?buffer=`): the transport recovers continuous
-                        // loss, and only the outage windows should leave
-                        // gaps. Budget the excusals by the schedule.
+                        // loss, so outage windows and the per-hour residue
+                        // an ARQ transport does not fully repair are what
+                        // legitimately leave gaps. Budget the excusals by
+                        // the schedule AND by how long the run lasted —
+                        // see `excusal_budget`.
                         let profile = artifacts.recv_report.profile.as_deref().or(config
                             .legs
                             .get(leg_name.as_str())
                             .map(|d| d.profile.as_str()));
                         let k = media_pids(profile);
-                        let budget = k * outage_windows + EXCUSAL_BUDGET_BASE;
+                        let budget = excusal_budget(
+                            k,
+                            outage_windows,
+                            run_duration_s,
+                            config.expected_duration_s,
+                        );
+                        let budget_hours = if run_duration_s > 0.0 {
+                            run_duration_s
+                        } else {
+                            config.expected_duration_s
+                        } / 3600.0;
                         let excused =
                             a.unexplained_transport_loss + a.undetected_lost + a.unrecovered_lost;
                         let unexplained_disc = artifacts
@@ -2743,7 +2795,8 @@ pub mod soak {
                                 "{leg_name}: {excused} excused ({} transport-loss events, {} \
                                  undetected-lost, {} unrecovered-lost) and {unexplained_disc} \
                                  unexplained discontinuities against budget {budget} (K={k} media \
-                                 PIDs x {outage_windows} outage window(s) + {EXCUSAL_BUDGET_BASE})",
+                                 PIDs x {outage_windows} outage window(s) + {EXCUSAL_BUDGET_BASE} \
+                                 + {EXCUSAL_PER_HOUR}/h x {budget_hours:.2}h)",
                                 a.unexplained_transport_loss, a.undetected_lost, a.unrecovered_lost
                             ),
                         ));
@@ -5022,10 +5075,11 @@ pub mod soak {
             let v = verdict(&r, "corruption_excusal_budget_srt");
             assert!(!v.pass, "{}", v.detail);
             assert!(!v.provisional);
-            // No profile declared and no outage: K falls back to 2, W = 0.
+            // No profile declared and no outage: K falls back to 2, W = 0,
+            // so the whole budget is the one-off base plus one hour of rate.
             assert!(
                 v.detail
-                    .contains("budget 24 (K=2 media PIDs x 0 outage window(s) + 24)"),
+                    .contains("budget 24 (K=2 media PIDs x 0 outage window(s) + 8 + 16/h x 1.00h)"),
                 "{}",
                 v.detail
             );
@@ -5059,9 +5113,58 @@ pub mod soak {
             assert!(v.detail.contains("against budget 24"), "{}", v.detail);
         }
 
+        /// The excusals an ARQ leg legitimately accrues are per HOUR of
+        /// run, not per outage window (measured: `/tmp/soak-resmoke`'s
+        /// rist leg excused 9 in one hour with ZERO outage windows), so
+        /// the budget has to grow with the run. The same excusal count
+        /// that blows a short run's budget is inside a long one's.
+        #[test]
+        fn excusal_budget_grows_with_the_run_duration() {
+            // K=2, W=0 either way: only the rate term moves.
+            assert_eq!(excusal_budget(2, 0, 3600.0, 0.0), 8 + 16);
+            assert_eq!(excusal_budget(2, 0, 72.0 * 3600.0, 0.0), 8 + 16 * 72);
+            // Partial hours round UP, so a 3541 s smoke run still gets a
+            // whole hour's allowance.
+            assert_eq!(excusal_budget(2, 0, 3541.0, 0.0), 8 + 16);
+            // Outage windows still contribute on top.
+            assert_eq!(excusal_budget(4, 11, 72.0 * 3600.0, 0.0), 44 + 8 + 16 * 72);
+            // No measured span (single sample / sampler never ticked):
+            // fall back to the declared duration rather than collapsing
+            // the rate term and failing a leg for a telemetry gap.
+            assert_eq!(excusal_budget(2, 0, 0.0, 2.0 * 3600.0), 8 + 32);
+
+            // End to end: 40 excusals fail a 1-hour run and pass a 3-hour
+            // one, from the same artifacts.
+            let build = |span_s: f64| {
+                let n = (span_s / 30.0) as usize + 1;
+                let mut inputs = corruption_inputs(500, 500, 480);
+                inputs.rss_samples = flat_series(n, 30.0);
+                inputs.config.expected_duration_s = span_s;
+                let a = inputs.legs[0]
+                    .1
+                    .recv_report
+                    .metrics
+                    .corruption_attribution
+                    .as_mut()
+                    .unwrap();
+                a.unexplained_transport_loss = 40;
+                build_soak_results(inputs).unwrap()
+            };
+            let short = build(3600.0);
+            let v = verdict(&short, "corruption_excusal_budget_srt");
+            assert!(!v.pass, "{}", v.detail);
+            assert!(v.detail.contains("budget 24"), "{}", v.detail);
+
+            let long = build(3.0 * 3600.0);
+            let v = verdict(&long, "corruption_excusal_budget_srt");
+            assert!(v.pass, "{}", v.detail);
+            assert!(v.detail.contains("budget 56"), "{}", v.detail);
+        }
+
         /// The demuxer's own unexplained discontinuities are held to the
         /// same budget — a demuxer emitting spurious CC jumps under lossy
-        /// judgement used to pass every corruption verdict.
+        /// judgement used to pass every corruption verdict. The rate term
+        /// applies to this clause too, not only to `excused`.
         #[test]
         fn corruption_excusal_budget_bounds_unexplained_discontinuities() {
             let mut inputs = corruption_inputs(500, 500, 480);
@@ -5082,6 +5185,9 @@ pub mod soak {
                 "{}",
                 v.detail
             );
+            // …and it is the SAME budget the excusal count is held to,
+            // rate term included.
+            assert!(v.detail.contains("+ 8 + 16/h x 1.00h"), "{}", v.detail);
         }
 
         /// A leg declared `rich` whose receiver judged it in compact mode
