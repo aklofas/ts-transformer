@@ -4,29 +4,17 @@ Things deliberately out of scope today with a clear path back if they
 become load-bearing. Each entry records the reason it was deferred and
 the trigger that would unblock it.
 
-## HLS publisher — SUPPORTED
-
-- **Status:** SUPPORTED. The HLS publisher ships in its own segmenter-first
-  `tst-hls` crate. The Python wheels enable it by default (`tstrans.hls`
-  imports out of the box); the C binding exposes it behind the opt-in `hls`
-  Cargo feature (`TST_HAS_HLS`). It is no longer gated out of published
-  artifacts. The security items that previously blocked promotion are
-  closed:
-  - **Path traversal (CWE-22)** is closed — the built-in HTTP server serves
-    only files from a known set it wrote itself; request paths are not used
-    to open arbitrary files under the output directory.
-  - **VOD / EVENT serving** is closed — `HlsPublisher::finish_serving`
-    returns an `HlsServerHandle` that keeps the built-in server up so a
-    completed VOD or EVENT playlist and its segments stay fetchable after
-    the stream ends.
-  - **Bind default is loopback** (`127.0.0.1:8080`); binding all interfaces
-    is now an explicit opt-in, and the guide points operators at fronting
-    the output directory with a reverse proxy / CDN for exposure.
-  - Segments open on a decodable boundary (PAT → PMT → IDR), so a joining
-    player can decode the first segment it fetches.
-- See the [HLS guide](/docs/guides/hls.md) for the full surface, serving
-  guidance, KLV ride-along, and latency tuning. The JVM binding does not
-  yet expose HLS (see below).
+**Status vocabulary.** Every entry's `Status:` line starts with one of three
+words. **Deferred** — not built; the entry records why and the concrete
+event that reopens it (a partial ship stays `Deferred` and says what shipped
+so far). **Won't-do** — decided against; the entry records the decision and
+what would overturn it. **Shipped** — built; the entry moves to the
+[Resolved (historical)](#resolved-historical) appendix at the end of this
+file and keeps only its closing note. Legacy phrasings on older entries —
+`Not implemented`, `Not exposed`, `Not done`, `Not run`, `Not supported`,
+`Pass-through`, `Consumer-side dispatch`, `Refused`, `Partially …` — all
+mean **Deferred**. An entry whose feature has shipped must never read
+`Deferred`.
 
 ## HLS fMP4 / CMAF segments + emsg-v1 KLV (MISB ST 1910.1)
 
@@ -40,9 +28,13 @@ the trigger that would unblock it.
   binding is a separate wire shape — real work with no current consumer
   driving it. TS-in-HLS covers the shipping use case, including KLV
   ride-along.
+  This is unrelated to the MPEG-TS sync-metadata AU cell at
+  `mpegts::au_cell` (H.222.0 §2.12.4.2) — different spec, different layer.
 - **Trigger to revisit:** Low-latency / LL-HLS demand (CMAF is the natural
   carrier), or a consumer that needs Safari-native timed metadata (Safari
-  surfaces `emsg` KLV where it does not surface TS private-data KLV).
+  surfaces `emsg` KLV where it does not surface TS private-data KLV). A
+  future HLS pipeline that elects the emsg-box path instead of the
+  MPEG-TS path counts.
 
 ## LL-HLS protocol (EXT-X-PART / blocking playlist reload / preload hints)
 
@@ -274,7 +266,7 @@ the trigger that would unblock it.
   (`composite_imaging_local_set`, ST 1602 Composite Imaging), and
   tags 100–101 (`segment_local_set` / `amend_local_set`, ST 1607
   Segment and Amend). Tag 73 (RVT / ST 0806) is no longer on this
-  list — see the `klv::st0806` typed-layer entry below.
+  list — see the `klv::st0806` entry in the Resolved appendix.
 - **Why deferred:** Same reasoning as the VMTI nested-LS entry above —
   the substrate supports typing each one, but every set is its own
   per-tag table to write and maintain, and no consumer has asked for
@@ -282,18 +274,6 @@ the trigger that would unblock it.
 - **Trigger to revisit:** A consumer asks for typed access to SAR
   motion imagery, range imagery, geo-registration, composite imaging,
   or segment/amend metadata.
-
-## `klv::st0806` RVT typed layer — SHIPPED
-
-- **Status:** SHIPPED. `klv::st0806` types the MISB ST 0806.4 Remote
-  Video Terminal (RVT) Local Set: the nested body form (carried via
-  `UasDatalinkLs::rvt`, ST 0601 Tag 73) and the standalone independent
-  form (own 16-byte UL, timestamp-first Tag 2, CRC-32/MPEG-2-last
-  Tag 1). The repeatable nested POI (Tag 12), AOI (Tag 13), and User
-  Defined (Tag 11) sub-sets are typed too. Decode via
-  `klv::st0806::decode` (nested) or `klv::st0806::decode_standalone`
-  (independent). See the `klv::st0806` module docs for the full
-  surface.
 
 ## RVT standalone-PID demuxer dispatch (`MetadataKind::RvtLs`)
 
@@ -319,9 +299,12 @@ the trigger that would unblock it.
   as ground truth. No automated cross-decoder agreement check.
 - **Why deferred:** Adding Python to CI is marginal value when MISB
   public test vectors are already authoritative ground truth.
-- **Trigger to revisit:** A parsing bug ships that golden-file tests
-  would have missed — i.e., the library and the spec disagreed without
-  the test suite catching it.
+- **Trigger to revisit:** a typed-KLV decode/encode disagreement with the
+  spec surfaces through a field report or through the interop matrix's
+  `klv_rich_*` cells (green since 2026-09-14), or the next release-gate
+  audit asks for an independent-decoder cross-check. (Re-worded 2026-09-14:
+  the old trigger — "a bug ships that golden tests would have missed" — is
+  only observable after the fact, so it could never fire in time.)
 - **Scope when added:** A `--features conformance` cargo feature plus
   a separate CI job that runs Python with `pip install klvdata`,
   parses each fixture with both decoders, and asserts typed-field
@@ -347,55 +330,22 @@ the trigger that would unblock it.
   external tooling, with an explicit decision on how unknown tags are
   represented.
 
-## `no_std` support for `klv`
-
-- **Status:** Shipped 2026-05-30 (tst-core no_std baseline). `pub mod
-  klv;` (`crates/tst-core/src/lib.rs:73`) carries no `std` feature
-  gate; `no-std-baremetal.sh` compiles it for both
-  `thumbv7em-none-eabihf` and `riscv32imac-unknown-none-elf` alongside
-  the rest of `tst-core`. Residual std-only corners: none — the only
-  two `#[cfg(not(feature = "std"))]` sites under `klv/` (`imapb.rs`,
-  `st0601/mapping.rs`) are the `no_std` *enabling* code itself (routing
-  float ops through `float_ext::FloatExt`'s `libm` shim in place of
-  `std::f64` methods), not a remaining std requirement.
-
-## Multi-stream `mpegts::mux` — `tst-jni` / `tst-uniffi` binding surface
-
-- **Status:** The `tst-c` C ABI fan-out shipped — `tst_video_stream_handle_t` /
-  `tst_klv_stream_handle_t` typedefs, `tst_mux_config_add_video_stream` /
-  `_add_klv_stream` returning handles, and `_video_to(handle, ...)` /
-  `_klv_to(handle, ...)` siblings on `tst_muxer_t`, `tst_mux_sender_t`,
-  and `tst_managed_mux_sender_t`. The single-target entry points keep
-  their original signatures and surface `MuxError::AmbiguousTarget` as
-  `TST_E_INVALID_USAGE` on multi-stream muxers. The same handle-aware
-  shape has NOT yet landed in `tst-jni` or `tst-uniffi`.
-- **Note on Sender / RawSender:** the original deferred-features entry
-  said `tst_ts_sender_*` / `tst_managed_ts_sender_*` would also gain
-  `_video_to` / `_klv_to` siblings. That was wrong: `tst_pipeline::Sender`
-  exposes only `send_ts(bytes)` (pre-muxed TS bytes) and `tst_pipeline::RawSender`
-  exposes only `send(bytes)`. Neither carries a `Muxer`, so handle-aware
-  fan-out is meaningless on those variants. Only the three muxer-owning
-  C variants (`tst_muxer_t`, `tst_mux_sender_t`, `tst_managed_mux_sender_t`)
-  have the new `_to` surface.
-- **Trigger to revisit:** First JNI or UniFFI consumer that actually wants
-  multi-stream output. The pattern is mechanical — mirror the same
-  handle-typedef + `_to(handle, ...)` fan-out across the JNI/UniFFI
-  binding once each ships.
-
 ## Codec parameter set parsing at the C ABI
 
 - **Status:** Deferred. The Rust core ships `tst_core::codec::h264` and
   `tst_core::codec::h265` with typed parsers for SPS / PPS (H.264) and
   VPS / SPS / PPS (H.265). The C ABI exposure is deferred.
-- **Why deferred:** The receiver-surface C ABI plan is the natural carrier
-  for all FFI parser exposure — consistent ownership and error semantics
-  across receiver fields, parameter-set fields, and future audio / subtitle
-  parser exposure are best designed in one pass rather than piecemeal. An
-  interim send-only or codec-only C ABI shape would need reshaping when the
-  receiver C ABI lands anyway.
-- **Trigger to revisit:** The receiver-surface C ABI plan starts execution.
-  At that point the codec parsers get C entry points alongside the receiver
-  event surface, sharing the same error-reporting and lifetime conventions.
+- **Why deferred:** the receiver C ABI is shipped; what is undecided is the
+  C shape of a parsed parameter set (one flat `repr(C)` struct per codec vs.
+  field getters over an opaque handle) and its growth policy across codec
+  revisions. No C consumer has needed the fields yet.
+- **Trigger to revisit:** a C or embedded consumer asks for typed SPS / PPS /
+  VPS fields at the C boundary (resolution, profile/level, VUI timing for a
+  decoder-config negotiation with no Rust layer in the process). The old
+  trigger — "the receiver-surface C ABI plan starts" — fired 2026-05-16
+  (plan #62) and the receiver ABI shipped WITHOUT these entries: it carries
+  raw Annex-B bytes, and `tst_annexb_to_length_prefixed` (ABI 0.21) covers
+  the decoder hand-off case, so the parsers were consciously left out.
 
 ## AV1 full Frame Header parsing
 
@@ -431,21 +381,6 @@ the trigger that would unblock it.
   and absent from the local corpus.
 - **Trigger to revisit:** A real-world capture with multi-OP AV1
   streams, or a consumer shipping scalable AV1.
-
-## AV1-in-MPEG-2-TS binding §3.2 / §3.4 carriage conformance
-
-- **Status:** Shipped (validate-1 C8). Default carriage is now
-  `Av1CarriageMode::Mpeg2TsBinding`: PES `stream_id = 0xBD`
-  (private_stream_1, §3.4) and `ts_open_bitstream_unit()` framing
-  on each OBU (3-byte `obu_start_code` = `uimsbf(24)` = `0x000001`,
-  i.e. byte sequence `0x00 0x00 0x01`, + emulation prevention
-  bytes, §3.2). Set `MuxerConfig::av1_carriage =
-  Av1CarriageMode::InteropRawObu` (escape hatch) for ffmpeg /
-  libaom / hls.js / mediamtx interop carriage.
-  Demuxer-side: matching `DemuxerConfig::av1_carriage`; binding
-  mode surfaces `NonConformantIssue::Av1WrongStreamId` /
-  `NonConformantIssue::Av1MissingTsObuFraming` on non-conforming
-  input and falls back to raw-OBU parsing in lenient mode.
 
 ## `AV1_video_descriptor` (typed PMT descriptor)
 
@@ -557,39 +492,23 @@ the trigger that would unblock it.
   iterator-of-`Result<Frame, CodecParseError>` shape as the existing
   ADTS / MPEG-audio slices.
 
-## Audio carriage at the `tst-c` C ABI
-
-- **Status:** Deferred (no consumer ask). Audio carriage in `mpegts::mux`
-  and `mpegts::demux` ships in Rust (codec scope: MP2 + AAC ADTS + AAC
-  LATM + AC-3, plus `DemuxerConfig::treat_as` for non-conformant
-  stream_type cases). The `tst-c` C ABI sender surface currently exposes
-  `tst_mux_sender_send_video` and `tst_mux_sender_send_klv` but no
-  `tst_*_send_audio` / `tst_*_send_audio_to` siblings, and the config
-  builders do not expose `tst_mux_config_add_audio_stream` /
-  `tst_audio_stream_handle_t`.
-- **Why deferred:** Adding the entries is mechanical (parallel to the
-  existing video / KLV send entries) but requires deciding the audio
-  frame envelope shape at the C boundary — whether to take raw access
-  units, ADTS frames, LATM blocks, etc., and how to surface the codec
-  selection per stream. No consumer has asked.
-- **Trigger to revisit:** A binding-author asks for audio send through
-  the C ABI; a downstream consumer needs in-band audio for a use case
-  not served by the Rust API.
-
 ## Non-ATSC AC-3 variants (E-AC-3, DVB-shaped AC-3)
 
 - **Status:** Deferred. `mpegts::mux` emits and `mpegts::demux` recognizes
   ATSC-shaped AC-3 only — `stream_type 0x81`, with `format_identifier =
   "AC-3"` in a registration descriptor (the shape ffmpeg's mpegts muxer
   emits by default). E-AC-3 (`stream_type 0x87`) and DVB-shaped AC-3
-  (`stream_type 0x06` + AC-3 registration descriptor) are not classified
-  as `AudioCodec::Ac3` automatically.
+  (`stream_type 0x06` + `AC3_descriptor` tag `0x6A` per ETSI TS 101 154
+  §5.6) are not classified as `AudioCodec::Ac3` automatically.
 - **Why deferred:** Neither variant appears in the local corpus. Adding
   them means either (a) parsing registration descriptors on every
   `stream_type 0x06` PID to disambiguate "AC-3" from "KLVA" / "HDMV" /
   etc. (a structural complication that isn't justified without a corpus
   signal), or (b) adding a new `AudioCodec::EAc3` variant plus the
-  corresponding stream_type byte / muxer / demuxer plumbing.
+  corresponding stream_type byte / muxer / demuxer plumbing. A
+  `MuxerConfig::ac3_mode: Ac3Mode { Atsc, Dvb }` switch is the
+  alternative shape on the mux side; both expand the public API without
+  a use case.
 - **Workaround:** `DemuxerConfig::treat_as` lets callers map an
   `Unknown(0x87)` PID or a `0x06` PID with the AC-3 registration
   descriptor to `AudioCodec::Ac3`. The library hands back raw PES
@@ -631,18 +550,12 @@ the trigger that would unblock it.
   `Unknown` PIDs, or a corpus analysis workflow needs stream-kind heuristics
   without PMT descriptors.
 
-## `pipeline::ext::pairing` — opt-in convenience pairing utility
+## `pipeline::ext::pairing` C ABI exposure
 
-- **Status:** Shipped (Rust API). `tst_pipeline::ext::pairing::Pairer` with
-  `with_config` (Realtime + Buffered) and `last_before_pts` strategies.
-  Cookbook recipes 24–27 cover the canonical patterns; recipes 12–14
-  remain as the inline-pattern reference. C ABI / JNI / UniFFI
-  exposure deferred — see the next entry.
-
-## `pipeline::ext::pairing` C ABI / JNI / UniFFI exposure
-
-- **Status:** Rust API only. `tst-c`, `tst-jni`, `tst-uniffi` do not
-  yet expose `Pairer`.
+- **Status:** Deferred at the C ABI only. Python (`tstrans.pipeline.Pairer`)
+  and JVM (`org.tstrans.pipeline.Pairer`) ship the pairing utility;
+  `tstrans.h` has no `tst_pairer_*` family (0 matches). This entry claimed
+  the JVM half was missing until 2026-09-14 (DEBT-14).
 - **Why deferred:** Receiver-side cross-language surfaces are deferred
   to the future receiver-surface plan, so all receiver-side exposure
   (multi-program demux at C ABI, receiver-side stats at C ABI, typed
@@ -652,45 +565,15 @@ the trigger that would unblock it.
   projection structs (`VideoSample`, `KlvSample`), a tagged-enum
   output (`PairerOutput`) that maps to C discriminator + union, and
   no lifetimes.
-- **Trigger to revisit:** When the receiver-surface C ABI plan is
-  written, `Pairer` joins as one more handle type
-  (`tst_pairer_t`, `tst_pairer_open_with_config`,
-  `tst_pairer_last_before_pts_open`, `tst_pairer_feed`,
-  `tst_pairer_flush`, `tst_pairer_stats`, `tst_pairer_close`).
+- **Trigger to revisit:** the binding-parity matrix decision in the
+  "managed shell = plain shell" arc (deep-review-#4 follow-up, DEBT-14)
+  decides whether `Pairer` joins the C ABI; a C consumer asking for
+  KLV↔video alignment without a Rust layer decides it sooner. The old
+  trigger — "when the receiver-surface C ABI plan is written" — fired
+  2026-05-16 without `Pairer` joining.
 - **Scope when added:** ~7 C entry points + 1 handle type + tagged
   output discriminator. Sketch parallel to the existing
   `tst_demux_receiver_t` shape.
-
-## Multi-program demux at the C ABI
-
-- **Status:** Shipped in Phase 3 (plan #62, 2026-05-16). The
-  `tst_demux_receiver_t` typed-event surface includes `tst_event_t`
-  with a `PROGRAM_MAP` arm carrying `program_number`; `tst_stream_info_t`
-  carries `program_number`; multi-program streams are handled naturally
-  by the `DemuxReceiver` backend.
-
-## Rustdoc lift to docs.rs via `#![doc = include_str!(...)]`
-
-- **Status:** Shipped in minimal form, v0.4.0. Each of the 8
-  publishable pure-Rust crates (`tst-core`, `tst-pipeline`, `tst-srt`,
-  `tst-rtp`, `tst-udp`, `tst-tcp`, `tst-hls`, `tst-rist`) now ships a
-  `README.md` (rendered on crates.io/docs.rs via the `readme` package
-  key); the six transport crates additionally lift it into the
-  crate-level rustdoc via `#![doc = include_str!("../README.md")]`
-  (`tst-core`/`tst-pipeline` keep their existing, more detailed crate
-  docs instead of double-including — their READMEs are a terser
-  summary that agrees with, but doesn't replace, those docs).
-  docs.rs now builds real API documentation from the bundled source
-  once each crate publishes.
-- **Why deferred (partially, still):** Full migration of the
-  markdown guides under `docs/` (the per-language onramps, cookbook,
-  guides) into rustdoc is not planned — those are user-journey docs
-  meant to be browsed as a set from the repo/docs site, not per-crate
-  API reference pages. Only the per-crate README summary moved.
-- **Trigger to revisit:** Satisfied by the v0.4.0 README lift above.
-  No further trigger is tracked; revisit only if a future consumer
-  specifically asks for the full guide tree to be mirrored into
-  docs.rs.
 
 ## URL parameter coverage (Group 3 — recognized but unsupported)
 
@@ -792,15 +675,6 @@ the trigger that would unblock it.
 - **Trigger to revisit:** A consumer reports a malformed URL silently
   parsing where they expected an error.
 
-## `Listener::accept_timeout` — bounded blocking accept
-
-- **Status:** Shipped in plan #30 (commit cf3233b).
-  `Listener::accept_timeout(Duration)` uses a one-shot `srt_epoll_wait`
-  to gate readiness, then calls `srt_accept` once a connection arrives or
-  returns `AcceptError::TimedOut` on expiry. `Listener::set_recv_timeout`
-  continues to apply only to *accepted* sockets, not to the accept call
-  itself — see `guide-srt.md` §Blocking semantics for the distinction.
-
 ## Errno-based error classification (`SrtErrno` minor codes)
 
 - **Status:** Several `From<RawError> for *Error` impls match libsrt
@@ -831,28 +705,22 @@ the trigger that would unblock it.
 
 ## `srt_cleanup()` shutdown hatch
 
-- **Status:** Never called. `ensure_initialized()` runs once and libsrt
-  stays initialized for the process lifetime. `init.rs` documents the
-  rationale (drop-order ambiguity vs. negligible OS-reclaimed leaks).
-- **Why deferred:** For long-running services this is correct. For
-  short-lived CLIs and tests, valgrind / LeakSanitizer / Miri may
-  report leaks; for dynamically-loadable modules unloaded by host
-  processes, there's no escape hatch.
+- **Status:** Deferred — the process-exit half shipped 2026-07-24 (PR #125):
+  `crates/tst-srt/src/init.rs` registers `srt_cleanup` via `atexit`
+  immediately after `srt_startup` (libsrt ≥ 1.5.6 makes exit-without-
+  cleanup a deterministic post-main SIGSEGV; the registration is
+  load-bearing and panics if it fails — do not remove it). What remains
+  deferred is an explicit, caller-invocable cleanup for hosts that
+  `dlclose` the library before process exit (plugin hot-reload), where
+  `atexit` runs too late. This entry read "Never called" until 2026-09-14.
+- **Why deferred:** for every process-lifetime host the `atexit` hook is
+  the correct answer; an on-demand hatch needs a "no sockets alive"
+  precondition the library cannot verify on the caller's behalf.
 - **Trigger to revisit:** A consumer reports problems with libsrt
   init persisting beyond their module's lifetime (e.g. host plugin
-  framework with hot-reload), OR LeakSanitizer integration becomes
-  load-bearing in CI.
-
-## Rust-API-only sender pipeline defaults
-
-- **Status:** Shipped 2026-05-07. `SocketConfig::sender_defaults()` /
-  `::receiver_defaults()` constructors, `merge_sender_defaults()` /
-  `merge_receiver_defaults()` in-place merge methods, and matching
-  `SocketBuilder::sender_defaults()` / `::receiver_defaults()` chain
-  methods all live in `tst-srt`. The `tst-c::connect_srt` helper now
-  calls `SocketConfig::merge_sender_defaults` instead of inlining the
-  merge logic. See the "Sender / receiver presets" section in
-  `docs/guides/srt.md`.
+  framework with hot-reload),
+  (LeakSanitizer is no longer a reason: the asan jobs run leak detection
+  against the atexit-cleaned process today).
 
 ## URL parameter coverage — bigger Group 3 keys (audit Issue 6 Cat B/C)
 
@@ -893,63 +761,6 @@ the trigger that would unblock it.
   flapping (e.g. for alarm thresholds / backoff tuning) beyond the
   existing rebuild count.
 
-## Background reconnect — bindings parity (C / Python / JVM) — RESOLVED 2026-08-21
-
-- **Status:** RESOLVED. `ReconnectMode::Background`,
-  `ManagedTransport::stats_handle()`, and `ManagedStatsHandle` /
-  `ManagedTransportStats` (send-side reconnect/gap telemetry) are now
-  reachable from all three bindings: the C ABI mirror
-  (`TstReconnectMode` + `tst_reconnect_policy_set_mode` on
-  `tst_reconnect_policy_t`, plus `tst_managed_transport_stats_t` +
-  `tst_managed_{sender,mux_sender,raw_sender}_get_reconnect_stats`, ABI
-  minor 20) shipped in PR #165; the Python mirror (`ReconnectMode`
-  incl. `BACKGROUND`, `.reconnect_stats()`, `ManagedTransportStats`)
-  shipped in PR #166; the JVM mirror (`ReconnectMode.BACKGROUND`,
-  `.reconnectStats()`, `ManagedTransportStats`) shipped in PR #167.
-  All three stay send-side only, matching the Rust-side scope — see
-  the "Reconnect counters on `ManagedTransport` stats" entry above for
-  the still-deferred receive-side residue (unaffected by this arc).
-
-## Last-activity-wall-clock gauges per stream (C / Python / JVM) — RESOLVED 2026-08-21
-
-- **Status:** RESOLVED. `StreamStats.last_seen: Option<SystemTime>`
-  (stamped on every mux push / demux emit, `std` builds only) is now
-  reachable from all three bindings. The C ABI mirror shipped
-  2026-08-20 (ABI minor 20, PR #165) — NOT by growing
-  `tst_stream_stats_t` (still byte-size-asserted, plain-integer
-  counters only), but as a new getter,
-  `tst_*_get_stream_last_seen_micros`, on all six demux-receiver
-  handle families (plain + managed SRT, RIST, RTP, TCP, UDP), returning
-  a `uint64_t` Unix epoch microsecond timestamp (`0` if the PID has
-  never been observed). The Python mirror (`last_seen_micros(pid) ->
-  Optional[int]` on `rtp.DemuxReceiver`, `srt.DemuxReceiver`, and
-  `srt.ManagedDemuxReceiver`) shipped in PR #166. The JVM mirror
-  (`lastSeenMicros(pid) -> Long`, same three receiver classes) shipped
-  in PR #167 — narrower than the C ABI's six families because neither
-  binding exposes standalone RIST/TCP/UDP receiver classes today.
-  Python and JVM diverge from the C getter's `0`-if-unseen sentinel —
-  both use their native nullable idiom (`None` / boxed `null`)
-  instead, since neither has a bare-integer ABI constraint.
-
-## Per-stream PMT descriptor surface at the C ABI
-
-- **Status:** The Rust core ships per-stream PMT descriptors via the
-  `mpegts::descriptors` module and `MuxerConfigBuilder::stream_descriptors_for_video` /
-  `stream_descriptors_for_klv` / `stream_descriptors_for_stream` methods.
-  The C ABI exposure is deferred.
-- **Why deferred:** The descriptor-construction surface and the future
-  receiver C ABI's per-stream descriptor surface should land together —
-  exposing a send-only C ABI shape now would need reshaping when the
-  receiver C ABI lands (which will also need `TstRawDescriptor` and
-  read access to `StreamInfo::raw_descriptors`).
-- **Trigger to revisit:** The receiver-surface design lands and pulls
-  the descriptor surface into scope. At that point the C ABI gets
-  descriptor builders mirroring `mpegts::descriptors` plus
-  `tst_mux_config_set_video_stream_descriptors` /
-  `_set_klv_stream_descriptors` with bounded array params + a
-  `TstRawDescriptor` `repr(C)` shape for the receive side's
-  `StreamInfo::raw_descriptors`.
-
 ## `Socket::close` Result-type cleanup
 
 - **Status:** `tst_srt::Socket::close(self) -> Result<(), IoError>` always
@@ -962,27 +773,11 @@ the trigger that would unblock it.
   on `if let Err(e) = sock.close()`. A future breaking-change cycle
   could either drop the `Result` entirely (close becomes infallible)
   or plumb `srt_close`'s rc back via a richer `CloseError` channel.
-- **Trigger to revisit:** Next breaking-change cycle, OR a consumer
-  reports needing the `srt_close` rc (e.g., to distinguish
-  graceful-close from race-close errors).
-
-## Pre-emptive close cancellation at the C ABI
-
-- **Status:** Partially shipped. All six sender `_cancel` entry points
-  ship in Phase 1 (plan #59). `tst_raw_receiver_cancel` ships in
-  Phase 1; `tst_receiver_cancel` and its managed sibling ship in
-  Phase 2 (plan #60). The remaining `tst_demux_receiver_cancel` rides
-  with Phase 3.
-- **Why deferred (originally):** The C ABI's `Handle<T>`
-  (= `Mutex<Option<T>>`) has the same blocking issue at the C layer
-  that the Rust shells had — `tst_*_close` waits on the handle's
-  mutex, so it competes with a parked C-side data-path call. Fixing
-  it cleanly requires a side-channel `Arc<dyn TransportCancel>` +
-  `Arc<AtomicBool>` captured at `_open` time, outside the mutex.
-  That design was implemented in Phase 1 and carried forward.
-- **Status (updated 2026-05-16):** `tst_demux_receiver_cancel` shipped
-  in Phase 3 (plan #62). Pre-emptive close cancellation is now complete
-  across all six sender families and all three receiver handle types.
+- **Trigger to revisit:** the 0.7.0 breaking release (the one that closes
+  the binding-shared-layer arc). Decision recorded now so it is not skipped
+  a third time: drop the `Result` (close becomes infallible) unless a
+  consumer has by then asked for the `srt_close` rc. The old trigger — "next
+  breaking-change cycle" — fired at 0.5.0 and again at 0.6.0 without action.
 
 ## Typed WebVTT cue substrate (`mpegts::webvtt::format_pes_payload` + `WebVttCue`)
 
@@ -1037,10 +832,13 @@ the trigger that would unblock it.
   captures, but the cross-tool interop is empirical, not normative.
   Empirical interop testing requires fixture corpus from each tool +
   a test matrix — a separate session's worth of work.
-- **Trigger to revisit:** Validate-1 Wave I (empirical interop matrix)
-  schedules an interop test against ffmpeg / hls.js / mediamtx /
-  GStreamer; results from that pass either confirm interop or
-  surface concrete divergences requiring spec follow-up.
+- **Trigger to revisit:** a WebVTT subtitle profile joins
+  `crates/tst-interop`'s synthetic profile set and `scripts/interop/
+  run-matrix.sh` gains cells for it (ffmpeg `-c:s webvtt` extraction, hls.js
+  / mediamtx playback), or a consumer emits WebVTT-in-TS to a third-party
+  player. The old trigger — "Validate-1 Wave I schedules the interop
+  matrix" — fired 2026-08-03: the matrix shipped with 12 profiles and no
+  subtitle stream in any of them.
 
 ## CEA-708 interop
 
@@ -1069,11 +867,11 @@ the trigger that would unblock it.
   layout. Do NOT silently change the wire format: if implemented, the CDP
   form should be a distinct carriage variant, not a mutation of the
   existing raw-cc_data `Cea708Standalone`.
-- **Trigger to revisit:** Validate-1 Wave I (empirical interop matrix)
-  schedules CEA-708 interop testing against ATSC ecosystem tooling;
-  results from that pass either confirm interop or surface the need
-  for a different marker convention. A consumer requiring ATSC-ecosystem
-  interop is the trigger to implement the ST 334-2 CDP variant.
+- **Trigger to revisit:** a CEA-708 profile joins the interop matrix
+  (`ccextractor` / ffmpeg closed-caption decode cell), or an ATSC-ecosystem
+  consumer asks — the latter is also the trigger for the ST 334-2 CDP
+  variant. The old trigger fired 2026-08-03 (matrix shipped) without a
+  caption profile.
 
 ## RP 225 registered private information in KLV (in-KLV-stream vendor metadata)
 
@@ -1099,23 +897,6 @@ the trigger that would unblock it.
   1-3 (structure designator 1 for ASCII-only format_identifiers, 2 =
   BER-OID per §4) over that substrate. Spec cached at
   `reference/smpte/rp0225-2005.pdf`.
-
-## Subtitle carriage at the `tst-c` C ABI
-
-- **Status:** Deferred (no consumer ask). Plan #22 ships sender-side and
-  receiver-side Rust APIs covering DVB-sub, teletext, CEA-708, and
-  WebVTT-in-TS. The `tst-c` C ABI sender surface currently exposes
-  `tst_mux_sender_send_video` and `tst_mux_sender_send_klv` but no
-  `tst_*_send_subtitle` / `tst_*_send_subtitle_to` siblings, and the
-  config builders do not expose `tst_mux_config_add_subtitle_stream` /
-  `tst_subtitle_stream_handle_t`.
-- **Why deferred:** Adding the entries is mechanical (parallel to the
-  existing video / KLV send entries) but requires deciding the subtitle
-  envelope shape at the C boundary across the four supported codec
-  families. No consumer has asked.
-- **Trigger to revisit:** A binding-author asks for subtitle send
-  through the C ABI; a downstream consumer needs in-band subtitles
-  for a use case not served by the Rust API.
 
 ## ARIB STD-B24 / ARIB STD-B37 subtitling
 
@@ -1151,27 +932,6 @@ the trigger that would unblock it.
   synthetic suite missed.
 
 
-## Multi-cell fragmented metadata AU cells
-
-- **Status:** SHIPPED 2026-05-24.
-- **Plan:** `docs/plans/2026-05-24-multi-cell-au-reassembly.md` (outside the published repo).
-- **Behavior:** the demuxer now reassembles fragmented AU cells per
-  H.222.0 V9 §2.12.4.2 Table 2-157. Both flavors covered:
-  - Multiple AU cells back-to-back within one PES — every cell emits
-    its own event; previously only the first cell did.
-  - Cells of one AU spread across multiple PES packets — `First` +
-    `Middle`* + `Last` accumulate in a per-PID buffer until `Last`
-    completes the AU; the demuxer then emits one event with
-    `MetadataKind::KlvSyncAuCell::was_reassembled = true` and
-    `cell_count = N`.
-- **Failure modes:** `NonConformantIssue::MultiCellAu` now carries a
-  typed `reason: MultiCellAuReason` (`Orphan` / `SequenceGap` /
-  `ConcurrentFirst` / `Overflow`). Per-PID buffer cap configurable via
-  `DemuxerConfig::au_cell_cap_per_pid` (default 1 MiB).
-- **Out of scope:** caller override of `random_access_indicator` /
-  `decoder_config_flag` on the mux side; mux-side emit of fragmented
-  output. Both remain as separate deferred entries.
-
 ## Caller override of `random_access_indicator` / `decoder_config_flag` on mux
 
 - **Status:** Deferred.
@@ -1191,41 +951,6 @@ the trigger that would unblock it.
   SyncKlvConfig { random_access_indicator,
   decoder_config_flag })` — following the workspace
   `_with_config` constructor convention (see `docs/reference/conventions.md`).
-
-## ST 1910.1 KLV-in-CMAF-emsg-box delivery
-
-- **Status:** Deferred.
-- **Why deferred:** ST 1910.1 (Adaptive Bitrate Content Encoding,
-  2020) defines KLV-in-CMAF emsg-box delivery for HLS/DASH
-  consumption — separate from MPEG-TS carriage. No CMAF/HLS
-  consumer asks for this in the current pipeline. Note: this is
-  unrelated to the MPEG-TS sync-metadata AU cell at
-  `mpegts::au_cell` (per H.222.0 § 2.12.4.2) — different specs,
-  different layers.
-- **Trigger to revisit:** An HLS/DASH-delivery consumer needs to
-  ingest sync KLV from a CMAF stream (e.g., a future HLS pipeline
-  that elects the emsg-box path instead of the MPEG-TS path).
-
-## DVB-shaped AC-3 (`stream_type 0x06` + AC3_descriptor `0x6A`)
-
-- **Status:** Deferred. AC-3 carriage is ATSC-shaped only —
-  `stream_type 0x81` with `format_identifier="AC-3"` registration
-  descriptor (the shape ffmpeg's mpegts muxer emits by default).
-  The DVB shape uses `stream_type 0x06` with `AC3_descriptor`
-  (tag `0x6A`) per ETSI TS 101 154 §5.6.
-- **Why deferred:** No consumer in the current target deployment
-  uses DVB-shaped AC-3. Adding the path means either a new
-  `AudioCodec::Ac3Dvb` enum variant (parallel to existing `Ac3`)
-  or a `MuxerConfig::ac3_mode: Ac3Mode { Atsc, Dvb }` switch — both
-  expand the public API without a use case. ATSC-only mode covers
-  every known consumer.
-- **Workaround:** A receiver consuming DVB-shaped AC-3 today
-  classifies as `Unknown(0x06)` unless the caller passes
-  `DemuxerConfig::treat_as` mapping the PID to `AudioCodec::Ac3`;
-  the library hands back raw PES bytes regardless of the
-  registration descriptor shape.
-- **Trigger to revisit:** A DVB-only receiver appears in the
-  target deployment, or a corpus capture shows DVB-shaped AC-3.
 
 ## Auto-prepend of access-unit delimiter (AUD) on H.264 / H.265 / H.266
 
@@ -1404,59 +1129,18 @@ the trigger that would unblock it.
   with `continue-on-error: true` initially, mirroring the
   Tier 1 phase-in pattern.
 
-## Windows MSVC runtime tests — RESOLVED 2026-05-29 (one sub-deferral remains)
+## Windows: IPv6 multicast receive
 
-- **Status:** RESOLVED. windows-msvc now runs the runtime test suite
-  and is green across all four platforms (the one carve-out is the
-  IPv6-multicast sub-deferral below). Plan #65's "SRT
-  loopback hangs on Windows" diagnosis turned out STALE — it was an
-  artifact of the pre-MSVC-`cl` librist build; on the cl-built libsrt
-  the blocking `srt_recv` wakes on peer-close immediately (proven by a
-  bounded diagnostic), same as Linux. The actual blocker was a real
-  `SRTO_LINGER` struct-ABI product bug: `LingerOpt` was two `int`
-  (8 bytes), but Winsock `struct linger` is two `u_short` (4 bytes), so
-  libsrt's `cast_optval<linger>` rejected the size (`MJ_NOTSUP/MN_INVAL`)
-  → every sender connect failed → receiver-accept hangs. Fixed
-  per-platform in `crates/tst-srt/src/socket.rs`. CI now runs all
-  platforms under cargo-nextest, so per-test timeouts bound any future
-  hang (one hang can no longer stall the job).
-- **Sub-deferrals, now all but one closed:**
-  1. **Promote windows-msvc to gating:** DONE 2026-05-30 — all four
-     Tier-1 platforms gate CI (`continue` = false in the `ci.yml` and
-     `jvm-jar.yml` matrices).
-  2. **RIST runtime on Windows:** DONE 2026-07-26 —
-     `tst-rist/tests/{loopback,pipeline_round_trip}.rs` are un-gated.
-     The blocker was a vendored-librist bug (teardown hung ~14s+ in
-     `rist_destroy` and the data plane delivered nothing, both
-     profiles), fixed upstream in librist 0.2.18: a CI diagnostic on
-     the bumped pin showed teardown in 10–31 ms with full delivery.
-  3. **Multicast on Windows:** IPv4 DONE 2026-05-29 (the failure was
-     our `set_multicast_if_v4` being unix-only, not a runner
-     limitation; fixed via socket2 + receiver-side
-     `IP_MULTICAST_LOOP`). **IPv6 multicast remains gated** —
-     `IPV6_MULTICAST_IF` needs an interface index on Windows, which
-     the URL `?iface=` plumbing doesn't carry yet. This is the one
-     remaining sub-deferral.
+- **Status:** Deferred. `IPV6_MULTICAST_IF` needs an interface *index* on
+  Windows; the URL `?iface=` plumbing carries an address string, not an
+  index, so IPv6 multicast joins are gated on the Windows CI leg (IPv4
+  multicast works since 2026-05-29). Shares the missing name→index lookup
+  with the "UDP multicast: IPv6 interface selection by name" entry.
+- **Why deferred:** no Windows consumer joins IPv6 multicast groups; the
+  fix is the same interface-index plumbing both entries need.
 - **Trigger to revisit:** a consumer needs IPv6 multicast reception on
-  Windows (adds interface-index plumbing to the multicast join path).
-
-## RTSP server/client deferred test surface (`#[ignore]`d)
-
-- **Status:** One `tst-rtp` RTSP test remains `#[ignore]`d:
-  `rtsp_client/interleaved_e2e.rs`
-  (`tcp_interleaved_end_to_end_round_trips_ts_bytes`) — re-ignored
-  post-merge (hangs in the post-PLAY drop sequence in the merged
-  state); the interleaved wire-up is covered by
-  `rtsp_server_loopback_interleaved` + `rtsp_server_notice_5402`.
-  Formerly-listed items now DONE: the client-side custom root-store
-  wiring (`RtspClientBuilder::tls_root_certs`) is implemented and
-  asserted end-to-end by `rtsp_server/tls.rs` (rcgen-generated certs,
-  no env-var gate) plus the Python `rtsps://` integration test; the
-  `rtsp_server/lagging_peer.rs` harness runs un-ignored.
-- **Why deferred:** the interleaved-drop shutdown fix is a
-  self-contained follow-up carved out of the tst-rtp Phase 2/3 waves.
-- **Trigger to revisit:** the next-session "fully-green test suite"
-  pass folds these in alongside the Windows un-gating.
+  Windows (adds interface-index plumbing to the multicast join path and
+  un-gates the Windows leg).
 
 ## Audio frame iterators for LATM + AC-3
 
@@ -1524,12 +1208,13 @@ the trigger that would unblock it.
   signed-delta type. Picking the wrong default poisons every consumer
   arithmetic site. The internal sweep becomes much cheaper if the arithmetic
   API ships first.
-- **Trigger to revisit:** (a) Pre-stabilization API freeze (forces the
-  decision), (b) a binding-author request for type-safe internal arithmetic
-  in the FFI bridge layer, (c) a binding-author request for a typed signed
-  PCR delta on `PcrAnomaly`, or (d) a confirmed-by-fuzzer arithmetic bug
-  traced to a `pts_90khz: i64` / `pcr_27mhz: u64` site that typed arithmetic
-  would have caught.
+- **Trigger to revisit:** (a) the 1.0 API-freeze pass — the
+  `api-stability.md` Stable-tier review that precedes 1.0 — where the
+  wrap-vs-saturate semantics MUST be decided; earlier only if (b) a
+  confirmed arithmetic bug at a raw `i64` / `u64` timing site (fuzz,
+  proptest or field) shows typed arithmetic would have caught it. The
+  former binding-author-request clauses are dropped: bindings marshal ticks
+  as plain integers and never see the newtypes.
 - **Scope when added:** (1) Design wrap-vs-saturate semantics on
   `Pts90khz::Add<i64>`, `Sub<Self> -> Duration90khz` (with type definition),
   `Add<Duration90khz>`. Same for `Pcr27mhz`. Decide whether `Duration90khz`
@@ -1542,34 +1227,6 @@ the trigger that would unblock it.
   fixture-generator `tests/tools/gen_*.rs` migrate too (probably not —
   raw integers are ergonomic for test scaffolding).
 - **Effort estimate:** ~4-6h API design + writeup, ~8-12h sweep.
-
-## Python-side subtitle muxing
-
-- **Status:** `tstrans.Muxer` does not expose `add_subtitle` because the
-  Rust mux-side `SubtitleCodec` is a struct-variant enum (carrying
-  per-codec configuration like language, page IDs, and ancillary
-  descriptors) that the flat Python `SubtitleCodec` enum doesn't yet
-  model. Demux-side subtitle decoding via `DemuxEvent.Subtitle` IS
-  supported. The `Muxer.push_subtitle` / `push_subtitle_to` /
-  `Muxer.subtitle_handles()` / `MuxerProgramConfigBuilder.stream_descriptors_for_subtitle`
-  surfaces remain wired so they work as soon as the construction gap
-  closes.
-- **Why deferred:** A half-implemented mux-side API (the previous
-  `add_subtitle` that always raised `NotImplementedError`) is worse than
-  a missing one — users build against it, then break. Mirroring the
-  Rust struct-variant `SubtitleCodec` in Python as a tagged-union /
-  dataclass hierarchy is sizeable work that should land as its own
-  focused plan, not as a placeholder.
-- **Trigger to revisit:** A consumer with a concrete Python subtitle
-  muxing use case provides the structured config schema (which
-  codec(s), which fields per codec, descriptor emission expectations).
-- **Scope when added:** (1) Model the Rust mux-side `SubtitleCodec`
-  variants as Python dataclasses (e.g. `DvbSubtitling(language: bytes,
-  composition_page_id: int, ancillary_page_id: int)`, `DvbTeletext(...)`,
-  `Cea708Standalone`, `WebVttInTs`). (2) Add `add_subtitle(pid, codec)`
-  back to `MuxerProgramConfigBuilder` accepting the structured form.
-  (3) Round-trip test against demux output. (4) Update CHANGELOG +
-  binding-authors doc.
 
 ## macOS Intel (x86_64) JVM native library
 
@@ -1698,6 +1355,43 @@ the trigger that would unblock it.
   object), or the Python bindings need to lift the documented single-
   thread recv/close contract for these transports.
 
+## UDP multicast: IPv6 interface selection by name / scope-id
+
+- **Status:** Deferred. `apply_multicast_iface`
+  (`crates/tst-core/src/net/udp_socket.rs`) sets `IP_MULTICAST_IF` for an
+  IPv4 group from a literal IPv4 address; for an IPv6 group it returns
+  `io::ErrorKind::Unsupported` ("IPv6 multicast iface name lookup not
+  implemented") because `IPV6_MULTICAST_IF` takes an interface index and
+  the name→index lookup (`if_nametoindex`) is not wired. A `?iface=` on an
+  IPv6 multicast URL therefore cannot pick the interface; link-local groups
+  on multi-homed hosts are unreachable by name.
+- **Why deferred:** no consumer joins IPv6 multicast today; the lookup is
+  platform-specific (`if_nametoindex` on Unix, `GetAdaptersAddresses` on
+  Windows) and is the same plumbing the "Windows: IPv6 multicast receive"
+  entry needs. Unledgered until deep review #4 (DEBT-46).
+- **Trigger to revisit:** a consumer joining an IPv6 multicast group on a
+  multi-homed host, or the Windows IPv6-multicast gate being lifted (both
+  land the index plumbing once).
+
+## `MuxSender` DTS / MISP video variants at the C ABI
+
+- **Status:** Deferred. `MuxSender::send_video_to_with_dts`,
+  `send_video_misp_to` and `send_video_misp_to_with_dts`
+  (`crates/tst-pipeline/src/mux_sender.rs`) are Rust-only. The C ABI has
+  those variants on the offline muxer (`tst_muxer_push_video_to_with_dts`,
+  `tst_muxer_push_video_misp_to[_with_dts]`) but every live shell —
+  `tst_mux_sender_*`, `tst_managed_mux_sender_*`, the per-transport
+  `tst_{udp,tcp,rtp,rist}_mux_sender_*` and `tst_rtsp_mount_*` — pushes
+  PTS-only video, so B-frame (DTS ≠ PTS) and ST 0604 MISP-stamped video
+  cannot be sent through a C shell. The rustdoc on the three methods says
+  "open an issue"; this entry is the ledger record it lacked (DEBT-47).
+- **Why deferred:** additive ABI work (a minor bump) with no C consumer ask;
+  the Python/JVM shells have the same gap, recorded under "Binding-side
+  `MuxSender` MISP timestamp mirrors".
+- **Trigger to revisit:** the binding-parity matrix decision (DEBT-14) in
+  the "managed shell = plain shell" arc, or a C consumer needing B-frames /
+  MISP through a live shell.
+
 ## RIST: IPv6 receiver bind in the Simple profile
 
 - **Status:** Refused. `RistRecvTransport::listen` (and every builder
@@ -1757,19 +1451,6 @@ the trigger that would unblock it.
   isolates the failing socket call (an upstream-report candidate). On
   that bump: drop the `cfg!(windows)` skip in `ipv6_loopback_round_trip`
   and confirm the round trip on the Windows CI leg.
-
-## RTP H.264 depayloader (RFC 6184)
-
-- **Status:** Shipped — v0.2.x (PRs #94 / #95 / #96). The
-  depacketizer (`H264Depacketizer`), receiver shell (`H264Receiver`),
-  and RTSP path (`setup_h264_auto` / `into_h264_receiver`) are all
-  implemented in Rust (`tst-rtp`) and mirrored in the Python and JVM
-  bindings. Covered: single-NAL unit, STAP-A aggregation, FU-A
-  fragmentation (packetization modes 0 and 1). Design document:
-  `docs/specs/2026-07-10-tst-rtp-rfc6184-depayloader.md`.
-- **What remains open:** See the four entries below
-  (C-ABI receiver, payloader send side, interleaved mode 2, and
-  RTP jitter/RTCP).
 
 ## C-ABI H.264 receiver family
 
@@ -1837,26 +1518,6 @@ the trigger that would unblock it.
   reconstruction, or RTCP RR feedback to the sender is needed for
   adaptive bitrate control.
 
-## RTP receive-deadline bindings parity (C / Python / JVM) — RESOLVED 2026-08-21
-
-- **Status:** RESOLVED. The `?recv_timeout=<ms>` URL key (already
-  reaching all four Rust constructors) plus a typed per-call deadline
-  are now honored across all three bindings. C ABI covered 2026-08-20
-  (PR #165, no new symbols needed): `tst_rtp_recv_open` /
-  `tst_rtp_demux_receiver_open` now also honor `?recv_timeout=`
-  (previously only the RTSP-converted path applied it); expiry
-  surfaces as the existing `TST_E_BUFFER_FULL` (-4), retryable,
-  documented on `tst_rtp_receiver_recv_ts` /
-  `tst_rtp_demux_receiver_next_event`. Python (PR #166) gained
-  `timeout_ms: Optional[int]` keyword args on `recv()`/`recv_au()`
-  (layered on top of, not replacing, the URL-configured persistent
-  deadline) and a typed `RtpError(TIMEOUT)`. JVM (PR #167) mirrors it
-  with `recv(Integer timeoutMs)` / `recvAu(Integer timeoutMs)`
-  overloads plus a new `RtpException.Kind.TIMEOUT`, and additionally
-  ships a checked `DemuxReceiver.recvEvent()` so a demux-side timeout
-  is also a typed `TIMEOUT` rather than an ambiguous EOS-shaped `null`
-  from the plain iterator-style `next()`.
-
 ## `MuxSender::finish` bindings parity
 
 - **Status:** Deferred. `MuxSender::finish()` (fallible graceful
@@ -1874,29 +1535,6 @@ the trigger that would unblock it.
   whether the buffered tail was delivered on shutdown — the same
   capture/gateway consumers the `FileTransport::finish` surface serves
   in Rust.
-
-## `ManagedRecvTransport::max_payload` during reconnect
-
-- **Status:** Resolved 2026-07-11 (recv API pass). `ManagedRecvTransport::max_payload`
-  now caches the deliverable ceiling from the most recent live inner transport
-  (set at construction, refreshed after each successful rebuild) and reports
-  that cached value during the reconnect window instead of the old fixed 1316-byte
-  fallback. Direct-caller edge only — pipeline shells (`Receiver` / `RawReceiver`
-  / `DemuxReceiver`) size their receive buffers at construction and were
-  unaffected. See the `### Fixed` entry in the `[Unreleased]` CHANGELOG section.
-
-## Recv-side `pkt_size` knob (inert since the recv-ceiling change)
-
-- **Status:** Resolved 2026-07-11 (recv API pass). The inert receive-side
-  `pkt_size` knobs were removed as a breaking pre-1.0 change: Rust
-  `RtpRecvSocketBuilder::pkt_size` / `UdpRecvTransportBuilder::pkt_size` /
-  `RistRecvTransportBuilder::pkt_size`, Python `tstrans.rtp.Receiver(pkt_size=)`
-  kwarg and the udp/rist receive builders' `pkt_size` methods, and JVM
-  `org.tstrans.rtp.Receiver.fromUrl(url, pktSize)`. Receive-side URLs now
-  actively reject `?pkt_size=` with a teaching error rather than silently
-  ignoring it. Send-side `pkt_size` everywhere and TCP's receive-side
-  read-granularity knob are unchanged. See the `### Removed` and
-  `### Changed` entries in the `[Unreleased]` CHANGELOG section.
 
 ## ST 0604 Commercial Time Stamp (UTC wall-clock SEI, `payloadType=21`)
 
@@ -2065,39 +1703,6 @@ the trigger that would unblock it.
   and decide the telemetry story (count it in `forced_cuts` or a dedicated
   counter).
 
-## Python/JVM `tracing` diagnostics bridge + structured stream-end reason — RESOLVED 2026-08-21
-
-- **Status:** RESOLVED. The Rust core logs meaningful diagnostics via
-  `tracing` (the interleaved pump WARNs on read errors, malformed
-  frames, queue floods; the keepalive WARNs on 454); previously the
-  Python and JVM bindings installed no subscriber, so all of it
-  vanished, and a dying RTSP session was largely indistinguishable
-  from a clean end of stream (`recv_au()` returning `None` for both).
-  Both pieces now ship in both bindings. The structured "why did the
-  stream end" surface shipped Rust-side 2026-08-20 —
-  `tst_rtp::StreamEndReason` / `StreamEndReasonHandle`,
-  `RtpRecvTransport::{end_reason, end_reason_handle}`,
-  `H264Receiver::end_reason` — see
-  [troubleshooting.md](/docs/troubleshooting.md#why-did-my-rtsp-stream-end)
-  — with a same-day C ABI mirror (ABI minor 20, PR #165):
-  `TstStreamEndReason` + `tst_rtp_{receiver,demux_receiver}_end_reason`.
-  The opt-in `TSTRANS_LOG` stderr bridge (an `EnvFilter`-driven
-  `tracing-subscriber` install, `try_init` so a host's own subscriber
-  is never displaced) and the structured `end_reason()`/`end_detail()`
-  mirror both shipped in Python (PR #166) and JVM (PR #167) — JVM's
-  bridge installs from `JNI_OnLoad`, the one guaranteed one-time
-  native-library entry point (Python's installs from the `_native`
-  module-init hook).
-- **Parity, recv side (2026-09-10):** the managed-SRT analogue of that
-  end-reason surface — `tst_pipeline::RecvEndReason`, which the C ABI
-  0.21 folds onto its existing `TstStreamEndReason` — now has its own
-  Python (`srt.ManagedDemuxReceiver.end_reason()` returning
-  `srt.RecvEndReason`) and JVM (`ManagedDemuxReceiver.endReason()`
-  returning `org.tstrans.srt.RecvEndReason`) mirrors, as does the
-  demuxer's `unwrap_timestamps` / `unwrapTimestamps(boolean)` knob.
-  Neither contract is Rust/C-only any more; see the parity matrix in
-  [binding-authors.md](/docs/reference/binding-authors.md).
-
 ## ASan under the JVM test suite (tst-jni)
 
 - **Status:** Not run. The nightly sanitizer CI covers the pure-Rust
@@ -2137,32 +1742,6 @@ the trigger that would unblock it.
 - **Trigger to revisit:** the first memory-unsafety-shaped bug reported
   through the Python surface, or tst-py gaining substantial new
   `unsafe` surface.
-
-## RTSP keepalive response handling — RESOLVED
-
-- **Status:** RESOLVED (was: "no 401 reaction / session-dead detection
-  on rejected pings" + "keepalive-auth integration coverage"). The
-  trigger fired — a field report of an interleaved receive session dying
-  mid-flight — and the investigation found the fire-and-forget design
-  was also the root cause of a hard session-death defect: keepalive
-  responses were queued into the interleaved pump's bounded control
-  queue, which nothing drains between main-thread requests, so every
-  TCP-interleaved receive session died after `CTRL_QUEUE_BOUND + 1`
-  pings (16.5 minutes at the default 30 s cadence), surfacing as a
-  clean EOS. Keepalive responses (CSeq ≥ `KEEPALIVE_CSEQ_BASE`) are now
-  consumed at whichever site owns reads — the interleaved pump, or the
-  main thread's non-pump read path (which previously could misattribute
-  a buffered keepalive 200 as the next request's response): a 401
-  refreshes the shared challenge cache so the next ping signs against
-  the rotated nonce, a 454 flips `session_dead` (surfaced via
-  `RtspClient::is_session_alive`), and anything else is dropped. The
-  keepalive cadence also now retunes to the server-advertised
-  `Session: <id>;timeout=N` at SETUP and binds pings to the session
-  (both were frozen at connect-time defaults before). The
-  challenged-OPTIONS loopback coverage shipped with it
-  (`keepalive_retune.rs::keepalive_pings_authenticate_against_challenged_options`
-  drives per-request-authenticated pings against the fixture's
-  `challenge_options` mode).
 
 ## Python `transmux`: payload substitution beyond KLV (`write_video` / `write_audio` / …)
 
@@ -2346,11 +1925,13 @@ the trigger that would unblock it.
   deciding which battery owns the player-decode-matrix and FFmpeg-
   differential checks going forward — is a deliberate design decision,
   not a mechanical merge, and hasn't been made yet.
-- **Trigger to revisit:** Before or during a future release-validation
-  pass, deliberately decide which steps move into the interop matrix
-  (and get retired from the pre-release battery) versus which stay
-  pre-release-only (corpus- or fuzzing-dependent steps that don't fit
-  the interop matrix's synthetic-traffic, real-tool shape).
+- **Trigger to revisit:** the 0.7.0 release-prep session, via a checklist
+  line added to `docs/releasing.md` ("decide which Tier-B steps the interop
+  matrix now owns: the player-decode matrix and the ffmpeg round-trip are
+  already covered by the `decode/*` and `ffmpeg/*` cells — retire them from
+  `release-validation.sh` or record why not"). The old trigger — "a future
+  release-validation pass" — passed at 0.6.0 with both batteries run and
+  no decision.
 
 ## `BrokenCause` (clean-EOF discriminator) bindings parity (C / Python / JVM)
 
@@ -2373,3 +1954,446 @@ the trigger that would unblock it.
   `tst_get_last_error_str` (or a dedicated errno-style code), a `cause`
   attribute on the Python `BROKEN` error, and a field on the JVM
   exception — no new error kinds.
+
+## Resolved (historical)
+
+Entries whose feature shipped. Kept for the record (dates, PR numbers, the decision that closed them); nothing below is a deferral. Moved out of the ledger proper on 2026-09-14 (deep review #4, DEBT-02).
+
+### HLS publisher — SUPPORTED
+
+- **Status:** SUPPORTED. The HLS publisher ships in its own segmenter-first
+  `tst-hls` crate. The Python wheels enable it by default (`tstrans.hls`
+  imports out of the box); the C binding exposes it behind the opt-in `hls`
+  Cargo feature (`TST_HAS_HLS`). It is no longer gated out of published
+  artifacts. The security items that previously blocked promotion are
+  closed:
+  - **Path traversal (CWE-22)** is closed — the built-in HTTP server serves
+    only files from a known set it wrote itself; request paths are not used
+    to open arbitrary files under the output directory.
+  - **VOD / EVENT serving** is closed — `HlsPublisher::finish_serving`
+    returns an `HlsServerHandle` that keeps the built-in server up so a
+    completed VOD or EVENT playlist and its segments stay fetchable after
+    the stream ends.
+  - **Bind default is loopback** (`127.0.0.1:8080`); binding all interfaces
+    is now an explicit opt-in, and the guide points operators at fronting
+    the output directory with a reverse proxy / CDN for exposure.
+  - Segments open on a decodable boundary (PAT → PMT → IDR), so a joining
+    player can decode the first segment it fetches.
+- See the [HLS guide](/docs/guides/hls.md) for the full surface, serving
+  guidance, KLV ride-along, and latency tuning. The JVM binding does not
+  yet expose HLS (see the "JVM HLS surface" entry in the ledger).
+
+### `klv::st0806` RVT typed layer — SHIPPED
+
+- **Status:** SHIPPED. `klv::st0806` types the MISB ST 0806.4 Remote
+  Video Terminal (RVT) Local Set: the nested body form (carried via
+  `UasDatalinkLs::rvt`, ST 0601 Tag 73) and the standalone independent
+  form (own 16-byte UL, timestamp-first Tag 2, CRC-32/MPEG-2-last
+  Tag 1). The repeatable nested POI (Tag 12), AOI (Tag 13), and User
+  Defined (Tag 11) sub-sets are typed too. Decode via
+  `klv::st0806::decode` (nested) or `klv::st0806::decode_standalone`
+  (independent). See the `klv::st0806` module docs for the full
+  surface.
+
+### `no_std` support for `klv`
+
+- **Status:** Shipped 2026-05-30 (tst-core no_std baseline). `pub mod
+  klv;` (`crates/tst-core/src/lib.rs:73`) carries no `std` feature
+  gate; `no-std-baremetal.sh` compiles it for both
+  `thumbv7em-none-eabihf` and `riscv32imac-unknown-none-elf` alongside
+  the rest of `tst-core`. Residual std-only corners: none — the only
+  two `#[cfg(not(feature = "std"))]` sites under `klv/` (`imapb.rs`,
+  `st0601/mapping.rs`) are the `no_std` *enabling* code itself (routing
+  float ops through `float_ext::FloatExt`'s `libm` shim in place of
+  `std::f64` methods), not a remaining std requirement.
+
+### Multi-stream `mpegts::mux` — C / JVM binding surface
+
+- **Status:** Shipped for C and JVM. C: `tst_video_stream_handle_t` /
+  `tst_klv_stream_handle_t` (+ audio / subtitle / data handles),
+  `tst_mux_config_add_video_stream` / `_add_klv_stream` returning handles,
+  and the `_video_to(handle, …)` / `_klv_to(handle, …)` siblings on
+  `tst_muxer_t`, `tst_mux_sender_t` and `tst_managed_mux_sender_t` (the
+  single-target entry points keep their signatures and surface
+  `MuxError::AmbiguousTarget` as `TST_E_INVALID_USAGE`). JVM:
+  `org.tstrans.mpegts.{Video,Klv,Audio,Subtitle,Data}StreamHandle` and
+  `Muxer.pushVideoTo(VideoStreamHandle, …)` / `pushVideoToWithDts` /
+  `pushKlvTo`. `tst-uniffi` does not exist yet; its multi-stream shape is
+  decided in the tst-uniffi brainstorm, not here. This entry claimed the
+  JVM half was missing until 2026-09-14 (DEBT-01).
+- **Note on Sender / RawSender:** the original deferred-features entry
+  said `tst_ts_sender_*` / `tst_managed_ts_sender_*` would also gain
+  `_video_to` / `_klv_to` siblings. That was wrong: `tst_pipeline::Sender`
+  exposes only `send_ts(bytes)` (pre-muxed TS bytes) and `tst_pipeline::RawSender`
+  exposes only `send(bytes)`. Neither carries a `Muxer`, so handle-aware
+  fan-out is meaningless on those variants. Only the three muxer-owning
+  C variants (`tst_muxer_t`, `tst_mux_sender_t`, `tst_managed_mux_sender_t`)
+  have the new `_to` surface.
+
+### AV1-in-MPEG-2-TS binding §3.2 / §3.4 carriage conformance
+
+- **Status:** Shipped (validate-1 C8). Default carriage is now
+  `Av1CarriageMode::Mpeg2TsBinding`: PES `stream_id = 0xBD`
+  (private_stream_1, §3.4) and `ts_open_bitstream_unit()` framing
+  on each OBU (3-byte `obu_start_code` = `uimsbf(24)` = `0x000001`,
+  i.e. byte sequence `0x00 0x00 0x01`, + emulation prevention
+  bytes, §3.2). Set `MuxerConfig::av1_carriage =
+  Av1CarriageMode::InteropRawObu` (escape hatch) for ffmpeg /
+  libaom / hls.js / mediamtx interop carriage.
+  Demuxer-side: matching `DemuxerConfig::av1_carriage`; binding
+  mode surfaces `NonConformantIssue::Av1WrongStreamId` /
+  `NonConformantIssue::Av1MissingTsObuFraming` on non-conforming
+  input and falls back to raw-OBU parsing in lenient mode.
+
+### Audio carriage at the `tst-c` C ABI
+
+- **Status:** Shipped. `tstrans.h` (ABI 0.21) carries the full audio
+  send surface: `tst_mux_config_add_audio_stream` /
+  `tst_mux_config_add_audio_stream_with_language` →
+  `tst_audio_stream_handle_t`, `tst_mux_config_add_audio_descriptor`,
+  `tst_muxer_push_audio[_to]`, `tst_mux_sender_send_audio[_to]`,
+  `tst_managed_mux_sender_send_audio[_to]`, `tst_mux_publisher_send_audio`,
+  the per-transport `tst_{udp,tcp,rtp,rist}_mux_sender_push_audio[_to]` and
+  `tst_rtsp_mount_push_audio[_to]`. The envelope is the Rust one: caller-
+  framed audio access units (ADTS / MP2 frames, AC-3 syncframes) plus one
+  PTS. This entry read "Deferred" until 2026-09-14 (deep review #4, DEBT-01).
+
+### `pipeline::ext::pairing` — opt-in convenience pairing utility
+
+- **Status:** Shipped (Rust API). `tst_pipeline::ext::pairing::Pairer` with
+  `with_config` (Realtime + Buffered) and `last_before_pts` strategies.
+  Cookbook recipes 24–27 cover the canonical patterns; recipes 12–14
+  remain as the inline-pattern reference. C ABI exposure deferred — see
+  "`pipeline::ext::pairing` C ABI exposure" in the ledger (Python and JVM
+  ship it).
+
+### Multi-program demux at the C ABI
+
+- **Status:** Shipped in Phase 3 (plan #62, 2026-05-16). The
+  `tst_demux_receiver_t` typed-event surface includes `tst_event_t`
+  with a `PROGRAM_MAP` arm carrying `program_number`; `tst_stream_info_t`
+  carries `program_number`; multi-program streams are handled naturally
+  by the `DemuxReceiver` backend.
+
+### Rustdoc lift to docs.rs via `#![doc = include_str!(...)]`
+
+- **Status:** Shipped in minimal form, v0.4.0. Each of the 8
+  publishable pure-Rust crates (`tst-core`, `tst-pipeline`, `tst-srt`,
+  `tst-rtp`, `tst-udp`, `tst-tcp`, `tst-hls`, `tst-rist`) now ships a
+  `README.md` (rendered on crates.io/docs.rs via the `readme` package
+  key); the six transport crates additionally lift it into the
+  crate-level rustdoc via `#![doc = include_str!("../README.md")]`
+  (`tst-core`/`tst-pipeline` keep their existing, more detailed crate
+  docs instead of double-including — their READMEs are a terser
+  summary that agrees with, but doesn't replace, those docs).
+  docs.rs now builds real API documentation from the bundled source
+  once each crate publishes.
+- **Why deferred (partially, still):** Full migration of the
+  markdown guides under `docs/` (the per-language onramps, cookbook,
+  guides) into rustdoc is not planned — those are user-journey docs
+  meant to be browsed as a set from the repo/docs site, not per-crate
+  API reference pages. Only the per-crate README summary moved.
+- **Trigger to revisit:** Satisfied by the v0.4.0 README lift above.
+  No further trigger is tracked; revisit only if a future consumer
+  specifically asks for the full guide tree to be mirrored into
+  docs.rs.
+
+### `Listener::accept_timeout` — bounded blocking accept
+
+- **Status:** Shipped in plan #30 (commit cf3233b).
+  `Listener::accept_timeout(Duration)` uses a one-shot `srt_epoll_wait`
+  to gate readiness, then calls `srt_accept` once a connection arrives or
+  returns `AcceptError::TimedOut` on expiry. `Listener::set_recv_timeout`
+  continues to apply only to *accepted* sockets, not to the accept call
+  itself — see `guide-srt.md` §Blocking semantics for the distinction.
+
+### Rust-API-only sender pipeline defaults
+
+- **Status:** Shipped 2026-05-07. `SocketConfig::sender_defaults()` /
+  `::receiver_defaults()` constructors, `merge_sender_defaults()` /
+  `merge_receiver_defaults()` in-place merge methods, and matching
+  `SocketBuilder::sender_defaults()` / `::receiver_defaults()` chain
+  methods all live in `tst-srt`. The `tst-c::connect_srt` helper now
+  calls `SocketConfig::merge_sender_defaults` instead of inlining the
+  merge logic. See the "Sender / receiver presets" section in
+  `docs/guides/srt.md`.
+
+### Background reconnect — bindings parity (C / Python / JVM) — RESOLVED 2026-08-21
+
+- **Status:** RESOLVED. `ReconnectMode::Background`,
+  `ManagedTransport::stats_handle()`, and `ManagedStatsHandle` /
+  `ManagedTransportStats` (send-side reconnect/gap telemetry) are now
+  reachable from all three bindings: the C ABI mirror
+  (`TstReconnectMode` + `tst_reconnect_policy_set_mode` on
+  `tst_reconnect_policy_t`, plus `tst_managed_transport_stats_t` +
+  `tst_managed_{sender,mux_sender,raw_sender}_get_reconnect_stats`, ABI
+  minor 20) shipped in PR #165; the Python mirror (`ReconnectMode`
+  incl. `BACKGROUND`, `.reconnect_stats()`, `ManagedTransportStats`)
+  shipped in PR #166; the JVM mirror (`ReconnectMode.BACKGROUND`,
+  `.reconnectStats()`, `ManagedTransportStats`) shipped in PR #167.
+  All three stay send-side only, matching the Rust-side scope — see
+  the "Reconnect counters on `ManagedTransport` stats" entry above for
+  the still-deferred receive-side residue (unaffected by this arc).
+
+### Last-activity-wall-clock gauges per stream (C / Python / JVM) — RESOLVED 2026-08-21
+
+- **Status:** RESOLVED. `StreamStats.last_seen: Option<SystemTime>`
+  (stamped on every mux push / demux emit, `std` builds only) is now
+  reachable from all three bindings. The C ABI mirror shipped
+  2026-08-20 (ABI minor 20, PR #165) — NOT by growing
+  `tst_stream_stats_t` (still byte-size-asserted, plain-integer
+  counters only), but as a new getter,
+  `tst_*_get_stream_last_seen_micros`, on all six demux-receiver
+  handle families (plain + managed SRT, RIST, RTP, TCP, UDP), returning
+  a `uint64_t` Unix epoch microsecond timestamp (`0` if the PID has
+  never been observed). The Python mirror (`last_seen_micros(pid) ->
+  Optional[int]` on `rtp.DemuxReceiver`, `srt.DemuxReceiver`, and
+  `srt.ManagedDemuxReceiver`) shipped in PR #166. The JVM mirror
+  (`lastSeenMicros(pid) -> Long`, same three receiver classes) shipped
+  in PR #167 — narrower than the C ABI's six families because neither
+  binding exposes standalone RIST/TCP/UDP receiver classes today.
+  Python and JVM diverge from the C getter's `0`-if-unseen sentinel —
+  both use their native nullable idiom (`None` / boxed `null`)
+  instead, since neither has a bare-integer ABI constraint.
+
+### Per-stream PMT descriptor surface at the C ABI
+
+- **Status:** Shipped. Send side: `tst_mux_config_set_program_descriptors`,
+  `tst_mux_config_set_stream_descriptors_for_{video,klv,data}` and the
+  per-stream `tst_mux_config_add_{video,klv,audio,subtitle,data}_descriptor`
+  appenders. Receive side: `tst_descriptor_t` (the `repr(C)` mirror of
+  `mpegts::descriptors::RawDescriptor`) exposed as
+  `tst_stream_info_t.raw_descriptors` / `descriptor_count`. Read "Deferred"
+  until 2026-09-14 (DEBT-01).
+
+### Pre-emptive close cancellation at the C ABI
+
+- **Status:** Partially shipped. All six sender `_cancel` entry points
+  ship in Phase 1 (plan #59). `tst_raw_receiver_cancel` ships in
+  Phase 1; `tst_receiver_cancel` and its managed sibling ship in
+  Phase 2 (plan #60). The remaining `tst_demux_receiver_cancel` rides
+  with Phase 3.
+- **Why deferred (originally):** The C ABI's `Handle<T>`
+  (= `Mutex<Option<T>>`) has the same blocking issue at the C layer
+  that the Rust shells had — `tst_*_close` waits on the handle's
+  mutex, so it competes with a parked C-side data-path call. Fixing
+  it cleanly requires a side-channel `Arc<dyn TransportCancel>` +
+  `Arc<AtomicBool>` captured at `_open` time, outside the mutex.
+  That design was implemented in Phase 1 and carried forward.
+- **Status (updated 2026-05-16):** `tst_demux_receiver_cancel` shipped
+  in Phase 3 (plan #62). Pre-emptive close cancellation is now complete
+  across all six sender families and all three receiver handle types.
+
+### Subtitle carriage at the `tst-c` C ABI
+
+- **Status:** Shipped. `tstrans.h` (ABI 0.21) carries
+  `tst_mux_config_add_subtitle_stream_dvb_subtitling` / `_dvb_teletext` /
+  `_cea708` / `_webvtt` → `tst_subtitle_stream_handle_t`,
+  `tst_mux_config_add_subtitle_descriptor`, `tst_muxer_push_subtitle[_to]`,
+  `tst_mux_sender_send_subtitle[_to]`,
+  `tst_managed_mux_sender_send_subtitle[_to]`,
+  `tst_mux_publisher_send_subtitle`, the per-transport
+  `tst_{udp,tcp,rtp,rist}_mux_sender_push_subtitle[_to]` and
+  `tst_rtsp_mount_push_subtitle[_to]` — one constructor per codec family
+  settled the envelope question this entry deferred on. Read "Deferred"
+  until 2026-09-14 (DEBT-01).
+
+### Multi-cell fragmented metadata AU cells
+
+- **Status:** SHIPPED 2026-05-24.
+- **Plan:** `docs/plans/2026-05-24-multi-cell-au-reassembly.md` (outside the published repo).
+- **Behavior:** the demuxer now reassembles fragmented AU cells per
+  H.222.0 V9 §2.12.4.2 Table 2-157. Both flavors covered:
+  - Multiple AU cells back-to-back within one PES — every cell emits
+    its own event; previously only the first cell did.
+  - Cells of one AU spread across multiple PES packets — `First` +
+    `Middle`* + `Last` accumulate in a per-PID buffer until `Last`
+    completes the AU; the demuxer then emits one event with
+    `MetadataKind::KlvSyncAuCell::was_reassembled = true` and
+    `cell_count = N`.
+- **Failure modes:** `NonConformantIssue::MultiCellAu` now carries a
+  typed `reason: MultiCellAuReason` (`Orphan` / `SequenceGap` /
+  `ConcurrentFirst` / `Overflow`). Per-PID buffer cap configurable via
+  `DemuxerConfig::au_cell_cap_per_pid` (default 1 MiB).
+- **Out of scope:** caller override of `random_access_indicator` /
+  `decoder_config_flag` on the mux side; mux-side emit of fragmented
+  output. Both remain as separate deferred entries.
+
+### Windows MSVC runtime tests — RESOLVED 2026-05-29
+
+- **Status:** RESOLVED. windows-msvc now runs the runtime test suite
+  and is green across all four platforms (the one carve-out is the
+  IPv6-multicast sub-deferral below). Plan #65's "SRT
+  loopback hangs on Windows" diagnosis turned out STALE — it was an
+  artifact of the pre-MSVC-`cl` librist build; on the cl-built libsrt
+  the blocking `srt_recv` wakes on peer-close immediately (proven by a
+  bounded diagnostic), same as Linux. The actual blocker was a real
+  `SRTO_LINGER` struct-ABI product bug: `LingerOpt` was two `int`
+  (8 bytes), but Winsock `struct linger` is two `u_short` (4 bytes), so
+  libsrt's `cast_optval<linger>` rejected the size (`MJ_NOTSUP/MN_INVAL`)
+  → every sender connect failed → receiver-accept hangs. Fixed
+  per-platform in `crates/tst-srt/src/socket.rs`. CI now runs all
+  platforms under cargo-nextest, so per-test timeouts bound any future
+  hang (one hang can no longer stall the job).
+- **Sub-deferrals (all closed; the IPv6-multicast residue has its own entry, "Windows: IPv6 multicast receive"):**
+  1. **Promote windows-msvc to gating:** DONE 2026-05-30 — all four
+     Tier-1 platforms gate CI (`continue` = false in the `ci.yml` and
+     `jvm-jar.yml` matrices).
+  2. **RIST runtime on Windows:** DONE 2026-07-26 —
+     `tst-rist/tests/{loopback,pipeline_round_trip}.rs` are un-gated.
+     The blocker was a vendored-librist bug (teardown hung ~14s+ in
+     `rist_destroy` and the data plane delivered nothing, both
+     profiles), fixed upstream in librist 0.2.18: a CI diagnostic on
+     the bumped pin showed teardown in 10–31 ms with full delivery.
+  3. **Multicast on Windows:** IPv4 DONE 2026-05-29 (the failure was
+     our `set_multicast_if_v4` being unix-only, not a runner
+     limitation; fixed via socket2 + receiver-side
+     `IP_MULTICAST_LOOP`). IPv6 multicast is tracked separately (see
+     that entry).
+
+### RTSP server/client deferred test surface (`#[ignore]`d)
+
+- **Status:** Shipped. No `#[ignore]` attribute remains under
+  `crates/tst-rtp/tests` (the only textual match is a comment in
+  `rtp/loopback_multicast.rs` about runtime skips);
+  `rtsp_client/interleaved_e2e.rs::tcp_interleaved_end_to_end_round_trips_ts_bytes`
+  runs un-ignored in the `rtsp_client` binary, as do the TLS root-store
+  (`rtsp_server/tls.rs`) and `rtsp_server/lagging_peer.rs` tests. Read
+  "one test remains ignored" until 2026-09-14 (DEBT-01).
+
+### Python-side subtitle muxing
+
+- **Status:** Shipped. `MuxerProgramConfigBuilder.add_subtitle(pid,
+  codec_config)` (`bindings/python/src/mux.rs`) takes the structured
+  `tstrans.mpegts` dataclasses this entry asked for — `DvbSubtitlingConfig`,
+  `DvbTeletextConfig`, `Cea708StandaloneConfig`, `WebVttInTsConfig` — and
+  `push_subtitle` / `push_subtitle_to` / `subtitle_handles()` /
+  `stream_descriptors_for_subtitle` round-trip against demux output. Read
+  "does not expose `add_subtitle`" until 2026-09-14 (DEBT-01).
+
+### RTP H.264 depayloader (RFC 6184)
+
+- **Status:** Shipped — v0.2.x (PRs #94 / #95 / #96). The
+  depacketizer (`H264Depacketizer`), receiver shell (`H264Receiver`),
+  and RTSP path (`setup_h264_auto` / `into_h264_receiver`) are all
+  implemented in Rust (`tst-rtp`) and mirrored in the Python and JVM
+  bindings. Covered: single-NAL unit, STAP-A aggregation, FU-A
+  fragmentation (packetization modes 0 and 1). Design document:
+  `docs/specs/2026-07-10-tst-rtp-rfc6184-depayloader.md`.
+- **What remains open:** See the ledger entries "C-ABI H.264 receiver
+  family", "H.264-over-RTP payloader (RFC 6184 send side)", "RTP
+  interleaved mode 2 (STAP-B / MTAP / FU-B / DON)" and "RTP jitter/reorder
+  buffer + H.264-path RTCP".
+
+### RTP receive-deadline bindings parity (C / Python / JVM) — RESOLVED 2026-08-21
+
+- **Status:** RESOLVED. The `?recv_timeout=<ms>` URL key (already
+  reaching all four Rust constructors) plus a typed per-call deadline
+  are now honored across all three bindings. C ABI covered 2026-08-20
+  (PR #165, no new symbols needed): `tst_rtp_recv_open` /
+  `tst_rtp_demux_receiver_open` now also honor `?recv_timeout=`
+  (previously only the RTSP-converted path applied it); expiry
+  surfaces as the existing `TST_E_BUFFER_FULL` (-4), retryable,
+  documented on `tst_rtp_receiver_recv_ts` /
+  `tst_rtp_demux_receiver_next_event`. Python (PR #166) gained
+  `timeout_ms: Optional[int]` keyword args on `recv()`/`recv_au()`
+  (layered on top of, not replacing, the URL-configured persistent
+  deadline) and a typed `RtpError(TIMEOUT)`. JVM (PR #167) mirrors it
+  with `recv(Integer timeoutMs)` / `recvAu(Integer timeoutMs)`
+  overloads plus a new `RtpException.Kind.TIMEOUT`, and additionally
+  ships a checked `DemuxReceiver.recvEvent()` so a demux-side timeout
+  is also a typed `TIMEOUT` rather than an ambiguous EOS-shaped `null`
+  from the plain iterator-style `next()`.
+
+### `ManagedRecvTransport::max_payload` during reconnect
+
+- **Status:** Resolved 2026-07-11 (recv API pass). `ManagedRecvTransport::max_payload`
+  now caches the deliverable ceiling from the most recent live inner transport
+  (set at construction, refreshed after each successful rebuild) and reports
+  that cached value during the reconnect window instead of the old fixed 1316-byte
+  fallback. Direct-caller edge only — pipeline shells (`Receiver` / `RawReceiver`
+  / `DemuxReceiver`) size their receive buffers at construction and were
+  unaffected. See the `### Fixed` entry in the `[Unreleased]` CHANGELOG section.
+
+### Recv-side `pkt_size` knob (inert since the recv-ceiling change)
+
+- **Status:** Resolved 2026-07-11 (recv API pass). The inert receive-side
+  `pkt_size` knobs were removed as a breaking pre-1.0 change: Rust
+  `RtpRecvSocketBuilder::pkt_size` / `UdpRecvTransportBuilder::pkt_size` /
+  `RistRecvTransportBuilder::pkt_size`, Python `tstrans.rtp.Receiver(pkt_size=)`
+  kwarg and the udp/rist receive builders' `pkt_size` methods, and JVM
+  `org.tstrans.rtp.Receiver.fromUrl(url, pktSize)`. Receive-side URLs now
+  actively reject `?pkt_size=` with a teaching error rather than silently
+  ignoring it. Send-side `pkt_size` everywhere and TCP's receive-side
+  read-granularity knob are unchanged. See the `### Removed` and
+  `### Changed` entries in the `[Unreleased]` CHANGELOG section.
+
+### Python/JVM `tracing` diagnostics bridge + structured stream-end reason — RESOLVED 2026-08-21
+
+- **Status:** RESOLVED. The Rust core logs meaningful diagnostics via
+  `tracing` (the interleaved pump WARNs on read errors, malformed
+  frames, queue floods; the keepalive WARNs on 454); previously the
+  Python and JVM bindings installed no subscriber, so all of it
+  vanished, and a dying RTSP session was largely indistinguishable
+  from a clean end of stream (`recv_au()` returning `None` for both).
+  Both pieces now ship in both bindings. The structured "why did the
+  stream end" surface shipped Rust-side 2026-08-20 —
+  `tst_rtp::StreamEndReason` / `StreamEndReasonHandle`,
+  `RtpRecvTransport::{end_reason, end_reason_handle}`,
+  `H264Receiver::end_reason` — see
+  [troubleshooting.md](/docs/troubleshooting.md#why-did-my-rtsp-stream-end)
+  — with a same-day C ABI mirror (ABI minor 20, PR #165):
+  `TstStreamEndReason` + `tst_rtp_{receiver,demux_receiver}_end_reason`.
+  The opt-in `TSTRANS_LOG` stderr bridge (an `EnvFilter`-driven
+  `tracing-subscriber` install, `try_init` so a host's own subscriber
+  is never displaced) and the structured `end_reason()`/`end_detail()`
+  mirror both shipped in Python (PR #166) and JVM (PR #167) — JVM's
+  bridge installs from `JNI_OnLoad`, the one guaranteed one-time
+  native-library entry point (Python's installs from the `_native`
+  module-init hook).
+- **Parity, recv side (2026-09-10):** the managed-SRT analogue of that
+  end-reason surface — `tst_pipeline::RecvEndReason`, which the C ABI
+  0.21 folds onto its existing `TstStreamEndReason` — now has its own
+  Python (`srt.ManagedDemuxReceiver.end_reason()` returning
+  `srt.RecvEndReason`) and JVM (`ManagedDemuxReceiver.endReason()`
+  returning `org.tstrans.srt.RecvEndReason`) mirrors, as does the
+  demuxer's `unwrap_timestamps` / `unwrapTimestamps(boolean)` knob.
+  Neither contract is Rust/C-only any more; see the parity matrix in
+  [binding-authors.md](/docs/reference/binding-authors.md).
+
+### RTSP keepalive response handling — RESOLVED
+
+- **Status:** RESOLVED (was: "no 401 reaction / session-dead detection
+  on rejected pings" + "keepalive-auth integration coverage"). The
+  trigger fired — a field report of an interleaved receive session dying
+  mid-flight — and the investigation found the fire-and-forget design
+  was also the root cause of a hard session-death defect: keepalive
+  responses were queued into the interleaved pump's bounded control
+  queue, which nothing drains between main-thread requests, so every
+  TCP-interleaved receive session died after `CTRL_QUEUE_BOUND + 1`
+  pings (16.5 minutes at the default 30 s cadence), surfacing as a
+  clean EOS. Keepalive responses (CSeq ≥ `KEEPALIVE_CSEQ_BASE`) are now
+  consumed at whichever site owns reads — the interleaved pump, or the
+  main thread's non-pump read path (which previously could misattribute
+  a buffered keepalive 200 as the next request's response): a 401
+  refreshes the shared challenge cache so the next ping signs against
+  the rotated nonce, a 454 flips `session_dead` (surfaced via
+  `RtspClient::is_session_alive`), and anything else is dropped. The
+  keepalive cadence also now retunes to the server-advertised
+  `Session: <id>;timeout=N` at SETUP and binds pings to the session
+  (both were frozen at connect-time defaults before). The
+  challenged-OPTIONS loopback coverage shipped with it
+  (`keepalive_retune.rs::keepalive_pings_authenticate_against_challenged_options`
+  drives per-request-authenticated pings against the fixture's
+  `challenge_options` mode).
+
+### `TcpListener` cross-thread cancel
+
+- **Status:** Shipped in the deep-review-#4 Arc 1 (WP-4b of the same arc
+  as this ledger sweep): `TcpListener::cancel_handle() -> TcpCancelHandle`
+  and `TcpListener::close()`; `accept_blocking` polls a 100 ms
+  `WouldBlock` loop on an `alive` flag and returns when either fires.
+  Before it, a parked `accept_blocking` could only be released by a peer
+  connecting — the gap was unledgered until CORR-12 (2026-09-14). Listed
+  here, not in the ledger, because it closes in the same arc; if your tree
+  has no `TcpListener::cancel_handle`, the WP-4b PR has not merged yet.
