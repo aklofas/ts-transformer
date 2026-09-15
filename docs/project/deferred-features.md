@@ -1280,8 +1280,10 @@ mean **Deferred**. An entry whose feature has shipped must never read
   `RtcpStats::rtt_us` always reports 0. The earlier computation mixed
   clock domains (it seeded its anchor from the peer's SR NTP midpoint
   instead of echoing our own SR per RFC 3550 §6.4.1) and produced garbage
-  on the rare path where it fired, so it was removed rather than shipped
-  wrong; a real RTT needs the LSR/DLSR feedback loop described below.
+  on the rare path where it fired, so it stays unwired; the helper itself
+  now saturates its µs conversion and reports anything above 60 s as "no
+  estimate" instead of a truncated number, and a real RTT needs the
+  LSR/DLSR feedback loop described below.
 - **Why deferred:** Populating the SR sender fields is a contained
   counter-sharing refactor, but full RR report blocks require a
   substantially larger new subsystem: RFC 3550 §A.1 sequence and cycle

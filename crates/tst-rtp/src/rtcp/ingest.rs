@@ -3,11 +3,16 @@
 //! for future use.
 //!
 //! `rtt_us` is always reported as 0. The `compute_rtt_us` helper that
-//! computes from RFC 3550 §6.4.1 is retained as public API but is no longer
+//! computes from RFC 3550 §6.4.1 is retained as public API but is not
 //! called from `ingest_rr`: the anchor ingested via `ingest_sr` comes from
 //! the PEER's SR (measuring the peer's clock domain), while the RTT formula
-//! needs the timestamp of OUR SR that we sent to the peer. That mismatch
-//! makes the computed value meaningless. Full RFC 3550 RTT is deferred; see
+//! needs the timestamp of OUR SR that we sent to the peer — and the SR
+//! reporter in `transport.rs` sends `ntp_timestamp: 0`. That mismatch makes
+//! a value computed here meaningless, so it stays unwired until the SR
+//! reporter carries a real NTP timestamp. The helper itself no longer
+//! truncates: the µs narrowing saturates and anything above 60 s (a wrapped
+//! subtraction on peer-controlled `last_sr` / `delay_since_last_sr`) is
+//! `None`. Full RFC 3550 RTT is deferred; see
 //! `docs/project/deferred-features.md` (RTCP statistics reporting).
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -25,25 +30,43 @@ pub struct SrAnchor {
     pub received_at: SystemTime,
 }
 
+/// Upper bound on a believable round-trip time: 60 s. Anything above it is
+/// a wrapped subtraction (an LSR "from the future"), a stale anchor, or a
+/// peer feeding garbage — reported as "no estimate", never as a number.
+pub(crate) const MAX_RTT_US: u32 = 60_000_000;
+
 /// Compute RTT in microseconds from a peer's RR + our stored SR anchor.
 ///
-/// Returns `None` if no SR anchor is available, or if the RR's
-/// `last_sr` doesn't match our anchor (timing drift).
+/// Returns `None` if no SR anchor is available, if the RR's `last_sr`
+/// doesn't match our anchor (timing drift), or if the result is not a
+/// believable RTT (above 60 s — a wrapped subtraction on peer-controlled
+/// input; the value is never truncated into range).
 pub fn compute_rtt_us(rb: &ReportBlock, anchor: Option<SrAnchor>) -> Option<u32> {
     let anchor = anchor?;
     if anchor.last_sr_ntp_mid != rb.last_sr {
         return None;
     }
-    // Convert "now" to NTP mid-32 format.
-    let now = SystemTime::now();
-    let now_ntp_mid = system_time_to_ntp_mid(now);
-    // RTT = now_ntp_mid - last_sr_NTP_mid - delay_since_last_sr  (all 16.16 sec)
+    let now_ntp_mid = system_time_to_ntp_mid(SystemTime::now());
+    rtt_us_from_ntp_mid(now_ntp_mid, rb.last_sr, rb.delay_since_last_sr)
+}
+
+/// RFC 3550 §6.4.1: `RTT = A − LSR − DLSR` in 16.16 s, converted to µs.
+/// The u64→u32 narrowing saturates and the result is bounded by
+/// [`MAX_RTT_US`]; both `last_sr` and `delay_since_last_sr` come from the
+/// peer, so `diff` can be anything.
+pub(crate) fn rtt_us_from_ntp_mid(
+    now_ntp_mid: u32,
+    last_sr: u32,
+    delay_since_last_sr: u32,
+) -> Option<u32> {
     let diff = now_ntp_mid
-        .wrapping_sub(rb.last_sr)
-        .wrapping_sub(rb.delay_since_last_sr);
-    // Convert 16.16 sec to microseconds: (diff * 1_000_000) >> 16
+        .wrapping_sub(last_sr)
+        .wrapping_sub(delay_since_last_sr);
+    // 16.16 s → µs: (diff * 1_000_000) >> 16, at most ≈ 6.6e10 — narrow with
+    // saturation, then apply the ceiling.
     let us = ((diff as u64) * 1_000_000) >> 16;
-    Some(us as u32)
+    let us = u32::try_from(us).unwrap_or(u32::MAX);
+    (us <= MAX_RTT_US).then_some(us)
 }
 
 /// Convert `SystemTime` to NTP middle 32 bits (16.16 fixed-point
@@ -114,6 +137,50 @@ mod tests {
         let t = UNIX_EPOCH + Duration::from_secs(1_767_225_600);
         let mid = system_time_to_ntp_mid(t);
         assert_eq!(mid >> 16, (3_976_214_400u64 & 0xFFFF) as u32);
+    }
+
+    /// CORR-28: the 16.16 s → µs conversion must not wrap. An LSR "from the
+    /// future" (anchor and `last_sr` half an NTP-mid epoch — 32 768 s —
+    /// ahead of now) makes the wrapping subtraction come out ≈ 0x8000_0000;
+    /// before the fix `((diff as u64) * 1_000_000) >> 16` (≈ 3.3e10) was cast
+    /// `as u32` and reported as 2_703_228_928 µs (~45 min) — a
+    /// plausible-looking lie. The value is deterministic regardless of the
+    /// few ticks between the two `SystemTime::now()` calls.
+    #[test]
+    fn compute_rtt_us_rejects_a_wrapped_diff() {
+        let ahead = system_time_to_ntp_mid(SystemTime::now()).wrapping_add(0x8000_0000);
+        let anchor = SrAnchor {
+            last_sr_ntp_mid: ahead,
+            received_at: SystemTime::now(),
+        };
+        let rb = ReportBlock {
+            ssrc: 1,
+            fraction_lost: 0,
+            cumulative_lost: 0,
+            extended_highest_seq: 0,
+            jitter: 0,
+            last_sr: ahead,
+            delay_since_last_sr: 0,
+        };
+        assert_eq!(compute_rtt_us(&rb, Some(anchor)), None);
+    }
+
+    #[test]
+    fn rtt_us_from_ntp_mid_converts_and_bounds() {
+        // 1.0 s in 16.16 → 1_000_000 µs.
+        assert_eq!(rtt_us_from_ntp_mid(0x0001_0000, 0, 0), Some(1_000_000));
+        // DLSR is subtracted: A − LSR − DLSR = 3 s − 1 s − 1 s.
+        assert_eq!(
+            rtt_us_from_ntp_mid(0x0003_0000, 0x0001_0000, 0x0001_0000),
+            Some(1_000_000)
+        );
+        // Exactly the 60 s ceiling is still a value; one tick above is not.
+        assert_eq!(rtt_us_from_ntp_mid(60 << 16, 0, 0), Some(MAX_RTT_US));
+        assert_eq!(rtt_us_from_ntp_mid((60 << 16) + 1, 0, 0), None);
+        // A wrapped subtraction (now < LSR): diff = u32::MAX → None, not a
+        // truncated 1_111_490_544.
+        assert_eq!(rtt_us_from_ntp_mid(0, 1, 0), None);
+        assert_eq!(rtt_us_from_ntp_mid(0, 0, 1), None);
     }
 
     #[test]
