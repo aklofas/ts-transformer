@@ -311,14 +311,20 @@ impl RtspClientBuilder {
 
     /// Per-request deadline: how long `options()` / `describe()` /
     /// `setup_*()` / `play()` / `pause()` / `get_parameter()` / `teardown()`
-    /// have, in total, to write the request and read the complete
-    /// response. The clock starts just before the write (so a blocked
-    /// write — an unresponsive peer not draining its receive window —
-    /// counts against the budget too, not only the read wait). Expiry
-    /// returns [`RtspError::Timeout`]. `None` disables the deadline (the
-    /// pre-`request_timeout` behaviour: a silent server parks the call
-    /// until the cancel handle fires). Default 10 s, the same as
+    /// wait for the complete response once the request write returns.
+    /// Expiry returns [`RtspError::Timeout`]. `None` disables the deadline
+    /// (the pre-`request_timeout` behaviour: a silent server parks the
+    /// call until the cancel handle fires). Default 10 s, the same as
     /// [`Self::connect_timeout`].
+    ///
+    /// The clock starts just before the write, so it also covers the
+    /// (normally instant) write itself — but the write is not actively
+    /// bounded by this deadline: it can still block up to the
+    /// connection's own internal write timeout (independent of this
+    /// knob) if the peer stops draining its receive window, in which case
+    /// the error is [`RtspError::Io`]`(TimedOut)`, not `Timeout`. In
+    /// practice an RTSP request is a few hundred bytes and this only
+    /// matters against a peer that has stopped reading entirely.
     ///
     /// After a `Timeout` treat the control connection as indeterminate and
     /// build a fresh client: the late response, if it ever arrives, is still
