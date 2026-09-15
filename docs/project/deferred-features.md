@@ -1392,6 +1392,24 @@ mean **Deferred**. An entry whose feature has shipped must never read
   the "managed shell = plain shell" arc, or a C consumer needing B-frames /
   MISP through a live shell.
 
+## C ABI cancel entry points for `tcp://` transports
+
+- **Status:** Deferred (Arc 2 rider) — additive, ABI 0.22. The Rust
+  `TcpTransport` exposes `cancel_handle()` (since PR #198), but the C ABI
+  has no `tst_tcp_*_cancel` entry point yet across any of the four
+  `tcp://` handle types (sender, mux sender, receiver, demux receiver).
+- **Why deferred:** Consequence since deep review #4 WP-4b: a send
+  against a peer that has stopped reading blocks until the peer resumes,
+  the peer resets the connection, or this handle is closed from the same
+  thread — it no longer returns `TST_E_TRANSPORT` after ~100 ms (before
+  WP-4b, a stalled send latched dead and surfaced `TST_E_TRANSPORT` within
+  one write timeout; that bound is gone now that the write loop keeps
+  writing the remainder instead of tearing the connection down on a
+  partial-write stall). Arc 1 keeps the C ABI frozen at 0.21, so adding
+  `tst_tcp_*_cancel` entry points is out of scope here.
+- **Trigger to revisit:** the first C consumer that needs to interrupt a
+  stalled TCP send, or Arc 2's one-cancel-model work.
+
 ## RIST: IPv6 receiver bind in the Simple profile
 
 - **Status:** Refused. `RistRecvTransport::listen` (and every builder

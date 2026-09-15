@@ -13,10 +13,11 @@
 //! `RecvTransport` side. Construction uses `TcpTransportBuilder::from_url`
 //! (same as the sender path — role is determined by the pipeline shell).
 //!
-//! **No C-side cancel yet:** `TcpTransport` has a `cancel_handle()`, but there
-//! is no `tst_tcp_receiver_cancel` entry point to reach it. `_close` simply
-//! drops the handle. Without a caller-cancel path, a graceful transport
-//! close maps to `TST_E_END_OF_STREAM`.
+//! **Cancel:** the Rust `TcpTransport` exposes `cancel_handle()` (since
+//! PR #198) but the C ABI has no `tst_tcp_receiver_cancel` entry point yet
+//! (additive candidate, ABI 0.22) — `_close` simply drops the handle.
+//! Without a caller-reachable cancel path, a graceful transport close maps
+//! to `TST_E_END_OF_STREAM`.
 
 use std::os::raw::c_char;
 
