@@ -49,6 +49,8 @@ const PORT_V6: u16 = 33022;
 /// would make this test pass for the wrong reason both with and without
 /// the guard.
 const PORT_V6_SIMPLE_REFUSED: u16 = 33024;
+/// Sender-only (no receiver bound). EVEN, same rule as PORT_SIMPLE.
+const PORT_BURST: u16 = 33026;
 
 /// 188 bytes of arbitrary payload — one MPEG-TS packet's worth.
 fn synthetic_ts_packet(seq_byte: u8) -> [u8; 188] {
@@ -399,4 +401,43 @@ fn ipv6_simple_profile_listen_is_refused() {
 /// `crates/tst-srt/tests/loopback/ipv6_loopback.rs`.
 fn ipv6_loopback_available() -> bool {
     std::net::UdpSocket::bind("[::1]:0").is_ok()
+}
+
+/// CORR-04 live guard: a burst with no receiver must never latch the sender
+/// dead. Every result is either `Ok` or the queue-full `Backpressure {
+/// errno_code: Some(-2) }`; `is_alive()` stays true throughout. This does
+/// NOT assert that `-2` occurs — librist's 524,288-entry sender queue is
+/// drained by its protocol thread whether or not a peer answers, so a
+/// 20,000-packet burst normally never fills it; the `-2` mapping itself is
+/// pinned by `transport::tests::classify_write_rc_maps_librist_namespace`.
+/// On the pre-fix tree this test only fails if the queue does fill (then
+/// `Broken { errno_code: Some(-2) }` trips the panic below).
+#[test]
+fn send_burst_without_receiver_never_latches_broken() {
+    let _serial = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
+    let connect_url = format!("rist://127.0.0.1:{PORT_BURST}");
+    let mut send = RistTransportBuilder::new(&connect_url)
+        .unwrap()
+        .profile(RistProfile::Simple)
+        .connect()
+        .expect("connect");
+
+    let block = [0x47u8; 1316];
+    let mut queue_full = 0usize;
+    for i in 0..20_000 {
+        match send.send_bytes(&block) {
+            Ok(()) => {}
+            Err(TransportError::Backpressure {
+                errno_code: Some(-2),
+                ..
+            }) => queue_full += 1,
+            Err(e) => panic!("send #{i}: expected Ok or queue-full Backpressure, got {e:?}"),
+        }
+        assert!(
+            send.is_alive(),
+            "send #{i}: a queue-full drop must not latch the sender dead"
+        );
+    }
+    eprintln!("queue-full drops during burst: {queue_full}");
+    send.close();
 }

@@ -118,6 +118,10 @@ pub enum TransportError {
     /// the code space:
     /// - `SrtTransport` uses the libsrt major-category error code (see
     ///   `tst-srt` docs for the full code table).
+    /// - `RistTransport` (`tst-rist`) uses librist's `rist_sender_data_write`
+    ///   return code: `Some(-2)` means the sender queue was full and this one
+    ///   message was dropped (retry it; the transport is still alive). Any
+    ///   other negative librist code is fatal and rides [`Self::Broken`].
     /// - `RtpTransport`'s send side never produces `Backpressure` (UDP
     ///   either accepts the datagram or surfaces an error); its OS-`errno`
     ///   codes ride [`Self::Broken`]. On the recv side, `tst-rtp`'s
