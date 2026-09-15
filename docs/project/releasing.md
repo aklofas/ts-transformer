@@ -108,6 +108,10 @@ the set — 14 published artifacts per release in total.
 5. **CHANGELOG:** retitle the `[Unreleased]` section to `[X.Y.Z] — <date>`
    and open a fresh `[Unreleased]` stub. The "Release highlights" block is
    the seed for the GitHub Release notes.
+6. - [ ] Decide which Tier-B steps the interop matrix now owns (see the
+   "`release-validation.sh` consolidation" entry in
+   [`deferred-features.md`](/docs/project/deferred-features.md)) — retire
+   the duplicated player-decode / ffmpeg round-trip steps or record why not.
 
 ## Release procedure
 
