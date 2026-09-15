@@ -69,9 +69,12 @@ impl InnerStream {
 ///   (~100 ms) and returns [`tst_core::transport::TransportError::Closed`];
 /// - calls started after `cancel()` return `Closed` on their entry check;
 /// - a call already past its entry check may still complete its current I/O
-///   first (a recv that receives data in that window returns it; a send
-///   finishes its bounded ≤~100 ms write attempt) — the *next* call then
-///   returns `Closed`.
+///   first (a recv that receives data in that window returns it; a send that
+///   has not yet committed any byte finishes its bounded ≤~100 ms write
+///   attempt) — the *next* call then returns `Closed`;
+/// - a send that has already committed a partial prefix keeps writing the
+///   remainder and observes the flag at its next ~100 ms write-timeout tick,
+///   returning `Closed` (the prefix stays on the wire; the transport is dead).
 ///
 /// `TcpCancelHandle` is `Clone + Send + Sync`; multiple holders can race
 /// `cancel()` safely (the flag is an `Arc<AtomicBool>`, idempotent).
@@ -241,14 +244,23 @@ impl TcpTransport {
 /// `Write::write_all` hides how many bytes it consumed before failing, so it
 /// cannot distinguish a zero-progress `WouldBlock` (the slice is intact — safe
 /// to retry per the [`Transport`] contract) from a partial-prefix-then-
-/// `WouldBlock` (the prefix is already on the wire — retrying would duplicate
-/// it and desync the receiver's 188-byte TS framing).
+/// `WouldBlock` (the prefix is already on the wire, so the *caller* must not
+/// retry the slice — but the stream itself is intact: the kernel accepted the
+/// prefix in order, and the `WouldBlock` is only the 100 ms send deadline
+/// (`apply_knobs`) ticking over). In that second case the loop keeps writing
+/// `&msg[written..]`, re-checking `alive` at every tick so a cancel or close
+/// from another thread bounds the wait — the same poll shape `recv_bytes`
+/// uses. Tearing the connection down here instead is what used to desync
+/// the peer's 188-byte TS framing: the managed reconnect started a fresh
+/// connection mid-message.
 ///
 /// Returns `Ok(())` on a full write. On error the `bool` is `true` when the
-/// transport must be marked dead (any partial/broken outcome) and `false` for
-/// a clean zero-progress `Backpressure` that the caller may retry.
+/// transport must be marked dead (`Ok(0)` or a hard error) and `false` for a
+/// clean zero-progress `Backpressure` the caller may retry, or a `Closed`
+/// after a mid-message cancel (the canceller already dropped the flag).
 fn write_loop<W: FnMut(&[u8]) -> std::io::Result<usize>>(
     msg: &[u8],
+    alive: &AtomicBool,
     mut write: W,
 ) -> Result<(), (TransportError, bool)> {
     let mut written = 0usize;
@@ -279,22 +291,13 @@ fn write_loop<W: FnMut(&[u8]) -> std::io::Result<usize>>(
                         false,
                     ));
                 }
-                // A partial prefix is already committed to the stream. We cannot
-                // report Backpressure (a retry would duplicate the prefix and
-                // desync the receiver's TS framing). The stream is in an undefined
-                // state — mark the transport dead and report Broken so the caller
-                // rebuilds rather than re-sending onto a corrupted stream.
-                return Err((
-                    TransportError::Broken {
-                        msg: format!(
-                            "partial write then WouldBlock ({written}/{} bytes); stream desynced, rebuild required",
-                            msg.len()
-                        ),
-                        errno_code: e.raw_os_error(),
-                        cause: BrokenCause::Unspecified,
-                    },
-                    true,
-                ));
+                // A partial prefix is on the wire in order; the deadline
+                // ticked over. Keep writing the remainder unless a cancel or
+                // close landed while we were parked (the write timeout is
+                // the poll cadence, so this check runs every ~100 ms).
+                if !alive.load(Ordering::Acquire) {
+                    return Err((TransportError::Closed, false));
+                }
             }
             Err(e) => {
                 return Err((
@@ -323,7 +326,7 @@ impl Transport for TcpTransport {
                 max: self.pkt_size,
             });
         }
-        match write_loop(msg, |b| self.inner.write(b)) {
+        match write_loop(msg, &self.alive, |b| self.inner.write(b)) {
             Ok(()) => {
                 self.stats.send_calls = self.stats.send_calls.saturating_add(1);
                 self.stats.bytes_sent = self.stats.bytes_sent.saturating_add(msg.len() as u64);
@@ -502,7 +505,13 @@ mod recv_classify_tests {
 mod write_loop_tests {
     use super::write_loop;
     use std::io;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use tst_core::transport::TransportError;
+
+    /// An `alive` flag that never drops — the default for scripted writers.
+    fn live() -> AtomicBool {
+        AtomicBool::new(true)
+    }
 
     /// Scripted writer: pops one outcome per call from a queue.
     fn scripted(steps: Vec<io::Result<usize>>) -> impl FnMut(&[u8]) -> io::Result<usize> {
@@ -513,14 +522,14 @@ mod write_loop_tests {
     #[test]
     fn full_write_in_one_call_is_ok() {
         let msg = vec![0u8; 188];
-        let r = write_loop(&msg, scripted(vec![Ok(188)]));
+        let r = write_loop(&msg, &live(), scripted(vec![Ok(188)]));
         assert!(r.is_ok());
     }
 
     #[test]
     fn full_write_across_multiple_calls_is_ok() {
         let msg = vec![0u8; 188];
-        let r = write_loop(&msg, scripted(vec![Ok(100), Ok(88)]));
+        let r = write_loop(&msg, &live(), scripted(vec![Ok(100), Ok(88)]));
         assert!(r.is_ok());
     }
 
@@ -528,7 +537,7 @@ mod write_loop_tests {
     fn zero_progress_wouldblock_is_backpressure_not_dead() {
         let msg = vec![0u8; 188];
         let err = io::Error::new(io::ErrorKind::WouldBlock, "ewouldblock");
-        let r = write_loop(&msg, scripted(vec![Err(err)]));
+        let r = write_loop(&msg, &live(), scripted(vec![Err(err)]));
         match r {
             Err((TransportError::Backpressure { .. }, mark_dead)) => {
                 assert!(!mark_dead, "zero-progress backpressure must NOT mark dead");
@@ -537,28 +546,52 @@ mod write_loop_tests {
         }
     }
 
+    /// CORR-22 / Q6: the kernel accepted the first 100 bytes *in order*, so
+    /// the stream is intact — a `WouldBlock` after that is the 100 ms send
+    /// deadline ticking over, not a desync. `write_loop` must keep writing
+    /// `&msg[written..]` and finish when the peer drains.
     #[test]
-    fn partial_then_wouldblock_is_broken_and_dead() {
+    fn partial_then_wouldblock_keeps_writing() {
         let msg = vec![0u8; 188];
         let err = io::Error::new(io::ErrorKind::WouldBlock, "ewouldblock");
-        // First write commits a partial prefix, then the next blocks.
-        let r = write_loop(&msg, scripted(vec![Ok(100), Err(err)]));
-        match r {
-            Err((TransportError::Broken { msg, .. }, mark_dead)) => {
-                assert!(mark_dead, "partial-write Broken must mark dead");
-                assert!(
-                    msg.contains("partial write") && msg.contains("100/188"),
-                    "unexpected message: {msg}"
-                );
+        let r = write_loop(&msg, &live(), scripted(vec![Ok(100), Err(err), Ok(88)]));
+        assert!(
+            r.is_ok(),
+            "expected Ok after the remainder drains, got {r:?}"
+        );
+    }
+
+    /// The remainder loop is bounded only by cancel/close: once the flag
+    /// drops mid-message the loop stops and reports `Closed` (the
+    /// transport was already latched dead by the canceller).
+    #[test]
+    fn partial_then_cancel_returns_closed() {
+        let msg = vec![0u8; 188];
+        let alive = AtomicBool::new(true);
+        let mut calls = 0;
+        let r = write_loop(&msg, &alive, |_buf| {
+            calls += 1;
+            match calls {
+                1 => Ok(100),
+                _ => {
+                    // The canceller flips the flag while the write is parked.
+                    alive.store(false, Ordering::Release);
+                    Err(io::Error::new(io::ErrorKind::WouldBlock, "ewouldblock"))
+                }
             }
-            other => panic!("expected Broken, got {other:?}"),
+        });
+        match r {
+            Err((TransportError::Closed, mark_dead)) => {
+                assert!(!mark_dead, "cancel already latched the flag; no re-latch")
+            }
+            other => panic!("expected Closed after a mid-message cancel, got {other:?}"),
         }
     }
 
     #[test]
     fn write_returns_zero_is_broken_and_dead() {
         let msg = vec![0u8; 188];
-        let r = write_loop(&msg, scripted(vec![Ok(0)]));
+        let r = write_loop(&msg, &live(), scripted(vec![Ok(0)]));
         match r {
             Err((TransportError::Broken { msg, .. }, mark_dead)) => {
                 assert!(mark_dead);
@@ -573,7 +606,7 @@ mod write_loop_tests {
         let msg = vec![0u8; 188];
         let eintr = io::Error::new(io::ErrorKind::Interrupted, "eintr");
         // EINTR mid-flight must be transparently retried, not surfaced.
-        let r = write_loop(&msg, scripted(vec![Ok(50), Err(eintr), Ok(138)]));
+        let r = write_loop(&msg, &live(), scripted(vec![Ok(50), Err(eintr), Ok(138)]));
         assert!(r.is_ok());
     }
 
@@ -581,7 +614,7 @@ mod write_loop_tests {
     fn hard_error_is_broken_and_dead() {
         let msg = vec![0u8; 188];
         let err = io::Error::new(io::ErrorKind::ConnectionReset, "reset");
-        let r = write_loop(&msg, scripted(vec![Err(err)]));
+        let r = write_loop(&msg, &live(), scripted(vec![Err(err)]));
         match r {
             Err((TransportError::Broken { .. }, mark_dead)) => assert!(mark_dead),
             other => panic!("expected Broken, got {other:?}"),
