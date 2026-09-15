@@ -9,6 +9,7 @@ use std::time::Duration;
 use tst_core::transport::{BrokenCause, RecvTransport, Transport, TransportError};
 use tst_tcp::TcpListener;
 use tst_tcp::TcpTransport;
+use tst_tcp::error::TcpError;
 
 #[test]
 fn caller_sender_to_std_listener() {
@@ -342,6 +343,86 @@ fn empty_recv_does_not_fake_eof() {
     server.write_all(&[0x47u8; 188]).unwrap();
     let mut buf = [0u8; 1024];
     let n = client.recv_bytes(&mut buf).expect("real payload after the empty call");
+    assert_eq!(n, 188);
+    assert!(buf[..n].iter().all(|&b| b == 0x47));
+}
+
+/// CORR-12: a `TcpListener` parked in `accept_blocking` must be
+/// unblockable from another thread. On `9b3fe2ee` this does not compile
+/// (`no method named cancel_handle found for struct TcpListener`) and the
+/// accept is a bare blocking `accept(2)` with no cancel path at any layer.
+#[test]
+fn listener_cancel_handle_unblocks_parked_accept() {
+    let listener = TcpListener::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let handle = listener.cancel_handle();
+
+    let (tx, rx) = mpsc::channel::<Result<(), TcpError>>();
+    let parked = thread::spawn(move || {
+        let result = listener.accept_blocking().map(|_| ());
+        let _ = tx.send(result);
+    });
+    // Let the thread park in the accept poll.
+    thread::sleep(Duration::from_millis(150));
+    handle.cancel();
+
+    let result = rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("accept_blocking did not unblock within 1 s after cancel");
+    parked.join().unwrap();
+    assert!(
+        matches!(result, Err(TcpError::Closed)),
+        "expected TcpError::Closed after cancel, got {result:?}"
+    );
+}
+
+/// `close()` is the same flag from the listener's own side: it unblocks a
+/// parked accept AND latches, so every later accept returns `Closed` at
+/// its entry check without touching the socket.
+#[test]
+fn listener_close_unblocks_parked_accept_and_latches() {
+    let listener = std::sync::Arc::new(TcpListener::bind("127.0.0.1:0".parse().unwrap()).unwrap());
+
+    let (tx, rx) = mpsc::channel::<Result<(), TcpError>>();
+    let l = listener.clone();
+    let parked = thread::spawn(move || {
+        let _ = tx.send(l.accept_blocking().map(|_| ()));
+    });
+    thread::sleep(Duration::from_millis(150));
+    listener.close();
+
+    let result = rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("accept_blocking did not unblock within 1 s after close");
+    parked.join().unwrap();
+    assert!(matches!(result, Err(TcpError::Closed)), "got {result:?}");
+
+    // Latched: a fresh accept returns immediately.
+    let again = listener.accept_blocking().map(|_| ());
+    assert!(matches!(again, Err(TcpError::Closed)), "got {again:?}");
+}
+
+/// The non-blocking poll must still hand back a working, BLOCKING transport:
+/// the std peer connects only after 300 ms, so the first `accept()` inside
+/// the loop is guaranteed to have returned `WouldBlock` at least twice
+/// before the connection lands, and the accepted transport then receives
+/// a real payload through its normal 100 ms read-timeout poll.
+#[test]
+fn listener_accept_resumes_after_wouldblock_polls() {
+    let listener = TcpListener::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let port = listener.local_addr().unwrap().port();
+
+    let _t = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(300));
+        let mut sock = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        sock.write_all(&[0x47u8; 188]).unwrap();
+        // Keep the peer open long enough for the read below; the sender
+        // side then closes on drop.
+        thread::sleep(Duration::from_millis(200));
+    });
+
+    let mut accepted = listener.accept_blocking().expect("accept after polling");
+    let mut buf = vec![0u8; 1024];
+    let n = accepted.recv_bytes(&mut buf).unwrap();
     assert_eq!(n, 188);
     assert!(buf[..n].iter().all(|&b| b == 0x47));
 }

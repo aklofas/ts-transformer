@@ -60,11 +60,13 @@ impl InnerStream {
 }
 
 /// Cheap cloneable handle that unblocks a parked [`TcpTransport::recv_bytes`]
-/// from another thread.
+/// (or a [`crate::listener::TcpListener::accept_blocking`]) from another thread.
 ///
-/// Obtained via [`TcpTransport::cancel_handle`]. Cancelling does **not** shut
-/// down the underlying socket — [`tst_core::transport::Transport::close`] still
-/// does. Cancellation is cooperative:
+/// Obtained via [`TcpTransport::cancel_handle`] or
+/// [`crate::listener::TcpListener::cancel_handle`]. Cancelling does **not**
+/// shut down the underlying socket — [`tst_core::transport::Transport::close`]
+/// still does (a listener's socket stays bound until the `TcpListener` is
+/// dropped). Cancellation is cooperative:
 ///
 /// - a parked `recv_bytes` observes the flag at its next poll boundary
 ///   (~100 ms) and returns [`tst_core::transport::TransportError::Closed`];
@@ -75,13 +77,24 @@ impl InnerStream {
 ///   attempt) — the *next* call then returns `Closed`;
 /// - a send that has already committed a partial prefix keeps writing the
 ///   remainder and observes the flag at its next ~100 ms write-timeout tick,
-///   returning `Closed` (the prefix stays on the wire; the transport is dead).
+///   returning `Closed` (the prefix stays on the wire; the transport is dead);
+/// - a parked `accept_blocking` observes the flag at its next ~100 ms poll
+///   and returns [`crate::error::TcpError::Closed`]; later accepts return it
+///   at their entry check.
 ///
 /// `TcpCancelHandle` is `Clone + Send + Sync`; multiple holders can race
 /// `cancel()` safely (the flag is an `Arc<AtomicBool>`, idempotent).
 #[derive(Clone, Debug)]
 pub struct TcpCancelHandle {
     alive: Arc<AtomicBool>,
+}
+
+impl TcpCancelHandle {
+    /// Build a handle over a shared flag — used by [`TcpTransport::cancel_handle`]
+    /// and [`crate::listener::TcpListener::cancel_handle`].
+    pub(crate) fn from_flag(alive: Arc<AtomicBool>) -> Self {
+        Self { alive }
+    }
 }
 
 impl TcpCancelHandle {
@@ -234,9 +247,7 @@ impl TcpTransport {
     /// Return a cloneable handle that can cancel a `recv_bytes` parked in
     /// another thread. See [`TcpCancelHandle`] for the full contract.
     pub fn cancel_handle(&self) -> TcpCancelHandle {
-        TcpCancelHandle {
-            alive: self.alive.clone(),
-        }
+        TcpCancelHandle::from_flag(self.alive.clone())
     }
 }
 

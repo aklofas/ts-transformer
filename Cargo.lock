@@ -2140,6 +2140,7 @@ dependencies = [
 name = "tst-tcp"
 version = "0.6.0"
 dependencies = [
+ "libc",
  "rcgen",
  "rustls",
  "rustls-native-certs",

@@ -23,10 +23,9 @@
 //! `tst_tcp_listener_accept_receiver` block until a connection arrives.
 //! For a non-blocking accept loop, call from a dedicated thread.
 //!
-//! **No cancel:** there is no cancel path on the listener's `accept_blocking`
-//! call — to stop a blocked accept, close the listener from another thread
-//! or rely on OS signal delivery. This mirrors the semantics of POSIX
-//! `accept(2)`.
+//! **Cancel:** the Rust `TcpListener` exposes `cancel_handle()`/`close()`
+//! (since deep review #4 WP-4b); the C ABI does not yet expose a
+//! `tst_tcp_listener_cancel` entry point — additive candidate for ABI 0.22.
 
 use std::net::SocketAddr;
 use std::os::raw::c_char;
