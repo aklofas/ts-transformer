@@ -38,7 +38,7 @@ use std::time::Duration;
 
 use secrecy::SecretString;
 use thiserror::Error;
-use tst_core::url::common::{ParsedUrl, UrlError as CoreUrlError, parse_url};
+use tst_core::url::common::{ParsedUrl, UrlError as CoreUrlError, parse_url, percent_decode};
 
 /// Default UDP payload size: 7 MPEG-TS packets per RTP packet = 1316 B
 /// (RFC 2250 §2 mandates an integral multiple of 188; 7×188 matches
@@ -508,8 +508,21 @@ impl RtspUrl {
             host: parsed.host.to_string(),
             port,
             path: parsed.path.to_string(),
-            username: parsed.username.map(str::to_string),
-            password: parsed.password.map(SecretString::from),
+            // Userinfo is percent-decoded (CORR-21): `parse_url` hands it
+            // over verbatim; the encoded form is the only way to put
+            // `@ : / ? #` in a credential and every other RTSP client decodes.
+            username: parsed
+                .username
+                .map(percent_decode)
+                .transpose()
+                .map_err(UrlError::Syntax)?
+                .map(|u| u.into_owned()),
+            password: parsed
+                .password
+                .map(percent_decode)
+                .transpose()
+                .map_err(UrlError::Syntax)?
+                .map(|p| SecretString::new(p.into_owned().into())),
             transport_preference,
             rtsp_version,
             tcp_keepalive,
@@ -862,6 +875,33 @@ mod rtsp_tests {
         assert_eq!(u.username.as_deref(), Some("admin"));
         // Password is wrapped in Secret; we only check it exists.
         assert!(u.password.is_some());
+    }
+
+    /// CORR-21: userinfo is percent-decoded like every other RTSP client
+    /// (ffmpeg / VLC / GStreamer) — a password containing `@ : / ? #` can
+    /// only be expressed encoded, and the encoded form used to be hashed
+    /// verbatim into the Digest response → `AuthFailed` with no diagnostic.
+    #[test]
+    fn rtsp_url_credentials_are_percent_decoded() {
+        use secrecy::ExposeSecret;
+        let u = RtspUrl::parse("rtsp://u:p%40ss@h/x").unwrap();
+        assert_eq!(u.username.as_deref(), Some("u"));
+        assert_eq!(
+            u.password.as_ref().map(|p| p.expose_secret().to_string()),
+            Some("p@ss".to_string())
+        );
+        let u = RtspUrl::parse("rtsp://u%3Aser:p%2Fw%3F%23@h/x").unwrap();
+        assert_eq!(u.username.as_deref(), Some("u:ser"));
+        assert_eq!(
+            u.password.as_ref().map(|p| p.expose_secret().to_string()),
+            Some("p/w?#".to_string())
+        );
+    }
+
+    #[test]
+    fn rtsp_url_bad_percent_escape_in_password_is_rejected() {
+        let e = RtspUrl::parse("rtsp://u:p%zz@h/x").unwrap_err();
+        assert!(matches!(e, UrlError::Syntax(_)), "got {e:?}");
     }
 
     #[test]

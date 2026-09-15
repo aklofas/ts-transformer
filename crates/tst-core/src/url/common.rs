@@ -26,8 +26,10 @@ pub struct ParsedUrl<'a> {
     /// `eq_ignore_ascii_case` or canonicalize at their layer.
     pub scheme: &'a str,
     /// `user` from `user[:password]@host` — None when no userinfo present.
+    /// Verbatim (not percent-decoded); see [`percent_decode`].
     pub username: Option<&'a str>,
     /// `password` from `user:password@host` — None when no `:` in userinfo.
+    /// Verbatim (not percent-decoded); see [`percent_decode`].
     pub password: Option<&'a str>,
     /// Host, with IPv6 brackets stripped (`::1` not `[::1]`).
     pub host: &'a str,
@@ -209,7 +211,13 @@ fn parse_query(q: &str) -> Result<Vec<QueryPair<'_>>, UrlError> {
 /// Percent-decode a string. Returns `Cow::Borrowed` when no `%` appears
 /// (the fast path); otherwise allocates. Invalid `%XY` sequences return
 /// `Err(UrlError::BadPercentEncoding)`.
-fn percent_decode(s: &str) -> Result<Cow<'_, str>, UrlError> {
+///
+/// [`parse_url`] applies this to query keys and values only. `ParsedUrl`'s
+/// `username` / `password` are the raw authority slices; a scheme that
+/// accepts userinfo (`rtsp(s)://` — `srt://` rejects it) decodes them with
+/// this function so `rtsp://user:p%40ss@host` carries the password `p@ss`
+/// (the only way to express `@ : / ? #` in a URL credential).
+pub fn percent_decode(s: &str) -> Result<Cow<'_, str>, UrlError> {
     if !s.contains('%') {
         return Ok(Cow::Borrowed(s));
     }
@@ -360,6 +368,17 @@ mod tests {
         assert_eq!(u.password, None);
         assert_eq!(u.path, "");
         assert!(u.query.is_empty());
+    }
+
+    #[test]
+    fn parse_url_userinfo_is_verbatim_and_percent_decode_is_the_caller_step() {
+        let u = parse_url("rtsp://u:p%40ss@h/x").unwrap();
+        assert_eq!(u.password, Some("p%40ss"));
+        assert_eq!(percent_decode(u.password.unwrap()).unwrap(), "p@ss");
+        assert!(matches!(
+            percent_decode("p%zz"),
+            Err(UrlError::BadPercentEncoding { .. })
+        ));
     }
 
     #[test]
