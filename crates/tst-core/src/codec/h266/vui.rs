@@ -38,10 +38,16 @@ pub(super) fn parse_h266_vui(br: &mut BitReader<'_>) -> Result<Option<ColorInfo>
         let aspect_ratio_idc = br.read_u(8)? as u8; // u(8)
         sample_aspect_ratio = aspect_ratio_idc_to_sar(aspect_ratio_idc);
         if aspect_ratio_idc == 255 {
-            // EXTENDED_SAR: explicit numerator / denominator.
+            // EXTENDED_SAR: explicit numerator / denominator. H.274 §7.3: a
+            // zero sar_width / sar_height means "unspecified" — never
+            // surface `Rational { den: 0 }` (mirrors h264/decode.rs).
             let w = br.read_u(16)?; // u(16) sar_width
             let h = br.read_u(16)?; // u(16) sar_height
-            sample_aspect_ratio = Some(Rational { num: w, den: h });
+            sample_aspect_ratio = if w != 0 && h != 0 {
+                Some(Rational { num: w, den: h })
+            } else {
+                None
+            };
         }
     }
 
@@ -108,6 +114,7 @@ pub(super) fn parse_h266_vui(br: &mut BitReader<'_>) -> Result<Option<ColorInfo>
 mod tests {
     use super::*;
     use crate::codec::bitreader::BitReader;
+    use crate::codec::test_util::BitWriter;
 
     /// Builds the minimum VUI bit stream that exercises the chroma_loc
     /// branch. Sequence per H.274 §7.2:
@@ -203,5 +210,45 @@ mod tests {
                 "expected ReservedValue (256 must NOT silent-truncate to valid 0), got {other:?}"
             ),
         }
+    }
+
+    /// H.274 §7.2 VUI carrying only an Extended_SAR aspect ratio.
+    fn vui_with_extended_sar(w: u32, h: u32) -> Vec<u8> {
+        let mut bw = BitWriter::new();
+        bw.write(1, 1); // vui_progressive_source_flag
+        bw.write(0, 1); // vui_interlaced_source_flag
+        bw.write(0, 1); // vui_non_packed_constraint_flag
+        bw.write(0, 1); // vui_non_projected_constraint_flag
+        bw.write(1, 1); // vui_aspect_ratio_info_present_flag
+        bw.write(0, 1); // vui_aspect_ratio_constant_flag
+        bw.write(255, 8); // aspect_ratio_idc = EXTENDED_SAR
+        bw.write(u64::from(w), 16); // sar_width
+        bw.write(u64::from(h), 16); // sar_height
+        bw.write(0, 1); // vui_overscan_info_present_flag
+        bw.write(0, 1); // vui_colour_description_present_flag
+        bw.write(0, 1); // vui_chroma_loc_info_present_flag
+        bw.end_rbsp();
+        bw.bytes
+    }
+
+    /// CORR-16: zero `sar_height` must read as "unspecified", never
+    /// `Rational { den: 0 }`.
+    #[test]
+    fn extended_sar_with_zero_height_is_unspecified_not_div_by_zero() {
+        let bytes = vui_with_extended_sar(16, 0);
+        let mut br = BitReader::new(&bytes);
+        let color = parse_h266_vui(&mut br).unwrap().expect("ColorInfo");
+        assert_eq!(color.sample_aspect_ratio, None);
+    }
+
+    #[test]
+    fn extended_sar_with_nonzero_dims_round_trips() {
+        let bytes = vui_with_extended_sar(16, 11);
+        let mut br = BitReader::new(&bytes);
+        let color = parse_h266_vui(&mut br).unwrap().expect("ColorInfo");
+        assert_eq!(
+            color.sample_aspect_ratio,
+            Some(Rational { num: 16, den: 11 })
+        );
     }
 }
