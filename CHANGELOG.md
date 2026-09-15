@@ -1015,7 +1015,35 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Testing — interop harness (WP-7b)
 
-- (pending)
+- **`CorruptionStats::log_write_failed`** (additive): the sender's tap
+  latches any corruption-log write/flush failure, and `report soak` fails
+  `corruption_coverage_<leg>` on it regardless of the 99 % ingestion floor
+  — an interior lost line (a `Dup` the receiver had no duty to notice) can
+  no longer pass as a teardown tail read.
+- **`rawts::Reader` bounds its carry**: confirmed garbage with no sync
+  candidate is discarded down to the 187-byte suffix that could still
+  complete a packet, and counted into the next `Resync::skipped_bytes`
+  (10 000 × 1316 bytes of garbage used to retain 13 MB and be rescanned
+  every feed). **`Reader::take_resyncs()` drains** recoveries like
+  `take_pcr_events` (+ `resync_count()` lifetime total); the cumulative
+  `resyncs()` list, `transport::tee_resyncs`, `Tally::resyncs_fed`,
+  `Resync::pcr_base` and `Reader::last_pcr` are gone (harness-internal).
+- **`parse_inventory`** rejects duplicate declared `(id, profile)` pairs,
+  unknown profile names, and a `full-157` inventory that does not list
+  every profile — 157 copies of one cell no longer satisfy the census.
+- **Drop-rate verdict from the renewal process** (`report soak`
+  `drop_rate_consistent_with_impairment_<leg>`): the expectation is the
+  engine's realised per-phase rate `m·q/(1−q+m·q)` (5.5q/(1+4.5q) for
+  burst phases, `q` otherwise, dup gate included), packet-weighted across
+  phases, with a renewal-reward variance that equals the binomial term for
+  non-burst phases and exceeds it for bursts. Archived seeds and
+  `generate_schedule` are untouched; a healthy long burst phase no longer
+  fails on the documented 0.13 pp bias.
+- **`PhaseCounters::outage_dropped`** (additive): the proxy counts drops
+  decided inside an outage window apart, and the drop-rate verdict excludes
+  them from both the observed drops and the packet total (the module doc's
+  "outage-leg excess" watch item is closed; a phase with more outage drops
+  than drops is a malformed artifact).
 
 ### Testing — CI/rails (WP-8)
 

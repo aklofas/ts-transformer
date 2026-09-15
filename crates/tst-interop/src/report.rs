@@ -1049,28 +1049,19 @@ pub fn append_github_summary(path: &Path, markdown: &str) -> Result<(), String> 
 ///   provisional reconnect-count verdict above. Unlike the reconnect
 ///   check, this one is NOT provisional: given the inputs available,
 ///   it's fully computable and always enforced.
-/// - **Outage-leg drop-rate excess (watch item, not a bug in itself).**
-///   The continuous-impairment-only model above is a slight
-///   underestimate on a leg that also carries outage windows: a
-///   `ManagedTransport` sender backing off through an outage doesn't
-///   sit perfectly silent — each reconnect attempt's handshake can fire
-///   before the sender's own `Broken` detection has caught up to the
-///   outage clearing (or before it's caught up to the outage
-///   *starting*), and any such attempt that lands while the proxy's
-///   outage window is still active gets counted as `dropped` same as
-///   continuous loss, even though `expected_drop_fraction` never
-///   modeled it. Per outage window this is a handful of packets — at
-///   72h scale (roughly a dozen windows over the default schedule)
-///   that accumulates to a small, genuinely expected excess on the
-///   order of ~0.02-0.2 percentage points over the continuous-only
-///   expectation, which can occasionally eat into (or on a bad draw,
-///   slightly exceed) the `DROP_RATE_TOLERANCE_FLOOR` (0.1pp) the
-///   non-outage leg never has to absorb. If
-///   `drop_rate_consistent_with_impairment_<leg>` fails specifically on
-///   the outage-bearing leg and by a small margin, treat this as the
-///   first hypothesis to rule out (compare against the reconnect count
-///   and the size of the excess) before escalating it as a library
-///   regression.
+///   Outage-window drops themselves are no longer part of that
+///   comparison at all: a `ManagedTransport` sender backing off through
+///   an outage doesn't sit perfectly silent — each reconnect attempt's
+///   handshake can fire before the sender's own `Broken` detection has
+///   caught up to the outage clearing (or starting) — and any such
+///   packet landing while the window is active used to be counted as
+///   `dropped` like continuous loss, against an expectation that never
+///   modeled it, for a genuinely expected ~0.02-0.2 percentage-point
+///   excess on the outage-bearing leg only. The proxy now records those
+///   drops apart (`proxy::PhaseCounters::outage_dropped`) and this
+///   verdict subtracts them from both the observed drops and the packet
+///   total, so the leg with outages is held to exactly the same
+///   continuous-loss expectation as the one without.
 ///
 /// # RSS-growth harness artifact (`--no-klv-digest`)
 ///
