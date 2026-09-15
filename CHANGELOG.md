@@ -733,7 +733,36 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed — rist/hls (WP-4c)
 
-- (pending)
+- **`RistTransport::send_bytes`: a librist "sender queue full" drop no
+  longer latches the transport dead.** librist's `rist_sender_data_write`
+  returns `-2` when its sender queue is full and drops that ONE packet with
+  the context still healthy; the sender mapped every negative code to
+  `TransportError::Broken` and set `is_alive() == false`, so a send burst,
+  a slow or absent peer, or a single dropped packet made
+  `ManagedTransport` `rist_destroy` and rebuild the context — losing the
+  recovery buffer and every peer. `-2` now surfaces as
+  `TransportError::Backpressure { errno_code: Some(-2) }` with the transport
+  alive and the message not consumed (retry it); any other negative code
+  stays `Broken`. An empty payload — which librist also refuses with `-1`
+  — is rejected up front as `TransportError::TooLarge { len: 0, max }`
+  instead of tearing the transport down. The `errno_code` docs on
+  `TransportError::Backpressure` now state the librist code namespace.
+- **RIST `?bandwidth=` and `?recovery_maxbitrate=` no longer silently
+  race for the same librist field.** Both set librist's
+  `recovery_maxbitrate` (the retransmit-bandwidth cap), and the last one
+  written won without warning. `bandwidth` is now a documented alias of
+  `recovery_maxbitrate`: giving both with different values is a
+  `RistUrlError::BadQueryValue` at parse, and the same conflict between
+  `RistConfig::bandwidth_kbps` / `recovery_maxbitrate_kbps` (or the two
+  builder setters) is `RistError::InvalidConfig` at connect/listen. Equal
+  values, or either alone, behave as before. No field or setter was
+  removed.
+- **`tst-hls` Basic-auth compare is constant-time.** The built-in HLS
+  server compared the submitted user and password with `==` (early-exit on
+  the first differing byte); it now uses `subtle::ConstantTimeEq` over both
+  fields, combined before the boolean conversion — the same shape as the
+  RTSP server's Basic verifier. `subtle` is a new `serve`-gated dependency
+  of `tst-hls` (already in the workspace lockfile via `tst-rtp`).
 
 ### Fixed — python (WP-5)
 

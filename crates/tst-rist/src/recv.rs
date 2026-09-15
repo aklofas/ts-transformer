@@ -49,8 +49,11 @@ fn classify_block(payload_len: usize, payload_null: bool, buf_len: usize) -> Blo
 
 /// Receive-side RIST transport.
 ///
-/// Wraps a librist `rist_ctx` configured as a receiver. Per-call recv via
-/// `rist_receiver_data_read2` with a short poll timeout + cancel-poll loop.
+/// Wraps a librist `rist_ctx` configured as a receiver. Each `recv_bytes`
+/// call blocks at most ~100 ms (`rist_receiver_data_read2` poll) and returns
+/// `TransportError::Backpressure` when nothing arrived; the retry loop lives
+/// in the pipeline shells. There is no cross-thread cancel handle (see
+/// `docs/project/deferred-features.md`, UDP/RIST receive cancellation).
 /// Drop calls `rist_destroy`.
 pub struct RistRecvTransport {
     ctx: *mut rist_sys::rist_ctx,
