@@ -177,13 +177,6 @@ fn pcr_masked_identical(a: &[u8; PKT], b: &[u8; PKT], a_has_pcr: bool, b_has_pcr
 pub struct Resync {
     /// `Reader::packets()` at the moment the hunt started.
     pub at_packets: u64,
-    /// The most recent PCR base DECODED from the wire before this
-    /// recovery — see [`Reader::last_pcr`], including the case where the
-    /// packet carrying it was itself skipped. Diagnostic only:
-    /// `corrupt::Attribution` places events by `at_packets` and resolves
-    /// coordinates from [`Reader::take_pcr_events`], and never reads this
-    /// field, so it cannot shift any corruption verdict.
-    pub pcr_base: Option<u64>,
     pub skipped_bytes: usize,
 }
 
@@ -447,7 +440,9 @@ pub struct Reader {
     carry: Vec<u8>,
     resync_mode: bool,
     resyncs: Vec<Resync>,
-    last_pcr: Option<u64>,
+    /// Lifetime number of sync recoveries, across every
+    /// [`Reader::take_resyncs`] drain.
+    resync_count: u64,
     /// Garbage bytes already dropped from the carry since the last
     /// accepted packet — see the no-candidate arm of [`Reader::feed`].
     /// Folded into the next [`Resync`].
@@ -457,7 +452,7 @@ pub struct Reader {
     /// `(pcr_base, packet ordinal of the packet that carried it)` for
     /// every PCR decoded since the last [`Reader::take_pcr_events`] —
     /// see that method's doc comment for why the ordinal is kept here
-    /// rather than re-derived by a caller polling [`Reader::last_pcr`].
+    /// rather than re-derived by a caller watching the latest base.
     pcr_events: Vec<(u64, u64)>,
     /// Last payload-carrying packet seen per PID, kept whole (not just its
     /// CC) so a duplicate can be told from a same-CC packet whose other
@@ -489,7 +484,7 @@ impl Reader {
             carry: Vec::new(),
             resync_mode: false,
             resyncs: Vec::new(),
-            last_pcr: None,
+            resync_count: 0,
             pending_skipped: 0,
             retention,
             pcr_events: Vec::new(),
@@ -502,28 +497,13 @@ impl Reader {
         self.summary.packets
     }
 
-    /// Most recent PCR base seen on ANY PID.
-    ///
-    /// "Seen" means decoded from the wire, which in resync mode includes
-    /// a base read off a packet that was afterwards SKIPPED for a
-    /// malformed payload: the adaptation field carrying the clock parsed
-    /// cleanly even though the rest of the packet did not, and the same
-    /// base is kept in `WireSummary::pcr` for the PCR-interval oracle.
-    /// Only ordinal-keyed state is rolled back on that path — the packet
-    /// counter and [`Reader::take_pcr_events`] — so this value can be
-    /// newer than the last base with a `take_pcr_events` entry. See the
-    /// error arm of [`Reader::feed`] for why.
-    pub fn last_pcr(&self) -> Option<u64> {
-        self.last_pcr
-    }
-
     /// Take every `(pcr_base, at)` decoded since the previous call, where
     /// `at` is the 0-based ordinal of the packet that CARRIED the base
     /// (i.e. [`Reader::packets`] as it read immediately before that
     /// packet was counted).
     ///
-    /// A caller could almost derive this by polling [`Reader::last_pcr`]
-    /// and noticing when it changes — but only to the granularity of
+    /// A caller could almost derive this by watching the most recent PCR
+    /// base and noticing when it changes — but only to the granularity of
     /// whatever it feeds, and a live receiver feeds whole transport reads
     /// (up to 7 packets each), so the ordinal it would attach could be
     /// off by up to that many packets. `crate::corrupt::Attribution`
@@ -543,16 +523,24 @@ impl Reader {
     /// Turns resync (sync-recovery) mode on or off. When on, `feed` hunts
     /// past corrupted or truncated packets instead of failing the whole
     /// feed, recording each recovery as a [`Resync`] (see
-    /// [`Reader::resyncs`]).
+    /// [`Reader::take_resyncs`]).
     pub fn set_resync_mode(&mut self, on: bool) {
         self.resync_mode = on;
     }
 
-    /// Resync events recorded so far — populated only in resync mode.
+    /// Take every sync-recovery recorded since the previous call —
+    /// populated only in resync mode. Drained, not peeked, for the same
+    /// reason as [`Reader::take_pcr_events`]: a live receiver polls this
+    /// for days and must not retain (or re-copy) the whole history.
     /// Does not include a trailing partial packet still sitting in the
-    /// carry; see [`Reader::trailing_resync`] for that.
-    pub fn resyncs(&self) -> &[Resync] {
-        &self.resyncs
+    /// carry; see [`Reader::trailing_resync`].
+    pub fn take_resyncs(&mut self) -> Vec<Resync> {
+        std::mem::take(&mut self.resyncs)
+    }
+
+    /// Lifetime number of sync recoveries, across every drain.
+    pub fn resync_count(&self) -> u64 {
+        self.resync_count
     }
 
     pub fn feed(&mut self, bytes: &[u8]) -> Result<(), String> {
@@ -593,9 +581,9 @@ impl Reader {
                         Some(k) if self.carry[off] != SYNC || k < off + PKT => {
                             self.resyncs.push(Resync {
                                 at_packets: self.summary.packets,
-                                pcr_base: self.last_pcr,
                                 skipped_bytes: self.pending_skipped + (k - start),
                             });
+                            self.resync_count += 1;
                             self.pending_skipped = 0;
                             off = k;
                             continue;
@@ -641,9 +629,9 @@ impl Reader {
                     // recovery instead.
                     self.resyncs.push(Resync {
                         at_packets: self.summary.packets,
-                        pcr_base: self.last_pcr,
                         skipped_bytes: self.pending_skipped,
                     });
+                    self.resync_count += 1;
                     self.pending_skipped = 0;
                 }
             }
@@ -675,10 +663,10 @@ impl Reader {
                     // The rollback stops there, ON PURPOSE. Exactly the
                     // two pieces of state whose MEANING is ordinal-based
                     // are undone; everything else `packet()` recorded
-                    // before it failed — `last_pcr`, `summary.pcr`,
-                    // `summary.pts`, `summary.packets_per_pid`, the PES
-                    // shape's `stream_ids` — is a reading of what was
-                    // genuinely on the wire and stays.
+                    // before it failed — `summary.pcr`, `summary.pts`,
+                    // `summary.packets_per_pid`, the PES shape's
+                    // `stream_ids` — is a reading of what was genuinely
+                    // on the wire and stays.
                     //
                     // It has to stay. Those series feed the wire oracles:
                     // `oracles::pcr_interval` reads `summary.pcr` and
@@ -693,16 +681,12 @@ impl Reader {
                     // The asymmetry is therefore not an oversight: an
                     // ordinal that no longer names a counted packet is
                     // unusable, a clock sample from a skipped packet is
-                    // not. Note that `Attribution` never reads
-                    // `Resync::pcr_base` — it resolves coordinates from
-                    // `take_pcr_events()`, which IS rolled back here — so
-                    // no attribution verdict can be shifted by the base
-                    // recorded below.
+                    // not.
                     self.resyncs.push(Resync {
                         at_packets: before,
-                        pcr_base: self.last_pcr,
                         skipped_bytes: PKT,
                     });
+                    self.resync_count += 1;
                 } else {
                     return Err(format!("packet {}: {e}", self.summary.packets));
                 }
@@ -740,7 +724,7 @@ impl Reader {
     /// unless resync mode is on AND a trailing fragment is present.
     /// `finish` consumes the reader, so this is the only way to inspect
     /// that final recovery event's fields; call it before `finish`, not
-    /// after. Not recorded in [`Reader::resyncs`] (which only holds
+    /// after. Not recorded in [`Reader::take_resyncs`] (which only holds
     /// recoveries `feed` made while it still owned the reader).
     pub fn trailing_resync(&self) -> Option<Resync> {
         if self.carry.is_empty() || !self.resync_mode {
@@ -748,7 +732,6 @@ impl Reader {
         }
         Some(Resync {
             at_packets: self.summary.packets,
-            pcr_base: self.last_pcr,
             skipped_bytes: self.pending_skipped + self.carry.len(),
         })
     }
@@ -780,7 +763,6 @@ impl Reader {
                 .entry(info.pid)
                 .or_insert_with(|| TimestampSeries::new(retention, info.pid))
                 .push(base);
-            self.last_pcr = Some(base);
             // `packets` was incremented just above, so this packet's own
             // 0-based ordinal is one less — see `take_pcr_events`.
             self.pcr_events.push((base, self.summary.packets - 1));
@@ -1196,7 +1178,10 @@ mod tests {
             !r.is_pmt_pid(0x1031),
             "an elementary stream must not become a PMT PID"
         );
-        assert_eq!(r.resyncs().len(), 0, "framing is intact: no sync was lost");
+        assert!(
+            r.take_resyncs().is_empty(),
+            "framing is intact: no sync was lost"
+        );
         let s = r.finish().unwrap();
         assert_eq!(s.packets, packets as u64, "no packet was skipped");
         assert_eq!(s.psi_crc_rejected, 1, "exactly the damaged PAT");
@@ -1319,8 +1304,8 @@ mod tests {
         assert!(!want.is_empty(), "the baseline profile carries PCRs");
 
         // Odd chunk size on purpose: a PCR packet routinely straddles two
-        // feeds, which is exactly the case a "did last_pcr change since
-        // the previous feed" diff would mis-stamp.
+        // feeds, which is exactly the case a "did the latest PCR base
+        // change since the previous feed" diff would mis-stamp.
         let mut r = Reader::new();
         let mut got = Vec::new();
         for chunk in bytes.chunks(101) {
@@ -1493,7 +1478,7 @@ mod tests {
     }
 
     #[test]
-    fn reader_exposes_packet_count_last_pcr_and_pmt_pids() {
+    fn reader_exposes_packet_count_pcr_events_and_pmt_pids() {
         let p = crate::profiles::by_name("baseline").unwrap();
         let path =
             std::env::temp_dir().join(format!("tst-interop-rawts-acc-{}.ts", std::process::id()));
@@ -1510,10 +1495,10 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         let mut r = Reader::new();
         assert_eq!(r.packets(), 0);
-        assert_eq!(r.last_pcr(), None);
+        assert!(r.take_pcr_events().is_empty());
         r.feed(&bytes).unwrap();
         assert_eq!(r.packets() as usize, bytes.len() / PKT);
-        assert!(r.last_pcr().is_some());
+        assert!(r.take_pcr_events().last().is_some());
         assert!(r.is_pmt_pid(0x1000));
         assert!(!r.is_pmt_pid(0x1011));
     }
@@ -1633,11 +1618,13 @@ mod tests {
         for chunk in bad.chunks(1316) {
             r.feed(chunk).unwrap();
         }
-        assert_eq!(r.resyncs().len(), 2, "{:?}", r.resyncs());
-        assert_eq!(r.resyncs()[0].at_packets, 5);
-        assert_eq!(r.resyncs()[0].skipped_bytes, 100);
-        assert_eq!(r.resyncs()[1].at_packets, 20);
-        assert_eq!(r.resyncs()[1].skipped_bytes, 37);
+        let got = r.take_resyncs();
+        assert_eq!(got.len(), 2, "{got:?}");
+        assert_eq!(got[0].at_packets, 5);
+        assert_eq!(got[0].skipped_bytes, 100);
+        assert_eq!(got[1].at_packets, 20);
+        assert_eq!(got[1].skipped_bytes, 37);
+        assert_eq!(r.resync_count(), 2);
         // Every other packet was accepted.
         let s = r.finish().unwrap();
         assert_eq!(s.packets as usize, bytes.len() / PKT - 1);
@@ -1662,11 +1649,9 @@ mod tests {
         let mut r = Reader::new();
         r.set_resync_mode(true);
         r.feed(&bytes[..3 * PKT + 50]).unwrap();
-        let last_pcr_before = r.last_pcr();
         let trailing = r.trailing_resync().expect("non-empty carry in resync mode");
         assert_eq!(trailing.at_packets, 3);
         assert_eq!(trailing.skipped_bytes, 50);
-        assert_eq!(trailing.pcr_base, last_pcr_before);
         let s = r.finish().unwrap();
         assert_eq!(s.packets, 3);
     }
@@ -1703,9 +1688,10 @@ mod tests {
         for chunk in bad.chunks(1316) {
             r.feed(chunk).unwrap();
         }
-        assert_eq!(r.resyncs().len(), 1, "{:?}", r.resyncs());
-        assert_eq!(r.resyncs()[0].at_packets, 7);
-        assert_eq!(r.resyncs()[0].skipped_bytes, PKT);
+        let got = r.take_resyncs();
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0].at_packets, 7);
+        assert_eq!(got[0].skipped_bytes, PKT);
         let s = r.finish().unwrap();
         assert_eq!(s.packets as usize, bytes.len() / PKT - 1);
 
@@ -1737,9 +1723,10 @@ mod tests {
         // recovery names every garbage byte ever fed.
         let clean = bytes_of("baseline", 1.0, "carry-bound");
         r.feed(&clean[..3 * PKT]).unwrap();
-        assert_eq!(r.resyncs().len(), 1, "{:?}", r.resyncs());
-        assert_eq!(r.resyncs()[0].at_packets, 0);
-        assert_eq!(r.resyncs()[0].skipped_bytes, CHUNKS * 1316);
+        let got = r.take_resyncs();
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0].at_packets, 0);
+        assert_eq!(got[0].skipped_bytes, CHUNKS * 1316);
         assert_eq!(r.packets(), 3);
         assert!(r.carry.is_empty());
     }
@@ -1759,13 +1746,47 @@ mod tests {
         r.feed(&first).unwrap();
         assert_eq!(r.carry.len(), PKT - 1, "the clean prefix is what survived");
         assert_eq!(r.carry[0], SYNC, "…and it starts at a packet boundary");
-        assert!(r.resyncs().is_empty(), "nothing is confirmed yet");
+        assert_eq!(r.resync_count(), 0, "nothing is confirmed yet");
 
         r.feed(&clean[PKT - 1..]).unwrap();
-        assert_eq!(r.resyncs().len(), 1, "{:?}", r.resyncs());
-        assert_eq!(r.resyncs()[0].at_packets, 0);
-        assert_eq!(r.resyncs()[0].skipped_bytes, 1000);
+        let got = r.take_resyncs();
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0].at_packets, 0);
+        assert_eq!(got[0].skipped_bytes, 1000);
         assert_eq!(r.packets() as usize, clean.len() / PKT);
+    }
+
+    /// SIMP-11(a) / X-CORR-06B: recoveries are DRAINED per batch, like
+    /// PCR events, so a multi-day capture never holds (or re-copies) its
+    /// whole recovery history. Total events still equals the number of
+    /// recoveries; the lifetime count survives the drains.
+    #[test]
+    fn resyncs_are_drained_in_batches_and_counted_for_life() {
+        let bytes = bytes_of("baseline", 3.0, "drain");
+        // Truncate every 50th packet to 100 bytes: one recovery each.
+        let mut bad = Vec::with_capacity(bytes.len());
+        let mut expected = 0u64;
+        for (i, pkt) in bytes.chunks_exact(PKT).enumerate() {
+            if i % 50 == 49 {
+                bad.extend_from_slice(&pkt[..100]);
+                expected += 1;
+            } else {
+                bad.extend_from_slice(pkt);
+            }
+        }
+        let mut r = Reader::with_retention(Retention::Bounded);
+        r.set_resync_mode(true);
+        let mut total = 0u64;
+        for chunk in bad.chunks(1316) {
+            r.feed(chunk).unwrap();
+            let batch = r.take_resyncs();
+            total += batch.len() as u64;
+            // A 1316-byte feed spans 7 packets: at most one recovery.
+            assert!(batch.len() <= 1, "{batch:?}");
+        }
+        assert_eq!(total, expected);
+        assert_eq!(r.resync_count(), expected);
+        assert!(r.take_resyncs().is_empty(), "already drained");
     }
 
     /// The trailing recovery counts discarded garbage too.

@@ -264,9 +264,6 @@ pub struct Tally {
     /// (the default) for every other capture, and then nothing about
     /// this tally's behaviour changes. See [`Tally::attach_attribution`].
     attribution: Option<corrupt::Attribution>,
-    /// How many of the raw reader's (cumulative) sync recoveries have
-    /// already been handed to `attribution` — see [`Tally::note_resyncs`].
-    resyncs_fed: usize,
     /// What KLV record set this capture is expected to carry. Compact
     /// (the default) means `CellMetrics::klv_rich` comes back `None`.
     klv_expect: KlvExpect,
@@ -327,7 +324,6 @@ impl Tally {
             first_discontinuity: None,
             first_nonconformant: None,
             attribution: None,
-            resyncs_fed: 0,
             klv_expect: KlvExpect::compact(),
             rich: KlvRichMetrics::default(),
             rich_first_decode: None,
@@ -644,37 +640,24 @@ impl Tally {
         }
     }
 
-    /// Hand the raw reader's sync recoveries to the attribution, skipping
-    /// the ones already fed. `resyncs` is the reader's CUMULATIVE list
-    /// (`rawts::Reader::resyncs`), so a live loop can simply call this
-    /// whenever the list has grown.
-    pub fn note_resyncs(&mut self, resyncs: &[rawts::Resync]) {
-        let Some(a) = self.attribution.as_mut() else {
-            self.resyncs_fed = resyncs.len();
-            return;
-        };
-        for r in resyncs.iter().skip(self.resyncs_fed) {
-            // A resync is not attributable to a PID: sync was lost for
-            // the whole multiplex, not for one stream in it.
-            a.on_signal(r.at_packets, None, corrupt::Signal::Resync);
+    /// Hand a DRAINED batch of the raw reader's sync recoveries
+    /// (`rawts::Reader::take_resyncs`) to the attribution. Every element
+    /// is fed; call it once per batch.
+    pub fn note_resyncs(&mut self, batch: &[rawts::Resync]) {
+        if let Some(a) = self.attribution.as_mut() {
+            for r in batch {
+                // A resync is not attributable to a PID: sync was lost for
+                // the whole multiplex, not for one stream in it.
+                a.on_signal(r.at_packets, None, corrupt::Signal::Resync);
+            }
         }
-        self.resyncs_fed = self.resyncs_fed.max(resyncs.len());
-    }
-
-    /// How many sync recoveries [`Tally::note_resyncs`] has already
-    /// consumed — lets a live loop compare against the reader's cheap
-    /// recovery COUNT and skip copying the list when it has not grown.
-    #[must_use]
-    pub fn resyncs_fed(&self) -> usize {
-        self.resyncs_fed
     }
 
     /// Hand the raw reader's FINAL recovery — the trailing partial packet
     /// `rawts::Reader::trailing_resync` describes — to the attribution.
-    /// Separate from [`Tally::note_resyncs`] because the reader's
-    /// cumulative list deliberately never holds it, so there is no index
-    /// to make the call idempotent: callers feed it exactly once, at the
-    /// end of the capture.
+    /// Separate from [`Tally::note_resyncs`] because the reader's own
+    /// batches deliberately never hold it: callers feed it exactly once,
+    /// at the end of the capture.
     pub fn note_trailing_resync(&mut self, r: &rawts::Resync) {
         if let Some(a) = self.attribution.as_mut() {
             a.on_signal(r.at_packets, None, corrupt::Signal::Resync);
@@ -1200,7 +1183,7 @@ pub fn verify_bytes_with_corruption(
         // Drain as we go, so each event carries the reader's position at
         // the time it surfaced rather than the position at end-of-file.
         tally.note_pcrs(&wire_reader.take_pcr_events());
-        tally.note_resyncs(wire_reader.resyncs());
+        tally.note_resyncs(&wire_reader.take_resyncs());
         while let Some(ev) = demux.next_event() {
             tally.feed_at(&ev, wire_reader.packets());
         }
@@ -1215,9 +1198,9 @@ pub fn verify_bytes_with_corruption(
     while let Some(ev) = demux.next_event() {
         tally.feed_at(&ev, wire_reader.packets());
     }
-    tally.note_resyncs(wire_reader.resyncs());
+    tally.note_resyncs(&wire_reader.take_resyncs());
     // A trailing partial packet is a recovery event too, and the only
-    // one `resyncs()` never holds — see `Reader::trailing_resync`.
+    // one `take_resyncs()` never holds — see `Reader::trailing_resync`.
     if let Some(t) = wire_reader.trailing_resync() {
         tally.note_trailing_resync(&t);
     }
@@ -2174,10 +2157,10 @@ mod tests {
     }
 
     /// A resync recorded by the raw reader is a signal like any other —
-    /// and `note_resyncs` must be idempotent, since the live loop polls
-    /// the (cumulative) list repeatedly.
+    /// and every element of a DRAINED batch is fed, so the live loop's
+    /// repeated polling neither double-counts nor drops one.
     #[test]
-    fn note_resyncs_feeds_each_recovery_exactly_once() {
+    fn note_resyncs_feeds_each_drained_batch_once() {
         use crate::corrupt::{Attribution, Class};
         let hdr = corruption_header();
         let mut t = Tally::new();
@@ -2187,11 +2170,12 @@ mod tests {
         ));
         let resyncs = vec![rawts::Resync {
             at_packets: 4,
-            pcr_base: None,
             skipped_bytes: 188,
         }];
         t.note_resyncs(&resyncs);
-        t.note_resyncs(&resyncs); // already fed: must not double-count
+        // A drained caller never hands the same batch twice; the next
+        // poll is simply empty.
+        t.note_resyncs(&[]);
         t.feed_at(&video_event(0, true), 10);
         feed_two_seconds_baseline(&mut t);
         let r = t.finish(

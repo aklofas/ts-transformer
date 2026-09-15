@@ -606,17 +606,12 @@ pub(crate) fn tee_bytes_so_far(tap: &Arc<Mutex<TeeState>>) -> u64 {
 pub(crate) struct TeeCoord {
     /// Packets the reader has accepted so far — the event's coordinate.
     pub packets: u64,
-    /// How many sync recoveries it has recorded so far. Only a COUNT:
-    /// [`tee_resyncs`] copies the events themselves, so the caller polls
-    /// this cheap number every event and copies only when it grows.
-    pub resyncs: usize,
 }
 
 pub(crate) fn tee_coord(tap: &Arc<Mutex<TeeState>>) -> TeeCoord {
     let s = tap.lock().expect("tee mutex poisoned");
     TeeCoord {
         packets: s.reader.packets(),
-        resyncs: s.reader.resyncs().len(),
     }
 }
 
@@ -644,17 +639,15 @@ pub(crate) fn tee_drain_pcrs(tap: &Arc<Mutex<TeeState>>) -> Vec<(u64, u64)> {
         .take_pcr_events()
 }
 
-/// Copy of the tap reader's sync-recovery events so far — populated only
-/// in resync mode (see [`tee_set_resync_mode`]). A copy rather than a
-/// borrow because the reader lives behind the tap's mutex; the list is
-/// one entry per recovery, which a corrupted capture produces at the
-/// injection rate (single digits per minute), not per packet.
-pub(crate) fn tee_resyncs(tap: &Arc<Mutex<TeeState>>) -> Vec<crate::rawts::Resync> {
+/// The tap reader's sync-recovery events since the last call — populated
+/// only in resync mode (see [`tee_set_resync_mode`]). Drained, like
+/// [`tee_drain_pcrs`]; every returned event must be fed to the
+/// attribution exactly once.
+pub(crate) fn tee_take_resyncs(tap: &Arc<Mutex<TeeState>>) -> Vec<crate::rawts::Resync> {
     tap.lock()
         .expect("tee mutex poisoned")
         .reader
-        .resyncs()
-        .to_vec()
+        .take_resyncs()
 }
 
 /// The tap reader's trailing-partial-packet recovery, if any — see
