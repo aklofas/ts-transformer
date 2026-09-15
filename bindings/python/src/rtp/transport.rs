@@ -8,8 +8,12 @@
 //! GIL boundaries (per `docs/specs/2026-05-26-tst-rtp-phase-4-binding-exposure-design.md`):
 //! - `send`, `recv` → wrapped in `py.allow_threads(|| ...)` so concurrent
 //!   Python threads can keep working while UDP I/O blocks on the kernel.
-//! - `stats`, `cancel_handle`, `cancel`, `__enter__`, `__exit__` → fast
-//!   read-only / atomic operations; no GIL release.
+//! - `stats` → also releases the GIL: it waits for the slot a parked
+//!   `recv` / in-flight `send` on another thread holds.
+//! - `cancel_handle`, `cancel`, `end_reason`, `__enter__`, `__exit__` →
+//!   fast read-only / atomic operations; no GIL release.
+//! - Every wrapper borrows `&self` over an `Arc<Mutex<Option<_>>>` slot;
+//!   `close()` cancels before taking it.
 //!
 //! Bytes-like extraction in `.send(ts_bytes)` follows the audit-backlog
 //! #10 two-path pattern: fast `&[u8]` extract (zero-copy for `bytes`),
@@ -32,11 +36,10 @@
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use pyo3::Py;
-use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
@@ -199,7 +202,11 @@ impl PyCancelHandle {
 /// can be embedded in the URL itself.
 #[pyclass(name = "Sender", module = "tstrans.rtp")]
 pub(crate) struct PySender {
-    inner: Option<RtpTransport>,
+    /// Shared slot (PR #209 shape): a `send` in flight on another thread
+    /// holds it with the GIL released; `close()` fires `cancel` BEFORE
+    /// taking it, so the in-flight send ends with `RtpError(CANCELLED)`
+    /// instead of the close raising `RuntimeError: Already borrowed`.
+    inner: Arc<Mutex<Option<RtpTransport>>>,
     /// Trait-erased cancel handle pulled from `Transport::cancel_handle()`
     /// at construction. Shared with any Python-side `CancelHandle` clones;
     /// calling `.cancel()` here flips the same atomic the transport's
@@ -225,15 +232,14 @@ impl PySender {
             builder.ssrc(s);
         }
         let inner = builder.build().map_err(|e| connect_error_to_pyerr(py, e))?;
-        // Pull the cancel handle BEFORE we own `inner` mutably so the
-        // borrow is short-lived. The Arc returned is the same one the
-        // transport's send-loop holds — flipping it here wakes a parked
-        // send on the next 100 ms cancel-poll tick.
+        // The Arc returned is the same one the transport's send-loop
+        // holds — flipping it here wakes a parked send on the next
+        // 100 ms cancel-poll tick.
         let cancel = inner
             .cancel_handle()
             .expect("RtpTransport always returns Some(cancel_handle)");
         Ok(Self {
-            inner: Some(inner),
+            inner: Arc::new(Mutex::new(Some(inner))),
             cancel,
         })
     }
@@ -244,40 +250,25 @@ impl PySender {
     ///
     /// Releases the GIL during the underlying `sendto` call so other
     /// Python threads can run while this thread blocks on the kernel.
-    fn send(&mut self, py: Python<'_>, ts_bytes: &Bound<'_, PyAny>) -> PyResult<()> {
-        let inner = self
-            .inner
-            .as_mut()
-            .ok_or_else(|| make_rtp_error(py, "TRANSPORT", "sender is closed"))?;
-        // Fast path: real `bytes` extracts to a borrowed &[u8] (zero-copy).
-        if let Ok(slice) = ts_bytes.extract::<&[u8]>() {
-            let res = py.allow_threads(|| inner.send_bytes(slice));
-            return res.map_err(|e| transport_error_to_pyerr(py, e));
-        }
-        // Fallback for bytearray / memoryview / numpy uint8 / etc.
-        // Coerce through Python's `bytes()` builtin — one C copy into a
-        // fresh immutable PyBytes. PyBuffer would skip this copy but
-        // it's gated on not(Py_LIMITED_API) in PyO3 0.22 and we build
-        // with abi3-py310 for one-wheel coverage of 3.10+.
-        let coerced: Bound<'_, PyBytes> = py
-            .import_bound("builtins")?
-            .getattr(intern!(py, "bytes"))?
-            .call1((ts_bytes,))?
-            .downcast_into::<PyBytes>()?;
+    fn send(&self, py: Python<'_>, ts_bytes: &Bound<'_, PyAny>) -> PyResult<()> {
+        // Zero-copy for real `bytes`; one C copy through `bytes()` for
+        // bytearray / memoryview / numpy (PyBuffer is unavailable under
+        // abi3-py310).
+        let coerced = crate::util::coerce_bytes_like(py, ts_bytes)?;
         let slice: &[u8] = coerced.as_bytes();
-        let res = py.allow_threads(|| inner.send_bytes(slice));
-        res.map_err(|e| transport_error_to_pyerr(py, e))
+        match crate::util::with_slot(py, &self.inner, |t| t.send_bytes(slice)) {
+            None => Err(make_rtp_error(py, "TRANSPORT", "sender is closed")),
+            Some(res) => res.map_err(|e| transport_error_to_pyerr(py, e)),
+        }
     }
 
     /// Snapshot of wire-level statistics. Returns a frozen `SocketStats`
     /// dataclass; the `bytes_sent` / `packets_sent` counters tick on
     /// each successful `.send()`.
     fn stats(&self, py: Python<'_>) -> PyResult<Py<PySocketStats>> {
-        let inner = self
-            .inner
-            .as_ref()
-            .ok_or_else(|| make_rtp_error(py, "TRANSPORT", "sender is closed"))?;
-        let core_stats = inner.socket_stats().unwrap_or_default();
+        let core_stats =
+            crate::util::with_slot(py, &self.inner, |t| t.socket_stats().unwrap_or_default())
+                .ok_or_else(|| make_rtp_error(py, "TRANSPORT", "sender is closed"))?;
         Py::new(py, PySocketStats::from_core(core_stats))
     }
 
@@ -293,12 +284,13 @@ impl PySender {
         )
     }
 
-    /// Close the sender. After close, further `.send()` calls raise
-    /// `RtpError(kind=TRANSPORT)`. Idempotent.
-    fn close(&mut self) {
-        if let Some(mut t) = self.inner.take() {
-            t.close();
-        }
+    /// Close the sender. Fires the cancel handle BEFORE taking the slot
+    /// (a `send()` in flight on another thread ends with
+    /// `RtpError(CANCELLED)`), then drops the transport. After close,
+    /// further `.send()` calls raise `RtpError(kind=TRANSPORT)`. Idempotent.
+    fn close(&self, py: Python<'_>) {
+        self.cancel.cancel();
+        crate::util::close_slot(py, &self.inner, |mut t| t.close());
     }
 
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -306,19 +298,21 @@ impl PySender {
     }
 
     fn __exit__(
-        &mut self,
+        &self,
+        py: Python<'_>,
         _exc_type: &Bound<'_, PyAny>,
         _exc_value: &Bound<'_, PyAny>,
         _traceback: &Bound<'_, PyAny>,
     ) -> bool {
-        self.close();
+        self.close(py);
         false // do not suppress exceptions
     }
 
     fn __repr__(&self) -> String {
-        match &self.inner {
-            Some(_) => "Sender(open)".to_string(),
-            None => "Sender(closed)".to_string(),
+        if crate::util::slot_alive(&self.inner, |_| true) {
+            "Sender(open)".to_string()
+        } else {
+            "Sender(closed)".to_string()
         }
     }
 }
@@ -334,23 +328,34 @@ impl PySender {
 /// transport's deliverable ceiling; `?pkt_size=` on a receiver URL is
 /// rejected. The 12-byte RTP header is stripped internally so `.recv()`
 /// returns just the TS payload bytes.
+/// Transport + reusable scratch buffer, kept under one lock so a `&self`
+/// `recv` can fill the scratch without a second borrow.
+struct RtpRecvInner {
+    transport: RtpRecvTransport,
+    /// Sized to the transport's `max_payload()` at construction. Reused
+    /// across calls to avoid a per-recv malloc.
+    scratch: Vec<u8>,
+}
+
 #[pyclass(name = "Receiver", module = "tstrans.rtp")]
 pub(crate) struct PyReceiver {
-    inner: Option<RtpRecvTransport>,
+    /// Shared slot (PR #209 shape): a parked `recv` holds it with the GIL
+    /// released; `close()` fires `cancel` BEFORE taking it, so the parked
+    /// recv ends with `RtpError(CANCELLED)` instead of the close raising
+    /// `RuntimeError: Already borrowed`.
+    inner: Arc<Mutex<Option<RtpRecvInner>>>,
     /// Trait-erased cancel handle pulled from
     /// `RecvTransport::cancel_handle()` at construction. Shared with any
     /// Python-side `CancelHandle` clones — flipping it wakes a parked
     /// recv on the next 100 ms cancel-poll tick.
     cancel: Arc<dyn TransportCancel + Send + Sync>,
     /// Handle onto the transport's [`StreamEndReasonHandle`], pulled at
-    /// construction — before `inner` is ever `take()`n by `close()`, so
+    /// construction — before the slot is ever emptied by `close()`, so
     /// `end_reason()` / `end_detail()` keep working after close (`close()`
     /// records `Cancelled` on the transport before dropping it, and this
-    /// handle shares the same underlying cell).
+    /// handle shares the same underlying cell). Lock-free: never touches
+    /// the slot, so a watchdog can read it while a recv is parked.
     end_reason: StreamEndReasonHandle,
-    /// Per-recv scratch buffer sized to the underlying transport's
-    /// `max_payload()`. Reused across calls to avoid a per-recv malloc.
-    scratch: Vec<u8>,
 }
 
 #[pymethods]
@@ -364,26 +369,27 @@ impl PyReceiver {
     fn new(py: Python<'_>, url: &str) -> PyResult<Self> {
         let builder = RtpRecvSocketBuilder::from_url(url)
             .map_err(|e| make_rtp_error(py, "TRANSPORT", &e.to_string()))?;
-        let inner = builder.build().map_err(|e| connect_error_to_pyerr(py, e))?;
-        let scratch_len = inner.max_payload();
-        let cancel = inner
+        let transport = builder.build().map_err(|e| connect_error_to_pyerr(py, e))?;
+        let scratch_len = transport.max_payload();
+        let cancel = transport
             .cancel_handle()
             .expect("RtpRecvTransport always returns Some(cancel_handle)");
-        let end_reason = inner.end_reason_handle();
+        let end_reason = transport.end_reason_handle();
         Ok(Self {
-            inner: Some(inner),
+            inner: Arc::new(Mutex::new(Some(RtpRecvInner {
+                transport,
+                scratch: vec![0u8; scratch_len],
+            }))),
             cancel,
             end_reason,
-            scratch: vec![0u8; scratch_len],
         })
     }
 
     /// Receive one MPEG-TS payload chunk. Blocks until a packet arrives
     /// (releases the GIL while parked) or the cancel handle fires.
     ///
-    /// `timeout_ms=None` (the default) blocks indefinitely — the same
-    /// code path as before this parameter existed. `timeout_ms=N` bounds
-    /// this single call to `N` milliseconds via the one-shot
+    /// `timeout_ms=None` (the default) blocks indefinitely. `timeout_ms=N`
+    /// bounds this single call to `N` milliseconds via the one-shot
     /// `RtpRecvTransport::recv_timeout`; on expiry it raises
     /// `RtpError(TIMEOUT)` and the receiver stays open — call again to
     /// keep waiting. The one-shot's `Ok(None)` expiry never leaks to
@@ -392,36 +398,35 @@ impl PyReceiver {
     /// Returns a fresh `bytes` object containing the TS bundle (RTP
     /// header already stripped).
     #[pyo3(signature = (timeout_ms = None))]
-    fn recv(&mut self, py: Python<'_>, timeout_ms: Option<u64>) -> PyResult<Py<PyBytes>> {
-        let inner = self
-            .inner
-            .as_mut()
-            .ok_or_else(|| make_rtp_error(py, "TRANSPORT", "receiver is closed"))?;
-        // SAFETY: scratch is owned by this PyClass instance and not
-        // shared with Python objects; the &mut borrow is exclusive for
-        // the duration of recv_bytes/recv_timeout. py.allow_threads is
-        // safe because we touch no Python objects inside.
-        let scratch: &mut [u8] = self.scratch.as_mut_slice();
-        let res = match timeout_ms {
-            None => py.allow_threads(|| inner.recv_bytes(scratch)).map(Some),
-            Some(ms) => py.allow_threads(|| inner.recv_timeout(scratch, Duration::from_millis(ms))),
-        };
+    fn recv(&self, py: Python<'_>, timeout_ms: Option<u64>) -> PyResult<Py<PyBytes>> {
+        let res = crate::util::with_slot(py, &self.inner, |s| {
+            let n = match timeout_ms {
+                None => s.transport.recv_bytes(&mut s.scratch).map(Some),
+                Some(ms) => s
+                    .transport
+                    .recv_timeout(&mut s.scratch, Duration::from_millis(ms)),
+            };
+            // Copy out under the lock; the PyBytes is built once the GIL
+            // is back.
+            n.map(|n| n.map(|n| s.scratch[..n].to_vec()))
+        });
         match res {
-            Ok(Some(n)) => Ok(PyBytes::new_bound(py, &self.scratch[..n]).unbind()),
-            Ok(None) => Err(make_rtp_error(py, "TIMEOUT", "recv deadline elapsed")),
-            Err(e) => Err(transport_error_to_pyerr(py, e)),
+            None => Err(make_rtp_error(py, "TRANSPORT", "receiver is closed")),
+            Some(Ok(Some(bytes))) => Ok(PyBytes::new_bound(py, &bytes).unbind()),
+            Some(Ok(None)) => Err(make_rtp_error(py, "TIMEOUT", "recv deadline elapsed")),
+            Some(Err(e)) => Err(transport_error_to_pyerr(py, e)),
         }
     }
 
     /// Snapshot of wire-level statistics. Returns a frozen `SocketStats`
     /// dataclass; the `bytes_received` / `packets_received` counters
-    /// tick on each successful `.recv()`.
+    /// tick on each successful `.recv()`. Waits (GIL released) for a
+    /// recv parked on another thread.
     fn stats(&self, py: Python<'_>) -> PyResult<Py<PySocketStats>> {
-        let inner = self
-            .inner
-            .as_ref()
-            .ok_or_else(|| make_rtp_error(py, "TRANSPORT", "receiver is closed"))?;
-        let core_stats = inner.socket_stats().unwrap_or_default();
+        let core_stats = crate::util::with_slot(py, &self.inner, |s| {
+            s.transport.socket_stats().unwrap_or_default()
+        })
+        .ok_or_else(|| make_rtp_error(py, "TRANSPORT", "receiver is closed"))?;
         Py::new(py, PySocketStats::from_core(core_stats))
     }
 
@@ -441,7 +446,7 @@ impl PyReceiver {
     /// (or ended through a path this arc doesn't instrument). Still
     /// readable after `close()` — `end_reason` is a
     /// [`StreamEndReasonHandle`] captured at construction, independent of
-    /// `inner`'s lifetime.
+    /// the slot's lifetime.
     ///
     /// `StreamEndReasonHandle::get` is a lock-free `Arc<OnceLock<_>>`
     /// read — no blocking, so no `py.allow_threads` is needed here even
@@ -461,15 +466,13 @@ impl PyReceiver {
         crate::rtp::end_reason::end_reason_detail(&reason).map(str::to_owned)
     }
 
-    /// Close the receiver. After close, further `.recv()` calls raise
-    /// `RtpError(kind=TRANSPORT)`. Idempotent.
-    fn close(&mut self) {
-        // Also flip the cancel so any parked .recv on a different
-        // thread unparks promptly.
+    /// Close the receiver. Fires the cancel handle BEFORE taking the slot
+    /// (a `recv()` parked on another thread ends with
+    /// `RtpError(CANCELLED)`), then drops the transport. After close,
+    /// further `.recv()` calls raise `RtpError(kind=TRANSPORT)`. Idempotent.
+    fn close(&self, py: Python<'_>) {
         self.cancel.cancel();
-        if let Some(mut t) = self.inner.take() {
-            t.close();
-        }
+        crate::util::close_slot(py, &self.inner, |mut s| s.transport.close());
     }
 
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -477,19 +480,21 @@ impl PyReceiver {
     }
 
     fn __exit__(
-        &mut self,
+        &self,
+        py: Python<'_>,
         _exc_type: &Bound<'_, PyAny>,
         _exc_value: &Bound<'_, PyAny>,
         _traceback: &Bound<'_, PyAny>,
     ) -> bool {
-        self.close();
+        self.close(py);
         false
     }
 
     fn __repr__(&self) -> String {
-        match &self.inner {
-            Some(_) => "Receiver(open)".to_string(),
-            None => "Receiver(closed)".to_string(),
+        if crate::util::slot_alive(&self.inner, |_| true) {
+            "Receiver(open)".to_string()
+        } else {
+            "Receiver(closed)".to_string()
         }
     }
 }

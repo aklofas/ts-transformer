@@ -29,6 +29,9 @@ from _builders.ports import free_udp_port as _free_udp_port
 TS_PACKET = b"\x47" + b"\x00" * 187
 TS_BUNDLE = TS_PACKET * 7          # one full 1316-byte framing bundle
 NAL_IDR = b"\x00\x00\x00\x01\x65\xBB"
+# `rtp.Sender`'s default `pkt_size=1316` is the whole DATAGRAM, so the TS
+# payload cap is 1316 - 12 (RTP header) = 1304 B: six packets, not seven.
+RTP_BUNDLE = TS_PACKET * 6
 
 _CLOSE_BUDGET_S = 2.0
 
@@ -581,3 +584,87 @@ def test_srt_socket_close_and_getters_from_other_thread_do_not_raise() -> None:
     assert ei.value.kind == SrtErrorKind.CLOSED
     caller.close()
     lst.close()
+
+
+# --------------------------------------------------------------------------- #
+# rtp.Sender / rtp.Receiver                                                   #
+# --------------------------------------------------------------------------- #
+
+
+def _udp_sink() -> tuple[socket.socket, int]:
+    """A bound UDP socket that absorbs datagrams (keeps the loopback peer
+    reachable so a connected sender never sees ECONNREFUSED)."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.bind(("127.0.0.1", 0))
+    return s, s.getsockname()[1]
+
+
+def test_rtp_sender_close_from_other_thread_during_send() -> None:
+    from tstrans.exceptions import RtpError, RtpErrorKind
+    import tstrans.rtp as rtp
+
+    sink, port = _udp_sink()
+    tx = rtp.Sender(f"rtp://127.0.0.1:{port}")
+    stop = threading.Event()
+    outcome: dict[str, object] = {}
+
+    def worker() -> None:
+        outcome.update(_spin_sender(lambda: tx.send(RTP_BUNDLE), stop))
+
+    w = threading.Thread(target=worker, daemon=True)
+    w.start()
+    time.sleep(0.1)
+    try:
+        c, errs = _close_on_thread(tx)
+        stop.set()
+        w.join(5.0)
+        _assert_close_ok(c, errs, "rtp.Sender")
+        assert not w.is_alive(), "send loop did not end after close()"
+        exc = outcome.get("exc")
+        assert isinstance(exc, RtpError), f"send loop ended with {exc!r}"
+        assert exc.kind in (RtpErrorKind.CANCELLED, RtpErrorKind.TRANSPORT), exc.kind
+        assert "closed" in repr(tx)
+    finally:
+        stop.set()
+        tx.close()
+        sink.close()
+
+
+def test_rtp_receiver_close_from_other_thread_while_recv_parked() -> None:
+    from tstrans.exceptions import RtpError, RtpErrorKind
+    import tstrans.rtp as rtp
+
+    port = _free_udp_port()
+    rx = rtp.Receiver(f"rtp://127.0.0.1:{port}")
+    captured: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            rx.recv()
+        except BaseException as exc:  # noqa: BLE001
+            captured.append(exc)
+
+    w = threading.Thread(target=worker, daemon=True)
+    w.start()
+    time.sleep(0.3)
+    try:
+        c, errs = _close_on_thread(rx)
+        w.join(5.0)
+        if w.is_alive():
+            # Rescue: a datagram unparks the recv (12-byte RTP header + TS).
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.sendto(
+                b"\x80\x21\x00\x01\x00\x00\x00\x00\x00\x00\x00\x01" + TS_PACKET,
+                ("127.0.0.1", port),
+            )
+            s.close()
+            w.join(5.0)
+        _assert_close_ok(c, errs, "rtp.Receiver")
+        assert not w.is_alive(), "close() did not end the parked recv()"
+        assert len(captured) == 1, f"expected one error; got {captured!r}"
+        err = captured[0]
+        assert isinstance(err, RtpError), f"parked recv ended with {err!r}"
+        assert err.kind in (RtpErrorKind.CANCELLED, RtpErrorKind.TRANSPORT), err.kind
+        assert rx.end_reason() is not None  # Cancelled — recorded by close()
+    finally:
+        rx.close()
