@@ -71,8 +71,14 @@
 //!   — resolving the handle under it made the cross-thread stop unobtainable while
 //!   the op it is meant to stop was in flight. Captured at construction, before the
 //!   resource is boxed. Every srt shell (sender and receiver, plain and
-//!   managed), the srt `Listener`, and the rtp types register both a hook and
-//!   a target (their `close()` wakes the parked op through the hook).
+//!   managed) and the srt `Listener` register both a hook and a target. Of the
+//!   rtp types, `Sender`, `Receiver` (`rtp/transport.rs`) and `H264Receiver`
+//!   also register both; `DemuxReceiver` and `RtspServer` register a hook
+//!   only, no target — neither reads this lock-free slot: `DemuxReceiver` has
+//!   no public `cancelHandle()` at all (`close()` is the sanctioned cross-thread
+//!   stop), and `RtspServer.cancelHandle()` leases the resource instead; and
+//!   `MuxSender` registers neither (plain `insert`, no cancel-on-close and no
+//!   `cancelHandle()`, matching tst-py's rtp surface).
 //! - **Lock-free end-reason cell.** Same shape, same reason, for the recv-side
 //!   stream-end record: an entry can carry the resource's
 //!   [`RecvEndReasonHandle`] OUTSIDE the resource mutex ([`Entry::end_reason`],
