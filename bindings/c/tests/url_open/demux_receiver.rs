@@ -93,6 +93,31 @@ fn managed_demux_receiver_end_reason_reconnect_stats_and_unwrap_config() {
     let listener_cancel = listener.cancel_handle();
     let (done_tx, done_rx) = mpsc::channel::<()>();
 
+    /// Tears the peer thread down on EVERY exit path, including an
+    /// assertion panic mid-test: drop the done-sender (the peer's
+    /// `recv_timeout` returns at once), cancel the listener (wakes a
+    /// parked `accept()` — `SrtCancelHandle` has no Drop of its own),
+    /// then join. Without this, unwinding would skip the teardown and
+    /// leak a thread parked in `srt_accept`. Bounded: the peer body is.
+    struct PeerGuard {
+        done: Option<mpsc::Sender<()>>,
+        cancel: tst_srt::SrtCancelHandle,
+        thread: Option<thread::JoinHandle<()>>,
+    }
+
+    impl Drop for PeerGuard {
+        fn drop(&mut self) {
+            drop(self.done.take());
+            self.cancel.cancel();
+            if let Some(t) = self.thread.take() {
+                // A panicked peer is reported by the happy path's
+                // explicit join below; in an unwinding drop there is
+                // already a panic in flight, so don't double-panic.
+                let _ = t.join();
+            }
+        }
+    }
+
     let listener_thread = thread::spawn(move || {
         // `.ok()`, not `.expect()`: this accept can legitimately lose a
         // race. The test thread cancels its socket microseconds after
@@ -110,6 +135,11 @@ fn managed_demux_receiver_end_reason_reconnect_stats_and_unwrap_config() {
         // in scope) until the main thread is done with it.
         done_rx.recv_timeout(Duration::from_secs(5)).ok();
     });
+    let mut peer = PeerGuard {
+        done: Some(done_tx),
+        cancel: listener_cancel,
+        thread: Some(listener_thread),
+    };
 
     let url_c = CString::new(format!("srt://127.0.0.1:{port}")).unwrap();
 
@@ -168,10 +198,15 @@ fn managed_demux_receiver_end_reason_reconnect_stats_and_unwrap_config() {
         tst_managed_demux_receiver_close(rx);
     }
 
-    done_tx.send(()).ok();
-    // Wake the peer if it is still parked in `accept()` (see the thread
-    // body). Idempotent: if the thread already exited and dropped the
-    // listener, this is a no-op.
-    listener_cancel.cancel();
-    listener_thread.join().expect("listener thread panicked");
+    // Happy-path teardown, explicit so a panicked peer FAILS the test
+    // (the guard's Drop swallows join errors). Same three steps as the
+    // guard: release the peer's hold, wake a still-parked `accept()`
+    // (idempotent if the thread already dropped the listener), join.
+    drop(peer.done.take());
+    peer.cancel.cancel();
+    peer.thread
+        .take()
+        .expect("join handle taken once")
+        .join()
+        .expect("listener thread panicked");
 }
