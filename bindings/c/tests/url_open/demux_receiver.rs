@@ -83,26 +83,34 @@ use super::last_error_msg;
 /// timing window. The C layer therefore asserts only the baseline.
 #[test]
 fn managed_demux_receiver_end_reason_reconnect_stats_and_unwrap_config() {
-    let (port_tx, port_rx) = mpsc::channel::<u16>();
+    // Bind on the test thread so the port AND the listener's cancel handle
+    // are in hand before the peer thread parks in `accept()`.
+    let mut listener = ListenerBuilder::new()
+        .recv_timeout(Duration::from_secs(5))
+        .bind("127.0.0.1:0")
+        .expect("bind");
+    let port = listener.local_addr().expect("local_addr").port();
+    let listener_cancel = listener.cancel_handle();
     let (done_tx, done_rx) = mpsc::channel::<()>();
 
     let listener_thread = thread::spawn(move || {
-        let mut listener = ListenerBuilder::new()
-            .recv_timeout(Duration::from_secs(5))
-            .bind("127.0.0.1:0")
-            .expect("bind");
-        let port = listener.local_addr().expect("local_addr").port();
-        port_tx.send(port).expect("send port");
-
-        let (_accepted, _) = listener.accept().expect("accept");
+        // `.ok()`, not `.expect()`: this accept can legitimately lose a
+        // race. The test thread cancels its socket microseconds after
+        // `connect` returns, and libsrt's GC pass
+        // (`CUDTUnited::checkBrokenSockets`) prunes a connection that
+        // breaks while still sitting in the listener's accept queue. If
+        // this thread is descheduled across that window (a loaded 2-vCPU
+        // CI runner; 2 sightings 2026-09-15/16), the queued connection
+        // vanishes and a plain `accept()` would sleep forever — nothing
+        // else ever connects. The test thread fires `listener_cancel`
+        // before joining, which closes the listener and wakes a parked
+        // accept with an error instead.
+        let _accepted = listener.accept().ok();
         // Hold the connection open (both `_accepted` and `listener` alive
         // in scope) until the main thread is done with it.
         done_rx.recv_timeout(Duration::from_secs(5)).ok();
     });
 
-    let port = port_rx
-        .recv_timeout(Duration::from_secs(5))
-        .expect("listener did not bind in time");
     let url_c = CString::new(format!("srt://127.0.0.1:{port}")).unwrap();
 
     unsafe {
@@ -161,5 +169,9 @@ fn managed_demux_receiver_end_reason_reconnect_stats_and_unwrap_config() {
     }
 
     done_tx.send(()).ok();
+    // Wake the peer if it is still parked in `accept()` (see the thread
+    // body). Idempotent: if the thread already exited and dropped the
+    // listener, this is a no-op.
+    listener_cancel.cancel();
     listener_thread.join().expect("listener thread panicked");
 }
