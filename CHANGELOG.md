@@ -1252,7 +1252,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   one frame per video frame, so its PTS step is a clean 1920 ticks — the `audio`
   profile's wire output and its `expectations.toml` rows are re-validated by the
   branch dispatch. Every oracle has a matching mutation test
-  (`crates/tst-interop/tests/mutations.rs`, ten tests) that removes the property
+  (`crates/tst-interop/tests/mutations.rs`, 14 tests) that removes the property
   it checks and asserts the oracle's named failure fires.
 
 ### Testing — interop harness (WP-7a)
