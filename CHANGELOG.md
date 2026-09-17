@@ -983,6 +983,22 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   close/cancel (bounded joins with a rescue path and, for the UDP
   `timeout_ms` contract test, a 30 s hang deadline), so a loaded runner
   can be slow but never fails a working cancel.
+- **tst-py: the GIL-release tests prove `py.allow_threads` structurally.**
+  `bindings/python/tests/test_gil_release.py` no longer compares a worker
+  thread's iteration throughput during the workload against its solo
+  throughput (a ≥ 60 % ratio that flaked twice in CI under host load — a
+  starved worker simply iterates less). A probe thread now records the first
+  instant it executes any Python bytecode while `sys.setswitchinterval` is
+  pinned to an hour, so the main thread can only ever hand the GIL over
+  voluntarily; the test asserts that instant falls strictly inside one of the
+  bracketed Rust calls. Without `allow_threads` the probe cannot run before
+  the workload ends (verified: removing the wrapper at the `Demuxer.feed` and
+  `iter_aac_frames_with_resync` sites fails the matching test 5/5), and with
+  it a false failure needs the OS to starve the probe for the whole ≥ 100 ms
+  in-Rust window (40/40 green, half of them pinned to two cores under six
+  busy loops). Workloads are unchanged in kind; sizes were rescaled to the
+  true in-Rust time now that it is measured (the old wall-clock numbers
+  counted Python-side draining).
 - **Tooling: `tst-interop` sender-side corruption tap.** `tst-interop send
   --corrupt rate=PER_10K[,min_gap=PKTS][,classes=a+b+c] --corruption-log
   PATH [--seed N]` wraps the sender's transport in a seeded tap that damages
