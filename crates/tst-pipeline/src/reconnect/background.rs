@@ -7,16 +7,23 @@
 //! 2. `bg_active` transitions and the send-path enqueue decision happen
 //!    under the `gap` lock, so worker exit and pump enqueue linearize.
 //! 3. `spawn_worker` is never called while holding the `gap` lock.
-//! 4. The worker holds `gap` across one inner send during drain — this
-//!    pins the front message so a concurrent `DropOldest` eviction can't
-//!    pop the message in flight (clone-then-pop would desync the queue).
+//! 4. The worker NEVER holds `gap` across an inner send. It takes the
+//!    lock only for the buffer's own critical sections: mark the front
+//!    message in flight (`begin_send`), release, send with just `inner`
+//!    held, then re-take it to settle (`finish_send` / `abort_send`).
+//!    The in-flight message is pinned by the buffer's `in_flight` mark
+//!    — `DropOldest` eviction skips it — not by the lock. That matters
+//!    because one inner send is unbounded against a peer that stops
+//!    draining (tst-tcp's write loop, SRT's default `send_timeout:
+//!    None`): holding `gap` there stalled both `stats()` and the
+//!    producer's enqueue for as long as the peer sulked.
 //! 5. The worker publishes each fresh inner's wake handle into the shared
 //!    `active` cancel slot (and clears it on tear-down) so a cancel can
 //!    reach a drain send without taking `inner` — see the same invariant
 //!    in `reconnect::mod`'s type docs.
 
 use std::sync::atomic::Ordering;
-use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -102,6 +109,14 @@ pub(crate) struct ManagedShared {
     pub(crate) reconnect_attempts: AtomicU64,
     /// Successful factory() installs (either mode).
     pub(crate) reconnect_successes: AtomicU64,
+    /// The live inner's `max_payload()`, published at construction and on
+    /// every successful install so `send_bytes`'s size pre-check does not
+    /// have to take the `inner` lock — which the drain worker holds
+    /// across one (unbounded) inner send. A value that went stale between
+    /// the pre-check and the drain is benign: the drain's own `TooLarge`
+    /// handling drops a queued message the rebuilt transport can no
+    /// longer carry.
+    pub(crate) max_payload: AtomicUsize,
 }
 
 /// Backpressure retry cadence while draining on the worker — there is no
@@ -145,9 +160,10 @@ pub(crate) enum Install {
 /// cancel that lands while the factory runs is answered identically on
 /// both: take the wake handle → install under `inner` → publish the
 /// handle after the lock drops → honour a latched close (close the fresh
-/// inner OUTSIDE the lock) → count the success. Before this the worker
-/// counted the success first and left the (already socket-cancelled)
-/// fresh inner installed; the inline path neither counted nor kept it.
+/// inner OUTSIDE the lock) → count the success and publish the fresh
+/// ceiling. Before this the worker counted the success first and left the
+/// (already socket-cancelled) fresh inner installed; the inline path
+/// neither counted nor kept it.
 pub(crate) fn install_fresh_inner<T: Transport>(
     inner: &Mutex<Option<T>>,
     active: &CancelSlot,
@@ -155,11 +171,12 @@ pub(crate) fn install_fresh_inner<T: Transport>(
     shared: &ManagedShared,
     new_inner: T,
 ) -> Install {
-    // Take the wake handle before the transport moves into the mutex;
-    // publish it after the lock drops, so the slot's own firing (a
-    // cancel that landed while the factory was building) never runs
-    // under `inner`.
+    // Take the wake handle (and read the ceiling) before the transport
+    // moves into the mutex; publish the handle after the lock drops, so
+    // the slot's own firing (a cancel that landed while the factory was
+    // building) never runs under `inner`.
     let new_cancel = new_inner.cancel_handle();
+    let new_max_payload = new_inner.max_payload();
     {
         let Ok(mut guard) = inner.lock() else {
             return Install::InnerPoisoned;
@@ -189,6 +206,10 @@ pub(crate) fn install_fresh_inner<T: Transport>(
         }
         return Install::Closed;
     }
+    // Publish the fresh ceiling for the lock-free size pre-check. Only on
+    // the Installed path: a fresh inner that was closed above never
+    // becomes the one a send is checked against.
+    shared.max_payload.store(new_max_payload, Ordering::Relaxed);
     shared.reconnect_successes.fetch_add(1, Ordering::Relaxed);
     Install::Installed
 }
@@ -198,6 +219,18 @@ enum DrainStep {
     Empty,
     Backpressure,
     Broken,
+}
+
+/// What the drain step's first (gap-locked) phase decided. Split out so
+/// the gap lock is released before the inner send runs (invariant 4).
+enum DrainPlan {
+    /// Gap is empty — the Empty protocol already ran under the gap lock.
+    Empty,
+    /// No live inner to drain into; nothing was marked in flight.
+    NoInner,
+    /// The front message is marked in flight and must be settled with
+    /// `finish_send`/`abort_send` once the send returns.
+    Send { seq: u64, msg: Vec<u8> },
 }
 
 /// Clears `bg_active` (invariant 2) when `worker_run` exits — including an
@@ -353,10 +386,13 @@ pub(crate) fn worker_run<T: Transport>(ctx: WorkerCtx<T>) {
                 return;
             }
             // Per-message lock scope, order inner -> gap (invariant 1).
-            // The gap lock is held across this one send on purpose
-            // (invariant 4): it pins the front message so a concurrent
-            // DropOldest eviction can't pop the message in flight. The
-            // pump blocks on the gap lock for at most one inner send.
+            // `inner` is held across the send (the transport needs
+            // `&mut`); `gap` is NOT (invariant 4) — it is taken once to
+            // mark the front message in flight, dropped for the duration
+            // of the send, and re-taken to settle. One inner send is
+            // unbounded against a peer that stops draining, so neither
+            // the producer's enqueue nor `stats()` may be queued behind
+            // it.
             let step = {
                 let Ok(mut transport_guard) = ctx.inner.lock() else {
                     // Inner lock poisoned mid-drain — same abnormal
@@ -366,64 +402,93 @@ pub(crate) fn worker_run<T: Transport>(ctx: WorkerCtx<T>) {
                     ctx.shared.gave_up.store(true, Ordering::Release);
                     return;
                 };
-                let mut gap = ctx
-                    .gap
-                    .lock()
-                    .expect("BUG: gap lock poisoned — gap buffer is invariant-critical");
-                if gap.front().is_none() {
-                    // Empty protocol: clear active while STILL holding the
-                    // gap lock — the send gate checks bg_active under this
-                    // same lock, so it can never enqueue into a
-                    // worker-less buffer (invariant 2). Mark the guard
-                    // skip-on-drop in this SAME critical section: from
-                    // this point on, bg_active belongs to whatever the
-                    // send gate does next (possibly a brand-new worker),
-                    // not to this one — see ActiveClearGuard's doc for
-                    // why an unconditional re-clear on Drop would clobber
-                    // that ownership handoff (Finding B).
-                    ctx.shared.bg_active.store(false, Ordering::Release);
-                    active_guard.skip.store(true, Ordering::Release);
-                    DrainStep::Empty
-                } else if let Some(transport) = transport_guard.as_mut() {
-                    let msg = gap.front().expect("checked non-empty above");
-                    match transport.send_bytes(msg) {
-                        Ok(()) => {
-                            gap.pop_front();
-                            DrainStep::Sent
-                        }
-                        Err(TransportError::Backpressure { .. }) => DrainStep::Backpressure,
-                        Err(TransportError::TooLarge { len, max }) => {
-                            // The rebuilt inner's ceiling shrank below a
-                            // queued message. With no caller to bounce it
-                            // to, keeping it would wedge the drain forever
-                            // — drop it, count it, keep going.
-                            if let Some(dropped) = gap.pop_front() {
-                                gap.bytes_dropped += dropped.len() as u64;
-                                gap.messages_dropped += 1;
+                let plan = {
+                    let mut gap = ctx
+                        .gap
+                        .lock()
+                        .expect("BUG: gap lock poisoned — gap buffer is invariant-critical");
+                    if gap.is_empty() {
+                        // Empty protocol: clear active while STILL holding
+                        // the gap lock — the send gate checks bg_active
+                        // under this same lock, so it can never enqueue
+                        // into a worker-less buffer (invariant 2). Mark the
+                        // guard skip-on-drop in this SAME critical section:
+                        // from this point on, bg_active belongs to whatever
+                        // the send gate does next (possibly a brand-new
+                        // worker), not to this one — see ActiveClearGuard's
+                        // doc for why an unconditional re-clear on Drop
+                        // would clobber that ownership handoff (Finding B).
+                        ctx.shared.bg_active.store(false, Ordering::Release);
+                        active_guard.skip.store(true, Ordering::Release);
+                        DrainPlan::Empty
+                    } else if transport_guard.is_some() {
+                        let (seq, msg) = gap.begin_send().expect("checked non-empty above");
+                        DrainPlan::Send { seq, msg }
+                    } else {
+                        // Inner vanished (only the worker clears it — belt
+                        // and braces for future refactors): treat as
+                        // broken. Nothing was marked in flight.
+                        DrainPlan::NoInner
+                    }
+                }; // gap lock dropped — never held across the send below
+                match plan {
+                    DrainPlan::Empty => DrainStep::Empty,
+                    DrainPlan::NoInner => DrainStep::Broken,
+                    DrainPlan::Send { seq, msg } => {
+                        let transport = transport_guard
+                            .as_mut()
+                            .expect("checked is_some above; only this worker clears it");
+                        let outcome = transport.send_bytes(&msg);
+                        // Re-take the gap lock ONLY to settle the entry.
+                        // The message is still at the front: eviction
+                        // skips an in-flight entry.
+                        let mut gap = ctx
+                            .gap
+                            .lock()
+                            .expect("BUG: gap lock poisoned — gap buffer is invariant-critical");
+                        match outcome {
+                            Ok(()) => {
+                                gap.finish_send(seq);
+                                DrainStep::Sent
                             }
-                            warn!(
-                                target: "tst_pipeline::reconnect",
-                                len,
-                                max,
-                                "dropping queued message larger than the reconnected transport's max_payload",
-                            );
-                            DrainStep::Sent
-                        }
-                        Err(_) => {
-                            // Broken / Closed / unknown-future — rebuild.
-                            // Front message stays queued for the retry.
-                            // Un-publish the dead inner's wake handle with
-                            // the inner it belongs to; the next successful
-                            // install republishes.
-                            *transport_guard = None;
-                            ctx.active.clear();
-                            DrainStep::Broken
+                            Err(TransportError::Backpressure { .. }) => {
+                                gap.abort_send(seq);
+                                DrainStep::Backpressure
+                            }
+                            Err(TransportError::TooLarge { len, max }) => {
+                                // The rebuilt inner's ceiling shrank below
+                                // a queued message. With no caller to
+                                // bounce it to, keeping it would wedge the
+                                // drain forever — drop it, count it, keep
+                                // going.
+                                if let Some(dropped) = gap.finish_send(seq) {
+                                    gap.bytes_dropped += dropped.len() as u64;
+                                    gap.messages_dropped += 1;
+                                }
+                                drop(gap);
+                                warn!(
+                                    target: "tst_pipeline::reconnect",
+                                    len,
+                                    max,
+                                    "dropping queued message larger than the reconnected transport's max_payload",
+                                );
+                                DrainStep::Sent
+                            }
+                            Err(_) => {
+                                // Broken / Closed / unknown-future —
+                                // rebuild. Front message stays queued for
+                                // the retry. Un-publish the dead inner's
+                                // wake handle with the inner it belongs
+                                // to; the next successful install
+                                // republishes.
+                                gap.abort_send(seq);
+                                drop(gap);
+                                *transport_guard = None;
+                                ctx.active.clear();
+                                DrainStep::Broken
+                            }
                         }
                     }
-                } else {
-                    // Inner vanished (only the worker clears it — belt and
-                    // braces for future refactors): treat as broken.
-                    DrainStep::Broken
                 }
             };
             match step {

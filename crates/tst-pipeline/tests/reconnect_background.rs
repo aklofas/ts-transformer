@@ -5,10 +5,10 @@
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
-use tst_core::transport::{BrokenCause, Transport, TransportError};
+use tst_core::transport::{BrokenCause, Transport, TransportCancel, TransportError};
 use tst_pipeline::{
     BackoffStrategy, ManagedTransport, OverflowPolicy, ReconnectMode, ReconnectPolicy,
 };
@@ -698,6 +698,317 @@ fn oversized_after_ceiling_shrink_drops_and_counts_instead_of_wedging() {
     let s = managed.stats_handle().stats().unwrap();
     assert_eq!(s.gap_messages_dropped, 1);
     assert_eq!(s.gap_bytes_dropped, 100);
+}
+
+// ---------------------------------------------------------------------
+// Parked-inner-send rig (post-Arc-1 review, finding "background drain
+// holds the gap lock across one inner send").
+//
+// A real sink can park a single `send_bytes` indefinitely: tst-tcp's
+// write loop keeps writing after partial progress until the peer drains
+// or a cancel lands, and SRT's default `send_timeout` is `None`. The
+// worker must therefore never hold the gap lock — nor make the producer
+// wait on the inner lock — across that one call.
+// ---------------------------------------------------------------------
+
+#[derive(Default)]
+struct GateState {
+    open: bool,
+    cancelled: bool,
+    /// How many sends have entered the gate (monotonic). Latch for
+    /// "the worker is now parked inside the inner send".
+    parked: u32,
+}
+
+/// Blocks a send until `release()` (deliver) or `cancel()` (fail).
+struct Gate {
+    state: Mutex<GateState>,
+    cv: Condvar,
+}
+
+impl Gate {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(GateState::default()),
+            cv: Condvar::new(),
+        }
+    }
+    /// Park until released or cancelled. `false` => cancelled.
+    fn park(&self) -> bool {
+        let mut st = self.state.lock().unwrap();
+        st.parked += 1;
+        while !st.open && !st.cancelled {
+            st = self.cv.wait(st).unwrap();
+        }
+        !st.cancelled
+    }
+    fn parked_count(&self) -> u32 {
+        self.state.lock().unwrap().parked
+    }
+    fn release(&self) {
+        self.state.lock().unwrap().open = true;
+        self.cv.notify_all();
+    }
+    fn cancel(&self) {
+        self.state.lock().unwrap().cancelled = true;
+        self.cv.notify_all();
+    }
+}
+
+struct GateCancel {
+    gate: Arc<Gate>,
+}
+impl TransportCancel for GateCancel {
+    fn cancel(&self) {
+        self.gate.cancel();
+    }
+}
+
+/// Transport whose `send_bytes` parks on a shared gate. The *initial*
+/// inner is built with `breaks: true` so the first producer send fails
+/// and the worker takes over; every factory-built replacement parks.
+struct GatedTransport {
+    gate: Arc<Gate>,
+    sent: Arc<Mutex<Vec<Vec<u8>>>>,
+    breaks: bool,
+    alive: bool,
+}
+
+impl Transport for GatedTransport {
+    fn send_bytes(&mut self, msg: &[u8]) -> Result<(), TransportError> {
+        if self.breaks {
+            self.alive = false;
+            return Err(TransportError::Broken {
+                msg: "initial break".into(),
+                errno_code: None,
+                cause: BrokenCause::Unspecified,
+            });
+        }
+        if !self.gate.park() {
+            self.alive = false;
+            return Err(TransportError::Broken {
+                msg: "cancelled while parked".into(),
+                errno_code: None,
+                cause: BrokenCause::Unspecified,
+            });
+        }
+        self.sent.lock().unwrap().push(msg.to_vec());
+        Ok(())
+    }
+    fn max_payload(&self) -> usize {
+        1316
+    }
+    fn is_alive(&self) -> bool {
+        self.alive
+    }
+    fn close(&mut self) {
+        self.alive = false;
+        self.gate.cancel();
+    }
+    fn cancel_handle(&self) -> Option<Arc<dyn TransportCancel + Send + Sync>> {
+        Some(Arc::new(GateCancel {
+            gate: Arc::clone(&self.gate),
+        }))
+    }
+}
+
+/// A `ManagedTransport` whose worker will park inside its first drain
+/// send, plus the shared gate and delivery log backing it.
+struct GatedRig {
+    managed: ManagedTransport<GatedTransport>,
+    gate: Arc<Gate>,
+    sent: Arc<Mutex<Vec<Vec<u8>>>>,
+}
+
+fn gated_rig(policy: ReconnectPolicy) -> GatedRig {
+    let gate = Arc::new(Gate::new());
+    let sent: Arc<Mutex<Vec<Vec<u8>>>> = Arc::new(Mutex::new(Vec::new()));
+    let gate_f = Arc::clone(&gate);
+    let sent_f = Arc::clone(&sent);
+    let factory = move || -> Result<GatedTransport, TransportError> {
+        Ok(GatedTransport {
+            gate: Arc::clone(&gate_f),
+            sent: Arc::clone(&sent_f),
+            breaks: false,
+            alive: true,
+        })
+    };
+    let initial = GatedTransport {
+        gate: Arc::clone(&gate),
+        sent: Arc::clone(&sent),
+        breaks: true,
+        alive: true,
+    };
+    let managed = ManagedTransport::new(initial, factory, policy);
+    GatedRig {
+        managed,
+        gate,
+        sent,
+    }
+}
+
+/// Post-Arc-1 review (High): the drain loop used to hold BOTH `inner` and
+/// `gap` across one inner `send_bytes`. Against a sink that stops
+/// draining, that one call is unbounded — so `stats()` (which needs
+/// `gap`) and the producer's `send_bytes` (which needed `inner` for its
+/// size pre-check) both stalled for as long as the peer sulked, making
+/// the documented Background contract ("send always enqueues") false.
+///
+/// Completion is proven by latch-and-poll — each call runs on its own
+/// helper thread and its result is `recv_timeout`-ed with a generous
+/// bound — never by asserting an elapsed duration.
+#[test]
+fn background_send_and_stats_do_not_wait_on_a_parked_inner_send() {
+    let policy = bg_policy(None, BackoffStrategy::Constant(Duration::from_millis(10)));
+    let GatedRig {
+        mut managed,
+        gate,
+        sent,
+    } = gated_rig(policy);
+    let stats = managed.stats_handle();
+
+    // msg 0 breaks the initial inner -> queued, worker spawned.
+    managed.send_bytes(&[0]).unwrap();
+    // The worker reconnects into a parking transport and parks inside the
+    // drain send of msg 0, holding `inner` (and, pre-fix, `gap` too).
+    wait_until(Duration::from_secs(10), || gate.parked_count() >= 1);
+
+    let (stats_tx, stats_rx) = mpsc::channel();
+    let stats_observer = stats.clone();
+    let h_stats = std::thread::spawn(move || {
+        let _ = stats_tx.send(stats_observer.stats());
+    });
+
+    let (send_tx, send_rx) = mpsc::channel();
+    let h_send = std::thread::spawn(move || {
+        let r = managed.send_bytes(&[1]);
+        let _ = send_tx.send(r);
+        managed // hand it back so the test owns the Drop
+    });
+
+    let stats_res = stats_rx.recv_timeout(Duration::from_secs(5));
+    let send_res = send_rx.recv_timeout(Duration::from_secs(5));
+
+    // Release BEFORE asserting so a failing run unwinds cleanly instead
+    // of leaving the helper threads parked.
+    gate.release();
+    let managed = h_send.join().expect("producer thread joined");
+    h_stats.join().expect("stats thread joined");
+
+    let snapshot = stats_res
+        .expect("stats() must complete while the worker is parked in an inner send")
+        .expect("gap lock not poisoned");
+    assert!(
+        snapshot.reconnecting,
+        "worker owns the outage while parked: {snapshot:?}"
+    );
+    assert!(
+        snapshot.gap_len >= 1,
+        "the in-flight message is still queued until it is acknowledged: {snapshot:?}"
+    );
+    send_res
+        .expect("send_bytes() must complete while the worker is parked in an inner send")
+        .expect("background mode accepts into the gap buffer");
+
+    wait_until(Duration::from_secs(10), || sent.lock().unwrap().len() == 2);
+    assert_eq!(
+        *sent.lock().unwrap(),
+        vec![vec![0], vec![1]],
+        "both messages delivered, in order, exactly once"
+    );
+    drop(managed);
+}
+
+/// The in-flight message is pinned by the gap buffer's own `in_flight`
+/// mark rather than by holding the lock, so a `DropOldest` eviction that
+/// lands while the worker is parked must skip it: the worker already
+/// handed those bytes to the transport and still has to pop exactly that
+/// entry when the send returns.
+#[test]
+fn drop_oldest_eviction_skips_the_in_flight_message() {
+    let mut policy = bg_policy(None, BackoffStrategy::Constant(Duration::from_millis(10)));
+    policy.gap_buffer_capacity = 1; // bg_policy already selects DropOldest
+    let GatedRig {
+        mut managed,
+        gate,
+        sent,
+    } = gated_rig(policy);
+    let stats = managed.stats_handle();
+
+    managed.send_bytes(b"A").unwrap(); // breaks the initial inner -> gap: [A]
+    wait_until(Duration::from_secs(10), || gate.parked_count() >= 1);
+
+    // The buffer is AT capacity, but its only entry is the message the
+    // worker is currently sending: enqueueing B must push past capacity
+    // (transient cap+1) rather than evict A out from under the worker.
+    let (tx, rx) = mpsc::channel();
+    let h = std::thread::spawn(move || {
+        let r = managed.send_bytes(b"B");
+        let _ = tx.send(r);
+        managed
+    });
+    let send_res = rx.recv_timeout(Duration::from_secs(5));
+    gate.release();
+    let managed = h.join().expect("producer thread joined");
+
+    send_res
+        .expect("send_bytes() must complete while the worker is parked in an inner send")
+        .expect("background mode accepts into the gap buffer");
+    wait_until(Duration::from_secs(10), || sent.lock().unwrap().len() == 2);
+    assert_eq!(
+        *sent.lock().unwrap(),
+        vec![b"A".to_vec(), b"B".to_vec()],
+        "the in-flight message is delivered, then its follower, in order"
+    );
+    assert_eq!(
+        stats.stats().unwrap().gap_messages_dropped,
+        0,
+        "the in-flight front must never be the eviction victim"
+    );
+    drop(managed);
+}
+
+/// `send_bytes`'s size pre-check reads a published ceiling instead of
+/// locking `inner` (so it can't be queued behind the worker's in-flight
+/// send). This pins both write sites: construction, and every successful
+/// install. A rebuild that RAISES the ceiling is the discriminating case
+/// — if the install site forgot to republish, the stale construction
+/// value would reject a message the live transport happily carries.
+#[test]
+fn size_pre_check_follows_the_published_ceiling_across_a_rebuild() {
+    let rig = Rig::new();
+    let policy = bg_policy(None, BackoffStrategy::Constant(Duration::from_millis(10)));
+    let mut managed = ManagedTransport::new(
+        rig.transport_with_payload(8),
+        rig.factory_with_payload(0, 100),
+        policy,
+    );
+    let stats = managed.stats_handle();
+
+    match managed.send_bytes(&[0u8; 9]).unwrap_err() {
+        TransportError::TooLarge { len, max } => assert_eq!(
+            (len, max),
+            (9, 8),
+            "the construction ceiling gates the pre-check"
+        ),
+        other => panic!("expected TooLarge, got {other:?}"),
+    }
+
+    rig.push_outcome(SendOutcome::Broken);
+    managed.send_bytes(&[1]).unwrap(); // break -> queued, worker rebuilds at 100
+    wait_until(Duration::from_secs(10), || {
+        let s = stats.stats().unwrap();
+        s.reconnect_successes >= 1 && !s.reconnecting && s.gap_len == 0
+    });
+
+    managed
+        .send_bytes(&[7u8; 50])
+        .expect("the rebuilt transport's 100-byte ceiling is published, so 50 bytes pass");
+    assert_eq!(
+        rig.sent_snapshot(),
+        vec![vec![1], vec![7u8; 50]],
+        "both messages delivered, in order"
+    );
 }
 
 #[test]
