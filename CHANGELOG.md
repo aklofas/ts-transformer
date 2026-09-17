@@ -1016,7 +1016,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   it a leaked thread parked in `srt_accept` held the port and stalled
   process exit (`srt_cleanup` at exit), red-first proven: both new tests in
   `loopback/accept_handle.rs` hit the 20 s kill against the old fixture and
-  pass in 1–2 s against the new one. Test-only; no library code changed.
+  pass in 1–2 s against the new one. The drop-guard test is also the first
+  to keep a process alive across libsrt's GC pass after a cross-thread
+  listener close, which let the tsan-native job see a libsrt-internal race
+  (`CUDTUnited::accept` reading the closed listener's config on its exit
+  path vs the GC's `removeSocket` free — an upstream-report candidate);
+  suppressed by that one function name in `.sanitizer-suppressions/tsan.txt`,
+  dated and re-test-on-bump like the librist entries. Test-only; no library
+  code changed.
 - **Tooling: `tst-interop` sender-side corruption tap.** `tst-interop send
   --corrupt rate=PER_10K[,min_gap=PKTS][,classes=a+b+c] --corruption-log
   PATH [--seed N]` wraps the sender's transport in a seeded tap that damages
