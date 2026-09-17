@@ -23,9 +23,9 @@ use tst_core::mpegts::demux::{
     VideoCodec as DemuxVideoCodec,
 };
 
-use crate::corrupt::{self, Injection, LogHeader};
+use crate::corrupt::{self, AttributionReport, Injection, LogHeader};
 use crate::fixtures::{self, KlvSet};
-use crate::oracles;
+use crate::oracles::{self, Explained};
 use crate::profiles::{self, Profile};
 use crate::rawts::{self, WireSummary};
 use crate::report_types::{CellMetrics, KlvRichMetrics, VerifyReport};
@@ -254,6 +254,13 @@ pub struct Tally {
     stream_hasher: Sha256,
     discontinuities: u64,
     nonconformant: u64,
+    /// The same two counts, split by the PID each event named. The
+    /// wire-vs-demux floor is per PID, and so is the allowance it
+    /// subtracts — see [`oracles::Explained`]. Bounded by the PID count
+    /// of the multiplex, not by the run's length, so a multi-day soak
+    /// accumulates nothing here.
+    discontinuities_by_pid: BTreeMap<u16, u64>,
+    nonconformant_by_pid: BTreeMap<u16, u64>,
     /// `Debug`-formatted `DiscontinuityKind` of the first `Discontinuity`
     /// event fed, if any.
     first_discontinuity: Option<String>,
@@ -321,6 +328,8 @@ impl Tally {
             stream_hasher: Sha256::new(),
             discontinuities: 0,
             nonconformant: 0,
+            discontinuities_by_pid: BTreeMap::new(),
+            nonconformant_by_pid: BTreeMap::new(),
             first_discontinuity: None,
             first_nonconformant: None,
             attribution: None,
@@ -459,13 +468,15 @@ impl Tally {
                     self.judge_rich(payload, damaged);
                 }
             }
-            DemuxEvent::Discontinuity { kind, .. } => {
+            DemuxEvent::Discontinuity { stream, kind } => {
                 self.discontinuities += 1;
+                *self.discontinuities_by_pid.entry(stream.pid).or_insert(0) += 1;
                 self.first_discontinuity
                     .get_or_insert_with(|| format!("{kind:?}"));
             }
-            DemuxEvent::NonConformant { issue, .. } => {
+            DemuxEvent::NonConformant { stream, issue } => {
                 self.nonconformant += 1;
+                *self.nonconformant_by_pid.entry(stream.pid).or_insert(0) += 1;
                 self.first_nonconformant
                     .get_or_insert_with(|| issue.to_string());
             }
@@ -748,6 +759,45 @@ impl Tally {
         self.stream_hasher.update(chunk);
     }
 
+    /// What the wire-vs-demux oracle may subtract from each PID's floor
+    /// — see [`oracles::Explained`] for why the answer is per PID and
+    /// `oracles::wire_vs_demux` for what the term means.
+    ///
+    /// Under `Strict` (offline `verify`, `recv --strict` on a transparent
+    /// cell) only the corruption log speaks: the capture's own
+    /// discontinuity/non-conformance events are failures in their own
+    /// right there, not an excuse for a missing access unit.
+    ///
+    /// Under `Lossy` those events join in — each is a PES the demuxer
+    /// legitimately abandoned — and they are the WHOLE per-PID term.
+    /// Adding the attribution's per-PID counts on top would count every
+    /// attributed event twice: `feed_at` routes each error-class event to
+    /// the attribution and then tallies that same event here, so an
+    /// attributed jump is already in `discontinuities_by_pid`.
+    ///
+    /// A resync is the one signal that belongs to no PID (the raw reader
+    /// lost packet sync for the whole multiplex), and it is not a
+    /// `DemuxEvent` either — so it reaches this only through the
+    /// attribution, in both tiers.
+    fn explained(&self, mode: VerifyMode, attribution: Option<&AttributionReport>) -> Explained {
+        let by_pid = match mode {
+            VerifyMode::Strict => attribution
+                .map(|rep| rep.attributed_events_by_pid.clone())
+                .unwrap_or_default(),
+            VerifyMode::Lossy => {
+                let mut m = self.discontinuities_by_pid.clone();
+                for (&pid, &n) in &self.nonconformant_by_pid {
+                    *m.entry(pid).or_insert(0) += n;
+                }
+                m
+            }
+        };
+        Explained {
+            by_pid,
+            multiplex_wide: attribution.map_or(0, |rep| rep.attributed_events_unpinned),
+        }
+    }
+
     /// Check the tally against `p`'s invariants for a `seconds`-long
     /// capture, requiring at least `slack` (e.g. `0.7` = 70%) of each
     /// nominal per-second count. `mode` governs whether a `Discontinuity`
@@ -851,18 +901,7 @@ impl Tally {
                     ));
                 }
             });
-        // What the wire-vs-demux oracle may subtract — see
-        // `oracles::wire_vs_demux`. `attributed_events` (receiver signals
-        // the attribution explained) in both tiers; the capture's own
-        // discontinuity/non-conformance tallies only under Lossy, where
-        // each is a PES the demuxer legitimately abandoned. Under Strict
-        // those events are failures in their own right (below), not an
-        // excuse for a missing access unit.
-        let explained = attribution.as_ref().map_or(0, |rep| rep.attributed_events)
-            + match mode {
-                VerifyMode::Strict => 0,
-                VerifyMode::Lossy => self.discontinuities + self.nonconformant,
-            };
+        let explained = self.explained(mode, attribution.as_ref());
         let slack = match &attribution {
             Some(rep) => slack * (1.0 - rep.injected_fraction),
             None => slack,
@@ -1046,7 +1085,7 @@ impl Tally {
             seconds,
             slack,
             mode,
-            explained,
+            &explained,
         ));
 
         // A compact capture has no presence schedule to judge, so it
@@ -1590,6 +1629,23 @@ mod tests {
             kind: DiscontinuityKind::ContinuityJump {
                 expected: 3,
                 observed: 5,
+            },
+        }
+    }
+
+    /// A malformed-PES non-conformance on the KLV PID — the
+    /// `Signal::MalformedPes` family, so unlike a continuity jump it is
+    /// never written off as transport loss.
+    fn klv_nonconformant_event() -> DemuxEvent {
+        DemuxEvent::NonConformant {
+            stream: StreamId {
+                pid: KLV_PID,
+                kind: StreamKind::KlvAsync,
+                program_number: PROGRAM,
+            },
+            issue: NonConformantIssue::MalformedPes {
+                pid: KLV_PID,
+                reason: "PES packet length overruns the payload",
             },
         }
     }
@@ -2672,5 +2728,67 @@ mod tests {
         assert_eq!(report.metrics.klv_records, 20);
         assert_eq!(report.metrics.bytes, ts_bytes.len() as u64);
         assert!(!report.metrics.stream_sha256.is_empty());
+    }
+
+    /// The wire-vs-demux loss allowance is keyed to the PID the event
+    /// happened on, and an attributed event widens that PID's floor
+    /// exactly ONCE.
+    ///
+    /// Both halves were wrong together. The allowance was a single
+    /// capture-wide number, so a video event excused a missing KLV
+    /// record; and under `Lossy` an attributed event was added twice —
+    /// once as `attributed_events` and again through the
+    /// discontinuity/non-conformance tally, which is fed from the same
+    /// events (`feed_at` routes each one to the attribution and then
+    /// tallies it). One attributed video jump plus one unattributed KLV
+    /// non-conformance therefore bought EVERY PID an allowance of three.
+    #[test]
+    fn the_loss_allowance_is_per_pid_and_counts_an_attributed_event_once() {
+        use crate::corrupt::Class;
+        let hdr = corruption_header();
+        // Logged damage to the VIDEO PID, and nothing else.
+        let inj = injection_at(Class::Header, VIDEO_PID, 3);
+
+        let mut t = Tally::new();
+        t.attach_attribution(attribution_for(VerifyMode::Lossy, vec![inj], &hdr));
+        // Attributed: inside that injection's window, on the PID it damaged.
+        t.feed_at(&discontinuity_event(), 10);
+        // Unattributed, and on a PID no injection ever touched.
+        t.feed_at(&klv_nonconformant_event(), 9_000);
+
+        let rep = t
+            .attribution
+            .take()
+            .expect("attached just above")
+            .finish(10_000);
+        assert_eq!(rep.attributed_events, 1, "{rep:?}");
+        assert_eq!(t.discontinuities, 1);
+        assert_eq!(t.nonconformant, 1);
+
+        // Lossy: each PID is owed exactly the one event it saw. The
+        // attributed video jump is ALREADY in the discontinuity tally, so
+        // adding `attributed_events` on top would count it twice.
+        let lossy = t.explained(VerifyMode::Lossy, Some(&rep));
+        assert_eq!(lossy.for_pid(VIDEO_PID), 1, "{lossy:?}");
+        assert_eq!(lossy.for_pid(KLV_PID), 1, "{lossy:?}");
+        assert_eq!(
+            lossy.multiplex_wide, 0,
+            "neither event is a resync, so nothing is multiplex-wide: {lossy:?}"
+        );
+
+        // Strict: only what the corruption log explains counts at all —
+        // the capture's own events are failures in their own right there,
+        // so the untouched KLV PID is owed nothing.
+        let strict = t.explained(VerifyMode::Strict, Some(&rep));
+        assert_eq!(strict.for_pid(VIDEO_PID), 1, "{strict:?}");
+        assert_eq!(strict.for_pid(KLV_PID), 0, "{strict:?}");
+
+        // With no corruption log at all, only the capture's own events
+        // count — and only under `Lossy`.
+        let none_strict = t.explained(VerifyMode::Strict, None);
+        assert_eq!(none_strict, Explained::default(), "{none_strict:?}");
+        let none_lossy = t.explained(VerifyMode::Lossy, None);
+        assert_eq!(none_lossy.for_pid(VIDEO_PID), 1, "{none_lossy:?}");
+        assert_eq!(none_lossy.for_pid(KLV_PID), 1, "{none_lossy:?}");
     }
 }

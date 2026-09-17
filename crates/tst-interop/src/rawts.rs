@@ -1108,8 +1108,26 @@ mod tests {
                 crate::verify::VerifyMode::Lossy,
             ] {
                 assert_eq!(
-                    crate::oracles::check(p, &inv, &full, &per_program, 7.0, 0.7, mode, 0),
-                    crate::oracles::check(p, &inv, &bounded, &per_program, 7.0, 0.7, mode, 0),
+                    crate::oracles::check(
+                        p,
+                        &inv,
+                        &full,
+                        &per_program,
+                        7.0,
+                        0.7,
+                        mode,
+                        &crate::oracles::Explained::default(),
+                    ),
+                    crate::oracles::check(
+                        p,
+                        &inv,
+                        &bounded,
+                        &per_program,
+                        7.0,
+                        0.7,
+                        mode,
+                        &crate::oracles::Explained::default(),
+                    ),
                     "{profile} in {mode:?}"
                 );
             }

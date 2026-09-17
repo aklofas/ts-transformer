@@ -1355,6 +1355,22 @@ pub struct AttributionReport {
     /// Attributed events whose signal was a discontinuity
     /// (`ContinuityJump` / `OtherDiscontinuity`).
     pub attributed_discontinuities: u64,
+    /// [`attributed_events`](Self::attributed_events) split by the PID
+    /// the signal surfaced on. A verifier widening a per-PID floor by
+    /// what the capture explains needs the split, not the total: seven
+    /// explained video events say nothing about a KLV PID (see
+    /// `oracles::Explained`).
+    ///
+    /// `#[serde(default)]` so an archived pre-split report still parses.
+    #[serde(default)]
+    pub attributed_events_by_pid: BTreeMap<u16, u64>,
+    /// Attributed events no PID owns — the `Resync` signals, which
+    /// `on_signal` receives with `pid: None` because sync was lost for
+    /// the whole multiplex rather than for one stream in it. This and the
+    /// values of `attributed_events_by_pid` together sum to
+    /// `attributed_events`.
+    #[serde(default)]
+    pub attributed_events_unpinned: u64,
     /// Sample of events no injection explains and no transport-loss
     /// excusal covers — capped at [`MAX_SAMPLES`]. The true count is
     /// [`unexplained_total`](Self::unexplained_total); never judge a run
@@ -1612,6 +1628,12 @@ pub struct Attribution {
     attributed_events: u64,
     attributed_nonconformant: u64,
     attributed_discontinuities: u64,
+    /// `attributed_events` split by the PID the signal surfaced on, and
+    /// the tail of them that names no PID (a resync) — see the two
+    /// fields of the same names on [`AttributionReport`]. Bounded by the
+    /// PID count of the multiplex, not by the run's length.
+    attributed_events_by_pid: BTreeMap<u16, u64>,
+    attributed_events_unpinned: u64,
     resyncs: u64,
     /// Injections ever added, across `new` and every `append` — `inj.len()`
     /// no longer answers this once pruning starts.
@@ -1803,6 +1825,8 @@ impl Attribution {
             attributed_events: 0,
             attributed_nonconformant: 0,
             attributed_discontinuities: 0,
+            attributed_events_by_pid: BTreeMap::new(),
+            attributed_events_unpinned: 0,
             resyncs: 0,
             detectable: 0,
             resolved: 0,
@@ -2311,6 +2335,14 @@ impl Attribution {
         match attributed_to {
             Some(i) => {
                 self.attributed_events += 1;
+                // …and the same event again, keyed to the PID it
+                // surfaced on, so a verifier can widen THAT PID's floor
+                // and no other. A resync names no PID (sync was lost for
+                // the whole multiplex) and lands in the unpinned tail.
+                match pid {
+                    Some(p) => *self.attributed_events_by_pid.entry(p).or_insert(0) += 1,
+                    None => self.attributed_events_unpinned += 1,
+                }
                 match sig {
                     Signal::PsiChecksum | Signal::MalformedPes | Signal::OtherNonConformant => {
                         self.attributed_nonconformant += 1;
@@ -2429,6 +2461,8 @@ impl Attribution {
             attributed_events: self.attributed_events,
             attributed_nonconformant: self.attributed_nonconformant,
             attributed_discontinuities: self.attributed_discontinuities,
+            attributed_events_by_pid: self.attributed_events_by_pid,
+            attributed_events_unpinned: self.attributed_events_unpinned,
             unexplained_events: self.unexplained_samples,
             unexplained_resyncs: self.unexplained_resyncs,
             unexplained_discontinuities: self.unexplained_discontinuities,

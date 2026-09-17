@@ -197,6 +197,52 @@ fn overrun_pes_header_len_on_every_nth(bytes: &[u8], pid: u16, nth: usize) -> Ve
     out
 }
 
+/// Damage the SMPTE 336M Universal Label (`06 0E 2B 34 …`) that opens the
+/// KLV record in every `nth` PES on `pid`, by overwriting its first byte.
+///
+/// This is the SILENT loss the wire-vs-demux oracle exists for. tst-core's
+/// `classify_klv` recognizes neither an AU cell (the 5-byte header's
+/// length field, untouched here, still overruns the payload) nor a bare
+/// UL, so the record comes back as `KlvShape::Other`: the demuxer emits a
+/// `SamplePayload::Unknown` sample — which is not a KLV record and not an
+/// error — and NO `Metadata`, `Discontinuity` or `NonConformant` event.
+/// The packet, and its PES start, stay on the wire for the raw reader.
+fn damage_klv_ul_on_every_nth(bytes: &[u8], pid: u16, nth: usize) -> Vec<u8> {
+    let mut out = bytes.to_vec();
+    let mut seen = 0;
+    for chunk in out.chunks_exact_mut(PKT) {
+        if pid_of(chunk) != pid {
+            continue;
+        }
+        if let Some(off) = pes_payload_start(chunk) {
+            seen += 1;
+            if seen % nth == 0 {
+                let d = off + 9 + usize::from(chunk[off + 8]);
+                if d < PKT {
+                    chunk[d] = 0xFF;
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Drop every `nth` packet on `pid` — one continuity jump apiece.
+fn drop_every_nth_packet_on_pid(bytes: &[u8], pid: u16, nth: usize) -> Vec<u8> {
+    let mut seen = 0;
+    let mut out = Vec::with_capacity(bytes.len());
+    for p in packets(bytes) {
+        if pid_of(p) == pid {
+            seen += 1;
+            if seen % nth == 0 {
+                continue;
+            }
+        }
+        out.extend_from_slice(p);
+    }
+    out
+}
+
 const SECONDS: f64 = 3.0;
 const ROLLOVER_SECONDS: f64 = 7.0;
 const PROG1_PMT: u16 = 0x1000;
@@ -461,4 +507,65 @@ fn every_fourth_klv_record_lost_in_the_demuxer_fails_wire_vs_demux() {
         r.failures
     );
     assert_fails_with(&r, &format!("wire_vs_demux_{PROG1_KLV}"));
+}
+
+/// The loss allowance is per PID: events explained on the VIDEO PID must
+/// not excuse records the KLV PID lost in silence.
+///
+/// One capture, two unrelated damages, which is the shape a real impaired
+/// run produces routinely:
+///
+/// - the video PID drops nine packets and says so — eight continuity
+///   jumps, which `Lossy` legitimately counts as explained (the ninth
+///   drop is the capture's last video packet, with no successor left to
+///   show the gap);
+/// - the KLV PID loses seven of thirty records with NO event at all.
+///
+/// A capture-wide allowance subtracted the video PID's eight from the KLV
+/// PID's floor (30 - 8 - 2 = 20 <= 23) and the whole capture passed. The
+/// per-PID allowance leaves the KLV floor at 28 and names the loss.
+#[test]
+fn video_pid_explanations_do_not_excuse_silent_klv_loss() {
+    let p = profiles::by_name("baseline").unwrap();
+    let path = gen_to_temp(p, SECONDS, "per-pid-allowance");
+    let bytes = std::fs::read(&path).unwrap();
+    let _ = std::fs::remove_file(&path);
+    let mutated = damage_klv_ul_on_every_nth(&bytes, PROG1_KLV, 4);
+    // Every 10th video packet — and `baseline` carries a PCR on every
+    // ODD video packet, so every dropped one (10, 20, … 90) is PCR-free
+    // and the PCR oracle sees an untouched cadence.
+    let mutated = drop_every_nth_packet_on_pid(&mutated, PROG1_VIDEO, 10);
+    let r = tst_interop::verify::verify_bytes_with_mode(
+        &mutated,
+        p,
+        SECONDS,
+        tst_interop::verify::VerifyMode::Lossy,
+    );
+
+    // The two damages, as the demuxer saw them.
+    assert_eq!(r.metrics.klv_records, 23, "{:?}", r.failures);
+    assert_eq!(r.metrics.video_aus, 81, "{:?}", r.failures);
+    assert_eq!(r.metrics.discontinuities, 8, "{:?}", r.failures);
+    assert_eq!(
+        r.metrics.nonconformant, 0,
+        "the KLV loss must be SILENT — an event would excuse it honestly: {:?}",
+        r.failures
+    );
+    // 23 of 30 clears the 70 % floor (21), so the count check says nothing.
+    assert!(
+        !r.failures.iter().any(|f| f.starts_with("KLV records:")),
+        "{:?}",
+        r.failures
+    );
+
+    assert_fails_with(&r, &format!("wire_vs_demux_{PROG1_KLV}"));
+    // …and the video PID, whose loss its own events DO explain, is not
+    // dragged down with it.
+    assert!(
+        !r.failures
+            .iter()
+            .any(|f| f.starts_with(&format!("wire_vs_demux_{PROG1_VIDEO}"))),
+        "{:?}",
+        r.failures
+    );
 }
