@@ -72,7 +72,11 @@ it. It does not extend to the liveness/socket-stats queries those
 shells forward: `socket_stats()` always asks the inner transport, so it
 waits for an in-flight inner send to return; `is_alive()` answers
 `true` straight from the reconnect flag while a worker is active (so it
-does not wait during an outage) but consults the inner otherwise. For
+does not wait during an outage) but consults the inner otherwise.
+`MuxSender` guards its muxer and transport with one mutex, so on that
+shell a concurrent send on another thread queues behind a
+`socket_stats()` call that is itself waiting on an in-flight inner
+send. For
 monitoring, poll `stats_handle().stats()` — its `reconnecting` /
 `gap_len` / drop counters are what you want anyway:
 

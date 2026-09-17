@@ -391,7 +391,10 @@ guarantee. The liveness/socket-stats queries those shells forward do
 not: `socket_stats()` always asks the inner transport and so waits for
 an in-flight inner send to return, while `is_alive()` answers from the
 reconnect flag whenever a worker is active and consults the inner only
-otherwise. Use the stats handle for outage monitoring.
+otherwise. On `MuxSender` that spills over onto sends: it guards its
+muxer and transport with a single mutex, so a send on one thread queues
+behind a `socket_stats()` call another thread already has in flight.
+Use the stats handle for outage monitoring.
 This is still a synchronous API, not an async
 runtime; see the
 [cookbook recipe](/docs/cookbook/operations/managed-transport-reconnect.md#background-mode-never-stall-the-producer)
