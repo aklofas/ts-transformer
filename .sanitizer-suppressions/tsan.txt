@@ -73,3 +73,23 @@ race:evsocket_destroy
 race:evsocket_loop_single
 race:rist_sender_enqueue
 race:rist_sender_flow_statistics
+
+# 2026-09-16 — libsrt-internal race on the listener-closed exit of
+# srt_accept (PR #233 tsan-native, run 35175171152). After a cross-thread
+# srt_close() wakes a parked accept — the sanctioned Listener::cancel_handle()
+# wake — CUDTUnited::accept reads the listener's config through its raw
+# CUDTSocket* (api.cpp:1310, `ls->core().m_config.bSynRecving` on the
+# "listener socket is closed" path) with no lock, while the GC thread's
+# checkBrokenSockets() -> removeSocket() (api.cpp:3100) frees that socket
+# under m_GlobControlLock. Both racing frames are inside libsrt 1.5.7;
+# the tst-srt frames are only the srt_accept caller. Exposed for the first
+# time by tst-srt::loopback accept_handle::drop_guard_wakes_parked_accept_on_unwind,
+# which cancels a parked listener from another thread and then WAITS for
+# the GC pass to release the port — every earlier cross-thread-cancel test
+# exits before the GC free lands, so TSan never saw the pair. Upstream-report
+# candidate (a libsrt UAF window, not a tst-srt bug). Scoped to the ONE
+# libsrt function at the racing read, NOT race:srt* — srt_* FFI frames ride
+# genuine app-race stacks and must stay unsuppressed.
+# Remove/re-test: on any libsrt bump — delete the entry, dispatch
+# tsan-native, re-add only if it re-fires.
+race:srt::CUDTUnited::accept
