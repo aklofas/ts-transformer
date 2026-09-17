@@ -999,6 +999,24 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   busy loops). Workloads are unchanged in kind; sizes were rescaled to the
   true in-Rust time now that it is measured (the old wall-clock numbers
   counted Python-side draining).
+- **tst-srt loopback test peers cannot park forever in `accept()`.** The
+  two remaining SRT test peers built on a plain blocking `accept()` — the
+  shared `Loopback::spawn_accept` fixture behind ~30 tst-srt tests and the
+  hand-rolled IPv6 round-trip thread — now carry the listener's cancel
+  handle, obtained before the listener moves into the peer thread, the same
+  shape PR #231 gave tst-c's managed demux receiver test. The class: libsrt's
+  GC pass (`CUDTUnited::checkBrokenSockets`) prunes a connection that breaks
+  while still queued on the listener's accept queue, so a test that closes
+  its caller socket right after `connect` returns can leave the peer's
+  `accept()` with nothing to dequeue, forever. `AcceptHandle::join` now
+  bounds the accept phase (10 s, under nextest's 20 s network-group kill),
+  fires the cancel on expiry and panics naming the class instead of hanging;
+  the closure phase after a successful accept stays unbounded. A drop guard
+  fires the cancel and joins when a test unwinds before its join — without
+  it a leaked thread parked in `srt_accept` held the port and stalled
+  process exit (`srt_cleanup` at exit), red-first proven: both new tests in
+  `loopback/accept_handle.rs` hit the 20 s kill against the old fixture and
+  pass in 1–2 s against the new one. Test-only; no library code changed.
 - **Tooling: `tst-interop` sender-side corruption tap.** `tst-interop send
   --corrupt rate=PER_10K[,min_gap=PKTS][,classes=a+b+c] --corruption-log
   PATH [--seed N]` wraps the sender's transport in a seeded tap that damages
