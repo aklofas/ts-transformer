@@ -10,57 +10,71 @@ breakeven point (~50us), and wrapping produces lock-contention
 pathology under hot batch loops. See `klv.rs` decision comments and
 `reference_pyo3_allow_threads_pattern.md` for the empirical analysis.
 
-## Technique
+## Technique — a structural probe, not a throughput ratio
 
-Each test runs a workload that calls into Rust while a background
-"worker" Python thread runs a pure-Python tight loop (incrementing a
-counter). Pure-Python bytecode execution requires the GIL on every
-iteration.
+Each test runs its workload through `_GilProbe.call`, which brackets
+every Rust call with `perf_counter()` stamps `(t0, t1)`, while ONE
+background "probe" thread waits to execute a single line of Python
+bytecode and records WHEN it managed to. The assertion is simply:
 
-We measure:
+    the probe's stamp lies strictly inside one of the call windows.
 
-1. The worker's solo throughput (no Rust workload) — establishes a
-   baseline for "what 100% CPU access looks like" on this machine.
-2. The worker's throughput during the Rust workload.
+Why that is a proof and not a measurement:
 
-Then we assert: worker throughput during workload ≥ THRESHOLD × solo.
+* Executing bytecode needs the GIL. While the main thread is inside a
+  C call that did NOT release the GIL, no other thread can execute a
+  single bytecode until the call returns — the interpreter's
+  switch-interval check never runs inside a C call.
+* The GIL can still change hands *between* bytecodes on the main
+  thread (the stamps and the call itself are a handful of bytecodes
+  apart), but only when a waiting thread has requested it, and a
+  waiting thread only requests it after `sys.getswitchinterval()`
+  seconds of waiting. The probe context sets the switch interval to
+  `_PINNED_SWITCH_INTERVAL_S` (one hour) for the duration of the
+  workload, so that request can never fire. From then on the ONLY way
+  the main thread gives up the GIL is voluntarily — i.e. exactly the
+  `allow_threads` calls under test (nothing else in the window blocks,
+  sleeps or does I/O).
+* Therefore, without `allow_threads`, the probe cannot run before the
+  main thread finishes the whole workload and blocks in `join()` —
+  its stamp lands after the last `t1` and the test fails
+  deterministically. With `allow_threads`, the GIL is free for the
+  whole duration of every Rust call and the probe's stamp lands inside
+  the first call during which the OS scheduled it.
 
-## Empirical baseline (on a dev box)
+There is no throughput ratio, no "≥ N iterations" and no wall-clock
+duration assertion (beyond the setup-sanity guard below). Host load
+cannot produce a false failure unless the OS starves the probe thread
+for the ENTIRE combined duration of the workload's Rust calls, which is
+why every workload is sized to spend well over `_MIN_WORKLOAD_MS`
+inside Rust — the longer the window, the more robust the proof. The
+earlier ratio form (probe iterations during the workload / solo
+iterations ≥ 60 %) flaked twice in CI under host load
+(`push_video_to_with_dts` on 2026-09-14, the AAC iterator on
+2026-09-15) because a starved probe thread simply iterates less; the
+structural form only asks whether it ran at all.
 
-Without GIL release, the worker still gets some progress because
-Python's `sys.setswitchinterval` (default 5ms) periodically yields
-the GIL — and many small Rust calls return to Python frequently
-enough that switchinterval is effective.
-
-The real discriminator is a SINGLE long Rust call. Without
-`allow_threads`, the worker gets ZERO iterations during the call.
-With `allow_threads`, the worker runs concurrently for the full
-duration.
-
-Measured ratios (worker-during-workload / worker-solo):
-
-| Workload | Without `allow_threads` | With `allow_threads` |
-|---|---|---|
-| push_video (30 MB NAL, one call) | ~25% | ~100% |
-| iter_aac (500 MB buf, one call) | ~10% | ~85% |
-| iter_mp2 (500 MB buf, one call) | ~12% | ~85% |
-
-We set the threshold at 60% — comfortably above the worst baseline
-(~25%) and below the post-fix floor (~80%). This catches regressions
-without flaking under CI host load.
+The probe stamps exactly once and then blocks on an `Event` (which
+releases the GIL) so that it never competes with the main thread for
+the GIL after the call returns; with the switch interval pinned, a
+spinning probe would otherwise stall the main thread's re-acquire for
+the whole interval.
 
 ## Workload sizing
 
-Each workload is sized to run ≥50ms wall-clock. Under 50ms the
-worker thread doesn't accumulate enough iterations to be statistically
-meaningful — the test asserts its own setup is broken in that case
-(pointing at the input-size constant to scale up).
+Each workload is sized to spend ≥ `_MIN_WORKLOAD_MS` wall-clock inside
+Rust calls. A much shorter workload would still be a valid proof, but
+it leaves the OS less time to schedule the probe thread on a loaded
+host — the test asserts its own setup is broken in that case (pointing
+at the input-size constant to scale up).
 """
 
 from __future__ import annotations
 
+import sys
 import threading
-import time
+from time import perf_counter
+from typing import Any, Callable, TypeVar
 
 import pytest
 
@@ -76,91 +90,106 @@ from tstrans.mpegts import (
     WebVttInTsConfig,
 )
 
+_R = TypeVar("_R")
+
 
 # ---------------------------------------------------------------------------
-# Pure-Python concurrency probe
+# Structural GIL-release probe
 # ---------------------------------------------------------------------------
 
 
-_MIN_WORKLOAD_MS = 50.0
-_GIL_RELEASED_THRESHOLD = 0.60  # 60% of solo throughput
+# Combined time the workload must spend inside Rust calls. Not a
+# discriminator (any window length would do for the proof) — a
+# scheduling-latency cushion: the OS has to run the probe thread at least
+# once while the GIL is free, and a loaded CI host can take tens of ms to
+# schedule a woken thread.
+_MIN_WORKLOAD_MS = 100.0
+
+# Switch interval pinned for the duration of a probed workload. A thread
+# waiting for the GIL asks the holder to drop it only after waiting this
+# long, so with the interval far longer than any workload the main thread
+# can never be made to yield between bytecodes — every GIL hand-off inside
+# the window is a voluntary `allow_threads`. Restored on exit.
+_PINNED_SWITCH_INTERVAL_S = 3600.0
 
 
-class _PyWorker:
-    """Background thread running a pure-Python tight loop.
+class _GilProbe:
+    """Prove that Rust calls made through `.call()` release the GIL.
 
-    Use as a context manager around the workload. After exit, read
-    `.iters` (bytecode steps the worker got) and `.duration_s` (wall-
-    clock of the workload).
+    Use as a context manager around the workload; route every Rust call
+    under test through `probe.call(fn, *args, **kwargs)`; then call
+    `probe.assert_released(op_name)`.
     """
 
     def __init__(self) -> None:
-        self._stop = threading.Event()
-        self.iters: int = 0
-        self.duration_s: float = 0.0
+        self._go = threading.Event()
+        self._done = threading.Event()
+        self.stamp: float | None = None
+        self.windows: list[tuple[float, float]] = []
+        self._prev_switch_interval: float = sys.getswitchinterval()
         self._t = threading.Thread(target=self._run, daemon=True)
-        self._start_perf: float = 0.0
 
     def _run(self) -> None:
-        # Pure Python counter increment — every iteration requires GIL.
-        local_stop = self._stop
-        n = 0
-        while not local_stop.is_set():
-            n += 1
-        self.iters = n
+        # Block (GIL released) until the first probed call is about to be
+        # made, then record the first instant this thread executes
+        # bytecode — which requires the GIL — and get out of the way.
+        self._go.wait()
+        self.stamp = perf_counter()
+        self._done.wait()
 
-    def __enter__(self) -> _PyWorker:
+    def __enter__(self) -> _GilProbe:
+        self._prev_switch_interval = sys.getswitchinterval()
+        sys.setswitchinterval(_PINNED_SWITCH_INTERVAL_S)
         self._t.start()
-        # Tiny yield so the worker actually starts before timing.
-        time.sleep(0.001)
-        self._start_perf = time.perf_counter()
         return self
 
     def __exit__(self, *exc: object) -> None:
-        self.duration_s = time.perf_counter() - self._start_perf
-        self._stop.set()
-        self._t.join(timeout=2.0)
+        self._done.set()
+        # Without `allow_threads` this join is the first point at which the
+        # probe can run at all — its stamp then lands after every window.
+        self._t.join(timeout=10.0)
+        sys.setswitchinterval(self._prev_switch_interval)
 
+    def call(self, fn: Callable[..., _R], *args: Any, **kwargs: Any) -> _R:
+        """Make one Rust call, recording its `(t0, t1)` window."""
+        self._go.set()
+        t0 = perf_counter()
+        result = fn(*args, **kwargs)
+        t1 = perf_counter()
+        self.windows.append((t0, t1))
+        return result
 
-def _measure_solo_throughput() -> float:
-    """Iters/sec the worker achieves with no competing GIL holder."""
-    w = _PyWorker()
-    with w:
-        time.sleep(0.2)
-    return w.iters / w.duration_s
+    @property
+    def workload_ms(self) -> float:
+        return sum(t1 - t0 for t0, t1 in self.windows) * 1000.0
 
-
-# Measure solo throughput once per session via a fixture — it varies by
-# host CPU + load, so we calibrate per-run rather than hard-coding.
-@pytest.fixture(scope="module")
-def solo_throughput() -> float:
-    """Worker's solo iters/sec on this host."""
-    # Warm up + measure 3 times, take the max (best-case).
-    rates = [_measure_solo_throughput() for _ in range(3)]
-    return max(rates)
-
-
-def _assert_gil_released(
-    worker: _PyWorker, solo_rate: float, op_name: str
-) -> None:
-    """Assert worker thread made ≥THRESHOLD × solo progress during workload."""
-    assert worker.duration_s * 1000.0 >= _MIN_WORKLOAD_MS, (
-        f"{op_name}: workload too short "
-        f"({worker.duration_s*1000:.0f}ms < {_MIN_WORKLOAD_MS:.0f}ms); "
-        f"scale up the input or iteration count — the test would not be "
-        f"discriminating at this duration"
-    )
-    actual_rate = worker.iters / worker.duration_s
-    ratio = actual_rate / solo_rate if solo_rate > 0 else 0.0
-    expected_iters = int(solo_rate * worker.duration_s * _GIL_RELEASED_THRESHOLD)
-    assert ratio >= _GIL_RELEASED_THRESHOLD, (
-        f"{op_name}: worker thread only completed {worker.iters} "
-        f"iterations during a {worker.duration_s*1000:.0f}ms workload "
-        f"({actual_rate/1e6:.1f}M iters/sec, "
-        f"{ratio*100:.0f}% of solo {solo_rate/1e6:.1f}M iters/sec); "
-        f"required ≥{expected_iters} ({_GIL_RELEASED_THRESHOLD*100:.0f}% "
-        f"of solo); GIL likely held during the Rust work"
-    )
+    def assert_released(self, op_name: str) -> None:
+        assert self.windows, f"{op_name}: no calls were routed through the probe"
+        assert self.workload_ms >= _MIN_WORKLOAD_MS, (
+            f"{op_name}: workload too short ({self.workload_ms:.0f}ms inside Rust "
+            f"< {_MIN_WORKLOAD_MS:.0f}ms) — this is a TEST SETUP problem, "
+            f"scale up the input or iteration count so the probe thread has a "
+            f"comfortable window to be scheduled in"
+        )
+        assert self.stamp is not None, (
+            f"{op_name}: probe thread never ran (join timed out) — test harness bug"
+        )
+        if any(t0 < self.stamp < t1 for t0, t1 in self.windows):
+            return
+        first_t0 = self.windows[0][0]
+        last_t1 = self.windows[-1][1]
+        where = (
+            f"{(self.stamp - last_t1) * 1000:.1f}ms AFTER the last call returned"
+            if self.stamp >= last_t1
+            else f"{(self.stamp - first_t0) * 1000:.1f}ms after the first call "
+            f"started, between calls"
+        )
+        raise AssertionError(
+            f"{op_name}: the probe thread first executed Python bytecode {where}, "
+            f"never inside any of the {len(self.windows)} call window(s) "
+            f"({self.workload_ms:.0f}ms inside Rust in total); the GIL was held "
+            f"for the whole of every call — `py.allow_threads` is missing"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -181,8 +210,8 @@ def _muxer_config_video_only() -> MuxerConfig:
 def _huge_h264_nal(mb: int = 30) -> bytes:
     """`mb` MB Annex-B NAL — a 30 MB push_video call takes ~50ms.
 
-    Bigger is more discriminating: 5 MB took ~13ms (below threshold);
-    30 MB lands at ~50ms (borderline on fast hardware); 50 MB at ~75ms.
+    Bigger gives the probe a longer window: 5 MB took ~13ms; 30 MB
+    lands at ~50ms on fast hardware; 50 MB at ~75ms; 100 MB at ~150ms.
     """
     return b"\x00\x00\x00\x01\x09" + b"\xA0" * (mb * 1024 * 1024)
 
@@ -191,7 +220,7 @@ def _huge_aac_buf() -> bytes:
     """~500 MB of pseudo-ADTS bytes — resync iterator scans for ~180ms.
 
     The resync scanner walks byte-by-byte; size dominates runtime.
-    Below ~100 MB the workload is sub-discriminator (<50ms).
+    Below ~200 MB the workload drops under _MIN_WORKLOAD_MS on fast hardware.
     """
     frame = bytes.fromhex("FFF150801FFC") + b"\x00" * (1024 - 6)
     return frame * 500_000
@@ -201,8 +230,6 @@ def _huge_mp2_buf() -> bytes:
     """~500 MB of pseudo MPEG-2 audio frames — ~150ms scan."""
     frame = b"\xFF\xFB\x90\x00" + b"\x00" * 1020
     return frame * 500_000
-
-
 
 
 def _build_ts_stream(target_mb: int = 50) -> bytes:
@@ -227,18 +254,19 @@ def _build_ts_stream(target_mb: int = 50) -> bytes:
 
 
 @pytest.mark.timeout(20)
-def test_push_video_releases_gil(solo_throughput: float) -> None:
-    """One push_video of a 50 MB NAL must let other Python threads run."""
+def test_push_video_releases_gil() -> None:
+    """One push_video of a 100 MB NAL must let other Python threads run."""
     m = Muxer(_muxer_config_video_only())
-    # 50 MB (~75ms) rather than 30 MB (~50ms): a single 30 MB call clocked at
-    # 49.6ms on a CI runner, just under the 50ms _MIN_WORKLOAD_MS guard. The
-    # larger NAL keeps the single call comfortably above the discriminator.
-    nal = _huge_h264_nal(50)
+    # 100 MB (~150ms) keeps the single call comfortably above the 100ms
+    # _MIN_WORKLOAD_MS cushion even on the fastest CI runners (a 30 MB call
+    # clocked at 49.6ms on one).
+    nal = _huge_h264_nal(100)
+    pts = Pts90khz.from_raw(900_000)
 
-    with _PyWorker() as worker:
-        m.push_video(nal, pts=Pts90khz.from_raw(900_000))
+    with _GilProbe() as probe:
+        probe.call(m.push_video, nal, pts=pts)
 
-    _assert_gil_released(worker, solo_throughput, "push_video")
+    probe.assert_released("push_video")
 
 
 def _muxer_config_video_and_subtitle() -> MuxerConfig:
@@ -269,37 +297,41 @@ def _max_subtitle_payload() -> bytes:
 
 
 @pytest.mark.timeout(20)
-def test_push_subtitle_releases_gil(solo_throughput: float) -> None:
+def test_push_subtitle_releases_gil() -> None:
     """Repeated push_subtitle calls (each near the 65 KB PES limit) must
     let other Python threads run.
 
     Each call is bounded — the PES_packet_length budget caps the payload
-    at ~65 KB — so a single call is too short to be discriminating
-    (~5ms). The test loops enough calls to cross the 50ms threshold.
+    at ~65 KB — so a single call spends only ~5 us inside Rust. The proof
+    does not need a long call (the probe lands inside whichever call the
+    OS schedules it during), but the test loops enough calls for the
+    combined in-Rust window to clear the _MIN_WORKLOAD_MS cushion.
     """
     m = Muxer(_muxer_config_video_and_subtitle())
     payload = _max_subtitle_payload()
 
-    # Per-call wall clock is ~5 ms on a dev box, ~2 ms on fast CI runners
-    # (Ryzen 9 / GHA Ubuntu). 100 calls puts the workload at ≥200 ms even
-    # on the fast end — well over _MIN_WORKLOAD_MS (50 ms) — and stays
-    # comfortably under the 20 s @pytest.mark.timeout. The previous
-    # n_calls=20 flaked CI on 2026-05-26 (41 ms < 50 ms).
-    n_calls = 100
+    # ~5-7 us inside Rust per call on a dev box (the muxer only copies the
+    # payload into TS packets), so 25 000 calls put the combined window at
+    # ~170 ms — over _MIN_WORKLOAD_MS (100 ms) — for ~0.7 s wall-clock,
+    # comfortably under the 20 s @pytest.mark.timeout even on slow runners.
+    n_calls = 25_000
+    # Each call emits ~330 packets; drain every 1000 calls (~330 K packets)
+    # so the 1 M-packet buffer never overflows.
+    drain_every = 1000
 
-    with _PyWorker() as worker:
+    with _GilProbe() as probe:
         for i in range(n_calls):
-            m.push_subtitle(payload, pts=Pts90khz.from_raw(900_000 + i * 90_000))
-            # Drain so buffer_packets doesn't overflow over the loop.
-            buf = bytearray(m.pending_packets() * 188)
-            if m.pending_packets() > 0:
+            pts = Pts90khz.from_raw(900_000 + i * 90_000)
+            probe.call(m.push_subtitle, payload, pts=pts)
+            if i % drain_every == drain_every - 1:
+                buf = bytearray(m.pending_packets() * 188)
                 m.pull(buf)
 
-    _assert_gil_released(worker, solo_throughput, "push_subtitle")
+    probe.assert_released("push_subtitle")
 
 
 @pytest.mark.timeout(20)
-def test_push_video_to_with_dts_releases_gil(solo_throughput: float) -> None:
+def test_push_video_to_with_dts_releases_gil() -> None:
     """push_video_to_with_dts on a 30 MB NAL must let other threads run.
 
     Covers the `_to_with_dts` variant which has the most complex
@@ -314,19 +346,15 @@ def test_push_video_to_with_dts_releases_gil(solo_throughput: float) -> None:
     handle = handles[0]
     nal = _huge_h264_nal()
 
-    # Loop 3× so the total workload comfortably exceeds the 50ms _MIN_WORKLOAD_MS
-    # sentinel on fast hardware — a single push_video_to_with_dts call clocked
-    # at ~49ms on a Ryzen 9 7950X3D, just below the guard threshold.
-    with _PyWorker() as worker:
+    # Loop 3× so the combined window comfortably exceeds the 100ms
+    # _MIN_WORKLOAD_MS cushion on fast hardware — a single
+    # push_video_to_with_dts call clocked at ~49ms on a Ryzen 9 7950X3D.
+    with _GilProbe() as probe:
         for i in range(3):
-            m.push_video_to_with_dts(
-                handle,
-                nal,
-                pts=Pts90khz.from_raw(900_000 + i * 90_000),
-                dts=Pts90khz.from_raw(900_000 + i * 90_000),
-            )
+            ts = Pts90khz.from_raw(900_000 + i * 90_000)
+            probe.call(m.push_video_to_with_dts, handle, nal, pts=ts, dts=ts)
 
-    _assert_gil_released(worker, solo_throughput, "push_video_to_with_dts")
+    probe.assert_released("push_video_to_with_dts")
 
 
 # ---------------------------------------------------------------------------
@@ -335,18 +363,13 @@ def test_push_video_to_with_dts_releases_gil(solo_throughput: float) -> None:
 
 
 @pytest.mark.timeout(30)
-def test_demuxer_feed_releases_gil(solo_throughput: float) -> None:
+def test_demuxer_feed_releases_gil() -> None:
     """Repeated Demuxer.feed calls must let other threads run.
 
     Each feed call processes 500 KB (well under the 4 MB sync ceiling)
-    so the demuxer doesn't error out. The cumulative work across the
-    batch crosses the 50ms discriminator threshold.
-
-    Note: with switchinterval-mediated yielding, the GIL is technically
-    released between bytecode steps even without `allow_threads`. The
-    `allow_threads` benefit here shows up as significantly higher
-    worker throughput because the Rust portion of each feed call no
-    longer blocks the worker for the full call duration.
+    so the demuxer doesn't error out. Only the `feed` calls are probed —
+    `next_event` does not release the GIL (it builds Python objects) and
+    so stays outside the windows.
     """
     ts_bytes = _build_ts_stream(target_mb=20)
     assert len(ts_bytes) > 5_000_000, (
@@ -358,17 +381,19 @@ def test_demuxer_feed_releases_gil(solo_throughput: float) -> None:
 
     d = Demuxer()
 
-    with _PyWorker() as worker:
-        # Loop the stream until the workload is discriminating.
-        for _ in range(15):
+    # The demuxer walks a 20 MB stream in ~3.5 ms of Rust on a dev box
+    # (~85 us per 500 KB feed); 60 passes put the combined in-Rust window
+    # at ~200 ms, over _MIN_WORKLOAD_MS, for ~0.25 s wall-clock.
+    with _GilProbe() as probe:
+        for _ in range(60):
             for ci in range(n_chunks):
                 start_off = ci * chunk_size
                 end_off = min(start_off + chunk_size, len(ts_bytes))
-                d.feed(ts_bytes[start_off:end_off])
+                probe.call(d.feed, ts_bytes[start_off:end_off])
                 while d.next_event() is not None:
                     pass
 
-    _assert_gil_released(worker, solo_throughput, "Demuxer.feed")
+    probe.assert_released("Demuxer.feed")
 
 
 # ---------------------------------------------------------------------------
@@ -377,36 +402,37 @@ def test_demuxer_feed_releases_gil(solo_throughput: float) -> None:
 
 
 @pytest.mark.timeout(20)
-def test_iter_aac_frames_with_resync_releases_gil(
-    solo_throughput: float,
-) -> None:
+def test_iter_aac_frames_with_resync_releases_gil() -> None:
     """iter_aac_frames_with_resync on ~500MB must release the GIL.
 
     The Rust resync scanner walks the entire buffer byte-by-byte
-    looking for sync patterns; on this scale it takes ~180ms (one
-    single long Rust call).
+    looking for sync patterns; on this scale one call takes ~140ms on a
+    dev box (a single long Rust call). Two calls clear the
+    _MIN_WORKLOAD_MS cushion with margin without doubling the ~1 GB
+    peak (buffer + owned frame copies) a larger input would cost.
     """
     buf = _huge_aac_buf()
 
-    with _PyWorker() as worker:
-        iter_aac_frames_with_resync(buf)
+    with _GilProbe() as probe:
+        for _ in range(2):
+            probe.call(iter_aac_frames_with_resync, buf)
 
-    _assert_gil_released(worker, solo_throughput, "iter_aac_frames_with_resync")
+    probe.assert_released("iter_aac_frames_with_resync")
 
 
 @pytest.mark.timeout(20)
-def test_iter_mpeg2_audio_frames_with_resync_releases_gil(
-    solo_throughput: float,
-) -> None:
-    """iter_mpeg2_audio_frames_with_resync on ~500MB must release the GIL."""
+def test_iter_mpeg2_audio_frames_with_resync_releases_gil() -> None:
+    """iter_mpeg2_audio_frames_with_resync on ~500MB must release the GIL.
+
+    Two ~125 ms calls, for the same reason as the AAC twin above.
+    """
     buf = _huge_mp2_buf()
 
-    with _PyWorker() as worker:
-        iter_mpeg2_audio_frames_with_resync(buf)
+    with _GilProbe() as probe:
+        for _ in range(2):
+            probe.call(iter_mpeg2_audio_frames_with_resync, buf)
 
-    _assert_gil_released(
-        worker, solo_throughput, "iter_mpeg2_audio_frames_with_resync"
-    )
+    probe.assert_released("iter_mpeg2_audio_frames_with_resync")
 
 
 # ---------------------------------------------------------------------------
