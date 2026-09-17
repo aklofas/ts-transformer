@@ -1381,8 +1381,15 @@ mod tests {
         // untouched rather than being parsed as confirmed sync.
         d.feed(&[])
             .unwrap_or_else(|e| panic!("empty feed after the verdict: {e}"));
+        // The intent, not the mechanism: the retained candidate is still
+        // live and unconsumed. Asserting `sync_consumed` unchanged would
+        // instead couple to the 1 MiB compaction floor — compaction can
+        // shift both `sync_buf` and `sync_consumed` together without
+        // touching the candidate at all, which would trip that assertion
+        // on an unrelated implementation detail.
         assert_eq!(
-            d.sync_consumed, sync_consumed_after_verdict,
+            d.sync_buf.len() - d.sync_consumed,
+            188,
             "the retained candidate must not be consumed without N-of-M confirmation"
         );
         assert!(
