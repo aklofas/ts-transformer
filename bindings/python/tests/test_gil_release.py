@@ -173,14 +173,14 @@ class _GilProbe:
         self.windows.append((t0, t1))
         return result
 
-    @property
-    def workload_ms(self) -> float:
-        return sum(t1 - t0 for t0, t1 in self.windows) * 1000.0
-
     def assert_released(self, op_name: str) -> None:
         assert self.windows, f"{op_name}: no calls were routed through the probe"
-        assert self.workload_ms >= _MIN_WORKLOAD_MS, (
-            f"{op_name}: workload too short ({self.workload_ms:.0f}ms inside Rust "
+        # Wall-clock summed over the probed call windows — the calls do
+        # nothing but the Rust work, so this is the time the GIL could have
+        # been free.
+        workload_ms = sum(t1 - t0 for t0, t1 in self.windows) * 1000.0
+        assert workload_ms >= _MIN_WORKLOAD_MS, (
+            f"{op_name}: workload too short ({workload_ms:.0f}ms in probed calls "
             f"< {_MIN_WORKLOAD_MS:.0f}ms) — this is a TEST SETUP problem, "
             f"scale up the input or iteration count so the probe thread has a "
             f"comfortable window to be scheduled in"
@@ -201,7 +201,7 @@ class _GilProbe:
         raise AssertionError(
             f"{op_name}: the probe thread first executed Python bytecode {where}, "
             f"never inside any of the {len(self.windows)} call window(s) "
-            f"({self.workload_ms:.0f}ms inside Rust in total); the GIL was held "
+            f"({workload_ms:.0f}ms in probed calls in total); the GIL was held "
             f"for the whole of every call — `py.allow_threads` is missing"
         )
 
@@ -332,14 +332,16 @@ def test_push_subtitle_releases_gil() -> None:
     # Each call emits ~330 packets; drain every 1000 calls (~330 K packets)
     # so the 1 M-packet buffer never overflows.
     drain_every = 1000
+    # One reusable drain buffer; `pull` returns 0 once the queue is empty.
+    drain = bytearray(188 * 100_000)
 
     with _GilProbe() as probe:
         for i in range(n_calls):
             pts = Pts90khz.from_raw(900_000 + i * 90_000)
             probe.call(m.push_subtitle, payload, pts=pts)
-            if i % drain_every == drain_every - 1 and m.pending_packets() > 0:
-                buf = bytearray(m.pending_packets() * 188)
-                m.pull(buf)
+            if i % drain_every == drain_every - 1:
+                while m.pull(drain) > 0:
+                    pass
 
     probe.assert_released("push_subtitle")
 
