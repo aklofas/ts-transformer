@@ -64,8 +64,7 @@ fn drop_guard_wakes_parked_accept_on_unwind() {
     loop {
         match UdpSocket::bind(("127.0.0.1", port)) {
             Ok(_) => break,
-            Err(e) if Instant::now() < deadline => {
-                let _ = e;
+            Err(_) if Instant::now() < deadline => {
                 std::thread::sleep(Duration::from_millis(100));
             }
             Err(e) => panic!(
