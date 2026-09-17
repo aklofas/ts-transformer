@@ -5042,7 +5042,9 @@ void tst_demuxer_close(struct TstDemuxer *p);
  * - `TST_E_INVALID_TS` (-3) — `DemuxError::StrictRejection`,
  *   `Unrecoverable` (one 6,016-byte sync-search window held no packet
  *   boundary; the scanned bytes are discarded and the next feed starts
- *   a fresh window), `MalformedPsi`, or `MalformedPes`.
+ *   a fresh window, except that a candidate sync byte the scan stopped
+ *   on is retained and re-validated on the next feed rather than
+ *   accepted outright), `MalformedPsi`, or `MalformedPes`.
  * - `TST_E_TOO_LARGE` (-6) — `DemuxError::SyncBufExhausted` (one feed
  *   would push the pre-sync buffer past `sync_buf_cap`; the buffered
  *   bytes and this call's bytes are dropped and the next feed starts

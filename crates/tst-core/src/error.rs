@@ -854,10 +854,12 @@ pub enum DemuxError {
     /// scanned more than 32 × 188 = 6,016 bytes without a confirmed
     /// `0x47`. The verdict covers that window only — the scanned bytes
     /// are discarded, the counter restarts at zero and the next `feed`
-    /// starts a fresh search (no `reset_sync` needed). `feed_aligned`
-    /// returns it with `after_bytes: 0` for a packet whose first byte is
-    /// not `0x47`. PSI checksum failures never produce it — they surface
-    /// as `NonConformant` events.
+    /// starts a fresh search (no `reset_sync` needed), except that a
+    /// candidate sync byte the scan stopped on is retained and
+    /// re-validated (N-of-M) on the next `feed` rather than accepted
+    /// outright. `feed_aligned` returns it with `after_bytes: 0` for a
+    /// packet whose first byte is not `0x47`. PSI checksum failures
+    /// never produce it — they surface as `NonConformant` events.
     #[error("demuxer cannot recover sync after {after_bytes} bytes")]
     Unrecoverable { after_bytes: usize },
 

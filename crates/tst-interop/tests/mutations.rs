@@ -543,6 +543,15 @@ fn video_pid_explanations_do_not_excuse_silent_klv_loss() {
     );
 
     // The two damages, as the demuxer saw them.
+    //
+    // `CellMetrics` has no per-PID breakdown, so `discontinuities` and
+    // `nonconformant` below are capture-wide counts, not proof by
+    // themselves that the KLV PID stayed silent. That proof is a
+    // mechanism argument instead: `damage_klv_ul_on_every_nth` only
+    // flips bytes inside the KLV payload, which cannot move a PID's
+    // continuity counter — so all 8 discontinuities counted here are
+    // the video PID's (from `drop_every_nth_packet_on_pid`), and the
+    // KLV loss contributes zero to either count.
     assert_eq!(r.metrics.klv_records, 23, "{:?}", r.failures);
     assert_eq!(r.metrics.video_aus, 81, "{:?}", r.failures);
     assert_eq!(r.metrics.discontinuities, 8, "{:?}", r.failures);

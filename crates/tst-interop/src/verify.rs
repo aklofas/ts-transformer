@@ -256,8 +256,11 @@ pub struct Tally {
     nonconformant: u64,
     /// The same two counts, split by the PID each event named. The
     /// wire-vs-demux floor is per PID, and so is the allowance it
-    /// subtracts — see [`oracles::Explained`]. Bounded by the PID count
-    /// of the multiplex, not by the run's length, so a multi-day soak
+    /// subtracts — see [`oracles::Explained`]. Under corruption the
+    /// demuxer can surface an event on a PID the profile never muxed
+    /// (a damaged PID field can name any 13-bit value), so the real
+    /// bound is the PID space (8192), not the multiplex's own PID
+    /// count — still hard-bounded and O(1), so a multi-day soak
     /// accumulates nothing here.
     discontinuities_by_pid: BTreeMap<u16, u64>,
     nonconformant_by_pid: BTreeMap<u16, u64>,

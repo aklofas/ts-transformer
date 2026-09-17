@@ -1630,8 +1630,12 @@ pub struct Attribution {
     attributed_discontinuities: u64,
     /// `attributed_events` split by the PID the signal surfaced on, and
     /// the tail of them that names no PID (a resync) — see the two
-    /// fields of the same names on [`AttributionReport`]. Bounded by the
-    /// PID count of the multiplex, not by the run's length.
+    /// fields of the same names on [`AttributionReport`]. Under
+    /// corruption the signal can surface on a PID the profile never
+    /// muxed (a damaged PID field can name any 13-bit value), so the
+    /// real bound is the PID space (8192), not the multiplex's own
+    /// PID count — still hard-bounded and O(1), not by the run's
+    /// length.
     attributed_events_by_pid: BTreeMap<u16, u64>,
     attributed_events_unpinned: u64,
     resyncs: u64,
