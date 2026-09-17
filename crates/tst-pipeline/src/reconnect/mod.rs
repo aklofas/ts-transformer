@@ -79,6 +79,10 @@ pub struct ReconnectPolicy {
     /// accepted rather than dropping bytes already handed to the
     /// transport. The next completed send brings the length back within
     /// `capacity`.
+    ///
+    /// A capacity of 0 buffers nothing: under `DropOldest` every message
+    /// is dropped and counted as it arrives, and under
+    /// [`OverflowPolicy::Reject`] every message is refused.
     pub gap_buffer_capacity: usize,
 
     /// What to do when gap buffer is full and a new message arrives.

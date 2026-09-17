@@ -91,6 +91,12 @@ impl GapBuffer {
     /// send returns. When that in-flight entry is the *only* entry the
     /// message is pushed anyway (transient `len == capacity + 1`); the
     /// next `finish_send` brings the buffer back within capacity.
+    ///
+    /// A zero capacity buffers nothing: with no evictable entry the
+    /// incoming message is itself the oldest, so it is dropped and
+    /// counted, and `Ok` means *accepted then dropped* as it does for any
+    /// other `DropOldest` eviction. Under `Reject` a zero capacity
+    /// returns `Err(Full)` for every message.
     pub fn enqueue(&mut self, msg: Vec<u8>) -> Result<(), GapBufferError> {
         if self.queue.len() >= self.capacity {
             match self.overflow {
@@ -99,6 +105,17 @@ impl GapBuffer {
                     if let Some((_, dropped)) = self.queue.remove(victim) {
                         self.bytes_dropped += dropped.len() as u64;
                         self.messages_dropped += 1;
+                    } else if !self.front_is_in_flight() {
+                        // Nothing to evict and nothing pinned: the queue is
+                        // empty, which inside this branch means `capacity`
+                        // is 0. The incoming message is itself the oldest,
+                        // so drop-oldest drops it. (With a pinned front
+                        // there IS something evictable in principle — it is
+                        // just not a legal victim — and the message rides
+                        // the documented transient overshoot instead.)
+                        self.bytes_dropped += msg.len() as u64;
+                        self.messages_dropped += 1;
+                        return Ok(());
                     }
                 }
                 OverflowPolicy::Reject => return Err(GapBufferError::Full),
@@ -328,5 +345,25 @@ mod tests {
         assert_eq!(buf.finish_send(seq).unwrap(), vec![1]);
         assert_eq!(buf.len(), 1, "back within capacity");
         assert_eq!(buf.pop_front().unwrap(), vec![3]);
+    }
+
+    #[test]
+    fn zero_capacity_buffers_nothing_and_counts_every_drop() {
+        let mut buf = GapBuffer::new(0, OverflowPolicy::DropOldest);
+        buf.enqueue(vec![1, 2, 3]).unwrap();
+        assert_eq!(buf.len(), 0, "a zero-capacity buffer holds nothing");
+        assert_eq!(buf.messages_dropped, 1);
+        assert_eq!(buf.bytes_dropped, 3);
+        // Nothing is ever queued, so no entry can be marked in flight and
+        // the in-flight overshoot cannot widen a zero capacity either.
+        assert!(buf.begin_send().is_none());
+        buf.enqueue(vec![4, 5]).unwrap();
+        assert_eq!(buf.len(), 0);
+        assert_eq!(buf.messages_dropped, 2);
+        assert_eq!(buf.bytes_dropped, 5);
+
+        let mut reject = GapBuffer::new(0, OverflowPolicy::Reject);
+        assert_eq!(reject.enqueue(vec![1]), Err(GapBufferError::Full));
+        assert_eq!(reject.len(), 0);
     }
 }
