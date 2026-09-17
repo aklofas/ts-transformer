@@ -1242,8 +1242,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   PID, the demuxer's `Sample`/`Metadata` count is held to the raw reader's
   independent PES-start count (`rawts::WireSummary::pes_starts_per_pid`,
   spec-legal duplicates excluded), short by at most the events the capture
-  itself explains (attributed injections; under `Lossy` also its own
-  discontinuities and non-conformances) plus a fixed per-PID boundary
+  explains ON THAT PID plus multiplex-wide resyncs (attributed injections;
+  under `Lossy` that PID's own discontinuities and non-conformances
+  instead) plus a fixed per-PID boundary
   allowance — one PSI repetition interval of units at that PID's rate (what a
   demuxer cannot emit before it has PAT + PMT: measured at 3 video AUs,
   1 KLV record and 5 audio frames on a 100 ms-PSI profile) plus the one
@@ -1272,6 +1273,28 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `rawts::PesShape::prefix_mismatches`: the ADTS and AV1 carriage oracles now
   judge every PES on the PID, not the first; the audio-cadence mutation
   asserts `1 frames, want 141`, not merely that the verdict fired.
+- **The `wire_vs_demux_<pid>` loss allowance is per PID, and counts an
+  attributed event once** (post-Arc-1 review: the final review's deferred
+  minor M1, plus a double count found with it). The allowance was one
+  capture-wide number subtracted from every PID's floor, so events the
+  video PID legitimately explained excused KLV records that went missing in
+  silence — the very class the oracle exists to catch, and invisible to the
+  70 % count floor above it. Under `Lossy` an attributed event was also
+  counted twice, once as the corruption log's `attributed_events` and again
+  through the capture's own discontinuity/non-conformance tally, which is
+  fed from those same events. New `oracles::Explained { by_pid,
+  multiplex_wide }` resolves it per PID, with the multiplex-wide term
+  reserved for the resyncs that belong to no single PID; `Tally` tallies
+  discontinuities and non-conformances per PID, and `AttributionReport`
+  gains `attributed_events_by_pid` / `attributed_events_unpinned` (both
+  serde-default, so archived reports still parse; `attributed_events` is
+  unchanged and remains their sum). Pinned by `tests/mutations.rs`'s
+  `video_pid_explanations_do_not_excuse_silent_klv_loss`: one capture whose
+  video PID drops nine packets and reports
+  eight continuity jumps while its KLV PID loses seven of thirty records
+  with no event at all — a damaged SMPTE UL, which the demuxer passes
+  through as an `Unknown` sample — passed entirely before and now fails
+  `wire_vs_demux_4145` alone.
 
 ### Testing — interop harness (WP-7b)
 

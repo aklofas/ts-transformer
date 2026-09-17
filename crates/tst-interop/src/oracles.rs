@@ -21,10 +21,46 @@ const AUDIO_CADENCE_TOLERANCE: f64 = 0.10;
 const AUDIO_PTS_STEP_TOLERANCE: f64 = 0.05;
 const AAC_SAMPLES_PER_FRAME: f64 = 1024.0;
 
+/// How many demuxed events a capture legitimately accounts for, resolved
+/// PER PID rather than as one capture-wide number — see `wire_vs_demux`
+/// (private; `--document-private-items` renders it), which is the only
+/// consumer.
+///
+/// The distinction is the whole point: seven video events a corruption
+/// log explains say nothing about a KLV PID, and a capture-wide scalar
+/// would let them excuse seven KLV records that went missing in silence
+/// — exactly the class the oracle exists to catch.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Explained {
+    /// Events the capture accounts for ON a given PID.
+    pub by_pid: BTreeMap<u16, u64>,
+    /// Events no single PID owns, and which therefore widen EVERY PID's
+    /// floor: today only the ATTRIBUTED `Resync` signals, where the raw
+    /// reader lost packet sync for the whole multiplex rather than for
+    /// one stream in it (`verify::Tally::note_resyncs` feeds those with
+    /// `pid: None`). An UNattributed resync excuses nothing, as it never
+    /// did — it is not a `DemuxEvent`, so the capture's own tallies do
+    /// not hold it either.
+    pub multiplex_wide: u64,
+}
+
+impl Explained {
+    /// What `wire_vs_demux` may subtract from `pid`'s floor: what the
+    /// capture explains on that PID, plus what it explains for the
+    /// multiplex as a whole.
+    pub fn for_pid(&self, pid: u16) -> u64 {
+        self.by_pid
+            .get(&pid)
+            .copied()
+            .unwrap_or(0)
+            .saturating_add(self.multiplex_wide)
+    }
+}
+
 /// Run all seven wire-level oracles and concatenate their failures.
-/// `explained` is how many demuxed events a corruption log and the
-/// capture's own discontinuity/non-conformance tallies account for —
-/// see `wire_vs_demux` (private; `--document-private-items` renders it).
+/// `explained` is what a corruption log and the capture's own
+/// discontinuity/non-conformance tallies account for, per PID — see
+/// `wire_vs_demux` (private; `--document-private-items` renders it).
 // Each parameter is a distinct fact one of the seven oracles needs, all
 // of them already owned by the single caller (`verify::Tally::finish`) —
 // a struct here would only move the same list one line up.
@@ -37,7 +73,7 @@ pub fn check(
     seconds: f64,
     slack: f64,
     mode: VerifyMode,
-    explained: u64,
+    explained: &Explained,
 ) -> Vec<String> {
     let mut f = Vec::new();
     f.extend(program_accounting(inv, wire, per_program, seconds, slack));
@@ -434,17 +470,21 @@ fn pmt_streams(p: &Profile, inv: &Invariants, wire: &WireSummary) -> Vec<String>
 ///
 /// `demux >= wire - explained - boundary`, per PID:
 ///
-/// - `explained` is what the capture itself accounts for: the count of
-///   receiver signals a corruption log's attribution explains, when one
-///   is attached (a truncated or dropped PES-start packet costs the
-///   demuxer the access unit while the wire may still show its start)
-///   plus, under `Lossy`, every
-///   `Discontinuity` and `NonConformant` the capture recorded — each is
-///   a place the demuxer legitimately gave up on a PES. Under `Strict`
-///   (offline `verify`, `recv --strict` on a transparent cell) those
-///   events are failures in their own right, not an excuse for a missing
-///   access unit. Loss that produced NO event is exactly what this
-///   oracle catches; `verify::Tally::finish` computes the term.
+/// - `explained` is what the capture itself accounts for ON THAT PID,
+///   plus the multiplex-wide resyncs ([`Explained::for_pid`]) — never
+///   what it accounts for elsewhere, since events explained on the video
+///   PID say nothing about a KLV PID that lost records in silence. Under
+///   `Strict` (offline `verify`, `recv --strict` on a transparent cell)
+///   it is only what a corruption log's attribution explains, when one is
+///   attached (a truncated or dropped PES-start packet costs the demuxer
+///   the access unit while the wire may still show its start): the
+///   capture's own `Discontinuity`/`NonConformant` events are failures in
+///   their own right there, not an excuse for a missing access unit.
+///   Under `Lossy` it is instead every such event the capture recorded on
+///   that PID — each is a place the demuxer legitimately gave up on a
+///   PES, and the attributed ones are already among them. Loss that
+///   produced NO event is exactly what this oracle catches;
+///   `verify::Tally::explained` computes the term.
 /// - `boundary` is what no demuxer can be held to at the EDGES of a
 ///   capture, independent of loss: everything that arrives before it has
 ///   acquired PAT + PMT, plus the one access unit still sitting in the
@@ -470,7 +510,7 @@ fn wire_vs_demux(
     wire: &WireSummary,
     per_program: &BTreeMap<u16, ProgramCounts>,
     mode: VerifyMode,
-    explained: u64,
+    explained: &Explained,
 ) -> Vec<String> {
     let mut f = Vec::new();
     // One PSI repetition interval of units at `rate_hz`, plus the one
@@ -508,6 +548,7 @@ fn wire_vs_demux(
         for (pid, demux, what, rate_hz) in pids {
             let wire_pes = wire.pes_starts_per_pid.get(&pid).copied().unwrap_or(0);
             let boundary = boundary(rate_hz);
+            let explained = explained.for_pid(pid);
             let floor = wire_pes.saturating_sub(explained + boundary);
             if demux < floor {
                 f.push(format!(
@@ -540,6 +581,19 @@ mod tests {
             stream_type,
             registration,
             descriptor_tags: descriptor_tags.to_vec(),
+        }
+    }
+
+    /// `baseline`'s video and KLV PIDs, the two this module's
+    /// `wire_vs_demux` tests pit against each other.
+    const BASELINE_VIDEO_PID: u16 = 0x1011;
+    const BASELINE_KLV_PID: u16 = 0x1031;
+
+    /// `n` events explained on `baseline`'s KLV PID and nowhere else.
+    fn klv_explained(n: u64) -> Explained {
+        Explained {
+            by_pid: BTreeMap::from([(BASELINE_KLV_PID, n)]),
+            multiplex_wide: 0,
         }
     }
 
@@ -1035,16 +1089,20 @@ mod tests {
             ..Default::default()
         };
         let counts = |video: u64, klv: u64| program_counts(&[(1, video, klv)]);
+        let run = |video: u64, klv: u64, mode, explained: &Explained| {
+            wire_vs_demux(p, &inv, &wire, &counts(video, klv), mode, explained)
+        };
+        let clean = Explained::default();
 
         // Exact: passes in both tiers.
-        assert!(wire_vs_demux(p, &inv, &wire, &counts(90, 30), VerifyMode::Strict, 0).is_empty());
-        assert!(wire_vs_demux(p, &inv, &wire, &counts(90, 30), VerifyMode::Lossy, 0).is_empty());
+        assert!(run(90, 30, VerifyMode::Strict, &clean).is_empty());
+        assert!(run(90, 30, VerifyMode::Lossy, &clean).is_empty());
         // Exactly at the boundary allowance (4 video, 2 KLV): still clean.
-        assert!(wire_vs_demux(p, &inv, &wire, &counts(86, 28), VerifyMode::Strict, 0).is_empty());
-        assert!(wire_vs_demux(p, &inv, &wire, &counts(86, 28), VerifyMode::Lossy, 0).is_empty());
+        assert!(run(86, 28, VerifyMode::Strict, &clean).is_empty());
+        assert!(run(86, 28, VerifyMode::Lossy, &clean).is_empty());
         // One unit past it on each PID: both named, so the allowance is
         // finite and per-PID rather than a blanket excuse.
-        let f = wire_vs_demux(p, &inv, &wire, &counts(85, 27), VerifyMode::Strict, 0);
+        let f = run(85, 27, VerifyMode::Strict, &clean);
         assert!(
             f.iter().any(|s| s.starts_with("wire_vs_demux_4113")),
             "{f:?}"
@@ -1055,7 +1113,7 @@ mod tests {
         );
         // Every fourth KLV record gone: 23 of 30 clears the 70 % floor
         // (21) and must NOT clear this one.
-        let f = wire_vs_demux(p, &inv, &wire, &counts(90, 23), VerifyMode::Strict, 0);
+        let f = run(90, 23, VerifyMode::Strict, &clean);
         assert_eq!(f.len(), 1, "{f:?}");
         assert!(
             f[0].starts_with(
@@ -1064,10 +1122,12 @@ mod tests {
             "{}",
             f[0]
         );
-        // Explained events widen the floor by exactly their count: the
-        // KLV floor is 30 - explained - 2, so 5 excuses 23 and 4 does not.
-        assert!(wire_vs_demux(p, &inv, &wire, &counts(90, 23), VerifyMode::Lossy, 5).is_empty());
-        assert!(!wire_vs_demux(p, &inv, &wire, &counts(90, 23), VerifyMode::Lossy, 4).is_empty());
+        // Events explained ON THE KLV PID widen its floor by exactly
+        // their count: 30 - explained - 2, so 5 excuses 23 and 4 does
+        // not. (That they must be explained on that PID and no other is
+        // `the_loss_allowance_is_per_pid_not_capture_wide`'s business.)
+        assert!(run(90, 23, VerifyMode::Lossy, &klv_explained(5)).is_empty());
+        assert!(!run(90, 23, VerifyMode::Lossy, &klv_explained(4)).is_empty());
         // A profile with audio checks the audio PID too.
         let p_a = profiles::by_name("audio").unwrap();
         let inv_a = profiles::invariants(p_a);
@@ -1077,7 +1137,14 @@ mod tests {
         };
         let mut c = program_counts(&[(1, 90, 30)]);
         c.get_mut(&1).unwrap().audio_frames = 100;
-        let f = wire_vs_demux(p_a, &inv_a, &wire_a, &c, VerifyMode::Strict, 0);
+        let f = wire_vs_demux(
+            p_a,
+            &inv_a,
+            &wire_a,
+            &c,
+            VerifyMode::Strict,
+            &Explained::default(),
+        );
         assert!(
             f.iter()
                 .any(|s| s.starts_with("wire_vs_demux_4161: demuxer emitted 100 audio frames")),
@@ -1086,15 +1153,118 @@ mod tests {
         // …and 135 of 141 (exactly the audio allowance of 6) does not.
         c.get_mut(&1).unwrap().audio_frames = 135;
         assert!(
-            wire_vs_demux(p_a, &inv_a, &wire_a, &c, VerifyMode::Strict, 0).is_empty(),
+            wire_vs_demux(
+                p_a,
+                &inv_a,
+                &wire_a,
+                &c,
+                VerifyMode::Strict,
+                &Explained::default()
+            )
+            .is_empty(),
             "the audio allowance is 6 frames, not more"
         );
         c.get_mut(&1).unwrap().audio_frames = 134;
         assert!(
-            wire_vs_demux(p_a, &inv_a, &wire_a, &c, VerifyMode::Strict, 0)
-                .iter()
-                .any(|s| s.starts_with("wire_vs_demux_4161")),
+            wire_vs_demux(
+                p_a,
+                &inv_a,
+                &wire_a,
+                &c,
+                VerifyMode::Strict,
+                &Explained::default()
+            )
+            .iter()
+            .any(|s| s.starts_with("wire_vs_demux_4161")),
             "the audio allowance is 6 frames, not more"
+        );
+    }
+
+    /// The loss allowance is PER PID: events a capture explains on one
+    /// PID must not excuse silent loss on another.
+    ///
+    /// The concrete shape this pins is the one a corruption run produces
+    /// routinely — a tap damaging the video PID while the KLV PID quietly
+    /// loses records. A capture-wide scalar subtracted the video PID's
+    /// seven explained events from the KLV PID's floor too, and 23 of 30
+    /// KLV records (over the 70 % nominal floor, so invisible to
+    /// `program_accounting`) sailed through.
+    #[test]
+    fn the_loss_allowance_is_per_pid_not_capture_wide() {
+        let p = profiles::by_name("baseline").unwrap();
+        let inv = profiles::invariants(p);
+        let wire = WireSummary {
+            pes_starts_per_pid: BTreeMap::from([(BASELINE_VIDEO_PID, 30), (BASELINE_KLV_PID, 30)]),
+            ..Default::default()
+        };
+        // 30 of 30 video AUs, 23 of 30 KLV records: the KLV PID lost
+        // seven records and said nothing about it.
+        let counts = program_counts(&[(1, 30, 23)]);
+        let klv_verdict = format!("wire_vs_demux_{BASELINE_KLV_PID}");
+        let video_verdict = format!("wire_vs_demux_{BASELINE_VIDEO_PID}");
+
+        // Seven events explained on the VIDEO PID: the KLV floor is
+        // untouched (30 - 0 - 2 = 28) and the missing records are named.
+        let f = wire_vs_demux(
+            p,
+            &inv,
+            &wire,
+            &counts,
+            VerifyMode::Lossy,
+            &Explained {
+                by_pid: BTreeMap::from([(BASELINE_VIDEO_PID, 7)]),
+                multiplex_wide: 0,
+            },
+        );
+        assert!(
+            f.iter().any(|s| s.starts_with(&klv_verdict)),
+            "video-PID explanations must not excuse KLV loss: {f:?}"
+        );
+        assert!(
+            !f.iter().any(|s| s.starts_with(&video_verdict)),
+            "the video PID is whole: {f:?}"
+        );
+        // The failure quotes the KLV PID's OWN allowance, not the
+        // capture-wide total, so the number a reader is handed is the
+        // one the floor was actually computed from.
+        let line = f
+            .iter()
+            .find(|s| s.starts_with(&klv_verdict))
+            .expect("the KLV verdict must be present");
+        assert!(
+            line.contains("0 explained") && line.contains("= 28)"),
+            "{line}"
+        );
+
+        // The same seven explained on the KLV PID itself DO excuse it.
+        assert!(
+            wire_vs_demux(
+                p,
+                &inv,
+                &wire,
+                &counts,
+                VerifyMode::Lossy,
+                &klv_explained(7)
+            )
+            .is_empty(),
+            "seven explained on the KLV PID excuse seven missing KLV records"
+        );
+        // And a multiplex-wide term (a resync: sync lost for every PID at
+        // once) widens every PID's floor, which is what it means.
+        assert!(
+            wire_vs_demux(
+                p,
+                &inv,
+                &wire,
+                &counts,
+                VerifyMode::Lossy,
+                &Explained {
+                    by_pid: BTreeMap::new(),
+                    multiplex_wide: 7,
+                },
+            )
+            .is_empty(),
+            "a multiplex-wide resync excuses loss on any PID"
         );
     }
 }
