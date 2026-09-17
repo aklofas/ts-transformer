@@ -641,6 +641,16 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   "repeated PSI checksum failures" producer (there is none), and the
   `tst_demuxer_feed` header comment describes the real contract
   (comment-only; C ABI unchanged).
+- **post-Arc-1 review: a sync candidate retained across an `Unrecoverable`
+  verdict skipped N-of-M on the very next `feed`.** Closing a search
+  window zeroed `bytes_since_sync`, and the resync predicate derived
+  straight from that counter — so a stray `0x47` that the scan stopped ON
+  (rather than past) was parsed as confirmed sync with no re-validation,
+  even via `feed(&[])`. A new `resync_required` field tracks the
+  candidate's outstanding-confirmation state directly instead of deriving
+  it from a counter that CORR-15 now resets independently; pinned by
+  `retained_candidate_after_unrecoverable_still_needs_n_of_m` and
+  `retained_candidate_is_rejected_when_real_sync_follows`.
 - **H.265 / H.266 VUI `Extended_SAR` with a zero `sar_width` /
   `sar_height` produced `Rational { den: 0 }`.** Both parsers now treat
   a zero dimension as "unspecified" (`sample_aspect_ratio: None`), as

@@ -166,6 +166,19 @@ pub struct Demuxer {
     /// re-validated. See `SYNC_REACQ_N` / `SYNC_REACQ_M` constants for
     /// the rationale (ffmpeg `mpegts.c::mpegts_resync` semantics).
     pub(super) is_synced: bool,
+    /// `true` when the NEXT candidate `0x47` the scan finds must pass the
+    /// N-of-M stride check before being accepted, even though `is_synced`
+    /// may already read `false` with `bytes_since_sync` at zero (e.g. right
+    /// after an `Unrecoverable` verdict). Set in the scan branch
+    /// (`live[0] != 0x47`); cleared wherever sync is (re)confirmed
+    /// (`is_synced = true`), in `reset_sync`, `feed_aligned`, and the two
+    /// `SyncBufExhausted` clear paths. `unrecoverable_window` derives it
+    /// from whether a candidate byte is still retained in `sync_buf` — an
+    /// EMPTY buffer keeps the CORR-15 fresh-demuxer contract (a leading
+    /// `0x47` on the next `feed` is initial acquisition, not resync), while
+    /// a retained candidate must still be confirmed. See
+    /// `retained_candidate_after_unrecoverable_still_needs_n_of_m`.
+    pub(super) resync_required: bool,
     /// First strict-mode-rejected issue captured this `feed` call. Drained
     /// at the end of each packet's processing and converted into a
     /// `DemuxError::StrictRejection` return. The `NonConformant` event
@@ -271,6 +284,7 @@ impl Demuxer {
             queue: VecDeque::new(),
             bytes_since_sync: 0,
             is_synced: false,
+            resync_required: false,
             fatal: None,
             program_maps_seen: 0,
             pmt_versions_seen: 0,
@@ -357,6 +371,7 @@ impl Demuxer {
             self.sync_consumed = 0;
             self.is_synced = false;
             self.bytes_since_sync = 0;
+            self.resync_required = false;
             return Err(DemuxError::SyncBufExhausted { observed, max: cap });
         }
         // Reserve up front so a partial copy can't leave the buffer in a
@@ -368,6 +383,7 @@ impl Demuxer {
             self.sync_consumed = 0;
             self.is_synced = false;
             self.bytes_since_sync = 0;
+            self.resync_required = false;
             return Err(DemuxError::SyncBufExhausted { observed, max: cap });
         }
         self.sync_buf.extend_from_slice(bytes);
@@ -380,13 +396,15 @@ impl Demuxer {
         // (resync logic fires only after a packet boundary turned out
         // not to carry 0x47).
         //
-        // Cross-feed resume: if a previous `feed()` call ran out of
-        // bytes mid-scan (live.len() < 188 with `bytes_since_sync > 0`
-        // already accumulated), we re-enter here with `is_synced=false`
-        // and a non-zero `bytes_since_sync`. The `> 0` predicate keeps
-        // us in resync mode across the call boundary so the next 0x47
-        // we find still has to pass N-of-M.
-        let mut resyncing = !self.is_synced && self.bytes_since_sync > 0;
+        // Cross-feed resume: if a previous `feed()` call ran out of bytes
+        // mid-scan, or closed a sync-search window on a retained candidate
+        // byte (`Unrecoverable`), we re-enter here with `is_synced=false`
+        // and `resync_required=true`. That field (not a derived count) keeps
+        // us in resync mode across the call boundary so the next 0x47 we
+        // find still has to pass N-of-M — including a candidate that
+        // survived a window verdict with `bytes_since_sync` already reset to
+        // zero (CORR-15 follow-up: see `resync_required`'s doc comment).
+        let mut resyncing = !self.is_synced && self.resync_required;
         loop {
             let live = &self.sync_buf[self.sync_consumed..];
             if live.len() < crate::mpegts::common::TS_PACKET_SIZE {
@@ -398,6 +416,7 @@ impl Demuxer {
                 // Lost sync (or never had it). Set the resync flag so
                 // the next 0x47 we find must pass N-of-M validation.
                 self.is_synced = false;
+                self.resync_required = true;
                 resyncing = true;
                 let mut i = 1;
                 while i < live.len() && live[i] != crate::mpegts::common::TS_SYNC_BYTE {
@@ -452,6 +471,7 @@ impl Demuxer {
             }
             // Have confirmed sync. Mark locked + reset the search counter.
             self.is_synced = true;
+            self.resync_required = false;
             resyncing = false;
             self.bytes_since_sync = 0;
             // Need to read 188 bytes; if the next byte after isn't 0x47 (or
@@ -523,6 +543,7 @@ impl Demuxer {
         // Caller guarantees alignment — lock sync state so the next
         // `feed` (if any) doesn't re-acquire via N-of-M.
         self.is_synced = true;
+        self.resync_required = false;
         self.bytes_since_sync = 0;
         let result = self.process_packet(pkt);
         self.handle_process_packet_result(result)?;
@@ -537,9 +558,19 @@ impl Demuxer {
     /// scanned span, and the counter restarts at zero so the next `feed`
     /// begins a fresh search instead of re-scanning the same bytes and
     /// re-reporting a doubled count (CORR-15).
+    ///
+    /// A scan can close the window sitting ON a candidate `0x47` (the byte
+    /// the scan stopped at, ≥ 188 bytes still behind it in `sync_buf`) —
+    /// that candidate was never scanned past, so it's still buffered, not
+    /// discarded. Derive `resync_required` from whether such a candidate
+    /// remains: an empty buffer means the next `feed`'s leading `0x47` (if
+    /// any) is fresh initial acquisition per CORR-15; a non-empty one means
+    /// it must still pass N-of-M before the demuxer trusts it (see
+    /// `retained_candidate_after_unrecoverable_still_needs_n_of_m`).
     fn unrecoverable_window(&mut self) -> DemuxError {
         let after_bytes = core::mem::take(&mut self.bytes_since_sync);
         self.is_synced = false;
+        self.resync_required = self.sync_buf.len() > self.sync_consumed;
         DemuxError::Unrecoverable { after_bytes }
     }
 
@@ -1000,6 +1031,7 @@ impl Demuxer {
         self.queue.clear();
         self.bytes_since_sync = 0;
         self.is_synced = false;
+        self.resync_required = false;
         self.fatal = None;
         // Per-PMT-version PID dedupe sets clear so a fresh PMT post-
         // reconnect re-fires `SubtitleMissingDescriptor` /
@@ -1298,6 +1330,107 @@ mod tests {
         assert!(
             matches!(err, DemuxError::Unrecoverable { after_bytes: 7_000 }),
             "{err:?}"
+        );
+    }
+
+    /// Shared prefix for the two `resync_required` regression tests below
+    /// (Task 3, post-Arc-1 review): `SYNC_SEARCH_WINDOW + 1` garbage bytes
+    /// so the scan closes the window ON a candidate `0x47` with a full
+    /// 188-byte packet's worth of bytes still behind it (`Unrecoverable`),
+    /// immediately followed by that stray `0x47` and 187 more bytes that
+    /// decode as a `transport_error_indicator`-set packet on PID 0x0100.
+    /// That payload is a trap: if the N-of-M reject path is ever skipped
+    /// and the candidate is handed to `process_packet` as "confirmed"
+    /// sync, it queues a `TransportErrorPacket` `NonConformant` event —
+    /// an observable that a correctly-discarded candidate never produces.
+    fn window_overflow_then_retained_candidate() -> Vec<u8> {
+        let window = crate::mpegts::demux::sync_ingress::SYNC_SEARCH_WINDOW;
+        let mut data = vec![0xAAu8; window + 1];
+        let mut candidate = [0xFFu8; 188];
+        candidate[0] = 0x47;
+        candidate[1] = 0x81; // transport_error_indicator=1, pid_high=0b00001
+        candidate[2] = 0x00; // pid_low=0 -> pid 0x0100
+        candidate[3] = 0x10; // adaptation_field_control=01 (payload only), cc=0
+        data.extend_from_slice(&candidate);
+        data
+    }
+
+    /// Task 3 (post-Arc-1 review, Medium): a candidate `0x47` retained in
+    /// `sync_buf` when a sync-search window closes with `Unrecoverable`
+    /// must still pass N-of-M on the next `feed` — including an EMPTY one.
+    /// Before the `resync_required` fix, `unrecoverable_window` zeroed
+    /// `bytes_since_sync` and the resync predicate derived straight from
+    /// that counter, so the very next `feed` computed `resyncing = false`
+    /// and parsed the retained candidate as "confirmed" sync with no
+    /// re-validation at all.
+    #[test]
+    fn retained_candidate_after_unrecoverable_still_needs_n_of_m() {
+        let mut d = Demuxer::new();
+        let data = window_overflow_then_retained_candidate();
+        let err = d.feed(&data).unwrap_err();
+        assert!(matches!(err, DemuxError::Unrecoverable { .. }), "{err:?}");
+        let sync_consumed_after_verdict = d.sync_consumed;
+        assert!(
+            d.sync_buf.len() > sync_consumed_after_verdict,
+            "the retained candidate must still be sitting in sync_buf"
+        );
+
+        // An empty feed carries no new bytes, but the retained candidate is
+        // only 188 bytes deep — N-of-M cannot yet confirm or reject it
+        // (it needs up to 7 strides of evidence), so it must stay buffered
+        // untouched rather than being parsed as confirmed sync.
+        d.feed(&[])
+            .unwrap_or_else(|e| panic!("empty feed after the verdict: {e}"));
+        assert_eq!(
+            d.sync_consumed, sync_consumed_after_verdict,
+            "the retained candidate must not be consumed without N-of-M confirmation"
+        );
+        assert!(
+            !d.is_synced,
+            "an unconfirmed retained candidate must not flip is_synced"
+        );
+    }
+
+    /// Companion to the test above: once enough real, NON-stride-aligned
+    /// sync follows, N-of-M must REJECT the retained candidate (consuming
+    /// it as garbage) and lock onto the real packets instead of trusting
+    /// the stray byte.
+    #[test]
+    fn retained_candidate_is_rejected_when_real_sync_follows() {
+        let mut d = Demuxer::new();
+        let data = window_overflow_then_retained_candidate();
+        let err = d.feed(&data).unwrap_err();
+        assert!(matches!(err, DemuxError::Unrecoverable { .. }), "{err:?}");
+
+        // One padding byte shifts every subsequent packet boundary off the
+        // 188-byte strides N-of-M probes from the retained candidate, so
+        // none of the real packets' sync bytes land where the candidate's
+        // stride check looks — it must be rejected, not accepted.
+        let mut next = vec![0xAAu8];
+        let pkt = null_ts_packet();
+        for _ in 0..10 {
+            next.extend_from_slice(&pkt);
+        }
+        d.feed(&next)
+            .unwrap_or_else(|e| panic!("resync after the retained candidate: {e}"));
+
+        assert!(
+            d.is_synced,
+            "the demuxer must re-lock onto the real, aligned packets"
+        );
+        // The stray candidate must have been discarded as garbage, never
+        // handed to `process_packet` — if it had been (the pre-fix bug),
+        // its transport_error_indicator payload would have queued a
+        // `TransportErrorPacket` NonConformant event. The 10 null packets
+        // on their own emit nothing, so any event here proves the
+        // candidate leaked through unconfirmed.
+        let mut events = Vec::new();
+        while let Some(e) = d.next_event() {
+            events.push(e);
+        }
+        assert!(
+            events.is_empty(),
+            "the retained candidate must be discarded as garbage, not parsed: {events:?}"
         );
     }
 
