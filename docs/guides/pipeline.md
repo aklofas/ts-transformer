@@ -384,8 +384,9 @@ gap buffer is non-empty) `send_bytes` enqueues under `overflow_policy`
 without waiting on backoff or the factory call — `Ok(())` means
 *accepted*, not *delivered*. It does not wait on the worker's in-flight
 inner send either (that call is unbounded against a peer that has
-stopped reading), only on the gap buffer's own short critical sections;
-`stats_handle().stats()` has the same guarantee.
+stopped reading), only on the gap buffer's own short critical sections.
+`stats_handle().stats()` and the sender shells wrapped around it
+(`MuxSender` / `Sender` / `RawSender`) have the same guarantee.
 This is still a synchronous API, not an async
 runtime; see the
 [cookbook recipe](/docs/cookbook/operations/managed-transport-reconnect.md#background-mode-never-stall-the-producer)

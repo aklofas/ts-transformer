@@ -128,7 +128,6 @@ use std::sync::Mutex;
 use std::thread;
 use tracing::{debug, info, warn};
 use tst_core::cancel::CancelSlot;
-use tst_core::mpegts::common::SRT_TS_BUNDLE_BYTES;
 use tst_core::transport::{BrokenCause, Transport, TransportCancel, TransportError};
 
 /// Snapshot of `ManagedTransport`'s reconnect/gap telemetry.
@@ -263,15 +262,17 @@ impl ManagedStatsHandle {
 ///    the previous worker, which may be blocked acquiring `gap` in its
 ///    exit path).
 /// 4. The background worker NEVER holds `gap` across an inner send, and
-///    `send_bytes`'s size pre-check never takes `inner` (it reads the
-///    published `max_payload` instead). One inner send is unbounded
-///    against a peer that stops draining, so either would stall the
-///    producer and `stats()` for the length of that send. The front
-///    message is pinned against `DropOldest` eviction by the gap
-///    buffer's own in-flight mark (`begin_send` / `finish_send` /
-///    `abort_send`), not by the lock. `inner` IS held across the drain
-///    send — the transport needs `&mut` — which is why nothing on the
-///    producer's Background path may take it.
+///    nothing on the producer's path takes `inner`: neither
+///    `send_bytes`'s size pre-check nor [`Transport::max_payload`] —
+///    which every sender shell calls on every send — both read the
+///    cached ceiling instead. One inner send is unbounded against a peer
+///    that stops draining, so any of those would stall the producer (or
+///    `stats()`) for the length of that send. The front message is
+///    pinned against `DropOldest` eviction by the gap buffer's own
+///    in-flight mark (`begin_send` / `finish_send` / `abort_send`), not
+///    by the lock. `inner` IS held across the drain send — the transport
+///    needs `&mut` — which is exactly why the producer's Background path
+///    must not take it.
 /// 5. The cancel path takes NEITHER lock: it fires the `active` cancel
 ///    slot, which publishes the live inner's wake handle. A cancel is only
 ///    useful while a send is in flight — i.e. exactly while `inner` is
@@ -295,8 +296,10 @@ impl ManagedStatsHandle {
 /// - **Inner-transport lock** (poisoned mid-mutation):
 ///   - `send_bytes`: returns `TransportError::Broken { .. }`. Caller can
 ///     rebuild the wrapper.
-///   - `max_payload`: returns `SRT_TS_BUNDLE_BYTES` (the same default used
-///     when the inner transport is `None` — no panic).
+///   - `max_payload`: takes no `inner` lock at all — poison-immune by
+///     construction (it reads the cached ceiling of the last installed
+///     inner; see locking invariant 4). Same for `send_bytes`'s size
+///     pre-check.
 ///   - `is_alive`: returns `false` (the same "no live transport" default
 ///     — no panic).
 ///   - `close`: silent no-op; the `closed` flag is already latched before
@@ -831,18 +834,31 @@ impl<T: Transport + 'static> Transport for ManagedTransport<T> {
     }
 
     fn max_payload(&self) -> usize {
-        // Mutex-poisoning policy (safe-default on poison): SRT_TS_BUNDLE_BYTES is
-        // already the "no live inner transport" default; poison falls through to
-        // the same default. Matches socket_stats's shape below.
-        // Deliberate asymmetry with ManagedRecvTransport (which caches the
-        // last live inner's ceiling): understating a *send* budget is safe —
-        // callers just chunk smaller — while understating a recv ceiling was
-        // the PR #97 truncation bug class. Keep the conservative constant here.
-        self.inner
-            .lock()
-            .ok()
-            .and_then(|g| g.as_ref().map(|t| t.max_payload()))
-            .unwrap_or(SRT_TS_BUNDLE_BYTES)
+        // The cached ceiling — NEVER the `inner` lock (locking invariant
+        // 4). Every sender shell calls this on every send
+        // (`RawSender::send`, `MuxSender`'s bundle sizing, `Sender`'s
+        // framing), and the background drain worker holds `inner` across
+        // one inner send that is unbounded against a peer which stops
+        // reading. Answering from `inner` therefore put the producer
+        // straight back behind a stalled sink — the exact stall
+        // `ReconnectMode::Background` exists to prevent — and made it
+        // poison-sensitive for no gain.
+        //
+        // The value is the ceiling of the LAST INSTALLED inner: equal to
+        // the live inner's whenever one is installed, and while none is
+        // (mid-reconnect) it keeps reporting that last ceiling instead of
+        // a placeholder. This matches `ManagedRecvTransport`, which
+        // caches for the same reason. A ceiling that SHRINKS on reinstall
+        // is already handled downstream: `send_managed`'s pre-check reads
+        // this same value, and the drain drops (and counts) a queued
+        // message the rebuilt transport can no longer carry. Before any
+        // inner is installed the field holds `SRT_TS_BUNDLE_BYTES`, but
+        // `ManagedTransport::new` overwrites it with the real ceiling
+        // immediately, so that constant is only ever a pre-construction
+        // placeholder.
+        self.shared
+            .max_payload
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     fn is_alive(&self) -> bool {
@@ -1063,8 +1079,19 @@ mod cancel_tests {
         // Construct a ManagedTransport with a NoopT inner whose
         // max_payload() returns 4242. Poison the inner mutex via a sibling
         // thread that panics while holding the lock. Then confirm that
-        // max_payload(), is_alive(), and close() all take the safe-default
-        // path rather than propagating the panic.
+        // max_payload(), is_alive(), and close() all take a non-panicking
+        // path.
+        //
+        // max_payload()'s CONTRACT CHANGED with the post-Arc-1 review fix:
+        // it no longer consults `inner` at all (locking invariant 4 — the
+        // drain worker holds that lock across one unbounded inner send,
+        // and every sender shell calls max_payload() per send), so it is
+        // poison-IMMUNE rather than poison-defaulting, and keeps reporting
+        // the cached ceiling of the last installed inner. Asserting
+        // SRT_TS_BUNDLE_BYTES here would now be asserting that a poisoned
+        // lock silently shrinks the caller's send budget — the opposite of
+        // the guarantee. is_alive() and close() DO still take the lock and
+        // keep their safe-default-on-poison behavior.
         let factory = || -> Result<NoopT, TransportError> {
             Err(TransportError::Broken {
                 msg: "".into(),
@@ -1091,12 +1118,13 @@ mod cancel_tests {
                 .expect_err("poison thread must panic to poison the mutex");
         }
 
-        // After poison, all three methods must NOT panic and must return the
-        // documented safe defaults rather than the inner transport's values.
+        // After poison, none of the three may panic. max_payload() reads
+        // the cached ceiling, which the poison cannot touch, so it still
+        // reports the inner's sentinel.
         assert_eq!(
             managed.max_payload(),
-            SRT_TS_BUNDLE_BYTES,
-            "poisoned inner lock must return SRT_TS_BUNDLE_BYTES, not inner sentinel 4242"
+            4242,
+            "max_payload() must not consult the (poisoned) inner lock — it reports the cached ceiling"
         );
         assert!(!managed.is_alive(), "poisoned inner lock must return false");
         managed.close(); // must not panic

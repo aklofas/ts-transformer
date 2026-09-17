@@ -10,7 +10,8 @@ use std::time::{Duration, Instant};
 
 use tst_core::transport::{BrokenCause, Transport, TransportCancel, TransportError};
 use tst_pipeline::{
-    BackoffStrategy, ManagedTransport, OverflowPolicy, ReconnectMode, ReconnectPolicy,
+    BackoffStrategy, ManagedTransport, OverflowPolicy, RawSender, RawSenderConfig, ReconnectMode,
+    ReconnectPolicy,
 };
 
 /// What the next inner send should do. Empty script => Ok.
@@ -966,6 +967,54 @@ fn drop_oldest_eviction_skips_the_in_flight_message() {
         "the in-flight front must never be the eviction victim"
     );
     drop(managed);
+}
+
+/// The real producer in Background mode is a sender SHELL, not
+/// `ManagedTransport::send_bytes` directly — and every shell asks the
+/// transport for `max_payload()` on each send (`RawSender::send`,
+/// `MuxSender`'s bundle sizing). `ManagedTransport::max_payload()` used
+/// to take the `inner` lock to answer, which put the shell's producer
+/// straight back behind the worker's unbounded in-flight send even after
+/// `send_bytes`'s own pre-check stopped locking. It now answers from the
+/// cached ceiling.
+///
+/// `RawSender` is the lightest shell fixture: `send` is exactly
+/// `max_payload()` + `send_bytes`.
+#[test]
+fn shell_send_does_not_wait_on_a_parked_inner_send() {
+    let policy = bg_policy(None, BackoffStrategy::Constant(Duration::from_millis(10)));
+    let GatedRig {
+        managed,
+        gate,
+        sent,
+    } = gated_rig(policy);
+    let mut shell = RawSender::new(managed, RawSenderConfig::default());
+
+    shell.send(&[0]).unwrap(); // breaks the initial inner -> queued, worker spawned
+    wait_until(Duration::from_secs(10), || gate.parked_count() >= 1);
+
+    let (tx, rx) = mpsc::channel();
+    let h = std::thread::spawn(move || {
+        let r = shell.send(&[1]);
+        let _ = tx.send(r);
+        shell // hand it back so the test owns the Drop
+    });
+    let send_res = rx.recv_timeout(Duration::from_secs(5));
+
+    // Release BEFORE asserting so a failing run unwinds cleanly.
+    gate.release();
+    let shell = h.join().expect("producer thread joined");
+
+    send_res
+        .expect("a shell send must complete while the worker is parked in an inner send")
+        .expect("background mode accepts into the gap buffer");
+    wait_until(Duration::from_secs(10), || sent.lock().unwrap().len() == 2);
+    assert_eq!(
+        *sent.lock().unwrap(),
+        vec![vec![0], vec![1]],
+        "both messages delivered, in order, exactly once"
+    );
+    drop(shell);
 }
 
 /// `send_bytes`'s size pre-check reads a published ceiling instead of
