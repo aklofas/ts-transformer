@@ -104,10 +104,9 @@ def test_srt_sender_close_from_other_thread_during_send() -> None:
 
     sender, receiver = _srt_pair(_free_tcp_port())
     stop = threading.Event()
-    outcome: dict[str, object] = {}
 
     def worker() -> None:
-        outcome.update(_spin_sender(lambda: sender.send_bytes(TS_BUNDLE), stop))
+        _spin_sender(lambda: sender.send_bytes(TS_BUNDLE), stop)
 
     w = threading.Thread(target=worker, daemon=True)
     w.start()
@@ -173,7 +172,6 @@ def test_srt_mux_sender_close_from_other_thread_during_send_video() -> None:
 
     tx, peer = _srt_mux_sender_with_silent_peer(_free_tcp_port())
     stop = threading.Event()
-    outcome: dict[str, object] = {}
     pts = [0]
 
     def send_one() -> None:
@@ -181,7 +179,7 @@ def test_srt_mux_sender_close_from_other_thread_during_send_video() -> None:
         pts[0] += 3000
 
     def worker() -> None:
-        outcome.update(_spin_sender(send_one, stop))
+        _spin_sender(send_one, stop)
 
     w = threading.Thread(target=worker, daemon=True)
     w.start()
