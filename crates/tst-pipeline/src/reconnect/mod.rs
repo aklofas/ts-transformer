@@ -71,6 +71,14 @@ pub struct ReconnectPolicy {
     pub backoff: BackoffStrategy,
 
     /// Gap-buffer capacity in messages. Default 256.
+    ///
+    /// Under [`OverflowPolicy::DropOldest`] the buffer may hold
+    /// `capacity + 1` for the duration of one send: the message the
+    /// background drain worker is currently writing is pinned against
+    /// eviction, so when it is the only queued entry a new message is
+    /// accepted rather than dropping bytes already handed to the
+    /// transport. The next completed send brings the length back within
+    /// `capacity`.
     pub gap_buffer_capacity: usize,
 
     /// What to do when gap buffer is full and a new message arrives.
@@ -264,7 +272,7 @@ impl ManagedStatsHandle {
 /// 4. The background worker NEVER holds `gap` across an inner send, and
 ///    nothing on the producer's path takes `inner`: neither
 ///    `send_bytes`'s size pre-check nor [`Transport::max_payload`] —
-///    which every sender shell calls on every send — both read the
+///    which `RawSender`/`MuxSender` call on every send — both read the
 ///    cached ceiling instead. One inner send is unbounded against a peer
 ///    that stops draining, so any of those would stall the producer (or
 ///    `stats()`) for the length of that send. The front message is
@@ -835,14 +843,14 @@ impl<T: Transport + 'static> Transport for ManagedTransport<T> {
 
     fn max_payload(&self) -> usize {
         // The cached ceiling — NEVER the `inner` lock (locking invariant
-        // 4). Every sender shell calls this on every send
-        // (`RawSender::send`, `MuxSender`'s bundle sizing, `Sender`'s
-        // framing), and the background drain worker holds `inner` across
-        // one inner send that is unbounded against a peer which stops
-        // reading. Answering from `inner` therefore put the producer
-        // straight back behind a stalled sink — the exact stall
-        // `ReconnectMode::Background` exists to prevent — and made it
-        // poison-sensitive for no gain.
+        // 4). `RawSender::send` and `MuxSender`'s bundle sizing call this
+        // on every send (`Sender` does not — its framer emits fixed
+        // `SRT_BUNDLE_BYTES` bundles), and the background drain worker
+        // holds `inner` across one inner send that is unbounded against a
+        // peer which stops reading. Answering from `inner` therefore put
+        // the producer straight back behind a stalled sink — the exact
+        // stall `ReconnectMode::Background` exists to prevent — and made
+        // it poison-sensitive for no gain.
         //
         // The value is the ceiling of the LAST INSTALLED inner: equal to
         // the live inner's whenever one is installed, and while none is
@@ -1085,7 +1093,7 @@ mod cancel_tests {
         // max_payload()'s CONTRACT CHANGED with the post-Arc-1 review fix:
         // it no longer consults `inner` at all (locking invariant 4 — the
         // drain worker holds that lock across one unbounded inner send,
-        // and every sender shell calls max_payload() per send), so it is
+        // and RawSender/MuxSender call max_payload() per send), so it is
         // poison-IMMUNE rather than poison-defaulting, and keeps reporting
         // the cached ceiling of the last installed inner. Asserting
         // SRT_TS_BUNDLE_BYTES here would now be asserting that a poisoned

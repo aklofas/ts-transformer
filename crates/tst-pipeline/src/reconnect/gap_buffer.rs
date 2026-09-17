@@ -110,10 +110,27 @@ impl GapBuffer {
         Ok(())
     }
 
+    /// Pop the front message.
+    ///
+    /// # Panics
+    ///
+    /// Debug builds assert that no send is in flight: the drain worker
+    /// settles its own entry with [`Self::finish_send`], and popping out
+    /// from under a live in-flight mark would leave that mark pointing at
+    /// a message the buffer no longer holds. (The inline `Blocking` drain
+    /// and any outside-crate caller run with no worker, so the mark is
+    /// `None` for them.)
     pub fn pop_front(&mut self) -> Option<Vec<u8>> {
+        debug_assert!(
+            self.in_flight.is_none(),
+            "BUG: pop_front while a send is in flight — settle it with finish_send/abort_send"
+        );
         self.queue.pop_front().map(|(_, msg)| msg)
     }
 
+    /// Peek at the front message. Read-only, so it is safe alongside an
+    /// in-flight send — note it then returns the very message the drain
+    /// worker is writing, which has NOT been delivered yet.
     pub fn front(&self) -> Option<&Vec<u8>> {
         self.queue.front().map(|(_, msg)| msg)
     }
@@ -224,6 +241,21 @@ mod tests {
             assert_eq!(buf.pop_front().unwrap(), vec![i]);
         }
         assert!(buf.is_empty());
+    }
+
+    /// The drain worker settles its own entry via `finish_send` (which
+    /// clears the mark before popping). A bare `pop_front` while a send
+    /// is in flight would leave the mark pointing at a message the buffer
+    /// no longer holds — caught loudly in debug rather than silently
+    /// desyncing.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "BUG: pop_front while a send is in flight")]
+    fn pop_front_while_a_send_is_in_flight_panics_in_debug() {
+        let mut buf = GapBuffer::new(2, OverflowPolicy::DropOldest);
+        buf.enqueue(vec![1]).unwrap();
+        let _ = buf.begin_send().expect("non-empty");
+        let _ = buf.pop_front();
     }
 
     #[test]

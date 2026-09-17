@@ -116,7 +116,7 @@ pub(crate) struct ManagedShared {
     /// The last installed inner's `max_payload()`, published at
     /// construction and on every successful install so neither
     /// `send_bytes`'s size pre-check nor `ManagedTransport::max_payload()`
-    /// (which every sender shell calls on every send) has to take the
+    /// (which `RawSender`/`MuxSender` call on every send) has to take the
     /// `inner` lock — the drain worker holds that across one unbounded
     /// inner send. A value that went stale between a read and the drain
     /// is benign: the drain's own `TooLarge` handling drops a queued

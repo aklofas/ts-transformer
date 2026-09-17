@@ -385,8 +385,13 @@ without waiting on backoff or the factory call — `Ok(())` means
 *accepted*, not *delivered*. It does not wait on the worker's in-flight
 inner send either (that call is unbounded against a peer that has
 stopped reading), only on the gap buffer's own short critical sections.
-`stats_handle().stats()` and the sender shells wrapped around it
-(`MuxSender` / `Sender` / `RawSender`) have the same guarantee.
+`stats_handle().stats()`, and a **send** through a sender shell
+(`MuxSender` / `Sender` / `RawSender`) wrapped around it, have the same
+guarantee. The liveness/socket-stats queries those shells forward do
+not: `socket_stats()` always asks the inner transport and so waits for
+an in-flight inner send to return, while `is_alive()` answers from the
+reconnect flag whenever a worker is active and consults the inner only
+otherwise. Use the stats handle for outage monitoring.
 This is still a synchronous API, not an async
 runtime; see the
 [cookbook recipe](/docs/cookbook/operations/managed-transport-reconnect.md#background-mode-never-stall-the-producer)
