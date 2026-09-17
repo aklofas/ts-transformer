@@ -31,6 +31,7 @@
     clippy::too_many_arguments
 )]
 
+use std::net::SocketAddr;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -616,14 +617,22 @@ pub(crate) struct PyListener {
     /// Cloned for each Python-side `CancelHandle` produced; fired first by
     /// `close()`.
     cancel_src: tst_core::SrtCancelHandle,
+    /// Bound address read once at construction, so `local_addr()` never
+    /// waits behind a parked `accept()` — the thread asking for the port
+    /// is usually the one that has to connect to end that park. `None`
+    /// only if `getsockname` failed here; `local_addr()` then falls back
+    /// to the slot.
+    local_addr: Option<SocketAddr>,
 }
 
 impl PyListener {
     pub(crate) fn wrap(listener: SrtListener) -> Self {
         let cancel_src = listener.cancel_handle();
+        let local_addr = listener.local_addr().ok();
         Self {
             inner: Arc::new(Mutex::new(Some(listener))),
             cancel_src,
+            local_addr,
         }
     }
 }
@@ -657,12 +666,17 @@ impl PyListener {
 
     /// Local bound address as `(host, port)`. Useful when the URL
     /// requested port 0 (kernel-pick) — the bound port reads back via
-    /// libsrt's `getsockname`. Waits (GIL released) for a parked accept on
-    /// another thread to release the slot.
+    /// libsrt's `getsockname`. Answered from the construction-time
+    /// snapshot, so it never waits behind an `accept()` parked on another
+    /// thread; raises `SrtError(CLOSED)` once the listener is closed.
     fn local_addr(&self, py: Python<'_>) -> PyResult<(String, u16)> {
-        let addr = crate::util::with_slot(py, &self.inner, |l| l.local_addr())
-            .ok_or_else(|| make_srt_error(py, "CLOSED", "listener is closed"))?
-            .map_err(|e| io_error_to_pyerr(py, e))?;
+        let addr = match self.local_addr {
+            Some(addr) if crate::util::slot_alive(&self.inner, |_| true) => addr,
+            Some(_) => return Err(make_srt_error(py, "CLOSED", "listener is closed")),
+            None => crate::util::with_slot(py, &self.inner, |l| l.local_addr())
+                .ok_or_else(|| make_srt_error(py, "CLOSED", "listener is closed"))?
+                .map_err(|e| io_error_to_pyerr(py, e))?,
+        };
         Ok((addr.ip().to_string(), addr.port()))
     }
 

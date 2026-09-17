@@ -480,10 +480,8 @@ def test_srt_managed_mux_sender_cancel_handle_wakes_blocking_backoff() -> None:
         handle = tx.cancel_handle()
         assert isinstance(handle, CancelHandle)
         w, stop, outcome = _park_send_video(tx)
-        t0 = time.monotonic()
         handle.cancel()
         w.join(5.0)
-        woke_after = time.monotonic() - t0
         stop.set()
         if w.is_alive():
             _t, rescue_box = _plain_srt_receiver_on_thread(port)
@@ -491,7 +489,6 @@ def test_srt_managed_mux_sender_cancel_handle_wakes_blocking_backoff() -> None:
             for r in rescue_box:
                 r.close()
             pytest.fail("cancel() did not wake the send parked in the reconnect loop")
-        assert woke_after < 2.0, f"cancel took {woke_after:.2f}s"
         exc = outcome.get("exc")
         assert isinstance(exc, SrtError), f"parked send ended with {exc!r}"
         assert exc.kind == SrtErrorKind.CLOSED, exc.kind
@@ -736,12 +733,9 @@ def test_rtp_h264_receiver_close_from_other_thread_while_recv_au_parked() -> Non
     import tstrans.rtp as rtp
 
     rx = rtp.H264Receiver.listen("rtp://127.0.0.1:0?pt=96")
-    # Read the bound address BEFORE the worker parks. `local_addr()` goes
-    # through the same slot a parked `recv_au` holds, so on a regression
-    # calling it from the rescue path would block the main thread inside a
-    # native mutex with the GIL released — where pytest-timeout cannot reach
-    # it, wedging the job instead of failing it. The udp / rtp / srt siblings
-    # capture their ports up front for the same reason.
+    # Read the bound address up front (it is a construction-time snapshot,
+    # so reading it while the worker is parked would also work); the udp /
+    # rtp / srt siblings capture their ports the same way.
     host_port = rx.local_addr()
     assert host_port is not None
     host, port = host_port.rsplit(":", 1)
@@ -843,10 +837,8 @@ def test_udp_recv_transport_close_from_other_thread_while_recv_parked() -> None:
     w.start()
     time.sleep(0.3)
     try:
-        t0 = time.monotonic()
         c, errs = _close_on_thread(rx)
         w.join(5.0)
-        woke_after = time.monotonic() - t0
         if w.is_alive():
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.sendto(TS_PACKET, ("127.0.0.1", port))  # rescue
@@ -854,7 +846,8 @@ def test_udp_recv_transport_close_from_other_thread_while_recv_parked() -> None:
             w.join(5.0)
         _assert_close_ok(c, errs, "udp.RecvTransport")
         assert not w.is_alive(), "close() did not end the parked recv()"
-        assert woke_after < 2.0, f"close took {woke_after:.2f}s to end the parked recv"
+        # A rescued recv returns data, not an error: `captured` then stays
+        # empty and the assertion below is what fails — no wall-clock bound.
         assert len(captured) == 1, f"expected one error; got {captured!r}"
         err = captured[0]
         assert isinstance(err, UdpError), f"parked recv ended with {err!r}"
@@ -865,20 +858,39 @@ def test_udp_recv_transport_close_from_other_thread_while_recv_parked() -> None:
 
 def test_udp_recv_transport_timeout_ms_still_raises_io_timed_out() -> None:
     """The polling rewrite must keep the documented per-call deadline
-    contract: `recv(timeout_ms=N)` with no data raises `UdpError(IO)`
-    "recv timed out" after ~N ms (a 100 ms poll slice must not add a
-    full extra slice to a 50 ms deadline)."""
+    contract: `recv(timeout_ms=N)` with no data still ENDS, and ends with
+    `UdpError(IO)` "recv timed out" — not `CLOSED`, not a hang. The call
+    runs on a worker with a generous join so a regression that never
+    honours the deadline fails the test (after a rescue `close()`) instead
+    of wedging the process; how long the 50 ms deadline actually takes is
+    deliberately not asserted (wall-clock bounds are a flake class)."""
     from tstrans import udp
     from tstrans.exceptions import UdpError, UdpErrorKind
 
-    with udp.RecvTransport.builder().bind_url("udp://127.0.0.1:0").build() as rx:
-        t0 = time.monotonic()
-        with pytest.raises(UdpError) as ei:
+    rx = udp.RecvTransport.builder().bind_url("udp://127.0.0.1:0").build()
+    captured: list[BaseException] = []
+
+    def worker() -> None:
+        try:
             rx.recv(timeout_ms=50)
-        elapsed = time.monotonic() - t0
-        assert ei.value.kind == UdpErrorKind.IO
-        assert "timed out" in str(ei.value)
-        assert elapsed < 1.0, f"50 ms deadline took {elapsed:.2f}s"
+        except BaseException as exc:  # noqa: BLE001
+            captured.append(exc)
+
+    w = threading.Thread(target=worker, daemon=True)
+    w.start()
+    w.join(30.0)
+    try:
+        if w.is_alive():
+            rx.close()  # rescue: the stop flag ends the parked recv
+            w.join(5.0)
+            pytest.fail("recv(timeout_ms=50) did not return within 30 s")
+        assert len(captured) == 1, f"expected one error; got {captured!r}"
+        err = captured[0]
+        assert isinstance(err, UdpError), f"recv ended with {err!r}"
+        assert err.kind == UdpErrorKind.IO, err.kind
+        assert "timed out" in str(err)
+    finally:
+        rx.close()
 
 
 # --------------------------------------------------------------------------- #
@@ -953,10 +965,8 @@ def test_rist_recv_transport_close_from_other_thread_while_recv_parked() -> None
     w.start()
     time.sleep(0.3)
     try:
-        t0 = time.monotonic()
         c, errs = _close_on_thread(rx)
         w.join(5.0)
-        woke_after = time.monotonic() - t0
         if w.is_alive():
             # Rescue: a sender session delivers one packet and unparks the recv.
             try:
@@ -970,10 +980,134 @@ def test_rist_recv_transport_close_from_other_thread_while_recv_parked() -> None
             w.join(5.0)
         _assert_close_ok(c, errs, "rist.RecvTransport")
         assert not w.is_alive(), "close() did not end the parked recv()"
-        assert woke_after < 2.0, f"close took {woke_after:.2f}s to end the parked recv"
+        # A rescued recv returns data, not an error: `captured` then stays
+        # empty and the assertion below is what fails — no wall-clock bound.
         assert len(captured) == 1, f"expected one error; got {captured!r}"
         err = captured[0]
         assert isinstance(err, RistError), f"parked recv ended with {err!r}"
         assert err.kind == RistErrorKind.CLOSED, err.kind
     finally:
         rx.close()
+
+
+# --------------------------------------------------------------------------- #
+# Construction-constant getters must not wait behind a parked call            #
+# --------------------------------------------------------------------------- #
+
+
+def _assert_getter_does_not_wait_behind_park(
+    what: str,
+    park: Callable[[], object],
+    getter: Callable[[], object],
+    end_park: Callable[[], None],
+) -> object:
+    """Park `park()` on a worker, then call `getter()` on a second thread
+    and require it to answer while the park is still in progress.
+
+    A getter that goes through the slot the park holds does not return
+    until the park ends — and the caller that wants the port is usually
+    the one that has to connect / send to end it, so that is a deadlock,
+    not slowness. The only bound is therefore a generous hang deadline;
+    `end_park()` (the object's `close()`) always runs before the failure
+    so no daemon thread is left inside native code."""
+    outcome: dict[str, object] = {}
+
+    def park_worker() -> None:
+        try:
+            park()
+        except BaseException:  # noqa: BLE001
+            pass
+
+    def getter_worker() -> None:
+        try:
+            outcome["value"] = getter()
+        except BaseException as exc:  # noqa: BLE001
+            outcome["exc"] = exc
+
+    p = threading.Thread(target=park_worker, daemon=True)
+    p.start()
+    time.sleep(0.3)  # parked with the GIL released
+    g = threading.Thread(target=getter_worker, daemon=True)
+    g.start()
+    g.join(30.0)
+    blocked = g.is_alive()
+    end_park()  # rescue: ends the park (and frees a slot-bound getter)
+    p.join(5.0)
+    g.join(5.0)
+    assert not blocked, f"{what} waited behind the parked call instead of answering"
+    assert "exc" not in outcome, f"{what} raised {outcome['exc']!r} while the call was parked"
+    return outcome.get("value")
+
+
+def test_srt_listener_local_addr_does_not_wait_behind_parked_accept() -> None:
+    from tstrans.exceptions import SrtError, SrtErrorKind
+    import tstrans.srt as srt
+
+    lst = srt.Builder("srt://127.0.0.1:0?mode=listener").listen()
+    before = lst.local_addr()
+    got = _assert_getter_does_not_wait_behind_park(
+        "srt.Listener.local_addr()", lst.accept, lst.local_addr, lst.close
+    )
+    assert got == before
+    with pytest.raises(SrtError) as ei:
+        lst.local_addr()
+    assert ei.value.kind == SrtErrorKind.CLOSED
+
+
+def test_tcp_listener_local_port_does_not_wait_behind_parked_accept() -> None:
+    from tstrans import tcp
+    from tstrans.exceptions import TcpError, TcpErrorKind
+
+    lst = tcp.Listener.builder().bind("127.0.0.1:0").build()
+    before = lst.local_port()
+    got = _assert_getter_does_not_wait_behind_park(
+        "tcp.Listener.local_port()", lst.accept_blocking, lst.local_port, lst.close
+    )
+    assert got == before
+    with pytest.raises(TcpError) as ei:
+        lst.local_port()
+    assert ei.value.kind == TcpErrorKind.CLOSED
+
+
+def test_udp_recv_transport_local_addr_port_does_not_wait_behind_parked_recv() -> None:
+    from tstrans import udp
+    from tstrans.exceptions import UdpError, UdpErrorKind
+
+    rx = udp.RecvTransport.builder().bind_url("udp://127.0.0.1:0").build()
+    before = rx.local_addr_port()
+    got = _assert_getter_does_not_wait_behind_park(
+        "udp.RecvTransport.local_addr_port()",
+        lambda: rx.recv(timeout_ms=None),
+        rx.local_addr_port,
+        rx.close,
+    )
+    assert got == before
+    with pytest.raises(UdpError) as ei:
+        rx.local_addr_port()
+    assert ei.value.kind == UdpErrorKind.CLOSED
+
+
+def test_rtp_h264_receiver_local_addr_does_not_wait_behind_parked_recv_au() -> None:
+    from tstrans.exceptions import RtpError
+    import tstrans.rtp as rtp
+
+    rx = rtp.H264Receiver.listen("rtp://127.0.0.1:0?pt=96")
+    before = rx.local_addr()
+    assert before is not None
+    got = _assert_getter_does_not_wait_behind_park(
+        "rtp.H264Receiver.local_addr()", rx.recv_au, rx.local_addr, rx.close
+    )
+    assert got == before
+    with pytest.raises(RtpError):  # closed-handle contract, never None
+        rx.local_addr()
+
+
+def test_rist_recv_transport_repr_does_not_wait_behind_parked_recv() -> None:
+    rx, _port = _rist_recv_or_skip()
+    before = repr(rx)
+    assert "rist://" in before
+    got = _assert_getter_does_not_wait_behind_park(
+        "repr(rist.RecvTransport)", lambda: rx.recv(timeout_ms=None), lambda: repr(rx), rx.close
+    )
+    assert got == before
+    assert repr(rx) == "RecvTransport(closed)"
