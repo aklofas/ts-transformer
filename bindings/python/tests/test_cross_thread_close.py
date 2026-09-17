@@ -118,9 +118,19 @@ def test_srt_sender_close_from_other_thread_during_send() -> None:
         w.join(5.0)
         _assert_close_ok(c, errs, "srt.Sender")
         assert not w.is_alive(), "send loop did not end after close()"
-        exc = outcome.get("exc")
-        assert isinstance(exc, SrtError), f"send loop ended with {exc!r}"
-        assert exc.kind in (SrtErrorKind.CLOSED, SrtErrorKind.BROKEN), exc.kind
+        # The worker loop only checks `stop` between iterations, so whether
+        # it attempts one more send before noticing `stop` is a scheduling
+        # race, not a guarantee `send_bytes()` makes — a plain srt.Sender
+        # with an idle peer never parks, so on a loaded CI runner the
+        # worker can legitimately see `stop` first and exit clean, leaving
+        # `outcome` empty (PR #232 run 35182377345). `close()` above
+        # already returned, which deterministically guarantees the slot is
+        # empty; call `send_bytes()` directly to prove a post-close send is
+        # rejected without depending on the worker's own timing (the same
+        # shape the rtp/udp non-parking sender tests below use).
+        with pytest.raises(SrtError) as ei:
+            sender.send_bytes(TS_BUNDLE)
+        assert ei.value.kind == SrtErrorKind.CLOSED, ei.value.kind
         assert not sender.is_alive()
     finally:
         stop.set()
@@ -182,9 +192,15 @@ def test_srt_mux_sender_close_from_other_thread_during_send_video() -> None:
         w.join(5.0)
         _assert_close_ok(c, errs, "srt.MuxSender")
         assert not w.is_alive(), "send loop did not end after close()"
-        exc = outcome.get("exc")
-        assert isinstance(exc, SrtError), f"send loop ended with {exc!r}"
-        assert exc.kind in (SrtErrorKind.CLOSED, SrtErrorKind.BROKEN), exc.kind
+        # See test_srt_sender_close_from_other_thread_during_send: whether
+        # the worker attempts one more send before noticing `stop` is a
+        # scheduling race, not a guarantee. `close()` already returned, so
+        # the slot is deterministically empty; call `send_video()` directly
+        # to prove a post-close send is rejected without depending on the
+        # worker's own timing.
+        with pytest.raises(SrtError) as ei:
+            send_one()
+        assert ei.value.kind == SrtErrorKind.CLOSED, ei.value.kind
         assert not tx.is_alive()
     finally:
         stop.set()
