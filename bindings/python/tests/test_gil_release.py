@@ -126,7 +126,8 @@ class _GilProbe:
         self._done = threading.Event()
         self.stamp: float | None = None
         self.windows: list[tuple[float, float]] = []
-        self._prev_switch_interval: float = sys.getswitchinterval()
+        # Captured in `__enter__` right before pinning; `None` until then.
+        self._prev_switch_interval: float | None = None
         self._t = threading.Thread(target=self._run, daemon=True)
 
     def _run(self) -> None:
@@ -148,15 +149,20 @@ class _GilProbe:
         return self
 
     def __exit__(self, *exc: object) -> None:
-        # Release the probe even if the workload raised before its first
-        # `call()` (which is what normally sets `_go`), so the thread always
-        # exits instead of lingering past the join timeout.
-        self._go.set()
-        self._done.set()
-        # Without `allow_threads` this join is the first point at which the
-        # probe can run at all — its stamp then lands after every window.
-        self._t.join(timeout=10.0)
-        sys.setswitchinterval(self._prev_switch_interval)
+        try:
+            # Release the probe even if the workload raised before its first
+            # `call()` (which is what normally sets `_go`), so the thread
+            # always exits instead of lingering past the join timeout.
+            self._go.set()
+            self._done.set()
+            # Without `allow_threads` this join is the first point at which
+            # the probe can run at all — its stamp then lands after every
+            # window.
+            self._t.join(timeout=10.0)
+        finally:
+            # The switch interval is process-wide: restore it no matter what.
+            if self._prev_switch_interval is not None:
+                sys.setswitchinterval(self._prev_switch_interval)
 
     def call(self, fn: Callable[..., _R], *args: Any, **kwargs: Any) -> _R:
         """Make one Rust call, recording its `(t0, t1)` window."""
@@ -331,7 +337,7 @@ def test_push_subtitle_releases_gil() -> None:
         for i in range(n_calls):
             pts = Pts90khz.from_raw(900_000 + i * 90_000)
             probe.call(m.push_subtitle, payload, pts=pts)
-            if i % drain_every == drain_every - 1:
+            if i % drain_every == drain_every - 1 and m.pending_packets() > 0:
                 buf = bytearray(m.pending_packets() * 188)
                 m.pull(buf)
 
