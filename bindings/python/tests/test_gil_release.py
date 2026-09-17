@@ -138,9 +138,13 @@ class _GilProbe:
         self._done.wait()
 
     def __enter__(self) -> _GilProbe:
+        # Start the thread BEFORE touching the process-wide switch interval:
+        # if `start()` raises, `__exit__` never runs and a pinned interval
+        # would outlive this test. The probe only blocks on `_go` until the
+        # first `call()`, so the order does not affect the proof.
+        self._t.start()
         self._prev_switch_interval = sys.getswitchinterval()
         sys.setswitchinterval(_PINNED_SWITCH_INTERVAL_S)
-        self._t.start()
         return self
 
     def __exit__(self, *exc: object) -> None:
