@@ -64,6 +64,7 @@ tst-core +16, tst-pipeline +3 (net zero).
 
 | old `tests/…` | new `tests/…` |
 | --- | --- |
+| (new 2026-09-16) | `loopback/accept_handle.rs` |
 | `cancellation_loopback.rs` | `loopback/cancellation_loopback.rs` |
 | `connect_timeout.rs` | `loopback/connect_timeout.rs` |
 | `encrypted_packet_filter.rs` | `loopback/encrypted_packet_filter.rs` |

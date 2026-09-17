@@ -6,7 +6,6 @@
 //! against a real libsrt socket.
 
 use std::net::IpAddr;
-use std::thread;
 use std::time::Duration;
 use tst_srt::{ListenerBuilder, SocketBuilder};
 
@@ -17,26 +16,24 @@ fn ipv6_loopback_round_trip() {
         return;
     }
 
-    let mut listener = ListenerBuilder::new()
-        .recv_timeout(Duration::from_secs(5))
-        .bind("[::1]:0")
-        .expect("bind v6 listener");
-
-    let local = listener.local_addr().expect("local_addr");
+    // The shared fixture (rather than a hand-rolled accept thread) so the
+    // peer's `accept()` cannot park forever — see `AcceptHandle`'s docs.
+    let mut builder = ListenerBuilder::new();
+    builder.recv_timeout(Duration::from_secs(5));
+    let lb = crate::common::Loopback::bind_at(builder, "[::1]:0");
+    let local = lb.listener.local_addr().expect("local_addr");
     assert!(
         matches!(local.ip(), IpAddr::V6(_)),
         "listener bound on v6, got {local:?}"
     );
-    let port = local.port();
+    let port = lb.port;
 
-    let listener_thread = thread::spawn(move || {
-        let (mut socket, _peer) = listener.accept().expect("accept");
+    let accept = lb.spawn_accept(|mut socket| {
         let mut buf = [0u8; 1316];
         let n = socket.recv(&mut buf).expect("recv");
         buf[..n].to_vec()
     });
-
-    crate::common::settle();
+    accept.wait_ready();
 
     let mut sender = SocketBuilder::new()
         .recv_timeout(Duration::from_secs(5))
@@ -45,7 +42,7 @@ fn ipv6_loopback_round_trip() {
         .expect("v6 caller connect");
     sender.send(b"hello over v6").expect("send");
 
-    let received = listener_thread.join().expect("listener thread join");
+    let received = accept.join();
     assert_eq!(received, b"hello over v6");
 }
 

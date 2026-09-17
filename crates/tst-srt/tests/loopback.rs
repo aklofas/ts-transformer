@@ -10,6 +10,8 @@
 #[macro_use]
 #[path = "common/mod.rs"]
 mod common;
+#[path = "loopback/accept_handle.rs"]
+mod accept_handle;
 #[path = "loopback/cancellation_loopback.rs"]
 mod cancellation_loopback;
 #[path = "loopback/connect_timeout.rs"]
