@@ -16,7 +16,10 @@
 //!    because one inner send is unbounded against a peer that stops
 //!    draining (tst-tcp's write loop, SRT's default `send_timeout:
 //!    None`): holding `gap` there stalled both `stats()` and the
-//!    producer's enqueue for as long as the peer sulked.
+//!    producer's enqueue for as long as the peer sulked. `inner` IS
+//!    held across that send, so the producer's path must not take it
+//!    either — both the size pre-check and `max_payload()` (which every
+//!    sender shell calls per send) read `ManagedShared::max_payload`.
 //! 5. The worker publishes each fresh inner's wake handle into the shared
 //!    `active` cancel slot (and clears it on tear-down) so a cancel can
 //!    reach a drain send without taking `inner` — see the same invariant
@@ -29,6 +32,7 @@ use std::time::{Duration, Instant};
 
 use tracing::{info, warn};
 use tst_core::cancel::CancelSlot;
+use tst_core::mpegts::common::SRT_TS_BUNDLE_BYTES;
 use tst_core::transport::{Transport, TransportError};
 
 use super::{GapBuffer, ReconnectPolicy};
@@ -91,7 +95,7 @@ impl Shutdown {
 
 /// State shared between `ManagedTransport`, its `ManagedStatsHandle`
 /// observers, and any spawned background worker (see `worker_run` below).
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct ManagedShared {
     /// True while a background worker owns reconnect+drain.
     /// Transitions happen under the gap lock (invariant 2).
@@ -109,14 +113,33 @@ pub(crate) struct ManagedShared {
     pub(crate) reconnect_attempts: AtomicU64,
     /// Successful factory() installs (either mode).
     pub(crate) reconnect_successes: AtomicU64,
-    /// The live inner's `max_payload()`, published at construction and on
-    /// every successful install so `send_bytes`'s size pre-check does not
-    /// have to take the `inner` lock — which the drain worker holds
-    /// across one (unbounded) inner send. A value that went stale between
-    /// the pre-check and the drain is benign: the drain's own `TooLarge`
-    /// handling drops a queued message the rebuilt transport can no
-    /// longer carry.
+    /// The last installed inner's `max_payload()`, published at
+    /// construction and on every successful install so neither
+    /// `send_bytes`'s size pre-check nor `ManagedTransport::max_payload()`
+    /// (which every sender shell calls on every send) has to take the
+    /// `inner` lock — the drain worker holds that across one unbounded
+    /// inner send. A value that went stale between a read and the drain
+    /// is benign: the drain's own `TooLarge` handling drops a queued
+    /// message the rebuilt transport can no longer carry.
     pub(crate) max_payload: AtomicUsize,
+}
+
+impl Default for ManagedShared {
+    fn default() -> Self {
+        Self {
+            bg_active: AtomicBool::new(false),
+            gave_up: AtomicBool::new(false),
+            gave_up_abnormal: AtomicBool::new(false),
+            reconnect_attempts: AtomicU64::new(0),
+            reconnect_successes: AtomicU64::new(0),
+            // Hand-written solely for this field: a derived `Default`
+            // would seed the ceiling at 0, which reads as "refuse every
+            // send". `ManagedTransport::new` overwrites it with the
+            // initial inner's real ceiling immediately, so this constant
+            // is only ever the pre-construction placeholder.
+            max_payload: AtomicUsize::new(SRT_TS_BUNDLE_BYTES),
+        }
+    }
 }
 
 /// Backpressure retry cadence while draining on the worker — there is no

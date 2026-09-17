@@ -66,7 +66,8 @@ on backoff or the factory call, whether or not the sink is currently
 reachable. It does not wait on the worker's in-flight inner send
 either (that one call is unbounded against a peer that has stopped
 reading), only on the gap buffer's own short critical sections — and
-the same is true of `stats_handle().stats()`:
+the same is true of `stats_handle().stats()` and of a sender shell
+(`MuxSender` / `Sender` / `RawSender`) wrapped around it:
 
 ```rust,ignore
 let policy = ReconnectPolicy {
