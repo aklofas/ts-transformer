@@ -667,8 +667,11 @@ impl PyListener {
     /// Local bound address as `(host, port)`. Useful when the URL
     /// requested port 0 (kernel-pick) — the bound port reads back via
     /// libsrt's `getsockname`. Answered from the construction-time
-    /// snapshot, so it never waits behind an `accept()` parked on another
-    /// thread; raises `SrtError(CLOSED)` once the listener is closed.
+    /// snapshot, so it does not wait behind an `accept()` parked on another
+    /// thread — except when that construction-time read failed (`None`),
+    /// in which case it falls back to the slot and waits for the parked
+    /// call like the other getters. Raises `SrtError(CLOSED)` once the
+    /// listener is closed.
     fn local_addr(&self, py: Python<'_>) -> PyResult<(String, u16)> {
         let addr = match self.local_addr {
             Some(addr) if crate::util::slot_alive(&self.inner, |_| true) => addr,

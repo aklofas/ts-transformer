@@ -598,9 +598,11 @@ impl PyTcpListener {
     /// Local bound port. Non-zero after successful `build()`.
     ///
     /// Use this to discover the ephemeral port when `.bind("127.0.0.1:0")`
-    /// was used. Answered from the `build()`-time snapshot, so it never
-    /// waits behind an `accept_blocking()` parked on another thread;
-    /// raises `TcpError(kind=CLOSED)` once the listener is closed.
+    /// was used. Answered from the `build()`-time snapshot, so it does not
+    /// wait behind an `accept_blocking()` parked on another thread — except
+    /// when that build-time read failed (`None`), in which case it falls
+    /// back to the lock and waits for the parked call like the other
+    /// getters. Raises `TcpError(kind=CLOSED)` once the listener is closed.
     fn local_port(&self, py: Python<'_>) -> PyResult<u16> {
         if let Some(port) = self.local_port {
             // Non-blocking liveness read: a parked accept holds the lock
