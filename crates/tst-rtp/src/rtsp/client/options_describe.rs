@@ -272,7 +272,12 @@ impl RtspClient {
         // `RtspClientBuilder::request_timeout` (CORR-26): every request
         // method funnels through here, so this one line is the producer of
         // `RtspError::Timeout`. `None` keeps the unbounded pre-knob wait.
-        let deadline = self.request_timeout.map(|t| std::time::Instant::now() + t);
+        // `checked_add` mirrors `H264Receiver::recv_au`'s idiom: a timeout
+        // too large to represent as an `Instant` (e.g. `Duration::MAX`)
+        // saturates to "no deadline" rather than panicking on overflow.
+        let deadline = self
+            .request_timeout
+            .and_then(|t| std::time::Instant::now().checked_add(t));
         self.send_and_read_with_deadline(request_bytes, deadline)
     }
 

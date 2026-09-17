@@ -21,7 +21,13 @@ impl RtspClient {
     ///   (`RtspClientBuilder::request_timeout`, default 10 s) elapses;
     ///   `session_id` is still cleared.
     pub fn teardown(&mut self) -> Result<(), RtspError> {
-        let deadline = self.request_timeout.map(|t| std::time::Instant::now() + t);
+        // checked_add: see `send_and_read`'s copy of this idiom — a
+        // `request_timeout` too large to represent as an `Instant` (e.g.
+        // `Duration::MAX`) saturates to "no deadline" rather than panicking,
+        // even though (with no session) this deadline is never waited on.
+        let deadline = self
+            .request_timeout
+            .and_then(|t| std::time::Instant::now().checked_add(t));
         self.teardown_with_deadline(deadline)
     }
 
