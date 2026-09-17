@@ -233,12 +233,15 @@ pub const ACCEPT_DEADLINE: Duration = Duration::from_secs(10);
 ///   naming this class. It never fires the cancel while the accept can
 ///   still succeed, and the closure phase after a successful accept is
 ///   not bounded at all — long recv loops stay legal.
-/// - `Drop` fires the cancel and joins when the handle is dropped without
-///   `join` — i.e. a test unwinding on an `expect` before its join. A
-///   leaked thread parked in `srt_accept` does worse than leak: it holds
-///   the port AND stalls process exit (`srt_cleanup` runs at exit). The
-///   drop path swallows a peer panic (a panic is already in flight); the
-///   happy path's explicit `join` is what reports one.
+/// - `Drop` fires the cancel if the accept is still pending when the handle
+///   is dropped without `join` — i.e. a test unwinding on an `expect`
+///   before its join — then reaps the thread if it finishes inside the
+///   accept budget and detaches it otherwise (a long closure phase is the
+///   test's own business, as it was before this guard existed). A leaked
+///   thread parked in `srt_accept` does worse than leak: it holds the port
+///   AND stalls process exit (`srt_cleanup` runs at exit). The drop path
+///   swallows a peer panic (a panic is already in flight); the happy
+///   path's explicit `join` is what reports one.
 pub struct AcceptHandle<R> {
     handle: Option<std::thread::JoinHandle<Result<R, tst_srt::AcceptError>>>,
     ready: Arc<AtomicBool>,
@@ -272,20 +275,24 @@ impl<R: Send + 'static> AcceptHandle<R> {
             if Instant::now() > deadline {
                 // Wake the parked accept (idempotent if it just returned).
                 self.cancel.cancel();
-                let outcome = handle.join();
-                // The accept can still have won the race against the cancel
-                // and delivered a socket; only a lost one is the failure.
-                if let Ok(Ok(value)) = outcome {
-                    return value;
+                match handle.join() {
+                    // The accept can still have won the race against the
+                    // cancel and delivered a socket; only a lost one fails.
+                    Ok(Ok(value)) => return value,
+                    Ok(Err(e)) => panic!(
+                        "AcceptHandle::join: accept() still parked after \
+                         {accept_deadline:?} with no connection to dequeue — \
+                         the libsrt accept-queue prune class (GC erased a \
+                         broken queued connection; PR #231). The caller's \
+                         connect either never happened or its socket closed \
+                         before the peer thread got scheduled. Woken by the \
+                         cancel with: {e}"
+                    ),
+                    Err(_) => panic!(
+                        "listener thread panicked while its accept() was \
+                         still pending after {accept_deadline:?}"
+                    ),
                 }
-                panic!(
-                    "AcceptHandle::join: accept() still parked after \
-                     {accept_deadline:?} with no connection to dequeue — the \
-                     libsrt accept-queue prune class (GC erased a broken \
-                     queued connection; PR #231). The caller's connect \
-                     either never happened or its socket closed before the \
-                     peer thread got scheduled."
-                );
             }
             std::thread::sleep(Duration::from_millis(5));
         }
@@ -298,10 +305,23 @@ impl<R: Send + 'static> AcceptHandle<R> {
 
 impl<R> Drop for AcceptHandle<R> {
     fn drop(&mut self) {
-        if let Some(handle) = self.handle.take() {
+        let Some(handle) = self.handle.take() else {
+            return;
+        };
+        // Only a still-pending accept needs the wake; once the accept has
+        // completed the closure phase owns the thread, exactly as before
+        // this guard existed, and closing the listener would not end it.
+        if !self.accepted.load(Ordering::SeqCst) {
             self.cancel.cancel();
-            // Bounded: after the cancel the accept returns at once, and the
-            // closure phase is bounded by the fixture's socket timeouts.
+        }
+        // Reap if the thread finishes inside the accept budget (a woken
+        // accept returns within one libsrt GC tick); otherwise detach —
+        // a long closure phase must not turn a test failure into a hang.
+        let deadline = Instant::now() + ACCEPT_DEADLINE;
+        while !handle.is_finished() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        if handle.is_finished() {
             let _ = handle.join();
         }
     }
