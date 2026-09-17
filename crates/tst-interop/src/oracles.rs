@@ -38,7 +38,7 @@ pub struct Explained {
     /// floor: today only the ATTRIBUTED `Resync` signals, where the raw
     /// reader lost packet sync for the whole multiplex rather than for
     /// one stream in it (`verify::Tally::note_resyncs` feeds those with
-    /// `pid: None`). An UNattributed resync excuses nothing, as it never
+    /// `pid: None`). An UNATTRIBUTED resync excuses nothing, as it never
     /// did — it is not a `DemuxEvent`, so the capture's own tallies do
     /// not hold it either.
     pub multiplex_wide: u64,
