@@ -66,8 +66,15 @@ on backoff or the factory call, whether or not the sink is currently
 reachable. It does not wait on the worker's in-flight inner send
 either (that one call is unbounded against a peer that has stopped
 reading), only on the gap buffer's own short critical sections — and
-the same is true of `stats_handle().stats()` and of a sender shell
-(`MuxSender` / `Sender` / `RawSender`) wrapped around it:
+the same holds for `stats_handle().stats()` and for a **send** through
+a sender shell (`MuxSender` / `Sender` / `RawSender`) wrapped around
+it. It does not extend to the liveness/socket-stats queries those
+shells forward: `socket_stats()` always asks the inner transport, so it
+waits for an in-flight inner send to return; `is_alive()` answers
+`true` straight from the reconnect flag while a worker is active (so it
+does not wait during an outage) but consults the inner otherwise. For
+monitoring, poll `stats_handle().stats()` — its `reconnecting` /
+`gap_len` / drop counters are what you want anyway:
 
 ```rust,ignore
 let policy = ReconnectPolicy {
