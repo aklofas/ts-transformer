@@ -732,6 +732,28 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   drop) are unchanged; which `RecvEndReason` is recorded for which terminal
   condition is also unchanged, but it is now recorded when the deferred
   terminal result is returned, after any flushed samples.
+- **`ReconnectMode::Background`: the producer and the stats observer no
+  longer wait on the worker's in-flight inner send** (post-Arc-1 review
+  finding). The drain loop used to hold BOTH the inner and the gap lock
+  across one `send_bytes`, and the producer's size pre-check took the
+  inner lock before it reached the enqueue gate — so against a sink that
+  stops reading (tst-tcp's write loop now keeps writing until the peer
+  drains; SRT's default `send_timeout` is `None`) that one unbounded call
+  stalled `send_bytes` and `ManagedStatsHandle::stats()` for as long as
+  the peer sulked, making the documented "send always enqueues" contract
+  false exactly when it mattered. The worker now takes the gap lock only
+  for the buffer's own critical sections — mark the front message in
+  flight, release, send with just the inner held, re-take to settle — and
+  the size pre-check reads the inner's `max_payload` from an atomic
+  published at construction and on every successful reconnect. The
+  in-flight message is pinned against `DropOldest` eviction by the gap
+  buffer's in-flight mark instead of by the lock; when it is the only
+  queued entry a new message is accepted past capacity (transient
+  `capacity + 1`) rather than evicting bytes already handed to the
+  transport. FIFO, drop accounting and every public signature are
+  unchanged. Pinned by
+  `background_send_and_stats_do_not_wait_on_a_parked_inner_send` and
+  `drop_oldest_eviction_skips_the_in_flight_message`.
 
 ### Fixed — rtp (WP-4a)
 

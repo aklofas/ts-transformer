@@ -52,12 +52,12 @@ pub enum ReconnectMode {
     #[default]
     Blocking,
     /// Reconnect on a background worker thread. `send_bytes` never waits
-    /// on backoff or a factory call: while the inner transport is down it
-    /// enqueues to the gap buffer under `overflow_policy` — though it can
-    /// still block briefly on internal lock contention while the worker
-    /// is mid-drain (bounded to at most one in-flight inner send).
-    /// `Ok(())` means *accepted*, not *delivered* — pair with
-    /// [`ManagedTransport::stats_handle`] for drop/reconnect visibility.
+    /// on backoff, a factory call, or an in-flight inner send: while the
+    /// inner transport is down it enqueues to the gap buffer under
+    /// `overflow_policy`, waiting only for the buffer's own (short)
+    /// critical sections. `Ok(())` means *accepted*, not *delivered* —
+    /// pair with [`ManagedTransport::stats_handle`] for drop/reconnect
+    /// visibility.
     Background,
 }
 
@@ -166,6 +166,12 @@ impl ManagedStatsHandle {
     /// (matches `socket_stats`'s None-on-poison shape — a read-only
     /// telemetry path must not panic).
     ///
+    /// Takes only the gap-buffer lock, and the background worker never
+    /// holds that across an inner send (locking invariant 4), so a
+    /// snapshot is never queued behind a stalled sink. `gap_len` counts a
+    /// message the worker is currently sending: it is queued until the
+    /// send is acknowledged.
+    ///
     /// # C ABI
     ///
     /// `tst_managed_sender_get_reconnect_stats` /
@@ -220,11 +226,12 @@ impl ManagedStatsHandle {
 ///   the factory/backoff/drain loop instead. While that worker is active,
 ///   or the gap buffer is non-empty, `send_bytes` never touches the inner
 ///   transport, never waits on backoff or a factory call, and enqueues
-///   under `overflow_policy` — though it can still block briefly on
-///   internal lock contention while the worker is mid-drain (bounded to
-///   at most one in-flight inner send). **`Ok(())` in this mode means the
-///   bytes were *accepted* into the gap buffer, not that they were
-///   *delivered*** —
+///   under `overflow_policy`. It never waits on the worker's in-flight
+///   inner send either — that call is unbounded against a peer that stops
+///   draining — only on the gap buffer's own short critical sections; the
+///   same is true of [`ManagedStatsHandle::stats`]. **`Ok(())` in this
+///   mode means the bytes were *accepted* into the gap buffer, not that
+///   they were *delivered*** —
 ///   pair `Background` with [`Self::stats_handle`] to observe
 ///   `reconnecting` / `gap_len` / `gap_messages_dropped`. That counter
 ///   also counts a queued message that no longer fits the *rebuilt*
@@ -255,8 +262,16 @@ impl ManagedStatsHandle {
 /// 3. Never call `spawn_worker()` while holding the `gap` lock (it joins
 ///    the previous worker, which may be blocked acquiring `gap` in its
 ///    exit path).
-/// 4. The worker holds `gap` across a single inner send during drain —
-///    deliberate, pins the front message against `DropOldest` eviction.
+/// 4. The background worker NEVER holds `gap` across an inner send, and
+///    `send_bytes`'s size pre-check never takes `inner` (it reads the
+///    published `max_payload` instead). One inner send is unbounded
+///    against a peer that stops draining, so either would stall the
+///    producer and `stats()` for the length of that send. The front
+///    message is pinned against `DropOldest` eviction by the gap
+///    buffer's own in-flight mark (`begin_send` / `finish_send` /
+///    `abort_send`), not by the lock. `inner` IS held across the drain
+///    send — the transport needs `&mut` — which is why nothing on the
+///    producer's Background path may take it.
 /// 5. The cancel path takes NEITHER lock: it fires the `active` cancel
 ///    slot, which publishes the live inner's wake handle. A cancel is only
 ///    useful while a send is in flight — i.e. exactly while `inner` is
@@ -338,6 +353,12 @@ impl<T: Transport + 'static> ManagedTransport<T> {
         if let Some(h) = inner.cancel_handle() {
             active.install(h);
         }
+        let shared = Arc::new(ManagedShared::default());
+        // Publish the initial ceiling for the lock-free size pre-check;
+        // `install_fresh_inner` republishes it on every rebuild.
+        shared
+            .max_payload
+            .store(inner.max_payload(), std::sync::atomic::Ordering::Relaxed);
         Self {
             inner: Arc::new(Mutex::new(Some(inner))),
             factory: Arc::new(factory),
@@ -345,7 +366,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
             gap: Arc::new(Mutex::new(gap)),
             closed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             shutdown: Arc::new(Shutdown::new()),
-            shared: Arc::new(ManagedShared::default()),
+            shared,
             bg_thread: Mutex::new(None),
             active,
         }
@@ -365,9 +386,11 @@ impl<T: Transport + 'static> ManagedTransport<T> {
     /// Try to send via the inner transport. On Broken/Closed, queue bytes
     /// and attempt reconnect.
     ///
-    /// Pre-checks `bytes.len() > max_payload` against the inner transport
-    /// before any state mutation, so oversized messages never enter the gap
-    /// buffer (where they'd block drain forever).
+    /// Pre-checks `bytes.len() > max_payload` against the last published
+    /// inner ceiling before any state mutation, so oversized messages
+    /// never enter the gap buffer (where they'd block drain forever).
+    /// The check reads a published atomic rather than the `inner` lock —
+    /// see locking invariant 4.
     ///
     /// A cancel that lands mid-drain, right after a factory reconnect,
     /// surfaces here as `Err(TransportError::Closed)` rather than the
@@ -420,23 +443,21 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                 });
             }
         }
-        // Pre-check size against inner before queuing — oversized messages
-        // would otherwise sit in the gap buffer and fail every drain.
+        // Pre-check size before queuing — oversized messages would
+        // otherwise sit in the gap buffer and fail every drain.
         //
-        // Mutex-poisoning policy (recoverable path): poisoned inner lock during the
-        // size pre-check routes to TransportError::Broken with a site-specific
-        // diagnostic. The `send_managed` poison checks use the same shape.
+        // Read from the published ceiling, NOT the `inner` lock: the
+        // background worker holds `inner` across one drain send, and that
+        // one send is unbounded against a peer that stops draining, so
+        // locking here would make the Background contract ("send always
+        // enqueues") false exactly when it matters. The value is
+        // republished at construction and on every successful install; a
+        // ceiling that shrank after a message was queued is caught by the
+        // drain's own `TooLarge` handling.
         let max = self
-            .inner
-            .lock()
-            .map_err(|_| TransportError::Broken {
-                msg: "reconnect: inner lock poisoned during size pre-check".into(),
-                errno_code: None,
-                cause: BrokenCause::Unspecified,
-            })?
-            .as_ref()
-            .map(|t| t.max_payload())
-            .unwrap_or(SRT_TS_BUNDLE_BYTES);
+            .shared
+            .max_payload
+            .load(std::sync::atomic::Ordering::Relaxed);
         if bytes.len() > max {
             return Err(TransportError::TooLarge {
                 len: bytes.len(),

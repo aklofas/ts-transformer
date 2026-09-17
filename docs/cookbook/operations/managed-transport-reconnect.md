@@ -63,8 +63,10 @@ Set `mode: ReconnectMode::Background` and a per-outage worker thread
 takes over the factory/backoff/drain loop instead — `send_bytes`
 enqueues into the gap buffer under `overflow_policy` without waiting
 on backoff or the factory call, whether or not the sink is currently
-reachable (it can still block briefly on lock contention while the
-worker is mid-drain, bounded to at most one in-flight inner send):
+reachable. It does not wait on the worker's in-flight inner send
+either (that one call is unbounded against a peer that has stopped
+reading), only on the gap buffer's own short critical sections — and
+the same is true of `stats_handle().stats()`:
 
 ```rust,ignore
 let policy = ReconnectPolicy {
