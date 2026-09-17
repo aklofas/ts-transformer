@@ -115,11 +115,11 @@ impl GapBuffer {
     /// # Panics
     ///
     /// Debug builds assert that no send is in flight: the drain worker
-    /// settles its own entry with [`Self::finish_send`], and popping out
-    /// from under a live in-flight mark would leave that mark pointing at
-    /// a message the buffer no longer holds. (The inline `Blocking` drain
-    /// and any outside-crate caller run with no worker, so the mark is
-    /// `None` for them.)
+    /// settles its own entry with `finish_send` (crate-internal), and
+    /// popping out from under a live in-flight mark would leave that mark
+    /// pointing at a message the buffer no longer holds. (The inline
+    /// `Blocking` drain and any outside-crate caller run with no worker,
+    /// so the mark is `None` for them.)
     pub fn pop_front(&mut self) -> Option<Vec<u8>> {
         debug_assert!(
             self.in_flight.is_none(),
