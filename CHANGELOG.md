@@ -974,6 +974,16 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Testing
 
+- **tst-py: the two plain srt sender cross-thread-close tests no longer race
+  their own worker.** `test_srt_sender_close_from_other_thread_during_send`
+  and `…mux_sender_close_from_other_thread_during_send_video` asserted that
+  the send loop ended with an `SrtError`, but `stop` is set only after
+  `close()` returns and the worker checks it between sends — whether the
+  worker lands one more send before seeing `stop` is a scheduling race (a
+  GHA runner let `stop` win on PR #232), the same class the rtp/udp
+  non-parking sender tests were cured of in PR #230. Both now prove the
+  invariant directly: a `send_bytes()`/`send_video()` after the concurrent
+  `close()` raises `SrtError(CLOSED)`.
 - **tst-py cross-thread close tests: wall-clock bounds removed.** The
   seven `assert woke_after < 2.0` / `elapsed < 1.0` / child-interpreter
   `< 2.0` assertions in `test_cross_thread_close.py`,
