@@ -144,6 +144,10 @@ class _GilProbe:
         return self
 
     def __exit__(self, *exc: object) -> None:
+        # Release the probe even if the workload raised before its first
+        # `call()` (which is what normally sets `_go`), so the thread always
+        # exits instead of lingering past the join timeout.
+        self._go.set()
         self._done.set()
         # Without `allow_threads` this join is the first point at which the
         # probe can run at all — its stamp then lands after every window.
