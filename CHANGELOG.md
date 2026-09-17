@@ -793,6 +793,15 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   timestamp yet).
 - New fuzz target `rtsp_request_decode` for the server-side
   `RtspRequest::parse` (33 fuzz targets total across the workspace).
+- **RTSP client: `request_timeout` deadline arithmetic no longer panics on
+  an extreme duration** (post-Arc-1 review). `options()`/`describe()`/etc.
+  (via `send_and_read`) and `teardown()` both computed the deadline as
+  `Instant::now() + t`, which panics on overflow for a `request_timeout`
+  such as `Duration::MAX` — `teardown()` hit this before its no-session
+  early return could even run. Both sites now use the crate's existing
+  `checked_add` saturating idiom (`H264Receiver::recv_au`): an
+  unrepresentable duration behaves as "no deadline" instead of panicking.
+  Pinned by `request_timeout_duration_max_does_not_panic`.
 
 ### Fixed — tcp/udp (WP-4b)
 

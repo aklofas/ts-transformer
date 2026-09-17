@@ -330,6 +330,10 @@ impl RtspClientBuilder {
     /// build a fresh client: the late response, if it ever arrives, is still
     /// in the socket and the non-interleaved read path does not match
     /// responses by CSeq.
+    ///
+    /// A duration too large to form an `Instant` deadline (e.g.
+    /// [`Duration::MAX`]) behaves as `None` (no deadline) rather than
+    /// panicking.
     pub fn request_timeout(mut self, t: Option<Duration>) -> Self {
         self.request_timeout = t;
         self

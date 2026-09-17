@@ -130,3 +130,69 @@ fn request_timeout_bounds_a_silent_peer() {
     watchdog.join().unwrap();
     server.join().unwrap();
 }
+
+/// Post-Arc-1 review finding: `request_timeout` deadline arithmetic must not
+/// panic when `t` is too large to add to `Instant::now()`. Before the fix,
+/// both `send_and_read` (the producer behind every request method, incl.
+/// `options()`) and `teardown()` computed the deadline as
+/// `Instant::now() + t` — an unchecked add that panics on overflow for
+/// `Duration::MAX`. `teardown()` computed that deadline BEFORE its
+/// no-session early return, so even a no-op teardown call would have
+/// panicked.
+#[test]
+fn request_timeout_duration_max_does_not_panic() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+
+    // Same hand-rolled accept-and-reply shape as `user_agent_is_sent_in_requests`
+    // above, but replies with the CSeq the client actually sent (rather than
+    // a hardcoded "1") so the response is a well-formed match for any request.
+    let server = std::thread::spawn(move || {
+        let (mut sock, _) = listener.accept().unwrap();
+        sock.set_read_timeout(Some(Duration::from_secs(5))).ok();
+        let mut buf = vec![0u8; 4096];
+        let mut acc = String::new();
+        loop {
+            let n = match sock.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => n,
+            };
+            acc.push_str(std::str::from_utf8(&buf[..n]).unwrap_or(""));
+            if acc.contains("\r\n\r\n") {
+                break;
+            }
+        }
+        let cseq = acc
+            .to_ascii_lowercase()
+            .lines()
+            .find_map(|l| l.strip_prefix("cseq:").map(|v| v.trim().to_string()))
+            .unwrap_or_else(|| "1".to_string());
+        let _ = sock.write_all(format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\n\r\n").as_bytes());
+    });
+
+    let url = format!("rtsp://127.0.0.1:{port}/x");
+    let mut client = tst_rtp::RtspClientBuilder::new(&url)
+        .unwrap()
+        .no_auto_keepalive(true)
+        .request_timeout(Some(Duration::MAX))
+        .connect()
+        .unwrap();
+
+    let result = client.options();
+    assert!(
+        result.is_ok(),
+        "options() with request_timeout(Some(Duration::MAX)) must not panic \
+         and must succeed, got {result:?}"
+    );
+
+    // No SETUP ever ran, so there is no session — teardown() must be the
+    // documented no-op `Ok(())`, not a panic from the same deadline
+    // arithmetic computed before that early return.
+    let result = client.teardown();
+    assert!(
+        matches!(result, Ok(())),
+        "teardown() with no session must be a no-op Ok(()), got {result:?}"
+    );
+
+    server.join().unwrap();
+}
