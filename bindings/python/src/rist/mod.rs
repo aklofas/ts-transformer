@@ -290,6 +290,9 @@ pub(crate) struct PyRistTransport {
     /// the next `send` raises `RistError(CLOSED)` instead of the close
     /// raising `RuntimeError: Already borrowed`.
     inner: Arc<Mutex<Option<RistTransport>>>,
+    /// `RistTransport::peer_url()` snapshot, so `repr()` (a logger's `%r`
+    /// from another thread) never waits behind an in-flight `send`.
+    peer_url: String,
 }
 
 #[pymethods]
@@ -346,10 +349,11 @@ impl PyRistTransport {
         false
     }
 
-    fn __repr__(&self, py: Python<'_>) -> String {
-        match crate::util::with_slot(py, &self.inner, |t| t.peer_url().to_owned()) {
-            Some(peer) => format!("Transport(peer={peer:?})"),
-            None => "Transport(closed)".to_string(),
+    fn __repr__(&self) -> String {
+        if crate::util::slot_alive(&self.inner, |_| true) {
+            format!("Transport(peer={:?})", self.peer_url)
+        } else {
+            "Transport(closed)".to_string()
         }
     }
 }
@@ -479,8 +483,10 @@ impl PyRistTransportBuilder {
         let t = py
             .allow_threads(|| b.connect())
             .map_err(|e| map_rist_error_from_err(py, e))?;
+        let peer_url = t.peer_url().to_owned();
         Ok(PyRistTransport {
             inner: Arc::new(Mutex::new(Some(t))),
+            peer_url,
         })
     }
 
@@ -519,6 +525,9 @@ pub(crate) struct PyRistRecvTransport {
     /// Binding-level cancel: `tst_rist` has no cancel handle, so the
     /// poll-retry loop in `recv` checks this between windows.
     stop: Arc<AtomicBool>,
+    /// `RistRecvTransport::bind_url()` snapshot, so `repr()` (a logger's
+    /// `%r` from another thread) never waits behind a parked `recv`.
+    bind_url: String,
 }
 
 #[pymethods]
@@ -611,10 +620,11 @@ impl PyRistRecvTransport {
         false
     }
 
-    fn __repr__(&self, py: Python<'_>) -> String {
-        match crate::util::with_slot(py, &self.inner, |s| s.transport.bind_url().to_owned()) {
-            Some(bind) => format!("RecvTransport(bind={bind:?})"),
-            None => "RecvTransport(closed)".to_string(),
+    fn __repr__(&self) -> String {
+        if crate::util::slot_alive(&self.inner, |_| true) {
+            format!("RecvTransport(bind={:?})", self.bind_url)
+        } else {
+            "RecvTransport(closed)".to_string()
         }
     }
 }
@@ -715,12 +725,14 @@ impl PyRistRecvTransportBuilder {
             .allow_threads(|| b.listen())
             .map_err(|e| map_rist_error_from_err(py, e))?;
         let scratch_len = t.max_payload().max(65_536);
+        let bind_url = t.bind_url().to_owned();
         Ok(PyRistRecvTransport {
             inner: Arc::new(Mutex::new(Some(RistRecvInner {
                 transport: t,
                 scratch: vec![0u8; scratch_len],
             }))),
             stop: Arc::new(AtomicBool::new(false)),
+            bind_url,
         })
     }
 

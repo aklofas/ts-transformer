@@ -46,7 +46,7 @@
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
-use std::sync::Mutex;
+use std::sync::{Mutex, TryLockError};
 
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::intern;
@@ -556,6 +556,12 @@ pub(crate) struct PyTcpListener {
     /// it makes a parked `accept_blocking()` return `TcpError(CLOSED)` at
     /// its next poll boundary (≤100 ms).
     cancel: TcpCancelHandle,
+    /// Bound port read once at `build()`, so `local_port()` never waits
+    /// behind a parked `accept_blocking()` — the thread asking for the
+    /// port is usually the one that has to connect to end that park.
+    /// `None` only if `getsockname` failed at build; `local_port()` then
+    /// falls back to the lock.
+    local_port: Option<u16>,
 }
 
 #[pymethods]
@@ -592,9 +598,24 @@ impl PyTcpListener {
     /// Local bound port. Non-zero after successful `build()`.
     ///
     /// Use this to discover the ephemeral port when `.bind("127.0.0.1:0")`
-    /// was used. Waits (GIL released) for a parked `accept_blocking` on
-    /// another thread to release the lock.
+    /// was used. Answered from the `build()`-time snapshot, so it never
+    /// waits behind an `accept_blocking()` parked on another thread;
+    /// raises `TcpError(kind=CLOSED)` once the listener is closed.
     fn local_port(&self, py: Python<'_>) -> PyResult<u16> {
+        if let Some(port) = self.local_port {
+            // Non-blocking liveness read: a parked accept holds the lock
+            // (WouldBlock) and means "open"; an empty slot means closed.
+            let alive = match self.inner.try_lock() {
+                Ok(g) => g.is_some(),
+                Err(TryLockError::Poisoned(p)) => p.into_inner().is_some(),
+                Err(TryLockError::WouldBlock) => true,
+            };
+            return if alive {
+                Ok(port)
+            } else {
+                Err(make_tcp_error(py, "CLOSED", "listener closed"))
+            };
+        }
         let result: Result<u16, TcpError> = py.allow_threads(|| {
             let guard = self
                 .inner
@@ -784,9 +805,11 @@ impl PyTcpListenerBuilder {
         match listener {
             Ok(l) => {
                 let cancel = l.cancel_handle();
+                let local_port = l.local_addr().ok().map(|a| a.port());
                 Ok(PyTcpListener {
                     inner: Mutex::new(Some(l)),
                     cancel,
+                    local_port,
                 })
             }
             Err(TcpError::Url(e)) => Err(map_tcp_url_error(py, e)),

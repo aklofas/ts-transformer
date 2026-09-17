@@ -434,6 +434,12 @@ pub struct PyH264Receiver {
     /// receiver drops. `None` until `close()` has run. A `Mutex` because
     /// `close()` now borrows `&self`.
     closed_end_reason: Mutex<Option<StreamEndReason>>,
+    /// `H264Receiver::local_addr()` read once at construction (it is fixed
+    /// for the receiver's lifetime), so `local_addr()` never waits behind
+    /// a parked `recv_au` — the thread asking for the address is usually
+    /// the one that has to send the packet that ends that park. `None`
+    /// for a TCP-interleaved (RTSP) receiver with no UDP socket.
+    local_addr: Option<std::net::SocketAddr>,
 }
 
 impl PyH264Receiver {
@@ -443,10 +449,12 @@ impl PyH264Receiver {
     /// before this constructor is ever called).
     pub(crate) fn from_h264_receiver(receiver: H264Receiver) -> Self {
         let cancel = receiver.cancel_handle();
+        let local_addr = receiver.local_addr();
         Self {
             inner: Arc::new(Mutex::new(Some(receiver))),
             cancel,
             closed_end_reason: Mutex::new(None),
+            local_addr,
         }
     }
 
@@ -500,10 +508,12 @@ impl PyH264Receiver {
             }
         };
         let cancel = receiver.cancel_handle();
+        let local_addr = receiver.local_addr();
         Ok(Self {
             inner: Arc::new(Mutex::new(Some(receiver))),
             cancel,
             closed_end_reason: Mutex::new(None),
+            local_addr,
         })
     }
 
@@ -590,10 +600,15 @@ impl PyH264Receiver {
     ///
     /// Raises `RtpError(TRANSPORT, "receiver is closed")` on a closed
     /// handle — matching the module's closed-handle contract — so `None`
-    /// is never ambiguous between "closed" and "no UDP socket".
+    /// is never ambiguous between "closed" and "no UDP socket". Answered
+    /// from the construction-time snapshot, so it never waits behind a
+    /// `recv_au` parked on another thread.
     fn local_addr(&self, py: Python<'_>) -> PyResult<Option<String>> {
-        crate::util::with_slot(py, &self.inner, |r| r.local_addr().map(|a| a.to_string()))
-            .ok_or_else(|| make_rtp_error(py, "TRANSPORT", "receiver is closed"))
+        if crate::util::slot_alive(&self.inner, |_| true) {
+            Ok(self.local_addr.map(|a| a.to_string()))
+        } else {
+            Err(make_rtp_error(py, "TRANSPORT", "receiver is closed"))
+        }
     }
 
     /// Return a shareable cancel handle. Calling `.cancel()` on the

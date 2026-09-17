@@ -929,6 +929,20 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the UDP/RIST close behaviour; `troubleshooting.md` and
   `deferred-features.md` no longer tell Python callers that a parked
   UDP/RIST receive cannot be interrupted.
+- **Construction-constant getters no longer wait behind a parked call.**
+  The shared-slot conversion above made `srt.Listener.local_addr()`,
+  `tcp.Listener.local_port()`, `udp.RecvTransport.local_addr_port()`,
+  `rtp.H264Receiver.local_addr()` and `repr()` on `rist.Transport` /
+  `rist.RecvTransport` take the same slot a parked `accept()` / `recv()`
+  holds — so a thread that spawned the accept/recv first and then asked
+  for the port (the one it needs to connect or send the datagram that
+  ends that park) blocked for good, with the GIL released and nothing
+  able to interrupt it (the `&mut self` shape had at least raised
+  `RuntimeError: Already borrowed` at once). Those values are fixed for
+  the object's lifetime, so they are now snapshotted at construction and
+  answered without touching the slot; the closed-handle contract is
+  unchanged (`CLOSED` / `TRANSPORT` after `close()`, `is_alive`-style
+  non-blocking liveness read while a call is parked).
 
 ### Fixed — jvm (WP-6)
 
@@ -960,6 +974,15 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Testing
 
+- **tst-py cross-thread close tests: wall-clock bounds removed.** The
+  seven `assert woke_after < 2.0` / `elapsed < 1.0` / child-interpreter
+  `< 2.0` assertions in `test_cross_thread_close.py`,
+  `test_srt_managed_listener_cancel.py` and `test_tcp_gil_close.py` were
+  the litigated duration-assert flake class; each site now asserts only
+  that the parked call ENDED with the documented kind after the
+  close/cancel (bounded joins with a rescue path and, for the UDP
+  `timeout_ms` contract test, a 30 s hang deadline), so a loaded runner
+  can be slow but never fails a working cancel.
 - **Tooling: `tst-interop` sender-side corruption tap.** `tst-interop send
   --corrupt rate=PER_10K[,min_gap=PKTS][,classes=a+b+c] --corruption-log
   PATH [--seed N]` wraps the sender's transport in a seeded tap that damages

@@ -363,6 +363,10 @@ pub(crate) struct PyUdpRecvTransport {
     /// Binding-level cancel: `tst_udp` has no cancel handle, so the
     /// polled `recv` loop checks this between slices.
     stop: Arc<AtomicBool>,
+    /// Bound port read once at `build()`, so `local_addr_port()` never
+    /// waits behind a parked `recv()` — the thread asking for the port is
+    /// usually the one that has to send the datagram that ends that park.
+    local_port: u16,
 }
 
 #[pymethods]
@@ -431,11 +435,15 @@ impl PyUdpRecvTransport {
     }
 
     /// Local bound port. Useful when the transport was bound to port 0
-    /// (kernel picks a free port). Waits (GIL released) for a recv parked
-    /// on another thread.
+    /// (kernel picks a free port). Answered from the `build()`-time
+    /// snapshot, so it never waits behind a `recv()` parked on another
+    /// thread; raises `UdpError(CLOSED)` once the transport is closed.
     fn local_addr_port(&self, py: Python<'_>) -> PyResult<u16> {
-        crate::util::with_slot(py, &self.inner, |s| s.transport.local_addr().port())
-            .ok_or_else(|| make_udp_error(py, "CLOSED", "transport closed"))
+        if crate::util::slot_alive(&self.inner, |_| true) {
+            Ok(self.local_port)
+        } else {
+            Err(make_udp_error(py, "CLOSED", "transport closed"))
+        }
     }
 
     /// Close the receiver. Sets the stop flag BEFORE taking the slot, so a
@@ -540,12 +548,14 @@ impl PyUdpRecvTransportBuilder {
         // Recv max_payload() is a flat 65535 deliverable ceiling; 65_536
         // keeps the historical scratch size.
         let scratch_len = t.max_payload().max(65_536);
+        let local_port = t.local_addr().port();
         Ok(PyUdpRecvTransport {
             inner: Arc::new(Mutex::new(Some(UdpRecvInner {
                 transport: t,
                 scratch: vec![0u8; scratch_len],
             }))),
             stop: Arc::new(AtomicBool::new(false)),
+            local_port,
         })
     }
 

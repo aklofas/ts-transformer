@@ -125,10 +125,8 @@ def test_cancel_wakes_managed_listener_parked_in_reaccept() -> None:
     sender.close()
     time.sleep(1.0)
 
-    t0 = time.monotonic()
     rx.cancel_handle().cancel()
     iter_t.join(timeout=3.0)
-    woke_after = time.monotonic() - t0
 
     if iter_t.is_alive():
         # Rescue so the daemon thread is not left parked in native accept.
@@ -139,7 +137,6 @@ def test_cancel_wakes_managed_listener_parked_in_reaccept() -> None:
         rescue.close()
         pytest.fail("cancel() did not wake the managed listener parked in re-accept within 3 s")
 
-    assert woke_after < 2.0, f"cancel took {woke_after:.2f}s to wake the parked re-accept"
     assert outcome.get("end") == "SrtError", f"iteration ended via {outcome}"
     assert outcome.get("kind") == SrtErrorKind.CLOSED, f"unexpected SrtError kind: {outcome}"
     rx.close()
@@ -213,10 +210,8 @@ def test_managed_receiver_cancel_wakes_reaccept() -> None:
     sender.close()
     time.sleep(1.0)
 
-    t0 = time.monotonic()
     cancel.cancel()
     pump_t.join(timeout=3.0)
-    woke_after = time.monotonic() - t0
 
     if pump_t.is_alive():
         # Rescue so the daemon thread is not left parked in native accept:
@@ -227,7 +222,6 @@ def test_managed_receiver_cancel_wakes_reaccept() -> None:
         rescue.close()
         pytest.fail("cancel() did not wake the ManagedReceiver parked in re-accept within 3 s")
 
-    assert woke_after < 2.0, f"cancel took {woke_after:.2f}s to wake the parked re-accept"
     assert outcome.get("end") == "SrtError", f"pump ended via {outcome}"
     assert outcome.get("kind") == SrtErrorKind.CLOSED, f"unexpected SrtError kind: {outcome}"
     rx.close()
