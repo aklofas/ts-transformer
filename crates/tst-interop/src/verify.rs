@@ -809,7 +809,7 @@ impl Tally {
     ///
     /// `wire` is the independent [`rawts`] reader's summary of the same
     /// bytes, alongside the tst-core-demuxed `Tally` — checked by
-    /// [`oracles::check`]'s six wire-level oracles, parameterized by
+    /// [`oracles::check`]'s seven wire-level oracles, parameterized by
     /// `p`'s [`profiles::Invariants`].
     pub fn finish(
         mut self,

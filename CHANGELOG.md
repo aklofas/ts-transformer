@@ -763,6 +763,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `background_send_and_stats_do_not_wait_on_a_parked_inner_send`,
   `shell_send_does_not_wait_on_a_parked_inner_send` and
   `drop_oldest_eviction_skips_the_in_flight_message`.
+- **`ReconnectPolicy::gap_buffer_capacity == 0` now buffers nothing** (post-Arc-1
+  review, Copilot finding on PR #236). A zero capacity previously held one
+  message silently (and the in-flight pin above would have widened that to
+  two); under `DropOldest` every message is now dropped and counted as it
+  arrives, under `OverflowPolicy::Reject` every message is refused. Any
+  capacity >= 1 is bit-for-bit unchanged.
 
 ### Fixed — rtp (WP-4a)
 
