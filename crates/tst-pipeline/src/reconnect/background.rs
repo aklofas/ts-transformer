@@ -24,6 +24,13 @@
 //!    `active` cancel slot (and clears it on tear-down) so a cancel can
 //!    reach a drain send without taking `inner` — see the same invariant
 //!    in `reconnect::mod`'s type docs.
+//! 6. `reconnect_successes` is the publication point for the ceiling of
+//!    invariant 4: `install_fresh_inner` stores `max_payload` and then
+//!    increments the counter with `Release`, and `stats()` loads it with
+//!    `Acquire`. So a caller that waits for the count to move and then
+//!    sends is guaranteed the rebuilt ceiling, not the previous inner's
+//!    — which `Relaxed` on both would not give on a weakly-ordered
+//!    target.
 
 use std::sync::atomic::Ordering;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
@@ -233,7 +240,14 @@ pub(crate) fn install_fresh_inner<T: Transport>(
     // the Installed path: a fresh inner that was closed above never
     // becomes the one a send is checked against.
     shared.max_payload.store(new_max_payload, Ordering::Relaxed);
-    shared.reconnect_successes.fetch_add(1, Ordering::Relaxed);
+    // `Release` makes this increment the publication point for the ceiling
+    // stored just above: a thread that observes the bumped counter through
+    // the matching `Acquire` load in `ManagedTransportStats` also observes
+    // the new ceiling. Callers do wait on `reconnect_successes` and then
+    // send a message sized against the rebuilt ceiling, and with both
+    // accesses `Relaxed` a weakly-ordered target could pair the new count
+    // with the old ceiling and reject that send as `TooLarge`.
+    shared.reconnect_successes.fetch_add(1, Ordering::Release);
     Install::Installed
 }
 
