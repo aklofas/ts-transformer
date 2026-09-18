@@ -194,7 +194,11 @@ impl ManagedStatsHandle {
         let gap = self.gap.lock().ok()?;
         Some(ManagedTransportStats {
             reconnect_attempts: self.shared.reconnect_attempts.load(Ordering::Relaxed),
-            reconnect_successes: self.shared.reconnect_successes.load(Ordering::Relaxed),
+            // `Acquire`, pairing with the `Release` increment in
+            // `install_fresh_inner`: a caller that waits for this counter to
+            // move and then sends must see the ceiling that reconnect
+            // published, not the previous inner's.
+            reconnect_successes: self.shared.reconnect_successes.load(Ordering::Acquire),
             gap_len: gap.len() as u64,
             gap_messages_dropped: gap.messages_dropped,
             gap_bytes_dropped: gap.bytes_dropped,
