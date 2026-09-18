@@ -181,9 +181,12 @@ impl GapBuffer {
     ///
     /// # Panics
     ///
-    /// Panics if `seq` is not the in-flight front. That would mean the
-    /// buffer desynchronised while the lock was released — the one
-    /// condition the in-flight mark exists to prevent.
+    /// Panics in **all** builds if `seq` is not the front entry: that
+    /// would mean the buffer desynchronised while the lock was released,
+    /// the one condition the in-flight mark exists to prevent, and
+    /// popping anyway would discard an unsent message. Debug builds
+    /// additionally assert that `seq` is the entry `begin_send` marked,
+    /// which only a caller that skipped `begin_send` could violate.
     pub(crate) fn finish_send(&mut self, seq: u64) -> Option<Vec<u8>> {
         debug_assert_eq!(
             self.in_flight,
