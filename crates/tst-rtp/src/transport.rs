@@ -360,7 +360,9 @@ impl Transport for RtpTransport {
     }
 
     fn is_alive(&self) -> bool {
-        self.socket.is_some()
+        // Latches on cancel (normative table): a fired handle is a dead
+        // transport whether or not an op has observed it yet.
+        self.socket.is_some() && !self.cancel.is_cancelled()
     }
 
     fn close(&mut self) {
@@ -1052,6 +1054,8 @@ impl RtpRecvTransport {
     /// (~100 ms): RTP-header-decode failures and PT mismatches keep
     /// retrying inside the receive loop, but each retry re-checks the
     /// same absolute deadline rather than extending it.
+    ///
+    /// An empty `buf` returns `Ok(Some(0))` immediately (X-CORR-07).
     pub fn recv_timeout(
         &mut self,
         buf: &mut [u8],
@@ -1082,6 +1086,12 @@ impl RtpRecvTransport {
         buf: &mut [u8],
         deadline: Option<Instant>,
     ) -> Result<usize, TransportError> {
+        // X-CORR-07: an empty destination is a no-op — return before the
+        // liveness check and before touching the source, so it can neither
+        // park nor be reported as "buf too small" (which latches dead).
+        if buf.is_empty() {
+            return Ok(0);
+        }
         if self.source.is_none() {
             return Err(TransportError::Closed);
         }
@@ -1246,7 +1256,8 @@ impl RecvTransport for RtpRecvTransport {
     }
 
     fn is_alive(&self) -> bool {
-        self.source.is_some()
+        // Latches on cancel — see `RtpTransport::is_alive`.
+        self.source.is_some() && !self.cancel.is_cancelled()
     }
 
     fn close(&mut self) {
@@ -2472,6 +2483,61 @@ mod tests {
         assert!(
             matches!(handle.get(), Some(StreamEndReason::Cancelled)),
             "a handle obtained before the fire must observe the same recording"
+        );
+    }
+
+    /// Normative table row "is_alive after cancel = false" (spec §3.5, the
+    /// two N cells): once a cancel has been observed by an op, the transport
+    /// must stop claiming it is alive. Before the fix `is_alive` read
+    /// `source.is_some()` and the ExplicitClose arm never cleared it.
+    #[test]
+    fn recv_is_alive_is_false_once_a_cancel_is_observed() {
+        let mut t = RtpRecvTransport::listen("rtp://127.0.0.1:0").unwrap();
+        let cancel = t
+            .cancel_handle()
+            .expect("recv transport exposes a cancel handle");
+        cancel.cancel();
+        let mut buf = vec![0u8; 2048];
+        let result = RecvTransport::recv_bytes(&mut t, &mut buf);
+        assert!(
+            matches!(result, Err(TransportError::ExplicitClose)),
+            "got {result:?}"
+        );
+        assert!(
+            !RecvTransport::is_alive(&t),
+            "is_alive() must read false after a cancel was observed"
+        );
+    }
+
+    /// X-CORR-07 for RTP: an empty destination returns `Ok(0)` at once and
+    /// touches nothing (before the fix it parked waiting for a datagram).
+    #[test]
+    fn recv_empty_buffer_is_a_noop() {
+        let mut t = RtpRecvTransport::listen("rtp://127.0.0.1:0").unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let h = std::thread::spawn(move || {
+            let r = RecvTransport::recv_bytes(&mut t, &mut []);
+            let alive = RecvTransport::is_alive(&t);
+            let _ = tx.send((r, alive));
+        });
+        let (r, alive) = rx
+            .recv_timeout(Duration::from_secs(3))
+            .expect("recv_bytes(&mut []) parked instead of returning Ok(0)");
+        h.join().unwrap();
+        assert!(matches!(r, Ok(0)), "got {r:?}");
+        assert!(alive, "an empty recv must not latch the transport dead");
+    }
+
+    /// The send twin of the liveness row.
+    #[test]
+    fn send_is_alive_is_false_after_a_cancel() {
+        let t = RtpTransport::connect("rtp://127.0.0.1:9").unwrap();
+        let cancel = Transport::cancel_handle(&t).expect("send transport exposes a cancel handle");
+        assert!(Transport::is_alive(&t));
+        cancel.cancel();
+        assert!(
+            !Transport::is_alive(&t),
+            "is_alive() must read false once the cancel handle has fired"
         );
     }
 }
