@@ -41,6 +41,15 @@ tst-test-helpers = { path = "../tst-test-helpers" }
 # events emitted by tst-pipeline library code.
 tracing-test    = { version = "0.2", features = ["no-env-filter"] }
 
+# Maintainer tool, not part of the published surface: renders the
+# BindingErrorKind table for scripts/check/repo/kind-equivalence.sh.
+[[bin]]
+name  = "print-kinds"
+required-features = ["std"]
+path  = "tests/tools/print_kinds.rs"
+test  = false
+bench = false
+
 [[bench]]
 name    = "syncer"
 harness = false

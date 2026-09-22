@@ -242,6 +242,13 @@ jobs:
       - name: Kind-table coverage (tst-core variants → BindingErrorKind)
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/rust/kind-table-coverage.sh
+      - name: Kind-equivalence rail (C ≡ Python ≡ JVM per BindingErrorKind)
+        # spec §8; KIND_EQUIV_STRICT is set only by the arc's assembly task.
+        if: matrix.name == 'linux-x86_64'
+        env:
+          SRT_FORCE_VENDORED: "1"
+          RIST_FORCE_VENDORED: "1"
+        run: bash scripts/check/repo/kind-equivalence.sh
       - name: Raw C mapper variant coverage
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/c/raw-mapper-coverage.sh
