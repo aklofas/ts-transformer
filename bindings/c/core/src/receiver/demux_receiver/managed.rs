@@ -35,58 +35,41 @@
 
 use crate::config::TstReconnectPolicy;
 use crate::demux_config::TstDemuxConfig;
-use crate::error::{TstError, record_eos, record_shell_error, set_last_error};
+use crate::error::{
+    TstError, record_binding_error, record_recv_closed, record_recv_error, set_last_error,
+};
 use crate::event::{EventArena, TstEvent};
-use crate::handle::Handle;
+use crate::handle::CHandle;
 use crate::sender::mux_sender::{parse_c_srt_url, parse_c_srt_url_listener};
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use tst_pipeline::ManagedDemuxReceiver;
-use tst_pipeline::ManagedDemuxReceiverConfig;
-use tst_pipeline::ManagedRecvTransport;
-use tst_pipeline::RecvEndReasonHandle;
-use tst_pipeline::ShellErrorKind;
-use tst_pipeline::TransportCancel;
-use tst_pipeline::TransportError;
+use tst_pipeline::binding::BindingError;
 use tst_srt::SrtTransport;
 use tst_srt::SrtUrl;
-use tst_srt::url::Mode;
 
 use crate::stream_end_reason::TstStreamEndReason;
 
 pub struct TstManagedDemuxReceiver {
-    inner: Handle<ManagedDemuxReceiver<SrtTransport>>,
+    /// Snapshot = the five lock-free observers (`ManagedHandles`) captured
+    /// at open, BEFORE the receiver moved into the slot: cancel, end
+    /// reason, successful rebuilds, factory attempts, reconnect-in-progress.
+    ///
+    /// Reading them takes NO lock on the slot (unlike `with_inner_ref` /
+    /// `with_inner_mut`, which share ONE mutex with `_recv_event` — a
+    /// blocked `_recv_event` holds it for its ENTIRE duration, including
+    /// any internal reconnect retry loop, so a stats read gated behind it
+    /// could never observe `reconnecting == true` while a reconnect is
+    /// actually in progress). That is what makes
+    /// `tst_managed_demux_receiver_get_reconnect_stats` and `_end_reason`
+    /// safe to poll from a watchdog thread while another thread is parked
+    /// in `_recv_event`. The end-reason handle is ALSO attached to the
+    /// `CHandle` itself (`with_end_reason`) so `_end_reason` reads it
+    /// through `CHandle::end_reason()` after the receiver is gone.
+    inner: CHandle<ManagedDemuxReceiver<SrtTransport>, tst_pipeline::binding::ManagedHandles>,
     arena: Mutex<EventArena>,
     stream_stats_buf: Mutex<Vec<crate::stats::TstStreamStats>>,
-    cancel: Option<Arc<dyn TransportCancel + Send + Sync>>,
-    was_cancelled: Arc<AtomicBool>,
-    /// End-reason handle snapshotted at open time, same
-    /// capture-before-move timing as `cancel` — obtained from the
-    /// `ManagedDemuxReceiver` BEFORE it is moved into `Handle::new(...)`
-    /// in `finish_managed_open`. Stays readable after the receiver is
-    /// closed, which is what lets `tst_managed_demux_receiver_end_reason`
-    /// be polled from a watchdog thread side-channel, without acquiring
-    /// `inner`'s Mutex. Read by `tst_managed_demux_receiver_end_reason`.
-    end_reason: RecvEndReasonHandle,
-    /// Reconnect-counter + reconnecting-flag handles, snapshotted at
-    /// open time with the same capture-before-move timing as `cancel`
-    /// and `end_reason` — obtained from the `ManagedDemuxReceiver`
-    /// BEFORE it is moved into `Handle::new(...)` in
-    /// `finish_managed_open`. Reading through these `Arc`s takes NO lock
-    /// on `inner` (unlike `handle.inner.with_inner_ref`/`with_inner_mut`,
-    /// which share ONE mutex with `_recv_event` — a blocked `_recv_event`
-    /// call holds that mutex for its ENTIRE duration, including any
-    /// internal reconnect retry loop, so a stats read gated behind it
-    /// could never observe `reconnecting == true` while a reconnect is
-    /// actually in progress). Side-channel reads here are what make
-    /// `tst_managed_demux_receiver_get_reconnect_stats` safe to poll
-    /// from a watchdog thread concurrently with a thread blocked in
-    /// `_recv_event`, same as `end_reason`.
-    reconnects: Arc<AtomicU64>,
-    reconnecting: Arc<AtomicBool>,
 }
 
 /// Open a `tst_managed_demux_receiver_t` with default demux options.
@@ -122,10 +105,7 @@ pub unsafe extern "C" fn tst_managed_demux_receiver_open(
             Ok(u) => u,
             Err(()) => return std::ptr::null_mut(),
         };
-        if url.mode == Mode::Listener {
-            return managed_open_listener_inner(url, policy, None);
-        }
-        managed_open_caller_inner(url, policy, None)
+        managed_open_inner(url, policy, None)
     })
 }
 
@@ -150,7 +130,7 @@ pub unsafe extern "C" fn tst_managed_demux_receiver_open_listener(
             Ok(u) => u,
             Err(()) => return std::ptr::null_mut(),
         };
-        managed_open_listener_inner(url, policy, None)
+        managed_open_inner(url, policy, None)
     })
 }
 
@@ -175,10 +155,7 @@ pub unsafe extern "C" fn tst_managed_demux_receiver_open_with_config(
             Err(()) => return std::ptr::null_mut(),
         };
         let opts = unsafe { cfg.as_ref().map(|c| c.build_options()) };
-        if url.mode == Mode::Listener {
-            return managed_open_listener_inner(url, policy, opts);
-        }
-        managed_open_caller_inner(url, policy, opts)
+        managed_open_inner(url, policy, opts)
     })
 }
 
@@ -204,89 +181,38 @@ pub unsafe extern "C" fn tst_managed_demux_receiver_open_listener_with_config(
             Err(()) => return std::ptr::null_mut(),
         };
         let opts = unsafe { cfg.as_ref().map(|c| c.build_options()) };
-        managed_open_listener_inner(url, policy, opts)
+        managed_open_inner(url, policy, opts)
     })
 }
 
-fn managed_open_caller_inner(
+/// One managed open for all four entry points. The composition — initial
+/// open dispatched on `url.mode`, the re-open factory that re-dials or
+/// RE-ACCEPTS the same URL through the shared `FactoryCancel` slot, the
+/// decorator, the shell, and the five observers taken before the move —
+/// lives in tst-srt (Arc 2 WP-A3). The FIRST accept runs through that same
+/// slot, but nothing can fire it before this call returns (DEBT-16,
+/// deferred in Arc 2).
+fn managed_open_inner(
     url: SrtUrl,
     policy: tst_pipeline::ReconnectPolicy,
     opts: Option<tst_core::mpegts::demux::DemuxerConfig>,
 ) -> *mut TstManagedDemuxReceiver {
-    let mut socket_cfg = tst_srt::config::SocketConfig::default();
-    url.overlay.apply_to_socket(&mut socket_cfg);
-    let initial = match crate::sender::connect::connect_srt(&url.host, url.port, &socket_cfg) {
+    // A3's signature takes the demuxer options by value; `DemuxerConfig`'s
+    // `Default` is exactly what `ManagedDemuxReceiver::new` applied here.
+    let opts = opts.unwrap_or_default();
+    let (rx, handles) = match tst_srt::shells::managed_demux_receiver_from_url(&url, policy, opts) {
         Ok(t) => t,
         Err(e) => {
-            crate::error::record_binding_error(e.into());
+            record_binding_error(BindingError::from(e));
             return std::ptr::null_mut();
         }
     };
-    let host = url.host.clone();
-    let port = url.port;
-    let cfg_for_reconnect = socket_cfg.clone();
-    let factory: Box<dyn FnMut() -> Result<SrtTransport, TransportError> + Send> =
-        Box::new(move || crate::sender::connect::connect_srt(&host, port, &cfg_for_reconnect));
-    let managed = ManagedRecvTransport::new(initial, factory, policy);
-    finish_managed_open(managed, opts)
-}
-
-fn managed_open_listener_inner(
-    url: SrtUrl,
-    policy: tst_pipeline::ReconnectPolicy,
-    opts: Option<tst_core::mpegts::demux::DemuxerConfig>,
-) -> *mut TstManagedDemuxReceiver {
-    let mut listener_cfg = tst_srt::config::ListenerConfig::default();
-    url.overlay.apply_to_listener(&mut listener_cfg);
-    let initial = match crate::receiver::listen::listen_srt(&url.host, url.port, &listener_cfg) {
-        Ok(t) => t,
-        Err(e) => {
-            crate::error::record_binding_error(e.into());
-            return std::ptr::null_mut();
-        }
-    };
-    let host = url.host.clone();
-    let port = url.port;
-    let cfg_for_relisten = listener_cfg.clone();
-    // The factory's re-accept is reachable by `_cancel` through this slot
-    // (see `listen_srt_cancellable`); the managed cancel handle fires it.
-    let factory_cancel = Arc::new(tst_pipeline::FactoryCancel::new());
-    let fc = Arc::clone(&factory_cancel);
-    let factory: Box<dyn FnMut() -> Result<SrtTransport, TransportError> + Send> =
-        Box::new(move || {
-            crate::receiver::listen::listen_srt_cancellable(&host, port, &cfg_for_relisten, &fc)
-        });
-    let managed =
-        ManagedRecvTransport::new_with_factory_cancel(initial, factory, policy, factory_cancel);
-    finish_managed_open(managed, opts)
-}
-
-fn finish_managed_open(
-    managed: ManagedRecvTransport<SrtTransport>,
-    opts: Option<tst_core::mpegts::demux::DemuxerConfig>,
-) -> *mut TstManagedDemuxReceiver {
-    let rx = match opts {
-        Some(o) => ManagedDemuxReceiver::with_demux_options(
-            managed,
-            o,
-            ManagedDemuxReceiverConfig::default(),
-        ),
-        None => ManagedDemuxReceiver::new(managed, ManagedDemuxReceiverConfig::default()),
-    };
-    let cancel = rx.cancel_handle();
-    let end_reason = rx.end_reason_handle();
-    let reconnects = rx.reconnects_handle();
-    let reconnecting = rx.reconnecting_handle();
-    let was_cancelled = Arc::new(AtomicBool::new(false));
+    let end_reason = handles.end_reason.clone();
+    let cancel = Arc::clone(&handles.cancel);
     Box::into_raw(Box::new(TstManagedDemuxReceiver {
-        inner: Handle::new(rx),
+        inner: CHandle::new(rx, cancel, handles).with_end_reason(end_reason),
         arena: Mutex::new(EventArena::new()),
         stream_stats_buf: Mutex::new(Vec::new()),
-        cancel,
-        was_cancelled,
-        reconnects,
-        reconnecting,
-        end_reason,
     }))
 }
 
@@ -348,7 +274,10 @@ pub unsafe extern "C" fn tst_managed_demux_receiver_recv_event(
         set_last_error(TstError::InvalidConfig, "null out_event pointer");
         return TstError::InvalidConfig as i32;
     }
-    let was_cancelled = handle.was_cancelled.clone();
+    // `broken_is_eos = false` — the decorator already retried on Broken, so
+    // a Broken reaching here is a hard transport failure (see the asymmetry
+    // note above). The latch is read on both sides of the park.
+    let cancelled = handle.inner.is_cancelled();
     handle.inner.with_inner_mut(|rx| match rx.recv_event() {
         Ok(Some(ev)) => {
             let mut arena = handle.arena.lock().expect("event arena Mutex poisoned");
@@ -357,31 +286,8 @@ pub unsafe extern "C" fn tst_managed_demux_receiver_recv_event(
             }
             0
         }
-        Ok(None) => {
-            if was_cancelled.load(Ordering::Acquire) {
-                set_last_error(
-                    TstError::Closed,
-                    "receiver was cancelled or closed by caller",
-                );
-                TstError::Closed as i32
-            } else {
-                record_eos();
-                TstError::EndOfStream as i32
-            }
-        }
-        Err(e) if e.kind == ShellErrorKind::EndOfStream || e.kind == ShellErrorKind::Closed => {
-            if was_cancelled.load(Ordering::Acquire) {
-                set_last_error(
-                    TstError::Closed,
-                    "receiver was cancelled or closed by caller",
-                );
-                TstError::Closed as i32
-            } else {
-                record_eos();
-                TstError::EndOfStream as i32
-            }
-        }
-        Err(e) => record_shell_error(&e),
+        Ok(None) => record_recv_closed(cancelled || handle.inner.is_cancelled()),
+        Err(e) => record_recv_error(&e, cancelled || handle.inner.is_cancelled(), false),
     })
 }
 
@@ -407,10 +313,7 @@ pub unsafe extern "C" fn tst_managed_demux_receiver_cancel(
             set_last_error(TstError::InvalidConfig, "null receiver pointer");
             return TstError::InvalidConfig as i32;
         };
-        handle.was_cancelled.store(true, Ordering::Release);
-        if let Some(c) = &handle.cancel {
-            c.cancel();
-        }
+        handle.inner.cancel();
         0
     })
 }
@@ -489,7 +392,7 @@ pub unsafe extern "C" fn tst_managed_demux_receiver_end_reason(
             set_last_error(TstError::InvalidConfig, "null out pointer");
             return TstError::InvalidConfig as i32;
         }
-        let reason = match handle.end_reason.get() {
+        let reason = match handle.inner.end_reason() {
             Some(r) => convert_recv_end_reason(&r),
             None => TstStreamEndReason::None,
         };
@@ -549,10 +452,7 @@ pub unsafe extern "C" fn tst_managed_demux_receiver_close(p: *mut TstManagedDemu
             return;
         }
         let boxed = unsafe { Box::from_raw(p) };
-        boxed.was_cancelled.store(true, Ordering::Release);
-        if let Some(c) = &boxed.cancel {
-            c.cancel();
-        }
+        // `CHandle::close` is cancel-first (see `tst_receiver_close`).
         boxed.inner.close();
         drop(boxed);
     });
@@ -585,22 +485,18 @@ pub unsafe extern "C" fn tst_managed_demux_receiver_get_stats(
 ///   (a receiver only ever consumes bytes that already arrived; it
 ///   cannot buffer bytes the peer hasn't sent yet), so eviction
 ///   telemetry is structurally inapplicable.
-/// * `reconnect_attempts` equals `reconnect_successes`
-///   (`ManagedDemuxReceiver::reconnects_count()`). The recv side tracks
-///   no separate attempts counter distinct from successful rebuilds
-///   (unlike the send side's `ManagedTransportStats::reconnect_attempts`,
-///   which counts every `factory()` invocation including failed ones) —
-///   this is a real asymmetry between the two sides, not a bug; it is
-///   documented here rather than silently reported as `0`, which would
-///   read as "never attempted" and be actively misleading while a
-///   reconnect is in progress.
+/// * `reconnect_attempts` counts every factory invocation (successful or
+///   not) since open, exactly like the send side's
+///   `ManagedTransportStats::reconnect_attempts`; `reconnect_successes`
+///   counts the rebuilds that were installed. Before 0.7.0 the recv side
+///   reported successes in BOTH fields, so a failing reconnect loop read
+///   as "never attempted".
 ///
 /// **Lock-free side-channel read**, same shape as
-/// `tst_managed_demux_receiver_end_reason`: `reconnecting` and
-/// `reconnect_successes` are read directly off `Arc<AtomicU64>` /
-/// `Arc<AtomicBool>` handles snapshotted at open time
-/// (`ManagedDemuxReceiver::reconnects_handle` /
-/// `ManagedDemuxReceiver::reconnecting_handle`), WITHOUT acquiring this
+/// `tst_managed_demux_receiver_end_reason`: `reconnecting`,
+/// `reconnect_attempts` and `reconnect_successes` are read directly off
+/// the `Arc<AtomicU64>` / `Arc<AtomicBool>` observers snapshotted at open
+/// time (`tst_pipeline::binding::ManagedHandles`), WITHOUT acquiring this
 /// handle's data-path Mutex. This is load-bearing, not a style choice: a
 /// thread blocked in `_recv_event` holds that Mutex for the entire call,
 /// including any internal reconnect retry loop — a getter gated behind
@@ -637,11 +533,11 @@ pub unsafe extern "C" fn tst_managed_demux_receiver_get_reconnect_stats(
             set_last_error(TstError::InvalidConfig, "null out pointer");
             return TstError::InvalidConfig as i32;
         }
-        let successes = handle.reconnects.load(Ordering::Acquire);
+        let h = handle.inner.snapshot();
         let stats = crate::stats::TstManagedTransportStats {
-            reconnect_attempts: successes,
-            reconnect_successes: successes,
-            reconnecting: handle.reconnecting.load(Ordering::Acquire),
+            reconnect_attempts: h.attempts.load(Ordering::Relaxed),
+            reconnect_successes: h.reconnects.load(Ordering::Acquire),
+            reconnecting: h.reconnecting.load(Ordering::Acquire),
             ..Default::default()
         };
         // SAFETY: out non-null per guard above.

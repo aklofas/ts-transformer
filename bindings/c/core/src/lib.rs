@@ -140,8 +140,6 @@ pub mod sender;
 // Receiver-side surface (requires SRT transport):
 #[cfg(feature = "srt")]
 pub mod receiver;
-#[cfg(feature = "srt")]
-mod srt_addr;
 
 // RTP/RTSP transport surface:
 #[cfg(feature = "rtp")]

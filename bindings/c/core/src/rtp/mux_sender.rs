@@ -8,22 +8,21 @@
 //! Push and stats bodies are thin forwarders to generic impls in
 //! `crate::transport_impls`. The literal `extern "C"` signature and
 //! doc-comment are preserved here so cbindgen can see and emit them.
-//! Cancel stays family-local because it needs the `cancel` +
-//! `was_cancelled` Arc fields, which are not part of the generic
-//! `Handle<MuxSender<T>>` interface.
+//! Cancel stays family-local only because the literal `extern "C"`
+//! signature must sit where cbindgen can see it — the cancel state itself
+//! lives on the handle's `CHandle`.
 
 use std::os::raw::c_char;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use tst_core::Transport;
-use tst_pipeline::{MuxSender, TransportCancel};
+use tst_pipeline::MuxSender;
 use tst_rtp::{RtpSocketBuilder, RtpTransport};
 
 use crate::config::TstMuxConfig;
 use crate::error::{TstError, record_mux_error, set_last_error};
 use crate::handle::{
-    Handle, TstAudioStreamHandle, TstKlvStreamHandle, TstSubtitleStreamHandle, TstVideoStreamHandle,
+    CHandle, TstAudioStreamHandle, TstKlvStreamHandle, TstSubtitleStreamHandle,
+    TstVideoStreamHandle, cancel_or_latch,
 };
 
 // ---------------------------------------------------------------------------
@@ -35,13 +34,9 @@ use crate::handle::{
 /// Returned by [`tst_rtp_mux_sender_open`]. Freed with
 /// [`tst_rtp_mux_sender_close`].
 pub struct TstRtpMuxSender {
-    pub(crate) inner: Handle<MuxSender<RtpTransport>>,
-    pub(crate) cancel: Option<Arc<dyn TransportCancel + Send + Sync>>,
-    /// Informational only on the sender side — set by `_cancel` and `_close`
-    /// but never read by `_push_*` paths. Kept for shape uniformity with the
-    /// receiver structs; future JNI/UniFFI bindings reflecting on field types
-    /// see the same shape across all handle families.
-    pub(crate) was_cancelled: Arc<AtomicBool>,
+    /// Slot + cancel handle + cancel latch in one; no snapshot (this family
+    /// has no construction-constant getter).
+    pub(crate) inner: CHandle<MuxSender<RtpTransport>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -106,7 +101,8 @@ pub unsafe extern "C" fn tst_rtp_mux_sender_open(
                 return std::ptr::null_mut();
             }
         };
-        let cancel = transport.cancel_handle();
+        // Captured BEFORE the transport moves into the shell.
+        let cancel = cancel_or_latch(transport.cancel_handle());
         let mux_sender = match MuxSender::new(transport, built) {
             Ok(s) => s,
             Err(e) => {
@@ -115,9 +111,7 @@ pub unsafe extern "C" fn tst_rtp_mux_sender_open(
             }
         };
         Box::into_raw(Box::new(TstRtpMuxSender {
-            inner: Handle::new(mux_sender),
-            cancel,
-            was_cancelled: Arc::new(AtomicBool::new(false)),
+            inner: CHandle::new(mux_sender, cancel, ()),
         }))
     })
 }
@@ -141,10 +135,7 @@ pub unsafe extern "C" fn tst_rtp_mux_sender_close(p: *mut TstRtpMuxSender) {
             return;
         }
         let boxed = unsafe { Box::from_raw(p) };
-        boxed.was_cancelled.store(true, Ordering::Release);
-        if let Some(c) = &boxed.cancel {
-            c.cancel();
-        }
+        // `CHandle::close` is cancel-first (see `tst_receiver_close`).
         boxed.inner.close();
         drop(boxed);
     });
@@ -173,13 +164,7 @@ pub unsafe extern "C" fn tst_rtp_mux_sender_cancel(p: *mut TstRtpMuxSender) -> l
             set_last_error(TstError::InvalidConfig, "null rtp mux sender pointer");
             return TstError::InvalidConfig as i32;
         };
-        // Side-channel: do NOT acquire handle.inner's Mutex (a concurrent
-        // push holds it). The was_cancelled flag + cancel-handle Arc are
-        // accessible without locking.
-        handle.was_cancelled.store(true, Ordering::Release);
-        if let Some(c) = &handle.cancel {
-            c.cancel();
-        }
+        handle.inner.cancel();
         0
     })
 }

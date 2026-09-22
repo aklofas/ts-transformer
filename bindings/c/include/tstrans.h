@@ -551,9 +551,11 @@ enum tst_e
   TST_E_INVALID_USAGE = -9,
   TST_E_INTERNAL = -10,
   /**
-   * Internal panic caught at the FFI boundary; the handle is now in
-   * an indeterminate state. Subsequent calls on the same handle will
-   * also fail (returning `Closed`). The caller should free the handle.
+   * Internal panic caught at the FFI boundary. After a panic inside a
+   * MUTATING call the handle is in an indeterminate state and its shell
+   * is dropped: subsequent calls fail with `Closed`; the caller should
+   * free the handle. A panic inside a read-only accessor (stats,
+   * `is_alive`) reports this code and leaves the handle usable.
    */
   TST_E_PANIC_CAUGHT = -11,
   /**
@@ -2727,6 +2729,9 @@ const char *tst_get_version_string(void);
  * snapshot.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null.
+ *
+ * After cancel the `_send_*` entry points report `TST_E_CLOSED` (-7) — the
+ * managed decorator latches the close before the send reaches libsrt.
  */
 int tst_managed_mux_sender_cancel(struct tst_managed_mux_sender_t *p);
 #endif
@@ -3461,8 +3466,13 @@ int tst_mux_config_set_stream_descriptors_for_video(struct tst_mux_config_t *cfg
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null.
  *
- * After cancel, all `_send_*` entry points return `TST_E_CLOSED`. The
- * handle must still be `_close`'d to free.
+ * After cancel the rule is ORDINAL, not park-state: the FIRST `_send_*`
+ * that observes the cancel returns `TST_E_TRANSPORT` (-8) — libsrt reports
+ * the closed socket as a broken connection, and `SrtTransport` nulls its
+ * socket slot on that error — and EVERY LATER call returns `TST_E_CLOSED`
+ * (-7) off the now-empty slot. `_cancel` itself never closes the shell.
+ * 0.7.0's WP-C2 makes the first call report `TST_E_CLOSED` too. The handle
+ * must still be `_close`'d to free.
  */
 int tst_mux_sender_cancel(struct tst_mux_sender_t *p);
 #endif
@@ -4246,6 +4256,10 @@ int tst_muxer_reset_stats(struct tst_muxer_t *p);
  * snapshot.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null.
+ *
+ * After cancel a `_send_*` reports `TST_E_CLOSED` (-7): the managed
+ * decorator latches the close, so the send never reaches libsrt (unlike
+ * the plain sender, whose interrupted send surfaces as `TST_E_TRANSPORT`).
  */
 int tst_managed_sender_cancel(struct tst_managed_sender_t *p);
 #endif
@@ -4353,8 +4367,13 @@ int tst_managed_sender_send_ts(struct tst_managed_sender_t *p, const uint8_t *by
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null.
  *
- * After cancel, `_send` returns `TST_E_CLOSED`. The handle must still
- * be `_close`'d to free.
+ * After cancel the rule is ORDINAL, not park-state: the FIRST `_send` that
+ * observes the cancel returns `TST_E_TRANSPORT` (-8) — libsrt reports the
+ * closed socket as a broken connection, and `SrtTransport` nulls its socket
+ * slot on that error — and EVERY LATER call returns `TST_E_CLOSED` (-7) off
+ * the now-empty slot. `_cancel` itself never closes the shell. 0.7.0's
+ * WP-C2 makes the first call report `TST_E_CLOSED` too. The handle must
+ * still be `_close`'d to free.
  */
 int tst_sender_cancel(struct tst_sender_t *p);
 #endif
@@ -4447,6 +4466,9 @@ int tst_sender_send_ts(struct tst_sender_t *p, const uint8_t *bytes, size_t len)
  * snapshot.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null.
+ *
+ * After cancel a `_send` reports `TST_E_CLOSED` (-7) — the managed
+ * decorator latches the close before the send reaches libsrt.
  */
 int tst_managed_raw_sender_cancel(struct tst_managed_raw_sender_t *p);
 #endif
@@ -4567,8 +4589,13 @@ int tst_managed_raw_sender_send(struct tst_managed_raw_sender_t *p,
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null.
  *
- * After cancel, `_send` returns `TST_E_CLOSED`. The handle must still
- * be `_close`'d to free.
+ * After cancel the rule is ORDINAL, not park-state: the FIRST `_send` that
+ * observes the cancel returns `TST_E_TRANSPORT` (-8) — libsrt reports the
+ * closed socket as a broken connection, and `SrtTransport` nulls its socket
+ * slot on that error — and EVERY LATER call returns `TST_E_CLOSED` (-7) off
+ * the now-empty slot. `_cancel` itself never closes the shell. 0.7.0's
+ * WP-C2 makes the first call report `TST_E_CLOSED` too. The handle must
+ * still be `_close`'d to free.
  */
 int tst_raw_sender_cancel(struct tst_raw_sender_t *p);
 #endif
@@ -4817,8 +4844,14 @@ int tst_demux_config_set_unwrap_timestamps(struct tst_demux_config_t *cfg, int e
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null.
  *
- * After cancel, `_recv_event` returns `TST_E_CLOSED` (not
- * `TST_E_END_OF_STREAM`). The handle must still be `_close`'d to free.
+ * After cancel, `_recv_event` never reports `TST_E_END_OF_STREAM`, and the
+ * rule is ORDINAL, not park-state: the FIRST call that observes the cancel
+ * returns `TST_E_TRANSPORT` (-8) — libsrt reports the closed socket as a
+ * broken connection, and `SrtTransport` nulls its socket slot on that error
+ * — and EVERY LATER call returns `TST_E_CLOSED` (-7) off the now-empty
+ * slot. `_cancel` itself never closes the shell. 0.7.0's WP-C2 makes the
+ * first call report `TST_E_CLOSED` too. The handle must still be `_close`'d
+ * to free.
  */
 int tst_demux_receiver_cancel(struct tst_demux_receiver_t *p);
 #endif
@@ -4992,7 +5025,9 @@ struct tst_demux_receiver_t *tst_demux_receiver_open_with_config(const char *srt
  * Returns:
  * - `0` on success (`*out_event` populated; pointer fields borrow)
  * - `TST_E_END_OF_STREAM` (-12) on graceful peer close
- * - `TST_E_CLOSED` (-7) if the handle was `_cancel`'d or `_close`'d
+ * - `TST_E_CLOSED` (-7) if the handle was `_close`'d, or on any call AFTER
+ *   the first one that observed a cross-thread `_cancel` (that first call
+ *   reports `TST_E_TRANSPORT`; 0.7.0's WP-C2 makes it `TST_E_CLOSED` too)
  * - `TST_E_TRANSPORT` (-8) on transport failure
  * - `TST_E_INVALID_TS` (-3) on a demuxer error (strict-mode rejection
  *   or unrecoverable packet malformation)
@@ -5267,22 +5302,18 @@ int tst_managed_demux_receiver_end_reason(struct tst_managed_demux_receiver_t *p
  *   (a receiver only ever consumes bytes that already arrived; it
  *   cannot buffer bytes the peer hasn't sent yet), so eviction
  *   telemetry is structurally inapplicable.
- * * `reconnect_attempts` equals `reconnect_successes`
- *   (`ManagedDemuxReceiver::reconnects_count()`). The recv side tracks
- *   no separate attempts counter distinct from successful rebuilds
- *   (unlike the send side's `ManagedTransportStats::reconnect_attempts`,
- *   which counts every `factory()` invocation including failed ones) —
- *   this is a real asymmetry between the two sides, not a bug; it is
- *   documented here rather than silently reported as `0`, which would
- *   read as "never attempted" and be actively misleading while a
- *   reconnect is in progress.
+ * * `reconnect_attempts` counts every factory invocation (successful or
+ *   not) since open, exactly like the send side's
+ *   `ManagedTransportStats::reconnect_attempts`; `reconnect_successes`
+ *   counts the rebuilds that were installed. Before 0.7.0 the recv side
+ *   reported successes in BOTH fields, so a failing reconnect loop read
+ *   as "never attempted".
  *
  * **Lock-free side-channel read**, same shape as
- * `tst_managed_demux_receiver_end_reason`: `reconnecting` and
- * `reconnect_successes` are read directly off `Arc<AtomicU64>` /
- * `Arc<AtomicBool>` handles snapshotted at open time
- * (`ManagedDemuxReceiver::reconnects_handle` /
- * `ManagedDemuxReceiver::reconnecting_handle`), WITHOUT acquiring this
+ * `tst_managed_demux_receiver_end_reason`: `reconnecting`,
+ * `reconnect_attempts` and `reconnect_successes` are read directly off
+ * the `Arc<AtomicU64>` / `Arc<AtomicBool>` observers snapshotted at open
+ * time (`tst_pipeline::binding::ManagedHandles`), WITHOUT acquiring this
  * handle's data-path Mutex. This is load-bearing, not a style choice: a
  * thread blocked in `_recv_event` holds that Mutex for the entire call,
  * including any internal reconnect retry loop — a getter gated behind
@@ -5646,8 +5677,14 @@ int tst_managed_receiver_reset_stats(struct tst_managed_receiver_t *p);
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null.
  *
- * After cancel, `_recv_packet` returns `TST_E_CLOSED` (not
- * `TST_E_END_OF_STREAM`). The handle must still be `_close`'d to free.
+ * After cancel, `_recv_packet` never reports `TST_E_END_OF_STREAM`, and the
+ * rule is ORDINAL, not park-state: the FIRST call that observes the cancel
+ * returns `TST_E_TRANSPORT` (-8) — libsrt reports the closed socket as a
+ * broken connection, and `SrtTransport` nulls its socket slot on that error
+ * — and EVERY LATER call returns `TST_E_CLOSED` (-7) off the now-empty
+ * slot. `_cancel` itself never closes the shell. 0.7.0's WP-C2 makes the
+ * first call report `TST_E_CLOSED` too. The handle must still be `_close`'d
+ * to free.
  */
 int tst_receiver_cancel(struct tst_receiver_t *p);
 #endif
@@ -5727,10 +5764,11 @@ struct tst_receiver_t *tst_receiver_open_listener(const char *srt_url);
  * Returns:
  * - `0` on success (188 bytes written to `out_packet`)
  * - `TST_E_END_OF_STREAM` (-12) on graceful peer close
- * - `TST_E_CLOSED` (-7) if the handle was `_cancel`'d or `_close`'d
+ * - `TST_E_CLOSED` (-7) if the handle was `_close`'d, or on any call AFTER
+ *   the first one that observed a cross-thread `_cancel` (that first call
+ *   reports `TST_E_TRANSPORT`; 0.7.0's WP-C2 makes it `TST_E_CLOSED` too)
  * - `TST_E_TRANSPORT` (-8) on a transport failure other than a clean
- *   peer disconnect (peer FIN surfaces as `TST_E_END_OF_STREAM`; see
- *   the `TransportError::Broken` arm in this function for details)
+ *   peer disconnect (peer FIN surfaces as `TST_E_END_OF_STREAM`)
  * - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments
  *
  * On any non-zero return the contents of `out_packet` are unspecified.
@@ -5892,8 +5930,14 @@ int tst_managed_raw_receiver_reset_stats(struct tst_managed_raw_receiver_t *p);
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null.
  *
- * After cancel, `_recv` returns `TST_E_CLOSED` (not `TST_E_END_OF_STREAM`).
- * The handle must still be `_close`'d to free.
+ * After cancel, `_recv` never reports `TST_E_END_OF_STREAM`, and the rule is
+ * ORDINAL, not park-state: the FIRST call that observes the cancel returns
+ * `TST_E_TRANSPORT` (-8) — libsrt reports the closed socket as a broken
+ * connection, and `SrtTransport` nulls its socket slot on that error — and
+ * EVERY LATER call returns `TST_E_CLOSED` (-7) off the now-empty slot.
+ * `_cancel` itself never closes the shell. 0.7.0's WP-C2 makes the first
+ * call report `TST_E_CLOSED` too. The handle must still be `_close`'d to
+ * free.
  */
 int tst_raw_receiver_cancel(struct tst_raw_receiver_t *p);
 #endif

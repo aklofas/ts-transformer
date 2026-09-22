@@ -13,13 +13,13 @@
 //! shell consumes it. Here `Sender<TcpTransport>` uses it as a sender.
 //!
 //! **Cancel:** the Rust `TcpTransport` exposes `cancel_handle()` (since
-//! PR #198) but the C ABI has no `tst_tcp_sender_cancel` entry point yet
-//! (additive candidate, ABI 0.22) and no `was_cancelled` side-channel —
-//! `_close` simply drops the handle. Consequence since deep review #4
-//! WP-4b: a send against a peer that has stopped reading blocks until the
-//! peer resumes, the peer resets the connection, or this handle is closed
-//! from the same thread — it no longer returns `TST_E_TRANSPORT` after
-//! ~100 ms.
+//! PR #198) and the handle's `CHandle` now carries it, so `_close` is
+//! cancel-first — but the C ABI still has no `tst_tcp_sender_cancel` entry
+//! point (additive candidate, ABI 0.22 — R4 builds it on
+//! `handle.inner.cancel()`). Consequence since deep review #4 WP-4b: a send
+//! against a peer that has stopped reading blocks until the peer resumes,
+//! the peer resets the connection, or this handle is closed — it no longer
+//! returns `TST_E_TRANSPORT` after ~100 ms.
 
 use std::os::raw::c_char;
 
@@ -27,7 +27,7 @@ use tst_pipeline::{Sender, SenderConfig};
 use tst_tcp::{TcpTransport, TcpTransportBuilder};
 
 use crate::error::{TstError, set_last_error};
-use crate::handle::Handle;
+use crate::handle::{CHandle, cancel_or_latch};
 use crate::stats::TstSenderStats;
 
 // ---------------------------------------------------------------------------
@@ -39,7 +39,7 @@ use crate::stats::TstSenderStats;
 /// Returned by [`tst_tcp_sender_open`]. Freed with
 /// [`tst_tcp_sender_close`].
 pub struct TstTcpSender {
-    pub(crate) inner: Handle<Sender<TcpTransport>>,
+    pub(crate) inner: CHandle<Sender<TcpTransport>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -86,8 +86,11 @@ pub unsafe extern "C" fn tst_tcp_sender_open(url: *const c_char) -> *mut TstTcpS
             }
         };
         let sender = Sender::new(transport, SenderConfig::default());
+        // TCP has a real `TcpCancelHandle`, so `cancel_or_latch` passes it
+        // straight through.
+        let cancel = cancel_or_latch(sender.cancel_handle());
         Box::into_raw(Box::new(TstTcpSender {
-            inner: Handle::new(sender),
+            inner: CHandle::new(sender, cancel, ()),
         }))
     })
 }

@@ -11,24 +11,23 @@
 //! helpers stay family-local.
 
 use crate::config::{TstMuxConfig, TstReconnectPolicy};
+use crate::error::record_binding_error;
 use crate::error::{
     TstError, record_mux_error, record_shell_error, set_last_error, tst_get_last_error,
 };
-use crate::handle::{Handle, TstDataStreamHandle};
-use std::sync::Arc;
+use crate::handle::{CHandle, TstDataStreamHandle, cancel_or_latch};
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::DataStreamHandle;
-use tst_pipeline::{ManagedTransport, MuxSender, TransportCancel};
+use tst_pipeline::binding::BindingError;
+use tst_pipeline::{ManagedTransport, MuxSender};
 use tst_srt::SrtTransport;
-use tst_srt::config::SocketConfig;
 
 // ------------------------------------------------------------------
 // tst_mux_sender_t (plain L1)
 // ------------------------------------------------------------------
 
 pub struct TstMuxSender {
-    inner: Handle<MuxSender<SrtTransport>>,
-    cancel: Option<Arc<dyn TransportCancel + Send + Sync>>,
+    inner: CHandle<MuxSender<SrtTransport>>,
 }
 
 /// Open a `tst_mux_sender_t` connected via SRT.
@@ -64,13 +63,16 @@ pub unsafe extern "C" fn tst_mux_sender_open(
                 return std::ptr::null_mut();
             }
         };
-        let mut socket_cfg = SocketConfig::default();
-        url.overlay.apply_to_socket(&mut socket_cfg);
-        let transport = match crate::sender::connect::connect_srt(&url.host, url.port, &socket_cfg)
-        {
+        // See `tst_sender_open`: plain senders refuse `?mode=listener` here
+        // (binding-level; `SrtUrl::connect` is mode-agnostic), then
+        // `SrtUrl::connect` performs the whole caller-mode open.
+        if require_caller_mode(&url).is_err() {
+            return std::ptr::null_mut();
+        }
+        let transport = match url.connect() {
             Ok(t) => t,
             Err(e) => {
-                crate::error::record_binding_error(e.into());
+                record_binding_error(BindingError::from(e));
                 return std::ptr::null_mut();
             }
         };
@@ -81,10 +83,9 @@ pub unsafe extern "C" fn tst_mux_sender_open(
                 return std::ptr::null_mut();
             }
         };
-        let cancel = sender.cancel_handle();
+        let cancel = cancel_or_latch(sender.cancel_handle());
         Box::into_raw(Box::new(TstMuxSender {
-            inner: Handle::new(sender),
-            cancel,
+            inner: CHandle::new(sender, cancel, ()),
         }))
     })
 }
@@ -557,9 +558,6 @@ pub unsafe extern "C" fn tst_mux_sender_close(p: *mut TstMuxSender) {
             return;
         }
         let boxed = unsafe { Box::from_raw(p) };
-        if let Some(c) = &boxed.cancel {
-            c.cancel();
-        }
         boxed.inner.close();
         drop(boxed);
     });
@@ -571,8 +569,13 @@ pub unsafe extern "C" fn tst_mux_sender_close(p: *mut TstMuxSender) {
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null.
 ///
-/// After cancel, all `_send_*` entry points return `TST_E_CLOSED`. The
-/// handle must still be `_close`'d to free.
+/// After cancel the rule is ORDINAL, not park-state: the FIRST `_send_*`
+/// that observes the cancel returns `TST_E_TRANSPORT` (-8) — libsrt reports
+/// the closed socket as a broken connection, and `SrtTransport` nulls its
+/// socket slot on that error — and EVERY LATER call returns `TST_E_CLOSED`
+/// (-7) off the now-empty slot. `_cancel` itself never closes the shell.
+/// 0.7.0's WP-C2 makes the first call report `TST_E_CLOSED` too. The handle
+/// must still be `_close`'d to free.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_mux_sender_cancel(p: *mut TstMuxSender) -> libc::c_int {
     crate::panic::ffi_catch(TstError::Internal as i32, || {
@@ -580,11 +583,7 @@ pub unsafe extern "C" fn tst_mux_sender_cancel(p: *mut TstMuxSender) -> libc::c_
             set_last_error(TstError::InvalidConfig, "null sender pointer");
             return TstError::InvalidConfig as i32;
         };
-        // Side-channel: do NOT acquire handle.inner's Mutex (a concurrent
-        // send holds it). The cancel-handle Arc is accessible without locking.
-        if let Some(c) = &handle.cancel {
-            c.cancel();
-        }
+        handle.inner.cancel();
         0
     })
 }
@@ -608,6 +607,35 @@ pub(crate) unsafe fn parse_c_srt_url(srt_url: *const libc::c_char) -> Result<tst
     tst_srt::SrtUrl::parse(s).map_err(|e| {
         set_last_error(TstError::InvalidConfig, &format!("invalid srt url: {e}"));
     })
+}
+
+/// Refuse `?mode=listener` on a PLAIN sender open.
+///
+/// The mode check is binding-level on purpose: [`tst_srt::SrtUrl::connect`]
+/// is mode-agnostic by design (the caller picks the direction by calling
+/// `connect` or `accept_one`), and the only refusal inside tst-srt is in the
+/// MANAGED send-side `shells::managed_*_sender_from_url` family. The plain C
+/// senders have no listener path, so without this check a `?mode=listener`
+/// URL would silently dial out as a caller — which is exactly what every
+/// release before 0.7.0 did.
+///
+/// The CODE matches what the managed family surfaces (tst-srt's
+/// `callers_only()` → `SrtError::Option` → `BindingErrorKind::ConfigInvalid`
+/// → −1), so both C sender paths answer a listener-mode URL with
+/// `TST_E_INVALID_CONFIG`. The DETAIL differs by one word on purpose:
+/// tst-srt says "managed senders open as callers only" because that is the
+/// only family it guards, and this one says "plain senders" for the same
+/// reason.
+pub(crate) fn require_caller_mode(url: &tst_srt::SrtUrl) -> Result<(), ()> {
+    if url.mode == tst_srt::url::Mode::Listener {
+        set_last_error(
+            TstError::InvalidConfig,
+            "?mode=listener: plain senders open as callers only \
+             (see deferred-features.md, \"SRT URL mode=listener / mode=rendezvous dispatch\")",
+        );
+        return Err(());
+    }
+    Ok(())
 }
 
 /// Like [`parse_c_srt_url`] but more forgiving for listener-mode entry points:
@@ -664,12 +692,9 @@ pub(crate) unsafe fn parse_c_srt_url_listener(
 // ------------------------------------------------------------------
 
 pub struct TstManagedMuxSender {
-    inner: Handle<MuxSender<ManagedTransport<SrtTransport>>>,
-    cancel: Option<Arc<dyn TransportCancel + Send + Sync>>,
-    /// Reconnect/gap telemetry observer, captured from the `ManagedTransport`
-    /// before it moved into the shell (same capture-before-move timing as
-    /// `cancel_handle()`). Read by `tst_managed_mux_sender_get_reconnect_stats`.
-    stats_handle: tst_pipeline::ManagedStatsHandle,
+    /// Snapshot = the reconnect/gap telemetry observer captured at open;
+    /// see `TstManagedSender`.
+    inner: CHandle<MuxSender<ManagedTransport<SrtTransport>>, tst_pipeline::ManagedStatsHandle>,
 }
 
 /// Open a `tst_managed_mux_sender_t` connected via SRT.
@@ -710,40 +735,22 @@ pub unsafe extern "C" fn tst_managed_mux_sender_open(
                 return std::ptr::null_mut();
             }
         };
-        let mut socket_cfg = SocketConfig::default();
-        url.overlay.apply_to_socket(&mut socket_cfg);
-
-        // Initial connect.
-        let initial = match crate::sender::connect::connect_srt(&url.host, url.port, &socket_cfg) {
-            Ok(t) => t,
-            Err(e) => {
-                crate::error::record_binding_error(e.into());
-                return std::ptr::null_mut();
-            }
-        };
-
-        // Reconnect closure: same host/port AND same socket config so URL
-        // overlay options (passphrase/latency/etc.) survive reconnects.
-        // URL is parsed once at construction and never re-parsed.
-        let host = url.host.clone();
-        let port = url.port;
-        let cfg_for_reconnect = socket_cfg.clone();
-        let factory = move || crate::sender::connect::connect_srt(&host, port, &cfg_for_reconnect);
-
-        let managed = ManagedTransport::new(initial, factory, policy);
-        let stats_handle = managed.stats_handle();
-        let sender = match MuxSender::new(managed, built) {
-            Ok(s) => s,
-            Err(e) => {
-                record_mux_error(&e);
-                return std::ptr::null_mut();
-            }
-        };
-        let cancel = sender.cancel_handle();
+        // See `tst_managed_sender_open`: initial connect + the same-URL
+        // reconnect factory (so the overlay survives every reconnect) + the
+        // decorator + the shell + the observers, all in one tst-srt call,
+        // which also refuses `?mode=listener` itself. A `MuxerConfig` that
+        // the shell rejects comes back as `SrtError` here, not `MuxError` —
+        // `build_config()` above already validated the C-side config.
+        let (sender, handles, stats) =
+            match tst_srt::shells::managed_mux_sender_from_url(&url, policy, built) {
+                Ok(t) => t,
+                Err(e) => {
+                    record_binding_error(BindingError::from(e));
+                    return std::ptr::null_mut();
+                }
+            };
         Box::into_raw(Box::new(TstManagedMuxSender {
-            inner: Handle::new(sender),
-            cancel,
-            stats_handle,
+            inner: CHandle::new(sender, handles.cancel, stats),
         }))
     })
 }
@@ -1116,13 +1123,7 @@ pub unsafe extern "C" fn tst_managed_mux_sender_get_reconnect_stats(
         set_last_error(TstError::InvalidConfig, "null sender pointer");
         return TstError::InvalidConfig as i32;
     };
-    unsafe {
-        crate::transport_impls::managed_get_reconnect_stats(
-            &handle.inner,
-            &handle.stats_handle,
-            out,
-        )
-    }
+    unsafe { crate::transport_impls::managed_get_reconnect_stats(&handle.inner, out) }
 }
 
 /// Managed sibling of [`tst_mux_sender_get_stream_codec_stats`]. Returns
@@ -1189,9 +1190,6 @@ pub unsafe extern "C" fn tst_managed_mux_sender_close(p: *mut TstManagedMuxSende
             return;
         }
         let boxed = unsafe { Box::from_raw(p) };
-        if let Some(c) = &boxed.cancel {
-            c.cancel();
-        }
         boxed.inner.close();
         drop(boxed);
     });
@@ -1203,6 +1201,9 @@ pub unsafe extern "C" fn tst_managed_mux_sender_close(p: *mut TstManagedMuxSende
 /// snapshot.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null.
+///
+/// After cancel the `_send_*` entry points report `TST_E_CLOSED` (-7) — the
+/// managed decorator latches the close before the send reaches libsrt.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_managed_mux_sender_cancel(p: *mut TstManagedMuxSender) -> libc::c_int {
     crate::panic::ffi_catch(TstError::Internal as i32, || {
@@ -1210,11 +1211,7 @@ pub unsafe extern "C" fn tst_managed_mux_sender_cancel(p: *mut TstManagedMuxSend
             set_last_error(TstError::InvalidConfig, "null sender pointer");
             return TstError::InvalidConfig as i32;
         };
-        // Side-channel: do NOT acquire handle.inner's Mutex (a concurrent
-        // send holds it). The cancel-handle Arc is accessible without locking.
-        if let Some(c) = &handle.cancel {
-            c.cancel();
-        }
+        handle.inner.cancel();
         0
     })
 }
@@ -1291,5 +1288,26 @@ mod tests {
         let rc =
             unsafe { tst_managed_mux_sender_get_reconnect_stats(std::ptr::null_mut(), &mut out) };
         assert_eq!(rc, TstError::InvalidConfig as i32);
+    }
+
+    /// Twin of `ts_sender.rs`'s pin: `require_caller_mode` refuses
+    /// `?mode=listener` before any socket (Arc 2 WP-B1 behaviour change — it
+    /// used to dial out as a caller). Nothing is dialled, so port 1 is never
+    /// touched and the test needs no peer.
+    #[test]
+    fn open_with_listener_mode_url_is_refused_before_any_socket() {
+        unsafe {
+            let cfg = tst_mux_config_new();
+            let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
+            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
+            let url = std::ffi::CString::new("srt://127.0.0.1:1?mode=listener").unwrap();
+            let p = tst_mux_sender_open(url.as_ptr(), cfg);
+            assert!(p.is_null());
+            assert_eq!(
+                crate::error::tst_get_last_error(),
+                TstError::InvalidConfig as i32
+            );
+            tst_mux_config_free(cfg);
+        }
     }
 }

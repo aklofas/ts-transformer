@@ -975,25 +975,24 @@ mean **Deferred**. An entry whose feature has shipped must never read
 
 ## SRT URL `mode=listener` / `mode=rendezvous` dispatch
 
-- **Status:** Partially resolved (entry refreshed 2026-09-06; the
-  earlier text predated the receiver C ABI). The URL parser at
-  `crates/tst-srt/src/url.rs` accepts `mode=caller` (the default) and
-  `mode=listener`; `mode=rendezvous` is still rejected with
-  `UrlError::UnsupportedMode`. Listener dispatch is wired on every
-  RECEIVER entry point: the C `tst_*receiver_open` family routes a
-  `?mode=listener` URL through the listener path and the
-  `_open_listener` variants force it regardless of the URL. It is NOT
-  wired on the sender side: every `tst_*sender_open` in the C ABI
-  (plain, mux, raw, and the managed variants) dials out as an SRT
-  caller and never looks at the parsed `mode` — `?mode=listener` is
-  SILENTLY IGNORED. With a host present (`srt://1.2.3.4:9000?mode=listener`)
-  the sender simply dials `1.2.3.4:9000` as a caller, and succeeds if a
-  listener is there (verified 2026-09-06); only the empty-host form
-  (`srt://:9000?mode=listener`) fails, and it fails at connect time
-  (address lookup on the empty host, `TST_E_TRANSPORT`), not at
-  validation. The Rust API is
-  unaffected — build a `Listener`, wrap the accepted `Socket` in
-  `SrtTransport`, as `examples/sending/srt_serve_ts_file.rs` does.
+- **Status:** Partially resolved (entry refreshed 2026-09 for Arc 2
+  WP-B1). The URL parser at `crates/tst-srt/src/url.rs` accepts
+  `mode=caller` (the default) and `mode=listener`; `mode=rendezvous` is
+  rejected with `UrlError::UnsupportedMode`. Listener dispatch is wired
+  on every RECEIVER entry point (C, Python, JVM): the C
+  `tst_*receiver_open` family routes a `?mode=listener` URL through the
+  listener path and the `_open_listener` variants force it regardless of
+  the URL. Every SENDER open now REFUSES a `?mode=listener` URL before
+  opening a socket, instead of silently dialling as a caller (the pre-0.7.0
+  behaviour, which succeeded whenever a host was present and a listener
+  happened to be there): the tst-srt `shells::managed_*_sender_from_url`
+  family refuses with `SrtError::Option`, and each binding's PLAIN sender
+  open refuses in its own open path (C: `TST_E_INVALID_CONFIG` from
+  `require_caller_mode`). The refusal is deliberately NOT in
+  `SrtUrl::connect`, which is mode-agnostic by design — the caller chooses
+  the direction by calling `connect` or `accept_one`. A listener-mode sender
+  remains unimplemented; build a `Listener` and wrap the accepted `Socket`
+  in `SrtTransport`, as `examples/sending/srt_serve_ts_file.rs` does.
 - **Why deferred (sender side):** a listener-mode sender is the
   "player dials in" shape (VLC, ffplay and `srt-live-transmit` default
   to caller mode), which is real but has had no C or binding consumer
@@ -2221,6 +2220,11 @@ Entries whose feature shipped. Kept for the record (dates, PR numbers, the decis
 - **Status (updated 2026-05-16):** `tst_demux_receiver_cancel` shipped
   in Phase 3 (plan #62). Pre-emptive close cancellation is now complete
   across all six sender families and all three receiver handle types.
+- **Status (updated 2026-09, Arc 2 WP-B1):** every `_cancel` reads the
+  binding-shared cancel state (`tst_pipeline::binding::Owned`); the FIRST
+  accept of a blocking `_open_listener` remains uncancellable — no handle
+  exists to cancel through until the call returns (DEBT-16 ruled deferred
+  in Arc 2); every RE-accept is cancellable through the managed slot.
 
 ### Subtitle carriage at the `tst-c` C ABI
 

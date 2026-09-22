@@ -9,14 +9,14 @@
 //! (design §4.5), `ShellErrorKind` → error-code mapping, and the
 //! per-PID stats borrowed buffer are all handled generically.
 //!
-//! **No cancel:** the RIST transport does not expose a `cancel_handle()`,
-//! so there is no `tst_rist_demux_receiver_cancel` entry point and no
-//! cancel / `was_cancelled` side-channel. `_close` simply drops the
-//! handle. To unblock a thread parked in `_next_event`, close the handle
-//! from the same thread (or rely on the socket's receive-timeout
-//! behavior). Without a caller-cancel path there is no
-//! `TST_E_CLOSED`-vs-`TST_E_END_OF_STREAM` discrimination: a graceful
-//! transport close maps to `TST_E_END_OF_STREAM`.
+//! **No `_cancel` entry point yet:** the C ABI exposes no cancel for this
+//! family (additive candidate, ABI 0.22 — R4). The handle already carries
+//! the binding-shared cancel state (`CHandle`), so `_close` is
+//! cancel-first; to unblock a thread parked in a data-path call, close the
+//! handle from that thread or use the transport's timeout knobs. The
+//! transport itself still has no `cancel_handle()` until WP-D, so the
+//! handle's cancel slot holds `binding::FlagCancel` — a latch that records
+//! the caller's intent but wakes nothing.
 //!
 //! **Construction differs from UDP:** RIST receivers use a bind URL with
 //! the ffmpeg `@` prefix (`rist://@host:port`) and the
@@ -31,7 +31,7 @@ use tst_rist::{RistRecvTransport, RistRecvTransportBuilder};
 use crate::demux_config::TstDemuxConfig;
 use crate::error::{TstError, set_last_error};
 use crate::event::{EventArena, TstEvent};
-use crate::handle::Handle;
+use crate::handle::{CHandle, cancel_or_latch};
 
 // ---------------------------------------------------------------------------
 // Handle type
@@ -42,7 +42,7 @@ use crate::handle::Handle;
 /// Returned by [`tst_rist_demux_receiver_open`]. Freed with
 /// [`tst_rist_demux_receiver_close`].
 pub struct TstRistDemuxReceiver {
-    pub(crate) inner: Handle<DemuxReceiver<RistRecvTransport>>,
+    pub(crate) inner: CHandle<DemuxReceiver<RistRecvTransport>>,
     /// Reusable backing storage for `tst_rist_demux_receiver_next_event` output.
     /// Allocated at open time so the data-path call never allocates on the hot path.
     /// Wrapped in Mutex for re-entrant safety within the Handle's closure.
@@ -111,8 +111,12 @@ pub unsafe extern "C" fn tst_rist_demux_receiver_open(
         } else {
             DemuxReceiver::new(transport)
         };
+        // UDP/RIST expose no cancel handle until WP-D: `cancel_or_latch`
+        // supplies the latch stand-in (delete the call in WP-D once
+        // `cancel_handle()` is `Some`).
+        let cancel = cancel_or_latch(receiver.cancel_handle());
         Box::into_raw(Box::new(TstRistDemuxReceiver {
-            inner: Handle::new(receiver),
+            inner: CHandle::new(receiver, cancel, ()),
             arena: Mutex::new(EventArena::new()),
             stream_stats_buf: Mutex::new(Vec::new()),
         }))
@@ -178,11 +182,7 @@ pub unsafe extern "C" fn tst_rist_demux_receiver_next_event(
         return TstError::InvalidConfig as i32;
     };
     unsafe {
-        crate::transport_impls::demux_receiver_next_event_no_cancel(
-            &handle.inner,
-            &handle.arena,
-            out_event,
-        )
+        crate::transport_impls::demux_receiver_next_event(&handle.inner, &handle.arena, out_event)
     }
 }
 

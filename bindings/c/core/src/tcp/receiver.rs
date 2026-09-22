@@ -13,11 +13,15 @@
 //! `RecvTransport` side. Construction uses `TcpTransportBuilder::from_url`
 //! (same as the sender path — role is determined by the pipeline shell).
 //!
-//! **Cancel:** the Rust `TcpTransport` exposes `cancel_handle()` (since
-//! PR #198) but the C ABI has no `tst_tcp_receiver_cancel` entry point yet
-//! (additive candidate, ABI 0.22) — `_close` simply drops the handle.
-//! Without a caller-reachable cancel path, a graceful transport close maps
-//! to `TST_E_END_OF_STREAM`.
+//! **No `_cancel` entry point yet:** the Rust `TcpTransport` exposes
+//! `cancel_handle()` (since PR #198) and the handle's `CHandle` carries
+//! it, so `_close` IS cancel-first — it fires that cancel before taking
+//! the slot, which unblocks a thread parked in a data-path call. What the
+//! C ABI still lacks is a standalone `tst_tcp_receiver_cancel` entry point
+//! (additive candidate, ABI 0.22 — R4 builds it on
+//! `handle.inner.cancel()`). The handle therefore DOES carry the
+//! binding-shared cancel state, and a call ended by that close reports
+//! `TST_E_CLOSED`, not `TST_E_END_OF_STREAM`.
 
 use std::os::raw::c_char;
 
@@ -25,7 +29,7 @@ use tst_pipeline::{Receiver, ReceiverConfig};
 use tst_tcp::{TcpTransport, TcpTransportBuilder};
 
 use crate::error::{TstError, set_last_error};
-use crate::handle::Handle;
+use crate::handle::{CHandle, cancel_or_latch};
 use crate::stats::TstReceiverStats;
 
 // ---------------------------------------------------------------------------
@@ -37,7 +41,7 @@ use crate::stats::TstReceiverStats;
 /// Returned by [`tst_tcp_recv_open`]. Freed with
 /// [`tst_tcp_receiver_close`].
 pub struct TstTcpReceiver {
-    pub(crate) inner: Handle<Receiver<TcpTransport>>,
+    pub(crate) inner: CHandle<Receiver<TcpTransport>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -82,8 +86,11 @@ pub unsafe extern "C" fn tst_tcp_recv_open(url: *const c_char) -> *mut TstTcpRec
             }
         };
         let receiver = Receiver::new(transport, ReceiverConfig::default());
+        // TCP has a real `TcpCancelHandle`, so `cancel_or_latch` passes it
+        // straight through.
+        let cancel = cancel_or_latch(receiver.cancel_handle());
         Box::into_raw(Box::new(TstTcpReceiver {
-            inner: Handle::new(receiver),
+            inner: CHandle::new(receiver, cancel, ()),
         }))
     })
 }

@@ -13,12 +13,15 @@
 //! both `Transport` and `RecvTransport`. `DemuxReceiver<TcpTransport>` uses
 //! the `RecvTransport` side. Construction uses `TcpTransportBuilder::from_url`.
 //!
-//! **Cancel:** the Rust `TcpTransport` exposes `cancel_handle()` (since
-//! PR #198) but the C ABI has no `tst_tcp_demux_receiver_cancel` entry
-//! point yet (additive candidate, ABI 0.22) — `_close` simply drops the
-//! handle. Without a caller-reachable cancel path there is no
-//! `TST_E_CLOSED`-vs-`TST_E_END_OF_STREAM` discrimination: a graceful
-//! transport close maps to `TST_E_END_OF_STREAM`.
+//! **No `_cancel` entry point yet:** the Rust `TcpTransport` exposes
+//! `cancel_handle()` (since PR #198) and the handle's `CHandle` carries
+//! it, so `_close` IS cancel-first — it fires that cancel before taking
+//! the slot, which unblocks a thread parked in a data-path call. What the
+//! C ABI still lacks is a standalone `tst_tcp_demux_receiver_cancel` entry point
+//! (additive candidate, ABI 0.22 — R4 builds it on
+//! `handle.inner.cancel()`). The handle therefore DOES carry the
+//! binding-shared cancel state, and a call ended by that close reports
+//! `TST_E_CLOSED`, not `TST_E_END_OF_STREAM`.
 
 use std::os::raw::c_char;
 use std::sync::Mutex;
@@ -29,7 +32,7 @@ use tst_tcp::{TcpTransport, TcpTransportBuilder};
 use crate::demux_config::TstDemuxConfig;
 use crate::error::{TstError, set_last_error};
 use crate::event::{EventArena, TstEvent};
-use crate::handle::Handle;
+use crate::handle::{CHandle, cancel_or_latch};
 
 // ---------------------------------------------------------------------------
 // Handle type
@@ -40,7 +43,7 @@ use crate::handle::Handle;
 /// Returned by [`tst_tcp_demux_receiver_open`]. Freed with
 /// [`tst_tcp_demux_receiver_close`].
 pub struct TstTcpDemuxReceiver {
-    pub(crate) inner: Handle<DemuxReceiver<TcpTransport>>,
+    pub(crate) inner: CHandle<DemuxReceiver<TcpTransport>>,
     /// Reusable backing storage for `tst_tcp_demux_receiver_next_event` output.
     /// Allocated at open time so the data-path call never allocates on the hot path.
     /// Wrapped in Mutex for re-entrant safety within the Handle's closure.
@@ -100,8 +103,11 @@ pub unsafe extern "C" fn tst_tcp_demux_receiver_open(
         } else {
             DemuxReceiver::new(transport)
         };
+        // TCP has a real `TcpCancelHandle`, so `cancel_or_latch` passes it
+        // straight through.
+        let cancel = cancel_or_latch(receiver.cancel_handle());
         Box::into_raw(Box::new(TstTcpDemuxReceiver {
-            inner: Handle::new(receiver),
+            inner: CHandle::new(receiver, cancel, ()),
             arena: Mutex::new(EventArena::new()),
             stream_stats_buf: Mutex::new(Vec::new()),
         }))
@@ -168,11 +174,7 @@ pub unsafe extern "C" fn tst_tcp_demux_receiver_next_event(
         return TstError::InvalidConfig as i32;
     };
     unsafe {
-        crate::transport_impls::demux_receiver_next_event_no_cancel(
-            &handle.inner,
-            &handle.arena,
-            out_event,
-        )
+        crate::transport_impls::demux_receiver_next_event(&handle.inner, &handle.arena, out_event)
     }
 }
 

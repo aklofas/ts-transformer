@@ -21,10 +21,11 @@
 //! reach the HLS-specific surface (richer stats, the bound socket address,
 //! the rendered playlist).
 //!
-//! Unlike the `Handle<T>` wrapper used by transport handles, `TstPublisher`
-//! stores `Option<PublisherImpl>` directly: `Publisher::finish` consumes
-//! the inner publisher by value (`self`), which a `Mutex<Option<T>>` can
-//! support but a `Handle` (built around `&mut T` / `&T` closures) cannot.
+//! Unlike the `CHandle<T, S>` wrapper used by transport handles,
+//! `TstPublisher` stores `Option<PublisherImpl>` directly:
+//! `Publisher::finish` consumes the inner publisher by value (`self`),
+//! which a `Mutex<Option<T>>` can support but a `CHandle` (built around
+//! `&mut T` / `&T` closures) cannot.
 //! After `_finish` the inner is `None` (terminal) — subsequent push/cut
 //! calls return `HlsFinished`.
 

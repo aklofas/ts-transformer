@@ -13,10 +13,8 @@
 //! `managed.rs`.
 
 use super::TstDemuxReceiver;
-use crate::error::{TstError, record_eos, record_shell_error, set_last_error};
+use crate::error::{TstError, record_recv_closed, record_recv_error, set_last_error};
 use crate::event::TstEvent;
-use std::sync::atomic::Ordering;
-use tst_pipeline::ShellErrorKind;
 
 /// Block until one typed `TstEvent` is ready, then populate
 /// `*out_event` with the converted event.
@@ -30,7 +28,9 @@ use tst_pipeline::ShellErrorKind;
 /// Returns:
 /// - `0` on success (`*out_event` populated; pointer fields borrow)
 /// - `TST_E_END_OF_STREAM` (-12) on graceful peer close
-/// - `TST_E_CLOSED` (-7) if the handle was `_cancel`'d or `_close`'d
+/// - `TST_E_CLOSED` (-7) if the handle was `_close`'d, or on any call AFTER
+///   the first one that observed a cross-thread `_cancel` (that first call
+///   reports `TST_E_TRANSPORT`; 0.7.0's WP-C2 makes it `TST_E_CLOSED` too)
 /// - `TST_E_TRANSPORT` (-8) on transport failure
 /// - `TST_E_INVALID_TS` (-3) on a demuxer error (strict-mode rejection
 ///   or unrecoverable packet malformation)
@@ -50,7 +50,12 @@ pub unsafe extern "C" fn tst_demux_receiver_recv_event(
         set_last_error(TstError::InvalidConfig, "null out_event pointer");
         return TstError::InvalidConfig as i32;
     }
-    let was_cancelled = handle.was_cancelled.clone();
+    // See `tst_receiver_recv_packet` for why the cancel latch is read on both
+    // sides of the park and why `broken_is_eos` is `true` on a plain shell
+    // (peer FIN surfaces as Broken from libsrt; `ManagedRecvTransport`
+    // retries internally, so a Broken reaching a PLAIN receiver is a peer
+    // close).
+    let cancelled = handle.inner.is_cancelled();
     handle.inner.with_inner_mut(|rx| match rx.recv_event() {
         Ok(Some(ev)) => {
             let mut arena = handle.arena.lock().expect("event arena Mutex poisoned");
@@ -66,42 +71,8 @@ pub unsafe extern "C" fn tst_demux_receiver_recv_event(
             }
             0
         }
-        Ok(None) => {
-            if was_cancelled.load(Ordering::Acquire) {
-                set_last_error(
-                    TstError::Closed,
-                    "receiver was cancelled or closed by caller",
-                );
-                TstError::Closed as i32
-            } else {
-                record_eos();
-                TstError::EndOfStream as i32
-            }
-        }
-        Err(e)
-            if e.kind == ShellErrorKind::TransportBroken
-                && !was_cancelled.load(Ordering::Acquire) =>
-        {
-            // Same Broken-on-non-cancelled → EOS mapping as
-            // tst_receiver_recv_packet (peer FIN surfaces as Broken
-            // from libsrt; ManagedRecvTransport retries internally,
-            // so a Broken reaching the plain receiver is a peer close).
-            record_eos();
-            TstError::EndOfStream as i32
-        }
-        Err(e) if e.kind == ShellErrorKind::EndOfStream || e.kind == ShellErrorKind::Closed => {
-            if was_cancelled.load(Ordering::Acquire) {
-                set_last_error(
-                    TstError::Closed,
-                    "receiver was cancelled or closed by caller",
-                );
-                TstError::Closed as i32
-            } else {
-                record_eos();
-                TstError::EndOfStream as i32
-            }
-        }
-        Err(e) => record_shell_error(&e),
+        Ok(None) => record_recv_closed(cancelled || handle.inner.is_cancelled()),
+        Err(e) => record_recv_error(&e, cancelled || handle.inner.is_cancelled(), true),
     })
 }
 
@@ -112,8 +83,14 @@ pub unsafe extern "C" fn tst_demux_receiver_recv_event(
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null.
 ///
-/// After cancel, `_recv_event` returns `TST_E_CLOSED` (not
-/// `TST_E_END_OF_STREAM`). The handle must still be `_close`'d to free.
+/// After cancel, `_recv_event` never reports `TST_E_END_OF_STREAM`, and the
+/// rule is ORDINAL, not park-state: the FIRST call that observes the cancel
+/// returns `TST_E_TRANSPORT` (-8) — libsrt reports the closed socket as a
+/// broken connection, and `SrtTransport` nulls its socket slot on that error
+/// — and EVERY LATER call returns `TST_E_CLOSED` (-7) off the now-empty
+/// slot. `_cancel` itself never closes the shell. 0.7.0's WP-C2 makes the
+/// first call report `TST_E_CLOSED` too. The handle must still be `_close`'d
+/// to free.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_demux_receiver_cancel(p: *mut TstDemuxReceiver) -> libc::c_int {
     crate::panic::ffi_catch(TstError::Internal as i32, || {
@@ -121,10 +98,7 @@ pub unsafe extern "C" fn tst_demux_receiver_cancel(p: *mut TstDemuxReceiver) -> 
             set_last_error(TstError::InvalidConfig, "null receiver pointer");
             return TstError::InvalidConfig as i32;
         };
-        handle.was_cancelled.store(true, Ordering::Release);
-        if let Some(c) = &handle.cancel {
-            c.cancel();
-        }
+        handle.inner.cancel();
         0
     })
 }

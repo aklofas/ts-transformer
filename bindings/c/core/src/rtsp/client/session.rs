@@ -51,9 +51,7 @@
 //! once `into_demux_receiver` has been called, cancel on the returned
 //! `TstRtpDemuxReceiver` governs data-plane shutdown.
 
-use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::AtomicBool;
 
 use secrecy::SecretString;
 use tst_core::RecvTransport;
@@ -62,7 +60,7 @@ use tst_rtp::{RtspCancelHandle, RtspClient, RtspClientBuilder, RtspSession};
 
 use crate::demux_config::TstDemuxConfig;
 use crate::error::{TstError, set_last_error};
-use crate::handle::TstRtspClientBuilder;
+use crate::handle::{CHandle, TstRtspClientBuilder, cancel_or_latch};
 use crate::panic::ffi_catch;
 use crate::rtp::demux_receiver::TstRtpDemuxReceiver;
 
@@ -479,8 +477,9 @@ pub unsafe extern "C" fn tst_rtsp_session_into_demux_receiver(
         // keepalive/pump threads too, not just this transport's own close.
         let transport = rtsp_session.into_recv_transport();
 
-        // Step 3: wrap in DemuxReceiver with caller-supplied config.
-        let cancel = transport.cancel_handle();
+        // Step 3: wrap in DemuxReceiver with caller-supplied config. Both
+        // observers are captured BEFORE the transport moves into the shell.
+        let cancel = cancel_or_latch(transport.cancel_handle());
         let end_reason = transport.end_reason_handle();
         let receiver = if let Some(cfg) = unsafe { demux_cfg.as_ref() } {
             DemuxReceiver::with_demux_options(transport, cfg.build_options())
@@ -492,15 +491,12 @@ pub unsafe extern "C" fn tst_rtsp_session_into_demux_receiver(
         // by tst_rtp_demux_receiver_open, so the caller can use the full
         // tst_rtp_demux_receiver_* data-path API without any distinction.
         use crate::event::EventArena;
-        use crate::handle::Handle;
+        use crate::rtp::RtpRecvSnap;
 
         Box::into_raw(Box::new(TstRtpDemuxReceiver {
-            inner: Handle::new(receiver),
+            inner: CHandle::new(receiver, cancel, RtpRecvSnap { end_reason }),
             arena: Mutex::new(EventArena::new()),
             stream_stats_buf: Mutex::new(Vec::new()),
-            cancel,
-            was_cancelled: Arc::new(AtomicBool::new(false)),
-            end_reason,
         }))
     })
 }

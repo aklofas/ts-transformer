@@ -714,33 +714,62 @@ mod tests {
             assert_eq!(h.with_inner_ref(|n| *n), 8);
         }
 
+        /// `cancel()` must never touch the slot (the #189 lease-bug class).
+        ///
+        /// Latch-and-poll, never a bare blocking call: the cancel runs on its
+        /// OWN thread with a `done` latch, and this thread polls that latch
+        /// against a bounded watchdog. A `cancel()` that took the lock would
+        /// block behind the parked `with_inner_mut` forever, and the assert
+        /// below FAILS the test at the watchdog instead of hanging until the
+        /// harness kills the whole binary. The parked thread is released and
+        /// joined on every exit path, including the failing one.
         #[test]
         fn cancel_is_lock_free_and_observable() {
             let (h, flag) = fresh();
-            // Hold the slot on another thread while cancelling from here:
-            // cancel must return without waiting on the lock.
             let h = Arc::new(h);
             let h2 = Arc::clone(&h);
-            let (tx, rx) = std::sync::mpsc::channel::<()>();
+            let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+            let (entered_tx, entered_rx) = std::sync::mpsc::channel::<()>();
+            // Park a thread INSIDE the slot and keep it there until released.
             let parked = std::thread::spawn(move || {
                 h2.with_inner_mut(|_| {
-                    rx.recv().ok();
+                    entered_tx.send(()).ok();
+                    release_rx.recv().ok();
                     0
                 })
             });
-            // Give the parked closure time to take the lock.
+            entered_rx
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .expect("parked thread never entered with_inner_mut");
+
+            let h3 = Arc::clone(&h);
+            let done = Arc::new(AtomicBool::new(false));
+            let done_w = Arc::clone(&done);
+            let canceller = std::thread::spawn(move || {
+                h3.cancel();
+                done_w.store(true, Ordering::SeqCst);
+            });
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-            while !flag.0.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
-                h.cancel();
+            while !done.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
                 std::thread::sleep(std::time::Duration::from_millis(5));
             }
+            let returned = done.load(Ordering::SeqCst);
+
+            // Release the parked thread FIRST so the join below cannot hang,
+            // then assert — a failure must be a failure, not a wedge.
+            release_tx.send(()).ok();
+            assert_eq!(parked.join().unwrap(), 0);
+            canceller.join().expect("cancel thread");
+
+            assert!(
+                returned,
+                "cancel() did not return while another thread held the slot — it took the lock"
+            );
             assert!(h.is_cancelled(), "is_cancelled must flip after cancel()");
             assert!(
                 flag.0.load(Ordering::SeqCst),
                 "cancel() must reach the transport handle"
             );
-            tx.send(()).unwrap();
-            assert_eq!(parked.join().unwrap(), 0);
         }
 
         #[test]

@@ -33,29 +33,27 @@ use tst_core::mpegts::mux::{
     AudioStreamHandle, KlvStreamHandle, SubtitleStreamHandle, VideoStreamHandle,
 };
 use tst_core::transport::{RecvTransport, Transport};
-#[cfg(any(feature = "udp", feature = "tcp", feature = "rist"))]
-use tst_pipeline::ShellErrorKind;
 use tst_pipeline::{DemuxReceiver, MuxSender, Receiver, Sender};
 #[cfg(feature = "srt")]
 use tst_pipeline::{ManagedDemuxReceiver, RawReceiver, RawSender};
 
-#[cfg(any(feature = "udp", feature = "tcp", feature = "rist"))]
-use crate::error::record_eos;
 #[cfg(feature = "srt")]
 use crate::error::record_internal;
 use crate::error::{
     TstError, record_mux_error, record_not_available, record_not_found, record_shell_error,
     set_last_error, tst_get_last_error,
 };
-#[cfg(any(feature = "udp", feature = "tcp", feature = "rist"))]
+#[cfg(any(feature = "rtp", feature = "udp", feature = "tcp", feature = "rist"))]
+use crate::error::{record_recv_closed, record_recv_error};
+#[cfg(any(feature = "rtp", feature = "udp", feature = "tcp", feature = "rist"))]
 use crate::event::{EventArena, TstEvent};
-use crate::handle::Handle;
+use crate::handle::CHandle;
 
 // ============================================================================
 // MuxSender<T> generic push impls
 // ============================================================================
 //
-// Each function receives a `&Handle<MuxSender<T>>` (after null-check in the
+// Each function receives a `&CHandle<MuxSender<T>, S>` (after null-check in the
 // family forwarder) and raw FFI parameters. No null-check on the handle itself
 // (already done by caller); null-checks on pointer args remain here.
 
@@ -63,8 +61,8 @@ use crate::handle::Handle;
 ///
 /// # Safety
 /// `nal` must be readable for `len` bytes.
-pub(crate) unsafe fn mux_sender_push_video<T: Transport>(
-    h: &Handle<MuxSender<T>>,
+pub(crate) unsafe fn mux_sender_push_video<T: Transport, S>(
+    h: &CHandle<MuxSender<T>, S>,
     nal: *const u8,
     len: usize,
     pts_90khz: i64,
@@ -88,8 +86,8 @@ pub(crate) unsafe fn mux_sender_push_video<T: Transport>(
 ///
 /// # Safety
 /// `klv` must be readable for `len` bytes.
-pub(crate) unsafe fn mux_sender_push_klv<T: Transport>(
-    h: &Handle<MuxSender<T>>,
+pub(crate) unsafe fn mux_sender_push_klv<T: Transport, S>(
+    h: &CHandle<MuxSender<T>, S>,
     klv: *const u8,
     len: usize,
     pts_90khz: i64,
@@ -112,8 +110,8 @@ pub(crate) unsafe fn mux_sender_push_klv<T: Transport>(
 ///
 /// # Safety
 /// `frames` must be readable for `len` bytes.
-pub(crate) unsafe fn mux_sender_push_audio<T: Transport>(
-    h: &Handle<MuxSender<T>>,
+pub(crate) unsafe fn mux_sender_push_audio<T: Transport, S>(
+    h: &CHandle<MuxSender<T>, S>,
     frames: *const u8,
     len: usize,
     pts_90khz: i64,
@@ -136,8 +134,8 @@ pub(crate) unsafe fn mux_sender_push_audio<T: Transport>(
 ///
 /// # Safety
 /// `payload` must be readable for `len` bytes.
-pub(crate) unsafe fn mux_sender_push_subtitle<T: Transport>(
-    h: &Handle<MuxSender<T>>,
+pub(crate) unsafe fn mux_sender_push_subtitle<T: Transport, S>(
+    h: &CHandle<MuxSender<T>, S>,
     payload: *const u8,
     len: usize,
     pts_90khz: i64,
@@ -163,8 +161,8 @@ pub(crate) unsafe fn mux_sender_push_subtitle<T: Transport>(
 ///
 /// # Safety
 /// `nal` must be readable for `len` bytes.
-pub(crate) unsafe fn mux_sender_push_video_to<T: Transport>(
-    h: &Handle<MuxSender<T>>,
+pub(crate) unsafe fn mux_sender_push_video_to<T: Transport, S>(
+    h: &CHandle<MuxSender<T>, S>,
     stream_handle: u32,
     nal: *const u8,
     len: usize,
@@ -196,8 +194,8 @@ pub(crate) unsafe fn mux_sender_push_video_to<T: Transport>(
 ///
 /// # Safety
 /// `klv` must be readable for `len` bytes.
-pub(crate) unsafe fn mux_sender_push_klv_to<T: Transport>(
-    h: &Handle<MuxSender<T>>,
+pub(crate) unsafe fn mux_sender_push_klv_to<T: Transport, S>(
+    h: &CHandle<MuxSender<T>, S>,
     stream_handle: u32,
     klv: *const u8,
     len: usize,
@@ -228,8 +226,8 @@ pub(crate) unsafe fn mux_sender_push_klv_to<T: Transport>(
 ///
 /// # Safety
 /// `frames` must be readable for `len` bytes.
-pub(crate) unsafe fn mux_sender_push_audio_to<T: Transport>(
-    h: &Handle<MuxSender<T>>,
+pub(crate) unsafe fn mux_sender_push_audio_to<T: Transport, S>(
+    h: &CHandle<MuxSender<T>, S>,
     stream_handle: u32,
     frames: *const u8,
     len: usize,
@@ -260,8 +258,8 @@ pub(crate) unsafe fn mux_sender_push_audio_to<T: Transport>(
 ///
 /// # Safety
 /// `payload` must be readable for `len` bytes.
-pub(crate) unsafe fn mux_sender_push_subtitle_to<T: Transport>(
-    h: &Handle<MuxSender<T>>,
+pub(crate) unsafe fn mux_sender_push_subtitle_to<T: Transport, S>(
+    h: &CHandle<MuxSender<T>, S>,
     stream_handle: u32,
     payload: *const u8,
     len: usize,
@@ -299,8 +297,8 @@ pub(crate) unsafe fn mux_sender_push_subtitle_to<T: Transport>(
 ///
 /// # Safety
 /// `out` must be a valid writable `*mut TstMuxSenderStats` when non-null.
-pub(crate) unsafe fn mux_sender_get_mux_sender_stats<T: Transport>(
-    h: &Handle<MuxSender<T>>,
+pub(crate) unsafe fn mux_sender_get_mux_sender_stats<T: Transport, S>(
+    h: &CHandle<MuxSender<T>, S>,
     out: *mut crate::stats::TstMuxSenderStats,
 ) -> i32 {
     if out.is_null() {
@@ -319,8 +317,8 @@ pub(crate) unsafe fn mux_sender_get_mux_sender_stats<T: Transport>(
 ///
 /// # Safety
 /// `out` must be a valid writable `*mut TstSocketStats` when non-null.
-pub(crate) unsafe fn mux_sender_get_socket_stats<T: Transport>(
-    h: &Handle<MuxSender<T>>,
+pub(crate) unsafe fn mux_sender_get_socket_stats<T: Transport, S>(
+    h: &CHandle<MuxSender<T>, S>,
     out: *mut crate::stats::TstSocketStats,
     not_available_msg: &str,
 ) -> i32 {
@@ -342,8 +340,8 @@ pub(crate) unsafe fn mux_sender_get_socket_stats<T: Transport>(
 ///
 /// # Safety
 /// `out` must be a valid writable `*mut TstStreamCodecStats` when non-null.
-pub(crate) unsafe fn mux_sender_get_stream_codec_stats<T: Transport>(
-    h: &Handle<MuxSender<T>>,
+pub(crate) unsafe fn mux_sender_get_stream_codec_stats<T: Transport, S>(
+    h: &CHandle<MuxSender<T>, S>,
     pid: u16,
     out: *mut crate::stats::TstStreamCodecStats,
     not_found_msg: &str,
@@ -362,7 +360,7 @@ pub(crate) unsafe fn mux_sender_get_stream_codec_stats<T: Transport>(
 }
 
 /// Generic body for `tst_*_mux_sender_reset_stats`.
-pub(crate) fn mux_sender_reset_stats<T: Transport>(h: &Handle<MuxSender<T>>) -> i32 {
+pub(crate) fn mux_sender_reset_stats<T: Transport, S>(h: &CHandle<MuxSender<T>, S>) -> i32 {
     h.with_inner_ref(|s| {
         s.reset_stats();
         0
@@ -375,16 +373,16 @@ pub(crate) fn mux_sender_reset_stats<T: Transport>(h: &Handle<MuxSender<T>>) -> 
 //
 // `ManagedStatsHandle` is not parameterized on the transport or the shell
 // type, so this one body serves `tst_managed_{sender,mux_sender,raw_sender}
-// _get_reconnect_stats` — the `S` parameter is just whatever shell type the
-// caller's `Handle<S>` wraps (used only for the closed-check; the stats
-// themselves come from the side-channel `ManagedStatsHandle`, same pattern
-// as `cancel`'s side-channel `Arc<dyn TransportCancel>`).
+// _get_reconnect_stats` — the `T` parameter is just whatever shell type the
+// caller's `CHandle<T, ManagedStatsHandle>` wraps (used only for the
+// closed-check; the stats themselves come from the handle's snapshot, which
+// on the three managed SEND classes IS the `ManagedStatsHandle`).
 
 /// Generic body for `tst_managed_*_get_reconnect_stats`.
 ///
 /// Runs the closed-check through `h` (so a closed handle reports
 /// `TST_E_CLOSED` like every other managed getter) but reads the counters
-/// from `sh`, which stays live independently of the shell's `Handle` state.
+/// from `sh`, which stays live independently of the shell's `CHandle` state.
 ///
 /// **Not fully non-blocking in `Blocking` mode:** the closed-check
 /// acquires `h`'s lock via `with_inner_ref`, the same lock a send stuck
@@ -397,15 +395,17 @@ pub(crate) fn mux_sender_reset_stats<T: Transport>(h: &Handle<MuxSender<T>>) -> 
 /// # Safety
 /// `out` must be a valid writable `*mut TstManagedTransportStats` when non-null.
 #[cfg(feature = "srt")]
-pub(crate) unsafe fn managed_get_reconnect_stats<S>(
-    h: &Handle<S>,
-    sh: &tst_pipeline::ManagedStatsHandle,
+pub(crate) unsafe fn managed_get_reconnect_stats<T>(
+    h: &CHandle<T, tst_pipeline::ManagedStatsHandle>,
     out: *mut crate::stats::TstManagedTransportStats,
 ) -> i32 {
     if out.is_null() {
         set_last_error(TstError::InvalidConfig, "null out pointer");
         return TstError::InvalidConfig as i32;
     }
+    // The observer IS the handle's construction-time snapshot: read it
+    // lock-free, then run the closed-check through the slot.
+    let sh = h.snapshot();
     h.with_inner_ref(|_| match sh.stats() {
         Some(stats) => {
             unsafe { *out = (&stats).into() };
@@ -427,8 +427,8 @@ pub(crate) unsafe fn managed_get_reconnect_stats<S>(
 /// # Safety
 /// `bytes` must be readable for `len` bytes.
 #[cfg(any(feature = "rtp", feature = "udp", feature = "tcp", feature = "rist"))]
-pub(crate) unsafe fn sender_send_ts<T: Transport>(
-    h: &Handle<Sender<T>>,
+pub(crate) unsafe fn sender_send_ts<T: Transport, S>(
+    h: &CHandle<Sender<T>, S>,
     bytes: *const u8,
     len: usize,
 ) -> i32 {
@@ -446,8 +446,8 @@ pub(crate) unsafe fn sender_send_ts<T: Transport>(
 ///
 /// # Safety
 /// `out` must be a valid writable `*mut TstSenderStats` when non-null.
-pub(crate) unsafe fn sender_get_stats<T: Transport>(
-    h: &Handle<Sender<T>>,
+pub(crate) unsafe fn sender_get_stats<T: Transport, S>(
+    h: &CHandle<Sender<T>, S>,
     out: *mut crate::stats::TstSenderStats,
 ) -> i32 {
     if out.is_null() {
@@ -465,8 +465,8 @@ pub(crate) unsafe fn sender_get_stats<T: Transport>(
 ///
 /// # Safety
 /// `out` must be a valid writable `*mut TstSocketStats` when non-null.
-pub(crate) unsafe fn sender_get_socket_stats<T: Transport>(
-    h: &Handle<Sender<T>>,
+pub(crate) unsafe fn sender_get_socket_stats<T: Transport, S>(
+    h: &CHandle<Sender<T>, S>,
     out: *mut crate::stats::TstSocketStats,
     not_available_msg: &str,
 ) -> i32 {
@@ -485,7 +485,7 @@ pub(crate) unsafe fn sender_get_socket_stats<T: Transport>(
 }
 
 /// Generic body for `tst_*_sender_reset_stats`.
-pub(crate) fn sender_reset_stats<T: Transport>(h: &Handle<Sender<T>>) -> i32 {
+pub(crate) fn sender_reset_stats<T: Transport, S>(h: &CHandle<Sender<T>, S>) -> i32 {
     h.with_inner_mut(|s| {
         s.reset_stats();
         0
@@ -501,8 +501,8 @@ pub(crate) fn sender_reset_stats<T: Transport>(h: &Handle<Sender<T>>) -> i32 {
 /// # Safety
 /// `out` must be a valid writable `*mut TstRawSendStats` when non-null.
 #[cfg(feature = "srt")]
-pub(crate) unsafe fn raw_sender_get_stats<T: Transport>(
-    h: &Handle<RawSender<T>>,
+pub(crate) unsafe fn raw_sender_get_stats<T: Transport, S>(
+    h: &CHandle<RawSender<T>, S>,
     out: *mut crate::stats::TstRawSendStats,
 ) -> i32 {
     if out.is_null() {
@@ -524,8 +524,8 @@ pub(crate) unsafe fn raw_sender_get_stats<T: Transport>(
 /// # Safety
 /// `out` must be a valid writable `*mut TstSocketStats` when non-null.
 #[cfg(feature = "srt")]
-pub(crate) unsafe fn raw_sender_get_socket_stats<T: Transport>(
-    h: &Handle<RawSender<T>>,
+pub(crate) unsafe fn raw_sender_get_socket_stats<T: Transport, S>(
+    h: &CHandle<RawSender<T>, S>,
     out: *mut crate::stats::TstSocketStats,
     not_available_msg: &str,
 ) -> i32 {
@@ -545,7 +545,7 @@ pub(crate) unsafe fn raw_sender_get_socket_stats<T: Transport>(
 
 /// Generic body for `tst_*_sender_reset_stats` on a `RawSender<T>` handle.
 #[cfg(feature = "srt")]
-pub(crate) fn raw_sender_reset_stats<T: Transport>(h: &Handle<RawSender<T>>) -> i32 {
+pub(crate) fn raw_sender_reset_stats<T: Transport, S>(h: &CHandle<RawSender<T>, S>) -> i32 {
     h.with_inner_mut(|s| {
         s.reset_stats();
         0
@@ -558,15 +558,16 @@ pub(crate) fn raw_sender_reset_stats<T: Transport>(h: &Handle<RawSender<T>>) -> 
 
 /// Generic body for `tst_*_receiver_recv_ts` (blocking 188-byte packet read).
 ///
-/// Validates that `buf` is non-null and `buf_len ≥ TS_PACKET_SIZE (188)`. Maps
-/// `Closed` / `TransportBroken` to `TST_E_END_OF_STREAM` (no cancel surface
-/// on non-RTP families; RTP receivers keep this logic family-local).
+/// Validates that `buf` is non-null and `buf_len ≥ TS_PACKET_SIZE (188)`. The
+/// stream-end outcomes route through `record_recv_error`: a handle the caller
+/// cancelled reports `TST_E_CLOSED`, a peer close reports
+/// `TST_E_END_OF_STREAM` (`broken_is_eos = true` — these are plain shells).
 ///
 /// # Safety
 /// `buf` must be writable for `buf_len` bytes; `out_n` must be non-null.
 #[cfg(any(feature = "udp", feature = "tcp", feature = "rist"))]
-pub(crate) unsafe fn receiver_recv_ts<R: RecvTransport>(
-    h: &Handle<Receiver<R>>,
+pub(crate) unsafe fn receiver_recv_ts<R: RecvTransport, S>(
+    h: &CHandle<Receiver<R>, S>,
     buf: *mut u8,
     buf_len: usize,
     out_n: *mut usize,
@@ -586,6 +587,11 @@ pub(crate) unsafe fn receiver_recv_ts<R: RecvTransport>(
         );
         return TstError::InvalidConfig as i32;
     }
+    // The cancel latch is read on both sides of the park. The pre-park read is
+    // belt-and-braces only: the latch never resets, so the post-park read
+    // already covers a cancel that lands while the call is blocked. Keeping
+    // both makes the intent explicit at every recv site.
+    let cancelled = h.is_cancelled();
     h.with_inner_mut(|rx| match rx.next_packet() {
         Ok(pkt) => {
             // SAFETY: buf non-null + writable for >= TS_PACKET_SIZE bytes per guard above.
@@ -595,11 +601,7 @@ pub(crate) unsafe fn receiver_recv_ts<R: RecvTransport>(
             }
             0
         }
-        Err(e) if e.kind == ShellErrorKind::Closed || e.kind == ShellErrorKind::TransportBroken => {
-            record_eos();
-            TstError::EndOfStream as i32
-        }
-        Err(e) => record_shell_error(&e),
+        Err(e) => record_recv_error(&e, cancelled || h.is_cancelled(), true),
     })
 }
 
@@ -607,8 +609,8 @@ pub(crate) unsafe fn receiver_recv_ts<R: RecvTransport>(
 ///
 /// # Safety
 /// `out` must be a valid writable `*mut TstReceiverStats` when non-null.
-pub(crate) unsafe fn receiver_get_stats<R: RecvTransport>(
-    h: &Handle<Receiver<R>>,
+pub(crate) unsafe fn receiver_get_stats<R: RecvTransport, S>(
+    h: &CHandle<Receiver<R>, S>,
     out: *mut crate::stats::TstReceiverStats,
 ) -> i32 {
     if out.is_null() {
@@ -626,8 +628,8 @@ pub(crate) unsafe fn receiver_get_stats<R: RecvTransport>(
 ///
 /// # Safety
 /// `out` must be a valid writable `*mut TstSocketStats` when non-null.
-pub(crate) unsafe fn receiver_get_socket_stats<R: RecvTransport>(
-    h: &Handle<Receiver<R>>,
+pub(crate) unsafe fn receiver_get_socket_stats<R: RecvTransport, S>(
+    h: &CHandle<Receiver<R>, S>,
     out: *mut crate::stats::TstSocketStats,
     not_available_msg: &str,
 ) -> i32 {
@@ -646,7 +648,7 @@ pub(crate) unsafe fn receiver_get_socket_stats<R: RecvTransport>(
 }
 
 /// Generic body for `tst_*_receiver_reset_stats`.
-pub(crate) fn receiver_reset_stats<R: RecvTransport>(h: &Handle<Receiver<R>>) -> i32 {
+pub(crate) fn receiver_reset_stats<R: RecvTransport, S>(h: &CHandle<Receiver<R>, S>) -> i32 {
     h.with_inner_mut(|rx| {
         rx.reset_stats();
         0
@@ -662,8 +664,8 @@ pub(crate) fn receiver_reset_stats<R: RecvTransport>(h: &Handle<Receiver<R>>) ->
 /// # Safety
 /// `out` must be a valid writable `*mut TstRawRecvStats` when non-null.
 #[cfg(feature = "srt")]
-pub(crate) unsafe fn raw_receiver_get_stats<R: RecvTransport>(
-    h: &Handle<RawReceiver<R>>,
+pub(crate) unsafe fn raw_receiver_get_stats<R: RecvTransport, S>(
+    h: &CHandle<RawReceiver<R>, S>,
     out: *mut crate::stats::TstRawRecvStats,
 ) -> i32 {
     if out.is_null() {
@@ -682,8 +684,8 @@ pub(crate) unsafe fn raw_receiver_get_stats<R: RecvTransport>(
 /// # Safety
 /// `out` must be a valid writable `*mut TstSocketStats` when non-null.
 #[cfg(feature = "srt")]
-pub(crate) unsafe fn raw_receiver_get_socket_stats<R: RecvTransport>(
-    h: &Handle<RawReceiver<R>>,
+pub(crate) unsafe fn raw_receiver_get_socket_stats<R: RecvTransport, S>(
+    h: &CHandle<RawReceiver<R>, S>,
     out: *mut crate::stats::TstSocketStats,
     not_available_msg: &str,
 ) -> i32 {
@@ -703,7 +705,7 @@ pub(crate) unsafe fn raw_receiver_get_socket_stats<R: RecvTransport>(
 
 /// Generic body for `tst_*_receiver_reset_stats` on a `RawReceiver<R>` handle.
 #[cfg(feature = "srt")]
-pub(crate) fn raw_receiver_reset_stats<R: RecvTransport>(h: &Handle<RawReceiver<R>>) -> i32 {
+pub(crate) fn raw_receiver_reset_stats<R: RecvTransport, S>(h: &CHandle<RawReceiver<R>, S>) -> i32 {
     h.with_inner_mut(|rx| {
         rx.reset_stats();
         0
@@ -714,21 +716,19 @@ pub(crate) fn raw_receiver_reset_stats<R: RecvTransport>(h: &Handle<RawReceiver<
 // DemuxReceiver<R> generic impls
 // ============================================================================
 
-/// Generic body for `tst_*_demux_receiver_next_event` (no-cancel families).
+/// Generic body for `tst_*_demux_receiver_next_event`.
 ///
-/// Applies to UDP, TCP, and RIST (which expose no `cancel_handle()`). For RTP,
-/// the cancel surface makes the body family-local.
-///
-/// `Ok(None)` from `recv_event` means stream ended — maps to
-/// `TST_E_END_OF_STREAM`. `Closed` / `TransportBroken` / `EndOfStream` errors
-/// similarly map to EOS (no cancel side-channel ⇒ no `TST_E_CLOSED` vs EOS
-/// discrimination).
+/// `Ok(None)` from `recv_event` means the stream ended; so do the `Closed` /
+/// `EndOfStream` / `TransportBroken` errors of a plain shell. All of them go
+/// through `record_recv_closed` / `record_recv_error`, which read the
+/// binding-shared cancel flag off the handle: a caller who cancelled sees
+/// `TST_E_CLOSED`, a peer close sees `TST_E_END_OF_STREAM`.
 ///
 /// # Safety
 /// `out_event` must be a valid writable `*mut TstEvent` when non-null.
-#[cfg(any(feature = "udp", feature = "tcp", feature = "rist"))]
-pub(crate) unsafe fn demux_receiver_next_event_no_cancel<R: RecvTransport>(
-    inner: &Handle<DemuxReceiver<R>>,
+#[cfg(any(feature = "rtp", feature = "udp", feature = "tcp", feature = "rist"))]
+pub(crate) unsafe fn demux_receiver_next_event<R: RecvTransport, S>(
+    inner: &CHandle<DemuxReceiver<R>, S>,
     arena: &Mutex<EventArena>,
     out_event: *mut TstEvent,
 ) -> i32 {
@@ -736,6 +736,11 @@ pub(crate) unsafe fn demux_receiver_next_event_no_cancel<R: RecvTransport>(
         set_last_error(TstError::InvalidConfig, "null out_event pointer");
         return TstError::InvalidConfig as i32;
     }
+    // The cancel latch is read on both sides of the park. The pre-park read is
+    // belt-and-braces only: the latch never resets, so the post-park read
+    // already covers a cancel that lands while the call is blocked. Keeping
+    // both makes the intent explicit at every recv site.
+    let cancelled = inner.is_cancelled();
     inner.with_inner_mut(|rx| match rx.recv_event() {
         Ok(Some(ev)) => {
             let mut arena = arena.lock().expect("event arena Mutex poisoned");
@@ -745,19 +750,8 @@ pub(crate) unsafe fn demux_receiver_next_event_no_cancel<R: RecvTransport>(
             unsafe { crate::event::convert(&mut arena, &ev, &mut *out_event) };
             0
         }
-        Ok(None) => {
-            record_eos();
-            TstError::EndOfStream as i32
-        }
-        Err(e)
-            if e.kind == ShellErrorKind::TransportBroken
-                || e.kind == ShellErrorKind::EndOfStream
-                || e.kind == ShellErrorKind::Closed =>
-        {
-            record_eos();
-            TstError::EndOfStream as i32
-        }
-        Err(e) => record_shell_error(&e),
+        Ok(None) => record_recv_closed(cancelled || inner.is_cancelled()),
+        Err(e) => record_recv_error(&e, cancelled || inner.is_cancelled(), true),
     })
 }
 
@@ -765,8 +759,8 @@ pub(crate) unsafe fn demux_receiver_next_event_no_cancel<R: RecvTransport>(
 ///
 /// # Safety
 /// `out` must be a valid writable `*mut TstDemuxReceiverStats` when non-null.
-pub(crate) unsafe fn demux_receiver_get_stats<R: RecvTransport>(
-    h: &Handle<DemuxReceiver<R>>,
+pub(crate) unsafe fn demux_receiver_get_stats<R: RecvTransport, S>(
+    h: &CHandle<DemuxReceiver<R>, S>,
     out: *mut crate::stats::TstDemuxReceiverStats,
 ) -> i32 {
     if out.is_null() {
@@ -784,8 +778,8 @@ pub(crate) unsafe fn demux_receiver_get_stats<R: RecvTransport>(
 ///
 /// # Safety
 /// `out` must be a valid writable `*mut TstSocketStats` when non-null.
-pub(crate) unsafe fn demux_receiver_get_socket_stats<R: RecvTransport>(
-    h: &Handle<DemuxReceiver<R>>,
+pub(crate) unsafe fn demux_receiver_get_socket_stats<R: RecvTransport, S>(
+    h: &CHandle<DemuxReceiver<R>, S>,
     out: *mut crate::stats::TstSocketStats,
     not_available_msg: &str,
 ) -> i32 {
@@ -807,8 +801,8 @@ pub(crate) unsafe fn demux_receiver_get_socket_stats<R: RecvTransport>(
 ///
 /// # Safety
 /// `out` must be a valid writable `*mut TstStreamCodecStats` when non-null.
-pub(crate) unsafe fn demux_receiver_get_stream_codec_stats<R: RecvTransport>(
-    h: &Handle<DemuxReceiver<R>>,
+pub(crate) unsafe fn demux_receiver_get_stream_codec_stats<R: RecvTransport, S>(
+    h: &CHandle<DemuxReceiver<R>, S>,
     pid: u16,
     out: *mut crate::stats::TstStreamCodecStats,
     not_found_msg: &str,
@@ -830,8 +824,8 @@ pub(crate) unsafe fn demux_receiver_get_stream_codec_stats<R: RecvTransport>(
 ///
 /// # Safety
 /// `out_epoch_micros` must be a valid writable `*mut u64` when non-null.
-pub(crate) unsafe fn demux_receiver_get_stream_last_seen_micros<R: RecvTransport>(
-    h: &Handle<DemuxReceiver<R>>,
+pub(crate) unsafe fn demux_receiver_get_stream_last_seen_micros<R: RecvTransport, S>(
+    h: &CHandle<DemuxReceiver<R>, S>,
     pid: u16,
     out_epoch_micros: *mut u64,
 ) -> i32 {
@@ -855,8 +849,8 @@ pub(crate) unsafe fn demux_receiver_get_stream_last_seen_micros<R: RecvTransport
 ///
 /// Clears the borrowed `stream_stats_buf` snapshot before resetting to ensure
 /// any pointer previously returned by `_get_stream_stats` is no longer valid.
-pub(crate) fn demux_receiver_reset_stats<R: RecvTransport>(
-    inner: &Handle<DemuxReceiver<R>>,
+pub(crate) fn demux_receiver_reset_stats<R: RecvTransport, S>(
+    inner: &CHandle<DemuxReceiver<R>, S>,
     stream_stats_buf: &Mutex<Vec<crate::stats::TstStreamStats>>,
 ) -> i32 {
     if let Ok(mut buf) = stream_stats_buf.lock() {
@@ -872,8 +866,8 @@ pub(crate) fn demux_receiver_reset_stats<R: RecvTransport>(
 ///
 /// # Safety
 /// `out_array` and `out_count` must be valid non-null pointers.
-pub(crate) unsafe fn demux_receiver_get_stream_stats<R: RecvTransport>(
-    inner: &Handle<DemuxReceiver<R>>,
+pub(crate) unsafe fn demux_receiver_get_stream_stats<R: RecvTransport, S>(
+    inner: &CHandle<DemuxReceiver<R>, S>,
     stream_stats_buf: &Mutex<Vec<crate::stats::TstStreamStats>>,
     out_array: *mut *const crate::stats::TstStreamStats,
     out_count: *mut libc::size_t,
@@ -929,8 +923,8 @@ pub(crate) unsafe fn demux_receiver_get_stream_stats<R: RecvTransport>(
 /// # Safety
 /// `out` must be a valid writable `*mut TstDemuxReceiverStats` when non-null.
 #[cfg(feature = "srt")]
-pub(crate) unsafe fn managed_demux_receiver_get_stats<R: RecvTransport>(
-    h: &Handle<ManagedDemuxReceiver<R>>,
+pub(crate) unsafe fn managed_demux_receiver_get_stats<R: RecvTransport, S>(
+    h: &CHandle<ManagedDemuxReceiver<R>, S>,
     out: *mut crate::stats::TstDemuxReceiverStats,
 ) -> i32 {
     if out.is_null() {
@@ -949,8 +943,8 @@ pub(crate) unsafe fn managed_demux_receiver_get_stats<R: RecvTransport>(
 /// # Safety
 /// `out` must be a valid writable `*mut TstSocketStats` when non-null.
 #[cfg(feature = "srt")]
-pub(crate) unsafe fn managed_demux_receiver_get_socket_stats<R: RecvTransport>(
-    h: &Handle<ManagedDemuxReceiver<R>>,
+pub(crate) unsafe fn managed_demux_receiver_get_socket_stats<R: RecvTransport, S>(
+    h: &CHandle<ManagedDemuxReceiver<R>, S>,
     out: *mut crate::stats::TstSocketStats,
     not_available_msg: &str,
 ) -> i32 {
@@ -973,8 +967,8 @@ pub(crate) unsafe fn managed_demux_receiver_get_socket_stats<R: RecvTransport>(
 /// # Safety
 /// `out` must be a valid writable `*mut TstStreamCodecStats` when non-null.
 #[cfg(feature = "srt")]
-pub(crate) unsafe fn managed_demux_receiver_get_stream_codec_stats<R: RecvTransport>(
-    h: &Handle<ManagedDemuxReceiver<R>>,
+pub(crate) unsafe fn managed_demux_receiver_get_stream_codec_stats<R: RecvTransport, S>(
+    h: &CHandle<ManagedDemuxReceiver<R>, S>,
     pid: u16,
     out: *mut crate::stats::TstStreamCodecStats,
     not_found_msg: &str,
@@ -997,8 +991,8 @@ pub(crate) unsafe fn managed_demux_receiver_get_stream_codec_stats<R: RecvTransp
 /// # Safety
 /// `out_epoch_micros` must be a valid writable `*mut u64` when non-null.
 #[cfg(feature = "srt")]
-pub(crate) unsafe fn managed_demux_receiver_get_stream_last_seen_micros<R: RecvTransport>(
-    h: &Handle<ManagedDemuxReceiver<R>>,
+pub(crate) unsafe fn managed_demux_receiver_get_stream_last_seen_micros<R: RecvTransport, S>(
+    h: &CHandle<ManagedDemuxReceiver<R>, S>,
     pid: u16,
     out_epoch_micros: *mut u64,
 ) -> i32 {
@@ -1023,8 +1017,8 @@ pub(crate) unsafe fn managed_demux_receiver_get_stream_last_seen_micros<R: RecvT
 /// Clears the borrowed `stream_stats_buf` snapshot before resetting, same
 /// invalidation contract as the plain receiver's `demux_receiver_reset_stats`.
 #[cfg(feature = "srt")]
-pub(crate) fn managed_demux_receiver_reset_stats<R: RecvTransport>(
-    inner: &Handle<ManagedDemuxReceiver<R>>,
+pub(crate) fn managed_demux_receiver_reset_stats<R: RecvTransport, S>(
+    inner: &CHandle<ManagedDemuxReceiver<R>, S>,
     stream_stats_buf: &Mutex<Vec<crate::stats::TstStreamStats>>,
 ) -> i32 {
     if let Ok(mut buf) = stream_stats_buf.lock() {
@@ -1042,8 +1036,8 @@ pub(crate) fn managed_demux_receiver_reset_stats<R: RecvTransport>(
 /// # Safety
 /// `out_array` and `out_count` must be valid non-null pointers.
 #[cfg(feature = "srt")]
-pub(crate) unsafe fn managed_demux_receiver_get_stream_stats<R: RecvTransport>(
-    inner: &Handle<ManagedDemuxReceiver<R>>,
+pub(crate) unsafe fn managed_demux_receiver_get_stream_stats<R: RecvTransport, S>(
+    inner: &CHandle<ManagedDemuxReceiver<R>, S>,
     stream_stats_buf: &Mutex<Vec<crate::stats::TstStreamStats>>,
     out_array: *mut *const crate::stats::TstStreamStats,
     out_count: *mut libc::size_t,

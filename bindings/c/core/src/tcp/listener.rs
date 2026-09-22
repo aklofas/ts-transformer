@@ -163,8 +163,11 @@ pub unsafe extern "C" fn tst_tcp_listener_accept_sender(
         match listener.inner.accept_blocking() {
             Ok(transport) => {
                 let sender = Sender::new(transport, SenderConfig::default());
+                // Same shape as `tst_tcp_sender_open`: the accepted socket's
+                // real `TcpCancelHandle` goes into the handle's cancel slot.
+                let cancel = crate::handle::cancel_or_latch(sender.cancel_handle());
                 Box::into_raw(Box::new(TstTcpSender {
-                    inner: crate::handle::Handle::new(sender),
+                    inner: crate::handle::CHandle::new(sender, cancel, ()),
                 }))
             }
             Err(e) => {
@@ -201,8 +204,10 @@ pub unsafe extern "C" fn tst_tcp_listener_accept_receiver(
         match listener.inner.accept_blocking() {
             Ok(transport) => {
                 let receiver = Receiver::new(transport, ReceiverConfig::default());
+                // Same shape as `tst_tcp_receiver_open`.
+                let cancel = crate::handle::cancel_or_latch(receiver.cancel_handle());
                 Box::into_raw(Box::new(TstTcpReceiver {
-                    inner: crate::handle::Handle::new(receiver),
+                    inner: crate::handle::CHandle::new(receiver, cancel, ()),
                 }))
             }
             Err(e) => {
