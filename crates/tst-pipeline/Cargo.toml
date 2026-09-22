@@ -12,7 +12,7 @@ categories   = ["multimedia::video", "network-programming"]
 
 [features]
 default = ["std"]
-# `std` pulls in the Managed* reconnect wrappers, mux_publisher, ext::pairing,
+# `std` pulls in the Managed* reconnect wrappers, mux_publisher, ext::pairing, binding,
 # and the std-backed tracing subscriber integration. Without it the crate is
 # #![no_std] + alloc and still exposes both the sender shells (MuxSender /
 # Sender / RawSender) and the receiver shells (Receiver / DemuxReceiver /
