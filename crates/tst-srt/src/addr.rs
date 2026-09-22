@@ -50,6 +50,23 @@ pub(crate) fn from_sockaddr(os_addr: &OsSocketAddr) -> Result<SocketAddr, AddrEr
         .ok_or_else(|| AddrError::Resolve("non-IP address family returned from libsrt".to_string()))
 }
 
+/// Join `host` and `port` into the `host:port` form `ToSocketAddrs`
+/// parses, bracketing a bare IPv6 literal (`::1` → `[::1]:9000`).
+///
+/// [`SrtUrl::parse`](crate::SrtUrl::parse) hands the host back with its
+/// brackets stripped, so a plain `format!("{host}:{port}")` produced
+/// `::1:9000` and every IPv6 `srt://` open failed to resolve (PR #188).
+/// One helper for every open path — the C, Python and JVM bindings each
+/// carried a private copy before it lived here. An already-bracketed
+/// host, an IPv4 literal and a hostname pass through unchanged.
+pub fn join_host_port(host: &str, port: u16) -> String {
+    if host.contains(':') && !host.starts_with('[') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -138,5 +155,15 @@ mod tests {
                 "OsSocketAddr v4 len must match libc::sockaddr_in"
             );
         }
+    }
+
+    #[test]
+    fn join_host_port_brackets_bare_ipv6_only() {
+        assert_eq!(join_host_port("::1", 9000), "[::1]:9000");
+        assert_eq!(join_host_port("fe80::1%eth0", 7000), "[fe80::1%eth0]:7000");
+        assert_eq!(join_host_port("[::1]", 9000), "[::1]:9000");
+        assert_eq!(join_host_port("127.0.0.1", 9000), "127.0.0.1:9000");
+        assert_eq!(join_host_port("0.0.0.0", 7000), "0.0.0.0:7000");
+        assert_eq!(join_host_port("camera.local", 9000), "camera.local:9000");
     }
 }

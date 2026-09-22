@@ -36,3 +36,5 @@ mod maxbw_roundtrip;
 mod payload_limit;
 #[path = "loopback/srto_sender.rs"]
 mod srto_sender;
+#[path = "loopback/url_open.rs"]
+mod url_open;
