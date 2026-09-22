@@ -411,7 +411,8 @@ with Receiver.from_url("srt://:9000?mode=listener") as rx:
             pkt = rx.recv_bytes()   # one 188-byte TS packet per call
             ...                     # process pkt
     except SrtError as e:
-        # CLOSED / BROKEN both signal end of stream.
+        # CLOSED (BROKEN on plain SRT until the transport-level cancel
+        # lands) signals end of stream.
         if e.kind not in (SrtErrorKind.CLOSED, SrtErrorKind.BROKEN):
             raise
 ```
@@ -447,54 +448,58 @@ URL-provided values win over kwargs / setters. A `Listener` is iterable —
 iterating yields accepted `Socket`s until `cancel_handle().cancel()` stops
 it.
 
-### Cancellation
+### Cancellation and cross-thread close
 
-Every SRT shell exposes `cancel_handle()` — `Sender` / `Receiver` /
-`Listener`, `MuxSender` / `DemuxReceiver`, and the four `Managed*`
-shells; calling `.cancel()` from another thread wakes a thread parked in
-`send_bytes` / `send_video` / `recv_bytes` / `accept` / `__next__` within
-~3–10 ms, surfacing `SrtError(BROKEN)` or `SrtError(CLOSED)`:
+Every transport shell — `Sender` / `Receiver` / `Listener`, `MuxSender` /
+`DemuxReceiver`, the four `Managed*` shells, and their `tstrans.rtp` /
+`udp` / `tcp` / `rist` siblings — exposes `close()` that is safe to call
+from ANY thread, and (except rtp `MuxSender` / `DemuxReceiver`, udp, tcp
+and rist) a `cancel_handle()`. Both go through one Rust state machine
+(`tst_pipeline::binding::Owned`): **cancel first, then free**. A call
+parked on another thread (`send_bytes`, `recv_bytes`, `accept`,
+`__next__`, `recv`, `recv_au`, `accept_blocking`) ends promptly and
+`close()` returns without waiting behind it.
 
 ```python
 tx = Sender.from_url("srt://host:9000?mode=caller")
 cancel = tx.cancel_handle()
 # On another thread:
-cancel.cancel()   # wakes tx.send_bytes() → SrtError(BROKEN | CLOSED)
+cancel.cancel()   # wakes tx.send_bytes() → SrtError(kind=CLOSED)
 ```
 
-`is_cancelled()` reports the SHELL's cancel state, shared by every clone
-and by the shell's own `close()` — a watchdog holding one handle observes
-a cancel issued anywhere else.
+What the interrupted call raises is the domain's `CLOSED` kind with the
+detail `"cancelled from another thread"` — `SrtError(CLOSED)`,
+`RtpError(CLOSED)` (`H264Receiver.recv_au()` returns `None`),
+`UdpError(CLOSED)`, `TcpError(CLOSED)`, `RistError(CLOSED)`. Two
+exceptions, both temporary: the plain SRT shells (`Sender`, `Receiver`,
+`MuxSender`, `DemuxReceiver`, `Listener`) may still report
+`SrtError(BROKEN)` because libsrt reports the closed socket as a
+connection error — this becomes `CLOSED` when the SRT transport-level
+cancel change lands later in 0.7.0; and a udp/rist `recv()` observes the
+cancel at its next ≤100 ms poll slice (they have no Rust cancel handle
+yet). A call made AFTER `close()` raises `CLOSED` too.
 
-**Exit with a shell still open.** You should still `close()` (or use
-`with`) every shell, but forgetting to is no longer fatal: at interpreter
-exit `tstrans` cancels every shell that is still alive before libsrt's own
-teardown runs. Without that, a thread left parked in `accept()` or
-`recv_bytes()` deadlocks `srt_cleanup`, which joins libsrt's GC thread —
-the process hangs instead of exiting. The hook costs nothing when
-everything was closed, and adds a short settle window at exit when it was
-not (woken threads need a moment to unwind before the interpreter shuts
-down).
-
-**Closing from another thread.** Every `tstrans.srt` shell's `close()`
-cancels first, then frees the object, so it is safe to call from a
-thread other than the one parked in a blocking call: the parked call ends
-promptly and `close()` returns without waiting behind it. What the parked
-call raises is the shell's cancel kind: the plain shells (`Sender`,
-`Receiver`, `MuxSender`, `DemuxReceiver`, `Listener`) surface
-`SrtError(BROKEN)` or `SrtError(CLOSED)` — the cancel closes the libsrt
-socket under the call and libsrt reports it either way — while the four
-`Managed*` shells always surface `SrtError(CLOSED)` (the managed wrapper
-latches its own close flag before the socket goes). The same holds for
-`tstrans.rtp` (`RtpError(CANCELLED)`; `H264Receiver.recv_au()` returns
-`None`), `tstrans.tcp` (`TcpError(CLOSED)`), and `tstrans.udp` /
-`tstrans.rist` (`UdpError(CLOSED)` / `RistError(CLOSED)`, see below).
+`is_cancelled()` reads the SHELL's state (0.7.0): every handle from the
+same shell, and the shell's own `close()`, flip it — a watchdog holding
+one clone sees a cancel issued through another. (Before 0.7.0 it was a
+per-clone flag.)
 
 A cancel-first `close()` is abortive by design: for the raw-bytes
 `Sender`, a partial 7-packet bundle still in the framing buffer is not
-delivered — call `flush()` first when the tail matters. (`MuxSender`
+delivered — call `flush()` first when the tail matters (`MuxSender`
 already closed cancel-first; on the Rust side `finish()` is the lossless
-alternative.)
+alternative).
+
+**Exit with a shell still open.** You should still `close()` (or use
+`with`) every shell, but forgetting to is no longer fatal: at interpreter
+exit `tstrans` cancels every shell that is still open before libsrt's own
+teardown runs. Without that, a thread left parked in `accept()` or
+`recv_bytes()` deadlocks `srt_cleanup`, which joins libsrt's GC thread —
+the process hangs instead of exiting. A program that closed everything
+pays nothing: shells whose cancel already latched are skipped, so neither
+the cancel walk nor the settle window runs. Only a shell left open costs
+the short settle window (woken threads need a moment to unwind before the
+interpreter shuts down).
 
 ### SRT convenience (`MuxSender` / `DemuxReceiver`)
 
@@ -644,7 +649,9 @@ use `socket_stats()` (the 16-field `SocketStats`) instead.
 `SocketStats` (not `SrtStats`). `ManagedReceiver.reconnect_attempts()` is a
 success count (excludes the initial accept); `ManagedMuxSender` and
 `ManagedDemuxReceiver` `reconnect_attempts()` count every reconnect-factory
-invocation. `ManagedDemuxReceiver.last_seen_micros(pid)` works the same
+invocation — read from the core's own attempt counter since 0.7.0
+(`ManagedTransportStats.reconnect_attempts` agrees with it).
+`ManagedDemuxReceiver.last_seen_micros(pid)` works the same
 as the plain `DemuxReceiver` above.
 
 **Why did the managed stream end?** `ManagedDemuxReceiver.end_reason()`
@@ -735,12 +742,13 @@ with Receiver("rtp://239.0.0.1:5004") as rx:
 ```
 
 `send` accepts a TS payload up to `pkt_size − 12`; oversize raises
-`RtpError(MALFORMED_PACKET)`. `recv()` blocks until a datagram arrives or a
+`RtpError(TOO_LARGE)`. `recv()` blocks until a datagram arrives or a
 cancel fires. RTP/UDP is connectionless — a remote sender closing does NOT
 end a `recv()` loop; stop on a sentinel or via `cancel_handle().cancel()`,
-which wakes a parked `send` / `recv` with `RtpError(CANCELLED)` within
-~100 ms. The RTP `CancelHandle` has only `cancel()` — no `is_cancelled()`
-(differs from SRT). A literal `rtp://host:0` receiver binds (the kernel
+which wakes a parked `send` / `recv` with `RtpError(CLOSED)` within
+~100 ms (`RtpErrorKind.CANCELLED` remains as a deprecated alias of
+`CLOSED` for 0.7.x). The RTP `CancelHandle` has `cancel()` and
+`is_cancelled()` (shared per shell). A literal `rtp://host:0` receiver binds (the kernel
 picks an ephemeral port; RTCP is off by default on this surface), but it
 is impractical: the raw receiver exposes no local-address getter, so
 there is no way to learn which port the kernel chose and no sender can
@@ -809,8 +817,8 @@ released — other threads keep running) until the next event, timeout, or
 cancel lets the iterator release that lock, and a receiver that has gone
 completely quiet with no `?recv_timeout=` makes the poll block for as
 long as the silence lasts. Give the receiver a `?recv_timeout=` deadline
-(the iterator then raises `RtpError(TIMEOUT)` / `SrtError(WOULD_BLOCK)`
-every `<ms>` and the lock cycles), or poll `last_seen_micros()` from the
+(the iterator then raises `RtpError(BACKPRESSURE)` /
+`SrtError(BACKPRESSURE)` every `<ms>` and the lock cycles), or poll `last_seen_micros()` from the
 consuming thread between events. The `end_reason()` getters, by contrast,
 are lock-free and safe to poll from a watchdog at any time.
 
@@ -824,7 +832,7 @@ by default — fine for a live camera, less fine for a quiet socket you
 want to notice going quiet. `?recv_timeout=<ms>` on a `rtp://` (or
 `rtsp(s)://`) URL arms a persistent receive deadline: a `recv()` /
 `next()` call that would otherwise block forever instead raises
-`RtpError(TIMEOUT)` after `<ms>` milliseconds of silence, and the
+`RtpError(BACKPRESSURE)` after `<ms>` milliseconds of silence, and the
 receiver stays open — call again to keep waiting:
 
 ```python
@@ -837,7 +845,7 @@ with DemuxReceiver("rtp://0.0.0.0:5004?recv_timeout=5000") as rx:
         try:
             event = next(it)
         except RtpError as e:
-            if e.kind == RtpErrorKind.TIMEOUT:
+            if e.kind == RtpErrorKind.BACKPRESSURE:
                 print("quiet for 5s — still connected, just nothing to say")
                 continue
             raise
@@ -848,9 +856,10 @@ with DemuxReceiver("rtp://0.0.0.0:5004?recv_timeout=5000") as rx:
 take a per-call override instead (or in addition — the explicit argument
 always wins over a configured URL deadline for that one call). `RtspClientConfig`'s
 URL accepts the same `?recv_timeout=` key; it carries through
-`into_demux_receiver()` / `into_h264_receiver()` automatically. `TIMEOUT`
-is retryable — the transport and session are both still alive, unlike
-`CANCELLED` or `TRANSPORT`.
+`into_demux_receiver()` / `into_h264_receiver()` automatically.
+`BACKPRESSURE` is retryable — the transport and session are both still
+alive, unlike `CLOSED` or `BROKEN`. (`RtpErrorKind.TIMEOUT` remains as a
+deprecated alias of `BACKPRESSURE` for 0.7.x.)
 
 ### RTSP client
 
@@ -1053,7 +1062,7 @@ with Transport.builder().url("udp://239.0.0.1:5000").ttl(8).build() as tx:
 
 # Receiver — bind, then recv (timeout_ms=None blocks).
 with RecvTransport.builder().bind_url("udp://@239.0.0.1:5000").build() as rx:
-    payload, _addr = rx.recv(timeout_ms=1000)   # raises UdpError(IO) on timeout
+    payload, _addr = rx.recv(timeout_ms=1000)   # raises UdpError(BACKPRESSURE) on timeout — retryable
 ```
 
 `recv()` returns `(payload, sender_addr)` — the address string is
@@ -1097,7 +1106,9 @@ that window raises `BufferError` there, and the received bytes always
 land in the buffer at the length you passed. `Listener.close()` and
 `Transport.close()` are safe from another thread — a parked
 `accept_blocking()` / `recv()` ends with `TcpError(CLOSED)` within
-~100 ms.
+~100 ms, and so does a `send()` stalled behind a full socket buffer (the
+send loop re-checks the cancel at its ~100 ms write-deadline tick,
+`tst_tcp` `transport.rs:76-79`).
 
 ### RIST (`tstrans.rist`)
 
@@ -1110,7 +1121,7 @@ with Transport.builder().url("rist://host:5004").build() as tx:
 
 # Receiver — the @ prefix is REQUIRED on bind_url.
 with RecvTransport.builder().bind_url("rist://@0.0.0.0:5004").build() as rx:
-    payload = rx.recv(timeout_ms=1000)       # raises RistError(RECV_TIMEOUT)
+    payload = rx.recv(timeout_ms=1000)       # raises RistError(BACKPRESSURE) — retryable
 
 # Encryption forces RistProfile.MAIN.
 enc = EncryptionKey.aes256("pre-shared-secret")
@@ -1125,8 +1136,9 @@ default is `RistProfile.SIMPLE`. Both transports return a `RistStats`
 snapshot from `stats()`.
 
 `close()` from another thread ends a parked `recv()` with
-`RistError(CLOSED)` within about 100 ms (a stop flag checked between the
-librist 100 ms poll windows).
+`RistError(CLOSED)`, detail "cancelled from another thread", within about
+100 ms (the shell's cancel flag, checked between the librist 100 ms poll
+windows).
 
 ## HLS publisher (`tstrans.hls`)
 
@@ -1607,6 +1619,18 @@ output directly when absolute byte offsets matter.
 
 ## Where this binding differs from the Rust core
 
+- **Error kinds are the Rust variant names.** Since 0.7.0 every
+  `*ErrorKind` in `tstrans.exceptions` is a per-domain subset of the
+  Rust `tst_pipeline::binding::BindingErrorKind` table, spelled as the
+  Rust variant in SCREAMING_SNAKE, and `import tstrans` fails (not a
+  later `except`) if the two ever disagree. The 0.7.0 old→new table is in
+  the CHANGELOG (`### Changed — Python binding (WP-B2)`); the retired
+  spellings survive as deprecated aliases of their successors through
+  0.7.x and are removed in 0.8.0.
+  A poisoned handle raises `RuntimeError`; a panic inside a MUTATING call
+  raises `pyo3_runtime.PanicException` and closes the object (later calls
+  raise `CLOSED`; before 0.7.0 the object stayed usable); a panic inside a
+  read-only accessor leaves it usable.
 - **Pipeline-shell naming follows the C-ABI convention, not the Rust
   crate's.** The TS-bytes-through-transport shells are `Sender` /
   `Receiver` (e.g. `tstrans.srt.Sender`) and the raw transports are
