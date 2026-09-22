@@ -356,4 +356,90 @@ class SrtManagedEndReasonTest {
         assertEquals(RecvEndReason.RECONNECT_EXHAUSTED, rx.endReason(),
             "the close-time snapshot must preserve the reason after close()");
     }
+    /**
+     * A {@link ManagedReceiver} whose reconnect budget is exhausted ends
+     * {@code recvBytes()} with {@code SrtException(END_OF_STREAM)} — the second
+     * producer of that kind on the JVM (the first is a peer's clean hang-up),
+     * and the kind the C ABI returns as {@code TST_E_END_OF_STREAM} (-12) on
+     * the same path.
+     *
+     * <p>Before 0.7.0 this surfaced as {@code CLOSED}. The route:
+     * `ManagedRecvTransport` gives up → `TransportError::Closed` →
+     * `tst_pipeline`'s receive-direction classification calls that
+     * `ShellErrorKind::EndOfStream` (`shell_error.rs`).
+     *
+     * <p>Deterministic by construction: {@code maxAttempts(0)} means the first
+     * post-drop attempt is already over budget, so there is no retry window to
+     * race. Same choreography as
+     * {@link #endReasonIsReconnectExhaustedWhenThePeerLeavesAndSurvivesClose()},
+     * with the TS-bytes shell (which surfaces the error) instead of the demux
+     * shell (which swallows a clean end into a null event).
+     */
+    @Test
+    @Timeout(60)
+    void budgetExhaustedManagedReceiverEndsWithEndOfStream() throws Exception {
+        assumeTrue(isLinux(), "SRT live-socket test gated to Linux (same as the Rust/C twins)");
+        int port = freeUdpPort();
+        String listenUrl = "srt://:" + port + "?mode=listener&latency=" + LATENCY_MS;
+        String callerUrl = "srt://127.0.0.1:" + port + "?latency=" + LATENCY_MS;
+        ReconnectPolicy noRetry = ReconnectPolicy.builder().maxAttempts(0).build();
+
+        CompletableFuture<ManagedReceiver> rxFuture = new CompletableFuture<>();
+        CompletableFuture<Throwable> endFuture = new CompletableFuture<>();
+        CountDownLatch startReceiving = new CountDownLatch(1);
+
+        Thread reader = new Thread(() -> {
+            ManagedReceiver rx;
+            try {
+                rx = ManagedReceiver.fromUrl(listenUrl, noRetry);
+            } catch (Exception ex) {
+                rxFuture.completeExceptionally(ex);
+                endFuture.complete(ex);
+                return;
+            }
+            rxFuture.complete(rx);
+            try {
+                startReceiving.await();
+                for (;;) {
+                    rx.recvBytes();
+                }
+            } catch (RuntimeException | SrtException e) {
+                endFuture.complete(e);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                endFuture.complete(ie);
+            }
+        }, "eos-reader");
+        reader.setDaemon(true);
+        reader.start();
+
+        ManagedMuxSender sender = connectSender(callerUrl, 5_000);
+        ManagedReceiver rx = rxFuture.get(5, TimeUnit.SECONDS);
+        CancelHandle rescue = rx.cancelHandle(); // pre-obtained; frees a stuck reader
+        startReceiving.countDown();
+
+        for (int i = 0; i < 5; i++) {
+            sender.sendVideo(syntheticH264Idr(), i * 3000L, i == 0);
+            Thread.sleep(10);
+        }
+        Thread.sleep(300);
+        // Peer leaves for good. Close on a side daemon thread — srt_close LINGERS.
+        Thread dropper = new Thread(sender::close);
+        dropper.setDaemon(true);
+        dropper.start();
+
+        Throwable end;
+        try {
+            end = endFuture.get(15, TimeUnit.SECONDS);
+        } finally {
+            rescue.cancel();
+        }
+        reader.join(TimeUnit.SECONDS.toMillis(2));
+
+        assertTrue(end instanceof SrtException,
+            "expected recvBytes() to end with an SrtException, got " + end);
+        assertEquals(SrtException.Kind.END_OF_STREAM, ((SrtException) end).kind(),
+            "a budget-exhausted managed receiver ends with END_OF_STREAM (was CLOSED before 0.7.0)");
+        rx.close();
+    }
 }

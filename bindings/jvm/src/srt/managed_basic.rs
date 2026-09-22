@@ -403,11 +403,14 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedReceiver_nFromUrl(
         // Cancel-on-close: `OwnedRegistry::close` fires the cancel before taking
         // the slot, so a `recvBytes()` parked on another thread ends with CLOSED
         // instead of holding `close()` hostage (tst-py / C ABI contract).
+        // No `with_end_reason`: `ManagedReceiver` exposes no `endReason()` native,
+        // and A3 documents that the plain `Receiver` never RECORDS one either
+        // (`ManagedHandles::end_reason` is a fresh, never-set handle for every
+        // shell but `ManagedDemuxReceiver`). Attaching it would advertise a
+        // capability that does not exist; the cell stays reachable through the
+        // `ManagedHandles` snapshot if a rider ever adds the native.
         let cancel = Arc::clone(&handles.cancel);
-        let end_reason = handles.end_reason.clone();
-        REGISTRY_RECEIVER.insert(
-            Owned::new(JniManagedReceiver { inner }, cancel, handles).with_end_reason(end_reason),
-        ) as jlong
+        REGISTRY_RECEIVER.insert(Owned::new(JniManagedReceiver { inner }, cancel, handles)) as jlong
     })
 }
 

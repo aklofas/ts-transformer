@@ -5,7 +5,7 @@ package org.tstrans;
  * Mirrors tst-py's {@code tstrans.exceptions.SrtError} / {@code SrtErrorKind}.
  * {@link Kind} maps the Rust {@code tst_srt} error families
  * (UrlError / ConnectError / BindError / AcceptError / IoError / TransportError)
- * onto eight user-facing buckets — see {@code bindings/jvm/src/srt/errors.rs}.
+ * onto twelve user-facing buckets — see {@code bindings/jvm/src/srt/errors.rs}.
  */
 public final class SrtException extends BindingException {
     private static final long serialVersionUID = 1L;
@@ -25,17 +25,25 @@ public final class SrtException extends BindingException {
         /** {@code sendBytes} input lost MPEG-TS sync (not 188-byte-aligned packets). */
         INPUT_MALFORMED,
         /**
-         * The peer closed the stream cleanly and the receive loop reached end
-         * of stream — {@link Receiver#recvBytes()} only. The receiver is dead;
-         * later calls report {@code CLOSED}. Same kind the C ABI returns as
+         * The receive loop reached end of stream. The receiver is dead; later
+         * calls report {@code CLOSED}. Same kind the C ABI returns as
          * {@code TST_E_END_OF_STREAM} (-12).
          *
-         * <p>Before 0.7.0 this surfaced as {@code CLOSED}, indistinguishable
-         * from a locally-closed transport.
+         * <p>Two producers:
+         * <ul>
+         *   <li>a peer closes the session cleanly — a sender opened with the
+         *       sender preset ({@code SRTO_SENDER} + linger), e.g. via the C
+         *       ABI or an {@code org.tstrans.srt.ManagedSender}; the plain JVM
+         *       caller shells do not set that preset, so a JVM-to-JVM plain
+         *       loopback reports {@code BROKEN} instead;</li>
+         *   <li>an {@code org.tstrans.srt.ManagedReceiver} whose reconnect
+         *       budget is exhausted — the decorator gives up and the receive
+         *       direction classifies that as end of stream.</li>
+         * </ul>
          *
-         * <p>Produced when the peer closes a session cleanly (a sender opened
-         * with the sender preset, e.g. via C or a managed sender); the plain
-         * JVM caller shells never see it today.
+         * <p>The message carries the transport's own text, which differs
+         * between the two. Before 0.7.0 both surfaced as {@code CLOSED},
+         * indistinguishable from a locally-closed transport.
          */
         END_OF_STREAM
     }
