@@ -18,7 +18,7 @@
 //! NO Java monitor across the upcall (`DemuxReceiver.next()`/`addByteSink()`
 //! are not `synchronized`), but it DOES run under this handle's registry
 //! resource lock: `nNext` leases the receiver for the whole `recv_event` call
-//! (`REGISTRY.with_poisoning`, below) and the sink fires inside that lease. A
+//! (`REGISTRY.with_mut`, below) and the sink fires while that slot is held. A
 //! sink that re-enters the same `DemuxReceiver` through any leased native
 //! (`next()`, `stats()`, `socketStats()`, `lastSeenMicros()`, `addByteSink()`)
 //! therefore self-deadlocks — the user guide's "never re-enter the receiver"

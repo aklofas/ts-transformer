@@ -5,7 +5,7 @@ package org.tstrans;
  * Mirrors tst-py's {@code tstrans.exceptions.SrtError} / {@code SrtErrorKind}.
  * {@link Kind} maps the Rust {@code tst_srt} error families
  * (UrlError / ConnectError / BindError / AcceptError / IoError / TransportError)
- * onto twelve user-facing buckets — see {@code bindings/jvm/src/srt/errors.rs}.
+ * onto eleven user-facing buckets — see {@code bindings/jvm/src/srt/errors.rs}.
  */
 public final class SrtException extends BindingException {
     private static final long serialVersionUID = 1L;

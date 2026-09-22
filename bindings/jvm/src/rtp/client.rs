@@ -552,7 +552,13 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspSession_nIntoDemuxReceiver(
         } else {
             None
         };
-        demux_receiver_handle_from_transport(transport, opts)
+        match demux_receiver_handle_from_transport(transport, opts) {
+            Ok(h) => h,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", e.detail);
+                0
+            }
+        }
     })
 }
 

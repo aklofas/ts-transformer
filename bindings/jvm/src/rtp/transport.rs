@@ -1,9 +1,10 @@
 //! JNI exports for `org.tstrans.rtp.Sender` and `org.tstrans.rtp.Receiver`.
 //!
-//! Each Java class is handle-backed by a `Box`:
-//! - `Sender`   → `Box<JniRtpSender>`   (wraps `tst_rtp::RtpTransport`).
-//! - `Receiver` → `Box<JniRtpReceiver>` (wraps `tst_rtp::RtpRecvTransport` + a
-//!   reusable recv scratch buffer, mirroring tst-py's `PyReceiver.scratch`).
+//! Each Java class is handle-backed by an `OwnedRegistry` entry:
+//! - `Sender`   → `Owned<SendHalf<tst_rtp::RtpTransport>>`.
+//! - `Receiver` → `Owned<JniRtpReceiver, StreamEndReasonHandle>` (the transport
+//!   plus a reusable recv scratch buffer, mirroring tst-py's
+//!   `PyReceiver.scratch`; the end-reason cell is the lock-free snapshot).
 //!
 //! Unlike the srt JVM surface (which wraps `tst_pipeline::Sender/Receiver`),
 //! the rtp surface wraps the transport DIRECTLY and calls the
@@ -123,7 +124,10 @@ pub extern "system" fn Java_org_tstrans_rtp_Sender_nFromUrl(
         let cancel = match super::rtp_cancel(inner.cancel_handle(), "RtpTransport") {
             Ok(c) => c,
             Err(e) => {
-                crate::error::throw_binding(env, crate::error::Domain::Rtp, &e);
+                // `Internal` is deliberately NOT an `RtpException.Kind` member:
+                // a transport with no cancel handle is a tst-rtp bug, not a
+                // transport outcome. Same shape as the receiver and mux sender.
+                let _ = env.throw_new("java/lang/RuntimeException", e.detail);
                 return 0;
             }
         };
@@ -319,7 +323,6 @@ pub extern "system" fn Java_org_tstrans_rtp_Receiver_nRecv(
 /// only. Mirrors tst-py `PyReceiver.recv(timeout_ms=...)`.
 ///
 /// `recv_timeout`'s `Ok(None)` return means the deadline elapsed (the
-/// transport/session stays alive) — hand-mapped to `RtpException(TIMEOUT)`
 /// below, since that outcome never reaches `transport_error` (which
 /// only sees `Err`).
 #[unsafe(no_mangle)]
