@@ -31,6 +31,7 @@ pub mod error;
 pub mod init;
 pub mod listener;
 pub mod options;
+pub mod shells;
 pub mod socket;
 pub mod transport;
 pub mod url;
