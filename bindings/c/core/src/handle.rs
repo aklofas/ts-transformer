@@ -1,9 +1,19 @@
-//! `Handle<T>` — the canonical wrapper for every C-side opaque pointer.
+//! `Handle<T>` — the no_std wrapper for the offline C-side opaque pointers,
+//! and [`CHandle<T, S>`] — the std transport-handle shape over
+//! [`tst_pipeline::binding::Owned`].
 //!
 //! `Handle<T> = Mutex<Option<T>>`. `_open` returns
 //! `Box::into_raw(Box::new(Handle::new(inner)))`. Data-path entry points
 //! call `Handle::with_inner_mut`; `_close` calls `Handle::close`. Drop of
 //! the inner runs Drop, which closes the underlying transport / muxer.
+//!
+//! Since Arc 2 `Handle<T>` serves ONLY the three offline handles that must
+//! build without std (`TstMuxer`, `TstDemuxer`, `TstSt0601`). Every
+//! transport-bearing handle holds a [`CHandle<T, S>`] instead — the one
+//! handle state machine shared with the Python and JVM bindings, which
+//! carries the cancel handle and the construction-time snapshot beside the
+//! slot so neither is reached through the lock. `binding` is std-only,
+//! which is why both shapes live here.
 //!
 //! Under `no_std` the lock is the spin-backed `nostd_mutex::Mutex` — no
 //! priority inheritance, no interrupt masking — so each C handle must be
@@ -14,8 +24,6 @@
 //! contract applies only to no_std/bare-metal embeddings.)
 
 use crate::error::{TstError, record_internal, record_panic_caught, set_last_error};
-#[cfg(feature = "std")]
-use crate::panic::panic_payload_message;
 
 #[cfg(not(feature = "std"))]
 use crate::nostd_mutex::Mutex;
@@ -23,10 +31,13 @@ use crate::nostd_mutex::Mutex;
 use std::sync::Mutex;
 
 /// Run `f` catching any panic (std). Returns `Ok(result)` or `Err(detail)`.
+///
+/// Delegates to the shared binding-layer helper so C, Python and the JVM
+/// render panic payloads identically (spec §3.6: the `panic_payload_message`
+/// twin goes).
 #[cfg(feature = "std")]
 fn catch<R>(f: impl FnOnce() -> R) -> Result<R, alloc::string::String> {
-    use core::panic::AssertUnwindSafe;
-    std::panic::catch_unwind(AssertUnwindSafe(f)).map_err(|p| panic_payload_message(&*p))
+    tst_pipeline::binding::panic::catch(f)
 }
 
 /// Under no_std (panic = abort), run the closure directly — no unwinding possible.
@@ -161,6 +172,131 @@ impl<T> Handle<T> {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// CHandle<T, S> — the std transport-handle shape (tst_pipeline::binding::Owned)
+//
+// Every transport-bearing C handle (srt/rtp/udp/tcp/rist senders and
+// receivers, plain and managed) holds exactly one of these. `Handle<T>`
+// above stays ONLY for the three no_std offline handles (muxer, demuxer,
+// st0601): `tst_pipeline::binding` is std-only.
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "std")]
+mod owned {
+    use alloc::sync::Arc;
+
+    use tst_core::transport::TransportCancel;
+    use tst_pipeline::RecvEndReason;
+    use tst_pipeline::RecvEndReasonHandle;
+    use tst_pipeline::binding::{BindingError, Close, FlagCancel, Owned};
+
+    use crate::error::record_binding_error;
+
+    /// Newtype over [`Owned`] that projects the handle state machine onto
+    /// the C `int` + thread-local last-error contract. The method names
+    /// mirror the no_std [`super::Handle`] so family modules and the
+    /// `extern-c-ffi-catch-coverage.sh` rail see the same call shape.
+    pub(crate) struct CHandle<T, S = ()>(Owned<T, S>);
+
+    impl<T, S> CHandle<T, S> {
+        #[allow(dead_code)] // consumed by every `_open` (B1.4-B1.10)
+        pub(crate) fn new(inner: T, cancel: Arc<dyn TransportCancel>, snapshot: S) -> Self {
+            Self(Owned::new(inner, cancel, snapshot))
+        }
+
+        /// Receivers only: attach the end-reason cell read by `_end_reason`.
+        #[allow(dead_code)] // consumed by the receiver families (B1.5-B1.9)
+        pub(crate) fn with_end_reason(self, h: RecvEndReasonHandle) -> Self {
+            Self(self.0.with_end_reason(h))
+        }
+
+        /// Run `f` against `&mut T`. Closed / poisoned / panicked handles are
+        /// recorded through the ONE error path (`record_binding_error`):
+        /// `Closed` → TST_E_CLOSED, `Poisoned` → TST_E_INTERNAL,
+        /// `Panicked` → TST_E_PANIC_CAUGHT. As with the no_std `Handle`, a
+        /// caught panic in a MUTATOR drops the inner (later calls are
+        /// `Closed`); [`Self::with_inner_ref`] keeps it (spec §3.2 as
+        /// amended at plan review).
+        #[allow(dead_code)] // consumed by the data-path entry points (B1.5-B1.10)
+        pub(crate) fn with_inner_mut(&self, f: impl FnOnce(&mut T) -> i32) -> i32 {
+            match self.0.with_mut(f) {
+                Ok(rc) => rc,
+                Err(state) => record_binding_error(BindingError::from(state)),
+            }
+        }
+
+        /// Reader twin of [`Self::with_inner_mut`] (recovers a poisoned lock,
+        /// and a caught panic leaves the inner in place).
+        #[allow(dead_code)] // consumed by the stats/is_alive getters (B1.5-B1.10)
+        pub(crate) fn with_inner_ref(&self, f: impl FnOnce(&T) -> i32) -> i32 {
+            match self.0.with_ref(f) {
+                Ok(rc) => rc,
+                Err(state) => record_binding_error(BindingError::from(state)),
+            }
+        }
+
+        /// Lock-free: never touches the slot (the #189 lease-bug class).
+        #[allow(dead_code)] // consumed by the `_cancel` entry points (B1.5-B1.10)
+        pub(crate) fn cancel(&self) {
+            self.0.cancel();
+        }
+
+        #[allow(dead_code)] // consumed by the recv-side CLOSED relabellers (B1.5-B1.9)
+        pub(crate) fn is_cancelled(&self) -> bool {
+            self.0.is_cancelled()
+        }
+
+        /// Construction-constant state (side-channel handles, addresses).
+        /// Getters that are constant after `_open` read HERE, never the slot
+        /// (`scripts/check/c/snapshot-getters.sh`).
+        #[allow(dead_code)] // consumed by the snapshot-bearing families (B1.8/B1.9)
+        pub(crate) fn snapshot(&self) -> &S {
+            self.0.snapshot()
+        }
+
+        #[allow(dead_code)] // consumed by the `_end_reason` getters (B1.5-B1.9)
+        pub(crate) fn end_reason(&self) -> Option<RecvEndReason> {
+            self.0.end_reason()
+        }
+    }
+
+    impl<T: Close, S> CHandle<T, S> {
+        /// Cancel-first close. `_close` returns `void`, so a close failure
+        /// is recorded to last-error and otherwise swallowed; a second
+        /// close is `Ok(())` in `Owned`. `From<CloseFailure<E>>` is the
+        /// shared rendering (`Inner` → INTERNAL, `Panicked` → PANIC_CAUGHT).
+        #[allow(dead_code)] // consumed by the `_close` entry points (B1.5-B1.10)
+        pub(crate) fn close(&self) {
+            if let Err(f) = self.0.close() {
+                record_binding_error(BindingError::from(f));
+            }
+        }
+    }
+
+    /// The shells' `cancel_handle()` still returns an `Option` until WP-D
+    /// (UDP and RIST have no handle); this is the ONE place the `Option`
+    /// is resolved. `None` → A1's `binding::FlagCancel` (a plain latch the
+    /// binding layer ships for exactly this gap; `Owned::is_cancelled`
+    /// reads its own flag). DELETE this fn in WP-D (PR 9) with its eight
+    /// udp/rist call sites once every `cancel_handle()` is `Some`.
+    #[allow(dead_code)] // consumed by the udp/rist `_open` paths (B1.7/B1.10)
+    pub(crate) fn cancel_or_latch(
+        c: Option<Arc<dyn TransportCancel + Send + Sync>>,
+    ) -> Arc<dyn TransportCancel> {
+        match c {
+            Some(c) => c,
+            None => Arc::new(FlagCancel::new()),
+        }
+    }
+}
+
+// Re-exported unconditionally so the family modules (B1.4-B1.10) import
+// `crate::handle::CHandle` exactly like `crate::handle::Handle`; until the
+// first family converts, the only consumers are this module's unit tests.
+#[cfg(feature = "std")]
+#[allow(unused_imports)]
+pub(crate) use owned::{CHandle, cancel_or_latch};
 
 // ---------------------------------------------------------------------------
 // RTSP client builder opaque handle (rtp feature)
@@ -534,5 +670,129 @@ mod tests {
         // a subsequent call also returns the default.
         let rc2 = h.with_inner_ref_silent(-1, |_| 0);
         assert_eq!(rc2, -1);
+    }
+
+    // ---- CHandle (the std transport-handle shape over tst_pipeline::binding::Owned) ----
+
+    #[cfg(feature = "std")]
+    mod chandle {
+        use super::super::{CHandle, cancel_or_latch};
+        use crate::error::{
+            TstError, clear_last_error_for_test, test_last_error_code, test_last_error_msg,
+        };
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use tst_core::transport::TransportCancel;
+
+        /// Local probe (not `binding::FlagCancel`: this one is inspected
+        /// through its own field so the test does not depend on `is_set`).
+        struct ProbeCancel(AtomicBool);
+        impl TransportCancel for ProbeCancel {
+            fn cancel(&self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+            // WP-C1 (PR 7) adds the required `is_cancelled`; until then this
+            // test impl has only `cancel` (the contract's CONTRACT NOTE 1).
+        }
+
+        fn fresh() -> (CHandle<i32>, Arc<ProbeCancel>) {
+            let flag = Arc::new(ProbeCancel(AtomicBool::new(false)));
+            let c: Arc<dyn TransportCancel> = flag.clone();
+            (CHandle::new(7i32, c, ()), flag)
+        }
+
+        #[test]
+        fn with_inner_mut_runs_and_returns_closure_code() {
+            let (h, _) = fresh();
+            assert_eq!(
+                h.with_inner_mut(|n| {
+                    *n += 1;
+                    0
+                }),
+                0
+            );
+            assert_eq!(h.with_inner_ref(|n| *n), 8);
+        }
+
+        #[test]
+        fn cancel_is_lock_free_and_observable() {
+            let (h, flag) = fresh();
+            // Hold the slot on another thread while cancelling from here:
+            // cancel must return without waiting on the lock.
+            let h = Arc::new(h);
+            let h2 = Arc::clone(&h);
+            let (tx, rx) = std::sync::mpsc::channel::<()>();
+            let parked = std::thread::spawn(move || {
+                h2.with_inner_mut(|_| {
+                    rx.recv().ok();
+                    0
+                })
+            });
+            // Give the parked closure time to take the lock.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while !flag.0.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
+                h.cancel();
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            assert!(h.is_cancelled(), "is_cancelled must flip after cancel()");
+            assert!(
+                flag.0.load(Ordering::SeqCst),
+                "cancel() must reach the transport handle"
+            );
+            tx.send(()).unwrap();
+            assert_eq!(parked.join().unwrap(), 0);
+        }
+
+        #[test]
+        fn panic_in_mutator_records_panic_caught_and_closes_the_handle() {
+            clear_last_error_for_test();
+            let (h, _) = fresh();
+            let rc = h.with_inner_mut(|_| panic!("boom-chandle"));
+            assert_eq!(rc, TstError::PanicCaught as i32);
+            assert_eq!(test_last_error_code(), TstError::PanicCaught as i32);
+            assert!(
+                test_last_error_msg().contains("boom-chandle"),
+                "got {}",
+                test_last_error_msg()
+            );
+            // Plan-review amendment of spec §3.2: a MUTATOR panic drops the
+            // slot (same as the no_std `Handle` and 0.6.x C — see
+            // `panic_in_inner_closure_is_caught` above); later calls are Closed.
+            assert_eq!(h.with_inner_ref(|n| *n), TstError::Closed as i32);
+            assert_eq!(test_last_error_code(), TstError::Closed as i32);
+        }
+
+        #[test]
+        fn panic_in_reader_records_panic_caught_and_keeps_the_handle() {
+            clear_last_error_for_test();
+            let (h, _) = fresh();
+            let rc = h.with_inner_ref(|_| panic!("boom-reader"));
+            assert_eq!(rc, TstError::PanicCaught as i32);
+            assert_eq!(
+                h.with_inner_ref(|n| *n),
+                7,
+                "reader panics keep the slot (spec §3.2 as amended; 0.6.x with_inner_ref dropped it)"
+            );
+        }
+
+        #[test]
+        fn flag_cancel_stand_in_only_latches() {
+            clear_last_error_for_test();
+            let h: CHandle<i32> = CHandle::new(1, cancel_or_latch(None), ());
+            assert!(!h.is_cancelled());
+            h.cancel();
+            assert!(h.is_cancelled());
+            // The handle itself keeps working: nothing was closed.
+            assert_eq!(h.with_inner_ref(|n| *n), 1);
+        }
+
+        #[test]
+        fn cancel_or_latch_passes_a_real_handle_through() {
+            let flag = Arc::new(ProbeCancel(AtomicBool::new(false)));
+            let some: Option<Arc<dyn TransportCancel + Send + Sync>> = Some(flag.clone());
+            let c = cancel_or_latch(some);
+            c.cancel();
+            assert!(flag.0.load(Ordering::SeqCst));
+        }
     }
 }
