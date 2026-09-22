@@ -158,7 +158,7 @@ def test_demux_receiver_url_knob_iteration_resumes_after_timeout() -> None:
     """`?recv_timeout=<ms>` on the URL arms a persistent recv deadline on
     `tstrans.rtp.DemuxReceiver` too (same knob as `tstrans.rtp.Receiver`
     — `RtpRecvSocketBuilder::from_url`, no new API). A quiet socket's
-    `next(it)` raises `RtpError(TIMEOUT)` rather than blocking forever;
+    `next(it)` raises `RtpError(BACKPRESSURE)` rather than blocking forever;
     the receiver + demuxer state survive the expiry, so once a real
     sender delivers muxed TS bytes, the SAME iterator resumes and
     yields a `DemuxEvent` instead of raising again."""
@@ -169,7 +169,7 @@ def test_demux_receiver_url_knob_iteration_resumes_after_timeout() -> None:
         it = iter(rx)
 
         # Quiet socket: the persistent deadline expires and `next()`
-        # raises RtpError(TIMEOUT) — the transport error mapping used by
+        # raises RtpError(BACKPRESSURE) — the transport error mapping used by
         # `DemuxReceiverErrorSource::Transport(Backpressure)`.
         with pytest.raises(RtpError) as exc_info:
             next(it)

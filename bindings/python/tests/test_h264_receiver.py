@@ -102,8 +102,9 @@ def test_h264_receiver_single_au_loopback() -> None:
 
 def test_h264_receiver_recv_au_per_call_timeout_ms_raises_and_recovers() -> None:
     """`recv_au(timeout_ms=N)` bounds a single call. A quiet socket raises
-    `RtpError(TIMEOUT)`; a real AU is still deliverable afterward on the
-    same receiver, proving the session stayed alive (retryable contract)."""
+    `RtpError(BACKPRESSURE)`; a real AU is still deliverable afterward on
+    the same receiver, proving the session stayed alive (retryable
+    contract)."""
     rx = tstrans.rtp.H264Receiver.listen("rtp://127.0.0.1:0?pt=96")
     addr_str = rx.local_addr()
     assert addr_str is not None

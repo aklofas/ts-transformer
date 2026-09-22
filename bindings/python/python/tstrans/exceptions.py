@@ -356,10 +356,14 @@ class RtpErrorKind(enum.IntEnum):
 
     Deprecated aliases (0.7.x only, removed in 0.8.0): `TRANSPORT` →
     `BROKEN`, `MALFORMED_PACKET` → `TOO_LARGE`, `CANCELLED` → `CLOSED`,
-    `TIMEOUT` → `BACKPRESSURE` — each `is` its successor, so existing
-    `e.kind == RtpErrorKind.CANCELLED` comparisons keep working; compare
-    against the successor. Before 0.7.0 `TRANSPORT` also covered the
-    construction-time errors, which now carry their own member.
+    `TIMEOUT` → `BACKPRESSURE`. Each `is` its successor, so the name still
+    resolves — but an `e.kind == OldName` comparison only keeps working
+    where the producer did not move: `MALFORMED_PACKET`, `CANCELLED` and
+    `TIMEOUT` each renamed in place, while `TRANSPORT` SPLIT. Before 0.7.0
+    `TRANSPORT` also covered a peer close (now `CLOSED`), an oversize
+    payload (now `TOO_LARGE`) and the construction-time errors (now the six
+    members above), so `== TRANSPORT` catches only `BROKEN` today. Compare
+    against the successor.
 
     Available only when tstrans was built with the `rtp` cargo
     feature (default-on in published wheels).
