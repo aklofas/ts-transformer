@@ -76,8 +76,9 @@ pub enum HandleState {
 pub enum CloseFailure<E> {
     /// [`Close::close`] returned this error. The slot is already empty.
     Inner(E),
-    /// [`Close::close`] panicked; the value was dropped after the unwind
-    /// was caught. The slot is already empty.
+    /// [`Close::close`] panicked, or `T`'s `Drop` did — both run inside
+    /// [`Owned::close`]'s panic boundary, so neither escapes. The value is
+    /// gone and the slot is already empty.
     Panicked {
         /// Panic message (or `"non-string panic payload"`).
         detail: String,
@@ -270,23 +271,35 @@ impl<T: Close, S> Owned<T, S> {
     ///    the slot;
     /// 2. [`Self::take`] — recovers a poisoned mutex, empties the slot;
     /// 3. [`Close::close`] on the taken value, OUTSIDE the lock, inside a
-    ///    panic boundary.
+    ///    panic boundary — the value is **moved into** that boundary, so its
+    ///    `Drop` runs inside it too.
     ///
     /// A second call finds the slot empty and returns `Ok(())` (the cancel
     /// handle is fired again — idempotent by the `TransportCancel`
-    /// contract). Never panics, so a binding's `Drop` may call it.
+    /// contract). Never panics, so a binding's `Drop` may call it — which is
+    /// why step 3 must contain the value's own drop: a panic escaping here
+    /// during an unwind aborts the process.
     ///
     /// # Errors
     ///
     /// [`CloseFailure::Inner`] / [`CloseFailure::Panicked`] from step 3; in
     /// both cases the slot is already empty and a retry is the quiet
-    /// double close.
+    /// double close. A panic from `T`'s `Drop` reports `Panicked` as well,
+    /// and takes precedence over a `Close::close` that had returned an
+    /// error — the panic is the more severe signal, and the value is gone
+    /// either way.
     pub fn close(&self) -> Result<(), CloseFailure<T::Error>> {
         self.cancel();
-        let Some(mut value) = self.take() else {
+        let Some(value) = self.take() else {
             return Ok(());
         };
-        match panic::catch(|| value.close()) {
+        // `value` is MOVED in: `Close::close` and the subsequent drop both
+        // run inside the boundary (pinned by
+        // `close_catches_a_panicking_drop_of_the_taken_value`).
+        match panic::catch(move || {
+            let mut value = value;
+            value.close()
+        }) {
             Ok(Ok(())) => Ok(()),
             Ok(Err(e)) => Err(CloseFailure::Inner(e)),
             Err(detail) => Err(CloseFailure::Panicked { detail }),
@@ -678,6 +691,42 @@ mod tests {
             "Drop-never-panics: close always recovers"
         );
         assert_eq!(f.closes.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn close_catches_a_panicking_drop_of_the_taken_value() {
+        // `close()` promises never to panic, because bindings call it from
+        // their own `Drop`, where an escaping panic during unwind aborts the
+        // process. That promise covers dropping the taken value too: `T`'s
+        // `Drop` must run INSIDE the panic boundary, not after `close()`
+        // returns.
+        struct DropPanics;
+        impl Close for DropPanics {
+            type Error = MockCloseError;
+            fn close(&mut self) -> Result<(), MockCloseError> {
+                Ok(()) // the close itself succeeds; only the drop panics
+            }
+        }
+        impl Drop for DropPanics {
+            fn drop(&mut self) {
+                panic!("drop boom");
+            }
+        }
+
+        let flag = Arc::new(AtomicBool::new(false));
+        let owned = Owned::new(
+            DropPanics,
+            Arc::new(MockCancel {
+                calls: AtomicU32::new(0),
+                flag,
+            }) as Arc<dyn TransportCancel>,
+            (),
+        );
+        match owned.close() {
+            Err(CloseFailure::Panicked { detail }) => assert_eq!(detail, "drop boom"),
+            other => panic!("expected CloseFailure::Panicked from the drop, got {other:?}"),
+        }
+        assert!(owned.is_closed());
     }
 
     // ---- concurrency: nothing but with_mut/with_ref/take/is_closed/close
