@@ -322,6 +322,215 @@ impl core::fmt::Display for BindingError {
 
 impl std::error::Error for BindingError {}
 
+use tst_core::codec::CodecParseError;
+use tst_core::error::{
+    DemuxError, KlvDecodeError, KlvEncodeError, KlvFieldError, MuxError, MuxErrorKind,
+};
+
+/// The detail a K7 wildcard produces: a variant of a `#[non_exhaustive]`
+/// upstream enum that this table does not map yet. Loud on purpose — the
+/// `scripts/check/rust/kind-table-coverage.sh` rail fails before such a
+/// variant can reach a user, so this string only ever appears if the rail
+/// itself was bypassed.
+fn unmapped(kind: BindingErrorKind, enum_name: &str, e: &dyn core::fmt::Debug) -> BindingError {
+    BindingError::new(kind, format!("unmapped {enum_name} variant: {e:?}"))
+}
+
+/// K4: the four `MuxError` variants C already numbers precisely keep their
+/// own kinds; everything else folds to `MuxError::kind()`, whose own
+/// per-variant coverage is `scripts/check/rust/mux-error-kind-coverage.sh`
+/// (tst-core). Both matches need a wildcard (`MuxError` and `MuxErrorKind`
+/// are `#[non_exhaustive]` in tst-core).
+pub fn kind_of_mux(e: &MuxError) -> BindingErrorKind {
+    match e {
+        MuxError::InvalidNal => BindingErrorKind::InvalidNal,
+        MuxError::InvalidAv1Obu => BindingErrorKind::InvalidAv1Obu,
+        MuxError::MispTime(_) => BindingErrorKind::MispTime,
+        MuxError::KlvTooLarge { .. } => BindingErrorKind::KlvTooLarge,
+        _ => match e.kind() {
+            MuxErrorKind::InputMalformed => BindingErrorKind::InputMalformed,
+            MuxErrorKind::ConfigInvalid => BindingErrorKind::ConfigInvalid,
+            MuxErrorKind::InvalidUsage => BindingErrorKind::InvalidUsage,
+            MuxErrorKind::Backpressure => BindingErrorKind::Backpressure,
+            MuxErrorKind::Internal => BindingErrorKind::Internal,
+            _ => BindingErrorKind::Internal,
+        },
+    }
+}
+
+impl From<MuxError> for BindingError {
+    fn from(e: MuxError) -> Self {
+        // No `unmapped` routing here: `MuxErrorKind::Internal` is a real
+        // mapping target (table row 10), not a fallthrough.
+        BindingError::new(kind_of_mux(&e), e.to_string())
+    }
+}
+
+/// Every `DemuxError` variant, 1:1 (K3). Wildcard required (K7); the
+/// kind-table rail greps every variant before it.
+pub fn kind_of_demux(e: &DemuxError) -> BindingErrorKind {
+    match e {
+        DemuxError::Unrecoverable { .. } => BindingErrorKind::DemuxUnrecoverable,
+        DemuxError::StrictRejection(_) => BindingErrorKind::DemuxStrictRejection,
+        DemuxError::MalformedPsi { .. } => BindingErrorKind::DemuxMalformedPsi,
+        DemuxError::MalformedPes { .. } => BindingErrorKind::DemuxMalformedPes,
+        DemuxError::SyncBufExhausted { .. } => BindingErrorKind::DemuxSyncBufExhausted,
+        _ => BindingErrorKind::Internal,
+    }
+}
+
+impl From<DemuxError> for BindingError {
+    fn from(e: DemuxError) -> Self {
+        match kind_of_demux(&e) {
+            BindingErrorKind::Internal => unmapped(BindingErrorKind::Internal, "DemuxError", &e),
+            k => BindingError::new(k, e.to_string()),
+        }
+    }
+}
+
+/// The six KLV-decode buckets (K3), byte-for-byte the routing at
+/// `bindings/python/src/klv.rs:97-121` / `bindings/jvm/src/error.rs:138-163`.
+pub fn kind_of_klv_decode(e: &KlvDecodeError) -> BindingErrorKind {
+    match e {
+        KlvDecodeError::Truncated { .. }
+        | KlvDecodeError::MalformedLength { .. }
+        | KlvDecodeError::LengthOverflow { .. } => BindingErrorKind::KlvDecodeTruncatedSet,
+        KlvDecodeError::UnexpectedUniversalLabel { .. } => {
+            BindingErrorKind::KlvDecodeBadUniversalLabel
+        }
+        KlvDecodeError::ChecksumMismatch { .. } | KlvDecodeError::Crc32Mismatch { .. } => {
+            BindingErrorKind::KlvDecodeChecksumMismatch
+        }
+        KlvDecodeError::DuplicateTag { .. } => BindingErrorKind::KlvDecodeDuplicateTag,
+        KlvDecodeError::Tag2NotFirst
+        | KlvDecodeError::Tag1NotLast
+        | KlvDecodeError::MissingTag65
+        | KlvDecodeError::St0102MissingRequiredTag { .. }
+        | KlvDecodeError::St0903MissingRequiredTag { .. } => {
+            BindingErrorKind::KlvDecodeMissingRequiredTag
+        }
+        KlvDecodeError::MalformedTag { .. }
+        | KlvDecodeError::NonCanonicalLength { .. }
+        | KlvDecodeError::NonCanonicalTag { .. }
+        | KlvDecodeError::TrailingBytes { .. }
+        | KlvDecodeError::BadTimeStampPackLength { .. }
+        | KlvDecodeError::ReservedBitsInvalid { .. }
+        | KlvDecodeError::St0903InvalidVTargetPack { .. }
+        | KlvDecodeError::FieldError(_) => BindingErrorKind::KlvDecodeMalformedBytes,
+        _ => BindingErrorKind::Internal,
+    }
+}
+
+impl From<KlvDecodeError> for BindingError {
+    fn from(e: KlvDecodeError) -> Self {
+        match kind_of_klv_decode(&e) {
+            BindingErrorKind::Internal => {
+                unmapped(BindingErrorKind::Internal, "KlvDecodeError", &e)
+            }
+            k => BindingError::new(k, e.to_string()),
+        }
+    }
+}
+
+/// `KlvFieldError` on its own (the SRT umbrella carries one; the Python
+/// klv module raises it directly): `TruncatedField` is a truncated set,
+/// every other field failure is malformed bytes
+/// (`bindings/python/src/klv.rs:140-141`, table rows 67 + 72).
+pub fn kind_of_klv_field(e: &KlvFieldError) -> BindingErrorKind {
+    match e {
+        KlvFieldError::TruncatedField { .. } => BindingErrorKind::KlvDecodeTruncatedSet,
+        KlvFieldError::OutOfRange { .. }
+        | KlvFieldError::InvalidUtf8 { .. }
+        | KlvFieldError::InvalidLength { .. }
+        | KlvFieldError::InvalidUtf16 { .. }
+        | KlvFieldError::InvalidCodepoint { .. }
+        | KlvFieldError::UnsupportedImapbLength { .. }
+        | KlvFieldError::InvalidImapbParams { .. } => BindingErrorKind::KlvDecodeMalformedBytes,
+        _ => BindingErrorKind::Internal,
+    }
+}
+
+impl From<KlvFieldError> for BindingError {
+    fn from(e: KlvFieldError) -> Self {
+        match kind_of_klv_field(&e) {
+            BindingErrorKind::Internal => unmapped(BindingErrorKind::Internal, "KlvFieldError", &e),
+            k => BindingError::new(k, e.to_string()),
+        }
+    }
+}
+
+/// Every `KlvEncodeError` variant, 1:1 (K3).
+pub fn kind_of_klv_encode(e: &KlvEncodeError) -> BindingErrorKind {
+    match e {
+        KlvEncodeError::BufferTooSmall { .. } => BindingErrorKind::KlvEncodeBufferTooSmall,
+        KlvEncodeError::RecordTooLarge => BindingErrorKind::KlvEncodeRecordTooLarge,
+        KlvEncodeError::OutOfRange { .. } => BindingErrorKind::KlvEncodeOutOfRange,
+        KlvEncodeError::StringTooLong { .. } => BindingErrorKind::KlvEncodeStringTooLong,
+        KlvEncodeError::UnsupportedImapbLength { .. } => {
+            BindingErrorKind::KlvEncodeUnsupportedImapbLength
+        }
+        KlvEncodeError::InvalidImapbParams { .. } => BindingErrorKind::KlvEncodeInvalidImapbParams,
+        KlvEncodeError::MissingMandatoryItem { .. } => {
+            BindingErrorKind::KlvEncodeMissingMandatoryItem
+        }
+        KlvEncodeError::ReservedTagInUnknown { .. } => {
+            BindingErrorKind::KlvEncodeReservedTagInUnknown
+        }
+        KlvEncodeError::VTargetPackEmpty { .. } => BindingErrorKind::KlvEncodeVTargetPackEmpty,
+        KlvEncodeError::DuplicateTargetId { .. } => BindingErrorKind::KlvEncodeDuplicateTargetId,
+        KlvEncodeError::ForbiddenStandaloneOffset { .. } => {
+            BindingErrorKind::KlvEncodeForbiddenStandaloneOffset
+        }
+        _ => BindingErrorKind::Internal,
+    }
+}
+
+impl From<KlvEncodeError> for BindingError {
+    fn from(e: KlvEncodeError) -> Self {
+        match kind_of_klv_encode(&e) {
+            BindingErrorKind::Internal => {
+                unmapped(BindingErrorKind::Internal, "KlvEncodeError", &e)
+            }
+            k => BindingError::new(k, e.to_string()),
+        }
+    }
+}
+
+/// Every `CodecParseError` variant, 1:1 (K3).
+pub fn kind_of_codec(e: &CodecParseError) -> BindingErrorKind {
+    match e {
+        CodecParseError::TruncatedRbsp { .. } => BindingErrorKind::CodecTruncatedRbsp,
+        CodecParseError::InvalidGolomb { .. } => BindingErrorKind::CodecInvalidGolomb,
+        CodecParseError::ReservedValue { .. } => BindingErrorKind::CodecReservedValue,
+        CodecParseError::UnsupportedProfile { .. } => BindingErrorKind::CodecUnsupportedProfile,
+        CodecParseError::DanglingSpsReference { .. } => BindingErrorKind::CodecDanglingSpsReference,
+        CodecParseError::DanglingVpsReference { .. } => BindingErrorKind::CodecDanglingVpsReference,
+        CodecParseError::EngineError(_) => BindingErrorKind::CodecEngineError,
+        CodecParseError::InvalidLeb128 { .. } => BindingErrorKind::CodecInvalidLeb128,
+        CodecParseError::BadSyncWord { .. } => BindingErrorKind::CodecBadSyncWord,
+        CodecParseError::Truncated { .. } => BindingErrorKind::CodecTruncated,
+        CodecParseError::Forbidden { .. } => BindingErrorKind::CodecForbidden,
+        CodecParseError::UnsupportedFreeFormat { .. } => {
+            BindingErrorKind::CodecUnsupportedFreeFormat
+        }
+        CodecParseError::InvalidLengthSize { .. } => BindingErrorKind::CodecInvalidLengthSize,
+        CodecParseError::NalLengthOverflow { .. } => BindingErrorKind::CodecNalLengthOverflow,
+        CodecParseError::BufferTooSmall { .. } => BindingErrorKind::CodecBufferTooSmall,
+        _ => BindingErrorKind::Internal,
+    }
+}
+
+impl From<CodecParseError> for BindingError {
+    fn from(e: CodecParseError) -> Self {
+        match kind_of_codec(&e) {
+            BindingErrorKind::Internal => {
+                unmapped(BindingErrorKind::Internal, "CodecParseError", &e)
+            }
+            k => BindingError::new(k, e.to_string()),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -500,5 +709,181 @@ mod tests {
         let e = BindingError::new(BindingErrorKind::Closed, "handle is closed");
         assert_eq!(e.to_string(), "handle is closed");
         assert_eq!(e.kind, BindingErrorKind::Closed);
+    }
+
+    #[test]
+    fn mux_error_four_precise_kinds_and_kind_fallback() {
+        use BindingErrorKind as K;
+        use tst_core::error::MuxError;
+        use tst_core::mpegts::mux::StreamKind;
+        assert_eq!(kind_of_mux(&MuxError::InvalidNal), K::InvalidNal);
+        assert_eq!(kind_of_mux(&MuxError::InvalidAv1Obu), K::InvalidAv1Obu);
+        assert_eq!(
+            kind_of_mux(&MuxError::KlvTooLarge {
+                size: 70000,
+                max: 65535
+            }),
+            K::KlvTooLarge
+        );
+        assert_eq!(
+            kind_of_mux(&MuxError::BufferFull {
+                capacity_packets: 1
+            }),
+            K::Backpressure
+        );
+        assert_eq!(
+            kind_of_mux(&MuxError::AudioTooLarge { size: 2, max: 1 }),
+            K::InputMalformed
+        );
+        assert_eq!(kind_of_mux(&MuxError::InvalidConfig("x")), K::ConfigInvalid);
+        assert_eq!(
+            kind_of_mux(&MuxError::InvalidStreamHandle {
+                kind: StreamKind::Video,
+                index: 9
+            }),
+            K::InvalidUsage
+        );
+        let e: BindingError = MuxError::InvalidNal.into();
+        assert_eq!(e.detail, MuxError::InvalidNal.to_string());
+    }
+
+    #[test]
+    fn demux_error_five_variants() {
+        use BindingErrorKind as K;
+        use tst_core::error::DemuxError;
+        assert_eq!(
+            kind_of_demux(&DemuxError::Unrecoverable { after_bytes: 6016 }),
+            K::DemuxUnrecoverable
+        );
+        assert_eq!(
+            kind_of_demux(&DemuxError::StrictRejection("x".into())),
+            K::DemuxStrictRejection
+        );
+        assert_eq!(
+            kind_of_demux(&DemuxError::MalformedPsi {
+                pid: 0,
+                reason: "r"
+            }),
+            K::DemuxMalformedPsi
+        );
+        assert_eq!(
+            kind_of_demux(&DemuxError::MalformedPes {
+                pid: 0,
+                reason: "r"
+            }),
+            K::DemuxMalformedPes
+        );
+        assert_eq!(
+            kind_of_demux(&DemuxError::SyncBufExhausted {
+                observed: 5,
+                max: 4
+            }),
+            K::DemuxSyncBufExhausted
+        );
+    }
+
+    #[test]
+    fn klv_decode_buckets_match_the_python_table() {
+        use BindingErrorKind as K;
+        use tst_core::error::KlvDecodeError as E;
+        assert_eq!(
+            kind_of_klv_decode(&E::Truncated {
+                offset: 0,
+                needed: 2,
+                have: 1
+            }),
+            K::KlvDecodeTruncatedSet
+        );
+        assert_eq!(
+            kind_of_klv_decode(&E::LengthOverflow { value: u64::MAX }),
+            K::KlvDecodeTruncatedSet
+        );
+        assert_eq!(
+            kind_of_klv_decode(&E::ChecksumMismatch {
+                expected: 1,
+                found: 2
+            }),
+            K::KlvDecodeChecksumMismatch
+        );
+        assert_eq!(
+            kind_of_klv_decode(&E::Crc32Mismatch {
+                expected: 1,
+                found: 2
+            }),
+            K::KlvDecodeChecksumMismatch
+        );
+        assert_eq!(
+            kind_of_klv_decode(&E::DuplicateTag { tag: 2, offset: 9 }),
+            K::KlvDecodeDuplicateTag
+        );
+        assert_eq!(
+            kind_of_klv_decode(&E::MissingTag65),
+            K::KlvDecodeMissingRequiredTag
+        );
+        assert_eq!(
+            kind_of_klv_decode(&E::St0102MissingRequiredTag { tag: 1 }),
+            K::KlvDecodeMissingRequiredTag
+        );
+        assert_eq!(
+            kind_of_klv_decode(&E::TrailingBytes { len: 3 }),
+            K::KlvDecodeMalformedBytes
+        );
+        assert_eq!(
+            kind_of_klv_decode(&E::NonCanonicalTag { offset: 1 }),
+            K::KlvDecodeMalformedBytes
+        );
+    }
+
+    #[test]
+    fn klv_encode_and_codec_are_one_to_one() {
+        use BindingErrorKind as K;
+        use tst_core::codec::CodecParseError as C;
+        use tst_core::error::KlvEncodeError as E;
+        assert_eq!(
+            kind_of_klv_encode(&E::RecordTooLarge),
+            K::KlvEncodeRecordTooLarge
+        );
+        assert_eq!(
+            kind_of_klv_encode(&E::OutOfRange {
+                tag: 13,
+                value: 91.0,
+                min: -90.0,
+                max: 90.0,
+                hint: None
+            }),
+            K::KlvEncodeOutOfRange
+        );
+        assert_eq!(
+            kind_of_klv_encode(&E::VTargetPackEmpty { target_id: 1 }),
+            K::KlvEncodeVTargetPackEmpty
+        );
+        assert_eq!(
+            kind_of_codec(&C::TruncatedRbsp {
+                offset_bits: 1,
+                needed_bits: 2
+            }),
+            K::CodecTruncatedRbsp
+        );
+        assert_eq!(
+            kind_of_codec(&C::EngineError("x".into())),
+            K::CodecEngineError
+        );
+        assert_eq!(
+            kind_of_codec(&C::InvalidLengthSize { got: 3 }),
+            K::CodecInvalidLengthSize
+        );
+        assert_eq!(
+            kind_of_codec(&C::NalLengthOverflow {
+                nal_len: 70000,
+                length_size: 2
+            }),
+            K::CodecNalLengthOverflow
+        );
+        assert_eq!(
+            kind_of_codec(&C::BufferTooSmall { needed: 9, have: 1 }),
+            K::CodecBufferTooSmall
+        );
+        assert_eq!(K::CodecInvalidLengthSize.c_projection(), -1);
+        assert_eq!(K::CodecNalLengthOverflow.c_projection(), -6);
     }
 }
