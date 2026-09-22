@@ -120,7 +120,10 @@ mod tests {
     use tst_core::transport::{TransportCancel, TransportError};
 
     use crate::binding::{FlagCancel, Owned};
-    use crate::{MuxSender, ReceiverConfig, SenderConfig};
+    use crate::{
+        DemuxReceiver, ManagedDemuxReceiver, MuxSender, RawReceiver, RawSender, ReceiverConfig,
+        SenderConfig,
+    };
 
     /// Send-side mock that records its close.
     struct Sink(Arc<AtomicBool>);
@@ -216,6 +219,86 @@ mod tests {
         assert!(
             closed.load(Ordering::SeqCst),
             "MuxSender::close closed its transport (mux_sender.rs:1017)"
+        );
+        assert!(owned.is_closed());
+    }
+
+    #[test]
+    fn owned_close_reaches_the_raw_sender_shell_and_its_transport() {
+        use crate::RawSenderConfig;
+
+        let closed = Arc::new(AtomicBool::new(false));
+        let owned = Owned::new(
+            RawSender::new(Sink(Arc::clone(&closed)), RawSenderConfig::default()),
+            cancel(),
+            (),
+        );
+        assert!(owned.close().is_ok());
+        assert!(
+            closed.load(Ordering::SeqCst),
+            "RawSender::close closed its transport"
+        );
+        assert!(owned.is_closed());
+    }
+
+    #[test]
+    fn owned_close_reaches_the_raw_receiver_shell_and_its_transport() {
+        use crate::RawReceiverConfig;
+
+        let closed = Arc::new(AtomicBool::new(false));
+        let owned = Owned::new(
+            RawReceiver::new(Source(Arc::clone(&closed)), RawReceiverConfig::default()),
+            cancel(),
+            (),
+        );
+        assert!(owned.close().is_ok());
+        assert!(
+            closed.load(Ordering::SeqCst),
+            "RawReceiver::close closed its transport"
+        );
+        assert!(owned.is_closed());
+    }
+
+    #[test]
+    fn owned_close_reaches_the_demux_receiver_shell_and_its_transport() {
+        let closed = Arc::new(AtomicBool::new(false));
+        let owned = Owned::new(
+            DemuxReceiver::new(Source(Arc::clone(&closed))),
+            cancel(),
+            (),
+        );
+        assert!(owned.close().is_ok());
+        assert!(
+            closed.load(Ordering::SeqCst),
+            "DemuxReceiver::close closed its transport"
+        );
+        assert!(owned.is_closed());
+    }
+
+    #[test]
+    fn owned_close_reaches_the_managed_demux_receiver_shell_and_its_transport() {
+        use crate::ManagedDemuxReceiverConfig;
+        use crate::managed_receive::ManagedRecvTransport;
+        use crate::reconnect::ReconnectPolicy;
+
+        let closed = Arc::new(AtomicBool::new(false));
+        // The factory is never called: nothing here provokes a reconnect.
+        let factory: Box<dyn FnMut() -> Result<Source, TransportError> + Send> =
+            Box::new(|| Err(TransportError::Closed));
+        let managed = ManagedRecvTransport::new(
+            Source(Arc::clone(&closed)),
+            factory,
+            ReconnectPolicy::default(),
+        );
+        let owned = Owned::new(
+            ManagedDemuxReceiver::new(managed, ManagedDemuxReceiverConfig::default()),
+            cancel(),
+            (),
+        );
+        assert!(owned.close().is_ok());
+        assert!(
+            closed.load(Ordering::SeqCst),
+            "ManagedDemuxReceiver::close closed its transport through the managed wrapper"
         );
         assert!(owned.is_closed());
     }

@@ -1454,7 +1454,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     PR #189 and #234 hang classes cannot recur through this type), and
     `close()` = cancel-first → take → `Close::close` outside the lock; a
     second `close()` is `Ok(())`. A panic inside a closure is reported as
-    `HandleState::Panicked { detail }` and does **not** poison the slot.
+    `HandleState::Panicked { detail }` and does **not** poison the mutex; a
+    panicking **mutator** drops the value (later calls report `Closed`), a
+    panicking **reader** keeps it.
   - `binding::owned::{Close, HandleState, CloseFailure}` — `Close` is
     implemented for `Sender`, `RawSender`, `MuxSender`, `Receiver`,
     `RawReceiver`, `DemuxReceiver`, `ManagedDemuxReceiver` (all
