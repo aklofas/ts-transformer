@@ -361,8 +361,9 @@ impl SrtUrl {
     /// ([`UrlOverlay::apply_to_listener`]) and renders the bind address
     /// the way the bindings' `listen_srt` did. Single-accept: the
     /// listener is dropped on return. Share the same `cancel` slot with
-    /// a managed transport's [`FactoryCancel`](tst_core::cancel::CancelSlot)
-    /// so a re-accept parked with no peer in sight can be woken by the
+    /// a managed transport's `tst_pipeline::FactoryCancel` — a type alias
+    /// for this very [`CancelSlot`] — so a
+    /// re-accept parked with no peer in sight can be woken by the
     /// transport's cancel handle — `tst_srt::shells` wires that.
     ///
     /// # Errors
