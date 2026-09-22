@@ -111,7 +111,7 @@ public final class DemuxReceiver extends NativeHandle implements Iterable<DemuxE
      * {@code ?recv_timeout=<ms>} URL knob) expiring throws
      * {@code RtpException(BACKPRESSURE)} here rather than a wrapped
      * {@code RuntimeException}. The receiver stays usable after a
-     * {@code TIMEOUT} (retryable) — a subsequent {@code recvEvent()} call
+     * {@code BACKPRESSURE} (retryable) — a subsequent {@code recvEvent()} call
      * resumes normally.
      *
      * <p>{@code recvEvent()} and {@link #iterator()} share the single-iterator
@@ -121,8 +121,8 @@ public final class DemuxReceiver extends NativeHandle implements Iterable<DemuxE
      * @return the next {@link DemuxEvent}, or {@code null} at end of stream
      * @throws IllegalStateException if the receiver is closed
      * @throws RtpException {@code CLOSED} if a cancel fired; {@code IO}
-     *     otherwise; {@code TIMEOUT} if the persistent {@code ?recv_timeout=}
-     *     deadline expires
+     *     otherwise; {@code BACKPRESSURE} if the persistent
+     *     {@code ?recv_timeout=} deadline expires
      * @throws DemuxException on a demux-side error
      */
     public DemuxEvent recvEvent() throws RtpException, DemuxException {

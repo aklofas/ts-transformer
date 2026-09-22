@@ -79,8 +79,13 @@ public final class H264Receiver extends NativeHandle implements Iterable<H264Acc
      * @param url {@code rtp://host:port?pt=N} where {@code N} is the dynamic
      *     payload type (1..=127; 33 is rejected — use {@link DemuxReceiver} for MPEG-TS)
      * @return a bound {@code H264Receiver}
-     * @throws RtpException {@code IO} on URL parse failure, missing
-     *     {@code ?pt=}, or socket bind error
+     * @throws RtpException one member per open-path cause:
+     *     {@code MISSING_PAYLOAD_TYPE_PARAM} if {@code ?pt=} is absent,
+     *     {@code URL} on a malformed URL or a rejected URL parameter (a
+     *     {@code ?pt=} value outside 1..=127, or 33, lands here),
+     *     {@code HOST_NOT_LITERAL} if the host is not a literal address,
+     *     {@code IFACE_UNSUPPORTED} for an unsupported multicast interface,
+     *     {@code IO} on the socket bind itself
      */
     public static H264Receiver listen(String url) throws RtpException {
         long h = nListen(url);
@@ -129,7 +134,7 @@ public final class H264Receiver extends NativeHandle implements Iterable<H264Acc
      * @return the next {@link H264AccessUnit}, or {@code null} at EOS (clean close
      *     or RTSP teardown — caller should exit the recv loop)
      * @throws RtpException {@code CLOSED} if the cancel handle was fired
-     *     explicitly; {@code IO} on a hard I/O error; {@code TIMEOUT} if
+     *     explicitly; {@code IO} on a hard I/O error; {@code BACKPRESSURE} if
      *     a configured persistent recv deadline (the {@code ?recv_timeout=<ms>}
      *     URL knob) expires
      * @throws IllegalStateException if the receiver is already closed
@@ -157,7 +162,7 @@ public final class H264Receiver extends NativeHandle implements Iterable<H264Acc
      *     {@code null} return never means the deadline expired — expiry always
      *     throws {@code RtpException(BACKPRESSURE)}.
      * @throws RtpException {@code CLOSED} if the cancel handle was fired
-     *     explicitly; {@code IO} on a hard I/O error; {@code TIMEOUT} if
+     *     explicitly; {@code IO} on a hard I/O error; {@code BACKPRESSURE} if
      *     {@code timeoutMs} elapses, or (when {@code timeoutMs} is {@code null})
      *     a configured persistent recv deadline expires
      * @throws IllegalStateException if the receiver is already closed
