@@ -98,12 +98,9 @@ public final class Receiver extends NativeHandle {
      * after {@link #close()} — the close path snapshots the reason before
      * the underlying native resource is freed.
      *
-     * <p><b>Blocking:</b> while open, this takes the same internal resource
-     * lock a parked {@link #recv} holds — if a recv is currently in flight on
-     * this receiver, {@code endReason()} blocks until it returns (data,
-     * timeout, or cancel). Call after a recv loop observes its terminal
-     * outcome, or from the same thread driving the recv loop, to avoid
-     * blocking. Once closed, this never blocks (returns the cached snapshot).
+     * <p><b>Never blocks:</b> the reason is read off a lock-free cell captured
+     * when the receiver was opened, so it answers while a recv is parked on
+     * another thread. Once closed, it returns the cached snapshot.
      *
      * <p><b>Cross-thread close race:</b> a concurrent call from another
      * thread while {@link #close()} is in flight may briefly observe

@@ -238,7 +238,7 @@ The 9 config knobs:
 | `auCellCapPerPid` | `long` | `0` (Rust default) | Per-PID AU-cell reassembly byte cap. |
 | `av1Carriage` | `Av1CarriageMode` | `MPEG2_TS_BINDING` | AV1 carriage: `MPEG2_TS_BINDING` or `INTEROP_RAW_OBU`. |
 | `lenientPsiReassembly` | `boolean` | `false` | Relax PSI section reassembly. |
-| `syncBufCap` | `long` | `0` (Rust default, 4 MiB) | Pre-sync ingress buffer ceiling in bytes; a `feed()` call larger than this throws `DemuxException` (kind `SYNC_LOSS`) before consuming any bytes. |
+| `syncBufCap` | `long` | `0` (Rust default, 4 MiB) | Pre-sync ingress buffer ceiling in bytes; a `feed()` call larger than this throws `DemuxException` (kind `SYNC_BUF_EXHAUSTED`) before consuming any bytes. |
 | `unwrapTimestamps` | `boolean` | `false` | Unwrap the raw 33-bit 90 kHz PTS/DTS onto a continuous per-program timeline that carries across the ~26.5 h rollover, instead of emitting the raw wire value. |
 
 A `long` knob of `0` means "use the Rust core's default cap."
@@ -699,9 +699,10 @@ wrapping `DemuxException` (Java streams cannot propagate checked exceptions
 during iteration). An I/O read error surfaces as `UncheckedIOException`.
 Truncation is a clean end — the stream terminates normally with no error.
 
-> **`UNEXPECTED_EOF` note.** `DemuxException.Kind.UNEXPECTED_EOF` exists for
-> tst-py parity but is never thrown by the file path: truncation is treated as
-> clean EOF and read failures surface as `UncheckedIOException`.
+> **Truncation note.** The file path never reports truncation as an error:
+> it is treated as a clean EOF, and read failures surface as
+> `UncheckedIOException`. (The parity-only `DemuxException.Kind.UNEXPECTED_EOF`
+> was retired in 0.7.0 — it had no producer in any binding.)
 
 ### Probe a file
 
@@ -977,6 +978,14 @@ itself safe from another thread at any time — `cancelHandle()` returns
 promptly even while `sendBytes` / `send*` / `recvBytes` / `next()` / `accept()`
 is parked on the same object, so it need not be taken before iterating.
 
+Since 0.7.0 `isCancelled()` reports the SHELL's one cancel state, not the
+handle's own: it is `true` once `cancel()` was called on ANY handle of that
+shell, or the shell was `close()`d (close cancels first). Every handle of one
+shell therefore agrees, and a handle that outlives its shell's `close()`
+answers `true` rather than `false`. Before 0.7.0 each handle carried a private
+flag, so a second handle read `false` after the first cancelled and `close()`
+set nothing.
+
 ### SRT-specific Gotchas
 
 - **One-shot accept on `Receiver.fromUrl`.** `Receiver.fromUrl` binds,
@@ -1232,12 +1241,13 @@ since a peer FIN reaches the reconnect decorator as a retryable break) and
 `CANCELLED` (`cancelHandle().cancel()` fired, or `close()` was called from
 another thread while `next()` was parked — `close()` cancels first, so the
 parked iteration ends with `SrtException(CLOSED)`; a `close()` with no
-iteration in flight ends nothing and records nothing). `END_OF_STREAM` is
-reserved for a future receive transport that can signal a clean end distinct
-from budget exhaustion. The surface exists specifically to tell a
-caller-initiated cancel apart from a budget-exhausted give-up, which
-otherwise both surface identically as `SrtException(CLOSED)` from the
-iterator. It reads a lock-free cell captured when the receiver is opened, so
+iteration in flight ends nothing and records nothing). `RecvEndReason.END_OF_STREAM`
+is reserved for a future receive transport that can signal a clean end
+distinct from budget exhaustion — do not confuse it with the unrelated
+`SrtException.Kind.END_OF_STREAM`, which 0.7.0 added for the ERROR a receive
+raises at end of stream (see "Error kinds" below). The surface exists
+specifically to tell a caller-initiated cancel apart from a budget-exhausted
+give-up. It reads a lock-free cell captured when the receiver is opened, so
 it answers while another thread is parked in `next()` and keeps answering
 after `close()`.
 
@@ -1334,7 +1344,7 @@ try (Sender s = Sender.fromUrl("rtp://239.0.0.1:5004")) {
 `send(byte[])` accepts a TS payload up to the configured packet size **minus the
 12-byte RTP header** prepended to every datagram — i.e. up to
 `Sender.DEFAULT_PKT_SIZE - 12` = 1304 bytes at the default `pkt_size` of 1316. A
-payload that exceeds the cap throws `RtpException(MALFORMED_PACKET)`.
+payload that exceeds the cap throws `RtpException(TOO_LARGE)`.
 
 ### Receiver hello
 
@@ -1368,7 +1378,7 @@ var rx = Receiver.fromUrl("rtp://127.0.0.1:5004");
 var cancel = rx.cancelHandle();
 
 // On another thread:
-cancel.cancel();  // wakes rx.recv() → throws RtpException(CANCELLED)
+cancel.cancel();  // wakes rx.recv() → throws RtpException(CLOSED)
 ```
 
 `CancelHandle` is safe to share across threads; `cancel()` and `close()` are
@@ -1378,7 +1388,8 @@ cancel.cancel();  // wakes rx.recv() → throws RtpException(CANCELLED)
 
 - **`Sender` / `Receiver` are not thread-safe.** Use one per thread. A
   cross-thread stop goes through `cancelHandle().cancel()`, which wakes a parked
-  `send`/`recv` with `RtpException(CANCELLED)`.
+  `send`/`recv` with `RtpException(CLOSED)` (detail `cancelled from another
+  thread`).
 - **`org.tstrans.rtp.SocketStats` is a distinct type from
   `org.tstrans.srt.SocketStats`.** Same 16-field shape, different package. The
   RTCP-derived fields (`rttUs`, `packetsLost*`) stay zero until RTCP ingest is
@@ -1486,7 +1497,7 @@ Both `Receiver.recv()` and `DemuxReceiver` iteration block indefinitely by
 default — fine for a live camera, less fine for a quiet socket you want to
 notice going quiet. `?recv_timeout=<ms>` on a `rtp://` (or `rtsp(s)://`) URL
 arms a persistent receive deadline: a `recv()` / `recvEvent()` call that
-would otherwise block forever instead throws `RtpException(TIMEOUT)` after
+would otherwise block forever instead throws `RtpException(BACKPRESSURE)` after
 `<ms>` milliseconds of silence, and the receiver stays open — call again to
 keep waiting:
 
@@ -1521,10 +1532,25 @@ always wins over a configured URL deadline for that one call; pass `null` to
 fall back to the configured deadline, or block indefinitely if none is
 configured). `RtspClientConfig`'s URL accepts the same `?recv_timeout=` key;
 it carries through `intoDemuxReceiver()` / `intoH264Receiver()` automatically.
-`TIMEOUT` is retryable — the transport and session are both still alive,
-unlike `CANCELLED` or `TRANSPORT`. Use `recvEvent()`, not the `Iterator`
-(`for (var event : rx)`), when you need to catch `TIMEOUT` as a checked
-exception — the iterator wraps it in an unchecked `RuntimeException`.
+`BACKPRESSURE` is retryable — the transport and session are both still
+alive, unlike `CLOSED` or `BROKEN`. Use `recvEvent()`, not the `Iterator`
+(`for (var event : rx)`), when you need to catch it as a checked exception —
+the iterator wraps it in an unchecked `RuntimeException`.
+
+> **0.7.0 kind changes.** The rtp deadline was `RtpException(TIMEOUT)`, a
+> cancel was `CANCELLED`, an oversized payload `MALFORMED_PACKET`, and every
+> other transport or connect failure the catch-all `TRANSPORT`. All four
+> members are gone: a deadline is `BACKPRESSURE`, a cancel or close is
+> `CLOSED`, an oversized payload is `TOO_LARGE`, a dead transport is `BROKEN`,
+> and each `ConnectError` has its own member (`URL`,
+> `PAYLOAD_TYPE_PARAM`, `MISSING_PAYLOAD_TYPE_PARAM`, `HOST_NOT_LITERAL`,
+> `IO`, `IFACE_UNSUPPORTED`). On the srt side `WOULD_BLOCK` became
+> `BACKPRESSURE`, a TS-sync loss on `sendBytes` became `INPUT_MALFORMED`, an
+> oversized payload `TOO_LARGE`, and a receive that reaches end of stream now
+> raises the new `SrtException.Kind.END_OF_STREAM` where it used to say
+> `CLOSED`. Every kind name is now the shared `BindingErrorKind` member, and
+> `NativeLoader.load()` verifies at load time that the JAR's enums carry every
+> kind the native library can raise.
 
 ## RTSP client (`org.tstrans.rtp`)
 
