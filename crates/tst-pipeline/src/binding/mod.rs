@@ -21,5 +21,4 @@
 pub mod owned;
 pub mod panic;
 
-// Task A1.2 re-enables this once `owned.rs` defines the items.
-// pub use owned::{Close, CloseFailure, HandleState, Owned};
+pub use owned::{Close, CloseFailure, HandleState, Owned};
