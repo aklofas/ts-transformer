@@ -356,54 +356,73 @@ pub(crate) fn verify_kind_tables(env: &mut JNIEnv) {
 /// Construct + throw `org.tstrans.DemuxException(Kind.<kind>, message)`.
 /// `kind` MUST be one of the `DemuxException.Kind` enum constant names
 /// (SCREAMING_SNAKE_CASE), matching the Rust `DemuxError` variants 1:1.
-pub fn throw_demux(env: &mut JNIEnv, kind: &str, message: &str) {
-    throw_family(
-        env,
-        "org/tstrans/DemuxException",
-        "Lorg/tstrans/DemuxException$Kind;",
-        kind,
-        message,
-    );
+pub fn throw_demux(env: &mut JNIEnv, kind: BindingErrorKind, message: &str) {
+    throw_binding(env, Domain::Demux, &BindingError::new(kind, message));
 }
 
 /// Construct + throw `org.tstrans.MuxException(Kind.<kind>, message)`.
 /// `kind` MUST be one of the `MuxException.Kind` enum constant names
 /// (SCREAMING_SNAKE_CASE), matching the 5-variant `MuxErrorKind` buckets.
-pub fn throw_mux(env: &mut JNIEnv, kind: &str, message: &str) {
-    throw_family(
-        env,
-        "org/tstrans/MuxException",
-        "Lorg/tstrans/MuxException$Kind;",
-        kind,
-        message,
-    );
+pub fn throw_mux(env: &mut JNIEnv, kind: BindingErrorKind, message: &str) {
+    throw_binding(env, Domain::Mux, &BindingError::new(kind, message));
 }
 
 /// Construct + throw `org.tstrans.KlvDecodeException(Kind.<kind>, message)`.
 /// `kind` MUST be one of the `KlvDecodeException.Kind` constant names
 /// (SCREAMING_SNAKE_CASE). The ratchet greps for `throw_klv_decode(env, "<CONST>", ...)`.
-pub fn throw_klv_decode(env: &mut JNIEnv, kind: &str, message: &str) {
-    throw_family(
-        env,
-        "org/tstrans/KlvDecodeException",
-        "Lorg/tstrans/KlvDecodeException$Kind;",
-        kind,
-        message,
-    );
+pub fn throw_klv_decode(env: &mut JNIEnv, kind: BindingErrorKind, message: &str) {
+    throw_binding(env, Domain::KlvDecode, &BindingError::new(kind, message));
 }
 
 /// Construct + throw `org.tstrans.KlvEncodeException(Kind.<kind>, tag, message)`.
 /// `tag` = `None` → uses the `(Kind, String)` ctor; `Some(t)` → uses
 /// `(Kind, Long, String)`. The ratchet greps for `throw_klv_encode(env, "<CONST>", ...)`.
-pub fn throw_klv_encode(env: &mut JNIEnv, kind: &str, tag: Option<u64>, message: &str) {
+/// Raw-member variant for the `jni-test-hooks` probes ONLY
+/// (`klv/mod.rs::nRaiseDecodeForTest`): the test names a Java member directly,
+/// so there is no `BindingErrorKind` to resolve. Never used on a real error
+/// path — those all go through [`throw_klv_decode`].
+#[cfg(feature = "jni-test-hooks")]
+pub fn throw_klv_decode_raw(env: &mut JNIEnv, member: &str, message: &str) {
+    throw_family(
+        env,
+        "org/tstrans/KlvDecodeException",
+        "Lorg/tstrans/KlvDecodeException$Kind;",
+        member,
+        message,
+    );
+}
+
+/// [`throw_klv_decode_raw`]'s encode twin (`klv/mod.rs::nRaiseEncodeForTest`).
+#[cfg(feature = "jni-test-hooks")]
+pub fn throw_klv_encode_raw(env: &mut JNIEnv, member: &str, tag: Option<u64>, message: &str) {
+    if env.exception_check().unwrap_or(false) {
+        return;
+    }
+    if let Err(e) = throw_klv_encode_inner(env, member, tag, message) {
+        let _ = env.throw_new(
+            "java/lang/RuntimeException",
+            format!("KlvEncodeException throw failed ({member}): {e}"),
+        );
+    }
+}
+
+pub fn throw_klv_encode(env: &mut JNIEnv, kind: BindingErrorKind, tag: Option<u64>, message: &str) {
     if env.exception_check().unwrap_or(false) {
         return; // don't clobber an already-pending exception
     }
-    if let Err(e) = throw_klv_encode_inner(env, kind, tag, message) {
+    // The wider (Kind, Long, String) ctor keeps its own builder; the kind check
+    // and member resolution are the shared ones.
+    let Some(member) = declared_member(env, Domain::KlvEncode, kind, message) else {
+        return;
+    };
+    if let Err(e) = throw_klv_encode_inner(env, member, tag, message) {
         // Fallback: a plain RuntimeException so the failure is never silent.
         let _ = env.throw_new(
             "java/lang/RuntimeException",
-            format!("KlvEncodeException throw failed ({kind}): {e}"),
+            format!(
+                "KlvEncodeException throw failed ({}): {e}",
+                kind.variant_name()
+            ),
         );
     }
 }
@@ -448,20 +467,24 @@ pub fn map_klv_decode_error(env: &mut JNIEnv, e: &KlvDecodeError) {
     match e {
         KlvDecodeError::Truncated { .. }
         | KlvDecodeError::MalformedLength { .. }
-        | KlvDecodeError::LengthOverflow { .. } => throw_klv_decode(env, "TRUNCATED_SET", &msg),
+        | KlvDecodeError::LengthOverflow { .. } => {
+            throw_klv_decode(env, BindingErrorKind::KlvDecodeTruncatedSet, &msg)
+        }
         KlvDecodeError::UnexpectedUniversalLabel { .. } => {
-            throw_klv_decode(env, "BAD_UNIVERSAL_LABEL", &msg)
+            throw_klv_decode(env, BindingErrorKind::KlvDecodeBadUniversalLabel, &msg)
         }
         KlvDecodeError::ChecksumMismatch { .. } | KlvDecodeError::Crc32Mismatch { .. } => {
-            throw_klv_decode(env, "CHECKSUM_MISMATCH", &msg)
+            throw_klv_decode(env, BindingErrorKind::KlvDecodeChecksumMismatch, &msg)
         }
-        KlvDecodeError::DuplicateTag { .. } => throw_klv_decode(env, "DUPLICATE_TAG", &msg),
+        KlvDecodeError::DuplicateTag { .. } => {
+            throw_klv_decode(env, BindingErrorKind::KlvDecodeDuplicateTag, &msg)
+        }
         KlvDecodeError::Tag2NotFirst
         | KlvDecodeError::Tag1NotLast
         | KlvDecodeError::MissingTag65
         | KlvDecodeError::St0102MissingRequiredTag { .. }
         | KlvDecodeError::St0903MissingRequiredTag { .. } => {
-            throw_klv_decode(env, "MISSING_REQUIRED_TAG", &msg)
+            throw_klv_decode(env, BindingErrorKind::KlvDecodeMissingRequiredTag, &msg)
         }
         KlvDecodeError::MalformedTag { .. }
         | KlvDecodeError::NonCanonicalLength { .. }
@@ -470,8 +493,10 @@ pub fn map_klv_decode_error(env: &mut JNIEnv, e: &KlvDecodeError) {
         | KlvDecodeError::BadTimeStampPackLength { .. }
         | KlvDecodeError::ReservedBitsInvalid { .. }
         | KlvDecodeError::St0903InvalidVTargetPack { .. }
-        | KlvDecodeError::FieldError(_) => throw_klv_decode(env, "MALFORMED_BYTES", &msg),
-        _ => throw_klv_decode(env, "INTERNAL", &msg),
+        | KlvDecodeError::FieldError(_) => {
+            throw_klv_decode(env, BindingErrorKind::KlvDecodeMalformedBytes, &msg)
+        }
+        _ => throw_klv_decode(env, BindingErrorKind::Internal, &msg),
     }
 }
 
@@ -483,30 +508,53 @@ pub fn map_klv_encode_error(env: &mut JNIEnv, e: &KlvEncodeError) {
     let msg = e.to_string();
     match e {
         KlvEncodeError::BufferTooSmall { .. } => {
-            throw_klv_encode(env, "BUFFER_TOO_SMALL", None, &msg)
+            throw_klv_encode(env, BindingErrorKind::KlvEncodeBufferTooSmall, None, &msg)
         }
-        KlvEncodeError::RecordTooLarge => throw_klv_encode(env, "RECORD_TOO_LARGE", None, &msg),
-        KlvEncodeError::OutOfRange { tag, .. } => {
-            throw_klv_encode(env, "OUT_OF_RANGE", Some(u64::from(*tag)), &msg)
+        KlvEncodeError::RecordTooLarge => {
+            throw_klv_encode(env, BindingErrorKind::KlvEncodeRecordTooLarge, None, &msg)
         }
-        KlvEncodeError::StringTooLong { tag, .. } => {
-            throw_klv_encode(env, "STRING_TOO_LONG", Some(u64::from(*tag)), &msg)
-        }
-        KlvEncodeError::UnsupportedImapbLength { .. } => {
-            throw_klv_encode(env, "UNSUPPORTED_IMAPB_LENGTH", None, &msg)
-        }
-        KlvEncodeError::InvalidImapbParams { .. } => {
-            throw_klv_encode(env, "INVALID_IMAPB_PARAMS", None, &msg)
-        }
-        KlvEncodeError::MissingMandatoryItem { tag, .. } => {
-            throw_klv_encode(env, "MISSING_MANDATORY_ITEM", Some(u64::from(*tag)), &msg)
-        }
-        KlvEncodeError::ReservedTagInUnknown { tag } => {
-            throw_klv_encode(env, "RESERVED_TAG_IN_UNKNOWN", Some(u64::from(*tag)), &msg)
-        }
-        KlvEncodeError::VTargetPackEmpty { target_id } => {
-            throw_klv_encode(env, "VTARGET_PACK_EMPTY", Some(*target_id), &msg)
-        }
+        KlvEncodeError::OutOfRange { tag, .. } => throw_klv_encode(
+            env,
+            BindingErrorKind::KlvEncodeOutOfRange,
+            Some(u64::from(*tag)),
+            &msg,
+        ),
+        KlvEncodeError::StringTooLong { tag, .. } => throw_klv_encode(
+            env,
+            BindingErrorKind::KlvEncodeStringTooLong,
+            Some(u64::from(*tag)),
+            &msg,
+        ),
+        KlvEncodeError::UnsupportedImapbLength { .. } => throw_klv_encode(
+            env,
+            BindingErrorKind::KlvEncodeUnsupportedImapbLength,
+            None,
+            &msg,
+        ),
+        KlvEncodeError::InvalidImapbParams { .. } => throw_klv_encode(
+            env,
+            BindingErrorKind::KlvEncodeInvalidImapbParams,
+            None,
+            &msg,
+        ),
+        KlvEncodeError::MissingMandatoryItem { tag, .. } => throw_klv_encode(
+            env,
+            BindingErrorKind::KlvEncodeMissingMandatoryItem,
+            Some(u64::from(*tag)),
+            &msg,
+        ),
+        KlvEncodeError::ReservedTagInUnknown { tag } => throw_klv_encode(
+            env,
+            BindingErrorKind::KlvEncodeReservedTagInUnknown,
+            Some(u64::from(*tag)),
+            &msg,
+        ),
+        KlvEncodeError::VTargetPackEmpty { target_id } => throw_klv_encode(
+            env,
+            BindingErrorKind::KlvEncodeVTargetPackEmpty,
+            Some(*target_id),
+            &msg,
+        ),
         KlvEncodeError::DuplicateTargetId { target_id } => {
             // Hoist the boxed tag so the `throw_klv_encode(env, "<CONST>", ...)`
             // call stays on one line — required by both rustfmt's width and the
@@ -514,13 +562,18 @@ pub fn map_klv_encode_error(env: &mut JNIEnv, e: &KlvEncodeError) {
             // this longer CONST would otherwise split the call across lines and
             // hide the constant from the grep).
             let t = Some(*target_id);
-            throw_klv_encode(env, "DUPLICATE_TARGET_ID", t, &msg)
+            throw_klv_encode(env, BindingErrorKind::KlvEncodeDuplicateTargetId, t, &msg)
         }
         KlvEncodeError::ForbiddenStandaloneOffset { tag } => {
             let t = Some(u64::from(*tag));
-            throw_klv_encode(env, "FORBIDDEN_STANDALONE_OFFSET", t, &msg)
+            throw_klv_encode(
+                env,
+                BindingErrorKind::KlvEncodeForbiddenStandaloneOffset,
+                t,
+                &msg,
+            )
         }
-        _ => throw_klv_encode(env, "BUFFER_TOO_SMALL", None, &msg),
+        _ => throw_klv_encode(env, BindingErrorKind::KlvEncodeBufferTooSmall, None, &msg),
     }
 }
 
@@ -532,7 +585,7 @@ pub fn map_klv_encode_error(env: &mut JNIEnv, e: &KlvEncodeError) {
 /// `getMessage()` text — call sites pass the Rust `Display` string.
 pub fn throw_codec(
     env: &mut JNIEnv,
-    kind: &str,
+    kind: BindingErrorKind,
     codec: &str,
     fields: &CodecErrFields,
     message: &str,
@@ -540,11 +593,19 @@ pub fn throw_codec(
     if env.exception_check().unwrap_or(false) {
         return; // don't clobber an already-pending exception
     }
-    if let Err(e) = throw_codec_inner(env, kind, codec, fields, message) {
+    // The wider fielded ctor keeps its own builder; the kind check and member
+    // resolution are the shared ones.
+    let Some(member) = declared_member(env, Domain::Codec, kind, message) else {
+        return;
+    };
+    if let Err(e) = throw_codec_inner(env, member, codec, fields, message) {
         // Fallback: a plain RuntimeException so the failure is never silent.
         let _ = env.throw_new(
             "java/lang/RuntimeException",
-            format!("CodecParseException throw failed ({kind}): {e}"),
+            format!(
+                "CodecParseException throw failed ({}): {e}",
+                kind.variant_name()
+            ),
         );
     }
 }
@@ -653,14 +714,14 @@ pub fn map_codec_parse_error(env: &mut JNIEnv, e: &CodecParseError, codec: &str)
                 needed_bits: Some(*needed_bits as i32),
                 ..Default::default()
             };
-            throw_codec(env, "TRUNCATED_RBSP", codec, &f, &msg)
+            throw_codec(env, BindingErrorKind::CodecTruncatedRbsp, codec, &f, &msg)
         }
         CodecParseError::InvalidGolomb { offset_bits } => {
             let f = CodecErrFields {
                 offset_bits: Some(*offset_bits as i32),
                 ..Default::default()
             };
-            throw_codec(env, "INVALID_GOLOMB", codec, &f, &msg)
+            throw_codec(env, BindingErrorKind::CodecInvalidGolomb, codec, &f, &msg)
         }
         CodecParseError::ReservedValue { field, value } => {
             let f = CodecErrFields {
@@ -668,38 +729,60 @@ pub fn map_codec_parse_error(env: &mut JNIEnv, e: &CodecParseError, codec: &str)
                 value: Some(*value as i32),
                 ..Default::default()
             };
-            throw_codec(env, "RESERVED_VALUE", codec, &f, &msg)
+            throw_codec(env, BindingErrorKind::CodecReservedValue, codec, &f, &msg)
         }
         CodecParseError::UnsupportedProfile { profile_idc } => {
             let f = CodecErrFields {
                 profile_idc: Some(i32::from(*profile_idc)),
                 ..Default::default()
             };
-            throw_codec(env, "UNSUPPORTED_PROFILE", codec, &f, &msg)
+            throw_codec(
+                env,
+                BindingErrorKind::CodecUnsupportedProfile,
+                codec,
+                &f,
+                &msg,
+            )
         }
         CodecParseError::DanglingSpsReference { sps_id } => {
             let f = CodecErrFields {
                 sps_id: Some(i32::from(*sps_id)),
                 ..Default::default()
             };
-            throw_codec(env, "DANGLING_SPS_REFERENCE", codec, &f, &msg)
+            throw_codec(
+                env,
+                BindingErrorKind::CodecDanglingSpsReference,
+                codec,
+                &f,
+                &msg,
+            )
         }
         CodecParseError::DanglingVpsReference { vps_id } => {
             let f = CodecErrFields {
                 vps_id: Some(i32::from(*vps_id)),
                 ..Default::default()
             };
-            throw_codec(env, "DANGLING_VPS_REFERENCE", codec, &f, &msg)
+            throw_codec(
+                env,
+                BindingErrorKind::CodecDanglingVpsReference,
+                codec,
+                &f,
+                &msg,
+            )
         }
-        CodecParseError::EngineError(_) => {
-            throw_codec(env, "ENGINE_ERROR", codec, &CodecErrFields::default(), &msg)
-        }
+        CodecParseError::EngineError(_) => throw_codec(
+            env,
+            BindingErrorKind::CodecEngineError,
+            codec,
+            &CodecErrFields::default(),
+            &msg,
+        ),
         CodecParseError::InvalidLeb128 { offset_bytes } => {
             let f = CodecErrFields {
                 offset_bytes: Some(*offset_bytes as i32),
                 ..Default::default()
             };
-            throw_codec(env, "INVALID_LEB128", codec, &f, &msg)
+            throw_codec(env, BindingErrorKind::CodecInvalidLeb128, codec, &f, &msg)
         }
         CodecParseError::BadSyncWord { expected, found } => {
             let f = CodecErrFields {
@@ -707,7 +790,7 @@ pub fn map_codec_parse_error(env: &mut JNIEnv, e: &CodecParseError, codec: &str)
                 found: Some(i32::from(*found)),
                 ..Default::default()
             };
-            throw_codec(env, "BAD_SYNC_WORD", codec, &f, &msg)
+            throw_codec(env, BindingErrorKind::CodecBadSyncWord, codec, &f, &msg)
         }
         CodecParseError::Truncated { needed, had } => {
             let f = CodecErrFields {
@@ -715,24 +798,73 @@ pub fn map_codec_parse_error(env: &mut JNIEnv, e: &CodecParseError, codec: &str)
                 had: Some(*had as i32),
                 ..Default::default()
             };
-            throw_codec(env, "TRUNCATED", codec, &f, &msg)
+            throw_codec(env, BindingErrorKind::CodecTruncated, codec, &f, &msg)
         }
         CodecParseError::Forbidden { field } => {
             let f = CodecErrFields {
                 field: Some((*field).to_string()),
                 ..Default::default()
             };
-            throw_codec(env, "FORBIDDEN", codec, &f, &msg)
+            throw_codec(env, BindingErrorKind::CodecForbidden, codec, &f, &msg)
         }
         CodecParseError::UnsupportedFreeFormat { layer } => {
             let f = CodecErrFields {
                 layer: Some(i32::from(*layer)),
                 ..Default::default()
             };
-            throw_codec(env, "UNSUPPORTED_FREE_FORMAT", codec, &f, &msg)
+            throw_codec(
+                env,
+                BindingErrorKind::CodecUnsupportedFreeFormat,
+                codec,
+                &f,
+                &msg,
+            )
         }
-        // Catch-all for marked-non-exhaustive additions not yet mapped:
-        _ => throw_codec(env, "ENGINE_ERROR", codec, &CodecErrFields::default(), &msg),
+        // The three nal-framing converter errors, each with its own member
+        // since 0.7.0 (all three were folded into the ENGINE_ERROR wildcard).
+        CodecParseError::InvalidLengthSize { got } => {
+            let f = CodecErrFields {
+                value: Some(i32::from(*got)),
+                ..Default::default()
+            };
+            throw_codec(
+                env,
+                BindingErrorKind::CodecInvalidLengthSize,
+                codec,
+                &f,
+                &msg,
+            )
+        }
+        CodecParseError::NalLengthOverflow { length_size, .. } => {
+            let f = CodecErrFields {
+                value: Some(i32::from(*length_size)),
+                ..Default::default()
+            };
+            throw_codec(
+                env,
+                BindingErrorKind::CodecNalLengthOverflow,
+                codec,
+                &f,
+                &msg,
+            )
+        }
+        CodecParseError::BufferTooSmall { needed, have } => {
+            let f = CodecErrFields {
+                needed: Some(*needed as i32),
+                had: Some(*have as i32),
+                ..Default::default()
+            };
+            throw_codec(env, BindingErrorKind::CodecBufferTooSmall, codec, &f, &msg)
+        }
+        // CodecParseError is #[non_exhaustive] (A2's K7): a future variant is
+        // ENGINE_ERROR with its Display text.
+        _ => throw_codec(
+            env,
+            BindingErrorKind::CodecEngineError,
+            codec,
+            &CodecErrFields::default(),
+            &msg,
+        ),
     }
 }
 

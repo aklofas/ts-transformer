@@ -105,6 +105,7 @@ use crate::jutil::{
     read_nullable_int, read_nullable_long, read_nullable_string, read_unknown_list,
     wrap_heap_byte_buffer,
 };
+use tst_pipeline::binding::BindingErrorKind;
 
 // -----------------------------------------------------------------------
 // Builder class / method-descriptor constants
@@ -3405,8 +3406,8 @@ pub fn read_uas_datalink_for_validate(
 fn map_sdcc_field_error(env: &mut JNIEnv, e: &KlvFieldError) {
     let msg = e.to_string();
     let kind = match e {
-        KlvFieldError::TruncatedField { .. } => "TRUNCATED_SET",
-        _ => "MALFORMED_BYTES",
+        KlvFieldError::TruncatedField { .. } => BindingErrorKind::KlvDecodeTruncatedSet,
+        _ => BindingErrorKind::KlvDecodeMalformedBytes,
     };
     throw_klv_decode(env, kind, &msg);
 }

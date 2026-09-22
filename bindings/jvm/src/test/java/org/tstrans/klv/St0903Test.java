@@ -364,7 +364,7 @@ class St0903Test {
                 .build();
         KlvEncodeException ex = assertThrows(KlvEncodeException.class,
                 () -> Klv.encodeVmtiStrictCompliance(rec));
-        assertEquals(KlvEncodeException.Kind.VTARGET_PACK_EMPTY, ex.kind());
+        assertEquals(KlvEncodeException.Kind.V_TARGET_PACK_EMPTY, ex.kind());
     }
 
     @Test

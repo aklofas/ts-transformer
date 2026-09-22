@@ -135,8 +135,8 @@ class MuxerMispTest {
             VideoStreamHandle h = m.videoStreamHandle(0).orElseThrow();
             MuxException ex = assertThrows(MuxException.class,
                 () -> m.pushVideoMispTo(h, syntheticH264Idr(), 9000L, true, nano));
-            assertEquals(MuxException.Kind.INPUT_MALFORMED, ex.kind(),
-                "nano-on-H264 must surface as INPUT_MALFORMED");
+            assertEquals(MuxException.Kind.MISP_TIME, ex.kind(),
+                "nano-on-H264 must surface as MISP_TIME (MuxError::MispTime)");
         }
     }
 

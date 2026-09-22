@@ -248,7 +248,11 @@ pub extern "system" fn Java_org_tstrans_rtp_DemuxReceiver_nNext<'local>(
                 // Forward-compat guard (all current variants build a record).
                 Ok(None) => JObject::null().into_raw(),
                 Err(()) => {
-                    crate::error::throw_demux(env, "INTERNAL", "event conversion failed");
+                    crate::error::throw_demux(
+                        env,
+                        BindingErrorKind::Internal,
+                        "event conversion failed",
+                    );
                     JObject::null().into_raw()
                 }
             },

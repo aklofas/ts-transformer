@@ -263,7 +263,11 @@ pub extern "system" fn Java_org_tstrans_srt_DemuxReceiver_nNext<'local>(
                     // Event-conversion JNI failure (mirrors mpegts::nNextEvent's
                     // Err(()) arm). `throw_demux` guards against clobbering a
                     // pending exception; the INTERNAL literal stays ratchet-visible.
-                    crate::error::throw_demux(env, "INTERNAL", "event conversion failed");
+                    crate::error::throw_demux(
+                        env,
+                        BindingErrorKind::Internal,
+                        "event conversion failed",
+                    );
                     JObject::null().into_raw()
                 }
             },

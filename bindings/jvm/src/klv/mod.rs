@@ -15,8 +15,6 @@ pub mod st1204;
 use jni::JNIEnv;
 use jni::objects::{JClass, JString};
 
-use crate::error::{throw_klv_decode, throw_klv_encode};
-
 /// Test-only: `org.tstrans.klv.Klv.nRaiseDecodeForTest(kind)`.
 /// Throws a `KlvDecodeException` with the given Kind name, allowing
 /// `KlvErrorModelTest` to verify the full error-mapping path.
@@ -28,7 +26,7 @@ pub extern "system" fn Java_org_tstrans_klv_Klv_nRaiseDecodeForTest<'local>(
 ) {
     crate::panic::jni_catch(&mut env, (), |env| {
         let k: String = env.get_string(&kind).map(Into::into).unwrap_or_default();
-        throw_klv_decode(env, &k, "forced decode error for test");
+        crate::error::throw_klv_decode_raw(env, &k, "forced decode error for test");
     })
 }
 
@@ -43,6 +41,6 @@ pub extern "system" fn Java_org_tstrans_klv_Klv_nRaiseEncodeForTest<'local>(
 ) {
     crate::panic::jni_catch(&mut env, (), |env| {
         let k: String = env.get_string(&kind).map(Into::into).unwrap_or_default();
-        throw_klv_encode(env, &k, None, "forced encode error for test");
+        crate::error::throw_klv_encode_raw(env, &k, None, "forced encode error for test");
     })
 }

@@ -24,6 +24,7 @@ use tst_core::codec::misp_time::{MispTimeKind, MispTimestamp, extract};
 use tst_core::mpegts::mux::VideoCodec;
 
 use crate::error::{CodecErrFields, throw_codec};
+use tst_pipeline::binding::BindingErrorKind;
 
 /// Map the Java `VideoCodec` ordinal (0-3) to the mux-side `VideoCodec`.
 /// Returns `None` and throws `CodecParseException(ENGINE_ERROR)` for
@@ -37,7 +38,7 @@ fn java_video_codec_ordinal_to_rust(env: &mut JNIEnv, ordinal: jint) -> Option<V
         _ => {
             throw_codec(
                 env,
-                "ENGINE_ERROR",
+                BindingErrorKind::CodecEngineError,
                 "misp_time",
                 &CodecErrFields::default(),
                 &format!("unknown VideoCodec ordinal {ordinal}"),
@@ -59,7 +60,7 @@ fn build_kind<'local>(env: &mut JNIEnv<'local>, kind: MispTimeKind) -> Result<JO
         _ => {
             throw_codec(
                 env,
-                "ENGINE_ERROR",
+                BindingErrorKind::CodecEngineError,
                 "misp_time",
                 &CodecErrFields::default(),
                 "unknown MispTimeKind variant crossing JNI",
@@ -128,7 +129,7 @@ pub extern "system" fn Java_org_tstrans_codec_Codec_nExtractMispTimestamp<'local
                 let msg = e.to_string();
                 throw_codec(
                     env,
-                    "ENGINE_ERROR",
+                    BindingErrorKind::CodecEngineError,
                     "misp_time",
                     &CodecErrFields::default(),
                     &msg,
