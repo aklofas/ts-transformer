@@ -89,15 +89,22 @@ pub(crate) fn throw_sender_error(env: &mut JNIEnv, e: &SenderError) {
 /// the wire errno), so only the end-of-stream case is special-cased here.
 fn throw_recv_transport(env: &mut JNIEnv, kind: ShellErrorKind, t: &TransportError) {
     if matches!(kind, ShellErrorKind::EndOfStream) {
-        throw_srt(env, BindingErrorKind::from(kind), "peer closed the stream");
+        // The transport's OWN message, never a fixed sentence: the two
+        // producers describe different events (a peer's clean hang-up vs a
+        // managed receiver whose reconnect budget ran out), and a hard-coded
+        // "peer closed the stream" is wrong for the second.
+        throw_srt(env, BindingErrorKind::from(kind), &t.to_string());
     } else {
         transport_error(env, t);
     }
 }
 
 /// `tst_pipeline::Receiver` errors — the transport arm through
-/// [`throw_recv_transport`], so a peer's clean hang-up is `END_OF_STREAM`
-/// rather than `CLOSED` (0.7.0 change; C has always reported it as -12).
+/// [`throw_recv_transport`], so an end of stream is `END_OF_STREAM` rather than
+/// `CLOSED` (0.7.0 change; C has always reported it as -12). TWO producers
+/// reach it: a peer's clean hang-up (`srt_recv` returns 0) and a MANAGED
+/// receiver whose reconnect budget is exhausted — both classify as
+/// `ShellErrorKind::EndOfStream` on the receive direction.
 pub(crate) fn throw_receiver_error(env: &mut JNIEnv, e: &ReceiverError) {
     match &e.source {
         ReceiverErrorSource::Transport(t) => throw_recv_transport(env, e.kind, t),

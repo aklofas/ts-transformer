@@ -120,11 +120,13 @@ final class ManagedReceiverAttemptsLockFreeTest {
             assertTrue(n >= 1, "one factory invocation happened (the parked re-accept); got " + n);
         } finally {
             rescue.cancel();                       // ends the parked re-accept on every path
-            Throwable end = endFuture.get(10, TimeUnit.SECONDS);
-            assertTrue(end instanceof SrtException, "expected the loop to end with SrtException, got " + end);
-            assertEquals(SrtException.Kind.CLOSED, ((SrtException) end).kind(),
-                "a caller-initiated cancel on the managed shell surfaces as CLOSED");
-            rx.close();
         }
+        // Terminal-kind verdicts live AFTER the body, not in `finally`: a
+        // failure here would otherwise mask the body's own failure.
+        Throwable end = endFuture.get(10, TimeUnit.SECONDS);
+        assertTrue(end instanceof SrtException, "expected the loop to end with SrtException, got " + end);
+        assertEquals(SrtException.Kind.CLOSED, ((SrtException) end).kind(),
+            "a caller-initiated cancel on the managed shell surfaces as CLOSED");
+        rx.close();
     }
 }

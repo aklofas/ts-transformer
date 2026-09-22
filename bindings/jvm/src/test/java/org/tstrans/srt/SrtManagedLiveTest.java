@@ -302,7 +302,8 @@ class SrtManagedLiveTest {
                         r.recvBytes();
                     } catch (SrtException e) {
                         if (e.kind() == SrtException.Kind.CLOSED
-                                || e.kind() == SrtException.Kind.BROKEN) {
+                        || e.kind() == SrtException.Kind.BROKEN
+                        || e.kind() == SrtException.Kind.END_OF_STREAM) {
                             break;
                         }
                         throw e;
@@ -379,7 +380,8 @@ class SrtManagedLiveTest {
                         r.recvBytes();
                     } catch (SrtException e) {
                         if (e.kind() == SrtException.Kind.CLOSED
-                                || e.kind() == SrtException.Kind.BROKEN) {
+                        || e.kind() == SrtException.Kind.BROKEN
+                        || e.kind() == SrtException.Kind.END_OF_STREAM) {
                             break;
                         }
                         throw e;
@@ -452,7 +454,8 @@ class SrtManagedLiveTest {
                         r.recvBytes();
                     } catch (SrtException e) {
                         if (e.kind() == SrtException.Kind.CLOSED
-                                || e.kind() == SrtException.Kind.BROKEN) {
+                        || e.kind() == SrtException.Kind.BROKEN
+                        || e.kind() == SrtException.Kind.END_OF_STREAM) {
                             break;
                         }
                         throw e;
@@ -528,7 +531,8 @@ class SrtManagedLiveTest {
                         r.recvBytes();
                     } catch (SrtException e) {
                         if (e.kind() == SrtException.Kind.CLOSED
-                                || e.kind() == SrtException.Kind.BROKEN) {
+                        || e.kind() == SrtException.Kind.BROKEN
+                        || e.kind() == SrtException.Kind.END_OF_STREAM) {
                             break;
                         }
                         throw e;
@@ -799,7 +803,11 @@ class SrtManagedLiveTest {
     private static boolean isCleanEndOfStream(RuntimeException re) {
         Throwable cause = re.getCause();
         return cause instanceof SrtException se
-            && (se.kind() == SrtException.Kind.CLOSED || se.kind() == SrtException.Kind.BROKEN);
+            && (se.kind() == SrtException.Kind.CLOSED
+                || se.kind() == SrtException.Kind.BROKEN
+                // 0.7.0: a managed receiver whose reconnect budget ran out ends
+                // the loop with END_OF_STREAM, a third clean terminal kind.
+                || se.kind() == SrtException.Kind.END_OF_STREAM);
     }
 
     /** Distinctive private-data record pushed alongside the video stream (test 1). */

@@ -159,7 +159,7 @@ public final class Listener extends NativeHandle implements Iterable<Socket> {
      */
     private static native long nAccept(long handle, long timeoutMs) throws SrtException;
 
-    /** Return a Box&lt;JniCancel&gt; handle wrapping the listener's cancel handle. */
+    /** Return a handle wrapping the listener's cancel view (its one cancel state). */
     private static native long nCancelHandle(long handle);
 
     private static native HostPort nLocalAddr(long handle) throws SrtException;
