@@ -94,3 +94,159 @@ fn connect_ipv6_literal_round_trips() {
     assert_eq!(accept.join(), b"hello over v6");
     t.close();
 }
+
+/// The whole point of taking the slot: a cancel fired from another thread
+/// while the accept is parked wakes it, and the wake is reported as a
+/// caller-initiated close (`ExplicitClose`), not a transport fault.
+///
+/// The accept runs on its own thread so a cancel that fails to wake it
+/// surfaces as a FAILED test at the watchdog, never as a hung one. (A
+/// thread left parked in `srt_accept` after the failure stalls process
+/// exit — nextest's per-test timeout reaps it; the failure is already on
+/// record by then.)
+///
+/// WP-C2 note: the outcome asserted here comes from
+/// `Listener::accept_one_cancellable`, which already reports
+/// `ExplicitClose` on cancel. C2 changes `SrtTransport::recv_bytes` /
+/// `send_bytes`, not the accept path — this test does not move.
+#[test]
+fn accept_one_cancelled_from_another_thread_returns_explicit_close() {
+    require_loopback!();
+    let port = reserve_port();
+    let url = SrtUrl::parse(&format!("srt://127.0.0.1:{port}?mode=listener")).expect("parse");
+    let slot = Arc::new(CancelSlot::new());
+
+    let acceptor = {
+        let slot = Arc::clone(&slot);
+        std::thread::spawn(move || url.accept_one(&slot))
+    };
+    // Let the accept park before firing: a cancel that lands before the
+    // bind is the other (already pinned) branch of the helper.
+    std::thread::sleep(Duration::from_millis(200));
+    slot.cancel();
+
+    let deadline = Instant::now() + WATCHDOG;
+    while !acceptor.is_finished() {
+        assert!(
+            Instant::now() < deadline,
+            "accept_one still parked {WATCHDOG:?} after the slot was cancelled"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    match acceptor.join().expect("acceptor thread") {
+        Err(SrtError::Transport(TransportError::ExplicitClose)) => {}
+        Ok(_) => panic!("returned a transport although no peer ever connected"),
+        Err(e) => panic!("expected SrtError::Transport(ExplicitClose); got {e:?}"),
+    }
+    assert!(slot.is_cancelled(), "the slot stays latched after the wake");
+}
+
+/// Happy path: a peer that connects is handed back as a live transport,
+/// and a successful accept leaves the slot un-latched. The overlay is
+/// applied to the listener side (`latency` is a listener-side key).
+#[test]
+fn accept_one_hands_back_a_connecting_peer() {
+    require_loopback!();
+    let port = reserve_port();
+
+    // The connector retries because its first attempt can run before the
+    // listener under test has bound. Its socket is held past the accept's
+    // return through the release channel: closing it mid-flight lets
+    // libsrt's GC reap the listener-side accepted socket before
+    // `srt_accept` resolves it (the PR #231 prune class).
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+    let connector = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let attempt = SocketBuilder::new()
+                .connect_timeout(Duration::from_millis(500))
+                .connect(format!("127.0.0.1:{port}"));
+            match attempt {
+                Ok(socket) => {
+                    let _ = release_rx.recv();
+                    drop(socket);
+                    return;
+                }
+                Err(e) => {
+                    assert!(Instant::now() < deadline, "connect never succeeded: {e:?}");
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+            }
+        }
+    });
+
+    let url =
+        SrtUrl::parse(&format!("srt://127.0.0.1:{port}?mode=listener&latency=120")).expect("parse");
+    let slot = CancelSlot::new();
+    let result = url.accept_one(&slot);
+    let _ = release_tx.send(());
+    let connector_result = connector.join();
+
+    let transport = result.expect("accept a connecting peer");
+    connector_result.expect("connector thread");
+    assert!(
+        transport.is_alive(),
+        "the accepted transport should be alive"
+    );
+    assert!(
+        !slot.is_cancelled(),
+        "a successful accept must not latch the slot"
+    );
+}
+
+/// The empty-host branch: `srt://:PORT?mode=listener` is a legal listener
+/// URL (`parse` only demands a host in caller mode), and `accept_one`
+/// renders it as the wildcard `0.0.0.0:PORT` — the bind address the
+/// bindings' `listen_srt` produced. Without that substitution the join
+/// yields `":PORT"`, which does not resolve, and the accept comes back
+/// `Broken { msg: "bind: …" }` instead of a peer.
+///
+/// (Added beyond the WP-A3 brief's test list: no other test exercises
+/// this branch, and it is a documented contract of the method.)
+#[test]
+fn accept_one_with_empty_host_binds_the_wildcard() {
+    require_loopback!();
+    let port = reserve_port();
+
+    // Same connector shape as `accept_one_hands_back_a_connecting_peer`:
+    // retry until the listener under test has bound, then hold the socket
+    // past the accept's return so libsrt's GC cannot reap the accepted
+    // peer mid-flight (the PR #231 prune class).
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+    let connector = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let attempt = SocketBuilder::new()
+                .connect_timeout(Duration::from_millis(500))
+                .connect(format!("127.0.0.1:{port}"));
+            match attempt {
+                Ok(socket) => {
+                    let _ = release_rx.recv();
+                    drop(socket);
+                    return;
+                }
+                Err(e) => {
+                    assert!(Instant::now() < deadline, "connect never succeeded: {e:?}");
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+            }
+        }
+    });
+
+    let url = SrtUrl::parse(&format!("srt://:{port}?mode=listener")).expect("parse");
+    assert!(
+        url.host.is_empty(),
+        "the wildcard form parses to an empty host"
+    );
+    let slot = CancelSlot::new();
+    let result = url.accept_one(&slot);
+    let _ = release_tx.send(());
+    let connector_result = connector.join();
+
+    let transport = result.expect("a wildcard-bound listener accepts a 127.0.0.1 peer");
+    connector_result.expect("connector thread");
+    assert!(
+        transport.is_alive(),
+        "the accepted transport should be alive"
+    );
+}
