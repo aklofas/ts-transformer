@@ -1,163 +1,70 @@
-//! `org.tstrans.rtp` + `org.tstrans` (RTSP) Rust→Java error mapping.
+//! `org.tstrans.rtp` + `org.tstrans` (RTSP) Rust→Java error mapping — typed
+//! entry points over [`crate::error::throw_binding`]; the kind table is
+//! `tst_pipeline::binding::BindingErrorKind` and the Java members carry its
+//! `name()`s (verified at load by `NativeLoader.nVerifyKinds`).
 //!
-//! RTP transport errors (`tst_core::TransportError` / `tst_rtp::ConnectError`)
-//! map onto the four `RtpException.Kind` variants — ported 1:1 from tst-py's
-//! `bindings/python/src/rtp/transport.rs` (`transport_error_to_pyerr` +
-//! `connect_error_to_pyerr`).
-//!
-//! RTSP control-plane errors (`tst_rtp::RtspError`) map onto the ten
-//! `RtspException.Kind` variants — ported 1:1 from tst-py's
-//! `bindings/python/src/rtp/client.rs` (`rtsp_error_kind_str`).
-//!
-//! The ratchet greps for `throw_rtp(env, "<CONST>", ...)` and
-//! `throw_rtsp(env, "<CONST>", ...)` — keep each KIND literal on the call line.
+//! Since Arc 2 WP-B3 this file holds no mapping tables of its own: the rtp and
+//! rtsp buckets are A2's `From` impls in `crates/tst-rtp/src/binding_kind.rs`.
 
 use jni::JNIEnv;
 use tst_core::transport::TransportError;
-use tst_rtp::ConnectError;
+use tst_pipeline::binding::{BindingError, BindingErrorKind};
 use tst_rtp::RtspError;
 use tst_rtp::error::{MountError, RtspServerError};
 
-use crate::error::throw_family;
+use crate::error::{Domain, throw_binding};
 
-/// Construct + throw `org.tstrans.RtpException(Kind.<kind>, message)`.
-/// `kind` MUST be one of the `RtpException.Kind` constant names.
-pub(crate) fn throw_rtp(env: &mut JNIEnv, kind: &str, message: &str) {
-    throw_family(
-        env,
-        "org/tstrans/RtpException",
-        "Lorg/tstrans/RtpException$Kind;",
-        kind,
-        message,
-    );
+/// `org.tstrans.RtpException(Kind.<kind.name()>, message)`.
+pub(crate) fn throw_rtp(env: &mut JNIEnv, kind: BindingErrorKind, message: &str) {
+    throw_binding(env, Domain::Rtp, &BindingError::new(kind, message));
 }
 
-/// Map a `TransportError` from `send_bytes` / `recv_bytes` onto an
-/// `RtpException`. Mirrors tst-py `transport_error_to_pyerr`:
-/// - `ExplicitClose`  → `CANCELLED`
-/// - `TooLarge`       → `MALFORMED_PACKET`
-/// - `Backpressure`   → `TIMEOUT` (recv deadline expired; retryable —
-///   the transport/session is still alive)
-/// - all others (`Broken`, `Closed`) → `TRANSPORT`
-pub(crate) fn transport_error_to_rtp(env: &mut JNIEnv, e: &TransportError) {
-    match e {
-        TransportError::ExplicitClose => {
-            throw_rtp(env, "CANCELLED", "transport cancelled by caller")
-        }
-        TransportError::TooLarge { len, max } => {
-            let msg = format!("payload too large: {len} bytes exceeds {max}-byte cap");
-            throw_rtp(env, "MALFORMED_PACKET", &msg)
-        }
-        // A configured recv deadline (`?recv_timeout=` / a future per-call
-        // timeout) expired — retryable, the transport/session is still alive.
-        TransportError::Backpressure { msg, .. } => throw_rtp(env, "TIMEOUT", msg),
-        other => throw_rtp(env, "TRANSPORT", &other.to_string()),
-    }
+/// `send_bytes` / `recv_bytes` / shell recv errors — A2's `From<TransportError>`:
+/// `ExplicitClose → CLOSED` ("cancelled from another thread"; was `CANCELLED`),
+/// `Backpressure → BACKPRESSURE` (the `?recv_timeout=` deadline; was `TIMEOUT`),
+/// `TooLarge → TOO_LARGE` (was `MALFORMED_PACKET`), `Broken → BROKEN`,
+/// `Closed → CLOSED` (both were `TRANSPORT`).
+pub(crate) fn transport_error(env: &mut JNIEnv, e: &TransportError) {
+    throw_binding(env, Domain::Rtp, &BindingError::from(e.clone()));
 }
 
-/// Map a `ConnectError` from `RtpSocketBuilder::build` /
-/// `RtpRecvSocketBuilder::build` onto an `RtpException`. Mirrors tst-py
-/// `connect_error_to_pyerr` — all connect-time failures surface as `TRANSPORT`;
-/// the free-text message carries the specific Rust variant.
-pub(crate) fn connect_error_to_rtp(env: &mut JNIEnv, e: &ConnectError) {
-    throw_rtp(env, "TRANSPORT", &e.to_string());
+/// `RtpSocketBuilder::from_url` / `RtpRecvSocketBuilder::from_url` failures
+/// (`RtpUrlError`) — A2 has no bare `From<RtpUrlError>` (the type is shared with
+/// `rtsp://` parsing), so the bucket is fixed here: `URL` (was `TRANSPORT`).
+pub(crate) fn rtp_url_error(env: &mut JNIEnv, e: &tst_rtp::RtpUrlError) {
+    throw_rtp(env, BindingErrorKind::RtpUrl, &e.to_string());
 }
 
-/// Construct + throw `org.tstrans.RtspException(Kind.<kind>, message)`.
-/// `kind` MUST be one of the `RtspException.Kind` constant names. The ratchet
-/// greps for `throw_rtsp(env, "<CONST>", ...)` — keep each KIND literal on the call line.
-pub(crate) fn throw_rtsp(env: &mut JNIEnv, kind: &str, message: &str) {
-    throw_family(
-        env,
-        "org/tstrans/RtspException",
-        "Lorg/tstrans/RtspException$Kind;",
-        kind,
-        message,
-    );
+/// `RtpSocketBuilder::build` / `RtpRecvSocketBuilder::build` / `H264Receiver::listen`
+/// failures — A2's `From<tst_rtp::ConnectError>`: one member per variant
+/// (`PAYLOAD_TYPE_PARAM` / `MISSING_PAYLOAD_TYPE_PARAM` / `URL` /
+/// `HOST_NOT_LITERAL` / `IO` / `IFACE_UNSUPPORTED`; all were `TRANSPORT`).
+pub(crate) fn connect_error(env: &mut JNIEnv, e: tst_rtp::ConnectError) {
+    throw_binding(env, Domain::Rtp, &BindingError::from(e));
 }
 
-/// Map a `tst_rtp::RtspError` onto a thrown `RtspException`. Ported 1:1 from
-/// tst-py `bindings/python/src/rtp/client.rs::rtsp_error_kind_str`. Used by the
-/// RTSP client connect/pause/play/teardown natives.
-pub(crate) fn rtsp_error_to_jvm(env: &mut JNIEnv, e: &RtspError) {
-    throw_rtsp(env, rtsp_error_kind(e), &e.to_string());
+/// `org.tstrans.RtspException(Kind.<kind.name()>, message)`.
+pub(crate) fn throw_rtsp(env: &mut JNIEnv, kind: BindingErrorKind, message: &str) {
+    throw_binding(env, Domain::Rtsp, &BindingError::new(kind, message));
 }
 
-/// `RtspError` → SCREAMING_SNAKE `RtspException.Kind` constant name. Mirrors
-/// tst-py `rtsp_error_kind_str` — keep both in sync on any mapping change.
-fn rtsp_error_kind(e: &RtspError) -> &'static str {
-    match e {
-        RtspError::Io(_) => "IO",
-        RtspError::Tls(_) => "TLS",
-        RtspError::Protocol { code: 404, .. } => "NOT_FOUND",
-        RtspError::Protocol { code: 401, .. } => "AUTH_REQUIRED",
-        RtspError::Protocol { .. } => "PROTOCOL",
-        RtspError::AuthFailed => "AUTH_FAILED",
-        RtspError::AuthUnsupported { .. } => "AUTH_FAILED",
-        RtspError::BadResponse { .. } => "PROTOCOL",
-        RtspError::BadSdp { .. } => "PROTOCOL",
-        RtspError::UnsupportedTransport => "UNSUPPORTED_TRANSPORT",
-        RtspError::SessionExpired => "PROTOCOL",
-        RtspError::Timeout => "TIMEOUT",
-        RtspError::LocalCancel => "PROTOCOL",
-        RtspError::NoMp2tMedia => "MOUNT",
-        RtspError::MultipleMp2tMedia { .. } => "MOUNT",
-        RtspError::NoH264Media => "MOUNT",
-        RtspError::MultipleH264Media { .. } => "MOUNT",
-        RtspError::UnsupportedPacketizationMode(_) => "UNSUPPORTED_TRANSPORT",
-        RtspError::Url(_) => "PROTOCOL",
-        // non-exhaustive wildcard — future variants land in PROTOCOL until the
-        // Java-side RtspException.Kind grows a matching constant.
-        _ => "PROTOCOL",
-    }
+/// RTSP client errors — A2's `From<RtspError>`. Two buckets move vs the table
+/// this file carried before 0.7.0: `AuthUnsupported` → `AUTH_REQUIRED` (was
+/// `AUTH_FAILED`) and the four SDP-media errors (`NoMp2tMedia` /
+/// `MultipleMp2tMedia` / `NoH264Media` / `MultipleH264Media`) → `NOT_FOUND`
+/// (was `MOUNT`). Everything else keeps its bucket.
+pub(crate) fn rtsp_error_to_jvm(env: &mut JNIEnv, e: RtspError) {
+    throw_binding(env, Domain::Rtsp, &BindingError::from(e));
 }
 
-/// Map a `tst_rtp::error::RtspServerError` onto a thrown `RtspException`. Ported
-/// 1:1 from tst-py `bindings/python/src/rtp/server.rs::server_error_to_pyerr`.
-/// Each arm keeps the KIND literal on the `throw_rtsp(env, "<CONST>", ...)` call
-/// line so the jvm error-mapping ratchet sees a real site per kind.
-pub(crate) fn server_error_to_jvm(env: &mut JNIEnv, e: &RtspServerError) {
-    use RtspServerError as E;
-    let msg = e.to_string();
-    match e {
-        E::Io(_) | E::BindAddrInUse => throw_rtsp(env, "IO", &msg),
-        E::Tls(_) => throw_rtsp(env, "TLS", &msg),
-        E::UrlParse(_) => throw_rtsp(env, "PROTOCOL", &msg),
-        E::InvalidMountPath { .. }
-        | E::InvalidMulticastGroup { .. }
-        | E::DuplicateMount { .. }
-        | E::InvalidConfig { .. } => throw_rtsp(env, "MOUNT", &msg),
-        E::AlreadyStarted | E::NotStarted | E::Shutdown => throw_rtsp(env, "SERVER", &msg),
-        // RtspServerError is non-exhaustive; future variants route to SERVER.
-        _ => throw_rtsp(env, "SERVER", &msg),
-    }
+/// RTSP server errors — A2's `From<RtspServerError>` (buckets unchanged).
+pub(crate) fn server_error_to_jvm(env: &mut JNIEnv, e: RtspServerError) {
+    throw_binding(env, Domain::Rtsp, &BindingError::from(e));
 }
 
-/// Map a `tst_rtp::error::MountError` onto a thrown exception. Ported 1:1 from
-/// tst-py `server.rs::mount_error_to_pyerr`: `Mux(_) | Closed → RtspException(MOUNT)`
-/// (the failure originates in the mount push path). NOTE: this DIFFERS from the
-/// wave-B MuxSender, whose `Mux(...)` became `MuxException` — MountHandle pushes
-/// are MOUNT.
-pub(crate) fn mount_error_to_jvm(env: &mut JNIEnv, e: &MountError) {
-    use MountError as E;
-    let msg = e.to_string();
-    match e {
-        E::Mux(_) | E::Closed => throw_rtsp(env, "MOUNT", &msg),
-        // non-exhaustive: future mount-side failures route to MOUNT.
-        _ => throw_rtsp(env, "MOUNT", &msg),
-    }
-}
-
-/// Ratchet coverage anchor: the JVM error-mapping rail requires a
-/// `throw_rtsp(env, "<CONST>", ...)` call site for EVERY `RtspException.Kind`
-/// constant. The server mapper (`server_error_to_jvm`) now supplies literal sites
-/// for IO/TLS/PROTOCOL/MOUNT/SERVER; the client mapper reaches the rest only via a
-/// variable kind, so this dead fn supplies their literal sites. Never called.
-#[allow(dead_code)]
-fn _rtsp_ratchet_coverage_anchor(env: &mut JNIEnv) {
-    throw_rtsp(env, "AUTH_FAILED", "ratchet anchor");
-    throw_rtsp(env, "AUTH_REQUIRED", "ratchet anchor");
-    throw_rtsp(env, "NOT_FOUND", "ratchet anchor");
-    throw_rtsp(env, "UNSUPPORTED_TRANSPORT", "ratchet anchor");
-    throw_rtsp(env, "TIMEOUT", "ratchet anchor");
+/// Mount push errors — A2's `From<MountError>` (`Mux(_)` | `Closed` → `MOUNT`,
+/// as before). NOTE: this DIFFERS from the `MuxSender`, whose `Mux(...)` is a
+/// `MuxException` — `MountHandle` pushes are `MOUNT`.
+pub(crate) fn mount_error_to_jvm(env: &mut JNIEnv, e: MountError) {
+    throw_binding(env, Domain::Rtsp, &BindingError::from(e));
 }

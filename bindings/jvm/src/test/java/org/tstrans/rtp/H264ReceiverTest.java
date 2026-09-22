@@ -107,7 +107,7 @@ class H264ReceiverTest {
 
     /**
      * A quiet {@code H264Receiver} (no {@code ?recv_timeout=} URL knob) must
-     * raise {@code RtpException(TIMEOUT)} from {@code recvAu(200)}, and must
+     * raise {@code RtpException(BACKPRESSURE)} from {@code recvAu(200)}, and must
      * stay usable afterward: a real IDR packet (same fixture as
      * {@link #udpLoopbackSingleIdrPacket()}) delivered via {@code recvAu(2000)}.
      */
@@ -119,7 +119,7 @@ class H264ReceiverTest {
             int port = Integer.parseInt(addrStr.substring(addrStr.lastIndexOf(':') + 1));
 
             RtpException ex = assertThrows(RtpException.class, () -> rx.recvAu(200));
-            assertEquals(RtpException.Kind.TIMEOUT, ex.kind());
+            assertEquals(RtpException.Kind.BACKPRESSURE, ex.kind());
 
             // Receiver stays alive after a TIMEOUT (retryable): send the canned
             // IDR packet and confirm recvAu(2000) delivers it.

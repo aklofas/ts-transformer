@@ -35,6 +35,7 @@ use jni::objects::{GlobalRef, JClass, JObject, JString, JThrowable, JValue};
 use jni::sys::{jboolean, jint, jlong, jobject};
 
 use tst_core::mpegts::demux::DemuxEvent;
+use tst_pipeline::binding::BindingErrorKind;
 use tst_pipeline::{
     DemuxReceiver as RustDemuxReceiver, DemuxReceiverError, DemuxReceiverErrorSource,
 };
@@ -47,7 +48,7 @@ use crate::mpegts::{
     build_demux_config_from_args, build_muxer_stats, convert_event, throw_demux_error,
 };
 
-use super::errors::{connect_error_to_rtp, throw_rtp, transport_error_to_rtp};
+use super::errors::{connect_error, rtp_url_error, throw_rtp, transport_error};
 use super::mux_sender::build_rtp_transport_stats;
 
 /// Native backing for `org.tstrans.rtp.DemuxReceiver`. The registry's
@@ -79,11 +80,12 @@ static REGISTRY: LazyLock<HandleRegistry<JniRtpDemuxReceiver>> = LazyLock::new(H
 /// `demux_recv_error_to_pyerr`.
 fn throw_demux_recv_error(env: &mut JNIEnv, e: &DemuxReceiverError) {
     match &e.source {
-        DemuxReceiverErrorSource::Transport(t) => transport_error_to_rtp(env, t),
+        DemuxReceiverErrorSource::Transport(t) => transport_error(env, t),
         DemuxReceiverErrorSource::Demux(d) => throw_demux_error(env, d),
         // `DemuxReceiverErrorSource` is non-exhaustive; route any future variant
-        // through `RtpException(TRANSPORT)` with the Display message preserved.
-        _ => throw_rtp(env, "TRANSPORT", &e.to_string()),
+        // through `RtpException(IO)` with the Display message preserved
+        // (`Internal` is not a member of `RtpException.Kind`).
+        _ => throw_rtp(env, BindingErrorKind::RtpIo, &e.to_string()),
     }
 }
 
@@ -106,14 +108,14 @@ fn build_from_url(
     let builder = match RtpRecvSocketBuilder::from_url(&url_str) {
         Ok(b) => b,
         Err(e) => {
-            throw_rtp(env, "TRANSPORT", &e.to_string());
+            rtp_url_error(env, &e);
             return 0;
         }
     };
     let transport = match builder.build() {
         Ok(t) => t,
         Err(e) => {
-            connect_error_to_rtp(env, &e);
+            connect_error(env, e);
             return 0;
         }
     };

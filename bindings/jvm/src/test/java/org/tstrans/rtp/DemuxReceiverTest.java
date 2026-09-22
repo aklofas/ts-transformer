@@ -30,7 +30,7 @@ class DemuxReceiverTest {
 
     /**
      * Persistent {@code ?recv_timeout=200} on a quiet receiver: {@code recvEvent()}
-     * must throw {@code RtpException(TIMEOUT)} as a directly catchable checked
+     * must throw {@code RtpException(BACKPRESSURE)} as a directly catchable checked
      * exception (assertThrows, no {@code RuntimeException} wrapper — that's
      * iterator()-only). The receiver must then stay usable: a real
      * {@code MuxSender} pushes a small H.264 burst over RTP/UDP to the same
@@ -62,7 +62,7 @@ class DemuxReceiverTest {
             // Phase 1: nothing has been sent. The persistent ?recv_timeout=200
             // deadline must expire as a checked, directly catchable RtpException.
             RtpException ex = assertThrows(RtpException.class, receiver::recvEvent);
-            assertEquals(RtpException.Kind.TIMEOUT, ex.kind());
+            assertEquals(RtpException.Kind.BACKPRESSURE, ex.kind());
 
             // Phase 2: resumable — push a real muxed TS stream (PAT/PMT + a
             // handful of H.264 IDRs at distinct PTS values, so the demuxer
@@ -93,7 +93,7 @@ class DemuxReceiverTest {
      * runs in {@code SAME_THREAD} mode by default and cannot interrupt a
      * blocked native {@code recvEvent()} call, so a regression that stops the
      * Video event from ever arriving must surface as a checked {@code
-     * RtpException(TIMEOUT)} test failure (propagated, uncaught) rather than
+     * RtpException(BACKPRESSURE)} test failure (propagated, uncaught) rather than
      * wedging the gradle {@code test} task indefinitely.
      */
     @Test

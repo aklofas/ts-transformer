@@ -28,6 +28,7 @@ use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{
     AudioStreamHandle, DataStreamHandle, KlvStreamHandle, SubtitleStreamHandle, VideoStreamHandle,
 };
+use tst_pipeline::binding::BindingErrorKind;
 use tst_pipeline::binding::Owned;
 use tst_pipeline::{MuxSender as RustMuxSender, MuxSenderError, MuxSenderErrorSource};
 use tst_rtp::{RtpSocketBuilder, RtpTransport};
@@ -37,7 +38,7 @@ use crate::jutil::{build_socket_stats, checked_u8, read_bytes};
 use crate::mpegts::build_muxer_stats;
 use crate::mpegts::muxer::{build_muxer_config_from_arrays, throw_mux_error};
 
-use super::errors::{connect_error_to_rtp, throw_rtp, transport_error_to_rtp};
+use super::errors::{connect_error, rtp_url_error, throw_rtp, transport_error};
 
 type Inner = RustMuxSender<RtpTransport>;
 
@@ -55,9 +56,16 @@ static REGISTRY: LazyLock<OwnedRegistry<Inner>> = LazyLock::new(OwnedRegistry::n
 /// `None` arm is the type's, not a reachable state, and is reported rather than
 /// `expect`ed (spec §3.4 retires the `.expect("… always Some")` sites).
 fn register(env: &mut JNIEnv, sender: Inner) -> jlong {
-    let Some(cancel) = sender.cancel_handle() else {
-        throw_rtp(env, "TRANSPORT", "rtp transport exposes no cancel handle");
-        return 0;
+    let cancel = match super::rtp_cancel(sender.cancel_handle(), "RtpTransport") {
+        Ok(c) => c,
+        Err(e) => {
+            // `Internal` is deliberately NOT an `RtpException.Kind` member: a
+            // transport with no cancel handle is a tst-rtp bug, not a transport
+            // outcome, so it surfaces as a plain RuntimeException like every
+            // other JVM-level failure in this crate.
+            let _ = env.throw_new("java/lang/RuntimeException", e.detail);
+            return 0;
+        }
     };
     REGISTRY.insert(Owned::new(sender, cancel, ())) as jlong
 }
@@ -68,10 +76,10 @@ fn register(env: &mut JNIEnv, sender: Inner) -> jlong {
 fn throw_mux_sender_error(env: &mut JNIEnv, e: &MuxSenderError) {
     match &e.source {
         MuxSenderErrorSource::Mux(m) => throw_mux_error(env, m),
-        MuxSenderErrorSource::Transport(t) => transport_error_to_rtp(env, t),
+        MuxSenderErrorSource::Transport(t) => transport_error(env, t),
         // `MuxSenderErrorSource` may gain variants; route any future one to a
         // generic RtpException(TRANSPORT) with the Display message preserved.
-        _ => throw_rtp(env, "TRANSPORT", &e.to_string()),
+        _ => throw_rtp(env, BindingErrorKind::RtpIo, &e.to_string()),
     }
 }
 
@@ -95,7 +103,7 @@ fn build_from_url(
     let mut builder = match RtpSocketBuilder::from_url(&url_str) {
         Ok(b) => b,
         Err(e) => {
-            throw_rtp(env, "TRANSPORT", &e.to_string());
+            rtp_url_error(env, &e);
             return 0;
         }
     };
@@ -103,7 +111,7 @@ fn build_from_url(
     let transport = match builder.build() {
         Ok(t) => t,
         Err(e) => {
-            connect_error_to_rtp(env, &e);
+            connect_error(env, e);
             return 0;
         }
     };
@@ -318,7 +326,7 @@ pub extern "system" fn Java_org_tstrans_rtp_MuxSender_nSendVideoTo<'local>(
             .ok()
             .and_then(|r| VideoStreamHandle::try_from_raw(r).ok())
         else {
-            throw_rtp(env, "TRANSPORT", "invalid stream handle");
+            throw_rtp(env, BindingErrorKind::RtpIo, "invalid stream handle");
             return;
         };
         let Some(buf) = read_bytes(env, &nal) else {
@@ -346,7 +354,7 @@ pub extern "system" fn Java_org_tstrans_rtp_MuxSender_nSendKlvTo<'local>(
             .ok()
             .and_then(|r| KlvStreamHandle::try_from_raw(r).ok())
         else {
-            throw_rtp(env, "TRANSPORT", "invalid stream handle");
+            throw_rtp(env, BindingErrorKind::RtpIo, "invalid stream handle");
             return;
         };
         let Ok(service_id) = checked_u8(env, i64::from(metadata_service_id), "metadataServiceId")
@@ -377,7 +385,7 @@ pub extern "system" fn Java_org_tstrans_rtp_MuxSender_nSendAudioTo<'local>(
             .ok()
             .and_then(|r| AudioStreamHandle::try_from_raw(r).ok())
         else {
-            throw_rtp(env, "TRANSPORT", "invalid stream handle");
+            throw_rtp(env, BindingErrorKind::RtpIo, "invalid stream handle");
             return;
         };
         let Some(buf) = read_bytes(env, &frames) else {
@@ -404,7 +412,7 @@ pub extern "system" fn Java_org_tstrans_rtp_MuxSender_nSendSubtitleTo<'local>(
             .ok()
             .and_then(|r| SubtitleStreamHandle::try_from_raw(r).ok())
         else {
-            throw_rtp(env, "TRANSPORT", "invalid stream handle");
+            throw_rtp(env, BindingErrorKind::RtpIo, "invalid stream handle");
             return;
         };
         let Some(buf) = read_bytes(env, &payload) else {
@@ -434,7 +442,7 @@ pub extern "system" fn Java_org_tstrans_rtp_MuxSender_nSendDataTo<'local>(
             .ok()
             .and_then(|r| DataStreamHandle::try_from_raw(r).ok())
         else {
-            throw_rtp(env, "TRANSPORT", "invalid stream handle");
+            throw_rtp(env, BindingErrorKind::RtpIo, "invalid stream handle");
             return;
         };
         let Some(buf) = read_bytes(env, &data) else {
