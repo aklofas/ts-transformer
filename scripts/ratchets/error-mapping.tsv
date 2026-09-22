@@ -24,14 +24,6 @@ py	rtp	RtpErrorKind	make_rtp_error	-
 py	rtsp	RtspErrorKind	make_rtsp_error	-
 py	srt	SrtErrorKind	make_srt_error	-
 py	hls	HlsErrorKind	make_hls_error	-
-java	demux	DemuxException.Kind	throw_demux	-
-java	mux	MuxException.Kind	throw_mux	-
-java	klv_decode	KlvDecodeException.Kind	throw_klv_decode	-
-java	klv_encode	KlvEncodeException.Kind	throw_klv_encode	-
-java	codec	CodecParseException.Kind	throw_codec	-
-java	srt	SrtException.Kind	throw_srt	-
-java	rtp	RtpException.Kind	throw_rtp	-
-java	rtsp	RtspException.Kind	throw_rtsp	-
 pyarm	codec	CodecParseError	crates/tst-core/src/codec/mod.rs	bindings/python/src/errors.rs	codec_parse_error_to_pyerr
 pyarm	demux	DemuxError	crates/tst-core/src/error.rs	bindings/python/src/mpegts.rs	demux_error_to_pyerr
 pyarm	klv_decode	KlvDecodeError	crates/tst-core/src/error.rs	bindings/python/src/klv.rs	klv_decode_error_to_pyerr

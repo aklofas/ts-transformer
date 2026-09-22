@@ -19,8 +19,7 @@ public final class DemuxException extends BindingException {
         /**
          * Parity-only constant mirroring tst-py's vestigial {@code DemuxErrorKind.UNEXPECTED_EOF}:
          * there is NO producer in {@code tst_core::DemuxError} (the file path treats truncation as
-         * clean EOF and surfaces read failures as native {@code IOException}). Exempted in
-         * {@code scripts/check/jvm/error-mapping-coverage.sh}.
+         * clean EOF and surfaces read failures as native {@code IOException}).
          */
         UNEXPECTED_EOF,
         STRICT_REJECTION, INTERNAL,

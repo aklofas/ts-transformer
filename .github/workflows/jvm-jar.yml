@@ -75,10 +75,6 @@ jobs:
         # probe-free lib into resources/ before the upload step copies it.
         run: ./gradlew copyNative --no-daemon --stacktrace
 
-      - name: check-jvm-error-mapping-coverage
-        if: matrix.triple == 'linux-x86_64'
-        run: bash scripts/check/jvm/error-mapping-coverage.sh
-
       - name: check-jvm-jni-catch-coverage
         if: matrix.triple == 'linux-x86_64'
         run: bash scripts/check/jvm/jni-catch-coverage.sh

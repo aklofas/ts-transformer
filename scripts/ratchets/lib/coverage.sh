@@ -134,9 +134,7 @@ rust_arm_enum_variants() { # <enum> <src_file>
 # grep — otherwise a variant name that only appears in prose (a
 # rationale comment, a stale commented-out arm) satisfies the check
 # without a real match arm existing, exactly the false-PASS class this
-# rail exists to prevent. Mirrors the sed pipeline
-# scripts/check/jvm/error-mapping-coverage.sh already uses for the same
-# reason (see its is_no_producer_exempt-adjacent comment block).
+# rail exists to prevent.
 strip_rust_comments() { # <file>
     sed 's@/\*.*\*/@@g' "$1" \
         | sed '\@/\*@,\@\*/@d' \
