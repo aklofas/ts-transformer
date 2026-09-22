@@ -368,20 +368,18 @@ pub fn throw_mux(env: &mut JNIEnv, kind: BindingErrorKind, message: &str) {
 }
 
 /// Construct + throw `org.tstrans.KlvDecodeException(Kind.<kind>, message)`.
-/// `kind` MUST be one of the `KlvDecodeException.Kind` constant names
-/// (SCREAMING_SNAKE_CASE). The ratchet greps for `throw_klv_decode(env, "<CONST>", ...)`.
+/// The kind is resolved to its Java member by [`declared_member`].
 pub fn throw_klv_decode(env: &mut JNIEnv, kind: BindingErrorKind, message: &str) {
     throw_binding(env, Domain::KlvDecode, &BindingError::new(kind, message));
 }
 
 /// Construct + throw `org.tstrans.KlvEncodeException(Kind.<kind>, tag, message)`.
 /// `tag` = `None` → uses the `(Kind, String)` ctor; `Some(t)` → uses
-/// `(Kind, Long, String)`. The ratchet greps for `throw_klv_encode(env, "<CONST>", ...)`.
+/// `(Kind, Long, String)`.
 /// Raw-member variant for the `jni-test-hooks` probes ONLY
 /// (`klv/mod.rs::nRaiseDecodeForTest`): the test names a Java member directly,
 /// so there is no `BindingErrorKind` to resolve. Never used on a real error
 /// path — those all go through [`throw_klv_decode`].
-#[cfg(feature = "jni-test-hooks")]
 pub fn throw_klv_decode_raw(env: &mut JNIEnv, member: &str, message: &str) {
     throw_family(
         env,
@@ -393,7 +391,6 @@ pub fn throw_klv_decode_raw(env: &mut JNIEnv, member: &str, message: &str) {
 }
 
 /// [`throw_klv_decode_raw`]'s encode twin (`klv/mod.rs::nRaiseEncodeForTest`).
-#[cfg(feature = "jni-test-hooks")]
 pub fn throw_klv_encode_raw(env: &mut JNIEnv, member: &str, tag: Option<u64>, message: &str) {
     if env.exception_check().unwrap_or(false) {
         return;
@@ -556,7 +553,7 @@ pub fn map_klv_encode_error(env: &mut JNIEnv, e: &KlvEncodeError) {
             &msg,
         ),
         KlvEncodeError::DuplicateTargetId { target_id } => {
-            // Hoist the boxed tag so the `throw_klv_encode(env, "<CONST>", ...)`
+            // Hoist the boxed tag so the `throw_klv_encode(env, <Kind>, ...)`
             // call stays on one line — required by both rustfmt's width and the
             // error-mapping ratchet's per-constant grep (a brace-less arm with
             // this longer CONST would otherwise split the call across lines and
@@ -578,10 +575,8 @@ pub fn map_klv_encode_error(env: &mut JNIEnv, e: &KlvEncodeError) {
 }
 
 /// Construct + throw `org.tstrans.CodecParseException`.
-/// `kind` MUST be one of the `CodecParseException.Kind` constant names
-/// (SCREAMING_SNAKE_CASE). The ratchet greps for `throw_codec(env, "<CONST>", ...)`
-/// — note `kind` is the 2nd argument (after `env`), so the literal sits where
-/// the ratchet expects it. `message` (LAST arg) is the exception's
+/// The kind is resolved to its Java member by [`declared_member`].
+/// `message` (LAST arg) is the exception's
 /// `getMessage()` text — call sites pass the Rust `Display` string.
 pub fn throw_codec(
     env: &mut JNIEnv,
@@ -701,7 +696,7 @@ pub fn map_codec_parse_error(env: &mut JNIEnv, e: &CodecParseError, codec: &str)
     // `format!("{err}")`); forwarded to every `throw_codec` call below.
     let msg = e.to_string();
     // NOTE: each arm binds the per-variant fields to `f` first, then makes the
-    // `throw_codec(env, "<KIND>", codec, &f, &msg)` call on ONE line so the
+    // `throw_codec(env, <Kind>, codec, &f, &msg)` call on ONE line so the
     // error-mapping ratchet (a line-oriented grep for
     // `throw_codec\s*\(\s*[^,]*,\s*"<KIND>"`) sees `env, "<KIND>"` together.
     match e {
