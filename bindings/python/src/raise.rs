@@ -277,7 +277,8 @@ pub(crate) static DOMAINS: &[&Domain] = &[
 
 /// Raise `e` as `d`'s exception class (see the module doc for the two
 /// member-less kinds).
-#[allow(dead_code)] // callers land with the per-domain re-points in WP-B2.
+#[allow(dead_code)] // every transport surface calls this; dead only in a
+// transport-less `--no-default-features` build.
 pub(crate) fn raise(py: Python<'_>, d: &Domain, e: BindingError) -> PyErr {
     if e.kind == K::PanicCaught {
         return PanicException::new_err(e.detail);
@@ -309,7 +310,8 @@ pub(crate) fn raise(py: Python<'_>, d: &Domain, e: BindingError) -> PyErr {
 
 /// Flatten `Owned::with_mut(|t| t.op())`: the handle state and the op's own
 /// error both go through [`raise`].
-#[allow(dead_code)] // callers land with the per-class `Owned` re-points in WP-B2.
+#[allow(dead_code)] // every transport surface calls this; dead only in a
+// transport-less `--no-default-features` build.
 pub(crate) fn pyres<R, E: Into<BindingError>>(
     py: Python<'_>,
     d: &Domain,
