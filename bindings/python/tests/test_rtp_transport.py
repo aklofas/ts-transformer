@@ -9,6 +9,7 @@ cancel propagates to a parked `.recv()` call.
 from __future__ import annotations
 
 import socket
+import re
 import threading
 import time
 
@@ -384,3 +385,46 @@ def test_receiver_rejects_pkt_size_url():
 def test_receiver_has_no_pkt_size_kwarg():
     with pytest.raises(TypeError):
         tstrans.rtp.Receiver("rtp://127.0.0.1:0", pkt_size=1316)
+
+
+# Members retired in 0.7.0, matched only where a docstring is naming a KIND
+# (`RtpError(...)` / `RtpErrorKind....`). A bare word match would flag the
+# legitimate `StreamEndReason.CANCELLED` / `TRANSPORT_FAILED` end reasons and
+# `RtspErrorKind.UNSUPPORTED_TRANSPORT`.
+_RETIRED_KIND_RE = re.compile(
+    r"RtpError\((?:kind=)?(TRANSPORT|MALFORMED_PACKET|CANCELLED|TIMEOUT)\b"
+    r"|RtpErrorKind\.(TRANSPORT|MALFORMED_PACKET|CANCELLED|TIMEOUT)\b"
+)
+
+
+def _rtp_docstrings():
+    """(qualified name, docstring) for every public rtp class and method."""
+    import inspect
+
+    import tstrans.rtp as rtp
+
+    for cls_name, obj in vars(rtp).items():
+        if cls_name.startswith("_") or not inspect.isclass(obj):
+            continue
+        yield f"rtp.{cls_name}", obj.__doc__ or ""
+        for attr in dir(obj):
+            if attr.startswith("_"):
+                continue
+            member = getattr(obj, attr, None)
+            doc = getattr(member, "__doc__", None)
+            if doc:
+                yield f"rtp.{cls_name}.{attr}", doc
+
+
+def test_no_rtp_docstring_names_a_retired_kind() -> None:
+    """The 0.7.0 rename left ~20 Python-visible rtp docstrings naming
+    `TRANSPORT` / `TIMEOUT` / `CANCELLED`. Those members still resolve as
+    deprecated aliases, so nothing else catches the drift — `help()` simply
+    tells the user the wrong kind. `TIMEOUT` is not checked: `RtspErrorKind`
+    keeps a real `TIMEOUT` member and the two surfaces share prose."""
+    offenders = [
+        (name, m.group(0))
+        for name, doc in _rtp_docstrings()
+        for m in _RETIRED_KIND_RE.finditer(doc)
+    ]
+    assert not offenders, f"rtp docstrings naming a retired kind: {offenders}"

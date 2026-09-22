@@ -19,24 +19,31 @@
 //!
 //! # Handle lifetime
 //!
-//! `H264Receiver` keeps `tst_rtp::H264Receiver` in an
-//! `Arc<Mutex<Option<_>>>` slot and every method borrows `&self`, so a
-//! parked `recv_au` on one thread never blocks a `close()` / getter on
+//! `H264Receiver` holds `tst_rtp::H264Receiver` in a
+//! `tst_pipeline::binding::Owned`, which takes the slot only inside
+//! `with_mut` / `with_ref` under `py.allow_threads`, so a parked
+//! `recv_au` on one thread never blocks a `close()` or a getter on
 //! another (a `&mut self` receive made PyO3 raise `RuntimeError: Already
-//! borrowed` there). Methods raise
-//! `RtpError(TRANSPORT, "receiver is closed")` once the slot is empty.
-//! `close()` fires the cancel handle BEFORE taking the slot, so any
-//! parked `recv_au` unparks promptly and returns `None` (EOS).
+//! borrowed` there). Methods raise `RtpError(CLOSED)` once the slot is
+//! empty. `close()` is cancel-first, so any parked `recv_au` unparks
+//! promptly and returns `None` (EOS); the end reason is snapshotted by
+//! `H264Held::close`, the one moment it can be read before the receiver
+//! drops.
 //!
 //! # Error mapping
 //!
-//! - `TransportError::ExplicitClose` → `RtpError(CANCELLED, ...)`
-//! - `TransportError::Backpressure`  → `RtpError(TIMEOUT, ...)` (a
+//! Every failure is a `tst_pipeline::binding::BindingError` raised on
+//! `RtpError` through `crate::raise`:
+//!
+//! - `TransportError::ExplicitClose`, and any call on a closed handle
+//!   → `CLOSED`
+//! - `TransportError::Backpressure` → `BACKPRESSURE` (a
 //!   `recv_au(timeout_ms=...)` deadline expired — retryable, the
 //!   receiver/session is still alive)
-//! - `TransportError::Broken`        → `RtpError(TRANSPORT, ...)`
-//! - closed-handle calls             → `RtpError(TRANSPORT, "receiver is closed")`
-//! - `ConnectError` (URL / bind)     → `RtpError(TRANSPORT, ...)`
+//! - `TransportError::Broken` → `BROKEN`
+//! - `ConnectError` (URL / bind) → one member per variant: `URL` / `IO` /
+//!   `HOST_NOT_LITERAL` / `IFACE_UNSUPPORTED` / `PAYLOAD_TYPE_PARAM` /
+//!   `MISSING_PAYLOAD_TYPE_PARAM`
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
@@ -372,7 +379,7 @@ impl PyRtpStats {
 /// reassembled or EOS. Returns `H264AccessUnit` on success, `None` at EOS
 /// (clean close or RTSP teardown), or raises `RtpError` on transport
 /// failure. `timeout_ms=N` bounds a single call via the one-shot
-/// `recv_au_timeout`; expiry raises `RtpError(TIMEOUT)` — the receiver
+/// `recv_au_timeout`; expiry raises `RtpError(BACKPRESSURE)` — the receiver
 /// stays open, call again to keep waiting. `None` return stays EOS-only
 /// and is never used to signal a timeout.
 ///
@@ -387,7 +394,7 @@ impl PyRtpStats {
 /// # Lifecycle
 ///
 /// `close()` fires the cancel handle and drops the underlying source;
-/// subsequent `recv_au()` calls raise `RtpError(TRANSPORT)`. Idempotent.
+/// subsequent `recv_au()` calls raise `RtpError(CLOSED)`. Idempotent.
 #[pyclass(name = "H264Receiver", module = "tstrans.rtp")]
 pub struct PyH264Receiver {
     /// The binding layer's handle state machine (Arc 2). The snapshot is
@@ -484,7 +491,7 @@ impl PyH264Receiver {
     /// `H264DepayConfig()` defaults are used (payload type is overridden
     /// from the URL's `?pt=` parameter regardless of `config.payload_type`).
     ///
-    /// Raises `RtpError(TRANSPORT)` on URL parse failure, missing `?pt=`,
+    /// Raises `RtpError(CLOSED)` on URL parse failure, missing `?pt=`,
     /// or socket bind error.
     #[staticmethod]
     #[pyo3(signature = (url, config = None))]
@@ -512,7 +519,7 @@ impl PyH264Receiver {
     ///
     /// `timeout_ms=None` (the default) blocks indefinitely. `timeout_ms=N`
     /// bounds this single call to `N` milliseconds via the one-shot
-    /// `recv_au_timeout`; on expiry it raises `RtpError(TIMEOUT)` and the
+    /// `recv_au_timeout`; on expiry it raises `RtpError(BACKPRESSURE)` and the
     /// receiver stays open — call again to keep waiting.
     ///
     /// Returns:
@@ -522,9 +529,9 @@ impl PyH264Receiver {
     ///   timeout.
     ///
     /// Raises:
-    /// - `RtpError(TIMEOUT)` if `timeout_ms` was given and no AU
+    /// - `RtpError(BACKPRESSURE)` if `timeout_ms` was given and no AU
     ///   completed within it — retryable, the receiver stays open.
-    /// - `RtpError(TRANSPORT)` on a hard I/O error or if the receiver is
+    /// - `RtpError(CLOSED)` on a hard I/O error or if the receiver is
     ///   already closed.
     #[pyo3(signature = (timeout_ms = None))]
     fn recv_au(
@@ -596,7 +603,7 @@ impl PyH264Receiver {
     /// Returns `None` only for a live TCP-interleaved (RTSP) receiver
     /// where no UDP socket exists.
     ///
-    /// Raises `RtpError(TRANSPORT, "receiver is closed")` on a closed
+    /// Raises `RtpError(CLOSED)` on a closed
     /// handle — matching the module's closed-handle contract — so `None`
     /// is never ambiguous between "closed" and "no UDP socket". Answered
     /// from the construction-time snapshot, so it never waits behind a

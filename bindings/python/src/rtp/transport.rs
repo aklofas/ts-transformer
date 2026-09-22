@@ -12,23 +12,10 @@
 //!   `recv` / in-flight `send` on another thread holds.
 //! - `cancel_handle`, `cancel`, `end_reason`, `__enter__`, `__exit__` →
 //!   fast read-only / atomic operations; no GIL release.
-//! - Every wrapper borrows `&self` over an `Arc<Mutex<Option<_>>>` slot;
-//!   `close()` cancels before taking it.
-//!
-//! Bytes-like extraction in `.send(ts_bytes)` follows the audit-backlog
-//! #10 two-path pattern: fast `&[u8]` extract (zero-copy for `bytes`),
-//! fallback through Python's `bytes()` builtin for `bytearray` /
-//! `memoryview` (one C copy). Required under PyO3's abi3-py310 feature
-//! since `PyBuffer` is gated behind `not(Py_LIMITED_API)`.
-//!
-//! Error mapping: every failure is a `tst_pipeline::binding::BindingError`
-//! raised on `RtpError` through `crate::raise` — the kind's `name()` is
-//! resolved on `tstrans.exceptions.RtpErrorKind` and checked at
-//! `import tstrans`. `tst_rtp::ConnectError` contributes one member per
-//! variant (`URL` / `IO` / `HOST_NOT_LITERAL` / `IFACE_UNSUPPORTED` /
-//! `PAYLOAD_TYPE_PARAM` / `MISSING_PAYLOAD_TYPE_PARAM`); a closed handle is
-//! `CLOSED`; a one-shot `recv(timeout_ms=…)` expiry is `BACKPRESSURE`
-//! (retryable — the receiver stays open).
+//! - Concurrency (Arc 2):
+//!   Every wrapper holds a `tst_pipeline::binding::Owned`, which takes
+//!   the slot only inside `with_mut` / `with_ref` (GIL released) and
+//!   makes `close()` cancel-first.
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
@@ -39,7 +26,7 @@ use pyo3::Py;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
-use tst_core::transport::{RecvTransport, SocketStats, Transport, TransportCancel};
+use tst_core::transport::{RecvTransport, SocketStats, Transport, TransportCancel, TransportError};
 use tst_pipeline::binding::{BindingError, BindingErrorKind, Owned, SendHalf};
 use tst_rtp::builder::RtpRecvSocketBuilder;
 use tst_rtp::{RtpRecvTransport, RtpSocketBuilder, RtpTransport, StreamEndReasonHandle};
@@ -270,15 +257,15 @@ impl PySender {
 
     /// Return a shareable cancel handle. Calling `.cancel()` on the
     /// returned handle wakes any thread currently parked in `.send()`;
-    /// that call returns `RtpError(kind=CANCELLED)`.
+    /// that call returns `RtpError(kind=CLOSED)`.
     fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<PyCancelHandle>> {
         Py::new(py, PyCancelHandle::from_source(&self.cancel))
     }
 
     /// Close the sender. Fires the cancel handle BEFORE taking the slot
     /// (a `send()` in flight on another thread ends with
-    /// `RtpError(CANCELLED)`), then drops the transport. After close,
-    /// further `.send()` calls raise `RtpError(kind=TRANSPORT)`. Idempotent.
+    /// `RtpError(CLOSED)`), then drops the transport. After close,
+    /// further `.send()` calls raise `RtpError(kind=CLOSED)`. Idempotent.
     fn close(&self, py: Python<'_>) -> PyResult<()> {
         close_owned(py, &RTP, &self.owned)
     }
@@ -391,7 +378,7 @@ impl PyReceiver {
     /// `timeout_ms=None` (the default) blocks indefinitely. `timeout_ms=N`
     /// bounds this single call to `N` milliseconds via the one-shot
     /// `RtpRecvTransport::recv_timeout`; on expiry it raises
-    /// `RtpError(TIMEOUT)` and the receiver stays open — call again to
+    /// `RtpError(BACKPRESSURE)` and the receiver stays open — call again to
     /// keep waiting. The one-shot's `Ok(None)` expiry never leaks to
     /// Python: `.recv()` always either returns `bytes` or raises.
     ///
@@ -410,6 +397,20 @@ impl PyReceiver {
                 // Copy out under the lock; the PyBytes is built once the GIL
                 // is back.
                 n.map(|n| n.map(|n| s.scratch[..n].to_vec()))
+            })
+        });
+        // A2's K6 peer-EOS rule lives on the pipeline SHELL impls; this
+        // class holds a raw `RtpRecvTransport`, so `From<TransportError>`
+        // would flatten a peer EOS to `CLOSED`. Apply the shell rule here
+        // instead, so `END_OF_STREAM` is reachable and a caller can tell a
+        // clean peer end (an RTSP teardown on a session-derived receiver)
+        // from their own `close()`.
+        let res = res.map(|r| {
+            r.map_err(|e| match e {
+                TransportError::Closed => {
+                    BindingError::new(BindingErrorKind::EndOfStream, "peer ended the stream")
+                }
+                other => BindingError::from(other),
             })
         });
         match pyres(py, &RTP, res)? {
@@ -446,7 +447,7 @@ impl PyReceiver {
 
     /// Return a shareable cancel handle. Calling `.cancel()` on the
     /// returned handle wakes any thread currently parked in `.recv()`;
-    /// that call returns `RtpError(kind=CANCELLED)`.
+    /// that call returns `RtpError(kind=CLOSED)`.
     fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<PyCancelHandle>> {
         Py::new(py, PyCancelHandle::from_source(&self.cancel))
     }
@@ -477,8 +478,8 @@ impl PyReceiver {
 
     /// Close the receiver. Fires the cancel handle BEFORE taking the slot
     /// (a `recv()` parked on another thread ends with
-    /// `RtpError(CANCELLED)`), then drops the transport. After close,
-    /// further `.recv()` calls raise `RtpError(kind=TRANSPORT)`. Idempotent.
+    /// `RtpError(CLOSED)`), then drops the transport. After close,
+    /// further `.recv()` calls raise `RtpError(kind=CLOSED)`. Idempotent.
     fn close(&self, py: Python<'_>) -> PyResult<()> {
         close_owned(py, &RTP, &self.owned)
     }

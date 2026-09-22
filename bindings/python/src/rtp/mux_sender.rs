@@ -23,14 +23,10 @@
 //!   `Py<PyBytes>` strong ref pinning the slice lives on the caller's
 //!   Python frame, so GC can't collect it while we hold the borrowed
 //!   `&[u8]` without the GIL.
-//! - `Arc<Mutex<Option<_>>>` slot + `&self` methods (the cross-thread
-//!   close shape of PR #209): `close()` cancels before taking the slot.
-//!
-//! Error mapping:
-//! - `tst_pipeline::MuxSenderError` carrying a `Mux(MuxError)`        → `MuxError`
-//! - `tst_pipeline::MuxSenderError` carrying a `Transport(TransportError)` → `RtpError`
-//! - Construction-time `MuxError` (e.g. `CONFIG_INVALID`)              → `MuxError`
-//! - Connect-time `ConnectError`                                       → `RtpError(TRANSPORT)`
+//! - Concurrency (Arc 2):
+//!   Every wrapper holds a `tst_pipeline::binding::Owned`, which takes
+//!   the slot only inside `with_mut` / `with_ref` (GIL released) and
+//!   makes `close()` cancel-first.
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
@@ -98,7 +94,7 @@ fn mux_sender_err(py: Python<'_>, e: MuxSenderError) -> PyErr {
 pub struct PyMuxSender {
     /// Shared slot (PR #209 shape): every push holds it with the GIL
     /// released; `close()` fires `cancel` BEFORE taking it, so a push in
-    /// flight on another thread ends with `RtpError(CANCELLED)` instead
+    /// flight on another thread ends with `RtpError(CLOSED)` instead
     /// of the close raising `RuntimeError: Already borrowed`. `Option` so
     /// `close()` / `__exit__` can drop the inner sender while keeping the
     /// PyClass addressable for repeated no-op closes.
@@ -112,7 +108,7 @@ impl PyMuxSender {
     /// datagram payload size (default 1316 = 7 × 188 TS packets, sized
     /// to stay under the typical Ethernet MTU minus IP+UDP+RTP header).
     ///
-    /// Raises `RtpError(TRANSPORT)` on URL parse / socket bind failure;
+    /// Raises `RtpError(CLOSED)` on URL parse / socket bind failure;
     /// `MuxError(CONFIG_INVALID)` if the muxer construction rejects the
     /// program config.
     #[new]
@@ -453,7 +449,7 @@ impl PyMuxSender {
     /// Tuple of `(SocketStats, MuxerStats)`. `SocketStats` reflects the
     /// underlying RTP transport's wire-level counters; `MuxerStats`
     /// reflects the inner Rust `Muxer`'s programs / packets-emitted
-    /// totals. Raises `RtpError(TRANSPORT)` if the sender is closed.
+    /// totals. Raises `RtpError(CLOSED)` if the sender is closed.
     /// Waits (GIL released) for a push in flight on another thread.
     fn stats(&self, py: Python<'_>) -> PyResult<(Py<PySocketStats>, Py<PyMuxerStats>)> {
         let (sock, pipe) = pyok(
@@ -485,7 +481,7 @@ impl PyMuxSender {
 
     /// Close the sender. Fires the transport's cancel BEFORE taking the
     /// slot (a push in flight on another thread ends with
-    /// `RtpError(CANCELLED)`), then drops the underlying RTP transport
+    /// `RtpError(CLOSED)`), then drops the underlying RTP transport
     /// (the pipeline `MuxSender::close` is itself cancel-first). Idempotent.
     fn close(&self, py: Python<'_>) -> PyResult<()> {
         close_owned(py, &RTP, &self.owned)
