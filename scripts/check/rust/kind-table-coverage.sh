@@ -7,11 +7,11 @@
 # tst-pipeline MUST carry a wildcard (E0004 otherwise) and rustc cannot tell
 # us when a new variant silently lands on it as INTERNAL. This ratchet can.
 #
-# Classifier names: the five enums whose wildcard decides "unmapped" have
-# their arms in the private `map_<domain>` helpers (which return
-# Option<BindingErrorKind>, the None arm being the wildcard); the public
-# `kind_of_<domain>` wrappers just default None to INTERNAL and hold no arms.
-# TransportError's arms are still inline in `kind_of_transport`.
+# Classifier names: every enum whose wildcard decides "unmapped" has its arms
+# in a private `map_<domain>` helper returning an Option (the None arm IS the
+# wildcard); the public `kind_of_<domain>` wrappers just default None to
+# INTERNAL and hold no arms. `map_transport` yields kind AND detail together so
+# there is only ever one match over TransportError for this rail to read.
 #
 # MuxError itself is deliberately not a row: kind_of_mux keeps four overrides
 # and delegates everything else to MuxError::kind(), whose own per-variant
@@ -35,7 +35,7 @@ KIND_RS="crates/tst-pipeline/src/binding/kind.rs"
 
 # Each row: enum-file | enum-short-name | classifier-fn-name
 ENUMS=(
-    "crates/tst-core/src/transport.rs|TransportError|kind_of_transport"
+    "crates/tst-core/src/transport.rs|TransportError|map_transport"
     "crates/tst-core/src/error.rs|DemuxError|map_demux"
     "crates/tst-core/src/error.rs|KlvDecodeError|map_klv_decode"
     "crates/tst-core/src/error.rs|KlvFieldError|map_klv_field"

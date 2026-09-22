@@ -138,6 +138,8 @@ pub tst_rtp::error::MountError::Closed
 pub tst_rtp::error::MountError::Mux(tst_core::error::MuxError)
 impl core::convert::From<tst_core::error::MuxError> for tst_rtp::error::MountError
 pub fn tst_rtp::error::MountError::from(tst_core::error::MuxError) -> Self
+impl core::convert::From<tst_rtp::error::MountError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_rtp::error::MountError) -> Self
 impl core::error::Error for tst_rtp::error::MountError
 pub fn tst_rtp::error::MountError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for tst_rtp::error::MountError
@@ -180,6 +182,8 @@ pub tst_rtp::error::RtspError::UnsupportedTransport
 pub tst_rtp::error::RtspError::Url(tst_rtp::url::UrlError)
 impl core::convert::From<core::io::error::Error> for tst_rtp::error::RtspError
 pub fn tst_rtp::error::RtspError::from(core::io::error::Error) -> Self
+impl core::convert::From<tst_rtp::error::RtspError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_rtp::error::RtspError) -> Self
 impl core::convert::From<tst_rtp::url::UrlError> for tst_rtp::error::RtspError
 pub fn tst_rtp::error::RtspError::from(tst_rtp::url::UrlError) -> Self
 impl core::error::Error for tst_rtp::error::RtspError
@@ -212,6 +216,8 @@ pub tst_rtp::error::RtspServerError::NotStarted
 pub tst_rtp::error::RtspServerError::Shutdown
 pub tst_rtp::error::RtspServerError::Tls(alloc::string::String)
 pub tst_rtp::error::RtspServerError::UrlParse(tst_rtp::url::UrlError)
+impl core::convert::From<tst_rtp::error::RtspServerError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_rtp::error::RtspServerError) -> Self
 impl core::convert::From<tst_rtp::url::UrlError> for tst_rtp::error::RtspServerError
 pub fn tst_rtp::error::RtspServerError::from(tst_rtp::url::UrlError) -> Self
 impl core::error::Error for tst_rtp::error::RtspServerError
@@ -1338,6 +1344,8 @@ pub tst_rtp::transport::ConnectError::PayloadTypeParam
 pub tst_rtp::transport::ConnectError::Url(tst_rtp::url::UrlError)
 impl core::convert::From<core::io::error::Error> for tst_rtp::transport::ConnectError
 pub fn tst_rtp::transport::ConnectError::from(core::io::error::Error) -> Self
+impl core::convert::From<tst_rtp::transport::ConnectError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_rtp::transport::ConnectError) -> Self
 impl core::convert::From<tst_rtp::url::UrlError> for tst_rtp::transport::ConnectError
 pub fn tst_rtp::transport::ConnectError::from(tst_rtp::url::UrlError) -> Self
 impl core::error::Error for tst_rtp::transport::ConnectError
@@ -1646,6 +1654,8 @@ pub tst_rtp::ConnectError::PayloadTypeParam
 pub tst_rtp::ConnectError::Url(tst_rtp::url::UrlError)
 impl core::convert::From<core::io::error::Error> for tst_rtp::transport::ConnectError
 pub fn tst_rtp::transport::ConnectError::from(core::io::error::Error) -> Self
+impl core::convert::From<tst_rtp::transport::ConnectError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_rtp::transport::ConnectError) -> Self
 impl core::convert::From<tst_rtp::url::UrlError> for tst_rtp::transport::ConnectError
 pub fn tst_rtp::transport::ConnectError::from(tst_rtp::url::UrlError) -> Self
 impl core::error::Error for tst_rtp::transport::ConnectError
@@ -1687,6 +1697,8 @@ pub tst_rtp::MountError::Closed
 pub tst_rtp::MountError::Mux(tst_core::error::MuxError)
 impl core::convert::From<tst_core::error::MuxError> for tst_rtp::error::MountError
 pub fn tst_rtp::error::MountError::from(tst_core::error::MuxError) -> Self
+impl core::convert::From<tst_rtp::error::MountError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_rtp::error::MountError) -> Self
 impl core::error::Error for tst_rtp::error::MountError
 pub fn tst_rtp::error::MountError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for tst_rtp::error::MountError
@@ -1897,6 +1909,8 @@ pub tst_rtp::RtspError::UnsupportedTransport
 pub tst_rtp::RtspError::Url(tst_rtp::url::UrlError)
 impl core::convert::From<core::io::error::Error> for tst_rtp::error::RtspError
 pub fn tst_rtp::error::RtspError::from(core::io::error::Error) -> Self
+impl core::convert::From<tst_rtp::error::RtspError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_rtp::error::RtspError) -> Self
 impl core::convert::From<tst_rtp::url::UrlError> for tst_rtp::error::RtspError
 pub fn tst_rtp::error::RtspError::from(tst_rtp::url::UrlError) -> Self
 impl core::error::Error for tst_rtp::error::RtspError
@@ -1972,6 +1986,8 @@ pub tst_rtp::RtspServerError::NotStarted
 pub tst_rtp::RtspServerError::Shutdown
 pub tst_rtp::RtspServerError::Tls(alloc::string::String)
 pub tst_rtp::RtspServerError::UrlParse(tst_rtp::url::UrlError)
+impl core::convert::From<tst_rtp::error::RtspServerError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_rtp::error::RtspServerError) -> Self
 impl core::convert::From<tst_rtp::url::UrlError> for tst_rtp::error::RtspServerError
 pub fn tst_rtp::error::RtspServerError::from(tst_rtp::url::UrlError) -> Self
 impl core::error::Error for tst_rtp::error::RtspServerError

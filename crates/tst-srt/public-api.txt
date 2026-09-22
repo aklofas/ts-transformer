@@ -172,6 +172,8 @@ pub tst_srt::error::AcceptError::System(core::io::error::Error)
 pub tst_srt::error::AcceptError::TimedOut
 impl core::convert::From<core::io::error::Error> for tst_srt::error::AcceptError
 pub fn tst_srt::error::AcceptError::from(core::io::error::Error) -> Self
+impl core::convert::From<tst_srt::error::AcceptError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_srt::error::AcceptError) -> Self
 impl core::convert::From<tst_srt::error::AcceptError> for tst_srt::error::SrtError
 pub fn tst_srt::error::SrtError::from(tst_srt::error::AcceptError) -> Self
 impl core::error::Error for tst_srt::error::AcceptError
@@ -222,6 +224,8 @@ impl core::convert::From<core::io::error::Error> for tst_srt::error::BindError
 pub fn tst_srt::error::BindError::from(core::io::error::Error) -> Self
 impl core::convert::From<tst_srt::error::AddrError> for tst_srt::error::BindError
 pub fn tst_srt::error::BindError::from(tst_srt::error::AddrError) -> Self
+impl core::convert::From<tst_srt::error::BindError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_srt::error::BindError) -> Self
 impl core::convert::From<tst_srt::error::BindError> for tst_srt::error::SrtError
 pub fn tst_srt::error::SrtError::from(tst_srt::error::BindError) -> Self
 impl core::convert::From<tst_srt::error::OptionError> for tst_srt::error::BindError
@@ -257,6 +261,8 @@ impl core::convert::From<core::io::error::Error> for tst_srt::error::ConnectErro
 pub fn tst_srt::error::ConnectError::from(core::io::error::Error) -> Self
 impl core::convert::From<tst_srt::error::AddrError> for tst_srt::error::ConnectError
 pub fn tst_srt::error::ConnectError::from(tst_srt::error::AddrError) -> Self
+impl core::convert::From<tst_srt::error::ConnectError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_srt::error::ConnectError) -> Self
 impl core::convert::From<tst_srt::error::ConnectError> for tst_srt::error::SrtError
 pub fn tst_srt::error::SrtError::from(tst_srt::error::ConnectError) -> Self
 impl core::convert::From<tst_srt::error::OptionError> for tst_srt::error::ConnectError
@@ -282,6 +288,8 @@ pub tst_srt::error::IoError::SocketClosed
 pub tst_srt::error::IoError::System(core::io::error::Error)
 impl core::convert::From<core::io::error::Error> for tst_srt::error::IoError
 pub fn tst_srt::error::IoError::from(core::io::error::Error) -> Self
+impl core::convert::From<tst_srt::error::IoError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_srt::error::IoError) -> Self
 impl core::convert::From<tst_srt::error::IoError> for tst_srt::error::SrtError
 pub fn tst_srt::error::SrtError::from(tst_srt::error::IoError) -> Self
 impl core::error::Error for tst_srt::error::IoError
@@ -306,6 +314,8 @@ pub tst_srt::error::OptionError::Other
 pub tst_srt::error::OptionError::Other::kind: tst_srt::error::SrtErrno
 pub tst_srt::error::OptionError::Other::message: alloc::string::String
 pub tst_srt::error::OptionError::OutOfRange(alloc::string::String)
+impl core::convert::From<tst_srt::error::OptionError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_srt::error::OptionError) -> Self
 impl core::convert::From<tst_srt::error::OptionError> for tst_srt::error::BindError
 pub fn tst_srt::error::BindError::from(tst_srt::error::OptionError) -> Self
 impl core::convert::From<tst_srt::error::OptionError> for tst_srt::error::ConnectError
@@ -382,6 +392,8 @@ pub tst_srt::error::RecvError::System(core::io::error::Error)
 pub tst_srt::error::RecvError::TimedOut
 impl core::convert::From<core::io::error::Error> for tst_srt::error::RecvError
 pub fn tst_srt::error::RecvError::from(core::io::error::Error) -> Self
+impl core::convert::From<tst_srt::error::RecvError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_srt::error::RecvError) -> Self
 impl core::convert::From<tst_srt::error::RecvError> for tst_srt::error::SrtError
 pub fn tst_srt::error::SrtError::from(tst_srt::error::RecvError) -> Self
 impl core::error::Error for tst_srt::error::RecvError
@@ -467,6 +479,8 @@ pub tst_srt::error::SendError::System(core::io::error::Error)
 pub tst_srt::error::SendError::TimedOut
 impl core::convert::From<core::io::error::Error> for tst_srt::error::SendError
 pub fn tst_srt::error::SendError::from(core::io::error::Error) -> Self
+impl core::convert::From<tst_srt::error::SendError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_srt::error::SendError) -> Self
 impl core::convert::From<tst_srt::error::SendError> for tst_srt::error::SrtError
 pub fn tst_srt::error::SrtError::from(tst_srt::error::SendError) -> Self
 impl core::error::Error for tst_srt::error::SendError
@@ -550,6 +564,8 @@ impl core::convert::From<tst_srt::error::RecvError> for tst_srt::error::SrtError
 pub fn tst_srt::error::SrtError::from(tst_srt::error::RecvError) -> Self
 impl core::convert::From<tst_srt::error::SendError> for tst_srt::error::SrtError
 pub fn tst_srt::error::SrtError::from(tst_srt::error::SendError) -> Self
+impl core::convert::From<tst_srt::error::SrtError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_srt::error::SrtError) -> Self
 impl core::error::Error for tst_srt::error::SrtError
 pub fn tst_srt::error::SrtError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for tst_srt::error::SrtError
@@ -879,6 +895,8 @@ pub tst_srt::url::UrlError::WrongScheme
 pub tst_srt::url::UrlError::WrongScheme::got: alloc::string::String
 impl core::convert::From<tst_core::url::common::UrlError> for tst_srt::url::UrlError
 pub fn tst_srt::url::UrlError::from(tst_core::url::common::UrlError) -> Self
+impl core::convert::From<tst_srt::url::UrlError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_srt::url::UrlError) -> Self
 impl core::error::Error for tst_srt::url::UrlError
 pub fn tst_srt::url::UrlError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for tst_srt::url::UrlError
@@ -959,6 +977,8 @@ pub tst_srt::AcceptError::System(core::io::error::Error)
 pub tst_srt::AcceptError::TimedOut
 impl core::convert::From<core::io::error::Error> for tst_srt::error::AcceptError
 pub fn tst_srt::error::AcceptError::from(core::io::error::Error) -> Self
+impl core::convert::From<tst_srt::error::AcceptError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_srt::error::AcceptError) -> Self
 impl core::convert::From<tst_srt::error::AcceptError> for tst_srt::error::SrtError
 pub fn tst_srt::error::SrtError::from(tst_srt::error::AcceptError) -> Self
 impl core::error::Error for tst_srt::error::AcceptError
@@ -987,6 +1007,8 @@ impl core::convert::From<core::io::error::Error> for tst_srt::error::BindError
 pub fn tst_srt::error::BindError::from(core::io::error::Error) -> Self
 impl core::convert::From<tst_srt::error::AddrError> for tst_srt::error::BindError
 pub fn tst_srt::error::BindError::from(tst_srt::error::AddrError) -> Self
+impl core::convert::From<tst_srt::error::BindError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_srt::error::BindError) -> Self
 impl core::convert::From<tst_srt::error::BindError> for tst_srt::error::SrtError
 pub fn tst_srt::error::SrtError::from(tst_srt::error::BindError) -> Self
 impl core::convert::From<tst_srt::error::OptionError> for tst_srt::error::BindError
@@ -1045,6 +1067,8 @@ impl core::convert::From<core::io::error::Error> for tst_srt::error::ConnectErro
 pub fn tst_srt::error::ConnectError::from(core::io::error::Error) -> Self
 impl core::convert::From<tst_srt::error::AddrError> for tst_srt::error::ConnectError
 pub fn tst_srt::error::ConnectError::from(tst_srt::error::AddrError) -> Self
+impl core::convert::From<tst_srt::error::ConnectError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_srt::error::ConnectError) -> Self
 impl core::convert::From<tst_srt::error::ConnectError> for tst_srt::error::SrtError
 pub fn tst_srt::error::SrtError::from(tst_srt::error::ConnectError) -> Self
 impl core::convert::From<tst_srt::error::OptionError> for tst_srt::error::ConnectError
@@ -1118,6 +1142,8 @@ pub tst_srt::RecvError::System(core::io::error::Error)
 pub tst_srt::RecvError::TimedOut
 impl core::convert::From<core::io::error::Error> for tst_srt::error::RecvError
 pub fn tst_srt::error::RecvError::from(core::io::error::Error) -> Self
+impl core::convert::From<tst_srt::error::RecvError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_srt::error::RecvError) -> Self
 impl core::convert::From<tst_srt::error::RecvError> for tst_srt::error::SrtError
 pub fn tst_srt::error::SrtError::from(tst_srt::error::RecvError) -> Self
 impl core::error::Error for tst_srt::error::RecvError
@@ -1167,6 +1193,8 @@ pub tst_srt::SendError::System(core::io::error::Error)
 pub tst_srt::SendError::TimedOut
 impl core::convert::From<core::io::error::Error> for tst_srt::error::SendError
 pub fn tst_srt::error::SendError::from(core::io::error::Error) -> Self
+impl core::convert::From<tst_srt::error::SendError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_srt::error::SendError) -> Self
 impl core::convert::From<tst_srt::error::SendError> for tst_srt::error::SrtError
 pub fn tst_srt::error::SrtError::from(tst_srt::error::SendError) -> Self
 impl core::error::Error for tst_srt::error::SendError
@@ -1222,6 +1250,8 @@ impl core::convert::From<tst_srt::error::RecvError> for tst_srt::error::SrtError
 pub fn tst_srt::error::SrtError::from(tst_srt::error::RecvError) -> Self
 impl core::convert::From<tst_srt::error::SendError> for tst_srt::error::SrtError
 pub fn tst_srt::error::SrtError::from(tst_srt::error::SendError) -> Self
+impl core::convert::From<tst_srt::error::SrtError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_srt::error::SrtError) -> Self
 impl core::error::Error for tst_srt::error::SrtError
 pub fn tst_srt::error::SrtError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for tst_srt::error::SrtError
@@ -1261,6 +1291,8 @@ pub tst_srt::UrlError::WrongScheme
 pub tst_srt::UrlError::WrongScheme::got: alloc::string::String
 impl core::convert::From<tst_core::url::common::UrlError> for tst_srt::url::UrlError
 pub fn tst_srt::url::UrlError::from(tst_core::url::common::UrlError) -> Self
+impl core::convert::From<tst_srt::url::UrlError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_srt::url::UrlError) -> Self
 impl core::error::Error for tst_srt::url::UrlError
 pub fn tst_srt::url::UrlError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for tst_srt::url::UrlError

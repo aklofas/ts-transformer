@@ -14,38 +14,38 @@ categories  = ["multimedia::video", "network-programming"]
 crate-type = ["rlib"]
 
 [dependencies]
-tst-core   = { path = "../tst-core", version = "0.6.0" }
+tst-core     = { path = "../tst-core", version = "0.6.0" }
 tst-pipeline = { path = "../tst-pipeline", version = "0.6.0" }
-thiserror  = { workspace = true }
-base64     = { version = "0.22", default-features = false, features = ["std"] }
-bytes      = "1"
+thiserror    = { workspace = true }
+base64       = { version = "0.22", default-features = false, features = ["std"] }
+bytes        = "1"
 # Random SSRC + initial RTP sequence number per RFC 3550 §5.1.
 # getrandom is the minimal dep — sized for one-shot construction-time use.
-getrandom  = "0.2"
-md-5       = { version = "0.10", default-features = false }
-sdp-types  = "0.1"
-secrecy    = { workspace = true }
-sha2       = { version = "0.10", default-features = false }
+getrandom    = "0.2"
+md-5         = { version = "0.10", default-features = false }
+sdp-types    = "0.1"
+secrecy      = { workspace = true }
+sha2         = { version = "0.10", default-features = false }
 # Constant-time byte comparison for RTSP auth credential verification.
 # Already in the workspace lockfile via rustls; declared direct so auth.rs
 # can use ConstantTimeEq without a feature gate.
-subtle     = "2"
+subtle       = "2"
 # Phase 3: tokio drives the RtspServer Runtime (internal-only sync facade).
 # Same feature set Phase 2 used as a dev-dep — features carry over.
 # Optional: gated behind the `rtsp-server` feature so client-only consumers
 # (e.g. tst-uniffi mobile) build a tokio-free dependency tree.
-tokio      = { version = "1", features = ["rt-multi-thread", "net", "time", "io-util", "sync", "macros"], optional = true }
+tokio        = { version = "1", features = ["rt-multi-thread", "net", "time", "io-util", "sync", "macros"], optional = true }
 # CancellationToken for graceful-shutdown coordination across per-session tasks.
-tokio-util = { version = "0.7", optional = true }
+tokio-util   = { version = "0.7", optional = true }
 # Single facade for diagnostics workspace-wide.
-tracing    = { version = "0.1", default-features = false, features = ["std"] }
+tracing      = { version = "0.1", default-features = false, features = ["std"] }
 
 # Cross-platform setsockopt paths std doesn't expose on 1.85: SO_KEEPALIVE
 # with an idle time on the RTSP client's control socket (`?tcp_keepalive=`),
 # and IP_MULTICAST_IF on Windows for the RTSP multicast-mount send socket
 # (Unix multicast uses the libc path below). Kept unconditional — it's a
 # tiny dep and gating it buys nothing.
-socket2    = { workspace = true }
+socket2      = { workspace = true }
 
 # Raw setsockopt for multicast knobs not exposed on stable std::net::UdpSocket
 # in Rust 1.85: IPV6_MULTICAST_HOPS and IP_MULTICAST_IF. Unix-only; Phase 1

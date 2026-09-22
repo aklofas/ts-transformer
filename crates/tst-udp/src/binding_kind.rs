@@ -42,6 +42,15 @@ mod tests {
             BindingError::from(UdpError::InvalidConfig("x".into())).kind,
             K::UdpInvalidConfig
         );
+        // Both ways into UDP_URL: the URL error on its own, and wrapped.
+        assert_eq!(
+            BindingError::from(crate::url::UdpUrlError::MissingPort).kind,
+            K::UdpUrl
+        );
+        assert_eq!(
+            BindingError::from(UdpError::Url(crate::url::UdpUrlError::MissingPort)).kind,
+            K::UdpUrl
+        );
         assert_eq!(K::UdpUrl.c_projection(), -27);
         assert_eq!(K::UdpUrl.name(), "URL");
     }

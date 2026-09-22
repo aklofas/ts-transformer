@@ -92,6 +92,8 @@ impl tst_hls::error::HlsError
 pub fn tst_hls::error::HlsError::kind(&self) -> tst_hls::error::HlsErrorKind
 impl core::convert::From<core::io::error::Error> for tst_hls::error::HlsError
 pub fn tst_hls::error::HlsError::from(core::io::error::Error) -> Self
+impl core::convert::From<tst_hls::error::HlsError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_hls::error::HlsError) -> Self
 impl core::convert::From<tst_hls::url::HlsUrlError> for tst_hls::error::HlsError
 pub fn tst_hls::error::HlsError::from(tst_hls::url::HlsUrlError) -> Self
 impl core::error::Error for tst_hls::error::HlsError
@@ -203,6 +205,8 @@ impl core::convert::From<tst_core::url::common::UrlError> for tst_hls::url::HlsU
 pub fn tst_hls::url::HlsUrlError::from(tst_core::url::common::UrlError) -> Self
 impl core::convert::From<tst_hls::url::HlsUrlError> for tst_hls::error::HlsError
 pub fn tst_hls::error::HlsError::from(tst_hls::url::HlsUrlError) -> Self
+impl core::convert::From<tst_hls::url::HlsUrlError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_hls::url::HlsUrlError) -> Self
 impl core::error::Error for tst_hls::url::HlsUrlError
 pub fn tst_hls::url::HlsUrlError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for tst_hls::url::HlsUrlError
@@ -256,6 +260,8 @@ impl tst_hls::error::HlsError
 pub fn tst_hls::error::HlsError::kind(&self) -> tst_hls::error::HlsErrorKind
 impl core::convert::From<core::io::error::Error> for tst_hls::error::HlsError
 pub fn tst_hls::error::HlsError::from(core::io::error::Error) -> Self
+impl core::convert::From<tst_hls::error::HlsError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_hls::error::HlsError) -> Self
 impl core::convert::From<tst_hls::url::HlsUrlError> for tst_hls::error::HlsError
 pub fn tst_hls::error::HlsError::from(tst_hls::url::HlsUrlError) -> Self
 impl core::error::Error for tst_hls::error::HlsError
@@ -334,6 +340,8 @@ impl core::convert::From<tst_core::url::common::UrlError> for tst_hls::url::HlsU
 pub fn tst_hls::url::HlsUrlError::from(tst_core::url::common::UrlError) -> Self
 impl core::convert::From<tst_hls::url::HlsUrlError> for tst_hls::error::HlsError
 pub fn tst_hls::error::HlsError::from(tst_hls::url::HlsUrlError) -> Self
+impl core::convert::From<tst_hls::url::HlsUrlError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_hls::url::HlsUrlError) -> Self
 impl core::error::Error for tst_hls::url::HlsUrlError
 pub fn tst_hls::url::HlsUrlError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for tst_hls::url::HlsUrlError

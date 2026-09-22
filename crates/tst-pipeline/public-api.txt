@@ -6,6 +6,196 @@ pub use tst_pipeline::Transport
 pub use tst_pipeline::TransportCancel
 pub use tst_pipeline::TransportError
 pub mod tst_pipeline::binding
+pub mod tst_pipeline::binding::kind
+#[non_exhaustive] #[repr(i32)] pub enum tst_pipeline::binding::kind::BindingErrorKind
+pub tst_pipeline::binding::kind::BindingErrorKind::Backpressure = -4
+pub tst_pipeline::binding::kind::BindingErrorKind::Broken = -8
+pub tst_pipeline::binding::kind::BindingErrorKind::Closed = -7
+pub tst_pipeline::binding::kind::BindingErrorKind::CodecBadSyncWord = -99
+pub tst_pipeline::binding::kind::BindingErrorKind::CodecBufferTooSmall = -105
+pub tst_pipeline::binding::kind::BindingErrorKind::CodecDanglingSpsReference = -95
+pub tst_pipeline::binding::kind::BindingErrorKind::CodecDanglingVpsReference = -96
+pub tst_pipeline::binding::kind::BindingErrorKind::CodecEngineError = -97
+pub tst_pipeline::binding::kind::BindingErrorKind::CodecForbidden = -101
+pub tst_pipeline::binding::kind::BindingErrorKind::CodecInvalidGolomb = -92
+pub tst_pipeline::binding::kind::BindingErrorKind::CodecInvalidLeb128 = -98
+pub tst_pipeline::binding::kind::BindingErrorKind::CodecInvalidLengthSize = -103
+pub tst_pipeline::binding::kind::BindingErrorKind::CodecNalLengthOverflow = -104
+pub tst_pipeline::binding::kind::BindingErrorKind::CodecReservedValue = -93
+pub tst_pipeline::binding::kind::BindingErrorKind::CodecTruncated = -100
+pub tst_pipeline::binding::kind::BindingErrorKind::CodecTruncatedRbsp = -91
+pub tst_pipeline::binding::kind::BindingErrorKind::CodecUnsupportedFreeFormat = -102
+pub tst_pipeline::binding::kind::BindingErrorKind::CodecUnsupportedProfile = -94
+pub tst_pipeline::binding::kind::BindingErrorKind::ConfigInvalid = -1
+pub tst_pipeline::binding::kind::BindingErrorKind::DemuxMalformedPes = -72
+pub tst_pipeline::binding::kind::BindingErrorKind::DemuxMalformedPsi = -71
+pub tst_pipeline::binding::kind::BindingErrorKind::DemuxStrictRejection = -70
+pub tst_pipeline::binding::kind::BindingErrorKind::DemuxSyncBufExhausted = -73
+pub tst_pipeline::binding::kind::BindingErrorKind::DemuxUnrecoverable = -69
+pub tst_pipeline::binding::kind::BindingErrorKind::EndOfStream = -12
+pub tst_pipeline::binding::kind::BindingErrorKind::HlsBindFailed = -57
+pub tst_pipeline::binding::kind::BindingErrorKind::HlsFinished = -36
+pub tst_pipeline::binding::kind::BindingErrorKind::HlsInvalidConfig = -35
+pub tst_pipeline::binding::kind::BindingErrorKind::HlsIo = -34
+pub tst_pipeline::binding::kind::BindingErrorKind::HlsTls = -37
+pub tst_pipeline::binding::kind::BindingErrorKind::HlsTlsDisabled = -59
+pub tst_pipeline::binding::kind::BindingErrorKind::HlsUnalignedPushTs = -58
+pub tst_pipeline::binding::kind::BindingErrorKind::HlsUrl = -56
+pub tst_pipeline::binding::kind::BindingErrorKind::InputMalformed = -3
+pub tst_pipeline::binding::kind::BindingErrorKind::Internal = -10
+pub tst_pipeline::binding::kind::BindingErrorKind::InvalidAv1Obu = -44
+pub tst_pipeline::binding::kind::BindingErrorKind::InvalidNal = -2
+pub tst_pipeline::binding::kind::BindingErrorKind::InvalidUsage = -9
+pub tst_pipeline::binding::kind::BindingErrorKind::KlvDecodeBadUniversalLabel = -75
+pub tst_pipeline::binding::kind::BindingErrorKind::KlvDecodeChecksumMismatch = -76
+pub tst_pipeline::binding::kind::BindingErrorKind::KlvDecodeDuplicateTag = -77
+pub tst_pipeline::binding::kind::BindingErrorKind::KlvDecodeMalformedBytes = -79
+pub tst_pipeline::binding::kind::BindingErrorKind::KlvDecodeMissingRequiredTag = -78
+pub tst_pipeline::binding::kind::BindingErrorKind::KlvDecodeTruncatedSet = -74
+pub tst_pipeline::binding::kind::BindingErrorKind::KlvEncodeBufferTooSmall = -80
+pub tst_pipeline::binding::kind::BindingErrorKind::KlvEncodeDuplicateTargetId = -89
+pub tst_pipeline::binding::kind::BindingErrorKind::KlvEncodeForbiddenStandaloneOffset = -90
+pub tst_pipeline::binding::kind::BindingErrorKind::KlvEncodeInvalidImapbParams = -85
+pub tst_pipeline::binding::kind::BindingErrorKind::KlvEncodeMissingMandatoryItem = -86
+pub tst_pipeline::binding::kind::BindingErrorKind::KlvEncodeOutOfRange = -82
+pub tst_pipeline::binding::kind::BindingErrorKind::KlvEncodeRecordTooLarge = -81
+pub tst_pipeline::binding::kind::BindingErrorKind::KlvEncodeReservedTagInUnknown = -87
+pub tst_pipeline::binding::kind::BindingErrorKind::KlvEncodeStringTooLong = -83
+pub tst_pipeline::binding::kind::BindingErrorKind::KlvEncodeUnsupportedImapbLength = -84
+pub tst_pipeline::binding::kind::BindingErrorKind::KlvEncodeVTargetPackEmpty = -88
+pub tst_pipeline::binding::kind::BindingErrorKind::KlvTooLarge = -5
+pub tst_pipeline::binding::kind::BindingErrorKind::MispTime = -45
+pub tst_pipeline::binding::kind::BindingErrorKind::MispTimeMalformed = -46
+pub tst_pipeline::binding::kind::BindingErrorKind::NotAvailable = -13
+pub tst_pipeline::binding::kind::BindingErrorKind::NotFound = -14
+pub tst_pipeline::binding::kind::BindingErrorKind::PanicCaught = -11
+pub tst_pipeline::binding::kind::BindingErrorKind::RistContextCreateFailed = -61
+pub tst_pipeline::binding::kind::BindingErrorKind::RistEncryptionDisabled = -41
+pub tst_pipeline::binding::kind::BindingErrorKind::RistFfi = -38
+pub tst_pipeline::binding::kind::BindingErrorKind::RistInvalidConfig = -39
+pub tst_pipeline::binding::kind::BindingErrorKind::RistPeerCreateFailed = -62
+pub tst_pipeline::binding::kind::BindingErrorKind::RistUrl = -60
+pub tst_pipeline::binding::kind::BindingErrorKind::RtpHostNotLiteral = -66
+pub tst_pipeline::binding::kind::BindingErrorKind::RtpIfaceUnsupported = -68
+pub tst_pipeline::binding::kind::BindingErrorKind::RtpIo = -67
+pub tst_pipeline::binding::kind::BindingErrorKind::RtpMissingPayloadTypeParam = -64
+pub tst_pipeline::binding::kind::BindingErrorKind::RtpPayloadTypeParam = -63
+pub tst_pipeline::binding::kind::BindingErrorKind::RtpUrl = -65
+pub tst_pipeline::binding::kind::BindingErrorKind::RtspAuthFailed = -17
+pub tst_pipeline::binding::kind::BindingErrorKind::RtspAuthRequired = -18
+pub tst_pipeline::binding::kind::BindingErrorKind::RtspIo = -22
+pub tst_pipeline::binding::kind::BindingErrorKind::RtspMount = -25
+pub tst_pipeline::binding::kind::BindingErrorKind::RtspNotFound = -19
+pub tst_pipeline::binding::kind::BindingErrorKind::RtspProtocol = -16
+pub tst_pipeline::binding::kind::BindingErrorKind::RtspServer = -24
+pub tst_pipeline::binding::kind::BindingErrorKind::RtspTimeout = -23
+pub tst_pipeline::binding::kind::BindingErrorKind::RtspTls = -21
+pub tst_pipeline::binding::kind::BindingErrorKind::RtspUnsupportedTransport = -20
+pub tst_pipeline::binding::kind::BindingErrorKind::SrtAcceptFailed = -50
+pub tst_pipeline::binding::kind::BindingErrorKind::SrtConnectFailed = -49
+pub tst_pipeline::binding::kind::BindingErrorKind::SrtIo = -52
+pub tst_pipeline::binding::kind::BindingErrorKind::SrtTimeout = -51
+pub tst_pipeline::binding::kind::BindingErrorKind::TcpConnectTimeout = -32
+pub tst_pipeline::binding::kind::BindingErrorKind::TcpInvalidConfig = -31
+pub tst_pipeline::binding::kind::BindingErrorKind::TcpIo = -30
+pub tst_pipeline::binding::kind::BindingErrorKind::TcpTls = -33
+pub tst_pipeline::binding::kind::BindingErrorKind::TcpTlsDisabled = -55
+pub tst_pipeline::binding::kind::BindingErrorKind::TcpUrl = -54
+pub tst_pipeline::binding::kind::BindingErrorKind::TooLarge = -6
+pub tst_pipeline::binding::kind::BindingErrorKind::UdpInvalidConfig = -27
+pub tst_pipeline::binding::kind::BindingErrorKind::UdpIo = -26
+pub tst_pipeline::binding::kind::BindingErrorKind::UdpUrl = -53
+pub tst_pipeline::binding::kind::BindingErrorKind::WrongType = -47
+impl tst_pipeline::binding::kind::BindingErrorKind
+pub const tst_pipeline::binding::kind::BindingErrorKind::ALL: &'static [tst_pipeline::binding::kind::BindingErrorKind]
+pub fn tst_pipeline::binding::kind::BindingErrorKind::c_projection(&self) -> i32
+pub fn tst_pipeline::binding::kind::BindingErrorKind::name(&self) -> &'static str
+pub fn tst_pipeline::binding::kind::BindingErrorKind::variant_name(&self) -> &'static str
+impl tst_pipeline::binding::kind::BindingErrorKind
+pub fn tst_pipeline::binding::kind::BindingErrorKind::c_code(&self) -> i32
+pub fn tst_pipeline::binding::kind::BindingErrorKind::is_c_frozen(&self) -> bool
+impl core::clone::Clone for tst_pipeline::binding::kind::BindingErrorKind
+pub fn tst_pipeline::binding::kind::BindingErrorKind::clone(&self) -> tst_pipeline::binding::kind::BindingErrorKind
+impl core::cmp::Eq for tst_pipeline::binding::kind::BindingErrorKind
+impl core::cmp::PartialEq for tst_pipeline::binding::kind::BindingErrorKind
+pub fn tst_pipeline::binding::kind::BindingErrorKind::eq(&self, &tst_pipeline::binding::kind::BindingErrorKind) -> bool
+impl core::convert::From<tst_pipeline::shell_error::ShellErrorKind> for tst_pipeline::binding::kind::BindingErrorKind
+pub fn tst_pipeline::binding::kind::BindingErrorKind::from(tst_pipeline::shell_error::ShellErrorKind) -> Self
+impl core::fmt::Debug for tst_pipeline::binding::kind::BindingErrorKind
+pub fn tst_pipeline::binding::kind::BindingErrorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for tst_pipeline::binding::kind::BindingErrorKind
+pub fn tst_pipeline::binding::kind::BindingErrorKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for tst_pipeline::binding::kind::BindingErrorKind
+impl core::marker::StructuralPartialEq for tst_pipeline::binding::kind::BindingErrorKind
+impl core::marker::Freeze for tst_pipeline::binding::kind::BindingErrorKind
+impl core::marker::Send for tst_pipeline::binding::kind::BindingErrorKind
+impl core::marker::Sync for tst_pipeline::binding::kind::BindingErrorKind
+impl core::marker::Unpin for tst_pipeline::binding::kind::BindingErrorKind
+impl core::marker::UnsafeUnpin for tst_pipeline::binding::kind::BindingErrorKind
+impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::kind::BindingErrorKind
+impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::kind::BindingErrorKind
+pub struct tst_pipeline::binding::kind::BindingError
+pub tst_pipeline::binding::kind::BindingError::detail: alloc::string::String
+pub tst_pipeline::binding::kind::BindingError::kind: tst_pipeline::binding::kind::BindingErrorKind
+impl tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::new(tst_pipeline::binding::kind::BindingErrorKind, impl core::convert::Into<alloc::string::String>) -> Self
+impl core::clone::Clone for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::clone(&self) -> tst_pipeline::binding::kind::BindingError
+impl core::cmp::Eq for tst_pipeline::binding::kind::BindingError
+impl core::cmp::PartialEq for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::eq(&self, &tst_pipeline::binding::kind::BindingError) -> bool
+impl core::convert::From<tst_core::codec::CodecParseError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_core::codec::CodecParseError) -> Self
+impl core::convert::From<tst_core::error::DemuxError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_core::error::DemuxError) -> Self
+impl core::convert::From<tst_core::error::KlvDecodeError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_core::error::KlvDecodeError) -> Self
+impl core::convert::From<tst_core::error::KlvEncodeError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_core::error::KlvEncodeError) -> Self
+impl core::convert::From<tst_core::error::KlvFieldError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_core::error::KlvFieldError) -> Self
+impl core::convert::From<tst_core::error::MuxError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_core::error::MuxError) -> Self
+impl core::convert::From<tst_core::transport::TransportError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_core::transport::TransportError) -> Self
+impl core::convert::From<tst_pipeline::binding::owned::HandleState> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::binding::owned::HandleState) -> Self
+impl core::convert::From<tst_pipeline::demux_receiver::DemuxReceiverError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::demux_receiver::DemuxReceiverError) -> Self
+impl core::convert::From<tst_pipeline::mux_sender::MuxSenderError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::mux_sender::MuxSenderError) -> Self
+impl core::convert::From<tst_pipeline::raw_receiver::RawReceiverError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::raw_receiver::RawReceiverError) -> Self
+impl core::convert::From<tst_pipeline::raw_sender::RawSenderError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::raw_sender::RawSenderError) -> Self
+impl core::convert::From<tst_pipeline::receiver::ReceiverError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::receiver::ReceiverError) -> Self
+impl core::convert::From<tst_pipeline::sender::SenderError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::sender::SenderError) -> Self
+impl core::convert::From<tst_pipeline::sender::TsFramingError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::sender::TsFramingError) -> Self
+impl core::error::Error for tst_pipeline::binding::kind::BindingError
+impl core::fmt::Debug for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tst_pipeline::binding::kind::BindingError
+impl<E> core::convert::From<tst_pipeline::mux_publisher::MuxPublisherError<E>> for tst_pipeline::binding::kind::BindingError where E: core::convert::Into<tst_pipeline::binding::kind::BindingError> + core::error::Error + core::marker::Send + core::marker::Sync + 'static
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::mux_publisher::MuxPublisherError<E>) -> Self
+impl core::marker::Freeze for tst_pipeline::binding::kind::BindingError
+impl core::marker::Send for tst_pipeline::binding::kind::BindingError
+impl core::marker::Sync for tst_pipeline::binding::kind::BindingError
+impl core::marker::Unpin for tst_pipeline::binding::kind::BindingError
+impl core::marker::UnsafeUnpin for tst_pipeline::binding::kind::BindingError
+impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::kind::BindingError
+impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::kind_of_codec(&tst_core::codec::CodecParseError) -> tst_pipeline::binding::kind::BindingErrorKind
+pub fn tst_pipeline::binding::kind::kind_of_demux(&tst_core::error::DemuxError) -> tst_pipeline::binding::kind::BindingErrorKind
+pub fn tst_pipeline::binding::kind::kind_of_klv_decode(&tst_core::error::KlvDecodeError) -> tst_pipeline::binding::kind::BindingErrorKind
+pub fn tst_pipeline::binding::kind::kind_of_klv_encode(&tst_core::error::KlvEncodeError) -> tst_pipeline::binding::kind::BindingErrorKind
+pub fn tst_pipeline::binding::kind::kind_of_klv_field(&tst_core::error::KlvFieldError) -> tst_pipeline::binding::kind::BindingErrorKind
+pub fn tst_pipeline::binding::kind::kind_of_mux(&tst_core::error::MuxError) -> tst_pipeline::binding::kind::BindingErrorKind
+pub fn tst_pipeline::binding::kind::kind_of_transport(&tst_core::transport::TransportError) -> tst_pipeline::binding::kind::BindingErrorKind
 pub mod tst_pipeline::binding::owned
 pub enum tst_pipeline::binding::owned::CloseFailure<E>
 pub tst_pipeline::binding::owned::CloseFailure::Inner(E)
@@ -30,6 +220,8 @@ pub fn tst_pipeline::binding::owned::HandleState::clone(&self) -> tst_pipeline::
 impl core::cmp::Eq for tst_pipeline::binding::owned::HandleState
 impl core::cmp::PartialEq for tst_pipeline::binding::owned::HandleState
 pub fn tst_pipeline::binding::owned::HandleState::eq(&self, &tst_pipeline::binding::owned::HandleState) -> bool
+impl core::convert::From<tst_pipeline::binding::owned::HandleState> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::binding::owned::HandleState) -> Self
 impl core::fmt::Debug for tst_pipeline::binding::owned::HandleState
 pub fn tst_pipeline::binding::owned::HandleState::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for tst_pipeline::binding::owned::HandleState
@@ -136,6 +328,133 @@ impl<T> core::marker::Unpin for tst_pipeline::binding::shells::SendHalf<T> where
 impl<T> core::marker::UnsafeUnpin for tst_pipeline::binding::shells::SendHalf<T> where T: core::marker::UnsafeUnpin
 impl<T> core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::shells::SendHalf<T> where T: core::panic::unwind_safe::RefUnwindSafe
 impl<T> core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::shells::SendHalf<T> where T: core::panic::unwind_safe::UnwindSafe
+#[non_exhaustive] #[repr(i32)] pub enum tst_pipeline::binding::BindingErrorKind
+pub tst_pipeline::binding::BindingErrorKind::Backpressure = -4
+pub tst_pipeline::binding::BindingErrorKind::Broken = -8
+pub tst_pipeline::binding::BindingErrorKind::Closed = -7
+pub tst_pipeline::binding::BindingErrorKind::CodecBadSyncWord = -99
+pub tst_pipeline::binding::BindingErrorKind::CodecBufferTooSmall = -105
+pub tst_pipeline::binding::BindingErrorKind::CodecDanglingSpsReference = -95
+pub tst_pipeline::binding::BindingErrorKind::CodecDanglingVpsReference = -96
+pub tst_pipeline::binding::BindingErrorKind::CodecEngineError = -97
+pub tst_pipeline::binding::BindingErrorKind::CodecForbidden = -101
+pub tst_pipeline::binding::BindingErrorKind::CodecInvalidGolomb = -92
+pub tst_pipeline::binding::BindingErrorKind::CodecInvalidLeb128 = -98
+pub tst_pipeline::binding::BindingErrorKind::CodecInvalidLengthSize = -103
+pub tst_pipeline::binding::BindingErrorKind::CodecNalLengthOverflow = -104
+pub tst_pipeline::binding::BindingErrorKind::CodecReservedValue = -93
+pub tst_pipeline::binding::BindingErrorKind::CodecTruncated = -100
+pub tst_pipeline::binding::BindingErrorKind::CodecTruncatedRbsp = -91
+pub tst_pipeline::binding::BindingErrorKind::CodecUnsupportedFreeFormat = -102
+pub tst_pipeline::binding::BindingErrorKind::CodecUnsupportedProfile = -94
+pub tst_pipeline::binding::BindingErrorKind::ConfigInvalid = -1
+pub tst_pipeline::binding::BindingErrorKind::DemuxMalformedPes = -72
+pub tst_pipeline::binding::BindingErrorKind::DemuxMalformedPsi = -71
+pub tst_pipeline::binding::BindingErrorKind::DemuxStrictRejection = -70
+pub tst_pipeline::binding::BindingErrorKind::DemuxSyncBufExhausted = -73
+pub tst_pipeline::binding::BindingErrorKind::DemuxUnrecoverable = -69
+pub tst_pipeline::binding::BindingErrorKind::EndOfStream = -12
+pub tst_pipeline::binding::BindingErrorKind::HlsBindFailed = -57
+pub tst_pipeline::binding::BindingErrorKind::HlsFinished = -36
+pub tst_pipeline::binding::BindingErrorKind::HlsInvalidConfig = -35
+pub tst_pipeline::binding::BindingErrorKind::HlsIo = -34
+pub tst_pipeline::binding::BindingErrorKind::HlsTls = -37
+pub tst_pipeline::binding::BindingErrorKind::HlsTlsDisabled = -59
+pub tst_pipeline::binding::BindingErrorKind::HlsUnalignedPushTs = -58
+pub tst_pipeline::binding::BindingErrorKind::HlsUrl = -56
+pub tst_pipeline::binding::BindingErrorKind::InputMalformed = -3
+pub tst_pipeline::binding::BindingErrorKind::Internal = -10
+pub tst_pipeline::binding::BindingErrorKind::InvalidAv1Obu = -44
+pub tst_pipeline::binding::BindingErrorKind::InvalidNal = -2
+pub tst_pipeline::binding::BindingErrorKind::InvalidUsage = -9
+pub tst_pipeline::binding::BindingErrorKind::KlvDecodeBadUniversalLabel = -75
+pub tst_pipeline::binding::BindingErrorKind::KlvDecodeChecksumMismatch = -76
+pub tst_pipeline::binding::BindingErrorKind::KlvDecodeDuplicateTag = -77
+pub tst_pipeline::binding::BindingErrorKind::KlvDecodeMalformedBytes = -79
+pub tst_pipeline::binding::BindingErrorKind::KlvDecodeMissingRequiredTag = -78
+pub tst_pipeline::binding::BindingErrorKind::KlvDecodeTruncatedSet = -74
+pub tst_pipeline::binding::BindingErrorKind::KlvEncodeBufferTooSmall = -80
+pub tst_pipeline::binding::BindingErrorKind::KlvEncodeDuplicateTargetId = -89
+pub tst_pipeline::binding::BindingErrorKind::KlvEncodeForbiddenStandaloneOffset = -90
+pub tst_pipeline::binding::BindingErrorKind::KlvEncodeInvalidImapbParams = -85
+pub tst_pipeline::binding::BindingErrorKind::KlvEncodeMissingMandatoryItem = -86
+pub tst_pipeline::binding::BindingErrorKind::KlvEncodeOutOfRange = -82
+pub tst_pipeline::binding::BindingErrorKind::KlvEncodeRecordTooLarge = -81
+pub tst_pipeline::binding::BindingErrorKind::KlvEncodeReservedTagInUnknown = -87
+pub tst_pipeline::binding::BindingErrorKind::KlvEncodeStringTooLong = -83
+pub tst_pipeline::binding::BindingErrorKind::KlvEncodeUnsupportedImapbLength = -84
+pub tst_pipeline::binding::BindingErrorKind::KlvEncodeVTargetPackEmpty = -88
+pub tst_pipeline::binding::BindingErrorKind::KlvTooLarge = -5
+pub tst_pipeline::binding::BindingErrorKind::MispTime = -45
+pub tst_pipeline::binding::BindingErrorKind::MispTimeMalformed = -46
+pub tst_pipeline::binding::BindingErrorKind::NotAvailable = -13
+pub tst_pipeline::binding::BindingErrorKind::NotFound = -14
+pub tst_pipeline::binding::BindingErrorKind::PanicCaught = -11
+pub tst_pipeline::binding::BindingErrorKind::RistContextCreateFailed = -61
+pub tst_pipeline::binding::BindingErrorKind::RistEncryptionDisabled = -41
+pub tst_pipeline::binding::BindingErrorKind::RistFfi = -38
+pub tst_pipeline::binding::BindingErrorKind::RistInvalidConfig = -39
+pub tst_pipeline::binding::BindingErrorKind::RistPeerCreateFailed = -62
+pub tst_pipeline::binding::BindingErrorKind::RistUrl = -60
+pub tst_pipeline::binding::BindingErrorKind::RtpHostNotLiteral = -66
+pub tst_pipeline::binding::BindingErrorKind::RtpIfaceUnsupported = -68
+pub tst_pipeline::binding::BindingErrorKind::RtpIo = -67
+pub tst_pipeline::binding::BindingErrorKind::RtpMissingPayloadTypeParam = -64
+pub tst_pipeline::binding::BindingErrorKind::RtpPayloadTypeParam = -63
+pub tst_pipeline::binding::BindingErrorKind::RtpUrl = -65
+pub tst_pipeline::binding::BindingErrorKind::RtspAuthFailed = -17
+pub tst_pipeline::binding::BindingErrorKind::RtspAuthRequired = -18
+pub tst_pipeline::binding::BindingErrorKind::RtspIo = -22
+pub tst_pipeline::binding::BindingErrorKind::RtspMount = -25
+pub tst_pipeline::binding::BindingErrorKind::RtspNotFound = -19
+pub tst_pipeline::binding::BindingErrorKind::RtspProtocol = -16
+pub tst_pipeline::binding::BindingErrorKind::RtspServer = -24
+pub tst_pipeline::binding::BindingErrorKind::RtspTimeout = -23
+pub tst_pipeline::binding::BindingErrorKind::RtspTls = -21
+pub tst_pipeline::binding::BindingErrorKind::RtspUnsupportedTransport = -20
+pub tst_pipeline::binding::BindingErrorKind::SrtAcceptFailed = -50
+pub tst_pipeline::binding::BindingErrorKind::SrtConnectFailed = -49
+pub tst_pipeline::binding::BindingErrorKind::SrtIo = -52
+pub tst_pipeline::binding::BindingErrorKind::SrtTimeout = -51
+pub tst_pipeline::binding::BindingErrorKind::TcpConnectTimeout = -32
+pub tst_pipeline::binding::BindingErrorKind::TcpInvalidConfig = -31
+pub tst_pipeline::binding::BindingErrorKind::TcpIo = -30
+pub tst_pipeline::binding::BindingErrorKind::TcpTls = -33
+pub tst_pipeline::binding::BindingErrorKind::TcpTlsDisabled = -55
+pub tst_pipeline::binding::BindingErrorKind::TcpUrl = -54
+pub tst_pipeline::binding::BindingErrorKind::TooLarge = -6
+pub tst_pipeline::binding::BindingErrorKind::UdpInvalidConfig = -27
+pub tst_pipeline::binding::BindingErrorKind::UdpIo = -26
+pub tst_pipeline::binding::BindingErrorKind::UdpUrl = -53
+pub tst_pipeline::binding::BindingErrorKind::WrongType = -47
+impl tst_pipeline::binding::kind::BindingErrorKind
+pub const tst_pipeline::binding::kind::BindingErrorKind::ALL: &'static [tst_pipeline::binding::kind::BindingErrorKind]
+pub fn tst_pipeline::binding::kind::BindingErrorKind::c_projection(&self) -> i32
+pub fn tst_pipeline::binding::kind::BindingErrorKind::name(&self) -> &'static str
+pub fn tst_pipeline::binding::kind::BindingErrorKind::variant_name(&self) -> &'static str
+impl tst_pipeline::binding::kind::BindingErrorKind
+pub fn tst_pipeline::binding::kind::BindingErrorKind::c_code(&self) -> i32
+pub fn tst_pipeline::binding::kind::BindingErrorKind::is_c_frozen(&self) -> bool
+impl core::clone::Clone for tst_pipeline::binding::kind::BindingErrorKind
+pub fn tst_pipeline::binding::kind::BindingErrorKind::clone(&self) -> tst_pipeline::binding::kind::BindingErrorKind
+impl core::cmp::Eq for tst_pipeline::binding::kind::BindingErrorKind
+impl core::cmp::PartialEq for tst_pipeline::binding::kind::BindingErrorKind
+pub fn tst_pipeline::binding::kind::BindingErrorKind::eq(&self, &tst_pipeline::binding::kind::BindingErrorKind) -> bool
+impl core::convert::From<tst_pipeline::shell_error::ShellErrorKind> for tst_pipeline::binding::kind::BindingErrorKind
+pub fn tst_pipeline::binding::kind::BindingErrorKind::from(tst_pipeline::shell_error::ShellErrorKind) -> Self
+impl core::fmt::Debug for tst_pipeline::binding::kind::BindingErrorKind
+pub fn tst_pipeline::binding::kind::BindingErrorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for tst_pipeline::binding::kind::BindingErrorKind
+pub fn tst_pipeline::binding::kind::BindingErrorKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for tst_pipeline::binding::kind::BindingErrorKind
+impl core::marker::StructuralPartialEq for tst_pipeline::binding::kind::BindingErrorKind
+impl core::marker::Freeze for tst_pipeline::binding::kind::BindingErrorKind
+impl core::marker::Send for tst_pipeline::binding::kind::BindingErrorKind
+impl core::marker::Sync for tst_pipeline::binding::kind::BindingErrorKind
+impl core::marker::Unpin for tst_pipeline::binding::kind::BindingErrorKind
+impl core::marker::UnsafeUnpin for tst_pipeline::binding::kind::BindingErrorKind
+impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::kind::BindingErrorKind
+impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::kind::BindingErrorKind
 pub enum tst_pipeline::binding::CloseFailure<E>
 pub tst_pipeline::binding::CloseFailure::Inner(E)
 pub tst_pipeline::binding::CloseFailure::Panicked
@@ -159,6 +478,8 @@ pub fn tst_pipeline::binding::owned::HandleState::clone(&self) -> tst_pipeline::
 impl core::cmp::Eq for tst_pipeline::binding::owned::HandleState
 impl core::cmp::PartialEq for tst_pipeline::binding::owned::HandleState
 pub fn tst_pipeline::binding::owned::HandleState::eq(&self, &tst_pipeline::binding::owned::HandleState) -> bool
+impl core::convert::From<tst_pipeline::binding::owned::HandleState> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::binding::owned::HandleState) -> Self
 impl core::fmt::Debug for tst_pipeline::binding::owned::HandleState
 pub fn tst_pipeline::binding::owned::HandleState::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for tst_pipeline::binding::owned::HandleState
@@ -169,6 +490,61 @@ impl core::marker::Unpin for tst_pipeline::binding::owned::HandleState
 impl core::marker::UnsafeUnpin for tst_pipeline::binding::owned::HandleState
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::owned::HandleState
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::owned::HandleState
+pub struct tst_pipeline::binding::BindingError
+pub tst_pipeline::binding::BindingError::detail: alloc::string::String
+pub tst_pipeline::binding::BindingError::kind: tst_pipeline::binding::kind::BindingErrorKind
+impl tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::new(tst_pipeline::binding::kind::BindingErrorKind, impl core::convert::Into<alloc::string::String>) -> Self
+impl core::clone::Clone for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::clone(&self) -> tst_pipeline::binding::kind::BindingError
+impl core::cmp::Eq for tst_pipeline::binding::kind::BindingError
+impl core::cmp::PartialEq for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::eq(&self, &tst_pipeline::binding::kind::BindingError) -> bool
+impl core::convert::From<tst_core::codec::CodecParseError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_core::codec::CodecParseError) -> Self
+impl core::convert::From<tst_core::error::DemuxError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_core::error::DemuxError) -> Self
+impl core::convert::From<tst_core::error::KlvDecodeError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_core::error::KlvDecodeError) -> Self
+impl core::convert::From<tst_core::error::KlvEncodeError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_core::error::KlvEncodeError) -> Self
+impl core::convert::From<tst_core::error::KlvFieldError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_core::error::KlvFieldError) -> Self
+impl core::convert::From<tst_core::error::MuxError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_core::error::MuxError) -> Self
+impl core::convert::From<tst_core::transport::TransportError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_core::transport::TransportError) -> Self
+impl core::convert::From<tst_pipeline::binding::owned::HandleState> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::binding::owned::HandleState) -> Self
+impl core::convert::From<tst_pipeline::demux_receiver::DemuxReceiverError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::demux_receiver::DemuxReceiverError) -> Self
+impl core::convert::From<tst_pipeline::mux_sender::MuxSenderError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::mux_sender::MuxSenderError) -> Self
+impl core::convert::From<tst_pipeline::raw_receiver::RawReceiverError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::raw_receiver::RawReceiverError) -> Self
+impl core::convert::From<tst_pipeline::raw_sender::RawSenderError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::raw_sender::RawSenderError) -> Self
+impl core::convert::From<tst_pipeline::receiver::ReceiverError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::receiver::ReceiverError) -> Self
+impl core::convert::From<tst_pipeline::sender::SenderError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::sender::SenderError) -> Self
+impl core::convert::From<tst_pipeline::sender::TsFramingError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::sender::TsFramingError) -> Self
+impl core::error::Error for tst_pipeline::binding::kind::BindingError
+impl core::fmt::Debug for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tst_pipeline::binding::kind::BindingError
+impl<E> core::convert::From<tst_pipeline::mux_publisher::MuxPublisherError<E>> for tst_pipeline::binding::kind::BindingError where E: core::convert::Into<tst_pipeline::binding::kind::BindingError> + core::error::Error + core::marker::Send + core::marker::Sync + 'static
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::mux_publisher::MuxPublisherError<E>) -> Self
+impl core::marker::Freeze for tst_pipeline::binding::kind::BindingError
+impl core::marker::Send for tst_pipeline::binding::kind::BindingError
+impl core::marker::Sync for tst_pipeline::binding::kind::BindingError
+impl core::marker::Unpin for tst_pipeline::binding::kind::BindingError
+impl core::marker::UnsafeUnpin for tst_pipeline::binding::kind::BindingError
+impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::kind::BindingError
+impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::kind::BindingError
 pub struct tst_pipeline::binding::FlagCancel(_)
 impl tst_pipeline::binding::owned::FlagCancel
 pub fn tst_pipeline::binding::owned::FlagCancel::is_set(&self) -> bool
@@ -320,6 +696,8 @@ impl core::convert::From<tst_core::error::DemuxError> for tst_pipeline::demux_re
 pub fn tst_pipeline::demux_receiver::DemuxReceiverError::from(tst_core::error::DemuxError) -> Self
 impl core::convert::From<tst_core::transport::TransportError> for tst_pipeline::demux_receiver::DemuxReceiverError
 pub fn tst_pipeline::demux_receiver::DemuxReceiverError::from(tst_core::transport::TransportError) -> Self
+impl core::convert::From<tst_pipeline::demux_receiver::DemuxReceiverError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::demux_receiver::DemuxReceiverError) -> Self
 impl core::error::Error for tst_pipeline::demux_receiver::DemuxReceiverError
 pub fn tst_pipeline::demux_receiver::DemuxReceiverError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for tst_pipeline::demux_receiver::DemuxReceiverError
@@ -649,6 +1027,8 @@ impl<E: core::error::Error + core::marker::Send + core::marker::Sync + 'static> 
 pub fn tst_pipeline::mux_publisher::MuxPublisherError<E>::kind(&self) -> tst_pipeline::shell_error::ShellErrorKind
 impl<E: core::fmt::Debug + core::error::Error + core::marker::Send + core::marker::Sync + 'static> core::fmt::Debug for tst_pipeline::mux_publisher::MuxPublisherError<E>
 pub fn tst_pipeline::mux_publisher::MuxPublisherError<E>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<E> core::convert::From<tst_pipeline::mux_publisher::MuxPublisherError<E>> for tst_pipeline::binding::kind::BindingError where E: core::convert::Into<tst_pipeline::binding::kind::BindingError> + core::error::Error + core::marker::Send + core::marker::Sync + 'static
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::mux_publisher::MuxPublisherError<E>) -> Self
 impl<E> core::error::Error for tst_pipeline::mux_publisher::MuxPublisherError<E> where E: core::error::Error + 'static + core::error::Error + core::marker::Send + core::marker::Sync, Self: core::fmt::Debug + core::fmt::Display
 pub fn tst_pipeline::mux_publisher::MuxPublisherError<E>::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl<E> core::fmt::Display for tst_pipeline::mux_publisher::MuxPublisherError<E> where E: core::fmt::Display + core::error::Error + core::marker::Send + core::marker::Sync + 'static
@@ -775,6 +1155,8 @@ impl core::convert::From<tst_core::error::MuxError> for tst_pipeline::mux_sender
 pub fn tst_pipeline::mux_sender::MuxSenderError::from(tst_core::error::MuxError) -> Self
 impl core::convert::From<tst_core::transport::TransportError> for tst_pipeline::mux_sender::MuxSenderError
 pub fn tst_pipeline::mux_sender::MuxSenderError::from(tst_core::transport::TransportError) -> Self
+impl core::convert::From<tst_pipeline::mux_sender::MuxSenderError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::mux_sender::MuxSenderError) -> Self
 impl core::error::Error for tst_pipeline::mux_sender::MuxSenderError
 pub fn tst_pipeline::mux_sender::MuxSenderError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for tst_pipeline::mux_sender::MuxSenderError
@@ -877,6 +1259,8 @@ pub tst_pipeline::raw_receiver::RawReceiverError::kind: tst_pipeline::shell_erro
 pub tst_pipeline::raw_receiver::RawReceiverError::source: tst_pipeline::raw_receiver::RawReceiverErrorSource
 impl core::convert::From<tst_core::transport::TransportError> for tst_pipeline::raw_receiver::RawReceiverError
 pub fn tst_pipeline::raw_receiver::RawReceiverError::from(tst_core::transport::TransportError) -> Self
+impl core::convert::From<tst_pipeline::raw_receiver::RawReceiverError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::raw_receiver::RawReceiverError) -> Self
 impl core::error::Error for tst_pipeline::raw_receiver::RawReceiverError
 pub fn tst_pipeline::raw_receiver::RawReceiverError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for tst_pipeline::raw_receiver::RawReceiverError
@@ -997,6 +1381,8 @@ pub tst_pipeline::raw_sender::RawSenderError::kind: tst_pipeline::shell_error::S
 pub tst_pipeline::raw_sender::RawSenderError::source: tst_pipeline::raw_sender::RawSenderErrorSource
 impl core::convert::From<tst_core::transport::TransportError> for tst_pipeline::raw_sender::RawSenderError
 pub fn tst_pipeline::raw_sender::RawSenderError::from(tst_core::transport::TransportError) -> Self
+impl core::convert::From<tst_pipeline::raw_sender::RawSenderError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::raw_sender::RawSenderError) -> Self
 impl core::error::Error for tst_pipeline::raw_sender::RawSenderError
 pub fn tst_pipeline::raw_sender::RawSenderError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for tst_pipeline::raw_sender::RawSenderError
@@ -1116,6 +1502,8 @@ pub tst_pipeline::receiver::ReceiverError::kind: tst_pipeline::shell_error::Shel
 pub tst_pipeline::receiver::ReceiverError::source: tst_pipeline::receiver::ReceiverErrorSource
 impl core::convert::From<tst_core::transport::TransportError> for tst_pipeline::receiver::ReceiverError
 pub fn tst_pipeline::receiver::ReceiverError::from(tst_core::transport::TransportError) -> Self
+impl core::convert::From<tst_pipeline::receiver::ReceiverError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::receiver::ReceiverError) -> Self
 impl core::error::Error for tst_pipeline::receiver::ReceiverError
 pub fn tst_pipeline::receiver::ReceiverError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for tst_pipeline::receiver::ReceiverError
@@ -1376,6 +1764,8 @@ pub fn tst_pipeline::sender::TsFramingError::clone(&self) -> tst_pipeline::sende
 impl core::cmp::Eq for tst_pipeline::sender::TsFramingError
 impl core::cmp::PartialEq for tst_pipeline::sender::TsFramingError
 pub fn tst_pipeline::sender::TsFramingError::eq(&self, &tst_pipeline::sender::TsFramingError) -> bool
+impl core::convert::From<tst_pipeline::sender::TsFramingError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::sender::TsFramingError) -> Self
 impl core::convert::From<tst_pipeline::sender::TsFramingError> for tst_pipeline::sender::SenderError
 pub fn tst_pipeline::sender::SenderError::from(tst_pipeline::sender::TsFramingError) -> Self
 impl core::convert::From<tst_pipeline::sender::TsFramingError> for tst_pipeline::sender::SenderErrorSource
@@ -1462,6 +1852,8 @@ pub tst_pipeline::sender::SenderError::kind: tst_pipeline::shell_error::ShellErr
 pub tst_pipeline::sender::SenderError::source: tst_pipeline::sender::SenderErrorSource
 impl core::convert::From<tst_core::transport::TransportError> for tst_pipeline::sender::SenderError
 pub fn tst_pipeline::sender::SenderError::from(tst_core::transport::TransportError) -> Self
+impl core::convert::From<tst_pipeline::sender::SenderError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::sender::SenderError) -> Self
 impl core::convert::From<tst_pipeline::sender::TsFramingError> for tst_pipeline::sender::SenderError
 pub fn tst_pipeline::sender::SenderError::from(tst_pipeline::sender::TsFramingError) -> Self
 impl core::error::Error for tst_pipeline::sender::SenderError
@@ -1532,6 +1924,8 @@ pub fn tst_pipeline::shell_error::ShellErrorKind::clone(&self) -> tst_pipeline::
 impl core::cmp::Eq for tst_pipeline::shell_error::ShellErrorKind
 impl core::cmp::PartialEq for tst_pipeline::shell_error::ShellErrorKind
 pub fn tst_pipeline::shell_error::ShellErrorKind::eq(&self, &tst_pipeline::shell_error::ShellErrorKind) -> bool
+impl core::convert::From<tst_pipeline::shell_error::ShellErrorKind> for tst_pipeline::binding::kind::BindingErrorKind
+pub fn tst_pipeline::binding::kind::BindingErrorKind::from(tst_pipeline::shell_error::ShellErrorKind) -> Self
 impl core::fmt::Debug for tst_pipeline::shell_error::ShellErrorKind
 pub fn tst_pipeline::shell_error::ShellErrorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::hash::Hash for tst_pipeline::shell_error::ShellErrorKind
@@ -1617,6 +2011,8 @@ impl<E: core::error::Error + core::marker::Send + core::marker::Sync + 'static> 
 pub fn tst_pipeline::mux_publisher::MuxPublisherError<E>::kind(&self) -> tst_pipeline::shell_error::ShellErrorKind
 impl<E: core::fmt::Debug + core::error::Error + core::marker::Send + core::marker::Sync + 'static> core::fmt::Debug for tst_pipeline::mux_publisher::MuxPublisherError<E>
 pub fn tst_pipeline::mux_publisher::MuxPublisherError<E>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<E> core::convert::From<tst_pipeline::mux_publisher::MuxPublisherError<E>> for tst_pipeline::binding::kind::BindingError where E: core::convert::Into<tst_pipeline::binding::kind::BindingError> + core::error::Error + core::marker::Send + core::marker::Sync + 'static
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::mux_publisher::MuxPublisherError<E>) -> Self
 impl<E> core::error::Error for tst_pipeline::mux_publisher::MuxPublisherError<E> where E: core::error::Error + 'static + core::error::Error + core::marker::Send + core::marker::Sync, Self: core::fmt::Debug + core::fmt::Display
 pub fn tst_pipeline::mux_publisher::MuxPublisherError<E>::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl<E> core::fmt::Display for tst_pipeline::mux_publisher::MuxPublisherError<E> where E: core::fmt::Display + core::error::Error + core::marker::Send + core::marker::Sync + 'static
@@ -1793,6 +2189,8 @@ pub fn tst_pipeline::shell_error::ShellErrorKind::clone(&self) -> tst_pipeline::
 impl core::cmp::Eq for tst_pipeline::shell_error::ShellErrorKind
 impl core::cmp::PartialEq for tst_pipeline::shell_error::ShellErrorKind
 pub fn tst_pipeline::shell_error::ShellErrorKind::eq(&self, &tst_pipeline::shell_error::ShellErrorKind) -> bool
+impl core::convert::From<tst_pipeline::shell_error::ShellErrorKind> for tst_pipeline::binding::kind::BindingErrorKind
+pub fn tst_pipeline::binding::kind::BindingErrorKind::from(tst_pipeline::shell_error::ShellErrorKind) -> Self
 impl core::fmt::Debug for tst_pipeline::shell_error::ShellErrorKind
 pub fn tst_pipeline::shell_error::ShellErrorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::hash::Hash for tst_pipeline::shell_error::ShellErrorKind
@@ -1865,6 +2263,8 @@ impl core::convert::From<tst_core::error::DemuxError> for tst_pipeline::demux_re
 pub fn tst_pipeline::demux_receiver::DemuxReceiverError::from(tst_core::error::DemuxError) -> Self
 impl core::convert::From<tst_core::transport::TransportError> for tst_pipeline::demux_receiver::DemuxReceiverError
 pub fn tst_pipeline::demux_receiver::DemuxReceiverError::from(tst_core::transport::TransportError) -> Self
+impl core::convert::From<tst_pipeline::demux_receiver::DemuxReceiverError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::demux_receiver::DemuxReceiverError) -> Self
 impl core::error::Error for tst_pipeline::demux_receiver::DemuxReceiverError
 pub fn tst_pipeline::demux_receiver::DemuxReceiverError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for tst_pipeline::demux_receiver::DemuxReceiverError
@@ -2137,6 +2537,8 @@ impl core::convert::From<tst_core::error::MuxError> for tst_pipeline::mux_sender
 pub fn tst_pipeline::mux_sender::MuxSenderError::from(tst_core::error::MuxError) -> Self
 impl core::convert::From<tst_core::transport::TransportError> for tst_pipeline::mux_sender::MuxSenderError
 pub fn tst_pipeline::mux_sender::MuxSenderError::from(tst_core::transport::TransportError) -> Self
+impl core::convert::From<tst_pipeline::mux_sender::MuxSenderError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::mux_sender::MuxSenderError) -> Self
 impl core::error::Error for tst_pipeline::mux_sender::MuxSenderError
 pub fn tst_pipeline::mux_sender::MuxSenderError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for tst_pipeline::mux_sender::MuxSenderError
@@ -2220,6 +2622,8 @@ pub tst_pipeline::RawReceiverError::kind: tst_pipeline::shell_error::ShellErrorK
 pub tst_pipeline::RawReceiverError::source: tst_pipeline::raw_receiver::RawReceiverErrorSource
 impl core::convert::From<tst_core::transport::TransportError> for tst_pipeline::raw_receiver::RawReceiverError
 pub fn tst_pipeline::raw_receiver::RawReceiverError::from(tst_core::transport::TransportError) -> Self
+impl core::convert::From<tst_pipeline::raw_receiver::RawReceiverError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::raw_receiver::RawReceiverError) -> Self
 impl core::error::Error for tst_pipeline::raw_receiver::RawReceiverError
 pub fn tst_pipeline::raw_receiver::RawReceiverError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for tst_pipeline::raw_receiver::RawReceiverError
@@ -2321,6 +2725,8 @@ pub tst_pipeline::RawSenderError::kind: tst_pipeline::shell_error::ShellErrorKin
 pub tst_pipeline::RawSenderError::source: tst_pipeline::raw_sender::RawSenderErrorSource
 impl core::convert::From<tst_core::transport::TransportError> for tst_pipeline::raw_sender::RawSenderError
 pub fn tst_pipeline::raw_sender::RawSenderError::from(tst_core::transport::TransportError) -> Self
+impl core::convert::From<tst_pipeline::raw_sender::RawSenderError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::raw_sender::RawSenderError) -> Self
 impl core::error::Error for tst_pipeline::raw_sender::RawSenderError
 pub fn tst_pipeline::raw_sender::RawSenderError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for tst_pipeline::raw_sender::RawSenderError
@@ -2382,6 +2788,8 @@ pub tst_pipeline::ReceiverError::kind: tst_pipeline::shell_error::ShellErrorKind
 pub tst_pipeline::ReceiverError::source: tst_pipeline::receiver::ReceiverErrorSource
 impl core::convert::From<tst_core::transport::TransportError> for tst_pipeline::receiver::ReceiverError
 pub fn tst_pipeline::receiver::ReceiverError::from(tst_core::transport::TransportError) -> Self
+impl core::convert::From<tst_pipeline::receiver::ReceiverError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::receiver::ReceiverError) -> Self
 impl core::error::Error for tst_pipeline::receiver::ReceiverError
 pub fn tst_pipeline::receiver::ReceiverError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for tst_pipeline::receiver::ReceiverError
@@ -2506,6 +2914,8 @@ pub tst_pipeline::SenderError::kind: tst_pipeline::shell_error::ShellErrorKind
 pub tst_pipeline::SenderError::source: tst_pipeline::sender::SenderErrorSource
 impl core::convert::From<tst_core::transport::TransportError> for tst_pipeline::sender::SenderError
 pub fn tst_pipeline::sender::SenderError::from(tst_core::transport::TransportError) -> Self
+impl core::convert::From<tst_pipeline::sender::SenderError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::sender::SenderError) -> Self
 impl core::convert::From<tst_pipeline::sender::TsFramingError> for tst_pipeline::sender::SenderError
 pub fn tst_pipeline::sender::SenderError::from(tst_pipeline::sender::TsFramingError) -> Self
 impl core::error::Error for tst_pipeline::sender::SenderError

@@ -56,6 +56,16 @@ mod tests {
             BindingError::from(RistError::PeerCreateFailed).kind,
             K::RistPeerCreateFailed
         );
+        // Both ways into RIST_URL: the URL error on its own, and wrapped.
+        assert_eq!(
+            BindingError::from(crate::url::RistUrlError::MissingPort).kind,
+            K::RistUrl
+        );
+        assert_eq!(
+            BindingError::from(RistError::Url(crate::url::RistUrlError::MissingPort)).kind,
+            K::RistUrl
+        );
+        assert_eq!(K::RistUrl.c_projection(), -39);
         assert_eq!(K::RistPeerCreateFailed.c_projection(), -38);
     }
 }

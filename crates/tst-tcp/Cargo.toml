@@ -16,11 +16,11 @@ default = ["tls"]
 tls = ["dep:rustls", "dep:rustls-native-certs", "dep:rustls-pemfile"]
 
 [dependencies]
-tst-core   = { path = "../tst-core", version = "0.6.0" }
+tst-core     = { path = "../tst-core", version = "0.6.0" }
 tst-pipeline = { path = "../tst-pipeline", version = "0.6.0" }
-socket2    = { workspace = true }
-thiserror  = { workspace = true }
-tracing    = { workspace = true }
+socket2      = { workspace = true }
+thiserror    = { workspace = true }
+tracing      = { workspace = true }
 
 [dependencies.rustls]
 version          = "0.23"

@@ -44,6 +44,11 @@ pub(crate) type ShellSpan = core::panic::AssertUnwindSafe<tracing::Span>;
 /// Kinds marked "—" cannot be produced by that shell. Bindings can
 /// document the unreachable arms with `unreachable!()` or
 /// `debug_assert!(false)`; the runtime never reaches them.
+///
+/// `ShellErrorKind` is a projection of the binding-wide
+/// `tst_pipeline::binding::BindingErrorKind` table (`impl From<ShellErrorKind>
+/// for BindingErrorKind`, exhaustive); the bindings resolve kinds through that
+/// table since 0.7.0.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ShellErrorKind {
@@ -65,9 +70,14 @@ pub enum ShellErrorKind {
     /// muxer internal buffer full and waiting for drain). Caller can retry
     /// the same input after backing off.
     ///
-    /// Maps to `TST_E_BUFFER_FULL` (-4) in `tst-c`. Both transport-side
-    /// (`TransportError::Backpressure`) and muxer-internal
-    /// (`MuxError::BufferFull`) backpressure fold to this single code.
+    /// Maps to `TST_E_BUFFER_FULL` (-4) in `tst-c` — on **every** path since
+    /// 0.7.0: the shell path always did, and the raw connect/listen path
+    /// (which emitted `TST_E_TRANSPORT` (-8) for a
+    /// `TransportError::Backpressure` before the kind table) now projects
+    /// through `tst_pipeline::binding::BindingErrorKind::Backpressure` (-4)
+    /// too. Both transport-side (`TransportError::Backpressure`) and
+    /// muxer-internal (`MuxError::BufferFull`) backpressure fold to this
+    /// single code.
     Backpressure,
 
     /// Transport-layer failure — socket broken, libsrt error, factory

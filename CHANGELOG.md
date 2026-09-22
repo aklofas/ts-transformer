@@ -1477,7 +1477,64 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed — error kinds (WP-A2)
 
-- (pending)
+- **One error-kind table for every binding: `tst_pipeline::binding::BindingErrorKind`**
+  (`#[repr(i32)]`, `#[non_exhaustive]`, 98 variants; Provisional) plus
+  `BindingError { kind, detail }`. The discriminant of every kind C already
+  numbered is the frozen `TST_E_*` code (41 kinds, −1 … −47); kinds C never had
+  are numbered from −49 down (57 kinds) and `c_projection()` names the frozen
+  code C emits for them. `variant_name()` is SCREAMING_SNAKE of the variant
+  (`UDP_IO`); `name()` is the string the per-domain Python / JVM enums resolve
+  (`IO` → `UdpErrorKind.IO`, `UdpException.Kind.IO`). `ALL` enumerates the table for the
+  new `scripts/check/repo/kind-equivalence.sh` rail (`scripts/ratchets/kind-equivalence.tsv`
+  asserts C ≡ Python ≡ JVM per kind, and pins `ALL`'s order line by line;
+  `scripts/check/rust/kind-table-coverage.sh` asserts every tst-core variant is
+  classified explicitly before its wildcard).
+  `From<…> for BindingError` is implemented once for `TransportError`
+  (`ExplicitClose` → `CLOSED`, detail "cancelled from another thread"),
+  `MuxError`, `DemuxError`, `KlvDecodeError`, `KlvFieldError`, `KlvEncodeError`,
+  `CodecParseError`, `TsFramingError`, `HandleState`, the six shell-error structs, `MuxPublisherError<E>` (generic over the sink error),
+  and — in each transport crate, which now depend on `tst-pipeline` — `SrtError`
+  (+ `ConnectError`, `BindError`, `AcceptError`, `SendError`, `RecvError`,
+  `OptionError`, `IoError`, `UrlError`), `TcpError`, `UdpError`, `RistError`,
+  `HlsError`, and tst-rtp's `ConnectError`, `RtspError`, `RtspServerError`,
+  `MountError` (+ the four `*UrlError`s). `ShellErrorKind` is now a documented
+  projection of the table (`impl From<ShellErrorKind> for BindingErrorKind`,
+  exhaustive); its `Backpressure` doc records the −4-on-every-path resolution.
+  **Observed kind changes — the COMPLETE table, every domain** (decided per
+  spec Q4: the full vocabulary change rides 0.7.0; Python keeps
+  value-compatible deprecated aliases for one release, the JVM drops the old
+  constants outright). The bindings COPY their column into their own 0.7.0
+  entries — C in "C binding (WP-B1)", Python in "Python binding (WP-B2)", JVM
+  in "JVM binding (WP-B3)" — this table is the source; everything not listed
+  keeps its name/code, the kind-equivalence rail proves it:
+
+  | Producer | C today → 0.7.0 | Python today → 0.7.0 | JVM today → 0.7.0 |
+  |---|---|---|---|
+  | `TransportError::Backpressure` | raw path −8 / shell −4 → **−4** everywhere | srt `WOULD_BLOCK`, rtp `TIMEOUT`, rist `RECV_TIMEOUT`, udp/tcp `IO` → **`BACKPRESSURE`** | srt `WOULD_BLOCK`, rtp `TIMEOUT` → **`BACKPRESSURE`** |
+  | `TransportError::Broken` | −8 → −8 | srt `BROKEN`; udp/tcp/rist `IO`, rtp `TRANSPORT` → **`BROKEN`** | srt `BROKEN`; rtp `TRANSPORT` → **`BROKEN`** |
+  | `TransportError::Closed` (sender / plain) | −7 → −7 | srt/udp/tcp/rist `CLOSED`; rtp `TRANSPORT` → **`CLOSED`** | srt `CLOSED`; rtp `TRANSPORT` → **`CLOSED`** |
+  | `TransportError::Closed` (receiver shell = peer EOS) | −12 → −12 | (iteration ends) | (end reason) |
+  | `TransportError::ExplicitClose` | raw path −8 "unhandled variant" / shell −7 → **−7** | srt/udp/tcp/rist `CLOSED`; rtp `CANCELLED` → **`CLOSED`** (`RtpErrorKind.CANCELLED` kept one release as a deprecated alias of `CLOSED`) | srt `CLOSED`; rtp `CANCELLED` → **`CLOSED`** (constant removed) |
+  | `TransportError::TooLarge` | raw −6 / shell −3 → **−6** | srt `CONFIG_INVALID`; udp/tcp/rist `PAYLOAD_TOO_LARGE`; rtp `MALFORMED_PACKET` → **`TOO_LARGE`** | srt `CONFIG_INVALID`; rtp `MALFORMED_PACKET` → **`TOO_LARGE`** |
+  | tst-rtp `ConnectError::{PayloadTypeParam, MissingPayloadTypeParam, Url, HostNotLiteral, Io, IfaceUnsupported}` | −15 → −15 | rtp `TRANSPORT` → **`PAYLOAD_TYPE_PARAM` / `MISSING_PAYLOAD_TYPE_PARAM` / `URL` / `HOST_NOT_LITERAL` / `IO` / `IFACE_UNSUPPORTED`** | same |
+  | Python rtp "recv deadline elapsed" (`recv_timeout` → `None`) / "sender\|receiver is closed" | — | `TIMEOUT` → **`BACKPRESSURE`** / `TRANSPORT` → **`CLOSED`** | — |
+  | `SenderErrorSource::Framing` (TS sync loss on `Sender::send_ts`) | −3 → −3 | srt `CONFIG_INVALID` → **`INPUT_MALFORMED`** | srt `CONFIG_INVALID` → **`INPUT_MALFORMED`** |
+  | `MuxError::InvalidNal` / `KlvTooLarge` / `InvalidAv1Obu` / `MispTime` | raw −2/−5/−44/−45; shell −3 → **−2/−5/−44/−45** on both paths | mux `INPUT_MALFORMED` → **`INVALID_NAL` / `KLV_TOO_LARGE` / `INVALID_AV1_OBU` / `MISP_TIME`** | same |
+  | `MuxError::{AudioTooLarge, SubtitleTooLarge, DataTooLarge}` | raw −9 / shell −3 → **−3** | `INPUT_MALFORMED` (unchanged) | unchanged |
+  | `MuxError` `InvalidUsage`-kind variants (`InvalidStreamHandle`, `AmbiguousTarget`, `No{Klv,Audio,Subtitle,Data}StreamsConfigured`, `ProgramNotFound`, `DescriptorIndexOutOfRange`, `AbsIndexOutOfRange`) | raw −9 / shell −1 → **−9** | `INVALID_USAGE` (unchanged) | unchanged |
+  | `DemuxError::Unrecoverable` / `MalformedPsi` / `MalformedPes` / `SyncBufExhausted` / `StrictRejection` | raw −3/−3/−3/−6/−3; shell −3 → **raw values on both paths** | `INTERNAL`/`BAD_PMT`/`BAD_PES`/`SYNC_LOSS`/`STRICT_REJECTION` → **`UNRECOVERABLE`/`MALFORMED_PSI`/`MALFORMED_PES`/`SYNC_BUF_EXHAUSTED`/`STRICT_REJECTION`** (old names kept one release as aliases; `UNEXPECTED_EOF` removed — never produced) | same (`UNEXPECTED_EOF` removed) |
+  | `RtspError::Protocol { code: 404 }` / `{ code: 401 }` | −16 → **−19 / −18** | `NOT_FOUND` / `AUTH_REQUIRED` (unchanged) | unchanged |
+  | `RtspError::AuthUnsupported` | −18 → −18 | `AUTH_FAILED` → **`AUTH_REQUIRED`** | same |
+  | `RtspError::{NoMp2tMedia, MultipleMp2tMedia, NoH264Media, MultipleH264Media}` | −19 → −19 | `MOUNT` → **`NOT_FOUND`** | same |
+  | `RtspServerError::{Io, BindAddrInUse}` / `Tls` / `UrlParse` / `{InvalidMountPath, InvalidMulticastGroup, DuplicateMount, InvalidConfig}` | −24 → **−22 / −21 / −16 / −25** | `IO` / `TLS` / `PROTOCOL` / `MOUNT` (unchanged) | unchanged |
+  | `MuxPublisherError::Mux(e)` (HLS `MuxPublisher` shell) | shell −1 → **the mux kind** (−2/−5/−44/−45/−3/−1/−9/−4) | hls `INVALID_CONFIG` → **`MuxError(<mux kind>)`** (raised as the mux exception class, as `MuxSender` already does) | (no JVM HLS surface) |
+  | `MuxPublisherError::Closed` (shell consumed via `finish`) | −36 → **−7** | hls `FINISHED` → **`CLOSED`** (`HlsErrorKind` gains `CLOSED`) | — |
+  | `MuxPublisherError::LockPoisoned` | −10 → −10 | hls `INTERNAL` (unchanged) | — |
+  | `KlvEncodeError::VTargetPackEmpty` | — | `VTARGET_PACK_EMPTY` → **`V_TARGET_PACK_EMPTY`** (alias kept one release) | same |
+  | `CodecParseError::BufferTooSmall` / `InvalidLengthSize` / `NalLengthOverflow` | −4 / −1 / −6 (unchanged) | `ENGINE_ERROR` → **`BUFFER_TOO_SMALL`** (new member); the other two unchanged | `ENGINE_ERROR` → **`INVALID_LENGTH_SIZE` / `NAL_LENGTH_OVERFLOW` / `BUFFER_TOO_SMALL`** (three new constants) |
+  | `KlvErrorKind.UNKNOWN_SET` | — | removed (never produced) | — |
+  | rist `IO` / `RECV_TIMEOUT` / `PAYLOAD_TOO_LARGE`; udp/tcp `PAYLOAD_TOO_LARGE`; rtp `TRANSPORT` / `MALFORMED_PACKET` / `TIMEOUT` / `CANCELLED`; srt `WOULD_BLOCK` | — | members retired (deprecated aliases of `BROKEN` / `BACKPRESSURE` / `TOO_LARGE` / `CLOSED` for one release) | rtp `TRANSPORT` / `MALFORMED_PACKET` / `TIMEOUT` / `CANCELLED`, srt `WOULD_BLOCK` constants removed |
+  | `HandleState::{Closed, Poisoned, Panicked}` (new, WP-A1) | −7 / −10 / −11 | per-class strings today → **`*Error(CLOSED)` / `RuntimeError` / PyO3 `PanicException` (B2; no `PanicError` class exists)** | **`IllegalStateException` / `IllegalStateException` / `RuntimeException("native panic in tst-jni: …")` (B3; the Java-side `ensureOpen` guard already throws `IllegalStateException`, no `TstPanicException` class exists)** |
 
 ### Added — SRT open path + managed handles (WP-A3)
 

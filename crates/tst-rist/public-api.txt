@@ -133,6 +133,8 @@ pub tst_rist::error::RistError::PeerCreateFailed
 pub tst_rist::error::RistError::Url(tst_rist::url::RistUrlError)
 impl tst_rist::error::RistError
 pub fn tst_rist::error::RistError::kind(&self) -> tst_rist::error::RistErrorKind
+impl core::convert::From<tst_rist::error::RistError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_rist::error::RistError) -> Self
 impl core::convert::From<tst_rist::url::RistUrlError> for tst_rist::error::RistError
 pub fn tst_rist::error::RistError::from(tst_rist::url::RistUrlError) -> Self
 impl core::error::Error for tst_rist::error::RistError
@@ -258,6 +260,8 @@ pub tst_rist::url::RistUrlError::MissingPort
 pub tst_rist::url::RistUrlError::Parse(tst_core::url::common::UrlError)
 impl core::convert::From<tst_core::url::common::UrlError> for tst_rist::url::RistUrlError
 pub fn tst_rist::url::RistUrlError::from(tst_core::url::common::UrlError) -> Self
+impl core::convert::From<tst_rist::url::RistUrlError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_rist::url::RistUrlError) -> Self
 impl core::convert::From<tst_rist::url::RistUrlError> for tst_rist::error::RistError
 pub fn tst_rist::error::RistError::from(tst_rist::url::RistUrlError) -> Self
 impl core::error::Error for tst_rist::url::RistUrlError
@@ -310,6 +314,8 @@ pub tst_rist::RistError::PeerCreateFailed
 pub tst_rist::RistError::Url(tst_rist::url::RistUrlError)
 impl tst_rist::error::RistError
 pub fn tst_rist::error::RistError::kind(&self) -> tst_rist::error::RistErrorKind
+impl core::convert::From<tst_rist::error::RistError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_rist::error::RistError) -> Self
 impl core::convert::From<tst_rist::url::RistUrlError> for tst_rist::error::RistError
 pub fn tst_rist::error::RistError::from(tst_rist::url::RistUrlError) -> Self
 impl core::error::Error for tst_rist::error::RistError
@@ -384,6 +390,8 @@ pub tst_rist::RistUrlError::MissingPort
 pub tst_rist::RistUrlError::Parse(tst_core::url::common::UrlError)
 impl core::convert::From<tst_core::url::common::UrlError> for tst_rist::url::RistUrlError
 pub fn tst_rist::url::RistUrlError::from(tst_core::url::common::UrlError) -> Self
+impl core::convert::From<tst_rist::url::RistUrlError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_rist::url::RistUrlError) -> Self
 impl core::convert::From<tst_rist::url::RistUrlError> for tst_rist::error::RistError
 pub fn tst_rist::error::RistError::from(tst_rist::url::RistUrlError) -> Self
 impl core::error::Error for tst_rist::url::RistUrlError
