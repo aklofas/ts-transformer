@@ -435,6 +435,22 @@ pub trait Transport: Send {
 /// that need "cancelled by someone else" keep their own flag on top (the
 /// binding layer's `Owned::is_cancelled` does exactly that).
 ///
+/// # Handle aliases vs composing wrappers
+///
+/// "Any clone/alias" above means another handle over the SAME underlying
+/// resource — two `TcpCancelHandle`s minted from one transport, say. Those
+/// must share one latch, and the [`conformance`] row `is_cancelled_flips`
+/// checks it.
+///
+/// It does NOT extend to a wrapper that OWNS an inner handle and forwards
+/// `cancel()` to it (the bindings' `Owned`, Python's `CancelSource`). Such a
+/// wrapper's `is_cancelled()` reports ITS OWN latch: it answers "was this
+/// object cancelled", which is the question its callers ask. Composing the
+/// inner handle's latch in is the job of whichever layer needs both — in
+/// this tree exactly one does, `Owned::is_cancelled`, and it ORs them.
+/// Pushing the OR further down would widen what a binding's user-visible
+/// `is_cancelled()` answers with nobody asking for it.
+///
 /// `Send + Sync` is required so consumers can stash one in an
 /// `Arc<dyn TransportCancel>` and share it across worker threads.
 pub trait TransportCancel: Send + Sync {
