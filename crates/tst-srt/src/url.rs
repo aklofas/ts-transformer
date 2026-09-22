@@ -303,6 +303,42 @@ impl SrtUrl {
         let socket = Socket::connect_with(&cfg, addr.as_str())?;
         Ok(SrtTransport::new(socket))
     }
+
+    /// Open this URL as a **listener**: bind `host:port` (an empty host
+    /// binds the wildcard `0.0.0.0`), accept **one** peer, and return it
+    /// as a transport — with the accept reachable by `cancel.cancel()`
+    /// from another thread.
+    ///
+    /// The bind → install-into-slot → accept → clear → classify sequence
+    /// is [`Listener::accept_one_cancellable`]; this method only builds
+    /// the [`ListenerConfig`] from the overlay
+    /// ([`UrlOverlay::apply_to_listener`]) and renders the bind address
+    /// the way the bindings' `listen_srt` did. Single-accept: the
+    /// listener is dropped on return. Share the same `cancel` slot with
+    /// a managed transport's [`FactoryCancel`](tst_core::cancel::CancelSlot)
+    /// so a re-accept parked with no peer in sight can be woken by the
+    /// transport's cancel handle — `tst_srt::shells` wires that.
+    ///
+    /// # Errors
+    ///
+    /// - [`SrtError::Transport`]`(`[`TransportError::ExplicitClose`]`)` —
+    ///   `cancel` was cancelled before or during the accept.
+    /// - [`SrtError::Transport`]`(`[`TransportError::Broken`]`)` — bind or
+    ///   accept fault; the message carries `bind: …` / `accept: …`.
+    ///
+    /// [`TransportError::ExplicitClose`]: tst_core::transport::TransportError::ExplicitClose
+    /// [`TransportError::Broken`]: tst_core::transport::TransportError::Broken
+    pub fn accept_one(&self, cancel: &CancelSlot) -> Result<SrtTransport, SrtError> {
+        let mut cfg = ListenerConfig::default();
+        self.overlay.apply_to_listener(&mut cfg);
+        let bind_host = if self.host.is_empty() {
+            "0.0.0.0"
+        } else {
+            self.host.as_str()
+        };
+        let addr = crate::addr::join_host_port(bind_host, self.port);
+        Ok(Listener::accept_one_cancellable(&cfg, &addr, cancel)?)
+    }
 }
 
 fn parse_int_nonneg<T>(key: &str, value: &str) -> Result<T, UrlError>
