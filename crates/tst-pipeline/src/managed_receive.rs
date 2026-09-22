@@ -551,6 +551,13 @@ impl tst_core::transport::TransportCancel for ManagedRecvCancel {
         // arrival rather than parked on.
         self.active.cancel();
     }
+    fn is_cancelled(&self) -> bool {
+        // `cancel()` above latches the slot last; `close()` only clears the
+        // installed target (see the DELIBERATE ASYMMETRY note in `close`,
+        // and `CancelSlot::clear`, which never un-latches), so this reads
+        // true exactly for a cross-thread cancel.
+        self.active.is_cancelled()
+    }
 }
 
 #[cfg(test)]
@@ -742,6 +749,9 @@ mod tests {
         fn cancel(&self) {
             self.cancelled
                 .store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        fn is_cancelled(&self) -> bool {
+            self.cancelled.load(std::sync::atomic::Ordering::SeqCst)
         }
     }
     impl RecvTransport for CancellableRecv {

@@ -125,6 +125,9 @@ impl TransportCancel for GateCancel {
         self.cancelled.store(true, Ordering::SeqCst);
         self.gate.open();
     }
+    fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
+    }
 }
 
 /// A `Break` inner with private flags. Every test starts the wrapper on one

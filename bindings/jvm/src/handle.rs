@@ -745,6 +745,9 @@ mod tests {
         fn cancel(&self) {
             self.fired.store(true, Ordering::SeqCst);
         }
+        fn is_cancelled(&self) -> bool {
+            self.fired.load(Ordering::SeqCst)
+        }
     }
     fn recording() -> (
         Arc<RecordingCancel>,

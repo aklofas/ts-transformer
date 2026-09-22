@@ -51,6 +51,9 @@ impl TransportCancel for RtpCancelHandle {
     fn cancel(&self) {
         RtpCancelHandle::cancel(self);
     }
+    fn is_cancelled(&self) -> bool {
+        RtpCancelHandle::is_cancelled(self)
+    }
 }
 
 /// Cancel handle for an `RtspServer` (introduced in Phase 3 Task 7).

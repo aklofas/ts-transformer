@@ -691,8 +691,9 @@ mod tests {
             fn cancel(&self) {
                 self.0.store(true, Ordering::SeqCst);
             }
-            // WP-C1 (PR 7) adds the required `is_cancelled`; until then this
-            // test impl has only `cancel` (the contract's CONTRACT NOTE 1).
+            fn is_cancelled(&self) -> bool {
+                self.0.load(Ordering::SeqCst)
+            }
         }
 
         fn fresh() -> (CHandle<i32>, Arc<ProbeCancel>) {

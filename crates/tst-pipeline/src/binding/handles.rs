@@ -83,10 +83,11 @@ mod tests {
 
     struct Noop;
 
-    // WP-C1 adds `fn is_cancelled(&self) -> bool` to the trait; this impl
-    // gains `false` there (it is one of the "13 test implementors").
     impl TransportCancel for Noop {
         fn cancel(&self) {}
+        fn is_cancelled(&self) -> bool {
+            false
+        }
     }
 
     fn handles() -> ManagedHandles {

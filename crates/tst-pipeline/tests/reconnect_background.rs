@@ -754,6 +754,9 @@ impl Gate {
         self.state.lock().unwrap().cancelled = true;
         self.cv.notify_all();
     }
+    fn is_cancelled(&self) -> bool {
+        self.state.lock().unwrap().cancelled
+    }
 }
 
 struct GateCancel {
@@ -762,6 +765,9 @@ struct GateCancel {
 impl TransportCancel for GateCancel {
     fn cancel(&self) {
         self.gate.cancel();
+    }
+    fn is_cancelled(&self) -> bool {
+        self.gate.is_cancelled()
     }
 }
 

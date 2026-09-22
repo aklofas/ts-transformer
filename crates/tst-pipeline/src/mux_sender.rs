@@ -2081,6 +2081,9 @@ mod multi_stream_tests {
         fn cancel(&self) {
             self.0.store(true, std::sync::atomic::Ordering::SeqCst);
         }
+        fn is_cancelled(&self) -> bool {
+            self.0.load(std::sync::atomic::Ordering::SeqCst)
+        }
     }
     impl Transport for BlocksUntilCancelled {
         fn send_bytes(&mut self, _b: &[u8]) -> Result<(), TransportError> {
@@ -2285,6 +2288,9 @@ mod cancel_tests {
     impl TransportCancel for ParkableCancel {
         fn cancel(&self) {
             self.cancelled.store(true, Ordering::SeqCst);
+        }
+        fn is_cancelled(&self) -> bool {
+            self.cancelled.load(Ordering::SeqCst)
         }
     }
     impl Transport for ParkableTransport {
@@ -2652,6 +2658,9 @@ mod cancel_tests {
     impl TransportCancel for TailLossCancel {
         fn cancel(&self) {
             self.0.lock().unwrap().cancelled = true;
+        }
+        fn is_cancelled(&self) -> bool {
+            self.0.lock().unwrap().cancelled
         }
     }
     impl Transport for TailLossTransport {

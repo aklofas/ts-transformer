@@ -1058,6 +1058,13 @@ impl TransportCancel for ManagedCancel {
         // Same three steps as close()/Drop — see `terminal_signal`.
         terminal_signal(&self.closed, &self.shutdown, &self.active);
     }
+    fn is_cancelled(&self) -> bool {
+        // The slot latches in `terminal_signal`, i.e. on cancel() AND on the
+        // wrapper's own close()/Drop (one terminal transition, X-CORR-01).
+        // Documented on the trait: where close() is implemented by firing the
+        // same handle, is_cancelled() reads true after that close() too.
+        self.active.is_cancelled()
+    }
 }
 
 #[cfg(test)]
@@ -1080,6 +1087,9 @@ mod cancel_tests {
         fn cancel(&self) {
             self.cancelled.store(true, Ordering::SeqCst);
             self.calls.fetch_add(1, Ordering::SeqCst);
+        }
+        fn is_cancelled(&self) -> bool {
+            self.cancelled.load(Ordering::SeqCst)
         }
     }
     impl Transport for CancellableMock {

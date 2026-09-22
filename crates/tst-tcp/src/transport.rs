@@ -88,13 +88,25 @@ impl InnerStream {
 #[derive(Clone, Debug)]
 pub struct TcpCancelHandle {
     alive: Arc<AtomicBool>,
+    /// The cancel latch proper, SEPARATE from `alive` (WP-C1).
+    ///
+    /// `alive` is a liveness flag: the transport drops it on a clean peer
+    /// EOF and on a broken read as well as on a cancel, so `!alive` cannot
+    /// answer "did the caller cancel?". The bindings relabel a
+    /// caller-initiated end from exactly that answer (`Owned::is_cancelled`
+    /// ORs the transport's latch in), so reading `!alive` would turn every
+    /// clean TCP peer EOF into `TST_E_CLOSED` instead of
+    /// `TST_E_END_OF_STREAM`. Shared through the same `Arc` chain as
+    /// `alive` so a handle minted after the cancel still reads `true`.
+    cancelled: Arc<AtomicBool>,
 }
 
 impl TcpCancelHandle {
-    /// Build a handle over a shared flag — used by [`TcpTransport::cancel_handle`]
-    /// and [`crate::listener::TcpListener::cancel_handle`].
-    pub(crate) fn from_flag(alive: Arc<AtomicBool>) -> Self {
-        Self { alive }
+    /// Build a handle over the shared liveness + cancel flags — used by
+    /// [`TcpTransport::cancel_handle`] and
+    /// [`crate::listener::TcpListener::cancel_handle`].
+    pub(crate) fn from_flags(alive: Arc<AtomicBool>, cancelled: Arc<AtomicBool>) -> Self {
+        Self { alive, cancelled }
     }
 }
 
@@ -103,18 +115,30 @@ impl TcpCancelHandle {
     /// to return [`tst_core::transport::TransportError::Closed`] at its next
     /// ~100 ms poll boundary. Idempotent — repeated calls are a no-op.
     pub fn cancel(&self) {
+        // Latch the cancel BEFORE dropping liveness: the woken thread's next
+        // act is to ask `is_cancelled()` whether the failure it just saw was
+        // caller-initiated, and it must not read `false` there.
+        self.cancelled.store(true, Ordering::Release);
         self.alive.store(false, Ordering::Release);
     }
 
-    /// `true` if [`Self::cancel`] has been called on any clone of this handle.
+    /// `true` if [`Self::cancel`] has been called on any clone of this handle
+    /// (or on any handle minted from the same transport/listener).
+    ///
+    /// A peer EOF or a wire failure does NOT set this — those drop the
+    /// transport's liveness flag only, which [`crate::TcpTransport`]'s
+    /// `is_alive()` reports.
     pub fn is_cancelled(&self) -> bool {
-        !self.alive.load(Ordering::Acquire)
+        self.cancelled.load(Ordering::Acquire)
     }
 }
 
 impl TransportCancel for TcpCancelHandle {
     fn cancel(&self) {
         TcpCancelHandle::cancel(self)
+    }
+    fn is_cancelled(&self) -> bool {
+        TcpCancelHandle::is_cancelled(self)
     }
 }
 
@@ -128,6 +152,9 @@ pub struct TcpTransport {
     pub(crate) peer: SocketAddr,
     pub(crate) stats: TcpStats,
     pub(crate) alive: Arc<AtomicBool>,
+    /// Set only by [`TcpCancelHandle::cancel`] — see that field's doc for
+    /// why it is not `!alive`.
+    pub(crate) cancelled: Arc<AtomicBool>,
 }
 
 /// Resolve `host:port` (IP literal or DNS name) and connect with `timeout`
@@ -200,6 +227,7 @@ impl TcpTransport {
             peer,
             stats: TcpStats::default(),
             alive: Arc::new(AtomicBool::new(true)),
+            cancelled: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -216,6 +244,7 @@ impl TcpTransport {
             peer,
             stats: TcpStats::default(),
             alive: Arc::new(AtomicBool::new(true)),
+            cancelled: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -232,6 +261,7 @@ impl TcpTransport {
             peer,
             stats: TcpStats::default(),
             alive: Arc::new(AtomicBool::new(true)),
+            cancelled: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -248,7 +278,7 @@ impl TcpTransport {
     /// Return a cloneable handle that can cancel a `recv_bytes` parked in
     /// another thread. See [`TcpCancelHandle`] for the full contract.
     pub fn cancel_handle(&self) -> TcpCancelHandle {
-        TcpCancelHandle::from_flag(self.alive.clone())
+        TcpCancelHandle::from_flags(self.alive.clone(), self.cancelled.clone())
     }
 }
 

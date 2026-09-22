@@ -132,7 +132,9 @@ impl TransportCancel for OwnedCancel {
         self.cancelled.store(true, Ordering::SeqCst);
         self.transport.cancel();
     }
-    // WP-C1 adds here: `fn is_cancelled(&self) -> bool { self.cancelled.load(SeqCst) || self.transport.is_cancelled() }`
+    fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst) || self.transport.is_cancelled()
+    }
 }
 
 impl<T, S> Owned<T, S> {
@@ -180,11 +182,15 @@ impl<T, S> Owned<T, S> {
     }
 
     /// `true` once [`Self::cancel`] (or [`Self::close`], or `cancel()` on a
-    /// handle from [`Self::cancel_arc`]) has run. Until WP-C1 lands
-    /// `TransportCancel::is_cancelled`, this reads only the local latch;
-    /// WP-C1 ORs in `self.cancel.transport.is_cancelled()`.
+    /// handle from [`Self::cancel_arc`]) has run.
     pub fn is_cancelled(&self) -> bool {
-        self.cancel.cancelled.load(Ordering::SeqCst)
+        // Our own latch first (set by `cancel()` / `close()` on THIS handle),
+        // then the transport's: a cancel fired through a handle the caller
+        // obtained directly from the shell (`cancel_handle()`) is still a
+        // cancel — WP-C1 made every `TransportCancel` able to say so. The
+        // transport's latch is a CANCEL latch, never a liveness proxy, so a
+        // peer EOF does not reach this (see `TransportCancel`'s docs).
+        self.cancel.cancelled.load(Ordering::SeqCst) || self.cancel.transport.is_cancelled()
     }
 
     /// The construction-time snapshot. Lock-free by construction — a plain
@@ -367,6 +373,9 @@ impl TransportCancel for FlagCancel {
     fn cancel(&self) {
         self.0.store(true, Ordering::SeqCst);
     }
+    fn is_cancelled(&self) -> bool {
+        self.is_set()
+    }
 }
 
 #[cfg(test)]
@@ -383,6 +392,9 @@ mod tests {
         fn cancel(&self) {
             self.calls.fetch_add(1, Ordering::SeqCst);
             self.flag.store(true, Ordering::SeqCst);
+        }
+        fn is_cancelled(&self) -> bool {
+            self.flag.load(Ordering::SeqCst)
         }
     }
 
@@ -726,6 +738,9 @@ mod tests {
                 self.0.lock().unwrap().push("cancel");
                 self.1.cancel();
             }
+            fn is_cancelled(&self) -> bool {
+                self.1.is_cancelled()
+            }
         }
         let f = fixture();
         let log = Arc::clone(&f.log);
@@ -1064,6 +1079,14 @@ mod tests {
                     .upgrade()
                     .expect("the Owned outlives this call");
                 *self.latch_seen_from_transport.lock().unwrap() = Some(owned.is_cancelled());
+            }
+            // DELIBERATELY latch-less: `Owned::is_cancelled` ORs this in, so
+            // a `true` here would satisfy the assertion below without
+            // `OwnedCancel` having latched first and make the test vacuous.
+            // (It must also not call back into `owned.is_cancelled()` — that
+            // would recurse through the OR.)
+            fn is_cancelled(&self) -> bool {
+                false
             }
         }
 

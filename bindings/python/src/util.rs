@@ -107,8 +107,12 @@ impl CancelSource {
         me
     }
 
+    /// `true` once this source, or the transport handle it wraps, has been
+    /// cancelled. ORing `inner` in (WP-C1) matters for a handle the caller
+    /// reached past the Python object — and is safe now that every
+    /// `TransportCancel::is_cancelled` is a cancel latch, never `!alive`.
     pub(crate) fn is_cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::Acquire)
+        self.cancelled.load(Ordering::Acquire) || self.inner.is_cancelled()
     }
 
     /// The trait-object view `Owned::new` takes. Only the transport
@@ -132,6 +136,9 @@ impl TransportCancel for CancelSource {
         // cancel already sees the state.
         self.cancelled.store(true, Ordering::Release);
         self.inner.cancel();
+    }
+    fn is_cancelled(&self) -> bool {
+        CancelSource::is_cancelled(self)
     }
 }
 
@@ -261,6 +268,9 @@ pub(crate) struct SlotCancel(pub Arc<tst_core::cancel::CancelSlot>);
 impl TransportCancel for SlotCancel {
     fn cancel(&self) {
         self.0.cancel();
+    }
+    fn is_cancelled(&self) -> bool {
+        self.0.is_cancelled()
     }
 }
 

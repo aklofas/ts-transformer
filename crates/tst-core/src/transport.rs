@@ -357,13 +357,32 @@ pub trait Transport: Send {
 /// [`Transport::cancel_handle`] and [`RecvTransport::cancel_handle`].
 ///
 /// `cancel()` from any thread interrupts the transport's current blocking
-/// send or receive — the parked call returns `Broken` (or whatever the
-/// inner mapping produces). Idempotent.
+/// send or receive; the parked call returns
+/// [`TransportError::ExplicitClose`] (the per-transport table in the
+/// module docs is normative, and the [`conformance`] kit pins it).
+/// Idempotent.
+///
+/// `is_cancelled()` reads the handle's latch: `false` on a fresh handle,
+/// `true` once `cancel()` has run on it or on any clone/alias sharing the
+/// same underlying resource — a handle obtained from the transport AFTER
+/// the cancel reads `true` too. It is never a liveness proxy: a peer
+/// disconnect or a wire failure leaves it `false` (the kit row
+/// `peer_eof_is_not_a_cancel`), because the bindings relabel a
+/// caller-initiated end from exactly this bit. Where a transport's own
+/// `close()` is implemented by firing the same handle (SRT, the managed
+/// wrappers), `is_cancelled()` also reads `true` after that `close()`;
+/// callers that need "cancelled by someone else" keep their own flag on
+/// top (the binding layer's `Owned::is_cancelled` does exactly that).
 ///
 /// `Send + Sync` is required so consumers can stash one in an
 /// `Arc<dyn TransportCancel>` and share it across worker threads.
 pub trait TransportCancel: Send + Sync {
+    /// Interrupt the transport's current blocking call. Idempotent.
     fn cancel(&self);
+    /// `true` once [`cancel`](Self::cancel) has run on this handle or on
+    /// any alias of it (see the trait docs). Required — every handle has a
+    /// latch to read.
+    fn is_cancelled(&self) -> bool;
 }
 
 // ============================================================

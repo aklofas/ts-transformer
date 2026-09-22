@@ -25,6 +25,9 @@ impl TransportCancel for ParkedRecvCancel {
     fn cancel(&self) {
         self.flag.store(true, Ordering::Release);
     }
+    fn is_cancelled(&self) -> bool {
+        self.flag.load(Ordering::Acquire)
+    }
 }
 
 /// A RecvTransport that blocks indefinitely on recv_bytes until the cancel
