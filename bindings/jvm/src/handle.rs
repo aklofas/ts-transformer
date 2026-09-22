@@ -537,6 +537,14 @@ impl<T: Send + 'static, S: Send + Sync + 'static> OwnedRegistry<T, S> {
     /// Mutator path (push / send / recv / next / flush): [`Owned::with_mut`]
     /// — refuses a poisoned slot, isolates a panic without poisoning.
     ///
+    /// A panicking mutator additionally REMOVES the entry from the id table,
+    /// keeping the table in step with the slot `Owned::with_mut` just dropped.
+    /// That is 0.6.x's `HandleRegistry::with_poisoning` policy one layer down:
+    /// the panicking call reports `Panicked` (→ `RuntimeException`) and every
+    /// later native on that object reports `Closed` (→ `IllegalStateException`),
+    /// including the lock-free side reads — `cancel_view` and `snapshot` must
+    /// not keep answering for a torn shell.
+    ///
     /// # Errors
     ///
     /// [`HandleState::Closed`] for a `0`/absent/closed id, otherwise whatever
@@ -546,10 +554,20 @@ impl<T: Send + 'static, S: Send + Sync + 'static> OwnedRegistry<T, S> {
         id: u64,
         f: impl FnOnce(&mut T) -> R,
     ) -> Result<R, HandleState> {
-        match self.lease(id) {
-            Some(e) => e.owned.with_mut(f),
-            None => Err(HandleState::Closed),
+        let Some(entry) = self.lease(id) else {
+            return Err(HandleState::Closed);
+        };
+        let result = entry.owned.with_mut(f);
+        if matches!(result, Err(HandleState::Panicked { .. })) {
+            // The slot is already empty (`Owned::with_mut` dropped `T` inside
+            // its own panic boundary); drop the table's strong ref too. The
+            // `entry` Arc above keeps this frame's view alive regardless.
+            self.inner
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(id);
         }
+        result
     }
 
     /// Reader path (stats / isAlive / getters): [`Owned::with_ref`] —
@@ -1271,10 +1289,18 @@ mod tests {
             Err(HandleState::Closed),
             "a mutator panic drops the slot"
         );
+        // The entry leaves the id table too (decision 3), so the lock-free side
+        // reads stop answering for the torn shell — not just the slot.
+        assert_eq!(reg.is_cancelled(id), None, "the id is gone from the table");
+        assert!(
+            reg.cancel_view(id).is_none(),
+            "no cancel view for a torn shell"
+        );
+        assert!(reg.snapshot(id, |_| ()).is_none());
         assert_eq!(
             reg.close(id),
             None,
-            "the taken slot yields nothing (decision 3); double close is quiet"
+            "the entry is gone (decision 3); double close is quiet"
         );
     }
 
