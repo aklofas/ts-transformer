@@ -102,11 +102,18 @@ impl Shutdown {
 
 /// State shared between `ManagedTransport`, its `ManagedStatsHandle`
 /// observers, and any spawned background worker (see `worker_run` below).
+///
+/// Three of the counters are themselves `Arc`s although this whole struct
+/// already lives in one: `ManagedTransport::{attempts,reconnects,
+/// reconnecting}_handle` hand those three out individually, so a binding
+/// can poll them after the transport has moved into a sender shell without
+/// holding — or knowing about — the rest of this state (ARCH-08). Every
+/// use site reads through `Deref` unchanged.
 #[derive(Debug)]
 pub(crate) struct ManagedShared {
     /// True while a background worker owns reconnect+drain.
     /// Transitions happen under the gap lock (invariant 2).
-    pub(crate) bg_active: AtomicBool,
+    pub(crate) bg_active: Arc<AtomicBool>,
     /// Set by a worker that exhausted max_attempts; consumed (swap false)
     /// by the next send_bytes, which reports Broken exactly once.
     pub(crate) gave_up: AtomicBool,
@@ -117,9 +124,9 @@ pub(crate) struct ManagedShared {
     /// doesn't claim "gave up after 0 attempts" for a crash.
     pub(crate) gave_up_abnormal: AtomicBool,
     /// factory() invocations (either mode).
-    pub(crate) reconnect_attempts: AtomicU64,
+    pub(crate) reconnect_attempts: Arc<AtomicU64>,
     /// Successful factory() installs (either mode).
-    pub(crate) reconnect_successes: AtomicU64,
+    pub(crate) reconnect_successes: Arc<AtomicU64>,
     /// The last installed inner's `max_payload()`, published at
     /// construction and on every successful install so neither
     /// `send_bytes`'s size pre-check nor `ManagedTransport::max_payload()`
@@ -134,11 +141,11 @@ pub(crate) struct ManagedShared {
 impl Default for ManagedShared {
     fn default() -> Self {
         Self {
-            bg_active: AtomicBool::new(false),
+            bg_active: Arc::new(AtomicBool::new(false)),
             gave_up: AtomicBool::new(false),
             gave_up_abnormal: AtomicBool::new(false),
-            reconnect_attempts: AtomicU64::new(0),
-            reconnect_successes: AtomicU64::new(0),
+            reconnect_attempts: Arc::new(AtomicU64::new(0)),
+            reconnect_successes: Arc::new(AtomicU64::new(0)),
             // Hand-written solely for this field: a derived `Default`
             // would seed the ceiling at 0, which reads as "refuse every
             // send". `ManagedTransport::new` overwrites it with the
