@@ -119,8 +119,18 @@ struct OwnedCancel {
 
 impl TransportCancel for OwnedCancel {
     fn cancel(&self) {
-        self.transport.cancel();
+        // LATCH FIRST, then wake. Firing the transport handle unblocks a
+        // parked operation on ANOTHER thread immediately, and that thread's
+        // very next act is to ask `is_cancelled()` whether the failure it
+        // just saw was caller-initiated. Storing the latch afterwards loses
+        // that race: the woken thread reads `false` and relabels a cancel as
+        // a peer disconnect (`TST_E_END_OF_STREAM` at the C ABI instead of
+        // `TST_E_CLOSED`). The bindings' pre-Arc-2 `_cancel` bodies all
+        // stored their `was_cancelled` flag before firing the handle for
+        // exactly this reason; pinned by
+        // `owned_cancel_latches_before_it_fires_the_transport_handle`.
         self.cancelled.store(true, Ordering::SeqCst);
+        self.transport.cancel();
     }
     // WP-C1 adds here: `fn is_cancelled(&self) -> bool { self.cancelled.load(SeqCst) || self.transport.is_cancelled() }`
 }
@@ -1023,13 +1033,24 @@ mod tests {
         let _ = parked.join().unwrap();
     }
 
+    /// ORDER PIN for the private `OwnedCancel` — the latch must be visible
+    /// BEFORE the transport handle is fired.
+    ///
+    /// Firing the handle wakes a parked operation on ANOTHER thread, and that
+    /// thread's very next act is to ask `is_cancelled()` whether the failure
+    /// it just observed was caller-initiated. Latching afterwards loses that
+    /// race: the woken reader sees `false` and relabels a caller cancel as a
+    /// peer disconnect (at the C ABI: `TST_E_END_OF_STREAM` instead of
+    /// `TST_E_CLOSED`). Reproduced in Arc 2 WP-B1 as an intermittent failure
+    /// of the six `bindings/c/tests/receiving/cancel_first.rs` parked-recv
+    /// tests; the pre-Arc-2 bindings all stored their `was_cancelled` flag
+    /// before firing the handle for exactly this reason.
+    ///
+    /// Deterministic — no polling: the transport handle reads the `Owned`'s
+    /// own latch from INSIDE its `cancel()`, exactly where a woken reader
+    /// would. `Weak` keeps the back-reference from forming an `Arc` cycle.
     #[test]
-    fn owned_cancel_fires_the_transport_handle_before_latching() {
-        // Order pin for the private `OwnedCancel`, deterministic — no polling:
-        // the transport handle reads the `Owned`'s own latch from INSIDE its
-        // `cancel()`. Observing `false` there proves the transport fired
-        // first and the latch was set after. `Weak` keeps the handle's
-        // back-reference from forming an `Arc` cycle.
+    fn owned_cancel_latches_before_it_fires_the_transport_handle() {
         struct OrderCancel {
             owned: std::sync::OnceLock<std::sync::Weak<Owned<u8, ()>>>,
             latch_seen_from_transport: std::sync::Mutex<Option<bool>>,
@@ -1062,12 +1083,13 @@ mod tests {
         owned.cancel();
         assert_eq!(
             *c.latch_seen_from_transport.lock().unwrap(),
-            Some(false),
-            "the transport handle fired BEFORE is_cancelled latched"
+            Some(true),
+            "is_cancelled() must already be true when the transport handle is \
+             fired — a woken reader relabels the cancel as end-of-stream otherwise"
         );
         assert!(
             owned.is_cancelled(),
-            "and the latch is set once cancel returns"
+            "and the latch is still set once cancel returns"
         );
     }
 
