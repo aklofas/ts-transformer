@@ -276,3 +276,57 @@ fn accept_one_with_empty_host_binds_the_wildcard() {
         "the accepted transport should be alive"
     );
 }
+
+/// The plain-shell cancel accessor: non-`Option`, obtained before the
+/// transport moves into a shell, wakes a parked recv from another thread,
+/// and still answers (as cancelled) after `close()`.
+///
+/// WP-C2 note: the error the woken recv returns is `Broken` today and
+/// becomes `ExplicitClose` in C2 — this test asserts only "returned with
+/// an error within the watchdog", so it does not move.
+#[test]
+fn srt_cancel_handle_wakes_a_parked_recv_and_survives_close() {
+    require_loopback!();
+    let lb = crate::common::Loopback::bind();
+    let port = lb.port;
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+    let accept = lb.spawn_accept(move |sock| {
+        let _ = release_rx.recv(); // send nothing; hold the socket open
+        drop(sock);
+    });
+    accept.wait_ready();
+
+    let url = SrtUrl::parse(&format!("srt://127.0.0.1:{port}")).expect("parse");
+    let mut t = url.connect().expect("connect");
+    let cancel = t.srt_cancel_handle();
+    assert!(!cancel.is_cancelled());
+
+    let reader = std::thread::spawn(move || {
+        let mut buf = [0u8; 1500];
+        let outcome = tst_core::transport::RecvTransport::recv_bytes(&mut t, &mut buf);
+        t.close();
+        outcome
+    });
+    std::thread::sleep(Duration::from_millis(300)); // let the recv park
+    cancel.cancel();
+
+    let deadline = Instant::now() + WATCHDOG;
+    while !reader.is_finished() {
+        if Instant::now() > deadline {
+            let _ = release_tx.send(());
+            panic!("recv_bytes still parked {WATCHDOG:?} after srt_cancel_handle().cancel()");
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let outcome = reader.join().expect("reader thread");
+    assert!(
+        outcome.is_err(),
+        "a cancelled recv must fail, got {outcome:?}"
+    );
+    assert!(
+        cancel.is_cancelled(),
+        "the handle reads cancelled after close()"
+    );
+    let _ = release_tx.send(());
+    accept.join();
+}
