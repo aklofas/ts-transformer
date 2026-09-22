@@ -4,6 +4,7 @@
 //! bounded by [`WATCHDOG`] and FAILS on expiry instead of hanging.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use tst_core::cancel::CancelSlot;
@@ -301,13 +302,26 @@ fn srt_cancel_handle_wakes_a_parked_recv_and_survives_close() {
     let cancel = t.srt_cancel_handle();
     assert!(!cancel.is_cancelled());
 
+    // The reader latches `entered` immediately before the call, so the
+    // cancel lands on a recv that has actually started — a fixed sleep
+    // would be setup dressed up as proof.
+    let entered = Arc::new(AtomicBool::new(false));
+    let reader_entered = Arc::clone(&entered);
     let reader = std::thread::spawn(move || {
         let mut buf = [0u8; 1500];
+        reader_entered.store(true, Ordering::SeqCst);
         let outcome = tst_core::transport::RecvTransport::recv_bytes(&mut t, &mut buf);
         t.close();
         outcome
     });
-    std::thread::sleep(Duration::from_millis(300)); // let the recv park
+    let entry_deadline = Instant::now() + WATCHDOG;
+    while !entered.load(Ordering::SeqCst) {
+        if Instant::now() > entry_deadline {
+            let _ = release_tx.send(());
+            panic!("the reader thread never reached recv_bytes");
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
     cancel.cancel();
 
     let deadline = Instant::now() + WATCHDOG;
