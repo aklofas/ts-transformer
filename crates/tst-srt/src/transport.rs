@@ -65,6 +65,12 @@ const SRT_LIVE_MAX_PAYLOAD: usize = 1456;
 pub struct SrtTransport {
     socket: Option<Socket>,
     max_payload: usize,
+    /// The socket's one-shot closer, captured at construction so
+    /// [`Self::srt_cancel_handle`] can hand it out without an `Option`
+    /// and after `close()` has taken the socket. `Socket::close` fires
+    /// this same handle, so it reads cancelled once the transport is
+    /// closed by either path.
+    cancel: tst_core::SrtCancelHandle,
 }
 
 impl SrtTransport {
@@ -94,10 +100,27 @@ impl SrtTransport {
     /// [`with_max_payload`]: SrtTransport::with_max_payload
     pub fn new(socket: Socket) -> Self {
         let max_payload = socket.payload_limit();
+        let cancel = socket.cancel_handle();
         Self {
             socket: Some(socket),
             max_payload,
+            cancel,
         }
+    }
+
+    /// The cross-thread wake for this transport's socket — the same
+    /// [`SrtCancelHandle`](tst_core::SrtCancelHandle) the trait method
+    /// [`Transport::cancel_handle`] wraps, without the `Option`: it is
+    /// captured at construction, so it exists for the transport's whole
+    /// life and keeps answering (as cancelled) after `close()`. Obtain it
+    /// BEFORE moving the transport into a shell. Idempotent; a `cancel()`
+    /// closes the socket, and a receive or send parked on it returns with
+    /// an error.
+    ///
+    /// [`Transport::cancel_handle`]: tst_core::transport::Transport::cancel_handle
+    #[must_use]
+    pub fn srt_cancel_handle(&self) -> tst_core::SrtCancelHandle {
+        self.cancel.clone()
     }
 
     /// Override the max payload after construction.
