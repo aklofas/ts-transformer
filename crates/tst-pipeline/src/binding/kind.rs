@@ -1124,11 +1124,32 @@ mod tests {
             );
             assert!(k.is_c_frozen());
         }
-        // Reserved C codes that nothing produces are NOT variants (K2).
-        for reserved in [-15, -28, -29, -40, -42, -43, -48] {
+        // C codes that are deliberately NOT discriminants (K2), in two groups.
+        //
+        // Reserved and never produced — no `TstError` producer exists:
+        //   -28 UdpPayloadTooLarge, -29 UdpIfaceUnsupported,
+        //   -40 RistPayloadTooLarge, -42 RistRecvTimeout, -43 RistIo.
+        //
+        // Real, produced codes that this table represents as finer kinds
+        // instead of one variant — they survive only as `c_projection()` fold
+        // targets, which is what keeps the C ABI unchanged:
+        //   -15 RtpTransport  <- the six RTP_* kinds,
+        //   -48 KlvDecode     <- the six KLV_DECODE_* kinds.
+        for not_a_discriminant in [-15, -28, -29, -40, -42, -43, -48] {
             assert!(
-                BindingErrorKind::ALL.iter().all(|k| k.c_code() != reserved),
-                "{reserved} must not be a discriminant"
+                BindingErrorKind::ALL
+                    .iter()
+                    .all(|k| k.c_code() != not_a_discriminant),
+                "{not_a_discriminant} must not be a discriminant"
+            );
+        }
+        // …and the two fold targets really are reachable through projection.
+        for folded in [-15, -48] {
+            assert!(
+                BindingErrorKind::ALL
+                    .iter()
+                    .any(|k| k.c_projection() == folded),
+                "{folded} must still be emitted by C via c_projection()"
             );
         }
     }
