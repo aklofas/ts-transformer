@@ -66,8 +66,10 @@ pub(crate) fn coerce_bytes_like<'py>(
 /// `Owned` wraps whatever it is given in its own latching `OwnedCancel`, so
 /// `Owned::cancel` → `CancelSource::cancel` → flag; a `CancelHandle` fires
 /// `CancelSource` directly. Both paths therefore set THIS flag, which is the
-/// one Python reads. WP-C1 follow-up: once `TransportCancel` has
-/// `is_cancelled`, `is_cancelled()` also ORs in `inner.is_cancelled()`.
+/// one Python reads. WP-C1 ruling: this stays its OWN latch and does NOT
+/// OR in `inner.is_cancelled()` — `Owned` already ORs the transport's latch
+/// for the shell's own reporting, and doing it here too would widen what the
+/// user-visible `CancelHandle.is_cancelled()` answers.
 pub(crate) struct CancelSource {
     inner: Arc<dyn TransportCancel + Send + Sync>,
     cancelled: AtomicBool,
