@@ -679,4 +679,265 @@ mod tests {
         );
         assert_eq!(f.closes.load(Ordering::SeqCst), 1);
     }
+
+    // ---- concurrency: nothing but with_mut/with_ref/take/is_closed/close
+    // waits on the slot (Task A1.5) ----
+
+    const PARK_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
+    const PROMPT: std::time::Duration = std::time::Duration::from_secs(2);
+
+    /// Latch-and-poll with a bounded watchdog — never a wall-clock assert.
+    fn wait_for(deadline: std::time::Duration, f: impl Fn() -> bool) -> bool {
+        let start = std::time::Instant::now();
+        while start.elapsed() < deadline {
+            if f() {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        f()
+    }
+
+    /// Park a thread inside `with_mut` until the shared cancel flag flips
+    /// (the shape of a receive parked in libsrt that only the cancel handle
+    /// can return). Returns the thread + an `entered` latch.
+    fn park_in_with_mut(
+        f: &Fixture,
+    ) -> (
+        std::thread::JoinHandle<Result<u32, HandleState>>,
+        Arc<AtomicBool>,
+    ) {
+        let entered = Arc::new(AtomicBool::new(false));
+        let o = Arc::clone(&f.owned);
+        let e = Arc::clone(&entered);
+        let h = std::thread::spawn(move || {
+            o.with_mut(|m| {
+                e.store(true, Ordering::SeqCst);
+                let start = std::time::Instant::now();
+                while !m.flag.load(Ordering::SeqCst) {
+                    assert!(
+                        start.elapsed() < PARK_DEADLINE,
+                        "parked closure was never released — watchdog"
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                m.n += 1;
+                m.n
+            })
+        });
+        assert!(
+            wait_for(PARK_DEADLINE, || entered.load(Ordering::SeqCst)),
+            "never entered with_mut"
+        );
+        (h, entered)
+    }
+
+    #[test]
+    fn cancel_returns_promptly_while_another_thread_is_parked_in_with_mut() {
+        let f = fixture();
+        let (parked, _) = park_in_with_mut(&f);
+        // cancel() from THIS thread must return without the slot.
+        let canceller = {
+            let o = Arc::clone(&f.owned);
+            std::thread::spawn(move || o.cancel())
+        };
+        assert!(
+            wait_for(PROMPT, || canceller.is_finished()),
+            "cancel() waited on the parked slot"
+        );
+        canceller.join().unwrap();
+        assert!(f.owned.is_cancelled());
+        // The parked closure observes the fired handle and returns.
+        assert_eq!(parked.join().unwrap(), Ok(1));
+    }
+
+    #[test]
+    fn snapshot_and_end_reason_and_is_cancelled_never_take_the_slot() {
+        let f = fixture();
+        let (parked, _) = park_in_with_mut(&f);
+        let reader = {
+            let o = Arc::clone(&f.owned);
+            std::thread::spawn(move || {
+                let handle = o.cancel_arc(); // must not lease the slot (the #189 class)
+                (*o.snapshot(), o.end_reason(), o.is_cancelled(), handle)
+            })
+        };
+        assert!(
+            wait_for(PROMPT, || reader.is_finished()),
+            "a snapshot getter or cancel_arc() waited on the parked slot (the PR #234 / #189 classes)"
+        );
+        let (snap, reason, cancelled, handle) = reader.join().unwrap();
+        assert_eq!((snap, reason, cancelled), ("snap", None, false));
+        handle.cancel(); // release the parked thread THROUGH the handed-out handle
+        assert_eq!(parked.join().unwrap(), Ok(1));
+        assert!(f.owned.is_cancelled());
+    }
+
+    #[test]
+    fn close_from_another_thread_returns_the_parked_call_first() {
+        let f = fixture();
+        let (parked, _) = park_in_with_mut(&f);
+        let closer = {
+            let o = Arc::clone(&f.owned);
+            std::thread::spawn(move || o.close())
+        };
+        assert!(
+            wait_for(PROMPT, || closer.is_finished()),
+            "close() blocked behind the parked with_mut"
+        );
+        assert!(closer.join().unwrap().is_ok());
+        assert_eq!(
+            parked.join().unwrap(),
+            Ok(1),
+            "the parked call completed (released by cancel), then close took the slot"
+        );
+        assert_eq!(f.closes.load(Ordering::SeqCst), 1);
+        assert!(f.owned.is_closed());
+    }
+
+    #[test]
+    fn is_closed_and_try_with_ref_never_wait_on_a_parked_slot() {
+        let f = fixture();
+        let (parked, _) = park_in_with_mut(&f);
+        let prober = {
+            let o = Arc::clone(&f.owned);
+            std::thread::spawn(move || (o.is_closed(), o.try_with_ref(|m| m.n)))
+        };
+        assert!(
+            wait_for(PROMPT, || prober.is_finished()),
+            "a non-blocking probe waited on the parked slot (the PR #234 class)"
+        );
+        assert_eq!(
+            prober.join().unwrap(),
+            (false, None),
+            "busy slot = still open; the probe declines rather than waits"
+        );
+        f.owned.cancel(); // release the parked thread
+        let _ = parked.join().unwrap();
+    }
+
+    #[test]
+    fn owned_cancel_fires_the_transport_handle_before_latching() {
+        // Order pin for the private `OwnedCancel`, deterministic — no polling:
+        // the transport handle reads the `Owned`'s own latch from INSIDE its
+        // `cancel()`. Observing `false` there proves the transport fired
+        // first and the latch was set after. `Weak` keeps the handle's
+        // back-reference from forming an `Arc` cycle.
+        struct OrderCancel {
+            owned: std::sync::OnceLock<std::sync::Weak<Owned<u8, ()>>>,
+            latch_seen_from_transport: std::sync::Mutex<Option<bool>>,
+        }
+        impl TransportCancel for OrderCancel {
+            fn cancel(&self) {
+                let owned = self
+                    .owned
+                    .get()
+                    .expect("wired immediately after construction")
+                    .upgrade()
+                    .expect("the Owned outlives this call");
+                *self.latch_seen_from_transport.lock().unwrap() = Some(owned.is_cancelled());
+            }
+        }
+
+        let c = Arc::new(OrderCancel {
+            owned: std::sync::OnceLock::new(),
+            latch_seen_from_transport: std::sync::Mutex::new(None),
+        });
+        let owned = Arc::new(Owned::new(
+            0u8,
+            Arc::clone(&c) as Arc<dyn TransportCancel>,
+            (),
+        ));
+        c.owned
+            .set(Arc::downgrade(&owned))
+            .expect("set exactly once");
+
+        owned.cancel();
+        assert_eq!(
+            *c.latch_seen_from_transport.lock().unwrap(),
+            Some(false),
+            "the transport handle fired BEFORE is_cancelled latched"
+        );
+        assert!(
+            owned.is_cancelled(),
+            "and the latch is set once cancel returns"
+        );
+    }
+
+    #[test]
+    fn owned_is_send_and_sync_for_a_send_but_not_sync_inner() {
+        // The other half of the auto-trait claim: `Mutex<Option<T>>` is `Sync`
+        // iff `T: Send`, so a `!Sync` inner still yields a `Send + Sync`
+        // handle. `Cell<u32>` is `Send` but not `Sync`.
+        fn assert_send_sync<X: Send + Sync>() {}
+        assert_send_sync::<Owned<core::cell::Cell<u32>, ()>>();
+    }
+
+    #[test]
+    fn close_runs_the_inner_close_outside_the_lock() {
+        // `close()` takes the value OUT of the slot and only then runs
+        // `Close::close`. So while the inner close is parked, the slot is
+        // empty AND unlocked: a BLOCKING `with_ref` from another thread must
+        // answer `Err(Closed)` immediately instead of queueing behind it.
+        struct GatedClose {
+            gate: Arc<AtomicBool>,
+            in_close: Arc<AtomicBool>,
+        }
+        impl Close for GatedClose {
+            type Error = MockCloseError;
+            fn close(&mut self) -> Result<(), MockCloseError> {
+                self.in_close.store(true, Ordering::SeqCst);
+                let start = std::time::Instant::now();
+                while !self.gate.load(Ordering::SeqCst) {
+                    assert!(
+                        start.elapsed() < PARK_DEADLINE,
+                        "close gate was never opened — watchdog"
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                Ok(())
+            }
+        }
+
+        let gate = Arc::new(AtomicBool::new(false));
+        let in_close = Arc::new(AtomicBool::new(false));
+        let flag = Arc::new(AtomicBool::new(false));
+        let owned = Arc::new(Owned::new(
+            GatedClose {
+                gate: Arc::clone(&gate),
+                in_close: Arc::clone(&in_close),
+            },
+            Arc::new(MockCancel {
+                calls: AtomicU32::new(0),
+                flag,
+            }) as Arc<dyn TransportCancel>,
+            (),
+        ));
+
+        let closer = {
+            let o = Arc::clone(&owned);
+            std::thread::spawn(move || o.close())
+        };
+        assert!(
+            wait_for(PARK_DEADLINE, || in_close.load(Ordering::SeqCst)),
+            "never entered Close::close"
+        );
+
+        let reader = {
+            let o = Arc::clone(&owned);
+            std::thread::spawn(move || o.with_ref(|_| ()))
+        };
+        assert!(
+            wait_for(PROMPT, || reader.is_finished()),
+            "with_ref queued behind Close::close — the inner close is running under the lock"
+        );
+        assert_eq!(
+            reader.join().unwrap(),
+            Err(HandleState::Closed),
+            "the value was taken before its close ran"
+        );
+
+        gate.store(true, Ordering::SeqCst);
+        assert!(closer.join().unwrap().is_ok());
+    }
 }
