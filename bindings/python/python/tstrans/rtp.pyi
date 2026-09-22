@@ -137,10 +137,11 @@ class CancelHandle:
     `H264Receiver`. Calling `.cancel()` wakes a thread parked in
     `.send()` / `.recv()` / `.recv_au()` within ~100 ms; that call raises
     `RtpError(kind=CLOSED)` (detail "cancelled from another thread";
-    `recv_au()` returns `None`).
+    `recv_au()` returns `None`). `is_cancelled()` is shared per shell.
     """
 
     def cancel(self) -> None: ...
+    def is_cancelled(self) -> bool: ...
     def __repr__(self) -> str: ...
 
 

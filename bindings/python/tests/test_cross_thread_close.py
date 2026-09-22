@@ -245,6 +245,37 @@ def test_srt_mux_sender_cancel_handle_wakes_send_from_other_thread() -> None:
         peer.close()
 
 
+def test_srt_close_from_other_thread_is_observable_on_a_prior_cancel_handle() -> None:
+    """`close()` cancels first; a handle obtained BEFORE the close reports
+    `is_cancelled()` afterwards (shared state — the watchdog pattern)."""
+    sender, receiver = _srt_pair(_free_tcp_port())
+    try:
+        handle = sender.cancel_handle()
+        assert not handle.is_cancelled()
+        c, errs = _close_on_thread(sender)
+        _assert_close_ok(c, errs, "srt.Sender")
+        assert handle.is_cancelled()
+    finally:
+        sender.close()
+        receiver.close()
+
+
+def test_rtp_cancel_handle_has_shared_is_cancelled() -> None:
+    import tstrans.rtp as rtp
+
+    sink, port = _udp_sink()
+    tx = rtp.Sender(f"rtp://127.0.0.1:{port}")
+    try:
+        h1 = tx.cancel_handle()
+        h2 = tx.cancel_handle()
+        assert not h1.is_cancelled() and not h2.is_cancelled()
+        tx.close()
+        assert h1.is_cancelled() and h2.is_cancelled()
+    finally:
+        tx.close()
+        sink.close()
+
+
 # --------------------------------------------------------------------------- #
 # srt.ManagedSender / srt.ManagedReceiver                                     #
 # --------------------------------------------------------------------------- #

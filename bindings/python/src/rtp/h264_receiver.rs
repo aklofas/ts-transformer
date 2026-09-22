@@ -46,8 +46,8 @@ use std::time::Duration;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
+use tst_core::transport::TransportCancel;
 use tst_core::transport::TransportError;
-use tst_rtp::cancel::RtpCancelHandle;
 use tst_rtp::transport::RtpStats;
 use tst_rtp::{
     ConnectError, H264Au, H264DepayConfig, H264DepayStats, H264Receiver, ParameterSetInjection,
@@ -422,7 +422,10 @@ pub struct PyH264Receiver {
     inner: Arc<Mutex<Option<H264Receiver>>>,
     /// Cancel handle pulled from the receiver at construction. Held
     /// outside the slot so `close()` can fire it first.
-    cancel: Arc<RtpCancelHandle>,
+    /// Shared cancel state (Arc 2 WP-B2): the same `Arc` every
+    /// `CancelHandle` this shell hands out holds, so `close()` here and
+    /// `cancel()` through any handle flip one observable flag.
+    cancel: Arc<crate::util::CancelSource>,
     /// Snapshot of `H264Receiver::end_reason()` taken by `close()`.
     ///
     /// Unlike `RtpRecvTransport`, `H264Receiver` has no
@@ -448,7 +451,7 @@ impl PyH264Receiver {
     /// end-reason slot (swapped in by `RtspSession::into_h264_receiver`
     /// before this constructor is ever called).
     pub(crate) fn from_h264_receiver(receiver: H264Receiver) -> Self {
-        let cancel = receiver.cancel_handle();
+        let cancel = crate::util::CancelSource::new(receiver.cancel_handle());
         let local_addr = receiver.local_addr();
         Self {
             inner: Arc::new(Mutex::new(Some(receiver))),
@@ -507,7 +510,7 @@ impl PyH264Receiver {
                     .map_err(|e| connect_error_to_pyerr(py, e))?
             }
         };
-        let cancel = receiver.cancel_handle();
+        let cancel = crate::util::CancelSource::new(receiver.cancel_handle());
         let local_addr = receiver.local_addr();
         Ok(Self {
             inner: Arc::new(Mutex::new(Some(receiver))),
@@ -615,12 +618,7 @@ impl PyH264Receiver {
     /// returned handle wakes any thread parked in `recv_au()` within
     /// ~100ms; that call returns `None` (EOS) rather than raising.
     fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<PyCancelHandle>> {
-        Py::new(
-            py,
-            PyCancelHandle {
-                inner: self.cancel.clone(),
-            },
-        )
+        Py::new(py, PyCancelHandle::from_source(&self.cancel))
     }
 
     /// Why the receive session ended, or `None` if it hasn't ended yet

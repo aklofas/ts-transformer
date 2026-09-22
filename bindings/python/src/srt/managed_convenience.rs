@@ -189,7 +189,10 @@ pub(crate) struct PyManagedMuxSender {
     /// transport's cancel (latches the close flag, wakes the backoff wait
     /// and the factory slot, closes the current inner). Exposed through
     /// `cancel_handle()` and fired first by `close()`.
-    cancel: Arc<dyn TransportCancel + Send + Sync>,
+    /// Shared cancel state (Arc 2 WP-B2): the same `Arc` every
+    /// `CancelHandle` this shell hands out holds, so `close()` here and
+    /// `cancel()` through any handle flip one observable flag.
+    cancel: Arc<crate::util::CancelSource>,
     /// Counts factory invocations (reconnect attempts). Bumped from
     /// inside the captured `Fn() -> Result<...>` closure by every
     /// `ManagedTransport::reconnect_and_drain` retry tick.
@@ -276,9 +279,11 @@ impl PyManagedMuxSender {
         let stats_handle = managed.stats_handle();
         let sender =
             RustMuxSender::new(managed, muxer_cfg).map_err(|e| mux_error_to_pyerr(py, e))?;
-        let cancel = sender
-            .cancel_handle()
-            .expect("ManagedTransport::cancel_handle is documented as always Some");
+        let cancel = crate::util::CancelSource::new(
+            sender
+                .cancel_handle()
+                .expect("ManagedTransport::cancel_handle is documented as always Some"),
+        );
         Ok(Self {
             inner: Arc::new(Mutex::new(Some(sender))),
             cancel,
@@ -571,7 +576,7 @@ impl PyManagedMuxSender {
     /// send; that push raises `SrtError(CLOSED)`. Mirrors
     /// `ManagedSender.cancel_handle()`.
     fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<PyCancelHandle>> {
-        Py::new(py, PyCancelHandle::from_arc(self.cancel.clone()))
+        Py::new(py, PyCancelHandle::from_source(&self.cancel))
     }
 
     /// Close the sender. Fires the managed cancel BEFORE taking the slot,
@@ -666,7 +671,10 @@ pub(crate) struct PyManagedDemuxReceiver {
     /// lock — wakes any thread parked in `__next__`'s `recv_event`,
     /// which then drops the mutex guard and the close path can take
     /// ownership of `inner` cleanly.
-    cancel: Arc<dyn TransportCancel + Send + Sync>,
+    /// Shared cancel state (Arc 2 WP-B2): the same `Arc` every
+    /// `CancelHandle` this shell hands out holds, so `close()` here and
+    /// `cancel()` through any handle flip one observable flag.
+    cancel: Arc<crate::util::CancelSource>,
     /// Reconnect-attempt counter — bumped from inside the factory closure
     /// on every invocation. Symmetric with `PyManagedMuxSender`.
     factory_attempts: Arc<AtomicU64>,
@@ -796,13 +804,13 @@ impl PyManagedDemuxReceiver {
         // None if the inner is mid-reconnect at construction. With a
         // freshly-built inner that's not the case, but defend with a
         // typed error rather than `.expect`.
-        let cancel = receiver.cancel_handle().ok_or_else(|| {
+        let cancel = crate::util::CancelSource::new(receiver.cancel_handle().ok_or_else(|| {
             make_srt_error(
                 py,
                 "IO",
                 "ManagedDemuxReceiver constructed without a live cancel handle",
             )
-        })?;
+        })?);
         Ok(Self {
             inner: Arc::new(Mutex::new(Some(receiver))),
             cancel,
@@ -857,7 +865,7 @@ impl PyManagedDemuxReceiver {
     }
 
     fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<PyCancelHandle>> {
-        Py::new(py, PyCancelHandle::from_arc(self.cancel.clone()))
+        Py::new(py, PyCancelHandle::from_source(&self.cancel))
     }
 
     /// Wire-level transport stats (RTT, bytes received, etc.) sourced

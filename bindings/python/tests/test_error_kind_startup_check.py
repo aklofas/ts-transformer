@@ -9,6 +9,7 @@ from one domain enum, then import `_native` — it must refuse."""
 from __future__ import annotations
 
 import enum
+import os
 import subprocess
 import sys
 import textwrap
@@ -27,7 +28,7 @@ def _run(script: str) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
         timeout=60,
-        env={"PYTHONPATH": str(PKG_DIR.parent), "PATH": "/usr/bin:/bin"},
+        env={**os.environ, "PYTHONPATH": str(PKG_DIR.parent)},
     )
 
 
