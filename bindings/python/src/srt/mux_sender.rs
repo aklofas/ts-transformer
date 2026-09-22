@@ -113,7 +113,10 @@ pub(crate) struct PyMuxSender {
     /// `tst_pipeline::MuxSender::cancel_handle()` snapshot — always
     /// `Some` for an `SrtTransport` with a live socket. Exposed through
     /// `cancel_handle()` and fired first by `close()`.
-    cancel: Arc<dyn TransportCancel + Send + Sync>,
+    /// Shared cancel state (Arc 2 WP-B2): the same `Arc` every
+    /// `CancelHandle` this shell hands out holds, so `close()` here and
+    /// `cancel()` through any handle flip one observable flag.
+    cancel: Arc<crate::util::CancelSource>,
 }
 
 #[pymethods]
@@ -161,9 +164,11 @@ impl PyMuxSender {
         // 3. Hand transport + config to the pipeline shell.
         let sender =
             RustMuxSender::new(transport, muxer_cfg).map_err(|e| mux_error_to_pyerr(py, e))?;
-        let cancel = sender
-            .cancel_handle()
-            .expect("SrtTransport with a live socket always returns Some(cancel_handle)");
+        let cancel = crate::util::CancelSource::new(
+            sender
+                .cancel_handle()
+                .expect("SrtTransport with a live socket always returns Some(cancel_handle)"),
+        );
         Ok(Self {
             inner: Arc::new(Mutex::new(Some(sender))),
             cancel,
@@ -461,7 +466,7 @@ impl PyMuxSender {
     /// addressable (`close()` still frees it). Mirrors
     /// `Sender.cancel_handle()` and the C ABI's `tst_mux_sender_cancel`.
     fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<PyCancelHandle>> {
-        Py::new(py, PyCancelHandle::from_arc(self.cancel.clone()))
+        Py::new(py, PyCancelHandle::from_source(&self.cancel))
     }
 
     /// Close the sender. Fires the cancel handle BEFORE taking the slot,
@@ -525,9 +530,11 @@ impl PyMuxSender {
         let transport = SrtTransport::new(socket);
         let sender =
             RustMuxSender::new(transport, muxer_cfg).map_err(|e| mux_error_to_pyerr(py, e))?;
-        let cancel = sender
-            .cancel_handle()
-            .expect("SrtTransport with a live socket always returns Some(cancel_handle)");
+        let cancel = crate::util::CancelSource::new(
+            sender
+                .cancel_handle()
+                .expect("SrtTransport with a live socket always returns Some(cancel_handle)"),
+        );
         Ok(Self {
             inner: Arc::new(Mutex::new(Some(sender))),
             cancel,

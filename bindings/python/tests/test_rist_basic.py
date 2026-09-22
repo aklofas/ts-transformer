@@ -303,10 +303,10 @@ def test_rist_error_is_subclass_of_tst_error():
 
 def test_rist_error_construction():
     """RistError can be constructed with kind + message."""
-    e = RistError(kind=RistErrorKind.IO, message="test io error")
-    assert e.kind == RistErrorKind.IO
-    assert e.message == "test io error"
-    assert "test io error" in str(e)
+    e = RistError(kind=RistErrorKind.BROKEN, message="test broken error")
+    assert e.kind == RistErrorKind.BROKEN
+    assert e.message == "test broken error"
+    assert "test broken error" in str(e)
 
 
 # ---------------------------------------------------------------------------

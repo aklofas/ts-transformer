@@ -359,10 +359,14 @@ def test_cancel_handle_multiple_clones_share_state() -> None:
 
 
 def test_cancel_handle_repr() -> None:
+    """The repr carries the shell's shared cancel state (0.7.0 — it was a
+    bare `CancelHandle()` while rtp handles had no `is_cancelled()`)."""
     port = _free_udp_port()
     with tstrans.rtp.Sender(f"rtp://127.0.0.1:{port}") as s:
         ch = s.cancel_handle()
-        assert repr(ch) == "CancelHandle()"
+        assert repr(ch) == "CancelHandle(cancelled=false)"
+        ch.cancel()
+        assert repr(ch) == "CancelHandle(cancelled=true)"
 
 
 # ---------------------------------------------------------------------------

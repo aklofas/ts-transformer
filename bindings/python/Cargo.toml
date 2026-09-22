@@ -91,6 +91,10 @@ secrecy      = { workspace = true, optional = true }
 # the bridge itself is always compiled in, but only installs a
 # subscriber at runtime when `TSTRANS_LOG` is set (see `lib.rs`).
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+# Direct since Arc 2 WP-B2: `util::close_owned` logs a transport whose own
+# `close()` failed instead of raising (Python `close()` is documented
+# infallible + idempotent). Already linked transitively via tracing-subscriber.
+tracing = { workspace = true }
 
 # `tls` feature path — parse `RtspClientConfig.tls_root_certs_pem` into the
 # `rustls::RootCertStore` that `RtspClientBuilder::tls_root_certs` takes.

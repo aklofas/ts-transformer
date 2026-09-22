@@ -40,7 +40,6 @@
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use pyo3::Py;
@@ -208,46 +207,30 @@ impl PySrtStats {
 // PyCancelHandle
 // ---------------------------------------------------------------------------
 
-/// Python-side cancel handle. Wraps an `Arc<dyn TransportCancel>` so
-/// multiple Python references (e.g., one held by the Sender, one
-/// stashed in a worker thread) share a single cancellation target.
-/// Calling `.cancel()` on any reference wakes the parked send/recv
-/// loop on the next libsrt I/O cycle (~3-10 ms; the exact mechanism is
-/// libsrt's `srt_close` on the paired socket handle).
-///
-/// The `TransportCancel` trait deliberately exposes only `cancel()` —
-/// no query path. To surface a Python-visible `is_cancelled()` we track
-/// a local flag here. Each `PyCancelHandle` clone has its own flag,
-/// but they all forward `cancel()` into the same `Arc<dyn>` so calling
-/// `.cancel()` on any clone still wakes the parked socket; only the
-/// flag observation is per-clone. Tests use the returned handle's own
-/// `is_cancelled()` to wait for the cancel signal.
+/// Python-side cancel handle. Wraps the shell's shared
+/// [`crate::util::CancelSource`]: every clone obtained from the same
+/// shell — and the shell's own `close()` — forwards into one
+/// `Arc<dyn TransportCancel>` and flips one flag, so `is_cancelled()`
+/// reports the shell's state, not this wrapper's history (Arc 2).
 #[pyclass(frozen, name = "CancelHandle", module = "tstrans.srt")]
 pub(crate) struct PyCancelHandle {
-    inner: Arc<dyn TransportCancel + Send + Sync>,
-    /// Per-handle observation of whether `cancel()` was invoked on
-    /// this Python wrapper. Frozen PyClass requires interior
-    /// mutability — `AtomicBool` is the cheapest shape.
-    flag: AtomicBool,
+    src: Arc<crate::util::CancelSource>,
 }
 
 #[pymethods]
 impl PyCancelHandle {
-    /// Signal cancellation. Idempotent — repeated calls are a no-op.
-    /// Wakes a thread parked in `Sender.send_bytes` / `Receiver.recv_bytes`;
-    /// that call returns an `SrtError` with `.kind == SrtErrorKind.BROKEN`
-    /// or `CLOSED` depending on which libsrt path the cancel races.
+    /// Signal cancellation. Idempotent. Wakes a thread parked in
+    /// `send_bytes` / `recv_bytes` / `accept` / `__next__`; that call
+    /// raises `SrtError(CLOSED)` — on the plain shells still `BROKEN`
+    /// until the SRT transport-level cancel change (later in 0.7.0).
     fn cancel(&self) {
-        self.flag.store(true, Ordering::Release);
-        self.inner.cancel();
+        tst_core::transport::TransportCancel::cancel(&*self.src);
     }
 
-    /// Returns `True` once `.cancel()` has been called on **this**
-    /// Python handle. Advisory — the underlying socket close may not
-    /// have completed yet on another thread, and other clones obtained
-    /// via separate `cancel_handle()` calls track their own flags.
+    /// `True` once the shell was cancelled or closed through ANY handle
+    /// or its own `close()` (shared state).
     fn is_cancelled(&self) -> bool {
-        self.flag.load(Ordering::Acquire)
+        self.src.is_cancelled()
     }
 
     fn __repr__(&self) -> String {
@@ -291,7 +274,10 @@ pub(crate) struct PySender {
     /// construction. Shared with any Python-side `CancelHandle` clones;
     /// calling `.cancel()` here closes the paired libsrt socket and
     /// wakes any thread parked in `send_ts`.
-    cancel: Arc<dyn TransportCancel + Send + Sync>,
+    /// Shared cancel state (Arc 2 WP-B2): the same `Arc` every
+    /// `CancelHandle` this shell hands out holds, so `close()` here and
+    /// `cancel()` through any handle flip one observable flag.
+    cancel: Arc<crate::util::CancelSource>,
 }
 
 #[pymethods]
@@ -328,9 +314,11 @@ impl PySender {
         let inner = PlSender::new(transport, SenderConfig::default());
         // Pull the cancel handle. `SrtTransport::cancel_handle` always
         // returns `Some` for a live socket.
-        let cancel = inner
-            .cancel_handle()
-            .expect("SrtTransport with a live socket always returns Some(cancel_handle)");
+        let cancel = crate::util::CancelSource::new(
+            inner
+                .cancel_handle()
+                .expect("SrtTransport with a live socket always returns Some(cancel_handle)"),
+        );
         Ok(Self {
             inner: Arc::new(Mutex::new(Some(inner))),
             cancel,
@@ -378,13 +366,7 @@ impl PySender {
     /// `SrtError(kind=CLOSED)` depending on which libsrt path the
     /// cancel races.
     fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<PyCancelHandle>> {
-        Py::new(
-            py,
-            PyCancelHandle {
-                inner: self.cancel.clone(),
-                flag: AtomicBool::new(false),
-            },
-        )
+        Py::new(py, PyCancelHandle::from_source(&self.cancel))
     }
 
     /// Snapshot of the scheme-neutral 16-field wire stats (matches
@@ -472,7 +454,10 @@ pub(crate) struct PyReceiver {
     inner: Arc<Mutex<Option<PlReceiver<SrtTransport>>>>,
     /// Trait-erased cancel handle pulled from the transport at
     /// construction. Shared with any Python-side `CancelHandle` clones.
-    cancel: Arc<dyn TransportCancel + Send + Sync>,
+    /// Shared cancel state (Arc 2 WP-B2): the same `Arc` every
+    /// `CancelHandle` this shell hands out holds, so `close()` here and
+    /// `cancel()` through any handle flip one observable flag.
+    cancel: Arc<crate::util::CancelSource>,
 }
 
 #[pymethods]
@@ -517,6 +502,7 @@ impl PyReceiver {
                 AcceptOrBindError::Bind(e) => bind_error_to_pyerr(py, e),
                 AcceptOrBindError::Accept(e) => accept_error_to_pyerr(py, e),
             })?;
+        let cancel = crate::util::CancelSource::new(cancel);
         let inner = PlReceiver::new(transport, ReceiverConfig::default());
         Ok(Self {
             inner: Arc::new(Mutex::new(Some(inner))),
@@ -572,13 +558,7 @@ impl PyReceiver {
     /// returned handle wakes any thread currently parked in
     /// `.recv_bytes()`.
     fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<PyCancelHandle>> {
-        Py::new(
-            py,
-            PyCancelHandle {
-                inner: self.cancel.clone(),
-                flag: AtomicBool::new(false),
-            },
-        )
+        Py::new(py, PyCancelHandle::from_source(&self.cancel))
     }
 
     /// Snapshot of the scheme-neutral 16-field wire stats.
@@ -678,9 +658,11 @@ impl PySender {
     pub(crate) fn from_socket(socket: Socket) -> Self {
         let transport = SrtTransport::new(socket);
         let inner = PlSender::new(transport, SenderConfig::default());
-        let cancel = inner
-            .cancel_handle()
-            .expect("SrtTransport with a live socket always returns Some(cancel_handle)");
+        let cancel = crate::util::CancelSource::new(
+            inner
+                .cancel_handle()
+                .expect("SrtTransport with a live socket always returns Some(cancel_handle)"),
+        );
         Self {
             inner: Arc::new(Mutex::new(Some(inner))),
             cancel,
@@ -694,8 +676,10 @@ impl PyReceiver {
     /// accept (listener side) or completed the handshake (caller side).
     pub(crate) fn from_socket(socket: Socket) -> Self {
         let transport = SrtTransport::new(socket);
-        let cancel = <SrtTransport as tst_core::transport::Transport>::cancel_handle(&transport)
-            .expect("SrtTransport with a live socket always returns Some(cancel_handle)");
+        let cancel = crate::util::CancelSource::new(
+            <SrtTransport as tst_core::transport::Transport>::cancel_handle(&transport)
+                .expect("SrtTransport with a live socket always returns Some(cancel_handle)"),
+        );
         let inner = PlReceiver::new(transport, ReceiverConfig::default());
         Self {
             inner: Arc::new(Mutex::new(Some(inner))),
@@ -705,25 +689,12 @@ impl PyReceiver {
 }
 
 impl PyCancelHandle {
-    /// Build a `PyCancelHandle` from a concrete `SrtCancelHandle` (the
-    /// type `Listener::cancel_handle()` returns directly). `SrtCancelHandle`
-    /// is itself a `TransportCancel`, so it drops straight into the
-    /// trait-erased slot the rest of the binding uses.
-    pub(crate) fn from_concrete(inner: tst_core::SrtCancelHandle) -> Self {
+    /// The single constructor every srt class uses: clone the shell's
+    /// shared cancel state so this handle observes — and contributes to —
+    /// the same cancel.
+    pub(crate) fn from_source(src: &Arc<crate::util::CancelSource>) -> Self {
         Self {
-            inner: Arc::new(inner) as Arc<dyn TransportCancel + Send + Sync>,
-            flag: AtomicBool::new(false),
-        }
-    }
-
-    /// Build a `PyCancelHandle` from an already-trait-erased
-    /// `Arc<dyn TransportCancel>`. Used by `PyDemuxReceiver::cancel_handle`
-    /// (T5) where the pipeline shell already returns the trait-erased
-    /// shape — no need to re-wrap.
-    pub(crate) fn from_arc(inner: Arc<dyn TransportCancel + Send + Sync>) -> Self {
-        Self {
-            inner,
-            flag: AtomicBool::new(false),
+            src: Arc::clone(src),
         }
     }
 }

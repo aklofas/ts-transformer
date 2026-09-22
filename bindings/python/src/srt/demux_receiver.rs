@@ -113,7 +113,10 @@ pub(crate) struct PyDemuxReceiver {
     /// which then drops the mutex guard and the close path can take
     /// ownership of `inner` cleanly. Cloning is cheap (`Arc`); multiple
     /// `close()` calls are idempotent.
-    cancel: Arc<dyn TransportCancel + Send + Sync>,
+    /// Shared cancel state (Arc 2 WP-B2): the same `Arc` every
+    /// `CancelHandle` this shell hands out holds, so `close()` here and
+    /// `cancel()` through any handle flip one observable flag.
+    cancel: Arc<crate::util::CancelSource>,
     /// First exception raised by a registered byte sink (see
     /// `add_byte_sink`). The sink closure runs inside `recv_event`
     /// (under `allow_threads`) where it can't return a `PyResult` to
@@ -188,9 +191,11 @@ impl PyDemuxReceiver {
             None => RustDemuxReceiver::new(transport),
             Some(opts) => RustDemuxReceiver::with_demux_options(transport, opts),
         };
-        let cancel = receiver
-            .cancel_handle()
-            .expect("SrtTransport always returns Some(cancel_handle) for a live socket");
+        let cancel = crate::util::CancelSource::new(
+            receiver
+                .cancel_handle()
+                .expect("SrtTransport always returns Some(cancel_handle) for a live socket"),
+        );
         Ok(Self {
             inner: Arc::new(Mutex::new(Some(receiver))),
             cancel,
@@ -312,7 +317,7 @@ impl PyDemuxReceiver {
     fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<crate::srt::transport::PyCancelHandle>> {
         Py::new(
             py,
-            crate::srt::transport::PyCancelHandle::from_arc(self.cancel.clone()),
+            crate::srt::transport::PyCancelHandle::from_source(&self.cancel),
         )
     }
 
@@ -478,9 +483,11 @@ impl PyDemuxReceiver {
     pub(crate) fn from_pipeline_demux(socket: Socket) -> Self {
         let transport = SrtTransport::new(socket);
         let receiver = RustDemuxReceiver::new(transport);
-        let cancel = receiver
-            .cancel_handle()
-            .expect("SrtTransport always returns Some(cancel_handle) for a live socket");
+        let cancel = crate::util::CancelSource::new(
+            receiver
+                .cancel_handle()
+                .expect("SrtTransport always returns Some(cancel_handle) for a live socket"),
+        );
         Self {
             inner: Arc::new(Mutex::new(Some(receiver))),
             cancel,
@@ -497,9 +504,11 @@ impl PyDemuxReceiver {
     ) -> Self {
         let transport = SrtTransport::new(socket);
         let receiver = RustDemuxReceiver::with_demux_options(transport, opts);
-        let cancel = receiver
-            .cancel_handle()
-            .expect("SrtTransport always returns Some(cancel_handle) for a live socket");
+        let cancel = crate::util::CancelSource::new(
+            receiver
+                .cancel_handle()
+                .expect("SrtTransport always returns Some(cancel_handle) for a live socket"),
+        );
         Self {
             inner: Arc::new(Mutex::new(Some(receiver))),
             cancel,

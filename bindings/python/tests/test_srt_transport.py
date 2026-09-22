@@ -424,12 +424,11 @@ def test_close_while_recv_parked_cancels_first() -> None:
         receiver.close()
 
 
-def test_cancel_handle_is_independently_clonable() -> None:
-    """Each call to `cancel_handle()` returns a fresh wrapper with its
-    own `is_cancelled()` observation, but they all forward `.cancel()`
-    into the same underlying socket. Cancelling one wakes the parked
-    socket; the other clone's is_cancelled stays False until cancel
-    is called through it directly."""
+def test_cancel_handle_state_is_shared_per_shell() -> None:
+    """Arc 2: `is_cancelled()` observes the SHELL's cancel state, not a
+    per-wrapper flag. Every clone from `cancel_handle()` and the shell's
+    own `close()` flip the same state (a watchdog holding one clone sees
+    a cancel issued through another, or through `close()`)."""
     port = _free_tcp_port()
     sender, receiver = _make_loopback_pair(port)
     try:
@@ -439,10 +438,8 @@ def test_cancel_handle_is_independently_clonable() -> None:
         assert not ch2.is_cancelled()
         ch1.cancel()
         assert ch1.is_cancelled()
-        # ch2 was not the one that received .cancel(), so its local
-        # flag stays False. (The underlying transport IS cancelled,
-        # but the per-wrapper observation only flips on direct cancel.)
-        assert not ch2.is_cancelled()
+        assert ch2.is_cancelled(), "clones share one cancel state"
+        assert sender.cancel_handle().is_cancelled(), "a clone obtained after the cancel sees it"
     finally:
         sender.close()
         receiver.close()

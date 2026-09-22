@@ -307,10 +307,14 @@ class KlvEncodeError(TstError):
 
 
 class RtspErrorKind(enum.IntEnum):
-    """Mirrors `tst_rtp::rtsp::RtspError` variants collapsed to
-    user-facing buckets. Raised by `tstrans.rtp.RtspClient` /
-    `tstrans.rtp.RtspServer` operations (connect, play, pause,
-    teardown, start, stop, add_mount).
+    """`RtspError.kind` — the RTSP subset of the Rust
+    `BindingErrorKind` table; members are `BindingErrorKind::name()`.
+    Raised by `tstrans.rtp.RtspClient` / `tstrans.rtp.RtspServer`
+    operations (connect, play, pause, teardown, start, stop, add_mount).
+
+    `CLOSED` (0.7.0) is the shared closed-handle kind: a call on a client,
+    session or mount whose handle was already closed, or one cancelled from
+    another thread.
 
     Available only when tstrans was built with the `rtp` cargo
     feature (default-on in published wheels).
@@ -326,6 +330,7 @@ class RtspErrorKind(enum.IntEnum):
     TIMEOUT = 8
     SERVER = 9
     MOUNT = 10
+    CLOSED = 11
 
 
 class RtspError(_KindMessageError):

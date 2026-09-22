@@ -3,7 +3,11 @@
 use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, TryLockError};
+
+use tst_core::transport::TransportCancel;
+use tst_pipeline::binding::{BindingError, BindingErrorKind, Close, CloseFailure, Owned};
 
 /// Coerce a Python bytes-like argument (`bytes`, `bytearray`, `memoryview`,
 /// NumPy `uint8`) to an owned `Bound<'py, PyBytes>` strong reference.
@@ -112,5 +116,108 @@ pub(crate) fn slot_alive<T>(slot: &Arc<Mutex<Option<T>>>, alive: impl FnOnce(&T)
         Ok(g) => g.as_ref().is_some_and(alive),
         Err(TryLockError::Poisoned(p)) => p.into_inner().as_ref().is_some_and(alive),
         Err(TryLockError::WouldBlock) => true,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Arc 2 WP-B2 — shared cancel state + the two `Owned` helpers every class uses
+// ---------------------------------------------------------------------------
+
+/// The one cancel state a Python shell and every `CancelHandle` it hands
+/// out share (Arc 2 WP-B2). Handed to `Owned::new` as the shell's
+/// `Arc<dyn TransportCancel>` AND cloned into each Python `CancelHandle`,
+/// so `close()` (which goes through `Owned::cancel`) and `handle.cancel()`
+/// flip the same flag, and `is_cancelled()` is observable from any clone.
+///
+/// `inner` is the transport's own handle (`SrtCancelHandle`,
+/// `RtpCancelHandle`, `TcpCancelHandle`, a `ManagedHandles.cancel`) or
+/// `tst_pipeline::binding::FlagCancel` for udp/rist until WP-D gives them
+/// one; for those two the `cancelled` flag is also the stop flag their
+/// polled `recv()` loop checks (the former per-class `stop: Arc<AtomicBool>`
+/// fields are deleted).
+///
+/// `Owned` wraps whatever it is given in its own latching `OwnedCancel`, so
+/// `Owned::cancel` → `CancelSource::cancel` → flag; a `CancelHandle` fires
+/// `CancelSource` directly. Both paths therefore set THIS flag, which is the
+/// one Python reads. WP-C1 follow-up: once `TransportCancel` has
+/// `is_cancelled`, `is_cancelled()` also ORs in `inner.is_cancelled()`.
+pub(crate) struct CancelSource {
+    inner: Arc<dyn TransportCancel + Send + Sync>,
+    cancelled: AtomicBool,
+}
+
+impl CancelSource {
+    pub(crate) fn new(inner: Arc<dyn TransportCancel + Send + Sync>) -> Arc<Self> {
+        Arc::new(Self {
+            inner,
+            cancelled: AtomicBool::new(false),
+        })
+    }
+
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+
+    /// The trait-object view `Owned::new` takes.
+    // First consumers land with the per-class `Owned` re-points (B2.4+).
+    #[allow(dead_code)]
+    pub(crate) fn as_dyn(self: &Arc<Self>) -> Arc<dyn TransportCancel + Send + Sync> {
+        Arc::clone(self) as Arc<dyn TransportCancel + Send + Sync>
+    }
+}
+
+impl TransportCancel for CancelSource {
+    fn cancel(&self) {
+        // Flag first so a poll loop that wakes because of the forwarded
+        // cancel already sees the state.
+        self.cancelled.store(true, Ordering::Release);
+        self.inner.cancel();
+    }
+}
+
+/// `close()` for every converted class: `Owned::close` = cancel → lock
+/// (recover) → take → `T::close`, outside the GIL. A transport whose own
+/// close fails (`Listener::close` → `IoError`) is logged, not raised —
+/// `close()` is documented infallible and idempotent; a panic inside the
+/// inner close is re-raised as `PanicException` exactly as before Arc 2.
+#[allow(dead_code)] // transport-feature-gated callers; unused in minimal builds
+pub(crate) fn close_owned<T, S>(
+    py: Python<'_>,
+    d: &crate::raise::Domain,
+    owned: &Owned<T, S>,
+) -> PyResult<()>
+where
+    T: Close + Send,
+    // `CloseFailure<T::Error>` is carried back across `allow_threads`.
+    T::Error: Send,
+    S: Send + Sync,
+{
+    match py.allow_threads(|| owned.close()) {
+        Ok(()) => Ok(()),
+        Err(CloseFailure::Inner(e)) => {
+            tracing::warn!(error = %e, "close() failed on the underlying transport; handle released");
+            Ok(())
+        }
+        Err(CloseFailure::Panicked { detail }) => Err(crate::raise::raise(
+            py,
+            d,
+            BindingError {
+                kind: BindingErrorKind::PanicCaught,
+                detail,
+            },
+        )),
+    }
+}
+
+/// Non-blocking liveness: `alive(&T)` when the slot can be inspected now,
+/// `true` while another thread holds it (a parked call means open),
+/// `false` once it is empty. Never waits behind a parked call (the
+/// PR #234 class).
+#[allow(dead_code)] // transport-feature-gated callers; unused in minimal builds
+pub(crate) fn alive_probe<T, S>(owned: &Owned<T, S>, alive: impl FnOnce(&T) -> bool) -> bool {
+    match owned.try_with_ref(alive) {
+        None => true,
+        Some(Ok(b)) => b,
+        Some(Err(_)) => false,
     }
 }

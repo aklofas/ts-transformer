@@ -177,7 +177,10 @@ pub(crate) struct PyManagedSender {
     /// construction. `ManagedTransport::cancel_handle` always returns
     /// `Some(...)` (it wraps both the latched-close flag and the
     /// current inner transport's cancel handle).
-    cancel: Arc<dyn TransportCancel + Send + Sync>,
+    /// Shared cancel state (Arc 2 WP-B2): the same `Arc` every
+    /// `CancelHandle` this shell hands out holds, so `close()` here and
+    /// `cancel()` through any handle flip one observable flag.
+    cancel: Arc<crate::util::CancelSource>,
     /// Reconnect/gap telemetry observer, snapshotted from the
     /// `ManagedTransport` BEFORE it moves into `PlSender::new` (same
     /// pattern as `cancel_handle` above — the handle keeps reading live
@@ -238,8 +241,10 @@ impl PyManagedSender {
         // latched flag and the inner transport's cancel snapshot;
         // `stats_handle()` is documented to be obtained before the shell
         // move (mirrors the cancel_handle precedent).
-        let cancel = Transport::cancel_handle(&managed)
-            .expect("ManagedTransport::cancel_handle is documented as always Some");
+        let cancel = crate::util::CancelSource::new(
+            Transport::cancel_handle(&managed)
+                .expect("ManagedTransport::cancel_handle is documented as always Some"),
+        );
         let stats_handle = managed.stats_handle();
         let inner = PlSender::new(managed, SenderConfig::default());
         Ok(Self {
@@ -277,7 +282,7 @@ impl PyManagedSender {
     /// and forwards into the current inner transport's cancel handle
     /// to wake any thread parked in `send_bytes`.
     fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<PyCancelHandle>> {
-        Py::new(py, PyCancelHandle::from_arc(self.cancel.clone()))
+        Py::new(py, PyCancelHandle::from_source(&self.cancel))
     }
 
     /// Scheme-neutral wire stats from the current inner transport.
@@ -403,7 +408,10 @@ pub(crate) struct PyManagedReceiver {
     /// snapshot each call; we stash one snapshot at construction so
     /// `close()` can cancel without re-acquiring `&self` on the
     /// inner.
-    cancel: Arc<dyn TransportCancel + Send + Sync>,
+    /// Shared cancel state (Arc 2 WP-B2): the same `Arc` every
+    /// `CancelHandle` this shell hands out holds, so `close()` here and
+    /// `cancel()` through any handle flip one observable flag.
+    cancel: Arc<crate::util::CancelSource>,
     /// Locally-tracked closed flag (mirror of the snapshotted cancel
     /// state). Set on `close()` and on `__exit__`.
     closed: Arc<AtomicBool>,
@@ -471,9 +479,11 @@ impl PyManagedReceiver {
         // parked: it signals the interruptible backoff wait, fires the
         // `factory_cancel` slot above (waking a factory sitting in
         // re-accept), and closes the current inner.
-        let cancel = <ManagedRecvTransport<SrtTransport> as tst_core::transport::RecvTransport>
-            ::cancel_handle(&managed)
-            .expect("ManagedRecvTransport::cancel_handle is documented as always Some");
+        let cancel = crate::util::CancelSource::new(
+            <ManagedRecvTransport<SrtTransport> as tst_core::transport::RecvTransport>
+                ::cancel_handle(&managed)
+                .expect("ManagedRecvTransport::cancel_handle is documented as always Some"),
+        );
 
         let inner = PlReceiver::new(managed, ReceiverConfig::default());
         Ok(Self {
@@ -519,7 +529,7 @@ impl PyManagedReceiver {
     /// transport's cancel handle to wake any thread parked in
     /// `recv_bytes`.
     fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<PyCancelHandle>> {
-        Py::new(py, PyCancelHandle::from_arc(self.cancel.clone()))
+        Py::new(py, PyCancelHandle::from_source(&self.cancel))
     }
 
     /// Scheme-neutral wire stats from the current inner transport. Waits

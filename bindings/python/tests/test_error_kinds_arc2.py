@@ -94,6 +94,7 @@ EXPECTED = {
         "TIMEOUT": 8,
         "SERVER": 9,
         "MOUNT": 10,
+        "CLOSED": 11,
     },
     exc.MuxErrorKind: {
         "INPUT_MALFORMED": 0,

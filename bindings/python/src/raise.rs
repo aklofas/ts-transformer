@@ -26,11 +26,6 @@
 //! from A2's `kind_of_*(&e).name()` — and only their `KINDS` live here, for
 //! the import-time check.
 
-// Same macro artifact `errors.rs` documents: PyO3's `#[pyfunction]` expansion
-// emits a `PyErr -> PyErr` `.into()` on the wrapped result. Scoped to
-// macro-generated code only — nothing hand-written here converts a `PyErr`.
-#![allow(clippy::useless_conversion)]
-
 use pyo3::exceptions::{PyImportError, PyRuntimeError};
 use pyo3::intern;
 use pyo3::panic::PanicException;
@@ -99,6 +94,10 @@ pub(crate) static RTSP: Domain = Domain {
         K::RtspTimeout,
         K::RtspServer,
         K::RtspMount,
+        // The shared closed-handle kind: `HandleState::Closed` reaches this
+        // domain through the rtsp client's closable slots (B2.9b). Without
+        // the member it would degrade to a misdiagnosing `RuntimeError`.
+        K::Closed,
     ],
 };
 
@@ -360,8 +359,20 @@ pub(crate) fn check_error_kinds(py: Python<'_>) -> PyResult<()> {
 /// `tstrans._native._check_error_kinds()` — the same walk `_native`'s init
 /// performs, exposed so the pytest suite can mutate one enum and watch it
 /// refuse without re-importing the extension.
-#[pyfunction]
-#[pyo3(name = "_check_error_kinds")]
-pub(crate) fn check_error_kinds_py(py: Python<'_>) -> PyResult<()> {
-    check_error_kinds(py)
+// PyO3 0.22's `#[pyfunction]` expansion emits a `PyErr -> PyErr` `.into()`
+// on the wrapped result; the lint fires on the generated code, not on
+// anything written here. Scoped to this one item (`errors.rs` carries the
+// same suppression module-wide for the same reason).
+#[allow(clippy::useless_conversion)]
+mod check_fn {
+    use super::check_error_kinds;
+    use pyo3::prelude::*;
+
+    #[pyfunction]
+    #[pyo3(name = "_check_error_kinds")]
+    pub(crate) fn check_error_kinds_py(py: Python<'_>) -> PyResult<()> {
+        check_error_kinds(py)
+    }
 }
+
+pub(crate) use check_fn::check_error_kinds_py;

@@ -32,7 +32,6 @@
 )]
 
 use std::net::SocketAddr;
-use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -612,11 +611,10 @@ pub(crate) struct PyListener {
     /// taking it, so the parked accept ends with `SrtError(CLOSED)`
     /// instead of the close raising `RuntimeError: Already borrowed`.
     inner: Arc<Mutex<Option<SrtListener>>>,
-    /// Concrete handle from `Listener::cancel_handle()` (NOT
-    /// `Arc<dyn TransportCancel>` — see plan defect #5 in the T3 brief).
-    /// Cloned for each Python-side `CancelHandle` produced; fired first by
-    /// `close()`.
-    cancel_src: tst_core::SrtCancelHandle,
+    /// Shared cancel state (Arc 2 WP-B2): the same `Arc` every
+    /// `CancelHandle` this shell hands out holds, so `close()` here and
+    /// `cancel()` through any handle flip one observable flag.
+    cancel_src: Arc<crate::util::CancelSource>,
     /// Bound address read once at construction, so `local_addr()` never
     /// waits behind a parked `accept()` — the thread asking for the port
     /// is usually the one that has to connect to end that park. `None`
@@ -627,7 +625,7 @@ pub(crate) struct PyListener {
 
 impl PyListener {
     pub(crate) fn wrap(listener: SrtListener) -> Self {
-        let cancel_src = listener.cancel_handle();
+        let cancel_src = crate::util::CancelSource::new(Arc::new(listener.cancel_handle()));
         let local_addr = listener.local_addr().ok();
         Self {
             inner: Arc::new(Mutex::new(Some(listener))),
@@ -661,7 +659,7 @@ impl PyListener {
     /// — the parked call returns `SrtError(kind=CLOSED)`. Iterator
     /// code converts that to `StopIteration` for clean for-loops.
     fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<PyCancelHandle>> {
-        Py::new(py, PyCancelHandle::from_concrete(self.cancel_src.clone()))
+        Py::new(py, PyCancelHandle::from_source(&self.cancel_src))
     }
 
     /// Local bound address as `(host, port)`. Useful when the URL
@@ -751,15 +749,6 @@ impl PyListener {
 // real call sites): "CONFIG_INVALID", "TIMEOUT", "CLOSED",
 // "CONNECT_FAILED", "ACCEPT_FAILED", "IO". Variants not used in this
 // module (WOULD_BLOCK, BROKEN) are covered by transport.rs.
-
-// Hold a no-op reference to suppress unused-import warnings for the
-// trait-object glue Arc<dyn TransportCancel> + AtomicBool — both are
-// actually re-exported through PyCancelHandle::from_concrete.
-const _: fn() = || {
-    fn _assert_send_sync<T: Send + Sync>() {}
-    _assert_send_sync::<Arc<dyn TransportCancel + Send + Sync>>();
-    _assert_send_sync::<AtomicBool>();
-};
 
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyBuilder>()?;

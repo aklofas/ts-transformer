@@ -160,33 +160,44 @@ impl PySocketStats {
 // PyCancelHandle — Arc-shared so multiple Python refs share one target
 // ---------------------------------------------------------------------------
 
-/// Python-side cancel handle. Wraps an `Arc<dyn TransportCancel>` so
-/// multiple Python references (e.g., one held by the Sender, one
-/// stashed in a worker thread) share a single cancellation target.
-/// Calling `.cancel()` on any reference wakes any thread parked in
-/// the paired transport's send/recv loop within ~100 ms.
-///
-/// The trait-erased Arc comes from `Transport::cancel_handle()` /
-/// `RecvTransport::cancel_handle()` — the transport's own internal
-/// `Arc<RtpCancelHandle>` shared with the cancel-poll loop. Cancelling
-/// here flips the same atomic the transport polls.
-#[pyclass(name = "CancelHandle", module = "tstrans.rtp")]
+/// Python-side cancel handle. Wraps the shell's shared
+/// [`crate::util::CancelSource`]: every clone obtained from the same
+/// shell — and the shell's own `close()` — forwards into one
+/// `Arc<dyn TransportCancel>` and flips one flag, so `is_cancelled()`
+/// reports the shell's state, not this wrapper's history (Arc 2).
+#[pyclass(frozen, name = "CancelHandle", module = "tstrans.rtp")]
 pub(crate) struct PyCancelHandle {
-    pub(crate) inner: Arc<dyn TransportCancel + Send + Sync>,
+    src: Arc<crate::util::CancelSource>,
 }
 
 #[pymethods]
 impl PyCancelHandle {
     /// Signal cancellation. Idempotent — repeated calls are a no-op.
-    /// Wakes a thread parked in `Sender.send` / `Receiver.recv` at the
-    /// next 100 ms cancel-poll tick; that call returns an `RtpError`
-    /// with `.kind == RtpErrorKind.CANCELLED`.
+    /// Wakes a thread parked in `Sender.send` / `Receiver.recv` /
+    /// `H264Receiver.recv_au` at the next 100 ms cancel-poll tick; that
+    /// call raises `RtpError(CLOSED)` (detail "cancelled from another
+    /// thread").
     fn cancel(&self) {
-        self.inner.cancel();
+        tst_core::transport::TransportCancel::cancel(&*self.src);
+    }
+
+    /// `True` once the shell was cancelled or closed through ANY handle
+    /// or its own `close()` (shared state).
+    fn is_cancelled(&self) -> bool {
+        self.src.is_cancelled()
     }
 
     fn __repr__(&self) -> String {
-        "CancelHandle()".to_string()
+        format!("CancelHandle(cancelled={})", self.is_cancelled())
+    }
+}
+
+impl PyCancelHandle {
+    /// The single constructor every rtp class uses.
+    pub(crate) fn from_source(src: &Arc<crate::util::CancelSource>) -> Self {
+        Self {
+            src: Arc::clone(src),
+        }
     }
 }
 
@@ -211,7 +222,10 @@ pub(crate) struct PySender {
     /// at construction. Shared with any Python-side `CancelHandle` clones;
     /// calling `.cancel()` here flips the same atomic the transport's
     /// send loop polls every 100 ms.
-    cancel: Arc<dyn TransportCancel + Send + Sync>,
+    /// Shared cancel state (Arc 2 WP-B2): the same `Arc` every
+    /// `CancelHandle` this shell hands out holds, so `close()` here and
+    /// `cancel()` through any handle flip one observable flag.
+    cancel: Arc<crate::util::CancelSource>,
 }
 
 #[pymethods]
@@ -235,9 +249,11 @@ impl PySender {
         // The Arc returned is the same one the transport's send-loop
         // holds — flipping it here wakes a parked send on the next
         // 100 ms cancel-poll tick.
-        let cancel = inner
-            .cancel_handle()
-            .expect("RtpTransport always returns Some(cancel_handle)");
+        let cancel = crate::util::CancelSource::new(
+            inner
+                .cancel_handle()
+                .expect("RtpTransport always returns Some(cancel_handle)"),
+        );
         Ok(Self {
             inner: Arc::new(Mutex::new(Some(inner))),
             cancel,
@@ -276,12 +292,7 @@ impl PySender {
     /// returned handle wakes any thread currently parked in `.send()`;
     /// that call returns `RtpError(kind=CANCELLED)`.
     fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<PyCancelHandle>> {
-        Py::new(
-            py,
-            PyCancelHandle {
-                inner: self.cancel.clone(),
-            },
-        )
+        Py::new(py, PyCancelHandle::from_source(&self.cancel))
     }
 
     /// Close the sender. Fires the cancel handle BEFORE taking the slot
@@ -348,7 +359,10 @@ pub(crate) struct PyReceiver {
     /// `RecvTransport::cancel_handle()` at construction. Shared with any
     /// Python-side `CancelHandle` clones — flipping it wakes a parked
     /// recv on the next 100 ms cancel-poll tick.
-    cancel: Arc<dyn TransportCancel + Send + Sync>,
+    /// Shared cancel state (Arc 2 WP-B2): the same `Arc` every
+    /// `CancelHandle` this shell hands out holds, so `close()` here and
+    /// `cancel()` through any handle flip one observable flag.
+    cancel: Arc<crate::util::CancelSource>,
     /// Handle onto the transport's [`StreamEndReasonHandle`], pulled at
     /// construction — before the slot is ever emptied by `close()`, so
     /// `end_reason()` / `end_detail()` keep working after close (`close()`
@@ -371,9 +385,11 @@ impl PyReceiver {
             .map_err(|e| make_rtp_error(py, "TRANSPORT", &e.to_string()))?;
         let transport = builder.build().map_err(|e| connect_error_to_pyerr(py, e))?;
         let scratch_len = transport.max_payload();
-        let cancel = transport
-            .cancel_handle()
-            .expect("RtpRecvTransport always returns Some(cancel_handle)");
+        let cancel = crate::util::CancelSource::new(
+            transport
+                .cancel_handle()
+                .expect("RtpRecvTransport always returns Some(cancel_handle)"),
+        );
         let end_reason = transport.end_reason_handle();
         Ok(Self {
             inner: Arc::new(Mutex::new(Some(RtpRecvInner {
@@ -434,12 +450,7 @@ impl PyReceiver {
     /// returned handle wakes any thread currently parked in `.recv()`;
     /// that call returns `RtpError(kind=CANCELLED)`.
     fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<PyCancelHandle>> {
-        Py::new(
-            py,
-            PyCancelHandle {
-                inner: self.cancel.clone(),
-            },
-        )
+        Py::new(py, PyCancelHandle::from_source(&self.cancel))
     }
 
     /// Why the receive session ended, or `None` if it hasn't ended yet
