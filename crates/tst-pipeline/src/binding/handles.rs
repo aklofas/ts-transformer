@@ -61,11 +61,16 @@ pub struct ManagedHandles {
 impl core::fmt::Debug for ManagedHandles {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         use std::sync::atomic::Ordering;
+        // `attempts` is `Relaxed` — it publishes nothing, and that is the
+        // one ordering the counter uses at its bump and everywhere it is
+        // read. `reconnects` and `reconnecting` are `Acquire` because they
+        // ARE publication points (the rebuilt inner's state, and the
+        // background worker's), matching `ManagedStatsHandle::stats`.
         f.debug_struct("ManagedHandles")
             .field("cancel", &"<dyn TransportCancel>")
             .field("end_reason", &self.end_reason.get())
             .field("reconnects", &self.reconnects.load(Ordering::Acquire))
-            .field("attempts", &self.attempts.load(Ordering::Acquire))
+            .field("attempts", &self.attempts.load(Ordering::Relaxed))
             .field("reconnecting", &self.reconnecting.load(Ordering::Acquire))
             .finish()
     }
