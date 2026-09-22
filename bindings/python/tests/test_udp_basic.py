@@ -184,3 +184,24 @@ def test_recv_builder_rejects_pkt_size_url():
         b.build()
     assert ei.value.kind == UdpErrorKind.URL
     assert "send-side knob" in str(ei.value)
+
+
+def test_udp_recv_deadline_is_backpressure_and_keeps_the_handle_open() -> None:
+    """Arc 2: a recv deadline expiry is BACKPRESSURE (retryable), the
+    handle stays open, and a datagram delivered afterwards is received."""
+    import socket as _socket
+
+    rx = udp.RecvTransport.builder().bind_url("udp://127.0.0.1:0").build()
+    try:
+        with pytest.raises(UdpError) as ei:
+            rx.recv(timeout_ms=50)
+        assert ei.value.kind == UdpErrorKind.BACKPRESSURE
+        assert "timed out" in str(ei.value)
+        assert "open" in repr(rx)
+        s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+        s.sendto(b"\x47" * 188, ("127.0.0.1", rx.local_addr_port()))
+        s.close()
+        payload, _ = rx.recv(timeout_ms=2000)
+        assert payload == b"\x47" * 188
+    finally:
+        rx.close()
