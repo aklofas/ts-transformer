@@ -69,6 +69,16 @@ fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     raise::check_error_kinds(_py)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_function(wrap_pyfunction!(raise::check_error_kinds_py, m)?)?;
+    // Arc 2 rider R-EXIT: a thread parked inside libsrt at process exit
+    // deadlocks `atexit(srt_cleanup)` (it joins `SRT:GC`, which cannot
+    // finish while a socket is parked). Python's atexit callbacks run
+    // before the C-level ones, so cancelling every live shell here lets
+    // teardown complete. See `util::fire_cancel_sources_at_exit`.
+    let hook = wrap_pyfunction!(util::fire_cancel_sources_at_exit, m)?;
+    m.add_function(hook.clone())?;
+    _py.import_bound("atexit")?
+        .getattr("register")?
+        .call1((hook,))?;
     m.add_function(wrap_pyfunction!(errors::raise_mux_error_for_test, m)?)?;
     #[cfg(feature = "srt")]
     {

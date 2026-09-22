@@ -33,104 +33,27 @@
 //! two-path pattern from udp/mod.rs: fast zero-copy `&[u8]` for `bytes`,
 //! fallback through Python `bytes()` builtin for `bytearray`/`memoryview`.
 //!
-//! Error mapping: `tst_tcp::error::TcpError` -> `tstrans.exceptions.TcpError`.
-//! `.kind` is populated from two sources: `tst_tcp::error::TcpErrorKind`'s
-//! own variants (URL, IO, CLOSED, CONNECT_TIMEOUT, INVALID_CONFIG, TLS,
-//! TLS_DISABLED), and the transport-level kind this binding maps from
-//! `tst_core::transport::TransportError` onto the same exception
-//! (PAYLOAD_TOO_LARGE — see `TcpTransportErr` below; CLOSED and IO are
-//! reachable from both sources, so they don't add to the total).
-//! `scripts/check/python/error-mapping-coverage.sh` enforces that every
-//! `TcpErrorKind` variant has at least one literal
-//! `make_tcp_error(py, "<VARIANT>", ...)` call site in this crate.
+//! Error mapping: every failure is a `tst_pipeline::binding::BindingError`
+//! raised on `TcpError` through `crate::raise` — the kind's `name()` is
+//! resolved on `tstrans.exceptions.TcpErrorKind` and checked at
+//! `import tstrans`.
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
-use std::sync::{Mutex, TryLockError};
+use std::sync::Arc;
 
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::exceptions::PyValueError;
 use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyMemoryView};
 
-use tst_core::transport::{RecvTransport, Transport, TransportError};
-use tst_tcp::error::{TcpError, TcpErrorKind};
-use tst_tcp::{TcpCancelHandle, TcpListener, TcpStats, TcpTransport};
+use tst_core::transport::{RecvTransport, Transport};
+use tst_pipeline::binding::{BindingError, BindingErrorKind, HandleState, Owned, SendHalf};
+use tst_tcp::error::TcpError;
+use tst_tcp::{TcpListener, TcpStats, TcpTransport};
 
-use crate::errors::make_tcp_error;
-
-// ---------------------------------------------------------------------------
-// Error mapping
-// ---------------------------------------------------------------------------
-
-/// Map a `tst_tcp::error::TcpError` to a `tstrans.exceptions.TcpError` PyErr.
-///
-/// `TcpErrorKind` is `#[non_exhaustive]`; the wildcard arm routes any
-/// unknown future variant to `IO` so this fn never panics on a Rust-side
-/// enum addition. The bash ratchet will surface the omission in CI.
-///
-/// Each of `TcpErrorKind`'s Rust-enum variants gets a literal call site
-/// below so the consolidated `scripts/check/python/error-mapping-coverage.sh`
-/// ratchet stays green. `TcpTransportErr::into_pyerr` below maps the one
-/// remaining observable kind (`PAYLOAD_TOO_LARGE`) from `TransportError`
-/// instead — it never reaches this function.
-fn map_tcp_error_kind(py: Python<'_>, e: TcpError) -> PyErr {
-    let msg = e.to_string();
-    match e.kind() {
-        TcpErrorKind::Url => make_tcp_error(py, "URL", &msg),
-        TcpErrorKind::Io => make_tcp_error(py, "IO", &msg),
-        TcpErrorKind::Closed => make_tcp_error(py, "CLOSED", &msg),
-        TcpErrorKind::ConnectTimeout => make_tcp_error(py, "CONNECT_TIMEOUT", &msg),
-        TcpErrorKind::InvalidConfig => make_tcp_error(py, "INVALID_CONFIG", &msg),
-        TcpErrorKind::Tls => make_tcp_error(py, "TLS", &msg),
-        TcpErrorKind::TlsDisabled => make_tcp_error(py, "TLS_DISABLED", &msg),
-        // Wildcard for #[non_exhaustive] additions not yet mapped.
-        _ => make_tcp_error(py, "IO", &msg),
-    }
-}
-
-/// Map a `tst_tcp::url::TcpUrlError` to a `tstrans.exceptions.TcpError`
-/// with `kind=URL`.
-fn map_tcp_url_error(py: Python<'_>, e: tst_tcp::url::TcpUrlError) -> PyErr {
-    make_tcp_error(py, "URL", &e.to_string())
-}
-
-/// Classifies a `TransportError` for mapping to TcpErrorKind without
-/// requiring a `Python<'_>` token. Returned from inside `allow_threads`
-/// closures; the caller converts to `PyErr` after the GIL is re-acquired.
-enum TcpTransportErr {
-    Closed,
-    PayloadTooLarge { len: usize, max: usize },
-    Io(String),
-    Mutex,
-    Closed2,
-}
-
-impl From<TransportError> for TcpTransportErr {
-    fn from(e: TransportError) -> Self {
-        match e {
-            TransportError::Closed | TransportError::ExplicitClose => Self::Closed,
-            TransportError::TooLarge { len, max } => Self::PayloadTooLarge { len, max },
-            other => Self::Io(other.to_string()),
-        }
-    }
-}
-
-impl TcpTransportErr {
-    fn into_pyerr(self, py: Python<'_>) -> PyErr {
-        match self {
-            Self::Closed | Self::Closed2 => {
-                make_tcp_error(py, "CLOSED", "transport closed by caller")
-            }
-            Self::PayloadTooLarge { len, max } => {
-                let msg = format!("payload {len} exceeds max {max} bytes per send call");
-                make_tcp_error(py, "PAYLOAD_TOO_LARGE", &msg)
-            }
-            Self::Io(msg) => make_tcp_error(py, "IO", &msg),
-            Self::Mutex => PyRuntimeError::new_err("tcp transport mutex poisoned"),
-        }
-    }
-}
+use crate::raise::{TCP, pyok, pyres, raise};
+use crate::util::{CancelSource, close_owned};
 
 // ---------------------------------------------------------------------------
 // PyTcpStats — frozen mirror of TcpStats
@@ -203,10 +126,11 @@ impl PyTcpStats {
 /// ≤100 ms) and the lock becomes available without holding the GIL.
 #[pyclass(name = "Transport", module = "tstrans.tcp")]
 pub(crate) struct PyTcpTransport {
-    inner: Mutex<Option<TcpTransport>>,
-    /// Cancel handle obtained at construction. `close()` fires it before
-    /// acquiring `inner`'s lock so a concurrent `recv()` unblocks promptly.
-    cancel: TcpCancelHandle,
+    /// The binding layer's handle state machine (Arc 2). The shell's
+    /// `Arc<dyn TransportCancel>` is a `CancelSource` over the real
+    /// `TcpCancelHandle`, so `close()` fires the handle before taking the
+    /// slot and a parked `recv()` ends within about one poll boundary.
+    owned: Owned<SendHalf<TcpTransport>>,
 }
 
 #[pymethods]
@@ -240,14 +164,11 @@ impl PyTcpTransport {
                 .downcast_into::<PyBytes>()?;
             coerced.as_bytes().to_vec()
         };
-        // Two-step error handling: inside allow_threads we return a Send-safe
-        // TcpTransportErr; after the GIL is re-acquired we convert to PyErr.
-        let result: Result<(), TcpTransportErr> = py.allow_threads(|| {
-            let mut guard = self.inner.lock().map_err(|_| TcpTransportErr::Mutex)?;
-            let inner = guard.as_mut().ok_or(TcpTransportErr::Closed2)?;
-            inner.send_bytes(&owned).map_err(TcpTransportErr::from)
-        });
-        result.map_err(|e| e.into_pyerr(py))
+        pyres(
+            py,
+            &TCP,
+            py.allow_threads(|| self.owned.with_mut(|t| t.0.send_bytes(&owned))),
+        )
     }
 
     /// Receive bytes from the TCP connection into a pre-allocated `bytearray`.
@@ -286,20 +207,21 @@ impl PyTcpTransport {
         // We need an owned buffer to cross the allow_threads boundary --
         // `PyByteArray` is a Python object and is !Send.
         let mut owned = vec![0u8; buf_len];
-        // Two-step: compute inside allow_threads, map error after.
-        let result: Result<usize, TcpTransportErr> = py.allow_threads(|| {
-            let mut guard = self.inner.lock().map_err(|_| TcpTransportErr::Mutex)?;
-            let inner = guard.as_mut().ok_or(TcpTransportErr::Closed2)?;
-            inner
-                .recv_bytes(owned.as_mut_slice())
-                .map_err(TcpTransportErr::from)
+        let res = py.allow_threads(|| {
+            self.owned
+                .with_mut(|t| t.0.recv_bytes(owned.as_mut_slice()))
         });
-        let copied = result.and_then(|n| {
+        let copied: PyResult<usize> = pyres(py, &TCP, res).and_then(|n| {
             // Unreachable while the export is live; a real check, not a
             // debug assert, because the copy below is `unsafe`.
             if buf.len() != buf_len {
-                return Err(TcpTransportErr::Io(
-                    "recv(): destination bytearray changed length during the call".into(),
+                return Err(raise(
+                    py,
+                    &TCP,
+                    BindingError::new(
+                        BindingErrorKind::TcpIo,
+                        "recv(): destination bytearray changed length during the call",
+                    ),
                 ));
             }
             // Safety: we hold the GIL; the only other reference to this
@@ -312,7 +234,7 @@ impl PyTcpTransport {
         // Release the export explicitly (dropping the Bound would too, but
         // this makes "resizable again once recv() returns" deterministic).
         export.call_method0(intern!(py, "release"))?;
-        copied.map_err(|e| e.into_pyerr(py))
+        copied
     }
 
     /// Peer address as a `"host:port"` string. Returns `""` if the transport
@@ -321,13 +243,8 @@ impl PyTcpTransport {
     /// Releases the GIL during mutex acquisition so a concurrent `recv()`
     /// parked in another thread cannot freeze the interpreter.
     fn peer_addr(&self, py: Python<'_>) -> String {
-        py.allow_threads(|| {
-            let guard = self.inner.lock().unwrap_or_else(|p| p.into_inner());
-            match guard.as_ref() {
-                Some(t) => t.peer().to_string(),
-                None => String::new(),
-            }
-        })
+        py.allow_threads(|| self.owned.with_ref(|t| t.0.peer().to_string()))
+            .unwrap_or_default()
     }
 
     /// Close the transport. Idempotent -- further `.send()` / `.recv()` calls
@@ -336,16 +253,8 @@ impl PyTcpTransport {
     /// Fires the cancel handle BEFORE acquiring the inner mutex so any thread
     /// parked in `recv()` unblocks within ≤100 ms, making the lock available
     /// without holding the GIL.
-    fn close(&self, py: Python<'_>) {
-        // Cancel first: the recv loop checks alive at its next ~100 ms poll
-        // boundary and returns Closed, releasing the inner lock promptly.
-        self.cancel.cancel();
-        py.allow_threads(|| {
-            let mut guard = self.inner.lock().unwrap_or_else(|p| p.into_inner());
-            if let Some(mut t) = guard.take() {
-                Transport::close(&mut t);
-            }
-        });
+    fn close(&self, py: Python<'_>) -> PyResult<()> {
+        close_owned(py, &TCP, &self.owned)
     }
 
     /// Snapshot of wire-level statistics. Counters are cumulative and never
@@ -354,13 +263,11 @@ impl PyTcpTransport {
     /// Releases the GIL during mutex acquisition so a concurrent `recv()`
     /// parked in another thread cannot freeze the interpreter.
     fn stats(&self, py: Python<'_>) -> PyResult<Py<PyTcpStats>> {
-        // Two-step: extract inside allow_threads, build Python object after.
-        let result: Result<TcpStats, TcpTransportErr> = py.allow_threads(|| {
-            let guard = self.inner.lock().map_err(|_| TcpTransportErr::Mutex)?;
-            let inner = guard.as_ref().ok_or(TcpTransportErr::Closed2)?;
-            Ok(inner.stats())
-        });
-        let s = result.map_err(|e| e.into_pyerr(py))?;
+        let s = pyok(
+            py,
+            &TCP,
+            py.allow_threads(|| self.owned.with_ref(|t| t.0.stats())),
+        )?;
         Py::new(py, PyTcpStats::from(s))
     }
 
@@ -374,29 +281,32 @@ impl PyTcpTransport {
         _exc_type: &Bound<'_, PyAny>,
         _exc_value: &Bound<'_, PyAny>,
         _traceback: &Bound<'_, PyAny>,
-    ) -> bool {
-        self.close(py);
-        false
+    ) -> PyResult<bool> {
+        self.close(py)?;
+        Ok(false)
     }
 
     fn __repr__(&self, py: Python<'_>) -> String {
-        py.allow_threads(|| {
-            let guard = self.inner.lock().unwrap_or_else(|p| p.into_inner());
-            match guard.as_ref() {
-                Some(t) => format!("Transport(peer={})", t.peer()),
-                None => "Transport(closed)".to_string(),
-            }
-        })
+        match py.allow_threads(|| {
+            self.owned
+                .with_ref(|t| format!("Transport(peer={})", t.0.peer()))
+        }) {
+            Ok(s) => s,
+            Err(_) => "Transport(closed)".to_string(),
+        }
     }
 }
 
 /// Construct a `PyTcpTransport` from an already-connected `TcpTransport`.
 /// Used internally by `PyTcpListenerBuilder::build()` / `accept_blocking`.
 fn make_py_tcp_transport(t: TcpTransport) -> PyTcpTransport {
-    let cancel = t.cancel_handle();
+    // tcp HAS a real cancel handle. The `CancelSource` latch is nonetheless
+    // the source of truth for the Python-visible `is_cancelled` state:
+    // `TcpCancelHandle::is_cancelled()` currently reports `!alive`, which
+    // WP-C1 fixes — this binding must not depend on it.
+    let cancel = CancelSource::new(Arc::new(t.cancel_handle()));
     PyTcpTransport {
-        inner: Mutex::new(Some(t)),
-        cancel,
+        owned: Owned::new(SendHalf(t), cancel.as_dyn(), ()),
     }
 }
 
@@ -522,8 +432,7 @@ impl PyTcpTransportBuilder {
 
         match t {
             Ok(transport) => Ok(make_py_tcp_transport(transport)),
-            Err(TcpError::Url(e)) => Err(map_tcp_url_error(py, e)),
-            Err(e) => Err(map_tcp_error_kind(py, e)),
+            Err(e) => Err(raise(py, &TCP, BindingError::from(e))),
         }
     }
 
@@ -546,22 +455,24 @@ impl PyTcpTransportBuilder {
 ///
 /// GIL is released during `accept_blocking` so other Python threads
 /// remain live while waiting for a connection.
+/// `tst_tcp::TcpListener` behind the binding layer's `Close`.
+pub(crate) struct TcpListenerHeld(pub TcpListener);
+
+impl tst_pipeline::binding::Close for TcpListenerHeld {
+    type Error = core::convert::Infallible;
+
+    fn close(&mut self) -> Result<(), Self::Error> {
+        self.0.close();
+        Ok(())
+    }
+}
+
 #[pyclass(name = "Listener", module = "tstrans.tcp")]
 pub(crate) struct PyTcpListener {
-    /// Held (GIL released) by a parked `accept_blocking`; `close()` fires
-    /// `cancel` BEFORE taking it. Every method releases the GIL around the
-    /// lock so a parked accept can never freeze the interpreter.
-    inner: Mutex<Option<TcpListener>>,
-    /// `TcpListener::cancel_handle()` snapshot taken at `build()`. Firing
-    /// it makes a parked `accept_blocking()` return `TcpError(CLOSED)` at
-    /// its next poll boundary (≤100 ms).
-    cancel: TcpCancelHandle,
-    /// Bound port read once at `build()`, so `local_port()` never waits
-    /// behind a parked `accept_blocking()` — the thread asking for the
-    /// port is usually the one that has to connect to end that park.
-    /// `None` only if `getsockname` failed at build; `local_port()` then
-    /// falls back to the lock.
-    local_port: Option<u16>,
+    /// The binding layer's handle state machine (Arc 2). Snapshot = the
+    /// bound port read at `build()`, so `local_port()` never waits behind a
+    /// parked `accept_blocking()`.
+    owned: Owned<TcpListenerHeld, Option<u16>>,
 }
 
 #[pymethods]
@@ -583,16 +494,8 @@ impl PyTcpListener {
     fn accept_blocking(&self, py: Python<'_>) -> PyResult<PyTcpTransport> {
         // Two-step: accept inside allow_threads (returns Result<TcpTransport, TcpError>
         // where TcpError is Send), then map to PyErr after re-acquiring the GIL.
-        let result: Result<TcpTransport, TcpError> = py.allow_threads(|| {
-            let guard = self
-                .inner
-                .lock()
-                .map_err(|_| TcpError::InvalidConfig("listener mutex poisoned".into()))?;
-            let listener = guard.as_ref().ok_or(TcpError::Closed)?;
-            listener.accept_blocking()
-        });
-        let t = result.map_err(|e| map_tcp_error_kind(py, e))?;
-        Ok(make_py_tcp_transport(t))
+        let res = py.allow_threads(|| self.owned.with_ref(|l| l.0.accept_blocking()));
+        Ok(make_py_tcp_transport(pyres(py, &TCP, res)?))
     }
 
     /// Local bound port. Non-zero after successful `build()`.
@@ -604,32 +507,17 @@ impl PyTcpListener {
     /// back to the lock and waits for the parked call like the other
     /// getters. Raises `TcpError(kind=CLOSED)` once the listener is closed.
     fn local_port(&self, py: Python<'_>) -> PyResult<u16> {
-        if let Some(port) = self.local_port {
-            // Non-blocking liveness read: a parked accept holds the lock
-            // (WouldBlock) and means "open"; an empty slot means closed.
-            let alive = match self.inner.try_lock() {
-                Ok(g) => g.is_some(),
-                Err(TryLockError::Poisoned(p)) => p.into_inner().is_some(),
-                Err(TryLockError::WouldBlock) => true,
-            };
-            return if alive {
-                Ok(port)
-            } else {
-                Err(make_tcp_error(py, "CLOSED", "listener closed"))
-            };
+        match self.owned.snapshot() {
+            Some(port) if !self.owned.is_closed() => Ok(*port),
+            Some(_) => Err(raise(py, &TCP, BindingError::from(HandleState::Closed))),
+            None => {
+                let res = py.allow_threads(|| {
+                    self.owned
+                        .with_ref(|l| l.0.local_addr().map(|a| a.port()).map_err(TcpError::Io))
+                });
+                pyres(py, &TCP, res)
+            }
         }
-        let result: Result<u16, TcpError> = py.allow_threads(|| {
-            let guard = self
-                .inner
-                .lock()
-                .map_err(|_| TcpError::InvalidConfig("listener mutex poisoned".into()))?;
-            let listener = guard.as_ref().ok_or(TcpError::Closed)?;
-            listener
-                .local_addr()
-                .map(|a| a.port())
-                .map_err(TcpError::Io)
-        });
-        result.map_err(|e| map_tcp_error_kind(py, e))
     }
 
     /// Close the listener. Fires the cancel handle BEFORE taking the lock,
@@ -637,14 +525,8 @@ impl PyTcpListener {
     /// `TcpError(kind=CLOSED)` within ≤100 ms; then frees the listener.
     /// Idempotent -- further `accept_blocking()` calls raise
     /// `TcpError(kind=CLOSED)`.
-    fn close(&self, py: Python<'_>) {
-        self.cancel.cancel();
-        py.allow_threads(|| {
-            let taken = self.inner.lock().unwrap_or_else(|p| p.into_inner()).take();
-            if let Some(l) = taken {
-                l.close();
-            }
-        });
+    fn close(&self, py: Python<'_>) -> PyResult<()> {
+        close_owned(py, &TCP, &self.owned)
     }
 
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -657,19 +539,17 @@ impl PyTcpListener {
         _exc_type: &Bound<'_, PyAny>,
         _exc_value: &Bound<'_, PyAny>,
         _traceback: &Bound<'_, PyAny>,
-    ) -> bool {
-        self.close(py);
-        false
+    ) -> PyResult<bool> {
+        self.close(py)?;
+        Ok(false)
     }
 
-    fn __repr__(&self, py: Python<'_>) -> String {
-        py.allow_threads(|| {
-            let guard = self.inner.lock().unwrap_or_else(|p| p.into_inner());
-            match guard.as_ref() {
-                Some(_) => "Listener(open)".to_string(),
-                None => "Listener(closed)".to_string(),
-            }
-        })
+    fn __repr__(&self) -> String {
+        if self.owned.is_closed() {
+            "Listener(closed)".to_string()
+        } else {
+            "Listener(open)".to_string()
+        }
     }
 }
 
@@ -766,12 +646,15 @@ impl PyTcpListenerBuilder {
         if let Some((cert, key)) = &tls_cert_key {
             for (label, path) in [("cert", cert), ("key", key)] {
                 if path.contains(['&', '#', '?']) {
-                    return Err(make_tcp_error(
+                    return Err(raise(
                         py,
-                        "INVALID_CONFIG",
-                        &format!(
-                            "tls {label} path contains a URL-structural character \
+                        &TCP,
+                        BindingError::new(
+                            BindingErrorKind::TcpInvalidConfig,
+                            format!(
+                                "tls {label} path contains a URL-structural character \
                              ('&', '#', or '?') and cannot be used: {path}"
+                            ),
                         ),
                     ));
                 }
@@ -806,16 +689,13 @@ impl PyTcpListenerBuilder {
 
         match listener {
             Ok(l) => {
-                let cancel = l.cancel_handle();
+                let cancel = CancelSource::new(Arc::new(l.cancel_handle()));
                 let local_port = l.local_addr().ok().map(|a| a.port());
                 Ok(PyTcpListener {
-                    inner: Mutex::new(Some(l)),
-                    cancel,
-                    local_port,
+                    owned: Owned::new(TcpListenerHeld(l), cancel.as_dyn(), local_port),
                 })
             }
-            Err(TcpError::Url(e)) => Err(map_tcp_url_error(py, e)),
-            Err(e) => Err(map_tcp_error_kind(py, e)),
+            Err(e) => Err(raise(py, &TCP, BindingError::from(e))),
         }
     }
 

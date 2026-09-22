@@ -462,8 +462,19 @@ cancel = tx.cancel_handle()
 cancel.cancel()   # wakes tx.send_bytes() → SrtError(BROKEN | CLOSED)
 ```
 
-`is_cancelled()` is per-clone, but `cancel()` on any clone wakes the shared
-socket.
+`is_cancelled()` reports the SHELL's cancel state, shared by every clone
+and by the shell's own `close()` — a watchdog holding one handle observes
+a cancel issued anywhere else.
+
+**Exit with a shell still open.** You should still `close()` (or use
+`with`) every shell, but forgetting to is no longer fatal: at interpreter
+exit `tstrans` cancels every shell that is still alive before libsrt's own
+teardown runs. Without that, a thread left parked in `accept()` or
+`recv_bytes()` deadlocks `srt_cleanup`, which joins libsrt's GC thread —
+the process hangs instead of exiting. The hook costs nothing when
+everything was closed, and adds a short settle window at exit when it was
+not (woken threads need a moment to unwind before the interpreter shuts
+down).
 
 **Closing from another thread.** Every `tstrans.srt` shell's `close()`
 cancels first, then frees the object, so it is safe to call from a

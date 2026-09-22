@@ -4,7 +4,7 @@ use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, TryLockError};
+use std::sync::{Arc, Mutex, TryLockError, Weak};
 
 use tst_core::transport::TransportCancel;
 use tst_pipeline::binding::{BindingError, BindingErrorKind, Close, CloseFailure, Owned};
@@ -131,12 +131,31 @@ pub(crate) struct CancelSource {
     cancelled: AtomicBool,
 }
 
+/// Every live [`CancelSource`], weakly. Walked once at interpreter exit by
+/// [`fire_cancel_sources_at_exit`] — see its doc for why.
+/// How long [`fire_cancel_sources_at_exit`] waits for woken threads to
+/// leave their Python frames. Long enough for libsrt's ~3-10 ms cancel
+/// wake plus the GIL hand-off; short enough to be invisible at exit.
+const EXIT_SETTLE_MS: u64 = 250;
+
+static LIVE_CANCEL_SOURCES: Mutex<Vec<Weak<CancelSource>>> = Mutex::new(Vec::new());
+
 impl CancelSource {
     pub(crate) fn new(inner: Arc<dyn TransportCancel + Send + Sync>) -> Arc<Self> {
-        Arc::new(Self {
+        let me = Arc::new(Self {
             inner,
             cancelled: AtomicBool::new(false),
-        })
+        });
+        if let Ok(mut reg) = LIVE_CANCEL_SOURCES.lock() {
+            // Amortised cleanup: drop the dead weaks whenever the registry
+            // doubles, so a long-lived process that opens and closes many
+            // shells does not grow the vector without bound.
+            if reg.len() == reg.capacity() {
+                reg.retain(|w| w.strong_count() > 0);
+            }
+            reg.push(Arc::downgrade(&me));
+        }
+        me
     }
 
     pub(crate) fn is_cancelled(&self) -> bool {
@@ -203,4 +222,46 @@ pub(crate) fn alive_probe<T, S>(owned: &Owned<T, S>, alive: impl FnOnce(&T) -> b
         Some(Ok(b)) => b,
         Some(Err(_)) => false,
     }
+}
+
+/// Cancel every still-live shell at interpreter exit (Arc 2 rider R-EXIT).
+///
+/// A thread parked inside libsrt when the process exits deadlocks teardown:
+/// `tst_srt` registers `srt_cleanup` with C `atexit`, and `srt_cleanup`
+/// joins libsrt's `SRT:GC` thread, which cannot finish while a socket is
+/// still parked in `accept()` / `recv()`. Python's `atexit` callbacks run
+/// during interpreter finalisation — strictly before the C-level handlers —
+/// so firing every live cancel here unparks those calls in time for
+/// `srt_cleanup` to join. Without it a script that simply forgets to
+/// `close()` a receiver hangs forever at exit instead of terminating.
+///
+/// Registered once from `_native`'s init (`lib.rs`). Idempotent and
+/// best-effort: a poisoned registry or an already-closed shell is skipped,
+/// and cancelling an already-cancelled source is a no-op by the
+/// `TransportCancel` contract.
+#[pyfunction]
+#[pyo3(name = "_fire_cancel_sources_at_exit")]
+pub(crate) fn fire_cancel_sources_at_exit(py: Python<'_>) {
+    let live: Vec<Arc<CancelSource>> = match LIVE_CANCEL_SOURCES.lock() {
+        Ok(mut reg) => reg.drain(..).filter_map(|w| w.upgrade()).collect(),
+        Err(_) => return,
+    };
+    // The cancels themselves are native and may block briefly (libsrt's
+    // `srt_close` on the paired socket), so drop the GIL for the walk.
+    if live.is_empty() {
+        return;
+    }
+    py.allow_threads(move || {
+        for src in live {
+            TransportCancel::cancel(&*src);
+        }
+        // Settle window. Cancelling only WAKES the parked call; the thread
+        // then needs the GIL to raise its exception and leave its Python
+        // frame. If interpreter finalisation gets there first, CPython
+        // aborts that thread (exit 134) instead of hanging (exit 124) —
+        // both are bad. Holding here with the GIL released lets those
+        // threads finish while the interpreter is still alive. Bounded and
+        // paid once, at exit, only when a shell was actually left open.
+        std::thread::sleep(std::time::Duration::from_millis(EXIT_SETTLE_MS));
+    });
 }

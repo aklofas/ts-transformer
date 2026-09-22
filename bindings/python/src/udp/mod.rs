@@ -10,36 +10,27 @@
 //!   keep running while UDP I/O blocks on the kernel and while a getter
 //!   waits for a parked call.
 //!
-//! Cross-thread close: neither `tst_udp::UdpTransport` nor
-//! `UdpRecvTransport` exposes a cancel handle, so this binding owns one —
-//! `RecvTransport.recv()` polls the socket in ≤100 ms slices and checks a
-//! `stop` flag that `close()` sets BEFORE taking the slot; a `recv()`
-//! parked on another thread therefore ends with `UdpError(CLOSED)` within
-//! about one slice. Every wrapper borrows `&self` over an
-//! `Arc<Mutex<Option<_>>>` slot (the PR #209 shape).
+//! Cross-thread close: `tst_udp` has no cancel handle until Arc 2 WP-D,
+//! so the shell's `CancelSource` flag is the stop signal —
+//! `RecvTransport.recv()` polls the socket in <=100 ms slices and checks it
+//! between slices; a `close()` from another thread ends a parked `recv()`
+//! with `UdpError(CLOSED)` within about one slice. Every wrapper holds a
+//! `tst_pipeline::binding::Owned`, which takes the slot only inside
+//! `with_mut` / `with_ref` and makes `close()` cancel-first.
 //!
 //! Bytes-like extraction in `Transport.send(payload)` follows the abi3-py310
 //! two-path pattern from rtp/transport.rs: fast zero-copy `&[u8]` extract
 //! for `bytes`, fallback through Python `bytes()` builtin for
 //! `bytearray`/`memoryview`.
 //!
-//! Error mapping: `tst_udp::UdpError` → `tstrans.exceptions.UdpError`.
-//! `.kind` is populated from two sources: `tst_udp::UdpErrorKind`'s own
-//! variants (URL, IO, INVALID_CONFIG), and the transport-level kinds this
-//! binding maps from `tst_core::transport::TransportError` onto the same
-//! exception (CLOSED, PAYLOAD_TOO_LARGE — see `transport_error_to_pyerr`
-//! below). The Rust `UdpErrorKind` numeric codes are 1-indexed; the
-//! Python `UdpErrorKind` enum is 0-indexed — the mapping uses enum
-//! *names*, not numeric codes, so there is no off-by-one issue.
-//!
-//! The consolidated `scripts/check/python/error-mapping-coverage.sh`
-//! ratchet enforces that every `UdpErrorKind` variant has at least one
-//! literal `make_udp_error(py, "<VARIANT>", ...)` call site in this crate.
+//! Error mapping: every failure is a `tst_pipeline::binding::BindingError`
+//! raised on `UdpError` through `crate::raise` — `UdpErrorKind::{Url, Io,
+//! InvalidConfig}` at build time; `CLOSED` / `BROKEN` / `BACKPRESSURE` /
+//! `TOO_LARGE` from the transport.
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use pyo3::exceptions::PyValueError;
@@ -47,59 +38,13 @@ use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
 use tst_core::transport::{RecvTransport, Transport, TransportError};
-use tst_udp::{UdpError, UdpErrorKind, UdpRecvTransport, UdpTransport};
+use tst_pipeline::binding::{
+    BindingError, BindingErrorKind, FlagCancel, HandleState, Owned, SendHalf,
+};
+use tst_udp::{UdpError, UdpRecvTransport, UdpTransport};
 
-use crate::errors::make_udp_error;
-
-// ---------------------------------------------------------------------------
-// Error mapping
-// ---------------------------------------------------------------------------
-
-/// Map a `tst_udp::UdpError` to a `tstrans.exceptions.UdpError` PyErr.
-///
-/// `UdpErrorKind` is `#[non_exhaustive]`; the wildcard arm routes any
-/// unknown future variant to `IO` so this fn never panics on a Rust-side
-/// enum addition. The bash ratchet will surface the omission in CI.
-///
-/// Each of `UdpErrorKind`'s Rust-enum variants gets a literal call site
-/// below so the consolidated `scripts/check/python/error-mapping-coverage.sh`
-/// ratchet stays green. `transport_error_to_pyerr` below maps the remaining
-/// observable kinds (`CLOSED`, `PAYLOAD_TOO_LARGE`) from `TransportError`
-/// instead — those never reach this function.
-fn map_udp_error(py: Python<'_>, e: UdpError) -> PyErr {
-    let msg = e.to_string();
-    match e.kind() {
-        UdpErrorKind::Url => make_udp_error(py, "URL", &msg),
-        UdpErrorKind::Io => make_udp_error(py, "IO", &msg),
-        UdpErrorKind::InvalidConfig => make_udp_error(py, "INVALID_CONFIG", &msg),
-        // Wildcard for #[non_exhaustive] additions not yet mapped.
-        _ => make_udp_error(py, "IO", &msg),
-    }
-}
-
-/// Map a `tst_udp::url::UdpUrlError` (from builder `from_url`) to a
-/// `tstrans.exceptions.UdpError` with `kind=URL`.
-fn map_udp_url_error(py: Python<'_>, e: tst_udp::UdpUrlError) -> PyErr {
-    make_udp_error(py, "URL", &e.to_string())
-}
-
-/// Map a `tst_core::transport::TransportError` from `send_bytes` to a
-/// `tstrans.exceptions.UdpError`. Routing:
-/// - `Closed` / `ExplicitClose` → `CLOSED`
-/// - `TooLarge` → `PAYLOAD_TOO_LARGE`
-/// - all others (`Broken`, `Backpressure`) → `IO`
-fn transport_error_to_pyerr(py: Python<'_>, e: TransportError) -> PyErr {
-    match e {
-        TransportError::Closed | TransportError::ExplicitClose => {
-            make_udp_error(py, "CLOSED", "transport closed by caller")
-        }
-        TransportError::TooLarge { len, max } => {
-            let msg = format!("payload {len} exceeds max {max} bytes per datagram");
-            make_udp_error(py, "PAYLOAD_TOO_LARGE", &msg)
-        }
-        other => make_udp_error(py, "IO", &other.to_string()),
-    }
-}
+use crate::raise::{UDP, pyok, pyres, raise};
+use crate::util::{CancelSource, close_owned};
 
 // ---------------------------------------------------------------------------
 // PyUdpStats — frozen mirror of UdpStats
@@ -167,7 +112,7 @@ pub(crate) struct PyUdpTransport {
     /// holds it with the GIL released; `close()` takes it afterwards, so
     /// the next `send` raises `UdpError(CLOSED)` instead of the close
     /// raising `RuntimeError: Already borrowed`.
-    inner: Arc<Mutex<Option<UdpTransport>>>,
+    owned: Owned<SendHalf<UdpTransport>>,
 }
 
 #[pymethods]
@@ -190,23 +135,27 @@ impl PyUdpTransport {
         // (PyBuffer is unavailable under abi3-py310).
         let coerced = crate::util::coerce_bytes_like(py, payload)?;
         let slice: &[u8] = coerced.as_bytes();
-        match crate::util::with_slot(py, &self.inner, |t| t.send_bytes(slice)) {
-            None => Err(make_udp_error(py, "CLOSED", "transport closed")),
-            Some(res) => res.map_err(|e| transport_error_to_pyerr(py, e)),
-        }
+        pyres(
+            py,
+            &UDP,
+            py.allow_threads(|| self.owned.with_mut(|t| t.0.send_bytes(slice))),
+        )
     }
 
     /// Close the sender. Idempotent and safe from any thread — further
     /// `.send()` calls raise `UdpError(kind=CLOSED)`.
-    fn close(&self, py: Python<'_>) {
-        crate::util::close_slot(py, &self.inner, |mut t| t.close());
+    fn close(&self, py: Python<'_>) -> PyResult<()> {
+        close_owned(py, &UDP, &self.owned)
     }
 
     /// Snapshot of wire-level statistics. `datagrams_sent` / `bytes_sent`
     /// tick on each successful `.send()`.
     fn stats(&self, py: Python<'_>) -> PyResult<Py<PyUdpStats>> {
-        let s = crate::util::with_slot(py, &self.inner, |t| t.stats())
-            .ok_or_else(|| make_udp_error(py, "CLOSED", "transport closed"))?;
+        let s = pyok(
+            py,
+            &UDP,
+            py.allow_threads(|| self.owned.with_ref(|t| t.0.stats())),
+        )?;
         Py::new(py, PyUdpStats::from(s))
     }
 
@@ -220,16 +169,16 @@ impl PyUdpTransport {
         _exc_type: &Bound<'_, PyAny>,
         _exc_value: &Bound<'_, PyAny>,
         _traceback: &Bound<'_, PyAny>,
-    ) -> bool {
-        self.close(py);
-        false
+    ) -> PyResult<bool> {
+        self.close(py)?;
+        Ok(false)
     }
 
     fn __repr__(&self) -> String {
-        if crate::util::slot_alive(&self.inner, |_| true) {
-            "Transport(open)".to_string()
-        } else {
+        if self.owned.is_closed() {
             "Transport(closed)".to_string()
+        } else {
+            "Transport(open)".to_string()
         }
     }
 }
@@ -297,7 +246,7 @@ impl PyUdpTransportBuilder {
             .as_ref()
             .ok_or_else(|| PyValueError::new_err("url(...) is required before build()"))?;
         let mut b = tst_udp::UdpTransportBuilder::from_url(url_str)
-            .map_err(|e| map_udp_url_error(py, e))?;
+            .map_err(|e| raise(py, &UDP, BindingError::from(e)))?;
         if let Some(v) = self.pkt_size {
             b.pkt_size(v);
         }
@@ -310,9 +259,18 @@ impl PyUdpTransportBuilder {
         if let Some(v) = self.ttl {
             b.ttl(v);
         }
-        let t = b.build().map_err(|e| map_udp_error(py, e))?;
+        let t = b
+            .build()
+            .map_err(|e| raise(py, &UDP, BindingError::from(e)))?;
+        // `FlagCancel` is the placeholder cancel until WP-D gives udp a real
+        // handle; the `CancelSource` latch is what `close()` flips and what
+        // the receive loop polls.
+        let cancel = CancelSource::new(Arc::new(FlagCancel::new()));
+        // No `cancel` field: the sender exposes no `cancel_handle()`, and the
+        // `CancelSource` lives on inside `Owned` as the shell's
+        // `Arc<dyn TransportCancel>` — `close()` still latches it first.
         Ok(PyUdpTransport {
-            inner: Arc::new(Mutex::new(Some(t))),
+            owned: Owned::new(SendHalf(t), cancel.as_dyn(), ()),
         })
     }
 
@@ -343,6 +301,15 @@ struct UdpRecvInner {
 /// Longest single kernel wait inside `recv()`: the binding's own
 /// cancel-poll interval (same 100 ms cadence `tst_udp` uses internally),
 /// so a `close()` from another thread is observed within one slice.
+impl tst_pipeline::binding::Close for UdpRecvInner {
+    type Error = core::convert::Infallible;
+
+    fn close(&mut self) -> Result<(), Self::Error> {
+        RecvTransport::close(&mut self.transport);
+        Ok(())
+    }
+}
+
 const RECV_POLL_SLICE: Duration = Duration::from_millis(100);
 
 /// Outcome of the polled receive loop, mapped to a `PyErr` once the GIL
@@ -356,17 +323,14 @@ enum UdpRecvOutcome {
 
 #[pyclass(name = "RecvTransport", module = "tstrans.udp")]
 pub(crate) struct PyUdpRecvTransport {
-    /// Shared slot (PR #209 shape): a parked `recv` holds it with the GIL
-    /// released; `close()` sets `stop` BEFORE taking it, so the parked
-    /// recv ends with `UdpError(CLOSED)` within one poll slice.
-    inner: Arc<Mutex<Option<UdpRecvInner>>>,
-    /// Binding-level cancel: `tst_udp` has no cancel handle, so the
-    /// polled `recv` loop checks this between slices.
-    stop: Arc<AtomicBool>,
-    /// Bound port read once at `build()`, so `local_addr_port()` never
-    /// waits behind a parked `recv()` — the thread asking for the port is
-    /// usually the one that has to send the datagram that ends that park.
-    local_port: u16,
+    /// The binding layer's handle state machine (Arc 2). Snapshot = the
+    /// bound port read at `build()`, so `local_addr_port()` never waits
+    /// behind a parked `recv`.
+    owned: Owned<UdpRecvInner, u16>,
+    /// Shared cancel state. `FlagCancel` inside until WP-D gives udp a real
+    /// handle; `close()` latches it and the poll loop checks it between
+    /// slices, so a parked `recv()` ends within about one slice.
+    cancel: Arc<CancelSource>,
 }
 
 #[pymethods]
@@ -393,41 +357,56 @@ impl PyUdpRecvTransport {
     /// Releases the GIL while waiting on the kernel.
     #[pyo3(signature = (timeout_ms = None))]
     fn recv(&self, py: Python<'_>, timeout_ms: Option<u64>) -> PyResult<(Py<PyBytes>, String)> {
-        let stop = Arc::clone(&self.stop);
+        let cancel = Arc::clone(&self.cancel);
         let deadline = timeout_ms.map(|ms| Instant::now() + Duration::from_millis(ms));
-        let outcome = crate::util::with_slot(py, &self.inner, move |s| {
-            loop {
-                if stop.load(Ordering::Acquire) {
-                    return UdpRecvOutcome::Closed;
-                }
-                let slice = match deadline {
-                    None => RECV_POLL_SLICE,
-                    Some(dl) => {
-                        let now = Instant::now();
-                        if now >= dl {
-                            return UdpRecvOutcome::TimedOut;
-                        }
-                        // A sub-millisecond SO_RCVTIMEO rounds to 0 on
-                        // Linux, which means "block forever" — floor it.
-                        RECV_POLL_SLICE.min(dl - now).max(Duration::from_millis(1))
+        let outcome = py.allow_threads(|| {
+            self.owned.with_mut(move |s| {
+                loop {
+                    if cancel.is_cancelled() {
+                        return UdpRecvOutcome::Closed;
                     }
-                };
-                match s.transport.recv_timeout(&mut s.scratch, slice) {
-                    Ok(Some(n)) => return UdpRecvOutcome::Data(s.scratch[..n].to_vec()),
-                    Ok(None) => continue, // slice elapsed: re-check stop / deadline
-                    Err(e) => return UdpRecvOutcome::Failed(e),
+                    let slice = match deadline {
+                        None => RECV_POLL_SLICE,
+                        Some(dl) => {
+                            let now = Instant::now();
+                            if now >= dl {
+                                return UdpRecvOutcome::TimedOut;
+                            }
+                            // A sub-millisecond SO_RCVTIMEO rounds to 0 on
+                            // Linux, which means "block forever" — floor it.
+                            RECV_POLL_SLICE.min(dl - now).max(Duration::from_millis(1))
+                        }
+                    };
+                    match s.transport.recv_timeout(&mut s.scratch, slice) {
+                        Ok(Some(n)) => return UdpRecvOutcome::Data(s.scratch[..n].to_vec()),
+                        Ok(None) => continue, // slice elapsed: re-check stop / deadline
+                        Err(e) => return UdpRecvOutcome::Failed(e),
+                    }
                 }
-            }
+            })
         });
-        let bytes = match outcome {
-            None | Some(UdpRecvOutcome::Closed) => {
-                return Err(make_udp_error(py, "CLOSED", "transport closed"));
+        let bytes = match pyok(py, &UDP, outcome)? {
+            UdpRecvOutcome::Data(b) => b,
+            UdpRecvOutcome::Closed => {
+                return Err(raise(
+                    py,
+                    &UDP,
+                    BindingError::from(TransportError::ExplicitClose),
+                ));
             }
-            Some(UdpRecvOutcome::TimedOut) => {
-                return Err(make_udp_error(py, "IO", "recv timed out"));
+            // A deadline expiry is transient refusal, not an I/O failure:
+            // the handle stays open and the caller may retry.
+            UdpRecvOutcome::TimedOut => {
+                return Err(raise(
+                    py,
+                    &UDP,
+                    BindingError {
+                        kind: BindingErrorKind::Backpressure,
+                        detail: "recv timed out".into(),
+                    },
+                ));
             }
-            Some(UdpRecvOutcome::Failed(e)) => return Err(map_udp_error(py, e)),
-            Some(UdpRecvOutcome::Data(b)) => b,
+            UdpRecvOutcome::Failed(e) => return Err(raise(py, &UDP, BindingError::from(e))),
         };
         // recv_bytes doesn't expose the sender address; callers that need
         // the source addr should use a raw socket or filter at the IP layer.
@@ -439,26 +418,28 @@ impl PyUdpRecvTransport {
     /// snapshot, so it never waits behind a `recv()` parked on another
     /// thread; raises `UdpError(CLOSED)` once the transport is closed.
     fn local_addr_port(&self, py: Python<'_>) -> PyResult<u16> {
-        if crate::util::slot_alive(&self.inner, |_| true) {
-            Ok(self.local_port)
+        if self.owned.is_closed() {
+            Err(raise(py, &UDP, BindingError::from(HandleState::Closed)))
         } else {
-            Err(make_udp_error(py, "CLOSED", "transport closed"))
+            Ok(*self.owned.snapshot())
         }
     }
 
     /// Close the receiver. Sets the stop flag BEFORE taking the slot, so a
     /// `recv()` parked on another thread ends with `UdpError(kind=CLOSED)`
     /// within ~100 ms; further `.recv()` calls raise the same. Idempotent.
-    fn close(&self, py: Python<'_>) {
-        self.stop.store(true, Ordering::Release);
-        crate::util::close_slot(py, &self.inner, |mut s| s.transport.close());
+    fn close(&self, py: Python<'_>) -> PyResult<()> {
+        close_owned(py, &UDP, &self.owned)
     }
 
     /// Snapshot of wire-level statistics. `datagrams_received` /
     /// `bytes_received` tick on each successful `.recv()`.
     fn stats(&self, py: Python<'_>) -> PyResult<Py<PyUdpStats>> {
-        let s = crate::util::with_slot(py, &self.inner, |s| s.transport.stats())
-            .ok_or_else(|| make_udp_error(py, "CLOSED", "transport closed"))?;
+        let s = pyok(
+            py,
+            &UDP,
+            py.allow_threads(|| self.owned.with_ref(|s| s.transport.stats())),
+        )?;
         Py::new(py, PyUdpStats::from(s))
     }
 
@@ -472,16 +453,16 @@ impl PyUdpRecvTransport {
         _exc_type: &Bound<'_, PyAny>,
         _exc_value: &Bound<'_, PyAny>,
         _traceback: &Bound<'_, PyAny>,
-    ) -> bool {
-        self.close(py);
-        false
+    ) -> PyResult<bool> {
+        self.close(py)?;
+        Ok(false)
     }
 
     fn __repr__(&self) -> String {
-        if crate::util::slot_alive(&self.inner, |_| true) {
-            "RecvTransport(open)".to_string()
-        } else {
+        if self.owned.is_closed() {
             "RecvTransport(closed)".to_string()
+        } else {
+            "RecvTransport(open)".to_string()
         }
     }
 }
@@ -536,26 +517,32 @@ impl PyUdpRecvTransportBuilder {
             .as_ref()
             .ok_or_else(|| PyValueError::new_err("bind_url(...) is required before build()"))?;
         let mut b = tst_udp::UdpRecvTransportBuilder::from_url(url_str)
-            .map_err(|e| map_udp_url_error(py, e))?;
+            .map_err(|e| raise(py, &UDP, BindingError::from(e)))?;
         if let Some(v) = self.rcvbuf {
             b.rcvbuf(v);
         }
         if let Some(ref s) = self.iface {
             b.iface(s.as_str());
         }
-        let t = b.build().map_err(|e| map_udp_error(py, e))?;
+        let t = b
+            .build()
+            .map_err(|e| raise(py, &UDP, BindingError::from(e)))?;
         // Size the scratch buffer to hold the largest legal datagram.
         // Recv max_payload() is a flat 65535 deliverable ceiling; 65_536
         // keeps the historical scratch size.
         let scratch_len = t.max_payload().max(65_536);
         let local_port = t.local_addr().port();
+        let cancel = CancelSource::new(Arc::new(FlagCancel::new()));
         Ok(PyUdpRecvTransport {
-            inner: Arc::new(Mutex::new(Some(UdpRecvInner {
-                transport: t,
-                scratch: vec![0u8; scratch_len],
-            }))),
-            stop: Arc::new(AtomicBool::new(false)),
-            local_port,
+            owned: Owned::new(
+                UdpRecvInner {
+                    transport: t,
+                    scratch: vec![0u8; scratch_len],
+                },
+                cancel.as_dyn(),
+                local_port,
+            ),
+            cancel,
         })
     }
 
