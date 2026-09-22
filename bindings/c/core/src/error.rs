@@ -205,6 +205,83 @@ pub enum TstError {
     KlvDecode = -48,
 }
 
+// Std-only: the projection's only consumer is `from_kind`, which resolves
+// `tst_pipeline::binding::BindingErrorKind` — and `binding` is std-only.
+#[cfg(feature = "std")]
+impl TstError {
+    /// Exhaustive inverse of the `#[repr(i32)]` discriminants — every
+    /// variant listed, no wildcard on the variant side, so adding a
+    /// `TstError` variant without a row here is caught by
+    /// `from_c_code_round_trips_every_tst_error_variant`.
+    pub(crate) fn from_c_code(code: i32) -> Option<TstError> {
+        use TstError::*;
+        Some(match code {
+            0 => Success,
+            -1 => InvalidConfig,
+            -2 => InvalidNal,
+            -3 => InvalidTs,
+            -4 => BufferFull,
+            -5 => KlvTooLarge,
+            -6 => TooLarge,
+            -7 => Closed,
+            -8 => Transport,
+            -9 => InvalidUsage,
+            -10 => Internal,
+            -11 => PanicCaught,
+            -12 => EndOfStream,
+            -13 => NotAvailable,
+            -14 => NotFound,
+            -15 => RtpTransport,
+            -16 => RtspProtocol,
+            -17 => RtspAuthFailed,
+            -18 => RtspAuthRequired,
+            -19 => RtspNotFound,
+            -20 => RtspUnsupported,
+            -21 => RtspTls,
+            -22 => RtspIo,
+            -23 => RtspTimeout,
+            -24 => RtspServer,
+            -25 => RtspMount,
+            -26 => UdpIo,
+            -27 => UdpConfig,
+            -28 => UdpPayloadTooLarge,
+            -29 => UdpIfaceUnsupported,
+            -30 => TcpIo,
+            -31 => TcpConfig,
+            -32 => TcpConnectTimeout,
+            -33 => TcpTls,
+            -34 => HlsIo,
+            -35 => HlsConfig,
+            -36 => HlsFinished,
+            -37 => HlsTls,
+            -38 => RistFfi,
+            -39 => RistConfig,
+            -40 => RistPayloadTooLarge,
+            -41 => RistEncryptionDisabled,
+            -42 => RistRecvTimeout,
+            -43 => RistIo,
+            -44 => InvalidAv1Obu,
+            -45 => MispTime,
+            -46 => MispTimeMalformed,
+            -47 => WrongType,
+            -48 => KlvDecode,
+            _ => return None,
+        })
+    }
+
+    /// THE C projection of the binding-shared kind table (spec §3.3): A2's
+    /// `c_projection()` is the frozen TST_E number every kind folds to (its
+    /// own discriminant for the 41 C-numbered kinds, the retired converter's
+    /// code for the 57 new ones — the fold table lives in tst-pipeline, not
+    /// here). NOT a `match`: `BindingErrorKind` is a foreign
+    /// `#[non_exhaustive]` enum, so a match would need a wildcard. The
+    /// `unwrap_or` is unreachable for every table entry — pinned by
+    /// `from_kind_is_total_over_the_kind_table`.
+    pub(crate) fn from_kind(k: tst_pipeline::binding::BindingErrorKind) -> TstError {
+        Self::from_c_code(k.c_projection()).unwrap_or(TstError::Internal)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Per-thread (std) / per-context (no_std) last-error storage
 // ---------------------------------------------------------------------------
@@ -373,6 +450,15 @@ pub(crate) fn tst_error_from_kind(kind: ShellErrorKind) -> TstError {
 pub(crate) fn record_shell_error<E: ShellError>(e: &E) -> i32 {
     let code = tst_error_from_kind(e.kind());
     set_last_error(code, &e.to_string());
+    code as i32
+}
+
+/// THE error path for every data-path failure: writes the kind's frozen C
+/// code + the error's detail to the thread-local slot and returns the code.
+#[cfg(feature = "std")]
+pub(crate) fn record_binding_error(e: tst_pipeline::binding::BindingError) -> i32 {
+    let code = TstError::from_kind(e.kind);
+    set_last_error(code, &e.detail);
     code as i32
 }
 

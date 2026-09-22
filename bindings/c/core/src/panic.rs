@@ -85,17 +85,11 @@ where
     f()
 }
 
-/// Best-effort detail string from a `catch_unwind` payload.
-/// Used by both the `handle` module and `jni_catch` panic-isolation paths.
+/// Best-effort detail string from a `catch_unwind` payload — one
+/// renderer for every binding (`tst_pipeline::binding::panic`).
 #[cfg(feature = "std")]
 pub(crate) fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> alloc::string::String {
-    if let Some(s) = payload.downcast_ref::<&'static str>() {
-        alloc::string::String::from(*s)
-    } else if let Some(s) = payload.downcast_ref::<alloc::string::String>() {
-        s.clone()
-    } else {
-        alloc::string::String::from("non-string panic payload")
-    }
+    tst_pipeline::binding::panic::payload_message(payload)
 }
 
 #[cfg(test)]
