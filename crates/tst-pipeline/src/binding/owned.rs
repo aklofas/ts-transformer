@@ -180,6 +180,86 @@ impl<T, S> Owned<T, S> {
     pub fn end_reason(&self) -> Option<RecvEndReason> {
         self.end_reason.as_ref().and_then(RecvEndReasonHandle::get)
     }
+
+    /// Run `f` on `&mut T` — the ONE lock site. Bindings call this with the
+    /// GIL released / outside the JNI critical region, and hold no mutex
+    /// of their own around it.
+    ///
+    /// # Errors
+    ///
+    /// [`HandleState::Poisoned`] — the mutex is poisoned (a mutator refuses,
+    /// spec §3.2); [`HandleState::Closed`] — the slot is empty;
+    /// [`HandleState::Panicked`] — `f` panicked. In the last case the guard
+    /// was held OUTSIDE the catch boundary, so the mutex is not poisoned —
+    /// but a panic mid-mutation leaves `T` in an unknown state, so the slot
+    /// is DROPPED: the panicking call reports `Panicked` and every later
+    /// call reports `Closed` (the std-poisoning model; also what the C and
+    /// JVM bindings did before Arc 2). Readers ([`Self::with_ref`]) keep
+    /// the slot: a `&T` closure can only mutate through interior mutability,
+    /// and every such interior (transport mutex, atomics) carries its own
+    /// poison/latch rule — A1.9 records the per-site audit.
+    pub fn with_mut<R>(&self, f: impl FnOnce(&mut T) -> R) -> Result<R, HandleState> {
+        let mut guard = self.inner.lock().map_err(|_| HandleState::Poisoned)?;
+        if guard.is_none() {
+            return Err(HandleState::Closed);
+        }
+        match panic::catch(|| f(guard.as_mut().expect("checked non-empty above"))) {
+            Ok(r) => Ok(r),
+            Err(detail) => {
+                *guard = None; // drop T here, under the lock
+                Err(HandleState::Panicked { detail })
+            }
+        }
+    }
+
+    /// Run `f` on `&T` (stats, `is_alive`, `repr`). Recovers a poisoned
+    /// mutex; otherwise the same contract as [`Self::with_mut`].
+    ///
+    /// # Errors
+    ///
+    /// [`HandleState::Closed`], [`HandleState::Panicked`] — never `Poisoned`.
+    pub fn with_ref<R>(&self, f: impl FnOnce(&T) -> R) -> Result<R, HandleState> {
+        let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let t = guard.as_ref().ok_or(HandleState::Closed)?;
+        panic::catch(|| f(t)).map_err(|detail| HandleState::Panicked { detail })
+    }
+
+    /// Take the value out (consuming ops: `into_inner`, `finish`). Recovers a
+    /// poisoned mutex. `None` if already taken or closed.
+    pub fn take(&self) -> Option<T> {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).take()
+    }
+
+    /// `true` when the slot is empty. NON-BLOCKING: a slot another thread
+    /// currently holds (a parked receive) is by definition still open, so
+    /// this answers `false` without waiting — the `is_alive()` / `repr()`
+    /// probes the bindings run from a watchdog thread must never queue
+    /// behind the parked call (the PR #234 class). Recovers a poisoned
+    /// mutex.
+    pub fn is_closed(&self) -> bool {
+        match self.inner.try_lock() {
+            Ok(guard) => guard.is_none(),
+            Err(TryLockError::Poisoned(p)) => p.into_inner().is_none(),
+            Err(TryLockError::WouldBlock) => false,
+        }
+    }
+
+    /// Non-blocking [`Self::with_ref`]. `None` when another thread holds
+    /// the slot — the caller decides what "busy" means (Python's
+    /// `is_alive()` reports `True`, a `repr()` prints "busy"); otherwise
+    /// exactly `Some(with_ref(f))`: `Err(Closed)` on an empty slot,
+    /// `Err(Panicked)` if `f` panics, poison recovered.
+    pub fn try_with_ref<R>(&self, f: impl FnOnce(&T) -> R) -> Option<Result<R, HandleState>> {
+        let guard = match self.inner.try_lock() {
+            Ok(guard) => guard,
+            Err(TryLockError::Poisoned(p)) => p.into_inner(),
+            Err(TryLockError::WouldBlock) => return None,
+        };
+        let Some(t) = guard.as_ref() else {
+            return Some(Err(HandleState::Closed));
+        };
+        Some(panic::catch(|| f(t)).map_err(|detail| HandleState::Panicked { detail }))
+    }
 }
 
 #[cfg(test)]
@@ -329,5 +409,130 @@ mod tests {
     fn owned_is_send_and_sync_for_a_send_inner() {
         fn assert_send_sync<X: Send + Sync>() {}
         assert_send_sync::<Owned<Mock, &'static str>>();
+    }
+
+    // ---- slot access, poison + panic policy (Task A1.3) ----
+
+    /// Poison the fixture's mutex the only way std allows: unwind while a
+    /// guard is held, on another thread (the test's own `with_mut` cannot,
+    /// by design — see `with_mut_panic_does_not_poison`).
+    fn poison(f: &Fixture) {
+        let o = Arc::clone(&f.owned);
+        let r = std::thread::spawn(move || {
+            let _guard = o.inner.lock().unwrap();
+            panic!("poisoning on purpose");
+        })
+        .join();
+        assert!(r.is_err(), "the poisoning thread must have panicked");
+        assert!(f.owned.inner.is_poisoned());
+    }
+
+    #[test]
+    fn with_mut_and_with_ref_reach_the_value() {
+        let f = fixture();
+        assert_eq!(
+            f.owned.with_mut(|m| {
+                m.n += 5;
+                m.n
+            }),
+            Ok(5)
+        );
+        assert_eq!(f.owned.with_ref(|m| m.n), Ok(5));
+    }
+
+    #[test]
+    fn take_empties_the_slot_and_everything_after_is_closed() {
+        let f = fixture();
+        let taken = f.owned.take().expect("first take yields the value");
+        assert_eq!(taken.n, 0);
+        assert!(f.owned.take().is_none(), "second take: slot already empty");
+        assert!(f.owned.is_closed());
+        assert_eq!(f.owned.with_mut(|m| m.n), Err(HandleState::Closed));
+        assert_eq!(f.owned.with_ref(|m| m.n), Err(HandleState::Closed));
+    }
+
+    #[test]
+    fn with_mut_panic_is_reported_once_and_drops_the_slot() {
+        let f = fixture();
+        let r = f.owned.with_mut(|_| -> u32 { panic!("mutator boom") });
+        assert_eq!(
+            r,
+            Err(HandleState::Panicked {
+                detail: String::from("mutator boom")
+            })
+        );
+        assert!(
+            !f.owned.inner.is_poisoned(),
+            "the guard lives outside the catch boundary"
+        );
+        assert_eq!(
+            f.owned.with_mut(|m| {
+                m.n += 1;
+                m.n
+            }),
+            Err(HandleState::Closed),
+            "a mutator panic closes the slot"
+        );
+        assert!(f.owned.is_closed());
+        assert_eq!(
+            f.closes.load(Ordering::SeqCst),
+            0,
+            "dropped, not Close::close()d — the state is unknown"
+        );
+        // (Task A1.4 appends the `close()` is-quiet-after-a-panic assertion here.)
+    }
+
+    #[test]
+    fn with_ref_panic_is_reported_and_keeps_the_slot() {
+        let f = fixture();
+        let r = f.owned.with_ref(|_| -> u32 { panic!("reader boom {}", 2) });
+        assert_eq!(
+            r,
+            Err(HandleState::Panicked {
+                detail: String::from("reader boom 2")
+            })
+        );
+        assert!(!f.owned.inner.is_poisoned());
+        assert_eq!(f.owned.with_ref(|m| m.n), Ok(0));
+    }
+
+    #[test]
+    fn poisoned_mutex_refuses_the_mutator_and_recovers_for_readers() {
+        let f = fixture();
+        poison(&f);
+        assert_eq!(
+            f.owned.with_mut(|m| m.n),
+            Err(HandleState::Poisoned),
+            "mutator: refuse"
+        );
+        assert_eq!(f.owned.with_ref(|m| m.n), Ok(0), "reader: recover");
+        assert!(!f.owned.is_closed(), "is_closed: recover (slot still Some)");
+        assert!(f.owned.take().is_some(), "take: recover");
+        assert!(f.owned.is_closed());
+    }
+
+    #[test]
+    fn try_with_ref_uncontended_paths() {
+        let f = fixture();
+        assert_eq!(f.owned.try_with_ref(|m| m.n), Some(Ok(0)));
+        let r = f.owned.try_with_ref(|_| -> u32 { panic!("probe boom") });
+        assert_eq!(
+            r,
+            Some(Err(HandleState::Panicked {
+                detail: String::from("probe boom")
+            }))
+        );
+        assert!(!f.owned.inner.is_poisoned());
+        poison(&f);
+        assert_eq!(
+            f.owned.try_with_ref(|m| m.n),
+            Some(Ok(0)),
+            "poison recovered, like with_ref"
+        );
+        assert!(f.owned.take().is_some());
+        assert_eq!(
+            f.owned.try_with_ref(|m| m.n),
+            Some(Err(HandleState::Closed))
+        );
     }
 }
