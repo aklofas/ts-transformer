@@ -8,6 +8,7 @@ use jni::JNIEnv;
 use jni::objects::{JObject, JThrowable, JValue};
 use tst_core::codec::CodecParseError;
 use tst_core::error::{KlvDecodeError, KlvEncodeError};
+use tst_pipeline::binding::{BindingError, BindingErrorKind, HandleState};
 
 /// Variant-specific diagnostic fields forwarded to `CodecParseException`.
 /// Every field is `None` except those the producing `CodecParseError` variant
@@ -40,6 +41,298 @@ pub fn throw_closed(env: &mut JNIEnv, what: &str) {
         "java/lang/IllegalStateException",
         format!("{what} is closed"),
     );
+}
+
+/// Which Java exception class a [`BindingError`] is thrown as. The kind
+/// alone cannot decide it — `Closed` exists in both `SrtException.Kind`
+/// and `RtpException.Kind`, `Internal` in four enums — so the throw SITE
+/// names its domain, and the domain's declared subset is what
+/// [`verify_kind_tables`] resolves at load. The Java constant is
+/// [`BindingErrorKind::name`] (domain prefix stripped);
+/// [`BindingErrorKind::variant_name`] is the prefixed identity and appears
+/// only in messages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Domain {
+    Srt,
+    Rtp,
+    Rtsp,
+    Demux,
+    Mux,
+    KlvDecode,
+    KlvEncode,
+    Codec,
+}
+
+use BindingErrorKind as K;
+
+/// `org.tstrans.SrtException.Kind` (spec §3.3 + A2's SRT buckets).
+pub(crate) const SRT_KINDS: &[K] = &[
+    K::ConfigInvalid,
+    K::SrtConnectFailed,
+    K::SrtAcceptFailed,
+    K::SrtTimeout,
+    K::Closed,
+    K::Broken,
+    K::SrtIo,
+    K::Backpressure,
+    K::TooLarge,
+    K::InputMalformed,
+];
+/// `org.tstrans.RtpException.Kind`: the five `TransportError` projections
+/// that reach an rtp shell + tst-rtp's six `ConnectError` kinds.
+pub(crate) const RTP_KINDS: &[K] = &[
+    K::Backpressure,
+    K::Broken,
+    K::Closed,
+    K::TooLarge,
+    K::RtpPayloadTypeParam,
+    K::RtpMissingPayloadTypeParam,
+    K::RtpUrl,
+    K::RtpHostNotLiteral,
+    K::RtpIo,
+    K::RtpIfaceUnsupported,
+];
+/// `org.tstrans.RtspException.Kind` — ten names unchanged since v0.1.0.
+pub(crate) const RTSP_KINDS: &[K] = &[
+    K::RtspProtocol,
+    K::RtspAuthFailed,
+    K::RtspAuthRequired,
+    K::RtspNotFound,
+    K::RtspUnsupportedTransport,
+    K::RtspTls,
+    K::RtspIo,
+    K::RtspTimeout,
+    K::RtspServer,
+    K::RtspMount,
+];
+/// `org.tstrans.DemuxException.Kind` (`Internal` = the JNI event-conversion
+/// failure and A2's wildcard, not a `DemuxError` variant).
+pub(crate) const DEMUX_KINDS: &[K] = &[
+    K::DemuxUnrecoverable,
+    K::DemuxMalformedPsi,
+    K::DemuxMalformedPes,
+    K::DemuxSyncBufExhausted,
+    K::DemuxStrictRejection,
+    K::Internal,
+];
+/// `org.tstrans.MuxException.Kind`.
+pub(crate) const MUX_KINDS: &[K] = &[
+    K::InputMalformed,
+    K::ConfigInvalid,
+    K::InvalidUsage,
+    K::Backpressure,
+    K::Internal,
+    K::InvalidNal,
+    K::KlvTooLarge,
+    K::InvalidAv1Obu,
+    K::MispTime,
+];
+/// `org.tstrans.KlvDecodeException.Kind`.
+pub(crate) const KLV_DECODE_KINDS: &[K] = &[
+    K::KlvDecodeTruncatedSet,
+    K::KlvDecodeBadUniversalLabel,
+    K::KlvDecodeChecksumMismatch,
+    K::KlvDecodeDuplicateTag,
+    K::KlvDecodeMissingRequiredTag,
+    K::KlvDecodeMalformedBytes,
+    K::Internal,
+];
+/// `org.tstrans.KlvEncodeException.Kind`.
+pub(crate) const KLV_ENCODE_KINDS: &[K] = &[
+    K::KlvEncodeBufferTooSmall,
+    K::KlvEncodeRecordTooLarge,
+    K::KlvEncodeOutOfRange,
+    K::KlvEncodeStringTooLong,
+    K::KlvEncodeUnsupportedImapbLength,
+    K::KlvEncodeInvalidImapbParams,
+    K::KlvEncodeMissingMandatoryItem,
+    K::KlvEncodeReservedTagInUnknown,
+    K::KlvEncodeVTargetPackEmpty,
+    K::KlvEncodeDuplicateTargetId,
+    K::KlvEncodeForbiddenStandaloneOffset,
+];
+/// `org.tstrans.CodecParseException.Kind`.
+pub(crate) const CODEC_KINDS: &[K] = &[
+    K::CodecTruncatedRbsp,
+    K::CodecInvalidGolomb,
+    K::CodecReservedValue,
+    K::CodecUnsupportedProfile,
+    K::CodecDanglingSpsReference,
+    K::CodecDanglingVpsReference,
+    K::CodecEngineError,
+    K::CodecInvalidLeb128,
+    K::CodecBadSyncWord,
+    K::CodecTruncated,
+    K::CodecForbidden,
+    K::CodecUnsupportedFreeFormat,
+    K::CodecInvalidLengthSize,
+    K::CodecNalLengthOverflow,
+    K::CodecBufferTooSmall,
+];
+
+impl Domain {
+    pub(crate) const ALL: [Domain; 8] = [
+        Domain::Srt,
+        Domain::Rtp,
+        Domain::Rtsp,
+        Domain::Demux,
+        Domain::Mux,
+        Domain::KlvDecode,
+        Domain::KlvEncode,
+        Domain::Codec,
+    ];
+
+    /// JNI class name of the domain's exception.
+    pub(crate) const fn exc_class(self) -> &'static str {
+        match self {
+            Domain::Srt => "org/tstrans/SrtException",
+            Domain::Rtp => "org/tstrans/RtpException",
+            Domain::Rtsp => "org/tstrans/RtspException",
+            Domain::Demux => "org/tstrans/DemuxException",
+            Domain::Mux => "org/tstrans/MuxException",
+            Domain::KlvDecode => "org/tstrans/KlvDecodeException",
+            Domain::KlvEncode => "org/tstrans/KlvEncodeException",
+            Domain::Codec => "org/tstrans/CodecParseException",
+        }
+    }
+
+    /// The kinds this domain's Java `Kind` enum declares. Every entry's
+    /// [`BindingErrorKind::name`] must resolve as a static field of
+    /// `<exc_class>$Kind` — [`verify_kind_tables`] checks that at load.
+    pub(crate) const fn kinds(self) -> &'static [K] {
+        match self {
+            Domain::Srt => SRT_KINDS,
+            Domain::Rtp => RTP_KINDS,
+            Domain::Rtsp => RTSP_KINDS,
+            Domain::Demux => DEMUX_KINDS,
+            Domain::Mux => MUX_KINDS,
+            Domain::KlvDecode => KLV_DECODE_KINDS,
+            Domain::KlvEncode => KLV_ENCODE_KINDS,
+            Domain::Codec => CODEC_KINDS,
+        }
+    }
+}
+
+/// THE raise path for every `(Kind, String)`-constructed exception —
+/// srt / rtp / rtsp / demux / mux / klv-decode:
+/// `<Domain>Exception(Kind.<name()>, detail)`. (`KlvEncodeException` and
+/// `CodecParseException` have wider constructors; their throwers in this
+/// file call [`declared_member`] for the same checks.)
+///
+/// Bails if an exception is already pending. A kind the domain does not
+/// declare is a programming error (a producer nobody listed) and throws a
+/// `RuntimeException` naming it — loud, never a wrong-kind exception.
+#[expect(dead_code, reason = "throw sites move over in B3.3-B3.5b")]
+pub(crate) fn throw_binding(env: &mut JNIEnv, domain: Domain, e: &BindingError) {
+    if env.exception_check().unwrap_or(false) {
+        return; // don't clobber an already-pending exception
+    }
+    let exc_class = domain.exc_class();
+    let Some(member) = declared_member(env, domain, e.kind, &e.detail) else {
+        return;
+    };
+    let kind_sig = format!("L{exc_class}$Kind;");
+    if let Err(err) = throw_kinded(env, exc_class, &kind_sig, member, &e.detail) {
+        let simple_name = exc_class.rsplit('/').next().unwrap_or(exc_class);
+        let _ = env.throw_new(
+            "java/lang/RuntimeException",
+            format!(
+                "{simple_name} throw failed ({}): {err}",
+                e.kind.variant_name()
+            ),
+        );
+    }
+}
+
+/// The Java constant for `kind` in `domain`, or `None` after throwing a
+/// `RuntimeException` naming the undeclared kind (a producer nobody
+/// listed — loud, never a wrong-kind exception).
+pub(crate) fn declared_member(
+    env: &mut JNIEnv,
+    domain: Domain,
+    kind: BindingErrorKind,
+    detail: &str,
+) -> Option<&'static str> {
+    if domain.kinds().contains(&kind) {
+        return Some(kind.name());
+    }
+    let _ = env.throw_new(
+        "java/lang/RuntimeException",
+        format!(
+            "tst-jni: kind {} is not declared for {}$Kind (add it to the domain's KINDS and the Java enum); detail: {detail}",
+            kind.variant_name(),
+            domain.exc_class()
+        ),
+    );
+    None
+}
+
+/// The ONE [`HandleState`] → Java mapping (spec §5, JVM column):
+/// `Closed` → `IllegalStateException("<what> is closed")` (the Java-side
+/// `NativeHandle.ensureOpen` guard throws the same type BEFORE the native
+/// runs, so a native-side `Closed` — only reachable in a close race — must
+/// not differ); `Poisoned` → `IllegalStateException`; `Panicked` → the
+/// `RuntimeException("native panic in tst-jni: …")` [`crate::panic::jni_catch`]
+/// already produces for an uncaught panic, so a panic reads the same whether
+/// `Owned::with_mut` or the outer boundary caught it.
+#[expect(dead_code, reason = "call sites move over in B3.3-B3.5b")]
+pub(crate) fn throw_handle_state(env: &mut JNIEnv, what: &str, state: &HandleState) {
+    if env.exception_check().unwrap_or(false) {
+        return;
+    }
+    match state {
+        HandleState::Closed => throw_closed(env, what),
+        HandleState::Poisoned => {
+            let _ = env.throw_new(
+                "java/lang/IllegalStateException",
+                format!(
+                    "{what} is poisoned: a previous native call panicked while holding its lock"
+                ),
+            );
+        }
+        HandleState::Panicked { detail } => {
+            let _ = env.throw_new(
+                "java/lang/RuntimeException",
+                format!("native panic in tst-jni: {detail}"),
+            );
+        }
+        // `HandleState` is #[non_exhaustive]: a future state is a closed
+        // handle as far as the Java caller can act on it.
+        other => {
+            let _ = env.throw_new(
+                "java/lang/IllegalStateException",
+                format!("{what} is unusable: {other:?}"),
+            );
+        }
+    }
+}
+
+/// Load-time check (called once from `NativeLoader.load()` right after
+/// `System.load`): resolve every declared kind name of every domain
+/// against its Java enum. A missing member fails HERE, with both sides
+/// named, instead of at the first throw as a `RuntimeException("…throw
+/// failed (X)")`. `GetStaticFieldID` leaves a `NoSuchFieldError` pending
+/// on a miss; it is cleared and replaced so the message carries the
+/// Rust variant too.
+pub(crate) fn verify_kind_tables(env: &mut JNIEnv) {
+    for domain in Domain::ALL {
+        let kind_class = format!("{}$Kind", domain.exc_class());
+        let kind_sig = format!("L{kind_class};");
+        for kind in domain.kinds() {
+            let resolved = env.get_static_field(&kind_class, kind.name(), &kind_sig);
+            if resolved.is_err() || env.exception_check().unwrap_or(false) {
+                let _ = env.exception_clear();
+                let _ = env.throw_new(
+                    "java/lang/IllegalStateException",
+                    format!(
+                        "tst-jni kind table mismatch: {kind_class} has no member {} (BindingErrorKind::{kind:?}); the JAR and libtstjni were built from different sources",
+                        kind.name()
+                    ),
+                );
+                return;
+            }
+        }
+    }
 }
 
 /// Construct + throw `org.tstrans.DemuxException(Kind.<kind>, message)`.
@@ -469,6 +762,102 @@ pub(crate) fn throw_family(
         let _ = env.throw_new(
             "java/lang/RuntimeException",
             format!("{simple_name} throw failed ({kind}): {e}"),
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tst_core::transport::{BrokenCause, TransportError};
+
+    /// Every kind a `TransportError` can project to is declared for BOTH
+    /// transport domains, so `throw_binding` never hits its "undeclared
+    /// kind" fallback on the hot path. (`Domain::kinds` is what the
+    /// load-time check resolves against the Java enums.)
+    #[test]
+    fn transport_error_kinds_are_declared_for_srt_and_rtp() {
+        let variants = [
+            TransportError::Backpressure {
+                msg: "q".into(),
+                errno_code: None,
+            },
+            TransportError::Broken {
+                msg: "b".into(),
+                errno_code: None,
+                cause: BrokenCause::Unspecified,
+            },
+            TransportError::Closed,
+            TransportError::ExplicitClose,
+            TransportError::TooLarge { len: 2, max: 1 },
+        ];
+        for v in variants {
+            let kind = BindingError::from(v.clone()).kind;
+            assert!(
+                SRT_KINDS.contains(&kind),
+                "{v:?} → {} missing from SRT_KINDS",
+                kind.variant_name()
+            );
+            assert!(
+                RTP_KINDS.contains(&kind),
+                "{v:?} → {} missing from RTP_KINDS",
+                kind.variant_name()
+            );
+        }
+        assert_eq!(
+            BindingError::from(TransportError::ExplicitClose)
+                .kind
+                .name(),
+            "CLOSED"
+        );
+        assert_eq!(
+            BindingError::from(TransportError::ExplicitClose).detail,
+            "cancelled from another thread"
+        );
+    }
+
+    /// The eight domains' declared sets have the sizes the Java enums will
+    /// have after Task B3.6 and contain no duplicate MEMBER (two kinds with
+    /// the same `name()` in one domain would be unresolvable by name).
+    #[test]
+    fn domain_kind_sets_are_deduplicated_and_sized() {
+        for (d, n) in [
+            (Domain::Srt, 10),
+            (Domain::Rtp, 10),
+            (Domain::Rtsp, 10),
+            (Domain::Demux, 6),
+            (Domain::Mux, 9),
+            (Domain::KlvDecode, 7),
+            (Domain::KlvEncode, 11),
+            (Domain::Codec, 15),
+        ] {
+            let members: std::collections::BTreeSet<&str> =
+                d.kinds().iter().map(|k| k.name()).collect();
+            assert_eq!(
+                members.len(),
+                d.kinds().len(),
+                "{d:?} has a duplicate member"
+            );
+            assert_eq!(members.len(), n, "{d:?}: {members:?}");
+        }
+        assert_eq!(Domain::ALL.len(), 8);
+    }
+
+    /// The demux / mux / klv / codec classifiers land inside their domains
+    /// (Task B3.5b routes them through `throw_binding`).
+    #[test]
+    fn core_family_classifiers_are_declared() {
+        use tst_core::error::{DemuxError, KlvDecodeError, MuxError};
+        use tst_pipeline::binding::kind::{kind_of_demux, kind_of_klv_decode, kind_of_mux};
+        assert!(MUX_KINDS.contains(&kind_of_mux(&MuxError::InvalidNal)));
+        assert_eq!(kind_of_mux(&MuxError::InvalidNal).name(), "INVALID_NAL");
+        assert!(DEMUX_KINDS.contains(&kind_of_demux(&DemuxError::StrictRejection(String::new()))));
+        assert!(
+            KLV_DECODE_KINDS.contains(&kind_of_klv_decode(&KlvDecodeError::Truncated {
+                offset: 0,
+                needed: 2,
+                have: 1,
+            }))
         );
     }
 }

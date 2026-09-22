@@ -65,6 +65,24 @@ pub extern "system" fn JNI_OnLoad(_vm: JavaVM, _reserved: *mut c_void) -> jint {
     JNI_VERSION_1_8
 }
 
+/// `org.tstrans.NativeLoader.nVerifyKinds()` — see
+/// `crate::error::verify_kind_tables`. Resolves every error kind this
+/// library can raise against the `*Exception.Kind` enums of the JAR that
+/// just loaded it, so a JAR/native mismatch fails at `System.load` naming
+/// both sides instead of at the first failing call.
+///
+/// Not done in `JNI_OnLoad`: an exception pending when `JNI_OnLoad` returns
+/// reaches Java as `UnsatisfiedLinkError("exception occurred in JNI_OnLoad")`
+/// with the detail dropped; a native called right after `System.load`
+/// surfaces the exact mismatch.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_tstrans_NativeLoader_nVerifyKinds(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+) {
+    crate::panic::jni_catch(&mut env, (), |env| crate::error::verify_kind_tables(env));
+}
+
 /// `org.tstrans.Version.versionString()` — returns the Rust workspace crate
 /// version (e.g. "0.2.0") as a Java string, proving a value crosses the JNI
 /// boundary from Rust to the JVM.

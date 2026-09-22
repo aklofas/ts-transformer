@@ -11,12 +11,18 @@ class MuxErrorModelTest {
         assertEquals(MuxException.Kind.CONFIG_INVALID, e.kind());
         assertEquals("bad config", e.getMessage());
     }
+    /**
+     * Task B3.2 ADDED the four precise {@code MuxError} members that used to
+     * fold into {@code INPUT_MALFORMED}; nothing retires here, so B3.6 leaves
+     * this at nine.
+     */
     @Test
-    void kindMatchesTstPyBuckets() {
+    void kindDeclaresEveryMemberTheNativeCanRaise() {
         for (String n : new String[]{
-                "INPUT_MALFORMED","CONFIG_INVALID","INVALID_USAGE","BACKPRESSURE","INTERNAL"}) {
+                "INPUT_MALFORMED","CONFIG_INVALID","INVALID_USAGE","BACKPRESSURE","INTERNAL",
+                "INVALID_NAL","KLV_TOO_LARGE","INVALID_AV1_OBU","MISP_TIME"}) {
             MuxException.Kind.valueOf(n);
         }
-        assertEquals(5, MuxException.Kind.values().length);
+        assertEquals(9, MuxException.Kind.values().length);
     }
 }

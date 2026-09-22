@@ -55,6 +55,7 @@ public final class NativeLoader {
         String override = overridePath();
         if (override != null) {
             System.load(override);
+            nVerifyKinds();
             loaded = true;
             return;
         }
@@ -71,6 +72,7 @@ public final class NativeLoader {
             Path target = extractToStableDir(bytes, ext,
                     Path.of(System.getProperty("java.io.tmpdir")));
             System.load(target.toAbsolutePath().toString());
+            nVerifyKinds();
             loaded = true;
         } catch (IOException e) {
             throw new UnsatisfiedLinkError(
@@ -88,6 +90,15 @@ public final class NativeLoader {
         String v = System.getProperty("tstrans.native.lib");
         return (v != null && !v.isEmpty()) ? v : null;
     }
+
+    /**
+     * Resolve every error kind the native library can raise against the
+     * {@code *Exception.Kind} enums of THIS JAR. Throws
+     * {@link IllegalStateException} naming the missing member when the JAR
+     * and {@code libtstjni} were built from different sources — at load,
+     * not at the first failing call.
+     */
+    private static native void nVerifyKinds();
 
     /**
      * Extracts {@code bytes} to
