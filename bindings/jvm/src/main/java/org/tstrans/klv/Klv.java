@@ -268,7 +268,7 @@ public final class Klv {
      * @return ST 0903 embedded body bytes
      * @throws org.tstrans.KlvEncodeException with {@code kind = MISSING_MANDATORY_ITEM} if
      *                                        a required item is absent, or
-     *                                        {@code kind = VTARGET_PACK_EMPTY} if a pack has
+     *                                        {@code kind = V_TARGET_PACK_EMPTY} if a pack has
      *                                        no TLV items, or
      *                                        {@code kind = DUPLICATE_TARGET_ID} if target IDs
      *                                        are not unique

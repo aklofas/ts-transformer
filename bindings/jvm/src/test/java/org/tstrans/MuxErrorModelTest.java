@@ -2,6 +2,9 @@ package org.tstrans;
 
 import static org.junit.jupiter.api.Assertions.*;
 import org.junit.jupiter.api.Test;
+import java.util.Arrays;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 class MuxErrorModelTest {
     @Test
@@ -12,17 +15,17 @@ class MuxErrorModelTest {
         assertEquals("bad config", e.getMessage());
     }
     /**
-     * Task B3.2 ADDED the four precise {@code MuxError} members that used to
-     * fold into {@code INPUT_MALFORMED}; nothing retires here, so B3.6 leaves
-     * this at nine.
+     * The members are exactly the domain's {@code BindingErrorKind} subset
+     * (WP-B3 / spec §3.3). The four precise members were added in 0.7.0; nothing retired.
      */
     @Test
-    void kindDeclaresEveryMemberTheNativeCanRaise() {
-        for (String n : new String[]{
-                "INPUT_MALFORMED","CONFIG_INVALID","INVALID_USAGE","BACKPRESSURE","INTERNAL",
-                "INVALID_NAL","KLV_TOO_LARGE","INVALID_AV1_OBU","MISP_TIME"}) {
-            MuxException.Kind.valueOf(n);
-        }
+    void kindMembersMatchTheMuxDomain() {
+        Set<String> expected = Set.of("INPUT_MALFORMED", "CONFIG_INVALID", "INVALID_USAGE", "BACKPRESSURE", "INTERNAL", "INVALID_NAL", "KLV_TOO_LARGE", "INVALID_AV1_OBU", "MISP_TIME");
+        Set<String> actual = Arrays.stream(MuxException.Kind.values())
+            .map(Enum::name)
+            .collect(Collectors.toSet());
+        assertEquals(expected, actual);
         assertEquals(9, MuxException.Kind.values().length);
+
     }
 }

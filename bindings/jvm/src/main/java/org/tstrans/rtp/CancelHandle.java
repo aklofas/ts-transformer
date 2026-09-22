@@ -6,7 +6,7 @@ import org.tstrans.NativeHandle;
  * Cross-thread cancel handle for an RTP {@link Sender} / {@link Receiver}.
  * {@link #cancel()} wakes a thread parked in {@code send}/{@code recv} within
  * ~100 ms; that call then throws {@link org.tstrans.RtpException} with kind
- * {@code CANCELLED}. Mirrors tst-py {@code tstrans.rtp.CancelHandle} — which
+ * {@code CLOSED}. Mirrors tst-py {@code tstrans.rtp.CancelHandle} — which
  * exposes only {@code cancel()} (no {@code isCancelled}).
  *
  * <p>The native handle is an {@link java.util.concurrent.atomic.AtomicLong}

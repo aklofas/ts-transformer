@@ -17,7 +17,7 @@ public final class SrtException extends BindingException {
      */
     public enum Kind {
         CONFIG_INVALID, CONNECT_FAILED, ACCEPT_FAILED, TIMEOUT,
-        CLOSED, BROKEN, WOULD_BLOCK, IO,
+        CLOSED, BROKEN, IO,
         /** The transport is alive but could not take the bytes now (full send queue); retry. */
         BACKPRESSURE,
         /** The payload exceeds the transport's per-send ceiling. */

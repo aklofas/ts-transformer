@@ -69,7 +69,7 @@ public final class Sender extends NativeHandle {
      *
      * @param data TS bytes to send (any length; need not be packet-aligned)
      * @throws IllegalStateException if the sender is closed
-     * @throws SrtException {@code WOULD_BLOCK} if the send queue is full (backpressure);
+     * @throws SrtException {@code BACKPRESSURE} if the send queue is full (retry);
      *     {@code BROKEN} if the transport is broken; {@code IO} on other errors
      */
     public void sendBytes(byte[] data) throws SrtException {

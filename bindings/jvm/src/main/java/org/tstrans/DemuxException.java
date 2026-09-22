@@ -1,27 +1,19 @@
 package org.tstrans;
 
 /**
- * Thrown when the MPEG-TS demuxer rejects input. {@link Kind} mirrors tst-py's
- * {@code DemuxErrorKind}; every constant except {@code UNEXPECTED_EOF} maps to a
- * producing {@code tst_core::mpegts::demux::DemuxError} variant. {@code UNEXPECTED_EOF}
- * is parity-only (no Rust producer) — see its constant doc.
+ * Thrown when the MPEG-TS demuxer rejects input. Every {@link Kind} constant
+ * except {@code INTERNAL} maps 1:1 to a producing
+ * {@code tst_core::mpegts::demux::DemuxError} variant; {@code INTERNAL} is the
+ * JNI-side event-conversion failure.
  */
 public final class DemuxException extends BindingException {
     private static final long serialVersionUID = 1L;
 
     /**
-     * Discriminant. Every constant except {@code UNEXPECTED_EOF} maps 1:1 to a
-     * {@code tst_core::DemuxError} variant; {@code UNEXPECTED_EOF} is parity-only
-     * (documented on the constant).
+     * Discriminant; the names are the {@code BindingErrorKind} members,
+     * verified against this enum at load time by {@link NativeLoader}.
      */
     public enum Kind {
-        SYNC_LOSS, BAD_PMT, BAD_PES,
-        /**
-         * Parity-only constant mirroring tst-py's vestigial {@code DemuxErrorKind.UNEXPECTED_EOF}:
-         * there is NO producer in {@code tst_core::DemuxError} (the file path treats truncation as
-         * clean EOF and surfaces read failures as native {@code IOException}).
-         */
-        UNEXPECTED_EOF,
         STRICT_REJECTION, INTERNAL,
         /**
          * {@code DemuxError::Unrecoverable} — one sync-search window held no

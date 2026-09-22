@@ -2,31 +2,15 @@ package org.tstrans;
 
 /**
  * Checked exception for the RTP transport surface ({@code org.tstrans.rtp}).
- * Mirrors tst-py's {@code tstrans.exceptions.RtpError} / {@code RtpErrorKind}.
- * {@link Kind} maps the Rust {@code tst_core::transport::TransportError} and
- * {@code tst_rtp::ConnectError} families onto four user-facing buckets — see
- * {@code bindings/jvm/src/rtp/errors.rs}.
+ * {@link Kind} carries the Rust {@code tst_core::transport::TransportError}
+ * projections an rtp shell can raise plus {@code tst_rtp::ConnectError}'s six
+ * variants; the names are the {@code BindingErrorKind} members, verified
+ * against this enum at load time by {@link NativeLoader}.
  */
 public final class RtpException extends BindingException {
     private static final long serialVersionUID = 1L;
 
-    /** RTP failure category. Names match tst-py {@code RtpErrorKind} 1:1. */
     public enum Kind {
-        TRANSPORT, MALFORMED_PACKET, CANCELLED,
-        /**
-         * Recv deadline expired — retryable; the transport/session is still
-         * alive. Raised from two triggers: a persistent deadline configured
-         * via the {@code ?recv_timeout=<ms>} URL query key on a receiver URL,
-         * or a per-call timeout argument to {@code recv()} / {@code recvAu()}.
-         * A receiver with neither configured blocks indefinitely instead of
-         * raising this. Mirrors tst-py {@code RtpErrorKind.TIMEOUT}.
-         */
-        TIMEOUT,
-        /**
-         * A receive deadline elapsed with the transport still alive — the
-         * persistent {@code ?recv_timeout=<ms>} URL knob or the per-call
-         * {@code timeoutMs} argument; retryable.
-         */
         BACKPRESSURE,
         /** The transport is dead (send/recv I/O failure); reopen. */
         BROKEN,

@@ -57,7 +57,7 @@ public final class MuxSender extends NativeHandle {
      * @param url           {@code rtp://host:port}
      * @param programConfig the muxer program configuration
      * @return an open {@code MuxSender}
-     * @throws RtpException {@code TRANSPORT} on URL-parse / socket-bind failure
+     * @throws RtpException {@code IO} on URL-parse / socket-bind failure
      * @throws MuxException {@code CONFIG_INVALID} if the muxer rejects the config
      */
     public static MuxSender fromUrl(String url, MuxerConfig programConfig)
@@ -73,7 +73,7 @@ public final class MuxSender extends NativeHandle {
      * @param programConfig the muxer program configuration
      * @param pktSize       the UDP datagram payload size; must be &ge; 0
      * @return an open {@code MuxSender}
-     * @throws RtpException {@code TRANSPORT} on URL-parse / socket-bind failure
+     * @throws RtpException {@code IO} on URL-parse / socket-bind failure
      * @throws MuxException {@code CONFIG_INVALID} if the muxer rejects the config
      * @throws IllegalArgumentException if {@code pktSize} is negative
      */
@@ -93,7 +93,7 @@ public final class MuxSender extends NativeHandle {
         if (h == 0) {
             // nFromUrl throws a pending RtpException/MuxException; JNI re-raises.
             // Unreachable in practice, but satisfies the compiler.
-            throw new RtpException(RtpException.Kind.TRANSPORT,
+            throw new RtpException(RtpException.Kind.IO,
                 "nFromUrl returned 0 without throwing");
         }
         return new MuxSender(h);
@@ -200,7 +200,7 @@ public final class MuxSender extends NativeHandle {
      * @param pts      90&nbsp;kHz presentation timestamp
      * @param keyFrame whether this access unit is a key frame
      * @throws IllegalStateException if the sender is closed
-     * @throws RtpException {@code TRANSPORT} on transport failure, or if the
+     * @throws RtpException {@code IO} on transport failure, or if the
      *     stream handle is out of range / forged
      * @throws MuxException on muxer/framing failure (incl. a handle not configured
      *     for this muxer)
@@ -221,7 +221,7 @@ public final class MuxSender extends NativeHandle {
      * @param metadataServiceId AU-cell metadata service id (0..=255; default 0)
      * @throws IllegalStateException if the sender is closed
      * @throws IllegalArgumentException if {@code metadataServiceId} is out of 0..=255
-     * @throws RtpException {@code TRANSPORT} on transport failure, or if the
+     * @throws RtpException {@code IO} on transport failure, or if the
      *     stream handle is out of range / forged
      * @throws MuxException on muxer failure (incl. a handle not configured for
      *     this muxer)
@@ -239,7 +239,7 @@ public final class MuxSender extends NativeHandle {
      * @param frames the encoded audio bytes
      * @param pts    90&nbsp;kHz presentation timestamp
      * @throws IllegalStateException if the sender is closed
-     * @throws RtpException {@code TRANSPORT} on transport failure, or if the
+     * @throws RtpException {@code IO} on transport failure, or if the
      *     stream handle is out of range / forged
      * @throws MuxException on muxer failure (incl. a handle not configured for
      *     this muxer)
@@ -257,7 +257,7 @@ public final class MuxSender extends NativeHandle {
      * @param payload the subtitle access-unit bytes
      * @param pts     90&nbsp;kHz presentation timestamp
      * @throws IllegalStateException if the sender is closed
-     * @throws RtpException {@code TRANSPORT} on transport failure, or if the
+     * @throws RtpException {@code IO} on transport failure, or if the
      *     stream handle is out of range / forged
      * @throws MuxException on muxer failure (incl. a handle not configured for
      *     this muxer)
@@ -277,7 +277,7 @@ public final class MuxSender extends NativeHandle {
      *             65527 bytes with PTS, 65532 without)
      * @param pts  90&nbsp;kHz presentation timestamp
      * @throws IllegalStateException if the sender is closed
-     * @throws RtpException {@code TRANSPORT} on transport failure, or if the
+     * @throws RtpException {@code IO} on transport failure, or if the
      *     stream handle is out of range / forged
      * @throws MuxException on muxer failure (incl. a handle not configured for
      *     this muxer)
