@@ -132,6 +132,7 @@ class SrtPlainCloseCancelsFirstTest {
 
         assertTrue(end instanceof SrtException,
             "expected the iteration to end with SrtException(BROKEN), got " + end);
+        // WP-C2 tightens to CLOSED (the SRT-level ExplicitClose lands in PR 8).
         assertEquals(SrtException.Kind.BROKEN, ((SrtException) end).kind(),
             "a close-initiated cancel on the plain shell surfaces as BROKEN");
         sender.close();
@@ -205,6 +206,7 @@ class SrtPlainCloseCancelsFirstTest {
 
         assertTrue(end instanceof SrtException,
             "expected recvBytes() to end with SrtException(BROKEN), got " + end);
+        // WP-C2 tightens to CLOSED (the SRT-level ExplicitClose lands in PR 8).
         assertEquals(SrtException.Kind.BROKEN, ((SrtException) end).kind(),
             "a close-initiated cancel on the plain shell surfaces as BROKEN");
         sender.close();

@@ -31,6 +31,7 @@ use jni::JNIEnv;
 use jni::objects::{JByteArray, JClass, JObject, JString};
 use jni::sys::{jboolean, jbyteArray, jint, jlong};
 use tst_core::transport::{BrokenCause, TransportError};
+use tst_pipeline::binding::BindingErrorKind;
 use tst_pipeline::receiver::ReceiverErrorSource;
 use tst_pipeline::sender::SenderErrorSource;
 use tst_pipeline::{
@@ -217,7 +218,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedSender_nFromUrl(
                 "ManagedSender.fromUrl requires mode=caller (default); got mode={:?}",
                 parsed.mode
             );
-            super::errors::throw_srt(env, "CONFIG_INVALID", &msg);
+            super::errors::throw_srt(env, BindingErrorKind::ConfigInvalid, &msg);
             return 0;
         }
 
@@ -299,9 +300,9 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedSender_nSendBytes(
             Some(Err(e)) => match e.source {
                 SenderErrorSource::Transport(t) => super::errors::transport_error(env, &t),
                 SenderErrorSource::Framing(f) => {
-                    super::errors::throw_srt(env, "CONFIG_INVALID", &f.to_string())
+                    super::errors::throw_srt(env, BindingErrorKind::ConfigInvalid, &f.to_string())
                 }
-                _ => super::errors::throw_srt(env, "IO", &e.to_string()),
+                _ => super::errors::throw_srt(env, BindingErrorKind::SrtIo, &e.to_string()),
             },
             None => {
                 crate::error::throw_closed(env, "ManagedSender");
@@ -323,9 +324,9 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedSender_nFlush(
             Some(Err(e)) => match e.source {
                 SenderErrorSource::Transport(t) => super::errors::transport_error(env, &t),
                 SenderErrorSource::Framing(f) => {
-                    super::errors::throw_srt(env, "CONFIG_INVALID", &f.to_string())
+                    super::errors::throw_srt(env, BindingErrorKind::ConfigInvalid, &f.to_string())
                 }
-                _ => super::errors::throw_srt(env, "IO", &e.to_string()),
+                _ => super::errors::throw_srt(env, BindingErrorKind::SrtIo, &e.to_string()),
             },
             None => {
                 crate::error::throw_closed(env, "ManagedSender");
@@ -390,7 +391,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedSender_nSrtStats<'local>(
     crate::panic::jni_catch(&mut env, JObject::null(), |env| {
         super::errors::throw_srt(
             env,
-            "IO",
+            BindingErrorKind::SrtIo,
             "srt_stats not available on ManagedSender (use socketStats); a future \
              tst-pipeline accessor will expose the SRT-rich shape",
         );
@@ -416,7 +417,11 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedSender_nReconnectStats<'local
             return JObject::null();
         };
         let Some(stats) = maybe_stats else {
-            super::errors::throw_srt(env, "IO", "reconnect stats unavailable: gap lock poisoned");
+            super::errors::throw_srt(
+                env,
+                BindingErrorKind::SrtIo,
+                "reconnect stats unavailable: gap lock poisoned",
+            );
             return JObject::null();
         };
         match build_managed_transport_stats(env, &stats) {
@@ -514,7 +519,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedReceiver_nFromUrl(
                 "ManagedReceiver.fromUrl requires mode=listener; got mode={:?}",
                 parsed.mode
             );
-            super::errors::throw_srt(env, "CONFIG_INVALID", &msg);
+            super::errors::throw_srt(env, BindingErrorKind::ConfigInvalid, &msg);
             return 0;
         }
 
@@ -599,7 +604,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedReceiver_nRecvBytes(
             Err(e) => {
                 match e.source {
                     ReceiverErrorSource::Transport(t) => super::errors::transport_error(env, &t),
-                    _ => super::errors::throw_srt(env, "IO", &e.to_string()),
+                    _ => super::errors::throw_srt(env, BindingErrorKind::SrtIo, &e.to_string()),
                 }
                 std::ptr::null_mut()
             }
@@ -676,7 +681,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedReceiver_nSrtStats<'local>(
     crate::panic::jni_catch(&mut env, JObject::null(), |env| {
         super::errors::throw_srt(
             env,
-            "IO",
+            BindingErrorKind::SrtIo,
             "srt_stats not available on ManagedReceiver (use socketStats); a future \
              tst-pipeline accessor will expose the SRT-rich shape",
         );

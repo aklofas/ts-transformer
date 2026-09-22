@@ -117,6 +117,7 @@ final class CancelHandleMidIterationTest {
             // managed wrapper's mapping. Same acceptance set as the Python twin
             // (test_cancel_handle_cross_thread) and docs/reference/srt-cancel-handle.md.
             SrtException.Kind kind = ((SrtException) cause).kind();
+            // WP-C2 tightens to CLOSED (the SRT-level ExplicitClose lands in PR 8).
             assertTrue(kind == SrtException.Kind.BROKEN || kind == SrtException.Kind.CLOSED,
                 "cancel should surface as BROKEN or CLOSED, got " + kind);
         } finally {

@@ -51,6 +51,7 @@ use tst_core::mpegts::mux::{
     AudioStreamHandle, DataStreamHandle, KlvStreamHandle, SubtitleStreamHandle, VideoStreamHandle,
 };
 use tst_core::transport::{BrokenCause, TransportError};
+use tst_pipeline::binding::BindingErrorKind;
 use tst_pipeline::{
     ManagedDemuxReceiver as RustManagedDemuxReceiver, ManagedDemuxReceiverConfig,
     ManagedRecvTransport, ManagedTransport, MuxSender as RustMuxSender, MuxSenderError,
@@ -172,7 +173,7 @@ fn throw_managed_mux_sender_error(env: &mut JNIEnv, e: &MuxSenderError) {
         MuxSenderErrorSource::Transport(t) => transport_error(env, t),
         // `MuxSenderErrorSource` may gain variants; route any future one to a
         // generic SrtException(IO) with the Display message preserved.
-        _ => throw_srt(env, "IO", &e.to_string()),
+        _ => throw_srt(env, BindingErrorKind::SrtIo, &e.to_string()),
     }
 }
 
@@ -285,7 +286,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nFromUrl<'local>(
                 "ManagedMuxSender.fromUrl requires mode=caller (default); got mode={:?}",
                 parsed.mode
             );
-            throw_srt(env, "CONFIG_INVALID", &msg);
+            throw_srt(env, BindingErrorKind::ConfigInvalid, &msg);
             return 0;
         }
 
@@ -327,7 +328,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nFromUrl<'local>(
                     TransportError::Broken { msg, .. } => msg.clone(),
                     _ => format!("{e:?}"),
                 };
-                throw_srt(env, "CONNECT_FAILED", &msg);
+                throw_srt(env, BindingErrorKind::SrtConnectFailed, &msg);
                 return 0;
             }
         };
@@ -485,7 +486,11 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nSendVideoTo<'local
             .ok()
             .and_then(|r| VideoStreamHandle::try_from_raw(r).ok())
         else {
-            throw_srt(env, "CONFIG_INVALID", "invalid stream handle");
+            throw_srt(
+                env,
+                BindingErrorKind::ConfigInvalid,
+                "invalid stream handle",
+            );
             return;
         };
         let Some(buf) = read_bytes(env, &nal) else {
@@ -513,7 +518,11 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nSendKlvTo<'local>(
             .ok()
             .and_then(|r| KlvStreamHandle::try_from_raw(r).ok())
         else {
-            throw_srt(env, "CONFIG_INVALID", "invalid stream handle");
+            throw_srt(
+                env,
+                BindingErrorKind::ConfigInvalid,
+                "invalid stream handle",
+            );
             return;
         };
         let Ok(service_id) = checked_u8(env, i64::from(metadata_service_id), "metadataServiceId")
@@ -544,7 +553,11 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nSendAudioTo<'local
             .ok()
             .and_then(|r| AudioStreamHandle::try_from_raw(r).ok())
         else {
-            throw_srt(env, "CONFIG_INVALID", "invalid stream handle");
+            throw_srt(
+                env,
+                BindingErrorKind::ConfigInvalid,
+                "invalid stream handle",
+            );
             return;
         };
         let Some(buf) = read_bytes(env, &frames) else {
@@ -571,7 +584,11 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nSendSubtitleTo<'lo
             .ok()
             .and_then(|r| SubtitleStreamHandle::try_from_raw(r).ok())
         else {
-            throw_srt(env, "CONFIG_INVALID", "invalid stream handle");
+            throw_srt(
+                env,
+                BindingErrorKind::ConfigInvalid,
+                "invalid stream handle",
+            );
             return;
         };
         let Some(buf) = read_bytes(env, &payload) else {
@@ -601,7 +618,11 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nSendDataTo<'local>
             .ok()
             .and_then(|r| DataStreamHandle::try_from_raw(r).ok())
         else {
-            throw_srt(env, "CONFIG_INVALID", "invalid stream handle");
+            throw_srt(
+                env,
+                BindingErrorKind::ConfigInvalid,
+                "invalid stream handle",
+            );
             return;
         };
         let Some(buf) = read_bytes(env, &data) else {
@@ -764,7 +785,11 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nReconnectStats<'lo
             return JObject::null();
         };
         let Some(stats) = maybe_stats else {
-            throw_srt(env, "IO", "reconnect stats unavailable: gap lock poisoned");
+            throw_srt(
+                env,
+                BindingErrorKind::SrtIo,
+                "reconnect stats unavailable: gap lock poisoned",
+            );
             return JObject::null();
         };
         match build_managed_transport_stats(env, &stats) {
@@ -951,7 +976,7 @@ fn build_demux_from_url(
                 TransportError::Broken { msg, .. } => msg.clone(),
                 _ => format!("{e:?}"),
             };
-            throw_srt(env, "CONNECT_FAILED", &msg);
+            throw_srt(env, BindingErrorKind::SrtConnectFailed, &msg);
             return 0;
         }
     };
