@@ -42,14 +42,17 @@
 use std::sync::Arc;
 
 use tst_core::mpegts::demux::DemuxerConfig;
-use tst_core::transport::{BrokenCause, RecvTransport, TransportError};
+use tst_core::mpegts::mux::MuxerConfig;
+use tst_core::transport::{BrokenCause, RecvTransport, Transport, TransportError};
 use tst_pipeline::binding::ManagedHandles;
 use tst_pipeline::{
     FactoryCancel, ManagedDemuxReceiver, ManagedDemuxReceiverConfig, ManagedRecvTransport,
-    RawReceiver, RawReceiverConfig, Receiver, ReceiverConfig, ReconnectPolicy, RecvEndReasonHandle,
+    ManagedStatsHandle, ManagedTransport, MuxSender, RawReceiver, RawReceiverConfig, RawSender,
+    RawSenderConfig, Receiver, ReceiverConfig, ReconnectPolicy, RecvEndReasonHandle, Sender,
+    SenderConfig,
 };
 
-use crate::error::SrtError;
+use crate::error::{OptionError, SrtError};
 use crate::transport::SrtTransport;
 use crate::url::{Mode, SrtUrl};
 
@@ -193,4 +196,133 @@ pub fn managed_raw_receiver_from_url(
         RawReceiver::new(managed, RawReceiverConfig::default()),
         handles,
     ))
+}
+
+/// Senders open as callers only (the C sender family never had a
+/// listener path; Python refuses `?mode=listener` at construction).
+/// Refused before any socket is touched.
+fn callers_only() -> SrtError {
+    SrtError::Option(OptionError::OutOfRange(
+        "?mode=listener: managed senders open as callers only \
+         (see deferred-features.md, \"SRT URL mode=listener / mode=rendezvous dispatch\")"
+            .to_string(),
+    ))
+}
+
+/// The send-side reconnect decorator for `url`: the initial connect now,
+/// a factory that re-dials the same URL on every `Broken`.
+fn managed_transport_from_url(
+    url: &SrtUrl,
+    policy: ReconnectPolicy,
+) -> Result<ManagedTransport<SrtTransport>, SrtError> {
+    if url.mode == Mode::Listener {
+        return Err(callers_only());
+    }
+    let initial = url.connect()?;
+    let url = url.clone();
+    Ok(ManagedTransport::new(
+        initial,
+        move || url.connect().map_err(open_error_to_transport),
+        policy,
+    ))
+}
+
+/// The observers for a send-side decorator, taken BEFORE it moves into a
+/// shell. Senders record no end reason: a fresh, never-set handle. The
+/// [`ManagedStatsHandle`] rides alongside because the gap-buffer counters
+/// it snapshots (`gap_len`, `gap_messages_dropped`, `gap_bytes_dropped`)
+/// exist only on the send side and every binding's `reconnect_stats()`
+/// reads them — `MuxSender` exposes no transport accessor, so the handle
+/// is unreachable once the shell owns the transport.
+fn send_handles(managed: &ManagedTransport<SrtTransport>) -> (ManagedHandles, ManagedStatsHandle) {
+    let handles = ManagedHandles {
+        // Always `Some` — `ManagedTransport::cancel_handle` builds a
+        // `ManagedCancel` unconditionally.
+        cancel: managed
+            .cancel_handle()
+            .expect("ManagedTransport::cancel_handle is always Some"),
+        end_reason: RecvEndReasonHandle::default(),
+        reconnects: managed.reconnects_handle(),
+        attempts: managed.attempts_handle(),
+        reconnecting: managed.reconnecting_handle(),
+    };
+    (handles, managed.stats_handle())
+}
+
+/// Open `url` (caller mode only) as a reconnecting mux sender for
+/// `config`, and return it with its [`ManagedHandles`] and the
+/// [`ManagedStatsHandle`] (gap-buffer + reconnect telemetry).
+///
+/// # Errors
+///
+/// - [`SrtError::Option`] — `?mode=listener` (refused before connecting).
+/// - [`SrtError::Connect`] — the initial connect failed.
+/// - [`SrtError::Mux`] — `config` was rejected by the muxer; the connected
+///   transport is dropped.
+pub fn managed_mux_sender_from_url(
+    url: &SrtUrl,
+    policy: ReconnectPolicy,
+    config: MuxerConfig,
+) -> Result<
+    (
+        MuxSender<ManagedTransport<SrtTransport>>,
+        ManagedHandles,
+        ManagedStatsHandle,
+    ),
+    SrtError,
+> {
+    let managed = managed_transport_from_url(url, policy)?;
+    let (handles, stats) = send_handles(&managed);
+    let tx = MuxSender::new(managed, config)?;
+    Ok((tx, handles, stats))
+}
+
+/// Open `url` (caller mode only) as a reconnecting TS-bytes sender with
+/// `config` (framing mode + unsynced watchdog; `SenderConfig::default()`
+/// is RECOVER framing with an 18 800-byte watchdog — what Python and the
+/// JVM pass; C forwards its `tst_sender_config_t`).
+///
+/// # Errors
+///
+/// [`SrtError::Option`] for `?mode=listener`; otherwise the initial
+/// connect's [`SrtError::Connect`].
+pub fn managed_sender_from_url(
+    url: &SrtUrl,
+    policy: ReconnectPolicy,
+    config: SenderConfig,
+) -> Result<
+    (
+        Sender<ManagedTransport<SrtTransport>>,
+        ManagedHandles,
+        ManagedStatsHandle,
+    ),
+    SrtError,
+> {
+    let managed = managed_transport_from_url(url, policy)?;
+    let (handles, stats) = send_handles(&managed);
+    Ok((Sender::new(managed, config), handles, stats))
+}
+
+/// Open `url` (caller mode only) as a reconnecting raw-bytes sender (C's
+/// `tst_managed_raw_sender`) for `config`.
+///
+/// # Errors
+///
+/// [`SrtError::Option`] for `?mode=listener`; otherwise the initial
+/// connect's [`SrtError::Connect`].
+pub fn managed_raw_sender_from_url(
+    url: &SrtUrl,
+    policy: ReconnectPolicy,
+    config: RawSenderConfig,
+) -> Result<
+    (
+        RawSender<ManagedTransport<SrtTransport>>,
+        ManagedHandles,
+        ManagedStatsHandle,
+    ),
+    SrtError,
+> {
+    let managed = managed_transport_from_url(url, policy)?;
+    let (handles, stats) = send_handles(&managed);
+    Ok((RawSender::new(managed, config), handles, stats))
 }
