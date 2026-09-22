@@ -1698,7 +1698,87 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed — JVM binding (WP-B3)
 
-- (pending)
+- **Every cancellable `org.tstrans.srt` / `org.tstrans.rtp` shell is now a
+  `tst_pipeline::binding::Owned` entry, and every error kind comes from the
+  shared `BindingErrorKind` table** (Arc 2, deep review #4 ARCH-01/02/03/08).
+  The JVM binding stops carrying its own handle state machine, its own
+  per-domain kind tables and its own URL/open composition. Observable
+  changes, by surface:
+  - **Retired `Kind` members** (Java enums cannot alias, so these are
+    removals, not renames): `SrtException.Kind.WOULD_BLOCK` →
+    `BACKPRESSURE`; `RtpException.Kind.TRANSPORT` → `BROKEN` / `CLOSED` /
+    `URL` / `IO` per cause, `.CANCELLED` → `CLOSED` (detail `cancelled from
+    another thread`), `.MALFORMED_PACKET` → `TOO_LARGE`, `.TIMEOUT` →
+    `BACKPRESSURE`; `DemuxException.Kind.SYNC_LOSS` → `SYNC_BUF_EXHAUSTED`,
+    `.BAD_PMT` → `MALFORMED_PSI`, `.BAD_PES` → `MALFORMED_PES`,
+    `.UNEXPECTED_EOF` → gone (it never had a producer in any binding);
+    `KlvEncodeException.Kind.VTARGET_PACK_EMPTY` → `V_TARGET_PACK_EMPTY`.
+  - **New `Kind` members**: `SrtException.Kind.{BACKPRESSURE, TOO_LARGE,
+    INPUT_MALFORMED, END_OF_STREAM}`; `RtpException.Kind.{BACKPRESSURE,
+    BROKEN, CLOSED, TOO_LARGE, PAYLOAD_TYPE_PARAM,
+    MISSING_PAYLOAD_TYPE_PARAM, URL, HOST_NOT_LITERAL, IO,
+    IFACE_UNSUPPORTED}` (one per `tst_rtp::ConnectError` variant);
+    `DemuxException.Kind.{UNRECOVERABLE, MALFORMED_PSI, MALFORMED_PES,
+    SYNC_BUF_EXHAUSTED}`; `MuxException.Kind.{INVALID_NAL, KLV_TOO_LARGE,
+    INVALID_AV1_OBU, MISP_TIME}` (each was the coarser `INPUT_MALFORMED`);
+    `CodecParseException.Kind.{INVALID_LENGTH_SIZE, NAL_LENGTH_OVERFLOW,
+    BUFFER_TOO_SMALL}` (each was the `ENGINE_ERROR` wildcard).
+    `RtspException.Kind` keeps its ten names, but two producers move bucket:
+    `AuthUnsupported` → `AUTH_REQUIRED` (was `AUTH_FAILED`) and the four
+    SDP-media errors → `NOT_FOUND` (was `MOUNT`).
+  - **`NativeLoader.load()` now verifies the kind tables**: every kind the
+    native library can raise is resolved against this JAR's `*Exception.Kind`
+    enums, so a JAR/native mismatch is an `IllegalStateException` naming both
+    sides at load time instead of a wrong-kind throw much later.
+  - **`SrtException.Kind.END_OF_STREAM`** is new and has two producers, both
+    of which reported `CLOSED` before: a peer that closes a session cleanly
+    (a sender opened with the sender preset — the C ABI, or an
+    `org.tstrans.srt.ManagedSender`; the plain JVM caller shells do not set
+    that preset, so a JVM-to-JVM plain loopback still reports `BROKEN`), and
+    **`ManagedReceiver.recvBytes()` once the reconnect budget is exhausted**.
+    The detail carries the transport's own message. Same kind the C ABI has
+    always returned as `TST_E_END_OF_STREAM` (-12).
+  - **`Receiver.fromUrl` / `DemuxReceiver.fromUrl` listener-open faults are
+    now `SrtException(BROKEN)`** with the message prefixed `bind: ` or
+    `accept: `, where they were `CONNECT_FAILED` / `ACCEPT_FAILED` /
+    `TIMEOUT` / `CLOSED`. Both opens go through the shared
+    `SrtUrl::accept_one`, which is what the C ABI's `listen_srt` has always
+    done. `Listener.accept` is unchanged and keeps the typed accept kinds.
+  - **`ManagedSender.fromUrl`'s initial connect failure is
+    `CONNECT_FAILED`** (was `BROKEN`) — the kind `ManagedMuxSender` and
+    `ManagedDemuxReceiver` already reported. A TS-sync loss on
+    `Sender.sendBytes` / `ManagedSender.sendBytes` is `INPUT_MALFORMED`
+    (was `CONFIG_INVALID`).
+  - **`ManagedReceiver.reconnectAttempts()` now counts ATTEMPTS** (factory
+    invocations, successful or not) instead of successful rebuilds — the
+    same counter the other three managed shells already reported.
+  - **`srt.CancelHandle.isCancelled()` reports the shell's one cancel
+    state**: `true` once `cancel()` was called on ANY handle of that shell,
+    or the shell was `close()`d (close cancels first). Every handle of one
+    shell now agrees, and a handle outliving its shell's `close()` answers
+    `true`. Each handle previously carried a private flag, so a second
+    handle read `false` after the first cancelled and `close()` set nothing.
+  - **Getters no longer queue behind a parked call.** `Listener.localAddr()`,
+    the four `reconnectAttempts()`, both `reconnectStats()`,
+    `H264Receiver.localAddr()` and the rtp `Receiver` / `DemuxReceiver`
+    `endReason()` / `endDetail()` pairs are read off a construction-time
+    snapshot, so they answer while a `recv` / `accept` / `send` is parked on
+    another thread (the PR #189 and #234 hang classes).
+  - **Panic policy is unchanged from 0.6.x for mutators** and is now stated:
+    a panic inside a mutating native (`send*`, `recv*`, `next()`, `flush`)
+    surfaces as `RuntimeException("native panic in tst-jni: …")` and drops
+    the object, so every later call on it throws `IllegalStateException`.
+    The one difference: a panic inside a READ-ONLY native (`stats`,
+    `isAlive`) no longer tears the object down.
+  - **Not a behaviour change, stated because the code moved**: the plain
+    caller opens (`Sender.fromUrl`, `MuxSender.fromUrl`) now compose through
+    `SrtUrl::connect_recv`, which applies the URL overlay to a default
+    `SocketConfig` and nothing else — byte-for-byte what they composed by
+    hand. They do NOT gain the sender preset (`SRTO_SENDER`, 5 s linger,
+    15 s connect timeout). The plain listener-mode FIRST accept inside
+    `Receiver.fromUrl` / `DemuxReceiver.fromUrl` also stays uncancellable,
+    as before: the object does not exist yet, so no cancel handle can reach
+    it (DEBT-16).
 
 ### Changed — cancel contract (WP-C)
 
