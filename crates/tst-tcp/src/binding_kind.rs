@@ -56,6 +56,16 @@ mod tests {
             BindingError::from(TcpError::TlsDisabled).kind,
             K::TcpTlsDisabled
         );
+        // Both ways into TCP_URL: the URL error on its own, and wrapped.
+        assert_eq!(
+            BindingError::from(crate::url::TcpUrlError::MissingPort).kind,
+            K::TcpUrl
+        );
+        assert_eq!(
+            BindingError::from(TcpError::Url(crate::url::TcpUrlError::MissingPort)).kind,
+            K::TcpUrl
+        );
+        assert_eq!(K::TcpUrl.c_projection(), -31);
         assert_eq!(K::TcpTlsDisabled.c_projection(), -33);
         assert_eq!(K::TcpTlsDisabled.name(), "TLS_DISABLED");
         #[cfg(feature = "tls")]

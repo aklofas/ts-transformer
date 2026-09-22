@@ -80,6 +80,8 @@ impl tst_tcp::error::TcpError
 pub fn tst_tcp::error::TcpError::kind(&self) -> tst_tcp::error::TcpErrorKind
 impl core::convert::From<core::io::error::Error> for tst_tcp::error::TcpError
 pub fn tst_tcp::error::TcpError::from(core::io::error::Error) -> Self
+impl core::convert::From<tst_tcp::error::TcpError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_tcp::error::TcpError) -> Self
 impl core::convert::From<tst_tcp::url::TcpUrlError> for tst_tcp::error::TcpError
 pub fn tst_tcp::error::TcpError::from(tst_tcp::url::TcpUrlError) -> Self
 impl core::error::Error for tst_tcp::error::TcpError
@@ -238,6 +240,8 @@ pub tst_tcp::url::TcpUrlError::NotAListenerUrl(alloc::string::String)
 pub tst_tcp::url::TcpUrlError::Parse(tst_core::url::common::UrlError)
 impl core::convert::From<tst_core::url::common::UrlError> for tst_tcp::url::TcpUrlError
 pub fn tst_tcp::url::TcpUrlError::from(tst_core::url::common::UrlError) -> Self
+impl core::convert::From<tst_tcp::url::TcpUrlError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_tcp::url::TcpUrlError) -> Self
 impl core::convert::From<tst_tcp::url::TcpUrlError> for tst_tcp::error::TcpError
 pub fn tst_tcp::error::TcpError::from(tst_tcp::url::TcpUrlError) -> Self
 impl core::error::Error for tst_tcp::url::TcpUrlError

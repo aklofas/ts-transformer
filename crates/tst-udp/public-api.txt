@@ -73,6 +73,8 @@ impl tst_udp::error::UdpError
 pub fn tst_udp::error::UdpError::kind(&self) -> tst_udp::error::UdpErrorKind
 impl core::convert::From<core::io::error::Error> for tst_udp::error::UdpError
 pub fn tst_udp::error::UdpError::from(core::io::error::Error) -> Self
+impl core::convert::From<tst_udp::error::UdpError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_udp::error::UdpError) -> Self
 impl core::convert::From<tst_udp::url::UdpUrlError> for tst_udp::error::UdpError
 pub fn tst_udp::error::UdpError::from(tst_udp::url::UdpUrlError) -> Self
 impl core::error::Error for tst_udp::error::UdpError
@@ -194,6 +196,8 @@ pub tst_udp::url::UdpUrlError::RecvPktSize
 pub tst_udp::url::UdpUrlError::SendRecvMismatch(alloc::string::String)
 impl core::convert::From<tst_core::url::common::UrlError> for tst_udp::url::UdpUrlError
 pub fn tst_udp::url::UdpUrlError::from(tst_core::url::common::UrlError) -> Self
+impl core::convert::From<tst_udp::url::UdpUrlError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_udp::url::UdpUrlError) -> Self
 impl core::convert::From<tst_udp::url::UdpUrlError> for tst_udp::error::UdpError
 pub fn tst_udp::error::UdpError::from(tst_udp::url::UdpUrlError) -> Self
 impl core::error::Error for tst_udp::url::UdpUrlError
@@ -242,6 +246,8 @@ impl tst_udp::error::UdpError
 pub fn tst_udp::error::UdpError::kind(&self) -> tst_udp::error::UdpErrorKind
 impl core::convert::From<core::io::error::Error> for tst_udp::error::UdpError
 pub fn tst_udp::error::UdpError::from(core::io::error::Error) -> Self
+impl core::convert::From<tst_udp::error::UdpError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_udp::error::UdpError) -> Self
 impl core::convert::From<tst_udp::url::UdpUrlError> for tst_udp::error::UdpError
 pub fn tst_udp::error::UdpError::from(tst_udp::url::UdpUrlError) -> Self
 impl core::error::Error for tst_udp::error::UdpError
@@ -297,6 +303,8 @@ pub tst_udp::UdpUrlError::RecvPktSize
 pub tst_udp::UdpUrlError::SendRecvMismatch(alloc::string::String)
 impl core::convert::From<tst_core::url::common::UrlError> for tst_udp::url::UdpUrlError
 pub fn tst_udp::url::UdpUrlError::from(tst_core::url::common::UrlError) -> Self
+impl core::convert::From<tst_udp::url::UdpUrlError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_udp::url::UdpUrlError) -> Self
 impl core::convert::From<tst_udp::url::UdpUrlError> for tst_udp::error::UdpError
 pub fn tst_udp::error::UdpError::from(tst_udp::url::UdpUrlError) -> Self
 impl core::error::Error for tst_udp::url::UdpUrlError

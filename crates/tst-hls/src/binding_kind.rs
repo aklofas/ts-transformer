@@ -65,5 +65,23 @@ mod tests {
         assert_eq!(internal.kind, K::Internal);
         assert_eq!(internal.detail, "internal HTTP server error: hyper");
         assert_eq!(K::HlsBindFailed.c_projection(), -34);
+        // Both ways into HLS_URL (serve-gated, like the variant itself).
+        #[cfg(feature = "serve")]
+        {
+            assert_eq!(
+                BindingError::from(crate::url::HlsUrlError::MissingPort).kind,
+                K::HlsUrl
+            );
+            assert_eq!(
+                BindingError::from(HlsError::Url(crate::url::HlsUrlError::MissingPort)).kind,
+                K::HlsUrl
+            );
+            assert_eq!(K::HlsUrl.c_projection(), -35);
+        }
+        #[cfg(feature = "tls")]
+        assert_eq!(
+            BindingError::from(HlsError::Tls("cert".into())).kind,
+            K::HlsTls
+        );
     }
 }

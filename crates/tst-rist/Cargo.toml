@@ -14,15 +14,13 @@ categories  = ["multimedia::video", "network-programming"]
 doctest = false
 
 [dependencies]
-rist-sys  = { package = "tstrans-rist-sys", path = "../rist-sys", version = "0.6.0" }
-tst-core  = { path = "../tst-core", version = "0.6.0" }
+rist-sys     = { package = "tstrans-rist-sys", path = "../rist-sys", version = "0.6.0" }
+tst-core     = { path = "../tst-core", version = "0.6.0" }
 tst-pipeline = { path = "../tst-pipeline", version = "0.6.0" }
-libc      = { workspace = true }
-secrecy   = { workspace = true }
-thiserror = { workspace = true }
-tracing   = { workspace = true }
-
-[dev-dependencies]
+libc         = { workspace = true }
+secrecy      = { workspace = true }
+thiserror    = { workspace = true }
+tracing      = { workspace = true }
 
 [features]
 default = ["mbedtls"]

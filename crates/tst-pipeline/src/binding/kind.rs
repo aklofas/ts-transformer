@@ -353,15 +353,11 @@ fn unmapped(enum_name: &str, e: &dyn core::fmt::Debug) -> BindingError {
     )
 }
 
-/// K4: the four `MuxError` variants C already numbers precisely keep their
-/// own kinds; everything else folds to `MuxError::kind()`, whose own
-/// per-variant coverage is `scripts/check/rust/mux-error-kind-coverage.sh`
-/// (tst-core). Both matches need a wildcard (`MuxError` and `MuxErrorKind`
-/// are `#[non_exhaustive]` in tst-core).
 /// The five `MuxErrorKind` buckets, 1:1. Its own function rather than an inner
 /// match so `scripts/check/rust/kind-table-coverage.sh` can anchor on it: the
-/// extractor stops at the FIRST wildcard in a function, which for `kind_of_mux`
-/// is the outer `_ => …` — these arms would sit behind it, uncovered.
+/// extractor stops at the FIRST wildcard in a function, which for
+/// [`kind_of_mux`] is the outer `_ => …` — these arms would sit behind it,
+/// uncovered.
 ///
 /// `Internal` here is a real bucket AND the wildcard's default; that is
 /// harmless because this classifier feeds no unmapped detail (`From<MuxError>`
@@ -377,6 +373,12 @@ fn map_mux_kind(k: MuxErrorKind) -> BindingErrorKind {
     }
 }
 
+/// K4: the four `MuxError` variants C already numbers precisely keep their
+/// own kinds; everything else folds to `MuxError::kind()`, whose own
+/// per-variant coverage is `scripts/check/rust/mux-error-kind-coverage.sh`
+/// (tst-core). Both matches need a wildcard (`MuxError` and `MuxErrorKind`
+/// are `#[non_exhaustive]` in tst-core); the second one lives in
+/// `map_mux_kind` so the coverage rail can read it.
 pub fn kind_of_mux(e: &MuxError) -> BindingErrorKind {
     match e {
         MuxError::InvalidNal => BindingErrorKind::InvalidNal,
@@ -649,35 +651,47 @@ impl From<ShellErrorKind> for BindingErrorKind {
     }
 }
 
+/// Kind AND detail in ONE match, so a variant can never be classified without
+/// also being given a message: a second match would be invisible to
+/// `scripts/check/rust/kind-table-coverage.sh` (it reads this function), and a
+/// variant with an arm here but none there would silently become `Internal`.
+/// `None` is the K7 wildcard — the one place that decides a variant is
+/// unmapped, so a deliberate `=> Internal` row would keep its own detail.
+fn map_transport(e: &TransportError) -> Option<(BindingErrorKind, String)> {
+    match e {
+        TransportError::Backpressure { msg, .. } => {
+            Some((BindingErrorKind::Backpressure, msg.clone()))
+        }
+        TransportError::Broken { msg, .. } => Some((BindingErrorKind::Broken, msg.clone())),
+        TransportError::Closed => {
+            Some((BindingErrorKind::Closed, String::from("transport closed")))
+        }
+        TransportError::TooLarge { .. } => Some((BindingErrorKind::TooLarge, e.to_string())),
+        TransportError::ExplicitClose => Some((
+            BindingErrorKind::Closed,
+            String::from("cancelled from another thread"),
+        )),
+        _ => None,
+    }
+}
+
 /// Kind of a `TransportError`. `ExplicitClose` projects to `Closed` (spec
 /// §3.3, confirmed 2026-09-17): C has no cancelled code and its numbers are
-/// frozen; the detail string carries the distinction. The wildcard is
-/// required by `#[non_exhaustive]` (K7) — `scripts/check/rust/kind-table-coverage.sh`
-/// fails if a `TransportError` variant is missing above it.
+/// frozen; the detail string carries the distinction. A variant `map_transport`
+/// does not map yet classifies as [`BindingErrorKind::Internal`]; use the
+/// `From` impl when the detail string matters, it says so explicitly.
 pub fn kind_of_transport(e: &TransportError) -> BindingErrorKind {
-    match e {
-        TransportError::Backpressure { .. } => BindingErrorKind::Backpressure,
-        TransportError::Broken { .. } => BindingErrorKind::Broken,
-        TransportError::Closed => BindingErrorKind::Closed,
-        TransportError::TooLarge { .. } => BindingErrorKind::TooLarge,
-        TransportError::ExplicitClose => BindingErrorKind::Closed,
-        _ => BindingErrorKind::Internal,
-    }
+    map_transport(e)
+        .map(|(kind, _)| kind)
+        .unwrap_or(BindingErrorKind::Internal)
 }
 
 impl From<TransportError> for BindingError {
     fn from(e: TransportError) -> Self {
-        let kind = kind_of_transport(&e);
-        let detail = match &e {
-            TransportError::Backpressure { msg, .. } | TransportError::Broken { msg, .. } => {
-                msg.clone()
-            }
-            TransportError::Closed => String::from("transport closed"),
-            TransportError::ExplicitClose => String::from("cancelled from another thread"),
-            TransportError::TooLarge { .. } => e.to_string(),
-            _ => return unmapped("TransportError", &e),
-        };
-        BindingError::new(kind, detail)
+        match map_transport(&e) {
+            Some((kind, detail)) => BindingError::new(kind, detail),
+            None => unmapped("TransportError", &e),
+        }
     }
 }
 

@@ -16,5 +16,3 @@ socket2 = { workspace = true }
 thiserror = { workspace = true }
 libc = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
-
-[dev-dependencies]
