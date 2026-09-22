@@ -271,19 +271,49 @@ impl SrtUrl {
         })
     }
 
-    /// Open this URL as a **caller**: dial `host:port` with the overlay
-    /// applied and the sender preset merged underneath it, and return the
-    /// connected transport.
-    ///
-    /// This is the one composition every binding used to carry a private
-    /// copy of (tst-c's `connect_srt`, the Python and JVM mirrors):
-    /// [`UrlOverlay::apply_to_socket`] on a default [`SocketConfig`] →
-    /// [`SocketConfig::merge_sender_defaults`] (15 s connect timeout,
-    /// 5 s linger, `Role::Sender` — each only where the overlay left it
-    /// unset, so the URL wins) → an IPv6-safe `host:port` join
+    /// The caller-side [`SocketConfig`] both open methods dial with: a
+    /// default config with the overlay applied, plus — when
+    /// `sender_defaults` — [`SocketConfig::merge_sender_defaults`]. That
+    /// one flag is the entire difference between [`Self::connect`] and
+    /// [`Self::connect_recv`].
+    fn caller_config(&self, sender_defaults: bool) -> SocketConfig {
+        let mut cfg = SocketConfig::default();
+        self.overlay.apply_to_socket(&mut cfg);
+        if sender_defaults {
+            cfg.merge_sender_defaults();
+        }
+        cfg
+    }
+
+    /// Shared dial tail: an IPv6-safe `host:port` join
     /// ([`crate::addr::join_host_port`]) → [`Socket::connect_with`], which
-    /// walks every resolved address. The bindings open caller-mode
-    /// *receivers* through this same preset today; that is preserved.
+    /// walks every resolved address → [`SrtTransport::new`].
+    fn dial(&self, cfg: &SocketConfig) -> Result<SrtTransport, SrtError> {
+        let addr = crate::addr::join_host_port(&self.host, self.port);
+        let socket = Socket::connect_with(cfg, addr.as_str())?;
+        Ok(SrtTransport::new(socket))
+    }
+
+    /// Open this URL as a **caller** for the SENDER path: dial `host:port`
+    /// with the overlay applied and the sender preset merged underneath
+    /// it, and return the connected transport.
+    ///
+    /// This is the one composition every binding's sender open used to
+    /// carry a private copy of (tst-c's `connect_srt`, the Python and JVM
+    /// mirrors): [`UrlOverlay::apply_to_socket`] on a default
+    /// [`SocketConfig`] → [`SocketConfig::merge_sender_defaults`] (15 s
+    /// connect timeout, 5 s linger, `Role::Sender` — each only where the
+    /// overlay left it unset, so the URL wins) → the shared dial tail.
+    ///
+    /// # Which one to call
+    ///
+    /// - `connect` — the C sender open path. Applies the sender defaults
+    ///   where the URL left them unset. tst-c opens its caller-mode
+    ///   *receivers* through this preset too, so the managed receive
+    ///   family keeps it; nothing changes for them.
+    /// - [`connect_recv`](Self::connect_recv) — the plain/receive-side
+    ///   open path: overlay only, no preset. This is what the Python and
+    ///   JVM plain caller opens do today.
     ///
     /// [`mode`](Self::mode) is not consulted: the caller chooses the
     /// direction by calling this or [`accept_one`](Self::accept_one)
@@ -296,12 +326,28 @@ impl SrtUrl {
     ///
     /// [`ConnectError`]: crate::ConnectError
     pub fn connect(&self) -> Result<SrtTransport, SrtError> {
-        let mut cfg = SocketConfig::default();
-        self.overlay.apply_to_socket(&mut cfg);
-        cfg.merge_sender_defaults();
-        let addr = crate::addr::join_host_port(&self.host, self.port);
-        let socket = Socket::connect_with(&cfg, addr.as_str())?;
-        Ok(SrtTransport::new(socket))
+        self.dial(&self.caller_config(true))
+    }
+
+    /// Open this URL as a **caller** for the plain/receive path: exactly
+    /// [`connect`](Self::connect) minus
+    /// [`SocketConfig::merge_sender_defaults`] — the overlay is applied to
+    /// a default [`SocketConfig`] and nothing else is, so the socket keeps
+    /// libsrt's own connect timeout and linger and stays
+    /// [`Role::Receiver`](crate::options::Role::Receiver).
+    ///
+    /// That is what the Python and JVM plain caller opens compose today,
+    /// and why the split exists: routing them through
+    /// [`connect`](Self::connect) would silently promote every plain
+    /// receiver to `SRTO_SENDER=1` with a 5 s close linger. See
+    /// [`connect`](Self::connect)'s "Which one to call".
+    ///
+    /// # Errors
+    ///
+    /// Identical to [`connect`](Self::connect): [`SrtError::Connect`]
+    /// carrying the typed [`ConnectError`](crate::ConnectError).
+    pub fn connect_recv(&self) -> Result<SrtTransport, SrtError> {
+        self.dial(&self.caller_config(false))
     }
 
     /// Open this URL as a **listener**: bind `host:port` (an empty host
@@ -999,5 +1045,46 @@ mod tests {
     fn mode_rendezvous_unsupported() {
         let err = SrtUrl::parse("srt://peer:9000?mode=rendezvous").unwrap_err();
         assert!(matches!(err, UrlError::UnsupportedMode { .. }));
+    }
+
+    /// The one difference between [`SrtUrl::connect`] and
+    /// [`SrtUrl::connect_recv`]: the sender preset. `connect` is the C
+    /// sender open path (15 s connect timeout, 5 s linger, `Role::Sender`
+    /// filled in where the URL left them unset); `connect_recv` is the
+    /// plain/receive-side open the Python and JVM bindings do today, which
+    /// applies the overlay and nothing else. Asserted on the config both
+    /// methods dial with, since a live socket exposes neither value back.
+    #[test]
+    fn connect_applies_the_sender_preset_and_connect_recv_does_not() {
+        let url = SrtUrl::parse("srt://camera.local:9000?latency=120").expect("parse");
+
+        let sender = url.caller_config(true);
+        assert_eq!(sender.connect_timeout, Some(Duration::from_secs(15)));
+        assert_eq!(sender.linger, Some(Duration::from_secs(5)));
+        assert_eq!(sender.role, crate::options::Role::Sender);
+
+        let recv = url.caller_config(false);
+        assert_eq!(recv.connect_timeout, None, "no sender connect-timeout");
+        assert_eq!(recv.linger, None, "no sender linger");
+        assert_eq!(
+            recv.role,
+            crate::options::Role::Receiver,
+            "connect_recv must not promote the socket to Role::Sender"
+        );
+
+        // Both apply the overlay identically.
+        assert_eq!(sender.latency, Some(Duration::from_millis(120)));
+        assert_eq!(recv.latency, Some(Duration::from_millis(120)));
+    }
+
+    /// The preset only fills what the URL left unset, so a URL that names
+    /// `conntimeo` / `linger` wins on BOTH paths (Q4-A precedence).
+    #[test]
+    fn the_url_wins_over_the_sender_preset() {
+        let url = SrtUrl::parse("srt://camera.local:9000?conntimeo=2000&linger=1").expect("parse");
+        for cfg in [url.caller_config(true), url.caller_config(false)] {
+            assert_eq!(cfg.connect_timeout, Some(Duration::from_millis(2000)));
+            assert_eq!(cfg.linger, Some(Duration::from_secs(1)));
+        }
     }
 }
