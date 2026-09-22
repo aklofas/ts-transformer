@@ -88,15 +88,22 @@ impl CancelSource {
             inner,
             cancelled: AtomicBool::new(false),
         });
-        if let Ok(mut reg) = LIVE_CANCEL_SOURCES.lock() {
-            // Amortised cleanup: drop the dead weaks whenever the registry
-            // doubles, so a long-lived process that opens and closes many
-            // shells does not grow the vector without bound.
-            if reg.len() == reg.capacity() {
-                reg.retain(|w| w.strong_count() > 0);
-            }
-            reg.push(Arc::downgrade(&me));
+        // Poison is RECOVERED, not skipped: the registry holds only
+        // `Weak`s and every critical section below is a single `push` /
+        // `retain`, so a panic cannot leave it half-updated. Bailing out
+        // instead would stop registering shells after any unrelated panic
+        // and reintroduce the exit hang this registry exists to prevent.
+        let mut reg = LIVE_CANCEL_SOURCES
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // Amortised cleanup: drop the dead weaks whenever the registry
+        // doubles, so a long-lived process that opens and closes many
+        // shells does not grow the vector without bound.
+        if reg.len() == reg.capacity() {
+            reg.retain(|w| w.strong_count() > 0);
         }
+        reg.push(Arc::downgrade(&me));
+        drop(reg);
         me
     }
 
@@ -206,14 +213,17 @@ pub(crate) fn alive_probe<T, S>(owned: &Owned<T, S>, alive: impl FnOnce(&T) -> b
 #[pyfunction]
 #[pyo3(name = "_fire_cancel_sources_at_exit")]
 pub(crate) fn fire_cancel_sources_at_exit(py: Python<'_>) -> usize {
-    let live: Vec<Arc<CancelSource>> = match LIVE_CANCEL_SOURCES.lock() {
-        Ok(mut reg) => reg
-            .drain(..)
-            .filter_map(|w| w.upgrade())
-            .filter(|s| !s.is_cancelled())
-            .collect(),
-        Err(_) => return 0,
-    };
+    // Poison recovered for the same reason as in `CancelSource::new`: a
+    // hook that no-ops after an unrelated panic is exactly the hang this
+    // exists to prevent, and `drain` on a `Vec<Weak<_>>` cannot observe a
+    // torn state.
+    let live: Vec<Arc<CancelSource>> = LIVE_CANCEL_SOURCES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .drain(..)
+        .filter_map(|w| w.upgrade())
+        .filter(|s| !s.is_cancelled())
+        .collect();
     // The cancels themselves are native and may block briefly (libsrt's
     // `srt_close` on the paired socket), so drop the GIL for the walk.
     if live.is_empty() {
