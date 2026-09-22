@@ -22,91 +22,27 @@
 //! `RistError(CLOSED)` within about one window. Every wrapper borrows
 //! `&self` over an `Arc<Mutex<Option<_>>>` slot (the PR #209 shape).
 //!
-//! Error mapping: `tst_rist::RistError` → `tstrans.exceptions.RistError`.
-//! `.kind` is populated from two sources: `tst_rist::RistErrorKind`'s own
-//! variants (URL, FFI, INVALID_CONFIG, ENCRYPTION_DISABLED,
-//! CONTEXT_CREATE_FAILED, PEER_CREATE_FAILED), and the transport-level
-//! kinds this binding maps from `tst_core::transport::TransportError` onto
-//! the same exception (CLOSED, PAYLOAD_TOO_LARGE, RECV_TIMEOUT, IO — see
-//! `transport_error_to_pyerr` below). `RistErrorKind` is `#[non_exhaustive]`;
-//! the wildcard arm routes any unknown future variant to `IO`. The
-//! consolidated `scripts/check/python/error-mapping-coverage.sh` ratchet
-//! enforces every `RistErrorKind` variant has a literal
-//! `make_rist_error(py, "<VARIANT>", ...)` call site.
-//!
-//! Timeout recv implementation: `RistRecvTransport::recv_bytes` internally
-//! polls with a 100 ms window (POLL_TIMEOUT_MS in tst-rist/recv.rs) and
-//! returns `TransportError::Backpressure` when no data arrived in that window.
-//! The binding implements `timeout_ms` support by looping until either a
-//! packet arrives, the deadline passes, or a non-retryable error fires.
-//! Blocking recv (None) retries the poll indefinitely until data arrives.
+//! Error mapping: every failure is a `tst_pipeline::binding::BindingError`
+//! raised on `RistError` through `crate::raise` — the kind's `name()` is
+//! resolved on `tstrans.exceptions.RistErrorKind` and checked at
+//! `import tstrans`.
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
 use tst_core::transport::{RecvTransport, Transport, TransportError};
+use tst_pipeline::binding::{BindingError, FlagCancel, Owned, SendHalf};
 use tst_rist::config::{EncryptionKey, RistProfile};
 use tst_rist::recv::RistRecvTransport;
 use tst_rist::transport::RistTransport;
-use tst_rist::{RistError, RistErrorKind, RistRecvTransportBuilder, RistTransportBuilder};
+use tst_rist::{RistRecvTransportBuilder, RistTransportBuilder};
 
-use crate::errors::make_rist_error;
-
-// ---------------------------------------------------------------------------
-// Error mapping
-// ---------------------------------------------------------------------------
-
-/// Map a `tst_rist::RistError` to a `tstrans.exceptions.RistError` PyErr.
-///
-/// `RistErrorKind` is `#[non_exhaustive]`; the wildcard arm routes any unknown
-/// future variant to `IO` so this fn never panics on a Rust-side enum addition.
-/// The bash ratchet surfaces the omission in CI.
-///
-/// Each of `RistErrorKind`'s Rust-enum variants gets a literal call site
-/// below so the consolidated `scripts/check/python/error-mapping-coverage.sh`
-/// ratchet stays green. `transport_error_to_pyerr` below maps the remaining
-/// observable kinds (`CLOSED`, `PAYLOAD_TOO_LARGE`, `RECV_TIMEOUT`) from
-/// `TransportError` instead — those never reach this function.
-fn map_rist_error_from_err(py: Python<'_>, e: RistError) -> PyErr {
-    let msg = e.to_string();
-    match e.kind() {
-        RistErrorKind::Url => make_rist_error(py, "URL", &msg),
-        RistErrorKind::Ffi => make_rist_error(py, "FFI", &msg),
-        RistErrorKind::InvalidConfig => make_rist_error(py, "INVALID_CONFIG", &msg),
-        RistErrorKind::EncryptionDisabled => make_rist_error(py, "ENCRYPTION_DISABLED", &msg),
-        RistErrorKind::ContextCreateFailed => make_rist_error(py, "CONTEXT_CREATE_FAILED", &msg),
-        RistErrorKind::PeerCreateFailed => make_rist_error(py, "PEER_CREATE_FAILED", &msg),
-        // Wildcard for #[non_exhaustive] additions not yet mapped.
-        _ => make_rist_error(py, "IO", &msg),
-    }
-}
-
-/// Map a `tst_core::transport::TransportError` from `send_bytes` / `recv_bytes`
-/// to a `tstrans.exceptions.RistError`. Routing:
-/// - `Closed` / `ExplicitClose` → `CLOSED`
-/// - `TooLarge` → `PAYLOAD_TOO_LARGE`
-/// - `Backpressure` used as timeout sentinel → `RECV_TIMEOUT`
-/// - all others (`Broken`) → `IO`
-fn transport_error_to_pyerr(py: Python<'_>, e: TransportError) -> PyErr {
-    match e {
-        TransportError::Closed | TransportError::ExplicitClose => {
-            make_rist_error(py, "CLOSED", "transport closed by caller")
-        }
-        TransportError::TooLarge { len, max } => {
-            let msg = format!("payload {len} exceeds max {max} bytes per datagram");
-            make_rist_error(py, "PAYLOAD_TOO_LARGE", &msg)
-        }
-        TransportError::Backpressure { .. } => {
-            make_rist_error(py, "RECV_TIMEOUT", "recv timed out")
-        }
-        other => make_rist_error(py, "IO", &other.to_string()),
-    }
-}
+use crate::raise::{RIST, pyok, pyres, raise};
+use crate::util::{CancelSource, close_owned};
 
 // ---------------------------------------------------------------------------
 // PyRistStats — frozen mirror of tst_rist::RistStats
@@ -289,10 +225,9 @@ pub(crate) struct PyRistTransport {
     /// holds it with the GIL released; `close()` takes it afterwards, so
     /// the next `send` raises `RistError(CLOSED)` instead of the close
     /// raising `RuntimeError: Already borrowed`.
-    inner: Arc<Mutex<Option<RistTransport>>>,
-    /// `RistTransport::peer_url()` snapshot, so `repr()` (a logger's `%r`
-    /// from another thread) never waits behind an in-flight `send`.
-    peer_url: String,
+    /// The binding layer's handle state machine (Arc 2). Snapshot =
+    /// `peer_url()`, so `repr()` never waits behind a send.
+    owned: Owned<SendHalf<RistTransport>, String>,
 }
 
 #[pymethods]
@@ -315,22 +250,26 @@ impl PyRistTransport {
         // (PyBuffer is unavailable under abi3-py310).
         let coerced = crate::util::coerce_bytes_like(py, payload)?;
         let slice: &[u8] = coerced.as_bytes();
-        match crate::util::with_slot(py, &self.inner, |t| t.send_bytes(slice)) {
-            None => Err(make_rist_error(py, "CLOSED", "transport closed")),
-            Some(res) => res.map_err(|e| transport_error_to_pyerr(py, e)),
-        }
+        pyres(
+            py,
+            &RIST,
+            py.allow_threads(|| self.owned.with_mut(|t| t.0.send_bytes(slice))),
+        )
     }
 
     /// Close the sender. Idempotent and safe from any thread — further
     /// `.send()` calls raise `RistError(kind=CLOSED)`.
-    fn close(&self, py: Python<'_>) {
-        crate::util::close_slot(py, &self.inner, |mut t| t.close());
+    fn close(&self, py: Python<'_>) -> PyResult<()> {
+        close_owned(py, &RIST, &self.owned)
     }
 
     /// Snapshot of cumulative wire-level statistics.
     fn stats(&self, py: Python<'_>) -> PyResult<Py<PyRistStats>> {
-        let s = crate::util::with_slot(py, &self.inner, |t| t.stats())
-            .ok_or_else(|| make_rist_error(py, "CLOSED", "transport closed"))?;
+        let s = pyok(
+            py,
+            &RIST,
+            py.allow_threads(|| self.owned.with_ref(|t| t.0.stats())),
+        )?;
         Py::new(py, PyRistStats::from(s))
     }
 
@@ -344,16 +283,16 @@ impl PyRistTransport {
         _exc_type: &Bound<'_, PyAny>,
         _exc_value: &Bound<'_, PyAny>,
         _traceback: &Bound<'_, PyAny>,
-    ) -> bool {
-        self.close(py);
-        false
+    ) -> PyResult<bool> {
+        self.close(py)?;
+        Ok(false)
     }
 
     fn __repr__(&self) -> String {
-        if crate::util::slot_alive(&self.inner, |_| true) {
-            format!("Transport(peer={:?})", self.peer_url)
-        } else {
+        if self.owned.is_closed() {
             "Transport(closed)".to_string()
+        } else {
+            format!("Transport(peer={:?})", self.owned.snapshot())
         }
     }
 }
@@ -452,8 +391,8 @@ impl PyRistTransportBuilder {
         })?;
         // `RistTransportBuilder::new` parses the URL and seeds the config from
         // URL params (via RistConfig::merge_from_url).
-        let mut b =
-            RistTransportBuilder::new(url_str).map_err(|e| map_rist_error_from_err(py, e))?;
+        let mut b = RistTransportBuilder::new(url_str)
+            .map_err(|e| raise(py, &RIST, BindingError::from(e)))?;
         if let Some(p) = self.profile {
             b = b.profile(p.into());
         }
@@ -482,11 +421,14 @@ impl PyRistTransportBuilder {
         }
         let t = py
             .allow_threads(|| b.connect())
-            .map_err(|e| map_rist_error_from_err(py, e))?;
+            .map_err(|e| raise(py, &RIST, BindingError::from(e)))?;
         let peer_url = t.peer_url().to_owned();
+        // `FlagCancel` is the placeholder cancel until WP-D gives rist a real
+        // handle; the `CancelSource` latch is what `close()` flips and what
+        // the receive loop checks between librist poll windows.
+        let cancel = CancelSource::new(Arc::new(FlagCancel::new()));
         Ok(PyRistTransport {
-            inner: Arc::new(Mutex::new(Some(t))),
-            peer_url,
+            owned: Owned::new(SendHalf(t), cancel.as_dyn(), peer_url),
         })
     }
 
@@ -516,18 +458,26 @@ struct RistRecvInner {
     scratch: Vec<u8>,
 }
 
+impl tst_pipeline::binding::Close for RistRecvInner {
+    type Error = core::convert::Infallible;
+
+    fn close(&mut self) -> Result<(), Self::Error> {
+        RecvTransport::close(&mut self.transport);
+        Ok(())
+    }
+}
+
 #[pyclass(name = "RecvTransport", module = "tstrans.rist")]
 pub(crate) struct PyRistRecvTransport {
     /// Shared slot (PR #209 shape): a parked `recv` holds it with the GIL
     /// released; `close()` sets `stop` BEFORE taking it, so the parked
     /// recv ends with `RistError(CLOSED)` within one librist poll window.
-    inner: Arc<Mutex<Option<RistRecvInner>>>,
-    /// Binding-level cancel: `tst_rist` has no cancel handle, so the
-    /// poll-retry loop in `recv` checks this between windows.
-    stop: Arc<AtomicBool>,
-    /// `RistRecvTransport::bind_url()` snapshot, so `repr()` (a logger's
-    /// `%r` from another thread) never waits behind a parked `recv`.
-    bind_url: String,
+    /// The binding layer's handle state machine (Arc 2). Snapshot =
+    /// `bind_url()`, so `repr()` never waits behind a parked `recv`.
+    owned: Owned<RistRecvInner, String>,
+    /// Shared cancel state. `FlagCancel` inside until WP-D gives rist a real
+    /// handle; the poll loop checks it between librist's 100 ms windows.
+    cancel: Arc<CancelSource>,
 }
 
 #[pymethods]
@@ -556,14 +506,14 @@ impl PyRistRecvTransport {
     /// Releases the GIL while waiting on the kernel.
     #[pyo3(signature = (timeout_ms = None))]
     fn recv(&self, py: Python<'_>, timeout_ms: Option<u64>) -> PyResult<Py<PyBytes>> {
-        let stop = Arc::clone(&self.stop);
+        let cancel = Arc::clone(&self.cancel);
         let deadline =
             timeout_ms.map(|ms| std::time::Instant::now() + std::time::Duration::from_millis(ms));
-        let result: Option<Result<Vec<u8>, TransportError>> =
-            crate::util::with_slot(py, &self.inner, move |s| {
+        let res = py.allow_threads(|| {
+            self.owned.with_mut(move |s| {
                 loop {
-                    if stop.load(Ordering::Acquire) {
-                        return Err(TransportError::Closed);
+                    if cancel.is_cancelled() {
+                        return Err(TransportError::ExplicitClose);
                     }
                     match s.transport.recv_bytes(&mut s.scratch) {
                         Ok(n) => return Ok(s.scratch[..n].to_vec()),
@@ -583,25 +533,26 @@ impl PyRistRecvTransport {
                         Err(other) => return Err(other),
                     }
                 }
-            });
-        let bytes = result
-            .ok_or_else(|| make_rist_error(py, "CLOSED", "transport closed"))?
-            .map_err(|e| transport_error_to_pyerr(py, e))?;
+            })
+        });
+        let bytes = pyres(py, &RIST, res)?;
         Ok(PyBytes::new_bound(py, &bytes).unbind())
     }
 
     /// Close the receiver. Sets the stop flag BEFORE taking the slot, so a
     /// `recv()` parked on another thread ends with `RistError(kind=CLOSED)`
     /// within ~100 ms; further `.recv()` calls raise the same. Idempotent.
-    fn close(&self, py: Python<'_>) {
-        self.stop.store(true, Ordering::Release);
-        crate::util::close_slot(py, &self.inner, |mut s| s.transport.close());
+    fn close(&self, py: Python<'_>) -> PyResult<()> {
+        close_owned(py, &RIST, &self.owned)
     }
 
     /// Snapshot of cumulative wire-level statistics.
     fn stats(&self, py: Python<'_>) -> PyResult<Py<PyRistStats>> {
-        let s = crate::util::with_slot(py, &self.inner, |s| s.transport.stats())
-            .ok_or_else(|| make_rist_error(py, "CLOSED", "transport closed"))?;
+        let s = pyok(
+            py,
+            &RIST,
+            py.allow_threads(|| self.owned.with_ref(|s| s.transport.stats())),
+        )?;
         Py::new(py, PyRistStats::from(s))
     }
 
@@ -615,16 +566,16 @@ impl PyRistRecvTransport {
         _exc_type: &Bound<'_, PyAny>,
         _exc_value: &Bound<'_, PyAny>,
         _traceback: &Bound<'_, PyAny>,
-    ) -> bool {
-        self.close(py);
-        false
+    ) -> PyResult<bool> {
+        self.close(py)?;
+        Ok(false)
     }
 
     fn __repr__(&self) -> String {
-        if crate::util::slot_alive(&self.inner, |_| true) {
-            format!("RecvTransport(bind={:?})", self.bind_url)
-        } else {
+        if self.owned.is_closed() {
             "RecvTransport(closed)".to_string()
+        } else {
+            format!("RecvTransport(bind={:?})", self.owned.snapshot())
         }
     }
 }
@@ -702,8 +653,8 @@ impl PyRistRecvTransportBuilder {
         let url_str = self.url.as_deref().ok_or_else(|| {
             pyo3::exceptions::PyValueError::new_err("bind_url(...) is required before build()")
         })?;
-        let mut b =
-            RistRecvTransportBuilder::new(url_str).map_err(|e| map_rist_error_from_err(py, e))?;
+        let mut b = RistRecvTransportBuilder::new(url_str)
+            .map_err(|e| raise(py, &RIST, BindingError::from(e)))?;
         if let Some(p) = self.profile {
             b = b.profile(p.into());
         }
@@ -723,16 +674,20 @@ impl PyRistRecvTransportBuilder {
         }
         let t = py
             .allow_threads(|| b.listen())
-            .map_err(|e| map_rist_error_from_err(py, e))?;
+            .map_err(|e| raise(py, &RIST, BindingError::from(e)))?;
         let scratch_len = t.max_payload().max(65_536);
         let bind_url = t.bind_url().to_owned();
+        let cancel = CancelSource::new(Arc::new(FlagCancel::new()));
         Ok(PyRistRecvTransport {
-            inner: Arc::new(Mutex::new(Some(RistRecvInner {
-                transport: t,
-                scratch: vec![0u8; scratch_len],
-            }))),
-            stop: Arc::new(AtomicBool::new(false)),
-            bind_url,
+            owned: Owned::new(
+                RistRecvInner {
+                    transport: t,
+                    scratch: vec![0u8; scratch_len],
+                },
+                cancel.as_dyn(),
+                bind_url,
+            ),
+            cancel,
         })
     }
 
