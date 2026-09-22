@@ -16,7 +16,14 @@ public final class KlvEncodeException extends BindingException {
         BUFFER_TOO_SMALL, RECORD_TOO_LARGE, OUT_OF_RANGE, STRING_TOO_LONG,
         UNSUPPORTED_IMAPB_LENGTH, INVALID_IMAPB_PARAMS,
         MISSING_MANDATORY_ITEM, RESERVED_TAG_IN_UNKNOWN,
-        VTARGET_PACK_EMPTY, DUPLICATE_TARGET_ID, FORBIDDEN_STANDALONE_OFFSET
+        VTARGET_PACK_EMPTY, DUPLICATE_TARGET_ID, FORBIDDEN_STANDALONE_OFFSET,
+        /**
+         * {@code KlvEncodeError::VTargetPackEmpty} — an ST 0903 VTarget Pack
+         * carried no items. Replaces {@code VTARGET_PACK_EMPTY} (the ST 0903
+         * spelling of the same condition); {@link #tag()} carries the
+         * {@code target_id}.
+         */
+        V_TARGET_PACK_EMPTY
     }
 
     private final Kind kind;

@@ -10,10 +10,20 @@ package org.tstrans;
 public final class SrtException extends BindingException {
     private static final long serialVersionUID = 1L;
 
-    /** SRT failure category. Names match tst-py {@code SrtErrorKind} 1:1. */
+    /**
+     * SRT failure category. Names are the Rust {@code BindingErrorKind} variant
+     * names in SCREAMING_SNAKE_CASE (the kind rule, 0.7.0); the native library
+     * verifies at load time that every kind it can raise resolves here.
+     */
     public enum Kind {
         CONFIG_INVALID, CONNECT_FAILED, ACCEPT_FAILED, TIMEOUT,
-        CLOSED, BROKEN, WOULD_BLOCK, IO
+        CLOSED, BROKEN, WOULD_BLOCK, IO,
+        /** The transport is alive but could not take the bytes now (full send queue); retry. */
+        BACKPRESSURE,
+        /** The payload exceeds the transport's per-send ceiling. */
+        TOO_LARGE,
+        /** {@code sendBytes} input lost MPEG-TS sync (not 188-byte-aligned packets). */
+        INPUT_MALFORMED
     }
 
     private final Kind kind;

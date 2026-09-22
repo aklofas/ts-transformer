@@ -8,16 +8,19 @@ import org.junit.jupiter.api.Test;
 
 class CodecErrorModelTest {
     @Test
-    void kindHasAllTwelveRustVariants() {
-        // Mirrors tst_core::codec::CodecParseError (12 variants). A Rust-side
-        // rename or addition is caught here.
+    void kindHasAllFifteenRustVariants() {
+        // Mirrors tst_core::codec::CodecParseError. A Rust-side rename or
+        // addition is caught here. Task B3.2 ADDED the three nal-framing
+        // converter errors that used to fold into the ENGINE_ERROR wildcard;
+        // nothing retires, so B3.6 leaves this at fifteen.
         CodecParseException.Kind[] ks = CodecParseException.Kind.values();
-        assertEquals(12, ks.length);
+        assertEquals(15, ks.length);
         for (String n : new String[] {
                 "TRUNCATED_RBSP", "INVALID_GOLOMB", "RESERVED_VALUE", "UNSUPPORTED_PROFILE",
                 "DANGLING_SPS_REFERENCE", "DANGLING_VPS_REFERENCE", "ENGINE_ERROR",
                 "INVALID_LEB128", "BAD_SYNC_WORD", "TRUNCATED", "FORBIDDEN",
-                "UNSUPPORTED_FREE_FORMAT"}) {
+                "UNSUPPORTED_FREE_FORMAT",
+                "INVALID_LENGTH_SIZE", "NAL_LENGTH_OVERFLOW", "BUFFER_TOO_SMALL"}) {
             CodecParseException.Kind.valueOf(n); // throws if missing
         }
     }

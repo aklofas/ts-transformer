@@ -15,7 +15,25 @@ public final class CodecParseException extends BindingException {
     public enum Kind {
         TRUNCATED_RBSP, INVALID_GOLOMB, RESERVED_VALUE, UNSUPPORTED_PROFILE,
         DANGLING_SPS_REFERENCE, DANGLING_VPS_REFERENCE, ENGINE_ERROR,
-        INVALID_LEB128, BAD_SYNC_WORD, TRUNCATED, FORBIDDEN, UNSUPPORTED_FREE_FORMAT
+        INVALID_LEB128, BAD_SYNC_WORD, TRUNCATED, FORBIDDEN, UNSUPPORTED_FREE_FORMAT,
+        /**
+         * {@code CodecParseError::InvalidLengthSize} — the AVCC/HVCC length
+         * prefix size is not 1, 2 or 4 bytes. Folded into
+         * {@code ENGINE_ERROR} before 0.7.0.
+         */
+        INVALID_LENGTH_SIZE,
+        /**
+         * {@code CodecParseError::NalLengthOverflow} — a NAL length does not
+         * fit the configured length-prefix size. Folded into
+         * {@code ENGINE_ERROR} before 0.7.0.
+         */
+        NAL_LENGTH_OVERFLOW,
+        /**
+         * {@code CodecParseError::BufferTooSmall} — the caller's output buffer
+         * cannot hold the converted stream. Folded into {@code ENGINE_ERROR}
+         * before 0.7.0.
+         */
+        BUFFER_TOO_SMALL
     }
 
     private final Kind kind;
