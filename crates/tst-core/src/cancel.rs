@@ -27,7 +27,7 @@
 
 use alloc::boxed::Box;
 use alloc::sync::Arc;
-use portable_atomic::{AtomicI64, Ordering};
+use portable_atomic::{AtomicBool, AtomicI64, Ordering};
 
 /// Sentinel stored in the atomic once cancel has run. Picked as `i64::MIN`
 /// because libsrt's `SRTSOCKET` (= `c_int`) cannot legally take this value
@@ -51,6 +51,17 @@ pub struct SrtCancelHandle {
 struct State {
     handle: AtomicI64,
     closer: Closer,
+    /// The CALLER-visible cancel latch, deliberately separate from the
+    /// `handle` sentinel (WP-C1).
+    ///
+    /// The sentinel says "the closer has run", which happens on the owner's
+    /// internal teardown too — `Socket::drop`, and every transport error
+    /// path that retires its socket. `is_cancelled()` must mean "a CALLER
+    /// cancelled", never "this socket is dead": the bindings choose between
+    /// "caller closed" and "stream ended" from exactly this bit, so reading
+    /// the sentinel turned every peer disconnect into a reported caller
+    /// close (`TST_E_CLOSED` instead of `TST_E_END_OF_STREAM`).
+    cancelled: AtomicBool,
 }
 
 impl SrtCancelHandle {
@@ -66,26 +77,62 @@ impl SrtCancelHandle {
             state: Arc::new(State {
                 handle: AtomicI64::new(handle),
                 closer: Box::new(closer),
+                cancelled: AtomicBool::new(false),
             }),
         }
     }
 
-    /// Trigger the closer if it hasn't already run.
+    /// Trigger the closer if it hasn't already run, and latch
+    /// [`Self::is_cancelled`] — the CALLER-initiated path.
     ///
     /// Idempotent: extra calls (including from other threads) are no-ops.
     /// The closer always runs to completion on the thread that wins the
     /// atomic swap.
     pub fn cancel(&self) {
+        // Latch BEFORE waking: firing the closer unblocks a parked call on
+        // another thread, and that thread's next act is to ask
+        // `is_cancelled()` whether what it saw was caller-initiated.
+        self.state.cancelled.store(true, Ordering::Release);
+        self.fire();
+    }
+
+    /// Trigger the closer WITHOUT latching [`Self::is_cancelled`] — the
+    /// owner's internal teardown path.
+    ///
+    /// For `Socket`/`Listener` `Drop` and the transport error paths that
+    /// retire a dead socket: the libsrt handle must still be closed and any
+    /// parked call still woken, but no caller asked for this, so the
+    /// caller-visible latch must stay clear. Using [`Self::cancel`] here
+    /// makes a peer disconnect indistinguishable from a caller cancel and
+    /// mislabels the stream's end in every binding.
+    pub fn close_without_cancel(&self) {
+        self.fire();
+    }
+
+    /// Swap in the sentinel and run the closer exactly once.
+    fn fire(&self) {
         let prev = self.state.handle.swap(CANCELLED, Ordering::AcqRel);
         if prev != CANCELLED {
             (self.state.closer)(prev);
         }
     }
 
-    /// Returns `true` once `cancel()` has been called on this handle (or
-    /// any clone of it). Advisory — the underlying socket close may not
+    /// Returns `true` once [`Self::cancel`] has been called on this handle
+    /// (or any clone of it). Advisory — the underlying socket close may not
     /// have completed yet on another thread.
+    ///
+    /// A teardown through [`Self::close_without_cancel`] does NOT set this,
+    /// and neither does a peer disconnect: this is the caller's intent, not
+    /// the socket's liveness.
     pub fn is_cancelled(&self) -> bool {
+        self.state.cancelled.load(Ordering::Acquire)
+    }
+
+    /// `true` once the closer has run by any path (caller cancel OR owner
+    /// teardown). Crate-internal: the sentinel is an implementation detail,
+    /// `is_cancelled()` is the contract.
+    #[cfg(test)]
+    fn closer_has_run(&self) -> bool {
         self.state.handle.load(Ordering::Acquire) == CANCELLED
     }
 }
@@ -273,6 +320,39 @@ mod tests {
         assert!(!h.is_cancelled());
         h.cancel();
         assert!(h.is_cancelled());
+    }
+
+    /// WP-C1: the owner's teardown path closes and wakes WITHOUT latching
+    /// the caller-visible latch.
+    ///
+    /// `Socket::drop` fires the handle, and `SrtTransport` drops its socket
+    /// on every peer-break path — so if teardown latched `is_cancelled()`, a
+    /// peer disconnect would be indistinguishable from a caller cancel and
+    /// every clean SRT end-of-stream would be reported as a caller close.
+    #[test]
+    fn close_without_cancel_runs_the_closer_but_does_not_latch() {
+        use core::sync::atomic::AtomicU32;
+        let runs = alloc::sync::Arc::new(AtomicU32::new(0));
+        let r = runs.clone();
+        let h = SrtCancelHandle::new(5, move |handle| {
+            assert_eq!(handle, 5);
+            r.fetch_add(1, Ordering::SeqCst);
+        });
+
+        h.close_without_cancel();
+        assert_eq!(runs.load(Ordering::SeqCst), 1, "the closer must still run");
+        assert!(h.closer_has_run(), "the sentinel is set either way");
+        assert!(
+            !h.is_cancelled(),
+            "owner teardown is not a caller cancel — this bit decides \
+             END_OF_STREAM vs CLOSED in every binding"
+        );
+
+        // And a later caller cancel still latches, even though the closer
+        // has already run (it will not run twice).
+        h.cancel();
+        assert!(h.is_cancelled());
+        assert_eq!(runs.load(Ordering::SeqCst), 1, "the closer runs once");
     }
 
     /// WP-C1: `is_cancelled` is part of the `TransportCancel` object contract,
