@@ -262,6 +262,38 @@ impl<T, S> Owned<T, S> {
     }
 }
 
+impl<T: Close, S> Owned<T, S> {
+    /// Cancel-first close, the Arc 1 contract enforced once:
+    ///
+    /// 1. [`Self::cancel`] — a thread parked inside [`Self::with_mut`]
+    ///    returns (its operation fails with `ExplicitClose`) and releases
+    ///    the slot;
+    /// 2. [`Self::take`] — recovers a poisoned mutex, empties the slot;
+    /// 3. [`Close::close`] on the taken value, OUTSIDE the lock, inside a
+    ///    panic boundary.
+    ///
+    /// A second call finds the slot empty and returns `Ok(())` (the cancel
+    /// handle is fired again — idempotent by the `TransportCancel`
+    /// contract). Never panics, so a binding's `Drop` may call it.
+    ///
+    /// # Errors
+    ///
+    /// [`CloseFailure::Inner`] / [`CloseFailure::Panicked`] from step 3; in
+    /// both cases the slot is already empty and a retry is the quiet
+    /// double close.
+    pub fn close(&self) -> Result<(), CloseFailure<T::Error>> {
+        self.cancel();
+        let Some(mut value) = self.take() else {
+            return Ok(());
+        };
+        match panic::catch(|| value.close()) {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(CloseFailure::Inner(e)),
+            Err(detail) => Err(CloseFailure::Panicked { detail }),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -479,7 +511,7 @@ mod tests {
             0,
             "dropped, not Close::close()d — the state is unknown"
         );
-        // (Task A1.4 appends the `close()` is-quiet-after-a-panic assertion here.)
+        assert!(f.owned.close().is_ok(), "close() after a panic is quiet");
     }
 
     #[test]
@@ -534,5 +566,117 @@ mod tests {
             f.owned.try_with_ref(|m| m.n),
             Some(Err(HandleState::Closed))
         );
+    }
+
+    // ---- close (Task A1.4) ----
+
+    #[test]
+    fn close_cancels_first_then_closes_once_and_empties_the_slot() {
+        let f = fixture();
+        // Outcome pin: the cancel handle fired (flag), the latch is set,
+        // Mock::close ran once, the slot is empty. The ORDER of cancel vs
+        // close is pinned separately by `close_fires_cancel_before_close_close`.
+        assert!(f.owned.close().is_ok());
+        assert!(f.flag.load(Ordering::SeqCst), "cancel handle fired");
+        assert!(f.owned.is_cancelled());
+        assert_eq!(
+            f.closes.load(Ordering::SeqCst),
+            1,
+            "Close::close ran exactly once"
+        );
+        assert!(f.owned.is_closed());
+        assert_eq!(f.owned.with_mut(|m| m.n), Err(HandleState::Closed));
+    }
+
+    #[test]
+    fn close_fires_cancel_before_close_close() {
+        // Order pin: Mock::close pushes "close"; a cancel wrapper that logs
+        // "cancel" sits in front of the mock handle.
+        struct LoggingCancel(Arc<std::sync::Mutex<Vec<&'static str>>>, Arc<MockCancel>);
+        impl TransportCancel for LoggingCancel {
+            fn cancel(&self) {
+                self.0.lock().unwrap().push("cancel");
+                self.1.cancel();
+            }
+        }
+        let f = fixture();
+        let log = Arc::clone(&f.log);
+        let mock = Mock {
+            n: 0,
+            flag: Arc::clone(&f.flag),
+            closes: Arc::clone(&f.closes),
+            log: Arc::clone(&log),
+        };
+        let owned = Owned::new(
+            mock,
+            Arc::new(LoggingCancel(Arc::clone(&log), Arc::clone(&f.cancel)))
+                as Arc<dyn TransportCancel>,
+            (),
+        );
+        assert!(owned.close().is_ok());
+        assert_eq!(*log.lock().unwrap(), vec!["cancel", "close"]);
+    }
+
+    #[test]
+    fn second_close_is_quiet_and_does_not_close_again() {
+        let f = fixture();
+        assert!(f.owned.close().is_ok());
+        assert!(f.owned.close().is_ok(), "double close is Ok(())");
+        assert_eq!(f.closes.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn close_surfaces_the_inner_error_and_still_empties_the_slot() {
+        let f = fixture();
+        assert!(f.owned.with_mut(|m| m.n = u32::MAX).is_ok()); // arms Mock::close to fail
+        match f.owned.close() {
+            Err(CloseFailure::Inner(MockCloseError)) => {}
+            other => panic!("expected CloseFailure::Inner, got {other:?}"),
+        }
+        assert!(
+            f.owned.is_closed(),
+            "the value was taken before its close ran"
+        );
+        assert!(
+            f.owned.close().is_ok(),
+            "and the retry is the quiet double close"
+        );
+    }
+
+    #[test]
+    fn close_reports_a_panicking_close_and_still_empties_the_slot() {
+        struct Explodes;
+        impl Close for Explodes {
+            type Error = MockCloseError;
+            fn close(&mut self) -> Result<(), MockCloseError> {
+                panic!("close boom")
+            }
+        }
+        let flag = Arc::new(AtomicBool::new(false));
+        let owned = Owned::new(
+            Explodes,
+            Arc::new(MockCancel {
+                calls: AtomicU32::new(0),
+                flag,
+            }) as Arc<dyn TransportCancel>,
+            (),
+        );
+        match owned.close() {
+            Err(CloseFailure::Panicked { detail }) => assert_eq!(detail, "close boom"),
+            other => panic!("expected CloseFailure::Panicked, got {other:?}"),
+        }
+        assert!(owned.is_closed());
+        assert!(!owned.inner.is_poisoned());
+    }
+
+    #[test]
+    fn close_recovers_a_poisoned_mutex() {
+        let f = fixture();
+        poison(&f);
+        assert!(
+            f.owned.close().is_ok(),
+            "Drop-never-panics: close always recovers"
+        );
+        assert_eq!(f.closes.load(Ordering::SeqCst), 1);
     }
 }
