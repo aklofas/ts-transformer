@@ -12,6 +12,7 @@ mod errors;
 mod klv;
 mod mpegts;
 mod mux;
+mod raise;
 mod raw_bytes;
 mod util;
 #[cfg(feature = "rtp")]
@@ -64,7 +65,10 @@ fn init_tracing_bridge() {
 #[pymodule]
 fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     init_tracing_bridge();
+    // Spec Arc 2 §3.3: a kind member the Python enum lacks fails `import tstrans`.
+    raise::check_error_kinds(_py)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    m.add_function(wrap_pyfunction!(raise::check_error_kinds_py, m)?)?;
     m.add_function(wrap_pyfunction!(errors::raise_mux_error_for_test, m)?)?;
     #[cfg(feature = "srt")]
     {
