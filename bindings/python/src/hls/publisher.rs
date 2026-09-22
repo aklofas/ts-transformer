@@ -35,7 +35,9 @@ use tst_hls::{HlsMode, HlsPublisher, HlsPublisherBuilder, HlsServerHandle};
 
 use crate::hls::config::{PyHlsMode, PyHlsStats};
 use crate::hls::publisher_abc::PyPublisherStats;
-use crate::hls::{make_hls_error, map_hls_error, map_hls_url_error};
+use crate::hls::{map_hls_error, map_hls_url_error};
+use crate::raise::{HLS, raise};
+use tst_pipeline::binding::{BindingError, BindingErrorKind};
 
 // ---------------------------------------------------------------------------
 // PyHlsPublisher — wraps tst_hls::HlsPublisher
@@ -100,11 +102,15 @@ impl PyHlsPublisher {
             .inner
             .lock()
             .map_err(|_| PyRuntimeError::new_err("HlsPublisher mutex poisoned"))?;
-        let inner = guard
-            .as_mut()
-            .ok_or_else(|| make_hls_error(py, "FINISHED", "HlsPublisher finished"))?;
+        let inner = guard.as_mut().ok_or_else(|| {
+            raise(
+                py,
+                &HLS,
+                BindingError::new(BindingErrorKind::HlsFinished, "HlsPublisher finished"),
+            )
+        })?;
         py.allow_threads(|| Publisher::push_ts(inner, slice))
-            .map_err(|e| map_hls_error(py, &e))
+            .map_err(|e| map_hls_error(py, e))
     }
 
     /// Hint that the next `push_ts` should start a new segment.
@@ -113,11 +119,15 @@ impl PyHlsPublisher {
             .inner
             .lock()
             .map_err(|_| PyRuntimeError::new_err("HlsPublisher mutex poisoned"))?;
-        let inner = guard
-            .as_mut()
-            .ok_or_else(|| make_hls_error(py, "FINISHED", "HlsPublisher finished"))?;
+        let inner = guard.as_mut().ok_or_else(|| {
+            raise(
+                py,
+                &HLS,
+                BindingError::new(BindingErrorKind::HlsFinished, "HlsPublisher finished"),
+            )
+        })?;
         py.allow_threads(|| Publisher::cut_segment(inner))
-            .map_err(|e| map_hls_error(py, &e))
+            .map_err(|e| map_hls_error(py, e))
     }
 
     /// Hint a new segment, supplying its media-presentation duration in
@@ -127,12 +137,16 @@ impl PyHlsPublisher {
             .inner
             .lock()
             .map_err(|_| PyRuntimeError::new_err("HlsPublisher mutex poisoned"))?;
-        let inner = guard
-            .as_mut()
-            .ok_or_else(|| make_hls_error(py, "FINISHED", "HlsPublisher finished"))?;
+        let inner = guard.as_mut().ok_or_else(|| {
+            raise(
+                py,
+                &HLS,
+                BindingError::new(BindingErrorKind::HlsFinished, "HlsPublisher finished"),
+            )
+        })?;
         let dur = std::time::Duration::from_micros(media_duration_us);
         py.allow_threads(|| Publisher::cut_segment_with_duration(inner, dur))
-            .map_err(|e| map_hls_error(py, &e))
+            .map_err(|e| map_hls_error(py, e))
     }
 
     /// Finalize: flush the open segment, write the terminal playlist,
@@ -144,12 +158,19 @@ impl PyHlsPublisher {
                 .inner
                 .lock()
                 .map_err(|_| PyRuntimeError::new_err("HlsPublisher mutex poisoned"))?;
-            guard
-                .take()
-                .ok_or_else(|| make_hls_error(py, "FINISHED", "HlsPublisher already finished"))?
+            guard.take().ok_or_else(|| {
+                raise(
+                    py,
+                    &HLS,
+                    BindingError::new(
+                        BindingErrorKind::HlsFinished,
+                        "HlsPublisher already finished",
+                    ),
+                )
+            })?
         };
         py.allow_threads(|| Publisher::finish(inner))
-            .map_err(|e| map_hls_error(py, &e))
+            .map_err(|e| map_hls_error(py, e))
     }
 
     /// Like `finish()`, but keep the built-in HTTP server serving the
@@ -168,13 +189,20 @@ impl PyHlsPublisher {
                 .inner
                 .lock()
                 .map_err(|_| PyRuntimeError::new_err("HlsPublisher mutex poisoned"))?;
-            guard
-                .take()
-                .ok_or_else(|| make_hls_error(py, "FINISHED", "HlsPublisher already finished"))?
+            guard.take().ok_or_else(|| {
+                raise(
+                    py,
+                    &HLS,
+                    BindingError::new(
+                        BindingErrorKind::HlsFinished,
+                        "HlsPublisher already finished",
+                    ),
+                )
+            })?
         };
         let handle = py
             .allow_threads(|| inner.finish_serving())
-            .map_err(|e| map_hls_error(py, &e))?;
+            .map_err(|e| map_hls_error(py, e))?;
         Ok(PyHlsServerHandle::from_inner(handle))
     }
 
@@ -184,9 +212,13 @@ impl PyHlsPublisher {
             .inner
             .lock()
             .map_err(|_| PyRuntimeError::new_err("HlsPublisher mutex poisoned"))?;
-        let inner = guard
-            .as_ref()
-            .ok_or_else(|| make_hls_error(py, "FINISHED", "HlsPublisher finished"))?;
+        let inner = guard.as_ref().ok_or_else(|| {
+            raise(
+                py,
+                &HLS,
+                BindingError::new(BindingErrorKind::HlsFinished, "HlsPublisher finished"),
+            )
+        })?;
         Ok(PyPublisherStats::from_core(Publisher::stats(inner)))
     }
 
@@ -196,9 +228,13 @@ impl PyHlsPublisher {
             .inner
             .lock()
             .map_err(|_| PyRuntimeError::new_err("HlsPublisher mutex poisoned"))?;
-        let inner = guard
-            .as_ref()
-            .ok_or_else(|| make_hls_error(py, "FINISHED", "HlsPublisher finished"))?;
+        let inner = guard.as_ref().ok_or_else(|| {
+            raise(
+                py,
+                &HLS,
+                BindingError::new(BindingErrorKind::HlsFinished, "HlsPublisher finished"),
+            )
+        })?;
         Ok(PyHlsStats::from(inner.hls_stats()))
     }
 
@@ -209,9 +245,13 @@ impl PyHlsPublisher {
             .inner
             .lock()
             .map_err(|_| PyRuntimeError::new_err("HlsPublisher mutex poisoned"))?;
-        let inner = guard
-            .as_ref()
-            .ok_or_else(|| make_hls_error(py, "FINISHED", "HlsPublisher finished"))?;
+        let inner = guard.as_ref().ok_or_else(|| {
+            raise(
+                py,
+                &HLS,
+                BindingError::new(BindingErrorKind::HlsFinished, "HlsPublisher finished"),
+            )
+        })?;
         Ok(inner.local_addr().map(|a| a.to_string()))
     }
 
@@ -222,9 +262,13 @@ impl PyHlsPublisher {
             .inner
             .lock()
             .map_err(|_| PyRuntimeError::new_err("HlsPublisher mutex poisoned"))?;
-        let inner = guard
-            .as_ref()
-            .ok_or_else(|| make_hls_error(py, "FINISHED", "HlsPublisher finished"))?;
+        let inner = guard.as_ref().ok_or_else(|| {
+            raise(
+                py,
+                &HLS,
+                BindingError::new(BindingErrorKind::HlsFinished, "HlsPublisher finished"),
+            )
+        })?;
         Ok(inner.local_addr().map(|a| a.port()).unwrap_or(0))
     }
 
@@ -236,9 +280,13 @@ impl PyHlsPublisher {
             .inner
             .lock()
             .map_err(|_| PyRuntimeError::new_err("HlsPublisher mutex poisoned"))?;
-        let inner = guard
-            .as_ref()
-            .ok_or_else(|| make_hls_error(py, "FINISHED", "HlsPublisher finished"))?;
+        let inner = guard.as_ref().ok_or_else(|| {
+            raise(
+                py,
+                &HLS,
+                BindingError::new(BindingErrorKind::HlsFinished, "HlsPublisher finished"),
+            )
+        })?;
         Ok(inner.render_playlist(is_event))
     }
 
@@ -254,7 +302,7 @@ impl PyHlsPublisher {
         };
         if let Some(inner) = inner {
             py.allow_threads(|| Publisher::finish(inner))
-                .map_err(|e| map_hls_error(py, &e))?;
+                .map_err(|e| map_hls_error(py, e))?;
         }
         Ok(())
     }
@@ -393,7 +441,7 @@ impl PyHlsPublisherBuilder {
     /// setters overlay on top). Raises `HlsError(URL)` on a bad URL.
     fn from_url<'py>(mut slf: PyRefMut<'py, Self>, url: &str) -> PyResult<PyRefMut<'py, Self>> {
         let py = slf.py();
-        let b = HlsPublisherBuilder::from_url(url).map_err(|e| map_hls_url_error(py, &e))?;
+        let b = HlsPublisherBuilder::from_url(url).map_err(|e| map_hls_url_error(py, e))?;
         slf.inner = Some(b);
         Ok(slf)
     }
@@ -408,7 +456,7 @@ impl PyHlsPublisherBuilder {
             .ok_or_else(|| PyRuntimeError::new_err("HlsPublisherBuilder already consumed"))?;
         let pub_ = py
             .allow_threads(|| b.build())
-            .map_err(|e| map_hls_error(py, &e))?;
+            .map_err(|e| map_hls_error(py, e))?;
         Ok(PyHlsPublisher::from_inner(pub_))
     }
 
@@ -456,9 +504,13 @@ impl PyHlsServerHandle {
             .inner
             .lock()
             .map_err(|_| PyRuntimeError::new_err("HlsServerHandle mutex poisoned"))?;
-        let handle = guard
-            .as_ref()
-            .ok_or_else(|| make_hls_error(py, "FINISHED", "HlsServerHandle shut down"))?;
+        let handle = guard.as_ref().ok_or_else(|| {
+            raise(
+                py,
+                &HLS,
+                BindingError::new(BindingErrorKind::HlsFinished, "HlsServerHandle shut down"),
+            )
+        })?;
         Ok(handle.local_addr().to_string())
     }
 
@@ -469,9 +521,13 @@ impl PyHlsServerHandle {
             .inner
             .lock()
             .map_err(|_| PyRuntimeError::new_err("HlsServerHandle mutex poisoned"))?;
-        let handle = guard
-            .as_ref()
-            .ok_or_else(|| make_hls_error(py, "FINISHED", "HlsServerHandle shut down"))?;
+        let handle = guard.as_ref().ok_or_else(|| {
+            raise(
+                py,
+                &HLS,
+                BindingError::new(BindingErrorKind::HlsFinished, "HlsServerHandle shut down"),
+            )
+        })?;
         Ok(handle.local_addr().port())
     }
 

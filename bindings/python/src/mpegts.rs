@@ -951,19 +951,8 @@ fn non_conformant_kind_name(issue: &NonConformantIssue) -> &'static str {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn demux_error_to_pyerr(py: Python<'_>, e: &DemuxError) -> PyErr {
-    // Map Rust DemuxError variants to Python DemuxErrorKind.
-    let kind = match e {
-        DemuxError::Unrecoverable { .. } => "INTERNAL",
-        // Audit-2 #8: StrictRejection is a distinct policy-level outcome,
-        // not an internal bug. Map to STRICT_REJECTION so callers can
-        // distinguish "demuxer enforcement" from "binding bug".
-        DemuxError::StrictRejection(_) => "STRICT_REJECTION",
-        DemuxError::MalformedPsi { .. } => "BAD_PMT",
-        DemuxError::MalformedPes { .. } => "BAD_PES",
-        DemuxError::SyncBufExhausted { .. } => "SYNC_LOSS",
-        // DemuxError carries the non-exhaustive attribute; forward-compat catch-all.
-        _ => "INTERNAL",
-    };
+    // A2's K3: the members are the Rust variant names since 0.7.0.
+    let kind = tst_pipeline::binding::kind::kind_of_demux(e).name();
     let msg = format!("{e}");
     make_demux_error(py, kind, &msg)
 }

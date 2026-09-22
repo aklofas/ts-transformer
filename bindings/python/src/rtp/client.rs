@@ -43,9 +43,10 @@ use tst_rtp::rtsp::client::{
 };
 use tst_rtp::{H264DepayConfig, RtspClientBuilder, RtspVersion};
 
-use crate::errors::make_rtsp_error;
+use crate::raise::{RTSP, raise};
 use crate::rtp::demux_receiver::PyDemuxReceiver;
 use crate::rtp::h264_receiver::PyH264Receiver;
+use tst_pipeline::binding::{BindingError, BindingErrorKind};
 
 // ---------------------------------------------------------------------------
 // Enums (Python IntEnum-equivalent PyClasses)
@@ -486,7 +487,7 @@ impl PyRtspClient {
         //    eagerly under the GIL so the error mapping has access to
         //    the Python interpreter handle.
         let mut builder = RtspClientBuilder::new(&config.url)
-            .map_err(|e| make_rtsp_error(py, rtsp_error_kind_str(&e), &e.to_string()))?;
+            .map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;
 
         // 2. Wire credentials. SecretString wrapping happens at this
         //    boundary — Python sees `str`, Rust sees SecretString.
@@ -548,8 +549,7 @@ impl PyRtspClient {
             },
         );
 
-        let (client, session) =
-            result.map_err(|e| make_rtsp_error(py, rtsp_error_kind_str(&e), &e.to_string()))?;
+        let (client, session) = result.map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;
 
         Ok(PyRtspSession {
             client: Arc::new(Mutex::new(Some(client))),
@@ -577,7 +577,7 @@ impl PyRtspClient {
     #[staticmethod]
     fn connect_h264(py: Python<'_>, config: &PyRtspClientConfig) -> PyResult<PyRtspSession> {
         let mut builder = RtspClientBuilder::new(&config.url)
-            .map_err(|e| make_rtsp_error(py, rtsp_error_kind_str(&e), &e.to_string()))?;
+            .map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;
 
         if let Some(auth_obj) = &config.auth {
             let auth_bound = auth_obj.bind(py);
@@ -621,7 +621,7 @@ impl PyRtspClient {
         );
 
         let (client, session, depay_config) =
-            result.map_err(|e| make_rtsp_error(py, rtsp_error_kind_str(&e), &e.to_string()))?;
+            result.map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;
 
         Ok(PyRtspSession {
             client: Arc::new(Mutex::new(Some(client))),
@@ -650,22 +650,35 @@ fn apply_tls_roots(
     let mut added = 0usize;
     for cert in rustls_pemfile::certs(&mut reader) {
         let cert = cert.map_err(|e| {
-            make_rtsp_error(py, "TLS", &format!("tls_root_certs_pem: invalid PEM: {e}"))
+            raise(
+                py,
+                &RTSP,
+                BindingError::new(
+                    BindingErrorKind::RtspTls,
+                    format!("tls_root_certs_pem: invalid PEM: {e}"),
+                ),
+            )
         })?;
         roots.add(cert).map_err(|e| {
-            make_rtsp_error(
+            raise(
                 py,
-                "TLS",
-                &format!("tls_root_certs_pem: certificate rejected as trust anchor: {e}"),
+                &RTSP,
+                BindingError::new(
+                    BindingErrorKind::RtspTls,
+                    format!("tls_root_certs_pem: certificate rejected as trust anchor: {e}"),
+                ),
             )
         })?;
         added += 1;
     }
     if added == 0 {
-        return Err(make_rtsp_error(
+        return Err(raise(
             py,
-            "TLS",
-            "tls_root_certs_pem contains no certificates",
+            &RTSP,
+            BindingError::new(
+                BindingErrorKind::RtspTls,
+                "tls_root_certs_pem contains no certificates",
+            ),
         ));
     }
     Ok(builder.tls_root_certs(roots))
@@ -680,11 +693,14 @@ fn apply_tls_roots(
     config: &PyRtspClientConfig,
 ) -> PyResult<RtspClientBuilder> {
     if config.tls_root_certs_pem.is_some() {
-        return Err(make_rtsp_error(
+        return Err(raise(
             py,
-            "TLS",
-            "tls_root_certs_pem requires the tst-py `tls` feature (on by \
-             default; this is a custom build without it)",
+            &RTSP,
+            BindingError::new(
+                BindingErrorKind::RtspTls,
+                "tls_root_certs_pem requires the tst-py `tls` feature (on by \
+                 default; this is a custom build without it)",
+            ),
         ));
     }
     Ok(builder)
@@ -749,7 +765,7 @@ impl PyRtspSession {
                 None => Err(RustRtspError::SessionExpired),
             }
         });
-        result.map_err(|e| make_rtsp_error(py, rtsp_error_kind_str(&e), &e.to_string()))
+        result.map_err(|e| raise(py, &RTSP, BindingError::from(e)))
     }
 
     /// Send PLAY (resume after `pause()`).
@@ -762,7 +778,7 @@ impl PyRtspSession {
                 None => Err(RustRtspError::SessionExpired),
             }
         });
-        result.map_err(|e| make_rtsp_error(py, rtsp_error_kind_str(&e), &e.to_string()))
+        result.map_err(|e| raise(py, &RTSP, BindingError::from(e)))
     }
 
     /// Send TEARDOWN. Closes the server session; subsequent
@@ -784,7 +800,7 @@ impl PyRtspSession {
             torn.store(true, Ordering::Relaxed);
             r
         });
-        result.map_err(|e| make_rtsp_error(py, rtsp_error_kind_str(&e), &e.to_string()))
+        result.map_err(|e| raise(py, &RTSP, BindingError::from(e)))
     }
 
     /// Cancel handle — flipping `cancel()` breaks any in-flight
@@ -805,7 +821,7 @@ impl PyRtspSession {
                 inner: c.cancel_handle(),
             }),
             None => Err(make_rtsp_error_pure(
-                "PROTOCOL",
+                BindingErrorKind::RtspProtocol,
                 "RtspSession is torn down; cancel_handle unavailable",
             )),
         }
@@ -852,11 +868,14 @@ impl PyRtspSession {
                 .lock()
                 .map_err(|_| PyValueError::new_err("RtspSession lock poisoned"))?;
             if guard.is_some() {
-                return Err(make_rtsp_error(
+                return Err(raise(
                     py,
-                    "PROTOCOL",
-                    "RtspSession.into_demux_receiver: this session was negotiated \
-                     for H.264 elementary ingest — use into_h264_receiver() instead",
+                    &RTSP,
+                    BindingError::new(
+                        BindingErrorKind::RtspProtocol,
+                        "RtspSession.into_demux_receiver: this session was negotiated \
+                         for H.264 elementary ingest — use into_h264_receiver() instead",
+                    ),
                 ));
             }
         }
@@ -868,7 +887,7 @@ impl PyRtspSession {
                 .map_err(|_| PyValueError::new_err("RtspSession lock poisoned"))?;
             guard.take().ok_or_else(|| {
                 make_rtsp_error_pure(
-                    "PROTOCOL",
+                    BindingErrorKind::RtspProtocol,
                     "RtspSession.into_demux_receiver: already consumed",
                 )
             })?
@@ -912,11 +931,14 @@ impl PyRtspSession {
                 .lock()
                 .map_err(|_| PyValueError::new_err("RtspSession lock poisoned"))?;
             guard.take().ok_or_else(|| {
-                make_rtsp_error(
+                raise(
                     py,
-                    "PROTOCOL",
-                    "RtspSession.into_h264_receiver: session was not created by \
-                     connect_h264(), or the H264DepayConfig has already been consumed",
+                    &RTSP,
+                    BindingError::new(
+                        BindingErrorKind::RtspProtocol,
+                        "RtspSession.into_h264_receiver: session was not created by \
+                         connect_h264(), or the H264DepayConfig has already been consumed",
+                    ),
                 )
             })?
         };
@@ -929,10 +951,13 @@ impl PyRtspSession {
                 .lock()
                 .map_err(|_| PyValueError::new_err("RtspSession lock poisoned"))?;
             guard.take().ok_or_else(|| {
-                make_rtsp_error(
+                raise(
                     py,
-                    "PROTOCOL",
-                    "RtspSession.into_h264_receiver: data plane already consumed",
+                    &RTSP,
+                    BindingError::new(
+                        BindingErrorKind::RtspProtocol,
+                        "RtspSession.into_h264_receiver: data plane already consumed",
+                    ),
                 )
             })?
         };
@@ -971,99 +996,11 @@ impl PyRtspSession {
     }
 }
 
-/// `make_rtsp_error` requires a Python handle; this helper provides a
-/// non-Python-handle variant for sites that have no `py` in scope
-/// (e.g. `cancel_handle` returning a typed error inside a `?` chain
-/// before `Python::with_gil`). Returns a `PyErr` that wraps a Python
-/// `RtspError` instance by re-acquiring the GIL.
-fn make_rtsp_error_pure(kind: &str, message: &str) -> PyErr {
-    Python::with_gil(|py| make_rtsp_error(py, kind, message))
-}
-
-// ---------------------------------------------------------------------------
-// Helper: RtspError → SHOUTY_SNAKE kind classifier
-// ---------------------------------------------------------------------------
-
-/// Map a Rust `RtspError` variant onto the SHOUTY_SNAKE kind name
-/// expected by `make_rtsp_error` / `tstrans.exceptions.RtspErrorKind`.
-///
-/// Bucket policy (collapsed-variant rule from the design spec):
-///
-/// - `Io` → `IO` (transport-level socket failure)
-/// - `Tls` → `TLS`
-/// - `Protocol { code: 404, .. }` → `NOT_FOUND`
-/// - `Protocol { code: 401, .. }` → `AUTH_REQUIRED` (server demanded
-///   auth and we couldn't satisfy it on retry)
-/// - `Protocol { .. }` (other 4xx/5xx) → `PROTOCOL`
-/// - `AuthFailed` / `AuthUnsupported` → `AUTH_FAILED`
-/// - `UnsupportedTransport` → `UNSUPPORTED_TRANSPORT`
-/// - `BadResponse` / `BadSdp` / `SessionExpired` / `LocalCancel` / `Url`
-///   → `PROTOCOL`
-/// - `Timeout` → `TIMEOUT`
-/// - `NoMp2tMedia` / `MultipleMp2tMedia` → `MOUNT` (SETUP-time mount
-///   path issue from the SDP side)
-/// - `NoH264Media` / `MultipleH264Media` → `MOUNT` (H.264 SETUP-time SDP issues)
-/// - `UnsupportedPacketizationMode` → `UNSUPPORTED_TRANSPORT` (parity with
-///   `UnsupportedTransport` and the C RtspUnsupported bucket — the error is
-///   about a transport/encoding mode the client cannot speak, not a
-///   server-side mount/configuration failure)
-/// - any future `#[non_exhaustive]` variant → `PROTOCOL` (catch-all;
-///   the bash ratchet flags missing Python-side variants when they
-///   land)
-fn rtsp_error_kind_str(e: &RustRtspError) -> &'static str {
-    match e {
-        RustRtspError::Io(_) => "IO",
-        RustRtspError::Tls(_) => "TLS",
-        RustRtspError::Protocol { code: 404, .. } => "NOT_FOUND",
-        RustRtspError::Protocol { code: 401, .. } => "AUTH_REQUIRED",
-        RustRtspError::Protocol { .. } => "PROTOCOL",
-        RustRtspError::AuthFailed => "AUTH_FAILED",
-        RustRtspError::AuthUnsupported { .. } => "AUTH_FAILED",
-        RustRtspError::BadResponse { .. } => "PROTOCOL",
-        RustRtspError::BadSdp { .. } => "PROTOCOL",
-        RustRtspError::UnsupportedTransport => "UNSUPPORTED_TRANSPORT",
-        RustRtspError::SessionExpired => "PROTOCOL",
-        RustRtspError::Timeout => "TIMEOUT",
-        RustRtspError::LocalCancel => "PROTOCOL",
-        RustRtspError::NoMp2tMedia => "MOUNT",
-        RustRtspError::MultipleMp2tMedia { .. } => "MOUNT",
-        RustRtspError::NoH264Media => "MOUNT",
-        RustRtspError::MultipleH264Media { .. } => "MOUNT",
-        RustRtspError::UnsupportedPacketizationMode(_) => "UNSUPPORTED_TRANSPORT",
-        RustRtspError::Url(_) => "PROTOCOL",
-        // #[non_exhaustive] wildcard — future variants land in PROTOCOL
-        // until the Python-side RtspErrorKind grows a matching variant.
-        _ => "PROTOCOL",
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Server-side variant call-site anchors for the ratchet
-// ---------------------------------------------------------------------------
-//
-// The consolidated `scripts/check/python/error-mapping-coverage.sh`
-// ratchet scans `bindings/python/src/` for at least one literal
-// `make_rtsp_error(<py>, "KIND", ...)` call site per
-// `RtspErrorKind` variant. Wave A's natural call sites cover most
-// kinds via `rtsp_error_kind_str`, but `SERVER` and `MOUNT` (mostly
-// server-side concepts coming in Task 22 / Wave B / future work)
-// need anchor call sites here too. The function below is `#[allow(
-// dead_code)]`, not called from anywhere, but the grep-ratchet
-// counts it.
-
-#[allow(dead_code)]
-fn _ratchet_coverage_anchor(py: Python<'_>) -> PyErr {
-    let _ = make_rtsp_error(py, "PROTOCOL", "ratchet anchor");
-    let _ = make_rtsp_error(py, "AUTH_FAILED", "ratchet anchor");
-    let _ = make_rtsp_error(py, "AUTH_REQUIRED", "ratchet anchor");
-    let _ = make_rtsp_error(py, "NOT_FOUND", "ratchet anchor");
-    let _ = make_rtsp_error(py, "UNSUPPORTED_TRANSPORT", "ratchet anchor");
-    let _ = make_rtsp_error(py, "TLS", "ratchet anchor");
-    let _ = make_rtsp_error(py, "IO", "ratchet anchor");
-    let _ = make_rtsp_error(py, "TIMEOUT", "ratchet anchor");
-    let _ = make_rtsp_error(py, "SERVER", "ratchet anchor");
-    let _ = make_rtsp_error(py, "MOUNT", "ratchet anchor");
-    make_rtsp_error(py, "PROTOCOL", "unreachable")
+/// `raise` needs a `Python` token; this helper serves the sites that have
+/// none in scope (e.g. `cancel_handle` returning a typed error inside a
+/// `?` chain before `Python::with_gil`) by re-acquiring the GIL.
+fn make_rtsp_error_pure(kind: BindingErrorKind, message: &str) -> PyErr {
+    Python::with_gil(|py| raise(py, &RTSP, BindingError::new(kind, message)))
 }
 
 // ---------------------------------------------------------------------------

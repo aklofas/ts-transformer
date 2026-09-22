@@ -34,10 +34,11 @@
 
 use pyo3::prelude::*;
 
-use tst_hls::{HlsError, HlsErrorKind, HlsUrlError};
+use tst_hls::{HlsError, HlsUrlError};
 use tst_pipeline::MuxPublisherError;
 
-pub(crate) use crate::errors::make_hls_error;
+use crate::raise::{HLS, raise};
+use tst_pipeline::binding::BindingError;
 
 pub(crate) mod config;
 pub(crate) mod mux_publisher;
@@ -48,59 +49,29 @@ pub(crate) mod publisher_abc;
 // Error mapping
 // ---------------------------------------------------------------------------
 
-/// Map a `tst_hls::HlsError` to a `tstrans.exceptions.HlsError`.
-///
-/// Exhaustive over the 9 `HlsErrorKind` variants; the wildcard arm routes
-/// any future `#[non_exhaustive]` addition to `INTERNAL` so this fn never
-/// panics on a Rust-side enum growth. The consolidated
-/// `scripts/check/python/error-mapping-coverage.sh` ratchet surfaces an
-/// unmapped variant in CI.
-pub(crate) fn map_hls_error(py: Python<'_>, e: &HlsError) -> PyErr {
-    let msg = e.to_string();
-    match e.kind() {
-        HlsErrorKind::Url => make_hls_error(py, "URL", &msg),
-        HlsErrorKind::Io => make_hls_error(py, "IO", &msg),
-        HlsErrorKind::BindFailed => make_hls_error(py, "BIND_FAILED", &msg),
-        HlsErrorKind::InvalidConfig => make_hls_error(py, "INVALID_CONFIG", &msg),
-        HlsErrorKind::UnalignedPushTs => make_hls_error(py, "UNALIGNED_PUSH_TS", &msg),
-        HlsErrorKind::Finished => make_hls_error(py, "FINISHED", &msg),
-        HlsErrorKind::TlsDisabled => make_hls_error(py, "TLS_DISABLED", &msg),
-        HlsErrorKind::Tls => make_hls_error(py, "TLS", &msg),
-        HlsErrorKind::Internal => make_hls_error(py, "INTERNAL", &msg),
-        // Wildcard for #[non_exhaustive] additions not yet mapped.
-        _ => make_hls_error(py, "INTERNAL", &msg),
-    }
+/// Map a `tst_hls::HlsError` through the one raise path.
+pub(crate) fn map_hls_error(py: Python<'_>, e: HlsError) -> PyErr {
+    raise(py, &HLS, BindingError::from(e))
 }
 
-/// Map a `tst_hls::HlsUrlError` (from `builder.from_url`) to a
-/// `tstrans.exceptions.HlsError` with `kind=URL`.
-pub(crate) fn map_hls_url_error(py: Python<'_>, e: &HlsUrlError) -> PyErr {
-    make_hls_error(py, "URL", &e.to_string())
+/// Map a `tst_hls::HlsUrlError` (from `builder.from_url`) — `URL`.
+pub(crate) fn map_hls_url_error(py: Python<'_>, e: HlsUrlError) -> PyErr {
+    raise(py, &HLS, BindingError::from(e))
 }
 
 /// Map a `tst_pipeline::MuxPublisherError<HlsError>` raised by a
-/// `MuxPublisher` send/cut into a Python exception.
+/// `MuxPublisher` send/cut.
 ///
-/// Routing:
-/// - `Publisher(HlsError)` → the inner HLS error, fully discriminated via
-///   `map_hls_error` (so an unaligned push or a finished sink surfaces
-///   with the right kind).
-/// - `Mux(MuxError)` → `HlsError(INVALID_CONFIG)` (muxer rejected the
-///   input; the free-text message carries the detail).
-/// - `Closed` → `HlsError(FINISHED)` (shell was consumed via
-///   `finish_into_publisher`).
-/// - wildcard (`#[non_exhaustive]`) → `HlsError(INTERNAL)`.
+/// The source decides the CLASS: a MUX-sourced failure keeps
+/// `mux_error_to_pyerr` (a `MuxError` carrying `.pid` and the `write_file`
+/// breadcrumb — it was flattened to `HlsError(INVALID_CONFIG)` before
+/// 0.7.0), everything else is a `BindingError` on the HLS domain via A2's
+/// `From<MuxPublisherError<E>>`: `Publisher(e)` keeps the inner HLS kind,
+/// `Closed` is `CLOSED` (was `FINISHED`), a poisoned lock is `INTERNAL`.
 pub(crate) fn map_mux_publisher_error(py: Python<'_>, e: MuxPublisherError<HlsError>) -> PyErr {
     match e {
-        MuxPublisherError::Publisher(hls_err) => map_hls_error(py, &hls_err),
-        MuxPublisherError::Mux(mux_err) => {
-            make_hls_error(py, "INVALID_CONFIG", &mux_err.to_string())
-        }
-        MuxPublisherError::Closed => {
-            make_hls_error(py, "FINISHED", "MuxPublisher already finished")
-        }
-        // Wildcard for #[non_exhaustive] additions not yet mapped.
-        ref other => make_hls_error(py, "INTERNAL", &other.to_string()),
+        MuxPublisherError::Mux(mux_err) => crate::errors::mux_error_to_pyerr(py, mux_err),
+        other => raise(py, &HLS, BindingError::from(other)),
     }
 }
 
