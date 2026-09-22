@@ -12731,3 +12731,240 @@ owning_tests = ["crates/tst-srt/tests/pipeline/shells_from_url.rs"]
 bindings = []
 scenario_ids = []
 tier = "A"
+
+# --- WP-C1 (Arc 2 PR 7): TransportCancel::is_cancelled + the conformance kit ---
+# The kit (`tst_core::transport::conformance`) is test infrastructure: it is
+# Provisional, std-only, and has no C/Python/JVM counterpart, so its items can
+# never carry binding columns. The cancel-handle rows sit alongside their
+# already-exempt siblings.
+[[exempt]]
+item = "tst_core::cancel::SrtCancelHandle::close_without_cancel"
+reason = "WP-C1: cancel-handle API, catalogued the same way as its siblings (SrtCancelHandle::cancel/::is_cancelled, TransportCancel::cancel) which are all exempt"
+
+[[exempt]]
+item = "tst_core::TransportCancel::is_cancelled"
+reason = "WP-C1: cancel-handle API, catalogued the same way as its siblings (SrtCancelHandle::cancel/::is_cancelled, TransportCancel::cancel) which are all exempt"
+
+[[exempt]]
+item = "tst_core::transport::conformance::assert_recv_contract"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::assert_recv_rows"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::assert_send_contract"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::assert_send_rows"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::BrokenSource"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::not_alive_after_broken_recv"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::not_alive_after_broken_send"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::PostCloseKind"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::PostCloseKind::clone"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::PostCloseKind::eq"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::PostCloseKind::fmt"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::probe_packet"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::recv_cancel_before_op_is_explicit_close"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::recv_cancel_during_park_is_explicit_close"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::recv_close_twice_is_ok"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::recv_empty_recv_is_noop"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::recv_is_cancelled_flips"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::recv_max_payload_ge_ceiling"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::recv_not_alive_after_cancel"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::RecvOptions"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::RecvOptions::clone"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::RecvOptions::default"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::RecvOptions::fmt"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::recv_peer_eof_is_not_a_cancel"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::recv_post_close_is_closed"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::RecvRow"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::RecvRow::ALL"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::RecvRow::all_except"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::RecvRow::clone"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::RecvRow::eq"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::RecvRow::fmt"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::RecvRow::name"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::send_cancel_before_op_is_explicit_close"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::send_cancel_during_park_is_explicit_close"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::send_close_twice_is_ok"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::send_is_cancelled_flips"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::send_not_alive_after_cancel"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::SendOptions"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::SendOptions::clone"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::SendOptions::default"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::SendOptions::fmt"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::SendPark"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::SendPark::clone"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::SendPark::eq"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::SendPark::fmt"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::send_post_close_is_closed"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::SendRow"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::SendRow::ALL"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::SendRow::all_except"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::SendRow::clone"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::SendRow::eq"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::SendRow::fmt"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::SendRow::name"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::conformance::WATCHDOG"
+reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+
+[[exempt]]
+item = "tst_core::transport::TransportCancel::is_cancelled"
+reason = "WP-C1: cancel-handle API, catalogued the same way as its siblings (SrtCancelHandle::cancel/::is_cancelled, TransportCancel::cancel) which are all exempt"
+
+[[exempt]]
+item = "tst_pipeline::binding::owned::FlagCancel::is_cancelled"
+reason = "WP-C1: cancel-handle API, catalogued the same way as its siblings (SrtCancelHandle::cancel/::is_cancelled, TransportCancel::cancel) which are all exempt"

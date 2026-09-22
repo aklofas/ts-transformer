@@ -75,6 +75,7 @@ its `rtsp` row), the more specific row wins for that path.
 | tst-core | codec::mpegaudio | Provisional | audio parser |
 | tst-core | codec::nal_framing | Provisional | new module, Annex B ↔ length-prefixed NAL conversion for VideoToolbox-style consumers |
 | tst-core | transport | Stable | trait contract all transports implement |
+| tst-core | transport::conformance | Provisional | executable form of the transport cancel/close/liveness table; run by every transport crate's `tests/conformance.rs`; its row/option enums may still gain members before 1.0 (std-only) |
 | tst-core | error | Stable | error taxonomy |
 | tst-core | cancel | Stable | cancellation plumbing shared across transports; spec-silent, defaults to tst-core's tier. `CancelSlot` (shipped 2026-09-09, re-exported by `tst-pipeline` as the `FactoryCancel` alias) is Provisional — same divergence shape as `tst-rtp`'s `h264` row below |
 | tst-core | io_file | Stable | file I/O convenience layer over mux/demux (`file` feature); spec-silent, defaults to tst-core's tier |
