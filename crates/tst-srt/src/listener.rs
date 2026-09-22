@@ -464,6 +464,11 @@ impl Listener {
 impl Drop for Listener {
     fn drop(&mut self) {
         // No-op if explicit close() / cancel() already fired.
-        self.cancel.cancel();
+        //
+        // `close_without_cancel`: Drop is the owner retiring the listener,
+        // not a caller cancelling it. See `Socket`'s Drop for the full
+        // reasoning — `is_cancelled()` is the caller's intent, never
+        // "this resource is gone".
+        self.cancel.close_without_cancel();
     }
 }

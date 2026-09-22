@@ -34,6 +34,8 @@ mod listener_cancel;
 mod maxbw_roundtrip;
 #[path = "loopback/payload_limit.rs"]
 mod payload_limit;
+#[path = "loopback/peer_eof_is_not_a_cancel.rs"]
+mod peer_eof_is_not_a_cancel;
 #[path = "loopback/srto_sender.rs"]
 mod srto_sender;
 #[path = "loopback/url_open.rs"]

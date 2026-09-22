@@ -107,12 +107,15 @@ impl CancelSource {
         me
     }
 
-    /// `true` once this source, or the transport handle it wraps, has been
-    /// cancelled. ORing `inner` in (WP-C1) matters for a handle the caller
-    /// reached past the Python object — and is safe now that every
-    /// `TransportCancel::is_cancelled` is a cancel latch, never `!alive`.
+    /// `true` once THIS source has been cancelled — its own latch only.
+    ///
+    /// Deliberately does NOT OR in `inner.is_cancelled()`: `Owned` already
+    /// ORs the transport's latch for the shell's own reporting, and pushing
+    /// it in here too would widen what the user-visible
+    /// `tstrans.*.CancelHandle.is_cancelled()` answers with no caller asking
+    /// for it.
     pub(crate) fn is_cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::Acquire) || self.inner.is_cancelled()
+        self.cancelled.load(Ordering::Acquire)
     }
 
     /// The trait-object view `Owned::new` takes. Only the transport

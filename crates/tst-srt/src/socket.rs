@@ -424,7 +424,13 @@ impl Socket {
 impl Drop for Socket {
     fn drop(&mut self) {
         // No-op if explicit close() / cancel() already fired.
-        self.cancel.cancel();
+        //
+        // `close_without_cancel`, NOT `cancel`: Drop runs on every transport
+        // error path that retires a dead socket (`SrtTransport` nulls its
+        // `Option<Socket>` on a peer break), and a peer disconnect must not
+        // latch the caller-visible `is_cancelled()`. The socket is still
+        // closed and any parked call still woken — only the latch differs.
+        self.cancel.close_without_cancel();
     }
 }
 
