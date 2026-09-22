@@ -519,16 +519,26 @@ def test_listener_open_bind_fault_is_broken_with_a_bind_prefix(opener) -> None:
         first.close()
 
 
-def test_every_public_srt_class_has_a_docstring() -> None:
+@pytest.mark.parametrize("mod_name", ["srt", "rtp", "udp", "tcp", "rist", "hls"])
+def test_every_public_transport_class_has_a_docstring(mod_name: str) -> None:
     """A `#[pyclass]` whose `///` block drifts onto a neighbouring item
-    silently loses `__doc__` and no rail notices (it happened to
-    `srt.Listener` during the Arc 2 re-point). Cheap guard over the
-    module's public classes."""
+    silently loses `__doc__` and no rail notices — it happened twice during
+    the Arc 2 re-point (`srt.Listener`, then `tcp.Listener`, both when a
+    `Close`-impl struct was inserted between the doc block and the
+    `#[pyclass]`). Cheap guard over every transport module's public
+    classes."""
+    import importlib
     import inspect
 
+    mod = importlib.import_module(f"tstrans.{mod_name}")
     missing = [
         name
-        for name, obj in vars(tstrans.srt).items()
-        if not name.startswith("_") and inspect.isclass(obj) and not (obj.__doc__ or "").strip()
+        for name, obj in vars(mod).items()
+        if not name.startswith("_")
+        and inspect.isclass(obj)
+        # Only classes this module defines: `vars()` also sees imported
+        # names (exception classes, enums re-exported from elsewhere).
+        and getattr(obj, "__module__", "") == f"tstrans.{mod_name}"
+        and not (obj.__doc__ or "").strip()
     ]
-    assert not missing, f"tstrans.srt classes without a docstring: {missing}"
+    assert not missing, f"tstrans.{mod_name} classes without a docstring: {missing}"

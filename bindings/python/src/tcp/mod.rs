@@ -144,7 +144,7 @@ impl PyTcpTransport {
     /// Send a payload over the TCP connection. Accepts any bytes-like object:
     /// `bytes`, `bytearray`, `memoryview`, or any buffer-protocol object.
     ///
-    /// Raises `TcpError(kind=PAYLOAD_TOO_LARGE)` if `len(payload)` exceeds
+    /// Raises `TcpError(kind=TOO_LARGE)` if `len(payload)` exceeds
     /// the configured `pkt_size` (default 64 KiB).
     ///
     /// Releases the GIL during the kernel send.
@@ -445,16 +445,6 @@ impl PyTcpTransportBuilder {
 // PyTcpListener -- wraps tst_tcp::TcpListener
 // ---------------------------------------------------------------------------
 
-/// TCP listener -- wraps `tst_tcp::TcpListener`.
-///
-/// Construct via `Listener.builder().bind("host:port").build()`, then call
-/// `accept_blocking()` to receive a `Transport` per inbound connection.
-///
-/// Binding to port 0 lets the kernel pick a free ephemeral port; read it
-/// back via `local_port()` before accepting.
-///
-/// GIL is released during `accept_blocking` so other Python threads
-/// remain live while waiting for a connection.
 /// `tst_tcp::TcpListener` behind the binding layer's `Close`.
 pub(crate) struct TcpListenerHeld(pub TcpListener);
 
@@ -467,6 +457,16 @@ impl tst_pipeline::binding::Close for TcpListenerHeld {
     }
 }
 
+/// TCP listener -- wraps `tst_tcp::TcpListener`.
+///
+/// Construct via `Listener.builder().bind("host:port").build()`, then call
+/// `accept_blocking()` to receive a `Transport` per inbound connection.
+///
+/// Binding to port 0 lets the kernel pick a free ephemeral port; read it
+/// back via `local_port()` before accepting.
+///
+/// GIL is released during `accept_blocking` so other Python threads
+/// remain live while waiting for a connection.
 #[pyclass(name = "Listener", module = "tstrans.tcp")]
 pub(crate) struct PyTcpListener {
     /// The binding layer's handle state machine (Arc 2). Snapshot = the

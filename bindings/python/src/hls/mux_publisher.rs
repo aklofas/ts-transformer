@@ -280,7 +280,7 @@ impl PyMuxPublisher {
 
     /// Consume the shell and return the owned `HlsPublisher`. The caller
     /// should then `finish()` it (writes the final playlist + tears down
-    /// the HTTP server). Raises `HlsError(FINISHED)` if already consumed.
+    /// the HTTP server). Raises `HlsError(CLOSED)` if already consumed.
     fn finish_into_publisher(&self, py: Python<'_>) -> PyResult<PyHlsPublisher> {
         let mp = {
             let mut guard = self

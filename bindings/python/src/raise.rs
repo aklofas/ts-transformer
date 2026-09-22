@@ -322,6 +322,15 @@ pub(crate) fn pyres<R, E: Into<BindingError>>(
     }
 }
 
+// Only the transport surfaces call this; cfg (not `allow(dead_code)`) so a
+// genuinely-orphaned helper would still warn.
+#[cfg(any(
+    feature = "srt",
+    feature = "rtp",
+    feature = "udp",
+    feature = "tcp",
+    feature = "rist"
+))]
 pub(crate) fn pyok<R>(py: Python<'_>, d: &Domain, r: Result<R, HandleState>) -> PyResult<R> {
     r.map_err(|state| raise(py, d, state.into()))
 }

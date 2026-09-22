@@ -95,17 +95,14 @@ pub(crate) struct PyManagedMuxSender {
     /// `close()` / `__exit__` can drop the inner shell while keeping the
     /// PyClass addressable for idempotent closes.
     owned: Owned<RustMuxSender<ManagedTransport<SrtTransport>>>,
-    /// `tst_pipeline::MuxSender::cancel_handle()` snapshot — the managed
-    /// transport's cancel (latches the close flag, wakes the backoff wait
-    /// and the factory slot, closes the current inner). Exposed through
-    /// `cancel_handle()` and fired first by `close()`.
     /// Shared cancel state (Arc 2 WP-B2): the same `Arc` every
     /// `CancelHandle` this shell hands out holds, so `close()` here and
     /// `cancel()` through any handle flip one observable flag.
     cancel: Arc<CancelSource>,
-    /// Counts factory invocations (reconnect attempts). Bumped from
-    /// inside the captured `Fn() -> Result<...>` closure by every
-    /// `ManagedTransport::reconnect_and_drain` retry tick.
+    /// `ManagedHandles.attempts` — the CORE's own reconnect-attempt
+    /// counter (A3), read by `reconnect_attempts()`. Every
+    /// `ManagedTransport::reconnect_and_drain` retry tick bumps it inside
+    /// the core, so the binding no longer wraps the factory to count.
     attempts: Arc<AtomicU64>,
     /// Reconnect/gap telemetry observer, snapshotted from the
     /// `ManagedTransport` BEFORE it moves into `RustMuxSender::new`

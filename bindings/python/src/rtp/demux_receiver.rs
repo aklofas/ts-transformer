@@ -127,7 +127,11 @@ impl PyDemuxReceiver {
     /// `demux_config` is an optional `tstrans.mpegts.DemuxerConfig`
     /// dataclass; when `None`, defaults are used.
     ///
-    /// Raises `RtpError(CLOSED)` on URL parse / socket bind failure.
+    /// Raises `RtpError(URL)` on URL parse failure (the other
+    /// `ConnectError` members — `PAYLOAD_TYPE_PARAM`,
+    /// `MISSING_PAYLOAD_TYPE_PARAM`, `HOST_NOT_LITERAL`,
+    /// `IFACE_UNSUPPORTED` — for the corresponding rejections) and
+    /// `RtpError(IO)` on a socket bind failure.
     #[new]
     #[pyo3(signature = (url, *, demux_config = None))]
     fn new(py: Python<'_>, url: &str, demux_config: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {

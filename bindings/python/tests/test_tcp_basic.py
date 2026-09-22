@@ -458,7 +458,7 @@ def test_tcp_error_connect_timeout() -> None:
 
 
 def test_tcp_error_payload_too_large() -> None:
-    """Transport.send() raises TcpError(kind=PAYLOAD_TOO_LARGE) for oversized payload."""
+    """Transport.send() raises TcpError(kind=TOO_LARGE) for oversized payload."""
     listener, port = _listener_and_port()
     ready = threading.Event()
 

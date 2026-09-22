@@ -3,7 +3,7 @@
 Covers:
 - T3: unicast loopback round-trip via Transport + RecvTransport
 - T4: builder URL validation, local_addr_port, stats fields
-- T5: PAYLOAD_TOO_LARGE error-kind propagation, UdpErrorKind variant count
+- T5: TOO_LARGE error-kind propagation, UdpErrorKind variant count
 """
 
 import pytest
@@ -133,7 +133,7 @@ def test_udp_recv_transport_context_manager() -> None:
 
 
 def test_udp_error_payload_too_large() -> None:
-    """Transport.send() raises UdpError(kind=PAYLOAD_TOO_LARGE) for oversized payload."""
+    """Transport.send() raises UdpError(kind=TOO_LARGE) for oversized payload."""
     rx = udp.RecvTransport.builder().bind_url("udp://0.0.0.0:0").build()
     port = rx.local_addr_port()
     # pkt_size=188 means any payload > 188 bytes is rejected.
