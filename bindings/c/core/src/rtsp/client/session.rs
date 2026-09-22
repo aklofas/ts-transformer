@@ -61,7 +61,7 @@ use tst_pipeline::DemuxReceiver;
 use tst_rtp::{RtspCancelHandle, RtspClient, RtspClientBuilder, RtspSession};
 
 use crate::demux_config::TstDemuxConfig;
-use crate::error::{TstError, rtsp_error_to_code, set_last_error};
+use crate::error::{TstError, set_last_error};
 use crate::handle::TstRtspClientBuilder;
 use crate::panic::ffi_catch;
 use crate::rtp::demux_receiver::TstRtpDemuxReceiver;
@@ -150,8 +150,7 @@ pub unsafe extern "C" fn tst_rtsp_client_builder_connect(
         let mut rust_builder = match RtspClientBuilder::new(&url_str) {
             Ok(rb) => rb,
             Err(e) => {
-                let code = rtsp_error_to_code(&e);
-                set_last_error(code, &format!("RTSP URL parse error: {e}"));
+                crate::error::record_with_context(e, "RTSP URL parse error");
                 return std::ptr::null_mut();
             }
         };
@@ -179,8 +178,7 @@ pub unsafe extern "C" fn tst_rtsp_client_builder_connect(
         let mut client = match rust_builder.connect() {
             Ok(c) => c,
             Err(e) => {
-                let code = rtsp_error_to_code(&e);
-                set_last_error(code, &format!("RTSP connect failed: {e}"));
+                crate::error::record_with_context(e, "RTSP connect failed");
                 return std::ptr::null_mut();
             }
         };
@@ -194,8 +192,7 @@ pub unsafe extern "C" fn tst_rtsp_client_builder_connect(
         let sdp = match client.describe() {
             Ok(s) => s,
             Err(e) => {
-                let code = rtsp_error_to_code(&e);
-                set_last_error(code, &format!("RTSP DESCRIBE failed: {e}"));
+                crate::error::record_with_context(e, "RTSP DESCRIBE failed");
                 return std::ptr::null_mut();
             }
         };
@@ -204,8 +201,7 @@ pub unsafe extern "C" fn tst_rtsp_client_builder_connect(
         let session = match client.setup_mp2t_auto(&sdp) {
             Ok(s) => s,
             Err(e) => {
-                let code = rtsp_error_to_code(&e);
-                set_last_error(code, &format!("RTSP SETUP failed: {e}"));
+                crate::error::record_with_context(e, "RTSP SETUP failed");
                 return std::ptr::null_mut();
             }
         };
@@ -256,11 +252,7 @@ pub unsafe extern "C" fn tst_rtsp_session_play(session: *mut TstRtspSession) -> 
                 let (client, _session) = pair.as_mut();
                 match client.play() {
                     Ok(_rtp_info) => 0,
-                    Err(e) => {
-                        let code = rtsp_error_to_code(&e);
-                        set_last_error(code, &format!("RTSP PLAY failed: {e}"));
-                        code as i32
-                    }
+                    Err(e) => crate::error::record_with_context(e, "RTSP PLAY failed"),
                 }
             }
         }
@@ -305,11 +297,7 @@ pub unsafe extern "C" fn tst_rtsp_session_pause(session: *mut TstRtspSession) ->
                 let (client, _session) = pair.as_mut();
                 match client.pause() {
                     Ok(()) => 0,
-                    Err(e) => {
-                        let code = rtsp_error_to_code(&e);
-                        set_last_error(code, &format!("RTSP PAUSE failed: {e}"));
-                        code as i32
-                    }
+                    Err(e) => crate::error::record_with_context(e, "RTSP PAUSE failed"),
                 }
             }
         }
@@ -363,14 +351,10 @@ pub unsafe extern "C" fn tst_rtsp_session_teardown_and_free(
                     let (client, _session) = pair.as_mut();
                     match client.teardown() {
                         Ok(()) => 0,
-                        Err(e) => {
-                            let code = rtsp_error_to_code(&e);
-                            set_last_error(
-                                code,
-                                &format!("RTSP TEARDOWN failed (continuing free): {e}"),
-                            );
-                            code as i32
-                        }
+                        Err(e) => crate::error::record_with_context(
+                            e,
+                            "RTSP TEARDOWN failed (continuing free)",
+                        ),
                     }
                 }
             }

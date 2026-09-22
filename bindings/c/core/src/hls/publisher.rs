@@ -32,7 +32,7 @@ use std::os::raw::c_char;
 
 use tst_core::publisher::Publisher;
 
-use crate::error::{TstError, hls_error_to_code, set_last_error};
+use crate::error::{TstError, set_last_error};
 use crate::stats::{TstHlsStats, TstPublisherStats};
 
 // ---------------------------------------------------------------------------
@@ -104,11 +104,7 @@ pub unsafe extern "C" fn tst_publisher_push_ts(
         match &mut handle.inner {
             Some(PublisherImpl::Hls(h)) => match h.push_ts(slice) {
                 Ok(()) => 0,
-                Err(e) => {
-                    let code = hls_error_to_code(&e);
-                    set_last_error(code, &format!("hls push_ts: {e}"));
-                    code as i32
-                }
+                Err(e) => crate::error::record_with_context(e, "hls push_ts"),
             },
             None => {
                 set_last_error(TstError::HlsFinished, "publisher already finished");
@@ -139,11 +135,7 @@ pub unsafe extern "C" fn tst_publisher_cut_segment(p: *mut TstPublisher) -> libc
         match &mut handle.inner {
             Some(PublisherImpl::Hls(h)) => match h.cut_segment() {
                 Ok(()) => 0,
-                Err(e) => {
-                    let code = hls_error_to_code(&e);
-                    set_last_error(code, &format!("hls cut_segment: {e}"));
-                    code as i32
-                }
+                Err(e) => crate::error::record_with_context(e, "hls cut_segment"),
             },
             None => {
                 set_last_error(TstError::HlsFinished, "publisher already finished");
@@ -178,11 +170,7 @@ pub unsafe extern "C" fn tst_publisher_finish(p: *mut TstPublisher) -> libc::c_i
         match handle.inner.take() {
             Some(PublisherImpl::Hls(h)) => match h.finish() {
                 Ok(()) => 0,
-                Err(e) => {
-                    let code = hls_error_to_code(&e);
-                    set_last_error(code, &format!("hls finish: {e}"));
-                    code as i32
-                }
+                Err(e) => crate::error::record_with_context(e, "hls finish"),
             },
             None => {
                 set_last_error(TstError::HlsFinished, "publisher already finished");
@@ -542,9 +530,7 @@ pub unsafe extern "C" fn tst_hls_publisher_finish_serving(
                     // finish_serving consumed the publisher by value on the
                     // error path too — the inner cannot be restored, so the
                     // handle stays terminal (subsequent calls: HlsFinished).
-                    let code = hls_error_to_code(&e);
-                    set_last_error(code, &format!("hls finish_serving: {e}"));
-                    code as i32
+                    crate::error::record_with_context(e, "hls finish_serving")
                 }
             },
             None => {

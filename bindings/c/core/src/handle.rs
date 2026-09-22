@@ -1,6 +1,6 @@
 //! `Handle<T>` — the no_std wrapper for the offline C-side opaque pointers,
-//! and [`CHandle<T, S>`] — the std transport-handle shape over
-//! [`tst_pipeline::binding::Owned`].
+//! and `CHandle<T, S>` — the std transport-handle shape over
+//! `tst_pipeline::binding::Owned`.
 //!
 //! `Handle<T> = Mutex<Option<T>>`. `_open` returns
 //! `Box::into_raw(Box::new(Handle::new(inner)))`. Data-path entry points
@@ -9,7 +9,7 @@
 //!
 //! Since Arc 2 `Handle<T>` serves ONLY the three offline handles that must
 //! build without std (`TstMuxer`, `TstDemuxer`, `TstSt0601`). Every
-//! transport-bearing handle holds a [`CHandle<T, S>`] instead — the one
+//! transport-bearing handle holds a `CHandle<T, S>` instead — the one
 //! handle state machine shared with the Python and JVM bindings, which
 //! carries the cancel handle and the construction-time snapshot beside the
 //! slot so neither is reached through the lock. `binding` is std-only,

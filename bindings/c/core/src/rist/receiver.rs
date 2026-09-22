@@ -81,7 +81,7 @@ pub unsafe extern "C" fn tst_rist_recv_open(url: *const c_char) -> *mut TstRistR
         // RIST receive builder: new() validates the `@` bind prefix and
         // parses query params; listen() establishes the librist context.
         // URL / config parse failures map to RistConfig (-39) directly.
-        // librist runtime failures route through rist_error_to_code.
+        // librist runtime failures route through `record_with_context`.
         let builder = match RistRecvTransportBuilder::new(url_str) {
             Ok(b) => b,
             Err(e) => {
@@ -92,17 +92,7 @@ pub unsafe extern "C" fn tst_rist_recv_open(url: *const c_char) -> *mut TstRistR
         let transport = match builder.listen() {
             Ok(t) => t,
             Err(e) => {
-                // Special-case the two errors whose codes are load-bearing
-                // before the stub rist_error_to_code is completed by another
-                // agent. All other errors route through the stub (RistFfi).
-                let code = match e.kind() {
-                    tst_rist::RistErrorKind::EncryptionDisabled => TstError::RistEncryptionDisabled,
-                    tst_rist::RistErrorKind::InvalidConfig | tst_rist::RistErrorKind::Url => {
-                        TstError::RistConfig
-                    }
-                    _ => crate::error::rist_error_to_code(&e),
-                };
-                set_last_error(code, &format!("rist listen: {e}"));
+                crate::error::record_with_context(e, "rist listen");
                 return std::ptr::null_mut();
             }
         };

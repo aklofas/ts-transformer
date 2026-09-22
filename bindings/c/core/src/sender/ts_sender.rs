@@ -4,7 +4,7 @@
 //! STRICT mode per `tst_sender_config_t::framing_mode`).
 
 use crate::config::{TstReconnectPolicy, TstSenderConfig};
-use crate::error::{TstError, record_shell_error, record_transport_error, set_last_error};
+use crate::error::{TstError, record_shell_error, set_last_error};
 use crate::handle::Handle;
 use crate::sender::mux_sender::parse_c_srt_url;
 use std::sync::Arc;
@@ -52,7 +52,7 @@ pub unsafe extern "C" fn tst_sender_open(
         {
             Ok(t) => t,
             Err(e) => {
-                record_transport_error(&e);
+                crate::error::record_binding_error(e.into());
                 return std::ptr::null_mut();
             }
         };
@@ -238,7 +238,7 @@ pub unsafe extern "C" fn tst_managed_sender_open(
         let initial = match crate::sender::connect::connect_srt(&url.host, url.port, &socket_cfg) {
             Ok(t) => t,
             Err(e) => {
-                record_transport_error(&e);
+                crate::error::record_binding_error(e.into());
                 return std::ptr::null_mut();
             }
         };

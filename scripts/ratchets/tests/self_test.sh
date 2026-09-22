@@ -5,7 +5,9 @@
 # tmpdir, so it never depends on the real source tree.
 set -uo pipefail
 DIR="$(cd "$(dirname "$0")/.." && pwd)"          # scripts/ratchets
-RUST="$DIR/run-rust-coverage.sh"
+# The `rust` driver (run-rust-coverage.sh) retired in Arc 2 WP-B1 together
+# with the C binding's per-transport `*_error_to_code` converters; only the
+# py / pyarm drivers remain to self-test.
 PY="$DIR/run-py-coverage.sh"
 
 tmp="$(mktemp -d)"
@@ -22,57 +24,8 @@ expect() { # <desc> <want_rc> <cmd...>
     fi
 }
 
-# ---- Rust fixtures ---------------------------------------------------------
-cat > "$tmp/enum.rs" <<'EOF'
-pub enum FooErrorKind {
-    Alpha = 1,
-    Beta = 2,
-}
-EOF
-cat > "$tmp/enum_ne.rs" <<'EOF'
-#[non_exhaustive]
-pub enum FooErrorKind {
-    Alpha = 1,
-    Beta = 2,
-}
-EOF
-cat > "$tmp/arm_ok.rs" <<'EOF'
-fn foo_error_to_code(k: FooErrorKind) -> i32 {
-    match k {
-        FooErrorKind::Alpha => 1,
-        FooErrorKind::Beta => 2,
-    }
-}
-EOF
-cat > "$tmp/arm_missing.rs" <<'EOF'
-fn foo_error_to_code(k: FooErrorKind) -> i32 {
-    match k {
-        FooErrorKind::Alpha => 1,
-    }
-}
-EOF
-# Maps every explicit variant AND adds a wildcard. The missing-variant check
-# passes (all mapped); only the wildcard guard distinguishes the two enums.
-cat > "$tmp/arm_wildcard.rs" <<'EOF'
-fn foo_error_to_code(k: FooErrorKind) -> i32 {
-    match k {
-        FooErrorKind::Alpha => 1,
-        FooErrorKind::Beta => 2,
-        _ => 99,
-    }
-}
-EOF
-printf 'rust\tfoo\tFooErrorKind\t%s\tfoo_error_to_code\n' "$tmp/enum.rs" > "$tmp/rust.tsv"
-printf 'rust\tfoo\tFooErrorKind\t%s\tfoo_error_to_code\n' "$tmp/enum_ne.rs" > "$tmp/rust_ne.tsv"
-printf 'one_column_no_tabs\n' > "$tmp/malformed.tsv"
-
-expect "rust: all variants mapped passes"        0 bash "$RUST" --tsv "$tmp/rust.tsv"    --arm-file "$tmp/arm_ok.rs"
-expect "rust: missing variant fails"             1 bash "$RUST" --tsv "$tmp/rust.tsv"    --arm-file "$tmp/arm_missing.rs"
-expect "rust: wildcard w/o non_exhaustive fails" 1 bash "$RUST" --tsv "$tmp/rust.tsv"    --arm-file "$tmp/arm_wildcard.rs"
-expect "rust: wildcard WITH non_exhaustive ok"   0 bash "$RUST" --tsv "$tmp/rust_ne.tsv" --arm-file "$tmp/arm_wildcard.rs"
-expect "rust: malformed table fails closed"      1 bash "$RUST" --tsv "$tmp/malformed.tsv" --arm-file "$tmp/arm_ok.rs"
-
 # ---- Python fixtures (one src dir per case) --------------------------------
+printf 'one_column_no_tabs\n' > "$tmp/malformed.tsv"
 cat > "$tmp/exceptions.py" <<'EOF'
 class FooErrorKind:
     ALPHA = 1

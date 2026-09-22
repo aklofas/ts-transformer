@@ -38,7 +38,7 @@ while IFS=$'\t' read -r lang name col3 col4 col5 col6 col7; do
             rows=$((rows + 1))
             col7="${col7%$'\r'}"  # tolerate a CRLF checkout (match_names is the last field)
             # variant_source/py_file are used as-is (workspace-relative, like
-            # the `rust` rows in run-rust-coverage.sh) — resolves correctly
+            # the retired `rust` driver) — resolves correctly
             # because every caller (CI steps, the pre-push rail sweep, the
             # hermetic self-test) runs from the workspace root.
             if ! assert_rust_arm_row "$col3" "$col4" "$col5" "$col6" "$col7"; then

@@ -24,7 +24,7 @@ use std::time::Duration;
 
 use tst_hls::{HlsMode, HlsPublisherBuilder};
 
-use crate::error::{TstError, hls_error_to_code, set_last_error};
+use crate::error::{TstError, set_last_error};
 use crate::hls::publisher::{PublisherImpl, TstPublisher};
 
 // ---------------------------------------------------------------------------
@@ -449,8 +449,7 @@ pub unsafe extern "C" fn tst_hls_publisher_builder_build(
                 inner: Some(PublisherImpl::Hls(hls)),
             })),
             Err(e) => {
-                let code = hls_error_to_code(&e);
-                set_last_error(code, &format!("hls build: {e}"));
+                crate::error::record_with_context(e, "hls build");
                 std::ptr::null_mut()
             }
         }

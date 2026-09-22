@@ -24,7 +24,7 @@ use tst_srt::config::ListenerConfig;
 /// inheritance mechanism.
 ///
 /// Returns `TransportError::Broken` on bind or accept failure for
-/// unified surfacing through `record_transport_error`.
+/// unified surfacing through `record_binding_error`.
 pub(crate) fn listen_srt(
     host: &str,
     port: u16,

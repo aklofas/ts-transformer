@@ -9,7 +9,8 @@
 #
 # Inner-tier sibling of:
 # - scripts/check/rust/pipeline-kind-classification.sh (outer-tier kind_from_mux)
-# - scripts/check/c/raw-mapper-coverage.sh (raw record_mux_error)
+# - scripts/check/rust/kind-table-coverage.sh (BindingErrorKind's kind_of_mux,
+#   which raw record_mux_error now delegates to)
 #
 # Wave 6.D shipped 2026-05-19 (see
 # docs/plans/2026-05-19-wave-6-muxerror-reshape.md).
