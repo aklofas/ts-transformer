@@ -233,9 +233,6 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/rust/no-public-usize.sh
 
-      - name: ShellErrorKind coverage at C ABI
-        if: matrix.name == 'linux-x86_64'
-        run: bash scripts/check/rust/shell-error-kind-coverage.sh
       - name: Pipeline kind-classification coverage
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/rust/pipeline-kind-classification.sh
@@ -249,9 +246,6 @@ jobs:
           SRT_FORCE_VENDORED: "1"
           RIST_FORCE_VENDORED: "1"
         run: bash scripts/check/repo/kind-equivalence.sh
-      - name: Raw C mapper variant coverage
-        if: matrix.name == 'linux-x86_64'
-        run: bash scripts/check/c/raw-mapper-coverage.sh
       - name: MuxError::kind() variant coverage
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/rust/mux-error-kind-coverage.sh
@@ -325,14 +319,6 @@ jobs:
         # in README.md, docs/, and examples/ must resolve to an existing
         # file (guards the cookbook re-slug and future doc moves).
         run: bash scripts/check/repo/docs-internal-links.sh
-
-      - name: Check udp/tcp/hls/rist C ABI error-mapping coverage
-        # Each tst-c transport family's *_error_to_code converter must
-        # exhaustively map its upstream *ErrorKind (wildcard arm allowed only
-        # because those enums are #[non_exhaustive]). Driven by
-        # scripts/ratchets/error-mapping.tsv (consolidated from the former
-        # per-protocol check-*-error-mapping-coverage.sh clones).
-        run: bash scripts/check/rust/rust-error-mapping-coverage.sh
 
       - name: check-ratchet-self-test (coverage drivers detect gaps)
         # Validates the error-mapping coverage framework detects gaps. Gated to

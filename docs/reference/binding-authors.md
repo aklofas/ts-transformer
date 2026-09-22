@@ -125,32 +125,26 @@ record_shell_error<E: ShellError>(e: &E) -> i32
 // 4. return negative code
 ```
 
-Two CI ratchets guard this path against silent regressions:
+Two invariants guard this path against silent regressions:
 
-- `scripts/check/rust/shell-error-kind-coverage.sh` — fails if a future
-  `ShellErrorKind` variant is added without an explicit arm in
-  `tst_error_from_kind` (before the `#[non_exhaustive]` wildcard).
+- `tst_error_from_kind` is `TstError::from_kind(BindingErrorKind::from(kind))`;
+  `From<ShellErrorKind> for BindingErrorKind` is an in-crate exhaustive match
+  (the compiler is the rail), and `from_kind_is_total_over_the_kind_table` in
+  `bindings/c/core/src/error.rs` pins the C projection.
 - `scripts/check/rust/pipeline-kind-classification.sh` — fails if a future
   variant of `MuxError`, `TransportError`, `DemuxError`, or
   `TsFramingError` is added without an explicit arm in the
   corresponding `kind_from_*` helper in
   `crates/tst-pipeline/src/shell_error.rs`.
 
-**Raw-mapper path (standalone-muxer + open helpers).** Two C-ABI paths
-surface upstream errors before any shell wraps them and still go
-through dedicated per-variant tables:
-
-- `record_mux_error(&MuxError)` — used by `tst_muxer_*` (the
-  standalone muxer, no transport).
-- `record_transport_error(&TransportError)` — used by `tst_*_open_url`
-  / `tst_*_open_addr` / `tst_*_listen_*` for connect/listen failures
-  surfaced before a shell exists.
-
-One CI ratchet guards this path:
-
-- `scripts/check/c/raw-mapper-coverage.sh` — fails if a future
-  `MuxError` or `TransportError` variant is added without an explicit
-  arm in the corresponding `record_*_error` function.
+**Raw-mapper path (standalone-muxer + open helpers).** Every raw error
+reaching the C ABI (`MuxError`, `DemuxError`, `KlvDecodeError`, the
+transport crates' own errors) projects through
+`tst_pipeline::binding::BindingError` → `TstError::from_kind`; variant
+coverage is enforced once, in tst-pipeline, by
+`scripts/check/rust/kind-table-coverage.sh`. The C-side entry points
+(`record_mux_error`, `record_demux_error`, `record_klv_decode_error`,
+`record_with_context`) are thin wrappers over that one table.
 
 Each path's wildcard `_ => ...` arm exists only to satisfy Rust's
 `#[non_exhaustive]` requirement and is unreachable when the
@@ -161,9 +155,9 @@ condition; no upstream variant silently degrades to `TST_E_INTERNAL`,
 choice by the tst-c maintainers.
 
 If you encounter a `tst_get_last_error_str()` value beginning with
-`"unhandled <Enum> variant: ..."`, that means one of the three
-ratchets was bypassed or failed; please file an issue with the
-variant name from the last-error string.
+`"unmapped <Enum> variant: ..."`, that means the kind-table ratchet was
+bypassed or failed; please file an issue with the variant name from the
+last-error string.
 
 ### Transient vs persistent error codes
 

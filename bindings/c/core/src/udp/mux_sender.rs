@@ -94,8 +94,7 @@ pub unsafe extern "C" fn tst_udp_mux_sender_open(
         let transport = match builder.build() {
             Ok(t) => t,
             Err(e) => {
-                let code = crate::error::udp_error_to_code(&e);
-                set_last_error(code, &format!("udp build: {e}"));
+                crate::error::record_with_context(e, "udp build");
                 return std::ptr::null_mut();
             }
         };

@@ -2,11 +2,12 @@
 # Tab-separated. Lines starting with # and blank lines are ignored.
 #
 # Only the genuinely-uniform clones live here. Bespoke/multi-enum rails
-# (rtsp, server, mux-error-kind, shell-error-kind, raw-c-mapper,
-# non-conformant) keep their own scripts/check/<group>/ rail.
+# (server, mux-error-kind, non-conformant) keep their own
+# scripts/check/<group>/ rail. The `rust` rows retired in Arc 2 WP-B1: the
+# per-transport `*_error_to_code` converters they covered were deleted when
+# the C binding moved onto `tst_pipeline::binding::BindingError`, whose
+# variant coverage `scripts/check/rust/kind-table-coverage.sh` enforces.
 #
-# rust rows:  lang  name  enum            variant_source                       arm_fn
-#             (arm file is always bindings/c/core/src/error.rs)
 # py rows:    lang  name  class           make_fn                              (col5 unused)
 #             (exceptions file = bindings/python/python/tstrans/exceptions.py,
 #              call-site dir = bindings/python/src)
@@ -16,10 +17,6 @@
 #              py_file — a Python-binding .rs source, not the C ABI;
 #              match_names may be an alternation like "KlvEncodeError|RustE"
 #              for a mapper that locally aliases the enum)
-rust	udp	UdpErrorKind	crates/tst-udp/src/error.rs	udp_error_to_code
-rust	tcp	TcpErrorKind	crates/tst-tcp/src/error.rs	tcp_error_to_code
-rust	rist	RistErrorKind	crates/tst-rist/src/error.rs	rist_error_to_code
-rust	hls	HlsErrorKind	crates/tst-hls/src/error.rs	hls_error_to_code
 py	udp	UdpErrorKind	make_udp_error	-
 py	tcp	TcpErrorKind	make_tcp_error	-
 py	rist	RistErrorKind	make_rist_error	-

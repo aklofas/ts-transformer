@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Shared error-mapping coverage checks. Sourced by run-rust-coverage.sh and
-# run-py-coverage.sh, which feed it rows from error-mapping.tsv. This replaces
+# Shared error-mapping coverage checks. Sourced by run-py-coverage.sh, which
+# feeds it rows from error-mapping.tsv. This replaces
 # the family of near-identical per-protocol check-*-error-mapping-coverage.sh
 # clones; the extraction and failure messages are kept byte-for-byte equivalent
 # to those clones (only parameterised by enum / fn / file).

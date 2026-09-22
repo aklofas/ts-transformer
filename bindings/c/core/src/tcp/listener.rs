@@ -96,8 +96,7 @@ pub unsafe extern "C" fn tst_tcp_listener_bind(bind_addr: *const c_char) -> *mut
         match TcpListener::bind(addr) {
             Ok(listener) => Box::into_raw(Box::new(TstTcpListener { inner: listener })),
             Err(e) => {
-                let code = crate::error::tcp_error_to_code(&e);
-                set_last_error(code, &format!("tcp listener bind: {e}"));
+                crate::error::record_with_context(e, "tcp listener bind");
                 std::ptr::null_mut()
             }
         }
@@ -126,8 +125,7 @@ pub unsafe extern "C" fn tst_tcp_listener_from_url(url: *const c_char) -> *mut T
         match TcpListener::from_url(url_str) {
             Ok(listener) => Box::into_raw(Box::new(TstTcpListener { inner: listener })),
             Err(e) => {
-                let code = crate::error::tcp_error_to_code(&e);
-                set_last_error(code, &format!("tcp listener from_url: {e}"));
+                crate::error::record_with_context(e, "tcp listener from_url");
                 std::ptr::null_mut()
             }
         }
@@ -170,8 +168,7 @@ pub unsafe extern "C" fn tst_tcp_listener_accept_sender(
                 }))
             }
             Err(e) => {
-                let code = crate::error::tcp_error_to_code(&e);
-                set_last_error(code, &format!("tcp accept: {e}"));
+                crate::error::record_with_context(e, "tcp accept");
                 std::ptr::null_mut()
             }
         }
@@ -209,8 +206,7 @@ pub unsafe extern "C" fn tst_tcp_listener_accept_receiver(
                 }))
             }
             Err(e) => {
-                let code = crate::error::tcp_error_to_code(&e);
-                set_last_error(code, &format!("tcp accept: {e}"));
+                crate::error::record_with_context(e, "tcp accept");
                 std::ptr::null_mut()
             }
         }

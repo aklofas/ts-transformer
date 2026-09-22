@@ -83,8 +83,7 @@ pub unsafe extern "C" fn tst_udp_demux_receiver_open(
         let transport = match builder.build() {
             Ok(t) => t,
             Err(e) => {
-                let code = crate::error::udp_error_to_code(&e);
-                set_last_error(code, &format!("udp recv build: {e}"));
+                crate::error::record_with_context(e, "udp recv build");
                 return std::ptr::null_mut();
             }
         };

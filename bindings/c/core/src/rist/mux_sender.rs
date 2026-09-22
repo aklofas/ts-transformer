@@ -93,7 +93,7 @@ pub unsafe extern "C" fn tst_rist_mux_sender_open(
         // RIST move-style builder: new() parses URL + query params,
         // connect() establishes the librist sender context + peer.
         // URL / config parse failures map to RistConfig (-39) directly.
-        // librist runtime failures route through rist_error_to_code.
+        // librist runtime failures route through `record_with_context`.
         let builder = match RistTransportBuilder::new(url_str) {
             Ok(b) => b,
             Err(e) => {
@@ -104,16 +104,7 @@ pub unsafe extern "C" fn tst_rist_mux_sender_open(
         let transport = match builder.connect() {
             Ok(t) => t,
             Err(e) => {
-                // Special-case the two errors whose codes are load-bearing
-                // before the stub rist_error_to_code is completed.
-                let code = match e.kind() {
-                    tst_rist::RistErrorKind::EncryptionDisabled => TstError::RistEncryptionDisabled,
-                    tst_rist::RistErrorKind::InvalidConfig | tst_rist::RistErrorKind::Url => {
-                        TstError::RistConfig
-                    }
-                    _ => crate::error::rist_error_to_code(&e),
-                };
-                set_last_error(code, &format!("rist connect: {e}"));
+                crate::error::record_with_context(e, "rist connect");
                 return std::ptr::null_mut();
             }
         };

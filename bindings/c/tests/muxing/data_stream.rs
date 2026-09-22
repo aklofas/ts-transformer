@@ -583,8 +583,11 @@ fn push_data_oversized_payload_returns_data_too_large() {
 
         let over = vec![0xABu8; 65528];
         let rc = tst_muxer_push_data(mux, over.as_ptr(), over.len(), 6000);
-        // MuxError::DataTooLarge → TST_E_INVALID_USAGE.
-        assert_eq!(rc, TstError::InvalidUsage as i32);
+        // WP-A2 K4/K6: MuxError::DataTooLarge is an `InputMalformed`-kind
+        // variant, so it now projects to TST_E_INVALID_TS (-3) like the rest
+        // of that bucket — the retired raw mapper answered -9 here while the
+        // shell path already said -3.
+        assert_eq!(rc, TstError::InvalidTs as i32);
         assert!(
             last_error_msg().contains("exceeds PES_packet_length"),
             "expected DataTooLarge detail, got: {}",
@@ -607,7 +610,7 @@ fn push_data_oversized_payload_returns_data_too_large() {
 
         let over = vec![0xCDu8; 65533];
         let rc = tst_muxer_push_data(mux, over.as_ptr(), over.len(), 6000);
-        assert_eq!(rc, TstError::InvalidUsage as i32);
+        assert_eq!(rc, TstError::InvalidTs as i32);
         tst_muxer_close(mux);
     }
 }

@@ -12,7 +12,7 @@ use tst_srt::{Socket, SocketConfig};
 /// Build a fresh `SrtTransport` connected to `host:port` using the
 /// provided socket config (passphrase, latency, etc. set as captured
 /// from the URL overlay). Returns `TransportError::Broken` on connect
-/// failure for unified surfacing through `record_transport_error`.
+/// failure for unified surfacing through `record_binding_error`.
 ///
 /// Applies `SocketConfig::merge_sender_defaults` to the config in
 /// place. User-set values are preserved (merge-if-default) — a future

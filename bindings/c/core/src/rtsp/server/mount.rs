@@ -36,7 +36,8 @@
 //! # Error mapping
 //!
 //! - `RtspServerError` variants → `TST_E_RTSP_SERVER` (-24) via
-//!   [`crate::error::rtsp_server_error_to_code`].
+//!   [`crate::error::record_with_context`] (the shared `From<RtspServerError>`
+//!   row of the binding kind table).
 //! - `MuxError` from config validation → mapped via
 //!   [`crate::error::record_mux_error`].
 
@@ -50,9 +51,7 @@ use tst_core::mpegts::mux::{
 };
 
 use crate::config::TstMuxConfig;
-use crate::error::{
-    TstError, mount_error_to_code, record_mux_error, rtsp_server_error_to_code, set_last_error,
-};
+use crate::error::{TstError, record_mux_error, set_last_error};
 use crate::handle::{
     TstAudioStreamHandle, TstDataStreamHandle, TstKlvStreamHandle, TstSubtitleStreamHandle,
     TstVideoStreamHandle,
@@ -153,8 +152,7 @@ pub unsafe extern "C" fn tst_rtsp_server_add_unicast_mount(
                 cancelled: AtomicBool::new(false),
             })),
             Err(e) => {
-                let code = rtsp_server_error_to_code(&e);
-                set_last_error(code, &format!("add_unicast_mount failed: {e}"));
+                crate::error::record_with_context(e, "add_unicast_mount failed");
                 std::ptr::null_mut()
             }
         }
@@ -299,8 +297,7 @@ pub unsafe extern "C" fn tst_rtsp_server_add_multicast_mount(
                 cancelled: AtomicBool::new(false),
             })),
             Err(e) => {
-                let code = rtsp_server_error_to_code(&e);
-                set_last_error(code, &format!("add_multicast_mount failed: {e}"));
+                crate::error::record_with_context(e, "add_multicast_mount failed");
                 std::ptr::null_mut()
             }
         }
@@ -381,11 +378,7 @@ pub unsafe extern "C" fn tst_rtsp_mount_push_video(
         let pts = Pts90khz::new(pts_90khz);
         match h.inner.push_video(slice, pts, key_frame) {
             Ok(()) => 0,
-            Err(e) => {
-                let code = mount_error_to_code(&e);
-                set_last_error(code, &format!("push_video failed: {e}"));
-                code as i32
-            }
+            Err(e) => crate::error::record_with_context(e, "push_video failed"),
         }
     })
 }
@@ -435,11 +428,7 @@ pub unsafe extern "C" fn tst_rtsp_mount_push_klv(
             0x00,
         ) {
             Ok(()) => 0,
-            Err(e) => {
-                let code = mount_error_to_code(&e);
-                set_last_error(code, &format!("push_klv failed: {e}"));
-                code as i32
-            }
+            Err(e) => crate::error::record_with_context(e, "push_klv failed"),
         }
     })
 }
@@ -482,11 +471,7 @@ pub unsafe extern "C" fn tst_rtsp_mount_push_audio(
         let pts = Pts90khz::new(pts_90khz);
         match h.inner.push_audio(slice, pts) {
             Ok(()) => 0,
-            Err(e) => {
-                let code = mount_error_to_code(&e);
-                set_last_error(code, &format!("push_audio failed: {e}"));
-                code as i32
-            }
+            Err(e) => crate::error::record_with_context(e, "push_audio failed"),
         }
     })
 }
@@ -529,11 +514,7 @@ pub unsafe extern "C" fn tst_rtsp_mount_push_subtitle(
         let pts = Pts90khz::new(pts_90khz);
         match h.inner.push_subtitle(slice, pts) {
             Ok(()) => 0,
-            Err(e) => {
-                let code = mount_error_to_code(&e);
-                set_last_error(code, &format!("push_subtitle failed: {e}"));
-                code as i32
-            }
+            Err(e) => crate::error::record_with_context(e, "push_subtitle failed"),
         }
     })
 }
@@ -575,11 +556,7 @@ pub unsafe extern "C" fn tst_rtsp_mount_push_data(
         let pts = Pts90khz::new(pts_90khz);
         match h.inner.push_data(slice, pts) {
             Ok(()) => 0,
-            Err(e) => {
-                let code = mount_error_to_code(&e);
-                set_last_error(code, &format!("push_data failed: {e}"));
-                code as i32
-            }
+            Err(e) => crate::error::record_with_context(e, "push_data failed"),
         }
     })
 }
@@ -635,11 +612,7 @@ pub unsafe extern "C" fn tst_rtsp_mount_push_video_to(
         let pts = Pts90khz::new(pts_90khz);
         match h.inner.push_video_to(stream, slice, pts, key_frame) {
             Ok(()) => 0,
-            Err(e) => {
-                let code = mount_error_to_code(&e);
-                set_last_error(code, &format!("push_video_to failed: {e}"));
-                code as i32
-            }
+            Err(e) => crate::error::record_with_context(e, "push_video_to failed"),
         }
     })
 }
@@ -693,11 +666,7 @@ pub unsafe extern "C" fn tst_rtsp_mount_push_klv_to(
             0x00,
         ) {
             Ok(()) => 0,
-            Err(e) => {
-                let code = mount_error_to_code(&e);
-                set_last_error(code, &format!("push_klv_to failed: {e}"));
-                code as i32
-            }
+            Err(e) => crate::error::record_with_context(e, "push_klv_to failed"),
         }
     })
 }
@@ -742,11 +711,7 @@ pub unsafe extern "C" fn tst_rtsp_mount_push_audio_to(
         let pts = Pts90khz::new(pts_90khz);
         match h.inner.push_audio_to(stream, slice, pts) {
             Ok(()) => 0,
-            Err(e) => {
-                let code = mount_error_to_code(&e);
-                set_last_error(code, &format!("push_audio_to failed: {e}"));
-                code as i32
-            }
+            Err(e) => crate::error::record_with_context(e, "push_audio_to failed"),
         }
     })
 }
@@ -791,11 +756,7 @@ pub unsafe extern "C" fn tst_rtsp_mount_push_subtitle_to(
         let pts = Pts90khz::new(pts_90khz);
         match h.inner.push_subtitle_to(stream, slice, pts) {
             Ok(()) => 0,
-            Err(e) => {
-                let code = mount_error_to_code(&e);
-                set_last_error(code, &format!("push_subtitle_to failed: {e}"));
-                code as i32
-            }
+            Err(e) => crate::error::record_with_context(e, "push_subtitle_to failed"),
         }
     })
 }
@@ -840,11 +801,7 @@ pub unsafe extern "C" fn tst_rtsp_mount_push_data_to(
         let pts = Pts90khz::new(pts_90khz);
         match h.inner.push_data_to(stream, slice, pts) {
             Ok(()) => 0,
-            Err(e) => {
-                let code = mount_error_to_code(&e);
-                set_last_error(code, &format!("push_data_to failed: {e}"));
-                code as i32
-            }
+            Err(e) => crate::error::record_with_context(e, "push_data_to failed"),
         }
     })
 }

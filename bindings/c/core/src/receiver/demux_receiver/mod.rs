@@ -57,7 +57,6 @@ pub use stats::{
 };
 
 use crate::demux_config::TstDemuxConfig;
-use crate::error::record_transport_error;
 use crate::event::EventArena;
 use crate::handle::Handle;
 use crate::sender::mux_sender::{parse_c_srt_url, parse_c_srt_url_listener};
@@ -175,7 +174,7 @@ fn open_caller_inner(
     let transport = match crate::sender::connect::connect_srt(&url.host, url.port, &socket_cfg) {
         Ok(t) => t,
         Err(e) => {
-            record_transport_error(&e);
+            crate::error::record_binding_error(e.into());
             return std::ptr::null_mut();
         }
     };
@@ -191,7 +190,7 @@ fn open_listener_inner(
     let transport = match crate::receiver::listen::listen_srt(&url.host, url.port, &listener_cfg) {
         Ok(t) => t,
         Err(e) => {
-            record_transport_error(&e);
+            crate::error::record_binding_error(e.into());
             return std::ptr::null_mut();
         }
     };

@@ -35,9 +35,7 @@
 
 use crate::config::TstReconnectPolicy;
 use crate::demux_config::TstDemuxConfig;
-use crate::error::{
-    TstError, record_eos, record_shell_error, record_transport_error, set_last_error,
-};
+use crate::error::{TstError, record_eos, record_shell_error, set_last_error};
 use crate::event::{EventArena, TstEvent};
 use crate::handle::Handle;
 use crate::sender::mux_sender::{parse_c_srt_url, parse_c_srt_url_listener};
@@ -220,7 +218,7 @@ fn managed_open_caller_inner(
     let initial = match crate::sender::connect::connect_srt(&url.host, url.port, &socket_cfg) {
         Ok(t) => t,
         Err(e) => {
-            record_transport_error(&e);
+            crate::error::record_binding_error(e.into());
             return std::ptr::null_mut();
         }
     };
@@ -243,7 +241,7 @@ fn managed_open_listener_inner(
     let initial = match crate::receiver::listen::listen_srt(&url.host, url.port, &listener_cfg) {
         Ok(t) => t,
         Err(e) => {
-            record_transport_error(&e);
+            crate::error::record_binding_error(e.into());
             return std::ptr::null_mut();
         }
     };

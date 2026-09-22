@@ -34,10 +34,11 @@
 //! # Error mapping
 //!
 //! `RtspServerError` variants all map to `TST_E_RTSP_SERVER` (code -24) via
-//! `crate::error::rtsp_server_error_to_code`. The detail string from the
+//! `crate::error::record_with_context` (the shared `From<RtspServerError>`
+//! row of the binding kind table). The detail string from the
 //! Rust `Display` impl is forwarded into the thread-local last-error message.
 
-use crate::error::{TstError, rtsp_server_error_to_code, set_last_error};
+use crate::error::{TstError, set_last_error};
 use crate::handle::TstRtspServerBuilder;
 use crate::panic::ffi_catch;
 use crate::rtsp::server::types::TstRtspServer;
@@ -89,8 +90,7 @@ pub unsafe extern "C" fn tst_rtsp_server_builder_start(
         let server = match b.build_server() {
             Ok(s) => s,
             Err(e) => {
-                let code = rtsp_server_error_to_code(&e);
-                set_last_error(code, &format!("RTSP server build failed: {e}"));
+                crate::error::record_with_context(e, "RTSP server build failed");
                 return std::ptr::null_mut();
             }
         };
@@ -99,8 +99,7 @@ pub unsafe extern "C" fn tst_rtsp_server_builder_start(
         // and spin-waits up to 1 s for the kernel to assign a local address.
         // On port-0 binds, local_addr() is authoritative after start().
         if let Err(e) = server.start() {
-            let code = rtsp_server_error_to_code(&e);
-            set_last_error(code, &format!("RTSP server start failed: {e}"));
+            crate::error::record_with_context(e, "RTSP server start failed");
             // server is dropped here — its Drop impl fires the hard-cancel
             // path and shuts down the tokio Runtime cleanly.
             return std::ptr::null_mut();
@@ -177,7 +176,10 @@ mod tests {
             "start must refuse TLS bytes it cannot honor"
         );
         let code = unsafe { crate::error::tst_get_last_error() };
-        assert_eq!(code, TstError::RtspServer as i32);
+        // WP-A2 K5: `RtspServerError::Tls` now carries the RTSP `TLS` kind
+        // (TST_E_RTSP_TLS, -21) instead of the catch-all -24 the retired
+        // `rtsp_server_error_to_code` emitted for every server variant.
+        assert_eq!(code, TstError::RtspTls as i32);
         let msg = unsafe { std::ffi::CStr::from_ptr(crate::error::tst_get_last_error_str()) }
             .to_str()
             .unwrap();

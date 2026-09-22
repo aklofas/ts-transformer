@@ -415,182 +415,108 @@ pub unsafe extern "C" fn tst_clear_last_error() {
 use tst_core::error::{DemuxError, KlvDecodeError, MuxError};
 #[cfg(test)]
 use tst_core::mpegts::mux::StreamKind;
-use tst_pipeline::{ShellError, ShellErrorKind, TransportError};
+#[cfg(feature = "std")]
+use tst_pipeline::binding::BindingError;
+#[cfg(feature = "std")]
+use tst_pipeline::{ShellError, ShellErrorKind};
 
-/// Map a [`ShellErrorKind`] to its corresponding [`TstError`] code.
-///
-/// This is the single point of truth for the kind-to-code projection.
-/// CI ratchet `scripts/check/rust/shell-error-kind-coverage.sh` enforces
-/// every `ShellErrorKind` variant is matched explicitly here.
+/// Map a [`ShellErrorKind`] to its [`TstError`] code — a projection of the
+/// binding-shared table (`ShellErrorKind` → `BindingErrorKind` →
+/// [`TstError::from_kind`]). Kept because `hls/mux_publisher.rs` projects
+/// `MuxPublisherError::kind()` through it.
+#[cfg(feature = "std")]
+#[allow(dead_code)] // hls-feature-gated caller; unused in minimal builds
 pub(crate) fn tst_error_from_kind(kind: ShellErrorKind) -> TstError {
-    match kind {
-        ShellErrorKind::ConfigInvalid => TstError::InvalidConfig,
-        ShellErrorKind::InputMalformed => TstError::InvalidTs,
-        ShellErrorKind::Backpressure => TstError::BufferFull,
-        ShellErrorKind::TransportBroken => TstError::Transport,
-        ShellErrorKind::Closed => TstError::Closed,
-        ShellErrorKind::EndOfStream => TstError::EndOfStream,
-        // Required by #[non_exhaustive]. CI ratchet
-        // scripts/check/rust/shell-error-kind-coverage.sh enforces every
-        // ShellErrorKind variant is matched above before this arm.
-        _ => TstError::Internal,
-    }
-}
-
-/// Record a shell error to the per-thread last-error slot. Used by
-/// every C ABI entry point's error path. Replaces the per-variant
-/// `record_sender_error` / `record_ts_sender_error` functions from
-/// pre-Wave-4 code. The standalone-muxer path still uses
-/// `record_mux_error` (for raw `MuxError` values not wrapped in a shell),
-/// and the connect/listen helper paths still use `record_transport_error`
-/// (for raw `TransportError` from pre-shell-layer code).
-///
-/// Returns the negative TST_E_* code suitable for direct return from
-/// the C entry point.
-pub(crate) fn record_shell_error<E: ShellError>(e: &E) -> i32 {
-    let code = tst_error_from_kind(e.kind());
-    set_last_error(code, &e.to_string());
-    code as i32
+    TstError::from_kind(kind.into())
 }
 
 /// THE error path for every data-path failure: writes the kind's frozen C
 /// code + the error's detail to the thread-local slot and returns the code.
 #[cfg(feature = "std")]
-pub(crate) fn record_binding_error(e: tst_pipeline::binding::BindingError) -> i32 {
+pub(crate) fn record_binding_error(e: BindingError) -> i32 {
     let code = TstError::from_kind(e.kind);
     set_last_error(code, &e.detail);
     code as i32
 }
 
-/// Map a `MuxError` to a code + message via the inner-tier
-/// `MuxErrorKind` category.
+/// Record a shell error through [`record_binding_error`]. Used by every
+/// transport-bearing C ABI entry point's error path.
 ///
-/// The code projection routes through `MuxError::kind()` for the
-/// `ConfigInvalid` / `InvalidUsage` / `Backpressure` / `Internal`
-/// categories (each has a stable per-kind `TST_E_*` code). The
-/// `InputMalformed` category has 6 variants mapping to 4 different
-/// `TstError` codes, so 3 variants get explicit overrides. The
-/// diagnostic message uses `MuxError`'s `Display` impl preserving
-/// spec-rich diagnostics from the `#[error("...")]` attributes.
-///
-/// **CI invariants:**
-///
-/// 1. `scripts/check/c/raw-mapper-coverage.sh` — every `MuxError`
-///    variant must be mentioned in the per-variant routing table
-///    inside this function before the wildcard arm.
-/// 2. The in-file unit test `every_known_mux_error_variant_maps_to_expected_code`
-///    verifies all 37 variants produce the expected `TstError` code.
+/// Returns the negative TST_E_* code suitable for direct return from
+/// the C entry point.
+#[cfg(feature = "std")]
+pub(crate) fn record_shell_error<E: ShellError>(e: &E) -> i32 {
+    record_binding_error(BindingError::new(e.kind().into(), e.to_string()))
+}
+
+/// Open-path shape: the callers used to write
+/// `set_last_error(code, &format!("tcp connect: {e}"))` — same message,
+/// one path.
+#[cfg(feature = "std")]
 #[allow(dead_code)] // transport-feature-gated callers; unused in minimal builds
+pub(crate) fn record_with_context(e: impl Into<BindingError>, ctx: &str) -> i32 {
+    let e = e.into();
+    record_binding_error(BindingError::new(
+        e.kind,
+        alloc::format!("{ctx}: {}", e.detail),
+    ))
+}
+
+/// Standalone-muxer path (`tst_muxer_*`, `tst_mux_config_*`): the
+/// per-variant routing now lives in `tst_pipeline::binding::kind::kind_of_mux`
+/// (K4: `InvalidNal` -2, `KlvTooLarge` -5, `InvalidAv1Obu` -44, `MispTime`
+/// -45 keep their precise codes; everything else folds through
+/// `MuxError::kind()`). `Display` still carries the spec-rich diagnostic.
+#[cfg(feature = "std")]
+pub(crate) fn record_mux_error(e: &MuxError) {
+    set_last_error(
+        TstError::from_kind(tst_pipeline::binding::kind::kind_of_mux(e)),
+        &e.to_string(),
+    );
+}
+
+/// no_std twin of [`record_mux_error`]: `tst_pipeline::binding` is
+/// std-only, so the bare offline muxer keeps the fold locally. Same
+/// projection as the std path (both planes agree, including the K4/K6
+/// `InputMalformed` -> `TST_E_INVALID_TS` change).
+#[cfg(not(feature = "std"))]
 pub(crate) fn record_mux_error(e: &MuxError) {
     use tst_core::error::MuxErrorKind;
-
-    // Per-variant code routing (covered by kind() projection below
-    // unless explicitly overridden). The ratchet
-    // scripts/check/c/raw-mapper-coverage.sh greps this block for
-    // every MuxError::VariantName before the wildcard arm.
-    //
-    //   MuxError::InvalidNal              -> TstError::InvalidNal     [override]
-    //   MuxError::InvalidAv1Obu          -> TstError::InvalidAv1Obu  [override]
-    //   MuxError::MispTime(_)            -> TstError::MispTime        [override]
-    //   MuxError::KlvTooLarge             -> TstError::KlvTooLarge    [override]
-    //   MuxError::AudioTooLarge           -> TstError::InvalidUsage   (InputMalformed kind default)
-    //   MuxError::SubtitleTooLarge        -> TstError::InvalidUsage   (InputMalformed kind default)
-    //   MuxError::DataTooLarge            -> TstError::InvalidUsage   (InputMalformed kind default)
-    //   MuxError::BufferFull              -> TstError::BufferFull     (Backpressure kind default)
-    //   MuxError::InvalidConfig           -> TstError::InvalidConfig  (ConfigInvalid kind default)
-    //   MuxError::ConfigInvalid           -> TstError::InvalidConfig  (ConfigInvalid kind default)
-    //   MuxError::InvalidLanguageCode     -> TstError::InvalidConfig  (ConfigInvalid kind default)
-    //   MuxError::InvalidTeletextField    -> TstError::InvalidConfig  (ConfigInvalid kind default)
-    //   MuxError::TooManyVideoStreams     -> TstError::InvalidConfig  (ConfigInvalid kind default)
-    //   MuxError::TooManyKlvStreams       -> TstError::InvalidConfig  (ConfigInvalid kind default)
-    //   MuxError::TooManyAudioStreams     -> TstError::InvalidConfig  (ConfigInvalid kind default)
-    //   MuxError::TooManySubtitleStreams  -> TstError::InvalidConfig  (ConfigInvalid kind default)
-    //   MuxError::TooManyDataStreams      -> TstError::InvalidConfig  (ConfigInvalid kind default)
-    //   MuxError::TooManyPrograms         -> TstError::InvalidConfig  (ConfigInvalid kind default)
-    //   MuxError::EmptyProgram            -> TstError::InvalidConfig  (ConfigInvalid kind default)
-    //   MuxError::DuplicateProgramNumber  -> TstError::InvalidConfig  (ConfigInvalid kind default)
-    //   MuxError::DuplicatePmtPid         -> TstError::InvalidConfig  (ConfigInvalid kind default)
-    //   MuxError::DuplicatePidAcrossPrograms -> TstError::InvalidConfig (ConfigInvalid kind default)
-    //   MuxError::PmtPidConflictsWithStream  -> TstError::InvalidConfig (ConfigInvalid kind default)
-    //   MuxError::SubtitlePidUsedAsPcrPid -> TstError::InvalidConfig  (ConfigInvalid kind default)
-    //   MuxError::KlvPidUsedAsPcrPid      -> TstError::InvalidConfig  (ConfigInvalid kind default)
-    //   MuxError::DataPidUsedAsPcrPid     -> TstError::InvalidConfig  (ConfigInvalid kind default)
-    //   MuxError::NoPcrEligibleStream     -> TstError::InvalidConfig  (ConfigInvalid kind default)
-    //   MuxError::MalformedDescriptor     -> TstError::InvalidConfig  (ConfigInvalid kind default)
-    //   MuxError::PmtTooLarge             -> TstError::InvalidConfig  (ConfigInvalid kind default)
-    //   MuxError::InvalidStreamHandle     -> TstError::InvalidUsage   (InvalidUsage kind default)
-    //   MuxError::AmbiguousTarget         -> TstError::InvalidUsage   (InvalidUsage kind default)
-    //   MuxError::NoKlvStreamsConfigured  -> TstError::InvalidUsage   (InvalidUsage kind default)
-    //   MuxError::NoAudioStreamsConfigured -> TstError::InvalidUsage  (InvalidUsage kind default)
-    //   MuxError::NoSubtitleStreamsConfigured -> TstError::InvalidUsage (InvalidUsage kind default)
-    //   MuxError::NoDataStreamsConfigured -> TstError::InvalidUsage   (InvalidUsage kind default)
-    //   MuxError::ProgramNotFound         -> TstError::InvalidUsage   (InvalidUsage kind default)
-    //   MuxError::DescriptorIndexOutOfRange -> TstError::InvalidUsage (InvalidUsage kind default)
-    //   MuxError::AbsIndexOutOfRange      -> TstError::InvalidUsage   (InvalidUsage kind default)
     let code = match e {
-        // InputMalformed bucket — variant-specific code overrides.
-        // The kind-default for InputMalformed maps to InvalidUsage;
-        // these variants project to more specific codes for
-        // diagnostic precision.
         MuxError::InvalidNal => TstError::InvalidNal,
         MuxError::InvalidAv1Obu => TstError::InvalidAv1Obu,
         MuxError::MispTime(_) => TstError::MispTime,
         MuxError::KlvTooLarge { .. } => TstError::KlvTooLarge,
-
-        // All other variants route via the kind() projection.
         _ => match e.kind() {
             MuxErrorKind::ConfigInvalid => TstError::InvalidConfig,
             MuxErrorKind::InvalidUsage => TstError::InvalidUsage,
             MuxErrorKind::Backpressure => TstError::BufferFull,
-            // AudioTooLarge + SubtitleTooLarge + DataTooLarge fall through
-            // here (the 3 InputMalformed variants not covered by overrides
-            // above). All three project to InvalidUsage per the
-            // pre-Wave-6.D behavior.
-            MuxErrorKind::InputMalformed => TstError::InvalidUsage,
+            MuxErrorKind::InputMalformed => TstError::InvalidTs,
             MuxErrorKind::Internal => TstError::Internal,
-            // Required by #[non_exhaustive]. CI ratchet
-            // scripts/check/rust/mux-error-kind-coverage.sh enforces every
-            // MuxErrorKind variant is matched above before this arm.
-            // Matches the wildcard-default-to-Internal pattern from Wave
-            // 4.A (record_shell_error) and Wave 6.D (MuxError::kind() at
-            // tst-core/src/error.rs:631): an unknown future coarse kind
-            // is more truthful as a library/internal failure than as
-            // caller InvalidConfig.
             _ => TstError::Internal,
         },
     };
-    // Use the existing Display impl on MuxError — each variant's
-    // #[error("...")] attribute already produces a spec-rich diagnostic
-    // string.
     set_last_error(code, &e.to_string());
 }
 
 /// Map a [`DemuxError`] to a code + message and record it to the per-thread
-/// last-error slot.
+/// last-error slot (the standalone offline demuxer path, `tst_demuxer_feed`).
 ///
-/// Used by the standalone offline demuxer path (`tst_demuxer_feed`). The
-/// transport-coupled `tst_demux_receiver_*` surface uses `record_shell_error`
-/// for `DemuxError`-rooted failures because those arrive wrapped in a
-/// `ShellError`. This mapper handles the raw demuxer path where no shell wraps
-/// the error.
-///
-/// **Variant coverage (DemuxError is `#[non_exhaustive]`):** all four known
-/// variants have explicit arms; the wildcard arm maps future additions to
-/// `TST_E_INVALID_TS` (the demux-parse error bucket) and surfaces the
-/// `Display` string so the message is still informative.
+/// The per-variant routing lives in `tst_pipeline::binding::kind::kind_of_demux`
+/// (K3, 1:1 over the five variants); the transport-coupled
+/// `tst_demux_receiver_*` surface reaches the same table through
+/// `record_shell_error`.
+#[cfg(feature = "std")]
 pub(crate) fn record_demux_error(e: &DemuxError) -> i32 {
-    // Per-variant code routing. All four known DemuxError variants are listed
-    // explicitly before the wildcard. The scripts/check/c/raw-mapper-coverage.sh
-    // ratchet intentionally does NOT scan DemuxError (it is `#[non_exhaustive]`
-    // from tst-core; the mux/transport raw mappers it covers predate this
-    // function). The explicit arms below give the same coverage guarantee
-    // without an automated ratchet row.
-    //
-    //   DemuxError::StrictRejection(_)   → TstError::InvalidTs (-3)
-    //   DemuxError::Unrecoverable{..}    → TstError::InvalidTs (-3)
-    //   DemuxError::MalformedPsi{..}     → TstError::InvalidTs (-3)
-    //   DemuxError::MalformedPes{..}     → TstError::InvalidTs (-3)
-    //   DemuxError::SyncBufExhausted{..} → TstError::TooLarge  (-6)
+    record_binding_error(BindingError::new(
+        tst_pipeline::binding::kind::kind_of_demux(e),
+        e.to_string(),
+    ))
+}
+
+/// no_std twin of [`record_demux_error`] (see [`record_mux_error`]'s twin).
+#[cfg(not(feature = "std"))]
+pub(crate) fn record_demux_error(e: &DemuxError) -> i32 {
     let code = match e {
         DemuxError::StrictRejection(_) => TstError::InvalidTs,
         DemuxError::Unrecoverable { .. } => TstError::InvalidTs,
@@ -605,59 +531,6 @@ pub(crate) fn record_demux_error(e: &DemuxError) -> i32 {
     };
     set_last_error(code, &e.to_string());
     code as i32
-}
-
-#[allow(dead_code)] // transport-feature-gated callers; unused in minimal builds
-pub(crate) fn record_transport_error(e: &TransportError) {
-    // D5 follow-up: helper to render the optional errno suffix. `SrtErrno::Bad.raw_code() == 0`,
-    // which would read as "(errno 0)" — i.e., "no error" in libsrt's idiom.
-    // That's a footgun for C consumers; suppress the suffix when the code
-    // is 0 (the Bad sentinel) so it doesn't masquerade as a real errno.
-    // Extracted into a fn (rather than a nested match) so the outer match
-    // body doesn't contain an inner `_ =>` arm — that would confuse the
-    // scripts/check/c/raw-mapper-coverage.sh ratchet (its awk extractor stops at
-    // the first `_ =>` line, treating it as the outer wildcard).
-    fn errno_suffix(errno_code: &Option<i32>) -> alloc::string::String {
-        match errno_code {
-            Some(c) if *c != 0 => alloc::format!(" (errno {c})"),
-            Some(_) | None => alloc::string::String::new(),
-        }
-    }
-    let (code, msg) = match e {
-        // The struct variants now carry an optional `errno_code` (libsrt
-        // MJ_* major when the underlying transport is SRT). Append it to
-        // the message when present so C consumers can see the wire-level
-        // cause without reaching past the C ABI; Rust callers that need
-        // structured access still get the typed field via the
-        // TransportError struct variant directly.
-        TransportError::Backpressure { msg: s, errno_code } => (
-            TstError::Transport,
-            alloc::format!("backpressure: {s}{}", errno_suffix(errno_code)),
-        ),
-        TransportError::Broken {
-            msg: s, errno_code, ..
-        } => (
-            TstError::Transport,
-            alloc::format!("broken: {s}{}", errno_suffix(errno_code)),
-        ),
-        TransportError::Closed => (
-            TstError::Closed,
-            alloc::string::String::from("transport closed"),
-        ),
-        TransportError::TooLarge { len, max } => (
-            TstError::TooLarge,
-            alloc::format!("message {len} bytes exceeds payload cap {max}"),
-        ),
-        _ => {
-            // Required by #[non_exhaustive]. See scripts/check/c/raw-mapper-coverage.sh
-            // for the CI ratchet that prevents this arm from firing.
-            (
-                TstError::Transport,
-                alloc::format!("unhandled TransportError variant: {e:?}"),
-            )
-        }
-    };
-    set_last_error(code, &msg);
 }
 
 /// Helper for entry points that catch panics or Mutex poison.
@@ -719,196 +592,27 @@ pub(crate) fn record_wrong_type(msg: &str) -> i32 {
     TstError::WrongType as i32
 }
 
-/// Map a [`KlvDecodeError`] to `TstError::KlvDecode` (-48) and record it
-/// to the per-thread last-error slot. Every variant collapses to the
-/// same code — `tst_st0601_decode` is a single structural-parse entry
-/// point with no per-variant C-side branching, unlike
-/// [`record_mux_error`]'s per-variant overrides. The `Display` impl on
-/// `KlvDecodeError` still carries the spec-rich diagnostic (offset,
-/// expected/found bytes, ...) into the last-error message.
+/// Map a [`KlvDecodeError`] to its code + message and record it to the
+/// per-thread last-error slot. Every mapped variant projects to
+/// `TST_E_KLV_DECODE` (-48) — `tst_st0601_decode` is a single
+/// structural-parse entry point with no per-variant C-side branching — but
+/// the six kinds the table distinguishes are what Python and the JVM
+/// raise, so the routing lives in `tst_pipeline::binding::kind::kind_of_klv_decode`
+/// rather than here. The `Display` impl still carries the spec-rich
+/// diagnostic (offset, expected/found bytes, ...) into the message.
+#[cfg(feature = "std")]
+pub(crate) fn record_klv_decode_error(e: &KlvDecodeError) -> i32 {
+    record_binding_error(BindingError::new(
+        tst_pipeline::binding::kind::kind_of_klv_decode(e),
+        e.to_string(),
+    ))
+}
+
+/// no_std twin of [`record_klv_decode_error`] (see [`record_mux_error`]'s twin).
+#[cfg(not(feature = "std"))]
 pub(crate) fn record_klv_decode_error(e: &KlvDecodeError) -> i32 {
     set_last_error(TstError::KlvDecode, &e.to_string());
     TstError::KlvDecode as i32
-}
-
-// ---------------------------------------------------------------------------
-// Phase 4 — RTP/RTSP error-to-code converters (gated on "rtp" feature).
-//
-// All three target enums are `#[non_exhaustive]` in tst-rtp, so Rust requires
-// a wildcard arm on matches from outside that crate. The explicit arms below
-// cover every variant known at Phase 4 ship time; the wildcard is a safe
-// fallback for future additions. CI ratchet
-// `scripts/check/rust/rtsp-error-mapping-coverage.sh` catches any gap at pre-push
-// time (not compile time) — it greps the explicit arm list here against the
-// enum definition in tst-rtp.
-// ---------------------------------------------------------------------------
-
-/// Map a [`tst_rtp::RtspError`] to the appropriate `TstError` variant.
-///
-/// Explicit arms cover every `RtspError` variant. The wildcard fallback is
-/// required by `#[non_exhaustive]` and maps future variants to
-/// `TstError::RtspProtocol` (the most generic RTSP failure bucket).
-///
-/// CI ratchet `scripts/check/rust/rtsp-error-mapping-coverage.sh` verifies every
-/// known variant has an explicit arm.
-#[cfg(feature = "rtp")]
-#[allow(dead_code)] // RTSP-feature-gated callers; unused in minimal builds
-pub(crate) fn rtsp_error_to_code(e: &tst_rtp::RtspError) -> TstError {
-    use tst_rtp::RtspError::*;
-    match e {
-        Io(_) => TstError::RtspIo,
-        Tls(_) => TstError::RtspTls,
-        Protocol { .. } => TstError::RtspProtocol,
-        AuthFailed => TstError::RtspAuthFailed,
-        AuthUnsupported { .. } => TstError::RtspAuthRequired,
-        BadResponse { .. } => TstError::RtspProtocol,
-        BadSdp { .. } => TstError::RtspProtocol,
-        UnsupportedTransport => TstError::RtspUnsupported,
-        SessionExpired => TstError::RtspProtocol,
-        Timeout => TstError::RtspTimeout,
-        LocalCancel => TstError::RtspProtocol,
-        NoMp2tMedia => TstError::RtspNotFound,
-        MultipleMp2tMedia { .. } => TstError::RtspNotFound,
-        NoH264Media => TstError::RtspNotFound,
-        MultipleH264Media { .. } => TstError::RtspNotFound,
-        UnsupportedPacketizationMode(_) => TstError::RtspUnsupported,
-        Url(_) => TstError::RtspProtocol,
-        // A header name/value (or the request-line URI) carried a CR/LF/NUL/
-        // control byte and was rejected before reaching the wire — a caller-side
-        // protocol violation (mirrors the JVM/Python InvalidHeader → protocol
-        // mapping).
-        InvalidHeader { .. } => TstError::RtspProtocol,
-        // Required by #[non_exhaustive] — future variants fall through to the
-        // generic protocol-error bucket. CI ratchet catches any new variant
-        // that was not explicitly mapped above.
-        _ => TstError::RtspProtocol,
-    }
-}
-
-/// Map a [`tst_rtp::MountError`] to the appropriate `TstError` variant.
-/// Every variant collapses to `TstError::RtspMount`.
-#[cfg(feature = "rtp")]
-#[allow(dead_code)] // RTSP-feature-gated callers; unused in minimal builds
-pub(crate) fn mount_error_to_code(e: &tst_rtp::MountError) -> TstError {
-    use tst_rtp::MountError::*;
-    match e {
-        Mux(_) => TstError::RtspMount,
-        Closed => TstError::RtspMount,
-        // Required by #[non_exhaustive].
-        _ => TstError::RtspMount,
-    }
-}
-
-/// Map a [`tst_rtp::RtspServerError`] to the appropriate `TstError` variant.
-/// Every variant collapses to `TstError::RtspServer`.
-#[cfg(feature = "rtp")]
-#[allow(dead_code)] // RTSP-feature-gated callers; unused in minimal builds
-pub(crate) fn rtsp_server_error_to_code(e: &tst_rtp::RtspServerError) -> TstError {
-    use tst_rtp::RtspServerError::*;
-    match e {
-        Io(_) => TstError::RtspServer,
-        Tls(_) => TstError::RtspServer,
-        UrlParse(_) => TstError::RtspServer,
-        BindAddrInUse => TstError::RtspServer,
-        InvalidMountPath { .. } => TstError::RtspServer,
-        InvalidMulticastGroup { .. } => TstError::RtspServer,
-        DuplicateMount { .. } => TstError::RtspServer,
-        InvalidConfig { .. } => TstError::RtspServer,
-        AlreadyStarted => TstError::RtspServer,
-        NotStarted => TstError::RtspServer,
-        Shutdown => TstError::RtspServer,
-        // Required by #[non_exhaustive].
-        _ => TstError::RtspServer,
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────
-// Plan A5a — per-protocol error converters. Each is an exhaustive
-// `match e.kind() { ... }`; coverage is enforced by the TSV-driven rail
-// at scripts/check/rust/rust-error-mapping-coverage.sh (data in
-// scripts/ratchets/error-mapping.tsv, driver at
-// scripts/ratchets/run-rust-coverage.sh).
-// ─────────────────────────────────────────────────────────────────────
-
-#[cfg(feature = "udp")]
-pub(crate) fn udp_error_to_code(e: &tst_udp::UdpError) -> TstError {
-    use tst_udp::UdpErrorKind;
-    // Exhaustive match — every UdpErrorKind variant maps to a single
-    // TstError code. CI ratchet scripts/check/rust/rust-error-mapping-coverage.sh
-    // enforces this completeness.
-    match e.kind() {
-        UdpErrorKind::Url => TstError::UdpConfig,
-        UdpErrorKind::Io => TstError::UdpIo,
-        UdpErrorKind::InvalidConfig => TstError::UdpConfig,
-        // Required by #[non_exhaustive]. CI ratchet allows this arm only
-        // when UdpErrorKind is non_exhaustive; verifies all 3 named
-        // variants above are still explicit.
-        _ => TstError::UdpIo,
-    }
-}
-
-#[cfg(feature = "tcp")]
-pub(crate) fn tcp_error_to_code(e: &tst_tcp::error::TcpError) -> TstError {
-    use tst_tcp::error::TcpErrorKind;
-    // Exhaustive match — every TcpErrorKind variant maps to a single
-    // TstError code. CI ratchet scripts/check/rust/rust-error-mapping-coverage.sh
-    // enforces this completeness.
-    match e.kind() {
-        TcpErrorKind::Url => TstError::TcpConfig,
-        TcpErrorKind::Io => TstError::TcpIo,
-        TcpErrorKind::Closed => TstError::Closed, // reuse global Closed = -7
-        TcpErrorKind::ConnectTimeout => TstError::TcpConnectTimeout,
-        TcpErrorKind::InvalidConfig => TstError::TcpConfig,
-        TcpErrorKind::Tls => TstError::TcpTls,
-        TcpErrorKind::TlsDisabled => TstError::TcpTls,
-        // Required by #[non_exhaustive]. CI ratchet allows this arm only
-        // when TcpErrorKind is non_exhaustive; verifies all 7 named
-        // variants above are still explicit.
-        _ => TstError::TcpIo,
-    }
-}
-
-#[cfg(feature = "hls")]
-pub(crate) fn hls_error_to_code(e: &tst_hls::HlsError) -> TstError {
-    use tst_hls::HlsErrorKind;
-    // Exhaustive match — every HlsErrorKind variant maps to a single TstError
-    // code. CI ratchet scripts/check/rust/rust-error-mapping-coverage.sh enforces
-    // this completeness.
-    match e.kind() {
-        HlsErrorKind::Url => TstError::HlsConfig,
-        HlsErrorKind::Io => TstError::HlsIo,
-        HlsErrorKind::BindFailed => TstError::HlsIo,
-        HlsErrorKind::InvalidConfig => TstError::HlsConfig,
-        HlsErrorKind::UnalignedPushTs => TstError::HlsConfig,
-        HlsErrorKind::Finished => TstError::HlsFinished,
-        HlsErrorKind::TlsDisabled => TstError::HlsTls,
-        HlsErrorKind::Tls => TstError::HlsTls,
-        HlsErrorKind::Internal => TstError::Internal, // reuse global Internal = -10
-        // Required by #[non_exhaustive]. CI ratchet allows this arm only
-        // when HlsErrorKind is non_exhaustive; verifies all 9 named
-        // variants above are still explicit.
-        _ => TstError::HlsIo,
-    }
-}
-
-#[cfg(feature = "rist")]
-pub(crate) fn rist_error_to_code(e: &tst_rist::RistError) -> TstError {
-    use tst_rist::RistErrorKind;
-    // Exhaustive match — every RistErrorKind variant maps to a single
-    // TstError code. CI ratchet scripts/check/rust/rust-error-mapping-coverage.sh
-    // enforces this completeness.
-    match e.kind() {
-        RistErrorKind::Url => TstError::RistConfig,
-        RistErrorKind::Ffi => TstError::RistFfi,
-        RistErrorKind::InvalidConfig => TstError::RistConfig,
-        RistErrorKind::EncryptionDisabled => TstError::RistEncryptionDisabled,
-        RistErrorKind::ContextCreateFailed => TstError::RistFfi,
-        RistErrorKind::PeerCreateFailed => TstError::RistFfi,
-        // Required by #[non_exhaustive]. CI ratchet allows this arm only
-        // when RistErrorKind is non_exhaustive; verifies all 6 named
-        // variants above are still explicit.
-        _ => TstError::RistFfi,
-    }
 }
 
 /// Expose `record_shell_error` to integration tests that cannot access
@@ -919,6 +623,7 @@ pub(crate) fn rist_error_to_code(e: &tst_rist::RistError) -> TstError {
 /// cbindgen-generated C header (`tstrans.h`). They are only reachable from
 /// Rust tests that link the rlib. Named with a `test_` prefix so call sites
 /// are self-documenting about their test-only status.
+#[cfg(feature = "std")]
 pub fn test_record_shell_error<E: ShellError>(e: &E) -> i32 {
     record_shell_error(e)
 }
@@ -946,7 +651,8 @@ pub fn test_clear_last_error() {
 mod tests {
     use super::*;
     use alloc::{vec, vec::Vec};
-    use tst_pipeline::BrokenCause;
+    #[cfg(feature = "std")]
+    use tst_pipeline::TransportError;
 
     #[test]
     fn set_then_get_roundtrips() {
@@ -1064,22 +770,6 @@ mod tests {
         let s_ptr = unsafe { tst_get_last_error_str() };
         let s = unsafe { core::ffi::CStr::from_ptr(s_ptr) };
         assert!(s.to_str().unwrap().contains("end of stream"));
-    }
-
-    /// Helper: read the thread-local last-error string and assert it does
-    /// NOT begin with `"unhandled "`. That prefix is uniquely produced by
-    /// the Debug-format wildcard arms in `record_*_error`; its presence
-    /// means a known variant fell through to the wildcard. Belt-and-
-    /// suspenders with the per-variant exact-code assertion.
-    fn assert_not_unhandled_wildcard() {
-        let s_ptr = unsafe { tst_get_last_error_str() };
-        let msg = unsafe { core::ffi::CStr::from_ptr(s_ptr) }
-            .to_str()
-            .unwrap();
-        assert!(
-            !msg.starts_with("unhandled "),
-            "wildcard arm fired for a known variant: {msg}"
-        );
     }
 
     #[test]
@@ -1203,7 +893,7 @@ mod tests {
             ),
             (
                 MuxError::AudioTooLarge { size: 100, max: 50 },
-                TstError::InvalidUsage,
+                TstError::InvalidTs,
             ),
             (
                 MuxError::TooManySubtitleStreams { count: 17, cap: 16 },
@@ -1211,7 +901,7 @@ mod tests {
             ),
             (
                 MuxError::SubtitleTooLarge { size: 100, max: 50 },
-                TstError::InvalidUsage,
+                TstError::InvalidTs,
             ),
             (
                 MuxError::SubtitlePidUsedAsPcrPid { pid: 0x100 },
@@ -1262,7 +952,7 @@ mod tests {
             ),
             (
                 MuxError::DataTooLarge { size: 100, max: 50 },
-                TstError::InvalidUsage,
+                TstError::InvalidTs,
             ),
             (
                 MuxError::DataPidUsedAsPcrPid { pid: 0x100 },
@@ -1279,46 +969,76 @@ mod tests {
                 "MuxError variant mapped to wrong code: {case:?} -> got {code}, expected {}",
                 expected as i32
             );
-            assert_not_unhandled_wildcard();
         }
     }
 
+    /// The projection is total over `BindingErrorKind`: every kind's
+    /// `c_projection()` (A2's fold table, always in -48..=-1) names a real
+    /// `TstError` variant, a C-frozen kind projects to its own discriminant,
+    /// and `from_kind` never falls back to `Internal` for a table entry.
+    #[cfg(feature = "std")]
     #[test]
-    fn every_known_transport_error_variant_maps_to_expected_code() {
-        let cases: Vec<(TransportError, TstError)> = vec![
-            (
-                TransportError::Backpressure {
-                    msg: "test".into(),
-                    errno_code: None,
-                },
-                TstError::Transport,
-            ),
-            (
-                TransportError::Broken {
-                    msg: "test".into(),
-                    errno_code: None,
-                    cause: BrokenCause::Unspecified,
-                },
-                TstError::Transport,
-            ),
-            (TransportError::Closed, TstError::Closed),
-            (
-                TransportError::TooLarge { len: 100, max: 50 },
-                TstError::TooLarge,
-            ),
-        ];
-
-        for (case, expected) in cases {
-            clear_last_error_for_test();
-            record_transport_error(&case);
-            let code = unsafe { tst_get_last_error() };
-            assert_eq!(
-                code, expected as i32,
-                "TransportError variant mapped to wrong code: {case:?} -> got {code}, expected {}",
-                expected as i32
+    fn from_kind_is_total_over_the_kind_table() {
+        use tst_pipeline::binding::BindingErrorKind;
+        assert_eq!(
+            BindingErrorKind::ALL.len(),
+            98,
+            "A2's table has 98 variants"
+        );
+        for k in BindingErrorKind::ALL {
+            let v = TstError::from_c_code(k.c_projection()).unwrap_or_else(|| {
+                panic!(
+                    "kind {} projects to {}, which is not a TstError",
+                    k.name(),
+                    k.c_projection()
+                )
+            });
+            assert_eq!(TstError::from_kind(*k), v);
+            assert!(
+                (-48..=-1).contains(&k.c_projection()),
+                "{} projects outside the C range",
+                k.name()
             );
-            assert_not_unhandled_wildcard();
+            if k.is_c_frozen() {
+                assert_eq!(
+                    k.c_projection(),
+                    k.c_code(),
+                    "{} is C-frozen but folds",
+                    k.name()
+                );
+            }
         }
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn from_c_code_round_trips_every_tst_error_variant() {
+        for code in -48..=0 {
+            let v = TstError::from_c_code(code).unwrap_or_else(|| panic!("no TstError for {code}"));
+            assert_eq!(v as i32, code);
+        }
+        assert!(TstError::from_c_code(-49).is_none());
+        assert!(TstError::from_c_code(1).is_none());
+    }
+
+    /// The "two answers" defect (spec §3.3): `TransportError::Backpressure`
+    /// used to project to -8 on the raw path and -4 on the kind path. Now
+    /// there is one path and it says -4.
+    #[cfg(feature = "std")]
+    #[test]
+    fn backpressure_projects_to_buffer_full_on_the_one_path() {
+        use tst_pipeline::binding::BindingError;
+        clear_last_error_for_test();
+        let e = BindingError::from(TransportError::Backpressure {
+            msg: "x".into(),
+            errno_code: None,
+        });
+        assert_eq!(record_binding_error(e), TstError::BufferFull as i32);
+        assert_eq!(test_last_error_code(), TstError::BufferFull as i32);
+        clear_last_error_for_test();
+        let e = BindingError::from(TransportError::ExplicitClose);
+        assert_eq!(record_binding_error(e), TstError::Closed as i32);
+        assert_eq!(test_last_error_msg(), "cancelled from another thread");
     }
 
     #[test]
@@ -1352,41 +1072,6 @@ mod tests {
         let rc = record_not_found("pid 0x100 not observed on this handle");
         assert_eq!(rc, TstError::NotFound as i32);
         assert_eq!(test_last_error_code(), TstError::NotFound as i32);
-    }
-
-    /// D5 follow-up: `(errno N)` suffix only appended for non-zero
-    /// codes. `errno_code: Some(0)` (the `SrtErrno::Bad` sentinel) is
-    /// suppressed because "(errno 0)" reads as "no error" — a footgun
-    /// for C consumers parsing the message string.
-    #[test]
-    fn record_transport_error_suppresses_errno_zero_suffix() {
-        clear_last_error_for_test();
-        record_transport_error(&TransportError::Broken {
-            msg: "synthetic".into(),
-            errno_code: Some(0),
-            cause: BrokenCause::Unspecified,
-        });
-        let s_ptr = unsafe { tst_get_last_error_str() };
-        let msg = unsafe { core::ffi::CStr::from_ptr(s_ptr) }
-            .to_str()
-            .unwrap();
-        assert!(
-            !msg.contains("(errno"),
-            "errno 0 should not surface a (errno N) suffix: {msg}"
-        );
-
-        // Non-zero codes still surface.
-        clear_last_error_for_test();
-        record_transport_error(&TransportError::Broken {
-            msg: "synthetic".into(),
-            errno_code: Some(2),
-            cause: BrokenCause::Unspecified,
-        });
-        let s_ptr = unsafe { tst_get_last_error_str() };
-        let msg = unsafe { core::ffi::CStr::from_ptr(s_ptr) }
-            .to_str()
-            .unwrap();
-        assert!(msg.contains("(errno 2)"), "got: {msg}");
     }
 
     #[test]

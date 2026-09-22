@@ -31,7 +31,7 @@
 //! interrupt pattern). The returned `TstRtspCancelHandle` is a heap-allocated
 //! opaque handle freed with `tst_rtsp_cancel_handle_free`.
 
-use crate::error::{TstError, rtsp_server_error_to_code, set_last_error};
+use crate::error::{TstError, set_last_error};
 use crate::panic::ffi_catch;
 use crate::rtsp::server::types::TstRtspServer;
 use crate::stats::{TstServerStats, fill_server_stats};
@@ -232,9 +232,7 @@ pub unsafe extern "C" fn tst_rtsp_server_stop(
         //   - per-session cancel + global cancel
         //   - sleep(graceful_shutdown_drain + 1 s)
         if let Err(e) = server_ref.stop() {
-            let code = rtsp_server_error_to_code(&e);
-            set_last_error(code, &format!("server stop failed: {e}"));
-            return code as libc::c_int;
+            return crate::error::record_with_context(e, "server stop failed");
         }
         // Mark the handle as stopped so subsequent calls return Closed.
         *guard = None;

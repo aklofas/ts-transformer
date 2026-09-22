@@ -70,7 +70,7 @@ pub unsafe extern "C" fn tst_mux_sender_open(
         {
             Ok(t) => t,
             Err(e) => {
-                crate::error::record_transport_error(&e);
+                crate::error::record_binding_error(e.into());
                 return std::ptr::null_mut();
             }
         };
@@ -717,7 +717,7 @@ pub unsafe extern "C" fn tst_managed_mux_sender_open(
         let initial = match crate::sender::connect::connect_srt(&url.host, url.port, &socket_cfg) {
             Ok(t) => t,
             Err(e) => {
-                crate::error::record_transport_error(&e);
+                crate::error::record_binding_error(e.into());
                 return std::ptr::null_mut();
             }
         };
