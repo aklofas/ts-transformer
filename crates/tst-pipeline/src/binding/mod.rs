@@ -20,5 +20,7 @@
 
 pub mod owned;
 pub mod panic;
+pub mod shells;
 
 pub use owned::{Close, CloseFailure, FlagCancel, HandleState, Owned};
+pub use shells::{RecvHalf, SendHalf};
