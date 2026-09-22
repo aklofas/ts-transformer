@@ -326,8 +326,10 @@ jobs:
         # file (guards the cookbook re-slug and future doc moves).
         run: bash scripts/check/repo/docs-internal-links.sh
 
-      - name: check-ratchet-self-test (coverage drivers detect gaps)
-        # Validates the error-mapping coverage framework detects gaps. Gated to
+      - name: check-ratchet-self-test (fail-closed ratchets detect gaps)
+        # Validates that the fail-closed ratchets actually detect their failure
+        # mode. Arc 2 retired the error-mapping coverage drivers this started
+        # out guarding; the C-header rail's cases are what remains. Gated to
         # linux-x86_64: the check is platform-independent (no signal from other
         # runners) and its synthetic-fixture bash is GNU-leaning.
         if: matrix.name == 'linux-x86_64'
@@ -1031,11 +1033,11 @@ jobs:
     # CI job; Phase 6 added `python-pandas-extra` for the optional extra;
     # this job (added via audit #1, 2026-05-24) closes the gap by running
     # the broader default-marker suite that exercises Demuxer, Muxer,
-    # KLV typed decode/encode, codec parsers, and io helpers. Wires
-    # scripts/check/python/error-mapping-coverage.sh as a fast-fail step
-    # (before the expensive maturin build) so future CodecParseError /
-    # DemuxError / KlvDecodeError / KlvEncodeError variants cannot
-    # silently miss Python exception mapping.
+    # KLV typed decode/encode, codec parsers, and io helpers. The former
+    # check-py-error-mapping-coverage fast-fail step was retired in 0.7.0
+    # (Arc 2 WP-B2): Python kinds now come from one Rust table and are
+    # resolved at `import tstrans`, so a gap fails the import (and the
+    # pytest suite) instead of needing a call-site grep.
     env:
       # Same `RUSTUP_TOOLCHAIN` pin as `build` and `python-pandas-extra` —
       # avoids the pre-installed clippy / rustup-sync clash on
@@ -1053,19 +1055,6 @@ jobs:
         # has an arm in `non_conformant_kind_name` and every output kind
         # string is a member of the Python NonConformantKind enum.
         run: bash scripts/check/python/non-conformant-kind-coverage.sh
-
-      - name: check-py-error-mapping-coverage
-        # Consolidated: `py` rows assert every <Proto>ErrorKind in
-        # tstrans.exceptions (srt/udp/tcp/rtp/rtsp/hls/rist) has a
-        # make_<proto>_error call site under bindings/python/src/; `pyarm`
-        # rows assert every CodecParseError / DemuxError / KlvDecodeError /
-        # KlvEncodeError variant (Plan #96 Wave G, Finding 12) has an
-        # explicit arm in its Python-binding mapper fn, instead of silently
-        # routing to a wildcard fallback. Driven by
-        # scripts/ratchets/error-mapping.tsv (replaces the former
-        # per-protocol check-py-*-error-mapping clones; also brings
-        # rtp/rtsp under CI, which were previously local-only).
-        run: bash scripts/check/python/error-mapping-coverage.sh
 
       - name: check-py-publisher-class-mirror
         # Plan A5b Wave C T14 — verifies the Python Publisher ABC method
