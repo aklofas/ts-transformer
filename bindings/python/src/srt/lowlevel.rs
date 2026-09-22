@@ -46,15 +46,25 @@ use tst_srt::{
     SrtUrl, url::Mode,
 };
 
-use tst_pipeline::binding::{BindingError, HandleState, Owned};
+use tst_pipeline::binding::{BindingError, BindingErrorKind, HandleState, Owned};
 
 use crate::errors::make_srt_error;
 use crate::raise::{SRT, pyres, raise};
-use crate::srt::errors::{
-    bind_error_to_pyerr, connect_error_to_pyerr, io_error_to_pyerr, url_error_to_pyerr,
-};
 use crate::srt::transport::{PyCancelHandle, PyReceiver, PySender};
 use crate::util::{alive_probe, close_owned};
+
+/// `SrtError(CONFIG_INVALID)` for this module's builder / URL pre-checks,
+/// through the one raise path (`crate::raise`).
+fn cfg_invalid(py: Python<'_>, detail: impl Into<String>) -> PyErr {
+    raise(
+        py,
+        &SRT,
+        BindingError {
+            kind: BindingErrorKind::ConfigInvalid,
+            detail: detail.into(),
+        },
+    )
+}
 
 // ---------------------------------------------------------------------------
 // Builder mode tracking
@@ -125,8 +135,7 @@ impl PyBuilder {
     /// boundary so callers never see `tst_srt::Passphrase` from Python.
     /// Validation errors collapse to `CONFIG_INVALID`.
     fn apply_passphrase(&mut self, py: Python<'_>, p: &str) -> PyResult<()> {
-        let pp = Passphrase::new(p.to_string())
-            .map_err(|e| make_srt_error(py, "CONFIG_INVALID", &e.to_string()))?;
+        let pp = Passphrase::new(p.to_string()).map_err(|e| cfg_invalid(py, e.to_string()))?;
         self.socket_cfg.passphrase = Some(pp.clone());
         self.listener_cfg.passphrase = Some(pp);
         self.passphrase_set = true;
@@ -134,8 +143,7 @@ impl PyBuilder {
     }
 
     fn apply_stream_id(&mut self, py: Python<'_>, s: &str) -> PyResult<()> {
-        let id = StreamId::new(s.to_string())
-            .map_err(|e| make_srt_error(py, "CONFIG_INVALID", &e.to_string()))?;
+        let id = StreamId::new(s.to_string()).map_err(|e| cfg_invalid(py, e.to_string()))?;
         self.socket_cfg.stream_id = Some(id);
         // ListenerConfig doesn't carry stream_id (set on accepted sockets
         // via post-handshake observation). Caller-side only.
@@ -143,8 +151,7 @@ impl PyBuilder {
     }
 
     fn apply_congestion(&mut self, py: Python<'_>, name: &str) -> PyResult<()> {
-        let c = Congestion::from_str_strict(name)
-            .map_err(|e| make_srt_error(py, "CONFIG_INVALID", &e.to_string()))?;
+        let c = Congestion::from_str_strict(name).map_err(|e| cfg_invalid(py, e.to_string()))?;
         self.socket_cfg.congestion = Some(c);
         self.listener_cfg.congestion = Some(c);
         Ok(())
@@ -333,25 +340,23 @@ impl PyBuilder {
     /// Releases the GIL during the SRT handshake.
     fn connect(&self, py: Python<'_>) -> PyResult<PySocket> {
         if matches!(self.mode_override, BuilderMode::Rendezvous) {
-            return Err(make_srt_error(
+            return Err(cfg_invalid(
                 py,
-                "CONFIG_INVALID",
                 "rendezvous mode is not yet supported by tst-srt",
             ));
         }
         if matches!(self.mode_override, BuilderMode::Listener) {
-            return Err(make_srt_error(
+            return Err(cfg_invalid(
                 py,
-                "CONFIG_INVALID",
                 "Builder.connect() requires caller mode (mode_override is Listener)",
             ));
         }
-        let parsed = SrtUrl::parse(&self.url).map_err(|e| url_error_to_pyerr(py, e))?;
+        let parsed =
+            SrtUrl::parse(&self.url).map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
         if parsed.mode != Mode::Caller {
-            return Err(make_srt_error(
+            return Err(cfg_invalid(
                 py,
-                "CONFIG_INVALID",
-                &format!(
+                format!(
                     "Builder.connect() requires URL mode=caller (default); got mode={:?}",
                     parsed.mode
                 ),
@@ -361,10 +366,10 @@ impl PyBuilder {
         // unconditional overwrite, so URL wins on conflict (Q4-A).
         let mut cfg = self.socket_cfg.clone();
         parsed.overlay.apply_to_socket(&mut cfg);
-        let addr = crate::util::join_host_port(&parsed.host, parsed.port);
+        let addr = tst_srt::addr::join_host_port(&parsed.host, parsed.port);
         let socket = py
             .allow_threads(|| SrtSocket::connect_with(&cfg, addr.as_str()))
-            .map_err(|e| connect_error_to_pyerr(py, e))?;
+            .map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
         Ok(PySocket::wrap(socket))
     }
 
@@ -373,25 +378,23 @@ impl PyBuilder {
     /// Releases the GIL during `srt_bind` + `srt_listen`.
     fn listen(&self, py: Python<'_>) -> PyResult<PyListener> {
         if matches!(self.mode_override, BuilderMode::Rendezvous) {
-            return Err(make_srt_error(
+            return Err(cfg_invalid(
                 py,
-                "CONFIG_INVALID",
                 "rendezvous mode is not yet supported by tst-srt",
             ));
         }
         if matches!(self.mode_override, BuilderMode::Caller) {
-            return Err(make_srt_error(
+            return Err(cfg_invalid(
                 py,
-                "CONFIG_INVALID",
                 "Builder.listen() requires listener mode (mode_override is Caller)",
             ));
         }
-        let parsed = SrtUrl::parse(&self.url).map_err(|e| url_error_to_pyerr(py, e))?;
+        let parsed =
+            SrtUrl::parse(&self.url).map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
         if parsed.mode != Mode::Listener {
-            return Err(make_srt_error(
+            return Err(cfg_invalid(
                 py,
-                "CONFIG_INVALID",
-                &format!(
+                format!(
                     "Builder.listen() requires URL ?mode=listener; got mode={:?}",
                     parsed.mode
                 ),
@@ -399,14 +402,15 @@ impl PyBuilder {
         }
         let mut cfg = self.listener_cfg.clone();
         parsed.overlay.apply_to_listener(&mut cfg);
-        let addr = if parsed.host.is_empty() {
-            format!("0.0.0.0:{}", parsed.port)
+        let bind_host = if parsed.host.is_empty() {
+            "0.0.0.0"
         } else {
-            crate::util::join_host_port(&parsed.host, parsed.port)
+            parsed.host.as_str()
         };
+        let addr = tst_srt::addr::join_host_port(bind_host, parsed.port);
         let listener = py
             .allow_threads(|| SrtListener::bind_with(&cfg, addr.as_str()))
-            .map_err(|e| bind_error_to_pyerr(py, e))?;
+            .map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
         Ok(PyListener::wrap(listener))
     }
 
@@ -500,7 +504,11 @@ impl PySocket {
         program_config: PyRef<'_, crate::mux::PyMuxerProgramConfig>,
     ) -> PyResult<crate::srt::mux_sender::PyMuxSender> {
         let socket = self.take_socket(py)?;
-        crate::srt::mux_sender::PyMuxSender::from_pipeline_mux(py, socket, &program_config)
+        crate::srt::mux_sender::PyMuxSender::from_pipeline_mux(
+            py,
+            SrtTransport::new(socket),
+            &program_config,
+        )
     }
 
     /// Consume this socket and produce a `DemuxReceiver`. Optional
@@ -514,17 +522,14 @@ impl PySocket {
         demux_config: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<crate::srt::demux_receiver::PyDemuxReceiver> {
         let socket = self.take_socket(py)?;
-        match demux_config {
-            None => Ok(crate::srt::demux_receiver::PyDemuxReceiver::from_pipeline_demux(socket)),
-            Some(cfg) => {
-                let opts = crate::mpegts::build_demuxer_config(py, cfg)?;
-                Ok(
-                    crate::srt::demux_receiver::PyDemuxReceiver::from_pipeline_demux_with_config(
-                        socket, opts,
-                    ),
-                )
-            }
-        }
+        let opts = match demux_config {
+            None => None,
+            Some(cfg) => Some(crate::mpegts::build_demuxer_config(py, cfg)?),
+        };
+        Ok(crate::srt::demux_receiver::PyDemuxReceiver::from_transport(
+            SrtTransport::new(socket),
+            opts,
+        ))
     }
 
     /// Local bound address as `(host, port)`. Useful when the URL
@@ -534,7 +539,9 @@ impl PySocket {
         let socket = guard
             .as_ref()
             .ok_or_else(|| make_srt_error(py, "CLOSED", "socket is closed"))?;
-        let addr = socket.local_addr().map_err(|e| io_error_to_pyerr(py, e))?;
+        let addr = socket
+            .local_addr()
+            .map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
         Ok((addr.ip().to_string(), addr.port()))
     }
 
@@ -545,7 +552,9 @@ impl PySocket {
         let socket = guard
             .as_ref()
             .ok_or_else(|| make_srt_error(py, "CLOSED", "socket is closed"))?;
-        let addr = socket.peer_addr().map_err(|e| io_error_to_pyerr(py, e))?;
+        let addr = socket
+            .peer_addr()
+            .map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
         Ok((addr.ip().to_string(), addr.port()))
     }
 
@@ -604,13 +613,6 @@ impl PySocket {
 // PyListener — bound listening socket, accept loop + iterator
 // ---------------------------------------------------------------------------
 
-/// Bound SRT listener. Iterate to consume accepted Sockets, or call
-/// `accept(timeout_ms=...)` for explicit per-accept control.
-///
-/// The iterator stops cleanly when `cancel_handle().cancel()` is called
-/// from another thread — `AcceptError::ListenerClosed` maps to
-/// `StopIteration` in `__next__`. Other accept errors propagate as
-/// `SrtError`.
 /// `tst_srt::Listener` behind the binding layer's `Close`: `close(self)`
 /// consumes the listener, so the slot holds an `Option` it can take.
 pub(crate) struct ListenerHeld(Option<SrtListener>);
@@ -632,6 +634,13 @@ impl tst_pipeline::binding::Close for ListenerHeld {
     }
 }
 
+/// Bound SRT listener. Iterate to consume accepted Sockets, or call
+/// `accept(timeout_ms=...)` for explicit per-accept control.
+///
+/// The iterator stops cleanly when `cancel_handle().cancel()` is called
+/// from another thread — `AcceptError::ListenerClosed` maps to
+/// `StopIteration` in `__next__`. Other accept errors propagate as
+/// `SrtError`.
 #[pyclass(name = "Listener", module = "tstrans.srt")]
 pub(crate) struct PyListener {
     /// Snapshot = the bound address read at construction (never waits
@@ -771,11 +780,6 @@ impl PyListener {
 // ---------------------------------------------------------------------------
 // Module registration
 // ---------------------------------------------------------------------------
-//
-// Touch sites the T4 grep ratchet looks for (already present above via
-// real call sites): "CONFIG_INVALID", "TIMEOUT", "CLOSED",
-// "CONNECT_FAILED", "ACCEPT_FAILED", "IO". Variants not used in this
-// module (WOULD_BLOCK, BROKEN) are covered by transport.rs.
 
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyBuilder>()?;

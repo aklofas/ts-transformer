@@ -322,7 +322,6 @@ pub(crate) fn pyres<R, E: Into<BindingError>>(
     }
 }
 
-#[allow(dead_code)] // callers land with the per-class `Owned` re-points in WP-B2.
 pub(crate) fn pyok<R>(py: Python<'_>, d: &Domain, r: Result<R, HandleState>) -> PyResult<R> {
     r.map_err(|state| raise(py, d, state.into()))
 }

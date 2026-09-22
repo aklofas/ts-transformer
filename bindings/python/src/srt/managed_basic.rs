@@ -157,18 +157,6 @@ fn build_receiver_transport(
 // PyManagedSender — wraps PlSender<ManagedTransport<SrtTransport>>
 // ---------------------------------------------------------------------------
 
-/// Python SRT managed sender — wraps `tst_pipeline::Sender
-/// <ManagedTransport<SrtTransport>>` so the inner SRT transport is
-/// rebuilt automatically when the connection breaks.
-///
-/// Construct via `ManagedSender.from_url(url, *, policy=ReconnectPolicy())`.
-/// The URL must use `mode=caller` (default). The supplied policy is
-/// applied identically to the initial connect and every subsequent
-/// reconnect.
-///
-/// `send_bytes` releases the GIL while the underlying transport call
-/// blocks — the reconnect work (factory + backoff sleep) likewise runs
-/// outside the GIL.
 /// Map a `tst_pipeline::sender::SenderError` to `SrtError`: transport
 /// failures keep their kind, framing rejections are `CONFIG_INVALID`,
 /// anything else `IO`. Local copy of the helper `srt::transport` carried
@@ -185,6 +173,18 @@ fn sender_error_to_pyerr(py: Python<'_>, e: tst_pipeline::sender::SenderError) -
     }
 }
 
+/// Python SRT managed sender — wraps `tst_pipeline::Sender
+/// <ManagedTransport<SrtTransport>>` so the inner SRT transport is
+/// rebuilt automatically when the connection breaks.
+///
+/// Construct via `ManagedSender.from_url(url, *, policy=ReconnectPolicy())`.
+/// The URL must use `mode=caller` (default). The supplied policy is
+/// applied identically to the initial connect and every subsequent
+/// reconnect.
+///
+/// `send_bytes` releases the GIL while the underlying transport call
+/// blocks — the reconnect work (factory + backoff sleep) likewise runs
+/// outside the GIL.
 #[pyclass(name = "ManagedSender", module = "tstrans.srt")]
 pub(crate) struct PyManagedSender {
     /// Shared slot — see the module doc; `close()` cancels before taking it.

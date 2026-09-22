@@ -42,38 +42,41 @@ use pyo3::Py;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
-use tst_core::mpegts::demux::DemuxEvent;
-use tst_core::transport::{BrokenCause, TransportCancel, TransportError};
+use tst_pipeline::binding::{BindingError, BindingErrorKind, Owned};
 use tst_pipeline::{
     DemuxReceiver as RustDemuxReceiver, DemuxReceiverError, DemuxReceiverErrorSource,
 };
-use tst_srt::error::AcceptError;
-use tst_srt::{Listener, ListenerConfig, Socket, SrtTransport, SrtUrl, url::Mode};
+use tst_srt::{SrtTransport, SrtUrl, url::Mode};
 
-use crate::errors::make_srt_error;
 use crate::mpegts::demux_error_to_pyerr;
 use crate::mux::PyMuxerStats;
-use crate::srt::errors::{accept_error_to_pyerr, bind_error_to_pyerr, url_error_to_pyerr};
-use crate::srt::transport::PySocketStats;
+use crate::raise::{SRT, pyok, raise};
+use crate::srt::transport::{PySocketStats, srt_cancel_source};
+use crate::util::{CancelSource, alive_probe, close_owned};
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Map a `DemuxReceiverError` raised by `recv_event` onto the right
-/// Python exception. Transport-side errors map to `SrtError` (via the
-/// `transport_error_to_pyerr` helper from `crate::srt::errors`);
-/// demux-side errors map to `DemuxError`.
-fn demux_recv_error_to_pyerr(py: Python<'_>, e: DemuxReceiverError) -> PyErr {
+/// Demux-sourced failures keep `demux_error_to_pyerr` (a `DemuxError`,
+/// not an `SrtError`); transport-sourced ones are `BindingError`s — and
+/// A2's K6 rule maps a receiver shell's `Transport(TransportError::Closed)`
+/// (peer EOS) to `EndOfStream`, which an iterator reports as
+/// `StopIteration` (today's clean-EOF shape), never as an error.
+///
+/// `pub(crate)` so `managed_convenience`'s `ManagedDemuxReceiver` shares
+/// the one split instead of carrying a copy.
+pub(crate) fn demux_recv_err(py: Python<'_>, e: DemuxReceiverError) -> PyErr {
     match e.source {
-        DemuxReceiverErrorSource::Transport(t) => {
-            crate::srt::errors::transport_error_to_pyerr(py, t)
-        }
         DemuxReceiverErrorSource::Demux(d) => demux_error_to_pyerr(py, &d),
-        // `DemuxReceiverErrorSource` is `#[non_exhaustive]`; route any
-        // future variant through `SrtError(IO)` with the
-        // ShellErrorKind discriminant preserved in the message.
-        _ => make_srt_error(py, "IO", &format!("{:?}", e.kind)),
+        _ => {
+            let be = BindingError::from(e);
+            if be.kind == BindingErrorKind::EndOfStream {
+                pyo3::exceptions::PyStopIteration::new_err(())
+            } else {
+                raise(py, &SRT, be)
+            }
+        }
     }
 }
 
@@ -101,22 +104,13 @@ fn demux_recv_error_to_pyerr(py: Python<'_>, e: DemuxReceiverError) -> PyErr {
 /// ```
 #[pyclass(name = "DemuxReceiver", module = "tstrans.srt")]
 pub(crate) struct PyDemuxReceiver {
-    /// Live receiver, behind a mutex so concurrent `__next__` /
-    /// `close()` calls from different Python threads don't trip the
-    /// PyO3 "Already borrowed" check that an `&mut self`-style design
-    /// would hit. `Option` so `close()` can take + drop the inner
-    /// receiver while keeping the PyClass addressable.
-    inner: Arc<Mutex<Option<RustDemuxReceiver<SrtTransport>>>>,
-    /// Cancel handle pulled from the transport at construction. Held
-    /// outside the mutex so `close()` can fire it BEFORE acquiring the
-    /// lock — wakes any thread parked in a `__next__`'s `recv_event`,
-    /// which then drops the mutex guard and the close path can take
-    /// ownership of `inner` cleanly. Cloning is cheap (`Arc`); multiple
-    /// `close()` calls are idempotent.
-    /// Shared cancel state (Arc 2 WP-B2): the same `Arc` every
-    /// `CancelHandle` this shell hands out holds, so `close()` here and
-    /// `cancel()` through any handle flip one observable flag.
-    cancel: Arc<crate::util::CancelSource>,
+    /// The binding layer's handle state machine (Arc 2): a `__next__`
+    /// parked in `recv_event` holds the slot only inside `with_mut`,
+    /// under `py.allow_threads`; `close()` (cancel-first) ends it
+    /// instead of waiting behind it.
+    owned: Owned<RustDemuxReceiver<SrtTransport>>,
+    /// Shared cancel state — see `crate::util::CancelSource`.
+    cancel: Arc<CancelSource>,
     /// First exception raised by a registered byte sink (see
     /// `add_byte_sink`). The sink closure runs inside `recv_event`
     /// (under `allow_threads`) where it can't return a `PyResult` to
@@ -125,6 +119,26 @@ pub(crate) struct PyDemuxReceiver {
     /// returns and re-raises fail-loud. Separate from `inner` so the
     /// closure never touches the `inner` lock it runs underneath.
     sink_error: Arc<Mutex<Option<PyErr>>>,
+}
+
+impl PyDemuxReceiver {
+    /// Wrap an already-accepted transport (the `from_url` and
+    /// `Socket.into_demux_receiver()` paths meet here).
+    pub(crate) fn from_transport(
+        transport: SrtTransport,
+        opts: Option<tst_core::mpegts::demux::DemuxerConfig>,
+    ) -> Self {
+        let cancel = srt_cancel_source(&transport);
+        let receiver = match opts {
+            None => RustDemuxReceiver::new(transport),
+            Some(opts) => RustDemuxReceiver::with_demux_options(transport, opts),
+        };
+        Self {
+            owned: Owned::new(receiver, cancel.as_dyn(), ()),
+            cancel,
+            sink_error: Arc::new(Mutex::new(None)),
+        }
+    }
 }
 
 #[pymethods]
@@ -147,60 +161,33 @@ impl PyDemuxReceiver {
         url: &str,
         demux_config: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
-        // 1. Parse URL + check listener mode.
-        let parsed = SrtUrl::parse(url).map_err(|e| url_error_to_pyerr(py, e))?;
+        let parsed = SrtUrl::parse(url).map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
         if parsed.mode != Mode::Listener {
-            let msg = format!(
-                "DemuxReceiver.from_url requires ?mode=listener; got mode={:?}",
-                parsed.mode
-            );
-            return Err(make_srt_error(py, "CONFIG_INVALID", &msg));
+            return Err(raise(
+                py,
+                &SRT,
+                BindingError {
+                    kind: BindingErrorKind::ConfigInvalid,
+                    detail: format!(
+                        "DemuxReceiver.from_url requires ?mode=listener; got mode={:?}",
+                        parsed.mode
+                    ),
+                },
+            ));
         }
-        let mut cfg = ListenerConfig::default();
-        parsed.overlay.apply_to_listener(&mut cfg);
-        let addr = if parsed.host.is_empty() {
-            format!("0.0.0.0:{}", parsed.port)
-        } else {
-            crate::util::join_host_port(&parsed.host, parsed.port)
-        };
-
-        // 2. Optionally translate the DemuxerConfig dataclass (must
-        // happen with the GIL held, before allow_threads).
+        // Translate the DemuxerConfig dataclass with the GIL held, before
+        // allow_threads.
         let demux_opts = match demux_config {
             None => None,
             Some(cfg_obj) => Some(crate::mpegts::build_demuxer_config(py, cfg_obj)?),
         };
-
-        // 3. Bind + accept (releases GIL during the blocking accept).
-        let socket = py
-            .allow_threads(|| -> Result<Socket, AcceptOrBindError> {
-                let mut listener =
-                    Listener::bind_with(&cfg, addr.as_str()).map_err(AcceptOrBindError::Bind)?;
-                let (sock, _peer) = listener.accept().map_err(AcceptOrBindError::Accept)?;
-                Ok(sock)
-            })
-            .map_err(|e| match e {
-                AcceptOrBindError::Bind(e) => bind_error_to_pyerr(py, e),
-                AcceptOrBindError::Accept(e) => accept_error_to_pyerr(py, e),
-            })?;
-
-        let transport = SrtTransport::new(socket);
-
-        // 4. Build the receiver (with or without demux options).
-        let receiver = match demux_opts {
-            None => RustDemuxReceiver::new(transport),
-            Some(opts) => RustDemuxReceiver::with_demux_options(transport, opts),
-        };
-        let cancel = crate::util::CancelSource::new(
-            receiver
-                .cancel_handle()
-                .expect("SrtTransport always returns Some(cancel_handle) for a live socket"),
-        );
-        Ok(Self {
-            inner: Arc::new(Mutex::new(Some(receiver))),
-            cancel,
-            sink_error: Arc::new(Mutex::new(None)),
-        })
+        // A3 owns the bind-host rule (empty host => 0.0.0.0), the IPv6
+        // bracketing and the single-accept listener.
+        let slot = tst_core::cancel::CancelSlot::new();
+        let transport = py
+            .allow_threads(|| parsed.accept_one(&slot))
+            .map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
+        Ok(Self::from_transport(transport, demux_opts))
     }
 
     /// Iterator protocol: `iter(rx)` returns `self`.
@@ -237,36 +224,31 @@ impl PyDemuxReceiver {
         // `callback` + `sink_error` — never `inner` (whose guard is held
         // by the parked `__next__`), so it cannot deadlock.
         let sink_error = self.sink_error.clone();
-        let inner = self.inner.clone();
-        // Acquire `inner` with the GIL RELEASED (matching `close()` /
+        // Take the slot with the GIL RELEASED (matching `close()` /
         // `socket_stats()`). If we held the GIL here while a concurrent
-        // `__next__` held `inner` inside `recv_event`, a sink firing on
+        // `__next__` held the slot inside `recv_event`, a sink firing on
         // the recv thread would block re-acquiring the GIL while we
-        // block on `inner.lock()` — a deadlock. Registering the sink (a
+        // block on the slot — a deadlock. Registering the sink (a
         // Vec push) needs no GIL and never re-enters Python, so it is
         // safe to do inside the released-GIL block.
-        let outcome: Result<(), &'static str> = py.allow_threads(move || {
-            let mut guard = inner.lock().map_err(|_| "poisoned")?;
-            let rx = guard.as_mut().ok_or("closed")?;
-            rx.add_byte_sink(Box::new(move |pkt: &[u8]| {
-                Python::with_gil(|py| {
-                    let b = PyBytes::new_bound(py, pkt);
-                    if let Err(e) = callback.call1(py, (b,)) {
-                        // First error wins; later packet errors are dropped.
-                        if let Ok(mut slot) = sink_error.lock() {
-                            if slot.is_none() {
-                                *slot = Some(e);
+        let res = py.allow_threads(move || {
+            self.owned.with_mut(|rx| {
+                rx.add_byte_sink(Box::new(move |pkt: &[u8]| {
+                    Python::with_gil(|py| {
+                        let b = PyBytes::new_bound(py, pkt);
+                        if let Err(e) = callback.call1(py, (b,)) {
+                            // First error wins; later packet errors are dropped.
+                            if let Ok(mut slot) = sink_error.lock() {
+                                if slot.is_none() {
+                                    *slot = Some(e);
+                                }
                             }
                         }
-                    }
-                });
-            }));
-            Ok(())
+                    });
+                }));
+            })
         });
-        outcome.map_err(|kind| match kind {
-            "poisoned" => make_srt_error(py, "IO", "DemuxReceiver lock poisoned"),
-            _ => make_srt_error(py, "CLOSED", "DemuxReceiver is closed"),
-        })
+        pyok(py, &SRT, res)
     }
 
     /// Block until the next `DemuxEvent` is available. Returns a
@@ -278,37 +260,21 @@ impl PyDemuxReceiver {
     /// malformed PMT/PES); or any exception raised by a registered
     /// byte sink (see `add_byte_sink`), re-raised fail-loud.
     fn __next__(&self, py: Python<'_>) -> PyResult<PyObject> {
-        let inner = self.inner.clone();
-        let res: Result<Option<DemuxEvent>, DemuxReceiverError> = py.allow_threads(|| {
-            let mut guard = match inner.lock() {
-                Ok(g) => g,
-                Err(_) => {
-                    return Err(DemuxReceiverError::from(TransportError::Broken {
-                        msg: "DemuxReceiver inner lock poisoned".into(),
-                        errno_code: None,
-                        cause: BrokenCause::Unspecified,
-                    }));
-                }
-            };
-            match guard.as_mut() {
-                Some(rx) => rx.recv_event(),
-                None => Err(DemuxReceiverError::from(TransportError::Closed)),
-            }
-        });
+        let res = py.allow_threads(|| self.owned.with_mut(|rx| rx.recv_event()));
         // Fail-loud: surface any sink exception captured during this
-        // `recv_event` (the `inner` guard has been dropped above, so
-        // touching `sink_error` here can't nest under it). Take it so a
-        // resumed iteration after a caught error isn't permanently
-        // poisoned.
+        // `recv_event` (the slot guard has been dropped above, so touching
+        // `sink_error` here can't nest under it). Take it so a resumed
+        // iteration after a caught error isn't permanently poisoned.
         if let Ok(mut slot) = self.sink_error.lock() {
             if let Some(err) = slot.take() {
                 return Err(err);
             }
         }
         match res {
-            Ok(None) => Err(pyo3::exceptions::PyStopIteration::new_err(())),
-            Ok(Some(ev)) => crate::mpegts::convert_event(py, &ev),
-            Err(e) => Err(demux_recv_error_to_pyerr(py, e)),
+            Err(state) => Err(raise(py, &SRT, BindingError::from(state))),
+            Ok(Ok(None)) => Err(pyo3::exceptions::PyStopIteration::new_err(())),
+            Ok(Ok(Some(ev))) => crate::mpegts::convert_event(py, &ev),
+            Ok(Err(e)) => Err(demux_recv_err(py, e)),
         }
     }
 
@@ -330,17 +296,14 @@ impl PyDemuxReceiver {
         // (ABBA: iterator holds lock + blocks on GIL; this call holds GIL
         // + blocks on lock). Matches the `close()` / `add_byte_sink()`
         // pattern in this file.
-        let inner = self.inner.clone();
-        let core: Result<Option<tst_core::transport::SocketStats>, &'static str> = py
-            .allow_threads(|| {
-                let guard = inner.lock().map_err(|_| "poisoned")?;
-                Ok(guard
-                    .as_ref()
-                    .map(|rx| rx.socket_stats().unwrap_or_default()))
-            });
-        let core = core
-            .map_err(|_| make_srt_error(py, "IO", "DemuxReceiver lock poisoned"))?
-            .ok_or_else(|| make_srt_error(py, "CLOSED", "DemuxReceiver is closed"))?;
+        let core = pyok(
+            py,
+            &SRT,
+            py.allow_threads(|| {
+                self.owned
+                    .with_ref(|rx| rx.socket_stats().unwrap_or_default())
+            }),
+        )?;
         Py::new(py, PySocketStats::from_core(core))
     }
 
@@ -356,14 +319,8 @@ impl PyDemuxReceiver {
         // sinks). Extract plain Rust values under the lock, then build
         // Python objects after the guard is dropped and the GIL is
         // reacquired.
-        let inner = self.inner.clone();
-        type RawStats = (
-            tst_core::transport::SocketStats,
-            tst_core::mpegts::mux::MuxerStats,
-        );
-        let raw: Result<Option<RawStats>, &'static str> = py.allow_threads(|| {
-            let guard = inner.lock().map_err(|_| "poisoned")?;
-            Ok(guard.as_ref().map(|rx| {
+        let raw = py.allow_threads(|| {
+            self.owned.with_ref(|rx| {
                 let combined = rx.stats();
                 // SocketStats from the wire counters tracked at the pipeline
                 // layer (full SocketStats via the transport accessor isn't
@@ -382,11 +339,9 @@ impl PyDemuxReceiver {
                     per_stream: combined.per_stream,
                 };
                 (sock_stats, mux_stats)
-            }))
+            })
         });
-        let (sock_stats, mux_stats) = raw
-            .map_err(|_| make_srt_error(py, "IO", "DemuxReceiver lock poisoned"))?
-            .ok_or_else(|| make_srt_error(py, "CLOSED", "DemuxReceiver is closed"))?;
+        let (sock_stats, mux_stats) = pyok(py, &SRT, raw)?;
         let sock_py = Py::new(py, PySocketStats::from_core(sock_stats))?;
         let mux_py = Py::new(py, PyMuxerStats::from_inner(mux_stats))?;
         Ok((sock_py, mux_py))
@@ -407,17 +362,11 @@ impl PyDemuxReceiver {
     /// lock discipline as `stats()`.
     fn last_seen_micros(&self, py: Python<'_>, pid: u16) -> PyResult<Option<u64>> {
         // Same GIL-released lock-then-extract shape as `stats()` above.
-        let inner = self.inner.clone();
-        let raw: Result<Option<Option<std::time::SystemTime>>, &'static str> =
-            py.allow_threads(|| {
-                let guard = inner.lock().map_err(|_| "poisoned")?;
-                Ok(guard
-                    .as_ref()
-                    .map(|rx| rx.stats().per_stream.get(&pid).and_then(|s| s.last_seen)))
-            });
-        let last_seen = raw
-            .map_err(|_| make_srt_error(py, "IO", "DemuxReceiver lock poisoned"))?
-            .ok_or_else(|| make_srt_error(py, "CLOSED", "DemuxReceiver is closed"))?;
+        let raw = py.allow_threads(|| {
+            self.owned
+                .with_ref(|rx| rx.stats().per_stream.get(&pid).and_then(|s| s.last_seen))
+        });
+        let last_seen = pyok(py, &SRT, raw)?;
         Ok(last_seen
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_micros() as u64))
@@ -426,27 +375,14 @@ impl PyDemuxReceiver {
     /// Close the receiver. Idempotent. Fires the cancel handle BEFORE
     /// acquiring the mutex so a concurrent `__next__` parked in
     /// `recv_event` unparks promptly.
-    fn close(&self, py: Python<'_>) {
-        self.cancel.cancel();
-        let inner = self.inner.clone();
-        py.allow_threads(move || {
-            if let Ok(mut guard) = inner.lock() {
-                if let Some(mut r) = guard.take() {
-                    r.close();
-                }
-            }
-        });
+    fn close(&self, py: Python<'_>) -> PyResult<()> {
+        close_owned(py, &SRT, &self.owned)
     }
 
-    /// `True` while the receiver owns a live transport.
+    /// `True` while the receiver owns a live transport (a `__next__`
+    /// parked on another thread counts as live; the probe never waits).
     fn is_alive(&self) -> bool {
-        match self.inner.try_lock() {
-            Ok(g) => g.as_ref().is_some_and(|r| r.is_alive()),
-            // Lock currently held by a parked __next__ — the receiver
-            // is still alive (the parked recv hasn't released the
-            // inner). Optimistic but matches the rtp shape.
-            Err(_) => true,
-        }
+        alive_probe(&self.owned, |r| r.is_alive())
     }
 
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -459,70 +395,18 @@ impl PyDemuxReceiver {
         _exc_type: &Bound<'_, PyAny>,
         _exc_value: &Bound<'_, PyAny>,
         _traceback: &Bound<'_, PyAny>,
-    ) -> bool {
-        self.close(py);
-        false
+    ) -> PyResult<bool> {
+        self.close(py)?;
+        Ok(false)
     }
 
     fn __repr__(&self) -> String {
-        match self.inner.try_lock() {
-            Ok(g) => match g.as_ref() {
-                Some(_) => "DemuxReceiver(open)".to_string(),
-                None => "DemuxReceiver(closed)".to_string(),
-            },
-            Err(_) => "DemuxReceiver(<busy>)".to_string(),
+        if self.owned.is_closed() {
+            "DemuxReceiver(closed)".to_string()
+        } else {
+            "DemuxReceiver(open)".to_string()
         }
     }
-}
-
-impl PyDemuxReceiver {
-    /// Crate-private constructor used by `Socket::into_demux_receiver`
-    /// (T3): takes an already-connected `Socket` (the caller has
-    /// already done the accept/connect handshake) and wraps it with
-    /// default demux options.
-    pub(crate) fn from_pipeline_demux(socket: Socket) -> Self {
-        let transport = SrtTransport::new(socket);
-        let receiver = RustDemuxReceiver::new(transport);
-        let cancel = crate::util::CancelSource::new(
-            receiver
-                .cancel_handle()
-                .expect("SrtTransport always returns Some(cancel_handle) for a live socket"),
-        );
-        Self {
-            inner: Arc::new(Mutex::new(Some(receiver))),
-            cancel,
-            sink_error: Arc::new(Mutex::new(None)),
-        }
-    }
-
-    /// Like [`Self::from_pipeline_demux`] but with explicit demuxer
-    /// options. Used when the Python caller passes a `DemuxerConfig`
-    /// dataclass to `Socket.into_demux_receiver(demux_config=...)`.
-    pub(crate) fn from_pipeline_demux_with_config(
-        socket: Socket,
-        opts: tst_core::mpegts::demux::DemuxerConfig,
-    ) -> Self {
-        let transport = SrtTransport::new(socket);
-        let receiver = RustDemuxReceiver::with_demux_options(transport, opts);
-        let cancel = crate::util::CancelSource::new(
-            receiver
-                .cancel_handle()
-                .expect("SrtTransport always returns Some(cancel_handle) for a live socket"),
-        );
-        Self {
-            inner: Arc::new(Mutex::new(Some(receiver))),
-            cancel,
-            sink_error: Arc::new(Mutex::new(None)),
-        }
-    }
-}
-
-/// Internal helper for `DemuxReceiver::from_url` — combines bind +
-/// accept failure paths inside one `allow_threads` block. Each variant
-/// maps to a distinct user-visible `SrtErrorKind` in the outer match.
-enum AcceptOrBindError {
-    Bind(tst_srt::error::BindError),
-    Accept(AcceptError),
 }
 
 // ---------------------------------------------------------------------------

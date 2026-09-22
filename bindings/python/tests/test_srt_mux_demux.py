@@ -18,6 +18,7 @@ import pytest
 import tstrans
 import tstrans.srt
 from tstrans.exceptions import (
+    DemuxError,
     MuxError,
     MuxErrorKind,
     SrtError,
@@ -25,9 +26,11 @@ from tstrans.exceptions import (
 )
 from tstrans.mpegts import (
     DemuxEvent,
+    DemuxerConfig,
     KlvStreamType,
     MuxerProgramConfigBuilder,
     Pts90khz,
+    StrictMode,
     VideoCodec,
 )
 
@@ -699,3 +702,81 @@ def test_demux_receiver_accepts_demux_config() -> None:
     assert rx_box, "demux receiver did not accept under demux_config kwarg"
     sender.close()
     rx_box[0].close()
+
+
+def test_demux_sourced_failure_raises_demux_error_not_srt_error() -> None:
+    """Arc 2 WP-B2: `DemuxReceiver.__next__` splits on the error's SOURCE.
+    A demuxer-side failure (here a PSI CRC mismatch, which `StrictMode.FULL`
+    escalates to fatal) must stay a `DemuxError` carrying its own kind; only
+    transport-side failures become `SrtError`. Without the split the whole
+    `DemuxReceiverError` would collapse onto the SRT domain.
+
+    The peer is a plain `srt.Sender` (raw TS bytes) so the bytes reach the
+    demuxer exactly as written — a `MuxSender` would only ever emit
+    conformant PSI. The iteration runs on a worker with a bounded join and a
+    rescue `close()`, so a regression that stops raising fails the test
+    instead of wedging the suite.
+    """
+    from _builders.unknown_stream import _pat_packet
+
+    # A valid PAT with a CRC byte flipped — `PsiChecksumMismatch`.
+    # `StrictMode.FULL` is what escalates it; `PSI_ONLY` surfaces it as a
+    # NonConformant event instead (verified, not assumed).
+    pat = bytearray(_pat_packet())
+    pat[19] ^= 0xFF
+    corrupt_pat = bytes(pat)
+
+    port = _free_tcp_port()
+    cfg = DemuxerConfig(strict_mode=StrictMode.FULL)
+    rx_box: list[tstrans.srt.DemuxReceiver] = []
+    rx_err: list[BaseException] = []
+
+    def accept_worker() -> None:
+        try:
+            rx_box.append(
+                tstrans.srt.DemuxReceiver.from_url(
+                    f"srt://:{port}?mode=listener", demux_config=cfg
+                )
+            )
+        except BaseException as exc:  # noqa: BLE001
+            rx_err.append(exc)
+
+    t = threading.Thread(target=accept_worker, daemon=True)
+    t.start()
+    time.sleep(0.15)
+    tx = tstrans.srt.Sender.from_url(f"srt://127.0.0.1:{port}?mode=caller")
+    t.join(5.0)
+    if rx_err:
+        tx.close()
+        raise rx_err[0]
+    assert rx_box, "DemuxReceiver listener thread did not accept within 5 s"
+    rx = rx_box[0]
+
+    captured: list[BaseException] = []
+
+    def pump() -> None:
+        try:
+            for _ in rx:
+                pass
+        except BaseException as exc:  # noqa: BLE001
+            captured.append(exc)
+
+    w = threading.Thread(target=pump, daemon=True)
+    w.start()
+    try:
+        tx.send_bytes(corrupt_pat * 7)  # a full 7-packet bundle so framing flushes
+        tx.flush()
+        w.join(10.0)
+        if w.is_alive():
+            rx.close()  # rescue so the suite never wedges
+            w.join(5.0)
+            pytest.fail("iteration did not end within 10 s of the corrupt PSI")
+        assert len(captured) == 1, f"expected one error; got {captured!r}"
+        err = captured[0]
+        assert isinstance(err, DemuxError), (
+            f"a demux-sourced failure must stay a DemuxError, got {err!r}"
+        )
+        assert err.kind is not None
+    finally:
+        tx.close()
+        rx.close()
