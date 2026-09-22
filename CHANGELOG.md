@@ -1662,12 +1662,25 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     the parked call report -7 too. Managed SRT and every RTP shell already
     report -7. Now pinned by `bindings/c/tests/receiving/cancel_first.rs` (12)
     and `transports/rtp_cancel_first.rs` (2).
+  * On the plain **RTP** receiver, an `EndOfStream`-kind error on a handle
+    the caller cancelled is now `TST_E_CLOSED` (-7); it used to fall through
+    to the generic shell mapper and report -12, unlike its own demux sibling,
+    which already discriminated. The two now agree.
   * On UDP / TCP / RIST, a `Closed`-kind error reaching a `_recv_*` on a
     handle the caller closed from another thread is now `TST_E_CLOSED` (-7)
-    rather than `TST_E_END_OF_STREAM` (-12) — those families had no cancel
-    state to discriminate with before. An `EndOfStream`-kind error still
-    returns -12 but now carries the shared "end of stream (peer
-    disconnected)" detail instead of the error's own message.
+    rather than `TST_E_END_OF_STREAM` (-12), and a `TransportBroken` error on
+    such a handle is `TST_E_TRANSPORT` (-8) rather than -12 (the
+    Broken-means-peer-disconnect relabel only applies when nobody cancelled).
+    Both are **unreachable through defined C usage today**: those families
+    have no `_cancel` entry point, so the only thing that sets the latch is
+    `_close`, which frees the handle — the codes become reachable when R4
+    adds `tst_{udp,tcp,rist}_*_cancel` at ABI 0.22.
+  * An `EndOfStream`-kind error still returns -12 but now carries the shared
+    "end of stream (peer disconnected)" detail instead of the error's own
+    message, and the cancelled-close detail is likewise genericized
+    (e.g. "rtp demux receiver was cancelled or closed by caller" →
+    "receiver was cancelled or closed by caller"). Codes unchanged; only
+    `tst_get_last_error_str()` text moves.
   * `tstrans.h` is **comment-only** in this change (ABI stays 0.21;
     declarations byte-identical with comments stripped). New rail
     `scripts/check/c/snapshot-getters.sh` fails on any construction-constant
