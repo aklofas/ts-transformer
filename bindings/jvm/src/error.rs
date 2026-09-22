@@ -77,6 +77,11 @@ pub(crate) const SRT_KINDS: &[K] = &[
     K::Backpressure,
     K::TooLarge,
     K::InputMalformed,
+    // A receiver shell's clean end of stream (the peer hung up). The kind
+    // table is TOTAL across bindings: C already returns this as
+    // `TST_E_END_OF_STREAM` (-12) from `tst_receiver_recv_packet`, so the JVM
+    // declares the same member rather than folding it into `CLOSED`.
+    K::EndOfStream,
 ];
 /// `org.tstrans.RtpException.Kind`: the five `TransportError` projections
 /// that reach an rtp shell + tst-rtp's six `ConnectError` kinds.
@@ -835,7 +840,7 @@ mod tests {
     #[test]
     fn domain_kind_sets_are_deduplicated_and_sized() {
         for (d, n) in [
-            (Domain::Srt, 10),
+            (Domain::Srt, 11),
             (Domain::Rtp, 10),
             (Domain::Rtsp, 10),
             (Domain::Demux, 6),
@@ -854,6 +859,31 @@ mod tests {
             assert_eq!(members.len(), n, "{d:?}: {members:?}");
         }
         assert_eq!(Domain::ALL.len(), 8);
+    }
+
+    /// A receiver shell's clean end of stream projects to a kind the SRT
+    /// domain DECLARES, so `throw_recv_transport` can raise it instead of
+    /// hitting `throw_binding`'s undeclared-kind guard. The projection is
+    /// A2's exhaustive `From<ShellErrorKind>`, the same one C uses to reach
+    /// `TST_E_END_OF_STREAM` (-12) — this pins that the three bindings agree
+    /// on the kind, which a JVM-only loopback cannot demonstrate (no JVM
+    /// caller sets `SRTO_SENDER`, so no JVM peer hangs up cleanly — see the
+    /// WP-B3 report, g3).
+    #[test]
+    fn end_of_stream_is_declared_for_srt() {
+        use tst_pipeline::ShellErrorKind;
+        let kind = BindingErrorKind::from(ShellErrorKind::EndOfStream);
+        assert_eq!(kind, BindingErrorKind::EndOfStream);
+        assert_eq!(kind.name(), "END_OF_STREAM");
+        assert_eq!(
+            kind.c_projection(),
+            -12,
+            "must equal C's TST_E_END_OF_STREAM"
+        );
+        assert!(
+            SRT_KINDS.contains(&kind),
+            "SrtException.Kind must declare END_OF_STREAM"
+        );
     }
 
     /// The demux / mux / klv / codec classifiers land inside their domains

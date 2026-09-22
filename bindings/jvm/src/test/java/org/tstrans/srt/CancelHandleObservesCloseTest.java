@@ -55,7 +55,9 @@ final class CancelHandleObservesCloseTest {
         }, "idle-peer");
         peer.setDaemon(true);
         peer.start();
-        Socket sock = listener.accept(null);
+        // Bounded: an unbounded native accept on the @Timeout thread cannot be
+        // interrupted, so a failed peer connect would hang the suite.
+        Socket sock = listener.accept(5000);
         listener.close();
         return new Live(sock.intoDemuxReceiver(), release);
     }

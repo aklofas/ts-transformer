@@ -7,6 +7,7 @@
 
 use jni::JNIEnv;
 use tst_core::transport::TransportError;
+use tst_pipeline::ShellErrorKind;
 use tst_pipeline::binding::{BindingError, BindingErrorKind};
 use tst_pipeline::receiver::{ReceiverError, ReceiverErrorSource};
 use tst_pipeline::sender::{SenderError, SenderErrorSource};
@@ -56,10 +57,10 @@ pub(crate) fn transport_error(env: &mut JNIEnv, e: &TransportError) {
 /// through A2's `From<TsFramingError>` = `INPUT_MALFORMED` — it was
 /// `CONFIG_INVALID` before 0.7.0 (observed change, CHANGELOG).
 ///
-/// Deliberately matched on `source` rather than using A2's
-/// `From<SenderError>`: the two are identical for the sender, but the
-/// RECEIVER twin must NOT use `From<ReceiverError>` (see
-/// [`throw_receiver_error`]), and the pair reads as one rule.
+/// Matched on `source` rather than calling A2's `From<SenderError>` only so
+/// that it reads as one rule with its receiver twin [`throw_receiver_error`];
+/// the two are equivalent on the send side (there is no direction-sensitive
+/// `Closed` on a sender — that stays `CLOSED`).
 pub(crate) fn throw_sender_error(env: &mut JNIEnv, e: &SenderError) {
     match &e.source {
         SenderErrorSource::Transport(t) => transport_error(env, t),
@@ -71,18 +72,35 @@ pub(crate) fn throw_sender_error(env: &mut JNIEnv, e: &SenderError) {
     }
 }
 
-/// `tst_pipeline::Receiver` errors — the transport arm through
-/// [`transport_error`].
+/// Receive-DIRECTION projection of a transport failure, shared by every srt
+/// receiver shell.
 ///
-/// NOT A2's `From<ReceiverError>`: that maps `TransportError::Closed` to
-/// `EndOfStream` (the receive-direction reading — the PEER closed), and
-/// `SrtException.Kind` declares no `END_OF_STREAM` member. A peer-closed
-/// `recvBytes()` has raised `SrtException(CLOSED)` since v0.1.0 and keeps
-/// doing so; introducing a kind here would be an unannounced surface change
-/// AND would hit `throw_binding`'s undeclared-kind guard at runtime.
+/// The shell has already classified the error direction-sensitively:
+/// `tst_pipeline::shell_error::kind_from_transport(.., Direction::Recv)` turns
+/// a `TransportError::Closed` on a RECEIVER into
+/// [`ShellErrorKind::EndOfStream`] — the peer hung up cleanly, which on SRT is
+/// `srt_recv` returning 0 and the shell converting that to `Closed`
+/// (`receiver/mod.rs`'s `n == 0` guard). A2's exhaustive
+/// `From<ShellErrorKind> for BindingErrorKind` is the projection; it is how the
+/// C ABI reaches `TST_E_END_OF_STREAM` (-12) on the same event, so the JVM
+/// declares and raises the same kind instead of folding it into `CLOSED`.
+///
+/// Every other kind keeps the richer `From<TransportError>` detail (`msg` plus
+/// the wire errno), so only the end-of-stream case is special-cased here.
+fn throw_recv_transport(env: &mut JNIEnv, kind: ShellErrorKind, t: &TransportError) {
+    if matches!(kind, ShellErrorKind::EndOfStream) {
+        throw_srt(env, BindingErrorKind::from(kind), "peer closed the stream");
+    } else {
+        transport_error(env, t);
+    }
+}
+
+/// `tst_pipeline::Receiver` errors — the transport arm through
+/// [`throw_recv_transport`], so a peer's clean hang-up is `END_OF_STREAM`
+/// rather than `CLOSED` (0.7.0 change; C has always reported it as -12).
 pub(crate) fn throw_receiver_error(env: &mut JNIEnv, e: &ReceiverError) {
     match &e.source {
-        ReceiverErrorSource::Transport(t) => transport_error(env, t),
+        ReceiverErrorSource::Transport(t) => throw_recv_transport(env, e.kind, t),
         // `ReceiverErrorSource` is #[non_exhaustive]; a future arm keeps its Display text.
         _ => throw_srt(env, BindingErrorKind::SrtIo, &e.to_string()),
     }

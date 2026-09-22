@@ -52,9 +52,15 @@ public final class Receiver extends NativeHandle {
      * @param url {@code srt://[host]:port?mode=listener[&key=value&...]}
      * @return a connected {@code Receiver}
      * @throws SrtException {@code CONFIG_INVALID} if the URL is malformed or
-     *     uses a non-listener mode; {@code TIMEOUT} on accept timeout;
-     *     {@code CONNECT_FAILED} if the socket cannot be bound;
-     *     {@code ACCEPT_FAILED} on handshake rejection
+     *     uses a non-listener mode; {@code BROKEN} if the bind or the accept
+     *     fails, with the message prefixed {@code bind: } or {@code accept: }
+     *     respectively. Since 0.7.0 the bind/accept faults of this one-shot
+     *     open are reported as {@code BROKEN} rather than
+     *     {@code CONNECT_FAILED} / {@code ACCEPT_FAILED} / {@code TIMEOUT} /
+     *     {@code CLOSED}: the open now goes through the shared
+     *     {@code SrtUrl::accept_one} path, which is what the C ABI's
+     *     {@code listen_srt} has always done. {@link Listener#accept} is
+     *     unchanged and keeps the typed accept kinds.
      */
     public static Receiver fromUrl(String url) throws SrtException {
         long h = nFromUrl(url);

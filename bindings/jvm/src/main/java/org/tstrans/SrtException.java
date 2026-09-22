@@ -23,7 +23,17 @@ public final class SrtException extends BindingException {
         /** The payload exceeds the transport's per-send ceiling. */
         TOO_LARGE,
         /** {@code sendBytes} input lost MPEG-TS sync (not 188-byte-aligned packets). */
-        INPUT_MALFORMED
+        INPUT_MALFORMED,
+        /**
+         * The peer closed the stream cleanly and the receive loop reached end
+         * of stream — {@link Receiver#recvBytes()} only. The receiver is dead;
+         * later calls report {@code CLOSED}. Same kind the C ABI returns as
+         * {@code TST_E_END_OF_STREAM} (-12).
+         *
+         * <p>Before 0.7.0 this surfaced as {@code CLOSED}, indistinguishable
+         * from a locally-closed transport.
+         */
+        END_OF_STREAM
     }
 
     private final Kind kind;
