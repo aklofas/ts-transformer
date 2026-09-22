@@ -63,7 +63,7 @@ use tst_srt::{Listener, ListenerConfig, Socket, SocketConfig, SrtTransport, SrtU
 use crate::errors::make_srt_error;
 use crate::srt::errors::{transport_error_to_pyerr, url_error_to_pyerr};
 use crate::srt::policy::{PyManagedTransportStats, PyReconnectPolicy};
-use crate::srt::transport::{PyCancelHandle, PySocketStats, PySrtStats, sender_error_to_pyerr};
+use crate::srt::transport::{PyCancelHandle, PySocketStats, PySrtStats};
 
 /// Build a fresh caller-mode `SrtTransport` from a URL string. Used by
 /// the reconnect factory closure: every Broken/Closed event reruns
@@ -169,6 +169,22 @@ fn build_receiver_transport(
 /// `send_bytes` releases the GIL while the underlying transport call
 /// blocks — the reconnect work (factory + backoff sleep) likewise runs
 /// outside the GIL.
+/// Map a `tst_pipeline::sender::SenderError` to `SrtError`: transport
+/// failures keep their kind, framing rejections are `CONFIG_INVALID`,
+/// anything else `IO`. Local copy of the helper `srt::transport` carried
+/// before Arc 2 (same pattern as `managed_convenience`'s
+/// `mux_sender_error_to_pyerr`) — the plain `Sender` now raises through
+/// `crate::raise`, and this goes when the managed shells follow.
+fn sender_error_to_pyerr(py: Python<'_>, e: tst_pipeline::sender::SenderError) -> PyErr {
+    match e.source {
+        tst_pipeline::sender::SenderErrorSource::Transport(t) => transport_error_to_pyerr(py, t),
+        tst_pipeline::sender::SenderErrorSource::Framing(f) => {
+            make_srt_error(py, "CONFIG_INVALID", &f.to_string())
+        }
+        _ => make_srt_error(py, "IO", &e.to_string()),
+    }
+}
+
 #[pyclass(name = "ManagedSender", module = "tstrans.srt")]
 pub(crate) struct PyManagedSender {
     /// Shared slot — see the module doc; `close()` cancels before taking it.
