@@ -222,10 +222,13 @@ fn rtp_receiver_cancel_unblocks() {
     let mut buf = [0u8; 188];
     let mut n: usize = 0;
     let rc = unsafe { tst_rtp_receiver_recv_ts(h, buf.as_mut_ptr(), buf.len(), &mut n) };
-    // After cancel, must return CLOSED (or EOS if socket closed fast).
-    assert!(
-        rc == TstError::Closed as i32 || rc == TstError::EndOfStream as i32,
-        "expected CLOSED or END_OF_STREAM after cancel, got {rc}"
+    // After cancel this is exactly CLOSED: `RtpRecvTransport` returns
+    // `ExplicitClose` once its cancel flag is set, and Arc 2's `Owned::cancel`
+    // latches BEFORE it wakes the parked call, so the relabeller cannot race.
+    assert_eq!(
+        rc,
+        TstError::Closed as i32,
+        "expected CLOSED after cancel, got {rc}"
     );
 
     unsafe { tst_rtp_receiver_close(h) };
@@ -363,10 +366,13 @@ fn rtp_demux_receiver_cancel_unblocks_next_event() {
 
     let mut ev = TstEvent::default();
     let rc = unsafe { tst_rtp_demux_receiver_next_event(h, &mut ev) };
-    // After cancel, must return CLOSED or END_OF_STREAM.
-    assert!(
-        rc == TstError::Closed as i32 || rc == TstError::EndOfStream as i32,
-        "expected CLOSED or END_OF_STREAM after cancel, got {rc}"
+    // After cancel this is exactly CLOSED: `RtpRecvTransport` returns
+    // `ExplicitClose` once its cancel flag is set, and Arc 2's `Owned::cancel`
+    // latches BEFORE it wakes the parked call, so the relabeller cannot race.
+    assert_eq!(
+        rc,
+        TstError::Closed as i32,
+        "expected CLOSED after cancel, got {rc}"
     );
 
     unsafe { tst_rtp_demux_receiver_close(h) };
