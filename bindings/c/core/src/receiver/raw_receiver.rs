@@ -5,40 +5,27 @@
 //!
 //! Cancellation contract: `_cancel` unblocks a thread parked in `_recv`
 //! within ~3-10 ms (one libsrt I/O cycle). The cancel signal is
-//! delivered through a side-channel `Arc<dyn TransportCancel>` field
-//! captured at `_open` time, not through the handle's `Mutex` — so
-//! `_cancel` does not deadlock against a concurrent `_recv`.
+//! delivered through the handle's `CHandle` cancel slot, which is read
+//! lock-free — `_cancel` never touches the slot a concurrent `_recv`
+//! holds, so the two cannot deadlock.
 
 use crate::config::TstReconnectPolicy;
-use crate::error::{TstError, record_eos, record_shell_error, set_last_error};
-use crate::handle::Handle;
+use crate::error::{TstError, record_binding_error, record_recv_error, set_last_error};
+use crate::handle::{CHandle, cancel_or_latch};
 use crate::sender::mux_sender::{parse_c_srt_url, parse_c_srt_url_listener};
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
 use tst_pipeline::ManagedRecvTransport;
-use tst_pipeline::ShellErrorKind;
-use tst_pipeline::TransportCancel;
-use tst_pipeline::TransportError;
+use tst_pipeline::binding::BindingError;
 use tst_pipeline::{RawReceiver, RawReceiverConfig};
 use tst_srt::SrtTransport;
 use tst_srt::SrtUrl;
-use tst_srt::url::Mode;
 
 // ------------------------------------------------------------------
 // tst_raw_receiver_t
 // ------------------------------------------------------------------
 
 pub struct TstRawReceiver {
-    inner: Handle<RawReceiver<SrtTransport>>,
-    /// Cancel handle snapshotted at `_open` time. Reaches the underlying
-    /// libsrt socket so a blocked `_recv` returns without waiting on
-    /// the handle's `Mutex`.
-    cancel: Option<Arc<dyn TransportCancel + Send + Sync>>,
-    /// Set by `_cancel` and `_close` so the recv path can distinguish
-    /// caller-initiated shutdown (returns `TST_E_CLOSED`) from peer FIN
-    /// (returns `TST_E_END_OF_STREAM`).
-    was_cancelled: Arc<AtomicBool>,
+    /// Slot + cancel handle + cancel latch in one; see `TstReceiver`.
+    inner: CHandle<RawReceiver<SrtTransport>>,
 }
 
 /// Open a `tst_raw_receiver_t`. Accepts `srt://host:port?...` URLs;
@@ -57,11 +44,7 @@ pub unsafe extern "C" fn tst_raw_receiver_open(
             Ok(u) => u,
             Err(()) => return std::ptr::null_mut(),
         };
-        // URL-driven listener mode: route through listen path.
-        if url.mode == Mode::Listener {
-            return open_listener_inner(url);
-        }
-        open_caller_inner(url)
+        open_inner(url)
     })
 }
 
@@ -87,44 +70,20 @@ pub unsafe extern "C" fn tst_raw_receiver_open_listener(
             Ok(u) => u,
             Err(()) => return std::ptr::null_mut(),
         };
-        open_listener_inner(url)
+        open_inner(url)
     })
 }
 
-fn open_caller_inner(url: SrtUrl) -> *mut TstRawReceiver {
-    let mut socket_cfg = tst_srt::config::SocketConfig::default();
-    url.overlay.apply_to_socket(&mut socket_cfg);
-    let transport = match crate::sender::connect::connect_srt(&url.host, url.port, &socket_cfg) {
-        Ok(t) => t,
-        Err(e) => {
-            crate::error::record_binding_error(e.into());
-            return std::ptr::null_mut();
-        }
+/// One open for both entry points: `open_plain_srt` dispatches on
+/// `url.mode` (the `_listener` variant has already forced it).
+fn open_inner(url: SrtUrl) -> *mut TstRawReceiver {
+    let Ok(transport) = crate::receiver::open_plain_srt(&url) else {
+        return std::ptr::null_mut();
     };
-    finish_open(transport)
-}
-
-fn open_listener_inner(url: SrtUrl) -> *mut TstRawReceiver {
-    let mut listener_cfg = tst_srt::config::ListenerConfig::default();
-    url.overlay.apply_to_listener(&mut listener_cfg);
-    let transport = match crate::receiver::listen::listen_srt(&url.host, url.port, &listener_cfg) {
-        Ok(t) => t,
-        Err(e) => {
-            crate::error::record_binding_error(e.into());
-            return std::ptr::null_mut();
-        }
-    };
-    finish_open(transport)
-}
-
-fn finish_open(transport: SrtTransport) -> *mut TstRawReceiver {
     let rx = RawReceiver::new(transport, RawReceiverConfig::default());
-    let cancel = rx.cancel_handle();
-    let was_cancelled = Arc::new(AtomicBool::new(false));
+    let cancel = cancel_or_latch(rx.cancel_handle());
     Box::into_raw(Box::new(TstRawReceiver {
-        inner: Handle::new(rx),
-        cancel,
-        was_cancelled,
+        inner: CHandle::new(rx, cancel, ()),
     }))
 }
 
@@ -140,15 +99,9 @@ pub unsafe extern "C" fn tst_raw_receiver_close(p: *mut TstRawReceiver) {
             return;
         }
         let boxed = unsafe { Box::from_raw(p) };
-        // Set the cancel flag and trip the libsrt-level cancel so any
-        // concurrent recv on this handle (multi-threaded misuse) returns
-        // promptly with TST_E_CLOSED rather than TST_E_END_OF_STREAM.
-        boxed
-            .was_cancelled
-            .store(true, std::sync::atomic::Ordering::Release);
-        if let Some(c) = &boxed.cancel {
-            c.cancel();
-        }
+        // `CHandle::close` is cancel-first: a concurrent recv on this handle
+        // (multi-threaded misuse) returns promptly and reports the
+        // caller-initiated shutdown, not end-of-stream.
         boxed.inner.close();
         drop(boxed);
     });
@@ -160,8 +113,14 @@ pub unsafe extern "C" fn tst_raw_receiver_close(p: *mut TstRawReceiver) {
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null.
 ///
-/// After cancel, `_recv` returns `TST_E_CLOSED` (not `TST_E_END_OF_STREAM`).
-/// The handle must still be `_close`'d to free.
+/// After cancel, `_recv` never reports `TST_E_END_OF_STREAM`, and the rule is
+/// ORDINAL, not park-state: the FIRST call that observes the cancel returns
+/// `TST_E_TRANSPORT` (-8) — libsrt reports the closed socket as a broken
+/// connection, and `SrtTransport` nulls its socket slot on that error — and
+/// EVERY LATER call returns `TST_E_CLOSED` (-7) off the now-empty slot.
+/// `_cancel` itself never closes the shell. 0.7.0's WP-C2 makes the first
+/// call report `TST_E_CLOSED` too. The handle must still be `_close`'d to
+/// free.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_raw_receiver_cancel(p: *mut TstRawReceiver) -> libc::c_int {
     crate::panic::ffi_catch(TstError::Internal as i32, || {
@@ -169,13 +128,7 @@ pub unsafe extern "C" fn tst_raw_receiver_cancel(p: *mut TstRawReceiver) -> libc
             set_last_error(TstError::InvalidConfig, "null receiver pointer");
             return TstError::InvalidConfig as i32;
         };
-        // Side-channel: do NOT acquire handle.inner's Mutex (a concurrent
-        // recv holds it). The was_cancelled flag + cancel-handle Arc are
-        // accessible without locking.
-        handle.was_cancelled.store(true, Ordering::Release);
-        if let Some(c) = &handle.cancel {
-            c.cancel();
-        }
+        handle.inner.cancel();
         0
     })
 }
@@ -267,7 +220,9 @@ pub unsafe extern "C" fn tst_raw_receiver_recv(
         set_last_error(TstError::InvalidConfig, "null out_len pointer");
         return TstError::InvalidConfig as i32;
     }
-    let was_cancelled = handle.was_cancelled.clone();
+    // See `tst_receiver_recv_packet` for why the latch is read on both sides
+    // of the park and why `broken_is_eos` is `true` on a plain shell.
+    let cancelled = handle.inner.is_cancelled();
     handle.inner.with_inner_mut(|rx| match rx.recv_one() {
         Ok(v) => {
             if v.len() > len {
@@ -284,33 +239,7 @@ pub unsafe extern "C" fn tst_raw_receiver_recv(
             unsafe { *out_len = v.len() };
             0
         }
-        Err(e) if e.kind == ShellErrorKind::Closed => {
-            if was_cancelled.load(Ordering::Acquire) {
-                set_last_error(
-                    TstError::Closed,
-                    "receiver was cancelled or closed by caller",
-                );
-                TstError::Closed as i32
-            } else {
-                record_eos();
-                TstError::EndOfStream as i32
-            }
-        }
-        // SrtTransport::recv_bytes maps a peer disconnect to
-        // TransportError::Broken { msg: "connection broken", .. } rather than Closed
-        // so that the managed-receive decorator can distinguish a
-        // self-initiated close from a peer-initiated break and drive
-        // reconnect. At the plain C ABI boundary a Broken result on a
-        // non-cancelled handle means the peer disconnected, which the
-        // caller contract documents as TST_E_END_OF_STREAM.
-        Err(e)
-            if e.kind == ShellErrorKind::TransportBroken
-                && !was_cancelled.load(Ordering::Acquire) =>
-        {
-            record_eos();
-            TstError::EndOfStream as i32
-        }
-        Err(e) => record_shell_error(&e),
+        Err(e) => record_recv_error(&e, cancelled || handle.inner.is_cancelled(), true),
     })
 }
 
@@ -319,9 +248,9 @@ pub unsafe extern "C" fn tst_raw_receiver_recv(
 // ------------------------------------------------------------------
 
 pub struct TstManagedRawReceiver {
-    inner: Handle<RawReceiver<ManagedRecvTransport<SrtTransport>>>,
-    cancel: Option<Arc<dyn TransportCancel + Send + Sync>>,
-    was_cancelled: Arc<AtomicBool>,
+    /// No snapshot: this family exposes neither `_end_reason` nor
+    /// `_get_reconnect_stats`; see `TstManagedReceiver`.
+    inner: CHandle<RawReceiver<ManagedRecvTransport<SrtTransport>>>,
 }
 
 /// Open a `tst_managed_raw_receiver_t`. URL-driven mode dispatch
@@ -349,10 +278,7 @@ pub unsafe extern "C" fn tst_managed_raw_receiver_open(
             Ok(u) => u,
             Err(()) => return std::ptr::null_mut(),
         };
-        if url.mode == Mode::Listener {
-            return managed_open_listener_inner(url, policy);
-        }
-        managed_open_caller_inner(url, policy)
+        managed_open_inner(url, policy)
     })
 }
 
@@ -385,73 +311,27 @@ pub unsafe extern "C" fn tst_managed_raw_receiver_open_listener(
             Ok(u) => u,
             Err(()) => return std::ptr::null_mut(),
         };
-        managed_open_listener_inner(url, policy)
+        managed_open_inner(url, policy)
     })
 }
 
-fn managed_open_caller_inner(
+/// One managed open for both entry points; see `TstManagedReceiver`'s
+/// `managed_open_inner`. `managed_raw_receiver_from_url` applies
+/// `RawReceiverConfig::default()` internally — what this family passed by
+/// hand before Arc 2.
+fn managed_open_inner(
     url: SrtUrl,
     policy: tst_pipeline::ReconnectPolicy,
 ) -> *mut TstManagedRawReceiver {
-    let mut socket_cfg = tst_srt::config::SocketConfig::default();
-    url.overlay.apply_to_socket(&mut socket_cfg);
-    let initial = match crate::sender::connect::connect_srt(&url.host, url.port, &socket_cfg) {
+    let (rx, handles) = match tst_srt::shells::managed_raw_receiver_from_url(&url, policy) {
         Ok(t) => t,
         Err(e) => {
-            crate::error::record_binding_error(e.into());
+            record_binding_error(BindingError::from(e));
             return std::ptr::null_mut();
         }
     };
-    let host = url.host.clone();
-    let port = url.port;
-    let cfg_for_reconnect = socket_cfg.clone();
-    let factory: Box<dyn FnMut() -> Result<SrtTransport, TransportError> + Send> =
-        Box::new(move || crate::sender::connect::connect_srt(&host, port, &cfg_for_reconnect));
-    let managed = ManagedRecvTransport::new(initial, factory, policy);
-    finish_managed_open(managed)
-}
-
-fn managed_open_listener_inner(
-    url: SrtUrl,
-    policy: tst_pipeline::ReconnectPolicy,
-) -> *mut TstManagedRawReceiver {
-    let mut listener_cfg = tst_srt::config::ListenerConfig::default();
-    url.overlay.apply_to_listener(&mut listener_cfg);
-    let initial = match crate::receiver::listen::listen_srt(&url.host, url.port, &listener_cfg) {
-        Ok(t) => t,
-        Err(e) => {
-            crate::error::record_binding_error(e.into());
-            return std::ptr::null_mut();
-        }
-    };
-    // Managed listener: on reconnect, re-bind a fresh listener socket and
-    // accept the next peer. Each factory invocation does BIND + ACCEPT, so
-    // the reconnect delay (from the policy) sits between the peer disconnect
-    // and the next bind attempt — not after accept returns.
-    let host = url.host.clone();
-    let port = url.port;
-    let cfg_for_relisten = listener_cfg.clone();
-    // The factory's re-accept is reachable by `_cancel` through this slot
-    // (see `listen_srt_cancellable`); the managed cancel handle fires it.
-    let factory_cancel = Arc::new(tst_pipeline::FactoryCancel::new());
-    let fc = Arc::clone(&factory_cancel);
-    let factory: Box<dyn FnMut() -> Result<SrtTransport, TransportError> + Send> =
-        Box::new(move || {
-            crate::receiver::listen::listen_srt_cancellable(&host, port, &cfg_for_relisten, &fc)
-        });
-    let managed =
-        ManagedRecvTransport::new_with_factory_cancel(initial, factory, policy, factory_cancel);
-    finish_managed_open(managed)
-}
-
-fn finish_managed_open(managed: ManagedRecvTransport<SrtTransport>) -> *mut TstManagedRawReceiver {
-    let rx = RawReceiver::new(managed, RawReceiverConfig::default());
-    let cancel = rx.cancel_handle();
-    let was_cancelled = Arc::new(AtomicBool::new(false));
     Box::into_raw(Box::new(TstManagedRawReceiver {
-        inner: Handle::new(rx),
-        cancel,
-        was_cancelled,
+        inner: CHandle::new(rx, handles.cancel, ()),
     }))
 }
 
@@ -497,7 +377,8 @@ pub unsafe extern "C" fn tst_managed_raw_receiver_recv(
         set_last_error(TstError::InvalidConfig, "null out_len pointer");
         return TstError::InvalidConfig as i32;
     }
-    let was_cancelled = handle.was_cancelled.clone();
+    // `broken_is_eos = false` — see the asymmetry note above.
+    let cancelled = handle.inner.is_cancelled();
     handle.inner.with_inner_mut(|rx| match rx.recv_one() {
         Ok(v) => {
             if v.len() > len {
@@ -514,19 +395,7 @@ pub unsafe extern "C" fn tst_managed_raw_receiver_recv(
             unsafe { *out_len = v.len() };
             0
         }
-        Err(e) if e.kind == ShellErrorKind::Closed => {
-            if was_cancelled.load(Ordering::Acquire) {
-                set_last_error(
-                    TstError::Closed,
-                    "receiver was cancelled or closed by caller",
-                );
-                TstError::Closed as i32
-            } else {
-                record_eos();
-                TstError::EndOfStream as i32
-            }
-        }
-        Err(e) => record_shell_error(&e),
+        Err(e) => record_recv_error(&e, cancelled || handle.inner.is_cancelled(), false),
     })
 }
 
@@ -543,13 +412,7 @@ pub unsafe extern "C" fn tst_managed_raw_receiver_cancel(
             set_last_error(TstError::InvalidConfig, "null receiver pointer");
             return TstError::InvalidConfig as i32;
         };
-        // Side-channel: do NOT acquire handle.inner's Mutex (a concurrent
-        // recv holds it). The was_cancelled flag + cancel-handle Arc are
-        // accessible without locking.
-        handle.was_cancelled.store(true, Ordering::Release);
-        if let Some(c) = &handle.cancel {
-            c.cancel();
-        }
+        handle.inner.cancel();
         0
     })
 }
@@ -566,10 +429,7 @@ pub unsafe extern "C" fn tst_managed_raw_receiver_close(p: *mut TstManagedRawRec
             return;
         }
         let boxed = unsafe { Box::from_raw(p) };
-        boxed.was_cancelled.store(true, Ordering::Release);
-        if let Some(c) = &boxed.cancel {
-            c.cancel();
-        }
+        // `CHandle::close` is cancel-first (see `tst_receiver_close`).
         boxed.inner.close();
         drop(boxed);
     });

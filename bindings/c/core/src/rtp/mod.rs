@@ -12,6 +12,14 @@
 
 pub(crate) mod url;
 
+/// Construction-constant side channel of the two RTP receive handles: the
+/// transport's end-reason cell, captured BEFORE the transport moves into
+/// the shell and read lock-free by `_end_reason` (a parked receive holds
+/// the data-path lock). Lives in `CHandle::snapshot()`, never in the slot.
+pub(crate) struct RtpRecvSnap {
+    pub(crate) end_reason: tst_rtp::StreamEndReasonHandle,
+}
+
 pub mod sender;
 pub mod receiver;
 pub mod mux_sender;

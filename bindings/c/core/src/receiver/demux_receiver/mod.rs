@@ -58,27 +58,23 @@ pub use stats::{
 
 use crate::demux_config::TstDemuxConfig;
 use crate::event::EventArena;
-use crate::handle::Handle;
+use crate::handle::{CHandle, cancel_or_latch};
 use crate::sender::mux_sender::{parse_c_srt_url, parse_c_srt_url_listener};
-use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
 use tst_pipeline::DemuxReceiver;
-use tst_pipeline::TransportCancel;
 use tst_srt::SrtTransport;
 use tst_srt::SrtUrl;
-use tst_srt::url::Mode;
 
 // ------------------------------------------------------------------
 // tst_demux_receiver_t
 // ------------------------------------------------------------------
 
 pub struct TstDemuxReceiver {
-    pub(super) inner: Handle<DemuxReceiver<SrtTransport>>,
+    /// Slot + cancel handle + cancel latch in one; see `TstReceiver`.
+    pub(super) inner: CHandle<DemuxReceiver<SrtTransport>>,
     /// Reusable per-handle backing storage for `_recv_event` output.
     /// Wrapped in Mutex because event::convert() needs &mut access
-    /// from inside the Handle's accessor closure (which takes the
+    /// from inside the handle's accessor closure (which takes the
     /// inner Mutex internally; we add a second one here because the
     /// arena's lifetime needs to outlive any single _recv_event
     /// borrow but be re-entrant only within this handle).
@@ -90,8 +86,6 @@ pub struct TstDemuxReceiver {
     /// design §4.5 — valid until the next _get_stream_stats /
     /// _reset_stats / _close call.
     pub(super) stream_stats_buf: Mutex<Vec<crate::stats::TstStreamStats>>,
-    pub(super) cancel: Option<Arc<dyn TransportCancel + Send + Sync>>,
-    pub(super) was_cancelled: Arc<AtomicBool>,
 }
 
 /// Open a `tst_demux_receiver_t` with default demux options.
@@ -106,10 +100,7 @@ pub unsafe extern "C" fn tst_demux_receiver_open(
             Ok(u) => u,
             Err(()) => return std::ptr::null_mut(),
         };
-        if url.mode == Mode::Listener {
-            return open_listener_inner(url, None);
-        }
-        open_caller_inner(url, None)
+        open_inner(url, None)
     })
 }
 
@@ -123,7 +114,7 @@ pub unsafe extern "C" fn tst_demux_receiver_open_listener(
             Ok(u) => u,
             Err(()) => return std::ptr::null_mut(),
         };
-        open_listener_inner(url, None)
+        open_inner(url, None)
     })
 }
 
@@ -141,10 +132,7 @@ pub unsafe extern "C" fn tst_demux_receiver_open_with_config(
             Err(()) => return std::ptr::null_mut(),
         };
         let opts = unsafe { cfg.as_ref().map(|c| c.build_options()) };
-        if url.mode == Mode::Listener {
-            return open_listener_inner(url, opts);
-        }
-        open_caller_inner(url, opts)
+        open_inner(url, opts)
     })
 }
 
@@ -161,58 +149,28 @@ pub unsafe extern "C" fn tst_demux_receiver_open_listener_with_config(
             Err(()) => return std::ptr::null_mut(),
         };
         let opts = unsafe { cfg.as_ref().map(|c| c.build_options()) };
-        open_listener_inner(url, opts)
+        open_inner(url, opts)
     })
 }
 
-fn open_caller_inner(
+/// One open for all four entry points: `open_plain_srt` dispatches on
+/// `url.mode` (the `_listener` variants have already forced it).
+fn open_inner(
     url: SrtUrl,
     opts: Option<tst_core::mpegts::demux::DemuxerConfig>,
 ) -> *mut TstDemuxReceiver {
-    let mut socket_cfg = tst_srt::config::SocketConfig::default();
-    url.overlay.apply_to_socket(&mut socket_cfg);
-    let transport = match crate::sender::connect::connect_srt(&url.host, url.port, &socket_cfg) {
-        Ok(t) => t,
-        Err(e) => {
-            crate::error::record_binding_error(e.into());
-            return std::ptr::null_mut();
-        }
+    let Ok(transport) = crate::receiver::open_plain_srt(&url) else {
+        return std::ptr::null_mut();
     };
-    finish_open(transport, opts)
-}
-
-fn open_listener_inner(
-    url: SrtUrl,
-    opts: Option<tst_core::mpegts::demux::DemuxerConfig>,
-) -> *mut TstDemuxReceiver {
-    let mut listener_cfg = tst_srt::config::ListenerConfig::default();
-    url.overlay.apply_to_listener(&mut listener_cfg);
-    let transport = match crate::receiver::listen::listen_srt(&url.host, url.port, &listener_cfg) {
-        Ok(t) => t,
-        Err(e) => {
-            crate::error::record_binding_error(e.into());
-            return std::ptr::null_mut();
-        }
-    };
-    finish_open(transport, opts)
-}
-
-fn finish_open(
-    transport: SrtTransport,
-    opts: Option<tst_core::mpegts::demux::DemuxerConfig>,
-) -> *mut TstDemuxReceiver {
     let rx = match opts {
         Some(o) => DemuxReceiver::with_demux_options(transport, o),
         None => DemuxReceiver::new(transport),
     };
-    let cancel = rx.cancel_handle();
-    let was_cancelled = Arc::new(AtomicBool::new(false));
+    let cancel = cancel_or_latch(rx.cancel_handle());
     Box::into_raw(Box::new(TstDemuxReceiver {
-        inner: Handle::new(rx),
+        inner: CHandle::new(rx, cancel, ()),
         arena: Mutex::new(EventArena::new()),
         stream_stats_buf: Mutex::new(Vec::new()),
-        cancel,
-        was_cancelled,
     }))
 }
 
@@ -228,10 +186,7 @@ pub unsafe extern "C" fn tst_demux_receiver_close(p: *mut TstDemuxReceiver) {
             return;
         }
         let boxed = unsafe { Box::from_raw(p) };
-        boxed.was_cancelled.store(true, Ordering::Release);
-        if let Some(c) = &boxed.cancel {
-            c.cancel();
-        }
+        // `CHandle::close` is cancel-first (see `tst_receiver_close`).
         boxed.inner.close();
         drop(boxed);
     });

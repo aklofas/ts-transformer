@@ -22,10 +22,11 @@
 
 use tst_core::mpegts::common::Pts90khz;
 use tst_hls::HlsPublisher;
+use tst_pipeline::binding::BindingError;
 use tst_pipeline::{MuxPublisher, MuxPublisherError};
 
 use crate::config::TstMuxConfig;
-use crate::error::{TstError, record_mux_error, set_last_error, tst_error_from_kind};
+use crate::error::{TstError, record_binding_error, record_mux_error, set_last_error};
 use crate::hls::publisher::{PublisherImpl, TstPublisher};
 use crate::stats::{TstMuxPublisherStats, TstPublisherStats};
 
@@ -44,24 +45,15 @@ pub struct TstMuxPublisher {
 
 /// Map a `MuxPublisherError<HlsError>` to a code + recorded last-error.
 ///
-/// The muxer-rejection arm (`Mux`) routes through `record_mux_error` to
-/// preserve the spec-rich `MuxError` diagnostic + per-variant code
-/// override (mirrors how `rtp/mux_sender.rs` records muxer errors). All
-/// other arms route through the coarse `kind()` → `ShellErrorKind`
-/// projection shared with the rest of tst-c.
-fn record_mux_publisher_error(e: &MuxPublisherError<tst_hls::HlsError>) -> i32 {
-    match e {
-        MuxPublisherError::Mux(m) => {
-            record_mux_error(m);
-            // record_mux_error set the precise code in last-error; mirror it.
-            unsafe { crate::error::tst_get_last_error() }
-        }
-        other => {
-            let code = tst_error_from_kind(other.kind());
-            set_last_error(code, &other.to_string());
-            code as i32
-        }
-    }
+/// One path, like every other error in tst-c since Arc 2: the shared
+/// `From<MuxPublisherError<E>>` classifies by SOURCE (`Mux` → the mux
+/// kind, `Publisher` → the sink's own kind, `Closed` → `CLOSED`,
+/// `LockPoisoned` → `INTERNAL`) and `record_binding_error` projects it.
+///
+/// Takes the error BY VALUE: the shared impl consumes it to keep each
+/// variant's own `Display` detail.
+fn record_mux_publisher_error(e: MuxPublisherError<tst_hls::HlsError>) -> i32 {
+    record_binding_error(BindingError::from(e))
 }
 
 // ---------------------------------------------------------------------------
@@ -126,7 +118,7 @@ pub unsafe extern "C" fn tst_mux_publisher_with_config_hls(
         match MuxPublisher::with_config(hls_pub, muxer_cfg) {
             Ok(mp) => Box::into_raw(Box::new(TstMuxPublisher { inner: Some(mp) })),
             Err(e) => {
-                record_mux_publisher_error(&e);
+                record_mux_publisher_error(e);
                 std::ptr::null_mut()
             }
         }
@@ -210,7 +202,7 @@ pub unsafe extern "C" fn tst_mux_publisher_send_video(
     unsafe {
         with_mux_publisher(p, |mp| match mp.send_video(slice, pts, key_frame) {
             Ok(()) => 0,
-            Err(e) => record_mux_publisher_error(&e),
+            Err(e) => record_mux_publisher_error(e),
         })
     }
 }
@@ -245,7 +237,7 @@ pub unsafe extern "C" fn tst_mux_publisher_send_klv(
     unsafe {
         with_mux_publisher(p, |mp| match mp.send_klv(slice, pts, stream_index) {
             Ok(()) => 0,
-            Err(e) => record_mux_publisher_error(&e),
+            Err(e) => record_mux_publisher_error(e),
         })
     }
 }
@@ -276,7 +268,7 @@ pub unsafe extern "C" fn tst_mux_publisher_send_audio(
     unsafe {
         with_mux_publisher(p, |mp| match mp.send_audio(slice, pts) {
             Ok(()) => 0,
-            Err(e) => record_mux_publisher_error(&e),
+            Err(e) => record_mux_publisher_error(e),
         })
     }
 }
@@ -307,7 +299,7 @@ pub unsafe extern "C" fn tst_mux_publisher_send_subtitle(
     unsafe {
         with_mux_publisher(p, |mp| match mp.send_subtitle(slice, pts) {
             Ok(()) => 0,
-            Err(e) => record_mux_publisher_error(&e),
+            Err(e) => record_mux_publisher_error(e),
         })
     }
 }
@@ -324,7 +316,7 @@ pub unsafe extern "C" fn tst_mux_publisher_cut_segment(p: *mut TstMuxPublisher) 
     unsafe {
         with_mux_publisher(p, |mp| match mp.cut_segment() {
             Ok(()) => 0,
-            Err(e) => record_mux_publisher_error(&e),
+            Err(e) => record_mux_publisher_error(e),
         })
     }
 }
@@ -368,7 +360,7 @@ pub unsafe extern "C" fn tst_mux_publisher_finish_into_publisher(
                 inner: Some(PublisherImpl::Hls(hls)),
             })),
             Err(e) => {
-                record_mux_publisher_error(&e);
+                record_mux_publisher_error(e);
                 std::ptr::null_mut()
             }
         }
@@ -482,5 +474,43 @@ mod tests {
             TstError::HlsConfig as i32
         );
         unsafe { crate::config::tst_mux_config_free(cfg) };
+    }
+
+    /// Arc 2 WP-B1: `record_mux_publisher_error` classifies by SOURCE through
+    /// the shared `From<MuxPublisherError<E>>` instead of folding everything
+    /// but `Mux` through the coarse `kind()` projection, which reported
+    /// `TST_E_TRANSPORT` (-8) for BOTH `Publisher(_)` and `LockPoisoned`
+    /// (`MuxPublisherError::kind()` maps both to `TransportBroken`).
+    ///
+    /// | variant | was | now |
+    /// |---|---|---|
+    /// | `Mux(e)` | the mux kind | unchanged |
+    /// | `Publisher(e)` | -8 | the SINK's own kind (HLS: -34/-35/-36/-37…) |
+    /// | `Closed` | -7 | unchanged |
+    /// | `LockPoisoned` | -8 | **-10 `TST_E_INTERNAL`** |
+    #[test]
+    fn mux_publisher_error_classifies_by_source_not_the_coarse_kind() {
+        use tst_pipeline::MuxPublisherError;
+
+        // Publisher(_): the sink's own kind, not the -8 the coarse
+        // `TransportBroken` projection produced.
+        let rc =
+            record_mux_publisher_error(MuxPublisherError::Publisher(tst_hls::HlsError::Finished));
+        assert_eq!(rc, TstError::HlsFinished as i32);
+        assert_eq!(unsafe { crate::error::tst_get_last_error() }, rc);
+
+        // LockPoisoned: INTERNAL, not TRANSPORT.
+        let rc = record_mux_publisher_error(MuxPublisherError::LockPoisoned);
+        assert_eq!(rc, TstError::Internal as i32);
+
+        // Closed stays -7 (it already was).
+        let rc = record_mux_publisher_error(MuxPublisherError::Closed);
+        assert_eq!(rc, TstError::Closed as i32);
+
+        // Mux keeps the per-variant mux code.
+        let rc = record_mux_publisher_error(MuxPublisherError::Mux(
+            tst_core::error::MuxError::InvalidNal,
+        ));
+        assert_eq!(rc, TstError::InvalidNal as i32);
     }
 }

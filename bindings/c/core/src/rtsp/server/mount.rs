@@ -1176,6 +1176,21 @@ mod tests {
         let m2 =
             unsafe { tst_rtsp_server_add_unicast_mount(server, path.as_ptr(), cfg2 as *const _) };
         assert!(m2.is_null(), "duplicate path should return null");
+        // Arc 2 WP-A2 (K5): the retired `rtsp_server_error_to_code` collapsed
+        // EVERY `RtspServerError` variant to `TST_E_RTSP_SERVER` (-24); the
+        // shared kind table splits them the way Python and the JVM already
+        // did. `DuplicateMount` is in the MOUNT bucket (-25), alongside
+        // `InvalidMountPath` / `InvalidMulticastGroup` / `InvalidConfig`.
+        // (`Io`/`BindAddrInUse` → -22, `Tls` → -21 — pinned by
+        // `start::tests::tls_cert_pem_on_plaintext_bind_fails_start` —,
+        // `UrlParse` → -16; only `AlreadyStarted`/`NotStarted`/`Shutdown`
+        // stay -24.)
+        assert_eq!(
+            unsafe { crate::error::tst_get_last_error() },
+            TstError::RtspMount as i32,
+            "DuplicateMount must project to TST_E_RTSP_MOUNT (-25), not the \
+             retired catch-all TST_E_RTSP_SERVER (-24)"
+        );
         unsafe { tst_rtsp_mount_handle_free(m1) };
         unsafe { crate::config::tst_mux_config_free(cfg1) };
         unsafe { crate::config::tst_mux_config_free(cfg2) };

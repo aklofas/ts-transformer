@@ -5,25 +5,24 @@
 //! Cancel with `tst_rtp_demux_receiver_cancel`. Free with
 //! `tst_rtp_demux_receiver_close`.
 //!
-//! Stats bodies (get_stats, get_socket_stats, get_stream_codec_stats,
-//! reset_stats, get_stream_stats) are thin forwarders to generic impls
-//! in `crate::transport_impls`. `next_event` and cancel stay family-local:
-//! `next_event` needs `was_cancelled` discrimination between peer-EOF
-//! and caller-cancel; cancel needs the `cancel` + `was_cancelled` Arc fields.
+//! Every body here is a thin forwarder to a generic impl in
+//! `crate::transport_impls` — `next_event` included, since Arc 2: the
+//! cancel state it needs to tell peer-EOF from caller-cancel now lives on
+//! the handle's `CHandle`, which the generic body reads itself. The
+//! end-reason cell lives in that handle's snapshot.
 
 use std::os::raw::c_char;
-use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use tst_core::RecvTransport;
-use tst_pipeline::{DemuxReceiver, ShellErrorKind, TransportCancel};
-use tst_rtp::{RtpRecvTransport, StreamEndReasonHandle};
+use tst_pipeline::DemuxReceiver;
+use tst_rtp::RtpRecvTransport;
 
 use crate::demux_config::TstDemuxConfig;
-use crate::error::{TstError, record_eos, record_shell_error, set_last_error};
+use crate::error::{TstError, set_last_error};
 use crate::event::{EventArena, TstEvent};
-use crate::handle::Handle;
+use crate::handle::{CHandle, cancel_or_latch};
+use crate::rtp::RtpRecvSnap;
 use crate::rtp::end_reason::convert_end_reason;
 use crate::stream_end_reason::TstStreamEndReason;
 
@@ -36,27 +35,20 @@ use crate::stream_end_reason::TstStreamEndReason;
 /// Returned by [`tst_rtp_demux_receiver_open`]. Freed with
 /// [`tst_rtp_demux_receiver_close`].
 pub struct TstRtpDemuxReceiver {
-    pub(crate) inner: Handle<DemuxReceiver<RtpRecvTransport>>,
+    /// Slot + cancel handle + cancel latch, plus the construction-constant
+    /// end-reason cell in the snapshot. Captured from the underlying
+    /// `RtpRecvTransport` both by `tst_rtp_demux_receiver_open` and by
+    /// `tst_rtsp_session_into_demux_receiver` (the latter captures it AFTER
+    /// `RtspSession::into_recv_transport()` has already swapped in the owning
+    /// `RtspClient`'s shared slot, so it reflects reasons recorded by the
+    /// RTSP keepalive/pump threads too).
+    pub(crate) inner: CHandle<DemuxReceiver<RtpRecvTransport>, RtpRecvSnap>,
     /// Reusable backing storage for `tst_rtp_demux_receiver_next_event` output.
     /// Allocated at open time so the data-path call never allocates on the hot path.
     /// Wrapped in Mutex for re-entrant safety within the Handle's closure.
     pub(crate) arena: Mutex<EventArena>,
     /// Per-stream stats snapshot buffer (borrowed-buffer design §4.5).
     pub(crate) stream_stats_buf: Mutex<Vec<crate::stats::TstStreamStats>>,
-    pub(crate) cancel: Option<Arc<dyn TransportCancel + Send + Sync>>,
-    /// Set by `_cancel` and `_close` so the recv path can distinguish
-    /// caller-initiated shutdown (`TST_E_CLOSED`) from peer EOF
-    /// (`TST_E_END_OF_STREAM`).
-    pub(crate) was_cancelled: Arc<AtomicBool>,
-    /// End-reason handle snapshotted at open/conversion time, same
-    /// capture-before-move timing as `cancel`. Captured from the
-    /// underlying `RtpRecvTransport` both by `tst_rtp_demux_receiver_open`
-    /// and by `tst_rtsp_session_into_demux_receiver` (the latter captures
-    /// it AFTER `RtspSession::into_recv_transport()` has already swapped
-    /// in the owning `RtspClient`'s shared slot, so it reflects reasons
-    /// recorded by the RTSP keepalive/pump threads too). Read by
-    /// `tst_rtp_demux_receiver_end_reason`.
-    pub(crate) end_reason: StreamEndReasonHandle,
 }
 
 // ---------------------------------------------------------------------------
@@ -100,7 +92,8 @@ pub unsafe extern "C" fn tst_rtp_demux_receiver_open(
                 return std::ptr::null_mut();
             }
         };
-        let cancel = transport.cancel_handle();
+        // Both observers captured BEFORE the transport moves into the shell.
+        let cancel = cancel_or_latch(transport.cancel_handle());
         let end_reason = transport.end_reason_handle();
         let receiver = if let Some(cfg) = unsafe { demux_cfg.as_ref() } {
             DemuxReceiver::with_demux_options(transport, cfg.build_options())
@@ -108,12 +101,9 @@ pub unsafe extern "C" fn tst_rtp_demux_receiver_open(
             DemuxReceiver::new(transport)
         };
         Box::into_raw(Box::new(TstRtpDemuxReceiver {
-            inner: Handle::new(receiver),
+            inner: CHandle::new(receiver, cancel, RtpRecvSnap { end_reason }),
             arena: Mutex::new(EventArena::new()),
             stream_stats_buf: Mutex::new(Vec::new()),
-            cancel,
-            was_cancelled: Arc::new(AtomicBool::new(false)),
-            end_reason,
         }))
     })
 }
@@ -137,10 +127,7 @@ pub unsafe extern "C" fn tst_rtp_demux_receiver_close(p: *mut TstRtpDemuxReceive
             return;
         }
         let boxed = unsafe { Box::from_raw(p) };
-        boxed.was_cancelled.store(true, Ordering::Release);
-        if let Some(c) = &boxed.cancel {
-            c.cancel();
-        }
+        // `CHandle::close` is cancel-first (see `tst_receiver_close`).
         boxed.inner.close();
         drop(boxed);
     });
@@ -184,56 +171,12 @@ pub unsafe extern "C" fn tst_rtp_demux_receiver_next_event(
         set_last_error(TstError::InvalidConfig, "null rtp demux receiver pointer");
         return TstError::InvalidConfig as i32;
     };
-    if out_event.is_null() {
-        set_last_error(TstError::InvalidConfig, "null out_event pointer");
-        return TstError::InvalidConfig as i32;
+    // The generic body owns the null-check on `out_event`, the cancel-aware
+    // relabel (it reads the latch off the `CHandle` itself) and the arena
+    // borrow. `broken_is_eos = true`: this is a plain transport.
+    unsafe {
+        crate::transport_impls::demux_receiver_next_event(&handle.inner, &handle.arena, out_event)
     }
-    let was_cancelled = handle.was_cancelled.clone();
-    handle.inner.with_inner_mut(|rx| match rx.recv_event() {
-        Ok(Some(ev)) => {
-            let mut arena = handle.arena.lock().expect("event arena Mutex poisoned");
-            // SAFETY: out_event non-null per guard above. event::convert
-            // writes through the pointer; pointer fields on the result
-            // alias arena Vecs (held under the arena Mutex for this call;
-            // Vec base pointers are stable until the next convert() call —
-            // see design §4.5 lifetime contract).
-            unsafe { crate::event::convert(&mut arena, &ev, &mut *out_event) };
-            0
-        }
-        Ok(None) => {
-            if was_cancelled.load(Ordering::Acquire) {
-                set_last_error(
-                    TstError::Closed,
-                    "rtp demux receiver was cancelled or closed by caller",
-                );
-                TstError::Closed as i32
-            } else {
-                record_eos();
-                TstError::EndOfStream as i32
-            }
-        }
-        Err(e)
-            if e.kind == ShellErrorKind::TransportBroken
-                && !was_cancelled.load(Ordering::Acquire) =>
-        {
-            // Broken on a non-cancelled handle means the peer closed — map to EOS.
-            record_eos();
-            TstError::EndOfStream as i32
-        }
-        Err(e) if e.kind == ShellErrorKind::EndOfStream || e.kind == ShellErrorKind::Closed => {
-            if was_cancelled.load(Ordering::Acquire) {
-                set_last_error(
-                    TstError::Closed,
-                    "rtp demux receiver was cancelled or closed by caller",
-                );
-                TstError::Closed as i32
-            } else {
-                record_eos();
-                TstError::EndOfStream as i32
-            }
-        }
-        Err(e) => record_shell_error(&e),
-    })
 }
 
 /// Cancel a `tst_rtp_demux_receiver_t`. Signals the underlying RTP socket
@@ -255,13 +198,7 @@ pub unsafe extern "C" fn tst_rtp_demux_receiver_cancel(p: *mut TstRtpDemuxReceiv
             set_last_error(TstError::InvalidConfig, "null rtp demux receiver pointer");
             return TstError::InvalidConfig as i32;
         };
-        // Side-channel: do NOT acquire handle.inner's Mutex (a concurrent
-        // next_event holds it). The was_cancelled flag + cancel-handle Arc
-        // are accessible without locking.
-        handle.was_cancelled.store(true, Ordering::Release);
-        if let Some(c) = &handle.cancel {
-            c.cancel();
-        }
+        handle.inner.cancel();
         0
     })
 }
@@ -317,7 +254,7 @@ pub unsafe extern "C" fn tst_rtp_demux_receiver_end_reason(
             set_last_error(TstError::InvalidConfig, "null out pointer");
             return TstError::InvalidConfig as i32;
         }
-        let reason = match handle.end_reason.get() {
+        let reason = match handle.inner.snapshot().end_reason.get() {
             Some(r) => convert_end_reason(&r),
             None => TstStreamEndReason::None,
         };

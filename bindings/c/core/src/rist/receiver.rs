@@ -8,14 +8,14 @@
 //! Data-path bodies (recv_ts, get_stats, get_socket_stats, reset_stats)
 //! are thin forwarders to generic impls in `crate::transport_impls`.
 //!
-//! **No cancel:** the RIST transport does not expose a `cancel_handle()`,
-//! so there is no `tst_rist_receiver_cancel` entry point and no cancel /
-//! `was_cancelled` side-channel. `_close` simply drops the handle. To
-//! unblock a thread parked in `_recv_ts`, close the handle from the same
-//! thread (or rely on the socket's receive-timeout behavior set via
-//! `?session_timeout=N`). Without a caller-cancel path there is no
-//! `TST_E_CLOSED`-vs-`TST_E_END_OF_STREAM` discrimination: a graceful
-//! transport close maps to `TST_E_END_OF_STREAM`.
+//! **No `_cancel` entry point yet:** the C ABI exposes no cancel for this
+//! family (additive candidate, ABI 0.22 — R4). The handle already carries
+//! the binding-shared cancel state (`CHandle`), so `_close` is
+//! cancel-first; to unblock a thread parked in a data-path call, close the
+//! handle from that thread or use the transport's timeout knobs. The
+//! transport itself still has no `cancel_handle()` until WP-D, so the
+//! handle's cancel slot holds `binding::FlagCancel` — a latch that records
+//! the caller's intent but wakes nothing.
 //!
 //! **Construction differs from UDP:** RIST receivers use a bind URL with
 //! the ffmpeg `@` prefix (`rist://@host:port`). The builder is
@@ -27,7 +27,7 @@ use tst_pipeline::{Receiver, ReceiverConfig};
 use tst_rist::{RistRecvTransport, RistRecvTransportBuilder};
 
 use crate::error::{TstError, set_last_error};
-use crate::handle::Handle;
+use crate::handle::{CHandle, cancel_or_latch};
 use crate::stats::TstReceiverStats;
 
 // ---------------------------------------------------------------------------
@@ -39,7 +39,7 @@ use crate::stats::TstReceiverStats;
 /// Returned by [`tst_rist_recv_open`]. Freed with
 /// [`tst_rist_receiver_close`].
 pub struct TstRistReceiver {
-    pub(crate) inner: Handle<Receiver<RistRecvTransport>>,
+    pub(crate) inner: CHandle<Receiver<RistRecvTransport>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -97,8 +97,12 @@ pub unsafe extern "C" fn tst_rist_recv_open(url: *const c_char) -> *mut TstRistR
             }
         };
         let receiver = Receiver::new(transport, ReceiverConfig::default());
+        // UDP/RIST expose no cancel handle until WP-D: `cancel_or_latch`
+        // supplies the latch stand-in (delete the call in WP-D once
+        // `cancel_handle()` is `Some`).
+        let cancel = cancel_or_latch(receiver.cancel_handle());
         Box::into_raw(Box::new(TstRistReceiver {
-            inner: Handle::new(receiver),
+            inner: CHandle::new(receiver, cancel, ()),
         }))
     })
 }

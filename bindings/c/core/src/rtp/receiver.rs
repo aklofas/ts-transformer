@@ -8,21 +8,20 @@
 //!
 //! Stats bodies (get_stats, get_socket_stats, reset_stats) are thin
 //! forwarders to generic impls in `crate::transport_impls`. `recv_ts`
-//! and cancel stay family-local: `recv_ts` needs `was_cancelled`
-//! discrimination between peer-EOF and caller-cancel; cancel needs the
-//! `cancel` + `was_cancelled` Arc fields.
+//! stays family-local (its 188-byte copy differs from the generic body);
+//! the cancel state and the end-reason cell both live on the handle's
+//! `CHandle` — the latch in the cancel slot, the cell in the snapshot.
 
 use std::os::raw::c_char;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use tst_core::RecvTransport;
 use tst_core::mpegts::common::TS_PACKET_SIZE;
-use tst_pipeline::{Receiver, ReceiverConfig, ShellErrorKind, TransportCancel};
-use tst_rtp::{RtpRecvTransport, StreamEndReasonHandle};
+use tst_pipeline::{Receiver, ReceiverConfig};
+use tst_rtp::RtpRecvTransport;
 
-use crate::error::{TstError, record_eos, record_shell_error, set_last_error};
-use crate::handle::Handle;
+use crate::error::{TstError, record_recv_error, set_last_error};
+use crate::handle::{CHandle, cancel_or_latch};
+use crate::rtp::RtpRecvSnap;
 use crate::rtp::end_reason::convert_end_reason;
 use crate::stats::TstReceiverStats;
 use crate::stream_end_reason::TstStreamEndReason;
@@ -36,19 +35,10 @@ use crate::stream_end_reason::TstStreamEndReason;
 /// Returned by [`tst_rtp_recv_open`]. Freed with
 /// [`tst_rtp_receiver_close`].
 pub struct TstRtpReceiver {
-    pub(crate) inner: Handle<Receiver<RtpRecvTransport>>,
-    /// Cancel handle snapshotted at `_open` time. Reaches the underlying
-    /// RTP socket so a blocked `_recv_ts` returns without waiting on the
-    /// handle's `Mutex`.
-    pub(crate) cancel: Option<Arc<dyn TransportCancel + Send + Sync>>,
-    /// Set by `_cancel` and `_close` so the recv path can distinguish
-    /// caller-initiated shutdown (`TST_E_CLOSED`) from peer EOF
-    /// (`TST_E_END_OF_STREAM`).
-    pub(crate) was_cancelled: Arc<AtomicBool>,
-    /// End-reason handle snapshotted at `_open` time, same
-    /// capture-before-move timing as `cancel`. Read by
-    /// `tst_rtp_receiver_end_reason`.
-    pub(crate) end_reason: StreamEndReasonHandle,
+    /// Slot + cancel handle + cancel latch, plus the construction-constant
+    /// end-reason cell in the snapshot — all read without the data-path
+    /// lock a parked `_recv_ts` holds.
+    pub(crate) inner: CHandle<Receiver<RtpRecvTransport>, RtpRecvSnap>,
 }
 
 // ---------------------------------------------------------------------------
@@ -94,14 +84,12 @@ pub unsafe extern "C" fn tst_rtp_recv_open(url: *const c_char) -> *mut TstRtpRec
                 return std::ptr::null_mut();
             }
         };
-        let cancel = transport.cancel_handle();
+        // Both observers captured BEFORE the transport moves into the shell.
+        let cancel = cancel_or_latch(transport.cancel_handle());
         let end_reason = transport.end_reason_handle();
         let receiver = Receiver::new(transport, ReceiverConfig::default());
         Box::into_raw(Box::new(TstRtpReceiver {
-            inner: Handle::new(receiver),
-            cancel,
-            was_cancelled: Arc::new(AtomicBool::new(false)),
-            end_reason,
+            inner: CHandle::new(receiver, cancel, RtpRecvSnap { end_reason }),
         }))
     })
 }
@@ -126,10 +114,7 @@ pub unsafe extern "C" fn tst_rtp_receiver_close(p: *mut TstRtpReceiver) {
             return;
         }
         let boxed = unsafe { Box::from_raw(p) };
-        boxed.was_cancelled.store(true, Ordering::Release);
-        if let Some(c) = &boxed.cancel {
-            c.cancel();
-        }
+        // `CHandle::close` is cancel-first (see `tst_receiver_close`).
         boxed.inner.close();
         drop(boxed);
     });
@@ -188,7 +173,10 @@ pub unsafe extern "C" fn tst_rtp_receiver_recv_ts(
         );
         return TstError::InvalidConfig as i32;
     }
-    let was_cancelled = handle.was_cancelled.clone();
+    // See `tst_receiver_recv_packet`: the latch is read on both sides of the
+    // park, and `broken_is_eos` is `true` because a Broken on a plain
+    // transport that nobody cancelled means the peer went away.
+    let cancelled = handle.inner.is_cancelled();
     handle.inner.with_inner_mut(|rx| match rx.next_packet() {
         Ok(pkt) => {
             // SAFETY: buf non-null + writable for >= TS_PACKET_SIZE bytes per guard.
@@ -198,27 +186,7 @@ pub unsafe extern "C" fn tst_rtp_receiver_recv_ts(
             }
             0
         }
-        Err(e) if e.kind == ShellErrorKind::Closed => {
-            if was_cancelled.load(Ordering::Acquire) {
-                set_last_error(
-                    TstError::Closed,
-                    "rtp receiver was cancelled or closed by caller",
-                );
-                TstError::Closed as i32
-            } else {
-                record_eos();
-                TstError::EndOfStream as i32
-            }
-        }
-        // Broken on a non-cancelled handle means the peer closed — map to EOS.
-        Err(e)
-            if e.kind == ShellErrorKind::TransportBroken
-                && !was_cancelled.load(Ordering::Acquire) =>
-        {
-            record_eos();
-            TstError::EndOfStream as i32
-        }
-        Err(e) => record_shell_error(&e),
+        Err(e) => record_recv_error(&e, cancelled || handle.inner.is_cancelled(), true),
     })
 }
 
@@ -241,13 +209,7 @@ pub unsafe extern "C" fn tst_rtp_receiver_cancel(p: *mut TstRtpReceiver) -> libc
             set_last_error(TstError::InvalidConfig, "null rtp receiver pointer");
             return TstError::InvalidConfig as i32;
         };
-        // Side-channel: do NOT acquire handle.inner's Mutex (a concurrent
-        // recv_ts holds it). The was_cancelled flag + cancel-handle Arc are
-        // accessible without locking.
-        handle.was_cancelled.store(true, Ordering::Release);
-        if let Some(c) = &handle.cancel {
-            c.cancel();
-        }
+        handle.inner.cancel();
         0
     })
 }
@@ -304,7 +266,7 @@ pub unsafe extern "C" fn tst_rtp_receiver_end_reason(
             set_last_error(TstError::InvalidConfig, "null out pointer");
             return TstError::InvalidConfig as i32;
         }
-        let reason = match handle.end_reason.get() {
+        let reason = match handle.inner.snapshot().end_reason.get() {
             Some(r) => convert_end_reason(&r),
             None => TstStreamEndReason::None,
         };

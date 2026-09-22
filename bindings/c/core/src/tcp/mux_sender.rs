@@ -29,7 +29,8 @@ use tst_tcp::{TcpTransport, TcpTransportBuilder};
 use crate::config::TstMuxConfig;
 use crate::error::{TstError, record_mux_error, set_last_error};
 use crate::handle::{
-    Handle, TstAudioStreamHandle, TstKlvStreamHandle, TstSubtitleStreamHandle, TstVideoStreamHandle,
+    CHandle, TstAudioStreamHandle, TstKlvStreamHandle, TstSubtitleStreamHandle,
+    TstVideoStreamHandle, cancel_or_latch,
 };
 
 // ---------------------------------------------------------------------------
@@ -41,7 +42,7 @@ use crate::handle::{
 /// Returned by [`tst_tcp_mux_sender_open`]. Freed with
 /// [`tst_tcp_mux_sender_close`].
 pub struct TstTcpMuxSender {
-    pub(crate) inner: Handle<MuxSender<TcpTransport>>,
+    pub(crate) inner: CHandle<MuxSender<TcpTransport>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -114,8 +115,11 @@ pub unsafe extern "C" fn tst_tcp_mux_sender_open(
                 return std::ptr::null_mut();
             }
         };
+        // TCP has a real `TcpCancelHandle`, so `cancel_or_latch` passes it
+        // straight through.
+        let cancel = cancel_or_latch(mux_sender.cancel_handle());
         Box::into_raw(Box::new(TstTcpMuxSender {
-            inner: Handle::new(mux_sender),
+            inner: CHandle::new(mux_sender, cancel, ()),
         }))
     })
 }

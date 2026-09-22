@@ -28,9 +28,11 @@ pub enum TstError {
     Transport = -8,
     InvalidUsage = -9,
     Internal = -10,
-    /// Internal panic caught at the FFI boundary; the handle is now in
-    /// an indeterminate state. Subsequent calls on the same handle will
-    /// also fail (returning `Closed`). The caller should free the handle.
+    /// Internal panic caught at the FFI boundary. After a panic inside a
+    /// MUTATING call the handle is in an indeterminate state and its shell
+    /// is dropped: subsequent calls fail with `Closed`; the caller should
+    /// free the handle. A panic inside a read-only accessor (stats,
+    /// `is_alive`) reports this code and leaves the handle usable.
     PanicCaught = -11,
     /// Peer disconnected gracefully (received TCP-style FIN / SRT clean close).
     /// Distinguished from `Closed` (caller-side cancel/close) so receive loops
@@ -556,6 +558,50 @@ pub(crate) fn record_panic_caught(detail: &str) {
 #[allow(dead_code)] // transport-feature-gated callers; unused in minimal builds
 pub(crate) fn record_eos() {
     set_last_error(TstError::EndOfStream, "end of stream (peer disconnected)");
+}
+
+/// A receive entry point observed the stream end (`Ok(None)`, `Closed`,
+/// `EndOfStream`): a caller-initiated cancel/close is `TST_E_CLOSED`,
+/// a peer close is `TST_E_END_OF_STREAM`. `cancelled` comes from
+/// `CHandle::is_cancelled()` — the binding-shared flag, no per-handle copy.
+#[cfg(feature = "std")]
+#[allow(dead_code)] // transport-feature-gated callers; unused in minimal builds
+pub(crate) fn record_recv_closed(cancelled: bool) -> i32 {
+    if cancelled {
+        set_last_error(
+            TstError::Closed,
+            "receiver was cancelled or closed by caller",
+        );
+        TstError::Closed as i32
+    } else {
+        record_eos();
+        TstError::EndOfStream as i32
+    }
+}
+
+/// Receive-side error projection shared by every `_recv_*` / `_next_event`.
+///
+/// `broken_is_eos` is `true` for PLAIN shells: a plain transport reports a
+/// peer disconnect as `Broken` (SRT: `tst-srt/src/transport.rs`), which at
+/// the C boundary of a handle nobody cancelled means end of stream. Managed
+/// shells pass `false` — their decorator already retried on `Broken`, so one
+/// reaching C is a hard `TST_E_TRANSPORT`.
+///
+/// Until WP-C2 (PR 8) a cancelled plain-SRT operation still surfaces as
+/// `Broken`, so it falls through to `record_shell_error` → `TST_E_TRANSPORT`
+/// (-8), exactly as before this PR. After WP-C2 it arrives as
+/// `ExplicitClose` → kind `Closed` and takes the first arm (-7).
+#[cfg(feature = "std")]
+#[allow(dead_code)] // transport-feature-gated callers; unused in minimal builds
+pub(crate) fn record_recv_error<E: ShellError>(e: &E, cancelled: bool, broken_is_eos: bool) -> i32 {
+    match e.kind() {
+        ShellErrorKind::Closed | ShellErrorKind::EndOfStream => record_recv_closed(cancelled),
+        ShellErrorKind::TransportBroken if broken_is_eos && !cancelled => {
+            record_eos();
+            TstError::EndOfStream as i32
+        }
+        _ => record_shell_error(e),
+    }
 }
 
 /// Record `NotAvailable` (-13) with a per-call message and return the

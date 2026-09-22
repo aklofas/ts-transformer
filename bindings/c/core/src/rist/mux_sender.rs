@@ -9,11 +9,14 @@
 //! literal `extern "C"` signature and doc-comment are preserved here
 //! so cbindgen can see and emit them to `tstrans.h`.
 //!
-//! **No cancel:** the RIST transport does not expose a `cancel_handle()`,
-//! so there is no `tst_rist_mux_sender_cancel` entry point and no cancel /
-//! `was_cancelled` side-channel. `_close` simply drops the handle. To
-//! unblock a thread parked in a `_push_*` call, close the handle from the
-//! same thread (or rely on the socket's send-side behavior).
+//! **No `_cancel` entry point yet:** the C ABI exposes no cancel for this
+//! family (additive candidate, ABI 0.22 — R4). The handle already carries
+//! the binding-shared cancel state (`CHandle`), so `_close` is
+//! cancel-first; to unblock a thread parked in a data-path call, close the
+//! handle from that thread or use the transport's timeout knobs. The
+//! transport itself still has no `cancel_handle()` until WP-D, so the
+//! handle's cancel slot holds `binding::FlagCancel` — a latch that records
+//! the caller's intent but wakes nothing.
 //!
 //! **Construction differs from UDP:** RIST uses a move-style builder
 //! (`RistTransportBuilder::new(url)?.connect()`) rather than UDP's
@@ -28,7 +31,8 @@ use tst_rist::{RistTransport, RistTransportBuilder};
 use crate::config::TstMuxConfig;
 use crate::error::{TstError, record_mux_error, set_last_error};
 use crate::handle::{
-    Handle, TstAudioStreamHandle, TstKlvStreamHandle, TstSubtitleStreamHandle, TstVideoStreamHandle,
+    CHandle, TstAudioStreamHandle, TstKlvStreamHandle, TstSubtitleStreamHandle,
+    TstVideoStreamHandle, cancel_or_latch,
 };
 
 // ---------------------------------------------------------------------------
@@ -40,7 +44,7 @@ use crate::handle::{
 /// Returned by [`tst_rist_mux_sender_open`]. Freed with
 /// [`tst_rist_mux_sender_close`].
 pub struct TstRistMuxSender {
-    pub(crate) inner: Handle<MuxSender<RistTransport>>,
+    pub(crate) inner: CHandle<MuxSender<RistTransport>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -115,8 +119,12 @@ pub unsafe extern "C" fn tst_rist_mux_sender_open(
                 return std::ptr::null_mut();
             }
         };
+        // UDP/RIST expose no cancel handle until WP-D: `cancel_or_latch`
+        // supplies the latch stand-in (delete the call in WP-D once
+        // `cancel_handle()` is `Some`).
+        let cancel = cancel_or_latch(mux_sender.cancel_handle());
         Box::into_raw(Box::new(TstRistMuxSender {
-            inner: Handle::new(mux_sender),
+            inner: CHandle::new(mux_sender, cancel, ()),
         }))
     })
 }
