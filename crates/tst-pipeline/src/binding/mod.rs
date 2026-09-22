@@ -10,6 +10,10 @@
 //! of those has a standard library. Nothing here is reachable from the
 //! `no_std` sender/receiver shells.
 //!
+//! - [`handles`] — [`ManagedHandles`], the five lock-free observers a
+//!   binding collects at open time (spec §3.4): cancel, stream-end reason,
+//!   successful rebuilds, factory attempts, reconnect-in-progress. No
+//!   `Option`s — the transport crate's `from_url` family builds it once.
 //! - [`kind`] — [`BindingErrorKind`]: the one error-kind table (spec Arc 2
 //!   §3.3) every binding resolves its per-domain kind name from,
 //!   discriminated by the frozen C `TST_E_*` codes, plus [`BindingError`]
@@ -25,11 +29,13 @@
 //!   [`SendHalf`] / [`RecvHalf`] for raw transports. These live here
 //!   because the orphan rule forbids the binding crates from writing them.
 
+pub mod handles;
 pub mod kind;
 pub mod owned;
 pub mod panic;
 pub mod shells;
 
+pub use handles::ManagedHandles;
 pub use kind::{BindingError, BindingErrorKind};
 pub use owned::{Close, CloseFailure, FlagCancel, HandleState, Owned};
 pub use shells::{RecvHalf, SendHalf};
