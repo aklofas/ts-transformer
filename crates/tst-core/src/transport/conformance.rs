@@ -883,8 +883,12 @@ pub fn recv_max_payload_ge_ceiling<R: RecvTransport>(r: &R, ceiling: usize) {
 // aggregates
 // ------------------------------------------------------------------
 
-fn skip_row(row: &str) {
-    eprintln!("conformance: {row}: skipped (Broken not producible on this transport)");
+/// Visible skip for a row a `BrokenSource::NotProducible` transport cannot
+/// run. The parenthetical is per-row: the two rows skip for related but
+/// different reasons, and a reader scanning `--nocapture` output should not
+/// have to guess which.
+fn skip_row(row: &str, why: &str) {
+    eprintln!("conformance: {row}: skipped ({why})");
 }
 
 /// Run the given send rows, taking a fresh transport from `factory` for each.
@@ -910,7 +914,10 @@ pub fn assert_send_rows<T: Transport + 'static>(
                 BrokenSource::Induce(induce) => {
                     not_alive_after_broken_send(factory(), induce.as_ref())
                 }
-                BrokenSource::NotProducible => skip_row(SendRow::NotAliveAfterBroken.name()),
+                BrokenSource::NotProducible => skip_row(
+                    SendRow::NotAliveAfterBroken.name(),
+                    "Broken not producible on this transport",
+                ),
             },
         }
     }
@@ -950,13 +957,19 @@ pub fn assert_recv_rows<R: RecvTransport + 'static>(
                 BrokenSource::Induce(induce) => {
                     not_alive_after_broken_recv(factory(), induce.as_ref())
                 }
-                BrokenSource::NotProducible => skip_row(RecvRow::NotAliveAfterBroken.name()),
+                BrokenSource::NotProducible => skip_row(
+                    RecvRow::NotAliveAfterBroken.name(),
+                    "Broken not producible on this transport",
+                ),
             },
             RecvRow::PeerEofIsNotACancel => match &broken {
                 BrokenSource::Induce(induce) => {
                     recv_peer_eof_is_not_a_cancel(factory(), induce.as_ref())
                 }
-                BrokenSource::NotProducible => skip_row(RecvRow::PeerEofIsNotACancel.name()),
+                BrokenSource::NotProducible => skip_row(
+                    RecvRow::PeerEofIsNotACancel.name(),
+                    "no peer-side break is producible on this transport",
+                ),
             },
         }
     }
