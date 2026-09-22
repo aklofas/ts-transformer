@@ -110,7 +110,6 @@ make_error_fn!(make_klv_error, "Klv");
 make_error_fn!(make_rtsp_error, "Rtsp", cfg(feature = "rtp"));
 make_error_fn!(make_srt_error, "Srt", cfg(feature = "srt"));
 make_error_fn!(make_hls_error, "Hls", cfg(feature = "hls"));
-make_error_fn!(make_rist_error, "Rist", cfg(feature = "rist"));
 
 /// Test-only: raise `member` (a `BindingErrorKind::name()` string) through
 /// the real raise path, so the pytest kind-wiring suites exercise `raise.rs`
