@@ -531,9 +531,336 @@ impl From<CodecParseError> for BindingError {
     }
 }
 
+use crate::binding::owned::HandleState;
+use crate::demux_receiver::{DemuxReceiverError, DemuxReceiverErrorSource};
+use crate::mux_publisher::MuxPublisherError;
+use crate::mux_sender::{MuxSenderError, MuxSenderErrorSource};
+use crate::raw_receiver::{RawReceiverError, RawReceiverErrorSource};
+use crate::raw_sender::{RawSenderError, RawSenderErrorSource};
+use crate::receiver::{ReceiverError, ReceiverErrorSource};
+use crate::sender::{SenderError, SenderErrorSource, TsFramingError};
+use crate::shell_error::ShellErrorKind;
+use tst_core::transport::TransportError;
+
+impl From<HandleState> for BindingError {
+    fn from(s: HandleState) -> Self {
+        match s {
+            HandleState::Closed => BindingError::new(BindingErrorKind::Closed, "handle is closed"),
+            HandleState::Poisoned => {
+                BindingError::new(BindingErrorKind::Internal, "handle mutex poisoned")
+            }
+            HandleState::Panicked { detail } => {
+                BindingError::new(BindingErrorKind::PanicCaught, detail)
+            }
+        }
+    }
+}
+
+/// `ShellErrorKind` is a projection of the table (spec §3.3). Exhaustive:
+/// both enums live in this crate, so a new `ShellErrorKind` variant is a
+/// compile error here until it is given a kind.
+impl From<ShellErrorKind> for BindingErrorKind {
+    fn from(k: ShellErrorKind) -> Self {
+        match k {
+            ShellErrorKind::ConfigInvalid => BindingErrorKind::ConfigInvalid,
+            ShellErrorKind::InputMalformed => BindingErrorKind::InputMalformed,
+            ShellErrorKind::Backpressure => BindingErrorKind::Backpressure,
+            ShellErrorKind::TransportBroken => BindingErrorKind::Broken,
+            ShellErrorKind::Closed => BindingErrorKind::Closed,
+            ShellErrorKind::EndOfStream => BindingErrorKind::EndOfStream,
+        }
+    }
+}
+
+/// Kind of a `TransportError`. `ExplicitClose` projects to `Closed` (spec
+/// §3.3, confirmed 2026-09-17): C has no cancelled code and its numbers are
+/// frozen; the detail string carries the distinction. The wildcard is
+/// required by `#[non_exhaustive]` (K7) — `scripts/check/rust/kind-table-coverage.sh`
+/// fails if a `TransportError` variant is missing above it.
+pub fn kind_of_transport(e: &TransportError) -> BindingErrorKind {
+    match e {
+        TransportError::Backpressure { .. } => BindingErrorKind::Backpressure,
+        TransportError::Broken { .. } => BindingErrorKind::Broken,
+        TransportError::Closed => BindingErrorKind::Closed,
+        TransportError::TooLarge { .. } => BindingErrorKind::TooLarge,
+        TransportError::ExplicitClose => BindingErrorKind::Closed,
+        _ => BindingErrorKind::Internal,
+    }
+}
+
+impl From<TransportError> for BindingError {
+    fn from(e: TransportError) -> Self {
+        let kind = kind_of_transport(&e);
+        let detail = match &e {
+            TransportError::Backpressure { msg, .. } | TransportError::Broken { msg, .. } => {
+                msg.clone()
+            }
+            TransportError::Closed => String::from("transport closed"),
+            TransportError::ExplicitClose => String::from("cancelled from another thread"),
+            TransportError::TooLarge { .. } => e.to_string(),
+            _ => format!("unmapped TransportError variant: {e:?}"),
+        };
+        BindingError::new(kind, detail)
+    }
+}
+
+impl From<TsFramingError> for BindingError {
+    fn from(e: TsFramingError) -> Self {
+        let kind = match e {
+            TsFramingError::SyncLost { .. } | TsFramingError::NoSyncAfterLimit { .. } => {
+                BindingErrorKind::InputMalformed
+            }
+        };
+        BindingError::new(kind, e.to_string())
+    }
+}
+
+// Shell-error structs project by `source` (K6) — the same split Python and
+// the JVM already apply — so `MuxSender::send_video(bad NAL)` is
+// INVALID_NAL, not the coarser INPUT_MALFORMED the C shell path emitted.
+// The source enums are in-crate, so these matches are exhaustive.
+
+impl From<MuxSenderError> for BindingError {
+    fn from(e: MuxSenderError) -> Self {
+        match e.source {
+            MuxSenderErrorSource::Mux(m) => m.into(),
+            MuxSenderErrorSource::Transport(t) => t.into(),
+        }
+    }
+}
+
+impl From<SenderError> for BindingError {
+    fn from(e: SenderError) -> Self {
+        match e.source {
+            SenderErrorSource::Framing(f) => f.into(),
+            SenderErrorSource::Transport(t) => t.into(),
+        }
+    }
+}
+
+impl From<RawSenderError> for BindingError {
+    fn from(e: RawSenderError) -> Self {
+        match e.source {
+            RawSenderErrorSource::Transport(t) => t.into(),
+        }
+    }
+}
+
+/// Receiver shells: `TransportError::Closed` means the PEER closed
+/// (`shell_error::Direction::Recv`), which is `EndOfStream`; a caller's
+/// cancel arrives as `ExplicitClose` and stays `Closed`.
+fn recv_transport(t: TransportError) -> BindingError {
+    match t {
+        TransportError::Closed => {
+            BindingError::new(BindingErrorKind::EndOfStream, "peer closed the stream")
+        }
+        other => other.into(),
+    }
+}
+
+impl From<DemuxReceiverError> for BindingError {
+    fn from(e: DemuxReceiverError) -> Self {
+        match e.source {
+            DemuxReceiverErrorSource::Transport(t) => recv_transport(t),
+            DemuxReceiverErrorSource::Demux(d) => d.into(),
+        }
+    }
+}
+
+impl From<ReceiverError> for BindingError {
+    fn from(e: ReceiverError) -> Self {
+        match e.source {
+            ReceiverErrorSource::Transport(t) => recv_transport(t),
+        }
+    }
+}
+
+impl From<RawReceiverError> for BindingError {
+    fn from(e: RawReceiverError) -> Self {
+        match e.source {
+            RawReceiverErrorSource::Transport(t) => recv_transport(t),
+        }
+    }
+}
+
+/// `MuxPublisher<P>`'s error, generic over the sink error `E` (tst-hls's
+/// `HlsError` in practice — its `From<HlsError>` lives in tst-hls, Task
+/// A2.5, so this impl needs only `E: Into<BindingError>`). By source
+/// (K6): a muxer rejection is the mux kind (today's Python folded it into
+/// `HlsErrorKind.INVALID_CONFIG`), the sink's error is its own kind,
+/// `Closed` (shell consumed via `finish`) is `Closed` (today's Python said
+/// `FINISHED`), `LockPoisoned` is `Internal`. In-crate enum → exhaustive.
+impl<E> From<MuxPublisherError<E>> for BindingError
+where
+    E: Into<BindingError> + std::error::Error + Send + Sync + 'static,
+{
+    fn from(e: MuxPublisherError<E>) -> Self {
+        match e {
+            MuxPublisherError::Mux(m) => m.into(),
+            MuxPublisherError::Publisher(p) => p.into(),
+            MuxPublisherError::Closed => {
+                BindingError::new(BindingErrorKind::Closed, "MuxPublisher closed")
+            }
+            MuxPublisherError::LockPoisoned => {
+                BindingError::new(BindingErrorKind::Internal, "MuxPublisher lock poisoned")
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::binding::owned::HandleState;
+    use crate::shell_error::ShellErrorKind;
+    use tst_core::transport::{BrokenCause, TransportError};
+
+    fn broken() -> TransportError {
+        TransportError::Broken {
+            msg: "peer reset".into(),
+            errno_code: Some(2),
+            cause: BrokenCause::Unspecified,
+        }
+    }
+
+    #[test]
+    fn handle_state_three_variants() {
+        let c: BindingError = HandleState::Closed.into();
+        assert_eq!(
+            (c.kind, c.detail.as_str()),
+            (BindingErrorKind::Closed, "handle is closed")
+        );
+        let p: BindingError = HandleState::Poisoned.into();
+        assert_eq!(
+            (p.kind, p.detail.as_str()),
+            (BindingErrorKind::Internal, "handle mutex poisoned")
+        );
+        let k: BindingError = HandleState::Panicked {
+            detail: "index out of bounds".into(),
+        }
+        .into();
+        assert_eq!(
+            (k.kind, k.detail.as_str()),
+            (BindingErrorKind::PanicCaught, "index out of bounds")
+        );
+    }
+
+    #[test]
+    fn transport_error_five_variants() {
+        let bp: BindingError = TransportError::Backpressure {
+            msg: "queue full".into(),
+            errno_code: Some(6),
+        }
+        .into();
+        assert_eq!(bp.kind, BindingErrorKind::Backpressure);
+        assert_eq!(bp.detail, "queue full");
+        let bk: BindingError = broken().into();
+        assert_eq!(bk.kind, BindingErrorKind::Broken);
+        assert_eq!(bk.detail, "peer reset");
+        let cl: BindingError = TransportError::Closed.into();
+        assert_eq!(
+            (cl.kind, cl.detail.as_str()),
+            (BindingErrorKind::Closed, "transport closed")
+        );
+        let tl: BindingError = TransportError::TooLarge {
+            len: 2000,
+            max: 1316,
+        }
+        .into();
+        assert_eq!(tl.kind, BindingErrorKind::TooLarge);
+        assert_eq!(
+            tl.detail,
+            "message too large: 2000 bytes exceeds payload-size cap of 1316 bytes"
+        );
+        let ec: BindingError = TransportError::ExplicitClose.into();
+        assert_eq!(
+            (ec.kind, ec.detail.as_str()),
+            (BindingErrorKind::Closed, "cancelled from another thread")
+        );
+    }
+
+    #[test]
+    fn shell_error_kind_is_a_projection_of_the_table() {
+        use BindingErrorKind as K;
+        let rows = [
+            (ShellErrorKind::ConfigInvalid, K::ConfigInvalid),
+            (ShellErrorKind::InputMalformed, K::InputMalformed),
+            (ShellErrorKind::Backpressure, K::Backpressure),
+            (ShellErrorKind::TransportBroken, K::Broken),
+            (ShellErrorKind::Closed, K::Closed),
+            (ShellErrorKind::EndOfStream, K::EndOfStream),
+        ];
+        for (s, k) in rows {
+            assert_eq!(K::from(s), k, "{s:?}");
+        }
+    }
+
+    #[test]
+    fn shell_structs_project_by_source_and_receivers_keep_direction() {
+        use crate::demux_receiver::DemuxReceiverError;
+        use crate::receiver::ReceiverError;
+        use crate::sender::{SenderError, TsFramingError};
+        use crate::{MuxSenderError, RawReceiverError, RawSenderError};
+        use tst_core::error::MuxError;
+
+        let m: BindingError = MuxSenderError::from(MuxError::InvalidNal).into();
+        assert_eq!(m.kind, BindingErrorKind::InvalidNal);
+        let m: BindingError = MuxSenderError::from(TransportError::ExplicitClose).into();
+        assert_eq!(m.kind, BindingErrorKind::Closed);
+        let s: BindingError = SenderError::from(TsFramingError::SyncLost { offset: 7 }).into();
+        assert_eq!(s.kind, BindingErrorKind::InputMalformed);
+        let s: BindingError = SenderError::from(broken()).into();
+        assert_eq!(s.kind, BindingErrorKind::Broken);
+        let r: BindingError = RawSenderError::from(TransportError::Closed).into();
+        assert_eq!(
+            r.kind,
+            BindingErrorKind::Closed,
+            "sender side: Closed stays CLOSED"
+        );
+        // Receiver shells: peer EOS is END_OF_STREAM, a cancel is CLOSED.
+        let d: BindingError = DemuxReceiverError::from(TransportError::Closed).into();
+        assert_eq!(d.kind, BindingErrorKind::EndOfStream);
+        let d: BindingError = DemuxReceiverError::from(TransportError::ExplicitClose).into();
+        assert_eq!(d.kind, BindingErrorKind::Closed);
+        let d: BindingError =
+            DemuxReceiverError::from(tst_core::error::DemuxError::SyncBufExhausted {
+                observed: 5,
+                max: 4,
+            })
+            .into();
+        assert_eq!(d.kind, BindingErrorKind::DemuxSyncBufExhausted);
+        let r: BindingError = ReceiverError::from(TransportError::Closed).into();
+        assert_eq!(r.kind, BindingErrorKind::EndOfStream);
+        let r: BindingError = RawReceiverError::from(TransportError::Closed).into();
+        assert_eq!(r.kind, BindingErrorKind::EndOfStream);
+        let r: BindingError = RawReceiverError::from(broken()).into();
+        assert_eq!(r.kind, BindingErrorKind::Broken);
+    }
+
+    #[test]
+    fn mux_publisher_error_is_generic_over_the_sink_error() {
+        use crate::mux_publisher::MuxPublisherError;
+        use tst_core::error::MuxError;
+        // Any sink error that already projects into the table works as `E`.
+        let e: BindingError = MuxPublisherError::<TransportError>::Mux(MuxError::InvalidNal).into();
+        assert_eq!(e.kind, BindingErrorKind::InvalidNal);
+        let e: BindingError = MuxPublisherError::<TransportError>::Publisher(broken()).into();
+        assert_eq!(
+            (e.kind, e.detail.as_str()),
+            (BindingErrorKind::Broken, "peer reset")
+        );
+        let e: BindingError = MuxPublisherError::<TransportError>::Closed.into();
+        assert_eq!(
+            (e.kind, e.detail.as_str()),
+            (BindingErrorKind::Closed, "MuxPublisher closed")
+        );
+        let e: BindingError = MuxPublisherError::<TransportError>::LockPoisoned.into();
+        assert_eq!(
+            (e.kind, e.detail.as_str()),
+            (BindingErrorKind::Internal, "MuxPublisher lock poisoned")
+        );
+    }
 
     /// CamelCase → SCREAMING_SNAKE, the one rule `name()` has to follow.
     /// Digits attach to the preceding word (`Av1Obu` → `AV1_OBU`,
