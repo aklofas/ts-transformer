@@ -33,9 +33,9 @@ use crate::reconnect::RecvEndReasonHandle;
 pub struct ManagedHandles {
     /// The managed transport's cancel: latches the close, wakes a backoff
     /// wait or a factory parked in a re-accept, and closes the live inner.
-    /// Lock-free — it never takes the shell's slot (the #189 lease-bug
-    /// class), so it is safe from a watchdog thread while another thread
-    /// is parked inside the shell.
+    /// It never takes the shell's slot (the #189 lease-bug class), so it
+    /// is safe to fire from a watchdog thread while another thread is
+    /// parked inside the shell.
     pub cancel: Arc<dyn TransportCancel>,
     /// Why the stream ended, first-writer-wins. Recorded only by
     /// [`crate::ManagedDemuxReceiver`]. Every OTHER shell — the plain

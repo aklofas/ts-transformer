@@ -312,8 +312,9 @@ impl<R: RecvTransport> ManagedDemuxReceiver<R> {
     /// # C ABI
     ///
     /// `tst_managed_demux_receiver_get_reconnect_stats`
-    /// (`reconnect_successes`; `reconnect_attempts` comes from
-    /// [`Self::attempts_handle`] since Arc 2 WP-A3) — see
+    /// (`reconnect_successes`). That getter still fills its
+    /// `reconnect_attempts` field from this counter; [`Self::attempts_handle`]
+    /// is the counter it should read instead, and WP-B1 re-points it. See
     /// `bindings/c/include/tstrans.h`.
     #[must_use]
     pub fn reconnects_handle(&self) -> Arc<AtomicU64> {

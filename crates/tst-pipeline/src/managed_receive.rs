@@ -306,7 +306,9 @@ impl<R: RecvTransport> ManagedRecvTransport<R> {
 
     /// Shared handle to the factory-call counter — see the `attempts`
     /// field. Same obtain-before-move rationale as
-    /// [`Self::reconnects_handle`]; read with `.load(Ordering::Acquire)`.
+    /// [`Self::reconnects_handle`]; read with `.load(Ordering::Relaxed)`
+    /// — the counter is a statistic and publishes nothing, so no
+    /// acquire pairing exists to honour (unlike `reconnects`).
     #[must_use]
     pub fn attempts_handle(&self) -> Arc<AtomicU64> {
         Arc::clone(&self.attempts)
@@ -398,7 +400,16 @@ impl<R: RecvTransport> RecvTransport for ManagedRecvTransport<R> {
                 }
                 // Count the CALL, not the outcome (ARCH-08) — the same
                 // placement as the send side's `reconnect_attempts` bump.
-                self.attempts.fetch_add(1, Ordering::Release);
+                //
+                // `Relaxed`, matching that counter (`reconnect/mod.rs`
+                // bump + `ManagedStatsHandle::stats`): attempts publish
+                // nothing. `reconnects` below is `Release`/`Acquire`
+                // because it IS a publication point — a reader that waits
+                // for it to move must then see the state the rebuild
+                // installed. Nothing hangs off `attempts`, so ordering it
+                // would only cost a fence per retry and imply a guarantee
+                // that does not exist.
+                self.attempts.fetch_add(1, Ordering::Relaxed);
                 match (self.factory)() {
                     Ok(t) => {
                         // Publish the fresh transport's wake handle BEFORE
