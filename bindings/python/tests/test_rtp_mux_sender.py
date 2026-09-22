@@ -111,7 +111,7 @@ def test_mux_sender_constructs_with_pkt_size() -> None:
 def test_mux_sender_bad_url_raises_rtp_error() -> None:
     with pytest.raises(RtpError) as exc_info:
         tstrans.rtp.MuxSender("not-a-valid-url://", _video_only_program())
-    assert exc_info.value.kind == RtpErrorKind.TRANSPORT
+    assert exc_info.value.kind == RtpErrorKind.URL
 
 
 # --------------------------------------------------------------------------- #
@@ -219,7 +219,7 @@ def test_send_video_accepts_bytes_like() -> None:
     # Bind a UDP listener so the kernel doesn't return ICMP
     # "Connection refused" between sends — once libsrt-style ECONNREFUSED
     # surfaces, the MuxSender marks the transport broken and subsequent
-    # pushes raise RtpError(TRANSPORT) on Linux's connected-UDP semantics.
+    # pushes raise RtpError(BROKEN) on Linux's connected-UDP semantics.
     listener = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     listener.bind(("127.0.0.1", port))
     listener.settimeout(2.0)
@@ -250,17 +250,17 @@ def test_send_video_on_closed_sender_raises_transport() -> None:
     s.close()
     with pytest.raises(RtpError) as exc_info:
         s.send_video(NAL_IDR, pts=Pts90khz.from_raw(0))
-    assert exc_info.value.kind == RtpErrorKind.TRANSPORT
+    assert exc_info.value.kind == RtpErrorKind.CLOSED
 
 
 def test_send_video_malformed_nal_raises_mux_error() -> None:
-    """Raw bytes without an Annex-B start code → MuxError(INPUT_MALFORMED)."""
+    """Raw bytes without an Annex-B start code → MuxError(INVALID_NAL)."""
     port = _free_udp_port()
     program = _video_only_program()
     with tstrans.rtp.MuxSender(f"rtp://127.0.0.1:{port}", program) as s:
         with pytest.raises(MuxError) as exc_info:
             s.send_video(b"not annex-b bytes", pts=Pts90khz.from_raw(0))
-        assert exc_info.value.kind == MuxErrorKind.INPUT_MALFORMED
+        assert exc_info.value.kind == MuxErrorKind.INVALID_NAL
 
 
 # --------------------------------------------------------------------------- #

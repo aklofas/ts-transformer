@@ -80,12 +80,12 @@ def test_push_video_single_target_form_increments_pending():
     assert m.pending_packets() > before
 
 
-def test_push_video_invalid_nal_raises_input_malformed():
+def test_push_video_invalid_nal_raises_invalid_nal():
     m = Muxer(_simple_config())
     with pytest.raises(MuxError) as ei:
         # No Annex-B start code — should fail validate_annex_b.
         m.push_video(b"\xDE\xAD\xBE\xEF", pts=Pts90khz.from_raw(900_000))
-    assert ei.value.kind == MuxErrorKind.INPUT_MALFORMED
+    assert ei.value.kind == MuxErrorKind.INVALID_NAL
 
 
 def test_push_video_to_with_invalid_handle_raises_invalid_usage():
@@ -1309,7 +1309,7 @@ def test_push_video_misp_to_nano_on_h264_raises():
         m.push_video_misp_to(
             handle, _h264_idr_au(), pts=Pts90khz.from_raw(900_000), misp=nano_ts
         )
-    assert ei.value.kind is MuxErrorKind.INPUT_MALFORMED
+    assert ei.value.kind is MuxErrorKind.MISP_TIME
 
 
 def test_push_video_misp_to_with_dts():

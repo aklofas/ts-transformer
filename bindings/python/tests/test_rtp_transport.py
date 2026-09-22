@@ -113,14 +113,14 @@ def test_sender_explicit_ssrc_and_pkt_size() -> None:
 
 
 def test_sender_oversized_payload_raises_malformed_packet() -> None:
-    """Payload > pkt_size - 12 (RTP header) → `RtpError(MALFORMED_PACKET)`."""
+    """Payload > pkt_size - 12 (RTP header) → `RtpError(TOO_LARGE)`."""
     port = _free_udp_port()
     with tstrans.rtp.Sender(f"rtp://127.0.0.1:{port}", pkt_size=200) as s:
         with pytest.raises(RtpError) as exc_info:
             # 300 bytes payload exceeds the 200-byte UDP-payload cap
             # (minus 12-byte RTP header → 188 max). 300 > 188.
             s.send(b"\x47" * 300)
-        assert exc_info.value.kind == RtpErrorKind.MALFORMED_PACKET
+        assert exc_info.value.kind == RtpErrorKind.TOO_LARGE
 
 
 def test_sender_close_idempotent() -> None:
@@ -131,7 +131,7 @@ def test_sender_close_idempotent() -> None:
     s.close()  # second close is a no-op
     with pytest.raises(RtpError) as exc_info:
         s.send(b"\x47" * 188)
-    assert exc_info.value.kind == RtpErrorKind.TRANSPORT
+    assert exc_info.value.kind == RtpErrorKind.CLOSED
 
 
 def test_sender_context_manager_closes_on_exception() -> None:
@@ -147,10 +147,10 @@ def test_sender_context_manager_closes_on_exception() -> None:
 
 
 def test_sender_bad_url_raises_rtp_error() -> None:
-    """Malformed URL → `RtpError(TRANSPORT)` at construction."""
+    """Malformed URL → `RtpError(URL)` at construction."""
     with pytest.raises(RtpError) as exc_info:
         tstrans.rtp.Sender("not-a-valid-url://")
-    assert exc_info.value.kind == RtpErrorKind.TRANSPORT
+    assert exc_info.value.kind == RtpErrorKind.URL
 
 
 # --------------------------------------------------------------------------- #
@@ -193,7 +193,7 @@ def test_receiver_recv_then_cancel_unparks_recv() -> None:
     assert len(captured) == 1
     exc = captured[0]
     assert isinstance(exc, RtpError)
-    assert exc.kind == RtpErrorKind.CANCELLED
+    assert exc.kind == RtpErrorKind.CLOSED
     r.close()
 
 
@@ -234,7 +234,7 @@ def test_receiver_close_idempotent() -> None:
     r.close()
     with pytest.raises(RtpError) as exc_info:
         r.recv()
-    assert exc_info.value.kind == RtpErrorKind.TRANSPORT
+    assert exc_info.value.kind == RtpErrorKind.CLOSED
 
 
 def test_receiver_recv_timeout_raises_timeout_kind() -> None:
@@ -247,12 +247,12 @@ def test_receiver_recv_timeout_raises_timeout_kind() -> None:
     with tstrans.rtp.Receiver(f"rtp://127.0.0.1:{port}?recv_timeout=200") as r:
         with pytest.raises(RtpError) as exc_info:
             r.recv()
-        assert exc_info.value.kind == RtpErrorKind.TIMEOUT
+        assert exc_info.value.kind == RtpErrorKind.BACKPRESSURE
         # The receiver is still alive after a TIMEOUT — a second recv on
         # the same (still-quiet) socket raises TIMEOUT again, not TRANSPORT.
         with pytest.raises(RtpError) as exc_info2:
             r.recv()
-        assert exc_info2.value.kind == RtpErrorKind.TIMEOUT
+        assert exc_info2.value.kind == RtpErrorKind.BACKPRESSURE
 
 
 def test_receiver_recv_per_call_timeout_ms_raises_and_recovers() -> None:
@@ -263,7 +263,7 @@ def test_receiver_recv_per_call_timeout_ms_raises_and_recovers() -> None:
     with tstrans.rtp.Receiver(f"rtp://127.0.0.1:{port}") as r:
         with pytest.raises(RtpError) as exc_info:
             r.recv(timeout_ms=200)
-        assert exc_info.value.kind == RtpErrorKind.TIMEOUT
+        assert exc_info.value.kind == RtpErrorKind.BACKPRESSURE
 
         # Session stayed alive across the TIMEOUT — a real packet sent
         # now is still delivered on the same receiver.
@@ -351,10 +351,10 @@ def test_cancel_handle_multiple_clones_share_state() -> None:
     h1.cancel()
     h2.cancel()  # idempotent
     # Both handles point at the same atomic — cancel from h1 should
-    # cause the next send() to return CANCELLED.
+    # cause the next send() to return CLOSED.
     with pytest.raises(RtpError) as exc_info:
         s.send(b"\x47" * 188)
-    assert exc_info.value.kind == RtpErrorKind.CANCELLED
+    assert exc_info.value.kind == RtpErrorKind.CLOSED
     s.close()
 
 
@@ -373,7 +373,7 @@ def test_cancel_handle_repr() -> None:
 def test_receiver_rejects_pkt_size_url():
     with pytest.raises(RtpError) as ei:
         tstrans.rtp.Receiver("rtp://127.0.0.1:0?pkt_size=1316")
-    assert ei.value.kind == RtpErrorKind.TRANSPORT
+    assert ei.value.kind == RtpErrorKind.URL
     assert "send-side knob" in str(ei.value)
 
 

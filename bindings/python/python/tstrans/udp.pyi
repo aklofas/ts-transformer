@@ -37,16 +37,22 @@ __all__: list[str] = [
 
 
 class UdpErrorKind(IntEnum):
-    """Discriminator for ``UdpError.kind``. Combines ``tst_udp::UdpErrorKind``'s
-    own variants (URL, IO, INVALID_CONFIG) with transport-level kinds the
-    ``tstrans.udp`` binding maps from ``tst_core::transport::TransportError``
-    onto the same exception (CLOSED, PAYLOAD_TOO_LARGE)."""
+    """Discriminator for ``UdpError.kind``. The ``tstrans.udp`` subset of the
+    Rust ``tst_pipeline::binding::BindingErrorKind`` table: ``URL`` / ``IO`` /
+    ``INVALID_CONFIG`` from ``tst_udp::UdpErrorKind``, ``CLOSED`` / ``BROKEN`` /
+    ``BACKPRESSURE`` / ``TOO_LARGE`` from the transport.
+
+    Deprecated alias (0.7.x only, removed in 0.8.0): ``PAYLOAD_TOO_LARGE`` →
+    ``TOO_LARGE``."""
 
     URL = 0
     IO = 2
-    PAYLOAD_TOO_LARGE = 4
+    TOO_LARGE = 4
+    PAYLOAD_TOO_LARGE = 4  # deprecated alias (0.7.x): use TOO_LARGE
     CLOSED = 5
     INVALID_CONFIG = 6
+    BACKPRESSURE = 7
+    BROKEN = 8
 
 
 class UdpError(Exception):
@@ -81,7 +87,7 @@ class SocketStats:
     bytes_received: int
     """Bytes successfully received (receiver only)."""
     send_errors: int
-    """Send-side I/O errors; excludes ``PAYLOAD_TOO_LARGE`` rejects."""
+    """Send-side I/O errors; excludes ``TOO_LARGE`` rejects."""
     recv_errors: int
     """Receive-side I/O errors; excludes ``WouldBlock``/``TimedOut``."""
 
@@ -115,7 +121,7 @@ class Transport:
 
         Raises
         ------
-        UdpError(kind=PAYLOAD_TOO_LARGE)
+        UdpError(kind=TOO_LARGE)
             If ``len(payload)`` exceeds the configured ``pkt_size``
             (default 1316 bytes = 7 × 188 TS packets).
         UdpError(kind=CLOSED)

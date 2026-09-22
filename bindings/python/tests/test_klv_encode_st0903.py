@@ -104,7 +104,7 @@ def test_encode_vmti_strict_compliance_empty_vtarget_pack_raises():
     )
     with pytest.raises(KlvEncodeError) as ei:
         encode_vmti_strict_compliance(rec)
-    assert ei.value.kind is KlvEncodeErrorKind.VTARGET_PACK_EMPTY
+    assert ei.value.kind is KlvEncodeErrorKind.V_TARGET_PACK_EMPTY
     # .tag carries the target_id for pack-level errors
     assert ei.value.tag == 42
 
@@ -136,7 +136,7 @@ def test_encode_vmti_strict_compliance_empty_pack_tag_preserves_large_target_id(
     )
     with pytest.raises(KlvEncodeError) as ei:
         encode_vmti_strict_compliance(rec)
-    assert ei.value.kind is KlvEncodeErrorKind.VTARGET_PACK_EMPTY
+    assert ei.value.kind is KlvEncodeErrorKind.V_TARGET_PACK_EMPTY
     assert ei.value.tag == big_target_id, ".tag must carry the full u64 target_id"
 
 

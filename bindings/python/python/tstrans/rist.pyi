@@ -107,7 +107,7 @@ class Transport:
     def send(self, payload: bytes | bytearray | memoryview) -> None:
         """Send one payload.
 
-        Raises ``RistError(kind=PAYLOAD_TOO_LARGE)`` if the payload exceeds
+        Raises ``RistError(kind=TOO_LARGE)`` if the payload exceeds
         the configured ``pkt_size``.
 
         Raises ``RistError(kind=CLOSED)`` if the transport is closed.
@@ -203,7 +203,7 @@ class RecvTransport:
         """Receive one payload.
 
         ``timeout_ms``: milliseconds to wait before raising
-        ``RistError(kind=RECV_TIMEOUT)``. ``None`` (default) blocks until a
+        ``RistError(kind=BACKPRESSURE)``. ``None`` (default) blocks until a
         packet arrives.
 
         Note: actual timeout latency may exceed ``timeout_ms`` by up to
@@ -214,9 +214,9 @@ class RecvTransport:
         checked between the librist poll windows).
 
         Raises:
-            RistError(kind=RECV_TIMEOUT): No packet within ``timeout_ms``.
+            RistError(kind=BACKPRESSURE): No packet within ``timeout_ms``.
             RistError(kind=CLOSED): Transport is closed.
-            RistError(kind=IO): Underlying I/O error.
+            RistError(kind=BROKEN): Underlying I/O error.
         """
         ...
 

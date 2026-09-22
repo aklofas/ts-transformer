@@ -172,16 +172,17 @@ class SrtStats:
 @final
 class CancelHandle:
     """Transport-side cancel handle for `Sender` / `Receiver` /
-    `Listener` / `MuxSender` / `DemuxReceiver`. Calling `.cancel()`
-    wakes a thread parked in `.send_bytes()` / `.recv_bytes()` /
-    `.accept()` / `.__next__()` within ~3-10 ms; that call returns
-    `SrtError(kind=BROKEN)` or `SrtError(kind=CLOSED)` depending on
-    which libsrt path the cancel races.
+    `Listener` / `MuxSender` / `DemuxReceiver` and the four `Managed*`
+    shells. Calling `.cancel()` from any thread wakes a thread parked in
+    `.send_bytes()` / `.recv_bytes()` / `.accept()` / `.__next__()` within
+    ~3-10 ms; that call raises `SrtError(kind=CLOSED)` (detail
+    "cancelled from another thread") — on the plain shells it may still
+    report `BROKEN` until the SRT transport-level cancel change lands
+    later in 0.7.0.
 
-    `is_cancelled()` is per-clone: each clone obtained from a fresh
-    `cancel_handle()` call tracks its own observation flag, but they
-    all forward `cancel()` into the same shared `Arc<dyn>` so calling
-    `.cancel()` on any clone wakes the parked socket.
+    `is_cancelled()` is SHARED per shell (0.7.0): every handle obtained
+    from the same shell — and the shell's own `close()` — flips the same
+    state, so a watchdog can observe a cancel issued elsewhere.
     """
 
     def cancel(self) -> None: ...

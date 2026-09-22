@@ -23,6 +23,9 @@ def test_codec_error_kind_enum_variants_present():
         "TRUNCATED",
         "FORBIDDEN",
         "UNSUPPORTED_FREE_FORMAT",
+        "INVALID_LENGTH_SIZE",
+        "NAL_LENGTH_OVERFLOW",
+        "BUFFER_TOO_SMALL",
     }
     actual = {v.name for v in CodecErrorKind}
     assert expected.issubset(actual), f"missing: {expected - actual}"

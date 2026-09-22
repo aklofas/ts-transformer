@@ -435,7 +435,7 @@ def test_tcp_tls_caller_rejects_untrusted_cert() -> None:
 
 def test_tcp_error_kind_count() -> None:
     """Sentinel: catches drift if Rust adds a new TcpErrorKind variant."""
-    assert len(TcpErrorKind) == 8
+    assert len(TcpErrorKind) == 10
 
 
 def test_tcp_error_url_bad_scheme() -> None:
@@ -479,7 +479,7 @@ def test_tcp_error_payload_too_large() -> None:
     huge = b"\x47" * 1316  # 7x188, exceeds cap of 188
     with pytest.raises(TcpError) as excinfo:
         caller.send(huge)
-    assert excinfo.value.kind == TcpErrorKind.PAYLOAD_TOO_LARGE
+    assert excinfo.value.kind == TcpErrorKind.TOO_LARGE
 
     caller.close()
     t.join(timeout=5.0)

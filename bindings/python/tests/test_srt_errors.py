@@ -110,7 +110,7 @@ def test_closed_after_sender_explicit_close() -> None:
     "kind_str,expected",
     [
         ("BROKEN", SrtErrorKind.BROKEN),
-        ("WOULD_BLOCK", SrtErrorKind.WOULD_BLOCK),
+        ("BACKPRESSURE", SrtErrorKind.BACKPRESSURE),
         ("ACCEPT_FAILED", SrtErrorKind.ACCEPT_FAILED),
         ("IO", SrtErrorKind.IO),
     ],
