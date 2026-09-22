@@ -13,7 +13,7 @@
 //! below; the [`conformance`] kit (std-only) is the executable form and
 //! each transport crate runs it in its `tests/conformance.rs`.
 //!
-//! Cells marked **(from WP-C2)** / **(from WP-D)** / **(from C1.4)** are
+//! Cells marked **(from WP-C2)** / **(from WP-D)** are
 //! the contract's target, NOT yet this commit's behaviour — the work
 //! package named makes them true, and until then the conformance kit
 //! carries that row `#[ignore]`d with the same reason. Everything
@@ -24,7 +24,7 @@
 //! | SRT (`SrtTransport`) | `Closed` | `ExplicitClose` (from WP-C2) | false / false | `SrtCancelHandle` |
 //! | TCP / TLS (`TcpTransport`) | `Closed` | `ExplicitClose` (from WP-C2) | false / false | `TcpCancelHandle` |
 //! | TCP listener (`TcpListener`) | `accept` → `Closed`; `close()` DOES latch `is_cancelled()` (a listener has no peer-EOF path, so its only terminal event is the caller stopping it) | `Closed` (from WP-C2) | n/a | `TcpCancelHandle` |
-//! | RTP send / recv (`RtpTransport` / `RtpRecvTransport`, incl. RTSP-client recv) | `Closed` | `ExplicitClose` | false / false (after cancel: from C1.4) | `RtpCancelHandle` |
+//! | RTP send / recv (`RtpTransport` / `RtpRecvTransport`, incl. RTSP-client recv) | `Closed` | `ExplicitClose` | false / false | `RtpCancelHandle` |
 //! | UDP send / recv | `Closed` | `ExplicitClose` (from WP-D) | false / false | `UdpCancelHandle` (WP-D) |
 //! | RIST send / recv | `Closed` | `ExplicitClose` (from WP-D) | false / false | `RistCancelHandle` (WP-D) |
 //! | `ManagedTransport` (send) | `Closed` | `ExplicitClose` (from WP-C2) | false / false | `ManagedCancel` |
@@ -35,7 +35,7 @@
 //! `RecvTransport::max_payload()` is the protocol's deliverable ceiling
 //! (never the local send budget); an EMPTY destination buffer makes
 //! `recv_bytes` return `Ok(0)` without touching the socket or the liveness
-//! flag (X-CORR-07 — TCP today; SRT and RTP from C1.6/C1.4). A cancel that
+//! flag (X-CORR-07 — TCP, SRT and RTP; UDP/RIST from WP-D). A cancel that
 //! lands after a successful op is not an error — the NEXT op fails with
 //! `ExplicitClose`. `Broken` after a cancel is impossible by construction
 //! (from WP-C2: a parked SRT/TCP recv still reports `Broken` today).
@@ -427,10 +427,13 @@ pub trait Transport: Send {
 /// disconnect or a wire failure leaves it `false` (the kit row
 /// `peer_eof_is_not_a_cancel`), because the bindings relabel a
 /// caller-initiated end from exactly this bit. Where a transport's own
-/// `close()` is implemented by firing the same handle (SRT, the managed
-/// wrappers), `is_cancelled()` also reads `true` after that `close()`;
-/// callers that need "cancelled by someone else" keep their own flag on
-/// top (the binding layer's `Owned::is_cancelled` does exactly that).
+/// `close()` is implemented by firing the same handle — `Socket::close` and
+/// the send-side `ManagedCancel` (whose `close()`/`Drop` run the same
+/// `terminal_signal`, X-CORR-01) — `is_cancelled()` also reads `true` after
+/// that `close()`. `ManagedRecvCancel` does NOT: its `close()` only clears
+/// the slot, so it reads `true` for a cross-thread cancel alone. Callers
+/// that need "cancelled by someone else" keep their own flag on top (the
+/// binding layer's `Owned::is_cancelled` does exactly that).
 ///
 /// `Send + Sync` is required so consumers can stash one in an
 /// `Arc<dyn TransportCancel>` and share it across worker threads.

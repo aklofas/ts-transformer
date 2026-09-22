@@ -352,8 +352,7 @@ impl<T: Close, S> Owned<T, S> {
 /// nothing parked is woken, which is exactly what those objects can offer.
 /// Replaces the JVM binding's `NoopCancel`.
 ///
-/// Until `TransportCancel::is_cancelled` exists (Arc 2 WP-C1) the flag is
-/// read through [`Self::is_set`]; WP-C1's trait impl delegates to it.
+/// The trait impl delegates to [`Self::is_set`].
 #[derive(Debug, Default)]
 pub struct FlagCancel(AtomicBool);
 
