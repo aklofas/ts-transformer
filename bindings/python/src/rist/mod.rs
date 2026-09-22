@@ -15,12 +15,14 @@
 //!   Python threads keep running during network I/O and while a getter
 //!   waits for a parked call.
 //!
-//! Cross-thread close: `tst_rist` exposes no cancel handle, so this
-//! binding owns one. `RecvTransport.recv()` already polls librist in
-//! 100 ms windows; `close()` sets a stop flag the loop checks between
-//! windows BEFORE taking the slot, so a parked `recv()` ends with
-//! `RistError(CLOSED)` within about one window. Every wrapper borrows
-//! `&self` over an `Arc<Mutex<Option<_>>>` slot (the PR #209 shape).
+//! Cross-thread close: `tst_rist` exposes no cancel handle yet, so the
+//! shell's `CancelSource` carries the flag (`FlagCancel` inside until
+//! WP-D). `RecvTransport.recv()` polls librist in 100 ms windows and
+//! re-checks that flag between windows, so a `close()` — which latches
+//! the cancel BEFORE taking the slot, through
+//! `tst_pipeline::binding::Owned::close` — ends a parked `recv()` with
+//! `RistError(CLOSED)` within about one window. Every class holds an
+//! `Owned<T, S>` and borrows `&self`.
 //!
 //! Error mapping: every failure is a `tst_pipeline::binding::BindingError`
 //! raised on `RistError` through `crate::raise` — the kind's `name()` is
@@ -221,11 +223,11 @@ impl From<PyRistProfile> for RistProfile {
 /// the kernel socket call blocks.
 #[pyclass(name = "Transport", module = "tstrans.rist")]
 pub(crate) struct PyRistTransport {
-    /// Shared slot (PR #209 shape): a `send` in flight on another thread
-    /// holds it with the GIL released; `close()` takes it afterwards, so
-    /// the next `send` raises `RistError(CLOSED)` instead of the close
-    /// raising `RuntimeError: Already borrowed`.
-    /// The binding layer's handle state machine (Arc 2). Snapshot =
+    /// The binding layer's handle state machine (Arc 2): a `send` in
+    /// flight on another thread holds the slot with the GIL released and
+    /// `close()` cancels-then-takes, so the next `send` raises
+    /// `RistError(CLOSED)` rather than `RuntimeError: Already borrowed`.
+    /// Snapshot =
     /// `peer_url()`, so `repr()` never waits behind a send.
     owned: Owned<SendHalf<RistTransport>, String>,
 }
@@ -241,7 +243,7 @@ impl PyRistTransport {
     /// Send one payload. Accepts any bytes-like object: `bytes`, `bytearray`,
     /// `memoryview`, or any buffer-protocol object.
     ///
-    /// Raises `RistError(kind=PAYLOAD_TOO_LARGE)` if `len(payload)` exceeds
+    /// Raises `RistError(kind=TOO_LARGE)` if `len(payload)` exceeds
     /// the configured `pkt_size` (default 1316 bytes / 7 TS packets).
     ///
     /// Releases the GIL during the underlying socket send call.
@@ -441,17 +443,6 @@ impl PyRistTransportBuilder {
 // PyRistRecvTransport — wraps tst_rist::RistRecvTransport
 // ---------------------------------------------------------------------------
 
-/// RIST receiver — wraps `tst_rist::RistRecvTransport`.
-///
-/// Construct via `RecvTransport.builder().bind_url("rist://@0.0.0.0:8000").build()`.
-/// The bind URL must include the `@` prefix per librist convention
-/// (`rist://@host:port`).
-///
-/// GIL is released during `recv` so other Python threads remain live while
-/// waiting for data.
-///
-/// Note: librist Simple profile requires even port numbers. Use `?buffer=NNN`
-/// in the URL to set the recovery buffer size (milliseconds).
 /// Transport + reusable scratch buffer under one lock.
 struct RistRecvInner {
     transport: RistRecvTransport,
@@ -467,12 +458,23 @@ impl tst_pipeline::binding::Close for RistRecvInner {
     }
 }
 
+/// RIST receiver — wraps `tst_rist::RistRecvTransport`.
+///
+/// Construct via `RecvTransport.builder().bind_url("rist://@0.0.0.0:8000").build()`.
+/// The bind URL must include the `@` prefix per librist convention
+/// (`rist://@host:port`).
+///
+/// GIL is released during `recv` so other Python threads remain live while
+/// waiting for data.
+///
+/// Note: librist Simple profile requires even port numbers. Use `?buffer=NNN`
+/// in the URL to set the recovery buffer size (milliseconds).
 #[pyclass(name = "RecvTransport", module = "tstrans.rist")]
 pub(crate) struct PyRistRecvTransport {
-    /// Shared slot (PR #209 shape): a parked `recv` holds it with the GIL
-    /// released; `close()` sets `stop` BEFORE taking it, so the parked
-    /// recv ends with `RistError(CLOSED)` within one librist poll window.
-    /// The binding layer's handle state machine (Arc 2). Snapshot =
+    /// The binding layer's handle state machine (Arc 2): a parked `recv`
+    /// holds the slot with the GIL released, and `close()` latches the
+    /// cancel BEFORE taking it, so the parked recv ends with
+    /// `RistError(CLOSED)` within one librist poll window. Snapshot =
     /// `bind_url()`, so `repr()` never waits behind a parked `recv`.
     owned: Owned<RistRecvInner, String>,
     /// Shared cancel state. `FlagCancel` inside until WP-D gives rist a real
@@ -491,7 +493,7 @@ impl PyRistRecvTransport {
     /// Receive one payload from the RIST session.
     ///
     /// `timeout_ms`: milliseconds to wait before raising
-    /// `RistError(kind=RECV_TIMEOUT)`. `None` (default) blocks until a
+    /// `RistError(kind=BACKPRESSURE)` — retryable. `None` (default) blocks until a
     /// packet arrives.
     ///
     /// Implementation note: the underlying `recv_bytes` polls with a 100 ms
@@ -539,9 +541,10 @@ impl PyRistRecvTransport {
         Ok(PyBytes::new_bound(py, &bytes).unbind())
     }
 
-    /// Close the receiver. Sets the stop flag BEFORE taking the slot, so a
-    /// `recv()` parked on another thread ends with `RistError(kind=CLOSED)`
-    /// within ~100 ms; further `.recv()` calls raise the same. Idempotent.
+    /// Close the receiver. Cancel-first (`Owned::close` latches the shared
+    /// cancel before taking the slot), so a `recv()` parked on another
+    /// thread ends with `RistError(kind=CLOSED)` within ~100 ms; further
+    /// `.recv()` calls raise the same. Idempotent.
     fn close(&self, py: Python<'_>) -> PyResult<()> {
         close_owned(py, &RIST, &self.owned)
     }

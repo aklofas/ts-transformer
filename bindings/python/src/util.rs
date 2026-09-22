@@ -131,13 +131,13 @@ pub(crate) struct CancelSource {
     cancelled: AtomicBool,
 }
 
-/// Every live [`CancelSource`], weakly. Walked once at interpreter exit by
-/// [`fire_cancel_sources_at_exit`] — see its doc for why.
 /// How long [`fire_cancel_sources_at_exit`] waits for woken threads to
 /// leave their Python frames. Long enough for libsrt's ~3-10 ms cancel
 /// wake plus the GIL hand-off; short enough to be invisible at exit.
 const EXIT_SETTLE_MS: u64 = 250;
 
+/// Every live [`CancelSource`], weakly. Walked once at interpreter exit by
+/// [`fire_cancel_sources_at_exit`] — see its doc for why.
 static LIVE_CANCEL_SOURCES: Mutex<Vec<Weak<CancelSource>>> = Mutex::new(Vec::new());
 
 impl CancelSource {
@@ -162,7 +162,16 @@ impl CancelSource {
         self.cancelled.load(Ordering::Acquire)
     }
 
-    /// The trait-object view `Owned::new` takes.
+    /// The trait-object view `Owned::new` takes. Only the transport
+    /// surfaces construct an `Owned`, so this is cfg'd rather than
+    /// `allow(dead_code)`d — an orphaned helper would still warn.
+    #[cfg(any(
+        feature = "srt",
+        feature = "rtp",
+        feature = "udp",
+        feature = "tcp",
+        feature = "rist"
+    ))]
     pub(crate) fn as_dyn(self: &Arc<Self>) -> Arc<dyn TransportCancel + Send + Sync> {
         Arc::clone(self) as Arc<dyn TransportCancel + Send + Sync>
     }
@@ -239,18 +248,34 @@ pub(crate) fn alive_probe<T, S>(owned: &Owned<T, S>, alive: impl FnOnce(&T) -> b
 /// best-effort: a poisoned registry or an already-closed shell is skipped,
 /// and cancelling an already-cancelled source is a no-op by the
 /// `TransportCancel` contract.
+///
+/// **A clean exit costs nothing.** A shell that was `close()`d (or whose
+/// handle was cancelled) has already latched its `CancelSource` — every
+/// path into `Owned::close` fires `OwnedCancel::cancel` → `CancelSource`
+/// first — so those sources are filtered out here. Only shells left OPEN
+/// are fired, and only then is the settle window paid. Returns how many
+/// sources it fired, which is the observable
+/// `test_exit_with_parked_shell.py` asserts is 0 after a clean close;
+/// `atexit` discards it. Note the shell object itself usually outlives
+/// the walk (a module-level name keeps the `Arc` alive), so "still
+/// registered" is NOT the same question as "still open" — the latch is.
 #[pyfunction]
 #[pyo3(name = "_fire_cancel_sources_at_exit")]
-pub(crate) fn fire_cancel_sources_at_exit(py: Python<'_>) {
+pub(crate) fn fire_cancel_sources_at_exit(py: Python<'_>) -> usize {
     let live: Vec<Arc<CancelSource>> = match LIVE_CANCEL_SOURCES.lock() {
-        Ok(mut reg) => reg.drain(..).filter_map(|w| w.upgrade()).collect(),
-        Err(_) => return,
+        Ok(mut reg) => reg
+            .drain(..)
+            .filter_map(|w| w.upgrade())
+            .filter(|s| !s.is_cancelled())
+            .collect(),
+        Err(_) => return 0,
     };
     // The cancels themselves are native and may block briefly (libsrt's
     // `srt_close` on the paired socket), so drop the GIL for the walk.
     if live.is_empty() {
-        return;
+        return 0;
     }
+    let fired = live.len();
     py.allow_threads(move || {
         for src in live {
             TransportCancel::cancel(&*src);
@@ -264,6 +289,7 @@ pub(crate) fn fire_cancel_sources_at_exit(py: Python<'_>) {
         // paid once, at exit, only when a shell was actually left open.
         std::thread::sleep(std::time::Duration::from_millis(EXIT_SETTLE_MS));
     });
+    fired
 }
 
 /// Adapter so a `tst_core::cancel::CancelSlot` can be registered as a

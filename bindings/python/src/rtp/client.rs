@@ -473,9 +473,11 @@ impl PyRtspClient {
     /// PLAY, return a live `RtspSession`.
     ///
     /// Raises `tstrans.exceptions.RtspError` on any failure in the
-    /// control-plane state machine. The mapped `.kind` enum value
-    /// reflects which Rust `RtspError` variant fired (see
-    /// `rtsp_error_kind_str` below for the variant → kind table).
+    /// control-plane state machine. The `.kind` reflects which Rust
+    /// `RtspError` variant fired — the table is
+    /// `impl From<RtspError> for BindingError` in
+    /// `crates/tst-rtp/src/binding_kind.rs`, resolved on
+    /// `RtspErrorKind` by `crate::raise`.
     ///
     /// GIL released for the duration of the network exchange — other
     /// Python threads continue to run while we wait on TCP I/O.
@@ -571,7 +573,7 @@ impl PyRtspClient {
     ///
     /// GIL released for the duration of the network exchange.
     ///
-    /// Raises `RtspError(MOUNT)` when the SDP has no H.264 media or
+    /// Raises `RtspError(NOT_FOUND)` when the SDP has no H.264 media or
     /// more than one H.264 media (use `connect()` for MP2T streams).
     /// Raises `RtspError(UNSUPPORTED_TRANSPORT)` for packetization mode 2.
     #[staticmethod]
@@ -820,7 +822,7 @@ impl PyRtspSession {
             Some(c) => Ok(PyRtspCancelHandle {
                 inner: c.cancel_handle(),
             }),
-            None => Err(make_rtsp_error_pure(
+            None => Err(rtsp_err_no_gil(
                 BindingErrorKind::RtspProtocol,
                 "RtspSession is torn down; cancel_handle unavailable",
             )),
@@ -886,7 +888,7 @@ impl PyRtspSession {
                 .lock()
                 .map_err(|_| PyValueError::new_err("RtspSession lock poisoned"))?;
             guard.take().ok_or_else(|| {
-                make_rtsp_error_pure(
+                rtsp_err_no_gil(
                     BindingErrorKind::RtspProtocol,
                     "RtspSession.into_demux_receiver: already consumed",
                 )
@@ -999,7 +1001,7 @@ impl PyRtspSession {
 /// `raise` needs a `Python` token; this helper serves the sites that have
 /// none in scope (e.g. `cancel_handle` returning a typed error inside a
 /// `?` chain before `Python::with_gil`) by re-acquiring the GIL.
-fn make_rtsp_error_pure(kind: BindingErrorKind, message: &str) -> PyErr {
+fn rtsp_err_no_gil(kind: BindingErrorKind, message: &str) -> PyErr {
     Python::with_gil(|py| raise(py, &RTSP, BindingError::new(kind, message)))
 }
 

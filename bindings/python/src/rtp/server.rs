@@ -593,11 +593,14 @@ impl PyRtspServer {
         // silently ignoring the cert paths).
         #[cfg(not(feature = "tls"))]
         if cfg.tls_cert.is_some() || cfg.tls_key.is_some() {
-            return Err(make_rtsp_error(
+            return Err(raise(
                 py,
-                "TLS",
-                "TLS (rtsps://) is not enabled in this build of tstrans; \
-                 rebuild with the tst-py `tls` feature",
+                &RTSP,
+                BindingError::new(
+                    BindingErrorKind::RtspTls,
+                    "TLS (rtsps://) is not enabled in this build of tstrans; \
+                     rebuild with the tst-py `tls` feature",
+                ),
             ));
         }
         // Belt-and-suspenders path validation. tst-rtp's start() now

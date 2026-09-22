@@ -10,31 +10,28 @@
 //! - `HlsPublisher` + `HlsPublisherBuilder` — T12
 //! - `HlsMode` + `HlsStats` — T13
 //! - `HlsError` / `HlsErrorKind` (in `tstrans.exceptions`) + error
-//!   mapping + ratchets — T14
+//!   mapping — T14
 //!
 //! GIL boundaries: `push_ts` / `cut_segment` / `finish` / builder
 //! `build` release the GIL via `py.allow_threads` (disk + HTTP work is
 //! pure Rust). Read-only getters do not release it.
 //!
-//! Error mapping: `tst_hls::HlsError` → `tstrans.exceptions.HlsError`
-//! via `map_hls_error` (exhaustive over `HlsErrorKind`, with a wildcard
-//! for the `#[non_exhaustive]` enum). The Rust `HlsErrorKind` is
-//! 1-indexed; the Python `HlsErrorKind` IntEnum is 0-indexed — the
-//! mapping uses enum *names* so there's no off-by-one.
+//! Error mapping goes through `crate::raise` (Arc 2 WP-B2):
+//! `From<HlsError>`/`From<HlsUrlError>` for `BindingError` live next to
+//! the Rust types, and `raise` resolves the kind's `name()` on
+//! `tstrans.exceptions.HlsErrorKind` — checked at `import tstrans`, so
+//! there is no name table and no off-by-one to keep in sync.
 //!
-//! Two ratchets back this module:
-//! - the consolidated `scripts/check/python/error-mapping-coverage.sh` —
-//!   every `HlsErrorKind` variant has a `make_hls_error(py, "<KIND>", ...)`
-//!   call site.
-//! - `scripts/check/python/publisher-class-mirror.sh` — the Python
-//!   `Publisher` ABC's abstract methods mirror the Rust
-//!   `tst_core::publisher::Publisher` trait.
+//! One ratchet backs this module:
+//! `scripts/check/python/publisher-class-mirror.sh` — the Python
+//! `Publisher` ABC's abstract methods mirror the Rust
+//! `tst_core::publisher::Publisher` trait.
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
 use pyo3::prelude::*;
 
-use tst_hls::{HlsError, HlsUrlError};
+use tst_hls::HlsError;
 use tst_pipeline::MuxPublisherError;
 
 use crate::raise::{HLS, raise};
@@ -48,16 +45,6 @@ pub(crate) mod publisher_abc;
 // ---------------------------------------------------------------------------
 // Error mapping
 // ---------------------------------------------------------------------------
-
-/// Map a `tst_hls::HlsError` through the one raise path.
-pub(crate) fn map_hls_error(py: Python<'_>, e: HlsError) -> PyErr {
-    raise(py, &HLS, BindingError::from(e))
-}
-
-/// Map a `tst_hls::HlsUrlError` (from `builder.from_url`) — `URL`.
-pub(crate) fn map_hls_url_error(py: Python<'_>, e: HlsUrlError) -> PyErr {
-    raise(py, &HLS, BindingError::from(e))
-}
 
 /// Map a `tst_pipeline::MuxPublisherError<HlsError>` raised by a
 /// `MuxPublisher` send/cut.

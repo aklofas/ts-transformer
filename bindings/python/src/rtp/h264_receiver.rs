@@ -491,8 +491,10 @@ impl PyH264Receiver {
     /// `H264DepayConfig()` defaults are used (payload type is overridden
     /// from the URL's `?pt=` parameter regardless of `config.payload_type`).
     ///
-    /// Raises `RtpError(CLOSED)` on URL parse failure, missing `?pt=`,
-    /// or socket bind error.
+    /// Raises `RtpError(URL)` on URL parse failure,
+    /// `RtpError(MISSING_PAYLOAD_TYPE_PARAM)` when `?pt=` is absent
+    /// (`RtpError(PAYLOAD_TYPE_PARAM)` when it is present but out of
+    /// range), and `RtpError(IO)` on a socket bind error.
     #[staticmethod]
     #[pyo3(signature = (url, config = None))]
     fn listen(py: Python<'_>, url: &str, config: Option<&PyH264DepayConfig>) -> PyResult<Self> {
@@ -531,8 +533,8 @@ impl PyH264Receiver {
     /// Raises:
     /// - `RtpError(BACKPRESSURE)` if `timeout_ms` was given and no AU
     ///   completed within it — retryable, the receiver stays open.
-    /// - `RtpError(CLOSED)` on a hard I/O error or if the receiver is
-    ///   already closed.
+    /// - `RtpError(BROKEN)` on a hard I/O error.
+    /// - `RtpError(CLOSED)` if the receiver is already closed.
     #[pyo3(signature = (timeout_ms = None))]
     fn recv_au(
         &self,

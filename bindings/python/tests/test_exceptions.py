@@ -44,6 +44,25 @@ def test_codec_error_carries_codec_label():
     assert err.kind is CodecErrorKind.UNSUPPORTED_PROFILE
 
 
+def test_codec_error_buffer_too_small_carries_needed_and_have():
+    """0.7.0 added `CodecErrorKind.BUFFER_TOO_SMALL`, and
+    `codec_parse_error_to_pyerr` forwards `CodecParseError::BufferTooSmall
+    { needed, have }` as kwargs — so `CodecError.__init__` must accept
+    `have` (it did not when the member landed; the mapper would have
+    raised TypeError instead of the error it was building)."""
+    err = CodecError(
+        kind=CodecErrorKind.BUFFER_TOO_SMALL,
+        codec="h264",
+        message="output buffer too small",
+        needed=64,
+        have=16,
+    )
+    assert err.kind is CodecErrorKind.BUFFER_TOO_SMALL
+    assert (err.needed, err.have) == (64, 16)
+    with pytest.raises(TstError):
+        raise err
+
+
 def test_specific_error_catchable_as_base_class():
     try:
         raise MuxError(kind=MuxErrorKind.CONFIG_INVALID, message="x")

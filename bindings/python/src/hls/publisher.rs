@@ -35,7 +35,6 @@ use tst_hls::{HlsMode, HlsPublisher, HlsPublisherBuilder, HlsServerHandle};
 
 use crate::hls::config::{PyHlsMode, PyHlsStats};
 use crate::hls::publisher_abc::PyPublisherStats;
-use crate::hls::{map_hls_error, map_hls_url_error};
 use crate::raise::{HLS, raise};
 use tst_pipeline::binding::{BindingError, BindingErrorKind};
 
@@ -110,7 +109,7 @@ impl PyHlsPublisher {
             )
         })?;
         py.allow_threads(|| Publisher::push_ts(inner, slice))
-            .map_err(|e| map_hls_error(py, e))
+            .map_err(|e| raise(py, &HLS, BindingError::from(e)))
     }
 
     /// Hint that the next `push_ts` should start a new segment.
@@ -127,7 +126,7 @@ impl PyHlsPublisher {
             )
         })?;
         py.allow_threads(|| Publisher::cut_segment(inner))
-            .map_err(|e| map_hls_error(py, e))
+            .map_err(|e| raise(py, &HLS, BindingError::from(e)))
     }
 
     /// Hint a new segment, supplying its media-presentation duration in
@@ -146,7 +145,7 @@ impl PyHlsPublisher {
         })?;
         let dur = std::time::Duration::from_micros(media_duration_us);
         py.allow_threads(|| Publisher::cut_segment_with_duration(inner, dur))
-            .map_err(|e| map_hls_error(py, e))
+            .map_err(|e| raise(py, &HLS, BindingError::from(e)))
     }
 
     /// Finalize: flush the open segment, write the terminal playlist,
@@ -170,7 +169,7 @@ impl PyHlsPublisher {
             })?
         };
         py.allow_threads(|| Publisher::finish(inner))
-            .map_err(|e| map_hls_error(py, e))
+            .map_err(|e| raise(py, &HLS, BindingError::from(e)))
     }
 
     /// Like `finish()`, but keep the built-in HTTP server serving the
@@ -202,7 +201,7 @@ impl PyHlsPublisher {
         };
         let handle = py
             .allow_threads(|| inner.finish_serving())
-            .map_err(|e| map_hls_error(py, e))?;
+            .map_err(|e| raise(py, &HLS, BindingError::from(e)))?;
         Ok(PyHlsServerHandle::from_inner(handle))
     }
 
@@ -302,7 +301,7 @@ impl PyHlsPublisher {
         };
         if let Some(inner) = inner {
             py.allow_threads(|| Publisher::finish(inner))
-                .map_err(|e| map_hls_error(py, e))?;
+                .map_err(|e| raise(py, &HLS, BindingError::from(e)))?;
         }
         Ok(())
     }
@@ -441,7 +440,8 @@ impl PyHlsPublisherBuilder {
     /// setters overlay on top). Raises `HlsError(URL)` on a bad URL.
     fn from_url<'py>(mut slf: PyRefMut<'py, Self>, url: &str) -> PyResult<PyRefMut<'py, Self>> {
         let py = slf.py();
-        let b = HlsPublisherBuilder::from_url(url).map_err(|e| map_hls_url_error(py, e))?;
+        let b = HlsPublisherBuilder::from_url(url)
+            .map_err(|e| raise(py, &HLS, BindingError::from(e)))?;
         slf.inner = Some(b);
         Ok(slf)
     }
@@ -456,7 +456,7 @@ impl PyHlsPublisherBuilder {
             .ok_or_else(|| PyRuntimeError::new_err("HlsPublisherBuilder already consumed"))?;
         let pub_ = py
             .allow_threads(|| b.build())
-            .map_err(|e| map_hls_error(py, e))?;
+            .map_err(|e| raise(py, &HLS, BindingError::from(e)))?;
         Ok(PyHlsPublisher::from_inner(pub_))
     }
 

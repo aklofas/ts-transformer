@@ -108,10 +108,10 @@ impl PyUdpStats {
 /// the kernel `sendto` blocks.
 #[pyclass(name = "Transport", module = "tstrans.udp")]
 pub(crate) struct PyUdpTransport {
-    /// Shared slot (PR #209 shape): a `send` in flight on another thread
-    /// holds it with the GIL released; `close()` takes it afterwards, so
-    /// the next `send` raises `UdpError(CLOSED)` instead of the close
-    /// raising `RuntimeError: Already borrowed`.
+    /// The binding layer's handle state machine (Arc 2): a `send` in
+    /// flight on another thread holds the slot with the GIL released and
+    /// `close()` cancels-then-takes, so the next `send` raises
+    /// `UdpError(CLOSED)` rather than `RuntimeError: Already borrowed`.
     owned: Owned<SendHalf<UdpTransport>>,
 }
 
@@ -126,7 +126,7 @@ impl PyUdpTransport {
     /// Send one datagram payload. Accepts any bytes-like object:
     /// `bytes`, `bytearray`, `memoryview`, or any buffer-protocol object.
     ///
-    /// Raises `UdpError(kind=PAYLOAD_TOO_LARGE)` if `len(payload)` exceeds
+    /// Raises `UdpError(kind=TOO_LARGE)` if `len(payload)` exceeds
     /// the configured `pkt_size` (default 1316 bytes / 7 TS packets).
     ///
     /// Releases the GIL during the kernel send call.
@@ -283,14 +283,6 @@ impl PyUdpTransportBuilder {
 // PyUdpRecvTransport — wraps tst_udp::UdpRecvTransport
 // ---------------------------------------------------------------------------
 
-/// Raw UDP receiver — wraps `tst_udp::UdpRecvTransport`.
-///
-/// Construct via `RecvTransport.builder().bind_url("udp://0.0.0.0:0").build()`.
-/// Binding to port 0 lets the kernel pick a free port; read it back via
-/// `.local_addr_port()`.
-///
-/// GIL is released during `recv` so other Python threads remain live while
-/// waiting for a datagram.
 /// Transport + reusable scratch buffer under one lock (a `&self` `recv`
 /// cannot borrow a `scratch` field mutably).
 struct UdpRecvInner {
@@ -298,9 +290,6 @@ struct UdpRecvInner {
     scratch: Vec<u8>,
 }
 
-/// Longest single kernel wait inside `recv()`: the binding's own
-/// cancel-poll interval (same 100 ms cadence `tst_udp` uses internally),
-/// so a `close()` from another thread is observed within one slice.
 impl tst_pipeline::binding::Close for UdpRecvInner {
     type Error = core::convert::Infallible;
 
@@ -310,6 +299,10 @@ impl tst_pipeline::binding::Close for UdpRecvInner {
     }
 }
 
+/// Longest single kernel wait inside `recv()`: the binding's own
+/// cancel-poll interval (the same 100 ms cadence `tst_udp` uses
+/// internally), so a `close()` from another thread is observed within one
+/// slice.
 const RECV_POLL_SLICE: Duration = Duration::from_millis(100);
 
 /// Outcome of the polled receive loop, mapped to a `PyErr` once the GIL
@@ -321,6 +314,14 @@ enum UdpRecvOutcome {
     Failed(UdpError),
 }
 
+/// Raw UDP receiver — wraps `tst_udp::UdpRecvTransport`.
+///
+/// Construct via `RecvTransport.builder().bind_url("udp://0.0.0.0:0").build()`.
+/// Binding to port 0 lets the kernel pick a free port; read it back via
+/// `.local_addr_port()`.
+///
+/// GIL is released during `recv` so other Python threads remain live while
+/// waiting for a datagram.
 #[pyclass(name = "RecvTransport", module = "tstrans.udp")]
 pub(crate) struct PyUdpRecvTransport {
     /// The binding layer's handle state machine (Arc 2). Snapshot = the
@@ -344,8 +345,9 @@ impl PyUdpRecvTransport {
     /// Receive one datagram. Returns `(payload_bytes, sender_addr_str)`.
     ///
     /// `timeout_ms`: milliseconds to wait. `None` (default) blocks until a
-    /// datagram arrives. On timeout, raises `UdpError(kind=IO)` with the
-    /// message "recv timed out".
+    /// datagram arrives. On timeout, raises
+    /// `UdpError(kind=BACKPRESSURE)` with the message "recv timed out" —
+    /// retryable, the receiver stays open (it was `IO` before 0.7.0).
     ///
     /// Note: `sender_addr_str` is currently always an empty string; the
     /// underlying `recv_bytes` API does not expose the sender address.
@@ -425,9 +427,10 @@ impl PyUdpRecvTransport {
         }
     }
 
-    /// Close the receiver. Sets the stop flag BEFORE taking the slot, so a
-    /// `recv()` parked on another thread ends with `UdpError(kind=CLOSED)`
-    /// within ~100 ms; further `.recv()` calls raise the same. Idempotent.
+    /// Close the receiver. Cancel-first (`Owned::close` latches the shared
+    /// cancel before taking the slot), so a `recv()` parked on another
+    /// thread ends with `UdpError(kind=CLOSED)` within ~100 ms; further
+    /// `.recv()` calls raise the same. Idempotent.
     fn close(&self, py: Python<'_>) -> PyResult<()> {
         close_owned(py, &UDP, &self.owned)
     }

@@ -579,6 +579,7 @@ class CodecError(TstError):
     - `needed` / `had` on TRUNCATED
     - `got` on INVALID_LENGTH_SIZE
     - `nal_len` / `length_size` on NAL_LENGTH_OVERFLOW
+    - `needed` / `have` on BUFFER_TOO_SMALL (0.7.0)
     """
 
     def __init__(
@@ -603,6 +604,7 @@ class CodecError(TstError):
         got: Optional[int] = None,
         nal_len: Optional[int] = None,
         length_size: Optional[int] = None,
+        have: Optional[int] = None,
     ) -> None:
         super().__init__(f"{codec}: {message}")
         self.kind = kind
@@ -624,6 +626,7 @@ class CodecError(TstError):
         self.got = got
         self.nal_len = nal_len
         self.length_size = length_size
+        self.have = have
 
 
 __all__ = [

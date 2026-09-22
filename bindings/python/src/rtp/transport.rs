@@ -40,7 +40,10 @@ use crate::util::{CancelSource, close_owned};
 
 /// Every live `RtpTransport` / `RtpRecvTransport` has a cancel handle;
 /// the trait accessor is nonetheless an `Option`, so this converts the
-/// `None` that cannot happen into a loud `Internal` instead of `.expect`.
+/// `None` that cannot happen into a loud raise instead of `.expect`.
+/// `Internal` is not an `RtpErrorKind` member, so `raise` surfaces it as
+/// a bare `RuntimeError` (spec §5's forward-compat rule) — deliberate:
+/// it is a binding bug, not an RTP condition.
 pub(crate) fn rtp_cancel_source(
     py: Python<'_>,
     handle: Option<Arc<dyn TransportCancel + Send + Sync>>,
@@ -298,13 +301,6 @@ impl PySender {
 // PyReceiver — wraps tst_rtp::RtpRecvTransport
 // ---------------------------------------------------------------------------
 
-/// Python RTP receiver — wraps `tst_rtp::RtpRecvTransport`.
-///
-/// Binds to `url` (literal IP:port). For multicast URLs, joins the
-/// group automatically. The receive buffer sizes itself to the
-/// transport's deliverable ceiling; `?pkt_size=` on a receiver URL is
-/// rejected. The 12-byte RTP header is stripped internally so `.recv()`
-/// returns just the TS payload bytes.
 /// Transport + reusable scratch buffer, kept under one lock so a `&self`
 /// `recv` can fill the scratch without a second borrow.
 pub(crate) struct RtpRecvInner {
@@ -323,6 +319,13 @@ impl tst_pipeline::binding::Close for RtpRecvInner {
     }
 }
 
+/// Python RTP receiver — wraps `tst_rtp::RtpRecvTransport`.
+///
+/// Binds to `url` (literal IP:port). For multicast URLs, joins the
+/// group automatically. The receive buffer sizes itself to the
+/// transport's deliverable ceiling; `?pkt_size=` on a receiver URL is
+/// rejected. The 12-byte RTP header is stripped internally so `.recv()`
+/// returns just the TS payload bytes.
 #[pyclass(name = "Receiver", module = "tstrans.rtp")]
 pub(crate) struct PyReceiver {
     /// The binding layer's handle state machine (Arc 2): a parked `recv`
@@ -405,9 +408,19 @@ impl PyReceiver {
         // instead, so `END_OF_STREAM` is reachable and a caller can tell a
         // clean peer end (an RTSP teardown on a session-derived receiver)
         // from their own `close()`.
+        //
+        // GATED on the recorded end reason: `recv_bytes` also answers
+        // `Closed` when the pump's source is gone after a wire break
+        // (tst-rtp transport.rs:1086/1118/1122), and calling that "peer
+        // ended the stream" would be a lie. Only a recorded
+        // `CleanTeardown` is a peer EOS; everything else keeps `CLOSED`.
+        let clean_eos = matches!(
+            self.end_reason.get(),
+            Some(tst_rtp::StreamEndReason::CleanTeardown)
+        );
         let res = res.map(|r| {
             r.map_err(|e| match e {
-                TransportError::Closed => {
+                TransportError::Closed if clean_eos => {
                     BindingError::new(BindingErrorKind::EndOfStream, "peer ended the stream")
                 }
                 other => BindingError::from(other),
