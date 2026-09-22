@@ -27,9 +27,10 @@ use tst_core::mpegts::demux::{DemuxEvent, DemuxerConfig};
 use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec as MuxVideoCodec};
 use tst_pipeline::{BackoffStrategy, MuxSender, ReconnectPolicy, RecvEndReason, ShellErrorKind};
 use tst_srt::shells::{
-    managed_demux_receiver_from_url, managed_raw_receiver_from_url, managed_receiver_from_url,
+    managed_demux_receiver_from_url, managed_mux_sender_from_url, managed_raw_receiver_from_url,
+    managed_raw_sender_from_url, managed_receiver_from_url, managed_sender_from_url,
 };
-use tst_srt::{ListenerBuilder, SrtTransport, SrtUrl};
+use tst_srt::{ListenerBuilder, SrtError, SrtTransport, SrtUrl};
 use tst_test_helpers::synthetic_nal;
 
 const WATCHDOG: Duration = Duration::from_secs(10);
@@ -327,4 +328,179 @@ fn managed_raw_receiver_from_url_yields_the_peer_bytes() {
     stop.store(true, Ordering::SeqCst);
     rx.close();
     accept.join();
+}
+
+/// The wiring the C recv-side getter used to get wrong (it copied
+/// `successes` into `reconnect_attempts` with an apology):
+/// [`ManagedHandles::attempts`] is the factory-CALL counter, and on a
+/// stream whose peer is gone for good the two must diverge — attempts
+/// climb to the budget while reconnects stay 0. This is the only test that
+/// tells the two handles apart through the whole `from_url` composition;
+/// everywhere else a healthy stream reads 0 for both.
+///
+/// `?conntimeo=300` keeps the dead re-dials fast: the URL wins over the
+/// 15 s sender-preset connect timeout `connect()` merges underneath it.
+#[test]
+fn recv_handles_attempts_count_failed_factory_calls_not_successes() {
+    require_loopback!();
+    let lb = crate::common::Loopback::bind();
+    let port = lb.port;
+    let stop = Arc::new(AtomicBool::new(false));
+    let peer_stop = Arc::clone(&stop);
+    let accept = lb.spawn_accept(move |sock| send_until(sock, null_ts_bundle(), peer_stop));
+    accept.wait_ready();
+
+    let url = SrtUrl::parse(&format!(
+        "srt://127.0.0.1:{port}?x-recvtimeout=1000&conntimeo=300"
+    ))
+    .expect("parse");
+    let policy = ReconnectPolicy {
+        max_attempts: Some(3),
+        backoff: BackoffStrategy::Constant(Duration::ZERO),
+        ..Default::default()
+    };
+    let (mut rx, handles) =
+        managed_receiver_from_url(&url, policy).expect("managed_receiver_from_url");
+    rx.next_packet().expect("the stream is live before the cut");
+
+    // Cut the peer AND its listener: the closure returning drops the
+    // accepted socket, and `spawn_accept` already moved the listener into
+    // that thread — so every re-dial from here on has nothing to reach.
+    stop.store(true, Ordering::SeqCst);
+    accept.join();
+
+    let deadline = Instant::now() + WATCHDOG;
+    loop {
+        if Instant::now() >= deadline {
+            panic!(
+                "the stream never ended (attempts={}, reconnects={})",
+                handles.attempts.load(Ordering::Acquire),
+                handles.reconnects.load(Ordering::Acquire)
+            );
+        }
+        match rx.next_packet() {
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
+
+    assert_eq!(
+        handles.attempts.load(Ordering::Acquire),
+        3,
+        "every factory call is counted — the budget was spent"
+    );
+    assert_eq!(
+        handles.reconnects.load(Ordering::Acquire),
+        0,
+        "not one of those calls produced a transport"
+    );
+    rx.close();
+}
+
+/// A managed mux sender from a URL pushes a bundle the peer receives;
+/// the sender's handles report no reconnect activity and a never-set end
+/// reason.
+#[test]
+fn managed_mux_sender_from_url_sends_bundles() {
+    require_loopback!();
+    let lb = crate::common::Loopback::bind();
+    let port = lb.port;
+    let accept = lb.spawn_accept(|mut sock| {
+        let mut buf = [0u8; 1500];
+        let n = sock.recv(&mut buf).expect("recv");
+        buf[..n].to_vec()
+    });
+    accept.wait_ready();
+
+    let url = SrtUrl::parse(&format!("srt://127.0.0.1:{port}?latency=120")).expect("parse");
+    let (tx, handles, stats) =
+        managed_mux_sender_from_url(&url, ReconnectPolicy::default(), video_only_config())
+            .expect("managed_mux_sender_from_url");
+    // A 5000-byte AU spans ≥ 27 TS packets, so at least one full
+    // 7-packet bundle leaves the muxer on this single push.
+    let nal = synthetic_nal::h264_au(5000, true);
+    tx.send_video(&nal, Pts90khz::new(0), true)
+        .expect("send_video");
+
+    let received = accept.join();
+    assert_eq!(received.len(), 1316, "one 7×188 bundle");
+    assert_eq!(received[0], 0x47);
+    assert_eq!(handles.attempts.load(Ordering::Acquire), 0);
+    assert_eq!(handles.reconnects.load(Ordering::Acquire), 0);
+    assert!(
+        !handles.reconnecting.load(Ordering::Acquire),
+        "Blocking mode: never set"
+    );
+    assert!(
+        handles.end_reason.get().is_none(),
+        "senders never record an end reason"
+    );
+    // The stats handle is the live gap/reconnect telemetry the bindings'
+    // reconnect_stats() read; a healthy stream shows zeros.
+    let s = stats.stats().expect("no poison");
+    assert_eq!(
+        (s.reconnect_attempts, s.reconnect_successes, s.gap_len),
+        (0, 0, 0)
+    );
+    tx.close();
+}
+
+/// The raw-bytes sender twin (C's `tst_managed_raw_sender`).
+#[test]
+fn managed_raw_sender_from_url_sends_the_bytes() {
+    require_loopback!();
+    let lb = crate::common::Loopback::bind();
+    let port = lb.port;
+    let accept = lb.spawn_accept(|mut sock| {
+        let mut buf = [0u8; 1500];
+        let n = sock.recv(&mut buf).expect("recv");
+        buf[..n].to_vec()
+    });
+    accept.wait_ready();
+
+    let url = SrtUrl::parse(&format!("srt://127.0.0.1:{port}")).expect("parse");
+    let (mut tx, handles, stats) = managed_raw_sender_from_url(
+        &url,
+        ReconnectPolicy::default(),
+        tst_pipeline::RawSenderConfig::default(),
+    )
+    .expect("managed_raw_sender_from_url");
+    tx.send(b"raw bytes through a managed raw sender")
+        .expect("send");
+
+    assert_eq!(accept.join(), b"raw bytes through a managed raw sender");
+    assert!(handles.end_reason.get().is_none());
+    assert_eq!(stats.stats().expect("no poison").reconnect_attempts, 0);
+    tx.close();
+}
+
+/// Senders are caller-only; `?mode=listener` is refused before any socket
+/// is touched (no loopback needed).
+#[test]
+fn sender_from_url_refuses_listener_mode_without_touching_the_network() {
+    let url = SrtUrl::parse("srt://127.0.0.1:9000?mode=listener").expect("parse");
+
+    let err = managed_sender_from_url(
+        &url,
+        ReconnectPolicy::default(),
+        tst_pipeline::SenderConfig::default(),
+    )
+    .err()
+    .expect("listener mode must be refused");
+    assert!(matches!(err, SrtError::Option(_)), "{err:?}");
+    assert!(err.to_string().contains("callers only"), "{err}");
+
+    let err = managed_mux_sender_from_url(&url, ReconnectPolicy::default(), video_only_config())
+        .err()
+        .expect("listener mode must be refused");
+    assert!(matches!(err, SrtError::Option(_)), "{err:?}");
+
+    let err = managed_raw_sender_from_url(
+        &url,
+        ReconnectPolicy::default(),
+        tst_pipeline::RawSenderConfig::default(),
+    )
+    .err()
+    .expect("listener mode must be refused");
+    assert!(matches!(err, SrtError::Option(_)), "{err:?}");
 }
