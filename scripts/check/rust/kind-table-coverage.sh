@@ -13,9 +13,11 @@
 # `kind_of_<domain>` wrappers just default None to INTERNAL and hold no arms.
 # TransportError's arms are still inline in `kind_of_transport`.
 #
-# MuxError is deliberately not a row: kind_of_mux keeps four overrides and
-# delegates everything else to MuxError::kind(), whose own per-variant
-# coverage is scripts/check/rust/mux-error-kind-coverage.sh.
+# MuxError itself is deliberately not a row: kind_of_mux keeps four overrides
+# and delegates everything else to MuxError::kind(), whose own per-variant
+# coverage is scripts/check/rust/mux-error-kind-coverage.sh. MuxErrorKind IS a
+# row — the buckets kind_of_mux folds onto live in map_mux_kind, behind their
+# own wildcard, and nothing else watches them.
 #
 # Same extractor as scripts/check/c/raw-mapper-coverage.sh (deleted in WP-B1).
 # GNU grep -P → Linux only; CI runs it on the linux-x86_64 leg.
@@ -39,6 +41,7 @@ ENUMS=(
     "crates/tst-core/src/error.rs|KlvFieldError|map_klv_field"
     "crates/tst-core/src/error.rs|KlvEncodeError|map_klv_encode"
     "crates/tst-core/src/codec/mod.rs|CodecParseError|map_codec"
+    "crates/tst-core/src/error.rs|MuxErrorKind|map_mux_kind"
 )
 
 # Prints the classifier's body up to (not including) its `_ =>` wildcard arm.

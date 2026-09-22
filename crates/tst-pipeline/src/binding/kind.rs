@@ -358,20 +358,32 @@ fn unmapped(enum_name: &str, e: &dyn core::fmt::Debug) -> BindingError {
 /// per-variant coverage is `scripts/check/rust/mux-error-kind-coverage.sh`
 /// (tst-core). Both matches need a wildcard (`MuxError` and `MuxErrorKind`
 /// are `#[non_exhaustive]` in tst-core).
+/// The five `MuxErrorKind` buckets, 1:1. Its own function rather than an inner
+/// match so `scripts/check/rust/kind-table-coverage.sh` can anchor on it: the
+/// extractor stops at the FIRST wildcard in a function, which for `kind_of_mux`
+/// is the outer `_ => …` — these arms would sit behind it, uncovered.
+///
+/// `Internal` here is a real bucket AND the wildcard's default; that is
+/// harmless because this classifier feeds no unmapped detail (`From<MuxError>`
+/// always surfaces the error's own `Display`).
+fn map_mux_kind(k: MuxErrorKind) -> BindingErrorKind {
+    match k {
+        MuxErrorKind::InputMalformed => BindingErrorKind::InputMalformed,
+        MuxErrorKind::ConfigInvalid => BindingErrorKind::ConfigInvalid,
+        MuxErrorKind::InvalidUsage => BindingErrorKind::InvalidUsage,
+        MuxErrorKind::Backpressure => BindingErrorKind::Backpressure,
+        MuxErrorKind::Internal => BindingErrorKind::Internal,
+        _ => BindingErrorKind::Internal,
+    }
+}
+
 pub fn kind_of_mux(e: &MuxError) -> BindingErrorKind {
     match e {
         MuxError::InvalidNal => BindingErrorKind::InvalidNal,
         MuxError::InvalidAv1Obu => BindingErrorKind::InvalidAv1Obu,
         MuxError::MispTime(_) => BindingErrorKind::MispTime,
         MuxError::KlvTooLarge { .. } => BindingErrorKind::KlvTooLarge,
-        _ => match e.kind() {
-            MuxErrorKind::InputMalformed => BindingErrorKind::InputMalformed,
-            MuxErrorKind::ConfigInvalid => BindingErrorKind::ConfigInvalid,
-            MuxErrorKind::InvalidUsage => BindingErrorKind::InvalidUsage,
-            MuxErrorKind::Backpressure => BindingErrorKind::Backpressure,
-            MuxErrorKind::Internal => BindingErrorKind::Internal,
-            _ => BindingErrorKind::Internal,
-        },
+        _ => map_mux_kind(e.kind()),
     }
 }
 
