@@ -41,12 +41,13 @@
 //! # Cargo features
 //!
 //! - `std` (default-on) — the full pipeline surface, adding the `Managed*`
-//!   reconnect wrappers, `MuxPublisher`, and `ext::pairing` on top of the
+//!   reconnect wrappers, `MuxPublisher`, `ext::pairing`, and the
+//!   binding-shared [`binding`] layer on top of the
 //!   sender and receiver shells. With `--no-default-features` the crate is
 //!   `#![no_std]` + `alloc` and exposes the **sender** shells
 //!   (`MuxSender`/`Sender`/`RawSender`) and the **receiver** shells
 //!   (`Receiver`/`DemuxReceiver`/`RawReceiver`) for bare-metal / FreeRTOS
-//!   use; the `Managed*` wrappers, `MuxPublisher`, and `ext::pairing` stay
+//!   use; the `Managed*` wrappers, `MuxPublisher`, `ext::pairing`, and `binding` stay
 //!   `std`-only. The embedding binary must supply a `#[global_allocator]`.
 //!   Verified in CI against `thumbv7em-none-eabihf` and
 //!   `riscv32imac-unknown-none-elf`, and at runtime under QEMU. Under no_std
@@ -68,6 +69,8 @@ extern crate alloc;
 
 mod mutex;
 
+#[cfg(feature = "std")]
+pub mod binding;
 pub mod demux_receiver;
 pub mod dyn_aliases;
 #[cfg(feature = "std")]
