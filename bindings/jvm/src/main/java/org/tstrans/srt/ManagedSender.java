@@ -82,7 +82,7 @@ public final class ManagedSender extends NativeHandle {
      *
      * @param data TS bytes to send (any length; need not be packet-aligned)
      * @throws IllegalStateException if the sender is closed
-     * @throws SrtException {@code WOULD_BLOCK} on backpressure; {@code BROKEN}
+     * @throws SrtException {@code BACKPRESSURE} on backpressure; {@code BROKEN}
      *     if the transport is broken past the reconnect budget; {@code IO} otherwise
      */
     public void sendBytes(byte[] data) throws SrtException {

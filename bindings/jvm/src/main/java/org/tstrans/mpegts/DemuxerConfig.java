@@ -77,7 +77,7 @@ public final class DemuxerConfig {
         /**
          * Pre-sync ingress buffer ceiling in bytes; {@code 0} = use the Rust default (4 MiB).
          * A single {@code feed()} call larger than this ceiling throws {@link org.tstrans.DemuxException}
-         * (kind {@code SYNC_LOSS}) before any bytes are consumed; feed in smaller chunks,
+         * (kind {@code SYNC_BUF_EXHAUSTED}) before any bytes are consumed; feed in smaller chunks,
          * or raise this ceiling. Rejects negatives.
          */
         public Builder syncBufCap(long v) { this.syncBufCap = requireNonNegativeCap(v, "syncBufCap"); return this; }

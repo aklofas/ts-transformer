@@ -27,7 +27,7 @@ import org.tstrans.mpegts.DemuxEvent;
  * whichever site observed the terminal condition. Two of its three variants are
  * reachable from the managed-SRT path today (see {@code RecvEndReason}'s
  * javadoc): {@code RECONNECT_EXHAUSTED} when the reconnect budget runs out,
- * {@code CANCELLED} on a caller-fired cancel. {@code END_OF_STREAM} is not
+ * {@code CLOSED} on a caller-fired cancel. {@code END_OF_STREAM} is not
  * produced here.
  */
 class SrtManagedEndReasonTest {

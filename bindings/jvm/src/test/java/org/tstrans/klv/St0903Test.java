@@ -356,7 +356,7 @@ class St0903Test {
 
     @Test
     void encodeVmtiStrictComplianceEmptyPackThrows() {
-        // A VTargetPack with no TLV items (only target_id) triggers VTARGET_PACK_EMPTY.
+        // A VTargetPack with no TLV items (only target_id) triggers V_TARGET_PACK_EMPTY.
         VmtiLs rec = new VmtiLs.Builder()
                 .versionNumber(6)
                 .numTargetsReported(1L)

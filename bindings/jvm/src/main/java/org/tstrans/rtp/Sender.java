@@ -36,14 +36,14 @@ public final class Sender extends NativeHandle {
      * @param pktSize UDP datagram size (RTP header + TS payload); must be &ge; 0
      * @param ssrc    RTP synchronization source identifier (unsigned 32-bit), or
      *                {@code null} to let the transport pick a random one
-     * @throws RtpException {@code TRANSPORT} on URL-parse / bind / connect failure
+     * @throws RtpException {@code IO} on URL-parse / bind / connect failure
      * @throws IllegalArgumentException if {@code pktSize} is negative or {@code ssrc} is out of u32 range
      */
     public static Sender fromUrl(String url, int pktSize, Long ssrc) throws RtpException {
         if (pktSize < 0) throw new IllegalArgumentException("pktSize must be >= 0: " + pktSize);
         long h = nFromUrl(url, pktSize, ssrc);
         if (h == 0) {
-            throw new RtpException(RtpException.Kind.TRANSPORT, "nFromUrl returned 0 without throwing");
+            throw new RtpException(RtpException.Kind.IO, "nFromUrl returned 0 without throwing");
         }
         return new Sender(h);
     }
@@ -52,8 +52,8 @@ public final class Sender extends NativeHandle {
      * Send one chunk of pre-muxed TS bytes over RTP.
      *
      * @throws IllegalStateException if the sender is closed
-     * @throws RtpException {@code MALFORMED_PACKET} if the payload exceeds the
-     *     datagram cap; {@code CANCELLED} if a cancel fired; {@code TRANSPORT} otherwise
+     * @throws RtpException {@code TOO_LARGE} if the payload exceeds the
+     *     datagram cap; {@code CLOSED} if a cancel fired; {@code IO} otherwise
      */
     public void send(byte[] data) throws RtpException {
         ensureOpen("Sender is closed");
@@ -69,7 +69,7 @@ public final class Sender extends NativeHandle {
     /**
      * Return a shareable cancel handle. Calling {@link CancelHandle#cancel()}
      * wakes a thread parked in {@link #send}; that call throws
-     * {@code RtpException(CANCELLED)}.
+     * {@code RtpException(CLOSED)}.
      */
     public CancelHandle cancelHandle() {
         ensureOpen("Sender is closed");

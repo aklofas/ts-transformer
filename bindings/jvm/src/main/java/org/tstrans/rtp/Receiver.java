@@ -30,12 +30,12 @@ public final class Receiver extends NativeHandle {
      *  multicast). The receive buffer sizes itself to the transport's
      *  deliverable ceiling; {@code ?pkt_size=} on a receiver URL is rejected.
      *
-     * @throws RtpException {@code TRANSPORT} on URL-parse / bind failure
+     * @throws RtpException {@code IO} on URL-parse / bind failure
      */
     public static Receiver fromUrl(String url) throws RtpException {
         long h = nFromUrl(url);
         if (h == 0) {
-            throw new RtpException(RtpException.Kind.TRANSPORT, "nFromUrl returned 0 without throwing");
+            throw new RtpException(RtpException.Kind.IO, "nFromUrl returned 0 without throwing");
         }
         return new Receiver(h);
     }
@@ -44,7 +44,7 @@ public final class Receiver extends NativeHandle {
      * Receive one TS payload chunk. Blocks until a packet arrives or a cancel fires.
      *
      * @throws IllegalStateException if the receiver is closed
-     * @throws RtpException {@code CANCELLED} if a cancel fired; {@code TRANSPORT} otherwise;
+     * @throws RtpException {@code CLOSED} if a cancel fired; {@code IO} otherwise;
      *     {@code TIMEOUT} if a configured persistent recv deadline (the
      *     {@code ?recv_timeout=<ms>} URL knob) expires
      * @see #recv(Integer) for a per-call deadline instead of (or on top of) a
@@ -66,7 +66,7 @@ public final class Receiver extends NativeHandle {
      *     {@code null} (blocks indefinitely) — there is no separate
      *     "immediate timeout" or rejected-argument case.
      * @throws IllegalStateException if the receiver is closed
-     * @throws RtpException {@code CANCELLED} if a cancel fired; {@code TRANSPORT}
+     * @throws RtpException {@code CLOSED} if a cancel fired; {@code IO}
      *     otherwise; {@code TIMEOUT} if {@code timeoutMs} elapses, or (when
      *     {@code timeoutMs} is {@code null}) a configured persistent recv
      *     deadline expires
@@ -85,7 +85,7 @@ public final class Receiver extends NativeHandle {
     /**
      * Return a shareable cancel handle. Calling {@link CancelHandle#cancel()}
      * wakes a thread parked in {@link #recv}; that call throws
-     * {@code RtpException(CANCELLED)}.
+     * {@code RtpException(CLOSED)}.
      */
     public CancelHandle cancelHandle() {
         ensureOpen("Receiver is closed");

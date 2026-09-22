@@ -64,12 +64,12 @@ public final class DemuxReceiver extends NativeHandle implements Iterable<DemuxE
      *
      * @param url {@code rtp://host:port} (unicast or multicast)
      * @return a bound {@code DemuxReceiver}
-     * @throws RtpException {@code TRANSPORT} on URL-parse / socket-bind failure
+     * @throws RtpException {@code IO} on URL-parse / socket-bind failure
      */
     public static DemuxReceiver fromUrl(String url) throws RtpException {
         long h = nFromUrl(url);
         if (h == 0) {
-            throw new RtpException(RtpException.Kind.TRANSPORT,
+            throw new RtpException(RtpException.Kind.IO,
                 "nFromUrl returned 0 without throwing");
         }
         return new DemuxReceiver(h);
@@ -92,7 +92,7 @@ public final class DemuxReceiver extends NativeHandle implements Iterable<DemuxE
             demuxConfig.lenientPsiReassembly(), demuxConfig.syncBufCap(),
             demuxConfig.unwrapTimestamps());
         if (h == 0) {
-            throw new RtpException(RtpException.Kind.TRANSPORT,
+            throw new RtpException(RtpException.Kind.IO,
                 "nFromUrlWithConfig returned 0 without throwing");
         }
         return new DemuxReceiver(h);
@@ -109,7 +109,7 @@ public final class DemuxReceiver extends NativeHandle implements Iterable<DemuxE
      * exceptions), this method surfaces them directly as catchable checked
      * exceptions — in particular, a configured persistent recv deadline (the
      * {@code ?recv_timeout=<ms>} URL knob) expiring throws
-     * {@code RtpException(TIMEOUT)} here rather than a wrapped
+     * {@code RtpException(BACKPRESSURE)} here rather than a wrapped
      * {@code RuntimeException}. The receiver stays usable after a
      * {@code TIMEOUT} (retryable) — a subsequent {@code recvEvent()} call
      * resumes normally.
@@ -120,7 +120,7 @@ public final class DemuxReceiver extends NativeHandle implements Iterable<DemuxE
      *
      * @return the next {@link DemuxEvent}, or {@code null} at end of stream
      * @throws IllegalStateException if the receiver is closed
-     * @throws RtpException {@code CANCELLED} if a cancel fired; {@code TRANSPORT}
+     * @throws RtpException {@code CLOSED} if a cancel fired; {@code IO}
      *     otherwise; {@code TIMEOUT} if the persistent {@code ?recv_timeout=}
      *     deadline expires
      * @throws DemuxException on a demux-side error
@@ -141,7 +141,7 @@ public final class DemuxReceiver extends NativeHandle implements Iterable<DemuxE
      *
      * <p>A cross-thread {@link #close()} (the watchdog pattern below) does NOT end
      * iteration via a clean {@code null}/EOF: it cancels the in-flight recv, which
-     * surfaces as an {@link RtpException} of kind {@code CANCELLED} wrapped in a
+     * surfaces as an {@link RtpException} of kind {@code CLOSED} wrapped in a
      * {@code RuntimeException}. Catch that to distinguish a deliberate teardown
      * from a real error.
      *
