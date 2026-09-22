@@ -196,7 +196,11 @@ impl<T, S> Owned<T, S> {
     /// but a panic mid-mutation leaves `T` in an unknown state, so the slot
     /// is DROPPED: the panicking call reports `Panicked` and every later
     /// call reports `Closed` (the std-poisoning model; also what the C and
-    /// JVM bindings did before Arc 2). Readers ([`Self::with_ref`]) keep
+    /// JVM bindings did before Arc 2). That drop happens inside its own
+    /// panic boundary, so a panicking `T::Drop` cannot poison the mutex and
+    /// turn the promised `Closed` into `Poisoned` — the drop panic is
+    /// swallowed and the closure's original panic is what is reported.
+    /// Readers ([`Self::with_ref`]) keep
     /// the slot: a `&T` closure can only mutate through interior mutability,
     /// and every such interior (transport mutex, atomics) carries its own
     /// poison/latch rule — A1.9 records the per-site audit.
@@ -208,7 +212,14 @@ impl<T, S> Owned<T, S> {
         match panic::catch(|| f(guard.as_mut().expect("checked non-empty above"))) {
             Ok(r) => Ok(r),
             Err(detail) => {
-                *guard = None; // drop T here, under the lock
+                // Drop `T` here, under the lock — but inside its own panic
+                // boundary: this runs while the guard is held, so a
+                // panicking `Drop` escaping would poison the mutex and every
+                // later call would answer `Poisoned` instead of the promised
+                // `Closed`. The ORIGINAL closure panic is what gets
+                // reported; a drop panic is swallowed.
+                let taken = guard.take();
+                let _ = panic::catch(move || drop(taken));
                 Err(HandleState::Panicked { detail })
             }
         }
@@ -568,6 +579,49 @@ mod tests {
             "dropped, not Close::close()d — the state is unknown"
         );
         assert!(f.owned.close().is_ok(), "close() after a panic is quiet");
+    }
+
+    #[test]
+    fn with_mut_panic_with_a_panicking_drop_still_reports_closed_next() {
+        // Dropping the value after a mutator panic happens under the guard,
+        // so it must be inside its own panic boundary: an escaping `Drop`
+        // panic would poison the mutex and every later `with_mut` would
+        // answer `Poisoned` instead of the `Closed` the contract promises.
+        struct DropPanics;
+        impl Drop for DropPanics {
+            fn drop(&mut self) {
+                panic!("drop boom in with_mut");
+            }
+        }
+
+        let flag = Arc::new(AtomicBool::new(false));
+        let owned = Owned::new(
+            DropPanics,
+            Arc::new(MockCancel {
+                calls: AtomicU32::new(0),
+                flag,
+            }) as Arc<dyn TransportCancel>,
+            (),
+        );
+
+        let r = owned.with_mut(|_| -> u32 { panic!("mutator boom") });
+        assert_eq!(
+            r,
+            Err(HandleState::Panicked {
+                detail: String::from("mutator boom")
+            }),
+            "the ORIGINAL mutator panic is what gets reported, not the drop's"
+        );
+        assert!(
+            !owned.inner.is_poisoned(),
+            "a panicking Drop must not poison the mutex"
+        );
+        assert_eq!(
+            owned.with_mut(|_: &mut DropPanics| 0u32),
+            Err(HandleState::Closed),
+            "the contract promises Closed after a mutator panic, never Poisoned"
+        );
+        assert!(owned.is_closed());
     }
 
     #[test]
