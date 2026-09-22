@@ -1439,7 +1439,39 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed — binding layer (WP-A1)
 
-- (pending)
+- **New `std`-only module `tst_pipeline::binding`** (Provisional) — the
+  layer the C, Python and JVM bindings will project instead of each carrying
+  its own handle/poison/panic policy (Arc 2, deep review #4 ARCH-02/03).
+  - `binding::owned::Owned<T, S>`: one `Mutex<Option<T>>` slot per binding
+    object with `with_mut` (the only lock site; refuses a poisoned mutex with
+    `HandleState::Poisoned`), `with_ref` / `take` (recover a poisoned mutex),
+    the NON-BLOCKING probes `is_closed()` / `try_with_ref()` (a slot another
+    thread holds is reported open / `None`, never waited on — the
+    `is_alive()` / `repr()` shape Python's `slot_alive` had), lock-free
+    `cancel()` / `cancel_arc()` (the shareable handle a binding's
+    `cancel_handle()` returns; a cancel through it latches `is_cancelled()`)
+    / `is_cancelled()` / `snapshot()` / `end_reason()` (the
+    PR #189 and #234 hang classes cannot recur through this type), and
+    `close()` = cancel-first → take → `Close::close` outside the lock; a
+    second `close()` is `Ok(())`. A panic inside a closure is reported as
+    `HandleState::Panicked { detail }` and does **not** poison the slot.
+  - `binding::owned::{Close, HandleState, CloseFailure}` — `Close` is
+    implemented for `Sender`, `RawSender`, `MuxSender`, `Receiver`,
+    `RawReceiver`, `DemuxReceiver`, `ManagedDemuxReceiver` (all
+    `Error = Infallible`, `binding::shells`) and for raw transports through
+    `binding::shells::{SendHalf, RecvHalf}`; `HandleState` is
+    `#[non_exhaustive]`.
+  - `binding::owned::FlagCancel` — a flag-only `TransportCancel` for shells
+    with no wake-up of their own (`udp://` / `rist://` until Arc 2 WP-D
+    ships their real handles; replaces the JVM binding's `NoopCancel`);
+    `is_set()` reads it until `TransportCancel::is_cancelled` lands (WP-C1).
+  - `binding::panic::{catch, payload_message}` — the single definition of the
+    `catch_unwind` + payload-to-string helper `tst-c`'s `ffi_catch` and
+    `tst-jni`'s `jni_catch` each duplicated; the twins are deleted when the
+    bindings re-point (WP-B1/WP-B3). Message text unchanged
+    (`"non-string panic payload"` fallback).
+- Additive only: no existing `tst-pipeline` item changed; `Owned::is_cancelled`
+  reads the local latch until `TransportCancel::is_cancelled` lands (WP-C1).
 
 ### Changed — error kinds (WP-A2)
 
