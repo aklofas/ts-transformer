@@ -28,7 +28,8 @@ use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec a
 use tst_pipeline::{BackoffStrategy, MuxSender, ReconnectPolicy, RecvEndReason, ShellErrorKind};
 use tst_srt::shells::{
     managed_demux_receiver_from_url, managed_mux_sender_from_url, managed_raw_receiver_from_url,
-    managed_raw_sender_from_url, managed_receiver_from_url, managed_sender_from_url,
+    managed_raw_sender_from_url, managed_receiver_from_url, managed_recv_transport_from_url,
+    managed_sender_from_url,
 };
 use tst_srt::{ListenerBuilder, SrtError, SrtTransport, SrtUrl};
 use tst_test_helpers::synthetic_nal;
@@ -199,13 +200,26 @@ fn cancel_handle_ends_a_parked_recv_and_records_cancelled() {
             .expect("managed_demux_receiver_from_url");
 
     // The parked recv runs on its own thread: a cancel that fails to wake
-    // it surfaces as a FAILED test at the watchdog, never a hung one.
+    // it surfaces as a FAILED test at the watchdog, never a hung one. The
+    // reader latches `entered` immediately before the call, so the cancel
+    // lands on a recv that has actually started — a fixed sleep would be
+    // setup dressed up as proof.
+    let entered = Arc::new(AtomicBool::new(false));
+    let reader_entered = Arc::clone(&entered);
     let reader = std::thread::spawn(move || {
+        reader_entered.store(true, Ordering::SeqCst);
         let outcome = rx.recv_event();
         rx.close();
         outcome
     });
-    std::thread::sleep(Duration::from_millis(300)); // let the recv park
+    let entry_deadline = Instant::now() + WATCHDOG;
+    while !entered.load(Ordering::SeqCst) {
+        assert!(
+            Instant::now() < entry_deadline,
+            "the reader thread never reached recv_event"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
     handles.cancel.cancel();
 
     let deadline = Instant::now() + WATCHDOG;
@@ -330,6 +344,106 @@ fn managed_raw_receiver_from_url_yields_the_peer_bytes() {
     accept.join();
 }
 
+/// `?mode=listener` through the receiver family: the open BINDS and waits
+/// for a peer to dial in, it does not dial out. Nothing else in this file
+/// exercises the listener arm of `shells::open`, and without this a
+/// mutation of that arm to `url.connect()` passes every other test here.
+///
+/// The discriminator is the direction: the peer is the CALLER, so a
+/// mutated family that dialled `127.0.0.1:{port}` would find nothing
+/// listening and fail fast with a `ConnectError` — and the open would
+/// never have bound the port the peer is retrying against, so this test
+/// fails on evidence rather than by timing out.
+#[test]
+fn managed_receiver_from_url_in_listener_mode_accepts_a_dialling_peer() {
+    require_loopback!();
+    // A port the peer can name before the listener under test binds it.
+    let probe = std::net::UdpSocket::bind("127.0.0.1:0").expect("reserve an ephemeral port");
+    let port = probe.local_addr().expect("local_addr").port();
+    drop(probe);
+
+    // Caller-side peer: retry until the family's first accept has bound,
+    // then stream until released (same reason as every other peer here).
+    let stop = Arc::new(AtomicBool::new(false));
+    let peer_stop = Arc::clone(&stop);
+    let peer = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let sock = loop {
+            match tst_srt::SocketBuilder::new()
+                .connect_timeout(Duration::from_millis(500))
+                .connect(format!("127.0.0.1:{port}"))
+            {
+                Ok(s) => break s,
+                Err(e) => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "the family never bound {port} for a caller to dial: {e:?}"
+                    );
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+            }
+        };
+        send_until(sock, null_ts_bundle(), peer_stop);
+    });
+
+    let url = SrtUrl::parse(&format!(
+        "srt://127.0.0.1:{port}?mode=listener&x-recvtimeout=5000"
+    ))
+    .expect("parse");
+    let (mut rx, handles) = managed_receiver_from_url(&url, no_reconnect())
+        .expect("listener-mode open accepts the dialling peer");
+    let pkt = rx.next_packet().expect("first aligned packet");
+    assert_eq!(pkt[0], 0x47);
+    assert_eq!(
+        handles.attempts.load(Ordering::Relaxed),
+        0,
+        "the FIRST accept is the initial open, not a factory call"
+    );
+
+    stop.store(true, Ordering::SeqCst);
+    rx.close();
+    peer.join().expect("peer thread");
+}
+
+/// The listener family's first accept runs through the slot the CALLER
+/// passed, not one the function made up: a slot cancelled before the call
+/// makes `managed_recv_transport_from_url` return without binding
+/// anything. This is what `managed_recv_transport_from_url` exists for
+/// (DEBT-16 for Rust callers) and the only direct evidence that the first
+/// accept and the re-accepts share one slot. No peer, no network.
+#[test]
+fn managed_recv_transport_from_url_first_accept_runs_through_the_caller_slot() {
+    require_loopback!();
+    let probe = std::net::UdpSocket::bind("127.0.0.1:0").expect("reserve an ephemeral port");
+    let port = probe.local_addr().expect("local_addr").port();
+    drop(probe);
+
+    let url = SrtUrl::parse(&format!("srt://127.0.0.1:{port}?mode=listener")).expect("parse");
+    let slot = Arc::new(tst_pipeline::FactoryCancel::new());
+    slot.cancel();
+
+    let start = Instant::now();
+    let err = managed_recv_transport_from_url(&url, no_reconnect(), Arc::clone(&slot))
+        .err()
+        .expect("a pre-cancelled slot must abort the first accept");
+    assert!(
+        matches!(
+            err,
+            SrtError::Transport(tst_pipeline::TransportError::ExplicitClose)
+        ),
+        "{err:?}"
+    );
+    assert!(
+        start.elapsed() < WATCHDOG,
+        "the cancelled open must return promptly, took {:?}",
+        start.elapsed()
+    );
+    // Nothing was left listening: a plain UDP bind on the same port
+    // fails while an SRT listener holds it.
+    std::net::UdpSocket::bind(("127.0.0.1", port))
+        .expect("port still bindable — the cancelled open left no listening socket");
+}
+
 /// The wiring the C recv-side getter used to get wrong (it copied
 /// `successes` into `reconnect_attempts` with an apology):
 /// [`ManagedHandles::attempts`] is the factory-CALL counter, and on a
@@ -380,6 +494,13 @@ fn recv_handles_attempts_count_failed_factory_calls_not_successes() {
         }
         match rx.next_packet() {
             Ok(_) => {}
+            // `?x-recvtimeout` expiry is NOT the end of the stream:
+            // `ManagedRecvTransport` propagates `Backpressure` unchanged
+            // and `Receiver::next_packet` passes it through, so breaking
+            // on it would end the loop before the reconnect budget was
+            // spent and make the counter assertions vacuous. The deadline
+            // above stays the failing watchdog.
+            Err(e) if e.kind == ShellErrorKind::Backpressure => continue,
             Err(_) => break,
         }
     }
@@ -474,10 +595,13 @@ fn managed_raw_sender_from_url_sends_the_bytes() {
     tx.close();
 }
 
-/// Senders are caller-only; `?mode=listener` is refused before any socket
-/// is touched (no loopback needed).
+/// Senders are caller-only: all three refuse `?mode=listener` with
+/// `SrtError::Option`, which is all this test asserts. (They also refuse
+/// it before touching the network — that is what the guard is FOR, and
+/// dropping the guard makes this test take 15 s instead of 0 s on a
+/// dead port — but the name now claims only the assertion.)
 #[test]
-fn sender_from_url_refuses_listener_mode_without_touching_the_network() {
+fn sender_from_url_refuses_listener_mode_with_an_option_error() {
     let url = SrtUrl::parse("srt://127.0.0.1:9000?mode=listener").expect("parse");
 
     let err = managed_sender_from_url(
