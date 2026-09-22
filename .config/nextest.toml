@@ -45,7 +45,7 @@ filter = """
   | binary(hls_e2e) | binary(pipeline) | binary(stats) | binary(receiving)
   | binary(muxing) | binary(transports) | binary(url_open) | binary(rtp)
   | binary(rtcp) | binary(rtsp_client) | binary(rtsp_server)
-  | binary(tls_hostname)
+  | binary(tls_hostname) | binary(conformance)
   | test(loopback) | test(round_trip) | test(roundtrip) | test(pairing)
   | test(multicast) | test(reconnect) | test(rtsp) | test(live_pair)
 """
@@ -63,7 +63,7 @@ filter = """
   | binary(hls_e2e) | binary(pipeline) | binary(stats) | binary(receiving)
   | binary(muxing) | binary(transports) | binary(url_open) | binary(rtp)
   | binary(rtcp) | binary(rtsp_client) | binary(rtsp_server)
-  | binary(tls_hostname)
+  | binary(tls_hostname) | binary(conformance)
   | test(loopback) | test(round_trip) | test(roundtrip) | test(pairing)
   | test(multicast) | test(reconnect) | test(rtsp) | test(live_pair)
 """
@@ -93,7 +93,7 @@ filter = """
   | binary(hls_e2e) | binary(pipeline) | binary(stats) | binary(receiving)
   | binary(muxing) | binary(transports) | binary(url_open) | binary(rtp)
   | binary(rtcp) | binary(rtsp_client) | binary(rtsp_server)
-  | binary(tls_hostname)
+  | binary(tls_hostname) | binary(conformance)
   | test(loopback) | test(round_trip) | test(roundtrip) | test(pairing)
   | test(multicast) | test(reconnect) | test(rtsp) | test(live_pair)
 """

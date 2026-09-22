@@ -224,8 +224,13 @@ fn managed_recv(wire: &Arc<Wire>) -> ManagedRecvTransport<MockRecv> {
 
 #[test]
 fn managed_send_contract_all_but_the_cancel_rows() {
-    // NotProducible on the wrappers: a broken inner is exactly what they
-    // reconnect through, and the budget-exhausted terminal is `Closed`.
+    // NotProducible on the wrappers for a reason the kit's skip line does not
+    // state: it prints "(Broken not producible on this transport)", but a
+    // broken inner IS producible here — it is exactly what the wrapper
+    // reconnects through, and once the budget is exhausted the terminal it
+    // reports is `Closed`, not `Broken`. So the row cannot assert what it
+    // wants to and is skipped. Divergence recorded rather than papered over;
+    // WP-D should give `NotProducible` a caller-supplied reason string.
     kit::assert_send_rows(
         managed_send,
         BrokenSource::NotProducible,
