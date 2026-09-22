@@ -180,6 +180,8 @@ pub fn tst_pipeline::binding::kind::BindingError::fmt(&self, &mut core::fmt::For
 impl core::fmt::Display for tst_pipeline::binding::kind::BindingError
 pub fn tst_pipeline::binding::kind::BindingError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for tst_pipeline::binding::kind::BindingError
+impl<E: core::fmt::Display> core::convert::From<tst_pipeline::binding::owned::CloseFailure<E>> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::binding::owned::CloseFailure<E>) -> Self
 impl<E> core::convert::From<tst_pipeline::mux_publisher::MuxPublisherError<E>> for tst_pipeline::binding::kind::BindingError where E: core::convert::Into<tst_pipeline::binding::kind::BindingError> + core::error::Error + core::marker::Send + core::marker::Sync + 'static
 pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::mux_publisher::MuxPublisherError<E>) -> Self
 impl core::marker::Freeze for tst_pipeline::binding::kind::BindingError
@@ -203,6 +205,8 @@ pub tst_pipeline::binding::owned::CloseFailure::Panicked
 pub tst_pipeline::binding::owned::CloseFailure::Panicked::detail: alloc::string::String
 impl<E: core::fmt::Debug> core::fmt::Debug for tst_pipeline::binding::owned::CloseFailure<E>
 pub fn tst_pipeline::binding::owned::CloseFailure<E>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<E: core::fmt::Display> core::convert::From<tst_pipeline::binding::owned::CloseFailure<E>> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::binding::owned::CloseFailure<E>) -> Self
 impl<E> core::marker::Freeze for tst_pipeline::binding::owned::CloseFailure<E> where E: core::marker::Freeze
 impl<E> core::marker::Send for tst_pipeline::binding::owned::CloseFailure<E> where E: core::marker::Send
 impl<E> core::marker::Sync for tst_pipeline::binding::owned::CloseFailure<E> where E: core::marker::Sync
@@ -461,6 +465,8 @@ pub tst_pipeline::binding::CloseFailure::Panicked
 pub tst_pipeline::binding::CloseFailure::Panicked::detail: alloc::string::String
 impl<E: core::fmt::Debug> core::fmt::Debug for tst_pipeline::binding::owned::CloseFailure<E>
 pub fn tst_pipeline::binding::owned::CloseFailure<E>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<E: core::fmt::Display> core::convert::From<tst_pipeline::binding::owned::CloseFailure<E>> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::binding::owned::CloseFailure<E>) -> Self
 impl<E> core::marker::Freeze for tst_pipeline::binding::owned::CloseFailure<E> where E: core::marker::Freeze
 impl<E> core::marker::Send for tst_pipeline::binding::owned::CloseFailure<E> where E: core::marker::Send
 impl<E> core::marker::Sync for tst_pipeline::binding::owned::CloseFailure<E> where E: core::marker::Sync
@@ -536,6 +542,8 @@ pub fn tst_pipeline::binding::kind::BindingError::fmt(&self, &mut core::fmt::For
 impl core::fmt::Display for tst_pipeline::binding::kind::BindingError
 pub fn tst_pipeline::binding::kind::BindingError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for tst_pipeline::binding::kind::BindingError
+impl<E: core::fmt::Display> core::convert::From<tst_pipeline::binding::owned::CloseFailure<E>> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::binding::owned::CloseFailure<E>) -> Self
 impl<E> core::convert::From<tst_pipeline::mux_publisher::MuxPublisherError<E>> for tst_pipeline::binding::kind::BindingError where E: core::convert::Into<tst_pipeline::binding::kind::BindingError> + core::error::Error + core::marker::Send + core::marker::Sync + 'static
 pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::mux_publisher::MuxPublisherError<E>) -> Self
 impl core::marker::Freeze for tst_pipeline::binding::kind::BindingError
