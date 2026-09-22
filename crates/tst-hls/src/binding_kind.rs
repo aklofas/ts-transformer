@@ -59,10 +59,11 @@ mod tests {
             BindingError::from(HlsError::TlsDisabled).kind,
             K::HlsTlsDisabled
         );
-        assert_eq!(
-            BindingError::from(HlsError::Internal("hyper".into())).kind,
-            K::Internal
-        );
+        // A DELIBERATE `=> Internal` row (table row 10) keeps its own detail:
+        // "unmapped" is a property of a wildcard arm, never of the kind.
+        let internal = BindingError::from(HlsError::Internal("hyper".into()));
+        assert_eq!(internal.kind, K::Internal);
+        assert_eq!(internal.detail, "internal HTTP server error: hyper");
         assert_eq!(K::HlsBindFailed.c_projection(), -34);
     }
 }
