@@ -18,3 +18,5 @@ mod pipeline_receiver_live;
 mod pipeline_receiver_live_corpus;
 #[path = "pipeline/pipeline_sender.rs"]
 mod pipeline_sender;
+#[path = "pipeline/shells_from_url.rs"]
+mod shells_from_url;

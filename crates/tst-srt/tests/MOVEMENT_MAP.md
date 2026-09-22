@@ -86,6 +86,7 @@ tst-core +16, tst-pipeline +3 (net zero).
 | `pipeline_receiver_live.rs` | `pipeline/pipeline_receiver_live.rs` |
 | `pipeline_receiver_live_corpus.rs` | `pipeline/pipeline_receiver_live_corpus.rs` |
 | `pipeline_sender.rs` | `pipeline/pipeline_sender.rs` |
+| (new 2026-09-22, Arc 2 WP-A3) | `pipeline/shells_from_url.rs` |
 
 ## Cross-crate moves (ownership cleanup)
 
