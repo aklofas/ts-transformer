@@ -881,14 +881,11 @@ impl PyRtspSession {
         // map_err.
         let transport = session.into_recv_transport();
         // Optionally lift demux config; build with defaults otherwise.
-        let receiver = match demux_config {
-            None => PyDemuxReceiver::from_recv_transport(transport),
-            Some(cfg) => {
-                let opts = crate::mpegts::build_demuxer_config(py, cfg)?;
-                PyDemuxReceiver::from_recv_transport_with_config(transport, opts)
-            }
+        let opts = match demux_config {
+            None => None,
+            Some(cfg) => Some(crate::mpegts::build_demuxer_config(py, cfg)?),
         };
-        Ok(receiver)
+        PyDemuxReceiver::from_recv_transport(py, transport, opts)
     }
 
     /// Consume the session's data plane and wrap it in an `H264Receiver`

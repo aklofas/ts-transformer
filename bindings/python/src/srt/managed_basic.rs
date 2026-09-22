@@ -64,7 +64,6 @@ use tst_pipeline::{
 };
 use tst_srt::{SrtTransport, SrtUrl, url::Mode};
 
-use crate::errors::make_srt_error;
 use crate::raise::{SRT, pyok, pyres, raise};
 use crate::srt::policy::{PyManagedTransportStats, PyReconnectPolicy};
 use crate::srt::transport::{PyCancelHandle, PySocketStats, PySrtStats};
@@ -213,11 +212,14 @@ impl PyManagedSender {
         if self.owned.is_closed() {
             return Err(raise(py, &SRT, BindingError::from(HandleState::Closed)));
         }
-        Err(make_srt_error(
+        Err(raise(
             py,
-            "IO",
-            "srt_stats not available on ManagedSender (use socket_stats); \
-             a future tst-pipeline accessor will expose the SRT-rich shape",
+            &SRT,
+            BindingError::new(
+                BindingErrorKind::SrtIo,
+                "srt_stats not available on ManagedSender (use socket_stats); \
+                 a future tst-pipeline accessor will expose the SRT-rich shape",
+            ),
         ))
     }
 
@@ -240,7 +242,14 @@ impl PyManagedSender {
         let stats = py
             .allow_threads(|| self.stats_handle.stats())
             .ok_or_else(|| {
-                make_srt_error(py, "IO", "reconnect stats unavailable: gap lock poisoned")
+                raise(
+                    py,
+                    &SRT,
+                    BindingError::new(
+                        BindingErrorKind::SrtIo,
+                        "reconnect stats unavailable: gap lock poisoned",
+                    ),
+                )
             })?;
         Py::new(py, PyManagedTransportStats::from_core(stats))
     }
@@ -418,18 +427,21 @@ impl PyManagedReceiver {
         if self.owned.is_closed() {
             return Err(raise(py, &SRT, BindingError::from(HandleState::Closed)));
         }
-        Err(make_srt_error(
+        Err(raise(
             py,
-            "IO",
-            "srt_stats not available on ManagedReceiver (use socket_stats); \
-             a future tst-pipeline accessor will expose the SRT-rich shape",
+            &SRT,
+            BindingError::new(
+                BindingErrorKind::SrtIo,
+                "srt_stats not available on ManagedReceiver (use socket_stats); \
+                 a future tst-pipeline accessor will expose the SRT-rich shape",
+            ),
         ))
     }
 
-    /// Close. Flips the local closed flag, fires the managed cancel (any
-    /// in-flight receive or reconnect exits with `TransportError::Closed`),
-    /// then takes the slot and tears the shell down. A `recv_bytes()`
-    /// parked on another thread ends with `SrtError(CLOSED)`. Idempotent.
+    /// Close: cancel first (any in-flight receive or reconnect exits with
+    /// `TransportError::Closed`), then take the slot and tear the shell
+    /// down. A `recv_bytes()` parked on another thread ends with
+    /// `SrtError(CLOSED)`. Idempotent.
     fn close(&self, py: Python<'_>) -> PyResult<()> {
         close_owned(py, &SRT, &self.owned)
     }

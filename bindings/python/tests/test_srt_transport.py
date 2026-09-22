@@ -489,18 +489,30 @@ def test_srt_stats_has_advanced_fields_not_in_socket_stats() -> None:
     assert "bytes_lost_recv_side" in extras
 
 
-def test_receiver_from_url_bind_fault_is_broken_with_a_bind_prefix() -> None:
-    """0.7.0: `Receiver.from_url` opens through `SrtUrl::accept_one`, which
-    classifies every bind/accept fault as a transport fault. A port already
+@pytest.mark.parametrize(
+    "opener",
+    [
+        pytest.param(lambda url: tstrans.srt.Receiver.from_url(url), id="Receiver"),
+        pytest.param(lambda url: tstrans.srt.DemuxReceiver.from_url(url), id="DemuxReceiver"),
+        pytest.param(lambda url: tstrans.srt.ManagedReceiver.from_url(url), id="ManagedReceiver"),
+        pytest.param(
+            lambda url: tstrans.srt.ManagedDemuxReceiver.from_url(url), id="ManagedDemuxReceiver"
+        ),
+    ],
+)
+def test_listener_open_bind_fault_is_broken_with_a_bind_prefix(opener) -> None:
+    """0.7.0: every listener-mode open goes through `SrtUrl::accept_one`,
+    which classifies bind/accept faults as transport faults. A port already
     bound by another SRT listener therefore raises `SrtError(BROKEN)` with a
     `bind: ` prefixed message — it raised `CONNECT_FAILED` (AddressInUse)
-    before. Pins the one open path's behaviour so the change cannot drift
-    back silently."""
+    before, and `CONFIG_INVALID` / `ACCEPT_FAILED` / `TIMEOUT` on the other
+    faults. Pins the one open path's behaviour across all four shells so the
+    change cannot drift back silently."""
     port = _free_tcp_port()
     first = tstrans.srt.Builder(f"srt://127.0.0.1:{port}?mode=listener").listen()
     try:
         with pytest.raises(SrtError) as ei:
-            tstrans.srt.Receiver.from_url(f"srt://127.0.0.1:{port}?mode=listener")
+            opener(f"srt://127.0.0.1:{port}?mode=listener")
         assert ei.value.kind == SrtErrorKind.BROKEN, ei.value.kind
         assert str(ei.value).startswith("bind: "), str(ei.value)
     finally:

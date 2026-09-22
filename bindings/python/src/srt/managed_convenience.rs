@@ -21,15 +21,12 @@
 //!
 //! ## Reconnect-attempt counter
 //!
-//! Both wrappers expose `reconnect_attempts() -> int`. The receiver side
-//! could in principle reuse `ManagedRecvTransport::reconnects_count` (a
-//! SUCCESS counter); the sender side has no equivalent public accessor on
-//! `ManagedTransport`. To keep the surface symmetric we instrument the
-//! factory closure on BOTH sides with an `Arc<AtomicU64>` that bumps on
-//! every factory CALL (attempt), then expose that counter unconditionally.
-//! That gives the same semantics on both shells: a non-zero value means
-//! the inner transport has been rebuilt (or attempted to rebuild) at
-//! least once since construction.
+//! Both wrappers expose `reconnect_attempts() -> int` from
+//! `ManagedHandles.attempts` — the core's factory-invocation counter,
+//! owned by `ManagedTransport` / `ManagedRecvTransport` since Arc 2
+//! (ARCH-08). The binding used to keep its own `Arc<AtomicU64>` bumped
+//! from inside a factory closure; that closure, and the drift it allowed
+//! against `ManagedTransportStats.reconnect_attempts`, are gone.
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
@@ -398,6 +395,10 @@ impl PyManagedMuxSender {
             self.owned
                 .with_ref(|s| s.video_handles().into_iter().next())
         })
+        // `with_ref` RECOVERS a poisoned mutex and documents "never
+        // Poisoned", so `.ok()` here only turns a CLOSED slot into
+        // `None` — the same answer the pre-Arc-2 `with_slot` gave for an
+        // empty slot.
         .ok()
         .flatten()
         .map(PyVideoStreamHandle)
@@ -609,8 +610,8 @@ pub(crate) struct PyManagedDemuxReceiver {
     /// `CancelHandle` this shell hands out holds, so `close()` here and
     /// `cancel()` through any handle flip one observable flag.
     cancel: Arc<CancelSource>,
-    /// Reconnect-attempt counter — bumped from inside the factory closure
-    /// on every invocation. Symmetric with `PyManagedMuxSender`.
+    /// `ManagedHandles.attempts` — the core's factory-invocation counter
+    /// (Arc 2 ARCH-08). Symmetric with `PyManagedMuxSender`.
     attempts: Arc<AtomicU64>,
 }
 

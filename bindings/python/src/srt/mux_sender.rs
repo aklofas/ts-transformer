@@ -12,7 +12,8 @@
 //! - URL dispatch: `SrtUrl::parse` + `Socket::connect_with` instead of
 //!   `RtpSocketBuilder::from_url`. There is no `SrtTransport::from_url`
 //!   helper, so it opens the same way `PySender::from_url` does
-//!   (`SrtUrl::parse` → `SrtUrl::connect_recv` → wrap).
+//!   (`SrtUrl::parse` → `SrtUrl::connect_recv` → wrap; the composition
+//!   itself lives in `tst_srt`, so this module formats no address).
 //! - Error mapping: the one raise path (`crate::raise`).
 //!   `MuxSenderErrorSource::Mux` keeps `mux_error_to_pyerr` (it carries
 //!   `.pid` and the `write_file` breadcrumb); every other source becomes a
@@ -428,6 +429,10 @@ impl PyMuxSender {
             self.owned
                 .with_ref(|s| s.video_handles().into_iter().next())
         })
+        // `with_ref` RECOVERS a poisoned mutex and documents "never
+        // Poisoned", so `.ok()` here only turns a CLOSED slot into
+        // `None` — the same answer the pre-Arc-2 `with_slot` gave for an
+        // empty slot.
         .ok()
         .flatten()
         .map(PyVideoStreamHandle)
