@@ -21,6 +21,8 @@ pub mod stats;
 #[cfg(feature = "serve")]
 pub mod url;
 
+mod binding_kind;
+
 #[cfg(feature = "serve")]
 mod auth;
 #[cfg(feature = "serve")]

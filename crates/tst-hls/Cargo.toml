@@ -29,6 +29,7 @@ tls = ["serve", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile"]
 
 [dependencies]
 tst-core = { path = "../tst-core", version = "0.6.0" }
+tst-pipeline = { path = "../tst-pipeline", version = "0.6.0" }
 thiserror = { workspace = true }
 
 [dependencies.tokio]
@@ -83,4 +84,3 @@ version  = "2"
 optional = true
 
 [dev-dependencies]
-tst-pipeline = { path = "../tst-pipeline" }

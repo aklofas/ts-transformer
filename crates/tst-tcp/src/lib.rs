@@ -34,6 +34,8 @@ pub mod url;
 #[cfg(feature = "tls")]
 pub mod tls;
 
+mod binding_kind;
+
 mod recv_knobs;
 
 pub use builder::{TcpListenerBuilder, TcpTransportBuilder};

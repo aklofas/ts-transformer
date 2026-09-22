@@ -32,6 +32,8 @@ pub mod stats;
 pub mod transport;
 pub mod url;
 
+mod binding_kind;
+
 pub use config::{EncryptionKey, RistConfig, RistProfile, RistSecret};
 pub use error::{RistError, RistErrorKind};
 pub use stats::RistStats;
