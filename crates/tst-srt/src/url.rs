@@ -11,9 +11,13 @@
 //! reference.
 
 use crate::config::{ListenerConfig, SocketConfig};
-use crate::error::OptionError;
+use crate::error::{OptionError, SrtError};
+use crate::listener::Listener;
 use crate::options::{Congestion, KeyLength, MaxBandwidth, PacketFilter, Passphrase, StreamId};
+use crate::socket::Socket;
+use crate::transport::SrtTransport;
 use std::time::Duration;
+use tst_core::cancel::CancelSlot;
 use tst_core::url::common::{UrlError as CoreUrlError, parse_url};
 
 /// `?latency=N` is parsed as N milliseconds (libsrt-URL canonical), but
@@ -95,7 +99,7 @@ pub enum Mode {
 /// Parsed `srt://host:port?...` URL: connection target + a typed overlay
 /// of the recognized query parameters.
 #[must_use]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SrtUrl {
     pub host: String,
     pub port: u16,
@@ -265,6 +269,39 @@ impl SrtUrl {
             overlay,
             mode,
         })
+    }
+
+    /// Open this URL as a **caller**: dial `host:port` with the overlay
+    /// applied and the sender preset merged underneath it, and return the
+    /// connected transport.
+    ///
+    /// This is the one composition every binding used to carry a private
+    /// copy of (tst-c's `connect_srt`, the Python and JVM mirrors):
+    /// [`UrlOverlay::apply_to_socket`] on a default [`SocketConfig`] →
+    /// [`SocketConfig::merge_sender_defaults`] (15 s connect timeout,
+    /// 5 s linger, `Role::Sender` — each only where the overlay left it
+    /// unset, so the URL wins) → an IPv6-safe `host:port` join
+    /// ([`crate::addr::join_host_port`]) → [`Socket::connect_with`], which
+    /// walks every resolved address. The bindings open caller-mode
+    /// *receivers* through this same preset today; that is preserved.
+    ///
+    /// [`mode`](Self::mode) is not consulted: the caller chooses the
+    /// direction by calling this or [`accept_one`](Self::accept_one)
+    /// (`tst_srt::shells` dispatches on `mode` for you).
+    ///
+    /// # Errors
+    ///
+    /// [`SrtError::Connect`] carrying the typed [`ConnectError`]
+    /// (resolution, handshake reject, timeout, refused, option refused).
+    ///
+    /// [`ConnectError`]: crate::ConnectError
+    pub fn connect(&self) -> Result<SrtTransport, SrtError> {
+        let mut cfg = SocketConfig::default();
+        self.overlay.apply_to_socket(&mut cfg);
+        cfg.merge_sender_defaults();
+        let addr = crate::addr::join_host_port(&self.host, self.port);
+        let socket = Socket::connect_with(&cfg, addr.as_str())?;
+        Ok(SrtTransport::new(socket))
     }
 }
 

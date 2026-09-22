@@ -76,6 +76,7 @@ tst-core +16, tst-pipeline +3 (net zero).
 | `maxbw_roundtrip.rs` | `loopback/maxbw_roundtrip.rs` |
 | `payload_limit.rs` | `loopback/payload_limit.rs` |
 | `srto_sender.rs` | `loopback/srto_sender.rs` |
+| (new 2026-09-21, Arc 2 WP-A3) | `loopback/url_open.rs` |
 
 ### `pipeline/` — pipeline shells (MuxSender/Receiver/Managed) over SRT transport. Needs SRT — stays in tst-srt.
 
