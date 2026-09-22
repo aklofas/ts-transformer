@@ -4,9 +4,14 @@
 //! against the in-crate `RtspServer`.
 //!
 //! Port discovery is `free_rtp_port_base`, the same discover-then-release
-//! helper `tests/rtp/loopback_unicast.rs` uses (an OS-assigned pair
-//! `base`/`base+1`, released before the transport binds it — the `network`
-//! nextest group serialises these tests so nobody races for the freed pair).
+//! helper `tests/rtp/loopback_unicast.rs` uses: an OS-assigned pair
+//! `base`/`base+1`, released before the transport binds it. That window is
+//! only safe because nothing else is binding ephemeral ports concurrently —
+//! `.config/nextest.toml` puts `binary(conformance)` in the single-threaded
+//! `network` group for exactly this reason. Under plain `cargo test` (which
+//! has no test groups) the whole workspace is not running alongside, so the
+//! window is likewise uncontended; it is CI, which uses nextest, that needs
+//! the group.
 
 use std::net::UdpSocket;
 use std::sync::Mutex;
@@ -167,11 +172,13 @@ fn rtsp_client_recv_contract() {
         // `mount_stats_tick_after_push` (tests/rtsp_server/loopback_udp.rs)
         // pushes; the muxer emits PAT/PMT/PES for it at once.
         //
-        // Pushed THREE times: the first access unit carries PSI the fan-out
-        // may emit before the fresh session's PLAY has fully wired its peer,
-        // so a single push can be delivered to nobody. The kit's feed
-        // contract is "something arrives", not "exactly these bytes", so
-        // over-feeding is free.
+        // Pushed THREE times as belt-and-braces, with NO measured need: the
+        // server subscribes the session to the mount's fan-out synchronously
+        // inside `handle_play`, BEFORE the PLAY response goes out
+        // (`src/rtsp/server/handlers.rs`), so nothing pushed after `play()`
+        // has returned can be delivered to nobody. The kit's feed contract is
+        // "something arrives", not "exactly these bytes", so the extra pushes
+        // cost nothing — but they are not load-bearing, and one would do.
         let nal = [0x00, 0x00, 0x00, 0x01, 0x65, 0xBB];
         for _ in 0..3 {
             let t = pts.fetch_add(3_000, Ordering::SeqCst);
