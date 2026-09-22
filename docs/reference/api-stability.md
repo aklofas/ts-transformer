@@ -95,6 +95,7 @@ its `rtsp` row), the more specific row wins for that path.
 | tst-pipeline | dyn_aliases | Stable | boxed-transport type aliases (plumbing/re-export); spec-silent, defaults to tst-pipeline's tier |
 | tst-pipeline | mux_publisher | Provisional | HLS-adjacent, newer |
 | tst-pipeline | ext | Provisional | extensions (pairing, file transport) — newer surface |
+| tst-pipeline | binding | Provisional | binding-shared handle layer (`Owned`, `HandleState`, panic helpers; error kinds + managed handles follow in Arc 2); `std`-only; shape may still move before 1.0 — see the Arc 2 decision log entry |
 | tst-srt | (crate) | Stable | primary transport of the project scope |
 | tst-udp | (crate) | Stable | small, settled |
 | tst-tcp | (crate) | Stable | small, settled |

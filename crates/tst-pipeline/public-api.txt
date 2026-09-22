@@ -5,6 +5,262 @@ pub use tst_pipeline::SrtCancelHandle
 pub use tst_pipeline::Transport
 pub use tst_pipeline::TransportCancel
 pub use tst_pipeline::TransportError
+pub mod tst_pipeline::binding
+pub mod tst_pipeline::binding::owned
+pub enum tst_pipeline::binding::owned::CloseFailure<E>
+pub tst_pipeline::binding::owned::CloseFailure::Inner(E)
+pub tst_pipeline::binding::owned::CloseFailure::Panicked
+pub tst_pipeline::binding::owned::CloseFailure::Panicked::detail: alloc::string::String
+impl<E: core::fmt::Debug> core::fmt::Debug for tst_pipeline::binding::owned::CloseFailure<E>
+pub fn tst_pipeline::binding::owned::CloseFailure<E>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<E> core::marker::Freeze for tst_pipeline::binding::owned::CloseFailure<E> where E: core::marker::Freeze
+impl<E> core::marker::Send for tst_pipeline::binding::owned::CloseFailure<E> where E: core::marker::Send
+impl<E> core::marker::Sync for tst_pipeline::binding::owned::CloseFailure<E> where E: core::marker::Sync
+impl<E> core::marker::Unpin for tst_pipeline::binding::owned::CloseFailure<E> where E: core::marker::Unpin
+impl<E> core::marker::UnsafeUnpin for tst_pipeline::binding::owned::CloseFailure<E> where E: core::marker::UnsafeUnpin
+impl<E> core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::owned::CloseFailure<E> where E: core::panic::unwind_safe::RefUnwindSafe
+impl<E> core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::owned::CloseFailure<E> where E: core::panic::unwind_safe::UnwindSafe
+#[non_exhaustive] pub enum tst_pipeline::binding::owned::HandleState
+pub tst_pipeline::binding::owned::HandleState::Closed
+pub tst_pipeline::binding::owned::HandleState::Panicked
+pub tst_pipeline::binding::owned::HandleState::Panicked::detail: alloc::string::String
+pub tst_pipeline::binding::owned::HandleState::Poisoned
+impl core::clone::Clone for tst_pipeline::binding::owned::HandleState
+pub fn tst_pipeline::binding::owned::HandleState::clone(&self) -> tst_pipeline::binding::owned::HandleState
+impl core::cmp::Eq for tst_pipeline::binding::owned::HandleState
+impl core::cmp::PartialEq for tst_pipeline::binding::owned::HandleState
+pub fn tst_pipeline::binding::owned::HandleState::eq(&self, &tst_pipeline::binding::owned::HandleState) -> bool
+impl core::fmt::Debug for tst_pipeline::binding::owned::HandleState
+pub fn tst_pipeline::binding::owned::HandleState::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tst_pipeline::binding::owned::HandleState
+impl core::marker::Freeze for tst_pipeline::binding::owned::HandleState
+impl core::marker::Send for tst_pipeline::binding::owned::HandleState
+impl core::marker::Sync for tst_pipeline::binding::owned::HandleState
+impl core::marker::Unpin for tst_pipeline::binding::owned::HandleState
+impl core::marker::UnsafeUnpin for tst_pipeline::binding::owned::HandleState
+impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::owned::HandleState
+impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::owned::HandleState
+pub struct tst_pipeline::binding::owned::FlagCancel(_)
+impl tst_pipeline::binding::owned::FlagCancel
+pub fn tst_pipeline::binding::owned::FlagCancel::is_set(&self) -> bool
+pub fn tst_pipeline::binding::owned::FlagCancel::new() -> Self
+impl core::default::Default for tst_pipeline::binding::owned::FlagCancel
+pub fn tst_pipeline::binding::owned::FlagCancel::default() -> tst_pipeline::binding::owned::FlagCancel
+impl core::fmt::Debug for tst_pipeline::binding::owned::FlagCancel
+pub fn tst_pipeline::binding::owned::FlagCancel::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl tst_core::transport::TransportCancel for tst_pipeline::binding::owned::FlagCancel
+pub fn tst_pipeline::binding::owned::FlagCancel::cancel(&self)
+impl !core::marker::Freeze for tst_pipeline::binding::owned::FlagCancel
+impl core::marker::Send for tst_pipeline::binding::owned::FlagCancel
+impl core::marker::Sync for tst_pipeline::binding::owned::FlagCancel
+impl core::marker::Unpin for tst_pipeline::binding::owned::FlagCancel
+impl core::marker::UnsafeUnpin for tst_pipeline::binding::owned::FlagCancel
+impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::owned::FlagCancel
+impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::owned::FlagCancel
+pub struct tst_pipeline::binding::owned::Owned<T, S>
+impl<T, S> tst_pipeline::binding::owned::Owned<T, S>
+pub fn tst_pipeline::binding::owned::Owned<T, S>::cancel(&self)
+pub fn tst_pipeline::binding::owned::Owned<T, S>::cancel_arc(&self) -> alloc::sync::Arc<dyn tst_core::transport::TransportCancel>
+pub fn tst_pipeline::binding::owned::Owned<T, S>::end_reason(&self) -> core::option::Option<tst_pipeline::RecvEndReason>
+pub fn tst_pipeline::binding::owned::Owned<T, S>::is_cancelled(&self) -> bool
+pub fn tst_pipeline::binding::owned::Owned<T, S>::is_closed(&self) -> bool
+pub fn tst_pipeline::binding::owned::Owned<T, S>::new(T, alloc::sync::Arc<dyn tst_core::transport::TransportCancel>, S) -> Self
+pub fn tst_pipeline::binding::owned::Owned<T, S>::snapshot(&self) -> &S
+pub fn tst_pipeline::binding::owned::Owned<T, S>::take(&self) -> core::option::Option<T>
+pub fn tst_pipeline::binding::owned::Owned<T, S>::try_with_ref<R>(&self, impl core::ops::function::FnOnce(&T) -> R) -> core::option::Option<core::result::Result<R, tst_pipeline::binding::owned::HandleState>>
+pub fn tst_pipeline::binding::owned::Owned<T, S>::with_end_reason(self, tst_pipeline::RecvEndReasonHandle) -> Self
+pub fn tst_pipeline::binding::owned::Owned<T, S>::with_mut<R>(&self, impl core::ops::function::FnOnce(&mut T) -> R) -> core::result::Result<R, tst_pipeline::binding::owned::HandleState>
+pub fn tst_pipeline::binding::owned::Owned<T, S>::with_ref<R>(&self, impl core::ops::function::FnOnce(&T) -> R) -> core::result::Result<R, tst_pipeline::binding::owned::HandleState>
+impl<T: tst_pipeline::binding::owned::Close, S> tst_pipeline::binding::owned::Owned<T, S>
+pub fn tst_pipeline::binding::owned::Owned<T, S>::close(&self) -> core::result::Result<(), tst_pipeline::binding::owned::CloseFailure<<T as tst_pipeline::binding::owned::Close>::Error>>
+impl<T, S> !core::marker::Freeze for tst_pipeline::binding::owned::Owned<T, S>
+impl<T, S> core::marker::Send for tst_pipeline::binding::owned::Owned<T, S> where S: core::marker::Send, T: core::marker::Send
+impl<T, S> core::marker::Sync for tst_pipeline::binding::owned::Owned<T, S> where S: core::marker::Sync, T: core::marker::Send
+impl<T, S> core::marker::Unpin for tst_pipeline::binding::owned::Owned<T, S> where S: core::marker::Unpin, T: core::marker::Unpin
+impl<T, S> core::marker::UnsafeUnpin for tst_pipeline::binding::owned::Owned<T, S> where S: core::marker::UnsafeUnpin, T: core::marker::UnsafeUnpin
+impl<T, S> !core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::owned::Owned<T, S>
+impl<T, S> !core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::owned::Owned<T, S>
+pub trait tst_pipeline::binding::owned::Close
+pub type tst_pipeline::binding::owned::Close::Error: core::fmt::Debug + core::fmt::Display
+pub fn tst_pipeline::binding::owned::Close::close(&mut self) -> core::result::Result<(), Self::Error>
+impl<R: tst_core::transport::RecvTransport> tst_pipeline::binding::owned::Close for tst_pipeline::binding::shells::RecvHalf<R>
+pub type tst_pipeline::binding::shells::RecvHalf<R>::Error = core::convert::Infallible
+pub fn tst_pipeline::binding::shells::RecvHalf<R>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
+impl<R: tst_core::transport::RecvTransport> tst_pipeline::binding::owned::Close for tst_pipeline::demux_receiver::DemuxReceiver<R>
+pub type tst_pipeline::demux_receiver::DemuxReceiver<R>::Error = core::convert::Infallible
+pub fn tst_pipeline::demux_receiver::DemuxReceiver<R>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
+impl<R: tst_core::transport::RecvTransport> tst_pipeline::binding::owned::Close for tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>
+pub type tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::Error = core::convert::Infallible
+pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
+impl<R: tst_core::transport::RecvTransport> tst_pipeline::binding::owned::Close for tst_pipeline::raw_receiver::RawReceiver<R>
+pub type tst_pipeline::raw_receiver::RawReceiver<R>::Error = core::convert::Infallible
+pub fn tst_pipeline::raw_receiver::RawReceiver<R>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
+impl<R: tst_core::transport::RecvTransport> tst_pipeline::binding::owned::Close for tst_pipeline::receiver::Receiver<R>
+pub type tst_pipeline::receiver::Receiver<R>::Error = core::convert::Infallible
+pub fn tst_pipeline::receiver::Receiver<R>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
+impl<T: tst_core::transport::Transport> tst_pipeline::binding::owned::Close for tst_pipeline::binding::shells::SendHalf<T>
+pub type tst_pipeline::binding::shells::SendHalf<T>::Error = core::convert::Infallible
+pub fn tst_pipeline::binding::shells::SendHalf<T>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
+impl<T: tst_core::transport::Transport> tst_pipeline::binding::owned::Close for tst_pipeline::mux_sender::MuxSender<T>
+pub type tst_pipeline::mux_sender::MuxSender<T>::Error = core::convert::Infallible
+pub fn tst_pipeline::mux_sender::MuxSender<T>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
+impl<T: tst_core::transport::Transport> tst_pipeline::binding::owned::Close for tst_pipeline::raw_sender::RawSender<T>
+pub type tst_pipeline::raw_sender::RawSender<T>::Error = core::convert::Infallible
+pub fn tst_pipeline::raw_sender::RawSender<T>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
+impl<T: tst_core::transport::Transport> tst_pipeline::binding::owned::Close for tst_pipeline::sender::Sender<T>
+pub type tst_pipeline::sender::Sender<T>::Error = core::convert::Infallible
+pub fn tst_pipeline::sender::Sender<T>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
+pub mod tst_pipeline::binding::panic
+pub fn tst_pipeline::binding::panic::catch<R>(impl core::ops::function::FnOnce() -> R) -> core::result::Result<R, alloc::string::String>
+pub fn tst_pipeline::binding::panic::payload_message(&(dyn core::any::Any + core::marker::Send)) -> alloc::string::String
+pub mod tst_pipeline::binding::shells
+pub struct tst_pipeline::binding::shells::RecvHalf<R>(pub R)
+impl<R: tst_core::transport::RecvTransport> tst_pipeline::binding::owned::Close for tst_pipeline::binding::shells::RecvHalf<R>
+pub type tst_pipeline::binding::shells::RecvHalf<R>::Error = core::convert::Infallible
+pub fn tst_pipeline::binding::shells::RecvHalf<R>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
+impl<R> core::marker::Freeze for tst_pipeline::binding::shells::RecvHalf<R> where R: core::marker::Freeze
+impl<R> core::marker::Send for tst_pipeline::binding::shells::RecvHalf<R> where R: core::marker::Send
+impl<R> core::marker::Sync for tst_pipeline::binding::shells::RecvHalf<R> where R: core::marker::Sync
+impl<R> core::marker::Unpin for tst_pipeline::binding::shells::RecvHalf<R> where R: core::marker::Unpin
+impl<R> core::marker::UnsafeUnpin for tst_pipeline::binding::shells::RecvHalf<R> where R: core::marker::UnsafeUnpin
+impl<R> core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::shells::RecvHalf<R> where R: core::panic::unwind_safe::RefUnwindSafe
+impl<R> core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::shells::RecvHalf<R> where R: core::panic::unwind_safe::UnwindSafe
+pub struct tst_pipeline::binding::shells::SendHalf<T>(pub T)
+impl<T: tst_core::transport::Transport> tst_pipeline::binding::owned::Close for tst_pipeline::binding::shells::SendHalf<T>
+pub type tst_pipeline::binding::shells::SendHalf<T>::Error = core::convert::Infallible
+pub fn tst_pipeline::binding::shells::SendHalf<T>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
+impl<T> core::marker::Freeze for tst_pipeline::binding::shells::SendHalf<T> where T: core::marker::Freeze
+impl<T> core::marker::Send for tst_pipeline::binding::shells::SendHalf<T> where T: core::marker::Send
+impl<T> core::marker::Sync for tst_pipeline::binding::shells::SendHalf<T> where T: core::marker::Sync
+impl<T> core::marker::Unpin for tst_pipeline::binding::shells::SendHalf<T> where T: core::marker::Unpin
+impl<T> core::marker::UnsafeUnpin for tst_pipeline::binding::shells::SendHalf<T> where T: core::marker::UnsafeUnpin
+impl<T> core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::shells::SendHalf<T> where T: core::panic::unwind_safe::RefUnwindSafe
+impl<T> core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::shells::SendHalf<T> where T: core::panic::unwind_safe::UnwindSafe
+pub enum tst_pipeline::binding::CloseFailure<E>
+pub tst_pipeline::binding::CloseFailure::Inner(E)
+pub tst_pipeline::binding::CloseFailure::Panicked
+pub tst_pipeline::binding::CloseFailure::Panicked::detail: alloc::string::String
+impl<E: core::fmt::Debug> core::fmt::Debug for tst_pipeline::binding::owned::CloseFailure<E>
+pub fn tst_pipeline::binding::owned::CloseFailure<E>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<E> core::marker::Freeze for tst_pipeline::binding::owned::CloseFailure<E> where E: core::marker::Freeze
+impl<E> core::marker::Send for tst_pipeline::binding::owned::CloseFailure<E> where E: core::marker::Send
+impl<E> core::marker::Sync for tst_pipeline::binding::owned::CloseFailure<E> where E: core::marker::Sync
+impl<E> core::marker::Unpin for tst_pipeline::binding::owned::CloseFailure<E> where E: core::marker::Unpin
+impl<E> core::marker::UnsafeUnpin for tst_pipeline::binding::owned::CloseFailure<E> where E: core::marker::UnsafeUnpin
+impl<E> core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::owned::CloseFailure<E> where E: core::panic::unwind_safe::RefUnwindSafe
+impl<E> core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::owned::CloseFailure<E> where E: core::panic::unwind_safe::UnwindSafe
+#[non_exhaustive] pub enum tst_pipeline::binding::HandleState
+pub tst_pipeline::binding::HandleState::Closed
+pub tst_pipeline::binding::HandleState::Panicked
+pub tst_pipeline::binding::HandleState::Panicked::detail: alloc::string::String
+pub tst_pipeline::binding::HandleState::Poisoned
+impl core::clone::Clone for tst_pipeline::binding::owned::HandleState
+pub fn tst_pipeline::binding::owned::HandleState::clone(&self) -> tst_pipeline::binding::owned::HandleState
+impl core::cmp::Eq for tst_pipeline::binding::owned::HandleState
+impl core::cmp::PartialEq for tst_pipeline::binding::owned::HandleState
+pub fn tst_pipeline::binding::owned::HandleState::eq(&self, &tst_pipeline::binding::owned::HandleState) -> bool
+impl core::fmt::Debug for tst_pipeline::binding::owned::HandleState
+pub fn tst_pipeline::binding::owned::HandleState::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tst_pipeline::binding::owned::HandleState
+impl core::marker::Freeze for tst_pipeline::binding::owned::HandleState
+impl core::marker::Send for tst_pipeline::binding::owned::HandleState
+impl core::marker::Sync for tst_pipeline::binding::owned::HandleState
+impl core::marker::Unpin for tst_pipeline::binding::owned::HandleState
+impl core::marker::UnsafeUnpin for tst_pipeline::binding::owned::HandleState
+impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::owned::HandleState
+impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::owned::HandleState
+pub struct tst_pipeline::binding::FlagCancel(_)
+impl tst_pipeline::binding::owned::FlagCancel
+pub fn tst_pipeline::binding::owned::FlagCancel::is_set(&self) -> bool
+pub fn tst_pipeline::binding::owned::FlagCancel::new() -> Self
+impl core::default::Default for tst_pipeline::binding::owned::FlagCancel
+pub fn tst_pipeline::binding::owned::FlagCancel::default() -> tst_pipeline::binding::owned::FlagCancel
+impl core::fmt::Debug for tst_pipeline::binding::owned::FlagCancel
+pub fn tst_pipeline::binding::owned::FlagCancel::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl tst_core::transport::TransportCancel for tst_pipeline::binding::owned::FlagCancel
+pub fn tst_pipeline::binding::owned::FlagCancel::cancel(&self)
+impl !core::marker::Freeze for tst_pipeline::binding::owned::FlagCancel
+impl core::marker::Send for tst_pipeline::binding::owned::FlagCancel
+impl core::marker::Sync for tst_pipeline::binding::owned::FlagCancel
+impl core::marker::Unpin for tst_pipeline::binding::owned::FlagCancel
+impl core::marker::UnsafeUnpin for tst_pipeline::binding::owned::FlagCancel
+impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::owned::FlagCancel
+impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::owned::FlagCancel
+pub struct tst_pipeline::binding::Owned<T, S>
+impl<T, S> tst_pipeline::binding::owned::Owned<T, S>
+pub fn tst_pipeline::binding::owned::Owned<T, S>::cancel(&self)
+pub fn tst_pipeline::binding::owned::Owned<T, S>::cancel_arc(&self) -> alloc::sync::Arc<dyn tst_core::transport::TransportCancel>
+pub fn tst_pipeline::binding::owned::Owned<T, S>::end_reason(&self) -> core::option::Option<tst_pipeline::RecvEndReason>
+pub fn tst_pipeline::binding::owned::Owned<T, S>::is_cancelled(&self) -> bool
+pub fn tst_pipeline::binding::owned::Owned<T, S>::is_closed(&self) -> bool
+pub fn tst_pipeline::binding::owned::Owned<T, S>::new(T, alloc::sync::Arc<dyn tst_core::transport::TransportCancel>, S) -> Self
+pub fn tst_pipeline::binding::owned::Owned<T, S>::snapshot(&self) -> &S
+pub fn tst_pipeline::binding::owned::Owned<T, S>::take(&self) -> core::option::Option<T>
+pub fn tst_pipeline::binding::owned::Owned<T, S>::try_with_ref<R>(&self, impl core::ops::function::FnOnce(&T) -> R) -> core::option::Option<core::result::Result<R, tst_pipeline::binding::owned::HandleState>>
+pub fn tst_pipeline::binding::owned::Owned<T, S>::with_end_reason(self, tst_pipeline::RecvEndReasonHandle) -> Self
+pub fn tst_pipeline::binding::owned::Owned<T, S>::with_mut<R>(&self, impl core::ops::function::FnOnce(&mut T) -> R) -> core::result::Result<R, tst_pipeline::binding::owned::HandleState>
+pub fn tst_pipeline::binding::owned::Owned<T, S>::with_ref<R>(&self, impl core::ops::function::FnOnce(&T) -> R) -> core::result::Result<R, tst_pipeline::binding::owned::HandleState>
+impl<T: tst_pipeline::binding::owned::Close, S> tst_pipeline::binding::owned::Owned<T, S>
+pub fn tst_pipeline::binding::owned::Owned<T, S>::close(&self) -> core::result::Result<(), tst_pipeline::binding::owned::CloseFailure<<T as tst_pipeline::binding::owned::Close>::Error>>
+impl<T, S> !core::marker::Freeze for tst_pipeline::binding::owned::Owned<T, S>
+impl<T, S> core::marker::Send for tst_pipeline::binding::owned::Owned<T, S> where S: core::marker::Send, T: core::marker::Send
+impl<T, S> core::marker::Sync for tst_pipeline::binding::owned::Owned<T, S> where S: core::marker::Sync, T: core::marker::Send
+impl<T, S> core::marker::Unpin for tst_pipeline::binding::owned::Owned<T, S> where S: core::marker::Unpin, T: core::marker::Unpin
+impl<T, S> core::marker::UnsafeUnpin for tst_pipeline::binding::owned::Owned<T, S> where S: core::marker::UnsafeUnpin, T: core::marker::UnsafeUnpin
+impl<T, S> !core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::owned::Owned<T, S>
+impl<T, S> !core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::owned::Owned<T, S>
+pub struct tst_pipeline::binding::RecvHalf<R>(pub R)
+impl<R: tst_core::transport::RecvTransport> tst_pipeline::binding::owned::Close for tst_pipeline::binding::shells::RecvHalf<R>
+pub type tst_pipeline::binding::shells::RecvHalf<R>::Error = core::convert::Infallible
+pub fn tst_pipeline::binding::shells::RecvHalf<R>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
+impl<R> core::marker::Freeze for tst_pipeline::binding::shells::RecvHalf<R> where R: core::marker::Freeze
+impl<R> core::marker::Send for tst_pipeline::binding::shells::RecvHalf<R> where R: core::marker::Send
+impl<R> core::marker::Sync for tst_pipeline::binding::shells::RecvHalf<R> where R: core::marker::Sync
+impl<R> core::marker::Unpin for tst_pipeline::binding::shells::RecvHalf<R> where R: core::marker::Unpin
+impl<R> core::marker::UnsafeUnpin for tst_pipeline::binding::shells::RecvHalf<R> where R: core::marker::UnsafeUnpin
+impl<R> core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::shells::RecvHalf<R> where R: core::panic::unwind_safe::RefUnwindSafe
+impl<R> core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::shells::RecvHalf<R> where R: core::panic::unwind_safe::UnwindSafe
+pub struct tst_pipeline::binding::SendHalf<T>(pub T)
+impl<T: tst_core::transport::Transport> tst_pipeline::binding::owned::Close for tst_pipeline::binding::shells::SendHalf<T>
+pub type tst_pipeline::binding::shells::SendHalf<T>::Error = core::convert::Infallible
+pub fn tst_pipeline::binding::shells::SendHalf<T>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
+impl<T> core::marker::Freeze for tst_pipeline::binding::shells::SendHalf<T> where T: core::marker::Freeze
+impl<T> core::marker::Send for tst_pipeline::binding::shells::SendHalf<T> where T: core::marker::Send
+impl<T> core::marker::Sync for tst_pipeline::binding::shells::SendHalf<T> where T: core::marker::Sync
+impl<T> core::marker::Unpin for tst_pipeline::binding::shells::SendHalf<T> where T: core::marker::Unpin
+impl<T> core::marker::UnsafeUnpin for tst_pipeline::binding::shells::SendHalf<T> where T: core::marker::UnsafeUnpin
+impl<T> core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::shells::SendHalf<T> where T: core::panic::unwind_safe::RefUnwindSafe
+impl<T> core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::shells::SendHalf<T> where T: core::panic::unwind_safe::UnwindSafe
+pub trait tst_pipeline::binding::Close
+pub type tst_pipeline::binding::Close::Error: core::fmt::Debug + core::fmt::Display
+pub fn tst_pipeline::binding::Close::close(&mut self) -> core::result::Result<(), Self::Error>
+impl<R: tst_core::transport::RecvTransport> tst_pipeline::binding::owned::Close for tst_pipeline::binding::shells::RecvHalf<R>
+pub type tst_pipeline::binding::shells::RecvHalf<R>::Error = core::convert::Infallible
+pub fn tst_pipeline::binding::shells::RecvHalf<R>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
+impl<R: tst_core::transport::RecvTransport> tst_pipeline::binding::owned::Close for tst_pipeline::demux_receiver::DemuxReceiver<R>
+pub type tst_pipeline::demux_receiver::DemuxReceiver<R>::Error = core::convert::Infallible
+pub fn tst_pipeline::demux_receiver::DemuxReceiver<R>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
+impl<R: tst_core::transport::RecvTransport> tst_pipeline::binding::owned::Close for tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>
+pub type tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::Error = core::convert::Infallible
+pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
+impl<R: tst_core::transport::RecvTransport> tst_pipeline::binding::owned::Close for tst_pipeline::raw_receiver::RawReceiver<R>
+pub type tst_pipeline::raw_receiver::RawReceiver<R>::Error = core::convert::Infallible
+pub fn tst_pipeline::raw_receiver::RawReceiver<R>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
+impl<R: tst_core::transport::RecvTransport> tst_pipeline::binding::owned::Close for tst_pipeline::receiver::Receiver<R>
+pub type tst_pipeline::receiver::Receiver<R>::Error = core::convert::Infallible
+pub fn tst_pipeline::receiver::Receiver<R>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
+impl<T: tst_core::transport::Transport> tst_pipeline::binding::owned::Close for tst_pipeline::binding::shells::SendHalf<T>
+pub type tst_pipeline::binding::shells::SendHalf<T>::Error = core::convert::Infallible
+pub fn tst_pipeline::binding::shells::SendHalf<T>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
+impl<T: tst_core::transport::Transport> tst_pipeline::binding::owned::Close for tst_pipeline::mux_sender::MuxSender<T>
+pub type tst_pipeline::mux_sender::MuxSender<T>::Error = core::convert::Infallible
+pub fn tst_pipeline::mux_sender::MuxSender<T>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
+impl<T: tst_core::transport::Transport> tst_pipeline::binding::owned::Close for tst_pipeline::raw_sender::RawSender<T>
+pub type tst_pipeline::raw_sender::RawSender<T>::Error = core::convert::Infallible
+pub fn tst_pipeline::raw_sender::RawSender<T>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
+impl<T: tst_core::transport::Transport> tst_pipeline::binding::owned::Close for tst_pipeline::sender::Sender<T>
+pub type tst_pipeline::sender::Sender<T>::Error = core::convert::Infallible
+pub fn tst_pipeline::sender::Sender<T>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
 pub mod tst_pipeline::demux_receiver
 #[non_exhaustive] pub enum tst_pipeline::demux_receiver::DemuxReceiverErrorSource
 pub tst_pipeline::demux_receiver::DemuxReceiverErrorSource::Demux(tst_core::error::DemuxError)
@@ -47,6 +303,9 @@ pub type tst_pipeline::demux_receiver::DemuxReceiver<R>::Item = core::result::Re
 pub fn tst_pipeline::demux_receiver::DemuxReceiver<R>::next(&mut self) -> core::option::Option<Self::Item>
 impl<R: tst_core::transport::RecvTransport> core::ops::drop::Drop for tst_pipeline::demux_receiver::DemuxReceiver<R>
 pub fn tst_pipeline::demux_receiver::DemuxReceiver<R>::drop(&mut self)
+impl<R: tst_core::transport::RecvTransport> tst_pipeline::binding::owned::Close for tst_pipeline::demux_receiver::DemuxReceiver<R>
+pub type tst_pipeline::demux_receiver::DemuxReceiver<R>::Error = core::convert::Infallible
+pub fn tst_pipeline::demux_receiver::DemuxReceiver<R>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
 impl<R> core::marker::Freeze for tst_pipeline::demux_receiver::DemuxReceiver<R> where R: core::marker::Freeze
 impl<R> core::marker::Send for tst_pipeline::demux_receiver::DemuxReceiver<R>
 impl<R> !core::marker::Sync for tst_pipeline::demux_receiver::DemuxReceiver<R>
@@ -333,6 +592,9 @@ pub type tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::Item = c
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::next(&mut self) -> core::option::Option<Self::Item>
 impl<R: tst_core::transport::RecvTransport> core::ops::drop::Drop for tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::drop(&mut self)
+impl<R: tst_core::transport::RecvTransport> tst_pipeline::binding::owned::Close for tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>
+pub type tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::Error = core::convert::Infallible
+pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
 impl<R> core::marker::Freeze for tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R> where R: core::marker::Freeze
 impl<R> core::marker::Send for tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>
 impl<R> !core::marker::Sync for tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>
@@ -495,6 +757,9 @@ impl<T: tst_core::transport::Transport> core::fmt::Debug for tst_pipeline::mux_s
 pub fn tst_pipeline::mux_sender::MuxSender<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl<T: tst_core::transport::Transport> core::ops::drop::Drop for tst_pipeline::mux_sender::MuxSender<T>
 pub fn tst_pipeline::mux_sender::MuxSender<T>::drop(&mut self)
+impl<T: tst_core::transport::Transport> tst_pipeline::binding::owned::Close for tst_pipeline::mux_sender::MuxSender<T>
+pub type tst_pipeline::mux_sender::MuxSender<T>::Error = core::convert::Infallible
+pub fn tst_pipeline::mux_sender::MuxSender<T>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
 impl<T> !core::marker::Freeze for tst_pipeline::mux_sender::MuxSender<T>
 impl<T> core::marker::Send for tst_pipeline::mux_sender::MuxSender<T>
 impl<T> core::marker::Sync for tst_pipeline::mux_sender::MuxSender<T>
@@ -583,6 +848,9 @@ impl<R: tst_core::transport::RecvTransport> core::fmt::Debug for tst_pipeline::r
 pub fn tst_pipeline::raw_receiver::RawReceiver<R>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl<R: tst_core::transport::RecvTransport> core::ops::drop::Drop for tst_pipeline::raw_receiver::RawReceiver<R>
 pub fn tst_pipeline::raw_receiver::RawReceiver<R>::drop(&mut self)
+impl<R: tst_core::transport::RecvTransport> tst_pipeline::binding::owned::Close for tst_pipeline::raw_receiver::RawReceiver<R>
+pub type tst_pipeline::raw_receiver::RawReceiver<R>::Error = core::convert::Infallible
+pub fn tst_pipeline::raw_receiver::RawReceiver<R>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
 impl<R> core::marker::Freeze for tst_pipeline::raw_receiver::RawReceiver<R> where R: core::marker::Freeze
 impl<R> core::marker::Send for tst_pipeline::raw_receiver::RawReceiver<R>
 impl<R> core::marker::Sync for tst_pipeline::raw_receiver::RawReceiver<R> where R: core::marker::Sync
@@ -700,6 +968,9 @@ impl<T: tst_core::transport::Transport> core::fmt::Debug for tst_pipeline::raw_s
 pub fn tst_pipeline::raw_sender::RawSender<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl<T: tst_core::transport::Transport> core::ops::drop::Drop for tst_pipeline::raw_sender::RawSender<T>
 pub fn tst_pipeline::raw_sender::RawSender<T>::drop(&mut self)
+impl<T: tst_core::transport::Transport> tst_pipeline::binding::owned::Close for tst_pipeline::raw_sender::RawSender<T>
+pub type tst_pipeline::raw_sender::RawSender<T>::Error = core::convert::Infallible
+pub fn tst_pipeline::raw_sender::RawSender<T>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
 impl<T> core::marker::Freeze for tst_pipeline::raw_sender::RawSender<T> where T: core::marker::Freeze
 impl<T> core::marker::Send for tst_pipeline::raw_sender::RawSender<T>
 impl<T> core::marker::Sync for tst_pipeline::raw_sender::RawSender<T> where T: core::marker::Sync
@@ -816,6 +1087,9 @@ impl<R: tst_core::transport::RecvTransport> core::fmt::Debug for tst_pipeline::r
 pub fn tst_pipeline::receiver::Receiver<R>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl<R: tst_core::transport::RecvTransport> core::ops::drop::Drop for tst_pipeline::receiver::Receiver<R>
 pub fn tst_pipeline::receiver::Receiver<R>::drop(&mut self)
+impl<R: tst_core::transport::RecvTransport> tst_pipeline::binding::owned::Close for tst_pipeline::receiver::Receiver<R>
+pub type tst_pipeline::receiver::Receiver<R>::Error = core::convert::Infallible
+pub fn tst_pipeline::receiver::Receiver<R>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
 impl<R> core::marker::Freeze for tst_pipeline::receiver::Receiver<R> where R: core::marker::Freeze
 impl<R> core::marker::Send for tst_pipeline::receiver::Receiver<R>
 impl<R> core::marker::Sync for tst_pipeline::receiver::Receiver<R> where R: core::marker::Sync
@@ -1156,6 +1430,9 @@ impl<T: tst_core::transport::Transport> core::fmt::Debug for tst_pipeline::sende
 pub fn tst_pipeline::sender::Sender<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl<T: tst_core::transport::Transport> core::ops::drop::Drop for tst_pipeline::sender::Sender<T>
 pub fn tst_pipeline::sender::Sender<T>::drop(&mut self)
+impl<T: tst_core::transport::Transport> tst_pipeline::binding::owned::Close for tst_pipeline::sender::Sender<T>
+pub type tst_pipeline::sender::Sender<T>::Error = core::convert::Infallible
+pub fn tst_pipeline::sender::Sender<T>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
 impl<T> core::marker::Freeze for tst_pipeline::sender::Sender<T> where T: core::marker::Freeze
 impl<T> core::marker::Send for tst_pipeline::sender::Sender<T>
 impl<T> core::marker::Sync for tst_pipeline::sender::Sender<T> where T: core::marker::Sync
@@ -1571,6 +1848,9 @@ pub type tst_pipeline::demux_receiver::DemuxReceiver<R>::Item = core::result::Re
 pub fn tst_pipeline::demux_receiver::DemuxReceiver<R>::next(&mut self) -> core::option::Option<Self::Item>
 impl<R: tst_core::transport::RecvTransport> core::ops::drop::Drop for tst_pipeline::demux_receiver::DemuxReceiver<R>
 pub fn tst_pipeline::demux_receiver::DemuxReceiver<R>::drop(&mut self)
+impl<R: tst_core::transport::RecvTransport> tst_pipeline::binding::owned::Close for tst_pipeline::demux_receiver::DemuxReceiver<R>
+pub type tst_pipeline::demux_receiver::DemuxReceiver<R>::Error = core::convert::Infallible
+pub fn tst_pipeline::demux_receiver::DemuxReceiver<R>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
 impl<R> core::marker::Freeze for tst_pipeline::demux_receiver::DemuxReceiver<R> where R: core::marker::Freeze
 impl<R> core::marker::Send for tst_pipeline::demux_receiver::DemuxReceiver<R>
 impl<R> !core::marker::Sync for tst_pipeline::demux_receiver::DemuxReceiver<R>
@@ -1668,6 +1948,9 @@ pub type tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::Item = c
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::next(&mut self) -> core::option::Option<Self::Item>
 impl<R: tst_core::transport::RecvTransport> core::ops::drop::Drop for tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::drop(&mut self)
+impl<R: tst_core::transport::RecvTransport> tst_pipeline::binding::owned::Close for tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>
+pub type tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::Error = core::convert::Infallible
+pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
 impl<R> core::marker::Freeze for tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R> where R: core::marker::Freeze
 impl<R> core::marker::Send for tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>
 impl<R> !core::marker::Sync for tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>
@@ -1836,6 +2119,9 @@ impl<T: tst_core::transport::Transport> core::fmt::Debug for tst_pipeline::mux_s
 pub fn tst_pipeline::mux_sender::MuxSender<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl<T: tst_core::transport::Transport> core::ops::drop::Drop for tst_pipeline::mux_sender::MuxSender<T>
 pub fn tst_pipeline::mux_sender::MuxSender<T>::drop(&mut self)
+impl<T: tst_core::transport::Transport> tst_pipeline::binding::owned::Close for tst_pipeline::mux_sender::MuxSender<T>
+pub type tst_pipeline::mux_sender::MuxSender<T>::Error = core::convert::Infallible
+pub fn tst_pipeline::mux_sender::MuxSender<T>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
 impl<T> !core::marker::Freeze for tst_pipeline::mux_sender::MuxSender<T>
 impl<T> core::marker::Send for tst_pipeline::mux_sender::MuxSender<T>
 impl<T> core::marker::Sync for tst_pipeline::mux_sender::MuxSender<T>
@@ -1905,6 +2191,9 @@ impl<R: tst_core::transport::RecvTransport> core::fmt::Debug for tst_pipeline::r
 pub fn tst_pipeline::raw_receiver::RawReceiver<R>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl<R: tst_core::transport::RecvTransport> core::ops::drop::Drop for tst_pipeline::raw_receiver::RawReceiver<R>
 pub fn tst_pipeline::raw_receiver::RawReceiver<R>::drop(&mut self)
+impl<R: tst_core::transport::RecvTransport> tst_pipeline::binding::owned::Close for tst_pipeline::raw_receiver::RawReceiver<R>
+pub type tst_pipeline::raw_receiver::RawReceiver<R>::Error = core::convert::Infallible
+pub fn tst_pipeline::raw_receiver::RawReceiver<R>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
 impl<R> core::marker::Freeze for tst_pipeline::raw_receiver::RawReceiver<R> where R: core::marker::Freeze
 impl<R> core::marker::Send for tst_pipeline::raw_receiver::RawReceiver<R>
 impl<R> core::marker::Sync for tst_pipeline::raw_receiver::RawReceiver<R> where R: core::marker::Sync
@@ -2003,6 +2292,9 @@ impl<T: tst_core::transport::Transport> core::fmt::Debug for tst_pipeline::raw_s
 pub fn tst_pipeline::raw_sender::RawSender<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl<T: tst_core::transport::Transport> core::ops::drop::Drop for tst_pipeline::raw_sender::RawSender<T>
 pub fn tst_pipeline::raw_sender::RawSender<T>::drop(&mut self)
+impl<T: tst_core::transport::Transport> tst_pipeline::binding::owned::Close for tst_pipeline::raw_sender::RawSender<T>
+pub type tst_pipeline::raw_sender::RawSender<T>::Error = core::convert::Infallible
+pub fn tst_pipeline::raw_sender::RawSender<T>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
 impl<T> core::marker::Freeze for tst_pipeline::raw_sender::RawSender<T> where T: core::marker::Freeze
 impl<T> core::marker::Send for tst_pipeline::raw_sender::RawSender<T>
 impl<T> core::marker::Sync for tst_pipeline::raw_sender::RawSender<T> where T: core::marker::Sync
@@ -2061,6 +2353,9 @@ impl<R: tst_core::transport::RecvTransport> core::fmt::Debug for tst_pipeline::r
 pub fn tst_pipeline::receiver::Receiver<R>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl<R: tst_core::transport::RecvTransport> core::ops::drop::Drop for tst_pipeline::receiver::Receiver<R>
 pub fn tst_pipeline::receiver::Receiver<R>::drop(&mut self)
+impl<R: tst_core::transport::RecvTransport> tst_pipeline::binding::owned::Close for tst_pipeline::receiver::Receiver<R>
+pub type tst_pipeline::receiver::Receiver<R>::Error = core::convert::Infallible
+pub fn tst_pipeline::receiver::Receiver<R>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
 impl<R> core::marker::Freeze for tst_pipeline::receiver::Receiver<R> where R: core::marker::Freeze
 impl<R> core::marker::Send for tst_pipeline::receiver::Receiver<R>
 impl<R> core::marker::Sync for tst_pipeline::receiver::Receiver<R> where R: core::marker::Sync
@@ -2179,6 +2474,9 @@ impl<T: tst_core::transport::Transport> core::fmt::Debug for tst_pipeline::sende
 pub fn tst_pipeline::sender::Sender<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl<T: tst_core::transport::Transport> core::ops::drop::Drop for tst_pipeline::sender::Sender<T>
 pub fn tst_pipeline::sender::Sender<T>::drop(&mut self)
+impl<T: tst_core::transport::Transport> tst_pipeline::binding::owned::Close for tst_pipeline::sender::Sender<T>
+pub type tst_pipeline::sender::Sender<T>::Error = core::convert::Infallible
+pub fn tst_pipeline::sender::Sender<T>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
 impl<T> core::marker::Freeze for tst_pipeline::sender::Sender<T> where T: core::marker::Freeze
 impl<T> core::marker::Send for tst_pipeline::sender::Sender<T>
 impl<T> core::marker::Sync for tst_pipeline::sender::Sender<T> where T: core::marker::Sync

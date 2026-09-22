@@ -149,6 +149,7 @@ impl<T, S> Owned<T, S> {
     /// Attach the receiver's [`RecvEndReasonHandle`] (obtained BEFORE the
     /// receiver moved into `inner`), so [`Self::end_reason`] answers after
     /// the value is gone. Senders never call this.
+    #[must_use]
     pub fn with_end_reason(mut self, h: RecvEndReasonHandle) -> Self {
         self.end_reason = Some(h);
         self
@@ -391,11 +392,15 @@ mod tests {
         flag: Arc<AtomicBool>,
         closes: Arc<AtomicU32>,
         log: Arc<std::sync::Mutex<Vec<&'static str>>>,
+        /// Attached to `owned`, so tests can drive `end_reason()`'s `Some`
+        /// branch and not just its `None` short-circuit.
+        end_reason: RecvEndReasonHandle,
     }
     fn fixture() -> Fixture {
         let flag = Arc::new(AtomicBool::new(false));
         let closes = Arc::new(AtomicU32::new(0));
         let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let end_reason = RecvEndReasonHandle::default();
         let cancel = Arc::new(MockCancel {
             calls: AtomicU32::new(0),
             flag: Arc::clone(&flag),
@@ -407,13 +412,15 @@ mod tests {
             log: Arc::clone(&log),
         };
         let cancel_dyn: Arc<dyn TransportCancel> = Arc::clone(&cancel) as Arc<dyn TransportCancel>;
-        let owned = Arc::new(Owned::new(mock, cancel_dyn, "snap"));
+        let owned =
+            Arc::new(Owned::new(mock, cancel_dyn, "snap").with_end_reason(end_reason.clone()));
         Fixture {
             owned,
             cancel,
             flag,
             closes,
             log,
+            end_reason,
         }
     }
 
@@ -424,7 +431,11 @@ mod tests {
         let f = fixture();
         assert!(!f.owned.is_cancelled());
         assert_eq!(*f.owned.snapshot(), "snap");
-        assert_eq!(f.owned.end_reason(), None, "no end-reason handle attached");
+        assert_eq!(
+            f.owned.end_reason(),
+            None,
+            "handle attached, but no reason recorded yet"
+        );
     }
 
     #[test]
@@ -761,11 +772,57 @@ mod tests {
         assert!(owned.is_closed());
     }
 
+    #[test]
+    fn close_drop_panic_takes_precedence_over_an_inner_close_error() {
+        // Ruled precedence: when `Close::close` returns an error AND the drop
+        // then panics, the panic wins — it is the more severe signal and the
+        // value is gone either way, so `Inner(e)` could tell the caller
+        // nothing `Panicked` does not.
+        struct FailsThenDropPanics;
+        impl Close for FailsThenDropPanics {
+            type Error = MockCloseError;
+            fn close(&mut self) -> Result<(), MockCloseError> {
+                Err(MockCloseError)
+            }
+        }
+        impl Drop for FailsThenDropPanics {
+            fn drop(&mut self) {
+                panic!("drop boom after a failed close");
+            }
+        }
+
+        let flag = Arc::new(AtomicBool::new(false));
+        let owned = Owned::new(
+            FailsThenDropPanics,
+            Arc::new(MockCancel {
+                calls: AtomicU32::new(0),
+                flag,
+            }) as Arc<dyn TransportCancel>,
+            (),
+        );
+        match owned.close() {
+            Err(CloseFailure::Panicked { detail }) => {
+                assert_eq!(detail, "drop boom after a failed close");
+            }
+            other => panic!("the drop panic must win over CloseFailure::Inner, got {other:?}"),
+        }
+        assert!(owned.is_closed());
+    }
+
     // ---- concurrency: nothing but with_mut/with_ref/take/is_closed/close
     // waits on the slot (Task A1.5) ----
 
     const PARK_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
-    const PROMPT: std::time::Duration = std::time::Duration::from_secs(2);
+    /// Bound on how long a call that must NOT wait on the slot may take.
+    ///
+    /// Deliberately loose. It never asserts that an operation was *fast* —
+    /// the tests only fail if the bound is exceeded, and the failure mode it
+    /// catches (a call that took the lock behind a parked `with_mut`) blocks
+    /// for `PARK_DEADLINE`, i.e. forever on this scale. So the only cost of a
+    /// generous bound is how long a genuine regression takes to report, while
+    /// a tight one would flake: these tests also run under ASan/TSan in the
+    /// nightly sanitizers job, where thread scheduling is 5–15x slower.
+    const PROMPT: std::time::Duration = std::time::Duration::from_secs(10);
 
     /// Latch-and-poll with a bounded watchdog — never a wall-clock assert.
     fn wait_for(deadline: std::time::Duration, f: impl Fn() -> bool) -> bool {
@@ -835,6 +892,10 @@ mod tests {
     #[test]
     fn snapshot_and_end_reason_and_is_cancelled_never_take_the_slot() {
         let f = fixture();
+        // Record BEFORE parking so the reader exercises `end_reason()`'s
+        // `Some` branch — an actual `OnceLock` read — rather than the
+        // `self.end_reason.is_none()` short-circuit.
+        f.end_reason.record(RecvEndReason::EndOfStream);
         let (parked, _) = park_in_with_mut(&f);
         let reader = {
             let o = Arc::clone(&f.owned);
@@ -848,7 +909,10 @@ mod tests {
             "a snapshot getter or cancel_arc() waited on the parked slot (the PR #234 / #189 classes)"
         );
         let (snap, reason, cancelled, handle) = reader.join().unwrap();
-        assert_eq!((snap, reason, cancelled), ("snap", None, false));
+        assert_eq!(
+            (snap, reason, cancelled),
+            ("snap", Some(RecvEndReason::EndOfStream), false)
+        );
         handle.cancel(); // release the parked thread THROUGH the handed-out handle
         assert_eq!(parked.join().unwrap(), Ok(1));
         assert!(f.owned.is_cancelled());
