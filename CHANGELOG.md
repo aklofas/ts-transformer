@@ -1292,7 +1292,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`crates/tst-interop/tests/mutations.rs`, 14 tests) that removes the property
   it checks and asserts the oracle's named failure fires.
 
-### Testing — interop harness (WP-7a)
+### Testing — interop harness (WP-7a, WP-7b)
 
 - **`wire_vs_demux_<pid>` oracle** (`tst-interop verify`/`recv`): per media
   PID, the demuxer's `Sample`/`Metadata` count is held to the raw reader's
@@ -1351,9 +1351,6 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   with no event at all — a damaged SMPTE UL, which the demuxer passes
   through as an `Unknown` sample — passed entirely before and now fails
   `wire_vs_demux_4145` alone.
-
-### Testing — interop harness (WP-7b)
-
 - **`CorruptionStats::log_write_failed`** (additive): the sender's tap
   latches any corruption-log write/flush failure, and `report soak` fails
   `corruption_coverage_<leg>` on it regardless of the 99 % ingestion floor
