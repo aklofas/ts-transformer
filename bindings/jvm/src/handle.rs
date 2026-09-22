@@ -101,10 +101,6 @@ use tst_pipeline::binding::{HandleState, Owned};
 /// and releases its lease. Types with no parked op pass `None`.
 pub(crate) type CancelHook = Box<dyn Fn() + Send + Sync>;
 
-/// A trait-erased cancel target a `cancelHandle()` native clones out of the entry
-/// without taking the resource lock — see [`Entry::cancel_target`].
-pub(crate) type CancelTarget = Arc<dyn tst_core::transport::TransportCancel + Send + Sync>;
-
 /// A registry entry. Permanent as far as the registry's table is concerned (the
 /// table never moves or frees an `Entry` out from under a lease — `close` only
 /// removes the registry's own strong `Arc`, and in-flight leases keep theirs).
@@ -116,11 +112,6 @@ pub(crate) struct Entry<T> {
     /// Fired once by `close` to wake a parked op before taking the lock. `None` for
     /// types with no parked op.
     cancel: Option<CancelHook>,
-    /// The resource's cross-thread cancel target, captured at construction and kept
-    /// OUTSIDE `resource`'s mutex so [`HandleRegistry::cancel_target`] can hand it
-    /// out while a parked op holds that mutex. `close` does NOT fire it (that is
-    /// `cancel`'s job); it only backs the public `cancelHandle()` natives.
-    cancel_target: Option<CancelTarget>,
 }
 
 impl<T> Entry<T> {
@@ -258,36 +249,18 @@ impl<T> HandleRegistry<T> {
     /// cancel (the rtp `DemuxReceiver` / transport recv/send paths) must therefore
     /// uphold a single-iterator contract: at most one op parked on a handle at a time.
     pub(crate) fn insert_with_cancel(&self, resource: T, cancel: Option<CancelHook>) -> u64 {
-        self.insert_full(resource, cancel, None)
-    }
-
-    /// Register a resource with BOTH a close-fired hook and a lock-free cancel
-    /// target (the rtp receivers: `close()` wakes a parked recv AND `cancelHandle()`
-    /// must not block behind one).
-    pub(crate) fn insert_full(
-        &self,
-        resource: T,
-        cancel: Option<CancelHook>,
-        cancel_target: Option<CancelTarget>,
-    ) -> u64 {
-        self.insert_entry(resource, cancel, cancel_target)
+        self.insert_entry(resource, cancel)
     }
 
     /// The one place an [`Entry`] is built — every `insert*` funnels here so a new
     /// side slot cannot be silently forgotten by one of them.
-    fn insert_entry(
-        &self,
-        resource: T,
-        cancel: Option<CancelHook>,
-        cancel_target: Option<CancelTarget>,
-    ) -> u64 {
+    fn insert_entry(&self, resource: T, cancel: Option<CancelHook>) -> u64 {
         self.inner
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .insert(Entry {
                 resource: Mutex::new(Some(resource)),
                 cancel,
-                cancel_target,
             })
     }
 
@@ -301,15 +274,6 @@ impl<T> HandleRegistry<T> {
     /// `IllegalStateException` on the Java boundary.
     pub(crate) fn lease(&self, id: u64) -> Option<Arc<Entry<T>>> {
         self.inner.lock().unwrap_or_else(|e| e.into_inner()).get(id)
-    }
-
-    /// Clone the entry's cross-thread cancel target WITHOUT touching the resource
-    /// lock — only the registry table lock, held for a hash lookup. `None` for `0`,
-    /// an absent/closed id, or an entry registered without a target. This is what
-    /// lets `cancelHandle()` return promptly while `next()`/`recvBytes()`/`accept()`
-    /// is parked on the same handle from another thread.
-    pub(crate) fn cancel_target(&self, id: u64) -> Option<CancelTarget> {
-        self.lease(id).and_then(|e| e.cancel_target.clone())
     }
 
     /// Lease `id` and run `f` on the resource under its lock — the common A2 path,
@@ -805,66 +769,6 @@ mod tests {
         });
         let dyn_c: Arc<dyn tst_core::transport::TransportCancel> = c.clone();
         (c, dyn_c)
-    }
-
-    #[test]
-    fn cancel_target_is_readable_while_resource_lock_is_held() {
-        let reg: HandleRegistry<u64> = HandleRegistry::new();
-        let target: Arc<dyn tst_core::transport::TransportCancel + Send + Sync> = recording().1;
-        let id = reg.insert_full(7, None, Some(Arc::clone(&target)));
-
-        // Park an op on the resource lock (a blocked recv/accept in production).
-        let entry = reg.lease(id).unwrap();
-        let held = Arc::new(std::sync::Barrier::new(2));
-        let release = Arc::new(std::sync::Barrier::new(2));
-        let (h, rel) = (held.clone(), release.clone());
-        let parked = thread::spawn(move || {
-            entry
-                .with(|_v| {
-                    h.wait();
-                    rel.wait();
-                })
-                .unwrap();
-        });
-        held.wait(); // resource lock is now held by the parked op
-
-        // The whole point: reading the cancel target must NOT wait on that lock.
-        let got = thread::spawn(move || reg.cancel_target(id));
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while !got.is_finished() {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "cancel_target blocked behind the parked op's resource lock"
-            );
-            thread::yield_now();
-        }
-        let got = got.join().unwrap().expect("live entry has a target");
-        assert!(
-            Arc::ptr_eq(&got, &target),
-            "returns the Arc registered at insert"
-        );
-
-        release.wait();
-        parked.join().unwrap();
-    }
-
-    #[test]
-    fn cancel_target_absent_for_plain_insert_and_after_close() {
-        let reg: HandleRegistry<u64> = HandleRegistry::new();
-        let plain = reg.insert(1);
-        assert!(
-            reg.cancel_target(plain).is_none(),
-            "plain insert has no target"
-        );
-        let target: Arc<dyn tst_core::transport::TransportCancel + Send + Sync> = recording().1;
-        let id = reg.insert_full(2, None, Some(target));
-        assert!(reg.cancel_target(id).is_some());
-        reg.close(id);
-        assert!(
-            reg.cancel_target(id).is_none(),
-            "closed entry has no target"
-        );
-        assert!(reg.cancel_target(0).is_none(), "0 sentinel");
     }
 
     #[test]

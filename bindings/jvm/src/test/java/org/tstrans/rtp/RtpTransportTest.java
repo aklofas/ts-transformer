@@ -31,9 +31,10 @@ class RtpTransportTest {
     }
 
     @Test
-    void senderMalformedUrlThrowsRtpTransport() {
+    void senderMalformedUrlThrowsRtpUrl() {
         RtpException ex = assertThrows(RtpException.class, () -> Sender.fromUrl("not-a-url"));
-        assertEquals(RtpException.Kind.TRANSPORT, ex.kind());
+        // 0.7.0: a URL-parse failure is URL, not the retired catch-all TRANSPORT.
+        assertEquals(RtpException.Kind.URL, ex.kind());
     }
 
     @Test
@@ -67,9 +68,10 @@ class RtpTransportTest {
     }
 
     @Test
-    void receiverMalformedUrlThrowsRtpTransport() {
+    void receiverMalformedUrlThrowsRtpUrl() {
         RtpException ex = assertThrows(RtpException.class, () -> Receiver.fromUrl("not-a-url"));
-        assertEquals(RtpException.Kind.TRANSPORT, ex.kind());
+        // 0.7.0: a URL-parse failure is URL, not the retired catch-all TRANSPORT.
+        assertEquals(RtpException.Kind.URL, ex.kind());
     }
 
     @Test
@@ -84,15 +86,15 @@ class RtpTransportTest {
     void receiverRecvTimeoutRaisesTimeoutKind() throws Exception {
         // `?recv_timeout=<ms>` arms a persistent recv deadline (wired by
         // RtpRecvSocketBuilder::from_url). A quiet socket (no sender) must throw
-        // RtpException(TIMEOUT) once the deadline expires — distinct from
+        // RtpException(BACKPRESSURE) once the deadline expires — distinct from
         // TRANSPORT, since the receiver stays open and usable (retry recv() again).
         try (Receiver r = Receiver.fromUrl("rtp://127.0.0.1:50004?recv_timeout=200")) {
             RtpException ex = assertThrows(RtpException.class, r::recv);
-            assertEquals(RtpException.Kind.TIMEOUT, ex.kind());
+            assertEquals(RtpException.Kind.BACKPRESSURE, ex.kind());
             // The receiver is still alive after a TIMEOUT — a second recv on the
             // same (still-quiet) socket raises TIMEOUT again, not TRANSPORT.
             RtpException ex2 = assertThrows(RtpException.class, r::recv);
-            assertEquals(RtpException.Kind.TIMEOUT, ex2.kind());
+            assertEquals(RtpException.Kind.BACKPRESSURE, ex2.kind());
         }
     }
 
@@ -115,7 +117,7 @@ class RtpTransportTest {
         // the per-call `recv(Integer)` argument.
         try (Receiver r = Receiver.fromUrl("rtp://127.0.0.1:50005")) {
             RtpException ex = assertThrows(RtpException.class, () -> r.recv(200));
-            assertEquals(RtpException.Kind.TIMEOUT, ex.kind());
+            assertEquals(RtpException.Kind.BACKPRESSURE, ex.kind());
 
             // The receiver stays alive after a TIMEOUT (retryable): a real send
             // must be delivered on a subsequent recv(timeoutMs) call.
@@ -144,7 +146,7 @@ class RtpTransportTest {
         // `nRecv`'s existing tests exercise). The 300 ms delayed send clears
         // comfortably inside the 4 s window, so this still proves null doesn't
         // flatten to a short deadline — but if a real bug or a lost packet ever
-        // left nothing to receive, the call throws RtpException(TIMEOUT) loudly
+        // left nothing to receive, the call throws RtpException(BACKPRESSURE) loudly
         // after 4 s instead of parking forever. @Timeout(5) alone is NOT a
         // sufficient guard here: it cannot interrupt a thread blocked in a
         // native socket read, so an unbounded native call guarded only by

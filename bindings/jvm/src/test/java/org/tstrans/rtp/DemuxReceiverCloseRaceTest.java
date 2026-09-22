@@ -103,7 +103,7 @@ final class DemuxReceiverCloseRaceTest {
                                 assertNotNull(e);
                             }
                         } catch (RuntimeException wrapped) {
-                            // A wrapped RtpException(CANCELLED)/DemuxException is the sanctioned
+                            // A wrapped RtpException(CLOSED)/DemuxException is the sanctioned
                             // outcome of the cancelled recv.
                         } catch (Throwable t) {
                             unexpected.set(t);

@@ -35,10 +35,12 @@ use jni::sys::{jboolean, jint, jlong, jobject};
 use tst_rtp::rtsp::client::RtspClient as RustRtspClient;
 use tst_rtp::{H264Au, H264DepayConfig, H264Receiver, ParameterSetInjection};
 
-use crate::handle::HandleRegistry;
+use tst_pipeline::binding::Owned;
+
+use crate::handle::OwnedRegistry;
 use crate::jutil::build_socket_stats;
 
-use super::errors::{connect_error_to_rtp, transport_error_to_rtp};
+use super::errors::{connect_error, transport_error};
 
 /// RTSP control plane retained by receivers created via
 /// `RtspSession.intoH264Receiver()`. The Java session wrapper is CONSUMED at
@@ -65,7 +67,10 @@ struct JniH264Receiver {
 
 /// Per-type leased-handle registry for `org.tstrans.rtp.H264Receiver`. Registers
 /// a cancel hook so a cross-thread `close()` wakes a parked `recv_au`.
-static REGISTRY: LazyLock<HandleRegistry<JniH264Receiver>> = LazyLock::new(HandleRegistry::new);
+/// `S = Option<SocketAddr>`: the bound address, constant after `listen`, so
+/// `nLocalAddr` never takes the slot a parked `recvAu` holds (spec §3.2).
+static REGISTRY: LazyLock<OwnedRegistry<JniH264Receiver, Option<std::net::SocketAddr>>> =
+    LazyLock::new(OwnedRegistry::new);
 
 /// Build a registry handle from an already-constructed `H264Receiver`
 /// (plain `nListen*` path — no RTSP control plane).
@@ -83,20 +88,24 @@ pub(super) fn h264_receiver_handle_from_rtsp_session(
     insert_receiver(receiver, Some(control))
 }
 
-/// Extract the cancel handle, register it as BOTH the registry cancel hook (fired
-/// by `close`) and the lock-free `nCancelHandle` target (readable while `recvAu`
-/// holds the resource lock), and return the boxed handle as `jlong`.
+/// Register the receiver as an `Owned` entry: its cancel handle backs both the
+/// cancel-first `close` and the lock-free `nCancelHandle` (readable while
+/// `recvAu` holds the slot), and the bound address is snapshotted for
+/// `nLocalAddr`.
+///
+/// No `rtp_cancel` here: `H264Receiver::cancel_handle` is an inherent,
+/// non-`Option` accessor (`crates/tst-rtp/src/h264/receiver.rs`), so there is no
+/// `.expect` to retire.
 fn insert_receiver(receiver: H264Receiver, rtsp: Option<JniRtspControl>) -> jlong {
-    // Coerce Arc<RtpCancelHandle> to Arc<dyn TransportCancel + Send + Sync>
+    // Coerce Arc<RtpCancelHandle> to Arc<dyn TransportCancel>
     // (RtpCancelHandle implements TransportCancel).
-    let cancel: Arc<dyn tst_core::transport::TransportCancel + Send + Sync> =
-        receiver.cancel_handle();
-    let hook = Arc::clone(&cancel);
+    let cancel: Arc<dyn tst_core::transport::TransportCancel> = receiver.cancel_handle();
+    let local_addr = receiver.local_addr();
     let slot = JniH264Receiver {
         inner: receiver,
         rtsp,
     };
-    REGISTRY.insert_full(slot, Some(Box::new(move || hook.cancel())), Some(cancel)) as jlong
+    REGISTRY.insert(Owned::new(slot, cancel, local_addr)) as jlong
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -123,7 +132,7 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nListen<'local>(
         match H264Receiver::listen(&url_str) {
             Ok(receiver) => h264_receiver_handle_from_receiver(receiver),
             Err(e) => {
-                connect_error_to_rtp(env, &e);
+                connect_error(env, e);
                 0
             }
         }
@@ -207,14 +216,14 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nListenWithConfig<'loca
         let parsed = match tst_rtp::url::RtpUrl::parse(&url_str) {
             Ok(p) => p,
             Err(e) => {
-                super::errors::throw_rtp(env, "TRANSPORT", &e.to_string());
+                super::errors::rtp_url_error(env, &e);
                 return 0;
             }
         };
         match H264Receiver::listen_with(&parsed, config) {
             Ok(receiver) => h264_receiver_handle_from_receiver(receiver),
             Err(e) => {
-                connect_error_to_rtp(env, &e);
+                connect_error(env, e);
                 0
             }
         }
@@ -243,7 +252,7 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nRecvAu<'local>(
         // `with_poisoning` holds the resource lock while recv_au runs (which may park
         // the calling thread). A concurrent `close()` fires the cancel hook first so
         // this call returns promptly then the resource is taken.
-        let Some(result) = REGISTRY.with_poisoning(handle as u64, |jdr| jdr.inner.recv_au()) else {
+        let Ok(result) = REGISTRY.with_mut(handle as u64, |jdr| jdr.inner.recv_au()) else {
             // Closed/absent — clean EOS: return null (the Java side returns null
             // from recvAu(), which the caller treats as end-of-stream).
             return JObject::null().into_raw();
@@ -254,7 +263,7 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nRecvAu<'local>(
             Ok(None) => JObject::null().into_raw(),
             Ok(Some(au)) => build_h264_access_unit(env, &au),
             Err(e) => {
-                transport_error_to_rtp(env, &e);
+                transport_error(env, &e);
                 JObject::null().into_raw()
             }
         }
@@ -275,7 +284,7 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nRecvAu<'local>(
 ///
 /// Unlike `RtpRecvTransport::recv_timeout`, `recv_au_timeout` reports deadline
 /// expiry as `Err(TransportError::Backpressure)`, not `Ok(None)` — so no
-/// hand-mapping is needed here: `transport_error_to_rtp` already maps
+/// hand-mapping is needed here: `transport_error` already maps
 /// `Backpressure` to `RtpException(TIMEOUT)`, and `Ok(None)` stays EOS-only.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nRecvAuTimeout<'local>(
@@ -285,7 +294,7 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nRecvAuTimeout<'local>(
     timeout_ms: jlong,
 ) -> jobject {
     crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
-        let Some(result) = REGISTRY.with_poisoning(handle as u64, |jdr| {
+        let Ok(result) = REGISTRY.with_mut(handle as u64, |jdr| {
             if timeout_ms < 0 {
                 jdr.inner.recv_au()
             } else {
@@ -302,7 +311,7 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nRecvAuTimeout<'local>(
             Ok(None) => JObject::null().into_raw(),
             Ok(Some(au)) => build_h264_access_unit(env, &au),
             Err(e) => {
-                transport_error_to_rtp(env, &e);
+                transport_error(env, &e);
                 JObject::null().into_raw()
             }
         }
@@ -364,7 +373,7 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nDepayStats<'local>(
     handle: jlong,
 ) -> jobject {
     crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
-        let Some(s) = REGISTRY.with(handle as u64, |jdr| jdr.inner.depay_stats()) else {
+        let Ok(s) = REGISTRY.with_ref(handle as u64, |jdr| jdr.inner.depay_stats()) else {
             crate::error::throw_closed(env, "H264Receiver");
             return JObject::null().into_raw();
         };
@@ -402,7 +411,7 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nRtpStats<'local>(
     handle: jlong,
 ) -> jobject {
     crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
-        let Some(s) = REGISTRY.with(handle as u64, |jdr| jdr.inner.rtp_stats()) else {
+        let Ok(s) = REGISTRY.with_ref(handle as u64, |jdr| jdr.inner.rtp_stats()) else {
             crate::error::throw_closed(env, "H264Receiver");
             return JObject::null().into_raw();
         };
@@ -431,7 +440,7 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nSocketStats<'local>(
     handle: jlong,
 ) -> jobject {
     crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
-        let Some(s) = REGISTRY.with(handle as u64, |jdr| jdr.inner.socket_stats()) else {
+        let Ok(s) = REGISTRY.with_ref(handle as u64, |jdr| jdr.inner.socket_stats()) else {
             crate::error::throw_closed(env, "H264Receiver");
             return JObject::null().into_raw();
         };
@@ -458,7 +467,9 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nLocalAddr<'local>(
     handle: jlong,
 ) -> jobject {
     crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
-        let Some(addr) = REGISTRY.with(handle as u64, |jdr| jdr.inner.local_addr()) else {
+        // Lock-free: the bound address is a construction constant, snapshotted
+        // at `insert_receiver`, so this answers while `recvAu` is parked.
+        let Some(addr) = REGISTRY.snapshot(handle as u64, |a| *a) else {
             crate::error::throw_closed(env, "H264Receiver");
             return JObject::null().into_raw();
         };
@@ -488,13 +499,15 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nCancelHandle(
     handle: jlong,
 ) -> jlong {
     crate::panic::jni_catch(&mut env, 0, |env| {
-        // Lock-free: the target was captured at registration (see
-        // `insert_receiver`), so this returns while `recvAu` is parked.
-        let Some(inner) = REGISTRY.cancel_target(handle as u64) else {
-            crate::error::throw_closed(env, "H264Receiver");
-            return 0;
-        };
-        crate::rtp::JniRtpCancel { inner }.into_handle()
+        // Lock-free: the view is the `Owned` entry itself, so this returns
+        // while `recvAu` is parked on the slot.
+        match REGISTRY.cancel_view(handle as u64) {
+            Some(view) => crate::rtp::cancel_view_handle(view),
+            None => {
+                crate::error::throw_closed(env, "H264Receiver");
+                0
+            }
+        }
     })
 }
 
@@ -513,7 +526,7 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nEndReason(
 ) -> jint {
     crate::panic::jni_catch(&mut env, -1, |_env| {
         REGISTRY
-            .with(handle as u64, |jdr| {
+            .with_ref(handle as u64, |jdr| {
                 super::end_reason::end_reason_ordinal(jdr.inner.end_reason().as_ref())
             })
             .unwrap_or(-1)
@@ -531,11 +544,12 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nEndDetail<'local>(
 ) -> JObject<'local> {
     crate::panic::jni_catch(&mut env, JObject::null(), |env| {
         let detail = REGISTRY
-            .with(handle as u64, |jdr| {
+            .with_ref(handle as u64, |jdr| {
                 jdr.inner
                     .end_reason()
                     .and_then(|r| super::end_reason::end_reason_detail(&r).map(str::to_owned))
             })
+            .ok()
             .flatten();
         match detail {
             Some(d) => match env.new_string(&d) {

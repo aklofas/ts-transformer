@@ -98,7 +98,7 @@ class RtpLoopbackScenarioTest {
                     try {
                         chunk = receiver.recv();
                     } catch (RtpException e) {
-                        if (e.kind() == RtpException.Kind.CANCELLED) break;
+                        if (e.kind() == RtpException.Kind.CLOSED) break;
                         receivedFuture.completeExceptionally(e);
                         return;
                     }

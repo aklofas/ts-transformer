@@ -13,6 +13,7 @@ use jni::sys::{jboolean, jint, jlong};
 
 use secrecy::SecretString;
 use tst_core::mpegts::demux::DemuxerConfig;
+use tst_pipeline::binding::BindingErrorKind;
 use tst_rtp::H264DepayConfig;
 use tst_rtp::RtspClientBuilder;
 use tst_rtp::error::RtspError;
@@ -55,14 +56,18 @@ fn apply_tls_roots(
         let cert = match cert {
             Ok(c) => c,
             Err(e) => {
-                throw_rtsp(env, "TLS", &format!("tlsRootCertsPem: invalid PEM: {e}"));
+                throw_rtsp(
+                    env,
+                    BindingErrorKind::RtspTls,
+                    &format!("tlsRootCertsPem: invalid PEM: {e}"),
+                );
                 return None;
             }
         };
         if let Err(e) = roots.add(cert) {
             throw_rtsp(
                 env,
-                "TLS",
+                BindingErrorKind::RtspTls,
                 &format!("tlsRootCertsPem: certificate rejected as trust anchor: {e}"),
             );
             return None;
@@ -70,7 +75,11 @@ fn apply_tls_roots(
         added += 1;
     }
     if added == 0 {
-        throw_rtsp(env, "TLS", "tlsRootCertsPem contains no certificates");
+        throw_rtsp(
+            env,
+            BindingErrorKind::RtspTls,
+            "tlsRootCertsPem contains no certificates",
+        );
         return None;
     }
     Some(builder.tls_root_certs(roots))
@@ -193,7 +202,7 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspClient_nConnect(
         let mut builder = match RtspClientBuilder::new(&url_str) {
             Ok(b) => b,
             Err(e) => {
-                rtsp_error_to_jvm(env, &e);
+                rtsp_error_to_jvm(env, e);
                 return 0;
             }
         };
@@ -249,7 +258,7 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspClient_nConnect(
         let (client, session) = match result {
             Ok(pair) => pair,
             Err(e) => {
-                rtsp_error_to_jvm(env, &e);
+                rtsp_error_to_jvm(env, e);
                 return 0;
             }
         };
@@ -289,7 +298,7 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspClient_nConnectH264(
         let mut builder = match RtspClientBuilder::new(&url_str) {
             Ok(b) => b,
             Err(e) => {
-                rtsp_error_to_jvm(env, &e);
+                rtsp_error_to_jvm(env, e);
                 return 0;
             }
         };
@@ -340,7 +349,7 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspClient_nConnectH264(
         let (client, session, depay_config) = match result {
             Ok(triple) => triple,
             Err(e) => {
-                rtsp_error_to_jvm(env, &e);
+                rtsp_error_to_jvm(env, e);
                 return 0;
             }
         };
@@ -413,7 +422,7 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspSession_nTeardown(
             r
         })();
         if let Err(e) = res {
-            rtsp_error_to_jvm(env, &e);
+            rtsp_error_to_jvm(env, e);
         }
     })
 }
@@ -437,7 +446,7 @@ fn session_control(
         }
     })();
     if let Err(e) = res {
-        rtsp_error_to_jvm(env, &e);
+        rtsp_error_to_jvm(env, e);
     }
 }
 
@@ -503,7 +512,11 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspSession_nIntoDemuxReceiver(
             let mut guard = match session_slot.lock() {
                 Ok(g) => g,
                 Err(_) => {
-                    throw_rtsp(env, "PROTOCOL", "RtspSession lock poisoned");
+                    throw_rtsp(
+                        env,
+                        BindingErrorKind::RtspProtocol,
+                        "RtspSession lock poisoned",
+                    );
                     return 0;
                 }
             };
@@ -512,7 +525,7 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspSession_nIntoDemuxReceiver(
                 None => {
                     throw_rtsp(
                         env,
-                        "PROTOCOL",
+                        BindingErrorKind::RtspProtocol,
                         "RtspSession.intoDemuxReceiver: already consumed",
                     );
                     return 0;
@@ -598,7 +611,11 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspSession_nIntoH264Receiver(
             let taken = match slot.h264_depay_config.lock() {
                 Ok(mut g) => g.take(),
                 Err(_) => {
-                    throw_rtsp(env, "PROTOCOL", "RtspSession H264DepayConfig lock poisoned");
+                    throw_rtsp(
+                        env,
+                        BindingErrorKind::RtspProtocol,
+                        "RtspSession H264DepayConfig lock poisoned",
+                    );
                     return 0;
                 }
             };
@@ -608,7 +625,7 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspSession_nIntoH264Receiver(
                     teardown_best_effort(&slot);
                     throw_rtsp(
                         env,
-                        "PROTOCOL",
+                        BindingErrorKind::RtspProtocol,
                         "RtspSession.intoH264Receiver: session was not created by \
                          connectH264(), or the H264DepayConfig has already been consumed",
                     );
@@ -624,7 +641,11 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspSession_nIntoH264Receiver(
             let taken = match slot.session.lock() {
                 Ok(mut g) => g.take(),
                 Err(_) => {
-                    throw_rtsp(env, "PROTOCOL", "RtspSession data-plane lock poisoned");
+                    throw_rtsp(
+                        env,
+                        BindingErrorKind::RtspProtocol,
+                        "RtspSession data-plane lock poisoned",
+                    );
                     return 0;
                 }
             };
@@ -634,7 +655,7 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspSession_nIntoH264Receiver(
                     teardown_best_effort(&slot);
                     throw_rtsp(
                         env,
-                        "PROTOCOL",
+                        BindingErrorKind::RtspProtocol,
                         "RtspSession.intoH264Receiver: data plane already consumed",
                     );
                     return 0;

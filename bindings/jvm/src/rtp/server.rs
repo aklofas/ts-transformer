@@ -18,6 +18,7 @@ use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{
     AudioStreamHandle, DataStreamHandle, KlvStreamHandle, SubtitleStreamHandle, VideoStreamHandle,
 };
+use tst_pipeline::binding::BindingErrorKind;
 use tst_rtp::RtspServer as RustRtspServer;
 use tst_rtp::RtspServerCancelHandle as RustServerCancel;
 use tst_rtp::ServerStats as RustServerStats;
@@ -215,7 +216,11 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nStart<'local>(
             // Java build() enforces both-or-neither; reaching here means a
             // caller bypassed the config type. Refuse rather than guess.
             _ => {
-                throw_rtsp(env, "TLS", "tlsCert and tlsKey must be set together");
+                throw_rtsp(
+                    env,
+                    BindingErrorKind::RtspTls,
+                    "tlsCert and tlsKey must be set together",
+                );
                 return 0;
             }
         };
@@ -227,7 +232,7 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nStart<'local>(
         if tls_paths.is_some() && !bind_is_rtsps {
             throw_rtsp(
                 env,
-                "TLS",
+                BindingErrorKind::RtspTls,
                 "tlsCert/tlsKey require an explicit rtsps:// bind address \
                  (a plaintext rtsp:// bind is refused)",
             );
@@ -271,7 +276,7 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nStart<'local>(
         let server = match built {
             Ok(s) => s,
             Err(e) => {
-                server_error_to_jvm(env, &e);
+                server_error_to_jvm(env, e);
                 return 0;
             }
         };
@@ -383,7 +388,7 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nStop(
             return;
         };
         if let Err(e) = res {
-            server_error_to_jvm(env, &e);
+            server_error_to_jvm(env, e);
         }
     })
 }
@@ -545,7 +550,7 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nAddUnicastMount<'local>(
         match res {
             Ok(mh) => REGISTRY_MOUNT.insert(mh) as jlong,
             Err(e) => {
-                server_error_to_jvm(env, &e);
+                server_error_to_jvm(env, e);
                 0
             }
         }
@@ -641,7 +646,7 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nAddMulticastMount<'local
         match res {
             Ok(mh) => REGISTRY_MOUNT.insert(mh) as jlong,
             Err(e) => {
-                server_error_to_jvm(env, &e);
+                server_error_to_jvm(env, e);
                 0
             }
         }
@@ -753,7 +758,7 @@ pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nPushVideo<'local>(
             return;
         };
         if let Err(e) = res {
-            mount_error_to_jvm(env, &e);
+            mount_error_to_jvm(env, e);
         }
     })
 }
@@ -782,7 +787,7 @@ pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nPushKlv<'local>(
             return;
         };
         if let Err(e) = res {
-            mount_error_to_jvm(env, &e);
+            mount_error_to_jvm(env, e);
         }
     })
 }
@@ -806,7 +811,7 @@ pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nPushAudio<'local>(
             return;
         };
         if let Err(e) = res {
-            mount_error_to_jvm(env, &e);
+            mount_error_to_jvm(env, e);
         }
     })
 }
@@ -830,7 +835,7 @@ pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nPushSubtitle<'local>(
             return;
         };
         if let Err(e) = res {
-            mount_error_to_jvm(env, &e);
+            mount_error_to_jvm(env, e);
         }
     })
 }
@@ -854,7 +859,7 @@ pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nPushData<'local>(
             return;
         };
         if let Err(e) = res {
-            mount_error_to_jvm(env, &e);
+            mount_error_to_jvm(env, e);
         }
     })
 }
@@ -879,7 +884,7 @@ pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nPushVideoTo<'local>(
             .ok()
             .and_then(|r| VideoStreamHandle::try_from_raw(r).ok())
         else {
-            throw_rtsp(env, "MOUNT", "invalid stream handle");
+            throw_rtsp(env, BindingErrorKind::RtspMount, "invalid stream handle");
             return;
         };
         let Some(buf) = read_bytes(env, &nal) else {
@@ -891,7 +896,7 @@ pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nPushVideoTo<'local>(
             return;
         };
         if let Err(e) = res {
-            mount_error_to_jvm(env, &e);
+            mount_error_to_jvm(env, e);
         }
     })
 }
@@ -912,7 +917,7 @@ pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nPushKlvTo<'local>(
             .ok()
             .and_then(|r| KlvStreamHandle::try_from_raw(r).ok())
         else {
-            throw_rtsp(env, "MOUNT", "invalid stream handle");
+            throw_rtsp(env, BindingErrorKind::RtspMount, "invalid stream handle");
             return;
         };
         let Ok(service_id) = checked_u8(env, i64::from(metadata_service_id), "metadataServiceId")
@@ -928,7 +933,7 @@ pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nPushKlvTo<'local>(
             return;
         };
         if let Err(e) = res {
-            mount_error_to_jvm(env, &e);
+            mount_error_to_jvm(env, e);
         }
     })
 }
@@ -948,7 +953,7 @@ pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nPushAudioTo<'local>(
             .ok()
             .and_then(|r| AudioStreamHandle::try_from_raw(r).ok())
         else {
-            throw_rtsp(env, "MOUNT", "invalid stream handle");
+            throw_rtsp(env, BindingErrorKind::RtspMount, "invalid stream handle");
             return;
         };
         let Some(buf) = read_bytes(env, &frames) else {
@@ -960,7 +965,7 @@ pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nPushAudioTo<'local>(
             return;
         };
         if let Err(e) = res {
-            mount_error_to_jvm(env, &e);
+            mount_error_to_jvm(env, e);
         }
     })
 }
@@ -980,7 +985,7 @@ pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nPushSubtitleTo<'local>(
             .ok()
             .and_then(|r| SubtitleStreamHandle::try_from_raw(r).ok())
         else {
-            throw_rtsp(env, "MOUNT", "invalid stream handle");
+            throw_rtsp(env, BindingErrorKind::RtspMount, "invalid stream handle");
             return;
         };
         let Some(buf) = read_bytes(env, &payload) else {
@@ -992,7 +997,7 @@ pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nPushSubtitleTo<'local>(
             return;
         };
         if let Err(e) = res {
-            mount_error_to_jvm(env, &e);
+            mount_error_to_jvm(env, e);
         }
     })
 }
@@ -1016,7 +1021,7 @@ pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nPushDataTo<'local>(
             .ok()
             .and_then(|r| DataStreamHandle::try_from_raw(r).ok())
         else {
-            throw_rtsp(env, "MOUNT", "invalid stream handle");
+            throw_rtsp(env, BindingErrorKind::RtspMount, "invalid stream handle");
             return;
         };
         let Some(buf) = read_bytes(env, &data) else {
@@ -1028,7 +1033,7 @@ pub extern "system" fn Java_org_tstrans_rtp_MountHandle_nPushDataTo<'local>(
             return;
         };
         if let Err(e) = res {
-            mount_error_to_jvm(env, &e);
+            mount_error_to_jvm(env, e);
         }
     })
 }

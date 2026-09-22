@@ -110,7 +110,7 @@ class RtpMuxDemuxLoopbackTest {
                     // CANCELLED RtpException = the watchdog/teardown close() fired.
                     Throwable cause = re.getCause();
                     if (cause instanceof RtpException rex
-                            && rex.kind() == RtpException.Kind.CANCELLED) {
+                            && rex.kind() == RtpException.Kind.CLOSED) {
                         // fall through: sha may still be null → fail below
                     } else {
                         throw re;
