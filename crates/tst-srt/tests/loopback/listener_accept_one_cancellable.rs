@@ -84,20 +84,24 @@ fn cancel_during_accept_returns_explicit_close_promptly() {
     );
 }
 
-/// The happy path still works: a peer that connects is handed back as a live
-/// transport, and a successful accept leaves the slot un-latched.
-#[test]
-fn accepts_a_connecting_peer() {
-    require_loopback!();
-    let port = reserve_port();
-
-    // The connector retries because its first attempt can run before the
-    // listener under test has bound. The connected socket is held past the
-    // accept's return through the release channel: closing it mid-flight
-    // lets libsrt's GC reap the listener-side accepted socket before
-    // srt_accept resolves it (same hazard as listener_accept_timeout.rs).
+/// Spawn the peer every happy-path accept test needs: retry `connect`
+/// until the listener under test has bound (its first attempt can run
+/// before the bind), then hold the connected socket open until the caller
+/// sends on the returned channel — closing it mid-flight lets libsrt's GC
+/// reap the listener-side accepted socket before `srt_accept` resolves it
+/// (same hazard as `listener_accept_timeout.rs`).
+///
+/// `slot` is the accept's cancel slot, and giving up fires it BEFORE the
+/// assert: the accept runs on the caller's (main) thread with nothing else
+/// able to reach it, so a connector that dies while the accept is parked
+/// would leave main in `srt_accept` forever — a hang instead of a failure,
+/// and a leaked parked thread stalls process exit on top.
+fn spawn_connector(
+    port: u16,
+    slot: Arc<CancelSlot>,
+) -> (mpsc::Sender<()>, std::thread::JoinHandle<()>) {
     let (release_tx, release_rx) = mpsc::channel::<()>();
-    let connector = std::thread::spawn(move || {
+    let handle = std::thread::spawn(move || {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             let attempt = SocketBuilder::new()
@@ -110,14 +114,29 @@ fn accepts_a_connecting_peer() {
                     return;
                 }
                 Err(e) => {
-                    assert!(Instant::now() < deadline, "connect never succeeded: {e:?}");
+                    if Instant::now() >= deadline {
+                        // Release the parked accept first, then report.
+                        slot.cancel();
+                        panic!("connect never succeeded: {e:?}");
+                    }
                     std::thread::sleep(Duration::from_millis(50));
                 }
             }
         }
     });
+    (release_tx, handle)
+}
 
-    let slot = CancelSlot::new();
+/// The happy path still works: a peer that connects is handed back as a live
+/// transport, and a successful accept leaves the slot un-latched.
+#[test]
+fn accepts_a_connecting_peer() {
+    require_loopback!();
+    let port = reserve_port();
+
+    let slot = Arc::new(CancelSlot::new());
+    let (release_tx, connector) = spawn_connector(port, Arc::clone(&slot));
+
     let result = Listener::accept_one_cancellable(
         &ListenerConfig::default(),
         &format!("127.0.0.1:{port}"),

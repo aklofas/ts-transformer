@@ -54,6 +54,35 @@ fn connect_round_trips_over_loopback() {
     t.close();
 }
 
+/// `connect_recv` dials the same way minus the sender preset — the open
+/// the plain Python/JVM receivers do today. That the preset is genuinely
+/// absent is asserted on the config in `url.rs`'s unit tests (a live
+/// socket reports back neither the linger nor the role); this pins that
+/// the overlay-only config still produces a working connection.
+#[test]
+fn connect_recv_round_trips_over_loopback() {
+    require_loopback!();
+    let lb = crate::common::Loopback::bind();
+    let port = lb.port;
+    let accept = lb.spawn_accept(|mut sock| {
+        let mut buf = [0u8; 1500];
+        let n = sock.recv(&mut buf).expect("recv");
+        buf[..n].to_vec()
+    });
+    accept.wait_ready();
+
+    let url = SrtUrl::parse(&format!(
+        "srt://127.0.0.1:{port}?latency=120&x-sendtimeout=5000"
+    ))
+    .expect("parse");
+    let mut t = url.connect_recv().expect("SrtUrl::connect_recv");
+    assert!(t.is_alive(), "a freshly connected transport is alive");
+    t.send_bytes(b"hello via connect_recv").expect("send_bytes");
+
+    assert_eq!(accept.join(), b"hello via connect_recv");
+    t.close();
+}
+
 /// The #188 class, end-to-end half: `parse` strips the brackets
 /// (`host == "::1"`), so the open path must put them back — an IPv6
 /// `srt://` URL has to connect and carry bytes, which is what PR #188
@@ -141,21 +170,25 @@ fn accept_one_cancelled_from_another_thread_returns_explicit_close() {
     assert!(slot.is_cancelled(), "the slot stays latched after the wake");
 }
 
-/// Happy path: a peer that connects is handed back as a live transport,
-/// and a successful accept leaves the slot un-latched. The overlay is
-/// applied to the listener side (`latency` is a listener-side key).
-#[test]
-fn accept_one_hands_back_a_connecting_peer() {
-    require_loopback!();
-    let port = reserve_port();
-
-    // The connector retries because its first attempt can run before the
-    // listener under test has bound. Its socket is held past the accept's
-    // return through the release channel: closing it mid-flight lets
-    // libsrt's GC reap the listener-side accepted socket before
-    // `srt_accept` resolves it (the PR #231 prune class).
+/// Spawn the peer the two happy-path accept tests need: retry `connect`
+/// until the listener under test has bound (its first attempt can run
+/// before the bind), then hold the connected socket open until the caller
+/// sends on the returned channel — closing it mid-flight lets libsrt's GC
+/// reap the listener-side accepted socket before `srt_accept` resolves it
+/// (the PR #231 prune class).
+///
+/// `slot` is the accept's cancel slot, and giving up fires it BEFORE the
+/// panic: `accept_one` runs on the test's own thread with nothing else
+/// able to reach it, so a connector that dies while the accept is parked
+/// would leave the test hanging in `srt_accept` instead of failing (and a
+/// thread left parked there stalls process exit — the `atexit(srt_cleanup)`
+/// class).
+fn spawn_connector(
+    port: u16,
+    slot: Arc<CancelSlot>,
+) -> (mpsc::Sender<()>, std::thread::JoinHandle<()>) {
     let (release_tx, release_rx) = mpsc::channel::<()>();
-    let connector = std::thread::spawn(move || {
+    let handle = std::thread::spawn(move || {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             let attempt = SocketBuilder::new()
@@ -168,16 +201,32 @@ fn accept_one_hands_back_a_connecting_peer() {
                     return;
                 }
                 Err(e) => {
-                    assert!(Instant::now() < deadline, "connect never succeeded: {e:?}");
+                    if Instant::now() >= deadline {
+                        // Release the parked accept first, then report.
+                        slot.cancel();
+                        panic!("connect never succeeded: {e:?}");
+                    }
                     std::thread::sleep(Duration::from_millis(50));
                 }
             }
         }
     });
+    (release_tx, handle)
+}
+
+/// Happy path: a peer that connects is handed back as a live transport,
+/// and a successful accept leaves the slot un-latched. The overlay is
+/// applied to the listener side (`latency` is a listener-side key).
+#[test]
+fn accept_one_hands_back_a_connecting_peer() {
+    require_loopback!();
+    let port = reserve_port();
+
+    let slot = Arc::new(CancelSlot::new());
+    let (release_tx, connector) = spawn_connector(port, Arc::clone(&slot));
 
     let url =
         SrtUrl::parse(&format!("srt://127.0.0.1:{port}?mode=listener&latency=120")).expect("parse");
-    let slot = CancelSlot::new();
     let result = url.accept_one(&slot);
     let _ = release_tx.send(());
     let connector_result = connector.join();
@@ -208,37 +257,14 @@ fn accept_one_with_empty_host_binds_the_wildcard() {
     require_loopback!();
     let port = reserve_port();
 
-    // Same connector shape as `accept_one_hands_back_a_connecting_peer`:
-    // retry until the listener under test has bound, then hold the socket
-    // past the accept's return so libsrt's GC cannot reap the accepted
-    // peer mid-flight (the PR #231 prune class).
-    let (release_tx, release_rx) = mpsc::channel::<()>();
-    let connector = std::thread::spawn(move || {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            let attempt = SocketBuilder::new()
-                .connect_timeout(Duration::from_millis(500))
-                .connect(format!("127.0.0.1:{port}"));
-            match attempt {
-                Ok(socket) => {
-                    let _ = release_rx.recv();
-                    drop(socket);
-                    return;
-                }
-                Err(e) => {
-                    assert!(Instant::now() < deadline, "connect never succeeded: {e:?}");
-                    std::thread::sleep(Duration::from_millis(50));
-                }
-            }
-        }
-    });
+    let slot = Arc::new(CancelSlot::new());
+    let (release_tx, connector) = spawn_connector(port, Arc::clone(&slot));
 
     let url = SrtUrl::parse(&format!("srt://:{port}?mode=listener")).expect("parse");
     assert!(
         url.host.is_empty(),
         "the wildcard form parses to an empty host"
     );
-    let slot = CancelSlot::new();
     let result = url.accept_one(&slot);
     let _ = release_tx.send(());
     let connector_result = connector.join();
