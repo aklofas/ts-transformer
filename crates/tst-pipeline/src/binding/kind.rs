@@ -1,0 +1,504 @@
+//! One error-kind table for every binding (C, Python, JVM).
+//!
+//! **Stability: Provisional** — see the
+//! [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
+//!
+//! `BindingErrorKind` is the superset of [`crate::ShellErrorKind`] over the
+//! transport / mux / demux / KLV / codec / RTSP / UDP / TCP / HLS / RIST error
+//! types. The discriminant of every variant that C already numbers is the frozen
+//! `TST_E_*` code (`bindings/c/core/src/error.rs`); kinds C never had are numbered
+//! from −49 downwards and [`BindingErrorKind::c_projection`] says which frozen
+//! code C emits for them. `name()` is the string Python and the JVM resolve
+//! (`getattr(<Domain>ErrorKind, kind.name())` / `GetStaticField`), so a name that
+//! does not resolve is a startup failure in the binding, never a runtime one — the
+//! `scripts/check/repo/kind-equivalence.sh` rail imports every member at test time.
+//!
+//! Naming rule: cross-domain kinds are unprefixed; domain kinds carry their domain
+//! (`Srt`, `Udp`, `Tcp`, `Hls`, `Rist`, `Rtp`, `Rtsp`, `Demux`, `KlvDecode`,
+//! `KlvEncode`, `Codec`) in [`BindingErrorKind::variant_name`]; [`BindingErrorKind::name`]
+//! strips it, because the per-domain binding enums spell the unprefixed member
+//! (`UdpErrorKind.IO`).
+
+use std::string::String;
+
+/// One row per kind: `Variant = discriminant => "VARIANT_NAME", "NAME", c_projection;`
+///
+/// The row format is what the `--print-kinds` bin and the unit tests pin:
+/// VARIANT_NAME must be SCREAMING_SNAKE of the variant, NAME (what the
+/// bindings resolve) must be VARIANT_NAME minus exactly one domain prefix
+/// (or VARIANT_NAME itself), c_projection must be a TST_E
+/// code in -48..=-1 and must equal the discriminant for C-numbered kinds.
+macro_rules! kinds {
+    ( $( $(#[$doc:meta])* $variant:ident = $code:literal => $name:literal, $member:literal, $proj:literal ; )+ ) => {
+        /// The one error-kind table shared by every binding (spec §3.3).
+        ///
+        /// **Stability: Provisional** — see the
+        /// [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
+        ///
+        /// `#[repr(i32)]`: the discriminant is the frozen C `TST_E_*` code for
+        /// the 41 kinds C already numbers and a new number ≤ −49 for the rest
+        /// (see [`Self::c_projection`]). `#[non_exhaustive]`: match with a
+        /// wildcard from outside `tst-pipeline`; new kinds are additive.
+        #[repr(i32)]
+        #[non_exhaustive]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        pub enum BindingErrorKind {
+            $( $(#[$doc])* $variant = $code, )+
+        }
+
+        impl BindingErrorKind {
+            /// Every variant, in table order (the order the kind-equivalence
+            /// rail's TSV follows and the order new discriminants were assigned in).
+            pub const ALL: &'static [BindingErrorKind] = &[ $( BindingErrorKind::$variant, )+ ];
+
+            #[cfg(test)]
+            pub(crate) const VARIANT_IDENTS: &'static [&'static str] = &[ $( stringify!($variant), )+ ];
+
+            /// SCREAMING_SNAKE of the Rust variant (`UdpIo` → `UDP_IO`); unique
+            /// per kind. The TSV's `rust_name` column.
+            pub fn variant_name(&self) -> &'static str {
+                match self { $( Self::$variant => $name, )+ }
+            }
+
+            /// The kind's name as the bindings resolve it (the kind rule, spec
+            /// §3.3): [`Self::variant_name`] with the domain prefix removed
+            /// (`UdpIo` → `IO`, what `getattr(UdpErrorKind, …)` /
+            /// `GetStaticField(UdpException$Kind, …)` looks up); equal to
+            /// `variant_name()` for cross-domain kinds. NOT unique across
+            /// domains (`IO` is the name of six kinds).
+            pub fn name(&self) -> &'static str {
+                match self { $( Self::$variant => $member, )+ }
+            }
+
+            /// The `TST_E_*` code C emits for this kind: the discriminant itself for
+            /// the C-numbered kinds, the frozen code this kind was folded into
+            /// before the table existed for the ≤ −49 kinds (e.g. `TcpTlsDisabled`
+            /// → −33 `TST_E_TCP_TLS`). Always in `-48..=-1`.
+            pub fn c_projection(&self) -> i32 {
+                match self { $( Self::$variant => $proj, )+ }
+            }
+        }
+    };
+}
+
+kinds! {
+    /// Configuration rejected (`ShellErrorKind::ConfigInvalid`, `MuxErrorKind::ConfigInvalid`, SRT address/option/URL errors).
+    ConfigInvalid = -1 => "CONFIG_INVALID", "CONFIG_INVALID", -1;
+    /// `MuxError::InvalidNal`.
+    InvalidNal = -2 => "INVALID_NAL", "INVALID_NAL", -2;
+    /// Input bytes malformed (`ShellErrorKind::InputMalformed`, TS framing, over-size audio/subtitle/data pushes).
+    InputMalformed = -3 => "INPUT_MALFORMED", "INPUT_MALFORMED", -3;
+    /// Transient refusal, retry later (`TransportError::Backpressure`, `MuxError::BufferFull`, SRT `QueueFull`).
+    Backpressure = -4 => "BACKPRESSURE", "BACKPRESSURE", -4;
+    /// `MuxError::KlvTooLarge`.
+    KlvTooLarge = -5 => "KLV_TOO_LARGE", "KLV_TOO_LARGE", -5;
+    /// Payload exceeds the transport cap (`TransportError::TooLarge`, SRT `PayloadTooLarge` / `BufferTooSmall`).
+    TooLarge = -6 => "TOO_LARGE", "TOO_LARGE", -6;
+    /// Caller closed or cancelled (`TransportError::{Closed on a sender, ExplicitClose}`, `HandleState::Closed`, `TcpError::Closed`, SRT `ListenerClosed` / `SocketClosed`).
+    Closed = -7 => "CLOSED", "CLOSED", -7;
+    /// Transport dead (`TransportError::Broken`, SRT `ConnectionBroken`).
+    Broken = -8 => "BROKEN", "BROKEN", -8;
+    /// Wrong handle / target for the call (`MuxErrorKind::InvalidUsage`).
+    InvalidUsage = -9 => "INVALID_USAGE", "INVALID_USAGE", -9;
+    /// Library-internal failure, a poisoned handle lock, or an unmapped variant of a `#[non_exhaustive]` upstream enum.
+    Internal = -10 => "INTERNAL", "INTERNAL", -10;
+    /// A panic caught at the binding boundary (`HandleState::Panicked`).
+    PanicCaught = -11 => "PANIC_CAUGHT", "PANIC_CAUGHT", -11;
+    /// Peer closed cleanly on a receiver shell (`ShellErrorKind::EndOfStream`).
+    EndOfStream = -12 => "END_OF_STREAM", "END_OF_STREAM", -12;
+    /// Transient: value not available right now (C managed-stats getters mid-reconnect).
+    NotAvailable = -13 => "NOT_AVAILABLE", "NOT_AVAILABLE", -13;
+    /// Persistent: key never observed (C per-PID getters).
+    NotFound = -14 => "NOT_FOUND", "NOT_FOUND", -14;
+    /// `MuxError::InvalidAv1Obu`.
+    InvalidAv1Obu = -44 => "INVALID_AV1_OBU", "INVALID_AV1_OBU", -44;
+    /// `MuxError::MispTime`.
+    MispTime = -45 => "MISP_TIME", "MISP_TIME", -45;
+    /// C `tst_misp_time_extract` on a malformed ST 0604 SEI.
+    MispTimeMalformed = -46 => "MISP_TIME_MALFORMED", "MISP_TIME_MALFORMED", -46;
+    /// C `tst_st0601_get_{f64,u64}` on a tag of another native type.
+    WrongType = -47 => "WRONG_TYPE", "WRONG_TYPE", -47;
+    /// RTSP wire/protocol failure not covered by a finer RTSP kind.
+    RtspProtocol = -16 => "RTSP_PROTOCOL", "PROTOCOL", -16;
+    /// RTSP credentials exhausted.
+    RtspAuthFailed = -17 => "RTSP_AUTH_FAILED", "AUTH_FAILED", -17;
+    /// RTSP 401, or an unsupported auth scheme was demanded.
+    RtspAuthRequired = -18 => "RTSP_AUTH_REQUIRED", "AUTH_REQUIRED", -18;
+    /// RTSP 404, or no uniquely-identified SDP media.
+    RtspNotFound = -19 => "RTSP_NOT_FOUND", "NOT_FOUND", -19;
+    /// RTSP 461 on every transport, or packetization-mode 2.
+    RtspUnsupportedTransport = -20 => "RTSP_UNSUPPORTED_TRANSPORT", "UNSUPPORTED_TRANSPORT", -20;
+    /// RTSP TLS failure (client or server).
+    RtspTls = -21 => "RTSP_TLS", "TLS", -21;
+    /// RTSP control-channel I/O failure (client, or server listener / bind-in-use).
+    RtspIo = -22 => "RTSP_IO", "IO", -22;
+    /// RTSP request timeout.
+    RtspTimeout = -23 => "RTSP_TIMEOUT", "TIMEOUT", -23;
+    /// RTSP server lifecycle misuse (`AlreadyStarted` / `NotStarted` / `Shutdown`).
+    RtspServer = -24 => "RTSP_SERVER", "SERVER", -24;
+    /// RTSP mount failure (`MountError`, mount-path / multicast-group / duplicate / config).
+    RtspMount = -25 => "RTSP_MOUNT", "MOUNT", -25;
+    /// `UdpError::Io`.
+    UdpIo = -26 => "UDP_IO", "IO", -26;
+    /// `UdpError::InvalidConfig`.
+    UdpInvalidConfig = -27 => "UDP_INVALID_CONFIG", "INVALID_CONFIG", -27;
+    /// `TcpError::Io`.
+    TcpIo = -30 => "TCP_IO", "IO", -30;
+    /// `TcpError::InvalidConfig`.
+    TcpInvalidConfig = -31 => "TCP_INVALID_CONFIG", "INVALID_CONFIG", -31;
+    /// `TcpError::ConnectTimeout`.
+    TcpConnectTimeout = -32 => "TCP_CONNECT_TIMEOUT", "CONNECT_TIMEOUT", -32;
+    /// `TcpError::Tls`.
+    TcpTls = -33 => "TCP_TLS", "TLS", -33;
+    /// `HlsError::Io`.
+    HlsIo = -34 => "HLS_IO", "IO", -34;
+    /// `HlsError::InvalidConfig`.
+    HlsInvalidConfig = -35 => "HLS_INVALID_CONFIG", "INVALID_CONFIG", -35;
+    /// `HlsError::Finished`.
+    HlsFinished = -36 => "HLS_FINISHED", "FINISHED", -36;
+    /// `HlsError::Tls`.
+    HlsTls = -37 => "HLS_TLS", "TLS", -37;
+    /// `RistError::Ffi`.
+    RistFfi = -38 => "RIST_FFI", "FFI", -38;
+    /// `RistError::InvalidConfig`.
+    RistInvalidConfig = -39 => "RIST_INVALID_CONFIG", "INVALID_CONFIG", -39;
+    /// `RistError::EncryptionDisabled`.
+    RistEncryptionDisabled = -41 => "RIST_ENCRYPTION_DISABLED", "ENCRYPTION_DISABLED", -41;
+    /// SRT connect / bind failed (refused, rejected, bad encryption, address in use, permission, system).
+    SrtConnectFailed = -49 => "SRT_CONNECT_FAILED", "CONNECT_FAILED", -8;
+    /// SRT accept failed (peer rejected during handshake, system).
+    SrtAcceptFailed = -50 => "SRT_ACCEPT_FAILED", "ACCEPT_FAILED", -8;
+    /// SRT connect / accept / send / recv timed out.
+    SrtTimeout = -51 => "SRT_TIMEOUT", "TIMEOUT", -8;
+    /// SRT low-level I/O failure (`IoError`, `SendError` / `RecvError` system or libsrt errors).
+    SrtIo = -52 => "SRT_IO", "IO", -8;
+    /// `UdpError::Url`.
+    UdpUrl = -53 => "UDP_URL", "URL", -27;
+    /// `TcpError::Url`.
+    TcpUrl = -54 => "TCP_URL", "URL", -31;
+    /// `TcpError::TlsDisabled`.
+    TcpTlsDisabled = -55 => "TCP_TLS_DISABLED", "TLS_DISABLED", -33;
+    /// `HlsError::Url`.
+    HlsUrl = -56 => "HLS_URL", "URL", -35;
+    /// `HlsError::BindFailed`.
+    HlsBindFailed = -57 => "HLS_BIND_FAILED", "BIND_FAILED", -34;
+    /// `HlsError::UnalignedPushTs`.
+    HlsUnalignedPushTs = -58 => "HLS_UNALIGNED_PUSH_TS", "UNALIGNED_PUSH_TS", -35;
+    /// `HlsError::TlsDisabled`.
+    HlsTlsDisabled = -59 => "HLS_TLS_DISABLED", "TLS_DISABLED", -37;
+    /// `RistError::Url`.
+    RistUrl = -60 => "RIST_URL", "URL", -39;
+    /// `RistError::ContextCreateFailed`.
+    RistContextCreateFailed = -61 => "RIST_CONTEXT_CREATE_FAILED", "CONTEXT_CREATE_FAILED", -38;
+    /// `RistError::PeerCreateFailed`.
+    RistPeerCreateFailed = -62 => "RIST_PEER_CREATE_FAILED", "PEER_CREATE_FAILED", -38;
+    /// tst-rtp `ConnectError::PayloadTypeParam`.
+    RtpPayloadTypeParam = -63 => "RTP_PAYLOAD_TYPE_PARAM", "PAYLOAD_TYPE_PARAM", -15;
+    /// tst-rtp `ConnectError::MissingPayloadTypeParam`.
+    RtpMissingPayloadTypeParam = -64 => "RTP_MISSING_PAYLOAD_TYPE_PARAM", "MISSING_PAYLOAD_TYPE_PARAM", -15;
+    /// tst-rtp `ConnectError::Url`.
+    RtpUrl = -65 => "RTP_URL", "URL", -15;
+    /// tst-rtp `ConnectError::HostNotLiteral`.
+    RtpHostNotLiteral = -66 => "RTP_HOST_NOT_LITERAL", "HOST_NOT_LITERAL", -15;
+    /// tst-rtp `ConnectError::Io`.
+    RtpIo = -67 => "RTP_IO", "IO", -15;
+    /// tst-rtp `ConnectError::IfaceUnsupported`.
+    RtpIfaceUnsupported = -68 => "RTP_IFACE_UNSUPPORTED", "IFACE_UNSUPPORTED", -15;
+    /// `DemuxError::Unrecoverable`.
+    DemuxUnrecoverable = -69 => "DEMUX_UNRECOVERABLE", "UNRECOVERABLE", -3;
+    /// `DemuxError::StrictRejection`.
+    DemuxStrictRejection = -70 => "DEMUX_STRICT_REJECTION", "STRICT_REJECTION", -3;
+    /// `DemuxError::MalformedPsi`.
+    DemuxMalformedPsi = -71 => "DEMUX_MALFORMED_PSI", "MALFORMED_PSI", -3;
+    /// `DemuxError::MalformedPes`.
+    DemuxMalformedPes = -72 => "DEMUX_MALFORMED_PES", "MALFORMED_PES", -3;
+    /// `DemuxError::SyncBufExhausted`.
+    DemuxSyncBufExhausted = -73 => "DEMUX_SYNC_BUF_EXHAUSTED", "SYNC_BUF_EXHAUSTED", -6;
+    /// KLV set truncated / BER length malformed or overflowing.
+    KlvDecodeTruncatedSet = -74 => "KLV_DECODE_TRUNCATED_SET", "TRUNCATED_SET", -48;
+    /// Unexpected universal label.
+    KlvDecodeBadUniversalLabel = -75 => "KLV_DECODE_BAD_UNIVERSAL_LABEL", "BAD_UNIVERSAL_LABEL", -48;
+    /// ST 0601 checksum or ST 0806 CRC-32 mismatch.
+    KlvDecodeChecksumMismatch = -76 => "KLV_DECODE_CHECKSUM_MISMATCH", "CHECKSUM_MISMATCH", -48;
+    /// Duplicate tag in a set.
+    KlvDecodeDuplicateTag = -77 => "KLV_DECODE_DUPLICATE_TAG", "DUPLICATE_TAG", -48;
+    /// A spec-mandatory tag is missing or misplaced.
+    KlvDecodeMissingRequiredTag = -78 => "KLV_DECODE_MISSING_REQUIRED_TAG", "MISSING_REQUIRED_TAG", -48;
+    /// Any other structural KLV decode failure (malformed tag, non-canonical BER, trailing bytes, field validation).
+    KlvDecodeMalformedBytes = -79 => "KLV_DECODE_MALFORMED_BYTES", "MALFORMED_BYTES", -48;
+    /// `KlvEncodeError::BufferTooSmall`.
+    KlvEncodeBufferTooSmall = -80 => "KLV_ENCODE_BUFFER_TOO_SMALL", "BUFFER_TOO_SMALL", -10;
+    /// `KlvEncodeError::RecordTooLarge`.
+    KlvEncodeRecordTooLarge = -81 => "KLV_ENCODE_RECORD_TOO_LARGE", "RECORD_TOO_LARGE", -10;
+    /// `KlvEncodeError::OutOfRange`.
+    KlvEncodeOutOfRange = -82 => "KLV_ENCODE_OUT_OF_RANGE", "OUT_OF_RANGE", -10;
+    /// `KlvEncodeError::StringTooLong`.
+    KlvEncodeStringTooLong = -83 => "KLV_ENCODE_STRING_TOO_LONG", "STRING_TOO_LONG", -10;
+    /// `KlvEncodeError::UnsupportedImapbLength`.
+    KlvEncodeUnsupportedImapbLength = -84 => "KLV_ENCODE_UNSUPPORTED_IMAPB_LENGTH", "UNSUPPORTED_IMAPB_LENGTH", -10;
+    /// `KlvEncodeError::InvalidImapbParams`.
+    KlvEncodeInvalidImapbParams = -85 => "KLV_ENCODE_INVALID_IMAPB_PARAMS", "INVALID_IMAPB_PARAMS", -10;
+    /// `KlvEncodeError::MissingMandatoryItem`.
+    KlvEncodeMissingMandatoryItem = -86 => "KLV_ENCODE_MISSING_MANDATORY_ITEM", "MISSING_MANDATORY_ITEM", -10;
+    /// `KlvEncodeError::ReservedTagInUnknown`.
+    KlvEncodeReservedTagInUnknown = -87 => "KLV_ENCODE_RESERVED_TAG_IN_UNKNOWN", "RESERVED_TAG_IN_UNKNOWN", -10;
+    /// `KlvEncodeError::VTargetPackEmpty`.
+    KlvEncodeVTargetPackEmpty = -88 => "KLV_ENCODE_V_TARGET_PACK_EMPTY", "V_TARGET_PACK_EMPTY", -10;
+    /// `KlvEncodeError::DuplicateTargetId`.
+    KlvEncodeDuplicateTargetId = -89 => "KLV_ENCODE_DUPLICATE_TARGET_ID", "DUPLICATE_TARGET_ID", -10;
+    /// `KlvEncodeError::ForbiddenStandaloneOffset`.
+    KlvEncodeForbiddenStandaloneOffset = -90 => "KLV_ENCODE_FORBIDDEN_STANDALONE_OFFSET", "FORBIDDEN_STANDALONE_OFFSET", -10;
+    /// `CodecParseError::TruncatedRbsp`.
+    CodecTruncatedRbsp = -91 => "CODEC_TRUNCATED_RBSP", "TRUNCATED_RBSP", -10;
+    /// `CodecParseError::InvalidGolomb`.
+    CodecInvalidGolomb = -92 => "CODEC_INVALID_GOLOMB", "INVALID_GOLOMB", -10;
+    /// `CodecParseError::ReservedValue`.
+    CodecReservedValue = -93 => "CODEC_RESERVED_VALUE", "RESERVED_VALUE", -10;
+    /// `CodecParseError::UnsupportedProfile`.
+    CodecUnsupportedProfile = -94 => "CODEC_UNSUPPORTED_PROFILE", "UNSUPPORTED_PROFILE", -10;
+    /// `CodecParseError::DanglingSpsReference`.
+    CodecDanglingSpsReference = -95 => "CODEC_DANGLING_SPS_REFERENCE", "DANGLING_SPS_REFERENCE", -10;
+    /// `CodecParseError::DanglingVpsReference`.
+    CodecDanglingVpsReference = -96 => "CODEC_DANGLING_VPS_REFERENCE", "DANGLING_VPS_REFERENCE", -10;
+    /// `CodecParseError::EngineError`.
+    CodecEngineError = -97 => "CODEC_ENGINE_ERROR", "ENGINE_ERROR", -10;
+    /// `CodecParseError::InvalidLeb128`.
+    CodecInvalidLeb128 = -98 => "CODEC_INVALID_LEB128", "INVALID_LEB128", -10;
+    /// `CodecParseError::BadSyncWord`.
+    CodecBadSyncWord = -99 => "CODEC_BAD_SYNC_WORD", "BAD_SYNC_WORD", -10;
+    /// `CodecParseError::Truncated`.
+    CodecTruncated = -100 => "CODEC_TRUNCATED", "TRUNCATED", -10;
+    /// `CodecParseError::Forbidden`.
+    CodecForbidden = -101 => "CODEC_FORBIDDEN", "FORBIDDEN", -10;
+    /// `CodecParseError::UnsupportedFreeFormat`.
+    CodecUnsupportedFreeFormat = -102 => "CODEC_UNSUPPORTED_FREE_FORMAT", "UNSUPPORTED_FREE_FORMAT", -10;
+    /// `CodecParseError::InvalidLengthSize` (C: −1, `codec_framing.rs:44`).
+    CodecInvalidLengthSize = -103 => "CODEC_INVALID_LENGTH_SIZE", "INVALID_LENGTH_SIZE", -1;
+    /// `CodecParseError::NalLengthOverflow` (C: −6, `codec_framing.rs:45`).
+    CodecNalLengthOverflow = -104 => "CODEC_NAL_LENGTH_OVERFLOW", "NAL_LENGTH_OVERFLOW", -6;
+    /// `CodecParseError::BufferTooSmall` (C: −4, the two-call size-query idiom).
+    CodecBufferTooSmall = -105 => "CODEC_BUFFER_TOO_SMALL", "BUFFER_TOO_SMALL", -4;
+}
+
+impl BindingErrorKind {
+    /// The discriminant (`*self as i32`); the frozen `TST_E_*` number for the
+    /// C-numbered kinds, ≤ −49 otherwise.
+    pub fn c_code(&self) -> i32 {
+        *self as i32
+    }
+
+    /// `true` when the discriminant is a frozen C code (`-48..=-1`).
+    pub fn is_c_frozen(&self) -> bool {
+        self.c_code() >= -48
+    }
+}
+
+/// A kind plus the human-readable detail the binding surfaces as the
+/// exception message / `tst_get_last_error_str()`.
+///
+/// **Stability: Provisional** — see the
+/// [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BindingError {
+    pub kind: BindingErrorKind,
+    pub detail: String,
+}
+
+impl BindingError {
+    /// A kind with its detail message.
+    pub fn new(kind: BindingErrorKind, detail: impl Into<String>) -> Self {
+        Self {
+            kind,
+            detail: detail.into(),
+        }
+    }
+}
+
+impl core::fmt::Display for BindingError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(&self.detail)
+    }
+}
+
+impl std::error::Error for BindingError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// CamelCase → SCREAMING_SNAKE, the one rule `name()` has to follow.
+    /// Digits attach to the preceding word (`Av1Obu` → `AV1_OBU`,
+    /// `Leb128` → `LEB128`, `St0102` → `ST0102`).
+    fn screaming(camel: &str) -> String {
+        let mut out = String::new();
+        for (i, c) in camel.chars().enumerate() {
+            if c.is_ascii_uppercase() && i > 0 {
+                out.push('_');
+            }
+            out.push(c.to_ascii_uppercase());
+        }
+        out
+    }
+
+    #[test]
+    fn variant_name_is_screaming_snake_of_the_variant_for_every_kind() {
+        assert_eq!(
+            BindingErrorKind::ALL.len(),
+            BindingErrorKind::VARIANT_IDENTS.len()
+        );
+        for (k, ident) in BindingErrorKind::ALL
+            .iter()
+            .zip(BindingErrorKind::VARIANT_IDENTS)
+        {
+            assert_eq!(
+                k.variant_name(),
+                screaming(ident),
+                "variant_name() drifted from the variant ident {ident}"
+            );
+        }
+    }
+
+    #[test]
+    fn name_is_variant_name_minus_exactly_one_domain_prefix() {
+        const PREFIXES: &[&str] = &[
+            "SRT_",
+            "UDP_",
+            "TCP_",
+            "HLS_",
+            "RIST_",
+            "RTSP_",
+            "RTP_",
+            "DEMUX_",
+            "KLV_DECODE_",
+            "KLV_ENCODE_",
+            "CODEC_",
+        ];
+        for k in BindingErrorKind::ALL {
+            let stripped = PREFIXES
+                .iter()
+                .find_map(|p| k.variant_name().strip_prefix(p));
+            match stripped {
+                Some(m) => assert_eq!(k.name(), m, "{} is a domain kind", k.variant_name()),
+                None => assert_eq!(
+                    k.name(),
+                    k.variant_name(),
+                    "{} is cross-domain",
+                    k.variant_name()
+                ),
+            }
+            assert!(!k.name().is_empty());
+        }
+    }
+
+    /// The C-frozen subset, pinned LITERALLY (tst-pipeline cannot import
+    /// `TstError`; these numbers are `bindings/c/core/src/error.rs:19-206`).
+    #[test]
+    fn c_frozen_discriminants_match_tst_error() {
+        use BindingErrorKind as K;
+        let frozen: &[(K, i32)] = &[
+            (K::ConfigInvalid, -1),
+            (K::InvalidNal, -2),
+            (K::InputMalformed, -3),
+            (K::Backpressure, -4),
+            (K::KlvTooLarge, -5),
+            (K::TooLarge, -6),
+            (K::Closed, -7),
+            (K::Broken, -8),
+            (K::InvalidUsage, -9),
+            (K::Internal, -10),
+            (K::PanicCaught, -11),
+            (K::EndOfStream, -12),
+            (K::NotAvailable, -13),
+            (K::NotFound, -14),
+            (K::RtspProtocol, -16),
+            (K::RtspAuthFailed, -17),
+            (K::RtspAuthRequired, -18),
+            (K::RtspNotFound, -19),
+            (K::RtspUnsupportedTransport, -20),
+            (K::RtspTls, -21),
+            (K::RtspIo, -22),
+            (K::RtspTimeout, -23),
+            (K::RtspServer, -24),
+            (K::RtspMount, -25),
+            (K::UdpIo, -26),
+            (K::UdpInvalidConfig, -27),
+            (K::TcpIo, -30),
+            (K::TcpInvalidConfig, -31),
+            (K::TcpConnectTimeout, -32),
+            (K::TcpTls, -33),
+            (K::HlsIo, -34),
+            (K::HlsInvalidConfig, -35),
+            (K::HlsFinished, -36),
+            (K::HlsTls, -37),
+            (K::RistFfi, -38),
+            (K::RistInvalidConfig, -39),
+            (K::RistEncryptionDisabled, -41),
+            (K::InvalidAv1Obu, -44),
+            (K::MispTime, -45),
+            (K::MispTimeMalformed, -46),
+            (K::WrongType, -47),
+        ];
+        assert_eq!(frozen.len(), 41);
+        for (k, code) in frozen {
+            assert_eq!(k.c_code(), *code, "{}", k.name());
+            assert_eq!(
+                k.c_projection(),
+                *code,
+                "{} is C-numbered: projection == code",
+                k.name()
+            );
+            assert!(k.is_c_frozen());
+        }
+        // Reserved C codes that nothing produces are NOT variants (K2).
+        for reserved in [-15, -28, -29, -40, -42, -43, -48] {
+            assert!(
+                BindingErrorKind::ALL.iter().all(|k| k.c_code() != reserved),
+                "{reserved} must not be a discriminant"
+            );
+        }
+    }
+
+    #[test]
+    fn new_kinds_are_numbered_from_minus_49_in_table_order_and_project_onto_frozen_codes() {
+        let new: Vec<_> = BindingErrorKind::ALL
+            .iter()
+            .filter(|k| !k.is_c_frozen())
+            .collect();
+        assert_eq!(new.len(), 57);
+        for (i, k) in new.iter().enumerate() {
+            assert_eq!(k.c_code(), -49 - i as i32, "{} out of order", k.name());
+            assert!(
+                (-48..=-1).contains(&k.c_projection()),
+                "{} projects outside TST_E",
+                k.name()
+            );
+        }
+        assert_eq!(BindingErrorKind::ALL.len(), 98);
+    }
+
+    #[test]
+    fn discriminants_and_names_are_unique() {
+        let mut codes: Vec<i32> = BindingErrorKind::ALL.iter().map(|k| k.c_code()).collect();
+        codes.sort();
+        codes.dedup();
+        assert_eq!(codes.len(), BindingErrorKind::ALL.len());
+        let mut names: Vec<&str> = BindingErrorKind::ALL
+            .iter()
+            .map(|k| k.variant_name())
+            .collect();
+        names.sort();
+        names.dedup();
+        assert_eq!(
+            names.len(),
+            BindingErrorKind::ALL.len(),
+            "variant_name() must be unique (name() is not: IO repeats per domain)"
+        );
+    }
+
+    #[test]
+    fn binding_error_displays_its_detail() {
+        let e = BindingError::new(BindingErrorKind::Closed, "handle is closed");
+        assert_eq!(e.to_string(), "handle is closed");
+        assert_eq!(e.kind, BindingErrorKind::Closed);
+    }
+}

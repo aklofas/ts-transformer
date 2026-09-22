@@ -10,6 +10,10 @@
 //! of those has a standard library. Nothing here is reachable from the
 //! `no_std` sender/receiver shells.
 //!
+//! - [`kind`] — [`BindingErrorKind`]: the one error-kind table (spec Arc 2
+//!   §3.3) every binding resolves its per-domain kind name from,
+//!   discriminated by the frozen C `TST_E_*` codes, plus [`BindingError`]
+//!   = kind + detail.
 //! - [`owned`] — [`Owned<T, S>`](owned::Owned): `Mutex<Option<T>>` slot +
 //!   lock-free cancel + construction-time snapshot, with the poison and
 //!   panic policy of spec Arc 2 §3.2 (readers recover, mutators refuse; a
@@ -21,9 +25,11 @@
 //!   [`SendHalf`] / [`RecvHalf`] for raw transports. These live here
 //!   because the orphan rule forbids the binding crates from writing them.
 
+pub mod kind;
 pub mod owned;
 pub mod panic;
 pub mod shells;
 
+pub use kind::{BindingError, BindingErrorKind};
 pub use owned::{Close, CloseFailure, FlagCancel, HandleState, Owned};
 pub use shells::{RecvHalf, SendHalf};
