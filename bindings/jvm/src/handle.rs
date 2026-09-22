@@ -63,35 +63,23 @@
 //!   passes `None`. `close` fires the hook, then hands the taken resource back so the
 //!   caller runs whatever type-specific teardown it needs. This covers every shape a
 //!   handle type needs without hardcoding a cancel type.
-//! - **Lock-free cancel target.** Separately from the close hook, an entry can carry
-//!   the resource's `Arc<dyn TransportCancel>` OUTSIDE the resource mutex
-//!   ([`Entry::cancel_target`], read via [`HandleRegistry::cancel_target`]). The
-//!   public `cancelHandle()` natives read that slot instead of leasing the resource,
-//!   because the resource lock is exactly what a parked `recv`/`accept`/`send` holds
-//!   — resolving the handle under it made the cross-thread stop unobtainable while
-//!   the op it is meant to stop was in flight. Captured at construction, before the
-//!   resource is boxed. Every srt shell (sender and receiver, plain and
-//!   managed) and the srt `Listener` register both a hook and a target. Of the
-//!   rtp types, `Sender`, `Receiver` (`rtp/transport.rs`) and `H264Receiver`
-//!   also register both; `DemuxReceiver` and `RtspServer` register a hook
-//!   only, no target — neither reads this lock-free slot: `DemuxReceiver` has
-//!   no public `cancelHandle()` at all (`close()` is the sanctioned cross-thread
-//!   stop), and `RtspServer.cancelHandle()` leases the resource instead; and
-//!   `MuxSender` registers neither (plain `insert`, no cancel-on-close and no
-//!   `cancelHandle()`, matching tst-py's rtp surface).
-//! - **Lock-free end-reason cell.** Same shape, same reason, for the recv-side
-//!   stream-end record: an entry can carry the resource's
-//!   [`RecvEndReasonHandle`] OUTSIDE the resource mutex ([`Entry::end_reason`],
-//!   read via [`HandleRegistry::end_reason`]). `RecvEndReasonHandle` is an
-//!   `Arc<OnceLock<_>>` in which every clone observes the same cell, so a clone
-//!   captured at construction answers for the resource without ever touching it.
-//!   Only `org.tstrans.srt.ManagedDemuxReceiver` registers one today; its
-//!   `endReason()` must answer while `nNext` is parked on the resource lock
-//!   (including a listener-mode re-accept that never returns on its own) — the
-//!   exact bind `cancelHandle()` was in before the lock-free target slot. `close`
-//!   neither reads nor writes it: the per-type `nClose` snapshots the reason off
-//!   the resource it exclusively owns, because the entry (and with it this slot)
-//!   is gone once `close` returns.
+//! - **Two entry shapes.** [`Entry<T>`] (plain — the registry owns the
+//!   `Mutex<Option<T>>`, plus the optional close hook, lock-free cancel target and
+//!   end-reason cell) is used by the non-cancellable handle types and the cancel
+//!   views; [`OwnedEntry<T, S>`] (a [`tst_pipeline::binding::Owned<T, S>`](Owned))
+//!   is used by every shell with a cancel handle. The cancel target, cancelled
+//!   flag, end-reason cell and construction-time snapshot are `Owned`'s fields;
+//!   [`OwnedRegistry`] reads them lock-free through
+//!   [`cancel_view`](OwnedRegistry::cancel_view) /
+//!   [`is_cancelled`](OwnedRegistry::is_cancelled) /
+//!   [`end_reason`](OwnedRegistry::end_reason) /
+//!   [`snapshot`](OwnedRegistry::snapshot). Lock-free is the point: the slot is
+//!   exactly what a parked `recv`/`accept`/`send` holds, so resolving a cancel
+//!   handle or a construction-constant getter under it made the cross-thread stop
+//!   unobtainable while the op it is meant to stop was in flight (PRs #189, #234).
+//!   `close` neither reads nor writes the end-reason cell: the per-type `nClose`
+//!   snapshots the reason off the shell it exclusively owns, because the entry
+//!   (and with it every side slot) is gone once `close` returns.
 //!
 //! The cancel-handle classes (`JniCancel`, `JniRtpCancel`, `JniRtspCancel`,
 //! `JniRtspServerCancel`) are themselves cancel *targets* — they hold an
@@ -105,6 +93,7 @@ use std::sync::{Arc, Mutex};
 
 use jni::JNIEnv;
 use jni::sys::jlong;
+use tst_pipeline::binding::{HandleState, Owned};
 use tst_pipeline::{RecvEndReason, RecvEndReasonHandle};
 
 /// An optional cross-thread cancel hook fired by [`HandleRegistry::close`] *before*
@@ -194,15 +183,56 @@ pub(crate) enum TryWith<R> {
 /// LazyLock::new(HandleRegistry::new)` per handle type. The Java `long` handle is
 /// the opaque key returned by [`insert`](HandleRegistry::insert).
 pub(crate) struct HandleRegistry<T> {
-    inner: Mutex<RegistryInner<T>>,
+    inner: Mutex<Table<Entry<T>>>,
 }
 
-struct RegistryInner<T> {
+/// The permanent id table both registries share: a monotonic never-zero,
+/// never-reused `u64` key → `Arc<E>`. Only the ENTRY type differs between
+/// [`HandleRegistry`] (a `Mutex<Option<T>>` the registry owns) and
+/// [`OwnedRegistry`] (a `tst_pipeline::binding::Owned<T, S>` that owns its
+/// own slot, cancel, cancelled flag, end-reason cell and snapshot).
+struct Table<E> {
     /// Monotonic, never-reused, never-zero id source. Starts at 1.
     next_id: u64,
     /// The permanent table. Keyed by the monotonic id, so a freed id never reappears
     /// and there is no ABA window.
-    table: HashMap<u64, Arc<Entry<T>>>,
+    table: HashMap<u64, Arc<E>>,
+}
+
+impl<E> Table<E> {
+    fn new() -> Self {
+        Table {
+            next_id: 1,
+            table: HashMap::new(),
+        }
+    }
+
+    fn insert(&mut self, entry: E) -> u64 {
+        let id = self.next_id;
+        // u64 monotonic: in the impossible event of wraparound, skip 0.
+        self.next_id = self.next_id.wrapping_add(1);
+        if self.next_id == 0 {
+            self.next_id = 1;
+        }
+        self.table.insert(id, Arc::new(entry));
+        id
+    }
+
+    fn get(&self, id: u64) -> Option<Arc<E>> {
+        if id == 0 {
+            None
+        } else {
+            self.table.get(&id).cloned()
+        }
+    }
+
+    fn remove(&mut self, id: u64) -> Option<Arc<E>> {
+        if id == 0 {
+            None
+        } else {
+            self.table.remove(&id)
+        }
+    }
 }
 
 impl<T> HandleRegistry<T> {
@@ -211,10 +241,7 @@ impl<T> HandleRegistry<T> {
     /// need not be `const`).
     pub(crate) fn new() -> Self {
         HandleRegistry {
-            inner: Mutex::new(RegistryInner {
-                next_id: 1,
-                table: HashMap::new(),
-            }),
+            inner: Mutex::new(Table::new()),
         }
     }
 
@@ -284,21 +311,15 @@ impl<T> HandleRegistry<T> {
         cancel_target: Option<CancelTarget>,
         end_reason: Option<RecvEndReasonHandle>,
     ) -> u64 {
-        let entry = Arc::new(Entry {
-            resource: Mutex::new(Some(resource)),
-            cancel,
-            cancel_target,
-            end_reason,
-        });
-        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        let id = inner.next_id;
-        // u64 monotonic: in the impossible event of wraparound, skip 0.
-        inner.next_id = inner.next_id.wrapping_add(1);
-        if inner.next_id == 0 {
-            inner.next_id = 1;
-        }
-        inner.table.insert(id, entry);
-        id
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(Entry {
+                resource: Mutex::new(Some(resource)),
+                cancel,
+                cancel_target,
+                end_reason,
+            })
     }
 
     /// Lease the entry for `id`: look it up under the registry lock against the
@@ -310,11 +331,7 @@ impl<T> HandleRegistry<T> {
     /// Every leased native method calls this first; `None` → throw
     /// `IllegalStateException` on the Java boundary.
     pub(crate) fn lease(&self, id: u64) -> Option<Arc<Entry<T>>> {
-        if id == 0 {
-            return None;
-        }
-        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        inner.table.get(&id).cloned()
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).get(id)
     }
 
     /// Clone the entry's cross-thread cancel target WITHOUT touching the resource
@@ -387,11 +404,10 @@ impl<T> HandleRegistry<T> {
     /// resource — used by [`with_poisoning`](Self::with_poisoning) after it has
     /// already taken the resource. Idempotent; `0`/absent → no-op.
     fn remove(&self, id: u64) {
-        if id == 0 {
-            return;
-        }
-        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        inner.table.remove(&id);
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(id);
     }
 
     /// Lease `id` and run `f` without blocking on a parked op — the `isAlive`-style
@@ -420,16 +436,14 @@ impl<T> HandleRegistry<T> {
     /// resource's own `Drop` runs when the caller drops the returned value AND every
     /// in-flight lease has released its `Arc` clone (whichever is last).
     pub(crate) fn close(&self, id: u64) -> Option<T> {
-        if id == 0 {
-            return None;
-        }
         // Remove under the registry lock — this is the single atomic gate that makes
         // double-close a no-op: only one caller gets the entry out of the table, so
         // the cancel hook below and the resource `take` each run at most once.
-        let entry = {
-            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-            inner.table.remove(&id)
-        }?;
+        let entry = self
+            .inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(id)?;
 
         // Wake a parked op BEFORE we try to take the resource lock, so a blocked
         // recv/accept releases and we don't deadlock waiting for `take()`.
@@ -447,11 +461,171 @@ impl<T> HandleRegistry<T> {
     /// `isAlive`/`isClosed`-style probe that doesn't need to lease. `0` → `false`.
     #[cfg(test)]
     pub(crate) fn contains(&self, id: u64) -> bool {
-        if id == 0 {
-            return false;
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(id)
+            .is_some()
+    }
+}
+
+/// Trait-erased cancel surface of an [`OwnedEntry`]: what a Java
+/// `CancelHandle` holds. `cancel()` never takes the slot and
+/// `is_cancelled()` reads the shell's ONE flag, so two handles on one
+/// shell — and a handle that outlives `close()` — always agree.
+///
+/// The `expect(dead_code)` here and on the three items below is scoped to the
+/// non-test build and is deliberately self-deleting: Task B3.1 introduces the
+/// `Owned`-backed registry, Tasks B3.3-B3.5 move the shells onto it. Once a
+/// shell registers here the expectation is unfulfilled and `-D warnings` says
+/// so — the attribute goes with that task, it is never widened to an `allow`.
+#[cfg_attr(not(test), expect(dead_code, reason = "shells move over in B3.3-B3.5"))]
+pub(crate) trait CancelSurface: Send + Sync {
+    fn cancel(&self);
+    fn is_cancelled(&self) -> bool;
+}
+
+/// Boxed behind `org.tstrans.srt.CancelHandle` and `org.tstrans.rtp.CancelHandle`
+/// (each in its own plain `HandleRegistry<CancelView>`, so their ids stay per-type).
+#[cfg_attr(not(test), expect(dead_code, reason = "shells move over in B3.3-B3.5"))]
+pub(crate) struct CancelView(pub(crate) Arc<dyn CancelSurface>);
+
+/// An [`OwnedRegistry`] entry. Nothing here but the `Owned` — the slot,
+/// the cancel target, the cancelled latch, the end-reason cell and the
+/// construction-time snapshot all live inside it (spec §3.2).
+pub(crate) struct OwnedEntry<T, S> {
+    owned: Owned<T, S>,
+}
+
+impl<T: Send + 'static, S: Send + Sync + 'static> CancelSurface for OwnedEntry<T, S> {
+    fn cancel(&self) {
+        self.owned.cancel();
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.owned.is_cancelled()
+    }
+}
+
+/// A process-global, per-type registry whose entries are
+/// [`tst_pipeline::binding::Owned`] shells. The registry contributes only
+/// the opaque-id table (UAF/double-free freedom — see the module doc);
+/// every lock, poison, panic, cancel and close rule is `Owned`'s.
+pub(crate) struct OwnedRegistry<T, S = ()> {
+    inner: Mutex<Table<OwnedEntry<T, S>>>,
+}
+
+#[cfg_attr(not(test), expect(dead_code, reason = "shells move over in B3.3-B3.5"))]
+impl<T: Send + 'static, S: Send + Sync + 'static> OwnedRegistry<T, S> {
+    /// Create an empty registry. Cheap; intended as the init fn of a
+    /// `static REGISTRY: LazyLock<OwnedRegistry<T, S>>`.
+    pub(crate) fn new() -> Self {
+        OwnedRegistry {
+            inner: Mutex::new(Table::new()),
         }
-        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        inner.table.contains_key(&id)
+    }
+
+    /// Register an [`Owned`] shell and return its opaque non-zero Java key.
+    pub(crate) fn insert(&self, owned: Owned<T, S>) -> u64 {
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(OwnedEntry { owned })
+    }
+
+    fn lease(&self, id: u64) -> Option<Arc<OwnedEntry<T, S>>> {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).get(id)
+    }
+
+    /// Mutator path (push / send / recv / next / flush): [`Owned::with_mut`]
+    /// — refuses a poisoned slot, isolates a panic without poisoning.
+    ///
+    /// # Errors
+    ///
+    /// [`HandleState::Closed`] for a `0`/absent/closed id, otherwise whatever
+    /// `Owned::with_mut` reports.
+    pub(crate) fn with_mut<R>(
+        &self,
+        id: u64,
+        f: impl FnOnce(&mut T) -> R,
+    ) -> Result<R, HandleState> {
+        match self.lease(id) {
+            Some(e) => e.owned.with_mut(f),
+            None => Err(HandleState::Closed),
+        }
+    }
+
+    /// Reader path (stats / isAlive / getters): [`Owned::with_ref`] —
+    /// recovers a poisoned slot.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::with_mut`], minus `Poisoned`.
+    pub(crate) fn with_ref<R>(&self, id: u64, f: impl FnOnce(&T) -> R) -> Result<R, HandleState> {
+        match self.lease(id) {
+            Some(e) => e.owned.with_ref(f),
+            None => Err(HandleState::Closed),
+        }
+    }
+
+    /// Non-blocking reader for the `isAlive` probes: `Ok(None)` when a
+    /// parked op holds the slot (the receiver is live), so the probe never
+    /// waits behind a receive. Adapts A1's `Option<Result<_>>` (outer `None`
+    /// = held) to the registry's `Result<Option<_>>` (absent id = `Closed`).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::with_ref`].
+    pub(crate) fn try_with_ref<R>(
+        &self,
+        id: u64,
+        f: impl FnOnce(&T) -> R,
+    ) -> Result<Option<R>, HandleState> {
+        match self.lease(id) {
+            Some(e) => match e.owned.try_with_ref(f) {
+                None => Ok(None),
+                Some(r) => r.map(Some),
+            },
+            None => Err(HandleState::Closed),
+        }
+    }
+
+    /// Construction-constant reads (local addr, reconnect handles, stats
+    /// handle): [`Owned::snapshot`], never the slot.
+    pub(crate) fn snapshot<R>(&self, id: u64, f: impl FnOnce(&S) -> R) -> Option<R> {
+        self.lease(id).map(|e| f(e.owned.snapshot()))
+    }
+
+    /// The `cancelHandle()` natives' read — the entry itself, trait-erased,
+    /// so `cancel()`/`is_cancelled()` keep working after `close()` removed
+    /// the id from the table (the `Arc` outlives the table's strong ref).
+    pub(crate) fn cancel_view(&self, id: u64) -> Option<CancelView> {
+        self.lease(id)
+            .map(|e| CancelView(e as Arc<dyn CancelSurface>))
+    }
+
+    /// The shell's ONE cancelled latch. `None` = `0`/absent/closed id.
+    pub(crate) fn is_cancelled(&self, id: u64) -> Option<bool> {
+        self.lease(id).map(|e| e.owned.is_cancelled())
+    }
+
+    /// The recorded end reason, read off the cell [`Owned`] holds outside the
+    /// slot; `None` folds absent id / no cell / not ended yet.
+    pub(crate) fn end_reason(&self, id: u64) -> Option<RecvEndReason> {
+        self.lease(id).and_then(|e| e.owned.end_reason())
+    }
+
+    /// Remove the id (the single atomic idempotency gate), cancel (wakes a
+    /// parked op, sets the flag every view reads), take the shell and hand
+    /// it back for its own `close()`. Second call → `None`.
+    pub(crate) fn close(&self, id: u64) -> Option<T> {
+        let entry = self
+            .inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(id)?;
+        entry.owned.cancel();
+        entry.owned.take()
     }
 }
 
@@ -638,18 +812,31 @@ mod tests {
         );
     }
 
-    /// A no-op cancel target: the test only needs an `Arc<dyn TransportCancel>`
-    /// identity to hand out, not a wake-up.
-    struct NoopCancel;
-    impl tst_core::transport::TransportCancel for NoopCancel {
-        fn cancel(&self) {}
+    /// A cancel target that records the wake (the thing a real handle does):
+    /// tests assert on `fired`, so this is never a silent no-op.
+    struct RecordingCancel {
+        fired: AtomicBool,
+    }
+    impl tst_core::transport::TransportCancel for RecordingCancel {
+        fn cancel(&self) {
+            self.fired.store(true, Ordering::SeqCst);
+        }
+    }
+    fn recording() -> (
+        Arc<RecordingCancel>,
+        Arc<dyn tst_core::transport::TransportCancel>,
+    ) {
+        let c = Arc::new(RecordingCancel {
+            fired: AtomicBool::new(false),
+        });
+        let dyn_c: Arc<dyn tst_core::transport::TransportCancel> = c.clone();
+        (c, dyn_c)
     }
 
     #[test]
     fn cancel_target_is_readable_while_resource_lock_is_held() {
         let reg: HandleRegistry<u64> = HandleRegistry::new();
-        let target: Arc<dyn tst_core::transport::TransportCancel + Send + Sync> =
-            Arc::new(NoopCancel);
+        let target: Arc<dyn tst_core::transport::TransportCancel + Send + Sync> = recording().1;
         let id = reg.insert_full(7, None, Some(Arc::clone(&target)));
 
         // Park an op on the resource lock (a blocked recv/accept in production).
@@ -695,8 +882,7 @@ mod tests {
             reg.cancel_target(plain).is_none(),
             "plain insert has no target"
         );
-        let target: Arc<dyn tst_core::transport::TransportCancel + Send + Sync> =
-            Arc::new(NoopCancel);
+        let target: Arc<dyn tst_core::transport::TransportCancel + Send + Sync> = recording().1;
         let id = reg.insert_full(2, None, Some(target));
         assert!(reg.cancel_target(id).is_some());
         reg.close(id);
@@ -723,8 +909,7 @@ mod tests {
     #[test]
     fn end_reason_is_readable_while_resource_lock_is_held() {
         let reg: HandleRegistry<u64> = HandleRegistry::new();
-        let target: Arc<dyn tst_core::transport::TransportCancel + Send + Sync> =
-            Arc::new(NoopCancel);
+        let target: Arc<dyn tst_core::transport::TransportCancel + Send + Sync> = recording().1;
         let id = reg.insert_cancel_on_close(7, target, Some(RecvEndReasonHandle::default()));
 
         // Park an op on the resource lock (a blocked recv in production).
@@ -776,8 +961,7 @@ mod tests {
             "plain insert registers no cell"
         );
 
-        let target: Arc<dyn tst_core::transport::TransportCancel + Send + Sync> =
-            Arc::new(NoopCancel);
+        let target: Arc<dyn tst_core::transport::TransportCancel + Send + Sync> = recording().1;
         let id = reg.insert_cancel_on_close(2, target, Some(RecvEndReasonHandle::default()));
         reg.close(id);
         assert!(
@@ -992,5 +1176,168 @@ mod tests {
             ROUNDS as usize,
             "each round's resource must drop exactly once"
         );
+    }
+
+    /// `CancelHandle.isCancelled()` reads the shell's ONE cancel state: it is
+    /// true after `close()` (which cancels first) — the per-handle flag it
+    /// replaces stayed false.
+    #[test]
+    fn owned_registry_is_cancelled_after_close_and_cancel_fired_once() {
+        let reg: OwnedRegistry<u64> = OwnedRegistry::new();
+        let (rec, cancel) = recording();
+        let id = reg.insert(Owned::new(7, cancel, ()));
+        assert_eq!(reg.is_cancelled(id), Some(false));
+        let view = reg.cancel_view(id).expect("live entry has a view");
+        assert!(!view.0.is_cancelled());
+
+        assert_eq!(
+            reg.close(id),
+            Some(7),
+            "the winning close gets the shell back"
+        );
+        assert!(
+            rec.fired.load(Ordering::SeqCst),
+            "close() cancels before it takes"
+        );
+        assert!(
+            view.0.is_cancelled(),
+            "a view obtained before close observes it"
+        );
+        assert_eq!(reg.is_cancelled(id), None, "the id is gone from the table");
+        assert_eq!(reg.close(id), None, "second close is a no-op");
+        // cancel() on the view after close never panics and never takes anything.
+        view.0.cancel();
+    }
+
+    /// `cancel_view` / `snapshot` / `end_reason` must answer while a parked
+    /// op holds the slot (the #189 lease bug and the #234 getter bug, both
+    /// in one test).
+    #[test]
+    fn owned_registry_side_reads_are_lock_free_while_parked() {
+        let reg: Arc<OwnedRegistry<u64, &'static str>> = Arc::new(OwnedRegistry::new());
+        let (_rec, cancel) = recording();
+        let id = reg
+            .insert(Owned::new(1, cancel, "snap").with_end_reason(RecvEndReasonHandle::default()));
+        let held = Arc::new(std::sync::Barrier::new(2));
+        let release = Arc::new(std::sync::Barrier::new(2));
+        let (h, rel, r2) = (held.clone(), release.clone(), reg.clone());
+        let parked = thread::spawn(move || {
+            r2.with_mut(id, |_v| {
+                h.wait();
+                rel.wait();
+            })
+            .expect("live");
+        });
+        held.wait(); // the slot is now held by the parked op
+        let r3 = reg.clone();
+        let got = thread::spawn(move || {
+            (
+                r3.cancel_view(id).is_some(),
+                r3.snapshot(id, |s| *s),
+                r3.end_reason(id),
+                r3.is_cancelled(id),
+            )
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !got.is_finished() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "a side read blocked behind the parked op's slot"
+            );
+            thread::yield_now();
+        }
+        assert_eq!(got.join().unwrap(), (true, Some("snap"), None, Some(false)));
+        release.wait();
+        parked.join().unwrap();
+    }
+
+    /// A panicking mutator is reported ONCE and then closes the Owned-backed
+    /// entry (spec §3.2 as amended at plan review — the JVM's existing
+    /// `with_poisoning` entry-removal semantics, one layer down); the mutex
+    /// is not poisoned and a later `close()` stays quiet.
+    #[test]
+    fn owned_registry_mutator_panic_is_reported_and_closes_the_entry() {
+        let reg: OwnedRegistry<u64> = OwnedRegistry::new();
+        let (_rec, cancel) = recording();
+        let id = reg.insert(Owned::new(0, cancel, ()));
+        let r = reg.with_mut(id, |v| {
+            *v += 1;
+            panic!("torn mutation");
+        });
+        assert!(
+            matches!(r, Err(HandleState::Panicked { ref detail }) if detail == "torn mutation")
+        );
+        assert_eq!(
+            reg.with_mut(id, |v| *v),
+            Err(HandleState::Closed),
+            "a mutator panic drops the slot"
+        );
+        assert_eq!(
+            reg.close(id),
+            None,
+            "the taken slot yields nothing (decision 3); double close is quiet"
+        );
+    }
+
+    /// `try_with_ref` never queues behind a parked op: `Ok(None)` while the
+    /// slot is held (the `isAlive`-probe path), `Ok(Some(_))` when free and
+    /// `Err(Closed)` once the id is gone — the three answers Tasks B3.3-B3.5
+    /// project onto `isAlive()`/`repr()`.
+    #[test]
+    fn owned_registry_try_with_ref_reports_held_free_and_closed() {
+        let reg: Arc<OwnedRegistry<u64>> = Arc::new(OwnedRegistry::new());
+        let (_rec, cancel) = recording();
+        let id = reg.insert(Owned::new(5, cancel, ()));
+        assert_eq!(
+            reg.try_with_ref(id, |v| *v),
+            Ok(Some(5)),
+            "free slot runs f"
+        );
+
+        let held = Arc::new(std::sync::Barrier::new(2));
+        let release = Arc::new(std::sync::Barrier::new(2));
+        let (h, rel, r2) = (held.clone(), release.clone(), reg.clone());
+        let parked = thread::spawn(move || {
+            r2.with_mut(id, |_v| {
+                h.wait();
+                rel.wait();
+            })
+            .expect("live");
+        });
+        held.wait(); // the slot is now held by the parked op
+
+        let r3 = reg.clone();
+        let probe = thread::spawn(move || r3.try_with_ref(id, |v| *v));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !probe.is_finished() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "try_with_ref blocked behind the parked op's slot"
+            );
+            thread::yield_now();
+        }
+        assert_eq!(probe.join().unwrap(), Ok(None), "a held slot is not closed");
+
+        release.wait();
+        parked.join().unwrap();
+
+        reg.close(id);
+        assert_eq!(reg.try_with_ref(id, |v| *v), Err(HandleState::Closed));
+        assert_eq!(reg.try_with_ref(0, |v| *v), Err(HandleState::Closed));
+    }
+
+    /// `with_mut` on an absent / zero / closed id is `Err(Closed)` — the
+    /// one value `throw_handle_state` maps to IllegalStateException.
+    #[test]
+    fn owned_registry_absent_ids_are_closed() {
+        let reg: OwnedRegistry<u64> = OwnedRegistry::new();
+        assert_eq!(reg.with_mut(0, |v| *v), Err(HandleState::Closed));
+        assert_eq!(reg.with_ref(999, |v| *v), Err(HandleState::Closed));
+        let (_rec, cancel) = recording();
+        let id = reg.insert(Owned::new(3, cancel, ()));
+        reg.close(id);
+        assert_eq!(reg.with_mut(id, |v| *v), Err(HandleState::Closed));
+        assert!(reg.cancel_view(id).is_none());
+        assert!(reg.snapshot(id, |_| ()).is_none());
     }
 }
