@@ -2,17 +2,24 @@
 //! object (Arc 2 spec §3.2).
 //!
 //! A binding wraps a pipeline shell `T` in an `Owned` and reaches it only
-//! through [`Owned::with_mut`] / [`Owned::with_ref`]; cross-thread cancel
-//! and close go through [`Owned::cancel`] / [`Owned::close`], which never
-//! wait on the slot a parked operation holds. Construction-constant
-//! getters (local address, port, URL text) read the [`Owned::snapshot`]
-//! captured at construction, never the slot (the PR #234 hang class).
+//! through [`Owned::with_mut`] / [`Owned::with_ref`]. Cross-thread cancel
+//! goes through [`Owned::cancel`], which never touches the slot at all, so
+//! it is prompt however long the parked operation runs. [`Owned::close`]
+//! fires that same cancel FIRST and only then takes the slot: it does wait
+//! for the slot, but only for as long as the cancelled operation needs to
+//! unwind — never for the original blocking call to finish on its own.
+//! Construction-constant getters (local address, port, URL text) read the
+//! [`Owned::snapshot`] captured at construction, never the slot (the
+//! PR #234 hang class).
 //!
 //! # Rules (each pinned by a unit test below)
 //!
-//! - **Lock inside**: `with_mut` is the only lock site; the binding holds no
-//!   mutex of its own around it, and takes the lock with the GIL released /
-//!   outside the JNI critical region.
+//! - **Lock inside**: `with_mut` is the only site that holds the lock
+//!   ACROSS CALLER CODE. `with_ref`, `take` and `close` take it too, but
+//!   only for the moment they need it, and `is_closed` / `try_with_ref`
+//!   never wait for it at all. The binding holds no mutex of its own around
+//!   `with_mut`, and takes the lock with the GIL released / outside the JNI
+//!   critical region.
 //! - **Poison policy**: readers (`with_ref`, `take`, `is_closed`, `close`)
 //!   RECOVER a poisoned mutex; the mutator `with_mut` REFUSES with
 //!   [`HandleState::Poisoned`] (the RTSP-client policy of PR #146).
@@ -183,9 +190,10 @@ impl<T, S> Owned<T, S> {
         self.end_reason.as_ref().and_then(RecvEndReasonHandle::get)
     }
 
-    /// Run `f` on `&mut T` — the ONE lock site. Bindings call this with the
-    /// GIL released / outside the JNI critical region, and hold no mutex
-    /// of their own around it.
+    /// Run `f` on `&mut T` — the only site that holds the lock ACROSS CALLER
+    /// CODE, and so the only one another thread can be made to wait behind.
+    /// Bindings call this with the GIL released / outside the JNI critical
+    /// region, and hold no mutex of their own around it.
     ///
     /// # Errors
     ///
