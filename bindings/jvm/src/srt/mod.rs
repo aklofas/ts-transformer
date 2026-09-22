@@ -21,13 +21,26 @@ use jni::sys::{jboolean, jlong};
 use tst_core::transport::TransportCancel;
 use tst_pipeline::{BackoffStrategy, OverflowPolicy, ReconnectMode, ReconnectPolicy};
 
-use crate::handle::{HandleRegistry, TryWith};
+use crate::handle::{CancelView, HandleRegistry};
 
-/// Per-type leased-handle registry for `org.tstrans.srt.CancelHandle`. The
-/// cancel-handle types are themselves cancel *targets* (no parked op to wake),
-/// so they register with `insert` (cancel = None); the registry kills their own
-/// UAF/double-free on `close`.
-static REGISTRY_CANCEL: LazyLock<HandleRegistry<JniCancel>> = LazyLock::new(HandleRegistry::new);
+/// `org.tstrans.srt.CancelHandle` boxes a [`CancelView`] over the shell's
+/// `Owned` entry: `cancel()` and `isCancelled()` act on the shell's one
+/// cancel state, so every handle on a shell — and a handle that outlives
+/// the shell's `close()` — agrees. Per-type plain registry: the view has
+/// no parked op of its own.
+static REGISTRY_CANCEL: LazyLock<HandleRegistry<CancelView>> = LazyLock::new(HandleRegistry::new);
+
+/// Register a cancel view and return its `org.tstrans.srt.CancelHandle` key.
+pub(crate) fn cancel_view_handle(view: CancelView) -> jlong {
+    REGISTRY_CANCEL.insert(view) as jlong
+}
+
+/// The transport's cancel target in the shape `Owned::new` takes. Obtained
+/// BEFORE the transport moves into a shell (obtain-before-move). Infallible:
+/// A3's inherent accessor is never `Option`.
+pub(crate) fn srt_cancel(t: &tst_srt::SrtTransport) -> Arc<dyn TransportCancel> {
+    Arc::new(t.srt_cancel_handle())
+}
 
 /// Reconstruct a `tst_pipeline::ReconnectPolicy` from the primitive args the
 /// JVM `Managed*.nFromUrl` natives marshal (see `org.tstrans.srt.PolicyArgs`).
@@ -62,7 +75,7 @@ pub(crate) fn build_reconnect_policy(
         other => {
             errors::throw_srt(
                 env,
-                "CONFIG_INVALID",
+                tst_pipeline::binding::BindingErrorKind::ConfigInvalid,
                 &format!("unknown BackoffStrategy ordinal {other}"),
             );
             return None;
@@ -74,7 +87,7 @@ pub(crate) fn build_reconnect_policy(
         other => {
             errors::throw_srt(
                 env,
-                "CONFIG_INVALID",
+                tst_pipeline::binding::BindingErrorKind::ConfigInvalid,
                 &format!("unknown OverflowPolicy ordinal {other}"),
             );
             return None;
@@ -100,16 +113,30 @@ pub(crate) fn build_reconnect_policy(
     })
 }
 
-/// Boxed behind a `CancelHandle.handle`. Mirrors tst-py's `PyCancelHandle`:
-/// a shared trait-erased cancel target + a per-handle observation flag.
+/// Boxed behind a `CancelHandle.handle` for the shells that have NOT yet moved
+/// onto `OwnedRegistry` (the managed srt family — Task B3.4 deletes this type
+/// together with its last callers). The `flag` is this handle's own
+/// observation bit, which is exactly the per-handle semantics B3 replaces;
+/// plain shells already read the shell's one state through [`CancelView`].
 pub(crate) struct JniCancel {
     pub inner: Arc<dyn TransportCancel + Send + Sync>,
     pub flag: AtomicBool,
 }
 
+impl crate::handle::CancelSurface for JniCancel {
+    fn cancel(&self) {
+        self.flag.store(true, Ordering::Release);
+        self.inner.cancel();
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.flag.load(Ordering::Acquire)
+    }
+}
+
 impl JniCancel {
     pub(crate) fn into_handle(self) -> jlong {
-        REGISTRY_CANCEL.insert(self) as jlong
+        cancel_view_handle(CancelView(Arc::new(self)))
     }
 }
 
@@ -120,11 +147,10 @@ pub extern "system" fn Java_org_tstrans_srt_CancelHandle_nCancel(
     handle: jlong,
 ) {
     crate::panic::jni_catch(&mut env, (), |env| {
-        let ran = REGISTRY_CANCEL.with(handle as u64, |c| {
-            c.flag.store(true, Ordering::Release);
-            c.inner.cancel();
-        });
-        if ran.is_none() {
+        if REGISTRY_CANCEL
+            .with(handle as u64, |c| c.0.cancel())
+            .is_none()
+        {
             crate::error::throw_closed(env, "CancelHandle");
         }
     })
@@ -137,12 +163,9 @@ pub extern "system" fn Java_org_tstrans_srt_CancelHandle_nIsCancelled(
     handle: jlong,
 ) -> jboolean {
     crate::panic::jni_catch(&mut env, 0, |env| {
-        // A cancel target is never "parked", so `try_with` never reports `Locked`
-        // here; treat `Locked`/`Taken` as closed.
-        match REGISTRY_CANCEL.try_with(handle as u64, |c| u8::from(c.flag.load(Ordering::Acquire)))
-        {
-            TryWith::Ran(v) => v,
-            _ => {
+        match REGISTRY_CANCEL.with(handle as u64, |c| u8::from(c.0.is_cancelled())) {
+            Some(v) => v,
+            None => {
                 crate::error::throw_closed(env, "CancelHandle");
                 0
             }

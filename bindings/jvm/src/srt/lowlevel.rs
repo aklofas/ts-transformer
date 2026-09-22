@@ -17,13 +17,13 @@
 
 use std::sync::Arc;
 use std::sync::LazyLock;
-use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use jni::JNIEnv;
 use jni::objects::{JClass, JObject, JString, JValue};
 use jni::sys::{jlong, jobject};
 use tst_core::transport::TransportCancel;
+use tst_pipeline::binding::{BindingErrorKind, Owned};
 use tst_pipeline::{Receiver as PlReceiver, ReceiverConfig, Sender as PlSender, SenderConfig};
 use tst_srt::{
     Listener as SrtListener, ListenerConfig, Socket as SrtSocket, SocketConfig, SrtTransport,
@@ -32,9 +32,8 @@ use tst_srt::{
     url::Mode,
 };
 
-use super::JniCancel;
-use super::errors::{accept_error, bind_error, connect_error, io_error, throw_srt, url_error};
-use crate::handle::HandleRegistry;
+use super::errors::{srt_error, throw_srt, url_error};
+use crate::handle::{HandleRegistry, OwnedRegistry};
 use crate::jutil::{checked_u16, join_host_port};
 
 /// Per-type leased-handle registry for `org.tstrans.srt.Socket` (an `SrtSocket`).
@@ -43,39 +42,41 @@ use crate::jutil::{checked_u16, join_host_port};
 pub(crate) static REGISTRY_SOCKET: LazyLock<HandleRegistry<SrtSocket>> =
     LazyLock::new(HandleRegistry::new);
 
-/// Per-type registry for `org.tstrans.srt.Listener` (a `JniListener`). Registered
-/// with a cancel hook that wakes a parked `accept`.
-static REGISTRY_LISTENER: LazyLock<HandleRegistry<SrtListener>> =
-    LazyLock::new(HandleRegistry::new);
+/// Construction-constant view of a `Listener` (spec §3.2): the bound address is
+/// captured at registration so `localAddr()` never takes the slot a parked
+/// `accept` holds — the PR #234 getter bug, JVM instance (`Listener.localAddr()`
+/// blocked behind `accept(null)` on another thread).
+pub(crate) struct ListenerSnapshot {
+    pub local_addr: Result<std::net::SocketAddr, String>,
+}
+
+/// Per-type `Owned`-backed registry for `org.tstrans.srt.Listener`.
+static REGISTRY_LISTENER: LazyLock<OwnedRegistry<SrtListener, ListenerSnapshot>> =
+    LazyLock::new(OwnedRegistry::new);
 
 // ---------------------------------------------------------------------------
 // Listener registration
 // ---------------------------------------------------------------------------
 //
-// MEMORY-SAFETY / LIFETIME CONTRACT. The leased `HandleRegistry` is the
-// process-global synchronisation point. `nAccept` leases the entry and runs
-// `accept()` INSIDE the entry's resource lock, so every `Listener` field read
-// happens in the critical section. `nClose` routes through `REGISTRY.close`,
-// which fires the entry's cancel hook FIRST (closing the SRTSOCKET, waking a
+// MEMORY-SAFETY / LIFETIME CONTRACT. The `Owned`-backed registry is the
+// process-global synchronisation point. `nAccept` runs `accept()` INSIDE
+// `Owned::with_mut`, i.e. holding the entry's slot, so every `Listener` field
+// read happens in the critical section. `nClose` routes through
+// `OwnedRegistry::close`, which cancels FIRST (closing the SRTSOCKET, waking a
 // parked accept WITHOUT touching the `Listener` allocation) and only THEN takes
-// the resource under the same lock — blocking until the woken accept released
-// it. The cancel hook below is the outside-the-mutex wake the round-1 bespoke
-// `Arc<Mutex<Option<…>>>` shim provided; the registry's generic primitive
-// replaces it. `accept()` is single-owner (single-iterator) per the Java
-// contract.
+// the value out of the slot — blocking until the woken accept released it.
+// `accept()` is single-owner (single-iterator) per the Java contract.
 
-/// Register a `Listener`, wiring the cancel hook from its independent
-/// `SrtCancelHandle` (held by the registry entry, fired by `close`). The same
-/// handle is the entry's lock-free cancel target, so `nCancelHandle` returns
-/// while an `accept` is parked on the resource lock.
+/// Register a `Listener` as an `Owned` entry: its independent `SrtCancelHandle`
+/// is the cancel target (fired by `close`, and handed out by `nCancelHandle`
+/// while an `accept` is parked), and the bound address is snapshotted so
+/// `nLocalAddr` never touches the slot.
 fn register_listener(listener: SrtListener) -> u64 {
-    let cancel: Arc<dyn TransportCancel + Send + Sync> = Arc::new(listener.cancel_handle());
-    let hook = Arc::clone(&cancel);
-    REGISTRY_LISTENER.insert_full(
-        listener,
-        Some(Box::new(move || hook.cancel())),
-        Some(cancel),
-    )
+    let cancel: Arc<dyn TransportCancel> = Arc::new(listener.cancel_handle());
+    let snapshot = ListenerSnapshot {
+        local_addr: listener.local_addr().map_err(|e| e.to_string()),
+    };
+    REGISTRY_LISTENER.insert(Owned::new(listener, cancel, snapshot))
 }
 
 // ---------------------------------------------------------------------------
@@ -160,7 +161,7 @@ fn build_socket_config(
         match Passphrase::new(s) {
             Ok(pp) => cfg.passphrase = Some(pp),
             Err(e) => {
-                throw_srt(env, "CONFIG_INVALID", &e.to_string());
+                throw_srt(env, BindingErrorKind::ConfigInvalid, &e.to_string());
                 return Err(jni::errors::Error::JavaException);
             }
         }
@@ -172,7 +173,7 @@ fn build_socket_config(
         match StreamId::new(s) {
             Ok(id) => cfg.stream_id = Some(id),
             Err(e) => {
-                throw_srt(env, "CONFIG_INVALID", &e.to_string());
+                throw_srt(env, BindingErrorKind::ConfigInvalid, &e.to_string());
                 return Err(jni::errors::Error::JavaException);
             }
         }
@@ -184,7 +185,7 @@ fn build_socket_config(
         match Congestion::from_str_strict(&s) {
             Ok(c) => cfg.congestion = Some(c),
             Err(e) => {
-                throw_srt(env, "CONFIG_INVALID", &e.to_string());
+                throw_srt(env, BindingErrorKind::ConfigInvalid, &e.to_string());
                 return Err(jni::errors::Error::JavaException);
             }
         }
@@ -260,7 +261,7 @@ fn build_listener_config(
         match Passphrase::new(s) {
             Ok(pp) => cfg.passphrase = Some(pp),
             Err(e) => {
-                throw_srt(env, "CONFIG_INVALID", &e.to_string());
+                throw_srt(env, BindingErrorKind::ConfigInvalid, &e.to_string());
                 return Err(jni::errors::Error::JavaException);
             }
         }
@@ -271,7 +272,7 @@ fn build_listener_config(
         match Congestion::from_str_strict(&s) {
             Ok(c) => cfg.congestion = Some(c),
             Err(e) => {
-                throw_srt(env, "CONFIG_INVALID", &e.to_string());
+                throw_srt(env, BindingErrorKind::ConfigInvalid, &e.to_string());
                 return Err(jni::errors::Error::JavaException);
             }
         }
@@ -339,7 +340,7 @@ pub extern "system" fn Java_org_tstrans_srt_Builder_nConnect<'local>(
         if mode == 3 {
             throw_srt(
                 env,
-                "CONFIG_INVALID",
+                BindingErrorKind::ConfigInvalid,
                 "rendezvous mode is not yet supported by tst-srt",
             );
             return 0;
@@ -347,7 +348,7 @@ pub extern "system" fn Java_org_tstrans_srt_Builder_nConnect<'local>(
         if mode == 2 {
             throw_srt(
                 env,
-                "CONFIG_INVALID",
+                BindingErrorKind::ConfigInvalid,
                 "Builder.connect() requires caller mode (mode is LISTENER)",
             );
             return 0;
@@ -396,7 +397,7 @@ pub extern "system" fn Java_org_tstrans_srt_Builder_nConnect<'local>(
                 "Builder.connect() requires URL mode=caller (default); got mode={:?}",
                 parsed.mode
             );
-            throw_srt(env, "CONFIG_INVALID", &msg);
+            throw_srt(env, BindingErrorKind::ConfigInvalid, &msg);
             return 0;
         }
 
@@ -407,7 +408,7 @@ pub extern "system" fn Java_org_tstrans_srt_Builder_nConnect<'local>(
         let socket = match SrtSocket::connect_with(&cfg, addr.as_str()) {
             Ok(s) => s,
             Err(e) => {
-                connect_error(env, &e);
+                srt_error(env, e);
                 return 0;
             }
         };
@@ -450,7 +451,7 @@ pub extern "system" fn Java_org_tstrans_srt_Builder_nListen<'local>(
         if mode == 3 {
             throw_srt(
                 env,
-                "CONFIG_INVALID",
+                BindingErrorKind::ConfigInvalid,
                 "rendezvous mode is not yet supported by tst-srt",
             );
             return 0;
@@ -458,7 +459,7 @@ pub extern "system" fn Java_org_tstrans_srt_Builder_nListen<'local>(
         if mode == 1 {
             throw_srt(
                 env,
-                "CONFIG_INVALID",
+                BindingErrorKind::ConfigInvalid,
                 "Builder.listen() requires listener mode (mode is CALLER)",
             );
             return 0;
@@ -508,7 +509,7 @@ pub extern "system" fn Java_org_tstrans_srt_Builder_nListen<'local>(
                 "Builder.listen() requires URL ?mode=listener; got mode={:?}",
                 parsed.mode
             );
-            throw_srt(env, "CONFIG_INVALID", &msg);
+            throw_srt(env, BindingErrorKind::ConfigInvalid, &msg);
             return 0;
         }
 
@@ -524,7 +525,7 @@ pub extern "system" fn Java_org_tstrans_srt_Builder_nListen<'local>(
         let listener = match SrtListener::bind_with(&cfg, addr.as_str()) {
             Ok(l) => l,
             Err(e) => {
-                bind_error(env, &e);
+                srt_error(env, e);
                 return 0;
             }
         };
@@ -604,7 +605,7 @@ pub extern "system" fn Java_org_tstrans_srt_Socket_nLocalAddr<'local>(
                 Err(_) => std::ptr::null_mut(),
             },
             Err(e) => {
-                io_error(env, &e);
+                srt_error(env, e);
                 std::ptr::null_mut()
             }
         }
@@ -631,7 +632,7 @@ pub extern "system" fn Java_org_tstrans_srt_Socket_nPeerAddr<'local>(
                 Err(_) => std::ptr::null_mut(),
             },
             Err(e) => {
-                io_error(env, &e);
+                srt_error(env, e);
                 std::ptr::null_mut()
             }
         }
@@ -690,7 +691,7 @@ pub extern "system" fn Java_org_tstrans_srt_Listener_nAccept(
         // resource lock, so a racing `nClose` (which fires the cancel hook before
         // taking the lock) wakes a parked accept rather than freeing under it.
         // `None` = absent/closed/taken → throw and bail.
-        let result = REGISTRY_LISTENER.with(handle as u64, |listener| {
+        let result = REGISTRY_LISTENER.with_mut(handle as u64, |listener| {
             if timeout_ms < 0 {
                 listener.accept()
             } else {
@@ -698,13 +699,13 @@ pub extern "system" fn Java_org_tstrans_srt_Listener_nAccept(
             }
         });
         match result {
-            Some(Ok((socket, _peer))) => REGISTRY_SOCKET.insert(socket) as jlong,
-            Some(Err(e)) => {
-                accept_error(env, &e);
+            Ok(Ok((socket, _peer))) => REGISTRY_SOCKET.insert(socket) as jlong,
+            Ok(Err(e)) => {
+                srt_error(env, e);
                 0
             }
-            None => {
-                crate::error::throw_closed(env, "Listener");
+            Err(state) => {
+                crate::error::throw_handle_state(env, "Listener", &state);
                 0
             }
         }
@@ -727,15 +728,9 @@ pub extern "system" fn Java_org_tstrans_srt_Listener_nCancelHandle(
         // holds that lock, and this is exactly the call that must wake it.
         // `cancel()` closes the SRTSOCKET WITHOUT freeing the Listener — the
         // sanctioned cross-thread wake. Mirrors tst-py's PyCancelHandle.
-        let cancel = REGISTRY_LISTENER.cancel_target(handle as u64);
-        match cancel {
-            Some(inner) => JniCancel {
-                inner,
-                flag: AtomicBool::new(false),
-            }
-            .into_handle(),
-            None => 0,
-        }
+        REGISTRY_LISTENER
+            .cancel_view(handle as u64)
+            .map_or(0, super::cancel_view_handle)
     })
 }
 
@@ -750,21 +745,19 @@ pub extern "system" fn Java_org_tstrans_srt_Listener_nLocalAddr<'local>(
     handle: jlong,
 ) -> jobject {
     crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
-        let addr_result =
-            match REGISTRY_LISTENER.with(handle as u64, |listener| listener.local_addr()) {
-                Some(r) => r,
-                None => {
-                    crate::error::throw_closed(env, "Listener");
-                    return std::ptr::null_mut();
-                }
-            };
-        match addr_result {
-            Ok(addr) => match build_host_port(env, addr) {
+        // Lock-free: the bound address was snapshotted at registration, so this
+        // answers while `accept` is parked on the slot (PR #234's getter class).
+        match REGISTRY_LISTENER.snapshot(handle as u64, |s| s.local_addr.clone()) {
+            Some(Ok(addr)) => match build_host_port(env, addr) {
                 Ok(obj) => obj.into_raw(),
                 Err(_) => std::ptr::null_mut(),
             },
-            Err(e) => {
-                io_error(env, &e);
+            Some(Err(msg)) => {
+                throw_srt(env, BindingErrorKind::SrtIo, &msg);
+                std::ptr::null_mut()
+            }
+            None => {
+                crate::error::throw_closed(env, "Listener");
                 std::ptr::null_mut()
             }
         }
@@ -778,9 +771,9 @@ pub extern "system" fn Java_org_tstrans_srt_Listener_nClose(
     handle: jlong,
 ) {
     crate::panic::jni_catch(&mut env, (), |_env| {
-        // `REGISTRY.close` fires the cancel hook FIRST (waking any parked accept via
-        // the independent SRTSOCKET cancel WITHOUT touching the Listener allocation),
-        // THEN takes the Listener under the resource lock — blocking until the woken
+        // `OwnedRegistry::close` cancels FIRST (waking any parked accept via the
+        // independent SRTSOCKET cancel WITHOUT touching the Listener allocation),
+        // THEN takes the Listener out of the slot — blocking until the woken
         // accept released it. So the free below is sound against a parked accept.
         // Atomic + idempotent: a double close finds the id gone → no-op.
         if let Some(listener) = REGISTRY_LISTENER.close(handle as u64) {

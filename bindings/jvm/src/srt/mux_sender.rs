@@ -25,8 +25,7 @@
 //! `MuxException`, `Transport(...)` → `SrtException` per `TransportError`
 //! variant, forward-compat catch-all → `SrtException(IO)`.
 
-use std::sync::LazyLock;
-use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, LazyLock};
 
 use jni::JNIEnv;
 use jni::objects::{JBooleanArray, JByteArray, JClass, JIntArray, JObject, JString, JValue};
@@ -36,23 +35,22 @@ use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{
     AudioStreamHandle, DataStreamHandle, KlvStreamHandle, SubtitleStreamHandle, VideoStreamHandle,
 };
+use tst_core::transport::TransportCancel;
+use tst_pipeline::binding::{BindingErrorKind, Owned};
 use tst_pipeline::{MuxSender as RustMuxSender, MuxSenderError, MuxSenderErrorSource};
-use tst_srt::{Socket, SocketConfig, SrtTransport, SrtUrl, url::Mode};
+use tst_srt::{SrtTransport, SrtUrl, url::Mode};
 
-use crate::handle::HandleRegistry;
-use crate::jutil::{
-    build_socket_stats, checked_u8, decode_stream_handle, join_host_port, read_bytes,
-};
+use crate::handle::OwnedRegistry;
+use crate::jutil::{build_socket_stats, checked_u8, decode_stream_handle, read_bytes};
 use crate::mpegts::build_muxer_stats;
 use crate::mpegts::muxer::{build_muxer_config_from_arrays, throw_mux_error};
 
-use super::JniCancel;
-use super::errors::{connect_error, throw_srt, transport_error};
+use super::errors::{srt_error, throw_srt, transport_error};
 
 type Inner = RustMuxSender<SrtTransport>;
 
-/// Per-type leased-handle registry for `org.tstrans.srt.MuxSender`.
-static REGISTRY: LazyLock<HandleRegistry<Inner>> = LazyLock::new(HandleRegistry::new);
+/// Per-type `Owned`-backed registry for `org.tstrans.srt.MuxSender`.
+static REGISTRY: LazyLock<OwnedRegistry<Inner>> = LazyLock::new(OwnedRegistry::new);
 
 /// Map a `MuxSenderError` (from any `send_*`) to a thrown Java exception.
 /// `Mux(...)` → `MuxException`; `Transport(...)` → `SrtException` per
@@ -63,24 +61,21 @@ fn throw_mux_sender_error(env: &mut JNIEnv, e: &MuxSenderError) {
         MuxSenderErrorSource::Transport(t) => transport_error(env, t),
         // `MuxSenderErrorSource` may gain variants; route any future one to a
         // generic SrtException(IO) with the Display message preserved.
-        _ => throw_srt(env, "IO", &e.to_string()),
+        _ => throw_srt(env, BindingErrorKind::SrtIo, &e.to_string()),
     }
 }
 
-/// Register a plain `MuxSender`, capturing its cancel target BEFORE the shell
-/// is boxed so `nCancelHandle` never needs the resource lock a parked send
-/// holds. Cancel-on-close: `nClose` fires `target` before taking the resource
-/// lock, so a `send*` parked on another thread (libsrt's blocking `srt_sendmsg`
-/// on a full send buffer) ends promptly with `SrtException(BROKEN)` — the plain
-/// cancel closes the socket under the parked send — instead of holding
-/// `close()` hostage. The contract the C ABI's `tst_mux_sender_close` and the
-/// plain srt receivers (`demux_receiver.rs::register`) already have. A fresh
-/// `SrtTransport` always has a cancel handle.
-fn register(sender: Inner) -> jlong {
-    let target = sender
-        .cancel_handle()
-        .expect("a fresh SrtTransport always returns Some(cancel_handle)");
-    REGISTRY.insert_cancel_on_close(sender, target, None) as jlong
+/// Register a plain `MuxSender` as an `Owned` entry. `MuxSender<T>` exposes no
+/// `transport()` accessor, so the cancel target is taken from the transport
+/// BEFORE `RustMuxSender::new` consumes it — the caller passes it in. `Owned`
+/// keeps it outside the slot, so `nCancelHandle` answers while a `send*` is
+/// parked (libsrt's blocking `srt_sendmsg` on a full send buffer) and
+/// `OwnedRegistry::close` cancels first, ending that parked send promptly with
+/// `SrtException(BROKEN)` — the plain cancel closes the socket under it —
+/// instead of holding `close()` hostage. The contract the C ABI's
+/// `tst_mux_sender_close` and the plain srt receivers already have.
+fn register(sender: Inner, cancel: Arc<dyn TransportCancel>) -> jlong {
+    REGISTRY.insert(Owned::new(sender, cancel, ())) as jlong
 }
 
 /// Build a `MuxSender<SrtTransport>` from a parsed caller-mode URL + a built
@@ -113,24 +108,26 @@ fn build_from_url(
             "MuxSender.fromUrl requires mode=caller (default); got mode={:?}",
             parsed.mode
         );
-        throw_srt(env, "CONFIG_INVALID", &msg);
+        throw_srt(env, BindingErrorKind::ConfigInvalid, &msg);
         return 0;
     }
 
-    let mut sock_cfg = SocketConfig::default();
-    parsed.overlay.apply_to_socket(&mut sock_cfg);
-    let addr = join_host_port(&parsed.host, parsed.port);
-
-    let socket = match Socket::connect_with(&sock_cfg, addr.as_str()) {
-        Ok(s) => s,
+    // One open path (ARCH-01): `SrtUrl::connect_recv` applies the overlay to a
+    // default `SocketConfig` and joins host:port (IPv6-bracketing included) —
+    // exactly what this site composed via `join_host_port`. `connect_recv`, NOT
+    // `connect`: this site has never merged the sender preset, and `connect`
+    // would silently add `Role::Sender` + a 5 s linger + a 15 s connect timeout.
+    let transport = match parsed.connect_recv() {
+        Ok(t) => t,
         Err(e) => {
-            connect_error(env, &e);
+            srt_error(env, e);
             return 0;
         }
     };
+    let cancel = super::srt_cancel(&transport);
 
-    match RustMuxSender::new(SrtTransport::new(socket), cfg) {
-        Ok(sender) => register(sender),
+    match RustMuxSender::new(transport, cfg) {
+        Ok(sender) => register(sender, cancel),
         Err(e) => {
             throw_mux_error(env, &e);
             0
@@ -341,7 +338,11 @@ pub extern "system" fn Java_org_tstrans_srt_MuxSender_nSendVideoTo<'local>(
     crate::panic::jni_catch(&mut env, (), |env| {
         let Some(h) = decode_stream_handle(stream_handle_raw, VideoStreamHandle::try_from_raw)
         else {
-            throw_srt(env, "CONFIG_INVALID", "invalid stream handle");
+            throw_srt(
+                env,
+                BindingErrorKind::ConfigInvalid,
+                "invalid stream handle",
+            );
             return;
         };
         let Some(buf) = read_bytes(env, &nal) else {
@@ -366,7 +367,11 @@ pub extern "system" fn Java_org_tstrans_srt_MuxSender_nSendKlvTo<'local>(
 ) {
     crate::panic::jni_catch(&mut env, (), |env| {
         let Some(h) = decode_stream_handle(stream_handle_raw, KlvStreamHandle::try_from_raw) else {
-            throw_srt(env, "CONFIG_INVALID", "invalid stream handle");
+            throw_srt(
+                env,
+                BindingErrorKind::ConfigInvalid,
+                "invalid stream handle",
+            );
             return;
         };
         let Ok(service_id) = checked_u8(env, i64::from(metadata_service_id), "metadataServiceId")
@@ -395,7 +400,11 @@ pub extern "system" fn Java_org_tstrans_srt_MuxSender_nSendAudioTo<'local>(
     crate::panic::jni_catch(&mut env, (), |env| {
         let Some(h) = decode_stream_handle(stream_handle_raw, AudioStreamHandle::try_from_raw)
         else {
-            throw_srt(env, "CONFIG_INVALID", "invalid stream handle");
+            throw_srt(
+                env,
+                BindingErrorKind::ConfigInvalid,
+                "invalid stream handle",
+            );
             return;
         };
         let Some(buf) = read_bytes(env, &frames) else {
@@ -420,7 +429,11 @@ pub extern "system" fn Java_org_tstrans_srt_MuxSender_nSendSubtitleTo<'local>(
     crate::panic::jni_catch(&mut env, (), |env| {
         let Some(h) = decode_stream_handle(stream_handle_raw, SubtitleStreamHandle::try_from_raw)
         else {
-            throw_srt(env, "CONFIG_INVALID", "invalid stream handle");
+            throw_srt(
+                env,
+                BindingErrorKind::ConfigInvalid,
+                "invalid stream handle",
+            );
             return;
         };
         let Some(buf) = read_bytes(env, &payload) else {
@@ -448,7 +461,11 @@ pub extern "system" fn Java_org_tstrans_srt_MuxSender_nSendDataTo<'local>(
     crate::panic::jni_catch(&mut env, (), |env| {
         let Some(h) = decode_stream_handle(stream_handle_raw, DataStreamHandle::try_from_raw)
         else {
-            throw_srt(env, "CONFIG_INVALID", "invalid stream handle");
+            throw_srt(
+                env,
+                BindingErrorKind::ConfigInvalid,
+                "invalid stream handle",
+            );
             return;
         };
         let Some(buf) = read_bytes(env, &data) else {
@@ -563,11 +580,14 @@ pub extern "system" fn Java_org_tstrans_srt_MuxSender_nStats<'local>(
     handle: jlong,
 ) -> JObject<'local> {
     crate::panic::jni_catch(&mut env, JObject::null(), |env| {
-        let Some((sock, pipe)) = REGISTRY.with(handle as u64, |inner| {
+        let (sock, pipe) = match REGISTRY.with_ref(handle as u64, |inner| {
             (inner.socket_stats().unwrap_or_default(), inner.stats())
-        }) else {
-            crate::error::throw_closed(env, "MuxSender");
-            return JObject::null();
+        }) {
+            Ok(v) => v,
+            Err(state) => {
+                crate::error::throw_handle_state(env, "MuxSender", &state);
+                return JObject::null();
+            }
         };
 
         let sock_obj = match build_socket_stats(env, "org/tstrans/srt/SocketStats", &sock) {
@@ -604,12 +624,8 @@ pub extern "system" fn Java_org_tstrans_srt_MuxSender_nCancelHandle(
     handle: jlong,
 ) -> jlong {
     crate::panic::jni_catch(&mut env, 0, |env| {
-        match REGISTRY.cancel_target(handle as u64) {
-            Some(inner) => JniCancel {
-                inner,
-                flag: AtomicBool::new(false),
-            }
-            .into_handle(),
+        match REGISTRY.cancel_view(handle as u64) {
+            Some(view) => super::cancel_view_handle(view),
             None => {
                 crate::error::throw_closed(env, "MuxSender");
                 0
@@ -645,7 +661,7 @@ pub extern "system" fn Java_org_tstrans_srt_MuxSender_nIsAlive(
 ) -> jboolean {
     crate::panic::jni_catch(&mut env, 0, |_env| {
         REGISTRY
-            .with(handle as u64, |inner| u8::from(inner.is_alive()))
+            .with_ref(handle as u64, |inner| u8::from(inner.is_alive()))
             .unwrap_or(0)
     })
 }
@@ -712,8 +728,11 @@ pub extern "system" fn Java_org_tstrans_srt_Socket_nIntoMuxSender<'local>(
             }
         };
 
+        // Obtain-before-move: the socket's cancel handle is read before
+        // `RustMuxSender::new` consumes the transport it is wrapped in.
+        let cancel: Arc<dyn TransportCancel> = Arc::new(socket.cancel_handle());
         match RustMuxSender::new(SrtTransport::new(socket), cfg) {
-            Ok(sender) => register(sender),
+            Ok(sender) => register(sender, cancel),
             Err(e) => {
                 throw_mux_error(env, &e);
                 0

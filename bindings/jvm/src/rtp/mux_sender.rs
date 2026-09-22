@@ -28,10 +28,11 @@ use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{
     AudioStreamHandle, DataStreamHandle, KlvStreamHandle, SubtitleStreamHandle, VideoStreamHandle,
 };
+use tst_pipeline::binding::Owned;
 use tst_pipeline::{MuxSender as RustMuxSender, MuxSenderError, MuxSenderErrorSource};
 use tst_rtp::{RtpSocketBuilder, RtpTransport};
 
-use crate::handle::HandleRegistry;
+use crate::handle::OwnedRegistry;
 use crate::jutil::{build_socket_stats, checked_u8, read_bytes};
 use crate::mpegts::build_muxer_stats;
 use crate::mpegts::muxer::{build_muxer_config_from_arrays, throw_mux_error};
@@ -40,8 +41,26 @@ use super::errors::{connect_error_to_rtp, throw_rtp, transport_error_to_rtp};
 
 type Inner = RustMuxSender<RtpTransport>;
 
-/// Per-type leased-handle registry for `org.tstrans.rtp.MuxSender`.
-static REGISTRY: LazyLock<HandleRegistry<Inner>> = LazyLock::new(HandleRegistry::new);
+/// Per-type `Owned`-backed registry for `org.tstrans.rtp.MuxSender`.
+///
+/// Moved here (not in Task B3.5, which owns the rest of the rtp surface) only
+/// because `handle::with_push` / `handle::first_handle` are now typed over
+/// [`OwnedRegistry`] and this file is their other user — keeping the tree
+/// building. B3.5 replaces the `register` helper below with the shared
+/// `rtp_cancel` path and adds the cancel-first close test.
+static REGISTRY: LazyLock<OwnedRegistry<Inner>> = LazyLock::new(OwnedRegistry::new);
+
+/// Register a `MuxSender<RtpTransport>` as an `Owned` entry. `RtpTransport`
+/// always yields a cancel handle (`crates/tst-rtp/src/transport.rs:370`); the
+/// `None` arm is the type's, not a reachable state, and is reported rather than
+/// `expect`ed (spec §3.4 retires the `.expect("… always Some")` sites).
+fn register(env: &mut JNIEnv, sender: Inner) -> jlong {
+    let Some(cancel) = sender.cancel_handle() else {
+        throw_rtp(env, "TRANSPORT", "rtp transport exposes no cancel handle");
+        return 0;
+    };
+    REGISTRY.insert(Owned::new(sender, cancel, ())) as jlong
+}
 
 /// Map a `MuxSenderError` (from any `send_*`) to a thrown Java exception.
 /// `Mux(...)` → `MuxException`; `Transport(...)` → `RtpException` per
@@ -90,7 +109,7 @@ fn build_from_url(
     };
 
     match RustMuxSender::new(transport, cfg) {
-        Ok(sender) => REGISTRY.insert(sender) as jlong,
+        Ok(sender) => register(env, sender),
         Err(e) => {
             throw_mux_error(env, &e);
             0
@@ -525,11 +544,14 @@ pub extern "system" fn Java_org_tstrans_rtp_MuxSender_nStats<'local>(
     handle: jlong,
 ) -> JObject<'local> {
     crate::panic::jni_catch(&mut env, JObject::null(), |env| {
-        let Some((sock, pipe)) = REGISTRY.with(handle as u64, |inner| {
+        let (sock, pipe) = match REGISTRY.with_ref(handle as u64, |inner| {
             (inner.socket_stats().unwrap_or_default(), inner.stats())
-        }) else {
-            crate::error::throw_closed(env, "MuxSender");
-            return JObject::null();
+        }) {
+            Ok(v) => v,
+            Err(state) => {
+                crate::error::throw_handle_state(env, "MuxSender", &state);
+                return JObject::null();
+            }
         };
 
         let sock_obj = match build_socket_stats(env, "org/tstrans/rtp/SocketStats", &sock) {
@@ -578,7 +600,7 @@ pub extern "system" fn Java_org_tstrans_rtp_MuxSender_nIsAlive(
 ) -> jboolean {
     crate::panic::jni_catch(&mut env, 0, |_env| {
         REGISTRY
-            .with(handle as u64, |inner| u8::from(inner.is_alive()))
+            .with_ref(handle as u64, |inner| u8::from(inner.is_alive()))
             .unwrap_or(0)
     })
 }

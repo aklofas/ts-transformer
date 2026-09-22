@@ -222,7 +222,6 @@ impl Domain {
 /// Bails if an exception is already pending. A kind the domain does not
 /// declare is a programming error (a producer nobody listed) and throws a
 /// `RuntimeException` naming it — loud, never a wrong-kind exception.
-#[expect(dead_code, reason = "throw sites move over in B3.3-B3.5b")]
 pub(crate) fn throw_binding(env: &mut JNIEnv, domain: Domain, e: &BindingError) {
     if env.exception_check().unwrap_or(false) {
         return; // don't clobber an already-pending exception
@@ -275,7 +274,6 @@ pub(crate) fn declared_member(
 /// `RuntimeException("native panic in tst-jni: …")` [`crate::panic::jni_catch`]
 /// already produces for an uncaught panic, so a panic reads the same whether
 /// `Owned::with_mut` or the outer boundary caught it.
-#[expect(dead_code, reason = "call sites move over in B3.3-B3.5b")]
 pub(crate) fn throw_handle_state(env: &mut JNIEnv, what: &str, state: &HandleState) {
     if env.exception_check().unwrap_or(false) {
         return;

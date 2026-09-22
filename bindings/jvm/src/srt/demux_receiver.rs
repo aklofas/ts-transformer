@@ -28,26 +28,26 @@
 //! captured first-wins into `sink_error` (as a `GlobalRef`) and re-thrown
 //! from the next `nNext` after the lease ends.
 
-use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, LazyLock, Mutex};
 
 use jni::JNIEnv;
 use jni::objects::{GlobalRef, JClass, JObject, JString, JThrowable, JValue};
 use jni::sys::{jboolean, jint, jlong, jobject};
 
+use tst_core::transport::TransportCancel;
+use tst_pipeline::binding::{BindingErrorKind, Owned};
 use tst_pipeline::{
     DemuxReceiver as RustDemuxReceiver, DemuxReceiverError, DemuxReceiverErrorSource,
 };
-use tst_srt::{Listener, ListenerConfig, Socket, SrtTransport, SrtUrl, url::Mode};
+use tst_srt::{SrtTransport, SrtUrl, url::Mode};
 
-use crate::handle::HandleRegistry;
-use crate::jutil::{build_socket_stats, join_host_port};
+use crate::handle::OwnedRegistry;
+use crate::jutil::build_socket_stats;
 use crate::mpegts::{
     build_demux_config_from_args, build_muxer_stats, convert_event, throw_demux_error,
 };
 
-use super::JniCancel;
-use super::errors::{accept_error, bind_error, throw_srt, transport_error, url_error};
+use super::errors::{srt_error, throw_srt, transport_error, url_error};
 use super::mux_sender::build_transport_stats;
 
 /// Native backing for `org.tstrans.srt.DemuxReceiver`. Single-threaded per the
@@ -60,9 +60,8 @@ struct JniDemuxReceiver {
     sink_error: Arc<Mutex<Option<GlobalRef>>>,
 }
 
-/// Per-type leased-handle registry for `org.tstrans.srt.DemuxReceiver`. No cancel
-/// hook (srt model — the public cancel handle + connection-close end iteration).
-static REGISTRY: LazyLock<HandleRegistry<JniDemuxReceiver>> = LazyLock::new(HandleRegistry::new);
+/// Per-type `Owned`-backed registry for `org.tstrans.srt.DemuxReceiver`.
+static REGISTRY: LazyLock<OwnedRegistry<JniDemuxReceiver>> = LazyLock::new(OwnedRegistry::new);
 
 /// Map a `DemuxReceiverError` raised by `recv_event` onto a thrown Java
 /// exception. Transport-side errors map to `SrtException` (via the shared
@@ -74,7 +73,7 @@ pub(crate) fn throw_demux_recv_error(env: &mut JNIEnv, e: &DemuxReceiverError) {
         DemuxReceiverErrorSource::Demux(d) => throw_demux_error(env, d),
         // `DemuxReceiverErrorSource` is non-exhaustive; route any future variant
         // through `SrtException(IO)` with the Display message preserved.
-        _ => throw_srt(env, "IO", &e.to_string()),
+        _ => throw_srt(env, BindingErrorKind::SrtIo, &e.to_string()),
     }
 }
 
@@ -108,46 +107,35 @@ fn build_from_url(
             "DemuxReceiver.fromUrl requires mode=listener; got mode={:?}",
             parsed.mode
         );
-        throw_srt(env, "CONFIG_INVALID", &msg);
+        throw_srt(env, BindingErrorKind::ConfigInvalid, &msg);
         return 0;
     }
 
-    let mut cfg = ListenerConfig::default();
-    parsed.overlay.apply_to_listener(&mut cfg);
-
-    let addr = if parsed.host.is_empty() {
-        format!("0.0.0.0:{}", parsed.port)
-    } else {
-        join_host_port(&parsed.host, parsed.port)
-    };
-
-    let mut listener = match Listener::bind_with(&cfg, addr.as_str()) {
-        Ok(l) => l,
+    // The one-shot accept of a plain receiver has no cancel handle yet (the
+    // object does not exist): a fresh, never-fired slot. DEBT-16 ruling (Arc 2):
+    // the FIRST accept inside a blocking constructor stays uncancellable.
+    // `accept_one` renders the empty-host → `0.0.0.0` bind and the IPv6
+    // bracketing this site composed by hand.
+    let slot = tst_core::cancel::CancelSlot::new();
+    let transport = match parsed.accept_one(&slot) {
+        Ok(t) => t,
         Err(e) => {
-            bind_error(env, &e);
+            srt_error(env, e);
             return 0;
         }
     };
+    let cancel = super::srt_cancel(&transport);
 
-    let (socket, _peer) = match listener.accept() {
-        Ok(pair) => pair,
-        Err(e) => {
-            accept_error(env, &e);
-            return 0;
-        }
-    };
-
-    register(make_receiver(socket, opts))
+    register(make_receiver(transport, opts), cancel)
 }
 
 /// Build a `JniDemuxReceiver` from an already-connected `Socket` (with or without
 /// explicit demux options). `DemuxReceiver::new` / `with_demux_options` are
 /// infallible post-consume.
 fn make_receiver(
-    socket: Socket,
+    transport: SrtTransport,
     opts: Option<tst_core::mpegts::demux::DemuxerConfig>,
 ) -> JniDemuxReceiver {
-    let transport = SrtTransport::new(socket);
     let inner = match opts {
         None => RustDemuxReceiver::new(transport),
         Some(opts) => RustDemuxReceiver::with_demux_options(transport, opts),
@@ -158,22 +146,17 @@ fn make_receiver(
     }
 }
 
-/// Register the receiver, capturing its cancel target BEFORE the box goes into
-/// the registry so `nCancelHandle` never needs the resource lock a parked `nNext`
-/// holds. A fresh `SrtTransport` always has a cancel handle.
-///
-/// Cancel-on-close: `nClose` fires `target` before taking the resource lock, so
-/// a `next()` parked on another thread ends promptly (with `SrtException(BROKEN)`
-/// — the plain cancel closes the socket under the parked recv) instead of
-/// holding `close()` hostage. The contract tst-py's `DemuxReceiver.close()` and
-/// the C ABI's `tst_demux_receiver_close` already have; no end-reason cell on
-/// the plain shell.
-fn register(jdr: JniDemuxReceiver) -> jlong {
-    let target = jdr
-        .inner
-        .cancel_handle()
-        .expect("a fresh SrtTransport always returns Some(cancel_handle)");
-    REGISTRY.insert_cancel_on_close(jdr, target, None) as jlong
+/// Register the receiver as an `Owned` entry. The cancel target is read off the
+/// transport BEFORE it moves into the shell (obtain-before-move) and `Owned`
+/// keeps it outside the slot, so `nCancelHandle` answers while a parked `nNext`
+/// holds the slot and `OwnedRegistry::close` cancels first — a `next()` parked
+/// on another thread ends promptly (with `SrtException(BROKEN)`: the plain
+/// cancel closes the socket under the parked recv) instead of holding `close()`
+/// hostage. The contract tst-py's `DemuxReceiver.close()` and the C ABI's
+/// `tst_demux_receiver_close` already have; no end-reason cell on the plain
+/// shell.
+fn register(jdr: JniDemuxReceiver, cancel: Arc<dyn TransportCancel>) -> jlong {
+    REGISTRY.insert(Owned::new(jdr, cancel, ())) as jlong
 }
 
 /// `DemuxReceiver.nFromUrl(url)` — bind a listener-mode SRT receiver, accept one
@@ -240,11 +223,14 @@ pub extern "system" fn Java_org_tstrans_srt_DemuxReceiver_nNext<'local>(
         // recv_event runs INSIDE the registry lease (under the resource lock). The
         // byte sinks fire during this call and may stash an exception; we clone the
         // `sink_error` Arc out so we can drain it AFTER the lease releases.
-        let Some((res, sink_error)) = REGISTRY.with_poisoning(handle as u64, |jdr| {
+        let (res, sink_error) = match REGISTRY.with_mut(handle as u64, |jdr| {
             (jdr.inner.recv_event(), jdr.sink_error.clone())
-        }) else {
-            crate::error::throw_closed(env, "DemuxReceiver");
-            return JObject::null().into_raw();
+        }) {
+            Ok(v) => v,
+            Err(state) => {
+                crate::error::throw_handle_state(env, "DemuxReceiver", &state);
+                return JObject::null().into_raw();
+            }
         };
 
         // Fail-loud: surface any byte-sink exception captured during this
@@ -315,7 +301,7 @@ pub extern "system" fn Java_org_tstrans_srt_DemuxReceiver_nAddByteSink<'local>(
 
         // Register the sink under the registry lease. The shared sink-error slot is
         // cloned from the leased receiver.
-        let registered = REGISTRY.with_poisoning(handle as u64, |jdr| {
+        let registered = REGISTRY.with_mut(handle as u64, |jdr| {
             let slot = jdr.sink_error.clone();
             jdr.inner.add_byte_sink(Box::new(move |pkt: &[u8]| {
                 // Runs on the receiver's own thread INSIDE recv_event. NO Java monitor
@@ -358,8 +344,8 @@ pub extern "system" fn Java_org_tstrans_srt_DemuxReceiver_nAddByteSink<'local>(
                 }
             }));
         });
-        if registered.is_none() {
-            crate::error::throw_closed(env, "DemuxReceiver");
+        if let Err(state) = registered {
+            crate::error::throw_handle_state(env, "DemuxReceiver", &state);
         }
     })
 }
@@ -375,12 +361,8 @@ pub extern "system" fn Java_org_tstrans_srt_DemuxReceiver_nCancelHandle(
     handle: jlong,
 ) -> jlong {
     crate::panic::jni_catch(&mut env, 0, |env| {
-        match REGISTRY.cancel_target(handle as u64) {
-            Some(inner) => JniCancel {
-                inner,
-                flag: AtomicBool::new(false),
-            }
-            .into_handle(),
+        match REGISTRY.cancel_view(handle as u64) {
+            Some(view) => super::cancel_view_handle(view),
             None => {
                 crate::error::throw_closed(env, "DemuxReceiver");
                 0
@@ -398,11 +380,14 @@ pub extern "system" fn Java_org_tstrans_srt_DemuxReceiver_nSocketStats<'local>(
     handle: jlong,
 ) -> JObject<'local> {
     crate::panic::jni_catch(&mut env, JObject::null(), |env| {
-        let Some(stats) = REGISTRY.with(handle as u64, |jdr| {
+        let stats = match REGISTRY.with_ref(handle as u64, |jdr| {
             jdr.inner.socket_stats().unwrap_or_default()
-        }) else {
-            crate::error::throw_closed(env, "DemuxReceiver");
-            return JObject::null();
+        }) {
+            Ok(v) => v,
+            Err(state) => {
+                crate::error::throw_handle_state(env, "DemuxReceiver", &state);
+                return JObject::null();
+            }
         };
         match build_socket_stats(env, "org/tstrans/srt/SocketStats", &stats) {
             Ok(obj) => obj,
@@ -423,9 +408,12 @@ pub extern "system" fn Java_org_tstrans_srt_DemuxReceiver_nStats<'local>(
     handle: jlong,
 ) -> JObject<'local> {
     crate::panic::jni_catch(&mut env, JObject::null(), |env| {
-        let Some(combined) = REGISTRY.with(handle as u64, |jdr| jdr.inner.stats()) else {
-            crate::error::throw_closed(env, "DemuxReceiver");
-            return JObject::null();
+        let combined = match REGISTRY.with_ref(handle as u64, |jdr| jdr.inner.stats()) {
+            Ok(v) => v,
+            Err(state) => {
+                crate::error::throw_handle_state(env, "DemuxReceiver", &state);
+                return JObject::null();
+            }
         };
 
         // SocketStats from the wire counters tracked at the pipeline layer (full
@@ -470,15 +458,18 @@ pub extern "system" fn Java_org_tstrans_srt_DemuxReceiver_nLastSeenMicros(
     pid: jint,
 ) -> jlong {
     crate::panic::jni_catch(&mut env, -1, |env| {
-        let Some(last_seen) = REGISTRY.with(handle as u64, |jdr| {
+        let last_seen = match REGISTRY.with_ref(handle as u64, |jdr| {
             jdr.inner
                 .stats()
                 .per_stream
                 .get(&(pid as u16))
                 .and_then(|s| s.last_seen)
-        }) else {
-            crate::error::throw_closed(env, "DemuxReceiver");
-            return -1;
+        }) {
+            Ok(v) => v,
+            Err(state) => {
+                crate::error::throw_handle_state(env, "DemuxReceiver", &state);
+                return -1;
+            }
         };
         last_seen
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
@@ -515,12 +506,12 @@ pub extern "system" fn Java_org_tstrans_srt_DemuxReceiver_nIsAlive(
     handle: jlong,
 ) -> jboolean {
     crate::panic::jni_catch(&mut env, 0, |_env| {
-        match REGISTRY.try_with(handle as u64, |jdr| u8::from(jdr.inner.is_alive())) {
-            crate::handle::TryWith::Ran(v) => v,
-            // Locked by a parked recv → the receiver is live.
-            crate::handle::TryWith::Locked => 1,
+        match REGISTRY.try_with_ref(handle as u64, |jdr| u8::from(jdr.inner.is_alive())) {
+            Ok(Some(v)) => v,
+            // A parked next() holds the slot → the receiver is live.
+            Ok(None) => 1,
             // Taken/absent → closed.
-            crate::handle::TryWith::Taken => 0,
+            Err(_) => 0,
         }
     })
 }
@@ -543,7 +534,8 @@ pub extern "system" fn Java_org_tstrans_srt_Socket_nIntoDemuxReceiver(
             crate::error::throw_closed(env, "Socket");
             return 0;
         };
-        register(make_receiver(socket, None))
+        let cancel: Arc<dyn TransportCancel> = Arc::new(socket.cancel_handle());
+        register(make_receiver(SrtTransport::new(socket), None), cancel)
     })
 }
 
@@ -584,6 +576,7 @@ pub extern "system" fn Java_org_tstrans_srt_Socket_nIntoDemuxReceiverWithConfig(
         ) else {
             return 0;
         };
-        register(make_receiver(socket, Some(opts)))
+        let cancel: Arc<dyn TransportCancel> = Arc::new(socket.cancel_handle());
+        register(make_receiver(SrtTransport::new(socket), Some(opts)), cancel)
     })
 }

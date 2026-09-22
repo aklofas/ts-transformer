@@ -479,7 +479,6 @@ impl<T> HandleRegistry<T> {
 /// `Owned`-backed registry, Tasks B3.3-B3.5 move the shells onto it. Once a
 /// shell registers here the expectation is unfulfilled and `-D warnings` says
 /// so — the attribute goes with that task, it is never widened to an `allow`.
-#[cfg_attr(not(test), expect(dead_code, reason = "shells move over in B3.3-B3.5"))]
 pub(crate) trait CancelSurface: Send + Sync {
     fn cancel(&self);
     fn is_cancelled(&self) -> bool;
@@ -487,7 +486,6 @@ pub(crate) trait CancelSurface: Send + Sync {
 
 /// Boxed behind `org.tstrans.srt.CancelHandle` and `org.tstrans.rtp.CancelHandle`
 /// (each in its own plain `HandleRegistry<CancelView>`, so their ids stay per-type).
-#[cfg_attr(not(test), expect(dead_code, reason = "shells move over in B3.3-B3.5"))]
 pub(crate) struct CancelView(pub(crate) Arc<dyn CancelSurface>);
 
 /// An [`OwnedRegistry`] entry. Nothing here but the `Owned` — the slot,
@@ -515,7 +513,6 @@ pub(crate) struct OwnedRegistry<T, S = ()> {
     inner: Mutex<Table<OwnedEntry<T, S>>>,
 }
 
-#[cfg_attr(not(test), expect(dead_code, reason = "shells move over in B3.3-B3.5"))]
 impl<T: Send + 'static, S: Send + Sync + 'static> OwnedRegistry<T, S> {
     /// Create an empty registry. Cheap; intended as the init fn of a
     /// `static REGISTRY: LazyLock<OwnedRegistry<T, S>>`.
@@ -605,12 +602,14 @@ impl<T: Send + 'static, S: Send + Sync + 'static> OwnedRegistry<T, S> {
     }
 
     /// The shell's ONE cancelled latch. `None` = `0`/absent/closed id.
+    #[cfg_attr(not(test), expect(dead_code, reason = "consumed by Tasks B3.4-B3.5"))]
     pub(crate) fn is_cancelled(&self, id: u64) -> Option<bool> {
         self.lease(id).map(|e| e.owned.is_cancelled())
     }
 
     /// The recorded end reason, read off the cell [`Owned`] holds outside the
     /// slot; `None` folds absent id / no cell / not ended yet.
+    #[cfg_attr(not(test), expect(dead_code, reason = "consumed by Tasks B3.4-B3.5"))]
     pub(crate) fn end_reason(&self, id: u64) -> Option<RecvEndReason> {
         self.lease(id).and_then(|e| e.owned.end_reason())
     }
@@ -634,36 +633,36 @@ impl<T: Send + 'static, S: Send + Sync + 'static> OwnedRegistry<T, S> {
 /// from `op` is mapped by `throw_err`. Shared by every `MuxSender`-shaped push
 /// surface (srt + rtp): `send_*` methods take `&self`, so the shared `&mut T`
 /// lease coerces fine.
-pub(crate) fn with_push<T, E>(
+pub(crate) fn with_push<T: Send + 'static, S: Send + Sync + 'static, E>(
     env: &mut JNIEnv,
-    registry: &HandleRegistry<T>,
+    registry: &OwnedRegistry<T, S>,
     handle: jlong,
     what: &str,
     op: impl FnOnce(&T) -> Result<(), E>,
     throw_err: impl FnOnce(&mut JNIEnv, &E),
 ) {
-    match registry.with_poisoning(handle as u64, |inner| op(inner)) {
-        Some(Ok(())) => {}
-        Some(Err(e)) => throw_err(env, &e),
-        None => crate::error::throw_closed(env, what),
+    match registry.with_mut(handle as u64, |inner| op(inner)) {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => throw_err(env, &e),
+        Err(state) => crate::error::throw_handle_state(env, what, &state),
     }
 }
 
 /// Lease `handle` on `registry` and return the first handle-of-kind picked out
 /// by `pick` (`-1` if none). A closed/absent handle throws
 /// `IllegalStateException` naming `what` and returns `-1`.
-pub(crate) fn first_handle<T>(
+pub(crate) fn first_handle<T: Send + 'static, S: Send + Sync + 'static>(
     env: &mut JNIEnv,
-    registry: &HandleRegistry<T>,
+    registry: &OwnedRegistry<T, S>,
     handle: jlong,
     what: &str,
     pick: impl FnOnce(&T) -> Option<u32>,
 ) -> jlong {
-    match registry.with(handle as u64, |inner| pick(inner)) {
-        Some(Some(raw)) => i64::from(raw),
-        Some(None) => -1,
-        None => {
-            crate::error::throw_closed(env, what);
+    match registry.with_ref(handle as u64, |inner| pick(inner)) {
+        Ok(Some(raw)) => i64::from(raw),
+        Ok(None) => -1,
+        Err(state) => {
+            crate::error::throw_handle_state(env, what, &state);
             -1
         }
     }

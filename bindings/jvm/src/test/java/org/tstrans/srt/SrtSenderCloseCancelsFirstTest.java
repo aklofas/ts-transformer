@@ -217,6 +217,7 @@ class SrtSenderCloseCancelsFirstTest {
         peer.close();
         assertTrue(end instanceof SrtException,
             "expected sendData to end with SrtException(BROKEN), got " + end);
+        // WP-C2 tightens to CLOSED (the SRT-level ExplicitClose lands in PR 8).
         assertEquals(SrtException.Kind.BROKEN, ((SrtException) end).kind(),
             "a close-initiated cancel on the plain shell surfaces as BROKEN");
     }
@@ -259,6 +260,7 @@ class SrtSenderCloseCancelsFirstTest {
         peer.close();
         assertTrue(end instanceof SrtException,
             "expected sendBytes to end with SrtException(BROKEN), got " + end);
+        // WP-C2 tightens to CLOSED (the SRT-level ExplicitClose lands in PR 8).
         assertEquals(SrtException.Kind.BROKEN, ((SrtException) end).kind(),
             "a close-initiated cancel on the plain shell surfaces as BROKEN");
     }

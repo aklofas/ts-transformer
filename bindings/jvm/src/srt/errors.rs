@@ -1,120 +1,89 @@
-//! `org.tstrans.srt` Rust→Java error mapping. Centralized exhaustive mappings
-//! from every tst_srt / tst_core error enum that flows through the SRT surface
-//! to one of the 8 `SrtException.Kind` variants. Ported 1:1 from tst-py's
-//! `bindings/python/src/srt/errors.rs`. The ratchet greps for
-//! `throw_srt(env, "<CONST>", ...)` — keep each KIND literal on the call line.
+//! `org.tstrans.srt` Rust→Java error mapping.
+//!
+//! Since Arc 2 WP-B3 this file holds no mapping tables: every kind comes from
+//! `tst_pipeline::binding` (A2's one table) and is raised through the single
+//! [`crate::error::throw_binding`] path. What remains is the per-error-type
+//! plumbing that names `Domain::Srt` and picks the right `From` impl.
 
 use jni::JNIEnv;
 use tst_core::transport::TransportError;
-use tst_srt::UrlError;
-use tst_srt::error::{AcceptError, BindError, ConnectError, IoError};
+use tst_pipeline::binding::{BindingError, BindingErrorKind};
+use tst_pipeline::receiver::{ReceiverError, ReceiverErrorSource};
+use tst_pipeline::sender::{SenderError, SenderErrorSource};
+use tst_srt::{SrtError, UrlError};
 
-use crate::error::throw_family;
+use crate::error::{Domain, throw_binding};
 
-/// Construct + throw `org.tstrans.SrtException(Kind.<kind>, message)`.
-/// `kind` MUST be one of the `SrtException.Kind` enum constant names
-/// (SCREAMING_SNAKE_CASE). The ratchet greps for `throw_srt(env, "<CONST>", ...)`.
-pub(crate) fn throw_srt(env: &mut JNIEnv, kind: &str, message: &str) {
-    throw_family(
+/// `org.tstrans.SrtException(Kind.<kind.name()>, message)`.
+pub(crate) fn throw_srt(env: &mut JNIEnv, kind: BindingErrorKind, message: &str) {
+    throw_binding(
         env,
-        "org/tstrans/SrtException",
-        "Lorg/tstrans/SrtException$Kind;",
-        kind,
-        message,
+        Domain::Srt,
+        &BindingError {
+            kind,
+            detail: message.to_owned(),
+        },
     );
 }
 
-/// Map a `tst_srt::UrlError` (raised by `SrtUrl::parse`) to
-/// `SrtException(Kind.CONFIG_INVALID)`. All variants are caller
-/// misconfiguration by definition.
+/// Any tst-srt per-category error (`ConnectError` / `BindError` /
+/// `AcceptError` / `IoError` / `OptionError` are `#[from]` arms of `SrtError`,
+/// `crates/tst-srt/src/error.rs`) through A2's one mapping:
+/// `InvalidAddress` / `InvalidOption` / `OptionError::*` → `CONFIG_INVALID`,
+/// `TimedOut` → `TIMEOUT`, `ListenerClosed` / `SocketClosed` → `CLOSED`, the
+/// rest → `CONNECT_FAILED` / `ACCEPT_FAILED` / `IO` — today's buckets exactly.
+pub(crate) fn srt_error(env: &mut JNIEnv, e: impl Into<SrtError>) {
+    throw_binding(env, Domain::Srt, &BindingError::from(e.into()));
+}
+
+/// `SrtUrl::parse` failures are caller misconfiguration by definition;
+/// `UrlError` is not an `SrtError` arm, so it is mapped here, once.
 pub(crate) fn url_error(env: &mut JNIEnv, e: &UrlError) {
-    throw_srt(env, "CONFIG_INVALID", &e.to_string());
+    throw_srt(env, BindingErrorKind::ConfigInvalid, &e.to_string());
 }
 
-/// Map a `tst_srt::ConnectError` (raised by `Socket::connect_with`) to
-/// an `SrtException`. `InvalidAddress` / `InvalidOption` → CONFIG_INVALID;
-/// `TimedOut` → TIMEOUT; everything else → CONNECT_FAILED.
-pub(crate) fn connect_error(env: &mut JNIEnv, e: &ConnectError) {
-    let msg = e.to_string();
-    match e {
-        ConnectError::InvalidAddress(_) | ConnectError::InvalidOption(_) => {
-            throw_srt(env, "CONFIG_INVALID", &msg)
-        }
-        ConnectError::TimedOut => throw_srt(env, "TIMEOUT", &msg),
-        ConnectError::Refused
-        | ConnectError::BadEncryption { .. }
-        | ConnectError::Rejected { .. }
-        | ConnectError::System(_)
-        | ConnectError::Other { .. } => throw_srt(env, "CONNECT_FAILED", &msg),
-        // Catch-all for future non-exhaustive additions.
-        _ => throw_srt(env, "CONNECT_FAILED", &msg),
-    }
-}
-
-/// Map a `tst_srt::BindError` (raised by `Listener::bind_with`) to an
-/// `SrtException`. `InvalidAddress` / `InvalidOption` → CONFIG_INVALID;
-/// everything else → CONNECT_FAILED (the listener failed to come up,
-/// treated as a connect-side failure).
-pub(crate) fn bind_error(env: &mut JNIEnv, e: &BindError) {
-    let msg = e.to_string();
-    match e {
-        BindError::InvalidAddress(_) | BindError::InvalidOption(_) => {
-            throw_srt(env, "CONFIG_INVALID", &msg)
-        }
-        BindError::AddressInUse
-        | BindError::PermissionDenied
-        | BindError::System(_)
-        | BindError::Other { .. } => throw_srt(env, "CONNECT_FAILED", &msg),
-        // Catch-all for future non-exhaustive additions.
-        _ => throw_srt(env, "CONNECT_FAILED", &msg),
-    }
-}
-
-/// Map a `tst_srt::AcceptError` (raised by `Listener::accept`) to an
-/// `SrtException`. `TimedOut` → TIMEOUT; `ListenerClosed` → CLOSED;
-/// everything else → ACCEPT_FAILED.
-pub(crate) fn accept_error(env: &mut JNIEnv, e: &AcceptError) {
-    let msg = e.to_string();
-    match e {
-        AcceptError::TimedOut => throw_srt(env, "TIMEOUT", &msg),
-        AcceptError::ListenerClosed => throw_srt(env, "CLOSED", &msg),
-        AcceptError::PeerRejected { .. } | AcceptError::System(_) | AcceptError::Other { .. } => {
-            throw_srt(env, "ACCEPT_FAILED", &msg)
-        }
-        // Catch-all for future non-exhaustive additions.
-        _ => throw_srt(env, "ACCEPT_FAILED", &msg),
-    }
-}
-
-/// Map a `tst_srt::error::IoError` (raised by `SrtTransport::stats` and
-/// other low-level libsrt IO paths) to an `SrtException`.
-/// `SocketClosed` → CLOSED; everything else → IO.
-pub(crate) fn io_error(env: &mut JNIEnv, e: &IoError) {
-    let msg = e.to_string();
-    match e {
-        IoError::SocketClosed => throw_srt(env, "CLOSED", &msg),
-        IoError::System(_) | IoError::Other { .. } => throw_srt(env, "IO", &msg),
-        // Catch-all for future non-exhaustive additions.
-        _ => throw_srt(env, "IO", &msg),
-    }
-}
-
-/// Map a `tst_core::transport::TransportError` (used by `tst_pipeline::Sender`
-/// / `Receiver`) to an `SrtException`. `Backpressure` → WOULD_BLOCK;
-/// `Broken` → BROKEN; `Closed`/`ExplicitClose` → CLOSED; `TooLarge` →
-/// CONFIG_INVALID; future variants → IO.
+/// `tst_core::transport::TransportError` (any shell op) through A2's
+/// `From<TransportError>`: `Backpressure → BACKPRESSURE`, `Broken → BROKEN`,
+/// `Closed → CLOSED`, `ExplicitClose → CLOSED` ("cancelled from another
+/// thread"), `TooLarge → TOO_LARGE`. No wildcard here — A2's mapping is
+/// exhaustive-before-wildcard and rail-pinned.
 pub(crate) fn transport_error(env: &mut JNIEnv, e: &TransportError) {
-    match e {
-        TransportError::Backpressure { msg, .. } => throw_srt(env, "WOULD_BLOCK", msg),
-        TransportError::Broken { msg, .. } => throw_srt(env, "BROKEN", msg),
-        TransportError::Closed => throw_srt(env, "CLOSED", "transport closed"),
-        TransportError::ExplicitClose => throw_srt(env, "CLOSED", "transport explicit close"),
-        TransportError::TooLarge { len, max } => throw_srt(
-            env,
-            "CONFIG_INVALID",
-            &format!("payload too large: {len} bytes exceeds {max}-byte cap"),
-        ),
-        // Catch-all for future non-exhaustive additions.
-        other => throw_srt(env, "IO", &other.to_string()),
+    throw_binding(env, Domain::Srt, &BindingError::from(e.clone()));
+}
+
+/// `tst_pipeline::Sender` errors: the transport arm through
+/// [`transport_error`]; a framing error (TS sync lost in the caller's bytes)
+/// through A2's `From<TsFramingError>` = `INPUT_MALFORMED` — it was
+/// `CONFIG_INVALID` before 0.7.0 (observed change, CHANGELOG).
+///
+/// Deliberately matched on `source` rather than using A2's
+/// `From<SenderError>`: the two are identical for the sender, but the
+/// RECEIVER twin must NOT use `From<ReceiverError>` (see
+/// [`throw_receiver_error`]), and the pair reads as one rule.
+pub(crate) fn throw_sender_error(env: &mut JNIEnv, e: &SenderError) {
+    match &e.source {
+        SenderErrorSource::Transport(t) => transport_error(env, t),
+        SenderErrorSource::Framing(f) => {
+            throw_binding(env, Domain::Srt, &BindingError::from(f.clone()));
+        }
+        // `SenderErrorSource` is #[non_exhaustive]; a future arm keeps its Display text.
+        _ => throw_srt(env, BindingErrorKind::SrtIo, &e.to_string()),
+    }
+}
+
+/// `tst_pipeline::Receiver` errors — the transport arm through
+/// [`transport_error`].
+///
+/// NOT A2's `From<ReceiverError>`: that maps `TransportError::Closed` to
+/// `EndOfStream` (the receive-direction reading — the PEER closed), and
+/// `SrtException.Kind` declares no `END_OF_STREAM` member. A peer-closed
+/// `recvBytes()` has raised `SrtException(CLOSED)` since v0.1.0 and keeps
+/// doing so; introducing a kind here would be an unannounced surface change
+/// AND would hit `throw_binding`'s undeclared-kind guard at runtime.
+pub(crate) fn throw_receiver_error(env: &mut JNIEnv, e: &ReceiverError) {
+    match &e.source {
+        ReceiverErrorSource::Transport(t) => transport_error(env, t),
+        // `ReceiverErrorSource` is #[non_exhaustive]; a future arm keeps its Display text.
+        _ => throw_srt(env, BindingErrorKind::SrtIo, &e.to_string()),
     }
 }
