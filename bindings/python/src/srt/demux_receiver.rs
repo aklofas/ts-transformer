@@ -12,7 +12,8 @@
 //! - URL dispatch: `SrtUrl::parse` + `Listener::bind_with` + one-shot
 //!   `accept` instead of `RtpRecvSocketBuilder::from_url`. Mirrors the
 //!   T2 `PyReceiver::from_url` construction pattern.
-//! - Error mapping: `crate::srt::errors::*` helpers.
+//! - Error mapping: the one raise path (`crate::raise`), with
+//!   demux-sourced failures kept on `DemuxError` (`demux_recv_err`).
 //!   `DemuxReceiverErrorSource::Transport` collapses to `SrtError`.
 //!
 //! Architectural notes (mirror `rtp/demux_receiver.rs`):

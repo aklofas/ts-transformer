@@ -11,12 +11,12 @@
 //! - Inner transport: `SrtTransport` instead of `RtpTransport`.
 //! - URL dispatch: `SrtUrl::parse` + `Socket::connect_with` instead of
 //!   `RtpSocketBuilder::from_url`. There is no `SrtTransport::from_url`
-//!   helper, so we replicate the T2 `PySender::from_url` construction
-//!   pattern (parse → SocketConfig → Socket::connect_with → wrap).
-//! - Error mapping: `crate::srt::errors::*` helpers instead of
-//!   `crate::rtp::errors::*`. `MuxSenderErrorSource::Transport` collapses
-//!   to `SrtError` (BROKEN / CLOSED / WOULD_BLOCK / CONFIG_INVALID / IO
-//!   per `TransportError` variant — same mapping as `PySender::send_bytes`).
+//!   helper, so it opens the same way `PySender::from_url` does
+//!   (`SrtUrl::parse` → `SrtUrl::connect_recv` → wrap).
+//! - Error mapping: the one raise path (`crate::raise`).
+//!   `MuxSenderErrorSource::Mux` keeps `mux_error_to_pyerr` (it carries
+//!   `.pid` and the `write_file` breadcrumb); every other source becomes a
+//!   `BindingError` on the SRT domain — see `mux_sender_err`.
 //! - Construction-time failures (URL parse, socket connect, muxer config)
 //!   raise `SrtError(CONFIG_INVALID / CONNECT_FAILED / TIMEOUT)` rather
 //!   than `RtpError(TRANSPORT)`.

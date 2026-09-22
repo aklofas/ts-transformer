@@ -804,3 +804,66 @@ def test_recv_end_reason_reconnect_exhausted_on_peer_close() -> None:
     # First-writer-wins: a later close() must not clobber the recorded
     # reason with CANCELLED.
     assert receiver.end_reason() == tstrans.srt.RecvEndReason.RECONNECT_EXHAUSTED
+
+
+def test_reconnect_attempts_counts_factory_invocations_from_the_core_counter() -> None:
+    """Arc 2 ARCH-08: the attempt counter lives on `ManagedTransport` /
+    `ManagedRecvTransport` (`ManagedHandles.attempts`), not in a binding
+    closure. A caller-mode `ManagedDemuxReceiver` whose peer vanishes makes
+    one factory attempt per backoff tick; `reconnect_attempts()` must reflect
+    them. Latch-and-poll with a 15 s watchdog — never a wall-clock bound.
+    """
+    import threading
+    import time
+
+    from tstrans.srt import BackoffStrategy, ManagedDemuxReceiver, ReconnectPolicy
+
+    port = _free_tcp_port()
+    # A one-shot plain peer so the initial connect succeeds, then vanishes.
+    peer_box: list = []
+    peer_err: list[BaseException] = []
+
+    def accept_worker() -> None:
+        try:
+            peer_box.append(tstrans.srt.Receiver.from_url(f"srt://:{port}?mode=listener"))
+        except BaseException as exc:  # noqa: BLE001
+            peer_err.append(exc)
+
+    t = threading.Thread(target=accept_worker, daemon=True)
+    t.start()
+    time.sleep(0.15)
+    policy = ReconnectPolicy(max_attempts=None, backoff=BackoffStrategy.constant(ms=100))
+    rx = ManagedDemuxReceiver.from_url(
+        f"srt://127.0.0.1:{port}?mode=caller&conntimeo=300", policy=policy
+    )
+    t.join(5.0)
+    if peer_err or not peer_box:
+        rx.close()
+        pytest.fail(f"plain peer did not accept: {peer_err!r}")
+
+    it_thread: Optional[threading.Thread] = None
+    try:
+        assert rx.reconnect_attempts() == 0
+        peer_box[0].close()  # peer gone -> Broken -> the factory retries a dead port
+
+        def drain() -> None:
+            # The rescue `close()` below ends this with a cancel; swallow it
+            # so the worker does not surface as an unhandled thread exception.
+            try:
+                next(iter(rx), None)
+            except BaseException:  # noqa: BLE001
+                pass
+
+        it_thread = threading.Thread(target=drain, daemon=True)
+        it_thread.start()
+
+        deadline = time.monotonic() + 15.0
+        while rx.reconnect_attempts() < 2 and time.monotonic() < deadline:
+            time.sleep(0.05)
+        attempts = rx.reconnect_attempts()
+    finally:
+        rx.close()
+        if it_thread is not None:
+            it_thread.join(5.0)
+
+    assert attempts >= 2, f"expected >=2 factory attempts within 15 s, saw {attempts}"

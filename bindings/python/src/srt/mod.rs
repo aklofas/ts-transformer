@@ -13,14 +13,13 @@
 //! - `managed`:        ManagedSender, ManagedReceiver, ManagedMuxSender, ManagedDemuxReceiver
 //! - `end_reason`:     RecvEndReason conversion for ManagedDemuxReceiver.end_reason()
 //!
-//! Error mapping lives in `crate::srt::errors` — typed `*_to_pyerr` helpers
-//! consolidate every Rust enum that flows through the surface (UrlError /
-//! ConnectError / BindError / AcceptError / IoError / TransportError) into
-//! the 8-variant `SrtErrorKind`.
+//! Error mapping goes through `crate::raise` (Arc 2): every Rust error
+//! type in this surface has a `From<…> for tst_pipeline::binding::BindingError`
+//! next to its own definition, and `raise` resolves the kind's `name()` on
+//! `tstrans.exceptions.SrtErrorKind` — checked at `import tstrans`.
 
 pub(crate) mod demux_receiver;
 pub(crate) mod end_reason;
-pub(crate) mod errors;
 mod lowlevel;
 pub(crate) mod managed_basic;
 pub(crate) mod managed_convenience;

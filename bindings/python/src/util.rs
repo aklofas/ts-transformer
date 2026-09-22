@@ -46,21 +46,6 @@ pub(crate) fn coerce_bytes_like<'py>(
         .map_err(|e| e.into())
 }
 
-/// Format a `host:port` string, bracketing IPv6 literals so the result
-/// parses through `SocketAddr` / `ToSocketAddrs`.
-///
-/// `host` must be the plain hostname or IP literal (without brackets or
-/// port). The function adds `[…]` iff `host` contains a colon and does
-/// not already start with `[`.
-#[allow(dead_code)] // transport-feature-gated callers; unused in minimal builds
-pub(crate) fn join_host_port(host: &str, port: u16) -> String {
-    if host.contains(':') && !host.starts_with('[') {
-        format!("[{host}]:{port}")
-    } else {
-        format!("{host}:{port}")
-    }
-}
-
 /// Run `f` against the value held in a shared slot with the GIL released,
 /// holding the slot's lock for the whole call. `None` when the slot is
 /// empty (the wrapper was closed). A `close()` on another thread fires the
