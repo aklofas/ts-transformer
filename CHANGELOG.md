@@ -1891,7 +1891,58 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed — cancel contract (WP-C)
 
-- (pending)
+- **`tst_core::transport::TransportCancel::is_cancelled(&self) -> bool` is a
+  required trait method** (BREAKING for out-of-tree implementors; 28 in-tree
+  implementors — 11 production, 17 test doubles — all already carried a latch).
+  Its contract is **the caller's intent, never liveness**: `false` on a fresh
+  handle, `true` once `cancel()` has run on it or on any alias, and also after
+  the caller's own `close()` where that close is implemented by firing the same
+  handle (`Socket::close`, the managed wrappers). A peer EOF or a wire failure
+  leaves it `false`, however dead the transport is. The binding layer's
+  `Owned::is_cancelled` now reads the transport's latch as well as its own.
+- **Released-behaviour change — `SrtCancelHandle::is_cancelled` answers a
+  different question.** It read the "the closer has run" sentinel, which
+  `Socket::drop` also sets — and `SrtTransport` drops its socket on every
+  peer-break path, so a peer disconnect was indistinguishable from a caller
+  cancel. It now reads a dedicated caller-cancel latch. Consumers that used it
+  to detect "this socket is finished" must use `is_alive()` instead. (Visible
+  in 0.6.0 and earlier as the old meaning; `tst-core` is a Stable-tier module,
+  so this is called out rather than folded into the trait bullet.)
+- **New public API: `SrtCancelHandle::close_without_cancel()`** — fires the
+  closer WITHOUT latching `is_cancelled()`, for an owner's internal teardown.
+  `Socket`/`Listener` `Drop` use it; `close()` keeps using `cancel()`.
+- **Released-behaviour change — `TcpCancelHandle::is_cancelled` is no longer
+  `!alive`.** tst-tcp drops `alive` on a clean peer EOF and on a broken read as
+  well as on a cancel, so the old spelling reported every peer EOF as a caller
+  cancel once the binding layer started consulting it. It now reads a dedicated
+  latch. `TcpListener::close()` does latch it (a listener has no peer-EOF path);
+  `TcpTransport::close()` does not.
+- `RtpTransport::is_alive` / `RtpRecvTransport::is_alive` read `false` once the
+  cancel handle has fired (they answered `socket.is_some()` / `source.is_some()`
+  before).
+- X-CORR-07 generalised: `SrtTransport::recv_bytes` and
+  `RtpRecvTransport::recv_bytes` return `Ok(0)` at once for an EMPTY
+  destination buffer (SRT reported `Broken` and nulled the socket — libsrt
+  refuses a zero-length receive; RTP parked waiting for a datagram).
+  `RtpRecvTransport::recv_timeout` correspondingly returns `Ok(Some(0))`.
+- **Normative cancel / close / liveness table** in the `tst_core::transport`
+  module docs, and a **conformance kit** `tst_core::transport::conformance`
+  (std-only, Provisional) that pins it. Rows: `post_close_is_closed`,
+  `close_twice_is_ok`, `cancel_during_park_is_explicit_close`,
+  `cancel_before_op_is_explicit_close`, `is_cancelled_flips`,
+  `not_alive_after_cancel`, `not_alive_after_broken`, and (receive only)
+  `empty_recv_is_noop` and `peer_eof_is_not_a_cancel`; plus the standalone
+  `not_alive_after_broken_{send,recv}` and `recv_max_payload_ge_ceiling`.
+  Every wait is bounded by a 10 s watchdog that is a failure bound only, never
+  a duration assertion. Run by `tests/conformance.rs` in tst-rtp, tst-pipeline,
+  tst-srt and tst-tcp (tst-udp / tst-rist follow with their cancel handles).
+- Six conformance rows are `#[ignore]`d in this entry's PR and name
+  WP-C2 (Task C2.3) in their reason strings — the SRT send/recv cancel rows (they report
+  `Broken`), the TCP send/recv cancel rows (`Closed`), and the managed-sender
+  cancel rows (`Closed`). The next entry under this heading un-ignores them.
+- The four `tests/conformance.rs` binaries join the single-threaded `network`
+  nextest group (`.config/nextest.toml`, all three keep-in-sync filters), so
+  they cannot contend with the rest of the suite for loopback ports.
 
 ### Added — UDP/RIST cancel handles (WP-D)
 
