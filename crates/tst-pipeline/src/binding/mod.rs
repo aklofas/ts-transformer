@@ -21,4 +21,4 @@
 pub mod owned;
 pub mod panic;
 
-pub use owned::{Close, CloseFailure, HandleState, Owned};
+pub use owned::{Close, CloseFailure, FlagCancel, HandleState, Owned};

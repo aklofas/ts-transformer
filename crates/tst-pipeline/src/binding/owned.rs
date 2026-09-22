@@ -307,6 +307,38 @@ impl<T: Close, S> Owned<T, S> {
     }
 }
 
+/// A cancel handle that is only a flag.
+///
+/// For values that have no wake-up mechanism of their own — the `udp://`
+/// and `rist://` shells until their real handles ship (Arc 2 WP-D), and
+/// any binding object whose cancel is purely a state transition. Firing it
+/// latches [`Owned::is_cancelled`] via the normal [`Owned::cancel`] path;
+/// nothing parked is woken, which is exactly what those objects can offer.
+/// Replaces the JVM binding's `NoopCancel`.
+///
+/// Until `TransportCancel::is_cancelled` exists (Arc 2 WP-C1) the flag is
+/// read through [`Self::is_set`]; WP-C1's trait impl delegates to it.
+#[derive(Debug, Default)]
+pub struct FlagCancel(AtomicBool);
+
+impl FlagCancel {
+    /// A clear flag.
+    pub fn new() -> Self {
+        Self(AtomicBool::new(false))
+    }
+
+    /// `true` once [`TransportCancel::cancel`] has run on this handle.
+    pub fn is_set(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+impl TransportCancel for FlagCancel {
+    fn cancel(&self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -988,5 +1020,36 @@ mod tests {
 
         gate.store(true, Ordering::SeqCst);
         assert!(closer.join().unwrap().is_ok());
+    }
+
+    // ---- FlagCancel (Task A1.6) ----
+
+    #[test]
+    fn flag_cancel_starts_clear() {
+        let c = FlagCancel::new();
+        assert!(!c.is_set());
+        assert!(
+            !FlagCancel::default().is_set(),
+            "Default is the same clear state"
+        );
+    }
+
+    #[test]
+    fn flag_cancel_sets_on_cancel_and_stays_set() {
+        let flag = Arc::new(FlagCancel::new());
+        // Reach the flag through the trait object, the way an Owned holds it.
+        let as_dyn: Arc<dyn TransportCancel> = Arc::clone(&flag) as Arc<dyn TransportCancel>;
+        as_dyn.cancel();
+        as_dyn.cancel(); // idempotent per the TransportCancel contract
+        assert!(flag.is_set());
+
+        // An Owned over a fresh FlagCancel: cancel() latches BOTH flags.
+        let fresh = Arc::new(FlagCancel::new());
+        let owned = Owned::new(0u8, Arc::clone(&fresh) as Arc<dyn TransportCancel>, ());
+        assert!(!owned.is_cancelled());
+        assert!(!fresh.is_set());
+        owned.cancel();
+        assert!(fresh.is_set());
+        assert!(owned.is_cancelled());
     }
 }
