@@ -145,3 +145,83 @@ crate = "tst-srt"
 path = "crates/tst-srt/src/transport.rs"
 class = "environmental"
 note = "Unit-test placeholder needing a live SRT socket; behavior is covered by tests/cancellation_loopback.rs."
+
+# --- WP-C1 (Arc 2 PR 7): conformance rows RED until WP-C2 ------------------
+# Six transport-conformance rows assert the post-Arc-2 cancel contract
+# (a cancelled op ends `ExplicitClose`). The mechanism change that makes them
+# true is WP-C2 Task C2.3; until then each is #[ignore]d with the reason in
+# its attribute, and the verbatim RED output is in the Arc 2 ledger's
+# "WP-C1 (PR 7) — red-first evidence" section.
+
+[[skip]]
+test = "managed_send_cancel_rows_are_explicit_close"
+crate = "tst-pipeline"
+class = "blocked_bug"
+expires_after = "2026-11-30"
+note = """
+The managed sender answers `Closed`, not `ExplicitClose`, to a cancel that
+lands during (or before) a parked send: the inner's `ExplicitClose` falls
+through `send_managed`'s `Err(_)` arm into `reconnect_and_drain`, whose
+`closed` check returns `Closed`. RED evidence in the Arc 2 ledger
+(`conformance: cancel_during_park_is_explicit_close: got Err(Closed)`).
+WP-C2 Task C2.3 fixes the mechanism and un-ignores this.
+"""
+
+[[skip]]
+test = "managed_send_parked_in_inner_is_interrupted_in_place"
+crate = "tst-pipeline"
+class = "blocked_bug"
+expires_after = "2026-11-30"
+note = """
+The provable-park twin of the row above: the in-memory mock's `in_call`
+counter shows the managed send is INSIDE the inner `send_bytes` when the
+cancel fires, and the assertion is on THAT invocation's result — so WP-C2
+cannot satisfy it by fixing only the between-calls path. Same defect, same
+fix (Task C2.3).
+"""
+
+[[skip]]
+test = "srt_send_cancel_rows_are_explicit_close"
+crate = "tst-srt"
+class = "blocked_bug"
+expires_after = "2026-11-30"
+note = """
+A cancel during (or before) a parked SRT send reports `Broken`, not
+`ExplicitClose`: the handle's `srt_close` makes the parked op fail
+`ConnectionBroken`, which `srt/transport.rs` maps to `Broken`. RED evidence
+in the Arc 2 ledger (`got Err(Broken { msg: "connection broken",
+errno_code: Some(2) })`). WP-C2 Task C2.3 un-ignores.
+"""
+
+[[skip]]
+test = "srt_recv_cancel_rows_are_explicit_close"
+crate = "tst-srt"
+class = "blocked_bug"
+expires_after = "2026-11-30"
+note = """
+Receive twin of the row above — the parked `srt_recv` fails
+`ConnectionBroken` after the handle's `srt_close` and the 'Peer hung up' arm
+reports `Broken`. WP-C2 Task C2.3 un-ignores.
+"""
+
+[[skip]]
+test = "tcp_send_cancel_rows_are_explicit_close"
+crate = "tst-tcp"
+class = "blocked_bug"
+expires_after = "2026-11-30"
+note = """
+A cancel during (or before) a parked TCP send reports `Closed`, not
+`ExplicitClose`: cancel drops the `alive` flag and the send path maps
+`!alive` to `Closed`. RED evidence in the Arc 2 ledger
+(`got Err(Closed)`). WP-C2 Task C2.3 un-ignores.
+"""
+
+[[skip]]
+test = "tcp_recv_cancel_rows_are_explicit_close"
+crate = "tst-tcp"
+class = "blocked_bug"
+expires_after = "2026-11-30"
+note = """
+Receive twin of the row above — the recv loop's `!alive` check maps a cancel
+to `Closed`. WP-C2 Task C2.3 un-ignores.
+"""

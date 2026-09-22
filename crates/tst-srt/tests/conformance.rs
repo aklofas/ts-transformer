@@ -3,8 +3,9 @@
 //! a helper thread while this thread accepts, and the accepted socket is kept
 //! in `peer` so the connection outlives the row (`drop_peer` is the
 //! `break_wire` of the `not_alive_after_broken` and `peer_eof_is_not_a_cancel`
-//! rows). 5 s recv/send timeouts on both ends: a parked op surfaces as a
-//! `Backpressure` tick every 5 s, which the kit's park loops retry.
+//! rows). 200 ms recv / 5 s send timeouts on both ends; a parked recv
+//! surfaces as a `Backpressure` tick every 200 ms, which the kit's park loops
+//! retry.
 //!
 //! `peer_eof_is_not_a_cancel` is the row the WP-C1 SRT latch split exists
 //! for. `SrtCancelHandle::is_cancelled()` used to read the "closer has run"

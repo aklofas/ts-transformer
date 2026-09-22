@@ -91,6 +91,7 @@ impl core::fmt::Debug for tst_rtp::cancel::RtpCancelHandle
 pub fn tst_rtp::cancel::RtpCancelHandle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl tst_core::transport::TransportCancel for tst_rtp::cancel::RtpCancelHandle
 pub fn tst_rtp::cancel::RtpCancelHandle::cancel(&self)
+pub fn tst_rtp::cancel::RtpCancelHandle::is_cancelled(&self) -> bool
 impl !core::marker::Freeze for tst_rtp::cancel::RtpCancelHandle
 impl core::marker::Send for tst_rtp::cancel::RtpCancelHandle
 impl core::marker::Sync for tst_rtp::cancel::RtpCancelHandle
@@ -2463,6 +2464,7 @@ impl core::fmt::Debug for tst_rtp::cancel::RtpCancelHandle
 pub fn tst_rtp::cancel::RtpCancelHandle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl tst_core::transport::TransportCancel for tst_rtp::cancel::RtpCancelHandle
 pub fn tst_rtp::cancel::RtpCancelHandle::cancel(&self)
+pub fn tst_rtp::cancel::RtpCancelHandle::is_cancelled(&self) -> bool
 impl !core::marker::Freeze for tst_rtp::cancel::RtpCancelHandle
 impl core::marker::Send for tst_rtp::cancel::RtpCancelHandle
 impl core::marker::Sync for tst_rtp::cancel::RtpCancelHandle

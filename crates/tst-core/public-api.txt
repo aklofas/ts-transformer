@@ -19,6 +19,7 @@ impl core::panic::unwind_safe::UnwindSafe for tst_core::cancel::CancelSlot
 pub struct tst_core::cancel::SrtCancelHandle
 impl tst_core::cancel::SrtCancelHandle
 pub fn tst_core::cancel::SrtCancelHandle::cancel(&self)
+pub fn tst_core::cancel::SrtCancelHandle::close_without_cancel(&self)
 pub fn tst_core::cancel::SrtCancelHandle::is_cancelled(&self) -> bool
 pub fn tst_core::cancel::SrtCancelHandle::new<F>(i64, F) -> Self where F: core::ops::function::Fn(i64) + core::marker::Send + core::marker::Sync + 'static
 impl core::clone::Clone for tst_core::cancel::SrtCancelHandle
@@ -27,6 +28,7 @@ impl core::fmt::Debug for tst_core::cancel::SrtCancelHandle
 pub fn tst_core::cancel::SrtCancelHandle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl tst_core::transport::TransportCancel for tst_core::cancel::SrtCancelHandle
 pub fn tst_core::cancel::SrtCancelHandle::cancel(&self)
+pub fn tst_core::cancel::SrtCancelHandle::is_cancelled(&self) -> bool
 impl core::marker::Freeze for tst_core::cancel::SrtCancelHandle
 impl core::marker::Send for tst_core::cancel::SrtCancelHandle
 impl core::marker::Sync for tst_core::cancel::SrtCancelHandle
@@ -6914,6 +6916,169 @@ impl core::marker::UnsafeUnpin for tst_core::shared::SharedBytes
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::shared::SharedBytes
 impl core::panic::unwind_safe::UnwindSafe for tst_core::shared::SharedBytes
 pub mod tst_core::transport
+pub mod tst_core::transport::conformance
+pub enum tst_core::transport::conformance::BrokenSource<T>
+pub tst_core::transport::conformance::BrokenSource::Induce(alloc::boxed::Box<dyn core::ops::function::Fn(&mut T)>)
+pub tst_core::transport::conformance::BrokenSource::NotProducible
+impl<T> core::marker::Freeze for tst_core::transport::conformance::BrokenSource<T>
+impl<T> !core::marker::Send for tst_core::transport::conformance::BrokenSource<T>
+impl<T> !core::marker::Sync for tst_core::transport::conformance::BrokenSource<T>
+impl<T> core::marker::Unpin for tst_core::transport::conformance::BrokenSource<T>
+impl<T> core::marker::UnsafeUnpin for tst_core::transport::conformance::BrokenSource<T>
+impl<T> !core::panic::unwind_safe::RefUnwindSafe for tst_core::transport::conformance::BrokenSource<T>
+impl<T> !core::panic::unwind_safe::UnwindSafe for tst_core::transport::conformance::BrokenSource<T>
+pub enum tst_core::transport::conformance::PostCloseKind
+pub tst_core::transport::conformance::PostCloseKind::Closed
+pub tst_core::transport::conformance::PostCloseKind::ExplicitClose
+impl core::clone::Clone for tst_core::transport::conformance::PostCloseKind
+pub fn tst_core::transport::conformance::PostCloseKind::clone(&self) -> tst_core::transport::conformance::PostCloseKind
+impl core::cmp::Eq for tst_core::transport::conformance::PostCloseKind
+impl core::cmp::PartialEq for tst_core::transport::conformance::PostCloseKind
+pub fn tst_core::transport::conformance::PostCloseKind::eq(&self, &tst_core::transport::conformance::PostCloseKind) -> bool
+impl core::fmt::Debug for tst_core::transport::conformance::PostCloseKind
+pub fn tst_core::transport::conformance::PostCloseKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_core::transport::conformance::PostCloseKind
+impl core::marker::StructuralPartialEq for tst_core::transport::conformance::PostCloseKind
+impl core::marker::Freeze for tst_core::transport::conformance::PostCloseKind
+impl core::marker::Send for tst_core::transport::conformance::PostCloseKind
+impl core::marker::Sync for tst_core::transport::conformance::PostCloseKind
+impl core::marker::Unpin for tst_core::transport::conformance::PostCloseKind
+impl core::marker::UnsafeUnpin for tst_core::transport::conformance::PostCloseKind
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::transport::conformance::PostCloseKind
+impl core::panic::unwind_safe::UnwindSafe for tst_core::transport::conformance::PostCloseKind
+pub enum tst_core::transport::conformance::RecvRow
+pub tst_core::transport::conformance::RecvRow::CancelBeforeOpIsExplicitClose
+pub tst_core::transport::conformance::RecvRow::CancelDuringParkIsExplicitClose
+pub tst_core::transport::conformance::RecvRow::CloseTwiceIsOk
+pub tst_core::transport::conformance::RecvRow::EmptyRecvIsNoop
+pub tst_core::transport::conformance::RecvRow::IsCancelledFlips
+pub tst_core::transport::conformance::RecvRow::NotAliveAfterBroken
+pub tst_core::transport::conformance::RecvRow::NotAliveAfterCancel
+pub tst_core::transport::conformance::RecvRow::PeerEofIsNotACancel
+pub tst_core::transport::conformance::RecvRow::PostCloseIsClosed
+impl tst_core::transport::conformance::RecvRow
+pub const tst_core::transport::conformance::RecvRow::ALL: &'static [tst_core::transport::conformance::RecvRow]
+pub fn tst_core::transport::conformance::RecvRow::all_except(&[tst_core::transport::conformance::RecvRow]) -> alloc::vec::Vec<tst_core::transport::conformance::RecvRow>
+pub fn tst_core::transport::conformance::RecvRow::name(self) -> &'static str
+impl core::clone::Clone for tst_core::transport::conformance::RecvRow
+pub fn tst_core::transport::conformance::RecvRow::clone(&self) -> tst_core::transport::conformance::RecvRow
+impl core::cmp::Eq for tst_core::transport::conformance::RecvRow
+impl core::cmp::PartialEq for tst_core::transport::conformance::RecvRow
+pub fn tst_core::transport::conformance::RecvRow::eq(&self, &tst_core::transport::conformance::RecvRow) -> bool
+impl core::fmt::Debug for tst_core::transport::conformance::RecvRow
+pub fn tst_core::transport::conformance::RecvRow::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_core::transport::conformance::RecvRow
+impl core::marker::StructuralPartialEq for tst_core::transport::conformance::RecvRow
+impl core::marker::Freeze for tst_core::transport::conformance::RecvRow
+impl core::marker::Send for tst_core::transport::conformance::RecvRow
+impl core::marker::Sync for tst_core::transport::conformance::RecvRow
+impl core::marker::Unpin for tst_core::transport::conformance::RecvRow
+impl core::marker::UnsafeUnpin for tst_core::transport::conformance::RecvRow
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::transport::conformance::RecvRow
+impl core::panic::unwind_safe::UnwindSafe for tst_core::transport::conformance::RecvRow
+pub enum tst_core::transport::conformance::SendPark
+pub tst_core::transport::conformance::SendPark::Loop
+pub tst_core::transport::conformance::SendPark::NextCall
+impl core::clone::Clone for tst_core::transport::conformance::SendPark
+pub fn tst_core::transport::conformance::SendPark::clone(&self) -> tst_core::transport::conformance::SendPark
+impl core::cmp::Eq for tst_core::transport::conformance::SendPark
+impl core::cmp::PartialEq for tst_core::transport::conformance::SendPark
+pub fn tst_core::transport::conformance::SendPark::eq(&self, &tst_core::transport::conformance::SendPark) -> bool
+impl core::fmt::Debug for tst_core::transport::conformance::SendPark
+pub fn tst_core::transport::conformance::SendPark::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_core::transport::conformance::SendPark
+impl core::marker::StructuralPartialEq for tst_core::transport::conformance::SendPark
+impl core::marker::Freeze for tst_core::transport::conformance::SendPark
+impl core::marker::Send for tst_core::transport::conformance::SendPark
+impl core::marker::Sync for tst_core::transport::conformance::SendPark
+impl core::marker::Unpin for tst_core::transport::conformance::SendPark
+impl core::marker::UnsafeUnpin for tst_core::transport::conformance::SendPark
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::transport::conformance::SendPark
+impl core::panic::unwind_safe::UnwindSafe for tst_core::transport::conformance::SendPark
+pub enum tst_core::transport::conformance::SendRow
+pub tst_core::transport::conformance::SendRow::CancelBeforeOpIsExplicitClose
+pub tst_core::transport::conformance::SendRow::CancelDuringParkIsExplicitClose
+pub tst_core::transport::conformance::SendRow::CloseTwiceIsOk
+pub tst_core::transport::conformance::SendRow::IsCancelledFlips
+pub tst_core::transport::conformance::SendRow::NotAliveAfterBroken
+pub tst_core::transport::conformance::SendRow::NotAliveAfterCancel
+pub tst_core::transport::conformance::SendRow::PostCloseIsClosed
+impl tst_core::transport::conformance::SendRow
+pub const tst_core::transport::conformance::SendRow::ALL: &'static [tst_core::transport::conformance::SendRow]
+pub fn tst_core::transport::conformance::SendRow::all_except(&[tst_core::transport::conformance::SendRow]) -> alloc::vec::Vec<tst_core::transport::conformance::SendRow>
+pub fn tst_core::transport::conformance::SendRow::name(self) -> &'static str
+impl core::clone::Clone for tst_core::transport::conformance::SendRow
+pub fn tst_core::transport::conformance::SendRow::clone(&self) -> tst_core::transport::conformance::SendRow
+impl core::cmp::Eq for tst_core::transport::conformance::SendRow
+impl core::cmp::PartialEq for tst_core::transport::conformance::SendRow
+pub fn tst_core::transport::conformance::SendRow::eq(&self, &tst_core::transport::conformance::SendRow) -> bool
+impl core::fmt::Debug for tst_core::transport::conformance::SendRow
+pub fn tst_core::transport::conformance::SendRow::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_core::transport::conformance::SendRow
+impl core::marker::StructuralPartialEq for tst_core::transport::conformance::SendRow
+impl core::marker::Freeze for tst_core::transport::conformance::SendRow
+impl core::marker::Send for tst_core::transport::conformance::SendRow
+impl core::marker::Sync for tst_core::transport::conformance::SendRow
+impl core::marker::Unpin for tst_core::transport::conformance::SendRow
+impl core::marker::UnsafeUnpin for tst_core::transport::conformance::SendRow
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::transport::conformance::SendRow
+impl core::panic::unwind_safe::UnwindSafe for tst_core::transport::conformance::SendRow
+pub struct tst_core::transport::conformance::RecvOptions
+pub tst_core::transport::conformance::RecvOptions::post_close: tst_core::transport::conformance::PostCloseKind
+impl core::clone::Clone for tst_core::transport::conformance::RecvOptions
+pub fn tst_core::transport::conformance::RecvOptions::clone(&self) -> tst_core::transport::conformance::RecvOptions
+impl core::default::Default for tst_core::transport::conformance::RecvOptions
+pub fn tst_core::transport::conformance::RecvOptions::default() -> Self
+impl core::fmt::Debug for tst_core::transport::conformance::RecvOptions
+pub fn tst_core::transport::conformance::RecvOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_core::transport::conformance::RecvOptions
+impl core::marker::Freeze for tst_core::transport::conformance::RecvOptions
+impl core::marker::Send for tst_core::transport::conformance::RecvOptions
+impl core::marker::Sync for tst_core::transport::conformance::RecvOptions
+impl core::marker::Unpin for tst_core::transport::conformance::RecvOptions
+impl core::marker::UnsafeUnpin for tst_core::transport::conformance::RecvOptions
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::transport::conformance::RecvOptions
+impl core::panic::unwind_safe::UnwindSafe for tst_core::transport::conformance::RecvOptions
+pub struct tst_core::transport::conformance::SendOptions
+pub tst_core::transport::conformance::SendOptions::park: tst_core::transport::conformance::SendPark
+pub tst_core::transport::conformance::SendOptions::post_close: tst_core::transport::conformance::PostCloseKind
+impl core::clone::Clone for tst_core::transport::conformance::SendOptions
+pub fn tst_core::transport::conformance::SendOptions::clone(&self) -> tst_core::transport::conformance::SendOptions
+impl core::default::Default for tst_core::transport::conformance::SendOptions
+pub fn tst_core::transport::conformance::SendOptions::default() -> Self
+impl core::fmt::Debug for tst_core::transport::conformance::SendOptions
+pub fn tst_core::transport::conformance::SendOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_core::transport::conformance::SendOptions
+impl core::marker::Freeze for tst_core::transport::conformance::SendOptions
+impl core::marker::Send for tst_core::transport::conformance::SendOptions
+impl core::marker::Sync for tst_core::transport::conformance::SendOptions
+impl core::marker::Unpin for tst_core::transport::conformance::SendOptions
+impl core::marker::UnsafeUnpin for tst_core::transport::conformance::SendOptions
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::transport::conformance::SendOptions
+impl core::panic::unwind_safe::UnwindSafe for tst_core::transport::conformance::SendOptions
+pub const tst_core::transport::conformance::WATCHDOG: core::time::Duration
+pub fn tst_core::transport::conformance::assert_recv_contract<R: tst_core::transport::RecvTransport + 'static>(impl core::ops::function::Fn() -> R, impl core::ops::function::Fn(&[u8]), tst_core::transport::conformance::BrokenSource<R>)
+pub fn tst_core::transport::conformance::assert_recv_rows<R: tst_core::transport::RecvTransport + 'static>(impl core::ops::function::Fn() -> R, impl core::ops::function::Fn(&[u8]), tst_core::transport::conformance::BrokenSource<R>, tst_core::transport::conformance::RecvOptions, &[tst_core::transport::conformance::RecvRow])
+pub fn tst_core::transport::conformance::assert_send_contract<T: tst_core::transport::Transport + 'static>(impl core::ops::function::Fn() -> T, tst_core::transport::conformance::BrokenSource<T>)
+pub fn tst_core::transport::conformance::assert_send_rows<T: tst_core::transport::Transport + 'static>(impl core::ops::function::Fn() -> T, tst_core::transport::conformance::BrokenSource<T>, tst_core::transport::conformance::SendOptions, &[tst_core::transport::conformance::SendRow])
+pub fn tst_core::transport::conformance::not_alive_after_broken_recv<R: tst_core::transport::RecvTransport + 'static>(R, &dyn core::ops::function::Fn(&mut R))
+pub fn tst_core::transport::conformance::not_alive_after_broken_send<T: tst_core::transport::Transport + 'static>(T, &dyn core::ops::function::Fn(&mut T))
+pub fn tst_core::transport::conformance::probe_packet() -> [u8; 188]
+pub fn tst_core::transport::conformance::recv_cancel_before_op_is_explicit_close<R: tst_core::transport::RecvTransport>(R)
+pub fn tst_core::transport::conformance::recv_cancel_during_park_is_explicit_close<R: tst_core::transport::RecvTransport + 'static>(R)
+pub fn tst_core::transport::conformance::recv_close_twice_is_ok<R: tst_core::transport::RecvTransport>(R)
+pub fn tst_core::transport::conformance::recv_empty_recv_is_noop<R: tst_core::transport::RecvTransport + 'static>(R, &dyn core::ops::function::Fn(&[u8]))
+pub fn tst_core::transport::conformance::recv_is_cancelled_flips<R: tst_core::transport::RecvTransport>(R)
+pub fn tst_core::transport::conformance::recv_max_payload_ge_ceiling<R: tst_core::transport::RecvTransport>(&R, usize)
+pub fn tst_core::transport::conformance::recv_not_alive_after_cancel<R: tst_core::transport::RecvTransport + 'static>(R)
+pub fn tst_core::transport::conformance::recv_peer_eof_is_not_a_cancel<R: tst_core::transport::RecvTransport + 'static>(R, &dyn core::ops::function::Fn(&mut R))
+pub fn tst_core::transport::conformance::recv_post_close_is_closed<R: tst_core::transport::RecvTransport>(R, tst_core::transport::conformance::PostCloseKind)
+pub fn tst_core::transport::conformance::send_cancel_before_op_is_explicit_close<T: tst_core::transport::Transport>(T)
+pub fn tst_core::transport::conformance::send_cancel_during_park_is_explicit_close<T: tst_core::transport::Transport + 'static>(T, tst_core::transport::conformance::SendPark)
+pub fn tst_core::transport::conformance::send_close_twice_is_ok<T: tst_core::transport::Transport>(T)
+pub fn tst_core::transport::conformance::send_is_cancelled_flips<T: tst_core::transport::Transport>(T)
+pub fn tst_core::transport::conformance::send_not_alive_after_cancel<T: tst_core::transport::Transport + 'static>(T)
+pub fn tst_core::transport::conformance::send_post_close_is_closed<T: tst_core::transport::Transport>(T, tst_core::transport::conformance::PostCloseKind)
 #[non_exhaustive] pub enum tst_core::transport::BrokenCause
 pub tst_core::transport::BrokenCause::CleanEof
 pub tst_core::transport::BrokenCause::Unspecified
@@ -7033,8 +7198,10 @@ pub fn alloc::boxed::Box<T>::send_bytes(&mut self, &[u8]) -> core::result::Resul
 pub fn alloc::boxed::Box<T>::socket_stats(&self) -> core::option::Option<tst_core::transport::SocketStats>
 pub trait tst_core::transport::TransportCancel: core::marker::Send + core::marker::Sync
 pub fn tst_core::transport::TransportCancel::cancel(&self)
+pub fn tst_core::transport::TransportCancel::is_cancelled(&self) -> bool
 impl tst_core::transport::TransportCancel for tst_core::cancel::SrtCancelHandle
 pub fn tst_core::cancel::SrtCancelHandle::cancel(&self)
+pub fn tst_core::cancel::SrtCancelHandle::is_cancelled(&self) -> bool
 pub mod tst_core::url
 pub mod tst_core::url::common
 #[non_exhaustive] pub enum tst_core::url::common::UrlError
@@ -7659,6 +7826,7 @@ impl core::panic::unwind_safe::UnwindSafe for tst_core::transport::SocketStats
 pub struct tst_core::SrtCancelHandle
 impl tst_core::cancel::SrtCancelHandle
 pub fn tst_core::cancel::SrtCancelHandle::cancel(&self)
+pub fn tst_core::cancel::SrtCancelHandle::close_without_cancel(&self)
 pub fn tst_core::cancel::SrtCancelHandle::is_cancelled(&self) -> bool
 pub fn tst_core::cancel::SrtCancelHandle::new<F>(i64, F) -> Self where F: core::ops::function::Fn(i64) + core::marker::Send + core::marker::Sync + 'static
 impl core::clone::Clone for tst_core::cancel::SrtCancelHandle
@@ -7667,6 +7835,7 @@ impl core::fmt::Debug for tst_core::cancel::SrtCancelHandle
 pub fn tst_core::cancel::SrtCancelHandle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl tst_core::transport::TransportCancel for tst_core::cancel::SrtCancelHandle
 pub fn tst_core::cancel::SrtCancelHandle::cancel(&self)
+pub fn tst_core::cancel::SrtCancelHandle::is_cancelled(&self) -> bool
 impl core::marker::Freeze for tst_core::cancel::SrtCancelHandle
 impl core::marker::Send for tst_core::cancel::SrtCancelHandle
 impl core::marker::Sync for tst_core::cancel::SrtCancelHandle
@@ -7876,5 +8045,7 @@ pub fn alloc::boxed::Box<T>::send_bytes(&mut self, &[u8]) -> core::result::Resul
 pub fn alloc::boxed::Box<T>::socket_stats(&self) -> core::option::Option<tst_core::transport::SocketStats>
 pub trait tst_core::TransportCancel: core::marker::Send + core::marker::Sync
 pub fn tst_core::TransportCancel::cancel(&self)
+pub fn tst_core::TransportCancel::is_cancelled(&self) -> bool
 impl tst_core::transport::TransportCancel for tst_core::cancel::SrtCancelHandle
 pub fn tst_core::cancel::SrtCancelHandle::cancel(&self)
+pub fn tst_core::cancel::SrtCancelHandle::is_cancelled(&self) -> bool

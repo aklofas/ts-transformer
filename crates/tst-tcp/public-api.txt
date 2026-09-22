@@ -192,6 +192,7 @@ impl core::fmt::Debug for tst_tcp::transport::TcpCancelHandle
 pub fn tst_tcp::transport::TcpCancelHandle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl tst_core::transport::TransportCancel for tst_tcp::transport::TcpCancelHandle
 pub fn tst_tcp::transport::TcpCancelHandle::cancel(&self)
+pub fn tst_tcp::transport::TcpCancelHandle::is_cancelled(&self) -> bool
 impl core::marker::Freeze for tst_tcp::transport::TcpCancelHandle
 impl core::marker::Send for tst_tcp::transport::TcpCancelHandle
 impl core::marker::Sync for tst_tcp::transport::TcpCancelHandle
@@ -318,6 +319,7 @@ impl core::fmt::Debug for tst_tcp::transport::TcpCancelHandle
 pub fn tst_tcp::transport::TcpCancelHandle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl tst_core::transport::TransportCancel for tst_tcp::transport::TcpCancelHandle
 pub fn tst_tcp::transport::TcpCancelHandle::cancel(&self)
+pub fn tst_tcp::transport::TcpCancelHandle::is_cancelled(&self) -> bool
 impl core::marker::Freeze for tst_tcp::transport::TcpCancelHandle
 impl core::marker::Send for tst_tcp::transport::TcpCancelHandle
 impl core::marker::Sync for tst_tcp::transport::TcpCancelHandle
