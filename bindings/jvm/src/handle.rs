@@ -56,36 +56,34 @@
 //!   matches how the Java classes already keep separate `handle` fields. A single
 //!   type-erased registry would need `Box<dyn Any>` downcasts on every lease for no
 //!   benefit, so per-type is the deliberate choice.
-//! - **Flexible teardown.** The cancel hook is an `Option<Box<dyn Fn() + Send +
-//!   Sync>>` stored on the entry, so a type WITH a cross-thread cancel (e.g. the rtp
-//!   `DemuxReceiver`, whose `close()` must wake a parked `recv_event` before taking
-//!   the lock) supplies one, and a type WITHOUT a cancel (e.g. a plain `Sender`)
-//!   passes `None`. `close` fires the hook, then hands the taken resource back so the
-//!   caller runs whatever type-specific teardown it needs. This covers every shape a
-//!   handle type needs without hardcoding a cancel type.
-//! - **Two entry shapes.** [`Entry<T>`] (plain — the registry owns the
-//!   `Mutex<Option<T>>`, plus the optional close hook, lock-free cancel target and
-//!   end-reason cell) is used by the non-cancellable handle types and the cancel
-//!   views; [`OwnedEntry<T, S>`] (a [`tst_pipeline::binding::Owned<T, S>`](Owned))
-//!   is used by every shell with a cancel handle. The cancel target, cancelled
-//!   flag, end-reason cell and construction-time snapshot are `Owned`'s fields;
-//!   [`OwnedRegistry`] reads them lock-free through
+//! - **Two entry shapes.** [`Entry<T>`] (this registry): the registry owns a
+//!   `Mutex<Option<T>>`; [`with_poisoning`](HandleRegistry::with_poisoning) drops
+//!   the resource on a panic; the only side slot is an optional close-fired hook
+//!   (`RtspServer`'s hard cancel, which is a `tst_rtp::RtspServerCancelHandle`,
+//!   not a `TransportCancel`). [`OwnedEntry<T, S>`] ([`OwnedRegistry`]): a
+//!   [`tst_pipeline::binding::Owned`](Owned) — the slot, cancel target, cancelled
+//!   latch, end-reason cell and construction-time snapshot are ITS fields, and the
+//!   registry reads them lock-free through
 //!   [`cancel_view`](OwnedRegistry::cancel_view) /
 //!   [`is_cancelled`](OwnedRegistry::is_cancelled) /
 //!   [`end_reason`](OwnedRegistry::end_reason) /
-//!   [`snapshot`](OwnedRegistry::snapshot). Lock-free is the point: the slot is
-//!   exactly what a parked `recv`/`accept`/`send` holds, so resolving a cancel
-//!   handle or a construction-constant getter under it made the cross-thread stop
-//!   unobtainable while the op it is meant to stop was in flight (PRs #189, #234).
-//!   `close` neither reads nor writes the end-reason cell: the per-type `nClose`
-//!   snapshots the reason off the shell it exclusively owns, because the entry
-//!   (and with it every side slot) is gone once `close` returns.
+//!   [`snapshot`](OwnedRegistry::snapshot). **Every shell with a cancel handle is
+//!   an `OwnedEntry`**; `Entry` is for the non-cancellable handle types
+//!   (`Socket`, `Muxer`, `Demuxer`, `Pairer`, `RtspSession`, `RtspServer`,
+//!   `MountHandle`, the cancel views and the test probe).
 //!
-//! The cancel-handle classes hold a [`CancelView`] (srt) or an
-//! `Arc<dyn TransportCancel>` (the rtp/rtsp ones, until Task B3.5) — a cancel
-//! *target*, not a resource that needs waking. They still benefit from the
-//! registry (it kills their own UAF/double-free on `close`), and they simply
-//! register with `cancel = None`.
+//!   Lock-free is the point: the slot is exactly what a parked `recv`/`accept`/
+//!   `send` holds, so resolving a cancel handle or a construction-constant getter
+//!   under it made the cross-thread stop unobtainable while the op it is meant to
+//!   stop was in flight (PRs #189, #234). `close` neither reads nor writes the
+//!   end-reason cell: the per-type `nClose` snapshots the reason off the shell it
+//!   exclusively owns, because the entry (and with it every side slot) is gone
+//!   once `close` returns.
+//!
+//! The cancel-handle classes hold a [`CancelView`] over the shell's `Owned`
+//! entry — a cancel *target*, not a resource that needs waking. They still
+//! benefit from the registry (it kills their own UAF/double-free on `close`),
+//! and they register with `cancel = None`.
 
 use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
