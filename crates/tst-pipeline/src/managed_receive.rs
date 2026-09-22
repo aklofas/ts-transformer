@@ -156,6 +156,15 @@ pub struct ManagedRecvTransport<R: RecvTransport> {
     /// observers can hold a handle independent of the decorator's
     /// lifetime.
     reconnects: Arc<AtomicU64>,
+    /// Number of times the factory has been CALLED — every attempt,
+    /// whether or not it produced an inner (ARCH-08). `reconnects` above
+    /// counts the successes, so `attempts - reconnects` is the failed-call
+    /// count a reconnect dashboard wants. Bumped immediately before each
+    /// `(self.factory)()` call; exposed lock-free via
+    /// [`Self::attempts_handle`] so bindings no longer wrap the factory in
+    /// a counting closure of their own. Send-side twin:
+    /// `ManagedTransport::attempts_handle`.
+    attempts: Arc<AtomicU64>,
     /// True while `inner` is absent — set the moment a broken/closed
     /// inner is torn down (before the factory is consulted), cleared the
     /// moment a fresh inner is successfully installed. Stays `true`
@@ -246,6 +255,7 @@ impl<R: RecvTransport> ManagedRecvTransport<R> {
             cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             active,
             reconnects: Arc::new(AtomicU64::new(0)),
+            attempts: Arc::new(AtomicU64::new(0)),
             reconnecting: Arc::new(AtomicBool::new(false)),
             last_live_max_payload,
             shutdown: Arc::new(Shutdown::new()),
@@ -292,6 +302,14 @@ impl<R: RecvTransport> ManagedRecvTransport<R> {
     #[must_use]
     pub fn reconnecting_handle(&self) -> Arc<AtomicBool> {
         Arc::clone(&self.reconnecting)
+    }
+
+    /// Shared handle to the factory-call counter — see the `attempts`
+    /// field. Same obtain-before-move rationale as
+    /// [`Self::reconnects_handle`]; read with `.load(Ordering::Acquire)`.
+    #[must_use]
+    pub fn attempts_handle(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.attempts)
     }
 }
 
@@ -378,6 +396,9 @@ impl<R: RecvTransport> RecvTransport for ManagedRecvTransport<R> {
                     self.explicit_close = true;
                     return Err(TransportError::ExplicitClose);
                 }
+                // Count the CALL, not the outcome (ARCH-08) — the same
+                // placement as the send side's `reconnect_attempts` bump.
+                self.attempts.fetch_add(1, Ordering::Release);
                 match (self.factory)() {
                     Ok(t) => {
                         // Publish the fresh transport's wake handle BEFORE

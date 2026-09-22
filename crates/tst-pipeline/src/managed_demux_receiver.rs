@@ -159,6 +159,9 @@ pub struct ManagedDemuxReceiver<R: RecvTransport> {
     /// The transport's "connection currently absent" flag, snapshotted
     /// the same way. Backs [`Self::reconnecting`].
     reconnect_in_progress: Arc<AtomicBool>,
+    /// The transport's factory-call counter, snapshotted the same way.
+    /// Backs [`Self::attempts_handle`].
+    attempts: Arc<AtomicU64>,
     /// Shared, first-writer-wins record of why this receiver's stream
     /// ended — see [`RecvEndReason`]. [`Self::end_reason_handle`] hands
     /// out clones so a caller can poll it independent of this receiver's
@@ -204,12 +207,14 @@ impl<R: RecvTransport> ManagedDemuxReceiver<R> {
         drop(_enter);
         let reconnects = transport.reconnects_handle();
         let reconnect_in_progress = transport.reconnecting_handle();
+        let attempts = transport.attempts_handle();
         let mut inner = DemuxReceiver::with_demux_options(transport, options);
         inner.set_reconnect_epoch(Arc::clone(&reconnects));
         Self {
             inner,
             reconnects,
             reconnect_in_progress,
+            attempts,
             end_reason: RecvEndReasonHandle::default(),
             _span: std::panic::AssertUnwindSafe(span),
         }
@@ -306,9 +311,9 @@ impl<R: RecvTransport> ManagedDemuxReceiver<R> {
     ///
     /// # C ABI
     ///
-    /// `tst_managed_demux_receiver_get_reconnect_stats` (`reconnect_successes`
-    /// and `reconnect_attempts` — the recv side tracks no separate
-    /// attempts counter, see that getter's doc) — see
+    /// `tst_managed_demux_receiver_get_reconnect_stats`
+    /// (`reconnect_successes`; `reconnect_attempts` comes from
+    /// [`Self::attempts_handle`] since Arc 2 WP-A3) — see
     /// `bindings/c/include/tstrans.h`.
     #[must_use]
     pub fn reconnects_handle(&self) -> Arc<AtomicU64> {
@@ -341,6 +346,17 @@ impl<R: RecvTransport> ManagedDemuxReceiver<R> {
     #[must_use]
     pub fn reconnecting_handle(&self) -> Arc<AtomicBool> {
         Arc::clone(&self.reconnect_in_progress)
+    }
+
+    /// Shared handle onto the underlying transport's factory-call counter
+    /// — [`ManagedRecvTransport::attempts_handle`], one layer up. Every
+    /// reconnect attempt, successful or not; [`Self::reconnects_handle`]
+    /// counts the successes. Obtain **before** moving the receiver into an
+    /// opaque handle, for the same lock-free-polling reason as the other
+    /// two handles.
+    #[must_use]
+    pub fn attempts_handle(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.attempts)
     }
 
     /// Shared handle onto this receiver's stream-end reason — see
