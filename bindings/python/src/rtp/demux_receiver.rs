@@ -21,23 +21,10 @@
 //!   onto the Rust `tst_pipeline::DemuxReceiver::with_demux_options`
 //!   path via the existing `crate::mpegts::build_demuxer_config`
 //!   helper.
-//! - Concurrency: `inner` is held under `Arc<Mutex<Option<...>>>` and
-//!   every PyMethod takes `&self`. The mutex serialises access; if a
-//!   `__next__` call is parked under `py.allow_threads`, a concurrent
-//!   `close()` / `__exit__()` from another Python thread fires the
-//!   cancel handle (held outside the mutex), wakes the parked recv,
-//!   then takes the inner once the recv path releases the lock. This
-//!   avoids the PyO3 "Already borrowed" error that an
-//!   `&mut self`-style design hits when close races a parked next.
-//!
-//! Error mapping (Arc 2): the source decides the CLASS.
-//! - `DemuxReceiverErrorSource::Demux(...)` keeps `DemuxError` (it carries
-//!   the per-variant attributes).
-//! - Everything else is a `tst_pipeline::binding::BindingError` raised on
-//!   `RtpError` through `crate::raise`; a peer EOS (`EndOfStream`) is
-//!   `StopIteration` on this iterator.
-//! - Construction-time `ConnectError` contributes one member per variant
-//!   (`URL` / `IO` / `HOST_NOT_LITERAL` / …).
+//! - Concurrency (Arc 2):
+//!   Every wrapper holds a `tst_pipeline::binding::Owned`, which takes
+//!   the slot only inside `with_mut` / `with_ref` (GIL released) and
+//!   makes `close()` cancel-first.
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
@@ -106,30 +93,29 @@ fn demux_recv_err(py: Python<'_>, e: DemuxReceiverError) -> PyErr {
 /// ```
 #[pyclass(name = "DemuxReceiver", module = "tstrans.rtp")]
 pub struct PyDemuxReceiver {
-    /// Live receiver, behind a mutex so concurrent `__next__` /
-    /// `close()` calls from different Python threads don't trip the
-    /// PyO3 "Already borrowed" check that an `&mut self`-style design
-    /// would hit. `Option` so `close()` can take + drop the inner
     /// The binding layer's handle state machine (Arc 2): a parked
     /// `__next__` holds the slot only inside `with_mut`, under
-    /// `py.allow_threads`; `close()` (cancel-first) ends it.
+    /// `py.allow_threads`, so a concurrent `close()` from another thread
+    /// ends it (cancel-first) instead of waiting behind it or tripping
+    /// PyO3's "Already borrowed" check.
     owned: Owned<RustDemuxReceiver<RtpRecvTransport>>,
     /// Handle onto the underlying `RtpRecvTransport`'s
     /// [`StreamEndReasonHandle`], captured from the transport BEFORE it
     /// moves into `DemuxReceiver::new`/`with_demux_options` — the
     /// pipeline shell (generic over `RecvTransport`) has no
     /// `end_reason_handle()` delegate of its own, so this must be pulled
-    /// pre-move, same as `cancel` above. Independent of `inner`'s
-    /// lifetime, so `end_reason()` / `end_detail()` keep working after
-    /// `close()`.
+    /// pre-move. It is a `tst_rtp::StreamEndReasonHandle` — a different
+    /// type and enum from the `RecvEndReasonHandle` that
+    /// `Owned::with_end_reason` takes, which is why it stays a field.
+    /// Independent of the slot's lifetime, so `end_reason()` /
+    /// `end_detail()` keep answering after `close()`.
     end_reason: StreamEndReasonHandle,
     /// First exception raised by a registered byte sink (see
-    /// `add_byte_sink`). The sink closure runs inside `recv_event`
-    /// (under `allow_threads`) where it can't return a `PyResult` to
-    /// the iterator, so on error it stashes the `PyErr` here (first
-    /// error wins). `__next__` drains this slot AFTER `recv_event`
-    /// returns and re-raises fail-loud. Separate from `inner` so the
-    /// closure never touches the `inner` lock it runs underneath.
+    /// `add_byte_sink`). The sink closure runs inside `recv_event`, where
+    /// it cannot return a `PyResult` to the iterator, so on error it
+    /// stashes the `PyErr` here (first error wins) and `__next__` drains
+    /// the slot after `recv_event` returns. Kept OUTSIDE `owned` so the
+    /// closure never touches the slot it runs underneath.
     sink_error: Arc<Mutex<Option<PyErr>>>,
 }
 
@@ -141,7 +127,7 @@ impl PyDemuxReceiver {
     /// `demux_config` is an optional `tstrans.mpegts.DemuxerConfig`
     /// dataclass; when `None`, defaults are used.
     ///
-    /// Raises `RtpError(TRANSPORT)` on URL parse / socket bind failure.
+    /// Raises `RtpError(CLOSED)` on URL parse / socket bind failure.
     #[new]
     #[pyo3(signature = (url, *, demux_config = None))]
     fn new(py: Python<'_>, url: &str, demux_config: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
@@ -184,7 +170,7 @@ impl PyDemuxReceiver {
     /// inside the recv loop, so on high-bitrate streams a slow sink (or
     /// many sinks) throttles the receiver. Keep sink bodies cheap.
     ///
-    /// Raises `RtpError(TRANSPORT)` if the receiver is already closed.
+    /// Raises `RtpError(CLOSED)` if the receiver is already closed.
     fn add_byte_sink(&self, py: Python<'_>, callback: Py<PyAny>) -> PyResult<()> {
         // The closure runs inside `recv_event` (under `allow_threads`),
         // re-acquires the GIL per packet, and only ever touches
@@ -315,7 +301,7 @@ impl PyDemuxReceiver {
     /// convention (the C getters have no `Option`) — Python's `None` is
     /// the honest "never" value.
     ///
-    /// Raises `RtpError(TRANSPORT)` if the receiver has been closed —
+    /// Raises `RtpError(CLOSED)` if the receiver has been closed —
     /// same lock discipline as `stats()`.
     fn last_seen_micros(&self, py: Python<'_>, pid: u16) -> PyResult<Option<u64>> {
         // Same GIL-released lock-then-extract shape as `stats()` above:
