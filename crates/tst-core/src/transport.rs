@@ -6,6 +6,37 @@
 //! This module contains both send-side and receive-side transport traits.
 //! Concrete implementations (SRT, file-replay, in-memory channels) live
 //! in their own crates; only the abstract contract lives here.
+//!
+//! # Cancel / close / liveness contract (normative)
+//!
+//! Every `Transport` / `RecvTransport` implementation honours the rows
+//! below; the [`conformance`] kit (std-only) is the executable form and
+//! each transport crate runs it in its `tests/conformance.rs`.
+//!
+//! | Transport | after own `close()` | cancel during a parked op | `is_alive()` after `Broken` / after cancel | handle type |
+//! |---|---|---|---|---|
+//! | SRT (`SrtTransport`) | `Closed` | `ExplicitClose` (from WP-C2) | false / false | `SrtCancelHandle` |
+//! | TCP / TLS (`TcpTransport`) | `Closed` | `ExplicitClose` (from WP-C2) | false / false | `TcpCancelHandle` |
+//! | RTP send / recv (`RtpTransport` / `RtpRecvTransport`, incl. RTSP-client recv) | `Closed` | `ExplicitClose` | false / false | `RtpCancelHandle` |
+//! | UDP send / recv | `Closed` | `ExplicitClose` (from WP-D) | false / false | `UdpCancelHandle` (WP-D) |
+//! | RIST send / recv | `Closed` | `ExplicitClose` (from WP-D) | false / false | `RistCancelHandle` (WP-D) |
+//! | `ManagedTransport` (send) | `Closed` | `ExplicitClose` (from WP-C2) | false / false | `ManagedCancel` |
+//! | `ManagedRecvTransport` (recv) | `ExplicitClose` (its own close is a caller-initiated end; see its docs) | `ExplicitClose` | false / false | `ManagedRecvCancel` |
+//!
+//! Shared rows, every transport: a second `close()` is a no-op;
+//! `cancel_handle()` returns `Some` (bare test mocks may return `None`);
+//! `is_cancelled()` is `false` on a fresh handle and `true` after
+//! `cancel()` on it or any alias, and is never a liveness proxy — a peer
+//! EOF leaves it `false`; `RecvTransport::max_payload()` is the
+//! protocol's deliverable ceiling (never the local send budget); an EMPTY
+//! destination buffer makes `recv_bytes` return `Ok(0)` without touching
+//! the socket or the liveness flag (X-CORR-07). A cancel that lands after
+//! a successful op is not an error — the NEXT op fails with
+//! `ExplicitClose`. `Broken` after a cancel is impossible by construction.
+//!
+//! ("from WP-C2" / "from WP-D" mark rows whose mechanism change lands in a
+//! later work package; the conformance kit carries those rows `#[ignore]`d
+//! with the same reason until then.)
 
 use alloc::boxed::Box;
 use alloc::string::String;
@@ -179,16 +210,13 @@ pub enum TransportError {
     /// shell that owns it). Distinguished from [`Self::Closed`] which means
     /// "peer closed the connection / end-of-stream observed on the wire."
     ///
-    /// **Producers:** `ManagedRecvTransport::recv_bytes` when its own
-    /// cancel signal has fired, and cancel-aware bare transports — the RTP
-    /// transports (`RtpTransport` / `RtpRecvTransport` in `tst-rtp`)
-    /// return it once their cancel handle fires. `SrtTransport` does not
-    /// produce this variant — it maps both caller-close and peer-EOS to
-    /// [`Self::Closed`] because the libsrt-level distinction isn't
-    /// reliably observable. The pipeline-shell layer treats the two the
-    /// same on the send side (`Closed` is always caller-initiated for
-    /// senders) and only distinguishes on the receive side via
-    /// `ManagedRecvTransport`'s extra tracking.
+    /// **Producers:** every cancel-aware transport, once its cancel handle
+    /// has fired and a blocking (or subsequent) op observes it — the
+    /// per-transport table in the module docs is normative and the
+    /// [`conformance`] kit pins it. `ManagedRecvTransport::recv_bytes`
+    /// also produces it after its own `close()`; the bare transports and
+    /// `ManagedTransport` produce [`Self::Closed`] there instead (sender
+    /// shells map both to `ShellErrorKind::Closed`).
     ///
     /// **Shell-layer mapping (`kind_from_transport`):**
     /// - `ExplicitClose` → `ShellErrorKind::Closed` (caller-initiated)
@@ -332,7 +360,8 @@ pub trait Transport: Send {
     /// The returned `Arc` is `Send + Sync` and can be moved or cloned to
     /// any thread; calling `cancel()` while another thread is parked in
     /// [`Self::send_bytes`] makes that parked call return
-    /// `TransportError::Broken`.
+    /// [`TransportError::ExplicitClose`] (module-doc table), and every
+    /// later call returns it at its entry check.
     fn cancel_handle(&self) -> Option<Arc<dyn TransportCancel + Send + Sync>> {
         None
     }
@@ -398,10 +427,17 @@ pub trait TransportCancel: Send + Sync {
 pub trait RecvTransport: Send {
     /// Receive one message into `buf`. Returns the number of bytes written.
     ///
-    /// Returns `Err(TransportError::Closed)` once the transport is closed or
-    /// the connection has been broken and no further receive is possible.
-    /// Returns `Err(TransportError::Backpressure)` on a recv timeout — the
-    /// transport is still alive and the caller may retry.
+    /// - `Err(TransportError::Closed)` once the transport has been closed by
+    ///   its own `close()` (bare transports) or the peer ended the stream
+    ///   where the protocol can say so;
+    /// - `Err(TransportError::Broken)` on a wire failure (the transport is
+    ///   dead; `is_alive()` reads `false` afterwards);
+    /// - `Err(TransportError::ExplicitClose)` once the cancel handle has
+    ///   fired — for the call that was parked and for every later call;
+    /// - `Err(TransportError::Backpressure)` on a recv timeout — the
+    ///   transport is still alive and the caller may retry;
+    /// - `Ok(0)` immediately for an EMPTY `buf`, touching nothing
+    ///   (X-CORR-07; the kit row `empty_recv_is_noop`).
     fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError>;
 
     /// Upper bound on the bytes a single `recv_bytes` call may deliver.
@@ -456,7 +492,8 @@ pub trait RecvTransport: Send {
     /// underlying close; an extra explicit close is preferable to a leak.
     fn close(&mut self) {}
 
-    /// Optional cancellation accessor. Wakes a thread parked in `recv_bytes`.
+    /// Optional cancellation accessor. Wakes a thread parked in `recv_bytes`,
+    /// which returns [`TransportError::ExplicitClose`].
     /// See [`Transport::cancel_handle`] for the general shape.
     fn cancel_handle(&self) -> Option<Arc<dyn TransportCancel + Send + Sync>> {
         None
