@@ -8,14 +8,17 @@
 //! factory under the configured `ReconnectPolicy`.
 //!
 //! Handle lifecycle mirrors `transport.rs`:
-//! - `nFromUrl` registers via `REGISTRY.insert_cancel_on_close` (a
-//!   `JniManagedSender` on the send side; a `JniManagedReceiver` on the recv
-//!   side): the `ManagedCancel` target is captured before the shell is boxed
-//!   and fired by `nClose` before the resource lock is taken, so a parked
-//!   `send`/`recv` ends with `SrtException(CLOSED)` instead of holding
+//! - `nFromUrl` opens through `tst_srt::shells::managed_{sender,receiver}_from_url`
+//!   — the ONE open path (ARCH-01): the initial dial, the reconnect factory,
+//!   the attempt/success counters and the cancel handle are composed in
+//!   tst-srt, once, for every binding. The returned `ManagedHandles` (plus the
+//!   sender's `ManagedStatsHandle`) become the entry's `Owned` SNAPSHOT, so
+//!   every counter/stats/cancel read is lock-free.
+//! - Per-call methods go through `with_mut` / `with_ref`; a `HandleState`
+//!   becomes the one Java mapping in `error::throw_handle_state`.
+//! - `nClose` cancels first, then takes + tears down, via `OwnedRegistry::close`:
+//!   a parked `send`/`recv` ends with `SrtException(CLOSED)` instead of holding
 //!   `close()` for the reconnect budget.
-//! - Per-call methods lease via `REGISTRY.with` (non-consuming).
-//! - `nClose` takes + tears down via `REGISTRY.close`.
 //!
 //! ## Stats drift (intentional — mirrors tst-py)
 //!
@@ -25,135 +28,24 @@
 
 use std::sync::Arc;
 use std::sync::LazyLock;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 
 use jni::JNIEnv;
 use jni::objects::{JByteArray, JClass, JObject, JString};
 use jni::sys::{jboolean, jbyteArray, jint, jlong};
-use tst_core::transport::{BrokenCause, TransportError};
-use tst_pipeline::binding::BindingErrorKind;
-use tst_pipeline::receiver::ReceiverErrorSource;
-use tst_pipeline::sender::SenderErrorSource;
+use tst_pipeline::binding::{BindingErrorKind, ManagedHandles, Owned};
 use tst_pipeline::{
-    ManagedRecvTransport, ManagedTransport, Receiver as PlReceiver, ReceiverConfig,
-    Sender as PlSender, SenderConfig,
+    ManagedRecvTransport, ManagedTransport, Receiver as PlReceiver, Sender as PlSender,
+    SenderConfig,
 };
-use tst_srt::{Listener, ListenerConfig, Socket, SocketConfig, SrtTransport, SrtUrl, url::Mode};
+use tst_srt::{SrtTransport, SrtUrl, url::Mode};
 
-use super::JniCancel;
+use super::ManagedSenderSnapshot;
+use super::errors::{throw_receiver_error, throw_sender_error, throw_srt};
 use super::stats::build_managed_transport_stats;
-use crate::handle::HandleRegistry;
-use crate::jutil::{build_socket_stats, join_host_port};
-
-// -----------------------------------------------------------------------
-// Factory helpers — rebuild a fresh SrtTransport from a URL string.
-// Ported verbatim from tst-py's managed_basic.rs: every failure maps to
-// TransportError::Broken so the reconnect loop treats it as recoverable.
-// -----------------------------------------------------------------------
-
-/// Build a fresh caller-mode `SrtTransport` from a URL string. Used by the
-/// reconnect factory closure: every Broken/Closed event reruns this.
-fn build_sender_transport(url: &str) -> Result<SrtTransport, TransportError> {
-    let parsed = SrtUrl::parse(url).map_err(|e| TransportError::Broken {
-        msg: format!("managed sender factory: URL parse failed: {e}"),
-        errno_code: None,
-        cause: BrokenCause::Unspecified,
-    })?;
-    if parsed.mode != Mode::Caller {
-        return Err(TransportError::Broken {
-            msg: format!(
-                "managed sender factory: URL mode={:?} but caller required",
-                parsed.mode
-            ),
-            errno_code: None,
-            cause: BrokenCause::Unspecified,
-        });
-    }
-    let mut cfg = SocketConfig::default();
-    parsed.overlay.apply_to_socket(&mut cfg);
-    let addr = join_host_port(&parsed.host, parsed.port);
-    let socket = Socket::connect_with(&cfg, addr.as_str()).map_err(|e| TransportError::Broken {
-        msg: format!("managed sender factory: connect failed: {e}"),
-        errno_code: None,
-        cause: BrokenCause::Unspecified,
-    })?;
-    Ok(SrtTransport::new(socket))
-}
-
-/// Parse a listener-mode URL into its bind address + `ListenerConfig`
-/// (shared by the initial open and the reconnect factory below).
-fn listener_bind_target(url: &str) -> Result<(String, ListenerConfig), TransportError> {
-    let parsed = SrtUrl::parse(url).map_err(|e| TransportError::Broken {
-        msg: format!("managed receiver factory: URL parse failed: {e}"),
-        errno_code: None,
-        cause: BrokenCause::Unspecified,
-    })?;
-    if parsed.mode != Mode::Listener {
-        return Err(TransportError::Broken {
-            msg: format!(
-                "managed receiver factory: URL mode={:?} but listener required",
-                parsed.mode
-            ),
-            errno_code: None,
-            cause: BrokenCause::Unspecified,
-        });
-    }
-    let mut cfg = ListenerConfig::default();
-    parsed.overlay.apply_to_listener(&mut cfg);
-    let addr = if parsed.host.is_empty() {
-        format!("0.0.0.0:{}", parsed.port)
-    } else {
-        join_host_port(&parsed.host, parsed.port)
-    };
-    Ok((addr, cfg))
-}
-
-/// Bind a listener + accept one peer for the INITIAL open. The bare
-/// `accept()` here is deliberate and cannot be otherwise: `nFromUrl` has not
-/// returned yet, so no cancel handle exists to reach it with. Every
-/// re-accept goes through [`build_receiver_transport_cancellable`] instead.
-fn build_receiver_transport(url: &str) -> Result<SrtTransport, TransportError> {
-    let (addr, cfg) = listener_bind_target(url)?;
-    let mut listener =
-        Listener::bind_with(&cfg, addr.as_str()).map_err(|e| TransportError::Broken {
-            msg: format!("managed receiver factory: bind failed: {e}"),
-            errno_code: None,
-            cause: BrokenCause::Unspecified,
-        })?;
-    let (socket, _peer) = listener.accept().map_err(|e| TransportError::Broken {
-        msg: format!("managed receiver factory: accept failed: {e}"),
-        errno_code: None,
-        cause: BrokenCause::Unspecified,
-    })?;
-    Ok(SrtTransport::new(socket))
-}
-
-/// [`build_receiver_transport`] for the RECONNECT factory: the listener's
-/// cancel handle is published into the shared `FactoryCancel` slot around
-/// the accept, so `cancel()` on the managed receiver can wake a re-accept
-/// parked with no peer in sight (the initial open above stays plain because
-/// no handle exists yet to cancel it with). That lifecycle lives in
-/// [`Listener::accept_one_cancellable`] (shared with the C and Python
-/// managed listener factories); here it is wrapped only to keep the
-/// `managed receiver factory:` prefix every error out of this module wears.
-fn build_receiver_transport_cancellable(
-    url: &str,
-    cancel: &tst_pipeline::FactoryCancel,
-) -> Result<SrtTransport, TransportError> {
-    let (addr, cfg) = listener_bind_target(url)?;
-    Listener::accept_one_cancellable(&cfg, addr.as_str(), cancel).map_err(|e| match e {
-        TransportError::Broken {
-            msg,
-            errno_code,
-            cause,
-        } => TransportError::Broken {
-            msg: format!("managed receiver factory: {msg}"),
-            errno_code,
-            cause,
-        },
-        other => other,
-    })
-}
+use crate::error::throw_handle_state;
+use crate::handle::OwnedRegistry;
+use crate::jutil::build_socket_stats;
 
 // -----------------------------------------------------------------------
 // ManagedSender  (org.tstrans.srt.ManagedSender)
@@ -161,19 +53,16 @@ fn build_receiver_transport_cancellable(
 // handle = Box<PlSender<ManagedTransport<SrtTransport>>>
 // -----------------------------------------------------------------------
 
-/// Backing state for `ManagedSender`. Holds the pipeline shell plus a
-/// reconnect/gap telemetry observer snapshotted at construction (mirrors
-/// `JniManagedMuxSender` in managed_convenience.rs and tst-py's
-/// `PyManagedSender`).
+/// Backing state for `ManagedSender`: just the shell. The reconnect/gap
+/// telemetry, the cancel target and the attempt counters live in the entry's
+/// `Owned` snapshot ([`ManagedSenderSnapshot`]), outside the slot.
 struct JniManagedSender {
     inner: PlSender<ManagedTransport<SrtTransport>>,
-    stats_handle: tst_pipeline::ManagedStatsHandle,
 }
 
-/// Per-type leased-handle registry for `org.tstrans.srt.ManagedSender`. No cancel
-/// hook (single-threaded; the public cancel handle drives reconnect-loop exit).
-static REGISTRY_SENDER: LazyLock<HandleRegistry<JniManagedSender>> =
-    LazyLock::new(HandleRegistry::new);
+/// Per-type `Owned`-backed registry for `org.tstrans.srt.ManagedSender`.
+static REGISTRY_SENDER: LazyLock<OwnedRegistry<JniManagedSender, ManagedSenderSnapshot>> =
+    LazyLock::new(OwnedRegistry::new);
 
 /// Allocate a `ManagedSender` from an SRT caller-mode URL + the 8 flattened
 /// reconnect-policy args. Returns a `jlong` handle on success; throws
@@ -218,7 +107,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedSender_nFromUrl(
                 "ManagedSender.fromUrl requires mode=caller (default); got mode={:?}",
                 parsed.mode
             );
-            super::errors::throw_srt(env, BindingErrorKind::ConfigInvalid, &msg);
+            throw_srt(env, BindingErrorKind::ConfigInvalid, &msg);
             return 0;
         }
 
@@ -236,43 +125,29 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedSender_nFromUrl(
             return 0;
         };
 
-        // Initial connect — the FIRST inner ManagedTransport::new wraps.
-        let initial = match build_sender_transport(&url_str) {
-            Ok(t) => t,
+        // One open path (ARCH-01 / ARCH-08): the initial dial, the reconnect
+        // factory (`SrtUrl::connect` per attempt), the attempt counter and the
+        // cancel/stats/reconnect handles are composed in tst-srt, once.
+        let (inner, handles, stats) = match tst_srt::shells::managed_sender_from_url(
+            &parsed,
+            policy,
+            SenderConfig::default(),
+        ) {
+            Ok(triple) => triple,
             Err(e) => {
-                super::errors::transport_error(env, &e);
+                // Initial connect failure: CONNECT_FAILED (was BROKEN — the
+                // old factory relabelled it; now the same kind the other
+                // three managed shells already reported).
+                super::errors::srt_error(env, e);
                 return 0;
             }
         };
-
-        // Factory for subsequent reconnects. `Fn + Send + Sync + 'static` per
-        // ManagedTransport::new's bound; `move` captures the URL string.
-        let factory = {
-            let url_for_factory = url_str.clone();
-            move || -> Result<SrtTransport, TransportError> {
-                build_sender_transport(&url_for_factory)
-            }
-        };
-
-        let managed = ManagedTransport::new(initial, factory, policy);
-        // Snapshot the stats handle and the cancel target BEFORE moving `managed`
-        // into the shell (same pattern as the convenience wrappers). The target
-        // lives outside the registry's resource lock so `nCancelHandle` returns
-        // while `send` is parked, and `nClose` fires it before taking that lock
-        // (cancel-on-close: a `sendBytes()` parked in the Blocking reconnect ends
-        // CLOSED); `ManagedTransport::cancel_handle` is always Some.
-        let stats_handle = managed.stats_handle();
-        let target = tst_core::transport::Transport::cancel_handle(&managed)
-            .expect("ManagedTransport::cancel_handle is always Some");
-        let inner = PlSender::new(managed, SenderConfig::default());
-        REGISTRY_SENDER.insert_cancel_on_close(
-            JniManagedSender {
-                inner,
-                stats_handle,
-            },
-            target,
-            None,
-        ) as jlong
+        let cancel = Arc::clone(&handles.cancel);
+        REGISTRY_SENDER.insert(Owned::new(
+            JniManagedSender { inner },
+            cancel,
+            ManagedSenderSnapshot { handles, stats },
+        )) as jlong
     })
 }
 
@@ -294,19 +169,10 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedSender_nSendBytes(
             }
         };
 
-        match REGISTRY_SENDER.with_poisoning(handle as u64, |jstruct| jstruct.inner.send_ts(&bytes))
-        {
-            Some(Ok(())) => {}
-            Some(Err(e)) => match e.source {
-                SenderErrorSource::Transport(t) => super::errors::transport_error(env, &t),
-                SenderErrorSource::Framing(f) => {
-                    super::errors::throw_srt(env, BindingErrorKind::ConfigInvalid, &f.to_string())
-                }
-                _ => super::errors::throw_srt(env, BindingErrorKind::SrtIo, &e.to_string()),
-            },
-            None => {
-                crate::error::throw_closed(env, "ManagedSender");
-            }
+        match REGISTRY_SENDER.with_mut(handle as u64, |jstruct| jstruct.inner.send_ts(&bytes)) {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => throw_sender_error(env, &e),
+            Err(state) => throw_handle_state(env, "ManagedSender", &state),
         }
     })
 }
@@ -319,18 +185,10 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedSender_nFlush(
     handle: jlong,
 ) {
     crate::panic::jni_catch(&mut env, (), |env| {
-        match REGISTRY_SENDER.with_poisoning(handle as u64, |jstruct| jstruct.inner.flush()) {
-            Some(Ok(())) => {}
-            Some(Err(e)) => match e.source {
-                SenderErrorSource::Transport(t) => super::errors::transport_error(env, &t),
-                SenderErrorSource::Framing(f) => {
-                    super::errors::throw_srt(env, BindingErrorKind::ConfigInvalid, &f.to_string())
-                }
-                _ => super::errors::throw_srt(env, BindingErrorKind::SrtIo, &e.to_string()),
-            },
-            None => {
-                crate::error::throw_closed(env, "ManagedSender");
-            }
+        match REGISTRY_SENDER.with_mut(handle as u64, |jstruct| jstruct.inner.flush()) {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => throw_sender_error(env, &e),
+            Err(state) => throw_handle_state(env, "ManagedSender", &state),
         }
     })
 }
@@ -344,17 +202,12 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedSender_nCancelHandle(
     handle: jlong,
 ) -> jlong {
     crate::panic::jni_catch(&mut env, 0, |_env| {
-        // Lock-free: the target was captured at registration, so this returns
-        // even while `send` is parked on the resource lock. Closed handle → 0
+        // Lock-free: the view is the `Owned` entry itself, so this returns
+        // even while `send` is parked on the slot. Closed handle → 0
         // (no throw, matching the original contract).
-        match REGISTRY_SENDER.cancel_target(handle as u64) {
-            Some(inner) => JniCancel {
-                inner,
-                flag: AtomicBool::new(false),
-            }
-            .into_handle(),
-            None => 0,
-        }
+        REGISTRY_SENDER
+            .cancel_view(handle as u64)
+            .map_or(0, super::cancel_view_handle)
     })
 }
 
@@ -368,7 +221,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedSender_nSocketStats<'local>(
     handle: jlong,
 ) -> JObject<'local> {
     crate::panic::jni_catch(&mut env, JObject::null(), |env| {
-        let Some(stats) = REGISTRY_SENDER.with(handle as u64, |jstruct| {
+        let Ok(stats) = REGISTRY_SENDER.with_ref(handle as u64, |jstruct| {
             jstruct.inner.socket_stats().unwrap_or_default()
         }) else {
             return JObject::null();
@@ -389,7 +242,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedSender_nSrtStats<'local>(
     _handle: jlong,
 ) -> JObject<'local> {
     crate::panic::jni_catch(&mut env, JObject::null(), |env| {
-        super::errors::throw_srt(
+        throw_srt(
             env,
             BindingErrorKind::SrtIo,
             "srt_stats not available on ManagedSender (use socketStats); a future \
@@ -410,14 +263,14 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedSender_nReconnectStats<'local
     handle: jlong,
 ) -> JObject<'local> {
     crate::panic::jni_catch(&mut env, JObject::null(), |env| {
-        let Some(maybe_stats) =
-            REGISTRY_SENDER.with(handle as u64, |jstruct| jstruct.stats_handle.stats())
-        else {
+        // Lock-free: `ManagedStatsHandle` lives in the snapshot, not the slot,
+        // so this answers while a `sendBytes()` is parked in a reconnect.
+        let Some(maybe_stats) = REGISTRY_SENDER.snapshot(handle as u64, |s| s.stats.stats()) else {
             crate::error::throw_closed(env, "ManagedSender");
             return JObject::null();
         };
         let Some(stats) = maybe_stats else {
-            super::errors::throw_srt(
+            throw_srt(
                 env,
                 BindingErrorKind::SrtIo,
                 "reconnect stats unavailable: gap lock poisoned",
@@ -456,7 +309,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedSender_nIsAlive(
 ) -> jboolean {
     crate::panic::jni_catch(&mut env, 0, |_env| {
         REGISTRY_SENDER
-            .with(handle as u64, |jstruct| u8::from(jstruct.inner.is_alive()))
+            .with_ref(handle as u64, |jstruct| u8::from(jstruct.inner.is_alive()))
             .unwrap_or(0)
     })
 }
@@ -467,18 +320,17 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedSender_nIsAlive(
 // handle = Box<JniManagedReceiver>
 // -----------------------------------------------------------------------
 
-/// Backing state for `ManagedReceiver`. Holds the pipeline shell plus a shared
-/// handle to the `ManagedRecvTransport`'s reconnect counter so callers can read
-/// it even mid-reconnect.
+/// Backing state for `ManagedReceiver`: just the shell. The reconnect counters,
+/// the cancel target and the end-reason cell live in the entry's `Owned`
+/// snapshot ([`ManagedHandles`]), outside the slot, so they answer while a
+/// `recvBytes()` is parked — including a listener-mode re-accept.
 struct JniManagedReceiver {
     inner: PlReceiver<ManagedRecvTransport<SrtTransport>>,
-    reconnects: Arc<AtomicU64>,
 }
 
-/// Per-type leased-handle registry for `org.tstrans.srt.ManagedReceiver`. No
-/// cancel hook (single-threaded; the public cancel handle wakes a parked recv).
-static REGISTRY_RECEIVER: LazyLock<HandleRegistry<JniManagedReceiver>> =
-    LazyLock::new(HandleRegistry::new);
+/// Per-type `Owned`-backed registry for `org.tstrans.srt.ManagedReceiver`.
+static REGISTRY_RECEIVER: LazyLock<OwnedRegistry<JniManagedReceiver, ManagedHandles>> =
+    LazyLock::new(OwnedRegistry::new);
 
 /// Allocate a `ManagedReceiver` from an SRT listener-mode URL + the 8 flattened
 /// reconnect-policy args. Returns a `jlong` handle on success; throws
@@ -519,7 +371,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedReceiver_nFromUrl(
                 "ManagedReceiver.fromUrl requires mode=listener; got mode={:?}",
                 parsed.mode
             );
-            super::errors::throw_srt(env, BindingErrorKind::ConfigInvalid, &msg);
+            throw_srt(env, BindingErrorKind::ConfigInvalid, &msg);
             return 0;
         }
 
@@ -537,44 +389,24 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedReceiver_nFromUrl(
             return 0;
         };
 
-        // Initial bind+accept — the FIRST inner ManagedRecvTransport::new wraps.
-        let initial = match build_receiver_transport(&url_str) {
-            Ok(t) => t,
+        // One open path (ARCH-01 / ARCH-08): the initial bind+accept, the
+        // reconnect factory (whose re-accept is reachable through the managed
+        // `FactoryCancel` slot), the attempt/success counters and the cancel
+        // handle are composed in tst-srt, once.
+        let (inner, handles) = match tst_srt::shells::managed_receiver_from_url(&parsed, policy) {
+            Ok(pair) => pair,
             Err(e) => {
-                super::errors::transport_error(env, &e);
+                super::errors::srt_error(env, e);
                 return 0;
             }
         };
-
-        // FnMut factory for the recv-side (no `Sync` required — it lives entirely
-        // behind `&mut self` on the recv path).
-        // The factory's re-accept is reachable by `cancel()` through this
-        // slot (see `build_receiver_transport_cancellable`).
-        let factory_cancel = Arc::new(tst_pipeline::FactoryCancel::new());
-        let factory: Box<dyn FnMut() -> Result<SrtTransport, TransportError> + Send> = {
-            let url_for_factory = url_str.clone();
-            let fc = Arc::clone(&factory_cancel);
-            Box::new(move || build_receiver_transport_cancellable(&url_for_factory, &fc))
-        };
-
-        let managed =
-            ManagedRecvTransport::new_with_factory_cancel(initial, factory, policy, factory_cancel);
-        // Snapshot the reconnect counter and the cancel target BEFORE moving
-        // `managed` into the shell. The target lives outside the registry's
-        // resource lock so `nCancelHandle` returns while `recvBytes` is parked
-        // (including a listener-mode re-accept); the managed handle follows
-        // reconnects, so one capture at open is enough.
-        let reconnects = managed.reconnects_handle();
-        let target = tst_core::transport::RecvTransport::cancel_handle(&managed)
-            .expect("ManagedRecvTransport::cancel_handle is always Some");
-        let inner = PlReceiver::new(managed, ReceiverConfig::default());
-        // Cancel-on-close: `nClose` fires `target` before taking the resource
-        // lock, so a `recvBytes()` parked on another thread ends with CLOSED
+        // Cancel-on-close: `OwnedRegistry::close` fires the cancel before taking
+        // the slot, so a `recvBytes()` parked on another thread ends with CLOSED
         // instead of holding `close()` hostage (tst-py / C ABI contract).
-        REGISTRY_RECEIVER.insert_cancel_on_close(
-            JniManagedReceiver { inner, reconnects },
-            target,
-            None,
+        let cancel = Arc::clone(&handles.cancel);
+        let end_reason = handles.end_reason.clone();
+        REGISTRY_RECEIVER.insert(
+            Owned::new(JniManagedReceiver { inner }, cancel, handles).with_end_reason(end_reason),
         ) as jlong
     })
 }
@@ -590,11 +422,14 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedReceiver_nRecvBytes(
     _max_len: jint,
 ) -> jbyteArray {
     crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
-        let Some(res) =
-            REGISTRY_RECEIVER.with_poisoning(handle as u64, |jstruct| jstruct.inner.next_packet())
-        else {
-            crate::error::throw_closed(env, "ManagedReceiver");
-            return std::ptr::null_mut();
+        let res = match REGISTRY_RECEIVER
+            .with_mut(handle as u64, |jstruct| jstruct.inner.next_packet())
+        {
+            Ok(res) => res,
+            Err(state) => {
+                throw_handle_state(env, "ManagedReceiver", &state);
+                return std::ptr::null_mut();
+            }
         };
         match res {
             Ok(bytes) => match env.byte_array_from_slice(&bytes) {
@@ -602,17 +437,16 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedReceiver_nRecvBytes(
                 Err(_) => std::ptr::null_mut(),
             },
             Err(e) => {
-                match e.source {
-                    ReceiverErrorSource::Transport(t) => super::errors::transport_error(env, &t),
-                    _ => super::errors::throw_srt(env, BindingErrorKind::SrtIo, &e.to_string()),
-                }
+                throw_receiver_error(env, &e);
                 std::ptr::null_mut()
             }
         }
     })
 }
 
-/// Return the total number of successful reconnect rebuilds.
+/// Total factory invocations since construction (ARCH-08 — was the success
+/// counter). Lock-free: read off the `Owned` snapshot, so it answers while
+/// `recvBytes()` is parked in a re-accept that has not completed.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_org_tstrans_srt_ManagedReceiver_nReconnectAttempts(
     mut env: JNIEnv<'_>,
@@ -621,8 +455,8 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedReceiver_nReconnectAttempts(
 ) -> jlong {
     crate::panic::jni_catch(&mut env, 0, |_env| {
         REGISTRY_RECEIVER
-            .with(handle as u64, |jstruct| {
-                jstruct.reconnects.load(Ordering::Acquire) as jlong
+            .snapshot(handle as u64, |h| {
+                h.attempts.load(Ordering::Acquire) as jlong
             })
             .unwrap_or(0)
     })
@@ -636,17 +470,12 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedReceiver_nCancelHandle(
     handle: jlong,
 ) -> jlong {
     crate::panic::jni_catch(&mut env, 0, |_env| {
-        // Lock-free: the target was captured at registration, so this returns
-        // even while `recvBytes` is parked on the resource lock. Closed handle →
-        // 0 (no throw, matching the original contract).
-        match REGISTRY_RECEIVER.cancel_target(handle as u64) {
-            Some(inner) => JniCancel {
-                inner,
-                flag: AtomicBool::new(false),
-            }
-            .into_handle(),
-            None => 0,
-        }
+        // Lock-free: the view is the `Owned` entry itself, so this returns
+        // even while `recvBytes` is parked on the slot. Closed handle → 0
+        // (no throw, matching the original contract).
+        REGISTRY_RECEIVER
+            .cancel_view(handle as u64)
+            .map_or(0, super::cancel_view_handle)
     })
 }
 
@@ -658,7 +487,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedReceiver_nSocketStats<'local>
     handle: jlong,
 ) -> JObject<'local> {
     crate::panic::jni_catch(&mut env, JObject::null(), |env| {
-        let Some(stats) = REGISTRY_RECEIVER.with(handle as u64, |jstruct| {
+        let Ok(stats) = REGISTRY_RECEIVER.with_ref(handle as u64, |jstruct| {
             jstruct.inner.socket_stats().unwrap_or_default()
         }) else {
             return JObject::null();
@@ -679,7 +508,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedReceiver_nSrtStats<'local>(
     _handle: jlong,
 ) -> JObject<'local> {
     crate::panic::jni_catch(&mut env, JObject::null(), |env| {
-        super::errors::throw_srt(
+        throw_srt(
             env,
             BindingErrorKind::SrtIo,
             "srt_stats not available on ManagedReceiver (use socketStats); a future \
@@ -713,7 +542,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedReceiver_nIsAlive(
 ) -> jboolean {
     crate::panic::jni_catch(&mut env, 0, |_env| {
         REGISTRY_RECEIVER
-            .with(handle as u64, |jstruct| u8::from(jstruct.inner.is_alive()))
+            .with_ref(handle as u64, |jstruct| u8::from(jstruct.inner.is_alive()))
             .unwrap_or(0)
     })
 }

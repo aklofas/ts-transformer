@@ -12,13 +12,13 @@ mod transport;
 
 use std::sync::Arc;
 use std::sync::LazyLock;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use jni::JNIEnv;
 use jni::objects::JClass;
 use jni::sys::{jboolean, jlong};
 use tst_core::transport::TransportCancel;
+use tst_pipeline::binding::ManagedHandles;
 use tst_pipeline::{BackoffStrategy, OverflowPolicy, ReconnectMode, ReconnectPolicy};
 
 use crate::handle::{CancelView, HandleRegistry};
@@ -40,6 +40,26 @@ pub(crate) fn cancel_view_handle(view: CancelView) -> jlong {
 /// A3's inherent accessor is never `Option`.
 pub(crate) fn srt_cancel(t: &tst_srt::SrtTransport) -> Arc<dyn TransportCancel> {
     Arc::new(t.srt_cancel_handle())
+}
+
+/// Construction-constant view of a MANAGED sender (`ManagedSender` /
+/// `ManagedMuxSender`): the handles `tst_srt::shells` composed at open plus the
+/// reconnect/gap telemetry observer. Both live outside the slot, so
+/// `reconnectStats()` / `reconnectAttempts()` answer while a `send*` is parked
+/// in a Blocking reconnect (spec §3.2's snapshot rule).
+pub(crate) struct ManagedSenderSnapshot {
+    /// The open-time handles. `cancel` is consumed by `Owned::new` at
+    /// registration; the counters are kept because the send side reports
+    /// attempts from [`Self::stats`] (`ManagedTransportStats::reconnect_attempts`)
+    /// rather than from `ManagedHandles::attempts`, which A3 maintains on the
+    /// recv side. Held so WP-C1's `is_cancelled` / a `reconnecting()` getter
+    /// have the same snapshot to read as the receivers do.
+    #[expect(
+        dead_code,
+        reason = "send side reads attempts from `stats`; kept for WP-C1"
+    )]
+    pub handles: ManagedHandles,
+    pub stats: tst_pipeline::ManagedStatsHandle,
 }
 
 /// Reconstruct a `tst_pipeline::ReconnectPolicy` from the primitive args the
@@ -111,33 +131,6 @@ pub(crate) fn build_reconnect_policy(
         overflow_policy: overflow,
         mode: recon_mode,
     })
-}
-
-/// Boxed behind a `CancelHandle.handle` for the shells that have NOT yet moved
-/// onto `OwnedRegistry` (the managed srt family — Task B3.4 deletes this type
-/// together with its last callers). The `flag` is this handle's own
-/// observation bit, which is exactly the per-handle semantics B3 replaces;
-/// plain shells already read the shell's one state through [`CancelView`].
-pub(crate) struct JniCancel {
-    pub inner: Arc<dyn TransportCancel + Send + Sync>,
-    pub flag: AtomicBool,
-}
-
-impl crate::handle::CancelSurface for JniCancel {
-    fn cancel(&self) {
-        self.flag.store(true, Ordering::Release);
-        self.inner.cancel();
-    }
-
-    fn is_cancelled(&self) -> bool {
-        self.flag.load(Ordering::Acquire)
-    }
-}
-
-impl JniCancel {
-    pub(crate) fn into_handle(self) -> jlong {
-        cancel_view_handle(CancelView(Arc::new(self)))
-    }
 }
 
 #[unsafe(no_mangle)]
