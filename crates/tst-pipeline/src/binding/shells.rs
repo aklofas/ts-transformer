@@ -77,6 +77,15 @@ impl<R: RecvTransport> Close for ManagedDemuxReceiver<R> {
 /// A raw transport held by a binding object that exposes its SEND side.
 /// `Close::close` is [`Transport::close`]. The field is `pub` so the
 /// binding reaches the transport with one deref inside `with_mut`.
+///
+/// Two reasons this exists rather than a blanket impl or a binding-side
+/// one. The binding crates cannot write `impl Close for SrtTransport` at
+/// all — trait and type are both foreign to them, so the orphan rule
+/// forbids it, which is why the impls live in this crate. And a blanket
+/// `impl<T: Transport> Close for T` here would overlap one over
+/// `RecvTransport`, because a transport may implement both (`SrtTransport`
+/// does). So the binding wraps the transport as the half its object
+/// exposes: `Owned<SendHalf<SrtTransport>>`.
 pub struct SendHalf<T>(pub T);
 
 impl<T: Transport> Close for SendHalf<T> {
@@ -88,7 +97,10 @@ impl<T: Transport> Close for SendHalf<T> {
 }
 
 /// A raw transport held by a binding object that exposes its RECEIVE
-/// side. `Close::close` is [`RecvTransport::close`].
+/// side. `Close::close` is [`RecvTransport::close`] — which has a default
+/// empty body, so this is a no-op for a transport that does not override
+/// it. See [`SendHalf`] for why the halves exist at all (orphan rule +
+/// overlapping blankets).
 pub struct RecvHalf<R>(pub R);
 
 impl<R: RecvTransport> Close for RecvHalf<R> {
@@ -108,7 +120,7 @@ mod tests {
     use tst_core::transport::{TransportCancel, TransportError};
 
     use crate::binding::{FlagCancel, Owned};
-    use crate::{ReceiverConfig, SenderConfig};
+    use crate::{MuxSender, ReceiverConfig, SenderConfig};
 
     /// Send-side mock that records its close.
     struct Sink(Arc<AtomicBool>);
@@ -176,6 +188,34 @@ mod tests {
         assert!(
             closed.load(Ordering::SeqCst),
             "Receiver::close closed its transport (receiver/mod.rs:385)"
+        );
+        assert!(owned.is_closed());
+    }
+
+    #[test]
+    fn owned_close_reaches_the_mux_sender_shell_and_its_transport() {
+        // `MuxSender::close` takes `&self`, unlike the other six shells'
+        // `&mut self` — this pins that the reborrow in its `Close` impl
+        // still reaches the transport.
+        use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
+
+        let closed = Arc::new(AtomicBool::new(false));
+        let cfg = {
+            let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+            prog.add_video(0x1011, VideoCodec::H264);
+            let mut b = MuxerConfig::builder();
+            b.add_program(prog.build());
+            b.build().expect("valid single-program config")
+        };
+        let owned = Owned::new(
+            MuxSender::new(Sink(Arc::clone(&closed)), cfg).expect("MuxSender opens"),
+            cancel(),
+            (),
+        );
+        assert!(owned.close().is_ok());
+        assert!(
+            closed.load(Ordering::SeqCst),
+            "MuxSender::close closed its transport (mux_sender.rs:1017)"
         );
         assert!(owned.is_closed());
     }

@@ -12108,3 +12108,240 @@ reason = "librist 0.2.20 bindgen surface growth 2026-08-30; graduate to [[surfac
 item = "rist_sys::RIST_URL_PARAM_RTT_RESTORE"
 reason = "librist 0.2.20 bindgen surface growth 2026-08-30; graduate to [[surface]] as coverage is asserted"
 
+
+# --- Arc 2 WP-A1 (2026-09): tst_pipeline::binding — Owned handle state machine + panic helpers.
+# Owning tests are the modules' own #[cfg(test)] blocks (same convention as tst_core::cancel).
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::Close"
+owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::Close::close"
+owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::Close::Error"
+owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::CloseFailure"
+owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::FlagCancel"
+owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::Owned"
+owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::owned::Close"
+owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::owned::Close::close"
+owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::owned::Close::Error"
+owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::owned::CloseFailure"
+owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::owned::FlagCancel"
+owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::owned::FlagCancel::cancel"
+owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::owned::FlagCancel::default"
+owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::owned::FlagCancel::fmt"
+owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::owned::FlagCancel::is_set"
+owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::owned::FlagCancel::new"
+owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::owned::HandleState::clone"
+owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::owned::HandleState::eq"
+owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::owned::HandleState::fmt"
+owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::owned::Owned"
+owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::panic::catch"
+owning_tests = ["crates/tst-pipeline/src/binding/panic.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::panic::payload_message"
+owning_tests = ["crates/tst-pipeline/src/binding/panic.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::RecvHalf"
+owning_tests = ["crates/tst-pipeline/src/binding/shells.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::SendHalf"
+owning_tests = ["crates/tst-pipeline/src/binding/shells.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::shells::RecvHalf"
+owning_tests = ["crates/tst-pipeline/src/binding/shells.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::shells::SendHalf"
+owning_tests = ["crates/tst-pipeline/src/binding/shells.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"

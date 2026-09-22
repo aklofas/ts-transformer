@@ -13,10 +13,13 @@
 //! - [`owned`] — [`Owned<T, S>`](owned::Owned): `Mutex<Option<T>>` slot +
 //!   lock-free cancel + construction-time snapshot, with the poison and
 //!   panic policy of spec Arc 2 §3.2 (readers recover, mutators refuse; a
-//!   panic inside a closure is reported, never poisons the slot).
+//!   panic inside a closure is reported, never poisons the mutex).
 //! - [`mod@panic`] — `catch_unwind` + payload-to-string, once, for every
 //!   binding's outer boundary (`ffi_catch` / `jni_catch` delegate here
 //!   once the bindings re-point in Arc 2 WP-B).
+//! - [`shells`] — [`Close`] for the seven pipeline shells, and
+//!   [`SendHalf`] / [`RecvHalf`] for raw transports. These live here
+//!   because the orphan rule forbids the binding crates from writing them.
 
 pub mod owned;
 pub mod panic;
