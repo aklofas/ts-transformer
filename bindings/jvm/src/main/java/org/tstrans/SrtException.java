@@ -32,6 +32,10 @@ public final class SrtException extends BindingException {
          *
          * <p>Before 0.7.0 this surfaced as {@code CLOSED}, indistinguishable
          * from a locally-closed transport.
+         *
+         * <p>Produced when the peer closes a session cleanly (a sender opened
+         * with the sender preset, e.g. via C or a managed sender); the plain
+         * JVM caller shells never see it today.
          */
         END_OF_STREAM
     }

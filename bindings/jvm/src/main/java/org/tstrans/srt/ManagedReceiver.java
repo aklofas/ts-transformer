@@ -13,7 +13,7 @@ import org.tstrans.SrtException;
  * <p>Constructed via {@link #fromUrl(String)} or {@link #fromUrl(String, ReconnectPolicy)}
  * with a {@code srt://[host]:port?mode=listener} URL.
  *
- * <p>{@link #reconnectAttempts()} exposes the total successful reconnect count
+ * <p>{@link #reconnectAttempts()} exposes the total reconnect ATTEMPT count
  * (does NOT include the initial bind+accept).
  *
  * <p><b>Thread safety:</b> a single {@code ManagedReceiver} is NOT thread-safe.
@@ -120,15 +120,24 @@ public final class ManagedReceiver extends NativeHandle {
     }
 
     /**
-     * Total number of successful reconnect rebuilds since construction. Does NOT
+     * Total number of reconnect ATTEMPTS (factory invocations) since
+     * construction, whether or not they succeeded — the same counter
+     * {@link ManagedDemuxReceiver#reconnectAttempts()} reports. Does NOT
      * include the initial bind+accept (which happened in {@link #fromUrl}).
+     *
+     * <p>Answers without waiting for a parked {@code recvBytes()}, including one
+     * parked in a listener-mode re-accept that has not completed — that accept
+     * IS an attempt and is counted here while the success counter is still
+     * behind it.
      *
      * <p>The recv side has no {@link ManagedTransportStats} record yet (that
      * accessor exists only on the send-side {@link ManagedSender} /
      * {@link ManagedMuxSender}) — this counter remains the only reconnect
      * telemetry available here.
      *
-     * @return the successful-reconnect counter
+     * <p>Before 0.7.0 this was the successful-rebuild count.
+     *
+     * @return the reconnect-attempt counter
      * @throws IllegalStateException if the receiver is closed
      */
     public long reconnectAttempts() {
