@@ -45,6 +45,8 @@ use tst_core::mpegts::mux::{
 use crate::error::throw_mux;
 use crate::handle::HandleRegistry;
 use crate::jutil::decode_stream_handle;
+use tst_pipeline::binding::BindingErrorKind;
+use tst_pipeline::binding::kind::kind_of_mux;
 
 /// Per-type leased-handle registry for `org.tstrans.mpegts.Muxer`.
 static REGISTRY: LazyLock<HandleRegistry<Muxer>> = LazyLock::new(HandleRegistry::new);
@@ -161,17 +163,29 @@ pub(crate) fn build_muxer_config_from_arrays<'local>(
     let desc_blob = match env.convert_byte_array(data_desc_bytes) {
         Ok(b) => b,
         Err(_) => {
-            throw_mux(env, "INTERNAL", "failed to read byte[] argument");
+            throw_mux(
+                env,
+                BindingErrorKind::Internal,
+                "failed to read byte[] argument",
+            );
             return Err(());
         }
     };
     let desc_lens = read_int_array(env, data_desc_lens).ok_or(())?;
     if kinds.len() != n || codecs.len() != n || type_codes.len() != n || carries.len() != n {
-        throw_mux(env, "INTERNAL", "stream sibling-array length mismatch");
+        throw_mux(
+            env,
+            BindingErrorKind::Internal,
+            "stream sibling-array length mismatch",
+        );
         return Err(());
     }
     if desc_lens.len() != n {
-        throw_mux(env, "INTERNAL", "dataDescLens length mismatch");
+        throw_mux(
+            env,
+            BindingErrorKind::Internal,
+            "dataDescLens length mismatch",
+        );
         return Err(());
     }
 
@@ -215,7 +229,7 @@ pub(crate) fn build_muxer_config_from_arrays<'local>(
                     _ => {
                         throw_mux(
                             env,
-                            "CONFIG_INVALID",
+                            BindingErrorKind::ConfigInvalid,
                             "DVB subtitle codecs need config not exposed in the JVM binding",
                         );
                         return Err(());
@@ -228,19 +242,27 @@ pub(crate) fn build_muxer_config_from_arrays<'local>(
                 // into a huge usize) and on offset overflow — never panic
                 // across the FFI boundary, in any build profile.
                 let Ok(dl) = usize::try_from(desc_lens[i]) else {
-                    throw_mux(env, "INTERNAL", "negative data-stream descriptor length");
+                    throw_mux(
+                        env,
+                        BindingErrorKind::Internal,
+                        "negative data-stream descriptor length",
+                    );
                     return Err(());
                 };
                 if dl > 0 {
                     let Some(end) = desc_off.checked_add(dl) else {
-                        throw_mux(env, "INTERNAL", "data-stream descriptor offset overflow");
+                        throw_mux(
+                            env,
+                            BindingErrorKind::Internal,
+                            "data-stream descriptor offset overflow",
+                        );
                         return Err(());
                     };
                     let Some(descs) = desc_blob.get(desc_off..end).and_then(split_descriptor_tlvs)
                     else {
                         throw_mux(
                             env,
-                            "CONFIG_INVALID",
+                            BindingErrorKind::ConfigInvalid,
                             "malformed data-stream descriptor TLV",
                         );
                         return Err(());
@@ -254,7 +276,11 @@ pub(crate) fn build_muxer_config_from_arrays<'local>(
                 data_idx += 1;
             }
             _ => {
-                throw_mux(env, "INTERNAL", "unknown stream kind ordinal");
+                throw_mux(
+                    env,
+                    BindingErrorKind::Internal,
+                    "unknown stream kind ordinal",
+                );
                 return Err(());
             }
         }
@@ -435,7 +461,11 @@ pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushDataTo<'local>(
         // or high bits set within u32) up front, rather than truncating.
         let Some(h) = decode_stream_handle(stream_handle_raw, DataStreamHandle::try_from_raw)
         else {
-            throw_mux(env, "INVALID_USAGE", "invalid data stream handle");
+            throw_mux(
+                env,
+                BindingErrorKind::InvalidUsage,
+                "invalid data stream handle",
+            );
             return;
         };
         let Some(buf) = read_mux_bytes(env, &data) else {
@@ -464,7 +494,11 @@ pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushVideoTo<'local>(
     crate::panic::jni_catch(&mut env, (), |env| {
         let Some(h) = decode_stream_handle(stream_handle_raw, VideoStreamHandle::try_from_raw)
         else {
-            throw_mux(env, "INVALID_USAGE", "invalid video stream handle");
+            throw_mux(
+                env,
+                BindingErrorKind::InvalidUsage,
+                "invalid video stream handle",
+            );
             return;
         };
         let Some(buf) = read_mux_bytes(env, &nal) else {
@@ -493,7 +527,11 @@ pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushVideoWireTo<'local>(
     crate::panic::jni_catch(&mut env, (), |env| {
         let Some(h) = decode_stream_handle(stream_handle_raw, VideoStreamHandle::try_from_raw)
         else {
-            throw_mux(env, "INVALID_USAGE", "invalid video stream handle");
+            throw_mux(
+                env,
+                BindingErrorKind::InvalidUsage,
+                "invalid video stream handle",
+            );
             return;
         };
         let Some(buf) = read_mux_bytes(env, &wire) else {
@@ -525,7 +563,11 @@ pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushVideoToWithDts<'local>
     crate::panic::jni_catch(&mut env, (), |env| {
         let Some(h) = decode_stream_handle(stream_handle_raw, VideoStreamHandle::try_from_raw)
         else {
-            throw_mux(env, "INVALID_USAGE", "invalid video stream handle");
+            throw_mux(
+                env,
+                BindingErrorKind::InvalidUsage,
+                "invalid video stream handle",
+            );
             return;
         };
         let Some(buf) = read_mux_bytes(env, &nal) else {
@@ -561,7 +603,11 @@ pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushVideoWireToWithDts<'lo
     crate::panic::jni_catch(&mut env, (), |env| {
         let Some(h) = decode_stream_handle(stream_handle_raw, VideoStreamHandle::try_from_raw)
         else {
-            throw_mux(env, "INVALID_USAGE", "invalid video stream handle");
+            throw_mux(
+                env,
+                BindingErrorKind::InvalidUsage,
+                "invalid video stream handle",
+            );
             return;
         };
         let Some(buf) = read_mux_bytes(env, &wire) else {
@@ -601,7 +647,11 @@ pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushVideoMispTo<'local>(
     crate::panic::jni_catch(&mut env, (), |env| {
         let Some(h) = decode_stream_handle(stream_handle_raw, VideoStreamHandle::try_from_raw)
         else {
-            throw_mux(env, "INVALID_USAGE", "invalid video stream handle");
+            throw_mux(
+                env,
+                BindingErrorKind::InvalidUsage,
+                "invalid video stream handle",
+            );
             return;
         };
         let misp = match build_misp(env, kind, time_status, value) {
@@ -636,7 +686,11 @@ pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushVideoMispToWithDts<'lo
     crate::panic::jni_catch(&mut env, (), |env| {
         let Some(h) = decode_stream_handle(stream_handle_raw, VideoStreamHandle::try_from_raw)
         else {
-            throw_mux(env, "INVALID_USAGE", "invalid video stream handle");
+            throw_mux(
+                env,
+                BindingErrorKind::InvalidUsage,
+                "invalid video stream handle",
+            );
             return;
         };
         let misp = match build_misp(env, kind, time_status, value) {
@@ -674,7 +728,11 @@ pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushKlvTo<'local>(
 ) {
     crate::panic::jni_catch(&mut env, (), |env| {
         let Some(h) = decode_stream_handle(stream_handle_raw, KlvStreamHandle::try_from_raw) else {
-            throw_mux(env, "INVALID_USAGE", "invalid klv stream handle");
+            throw_mux(
+                env,
+                BindingErrorKind::InvalidUsage,
+                "invalid klv stream handle",
+            );
             return;
         };
         let Some(buf) = read_mux_bytes(env, &klv) else {
@@ -703,7 +761,11 @@ pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushAudioTo<'local>(
     crate::panic::jni_catch(&mut env, (), |env| {
         let Some(h) = decode_stream_handle(stream_handle_raw, AudioStreamHandle::try_from_raw)
         else {
-            throw_mux(env, "INVALID_USAGE", "invalid audio stream handle");
+            throw_mux(
+                env,
+                BindingErrorKind::InvalidUsage,
+                "invalid audio stream handle",
+            );
             return;
         };
         let Some(buf) = read_mux_bytes(env, &frames) else {
@@ -732,7 +794,11 @@ pub extern "system" fn Java_org_tstrans_mpegts_Muxer_nPushSubtitleTo<'local>(
     crate::panic::jni_catch(&mut env, (), |env| {
         let Some(h) = decode_stream_handle(stream_handle_raw, SubtitleStreamHandle::try_from_raw)
         else {
-            throw_mux(env, "INVALID_USAGE", "invalid subtitle stream handle");
+            throw_mux(
+                env,
+                BindingErrorKind::InvalidUsage,
+                "invalid subtitle stream handle",
+            );
             return;
         };
         let Some(buf) = read_mux_bytes(env, &payload) else {
@@ -1064,7 +1130,7 @@ fn build_misp(
         _ => {
             throw_mux(
                 env,
-                "INVALID_USAGE",
+                BindingErrorKind::InvalidUsage,
                 "misp kind must be 0 (micro) or 1 (nano)",
             );
             None
@@ -1079,7 +1145,11 @@ fn read_mux_bytes(env: &mut JNIEnv, arr: &JByteArray) -> Option<Vec<u8>> {
     match env.convert_byte_array(arr) {
         Ok(b) => Some(b),
         Err(_) => {
-            throw_mux(env, "INTERNAL", "failed to read byte[] argument");
+            throw_mux(
+                env,
+                BindingErrorKind::Internal,
+                "failed to read byte[] argument",
+            );
             None
         }
     }
@@ -1109,17 +1179,10 @@ fn closed(env: &mut JNIEnv) {
 /// `mux_error_to_pyerr` (route via the 5-variant `MuxErrorKind`). Each
 /// inline literal is what the error-mapping ratchet greps for.
 pub(crate) fn throw_mux_error(env: &mut JNIEnv, e: &MuxError) {
-    use tst_core::error::MuxErrorKind::*;
-    let msg = e.to_string();
-    match e.kind() {
-        InputMalformed => throw_mux(env, "INPUT_MALFORMED", &msg),
-        ConfigInvalid => throw_mux(env, "CONFIG_INVALID", &msg),
-        InvalidUsage => throw_mux(env, "INVALID_USAGE", &msg),
-        Backpressure => throw_mux(env, "BACKPRESSURE", &msg),
-        Internal => throw_mux(env, "INTERNAL", &msg),
-        // MuxErrorKind is non-exhaustive; forward-compat catch-all.
-        _ => throw_mux(env, "INTERNAL", &msg),
-    }
+    // A2's classifier, not the coarse `MuxErrorKind` bucket: `InvalidNal`,
+    // `KlvTooLarge`, `InvalidAv1Obu` and `MispTime` now get their own members
+    // (all four were `INPUT_MALFORMED`); everything else keeps its bucket.
+    crate::error::throw_mux(env, kind_of_mux(e), &e.to_string());
 }
 
 /// Read a Java `int[]` into a `Vec<i32>`, or throw INTERNAL + return `None` on a
@@ -1128,13 +1191,21 @@ fn read_int_array(env: &mut JNIEnv, arr: &JIntArray) -> Option<Vec<i32>> {
     let len = match env.get_array_length(arr) {
         Ok(l) => l as usize,
         Err(_) => {
-            throw_mux(env, "INTERNAL", "failed to read int[] length");
+            throw_mux(
+                env,
+                BindingErrorKind::Internal,
+                "failed to read int[] length",
+            );
             return None;
         }
     };
     let mut v = vec![0i32; len];
     if env.get_int_array_region(arr, 0, &mut v).is_err() {
-        throw_mux(env, "INTERNAL", "failed to read int[] region");
+        throw_mux(
+            env,
+            BindingErrorKind::Internal,
+            "failed to read int[] region",
+        );
         return None;
     }
     Some(v)
@@ -1146,13 +1217,21 @@ fn read_boolean_array(env: &mut JNIEnv, arr: &JBooleanArray) -> Option<Vec<u8>> 
     let len = match env.get_array_length(arr) {
         Ok(l) => l as usize,
         Err(_) => {
-            throw_mux(env, "INTERNAL", "failed to read boolean[] length");
+            throw_mux(
+                env,
+                BindingErrorKind::Internal,
+                "failed to read boolean[] length",
+            );
             return None;
         }
     };
     let mut v = vec![0u8; len];
     if env.get_boolean_array_region(arr, 0, &mut v).is_err() {
-        throw_mux(env, "INTERNAL", "failed to read boolean[] region");
+        throw_mux(
+            env,
+            BindingErrorKind::Internal,
+            "failed to read boolean[] region",
+        );
         return None;
     }
     Some(v)
@@ -1171,7 +1250,7 @@ fn video_codec(env: &mut JNIEnv, ordinal: i32) -> Option<VideoCodec> {
         other => {
             throw_mux(
                 env,
-                "CONFIG_INVALID",
+                BindingErrorKind::ConfigInvalid,
                 &format!("unknown VideoCodec ordinal {other}"),
             );
             None
@@ -1191,7 +1270,7 @@ fn audio_codec(env: &mut JNIEnv, ordinal: i32) -> Option<AudioCodec> {
         other => {
             throw_mux(
                 env,
-                "CONFIG_INVALID",
+                BindingErrorKind::ConfigInvalid,
                 &format!("unknown AudioCodec ordinal {other}"),
             );
             None
@@ -1225,7 +1304,7 @@ fn klv_type(env: &mut JNIEnv, ordinal: i32) -> Option<KlvStreamType> {
         other => {
             throw_mux(
                 env,
-                "CONFIG_INVALID",
+                BindingErrorKind::ConfigInvalid,
                 &format!("unknown KlvStreamType ordinal {other}"),
             );
             None
@@ -1244,7 +1323,7 @@ fn av1_mode(env: &mut JNIEnv, ordinal: i32) -> Option<Av1CarriageMode> {
         other => {
             throw_mux(
                 env,
-                "CONFIG_INVALID",
+                BindingErrorKind::ConfigInvalid,
                 &format!("unknown Av1CarriageMode ordinal {other}"),
             );
             None

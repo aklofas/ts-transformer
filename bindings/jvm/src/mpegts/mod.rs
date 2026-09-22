@@ -50,6 +50,8 @@ use crate::codec::shared::{build_nal_unit, build_obu};
 use crate::error::{map_codec_parse_error, throw_demux};
 use crate::handle::HandleRegistry;
 use crate::jutil::enum_const;
+use tst_pipeline::binding::BindingErrorKind;
+use tst_pipeline::binding::kind::kind_of_demux;
 
 /// Per-type leased-handle registry for `org.tstrans.mpegts.Demuxer`.
 static REGISTRY: LazyLock<HandleRegistry<Demuxer>> = LazyLock::new(HandleRegistry::new);
@@ -148,7 +150,7 @@ pub(crate) fn build_demux_config_from_args(
             // wrong carriage.
             throw_demux(
                 env,
-                "INTERNAL",
+                BindingErrorKind::Internal,
                 &format!("unknown Av1CarriageMode ordinal {other}"),
             );
             return None;
@@ -204,7 +206,11 @@ pub extern "system" fn Java_org_tstrans_mpegts_Demuxer_nFeed<'local>(
         let buf = match env.convert_byte_array(&bytes) {
             Ok(b) => b,
             Err(_) => {
-                throw_demux(env, "INTERNAL", "failed to read byte[] argument");
+                throw_demux(
+                    env,
+                    BindingErrorKind::Internal,
+                    "failed to read byte[] argument",
+                );
                 return;
             }
         };
@@ -225,15 +231,11 @@ pub extern "system" fn Java_org_tstrans_mpegts_Demuxer_nFeed<'local>(
 ///
 /// Shared by `nFeed` and the srt `DemuxReceiver.nNext` demux-error arm.
 pub(crate) fn throw_demux_error(env: &mut JNIEnv, e: &DemuxError) {
-    match e {
-        DemuxError::SyncBufExhausted { .. } => throw_demux(env, "SYNC_LOSS", &e.to_string()),
-        DemuxError::MalformedPsi { .. } => throw_demux(env, "BAD_PMT", &e.to_string()),
-        DemuxError::MalformedPes { .. } => throw_demux(env, "BAD_PES", &e.to_string()),
-        DemuxError::StrictRejection(_) => throw_demux(env, "STRICT_REJECTION", &e.to_string()),
-        DemuxError::Unrecoverable { .. } => throw_demux(env, "INTERNAL", &e.to_string()),
-        // DemuxError is marked non-exhaustive; forward-compat catch-all.
-        _ => throw_demux(env, "INTERNAL", &e.to_string()),
-    }
+    // A2's classifier, not a local table: `UNRECOVERABLE` / `MALFORMED_PSI` /
+    // `MALFORMED_PES` / `SYNC_BUF_EXHAUSTED` each get their own member (they
+    // were `INTERNAL` / `BAD_PMT` / `BAD_PES` / `SYNC_LOSS`); `STRICT_REJECTION`
+    // is unchanged and A2's K7 wildcard is `Internal`.
+    crate::error::throw_demux(env, kind_of_demux(e), &e.to_string());
 }
 
 /// `nFlush(handle)` — flush in-flight PES reassembly (call once at EOF).
@@ -280,7 +282,7 @@ pub extern "system" fn Java_org_tstrans_mpegts_Demuxer_nNextEvent<'local>(
                     // guard should a future skip-worthy variant appear.
                     Ok(None) => continue,
                     Err(()) => {
-                        throw_demux(env, "INTERNAL", "event conversion failed");
+                        throw_demux(env, BindingErrorKind::Internal, "event conversion failed");
                         return JObject::null().into_raw();
                     }
                 }
@@ -316,7 +318,11 @@ pub extern "system" fn Java_org_tstrans_mpegts_DemuxEventVideoNatives_nSplitVide
         let raw_bytes = match env.convert_byte_array(&raw) {
             Ok(b) => b,
             Err(_) => {
-                throw_demux(env, "INTERNAL", "failed to read byte[] argument");
+                throw_demux(
+                    env,
+                    BindingErrorKind::Internal,
+                    "failed to read byte[] argument",
+                );
                 return std::ptr::null_mut();
             }
         };
@@ -332,7 +338,7 @@ pub extern "system" fn Java_org_tstrans_mpegts_DemuxEventVideoNatives_nSplitVide
             other => {
                 throw_demux(
                     env,
-                    "INTERNAL",
+                    BindingErrorKind::Internal,
                     &format!("unknown VideoCodec ordinal {other}"),
                 );
                 return std::ptr::null_mut();
@@ -344,7 +350,7 @@ pub extern "system" fn Java_org_tstrans_mpegts_DemuxEventVideoNatives_nSplitVide
             other => {
                 throw_demux(
                     env,
-                    "INTERNAL",
+                    BindingErrorKind::Internal,
                     &format!("unknown Av1CarriageMode ordinal {other}"),
                 );
                 return std::ptr::null_mut();
@@ -355,7 +361,7 @@ pub extern "system" fn Java_org_tstrans_mpegts_DemuxEventVideoNatives_nSplitVide
         match build_video_units(env, &payload) {
             Ok(list) => list.into_raw(),
             Err(()) => {
-                throw_demux(env, "INTERNAL", "video unit split failed");
+                throw_demux(env, BindingErrorKind::Internal, "video unit split failed");
                 std::ptr::null_mut()
             }
         }
@@ -387,7 +393,11 @@ pub extern "system" fn Java_org_tstrans_mpegts_DemuxEventAudioNatives_nParseAudi
         let raw_bytes = match env.convert_byte_array(&raw) {
             Ok(b) => b,
             Err(_) => {
-                throw_demux(env, "INTERNAL", "failed to read byte[] argument");
+                throw_demux(
+                    env,
+                    BindingErrorKind::Internal,
+                    "failed to read byte[] argument",
+                );
                 return std::ptr::null_mut();
             }
         };
@@ -403,7 +413,7 @@ pub extern "system" fn Java_org_tstrans_mpegts_DemuxEventAudioNatives_nParseAudi
             other => {
                 throw_demux(
                     env,
-                    "INTERNAL",
+                    BindingErrorKind::Internal,
                     &format!("unknown AudioCodec ordinal {other}"),
                 );
                 return std::ptr::null_mut();

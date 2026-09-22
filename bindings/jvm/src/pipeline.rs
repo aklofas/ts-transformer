@@ -32,6 +32,8 @@ use tst_pipeline::ext::pairing::{
 use crate::error::throw_demux;
 use crate::handle::HandleRegistry;
 use crate::jutil::enum_const;
+use tst_pipeline::binding::BindingErrorKind;
+
 use crate::mpegts::{
     build_demux_config_from_args, build_stream_id, build_video_units, convert_event, metadata_kind,
     opt_long, throw_demux_error, video_codec_name, wrap_heap_byte_buffer,
@@ -148,7 +150,11 @@ pub extern "system" fn Java_org_tstrans_pipeline_Pairer_nFeed<'local>(
         let buf = match env.convert_byte_array(&bytes) {
             Ok(b) => b,
             Err(_) => {
-                throw_demux(env, "INTERNAL", "failed to read byte[] argument");
+                throw_demux(
+                    env,
+                    BindingErrorKind::Internal,
+                    "failed to read byte[] argument",
+                );
                 return JObject::null().into_raw();
             }
         };

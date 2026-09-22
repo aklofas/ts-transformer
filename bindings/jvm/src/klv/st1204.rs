@@ -22,6 +22,7 @@ use tst_core::klv::st1204::{CoreId, IdType, St1204Error, decode, encode_to_vec};
 
 use crate::error::throw_klv_decode;
 use crate::jutil::require_non_null;
+use tst_pipeline::binding::BindingErrorKind;
 
 // ── IdType helpers ────────────────────────────────────────────────────────────
 
@@ -64,12 +65,16 @@ fn id_type_from_ordinal<'local>(
 fn map_st1204_error(env: &mut JNIEnv, e: &St1204Error) {
     let msg = e.to_string();
     match e {
-        St1204Error::Truncated => throw_klv_decode(env, "TRUNCATED_SET", &msg),
+        St1204Error::Truncated => {
+            throw_klv_decode(env, BindingErrorKind::KlvDecodeTruncatedSet, &msg)
+        }
         St1204Error::TrailingBytes
         | St1204Error::UnsupportedVersion(_)
         | St1204Error::ReservedBitsSet
-        | St1204Error::InvalidUsage => throw_klv_decode(env, "MALFORMED_BYTES", &msg),
-        _ => throw_klv_decode(env, "MALFORMED_BYTES", &msg),
+        | St1204Error::InvalidUsage => {
+            throw_klv_decode(env, BindingErrorKind::KlvDecodeMalformedBytes, &msg)
+        }
+        _ => throw_klv_decode(env, BindingErrorKind::KlvDecodeMalformedBytes, &msg),
     }
 }
 
@@ -90,7 +95,7 @@ fn build_core_id(env: &mut JNIEnv<'_>, id: &CoreId) -> jni::errors::Result<jobje
         if ordinal < 0 {
             throw_klv_decode(
                 env,
-                "INTERNAL",
+                BindingErrorKind::Internal,
                 "Unknown IdType variant from Rust st1204 decoder",
             );
             return Err(jni::errors::Error::JavaException);
@@ -108,7 +113,7 @@ fn build_core_id(env: &mut JNIEnv<'_>, id: &CoreId) -> jni::errors::Result<jobje
         if ordinal < 0 {
             throw_klv_decode(
                 env,
-                "INTERNAL",
+                BindingErrorKind::Internal,
                 "Unknown IdType variant from Rust st1204 decoder",
             );
             return Err(jni::errors::Error::JavaException);
@@ -192,7 +197,7 @@ fn read_nullable_id_type(
         other => {
             throw_klv_decode(
                 env,
-                "MALFORMED_BYTES",
+                BindingErrorKind::KlvDecodeMalformedBytes,
                 &format!("unknown IdType ordinal {other} in CoreId record"),
             );
             return Err(jni::errors::Error::JavaException);
@@ -470,7 +475,7 @@ fn build_violation<'local>(
         _ => {
             throw_klv_decode(
                 env,
-                "INTERNAL",
+                BindingErrorKind::Internal,
                 "Unknown MismmsViolation variant from Rust validator crossing the JNI boundary",
             );
             return Err(jni::errors::Error::JavaException);
