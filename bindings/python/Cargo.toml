@@ -24,31 +24,35 @@ doctest    = false
 # selection without `hls`) is the only way to omit it. See
 # docs/project/deferred-features.md.
 default = ["rtp", "srt", "udp", "tcp", "rist", "pipeline", "hls", "tls"]
-# `rtp` pulls tst-rtp + tst-pipeline (the latter for the
-# `MuxSender<RtpTransport>` / `DemuxReceiver<RtpRecvTransport>`
-# convenience wrappers added by Wave B Task 23) + secrecy (for
-# RtspClientBuilder::auth + server-side auth password wrapping).
+# `rtp` pulls tst-rtp + secrecy (for RtspClientBuilder::auth + server-side
+# auth password wrapping). The `MuxSender<RtpTransport>` /
+# `DemuxReceiver<RtpRecvTransport>` convenience wrappers come from
+# tst-pipeline, which is an unconditional dependency (see `pipeline` below).
 # `tst-rtp?/rtsp-server` — tst-py ships the RTSP push server (mounts), so
 # this forwards tst-rtp's default-on server feature explicitly (tst-py
 # itself sets `default-features = false` on tst-rtp below).
-rtp     = ["dep:tst-rtp", "dep:tst-pipeline", "dep:secrecy", "tst-rtp?/rtsp-server"]
-# `srt` pulls tst-srt + tst-pipeline (shared with rtp) + secrecy
+rtp     = ["dep:tst-rtp", "dep:secrecy", "tst-rtp?/rtsp-server"]
+# `srt` pulls tst-srt + secrecy
 # (for passphrase wrapping in SocketBuilder; matches the rtp pattern of
 # wrapping user-passed passwords in `SecretString` before handing them
 # to the Rust builder).
-srt     = ["dep:tst-srt", "dep:tst-pipeline", "dep:secrecy"]
+srt     = ["dep:tst-srt", "dep:secrecy"]
 # Plan A5b — udp / tcp / hls / rist transports (all default-on, matching
 # rtp/srt; PyPI wheels ship everything). `hls` pulls tst-hls (with its
-# `serve` feature for the built-in HTTP server) + tst-pipeline (MuxPublisher
-# shell). `rist` pulls secrecy for AES PSK wrapping AND tst-rist's `mbedtls`
+# `serve` feature for the built-in HTTP server; the MuxPublisher shell comes
+# from the unconditional tst-pipeline). `rist` pulls secrecy for AES PSK
+# wrapping AND tst-rist's `mbedtls`
 # so `EncryptionKey` PSKs actually encrypt (without it every encrypted
 # config raises RistError(ENCRYPTION_DISABLED) at build time).
 udp     = ["dep:tst-udp"]
 tcp     = ["dep:tst-tcp"]
-hls     = ["dep:tst-hls", "tst-hls?/serve", "dep:tst-pipeline"]
+hls     = ["dep:tst-hls", "tst-hls?/serve"]
 rist    = ["dep:tst-rist", "tst-rist/mbedtls", "dep:secrecy"]
-# pipeline pulls tst-pipeline for the ext::pairing PairingDemuxer composite.
-pipeline = ["dep:tst-pipeline"]
+# `pipeline` gates the ext::pairing PairingDemuxer composite. tst-pipeline
+# itself is an UNCONDITIONAL dependency since Arc 2 WP-B2: `src/raise.rs`
+# (the one Rust->Python raise path) and the mux / demux / klv / codec error
+# mappers use `tst_pipeline::binding` in every build, transports or not.
+pipeline = []
 # `tls` (default-on, ships in wheels) lights up the rustls-backed encrypted
 # variants of whichever transports are also enabled (weak deps — it never
 # pulls a transport in by itself): `rtsps://` client + server (tst-rtp),
@@ -68,7 +72,7 @@ tls = ["tst-rtp?/tls", "tst-rtp?/rtsp-server-tls", "tst-tcp?/tls", "tst-hls?/tls
 
 [dependencies]
 tst-core     = { path = "../../crates/tst-core" }
-tst-pipeline = { path = "../../crates/tst-pipeline", optional = true }
+tst-pipeline = { path = "../../crates/tst-pipeline" }
 tst-rtp      = { path = "../../crates/tst-rtp", default-features = false, optional = true }
 tst-srt      = { path = "../../crates/tst-srt", optional = true }
 tst-udp      = { path = "../../crates/tst-udp", default-features = false, optional = true }

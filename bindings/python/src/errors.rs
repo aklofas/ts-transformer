@@ -115,6 +115,26 @@ make_error_fn!(make_tcp_error, "Tcp", cfg(feature = "tcp"));
 make_error_fn!(make_hls_error, "Hls", cfg(feature = "hls"));
 make_error_fn!(make_rist_error, "Rist", cfg(feature = "rist"));
 
+/// Test-only: raise `member` (a `BindingErrorKind::name()` string) through
+/// the real raise path, so the pytest kind-wiring suites exercise `raise.rs`
+/// instead of a parallel literal-string mapper.
+#[cfg(any(
+    feature = "srt",
+    feature = "udp",
+    feature = "tcp",
+    feature = "hls",
+    feature = "rist"
+))]
+fn raise_for_test(py: Python<'_>, d: &crate::raise::Domain, member: &str, message: &str) -> PyErr {
+    match crate::raise::kind_by_name(d, member) {
+        Some(k) => crate::raise::raise(py, d, tst_pipeline::binding::BindingError::new(k, message)),
+        None => pyo3::exceptions::PyValueError::new_err(format!(
+            "{} has no kind with member {member}",
+            d.kind_enum
+        )),
+    }
+}
+
 /// Test helper: forces a `MuxError` raise from Rust, used by
 /// `test_error_wiring.py` to confirm end-to-end wiring. Exposed only
 /// under the `_native._raise_mux_error_for_test` name.
@@ -126,64 +146,58 @@ pub fn raise_mux_error_for_test(py: Python<'_>, message: &str) -> PyResult<()> {
 
 /// Test helper: forces an `SrtError` raise from Rust, exposed as
 /// `_native._raise_srt_error_for_test` so `test_error_wiring.py` can
-/// confirm end-to-end wiring for a caller-supplied kind. (The kind
-/// argument is a runtime `&str`, so this call site is invisible to
-/// the literal-kind grep in `scripts/check/python/error-mapping-coverage.sh`
-/// — that ratchet is covered by the mapper functions' own literal
-/// call sites, not by this helper.)
+/// confirm end-to-end wiring for a caller-supplied kind. The kind is a
+/// `BindingErrorKind::name()` member string resolved against the domain's
+/// `KINDS` table, so an unknown member is a `ValueError`, not a silent pass.
 #[cfg(feature = "srt")]
 #[pyfunction]
 #[pyo3(name = "_raise_srt_error_for_test")]
 pub fn raise_srt_error_for_test(py: Python<'_>, kind: &str, message: &str) -> PyResult<()> {
-    Err(make_srt_error(py, kind, message))
+    Err(raise_for_test(py, &crate::raise::SRT, kind, message))
 }
 
 /// Test helper: forces a `UdpError` raise from Rust, exposed as
 /// `_native._raise_udp_error_for_test` so `test_error_wiring.py` can
-/// confirm end-to-end wiring for a caller-supplied kind. (Runtime
-/// `&str` kind — not visible to the error-mapping-coverage ratchet;
-/// see the `srt` helper above.)
+/// confirm end-to-end wiring for a caller-supplied kind (a
+/// `BindingErrorKind::name()` member string; see the `srt` helper above).
 #[cfg(feature = "udp")]
 #[pyfunction]
 #[pyo3(name = "_raise_udp_error_for_test")]
 pub fn raise_udp_error_for_test(py: Python<'_>, kind: &str, message: &str) -> PyResult<()> {
-    Err(make_udp_error(py, kind, message))
+    Err(raise_for_test(py, &crate::raise::UDP, kind, message))
 }
 
 /// Test helper: forces a `TcpError` raise from Rust, exposed as
 /// `_native._raise_tcp_error_for_test` so `test_error_wiring.py` can
-/// confirm end-to-end wiring for a caller-supplied kind. (Runtime
-/// `&str` kind — not visible to the error-mapping-coverage ratchet;
-/// see the `srt` helper above.)
+/// confirm end-to-end wiring for a caller-supplied kind (a
+/// `BindingErrorKind::name()` member string; see the `srt` helper above).
 #[cfg(feature = "tcp")]
 #[pyfunction]
 #[pyo3(name = "_raise_tcp_error_for_test")]
 pub fn raise_tcp_error_for_test(py: Python<'_>, kind: &str, message: &str) -> PyResult<()> {
-    Err(make_tcp_error(py, kind, message))
+    Err(raise_for_test(py, &crate::raise::TCP, kind, message))
 }
 
 /// Test helper: forces an `HlsError` raise from Rust, exposed as
 /// `_native._raise_hls_error_for_test` so `test_error_wiring.py` can
-/// confirm end-to-end wiring for a caller-supplied kind. (Runtime
-/// `&str` kind — not visible to the error-mapping-coverage ratchet;
-/// see the `srt` helper above.)
+/// confirm end-to-end wiring for a caller-supplied kind (a
+/// `BindingErrorKind::name()` member string; see the `srt` helper above).
 #[cfg(feature = "hls")]
 #[pyfunction]
 #[pyo3(name = "_raise_hls_error_for_test")]
 pub fn raise_hls_error_for_test(py: Python<'_>, kind: &str, message: &str) -> PyResult<()> {
-    Err(make_hls_error(py, kind, message))
+    Err(raise_for_test(py, &crate::raise::HLS, kind, message))
 }
 
 /// Test helper: forces a `RistError` raise from Rust, exposed as
 /// `_native._raise_rist_error_for_test` so `test_error_wiring.py` can
-/// confirm end-to-end wiring for a caller-supplied kind. (Runtime
-/// `&str` kind — not visible to the error-mapping-coverage ratchet;
-/// see the `srt` helper above.)
+/// confirm end-to-end wiring for a caller-supplied kind (a
+/// `BindingErrorKind::name()` member string; see the `srt` helper above).
 #[cfg(feature = "rist")]
 #[pyfunction]
 #[pyo3(name = "_raise_rist_error_for_test")]
 pub fn raise_rist_error_for_test(py: Python<'_>, kind: &str, message: &str) -> PyResult<()> {
-    Err(make_rist_error(py, kind, message))
+    Err(raise_for_test(py, &crate::raise::RIST, kind, message))
 }
 
 // ---------------------------------------------------------------------------
