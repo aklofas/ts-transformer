@@ -239,6 +239,9 @@ jobs:
       - name: Pipeline kind-classification coverage
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/rust/pipeline-kind-classification.sh
+      - name: Kind-table coverage (tst-core variants → BindingErrorKind)
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/check/rust/kind-table-coverage.sh
       - name: Raw C mapper variant coverage
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/c/raw-mapper-coverage.sh
