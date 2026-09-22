@@ -1437,6 +1437,46 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   permissions); the in-tree ledger `docs/project/ci-health.csv` is appended
   by the maintainer at closeouts.
 
+### Changed — binding layer (WP-A1)
+
+- (pending)
+
+### Changed — error kinds (WP-A2)
+
+- (pending)
+
+### Added — SRT open path + managed handles (WP-A3)
+
+- (pending)
+
+### Changed — C binding (WP-B1)
+
+- (pending)
+
+### Changed — Python binding (WP-B2)
+
+- (pending)
+
+### Changed — JVM binding (WP-B3)
+
+- (pending)
+
+### Changed — cancel contract (WP-C)
+
+- (pending)
+
+### Added — UDP/RIST cancel handles (WP-D)
+
+- (pending)
+
+### Testing — rails (R1/R2)
+
+- (pending)
+
+### Added — C ABI 0.22 (R3/R4)
+
+- (pending)
+
 ---
 
 ## [0.6.0] — 2026-09-01
