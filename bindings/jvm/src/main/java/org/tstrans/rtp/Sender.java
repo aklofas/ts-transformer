@@ -36,7 +36,12 @@ public final class Sender extends NativeHandle {
      * @param pktSize UDP datagram size (RTP header + TS payload); must be &ge; 0
      * @param ssrc    RTP synchronization source identifier (unsigned 32-bit), or
      *                {@code null} to let the transport pick a random one
-     * @throws RtpException {@code IO} on URL-parse / bind / connect failure
+     * @throws RtpException one member per open-path cause: {@code URL} on a
+     *     malformed URL or a rejected URL parameter, {@code PAYLOAD_TYPE_PARAM}
+     *     for a {@code ?pt=} on an MPEG-TS sender, {@code HOST_NOT_LITERAL} if
+     *     the host is not a literal address, {@code IFACE_UNSUPPORTED} for an
+     *     unsupported multicast interface, {@code IO} on the socket bind /
+     *     connect itself
      * @throws IllegalArgumentException if {@code pktSize} is negative or {@code ssrc} is out of u32 range
      */
     public static Sender fromUrl(String url, int pktSize, Long ssrc) throws RtpException {

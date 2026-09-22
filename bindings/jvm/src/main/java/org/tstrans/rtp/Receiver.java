@@ -30,7 +30,13 @@ public final class Receiver extends NativeHandle {
      *  multicast). The receive buffer sizes itself to the transport's
      *  deliverable ceiling; {@code ?pkt_size=} on a receiver URL is rejected.
      *
-     * @throws RtpException {@code IO} on URL-parse / bind failure
+     * @throws RtpException one member per open-path cause: {@code URL} on a
+     *     malformed URL or a rejected URL parameter (a {@code ?pkt_size=} on a
+     *     receiver URL lands here), {@code PAYLOAD_TYPE_PARAM} if the URL
+     *     carries {@code ?pt=} (that is elementary RTP — use
+     *     {@link H264Receiver}), {@code HOST_NOT_LITERAL} if the host is not a
+     *     literal address, {@code IFACE_UNSUPPORTED} for an unsupported
+     *     multicast interface, {@code IO} on the socket bind itself
      */
     public static Receiver fromUrl(String url) throws RtpException {
         long h = nFromUrl(url);
@@ -45,7 +51,7 @@ public final class Receiver extends NativeHandle {
      *
      * @throws IllegalStateException if the receiver is closed
      * @throws RtpException {@code CLOSED} if a cancel fired; {@code IO} otherwise;
-     *     {@code TIMEOUT} if a configured persistent recv deadline (the
+     *     {@code BACKPRESSURE} if a configured persistent recv deadline (the
      *     {@code ?recv_timeout=<ms>} URL knob) expires
      * @see #recv(Integer) for a per-call deadline instead of (or on top of) a
      *     persistent one
@@ -67,9 +73,9 @@ public final class Receiver extends NativeHandle {
      *     "immediate timeout" or rejected-argument case.
      * @throws IllegalStateException if the receiver is closed
      * @throws RtpException {@code CLOSED} if a cancel fired; {@code IO}
-     *     otherwise; {@code TIMEOUT} if {@code timeoutMs} elapses, or (when
-     *     {@code timeoutMs} is {@code null}) a configured persistent recv
-     *     deadline expires
+     *     otherwise; {@code BACKPRESSURE} if {@code timeoutMs} elapses, or
+     *     (when {@code timeoutMs} is {@code null}) a configured persistent
+     *     recv deadline expires
      */
     public byte[] recv(Integer timeoutMs) throws RtpException {
         ensureOpen("Receiver is closed");
