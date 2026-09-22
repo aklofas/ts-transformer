@@ -159,8 +159,6 @@ impl CancelSource {
     }
 
     /// The trait-object view `Owned::new` takes.
-    // First consumers land with the per-class `Owned` re-points (B2.4+).
-    #[allow(dead_code)]
     pub(crate) fn as_dyn(self: &Arc<Self>) -> Arc<dyn TransportCancel + Send + Sync> {
         Arc::clone(self) as Arc<dyn TransportCancel + Send + Sync>
     }

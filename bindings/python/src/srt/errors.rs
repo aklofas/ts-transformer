@@ -43,7 +43,6 @@ use pyo3::prelude::*;
 
 use tst_core::transport::TransportError;
 use tst_srt::UrlError;
-use tst_srt::error::{AcceptError, BindError, ConnectError, IoError};
 
 use crate::errors::make_srt_error;
 
@@ -58,78 +57,6 @@ use crate::errors::make_srt_error;
 /// are all caller-misconfiguration by definition.
 pub(crate) fn url_error_to_pyerr(py: Python<'_>, e: UrlError) -> PyErr {
     make_srt_error(py, "CONFIG_INVALID", &e.to_string())
-}
-
-/// Map a `tst_srt::ConnectError` (raised by `Socket::connect_with`) to
-/// a `tstrans.exceptions.SrtError`. Exhaustive match against the 8
-/// concrete variants today, plus a wildcard arm for
-/// `#[non_exhaustive]` additions.
-pub(crate) fn connect_error_to_pyerr(py: Python<'_>, e: ConnectError) -> PyErr {
-    let msg = e.to_string();
-    match e {
-        ConnectError::InvalidAddress(_) | ConnectError::InvalidOption(_) => {
-            make_srt_error(py, "CONFIG_INVALID", &msg)
-        }
-        ConnectError::TimedOut => make_srt_error(py, "TIMEOUT", &msg),
-        ConnectError::Refused
-        | ConnectError::BadEncryption { .. }
-        | ConnectError::Rejected { .. }
-        | ConnectError::System(_)
-        | ConnectError::Other { .. } => make_srt_error(py, "CONNECT_FAILED", &msg),
-        // Catch-all for future #[non_exhaustive] additions — surface as
-        // CONNECT_FAILED since the variant describes a failed handshake.
-        _ => make_srt_error(py, "CONNECT_FAILED", &msg),
-    }
-}
-
-/// Map a `tst_srt::BindError` (raised by `Listener::bind_with`) to a
-/// `tstrans.exceptions.SrtError`. Exhaustive match against the 6
-/// concrete variants today.
-pub(crate) fn bind_error_to_pyerr(py: Python<'_>, e: BindError) -> PyErr {
-    let msg = e.to_string();
-    match e {
-        BindError::InvalidAddress(_) | BindError::InvalidOption(_) => {
-            make_srt_error(py, "CONFIG_INVALID", &msg)
-        }
-        BindError::AddressInUse
-        | BindError::PermissionDenied
-        | BindError::System(_)
-        | BindError::Other { .. } => make_srt_error(py, "CONNECT_FAILED", &msg),
-        // Catch-all for #[non_exhaustive] additions.
-        _ => make_srt_error(py, "CONNECT_FAILED", &msg),
-    }
-}
-
-/// Map a `tst_srt::AcceptError` (raised by `Listener::accept`) to a
-/// `tstrans.exceptions.SrtError`. Exhaustive match against the 5
-/// concrete variants today.
-pub(crate) fn accept_error_to_pyerr(py: Python<'_>, e: AcceptError) -> PyErr {
-    let msg = e.to_string();
-    match e {
-        AcceptError::TimedOut => make_srt_error(py, "TIMEOUT", &msg),
-        AcceptError::ListenerClosed => make_srt_error(py, "CLOSED", &msg),
-        AcceptError::PeerRejected { .. } | AcceptError::System(_) | AcceptError::Other { .. } => {
-            make_srt_error(py, "ACCEPT_FAILED", &msg)
-        }
-        // Catch-all for #[non_exhaustive] additions.
-        _ => make_srt_error(py, "ACCEPT_FAILED", &msg),
-    }
-}
-
-/// Map a `tst_srt::error::IoError` (raised by `SrtTransport::stats` and
-/// other low-level libsrt IO entry points) to a
-/// `tstrans.exceptions.SrtError`.
-///
-/// Used by both T2 (transport stats) and T3 (Socket/Listener low-level
-/// surface) — kept here so the per-variant routing is consistent.
-pub(crate) fn io_error_to_pyerr(py: Python<'_>, e: IoError) -> PyErr {
-    let msg = e.to_string();
-    match e {
-        IoError::SocketClosed => make_srt_error(py, "CLOSED", &msg),
-        IoError::System(_) | IoError::Other { .. } => make_srt_error(py, "IO", &msg),
-        // Catch-all for #[non_exhaustive] additions.
-        _ => make_srt_error(py, "IO", &msg),
-    }
 }
 
 /// Map a `tst_core::transport::TransportError` (the unified transport

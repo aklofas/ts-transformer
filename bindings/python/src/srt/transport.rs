@@ -3,22 +3,29 @@
 //!
 //! Mirrors the `tstrans.rtp` binding shape:
 //! - Per-direction concrete PyClass (not generic over `T: Transport`).
-//! - GIL released around `connect`/`bind+accept`/`send`/`recv`.
-//! - Every wrapper borrows `&self` over an `Arc<Mutex<Option<_>>>` slot;
-//!   `close()` cancels before taking it (the cross-thread close contract).
+//! - GIL released around `connect` / `accept` / `send` / `recv`.
+//! - Every wrapper holds a `tst_pipeline::binding::Owned<T>`: the slot is
+//!   taken only inside `with_mut` / `with_ref`, always under
+//!   `py.allow_threads`, and `close()` is `Owned::close` — cancel first,
+//!   then take, then `Close::close` inside a panic boundary. A call parked
+//!   on another thread therefore ends promptly instead of blocking the
+//!   close or tripping PyO3's borrow check.
 //! - Bytes-like extraction follows audit-backlog #10's two-path pattern:
 //!   fast `&[u8]` for real `bytes`, fallback through `builtins.bytes(x)`
 //!   for `bytearray` / `memoryview` (gated under PyO3's abi3-py310
 //!   because `PyBuffer` is hidden behind `not(Py_LIMITED_API)`).
-//! - Error mapping uses `make_srt_error(py, "KIND", &msg)` with the
-//!   KIND literal on the same line as the open-paren (required by
-//!   the T4 line-based grep ratchet).
+//! - Errors take the one raise path (`crate::raise`): every failure is a
+//!   `tst_pipeline::binding::BindingError` whose kind is resolved on
+//!   `tstrans.exceptions.SrtErrorKind` by name, checked at import.
 //!
-//! URL dispatch:
-//! - `Sender::from_url` requires `?mode=caller` (the SrtUrl default).
-//!   Calls `Socket::connect_with(&cfg, "host:port")`.
-//! - `Receiver::from_url` requires `?mode=listener`. Calls
-//!   `Listener::bind_with(&cfg, "host:port")` then one-shot `accept()`.
+//! URL dispatch (the composition itself lives in `tst_srt`, Arc 2 A3):
+//! - `Sender::from_url` requires `?mode=caller` (the SrtUrl default) and
+//!   dials through `SrtUrl::connect_recv` — overlay only, no sender
+//!   preset, which is what this open composed before Arc 2.
+//! - `Receiver::from_url` requires `?mode=listener` and goes through
+//!   `SrtUrl::accept_one`: bind, accept ONE peer, drop the listener. The
+//!   empty-host `0.0.0.0` rule and IPv6 bracketing live there, so this
+//!   module formats no address at all.
 //!
 //! The Receiver one-shot semantics mirror libsrt: each accepted Socket
 //! is its own connection; for a listener that hosts many peers, callers
@@ -29,14 +36,6 @@
 //! `RecvTransport` (recv). Construction is identical for both
 //! directions; the only difference is which `tst_pipeline::Sender` /
 //! `Receiver` shell wraps it.
-//!
-//! Cross-crate plumbing added by this task:
-//! - `tst_pipeline::Sender::transport(&self) -> &T`
-//! - `tst_pipeline::Receiver::transport(&self) -> &R`
-//! - `tst_srt::SrtTransport::stats(&self) -> Result<Stats, IoError>`
-//!
-//! Both are additive; both bump the respective `cargo public-api`
-//! baselines.
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 use std::sync::Arc;
@@ -412,9 +411,18 @@ impl PyReceiver {
 #[pymethods]
 impl PyReceiver {
     /// Bind + accept one peer (GIL released). An empty host binds
-    /// `0.0.0.0`. Raises `CONFIG_INVALID` (URL / mode), `CONNECT_FAILED`
-    /// (bind), `ACCEPT_FAILED` / `TIMEOUT` (accept). The first accept is
-    /// not cancellable — no handle exists until this returns.
+    /// `0.0.0.0`.
+    ///
+    /// Raises `SrtError(CONFIG_INVALID)` for a bad URL or a non-listener
+    /// mode, and `SrtError(BROKEN)` for any bind or accept fault — the
+    /// message is prefixed `bind: ` or `accept: `. Before 0.7.0 this open
+    /// had its own mapping (`CONNECT_FAILED` / `CONFIG_INVALID` for bind,
+    /// `ACCEPT_FAILED` / `TIMEOUT` for accept); it now shares
+    /// `SrtUrl::accept_one` with the C ABI, which classifies both as
+    /// transport faults.
+    ///
+    /// The first accept is not cancellable — no handle exists until this
+    /// returns.
     #[staticmethod]
     fn from_url(py: Python<'_>, url: &str) -> PyResult<Self> {
         let parsed = SrtUrl::parse(url).map_err(|e| raise(py, &SRT, BindingError::from(e)))?;

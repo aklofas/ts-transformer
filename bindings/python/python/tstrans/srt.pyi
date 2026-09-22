@@ -228,6 +228,15 @@ class Receiver:
     first incoming SRT handshake. The accepted socket becomes the
     receive transport; this is a one-shot accept (subsequent peers
     must use a fresh `from_url` call or the lower-level `Listener`).
+
+    Raises:
+        SrtError(kind=CONFIG_INVALID): Bad URL, or a non-listener mode.
+        SrtError(kind=BROKEN): Any bind or accept fault; the message is
+            prefixed `bind: ` or `accept: `. Before 0.7.0 bind failures
+            raised `CONNECT_FAILED` / `CONFIG_INVALID` and accept failures
+            `ACCEPT_FAILED` / `TIMEOUT`; the open now shares
+            `SrtUrl::accept_one` with the C ABI, which classifies both as
+            transport faults.
     """
 
     @staticmethod
