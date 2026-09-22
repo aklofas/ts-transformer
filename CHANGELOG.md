@@ -1694,7 +1694,94 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed — Python binding (WP-B2)
 
-- (pending)
+- **`tstrans` raises every transport/shell failure through one Rust path**
+  (`tst_pipeline::binding`): the 20 transport/shell classes (`srt`
+  `Sender`/`Receiver`/`Listener`/`MuxSender`/`DemuxReceiver`/`Managed*`×4,
+  `rtp` `Sender`/`Receiver`/`MuxSender`/`DemuxReceiver`/`H264Receiver`,
+  `udp`/`tcp`/`rist` `Transport`/`RecvTransport`/`Listener`) hold an
+  `Owned<T>` handle — cancel-first `close()`, poison and panic policy,
+  snapshot getters — instead of a per-class mutex-and-slot; the SRT open
+  path is `SrtUrl::connect` / `accept_one` (no more address formatting in
+  the binding); the managed shells read `reconnect_attempts()` from the
+  core's own counter (`ManagedHandles.attempts`), so it now agrees with
+  `ManagedTransportStats.reconnect_attempts` (it was a binding-side count of
+  reconnect-factory invocations before). **Every `*ErrorKind` is now a
+  per-domain subset of `BindingErrorKind`, spelled as the Rust variant
+  name**, and `import tstrans` fails with `ImportError` naming the member if
+  the Python enum and the Rust table disagree — drift can no longer hide
+  until a user's `except` clause. A poisoned handle raises `RuntimeError`;
+  **a panic inside a MUTATING call still raises `pyo3_runtime.PanicException`
+  but now CLOSES the object — later calls raise `*Error(CLOSED)`** (before:
+  the old slot helpers recovered the poisoned mutex and kept the inner, so
+  the object stayed usable in an unknown state; now `Owned::with_mut` drops
+  the shell, matching the std-poisoning model and what the C and JVM
+  bindings already did). A panic inside a read-only accessor (`stats()`,
+  `is_alive()`, `repr`) leaves the object usable.
+  `CancelHandle.is_cancelled()` is now shared per shell (every clone AND the
+  shell's `close()` flip it; it was a per-clone flag), and
+  `tstrans.rtp.CancelHandle` gains `is_cancelled()`. A getter called while
+  another thread is parked in the shell still never waits, but it no longer
+  says so: `repr()` on `srt.DemuxReceiver`, `srt.ManagedDemuxReceiver` and
+  `rtp.DemuxReceiver` **dropped the `<busy>` state** — those three used a
+  try-lock and rendered `DemuxReceiver(<busy>)` when another thread held the
+  slot, and now render `open` / `closed` from the handle's own
+  (non-blocking) state, which is the answer the other 17 classes always
+  gave. `local_addr()` / `local_port()` / `is_alive()` keep answering from a
+  construction-time snapshot. `close()` may now
+  raise `pyo3_runtime.PanicException` if the underlying close panics (it was
+  silently infallible before); a transport-level close failure is still
+  logged, not raised. `srt.Receiver.connect_recv(...)` is unchanged —
+  same URL handling, same kinds. Observed kind changes (old → new; values
+  of surviving members unchanged):
+
+  | Producer | Python today → 0.7.0 |
+  |---|---|
+  | `TransportError::Backpressure` / a recv deadline expiry | srt `WOULD_BLOCK`, rtp `TIMEOUT`, rist `RECV_TIMEOUT`, udp/tcp `IO` → **`BACKPRESSURE`** |
+  | `TransportError::Broken` | udp/tcp/rist `IO`, rtp `TRANSPORT` → **`BROKEN`** (srt unchanged) |
+  | `TransportError::Closed` (sender / plain) and a call on a closed handle | rtp `TRANSPORT` → **`CLOSED`** (others unchanged) |
+  | `TransportError::Closed` on a receiver shell (peer EOS) | iterators: `StopIteration` (unchanged); `srt.Receiver.recv_bytes` / `ManagedReceiver.recv_bytes` / `rtp.Receiver.recv`: `CLOSED` → **`END_OF_STREAM`** (new member; on the raw rtp receiver only when the session recorded a clean teardown — a wire break stays `CLOSED`) |
+  | `TransportError::ExplicitClose` (cancel / close from another thread) | rtp `CANCELLED` → **`CLOSED`**; detail is now "cancelled from another thread" everywhere (plain SRT shells may still report `BROKEN` until the SRT transport change lands) |
+  | `TransportError::TooLarge` | srt `CONFIG_INVALID`, udp/tcp/rist `PAYLOAD_TOO_LARGE`, rtp `MALFORMED_PACKET` → **`TOO_LARGE`** |
+  | A listener-mode open whose bind or accept fails (`srt.Receiver.from_url`, `DemuxReceiver.from_url`, `ManagedReceiver.from_url`, `ManagedDemuxReceiver.from_url`) | srt `CONFIG_INVALID` / `ACCEPT_FAILED` → **`BROKEN`**, message prefixed `"bind: "` / `"accept: "` |
+  | tst-rtp `ConnectError::{PayloadTypeParam, MissingPayloadTypeParam, Url, HostNotLiteral, Io, IfaceUnsupported}` (and `RtpUrlError`) | rtp `TRANSPORT` → **`PAYLOAD_TYPE_PARAM` / `MISSING_PAYLOAD_TYPE_PARAM` / `URL` / `HOST_NOT_LITERAL` / `IO` / `IFACE_UNSUPPORTED`** |
+  | `SenderErrorSource::Framing` (TS sync loss in `Sender.send_bytes`) | srt `CONFIG_INVALID` → **`INPUT_MALFORMED`** |
+  | `MuxError::InvalidNal` / `KlvTooLarge` / `InvalidAv1Obu` / `MispTime` | mux `INPUT_MALFORMED` → **`INVALID_NAL` / `KLV_TOO_LARGE` / `INVALID_AV1_OBU` / `MISP_TIME`** |
+  | `DemuxError::Unrecoverable` / `MalformedPsi` / `MalformedPes` / `SyncBufExhausted` | `INTERNAL` / `BAD_PMT` / `BAD_PES` / `SYNC_LOSS` → **`UNRECOVERABLE` / `MALFORMED_PSI` / `MALFORMED_PES` / `SYNC_BUF_EXHAUSTED`** (`STRICT_REJECTION` unchanged; `UNEXPECTED_EOF` removed — never produced). **`DemuxErrorKind` is now a `str`-valued `enum.Enum`, not an `IntEnum`** — `.value` is the member's lowercase name, so code comparing `.value` to an integer must compare the member instead |
+  | `RtspError::AuthUnsupported` | `AUTH_FAILED` → **`AUTH_REQUIRED`** |
+  | `RtspError::{NoMp2tMedia, MultipleMp2tMedia, NoH264Media, MultipleH264Media}` | `MOUNT` → **`NOT_FOUND`** |
+  | `RtspSession.cancel_handle()` after teardown, and a second `into_demux_receiver()` / `into_h264_receiver()` | `PROTOCOL` → **`CLOSED`** (`RtspErrorKind.CLOSED`, new member) |
+  | `KlvEncodeError::VTargetPackEmpty` | `VTARGET_PACK_EMPTY` → **`V_TARGET_PACK_EMPTY`** |
+  | `CodecParseError::BufferTooSmall` | `ENGINE_ERROR` → **`BUFFER_TOO_SMALL`** (new member; new `CodecError.have` attribute alongside `needed`) |
+  | `KlvErrorKind.UNKNOWN_SET` | removed (never produced) |
+  | `MuxPublisherError::Mux(m)` (hls `MuxPublisher.send_*`) | `HlsError(INVALID_CONFIG)` → **`MuxError(<mux kind>)`** — the class flips, as `MuxSender` already raises |
+  | `MuxPublisherError::Closed` (a `MuxPublisher` call after the shell was taken) / `LockPoisoned` | `HlsError(FINISHED)` → **`HlsError(CLOSED)`** (new member; `HlsPublisher`'s own consumed-handle sites keep `FINISHED`) / `HlsError(INTERNAL)` (unchanged) |
+  | poisoned handle mutex / panic inside a call | srt `IO` / rtp `TRANSPORT` / udp,rist `CLOSED` / tcp `RuntimeError` → **`RuntimeError`**; panic → `pyo3_runtime.PanicException` (unchanged type) |
+
+  Deprecated aliases kept for 0.7.x (each `is` its successor, so
+  `e.kind == OldName` keeps working and `.name` returns the SUCCESSOR's
+  spelling; no `DeprecationWarning` is raised; removed in 0.8.0):
+  `SrtErrorKind.WOULD_BLOCK`; `RtpErrorKind.TRANSPORT` /
+  `MALFORMED_PACKET` / `CANCELLED` / `TIMEOUT`; `UdpErrorKind`,
+  `TcpErrorKind`, `RistErrorKind` `.PAYLOAD_TOO_LARGE`;
+  `RistErrorKind.RECV_TIMEOUT` / `.IO`; `DemuxErrorKind.INTERNAL` /
+  `.BAD_PMT` / `.BAD_PES` / `.SYNC_LOSS`; `KlvEncodeErrorKind.VTARGET_PACK_EMPTY`
+  — 15 aliases across 7 enums. `RtspErrorKind` keeps every member it had and
+  gains `CLOSED`; `HlsErrorKind` gains `CLOSED`; `MuxErrorKind`,
+  `RtpErrorKind`, `SrtErrorKind`, `CodecErrorKind` gain members. The
+  Python-side kind tables are gone: `tstrans.exceptions` carries no mapping
+  of its own, the Rust `BindingErrorKind::name()` is the only source, and
+  the per-kind Python error-mapping CI ratchet is retired in favour of
+  `scripts/ratchets/kind-equivalence.tsv` plus the import-time check.
+
+  **Exiting with a shell still open no longer hangs.** `tstrans` registers
+  an `atexit` hook that cancels every still-open shell before libsrt's own
+  C-level `srt_cleanup` runs; without it a thread left parked in `accept()`
+  or `recv_bytes()` deadlocked that teardown (`srt_cleanup` joins libsrt's
+  GC thread) or aborted the process. Shells whose cancel already latched —
+  everything you closed — are skipped, so a clean exit costs nothing; only a
+  shell left open pays a bounded ~250 ms settle window while the woken
+  threads unwind. Closing your shells (or using `with`) remains the
+  supported pattern.
 
 ### Changed — JVM binding (WP-B3)
 
