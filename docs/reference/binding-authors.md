@@ -146,13 +146,22 @@ coverage is enforced once, in tst-pipeline, by
 (`record_mux_error`, `record_demux_error`, `record_klv_decode_error`,
 `record_with_context`) are thin wrappers over that one table.
 
-Each path's wildcard `_ => ...` arm exists only to satisfy Rust's
-`#[non_exhaustive]` requirement and is unreachable when the
-corresponding ratchet is green. Binding authors can therefore assume
-that every documented `TstError` code maps to a specific upstream
-condition; no upstream variant silently degrades to `TST_E_INTERNAL`,
-`TST_E_INVALID_CONFIG`, or `TST_E_TRANSPORT` without an explicit
-choice by the tst-c maintainers.
+Most wildcard `_ => ...` arms in the table exist only to satisfy Rust's
+`#[non_exhaustive]` requirement and are unreachable while
+`kind-table-coverage.sh` is green — that rail names every upstream
+variant before the wildcard. Two are DELIBERATE fallbacks the rail does
+not watch, and both are documented at the arm:
+
+- `kind_of_mux`'s wildcard forwards to `MuxError::kind()`, i.e. the
+  coarse bucket, for every `MuxError` variant that has no precise code
+  of its own. That is the routing, not a gap.
+- `map_mux_kind`'s own trailing arm folds an unknown future
+  `MuxErrorKind` to `Internal`.
+
+So binding authors can assume that every documented `TstError` code maps
+to a specific upstream condition, with that one coarsening: a new
+`MuxError` variant lands in its `kind()`'s bucket rather than degrading
+to `TST_E_INTERNAL`.
 
 If you encounter a `tst_get_last_error_str()` value beginning with
 `"unmapped <Enum> variant: ..."`, that means the kind-table ratchet was

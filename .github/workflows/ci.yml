@@ -266,6 +266,12 @@ jobs:
       - name: Check no direct from_raw_parts in C bindings
         run: bash scripts/check/c/no-direct-from-raw-parts.sh
 
+      - name: Check no slot-taking construction-constant getters in bindings
+        # Arc 2 §3.2: a getter that is constant after `_open` must read the
+        # handle's snapshot, never the shell slot a parked recv/accept holds
+        # (the PR #234 hang class). Covers every binding under bindings/.
+        run: bash scripts/check/c/snapshot-getters.sh
+
       - name: Check lifecycle ffi_catch coverage
         # Linux-only: scans platform-independent Rust source under
         # bindings/c/core/src/ with GNU-grep `\w`/`\b`. BSD grep on the

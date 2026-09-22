@@ -337,7 +337,7 @@ The full code table is in `tstrans.h` (search `TST_E_`). Key transient-vs-persis
 
 See [Binding-authors guide](/docs/reference/binding-authors.md#transient-vs-persistent-error-codes) for the full mapping recipe.
 
-**Panics are mapped, not propagated.** Every `extern "C"` entry point wraps the Rust call in a `ffi_catch` shim. A Rust panic surfaces as `TST_E_INTERNAL` (-10) with the panic message in `tst_get_last_error_str()` — never as a `std::abort` or a stack-unwind into your C runtime.
+**Panics are mapped, not propagated.** Every `extern "C"` entry point wraps the Rust call in a `ffi_catch` shim. A Rust panic surfaces as `TST_E_PANIC_CAUGHT` (-11) with the panic message in `tst_get_last_error_str()` — never as a `std::abort` or a stack-unwind into your C runtime. A panic inside a MUTATING call also drops the handle's shell, so every later call returns `TST_E_CLOSED`; a panic inside a read-only accessor (`_get_stats`, `_is_alive`) reports the code and leaves the handle usable.
 
 **Stream handles are `uint32_t` with packed metadata.** `tst_mux_config_add_video_stream` returns a `tst_video_stream_handle_t` whose high bits encode program/stream indices. The library validates these at every push-time call; **don't fabricate them by hand** — bit-twiddled values are rejected with `TST_E_INVALID_USAGE`. `TST_INVALID_STREAM_HANDLE` (`UINT32_MAX`) is the failure sentinel returned from the add-stream calls.
 
@@ -354,7 +354,7 @@ switch (ev.kind) {
 
 **Threading.** Pipeline shells (`tst_mux_sender_t`, `tst_demux_receiver_t`, etc.) are internally synchronized — the data-path methods (`_send_*`, `_recv_*`, `_pull`) are callable from multiple threads concurrently. **Configs (`tst_mux_config_t`, `tst_sender_config_t`, etc.) are NOT.** Build a config on one thread, hand it to `_open`, then never touch it again.
 
-**Cancellation.** For clean shutdown from a different thread, every shell has a `_cancel` method (`tst_mux_sender_cancel`, `tst_demux_receiver_cancel`, etc.) that atomically closes the SRT socket and unblocks any peer thread parked in `_send` / `_recv`. The follow-up call returns `TST_E_CLOSED`. See [SRT cancel handle](/docs/reference/srt-cancel-handle.md) for the pattern at the Rust layer.
+**Cancellation.** Every SRT and RTP shell has a `_cancel` (`tst_mux_sender_cancel`, `tst_demux_receiver_cancel`, …): lock-free, callable from any thread, idempotent. It closes the underlying socket (SRT) or flags the transport (RTP) so a thread parked in `_send` / `_recv` returns promptly. What that call returns: managed SRT shells and every RTP shell report `TST_E_CLOSED` (-7); a **plain** SRT shell reports `TST_E_TRANSPORT` (-8) for the call that was parked when the cancel landed (libsrt reports the closed socket as broken) and `TST_E_CLOSED` for every call after it — 0.7.0 makes the parked call report `TST_E_CLOSED` too. `_close` is cancel-first on every shell (SRT, RTP, UDP, TCP, RIST): it fires the same cancel, then frees. On TCP that cancel is the transport's real handle, so a parked call is woken; on **UDP and RIST** it is only a flag latch — it records the intent (so the call reports `TST_E_CLOSED` rather than end-of-stream) but wakes nothing, because those transports expose no cancel handle yet. UDP/TCP/RIST gain their own `_cancel` entry points, and UDP/RIST a real wake-up, with ABI 0.22. See [SRT cancel handle](/docs/reference/srt-cancel-handle.md) for the Rust-layer pattern.
 
 ## Where this binding differs from the Rust core
 
@@ -364,7 +364,7 @@ The C surface is `tst_pipeline` + `tst_srt` mechanically projected through `cbin
 - **Stable integer enums.** Rust's `#[non_exhaustive]` enums become flat `int32_t`-backed C enums; new variants land at the next integer. The Rust-side wildcard arm requirement is invisible at the C ABI.
 - **No iterator types.** Rust's `Iterator<Item = DemuxEvent>` becomes a poll-style `tst_demux_receiver_recv_event(rx, &out_event)` — call in a loop, terminate on `TST_E_END_OF_STREAM`.
 - **No generics.** Rust's `MuxSender<T: Transport>` collapses to one concrete `tst_mux_sender_t` (SRT-backed). No `RecvTransport` mock at the C ABI — wire-up tests use real SRT loopback.
-- **Panic mapping.** Rust panics become `TST_E_INTERNAL` rather than unwinding into your C runtime.
+- **Panic mapping.** Rust panics become `TST_E_PANIC_CAUGHT` rather than unwinding into your C runtime.
 - **Explicit lifecycle.** Every handle needs an explicit `_close` / `_free` call — no `Drop` semantics. NULL-safe on the way in, UB on double-close of a non-null pointer.
 - **Stream handles are validated `uint32_t`s.** Rust's `VideoStreamHandle` is a newtype enforcing program/stream indices at the type level; the C ABI smuggles the same metadata through the high bits of a `uint32_t` and validates at every push call.
 

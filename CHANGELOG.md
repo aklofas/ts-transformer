@@ -1603,7 +1603,81 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed — C binding (WP-B1)
 
-- (pending)
+- **`tst-c` is a projection of `tst_pipeline::binding`.** Every transport
+  handle (SRT / RTP / UDP / TCP / RIST, plain and managed — 28 handle types)
+  holds one `Owned<T, S>`; the per-handle `Mutex<Option<T>>` +
+  `cancel: Option<…>` + `was_cancelled` triple (10 flag fields, 20
+  `if let Some(cancel)` sites) is gone, and `_cancel` / `_close` / the
+  `TST_E_CLOSED`-vs-`TST_E_END_OF_STREAM` decision all read the
+  binding-shared cancel state. `Handle<T>` survives only for the three
+  offline `no_std` handles (`tst_muxer_t`, `tst_demuxer_t`,
+  `tst_st0601_t`) — `binding` is std-only. Observable changes:
+  * **One error path.** `TstError::from_kind(BindingErrorKind)` projects the
+    shared kind table by its `c_projection()` number; the raw
+    `TransportError` mapper (which said `TST_E_TRANSPORT` (-8) for
+    `Backpressure` while the shell path said `TST_E_BUFFER_FULL` (-4)), the
+    per-variant `MuxError` routing, and the seven per-transport
+    `*_error_to_code` converters are deleted. Codes that move, all from the
+    binding-layer table (see "error kinds (WP-A2)" for the full old→new
+    table): `TransportError::Backpressure` is -4 on **every** path;
+    `ExplicitClose` is `TST_E_CLOSED` (-7, was an unhandled -8) with detail
+    "cancelled from another thread";
+    `MuxError::{AudioTooLarge, SubtitleTooLarge, DataTooLarge}` are
+    `TST_E_INVALID_TS` (-3, was -9); `RtspError::Protocol { code: 404 }` /
+    `{ code: 401 }` are `TST_E_RTSP_NOT_FOUND` (-19) / `TST_E_RTSP_AUTH_REQUIRED`
+    (-18) (both were -16); and `RtspServerError`, which the retired converter
+    collapsed to `TST_E_RTSP_SERVER` (-24) for every variant, now splits the
+    way Python and the JVM already did — `{Io, BindAddrInUse}` → -22,
+    `Tls` → -21, `UrlParse` → -16,
+    `{InvalidMountPath, InvalidMulticastGroup, DuplicateMount, InvalidConfig}`
+    → `TST_E_RTSP_MOUNT` (-25); only `{AlreadyStarted, NotStarted, Shutdown}`
+    stay -24. `MuxPublisherError::{Publisher(_), LockPoisoned}` (the HLS mux
+    publisher) were both -8 via the coarse kind; they are now the sink's own
+    code and `TST_E_INTERNAL` (-10). Open-path detail strings keep their
+    context prefix (`"tcp connect: …"`).
+  * `TST_E_PANIC_CAUGHT` semantics unchanged for mutating calls (the shell is
+    dropped, later calls return `TST_E_CLOSED`); a panic inside a read-only
+    accessor (`_get_stats`, `_is_alive`) now reports the code WITHOUT
+    dropping the shell (it used to drop it either way).
+  * **`tst_managed_transport_stats_t.reconnect_attempts` on the three managed
+    RECEIVE handles counts factory attempts** (it reported successes in both
+    fields, documented as a deliberate asymmetry, so a reconnect loop that
+    only ever failed read as "never attempted"). Send side unchanged.
+  * **SRT opens go through `SrtUrl::connect` / `SrtUrl::accept_one` and the
+    tst-srt `shells::managed_*_from_url` family** — the C copies of the
+    connect / listen / IPv6-bracket helpers are deleted; listener-mode opens
+    (initial and re-accept) share one cancel slot. The FIRST accept of a
+    blocking `_open_listener` is still uncancellable: it returns the handle
+    only after the accept completes, so there is nothing to cancel through
+    (DEBT-16, deferred — see `docs/project/deferred-features.md`).
+  * **Every `tst_*sender_open` refuses a `?mode=listener` URL** with
+    `TST_E_INVALID_CONFIG` before opening a socket. It used to ignore the key
+    and dial out as a caller, which SUCCEEDED whenever a host was present and
+    a listener happened to be there (deferred-features, "SRT URL mode
+    dispatch").
+  * A cancelled **plain**-SRT operation reports `TST_E_TRANSPORT` (-8) for the
+    call that was parked when the cancel landed, and `TST_E_CLOSED` (-7) for
+    every call after it — libsrt reports the closed socket as broken and
+    `SrtTransport` then empties its socket slot. WP-C2 in this release makes
+    the parked call report -7 too. Managed SRT and every RTP shell already
+    report -7. Now pinned by `bindings/c/tests/receiving/cancel_first.rs` (12)
+    and `transports/rtp_cancel_first.rs` (2).
+  * On UDP / TCP / RIST, a `Closed`-kind error reaching a `_recv_*` on a
+    handle the caller closed from another thread is now `TST_E_CLOSED` (-7)
+    rather than `TST_E_END_OF_STREAM` (-12) — those families had no cancel
+    state to discriminate with before. An `EndOfStream`-kind error still
+    returns -12 but now carries the shared "end of stream (peer
+    disconnected)" detail instead of the error's own message.
+  * `tstrans.h` is **comment-only** in this change (ABI stays 0.21;
+    declarations byte-identical with comments stripped). New rail
+    `scripts/check/c/snapshot-getters.sh` fails on any construction-constant
+    getter (`local_addr` / `local_port` / `repr`) read inside a slot-taking
+    closure under `bindings/`. Four rails retire, made vacuous by the one
+    error path: `scripts/check/c/raw-mapper-coverage.sh`,
+    `scripts/check/rust/shell-error-kind-coverage.sh`,
+    `scripts/check/rust/rust-error-mapping-coverage.sh` (+ its driver and the
+    `rust` rows of `scripts/ratchets/error-mapping.tsv`), and
+    `scripts/check/rust/rtsp-error-mapping-coverage.sh`.
 
 ### Changed — Python binding (WP-B2)
 
