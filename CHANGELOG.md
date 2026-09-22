@@ -1759,11 +1759,22 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     `true`. Each handle previously carried a private flag, so a second
     handle read `false` after the first cancelled and `close()` set nothing.
   - **Getters no longer queue behind a parked call.** `Listener.localAddr()`,
-    the four `reconnectAttempts()`, both `reconnectStats()`,
+    the three `reconnectAttempts()` (`ManagedReceiver`,
+    `ManagedDemuxReceiver`, `ManagedMuxSender`), both `reconnectStats()`,
     `H264Receiver.localAddr()` and the rtp `Receiver` / `DemuxReceiver`
     `endReason()` / `endDetail()` pairs are read off a construction-time
     snapshot, so they answer while a `recv` / `accept` / `send` is parked on
     another thread (the PR #189 and #234 hang classes).
+  - **`rtp.MuxSender` / `rtp.Sender` now register a cancel target**, so
+    `close()` cancels before it frees and a `send*` parked on another thread
+    is woken instead of racing the teardown. Neither registered one before.
+  - **One exception TYPE changes**: the rtp receive path's internal
+    "failed to allocate received packet" (a JNI array-allocation failure,
+    not a transport outcome) now throws a plain
+    `java.lang.RuntimeException` where it threw `RtpException(TRANSPORT)`.
+    It is unchecked, so it escapes the `throws RtpException` clause — the
+    same shape every other JNI allocation failure in this binding already
+    had.
   - **Panic policy is unchanged from 0.6.x for mutators** and is now stated:
     a panic inside a mutating native (`send*`, `recv*`, `next()`, `flush`)
     surfaces as `RuntimeException("native panic in tst-jni: …")` and drops

@@ -327,7 +327,7 @@ pub(crate) fn throw_handle_state(env: &mut JNIEnv, what: &str, state: &HandleSta
 ///
 /// `get_static_field_id`, NOT `get_static_field`: the latter READS the field
 /// and hands back a `JValueOwned::Object` — a JNI local ref jni-rs does not
-/// auto-delete. This loop visits 78 members across eight domains in one frame,
+/// auto-delete. This loop visits 79 members across eight domains in one frame,
 /// well past the 16-slot default local-reference capacity, and `-Xcheck:jni`
 /// does not report local-ref accumulation (see
 /// `reference_xcheck_jni_local_ref_accumulation_unobservable`). The field ID

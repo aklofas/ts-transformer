@@ -89,6 +89,7 @@ final class ManagedReceiverAttemptsLockFreeTest {
         assertNotNull(peer, "caller could not connect: " + last);
         ManagedReceiver rx = rxFuture.get(5, TimeUnit.SECONDS);
         CancelHandle rescue = rx.cancelHandle(); // pre-obtained: the only thing that ends a parked re-accept
+        boolean peerClosed = false;
         try {
             // Enough frames to cross the sender's 1316-byte bundle threshold AND
             // the Receiver syncer's 4-packet sync window — this class exposes no
@@ -99,6 +100,7 @@ final class ManagedReceiverAttemptsLockFreeTest {
             }
             assertTrue(gotFirst.await(5, TimeUnit.SECONDS), "the first frame never arrived");
             peer.close();                          // the link breaks; the loop re-binds and parks in accept
+            peerClosed = true;
             Thread.sleep(1_000);                   // let Broken → factory → re-accept happen
 
             // The call under test, bounded and off-thread: lock-free means it answers
@@ -119,8 +121,13 @@ final class ManagedReceiverAttemptsLockFreeTest {
             // not completed, so the success counter is still 0 here.
             assertTrue(n >= 1, "one factory invocation happened (the parked re-accept); got " + n);
         } finally {
+            // Nothing here may leak a live shell: a parked native outliving the
+            // JVM's exit is the R-EXIT hang class.
+            if (!peerClosed) {
+                peer.close();
+            }
             rescue.cancel();                       // ends the parked re-accept on every path
-            rx.close();                            // never leak a live receiver (R-EXIT class)
+            rx.close();
         }
         // Terminal-kind verdicts live AFTER the body, not in `finally`: a
         // failure here would otherwise mask the body's own failure.

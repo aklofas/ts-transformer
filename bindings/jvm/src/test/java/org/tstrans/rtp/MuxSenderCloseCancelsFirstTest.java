@@ -61,8 +61,15 @@ final class MuxSenderCloseCancelsFirstTest {
             }, "rtp-mux-pump-" + i);
             pump.setDaemon(true);
             pump.start();
-            assertTrue(ready.await(2, TimeUnit.SECONDS));
-            tx.close();
+            boolean started = false;
+            try {
+                started = ready.await(2, TimeUnit.SECONDS);
+                assertTrue(started, "pump thread never started (run " + i + ")");
+            } finally {
+                // `close()` is the subject AND the cleanup: never leave a live
+                // sender behind on a failed verdict.
+                tx.close();
+            }
             pump.join(5_000);
             assertFalse(pump.isAlive(), "pump did not finish after close (run " + i + ")");
             assertNull(unexpected.get(), "pump saw an unexpected failure (run " + i + ")");
