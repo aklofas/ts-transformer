@@ -255,6 +255,12 @@ pub(crate) fn declared_member(
     if domain.kinds().contains(&kind) {
         return Some(kind.name());
     }
+    // Callers that reach this directly (the `KlvEncodeException` /
+    // `CodecParseException` throwers, Task B3.5b) have no `throw_binding`
+    // wrapper above them, so guard here too: never clobber a pending exception.
+    if env.exception_check().unwrap_or(false) {
+        return None;
+    }
     let _ = env.throw_new(
         "java/lang/RuntimeException",
         format!(
@@ -312,12 +318,21 @@ pub(crate) fn throw_handle_state(env: &mut JNIEnv, what: &str, state: &HandleSta
 /// failed (X)")`. `GetStaticFieldID` leaves a `NoSuchFieldError` pending
 /// on a miss; it is cleared and replaced so the message carries the
 /// Rust variant too.
+///
+/// `get_static_field_id`, NOT `get_static_field`: the latter READS the field
+/// and hands back a `JValueOwned::Object` — a JNI local ref jni-rs does not
+/// auto-delete. This loop visits 78 members across eight domains in one frame,
+/// well past the 16-slot default local-reference capacity, and `-Xcheck:jni`
+/// does not report local-ref accumulation (see
+/// `reference_xcheck_jni_local_ref_accumulation_unobservable`). The field ID
+/// lookup validates the member name AND its signature identically while
+/// minting no object reference at all.
 pub(crate) fn verify_kind_tables(env: &mut JNIEnv) {
     for domain in Domain::ALL {
         let kind_class = format!("{}$Kind", domain.exc_class());
         let kind_sig = format!("L{kind_class};");
         for kind in domain.kinds() {
-            let resolved = env.get_static_field(&kind_class, kind.name(), &kind_sig);
+            let resolved = env.get_static_field_id(&kind_class, kind.name(), &kind_sig);
             if resolved.is_err() || env.exception_check().unwrap_or(false) {
                 let _ = env.exception_clear();
                 let _ = env.throw_new(
