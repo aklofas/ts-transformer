@@ -49,6 +49,8 @@ pub mod sdp;
 pub mod transport;
 pub mod url;
 
+mod binding_kind;
+
 // RTP transport.
 pub use builder::{RtpRecvSocketBuilder, RtpSocketBuilder};
 pub use cancel::RtpCancelHandle;

@@ -26,6 +26,8 @@ pub mod stats;
 pub mod transport;
 pub mod url;
 
+mod binding_kind;
+
 pub use builder::{UdpRecvTransportBuilder, UdpTransportBuilder};
 pub use config::SocketConfig;
 pub use error::{UdpError, UdpErrorKind};

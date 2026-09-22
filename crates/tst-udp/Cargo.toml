@@ -11,10 +11,10 @@ categories = ["multimedia::video", "network-programming"]
 
 [dependencies]
 tst-core = { path = "../tst-core", version = "0.6.0" }
+tst-pipeline = { path = "../tst-pipeline", version = "0.6.0" }
 socket2 = { workspace = true }
 thiserror = { workspace = true }
 libc = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
-tst-pipeline = { path = "../tst-pipeline" }
