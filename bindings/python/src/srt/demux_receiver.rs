@@ -151,10 +151,13 @@ impl PyDemuxReceiver {
     /// `demux_config` is an optional `tstrans.mpegts.DemuxerConfig`
     /// dataclass; when `None`, defaults are used.
     ///
-    /// Raises `SrtError(CONFIG_INVALID)` on URL parse / bad-mode
-    /// failure; `SrtError(CONNECT_FAILED)` on bind failure;
-    /// `SrtError(ACCEPT_FAILED)` / `SrtError(TIMEOUT)` on accept
-    /// failure.
+    /// Raises `SrtError(CONFIG_INVALID)` for a bad URL or a non-listener
+    /// mode, and `SrtError(BROKEN)` for any bind or accept fault — the
+    /// message is prefixed `bind: ` or `accept: `. Before 0.7.0 this open
+    /// had its own mapping (`CONNECT_FAILED` / `CONFIG_INVALID` for bind,
+    /// `ACCEPT_FAILED` / `TIMEOUT` for accept); it now shares
+    /// `SrtUrl::accept_one` with the C ABI, which classifies both as
+    /// transport faults.
     #[staticmethod]
     #[pyo3(signature = (url, *, demux_config = None))]
     fn from_url(

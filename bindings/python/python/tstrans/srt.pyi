@@ -501,6 +501,12 @@ class DemuxReceiver:
     `stats()` returns a tuple `(SocketStats, MuxerStats)` — same shape
     as `MuxSender.stats()` so cross-direction code can read both
     accessors identically.
+
+    Bind / accept faults (0.7.0) raise `SrtError(kind=BROKEN)` with the
+    message prefixed `bind: ` or `accept: ` — this open shares
+    `SrtUrl::accept_one` with the C ABI, which classifies both as
+    transport faults. Before 0.7.0 bind failures raised `CONNECT_FAILED` /
+    `CONFIG_INVALID` and accept failures `ACCEPT_FAILED` / `TIMEOUT`.
     """
 
     @staticmethod
@@ -715,6 +721,12 @@ class ManagedReceiver:
     `policy.mode` is send-side only: `ReconnectMode.BACKGROUND` on a
     policy handed here logs a warning and this receiver reconnects on
     the caller's thread anyway (behaves as `ReconnectMode.BLOCKING`).
+
+    Bind / accept faults (0.7.0) raise `SrtError(kind=BROKEN)` with the
+    message prefixed `bind: ` or `accept: ` — this open shares
+    `SrtUrl::accept_one` with the C ABI, which classifies both as
+    transport faults. Before 0.7.0 bind failures raised `CONNECT_FAILED` /
+    `CONFIG_INVALID` and accept failures `ACCEPT_FAILED` / `TIMEOUT`.
     """
 
     @staticmethod
@@ -874,6 +886,12 @@ class ManagedDemuxReceiver:
     lock-free cell captured at construction, so it stays answerable
     after `close()` and is safe to poll from a watchdog thread while
     another thread iterates.
+
+    Bind / accept faults (0.7.0) raise `SrtError(kind=BROKEN)` with the
+    message prefixed `bind: ` or `accept: ` — this open shares
+    `SrtUrl::accept_one` with the C ABI, which classifies both as
+    transport faults. Before 0.7.0 bind failures raised `CONNECT_FAILED` /
+    `CONFIG_INVALID` and accept failures `ACCEPT_FAILED` / `TIMEOUT`.
     """
 
     @staticmethod
