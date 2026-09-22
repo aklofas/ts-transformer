@@ -1727,7 +1727,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   slot, and now render `open` / `closed` from the handle's own
   (non-blocking) state, which is the answer the other 17 classes always
   gave. `local_addr()` / `local_port()` / `is_alive()` keep answering from a
-  construction-time snapshot. `close()` may now
+  construction-time snapshot — and `tcp.Listener.local_port()`'s fallback for
+  a listener whose build-time `local_addr()` failed is non-blocking too: it no
+  longer parks behind an `accept_blocking()` on another thread, raising
+  `TcpError(IO)` instead if the slot is busy. `close()` may now
   raise `pyo3_runtime.PanicException` if the underlying close panics (it was
   silently infallible before); a transport-level close failure is still
   logged, not raised. `srt.Receiver.connect_recv(...)` is unchanged —
@@ -1757,9 +1760,17 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   | `MuxPublisherError::Closed` (a `MuxPublisher` call after the shell was taken) / `LockPoisoned` | `HlsError(FINISHED)` → **`HlsError(CLOSED)`** (new member; `HlsPublisher`'s own consumed-handle sites keep `FINISHED`) / `HlsError(INTERNAL)` (unchanged) |
   | poisoned handle mutex / panic inside a call | srt `IO` / rtp `TRANSPORT` / udp,rist `CLOSED` / tcp `RuntimeError` → **`RuntimeError`**; panic → `pyo3_runtime.PanicException` (unchanged type) |
 
-  Deprecated aliases kept for 0.7.x (each `is` its successor, so
-  `e.kind == OldName` keeps working and `.name` returns the SUCCESSOR's
-  spelling; no `DeprecationWarning` is raised; removed in 0.8.0):
+  Deprecated aliases kept for 0.7.x (each `is` its successor, so the NAME
+  still resolves and `.name` returns the successor's spelling; no
+  `DeprecationWarning` is raised; removed in 0.8.0). An
+  `e.kind == OldName` comparison keeps working only where the producer did
+  not move — `WOULD_BLOCK` / `TIMEOUT` / `RECV_TIMEOUT` still match the
+  backpressure they always meant, `PAYLOAD_TOO_LARGE` the oversize payload.
+  Where a kind SPLIT, the alias catches only the successor it points at:
+  `RtpErrorKind.TRANSPORT` is now `BROKEN`, so it no longer matches the
+  former `TRANSPORT` producers that became `CLOSED`, `TOO_LARGE` or one of
+  the six `ConnectError` members, and `RistErrorKind.IO` likewise only
+  matches `BROKEN`. Read the table above for where each producer went:
   `SrtErrorKind.WOULD_BLOCK`; `RtpErrorKind.TRANSPORT` /
   `MALFORMED_PACKET` / `CANCELLED` / `TIMEOUT`; `UdpErrorKind`,
   `TcpErrorKind`, `RistErrorKind` `.PAYLOAD_TOO_LARGE`;

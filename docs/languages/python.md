@@ -501,6 +501,15 @@ the cancel walk nor the settle window runs. Only a shell left open costs
 the short settle window (woken threads need a moment to unwind before the
 interpreter shuts down).
 
+One visible side effect: the call the hook wakes raises like any other
+cancelled call, so a worker thread that was parked in it and has no
+`except` of its own ends with
+`SrtError: cancelled from another thread` (or `accept: listener was
+closed` on the plain SRT shells) and Python prints that thread's
+traceback to stderr during shutdown. The process still exits 0 — it is
+the guard doing its job, not a failure. `close()` your shells before
+exit, or catch `BaseException` in the worker, to keep the output clean.
+
 ### SRT convenience (`MuxSender` / `DemuxReceiver`)
 
 `MuxSender` bundles a `Muxer` + an SRT `Sender`: send encoded elementary

@@ -519,6 +519,64 @@ def test_listener_open_bind_fault_is_broken_with_a_bind_prefix(opener) -> None:
         first.close()
 
 
+# The four srt opens that go through `SrtUrl::accept_one` in listener mode.
+# Their pre-0.7.0 mapping (`CONNECT_FAILED` / `CONFIG_INVALID` for bind,
+# `ACCEPT_FAILED` / `TIMEOUT` for accept) collapsed into one `BROKEN` with a
+# `bind: ` / `accept: ` prefix, and three of the four docstrings were updated
+# at the time while `ManagedDemuxReceiver.from_url` was missed — the class of
+# miss this guard exists to catch. `CONNECT_FAILED` is NOT forbidden: the two
+# dual-mode shells still raise it for the caller half.
+_LISTENER_OPENS = [
+    "Receiver",
+    "DemuxReceiver",
+    "ManagedReceiver",
+    "ManagedDemuxReceiver",
+]
+
+
+@pytest.mark.parametrize("cls_name", _LISTENER_OPENS)
+def test_listener_open_docstring_names_broken_not_accept_failed(cls_name: str) -> None:
+    """Every listener-mode `from_url` must document the 0.7.0 kind."""
+    doc = getattr(tstrans.srt, cls_name).from_url.__doc__ or ""
+    assert doc.strip(), f"srt.{cls_name}.from_url has no docstring"
+    assert "BROKEN" in doc, (
+        f"srt.{cls_name}.from_url does not name SrtError(BROKEN) — since 0.7.0 "
+        "every bind/accept fault on the listener open is BROKEN"
+    )
+    # A mention is fine only inside the "before 0.7.0 it was ..." sentence.
+    live = doc.split("Before 0.7.0")[0]
+    assert "ACCEPT_FAILED" not in live, (
+        f"srt.{cls_name}.from_url still promises ACCEPT_FAILED as a live kind"
+    )
+
+
+def test_no_srt_docstring_names_a_retired_kind() -> None:
+    """`SrtErrorKind.WOULD_BLOCK` is a 0.7.x deprecated alias of
+    `BACKPRESSURE`; it still resolves, so nothing else catches a docstring
+    that keeps naming it. Scoped to kind contexts so unrelated prose cannot
+    trip it (the rtp twin in `test_rtp_transport.py` has the same shape)."""
+    import inspect
+    import re
+
+    retired = re.compile(
+        r"SrtError\((?:kind=)?WOULD_BLOCK\b|SrtErrorKind\.WOULD_BLOCK\b"
+    )
+    offenders = []
+    for cls_name, obj in vars(tstrans.srt).items():
+        if cls_name.startswith("_") or not inspect.isclass(obj):
+            continue
+        if getattr(obj, "__module__", "") != "tstrans.srt":
+            continue
+        for label, doc in [(f"srt.{cls_name}", obj.__doc__ or "")] + [
+            (f"srt.{cls_name}.{a}", getattr(getattr(obj, a, None), "__doc__", None) or "")
+            for a in dir(obj)
+            if not a.startswith("_")
+        ]:
+            if retired.search(doc):
+                offenders.append(label)
+    assert not offenders, f"srt docstrings naming a retired kind: {offenders}"
+
+
 @pytest.mark.parametrize("mod_name", ["srt", "rtp", "udp", "tcp", "rist", "hls"])
 def test_every_public_transport_class_has_a_docstring(mod_name: str) -> None:
     """A `#[pyclass]` whose `///` block drifts onto a neighbouring item

@@ -318,13 +318,6 @@ pub(crate) struct PyManagedReceiver {
     /// Held independently of the wrapper's lifetime so callers can
     /// read it even mid-reconnect.
     reconnects: Arc<std::sync::atomic::AtomicU64>,
-    /// Latched-close + cancel-on-peer-side flag. Used by `is_alive`
-    /// and by `close()` to short-circuit the inner shell's cancel
-    /// chain. Wrapping the inner shell's cancel handle would be ideal
-    /// but `ManagedRecvTransport::cancel_handle` builds a fresh
-    /// snapshot each call; we stash one snapshot at construction so
-    /// `close()` can cancel without re-acquiring `&self` on the
-    /// inner.
     /// Shared cancel state (Arc 2 WP-B2): the same `Arc` every
     /// `CancelHandle` this shell hands out holds, so `close()` here and
     /// `cancel()` through any handle flip one observable flag.
@@ -336,6 +329,16 @@ impl PyManagedReceiver {
     /// Bind + accept a managed receiver from a `srt://...?mode=listener`
     /// URL. Performs the initial bind+accept under `py.allow_threads`;
     /// every subsequent reconnect re-runs the same path.
+    ///
+    /// Raises `SrtError(CONFIG_INVALID)` for a bad URL and
+    /// `SrtError(BROKEN)` for any bind or accept fault — the message is
+    /// prefixed `bind: ` or `accept: `. Before 0.7.0 the open had its own
+    /// mapping (`CONNECT_FAILED` / `CONFIG_INVALID` for bind,
+    /// `ACCEPT_FAILED` / `TIMEOUT` for accept); it now shares
+    /// `SrtUrl::accept_one` with the C ABI.
+    ///
+    /// The first accept is not cancellable — no handle exists until this
+    /// returns.
     #[staticmethod]
     #[pyo3(signature = (url, *, policy=None))]
     fn from_url(py: Python<'_>, url: &str, policy: Option<PyReconnectPolicy>) -> PyResult<Self> {

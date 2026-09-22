@@ -133,7 +133,8 @@ impl TransportCancel for CancelSource {
 /// close fails (`Listener::close` → `IoError`) is logged, not raised —
 /// `close()` is documented infallible and idempotent; a panic inside the
 /// inner close is re-raised as `PanicException` exactly as before Arc 2.
-#[allow(dead_code)] // transport-feature-gated callers; unused in minimal builds
+#[allow(dead_code)] // every transport surface calls this; dead only in a
+// transport-less `--no-default-features` build.
 pub(crate) fn close_owned<T, S>(
     py: Python<'_>,
     d: &crate::raise::Domain,
@@ -166,7 +167,8 @@ where
 /// `true` while another thread holds it (a parked call means open),
 /// `false` once it is empty. Never waits behind a parked call (the
 /// PR #234 class).
-#[allow(dead_code)] // transport-feature-gated callers; unused in minimal builds
+#[allow(dead_code)] // every transport surface calls this; dead only in a
+// transport-less `--no-default-features` build.
 pub(crate) fn alive_probe<T, S>(owned: &Owned<T, S>, alive: impl FnOnce(&T) -> bool) -> bool {
     match owned.try_with_ref(alive) {
         None => true,

@@ -620,9 +620,17 @@ impl PyManagedDemuxReceiver {
     /// dataclass; defaults are used when `None`. `policy` defaults to
     /// `ReconnectPolicy()` (matches Rust default).
     ///
-    /// Raises `SrtError(CONFIG_INVALID)` on URL parse failure;
-    /// `SrtError(CONNECT_FAILED)` on bind / connect failure;
-    /// `SrtError(ACCEPT_FAILED)` / `SrtError(TIMEOUT)` on accept failure.
+    /// Raises `SrtError(CONFIG_INVALID)` for a bad URL. In caller mode a
+    /// failed handshake is `SrtError(CONNECT_FAILED | TIMEOUT)`. In
+    /// listener mode any bind or accept fault is `SrtError(BROKEN)` — the
+    /// message is prefixed `bind: ` or `accept: `. Before 0.7.0 the
+    /// listener open had its own mapping (`CONNECT_FAILED` /
+    /// `CONFIG_INVALID` for bind, `ACCEPT_FAILED` / `TIMEOUT` for accept);
+    /// it now shares `SrtUrl::accept_one` with the C ABI, which classifies
+    /// both as transport faults.
+    ///
+    /// The first accept is not cancellable — no handle exists until this
+    /// returns.
     #[staticmethod]
     #[pyo3(signature = (url, *, demux_config = None, policy = None))]
     fn from_url(
