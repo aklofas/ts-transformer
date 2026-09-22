@@ -107,9 +107,7 @@ macro_rules! make_error_fn {
 make_error_fn!(make_mux_error, "Mux");
 make_error_fn!(make_demux_error, "Demux");
 make_error_fn!(make_klv_error, "Klv");
-make_error_fn!(make_rtsp_error, "Rtsp", cfg(feature = "rtp"));
 make_error_fn!(make_srt_error, "Srt", cfg(feature = "srt"));
-make_error_fn!(make_hls_error, "Hls", cfg(feature = "hls"));
 
 /// Test-only: raise `member` (a `BindingErrorKind::name()` string) through
 /// the real raise path, so the pytest kind-wiring suites exercise `raise.rs`
@@ -213,15 +211,10 @@ pub fn raise_rist_error_for_test(py: Python<'_>, kind: &str, message: &str) -> P
 /// Called from Muxer wrappers.
 #[allow(dead_code)]
 pub(crate) fn mux_error_to_pyerr(py: Python<'_>, e: tst_core::MuxError) -> PyErr {
-    use tst_core::error::MuxErrorKind;
-    let kind_str = match e.kind() {
-        MuxErrorKind::InputMalformed => "INPUT_MALFORMED",
-        MuxErrorKind::ConfigInvalid => "CONFIG_INVALID",
-        MuxErrorKind::InvalidUsage => "INVALID_USAGE",
-        MuxErrorKind::Backpressure => "BACKPRESSURE",
-        MuxErrorKind::Internal => "INTERNAL",
-        _ => "INTERNAL",
-    };
+    // A2's K4 ruling: `INVALID_NAL` / `KLV_TOO_LARGE` / `INVALID_AV1_OBU` /
+    // `MISP_TIME` are precise kinds since 0.7.0 — the five coarse buckets of
+    // `MuxErrorKind` no longer flatten them.
+    let kind_str = tst_pipeline::binding::kind::kind_of_mux(&e).name();
     // BufferFull gets a Python-only breadcrumb: the most common way to
     // hit it is pushing on the original Muxer inside an active
     // `Muxer.write_file(...)` block — those pushes bypass the drain
@@ -273,86 +266,65 @@ pub(crate) fn codec_parse_error_to_pyerr(
         Ok(c) => c,
         Err(e) => return e,
     };
-    let (kind_name, extra_attrs): (&str, Vec<(&str, PyObject)>) = match err {
+    // The KIND comes from A2's one table (`kind_of_codec`); this match only
+    // harvests the per-variant ATTRIBUTES the `CodecError` class carries.
+    // `BufferTooSmall` gained its own `BUFFER_TOO_SMALL` member in 0.7.0
+    // (it folded into `ENGINE_ERROR` before) and now carries `needed` /
+    // `have` — still unreachable from Python, since the write-into-a-caller
+    // -buffer entry points have no binding.
+    let kind_name = tst_pipeline::binding::kind::kind_of_codec(err).name();
+    let extra_attrs: Vec<(&str, PyObject)> = match err {
         CodecParseError::TruncatedRbsp {
             offset_bits,
             needed_bits,
-        } => (
-            "TRUNCATED_RBSP",
-            vec![
-                ("offset_bits", offset_bits.into_py(py)),
-                ("needed_bits", needed_bits.into_py(py)),
-            ],
-        ),
-        CodecParseError::InvalidGolomb { offset_bits } => (
-            "INVALID_GOLOMB",
-            vec![("offset_bits", offset_bits.into_py(py))],
-        ),
-        CodecParseError::ReservedValue { field, value } => (
-            "RESERVED_VALUE",
-            vec![
-                ("field", (*field).into_py(py)),
-                ("value", value.into_py(py)),
-            ],
-        ),
-        CodecParseError::UnsupportedProfile { profile_idc } => (
-            "UNSUPPORTED_PROFILE",
-            vec![("profile_idc", profile_idc.into_py(py))],
-        ),
-        CodecParseError::DanglingSpsReference { sps_id } => (
-            "DANGLING_SPS_REFERENCE",
-            vec![("sps_id", sps_id.into_py(py))],
-        ),
-        CodecParseError::DanglingVpsReference { vps_id } => (
-            "DANGLING_VPS_REFERENCE",
-            vec![("vps_id", vps_id.into_py(py))],
-        ),
-        CodecParseError::EngineError(_) => ("ENGINE_ERROR", vec![]),
-        CodecParseError::InvalidLeb128 { offset_bytes } => (
-            "INVALID_LEB128",
-            vec![("offset_bytes", offset_bytes.into_py(py))],
-        ),
-        CodecParseError::BadSyncWord { expected, found } => (
-            "BAD_SYNC_WORD",
-            vec![
-                ("expected", expected.into_py(py)),
-                ("found", found.into_py(py)),
-            ],
-        ),
-        CodecParseError::Truncated { needed, had } => (
-            "TRUNCATED",
-            vec![("needed", needed.into_py(py)), ("had", had.into_py(py))],
-        ),
-        CodecParseError::Forbidden { field } => {
-            ("FORBIDDEN", vec![("field", (*field).into_py(py))])
+        } => vec![
+            ("offset_bits", offset_bits.into_py(py)),
+            ("needed_bits", needed_bits.into_py(py)),
+        ],
+        CodecParseError::InvalidGolomb { offset_bits } => {
+            vec![("offset_bits", offset_bits.into_py(py))]
         }
-        CodecParseError::UnsupportedFreeFormat { layer } => (
-            "UNSUPPORTED_FREE_FORMAT",
-            vec![("layer", layer.into_py(py))],
-        ),
-        CodecParseError::InvalidLengthSize { got } => {
-            ("INVALID_LENGTH_SIZE", vec![("got", got.into_py(py))])
+        CodecParseError::ReservedValue { field, value } => vec![
+            ("field", (*field).into_py(py)),
+            ("value", value.into_py(py)),
+        ],
+        CodecParseError::UnsupportedProfile { profile_idc } => {
+            vec![("profile_idc", profile_idc.into_py(py))]
         }
+        CodecParseError::DanglingSpsReference { sps_id } => {
+            vec![("sps_id", sps_id.into_py(py))]
+        }
+        CodecParseError::DanglingVpsReference { vps_id } => {
+            vec![("vps_id", vps_id.into_py(py))]
+        }
+        CodecParseError::EngineError(_) => vec![],
+        CodecParseError::InvalidLeb128 { offset_bytes } => {
+            vec![("offset_bytes", offset_bytes.into_py(py))]
+        }
+        CodecParseError::BadSyncWord { expected, found } => vec![
+            ("expected", expected.into_py(py)),
+            ("found", found.into_py(py)),
+        ],
+        CodecParseError::Truncated { needed, had } => {
+            vec![("needed", needed.into_py(py)), ("had", had.into_py(py))]
+        }
+        CodecParseError::Forbidden { field } => vec![("field", (*field).into_py(py))],
+        CodecParseError::UnsupportedFreeFormat { layer } => {
+            vec![("layer", layer.into_py(py))]
+        }
+        CodecParseError::InvalidLengthSize { got } => vec![("got", got.into_py(py))],
         CodecParseError::NalLengthOverflow {
             nal_len,
             length_size,
-        } => (
-            "NAL_LENGTH_OVERFLOW",
-            vec![
-                ("nal_len", nal_len.into_py(py)),
-                ("length_size", length_size.into_py(py)),
-            ],
-        ),
-        // Not reachable from Python: `BufferTooSmall` is raised only by
-        // the Rust write-into-a-caller-buffer entry points
-        // (`annexb_to_length_prefixed_into`), which have no Python
-        // binding — every Python conversion returns a fresh `bytes`.
-        // Mapped explicitly anyway (rather than left to the wildcard) so
-        // the `pyarm` coverage rail stays honest, and to `ENGINE_ERROR`
-        // rather than a new kind, since no Python caller can observe it.
-        CodecParseError::BufferTooSmall { .. } => ("ENGINE_ERROR", vec![]),
-        // Catch-all for #[non_exhaustive] additions not yet mapped:
-        _ => ("ENGINE_ERROR", vec![]),
+        } => vec![
+            ("nal_len", nal_len.into_py(py)),
+            ("length_size", length_size.into_py(py)),
+        ],
+        CodecParseError::BufferTooSmall { needed, have } => {
+            vec![("needed", needed.into_py(py)), ("have", have.into_py(py))]
+        }
+        // Catch-all for #[non_exhaustive] additions not yet mapped.
+        _ => vec![],
     };
     let kind = match kind_class.getattr(kind_name) {
         Ok(k) => k,
@@ -403,23 +375,22 @@ pub(crate) fn klv_encode_error_to_pyerr(py: Python<'_>, e: tst_core::KlvEncodeEr
     // REF-KLV-04) reaches `.tag` losslessly; the KLV-tag-number variants
     // widen their u16/u32 tag values to u64 (lossless). PyO3 maps `u64` →
     // Python `int` (unbounded), matching the `.tag: Optional[int]` stub.
-    let (kind_str, tag): (&str, Option<u64>) = match &e {
-        RustE::BufferTooSmall { .. } => ("BUFFER_TOO_SMALL", None),
-        RustE::RecordTooLarge => ("RECORD_TOO_LARGE", None),
-        RustE::OutOfRange { tag, .. } => ("OUT_OF_RANGE", Some(u64::from(*tag))),
-        RustE::StringTooLong { tag, .. } => ("STRING_TOO_LONG", Some(u64::from(*tag))),
-        RustE::UnsupportedImapbLength { .. } => ("UNSUPPORTED_IMAPB_LENGTH", None),
-        RustE::InvalidImapbParams { .. } => ("INVALID_IMAPB_PARAMS", None),
-        RustE::MissingMandatoryItem { tag, .. } => {
-            ("MISSING_MANDATORY_ITEM", Some(u64::from(*tag)))
-        }
-        RustE::ReservedTagInUnknown { tag } => ("RESERVED_TAG_IN_UNKNOWN", Some(u64::from(*tag))),
-        RustE::VTargetPackEmpty { target_id } => ("VTARGET_PACK_EMPTY", Some(*target_id)),
-        RustE::DuplicateTargetId { target_id } => ("DUPLICATE_TARGET_ID", Some(*target_id)),
-        RustE::ForbiddenStandaloneOffset { tag } => {
-            ("FORBIDDEN_STANDALONE_OFFSET", Some(u64::from(*tag)))
-        }
-        _ => ("BUFFER_TOO_SMALL", None),
+    // The KIND comes from A2's one table; this match only harvests `.tag`
+    // (a KLV tag for most variants, a VTarget Pack `target_id` for two).
+    let kind_str = tst_pipeline::binding::kind::kind_of_klv_encode(&e).name();
+    let tag: Option<u64> = match &e {
+        RustE::BufferTooSmall { .. } => None,
+        RustE::RecordTooLarge => None,
+        RustE::OutOfRange { tag, .. } => Some(u64::from(*tag)),
+        RustE::StringTooLong { tag, .. } => Some(u64::from(*tag)),
+        RustE::UnsupportedImapbLength { .. } => None,
+        RustE::InvalidImapbParams { .. } => None,
+        RustE::MissingMandatoryItem { tag, .. } => Some(u64::from(*tag)),
+        RustE::ReservedTagInUnknown { tag } => Some(u64::from(*tag)),
+        RustE::VTargetPackEmpty { target_id } => Some(*target_id),
+        RustE::DuplicateTargetId { target_id } => Some(*target_id),
+        RustE::ForbiddenStandaloneOffset { tag } => Some(u64::from(*tag)),
+        _ => None,
     };
     let msg = e.to_string();
     let exceptions = match py.import_bound("tstrans.exceptions") {

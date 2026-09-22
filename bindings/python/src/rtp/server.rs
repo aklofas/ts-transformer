@@ -26,11 +26,12 @@ use tst_rtp::cancel::RtspServerCancelHandle;
 use tst_rtp::rtsp::server::mount::{MountHandle as RustMountHandle, MountKind as RustMountKind};
 use tst_rtp::rtsp::server::{RtspServer as RustRtspServer, ServerStats as RustServerStats};
 
-use crate::errors::make_rtsp_error;
 use crate::mux::{
     PyAudioStreamHandle, PyDataStreamHandle, PyKlvStreamHandle, PyMuxerProgramConfig,
     PySubtitleStreamHandle, PyVideoStreamHandle, py_pts90khz,
 };
+use crate::raise::{RTSP, raise};
+use tst_pipeline::binding::{BindingError, BindingErrorKind};
 
 // ---------------------------------------------------------------------------
 // Module registration.
@@ -43,49 +44,6 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMountStats>()?;
     m.add_class::<PyRtspServerCancelHandle>()?;
     Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// Helpers — RtspServerError → PyErr.
-// ---------------------------------------------------------------------------
-
-/// Map an [`tst_rtp::error::RtspServerError`] to a Python `RtspError`.
-///
-/// Each variant gets its own `make_rtsp_error(py, "<KIND>", ...)` arm so
-/// the consolidated `scripts/check/python/error-mapping-coverage.sh`
-/// ratchet sees a literal call site per kind. The kinds not emitted from
-/// this module —
-/// `AUTH_FAILED`, `AUTH_REQUIRED`, `NOT_FOUND`, `TIMEOUT`,
-/// `UNSUPPORTED_TRANSPORT` — are covered naturally by T21's client surface
-/// (`bindings/python/src/rtp/client.rs::rtsp_error_to_pyerr`), so the
-/// ratchet is satisfied workspace-wide without defensive stubs.
-fn server_error_to_pyerr(py: Python<'_>, e: tst_rtp::error::RtspServerError) -> PyErr {
-    use tst_rtp::error::RtspServerError as E;
-    let msg = e.to_string();
-    match e {
-        E::Io(_) | E::BindAddrInUse => make_rtsp_error(py, "IO", &msg),
-        E::Tls(_) => make_rtsp_error(py, "TLS", &msg),
-        E::UrlParse(_) => make_rtsp_error(py, "PROTOCOL", &msg),
-        E::InvalidMountPath { .. }
-        | E::InvalidMulticastGroup { .. }
-        | E::DuplicateMount { .. }
-        | E::InvalidConfig { .. } => make_rtsp_error(py, "MOUNT", &msg),
-        E::AlreadyStarted | E::NotStarted | E::Shutdown => make_rtsp_error(py, "SERVER", &msg),
-        _ => make_rtsp_error(py, "SERVER", &msg),
-    }
-}
-
-/// Map an [`tst_rtp::error::MountError`] to a Python `RtspError(MOUNT)`.
-/// Mount-side push failures are MuxError wrappings; we route those to
-/// `RtspError(MOUNT)` with the muxer's `Display` since the failure
-/// originates in the mount push path.
-fn mount_error_to_pyerr(py: Python<'_>, e: tst_rtp::error::MountError) -> PyErr {
-    use tst_rtp::error::MountError as E;
-    let msg = e.to_string();
-    match e {
-        E::Mux(_) | E::Closed => make_rtsp_error(py, "MOUNT", &msg),
-        _ => make_rtsp_error(py, "MOUNT", &msg),
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -296,7 +254,7 @@ impl PyMountHandle {
         let coerced = crate::util::coerce_bytes_like(py, nal)?;
         let slice = coerced.as_bytes();
         let res = py.allow_threads(|| self.inner.push_video(slice, rust_pts, key_frame));
-        res.map_err(|e| mount_error_to_pyerr(py, e))
+        res.map_err(|e| raise(py, &RTSP, BindingError::from(e)))
     }
 
     /// Push one KLV blob onto the lone configured KLV stream.
@@ -314,7 +272,7 @@ impl PyMountHandle {
         let coerced = crate::util::coerce_bytes_like(py, klv)?;
         let slice = coerced.as_bytes();
         let res = py.allow_threads(|| self.inner.push_klv(slice, rust_pts, metadata_service_id));
-        res.map_err(|e| mount_error_to_pyerr(py, e))
+        res.map_err(|e| raise(py, &RTSP, BindingError::from(e)))
     }
 
     /// Push one audio frame onto the lone configured audio stream.
@@ -330,7 +288,7 @@ impl PyMountHandle {
         let coerced = crate::util::coerce_bytes_like(py, frames)?;
         let slice = coerced.as_bytes();
         let res = py.allow_threads(|| self.inner.push_audio(slice, rust_pts));
-        res.map_err(|e| mount_error_to_pyerr(py, e))
+        res.map_err(|e| raise(py, &RTSP, BindingError::from(e)))
     }
 
     /// Push one subtitle payload onto the lone configured subtitle stream.
@@ -346,7 +304,7 @@ impl PyMountHandle {
         let coerced = crate::util::coerce_bytes_like(py, payload)?;
         let slice = coerced.as_bytes();
         let res = py.allow_threads(|| self.inner.push_subtitle(slice, rust_pts));
-        res.map_err(|e| mount_error_to_pyerr(py, e))
+        res.map_err(|e| raise(py, &RTSP, BindingError::from(e)))
     }
 
     /// Push one data payload onto the lone configured data stream.
@@ -362,7 +320,7 @@ impl PyMountHandle {
         let coerced = crate::util::coerce_bytes_like(py, data)?;
         let slice = coerced.as_bytes();
         let res = py.allow_threads(|| self.inner.push_data(slice, rust_pts));
-        res.map_err(|e| mount_error_to_pyerr(py, e))
+        res.map_err(|e| raise(py, &RTSP, BindingError::from(e)))
     }
 
     // ── Push surface — multi-stream variants ───────────────────────────────
@@ -391,7 +349,7 @@ impl PyMountHandle {
             self.inner
                 .push_video_to(handle_inner, slice, rust_pts, key_frame)
         });
-        res.map_err(|e| mount_error_to_pyerr(py, e))
+        res.map_err(|e| raise(py, &RTSP, BindingError::from(e)))
     }
 
     /// Push to a specific KLV stream handle. Accepts bytes-like input.
@@ -412,7 +370,7 @@ impl PyMountHandle {
             self.inner
                 .push_klv_to(handle_inner, slice, rust_pts, metadata_service_id)
         });
-        res.map_err(|e| mount_error_to_pyerr(py, e))
+        res.map_err(|e| raise(py, &RTSP, BindingError::from(e)))
     }
 
     /// Push to a specific audio stream handle. Accepts bytes-like input.
@@ -429,7 +387,7 @@ impl PyMountHandle {
         let coerced = crate::util::coerce_bytes_like(py, frames)?;
         let slice = coerced.as_bytes();
         let res = py.allow_threads(|| self.inner.push_audio_to(handle_inner, slice, rust_pts));
-        res.map_err(|e| mount_error_to_pyerr(py, e))
+        res.map_err(|e| raise(py, &RTSP, BindingError::from(e)))
     }
 
     /// Push to a specific subtitle stream handle. Accepts bytes-like input.
@@ -446,7 +404,7 @@ impl PyMountHandle {
         let coerced = crate::util::coerce_bytes_like(py, payload)?;
         let slice = coerced.as_bytes();
         let res = py.allow_threads(|| self.inner.push_subtitle_to(handle_inner, slice, rust_pts));
-        res.map_err(|e| mount_error_to_pyerr(py, e))
+        res.map_err(|e| raise(py, &RTSP, BindingError::from(e)))
     }
 
     #[pyo3(signature = (handle, data, *, pts))]
@@ -462,7 +420,7 @@ impl PyMountHandle {
         let coerced = crate::util::coerce_bytes_like(py, data)?;
         let slice = coerced.as_bytes();
         let res = py.allow_threads(|| self.inner.push_data_to(handle_inner, slice, rust_pts));
-        res.map_err(|e| mount_error_to_pyerr(py, e))
+        res.map_err(|e| raise(py, &RTSP, BindingError::from(e)))
     }
 
     // ── Stream-handle accessors ────────────────────────────────────────────
@@ -656,17 +614,23 @@ impl PyRtspServer {
             match std::fs::File::open(path).and_then(|f| f.metadata()) {
                 Ok(m) if m.is_file() => {}
                 Ok(_) => {
-                    return Err(make_rtsp_error(
+                    return Err(raise(
                         py,
-                        "TLS",
-                        &format!("TLS path '{path}' is not a regular file"),
+                        &RTSP,
+                        BindingError::new(
+                            BindingErrorKind::RtspTls,
+                            format!("TLS path '{path}' is not a regular file"),
+                        ),
                     ));
                 }
                 Err(e) => {
-                    return Err(make_rtsp_error(
+                    return Err(raise(
                         py,
-                        "TLS",
-                        &format!("cannot read TLS file '{path}': {e}"),
+                        &RTSP,
+                        BindingError::new(
+                            BindingErrorKind::RtspTls,
+                            format!("cannot read TLS file '{path}': {e}"),
+                        ),
                     ));
                 }
             }
@@ -725,7 +689,7 @@ impl PyRtspServer {
                     Ok(server)
                 },
             )
-            .map_err(|e| server_error_to_pyerr(py, e))?;
+            .map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;
 
         Ok(Self {
             inner: Arc::new(server),
@@ -752,7 +716,7 @@ impl PyRtspServer {
         let path_owned = path.to_string();
         let res = py
             .allow_threads(move || server.add_mount(&path_owned, muxer_cfg))
-            .map_err(|e| server_error_to_pyerr(py, e))?;
+            .map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;
         Ok(PyMountHandle { inner: res })
     }
 
@@ -785,7 +749,7 @@ impl PyRtspServer {
         let path_owned = path.to_string();
         let res = py
             .allow_threads(move || server.add_multicast_mount(&path_owned, muxer_cfg, &url))
-            .map_err(|e| server_error_to_pyerr(py, e))?;
+            .map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;
         Ok(PyMountHandle { inner: res })
     }
 
@@ -818,7 +782,7 @@ impl PyRtspServer {
         let _ = drain_ms;
         let server = self.inner.clone();
         py.allow_threads(move || server.stop())
-            .map_err(|e| server_error_to_pyerr(py, e))?;
+            .map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;
         Ok(())
     }
 
@@ -854,7 +818,7 @@ impl PyRtspServer {
         match py.allow_threads(move || server.stop()) {
             Ok(_) => Ok(false),
             Err(tst_rtp::error::RtspServerError::NotStarted) => Ok(false),
-            Err(e) => Err(server_error_to_pyerr(py, e)),
+            Err(e) => Err(raise(py, &RTSP, BindingError::from(e))),
         }
     }
 

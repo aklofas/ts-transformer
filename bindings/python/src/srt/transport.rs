@@ -439,7 +439,12 @@ impl PyReceiver {
                 },
             ));
         }
-        let slot = tst_core::cancel::CancelSlot::new();
+        // Registered for the duration of the accept so the interpreter-exit
+        // hook can unpark it — the first accept has no Python handle
+        // (DEBT-16), and a thread parked here at exit deadlocks
+        // `atexit(srt_cleanup)`. `_accept_guard` must outlive the accept.
+        let slot = std::sync::Arc::new(tst_core::cancel::CancelSlot::new());
+        let _accept_guard = crate::util::register_accept_slot(&slot);
         let transport = py
             .allow_threads(|| parsed.accept_one(&slot))
             .map_err(|e| raise(py, &SRT, BindingError::from(e)))?;

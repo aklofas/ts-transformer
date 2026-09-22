@@ -96,30 +96,7 @@ use crate::errors::{klv_encode_error_to_pyerr, make_klv_error};
 /// explicit arms as new Rust variants surface.
 pub(crate) fn klv_decode_error_to_pyerr(py: Python<'_>, e: KlvDecodeError) -> PyErr {
     let msg = format!("{e}");
-    let kind = match &e {
-        KlvDecodeError::Truncated { .. }
-        | KlvDecodeError::MalformedLength { .. }
-        | KlvDecodeError::LengthOverflow { .. } => "TRUNCATED_SET",
-        KlvDecodeError::UnexpectedUniversalLabel { .. } => "BAD_UNIVERSAL_LABEL",
-        KlvDecodeError::ChecksumMismatch { .. } | KlvDecodeError::Crc32Mismatch { .. } => {
-            "CHECKSUM_MISMATCH"
-        }
-        KlvDecodeError::DuplicateTag { .. } => "DUPLICATE_TAG",
-        KlvDecodeError::Tag2NotFirst
-        | KlvDecodeError::Tag1NotLast
-        | KlvDecodeError::MissingTag65
-        | KlvDecodeError::St0102MissingRequiredTag { .. }
-        | KlvDecodeError::St0903MissingRequiredTag { .. } => "MISSING_REQUIRED_TAG",
-        KlvDecodeError::MalformedTag { .. }
-        | KlvDecodeError::NonCanonicalLength { .. }
-        | KlvDecodeError::NonCanonicalTag { .. }
-        | KlvDecodeError::TrailingBytes { .. }
-        | KlvDecodeError::BadTimeStampPackLength { .. }
-        | KlvDecodeError::ReservedBitsInvalid { .. }
-        | KlvDecodeError::St0903InvalidVTargetPack { .. }
-        | KlvDecodeError::FieldError(_) => "MALFORMED_BYTES",
-        _ => "INTERNAL",
-    };
+    let kind = tst_pipeline::binding::kind::kind_of_klv_decode(&e).name();
     make_klv_error(py, kind, &msg)
 }
 
@@ -136,10 +113,7 @@ pub(crate) fn klv_decode_error_to_pyerr(py: Python<'_>, e: KlvDecodeError) -> Py
 /// that same bucket except the substrate-framing one.
 fn klv_field_error_to_pyerr(py: Python<'_>, e: RustKlvFieldError) -> PyErr {
     let msg = format!("{e}");
-    let kind = match &e {
-        RustKlvFieldError::TruncatedField { .. } => "TRUNCATED_SET",
-        _ => "MALFORMED_BYTES",
-    };
+    let kind = tst_pipeline::binding::kind::kind_of_klv_field(&e).name();
     make_klv_error(py, kind, &msg)
 }
 

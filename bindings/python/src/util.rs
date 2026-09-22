@@ -265,3 +265,29 @@ pub(crate) fn fire_cancel_sources_at_exit(py: Python<'_>) {
         std::thread::sleep(std::time::Duration::from_millis(EXIT_SETTLE_MS));
     });
 }
+
+/// Adapter so a `tst_core::cancel::CancelSlot` can be registered as a
+/// [`CancelSource`] — the slot has inherent `cancel()` but no
+/// `TransportCancel` impl.
+///
+/// This exists for ONE purpose: the first accept inside a listener-mode
+/// constructor parks before any Python handle exists (DEBT-16 — it stays
+/// uncancellable BY THE CALLER, and that is deliberate), so without this
+/// the exit hook has nothing to fire and the process hangs. Wrapping the
+/// slot for the duration of the accept keeps it user-uncancellable while
+/// making it reachable at interpreter exit.
+pub(crate) struct SlotCancel(pub Arc<tst_core::cancel::CancelSlot>);
+
+impl TransportCancel for SlotCancel {
+    fn cancel(&self) {
+        self.0.cancel();
+    }
+}
+
+/// Register `slot` for the duration of a blocking first accept. The
+/// returned guard must stay alive across the accept: the exit registry
+/// holds only a `Weak`, so dropping it de-registers the slot.
+#[allow(dead_code)] // srt-feature-gated callers
+pub(crate) fn register_accept_slot(slot: &Arc<tst_core::cancel::CancelSlot>) -> Arc<CancelSource> {
+    CancelSource::new(Arc::new(SlotCancel(Arc::clone(slot))))
+}

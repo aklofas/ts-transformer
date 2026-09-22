@@ -37,10 +37,12 @@ use pyo3::prelude::*;
 use tst_hls::HlsPublisher;
 use tst_pipeline::{MuxPublisher as RustMuxPublisher, MuxPublisherError};
 
+use crate::hls::map_mux_publisher_error;
 use crate::hls::publisher::PyHlsPublisher;
 use crate::hls::publisher_abc::PyPublisherStats;
-use crate::hls::{make_hls_error, map_mux_publisher_error};
 use crate::mux::{PyMuxerProgramConfig, py_pts90khz};
+use crate::raise::{HLS, raise};
+use tst_pipeline::binding::{BindingError, BindingErrorKind};
 
 // ---------------------------------------------------------------------------
 // MuxPublisherStats — frozen mirror of tst_pipeline::MuxPublisherStats
@@ -124,9 +126,13 @@ impl PyMuxPublisher {
             .inner
             .lock()
             .map_err(|_| PyRuntimeError::new_err("MuxPublisher mutex poisoned"))?;
-        let inner = guard
-            .as_ref()
-            .ok_or_else(|| make_hls_error(py, "FINISHED", "MuxPublisher already finished"))?;
+        let inner = guard.as_ref().ok_or_else(|| {
+            raise(
+                py,
+                &HLS,
+                BindingError::new(BindingErrorKind::Closed, "MuxPublisher already finished"),
+            )
+        })?;
         f(inner).map_err(|e| map_mux_publisher_error(py, e))
     }
 }
@@ -150,7 +156,14 @@ impl PyMuxPublisher {
         let hls = {
             let mut pub_ref = publisher.borrow_mut();
             pub_ref.take_inner().ok_or_else(|| {
-                make_hls_error(py, "FINISHED", "HlsPublisher already consumed or finished")
+                raise(
+                    py,
+                    &HLS,
+                    BindingError::new(
+                        BindingErrorKind::HlsFinished,
+                        "HlsPublisher already consumed or finished",
+                    ),
+                )
             })?
         };
 
@@ -158,9 +171,13 @@ impl PyMuxPublisher {
         //    rtp/mux_sender.rs::PyMuxSender::new).
         let mut cfg_builder = tst_core::mpegts::mux::MuxerConfig::builder();
         cfg_builder.add_program(program_config.inner.clone());
-        let muxer_cfg = cfg_builder
-            .build()
-            .map_err(|e| make_hls_error(py, "INVALID_CONFIG", &e.to_string()))?;
+        let muxer_cfg = cfg_builder.build().map_err(|e| {
+            raise(
+                py,
+                &HLS,
+                BindingError::new(BindingErrorKind::HlsInvalidConfig, e.to_string()),
+            )
+        })?;
 
         // 3. Hand publisher + config to the pipeline shell.
         let mp = RustMuxPublisher::with_config(hls, muxer_cfg)
@@ -270,9 +287,13 @@ impl PyMuxPublisher {
                 .inner
                 .lock()
                 .map_err(|_| PyRuntimeError::new_err("MuxPublisher mutex poisoned"))?;
-            guard
-                .take()
-                .ok_or_else(|| make_hls_error(py, "FINISHED", "MuxPublisher already finished"))?
+            guard.take().ok_or_else(|| {
+                raise(
+                    py,
+                    &HLS,
+                    BindingError::new(BindingErrorKind::Closed, "MuxPublisher already finished"),
+                )
+            })?
         };
         let hls = mp.finish().map_err(|e| map_mux_publisher_error(py, e))?;
         Ok(PyHlsPublisher::from_inner(hls))
