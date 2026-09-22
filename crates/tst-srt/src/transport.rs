@@ -264,6 +264,14 @@ impl Transport for SrtTransport {
 impl tst_core::transport::RecvTransport for SrtTransport {
     fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
         use crate::error::RecvError;
+        // X-CORR-07: an empty destination is a no-op. libsrt rejects a
+        // zero-length receive (`MJ_NOTSUP`, core.cpp `if (len <= 0)`), which
+        // the catch-all arm below would report as Broken and tear the socket
+        // down — for a call that asked for nothing. Same guard tst-tcp
+        // carries; the conformance kit's `empty_recv_is_noop` row pins it.
+        if buf.is_empty() {
+            return Ok(0);
+        }
         let socket = self.socket.as_mut().ok_or(TransportError::Closed)?;
         match socket.recv(buf) {
             Ok(n) => Ok(n),
