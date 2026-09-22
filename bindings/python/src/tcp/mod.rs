@@ -300,10 +300,10 @@ impl PyTcpTransport {
 /// Construct a `PyTcpTransport` from an already-connected `TcpTransport`.
 /// Used internally by `PyTcpListenerBuilder::build()` / `accept_blocking`.
 fn make_py_tcp_transport(t: TcpTransport) -> PyTcpTransport {
-    // tcp HAS a real cancel handle. The `CancelSource` latch is nonetheless
-    // the source of truth for the Python-visible `is_cancelled` state:
-    // `TcpCancelHandle::is_cancelled()` currently reports `!alive`, which
-    // WP-C1 fixes — this binding must not depend on it.
+    // tcp HAS a real cancel handle, and since WP-C1 its `is_cancelled()` is a
+    // cancel latch rather than `!alive`, so a clean peer EOF no longer reads
+    // as a caller cancel through it. `CancelSource` still owns its own latch
+    // (Python `close()` goes through it) and ORs the handle's in.
     let cancel = CancelSource::new(Arc::new(t.cancel_handle()));
     PyTcpTransport {
         owned: Owned::new(SendHalf(t), cancel.as_dyn(), ()),

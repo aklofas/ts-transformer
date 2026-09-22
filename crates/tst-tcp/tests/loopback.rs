@@ -97,6 +97,54 @@ fn loopback_pair() -> (TcpTransport, std::net::TcpStream) {
     (client, server)
 }
 
+/// WP-C1: `is_cancelled()` is the CANCEL latch, never a liveness proxy.
+///
+/// `TcpCancelHandle::is_cancelled()` used to be `!alive`, and tst-tcp drops
+/// `alive` on a clean peer EOF as well as on a cancel. Once the binding
+/// layer's `Owned::is_cancelled` ORs the transport's latch in (WP-C1), that
+/// spelling would relabel every clean TCP peer EOF as a caller cancel —
+/// `TST_E_CLOSED` instead of `TST_E_END_OF_STREAM` at the C ABI, and the
+/// same one-kind shift in Python and the JVM. Pinned here at the crate
+/// level; the `peer_eof_is_not_a_cancel` conformance-kit row generalises it.
+#[test]
+fn peer_eof_is_not_a_cancel() {
+    let (mut client, server) = loopback_pair();
+    let h = client.cancel_handle();
+    assert!(!h.is_cancelled(), "fresh handle");
+
+    // Clean EOF: the peer shuts the connection down without anyone
+    // cancelling. `recv_bytes` reports it and latches `alive = false`.
+    drop(server);
+    let mut b = [0u8; 16];
+    let got = client.recv_bytes(&mut b);
+    assert!(
+        matches!(
+            got,
+            Err(TransportError::Broken {
+                cause: BrokenCause::CleanEof,
+                ..
+            })
+        ),
+        "expected a clean-EOF Broken, got {got:?}"
+    );
+
+    assert!(
+        !RecvTransport::is_alive(&client),
+        "a peer EOF kills liveness"
+    );
+    assert!(
+        !h.is_cancelled(),
+        "a peer EOF must NOT read as a caller cancel"
+    );
+    // A handle minted after the EOF must agree.
+    assert!(!client.cancel_handle().is_cancelled());
+
+    // And a real cancel still latches, on this handle and on a later one.
+    h.cancel();
+    assert!(h.is_cancelled());
+    assert!(client.cancel_handle().is_cancelled());
+}
+
 /// CORR-08: `TcpCancelHandle` must be reachable through both trait objects
 /// (`Transport::cancel_handle` / `RecvTransport::cancel_handle`), not just
 /// the inherent `TcpTransport::cancel_handle` method — generic shells and

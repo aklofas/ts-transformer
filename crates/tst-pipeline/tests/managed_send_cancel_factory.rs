@@ -70,6 +70,9 @@ impl TransportCancel for FlagCancel {
     fn cancel(&self) {
         self.0.store(true, Ordering::SeqCst);
     }
+    fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
 }
 
 /// A cancel that lands *while the factory runs* must not be lost. The

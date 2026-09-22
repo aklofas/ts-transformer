@@ -45,6 +45,11 @@ impl TransportCancel for ParkedAccept {
             let _ = tx.send(());
         }
     }
+    // Taking the sender IS this double's latch: `cancel()` is the only site
+    // that empties the slot, and it never refills it.
+    fn is_cancelled(&self) -> bool {
+        self.wake.lock().unwrap().is_none()
+    }
 }
 
 #[test]
@@ -157,6 +162,9 @@ struct FlagCancel(Arc<AtomicBool>);
 impl TransportCancel for FlagCancel {
     fn cancel(&self) {
         self.0.store(true, Ordering::SeqCst);
+    }
+    fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
     }
 }
 

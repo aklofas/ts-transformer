@@ -33,6 +33,9 @@ pub struct TcpListener {
     /// the `CANCEL_POLL_INTERVAL` the recv/send paths use — see that
     /// constant's doc for why).
     alive: Arc<AtomicBool>,
+    /// Set only by [`TcpCancelHandle::cancel`] / [`Self::close`] — the cancel
+    /// latch the handle reports, kept apart from `alive` (WP-C1).
+    cancelled: Arc<AtomicBool>,
     #[cfg(feature = "tls")]
     tls_config: Option<Arc<rustls::ServerConfig>>,
 }
@@ -50,6 +53,7 @@ impl TcpListener {
             inner,
             config: SocketConfig::default(),
             alive: Arc::new(AtomicBool::new(true)),
+            cancelled: Arc::new(AtomicBool::new(false)),
             #[cfg(feature = "tls")]
             tls_config: None,
         })
@@ -192,7 +196,7 @@ impl TcpListener {
     /// another thread. Obtain it BEFORE moving the listener into the accept
     /// thread. See [`TcpCancelHandle`] for the cooperative-cancel contract.
     pub fn cancel_handle(&self) -> TcpCancelHandle {
-        TcpCancelHandle::from_flag(self.alive.clone())
+        TcpCancelHandle::from_flags(self.alive.clone(), self.cancelled.clone())
     }
 
     /// Close the listener from any thread: a parked `accept_blocking` returns
@@ -202,6 +206,11 @@ impl TcpListener {
     /// explicitly), so bind the next listener on a fresh port or drop this
     /// one first.
     pub fn close(&self) {
+        // A listener has no peer-EOF path: its only terminal event IS the
+        // caller asking it to stop, so close() latches the cancel flag too
+        // (matching `TcpCancelHandle::cancel`, which is the same operation
+        // reached from another thread).
+        self.cancelled.store(true, Ordering::Release);
         self.alive.store(false, Ordering::Release);
     }
 }

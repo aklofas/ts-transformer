@@ -98,6 +98,9 @@ impl crate::transport::TransportCancel for SrtCancelHandle {
     fn cancel(&self) {
         SrtCancelHandle::cancel(self);
     }
+    fn is_cancelled(&self) -> bool {
+        SrtCancelHandle::is_cancelled(self)
+    }
 }
 
 impl core::fmt::Debug for SrtCancelHandle {
@@ -271,6 +274,23 @@ mod tests {
         h.cancel();
         assert!(h.is_cancelled());
     }
+
+    /// WP-C1: `is_cancelled` is part of the `TransportCancel` object contract,
+    /// reachable through the trait object every binding and managed wrapper
+    /// holds — not only through the inherent method. Pinned via the trait
+    /// path so a missing trait method is a compile failure here.
+    #[test]
+    fn is_cancelled_is_reachable_through_the_trait_object() {
+        use crate::transport::TransportCancel;
+        let h = SrtCancelHandle::new(3, |_| {});
+        let dyn_h: &dyn TransportCancel = &h;
+        assert!(!dyn_h.is_cancelled());
+        dyn_h.cancel();
+        assert!(
+            dyn_h.is_cancelled(),
+            "the trait view must read the same latch as the inherent method"
+        );
+    }
 }
 
 #[cfg(all(test, feature = "std"))]
@@ -297,6 +317,9 @@ mod cancel_slot_tests {
     impl TransportCancel for Flag {
         fn cancel(&self) {
             self.0.fetch_add(1, Ordering::SeqCst);
+        }
+        fn is_cancelled(&self) -> bool {
+            self.0.load(Ordering::SeqCst) > 0
         }
     }
 
@@ -385,6 +408,9 @@ mod cancel_slot_tests {
                     "the latch must be visible to a target firing from cancel()"
                 );
                 self.1.store(true, Ordering::SeqCst);
+            }
+            fn is_cancelled(&self) -> bool {
+                self.1.load(Ordering::SeqCst)
             }
         }
 
