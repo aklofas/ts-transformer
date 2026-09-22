@@ -34,115 +34,28 @@
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use pyo3::Py;
 use pyo3::prelude::*;
 
-use tst_core::mpegts::demux::DemuxEvent;
-use tst_core::transport::{BrokenCause, TransportCancel, TransportError};
+use tst_pipeline::binding::{BindingError, BindingErrorKind, HandleState, Owned};
 use tst_pipeline::{
-    FactoryCancel, ManagedDemuxReceiver as RustManagedDemuxReceiver, ManagedDemuxReceiverConfig,
-    ManagedRecvTransport, ManagedTransport, MuxSender as RustMuxSender, MuxSenderError,
-    MuxSenderErrorSource, RecvEndReasonHandle,
+    ManagedDemuxReceiver as RustManagedDemuxReceiver, ManagedTransport, MuxSender as RustMuxSender,
 };
-use tst_srt::{Listener, ListenerConfig, Socket, SocketConfig, SrtTransport, SrtUrl, url::Mode};
+use tst_srt::{SrtTransport, SrtUrl, url::Mode};
 
-use crate::errors::{make_srt_error, mux_error_to_pyerr};
-use crate::mpegts::demux_error_to_pyerr;
+use crate::errors::mux_error_to_pyerr;
 use crate::mux::{
     PyAudioStreamHandle, PyDataStreamHandle, PyKlvStreamHandle, PyMuxerProgramConfig, PyMuxerStats,
     PySubtitleStreamHandle, PyVideoStreamHandle, py_pts90khz,
 };
-use crate::srt::errors::{transport_error_to_pyerr, url_error_to_pyerr};
+use crate::raise::{SRT, pyok, raise};
+use crate::srt::demux_receiver::demux_recv_err;
+use crate::srt::mux_sender::mux_sender_err;
 use crate::srt::policy::{PyManagedTransportStats, PyReconnectPolicy};
 use crate::srt::transport::{PyCancelHandle, PySocketStats};
-
-// ---------------------------------------------------------------------------
-// Shared helpers (parallel to T5's `mux_sender.rs` / `demux_receiver.rs`)
-// ---------------------------------------------------------------------------
-
-/// Map a `MuxSenderError` to a Python exception. Mirror of T5's
-/// `mux_sender_error_to_pyerr` — kept local rather than re-exported so
-/// the call site can pick the SRT-specific transport-error helper.
-fn mux_sender_error_to_pyerr(py: Python<'_>, e: MuxSenderError) -> PyErr {
-    match e.source {
-        MuxSenderErrorSource::Mux(mux_err) => mux_error_to_pyerr(py, mux_err),
-        MuxSenderErrorSource::Transport(t) => transport_error_to_pyerr(py, t),
-        _ => make_srt_error(py, "IO", &format!("{:?}", e.kind)),
-    }
-}
-
-/// Map a `DemuxReceiverError` to the right Python exception. Mirror of
-/// T5's helper in `demux_receiver.rs`.
-fn demux_recv_error_to_pyerr(py: Python<'_>, e: tst_pipeline::DemuxReceiverError) -> PyErr {
-    use tst_pipeline::DemuxReceiverErrorSource;
-    match e.source {
-        DemuxReceiverErrorSource::Transport(t) => transport_error_to_pyerr(py, t),
-        DemuxReceiverErrorSource::Demux(d) => demux_error_to_pyerr(py, &d),
-        _ => make_srt_error(py, "IO", &format!("{:?}", e.kind)),
-    }
-}
-
-/// Build a fresh `SrtTransport` connected as a caller. Mirror of
-/// `tst-c`'s `crate::sender::connect::connect_srt` — re-implemented here
-/// (`tst-c` is downstream of `tst-py`).
-fn connect_srt(host: &str, port: u16, cfg: &SocketConfig) -> Result<SrtTransport, TransportError> {
-    let mut cfg = cfg.clone();
-    cfg.merge_sender_defaults();
-    let addr = crate::util::join_host_port(host, port);
-    let socket = Socket::connect_with(&cfg, addr.as_str()).map_err(|e| TransportError::Broken {
-        msg: format!("connect: {e}"),
-        errno_code: None,
-        cause: BrokenCause::Unspecified,
-    })?;
-    Ok(SrtTransport::new(socket))
-}
-
-/// Bind a listener + accept one peer; return the accepted `SrtTransport`.
-/// Mirror of `tst-c`'s `crate::receiver::listen::listen_srt`.
-fn listen_srt(host: &str, port: u16, cfg: &ListenerConfig) -> Result<SrtTransport, TransportError> {
-    let bind_host = if host.is_empty() { "0.0.0.0" } else { host };
-    let addr = if host.contains(':') && !host.starts_with('[') {
-        format!("[{bind_host}]:{port}")
-    } else {
-        format!("{bind_host}:{port}")
-    };
-    let mut listener =
-        Listener::bind_with(cfg, addr.as_str()).map_err(|e| TransportError::Broken {
-            msg: format!("bind: {e}"),
-            errno_code: None,
-            cause: BrokenCause::Unspecified,
-        })?;
-    let (socket, _peer) = listener.accept().map_err(|e| TransportError::Broken {
-        msg: format!("accept: {e}"),
-        errno_code: None,
-        cause: BrokenCause::Unspecified,
-    })?;
-    Ok(SrtTransport::new(socket))
-}
-
-/// [`listen_srt`] for the reconnect factory: the listener's cancel handle
-/// is published into the shared `FactoryCancel` slot around the accept so
-/// `cancel()` can reach a re-accept parked with no peer in sight. That
-/// lifecycle lives in [`Listener::accept_one_cancellable`] (shared with the
-/// C and JVM managed listener factories); this wrapper only renders the
-/// bind address the way `listen_srt` above does.
-fn listen_srt_cancellable(
-    host: &str,
-    port: u16,
-    cfg: &ListenerConfig,
-    cancel: &FactoryCancel,
-) -> Result<SrtTransport, TransportError> {
-    let bind_host = if host.is_empty() { "0.0.0.0" } else { host };
-    let addr = if host.contains(':') && !host.starts_with('[') {
-        format!("[{bind_host}]:{port}")
-    } else {
-        format!("{bind_host}:{port}")
-    };
-    Listener::accept_one_cancellable(cfg, addr.as_str(), cancel)
-}
+use crate::util::{CancelSource, alive_probe, close_owned};
 
 // ---------------------------------------------------------------------------
 // PyManagedMuxSender — wraps MuxSender<ManagedTransport<SrtTransport>>.
@@ -184,7 +97,7 @@ pub(crate) struct PyManagedMuxSender {
     /// the close raising `RuntimeError: Already borrowed`. `Option` so
     /// `close()` / `__exit__` can drop the inner shell while keeping the
     /// PyClass addressable for idempotent closes.
-    inner: Arc<Mutex<Option<RustMuxSender<ManagedTransport<SrtTransport>>>>>,
+    owned: Owned<RustMuxSender<ManagedTransport<SrtTransport>>>,
     /// `tst_pipeline::MuxSender::cancel_handle()` snapshot — the managed
     /// transport's cancel (latches the close flag, wakes the backoff wait
     /// and the factory slot, closes the current inner). Exposed through
@@ -192,11 +105,11 @@ pub(crate) struct PyManagedMuxSender {
     /// Shared cancel state (Arc 2 WP-B2): the same `Arc` every
     /// `CancelHandle` this shell hands out holds, so `close()` here and
     /// `cancel()` through any handle flip one observable flag.
-    cancel: Arc<crate::util::CancelSource>,
+    cancel: Arc<CancelSource>,
     /// Counts factory invocations (reconnect attempts). Bumped from
     /// inside the captured `Fn() -> Result<...>` closure by every
     /// `ManagedTransport::reconnect_and_drain` retry tick.
-    factory_attempts: Arc<AtomicU64>,
+    attempts: Arc<AtomicU64>,
     /// Reconnect/gap telemetry observer, snapshotted from the
     /// `ManagedTransport` BEFORE it moves into `RustMuxSender::new`
     /// (same precedent as `cancel_handle()` on the basic-bytes shells).
@@ -225,69 +138,39 @@ impl PyManagedMuxSender {
         program_config: PyRef<'_, PyMuxerProgramConfig>,
         policy: Option<PyReconnectPolicy>,
     ) -> PyResult<Self> {
-        // 1. Build the muxer config from the single program.
         let mut cfg_builder = tst_core::mpegts::mux::MuxerConfig::builder();
         cfg_builder.add_program(program_config.inner.clone());
         let muxer_cfg = cfg_builder.build().map_err(|e| mux_error_to_pyerr(py, e))?;
 
-        // 2. Parse the URL and enforce caller mode.
-        let parsed = SrtUrl::parse(url).map_err(|e| url_error_to_pyerr(py, e))?;
+        let parsed = SrtUrl::parse(url).map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
         if parsed.mode != Mode::Caller {
-            let msg = format!(
-                "ManagedMuxSender.from_url requires ?mode=caller (default); got mode={:?}",
-                parsed.mode
-            );
-            return Err(make_srt_error(py, "CONFIG_INVALID", &msg));
+            return Err(raise(
+                py,
+                &SRT,
+                BindingError {
+                    kind: BindingErrorKind::ConfigInvalid,
+                    detail: format!(
+                        "ManagedMuxSender.from_url requires ?mode=caller (default); got mode={:?}",
+                        parsed.mode
+                    ),
+                },
+            ));
         }
-        let mut sock_cfg = SocketConfig::default();
-        parsed.overlay.apply_to_socket(&mut sock_cfg);
-
-        // 3. Initial connect (GIL released for the libsrt handshake).
-        let host = parsed.host.clone();
-        let port = parsed.port;
-        let initial = py
-            .allow_threads(|| connect_srt(&host, port, &sock_cfg))
-            .map_err(|e| {
-                // Initial connect failure: convert TransportError::Broken
-                // into a CONNECT_FAILED SrtError so callers can distinguish
-                // it from runtime reconnect failures.
-                let msg = match &e {
-                    TransportError::Broken { msg, .. } => msg.clone(),
-                    _ => format!("{e:?}"),
-                };
-                make_srt_error(py, "CONNECT_FAILED", &msg)
-            })?;
-
-        // 4. Build the reconnect factory. Capture host+port+cfg by value
-        // so the closure outlives this scope. The factory is `Fn + Sync`
-        // for `ManagedTransport::new` (send-side requires Sync).
-        let attempts = Arc::new(AtomicU64::new(0));
-        let attempts_for_factory = attempts.clone();
-        let host_for_factory = parsed.host.clone();
-        let port_for_factory = parsed.port;
-        let cfg_for_factory = sock_cfg.clone();
-        let factory = move || -> Result<SrtTransport, TransportError> {
-            attempts_for_factory.fetch_add(1, Ordering::Release);
-            connect_srt(&host_for_factory, port_for_factory, &cfg_for_factory)
-        };
-
-        // 5. Wrap initial in a ManagedTransport, then hand to MuxSender.
         let policy_inner = policy.map(|p| p.inner).unwrap_or_default();
-        let managed = ManagedTransport::new(initial, factory, policy_inner);
-        // Snapshot BEFORE the shell move — same precedent as
-        // ManagedSender's cancel_handle/stats_handle capture.
-        let stats_handle = managed.stats_handle();
-        let sender =
-            RustMuxSender::new(managed, muxer_cfg).map_err(|e| mux_error_to_pyerr(py, e))?;
-        let cancel = crate::util::CancelSource::new(
-            sender
-                .cancel_handle()
-                .expect("ManagedTransport::cancel_handle is documented as always Some"),
-        );
+        // A3 owns the open, the reconnect factory (including the attempt
+        // counter, which now lives on `ManagedTransport` itself) and the
+        // handle snapshots. The managed family dials with `connect()` —
+        // the sender preset — matching the C ABI.
+        let (sender, handles, stats_handle) = py
+            .allow_threads(|| {
+                tst_srt::shells::managed_mux_sender_from_url(&parsed, policy_inner, muxer_cfg)
+            })
+            .map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
+        let cancel = CancelSource::new(handles.cancel);
         Ok(Self {
-            inner: Arc::new(Mutex::new(Some(sender))),
+            owned: Owned::new(sender, cancel.as_dyn(), ()),
             cancel,
-            factory_attempts: attempts,
+            attempts: handles.attempts,
             stats_handle,
         })
     }
@@ -307,11 +190,14 @@ impl PyManagedMuxSender {
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, nal)?;
         let slice = coerced.as_bytes();
-        crate::util::with_slot(py, &self.inner, |s| {
-            s.send_video(slice, rust_pts, key_frame)
-        })
-        .ok_or_else(|| make_srt_error(py, "CLOSED", "ManagedMuxSender is closed"))?
-        .map_err(|e| mux_sender_error_to_pyerr(py, e))
+        let res = py.allow_threads(|| {
+            self.owned
+                .with_mut(|s| s.send_video(slice, rust_pts, key_frame))
+        });
+        match res {
+            Ok(r) => r.map_err(|e| mux_sender_err(py, e)),
+            Err(state) => Err(raise(py, &SRT, BindingError::from(state))),
+        }
     }
 
     /// Send one KLV blob to the lone configured KLV stream.
@@ -326,11 +212,14 @@ impl PyManagedMuxSender {
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, klv)?;
         let slice = coerced.as_bytes();
-        crate::util::with_slot(py, &self.inner, |s| {
-            s.send_klv(slice, rust_pts, metadata_service_id)
-        })
-        .ok_or_else(|| make_srt_error(py, "CLOSED", "ManagedMuxSender is closed"))?
-        .map_err(|e| mux_sender_error_to_pyerr(py, e))
+        let res = py.allow_threads(|| {
+            self.owned
+                .with_mut(|s| s.send_klv(slice, rust_pts, metadata_service_id))
+        });
+        match res {
+            Ok(r) => r.map_err(|e| mux_sender_err(py, e)),
+            Err(state) => Err(raise(py, &SRT, BindingError::from(state))),
+        }
     }
 
     /// Send one encoded audio frame to the lone configured audio stream.
@@ -344,9 +233,11 @@ impl PyManagedMuxSender {
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, adts)?;
         let slice = coerced.as_bytes();
-        crate::util::with_slot(py, &self.inner, |s| s.send_audio(slice, rust_pts))
-            .ok_or_else(|| make_srt_error(py, "CLOSED", "ManagedMuxSender is closed"))?
-            .map_err(|e| mux_sender_error_to_pyerr(py, e))
+        let res = py.allow_threads(|| self.owned.with_mut(|s| s.send_audio(slice, rust_pts)));
+        match res {
+            Ok(r) => r.map_err(|e| mux_sender_err(py, e)),
+            Err(state) => Err(raise(py, &SRT, BindingError::from(state))),
+        }
     }
 
     /// Send one subtitle payload to the lone configured subtitle stream.
@@ -360,9 +251,11 @@ impl PyManagedMuxSender {
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, payload)?;
         let slice = coerced.as_bytes();
-        crate::util::with_slot(py, &self.inner, |s| s.send_subtitle(slice, rust_pts))
-            .ok_or_else(|| make_srt_error(py, "CLOSED", "ManagedMuxSender is closed"))?
-            .map_err(|e| mux_sender_error_to_pyerr(py, e))
+        let res = py.allow_threads(|| self.owned.with_mut(|s| s.send_subtitle(slice, rust_pts)));
+        match res {
+            Ok(r) => r.map_err(|e| mux_sender_err(py, e)),
+            Err(state) => Err(raise(py, &SRT, BindingError::from(state))),
+        }
     }
 
     /// Send one data payload to the lone configured data stream.
@@ -377,9 +270,11 @@ impl PyManagedMuxSender {
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, data)?;
         let slice = coerced.as_bytes();
-        crate::util::with_slot(py, &self.inner, |s| s.send_data(slice, rust_pts))
-            .ok_or_else(|| make_srt_error(py, "CLOSED", "ManagedMuxSender is closed"))?
-            .map_err(|e| mux_sender_error_to_pyerr(py, e))
+        let res = py.allow_threads(|| self.owned.with_mut(|s| s.send_data(slice, rust_pts)));
+        match res {
+            Ok(r) => r.map_err(|e| mux_sender_err(py, e)),
+            Err(state) => Err(raise(py, &SRT, BindingError::from(state))),
+        }
     }
 
     // ── Send family — handle-targeted variants ────────────────────────────
@@ -397,11 +292,14 @@ impl PyManagedMuxSender {
         let handle_inner = handle.0;
         let coerced = crate::util::coerce_bytes_like(py, nal)?;
         let slice = coerced.as_bytes();
-        crate::util::with_slot(py, &self.inner, |s| {
-            s.send_video_to(handle_inner, slice, rust_pts, key_frame)
-        })
-        .ok_or_else(|| make_srt_error(py, "CLOSED", "ManagedMuxSender is closed"))?
-        .map_err(|e| mux_sender_error_to_pyerr(py, e))
+        let res = py.allow_threads(|| {
+            self.owned
+                .with_mut(|s| s.send_video_to(handle_inner, slice, rust_pts, key_frame))
+        });
+        match res {
+            Ok(r) => r.map_err(|e| mux_sender_err(py, e)),
+            Err(state) => Err(raise(py, &SRT, BindingError::from(state))),
+        }
     }
 
     #[pyo3(signature = (handle, klv, *, pts, metadata_service_id = 0))]
@@ -417,11 +315,14 @@ impl PyManagedMuxSender {
         let handle_inner = handle.0;
         let coerced = crate::util::coerce_bytes_like(py, klv)?;
         let slice = coerced.as_bytes();
-        crate::util::with_slot(py, &self.inner, |s| {
-            s.send_klv_to(handle_inner, slice, rust_pts, metadata_service_id)
-        })
-        .ok_or_else(|| make_srt_error(py, "CLOSED", "ManagedMuxSender is closed"))?
-        .map_err(|e| mux_sender_error_to_pyerr(py, e))
+        let res = py.allow_threads(|| {
+            self.owned
+                .with_mut(|s| s.send_klv_to(handle_inner, slice, rust_pts, metadata_service_id))
+        });
+        match res {
+            Ok(r) => r.map_err(|e| mux_sender_err(py, e)),
+            Err(state) => Err(raise(py, &SRT, BindingError::from(state))),
+        }
     }
 
     #[pyo3(signature = (handle, adts, *, pts))]
@@ -436,11 +337,14 @@ impl PyManagedMuxSender {
         let handle_inner = handle.0;
         let coerced = crate::util::coerce_bytes_like(py, adts)?;
         let slice = coerced.as_bytes();
-        crate::util::with_slot(py, &self.inner, |s| {
-            s.send_audio_to(handle_inner, slice, rust_pts)
-        })
-        .ok_or_else(|| make_srt_error(py, "CLOSED", "ManagedMuxSender is closed"))?
-        .map_err(|e| mux_sender_error_to_pyerr(py, e))
+        let res = py.allow_threads(|| {
+            self.owned
+                .with_mut(|s| s.send_audio_to(handle_inner, slice, rust_pts))
+        });
+        match res {
+            Ok(r) => r.map_err(|e| mux_sender_err(py, e)),
+            Err(state) => Err(raise(py, &SRT, BindingError::from(state))),
+        }
     }
 
     #[pyo3(signature = (handle, payload, *, pts))]
@@ -455,11 +359,14 @@ impl PyManagedMuxSender {
         let handle_inner = handle.0;
         let coerced = crate::util::coerce_bytes_like(py, payload)?;
         let slice = coerced.as_bytes();
-        crate::util::with_slot(py, &self.inner, |s| {
-            s.send_subtitle_to(handle_inner, slice, rust_pts)
-        })
-        .ok_or_else(|| make_srt_error(py, "CLOSED", "ManagedMuxSender is closed"))?
-        .map_err(|e| mux_sender_error_to_pyerr(py, e))
+        let res = py.allow_threads(|| {
+            self.owned
+                .with_mut(|s| s.send_subtitle_to(handle_inner, slice, rust_pts))
+        });
+        match res {
+            Ok(r) => r.map_err(|e| mux_sender_err(py, e)),
+            Err(state) => Err(raise(py, &SRT, BindingError::from(state))),
+        }
     }
 
     #[pyo3(signature = (handle, data, *, pts))]
@@ -474,41 +381,58 @@ impl PyManagedMuxSender {
         let handle_inner = handle.0;
         let coerced = crate::util::coerce_bytes_like(py, data)?;
         let slice = coerced.as_bytes();
-        crate::util::with_slot(py, &self.inner, |s| {
-            s.send_data_to(handle_inner, slice, rust_pts)
-        })
-        .ok_or_else(|| make_srt_error(py, "CLOSED", "ManagedMuxSender is closed"))?
-        .map_err(|e| mux_sender_error_to_pyerr(py, e))
+        let res = py.allow_threads(|| {
+            self.owned
+                .with_mut(|s| s.send_data_to(handle_inner, slice, rust_pts))
+        });
+        match res {
+            Ok(r) => r.map_err(|e| mux_sender_err(py, e)),
+            Err(state) => Err(raise(py, &SRT, BindingError::from(state))),
+        }
     }
 
     // ── Handle getters ────────────────────────────────────────────────────
 
     fn video_handle(&self, py: Python<'_>) -> Option<PyVideoStreamHandle> {
-        crate::util::with_slot(py, &self.inner, |s| s.video_handles().into_iter().next())
-            .flatten()
-            .map(PyVideoStreamHandle)
+        py.allow_threads(|| {
+            self.owned
+                .with_ref(|s| s.video_handles().into_iter().next())
+        })
+        .ok()
+        .flatten()
+        .map(PyVideoStreamHandle)
     }
 
     fn klv_handle(&self, py: Python<'_>) -> Option<PyKlvStreamHandle> {
-        crate::util::with_slot(py, &self.inner, |s| s.klv_handles().into_iter().next())
+        py.allow_threads(|| self.owned.with_ref(|s| s.klv_handles().into_iter().next()))
+            .ok()
             .flatten()
             .map(PyKlvStreamHandle)
     }
 
     fn audio_handle(&self, py: Python<'_>) -> Option<PyAudioStreamHandle> {
-        crate::util::with_slot(py, &self.inner, |s| s.audio_handles().into_iter().next())
-            .flatten()
-            .map(PyAudioStreamHandle)
+        py.allow_threads(|| {
+            self.owned
+                .with_ref(|s| s.audio_handles().into_iter().next())
+        })
+        .ok()
+        .flatten()
+        .map(PyAudioStreamHandle)
     }
 
     fn subtitle_handle(&self, py: Python<'_>) -> Option<PySubtitleStreamHandle> {
-        crate::util::with_slot(py, &self.inner, |s| s.subtitle_handles().into_iter().next())
-            .flatten()
-            .map(PySubtitleStreamHandle)
+        py.allow_threads(|| {
+            self.owned
+                .with_ref(|s| s.subtitle_handles().into_iter().next())
+        })
+        .ok()
+        .flatten()
+        .map(PySubtitleStreamHandle)
     }
 
     fn data_handle(&self, py: Python<'_>) -> Option<PyDataStreamHandle> {
-        crate::util::with_slot(py, &self.inner, |s| s.data_handles().into_iter().next())
+        py.allow_threads(|| self.owned.with_ref(|s| s.data_handles().into_iter().next()))
+            .ok()
             .flatten()
             .map(PyDataStreamHandle)
     }
@@ -523,10 +447,14 @@ impl PyManagedMuxSender {
     /// slot lock is taken inside `allow_threads`, so holding the GIL while
     /// waiting for it can never freeze the interpreter.
     fn stats(&self, py: Python<'_>) -> PyResult<(Py<PySocketStats>, Py<PyMuxerStats>)> {
-        let (sock, pipe) = crate::util::with_slot(py, &self.inner, |s| {
-            (s.socket_stats().unwrap_or_default(), s.stats())
-        })
-        .ok_or_else(|| make_srt_error(py, "CLOSED", "ManagedMuxSender is closed"))?;
+        let (sock, pipe) = pyok(
+            py,
+            &SRT,
+            py.allow_threads(|| {
+                self.owned
+                    .with_ref(|s| (s.socket_stats().unwrap_or_default(), s.stats()))
+            }),
+        )?;
         let mux_stats = tst_core::mpegts::mux::MuxerStats {
             ts_packets_emitted: pipe.packets_sent,
             ts_bytes_emitted: pipe.bytes_sent,
@@ -544,7 +472,7 @@ impl PyManagedMuxSender {
     /// rising values mean the inner SRT socket has been rebuilt (or a
     /// rebuild attempt failed and was retried).
     fn reconnect_attempts(&self) -> u64 {
-        self.factory_attempts.load(Ordering::Acquire)
+        self.attempts.load(Ordering::Acquire)
     }
 
     /// Reconnect/gap telemetry: attempts, successes, current gap-buffer
@@ -557,13 +485,20 @@ impl PyManagedMuxSender {
     /// Raises `SrtError(IO)` if the internal gap-buffer lock is
     /// poisoned.
     fn reconnect_stats(&self, py: Python<'_>) -> PyResult<Py<PyManagedTransportStats>> {
-        if !crate::util::slot_alive(&self.inner, |_| true) {
-            return Err(make_srt_error(py, "CLOSED", "ManagedMuxSender is closed"));
+        if self.owned.is_closed() {
+            return Err(raise(py, &SRT, BindingError::from(HandleState::Closed)));
         }
         let stats = py
             .allow_threads(|| self.stats_handle.stats())
             .ok_or_else(|| {
-                make_srt_error(py, "IO", "reconnect stats unavailable: gap lock poisoned")
+                raise(
+                    py,
+                    &SRT,
+                    BindingError::new(
+                        BindingErrorKind::SrtIo,
+                        "reconnect stats unavailable: gap lock poisoned",
+                    ),
+                )
             })?;
         Py::new(py, PyManagedTransportStats::from_core(stats))
     }
@@ -583,15 +518,14 @@ impl PyManagedMuxSender {
     /// so a push parked on another thread ends with `SrtError(CLOSED)`;
     /// then drops the managed transport (which closes the inner SRT
     /// socket). Idempotent.
-    fn close(&self, py: Python<'_>) {
-        self.cancel.cancel();
-        crate::util::close_slot(py, &self.inner, |s| s.close());
+    fn close(&self, py: Python<'_>) -> PyResult<()> {
+        close_owned(py, &SRT, &self.owned)
     }
 
     /// `True` while the sender holds a live transport (a push in flight on
     /// another thread counts as live).
     fn is_alive(&self) -> bool {
-        crate::util::slot_alive(&self.inner, |s| s.is_alive())
+        alive_probe(&self.owned, |s| s.is_alive())
     }
 
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -604,13 +538,13 @@ impl PyManagedMuxSender {
         _exc_type: &Bound<'_, PyAny>,
         _exc_value: &Bound<'_, PyAny>,
         _traceback: &Bound<'_, PyAny>,
-    ) -> bool {
-        self.close(py);
-        false
+    ) -> PyResult<bool> {
+        self.close(py)?;
+        Ok(false)
     }
 
     fn __repr__(&self) -> String {
-        if crate::util::slot_alive(&self.inner, |_| true) {
+        if !self.owned.is_closed() {
             format!(
                 "ManagedMuxSender(open, reconnect_attempts={})",
                 self.reconnect_attempts()
@@ -665,7 +599,7 @@ pub(crate) struct PyManagedDemuxReceiver {
     /// Live receiver behind a mutex so a concurrent `__next__` /
     /// `close()` from different Python threads serialise cleanly.
     /// `Option` so `close()` can take + drop the inner shell.
-    inner: Arc<Mutex<Option<RustManagedDemuxReceiver<SrtTransport>>>>,
+    owned: Owned<RustManagedDemuxReceiver<SrtTransport>>,
     /// Cancel handle pulled from the receiver at construction. Held
     /// outside the mutex so `close()` can fire it BEFORE acquiring the
     /// lock — wakes any thread parked in `__next__`'s `recv_event`,
@@ -674,18 +608,10 @@ pub(crate) struct PyManagedDemuxReceiver {
     /// Shared cancel state (Arc 2 WP-B2): the same `Arc` every
     /// `CancelHandle` this shell hands out holds, so `close()` here and
     /// `cancel()` through any handle flip one observable flag.
-    cancel: Arc<crate::util::CancelSource>,
+    cancel: Arc<CancelSource>,
     /// Reconnect-attempt counter — bumped from inside the factory closure
     /// on every invocation. Symmetric with `PyManagedMuxSender`.
-    factory_attempts: Arc<AtomicU64>,
-    /// Handle onto the receiver's [`tst_pipeline::RecvEndReasonHandle`],
-    /// captured at construction BEFORE the receiver moves into `inner` —
-    /// the obtain-before-move pattern every binding uses for
-    /// shell-wrapped state (mirrors `crate::rtp::demux_receiver`'s
-    /// `end_reason` field, and the C binding's `end_reason` box field).
-    /// Independent of `inner`'s lifetime, so `end_reason()` keeps
-    /// answering after `close()` has dropped the receiver.
-    end_reason: RecvEndReasonHandle,
+    attempts: Arc<AtomicU64>,
 }
 
 #[pymethods]
@@ -707,115 +633,31 @@ impl PyManagedDemuxReceiver {
         demux_config: Option<&Bound<'_, PyAny>>,
         policy: Option<PyReconnectPolicy>,
     ) -> PyResult<Self> {
-        // 1. Parse URL.
-        let parsed = SrtUrl::parse(url).map_err(|e| url_error_to_pyerr(py, e))?;
-        let is_listener = parsed.mode == Mode::Listener;
-        let mut listener_cfg = ListenerConfig::default();
-        let mut sock_cfg = SocketConfig::default();
-        if is_listener {
-            parsed.overlay.apply_to_listener(&mut listener_cfg);
-        } else {
-            parsed.overlay.apply_to_socket(&mut sock_cfg);
-        }
-        let host = parsed.host.clone();
-        let port = parsed.port;
-
-        // 2. Translate DemuxerConfig dataclass (must happen with GIL held).
+        let parsed = SrtUrl::parse(url).map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
+        // Translate the DemuxerConfig dataclass with the GIL held.
         let demux_opts = match demux_config {
             None => None,
             Some(cfg_obj) => Some(crate::mpegts::build_demuxer_config(py, cfg_obj)?),
         };
-
-        // 3. Initial inner transport (GIL released).
-        let host_for_initial = host.clone();
-        let listener_cfg_for_initial = listener_cfg.clone();
-        let sock_cfg_for_initial = sock_cfg.clone();
-        let initial = py.allow_threads(move || -> Result<SrtTransport, BindOrConnect> {
-            if is_listener {
-                listen_srt(&host_for_initial, port, &listener_cfg_for_initial)
-                    .map_err(BindOrConnect::ListenInitial)
-            } else {
-                connect_srt(&host_for_initial, port, &sock_cfg_for_initial)
-                    .map_err(BindOrConnect::ConnectInitial)
-            }
-        });
-        let initial = match initial {
-            Ok(t) => t,
-            Err(BindOrConnect::ListenInitial(e)) => {
-                let msg = match &e {
-                    TransportError::Broken { msg, .. } => msg.clone(),
-                    _ => format!("{e:?}"),
-                };
-                return Err(make_srt_error(py, "CONNECT_FAILED", &msg));
-            }
-            Err(BindOrConnect::ConnectInitial(e)) => {
-                let msg = match &e {
-                    TransportError::Broken { msg, .. } => msg.clone(),
-                    _ => format!("{e:?}"),
-                };
-                return Err(make_srt_error(py, "CONNECT_FAILED", &msg));
-            }
-        };
-
-        // 4. Build the reconnect factory. `ManagedRecvTransport::new`
-        // takes `Box<dyn FnMut() -> Result<R, TransportError> + Send>` —
-        // no `Sync` bound (receive-side single-thread access pattern).
-        let attempts = Arc::new(AtomicU64::new(0));
-        let attempts_for_factory = attempts.clone();
-        let host_for_factory = host.clone();
-        let listener_cfg_for_factory = listener_cfg.clone();
-        let sock_cfg_for_factory = sock_cfg.clone();
-        // Listener mode: the re-accept is reachable by `cancel()` through
-        // this slot (see `listen_srt_cancellable`).
-        let factory_cancel = Arc::new(FactoryCancel::new());
-        let fc = Arc::clone(&factory_cancel);
-        let factory: Box<dyn FnMut() -> Result<SrtTransport, TransportError> + Send> =
-            Box::new(move || {
-                attempts_for_factory.fetch_add(1, Ordering::Release);
-                if is_listener {
-                    listen_srt_cancellable(&host_for_factory, port, &listener_cfg_for_factory, &fc)
-                } else {
-                    connect_srt(&host_for_factory, port, &sock_cfg_for_factory)
-                }
-            });
-
-        // 5. Wrap.
         let policy_inner = policy.map(|p| p.inner).unwrap_or_default();
-        let managed = ManagedRecvTransport::new_with_factory_cancel(
-            initial,
-            factory,
-            policy_inner,
-            factory_cancel,
-        );
-        let receiver = match demux_opts {
-            None => RustManagedDemuxReceiver::new(managed, ManagedDemuxReceiverConfig::default()),
-            Some(opts) => RustManagedDemuxReceiver::with_demux_options(
-                managed,
-                opts,
-                ManagedDemuxReceiverConfig::default(),
-            ),
-        };
-        // Pulled BEFORE `receiver` moves into `inner` below — see the
-        // `end_reason` field doc for why (obtain-before-move: the handle
-        // outlives the receiver, so `end_reason()` still answers after
-        // `close()`).
-        let end_reason = receiver.end_reason_handle();
-        // `ManagedDemuxReceiver::cancel_handle` may legitimately return
-        // None if the inner is mid-reconnect at construction. With a
-        // freshly-built inner that's not the case, but defend with a
-        // typed error rather than `.expect`.
-        let cancel = crate::util::CancelSource::new(receiver.cancel_handle().ok_or_else(|| {
-            make_srt_error(
-                py,
-                "IO",
-                "ManagedDemuxReceiver constructed without a live cancel handle",
-            )
-        })?);
+        // A3 dispatches on `url.mode` (both modes are legal here), owns the
+        // re-accept `FactoryCancel` slot the cancel handle fires, and
+        // snapshots the end-reason handle before the shell move. The FIRST
+        // accept stays uncancellable (DEBT-16, documented in python.md).
+        let (receiver, handles) = py
+            .allow_threads(|| {
+                tst_srt::shells::managed_demux_receiver_from_url(
+                    &parsed,
+                    policy_inner,
+                    demux_opts.unwrap_or_default(),
+                )
+            })
+            .map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
+        let cancel = CancelSource::new(handles.cancel);
         Ok(Self {
-            inner: Arc::new(Mutex::new(Some(receiver))),
+            owned: Owned::new(receiver, cancel.as_dyn(), ()).with_end_reason(handles.end_reason),
             cancel,
-            factory_attempts: attempts,
-            end_reason,
+            attempts: handles.attempts,
         })
     }
 
@@ -835,32 +677,12 @@ impl PyManagedDemuxReceiver {
     /// transport-side failure the decorator did not absorb (a cancel arrives
     /// as `SrtError(CLOSED)`); `DemuxError` on demuxer failure.
     fn __next__(&self, py: Python<'_>) -> PyResult<PyObject> {
-        let inner = self.inner.clone();
-        let res: Result<Option<DemuxEvent>, tst_pipeline::DemuxReceiverError> =
-            py.allow_threads(|| {
-                let mut guard = match inner.lock() {
-                    Ok(g) => g,
-                    Err(_) => {
-                        return Err(tst_pipeline::DemuxReceiverError::from(
-                            TransportError::Broken {
-                                msg: "ManagedDemuxReceiver inner lock poisoned".into(),
-                                errno_code: None,
-                                cause: BrokenCause::Unspecified,
-                            },
-                        ));
-                    }
-                };
-                match guard.as_mut() {
-                    Some(rx) => rx.recv_event(),
-                    None => Err(tst_pipeline::DemuxReceiverError::from(
-                        TransportError::Closed,
-                    )),
-                }
-            });
+        let res = py.allow_threads(|| self.owned.with_mut(|rx| rx.recv_event()));
         match res {
-            Ok(None) => Err(pyo3::exceptions::PyStopIteration::new_err(())),
-            Ok(Some(ev)) => crate::mpegts::convert_event(py, &ev),
-            Err(e) => Err(demux_recv_error_to_pyerr(py, e)),
+            Err(state) => Err(raise(py, &SRT, BindingError::from(state))),
+            Ok(Ok(None)) => Err(pyo3::exceptions::PyStopIteration::new_err(())),
+            Ok(Ok(Some(ev))) => crate::mpegts::convert_event(py, &ev),
+            Ok(Err(e)) => Err(demux_recv_err(py, e)),
         }
     }
 
@@ -880,19 +702,14 @@ impl PyManagedDemuxReceiver {
         // Two-step: acquire the outer mutex inside allow_threads so the GIL
         // is free while waiting. Without this, a parked __next__ holding the
         // mutex inside allow_threads would freeze all Python threads.
-        enum StatsErr {
-            Poisoned,
-            Closed,
-        }
-        let result: Result<tst_core::transport::SocketStats, StatsErr> = py.allow_threads(|| {
-            let guard = self.inner.lock().map_err(|_| StatsErr::Poisoned)?;
-            let inner = guard.as_ref().ok_or(StatsErr::Closed)?;
-            Ok(inner.socket_stats().unwrap_or_default())
-        });
-        let core = result.map_err(|e| match e {
-            StatsErr::Poisoned => make_srt_error(py, "IO", "ManagedDemuxReceiver lock poisoned"),
-            StatsErr::Closed => make_srt_error(py, "CLOSED", "ManagedDemuxReceiver is closed"),
-        })?;
+        let core = pyok(
+            py,
+            &SRT,
+            py.allow_threads(|| {
+                self.owned
+                    .with_ref(|rx| rx.socket_stats().unwrap_or_default())
+            }),
+        )?;
         Py::new(py, PySocketStats::from_core(core))
     }
 
@@ -910,7 +727,7 @@ impl PyManagedDemuxReceiver {
     /// Total number of times the reconnect factory has been invoked
     /// since construction. Mirror of `ManagedMuxSender.reconnect_attempts`.
     fn reconnect_attempts(&self) -> u64 {
-        self.factory_attempts.load(Ordering::Acquire)
+        self.attempts.load(Ordering::Acquire)
     }
 
     /// Wall-clock time the stream identified by `pid` last carried an
@@ -930,19 +747,14 @@ impl PyManagedDemuxReceiver {
     /// `allow_threads`) can't freeze the interpreter. Raises
     /// `SrtError(CLOSED)` if the receiver has been closed.
     fn last_seen_micros(&self, py: Python<'_>, pid: u16) -> PyResult<Option<u64>> {
-        enum StatsErr {
-            Poisoned,
-            Closed,
-        }
-        let result: Result<Option<std::time::SystemTime>, StatsErr> = py.allow_threads(|| {
-            let guard = self.inner.lock().map_err(|_| StatsErr::Poisoned)?;
-            let inner = guard.as_ref().ok_or(StatsErr::Closed)?;
-            Ok(inner.stats().per_stream.get(&pid).and_then(|s| s.last_seen))
-        });
-        let last_seen = result.map_err(|e| match e {
-            StatsErr::Poisoned => make_srt_error(py, "IO", "ManagedDemuxReceiver lock poisoned"),
-            StatsErr::Closed => make_srt_error(py, "CLOSED", "ManagedDemuxReceiver is closed"),
-        })?;
+        let last_seen = pyok(
+            py,
+            &SRT,
+            py.allow_threads(|| {
+                self.owned
+                    .with_ref(|rx| rx.stats().per_stream.get(&pid).and_then(|s| s.last_seen))
+            }),
+        )?;
         Ok(last_seen
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_micros() as u64))
@@ -968,7 +780,7 @@ impl PyManagedDemuxReceiver {
     /// reserved for a future transport that can signal a clean EOS
     /// distinct from budget exhaustion.
     fn end_reason(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
-        match self.end_reason.get() {
+        match self.owned.end_reason() {
             Some(r) => crate::srt::end_reason::recv_end_reason_to_py(py, &r),
             None => Ok(None),
         }
@@ -977,24 +789,14 @@ impl PyManagedDemuxReceiver {
     /// Close the receiver. Fires the cancel handle BEFORE acquiring the
     /// mutex so a concurrent `__next__` parked in `recv_event` unparks
     /// promptly. Idempotent.
-    fn close(&self, py: Python<'_>) {
-        self.cancel.cancel();
-        let inner = self.inner.clone();
-        py.allow_threads(move || {
-            if let Ok(mut guard) = inner.lock() {
-                if let Some(mut r) = guard.take() {
-                    r.close();
-                }
-            }
-        });
+    fn close(&self, py: Python<'_>) -> PyResult<()> {
+        close_owned(py, &SRT, &self.owned)
     }
 
+    /// `True` while the receiver holds a live shell (a `__next__` parked on
+    /// another thread counts as live; the probe never waits).
     fn is_alive(&self) -> bool {
-        match self.inner.try_lock() {
-            Ok(g) => g.as_ref().is_some_and(|r| r.is_alive()),
-            // Lock currently held by a parked __next__ — optimistic.
-            Err(_) => true,
-        }
+        alive_probe(&self.owned, |r| r.is_alive())
     }
 
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -1007,30 +809,21 @@ impl PyManagedDemuxReceiver {
         _exc_type: &Bound<'_, PyAny>,
         _exc_value: &Bound<'_, PyAny>,
         _traceback: &Bound<'_, PyAny>,
-    ) -> bool {
-        self.close(py);
-        false
+    ) -> PyResult<bool> {
+        self.close(py)?;
+        Ok(false)
     }
 
     fn __repr__(&self) -> String {
-        match self.inner.try_lock() {
-            Ok(g) => match g.as_ref() {
-                Some(_) => format!(
-                    "ManagedDemuxReceiver(open, reconnect_attempts={})",
-                    self.reconnect_attempts()
-                ),
-                None => "ManagedDemuxReceiver(closed)".to_string(),
-            },
-            Err(_) => "ManagedDemuxReceiver(<busy>)".to_string(),
+        if self.owned.is_closed() {
+            "ManagedDemuxReceiver(closed)".to_string()
+        } else {
+            format!(
+                "ManagedDemuxReceiver(open, reconnect_attempts={})",
+                self.reconnect_attempts()
+            )
         }
     }
-}
-
-/// Internal helper for `ManagedDemuxReceiver::from_url` — combines the
-/// listen-vs-connect failure paths inside one `allow_threads` block.
-enum BindOrConnect {
-    ListenInitial(TransportError),
-    ConnectInitial(TransportError),
 }
 
 // ---------------------------------------------------------------------------
