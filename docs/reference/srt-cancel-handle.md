@@ -150,6 +150,13 @@ The Rust API is the source of truth — every binding crate forwards
   context.
 - `is_cancelled()` (on the concrete `SrtCancelHandle` struct) is advisory;
   the underlying close may not have completed yet on another thread.
+- `is_cancelled()` answers **"did a caller cancel?"**, never "is this
+  socket finished?". A peer disconnect or a wire failure leaves it
+  `false`, however dead the connection is — use `is_alive()` on the
+  transport for that. The owner's internal teardown (`Socket`/`Listener`
+  `Drop`, and the transport error paths that retire a dead socket) goes
+  through `close_without_cancel()`, which closes and wakes without
+  latching; `Socket::close()` and a cross-thread `cancel()` latch.
 
 ## Why this and not `close()`?
 
