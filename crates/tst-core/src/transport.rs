@@ -25,9 +25,16 @@
 //!
 //! Shared rows, every transport: a second `close()` is a no-op;
 //! `cancel_handle()` returns `Some` (bare test mocks may return `None`);
-//! `is_cancelled()` is `false` on a fresh handle and `true` after
-//! `cancel()` on it or any alias, and is never a liveness proxy — a peer
-//! EOF leaves it `false`; `RecvTransport::max_payload()` is the
+//! `is_cancelled()` answers **"did the CALLER end this transport?"** —
+//! `false` on a fresh handle, `true` after `cancel()` on it or any alias,
+//! and also after the caller's own `close()` where that close is
+//! implemented by firing the same handle (SRT, the managed wrappers —
+//! X-CORR-01). It is never a liveness proxy: a peer EOF or a wire failure
+//! leaves it `false`, however dead the transport is (the kit row
+//! `peer_eof_is_not_a_cancel`). That line is load-bearing — the bindings
+//! choose between "caller closed" and "stream ended" from this bit alone,
+//! so a handle that latches on a peer-side end turns every clean EOF into
+//! a reported caller close; `RecvTransport::max_payload()` is the
 //! protocol's deliverable ceiling (never the local send budget); an EMPTY
 //! destination buffer makes `recv_bytes` return `Ok(0)` without touching
 //! the socket or the liveness flag (X-CORR-07). A cancel that lands after
@@ -42,6 +49,13 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::sync::Arc;
 use thiserror::Error;
+
+// Executable form of the contract table above (std-only, Provisional). The
+// summary rustdoc lives in the module file's own `//!` docs — an outer `///`
+// here would make rustdoc resolve the module's intra-doc links in THIS
+// module's scope and break every one of them.
+#[cfg(feature = "std")]
+pub mod conformance;
 
 // ============================================================
 // Wire-level socket stats (shared between Transport + RecvTransport)
