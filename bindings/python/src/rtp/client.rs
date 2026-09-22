@@ -812,7 +812,8 @@ impl PyRtspSession {
     ///
     /// Returns a fresh `PyRtspCancelHandle` each call; all handles
     /// share the same backing `Arc<AtomicBool>` flag (cloned from
-    /// `RustRtspCancelHandle`).
+    /// `RustRtspCancelHandle`). Raises `RtspError(CLOSED)` once the
+    /// session has been torn down (0.7.0: was `PROTOCOL`).
     fn cancel_handle(&self) -> PyResult<PyRtspCancelHandle> {
         let guard = self
             .client
@@ -823,7 +824,7 @@ impl PyRtspSession {
                 inner: c.cancel_handle(),
             }),
             None => Err(rtsp_err_no_gil(
-                BindingErrorKind::RtspProtocol,
+                BindingErrorKind::Closed,
                 "RtspSession is torn down; cancel_handle unavailable",
             )),
         }
@@ -889,7 +890,7 @@ impl PyRtspSession {
                 .map_err(|_| PyValueError::new_err("RtspSession lock poisoned"))?;
             guard.take().ok_or_else(|| {
                 rtsp_err_no_gil(
-                    BindingErrorKind::RtspProtocol,
+                    BindingErrorKind::Closed,
                     "RtspSession.into_demux_receiver: already consumed",
                 )
             })?
@@ -957,7 +958,7 @@ impl PyRtspSession {
                     py,
                     &RTSP,
                     BindingError::new(
-                        BindingErrorKind::RtspProtocol,
+                        BindingErrorKind::Closed,
                         "RtspSession.into_h264_receiver: data plane already consumed",
                     ),
                 )

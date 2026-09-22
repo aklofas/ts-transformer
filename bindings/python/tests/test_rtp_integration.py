@@ -226,6 +226,16 @@ def test_full_pipeline_rtsp_server_to_rtsp_client() -> None:
                 # socket pair (UDP) or the TCP-interleaved mpsc rx.
                 demux = session.into_demux_receiver()
 
+                # 0.7.0: the data plane is a consumable handle, so a
+                # second take is a closed-handle condition (`CLOSED`),
+                # not a protocol error. Pins the one RtspErrorKind
+                # member Arc 2 added.
+                from tstrans.exceptions import RtspError, RtspErrorKind
+
+                with pytest.raises(RtspError) as double_take:
+                    session.into_demux_receiver()
+                assert double_take.value.kind == RtspErrorKind.CLOSED
+
                 def consumer() -> None:
                     try:
                         for ev in demux:
