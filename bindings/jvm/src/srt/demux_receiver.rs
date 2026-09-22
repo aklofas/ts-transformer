@@ -67,6 +67,12 @@ static REGISTRY: LazyLock<OwnedRegistry<JniDemuxReceiver>> = LazyLock::new(Owned
 /// exception. Transport-side errors map to `SrtException` (via the shared
 /// `transport_error` helper); demux-side errors map to `DemuxException` (via the
 /// shared `throw_demux_error`). Mirrors tst-py's `demux_recv_error_to_pyerr`.
+/// No end-of-stream arm here, unlike `Receiver`: `DemuxReceiver::recv_event`
+/// SWALLOWS a clean end of stream — it flushes the demuxer and returns
+/// `Ok(None)` (`crates/tst-pipeline/src/demux_receiver.rs`), so iteration
+/// simply ends and no `DemuxReceiverError` can ever carry
+/// `ShellErrorKind::EndOfStream`. `END_OF_STREAM` is therefore reachable on
+/// the JVM only through `Receiver.recvBytes()`.
 pub(crate) fn throw_demux_recv_error(env: &mut JNIEnv, e: &DemuxReceiverError) {
     match &e.source {
         DemuxReceiverErrorSource::Transport(t) => transport_error(env, t),
