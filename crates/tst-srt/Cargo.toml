@@ -20,6 +20,7 @@ mbedtls = ["srt-sys/mbedtls"]
 [dependencies]
 srt-sys       = { package = "tstrans-srt-sys", path = "../srt-sys", version = "0.6.0", default-features = false }
 tst-core      = { path = "../tst-core", version = "0.6.0" }
+tst-pipeline  = { path = "../tst-pipeline", version = "0.6.0" }
 libc          = { workspace = true }
 os_socketaddr = { workspace = true }
 thiserror     = { workspace = true }
@@ -34,7 +35,6 @@ tracing = { version = "0.1", default-features = false, features = ["std"] }
 [dev-dependencies]
 libc             = { workspace = true }
 proptest         = { workspace = true }
-tst-pipeline     = { path = "../tst-pipeline" }
 tst-test-helpers = { path = "../tst-test-helpers" }
 # Used by integration tests that read raw libsrt socket flags
 # (e.g. SRTO_SENDER) via Socket::raw_handle().
