@@ -21,7 +21,7 @@
 
 use std::string::String;
 
-use crate::binding::owned::HandleState;
+use crate::binding::owned::{CloseFailure, HandleState};
 use crate::demux_receiver::{DemuxReceiverError, DemuxReceiverErrorSource};
 use crate::mux_publisher::MuxPublisherError;
 use crate::mux_sender::{MuxSenderError, MuxSenderErrorSource};
@@ -635,6 +635,31 @@ impl From<HandleState> for BindingError {
     }
 }
 
+/// [`Owned::close`](crate::binding::Owned::close)'s failure, so every binding
+/// surfaces a failed close the same way instead of hand-rolling it.
+///
+/// The bound is `E: Display`, not `E: Into<BindingError>`, because that is
+/// what makes the impl usable for the shells: `Close::Error` is bounded
+/// `Debug + Display`, and all nine in-tree `Close` impls set it to
+/// `Infallible`, which has no `Into<BindingError>`. `Inner` therefore carries
+/// the shell's own message under [`BindingErrorKind::Internal`] — no table row
+/// describes "a shell's close failed", and none can while `Inner` is
+/// unconstructible through the shells. A caller whose `E` does have a kind of
+/// its own converts it first: `match cf { CloseFailure::Inner(e) => e.into(),
+/// other => other.into() }`.
+impl<E: core::fmt::Display> From<CloseFailure<E>> for BindingError {
+    fn from(e: CloseFailure<E>) -> Self {
+        match e {
+            CloseFailure::Inner(inner) => {
+                BindingError::new(BindingErrorKind::Internal, inner.to_string())
+            }
+            CloseFailure::Panicked { detail } => {
+                BindingError::new(BindingErrorKind::PanicCaught, detail)
+            }
+        }
+    }
+}
+
 /// `ShellErrorKind` is a projection of the table (spec §3.3). Exhaustive:
 /// both enums live in this crate, so a new `ShellErrorKind` variant is a
 /// compile error here until it is given a kind.
@@ -834,6 +859,29 @@ mod tests {
         assert_eq!(
             (k.kind, k.detail.as_str()),
             (BindingErrorKind::PanicCaught, "index out of bounds")
+        );
+    }
+
+    /// `Owned::close`'s failure mode, for the bindings that surface it.
+    /// Every in-tree `Close` impl has `Error = Infallible`, so `Inner` is
+    /// unconstructible through the shells — the bound is `E: Display`
+    /// (`Close::Error` always is), which is what makes the impl callable for
+    /// them at all.
+    #[test]
+    fn close_failure_maps_panic_and_inner() {
+        use crate::binding::owned::CloseFailure;
+        let p: BindingError = CloseFailure::<std::convert::Infallible>::Panicked {
+            detail: "close panicked".into(),
+        }
+        .into();
+        assert_eq!(
+            (p.kind, p.detail.as_str()),
+            (BindingErrorKind::PanicCaught, "close panicked")
+        );
+        let i: BindingError = CloseFailure::Inner(String::from("final flush failed")).into();
+        assert_eq!(
+            (i.kind, i.detail.as_str()),
+            (BindingErrorKind::Internal, "final flush failed")
         );
     }
 

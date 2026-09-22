@@ -482,6 +482,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "spin"
+version = "0.9.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3763264f6b73151db08c50ff20d7d8a0b8796e021cdea7ceedad07b80155fa0e"
+
+[[package]]
 name = "syn"
 version = "2.0.117"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -590,6 +596,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tst-pipeline"
+version = "0.6.0"
+dependencies = [
+ "spin",
+ "thiserror",
+ "tracing",
+ "tst-core",
+]
+
+[[package]]
 name = "tst-srt"
 version = "0.6.0"
 dependencies = [
@@ -599,6 +615,7 @@ dependencies = [
  "thiserror",
  "tracing",
  "tst-core",
+ "tst-pipeline",
  "tstrans-srt-sys",
 ]
 

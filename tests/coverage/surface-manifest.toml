@@ -12345,3 +12345,232 @@ owning_tests = ["crates/tst-pipeline/src/binding/shells.rs"]
 bindings = []
 scenario_ids = []
 tier = "A"
+
+# --- Arc 2 WP-A2 (2026-09): tst_pipeline::binding::kind — the one BindingErrorKind
+# table, BindingError, and the kind_of_* classifiers. Owning tests are the
+# module's own #[cfg(test)] block (same convention as WP-A1 above).
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::BindingError"
+owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::kind::BindingError"
+owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::kind::BindingError::clone"
+owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::kind::BindingError::eq"
+owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::kind::BindingError::fmt"
+owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::kind::BindingError::from"
+owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::kind::BindingError::new"
+owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::kind::BindingErrorKind::ALL"
+owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::kind::BindingErrorKind::c_code"
+owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::kind::BindingErrorKind::c_projection"
+owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::kind::BindingErrorKind::clone"
+owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::kind::BindingErrorKind::eq"
+owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::kind::BindingErrorKind::fmt"
+owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::kind::BindingErrorKind::from"
+owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::kind::BindingErrorKind::hash"
+owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::kind::BindingErrorKind::is_c_frozen"
+owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::kind::BindingErrorKind::name"
+owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::kind::BindingErrorKind::variant_name"
+owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::kind::kind_of_codec"
+owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::kind::kind_of_demux"
+owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::kind::kind_of_klv_decode"
+owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::kind::kind_of_klv_encode"
+owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::kind::kind_of_klv_field"
+owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::kind::kind_of_mux"
+owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::kind::kind_of_transport"
+owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
