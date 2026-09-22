@@ -65,7 +65,6 @@
 //!   latch, end-reason cell and construction-time snapshot are ITS fields, and the
 //!   registry reads them lock-free through
 //!   [`cancel_view`](OwnedRegistry::cancel_view) /
-//!   [`is_cancelled`](OwnedRegistry::is_cancelled) /
 //!   [`end_reason`](OwnedRegistry::end_reason) /
 //!   [`snapshot`](OwnedRegistry::snapshot). **Every shell with a cancel handle is
 //!   an `OwnedEntry`**; `Entry` is for the non-cancellable handle types
@@ -394,11 +393,6 @@ impl<T> HandleRegistry<T> {
 /// `is_cancelled()` reads the shell's ONE flag, so two handles on one
 /// shell — and a handle that outlives `close()` — always agree.
 ///
-/// The `expect(dead_code)` here and on the three items below is scoped to the
-/// non-test build and is deliberately self-deleting: Task B3.1 introduces the
-/// `Owned`-backed registry, Tasks B3.3-B3.5 move the shells onto it. Once a
-/// shell registers here the expectation is unfulfilled and `-D warnings` says
-/// so — the attribute goes with that task, it is never widened to an `allow`.
 pub(crate) trait CancelSurface: Send + Sync {
     fn cancel(&self);
     fn is_cancelled(&self) -> bool;
@@ -537,12 +531,6 @@ impl<T: Send + 'static, S: Send + Sync + 'static> OwnedRegistry<T, S> {
     pub(crate) fn cancel_view(&self, id: u64) -> Option<CancelView> {
         self.lease(id)
             .map(|e| CancelView(e as Arc<dyn CancelSurface>))
-    }
-
-    /// The shell's ONE cancelled latch. `None` = `0`/absent/closed id.
-    #[cfg_attr(not(test), expect(dead_code, reason = "consumed by Tasks B3.4-B3.5"))]
-    pub(crate) fn is_cancelled(&self, id: u64) -> Option<bool> {
-        self.lease(id).map(|e| e.owned.is_cancelled())
     }
 
     /// The recorded end reason, read off the cell [`Owned`] holds outside the
@@ -985,7 +973,6 @@ mod tests {
         let reg: OwnedRegistry<u64> = OwnedRegistry::new();
         let (rec, cancel) = recording();
         let id = reg.insert(Owned::new(7, cancel, ()));
-        assert_eq!(reg.is_cancelled(id), Some(false));
         let view = reg.cancel_view(id).expect("live entry has a view");
         assert!(!view.0.is_cancelled());
 
@@ -1002,7 +989,10 @@ mod tests {
             view.0.is_cancelled(),
             "a view obtained before close observes it"
         );
-        assert_eq!(reg.is_cancelled(id), None, "the id is gone from the table");
+        assert!(
+            reg.cancel_view(id).is_none(),
+            "the id is gone from the table"
+        );
         assert_eq!(reg.close(id), None, "second close is a no-op");
         // cancel() on the view after close never panics and never takes anything.
         view.0.cancel();
@@ -1036,7 +1026,6 @@ mod tests {
                 r3.cancel_view(id).is_some(),
                 r3.snapshot(id, |s| *s),
                 r3.end_reason(id),
-                r3.is_cancelled(id),
             )
         });
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
@@ -1047,7 +1036,7 @@ mod tests {
             );
             thread::yield_now();
         }
-        assert_eq!(got.join().unwrap(), (true, Some("snap"), None, Some(false)));
+        assert_eq!(got.join().unwrap(), (true, Some("snap"), None));
         release.wait();
         parked.join().unwrap();
     }
@@ -1075,10 +1064,9 @@ mod tests {
         );
         // The entry leaves the id table too (decision 3), so the lock-free side
         // reads stop answering for the torn shell — not just the slot.
-        assert_eq!(reg.is_cancelled(id), None, "the id is gone from the table");
         assert!(
             reg.cancel_view(id).is_none(),
-            "no cancel view for a torn shell"
+            "the id is gone from the table: no cancel view for a torn shell"
         );
         assert!(reg.snapshot(id, |_| ()).is_none());
         assert_eq!(

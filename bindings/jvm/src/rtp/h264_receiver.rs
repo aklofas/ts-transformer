@@ -391,9 +391,14 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nDepayStats<'local>(
     handle: jlong,
 ) -> jobject {
     crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
-        let Ok(s) = REGISTRY.with_ref(handle as u64, |jdr| jdr.inner.depay_stats()) else {
-            crate::error::throw_closed(env, "H264Receiver");
-            return JObject::null().into_raw();
+        let s = match REGISTRY.with_ref(handle as u64, |jdr| jdr.inner.depay_stats()) {
+            Ok(s) => s,
+            // Closed/absent is IllegalStateException; a panic or a poisoned
+            // slot keeps its own mapping rather than being reported as closed.
+            Err(state) => {
+                crate::error::throw_handle_state(env, "H264Receiver", &state);
+                return JObject::null().into_raw();
+            }
         };
         // Construct `new H264DepayStats(long x9)`.
         match env.new_object(
@@ -429,9 +434,14 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nRtpStats<'local>(
     handle: jlong,
 ) -> jobject {
     crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
-        let Ok(s) = REGISTRY.with_ref(handle as u64, |jdr| jdr.inner.rtp_stats()) else {
-            crate::error::throw_closed(env, "H264Receiver");
-            return JObject::null().into_raw();
+        let s = match REGISTRY.with_ref(handle as u64, |jdr| jdr.inner.rtp_stats()) {
+            Ok(s) => s,
+            // Closed/absent is IllegalStateException; a panic or a poisoned
+            // slot keeps its own mapping rather than being reported as closed.
+            Err(state) => {
+                crate::error::throw_handle_state(env, "H264Receiver", &state);
+                return JObject::null().into_raw();
+            }
         };
         match env.new_object(
             "org/tstrans/rtp/RtpStats",
@@ -458,9 +468,14 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nSocketStats<'local>(
     handle: jlong,
 ) -> jobject {
     crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
-        let Ok(s) = REGISTRY.with_ref(handle as u64, |jdr| jdr.inner.socket_stats()) else {
-            crate::error::throw_closed(env, "H264Receiver");
-            return JObject::null().into_raw();
+        let s = match REGISTRY.with_ref(handle as u64, |jdr| jdr.inner.socket_stats()) {
+            Ok(s) => s,
+            // Closed/absent is IllegalStateException; a panic or a poisoned
+            // slot keeps its own mapping rather than being reported as closed.
+            Err(state) => {
+                crate::error::throw_handle_state(env, "H264Receiver", &state);
+                return JObject::null().into_raw();
+            }
         };
         match build_socket_stats(env, "org/tstrans/rtp/SocketStats", &s) {
             Ok(o) => o.into_raw(),
