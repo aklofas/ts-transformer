@@ -107,7 +107,7 @@ class RtpMuxDemuxLoopbackTest {
                     }
                 } catch (RuntimeException re) {
                     // The iterator wraps checked RtpException/DemuxException. A
-                    // CANCELLED RtpException = the watchdog/teardown close() fired.
+                    // CLOSED RtpException = the watchdog/teardown close() fired.
                     Throwable cause = re.getCause();
                     if (cause instanceof RtpException rex
                             && rex.kind() == RtpException.Kind.CLOSED) {

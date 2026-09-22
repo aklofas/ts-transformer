@@ -5,7 +5,7 @@
 //! # Architecture
 //!
 //! `JniH264Receiver` boxes the Rust `H264Receiver` behind the standard
-//! `HandleRegistry<T>`. Unlike `DemuxReceiver` there is NO byte-sink
+//! `OwnedRegistry<T, S>`. Unlike `DemuxReceiver` there is NO byte-sink
 //! registration and the inner value is NOT wrapped in `Arc<Mutex>` — the
 //! single-iterator contract means one thread owns the receiver; any cross-thread
 //! stop routes through the cancel handle (held separately so `close()` can fire
@@ -17,12 +17,12 @@
 //!
 //! # Error mapping (mirrors tst-py)
 //!
-//! - `TransportError::ExplicitClose`  → `RtpException(CANCELLED)`
+//! - `TransportError::ExplicitClose`  → `RtpException(CLOSED)`
 //! - `TransportError::TooLarge`       → `RtpException(MALFORMED_PACKET)`
-//! - `TransportError::Backpressure`   → `RtpException(TIMEOUT)` (recv deadline
+//! - `TransportError::Backpressure`   → `RtpException(BACKPRESSURE)` (recv deadline
 //!   expired; retryable — the transport/session is still alive)
-//! - other `TransportError`           → `RtpException(TRANSPORT)`
-//! - `ConnectError`                   → `RtpException(TRANSPORT)`
+//! - other `TransportError`           → `RtpException(IO)`
+//! - `ConnectError`                   → `RtpException(IO)`
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
@@ -35,7 +35,7 @@ use jni::sys::{jboolean, jint, jlong, jobject};
 use tst_rtp::rtsp::client::RtspClient as RustRtspClient;
 use tst_rtp::{H264Au, H264DepayConfig, H264Receiver, ParameterSetInjection};
 
-use tst_pipeline::binding::Owned;
+use tst_pipeline::binding::{HandleState, Owned};
 
 use crate::handle::OwnedRegistry;
 use crate::jutil::build_socket_stats;
@@ -249,13 +249,21 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nRecvAu<'local>(
     handle: jlong,
 ) -> jobject {
     crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
-        // `with_poisoning` holds the resource lock while recv_au runs (which may park
-        // the calling thread). A concurrent `close()` fires the cancel hook first so
-        // this call returns promptly then the resource is taken.
-        let Ok(result) = REGISTRY.with_mut(handle as u64, |jdr| jdr.inner.recv_au()) else {
-            // Closed/absent — clean EOS: return null (the Java side returns null
-            // from recvAu(), which the caller treats as end-of-stream).
-            return JObject::null().into_raw();
+        // `with_mut` holds the slot while recv_au runs (which may park the
+        // calling thread). A concurrent `close()` cancels first, so this call
+        // returns promptly and the slot is then taken.
+        let result = match REGISTRY.with_mut(handle as u64, |jdr| jdr.inner.recv_au()) {
+            Ok(r) => r,
+            // Closed/absent — clean EOS: null (the Java side returns null from
+            // recvAu(), which the caller treats as end of stream).
+            Err(HandleState::Closed) => return JObject::null().into_raw(),
+            // A PANIC or a poisoned slot is NOT an end of stream: it must reach
+            // Java as the panic RuntimeException, never be folded into the
+            // documented null. (`rtp/transport.rs` does the same.)
+            Err(state) => {
+                crate::error::throw_handle_state(env, "H264Receiver", &state);
+                return JObject::null().into_raw();
+            }
         };
 
         match result {
@@ -285,7 +293,7 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nRecvAu<'local>(
 /// Unlike `RtpRecvTransport::recv_timeout`, `recv_au_timeout` reports deadline
 /// expiry as `Err(TransportError::Backpressure)`, not `Ok(None)` — so no
 /// hand-mapping is needed here: `transport_error` already maps
-/// `Backpressure` to `RtpException(TIMEOUT)`, and `Ok(None)` stays EOS-only.
+/// `Backpressure` to `RtpException(BACKPRESSURE)`, and `Ok(None)` stays EOS-only.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nRecvAuTimeout<'local>(
     mut env: JNIEnv<'local>,
@@ -294,15 +302,25 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nRecvAuTimeout<'local>(
     timeout_ms: jlong,
 ) -> jobject {
     crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
-        let Ok(result) = REGISTRY.with_mut(handle as u64, |jdr| {
+        let result = match REGISTRY.with_mut(handle as u64, |jdr| {
             if timeout_ms < 0 {
                 jdr.inner.recv_au()
             } else {
                 jdr.inner
                     .recv_au_timeout(Duration::from_millis(timeout_ms as u64))
             }
-        }) else {
-            return JObject::null().into_raw();
+        }) {
+            Ok(r) => r,
+            // Closed/absent — clean EOS: null (the Java side returns null from
+            // recvAu(), which the caller treats as end of stream).
+            Err(HandleState::Closed) => return JObject::null().into_raw(),
+            // A PANIC or a poisoned slot is NOT an end of stream: it must reach
+            // Java as the panic RuntimeException, never be folded into the
+            // documented null. (`rtp/transport.rs` does the same.)
+            Err(state) => {
+                crate::error::throw_handle_state(env, "H264Receiver", &state);
+                return JObject::null().into_raw();
+            }
         };
 
         match result {

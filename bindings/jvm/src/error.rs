@@ -8,6 +8,7 @@ use jni::JNIEnv;
 use jni::objects::{JObject, JThrowable, JValue};
 use tst_core::codec::CodecParseError;
 use tst_core::error::{KlvDecodeError, KlvEncodeError};
+use tst_pipeline::binding::kind::{kind_of_klv_decode, kind_of_klv_field};
 use tst_pipeline::binding::{BindingError, BindingErrorKind, HandleState};
 
 /// Variant-specific diagnostic fields forwarded to `CodecParseException`.
@@ -373,9 +374,6 @@ pub fn throw_klv_decode(env: &mut JNIEnv, kind: BindingErrorKind, message: &str)
     throw_binding(env, Domain::KlvDecode, &BindingError::new(kind, message));
 }
 
-/// Construct + throw `org.tstrans.KlvEncodeException(Kind.<kind>, tag, message)`.
-/// `tag` = `None` → uses the `(Kind, String)` ctor; `Some(t)` → uses
-/// `(Kind, Long, String)`.
 /// Raw-member variant for the `jni-test-hooks` probes ONLY
 /// (`klv/mod.rs::nRaiseDecodeForTest`): the test names a Java member directly,
 /// so there is no `BindingErrorKind` to resolve. Never used on a real error
@@ -391,6 +389,7 @@ pub fn throw_klv_decode_raw(env: &mut JNIEnv, member: &str, message: &str) {
 }
 
 /// [`throw_klv_decode_raw`]'s encode twin (`klv/mod.rs::nRaiseEncodeForTest`).
+/// `tag` = `None` → the `(Kind, String)` ctor; `Some(t)` → `(Kind, Long, String)`.
 pub fn throw_klv_encode_raw(env: &mut JNIEnv, member: &str, tag: Option<u64>, message: &str) {
     if env.exception_check().unwrap_or(false) {
         return;
@@ -403,6 +402,8 @@ pub fn throw_klv_encode_raw(env: &mut JNIEnv, member: &str, tag: Option<u64>, me
     }
 }
 
+/// Construct + throw `org.tstrans.KlvEncodeException(Kind, [Long tag,] String)`.
+/// `tag` = `None` → the `(Kind, String)` ctor; `Some(t)` → `(Kind, Long, String)`.
 pub fn throw_klv_encode(env: &mut JNIEnv, kind: BindingErrorKind, tag: Option<u64>, message: &str) {
     if env.exception_check().unwrap_or(false) {
         return; // don't clobber an already-pending exception
@@ -457,44 +458,17 @@ fn throw_klv_encode_inner(
     env.throw(JThrowable::from(exc))
 }
 
-/// Map + throw a Rust `KlvDecodeError`. All 7 Kind literals appear inline
-/// (satisfies the error-mapping ratchet). Used by the per-set JNI fns (Tasks 1–4).
+/// Map + throw a Rust `KlvDecodeError` through A2's classifier — one source of
+/// truth for the buckets, shared with C and Python (the hand table this used to
+/// carry is gone). `FieldError` routes through `kind_of_klv_field` so a field
+/// error keeps its own classification rather than collapsing into the
+/// enclosing-set bucket.
 pub fn map_klv_decode_error(env: &mut JNIEnv, e: &KlvDecodeError) {
-    let msg = e.to_string();
-    match e {
-        KlvDecodeError::Truncated { .. }
-        | KlvDecodeError::MalformedLength { .. }
-        | KlvDecodeError::LengthOverflow { .. } => {
-            throw_klv_decode(env, BindingErrorKind::KlvDecodeTruncatedSet, &msg)
-        }
-        KlvDecodeError::UnexpectedUniversalLabel { .. } => {
-            throw_klv_decode(env, BindingErrorKind::KlvDecodeBadUniversalLabel, &msg)
-        }
-        KlvDecodeError::ChecksumMismatch { .. } | KlvDecodeError::Crc32Mismatch { .. } => {
-            throw_klv_decode(env, BindingErrorKind::KlvDecodeChecksumMismatch, &msg)
-        }
-        KlvDecodeError::DuplicateTag { .. } => {
-            throw_klv_decode(env, BindingErrorKind::KlvDecodeDuplicateTag, &msg)
-        }
-        KlvDecodeError::Tag2NotFirst
-        | KlvDecodeError::Tag1NotLast
-        | KlvDecodeError::MissingTag65
-        | KlvDecodeError::St0102MissingRequiredTag { .. }
-        | KlvDecodeError::St0903MissingRequiredTag { .. } => {
-            throw_klv_decode(env, BindingErrorKind::KlvDecodeMissingRequiredTag, &msg)
-        }
-        KlvDecodeError::MalformedTag { .. }
-        | KlvDecodeError::NonCanonicalLength { .. }
-        | KlvDecodeError::NonCanonicalTag { .. }
-        | KlvDecodeError::TrailingBytes { .. }
-        | KlvDecodeError::BadTimeStampPackLength { .. }
-        | KlvDecodeError::ReservedBitsInvalid { .. }
-        | KlvDecodeError::St0903InvalidVTargetPack { .. }
-        | KlvDecodeError::FieldError(_) => {
-            throw_klv_decode(env, BindingErrorKind::KlvDecodeMalformedBytes, &msg)
-        }
-        _ => throw_klv_decode(env, BindingErrorKind::Internal, &msg),
-    }
+    let kind = match e {
+        KlvDecodeError::FieldError(f) => kind_of_klv_field(f),
+        other => kind_of_klv_decode(other),
+    };
+    throw_klv_decode(env, kind, &e.to_string());
 }
 
 /// Map + throw a Rust `KlvEncodeError`. All 11 Kind literals appear inline
@@ -830,19 +804,13 @@ pub fn map_codec_parse_error(env: &mut JNIEnv, e: &CodecParseError, codec: &str)
                 &msg,
             )
         }
-        CodecParseError::NalLengthOverflow { length_size, .. } => {
-            let f = CodecErrFields {
-                value: Some(i32::from(*length_size)),
-                ..Default::default()
-            };
-            throw_codec(
-                env,
-                BindingErrorKind::CodecNalLengthOverflow,
-                codec,
-                &f,
-                &msg,
-            )
-        }
+        CodecParseError::NalLengthOverflow { .. } => throw_codec(
+            env,
+            BindingErrorKind::CodecNalLengthOverflow,
+            codec,
+            &CodecErrFields::default(),
+            &msg,
+        ),
         CodecParseError::BufferTooSmall { needed, have } => {
             let f = CodecErrFields {
                 needed: Some(*needed as i32),

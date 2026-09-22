@@ -16,7 +16,7 @@
 //!
 //! Error mapping mirrors tst-py's `mux_sender_error_to_pyerr`: `Mux(...)` →
 //! `MuxException`, `Transport(...)` → `RtpException` per `TransportError` variant,
-//! forward-compat catch-all → `RtpException(TRANSPORT)`.
+//! forward-compat catch-all → `RtpException(IO)`.
 
 use std::sync::LazyLock;
 
@@ -43,18 +43,14 @@ use super::errors::{connect_error, rtp_url_error, throw_rtp, transport_error};
 type Inner = RustMuxSender<RtpTransport>;
 
 /// Per-type `Owned`-backed registry for `org.tstrans.rtp.MuxSender`.
-///
-/// Moved here (not in Task B3.5, which owns the rest of the rtp surface) only
-/// because `handle::with_push` / `handle::first_handle` are now typed over
-/// [`OwnedRegistry`] and this file is their other user — keeping the tree
-/// building. B3.5 replaces the `register` helper below with the shared
-/// `rtp_cancel` path and adds the cancel-first close test.
+/// `OwnedRegistry::close` cancels first; `register` below takes the cancel
+/// target through the shared `rtp_cancel` path.
 static REGISTRY: LazyLock<OwnedRegistry<Inner>> = LazyLock::new(OwnedRegistry::new);
 
 /// Register a `MuxSender<RtpTransport>` as an `Owned` entry. `RtpTransport`
-/// always yields a cancel handle (`crates/tst-rtp/src/transport.rs:370`); the
-/// `None` arm is the type's, not a reachable state, and is reported rather than
-/// `expect`ed (spec §3.4 retires the `.expect("… always Some")` sites).
+/// always yields a cancel handle; the `None` arm is the trait's, not a
+/// reachable state, and is REPORTED rather than `expect`ed (spec §3.4 retires
+/// the `.expect("… always Some")` sites).
 fn register(env: &mut JNIEnv, sender: Inner) -> jlong {
     let cancel = match super::rtp_cancel(sender.cancel_handle(), "RtpTransport") {
         Ok(c) => c,
@@ -78,7 +74,7 @@ fn throw_mux_sender_error(env: &mut JNIEnv, e: &MuxSenderError) {
         MuxSenderErrorSource::Mux(m) => throw_mux_error(env, m),
         MuxSenderErrorSource::Transport(t) => transport_error(env, t),
         // `MuxSenderErrorSource` may gain variants; route any future one to a
-        // generic RtpException(TRANSPORT) with the Display message preserved.
+        // generic RtpException(IO) with the Display message preserved.
         _ => throw_rtp(env, BindingErrorKind::RtpIo, &e.to_string()),
     }
 }

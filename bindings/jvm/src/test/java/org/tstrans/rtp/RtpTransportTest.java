@@ -83,7 +83,7 @@ class RtpTransportTest {
     }
 
     @Test
-    void receiverRecvTimeoutRaisesTimeoutKind() throws Exception {
+    void receiverRecvDeadlineRaisesBackpressureKind() throws Exception {
         // `?recv_timeout=<ms>` arms a persistent recv deadline (wired by
         // RtpRecvSocketBuilder::from_url). A quiet socket (no sender) must throw
         // RtpException(BACKPRESSURE) once the deadline expires — distinct from
@@ -91,7 +91,7 @@ class RtpTransportTest {
         try (Receiver r = Receiver.fromUrl("rtp://127.0.0.1:50004?recv_timeout=200")) {
             RtpException ex = assertThrows(RtpException.class, r::recv);
             assertEquals(RtpException.Kind.BACKPRESSURE, ex.kind());
-            // The receiver is still alive after a TIMEOUT — a second recv on the
+            // The receiver is still alive after a BACKPRESSURE — a second recv on the
             // same (still-quiet) socket raises TIMEOUT again, not TRANSPORT.
             RtpException ex2 = assertThrows(RtpException.class, r::recv);
             assertEquals(RtpException.Kind.BACKPRESSURE, ex2.kind());
@@ -119,7 +119,7 @@ class RtpTransportTest {
             RtpException ex = assertThrows(RtpException.class, () -> r.recv(200));
             assertEquals(RtpException.Kind.BACKPRESSURE, ex.kind());
 
-            // The receiver stays alive after a TIMEOUT (retryable): a real send
+            // The receiver stays alive after a BACKPRESSURE (retryable): a real send
             // must be delivered on a subsequent recv(timeoutMs) call.
             byte[] sent = tsPacket((byte) 0xAB);
             try (Sender s = Sender.fromUrl("rtp://127.0.0.1:50005")) {
