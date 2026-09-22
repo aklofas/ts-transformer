@@ -52,11 +52,11 @@ pub(crate) struct ManagedSenderSnapshot {
     /// registration; the counters are kept because the send side reports
     /// attempts from [`Self::stats`] (`ManagedTransportStats::reconnect_attempts`)
     /// rather than from `ManagedHandles::attempts`, which A3 maintains on the
-    /// recv side. Held so WP-C1's `is_cancelled` / a `reconnecting()` getter
-    /// have the same snapshot to read as the receivers do.
+    /// recv side. Held so a binding-side `reconnecting()` getter / the WP-D
+    /// cancel-handle work have the same snapshot to read as the receivers do.
     #[expect(
         dead_code,
-        reason = "send side reads attempts from `stats`; kept for WP-C1"
+        reason = "send side reads attempts from `stats`; kept for the binding-side `reconnecting()` / WP-D cancel-handle work"
     )]
     pub handles: ManagedHandles,
     pub stats: tst_pipeline::ManagedStatsHandle,

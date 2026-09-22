@@ -1892,8 +1892,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed — cancel contract (WP-C)
 
 - **`tst_core::transport::TransportCancel::is_cancelled(&self) -> bool` is a
-  required trait method** (BREAKING for out-of-tree implementors; 28 in-tree
-  implementors — 11 production, 17 test doubles — all already carried a latch).
+  required trait method** (BREAKING for out-of-tree implementors; 31 in-tree
+  implementors — 11 production, 20 test doubles (three of them the conformance
+  kit's own mocks) — all already carried a latch).
   Its contract is **the caller's intent, never liveness**: `false` on a fresh
   handle, `true` once `cancel()` has run on it or on any alias, and also after
   the caller's own `close()` where that close is implemented by firing the same
