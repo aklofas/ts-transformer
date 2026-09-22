@@ -1,6 +1,7 @@
 pub mod tst_srt
 pub use tst_srt::SrtCancelHandle
 pub mod tst_srt::addr
+pub fn tst_srt::addr::join_host_port(&str, u16) -> alloc::string::String
 pub mod tst_srt::builder
 pub struct tst_srt::builder::ListenerBuilder
 impl tst_srt::builder::ListenerBuilder
@@ -761,6 +762,14 @@ impl core::marker::Unpin for tst_srt::options::StreamId
 impl core::marker::UnsafeUnpin for tst_srt::options::StreamId
 impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::options::StreamId
 impl core::panic::unwind_safe::UnwindSafe for tst_srt::options::StreamId
+pub mod tst_srt::shells
+pub fn tst_srt::shells::managed_demux_receiver_from_url(&tst_srt::url::SrtUrl, tst_pipeline::reconnect::ReconnectPolicy, tst_core::mpegts::demux::types::DemuxerConfig) -> core::result::Result<(tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<tst_srt::transport::SrtTransport>, tst_pipeline::binding::handles::ManagedHandles), tst_srt::error::SrtError>
+pub fn tst_srt::shells::managed_mux_sender_from_url(&tst_srt::url::SrtUrl, tst_pipeline::reconnect::ReconnectPolicy, tst_core::mpegts::mux::config::MuxerConfig) -> core::result::Result<(tst_pipeline::mux_sender::MuxSender<tst_pipeline::reconnect::ManagedTransport<tst_srt::transport::SrtTransport>>, tst_pipeline::binding::handles::ManagedHandles, tst_pipeline::reconnect::ManagedStatsHandle), tst_srt::error::SrtError>
+pub fn tst_srt::shells::managed_raw_receiver_from_url(&tst_srt::url::SrtUrl, tst_pipeline::reconnect::ReconnectPolicy) -> core::result::Result<(tst_pipeline::raw_receiver::RawReceiver<tst_pipeline::managed_receive::ManagedRecvTransport<tst_srt::transport::SrtTransport>>, tst_pipeline::binding::handles::ManagedHandles), tst_srt::error::SrtError>
+pub fn tst_srt::shells::managed_raw_sender_from_url(&tst_srt::url::SrtUrl, tst_pipeline::reconnect::ReconnectPolicy, tst_pipeline::raw_sender::RawSenderConfig) -> core::result::Result<(tst_pipeline::raw_sender::RawSender<tst_pipeline::reconnect::ManagedTransport<tst_srt::transport::SrtTransport>>, tst_pipeline::binding::handles::ManagedHandles, tst_pipeline::reconnect::ManagedStatsHandle), tst_srt::error::SrtError>
+pub fn tst_srt::shells::managed_receiver_from_url(&tst_srt::url::SrtUrl, tst_pipeline::reconnect::ReconnectPolicy) -> core::result::Result<(tst_pipeline::receiver::Receiver<tst_pipeline::managed_receive::ManagedRecvTransport<tst_srt::transport::SrtTransport>>, tst_pipeline::binding::handles::ManagedHandles), tst_srt::error::SrtError>
+pub fn tst_srt::shells::managed_recv_transport_from_url(&tst_srt::url::SrtUrl, tst_pipeline::reconnect::ReconnectPolicy, alloc::sync::Arc<tst_pipeline::managed_receive::FactoryCancel>) -> core::result::Result<tst_pipeline::managed_receive::ManagedRecvTransport<tst_srt::transport::SrtTransport>, tst_srt::error::SrtError>
+pub fn tst_srt::shells::managed_sender_from_url(&tst_srt::url::SrtUrl, tst_pipeline::reconnect::ReconnectPolicy, tst_pipeline::sender::SenderConfig) -> core::result::Result<(tst_pipeline::sender::Sender<tst_pipeline::reconnect::ManagedTransport<tst_srt::transport::SrtTransport>>, tst_pipeline::binding::handles::ManagedHandles, tst_pipeline::reconnect::ManagedStatsHandle), tst_srt::error::SrtError>
 pub mod tst_srt::socket
 pub struct tst_srt::socket::Socket
 impl tst_srt::socket::Socket
@@ -822,6 +831,7 @@ pub struct tst_srt::transport::SrtTransport
 impl tst_srt::transport::SrtTransport
 pub const tst_srt::transport::SrtTransport::DEFAULT_PAYLOAD: usize
 pub fn tst_srt::transport::SrtTransport::new(tst_srt::socket::Socket) -> Self
+pub fn tst_srt::transport::SrtTransport::srt_cancel_handle(&self) -> tst_core::cancel::SrtCancelHandle
 pub fn tst_srt::transport::SrtTransport::stats(&self) -> core::result::Result<tst_srt::socket::Stats, tst_srt::error::IoError>
 pub fn tst_srt::transport::SrtTransport::with_max_payload(self, usize) -> Self
 impl core::ops::drop::Drop for tst_srt::transport::SrtTransport
@@ -916,7 +926,12 @@ pub tst_srt::url::SrtUrl::mode: tst_srt::url::Mode
 pub tst_srt::url::SrtUrl::overlay: tst_srt::url::UrlOverlay
 pub tst_srt::url::SrtUrl::port: u16
 impl tst_srt::url::SrtUrl
+pub fn tst_srt::url::SrtUrl::accept_one(&self, &tst_core::cancel::CancelSlot) -> core::result::Result<tst_srt::transport::SrtTransport, tst_srt::error::SrtError>
+pub fn tst_srt::url::SrtUrl::connect(&self) -> core::result::Result<tst_srt::transport::SrtTransport, tst_srt::error::SrtError>
+pub fn tst_srt::url::SrtUrl::connect_recv(&self) -> core::result::Result<tst_srt::transport::SrtTransport, tst_srt::error::SrtError>
 pub fn tst_srt::url::SrtUrl::parse(&str) -> core::result::Result<Self, tst_srt::url::UrlError>
+impl core::clone::Clone for tst_srt::url::SrtUrl
+pub fn tst_srt::url::SrtUrl::clone(&self) -> tst_srt::url::SrtUrl
 impl core::fmt::Debug for tst_srt::url::SrtUrl
 pub fn tst_srt::url::SrtUrl::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Freeze for tst_srt::url::SrtUrl
@@ -1544,6 +1559,7 @@ pub struct tst_srt::SrtTransport
 impl tst_srt::transport::SrtTransport
 pub const tst_srt::transport::SrtTransport::DEFAULT_PAYLOAD: usize
 pub fn tst_srt::transport::SrtTransport::new(tst_srt::socket::Socket) -> Self
+pub fn tst_srt::transport::SrtTransport::srt_cancel_handle(&self) -> tst_core::cancel::SrtCancelHandle
 pub fn tst_srt::transport::SrtTransport::stats(&self) -> core::result::Result<tst_srt::socket::Stats, tst_srt::error::IoError>
 pub fn tst_srt::transport::SrtTransport::with_max_payload(self, usize) -> Self
 impl core::ops::drop::Drop for tst_srt::transport::SrtTransport
@@ -1575,7 +1591,12 @@ pub tst_srt::SrtUrl::mode: tst_srt::url::Mode
 pub tst_srt::SrtUrl::overlay: tst_srt::url::UrlOverlay
 pub tst_srt::SrtUrl::port: u16
 impl tst_srt::url::SrtUrl
+pub fn tst_srt::url::SrtUrl::accept_one(&self, &tst_core::cancel::CancelSlot) -> core::result::Result<tst_srt::transport::SrtTransport, tst_srt::error::SrtError>
+pub fn tst_srt::url::SrtUrl::connect(&self) -> core::result::Result<tst_srt::transport::SrtTransport, tst_srt::error::SrtError>
+pub fn tst_srt::url::SrtUrl::connect_recv(&self) -> core::result::Result<tst_srt::transport::SrtTransport, tst_srt::error::SrtError>
 pub fn tst_srt::url::SrtUrl::parse(&str) -> core::result::Result<Self, tst_srt::url::UrlError>
+impl core::clone::Clone for tst_srt::url::SrtUrl
+pub fn tst_srt::url::SrtUrl::clone(&self) -> tst_srt::url::SrtUrl
 impl core::fmt::Debug for tst_srt::url::SrtUrl
 pub fn tst_srt::url::SrtUrl::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Freeze for tst_srt::url::SrtUrl

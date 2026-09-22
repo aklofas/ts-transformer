@@ -97,6 +97,7 @@ its `rtsp` row), the more specific row wins for that path.
 | tst-pipeline | ext | Provisional | extensions (pairing, file transport) — newer surface |
 | tst-pipeline | binding | Provisional | binding-shared handle layer (`Owned`, `HandleState`, panic helpers; error kinds + managed handles follow in Arc 2); `std`-only; shape may still move before 1.0 — see the Arc 2 decision log entry |
 | tst-srt | (crate) | Stable | primary transport of the project scope |
+| tst-srt | shells | Provisional | URL → managed-shell open path + `ManagedHandles` (Arc 2 WP-A3); new surface, may still move before 1.0 |
 | tst-udp | (crate) | Stable | small, settled |
 | tst-tcp | (crate) | Stable | small, settled |
 | tst-rtp | builder | Stable | RTP transport builder / URL-connect surface |

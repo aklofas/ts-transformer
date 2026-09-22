@@ -1538,7 +1538,68 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added — SRT open path + managed handles (WP-A3)
 
-- (pending)
+- **`SrtUrl::connect()` / `SrtUrl::accept_one(&CancelSlot)`** — the one
+  SRT open path. `connect` (caller mode) applies the URL overlay on a
+  default `SocketConfig`, merges the sender preset underneath it
+  (`merge_sender_defaults`: 15 s connect timeout, 5 s linger,
+  `Role::Sender`, each only where the URL left it unset), joins
+  `host:port` IPv6-safely and dials through `Socket::connect_with`;
+  `accept_one` (listener mode) applies the overlay to a `ListenerConfig`,
+  binds (`0.0.0.0` for an empty host) and runs
+  `Listener::accept_one_cancellable` with the caller's slot, so the accept
+  is reachable by `slot.cancel()` from another thread (`ExplicitClose`).
+  This is the composition the C, Python and JVM bindings each carried a
+  private copy of (`connect_srt` / `listen_srt` / `listen_srt_cancellable`)
+  — including the IPv6-bracket bug class PR #188 fixed in the C copy —
+  now written once. New public helper `tst_srt::addr::join_host_port`;
+  `SrtUrl` is now `Clone`.
+- **`SrtUrl::connect_recv()`** — `connect()` without
+  `merge_sender_defaults`: the URL overlay and nothing else, so the socket
+  keeps libsrt's own connect timeout and linger and stays
+  `Role::Receiver`. This is what the Python and JVM *plain* caller opens
+  compose today; routing them through `connect()` would silently promote
+  every plain receiver to `SRTO_SENDER=1` with a 5 s close linger. The
+  managed family keeps using `connect()`, because every C caller-mode
+  open — plain and managed, TS / raw / demux — goes through `connect_srt`
+  and therefore merges the preset today.
+- **`tst_srt::shells`** (Provisional) — `managed_demux_receiver_from_url`,
+  `managed_receiver_from_url`, `managed_raw_receiver_from_url`,
+  `managed_mux_sender_from_url`, `managed_sender_from_url`,
+  `managed_raw_sender_from_url` (+ the lower-level
+  `managed_recv_transport_from_url(url, policy, Arc<FactoryCancel>)`):
+  open a URL straight into a reconnecting shell and get back the shell
+  together with a `tst_pipeline::binding::ManagedHandles` (senders also
+  return the `ManagedStatsHandle` for their gap-buffer telemetry).
+  Receivers accept `?mode=caller` and `?mode=listener` (the re-accept,
+  and the first accept, run through the managed transport's
+  `FactoryCancel` slot); senders are caller-only and refuse
+  `?mode=listener` before any socket is touched (`SrtError::Option`).
+- **`SrtTransport::srt_cancel_handle()`** — the socket's
+  `SrtCancelHandle` without the `Option` the trait method carries:
+  captured at construction, valid for the transport's whole life,
+  reads cancelled after `close()`. The plain-shell bindings use it in
+  place of `cancel_handle().expect("always Some")`.
+- **`tst_pipeline::binding::ManagedHandles`** — `{ cancel:
+  Arc<dyn TransportCancel>, end_reason: RecvEndReasonHandle, reconnects,
+  attempts: Arc<AtomicU64>, reconnecting: Arc<AtomicBool> }`, no
+  `Option`s: every managed transport's cancel handle is `Some` by
+  construction, and shells that record no end reason (the plain
+  `Receiver`, both senders) carry a fresh never-set handle.
+- **Reconnect attempts counted in the core (ARCH-08)** —
+  `ManagedRecvTransport::attempts_handle()` is a NEW receive-side counter:
+  every factory CALL, bumped immediately before the call, so it counts
+  failed attempts too and `attempts - reconnects` is the failed-call
+  count; `reconnects_handle()` keeps counting only the successes. The
+  same counter is re-exposed by `ManagedDemuxReceiver::attempts_handle()`.
+  On the send side `ManagedTransport::{attempts_handle, reconnects_handle,
+  reconnecting_handle}()` expose the counters `ManagedTransportStats`
+  already snapshotted, as lock-free `Arc`s. Both `attempts` counters are
+  plain statistics and are read `Relaxed`; `reconnects` keeps its
+  `Release`/`Acquire` pairing because it publishes the rebuilt inner's
+  state. The bindings' per-binding attempt-counting closures become
+  redundant (deleted in WP-B), and C's receive-side `reconnect_attempts`
+  — which reports successes today — starts meaning attempts once WP-B1
+  re-points it.
 
 ### Changed — C binding (WP-B1)
 

@@ -12574,3 +12574,160 @@ owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
 bindings = []
 scenario_ids = []
 tier = "A"
+
+# --- Arc 2 WP-A3: SRT open path + managed handles ----------------------
+# `ManagedHandles` is covered by its own in-module tests; the tst-srt open
+# path and the `from_url` family by the two loopback domains below.
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::ManagedHandles"
+owning_tests = ["crates/tst-pipeline/src/binding/handles.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::handles::ManagedHandles"
+owning_tests = ["crates/tst-pipeline/src/binding/handles.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::handles::ManagedHandles::clone"
+owning_tests = ["crates/tst-pipeline/src/binding/handles.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::handles::ManagedHandles::fmt"
+owning_tests = ["crates/tst-pipeline/src/binding/handles.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::addr::join_host_port"
+owning_tests = ["crates/tst-srt/src/addr.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::url::SrtUrl::connect"
+owning_tests = ["crates/tst-srt/tests/loopback/url_open.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::url::SrtUrl::connect_recv"
+owning_tests = ["crates/tst-srt/tests/loopback/url_open.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::url::SrtUrl::accept_one"
+owning_tests = ["crates/tst-srt/tests/loopback/url_open.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::url::SrtUrl::clone"
+owning_tests = ["crates/tst-srt/tests/loopback/url_open.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::transport::SrtTransport::srt_cancel_handle"
+owning_tests = ["crates/tst-srt/tests/loopback/url_open.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::shells::managed_recv_transport_from_url"
+owning_tests = ["crates/tst-srt/tests/pipeline/shells_from_url.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::shells::managed_demux_receiver_from_url"
+owning_tests = ["crates/tst-srt/tests/pipeline/shells_from_url.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::shells::managed_receiver_from_url"
+owning_tests = ["crates/tst-srt/tests/pipeline/shells_from_url.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::shells::managed_raw_receiver_from_url"
+owning_tests = ["crates/tst-srt/tests/pipeline/shells_from_url.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::shells::managed_mux_sender_from_url"
+owning_tests = ["crates/tst-srt/tests/pipeline/shells_from_url.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::shells::managed_sender_from_url"
+owning_tests = ["crates/tst-srt/tests/pipeline/shells_from_url.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::shells::managed_raw_sender_from_url"
+owning_tests = ["crates/tst-srt/tests/pipeline/shells_from_url.rs"]
+bindings = []
+scenario_ids = []
+tier = "A"

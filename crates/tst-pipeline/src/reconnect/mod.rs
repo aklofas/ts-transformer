@@ -407,12 +407,14 @@ impl<T: Transport + 'static> ManagedTransport<T> {
     /// [`ManagedTransportStats::reconnect_attempts`] snapshots), exposed as
     /// a lock-free `Arc` so a binding can read it after this transport has
     /// moved into a sender shell (ARCH-08). Obtain **before** the move;
-    /// read with `.load(Ordering::Acquire)`. The counter lives outside
-    /// both the `inner` and `gap` mutexes, so — unlike
-    /// [`ManagedStatsHandle::stats`], which takes the gap lock — reading
-    /// through this handle can never queue behind a send, however long the
-    /// parked one runs. Receive-side twin:
-    /// [`crate::ManagedRecvTransport::attempts_handle`].
+    /// read with `.load(Ordering::Relaxed)`, the ordering the bump and
+    /// [`ManagedStatsHandle::stats`] already use for it — the counter is a
+    /// statistic and publishes nothing, unlike
+    /// [`Self::reconnects_handle`]. The counter lives outside both the
+    /// `inner` and `gap` mutexes, so — unlike [`ManagedStatsHandle::stats`],
+    /// which takes the gap lock — reading through this handle can never
+    /// queue behind a send, however long the parked one runs. Receive-side
+    /// twin: [`crate::ManagedRecvTransport::attempts_handle`].
     #[must_use]
     pub fn attempts_handle(&self) -> Arc<std::sync::atomic::AtomicU64> {
         Arc::clone(&self.shared.reconnect_attempts)

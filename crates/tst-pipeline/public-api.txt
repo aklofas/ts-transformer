@@ -6,6 +6,24 @@ pub use tst_pipeline::Transport
 pub use tst_pipeline::TransportCancel
 pub use tst_pipeline::TransportError
 pub mod tst_pipeline::binding
+pub mod tst_pipeline::binding::handles
+pub struct tst_pipeline::binding::handles::ManagedHandles
+pub tst_pipeline::binding::handles::ManagedHandles::attempts: alloc::sync::Arc<core::sync::atomic::AtomicU64>
+pub tst_pipeline::binding::handles::ManagedHandles::cancel: alloc::sync::Arc<dyn tst_core::transport::TransportCancel>
+pub tst_pipeline::binding::handles::ManagedHandles::end_reason: tst_pipeline::RecvEndReasonHandle
+pub tst_pipeline::binding::handles::ManagedHandles::reconnecting: alloc::sync::Arc<core::sync::atomic::AtomicBool>
+pub tst_pipeline::binding::handles::ManagedHandles::reconnects: alloc::sync::Arc<core::sync::atomic::AtomicU64>
+impl core::clone::Clone for tst_pipeline::binding::handles::ManagedHandles
+pub fn tst_pipeline::binding::handles::ManagedHandles::clone(&self) -> tst_pipeline::binding::handles::ManagedHandles
+impl core::fmt::Debug for tst_pipeline::binding::handles::ManagedHandles
+pub fn tst_pipeline::binding::handles::ManagedHandles::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_pipeline::binding::handles::ManagedHandles
+impl core::marker::Send for tst_pipeline::binding::handles::ManagedHandles
+impl core::marker::Sync for tst_pipeline::binding::handles::ManagedHandles
+impl core::marker::Unpin for tst_pipeline::binding::handles::ManagedHandles
+impl core::marker::UnsafeUnpin for tst_pipeline::binding::handles::ManagedHandles
+impl !core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::handles::ManagedHandles
+impl !core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::handles::ManagedHandles
 pub mod tst_pipeline::binding::kind
 #[non_exhaustive] #[repr(i32)] pub enum tst_pipeline::binding::kind::BindingErrorKind
 pub tst_pipeline::binding::kind::BindingErrorKind::Backpressure = -4
@@ -570,6 +588,23 @@ impl core::marker::Unpin for tst_pipeline::binding::owned::FlagCancel
 impl core::marker::UnsafeUnpin for tst_pipeline::binding::owned::FlagCancel
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::owned::FlagCancel
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::owned::FlagCancel
+pub struct tst_pipeline::binding::ManagedHandles
+pub tst_pipeline::binding::ManagedHandles::attempts: alloc::sync::Arc<core::sync::atomic::AtomicU64>
+pub tst_pipeline::binding::ManagedHandles::cancel: alloc::sync::Arc<dyn tst_core::transport::TransportCancel>
+pub tst_pipeline::binding::ManagedHandles::end_reason: tst_pipeline::RecvEndReasonHandle
+pub tst_pipeline::binding::ManagedHandles::reconnecting: alloc::sync::Arc<core::sync::atomic::AtomicBool>
+pub tst_pipeline::binding::ManagedHandles::reconnects: alloc::sync::Arc<core::sync::atomic::AtomicU64>
+impl core::clone::Clone for tst_pipeline::binding::handles::ManagedHandles
+pub fn tst_pipeline::binding::handles::ManagedHandles::clone(&self) -> tst_pipeline::binding::handles::ManagedHandles
+impl core::fmt::Debug for tst_pipeline::binding::handles::ManagedHandles
+pub fn tst_pipeline::binding::handles::ManagedHandles::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_pipeline::binding::handles::ManagedHandles
+impl core::marker::Send for tst_pipeline::binding::handles::ManagedHandles
+impl core::marker::Sync for tst_pipeline::binding::handles::ManagedHandles
+impl core::marker::Unpin for tst_pipeline::binding::handles::ManagedHandles
+impl core::marker::UnsafeUnpin for tst_pipeline::binding::handles::ManagedHandles
+impl !core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::handles::ManagedHandles
+impl !core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::handles::ManagedHandles
 pub struct tst_pipeline::binding::Owned<T, S>
 impl<T, S> tst_pipeline::binding::owned::Owned<T, S>
 pub fn tst_pipeline::binding::owned::Owned<T, S>::cancel(&self)
@@ -956,6 +991,7 @@ pub mod tst_pipeline::managed_demux_receiver
 pub struct tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R: tst_core::transport::RecvTransport>
 impl<R: tst_core::transport::RecvTransport> tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::add_byte_sink(&mut self, tst_pipeline::demux_receiver::ByteSink)
+pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::attempts_handle(&self) -> alloc::sync::Arc<core::sync::atomic::AtomicU64>
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::close(&mut self)
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::end_reason_handle(&self) -> tst_pipeline::RecvEndReasonHandle
@@ -1005,6 +1041,7 @@ impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::managed_demux_receiv
 pub mod tst_pipeline::managed_receive
 pub struct tst_pipeline::managed_receive::ManagedRecvTransport<R: tst_core::transport::RecvTransport>
 impl<R: tst_core::transport::RecvTransport> tst_pipeline::managed_receive::ManagedRecvTransport<R>
+pub fn tst_pipeline::managed_receive::ManagedRecvTransport<R>::attempts_handle(&self) -> alloc::sync::Arc<core::sync::atomic::AtomicU64>
 pub fn tst_pipeline::managed_receive::ManagedRecvTransport<R>::new(R, alloc::boxed::Box<(dyn core::ops::function::FnMut() -> core::result::Result<R, tst_core::transport::TransportError> + core::marker::Send)>, tst_pipeline::reconnect::ReconnectPolicy) -> Self
 pub fn tst_pipeline::managed_receive::ManagedRecvTransport<R>::new_with_factory_cancel(R, alloc::boxed::Box<(dyn core::ops::function::FnMut() -> core::result::Result<R, tst_core::transport::TransportError> + core::marker::Send)>, tst_pipeline::reconnect::ReconnectPolicy, alloc::sync::Arc<tst_pipeline::managed_receive::FactoryCancel>) -> Self
 pub fn tst_pipeline::managed_receive::ManagedRecvTransport<R>::reconnecting_handle(&self) -> alloc::sync::Arc<core::sync::atomic::AtomicBool>
@@ -1668,7 +1705,10 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::reconnect::Manage
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::reconnect::ManagedStatsHandle
 pub struct tst_pipeline::reconnect::ManagedTransport<T: tst_core::transport::Transport>
 impl<T: tst_core::transport::Transport + 'static> tst_pipeline::reconnect::ManagedTransport<T>
+pub fn tst_pipeline::reconnect::ManagedTransport<T>::attempts_handle(&self) -> alloc::sync::Arc<core::sync::atomic::AtomicU64>
 pub fn tst_pipeline::reconnect::ManagedTransport<T>::new<F>(T, F, tst_pipeline::reconnect::ReconnectPolicy) -> Self where F: core::ops::function::Fn() -> core::result::Result<T, tst_core::transport::TransportError> + core::marker::Send + core::marker::Sync + 'static
+pub fn tst_pipeline::reconnect::ManagedTransport<T>::reconnecting_handle(&self) -> alloc::sync::Arc<core::sync::atomic::AtomicBool>
+pub fn tst_pipeline::reconnect::ManagedTransport<T>::reconnects_handle(&self) -> alloc::sync::Arc<core::sync::atomic::AtomicU64>
 pub fn tst_pipeline::reconnect::ManagedTransport<T>::stats_handle(&self) -> tst_pipeline::reconnect::ManagedStatsHandle
 impl<T: tst_core::transport::Transport + 'static> tst_core::transport::Transport for tst_pipeline::reconnect::ManagedTransport<T>
 pub fn tst_pipeline::reconnect::ManagedTransport<T>::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
@@ -2334,6 +2374,7 @@ impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::GapBuffer
 pub struct tst_pipeline::ManagedDemuxReceiver<R: tst_core::transport::RecvTransport>
 impl<R: tst_core::transport::RecvTransport> tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::add_byte_sink(&mut self, tst_pipeline::demux_receiver::ByteSink)
+pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::attempts_handle(&self) -> alloc::sync::Arc<core::sync::atomic::AtomicU64>
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::close(&mut self)
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::end_reason_handle(&self) -> tst_pipeline::RecvEndReasonHandle
@@ -2382,6 +2423,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::managed_demux_rec
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::managed_demux_receiver::ManagedDemuxReceiverConfig
 pub struct tst_pipeline::ManagedRecvTransport<R: tst_core::transport::RecvTransport>
 impl<R: tst_core::transport::RecvTransport> tst_pipeline::managed_receive::ManagedRecvTransport<R>
+pub fn tst_pipeline::managed_receive::ManagedRecvTransport<R>::attempts_handle(&self) -> alloc::sync::Arc<core::sync::atomic::AtomicU64>
 pub fn tst_pipeline::managed_receive::ManagedRecvTransport<R>::new(R, alloc::boxed::Box<(dyn core::ops::function::FnMut() -> core::result::Result<R, tst_core::transport::TransportError> + core::marker::Send)>, tst_pipeline::reconnect::ReconnectPolicy) -> Self
 pub fn tst_pipeline::managed_receive::ManagedRecvTransport<R>::new_with_factory_cancel(R, alloc::boxed::Box<(dyn core::ops::function::FnMut() -> core::result::Result<R, tst_core::transport::TransportError> + core::marker::Send)>, tst_pipeline::reconnect::ReconnectPolicy, alloc::sync::Arc<tst_pipeline::managed_receive::FactoryCancel>) -> Self
 pub fn tst_pipeline::managed_receive::ManagedRecvTransport<R>::reconnecting_handle(&self) -> alloc::sync::Arc<core::sync::atomic::AtomicBool>
@@ -2415,7 +2457,10 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::reconnect::Manage
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::reconnect::ManagedStatsHandle
 pub struct tst_pipeline::ManagedTransport<T: tst_core::transport::Transport>
 impl<T: tst_core::transport::Transport + 'static> tst_pipeline::reconnect::ManagedTransport<T>
+pub fn tst_pipeline::reconnect::ManagedTransport<T>::attempts_handle(&self) -> alloc::sync::Arc<core::sync::atomic::AtomicU64>
 pub fn tst_pipeline::reconnect::ManagedTransport<T>::new<F>(T, F, tst_pipeline::reconnect::ReconnectPolicy) -> Self where F: core::ops::function::Fn() -> core::result::Result<T, tst_core::transport::TransportError> + core::marker::Send + core::marker::Sync + 'static
+pub fn tst_pipeline::reconnect::ManagedTransport<T>::reconnecting_handle(&self) -> alloc::sync::Arc<core::sync::atomic::AtomicBool>
+pub fn tst_pipeline::reconnect::ManagedTransport<T>::reconnects_handle(&self) -> alloc::sync::Arc<core::sync::atomic::AtomicU64>
 pub fn tst_pipeline::reconnect::ManagedTransport<T>::stats_handle(&self) -> tst_pipeline::reconnect::ManagedStatsHandle
 impl<T: tst_core::transport::Transport + 'static> tst_core::transport::Transport for tst_pipeline::reconnect::ManagedTransport<T>
 pub fn tst_pipeline::reconnect::ManagedTransport<T>::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
