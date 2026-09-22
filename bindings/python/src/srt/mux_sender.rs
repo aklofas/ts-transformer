@@ -20,14 +20,14 @@
 //!   `BindingError` on the SRT domain — see `mux_sender_err`.
 //! - Construction-time failures (URL parse, socket connect, muxer config)
 //!   raise `SrtError(CONFIG_INVALID / CONNECT_FAILED / TIMEOUT)` rather
-//!   than `RtpError(TRANSPORT)`.
+//!   than `RtpError(BROKEN)`.
 //!
 //! Architectural notes (mirror `rtp/mux_sender.rs`):
 //!
-//! - `Arc<Mutex<Option<_>>>` slot + `&self` methods (the cross-thread
-//!   close shape of PR #209): `close()` cancels before taking the slot.
-//! - `Option` so `close()` / `__exit__` can drop the inner sender while
-//!   keeping the PyClass instance addressable for idempotent closes.
+//! - `tst_pipeline::binding::Owned` + `&self` methods (Arc 2, carrying
+//!   the cross-thread close shape of PR #209): `close()` latches the
+//!   shared cancel before taking the slot, and the slot's emptiness is
+//!   what keeps the PyClass instance addressable for idempotent closes.
 //! - Bytes-like extraction: fast `bytes` downcast, fallback through
 //!   Python's `bytes()` builtin coercion (abi3-py310 two-path pattern).
 //! - GIL release: every push method + `from_url` runs the underlying I/O

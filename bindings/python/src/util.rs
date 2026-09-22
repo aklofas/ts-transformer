@@ -4,7 +4,7 @@ use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, TryLockError, Weak};
+use std::sync::{Arc, Mutex, Weak};
 
 use tst_core::transport::TransportCancel;
 use tst_pipeline::binding::{BindingError, BindingErrorKind, Close, CloseFailure, Owned};
@@ -44,64 +44,6 @@ pub(crate) fn coerce_bytes_like<'py>(
         .call1((arg,))?
         .downcast_into::<PyBytes>()
         .map_err(|e| e.into())
-}
-
-/// Run `f` against the value held in a shared slot with the GIL released,
-/// holding the slot's lock for the whole call. `None` when the slot is
-/// empty (the wrapper was closed). A `close()` on another thread fires the
-/// wrapper's cancel BEFORE taking this lock, so a parked call returns
-/// promptly and releases the slot.
-///
-/// Poison is recovered with `into_inner`: the slot only ever holds an
-/// `Option`, which a panic cannot leave half-updated (same policy as
-/// `srt::Receiver`).
-#[allow(dead_code)] // transport-feature-gated callers; unused in minimal builds
-pub(crate) fn with_slot<T, R>(
-    py: Python<'_>,
-    slot: &Arc<Mutex<Option<T>>>,
-    f: impl FnOnce(&mut T) -> R + Send,
-) -> Option<R>
-where
-    T: Send,
-    R: Send,
-{
-    let slot = Arc::clone(slot);
-    py.allow_threads(move || {
-        let mut guard = slot.lock().unwrap_or_else(|e| e.into_inner());
-        guard.as_mut().map(f)
-    })
-}
-
-/// Take the value out of a shared slot (GIL released while waiting for a
-/// parked call to release it) and run `close` on it OUTSIDE the lock — an
-/// inner's close may block (libsrt lingers) and must never hold the slot
-/// while it does. No-op when the slot is already empty. Callers fire the
-/// wrapper's cancel handle before calling this.
-#[allow(dead_code)] // transport-feature-gated callers; unused in minimal builds
-pub(crate) fn close_slot<T: Send>(
-    py: Python<'_>,
-    slot: &Arc<Mutex<Option<T>>>,
-    close: impl FnOnce(T) + Send,
-) {
-    let slot = Arc::clone(slot);
-    py.allow_threads(move || {
-        let taken = slot.lock().unwrap_or_else(|e| e.into_inner()).take();
-        if let Some(t) = taken {
-            close(t);
-        }
-    })
-}
-
-/// Non-blocking liveness read of a shared slot: `alive(&T)` when the slot
-/// can be inspected, `true` while another thread holds it (a parked call
-/// means the wrapper is still open), `false` once it is empty.
-#[allow(dead_code)] // transport-feature-gated callers; unused in minimal builds
-pub(crate) fn slot_alive<T>(slot: &Arc<Mutex<Option<T>>>, alive: impl FnOnce(&T) -> bool) -> bool {
-    match slot.try_lock() {
-        Ok(g) => g.as_ref().is_some_and(alive),
-        Err(TryLockError::Poisoned(p)) => p.into_inner().as_ref().is_some_and(alive),
-        Err(TryLockError::WouldBlock) => true,
-    }
 }
 
 // ---------------------------------------------------------------------------

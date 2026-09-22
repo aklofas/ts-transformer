@@ -30,7 +30,7 @@ use tst_core::mpegts::demux::{
     StrictMode, SubtitleCodec, VideoCodec, VideoPayload,
 };
 
-use crate::errors::make_demux_error;
+use crate::errors::make_kinded_error;
 
 // ---------------------------------------------------------------------------
 // PyDemuxer — the main wrapper
@@ -954,7 +954,7 @@ pub(crate) fn demux_error_to_pyerr(py: Python<'_>, e: &DemuxError) -> PyErr {
     // A2's K3: the members are the Rust variant names since 0.7.0.
     let kind = tst_pipeline::binding::kind::kind_of_demux(e).name();
     let msg = format!("{e}");
-    make_demux_error(py, kind, &msg)
+    make_kinded_error(py, "DemuxError", "DemuxErrorKind", kind, &msg)
 }
 
 // ---------------------------------------------------------------------------

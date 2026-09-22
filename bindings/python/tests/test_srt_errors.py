@@ -6,8 +6,8 @@ mode, etc.) and asserts the resulting `SrtError` carries the expected
 `.kind`. Variants that have no tractable trigger from pure-Python
 loopback are exercised via the Rust-side `_raise_srt_error_for_test`
 hook so the test suite stays as a second-line check on top of the
-bash ratchet (which is the primary guarantee that every variant has
-a `make_srt_error` call site).
+`import tstrans` startup check (`raise.rs::check_error_kinds`, which is
+the primary guarantee that every kind resolves to a real member).
 """
 
 from __future__ import annotations
@@ -90,7 +90,7 @@ def test_timeout_via_test_net_1() -> None:
 def test_closed_after_sender_explicit_close() -> None:
     """Constructing a Sender against a never-listening port fails at
     handshake; we instead force CLOSED by using the test-helper hook.
-    The bash ratchet ensures the real `CLOSED` call sites exist; this
+    The startup check ensures `CLOSED` resolves on `SrtErrorKind`; this
     test confirms the variant routes through Python correctly."""
     with pytest.raises(SrtError) as ei:
         _raise_srt_error_for_test("CLOSED", "transport closed by caller")
@@ -99,7 +99,7 @@ def test_closed_after_sender_explicit_close() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# BROKEN / WOULD_BLOCK / ACCEPT_FAILED / IO — covered via the test helper.    #
+# BROKEN / BACKPRESSURE / ACCEPT_FAILED / IO — covered via the test helper.  #
 # These variants need a live SRT session to trigger naturally — covered by    #
 # the T2 transport tests; here we use the helper as a second-line check on    #
 # the kind-string → exception-class wiring.                                   #

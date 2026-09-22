@@ -456,7 +456,8 @@ class MuxPublisher:
         """Consume the shell and return the owned ``HlsPublisher``.
 
         Caller should then ``finish()`` it. Raises
-        ``HlsError(kind=FINISHED)`` if already consumed.
+        ``HlsError(kind=CLOSED)`` if already consumed (0.7.0: was
+        ``FINISHED``).
         """
         ...
 
