@@ -650,13 +650,13 @@ def test_send_video_on_closed_sender_raises_closed() -> None:
 
 
 def test_send_video_malformed_nal_raises_mux_error() -> None:
-    """Raw bytes without an Annex-B start code → MuxError(INPUT_MALFORMED)."""
+    """Raw bytes without an Annex-B start code → MuxError(INVALID_NAL)."""
     port = _free_tcp_port()
     sender, receiver = _make_mux_demux_pair(port)
     try:
         with pytest.raises(MuxError) as exc_info:
             sender.send_video(b"not annex-b bytes", pts=Pts90khz.from_raw(0))
-        assert exc_info.value.kind == MuxErrorKind.INPUT_MALFORMED
+        assert exc_info.value.kind == MuxErrorKind.INVALID_NAL
     finally:
         sender.close()
         receiver.close()

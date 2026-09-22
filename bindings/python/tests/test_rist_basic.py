@@ -201,14 +201,14 @@ def test_rist_error_kind_values():
     """RistErrorKind variant values match exceptions.py definitions."""
     assert RistErrorKind.URL == 0
     assert RistErrorKind.FFI == 1
-    assert RistErrorKind.PAYLOAD_TOO_LARGE == 2
+    assert RistErrorKind.TOO_LARGE == 2
     assert RistErrorKind.CLOSED == 3
     assert RistErrorKind.INVALID_CONFIG == 4
     assert RistErrorKind.ENCRYPTION_DISABLED == 5
     assert RistErrorKind.CONTEXT_CREATE_FAILED == 6
     assert RistErrorKind.PEER_CREATE_FAILED == 7
-    assert RistErrorKind.RECV_TIMEOUT == 8
-    assert RistErrorKind.IO == 9
+    assert RistErrorKind.BACKPRESSURE == 8
+    assert RistErrorKind.BROKEN == 9
 
 
 def test_rist_error_kind_variant_mapping_via_raise():
@@ -216,14 +216,14 @@ def test_rist_error_kind_variant_mapping_via_raise():
     variants = [
         "URL",
         "FFI",
-        "PAYLOAD_TOO_LARGE",
+        "TOO_LARGE",
         "CLOSED",
         "INVALID_CONFIG",
         "ENCRYPTION_DISABLED",
         "CONTEXT_CREATE_FAILED",
         "PEER_CREATE_FAILED",
-        "RECV_TIMEOUT",
-        "IO",
+        "BACKPRESSURE",
+        "BROKEN",
     ]
     for v in variants:
         with pytest.raises(RistError) as exc_info:
@@ -361,7 +361,7 @@ def test_rist_simple_profile_loopback():
                     f"TS header mismatch: {received[:4]!r} != {payload[:4]!r}"
                 )
             except RistError as e:
-                if e.kind == RistErrorKind.RECV_TIMEOUT:
+                if e.kind == RistErrorKind.BACKPRESSURE:
                     pytest.skip("loopback recv timed out (librist session not ready)")
                 raise
         finally:

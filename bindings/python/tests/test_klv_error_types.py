@@ -10,7 +10,6 @@ def test_klv_error_kind_has_new_variants():
     expected = {
         "BAD_UNIVERSAL_LABEL",
         "TRUNCATED_SET",
-        "UNKNOWN_SET",
         "CHECKSUM_MISMATCH",
         "DUPLICATE_TAG",
         "MISSING_REQUIRED_TAG",

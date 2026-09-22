@@ -1079,7 +1079,7 @@ class DemuxerConfig:
       behavior — the section either passes by luck or fails its CRC).
     - `sync_buf_cap` — ceiling in bytes on the pre-sync ingress buffer.
       A single `feed()` call larger than this ceiling raises
-      `DemuxError` (kind `SYNC_LOSS`) before any bytes are consumed;
+      `DemuxError` (kind `SYNC_BUF_EXHAUSTED`) before any bytes are consumed;
       feed in smaller chunks and drain events between feeds, or raise
       this ceiling. Default is 4 MiB (`4 * 1024 * 1024`).
     - `unwrap_timestamps` — opt-in PTS/DTS unwrap onto a continuous
@@ -1122,7 +1122,7 @@ class DemuxerConfig:
     # reassembly trade-off.
     lenient_psi_reassembly: bool = False
     # Pre-sync ingress buffer ceiling in bytes. Feeds larger than this
-    # ceiling raise DemuxError (kind SYNC_LOSS) before any bytes are
+    # ceiling raise DemuxError (kind SYNC_BUF_EXHAUSTED) before any bytes are
     # consumed; feed in smaller chunks, or raise this value.
     sync_buf_cap: int = _DEFAULT_SYNC_BUF_CAP
     # Unwrap the demuxer's raw 33-bit 90 kHz PTS/DTS onto a continuous

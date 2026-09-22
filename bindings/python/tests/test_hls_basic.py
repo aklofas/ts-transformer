@@ -308,10 +308,11 @@ def test_mux_publisher_video_then_finish_into_publisher() -> None:
         segs = sorted(glob.glob(os.path.join(d, "*.ts")))
         assert segs
 
-        # Shell is consumed — a second finish raises FINISHED.
+        # Shell is consumed — a second finish raises CLOSED
+        # (`MuxPublisherError::Closed`; was FINISHED before 0.7.0).
         with pytest.raises(HlsError) as ei2:
             mp.finish_into_publisher()
-        assert ei2.value.kind == HlsErrorKind.FINISHED
+        assert ei2.value.kind == HlsErrorKind.CLOSED
 
 
 def test_mux_publisher_klv_preserved_in_ts_segment() -> None:
@@ -342,7 +343,7 @@ def test_mux_publisher_klv_preserved_in_ts_segment() -> None:
 
 
 def test_hls_error_kind_count() -> None:
-    assert len(HlsErrorKind) == 9
+    assert len(HlsErrorKind) == 10
 
 
 @pytest.mark.parametrize(
@@ -357,10 +358,11 @@ def test_hls_error_kind_count() -> None:
         "TLS_DISABLED",
         "TLS",
         "INTERNAL",
+        "CLOSED",
     ],
 )
 def test_hls_error_round_trips_from_rust(kind_name: str) -> None:
-    """Every HlsErrorKind variant maps through make_hls_error in Rust."""
+    """Every HlsErrorKind variant maps through the one raise path in Rust."""
     with pytest.raises(HlsError) as ei:
         _native._raise_hls_error_for_test(kind_name, f"test {kind_name}")
     assert ei.value.kind == getattr(HlsErrorKind, kind_name)

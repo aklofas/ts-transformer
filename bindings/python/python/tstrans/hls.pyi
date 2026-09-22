@@ -42,7 +42,9 @@ __all__: list[str] = [
 
 
 class HlsErrorKind(IntEnum):
-    """Discriminator for ``HlsError.kind``. Mirrors ``tst_hls::HlsErrorKind``."""
+    """Discriminator for ``HlsError.kind``. The ``tst_hls::HlsErrorKind``
+    variants plus ``CLOSED`` (0.7.0: ``MuxPublisherError::Closed`` — a call
+    after the publisher was taken)."""
 
     URL = 0
     IO = 1
@@ -53,6 +55,7 @@ class HlsErrorKind(IntEnum):
     TLS_DISABLED = 6
     TLS = 7
     INTERNAL = 8
+    CLOSED = 9
 
 
 class HlsError(Exception):

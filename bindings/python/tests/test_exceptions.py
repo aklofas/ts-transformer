@@ -54,6 +54,8 @@ def test_specific_error_catchable_as_base_class():
 def test_demux_error_carries_kind_and_message():
     err = DemuxError(kind=DemuxErrorKind.SYNC_LOSS, message="lost sync at byte 12345")
     assert err.kind is DemuxErrorKind.SYNC_LOSS
+    # SYNC_LOSS is the 0.7.x deprecated alias for the canonical member.
+    assert err.kind is DemuxErrorKind.SYNC_BUF_EXHAUSTED
     assert err.message == "lost sync at byte 12345"
     assert "lost sync" in str(err)
 

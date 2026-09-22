@@ -642,7 +642,7 @@ def test_rtp_sender_close_from_other_thread_during_send() -> None:
         # without depending on the worker's own timing.
         with pytest.raises(RtpError) as ei:
             tx.send(RTP_BUNDLE)
-        assert ei.value.kind in (RtpErrorKind.CANCELLED, RtpErrorKind.TRANSPORT), ei.value.kind
+        assert ei.value.kind == RtpErrorKind.CLOSED, ei.value.kind
         assert "closed" in repr(tx)
     finally:
         stop.set()
@@ -684,7 +684,7 @@ def test_rtp_receiver_close_from_other_thread_while_recv_parked() -> None:
         assert len(captured) == 1, f"expected one error; got {captured!r}"
         err = captured[0]
         assert isinstance(err, RtpError), f"parked recv ended with {err!r}"
-        assert err.kind in (RtpErrorKind.CANCELLED, RtpErrorKind.TRANSPORT), err.kind
+        assert err.kind == RtpErrorKind.CLOSED, err.kind
         assert rx.end_reason() is not None  # Cancelled — recorded by close()
     finally:
         rx.close()
@@ -730,7 +730,7 @@ def test_rtp_mux_sender_close_from_other_thread_during_send_video() -> None:
         # is rejected without depending on the worker's own timing.
         with pytest.raises(RtpError) as ei:
             send_one()
-        assert ei.value.kind in (RtpErrorKind.CANCELLED, RtpErrorKind.TRANSPORT), ei.value.kind
+        assert ei.value.kind == RtpErrorKind.CLOSED, ei.value.kind
         assert "closed" in repr(tx)
     finally:
         stop.set()
@@ -870,10 +870,11 @@ def test_udp_recv_transport_close_from_other_thread_while_recv_parked() -> None:
         rx.close()
 
 
-def test_udp_recv_transport_timeout_ms_still_raises_io_timed_out() -> None:
+def test_udp_recv_transport_timeout_ms_still_raises_backpressure() -> None:
     """The polling rewrite must keep the documented per-call deadline
     contract: `recv(timeout_ms=N)` with no data still ENDS, and ends with
-    `UdpError(IO)` "recv timed out" — not `CLOSED`, not a hang. The call
+    `UdpError(BACKPRESSURE)` "recv timed out" — not `CLOSED`, not a hang
+    (the kind was `IO` before 0.7.0). The call
     runs on a worker with a generous join so a regression that never
     honours the deadline fails the test (after a rescue `close()`) instead
     of wedging the process; how long the 50 ms deadline actually takes is
@@ -901,7 +902,7 @@ def test_udp_recv_transport_timeout_ms_still_raises_io_timed_out() -> None:
         assert len(captured) == 1, f"expected one error; got {captured!r}"
         err = captured[0]
         assert isinstance(err, UdpError), f"recv ended with {err!r}"
-        assert err.kind == UdpErrorKind.IO, err.kind
+        assert err.kind == UdpErrorKind.BACKPRESSURE, err.kind
         assert "timed out" in str(err)
     finally:
         rx.close()

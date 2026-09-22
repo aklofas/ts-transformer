@@ -11,11 +11,17 @@ Field-level KLV parse warnings are NOT raised — they live on the
 parsed object as `field_errors`, matching Rust's "best-effort parse"
 semantics for ST 0601 in the field.
 
-`MuxErrorKind` mirrors Rust's 5-variant
-`tst_core::error::MuxErrorKind` coarse-tier categorical
-classification. `KlvEncodeErrorKind` accompanies the `klv.encode_*`
-Python wrappers. `DemuxErrorKind` / `KlvErrorKind` / `CodecErrorKind`
-mirror their owning Rust enums.
+Since 0.7.0 every `*ErrorKind` member below is a
+`tst_pipeline::binding::BindingErrorKind::name()` string — the one
+Rust-side kind table shared by the C, Python and JVM bindings, with the
+domain prefix stripped (`BindingErrorKind::UdpIo` → `UdpErrorKind.IO`).
+The native extension resolves every member it can raise at
+`import tstrans`, so a table/enum mismatch is an `ImportError`, never a
+surprise in an `except` clause. Members retired by that alignment stay as
+value-compatible deprecated aliases for 0.7.x and are removed in 0.8.0;
+each enum's docstring lists its own.
+
+`KlvEncodeErrorKind` accompanies the `klv.encode_*` Python wrappers.
 """
 
 import enum
@@ -52,16 +58,13 @@ class _KindMessageError(TstError):
 
 
 class MuxErrorKind(enum.IntEnum):
-    """Mirrors Rust `tst_core::error::MuxErrorKind` — the
-    coarse-tier 5-variant classification of muxer-side failures
-    introduced in plan #91. Every `MuxError` carries one of these on
-    `.kind` for programmatic matching; the underlying free-text message
-    captures the specific Rust `MuxError` variant.
-
-    The Rust enum is `#[non_exhaustive]`; Python matchers should
-    include a default arm. Mapping is performed by
-    `tst_py::errors::make_mux_error` in Rust, which translates from
-    `MuxErrorKind` to this enum's variant name via SHOUTY_SNAKE.
+    """`MuxError.kind` — the muxer subset of the Rust
+    `tst_pipeline::binding::BindingErrorKind` table; members are
+    `BindingErrorKind::name()`. The five coarse kinds of
+    `tst_core::error::MuxErrorKind` plus, since 0.7.0, the four precise
+    variants the C ABI always numbered separately: `INVALID_NAL`
+    (`MuxError::InvalidNal` — was `INPUT_MALFORMED`), `KLV_TOO_LARGE`,
+    `INVALID_AV1_OBU`, `MISP_TIME`. Matchers should include a default arm.
     """
 
     # Caller pushed input bytes that don't conform — non-Annex-B NAL,
@@ -86,9 +89,25 @@ class MuxErrorKind(enum.IntEnum):
     # well-formed use; file an issue with reproduction bytes.
     INTERNAL = 4
 
+    # `MuxError::InvalidNal` — a pushed video AU carried no Annex-B start
+    # code (was reported as INPUT_MALFORMED before 0.7.0).
+    INVALID_NAL = 5
+
+    # `MuxError::KlvTooLarge` — a KLV record exceeded the PES length cap.
+    KLV_TOO_LARGE = 6
+
+    # `MuxError::InvalidAv1Obu` — the AV1 OBU stream could not be framed.
+    INVALID_AV1_OBU = 7
+
+    # `MuxError::MispTime` — the MISP ST 0604 timestamp SEI could not be
+    # built or inserted (`push_video_misp_to` family).
+    MISP_TIME = 8
+
 
 class DemuxErrorKind(enum.Enum):
-    """Mirrors Rust's `tst_core::mpegts::DemuxError` variants.
+    """`DemuxError.kind` — mirrors `tst_core::mpegts::DemuxError`'s
+    variant names since 0.7.0 (`UNRECOVERABLE`, `STRICT_REJECTION`,
+    `MALFORMED_PSI`, `MALFORMED_PES`, `SYNC_BUF_EXHAUSTED`).
 
     ``STRICT_REJECTION`` is the Python-side representation of
     ``DemuxError::StrictRejection`` — raised when ``StrictMode`` is
@@ -97,24 +116,30 @@ class DemuxErrorKind(enum.Enum):
     ``DemuxError`` message carries the specific ``NonConformantIssue``
     name as a diagnostic string.
 
-    Matchers should include a default arm — the Rust ``DemuxError``
-    enum is ``#[non_exhaustive]`` and new variants may appear in minor
-    releases.
+    Deprecated aliases (0.7.x only, removed in 0.8.0): `INTERNAL` →
+    `UNRECOVERABLE`, `BAD_PMT` → `MALFORMED_PSI`, `BAD_PES` → `MALFORMED_PES`,
+    `SYNC_LOSS` → `SYNC_BUF_EXHAUSTED`. `UNEXPECTED_EOF` is removed — it was
+    never produced (truncation is a clean EOF, read failures are `OSError`).
+    Matchers should include a default arm — the Rust ``DemuxError`` enum is
+    ``#[non_exhaustive]`` and new variants may appear in minor releases.
     """
 
-    SYNC_LOSS = "sync_loss"
-    BAD_PMT = "bad_pmt"
-    BAD_PES = "bad_pes"
-    # Parity-only: there is NO producer in `tst_core::DemuxError` (the
-    # file path treats truncation as clean EOF and surfaces read
-    # failures as a native `OSError`). Exempted in
-    # scripts/check/python/error-mapping-coverage.sh. Mirrored (also
-    # parity-only) by the JVM `DemuxException.Kind.UNEXPECTED_EOF`.
-    UNEXPECTED_EOF = "unexpected_eof"
+    # `DemuxError::Unrecoverable` — the demuxer cannot continue.
+    UNRECOVERABLE = "unrecoverable"
+    INTERNAL = "unrecoverable"  # deprecated alias (0.7.x): use UNRECOVERABLE
     # Strict-mode policy rejection — StrictMode converted a non-conformance
-    # into a fatal error.  Placed before INTERNAL (increasing severity).
+    # into a fatal error.
     STRICT_REJECTION = "strict_rejection"
-    INTERNAL = "internal"
+    # `DemuxError::MalformedPsi` — PAT/PMT section structurally invalid.
+    MALFORMED_PSI = "malformed_psi"
+    BAD_PMT = "malformed_psi"  # deprecated alias (0.7.x): use MALFORMED_PSI
+    # `DemuxError::MalformedPes` — PES header/payload structurally invalid.
+    MALFORMED_PES = "malformed_pes"
+    BAD_PES = "malformed_pes"  # deprecated alias (0.7.x): use MALFORMED_PES
+    # `DemuxError::SyncBufExhausted` — the resync buffer filled without
+    # finding the four confirming sync bytes.
+    SYNC_BUF_EXHAUSTED = "sync_buf_exhausted"
+    SYNC_LOSS = "sync_buf_exhausted"  # deprecated alias (0.7.x): use SYNC_BUF_EXHAUSTED
 
 
 class KlvErrorKind(enum.Enum):
@@ -126,13 +151,11 @@ class KlvErrorKind(enum.Enum):
     mapping" for the full mapping table.
 
     The Rust `KlvDecodeError` enum is `#[non_exhaustive]` — Python
-    matchers should include a default arm. The initial 8-variant
-    lineup is below; future Rust variants get added here when
-    surfaced."""
+    matchers should include a default arm. `UNKNOWN_SET` was removed in
+    0.7.0 — no decoder produced it."""
 
     BAD_UNIVERSAL_LABEL = "bad_universal_label"
     TRUNCATED_SET = "truncated_set"
-    UNKNOWN_SET = "unknown_set"
     CHECKSUM_MISMATCH = "checksum_mismatch"
     DUPLICATE_TAG = "duplicate_tag"
     MISSING_REQUIRED_TAG = "missing_required_tag"
@@ -157,6 +180,10 @@ class KlvEncodeErrorKind(enum.IntEnum):
     The Rust enum is `#[non_exhaustive]`; new variants land as the
     encoder catches more failure modes. Python matchers should include
     a default arm.
+
+    Deprecated alias (0.7.x only, removed in 0.8.0):
+    `VTARGET_PACK_EMPTY` → `V_TARGET_PACK_EMPTY` (the Rust variant is
+    `VTargetPackEmpty`, whose SCREAMING_SNAKE is `V_TARGET_PACK_EMPTY`).
     """
 
     BUFFER_TOO_SMALL = 0
@@ -167,7 +194,8 @@ class KlvEncodeErrorKind(enum.IntEnum):
     INVALID_IMAPB_PARAMS = 5
     MISSING_MANDATORY_ITEM = 6
     RESERVED_TAG_IN_UNKNOWN = 7
-    VTARGET_PACK_EMPTY = 8
+    V_TARGET_PACK_EMPTY = 8
+    VTARGET_PACK_EMPTY = 8  # deprecated alias (0.7.x): use V_TARGET_PACK_EMPTY
     DUPLICATE_TARGET_ID = 9
     FORBIDDEN_STANDALONE_OFFSET = 10
 
@@ -178,6 +206,11 @@ class CodecErrorKind(enum.IntEnum):
     Unknown Rust variants (e.g. from a newer library version) are mapped
     to ``ENGINE_ERROR`` by the native extension; Python pattern-matchers
     must include a default fallback to remain robust.
+
+    ``BUFFER_TOO_SMALL`` (0.7.0) mirrors
+    ``CodecParseError::BufferTooSmall { needed, have }`` — raised only by
+    the write-into-buffer entry points, which have no Python caller today;
+    it was folded into ``ENGINE_ERROR`` before.
     """
 
     TRUNCATED_RBSP = 1
@@ -194,6 +227,7 @@ class CodecErrorKind(enum.IntEnum):
     UNSUPPORTED_FREE_FORMAT = 12
     INVALID_LENGTH_SIZE = 13
     NAL_LENGTH_OVERFLOW = 14
+    BUFFER_TOO_SMALL = 15
 
 
 class MuxError(TstError):
@@ -246,7 +280,7 @@ class KlvEncodeError(TstError):
     optional `.tag`. For most tag-bearing variants `.tag` is the offending
     ST item (KLV tag) code — `OUT_OF_RANGE`, `STRING_TOO_LONG`,
     `MISSING_MANDATORY_ITEM`, `RESERVED_TAG_IN_UNKNOWN`, and
-    `FORBIDDEN_STANDALONE_OFFSET`. For `VTARGET_PACK_EMPTY` and
+    `FORBIDDEN_STANDALONE_OFFSET`. For `V_TARGET_PACK_EMPTY` and
     `DUPLICATE_TARGET_ID`, `.tag` instead carries the VTarget Pack
     `target_id` (a target identifier, not a KLV tag). `BUFFER_TOO_SMALL`,
     `RECORD_TOO_LARGE`, `UNSUPPORTED_IMAPB_LENGTH`, and
@@ -303,24 +337,54 @@ class RtspError(_KindMessageError):
 
 
 class RtpErrorKind(enum.IntEnum):
-    """Mirrors `tst_rtp::transport::RtpError` variants. Raised by
-    `tstrans.rtp.Sender` / `Receiver` / `MuxSender` / `DemuxReceiver`
-    send/recv/push operations.
+    """`RtpError.kind` — the `tstrans.rtp` subset of the Rust
+    `BindingErrorKind` table; members are `BindingErrorKind::name()`.
+    Runtime: `CLOSED` (cancel / close from another thread — detail
+    "cancelled from another thread" — or a call on a closed handle),
+    `BROKEN` (wire failure), `BACKPRESSURE` (recv deadline expired:
+    `?recv_timeout=` or `timeout_ms=`; retryable, the receiver stays open),
+    `TOO_LARGE` (payload over the datagram cap), `END_OF_STREAM` (peer
+    ended the stream on a non-iterator `recv()`). Construction
+    (`tst_rtp::ConnectError`, one member per variant): `PAYLOAD_TYPE_PARAM`,
+    `MISSING_PAYLOAD_TYPE_PARAM`, `URL`, `HOST_NOT_LITERAL`, `IO`,
+    `IFACE_UNSUPPORTED`.
+
+    Deprecated aliases (0.7.x only, removed in 0.8.0): `TRANSPORT` →
+    `BROKEN`, `MALFORMED_PACKET` → `TOO_LARGE`, `CANCELLED` → `CLOSED`,
+    `TIMEOUT` → `BACKPRESSURE` — each `is` its successor, so existing
+    `e.kind == RtpErrorKind.CANCELLED` comparisons keep working; compare
+    against the successor. Before 0.7.0 `TRANSPORT` also covered the
+    construction-time errors, which now carry their own member.
 
     Available only when tstrans was built with the `rtp` cargo
     feature (default-on in published wheels).
     """
 
-    TRANSPORT = 1
-    MALFORMED_PACKET = 2
-    CANCELLED = 3
+    BROKEN = 1
+    TRANSPORT = 1  # deprecated alias (0.7.x): use BROKEN (or the construction members)
+    TOO_LARGE = 2
+    MALFORMED_PACKET = 2  # deprecated alias (0.7.x): use TOO_LARGE
+    CLOSED = 3
+    CANCELLED = 3  # deprecated alias (0.7.x): use CLOSED
     # Recv deadline expired — retryable; the transport/session is still
     # alive. Raised from two triggers: a persistent deadline configured
     # via the `?recv_timeout=<ms>` URL query key on a Receiver /
     # DemuxReceiver URL, or a per-call `timeout_ms=` argument to
     # `recv()` / `recv_au()`. A receiver with neither configured blocks
     # indefinitely instead of raising this.
-    TIMEOUT = 4
+    BACKPRESSURE = 4
+    TIMEOUT = 4  # deprecated alias (0.7.x): use BACKPRESSURE
+    # `tst_rtp::ConnectError` — one member per variant since 0.7.0
+    # (all of these were TRANSPORT before).
+    PAYLOAD_TYPE_PARAM = 5
+    MISSING_PAYLOAD_TYPE_PARAM = 6
+    URL = 7
+    HOST_NOT_LITERAL = 8
+    IO = 9
+    IFACE_UNSUPPORTED = 10
+    # Peer ended the stream cleanly on a non-iterator `recv()` (iterators
+    # raise `StopIteration` instead).
+    END_OF_STREAM = 11
 
 
 class RtpError(_KindMessageError):
@@ -330,10 +394,22 @@ class RtpError(_KindMessageError):
 
 
 class SrtErrorKind(enum.IntEnum):
-    """Mirrors `tst_srt::IoError` / `ConnectError` / `AcceptError`
-    + `tst_pipeline::TransportError` variants collapsed to user-facing
-    buckets. Raised by `tstrans.srt` socket / sender / receiver
-    operations.
+    """`SrtError.kind` — the `tstrans.srt` subset of the Rust
+    `BindingErrorKind` table; members are `BindingErrorKind::name()`.
+    Construction: `CONNECT_FAILED` / `ACCEPT_FAILED` / `TIMEOUT` /
+    `CONFIG_INVALID` (URL, mode, option and address errors). Runtime:
+    `CLOSED` (own close; a cancel/close from another thread — detail
+    "cancelled from another thread"; a call on a closed handle), `BROKEN`
+    (wire failure — and, until the SRT transport-level cancel change lands
+    later in 0.7.0, what a cancelled parked call on a plain shell may still
+    raise), `BACKPRESSURE` (libsrt would-block / send queue full; retry),
+    `TOO_LARGE` (payload over the `payloadsize` cap; was `CONFIG_INVALID`),
+    `INPUT_MALFORMED` (TS framing lost sync in `send_bytes`; was
+    `CONFIG_INVALID`), `END_OF_STREAM` (the peer closed cleanly on a
+    non-iterator `recv_bytes`; was `CLOSED`), `IO` (libsrt system errors).
+
+    Deprecated alias (0.7.x only, removed in 0.8.0): `WOULD_BLOCK` →
+    `BACKPRESSURE`.
 
     Available only when tstrans was built with the `srt` cargo
     feature (default-on in published wheels).
@@ -341,12 +417,16 @@ class SrtErrorKind(enum.IntEnum):
 
     CONNECT_FAILED = 0
     ACCEPT_FAILED = 1
-    WOULD_BLOCK = 2
+    BACKPRESSURE = 2
+    WOULD_BLOCK = 2  # deprecated alias (0.7.x): use BACKPRESSURE
     TIMEOUT = 3
     CLOSED = 4
     BROKEN = 5
     CONFIG_INVALID = 6
     IO = 7
+    TOO_LARGE = 8
+    INPUT_MALFORMED = 9
+    END_OF_STREAM = 10
 
 
 class SrtError(_KindMessageError):
@@ -362,18 +442,24 @@ class SrtError(_KindMessageError):
 
 
 class UdpErrorKind(enum.IntEnum):
-    """Discriminator for `UdpError.kind`. Combines `tst_udp::UdpErrorKind`'s
-    own variants (URL, IO, INVALID_CONFIG) with transport-level kinds the
-    `tstrans.udp` binding maps from `tst_core::transport::TransportError`
-    onto the same exception (CLOSED, PAYLOAD_TOO_LARGE). Raised by
-    `tstrans.udp` operations (built with the `udp` cargo feature,
-    default-on)."""
+    """`UdpError.kind` — the `tstrans.udp` subset of the Rust
+    `BindingErrorKind` table. `URL` / `IO` / `INVALID_CONFIG` come from
+    `tst_udp::UdpErrorKind` at build time; `CLOSED` / `BROKEN` /
+    `BACKPRESSURE` (recv deadline expired — retryable; raised `IO` before
+    0.7.0) / `TOO_LARGE` from the transport. Raised by `tstrans.udp`
+    operations (built with the `udp` cargo feature, default-on).
+
+    Deprecated alias (0.7.x only, removed in 0.8.0): `PAYLOAD_TOO_LARGE` →
+    `TOO_LARGE`."""
 
     URL = 0
     IO = 2
-    PAYLOAD_TOO_LARGE = 4
+    TOO_LARGE = 4
+    PAYLOAD_TOO_LARGE = 4  # deprecated alias (0.7.x): use TOO_LARGE
     CLOSED = 5
     INVALID_CONFIG = 6
+    BACKPRESSURE = 7
+    BROKEN = 8
 
 
 class UdpError(_KindMessageError):
@@ -383,22 +469,28 @@ class UdpError(_KindMessageError):
 
 
 class TcpErrorKind(enum.IntEnum):
-    """`tst_tcp::TcpErrorKind`'s variants, reachable via two paths:
-    construction/config-time errors from the concrete Rust
-    `TcpErrorKind` enum, and select `tst_core::transport::TransportError`
-    conditions mapped onto the same kinds at the `tstrans.tcp` send/recv
-    boundary (e.g. `CLOSED` / `PAYLOAD_TOO_LARGE` are reachable via
-    either path). Raised by `tstrans.tcp` operations (built with the
-    `tcp` cargo feature, default-on)."""
+    """`TcpError.kind` — the `tstrans.tcp` subset of the Rust
+    `BindingErrorKind` table. `URL` / `IO` / `CLOSED` / `CONNECT_TIMEOUT` /
+    `INVALID_CONFIG` / `TLS` / `TLS_DISABLED` come from
+    `tst_tcp::TcpErrorKind`; `BROKEN` (a wire failure — raised `IO` before
+    0.7.0) / `BACKPRESSURE` / `TOO_LARGE` from the transport; `CLOSED` also
+    from a cancel/close from another thread. Raised by `tstrans.tcp`
+    operations (built with the `tcp` cargo feature, default-on).
+
+    Deprecated alias (0.7.x only, removed in 0.8.0): `PAYLOAD_TOO_LARGE` →
+    `TOO_LARGE`."""
 
     URL = 0
     IO = 1
-    PAYLOAD_TOO_LARGE = 2
+    TOO_LARGE = 2
+    PAYLOAD_TOO_LARGE = 2  # deprecated alias (0.7.x): use TOO_LARGE
     CLOSED = 3
     CONNECT_TIMEOUT = 4
     INVALID_CONFIG = 5
     TLS = 6
     TLS_DISABLED = 7
+    BACKPRESSURE = 8
+    BROKEN = 9
 
 
 class TcpError(_KindMessageError):
@@ -408,8 +500,12 @@ class TcpError(_KindMessageError):
 
 
 class HlsErrorKind(enum.IntEnum):
-    """Mirrors `tst_hls::HlsErrorKind`. Raised by `tstrans.hls`
-    operations (built with the `hls` cargo feature, default-on)."""
+    """`HlsError.kind` — the `tstrans.hls` subset of the Rust
+    `BindingErrorKind` table; the `tst_hls::HlsErrorKind` variants plus
+    `CLOSED` (0.7.0: `MuxPublisherError::Closed` — a call after the
+    publisher was taken; folded into `FINISHED` before). Raised by
+    `tstrans.hls` operations (built with the `hls` cargo feature,
+    default-on)."""
 
     URL = 0
     IO = 1
@@ -420,6 +516,7 @@ class HlsErrorKind(enum.IntEnum):
     TLS_DISABLED = 6
     TLS = 7
     INTERNAL = 8
+    CLOSED = 9
 
 
 class HlsError(_KindMessageError):
@@ -429,24 +526,31 @@ class HlsError(_KindMessageError):
 
 
 class RistErrorKind(enum.IntEnum):
-    """`tst_rist::RistErrorKind`'s variants, reachable via two paths:
-    construction/config-time errors from the concrete Rust
-    `RistErrorKind` enum, and select `tst_core::transport::TransportError`
-    conditions mapped onto the same kinds at the `tstrans.rist` send/recv
-    boundary (e.g. `CLOSED` / `PAYLOAD_TOO_LARGE` / `RECV_TIMEOUT` are
-    reachable via either path). Raised by `tstrans.rist` operations
-    (built with the `rist` cargo feature, default-on)."""
+    """`RistError.kind` — the `tstrans.rist` subset of the Rust
+    `BindingErrorKind` table. `URL` / `FFI` / `INVALID_CONFIG` /
+    `ENCRYPTION_DISABLED` / `CONTEXT_CREATE_FAILED` / `PEER_CREATE_FAILED`
+    come from `tst_rist::RistErrorKind`; `CLOSED` / `BROKEN` /
+    `BACKPRESSURE` (recv deadline expired — retryable) / `TOO_LARGE` from
+    the transport. Raised by `tstrans.rist` operations (built with the
+    `rist` cargo feature, default-on).
+
+    Deprecated aliases (0.7.x only, removed in 0.8.0): `PAYLOAD_TOO_LARGE`
+    → `TOO_LARGE`, `RECV_TIMEOUT` → `BACKPRESSURE`, `IO` → `BROKEN`
+    (librist has no generic I/O kind of its own)."""
 
     URL = 0
     FFI = 1
-    PAYLOAD_TOO_LARGE = 2
+    TOO_LARGE = 2
+    PAYLOAD_TOO_LARGE = 2  # deprecated alias (0.7.x): use TOO_LARGE
     CLOSED = 3
     INVALID_CONFIG = 4
     ENCRYPTION_DISABLED = 5
     CONTEXT_CREATE_FAILED = 6
     PEER_CREATE_FAILED = 7
-    RECV_TIMEOUT = 8
-    IO = 9
+    BACKPRESSURE = 8
+    RECV_TIMEOUT = 8  # deprecated alias (0.7.x): use BACKPRESSURE
+    BROKEN = 9
+    IO = 9  # deprecated alias (0.7.x): use BROKEN
 
 
 class RistError(_KindMessageError):

@@ -133,9 +133,11 @@ class SocketStats:
 
 @final
 class CancelHandle:
-    """Transport-side cancel handle for `Sender` / `Receiver`. Calling
-    `.cancel()` wakes a thread parked in `.send()` / `.recv()` within
-    ~100 ms; that call returns `RtpError(kind=CANCELLED)`.
+    """Transport-side cancel handle for `Sender` / `Receiver` /
+    `H264Receiver`. Calling `.cancel()` wakes a thread parked in
+    `.send()` / `.recv()` / `.recv_au()` within ~100 ms; that call raises
+    `RtpError(kind=CLOSED)` (detail "cancelled from another thread";
+    `recv_au()` returns `None`).
     """
 
     def cancel(self) -> None: ...
@@ -880,14 +882,14 @@ class H264Receiver:
     `recv_au(timeout_ms=None)` — block until an Access Unit is reassembled
     (releasing the GIL via `py.allow_threads()`). Returns `H264AccessUnit`
     or `None` at EOS. `timeout_ms=N` bounds a single call; expiry raises
-    `RtpError(TIMEOUT)` — the receiver stays open, call again to retry.
+    `RtpError(BACKPRESSURE)` — the receiver stays open, call again to retry.
 
     Acts as its own iterator: `for au in receiver: ...` yields AUs until EOS.
 
     `depay_stats()` / `rtp_stats()` / `socket_stats()` — snapshot counters.
     `local_addr()` — UDP bind address as `"host:port"`. `None` only for a
     live TCP-interleaved (RTSP) receiver where no UDP socket exists;
-    raises `RtpError(TRANSPORT)` if the receiver is closed.
+    raises `RtpError(CLOSED)` if the receiver is closed.
     `cancel_handle()` — returns a `CancelHandle` for cross-thread cancellation.
     `end_reason()` / `end_detail()` — why the session ended
     (`StreamEndReason` / free-text detail), or `None` for both while the

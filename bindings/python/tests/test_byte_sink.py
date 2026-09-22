@@ -403,4 +403,4 @@ def test_rtp_add_byte_sink_on_closed_raises() -> None:
     rx.close()
     with pytest.raises(RtpError) as exc_info:
         rx.add_byte_sink(lambda _pkt: None)
-    assert exc_info.value.kind == RtpErrorKind.TRANSPORT
+    assert exc_info.value.kind == RtpErrorKind.CLOSED

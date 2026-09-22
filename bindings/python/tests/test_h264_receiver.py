@@ -112,7 +112,7 @@ def test_h264_receiver_recv_au_per_call_timeout_ms_raises_and_recovers() -> None
 
     with pytest.raises(RtpError) as exc_info:
         rx.recv_au(timeout_ms=200)
-    assert exc_info.value.kind == RtpErrorKind.TIMEOUT
+    assert exc_info.value.kind == RtpErrorKind.BACKPRESSURE
 
     # Hand-built IDR packet, identical layout to test_h264_receiver_single_au_loopback.
     pkt = bytes([
@@ -228,19 +228,19 @@ def test_h264_receiver_context_manager() -> None:
 
 
 def test_h264_receiver_closed_recv_raises() -> None:
-    """Closing then calling recv_au must raise RtpError (TRANSPORT or CANCELLED)."""
+    """Closing then calling recv_au must raise RtpError(CLOSED)."""
     rx = tstrans.rtp.H264Receiver.listen("rtp://127.0.0.1:0?pt=96")
     rx.close()
     with pytest.raises(RtpError) as exc_info:
         rx.recv_au()
-    # Either TRANSPORT or CANCELLED is acceptable for a closed receiver.
-    assert exc_info.value.kind in (RtpErrorKind.TRANSPORT, RtpErrorKind.CANCELLED)
+    # A closed receiver raises CLOSED (the cancel / closed-handle kind).
+    assert exc_info.value.kind == RtpErrorKind.CLOSED
     # local_addr follows the same closed-handle contract: it must raise,
     # NOT return None — None is reserved for a live TCP-interleaved
     # receiver where no UDP socket exists.
     with pytest.raises(RtpError) as exc_info:
         rx.local_addr()
-    assert exc_info.value.kind in (RtpErrorKind.TRANSPORT, RtpErrorKind.CANCELLED)
+    assert exc_info.value.kind == RtpErrorKind.CLOSED
 
 
 # --------------------------------------------------------------------------- #
@@ -290,10 +290,10 @@ def test_parameter_set_injection_enum() -> None:
 
 
 def test_h264_receiver_listen_without_pt_raises() -> None:
-    """listen() without ?pt= must raise RtpError(TRANSPORT)."""
+    """listen() without ?pt= must raise RtpError(MISSING_PAYLOAD_TYPE_PARAM)."""
     with pytest.raises(RtpError) as exc_info:
         tstrans.rtp.H264Receiver.listen("rtp://127.0.0.1:0")
-    assert exc_info.value.kind == RtpErrorKind.TRANSPORT
+    assert exc_info.value.kind == RtpErrorKind.MISSING_PAYLOAD_TYPE_PARAM
 
 
 # --------------------------------------------------------------------------- #

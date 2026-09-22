@@ -75,7 +75,7 @@ def test_demux_receiver_bind_and_close() -> None:
 def test_demux_receiver_bad_url_raises_rtp_error() -> None:
     with pytest.raises(RtpError) as exc_info:
         tstrans.rtp.DemuxReceiver("not-a-valid-url://")
-    assert exc_info.value.kind == RtpErrorKind.TRANSPORT
+    assert exc_info.value.kind == RtpErrorKind.URL
 
 
 def test_demux_receiver_with_demux_config() -> None:
@@ -173,7 +173,7 @@ def test_demux_receiver_url_knob_iteration_resumes_after_timeout() -> None:
         # `DemuxReceiverErrorSource::Transport(Backpressure)`.
         with pytest.raises(RtpError) as exc_info:
             next(it)
-        assert exc_info.value.kind == RtpErrorKind.TIMEOUT
+        assert exc_info.value.kind == RtpErrorKind.BACKPRESSURE
         # A deadline expiry is not a recorded end reason — the session is
         # still alive, so `end_reason()` stays None (pins the
         # deadline-expiry-records-no-reason seam against `StreamEndReason`).

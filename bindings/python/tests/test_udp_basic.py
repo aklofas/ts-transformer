@@ -141,29 +141,30 @@ def test_udp_error_payload_too_large() -> None:
     huge = b"\x47" * 1316  # 7×188, exceeds cap of 188
     with pytest.raises(UdpError) as excinfo:
         tx.send(huge)
-    assert excinfo.value.kind == UdpErrorKind.PAYLOAD_TOO_LARGE
+    assert excinfo.value.kind == UdpErrorKind.TOO_LARGE
 
     tx.close()
     rx.close()
 
 
 def test_udp_error_recv_timeout() -> None:
-    """RecvTransport.recv(timeout_ms=...) raises UdpError(kind=IO) on timeout."""
+    """RecvTransport.recv(timeout_ms=...) raises UdpError(kind=BACKPRESSURE)
+    on timeout — retryable, the receiver stays open (was IO before 0.7.0)."""
     rx = udp.RecvTransport.builder().bind_url("udp://0.0.0.0:0").build()
     with pytest.raises(UdpError) as excinfo:
         rx.recv(timeout_ms=50)  # very short timeout, no sender
-    # Timeout maps to IO
-    assert excinfo.value.kind == UdpErrorKind.IO
+    # An expired recv deadline is transient refusal, not an I/O failure.
+    assert excinfo.value.kind == UdpErrorKind.BACKPRESSURE
     rx.close()
 
 
 def test_udp_error_kind_count() -> None:
     """Sentinel: catches drift if Rust adds a new UdpErrorKind variant."""
-    assert len(UdpErrorKind) == 5
+    assert len(UdpErrorKind) == 7
 
 
 def test_udp_error_wiring_via_test_helper() -> None:
-    """Verify make_udp_error wiring for all 5 kind variants via test helper."""
+    """Verify the raise path wiring for every canonical kind via test helper."""
     from tstrans._native import _raise_udp_error_for_test
 
     for kind in UdpErrorKind:
