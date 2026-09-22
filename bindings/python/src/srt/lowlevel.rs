@@ -696,12 +696,13 @@ impl PyListener {
 
     /// Local bound address as `(host, port)`. Useful when the URL
     /// requested port 0 (kernel-pick) — the bound port reads back via
-    /// libsrt's `getsockname`. Answered from the construction-time
-    /// snapshot, so it does not wait behind an `accept()` parked on another
-    /// thread — except when that construction-time read failed (`None`),
-    /// in which case it falls back to the slot and waits for the parked
-    /// call like the other getters. Raises `SrtError(CLOSED)` once the
-    /// listener is closed.
+    /// libsrt's `getsockname`. Answered ONLY from the construction-time
+    /// snapshot (spec §3.2), so it never waits behind an `accept()` parked
+    /// on another thread — the hang PR #234 fixed. Raises
+    /// `SrtError(CLOSED)` once the listener is closed, and `SrtError(IO)`
+    /// in the one case where the snapshot is absent: libsrt's
+    /// construction-time `getsockname` failed, so there is no address to
+    /// report and re-reading it under the slot would only buy a park.
     fn local_addr(&self, py: Python<'_>) -> PyResult<(String, u16)> {
         let addr = match self.owned.snapshot() {
             Some(addr) if !self.owned.is_closed() => *addr,
@@ -709,14 +710,15 @@ impl PyListener {
                 return Err(raise(py, &SRT, BindingError::from(HandleState::Closed)));
             }
             None => {
-                let res = py.allow_threads(|| {
-                    self.owned.with_mut(|l| {
-                        l.get()
-                            .map_err(BindingError::from)
-                            .and_then(|l| l.local_addr().map_err(BindingError::from))
-                    })
-                });
-                pyres(py, &SRT, res)?
+                return Err(raise(
+                    py,
+                    &SRT,
+                    BindingError::new(
+                        BindingErrorKind::SrtIo,
+                        "local address unavailable: getsockname failed when the \
+                         listener was built",
+                    ),
+                ));
             }
         };
         Ok((addr.ip().to_string(), addr.port()))

@@ -501,35 +501,26 @@ impl PyTcpListener {
     /// Local bound port. Non-zero after successful `build()`.
     ///
     /// Use this to discover the ephemeral port when `.bind("127.0.0.1:0")`
-    /// was used. Answered from the `build()`-time snapshot, so it NEVER
-    /// waits behind an `accept_blocking()` parked on another thread (spec
-    /// §3.2's snapshot-getter rule, the PR #234 class). If that build-time
-    /// read failed (`None` — a bound listener whose `local_addr()` errored,
-    /// which the kernel does not otherwise do) the retry is non-blocking
-    /// too: a busy slot raises `TcpError(kind=IO)` rather than parking.
-    /// Raises `TcpError(kind=CLOSED)` once the listener is closed.
+    /// was used. Answered ONLY from the `build()`-time snapshot (spec
+    /// §3.2's snapshot-getter rule), so it NEVER waits behind an
+    /// `accept_blocking()` parked on another thread — the PR #234 class.
+    /// Raises `TcpError(kind=CLOSED)` once the listener is closed, and
+    /// `TcpError(kind=IO)` in the one case where the snapshot is absent:
+    /// the bound listener's `local_addr()` errored at `build()`, which the
+    /// kernel does not otherwise do, so there is no port to report.
     fn local_port(&self, py: Python<'_>) -> PyResult<u16> {
         match self.owned.snapshot() {
             Some(port) if !self.owned.is_closed() => Ok(*port),
             Some(_) => Err(raise(py, &TCP, BindingError::from(HandleState::Closed))),
-            None => {
-                let res = py.allow_threads(|| {
-                    self.owned
-                        .try_with_ref(|l| l.0.local_addr().map(|a| a.port()).map_err(TcpError::Io))
-                });
-                match res {
-                    Some(r) => pyres(py, &TCP, r),
-                    None => Err(raise(
-                        py,
-                        &TCP,
-                        BindingError::new(
-                            BindingErrorKind::TcpIo,
-                            "local port unavailable: the build-time read failed and the \
-                             listener is busy in accept_blocking()",
-                        ),
-                    )),
-                }
-            }
+            None => Err(raise(
+                py,
+                &TCP,
+                BindingError::new(
+                    BindingErrorKind::TcpIo,
+                    "local port unavailable: getsockname failed when the listener \
+                     was built",
+                ),
+            )),
         }
     }
 
