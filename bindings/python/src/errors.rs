@@ -1,8 +1,14 @@
 //! Rust-side helpers that construct the Python exception classes
-//! defined in `tstrans.exceptions`. Type wrappers use these to raise
-//! Python-side exceptions — e.g. `Demuxer.feed_bytes` calls
-//! `make_demux_error(py, "BAD_PMT", "...")` when the underlying
-//! `tst_core::mpegts::Demuxer` returns an error.
+//! defined in `tstrans.exceptions`, for the OFFLINE domains only — mux,
+//! demux, KLV and the three `srt.Socket` lowlevel sites. Every transport
+//! and shell error goes through `crate::raise` instead (Arc 2 WP-B2),
+//! which resolves `BindingErrorKind::name()` on the domain's kind enum.
+//!
+//! The attribute-carrying mappers below (`mux_error_to_pyerr`,
+//! `demux_error_to_pyerr`, `klv_decode_error_to_pyerr`,
+//! `klv_encode_error_to_pyerr`, `codec_parse_error_to_pyerr`) take their
+//! member from the A2 classifiers (`kind_of_mux`, `kind_of_demux`, …) and
+//! add the per-variant attributes the Python classes expose.
 //!
 //! Implementation note: we deliberately do NOT use PyO3's
 //! `create_exception!` (which would mint *new* exception classes on
@@ -35,16 +41,16 @@ use pyo3::types::PyDict;
 /// Looks up `<kind_enum_class>.<kind_variant>` and calls
 /// `<error_class>(kind=<variant>, message=<message>)` with kwargs.
 /// Any attribute-lookup failure (e.g. an unknown `kind_variant`) is itself
-/// returned as a `PyErr`. The bash ratchets in `scripts/check/python/`
-/// enforce that every variant name used in this crate is a valid member of
-/// the corresponding `FooErrorKind` enum.
+/// returned as a `PyErr`. Members reached this way come from
+/// `BindingErrorKind::name()` (via the `kind_of_*` classifiers), which
+/// `crate::raise::check_error_kinds` proves resolvable at `import tstrans`.
 ///
 /// We deliberately do NOT use PyO3's `create_exception!`: that would mint
 /// NEW exception classes on the Rust side, distinct from the Python-defined
 /// `class MuxError` etc. Users need `isinstance(err, MuxError)` to work
 /// whether the exception comes from Python or Rust, so this side must CALL
 /// INTO the Python-defined classes rather than defining its own.
-fn make_kinded_error(
+pub(crate) fn make_kinded_error(
     py: Python<'_>,
     error_class: &str,
     kind_enum_class: &str,
@@ -80,34 +86,13 @@ fn make_kinded_error(
     }
 }
 
-/// Generate a `pub fn make_<Name>_error(py, kind_variant, message) -> PyErr`
-/// thin wrapper around [`make_kinded_error`]. The error class is
-/// `<Prefix>Error` and the kind enum is `<Prefix>ErrorKind`. An optional
-/// `cfg(...)` arm gates the wrapper behind a cargo feature.
-macro_rules! make_error_fn {
-    ($fn_name:ident, $prefix:literal $(, cfg($($cfg:tt)*))?) => {
-        $(#[cfg($($cfg)*)])?
-        pub fn $fn_name(py: Python<'_>, kind_variant: &str, message: &str) -> PyErr {
-            make_kinded_error(
-                py,
-                concat!($prefix, "Error"),
-                concat!($prefix, "ErrorKind"),
-                kind_variant,
-                message,
-            )
-        }
-    };
-}
-
-// One thin wrapper per tstrans.exceptions error class.
-// The bash ratchets in scripts/check/python/ enforce that every *ErrorKind
-// variant has at least one literal make_*_error(py, "VARIANT", ...) call
-// site in the crate. Callers pass string literals for kind_variant; an
-// unknown name surfaces as AttributeError from the Python side.
-make_error_fn!(make_mux_error, "Mux");
-make_error_fn!(make_demux_error, "Demux");
-make_error_fn!(make_klv_error, "Klv");
-make_error_fn!(make_srt_error, "Srt", cfg(feature = "srt"));
+// The per-prefix `make_<name>_error` wrappers were deleted in 0.7.0 with
+// the Python error-mapping ratchet that counted their literal call sites
+// (Arc 2 WP-B2): the kind vocabulary is now proven Rust-side by
+// scripts/check/rust/kind-table-coverage.sh and binding-side by
+// `crate::raise::check_error_kinds` at `import tstrans`, so there is
+// nothing left for a per-kind call-site census to check. The handful of
+// remaining callers name the class and the enum at the call site.
 
 /// Test-only: raise `member` (a `BindingErrorKind::name()` string) through
 /// the real raise path, so the pytest kind-wiring suites exercise `raise.rs`
@@ -135,7 +120,13 @@ fn raise_for_test(py: Python<'_>, d: &crate::raise::Domain, member: &str, messag
 #[pyfunction]
 #[pyo3(name = "_raise_mux_error_for_test")]
 pub fn raise_mux_error_for_test(py: Python<'_>, message: &str) -> PyResult<()> {
-    Err(make_mux_error(py, "INTERNAL", message))
+    Err(make_kinded_error(
+        py,
+        "MuxError",
+        "MuxErrorKind",
+        "INTERNAL",
+        message,
+    ))
 }
 
 /// Test helper: forces an `SrtError` raise from Rust, exposed as
@@ -229,7 +220,7 @@ pub(crate) fn mux_error_to_pyerr(py: Python<'_>, e: tst_core::MuxError) -> PyErr
         ),
         _ => e.to_string(),
     };
-    make_mux_error(py, kind_str, &msg)
+    make_kinded_error(py, "MuxError", "MuxErrorKind", kind_str, &msg)
 }
 
 /// Map a Rust `CodecParseError` to a Python `CodecError` instance.
@@ -239,12 +230,10 @@ pub(crate) fn mux_error_to_pyerr(py: Python<'_>, e: tst_core::MuxError) -> PyErr
 /// fields as keyword arguments to `CodecError.__init__` so the Python
 /// side can read `.offset_bits`, `.field`, `.expected`, etc.
 ///
-/// The wildcard arm routes unknown future variants (added via the
-/// `#[non_exhaustive]` hatch on `CodecParseError`) to `ENGINE_ERROR`
-/// so this fn never panics on a Rust-side enum addition — the
-/// `pyarm` row in `scripts/ratchets/error-mapping.tsv` (driven by
-/// `scripts/check/python/error-mapping-coverage.sh`) will surface the
-/// omission in CI.
+/// The member comes from `tst_pipeline::binding::kind_of_codec`, so a
+/// Rust-side enum addition cannot silently fall through here; only the
+/// per-variant ATTRIBUTE forwarding below is hand-written, and its
+/// wildcard arm simply forwards no extras.
 ///
 /// Called from codec-parser wrappers.
 #[allow(dead_code)]

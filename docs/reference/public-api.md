@@ -109,8 +109,12 @@ The three binding crates — `bindings/c` (tst-c), `bindings/c/core`
 - **tst-py.** The Rust surface is `#[pymodule]` / `#[pymethods]` PyO3 glue —
   not the Python contract. The Python consumer surface is gated by the
   committed `.pyi` stubs under `bindings/python/python/tstrans/`, the
-  `py.typed` marker, the pytest suite, and the Python error-mapping ratchets
-  under `scripts/check/python/`.
+  `py.typed` marker, the pytest suite, the ratchets under
+  `scripts/check/python/`, and — since 0.7.0 — the error-kind vocabulary
+  itself, which is `tst_pipeline::binding::BindingErrorKind::name()` checked
+  at `import tstrans` (the per-kind Python error-mapping ratchet was retired
+  in Arc 2 WP-B2; `scripts/ratchets/kind-equivalence.tsv` records the
+  Rust-C-Python-JVM member mapping instead).
 
 **Rule:** do not add `cargo public-api` baselines to binding crates unless
 they become actual CI release gates. Adding a baseline to a binding crate

@@ -441,9 +441,11 @@ class SrtError(_KindMessageError):
 
 
 # ── Plan A5b — udp / tcp / hls / rist transport error classes ────────────
-# Kind enums mirror the Rust `*ErrorKind` variant sets (SCREAMING_SNAKE).
-# The Rust side raises these via `errors::make_<proto>_error(py, "VARIANT",
-# message)` (import-based, mirroring make_rtsp_error — NOT create_exception!).
+# Each kind enum is the domain's subset of the Rust
+# `tst_pipeline::binding::BindingErrorKind` table, spelled as `name()`.
+# The Rust side raises them through `crate::raise` (import-based, so
+# `isinstance` works across the boundary — NOT create_exception!), which
+# resolves the member on this enum; `import tstrans` fails if any is missing.
 
 
 class UdpErrorKind(enum.IntEnum):

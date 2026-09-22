@@ -29,11 +29,12 @@
 //!   dataclass; if `None`, defaults are used. Configuration is lifted
 //!   onto the Rust `tst_pipeline::DemuxReceiver::with_demux_options`
 //!   path via the existing `crate::mpegts::build_demuxer_config` helper.
-//! - Concurrency: `inner` is held under `Arc<Mutex<Option<...>>>` and
-//!   every PyMethod takes `&self`. The mutex serialises access; a
-//!   concurrent `close()` / `__exit__()` from another Python thread
-//!   fires the cancel handle (held outside the mutex), wakes the parked
-//!   recv, then takes the inner once the recv path releases the lock.
+//! - Concurrency (Arc 2): the shell lives in a
+//!   `tst_pipeline::binding::Owned` and every PyMethod takes `&self`.
+//!   `Owned` serialises access to the inner; a concurrent `close()` /
+//!   `__exit__()` from another Python thread latches the shared cancel
+//!   FIRST (outside the slot), which wakes the parked recv, and only
+//!   then takes the inner.
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 

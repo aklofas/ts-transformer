@@ -693,9 +693,9 @@ impl PyManagedDemuxReceiver {
     /// `SrtError(CLOSED)` if the receiver has been closed, or all-zero
     /// stats if the wrapper is mid-reconnect.
     ///
-    /// Releases the GIL while acquiring the outer `Arc<Mutex<Option<...>>>`
-    /// so a concurrent `__next__` parked in `recv_event` (which holds that
-    /// same mutex inside `allow_threads`) cannot freeze the interpreter.
+    /// Releases the GIL while taking the `Owned` slot, so a concurrent
+    /// `__next__` parked in `recv_event` (which holds that same slot
+    /// inside `allow_threads`) cannot freeze the interpreter.
     fn socket_stats(&self, py: Python<'_>) -> PyResult<Py<PySocketStats>> {
         // Two-step: acquire the outer mutex inside allow_threads so the GIL
         // is free while waiting. Without this, a parked __next__ holding the
@@ -740,9 +740,9 @@ impl PyManagedDemuxReceiver {
     /// the honest "never" value.
     ///
     /// Same access pattern as `socket_stats`: releases the GIL before
-    /// acquiring the outer `Arc<Mutex<Option<...>>>` so a concurrent
-    /// `__next__` parked in `recv_event` (holding that same mutex inside
-    /// `allow_threads`) can't freeze the interpreter. Raises
+    /// taking the `Owned` slot, so a concurrent `__next__` parked in
+    /// `recv_event` (holding that same slot inside `allow_threads`)
+    /// can't freeze the interpreter. Raises
     /// `SrtError(CLOSED)` if the receiver has been closed.
     fn last_seen_micros(&self, py: Python<'_>, pid: u16) -> PyResult<Option<u64>> {
         let last_seen = pyok(

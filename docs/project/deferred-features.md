@@ -2340,7 +2340,8 @@ Entries whose feature shipped. Kept for the record (dates, PR numbers, the decis
   `tst_rtp_demux_receiver_next_event`. Python (PR #166) gained
   `timeout_ms: Optional[int]` keyword args on `recv()`/`recv_au()`
   (layered on top of, not replacing, the URL-configured persistent
-  deadline) and a typed `RtpError(TIMEOUT)`. JVM (PR #167) mirrors it
+  deadline) and a typed `RtpError(TIMEOUT)` — renamed `BACKPRESSURE` in
+  0.7.0, with `TIMEOUT` kept as a deprecated alias. JVM (PR #167) mirrors it
   with `recv(Integer timeoutMs)` / `recvAu(Integer timeoutMs)`
   overloads plus a new `RtpException.Kind.TIMEOUT`, and additionally
   ships a checked `DemuxReceiver.recvEvent()` so a demux-side timeout

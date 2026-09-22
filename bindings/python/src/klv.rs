@@ -4,7 +4,7 @@
 //! to an instance of a Python-side dataclass under `tstrans.klv.*` via
 //! per-set translator functions (`convert_uas_datalink`, etc.). Decode
 //! entry points are `#[pyfunction]`s that map `KlvDecodeError` to
-//! `tstrans.exceptions.KlvError` via `make_klv_error`.
+//! `tstrans.exceptions.KlvError` via `make_kinded_error`.
 //!
 //! Covers ST 0601 / ST 0102 / ST 0605 / ST 0903 decode and encode
 //! with field-error surfacing on the decode path.
@@ -84,7 +84,7 @@ use tst_core::klv::st1204::{
     encode_to_vec as encode_st1204,
 };
 
-use crate::errors::{klv_encode_error_to_pyerr, make_klv_error};
+use crate::errors::{klv_encode_error_to_pyerr, make_kinded_error};
 
 // ---------------------------------------------------------------------------
 // KlvDecodeError → KlvError mapping
@@ -97,7 +97,7 @@ use crate::errors::{klv_encode_error_to_pyerr, make_klv_error};
 pub(crate) fn klv_decode_error_to_pyerr(py: Python<'_>, e: KlvDecodeError) -> PyErr {
     let msg = format!("{e}");
     let kind = tst_pipeline::binding::kind::kind_of_klv_decode(&e).name();
-    make_klv_error(py, kind, &msg)
+    make_kinded_error(py, "KlvError", "KlvErrorKind", kind, &msg)
 }
 
 // ---------------------------------------------------------------------------
@@ -114,7 +114,7 @@ pub(crate) fn klv_decode_error_to_pyerr(py: Python<'_>, e: KlvDecodeError) -> Py
 fn klv_field_error_to_pyerr(py: Python<'_>, e: RustKlvFieldError) -> PyErr {
     let msg = format!("{e}");
     let kind = tst_pipeline::binding::kind::kind_of_klv_field(&e).name();
-    make_klv_error(py, kind, &msg)
+    make_kinded_error(py, "KlvError", "KlvErrorKind", kind, &msg)
 }
 
 // ---------------------------------------------------------------------------
@@ -132,7 +132,7 @@ fn st1204_error_to_pyerr(py: Python<'_>, e: St1204Error) -> PyErr {
         St1204Error::TrailingBytes => "MALFORMED_BYTES",
         _ => "INTERNAL",
     };
-    make_klv_error(py, kind, &msg)
+    make_kinded_error(py, "KlvError", "KlvErrorKind", kind, &msg)
 }
 
 // ---------------------------------------------------------------------------
@@ -3365,7 +3365,7 @@ fn encode_rvt_standalone_py(py: Python<'_>, record: &Bound<'_, PyAny>) -> PyResu
 /// Map a Rust `CotError` to a Python `ValueError`. A missing input field is
 /// an invalid-argument error on an already-decoded record, not a KLV
 /// byte-decode failure, so this does NOT route through
-/// `make_klv_error`/`KlvError` (contrast `st1204_error_to_pyerr` above,
+/// `make_kinded_error`/`KlvError` (contrast `st1204_error_to_pyerr` above,
 /// which decodes wire bytes) — `ValueError` also keeps cross-binding
 /// symmetry with the JVM `IllegalArgumentException` mapping.
 fn cot_error_to_pyerr(e: CotError) -> PyErr {

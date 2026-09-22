@@ -16,8 +16,9 @@
 //!   `cancel()` call from another thread closes the loop cleanly.
 //!
 //! Error mapping for `UrlError`/`ConnectError`/`BindError`/`AcceptError`/
-//! `IoError` reuses the canonical mappers in `srt/errors.rs` (the coverage
-//! ratchet greps the whole `src/` directory, not per-file).
+//! `IoError` goes through `crate::raise` (Arc 2 WP-B2) — each has a
+//! `From<…> for BindingError` next to its Rust definition, and `raise`
+//! resolves the kind's `name()` on `tstrans.exceptions.SrtErrorKind`.
 
 #![allow(
     unsafe_op_in_unsafe_fn,
@@ -48,7 +49,7 @@ use tst_srt::{
 
 use tst_pipeline::binding::{BindingError, BindingErrorKind, HandleState, Owned};
 
-use crate::errors::make_srt_error;
+use crate::errors::make_kinded_error;
 use crate::raise::{SRT, pyres, raise};
 use crate::srt::transport::{PyCancelHandle, PyReceiver, PySender};
 use crate::util::{alive_probe, close_owned};
@@ -468,7 +469,9 @@ impl PySocket {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .take()
-            .ok_or_else(|| make_srt_error(py, "CLOSED", "socket is closed"))
+            .ok_or_else(|| {
+                make_kinded_error(py, "SrtError", "SrtErrorKind", "CLOSED", "socket is closed")
+            })
     }
 }
 
@@ -536,9 +539,9 @@ impl PySocket {
     /// requested port 0 (kernel-pick).
     fn local_addr(&self, py: Python<'_>) -> PyResult<(String, u16)> {
         let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        let socket = guard
-            .as_ref()
-            .ok_or_else(|| make_srt_error(py, "CLOSED", "socket is closed"))?;
+        let socket = guard.as_ref().ok_or_else(|| {
+            make_kinded_error(py, "SrtError", "SrtErrorKind", "CLOSED", "socket is closed")
+        })?;
         let addr = socket
             .local_addr()
             .map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
@@ -549,9 +552,9 @@ impl PySocket {
     /// connected (e.g., a fresh bind without accept).
     fn peer_addr(&self, py: Python<'_>) -> PyResult<(String, u16)> {
         let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        let socket = guard
-            .as_ref()
-            .ok_or_else(|| make_srt_error(py, "CLOSED", "socket is closed"))?;
+        let socket = guard.as_ref().ok_or_else(|| {
+            make_kinded_error(py, "SrtError", "SrtErrorKind", "CLOSED", "socket is closed")
+        })?;
         let addr = socket
             .peer_addr()
             .map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
