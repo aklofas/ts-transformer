@@ -28,13 +28,17 @@ const SRT_INVALID_SOCK: srt_sys::SRTSOCKET = -1;
 /// `SRTSOCKET` integer can move across threads). It supports three
 /// shutdown patterns:
 ///
-/// 1. **Drop** — the [`Drop`] impl calls `cancel.cancel()`, which fires
-///    `srt_close(fd)` exactly once (idempotent with `close()`). Bounded
-///    by `SRTO_LINGER` (libsrt default 30 s, configurable via
-///    `SocketBuilder::linger` before construction).
-/// 2. **Explicit close** — call [`Self::close`] (consuming `self`).
-///    Equivalent to drop's cancel; always returns `Ok(())` (the inner
-///    `srt_close` rc is currently swallowed; see method doc).
+/// 1. **Drop** — the [`Drop`] impl calls
+///    `cancel.close_without_cancel()`, which fires `srt_close(fd)` exactly
+///    once (idempotent with `close()`) but does NOT latch
+///    `SrtCancelHandle::is_cancelled()`: Drop also runs on every transport
+///    error path that retires a dead socket, and a peer disconnect must not
+///    read as a caller cancel. Bounded by `SRTO_LINGER` (libsrt default
+///    30 s, configurable via `SocketBuilder::linger` before construction).
+/// 2. **Explicit close** — call [`Self::close`] (consuming `self`). Same
+///    `srt_close`, but it DOES latch `is_cancelled()` — a caller asked for
+///    it. Always returns `Ok(())` (the inner `srt_close` rc is currently
+///    swallowed; see method doc).
 /// 3. **Cross-thread cancel** — call [`Self::cancel_handle`] to obtain a
 ///    [`tst_core::SrtCancelHandle`] (clone-able, `Send + Sync`), then
 ///    `cancel()` from any thread. Closes the libsrt socket; a peer
@@ -58,8 +62,9 @@ pub struct Socket {
     handle: srt_sys::SRTSOCKET,
     /// Shared close-once primitive. Cloned out via `cancel_handle()` so a
     /// thread parked in `send`/`recv` can be woken from another thread.
-    /// Drop calls `cancel.cancel()` so explicit `close()` and Drop never
-    /// double-close.
+    /// Drop calls `cancel.close_without_cancel()` so explicit `close()` and
+    /// Drop never double-close — and so Drop does not latch the
+    /// caller-visible `is_cancelled()` (see the type docs).
     cancel: tst_core::SrtCancelHandle,
     /// Cached at construction; libsrt allows reading via getsockflag, but
     /// reading once is cheaper.
