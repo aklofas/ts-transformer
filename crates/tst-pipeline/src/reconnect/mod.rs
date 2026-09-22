@@ -402,6 +402,42 @@ impl<T: Transport + 'static> ManagedTransport<T> {
         }
     }
 
+    /// Shared handle to the factory-call counter — every `factory()`
+    /// invocation, either mode, successful or not (the value
+    /// [`ManagedTransportStats::reconnect_attempts`] snapshots), exposed as
+    /// a lock-free `Arc` so a binding can read it after this transport has
+    /// moved into a sender shell (ARCH-08). Obtain **before** the move;
+    /// read with `.load(Ordering::Acquire)`. The counter lives outside
+    /// both the `inner` and `gap` mutexes, so — unlike
+    /// [`ManagedStatsHandle::stats`], which takes the gap lock — reading
+    /// through this handle can never queue behind a send, however long the
+    /// parked one runs. Receive-side twin:
+    /// [`crate::ManagedRecvTransport::attempts_handle`].
+    #[must_use]
+    pub fn attempts_handle(&self) -> Arc<std::sync::atomic::AtomicU64> {
+        Arc::clone(&self.shared.reconnect_attempts)
+    }
+
+    /// Shared handle to the successful-rebuild counter
+    /// ([`ManagedTransportStats::reconnect_successes`]). Same contract as
+    /// [`Self::attempts_handle`]; receive-side twin
+    /// [`crate::ManagedRecvTransport::reconnects_handle`].
+    #[must_use]
+    pub fn reconnects_handle(&self) -> Arc<std::sync::atomic::AtomicU64> {
+        Arc::clone(&self.shared.reconnect_successes)
+    }
+
+    /// Shared handle to the "background worker active" flag
+    /// ([`ManagedTransportStats::reconnecting`]): `true` only while a
+    /// [`ReconnectMode::Background`] worker owns reconnect + drain. Always
+    /// `false` in `Blocking` mode — the inline loop runs on the caller's
+    /// thread, so there is no window in which another thread could observe
+    /// it. Same contract as [`Self::attempts_handle`].
+    #[must_use]
+    pub fn reconnecting_handle(&self) -> Arc<std::sync::atomic::AtomicBool> {
+        Arc::clone(&self.shared.bg_active)
+    }
+
     /// Try to send via the inner transport. On Broken/Closed, queue bytes
     /// and attempt reconnect.
     ///
@@ -1324,6 +1360,177 @@ mod cancel_tests {
         assert_eq!(s1.reconnect_attempts, 3, "two failures + one success");
         assert_eq!(s1.reconnect_successes, 1);
         assert_eq!(s1.gap_len, 0, "gap drained by the successful reconnect");
+    }
+
+    /// ARCH-08 / spec §3.4: the three lock-free observers `ManagedHandles`
+    /// carries for a sender read the SAME counters `stats_handle()`
+    /// snapshots — obtained before the transport moves into a shell.
+    #[test]
+    fn counter_handles_track_the_blocking_reconnect_cycle() {
+        let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let inner = CancellableMock {
+            cancelled: cancelled.clone(),
+            cancel_calls: Arc::new(AtomicU32::new(0)),
+        };
+        let calls = Arc::new(AtomicU32::new(0));
+        let calls_cl = calls.clone();
+        let factory = move || -> Result<CancellableMock, TransportError> {
+            let n = calls_cl.fetch_add(1, Ordering::SeqCst);
+            if n < 2 {
+                Err(TransportError::Broken {
+                    msg: "factory down".into(),
+                    errno_code: None,
+                    cause: BrokenCause::Unspecified,
+                })
+            } else {
+                Ok(CancellableMock {
+                    cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                    cancel_calls: Arc::new(AtomicU32::new(0)),
+                })
+            }
+        };
+        let policy = ReconnectPolicy {
+            max_attempts: Some(10),
+            backoff: BackoffStrategy::Constant(std::time::Duration::from_millis(0)),
+            ..Default::default()
+        };
+        let mut managed = ManagedTransport::new(inner, factory, policy);
+        let attempts = managed.attempts_handle();
+        let reconnects = managed.reconnects_handle();
+        let reconnecting = managed.reconnecting_handle();
+        assert_eq!(
+            (
+                attempts.load(Ordering::Acquire),
+                reconnects.load(Ordering::Acquire)
+            ),
+            (0, 0)
+        );
+        assert!(!reconnecting.load(Ordering::Acquire));
+
+        cancelled.store(true, Ordering::SeqCst); // inner now reports Broken
+        managed
+            .send_bytes(b"x")
+            .expect("blocking reconnect succeeds on the 3rd factory call");
+        assert_eq!(
+            attempts.load(Ordering::Acquire),
+            3,
+            "two failures + one success"
+        );
+        assert_eq!(reconnects.load(Ordering::Acquire), 1);
+        assert!(
+            !reconnecting.load(Ordering::Acquire),
+            "Blocking mode never sets the background-worker flag"
+        );
+        let stats = managed.stats_handle().stats().expect("no poison");
+        assert_eq!(
+            (stats.reconnect_attempts, stats.reconnect_successes),
+            (3, 1),
+            "the handles and the stats snapshot read one set of counters"
+        );
+    }
+
+    /// The handles must never queue behind the `inner` mutex: a binding
+    /// polls them from a watchdog thread while the sender thread is parked
+    /// inside the reconnect loop holding that lock (the A1.5 shape —
+    /// bounded failing watchdog, no wall-clock assert). The *values* are
+    /// the load-bearing part: the in-flight attempt is already visible,
+    /// which pins the bump BEFORE the factory call — the placement a
+    /// binding's reconnect dashboard depends on.
+    #[test]
+    fn counter_handles_read_while_the_sender_is_parked_in_the_factory() {
+        const PROMPT: std::time::Duration = std::time::Duration::from_secs(10);
+        fn wait_for(deadline: std::time::Duration, f: impl Fn() -> bool) -> bool {
+            let start = std::time::Instant::now();
+            while start.elapsed() < deadline {
+                if f() {
+                    return true;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            f()
+        }
+
+        let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let inner = CancellableMock {
+            cancelled: cancelled.clone(),
+            cancel_calls: Arc::new(AtomicU32::new(0)),
+        };
+        let entered = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let release = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let factory = {
+            let entered = Arc::clone(&entered);
+            let release = Arc::clone(&release);
+            let calls = Arc::new(AtomicU32::new(0));
+            move || -> Result<CancellableMock, TransportError> {
+                if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                    entered.store(true, Ordering::SeqCst);
+                    assert!(
+                        wait_for(PROMPT, || release.load(Ordering::SeqCst)),
+                        "parked factory was never released — watchdog"
+                    );
+                    return Err(TransportError::Broken {
+                        msg: "factory down".into(),
+                        errno_code: None,
+                        cause: BrokenCause::Unspecified,
+                    });
+                }
+                Ok(CancellableMock {
+                    cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                    cancel_calls: Arc::new(AtomicU32::new(0)),
+                })
+            }
+        };
+        let policy = ReconnectPolicy {
+            max_attempts: Some(10),
+            backoff: BackoffStrategy::Constant(std::time::Duration::from_millis(0)),
+            ..Default::default()
+        };
+        let mut managed = ManagedTransport::new(inner, factory, policy);
+        // Obtain BEFORE the move — the only way a binding can reach them.
+        let attempts = managed.attempts_handle();
+        let reconnects = managed.reconnects_handle();
+        let reconnecting = managed.reconnecting_handle();
+        let sender = std::thread::spawn(move || {
+            managed.send_bytes(b"x").expect("2nd factory call wins");
+        });
+
+        assert!(
+            wait_for(PROMPT, || entered.load(Ordering::SeqCst)),
+            "the factory was never entered"
+        );
+        let reader = {
+            let (a, r, g) = (
+                Arc::clone(&attempts),
+                Arc::clone(&reconnects),
+                Arc::clone(&reconnecting),
+            );
+            std::thread::spawn(move || {
+                (
+                    a.load(Ordering::Acquire),
+                    r.load(Ordering::Acquire),
+                    g.load(Ordering::Acquire),
+                )
+            })
+        };
+        assert!(
+            wait_for(PROMPT, || reader.is_finished()),
+            "a counter handle waited on the parked sender (the PR #234 class)"
+        );
+        assert_eq!(
+            reader.join().expect("reader thread"),
+            (1, 0, false),
+            "the in-flight attempt is counted; no success yet; Blocking never flags a worker"
+        );
+
+        release.store(true, Ordering::SeqCst);
+        sender.join().expect("sender thread");
+        assert_eq!(
+            (
+                attempts.load(Ordering::Acquire),
+                reconnects.load(Ordering::Acquire)
+            ),
+            (2, 1)
+        );
     }
 
     /// CORR-10: the wrapper latches `closed` on cancel (and every later
