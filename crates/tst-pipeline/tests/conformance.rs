@@ -243,7 +243,6 @@ fn managed_send_contract_all_but_the_cancel_rows() {
 }
 
 #[test]
-#[ignore = "WP-C2 (Task C2.3): both cancel rows return Closed on main — the inner's ExplicitClose falls through send_managed's Err(_) arm into reconnect_and_drain, whose `closed` check answers Closed. Un-ignore in PR 8."]
 fn managed_send_cancel_rows_are_explicit_close() {
     kit::send_cancel_during_park_is_explicit_close(managed_send(), SendPark::Loop);
     kit::send_cancel_before_op_is_explicit_close(managed_send());
@@ -256,7 +255,6 @@ fn managed_send_cancel_rows_are_explicit_close() {
 /// permitted race and is not what this test exercises: the send cannot
 /// complete while the inner parks.
 #[test]
-#[ignore = "WP-C2 (Task C2.3): a cancel during a parked managed send returns Closed on main (reconnect/mod.rs send_managed Err(_) arm → reconnect_and_drain's `closed` check) — un-ignore in PR 8"]
 fn managed_send_parked_in_inner_is_interrupted_in_place() {
     let wire = Wire::new();
     let mut m = managed_send_on(&wire);
