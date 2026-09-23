@@ -22,8 +22,8 @@
 //! | Transport | after own `close()` | cancel during a parked op | `is_alive()` after `Broken` / after cancel | handle type |
 //! |---|---|---|---|---|
 //! | SRT (`SrtTransport`) | `Closed` | `ExplicitClose` | false / false | `SrtCancelHandle` |
-//! | TCP / TLS (`TcpTransport`) | `Closed` | `ExplicitClose` (from WP-C2) | false / false | `TcpCancelHandle` |
-//! | TCP listener (`TcpListener`) | `accept` → `Closed`; `close()` DOES latch `is_cancelled()` (a listener has no peer-EOF path, so its only terminal event is the caller stopping it) | `Closed` (from WP-C2) | n/a | `TcpCancelHandle` |
+//! | TCP / TLS (`TcpTransport`) | `Closed` | `ExplicitClose` | false / false | `TcpCancelHandle` |
+//! | TCP listener (`TcpListener`) | `accept` → `Closed`; `close()` DOES latch `is_cancelled()` (a listener has no peer-EOF path, so its only terminal event is the caller stopping it) | `Closed` (a listener is not a `Transport`; the `TcpError` layer has no cancel variant) | n/a | `TcpCancelHandle` |
 //! | RTP send / recv (`RtpTransport` / `RtpRecvTransport`, incl. RTSP-client recv) | `Closed` | `ExplicitClose` | false / false | `RtpCancelHandle` |
 //! | UDP send / recv | `Closed` | `ExplicitClose` (from WP-D) | false / false | `UdpCancelHandle` (WP-D) |
 //! | RIST send / recv | `Closed` | `ExplicitClose` (from WP-D) | false / false | `RistCancelHandle` (WP-D) |
@@ -37,8 +37,7 @@
 //! `recv_bytes` return `Ok(0)` without touching the socket or the liveness
 //! flag (X-CORR-07 — TCP, SRT and RTP; UDP/RIST from WP-D). A cancel that
 //! lands after a successful op is not an error — the NEXT op fails with
-//! `ExplicitClose`. `Broken` after a cancel is impossible by construction
-//! (from WP-C2: a parked SRT/TCP recv still reports `Broken` today).
+//! `ExplicitClose`. `Broken` after a cancel is impossible by construction.
 //!
 //! # `is_cancelled()` — the caller's intent, never liveness
 //!

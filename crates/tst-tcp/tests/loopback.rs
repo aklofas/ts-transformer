@@ -179,14 +179,14 @@ fn cancel_handle_is_visible_through_both_transport_traits() {
     parked.join().unwrap();
 
     assert!(
-        matches!(result, Err(TransportError::Closed)),
+        matches!(result, Err(TransportError::ExplicitClose)),
         "got {result:?}"
     );
 }
 
 /// Thread A parks in `recv_bytes` on a connected-but-silent peer; thread B
-/// calls `cancel_handle.cancel()`. Thread A must exit with `Closed` (or
-/// `ExplicitClose`) within ≤1 poll interval (~100 ms) plus scheduling slack.
+/// calls `cancel_handle.cancel()`. Thread A must exit with `ExplicitClose`
+/// within ≤1 poll interval (~100 ms) plus scheduling slack.
 /// Watchdog: 3 s.
 #[test]
 fn cancel_handle_unblocks_parked_recv() {
@@ -239,11 +239,8 @@ fn cancel_handle_unblocks_parked_recv() {
 
     // The transport must report it is no longer alive.
     assert!(
-        matches!(
-            result,
-            Err(TransportError::Closed) | Err(TransportError::ExplicitClose)
-        ),
-        "expected Closed/ExplicitClose after cancel, got {:?}",
+        matches!(result, Err(TransportError::ExplicitClose)),
+        "expected ExplicitClose after cancel, got {:?}",
         result
     );
 }

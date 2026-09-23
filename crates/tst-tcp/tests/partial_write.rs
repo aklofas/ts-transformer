@@ -206,8 +206,8 @@ fn partial_write_stall_loopback_cancel_unblocks_parked_send() {
         .expect("cancel did not unblock the parked send within 2 s");
     sender.join().unwrap();
     assert!(
-        matches!(result, Err(TransportError::Closed)),
-        "expected Closed after cancel mid-message, got {result:?}"
+        matches!(result, Err(TransportError::ExplicitClose)),
+        "expected ExplicitClose after cancel mid-message, got {result:?}"
     );
     assert!(!alive, "a cancelled transport must report dead");
 }
