@@ -3318,6 +3318,222 @@ bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", 
 scenario_ids = []
 tier = "A"
 
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::klv::st0601::IcingDetected::ALL"
+owning_tests = ["crates/tst-core/src/klv/st0601/model.rs"]
+bindings = ["c:n/a", "python:deferred", "java:org.tstrans.klv.IcingDetected", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "B"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::klv::st0601::IcingDetected::to_wire"
+owning_tests = ["crates/tst-core/src/klv/st0601/model.rs"]
+bindings = ["c:n/a", "python:deferred", "java:org.tstrans.klv.IcingDetected", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "B"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::klv::st0601::IcingDetected::from_wire"
+owning_tests = ["crates/tst-core/src/klv/st0601/model.rs"]
+bindings = ["c:n/a", "python:deferred", "java:org.tstrans.klv.IcingDetected", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "B"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::klv::st0601::SensorFovName::ALL"
+owning_tests = ["crates/tst-core/src/klv/st0601/model.rs"]
+bindings = ["c:n/a", "python:deferred", "java:org.tstrans.klv.SensorFovName", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "B"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::klv::st0601::SensorFovName::to_wire"
+owning_tests = ["crates/tst-core/src/klv/st0601/model.rs"]
+bindings = ["c:n/a", "python:deferred", "java:org.tstrans.klv.SensorFovName", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "B"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::klv::st0601::SensorFovName::from_wire"
+owning_tests = ["crates/tst-core/src/klv/st0601/model.rs"]
+bindings = ["c:n/a", "python:deferred", "java:org.tstrans.klv.SensorFovName", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "B"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::klv::st0601::OperationalMode::ALL"
+owning_tests = ["crates/tst-core/src/klv/st0601/model.rs"]
+bindings = ["c:n/a", "python:deferred", "java:org.tstrans.klv.OperationalMode", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "B"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::klv::st0601::OperationalMode::to_wire"
+owning_tests = ["crates/tst-core/src/klv/st0601/model.rs"]
+bindings = ["c:n/a", "python:deferred", "java:org.tstrans.klv.OperationalMode", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "B"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::klv::st0601::OperationalMode::from_wire"
+owning_tests = ["crates/tst-core/src/klv/st0601/model.rs"]
+bindings = ["c:n/a", "python:deferred", "java:org.tstrans.klv.OperationalMode", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "B"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::klv::st0601::PlatformStatus::ALL"
+owning_tests = ["crates/tst-core/src/klv/st0601/model.rs"]
+bindings = ["c:n/a", "python:deferred", "java:org.tstrans.klv.PlatformStatus", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "B"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::klv::st0601::PlatformStatus::to_wire"
+owning_tests = ["crates/tst-core/src/klv/st0601/model.rs"]
+bindings = ["c:n/a", "python:deferred", "java:org.tstrans.klv.PlatformStatus", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "B"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::klv::st0601::PlatformStatus::from_wire"
+owning_tests = ["crates/tst-core/src/klv/st0601/model.rs"]
+bindings = ["c:n/a", "python:deferred", "java:org.tstrans.klv.PlatformStatus", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "B"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::klv::st0601::SensorControlMode::ALL"
+owning_tests = ["crates/tst-core/src/klv/st0601/model.rs"]
+bindings = ["c:n/a", "python:deferred", "java:org.tstrans.klv.SensorControlMode", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "B"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::klv::st0601::SensorControlMode::to_wire"
+owning_tests = ["crates/tst-core/src/klv/st0601/model.rs"]
+bindings = ["c:n/a", "python:deferred", "java:org.tstrans.klv.SensorControlMode", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "B"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::klv::st0601::SensorControlMode::from_wire"
+owning_tests = ["crates/tst-core/src/klv/st0601/model.rs"]
+bindings = ["c:n/a", "python:deferred", "java:org.tstrans.klv.SensorControlMode", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "B"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::klv::st0601::PayloadType::ALL"
+owning_tests = ["crates/tst-core/src/klv/st0601/packs.rs"]
+bindings = ["c:n/a", "python:deferred", "java:org.tstrans.klv.PayloadType", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "B"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::klv::st0601::PayloadType::to_wire"
+owning_tests = ["crates/tst-core/src/klv/st0601/packs.rs"]
+bindings = ["c:n/a", "python:deferred", "java:org.tstrans.klv.PayloadType", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "B"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::klv::st0601::PayloadType::from_wire"
+owning_tests = ["crates/tst-core/src/klv/st0601/packs.rs"]
+bindings = ["c:n/a", "python:deferred", "java:org.tstrans.klv.PayloadType", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "B"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::klv::RvtPoiType::ALL"
+owning_tests = ["crates/tst-core/src/klv/st0806/model.rs"]
+bindings = ["c:n/a", "python:deferred", "java:org.tstrans.klv.RvtPoiType", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "B"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::klv::RvtPoiType::to_wire"
+owning_tests = ["crates/tst-core/src/klv/st0806/model.rs"]
+bindings = ["c:n/a", "python:deferred", "java:org.tstrans.klv.RvtPoiType", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "B"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::klv::RvtPoiType::from_wire"
+owning_tests = ["crates/tst-core/src/klv/st0806/model.rs"]
+bindings = ["c:n/a", "python:deferred", "java:org.tstrans.klv.RvtPoiType", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "B"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::klv::RvtAoiType::ALL"
+owning_tests = ["crates/tst-core/src/klv/st0806/model.rs"]
+bindings = ["c:n/a", "python:deferred", "java:org.tstrans.klv.RvtAoiType", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "B"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::klv::RvtAoiType::to_wire"
+owning_tests = ["crates/tst-core/src/klv/st0806/model.rs"]
+bindings = ["c:n/a", "python:deferred", "java:org.tstrans.klv.RvtAoiType", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "B"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::klv::RvtAoiType::from_wire"
+owning_tests = ["crates/tst-core/src/klv/st0806/model.rs"]
+bindings = ["c:n/a", "python:deferred", "java:org.tstrans.klv.RvtAoiType", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "B"
+
 [[exempt]]
 item = "tst_core::klv::RvtAoi"
 reason = "top-level re-export of tst_core::klv::st0806::RvtAoi; see that entry for coverage"
