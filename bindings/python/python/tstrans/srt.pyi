@@ -480,7 +480,9 @@ class MuxSender:
     def finish(self) -> None:
         """Drain pending bytes to the transport, raise the first drain error
         (``SrtError`` with the transport's kind), then close.
-        The sender is closed either way; a second ``finish()`` is a no-op.
+        The sender is closed either way; a second ``finish()`` is a no-op,
+        and so is a ``finish()`` after ``close()``. It does NOT free the
+        handle — call ``close()`` (or use the ``with`` block) to release it.
         Unlike ``close()`` this does not cancel a parked send first."""
     def is_alive(self) -> bool: ...
     def __enter__(self) -> MuxSender: ...
@@ -856,7 +858,9 @@ class ManagedMuxSender:
     def finish(self) -> None:
         """Drain pending bytes to the transport, raise the first drain error
         (``SrtError`` with the transport's kind), then close.
-        The sender is closed either way; a second ``finish()`` is a no-op.
+        The sender is closed either way; a second ``finish()`` is a no-op,
+        and so is a ``finish()`` after ``close()``. It does NOT free the
+        handle — call ``close()`` (or use the ``with`` block) to release it.
         Unlike ``close()`` this does not cancel a parked send first."""
     def is_alive(self) -> bool: ...
     def __enter__(self) -> ManagedMuxSender: ...
