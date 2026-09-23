@@ -206,8 +206,15 @@ its entry check, on every transport that has a handle and on the managed
 wrappers — the normative table lives in the `tst_core::transport` rustdoc
 and `tst_core::transport::conformance` pins it in each crate's
 `tests/conformance.rs`. Bindings therefore project one kind for a cancel:
-`TstError::Closed` (−7) / `SrtError(CLOSED)` / `SrtException(CLOSED)`,
-detail `cancelled from another thread`, via `BindingErrorKind`. The
+`TstError::Closed` (−7) / `SrtError(CLOSED)` / `SrtException(CLOSED)`, via
+`BindingErrorKind`. The detail is `cancelled from another thread` wherever
+the `BindingError` reaches the caller unchanged — the Rust binding layer,
+Python, the JVM, and the C **send** path. The C **receive** path is the one
+exception: a receive that ends `Closed`/`EndOfStream` goes through
+`record_recv_closed`, which picks its message from the shared cancel flag so
+a caller close and a peer EOS can be told apart, and writes
+`receiver was cancelled or closed by caller` instead. Key on the CODE, not
+the message (see "C ABI error-mapping contract" above). The
 transport's OWN `close()` keeps producing `Closed` (`ExplicitClose` on
 `ManagedRecvTransport`, whose close is a caller-initiated end); the
 binding layer tells "cancelled" from "closed" with `Owned::is_cancelled()`,

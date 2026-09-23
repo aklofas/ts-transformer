@@ -138,7 +138,7 @@ class LastSeenMicrosTest {
                     if (pulled >= 20) break;
                 }
             } catch (RuntimeException re) {
-                // A watchdog cancel surfaces as CLOSED/BROKEN; let the Video
+                // A watchdog cancel surfaces as CLOSED; let the Video
                 // assertion below report the starvation instead.
                 if (!isCleanEndOfStream(re)) throw re;
             } finally {
