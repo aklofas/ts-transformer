@@ -6,7 +6,8 @@
 #   (b) every binding column symbol resolves in that binding's source
 #       (feature-tagged "[feature=X]" entries are skipped unless X is in BUILT_FEATURES);
 #   (b2) every [[surface]] row carries all five binding columns (c, python, java,
-#       swift, kotlin) — "<prefix>:deferred" / "<prefix>:n/a" declare an absent twin;
+#       swift, kotlin) — "<prefix>:unaudited" / ":deferred" / ":n/a" declare a
+#       column whose twin is unchecked / absent today / absent by design;
 #   (c) closure: every mappable public-api.txt item is mapped ([[surface]] item)
 #       or exempted ([[exempt]] item).
 #
@@ -94,8 +95,19 @@ run_check() {
       printf '%s\n' $SURFACE_BUILT_FEATURES | grep -Fxq "$feat" || continue
     fi
     case "$sym" in
-      *:deferred|*:n/a)
-        : ;;   # five-column sentinel — declared absent, never resolved (rule b2)
+      *:deferred|*:n/a|*:unaudited)
+        # Five-column sentinels — declared, never resolved (rule b2):
+        #   :unaudited  nobody has checked whether a twin exists (the value the
+        #               bulk migration wrote; burn these down to a real symbol,
+        #               :deferred or :n/a as rows are audited)
+        #   :deferred   no twin in that binding TODAY
+        #   :n/a        no twin by design
+        # This arm MUST precede `c:*)`: the resolution arms are unbounded
+        # substring greps, and the word "deferred" really does occur in
+        # tstrans.h (1x) and in the Python (3 files) and Java (11 files)
+        # sources — so a sentinel that reached them would silently "resolve"
+        # and rule (b) would pass for the wrong reason.
+        : ;;
       c:*)
         grep -Fq "${sym#c:}" "$SURFACE_C_HEADER" \
           || echo "FAIL: c symbol unresolved: ${sym#c:}" ;;
@@ -222,8 +234,14 @@ self_test() {
   # (5) Five-column rule: a row missing one column -> fail; all sentinels -> pass
   printf '[[surface]]\nitem = "demo::a"\nowning_tests = ["tests/coverage/README.md"]\nbindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred"]\n[[exempt]]\nitem = "demo::B"\n' > "$tmp/m.toml"
   expect fail "row missing the kotlin column" || return 1
-  printf '[[surface]]\nitem = "demo::a"\nowning_tests = ["tests/coverage/README.md"]\nbindings = ["c:deferred", "python:n/a", "java:deferred", "swift:deferred", "kotlin:deferred"]\n[[exempt]]\nitem = "demo::B"\n' > "$tmp/m.toml"
-  expect pass "all five columns present as sentinels" || return 1
+  printf '[[surface]]\nitem = "demo::a"\nowning_tests = ["tests/coverage/README.md"]\nbindings = ["c:deferred", "python:n/a", "java:unaudited", "swift:deferred", "kotlin:deferred"]\n[[exempt]]\nitem = "demo::B"\n' > "$tmp/m.toml"
+  expect pass "all five columns present as sentinels (:deferred / :n/a / :unaudited)" || return 1
+
+  # (6) SURFACE_REQUIRED_PREFIXES really drives rule (b2) — the same two-column
+  # row that fails under the default set passes when the set is narrowed.
+  printf '[[surface]]\nitem = "demo::a"\nowning_tests = ["tests/coverage/README.md"]\nbindings = ["c:deferred", "python:deferred"]\n[[exempt]]\nitem = "demo::B"\n' > "$tmp/m.toml"
+  expect fail "a two-column row under the default prefix set" || return 1
+  SURFACE_REQUIRED_PREFIXES="c python" expect pass "the same row under SURFACE_REQUIRED_PREFIXES='c python'" || return 1
 
   echo "self-test: PASS"
 }
