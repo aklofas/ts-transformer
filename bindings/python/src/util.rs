@@ -56,12 +56,12 @@ pub(crate) fn coerce_bytes_like<'py>(
 /// so `close()` (which goes through `Owned::cancel`) and `handle.cancel()`
 /// flip the same flag, and `is_cancelled()` is observable from any clone.
 ///
-/// `inner` is the transport's own handle (`SrtCancelHandle`,
-/// `RtpCancelHandle`, `TcpCancelHandle`, a `ManagedHandles.cancel`) or
-/// `tst_pipeline::binding::FlagCancel` for udp/rist until WP-D gives them
-/// one; for those two the `cancelled` flag is also the stop flag their
-/// polled `recv()` loop checks (the former per-class `stop: Arc<AtomicBool>`
-/// fields are deleted).
+/// `inner` is always the transport's own handle — `SrtCancelHandle`,
+/// `RtpCancelHandle`, `TcpCancelHandle`, `UdpCancelHandle`,
+/// `RistCancelHandle` (both added by Arc 2 WP-D) or a
+/// `ManagedHandles.cancel`. For udp/rist the `cancelled` flag is also the
+/// stop flag their polled `recv()` loop checks between slices (the former
+/// per-class `stop: Arc<AtomicBool>` fields are deleted).
 ///
 /// `Owned` wraps whatever it is given in its own latching `OwnedCancel`, so
 /// `Owned::cancel` → `CancelSource::cancel` → flag; a `CancelHandle` fires

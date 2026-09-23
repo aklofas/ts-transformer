@@ -27,6 +27,7 @@ __all__: list[str] = [
     "TransportBuilder",
     "RecvTransportBuilder",
     "SocketStats",
+    "CancelHandle",
     "UdpError",
     "UdpErrorKind",
 ]
@@ -95,6 +96,39 @@ class SocketStats:
 
 
 # ---------------------------------------------------------------------------
+# CancelHandle — cross-thread cancel for Transport / RecvTransport
+# ---------------------------------------------------------------------------
+
+
+@final
+class CancelHandle:
+    """Cross-thread cancel handle for ``Transport`` / ``RecvTransport``.
+
+    ``cancel()`` from any thread ends a ``recv()`` parked in
+    ``RecvTransport`` with ``UdpError(kind=CLOSED)`` ("cancelled from
+    another thread") within about one 100 ms slice, and every later
+    ``send()`` / ``recv()`` on the originating object raises the same.
+    The object is not closed by a cancel — ``close()`` afterwards is
+    quiet.
+
+    Obtain one with ``Transport.cancel_handle()`` /
+    ``RecvTransport.cancel_handle()``. Every handle from the same object
+    shares one flag, which ``close()`` also sets.
+    """
+
+    def cancel(self) -> None:
+        """Signal cancellation. Idempotent."""
+        ...
+
+    def is_cancelled(self) -> bool:
+        """``True`` once this object was cancelled or closed through any
+        handle."""
+        ...
+
+    def __repr__(self) -> str: ...
+
+
+# ---------------------------------------------------------------------------
 # Transport — UDP sender
 # ---------------------------------------------------------------------------
 
@@ -134,6 +168,11 @@ class Transport:
     def close(self) -> None:
         """Close the sender. Idempotent; safe to call from another thread."""
         ...
+    def cancel_handle(self) -> CancelHandle:
+        """Lock-free cross-thread cancel handle; never waits behind a
+        parked call."""
+        ...
+
 
     def stats(self) -> SocketStats:
         """Return a frozen cumulative stats snapshot.
@@ -253,9 +292,16 @@ class RecvTransport:
         ...
 
     def close(self) -> None:
-        """Close the receiver. Idempotent; from another thread it ends a
-        parked ``recv()`` with ``UdpError(kind=CLOSED)``."""
+        """Close the receiver. Idempotent; from another thread the
+        transport's cancel handle is fired first (``close()`` cancels
+        first), so a parked ``recv()`` ends with
+        ``UdpError(kind=CLOSED)``."""
         ...
+    def cancel_handle(self) -> CancelHandle:
+        """Lock-free cross-thread cancel handle; never waits behind a
+        parked call."""
+        ...
+
 
     def stats(self) -> SocketStats:
         """Return a frozen cumulative stats snapshot.

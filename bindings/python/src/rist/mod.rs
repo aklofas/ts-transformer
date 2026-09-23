@@ -15,14 +15,16 @@
 //!   Python threads keep running during network I/O and while a getter
 //!   waits for a parked call.
 //!
-//! Cross-thread close: `tst_rist` exposes no cancel handle yet, so the
-//! shell's `CancelSource` carries the flag (`FlagCancel` inside until
-//! WP-D). `RecvTransport.recv()` polls librist in 100 ms windows and
-//! re-checks that flag between windows, so a `close()` — which latches
-//! the cancel BEFORE taking the slot, through
-//! `tst_pipeline::binding::Owned::close` — ends a parked `recv()` with
-//! `RistError(CLOSED)` within about one window. Every class holds an
-//! `Owned<T, S>` and borrows `&self`.
+//! Cross-thread cancel/close: both `tst_rist` transports expose a real
+//! cancel handle (Arc 2 WP-D) and the shell's `CancelSource` forwards into
+//! it, so `close()` cancels first and `Transport.cancel_handle()` /
+//! `RecvTransport.cancel_handle()` hand the same shared state to Python as
+//! `rist.CancelHandle`. `RecvTransport.recv()` polls librist in 100 ms
+//! windows and re-checks the latch between windows, so a parked `recv()`
+//! ends with `RistError(CLOSED)` ("cancelled from another thread") within
+//! about one window. Every class holds an `Owned<T, S>` and borrows
+//! `&self`. A cancel is NOT a close: the object stays open until
+//! `close()`, which is quiet afterwards.
 //!
 //! Error mapping: every failure is a `tst_pipeline::binding::BindingError`
 //! raised on `RistError` through `crate::raise` — the kind's `name()` is
@@ -37,7 +39,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
 use tst_core::transport::{RecvTransport, Transport, TransportError};
-use tst_pipeline::binding::{BindingError, FlagCancel, Owned, SendHalf};
+use tst_pipeline::binding::{BindingError, Owned, SendHalf};
 use tst_rist::config::{EncryptionKey, RistProfile};
 use tst_rist::recv::RistRecvTransport;
 use tst_rist::transport::RistTransport;
@@ -215,6 +217,48 @@ impl From<PyRistProfile> for RistProfile {
 // PyRistTransport — wraps tst_rist::RistTransport
 // ---------------------------------------------------------------------------
 
+/// Python-side cancel handle. Wraps the shell's shared
+/// [`crate::util::CancelSource`], which forwards into the transport's real
+/// `RistCancelHandle`: every handle obtained from the same shell — and the
+/// shell's own `close()` — flips one flag, so `is_cancelled()` reports the
+/// shell's state, not this wrapper's history.
+#[pyclass(frozen, name = "CancelHandle", module = "tstrans.rist")]
+pub(crate) struct PyRistCancelHandle {
+    src: Arc<CancelSource>,
+}
+
+#[pymethods]
+impl PyRistCancelHandle {
+    /// Signal cancellation. Idempotent — repeated calls are a no-op.
+    /// A `RecvTransport.recv()` parked on librist's poll raises
+    /// `RistError(CLOSED)` (detail "cancelled from another thread") within
+    /// about one 100 ms window, and every later `send()` / `recv()` on the
+    /// originating object raises the same. The object itself is NOT
+    /// closed — call `close()` (quiet after a cancel) to release it.
+    fn cancel(&self) {
+        tst_core::transport::TransportCancel::cancel(&*self.src);
+    }
+
+    /// `True` once the shell was cancelled or closed through ANY handle
+    /// or its own `close()` (shared state).
+    fn is_cancelled(&self) -> bool {
+        self.src.is_cancelled()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("CancelHandle(cancelled={})", self.is_cancelled())
+    }
+}
+
+impl PyRistCancelHandle {
+    /// The single constructor both rist transport classes use.
+    pub(crate) fn from_source(src: &Arc<CancelSource>) -> Self {
+        Self {
+            src: Arc::clone(src),
+        }
+    }
+}
+
 /// RIST sender — wraps `tst_rist::RistTransport`.
 ///
 /// Construct via `Transport.builder().url("rist://host:port").build()`.
@@ -230,10 +274,20 @@ pub(crate) struct PyRistTransport {
     /// Snapshot =
     /// `peer_url()`, so `repr()` never waits behind a send.
     owned: Owned<SendHalf<RistTransport>, String>,
+    /// Shared cancel state, wrapping the transport's real `RistCancelHandle`
+    /// (Arc 2 WP-D). Held beside the slot so `cancel_handle()` never waits
+    /// behind an in-flight `send` (the PR #189 lease-bug class).
+    cancel: Arc<CancelSource>,
 }
 
 #[pymethods]
 impl PyRistTransport {
+    /// Obtain a cross-thread cancel handle. Lock-free: never waits behind
+    /// an in-flight `send()` (the handle lives outside the slot).
+    fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<PyRistCancelHandle>> {
+        Py::new(py, PyRistCancelHandle::from_source(&self.cancel))
+    }
+
     /// Return a builder for configuring and constructing a `Transport`.
     #[staticmethod]
     fn builder() -> PyRistTransportBuilder {
@@ -425,12 +479,14 @@ impl PyRistTransportBuilder {
             .allow_threads(|| b.connect())
             .map_err(|e| raise(py, &RIST, BindingError::from(e)))?;
         let peer_url = t.peer_url().to_owned();
-        // `FlagCancel` is the placeholder cancel until WP-D gives rist a real
-        // handle; the `CancelSource` latch is what `close()` flips and what
-        // the receive loop checks between librist poll windows.
-        let cancel = CancelSource::new(Arc::new(FlagCancel::new()));
+        // Obtain-before-move: the transport's real cancel handle, captured
+        // before `SendHalf` takes ownership. `CancelSource` latches its own
+        // flag and forwards into it, so `close()` and `cancel_handle()`
+        // drive the same state.
+        let cancel = CancelSource::new(Arc::new(t.cancel_handle()));
         Ok(PyRistTransport {
             owned: Owned::new(SendHalf(t), cancel.as_dyn(), peer_url),
+            cancel,
         })
     }
 
@@ -477,13 +533,20 @@ pub(crate) struct PyRistRecvTransport {
     /// `RistError(CLOSED)` within one librist poll window. Snapshot =
     /// `bind_url()`, so `repr()` never waits behind a parked `recv`.
     owned: Owned<RistRecvInner, String>,
-    /// Shared cancel state. `FlagCancel` inside until WP-D gives rist a real
-    /// handle; the poll loop checks it between librist's 100 ms windows.
+    /// Shared cancel state, wrapping the transport's real `RistCancelHandle`
+    /// (Arc 2 WP-D). `close()` and `cancel_handle().cancel()` both latch it
+    /// and the poll loop checks it between librist's 100 ms windows.
     cancel: Arc<CancelSource>,
 }
 
 #[pymethods]
 impl PyRistRecvTransport {
+    /// Obtain a cross-thread cancel handle. Lock-free: never waits behind
+    /// a parked `recv()` (the handle lives outside the slot).
+    fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<PyRistCancelHandle>> {
+        Py::new(py, PyRistCancelHandle::from_source(&self.cancel))
+    }
+
     /// Return a builder for configuring and constructing a `RecvTransport`.
     #[staticmethod]
     fn builder() -> PyRistRecvTransportBuilder {
@@ -680,7 +743,8 @@ impl PyRistRecvTransportBuilder {
             .map_err(|e| raise(py, &RIST, BindingError::from(e)))?;
         let scratch_len = t.max_payload().max(65_536);
         let bind_url = t.bind_url().to_owned();
-        let cancel = CancelSource::new(Arc::new(FlagCancel::new()));
+        // Obtain-before-move (see the sender twin).
+        let cancel = CancelSource::new(Arc::new(t.cancel_handle()));
         Ok(PyRistRecvTransport {
             owned: Owned::new(
                 RistRecvInner {
@@ -705,6 +769,7 @@ impl PyRistRecvTransportBuilder {
 
 pub(crate) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new_bound(parent.py(), "rist")?;
+    m.add_class::<PyRistCancelHandle>()?;
     m.add_class::<PyRistProfile>()?;
     m.add_class::<PyRistStats>()?;
     m.add_class::<PyEncryptionKey>()?;

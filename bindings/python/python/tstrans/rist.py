@@ -30,6 +30,7 @@ Transport = _rist.Transport
 TransportBuilder = _rist.TransportBuilder
 RecvTransport = _rist.RecvTransport
 RecvTransportBuilder = _rist.RecvTransportBuilder
+CancelHandle = _rist.CancelHandle
 
 __all__ = [
     "RistProfile",
@@ -39,6 +40,7 @@ __all__ = [
     "TransportBuilder",
     "RecvTransport",
     "RecvTransportBuilder",
+    "CancelHandle",
     "RistError",
     "RistErrorKind",
 ]
