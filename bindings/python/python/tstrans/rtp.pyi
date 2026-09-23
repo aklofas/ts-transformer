@@ -720,6 +720,11 @@ class MuxSender:
 
     def stats(self) -> Tuple[SocketStats, MuxerStats]: ...
     def close(self) -> None: ...
+    def finish(self) -> None:
+        """Drain pending bytes to the transport, raise the first drain error
+        (``SrtError`` / ``RtpError`` with the transport's kind), then close.
+        The sender is closed either way; a second ``finish()`` is a no-op.
+        Unlike ``close()`` this does not cancel a parked send first."""
     def __enter__(self) -> MuxSender: ...
     def __exit__(
         self,
