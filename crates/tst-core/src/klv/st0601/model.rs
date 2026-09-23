@@ -866,7 +866,21 @@ pub enum IcingDetected {
 }
 
 impl IcingDetected {
-    pub(crate) fn from_wire(b: u8) -> Self {
+    /// Every variant, unit variants in declaration order plus one
+    /// representative `Other`. Binding crates iterate this at test time to
+    /// prove their mirrors cover every variant (they cannot `match`
+    /// exhaustively across the crate boundary — `#[non_exhaustive]`).
+    /// Completeness is pinned by the wildcard-free `match` in this
+    /// module's `variant_inventory` tests.
+    pub const ALL: &'static [Self] = &[
+        Self::DetectorOff,
+        Self::NoIcingDetected,
+        Self::IcingDetected,
+        Self::Other(0xFF),
+    ];
+
+    /// ST 0601.19 §8.34 wire codepoint → variant (`Other(b)` for unknown codes).
+    pub fn from_wire(b: u8) -> Self {
         match b {
             0 => Self::DetectorOff,
             1 => Self::NoIcingDetected,
@@ -875,7 +889,8 @@ impl IcingDetected {
         }
     }
 
-    pub(crate) fn to_wire(self) -> u8 {
+    /// Variant → ST 0601.19 §8.34 wire codepoint (inverse of [`Self::from_wire`]).
+    pub fn to_wire(self) -> u8 {
         match self {
             Self::DetectorOff => 0,
             Self::NoIcingDetected => 1,
@@ -923,7 +938,27 @@ pub enum SensorFovName {
 }
 
 impl SensorFovName {
-    pub(crate) fn from_wire(b: u8) -> Self {
+    /// Every variant, unit variants in declaration order plus one
+    /// representative `Other`. Binding crates iterate this at test time to
+    /// prove their mirrors cover every variant (they cannot `match`
+    /// exhaustively across the crate boundary — `#[non_exhaustive]`).
+    /// Completeness is pinned by the wildcard-free `match` in this
+    /// module's `variant_inventory` tests.
+    pub const ALL: &'static [Self] = &[
+        Self::Ultranarrow,
+        Self::Narrow,
+        Self::Medium,
+        Self::Wide,
+        Self::Ultrawide,
+        Self::NarrowMedium,
+        Self::TwoXUltranarrow,
+        Self::FourXUltranarrow,
+        Self::ContinuousZoom,
+        Self::Other(0xFF),
+    ];
+
+    /// ST 0601.19 §8.63 wire codepoint → variant (`Other(b)` for unknown codes).
+    pub fn from_wire(b: u8) -> Self {
         match b {
             0 => Self::Ultranarrow,
             1 => Self::Narrow,
@@ -938,7 +973,8 @@ impl SensorFovName {
         }
     }
 
-    pub(crate) fn to_wire(self) -> u8 {
+    /// Variant → ST 0601.19 §8.63 wire codepoint (inverse of [`Self::from_wire`]).
+    pub fn to_wire(self) -> u8 {
         match self {
             Self::Ultranarrow => 0,
             Self::Narrow => 1,
@@ -985,7 +1021,24 @@ pub enum OperationalMode {
 }
 
 impl OperationalMode {
-    pub(crate) fn from_wire(b: u8) -> Self {
+    /// Every variant, unit variants in declaration order plus one
+    /// representative `Other`. Binding crates iterate this at test time to
+    /// prove their mirrors cover every variant (they cannot `match`
+    /// exhaustively across the crate boundary — `#[non_exhaustive]`).
+    /// Completeness is pinned by the wildcard-free `match` in this
+    /// module's `variant_inventory` tests.
+    pub const ALL: &'static [Self] = &[
+        Self::OtherMode,
+        Self::Operational,
+        Self::Training,
+        Self::Exercise,
+        Self::Maintenance,
+        Self::Test,
+        Self::Other(0xFF),
+    ];
+
+    /// ST 0601.19 §8.77 wire codepoint → variant (`Other(b)` for unknown codes).
+    pub fn from_wire(b: u8) -> Self {
         match b {
             0 => Self::OtherMode,
             1 => Self::Operational,
@@ -997,7 +1050,8 @@ impl OperationalMode {
         }
     }
 
-    pub(crate) fn to_wire(self) -> u8 {
+    /// Variant → ST 0601.19 §8.77 wire codepoint (inverse of [`Self::from_wire`]).
+    pub fn to_wire(self) -> u8 {
         match self {
             Self::OtherMode => 0,
             Self::Operational => 1,
@@ -1050,7 +1104,31 @@ pub enum PlatformStatus {
 }
 
 impl PlatformStatus {
-    pub(crate) fn from_wire(b: u8) -> Self {
+    /// Every variant, unit variants in declaration order plus one
+    /// representative `Other`. Binding crates iterate this at test time to
+    /// prove their mirrors cover every variant (they cannot `match`
+    /// exhaustively across the crate boundary — `#[non_exhaustive]`).
+    /// Completeness is pinned by the wildcard-free `match` in this
+    /// module's `variant_inventory` tests.
+    pub const ALL: &'static [Self] = &[
+        Self::Active,
+        Self::PreFlight,
+        Self::PreFlightTaxiing,
+        Self::RunUp,
+        Self::TakeOff,
+        Self::Ingress,
+        Self::ManualOperation,
+        Self::AutomatedOrbit,
+        Self::Transitioning,
+        Self::Egress,
+        Self::Landing,
+        Self::LandedTaxiing,
+        Self::LandedParked,
+        Self::Other(0xFF),
+    ];
+
+    /// ST 0601.19 §8.125 wire codepoint → variant (`Other(b)` for unknown codes).
+    pub fn from_wire(b: u8) -> Self {
         match b {
             0 => Self::Active,
             1 => Self::PreFlight,
@@ -1069,7 +1147,8 @@ impl PlatformStatus {
         }
     }
 
-    pub(crate) fn to_wire(self) -> u8 {
+    /// Variant → ST 0601.19 §8.125 wire codepoint (inverse of [`Self::from_wire`]).
+    pub fn to_wire(self) -> u8 {
         match self {
             Self::Active => 0,
             Self::PreFlight => 1,
@@ -1117,7 +1196,25 @@ pub enum SensorControlMode {
 }
 
 impl SensorControlMode {
-    pub(crate) fn from_wire(b: u8) -> Self {
+    /// Every variant, unit variants in declaration order plus one
+    /// representative `Other`. Binding crates iterate this at test time to
+    /// prove their mirrors cover every variant (they cannot `match`
+    /// exhaustively across the crate boundary — `#[non_exhaustive]`).
+    /// Completeness is pinned by the wildcard-free `match` in this
+    /// module's `variant_inventory` tests.
+    pub const ALL: &'static [Self] = &[
+        Self::Off,
+        Self::HomePosition,
+        Self::Uncontrolled,
+        Self::ManualControl,
+        Self::Calibrating,
+        Self::AutoHoldingPosition,
+        Self::AutoTracking,
+        Self::Other(0xFF),
+    ];
+
+    /// ST 0601.19 §8.126 wire codepoint → variant (`Other(b)` for unknown codes).
+    pub fn from_wire(b: u8) -> Self {
         match b {
             0 => Self::Off,
             1 => Self::HomePosition,
@@ -1130,7 +1227,8 @@ impl SensorControlMode {
         }
     }
 
-    pub(crate) fn to_wire(self) -> u8 {
+    /// Variant → ST 0601.19 §8.126 wire codepoint (inverse of [`Self::from_wire`]).
+    pub fn to_wire(self) -> u8 {
         match self {
             Self::Off => 0,
             Self::HomePosition => 1,
@@ -1324,4 +1422,87 @@ impl UasDatalinkLs {
                     .map(move |bit| byte_i as u32 * 8 + bit)
             })
     }
+}
+
+#[cfg(test)]
+mod variant_inventory {
+    //! Exhaustiveness for this module's wire-code enums (Arc 2 R2). See
+    //! [`crate::klv::inventory_test`] for what the generated test pins and why
+    //! the compile-time half can only live inside tst-core.
+    use super::*;
+    use crate::klv::inventory_test;
+
+    inventory_test!(
+        icing_detected_all_is_complete_and_round_trips,
+        IcingDetected,
+        [
+            IcingDetected::DetectorOff,
+            IcingDetected::NoIcingDetected,
+            IcingDetected::IcingDetected,
+            IcingDetected::Other(_),
+        ]
+    );
+    inventory_test!(
+        sensor_fov_name_all_is_complete_and_round_trips,
+        SensorFovName,
+        [
+            SensorFovName::Ultranarrow,
+            SensorFovName::Narrow,
+            SensorFovName::Medium,
+            SensorFovName::Wide,
+            SensorFovName::Ultrawide,
+            SensorFovName::NarrowMedium,
+            SensorFovName::TwoXUltranarrow,
+            SensorFovName::FourXUltranarrow,
+            SensorFovName::ContinuousZoom,
+            SensorFovName::Other(_),
+        ]
+    );
+    inventory_test!(
+        operational_mode_all_is_complete_and_round_trips,
+        OperationalMode,
+        [
+            OperationalMode::OtherMode,
+            OperationalMode::Operational,
+            OperationalMode::Training,
+            OperationalMode::Exercise,
+            OperationalMode::Maintenance,
+            OperationalMode::Test,
+            OperationalMode::Other(_),
+        ]
+    );
+    inventory_test!(
+        platform_status_all_is_complete_and_round_trips,
+        PlatformStatus,
+        [
+            PlatformStatus::Active,
+            PlatformStatus::PreFlight,
+            PlatformStatus::PreFlightTaxiing,
+            PlatformStatus::RunUp,
+            PlatformStatus::TakeOff,
+            PlatformStatus::Ingress,
+            PlatformStatus::ManualOperation,
+            PlatformStatus::AutomatedOrbit,
+            PlatformStatus::Transitioning,
+            PlatformStatus::Egress,
+            PlatformStatus::Landing,
+            PlatformStatus::LandedTaxiing,
+            PlatformStatus::LandedParked,
+            PlatformStatus::Other(_),
+        ]
+    );
+    inventory_test!(
+        sensor_control_mode_all_is_complete_and_round_trips,
+        SensorControlMode,
+        [
+            SensorControlMode::Off,
+            SensorControlMode::HomePosition,
+            SensorControlMode::Uncontrolled,
+            SensorControlMode::ManualControl,
+            SensorControlMode::Calibrating,
+            SensorControlMode::AutoHoldingPosition,
+            SensorControlMode::AutoTracking,
+            SensorControlMode::Other(_),
+        ]
+    );
 }

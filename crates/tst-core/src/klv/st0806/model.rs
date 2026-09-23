@@ -60,7 +60,23 @@ pub enum RvtUserDataType {
 }
 
 impl RvtPoiType {
-    pub(super) fn from_wire(v: u8) -> Self {
+    /// Every variant, unit variants in declaration order plus one
+    /// representative `Other`. Binding crates iterate this at test time to
+    /// prove their mirrors cover every variant (they cannot `match`
+    /// exhaustively across the crate boundary — `#[non_exhaustive]`).
+    /// Completeness is pinned by the wildcard-free `match` in this
+    /// module's `variant_inventory` tests.
+    pub const ALL: &'static [Self] = &[
+        Self::Friendly,
+        Self::Hostile,
+        Self::Target,
+        Self::Unknown,
+        Self::Other(0xFF),
+    ];
+
+    /// ST 0806.4 Table 8-2 Tag 5 wire codepoint → variant (`Other(v)` for
+    /// unknown codes).
+    pub fn from_wire(v: u8) -> Self {
         match v {
             1 => Self::Friendly,
             2 => Self::Hostile,
@@ -69,7 +85,9 @@ impl RvtPoiType {
             o => Self::Other(o),
         }
     }
-    pub(super) fn to_wire(self) -> u8 {
+    /// Variant → ST 0806.4 Table 8-2 Tag 5 wire codepoint (inverse of
+    /// [`Self::from_wire`]).
+    pub fn to_wire(self) -> u8 {
         match self {
             Self::Friendly => 1,
             Self::Hostile => 2,
@@ -80,7 +98,23 @@ impl RvtPoiType {
     }
 }
 impl RvtAoiType {
-    pub(super) fn from_wire(v: u8) -> Self {
+    /// Every variant, unit variants in declaration order plus one
+    /// representative `Other`. Binding crates iterate this at test time to
+    /// prove their mirrors cover every variant (they cannot `match`
+    /// exhaustively across the crate boundary — `#[non_exhaustive]`).
+    /// Completeness is pinned by the wildcard-free `match` in this
+    /// module's `variant_inventory` tests.
+    pub const ALL: &'static [Self] = &[
+        Self::Friendly,
+        Self::Hostile,
+        Self::Reserved,
+        Self::Unknown,
+        Self::Other(0xFF),
+    ];
+
+    /// ST 0806.4 Table 8-3 Tag 6 wire codepoint → variant (`Other(v)` for
+    /// unknown codes).
+    pub fn from_wire(v: u8) -> Self {
         match v {
             1 => Self::Friendly,
             2 => Self::Hostile,
@@ -89,7 +123,9 @@ impl RvtAoiType {
             o => Self::Other(o),
         }
     }
-    pub(super) fn to_wire(self) -> u8 {
+    /// Variant → ST 0806.4 Table 8-3 Tag 6 wire codepoint (inverse of
+    /// [`Self::from_wire`]).
+    pub fn to_wire(self) -> u8 {
         match self {
             Self::Friendly => 1,
             Self::Hostile => 2,
@@ -291,4 +327,35 @@ fn mgrs_string(
         "{:02}{}{:05}{:05}",
         zone?, band_grid?, easting?, northing?
     ))
+}
+
+#[cfg(test)]
+mod variant_inventory {
+    //! Exhaustiveness for this module's wire-code enums (Arc 2 R2). See
+    //! [`crate::klv::inventory_test`].
+    use super::*;
+    use crate::klv::inventory_test;
+
+    inventory_test!(
+        rvt_poi_type_all_is_complete_and_round_trips,
+        RvtPoiType,
+        [
+            RvtPoiType::Friendly,
+            RvtPoiType::Hostile,
+            RvtPoiType::Target,
+            RvtPoiType::Unknown,
+            RvtPoiType::Other(_),
+        ]
+    );
+    inventory_test!(
+        rvt_aoi_type_all_is_complete_and_round_trips,
+        RvtAoiType,
+        [
+            RvtAoiType::Friendly,
+            RvtAoiType::Hostile,
+            RvtAoiType::Reserved,
+            RvtAoiType::Unknown,
+            RvtAoiType::Other(_),
+        ]
+    );
 }

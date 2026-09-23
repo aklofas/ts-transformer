@@ -67,3 +67,56 @@ pub use st0806::{
 pub use st0903::{VMTI_LS_UL, VTargetPack, VTargetPackError, VmtiLs};
 pub use st1010::{SdccFlp, decode_sdcc_flp, encode_sdcc_flp_mode2};
 pub use universal_label::UniversalLabel;
+
+/// Shared body of the wire-code enums' `variant_inventory` tests (Arc 2 R2).
+///
+/// Generates one `#[test]` that walks `<Enum>::ALL` and pins the inventory
+/// TWICE:
+///
+/// 1. the `match` carries **no wildcard** — these tests live inside tst-core,
+///    where `#[non_exhaustive]` does not force one, so a newly added variant
+///    fails to compile until its pattern is listed here;
+/// 2. every listed pattern records a hit by name and the test asserts each
+///    name was hit **exactly once**, so `ALL` must contain every variant once
+///    (a missing entry reads 0, a duplicate reads 2).
+///
+/// The compiler alone only gives (1): a developer who adds the arm but forgets
+/// the `ALL` entry would otherwise pass. Binding crates cannot get (1) at all
+/// (matching a foreign `#[non_exhaustive]` enum without a wildcard is E0004);
+/// they iterate `ALL` instead.
+#[cfg(test)]
+macro_rules! inventory_test {
+    ($name:ident, $ty:ident, [$($pat:pat),+ $(,)?]) => {
+        #[test]
+        fn $name() {
+            let mut hit: alloc::vec::Vec<&'static str> = alloc::vec::Vec::new();
+            for v in $ty::ALL {
+                // wildcard-free: a new variant is a compile error here
+                match v {
+                    $( $pat => hit.push(stringify!($pat)), )+
+                }
+                assert_eq!($ty::from_wire(v.to_wire()), *v, "{v:?}");
+            }
+            let expected: &[&'static str] = &[$( stringify!($pat) ),+];
+            for p in expected {
+                let n = hit.iter().filter(|h| *h == p).count();
+                assert_eq!(
+                    n, 1,
+                    "{}: `{p}` was hit {n} times by ALL (0 = missing from ALL, >1 = duplicate)",
+                    stringify!($ty)
+                );
+            }
+            assert_eq!(
+                hit.len(),
+                expected.len(),
+                "{}: ALL has {} entries, {} patterns listed",
+                stringify!($ty),
+                hit.len(),
+                expected.len()
+            );
+        }
+    };
+}
+
+#[cfg(test)]
+pub(crate) use inventory_test;

@@ -955,7 +955,24 @@ pub enum PayloadType {
 }
 
 impl PayloadType {
-    pub(crate) fn from_wire(code: u64) -> Self {
+    /// Every variant, unit variants in declaration order plus one
+    /// representative `Other`. Binding crates iterate this at test time to
+    /// prove their mirrors cover every variant (they cannot `match`
+    /// exhaustively across the crate boundary — `#[non_exhaustive]`).
+    /// Completeness is pinned by the wildcard-free `match` in this
+    /// module's `variant_inventory` tests.
+    pub const ALL: &'static [Self] = &[
+        Self::ElectroOptical,
+        Self::Lidar,
+        Self::Radar,
+        Self::Sigint,
+        Self::Sar,
+        Self::Other(u64::MAX),
+    ];
+
+    /// ST 0601.19 §8.138 Table 17 wire codepoint → variant (`Other(code)`
+    /// for unknown codes).
+    pub fn from_wire(code: u64) -> Self {
         match code {
             0 => Self::ElectroOptical,
             1 => Self::Lidar,
@@ -966,7 +983,9 @@ impl PayloadType {
         }
     }
 
-    pub(crate) fn to_wire(self) -> u64 {
+    /// Variant → ST 0601.19 §8.138 Table 17 wire codepoint (inverse of
+    /// [`Self::from_wire`]).
+    pub fn to_wire(self) -> u64 {
         match self {
             Self::ElectroOptical => 0,
             Self::Lidar => 1,
@@ -1696,4 +1715,25 @@ mod tests {
         assert_eq!(buf, vec![0x05]);
         assert_eq!(parse_metadata_substream_id(&buf).unwrap(), ms);
     }
+}
+
+#[cfg(test)]
+mod variant_inventory {
+    //! Exhaustiveness for this module's wire-code enum (Arc 2 R2). See
+    //! [`crate::klv::inventory_test`].
+    use super::*;
+    use crate::klv::inventory_test;
+
+    inventory_test!(
+        payload_type_all_is_complete_and_round_trips,
+        PayloadType,
+        [
+            PayloadType::ElectroOptical,
+            PayloadType::Lidar,
+            PayloadType::Radar,
+            PayloadType::Sigint,
+            PayloadType::Sar,
+            PayloadType::Other(_),
+        ]
+    );
 }
