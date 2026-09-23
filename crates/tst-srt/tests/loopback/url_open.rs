@@ -282,9 +282,9 @@ fn accept_one_with_empty_host_binds_the_wildcard() {
 /// transport moves into a shell, wakes a parked recv from another thread,
 /// and still answers (as cancelled) after `close()`.
 ///
-/// WP-C2 note: the error the woken recv returns is `Broken` today and
-/// becomes `ExplicitClose` in C2 — this test asserts only "returned with
-/// an error within the watchdog", so it does not move.
+/// The error the woken recv returns is `ExplicitClose` (WP-C2) — this test
+/// asserts only "returned with an error within the watchdog", so it did not
+/// move when that kind changed.
 #[test]
 fn srt_cancel_handle_wakes_a_parked_recv_and_survives_close() {
     require_loopback!();
