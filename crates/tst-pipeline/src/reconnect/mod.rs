@@ -341,6 +341,13 @@ pub struct ManagedTransport<T: Transport> {
     /// reconnect loop checks this each iteration so a cancel mid-retry
     /// breaks out instead of waiting through the full backoff budget.
     closed: Arc<std::sync::atomic::AtomicBool>,
+    /// Latched ONLY by `cancel_handle().cancel()` — never by `close()` or
+    /// `Drop`, which share the rest of the terminal transition
+    /// (`terminal_signal`). Read wherever the `closed` latch turns a send
+    /// away, so a cancel is reported as `ExplicitClose` and an own close as
+    /// `Closed` (the normative table; the receive twin keeps
+    /// `explicit_close` for the same split).
+    cancelled: Arc<std::sync::atomic::AtomicBool>,
     /// Wakes any backoff wait (blocking loop or background worker) when
     /// `close()` / `cancel()` / `Drop` latch shutdown. `closed` stays the
     /// semantic flag; this is the wakeup channel.
@@ -384,6 +391,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
             policy,
             gap: Arc::new(Mutex::new(gap)),
             closed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             shutdown: Arc::new(Shutdown::new()),
             shared,
             bg_thread: Mutex::new(None),
@@ -450,10 +458,12 @@ impl<T: Transport + 'static> ManagedTransport<T> {
     /// see locking invariant 4.
     ///
     /// A cancel that lands mid-drain, right after a factory reconnect,
-    /// surfaces here as `Err(TransportError::Closed)` rather than the
-    /// drain's own wire-looking `Broken`. A cancel that instead lands after
-    /// the drain has already fully succeeded also returns `Closed` on this
-    /// call — the entry gate above would return it on the next one anyway.
+    /// surfaces here as `Err(TransportError::ExplicitClose)` rather than
+    /// the drain's own wire-looking `Broken`. A cancel that instead lands
+    /// after the drain has already fully succeeded also returns
+    /// `ExplicitClose` on this call — the entry gate above would return it
+    /// on the next one anyway. The wrapper's OWN `close()`/`Drop` reports
+    /// `Closed` at every one of those exits (`latched_error`).
     ///
     /// # Panics
     ///
@@ -466,7 +476,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
     /// returns `Err(TransportError::Broken { .. })` — see Task 3 sites.
     fn send_managed(&self, bytes: &[u8]) -> Result<(), TransportError> {
         if self.closed.load(std::sync::atomic::Ordering::Acquire) {
-            return Err(TransportError::Closed);
+            return Err(self.latched_error());
         }
         if self.policy.mode == ReconnectMode::Background {
             // Report a completed give-up cycle exactly once. This call's
@@ -760,7 +770,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
         let mut attempt: u32 = 0;
         loop {
             if self.closed.load(std::sync::atomic::Ordering::Acquire) {
-                return Err(TransportError::Closed);
+                return Err(self.latched_error());
             }
             attempt += 1;
             let Some(wait) = self.policy.next_delay(attempt) else {
@@ -797,7 +807,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
             if self.shutdown.wait_timeout(wait) {
                 // close()/cancel() latched during the backoff wait — same
                 // exit as the loop-top closed check, just prompt.
-                return Err(TransportError::Closed);
+                return Err(self.latched_error());
             }
             self.shared
                 .reconnect_attempts
@@ -812,7 +822,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                         new_inner,
                     ) {
                         Install::Installed => {}
-                        Install::Closed => return Err(TransportError::Closed),
+                        Install::Closed => return Err(self.latched_error()),
                         // Plan B mutex sweep (recoverable path): poisoned
                         // inner lock means a previous panic left the wrapper
                         // in an unknown state. Route to TransportError::Broken;
@@ -837,7 +847,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                     // would anyway, via send_managed's entry gate.
                     let drained = self.drain_gap_if_alive();
                     if self.closed.load(std::sync::atomic::Ordering::Acquire) {
-                        return Err(TransportError::Closed);
+                        return Err(self.latched_error());
                     }
                     return drained;
                 }
@@ -880,6 +890,18 @@ impl<T: Transport + 'static> ManagedTransport<T> {
     fn terminal_signal(&self) {
         terminal_signal(&self.closed, &self.shutdown, &self.active);
     }
+
+    /// The error a latched-closed wrapper reports: the cancel if one fired,
+    /// else the wrapper's own `close()`/`Drop`. Every `closed`-latch exit
+    /// goes through this — the latch alone cannot tell the two apart
+    /// because `close()`, `Drop` and `cancel()` share `terminal_signal`.
+    fn latched_error(&self) -> TransportError {
+        if self.cancelled.load(std::sync::atomic::Ordering::Acquire) {
+            TransportError::ExplicitClose
+        } else {
+            TransportError::Closed
+        }
+    }
 }
 
 impl<T: Transport + 'static> Transport for ManagedTransport<T> {
@@ -917,7 +939,8 @@ impl<T: Transport + 'static> Transport for ManagedTransport<T> {
 
     fn is_alive(&self) -> bool {
         // The wrapper's own latch first (CORR-10): after close()/cancel()
-        // every send returns `Closed`, whatever the inner says — a plain
+        // every send is terminal (`Closed` / `ExplicitClose` — see
+        // `latched_error`), whatever the inner says — a plain
         // `SrtTransport` keeps answering `socket.is_some()` after its fd
         // was closed by the cancel handle, and a background worker may
         // still be winding down.
@@ -982,6 +1005,7 @@ impl<T: Transport + 'static> Transport for ManagedTransport<T> {
     fn cancel_handle(&self) -> Option<Arc<dyn TransportCancel + Send + Sync>> {
         Some(Arc::new(ManagedCancel {
             closed: Arc::clone(&self.closed),
+            cancelled: Arc::clone(&self.cancelled),
             shutdown: Arc::clone(&self.shutdown),
             active: Arc::clone(&self.active),
         }))
@@ -1049,13 +1073,19 @@ fn terminal_signal(
 
 struct ManagedCancel {
     closed: Arc<std::sync::atomic::AtomicBool>,
+    /// The wrapper's cancel-only latch — see `ManagedTransport::cancelled`.
+    cancelled: Arc<std::sync::atomic::AtomicBool>,
     shutdown: Arc<Shutdown>,
     active: Arc<CancelSlot>,
 }
 
 impl TransportCancel for ManagedCancel {
     fn cancel(&self) {
-        // Same three steps as close()/Drop — see `terminal_signal`.
+        // Latch the cancel FIRST, then the shared terminal transition
+        // (close()/Drop run the same three steps without this latch), so a
+        // send woken by step 3 already reads the reason as the cancel.
+        self.cancelled
+            .store(true, std::sync::atomic::Ordering::Release);
         terminal_signal(&self.closed, &self.shutdown, &self.active);
     }
     fn is_cancelled(&self) -> bool {
@@ -1247,14 +1277,15 @@ mod cancel_tests {
         let h = managed.cancel_handle().unwrap();
         h.cancel();
 
-        // After cancel, send_bytes should return Broken without burning
+        // After cancel, send_bytes reports the cancel without burning
         // through reconnect attempts (the closed flag short-circuits the
         // reconnect loop).
         let err = managed.send_bytes(b"x").unwrap_err();
-        assert!(matches!(
+        assert_eq!(
             err,
-            TransportError::Broken { .. } | TransportError::Closed
-        ));
+            TransportError::ExplicitClose,
+            "a cancel is reported as the cancel, not as a close or a wire break"
+        );
         // The factory should NOT have been called repeatedly trying to
         // reconnect after cancel.
         assert!(factory_calls.load(Ordering::SeqCst) <= 1);
@@ -1318,10 +1349,11 @@ mod cancel_tests {
             "cancel must interrupt the 30s backoff wait, took {:?}",
             t0.elapsed()
         );
-        assert!(matches!(
+        assert_eq!(
             err,
-            TransportError::Broken { .. } | TransportError::Closed
-        ));
+            TransportError::ExplicitClose,
+            "the interrupted backoff wait reports the cancel that interrupted it"
+        );
         canceller.join().unwrap();
     }
 
@@ -1569,7 +1601,7 @@ mod cancel_tests {
             .cancel();
 
         assert!(
-            matches!(managed.send_bytes(b"x"), Err(TransportError::Closed)),
+            matches!(managed.send_bytes(b"x"), Err(TransportError::ExplicitClose)),
             "the send path already honours the latch"
         );
         assert!(

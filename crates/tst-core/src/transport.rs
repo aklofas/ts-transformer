@@ -13,11 +13,10 @@
 //! below; the [`conformance`] kit (std-only) is the executable form and
 //! each transport crate runs it in its `tests/conformance.rs`.
 //!
-//! Cells marked **(from WP-C2)** / **(from WP-D)** are
-//! the contract's target, NOT yet this commit's behaviour — the work
-//! package named makes them true, and until then the conformance kit
-//! carries that row `#[ignore]`d with the same reason. Everything
-//! unmarked is true as written.
+//! Cells marked **(from WP-D)** are the contract's target, NOT yet this
+//! commit's behaviour — the work package named makes them true, and until
+//! then the conformance kit carries that row `#[ignore]`d with the same
+//! reason. Everything unmarked is true as written.
 //!
 //! | Transport | after own `close()` | cancel during a parked op | `is_alive()` after `Broken` / after cancel | handle type |
 //! |---|---|---|---|---|
@@ -27,7 +26,7 @@
 //! | RTP send / recv (`RtpTransport` / `RtpRecvTransport`, incl. RTSP-client recv) | `Closed` | `ExplicitClose` | false / false | `RtpCancelHandle` |
 //! | UDP send / recv | `Closed` | `ExplicitClose` (from WP-D) | false / false | `UdpCancelHandle` (WP-D) |
 //! | RIST send / recv | `Closed` | `ExplicitClose` (from WP-D) | false / false | `RistCancelHandle` (WP-D) |
-//! | `ManagedTransport` (send) | `Closed` | `ExplicitClose` (from WP-C2) | false / false | `ManagedCancel` |
+//! | `ManagedTransport` (send) | `Closed` | `ExplicitClose` | false / false | `ManagedCancel` |
 //! | `ManagedRecvTransport` (recv) | `ExplicitClose` (its own close is a caller-initiated end; see its docs) | `ExplicitClose` | false / false | `ManagedRecvCancel` |
 //!
 //! Shared rows, every transport: a second `close()` is a no-op;

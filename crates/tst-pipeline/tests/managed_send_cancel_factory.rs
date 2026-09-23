@@ -126,7 +126,7 @@ fn factory_success_after_cancel_is_not_drained_into() {
     let result = managed.send_bytes(&[0x47; 188]);
 
     assert!(
-        matches!(result, Err(TransportError::Closed)),
+        matches!(result, Err(TransportError::ExplicitClose)),
         "a cancel that landed mid-factory must surface as the caller-initiated close, got {result:?}"
     );
     assert!(
@@ -194,10 +194,12 @@ impl Transport for DrainRaceInner {
 /// CORR-11: a cancel that lands DURING the post-reconnect gap drain — one
 /// step after the mid-factory window the test above closes — made the
 /// wrapper report the drain's `Broken("transport broken during drain")`
-/// instead of the caller-initiated `Closed`. Bindings map the two to
+/// instead of the caller-initiated close. Bindings map the two to
 /// different kinds, so a watchdog cancel surfaced as a transport fault.
+/// WP-C2: the caller-initiated answer is `ExplicitClose` — `Closed` is
+/// reserved for the wrapper's OWN `close()`/`Drop`.
 #[test]
-fn cancel_during_post_reconnect_drain_reports_closed() {
+fn cancel_during_post_reconnect_drain_reports_explicit_close() {
     let handle_cell: Arc<Mutex<Option<Arc<dyn TransportCancel + Send + Sync>>>> =
         Arc::new(Mutex::new(None));
     let fired = Arc::new(AtomicBool::new(false));
@@ -232,7 +234,7 @@ fn cancel_during_post_reconnect_drain_reports_closed() {
         "test setup: the fresh inner's first drain send must have fired the cancel"
     );
     assert!(
-        matches!(result, Err(TransportError::Closed)),
+        matches!(result, Err(TransportError::ExplicitClose)),
         "a cancel that landed mid-drain must surface as the caller-initiated close, got {result:?}"
     );
     assert!(

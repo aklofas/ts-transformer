@@ -608,7 +608,7 @@ fn cancel_handle_stops_background_worker() {
     assert_eq!(a, b, "worker kept retrying after cancel ({a} -> {b})");
     assert!(matches!(
         managed.send_bytes(&[1]).unwrap_err(),
-        tst_core::transport::TransportError::Closed
+        tst_core::transport::TransportError::ExplicitClose
     ));
 }
 
