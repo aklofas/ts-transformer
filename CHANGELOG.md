@@ -1986,7 +1986,68 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added — UDP/RIST cancel handles (WP-D)
 
-- (pending)
+- **`tst_udp::UdpCancelHandle` / `tst_rist::RistCancelHandle`** — every
+  transport now has a cross-thread cancel handle. Inherent
+  `UdpTransport::cancel_handle()` / `UdpRecvTransport::cancel_handle()` /
+  `RistTransport::cancel_handle()` / `RistRecvTransport::cancel_handle()`
+  return it directly; the `Transport::cancel_handle` /
+  `RecvTransport::cancel_handle` trait forms return `Some` (they returned
+  `None` before). Both handles are `Clone + Send + Sync`, implement
+  `TransportCancel::{cancel, is_cancelled}`, and are one-shot. A
+  `recv_bytes` parked on the UDP 100 ms poll loop (unchanged cadence —
+  the loop already existed) or on librist's 100 ms poll tick returns
+  `TransportError::ExplicitClose` at its next tick when the handle fires;
+  `send_bytes` observes the handle at entry (neither send ever parks);
+  `is_alive()` reads `false` after a cancel. `close()` is unchanged:
+  post-close calls stay `Closed`, and a handle does not read cancelled
+  after a plain close.
+- **Behaviour change (UDP only):** a `Broken` from `send_bytes` — a fatal
+  `send_to` error, which is EVERY non-transient `io::ErrorKind`
+  (`EMSGSIZE`, `ENETUNREACH`, `ENOBUFS`, …), not just the obviously fatal
+  ones — or from `recv_bytes` now latches the transport dead: `is_alive()`
+  reads `false` and later calls return `Closed`. This matches the
+  `Transport` contract ("state undefined after any non-Backpressure
+  error") and the TCP/RIST fatal arms, which already latched.
+  `Backpressure` (the CORR-24 deadline/EINTR class) and `TooLarge` never
+  latch. `ManagedTransport` keys its reconnect on the `Broken` error
+  rather than on `is_alive()`, so managed callers see no change in
+  recovery.
+- **X-CORR-07 on both receivers:** `recv_bytes(&mut [])` is `Ok(0)` at
+  once — before the socket or either flag is consulted — and
+  `UdpRecvTransport::recv_timeout(&mut [], _)` is `Ok(Some(0))`. The old
+  UDP empty read was served by a zero-length `recv` that silently
+  consumed a queued datagram; the old RIST one burned a 100 ms tick and
+  reported `Backpressure`.
+- **Conformance:** `crates/tst-udp/tests/conformance.rs` and
+  `crates/tst-rist/tests/conformance.rs` run the
+  `tst_core::transport::conformance` kit over every `SendRow` / `RecvRow`.
+  The `not_alive_after_broken` rows (and `peer_eof_is_not_a_cancel`) are
+  skipped for UDP recv, RIST send and RIST recv — `Broken` is not
+  producible from outside a bound datagram transport — so the latch lines
+  are pinned in-crate instead, by `tst_udp::recv::tests::broken_recv_latches_dead`
+  (Linux ECONNREFUSED) and tst-rist's `force_dead_for_test` tests. UDP
+  send DOES run the row, inducing a real `EMSGSIZE`.
+- **Python:** `tstrans.udp.CancelHandle` / `tstrans.rist.CancelHandle`
+  from `cancel_handle()` on `Transport` and `RecvTransport`; a cancelled
+  parked `recv()` raises `UdpError(CLOSED)` / `RistError(CLOSED)` with the
+  detail `cancelled from another thread`. Obtaining a handle never waits
+  behind a parked call.
+- **C:** the eight `tst_udp_*` / `tst_rist_*` handles hold the real
+  handle, so `tst_udp_receiver_close` / `tst_udp_demux_receiver_close`
+  from another thread end a parked `_recv_ts` / `_next_event` with
+  `TST_E_CLOSED` within ~100 ms (before: it waited for the next
+  datagram). RIST is different and deliberately so: its `_recv_ts` does
+  not park — it is one ~100 ms librist poll returning
+  `TST_E_BUFFER_FULL` — so callers loop, and since `_close` frees the
+  handle, closing a RIST handle from another thread while that loop runs
+  is a use-after-free. The `tst_udp_*_cancel` / `tst_rist_*_cancel` entry
+  points (the non-freeing cross-thread cancel) are new symbols and ship
+  with the ABI 0.22 bump; the committed `tstrans.h` is unchanged here.
+- **Docs:** `deferred-features.md` "Cross-thread receive cancellation for
+  UDP / RIST" moved to the Resolved appendix; `binding-authors.md`
+  "Cancel handles" no longer lists a `None` transport; the C ABI
+  cancel-entry-point deferral now covers `tcp://`, `udp://` and `rist://`
+  in one entry.
 
 ### Testing — rails (R1/R2)
 

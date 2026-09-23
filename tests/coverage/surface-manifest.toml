@@ -12968,3 +12968,67 @@ reason = "WP-C1: cancel-handle API, catalogued the same way as its siblings (Srt
 [[exempt]]
 item = "tst_pipeline::binding::owned::FlagCancel::is_cancelled"
 reason = "WP-C1: cancel-handle API, catalogued the same way as its siblings (SrtCancelHandle::cancel/::is_cancelled, TransportCancel::cancel) which are all exempt"
+
+[[exempt]]
+item = "tst_rist::recv::RistRecvTransport::cancel_handle"
+reason = "added Arc 2 WP-D 2026-09; cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
+
+[[exempt]]
+item = "tst_rist::RistCancelHandle"
+reason = "added Arc 2 WP-D 2026-09; cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
+
+[[exempt]]
+item = "tst_rist::transport::RistCancelHandle"
+reason = "added Arc 2 WP-D 2026-09; cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
+
+[[exempt]]
+item = "tst_rist::transport::RistCancelHandle::cancel"
+reason = "added Arc 2 WP-D 2026-09; cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
+
+[[exempt]]
+item = "tst_rist::transport::RistCancelHandle::clone"
+reason = "added Arc 2 WP-D 2026-09; cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
+
+[[exempt]]
+item = "tst_rist::transport::RistCancelHandle::fmt"
+reason = "added Arc 2 WP-D 2026-09; cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
+
+[[exempt]]
+item = "tst_rist::transport::RistCancelHandle::is_cancelled"
+reason = "added Arc 2 WP-D 2026-09; cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
+
+[[exempt]]
+item = "tst_rist::transport::RistTransport::cancel_handle"
+reason = "added Arc 2 WP-D 2026-09; cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
+
+[[exempt]]
+item = "tst_udp::recv::UdpRecvTransport::cancel_handle"
+reason = "added Arc 2 WP-D 2026-09; cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
+
+[[exempt]]
+item = "tst_udp::transport::UdpCancelHandle"
+reason = "added Arc 2 WP-D 2026-09; cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
+
+[[exempt]]
+item = "tst_udp::transport::UdpCancelHandle::cancel"
+reason = "added Arc 2 WP-D 2026-09; cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
+
+[[exempt]]
+item = "tst_udp::transport::UdpCancelHandle::clone"
+reason = "added Arc 2 WP-D 2026-09; cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
+
+[[exempt]]
+item = "tst_udp::transport::UdpCancelHandle::fmt"
+reason = "added Arc 2 WP-D 2026-09; cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
+
+[[exempt]]
+item = "tst_udp::transport::UdpCancelHandle::is_cancelled"
+reason = "added Arc 2 WP-D 2026-09; cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
+
+[[exempt]]
+item = "tst_udp::transport::UdpTransport::cancel_handle"
+reason = "added Arc 2 WP-D 2026-09; cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
+
+[[exempt]]
+item = "tst_udp::UdpCancelHandle"
+reason = "added Arc 2 WP-D 2026-09; cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
