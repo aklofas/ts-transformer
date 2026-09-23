@@ -314,8 +314,9 @@ filtering by kind is not the issue).
 Python equivalent) does not return when another thread tries to shut it
 down.
 
-**Diagnosis:** you are on a release before 0.7.0, or you never obtained
-the cancel handle. Since 0.7.0 every transport has one —
+**Diagnosis:** you are on an older release — the handles land in 0.7.0,
+which is still in development — or you never obtained the cancel handle.
+From 0.7.0 every transport has one —
 `UdpTransport::cancel_handle()` / `UdpRecvTransport::cancel_handle()`
 return a `UdpCancelHandle`, and the RIST pair a `RistCancelHandle`
 (`SrtCancelHandle` / `RtpCancelHandle` / `TcpCancelHandle` are the
@@ -331,11 +332,12 @@ rist twin have always ended a parked `recv()` from another thread with
 `UdpError(CLOSED)` / `RistError(CLOSED)` — they now fire the real handle
 first.
 
-**Fix (Rust, 0.7.0+):** obtain `cancel_handle()` before moving the
+**Fix (Rust, 0.7.0 onward):** obtain `cancel_handle()` before moving the
 transport into its thread, then fire `cancel()` from anywhere; the parked
 `recv_bytes` returns `ExplicitClose`. **Fix (Python):** call
 `cancel_handle().cancel()` (or `close()`) from the stopping thread.
-**Fix (pre-0.7.0, still valid):** use `recv_timeout` (UDP) or catch
+**Fix (older releases, and still valid on any):** use `recv_timeout`
+(UDP) or catch
 `Backpressure` (RIST) for a bounded per-call deadline and check a stop
 flag in the caller loop — the owning thread calls `close()` once it
 decides to stop, between `recv` calls:
