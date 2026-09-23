@@ -2043,6 +2043,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   is a use-after-free. The `tst_udp_*_cancel` / `tst_rist_*_cancel` entry
   points (the non-freeing cross-thread cancel) are new symbols and ship
   with the ABI 0.22 bump; the committed `tstrans.h` is unchanged here.
+- **Source-breaking (Rust callers that FORWARD the trait method):** the new
+  inherent `cancel_handle()` on the concrete `UdpTransport` /
+  `UdpRecvTransport` / `RistTransport` / `RistRecvTransport` shadows
+  `Transport::cancel_handle` / `RecvTransport::cancel_handle` in
+  method-call position — an inherent method wins over a trait method. Code
+  that forwards the TRAIT method from a concrete-typed field now gets the
+  concrete `UdpCancelHandle` / `RistCancelHandle` where it expected
+  `Option<Arc<dyn TransportCancel + Send + Sync>>`, and must qualify the
+  call: `Transport::cancel_handle(&self.inner)` (or
+  `RecvTransport::cancel_handle(&…)`). Code generic over `T: Transport` is
+  unaffected, because no inherent method exists there. The in-tree
+  instance was `tst_interop`'s `GracefulRistClose`, fixed the same way.
 - **Docs:** `deferred-features.md` "Cross-thread receive cancellation for
   UDP / RIST" moved to the Resolved appendix; `binding-authors.md`
   "Cancel handles" no longer lists a `None` transport; the C ABI
