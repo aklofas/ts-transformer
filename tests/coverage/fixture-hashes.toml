@@ -315,6 +315,14 @@ path = "crates/tst-integration/tests/fixtures/scenarios/av1-registration-desc/in
 sha256 = "742b44e39716febc26ab01c117f8bb27612d2e55e26e7b869456036d69d96084"
 
 [[file]]
+path = "crates/tst-integration/tests/fixtures/scenarios/cancelled-recv-kind/golden.json"
+sha256 = "953b2476ccf62977a6af06f1ff2cc69bd1a6b98646ad247762660f906d53749a"
+
+[[file]]
+path = "crates/tst-integration/tests/fixtures/scenarios/cancelled-recv-kind/input.bin"
+sha256 = "99c6629972e06f534a75af35581a2474401a3e060a281ae70d6c2418cb755780"
+
+[[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/drop-idempotence/golden.json"
 sha256 = "cd1f6ec06b46d6ef35ef5c68c95c886726af4d84cc39b2d3df42fb5d3f593ef8"
 
@@ -388,7 +396,7 @@ sha256 = "637525b5bf575a8a337f838ccd9495d589198ad6c2dfd0d6c563ff7b60551341"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/scenarios.toml"
-sha256 = "8102aa5a267e7104e0f4f9e0ae49d42ac37a6de6a32f7aaaea8584889d3bbc1b"
+sha256 = "830044a23a1f98acbf77dffaecd769d5eaf7134452b7cb7db15d4ad2d546e2e5"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/strict-rejection/golden.json"
