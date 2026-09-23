@@ -560,6 +560,7 @@ follow-up:
 |---|---|---|---|---|
 | Continuous-timestamp unwrap across the 33-bit rollover (`DemuxerConfig::unwrap_timestamps`) | ✅ | ✅ `tst_demux_config_set_unwrap_timestamps` | ✅ `DemuxerConfig.unwrap_timestamps` | ✅ `DemuxerConfig.Builder.unwrapTimestamps(boolean)` |
 | Managed-receiver end reason (`ManagedDemuxReceiver::end_reason_handle()` → `RecvEndReasonHandle` → `RecvEndReason`) | ✅ | ✅ `tst_managed_demux_receiver_end_reason` | ✅ `ManagedDemuxReceiver.end_reason() -> Optional[RecvEndReason]` | ✅ `ManagedDemuxReceiver.endReason()` → `RecvEndReason` or `null` |
+| Pre-sync ingress ceiling (`DemuxerConfig::sync_buf_cap`, Arc 1 CORR-01 accounting) | ✅ | ✅ `tst_demux_config_set_sync_buf_cap` (ABI 0.22; 0 = default) | ✅ `DemuxerConfig.sync_buf_cap` | ✅ `DemuxerConfig.Builder.syncBufCap(long)` (0 = default) |
 
 **Notes on specific cells.**
 
