@@ -6368,6 +6368,9 @@ void tst_reconnect_policy_free(struct tst_reconnect_policy_t *p);
  * it leaves the handle valid, so the owner still frees it with
  * `tst_rist_demux_receiver_close` once no other thread is using it.
  *
+ * The cancel is terminal: the call that observes it and every later
+ * `_recv_*` / `_next_event` on this handle return `TST_E_CLOSED`.
+ *
  * Returns 0, or `TST_E_INVALID_CONFIG` if `p` is null.
  *
  * # Safety
@@ -6400,6 +6403,9 @@ void tst_rist_demux_receiver_close(struct TstRistDemuxReceiver *p);
  * This is the NON-FREEING cross-thread interrupt: unlike `tst_rist_mux_sender_close`
  * it leaves the handle valid, so the owner still frees it with
  * `tst_rist_mux_sender_close` once no other thread is using it.
+ *
+ * The cancel is terminal: the call that observes it and every later
+ * `push_*` on this handle return `TST_E_CLOSED`.
  *
  * Returns 0, or `TST_E_INVALID_CONFIG` if `p` is null.
  *
@@ -6434,6 +6440,9 @@ void tst_rist_mux_sender_close(struct TstRistMuxSender *p);
  * it leaves the handle valid, so the owner still frees it with
  * `tst_rist_receiver_close` once no other thread is using it.
  *
+ * The cancel is terminal: the call that observes it and every later
+ * `_recv_*` / `_next_event` on this handle return `TST_E_CLOSED`.
+ *
  * Returns 0, or `TST_E_INVALID_CONFIG` if `p` is null.
  *
  * # Safety
@@ -6467,6 +6476,9 @@ void tst_rist_receiver_close(struct TstRistReceiver *p);
  * This is the NON-FREEING cross-thread interrupt: unlike `tst_rist_sender_close`
  * it leaves the handle valid, so the owner still frees it with
  * `tst_rist_sender_close` once no other thread is using it.
+ *
+ * The cancel is terminal: the call that observes it and every later
+ * `_send_*` on this handle return `TST_E_CLOSED`.
  *
  * Returns 0, or `TST_E_INVALID_CONFIG` if `p` is null.
  *
@@ -6813,6 +6825,9 @@ int tst_rtsp_session_teardown_and_free(struct TstRtspSession *session);
  * the handle's slot), idempotent. The handle must still be freed with
  * `tst_tcp_demux_receiver_close`.
  *
+ * The cancel is terminal: the call that observes it and every later
+ * `_recv_*` / `_next_event` on this handle return `TST_E_CLOSED`.
+ *
  * Returns 0, or `TST_E_INVALID_CONFIG` if `p` is null.
  *
  * # Safety
@@ -6848,6 +6863,9 @@ void tst_tcp_demux_receiver_close(struct TstTcpDemuxReceiver *p);
  * listening socket down explicitly), so bind the next listener on a fresh
  * port or free this one first.
  *
+ * The cancel is terminal: the `_accept_*` that observes it and every
+ * later one on this listener return NULL with `TST_E_CLOSED`.
+ *
  * Returns 0, or `TST_E_INVALID_CONFIG` if `p` is null.
  *
  * # Safety
@@ -6882,6 +6900,9 @@ void tst_tcp_listener_free(struct TstTcpListener *p);
  * the handle's slot), idempotent. The handle must still be freed with
  * `tst_tcp_mux_sender_close`.
  *
+ * The cancel is terminal: the call that observes it and every later
+ * `push_*` on this handle return `TST_E_CLOSED`.
+ *
  * Returns 0, or `TST_E_INVALID_CONFIG` if `p` is null.
  *
  * # Safety
@@ -6911,6 +6932,9 @@ void tst_tcp_mux_sender_close(struct TstTcpMuxSender *p);
  * returns `TST_E_CLOSED`. Callable from any thread, lock-free (never takes
  * the handle's slot), idempotent. The handle must still be freed with
  * `tst_tcp_receiver_close`.
+ *
+ * The cancel is terminal: the call that observes it and every later
+ * `_recv_*` / `_next_event` on this handle return `TST_E_CLOSED`.
  *
  * Returns 0, or `TST_E_INVALID_CONFIG` if `p` is null.
  *
@@ -6942,6 +6966,9 @@ void tst_tcp_receiver_close(struct TstTcpReceiver *p);
  * returns `TST_E_CLOSED`. Callable from any thread, lock-free (never takes
  * the handle's slot), idempotent. The handle must still be freed with
  * `tst_tcp_sender_close`.
+ *
+ * The cancel is terminal: the call that observes it and every later
+ * `_send_*` on this handle return `TST_E_CLOSED`.
  *
  * Returns 0, or `TST_E_INVALID_CONFIG` if `p` is null.
  *
@@ -6978,6 +7005,9 @@ void tst_tcp_sender_close(struct TstTcpSender *p);
  * it leaves the handle valid, so the owner still frees it with
  * `tst_udp_demux_receiver_close` once no other thread is using it.
  *
+ * The cancel is terminal: the call that observes it and every later
+ * `_recv_*` / `_next_event` on this handle return `TST_E_CLOSED`.
+ *
  * Returns 0, or `TST_E_INVALID_CONFIG` if `p` is null.
  *
  * # Safety
@@ -7010,6 +7040,9 @@ void tst_udp_demux_receiver_close(struct TstUdpDemuxReceiver *p);
  * This is the NON-FREEING cross-thread interrupt: unlike `tst_udp_mux_sender_close`
  * it leaves the handle valid, so the owner still frees it with
  * `tst_udp_mux_sender_close` once no other thread is using it.
+ *
+ * The cancel is terminal: the call that observes it and every later
+ * `push_*` on this handle return `TST_E_CLOSED`.
  *
  * Returns 0, or `TST_E_INVALID_CONFIG` if `p` is null.
  *
@@ -7044,6 +7077,9 @@ void tst_udp_mux_sender_close(struct TstUdpMuxSender *p);
  * it leaves the handle valid, so the owner still frees it with
  * `tst_udp_receiver_close` once no other thread is using it.
  *
+ * The cancel is terminal: the call that observes it and every later
+ * `_recv_*` / `_next_event` on this handle return `TST_E_CLOSED`.
+ *
  * Returns 0, or `TST_E_INVALID_CONFIG` if `p` is null.
  *
  * # Safety
@@ -7077,6 +7113,9 @@ void tst_udp_receiver_close(struct TstUdpReceiver *p);
  * This is the NON-FREEING cross-thread interrupt: unlike `tst_udp_sender_close`
  * it leaves the handle valid, so the owner still frees it with
  * `tst_udp_sender_close` once no other thread is using it.
+ *
+ * The cancel is terminal: the call that observes it and every later
+ * `_send_*` on this handle return `TST_E_CLOSED`.
  *
  * Returns 0, or `TST_E_INVALID_CONFIG` if `p` is null.
  *
