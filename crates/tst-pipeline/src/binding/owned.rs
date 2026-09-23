@@ -316,6 +316,22 @@ impl<T: Close, S> Owned<T, S> {
     /// why step 3 must contain the value's own drop: a panic escaping here
     /// during an unwind aborts the process.
     ///
+    /// # Invariant: step 2's take must stay BLOCKING
+    ///
+    /// Every binding's cross-thread `close()` — the C ABI's `tst_*_close`,
+    /// tst-py's `close()`, tst-jni's `nClose` — is memory-safe on a reader
+    /// parked INSIDE a call only because of the order above: step 1 makes
+    /// that call return, and step 2 then WAITS on the mutex until it has
+    /// released the slot. The value is dropped in step 3 strictly after the
+    /// parked call is provably out of it.
+    ///
+    /// Making the take non-blocking (a `try_lock` fast path, a "give up and
+    /// drop anyway" timeout) would let step 3 free a value another thread is
+    /// still executing inside — a use-after-free reachable from every
+    /// binding's close, not a missed close. If a close ever appears to hang,
+    /// the bug is a cancel that did not wake its transport (step 1), never
+    /// the wait in step 2.
+    ///
     /// # Errors
     ///
     /// [`CloseFailure::Inner`] / [`CloseFailure::Panicked`] from step 3; in
