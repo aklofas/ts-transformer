@@ -10,13 +10,18 @@
 //!   keep running while UDP I/O blocks on the kernel and while a getter
 //!   waits for a parked call.
 //!
-//! Cross-thread close: `tst_udp` has no cancel handle until Arc 2 WP-D,
-//! so the shell's `CancelSource` flag is the stop signal —
-//! `RecvTransport.recv()` polls the socket in <=100 ms slices and checks it
-//! between slices; a `close()` from another thread ends a parked `recv()`
-//! with `UdpError(CLOSED)` within about one slice. Every wrapper holds a
-//! `tst_pipeline::binding::Owned`, which takes the slot only inside
-//! `with_mut` / `with_ref` and makes `close()` cancel-first.
+//! Cross-thread cancel/close: both `tst_udp` transports expose a real
+//! cancel handle (Arc 2 WP-D) and the shell's `CancelSource` forwards into
+//! it, so `close()` cancels first and `Transport.cancel_handle()` /
+//! `RecvTransport.cancel_handle()` hand the same shared state to Python as
+//! `udp.CancelHandle`. `RecvTransport.recv()` still polls the socket in
+//! <=100 ms slices (that is how `timeout_ms` is honoured) and checks the
+//! latch between slices, so a parked `recv()` ends with
+//! `UdpError(CLOSED)` ("cancelled from another thread") within about one
+//! slice. Every wrapper holds a `tst_pipeline::binding::Owned`, which
+//! takes the slot only inside `with_mut` / `with_ref` and makes `close()`
+//! cancel-first. A cancel is NOT a close: the object stays open until
+//! `close()`, which is quiet afterwards.
 //!
 //! Bytes-like extraction in `Transport.send(payload)` follows the abi3-py310
 //! two-path pattern from rtp/transport.rs: fast zero-copy `&[u8]` extract
@@ -38,13 +43,57 @@ use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
 use tst_core::transport::{RecvTransport, Transport, TransportError};
-use tst_pipeline::binding::{
-    BindingError, BindingErrorKind, FlagCancel, HandleState, Owned, SendHalf,
-};
+use tst_pipeline::binding::{BindingError, BindingErrorKind, HandleState, Owned, SendHalf};
 use tst_udp::{UdpError, UdpRecvTransport, UdpTransport};
 
 use crate::raise::{UDP, pyok, pyres, raise};
 use crate::util::{CancelSource, close_owned};
+
+// ---------------------------------------------------------------------------
+// PyUdpCancelHandle — the shell's shared cancel state, exposed to Python
+// ---------------------------------------------------------------------------
+
+/// Python-side cancel handle. Wraps the shell's shared
+/// [`crate::util::CancelSource`], which forwards into the transport's real
+/// `UdpCancelHandle`: every handle obtained from the same shell — and the
+/// shell's own `close()` — flips one flag, so `is_cancelled()` reports the
+/// shell's state, not this wrapper's history.
+#[pyclass(frozen, name = "CancelHandle", module = "tstrans.udp")]
+pub(crate) struct PyUdpCancelHandle {
+    src: Arc<CancelSource>,
+}
+
+#[pymethods]
+impl PyUdpCancelHandle {
+    /// Signal cancellation. Idempotent — repeated calls are a no-op.
+    /// A `RecvTransport.recv()` parked on the poll loop raises
+    /// `UdpError(CLOSED)` (detail "cancelled from another thread") within
+    /// about one 100 ms slice, and every later `send()` / `recv()` on the
+    /// originating object raises the same. The object itself is NOT
+    /// closed — call `close()` (quiet after a cancel) to release it.
+    fn cancel(&self) {
+        tst_core::transport::TransportCancel::cancel(&*self.src);
+    }
+
+    /// `True` once the shell was cancelled or closed through ANY handle
+    /// or its own `close()` (shared state).
+    fn is_cancelled(&self) -> bool {
+        self.src.is_cancelled()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("CancelHandle(cancelled={})", self.is_cancelled())
+    }
+}
+
+impl PyUdpCancelHandle {
+    /// The single constructor both udp transport classes use.
+    pub(crate) fn from_source(src: &Arc<CancelSource>) -> Self {
+        Self {
+            src: Arc::clone(src),
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // PyUdpStats — frozen mirror of UdpStats
@@ -113,6 +162,10 @@ pub(crate) struct PyUdpTransport {
     /// `close()` cancels-then-takes, so the next `send` raises
     /// `UdpError(CLOSED)` rather than `RuntimeError: Already borrowed`.
     owned: Owned<SendHalf<UdpTransport>>,
+    /// Shared cancel state, wrapping the transport's real `UdpCancelHandle`
+    /// (Arc 2 WP-D). Held beside the slot so `cancel_handle()` never waits
+    /// behind an in-flight `send` (the PR #189 lease-bug class).
+    cancel: Arc<CancelSource>,
 }
 
 #[pymethods]
@@ -121,6 +174,12 @@ impl PyUdpTransport {
     #[staticmethod]
     fn builder() -> PyUdpTransportBuilder {
         PyUdpTransportBuilder::default()
+    }
+
+    /// Obtain a cross-thread cancel handle. Lock-free: never waits behind
+    /// an in-flight `send()` (the handle lives outside the slot).
+    fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<PyUdpCancelHandle>> {
+        Py::new(py, PyUdpCancelHandle::from_source(&self.cancel))
     }
 
     /// Send one datagram payload. Accepts any bytes-like object:
@@ -262,15 +321,14 @@ impl PyUdpTransportBuilder {
         let t = b
             .build()
             .map_err(|e| raise(py, &UDP, BindingError::from(e)))?;
-        // `FlagCancel` is the placeholder cancel until WP-D gives udp a real
-        // handle; the `CancelSource` latch is what `close()` flips and what
-        // the receive loop polls.
-        let cancel = CancelSource::new(Arc::new(FlagCancel::new()));
-        // No `cancel` field: the sender exposes no `cancel_handle()`, and the
-        // `CancelSource` lives on inside `Owned` as the shell's
-        // `Arc<dyn TransportCancel>` — `close()` still latches it first.
+        // Obtain-before-move: the transport's real cancel handle, captured
+        // before `SendHalf` takes ownership. `CancelSource` latches its own
+        // flag and forwards into it, so `close()` and `cancel_handle()`
+        // drive the same state.
+        let cancel = CancelSource::new(Arc::new(t.cancel_handle()));
         Ok(PyUdpTransport {
             owned: Owned::new(SendHalf(t), cancel.as_dyn(), ()),
+            cancel,
         })
     }
 
@@ -328,9 +386,10 @@ pub(crate) struct PyUdpRecvTransport {
     /// bound port read at `build()`, so `local_addr_port()` never waits
     /// behind a parked `recv`.
     owned: Owned<UdpRecvInner, u16>,
-    /// Shared cancel state. `FlagCancel` inside until WP-D gives udp a real
-    /// handle; `close()` latches it and the poll loop checks it between
-    /// slices, so a parked `recv()` ends within about one slice.
+    /// Shared cancel state, wrapping the transport's real `UdpCancelHandle`
+    /// (Arc 2 WP-D). `close()` and `cancel_handle().cancel()` both latch it
+    /// and the poll loop checks it between slices, so a parked `recv()`
+    /// ends within about one slice.
     cancel: Arc<CancelSource>,
 }
 
@@ -340,6 +399,12 @@ impl PyUdpRecvTransport {
     #[staticmethod]
     fn builder() -> PyUdpRecvTransportBuilder {
         PyUdpRecvTransportBuilder::default()
+    }
+
+    /// Obtain a cross-thread cancel handle. Lock-free: never waits behind
+    /// a parked `recv()` (the handle lives outside the slot).
+    fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<PyUdpCancelHandle>> {
+        Py::new(py, PyUdpCancelHandle::from_source(&self.cancel))
     }
 
     /// Receive one datagram. Returns `(payload_bytes, sender_addr_str)`.
@@ -535,7 +600,8 @@ impl PyUdpRecvTransportBuilder {
         // keeps the historical scratch size.
         let scratch_len = t.max_payload().max(65_536);
         let local_port = t.local_addr().port();
-        let cancel = CancelSource::new(Arc::new(FlagCancel::new()));
+        // Obtain-before-move (see the sender twin).
+        let cancel = CancelSource::new(Arc::new(t.cancel_handle()));
         Ok(PyUdpRecvTransport {
             owned: Owned::new(
                 UdpRecvInner {
@@ -560,6 +626,7 @@ impl PyUdpRecvTransportBuilder {
 
 pub(crate) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new_bound(parent.py(), "udp")?;
+    m.add_class::<PyUdpCancelHandle>()?;
     m.add_class::<PyUdpStats>()?;
     m.add_class::<PyUdpTransport>()?;
     m.add_class::<PyUdpTransportBuilder>()?;

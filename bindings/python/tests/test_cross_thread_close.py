@@ -1085,6 +1085,164 @@ def _assert_getter_does_not_wait_behind_park(
     return outcome.get("value")
 
 
+# --------------------------------------------------------------------------- #
+# udp / rist cancel handles (Arc 2 WP-D) — cancel from a side thread, the      #
+# object is NOT closed, the parked call ends CLOSED, a later close() is quiet  #
+# --------------------------------------------------------------------------- #
+
+
+def _cancel_on_thread(handle: object) -> tuple[threading.Thread, list[BaseException]]:
+    """Run `handle.cancel()` on its own daemon thread; join with the WP budget."""
+    errs: list[BaseException] = []
+
+    def canceller() -> None:
+        try:
+            handle.cancel()
+        except BaseException as exc:  # noqa: BLE001
+            errs.append(exc)
+
+    t = threading.Thread(target=canceller, daemon=True)
+    t.start()
+    t.join(_CLOSE_BUDGET_S)
+    return t, errs
+
+
+def test_udp_recv_transport_cancel_handle_from_other_thread_ends_parked_recv() -> None:
+    from tstrans import udp
+    from tstrans.exceptions import UdpError, UdpErrorKind
+
+    rx = udp.RecvTransport.builder().bind_url("udp://127.0.0.1:0").build()
+    port = rx.local_addr_port()
+    handle = rx.cancel_handle()
+    assert isinstance(handle, udp.CancelHandle)
+    assert not handle.is_cancelled()
+    # Rust-side `{}` on a bool: the established repr across every binding
+    # cancel handle (test_rtp_transport.py pins the same spelling).
+    assert repr(handle) == "CancelHandle(cancelled=false)"
+    captured: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            rx.recv(timeout_ms=None)
+        except BaseException as exc:  # noqa: BLE001
+            captured.append(exc)
+
+    w = threading.Thread(target=worker, daemon=True)
+    w.start()
+    time.sleep(0.3)
+    try:
+        c, errs = _cancel_on_thread(handle)
+        w.join(5.0)
+        if w.is_alive():
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.sendto(TS_PACKET, ("127.0.0.1", port))  # rescue
+            s.close()
+            w.join(5.0)
+        _assert_close_ok(c, errs, "udp.CancelHandle")
+        assert not w.is_alive(), "cancel() did not end the parked recv()"
+        assert handle.is_cancelled()
+        # A rescued recv returns data, not an error: `captured` then stays
+        # empty and the assertion below is what fails — no wall-clock bound.
+        assert len(captured) == 1, f"expected one error; got {captured!r}"
+        err = captured[0]
+        assert isinstance(err, UdpError), f"parked recv ended with {err!r}"
+        assert err.kind == UdpErrorKind.CLOSED, err.kind
+        assert "cancelled" in str(err)
+        # A cancel is not a close: the object is still open until close().
+        assert "closed" not in repr(rx)
+        with pytest.raises(UdpError) as ei:
+            rx.recv(timeout_ms=10)
+        assert ei.value.kind == UdpErrorKind.CLOSED, ei.value.kind
+    finally:
+        rx.close()
+        rx.close()  # quiet second close
+
+
+def test_udp_transport_cancel_handle_makes_next_send_closed() -> None:
+    from tstrans import udp
+    from tstrans.exceptions import UdpError, UdpErrorKind
+
+    sink, port = _udp_sink()
+    tx = udp.Transport.builder().url(f"udp://127.0.0.1:{port}").build()
+    try:
+        tx.send(TS_BUNDLE)
+        handle = tx.cancel_handle()
+        assert isinstance(handle, udp.CancelHandle)
+        c, errs = _cancel_on_thread(handle)
+        _assert_close_ok(c, errs, "udp.CancelHandle")
+        assert handle.is_cancelled()
+        with pytest.raises(UdpError) as ei:
+            tx.send(TS_BUNDLE)
+        assert ei.value.kind == UdpErrorKind.CLOSED, ei.value.kind
+        assert "cancelled" in str(ei.value)
+    finally:
+        tx.close()
+        sink.close()
+
+
+def test_rist_recv_transport_cancel_handle_from_other_thread_ends_parked_recv() -> None:
+    from tstrans import rist
+    from tstrans.exceptions import RistError, RistErrorKind
+
+    rx, _port = _rist_recv_or_skip()
+    handle = rx.cancel_handle()
+    assert isinstance(handle, rist.CancelHandle)
+    assert not handle.is_cancelled()
+    captured: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            rx.recv(timeout_ms=None)
+        except BaseException as exc:  # noqa: BLE001
+            captured.append(exc)
+
+    w = threading.Thread(target=worker, daemon=True)
+    w.start()
+    time.sleep(0.3)
+    try:
+        c, errs = _cancel_on_thread(handle)
+        w.join(5.0)
+        if w.is_alive():
+            rx.close()  # rescue: close is cancel-first too
+            w.join(5.0)
+            pytest.fail("cancel() did not end the parked rist recv() within 5 s")
+        _assert_close_ok(c, errs, "rist.CancelHandle")
+        assert handle.is_cancelled()
+        assert len(captured) == 1, f"expected one error; got {captured!r}"
+        err = captured[0]
+        assert isinstance(err, RistError), f"parked recv ended with {err!r}"
+        assert err.kind == RistErrorKind.CLOSED, err.kind
+        assert "cancelled" in str(err)
+    finally:
+        rx.close()
+
+
+def test_rist_transport_cancel_handle_makes_next_send_closed() -> None:
+    from tstrans import rist
+    from tstrans.exceptions import RistError, RistErrorKind
+
+    rx, port = _rist_recv_or_skip()
+    try:
+        tx = rist.Transport.builder().url(f"rist://127.0.0.1:{port}").build()
+    except RistError as e:
+        rx.close()
+        pytest.skip(f"sender build failed ({e.kind.name}): {e}")
+    try:
+        tx.send(TS_BUNDLE)
+        handle = tx.cancel_handle()
+        assert isinstance(handle, rist.CancelHandle)
+        c, errs = _cancel_on_thread(handle)
+        _assert_close_ok(c, errs, "rist.CancelHandle")
+        assert handle.is_cancelled()
+        with pytest.raises(RistError) as ei:
+            tx.send(TS_BUNDLE)
+        assert ei.value.kind == RistErrorKind.CLOSED, ei.value.kind
+        assert "cancelled" in str(ei.value)
+    finally:
+        tx.close()
+        rx.close()
+
+
 def test_srt_listener_local_addr_does_not_wait_behind_parked_accept() -> None:
     from tstrans.exceptions import SrtError, SrtErrorKind
     import tstrans.srt as srt

@@ -20,6 +20,9 @@ RecvTransportBuilder
 SocketStats
     Frozen stats snapshot returned by ``Transport.stats()`` /
     ``RecvTransport.stats()``.
+CancelHandle
+    Cross-thread cancel handle from ``Transport.cancel_handle()`` /
+    ``RecvTransport.cancel_handle()``.
 UdpError
     Base exception for all ``tstrans.udp`` errors; available in
     ``tstrans.exceptions`` as well.
@@ -45,6 +48,7 @@ RecvTransport = _udp.RecvTransport
 TransportBuilder = _udp.TransportBuilder
 RecvTransportBuilder = _udp.RecvTransportBuilder
 SocketStats = _udp.SocketStats
+CancelHandle = _udp.CancelHandle
 
 # UdpError + UdpErrorKind live in tstrans.exceptions but are also exposed
 # here for convenience (mirrors the rtp/srt pattern).
@@ -56,6 +60,7 @@ __all__: list[str] = [
     "TransportBuilder",
     "RecvTransportBuilder",
     "SocketStats",
+    "CancelHandle",
     "UdpError",
     "UdpErrorKind",
 ]
