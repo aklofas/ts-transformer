@@ -6,7 +6,8 @@ import org.tstrans.NativeHandle;
  * Cancel handle for a {@link Sender} / {@link Receiver} / {@link Listener}.
  * {@link #cancel()} wakes a thread parked in {@code sendBytes}/{@code recvBytes}/
  * {@code accept} within a few ms; that call then throws
- * {@link org.tstrans.SrtException} with kind {@code BROKEN} or {@code CLOSED}.
+ * {@link org.tstrans.SrtException} with kind {@code CLOSED} (message
+ * {@code cancelled from another thread}).
  * {@link #isCancelled()} reflects the shell's one cancel state: {@code true}
  * once {@link #cancel()} was called on ANY handle of the shell, or the shell was
  * {@code close()}d (close cancels first). All handles of one shell agree, and a

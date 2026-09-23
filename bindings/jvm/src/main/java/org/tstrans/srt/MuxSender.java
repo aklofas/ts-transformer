@@ -332,8 +332,9 @@ public final class MuxSender extends NativeHandle {
     /**
      * Return a shareable cancel handle. Calling {@link CancelHandle#cancel()}
      * wakes a thread parked in any {@code send*} (libsrt blocked on a full send
-     * buffer); that send then throws {@code SrtException(BROKEN)} — the plain
-     * cancel closes the underlying socket, after which the sender is dead.
+     * buffer); that send then throws {@code SrtException(CLOSED)} — the cancel
+     * closes the underlying socket and the send reports the cancel; the sender
+     * is dead afterwards.
      *
      * <p>Safe to call from another thread at any time while the sender is open,
      * including while a send is parked: the cancel target is captured when the
@@ -366,7 +367,7 @@ public final class MuxSender extends NativeHandle {
     /**
      * Close the sender. Cancels the transport first, so a {@code send*} parked
      * on another thread (libsrt blocked on a full send buffer) ends with
-     * {@code SrtException(BROKEN)} and this call returns promptly; then
+     * {@code SrtException(CLOSED)} and this call returns promptly; then
      * best-effort drains any pending bytes and drops the underlying SRT
      * transport. Idempotent — subsequent calls are no-ops. A {@code close()}
      * with nothing parked simply closes.

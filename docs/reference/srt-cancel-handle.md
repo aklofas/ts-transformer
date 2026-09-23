@@ -98,13 +98,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         cancel.cancel();  // wakes the parked send_ts on the main thread
     });
 
-    // Main thread: the parked `send_ts` returns Err(Transport(Broken(_)))
-    // once cancel() fires. Loop break is by error, not by polling.
+    // Main thread: the parked `send_ts` returns
+    // Err(Transport(ExplicitClose)) once cancel() fires. Loop break is by
+    // error, not by polling.
     let pkt = vec![0u8; 188];
     loop {
         match sender.send_ts(&pkt) {
             Ok(()) => continue,
-            Err(_e) => break,  // Cancellation surfaces as TransportError::Broken("cancelled")
+            Err(_e) => break,  // Cancellation surfaces as TransportError::ExplicitClose
         }
     }
     Ok(())
@@ -114,9 +115,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 `cancel()` triggers the closer (libsrt's `srt_close` for `SrtTransport`)
 exactly once. The parked syscall returns within one libsrt I/O cycle —
 in practice 3–10 ms, bounded by the transport's `SRTO_RCVTIMEO` /
-`SRTO_SNDTIMEO`. The error surfaces to the caller as
-`TransportError::Broken(_)` (the message string is "cancelled" for
-shells, or the libsrt error for direct `Socket::send` / `recv`).
+`SRTO_SNDTIMEO`. libsrt reports the closed socket as a connection error,
+but `SrtTransport` reads its own cancel latch afterwards and surfaces
+`TransportError::ExplicitClose` to the caller — the caller asked for the
+close, so it is reported as the close, not as the wire error it provoked.
+Every binding projects that to its `CLOSED` kind with the detail
+`cancelled from another thread`. (Through 0.6.x this was
+`TransportError::Broken`.) A direct `Socket::send` / `Socket::recv`, which
+is below the transport layer, still reports the libsrt error.
 
 ## Per-language idiom
 

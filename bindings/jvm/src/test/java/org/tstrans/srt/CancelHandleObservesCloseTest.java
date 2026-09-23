@@ -112,11 +112,11 @@ final class CancelHandleObservesCloseTest {
                 rescue.cancel(); // frees the reader on a failed verdict; never asserted on
             }
             assertTrue(cause instanceof SrtException, "expected an SrtException, got " + cause);
-            // WP-C2 tightens to CLOSED: today the plain srt cancel closes the socket
-            // under the parked recv, which surfaces as BROKEN (PR #209).
+            // Since Arc 2 a cancel is CLOSED on every srt shell: the plain
+            // transport closes the socket under the parked recv and then
+            // reports the cancel it observed.
             SrtException.Kind kind = ((SrtException) cause).kind();
-            assertTrue(kind == SrtException.Kind.BROKEN || kind == SrtException.Kind.CLOSED,
-                "cancel surfaces as BROKEN (CLOSED after WP-C2), got " + kind);
+            assertEquals(SrtException.Kind.CLOSED, kind, "cancel should surface as CLOSED, got " + kind);
             assertTrue(cancellerSaw, "the cancelling handle observes its own cancel");
             assertTrue(secondHandleSaw,
                 "a second handle on the same shell observes the cancel (one state)");

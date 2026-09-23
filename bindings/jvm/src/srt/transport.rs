@@ -106,9 +106,10 @@ pub extern "system" fn Java_org_tstrans_srt_Sender_nFromUrl(
 /// the transport BEFORE the shell is boxed; `Owned` keeps it outside the slot,
 /// so `nCancelHandle` answers while a `send` parked in libsrt's blocking
 /// `srt_sendmsg` holds the slot, and `nClose` cancels first — a `sendBytes()`
-/// parked on another thread ends promptly (with `SrtException(BROKEN)`: the
-/// plain cancel closes the socket under the parked send) instead of holding
-/// `close()` hostage. That is the cancel-on-close contract of PR #207.
+/// parked on another thread ends promptly (with `SrtException(CLOSED)`: the
+/// cancel closes the socket under the parked send and `SrtTransport` reports
+/// the cancel) instead of holding `close()` hostage. That is the
+/// cancel-on-close contract of PR #207.
 pub(super) fn register_sender(inner: PlSender<SrtTransport>) -> jlong {
     let cancel = super::srt_cancel(inner.transport());
     REGISTRY_SENDER.insert(Owned::new(inner, cancel, ())) as jlong

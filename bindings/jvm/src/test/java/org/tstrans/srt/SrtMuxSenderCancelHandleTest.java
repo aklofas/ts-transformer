@@ -27,9 +27,10 @@ import org.tstrans.srt.SrtSenderParkSupport.Pump;
  * the handle is obtainable from another thread WHILE a send is parked (the
  * target lives outside the registry's resource lock — same contract
  * {@link CancelHandleMidIterationTest} pins for the receiver), and
- * {@code cancel()} ends the parked send: {@code CLOSED} on the managed shell
- * (reconnect backoff), {@code BROKEN} on the plain shell (socket closed under
- * {@code srt_sendmsg}). Closes {@code A-ARCH-02}'s two JVM gaps.
+ * {@code cancel()} ends the parked send with {@code CLOSED} on both shells:
+ * the managed one latches its close flag in the reconnect backoff, and the
+ * plain one closes the socket under {@code srt_sendmsg} and the transport
+ * reports the cancel it observed. Closes {@code A-ARCH-02}'s two JVM gaps.
  */
 class SrtMuxSenderCancelHandleTest {
 
@@ -93,7 +94,7 @@ class SrtMuxSenderCancelHandleTest {
 
     @Test
     @Timeout(90)
-    void plainCancelHandleEndsParkedSendDataBroken() throws Exception {
+    void plainCancelHandleEndsParkedSendDataClosed() throws Exception {
         assumeTrue(isLinux(), "SRT live-socket test gated to Linux (same as the Rust/C twins)");
         int port = freeUdpPort();
         String listenUrl = "srt://:" + port + "?mode=listener&latency=" + LATENCY_MS
@@ -127,10 +128,9 @@ class SrtMuxSenderCancelHandleTest {
             Throwable end = pump.end.get(3, TimeUnit.SECONDS);
             peer.close();
             assertTrue(end instanceof SrtException,
-                "expected sendData to end with SrtException(BROKEN), got " + end);
-            // WP-C2 tightens to CLOSED (the SRT-level ExplicitClose lands in PR 8).
-            assertEquals(SrtException.Kind.BROKEN, ((SrtException) end).kind(),
-                "cancel on the plain shell closes the socket under the parked send → BROKEN");
+                "expected sendData to end with SrtException(CLOSED), got " + end);
+            assertEquals(SrtException.Kind.CLOSED, ((SrtException) end).kind(),
+                "a cancel is reported as CLOSED on every shell (Arc 2, spec Q2)");
             cancel.close();
         }
     }

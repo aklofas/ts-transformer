@@ -16,7 +16,7 @@
 //! are sound. `nClose` takes + drops via `REGISTRY.close`, which fires the
 //! shell's cancel target BEFORE taking that resource lock (see [`register`]),
 //! so a `send*` parked on another thread — libsrt's `srt_sendmsg` blocked on a
-//! full send buffer — ends with `SrtException(BROKEN)` instead of holding
+//! full send buffer — ends with `SrtException(CLOSED)` instead of holding
 //! `close()` hostage.
 //! `Socket::nIntoMuxSender` CONSUMES a `Socket` (via `REGISTRY_SOCKET.close`) and
 //! returns a fresh handle.
@@ -71,8 +71,8 @@ fn throw_mux_sender_error(env: &mut JNIEnv, e: &MuxSenderError) {
 /// keeps it outside the slot, so `nCancelHandle` answers while a `send*` is
 /// parked (libsrt's blocking `srt_sendmsg` on a full send buffer) and
 /// `OwnedRegistry::close` cancels first, ending that parked send promptly with
-/// `SrtException(BROKEN)` — the plain cancel closes the socket under it —
-/// instead of holding `close()` hostage. The contract the C ABI's
+/// `SrtException(CLOSED)` — the cancel closes the socket under it and
+/// `SrtTransport` reports the cancel — instead of holding `close()` hostage. The contract the C ABI's
 /// `tst_mux_sender_close` and the plain srt receivers already have.
 fn register(sender: Inner, cancel: Arc<dyn TransportCancel>) -> jlong {
     REGISTRY.insert(Owned::new(sender, cancel, ())) as jlong

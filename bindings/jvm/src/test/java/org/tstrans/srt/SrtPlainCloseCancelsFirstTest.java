@@ -24,11 +24,11 @@ import org.tstrans.mpegts.DemuxEvent;
  * {@code DemuxReceiver.close()} / {@code Receiver.close()} and the C ABI's
  * {@code tst_demux_receiver_close}, which both cancel before tearing down.
  *
- * <p>The one difference from the managed pair is the kind the parked call ends
- * with: the plain cancel handle closes the libsrt socket, so the parked
- * {@code srt_recvmsg} fails with a connection error and surfaces as
- * {@code SrtException(BROKEN)} — the managed shells map their own cancel to
- * {@code CLOSED}. The plain shells record no end reason.
+ * <p>Both pairs end the parked call with {@code SrtException(CLOSED)}: the
+ * plain cancel handle closes the libsrt socket under the parked
+ * {@code srt_recvmsg}, and {@code SrtTransport} reports the cancel it observed
+ * rather than the connection error it provoked (Arc 2). The plain shells
+ * record no end reason.
  *
  * <p>Both tests park a reader on a connected-but-silent peer, so nothing but the
  * cancel can end the native receive: under the previous contract {@code close()}
@@ -61,7 +61,7 @@ class SrtPlainCloseCancelsFirstTest {
 
     /**
      * {@code close()} while {@code next()} is parked on another thread ends that
-     * iteration with {@code SrtException(BROKEN)} and returns.
+     * iteration with {@code SrtException(CLOSED)} and returns.
      */
     @Test
     @Timeout(60)
@@ -131,17 +131,16 @@ class SrtPlainCloseCancelsFirstTest {
         reader.join(TimeUnit.SECONDS.toMillis(2));
 
         assertTrue(end instanceof SrtException,
-            "expected the iteration to end with SrtException(BROKEN), got " + end);
-        // WP-C2 tightens to CLOSED (the SRT-level ExplicitClose lands in PR 8).
-        assertEquals(SrtException.Kind.BROKEN, ((SrtException) end).kind(),
-            "a close-initiated cancel on the plain shell surfaces as BROKEN");
+            "expected the iteration to end with SrtException(CLOSED), got " + end);
+        assertEquals(SrtException.Kind.CLOSED, ((SrtException) end).kind(),
+            "a close-initiated cancel surfaces as CLOSED on the plain shells too (Arc 2)");
         sender.close();
     }
 
     /**
      * Same contract on the basic-bytes shell: {@code close()} while
      * {@code recvBytes()} is parked on another thread ends that call with
-     * {@code SrtException(BROKEN)} and returns.
+     * {@code SrtException(CLOSED)} and returns.
      */
     @Test
     @Timeout(60)
@@ -205,10 +204,9 @@ class SrtPlainCloseCancelsFirstTest {
         reader.join(TimeUnit.SECONDS.toMillis(2));
 
         assertTrue(end instanceof SrtException,
-            "expected recvBytes() to end with SrtException(BROKEN), got " + end);
-        // WP-C2 tightens to CLOSED (the SRT-level ExplicitClose lands in PR 8).
-        assertEquals(SrtException.Kind.BROKEN, ((SrtException) end).kind(),
-            "a close-initiated cancel on the plain shell surfaces as BROKEN");
+            "expected recvBytes() to end with SrtException(CLOSED), got " + end);
+        assertEquals(SrtException.Kind.CLOSED, ((SrtException) end).kind(),
+            "a close-initiated cancel surfaces as CLOSED on the plain shells too (Arc 2)");
         sender.close();
     }
 

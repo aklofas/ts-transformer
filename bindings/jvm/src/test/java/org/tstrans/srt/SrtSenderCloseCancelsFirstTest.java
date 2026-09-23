@@ -36,8 +36,8 @@ import org.tstrans.srt.SrtSenderParkSupport.Pump;
  * <p>Managed shells park in the Blocking reconnect's backoff wait after their
  * peer vanishes and end with {@code SrtException(CLOSED)}; plain shells park in
  * libsrt's blocking {@code srt_sendmsg} behind a peer that never reads and end
- * with {@code SrtException(BROKEN)} (the plain cancel closes the socket under
- * the parked send — the same kind the plain receivers surface).
+ * with {@code SrtException(CLOSED)} as well (the plain cancel closes the socket
+ * under the parked send and the transport reports the cancel).
  *
  * <p>Under the previous contract {@code close()} took the resource lock the
  * parked send held and waited out the whole reconnect budget (managed) or the
@@ -175,7 +175,7 @@ class SrtSenderCloseCancelsFirstTest {
     /**
      * Plain {@link MuxSender}: {@code close()} while {@code sendData()} is parked
      * in {@code srt_sendmsg} (peer connected, never reading, no too-late drop)
-     * ends that send with {@code SrtException(BROKEN)} and returns.
+     * ends that send with {@code SrtException(CLOSED)} and returns.
      */
     @Test
     @Timeout(90)
@@ -216,13 +216,12 @@ class SrtSenderCloseCancelsFirstTest {
         pump.thread.join(TimeUnit.SECONDS.toMillis(2));
         peer.close();
         assertTrue(end instanceof SrtException,
-            "expected sendData to end with SrtException(BROKEN), got " + end);
-        // WP-C2 tightens to CLOSED (the SRT-level ExplicitClose lands in PR 8).
-        assertEquals(SrtException.Kind.BROKEN, ((SrtException) end).kind(),
-            "a close-initiated cancel on the plain shell surfaces as BROKEN");
+            "expected sendData to end with SrtException(CLOSED), got " + end);
+        assertEquals(SrtException.Kind.CLOSED, ((SrtException) end).kind(),
+            "a close-initiated cancel surfaces as CLOSED on the plain shells too (Arc 2)");
     }
 
-    /** Plain {@link Sender}: a parked {@code sendBytes()} ends BROKEN and {@code close()} returns. */
+    /** Plain {@link Sender}: a parked {@code sendBytes()} ends CLOSED and {@code close()} returns. */
     @Test
     @Timeout(90)
     void closeWakesPlainSenderParkedInFullSendBuffer() throws Exception {
@@ -259,9 +258,8 @@ class SrtSenderCloseCancelsFirstTest {
         pump.thread.join(TimeUnit.SECONDS.toMillis(2));
         peer.close();
         assertTrue(end instanceof SrtException,
-            "expected sendBytes to end with SrtException(BROKEN), got " + end);
-        // WP-C2 tightens to CLOSED (the SRT-level ExplicitClose lands in PR 8).
-        assertEquals(SrtException.Kind.BROKEN, ((SrtException) end).kind(),
-            "a close-initiated cancel on the plain shell surfaces as BROKEN");
+            "expected sendBytes to end with SrtException(CLOSED), got " + end);
+        assertEquals(SrtException.Kind.CLOSED, ((SrtException) end).kind(),
+            "a close-initiated cancel surfaces as CLOSED on the plain shells too (Arc 2)");
     }
 }

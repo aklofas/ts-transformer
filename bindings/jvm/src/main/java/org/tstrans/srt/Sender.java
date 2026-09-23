@@ -28,7 +28,7 @@ import org.tstrans.SrtException;
  * <p><b>Cancellation:</b> call {@link #cancelHandle()} to obtain a
  * {@link CancelHandle}; invoking {@code cancel()} on any handle wakes a thread
  * parked in {@link #sendBytes} within ~3-10 ms, causing that call to throw
- * {@code SrtException(BROKEN)} or {@code SrtException(CLOSED)}.
+ * {@code SrtException(CLOSED)}.
  *
  * <p>Mirrors {@code tstrans.srt.Sender} in tst-py.
  */
@@ -92,7 +92,7 @@ public final class Sender extends NativeHandle {
     /**
      * Return a shareable cancel handle. Calling {@link CancelHandle#cancel()}
      * on any handle wakes a thread parked in {@link #sendBytes}; that call
-     * returns {@code SrtException(BROKEN)} or {@code SrtException(CLOSED)}.
+     * returns {@code SrtException(CLOSED)}.
      *
      * @return a new {@link CancelHandle} whose {@code cancel()} is forwarded to
      *     the shared underlying libsrt socket
@@ -135,7 +135,7 @@ public final class Sender extends NativeHandle {
 
     /**
      * Close the sender. Cancels the socket first, so a {@link #sendBytes} parked
-     * on another thread ends with {@code SrtException(BROKEN)} and this call
+     * on another thread ends with {@code SrtException(CLOSED)} and this call
      * returns promptly; then best-effort flushes any buffered partial bundle and
      * closes the underlying libsrt socket. Idempotent — subsequent calls are
      * no-ops. After close, further {@link #sendBytes}/{@link #flush} calls
