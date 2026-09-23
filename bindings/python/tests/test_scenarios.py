@@ -703,16 +703,18 @@ def _run_forged_handle(
     return [{"event": "error", "code": "INVALID_HANDLE"}]
 
 
-def _run_cancelled_recv_kind(scenario_id: str) -> list[dict[str, Any]]:
+def _run_cancelled_recv_kind(scenario_id: str, rescue_frame: bytes) -> list[dict[str, Any]]:
     """One cancelled plain SRT receive; the observed kind name is the golden's
     code (Arc 2 spec 3.3 / 6).
 
     Listener-mode ``Receiver`` opened on a daemon thread (``from_url`` blocks in
     the one-shot accept), caller-mode ``Sender`` that never sends, the receive
     parked on a daemon thread, and the cancel fired from the test thread.  Every
-    wait is a 10 s FAILURE bound, never a duration assertion; a rescue frame
-    from the still-connected peer unparks the daemon thread if the cancel failed,
-    so it never sits in a native read at interpreter exit.
+    wait is a 10 s FAILURE bound, never a duration assertion; ``rescue_frame``
+    (the scenario's committed ``input.bin``, so a generator change cannot drift
+    away from it silently) is sent from the still-connected peer to unpark the
+    daemon thread if the cancel failed, so it never sits in a native read at
+    interpreter exit.
     """
     import socket
     import threading
@@ -765,7 +767,7 @@ def _run_cancelled_recv_kind(scenario_id: str) -> list[dict[str, Any]]:
     if w.is_alive():
         # Rescue: one frame from the still-connected peer unparks the daemon
         # thread so it does not sit in a native read at interpreter exit.
-        sender.send_bytes(b"\x47\x1f\xff\x10" + b"\xff" * 184)
+        sender.send_bytes(rescue_frame)
         w.join(timeout=5.0)
         pytest.fail(f"[{scenario_id}] cancel() did not end the parked recv within 10 s")
     sender.close()
@@ -799,7 +801,7 @@ def _run_binding_contract(
     if scenario_id == "forged-handle":
         return _run_forged_handle(scenario_id, input_bytes)
     if scenario_id == "cancelled-recv-kind":
-        return _run_cancelled_recv_kind(scenario_id)
+        return _run_cancelled_recv_kind(scenario_id, input_bytes)
 
     pytest.fail(f"unknown binding_contract scenario id: {scenario_id!r}")
 
