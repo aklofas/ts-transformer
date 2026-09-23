@@ -480,6 +480,11 @@ impl RecvTransport for TcpTransport {
     /// and latch the transport dead while the peer is still connected
     /// (X-CORR-07). The guard sits above `InnerStream`, so `tcps://` follows
     /// the same rule.
+    ///
+    /// A dead transport reports WHICH death at the loop's entry check (the
+    /// private `dead_error` helper): a cancel → `ExplicitClose`, the
+    /// transport's own `close()` → `Closed`. A parked receive observes either
+    /// at its next ~100 ms poll boundary.
     fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
         if buf.is_empty() {
             return Ok(0);
@@ -693,7 +698,7 @@ mod write_loop_tests {
 
     /// WP-C2: a cross-thread cancel mid-message is reported as the cancel
     /// (`ExplicitClose`); the transport's own close() keeps reporting
-    /// `Closed` (`partial_then_cancel_returns_closed` above).
+    /// `Closed` (`partial_then_close_returns_closed` above).
     #[test]
     fn partial_then_cross_thread_cancel_returns_explicit_close() {
         let msg = vec![0u8; 188];

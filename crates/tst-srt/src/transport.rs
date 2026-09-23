@@ -191,17 +191,31 @@ impl SrtTransport {
         }
     }
 
-    /// Pre-op slot check. Once the socket is gone, EVERY later operation
-    /// keeps reporting the terminal reason that took it: `ExplicitClose`
-    /// after a cancel from another thread, `Closed` after the transport's
-    /// own `close()` (which fires the same latch — `closed` disambiguates).
-    /// Without this the second op after a cancel would report `Closed`,
-    /// contradicting the normative table and the TCP mechanism.
+    /// Pre-op check. Reports the terminal reason and never enters libsrt once
+    /// one has landed:
+    ///
+    /// - the transport's own `close()` wins, whatever the latch says — it
+    ///   fires the same handle, and `closed` is what disambiguates;
+    /// - a cancel from another thread answers `ExplicitClose`, whether or not
+    ///   an op has already retired the socket. Checking the latch BEFORE
+    ///   `socket.as_mut()` (the shape `TcpTransport::send_bytes` uses) makes
+    ///   cancel-before-op deterministic: the first op after a cancel reports
+    ///   the cancel directly instead of calling into a socket libsrt has
+    ///   already closed and mapping whatever error that provokes;
+    /// - otherwise a retired socket is a plain `Closed`.
+    ///
+    /// Together with `cancelled_or` this makes the reason STICKY: every later
+    /// op keeps reporting it, as the normative table requires.
     fn slot(&mut self) -> Result<&mut Socket, TransportError> {
+        if self.closed {
+            return Err(TransportError::Closed);
+        }
+        if self.cancel.is_cancelled() {
+            self.socket = None;
+            return Err(TransportError::ExplicitClose);
+        }
         match self.socket.as_mut() {
             Some(s) => Ok(s),
-            None if self.closed => Err(TransportError::Closed),
-            None if self.cancel.is_cancelled() => Err(TransportError::ExplicitClose),
             None => Err(TransportError::Closed),
         }
     }

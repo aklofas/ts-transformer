@@ -842,9 +842,11 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                     // socket fail the in-flight send with a wire-looking
                     // `Broken` — the caller asked for the close, so report
                     // the close. (Same guard as the receive side's post-error
-                    // `cancelled` check.) A cancel that lands after a fully
-                    // successful drain also reports `Closed`: the next call
-                    // would anyway, via send_managed's entry gate.
+                    // `cancelled` check.) `latched_error` names WHICH close:
+                    // `ExplicitClose` for a cancel, `Closed` for the
+                    // wrapper's own close()/Drop. A cancel that lands after a
+                    // fully successful drain is reported here too — the next
+                    // call would anyway, via send_managed's entry gate.
                     let drained = self.drain_gap_if_alive();
                     if self.closed.load(std::sync::atomic::Ordering::Acquire) {
                         return Err(self.latched_error());
