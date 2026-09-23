@@ -7,13 +7,14 @@
 //! the handle-specific data-path entry points in the sub-modules below.
 //! Each handle has its own `_close` entry point to free it.
 //!
-//! The surface mirrors `bindings/c/core/src/udp/` module-for-module
-//! **minus the `_cancel` entry points**: those are new symbols deferred to
-//! ABI 0.22 (see "C ABI cancel entry points for `tcp://`, `udp://` and
-//! `rist://` transports" in `docs/project/deferred-features.md`). The
-//! RIST transport DOES expose a real `cancel_handle()` since Arc 2 WP-D
-//! and every handle holds it, so `_close` from any thread cancels first —
-//! see each handle module's **Cancel** note for what that unblocks.
+//! The surface mirrors `bindings/c/core/src/udp/` module-for-module,
+//! `_cancel` entry points included since ABI 0.22. The RIST transport
+//! exposes a real `cancel_handle()` since Arc 2 WP-D and every handle holds
+//! it, so `_close` from any thread cancels first and
+//! `tst_rist_<shell>_cancel` does the same WITHOUT freeing — which on RIST
+//! is the only safe cross-thread interrupt, because a `_recv_ts` never
+//! parks and its caller loop would race a freeing `_close`. See each handle
+//! module's **Cancel** note.
 //!
 //! **Construction pattern (differs from UDP):**
 //! RIST uses a move-style builder:
@@ -39,29 +40,30 @@ pub mod mux_sender;
 pub mod demux_receiver;
 
 pub use demux_receiver::{
-    TstRistDemuxReceiver, tst_rist_demux_receiver_close, tst_rist_demux_receiver_get_socket_stats,
-    tst_rist_demux_receiver_get_stats, tst_rist_demux_receiver_get_stream_codec_stats,
+    TstRistDemuxReceiver, tst_rist_demux_receiver_cancel, tst_rist_demux_receiver_close,
+    tst_rist_demux_receiver_get_socket_stats, tst_rist_demux_receiver_get_stats,
+    tst_rist_demux_receiver_get_stream_codec_stats,
     tst_rist_demux_receiver_get_stream_last_seen_micros, tst_rist_demux_receiver_get_stream_stats,
     tst_rist_demux_receiver_next_event, tst_rist_demux_receiver_open,
     tst_rist_demux_receiver_reset_stats,
 };
 pub use mux_sender::{
-    TstRistMuxSender, tst_rist_mux_sender_close, tst_rist_mux_sender_finish,
-    tst_rist_mux_sender_get_mux_sender_stats, tst_rist_mux_sender_get_socket_stats,
-    tst_rist_mux_sender_get_stream_codec_stats, tst_rist_mux_sender_open,
-    tst_rist_mux_sender_push_audio, tst_rist_mux_sender_push_audio_to,
+    TstRistMuxSender, tst_rist_mux_sender_cancel, tst_rist_mux_sender_close,
+    tst_rist_mux_sender_finish, tst_rist_mux_sender_get_mux_sender_stats,
+    tst_rist_mux_sender_get_socket_stats, tst_rist_mux_sender_get_stream_codec_stats,
+    tst_rist_mux_sender_open, tst_rist_mux_sender_push_audio, tst_rist_mux_sender_push_audio_to,
     tst_rist_mux_sender_push_klv, tst_rist_mux_sender_push_klv_to,
     tst_rist_mux_sender_push_subtitle, tst_rist_mux_sender_push_subtitle_to,
     tst_rist_mux_sender_push_video, tst_rist_mux_sender_push_video_to,
     tst_rist_mux_sender_reset_stats,
 };
 pub use receiver::{
-    TstRistReceiver, tst_rist_receiver_close, tst_rist_receiver_get_socket_stats,
-    tst_rist_receiver_get_stats, tst_rist_receiver_recv_ts, tst_rist_receiver_reset_stats,
-    tst_rist_recv_open,
+    TstRistReceiver, tst_rist_receiver_cancel, tst_rist_receiver_close,
+    tst_rist_receiver_get_socket_stats, tst_rist_receiver_get_stats, tst_rist_receiver_recv_ts,
+    tst_rist_receiver_reset_stats, tst_rist_recv_open,
 };
 pub use sender::{
-    TstRistSender, tst_rist_sender_close, tst_rist_sender_get_socket_stats,
+    TstRistSender, tst_rist_sender_cancel, tst_rist_sender_close, tst_rist_sender_get_socket_stats,
     tst_rist_sender_get_stats, tst_rist_sender_open, tst_rist_sender_reset_stats,
     tst_rist_sender_send_ts,
 };

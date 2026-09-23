@@ -13,12 +13,10 @@
 //! WP-D and this handle's `CHandle` slot holds it, so `_close` from ANY
 //! thread cancels first and a `_next_event` parked on the 100 ms poll loop
 //! returns `TST_E_CLOSED` within one tick (pinned by
-//! `tests/transports/udp_close_cancels_first.rs`). There is no
-//! `tst_udp_demux_receiver_cancel` entry point yet — it is a new symbol and
-//! rides the ABI 0.22 bump (see "C ABI cancel entry points for `tcp://`,
-//! `udp://` and `rist://` transports" in
-//! `docs/project/deferred-features.md`). Until then `_close` IS the
-//! cross-thread cancel.
+//! `tests/transports/udp_close_cancels_first.rs`).
+//! `tst_udp_demux_receiver_cancel` (ABI 0.22) does the same WITHOUT freeing
+//! the handle — the interrupt to use when the reader's pointer must stay
+//! valid.
 
 use std::os::raw::c_char;
 use std::sync::Mutex;
@@ -128,6 +126,38 @@ pub unsafe extern "C" fn tst_udp_demux_receiver_close(p: *mut TstUdpDemuxReceive
         boxed.inner.close();
         drop(boxed);
     });
+}
+
+// ---------------------------------------------------------------------------
+// Cancel
+// ---------------------------------------------------------------------------
+
+/// Interrupt a `tst_udp_demux_receiver_next_event` on another thread; that call
+/// returns `TST_E_CLOSED` within one 100 ms poll tick. Callable from any thread,
+/// lock-free (never takes the handle's slot), idempotent.
+///
+/// This is the NON-FREEING cross-thread interrupt: unlike `tst_udp_demux_receiver_close`
+/// it leaves the handle valid, so the owner still frees it with
+/// `tst_udp_demux_receiver_close` once no other thread is using it.
+///
+/// Returns 0, or `TST_E_INVALID_CONFIG` if `p` is null.
+///
+/// # Safety
+///
+/// `p` must be NULL or a valid, not-yet-closed `*mut TstUdpDemuxReceiver`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tst_udp_demux_receiver_cancel(p: *mut TstUdpDemuxReceiver) -> libc::c_int {
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let Some(handle) = (unsafe { p.as_ref() }) else {
+            set_last_error(TstError::InvalidConfig, "null udp demux receiver pointer");
+            return TstError::InvalidConfig as i32;
+        };
+        // `CHandle::cancel` → `Owned::cancel`: fires the transport's
+        // `UdpCancelHandle` (Arc 2 WP-D) without taking the slot, so it
+        // answers while a data-path call is in flight.
+        handle.inner.cancel();
+        0
+    })
 }
 
 // ---------------------------------------------------------------------------

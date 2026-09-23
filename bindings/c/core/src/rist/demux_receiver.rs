@@ -16,11 +16,10 @@
 //! poll in a loop. A cancel is observed at the end of the current tick and
 //! the loop's next call reports `TST_E_CLOSED`. Do NOT call `_close` from
 //! another thread while such a loop runs — `_close` frees the handle and
-//! the poller holds no lock between calls. The non-freeing cross-thread
-//! cancel is `tst_rist_demux_receiver_cancel`, a new symbol that
-//! rides the ABI 0.22 bump (see "C ABI cancel entry points for `tcp://`,
-//! `udp://` and `rist://` transports" in
-//! `docs/project/deferred-features.md`).
+//! the poller holds no lock between calls. Use
+//! `tst_rist_demux_receiver_cancel` (ABI 0.22) instead: it is the
+//! NON-FREEING cross-thread cancel, so the poller's pointer stays valid and
+//! the owner still calls `_close` once the loop has ended.
 //!
 //! **Construction differs from UDP:** RIST receivers use a bind URL with
 //! the ffmpeg `@` prefix (`rist://@host:port`) and the
@@ -149,6 +148,40 @@ pub unsafe extern "C" fn tst_rist_demux_receiver_close(p: *mut TstRistDemuxRecei
         boxed.inner.close();
         drop(boxed);
     });
+}
+
+// ---------------------------------------------------------------------------
+// Cancel
+// ---------------------------------------------------------------------------
+
+/// Interrupt a `tst_rist_demux_receiver_next_event` on another thread; that call
+/// returns `TST_E_CLOSED` at the end of the current ~100 ms librist tick. Callable from any thread,
+/// lock-free (never takes the handle's slot), idempotent.
+///
+/// This is the NON-FREEING cross-thread interrupt: unlike `tst_rist_demux_receiver_close`
+/// it leaves the handle valid, so the owner still frees it with
+/// `tst_rist_demux_receiver_close` once no other thread is using it.
+///
+/// Returns 0, or `TST_E_INVALID_CONFIG` if `p` is null.
+///
+/// # Safety
+///
+/// `p` must be NULL or a valid, not-yet-closed `*mut TstRistDemuxReceiver`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tst_rist_demux_receiver_cancel(
+    p: *mut TstRistDemuxReceiver,
+) -> libc::c_int {
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let Some(handle) = (unsafe { p.as_ref() }) else {
+            set_last_error(TstError::InvalidConfig, "null rist demux receiver pointer");
+            return TstError::InvalidConfig as i32;
+        };
+        // `CHandle::cancel` → `Owned::cancel`: fires the transport's
+        // `RistCancelHandle` (Arc 2 WP-D) without taking the slot, so it
+        // answers while a data-path call is in flight.
+        handle.inner.cancel();
+        0
+    })
 }
 
 // ---------------------------------------------------------------------------

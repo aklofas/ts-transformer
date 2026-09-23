@@ -14,14 +14,12 @@
 //! Note: the lib name for `tst-c` is `tstrans` (see `[lib] name` in
 //! Cargo.toml); integration tests reference it as `tstrans`, not `tst_c`.
 //!
-//! There is no `tst_rist_*_cancel` entry point yet (new symbols, ABI
-//! 0.22), so these tests do not exercise a cancel path — receivers open on
-//! an ephemeral port (port 0 maps to a kernel-assigned port) and close
-//! without a blocking recv. The RIST transport does carry a real cancel
-//! handle since Arc 2 WP-D, but a `tst_rist_*_recv_ts` call never parks
-//! (one ~100 ms poll, `TST_E_BUFFER_FULL` when empty), so the
-//! cross-thread pin lives at the Rust level in
-//! `crates/tst-rist/tests/cancel.rs` until the 0.22 cancel handles land.
+//! Cancel entry points (`tst_rist_*_cancel`, ABI 0.22) get their
+//! null-guard / idempotence coverage below. The cross-thread behaviour
+//! needs its own shape — a `tst_rist_*_recv_ts` never parks (one ~100 ms
+//! librist poll, `TST_E_BUFFER_FULL` when empty), so a C caller polls in a
+//! loop and the pin is "a cancel from another thread ends the LOOP with
+//! `TST_E_CLOSED`": that lives in `rist_cancel_from_other_thread.rs`.
 //!
 //! RIST receiver URLs require the `@` bind prefix (ffmpeg convention):
 //! `rist://@127.0.0.1:0`. Sender URLs use no prefix: `rist://host:port`.
@@ -36,9 +34,11 @@ use tstrans::config::{
 use tstrans::error::{TstError, tst_get_last_error};
 use tstrans::event::TstEvent;
 use tstrans::rist::{
-    tst_rist_demux_receiver_close, tst_rist_demux_receiver_next_event,
-    tst_rist_demux_receiver_open, tst_rist_mux_sender_close, tst_rist_mux_sender_finish,
-    tst_rist_mux_sender_open, tst_rist_receiver_close, tst_rist_recv_open, tst_rist_sender_open,
+    tst_rist_demux_receiver_cancel, tst_rist_demux_receiver_close,
+    tst_rist_demux_receiver_next_event, tst_rist_demux_receiver_open, tst_rist_mux_sender_cancel,
+    tst_rist_mux_sender_close, tst_rist_mux_sender_finish, tst_rist_mux_sender_open,
+    tst_rist_receiver_cancel, tst_rist_receiver_close, tst_rist_recv_open, tst_rist_sender_cancel,
+    tst_rist_sender_close, tst_rist_sender_open,
 };
 
 // ---------------------------------------------------------------------------
@@ -246,4 +246,48 @@ fn rist_mux_sender_finish_then_close() {
     );
 
     unsafe { tst_rist_mux_sender_close(h) };
+}
+
+// ---------------------------------------------------------------------------
+// `_cancel` — Arc 2 R4, ABI 0.22
+// ---------------------------------------------------------------------------
+
+/// Every `tst_rist_*_cancel` returns 0 on a live handle and
+/// `TST_E_INVALID_CONFIG` on NULL, and `_cancel` never consumes the handle
+/// (the `_close` after it still frees).
+///
+/// The cross-thread behaviour — a cancel ending a C-side RIST poll loop
+/// with `TST_E_CLOSED` — lives in `rist_cancel_from_other_thread.rs`, which
+/// owns the reserved port 33100. This test uses 33104 (EVEN: the Simple
+/// profile puts RTCP on `port + 1`), disjoint from that, from
+/// `rist_mux_sender_finish_then_close`'s 33106, and from every Rust-side
+/// range (`loopback.rs` 33010–33026, `cancel.rs` 33040–33048,
+/// `conformance.rs` 33050–33098, pytest 34110–34150).
+#[test]
+fn rist_cancel_entry_points_return_ok_and_null_is_invalid_config() {
+    let url = CString::new("rist://127.0.0.1:33104").unwrap();
+    let s = unsafe { tst_rist_sender_open(url.as_ptr()) };
+    assert!(!s.is_null(), "tst_rist_sender_open failed: {}", unsafe {
+        tst_get_last_error()
+    });
+    assert_eq!(unsafe { tst_rist_sender_cancel(s) }, 0);
+    assert_eq!(unsafe { tst_rist_sender_cancel(s) }, 0, "idempotent");
+    unsafe { tst_rist_sender_close(s) };
+
+    assert_eq!(
+        unsafe { tst_rist_sender_cancel(std::ptr::null_mut()) },
+        TstError::InvalidConfig as i32
+    );
+    assert_eq!(
+        unsafe { tst_rist_mux_sender_cancel(std::ptr::null_mut()) },
+        TstError::InvalidConfig as i32
+    );
+    assert_eq!(
+        unsafe { tst_rist_receiver_cancel(std::ptr::null_mut()) },
+        TstError::InvalidConfig as i32
+    );
+    assert_eq!(
+        unsafe { tst_rist_demux_receiver_cancel(std::ptr::null_mut()) },
+        TstError::InvalidConfig as i32
+    );
 }

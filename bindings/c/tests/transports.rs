@@ -7,6 +7,8 @@
 //! gates still apply (a gated-out member compiles to an empty module).
 #[path = "transports/hls_publish_smoke.rs"]
 mod hls_publish_smoke;
+#[path = "transports/rist_cancel_from_other_thread.rs"]
+mod rist_cancel_from_other_thread;
 #[path = "transports/rist_open_smoke.rs"]
 mod rist_open_smoke;
 #[path = "transports/rtp_cancel_first.rs"]

@@ -14,10 +14,9 @@
 //! FREES the handle: a `_send_ts` already in flight completes normally (the
 //! close waits for the slot in `take()`), and there is no such thing as a
 //! `_send_ts` after the close — that would be a use-after-free, not a
-//! `TST_E_CLOSED`. The non-freeing cross-thread cancel is
-//! `tst_rist_sender_cancel`, a new symbol that rides the ABI 0.22 bump (see
-//! "C ABI cancel entry points for `tcp://`, `udp://` and `rist://`
-//! transports" in `docs/project/deferred-features.md`).
+//! `TST_E_CLOSED`. `tst_rist_sender_cancel` (ABI 0.22) is the NON-FREEING
+//! cross-thread cancel: it fires the same `RistCancelHandle` without taking
+//! the slot and leaves the handle valid for its owner to `_close`.
 //!
 //! **Construction differs from UDP:** RIST uses a move-style builder
 //! chain (`RistTransportBuilder::new(url)?.connect()?`) rather than
@@ -137,6 +136,38 @@ pub unsafe extern "C" fn tst_rist_sender_close(p: *mut TstRistSender) {
         boxed.inner.close();
         drop(boxed);
     });
+}
+
+// ---------------------------------------------------------------------------
+// Cancel
+// ---------------------------------------------------------------------------
+
+/// Interrupt a `tst_rist_sender_send_ts` on another thread; that call
+/// returns `TST_E_CLOSED`. Callable from any thread,
+/// lock-free (never takes the handle's slot), idempotent.
+///
+/// This is the NON-FREEING cross-thread interrupt: unlike `tst_rist_sender_close`
+/// it leaves the handle valid, so the owner still frees it with
+/// `tst_rist_sender_close` once no other thread is using it.
+///
+/// Returns 0, or `TST_E_INVALID_CONFIG` if `p` is null.
+///
+/// # Safety
+///
+/// `p` must be NULL or a valid, not-yet-closed `*mut TstRistSender`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tst_rist_sender_cancel(p: *mut TstRistSender) -> libc::c_int {
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let Some(handle) = (unsafe { p.as_ref() }) else {
+            set_last_error(TstError::InvalidConfig, "null rist sender pointer");
+            return TstError::InvalidConfig as i32;
+        };
+        // `CHandle::cancel` → `Owned::cancel`: fires the transport's
+        // `RistCancelHandle` (Arc 2 WP-D) without taking the slot, so it
+        // answers while a data-path call is in flight.
+        handle.inner.cancel();
+        0
+    })
 }
 
 // ---------------------------------------------------------------------------
