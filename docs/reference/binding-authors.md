@@ -575,6 +575,29 @@ follow-up:
   SRT managed-receiver-lifecycle reasons) have different member sets and
   no binding shares one type between them.
 
+## Shell parity matrix (DEBT-14, decided in deep-review-4 Arc 2)
+
+Deep review #4 found the ledger's inputs for the shell-parity question were
+wrong (the Pairer entry claimed the JVM half was missing; the `MuxSender`
+DTS/MISP gap at C was unledgered). This table is the decided record — each
+cell is either shipped, or deferred with the trigger that reopens it in
+`docs/project/deferred-features.md`.
+
+| Capability | Rust core | C (`tst-c`) | Python (`tst-py`) | JVM (`tst-jni`) |
+|---|---|---|---|---|
+| `ext::pairing::Pairer` (KLV↔video alignment) | ✅ | Deferred — "`pipeline::ext::pairing` C ABI exposure" | ✅ `tstrans.pipeline.Pairer` | ✅ `org.tstrans.pipeline.Pairer` |
+| `MuxSender` DTS / MISP video variants on LIVE shells | ✅ | Deferred — "`MuxSender` DTS / MISP video variants at the C ABI" (offline `tst_muxer_push_video_to_with_dts` / `_misp_to` exist) | Deferred — "Binding-side `MuxSender` MISP timestamp mirrors" | Deferred — same entry |
+| `MuxSender::finish()` (drain, report, close) | ✅ | ✅ `tst_mux_sender_finish`, `tst_managed_mux_sender_finish`, `tst_{udp,tcp,rtp,rist}_mux_sender_finish` (ABI 0.22) | ✅ `MuxSender.finish()`, `ManagedMuxSender.finish()`, `rtp.MuxSender.finish()` | ✅ `MuxSender.finish()`, `ManagedMuxSender.finish()`, `rtp.MuxSender.finish()` |
+| `FileTransport::finish()` | ✅ | n/a — `FileTransport` is a Rust-only capture transport; no binding exposes it | n/a | n/a |
+| `DemuxerConfig::sync_buf_cap` | ✅ | ✅ `tst_demux_config_set_sync_buf_cap` (ABI 0.22) | ✅ `DemuxerConfig.sync_buf_cap` | ✅ `DemuxerConfig.Builder.syncBufCap(long)` |
+| Cross-thread cancel entry point | ✅ every transport (`cancel_handle()` is `Some` everywhere since Arc 2 WP-D) | ✅ `tst_<transport>_<shell>_cancel` for srt/rtp (since 0.6–0.21) and tcp/udp/rist (ABI 0.22) | ✅ `cancel_handle()` on every shell | ✅ `cancelHandle()` on every shell |
+
+**Rule for new cells.** A ship-now cell must be under a day per binding
+(a `with_ref`/`with_mut` body plus one error projection, with a red-first
+test); anything larger is deferred WITH a trigger, never silently absent.
+The surface manifest's five-column rule (`tests/coverage/README.md`) keeps
+the Swift/Kotlin columns from repeating this drift.
+
 ## C stats-getter naming
 
 The C ABI stats getter symbols (`tst_mux_sender_get_stats`,

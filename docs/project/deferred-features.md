@@ -565,12 +565,13 @@ mean **Deferred**. An entry whose feature has shipped must never read
   projection structs (`VideoSample`, `KlvSample`), a tagged-enum
   output (`PairerOutput`) that maps to C discriminator + union, and
   no lifetimes.
-- **Trigger to revisit:** the binding-parity matrix decision in the
-  "managed shell = plain shell" arc (deep-review-#4 follow-up, DEBT-14)
-  decides whether `Pairer` joins the C ABI; a C consumer asking for
-  KLV↔video alignment without a Rust layer decides it sooner. The old
-  trigger — "when the receiver-surface C ABI plan is written" — fired
-  2026-05-16 without `Pairer` joining.
+- **Trigger to revisit:** DECIDED 2026-09 (deep-review-4 Arc 2, DEBT-14 rider —
+  see the shell parity matrix in `docs/reference/binding-authors.md`): stays
+  deferred because it is a new handle family (~7 entry points, a tagged
+  output discriminator + union, two projection structs), not a < 1-day
+  addition. Reopens when (a) the tst-uniffi design decides `Pairer` is in
+  the mobile surface — then the C family lands in the same arc — or (b) a C
+  consumer asks for KLV↔video alignment without a Rust layer.
 - **Scope when added:** ~7 C entry points + 1 handle type + tagged
   output discriminator. Sketch parallel to the existing
   `tst_demux_receiver_t` shape.
@@ -1363,9 +1364,12 @@ mean **Deferred**. An entry whose feature has shipped must never read
 - **Why deferred:** additive ABI work (a minor bump) with no C consumer ask;
   the Python/JVM shells have the same gap, recorded under "Binding-side
   `MuxSender` MISP timestamp mirrors".
-- **Trigger to revisit:** the binding-parity matrix decision (DEBT-14) in
-  the "managed shell = plain shell" arc, or a C consumer needing B-frames /
-  MISP through a live shell.
+- **Trigger to revisit:** DECIDED 2026-09 (deep-review-4 Arc 2, DEBT-14 rider):
+  stays deferred — three variants across six live shells plus the RTSP mount
+  is 21 entry points with per-shell tests, above the rider's < 1-day bar.
+  Reopens on the first C consumer needing B-frame or ST 0604-stamped video
+  through a LIVE shell, or when the Python/JVM MISP mirrors entry ships
+  (then all three bindings in one pass).
 
 ## C ABI cancel entry points for `tcp://`, `udp://` and `rist://` transports
 
