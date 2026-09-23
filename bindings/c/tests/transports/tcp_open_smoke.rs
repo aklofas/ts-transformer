@@ -41,10 +41,10 @@ use tstrans::tcp::{
     tst_tcp_listener_accept_sender, tst_tcp_listener_bind, tst_tcp_listener_cancel,
     tst_tcp_listener_free, tst_tcp_mux_sender_cancel, tst_tcp_mux_sender_close,
     tst_tcp_mux_sender_finish, tst_tcp_mux_sender_get_mux_sender_stats,
-    tst_tcp_mux_sender_get_socket_stats, tst_tcp_mux_sender_open, tst_tcp_mux_sender_reset_stats,
-    tst_tcp_receiver_cancel, tst_tcp_receiver_close, tst_tcp_receiver_get_socket_stats,
-    tst_tcp_receiver_get_stats, tst_tcp_receiver_recv_ts, tst_tcp_receiver_reset_stats,
-    tst_tcp_recv_open, tst_tcp_sender_cancel, tst_tcp_sender_close,
+    tst_tcp_mux_sender_get_socket_stats, tst_tcp_mux_sender_open, tst_tcp_mux_sender_push_video,
+    tst_tcp_mux_sender_reset_stats, tst_tcp_receiver_cancel, tst_tcp_receiver_close,
+    tst_tcp_receiver_get_socket_stats, tst_tcp_receiver_get_stats, tst_tcp_receiver_recv_ts,
+    tst_tcp_receiver_reset_stats, tst_tcp_recv_open, tst_tcp_sender_cancel, tst_tcp_sender_close,
     tst_tcp_sender_get_socket_stats, tst_tcp_sender_get_stats, tst_tcp_sender_open,
     tst_tcp_sender_reset_stats, tst_tcp_sender_send_ts,
 };
@@ -421,11 +421,17 @@ fn null_next_event_returns_invalid_config() {
 
 /// `tst_tcp_mux_sender_finish` drains and closes.
 ///
-/// The background peer accepts and immediately drops the socket, so the
-/// drain may legitimately report a transport error (peer gone) or 0
-/// (nothing pending). Both are "finished"; what must hold is that the
-/// call neither panics nor mis-reports a null pointer, that a second call
-/// is 0, and that the handle still frees with `_close`.
+/// Nothing was ever pushed, so `pending_bytes` is empty and this takes the
+/// EMPTY-DRAIN path: `finish` has nothing to send and closes. The rc is
+/// asserted leniently only because the background peer has already dropped
+/// its socket, so the transport's own `close()` may report an error the
+/// shell does not surface; what must hold is that the call neither panics
+/// nor mis-reports a null pointer, that a second call is 0, and that the
+/// handle still frees with `_close`.
+///
+/// The drain-ERROR arm — `finish` reporting a failed drain — is pinned
+/// separately by `tcp_mux_sender_finish_reports_the_drain_error`, which is
+/// the only `_finish` test in this suite that reaches it.
 #[test]
 fn tcp_mux_sender_finish_then_close() {
     let url_str = accept_one_background(|p| format!("tcp://127.0.0.1:{p}"));
@@ -512,15 +518,24 @@ fn tcp_receiver_cancel_wakes_parked_recv_with_closed() {
     });
 
     let (done_tx, done_rx) = mpsc::channel::<i32>();
+    let (entered_tx, entered_rx) = mpsc::channel::<()>();
     let reader_ptr = SendRx(h);
     let reader = thread::spawn(move || {
         let p = reader_ptr; // whole-struct capture: SendRx is Send, its field is not
         let mut buf = vec![0u8; 1316];
         let mut n = 0usize;
+        // Signal BEFORE the call: the next statement enters the native recv
+        // and does not return until it parks and is woken.
+        let _ = entered_tx.send(());
         let rc = unsafe { tst_tcp_receiver_recv_ts(p.0, buf.as_mut_ptr(), buf.len(), &mut n) };
         let _ = done_tx.send(rc);
     });
-    thread::sleep(Duration::from_millis(300)); // reader is parked on a poll tick
+    // Latch instead of a bare settle: wait for the reader to reach the call,
+    // then give it one poll tick to be provably inside it.
+    entered_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("reader thread never reached _recv_ts");
+    thread::sleep(Duration::from_millis(200));
 
     let t0 = Instant::now();
     assert_eq!(unsafe { tst_tcp_receiver_cancel(h) }, 0, "cancel rc");
@@ -604,9 +619,12 @@ fn tcp_listener_cancel_wakes_parked_accept() {
     });
 
     let (done_tx, done_rx) = mpsc::channel::<(bool, i32)>();
+    let (entered_tx, entered_rx) = mpsc::channel::<()>();
     let lp = SendListener(l);
     let acceptor = thread::spawn(move || {
         let p = lp;
+        // Signal BEFORE the call, as in the recv test above.
+        let _ = entered_tx.send(());
         let r = unsafe { tst_tcp_listener_accept_receiver(p.0) };
         let code = unsafe { tst_get_last_error() };
         let _ = done_tx.send((r.is_null(), code));
@@ -614,7 +632,10 @@ fn tcp_listener_cancel_wakes_parked_accept() {
             unsafe { tst_tcp_receiver_close(r) };
         }
     });
-    thread::sleep(Duration::from_millis(300)); // acceptor is parked
+    entered_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("acceptor thread never reached _accept_receiver");
+    thread::sleep(Duration::from_millis(200));
 
     let t0 = Instant::now();
     assert_eq!(unsafe { tst_tcp_listener_cancel(l) }, 0, "cancel rc");
@@ -648,4 +669,116 @@ fn tcp_listener_cancel_wakes_parked_accept() {
         "cancel is idempotent"
     );
     unsafe { tst_tcp_listener_free(l) };
+}
+
+/// `_finish` REPORTS the drain error — the arm the other five `_finish`
+/// tests cannot reach.
+///
+/// `MuxSender::finish` drains `pending_bytes`, and `pending_bytes` is
+/// populated only by a send that FAILED (`Inner::drain_muxer` buffers the
+/// chunk the transport rejected, plus whatever the muxer still holds). Every
+/// other `_finish` test in this PR takes the empty-drain path and therefore
+/// exercises only the `Ok(())` arm; this one pins the
+/// `Err(e) => record_shell_error(&e)` projection end to end.
+///
+/// How the drain is made to fail deterministically: the peer accepts and
+/// immediately drops its socket. The first write lands in the kernel send
+/// buffer, the peer's stack answers RST, and a following write fails
+/// (EPIPE / ECONNRESET). That failing push leaves the muxed bytes in
+/// `pending_bytes`, so `_finish`'s drain re-sends them into the same dead
+/// socket and surfaces the error.
+///
+/// Every wait is bounded: the push loop has both an iteration cap and a
+/// wall-clock deadline and FAILS if no push ever errors, so the test can
+/// never hang waiting for a failure that is not coming.
+#[test]
+fn tcp_mux_sender_finish_reports_the_drain_error() {
+    let listener = StdTcpListener::bind("127.0.0.1:0").expect("bind ephemeral");
+    let port = listener.local_addr().unwrap().port();
+    let (accepted_tx, accepted_rx) = mpsc::channel::<bool>();
+    let peer = thread::spawn(move || {
+        let ok = listener.accept().is_ok();
+        // Drop the accepted socket immediately: the sender's next writes go
+        // to a closed peer.
+        let _ = accepted_tx.send(ok);
+    });
+
+    let url = CString::new(format!("tcp://127.0.0.1:{port}")).unwrap();
+    let cfg = unsafe { tst_mux_config_new() };
+    let prog = unsafe { tst_mux_config_add_program(cfg, 1, 0x1000) };
+    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264) };
+    let h = unsafe { tst_tcp_mux_sender_open(url.as_ptr(), cfg as *const _) };
+    unsafe { tst_mux_config_free(cfg) };
+    assert!(!h.is_null(), "tst_tcp_mux_sender_open returned null");
+
+    assert!(
+        accepted_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("peer did not accept within 5 s"),
+        "peer accept failed"
+    );
+    peer.join().expect("peer thread panicked");
+
+    // Push until one push reports the dead peer. Bounded twice over.
+    let nal = [0u8, 0, 0, 1, 0x65, 0xBB, 0x11, 0x22, 0x33, 0x44];
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut push_rc = 0;
+    let mut pushes = 0u32;
+    while pushes < 5_000 && Instant::now() < deadline {
+        push_rc = unsafe {
+            tst_tcp_mux_sender_push_video(
+                h,
+                nal.as_ptr(),
+                nal.len(),
+                i64::from(pushes) * 3_000,
+                true,
+            )
+        };
+        pushes += 1;
+        if push_rc != 0 {
+            break;
+        }
+    }
+    assert_eq!(
+        push_rc,
+        TstError::Transport as i32,
+        "the write that met the dead peer is a terminal transport error \
+         (TST_E_TRANSPORT) after {pushes} pushes"
+    );
+
+    // The failed push retained its muxed bytes in `pending_bytes`, so
+    // `_finish`'s drain re-sends into the same socket and must REPORT the
+    // failure — not silently return 0.
+    //
+    // The code is TST_E_CLOSED, not the TST_E_TRANSPORT the push reported:
+    // that terminal write LATCHED the transport dead
+    // (`TcpTransport::dead_error`, `crates/tst-tcp/src/transport.rs`), so the
+    // drain's send is refused at the dead-transport guard rather than
+    // reaching the socket again. Both are the same `record_shell_error`
+    // projection of a real `MuxSenderError` — this is the arm the five
+    // empty-drain `_finish` tests never reach.
+    let finish_rc = unsafe { tst_tcp_mux_sender_finish(h) };
+    assert_eq!(
+        finish_rc,
+        TstError::Closed as i32,
+        "_finish must report the drain failure as TST_E_CLOSED (the transport \
+         latched dead on the failing push, which reported {push_rc})"
+    );
+    let msg = unsafe { std::ffi::CStr::from_ptr(tstrans::error::tst_get_last_error_str()) }
+        .to_str()
+        .unwrap_or("");
+    assert!(
+        !msg.is_empty(),
+        "_finish must leave a last-error string describing the drain failure"
+    );
+
+    // `finish` closes the sender whatever the drain outcome, so the second
+    // call takes the already-closed path and is quiet.
+    assert_eq!(
+        unsafe { tst_tcp_mux_sender_finish(h) },
+        0,
+        "second finish must be 0 even after a reported drain error"
+    );
+
+    unsafe { tst_tcp_mux_sender_close(h) };
 }
