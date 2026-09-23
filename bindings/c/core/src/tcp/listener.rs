@@ -259,6 +259,9 @@ pub unsafe extern "C" fn tst_tcp_listener_free(p: *mut TstTcpListener) {
 /// listening socket down explicitly), so bind the next listener on a fresh
 /// port or free this one first.
 ///
+/// The cancel is terminal: the `_accept_*` that observes it and every
+/// later one on this listener return NULL with `TST_E_CLOSED`.
+///
 /// Returns 0, or `TST_E_INVALID_CONFIG` if `p` is null.
 ///
 /// # Safety

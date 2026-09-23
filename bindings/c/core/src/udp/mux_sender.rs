@@ -158,6 +158,9 @@ pub unsafe extern "C" fn tst_udp_mux_sender_close(p: *mut TstUdpMuxSender) {
 /// it leaves the handle valid, so the owner still frees it with
 /// `tst_udp_mux_sender_close` once no other thread is using it.
 ///
+/// The cancel is terminal: the call that observes it and every later
+/// `push_*` on this handle return `TST_E_CLOSED`.
+///
 /// Returns 0, or `TST_E_INVALID_CONFIG` if `p` is null.
 ///
 /// # Safety
