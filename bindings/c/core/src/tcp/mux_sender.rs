@@ -13,13 +13,13 @@
 //! both `Transport` and `RecvTransport`. `MuxSender<TcpTransport>` uses
 //! the `Transport` side for sending.
 //!
-//! **Cancel:** the Rust `TcpTransport` exposes `cancel_handle()` (since
-//! PR #198) but the C ABI has no `tst_tcp_mux_sender_cancel` entry point
-//! yet (additive candidate, ABI 0.22) — `_close` simply drops the handle.
-//! Consequence since deep review #4 WP-4b: a `push_*` call against a peer
-//! that has stopped reading blocks until the peer resumes, the peer
-//! resets the connection, or this handle is closed from the same thread
-//! — it no longer returns `TST_E_TRANSPORT` after ~100 ms.
+//! **Cancel:** `tst_tcp_mux_sender_cancel` (ABI 0.22) fires the transport's
+//! `TcpCancelHandle`; a `push_*` parked on another thread returns
+//! `TST_E_CLOSED`. That entry point is what unblocks a push against a peer
+//! that has stopped reading: since deep review #4 WP-4b such a push blocks
+//! until the peer resumes, the peer resets the connection, or the handle is
+//! cancelled or closed — it no longer returns `TST_E_TRANSPORT` after
+//! ~100 ms.
 
 use std::os::raw::c_char;
 
@@ -146,6 +146,35 @@ pub unsafe extern "C" fn tst_tcp_mux_sender_close(p: *mut TstTcpMuxSender) {
         boxed.inner.close();
         drop(boxed);
     });
+}
+
+// ---------------------------------------------------------------------------
+// Cancel
+// ---------------------------------------------------------------------------
+
+/// Interrupt a `tst_tcp_mux_sender_push_*` parked on another thread; that call
+/// returns `TST_E_CLOSED`. Callable from any thread, lock-free (never takes
+/// the handle's slot), idempotent. The handle must still be freed with
+/// `tst_tcp_mux_sender_close`.
+///
+/// Returns 0, or `TST_E_INVALID_CONFIG` if `p` is null.
+///
+/// # Safety
+///
+/// `p` must be NULL or a valid, not-yet-closed `*mut TstTcpMuxSender`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tst_tcp_mux_sender_cancel(p: *mut TstTcpMuxSender) -> libc::c_int {
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let Some(handle) = (unsafe { p.as_ref() }) else {
+            set_last_error(TstError::InvalidConfig, "null tcp mux sender pointer");
+            return TstError::InvalidConfig as i32;
+        };
+        // `CHandle::cancel` → `Owned::cancel`: fires the transport's
+        // `TcpCancelHandle` without taking the slot, so it answers while a
+        // data-path call is parked.
+        handle.inner.cancel();
+        0
+    })
 }
 
 // ---------------------------------------------------------------------------

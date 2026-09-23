@@ -13,15 +13,13 @@
 //! both `Transport` and `RecvTransport`. `DemuxReceiver<TcpTransport>` uses
 //! the `RecvTransport` side. Construction uses `TcpTransportBuilder::from_url`.
 //!
-//! **No `_cancel` entry point yet:** the Rust `TcpTransport` exposes
-//! `cancel_handle()` (since PR #198) and the handle's `CHandle` carries
-//! it, so `_close` IS cancel-first — it fires that cancel before taking
-//! the slot, which unblocks a thread parked in a data-path call. What the
-//! C ABI still lacks is a standalone `tst_tcp_demux_receiver_cancel` entry point
-//! (additive candidate, ABI 0.22 — R4 builds it on
-//! `handle.inner.cancel()`). The handle therefore DOES carry the
-//! binding-shared cancel state, and a call ended by that close reports
-//! `TST_E_CLOSED`, not `TST_E_END_OF_STREAM`.
+//! **Cancel:** `tst_tcp_demux_receiver_cancel` (ABI 0.22) fires the
+//! transport's `TcpCancelHandle` without taking the handle's slot, so a
+//! `tst_tcp_demux_receiver_next_event` parked on another thread returns
+//! `TST_E_CLOSED` — not `TST_E_END_OF_STREAM`, because the handle carries
+//! the binding-shared cancel state. `_close` is cancel-first for the same
+//! reason (it fires that cancel before taking the slot), but unlike
+//! `_cancel` it also frees the handle.
 
 use std::os::raw::c_char;
 use std::sync::Mutex;
@@ -137,6 +135,35 @@ pub unsafe extern "C" fn tst_tcp_demux_receiver_close(p: *mut TstTcpDemuxReceive
         boxed.inner.close();
         drop(boxed);
     });
+}
+
+// ---------------------------------------------------------------------------
+// Cancel
+// ---------------------------------------------------------------------------
+
+/// Interrupt a `tst_tcp_demux_receiver_next_event` parked on another thread; that call
+/// returns `TST_E_CLOSED`. Callable from any thread, lock-free (never takes
+/// the handle's slot), idempotent. The handle must still be freed with
+/// `tst_tcp_demux_receiver_close`.
+///
+/// Returns 0, or `TST_E_INVALID_CONFIG` if `p` is null.
+///
+/// # Safety
+///
+/// `p` must be NULL or a valid, not-yet-closed `*mut TstTcpDemuxReceiver`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tst_tcp_demux_receiver_cancel(p: *mut TstTcpDemuxReceiver) -> libc::c_int {
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let Some(handle) = (unsafe { p.as_ref() }) else {
+            set_last_error(TstError::InvalidConfig, "null tcp demux receiver pointer");
+            return TstError::InvalidConfig as i32;
+        };
+        // `CHandle::cancel` → `Owned::cancel`: fires the transport's
+        // `TcpCancelHandle` without taking the slot, so it answers while a
+        // data-path call is parked.
+        handle.inner.cancel();
+        0
+    })
 }
 
 // ---------------------------------------------------------------------------

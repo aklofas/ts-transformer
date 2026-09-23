@@ -12,14 +12,13 @@
 //! `Transport` and `RecvTransport`. The role is determined by which pipeline
 //! shell consumes it. Here `Sender<TcpTransport>` uses it as a sender.
 //!
-//! **Cancel:** the Rust `TcpTransport` exposes `cancel_handle()` (since
-//! PR #198) and the handle's `CHandle` now carries it, so `_close` is
-//! cancel-first — but the C ABI still has no `tst_tcp_sender_cancel` entry
-//! point (additive candidate, ABI 0.22 — R4 builds it on
-//! `handle.inner.cancel()`). Consequence since deep review #4 WP-4b: a send
-//! against a peer that has stopped reading blocks until the peer resumes,
-//! the peer resets the connection, or this handle is closed — it no longer
-//! returns `TST_E_TRANSPORT` after ~100 ms.
+//! **Cancel:** `tst_tcp_sender_cancel` (ABI 0.22) fires the transport's
+//! `TcpCancelHandle`; a `tst_tcp_sender_send_ts` parked on another thread
+//! returns `TST_E_CLOSED`. `_close` is cancel-first for the same reason.
+//! That entry point is what unblocks a send against a peer that has
+//! stopped reading: since deep review #4 WP-4b such a send blocks until the
+//! peer resumes, the peer resets the connection, or the handle is cancelled
+//! or closed — it no longer returns `TST_E_TRANSPORT` after ~100 ms.
 
 use std::os::raw::c_char;
 
@@ -119,6 +118,35 @@ pub unsafe extern "C" fn tst_tcp_sender_close(p: *mut TstTcpSender) {
         boxed.inner.close();
         drop(boxed);
     });
+}
+
+// ---------------------------------------------------------------------------
+// Cancel
+// ---------------------------------------------------------------------------
+
+/// Interrupt a `tst_tcp_sender_send_ts` parked on another thread; that call
+/// returns `TST_E_CLOSED`. Callable from any thread, lock-free (never takes
+/// the handle's slot), idempotent. The handle must still be freed with
+/// `tst_tcp_sender_close`.
+///
+/// Returns 0, or `TST_E_INVALID_CONFIG` if `p` is null.
+///
+/// # Safety
+///
+/// `p` must be NULL or a valid, not-yet-closed `*mut TstTcpSender`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tst_tcp_sender_cancel(p: *mut TstTcpSender) -> libc::c_int {
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let Some(handle) = (unsafe { p.as_ref() }) else {
+            set_last_error(TstError::InvalidConfig, "null tcp sender pointer");
+            return TstError::InvalidConfig as i32;
+        };
+        // `CHandle::cancel` → `Owned::cancel`: fires the transport's
+        // `TcpCancelHandle` without taking the slot, so it answers while a
+        // data-path call is parked.
+        handle.inner.cancel();
+        0
+    })
 }
 
 // ---------------------------------------------------------------------------
