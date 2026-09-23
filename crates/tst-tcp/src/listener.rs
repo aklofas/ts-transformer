@@ -131,6 +131,13 @@ impl TcpListener {
     /// [`TcpError::Closed`], so a caller never receives a stream after its
     /// `close()`/`cancel()` call has returned on another thread.
     ///
+    /// A cancelled listener's parked/later `accept_blocking` keeps returning
+    /// [`TcpError::Closed`] — the `TcpError` layer carries no cancel variant,
+    /// and a listener is not a `Transport` (WP-C2 decision), so the
+    /// `ExplicitClose` the transports report has no home here. Read
+    /// [`Self::cancel_handle`]`().is_cancelled()` to tell a cancel from a
+    /// plain close.
+    ///
     /// **Accept latency ceiling:** unlike `recv_bytes`/`send_bytes`, whose
     /// `SO_RCVTIMEO`/`SO_SNDTIMEO` wake the thread the instant data or
     /// buffer space is available (the timeout only bounds the *cancel*

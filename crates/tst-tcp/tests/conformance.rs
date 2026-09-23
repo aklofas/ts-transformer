@@ -80,7 +80,6 @@ fn tcp_send_contract_all_but_the_cancel_rows() {
 }
 
 #[test]
-#[ignore = "WP-C2 (Task C2.3): both cancel rows (during-park + before-op) return Closed on main — cancel drops `alive`, and the send/recv paths map `!alive` to Closed (tcp/transport.rs the mid-message and entry checks, and the recv loop's check). Un-ignore in PR 8."]
 fn tcp_send_cancel_rows_are_explicit_close() {
     let pair = Pair::bind();
     kit::send_cancel_during_park_is_explicit_close(pair.connect(), SendPark::Loop);
@@ -106,7 +105,6 @@ fn tcp_recv_contract_all_but_the_cancel_rows() {
 }
 
 #[test]
-#[ignore = "WP-C2 (Task C2.3): both cancel rows (during-park + before-op) return Closed on main — cancel drops `alive`, and the send/recv paths map `!alive` to Closed. Un-ignore in PR 8."]
 fn tcp_recv_cancel_rows_are_explicit_close() {
     let pair = Pair::bind();
     kit::recv_cancel_during_park_is_explicit_close(pair.connect());
