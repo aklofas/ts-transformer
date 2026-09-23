@@ -134,9 +134,9 @@ impl TcpListener {
     /// A cancelled listener's parked/later `accept_blocking` keeps returning
     /// [`TcpError::Closed`] — the `TcpError` layer carries no cancel variant,
     /// and a listener is not a `Transport` (WP-C2 decision), so the
-    /// `ExplicitClose` the transports report has no home here. Read
-    /// [`Self::cancel_handle`]`().is_cancelled()` to tell a cancel from a
-    /// plain close.
+    /// `ExplicitClose` the transports report has no home here. Ask
+    /// [`Self::cancel_handle`] for a handle and read its `is_cancelled()` to
+    /// tell a cancel from a plain close.
     ///
     /// **Accept latency ceiling:** unlike `recv_bytes`/`send_bytes`, whose
     /// `SO_RCVTIMEO`/`SO_SNDTIMEO` wake the thread the instant data or
