@@ -174,7 +174,6 @@ class Transport:
         parked call."""
         ...
 
-
     def stats(self) -> SocketStats:
         """Return a frozen cumulative stats snapshot.
 
@@ -303,7 +302,6 @@ class RecvTransport:
         """Lock-free cross-thread cancel handle; never waits behind a
         parked call."""
         ...
-
 
     def stats(self) -> SocketStats:
         """Return a frozen cumulative stats snapshot.

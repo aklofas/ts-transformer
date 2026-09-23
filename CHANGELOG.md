@@ -2008,10 +2008,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reads `false` and later calls return `Closed`. This matches the
   `Transport` contract ("state undefined after any non-Backpressure
   error") and the TCP/RIST fatal arms, which already latched.
-  `Backpressure` (the CORR-24 deadline/EINTR class) and `TooLarge` never
-  latch. `ManagedTransport` keys its reconnect on the `Broken` error
-  rather than on `is_alive()`, so managed callers see no change in
-  recovery.
+  Transient errors never latch: on the send side `Backpressure` (the
+  CORR-24 deadline/EINTR class) and `TooLarge`; on the receive side the
+  `SO_RCVTIMEO` poll tick and `EINTR`, which is retried in place rather
+  than surfaced (a handled signal must not kill a receiver that the latch
+  would otherwise leave permanently dead — the same reasoning as
+  `tst-tcp`'s `classify_recv_error`). `ManagedTransport` keys its
+  reconnect on the `Broken` error rather than on `is_alive()`, so managed
+  callers see no change in recovery.
 - **X-CORR-07 on both receivers:** `recv_bytes(&mut [])` is `Ok(0)` at
   once — before the socket or either flag is consulted — and
   `UdpRecvTransport::recv_timeout(&mut [], _)` is `Ok(Some(0))`. The old

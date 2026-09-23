@@ -344,6 +344,14 @@ impl RecvTransport for BoundedUdpRecv {
         self.inner.close();
     }
 
+    fn cancel_handle(&self) -> Option<Arc<dyn TransportCancel + Send + Sync>> {
+        // Qualified: `UdpRecvTransport` has an INHERENT `cancel_handle()`
+        // returning a concrete `UdpCancelHandle` (Arc 2 WP-D), which
+        // shadows the trait method in method-call position. Forwarding it
+        // keeps the adapter honest — a real handle exists behind it.
+        RecvTransport::cancel_handle(&self.inner)
+    }
+
     fn socket_stats(&self) -> Option<SocketStats> {
         self.inner.socket_stats()
     }
