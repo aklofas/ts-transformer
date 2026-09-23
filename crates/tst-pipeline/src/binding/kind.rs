@@ -374,11 +374,11 @@ fn map_mux_kind(k: MuxErrorKind) -> BindingErrorKind {
 }
 
 /// K4: the four `MuxError` variants C already numbers precisely keep their
-/// own kinds; everything else folds to `MuxError::kind()`, whose own
-/// per-variant coverage is `scripts/check/rust/mux-error-kind-coverage.sh`
-/// (tst-core). Both matches need a wildcard (`MuxError` and `MuxErrorKind`
-/// are `#[non_exhaustive]` in tst-core); the second one lives in
-/// `map_mux_kind` so the coverage rail can read it.
+/// own kinds; everything else folds to `MuxError::kind()`, whose per-variant
+/// coverage the compiler pins inside tst-core (its match has no wildcard).
+/// Both matches HERE need one (`MuxError` and `MuxErrorKind` are
+/// `#[non_exhaustive]` and foreign to this crate); the second one lives in
+/// `map_mux_kind` so `kind-table-coverage.sh` can read it.
 pub fn kind_of_mux(e: &MuxError) -> BindingErrorKind {
     match e {
         MuxError::InvalidNal => BindingErrorKind::InvalidNal,

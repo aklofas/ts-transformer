@@ -2,11 +2,10 @@
 //! `MuxErrorKind` via the `MuxError::kind()` method.
 //!
 //! One (variant, expected kind) row per MuxError variant. Maintained as a flat table; if
-//! a new variant is added upstream the CI ratchet
-//! `scripts/check/rust/mux-error-kind-coverage.sh` catches the missing
-//! match arm before this test runs. This test is the per-variant
-//! correctness check (the ratchet guarantees coverage; this test
-//! guarantees correctness of the mapping).
+//! a new variant is added upstream, `MuxError::kind()`'s wildcard-free
+//! in-crate match fails to compile before this test runs. This test is the
+//! per-variant correctness check (the compiler guarantees coverage; this
+//! test guarantees correctness of the mapping).
 //!
 //! The canonical routing table is the `MuxError::kind()` match in
 //! `crates/tst-core/src/error.rs`.
