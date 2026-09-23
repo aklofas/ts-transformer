@@ -513,7 +513,7 @@ impl PyMuxSender {
 
     /// Shareable cancel handle. Calling `.cancel()` on the returned
     /// handle from any thread wakes a push parked in the transport; that
-    /// push raises `SrtError(BROKEN | CLOSED)`. The sender itself stays
+    /// push raises `SrtError(CLOSED)`. The sender itself stays
     /// addressable (`close()` still frees it). Mirrors
     /// `Sender.cancel_handle()` and the C ABI's `tst_mux_sender_cancel`.
     fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<PyCancelHandle>> {
@@ -522,7 +522,7 @@ impl PyMuxSender {
 
     /// Close the sender. Fires the cancel handle BEFORE taking the slot,
     /// so a push in flight on another thread ends promptly with
-    /// `SrtError(CLOSED | BROKEN)`; then drops the underlying SRT
+    /// `SrtError(CLOSED)`; then drops the underlying SRT
     /// transport (the pipeline `MuxSender::close` is itself cancel-first —
     /// `finish()` is the lossless alternative on the Rust side). Idempotent.
     fn close(&self, py: Python<'_>) -> PyResult<()> {

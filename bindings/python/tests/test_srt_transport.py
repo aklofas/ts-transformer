@@ -331,9 +331,10 @@ def test_close_idempotent() -> None:
 
 def test_cancel_handle_cross_thread() -> None:
     """Park a receiver.recv_bytes() on a worker thread, then cancel
-    from a Timer thread. The recv must return SrtError(BROKEN or
-    CLOSED) within ~2 s — libsrt cancels by closing the underlying
-    socket, which surfaces as a connection-broken error."""
+    from a Timer thread. The recv must return SrtError(CLOSED) within
+    ~2 s — the cancel closes the underlying libsrt socket and the
+    transport reports the cancel, not the connection error it
+    provoked."""
     port = _free_tcp_port()
     sender, receiver = _make_loopback_pair(port)
     ch = receiver.cancel_handle()
@@ -359,7 +360,7 @@ def test_cancel_handle_cross_thread() -> None:
     assert len(captured) == 1, f"expected one error; got {captured!r}"
     err = captured[0]
     assert isinstance(err, SrtError)
-    assert err.kind in (SrtErrorKind.BROKEN, SrtErrorKind.CLOSED)
+    assert err.kind == SrtErrorKind.CLOSED, f"unexpected kind: {err.kind!r}"
     assert ch.is_cancelled()
     sender.close()
     receiver.close()
@@ -368,10 +369,10 @@ def test_cancel_handle_cross_thread() -> None:
 def test_close_while_recv_parked_cancels_first() -> None:
     """`close()` from another thread while `recv_bytes()` is parked cancels
     first: it returns promptly (no `RuntimeError: Already borrowed`, no wait
-    behind the parked recv) and the parked call ends with `SrtError(BROKEN)`
-    — the plain cancel handle closes the libsrt socket, so the parked
-    `srt_recvmsg` fails with a connection error. The contract shared with
-    the JVM plain `Receiver.close()` and the C ABI's receiver close."""
+    behind the parked recv) and the parked call ends with `SrtError(CLOSED)`
+    — the plain cancel handle closes the libsrt socket and `SrtTransport`
+    reports the cancel it observed. The contract shared with the JVM plain
+    `Receiver.close()` and the C ABI's receiver close."""
     port = _free_tcp_port()
     sender, receiver = _make_loopback_pair(port)
     captured: list[BaseException] = []
@@ -417,7 +418,7 @@ def test_close_while_recv_parked_cancels_first() -> None:
         assert len(captured) == 1, f"expected one error; got {captured!r}"
         err = captured[0]
         assert isinstance(err, SrtError), f"parked recv ended with {err!r}"
-        assert err.kind == SrtErrorKind.BROKEN, f"unexpected kind: {err.kind!r}"
+        assert err.kind == SrtErrorKind.CLOSED, f"unexpected kind: {err.kind!r}"
         assert not receiver.is_alive()
     finally:
         sender.close()

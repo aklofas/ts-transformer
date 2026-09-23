@@ -215,8 +215,9 @@ pub(crate) struct PyCancelHandle {
 impl PyCancelHandle {
     /// Signal cancellation. Idempotent. Wakes a thread parked in
     /// `send_bytes` / `recv_bytes` / `accept` / `__next__`; that call
-    /// raises `SrtError(CLOSED)` — on the plain shells still `BROKEN`
-    /// until the SRT transport-level cancel change (later in 0.7.0).
+    /// raises `SrtError(CLOSED)` on every shell, plain or managed — the
+    /// cancel closes the libsrt socket and the transport reports the
+    /// cancel, not the connection error it provoked.
     fn cancel(&self) {
         tst_core::transport::TransportCancel::cancel(&*self.src);
     }
@@ -306,8 +307,8 @@ impl PySender {
 
     /// Send one pre-muxed TS chunk (any bytes-like). Releases the GIL
     /// while the libsrt send blocks; a concurrent `close()` cancels first,
-    /// so the call ends with `SrtError(CLOSED)` (plain SRT may still
-    /// report `BROKEN` until the transport-level cancel change lands).
+    /// so the call ends with `SrtError(CLOSED)` — the cancel closes the
+    /// libsrt socket and the transport reports the cancel.
     fn send_bytes(&self, py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<()> {
         let coerced = crate::util::coerce_bytes_like(py, data)?;
         let slice: &[u8] = coerced.as_bytes();
@@ -488,8 +489,8 @@ impl PyReceiver {
     }
 
     /// Close: cancel first, so a `recv_bytes()` parked on another thread
-    /// ends promptly (`CLOSED`; plain SRT may still say `BROKEN` until the
-    /// transport-level change), then close the socket. Idempotent.
+    /// ends promptly with `SrtError(CLOSED)`, then close the socket.
+    /// Idempotent.
     fn close(&self, py: Python<'_>) -> PyResult<()> {
         close_owned(py, &SRT, &self.owned)
     }

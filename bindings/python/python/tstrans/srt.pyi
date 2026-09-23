@@ -176,9 +176,9 @@ class CancelHandle:
     shells. Calling `.cancel()` from any thread wakes a thread parked in
     `.send_bytes()` / `.recv_bytes()` / `.accept()` / `.__next__()` within
     ~3-10 ms; that call raises `SrtError(kind=CLOSED)` (detail
-    "cancelled from another thread") — on the plain shells it may still
-    report `BROKEN` until the SRT transport-level cancel change lands
-    later in 0.7.0.
+    "cancelled from another thread") on every shell, plain or managed:
+    the plain shells close the underlying libsrt socket and report the
+    cancel they observed, not the connection error it provoked.
 
     `is_cancelled()` is SHARED per shell (0.7.0): every handle obtained
     from the same shell — and the shell's own `close()` — flips the same
