@@ -312,10 +312,16 @@ impl Transport for SrtTransport {
         }
     }
 
+    /// Always `Some`: the handle is captured at construction and is
+    /// independent of the socket slot, so it outlives every path that
+    /// retires that slot (a cancel, a peer break, our own `close()`) and
+    /// keeps reading the shared latch — the normative table's "a handle
+    /// obtained after the cancel agrees". Gating it on `socket.is_some()`
+    /// would hand a watchdog `None` exactly when it asks whether the
+    /// transport it was watching was cancelled, and would contradict the
+    /// inherent [`Self::srt_cancel_handle`], which never had an `Option`.
     fn cancel_handle(&self) -> Option<Arc<dyn TransportCancel + Send + Sync>> {
-        self.socket
-            .as_ref()
-            .map(|_| Arc::new(self.cancel.clone()) as Arc<dyn TransportCancel + Send + Sync>)
+        Some(Arc::new(self.cancel.clone()) as Arc<dyn TransportCancel + Send + Sync>)
     }
 
     fn socket_stats(&self) -> Option<SocketStats> {
@@ -492,9 +498,9 @@ mod tests {
         assert_eq!(SrtTransport::DEFAULT_PAYLOAD, 1316);
     }
 
-    /// `cancel_handle()` returns Some when a Socket is held; calling
-    /// cancel() flips the inner socket to None on the next send_bytes
-    /// (which now returns Closed because we proactively dropped it).
+    /// `cancel_handle()` always returns Some (the handle is captured at
+    /// construction); calling cancel() retires the inner socket slot, and
+    /// every later op reports ExplicitClose off the latch.
     #[test]
     #[ignore = "needs live SRT socket; covered by tests/cancellation_loopback.rs"]
     fn cancel_handle_some_when_alive() {}
