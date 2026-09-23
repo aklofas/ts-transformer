@@ -66,6 +66,10 @@ impl RvtPoiType {
     /// exhaustively across the crate boundary — `#[non_exhaustive]`).
     /// Completeness is pinned by the wildcard-free `match` in this
     /// module's `variant_inventory` tests.
+    ///
+    /// The `Other` payload here is an ARBITRARY representative, chosen only
+    /// to be outside the mapped range so it round-trips; it carries no
+    /// meaning and callers must not treat it as a sentinel value.
     pub const ALL: &'static [Self] = &[
         Self::Friendly,
         Self::Hostile,
@@ -104,6 +108,10 @@ impl RvtAoiType {
     /// exhaustively across the crate boundary — `#[non_exhaustive]`).
     /// Completeness is pinned by the wildcard-free `match` in this
     /// module's `variant_inventory` tests.
+    ///
+    /// The `Other` payload here is an ARBITRARY representative, chosen only
+    /// to be outside the mapped range so it round-trips; it carries no
+    /// meaning and callers must not treat it as a sentinel value.
     pub const ALL: &'static [Self] = &[
         Self::Friendly,
         Self::Hostile,
