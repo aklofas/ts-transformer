@@ -930,14 +930,14 @@ tcp_cells() {
   local port
 
   # ffmpeg listens (`?listen=1`); we connect as the caller.
-  port=$(free_port)
+  port=$(free_port tcp)
   run_send_peer_recv "tcp/us-to-ffmpeg" ffmpeg remux \
     "tcp://127.0.0.1:$port" "$WORK/tcp_us-to-ffmpeg.ts" -- \
     ffmpeg -y -loglevel warning -i "tcp://0.0.0.0:$port?listen=1" \
     -map 0 -c copy -copy_unknown -f mpegts "$WORK/tcp_us-to-ffmpeg.ts"
 
   # We listen; ffmpeg connects as a plain (non-listen) caller.
-  port=$(free_port)
+  port=$(free_port tcp)
   run_peer_send_recv "tcp/ffmpeg-to-us" ffmpeg remux \
     "tcp://0.0.0.0:$port?listen=1" -- \
     ffmpeg -y -re -loglevel warning -i "$GEN_FILE" -c copy -copy_unknown -f mpegts \
@@ -947,13 +947,13 @@ tcp_cells() {
 hls_cells() {
   local port
 
-  port=$(free_port)
+  port=$(free_port tcp)
   run_serve_peer_pull "hls/ffmpeg-pull" ffmpeg remux \
     "hls://127.0.0.1:$port" "$WORK/hls_ffmpeg-pull.ts" -- \
     ffmpeg -y -loglevel warning -i "http://127.0.0.1:$port/playlist.m3u8" \
     -map 0 -c copy -copy_unknown -f mpegts "$WORK/hls_ffmpeg-pull.ts"
 
-  port=$(free_port)
+  port=$(free_port tcp)
   run_serve_peer_pull "hls/tsp-pull" tsp remux \
     "hls://127.0.0.1:$port" "$WORK/hls_tsp-pull.ts" -- \
     tsp -I hls "http://127.0.0.1:$port/playlist.m3u8" -O file "$WORK/hls_tsp-pull.ts"
@@ -962,14 +962,14 @@ hls_cells() {
 rtsp_cells() {
   local port
 
-  port=$(free_port)
+  port=$(free_port tcp)
   run_serve_peer_pull "rtsp-serve/ffmpeg-pull" ffmpeg remux \
     "rtsp://127.0.0.1:$port/mount" "$WORK/rtsp-serve_ffmpeg-pull.ts" -- \
     ffmpeg -y -loglevel warning -rtsp_transport tcp \
     -i "rtsp://127.0.0.1:$port/mount" \
     -map 0 -c copy -copy_unknown -f mpegts "$WORK/rtsp-serve_ffmpeg-pull.ts"
 
-  port=$(free_port)
+  port=$(free_port tcp)
   run_serve_peer_probe "rtsp-serve/vlc-probe" cvlc \
     "rtsp://127.0.0.1:$port/mount" -- \
     cvlc --intf dummy --play-and-exit --no-audio \
@@ -990,7 +990,7 @@ rtsp_cells() {
       "$missing not installed on this box"
     return 0
   fi
-  port=$(free_port)
+  port=$(free_port tcp)
   local log="$LOGS_DIR/$(slug "rtsp-consume/vlc-serve-ffmpeg-pull").log"
   : >"$log"
   local budget

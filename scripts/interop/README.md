@@ -1204,7 +1204,8 @@ profile added to `crates/tst-interop/src/profiles.rs`'s registry needs no
 new plumbing here either, just `lib.sh`'s `ALL_PROFILE_NAMES` updated (and
 `expected_stream_count` if the new profile's program/audio shape isn't
 already covered by that function's formula). `lib.sh` holds the
-shape-independent primitives (`have`, `free_port`, `cell_timeout`,
+shape-independent primitives (`have`, `free_port` — pass `tcp` for a cell
+that binds a TCP listener, see its doc comment —, `cell_timeout`,
 `emit_pass`/`emit_fail`/`emit_skipped`, `metrics_only`, plus the
 format-axis's `expected_stream_count`/`tsanalyze_ts_line_counters_zero`/
 `tsp_analyze_counters_zero`/`DECODE_PAYLOAD_NOISE` family — see their own

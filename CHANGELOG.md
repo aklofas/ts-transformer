@@ -1298,6 +1298,20 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Testing — interop harness (WP-7a, WP-7b)
 
+- **`free_port` probes the protocol the cell actually binds.** The shell
+  orchestrator's allocator (`scripts/interop/lib.sh`) asked the kernel for a
+  free **UDP** port and handed it to cells that bind **TCP** — rtsp-serve,
+  tcp and hls. The kernel tracks the two namespaces separately, so a free UDP
+  port is no evidence the TCP port is free; this is what made
+  `rtsp-serve/ffmpeg-pull` fail with `RtspServer::start: bind address in use`
+  (census 157/92/1/64/0), the second sighting of the port-bind race first
+  seen 2026-09-18. `free_port` now takes `tcp`/`udp` (default `udp`, unknown
+  values rejected) and the seven TCP-binding call sites pass `tcp`;
+  `crates/tst-interop/tests/serve.rs` already drew this distinction with its
+  own `free_tcp_port()`. No retry loop around the bind — that would mask
+  genuine failures, and the residual same-protocol TOCTOU is the accepted
+  class.
+
 - **`wire_vs_demux_<pid>` oracle** (`tst-interop verify`/`recv`): per media
   PID, the demuxer's `Sample`/`Metadata` count is held to the raw reader's
   independent PES-start count (`rawts::WireSummary::pes_starts_per_pid`,
