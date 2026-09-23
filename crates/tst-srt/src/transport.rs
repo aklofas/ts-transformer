@@ -70,7 +70,18 @@ pub struct SrtTransport {
     /// and after `close()` has taken the socket. `Socket::close` fires
     /// this same handle, so it reads cancelled once the transport is
     /// closed by either path.
+    ///
+    /// Read after every libsrt failure so a cancel from another thread is
+    /// reported as [`TransportError::ExplicitClose`] rather than the wire
+    /// error `srt_close` provokes, and by `is_alive` so a fired handle
+    /// reads dead at once.
     cancel: tst_core::SrtCancelHandle,
+    /// Set by this transport's own `close()`, BEFORE the socket is
+    /// dropped. `Socket::close` fires `cancel` too, so the latch alone
+    /// cannot tell "the caller closed this transport" from "another
+    /// thread cancelled it"; this flag is what makes a post-`close()`
+    /// operation report `Closed` and a post-cancel one `ExplicitClose`.
+    closed: bool,
 }
 
 impl SrtTransport {
@@ -105,6 +116,7 @@ impl SrtTransport {
             socket: Some(socket),
             max_payload,
             cancel,
+            closed: false,
         }
     }
 
@@ -160,6 +172,39 @@ impl SrtTransport {
             .ok_or(crate::error::IoError::SocketClosed)?;
         socket.stats()
     }
+
+    /// Post-error check shared by `send_bytes` / `recv_bytes` (normative
+    /// table in [`tst_core::transport`]: "cancel during a parked op →
+    /// `ExplicitClose`"). Runs only AFTER libsrt reported a failure, so a
+    /// cancel that lands after a successful op never turns that success
+    /// into an error — the NEXT op reports it.
+    ///
+    /// A genuine wire break that raced the cancel is reported as the
+    /// cancel (spec §11: the caller asked for the close, and the managed
+    /// decorator treats both as terminal).
+    fn cancelled_or(&mut self, e: TransportError) -> TransportError {
+        if self.cancel.is_cancelled() {
+            self.socket = None;
+            TransportError::ExplicitClose
+        } else {
+            e
+        }
+    }
+
+    /// Pre-op slot check. Once the socket is gone, EVERY later operation
+    /// keeps reporting the terminal reason that took it: `ExplicitClose`
+    /// after a cancel from another thread, `Closed` after the transport's
+    /// own `close()` (which fires the same latch — `closed` disambiguates).
+    /// Without this the second op after a cancel would report `Closed`,
+    /// contradicting the normative table and the TCP mechanism.
+    fn slot(&mut self) -> Result<&mut Socket, TransportError> {
+        match self.socket.as_mut() {
+            Some(s) => Ok(s),
+            None if self.closed => Err(TransportError::Closed),
+            None if self.cancel.is_cancelled() => Err(TransportError::ExplicitClose),
+            None => Err(TransportError::Closed),
+        }
+    }
 }
 
 impl Transport for SrtTransport {
@@ -170,8 +215,8 @@ impl Transport for SrtTransport {
                 max: self.max_payload,
             });
         }
-        let socket = self.socket.as_mut().ok_or(TransportError::Closed)?;
-        match socket.send(msg) {
+        let socket = self.slot()?;
+        let result = match socket.send(msg) {
             Ok(_) => Ok(()),
             Err(SendError::TimedOut) => Err(TransportError::Backpressure {
                 msg: "send timed out".into(),
@@ -230,7 +275,8 @@ impl Transport for SrtTransport {
                     })
                 }
             }
-        }
+        };
+        result.map_err(|e| self.cancelled_or(e))
     }
 
     fn max_payload(&self) -> usize {
@@ -238,10 +284,14 @@ impl Transport for SrtTransport {
     }
 
     fn is_alive(&self) -> bool {
-        self.socket.is_some()
+        self.socket.is_some() && !self.cancel.is_cancelled()
     }
 
     fn close(&mut self) {
+        // Set BEFORE the socket goes: `Socket::close` fires the same
+        // cancel handle, so without this flag every later op would read
+        // the latch and report `ExplicitClose` for our own close.
+        self.closed = true;
         if let Some(socket) = self.socket.take() {
             // Socket::close consumes self; ignore the error — we're closing.
             let _ = socket.close();
@@ -251,7 +301,7 @@ impl Transport for SrtTransport {
     fn cancel_handle(&self) -> Option<Arc<dyn TransportCancel + Send + Sync>> {
         self.socket
             .as_ref()
-            .map(|s| Arc::new(s.cancel_handle()) as Arc<dyn TransportCancel + Send + Sync>)
+            .map(|_| Arc::new(self.cancel.clone()) as Arc<dyn TransportCancel + Send + Sync>)
     }
 
     fn socket_stats(&self) -> Option<SocketStats> {
@@ -272,19 +322,19 @@ impl tst_core::transport::RecvTransport for SrtTransport {
         if buf.is_empty() {
             return Ok(0);
         }
-        let socket = self.socket.as_mut().ok_or(TransportError::Closed)?;
-        match socket.recv(buf) {
+        let socket = self.slot()?;
+        let result = match socket.recv(buf) {
             Ok(n) => Ok(n),
             Err(RecvError::TimedOut) => Err(TransportError::Backpressure {
                 msg: "recv timed out".into(),
                 errno_code: Some(SrtErrno::Async.raw_code()),
             }),
             Err(RecvError::ConnectionBroken) => {
-                // Peer hung up or mid-stream abort. Surface as Broken (not
-                // Closed) so a managed receive decorator can distinguish a
-                // self-initiated close from a peer-initiated break and drive
-                // reconnect. Matches the send-side mapping for the same
-                // RecvError-equivalent variant.
+                // Peer hung up or mid-stream abort. Broken drives the
+                // managed decorator's reconnect; a caller-initiated close
+                // never reaches this arm as Broken — `cancelled_or` below
+                // turns any post-cancel failure into ExplicitClose, which
+                // the decorator already treats as terminal.
                 self.socket = None;
                 Err(TransportError::Broken {
                     msg: "connection broken".into(),
@@ -325,7 +375,8 @@ impl tst_core::transport::RecvTransport for SrtTransport {
                     cause: BrokenCause::Unspecified,
                 })
             }
-        }
+        };
+        result.map_err(|e| self.cancelled_or(e))
     }
 
     fn max_payload(&self) -> usize {
@@ -342,7 +393,7 @@ impl tst_core::transport::RecvTransport for SrtTransport {
     }
 
     fn is_alive(&self) -> bool {
-        self.socket.is_some()
+        <Self as Transport>::is_alive(self)
     }
 
     fn close(&mut self) {

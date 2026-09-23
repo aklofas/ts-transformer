@@ -17,8 +17,10 @@
 //! another thread by closing the underlying SRT handle. Per libsrt's
 //! semantics, closing a socket that another thread is parked on causes
 //! the parked syscall to return with an error (`SRT_ECONNLOST` or
-//! similar) — which surfaces through our error mapping as `Broken` /
-//! `ConnectionBroken`.
+//! similar) — `Socket::send` / `Socket::recv` report `ConnectionBroken`,
+//! and `SrtTransport` turns that into `TransportError::ExplicitClose` when
+//! its own handle has fired (the normative table in
+//! [`crate::transport`]).
 //!
 //! [`CancelSlot`] (std-only) generalizes that to a *replaceable* target:
 //! a worker publishes the handle that can wake its current blocking call

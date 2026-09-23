@@ -17,6 +17,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{KlvStreamType, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
+use tst_core::transport::{RecvTransport, Transport};
 use tst_pipeline::{MuxSender, MuxSenderError, MuxSenderErrorSource, TransportError};
 use tst_srt::SrtTransport;
 use tst_srt::{ListenerBuilder, SocketBuilder};
@@ -65,7 +66,7 @@ fn close_unblocks_libsrt_parked_send() {
     let s_send = s.clone();
 
     // MuxSender thread: pump 64-byte NAL payloads until the call returns
-    // (with Ok, or with our Broken-via-cancel error). 1000 NALs is
+    // (with Ok, or with our ExplicitClose-via-cancel error). 1000 NALs is
     // ~64 KB, far more than the 8-packet SNDBUF can absorb.
     let send_thread = std::thread::spawn(move || -> Result<u32, MuxSenderError> {
         // 4-byte Annex B start code (0x00000001) + 60 bytes payload.
@@ -93,8 +94,10 @@ fn close_unblocks_libsrt_parked_send() {
         "close() took {close_elapsed:?} — should be near-instant via cancel"
     );
 
-    // Parked sender should return promptly with a Transport Broken
-    // error (libsrt's srt_sendmsg2 returns SRT_ECONNLOST after close).
+    // Parked sender should return promptly with `ExplicitClose`: the
+    // close fires the cancel handle first, libsrt's srt_sendmsg2 returns
+    // SRT_ECONNLOST, and (WP-C2) `SrtTransport` reads the fired latch and
+    // reports the cancel rather than the wire error it provoked.
     let join_start = Instant::now();
     let result = send_thread.join().expect("send thread panic");
     let join_elapsed = join_start.elapsed();
@@ -103,17 +106,77 @@ fn close_unblocks_libsrt_parked_send() {
         "send thread didn't unpark within 2s of cancel ({join_elapsed:?})"
     );
     match result {
-        // Either the thread broke partway (most common) or it pumped
-        // every payload before close (unlikely with SNDBUF=8). Both
-        // outcomes prove cancel works; we only fail on stuck.
+        // Three legal outcomes: the parked send woke on the cancel
+        // (`ExplicitClose`, the usual one), the sender was between calls
+        // when `close()` won the send lock and closed the transport
+        // (`Closed`), or it pumped every payload before close (unlikely
+        // with SNDBUF=8). All three prove cancel works; we fail on stuck —
+        // and on `Broken`, which WP-C2 retired for this path.
         Ok(_) => {}
         Err(ref err)
             if matches!(
                 err.source,
                 MuxSenderErrorSource::Transport(
-                    TransportError::Broken { .. } | TransportError::Closed
+                    TransportError::ExplicitClose | TransportError::Closed
                 )
             ) => {}
         Err(other) => panic!("unexpected sender error after cancel: {other:?}"),
     }
+}
+
+/// Arc 2 WP-C2: after a cancel, EVERY later op reports `ExplicitClose` —
+/// not `ExplicitClose` once and `Closed` afterwards; after the transport's
+/// OWN `close()` the answer is `Closed` even though `Socket::close` fires
+/// the same libsrt cancel latch.
+#[test]
+fn cancelled_srt_transport_reports_explicit_close_on_every_later_op_and_closed_after_own_close() {
+    require_loopback!();
+    let lb = crate::common::Loopback::bind();
+    let port = lb.port;
+    // The accepted socket is returned so the main thread can hold the
+    // connection open for the whole test — a peer that went away would
+    // give `Broken` for a reason that has nothing to do with the cancel.
+    let accept = lb.spawn_accept(|sock| sock);
+    accept.wait_ready();
+
+    let socket = SocketBuilder::new()
+        .recv_timeout(Duration::from_millis(200))
+        .send_timeout(Duration::from_secs(5))
+        .connect(format!("127.0.0.1:{port}"))
+        .expect("connect");
+    let _peer = accept.join();
+
+    let mut t = SrtTransport::new(socket);
+    let h = Transport::cancel_handle(&t).expect("a live transport has a handle");
+    h.cancel();
+
+    let mut buf = vec![0u8; RecvTransport::max_payload(&t)];
+    for i in 0..3 {
+        let r = RecvTransport::recv_bytes(&mut t, &mut buf);
+        assert!(
+            matches!(r, Err(TransportError::ExplicitClose)),
+            "recv #{i} after cancel: {r:?}"
+        );
+    }
+    let r = Transport::send_bytes(&mut t, &[0x47u8; 188]);
+    assert!(
+        matches!(r, Err(TransportError::ExplicitClose)),
+        "send after cancel: {r:?}"
+    );
+    assert!(
+        !Transport::is_alive(&t),
+        "a cancelled transport is not alive"
+    );
+
+    Transport::close(&mut t);
+    let r = RecvTransport::recv_bytes(&mut t, &mut buf);
+    assert!(
+        matches!(r, Err(TransportError::Closed)),
+        "own close() wins over the latch: {r:?}"
+    );
+    let r = Transport::send_bytes(&mut t, &[0x47u8; 188]);
+    assert!(
+        matches!(r, Err(TransportError::Closed)),
+        "own close() wins over the latch on send: {r:?}"
+    );
 }

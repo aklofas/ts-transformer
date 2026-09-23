@@ -178,7 +178,6 @@ fn srt_send_contract_all_but_the_cancel_rows() {
 }
 
 #[test]
-#[ignore = "WP-C2 (Task C2.3): both cancel rows (during-park + before-op) return Broken on main — the handle's srt_close makes the parked op fail ConnectionBroken, which srt/transport.rs reports as Broken. Un-ignore in PR 8."]
 fn srt_send_cancel_rows_are_explicit_close() {
     require_loopback!();
     let pair = Pair::bind();
@@ -206,7 +205,6 @@ fn srt_recv_contract_all_but_the_cancel_rows() {
 }
 
 #[test]
-#[ignore = "WP-C2 (Task C2.3): both cancel rows (during-park + before-op) return Broken on main — the parked srt_recv fails ConnectionBroken after the handle's srt_close, and srt/transport.rs's 'Peer hung up' arm reports Broken. Un-ignore in PR 8."]
 fn srt_recv_cancel_rows_are_explicit_close() {
     require_loopback!();
     let pair = Pair::bind();
