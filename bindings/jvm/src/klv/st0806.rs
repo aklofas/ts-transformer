@@ -115,56 +115,28 @@ fn is_st0806_poi_aoi_typed_tag(tag: u32) -> bool {
     matches!(tag, 1..=10)
 }
 
-/// Map a Rust `RvtPoiType` to its ST 0806.4 Table 8-2 Tag 5 wire codepoint.
-/// Mirrors tst-py's `convert_rvt_poi_type` match arms (NOT the Rust-private
-/// `to_wire` helper, which is `pub(super)` and unreachable from this crate).
+/// Map a Rust `RvtPoiType` to its ST 0806.4 Table 8-2 Tag 5 wire codepoint —
+/// tst-core's own table (`RvtPoiType::to_wire`, public since Arc 2 R2). No
+/// local copy, so no `#[non_exhaustive]` wildcard and nothing to drift.
 fn poi_type_code(v: RustRvtPoiType) -> u8 {
-    match v {
-        RustRvtPoiType::Friendly => 1,
-        RustRvtPoiType::Hostile => 2,
-        RustRvtPoiType::Target => 3,
-        RustRvtPoiType::Unknown => 4,
-        RustRvtPoiType::Other(b) => b,
-        // #[non_exhaustive] in tst-core: `Other(u8)` already covers every
-        // remaining byte value, so this arm is unreachable in practice.
-        _ => unreachable!("RvtPoiType variant outside {{Friendly,Hostile,Target,Unknown,Other}}"),
-    }
+    v.to_wire()
 }
 
-/// Inverse of `poi_type_code`. Mirrors tst-py's `rvt_poi_type_from_wire`.
+/// Inverse of `poi_type_code`.
 fn poi_type_from_code(b: u8) -> RustRvtPoiType {
-    match b {
-        1 => RustRvtPoiType::Friendly,
-        2 => RustRvtPoiType::Hostile,
-        3 => RustRvtPoiType::Target,
-        4 => RustRvtPoiType::Unknown,
-        other => RustRvtPoiType::Other(other),
-    }
+    RustRvtPoiType::from_wire(b)
 }
 
-/// Map a Rust `RvtAoiType` to its ST 0806.4 Table 8-3 Tag 6 wire codepoint.
-/// Code 3 is "Reserved" here vs. "Target" for `RvtPoiType`. Mirrors tst-py's
-/// `convert_rvt_aoi_type`.
+/// Map a Rust `RvtAoiType` to its ST 0806.4 Table 8-3 Tag 6 wire codepoint —
+/// tst-core's own table (`RvtAoiType::to_wire`, public since Arc 2 R2). Code 3
+/// is "Reserved" here vs. "Target" for `RvtPoiType`.
 fn aoi_type_code(v: RustRvtAoiType) -> u8 {
-    match v {
-        RustRvtAoiType::Friendly => 1,
-        RustRvtAoiType::Hostile => 2,
-        RustRvtAoiType::Reserved => 3,
-        RustRvtAoiType::Unknown => 4,
-        RustRvtAoiType::Other(b) => b,
-        _ => unreachable!("RvtAoiType variant outside {{Friendly,Hostile,Reserved,Unknown,Other}}"),
-    }
+    v.to_wire()
 }
 
-/// Inverse of `aoi_type_code`. Mirrors tst-py's `rvt_aoi_type_from_wire`.
+/// Inverse of `aoi_type_code`.
 fn aoi_type_from_code(b: u8) -> RustRvtAoiType {
-    match b {
-        1 => RustRvtAoiType::Friendly,
-        2 => RustRvtAoiType::Hostile,
-        3 => RustRvtAoiType::Reserved,
-        4 => RustRvtAoiType::Unknown,
-        other => RustRvtAoiType::Other(other),
-    }
+    RustRvtAoiType::from_wire(b)
 }
 
 // -----------------------------------------------------------------------
@@ -1031,4 +1003,33 @@ fn read_rvt_ls(env: &mut JNIEnv<'_>, rec: &JObject<'_>) -> jni::errors::Result<R
 
     // field_errors is decoder-only diagnostic; not round-tripped.
     Ok(r)
+}
+
+#[cfg(test)]
+mod wire_inventory {
+    //! RVT POI/AOI type codes cross the JNI boundary as tst-core's own wire
+    //! codepoints, for every variant in `ALL` (Arc 2 R2). See the twin module
+    //! in `st0601.rs`.
+    use tst_core::klv::st0806::{RvtAoiType, RvtPoiType};
+
+    #[test]
+    fn every_rvt_coded_enum_variant_round_trips_through_the_jni_codepoint() {
+        for v in RvtPoiType::ALL {
+            assert_eq!(super::poi_type_from_code(super::poi_type_code(*v)), *v);
+        }
+        for v in RvtAoiType::ALL {
+            assert_eq!(super::aoi_type_from_code(super::aoi_type_code(*v)), *v);
+        }
+    }
+
+    /// The JNI codepoint IS tst-core's wire codepoint (see the st0601 twin).
+    #[test]
+    fn the_jni_codepoint_is_tst_cores_wire_codepoint() {
+        for v in RvtPoiType::ALL {
+            assert_eq!(super::poi_type_code(*v), v.to_wire());
+        }
+        for v in RvtAoiType::ALL {
+            assert_eq!(super::aoi_type_code(*v), v.to_wire());
+        }
+    }
 }

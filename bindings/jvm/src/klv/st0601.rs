@@ -143,96 +143,40 @@ fn is_st0601_typed_tag(tag: u32) -> bool {
 // ST 0601 — Tags 34/63/77 coded enums (WP-A Table A3)
 // ---------------------------------------------------------------------------
 //
-// `IcingDetected::to_wire`/`from_wire` (and the SensorFovName /
-// OperationalMode equivalents) are `pub(crate)`-scoped to tst-core, so the
-// tiny wire-code tables are duplicated locally here — same rationale as the
-// `is_st0601_typed_tag` predicate above (narrow inventories kept local rather
-// than threading internal Rust APIs out of tst-core). Mirrors tst-py's
-// `convert_icing_detected`/`icing_detected_from_wire` (and the SensorFovName /
-// OperationalMode equivalents), adapted to the JNI raw-codepoint-`Integer`
-// crossing (no Python-enum-instance step).
+// These helpers name the JNI crossing (raw codepoint `Integer`, no
+// Python-enum-instance step) and delegate to tst-core's own wire tables —
+// `to_wire`/`from_wire`, public since Arc 2 R2. No local copy, so no
+// `#[non_exhaustive]` wildcard and nothing to drift; tst-core's
+// `variant_inventory` tests pin the tables themselves.
 
 /// Extract the ST 0601.19 §8.34 wire codepoint from an `IcingDetected`.
 fn icing_detected_to_code(v: IcingDetected) -> u8 {
-    match v {
-        IcingDetected::DetectorOff => 0,
-        IcingDetected::NoIcingDetected => 1,
-        IcingDetected::IcingDetected => 2,
-        IcingDetected::Other(b) => b,
-        // `#[non_exhaustive]` in tst-core forces this wildcard even though
-        // every current variant is matched above; unreachable in practice.
-        _ => unreachable!("tst-core added an IcingDetected variant not yet mirrored in tst-jni"),
-    }
+    v.to_wire()
 }
 
 /// Inverse of [`icing_detected_to_code`].
 fn icing_detected_from_code(b: u8) -> IcingDetected {
-    match b {
-        0 => IcingDetected::DetectorOff,
-        1 => IcingDetected::NoIcingDetected,
-        2 => IcingDetected::IcingDetected,
-        other => IcingDetected::Other(other),
-    }
+    IcingDetected::from_wire(b)
 }
 
 /// Extract the ST 0601.19 §8.63 wire codepoint from a `SensorFovName`.
 fn sensor_fov_name_to_code(v: SensorFovName) -> u8 {
-    match v {
-        SensorFovName::Ultranarrow => 0,
-        SensorFovName::Narrow => 1,
-        SensorFovName::Medium => 2,
-        SensorFovName::Wide => 3,
-        SensorFovName::Ultrawide => 4,
-        SensorFovName::NarrowMedium => 5,
-        SensorFovName::TwoXUltranarrow => 6,
-        SensorFovName::FourXUltranarrow => 7,
-        SensorFovName::ContinuousZoom => 8,
-        SensorFovName::Other(b) => b,
-        _ => unreachable!("tst-core added a SensorFovName variant not yet mirrored in tst-jni"),
-    }
+    v.to_wire()
 }
 
 /// Inverse of [`sensor_fov_name_to_code`].
 fn sensor_fov_name_from_code(b: u8) -> SensorFovName {
-    match b {
-        0 => SensorFovName::Ultranarrow,
-        1 => SensorFovName::Narrow,
-        2 => SensorFovName::Medium,
-        3 => SensorFovName::Wide,
-        4 => SensorFovName::Ultrawide,
-        5 => SensorFovName::NarrowMedium,
-        6 => SensorFovName::TwoXUltranarrow,
-        7 => SensorFovName::FourXUltranarrow,
-        8 => SensorFovName::ContinuousZoom,
-        other => SensorFovName::Other(other),
-    }
+    SensorFovName::from_wire(b)
 }
 
 /// Extract the ST 0601.19 §8.77 wire codepoint from an `OperationalMode`.
 fn operational_mode_to_code(v: OperationalMode) -> u8 {
-    match v {
-        OperationalMode::OtherMode => 0,
-        OperationalMode::Operational => 1,
-        OperationalMode::Training => 2,
-        OperationalMode::Exercise => 3,
-        OperationalMode::Maintenance => 4,
-        OperationalMode::Test => 5,
-        OperationalMode::Other(b) => b,
-        _ => unreachable!("tst-core added an OperationalMode variant not yet mirrored in tst-jni"),
-    }
+    v.to_wire()
 }
 
 /// Inverse of [`operational_mode_to_code`].
 fn operational_mode_from_code(b: u8) -> OperationalMode {
-    match b {
-        0 => OperationalMode::OtherMode,
-        1 => OperationalMode::Operational,
-        2 => OperationalMode::Training,
-        3 => OperationalMode::Exercise,
-        4 => OperationalMode::Maintenance,
-        5 => OperationalMode::Test,
-        other => OperationalMode::Other(other),
-    }
+    OperationalMode::from_wire(b)
 }
 
 // ---------------------------------------------------------------------------
@@ -241,76 +185,22 @@ fn operational_mode_from_code(b: u8) -> OperationalMode {
 
 /// Extract the ST 0601.19 §8.125 wire codepoint from a `PlatformStatus`.
 fn platform_status_to_code(v: PlatformStatus) -> u8 {
-    match v {
-        PlatformStatus::Active => 0,
-        PlatformStatus::PreFlight => 1,
-        PlatformStatus::PreFlightTaxiing => 2,
-        PlatformStatus::RunUp => 3,
-        PlatformStatus::TakeOff => 4,
-        PlatformStatus::Ingress => 5,
-        PlatformStatus::ManualOperation => 6,
-        PlatformStatus::AutomatedOrbit => 7,
-        PlatformStatus::Transitioning => 8,
-        PlatformStatus::Egress => 9,
-        PlatformStatus::Landing => 10,
-        PlatformStatus::LandedTaxiing => 11,
-        PlatformStatus::LandedParked => 12,
-        PlatformStatus::Other(b) => b,
-        // `#[non_exhaustive]` in tst-core forces this wildcard even though
-        // every current variant is matched above; unreachable in practice.
-        _ => unreachable!("tst-core added a PlatformStatus variant not yet mirrored in tst-jni"),
-    }
+    v.to_wire()
 }
 
 /// Inverse of [`platform_status_to_code`].
 fn platform_status_from_code(b: u8) -> PlatformStatus {
-    match b {
-        0 => PlatformStatus::Active,
-        1 => PlatformStatus::PreFlight,
-        2 => PlatformStatus::PreFlightTaxiing,
-        3 => PlatformStatus::RunUp,
-        4 => PlatformStatus::TakeOff,
-        5 => PlatformStatus::Ingress,
-        6 => PlatformStatus::ManualOperation,
-        7 => PlatformStatus::AutomatedOrbit,
-        8 => PlatformStatus::Transitioning,
-        9 => PlatformStatus::Egress,
-        10 => PlatformStatus::Landing,
-        11 => PlatformStatus::LandedTaxiing,
-        12 => PlatformStatus::LandedParked,
-        other => PlatformStatus::Other(other),
-    }
+    PlatformStatus::from_wire(b)
 }
 
 /// Extract the ST 0601.19 §8.126 wire codepoint from a `SensorControlMode`.
 fn sensor_control_mode_to_code(v: SensorControlMode) -> u8 {
-    match v {
-        SensorControlMode::Off => 0,
-        SensorControlMode::HomePosition => 1,
-        SensorControlMode::Uncontrolled => 2,
-        SensorControlMode::ManualControl => 3,
-        SensorControlMode::Calibrating => 4,
-        SensorControlMode::AutoHoldingPosition => 5,
-        SensorControlMode::AutoTracking => 6,
-        SensorControlMode::Other(b) => b,
-        _ => {
-            unreachable!("tst-core added a SensorControlMode variant not yet mirrored in tst-jni")
-        }
-    }
+    v.to_wire()
 }
 
 /// Inverse of [`sensor_control_mode_to_code`].
 fn sensor_control_mode_from_code(b: u8) -> SensorControlMode {
-    match b {
-        0 => SensorControlMode::Off,
-        1 => SensorControlMode::HomePosition,
-        2 => SensorControlMode::Uncontrolled,
-        3 => SensorControlMode::ManualControl,
-        4 => SensorControlMode::Calibrating,
-        5 => SensorControlMode::AutoHoldingPosition,
-        6 => SensorControlMode::AutoTracking,
-        other => SensorControlMode::Other(other),
-    }
+    SensorControlMode::from_wire(b)
 }
 
 // ---------------------------------------------------------------------------
@@ -325,8 +215,9 @@ fn sensor_control_mode_from_code(b: u8) -> SensorControlMode {
 
 /// Translate a Rust `ImapbSpecial` to its `(code, payload)` wire-string
 /// pair. Throws `IllegalArgumentException` (rather than silently
-/// mislabeling) on a future non-exhaustive variant — same stance as
-/// `platform_status_to_code`/`sensor_control_mode_to_code` above.
+/// mislabeling) on a future non-exhaustive variant: unlike the coded enums
+/// above, `ImapbSpecial` has no tst-core wire-code helper to delegate to, so
+/// this table is genuinely local and must fail loudly when it goes stale.
 fn imapb_special_to_code(
     env: &mut JNIEnv,
     s: ImapbSpecial,
@@ -778,36 +669,17 @@ fn read_airbase_locations(
 
 // -- Item 138: Payload List ----------------------------------------------------
 //
-// `PayloadType::to_wire`/`from_wire` are `pub(crate)`-scoped to tst-core (same
-// rationale as the WP-A coded-enum comment above `icing_detected_to_code`) —
-// the tiny wire-code table is duplicated locally here. Unlike `IcingDetected`'s
-// narrow wire byte, `PayloadType::Other` carries the type code's full BER-OID
-// `u64` range, so the Java crossing (`PayloadRecord.payloadTypeCode`) is a
-// `long`, not an `int`. Mirrors tst-py's `convert_payload_type`/
-// `payload_type_from_wire`.
+// Delegates to tst-core's `PayloadType::to_wire`/`from_wire` (public since
+// Arc 2 R2). Unlike `IcingDetected`'s narrow wire byte, `PayloadType::Other`
+// carries the type code's full BER-OID `u64` range, so the Java crossing
+// (`PayloadRecord.payloadTypeCode`) is a `long`, not an `int`.
 
 fn payload_type_to_code(v: PayloadType) -> u64 {
-    match v {
-        PayloadType::ElectroOptical => 0,
-        PayloadType::Lidar => 1,
-        PayloadType::Radar => 2,
-        PayloadType::Sigint => 3,
-        PayloadType::Sar => 4,
-        PayloadType::Other(code) => code,
-        // `#[non_exhaustive]` in tst-core: no current variant reaches here.
-        _ => unreachable!("tst-core added a PayloadType variant not yet mirrored in tst-jni"),
-    }
+    v.to_wire()
 }
 
 fn payload_type_from_code(code: u64) -> PayloadType {
-    match code {
-        0 => PayloadType::ElectroOptical,
-        1 => PayloadType::Lidar,
-        2 => PayloadType::Radar,
-        3 => PayloadType::Sigint,
-        4 => PayloadType::Sar,
-        other => PayloadType::Other(other),
-    }
+    PayloadType::from_wire(code)
 }
 
 fn build_payload_record(env: &mut JNIEnv<'_>, r: &PayloadRecord) -> jni::errors::Result<jobject> {
@@ -3530,4 +3402,84 @@ pub extern "system" fn Java_org_tstrans_klv_Klv_encodeSdccFlpMode2Native<'local>
             }
         }
     })
+}
+
+#[cfg(test)]
+mod wire_inventory {
+    //! Every tst-core wire-code variant crosses the JNI boundary as the
+    //! codepoint tst-core itself defines, for every variant in `ALL`
+    //! (Arc 2 R2 — replaces the hand-copied tables and their unreachable
+    //! wildcard arms). The compile-time pin is tst-core's `variant_inventory`;
+    //! this is
+    //! the runtime half, which is all a binding crate can have (matching a
+    //! foreign `#[non_exhaustive]` enum without a wildcard is E0004).
+    use tst_core::klv::st0601::{
+        IcingDetected, OperationalMode, PayloadType, PlatformStatus, SensorControlMode,
+        SensorFovName,
+    };
+
+    #[test]
+    fn every_st0601_coded_enum_variant_round_trips_through_the_jni_codepoint() {
+        for v in IcingDetected::ALL {
+            assert_eq!(
+                super::icing_detected_from_code(super::icing_detected_to_code(*v)),
+                *v
+            );
+        }
+        for v in SensorFovName::ALL {
+            assert_eq!(
+                super::sensor_fov_name_from_code(super::sensor_fov_name_to_code(*v)),
+                *v
+            );
+        }
+        for v in OperationalMode::ALL {
+            assert_eq!(
+                super::operational_mode_from_code(super::operational_mode_to_code(*v)),
+                *v
+            );
+        }
+        for v in PlatformStatus::ALL {
+            assert_eq!(
+                super::platform_status_from_code(super::platform_status_to_code(*v)),
+                *v
+            );
+        }
+        for v in SensorControlMode::ALL {
+            assert_eq!(
+                super::sensor_control_mode_from_code(super::sensor_control_mode_to_code(*v)),
+                *v
+            );
+        }
+        for v in PayloadType::ALL {
+            assert_eq!(
+                super::payload_type_from_code(super::payload_type_to_code(*v)),
+                *v
+            );
+        }
+    }
+
+    /// The JNI codepoint IS tst-core's wire codepoint — not merely a
+    /// self-consistent local table. Without this a pair of mirrored local
+    /// tables could agree with each other and disagree with the wire.
+    #[test]
+    fn the_jni_codepoint_is_tst_cores_wire_codepoint() {
+        for v in IcingDetected::ALL {
+            assert_eq!(super::icing_detected_to_code(*v), v.to_wire());
+        }
+        for v in SensorFovName::ALL {
+            assert_eq!(super::sensor_fov_name_to_code(*v), v.to_wire());
+        }
+        for v in OperationalMode::ALL {
+            assert_eq!(super::operational_mode_to_code(*v), v.to_wire());
+        }
+        for v in PlatformStatus::ALL {
+            assert_eq!(super::platform_status_to_code(*v), v.to_wire());
+        }
+        for v in SensorControlMode::ALL {
+            assert_eq!(super::sensor_control_mode_to_code(*v), v.to_wire());
+        }
+        for v in PayloadType::ALL {
+            assert_eq!(super::payload_type_to_code(*v), v.to_wire());
+        }
+    }
 }
