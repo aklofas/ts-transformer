@@ -142,6 +142,46 @@ pub unsafe extern "C" fn tst_rtp_mux_sender_close(p: *mut TstRtpMuxSender) {
 }
 
 // ---------------------------------------------------------------------------
+// Finish
+// ---------------------------------------------------------------------------
+
+/// Drain every byte the muxer still holds to the transport, report the
+/// first drain error, then close the transport (`MuxSender::finish`).
+///
+/// Returns 0 when everything reached the transport, or the negative
+/// `TST_E_*` code of the first drain failure (the remaining bytes are
+/// abandoned; the sender is closed either way). A second call returns 0.
+/// Unlike `tst_rtp_mux_sender_close`, this does NOT cancel first: a `push_*`
+/// parked on another thread holds the sender and `_finish` waits behind
+/// it — call `tst_rtp_mux_sender_cancel` first if that is not wanted. The
+/// handle must still be freed with `tst_rtp_mux_sender_close`.
+///
+/// Returns `TST_E_INVALID_CONFIG` on a null pointer. Like every entry
+/// point, a call after `tst_rtp_mux_sender_close` has freed the pointer is a
+/// use-after-free, not an error code — `_close` consumes the handle.
+///
+/// # Safety
+///
+/// `p` must be NULL or a valid, not-yet-closed `*mut tst_rtp_mux_sender_t`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tst_rtp_mux_sender_finish(p: *mut TstRtpMuxSender) -> libc::c_int {
+    crate::panic::ffi_catch(TstError::PanicCaught as i32, || {
+        let Some(handle) = (unsafe { p.as_ref() }) else {
+            set_last_error(TstError::InvalidConfig, "null rtp mux sender pointer");
+            return TstError::InvalidConfig as i32;
+        };
+        // `CHandle::with_inner_ref(impl FnOnce(&T) -> i32) -> i32`: the
+        // closure returns the C code and `CHandle` folds `HandleState`
+        // (already-closed / cancelled) into `record_binding_error` itself,
+        // so there is no `Err(state)` arm here.
+        handle.inner.with_inner_ref(|s| match s.finish() {
+            Ok(()) => 0,
+            Err(e) => crate::error::record_shell_error(&e),
+        })
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Cancel
 // ---------------------------------------------------------------------------
 

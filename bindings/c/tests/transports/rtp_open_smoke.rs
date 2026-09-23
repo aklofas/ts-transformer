@@ -28,12 +28,12 @@ use tstrans::rtp::{
     tst_rtp_demux_receiver_get_stream_last_seen_micros, tst_rtp_demux_receiver_get_stream_stats,
     tst_rtp_demux_receiver_next_event, tst_rtp_demux_receiver_open,
     tst_rtp_demux_receiver_reset_stats, tst_rtp_mux_sender_cancel, tst_rtp_mux_sender_close,
-    tst_rtp_mux_sender_get_mux_sender_stats, tst_rtp_mux_sender_get_socket_stats,
-    tst_rtp_mux_sender_get_stream_codec_stats, tst_rtp_mux_sender_open,
-    tst_rtp_mux_sender_push_klv, tst_rtp_mux_sender_push_video, tst_rtp_mux_sender_reset_stats,
-    tst_rtp_receiver_cancel, tst_rtp_receiver_close, tst_rtp_receiver_get_socket_stats,
-    tst_rtp_receiver_get_stats, tst_rtp_receiver_recv_ts, tst_rtp_receiver_reset_stats,
-    tst_rtp_recv_open, tst_rtp_sender_cancel, tst_rtp_sender_close,
+    tst_rtp_mux_sender_finish, tst_rtp_mux_sender_get_mux_sender_stats,
+    tst_rtp_mux_sender_get_socket_stats, tst_rtp_mux_sender_get_stream_codec_stats,
+    tst_rtp_mux_sender_open, tst_rtp_mux_sender_push_klv, tst_rtp_mux_sender_push_video,
+    tst_rtp_mux_sender_reset_stats, tst_rtp_receiver_cancel, tst_rtp_receiver_close,
+    tst_rtp_receiver_get_socket_stats, tst_rtp_receiver_get_stats, tst_rtp_receiver_recv_ts,
+    tst_rtp_receiver_reset_stats, tst_rtp_recv_open, tst_rtp_sender_cancel, tst_rtp_sender_close,
     tst_rtp_sender_get_socket_stats, tst_rtp_sender_get_stats, tst_rtp_sender_open,
     tst_rtp_sender_reset_stats, tst_rtp_sender_send_ts,
 };
@@ -563,4 +563,38 @@ fn null_next_event_returns_invalid_config() {
     let mut ev = TstEvent::default();
     let rc = unsafe { tst_rtp_demux_receiver_next_event(std::ptr::null_mut(), &mut ev) };
     assert_eq!(rc, TstError::InvalidConfig as i32);
+}
+
+// ---------------------------------------------------------------------------
+// `_finish` — Arc 2 R3 (DEBT-14 "ship now" cell), ABI 0.22
+// ---------------------------------------------------------------------------
+
+/// `tst_rtp_mux_sender_finish` drains and closes. RTP rides UDP, so there
+/// is no peer to lose and the drain must report 0 exactly; a second call is
+/// 0; a null pointer is `TST_E_INVALID_CONFIG`; the handle still frees with
+/// `_close`.
+#[test]
+fn rtp_mux_sender_finish_then_close() {
+    let cfg = unsafe { tst_mux_config_new() };
+    let prog = unsafe { tst_mux_config_add_program(cfg, 1, 0x1000) };
+    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264) };
+
+    let url = CString::new(format!("rtp://127.0.0.1:{}", pick_port())).unwrap();
+    let h = unsafe { tst_rtp_mux_sender_open(url.as_ptr(), cfg as *const _) };
+    unsafe { tst_mux_config_free(cfg) };
+    assert!(!h.is_null(), "rtp mux sender open failed");
+
+    let rc = unsafe { tst_rtp_mux_sender_finish(h) };
+    assert_eq!(rc, 0, "finish rc={rc}");
+    assert_eq!(
+        unsafe { tst_rtp_mux_sender_finish(h) },
+        0,
+        "second finish is 0"
+    );
+    assert_eq!(
+        unsafe { tst_rtp_mux_sender_finish(std::ptr::null_mut()) },
+        TstError::InvalidConfig as i32
+    );
+
+    unsafe { tst_rtp_mux_sender_close(h) };
 }

@@ -47,10 +47,11 @@ pub use listener::{
     tst_tcp_listener_bind, tst_tcp_listener_free, tst_tcp_listener_from_url,
 };
 pub use mux_sender::{
-    TstTcpMuxSender, tst_tcp_mux_sender_close, tst_tcp_mux_sender_get_mux_sender_stats,
-    tst_tcp_mux_sender_get_socket_stats, tst_tcp_mux_sender_get_stream_codec_stats,
-    tst_tcp_mux_sender_open, tst_tcp_mux_sender_push_audio, tst_tcp_mux_sender_push_audio_to,
-    tst_tcp_mux_sender_push_klv, tst_tcp_mux_sender_push_klv_to, tst_tcp_mux_sender_push_subtitle,
+    TstTcpMuxSender, tst_tcp_mux_sender_close, tst_tcp_mux_sender_finish,
+    tst_tcp_mux_sender_get_mux_sender_stats, tst_tcp_mux_sender_get_socket_stats,
+    tst_tcp_mux_sender_get_stream_codec_stats, tst_tcp_mux_sender_open,
+    tst_tcp_mux_sender_push_audio, tst_tcp_mux_sender_push_audio_to, tst_tcp_mux_sender_push_klv,
+    tst_tcp_mux_sender_push_klv_to, tst_tcp_mux_sender_push_subtitle,
     tst_tcp_mux_sender_push_subtitle_to, tst_tcp_mux_sender_push_video,
     tst_tcp_mux_sender_push_video_to, tst_tcp_mux_sender_reset_stats,
 };

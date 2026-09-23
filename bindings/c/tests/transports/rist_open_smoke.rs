@@ -29,12 +29,16 @@
 
 use std::ffi::CString;
 
+use tstrans::config::{
+    TstVideoCodec, tst_mux_config_add_program, tst_mux_config_add_video_stream,
+    tst_mux_config_free, tst_mux_config_new,
+};
 use tstrans::error::{TstError, tst_get_last_error};
 use tstrans::event::TstEvent;
 use tstrans::rist::{
     tst_rist_demux_receiver_close, tst_rist_demux_receiver_next_event,
-    tst_rist_demux_receiver_open, tst_rist_receiver_close, tst_rist_recv_open,
-    tst_rist_sender_open,
+    tst_rist_demux_receiver_open, tst_rist_mux_sender_close, tst_rist_mux_sender_finish,
+    tst_rist_mux_sender_open, tst_rist_receiver_close, tst_rist_recv_open, tst_rist_sender_open,
 };
 
 // ---------------------------------------------------------------------------
@@ -193,4 +197,53 @@ fn null_next_event_returns_invalid_config() {
     let mut ev = TstEvent::default();
     let rc = unsafe { tst_rist_demux_receiver_next_event(std::ptr::null_mut(), &mut ev) };
     assert_eq!(rc, TstError::InvalidConfig as i32);
+}
+
+// ---------------------------------------------------------------------------
+// `_finish` — Arc 2 R3 (DEBT-14 "ship now" cell), ABI 0.22
+// ---------------------------------------------------------------------------
+
+/// `tst_rist_mux_sender_finish` drains and closes.
+///
+/// No receiver is listening, so librist has nowhere to deliver and the
+/// drain may legitimately report a transport error or 0 (nothing pending).
+/// Both are "finished"; what must hold is that the call neither panics nor
+/// mis-reports a null pointer, that a second call is 0, and that the handle
+/// still frees with `_close`.
+///
+/// Port 33106 is EVEN (the Simple profile puts RTCP on `port + 1`) and
+/// disjoint from every other reserved range: `loopback.rs` 33010–33026,
+/// `cancel.rs` 33040–33048, `conformance.rs` 33050–33098, the WP-D
+/// cross-thread pin 33100, R34.7's cancel tests 33102/33104 and the pytest
+/// suite 34110–34150.
+#[test]
+fn rist_mux_sender_finish_then_close() {
+    let cfg = unsafe { tst_mux_config_new() };
+    let prog = unsafe { tst_mux_config_add_program(cfg, 1, 0x1000) };
+    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264) };
+
+    let url = CString::new("rist://127.0.0.1:33106").unwrap();
+    let h = unsafe { tst_rist_mux_sender_open(url.as_ptr(), cfg as *const _) };
+    unsafe { tst_mux_config_free(cfg) };
+    assert!(!h.is_null(), "tst_rist_mux_sender_open returned null");
+
+    let rc = unsafe { tst_rist_mux_sender_finish(h) };
+    assert!(
+        rc == 0
+            || (rc < 0
+                && rc != TstError::PanicCaught as i32
+                && rc != TstError::InvalidConfig as i32),
+        "finish rc={rc}"
+    );
+    assert_eq!(
+        unsafe { tst_rist_mux_sender_finish(h) },
+        0,
+        "second finish is 0"
+    );
+    assert_eq!(
+        unsafe { tst_rist_mux_sender_finish(std::ptr::null_mut()) },
+        TstError::InvalidConfig as i32
+    );
+
+    unsafe { tst_rist_mux_sender_close(h) };
 }
