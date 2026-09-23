@@ -127,6 +127,9 @@ pub unsafe extern "C" fn tst_tcp_receiver_close(p: *mut TstTcpReceiver) {
 /// the handle's slot), idempotent. The handle must still be freed with
 /// `tst_tcp_receiver_close`.
 ///
+/// The cancel is terminal: the call that observes it and every later
+/// `_recv_*` / `_next_event` on this handle return `TST_E_CLOSED`.
+///
 /// Returns 0, or `TST_E_INVALID_CONFIG` if `p` is null.
 ///
 /// # Safety

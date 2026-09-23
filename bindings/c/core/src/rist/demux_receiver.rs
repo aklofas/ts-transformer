@@ -162,6 +162,9 @@ pub unsafe extern "C" fn tst_rist_demux_receiver_close(p: *mut TstRistDemuxRecei
 /// it leaves the handle valid, so the owner still frees it with
 /// `tst_rist_demux_receiver_close` once no other thread is using it.
 ///
+/// The cancel is terminal: the call that observes it and every later
+/// `_recv_*` / `_next_event` on this handle return `TST_E_CLOSED`.
+///
 /// Returns 0, or `TST_E_INVALID_CONFIG` if `p` is null.
 ///
 /// # Safety
