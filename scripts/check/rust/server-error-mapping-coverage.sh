@@ -7,7 +7,9 @@ set -euo pipefail
 # Intent: no silent error paths in the server lifecycle; every defined
 # arm has a visible construction site that maps to a real failure mode.
 #
-# Same shape as check/rust/mux-error-kind-coverage.sh (plan #79).
+# A producer-existence rail, not an exhaustiveness rail despite the name —
+# same shape as the former check/rust/mux-error-kind-coverage.sh (plan #79,
+# deleted in Arc 2 R2 once the compiler could pin MuxError::kind()).
 
 src="crates/tst-rtp/src/error.rs"
 

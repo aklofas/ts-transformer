@@ -715,12 +715,10 @@ impl MuxError {
     /// re-export (the same enum; the re-export signals intent at the
     /// import site).
     ///
-    /// Per-variant routing is enforced by the CI ratchet
-    /// `scripts/check/rust/mux-error-kind-coverage.sh` — every variant of
-    /// the upstream [`MuxError`] enum must be matched explicitly in
-    /// this function's body before the `#[non_exhaustive]` wildcard.
-    /// A new variant added without a corresponding arm here will fail
-    /// the ratchet in CI.
+    /// Per-variant routing is enforced by the compiler: the match below
+    /// lives in [`MuxError`]'s own crate and carries no wildcard, so a new
+    /// variant without an arm here is a build error (Arc 2 R2 retired the
+    /// awk ratchet that used to check this).
     ///
     /// See [`MuxErrorKind`] for the per-variant rationale.
     ///
@@ -735,13 +733,9 @@ impl MuxError {
     #[must_use]
     pub fn kind(&self) -> MuxErrorKind {
         use MuxErrorKind::*;
-        // The match is exhaustive in-crate (MuxError is #[non_exhaustive]
-        // but defined here), so the trailing wildcard would be flagged
-        // unreachable. We keep it intentionally as an anchor for the CI
-        // ratchet scripts/check/rust/mux-error-kind-coverage.sh, which uses
-        // the wildcard's presence to delimit "above this point all
-        // variants are explicitly classified".
-        #[allow(unreachable_patterns)]
+        // No wildcard on purpose: this match is inside the defining crate,
+        // so the compiler enforces exhaustiveness (Arc 2 R2 replaced the
+        // awk rail that used to check this).
         match self {
             // === InputMalformed (7 variants) ===
             // Caller pushed bytes that don't conform to the expected shape.
@@ -792,15 +786,6 @@ impl MuxError {
             MuxError::ProgramNotFound { .. } => InvalidUsage,
             MuxError::DescriptorIndexOutOfRange { .. } => InvalidUsage,
             MuxError::AbsIndexOutOfRange { .. } => InvalidUsage,
-
-            // Required by #[non_exhaustive]. CI ratchet
-            // scripts/check/rust/mux-error-kind-coverage.sh enforces every
-            // upstream MuxError variant is matched explicitly above
-            // before this arm. If this arm fires at runtime, the
-            // ratchet failed (or was bypassed) — the safe default
-            // matches the workspace convention (`tst_error_from_kind`
-            // wildcard-default-to-Internal pattern from Wave 4.A).
-            _ => Internal,
         }
     }
 }

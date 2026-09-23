@@ -246,9 +246,6 @@ jobs:
           SRT_FORCE_VENDORED: "1"
           RIST_FORCE_VENDORED: "1"
         run: bash scripts/check/repo/kind-equivalence.sh
-      - name: MuxError::kind() variant coverage
-        if: matrix.name == 'linux-x86_64'
-        run: bash scripts/check/rust/mux-error-kind-coverage.sh
       - name: No srt_*/SRT_* symbol leak in libtstrans.so
         # Plan B Wave 5.B ratchet — fails if libtstrans.so's dynamic
         # export table contains any srt_*/SRT_* symbols (defense in depth
