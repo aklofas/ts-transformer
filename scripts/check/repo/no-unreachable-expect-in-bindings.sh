@@ -14,7 +14,10 @@
 #         at bindings/c/core/src/lib.rs:27, `pub(crate) fn
 #         clear_last_error_for_test` and a `use` at .../error.rs:324/:418);
 #       - an INDENTED `#[cfg(test)]`, always a single test-only item
-#         (e.g. `HandleRegistry::contains`) with production code after it;
+#         (e.g. `HandleRegistry::contains`) with production code after it.
+#         An indented `#[cfg(test)] mod` would be skipped as one item too
+#         rather than ending the file; none exists in the scanned crates, and
+#         a nested test module is inside the item this already skips;
 #   * line comments (`//`, `///`, `//!`) — prose that NAMES `.expect(` or
 #     `unreachable!`, typically to explain why the code does not use one, must
 #     not be squeezed out by its own rail. A trailing comment does not shield
@@ -28,9 +31,11 @@
 # point `scan` at a throwaway tree):
 #   NUE_ROOT   repository root to scan
 #   NUE_DIRS   space-separated, root-relative directories to scan
+#              (default: every binding crate's production Rust —
+#              tst-c-core, the tst-c cdylib, tst-py and tst-jni)
 set -euo pipefail
 DEFAULT_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-DEFAULT_DIRS="bindings/c/core/src bindings/python/src bindings/jvm/src"
+DEFAULT_DIRS="bindings/c/core/src bindings/c/src bindings/python/src bindings/jvm/src"
 
 scan() {
   local root dirs hits=0 f
