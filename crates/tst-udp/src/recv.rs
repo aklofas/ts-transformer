@@ -8,11 +8,14 @@ use tst_core::net::udp_socket::{
     CANCEL_POLL_INTERVAL, apply_multicast_recv_join, bind_udp_socket, bind_udp_socket_multicast,
     set_socket_buffers,
 };
-use tst_core::transport::{BrokenCause, RecvTransport, SocketStats, TransportError};
+use tst_core::transport::{
+    BrokenCause, RecvTransport, SocketStats, TransportCancel, TransportError,
+};
 
 use crate::config::SocketConfig;
 use crate::error::UdpError;
 use crate::stats::UdpStats;
+use crate::transport::UdpCancelHandle;
 use crate::url::UdpUrl;
 
 /// UDP receiver.
@@ -22,20 +25,24 @@ use crate::url::UdpUrl;
 ///
 /// # Cross-thread cancellation
 ///
-/// `UdpRecvTransport` does not expose a cancel handle. Both
-/// [`RecvTransport::recv_bytes`] and [`RecvTransport::close`] take `&mut self`,
-/// so they cannot be called concurrently — there is no race-free way to
-/// interrupt a live receive from another thread. Use cooperative shutdown
-/// instead: call [`UdpRecvTransport::recv_timeout`] with a finite deadline and
-/// check a stop flag in the caller loop; the owning thread calls `close()` once
-/// it decides to stop. If you need to fire shutdown from a thread that does not
-/// own the transport, consider `tst-srt` / `tst-rtp` / `tst-tcp`, which expose
-/// cloneable cancel handles.
+/// `recv_bytes` parks on a 100 ms poll loop (`SO_RCVTIMEO` =
+/// [`CANCEL_POLL_INTERVAL`], set by the bind helper) and re-checks two flags
+/// at every tick: the [`UdpCancelHandle`] flag (→
+/// [`TransportError::ExplicitClose`]) and the `alive` flag cleared by
+/// `close()` (→ [`TransportError::Closed`]). Obtain the handle with
+/// [`UdpRecvTransport::cancel_handle`] (or the `RecvTransport::cancel_handle`
+/// trait form) and fire `cancel()` from any thread; the parked call returns
+/// within one tick. A per-call deadline is still available through
+/// [`UdpRecvTransport::recv_timeout`] for callers that poll cooperatively.
 pub struct UdpRecvTransport {
     socket: UdpSocket,
     local: SocketAddr,
     stats: UdpStats,
+    /// Cleared by `close()` and by a latched `Broken`.
     alive: Arc<AtomicBool>,
+    /// Set by [`UdpCancelHandle::cancel`]; read at every poll tick before
+    /// `alive` so a cancelled park ends with `ExplicitClose`, not `Closed`.
+    cancelled: Arc<AtomicBool>,
     /// Cached `SO_RCVTIMEO` value. Initialized to `CANCEL_POLL_INTERVAL`
     /// (matching what the bind helper sets). Updated lazily: `recv_timeout`
     /// skips `set_read_timeout` when the socket is already at the requested
@@ -100,6 +107,7 @@ impl UdpRecvTransport {
             local,
             stats: UdpStats::default(),
             alive: Arc::new(AtomicBool::new(true)),
+            cancelled: Arc::new(AtomicBool::new(false)),
             // The bind helper sets SO_RCVTIMEO = CANCEL_POLL_INTERVAL on
             // the socket; cache that so the first recv_bytes entry is a no-op.
             applied_timeout: CANCEL_POLL_INTERVAL,
@@ -109,6 +117,16 @@ impl UdpRecvTransport {
     /// Local bound address (useful for tests that bind to port 0).
     pub fn local_addr(&self) -> SocketAddr {
         self.local
+    }
+
+    /// Cross-thread cancel handle for this receiver. Cloneable; see
+    /// [`UdpCancelHandle`] for the contract. `recv_bytes` observes it at
+    /// every ~100 ms poll tick; `recv_timeout` does NOT (it is the
+    /// cooperative per-call-deadline path — callers looping on it check
+    /// `is_cancelled()` between slices, which is what the Python binding
+    /// does).
+    pub fn cancel_handle(&self) -> UdpCancelHandle {
+        UdpCancelHandle::from_flag(self.cancelled.clone())
     }
 
     /// Snapshot of UDP stats.
@@ -125,12 +143,20 @@ impl UdpRecvTransport {
     /// interval on entry when the cached value differs. Not concurrency-safe —
     /// callers must ensure no concurrent `recv_bytes` is in progress on
     /// the same transport handle (the `Mutex<Option<…>>` in the Python
-    /// binding guarantees this).
+    /// binding guarantees this). The cancel handle is not observed inside
+    /// this call; a caller polling in slices checks
+    /// [`UdpCancelHandle::is_cancelled`] between them. An empty `buf`
+    /// returns `Ok(Some(0))` immediately (X-CORR-07).
     pub fn recv_timeout(
         &mut self,
         buf: &mut [u8],
         deadline: std::time::Duration,
     ) -> Result<Option<usize>, crate::error::UdpError> {
+        // X-CORR-07: an empty destination is a no-op — answer before the
+        // socket is touched, so the caller's queued datagram survives.
+        if buf.is_empty() {
+            return Ok(Some(0));
+        }
         // Only pay the setsockopt cost when the socket needs a different value.
         if self.applied_timeout != deadline {
             self.socket
@@ -160,21 +186,35 @@ impl UdpRecvTransport {
 
 impl RecvTransport for UdpRecvTransport {
     fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
+        // X-CORR-07: an empty destination is a no-op — `Ok(0)` before the
+        // socket or either flag is consulted (the kit row `empty_recv_is_noop`;
+        // without this an empty read is served by a zero-length `recv` that
+        // silently consumes a queued datagram).
+        if buf.is_empty() {
+            return Ok(0);
+        }
         // Lazy restore: if recv_timeout left the socket at a non-cancel-poll
         // timeout, restore it now so the cancel-poll guarantee holds for this
         // entire recv. One setsockopt per recv_bytes entry rather than one per
         // recv_timeout call.
         if self.applied_timeout != CANCEL_POLL_INTERVAL {
-            self.socket
-                .set_read_timeout(Some(CANCEL_POLL_INTERVAL))
-                .map_err(|e| TransportError::Broken {
+            if let Err(e) = self.socket.set_read_timeout(Some(CANCEL_POLL_INTERVAL)) {
+                // The socket cannot honour the poll contract any more —
+                // without the tick a cancel would never be observed. Latch.
+                self.alive.store(false, Ordering::Release);
+                return Err(TransportError::Broken {
                     msg: format!("failed to restore cancel-poll timeout: {e}"),
                     errno_code: e.raw_os_error(),
                     cause: BrokenCause::Unspecified,
-                })?;
+                });
+            }
             self.applied_timeout = CANCEL_POLL_INTERVAL;
         }
         loop {
+            // Cancel wins over close (same order as the sender).
+            if self.cancelled.load(Ordering::Acquire) {
+                return Err(TransportError::ExplicitClose);
+            }
             if !self.alive.load(Ordering::Acquire) {
                 return Err(TransportError::Closed);
             }
@@ -193,6 +233,8 @@ impl RecvTransport for UdpRecvTransport {
                 }
                 Err(e) => {
                     self.stats.recv_errors = self.stats.recv_errors.saturating_add(1);
+                    // Spec §3.5: a Broken receive latches dead (was: no latch).
+                    self.alive.store(false, Ordering::Release);
                     return Err(TransportError::Broken {
                         msg: format!("recv error: {e}"),
                         errno_code: e.raw_os_error(),
@@ -217,11 +259,15 @@ impl RecvTransport for UdpRecvTransport {
     }
 
     fn is_alive(&self) -> bool {
-        self.alive.load(Ordering::Acquire)
+        self.alive.load(Ordering::Acquire) && !self.cancelled.load(Ordering::Acquire)
     }
 
     fn close(&mut self) {
         self.alive.store(false, Ordering::Release);
+    }
+
+    fn cancel_handle(&self) -> Option<Arc<dyn TransportCancel + Send + Sync>> {
+        Some(Arc::new(self.cancel_handle()))
     }
 
     fn socket_stats(&self) -> Option<SocketStats> {
@@ -485,5 +531,45 @@ mod tests {
         );
         assert_eq!(&got1[..], &payload[..], "recv1 payload mismatch");
         assert_eq!(&got2[..], &payload[..], "recv2 payload mismatch");
+    }
+
+    /// Spec §3.5: UDP `is_alive()` after `Broken` = false (was: no latch).
+    /// The only deterministic `recv` error on a datagram socket is the
+    /// ICMP port-unreachable that a CONNECTED socket surfaces as
+    /// `ECONNREFUSED` on its next `recv` — so this test connects the private
+    /// socket to a port nothing listens on, sends one byte (loopback
+    /// generates the ICMP synchronously), and reads. Linux-only: macOS and
+    /// Windows deliver the error differently (`so_error` timing / `WSAECONNRESET`
+    /// quirks), and the latch line under test is platform-independent.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn broken_recv_latches_dead() {
+        let mut recv = UdpRecvTransport::listen("udp://@127.0.0.1:0").expect("bind recv");
+        let closed_port = {
+            let s = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+            s.local_addr().unwrap().port()
+            // dropped here: nothing listens on closed_port any more
+        };
+        recv.socket
+            .connect(("127.0.0.1", closed_port))
+            .expect("connect the private socket to the closed port");
+        recv.socket
+            .send(&[0u8])
+            .expect("send the probe that draws the ICMP");
+        let mut buf = vec![0u8; recv.max_payload()];
+        let r = recv.recv_bytes(&mut buf);
+        assert!(
+            matches!(
+                &r,
+                Err(TransportError::Broken {
+                    errno_code: Some(111),
+                    ..
+                })
+            ),
+            "expected Broken(ECONNREFUSED=111) from the ICMP, got {r:?}"
+        );
+        assert!(!recv.is_alive(), "Broken must latch the receiver dead");
+        let next = recv.recv_bytes(&mut buf);
+        assert!(matches!(next, Err(TransportError::Closed)), "got {next:?}");
     }
 }

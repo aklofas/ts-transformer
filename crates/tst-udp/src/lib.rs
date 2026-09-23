@@ -33,5 +33,5 @@ pub use config::SocketConfig;
 pub use error::{UdpError, UdpErrorKind};
 pub use recv::UdpRecvTransport;
 pub use stats::UdpStats;
-pub use transport::UdpTransport;
+pub use transport::{UdpCancelHandle, UdpTransport};
 pub use url::{UdpUrl, UdpUrlError};

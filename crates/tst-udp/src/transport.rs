@@ -6,12 +6,82 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use tst_core::net::udp_socket::{apply_multicast_send_knobs, bind_udp_socket, set_socket_buffers};
 use tst_core::net::{SendClass, classify_send_error};
-use tst_core::transport::{BrokenCause, SocketStats, Transport, TransportError};
+use tst_core::transport::{BrokenCause, SocketStats, Transport, TransportCancel, TransportError};
 
 use crate::config::SocketConfig;
 use crate::error::UdpError;
 use crate::stats::UdpStats;
 use crate::url::UdpUrl;
+
+/// Cheap cloneable handle that unblocks a [`crate::recv::UdpRecvTransport`]
+/// parked in `recv_bytes` on the 100 ms poll loop and makes the *next*
+/// `send_bytes` / `recv_bytes` on the owning transport return
+/// [`TransportError::ExplicitClose`], from any thread.
+///
+/// Obtained via [`UdpTransport::cancel_handle`] /
+/// [`crate::recv::UdpRecvTransport::cancel_handle`] (inherent, non-`Option`)
+/// or through `Transport::cancel_handle` / `RecvTransport::cancel_handle`
+/// (the trait forms, `Some` on both UDP transports). Cancelling does **not**
+/// close the socket — `close()` still does. Cancellation is cooperative,
+/// with the same shape as `TcpCancelHandle` and `RtpCancelHandle`:
+///
+/// - a parked `recv_bytes` observes the flag at its next poll tick (≤ ~100 ms,
+///   `tst_core::net::udp_socket::CANCEL_POLL_INTERVAL`) and returns
+///   `ExplicitClose`;
+/// - calls started after `cancel()` return `ExplicitClose` on their entry
+///   check (a UDP `send_bytes` never parks — `send_to` on a datagram socket
+///   returns at once — so the entry check is its only cancel point);
+/// - a call already past its entry check completes its current I/O first (a
+///   recv that receives a datagram in that window returns it); the *next*
+///   call fails;
+/// - after `cancel()` the transport's `is_alive()` reads `false`; `close()`
+///   afterwards is a quiet no-op.
+///
+/// `close()` is a different signal: post-close calls return
+/// [`TransportError::Closed`], and a handle obtained earlier does **not**
+/// read `is_cancelled()` after a plain close.
+///
+/// `UdpCancelHandle` is `Clone + Send + Sync`; multiple holders can race
+/// `cancel()` safely (the flag is an `Arc<AtomicBool>`, idempotent).
+#[derive(Clone, Debug)]
+pub struct UdpCancelHandle {
+    /// The cancel latch proper, SEPARATE from the transport's `alive` flag.
+    ///
+    /// `alive` is a liveness flag — `close()` and a latched `Broken` both
+    /// clear it — so `!alive` cannot answer "did the caller cancel?". The
+    /// bindings relabel a caller-initiated end from exactly that answer, so
+    /// reading `!alive` here would turn every broken UDP receive into a
+    /// `CLOSED` outcome instead of a broken one.
+    cancelled: Arc<AtomicBool>,
+}
+
+impl UdpCancelHandle {
+    /// Build a handle over a shared flag — used by [`UdpTransport::cancel_handle`]
+    /// and [`crate::recv::UdpRecvTransport::cancel_handle`].
+    pub(crate) fn from_flag(cancelled: Arc<AtomicBool>) -> Self {
+        Self { cancelled }
+    }
+
+    /// Signal cancellation. Idempotent — repeated calls are a no-op.
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+    }
+
+    /// `true` once [`Self::cancel`] has been called on any clone of this handle.
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+}
+
+impl TransportCancel for UdpCancelHandle {
+    fn cancel(&self) {
+        UdpCancelHandle::cancel(self)
+    }
+
+    fn is_cancelled(&self) -> bool {
+        UdpCancelHandle::is_cancelled(self)
+    }
+}
 
 /// UDP sender.
 ///
@@ -31,7 +101,13 @@ pub struct UdpTransport {
     pkt_size: usize,
     peer: SocketAddr,
     stats: UdpStats,
+    /// Cleared by `close()` and by a latched `Broken`; post-close/-broken
+    /// sends return `Closed`.
     alive: Arc<AtomicBool>,
+    /// Set by [`UdpCancelHandle::cancel`]; checked at `send_bytes` entry
+    /// BEFORE `alive`, so a cancelled transport reports `ExplicitClose`
+    /// rather than `Closed` (spec §3.5, one cancel outcome).
+    cancelled: Arc<AtomicBool>,
 }
 
 impl UdpTransport {
@@ -90,6 +166,7 @@ impl UdpTransport {
             peer,
             stats: UdpStats::default(),
             alive: Arc::new(AtomicBool::new(true)),
+            cancelled: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -102,6 +179,14 @@ impl UdpTransport {
     /// UNCONNECTED (`send_to` per datagram) — see the send-path notes.
     pub fn peer(&self) -> SocketAddr {
         self.peer
+    }
+
+    /// Cross-thread cancel handle for this sender. Cloneable; see
+    /// [`UdpCancelHandle`] for the contract. The trait form
+    /// [`Transport::cancel_handle`] hands back the same flag boxed as
+    /// `Arc<dyn TransportCancel>`.
+    pub fn cancel_handle(&self) -> UdpCancelHandle {
+        UdpCancelHandle::from_flag(self.cancelled.clone())
     }
 }
 
@@ -117,6 +202,11 @@ fn apply_socket2_knobs(socket: &UdpSocket, cfg: &SocketConfig) -> std::io::Resul
 
 impl Transport for UdpTransport {
     fn send_bytes(&mut self, msg: &[u8]) -> Result<(), TransportError> {
+        // Cancel wins over close: a caller who fired the handle sees the
+        // cancel outcome even if a close() raced in afterwards.
+        if self.cancelled.load(Ordering::Acquire) {
+            return Err(TransportError::ExplicitClose);
+        }
         if !self.alive.load(Ordering::Acquire) {
             return Err(TransportError::Closed);
         }
@@ -144,7 +234,14 @@ impl Transport for UdpTransport {
                 })
             }
             Err(e) => {
+                // Fatal (EMSGSIZE, ENETUNREACH, EPERM, …): per the
+                // `Transport` contract the state is undefined after any
+                // non-Backpressure error — latch dead so `is_alive()` tells
+                // the truth and later sends are `Closed`, the same as the
+                // TCP/RIST fatal arms (spec §3.5, UDP `is_alive` after
+                // Broken = false).
                 self.stats.send_errors = self.stats.send_errors.saturating_add(1);
+                self.alive.store(false, Ordering::Release);
                 Err(TransportError::Broken {
                     msg: format!("send error: {e}"),
                     errno_code: e.raw_os_error(),
@@ -159,11 +256,15 @@ impl Transport for UdpTransport {
     }
 
     fn is_alive(&self) -> bool {
-        self.alive.load(Ordering::Acquire)
+        self.alive.load(Ordering::Acquire) && !self.cancelled.load(Ordering::Acquire)
     }
 
     fn close(&mut self) {
         self.alive.store(false, Ordering::Release);
+    }
+
+    fn cancel_handle(&self) -> Option<Arc<dyn TransportCancel + Send + Sync>> {
+        Some(Arc::new(self.cancel_handle()))
     }
 
     fn socket_stats(&self) -> Option<SocketStats> {
