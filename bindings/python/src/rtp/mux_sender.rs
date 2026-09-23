@@ -34,7 +34,7 @@ use pyo3::Py;
 use pyo3::prelude::*;
 
 use tst_core::transport::Transport;
-use tst_pipeline::binding::{BindingError, Owned};
+use tst_pipeline::binding::{BindingError, HandleState, Owned};
 use tst_pipeline::{MuxSender as RustMuxSender, MuxSenderError, MuxSenderErrorSource};
 use tst_rtp::{RtpSocketBuilder, RtpTransport};
 
@@ -485,6 +485,25 @@ impl PyMuxSender {
     /// (the pipeline `MuxSender::close` is itself cancel-first). Idempotent.
     fn close(&self, py: Python<'_>) -> PyResult<()> {
         close_owned(py, &RTP, &self.owned)
+    }
+
+    /// Drain every byte the muxer still holds to the transport, raise the
+    /// first drain error, then close the transport — the lossless
+    /// counterpart to `close()`. The sender is closed either way; a second
+    /// `finish()` is a no-op, and so is a `finish()` after `close()`.
+    ///
+    /// Unlike `close()` this does NOT cancel first: a push parked on
+    /// another thread keeps the slot and `finish()` waits behind it. Call
+    /// `close()` (cancel-first) if that is not wanted.
+    fn finish(&self, py: Python<'_>) -> PyResult<()> {
+        match py.allow_threads(|| self.owned.with_ref(|s| s.finish())) {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(mux_sender_err(py, e)),
+            // Already closed: the slot is empty, which is the same answer
+            // a second `finish()` gets from the shell itself — stay quiet.
+            Err(HandleState::Closed) => Ok(()),
+            Err(state) => Err(raise(py, &RTP, BindingError::from(state))),
+        }
     }
 
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {

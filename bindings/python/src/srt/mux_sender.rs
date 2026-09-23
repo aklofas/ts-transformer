@@ -42,7 +42,7 @@ use std::sync::Arc;
 use pyo3::Py;
 use pyo3::prelude::*;
 
-use tst_pipeline::binding::{BindingError, BindingErrorKind, Owned};
+use tst_pipeline::binding::{BindingError, BindingErrorKind, HandleState, Owned};
 use tst_pipeline::{MuxSender as RustMuxSender, MuxSenderError, MuxSenderErrorSource};
 use tst_srt::{SrtTransport, SrtUrl, url::Mode};
 
@@ -527,6 +527,26 @@ impl PyMuxSender {
     /// `finish()` is the lossless alternative on the Rust side). Idempotent.
     fn close(&self, py: Python<'_>) -> PyResult<()> {
         close_owned(py, &SRT, &self.owned)
+    }
+
+    /// Drain every byte the muxer still holds to the transport, raise the
+    /// first drain error, then close the transport — the lossless
+    /// counterpart to `close()`. The sender is closed either way; a second
+    /// `finish()` is a no-op, and so is a `finish()` after `close()`.
+    ///
+    /// Unlike `close()` this does NOT cancel first: a push parked on
+    /// another thread keeps the slot and `finish()` waits behind it. Fire
+    /// `cancel_handle().cancel()` (or `close()`) first if that is not
+    /// wanted.
+    fn finish(&self, py: Python<'_>) -> PyResult<()> {
+        match py.allow_threads(|| self.owned.with_ref(|s| s.finish())) {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(mux_sender_err(py, e)),
+            // Already closed: the slot is empty, which is the same answer
+            // a second `finish()` gets from the shell itself — stay quiet.
+            Err(HandleState::Closed) => Ok(()),
+            Err(state) => Err(raise(py, &SRT, BindingError::from(state))),
+        }
     }
 
     /// `True` while the sender owns a live transport (a push in flight on

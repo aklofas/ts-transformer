@@ -546,6 +546,14 @@ accessors (`video_handle()`, `klv_handle()`, …, `data_handle()`). `stats()`
 returns a `(SocketStats, MuxerStats)` tuple. There is no `flush()` — bytes
 flush per-send and again on `close()`.
 
+**Lossless shutdown.** `close()` is cancel-first and abandons pending
+bytes; `finish()` drains them, raises the first drain error, then closes —
+use it when you need to know the tail reached the wire. `finish()` does
+not cancel a parked send first, so it waits behind one; a second
+`finish()` (or a `finish()` after `close()`) is a no-op, and the handle
+still takes a `close()` afterwards. `ManagedMuxSender` and
+`rtp.MuxSender` have the same method.
+
 Receiving:
 
 ```python
