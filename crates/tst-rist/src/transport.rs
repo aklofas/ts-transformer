@@ -6,13 +6,71 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tst_core::transport::{BrokenCause, Transport, TransportError};
+use tst_core::transport::{BrokenCause, Transport, TransportCancel, TransportError};
 
 use crate::config::{EncryptionKey, RistConfig, RistProfile};
 use crate::error::RistError;
 use crate::init::{GLOBAL_LOGGING, ensure_init};
 use crate::stats::{OnDrop, RistStats};
 use crate::url::{RistUrl, native_endpoint};
+
+/// Cheap cloneable handle that ends a [`crate::recv::RistRecvTransport`]
+/// parked in `recv_bytes` on librist's 100 ms poll and makes the *next*
+/// `send_bytes` / `recv_bytes` on the owning transport return
+/// [`TransportError::ExplicitClose`], from any thread.
+///
+/// Obtained via [`RistTransport::cancel_handle`] /
+/// [`crate::recv::RistRecvTransport::cancel_handle`] (inherent) or the
+/// `Transport::cancel_handle` / `RecvTransport::cancel_handle` trait forms
+/// (`Some` on both RIST transports). Cancelling does **not** destroy the
+/// librist context — `close()` still does (`rist_destroy` + stats-ref
+/// reclaim). Cooperative, same shape as `UdpCancelHandle`:
+///
+/// - a parked `recv_bytes` observes the flag when its current
+///   `rist_receiver_data_read2` tick (≤ 100 ms, `POLL_TIMEOUT_MS`) returns
+///   and reports `ExplicitClose` instead of the tick's `Backpressure`;
+/// - calls started after `cancel()` return `ExplicitClose` at their entry
+///   check (`send_bytes` never parks — `rist_sender_data_write` enqueues —
+///   so the entry check is its only cancel point);
+/// - a tick that delivered a block returns it; the *next* call fails;
+/// - `is_alive()` reads `false` after `cancel()`; `close()` afterwards
+///   still runs `rist_destroy` exactly once (double close stays a no-op).
+///
+/// `close()` is a different signal: post-close calls return
+/// [`TransportError::Closed`] and the handle does not read cancelled.
+#[derive(Clone, Debug)]
+pub struct RistCancelHandle {
+    /// The cancel latch proper, SEPARATE from the transport's `alive` flag
+    /// — `alive` is cleared by `close()` and by a latched `Broken` too, so
+    /// it cannot answer "did the caller cancel?".
+    cancelled: Arc<AtomicBool>,
+}
+
+impl RistCancelHandle {
+    pub(crate) fn from_flag(cancelled: Arc<AtomicBool>) -> Self {
+        Self { cancelled }
+    }
+
+    /// Signal cancellation. Idempotent.
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+    }
+
+    /// `true` once [`Self::cancel`] has been called on any clone.
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+}
+
+impl TransportCancel for RistCancelHandle {
+    fn cancel(&self) {
+        RistCancelHandle::cancel(self)
+    }
+
+    fn is_cancelled(&self) -> bool {
+        RistCancelHandle::is_cancelled(self)
+    }
+}
 
 /// Send-side RIST transport.
 ///
@@ -23,6 +81,9 @@ pub struct RistTransport {
     pkt_size: usize,
     peer_url: String,
     alive: Arc<AtomicBool>,
+    /// Set by [`RistCancelHandle::cancel`]; checked at `send_bytes` entry
+    /// BEFORE `alive` so a cancelled transport reports `ExplicitClose`.
+    cancelled: Arc<AtomicBool>,
     stats: Arc<Mutex<RistStats>>,
     /// Leaked `Arc<Mutex<RistStats>>` ref handed to librist as the stats
     /// callback `arg`. Reclaimed exactly once in `close()` after `rist_destroy`.
@@ -150,6 +211,7 @@ impl RistTransport {
             pkt_size: cfg.pkt_size,
             peer_url: peer_url_str,
             alive: Arc::new(AtomicBool::new(true)),
+            cancelled: Arc::new(AtomicBool::new(false)),
             stats,
             stats_arg,
         })
@@ -163,6 +225,11 @@ impl RistTransport {
     /// Current snapshot of cumulative stats.
     pub fn stats(&self) -> RistStats {
         self.stats.lock().map(|s| *s).unwrap_or_default()
+    }
+
+    /// Cross-thread cancel handle for this sender; see [`RistCancelHandle`].
+    pub fn cancel_handle(&self) -> RistCancelHandle {
+        RistCancelHandle::from_flag(self.cancelled.clone())
     }
 }
 
@@ -179,6 +246,11 @@ impl Transport for RistTransport {
     /// - any other `rc < 0` → [`TransportError::Broken`] `{ errno_code:
     ///   Some(rc) }` and the transport is latched dead.
     fn send_bytes(&mut self, msg: &[u8]) -> Result<(), TransportError> {
+        // Cancel wins over close: a caller who fired the handle sees the
+        // cancel outcome even if a close() raced in afterwards.
+        if self.cancelled.load(Ordering::Acquire) {
+            return Err(TransportError::ExplicitClose);
+        }
         if !self.alive.load(Ordering::Acquire) {
             return Err(TransportError::Closed);
         }
@@ -247,7 +319,11 @@ impl Transport for RistTransport {
     }
 
     fn is_alive(&self) -> bool {
-        self.alive.load(Ordering::Acquire)
+        self.alive.load(Ordering::Acquire) && !self.cancelled.load(Ordering::Acquire)
+    }
+
+    fn cancel_handle(&self) -> Option<Arc<dyn TransportCancel + Send + Sync>> {
+        Some(Arc::new(self.cancel_handle()))
     }
 
     fn socket_stats(&self) -> Option<tst_core::transport::SocketStats> {

@@ -6,13 +6,15 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tst_core::transport::{BrokenCause, RecvTransport, TransportError};
+use tst_core::transport::{BrokenCause, RecvTransport, TransportCancel, TransportError};
 
 use crate::config::{RistConfig, RistProfile};
 use crate::error::RistError;
 use crate::init::ensure_init;
 use crate::stats::{OnDrop, RistStats};
-use crate::transport::{apply_peer_overrides, global_logging_ptr, rist_profile_to_c};
+use crate::transport::{
+    RistCancelHandle, apply_peer_overrides, global_logging_ptr, rist_profile_to_c,
+};
 use crate::url::{RistUrl, native_endpoint};
 
 /// Default per-`recv_bytes` poll interval in milliseconds. Short enough that
@@ -52,13 +54,17 @@ fn classify_block(payload_len: usize, payload_null: bool, buf_len: usize) -> Blo
 /// Wraps a librist `rist_ctx` configured as a receiver. Each `recv_bytes`
 /// call blocks at most ~100 ms (`rist_receiver_data_read2` poll) and returns
 /// `TransportError::Backpressure` when nothing arrived; the retry loop lives
-/// in the pipeline shells. There is no cross-thread cancel handle (see
-/// `docs/project/deferred-features.md`, UDP/RIST receive cancellation).
-/// Drop calls `rist_destroy`.
+/// in the pipeline shells. A [`RistCancelHandle`] (from
+/// [`RistRecvTransport::cancel_handle`]) fired from another thread ends the
+/// current tick with `TransportError::ExplicitClose`. Drop calls
+/// `rist_destroy`.
 pub struct RistRecvTransport {
     ctx: *mut rist_sys::rist_ctx,
     bind_url: String,
     alive: Arc<AtomicBool>,
+    /// Set by [`RistCancelHandle::cancel`]; read at entry and at the end of
+    /// every poll tick before `alive`.
+    cancelled: Arc<AtomicBool>,
     stats: Arc<Mutex<RistStats>>,
     /// Leaked `Arc<Mutex<RistStats>>` ref handed to librist as the stats
     /// callback `arg`. Reclaimed exactly once in `close()` after `rist_destroy`.
@@ -200,6 +206,7 @@ impl RistRecvTransport {
             ctx,
             bind_url: bind_url_str,
             alive: Arc::new(AtomicBool::new(true)),
+            cancelled: Arc::new(AtomicBool::new(false)),
             stats,
             stats_arg,
         })
@@ -208,6 +215,11 @@ impl RistRecvTransport {
     /// Bind URL the receiver was built against (for diagnostics).
     pub fn bind_url(&self) -> &str {
         &self.bind_url
+    }
+
+    /// Cross-thread cancel handle for this receiver; see [`RistCancelHandle`].
+    pub fn cancel_handle(&self) -> RistCancelHandle {
+        RistCancelHandle::from_flag(self.cancelled.clone())
     }
 
     /// Current snapshot of cumulative stats.
@@ -226,6 +238,17 @@ impl RistRecvTransport {
 
 impl RecvTransport for RistRecvTransport {
     fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
+        // X-CORR-07: an empty destination is a no-op — `Ok(0)` before librist
+        // or either flag is consulted (the kit row `empty_recv_is_noop`;
+        // without this an empty read burns a 100 ms tick and reports
+        // `Backpressure`, or drops a delivered block as `DropOversize`).
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        // Cancel wins over close (same order as the sender).
+        if self.cancelled.load(Ordering::Acquire) {
+            return Err(TransportError::ExplicitClose);
+        }
         if !self.alive.load(Ordering::Acquire) {
             return Err(TransportError::Closed);
         }
@@ -243,6 +266,12 @@ impl RecvTransport for RistRecvTransport {
             });
         }
         if rc == 0 || block.is_null() {
+            // The tick elapsed with nothing to read. A cancel that landed
+            // while we were parked is reported HERE — one tick of latency,
+            // never a Backpressure that hides it (spec §3.5, RIST row).
+            if self.cancelled.load(Ordering::Acquire) {
+                return Err(TransportError::ExplicitClose);
+            }
             // Timeout — transport is alive, nothing to read this tick. Per
             // RecvTransport contract, surface as Backpressure (retryable).
             return Err(TransportError::Backpressure {
@@ -328,7 +357,11 @@ impl RecvTransport for RistRecvTransport {
     }
 
     fn is_alive(&self) -> bool {
-        self.alive.load(Ordering::Acquire)
+        self.alive.load(Ordering::Acquire) && !self.cancelled.load(Ordering::Acquire)
+    }
+
+    fn cancel_handle(&self) -> Option<Arc<dyn TransportCancel + Send + Sync>> {
+        Some(Arc::new(self.cancel_handle()))
     }
 
     fn socket_stats(&self) -> Option<tst_core::transport::SocketStats> {
