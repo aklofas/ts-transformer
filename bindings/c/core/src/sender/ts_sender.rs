@@ -172,13 +172,12 @@ pub unsafe extern "C" fn tst_sender_close(p: *mut TstSender) {
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null.
 ///
-/// After cancel the rule is ORDINAL, not park-state: the FIRST `_send` that
-/// observes the cancel returns `TST_E_TRANSPORT` (-8) — libsrt reports the
-/// closed socket as a broken connection, and `SrtTransport` nulls its socket
-/// slot on that error — and EVERY LATER call returns `TST_E_CLOSED` (-7) off
-/// the now-empty slot. `_cancel` itself never closes the shell. 0.7.0's
-/// WP-C2 makes the first call report `TST_E_CLOSED` too. The handle must
-/// still be `_close`'d to free.
+/// After cancel, the first `_send` that observes the cancel and every later
+/// one return `TST_E_CLOSED` (-7). libsrt reports the closed socket as a
+/// broken connection, but `SrtTransport` reads its own cancel latch
+/// afterwards and reports the cancel the caller asked for (0.7.0; through
+/// 0.6.x the first call reported `TST_E_TRANSPORT`). `_cancel` itself never
+/// closes the shell — the handle must still be `_close`'d to free.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_sender_cancel(p: *mut TstSender) -> libc::c_int {
     crate::panic::ffi_catch(TstError::Internal as i32, || {

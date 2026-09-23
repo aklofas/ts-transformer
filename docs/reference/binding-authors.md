@@ -195,11 +195,28 @@ Every long-lived shell exposes `cancel_handle()` returning
 `Option<Arc<dyn TransportCancel + Send + Sync>>` — `Some` for SRT
 (`SrtCancelHandle`), RTP (`RtpCancelHandle`) and TCP (`TcpCancelHandle`),
 `None` for UDP and RIST today (see "Cross-thread receive cancellation for
-UDP / RIST" in deferred-features.md). A handle is `Send + Sync` and
-one-shot. Bindings should expose it as a
-language-native shutdown primitive (e.g. Kotlin `Job.cancel()` analog,
-Swift `Task.cancel()` analog, Python `threading.Event`-shaped). See
-`docs/reference/srt-cancel-handle.md` for the full pattern.
+UDP / RIST" in deferred-features.md).
+A handle is `Send + Sync`; `cancel()` is one-shot and idempotent, and
+`is_cancelled()` (required on the trait since 0.7.0) reads the shared
+latch — every clone, and a handle obtained after the cancel, agrees.
+
+**One outcome.** A cancel that lands while an op is parked ends that op
+with `TransportError::ExplicitClose`, and every later op returns it at
+its entry check, on every transport that has a handle and on the managed
+wrappers — the normative table lives in the `tst_core::transport` rustdoc
+and `tst_core::transport::conformance` pins it in each crate's
+`tests/conformance.rs`. Bindings therefore project one kind for a cancel:
+`TstError::Closed` (−7) / `SrtError(CLOSED)` / `SrtException(CLOSED)`,
+detail `cancelled from another thread`, via `BindingErrorKind`. The
+transport's OWN `close()` keeps producing `Closed` (`ExplicitClose` on
+`ManagedRecvTransport`, whose close is a caller-initiated end); the
+binding layer tells "cancelled" from "closed" with `Owned::is_cancelled()`,
+never by inspecting the variant. Through 0.6.x the plain SRT shells
+reported a cancel as `Broken` (the connection error `srt_close` provoked)
+— that decision (PR #209) is reversed. Bindings should expose the handle
+as a language-native shutdown primitive (e.g. Kotlin `Job.cancel()`
+analog, Swift `Task.cancel()` analog, Python `threading.Event`-shaped).
+See `docs/reference/srt-cancel-handle.md` for the full pattern.
 
 ## Builder shape
 

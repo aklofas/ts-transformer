@@ -234,6 +234,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   contract tst-py's `DemuxReceiver.close()` / `Receiver.close()` and the C
   ABI's `tst_demux_receiver_close` already had. A `close()` with no
   receive in flight is unchanged. JUnit + pytest parity tests.
+  (Superseded later in this release — see "cancel contract (WP-C)" below:
+  plain shells now surface `CLOSED` too.)
 - **JVM: `ManagedDemuxReceiver.close()` and `ManagedReceiver.close()` now
   cancel first.** Both used to take the receiver's resource lock and wait
   for a `next()` / `recvBytes()` parked on another thread to return on its
@@ -1017,6 +1019,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `SrtException(BROKEN)` on the plain ones (the plain cancel closes the
   socket under the send), and `close()` returns promptly. `close()` stays the
   prompt, lossy shutdown; there is no lossless `finish()` on the JVM yet.
+  (Superseded later in this release — see "cancel contract (WP-C)" below:
+  plain shells now surface `CLOSED` too.)
 - **`MuxSender.cancelHandle()` / `ManagedMuxSender.cancelHandle()`** — the
   two srt senders that exposed no cross-thread cancel now do (additive;
   `IllegalStateException` after `close()`). The handle is obtainable while a
@@ -1743,7 +1747,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   | `TransportError::Broken` | udp/tcp/rist `IO`, rtp `TRANSPORT` → **`BROKEN`** (srt unchanged) |
   | `TransportError::Closed` (sender / plain) and a call on a closed handle | rtp `TRANSPORT` → **`CLOSED`** (others unchanged) |
   | `TransportError::Closed` on a receiver shell (peer EOS) | iterators: `StopIteration` (unchanged); `srt.Receiver.recv_bytes` / `ManagedReceiver.recv_bytes` / `rtp.Receiver.recv`: `CLOSED` → **`END_OF_STREAM`** (new member; on the raw rtp receiver only when the session recorded a clean teardown — a wire break stays `CLOSED`) |
-  | `TransportError::ExplicitClose` (cancel / close from another thread) | rtp `CANCELLED` → **`CLOSED`**; detail is now "cancelled from another thread" everywhere (plain SRT shells may still report `BROKEN` until the SRT transport change lands) |
+  | `TransportError::ExplicitClose` (cancel / close from another thread) | rtp `CANCELLED` → **`CLOSED`**; detail is now "cancelled from another thread" everywhere, on the plain SRT shells too |
   | `TransportError::TooLarge` | srt `CONFIG_INVALID`, udp/tcp/rist `PAYLOAD_TOO_LARGE`, rtp `MALFORMED_PACKET` → **`TOO_LARGE`** |
   | A listener-mode open whose bind or accept fails (`srt.Receiver.from_url`, `DemuxReceiver.from_url`, `ManagedReceiver.from_url`, `ManagedDemuxReceiver.from_url`) | srt `CONFIG_INVALID` / `ACCEPT_FAILED` → **`BROKEN`**, message prefixed `"bind: "` / `"accept: "` |
   | tst-rtp `ConnectError::{PayloadTypeParam, MissingPayloadTypeParam, Url, HostNotLiteral, Io, IfaceUnsupported}` (and `RtpUrlError`) | rtp `TRANSPORT` → **`PAYLOAD_TYPE_PARAM` / `MISSING_PAYLOAD_TYPE_PARAM` / `URL` / `HOST_NOT_LITERAL` / `IO` / `IFACE_UNSUPPORTED`** |
@@ -1937,10 +1941,27 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Every wait is bounded by a 10 s watchdog that is a failure bound only, never
   a duration assertion. Run by `tests/conformance.rs` in tst-rtp, tst-pipeline,
   tst-srt and tst-tcp (tst-udp / tst-rist follow with their cancel handles).
-- Six conformance rows are `#[ignore]`d in this entry's PR and name
-  WP-C2 (Task C2.3) in their reason strings — the SRT send/recv cancel rows (they report
+- Six conformance rows are `#[ignore]`d in that PR and name WP-C2 (Task C2.3)
+  in their reason strings — the SRT send/recv cancel rows (they reported
   `Broken`), the TCP send/recv cancel rows (`Closed`), and the managed-sender
-  cancel rows (`Closed`). The next entry under this heading un-ignores them.
+  cancel rows (`Closed`). The two bullets below un-ignore all six.
+- **BREAKING (Rust): a cancelled SRT / TCP operation returns
+  `TransportError::ExplicitClose`.** `SrtTransport` reports the cancel it
+  observed after any libsrt failure instead of the `Broken` the
+  `srt_close` provoked; `TcpTransport` distinguishes a cancel
+  (`ExplicitClose`) from its own `close()` (`Closed`) — `TcpListener`'s
+  parked `accept_blocking` keeps returning `TcpError::Closed`.
+  `ManagedTransport` reports a cancel as `ExplicitClose` too (its own
+  `close()` stays `Closed`). All six `tests/conformance.rs`
+  `cancel_during_park` rows now run un-ignored.
+- **Observed (Python / JVM): a cancelled PLAIN srt shell reports `CLOSED`,
+  not `BROKEN`** — PR #209's "plain = BROKEN, managed = CLOSED" split is
+  reversed (spec Q2 / A-ARCH-03); `SrtError(CLOSED)` /
+  `SrtException(CLOSED)` with detail `cancelled from another thread` on
+  every shell. The C ABI already reported `TST_E_CLOSED` (−7) through its
+  cancel relabelling; unchanged. `docs/languages/{python,jvm}.md`,
+  `docs/reference/binding-authors.md` ("Cancel handles") and
+  `docs/reference/srt-cancel-handle.md` rewritten accordingly.
 - The four `tests/conformance.rs` binaries join the single-threaded `network`
   nextest group (`.config/nextest.toml`, all three keep-in-sync filters), so
   they cannot contend with the rest of the suite for loopback ports.

@@ -56,7 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     loop {
         match sender.send_ts(&pkt) {
             Ok(()) => continue,
-            Err(_e) => break, // cancellation surfaces as TransportError::Broken("cancelled")
+            Err(_e) => break, // cancellation surfaces as TransportError::ExplicitClose
         }
     }
     Ok(())
