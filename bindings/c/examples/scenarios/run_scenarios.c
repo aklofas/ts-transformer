@@ -1895,18 +1895,30 @@ static int contract_cancelled_recv_kind(const char *scenarios_dir_path,
                                         const scenario_entry_t *entry,
                                         core_event_list_t *out_events) {
     (void)scenarios_dir_path;
-    cancelled_recv_state_t st;
-    memset(&st, 0, sizeof st);
-    st.port = free_udp_port();
+    /* HEAP, not stack. The worker below is DETACHED and keeps writing into
+     * this state (its `detail` buffer and three atomics) until its
+     * open_listener / recv_packet returns. Several failure paths here return
+     * while that worker is still parked, so the state must outlive this
+     * frame: on those paths it is deliberately LEAKED - the process is about
+     * to report a failed scenario and exit, and a one-off leak is strictly
+     * better than the use-after-free a stack local would give. It is freed
+     * only once `done` proves the worker has finished writing. */
+    cancelled_recv_state_t *st = calloc(1, sizeof *st);
+    if (!st) {
+        perror("calloc");
+        return -1;
+    }
+    st->port = free_udp_port();
     pthread_t th;
-    if (pthread_create(&th, NULL, cancelled_recv_worker, &st) != 0) {
+    if (pthread_create(&th, NULL, cancelled_recv_worker, st) != 0) {
         perror("pthread_create");
+        free(st); /* no worker started - nothing can reference it */
         return -1;
     }
     pthread_detach(th);
 
     char caller[64];
-    snprintf(caller, sizeof caller, "srt://127.0.0.1:%u?mode=caller", (unsigned)st.port);
+    snprintf(caller, sizeof caller, "srt://127.0.0.1:%u?mode=caller", (unsigned)st->port);
     tst_raw_sender_t *peer = NULL;
     for (int i = 0; i < 100 && !peer; i++) { /* <= 5 s: the listener may not be bound yet */
         peer = tst_raw_sender_open(caller, NULL);
@@ -1917,16 +1929,35 @@ static int contract_cancelled_recv_kind(const char *scenarios_dir_path,
     if (!peer) {
         fprintf(stderr, "FAIL [%s]: idle peer could not connect: %s\n", entry->id,
                 tst_get_last_error_str());
+        /* The worker is parked in open_listener's accept with nothing to
+         * accept, and the C ABI exposes no listener cancel handle, so it
+         * cannot be woken from here. Leak `st` and let the failing run end.
+         * (Only reachable when SRT loopback is broken outright.) */
         return -1;
     }
 
+    /* Watch `done` as well as `rx`: an open_listener failure sets `done`
+     * without ever publishing an `rx`, and polling `rx` alone would stall the
+     * full 10 s and then report the wrong reason. */
     tst_receiver_t *rx = NULL;
-    for (int i = 0; i < 200 && !(rx = atomic_load(&st.rx)); i++) { /* <= 10 s */
+    for (int i = 0; i < 200; i++) { /* <= 10 s */
+        rx = atomic_load(&st->rx);
+        if (rx || atomic_load(&st->done)) {
+            break;
+        }
         usleep(50 * 1000);
     }
     if (!rx) {
-        fprintf(stderr, "FAIL [%s]: listener never accepted within 10 s\n", entry->id);
-        tst_raw_sender_close(peer);
+        if (atomic_load(&st->done)) {
+            /* The worker has finished writing, so the state is ours again. */
+            fprintf(stderr, "FAIL [%s]: listener open failed: %s\n", entry->id, st->detail);
+            tst_raw_sender_close(peer);
+            free(st);
+        } else {
+            fprintf(stderr, "FAIL [%s]: listener never accepted within 10 s\n", entry->id);
+            tst_raw_sender_close(peer);
+            /* worker still parked - leak (see the allocation comment) */
+        }
         return -1;
     }
     usleep(300 * 1000); /* let recv_packet park in srt_recv */
@@ -1934,29 +1965,39 @@ static int contract_cancelled_recv_kind(const char *scenarios_dir_path,
         fprintf(stderr, "FAIL [%s]: tst_receiver_cancel: %s\n", entry->id,
                 tst_get_last_error_str());
         tst_raw_sender_close(peer);
-        return -1;
+        /* Close the receiver so the parked worker returns instead of sitting
+         * in libsrt at process exit (where atexit(srt_cleanup) would join it). */
+        tst_receiver_close(rx);
+        return -1; /* worker may still be mid-write - leak */
     }
-    for (int i = 0; i < 200 && !atomic_load(&st.done); i++) { /* <= 10 s */
+    for (int i = 0; i < 200 && !atomic_load(&st->done); i++) { /* <= 10 s */
         usleep(50 * 1000);
     }
     tst_raw_sender_close(peer);
-    if (!atomic_load(&st.done)) {
+    if (!atomic_load(&st->done)) {
         fprintf(stderr, "FAIL [%s]: cancel did not end the parked recv within 10 s\n",
                 entry->id);
-        return -1;
+        tst_receiver_close(rx); /* same reason as above */
+        return -1;              /* worker still parked - leak */
     }
     tst_receiver_close(rx);
 
-    int rc = atomic_load(&st.rc);
+    /* `done` is set: the worker is finished and the state is ours. Snapshot
+     * what the verdict needs, then free. */
+    int rc = atomic_load(&st->rc);
+    char detail[sizeof st->detail];
+    snprintf(detail, sizeof detail, "%s", st->detail);
+    free(st);
+
     if (rc != TST_E_CLOSED) {
         fprintf(stderr, "FAIL [%s]: expected TST_E_CLOSED (%d) after cancel, got %d (%s)\n",
-                entry->id, (int)TST_E_CLOSED, rc, st.detail);
+                entry->id, (int)TST_E_CLOSED, rc, detail);
         return -1;
     }
     fprintf(stdout,
             "  [cancelled-recv-kind] recv_packet after cancel -> TST_E_CLOSED (last error: "
             "\"%s\") - maps to CLOSED\n",
-            st.detail);
+            detail);
     core_event_t ev;
     memset(&ev, 0, sizeof ev);
     ev.kind = CE_ERROR;
