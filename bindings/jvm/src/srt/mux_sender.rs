@@ -72,8 +72,9 @@ fn throw_mux_sender_error(env: &mut JNIEnv, e: &MuxSenderError) {
 /// parked (libsrt's blocking `srt_sendmsg` on a full send buffer) and
 /// `OwnedRegistry::close` cancels first, ending that parked send promptly with
 /// `SrtException(CLOSED)` — the cancel closes the socket under it and
-/// `SrtTransport` reports the cancel — instead of holding `close()` hostage. The contract the C ABI's
-/// `tst_mux_sender_close` and the plain srt receivers already have.
+/// `SrtTransport` reports the cancel — instead of holding `close()` hostage.
+/// The contract the C ABI's `tst_mux_sender_close` and the plain srt
+/// receivers already have.
 fn register(sender: Inner, cancel: Arc<dyn TransportCancel>) -> jlong {
     REGISTRY.insert(Owned::new(sender, cancel, ())) as jlong
 }

@@ -1011,9 +1011,9 @@ set nothing.
 - **`Receiver.close()` / `DemuxReceiver.close()` cancel first.** Calling
   either from another thread while `recvBytes()` / `next()` is parked wakes
   that call — it throws `SrtException(CLOSED)` — and `close()` returns
-  promptly. The managed pair (`ManagedReceiver` / `ManagedDemuxReceiver`)
-  does the same and records `RecvEndReason.CANCELLED`.
-  A `close()` with nothing parked simply closes.
+  promptly. The managed pair (`ManagedReceiver` / `ManagedDemuxReceiver`) does
+  the same and records `RecvEndReason.CANCELLED`. A `close()` with nothing
+  parked simply closes.
 - **Every srt sender's `close()` cancels first too.** `MuxSender.close()` /
   `Sender.close()` from another thread while a `send*` / `sendBytes()` is
   parked (libsrt blocked on a full send buffer) wakes that call — it throws
@@ -1021,10 +1021,9 @@ set nothing.
   `ManagedMuxSender.close()` / `ManagedSender.close()` do the same for a send
   parked anywhere in the reconnect loop (a live send, the backoff wait, a
   re-dial), so a cross-thread close mid-outage no longer waits out the whole
-  reconnect budget. `close()` is the prompt,
-  lossy shutdown: bytes a prior transient error left pending are abandoned.
-  One binding, one contract: this is what the rtp senders and the C ABI's
-  `tst_*_sender_close` already do.
+  reconnect budget. `close()` is the prompt, lossy shutdown: bytes a prior
+  transient error left pending are abandoned. One binding, one contract: this
+  is what the rtp senders and the C ABI's `tst_*_sender_close` already do.
 - **JDK-17 byte-copy posture.** `sendBytes` copies the supplied array across
   the JNI boundary; `recvBytes` returns a heap `byte[]` copy. A zero-copy
   path using FFM `MemorySegment` is deferred to a JDK-22+ release.

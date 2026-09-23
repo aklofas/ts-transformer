@@ -158,9 +158,9 @@ fn make_receiver(
 /// holds the slot and `OwnedRegistry::close` cancels first — a `next()` parked
 /// on another thread ends promptly (with `SrtException(CLOSED)`: the cancel
 /// closes the socket under the parked recv and `SrtTransport` reports the
-/// cancel) instead of holding `close()` hostage. The contract tst-py's `DemuxReceiver.close()` and the C ABI's
-/// `tst_demux_receiver_close` already have; no end-reason cell on the plain
-/// shell.
+/// cancel) instead of holding `close()` hostage. The contract tst-py's
+/// `DemuxReceiver.close()` and the C ABI's `tst_demux_receiver_close` already
+/// have; no end-reason cell on the plain shell.
 fn register(jdr: JniDemuxReceiver, cancel: Arc<dyn TransportCancel>) -> jlong {
     REGISTRY.insert(Owned::new(jdr, cancel, ())) as jlong
 }
