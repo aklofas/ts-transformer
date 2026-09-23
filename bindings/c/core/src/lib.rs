@@ -84,14 +84,29 @@ use spin as _;
 #[cfg(not(feature = "std"))]
 pub(crate) mod nostd_mutex {
     //! Single-core no_std lock seam mirroring `std::sync::Mutex`'s surface
-    //! (`new` + `lock() -> Result<Guard, _>`) so call sites compile verbatim.
+    //! (`new` + `lock() -> Result<Guard, Poisoned<Guard>>`, and
+    //! `Poisoned::into_inner`) so call sites compile verbatim — including the
+    //! poison-recover sites, which spell recovery `.unwrap_or_else(|e|
+    //! e.into_inner())` in both feature planes.
     pub(crate) struct Mutex<T>(spin::Mutex<T>);
+
+    /// Stand-in for `std::sync::PoisonError`. A spin lock cannot be poisoned,
+    /// so this is never constructed; it exists so the `Err` arm has the same
+    /// shape (and the same `into_inner`) as under `std`.
+    pub(crate) struct Poisoned<T>(T);
+    impl<T> Poisoned<T> {
+        pub(crate) fn into_inner(self) -> T {
+            self.0
+        }
+    }
+
     impl<T> Mutex<T> {
         pub(crate) const fn new(v: T) -> Self {
             Self(spin::Mutex::new(v))
         }
-        #[allow(clippy::result_unit_err)]
-        pub(crate) fn lock(&self) -> Result<spin::MutexGuard<'_, T>, ()> {
+        pub(crate) fn lock(
+            &self,
+        ) -> Result<spin::MutexGuard<'_, T>, Poisoned<spin::MutexGuard<'_, T>>> {
             Ok(self.0.lock())
         }
     }

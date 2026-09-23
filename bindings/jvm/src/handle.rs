@@ -298,11 +298,8 @@ impl<T> HandleRegistry<T> {
         let entry = self.lease(id)?;
         let mut guard = entry.resource.lock().unwrap_or_else(|e| e.into_inner());
         // Lost the race to `close` (resource already taken)?
-        guard.as_mut()?;
-        let result = catch_unwind(AssertUnwindSafe(|| {
-            let t = guard.as_mut().expect("checked Some above");
-            f(t)
-        }));
+        let t = guard.as_mut()?;
+        let result = catch_unwind(AssertUnwindSafe(|| f(t)));
         match result {
             Ok(r) => Some(r),
             Err(payload) => {

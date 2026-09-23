@@ -743,7 +743,10 @@ pub(crate) unsafe fn demux_receiver_next_event<R: RecvTransport, S>(
     let cancelled = inner.is_cancelled();
     inner.with_inner_mut(|rx| match rx.recv_event() {
         Ok(Some(ev)) => {
-            let mut arena = arena.lock().expect("event arena Mutex poisoned");
+            // Poison = a panic mid-write on another call; the arena is
+            // rewritten before it is read, so recover (binding poison
+            // policy: readers recover).
+            let mut arena = arena.lock().unwrap_or_else(|e| e.into_inner());
             // SAFETY: out_event non-null per guard above. event::convert writes
             // through the pointer; pointer fields on the result alias arena Vecs
             // (held under the arena Mutex for this call — stable until next call).
@@ -881,9 +884,10 @@ pub(crate) unsafe fn demux_receiver_get_stream_stats<R: RecvTransport, S>(
     }
     inner.with_inner_ref(|rx| {
         let stats = rx.stats();
-        let mut buf = stream_stats_buf
-            .lock()
-            .expect("stream_stats_buf Mutex poisoned");
+        // Poison = a panic mid-write on another call; the buffer is cleared
+        // below before it is read, so recover (binding poison policy:
+        // readers recover).
+        let mut buf = stream_stats_buf.lock().unwrap_or_else(|e| e.into_inner());
         buf.clear();
         let cap = crate::stats::TST_STATS_MAX_STREAMS;
         for (pid, ss) in stats.per_stream.iter().take(cap) {
@@ -1051,9 +1055,10 @@ pub(crate) unsafe fn managed_demux_receiver_get_stream_stats<R: RecvTransport, S
     }
     inner.with_inner_ref(|rx| {
         let stats = rx.stats();
-        let mut buf = stream_stats_buf
-            .lock()
-            .expect("stream_stats_buf Mutex poisoned");
+        // Poison = a panic mid-write on another call; the buffer is cleared
+        // below before it is read, so recover (binding poison policy:
+        // readers recover).
+        let mut buf = stream_stats_buf.lock().unwrap_or_else(|e| e.into_inner());
         buf.clear();
         let cap = crate::stats::TST_STATS_MAX_STREAMS;
         for (pid, ss) in stats.per_stream.iter().take(cap) {
