@@ -59,12 +59,34 @@ tool_versions_json() {
 # Port allocation
 # ---------------------------------------------------------------------
 
-# Ask the OS for an unused loopback port via a throwaway UDP bind —
-# mirrors crates/tst-interop/tests/loopback.rs's own `free_port()`
-# (small TOCTOU race between this probe's close and the real bind that
-# follows; same accepted trade-off documented there).
+# Ask the OS for an unused loopback port via a throwaway bind.
+#
+#   free_port          # UDP namespace (default): srt, rist, udp, rtp cells
+#   free_port tcp      # TCP namespace: rtsp-serve, tcp, hls cells
+#
+# PROBE THE PROTOCOL THE CELL WILL ACTUALLY BIND. The kernel tracks UDP
+# and TCP ports in SEPARATE namespaces, so a port free for one is not
+# evidence it is free for the other (the same warning
+# bindings/python/tests/_builders/ports.py carries). Probing UDP for a
+# TCP bind is not a race — it is asking the wrong question, and it is
+# what made rtsp-serve/ffmpeg-pull fail with "RtspServer::start: bind
+# address in use" while an unrelated TCP socket held the port.
+# crates/tst-interop/tests/serve.rs already draws this distinction with
+# its own `free_tcp_port()`; this is the shell orchestrator catching up.
+#
+# The residual same-protocol TOCTOU between this probe's close and the
+# real bind is the accepted trade-off crates/tst-interop/tests/loopback.rs
+# documents; deliberately NOT papered over with a retry loop, which would
+# mask genuine bind failures.
 free_port() {
-  python3 -c 'import socket; s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()'
+  local proto=${1:-udp}
+  local sock_type
+  case "$proto" in
+    udp) sock_type=SOCK_DGRAM ;;
+    tcp) sock_type=SOCK_STREAM ;;
+    *) echo "free_port: unknown protocol '$proto' (want tcp or udp)" >&2; return 2 ;;
+  esac
+  python3 -c "import socket; s=socket.socket(socket.AF_INET, socket.$sock_type); s.bind((\"127.0.0.1\", 0)); print(s.getsockname()[1]); s.close()"
 }
 
 # ---------------------------------------------------------------------
