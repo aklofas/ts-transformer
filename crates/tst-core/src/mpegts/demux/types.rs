@@ -116,6 +116,11 @@ pub struct DemuxerConfig {
     /// [`crate::error::DemuxError::SyncBufExhausted`] and the buffered
     /// bytes are dropped. `None` uses the 4 MiB default. Distinct from
     /// `pes_cap_*`, which bound PES *reassembly*.
+    ///
+    /// # C ABI
+    ///
+    /// `tst_demux_config_set_sync_buf_cap` — see
+    /// `bindings/c/include/tstrans.h`.
     pub sync_buf_cap: Option<usize>,
     pub klv_link_overrides: Vec<(u16, u16)>,
     pub stream_kind_overrides: BTreeMap<u16, StreamKind>,

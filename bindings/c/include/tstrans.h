@@ -56,7 +56,7 @@
  * Minor version of the C ABI contract. See [`TST_ABI_VERSION_MAJOR`]
  * for the bump policy.
  *
- * Cbindgen emits this as `#define TST_ABI_VERSION_MINOR 21` in the
+ * Cbindgen emits this as `#define TST_ABI_VERSION_MINOR 22` in the
  * generated header. Runtime accessor: [`tst_get_abi_version_minor`].
  *
  * History (additive bumps only — major stays at 0 pre-1.0):
@@ -278,8 +278,23 @@
  *   error codes. See
  *   `bindings/c/core/src/receiver/demux_receiver/managed.rs` and
  *   `bindings/c/core/src/demux_config.rs`.
+ * - `22` (deep-review-4 Arc 2 riders R3/R4, 2026-09): additive.
+ *   `tst_demux_config_set_sync_buf_cap` (unconditional; ARCH-10 — the
+ *   pre-sync ingress ceiling, 0 = Rust default). Cancel entry points for
+ *   the three transports that had none: `tst_tcp_{sender,mux_sender,
+ *   receiver,demux_receiver,listener}_cancel` (`TST_HAS_TCP`),
+ *   `tst_udp_{sender,mux_sender,receiver,demux_receiver}_cancel`
+ *   (`TST_HAS_UDP`), `tst_rist_{…}_cancel` (`TST_HAS_RIST`) — all reach
+ *   the Rust `TcpCancelHandle` / `UdpCancelHandle` / `RistCancelHandle`
+ *   through the shared `tst_pipeline::binding::Owned` slot, and a parked
+ *   data-path call on another thread returns `TST_E_CLOSED` (the Arc 2
+ *   one-cancel-outcome contract). `MuxSender::finish` parity (DEBT-14):
+ *   `tst_mux_sender_finish`, `tst_managed_mux_sender_finish`,
+ *   `tst_{udp,tcp,rtp,rist}_mux_sender_finish`. No new C types, no new
+ *   error codes. See `bindings/c/core/src/tcp/`, `demux_config.rs`, and
+ *   the shell parity matrix in `docs/reference/binding-authors.md`.
  */
-#define TST_ABI_VERSION_MINOR 21
+#define TST_ABI_VERSION_MINOR 22
 
 #define TST_CODEC_KIND_AUDIO 3
 
@@ -2749,6 +2764,33 @@ void tst_managed_mux_sender_close(struct tst_managed_mux_sender_t *p);
 
 #if defined(TST_HAS_SRT)
 /**
+ * Drain every byte the muxer still holds to the transport, report the
+ * first drain error, then close the transport (`MuxSender::finish`).
+ *
+ * Returns 0 when everything reached the transport, or the negative
+ * `TST_E_*` code of the first drain failure (the remaining bytes are
+ * abandoned; the sender is closed either way). A second call returns 0.
+ * Unlike `tst_managed_mux_sender_close`, this does NOT cancel first: a
+ * `send_*` parked on another thread — including one waiting out a
+ * reconnect backoff — holds the sender and `_finish` waits behind it;
+ * call `tst_managed_mux_sender_cancel` first if that is not wanted. The
+ * handle must still be freed with `tst_managed_mux_sender_close`.
+ *
+ * Returns `TST_E_INVALID_CONFIG` on a null pointer. Like every entry
+ * point, a call after `tst_managed_mux_sender_close` has freed the
+ * pointer is a use-after-free, not an error code — `_close` consumes the
+ * handle.
+ *
+ * # Safety
+ *
+ * `p` must be NULL or a valid, not-yet-closed
+ * `*mut tst_managed_mux_sender_t`.
+ */
+int tst_managed_mux_sender_finish(struct tst_managed_mux_sender_t *p);
+#endif
+
+#if defined(TST_HAS_SRT)
+/**
  * Snapshot reconnect/gap telemetry for a `tst_managed_mux_sender_t` into
  * `*out`. Unlike [`tst_managed_mux_sender_get_socket_stats`], this never
  * returns `TST_E_NOT_AVAILABLE` — the counters live on the side-channel
@@ -3485,6 +3527,30 @@ int tst_mux_sender_cancel(struct tst_mux_sender_t *p);
  * behavior (use-after-free on the consumed `Box`).
  */
 void tst_mux_sender_close(struct tst_mux_sender_t *p);
+#endif
+
+#if defined(TST_HAS_SRT)
+/**
+ * Drain every byte the muxer still holds to the transport, report the
+ * first drain error, then close the transport (`MuxSender::finish`).
+ *
+ * Returns 0 when everything reached the transport, or the negative
+ * `TST_E_*` code of the first drain failure (the remaining bytes are
+ * abandoned; the sender is closed either way). A second call returns 0.
+ * Unlike `tst_mux_sender_close`, this does NOT cancel first: a `send_*`
+ * parked on another thread holds the sender and `_finish` waits behind
+ * it — call `tst_mux_sender_cancel` first if that is not wanted. The
+ * handle must still be freed with `tst_mux_sender_close`.
+ *
+ * Returns `TST_E_INVALID_CONFIG` on a null pointer. Like every entry
+ * point, a call after `tst_mux_sender_close` has freed the pointer is a
+ * use-after-free, not an error code — `_close` consumes the handle.
+ *
+ * # Safety
+ *
+ * `p` must be NULL or a valid, not-yet-closed `*mut tst_mux_sender_t`.
+ */
+int tst_mux_sender_finish(struct tst_mux_sender_t *p);
 #endif
 
 #if defined(TST_HAS_SRT)
@@ -4814,6 +4880,22 @@ int tst_demux_config_set_pes_cap(struct tst_demux_config_t *cfg, size_t per_pid,
  * unrecognized `mode`.
  */
 int tst_demux_config_set_strict_mode(struct tst_demux_config_t *cfg, int mode);
+
+/**
+ * Set the demuxer's pre-sync ingress ceiling in bytes (Rust
+ * `DemuxerConfig::sync_buf_cap`). `0` restores the Rust default (4 MiB).
+ *
+ * The ceiling bounds the LIVE bytes one `tst_demuxer_feed` may leave in
+ * the pre-sync buffer (that call's input plus at most 187 unaligned
+ * residue bytes) — a single feed larger than it is rejected with
+ * `TST_E_TOO_LARGE` (`DemuxError::SyncBufExhausted`) and the buffered
+ * bytes are dropped. Raise it to feed a whole file in one call; lower it
+ * to bound memory on adversarial input. Distinct from the PES caps
+ * (`tst_demux_config_set_pes_cap`), which bound PES *reassembly*.
+ *
+ * Returns 0 on success, `TST_E_INVALID_CONFIG` on null `cfg`.
+ */
+int tst_demux_config_set_sync_buf_cap(struct tst_demux_config_t *cfg, size_t cap_bytes);
 
 /**
  * Enable the opt-in PTS/DTS unwrap. `enable` is read as a C `bool`
@@ -6278,6 +6360,25 @@ void tst_reconnect_policy_free(struct tst_reconnect_policy_t *p);
 
 #if defined(TST_HAS_RIST)
 /**
+ * Interrupt a `tst_rist_demux_receiver_next_event` on another thread; that call
+ * returns `TST_E_CLOSED` at the end of the current ~100 ms librist tick. Callable from any thread,
+ * lock-free (never takes the handle's slot), idempotent.
+ *
+ * This is the NON-FREEING cross-thread interrupt: unlike `tst_rist_demux_receiver_close`
+ * it leaves the handle valid, so the owner still frees it with
+ * `tst_rist_demux_receiver_close` once no other thread is using it.
+ *
+ * Returns 0, or `TST_E_INVALID_CONFIG` if `p` is null.
+ *
+ * # Safety
+ *
+ * `p` must be NULL or a valid, not-yet-closed `*mut TstRistDemuxReceiver`.
+ */
+int tst_rist_demux_receiver_cancel(struct TstRistDemuxReceiver *p);
+#endif
+
+#if defined(TST_HAS_RIST)
+/**
  * Close and free a `tst_rist_demux_receiver_t`.
  *
  * Safe to call with `NULL` (no-op).
@@ -6288,6 +6389,25 @@ void tst_reconnect_policy_free(struct tst_reconnect_policy_t *p);
  * returned by `tst_rist_demux_receiver_open`.
  */
 void tst_rist_demux_receiver_close(struct TstRistDemuxReceiver *p);
+#endif
+
+#if defined(TST_HAS_RIST)
+/**
+ * Interrupt a `tst_rist_mux_sender_push_*` on another thread; that call
+ * returns `TST_E_CLOSED`. Callable from any thread,
+ * lock-free (never takes the handle's slot), idempotent.
+ *
+ * This is the NON-FREEING cross-thread interrupt: unlike `tst_rist_mux_sender_close`
+ * it leaves the handle valid, so the owner still frees it with
+ * `tst_rist_mux_sender_close` once no other thread is using it.
+ *
+ * Returns 0, or `TST_E_INVALID_CONFIG` if `p` is null.
+ *
+ * # Safety
+ *
+ * `p` must be NULL or a valid, not-yet-closed `*mut TstRistMuxSender`.
+ */
+int tst_rist_mux_sender_cancel(struct TstRistMuxSender *p);
 #endif
 
 #if defined(TST_HAS_RIST)
@@ -6306,6 +6426,25 @@ void tst_rist_mux_sender_close(struct TstRistMuxSender *p);
 
 #if defined(TST_HAS_RIST)
 /**
+ * Interrupt a `tst_rist_receiver_recv_ts` on another thread; that call
+ * returns `TST_E_CLOSED` at the end of the current ~100 ms librist tick. Callable from any thread,
+ * lock-free (never takes the handle's slot), idempotent.
+ *
+ * This is the NON-FREEING cross-thread interrupt: unlike `tst_rist_receiver_close`
+ * it leaves the handle valid, so the owner still frees it with
+ * `tst_rist_receiver_close` once no other thread is using it.
+ *
+ * Returns 0, or `TST_E_INVALID_CONFIG` if `p` is null.
+ *
+ * # Safety
+ *
+ * `p` must be NULL or a valid, not-yet-closed `*mut TstRistReceiver`.
+ */
+int tst_rist_receiver_cancel(struct TstRistReceiver *p);
+#endif
+
+#if defined(TST_HAS_RIST)
+/**
  * Close and free a `tst_rist_receiver_t`.
  *
  * Safe to call with `NULL` (no-op). See `tst_rist_sender_close` for
@@ -6317,6 +6456,25 @@ void tst_rist_mux_sender_close(struct TstRistMuxSender *p);
  * by `tst_rist_recv_open`.
  */
 void tst_rist_receiver_close(struct TstRistReceiver *p);
+#endif
+
+#if defined(TST_HAS_RIST)
+/**
+ * Interrupt a `tst_rist_sender_send_ts` on another thread; that call
+ * returns `TST_E_CLOSED`. Callable from any thread,
+ * lock-free (never takes the handle's slot), idempotent.
+ *
+ * This is the NON-FREEING cross-thread interrupt: unlike `tst_rist_sender_close`
+ * it leaves the handle valid, so the owner still frees it with
+ * `tst_rist_sender_close` once no other thread is using it.
+ *
+ * Returns 0, or `TST_E_INVALID_CONFIG` if `p` is null.
+ *
+ * # Safety
+ *
+ * `p` must be NULL or a valid, not-yet-closed `*mut TstRistSender`.
+ */
+int tst_rist_sender_cancel(struct TstRistSender *p);
 #endif
 
 #if defined(TST_HAS_RIST)
@@ -6650,6 +6808,22 @@ int tst_rtsp_session_teardown_and_free(struct TstRtspSession *session);
 
 #if defined(TST_HAS_TCP)
 /**
+ * Interrupt a `tst_tcp_demux_receiver_next_event` parked on another thread; that call
+ * returns `TST_E_CLOSED`. Callable from any thread, lock-free (never takes
+ * the handle's slot), idempotent. The handle must still be freed with
+ * `tst_tcp_demux_receiver_close`.
+ *
+ * Returns 0, or `TST_E_INVALID_CONFIG` if `p` is null.
+ *
+ * # Safety
+ *
+ * `p` must be NULL or a valid, not-yet-closed `*mut TstTcpDemuxReceiver`.
+ */
+int tst_tcp_demux_receiver_cancel(struct TstTcpDemuxReceiver *p);
+#endif
+
+#if defined(TST_HAS_TCP)
+/**
  * Close and free a `tst_tcp_demux_receiver_t`.
  *
  * Safe to call with `NULL` (no-op).
@@ -6661,6 +6835,26 @@ int tst_rtsp_session_teardown_and_free(struct TstRtspSession *session);
  * `tst_tcp_listener_accept_receiver` (via the DemuxReceiver variant).
  */
 void tst_tcp_demux_receiver_close(struct TstTcpDemuxReceiver *p);
+#endif
+
+#if defined(TST_HAS_TCP)
+/**
+ * Interrupt a `tst_tcp_listener_accept_sender` / `_accept_receiver` parked
+ * on another thread: it returns NULL with `TST_E_CLOSED` within one accept
+ * poll tick (~5 ms). Callable from any thread, idempotent; the listener
+ * must still be freed with `tst_tcp_listener_free`.
+ *
+ * The OS socket stays bound until the listener is freed (std cannot shut a
+ * listening socket down explicitly), so bind the next listener on a fresh
+ * port or free this one first.
+ *
+ * Returns 0, or `TST_E_INVALID_CONFIG` if `p` is null.
+ *
+ * # Safety
+ *
+ * `p` must be NULL or a valid non-freed `*mut TstTcpListener`.
+ */
+int tst_tcp_listener_cancel(struct TstTcpListener *p);
 #endif
 
 #if defined(TST_HAS_TCP)
@@ -6683,6 +6877,22 @@ void tst_tcp_listener_free(struct TstTcpListener *p);
 
 #if defined(TST_HAS_TCP)
 /**
+ * Interrupt a `tst_tcp_mux_sender_push_*` parked on another thread; that call
+ * returns `TST_E_CLOSED`. Callable from any thread, lock-free (never takes
+ * the handle's slot), idempotent. The handle must still be freed with
+ * `tst_tcp_mux_sender_close`.
+ *
+ * Returns 0, or `TST_E_INVALID_CONFIG` if `p` is null.
+ *
+ * # Safety
+ *
+ * `p` must be NULL or a valid, not-yet-closed `*mut TstTcpMuxSender`.
+ */
+int tst_tcp_mux_sender_cancel(struct TstTcpMuxSender *p);
+#endif
+
+#if defined(TST_HAS_TCP)
+/**
  * Close and free a `tst_tcp_mux_sender_t`.
  *
  * Safe to call with `NULL` (no-op).
@@ -6693,6 +6903,22 @@ void tst_tcp_listener_free(struct TstTcpListener *p);
  * by `tst_tcp_mux_sender_open`.
  */
 void tst_tcp_mux_sender_close(struct TstTcpMuxSender *p);
+#endif
+
+#if defined(TST_HAS_TCP)
+/**
+ * Interrupt a `tst_tcp_receiver_recv_ts` parked on another thread; that call
+ * returns `TST_E_CLOSED`. Callable from any thread, lock-free (never takes
+ * the handle's slot), idempotent. The handle must still be freed with
+ * `tst_tcp_receiver_close`.
+ *
+ * Returns 0, or `TST_E_INVALID_CONFIG` if `p` is null.
+ *
+ * # Safety
+ *
+ * `p` must be NULL or a valid, not-yet-closed `*mut TstTcpReceiver`.
+ */
+int tst_tcp_receiver_cancel(struct TstTcpReceiver *p);
 #endif
 
 #if defined(TST_HAS_TCP)
@@ -6708,6 +6934,22 @@ void tst_tcp_mux_sender_close(struct TstTcpMuxSender *p);
  * by `tst_tcp_recv_open` or `tst_tcp_listener_accept_receiver`.
  */
 void tst_tcp_receiver_close(struct TstTcpReceiver *p);
+#endif
+
+#if defined(TST_HAS_TCP)
+/**
+ * Interrupt a `tst_tcp_sender_send_ts` parked on another thread; that call
+ * returns `TST_E_CLOSED`. Callable from any thread, lock-free (never takes
+ * the handle's slot), idempotent. The handle must still be freed with
+ * `tst_tcp_sender_close`.
+ *
+ * Returns 0, or `TST_E_INVALID_CONFIG` if `p` is null.
+ *
+ * # Safety
+ *
+ * `p` must be NULL or a valid, not-yet-closed `*mut TstTcpSender`.
+ */
+int tst_tcp_sender_cancel(struct TstTcpSender *p);
 #endif
 
 #if defined(TST_HAS_TCP)
@@ -6728,6 +6970,25 @@ void tst_tcp_sender_close(struct TstTcpSender *p);
 
 #if defined(TST_HAS_UDP)
 /**
+ * Interrupt a `tst_udp_demux_receiver_next_event` on another thread; that call
+ * returns `TST_E_CLOSED` within one 100 ms poll tick. Callable from any thread,
+ * lock-free (never takes the handle's slot), idempotent.
+ *
+ * This is the NON-FREEING cross-thread interrupt: unlike `tst_udp_demux_receiver_close`
+ * it leaves the handle valid, so the owner still frees it with
+ * `tst_udp_demux_receiver_close` once no other thread is using it.
+ *
+ * Returns 0, or `TST_E_INVALID_CONFIG` if `p` is null.
+ *
+ * # Safety
+ *
+ * `p` must be NULL or a valid, not-yet-closed `*mut TstUdpDemuxReceiver`.
+ */
+int tst_udp_demux_receiver_cancel(struct TstUdpDemuxReceiver *p);
+#endif
+
+#if defined(TST_HAS_UDP)
+/**
  * Close and free a `tst_udp_demux_receiver_t`.
  *
  * Safe to call with `NULL` (no-op).
@@ -6738,6 +6999,25 @@ void tst_tcp_sender_close(struct TstTcpSender *p);
  * returned by `tst_udp_demux_receiver_open`.
  */
 void tst_udp_demux_receiver_close(struct TstUdpDemuxReceiver *p);
+#endif
+
+#if defined(TST_HAS_UDP)
+/**
+ * Interrupt a `tst_udp_mux_sender_push_*` on another thread; that call
+ * returns `TST_E_CLOSED`. Callable from any thread,
+ * lock-free (never takes the handle's slot), idempotent.
+ *
+ * This is the NON-FREEING cross-thread interrupt: unlike `tst_udp_mux_sender_close`
+ * it leaves the handle valid, so the owner still frees it with
+ * `tst_udp_mux_sender_close` once no other thread is using it.
+ *
+ * Returns 0, or `TST_E_INVALID_CONFIG` if `p` is null.
+ *
+ * # Safety
+ *
+ * `p` must be NULL or a valid, not-yet-closed `*mut TstUdpMuxSender`.
+ */
+int tst_udp_mux_sender_cancel(struct TstUdpMuxSender *p);
 #endif
 
 #if defined(TST_HAS_UDP)
@@ -6756,6 +7036,25 @@ void tst_udp_mux_sender_close(struct TstUdpMuxSender *p);
 
 #if defined(TST_HAS_UDP)
 /**
+ * Interrupt a `tst_udp_receiver_recv_ts` on another thread; that call
+ * returns `TST_E_CLOSED` within one 100 ms poll tick. Callable from any thread,
+ * lock-free (never takes the handle's slot), idempotent.
+ *
+ * This is the NON-FREEING cross-thread interrupt: unlike `tst_udp_receiver_close`
+ * it leaves the handle valid, so the owner still frees it with
+ * `tst_udp_receiver_close` once no other thread is using it.
+ *
+ * Returns 0, or `TST_E_INVALID_CONFIG` if `p` is null.
+ *
+ * # Safety
+ *
+ * `p` must be NULL or a valid, not-yet-closed `*mut TstUdpReceiver`.
+ */
+int tst_udp_receiver_cancel(struct TstUdpReceiver *p);
+#endif
+
+#if defined(TST_HAS_UDP)
+/**
  * Close and free a `tst_udp_receiver_t`.
  *
  * Safe to call with `NULL` (no-op). See `tst_udp_sender_close` for
@@ -6767,6 +7066,25 @@ void tst_udp_mux_sender_close(struct TstUdpMuxSender *p);
  * by `tst_udp_recv_open`.
  */
 void tst_udp_receiver_close(struct TstUdpReceiver *p);
+#endif
+
+#if defined(TST_HAS_UDP)
+/**
+ * Interrupt a `tst_udp_sender_send_ts` on another thread; that call
+ * returns `TST_E_CLOSED`. Callable from any thread,
+ * lock-free (never takes the handle's slot), idempotent.
+ *
+ * This is the NON-FREEING cross-thread interrupt: unlike `tst_udp_sender_close`
+ * it leaves the handle valid, so the owner still frees it with
+ * `tst_udp_sender_close` once no other thread is using it.
+ *
+ * Returns 0, or `TST_E_INVALID_CONFIG` if `p` is null.
+ *
+ * # Safety
+ *
+ * `p` must be NULL or a valid, not-yet-closed `*mut TstUdpSender`.
+ */
+int tst_udp_sender_cancel(struct TstUdpSender *p);
 #endif
 
 #if defined(TST_HAS_UDP)
@@ -7776,6 +8094,30 @@ int tst_rist_demux_receiver_reset_stats(struct TstRistDemuxReceiver *p);
 
 #if defined(TST_HAS_RIST)
 /**
+ * Drain every byte the muxer still holds to the transport, report the
+ * first drain error, then close the transport (`MuxSender::finish`).
+ *
+ * Returns 0 when everything reached the transport, or the negative
+ * `TST_E_*` code of the first drain failure (the remaining bytes are
+ * abandoned; the sender is closed either way). A second call returns 0.
+ * Unlike `tst_rist_mux_sender_close`, this does NOT cancel first: a `push_*`
+ * parked on another thread holds the sender and `_finish` waits behind
+ * it — call `tst_rist_mux_sender_cancel` first if that is not wanted. The
+ * handle must still be freed with `tst_rist_mux_sender_close`.
+ *
+ * Returns `TST_E_INVALID_CONFIG` on a null pointer. Like every entry
+ * point, a call after `tst_rist_mux_sender_close` has freed the pointer is a
+ * use-after-free, not an error code — `_close` consumes the handle.
+ *
+ * # Safety
+ *
+ * `p` must be NULL or a valid, not-yet-closed `*mut tst_rist_mux_sender_t`.
+ */
+int tst_rist_mux_sender_finish(struct TstRistMuxSender *p);
+#endif
+
+#if defined(TST_HAS_RIST)
+/**
  * Snapshot mux-sender-level stats for a `tst_rist_mux_sender_t` into `*out`.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
@@ -8511,6 +8853,30 @@ struct TstRtpDemuxReceiver *tst_rtp_demux_receiver_open(const char *url,
  * `tst_rtp_demux_receiver_open`.
  */
 int tst_rtp_demux_receiver_reset_stats(struct TstRtpDemuxReceiver *p);
+#endif
+
+#if defined(TST_HAS_RTP)
+/**
+ * Drain every byte the muxer still holds to the transport, report the
+ * first drain error, then close the transport (`MuxSender::finish`).
+ *
+ * Returns 0 when everything reached the transport, or the negative
+ * `TST_E_*` code of the first drain failure (the remaining bytes are
+ * abandoned; the sender is closed either way). A second call returns 0.
+ * Unlike `tst_rtp_mux_sender_close`, this does NOT cancel first: a `push_*`
+ * parked on another thread holds the sender and `_finish` waits behind
+ * it — call `tst_rtp_mux_sender_cancel` first if that is not wanted. The
+ * handle must still be freed with `tst_rtp_mux_sender_close`.
+ *
+ * Returns `TST_E_INVALID_CONFIG` on a null pointer. Like every entry
+ * point, a call after `tst_rtp_mux_sender_close` has freed the pointer is a
+ * use-after-free, not an error code — `_close` consumes the handle.
+ *
+ * # Safety
+ *
+ * `p` must be NULL or a valid, not-yet-closed `*mut tst_rtp_mux_sender_t`.
+ */
+int tst_rtp_mux_sender_finish(struct TstRtpMuxSender *p);
 #endif
 
 #if defined(TST_HAS_RTP)
@@ -10420,6 +10786,30 @@ struct TstTcpListener *tst_tcp_listener_from_url(const char *url);
 
 #if defined(TST_HAS_TCP)
 /**
+ * Drain every byte the muxer still holds to the transport, report the
+ * first drain error, then close the transport (`MuxSender::finish`).
+ *
+ * Returns 0 when everything reached the transport, or the negative
+ * `TST_E_*` code of the first drain failure (the remaining bytes are
+ * abandoned; the sender is closed either way). A second call returns 0.
+ * Unlike `tst_tcp_mux_sender_close`, this does NOT cancel first: a `push_*`
+ * parked on another thread holds the sender and `_finish` waits behind
+ * it — call `tst_tcp_mux_sender_cancel` first if that is not wanted. The
+ * handle must still be freed with `tst_tcp_mux_sender_close`.
+ *
+ * Returns `TST_E_INVALID_CONFIG` on a null pointer. Like every entry
+ * point, a call after `tst_tcp_mux_sender_close` has freed the pointer is a
+ * use-after-free, not an error code — `_close` consumes the handle.
+ *
+ * # Safety
+ *
+ * `p` must be NULL or a valid, not-yet-closed `*mut tst_tcp_mux_sender_t`.
+ */
+int tst_tcp_mux_sender_finish(struct TstTcpMuxSender *p);
+#endif
+
+#if defined(TST_HAS_TCP)
+/**
  * Snapshot mux-sender-level stats for a `tst_tcp_mux_sender_t` into `*out`.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
@@ -11090,6 +11480,30 @@ struct TstUdpDemuxReceiver *tst_udp_demux_receiver_open(const char *url,
  * `tst_udp_demux_receiver_open`.
  */
 int tst_udp_demux_receiver_reset_stats(struct TstUdpDemuxReceiver *p);
+#endif
+
+#if defined(TST_HAS_UDP)
+/**
+ * Drain every byte the muxer still holds to the transport, report the
+ * first drain error, then close the transport (`MuxSender::finish`).
+ *
+ * Returns 0 when everything reached the transport, or the negative
+ * `TST_E_*` code of the first drain failure (the remaining bytes are
+ * abandoned; the sender is closed either way). A second call returns 0.
+ * Unlike `tst_udp_mux_sender_close`, this does NOT cancel first: a `push_*`
+ * parked on another thread holds the sender and `_finish` waits behind
+ * it — call `tst_udp_mux_sender_cancel` first if that is not wanted. The
+ * handle must still be freed with `tst_udp_mux_sender_close`.
+ *
+ * Returns `TST_E_INVALID_CONFIG` on a null pointer. Like every entry
+ * point, a call after `tst_udp_mux_sender_close` has freed the pointer is a
+ * use-after-free, not an error code — `_close` consumes the handle.
+ *
+ * # Safety
+ *
+ * `p` must be NULL or a valid, not-yet-closed `*mut tst_udp_mux_sender_t`.
+ */
+int tst_udp_mux_sender_finish(struct TstUdpMuxSender *p);
 #endif
 
 #if defined(TST_HAS_UDP)

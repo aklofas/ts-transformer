@@ -1048,6 +1048,12 @@ impl<T: Transport> MuxSender<T> {
     /// the sender half-open). A poisoned inner lock surfaces as
     /// [`MuxSenderErrorSource::Transport`] with a `finish`-site message,
     /// matching the send-path poisoning policy.
+    ///
+    /// # C ABI
+    ///
+    /// `tst_mux_sender_finish` / `tst_managed_mux_sender_finish` (and the
+    /// per-transport `tst_{udp,tcp,rtp,rist}_mux_sender_finish`) — see
+    /// `bindings/c/include/tstrans.h`.
     pub fn finish(&self) -> Result<(), MuxSenderError> {
         let mut inner = self.inner.lock().map_err(|_| lock_poisoned("finish"))?;
         if inner.closed {
