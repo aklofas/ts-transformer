@@ -37,10 +37,10 @@ pub use demux_receiver::{
 };
 pub use mux_sender::{
     TstRtpMuxSender, tst_rtp_mux_sender_cancel, tst_rtp_mux_sender_close,
-    tst_rtp_mux_sender_get_mux_sender_stats, tst_rtp_mux_sender_get_socket_stats,
-    tst_rtp_mux_sender_get_stream_codec_stats, tst_rtp_mux_sender_open,
-    tst_rtp_mux_sender_push_audio, tst_rtp_mux_sender_push_audio_to, tst_rtp_mux_sender_push_klv,
-    tst_rtp_mux_sender_push_klv_to, tst_rtp_mux_sender_push_subtitle,
+    tst_rtp_mux_sender_finish, tst_rtp_mux_sender_get_mux_sender_stats,
+    tst_rtp_mux_sender_get_socket_stats, tst_rtp_mux_sender_get_stream_codec_stats,
+    tst_rtp_mux_sender_open, tst_rtp_mux_sender_push_audio, tst_rtp_mux_sender_push_audio_to,
+    tst_rtp_mux_sender_push_klv, tst_rtp_mux_sender_push_klv_to, tst_rtp_mux_sender_push_subtitle,
     tst_rtp_mux_sender_push_subtitle_to, tst_rtp_mux_sender_push_video,
     tst_rtp_mux_sender_push_video_to, tst_rtp_mux_sender_reset_stats,
 };

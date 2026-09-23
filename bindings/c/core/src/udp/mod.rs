@@ -35,10 +35,11 @@ pub use demux_receiver::{
     tst_udp_demux_receiver_reset_stats,
 };
 pub use mux_sender::{
-    TstUdpMuxSender, tst_udp_mux_sender_close, tst_udp_mux_sender_get_mux_sender_stats,
-    tst_udp_mux_sender_get_socket_stats, tst_udp_mux_sender_get_stream_codec_stats,
-    tst_udp_mux_sender_open, tst_udp_mux_sender_push_audio, tst_udp_mux_sender_push_audio_to,
-    tst_udp_mux_sender_push_klv, tst_udp_mux_sender_push_klv_to, tst_udp_mux_sender_push_subtitle,
+    TstUdpMuxSender, tst_udp_mux_sender_close, tst_udp_mux_sender_finish,
+    tst_udp_mux_sender_get_mux_sender_stats, tst_udp_mux_sender_get_socket_stats,
+    tst_udp_mux_sender_get_stream_codec_stats, tst_udp_mux_sender_open,
+    tst_udp_mux_sender_push_audio, tst_udp_mux_sender_push_audio_to, tst_udp_mux_sender_push_klv,
+    tst_udp_mux_sender_push_klv_to, tst_udp_mux_sender_push_subtitle,
     tst_udp_mux_sender_push_subtitle_to, tst_udp_mux_sender_push_video,
     tst_udp_mux_sender_push_video_to, tst_udp_mux_sender_reset_stats,
 };

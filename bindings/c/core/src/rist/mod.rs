@@ -46,9 +46,10 @@ pub use demux_receiver::{
     tst_rist_demux_receiver_reset_stats,
 };
 pub use mux_sender::{
-    TstRistMuxSender, tst_rist_mux_sender_close, tst_rist_mux_sender_get_mux_sender_stats,
-    tst_rist_mux_sender_get_socket_stats, tst_rist_mux_sender_get_stream_codec_stats,
-    tst_rist_mux_sender_open, tst_rist_mux_sender_push_audio, tst_rist_mux_sender_push_audio_to,
+    TstRistMuxSender, tst_rist_mux_sender_close, tst_rist_mux_sender_finish,
+    tst_rist_mux_sender_get_mux_sender_stats, tst_rist_mux_sender_get_socket_stats,
+    tst_rist_mux_sender_get_stream_codec_stats, tst_rist_mux_sender_open,
+    tst_rist_mux_sender_push_audio, tst_rist_mux_sender_push_audio_to,
     tst_rist_mux_sender_push_klv, tst_rist_mux_sender_push_klv_to,
     tst_rist_mux_sender_push_subtitle, tst_rist_mux_sender_push_subtitle_to,
     tst_rist_mux_sender_push_video, tst_rist_mux_sender_push_video_to,

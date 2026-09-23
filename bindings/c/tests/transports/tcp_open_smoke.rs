@@ -36,7 +36,7 @@ use tstrans::tcp::{
     tst_tcp_demux_receiver_get_stream_stats, tst_tcp_demux_receiver_next_event,
     tst_tcp_demux_receiver_open, tst_tcp_demux_receiver_reset_stats,
     tst_tcp_listener_accept_sender, tst_tcp_listener_bind, tst_tcp_listener_free,
-    tst_tcp_mux_sender_close, tst_tcp_mux_sender_get_mux_sender_stats,
+    tst_tcp_mux_sender_close, tst_tcp_mux_sender_finish, tst_tcp_mux_sender_get_mux_sender_stats,
     tst_tcp_mux_sender_get_socket_stats, tst_tcp_mux_sender_open, tst_tcp_mux_sender_reset_stats,
     tst_tcp_receiver_close, tst_tcp_receiver_get_socket_stats, tst_tcp_receiver_get_stats,
     tst_tcp_receiver_recv_ts, tst_tcp_receiver_reset_stats, tst_tcp_recv_open,
@@ -408,4 +408,49 @@ fn null_next_event_returns_invalid_config() {
     let mut ev = TstEvent::default();
     let rc = unsafe { tst_tcp_demux_receiver_next_event(std::ptr::null_mut(), &mut ev) };
     assert_eq!(rc, TstError::InvalidConfig as i32);
+}
+
+// ---------------------------------------------------------------------------
+// `_finish` — Arc 2 R3 (DEBT-14 "ship now" cell), ABI 0.22
+// ---------------------------------------------------------------------------
+
+/// `tst_tcp_mux_sender_finish` drains and closes.
+///
+/// The background peer accepts and immediately drops the socket, so the
+/// drain may legitimately report a transport error (peer gone) or 0
+/// (nothing pending). Both are "finished"; what must hold is that the
+/// call neither panics nor mis-reports a null pointer, that a second call
+/// is 0, and that the handle still frees with `_close`.
+#[test]
+fn tcp_mux_sender_finish_then_close() {
+    let url_str = accept_one_background(|p| format!("tcp://127.0.0.1:{p}"));
+    let url = CString::new(url_str).unwrap();
+
+    let cfg = unsafe { tst_mux_config_new() };
+    let prog = unsafe { tst_mux_config_add_program(cfg, 1, 0x1000) };
+    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264) };
+
+    let h = unsafe { tst_tcp_mux_sender_open(url.as_ptr(), cfg as *const _) };
+    unsafe { tst_mux_config_free(cfg) };
+    assert!(!h.is_null(), "tst_tcp_mux_sender_open returned null");
+
+    let rc = unsafe { tst_tcp_mux_sender_finish(h) };
+    assert!(
+        rc == 0
+            || (rc < 0
+                && rc != TstError::PanicCaught as i32
+                && rc != TstError::InvalidConfig as i32),
+        "finish rc={rc}"
+    );
+    assert_eq!(
+        unsafe { tst_tcp_mux_sender_finish(h) },
+        0,
+        "second finish is 0"
+    );
+    assert_eq!(
+        unsafe { tst_tcp_mux_sender_finish(std::ptr::null_mut()) },
+        TstError::InvalidConfig as i32
+    );
+
+    unsafe { tst_tcp_mux_sender_close(h) };
 }

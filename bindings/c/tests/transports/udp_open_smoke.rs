@@ -38,12 +38,12 @@ use tstrans::udp::{
     tst_udp_demux_receiver_get_stats, tst_udp_demux_receiver_get_stream_codec_stats,
     tst_udp_demux_receiver_get_stream_stats, tst_udp_demux_receiver_next_event,
     tst_udp_demux_receiver_open, tst_udp_demux_receiver_reset_stats, tst_udp_mux_sender_close,
-    tst_udp_mux_sender_get_mux_sender_stats, tst_udp_mux_sender_get_socket_stats,
-    tst_udp_mux_sender_open, tst_udp_mux_sender_reset_stats, tst_udp_receiver_close,
-    tst_udp_receiver_get_socket_stats, tst_udp_receiver_get_stats, tst_udp_receiver_recv_ts,
-    tst_udp_receiver_reset_stats, tst_udp_recv_open, tst_udp_sender_close,
-    tst_udp_sender_get_socket_stats, tst_udp_sender_get_stats, tst_udp_sender_open,
-    tst_udp_sender_reset_stats, tst_udp_sender_send_ts,
+    tst_udp_mux_sender_finish, tst_udp_mux_sender_get_mux_sender_stats,
+    tst_udp_mux_sender_get_socket_stats, tst_udp_mux_sender_open, tst_udp_mux_sender_reset_stats,
+    tst_udp_receiver_close, tst_udp_receiver_get_socket_stats, tst_udp_receiver_get_stats,
+    tst_udp_receiver_recv_ts, tst_udp_receiver_reset_stats, tst_udp_recv_open,
+    tst_udp_sender_close, tst_udp_sender_get_socket_stats, tst_udp_sender_get_stats,
+    tst_udp_sender_open, tst_udp_sender_reset_stats, tst_udp_sender_send_ts,
 };
 
 // ---------------------------------------------------------------------------
@@ -323,4 +323,38 @@ fn null_next_event_returns_invalid_config() {
     let mut ev = TstEvent::default();
     let rc = unsafe { tst_udp_demux_receiver_next_event(std::ptr::null_mut(), &mut ev) };
     assert_eq!(rc, TstError::InvalidConfig as i32);
+}
+
+// ---------------------------------------------------------------------------
+// `_finish` — Arc 2 R3 (DEBT-14 "ship now" cell), ABI 0.22
+// ---------------------------------------------------------------------------
+
+/// `tst_udp_mux_sender_finish` drains and closes. UDP is connectionless, so
+/// there is no peer to lose and the drain must report 0 exactly; a second
+/// call is 0; a null pointer is `TST_E_INVALID_CONFIG`; the handle still
+/// frees with `_close`.
+#[test]
+fn udp_mux_sender_finish_then_close() {
+    let cfg = unsafe { tst_mux_config_new() };
+    let prog = unsafe { tst_mux_config_add_program(cfg, 1, 0x1000) };
+    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264) };
+
+    let url = CString::new("udp://127.0.0.1:54407").unwrap();
+    let h = unsafe { tst_udp_mux_sender_open(url.as_ptr(), cfg as *const _) };
+    unsafe { tst_mux_config_free(cfg) };
+    assert!(!h.is_null(), "tst_udp_mux_sender_open returned null");
+
+    let rc = unsafe { tst_udp_mux_sender_finish(h) };
+    assert_eq!(rc, 0, "finish rc={rc}");
+    assert_eq!(
+        unsafe { tst_udp_mux_sender_finish(h) },
+        0,
+        "second finish is 0"
+    );
+    assert_eq!(
+        unsafe { tst_udp_mux_sender_finish(std::ptr::null_mut()) },
+        TstError::InvalidConfig as i32
+    );
+
+    unsafe { tst_udp_mux_sender_close(h) };
 }
