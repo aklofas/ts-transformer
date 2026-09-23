@@ -1051,9 +1051,16 @@ impl<T: Transport> MuxSender<T> {
     ///
     /// # C ABI
     ///
-    /// `tst_mux_sender_finish` / `tst_managed_mux_sender_finish` (and the
-    /// per-transport `tst_{udp,tcp,rtp,rist}_mux_sender_finish`) — see
+    /// `tst_mux_sender_finish` / `tst_managed_mux_sender_finish` — see
     /// `bindings/c/include/tstrans.h`.
+    ///
+    /// The per-transport `tst_{udp,tcp,rtp,rist}_mux_sender_finish` are
+    /// feature-gated (`TST_HAS_UDP` / `_TCP` / `_RTP` / `_RIST`). The
+    /// committed header is the `srt,rtp` rendering, which defines the absent
+    /// features only in its trailing compatibility block — after those
+    /// declarations — so their `#if defined(...)` blocks preprocess away
+    /// there. Read them in the header cbindgen generates for the build that
+    /// enables them (`target/<profile>/include/tstrans.h`).
     pub fn finish(&self) -> Result<(), MuxSenderError> {
         let mut inner = self.inner.lock().map_err(|_| lock_poisoned("finish"))?;
         if inner.closed {
