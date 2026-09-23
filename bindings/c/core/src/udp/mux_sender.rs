@@ -10,15 +10,16 @@
 //! so cbindgen can see and emit them to `tstrans.h`.
 //!
 //! **Cancel:** the UDP transport exposes a real cancel handle since Arc 2
-//! WP-D and this handle's `CHandle` slot holds it, so `_close` from ANY
-//! thread cancels first and a push started after the close returns
-//! `TST_E_CLOSED` at its entry check (a UDP send never parks — `send_to`
-//! on a datagram socket returns at once). There is no `tst_udp_mux_sender_cancel` entry
-//! point yet — it is a new symbol and
-//! rides the ABI 0.22 bump (see "C ABI cancel entry points for `tcp://`,
-//! `udp://` and `rist://` transports" in
-//! `docs/project/deferred-features.md`). Until then `_close` IS the
-//! cross-thread cancel.
+//! WP-D and this handle's `CHandle` slot holds it, so `_close` fires it
+//! before taking the slot. There is little for it to unblock on the send
+//! side (a UDP send never parks — `send_to` on a datagram socket returns at
+//! once), and `_close` FREES the handle: a push already in flight completes
+//! normally (the close waits for the slot in `take()`), and there is no
+//! such thing as a push after the close — that would be a use-after-free,
+//! not a `TST_E_CLOSED`. The non-freeing cross-thread cancel is
+//! `tst_udp_mux_sender_cancel`, a new symbol that rides the ABI 0.22 bump
+//! (see "C ABI cancel entry points for `tcp://`, `udp://` and `rist://`
+//! transports" in `docs/project/deferred-features.md`).
 
 use std::os::raw::c_char;
 

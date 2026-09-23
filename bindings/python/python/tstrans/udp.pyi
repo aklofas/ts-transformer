@@ -168,6 +168,7 @@ class Transport:
     def close(self) -> None:
         """Close the sender. Idempotent; safe to call from another thread."""
         ...
+
     def cancel_handle(self) -> CancelHandle:
         """Lock-free cross-thread cancel handle; never waits behind a
         parked call."""
@@ -297,6 +298,7 @@ class RecvTransport:
         first), so a parked ``recv()`` ends with
         ``UdpError(kind=CLOSED)``."""
         ...
+
     def cancel_handle(self) -> CancelHandle:
         """Lock-free cross-thread cancel handle; never waits behind a
         parked call."""
