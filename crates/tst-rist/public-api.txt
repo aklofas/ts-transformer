@@ -180,6 +180,7 @@ pub mod tst_rist::recv
 pub struct tst_rist::recv::RistRecvTransport
 impl tst_rist::recv::RistRecvTransport
 pub fn tst_rist::recv::RistRecvTransport::bind_url(&self) -> &str
+pub fn tst_rist::recv::RistRecvTransport::cancel_handle(&self) -> tst_rist::transport::RistCancelHandle
 pub fn tst_rist::recv::RistRecvTransport::listen(&str) -> core::result::Result<Self, tst_rist::error::RistError>
 pub fn tst_rist::recv::RistRecvTransport::listen_with_config(&tst_rist::url::RistUrl, &tst_rist::config::RistConfig) -> core::result::Result<Self, tst_rist::error::RistError>
 pub fn tst_rist::recv::RistRecvTransport::stats(&self) -> tst_rist::stats::RistStats
@@ -187,6 +188,7 @@ impl core::marker::Send for tst_rist::recv::RistRecvTransport
 impl core::ops::drop::Drop for tst_rist::recv::RistRecvTransport
 pub fn tst_rist::recv::RistRecvTransport::drop(&mut self)
 impl tst_core::transport::RecvTransport for tst_rist::recv::RistRecvTransport
+pub fn tst_rist::recv::RistRecvTransport::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_rist::recv::RistRecvTransport::close(&mut self)
 pub fn tst_rist::recv::RistRecvTransport::is_alive(&self) -> bool
 pub fn tst_rist::recv::RistRecvTransport::max_payload(&self) -> usize
@@ -225,8 +227,27 @@ impl core::marker::UnsafeUnpin for tst_rist::stats::RistStats
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rist::stats::RistStats
 impl core::panic::unwind_safe::UnwindSafe for tst_rist::stats::RistStats
 pub mod tst_rist::transport
+pub struct tst_rist::transport::RistCancelHandle
+impl tst_rist::transport::RistCancelHandle
+pub fn tst_rist::transport::RistCancelHandle::cancel(&self)
+pub fn tst_rist::transport::RistCancelHandle::is_cancelled(&self) -> bool
+impl core::clone::Clone for tst_rist::transport::RistCancelHandle
+pub fn tst_rist::transport::RistCancelHandle::clone(&self) -> tst_rist::transport::RistCancelHandle
+impl core::fmt::Debug for tst_rist::transport::RistCancelHandle
+pub fn tst_rist::transport::RistCancelHandle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl tst_core::transport::TransportCancel for tst_rist::transport::RistCancelHandle
+pub fn tst_rist::transport::RistCancelHandle::cancel(&self)
+pub fn tst_rist::transport::RistCancelHandle::is_cancelled(&self) -> bool
+impl core::marker::Freeze for tst_rist::transport::RistCancelHandle
+impl core::marker::Send for tst_rist::transport::RistCancelHandle
+impl core::marker::Sync for tst_rist::transport::RistCancelHandle
+impl core::marker::Unpin for tst_rist::transport::RistCancelHandle
+impl core::marker::UnsafeUnpin for tst_rist::transport::RistCancelHandle
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rist::transport::RistCancelHandle
+impl core::panic::unwind_safe::UnwindSafe for tst_rist::transport::RistCancelHandle
 pub struct tst_rist::transport::RistTransport
 impl tst_rist::transport::RistTransport
+pub fn tst_rist::transport::RistTransport::cancel_handle(&self) -> tst_rist::transport::RistCancelHandle
 pub fn tst_rist::transport::RistTransport::connect(&str) -> core::result::Result<Self, tst_rist::error::RistError>
 pub fn tst_rist::transport::RistTransport::connect_with_config(&tst_rist::url::RistUrl, &tst_rist::config::RistConfig) -> core::result::Result<Self, tst_rist::error::RistError>
 pub fn tst_rist::transport::RistTransport::peer_url(&self) -> &str
@@ -235,6 +256,7 @@ impl core::marker::Send for tst_rist::transport::RistTransport
 impl core::ops::drop::Drop for tst_rist::transport::RistTransport
 pub fn tst_rist::transport::RistTransport::drop(&mut self)
 impl tst_core::transport::Transport for tst_rist::transport::RistTransport
+pub fn tst_rist::transport::RistTransport::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_rist::transport::RistTransport::close(&mut self)
 pub fn tst_rist::transport::RistTransport::is_alive(&self) -> bool
 pub fn tst_rist::transport::RistTransport::max_payload(&self) -> usize
@@ -427,6 +449,24 @@ impl core::marker::Unpin for tst_rist::config::EncryptionKey
 impl core::marker::UnsafeUnpin for tst_rist::config::EncryptionKey
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rist::config::EncryptionKey
 impl core::panic::unwind_safe::UnwindSafe for tst_rist::config::EncryptionKey
+pub struct tst_rist::RistCancelHandle
+impl tst_rist::transport::RistCancelHandle
+pub fn tst_rist::transport::RistCancelHandle::cancel(&self)
+pub fn tst_rist::transport::RistCancelHandle::is_cancelled(&self) -> bool
+impl core::clone::Clone for tst_rist::transport::RistCancelHandle
+pub fn tst_rist::transport::RistCancelHandle::clone(&self) -> tst_rist::transport::RistCancelHandle
+impl core::fmt::Debug for tst_rist::transport::RistCancelHandle
+pub fn tst_rist::transport::RistCancelHandle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl tst_core::transport::TransportCancel for tst_rist::transport::RistCancelHandle
+pub fn tst_rist::transport::RistCancelHandle::cancel(&self)
+pub fn tst_rist::transport::RistCancelHandle::is_cancelled(&self) -> bool
+impl core::marker::Freeze for tst_rist::transport::RistCancelHandle
+impl core::marker::Send for tst_rist::transport::RistCancelHandle
+impl core::marker::Sync for tst_rist::transport::RistCancelHandle
+impl core::marker::Unpin for tst_rist::transport::RistCancelHandle
+impl core::marker::UnsafeUnpin for tst_rist::transport::RistCancelHandle
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rist::transport::RistCancelHandle
+impl core::panic::unwind_safe::UnwindSafe for tst_rist::transport::RistCancelHandle
 #[non_exhaustive] pub struct tst_rist::RistConfig
 pub tst_rist::RistConfig::bandwidth_kbps: core::option::Option<u32>
 pub tst_rist::RistConfig::buffer: core::time::Duration
@@ -456,6 +496,7 @@ impl core::panic::unwind_safe::UnwindSafe for tst_rist::config::RistConfig
 pub struct tst_rist::RistRecvTransport
 impl tst_rist::recv::RistRecvTransport
 pub fn tst_rist::recv::RistRecvTransport::bind_url(&self) -> &str
+pub fn tst_rist::recv::RistRecvTransport::cancel_handle(&self) -> tst_rist::transport::RistCancelHandle
 pub fn tst_rist::recv::RistRecvTransport::listen(&str) -> core::result::Result<Self, tst_rist::error::RistError>
 pub fn tst_rist::recv::RistRecvTransport::listen_with_config(&tst_rist::url::RistUrl, &tst_rist::config::RistConfig) -> core::result::Result<Self, tst_rist::error::RistError>
 pub fn tst_rist::recv::RistRecvTransport::stats(&self) -> tst_rist::stats::RistStats
@@ -463,6 +504,7 @@ impl core::marker::Send for tst_rist::recv::RistRecvTransport
 impl core::ops::drop::Drop for tst_rist::recv::RistRecvTransport
 pub fn tst_rist::recv::RistRecvTransport::drop(&mut self)
 impl tst_core::transport::RecvTransport for tst_rist::recv::RistRecvTransport
+pub fn tst_rist::recv::RistRecvTransport::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_rist::recv::RistRecvTransport::close(&mut self)
 pub fn tst_rist::recv::RistRecvTransport::is_alive(&self) -> bool
 pub fn tst_rist::recv::RistRecvTransport::max_payload(&self) -> usize
@@ -533,6 +575,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_rist::stats::RistStats
 impl core::panic::unwind_safe::UnwindSafe for tst_rist::stats::RistStats
 pub struct tst_rist::RistTransport
 impl tst_rist::transport::RistTransport
+pub fn tst_rist::transport::RistTransport::cancel_handle(&self) -> tst_rist::transport::RistCancelHandle
 pub fn tst_rist::transport::RistTransport::connect(&str) -> core::result::Result<Self, tst_rist::error::RistError>
 pub fn tst_rist::transport::RistTransport::connect_with_config(&tst_rist::url::RistUrl, &tst_rist::config::RistConfig) -> core::result::Result<Self, tst_rist::error::RistError>
 pub fn tst_rist::transport::RistTransport::peer_url(&self) -> &str
@@ -541,6 +584,7 @@ impl core::marker::Send for tst_rist::transport::RistTransport
 impl core::ops::drop::Drop for tst_rist::transport::RistTransport
 pub fn tst_rist::transport::RistTransport::drop(&mut self)
 impl tst_core::transport::Transport for tst_rist::transport::RistTransport
+pub fn tst_rist::transport::RistTransport::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_rist::transport::RistTransport::close(&mut self)
 pub fn tst_rist::transport::RistTransport::is_alive(&self) -> bool
 pub fn tst_rist::transport::RistTransport::max_payload(&self) -> usize
