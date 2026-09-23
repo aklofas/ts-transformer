@@ -587,10 +587,10 @@ pub(crate) fn record_recv_closed(cancelled: bool) -> i32 {
 /// shells pass `false` — their decorator already retried on `Broken`, so one
 /// reaching C is a hard `TST_E_TRANSPORT`.
 ///
-/// Until WP-C2 (PR 8) a cancelled plain-SRT operation still surfaces as
-/// `Broken`, so it falls through to `record_shell_error` → `TST_E_TRANSPORT`
-/// (-8), exactly as before this PR. After WP-C2 it arrives as
-/// `ExplicitClose` → kind `Closed` and takes the first arm (-7).
+/// A cancelled plain-SRT operation arrives as `ExplicitClose` → kind
+/// `Closed` and takes the first arm (-7): `SrtTransport` reads its cancel
+/// latch after the libsrt failure and reports the cancel rather than the
+/// broken connection `srt_close` provoked.
 #[cfg(feature = "std")]
 #[allow(dead_code)] // transport-feature-gated callers; unused in minimal builds
 pub(crate) fn record_recv_error<E: ShellError>(e: &E, cancelled: bool, broken_is_eos: bool) -> i32 {
