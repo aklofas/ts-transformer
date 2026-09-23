@@ -18,7 +18,7 @@ Rust core; C, Python, and JVM bindings; `no_std` embedded support.
 | Language | Status | Start here |
 |---|---|---|
 | **Rust** | Shipping | [`docs/languages/rust.md`](docs/languages/rust.md) |
-| **C** | Shipping · ABI 0.21 | [`docs/languages/c.md`](docs/languages/c.md) |
+| **C** | Shipping · ABI 0.22 | [`docs/languages/c.md`](docs/languages/c.md) |
 | **Python** | Shipping · `tstrans` on PyPI | [`docs/languages/python.md`](docs/languages/python.md) |
 | **JVM** | Shipping · `org.tstrans:tstrans-jvm` on Maven Central | [`docs/languages/jvm.md`](docs/languages/jvm.md) |
 | **Embedded (bare-metal / RTOS)** | Shipping · QEMU-gated `no_std` core + C staticlib | [`docs/languages/embedded.md`](docs/languages/embedded.md) |
@@ -143,7 +143,7 @@ census, methodology, and every documented gap.
 ## Status
 
 Pre-1.0, released on PyPI (`tstrans`) and Maven Central (`org.tstrans:tstrans-jvm`);
-C ABI **0.21**. Sender + receiver pipelines are complete, and **all four Tier-1
+C ABI **0.22**. Sender + receiver pipelines are complete, and **all four Tier-1
 targets gate CI** — Linux x86_64, Linux aarch64, macOS arm64, and Windows MSVC.
 Hundreds of tests run across both feature modes, with bash ratchets and
 `cargo public-api` baselines guarding the surface on every commit.

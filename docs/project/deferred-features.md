@@ -1371,42 +1371,6 @@ mean **Deferred**. An entry whose feature has shipped must never read
   through a LIVE shell, or when the Python/JVM MISP mirrors entry ships
   (then all three bindings in one pass).
 
-## C ABI cancel entry points for `tcp://`, `udp://` and `rist://` transports
-
-- **Status:** Deferred (Arc 2 rider) — additive, ABI 0.22. The Rust
-  `TcpTransport` exposes `cancel_handle()` (since PR #198), but the C ABI
-  has no `tst_tcp_*_cancel` entry point yet across any of the four
-  `tcp://` handle types (sender, mux sender, receiver, demux receiver).
-- **Why deferred:** Consequence since deep review #4 WP-4b: a send
-  against a peer that has stopped reading blocks until the peer resumes,
-  the peer resets the connection, or this handle is closed from the same
-  thread — it no longer returns `TST_E_TRANSPORT` after ~100 ms (before
-  WP-4b, a stalled send latched dead and surfaced `TST_E_TRANSPORT` within
-  one write timeout; that bound is gone now that the write loop keeps
-  writing the remainder instead of tearing the connection down on a
-  partial-write stall). Arc 1 keeps the C ABI frozen at 0.21, so adding
-  `tst_tcp_*_cancel` entry points is out of scope here.
-- **Status (2026-09, Arc 2 WP-D):** the UDP and RIST transports now expose
-  real cancel handles (`UdpCancelHandle` / `RistCancelHandle`) and the
-  eight `tst_udp_*` / `tst_rist_*` handles hold them, so `_close` from any
-  thread cancels first. On UDP that is a full cross-thread cancel: a
-  `_recv_ts` / `_next_event` parked on the 100 ms poll loop returns
-  `TST_E_CLOSED` within one tick (pinned by
-  `bindings/c/tests/transports/udp_close_cancels_first.rs`). On RIST it is
-  NOT: a `tst_rist_*_recv_ts` call is a single ~100 ms librist poll that
-  returns `TST_E_BUFFER_FULL` when nothing arrived, so callers poll in a
-  loop, and `_close` frees the handle — a cross-thread `_close` racing
-  that loop is a use-after-free like any other post-free use. Interrupting
-  a RIST receive from another thread therefore needs the non-freeing
-  cancel entry point below.
-- **What ships with ABI 0.22 (PR 11, Arc 2 rider R4):** the
-  `tst_tcp_*_cancel`, `tst_udp_*_cancel` and `tst_rist_*_cancel` entry
-  points — twelve new symbols for udp/rist on top of the tcp set — in ONE
-  bump for the arc. This entry covers all three families so R4 flips a
-  single entry.
-- **Trigger to revisit:** the first C consumer that needs to interrupt a
-  stalled TCP send or a RIST receive, or Arc 2's one-cancel-model work.
-
 ## RIST: IPv6 receiver bind in the Simple profile
 
 - **Status:** Refused. `RistRecvTransport::listen` (and every builder
@@ -1532,24 +1496,6 @@ mean **Deferred**. An entry whose feature has shipped must never read
   reordering (e.g. multi-path satellite link) and requires in-order AU
   reconstruction, or RTCP RR feedback to the sender is needed for
   adaptive bitrate control.
-
-## `MuxSender::finish` bindings parity
-
-- **Status:** Deferred. `MuxSender::finish()` (fallible graceful
-  shutdown: drain `pending_bytes` to the live transport, report the
-  drain outcome, then close) is Rust-only; the C ABI, Python, and JVM
-  surfaces expose only the prompt `close()` (cancel-first, pending
-  abandoned) and `Drop`-equivalent teardown.
-- **Why deferred:** shipped Rust-first at the 0.5.0 release gate as the
-  resolution of the interop-arc close-ordering finding — the prompt
-  `close()` contract had to stay unchanged for every binding, and no
-  binding consumer has yet asked for an error-reporting lossless
-  shutdown (the drop-don't-close workaround remains available and
-  equivalent-minus-error-reporting there).
-- **Trigger to revisit:** the first binding consumer that needs to know
-  whether the buffered tail was delivered on shutdown — the same
-  capture/gateway consumers the `FileTransport::finish` surface serves
-  in Rust.
 
 ## ST 0604 Commercial Time Stamp (UTC wall-clock SEI, `payloadType=21`)
 
@@ -2446,8 +2392,35 @@ Entries whose feature shipped. Kept for the record (dates, PR numbers, the decis
   handle fires; `send_bytes` observes it at entry; `is_alive()` reads
   `false` after a cancel and (UDP, new) after a `Broken`. Python exposes
   `udp.CancelHandle` / `rist.CancelHandle`; the C handles fire the real
-  handle from `_close` (the `tst_udp_*_cancel` / `tst_rist_*_cancel` entry
-  points ride the ABI 0.22 bump — see "C ABI cancel entry points for
-  `tcp://`, `udp://` and `rist://` transports"). The pre-Arc-2 "cooperative
+  handle from `_close`, and the non-freeing `tst_udp_*_cancel` /
+  `tst_rist_*_cancel` entry points shipped with ABI 0.22 — see "C ABI
+  cancel entry points for `tcp://`, `udp://`, `rist://` transports —
+  RESOLVED 2026-09" below. The pre-Arc-2 "cooperative
   timeout + stop flag" shape is still available (`recv_timeout` on UDP,
   `timeout_ms` in Python) but is no longer the only way.
+
+### C ABI cancel entry points for `tcp://`, `udp://`, `rist://` transports — RESOLVED 2026-09 (Arc 2 R4, ABI 0.22)
+
+- **Status:** Shipped. `tst_tcp_{sender,mux_sender,receiver,demux_receiver,listener}_cancel`,
+  `tst_udp_{sender,mux_sender,receiver,demux_receiver}_cancel` and
+  `tst_rist_{sender,mux_sender,receiver,demux_receiver}_cancel` reach the
+  `TcpCancelHandle` / `UdpCancelHandle` / `RistCancelHandle` (Arc 2 WP-D) from any
+  thread; a parked data-path call returns `TST_E_CLOSED` (the one-cancel-outcome
+  contract, `TransportError::ExplicitClose`). The stalled-TCP-send consequence
+  recorded here since Arc 1 WP-4b now has a C-side remedy, a parked
+  `tst_tcp_listener_accept_*` returns NULL with the same code, and RIST — whose
+  `_recv_ts` never parks, so its caller polls in a loop that a freeing `_close`
+  would race — now has the non-freeing interrupt that shape requires (pinned by
+  `bindings/c/tests/transports/rist_cancel_from_other_thread.rs`). `_cancel` never
+  frees: the handle still takes its `_close` / `_free`.
+
+### `MuxSender::finish` bindings parity — RESOLVED 2026-09 (Arc 2 R3 / DEBT-14, ABI 0.22)
+
+- **Status:** Shipped on all three bindings: C `tst_mux_sender_finish` /
+  `tst_managed_mux_sender_finish` / `tst_{udp,tcp,rtp,rist}_mux_sender_finish`;
+  Python `MuxSender.finish()` on `srt.MuxSender`, `srt.ManagedMuxSender`,
+  `rtp.MuxSender`; JVM `finish()` on the same three classes. Same contract
+  everywhere: drain, report the first drain error, close; second call quiet;
+  does not cancel first. `FileTransport::finish` stays Rust-only (no binding
+  exposes `FileTransport`) — see the shell parity matrix in
+  `docs/reference/binding-authors.md`.

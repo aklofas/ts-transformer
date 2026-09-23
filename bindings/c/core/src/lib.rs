@@ -13,7 +13,7 @@
 //! transport surfaces are gated on the `rtp` cargo feature. The
 //! offline byte-feeding `tst_demuxer_*` surface is unconditional (no
 //! feature gate), as is the offline `tst_muxer_*` surface (un-gated from
-//! `srt` in ABI 0.9). ABI minor is `0.21` (see [`TST_ABI_VERSION_MINOR`]).
+//! `srt` in ABI 0.9). ABI minor is `0.22` (see [`TST_ABI_VERSION_MINOR`]).
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![allow(clippy::missing_safety_doc)] // every extern "C" fn has a /// header documenting the contract
@@ -247,7 +247,7 @@ pub const TST_ABI_VERSION_MAJOR: crate::c_types::c_int = 0;
 /// Minor version of the C ABI contract. See [`TST_ABI_VERSION_MAJOR`]
 /// for the bump policy.
 ///
-/// Cbindgen emits this as `#define TST_ABI_VERSION_MINOR 21` in the
+/// Cbindgen emits this as `#define TST_ABI_VERSION_MINOR 22` in the
 /// generated header. Runtime accessor: [`tst_get_abi_version_minor`].
 ///
 /// History (additive bumps only — major stays at 0 pre-1.0):
@@ -469,7 +469,22 @@ pub const TST_ABI_VERSION_MAJOR: crate::c_types::c_int = 0;
 ///   error codes. See
 ///   `bindings/c/core/src/receiver/demux_receiver/managed.rs` and
 ///   `bindings/c/core/src/demux_config.rs`.
-pub const TST_ABI_VERSION_MINOR: crate::c_types::c_int = 21;
+/// - `22` (deep-review-4 Arc 2 riders R3/R4, 2026-09): additive.
+///   `tst_demux_config_set_sync_buf_cap` (unconditional; ARCH-10 — the
+///   pre-sync ingress ceiling, 0 = Rust default). Cancel entry points for
+///   the three transports that had none: `tst_tcp_{sender,mux_sender,
+///   receiver,demux_receiver,listener}_cancel` (`TST_HAS_TCP`),
+///   `tst_udp_{sender,mux_sender,receiver,demux_receiver}_cancel`
+///   (`TST_HAS_UDP`), `tst_rist_{…}_cancel` (`TST_HAS_RIST`) — all reach
+///   the Rust `TcpCancelHandle` / `UdpCancelHandle` / `RistCancelHandle`
+///   through the shared `tst_pipeline::binding::Owned` slot, and a parked
+///   data-path call on another thread returns `TST_E_CLOSED` (the Arc 2
+///   one-cancel-outcome contract). `MuxSender::finish` parity (DEBT-14):
+///   `tst_mux_sender_finish`, `tst_managed_mux_sender_finish`,
+///   `tst_{udp,tcp,rtp,rist}_mux_sender_finish`. No new C types, no new
+///   error codes. See `bindings/c/core/src/tcp/`, `demux_config.rs`, and
+///   the shell parity matrix in `docs/reference/binding-authors.md`.
+pub const TST_ABI_VERSION_MINOR: crate::c_types::c_int = 22;
 
 // =========================================================================
 // Runtime version accessors

@@ -259,6 +259,7 @@ ALLOWLIST=(
     "tst_rtp_receiver_close"
     "tst_rtp_mux_sender_open"
     "tst_rtp_mux_sender_close"
+    "tst_rtp_mux_sender_finish"
     "tst_rtp_demux_receiver_open"
     "tst_rtp_demux_receiver_close"
 
@@ -310,15 +311,18 @@ ALLOWLIST=(
     "tst_rtp_receiver_end_reason"
     "tst_rtp_demux_receiver_end_reason"
 
-    # --- Plan A5a UDP entry points (full RTP parity, minus cancel) ---
+    # --- Plan A5a UDP entry points (full RTP parity) ---
     #     tst-c–only projections of pipeline Sender/Receiver/MuxSender/
     #     DemuxReceiver typed on tst_udp::Udp{,Recv}Transport. Same rationale
     #     as the RTP block above — they delegate to the same pipeline methods
-    #     the SRT variants call. UDP exposes no cancel (no cancel_handle on
-    #     the transport), so the _cancel entry points are absent.
+    #     the SRT variants call. The _cancel entry points (ABI 0.22) fire
+    #     tst_udp::UdpCancelHandle through the shared Owned slot — the Rust
+    #     counterpart is the generic pipeline shell's cancel_handle(), already
+    #     cross-referenced from the SRT names.
     # TstUdpSender
     "tst_udp_sender_open"
     "tst_udp_sender_close"
+    "tst_udp_sender_cancel"
     "tst_udp_sender_send_ts"
     "tst_udp_sender_get_stats"
     "tst_udp_sender_get_socket_stats"
@@ -326,6 +330,7 @@ ALLOWLIST=(
     # TstUdpReceiver
     "tst_udp_recv_open"
     "tst_udp_receiver_close"
+    "tst_udp_receiver_cancel"
     "tst_udp_receiver_recv_ts"
     "tst_udp_receiver_get_stats"
     "tst_udp_receiver_get_socket_stats"
@@ -333,6 +338,8 @@ ALLOWLIST=(
     # TstUdpMuxSender
     "tst_udp_mux_sender_open"
     "tst_udp_mux_sender_close"
+    "tst_udp_mux_sender_cancel"
+    "tst_udp_mux_sender_finish"
     "tst_udp_mux_sender_push_video"
     "tst_udp_mux_sender_push_video_to"
     "tst_udp_mux_sender_push_klv"
@@ -348,6 +355,7 @@ ALLOWLIST=(
     # TstUdpDemuxReceiver
     "tst_udp_demux_receiver_open"
     "tst_udp_demux_receiver_close"
+    "tst_udp_demux_receiver_cancel"
     "tst_udp_demux_receiver_next_event"
     "tst_udp_demux_receiver_get_stats"
     "tst_udp_demux_receiver_get_socket_stats"
@@ -355,21 +363,24 @@ ALLOWLIST=(
     "tst_udp_demux_receiver_get_stream_stats"
     "tst_udp_demux_receiver_reset_stats"
 
-    # --- Plan A5a TCP entry points (full RTP parity, minus cancel; + listener) ---
+    # --- Plan A5a TCP entry points (full RTP parity; + listener) ---
     #     Same rationale as the UDP/RTP blocks — tst-c-only projections of the
     #     generic pipeline shells typed on tst_tcp::TcpTransport (which impls
-    #     both Transport + RecvTransport). No cancel (no cancel_handle). The
+    #     both Transport + RecvTransport). The _cancel entry points (ABI 0.22)
+    #     fire tst_tcp::TcpCancelHandle through the shared Owned slot. The
     #     listener family has no Rust 1:1 counterpart (it wraps
-    #     tst_tcp::TcpListener::{bind,from_url,accept_blocking}).
+    #     tst_tcp::TcpListener::{bind,from_url,accept_blocking,cancel_handle}).
     # TstTcpSender
     "tst_tcp_sender_open"
     "tst_tcp_sender_close"
+    "tst_tcp_sender_cancel"
     "tst_tcp_sender_send_ts"
     "tst_tcp_sender_get_stats"
     "tst_tcp_sender_get_socket_stats"
     "tst_tcp_sender_reset_stats"
     # TstTcpReceiver
     "tst_tcp_recv_open"
+    "tst_tcp_receiver_cancel"
     "tst_tcp_receiver_close"
     "tst_tcp_receiver_recv_ts"
     "tst_tcp_receiver_get_stats"
@@ -378,6 +389,8 @@ ALLOWLIST=(
     # TstTcpMuxSender
     "tst_tcp_mux_sender_open"
     "tst_tcp_mux_sender_close"
+    "tst_tcp_mux_sender_cancel"
+    "tst_tcp_mux_sender_finish"
     "tst_tcp_mux_sender_push_video"
     "tst_tcp_mux_sender_push_video_to"
     "tst_tcp_mux_sender_push_klv"
@@ -393,6 +406,7 @@ ALLOWLIST=(
     # TstTcpDemuxReceiver
     "tst_tcp_demux_receiver_open"
     "tst_tcp_demux_receiver_close"
+    "tst_tcp_demux_receiver_cancel"
     "tst_tcp_demux_receiver_next_event"
     "tst_tcp_demux_receiver_get_stats"
     "tst_tcp_demux_receiver_get_socket_stats"
@@ -405,6 +419,7 @@ ALLOWLIST=(
     "tst_tcp_listener_accept_sender"
     "tst_tcp_listener_accept_receiver"
     "tst_tcp_listener_free"
+    "tst_tcp_listener_cancel"
 
     # --- Plan A5a HLS publisher entry points ---
     #     tst-c-only projections: TstPublisher (enum-dispatch over the
@@ -450,24 +465,31 @@ ALLOWLIST=(
     "tst_mux_publisher_get_publisher_stats"
     "tst_mux_publisher_free"
 
-    # --- Plan A5a RIST entry points (full RTP parity, minus cancel) ---
+    # --- Plan A5a RIST entry points (full RTP parity) ---
     #     tst-c-only projections of the generic pipeline shells typed on
     #     tst_rist::Rist{,Recv}Transport (move-style builder: new()+connect()/
-    #     listen()). No cancel (no cancel_handle). Same rationale as UDP/TCP/RTP.
+    #     listen()). Same rationale as UDP/TCP/RTP. The _cancel entry points
+    #     (ABI 0.22) fire tst_rist::RistCancelHandle through the shared Owned
+    #     slot — on RIST they are the ONLY safe cross-thread interrupt, since
+    #     _recv_ts never parks and its caller loop would race a freeing _close.
     "tst_rist_sender_open"
     "tst_rist_sender_close"
+    "tst_rist_sender_cancel"
     "tst_rist_sender_send_ts"
     "tst_rist_sender_get_stats"
     "tst_rist_sender_get_socket_stats"
     "tst_rist_sender_reset_stats"
     "tst_rist_recv_open"
     "tst_rist_receiver_close"
+    "tst_rist_receiver_cancel"
     "tst_rist_receiver_recv_ts"
     "tst_rist_receiver_get_stats"
     "tst_rist_receiver_get_socket_stats"
     "tst_rist_receiver_reset_stats"
     "tst_rist_mux_sender_open"
     "tst_rist_mux_sender_close"
+    "tst_rist_mux_sender_cancel"
+    "tst_rist_mux_sender_finish"
     "tst_rist_mux_sender_push_video"
     "tst_rist_mux_sender_push_video_to"
     "tst_rist_mux_sender_push_klv"
@@ -482,6 +504,7 @@ ALLOWLIST=(
     "tst_rist_mux_sender_reset_stats"
     "tst_rist_demux_receiver_open"
     "tst_rist_demux_receiver_close"
+    "tst_rist_demux_receiver_cancel"
     "tst_rist_demux_receiver_next_event"
     "tst_rist_demux_receiver_get_stats"
     "tst_rist_demux_receiver_get_socket_stats"

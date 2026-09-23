@@ -296,7 +296,7 @@ baseline (by design)" for the full rationale.
   incompatible change to the ABI shape. **0** today.
 - `TST_ABI_VERSION_MINOR` — incremented on additive, source-compatible
   changes (new event kinds, new C entry points, new error codes).
-  **21** today. History (additive bumps only — major stays at 0 pre-1.0):
+  **22** today. History (additive bumps only — major stays at 0 pre-1.0):
     - `1` (plan #62): receiver-surface initial drop.
     - `2` (validate-1 Phase 2 wrap-up): `ManagedDemuxReceiver` wired into
       `tst-c`; `TST_EVENT_KIND_RECONNECT_DISCONTINUITY = 6` added; TS-bytes
@@ -477,6 +477,34 @@ baseline (by design)" for the full rationale.
         likewise reuses the existing `tst_managed_transport_stats_t`
         struct from ABI 20. `tst_demux_config_set_unwrap_timestamps`
         (unconditional) is a new demuxer-config setter.
+    - `22` (deep-review-4 Arc 2 riders R3/R4, 2026-09) — additive; no
+      existing symbol, signature, or struct layout changed, and no new C
+      types or error codes:
+      - **`tst_demux_config_set_sync_buf_cap`** (unconditional) — the
+        pre-sync ingress ceiling (`DemuxerConfig::sync_buf_cap`, ARCH-10);
+        `0` restores the Rust default, the same sentinel
+        `tst_demux_config_set_au_cell_cap_per_pid` uses.
+      - **Cancel entry points for the three transports that had none:**
+        `tst_tcp_{sender,mux_sender,receiver,demux_receiver,listener}_cancel`
+        (`TST_HAS_TCP`), `tst_udp_{sender,mux_sender,receiver,demux_receiver}_cancel`
+        (`TST_HAS_UDP`) and `tst_rist_{sender,mux_sender,receiver,demux_receiver}_cancel`
+        (`TST_HAS_RIST`). Each fires the Rust `TcpCancelHandle` /
+        `UdpCancelHandle` / `RistCancelHandle` through the shared
+        `tst_pipeline::binding::Owned` slot without taking it, so it is
+        callable from any thread while a data-path call is in flight, and
+        the interrupted call returns `TST_E_CLOSED` (the Arc 2
+        one-cancel-outcome contract). `_cancel` never frees — the handle
+        still takes its `_close` / `_free`. The tcp listener is the one
+        exception to the mechanism: its handle holds a bare `TcpListener`,
+        so `tst_tcp_listener_cancel` goes through
+        `TcpListener::cancel_handle()` and a parked `_accept_*` returns
+        NULL with `TST_E_CLOSED`.
+      - **`MuxSender::finish` parity** (DEBT-14): `tst_mux_sender_finish`,
+        `tst_managed_mux_sender_finish` and
+        `tst_{udp,tcp,rtp,rist}_mux_sender_finish` — drain the muxer's
+        pending bytes to the live transport, report the first drain error,
+        then close. Unlike `_close` they do NOT cancel first and do NOT
+        free. See the shell parity matrix below.
 - `TST_ABI_VERSION_PATCH` — incremented on internal fixes that
   preserve both shape and behaviour.
 
