@@ -14,10 +14,11 @@
 //! Note: the lib name for `tst-c` is `tstrans` (see `[lib] name` in
 //! Cargo.toml); integration tests reference it as `tstrans`, not `tst_c`.
 //!
-//! There is no cancel surface on the UDP handles (the UDP transport does
-//! not expose `cancel_handle()`), so these tests do not exercise a
-//! cancel path — receivers open on an ephemeral port and close without a
-//! blocking recv.
+//! There is no `tst_udp_*_cancel` entry point yet (new symbols, ABI 0.22),
+//! so these tests do not exercise a cancel path — receivers open on an
+//! ephemeral port and close without a blocking recv. The cross-thread
+//! close that the UDP transport's real cancel handle now unblocks is
+//! covered by `udp_close_cancels_first.rs`.
 #![cfg(feature = "udp")]
 
 use std::ffi::CString;

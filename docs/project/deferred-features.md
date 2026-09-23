@@ -1395,7 +1395,7 @@ mean **Deferred**. An entry whose feature has shipped must never read
   the "managed shell = plain shell" arc, or a C consumer needing B-frames /
   MISP through a live shell.
 
-## C ABI cancel entry points for `tcp://` transports
+## C ABI cancel entry points for `tcp://`, `udp://` and `rist://` transports
 
 - **Status:** Deferred (Arc 2 rider) — additive, ABI 0.22. The Rust
   `TcpTransport` exposes `cancel_handle()` (since PR #198), but the C ABI
@@ -1410,8 +1410,26 @@ mean **Deferred**. An entry whose feature has shipped must never read
   writing the remainder instead of tearing the connection down on a
   partial-write stall). Arc 1 keeps the C ABI frozen at 0.21, so adding
   `tst_tcp_*_cancel` entry points is out of scope here.
+- **Status (2026-09, Arc 2 WP-D):** the UDP and RIST transports now expose
+  real cancel handles (`UdpCancelHandle` / `RistCancelHandle`) and the
+  eight `tst_udp_*` / `tst_rist_*` handles hold them, so `_close` from any
+  thread cancels first. On UDP that is a full cross-thread cancel: a
+  `_recv_ts` / `_next_event` parked on the 100 ms poll loop returns
+  `TST_E_CLOSED` within one tick (pinned by
+  `bindings/c/tests/transports/udp_close_cancels_first.rs`). On RIST it is
+  NOT: a `tst_rist_*_recv_ts` call is a single ~100 ms librist poll that
+  returns `TST_E_BUFFER_FULL` when nothing arrived, so callers poll in a
+  loop, and `_close` frees the handle — a cross-thread `_close` racing
+  that loop is a use-after-free like any other post-free use. Interrupting
+  a RIST receive from another thread therefore needs the non-freeing
+  cancel entry point below.
+- **What ships with ABI 0.22 (PR 11, Arc 2 rider R4):** the
+  `tst_tcp_*_cancel`, `tst_udp_*_cancel` and `tst_rist_*_cancel` entry
+  points — twelve new symbols for udp/rist on top of the tcp set — in ONE
+  bump for the arc. This entry covers all three families so R4 flips a
+  single entry.
 - **Trigger to revisit:** the first C consumer that needs to interrupt a
-  stalled TCP send, or Arc 2's one-cancel-model work.
+  stalled TCP send or a RIST receive, or Arc 2's one-cancel-model work.
 
 ## RIST: IPv6 receiver bind in the Simple profile
 

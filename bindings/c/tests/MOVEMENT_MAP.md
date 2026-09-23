@@ -84,4 +84,5 @@ unchanged (484) and the test leaf-name multiset is byte-identical before/after
 | `rist_open_smoke.rs` | `transports/rist_open_smoke.rs` |
 | `rtp_open_smoke.rs` | `transports/rtp_open_smoke.rs` |
 | `tcp_open_smoke.rs` | `transports/tcp_open_smoke.rs` |
+| (new, Arc 2 WP-D) | `transports/udp_close_cancels_first.rs` |
 | `udp_open_smoke.rs` | `transports/udp_open_smoke.rs` |

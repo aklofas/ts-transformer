@@ -15,5 +15,7 @@ mod rtp_cancel_first;
 mod rtp_open_smoke;
 #[path = "transports/tcp_open_smoke.rs"]
 mod tcp_open_smoke;
+#[path = "transports/udp_close_cancels_first.rs"]
+mod udp_close_cancels_first;
 #[path = "transports/udp_open_smoke.rs"]
 mod udp_open_smoke;

@@ -7,14 +7,16 @@
 //! Data-path bodies (send_ts, get_stats, get_socket_stats, reset_stats)
 //! are thin forwarders to generic impls in `crate::transport_impls`.
 //!
-//! **No `_cancel` entry point yet:** the C ABI exposes no cancel for this
-//! family (additive candidate, ABI 0.22 — R4). The handle already carries
-//! the binding-shared cancel state (`CHandle`), so `_close` is
-//! cancel-first; to unblock a thread parked in a data-path call, close the
-//! handle from that thread or use the transport's timeout knobs. The
-//! transport itself still has no `cancel_handle()` until WP-D, so the
-//! handle's cancel slot holds `binding::FlagCancel` — a latch that records
-//! the caller's intent but wakes nothing.
+//! **Cancel:** the RIST transport exposes a real cancel handle since Arc 2
+//! WP-D and this handle's `CHandle` slot holds it, so `_close` from ANY
+//! thread cancels first and a `_send_ts` started after the close returns
+//! `TST_E_CLOSED` at its entry check (`rist_sender_data_write` enqueues
+//! and never parks). There is no `tst_rist_sender_cancel` entry point yet — it is a
+//! new symbol and
+//! rides the ABI 0.22 bump (see "C ABI cancel entry points for `tcp://`,
+//! `udp://` and `rist://` transports" in
+//! `docs/project/deferred-features.md`). Until then `_close` IS the
+//! cross-thread cancel.
 //!
 //! **Construction differs from UDP:** RIST uses a move-style builder
 //! chain (`RistTransportBuilder::new(url)?.connect()?`) rather than

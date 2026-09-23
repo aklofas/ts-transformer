@@ -14,10 +14,14 @@
 //! Note: the lib name for `tst-c` is `tstrans` (see `[lib] name` in
 //! Cargo.toml); integration tests reference it as `tstrans`, not `tst_c`.
 //!
-//! There is no cancel surface on the RIST handles (the RIST transport
-//! does not expose `cancel_handle()`), so these tests do not exercise a
-//! cancel path — receivers open on an ephemeral port (port 0 maps to a
-//! kernel-assigned port) and close without a blocking recv.
+//! There is no `tst_rist_*_cancel` entry point yet (new symbols, ABI
+//! 0.22), so these tests do not exercise a cancel path — receivers open on
+//! an ephemeral port (port 0 maps to a kernel-assigned port) and close
+//! without a blocking recv. The RIST transport does carry a real cancel
+//! handle since Arc 2 WP-D, but a `tst_rist_*_recv_ts` call never parks
+//! (one ~100 ms poll, `TST_E_BUFFER_FULL` when empty), so the
+//! cross-thread pin lives at the Rust level in
+//! `crates/tst-rist/tests/cancel.rs` until the 0.22 cancel handles land.
 //!
 //! RIST receiver URLs require the `@` bind prefix (ffmpeg convention):
 //! `rist://@127.0.0.1:0`. Sender URLs use no prefix: `rist://host:port`.

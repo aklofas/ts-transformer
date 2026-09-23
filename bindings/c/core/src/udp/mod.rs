@@ -7,11 +7,13 @@
 //! data-path entry points in the sub-modules below. Each handle has its
 //! own `_close` entry point to free it.
 //!
-//! The surface mirrors `bindings/c/core/src/rtp/` module-for-module **minus
-//! cancel**: the UDP transport does not expose a `cancel_handle()`, so
-//! there are no `tst_udp_*_cancel` entry points. To unblock a thread
-//! parked in a data-path call, close the handle from the same thread (or
-//! rely on the socket's read/write behavior).
+//! The surface mirrors `bindings/c/core/src/rtp/` module-for-module
+//! **minus the `_cancel` entry points**: those are new symbols deferred to
+//! ABI 0.22 (see "C ABI cancel entry points for `tcp://`, `udp://` and
+//! `rist://` transports" in `docs/project/deferred-features.md`). The
+//! UDP transport DOES expose a real `cancel_handle()` since Arc 2 WP-D
+//! and every handle holds it, so `_close` from any thread cancels first —
+//! see each handle module's **Cancel** note for what that unblocks.
 //!
 //! URL grammar (ffmpeg-compatible):
 //! - `udp://host:port` — unicast send (sender) / unicast bind (receiver)

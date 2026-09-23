@@ -9,14 +9,18 @@
 //! (design §4.5), `ShellErrorKind` → error-code mapping, and the
 //! per-PID stats borrowed buffer are all handled generically.
 //!
-//! **No `_cancel` entry point yet:** the C ABI exposes no cancel for this
-//! family (additive candidate, ABI 0.22 — R4). The handle already carries
-//! the binding-shared cancel state (`CHandle`), so `_close` is
-//! cancel-first; to unblock a thread parked in a data-path call, close the
-//! handle from that thread or use the transport's timeout knobs. The
-//! transport itself still has no `cancel_handle()` until WP-D, so the
-//! handle's cancel slot holds `binding::FlagCancel` — a latch that records
-//! the caller's intent but wakes nothing.
+//! **Cancel:** the RIST transport exposes a real cancel handle since Arc 2
+//! WP-D and this handle's `CHandle` slot holds it, so `_close` cancels
+//! first. Note the data path does NOT park: `_next_event` is one ~100 ms librist
+//! poll that reports `TST_E_BUFFER_FULL` when nothing arrived, so callers
+//! poll in a loop. A cancel is observed at the end of the current tick and
+//! the loop's next call reports `TST_E_CLOSED`. Do NOT call `_close` from
+//! another thread while such a loop runs — `_close` frees the handle and
+//! the poller holds no lock between calls. The non-freeing cross-thread
+//! cancel is `tst_rist_demux_receiver_cancel`, a new symbol that
+//! rides the ABI 0.22 bump (see "C ABI cancel entry points for `tcp://`,
+//! `udp://` and `rist://` transports" in
+//! `docs/project/deferred-features.md`).
 //!
 //! **Construction differs from UDP:** RIST receivers use a bind URL with
 //! the ffmpeg `@` prefix (`rist://@host:port`) and the
