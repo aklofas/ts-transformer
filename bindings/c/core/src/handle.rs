@@ -274,12 +274,18 @@ mod owned {
         }
     }
 
-    /// The shells' `cancel_handle()` still returns an `Option` until WP-D
-    /// (UDP and RIST have no handle); this is the ONE place the `Option`
-    /// is resolved. `None` → A1's `binding::FlagCancel` (a plain latch the
-    /// binding layer ships for exactly this gap; `Owned::is_cancelled`
-    /// reads its own flag). DELETE this fn in WP-D (PR 9) with its eight
-    /// udp/rist call sites once every `cancel_handle()` is `Some`.
+    /// The shells' `cancel_handle()` returns an `Option`; this is the ONE
+    /// place it is resolved. `None` → A1's `binding::FlagCancel` (a plain
+    /// latch that records the request and wakes nothing).
+    ///
+    /// Since Arc 2 WP-D every transport this binding opens returns `Some`,
+    /// so the `None` arm is a defensive fallback rather than a live path —
+    /// UDP and RIST got their real handles there, and the udp/rist call
+    /// sites picked them up through this function with no change. The
+    /// function itself STAYS: the shell-level `cancel_handle()` is still
+    /// `Option`-typed, so all ~22 call sites across every family need the
+    /// resolution, and replacing it with `.expect()` would trade a safe
+    /// fallback for a panic path (R2's no-`expect` gate).
     #[allow(dead_code)] // consumed by the udp/rist `_open` paths (B1.7/B1.10)
     pub(crate) fn cancel_or_latch(
         c: Option<Arc<dyn TransportCancel + Send + Sync>>,
