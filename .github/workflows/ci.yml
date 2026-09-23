@@ -384,13 +384,21 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/scenario-manifest.sh
 
-      - name: check-surface-manifest (L3 closure + owning-test + binding-symbol)
+      - name: check-surface-manifest (L3 closure + owning-test + binding-symbol + five columns)
         # Every mappable public-api.txt item is either mapped to an owning test
         # + binding columns, or explicitly exempted. Enforces closure so no new
-        # public item ships un-catalogued, and paves the java: parity gate for
-        # tst-jni. Gated to linux-x86_64 — baselines are platform-independent.
+        # public item ships un-catalogued, and (Arc 2 R1, rule b2) that every
+        # [[surface]] row carries all five binding columns — an absent twin is
+        # spelled "<prefix>:deferred", never omitted. Gated to linux-x86_64 —
+        # baselines are platform-independent.
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/surface-manifest.sh
+
+      - name: check-no-unreachable-expect-in-bindings (Arc 2 R2)
+        # Binding production code never aborts on a #[non_exhaustive]
+        # wildcard or an .expect(); test tails / tests/ / build.rs excluded.
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/check/repo/no-unreachable-expect-in-bindings.sh
 
       - name: check-platform-capabilities (gate-sync + I4 promotion alarm)
         # Every test-level platform cfg-gate has a platform_skip entry; every

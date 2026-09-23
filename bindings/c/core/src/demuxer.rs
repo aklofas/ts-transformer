@@ -222,7 +222,10 @@ pub unsafe extern "C" fn tst_demuxer_next_event(
     }
     handle.inner.with_inner_mut(|d| match d.next_event() {
         Some(ev) => {
-            let mut arena = handle.arena.lock().expect("event arena Mutex poisoned");
+            // Poison = a panic mid-write on another call; the arena is
+            // rewritten before it is read, so recover (binding poison
+            // policy: readers recover).
+            let mut arena = handle.arena.lock().unwrap_or_else(|e| e.into_inner());
             // SAFETY: out_event non-null per guard above.
             // event::convert writes through the pointer; pointer fields on the
             // result alias the arena Vecs (held under the Mutex for this call;

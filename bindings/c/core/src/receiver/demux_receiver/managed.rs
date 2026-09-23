@@ -280,7 +280,10 @@ pub unsafe extern "C" fn tst_managed_demux_receiver_recv_event(
     let cancelled = handle.inner.is_cancelled();
     handle.inner.with_inner_mut(|rx| match rx.recv_event() {
         Ok(Some(ev)) => {
-            let mut arena = handle.arena.lock().expect("event arena Mutex poisoned");
+            // Poison = a panic mid-write on another call; the arena is
+            // rewritten before it is read, so recover (binding poison
+            // policy: readers recover).
+            let mut arena = handle.arena.lock().unwrap_or_else(|e| e.into_inner());
             unsafe {
                 crate::event::convert(&mut arena, &ev, &mut *out_event);
             }

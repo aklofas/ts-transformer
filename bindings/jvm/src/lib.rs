@@ -96,9 +96,13 @@ pub extern "system" fn Java_org_tstrans_Version_versionString<'local>(
     _class: JClass<'local>,
 ) -> jstring {
     crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
-        env.new_string(env!("CARGO_PKG_VERSION"))
-            .expect("failed to allocate Java string")
-            .into_raw()
+        // A failed JNI allocation has already left an OutOfMemoryError pending
+        // on this thread; returning null lets the JVM raise it instead of
+        // aborting the process from Rust.
+        match env.new_string(env!("CARGO_PKG_VERSION")) {
+            Ok(js) => js.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        }
     })
 }
 
