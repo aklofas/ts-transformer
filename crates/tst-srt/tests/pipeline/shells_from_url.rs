@@ -178,9 +178,9 @@ fn managed_demux_receiver_from_url_reads_events() {
 /// parked in libsrt with no data in sight, the shell reports kind
 /// `Closed`, and the end reason reads `Cancelled`.
 ///
-/// WP-C2 note: inside the managed loop the SRT-level variant the wake
-/// produces changes from `Broken` (today) to `ExplicitClose`; the
-/// observed shell kind stays `Closed` and this test does not move.
+/// Inside the managed loop the SRT-level variant the wake produces is
+/// `ExplicitClose` (WP-C2); the observed shell kind stays `Closed`, so this
+/// test did not move when that kind changed.
 #[test]
 fn cancel_handle_ends_a_parked_recv_and_records_cancelled() {
     require_loopback!();

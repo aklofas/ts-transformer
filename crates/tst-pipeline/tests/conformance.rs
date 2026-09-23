@@ -3,13 +3,13 @@
 //! post-Arc-2 inner contract (parks until its handle fires, then
 //! `ExplicitClose`; `Ok(0)` on an empty buffer).
 //!
-//! Two rows differ from the bare-transport defaults, both documented in the
+//! One row differs from the bare-transport defaults, documented in the
 //! `tst_core::transport` table: the receive wrapper answers `ExplicitClose`
 //! after its OWN `close()` (`managed_receive.rs` "close() is a
-//! caller-initiated path"), and — until WP-C2 — the send wrapper answers
-//! `Closed` to a cancel that lands during a parked send (the inner's
-//! `ExplicitClose` falls through `send_managed`'s `Err(_)` arm into
-//! `reconnect_and_drain`, whose `closed` check returns `Closed`).
+//! caller-initiated path"), where the send wrapper answers `Closed`. Both
+//! answer `ExplicitClose` to a cancel (WP-C2: `ManagedTransport` latches a
+//! cancel-only flag that `latched_error` reads at every `closed`-latch
+//! exit).
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

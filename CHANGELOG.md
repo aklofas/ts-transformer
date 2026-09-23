@@ -1958,8 +1958,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   not `BROKEN`** — PR #209's "plain = BROKEN, managed = CLOSED" split is
   reversed (spec Q2 / A-ARCH-03); `SrtError(CLOSED)` /
   `SrtException(CLOSED)` with detail `cancelled from another thread` on
-  every shell. The C ABI already reported `TST_E_CLOSED` (−7) through its
-  cancel relabelling; unchanged. `docs/languages/{python,jvm}.md`,
+  every shell. At the C ABI the MANAGED shells already reported
+  `TST_E_CLOSED` (−7) through the cancel relabelling; the PLAIN SRT shells'
+  parked call changes from `TST_E_TRANSPORT` (−8) to `TST_E_CLOSED` (−7)
+  (see the WP-B1 entry above, which pinned the −8), so every call at or
+  after the one that observes a cancel now reports −7.
+  `docs/languages/{python,jvm,c}.md`,
   `docs/reference/binding-authors.md` ("Cancel handles") and
   `docs/reference/srt-cancel-handle.md` rewritten accordingly.
 - The four `tests/conformance.rs` binaries join the single-threaded `network`
