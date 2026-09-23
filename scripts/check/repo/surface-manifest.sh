@@ -5,6 +5,8 @@
 #   (a) every owning_tests path in tests/coverage/surface-manifest.toml exists on disk;
 #   (b) every binding column symbol resolves in that binding's source
 #       (feature-tagged "[feature=X]" entries are skipped unless X is in BUILT_FEATURES);
+#   (b2) every [[surface]] row carries all five binding columns (c, python, java,
+#       swift, kotlin) — "<prefix>:deferred" / "<prefix>:n/a" declare an absent twin;
 #   (c) closure: every mappable public-api.txt item is mapped ([[surface]] item)
 #       or exempted ([[exempt]] item).
 #
@@ -18,6 +20,7 @@
 #   SURFACE_BUILT_FEATURES  space-separated features considered built (default: all)
 #   SURFACE_C_HEADER        path to the C binding header
 #   SURFACE_PYI_DIR         directory to search for Python binding symbols
+#   SURFACE_REQUIRED_PREFIXES  binding columns every [[surface]] row must carry
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -91,6 +94,8 @@ run_check() {
       printf '%s\n' $SURFACE_BUILT_FEATURES | grep -Fxq "$feat" || continue
     fi
     case "$sym" in
+      *:deferred|*:n/a)
+        : ;;   # five-column sentinel — declared absent, never resolved (rule b2)
       c:*)
         grep -Fq "${sym#c:}" "$SURFACE_C_HEADER" \
           || echo "FAIL: c symbol unresolved: ${sym#c:}" ;;
@@ -118,6 +123,31 @@ run_check() {
         echo "FAIL: unknown binding prefix: $sym" ;;
     esac
   done >> "$errs"
+
+  # (b2) five-column rule (Arc 2 R1 / X-META-02): every [[surface]] row's
+  # `bindings` array carries at least one entry per required prefix. A
+  # binding with no twin today says so explicitly with the sentinel
+  # "<prefix>:deferred" (or "<prefix>:n/a" for by-design gaps) instead of
+  # omitting the column — an omitted column is indistinguishable from a
+  # forgotten one, which is exactly how the Swift/Kotlin columns stayed
+  # empty for three months. Sentinels are never resolved.
+  local required_prefixes="${SURFACE_REQUIRED_PREFIXES:-c python java swift kotlin}"
+  awk -v req="$required_prefixes" '
+    BEGIN { n = split(req, P, " ") }
+    function flush() {
+      if (!insurf) return
+      if (!hasb) { printf "FAIL: [[surface]] row %s has no bindings array (need every column: %s)\n", item, req; return }
+      for (i = 1; i <= n; i++) {
+        if (index(bline, "\"" P[i] ":") == 0)
+          printf "FAIL: [[surface]] row %s is missing the %s: column (use \"%s:deferred\" when there is no twin)\n", item, P[i], P[i]
+      }
+    }
+    /^\[\[surface\]\]/ { flush(); insurf = 1; hasb = 0; item = "?"; bline = ""; next }
+    /^\[\[exempt\]\]/  { flush(); insurf = 0; next }
+    insurf && /^item = /     { item = $0; sub(/^item = "/, "", item); sub(/".*$/, "", item) }
+    insurf && /^bindings = / { hasb = 1; bline = $0 }
+    END { flush() }
+  ' "$SURFACE_MANIFEST" >> "$errs"
 
   # (c) closure: every mappable baseline item is mapped or exempted.
   local c f item
@@ -180,13 +210,20 @@ self_test() {
   expect fail "un-catalogued item" || return 1
 
   # (3) Mapped row with a missing owning test -> fail
-  printf '[[surface]]\nitem = "demo::a"\nowning_tests = ["tests/coverage/NO_SUCH_FILE.rs"]\nbindings = []\n[[exempt]]\nitem = "demo::B"\n' > "$tmp/m.toml"
+  # Five-column sentinels so the expected failure can only come from rule (a).
+  printf '[[surface]]\nitem = "demo::a"\nowning_tests = ["tests/coverage/NO_SUCH_FILE.rs"]\nbindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]\n[[exempt]]\nitem = "demo::B"\n' > "$tmp/m.toml"
   expect fail "missing owning test" || return 1
 
   # (4) Mapped row with owning test present but unresolved c symbol -> fail
   # Use a real repo-relative path that exists (tests/coverage/README.md)
-  printf '[[surface]]\nitem = "demo::a"\nowning_tests = ["tests/coverage/README.md"]\nbindings = ["c:nope_sym_xyz"]\n[[exempt]]\nitem = "demo::B"\n' > "$tmp/m.toml"
+  printf '[[surface]]\nitem = "demo::a"\nowning_tests = ["tests/coverage/README.md"]\nbindings = ["c:nope_sym_xyz", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]\n[[exempt]]\nitem = "demo::B"\n' > "$tmp/m.toml"
   expect fail "unresolved c symbol" || return 1
+
+  # (5) Five-column rule: a row missing one column -> fail; all sentinels -> pass
+  printf '[[surface]]\nitem = "demo::a"\nowning_tests = ["tests/coverage/README.md"]\nbindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred"]\n[[exempt]]\nitem = "demo::B"\n' > "$tmp/m.toml"
+  expect fail "row missing the kotlin column" || return 1
+  printf '[[surface]]\nitem = "demo::a"\nowning_tests = ["tests/coverage/README.md"]\nbindings = ["c:deferred", "python:n/a", "java:deferred", "swift:deferred", "kotlin:deferred"]\n[[exempt]]\nitem = "demo::B"\n' > "$tmp/m.toml"
+  expect pass "all five columns present as sentinels" || return 1
 
   echo "self-test: PASS"
 }
