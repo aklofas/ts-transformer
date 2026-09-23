@@ -80,9 +80,9 @@ pub unsafe extern "C" fn tst_udp_sender_open(url: *const c_char) -> *mut TstUdpS
             }
         };
         let sender = Sender::new(transport, SenderConfig::default());
-        // UDP/RIST expose no cancel handle until WP-D: `cancel_or_latch`
-        // supplies the latch stand-in (delete the call in WP-D once
-        // `cancel_handle()` is `Some`).
+        // `cancel_or_latch` resolves the shell's `Option`; since Arc 2 WP-D
+        // this transport's `cancel_handle()` is `Some`, so the handle below
+        // carries the REAL cancel and `_close` wakes what it can.
         let cancel = cancel_or_latch(sender.cancel_handle());
         Box::into_raw(Box::new(TstUdpSender {
             inner: CHandle::new(sender, cancel, ()),

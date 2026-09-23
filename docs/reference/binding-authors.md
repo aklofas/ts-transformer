@@ -192,10 +192,13 @@ above).
 ## Cancel handles
 
 Every long-lived shell exposes `cancel_handle()` returning
-`Option<Arc<dyn TransportCancel + Send + Sync>>` — `Some` for SRT
-(`SrtCancelHandle`), RTP (`RtpCancelHandle`) and TCP (`TcpCancelHandle`),
-`None` for UDP and RIST today (see "Cross-thread receive cancellation for
-UDP / RIST" in deferred-features.md).
+`Option<Arc<dyn TransportCancel + Send + Sync>>`, and since 0.7.0 it is
+`Some` on **every** transport: SRT (`SrtCancelHandle`), RTP
+(`RtpCancelHandle`), TCP (`TcpCancelHandle`), UDP (`UdpCancelHandle`) and
+RIST (`RistCancelHandle`). The `Option` survives only for pure in-memory
+test mocks; a binding never has to handle `None` for a real transport —
+`tst_pipeline::binding::Owned` holds the handle as a plain `Arc` and
+fires it first on `close()`.
 A handle is `Send + Sync`; `cancel()` is one-shot and idempotent, and
 `is_cancelled()` (required on the trait since 0.7.0) reads the shared
 latch — every clone, and a handle obtained after the cancel, agrees.

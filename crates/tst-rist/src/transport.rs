@@ -571,6 +571,33 @@ mod tests {
         t.close(); // must not panic / double-free
     }
 
+    /// Pins the [`RistCancelHandle`] doc claim that a `close()` AFTER a
+    /// `cancel()` still runs `rist_destroy` exactly once and a second
+    /// close stays a no-op. A cancel only latches a flag — it must not
+    /// consume the context, and it must not make `close()` skip it.
+    #[test]
+    fn close_after_cancel_destroys_ctx_exactly_once() {
+        let mut t = match RistTransport::connect("rist://127.0.0.1:19006") {
+            Ok(t) => t,
+            Err(_) => return,
+        };
+        let h = t.cancel_handle();
+        h.cancel();
+        assert!(h.is_cancelled());
+        assert!(!t.is_alive(), "a cancelled transport reports dead");
+        assert!(
+            !t.ctx_is_null(),
+            "a cancel must NOT destroy the librist context"
+        );
+        t.close();
+        assert!(
+            t.ctx_is_null(),
+            "close() after a cancel must still run rist_destroy"
+        );
+        t.close(); // must not panic / double-free
+        assert!(t.ctx_is_null());
+    }
+
     #[test]
     fn rejects_recv_bind_url() {
         // RistUrl with @ prefix means "receiver" — connect() should refuse.

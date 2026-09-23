@@ -21,9 +21,10 @@ use crate::url::UdpUrl;
 /// Obtained via [`UdpTransport::cancel_handle`] /
 /// [`crate::recv::UdpRecvTransport::cancel_handle`] (inherent, non-`Option`)
 /// or through `Transport::cancel_handle` / `RecvTransport::cancel_handle`
-/// (the trait forms, `Some` on both UDP transports). Cancelling does **not**
-/// close the socket — `close()` still does. Cancellation is cooperative,
-/// with the same shape as `TcpCancelHandle` and `RtpCancelHandle`:
+/// (the trait forms, `Some` on both UDP transports). Neither a cancel nor a
+/// `close()` closes the socket: `close()` latches the transport dead, and
+/// the socket closes on drop. Cancellation is cooperative, with the same
+/// shape as `TcpCancelHandle` and `RtpCancelHandle`:
 ///
 /// - a parked `recv_bytes` observes the flag at its next poll tick (≤ ~100 ms,
 ///   `tst_core::net::udp_socket::CANCEL_POLL_INTERVAL`) and returns

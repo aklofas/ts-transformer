@@ -15,9 +15,11 @@
 //! before the panic so the process exits cleanly.
 
 use std::net::UdpSocket;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tst_core::transport::{RecvTransport, Transport, TransportError};
 use tst_udp::{UdpRecvTransport, UdpTransport, UdpTransportBuilder};
@@ -144,18 +146,45 @@ enum Parked {
     ),
 }
 
-/// Park `recv` on a worker thread; returns the channel + the port a rescue
-/// datagram must be sent to.
-fn park_recv(mut recv: UdpRecvTransport) -> (mpsc::Receiver<Parked>, u16, thread::JoinHandle<()>) {
+/// Park `recv` on a worker thread; returns the channel, the port a rescue
+/// datagram must be sent to, the join handle, and an `entered` latch the
+/// worker sets immediately before it calls `recv_bytes`.
+///
+/// The latch is why the caller does not guess with a sleep: it proves the
+/// worker actually reached the blocking call, so the cancel that follows
+/// is genuinely exercising the PARK path rather than the entry check.
+fn park_recv(
+    mut recv: UdpRecvTransport,
+) -> (
+    mpsc::Receiver<Parked>,
+    u16,
+    thread::JoinHandle<()>,
+    Arc<AtomicBool>,
+) {
     let port = recv.local_addr().port();
     let (tx, rx) = mpsc::channel();
+    let entered = Arc::new(AtomicBool::new(false));
+    let e = Arc::clone(&entered);
     let worker = thread::spawn(move || {
         let mut buf = vec![0u8; recv.max_payload()];
+        e.store(true, Ordering::SeqCst);
         let r = recv.recv_bytes(&mut buf);
         let alive = recv.is_alive();
         let _ = tx.send(Parked::Ended(r, alive));
     });
-    (rx, port, worker)
+    (rx, port, worker, entered)
+}
+
+/// Spin until `cond` or the bound elapses; `false` means it never became true.
+fn wait_until(bound: Duration, cond: impl Fn() -> bool) -> bool {
+    let deadline = Instant::now() + bound;
+    while Instant::now() < deadline {
+        if cond() {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    cond()
 }
 
 /// Send one datagram to `port` so a worker that did NOT observe the cancel
@@ -182,8 +211,17 @@ fn recv_cancel_from_other_thread_loopback_returns_explicit_close() {
     let recv = UdpRecvTransport::listen("udp://@127.0.0.1:0").expect("bind");
     let handle =
         RecvTransport::cancel_handle(&recv).expect("UdpRecvTransport must expose a cancel handle");
-    let (rx, port, worker) = park_recv(recv);
-    thread::sleep(Duration::from_millis(300)); // the worker is parked on a tick by now
+    let (rx, port, worker, entered) = park_recv(recv);
+    if !wait_until(Duration::from_secs(5), || entered.load(Ordering::SeqCst)) {
+        rescue(port);
+        let _ = worker.join();
+        panic!("the recv worker never reached recv_bytes");
+    }
+    // The worker has entered the call; give it the moment it needs to be
+    // inside the kernel wait rather than just before it. Not an assertion —
+    // a cancel that lands a hair early is still observed at the entry check
+    // (`recv_after_cancel_loopback_is_explicit_close_at_entry` pins that).
+    thread::sleep(Duration::from_millis(150));
     handle.cancel();
     let outcome = match rx.recv_timeout(Duration::from_secs(2)) {
         Ok(o) => o,

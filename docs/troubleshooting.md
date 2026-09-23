@@ -312,26 +312,33 @@ filtering by kind is not the issue).
 
 **Symptom:** a thread parked in `UdpRecvTransport::recv_bytes` (or the
 Python equivalent) does not return when another thread tries to shut it
-down. SRT, RTP, and TCP expose a cloneable cancel handle
-(`SrtCancelHandle` / `RtpCancelHandle` / `TcpCancelHandle`) that can be
-fired from any thread; UDP and RIST have no equivalent.
+down.
 
-**Diagnosis:** the Rust crates have no cancel handle for UDP or RIST: both
-`recv_bytes` and `close()` take `&mut self`, so in Rust the supported
-shutdown is cooperative — a finite per-call timeout plus a stop flag
-checked between calls (`recv_timeout` on `UdpRecvTransport`; the 100 ms
-`Backpressure` poll on `RistRecvTransport`). The Python bindings build
-that loop in: `tstrans.udp.RecvTransport.recv()` and
-`tstrans.rist.RecvTransport.recv()` poll in ≤100 ms slices and `close()`
-from another thread ends the parked call with `UdpError(CLOSED)` /
-`RistError(CLOSED)`. See the [deferred-features
-entry](/docs/project/deferred-features.md) for the Rust-side rationale.
+**Diagnosis:** you are on a release before 0.7.0, or you never obtained
+the cancel handle. Since 0.7.0 every transport has one —
+`UdpTransport::cancel_handle()` / `UdpRecvTransport::cancel_handle()`
+return a `UdpCancelHandle`, and the RIST pair a `RistCancelHandle`
+(`SrtCancelHandle` / `RtpCancelHandle` / `TcpCancelHandle` are the
+siblings). The handle must be obtained BEFORE the transport is moved into
+the parked thread; a `recv_bytes` already parked then returns
+`TransportError::ExplicitClose` at its next ~100 ms poll tick. Before
+0.7.0 there was no handle and the only shutdown was cooperative: a finite
+per-call timeout plus a stop flag checked between calls (`recv_timeout`
+on `UdpRecvTransport`; the 100 ms `Backpressure` poll on
+`RistRecvTransport`). That shape still works and Python still uses it
+internally, which is why `tstrans.udp.RecvTransport.close()` and its
+rist twin have always ended a parked `recv()` from another thread with
+`UdpError(CLOSED)` / `RistError(CLOSED)` — they now fire the real handle
+first.
 
-**Fix (Rust):** use `recv_timeout` (UDP) or catch `Backpressure` (RIST)
-for a bounded per-call deadline, and check a stop flag in the caller
-loop. **Fix (Python):** call `close()` from the stopping thread; or keep
-`timeout_ms` for a bounded deadline as before. The Rust owning thread
-calls `close()` once it decides to stop, between `recv` calls:
+**Fix (Rust, 0.7.0+):** obtain `cancel_handle()` before moving the
+transport into its thread, then fire `cancel()` from anywhere; the parked
+`recv_bytes` returns `ExplicitClose`. **Fix (Python):** call
+`cancel_handle().cancel()` (or `close()`) from the stopping thread.
+**Fix (pre-0.7.0, still valid):** use `recv_timeout` (UDP) or catch
+`Backpressure` (RIST) for a bounded per-call deadline and check a stop
+flag in the caller loop — the owning thread calls `close()` once it
+decides to stop, between `recv` calls:
 
 ```rust,ignore
 use std::sync::atomic::{AtomicBool, Ordering};

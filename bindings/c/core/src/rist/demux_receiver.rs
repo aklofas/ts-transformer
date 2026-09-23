@@ -115,9 +115,9 @@ pub unsafe extern "C" fn tst_rist_demux_receiver_open(
         } else {
             DemuxReceiver::new(transport)
         };
-        // UDP/RIST expose no cancel handle until WP-D: `cancel_or_latch`
-        // supplies the latch stand-in (delete the call in WP-D once
-        // `cancel_handle()` is `Some`).
+        // `cancel_or_latch` resolves the shell's `Option`; since Arc 2 WP-D
+        // this transport's `cancel_handle()` is `Some`, so the handle below
+        // carries the REAL cancel and `_close` wakes what it can.
         let cancel = cancel_or_latch(receiver.cancel_handle());
         Box::into_raw(Box::new(TstRistDemuxReceiver {
             inner: CHandle::new(receiver, cancel, ()),

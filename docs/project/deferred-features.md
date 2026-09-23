@@ -1330,34 +1330,6 @@ mean **Deferred**. An entry whose feature has shipped must never read
 - **Trigger to revisit:** A consumer produces or ingests ST 0605 Nano
   Precision Time Stamp packs and needs sub-microsecond timestamp fidelity.
 
-## Cross-thread receive cancellation for UDP / RIST
-
-- **Status:** Not implemented for the `tst-udp` and `tst-rist` receive
-  paths. SRT (`SrtCancelHandle`), RTP (`RtpCancelHandle`), and TCP
-  (`TcpCancelHandle`) all expose cloneable cross-thread cancel handles;
-  `tst-udp` and `tst-rist` have no equivalent. Both `recv_bytes` and
-  `close` take `&mut self`, so calling `close()` while a `recv` is in
-  flight is not possible in safe Rust — there is no race-free way to
-  interrupt a live receive from another thread.
-  Cooperative shutdown in Rust requires a finite per-call timeout plus a
-  caller-side stop flag checked between calls. The Python bindings
-  implement exactly that loop internally: `tstrans.udp.RecvTransport` and
-  `tstrans.rist.RecvTransport` poll in ≤100 ms slices and their `close()`
-  ends a parked `recv()` from another thread with `CLOSED`, so the
-  single-thread recv/close contract is lifted for Python only; the Rust
-  crates are unchanged.
-- **Why deferred:** Cooperative timeout-based shutdown covers the
-  operational need for graceful teardown. A cancel handle is permanent
-  public API on two crates plus up to three binding mirrors; no consumer
-  has asked for it on these transports. This is precisely the gap that
-  `SrtCancelHandle` / `RtpCancelHandle` / `TcpCancelHandle` close on
-  the other transports — a future UDP/RIST cancel handle would follow
-  the same shape.
-- **Trigger to revisit:** A consumer needs to interrupt a parked
-  UDP or RIST receive from a thread that does not own the transport
-  (for example, a signal handler that cannot reach the transport
-  object).
-
 ## UDP multicast: IPv6 interface selection by name / scope-id
 
 - **Status:** Deferred. `apply_multicast_iface`
@@ -2458,3 +2430,20 @@ Entries whose feature shipped. Kept for the record (dates, PR numbers, the decis
   connecting — the gap was unledgered until CORR-12 (2026-09-14). Listed
   here, not in the ledger, because it closes in the same arc; if your tree
   has no `TcpListener::cancel_handle`, the WP-4b PR has not merged yet.
+
+### Cross-thread receive cancellation for UDP / RIST — RESOLVED 2026-09
+
+- **Status:** Shipped in deep-review-#4 Arc 2 (WP-D): `tst_udp::UdpCancelHandle`
+  and `tst_rist::RistCancelHandle`, obtained from the inherent
+  `cancel_handle()` on all four transports (or the `Transport` /
+  `RecvTransport` trait forms, now `Some`). A `recv_bytes` parked on the
+  UDP 100 ms poll loop or on librist's 100 ms `rist_receiver_data_read2`
+  tick returns `TransportError::ExplicitClose` at its next tick when the
+  handle fires; `send_bytes` observes it at entry; `is_alive()` reads
+  `false` after a cancel and (UDP, new) after a `Broken`. Python exposes
+  `udp.CancelHandle` / `rist.CancelHandle`; the C handles fire the real
+  handle from `_close` (the `tst_udp_*_cancel` / `tst_rist_*_cancel` entry
+  points ride the ABI 0.22 bump — see "C ABI cancel entry points for
+  `tcp://`, `udp://` and `rist://` transports"). The pre-Arc-2 "cooperative
+  timeout + stop flag" shape is still available (`recv_timeout` on UDP,
+  `timeout_ms` in Python) but is no longer the only way.
