@@ -411,8 +411,8 @@ with Receiver.from_url("srt://:9000?mode=listener") as rx:
             pkt = rx.recv_bytes()   # one 188-byte TS packet per call
             ...                     # process pkt
     except SrtError as e:
-        # CLOSED (BROKEN on plain SRT until the transport-level cancel
-        # lands) signals end of stream.
+        # CLOSED (a cancel or close) and BROKEN (a wire failure) both
+        # end the stream; anything else is a real fault.
         if e.kind not in (SrtErrorKind.CLOSED, SrtErrorKind.BROKEN):
             raise
 ```
@@ -470,12 +470,11 @@ cancel.cancel()   # wakes tx.send_bytes() → SrtError(kind=CLOSED)
 What the interrupted call raises is the domain's `CLOSED` kind with the
 detail `"cancelled from another thread"` — `SrtError(CLOSED)`,
 `RtpError(CLOSED)` (`H264Receiver.recv_au()` returns `None`),
-`UdpError(CLOSED)`, `TcpError(CLOSED)`, `RistError(CLOSED)`. Two
-exceptions, both temporary: the plain SRT shells (`Sender`, `Receiver`,
-`MuxSender`, `DemuxReceiver`, `Listener`) may still report
-`SrtError(BROKEN)` because libsrt reports the closed socket as a
-connection error — this becomes `CLOSED` when the SRT transport-level
-cancel change lands later in 0.7.0; and a udp/rist `recv()` observes the
+`UdpError(CLOSED)`, `TcpError(CLOSED)`, `RistError(CLOSED)`. That is the
+same on every `tstrans.srt` shell, plain or managed: the plain shells
+close the underlying libsrt socket and report the cancel they observed,
+not the connection error it provoked. (Through 0.6.x they raised
+`SrtError(BROKEN)`.) One caveat remains: a udp/rist `recv()` observes the
 cancel at its next ≤100 ms poll slice (they have no Rust cancel handle
 yet). A call made AFTER `close()` raises `CLOSED` too.
 

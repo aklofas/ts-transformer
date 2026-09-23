@@ -579,9 +579,9 @@ def test_demux_receiver_context_manager_closes_cleanly() -> None:
 def test_demux_receiver_close_while_next_parked_cancels_first() -> None:
     """`close()` from another thread while `__next__` is parked cancels
     first: it returns promptly and the parked iteration ends with
-    `SrtError(BROKEN)` (the plain cancel handle closes the libsrt socket;
-    the managed shell is the one that maps its own cancel to CLOSED). The
-    contract shared with the JVM plain `DemuxReceiver.close()` and the C
+    `SrtError(CLOSED)` (the plain cancel handle closes the libsrt socket;
+    since Arc 2 every shell, plain or managed, reports a cancel as CLOSED).
+    The contract shared with the JVM plain `DemuxReceiver.close()` and the C
     ABI's `tst_demux_receiver_close`."""
     port = _free_tcp_port()
     sender, receiver = _make_mux_demux_pair(port)
@@ -620,7 +620,7 @@ def test_demux_receiver_close_while_next_parked_cancels_first() -> None:
             c.join(timeout=5.0)
             pytest.fail("close() did not end the parked iteration within 5 s")
         assert outcome.get("end") == "SrtError", f"iteration ended via {outcome}"
-        assert outcome.get("kind") == SrtErrorKind.BROKEN, f"unexpected kind: {outcome}"
+        assert outcome.get("kind") == SrtErrorKind.CLOSED, f"unexpected kind: {outcome}"
     finally:
         sender.close()
         receiver.close()

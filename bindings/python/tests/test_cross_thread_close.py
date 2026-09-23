@@ -239,7 +239,7 @@ def test_srt_mux_sender_cancel_handle_wakes_send_from_other_thread() -> None:
         assert not w.is_alive(), "cancel() did not end the send loop"
         exc = outcome.get("exc")
         assert isinstance(exc, SrtError), f"send loop ended with {exc!r}"
-        assert exc.kind in (SrtErrorKind.CLOSED, SrtErrorKind.BROKEN), exc.kind
+        assert exc.kind == SrtErrorKind.CLOSED, exc.kind
     finally:
         tx.close()
         peer.close()
