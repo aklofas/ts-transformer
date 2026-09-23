@@ -29,6 +29,7 @@ use tst_core::mpegts::mux::{
     AudioStreamHandle, DataStreamHandle, KlvStreamHandle, SubtitleStreamHandle, VideoStreamHandle,
 };
 use tst_pipeline::binding::BindingErrorKind;
+use tst_pipeline::binding::HandleState;
 use tst_pipeline::binding::Owned;
 use tst_pipeline::{MuxSender as RustMuxSender, MuxSenderError, MuxSenderErrorSource};
 use tst_rtp::{RtpSocketBuilder, RtpTransport};
@@ -591,6 +592,30 @@ pub extern "system" fn Java_org_tstrans_rtp_MuxSender_nClose(
         // Atomic + idempotent: the winning close gets the shell back for teardown.
         if let Some(inner) = REGISTRY.close(handle as u64) {
             inner.close();
+        }
+    })
+}
+
+/// `nFinish(handle)` — drain the muxer's pending bytes to the live transport,
+/// report the first drain error, then close the transport
+/// (`MuxSender::finish`). Unlike `nClose` this does NOT cancel first and does
+/// NOT free the registry entry: the Java side still calls `close()`.
+/// A zero / already-closed handle is quiet — the same answer a second
+/// `finish()` gets from the shell itself.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_tstrans_rtp_MuxSender_nFinish(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+) {
+    crate::panic::jni_catch(&mut env, (), |env| {
+        match REGISTRY.with_ref(handle as u64, |inner| inner.finish()) {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => throw_mux_sender_error(env, &e),
+            // Closed between the Java-side `peekHandle()` and here, or closed
+            // outright: stay quiet, exactly like a second `finish()`.
+            Err(HandleState::Closed) => {}
+            Err(state) => crate::error::throw_handle_state(env, "MuxSender", &state),
         }
     })
 }
