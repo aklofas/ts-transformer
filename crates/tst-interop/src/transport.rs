@@ -426,7 +426,10 @@ impl Transport for GracefulRistClose {
     }
 
     fn cancel_handle(&self) -> Option<Arc<dyn TransportCancel + Send + Sync>> {
-        self.inner.cancel_handle()
+        // Qualified: `RistTransport` has an INHERENT `cancel_handle()`
+        // returning a concrete `RistCancelHandle` (Arc 2 WP-D), which
+        // shadows the trait method in method-call position.
+        Transport::cancel_handle(&self.inner)
     }
 
     fn socket_stats(&self) -> Option<SocketStats> {

@@ -41,4 +41,4 @@ pub use url::{RistUrl, RistUrlError};
 
 pub use builder::{RistRecvTransportBuilder, RistTransportBuilder};
 pub use recv::RistRecvTransport;
-pub use transport::RistTransport;
+pub use transport::{RistCancelHandle, RistTransport};
