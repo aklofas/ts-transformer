@@ -81,6 +81,7 @@ unchanged (484) and the test leaf-name multiset is byte-identical before/after
 | old `tests/…` | new `tests/…` |
 | --- | --- |
 | `hls_publish_smoke.rs` | `transports/hls_publish_smoke.rs` |
+| (new, Arc 2 R4) | `transports/rist_cancel_from_other_thread.rs` |
 | `rist_open_smoke.rs` | `transports/rist_open_smoke.rs` |
 | `rtp_open_smoke.rs` | `transports/rtp_open_smoke.rs` |
 | `tcp_open_smoke.rs` | `transports/tcp_open_smoke.rs` |

@@ -14,14 +14,16 @@
 //! Note: the lib name for `tst-c` is `tstrans` (see `[lib] name` in
 //! Cargo.toml); integration tests reference it as `tstrans`, not `tst_c`.
 //!
-//! There is no `tst_udp_*_cancel` entry point yet (new symbols, ABI 0.22),
-//! so these tests do not exercise a cancel path — receivers open on an
-//! ephemeral port and close without a blocking recv. The cross-thread
-//! close that the UDP transport's real cancel handle now unblocks is
-//! covered by `udp_close_cancels_first.rs`.
+//! Cancel entry points (`tst_udp_*_cancel`, ABI 0.22) are exercised below:
+//! a cancel from another thread ends a parked `_recv_ts` with
+//! `TST_E_CLOSED` without freeing the handle. The freeing cross-thread
+//! `_close` is covered separately by `udp_close_cancels_first.rs`.
 #![cfg(feature = "udp")]
 
 use std::ffi::CString;
+use std::sync::mpsc;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use tstrans::config::{
     TstVideoCodec, tst_mux_config_add_program, tst_mux_config_add_video_stream,
@@ -34,16 +36,18 @@ use tstrans::stats::{
     TstSenderStats, TstSocketStats, TstStreamCodecStats, TstStreamCodecStatsUnion,
 };
 use tstrans::udp::{
-    tst_udp_demux_receiver_close, tst_udp_demux_receiver_get_socket_stats,
-    tst_udp_demux_receiver_get_stats, tst_udp_demux_receiver_get_stream_codec_stats,
-    tst_udp_demux_receiver_get_stream_stats, tst_udp_demux_receiver_next_event,
-    tst_udp_demux_receiver_open, tst_udp_demux_receiver_reset_stats, tst_udp_mux_sender_close,
+    tst_udp_demux_receiver_cancel, tst_udp_demux_receiver_close,
+    tst_udp_demux_receiver_get_socket_stats, tst_udp_demux_receiver_get_stats,
+    tst_udp_demux_receiver_get_stream_codec_stats, tst_udp_demux_receiver_get_stream_stats,
+    tst_udp_demux_receiver_next_event, tst_udp_demux_receiver_open,
+    tst_udp_demux_receiver_reset_stats, tst_udp_mux_sender_cancel, tst_udp_mux_sender_close,
     tst_udp_mux_sender_finish, tst_udp_mux_sender_get_mux_sender_stats,
     tst_udp_mux_sender_get_socket_stats, tst_udp_mux_sender_open, tst_udp_mux_sender_reset_stats,
-    tst_udp_receiver_close, tst_udp_receiver_get_socket_stats, tst_udp_receiver_get_stats,
-    tst_udp_receiver_recv_ts, tst_udp_receiver_reset_stats, tst_udp_recv_open,
-    tst_udp_sender_close, tst_udp_sender_get_socket_stats, tst_udp_sender_get_stats,
-    tst_udp_sender_open, tst_udp_sender_reset_stats, tst_udp_sender_send_ts,
+    tst_udp_receiver_cancel, tst_udp_receiver_close, tst_udp_receiver_get_socket_stats,
+    tst_udp_receiver_get_stats, tst_udp_receiver_recv_ts, tst_udp_receiver_reset_stats,
+    tst_udp_recv_open, tst_udp_sender_cancel, tst_udp_sender_close,
+    tst_udp_sender_get_socket_stats, tst_udp_sender_get_stats, tst_udp_sender_open,
+    tst_udp_sender_reset_stats, tst_udp_sender_send_ts,
 };
 
 // ---------------------------------------------------------------------------
@@ -357,4 +361,131 @@ fn udp_mux_sender_finish_then_close() {
     );
 
     unsafe { tst_udp_mux_sender_close(h) };
+}
+
+// ---------------------------------------------------------------------------
+// `_cancel` — Arc 2 R4, ABI 0.22
+// ---------------------------------------------------------------------------
+
+/// `_cancel` is documented callable from any thread; the raw pointer just
+/// needs to cross the thread boundary to get there.
+struct SendUdpRx(*mut tstrans::udp::TstUdpReceiver);
+unsafe impl Send for SendUdpRx {}
+
+/// Ask the kernel for a free loopback UDP port by binding and releasing.
+/// The C receiver handle exposes no local-port getter, so a test that needs
+/// to know its port must pick it first. (Same helper shape as
+/// `udp_close_cancels_first.rs::free_port`.)
+fn free_udp_port() -> u16 {
+    std::net::UdpSocket::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
+/// Arc 2 R4: `tst_udp_receiver_cancel` from another thread wakes a parked
+/// `recv_ts` with `TST_E_CLOSED`.
+///
+/// UDP needs no peer: nothing is ever sent to the bound port, so the
+/// receiver parks in its 100 ms poll loop. Unlike `_close` (pinned by
+/// `udp_close_cancels_first.rs`) `_cancel` does NOT free the handle, so the
+/// reader's pointer stays valid throughout and the `_close` at the end is
+/// the only teardown.
+///
+/// Bounded by a 10 s watchdog that FAILS. The rescue is a real datagram
+/// burst (16 packets in one datagram — the `Receiver` TS syncer locks only
+/// after four aligned packets) so the reader can always be joined; if even
+/// that does not free it the test panics WITHOUT joining, because a failing
+/// test must fail, never wedge.
+#[test]
+fn udp_receiver_cancel_wakes_parked_recv_with_closed() {
+    let port = free_udp_port();
+    let url = CString::new(format!("udp://127.0.0.1:{port}")).unwrap();
+    let h = unsafe { tst_udp_recv_open(url.as_ptr()) };
+    assert!(!h.is_null(), "tst_udp_recv_open failed: {}", unsafe {
+        tst_get_last_error()
+    });
+
+    let (done_tx, done_rx) = mpsc::channel::<i32>();
+    let reader_ptr = SendUdpRx(h);
+    let reader = thread::spawn(move || {
+        let p = reader_ptr; // whole-struct capture: SendUdpRx is Send, its field is not
+        let mut buf = vec![0u8; 1316];
+        let mut n = 0usize;
+        let rc = unsafe { tst_udp_receiver_recv_ts(p.0, buf.as_mut_ptr(), buf.len(), &mut n) };
+        let _ = done_tx.send(rc);
+    });
+    thread::sleep(Duration::from_millis(300)); // reader is parked on a poll tick
+
+    let t0 = Instant::now();
+    assert_eq!(unsafe { tst_udp_receiver_cancel(h) }, 0, "cancel rc");
+    let rc = match done_rx.recv_timeout(Duration::from_secs(10)) {
+        Ok(rc) => rc,
+        Err(_) => {
+            let s = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+            let mut pkt = [0xFFu8; 188];
+            pkt[0] = 0x47;
+            pkt[1] = 0x1F;
+            pkt[2] = 0xFF;
+            pkt[3] = 0x10;
+            let mut burst = Vec::with_capacity(16 * 188);
+            for _ in 0..16 {
+                burst.extend_from_slice(&pkt);
+            }
+            let _ = s.send_to(&burst, ("127.0.0.1", port));
+            if done_rx.recv_timeout(Duration::from_secs(5)).is_ok() {
+                let _ = reader.join();
+                unsafe { tst_udp_receiver_close(h) };
+            }
+            panic!("tst_udp_receiver_cancel did not wake the parked _recv_ts within 10 s");
+        }
+    };
+    reader.join().expect("reader");
+    assert_eq!(
+        rc,
+        TstError::Closed as i32,
+        "expected TST_E_CLOSED (-7) after cancel, got {rc} (woke after {:?})",
+        t0.elapsed()
+    );
+    assert_eq!(
+        unsafe { tst_udp_receiver_cancel(h) },
+        0,
+        "cancel is idempotent"
+    );
+    // `_cancel` never frees: the handle is still ours to close.
+    unsafe { tst_udp_receiver_close(h) };
+}
+
+/// Every `tst_udp_*_cancel` returns 0 on a live handle and
+/// `TST_E_INVALID_CONFIG` on NULL, and `_cancel` never consumes the handle
+/// (the `_close` after it still frees).
+#[test]
+fn udp_cancel_entry_points_return_ok_and_null_is_invalid_config() {
+    // Discard port (RFC 863): a UDP sender needs no peer to open.
+    let url = CString::new("udp://127.0.0.1:9").unwrap();
+    let s = unsafe { tst_udp_sender_open(url.as_ptr()) };
+    assert!(!s.is_null(), "tst_udp_sender_open failed: {}", unsafe {
+        tst_get_last_error()
+    });
+    assert_eq!(unsafe { tst_udp_sender_cancel(s) }, 0);
+    assert_eq!(unsafe { tst_udp_sender_cancel(s) }, 0, "idempotent");
+    unsafe { tst_udp_sender_close(s) };
+
+    assert_eq!(
+        unsafe { tst_udp_sender_cancel(std::ptr::null_mut()) },
+        TstError::InvalidConfig as i32
+    );
+    assert_eq!(
+        unsafe { tst_udp_mux_sender_cancel(std::ptr::null_mut()) },
+        TstError::InvalidConfig as i32
+    );
+    assert_eq!(
+        unsafe { tst_udp_receiver_cancel(std::ptr::null_mut()) },
+        TstError::InvalidConfig as i32
+    );
+    assert_eq!(
+        unsafe { tst_udp_demux_receiver_cancel(std::ptr::null_mut()) },
+        TstError::InvalidConfig as i32
+    );
 }
