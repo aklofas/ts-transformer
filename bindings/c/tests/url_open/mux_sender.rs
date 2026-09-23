@@ -177,47 +177,97 @@ fn variant_managed_mux_sender_get_reconnect_stats() {
 // `_finish` — Arc 2 R3 (DEBT-14 "ship now" cell), ABI 0.22
 // ---------------------------------------------------------------------------
 
-/// Holds a loopback SRT peer alive for the whole test. Dropping it releases
-/// the accepted socket and joins the peer thread, so a test that panics
-/// still tears the listener down.
+/// Holds a loopback SRT peer alive for the whole test.
+///
+/// A passing test calls [`HeldPeer::release`], which unblocks the peer
+/// thread, joins it, and fails loudly if its accept did not succeed. A
+/// FAILING test drops the guard instead: that path unblocks the thread but
+/// deliberately does not join, so a panic stays a panic rather than wedging
+/// the test binary.
 struct HeldPeer {
     done_tx: mpsc::Sender<()>,
+    /// The peer thread reports its accept outcome here. `Some(Err(msg))`
+    /// means the accept genuinely failed and the test must say so rather
+    /// than quietly proceed against a peerless sender.
+    outcome_rx: mpsc::Receiver<Result<(), String>>,
     join: Option<thread::JoinHandle<()>>,
 }
 
-impl Drop for HeldPeer {
-    fn drop(&mut self) {
+impl HeldPeer {
+    /// Release the peer and join its thread, surfacing an accept failure.
+    ///
+    /// Called explicitly at the end of a passing test. On the FAILURE path
+    /// `Drop` runs instead and deliberately does NOT join — see there.
+    fn release(mut self) {
         let _ = self.done_tx.send(());
+        let outcome = self.outcome_rx.recv_timeout(Duration::from_secs(10));
         if let Some(j) = self.join.take() {
-            let _ = j.join();
+            j.join().expect("peer thread panicked");
+        }
+        match outcome {
+            Ok(Ok(())) => {}
+            Ok(Err(msg)) => panic!("loopback peer failed to accept: {msg}"),
+            Err(_) => panic!("loopback peer did not report an accept outcome within 10 s"),
         }
     }
 }
 
+impl Drop for HeldPeer {
+    fn drop(&mut self) {
+        // Unblock the peer thread, but do NOT join: this runs while a test
+        // is already unwinding from a panic (a null `_open`, a failed
+        // assertion), and joining there would trade a loud failure for a
+        // wedged test binary. The thread is bounded on both of its waits
+        // and detaches harmlessly. Same shape as
+        // `transports/udp_close_cancels_first.rs`'s failure path.
+        let _ = self.done_tx.send(());
+        let _ = self.join.take();
+    }
+}
+
 /// Bind a loopback listener on an ephemeral port, accept one connection on a
-/// background thread and HOLD the accepted socket until the returned guard
-/// drops. Unlike the open-smoke bodies above (which accept and immediately
+/// background thread and HOLD the accepted socket until the returned guard is
+/// released. Unlike the open-smoke bodies above (which accept and immediately
 /// drop), `_finish` needs the peer alive so the drain has somewhere to go.
 ///
-/// Every wait is bounded: the peer thread gives up after its accept timeout
-/// and after a 30 s hold timeout, so a failing test fails rather than wedges.
+/// Every wait is bounded and none of them can wedge the binary:
+/// `Listener::accept_timeout` (5 s) — NOT `accept()`, which is unbounded
+/// because libsrt's `srt_accept` does not honour `SRTO_RCVTIMEO`
+/// (`crates/tst-srt/src/listener.rs`); a 30 s ceiling on the hold; and a
+/// 10 s ceiling on reading the accept outcome back. The accept result is
+/// reported, not discarded: `HeldPeer::release` panics on an accept error
+/// rather than letting the test run on against a peerless sender.
 fn hold_loopback_peer(streamid: &str) -> (String, HeldPeer) {
     let (port_tx, port_rx) = mpsc::channel::<u16>();
     let (done_tx, done_rx) = mpsc::channel::<()>();
+    let (outcome_tx, outcome_rx) = mpsc::channel::<Result<(), String>>();
     let join = thread::spawn(move || {
-        let Ok(mut listener) = ListenerBuilder::new()
-            .recv_timeout(Duration::from_secs(5))
-            .bind("127.0.0.1:0")
-        else {
-            return;
+        let mut listener = match ListenerBuilder::new().bind("127.0.0.1:0") {
+            Ok(l) => l,
+            Err(e) => {
+                let _ = outcome_tx.send(Err(format!("bind: {e}")));
+                return;
+            }
         };
-        let Ok(addr) = listener.local_addr() else {
-            return;
+        let addr = match listener.local_addr() {
+            Ok(a) => a,
+            Err(e) => {
+                let _ = outcome_tx.send(Err(format!("local_addr: {e}")));
+                return;
+            }
         };
         if port_tx.send(addr.port()).is_err() {
-            return;
+            return; // the test gave up before reading the port
         }
-        let accepted = listener.accept();
+        // `accept_timeout`, not `accept()`: the latter is unbounded.
+        let accepted = match listener.accept_timeout(Duration::from_secs(5)) {
+            Ok(pair) => pair,
+            Err(e) => {
+                let _ = outcome_tx.send(Err(format!("accept: {e}")));
+                return;
+            }
+        };
+        let _ = outcome_tx.send(Ok(()));
         // Hold the accepted socket until the test is done with it (bounded,
         // so a panicking test never leaves this thread parked forever).
         let _ = done_rx.recv_timeout(Duration::from_secs(30));
@@ -230,6 +280,7 @@ fn hold_loopback_peer(streamid: &str) -> (String, HeldPeer) {
         format!("srt://127.0.0.1:{port}?streamid={streamid}"),
         HeldPeer {
             done_tx,
+            outcome_rx,
             join: Some(join),
         },
     )
@@ -253,7 +304,7 @@ unsafe fn finish_test_config() -> *mut tstrans::config::TstMuxConfig {
 /// handle still frees with `_close`.
 #[test]
 fn mux_sender_finish_drains_then_reports_zero_and_is_idempotent() {
-    let (url_str, _peer) = hold_loopback_peer("mux-finish");
+    let (url_str, peer) = hold_loopback_peer("mux-finish");
     let url = CString::new(url_str).unwrap();
 
     unsafe {
@@ -276,6 +327,7 @@ fn mux_sender_finish_drains_then_reports_zero_and_is_idempotent() {
 
         tst_mux_sender_close(tx);
     }
+    peer.release();
 }
 
 #[test]
@@ -288,7 +340,7 @@ fn mux_sender_finish_null_is_invalid_config() {
 
 #[test]
 fn managed_mux_sender_finish_is_zero_then_closed() {
-    let (url_str, _peer) = hold_loopback_peer("managed-finish");
+    let (url_str, peer) = hold_loopback_peer("managed-finish");
     let url = CString::new(url_str).unwrap();
 
     unsafe {
@@ -310,6 +362,7 @@ fn managed_mux_sender_finish_is_zero_then_closed() {
 
         tst_managed_mux_sender_close(tx);
     }
+    peer.release();
 }
 
 #[test]
