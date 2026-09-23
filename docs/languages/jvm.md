@@ -970,15 +970,16 @@ var tx = Sender.fromUrl("srt://host:9000?mode=caller");
 var cancel = tx.cancelHandle();
 
 // On another thread:
-cancel.cancel();  // wakes tx.sendBytes() → throws SrtException(BROKEN or CLOSED)
+cancel.cancel();  // wakes tx.sendBytes() → throws SrtException(CLOSED)
 ```
 
-`CancelHandle` is safe to share across threads. On the plain shells the first
-`cancel()` call closes the underlying libsrt socket, so the parked call ends
-with `BROKEN` and the shell is dead afterwards; on the `Managed*` shells it
-latches the close flag and wakes whatever the reconnect loop is parked in (a
-live send/receive, the backoff wait, a re-dial or re-accept), and the parked
-call ends with `CLOSED`. Subsequent calls are no-ops. Obtaining the handle is
+`CancelHandle` is safe to share across threads. On every shell, plain or
+managed, the parked call ends with `CLOSED` (message `cancelled from another
+thread`): the plain shells close the underlying libsrt socket and report the
+cancel they observed — the shell is dead afterwards — and the `Managed*`
+shells latch their close flag and wake whatever the reconnect loop is parked
+in (a live send/receive, the backoff wait, a re-dial or re-accept).
+Subsequent calls are no-ops. Obtaining the handle is
 itself safe from another thread at any time — `cancelHandle()` returns
 promptly even while `sendBytes` / `send*` / `recvBytes` / `next()` / `accept()`
 is parked on the same object, so it need not be taken before iterating.
@@ -1004,25 +1005,23 @@ set nothing.
   TSBPD delivery when data arrives before `recvBytes()` is called. Prefer
   `accept(null)` (direct `srt_accept`) for the accepted socket's receiver path.
   `Receiver.fromUrl` always uses `srt_accept` directly and is unaffected.
-- **Cancel wakes with `BROKEN` or `CLOSED`.** `CancelHandle.cancel()` wakes a
-  thread parked in `sendBytes` or `recvBytes`; that call throws
-  `SrtException(BROKEN)` or `SrtException(CLOSED)`. Catch both if your code
-  must distinguish a cancel from a peer hangup.
+- **Cancel wakes with `CLOSED`.** `CancelHandle.cancel()` wakes a thread
+  parked in `sendBytes` or `recvBytes`; that call throws
+  `SrtException(CLOSED)`. (Through 0.6.x the plain shells threw `BROKEN`.)
 - **`Receiver.close()` / `DemuxReceiver.close()` cancel first.** Calling
   either from another thread while `recvBytes()` / `next()` is parked wakes
-  that call — it throws `SrtException(BROKEN)`, because the plain cancel
-  closes the libsrt socket under the parked receive — and `close()` returns
+  that call — it throws `SrtException(CLOSED)` — and `close()` returns
   promptly. The managed pair (`ManagedReceiver` / `ManagedDemuxReceiver`)
-  does the same but surfaces `CLOSED` and records `RecvEndReason.CANCELLED`.
+  does the same and records `RecvEndReason.CANCELLED`.
   A `close()` with nothing parked simply closes.
 - **Every srt sender's `close()` cancels first too.** `MuxSender.close()` /
   `Sender.close()` from another thread while a `send*` / `sendBytes()` is
   parked (libsrt blocked on a full send buffer) wakes that call — it throws
-  `SrtException(BROKEN)`, the plain-shell kind — and `close()` returns
-  promptly. `ManagedMuxSender.close()` / `ManagedSender.close()` do the same
-  for a send parked anywhere in the reconnect loop (a live send, the backoff
-  wait, a re-dial) and surface `CLOSED`, so a cross-thread close mid-outage no
-  longer waits out the whole reconnect budget. `close()` is the prompt,
+  `SrtException(CLOSED)` — and `close()` returns promptly.
+  `ManagedMuxSender.close()` / `ManagedSender.close()` do the same for a send
+  parked anywhere in the reconnect loop (a live send, the backoff wait, a
+  re-dial), so a cross-thread close mid-outage no longer waits out the whole
+  reconnect budget. `close()` is the prompt,
   lossy shutdown: bytes a prior transient error left pending are abandoned.
   One binding, one contract: this is what the rtp senders and the C ABI's
   `tst_*_sender_close` already do.
@@ -1076,7 +1075,7 @@ try (MuxSender s = MuxSender.fromUrl(
 
 `MuxSender.cancelHandle()` returns a cross-thread `CancelHandle` (see
 [Cancellation](#cancellation)); `close()` from another thread cancels first,
-so a parked `send*` ends with `SrtException(BROKEN)` instead of blocking the
+so a parked `send*` ends with `SrtException(CLOSED)` instead of blocking the
 close.
 
 `sendKlv`, `sendAudio`, `sendSubtitle`, and `sendData` (raw private-data

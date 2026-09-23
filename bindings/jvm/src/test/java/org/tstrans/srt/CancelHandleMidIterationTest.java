@@ -112,14 +112,13 @@ final class CancelHandleMidIterationTest {
             long wokeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
             assertTrue(wokeMs < 2_000, "cancel took " + wokeMs + " ms to wake next()");
             assertTrue(cause instanceof SrtException, "expected an SrtException, got " + cause);
-            // A plain (unmanaged) srt transport surfaces a cancel by closing the
-            // socket under the parked recv, which maps to BROKEN; CLOSED is the
-            // managed wrapper's mapping. Same acceptance set as the Python twin
-            // (test_cancel_handle_cross_thread) and docs/reference/srt-cancel-handle.md.
+            // Since Arc 2 a cancel is CLOSED on every srt shell, plain or
+            // managed: the plain transport closes the socket under the parked
+            // recv and then reports the cancel it observed. Same verdict as the
+            // Python twin (test_cancel_handle_cross_thread) and
+            // docs/reference/srt-cancel-handle.md.
             SrtException.Kind kind = ((SrtException) cause).kind();
-            // WP-C2 tightens to CLOSED (the SRT-level ExplicitClose lands in PR 8).
-            assertTrue(kind == SrtException.Kind.BROKEN || kind == SrtException.Kind.CLOSED,
-                "cancel should surface as BROKEN or CLOSED, got " + kind);
+            assertEquals(SrtException.Kind.CLOSED, kind, "cancel should surface as CLOSED, got " + kind);
         } finally {
             release.countDown();
         }

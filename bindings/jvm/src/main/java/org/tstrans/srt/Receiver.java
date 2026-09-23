@@ -32,7 +32,7 @@ import org.tstrans.SrtException;
  * <p><b>Cancellation:</b> call {@link #cancelHandle()} to obtain a
  * {@link CancelHandle}; invoking {@code cancel()} on any handle wakes a thread
  * parked in {@link #recvBytes()} within ~3-10 ms, causing that call to throw
- * {@code SrtException(BROKEN)} or {@code SrtException(CLOSED)}.
+ * {@code SrtException(CLOSED)}.
  *
  * <p>Mirrors {@code tstrans.srt.Receiver} in tst-py.
  */
@@ -110,7 +110,7 @@ public final class Receiver extends NativeHandle {
     /**
      * Return a shareable cancel handle. Calling {@link CancelHandle#cancel()}
      * on any handle wakes a thread parked in {@link #recvBytes()}; that call
-     * returns {@code SrtException(BROKEN)} or {@code SrtException(CLOSED)}.
+     * returns {@code SrtException(CLOSED)}.
      *
      * @return a new {@link CancelHandle}
      */
@@ -152,9 +152,10 @@ public final class Receiver extends NativeHandle {
      * <p>If a thread is parked in {@link #recvBytes}, {@code close()} cancels
      * first: it fires the receiver's cancel target before taking the resource
      * lock the parked recv holds, so that call ends promptly with
-     * {@code SrtException(BROKEN)} — the cancel closes the libsrt socket under
-     * it; the managed {@link ManagedReceiver} surfaces the same close as
-     * {@code CLOSED} — and {@code close()} returns without waiting for data.
+     * {@code SrtException(CLOSED)} — the cancel closes the libsrt socket under
+     * the parked receive and the transport reports the cancel, the same kind
+     * the managed {@link ManagedReceiver} surfaces — and {@code close()}
+     * returns without waiting for data.
      * Same contract as the rtp receiver and the Python / C twins.
      */
     @Override public void close() { super.close(); }
