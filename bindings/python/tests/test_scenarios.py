@@ -703,6 +703,80 @@ def _run_forged_handle(
     return [{"event": "error", "code": "INVALID_HANDLE"}]
 
 
+def _run_cancelled_recv_kind(scenario_id: str) -> list[dict[str, Any]]:
+    """One cancelled plain SRT receive; the observed kind name is the golden's
+    code (Arc 2 spec 3.3 / 6).
+
+    Listener-mode ``Receiver`` opened on a daemon thread (``from_url`` blocks in
+    the one-shot accept), caller-mode ``Sender`` that never sends, the receive
+    parked on a daemon thread, and the cancel fired from the test thread.  Every
+    wait is a 10 s FAILURE bound, never a duration assertion; a rescue frame
+    from the still-connected peer unparks the daemon thread if the cancel failed,
+    so it never sits in a native read at interpreter exit.
+    """
+    import socket
+    import threading
+    import time
+
+    import tstrans
+    from tstrans.exceptions import SrtError
+
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    listener_url = f"srt://:{port}?mode=listener"
+    caller_url = f"srt://127.0.0.1:{port}?mode=caller"
+
+    box: list[Any] = []
+    acc_err: list[BaseException] = []
+
+    def accept_worker() -> None:
+        try:
+            box.append(tstrans.srt.Receiver.from_url(listener_url))
+        except BaseException as exc:  # noqa: BLE001
+            acc_err.append(exc)
+
+    acc = threading.Thread(target=accept_worker, daemon=True, name="accept")
+    acc.start()
+    time.sleep(0.2)
+    sender = tstrans.srt.Sender.from_url(caller_url)
+    acc.join(timeout=10.0)
+    assert not acc.is_alive() and not acc_err, f"[{scenario_id}] accept failed: {acc_err!r}"
+    receiver = box[0]
+    handle = receiver.cancel_handle()
+
+    outcome: dict[str, Any] = {}
+
+    def recv_worker() -> None:
+        try:
+            receiver.recv_bytes(max_len=1316)
+            outcome["end"] = "ok"
+        except SrtError as exc:
+            outcome["kind"] = exc.kind.name
+            outcome["detail"] = exc.args[0]
+        except BaseException as exc:  # noqa: BLE001
+            outcome["end"] = repr(exc)
+
+    w = threading.Thread(target=recv_worker, daemon=True, name="parked-recv")
+    w.start()
+    time.sleep(0.3)
+    handle.cancel()
+    w.join(timeout=10.0)
+    if w.is_alive():
+        # Rescue: one frame from the still-connected peer unparks the daemon
+        # thread so it does not sit in a native read at interpreter exit.
+        sender.send_bytes(b"\x47\x1f\xff\x10" + b"\xff" * 184)
+        w.join(timeout=5.0)
+        pytest.fail(f"[{scenario_id}] cancel() did not end the parked recv within 10 s")
+    sender.close()
+    receiver.close()
+    assert "kind" in outcome, f"[{scenario_id}] recv ended without SrtError: {outcome}"
+    assert outcome["detail"] == "cancelled from another thread", (
+        f"[{scenario_id}] detail mismatch: {outcome}"
+    )
+    return [{"event": "error", "code": outcome["kind"]}]
+
+
 def _run_binding_contract(
     scenario_id: str,
     input_path: Path,
@@ -724,6 +798,8 @@ def _run_binding_contract(
         return _run_drop_idempotence(scenario_id, input_bytes)
     if scenario_id == "forged-handle":
         return _run_forged_handle(scenario_id, input_bytes)
+    if scenario_id == "cancelled-recv-kind":
+        return _run_cancelled_recv_kind(scenario_id)
 
     pytest.fail(f"unknown binding_contract scenario id: {scenario_id!r}")
 

@@ -323,6 +323,74 @@ fn run_binding_contract(id: &str, input: &[u8]) -> Vec<CoreEvent> {
             drop(demuxer);
             vec![CoreEvent::Error { code }]
         }
+        "cancelled-recv-kind" => {
+            // One cancelled plain SRT receive; the kind projected by the shared
+            // binding layer is the golden's code (Arc 2 spec 3.3 / 6).
+            // Choreography: listener on this thread, idle caller on a helper
+            // thread, the recv parked on a worker thread, the cancel fired from
+            // here. Every wait is bounded (10 s) and FAILS; the worker is never
+            // joined after a failed verdict, so a regression reports instead of
+            // hanging.
+            use std::sync::mpsc;
+            use std::time::Duration;
+            use tst_core::transport::{RecvTransport, TransportError};
+            use tst_pipeline::binding::BindingError;
+            use tst_srt::{ListenerBuilder, SocketBuilder, SrtTransport};
+
+            let mut listener = ListenerBuilder::new()
+                .recv_timeout(Duration::from_secs(5))
+                .send_timeout(Duration::from_secs(5))
+                .bind("127.0.0.1:0")
+                .expect(
+                    "cancelled-recv-kind: bind 127.0.0.1:0 (loopback is required, not optional)",
+                );
+            let port = listener.local_addr().expect("local_addr").port();
+            let peer = std::thread::spawn(move || {
+                SocketBuilder::new()
+                    .send_timeout(Duration::from_secs(5))
+                    .connect(format!("127.0.0.1:{port}"))
+                    .expect("idle peer connect")
+            });
+            let (accepted, _) = listener.accept().expect("accept");
+            let peer = peer.join().expect("peer thread");
+            let mut rx = SrtTransport::new(accepted);
+            let cancel =
+                RecvTransport::cancel_handle(&rx).expect("SrtTransport has a cancel handle");
+
+            let (tx, result_rx) = mpsc::channel::<Result<usize, TransportError>>();
+            let (entered_tx, entered_rx) = mpsc::channel::<()>();
+            std::thread::spawn(move || {
+                let mut buf = vec![0u8; RecvTransport::max_payload(&rx)];
+                let _ = entered_tx.send(());
+                let r = loop {
+                    match rx.recv_bytes(&mut buf) {
+                        Err(TransportError::Backpressure { .. }) => continue,
+                        other => break other,
+                    }
+                };
+                let _ = tx.send(r);
+            });
+            entered_rx
+                .recv_timeout(Duration::from_secs(10))
+                .expect("cancelled-recv-kind: recv worker never started");
+            std::thread::sleep(Duration::from_millis(200)); // let it reach srt_recv
+            cancel.cancel();
+            let result = result_rx.recv_timeout(Duration::from_secs(10)).expect(
+                "cancelled-recv-kind: the parked recv did not return within 10 s of cancel()",
+            );
+            drop(peer);
+            let err = result.expect_err("a cancelled recv must not succeed");
+            let projected = BindingError::from(err);
+            assert_eq!(
+                projected.detail,
+                "cancelled from another thread",
+                "cancelled-recv-kind: detail mismatch (kind {})",
+                projected.kind.name()
+            );
+            vec![CoreEvent::Error {
+                code: projected.kind.name().to_string(),
+            }]
+        }
         other => panic!("unknown binding_contract scenario: {other}"),
     }
 }

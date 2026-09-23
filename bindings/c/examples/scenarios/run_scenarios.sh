@@ -27,10 +27,16 @@ WORKSPACE_ROOT="${WORKSPACE_ROOT:-$(cd "$SCRIPT_DIR/../../../.." && pwd)}"
 echo "workspace root: $WORKSPACE_ROOT"
 
 # ── Build libtstrans ─────────────────────────────────────────────────────────
+# --all-features, not the default build: the `cancelled-recv-kind` scenario
+# calls the srt-gated receiver/raw-sender entry points, and tst-c's transport
+# features are default-OFF, so a bare build would leave those symbols out of
+# the cdylib and the link below would fail. CI links the all-features cdylib
+# its earlier build step produced (ci.yml "C scenario adapter"), so this keeps
+# the local run and CI on the same surface.
 echo "building libtstrans..."
 SRT_FORCE_VENDORED="${SRT_FORCE_VENDORED:-1}" \
 RIST_FORCE_VENDORED="${RIST_FORCE_VENDORED:-1}" \
-  cargo build -p tst-c --manifest-path "$WORKSPACE_ROOT/Cargo.toml"
+  cargo build -p tst-c --all-features --manifest-path "$WORKSPACE_ROOT/Cargo.toml"
 
 LIB_DIR="$WORKSPACE_ROOT/target/debug"
 INCLUDE_DIR="$WORKSPACE_ROOT/bindings/c/include"

@@ -102,12 +102,17 @@
  */
 
 #include "tstrans.h"
+#include <arpa/inet.h>
 #include <inttypes.h>
+#include <pthread.h>
+#include <stdatomic.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 /* ── Compact SHA-256 implementation (public domain) ─────────────────────────
  *
@@ -1817,6 +1822,149 @@ static int contract_forged_handle(const char *scenarios_dir_path,
     return 0;
 }
 
+/* cancelled-recv-kind - one cancelled plain SRT receive at the C ABI: the
+ * observed code must be TST_E_CLOSED (-7), which is the golden's
+ * extensions.c_code and maps to its core code "CLOSED".
+ *
+ * The golden's extensions.detail ("cancelled from another thread") is the
+ * BINDING-LAYER detail the Rust/Python/JVM legs assert. The C ABI does NOT
+ * carry it on this path by design: a receive that ends Closed/EndOfStream goes
+ * through `record_recv_closed`, which relabels from the shared cancel flag and
+ * writes its own message ("receiver was cancelled or closed by caller") so a
+ * caller close and a peer EOS can be told apart. Per the C ABI error-mapping
+ * contract (docs/reference/binding-authors.md) the message is a debug aid and
+ * not part of the stable contract - the CODE is. So this leg asserts the code
+ * and only prints the message.
+ *
+ * The listener open blocks in accept, so it and the parked recv run on one
+ * worker thread; the idle caller and the cancel run here. Every wait is a 10 s
+ * FAILURE bound; the worker is detached, never joined after a failed verdict. */
+typedef struct {
+    uint16_t port;
+    _Atomic(tst_receiver_t *) rx;
+    _Atomic int rc;
+    _Atomic int done;
+    char detail[256];
+} cancelled_recv_state_t;
+
+static uint16_t free_udp_port(void) {
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    struct sockaddr_in a;
+    memset(&a, 0, sizeof a);
+    a.sin_family = AF_INET;
+    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    a.sin_port = 0;
+    if (fd < 0 || bind(fd, (struct sockaddr *)&a, sizeof a) != 0) {
+        perror("free_udp_port");
+        exit(2);
+    }
+    socklen_t len = sizeof a;
+    if (getsockname(fd, (struct sockaddr *)&a, &len) != 0) {
+        perror("getsockname");
+        exit(2);
+    }
+    uint16_t port = ntohs(a.sin_port);
+    close(fd);
+    return port;
+}
+
+static void *cancelled_recv_worker(void *arg) {
+    cancelled_recv_state_t *st = arg;
+    char url[64];
+    snprintf(url, sizeof url, "srt://:%u", (unsigned)st->port);
+    /* blocks until the caller connects */
+    tst_receiver_t *rx = tst_receiver_open_listener(url);
+    if (!rx) {
+        snprintf(st->detail, sizeof st->detail, "open_listener failed: %s",
+                 tst_get_last_error_str());
+        atomic_store(&st->rc, 1);
+        atomic_store(&st->done, 1);
+        return NULL;
+    }
+    atomic_store(&st->rx, rx);
+    uint8_t pkt[188];
+    int rc = tst_receiver_recv_packet(rx, pkt);
+    /* thread-local last error: read it HERE, on the calling thread */
+    snprintf(st->detail, sizeof st->detail, "%s", tst_get_last_error_str());
+    atomic_store(&st->rc, rc);
+    atomic_store(&st->done, 1);
+    return NULL;
+}
+
+static int contract_cancelled_recv_kind(const char *scenarios_dir_path,
+                                        const scenario_entry_t *entry,
+                                        core_event_list_t *out_events) {
+    (void)scenarios_dir_path;
+    cancelled_recv_state_t st;
+    memset(&st, 0, sizeof st);
+    st.port = free_udp_port();
+    pthread_t th;
+    if (pthread_create(&th, NULL, cancelled_recv_worker, &st) != 0) {
+        perror("pthread_create");
+        return -1;
+    }
+    pthread_detach(th);
+
+    char caller[64];
+    snprintf(caller, sizeof caller, "srt://127.0.0.1:%u?mode=caller", (unsigned)st.port);
+    tst_raw_sender_t *peer = NULL;
+    for (int i = 0; i < 100 && !peer; i++) { /* <= 5 s: the listener may not be bound yet */
+        peer = tst_raw_sender_open(caller, NULL);
+        if (!peer) {
+            usleep(50 * 1000);
+        }
+    }
+    if (!peer) {
+        fprintf(stderr, "FAIL [%s]: idle peer could not connect: %s\n", entry->id,
+                tst_get_last_error_str());
+        return -1;
+    }
+
+    tst_receiver_t *rx = NULL;
+    for (int i = 0; i < 200 && !(rx = atomic_load(&st.rx)); i++) { /* <= 10 s */
+        usleep(50 * 1000);
+    }
+    if (!rx) {
+        fprintf(stderr, "FAIL [%s]: listener never accepted within 10 s\n", entry->id);
+        tst_raw_sender_close(peer);
+        return -1;
+    }
+    usleep(300 * 1000); /* let recv_packet park in srt_recv */
+    if (tst_receiver_cancel(rx) != 0) {
+        fprintf(stderr, "FAIL [%s]: tst_receiver_cancel: %s\n", entry->id,
+                tst_get_last_error_str());
+        tst_raw_sender_close(peer);
+        return -1;
+    }
+    for (int i = 0; i < 200 && !atomic_load(&st.done); i++) { /* <= 10 s */
+        usleep(50 * 1000);
+    }
+    tst_raw_sender_close(peer);
+    if (!atomic_load(&st.done)) {
+        fprintf(stderr, "FAIL [%s]: cancel did not end the parked recv within 10 s\n",
+                entry->id);
+        return -1;
+    }
+    tst_receiver_close(rx);
+
+    int rc = atomic_load(&st.rc);
+    if (rc != TST_E_CLOSED) {
+        fprintf(stderr, "FAIL [%s]: expected TST_E_CLOSED (%d) after cancel, got %d (%s)\n",
+                entry->id, (int)TST_E_CLOSED, rc, st.detail);
+        return -1;
+    }
+    fprintf(stdout,
+            "  [cancelled-recv-kind] recv_packet after cancel -> TST_E_CLOSED (last error: "
+            "\"%s\") - maps to CLOSED\n",
+            st.detail);
+    core_event_t ev;
+    memset(&ev, 0, sizeof ev);
+    ev.kind = CE_ERROR;
+    strncpy(ev.code, "CLOSED", sizeof(ev.code) - 1);
+    core_event_list_push(out_events, &ev);
+    return 0;
+}
+
 static int run_binding_contract(const char *scenarios_dir_path,
                                 const scenario_entry_t *entry,
                                 core_event_list_t *out_events) {
@@ -1832,6 +1980,9 @@ static int run_binding_contract(const char *scenarios_dir_path,
     }
     if (strcmp(entry->id, "forged-handle") == 0) {
         return contract_forged_handle(scenarios_dir_path, entry, out_events);
+    }
+    if (strcmp(entry->id, "cancelled-recv-kind") == 0) {
+        return contract_cancelled_recv_kind(scenarios_dir_path, entry, out_events);
     }
     fprintf(stderr, "ERROR: unknown binding_contract scenario: %s\n", entry->id);
     return -1;

@@ -61,6 +61,7 @@ pub fn all_scenarios() -> Vec<Box<dyn Scenario>> {
         Box::new(DropIdempotence),
         Box::new(ForgedHandle),
         Box::new(ExceptionKindStability),
+        Box::new(CancelledRecvKind),
     ]
 }
 
@@ -1949,6 +1950,61 @@ impl Scenario for ExceptionKindStability {
                 code: "STRICT_REJECTION".to_string(),
             }],
             extensions: serde_json::json!({ "contract": "exception_kind_stability" }),
+        };
+        (artifact_rel, golden)
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Scenario 20 - cancelled-recv-kind (binding_contract)
+// -----------------------------------------------------------------------------
+
+/// `kind = "binding_contract"`, `features = ["srt"]`: a plain SRT receive parked
+/// on a silent peer and cancelled from another thread must surface the SAME
+/// kind in every binding - Rust `BindingErrorKind::Closed` ("CLOSED"), C
+/// `TST_E_CLOSED` (-7), Python `SrtErrorKind.CLOSED`, JVM
+/// `SrtException.Kind.CLOSED` - with the detail `cancelled from another
+/// thread` (Arc 2 spec 3.3 / 6). The generator is socket-free: it writes the
+/// one TS null packet the adapters' idle peer may send as a rescue and returns
+/// the expected envelope; the live cancel runs inside each adapter.
+///
+/// This generator NEVER reads from testfiles/ or local/ directories.
+struct CancelledRecvKind;
+
+impl Scenario for CancelledRecvKind {
+    fn id(&self) -> &'static str {
+        "cancelled-recv-kind"
+    }
+    fn kind(&self) -> &'static str {
+        "binding_contract"
+    }
+    fn features(&self) -> Vec<&'static str> {
+        vec!["srt"]
+    }
+    fn tier(&self) -> &'static str {
+        "A"
+    }
+
+    fn generate(&self, out_dir: &Path) -> (PathBuf, Golden) {
+        // One TS null packet (PID 0x1FFF): the rescue frame an adapter sends
+        // from the still-connected peer when a cancel failed to end the parked
+        // receive, so the reader thread is never left in a native read.
+        let pkt = ts_packet(0x1FFF, false, &[]);
+
+        let artifact_rel = PathBuf::from(self.id()).join("input.bin");
+        write_file(&out_dir.join(&artifact_rel), &pkt);
+
+        let golden = Golden {
+            schema_version: 0,
+            lossy: false,
+            core: vec![CoreEvent::Error {
+                code: "CLOSED".to_string(),
+            }],
+            extensions: serde_json::json!({
+                "contract": "cancelled_recv_kind",
+                "detail": "cancelled from another thread",
+                "c_code": -7
+            }),
         };
         (artifact_rel, golden)
     }

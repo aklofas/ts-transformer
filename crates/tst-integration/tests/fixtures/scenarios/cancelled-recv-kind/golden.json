@@ -1,0 +1,15 @@
+{
+  "schema_version": 0,
+  "lossy": false,
+  "core": [
+    {
+      "event": "error",
+      "code": "CLOSED"
+    }
+  ],
+  "extensions": {
+    "c_code": -7,
+    "contract": "cancelled_recv_kind",
+    "detail": "cancelled from another thread"
+  }
+}
