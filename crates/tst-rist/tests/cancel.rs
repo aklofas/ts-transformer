@@ -177,7 +177,9 @@ fn recv_after_close_loopback_is_closed() {
 }
 
 /// X-CORR-07 (the kit row `empty_recv_is_noop`): `recv_bytes(&mut [])` is
-/// `Ok(0)` at once, no librist tick is spent, the transport stays alive.
+/// `Ok(0)` and the transport stays alive. (That no librist tick is spent
+/// follows from the guard's placement but is not asserted here; the kit's
+/// `empty_recv_is_noop` row is the behavioural pin.)
 /// RED on the pre-WP-D tree: the call waits out a 100 ms
 /// `rist_receiver_data_read2` tick and returns `Backpressure`.
 #[test]

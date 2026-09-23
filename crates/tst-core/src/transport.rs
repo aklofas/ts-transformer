@@ -13,19 +13,14 @@
 //! below; the [`conformance`] kit (std-only) is the executable form and
 //! each transport crate runs it in its `tests/conformance.rs`.
 //!
-//! Cells marked **(from WP-D)** are the contract's target, NOT yet this
-//! commit's behaviour — the work package named makes them true, and until
-//! then the conformance kit carries that row `#[ignore]`d with the same
-//! reason. Everything unmarked is true as written.
-//!
 //! | Transport | after own `close()` | cancel during a parked op | `is_alive()` after `Broken` / after cancel | handle type |
 //! |---|---|---|---|---|
 //! | SRT (`SrtTransport`) | `Closed` | `ExplicitClose` | false / false | `SrtCancelHandle` |
 //! | TCP / TLS (`TcpTransport`) | `Closed` | `ExplicitClose` | false / false | `TcpCancelHandle` |
 //! | TCP listener (`TcpListener`) | `accept` → `Closed`; `close()` DOES latch `is_cancelled()` (a listener has no peer-EOF path, so its only terminal event is the caller stopping it) | `Closed` (a listener is not a `Transport`; the `TcpError` layer has no cancel variant) | n/a | `TcpCancelHandle` |
 //! | RTP send / recv (`RtpTransport` / `RtpRecvTransport`, incl. RTSP-client recv) | `Closed` | `ExplicitClose` | false / false | `RtpCancelHandle` |
-//! | UDP send / recv | `Closed` | `ExplicitClose` (from WP-D) | false / false | `UdpCancelHandle` (WP-D) |
-//! | RIST send / recv | `Closed` | `ExplicitClose` (from WP-D) | false / false | `RistCancelHandle` (WP-D) |
+//! | UDP send / recv | `Closed` | `ExplicitClose` | false / false | `UdpCancelHandle` |
+//! | RIST send / recv | `Closed` | `ExplicitClose` | false / false | `RistCancelHandle` |
 //! | `ManagedTransport` (send) | `Closed` | `ExplicitClose` | false / false | `ManagedCancel` |
 //! | `ManagedRecvTransport` (recv) | `ExplicitClose` (its own close is a caller-initiated end; see its docs) | `ExplicitClose` | false / false | `ManagedRecvCancel` |
 //!
@@ -34,7 +29,7 @@
 //! `RecvTransport::max_payload()` is the protocol's deliverable ceiling
 //! (never the local send budget); an EMPTY destination buffer makes
 //! `recv_bytes` return `Ok(0)` without touching the socket or the liveness
-//! flag (X-CORR-07 — TCP, SRT and RTP; UDP/RIST from WP-D). A cancel that
+//! flag (X-CORR-07 — every transport). A cancel that
 //! lands after a successful op is not an error — the NEXT op fails with
 //! `ExplicitClose`. `Broken` after a cancel is impossible by construction.
 //!

@@ -242,6 +242,10 @@ impl RecvTransport for RistRecvTransport {
         // or either flag is consulted (the kit row `empty_recv_is_noop`;
         // without this an empty read burns a 100 ms tick and reports
         // `Backpressure`, or drops a delivered block as `DropOversize`).
+        //
+        // Deliberately FIRST, ahead of the cancelled/closed checks: an empty
+        // read asks nothing of the transport, so it answers the same on a
+        // cancelled or closed one. Same ordering as tst-udp/tcp/rtp.
         if buf.is_empty() {
             return Ok(0);
         }

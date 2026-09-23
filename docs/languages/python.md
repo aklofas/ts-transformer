@@ -453,8 +453,8 @@ it.
 Every transport shell — `Sender` / `Receiver` / `Listener`, `MuxSender` /
 `DemuxReceiver`, the four `Managed*` shells, and their `tstrans.rtp` /
 `udp` / `tcp` / `rist` siblings — exposes `close()` that is safe to call
-from ANY thread, and (except rtp `MuxSender` / `DemuxReceiver`, udp, tcp
-and rist) a `cancel_handle()`. Both go through one Rust state machine
+from ANY thread, and (except rtp `MuxSender` / `DemuxReceiver` and tcp) a
+`cancel_handle()`. Both go through one Rust state machine
 (`tst_pipeline::binding::Owned`): **cancel first, then free**. A call
 parked on another thread (`send_bytes`, `recv_bytes`, `accept`,
 `__next__`, `recv`, `recv_au`, `accept_blocking`) ends promptly and
@@ -475,8 +475,9 @@ same on every `tstrans.srt` shell, plain or managed: the plain shells
 close the underlying libsrt socket and report the cancel they observed,
 not the connection error it provoked. (Through 0.6.x they raised
 `SrtError(BROKEN)`.) One caveat remains: a udp/rist `recv()` observes the
-cancel at its next ≤100 ms poll slice (they have no Rust cancel handle
-yet). A call made AFTER `close()` raises `CLOSED` too.
+cancel at its next ≤100 ms poll slice rather than instantly — that is the
+transports' poll cadence, not a missing handle (both gained real cancel
+handles in 0.7.0). A call made AFTER `close()` raises `CLOSED` too.
 
 `is_cancelled()` reads the SHELL's state (0.7.0): every handle from the
 same shell, and the shell's own `close()`, flip it — a watchdog holding
@@ -1077,9 +1078,15 @@ with RecvTransport.builder().bind_url("udp://@239.0.0.1:5000").build() as rx:
 currently always `""`. Use `udp://@group:port` (the `@` prefix) on
 `bind_url` for a multicast join; `RecvTransport.local_addr_port()` reads
 back an ephemeral port when you bind `:0`. `close()` from another thread
-ends a parked `recv()` with `UdpError(CLOSED)` within about 100 ms (the
-binding slices the kernel wait into short polls and checks a stop flag
-between them — the Rust crate itself has no cancel handle).
+ends a parked `recv()` with `UdpError(CLOSED)` within about 100 ms — it
+fires the transport's cancel handle first. The handle itself is available
+as `rx.cancel_handle()` (a `udp.CancelHandle` with `cancel()` /
+`is_cancelled()`): `cancel()` from any thread ends the parked `recv()`
+with `UdpError(CLOSED)` ("cancelled from another thread") and makes later
+`send()` / `recv()` raise the same, without closing the object; `close()`
+afterwards is quiet. `Transport.cancel_handle()` works the same way for
+the sender (a UDP `send()` never parks, so the cancel is observed by the
+*next* send).
 
 ### TCP (`tstrans.tcp`)
 
@@ -1145,8 +1152,14 @@ snapshot from `stats()`.
 
 `close()` from another thread ends a parked `recv()` with
 `RistError(CLOSED)`, detail "cancelled from another thread", within about
-100 ms (the shell's cancel flag, checked between the librist 100 ms poll
-windows).
+one librist poll window — it fires the transport's cancel handle first.
+The handle itself is available as `rx.cancel_handle()` (a
+`rist.CancelHandle` with `cancel()` / `is_cancelled()`): `cancel()` from
+any thread ends the parked `recv()` the same way and makes later `send()`
+/ `recv()` raise the same, without closing the object; `close()`
+afterwards is quiet. `Transport.cancel_handle()` works the same way for
+the sender (a RIST `send()` never parks — `rist_sender_data_write`
+enqueues — so the cancel is observed by the *next* send).
 
 ## HLS publisher (`tstrans.hls`)
 

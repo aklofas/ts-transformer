@@ -190,6 +190,10 @@ impl RecvTransport for UdpRecvTransport {
         // socket or either flag is consulted (the kit row `empty_recv_is_noop`;
         // without this an empty read is served by a zero-length `recv` that
         // silently consumes a queued datagram).
+        //
+        // Deliberately FIRST, ahead of the cancelled/closed checks: an empty
+        // read asks nothing of the transport, so it answers the same on a
+        // cancelled or closed one. Same ordering as tst-tcp and tst-rtp.
         if buf.is_empty() {
             return Ok(0);
         }

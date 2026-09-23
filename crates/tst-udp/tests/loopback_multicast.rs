@@ -47,9 +47,10 @@ fn ipv4_multicast_loopback_round_trip() {
     let (tx, rx) = mpsc::channel::<Vec<u8>>();
     let _t = thread::spawn(move || {
         let mut buf = vec![0u8; recv.max_payload() + 64];
-        // Bounded wait instead of a blocking recv_bytes: UdpRecvTransport has
-        // no cancel handle (deferred Low), so on the skip/timeout paths below
-        // a blocking recv would park this thread past the end of the test.
+        // Bounded wait instead of a blocking recv_bytes: this test never
+        // obtains the transport's cancel handle (it hands the receiver to
+        // the worker whole), so on the skip/timeout paths below a blocking
+        // recv would park this thread past the end of the test.
         // The deadline comfortably exceeds the 5 s observation window.
         if let Ok(Some(n)) = recv.recv_timeout(&mut buf, Duration::from_secs(6)) {
             let _ = tx.send(buf[..n].to_vec());
@@ -73,9 +74,10 @@ fn ipv6_multicast_loopback_round_trip() {
     let (tx, rx) = mpsc::channel::<Vec<u8>>();
     let _t = thread::spawn(move || {
         let mut buf = vec![0u8; recv.max_payload() + 64];
-        // Bounded wait instead of a blocking recv_bytes: UdpRecvTransport has
-        // no cancel handle (deferred Low), so on the skip/timeout paths below
-        // a blocking recv would park this thread past the end of the test.
+        // Bounded wait instead of a blocking recv_bytes: this test never
+        // obtains the transport's cancel handle (it hands the receiver to
+        // the worker whole), so on the skip/timeout paths below a blocking
+        // recv would park this thread past the end of the test.
         // The deadline comfortably exceeds the 5 s observation window.
         if let Ok(Some(n)) = recv.recv_timeout(&mut buf, Duration::from_secs(6)) {
             let _ = tx.send(buf[..n].to_vec());

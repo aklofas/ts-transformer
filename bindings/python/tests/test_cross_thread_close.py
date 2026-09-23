@@ -848,9 +848,10 @@ def test_udp_transport_close_from_other_thread_during_send() -> None:
         # See the identical comment in test_rtp_sender_close_from_other_
         # thread_during_send: whether the worker attempts one more send
         # before noticing `stop` is a scheduling race, not a guarantee —
-        # `udp.Transport` has no cancel handle at all (send() never
-        # parks), so there is even less reason to expect the worker to
-        # land another send before `stop` becomes visible to it. `close()`
+        # a UDP `send()` never parks, so there is even less reason to
+        # expect the worker to land another send before `stop` becomes
+        # visible to it. (`udp.Transport` DOES have a cancel handle since
+        # Arc 2 WP-D — it just has nothing to unblock on the send side.) `close()`
         # already returned, so the slot is deterministically empty; call
         # `send()` directly to prove a post-close send is rejected without
         # depending on the worker's own timing.

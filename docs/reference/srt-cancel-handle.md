@@ -200,8 +200,8 @@ above. See the **Sync vs. async** section in
 | SRT (`tst-srt`) | `SrtCancelHandle` | From `Socket::cancel_handle()` or `pipeline_shell.cancel_handle()`. |
 | RTP / RTSP (`tst-rtp`) | `RtpCancelHandle` | From `RtpTransport::cancel_handle()` or the pipeline shell. |
 | TCP / TLS (`tst-tcp`) | `TcpCancelHandle` | From the inherent `TcpTransport::cancel_handle()`, from `Transport::cancel_handle` / `RecvTransport::cancel_handle` on the same transport, or from the pipeline shell (which reads the trait method). All three hand back the same handle. |
-| UDP (`tst-udp`) | None | Cooperative shutdown only: pass a finite `timeout_ms` / `recv_timeout` deadline and check a stop flag between calls. `close()` requires `&mut self` — not callable from another thread while a `recv` is in flight. See [/docs/project/deferred-features.md](/docs/project/deferred-features.md). |
-| RIST (`tst-rist`) | None | Same as UDP — cooperative shutdown with `timeout_ms` and a stop flag. No race-free cross-thread interrupt of a live `recv`. See [/docs/project/deferred-features.md](/docs/project/deferred-features.md). |
+| UDP (`tst-udp`) | `UdpCancelHandle` | From the inherent `UdpTransport::cancel_handle()` / `UdpRecvTransport::cancel_handle()`, the trait forms, or the pipeline shell. A parked `recv_bytes` observes it at its next ~100 ms poll tick and returns `ExplicitClose`; `send_bytes` never parks and checks it at entry. `close()` stays `Closed`. `recv_timeout` (per-call deadline) does not observe it — check `is_cancelled()` between slices. |
+| RIST (`tst-rist`) | `RistCancelHandle` | From the inherent `RistTransport::cancel_handle()` / `RistRecvTransport::cancel_handle()`, the trait forms, or the pipeline shell. Observed when the current 100 ms `rist_receiver_data_read2` tick returns (`ExplicitClose` instead of that tick's `Backpressure`) and at `send_bytes` entry. `close()` (→ `rist_destroy`) stays `Closed`. |
 
 ## See also
 
