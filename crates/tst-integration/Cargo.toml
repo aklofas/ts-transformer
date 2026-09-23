@@ -23,3 +23,10 @@ serde      = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml       = "0.8"
 sha2       = "0.10"
+
+# Live-socket leg of the `cancelled-recv-kind` binding_contract scenario
+# (tests/rust_scenarios.rs only — the library and gen-scenarios stay
+# socket-free, which is what the `scenarios.sh` drift rail relies on).
+[dev-dependencies]
+tst-srt      = { path = "../tst-srt" }
+tst-pipeline = { path = "../tst-pipeline" }

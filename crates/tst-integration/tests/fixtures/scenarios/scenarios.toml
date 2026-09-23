@@ -168,3 +168,12 @@ golden = "exception-kind-stability/golden.json"
 features = []
 tier = "A"
 schema_version = 0
+
+[[scenario]]
+id = "cancelled-recv-kind"
+kind = "binding_contract"
+input = "cancelled-recv-kind/input.bin"
+golden = "cancelled-recv-kind/golden.json"
+features = ["srt"]
+tier = "A"
+schema_version = 0
