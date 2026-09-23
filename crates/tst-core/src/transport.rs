@@ -21,7 +21,7 @@
 //!
 //! | Transport | after own `close()` | cancel during a parked op | `is_alive()` after `Broken` / after cancel | handle type |
 //! |---|---|---|---|---|
-//! | SRT (`SrtTransport`) | `Closed` | `ExplicitClose` (from WP-C2) | false / false | `SrtCancelHandle` |
+//! | SRT (`SrtTransport`) | `Closed` | `ExplicitClose` | false / false | `SrtCancelHandle` |
 //! | TCP / TLS (`TcpTransport`) | `Closed` | `ExplicitClose` (from WP-C2) | false / false | `TcpCancelHandle` |
 //! | TCP listener (`TcpListener`) | `accept` → `Closed`; `close()` DOES latch `is_cancelled()` (a listener has no peer-EOF path, so its only terminal event is the caller stopping it) | `Closed` (from WP-C2) | n/a | `TcpCancelHandle` |
 //! | RTP send / recv (`RtpTransport` / `RtpRecvTransport`, incl. RTSP-client recv) | `Closed` | `ExplicitClose` | false / false | `RtpCancelHandle` |
