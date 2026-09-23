@@ -1847,6 +1847,18 @@ typedef struct {
     char detail[256];
 } cancelled_recv_state_t;
 
+/* Ask the OS for an ephemeral UDP port, then release it — the same shape as
+ * the repo's other loopback harnesses (`bindings/python/tests/_builders/ports.py`,
+ * `TestSupport.freeUdpPort()` in the JVM tests), which document and accept the
+ * same tiny TOCTOU window between release and rebind. Two reasons it stays
+ * that way here: the C ABI cannot hand the port back (`tst_receiver_open_listener`
+ * BLOCKS in accept, so there is no handle to query until a peer has already
+ * connected — and the peer needs the port), and a fixed band would collide
+ * with the Rust tests that own one (`tests/receiving/cancel_first.rs`, band
+ * 32_000). If the window is ever lost, `open_listener` fails, the worker
+ * publishes `done` with its own message, and the poll loop below reports
+ * "listener open failed: ..." at once — a loud, fast failure, never a hang or
+ * a silent pass. */
 static uint16_t free_udp_port(void) {
     int fd = socket(AF_INET, SOCK_DGRAM, 0);
     struct sockaddr_in a;

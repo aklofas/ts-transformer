@@ -41,10 +41,26 @@ final class CancelledRecvKindGoldenTest {
             .normalize();
     }
 
+    /**
+     * Read one string-valued key out of the committed golden.
+     *
+     * <p>String extraction rather than a JSON parser, matching
+     * {@link ScenarioReproductionTest}'s {@code extractVideoEvent} /
+     * {@code extractKlvEvent}: the JVM binding's test classpath is JUnit only
+     * (see {@code build.gradle.kts}), and pulling Jackson or Gson into a
+     * PUBLISHED artifact's build to read two fields in one test is not a
+     * trade worth making. The brittleness that would matter — a schema that
+     * grows a SECOND occurrence of the key, so the first match is silently
+     * the wrong one — is asserted away here instead of assumed.
+     */
     private static String jsonString(String json, String key) {
         Matcher m = Pattern.compile("\"" + key + "\"\\s*:\\s*\"([^\"]*)\"").matcher(json);
         assertTrue(m.find(), "golden has no \"" + key + "\": " + json);
-        return m.group(1);
+        String value = m.group(1);
+        assertFalse(m.find(),
+            "golden has more than one \"" + key + "\" — this test reads the first and would "
+                + "silently assert the wrong one; scope the lookup or parse properly: " + json);
+        return value;
     }
 
     @Test
