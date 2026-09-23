@@ -205,16 +205,19 @@ fn null_next_event_returns_invalid_config() {
 
 /// `tst_rist_mux_sender_finish` drains and closes.
 ///
-/// No receiver is listening, so librist has nowhere to deliver and the
-/// drain may legitimately report a transport error or 0 (nothing pending).
-/// Both are "finished"; what must hold is that the call neither panics nor
-/// mis-reports a null pointer, that a second call is 0, and that the handle
-/// still frees with `_close`.
+/// Nothing was ever pushed, so `pending_bytes` is empty and this takes the
+/// EMPTY-DRAIN path: `finish` has nothing to send and closes. The rc is
+/// asserted leniently only because no receiver is listening, so librist's
+/// own teardown may report an error; what must hold is that the call
+/// neither panics nor mis-reports a null pointer, that a second call is 0,
+/// and that the handle still frees with `_close`. The drain-ERROR arm is
+/// pinned once for the whole PR by the tcp shell's
+/// `tcp_mux_sender_finish_reports_the_drain_error`.
 ///
 /// Port 33106 is EVEN (the Simple profile puts RTCP on `port + 1`) and
 /// disjoint from every other reserved range: `loopback.rs` 33010–33026,
 /// `cancel.rs` 33040–33048, `conformance.rs` 33050–33098, the WP-D
-/// cross-thread pin 33100, R34.7's cancel tests 33102/33104 and the pytest
+/// cross-thread pin 33100, R34.7's null-guard test 33104 and the pytest
 /// suite 34110–34150.
 #[test]
 fn rist_mux_sender_finish_then_close() {

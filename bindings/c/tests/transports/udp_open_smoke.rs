@@ -408,15 +408,24 @@ fn udp_receiver_cancel_wakes_parked_recv_with_closed() {
     });
 
     let (done_tx, done_rx) = mpsc::channel::<i32>();
+    let (entered_tx, entered_rx) = mpsc::channel::<()>();
     let reader_ptr = SendUdpRx(h);
     let reader = thread::spawn(move || {
         let p = reader_ptr; // whole-struct capture: SendUdpRx is Send, its field is not
         let mut buf = vec![0u8; 1316];
         let mut n = 0usize;
+        // Signal BEFORE the call: the next statement enters the native recv
+        // and does not return until it parks and is woken.
+        let _ = entered_tx.send(());
         let rc = unsafe { tst_udp_receiver_recv_ts(p.0, buf.as_mut_ptr(), buf.len(), &mut n) };
         let _ = done_tx.send(rc);
     });
-    thread::sleep(Duration::from_millis(300)); // reader is parked on a poll tick
+    // Latch instead of a bare settle: wait for the reader to reach the call,
+    // then give it one poll tick to be provably inside it.
+    entered_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("reader thread never reached _recv_ts");
+    thread::sleep(Duration::from_millis(200));
 
     let t0 = Instant::now();
     assert_eq!(unsafe { tst_udp_receiver_cancel(h) }, 0, "cancel rc");
