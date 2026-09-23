@@ -80,8 +80,9 @@ empty — the C/Python adapters live in their own crates' test/example surfaces)
 - **`surface-manifest.toml`** — **L3 surface-to-test ownership manifest** (shipped
   2026-06-03). Every mappable entry across the 8 `public-api.txt` baselines is either
   a `[[surface]]` row (item → owning tests + per-binding columns) or an `[[exempt]]`
-  entry. Enforced by `scripts/check/repo/surface-manifest.sh` (three rules: owning-test
-  path exists, binding symbol resolves, closure over all mappable baseline items).
+  entry. Enforced by `scripts/check/repo/surface-manifest.sh` (owning-test path
+  exists, binding symbol resolves, every row carries all five binding columns,
+  closure over all mappable baseline items).
   See "Surface manifest" section below for the graduation workflow.
 - **`TEST_CORPUS.md`** — notes on the (gitignored, local-only) real-world corpus.
 
@@ -91,11 +92,14 @@ empty — the C/Python adapters live in their own crates' test/example surfaces)
 un-catalogued. The ratchet (`scripts/check/repo/surface-manifest.sh`) enforces:
 
 - **(a) owning-test existence** — every `owning_tests` path must exist on disk.
-- **(b) binding symbol resolution** — every `c:SYM` is grepped in
-  `bindings/c/include/tstrans.h`; every `python:dotted.name` resolves its leaf
-  component in `bindings/python/python/tstrans/` (both `.py` and `.pyi`).
-  Binding entries tagged `[feature=X]` are skipped when feature `X` is not built.
-  `java:` / `swift:` / `kotlin:` columns are reserved (not yet resolved).
+- **(b) binding symbol resolution + five columns** — every `c:SYM` is grepped in
+  `bindings/c/include/tstrans.h`; every `python:dotted.name` / `java:dotted.name`
+  resolves its leaf component in the binding sources. Binding entries tagged
+  `[feature=X]` are skipped when feature `X` is not built. **Every `[[surface]]`
+  row must list all five prefixes** (`c`, `python`, `java`, `swift`, `kotlin`);
+  a binding with no twin says `"<prefix>:deferred"` (or `"<prefix>:n/a"` by
+  design). `swift:` / `kotlin:` real symbols are accepted unresolved until
+  tst-uniffi ships.
 - **(c) closure** — every item extracted from the 8 `public-api.txt` baselines is
   present in the manifest as either a `[[surface]]` item or an `[[exempt]]` item.
 
@@ -107,8 +111,9 @@ un-catalogued items, then append them to the manifest.
 
 **Graduating an exempt item to a surface row:** remove its `[[exempt]]` block and
 add a `[[surface]]` row with `owning_tests`, `bindings`, and optionally `scenario_ids`.
-When `tst-jni` lands, add a `java:org.tstrans.XXX` column to the relevant
-rows — rule (b) then forces JNI test coverage for that item (the §8.5 parity gate).
+When tst-uniffi lands, replace the `swift:deferred` / `kotlin:deferred` sentinels
+row by row with real symbols — rule (b2) already guarantees no row can forget the
+column.
 
 **Feature-tagged binding columns:** use `"c:SYM [feature=srt]"` (space before `[`)
 to mark a binding symbol that only exists when feature `srt` is compiled in. The
