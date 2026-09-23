@@ -11,6 +11,22 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`ALL` + public `to_wire` / `from_wire` on the eight ST 0601 / ST 0806
+  wire-code enums** — `IcingDetected`, `SensorFovName`, `OperationalMode`,
+  `PlatformStatus`, `SensorControlMode` and `PayloadType` in
+  `tst_core::klv::st0601`, `RvtPoiType` and `RvtAoiType` in
+  `tst_core::klv::st0806`. `ALL` lists every unit variant in declaration order
+  plus one arbitrary `Other` representative, so a binding (or any consumer)
+  can enumerate the variants it cannot `match` exhaustively across a crate
+  boundary; `to_wire` / `from_wire` were already the canonical tables and were
+  merely `pub(crate)` / `pub(super)`. Purely additive — `tst-core`'s public-api
+  baseline grows by 40 lines (24 items) with none removed — but note that `ALL`
+  is public API on a **Stable** module (`klv::st0601`) and a Provisional one
+  (`klv::st0806`): adding a variant to one of these `#[non_exhaustive]` enums
+  now also changes the length of a public constant. tst-jni's eight hand-copied
+  wire tables (and their `unreachable!` arms) are gone in favour of these; see
+  the rails section below.
+
 - **`tst_core::codec::nal_framing`** — Annex-B ↔ length-prefixed NAL
   conversion for AVCC/HVCC-style consumers (Apple VideoToolbox and
   similar decoder APIs expect length-prefixed framing, not the
@@ -2067,15 +2083,21 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Testing — rails (R1/R2)
 
-- **Surface manifest: five binding columns per row.** All 324 `[[surface]]` rows
-  in `tests/coverage/surface-manifest.toml` now list `c:` / `python:` / `java:` /
-  `swift:` / `kotlin:`; a binding without a twin says `"<prefix>:deferred"` (or
-  `"<prefix>:n/a"` when there is none by design), and sentinels are never
-  resolved. Rule (b2) in `scripts/check/repo/surface-manifest.sh` fails a row
-  that omits a column — an omitted column was indistinguishable from a forgotten
-  one, which is how the `swift:` / `kotlin:` columns stayed empty on every row.
-  Self-test case 5 pins the rule. One row that used `test = "<path>::<name>"`
-  instead of `owning_tests = [...]` was invisible to rule (a) and is now checked.
+- **Surface manifest: five binding columns per row.** Every `[[surface]]` row
+  (348 today) in `tests/coverage/surface-manifest.toml` lists `c:` / `python:` /
+  `java:` / `swift:` / `kotlin:`. Three sentinels stand in for a symbol and are
+  never resolved: `"<prefix>:unaudited"` (nobody has checked),
+  `"<prefix>:deferred"` (a checked gap) and `"<prefix>:n/a"` (no twin by
+  design). Rule (b2) in `scripts/check/repo/surface-manifest.sh` fails a row
+  that omits a column — an omitted column was indistinguishable from a
+  forgotten one, which is how the `swift:` / `kotlin:` columns stayed empty on
+  every row. One row that used `test = "<path>::<name>"` instead of
+  `owning_tests = [...]` was invisible to rule (a) and is now checked. The bulk
+  migration of the 324 pre-existing rows could not know whether a twin exists,
+  so the **786** `c:` / `python:` / `java:` cells it filled in say
+  `"<prefix>:unaudited"` — a TODO, not a claim; auditing a row means replacing
+  that with a real symbol, `:deferred` or `:n/a`, and that count is the size of
+  the backlog (ROADMAP rider).
 - **Rust exhaustiveness replaces awk.** The eight ST 0601 / ST 0806 wire-code
   enums (`IcingDetected`, `SensorFovName`, `OperationalMode`, `PlatformStatus`,
   `SensorControlMode`, `PayloadType`, `RvtPoiType`, `RvtAoiType`) gain a public
@@ -2087,9 +2109,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   asserting the JNI codepoint IS tst-core's wire codepoint. Note that `ALL` is
   public API on `klv::st0601` (Stable) and `klv::st0806` (Provisional): adding a
   variant to any of these `#[non_exhaustive]` enums also changes the length of a
-  public constant. `MuxError::kind()` lost its in-crate wildcard, so the compiler
-  pins that too. `tst-core`'s public API grows by 40 lines (24 items), none
-  removed.
+  public constant (see the `### Added` entry). `MuxError::kind()` lost its
+  in-crate wildcard, so the compiler pins that too.
 - **Retired rails.** `scripts/check/rust/mux-error-kind-coverage.sh` goes with
   `MuxError::kind()`'s wildcard, closing the family this arc retired
   (`*-error-mapping-coverage`, raw-mapper, shell-error-kind and the
@@ -2106,10 +2127,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   contain no `unreachable!` and no `.expect(`, and the last poison sites (the C
   event arena and stream-stats buffers, the JVM version string, the JVM handle
   registry's `with_poisoning`) recover or report instead of aborting. A file's
-  production region ends at a COLUMN-0 `#[cfg(test)]` — an indented one marks a
-  single test-only item with production code after it — and comment-only lines
-  are skipped so prose explaining why a site does NOT panic survives its own
-  rail. `tests/` and `build.rs` are out of scope. Self-tested, 7 cases.
+  production region ends only at a COLUMN-0 `#[cfg(test)]` **on a `mod` item**;
+  any other `#[cfg(test)]` item — an indented one, or a column-0 one on an
+  `extern crate` / `fn` / `use`, both of which exist in tst-c-core — is skipped
+  as a single item and scanning resumes, which is worth 976 lines of
+  `bindings/c/core/src/{lib,error}.rs` that a naive "first `#[cfg(test)]` wins"
+  rule would leave unscanned. Comment-only lines are skipped so prose explaining
+  why a site does NOT panic survives its own rail; a trailing comment shields
+  nothing. `tests/` and `build.rs` are out of scope. Self-tested, 11 cases.
 
 ### Added — C ABI 0.22 (R3/R4)
 
