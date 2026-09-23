@@ -349,6 +349,24 @@ public final class MuxSender extends NativeHandle {
      * transport. Idempotent. */
     @Override public void close() { super.close(); }
 
+    /**
+     * Drain every byte the muxer still holds to the transport, report the first
+     * drain error, then close the transport — the lossless counterpart to
+     * {@link #close()}. The sender is closed either way; a second call is a
+     * no-op, and so is a call after {@link #close()}.
+     *
+     * <p>Unlike {@link #close()} this does NOT cancel first: a {@code send*}
+     * parked on another thread holds the sender and {@code finish()} waits
+     * behind it. The handle still needs a {@link #close()} afterwards.
+     *
+     * @throws RtpException with the first drain error's kind
+     */
+    public void finish() throws RtpException {
+        long h = peekHandle();
+        if (h == 0) return;            // already closed: quiet, like a second finish
+        nFinish(h);
+    }
+
     /** Whether the sender owns a live transport. */
     public boolean isAlive() {
         if (peekHandle() == 0) return false;
@@ -395,5 +413,6 @@ public final class MuxSender extends NativeHandle {
 
     private static native TransportStats nStats(long handle);
     private static native void nClose(long handle);
+    private static native void nFinish(long handle) throws RtpException;
     private static native boolean nIsAlive(long handle);
 }

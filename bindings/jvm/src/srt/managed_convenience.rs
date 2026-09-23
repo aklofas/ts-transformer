@@ -52,7 +52,7 @@ use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{
     AudioStreamHandle, DataStreamHandle, KlvStreamHandle, SubtitleStreamHandle, VideoStreamHandle,
 };
-use tst_pipeline::binding::{BindingErrorKind, ManagedHandles, Owned};
+use tst_pipeline::binding::{BindingErrorKind, HandleState, ManagedHandles, Owned};
 use tst_pipeline::{
     ManagedDemuxReceiver as RustManagedDemuxReceiver, ManagedTransport, MuxSender as RustMuxSender,
     MuxSenderError, MuxSenderErrorSource, RecvEndReasonHandle,
@@ -731,6 +731,32 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nClose(
         // Atomic + idempotent: the winning close gets the shell back for teardown.
         if let Some(jstruct) = REGISTRY_MUX.close(handle as u64) {
             jstruct.inner.close();
+        }
+    })
+}
+
+/// `nFinish(handle)` — drain the muxer's pending bytes to the live transport,
+/// report the first drain error, then close the transport
+/// (`MuxSender::finish`). Unlike `nClose` this does NOT cancel first and does
+/// NOT free the registry entry: the Java side still calls `close()`.
+/// A send parked in the reconnect backoff keeps the slot: `nFinish`
+/// waits behind it (unlike `nClose`, which cancels first).
+/// A zero / already-closed handle is quiet — the same answer a second
+/// `finish()` gets from the shell itself.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nFinish(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+) {
+    crate::panic::jni_catch(&mut env, (), |env| {
+        match REGISTRY_MUX.with_ref(handle as u64, |jstruct| jstruct.inner.finish()) {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => throw_managed_mux_sender_error(env, &e),
+            // Closed between the Java-side `peekHandle()` and here, or closed
+            // outright: stay quiet, exactly like a second `finish()`.
+            Err(HandleState::Closed) => {}
+            Err(state) => crate::error::throw_handle_state(env, "ManagedMuxSender", &state),
         }
     })
 }

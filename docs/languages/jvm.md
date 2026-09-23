@@ -1077,6 +1077,14 @@ try (MuxSender s = MuxSender.fromUrl(
 so a parked `send*` ends with `SrtException(CLOSED)` instead of blocking the
 close.
 
+**Lossless shutdown.** `close()` cancels first and abandons pending bytes;
+`finish()` drains them, throws the first drain error as `SrtException`, then
+closes. `finish()` does not cancel a parked `send*` first, so it waits behind
+one; a second `finish()` (or a `finish()` after `close()`) is a no-op, and the
+handle still takes a `close()` afterwards. `ManagedMuxSender` and
+`org.tstrans.rtp.MuxSender` have the same method (the latter throws
+`RtpException`).
+
 `sendKlv`, `sendAudio`, `sendSubtitle`, and `sendData` (raw private-data
 bytes, passed through verbatim — same PTS / ceiling semantics as
 `Muxer.pushData`) cover the other elementary-stream kinds; the handle-targeted

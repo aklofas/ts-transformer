@@ -375,6 +375,26 @@ public final class MuxSender extends NativeHandle {
     @Override public void close() { super.close(); }
 
     /**
+     * Drain every byte the muxer still holds to the transport, report the first
+     * drain error, then close the transport — the lossless counterpart to
+     * {@link #close()}. The sender is closed either way; a second call is a
+     * no-op, and so is a call after {@link #close()}.
+     *
+     * <p>Unlike {@link #close()} this does NOT cancel first: a {@code send*}
+     * parked on another thread holds the sender and {@code finish()} waits
+     * behind it — fire {@link #cancelHandle()} (or call {@link #close()})
+     * first if that is not wanted. The handle still needs a {@link #close()}
+     * afterwards.
+     *
+     * @throws SrtException with the first drain error's kind
+     */
+    public void finish() throws SrtException {
+        long h = peekHandle();
+        if (h == 0) return;            // already closed: quiet, like a second finish
+        nFinish(h);
+    }
+
+    /**
      * Return {@code true} while the sender owns a live transport.
      *
      * @return liveness state of the underlying SRT socket
@@ -425,5 +445,6 @@ public final class MuxSender extends NativeHandle {
     private static native TransportStats nStats(long handle);
     private static native long nCancelHandle(long handle);
     private static native void nClose(long handle);
+    private static native void nFinish(long handle) throws SrtException;
     private static native boolean nIsAlive(long handle);
 }
