@@ -2067,7 +2067,49 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Testing — rails (R1/R2)
 
-- (pending)
+- **Surface manifest: five binding columns per row.** All 324 `[[surface]]` rows
+  in `tests/coverage/surface-manifest.toml` now list `c:` / `python:` / `java:` /
+  `swift:` / `kotlin:`; a binding without a twin says `"<prefix>:deferred"` (or
+  `"<prefix>:n/a"` when there is none by design), and sentinels are never
+  resolved. Rule (b2) in `scripts/check/repo/surface-manifest.sh` fails a row
+  that omits a column — an omitted column was indistinguishable from a forgotten
+  one, which is how the `swift:` / `kotlin:` columns stayed empty on every row.
+  Self-test case 5 pins the rule. One row that used `test = "<path>::<name>"`
+  instead of `owning_tests = [...]` was invisible to rule (a) and is now checked.
+- **Rust exhaustiveness replaces awk.** The eight ST 0601 / ST 0806 wire-code
+  enums (`IcingDetected`, `SensorFovName`, `OperationalMode`, `PlatformStatus`,
+  `SensorControlMode`, `PayloadType`, `RvtPoiType`, `RvtAoiType`) gain a public
+  `ALL` inventory and public `to_wire` / `from_wire`, pinned by wildcard-free
+  matches inside tst-core: a new variant is a compile error there, and a variant
+  missing from `ALL` (which no exhaustiveness check can see) fails the per-pattern
+  hit-count assertion. tst-jni delegates to them — its eight hand-copied tables
+  and their `unreachable!` arms are gone — and round-trips every `ALL` entry,
+  asserting the JNI codepoint IS tst-core's wire codepoint. Note that `ALL` is
+  public API on `klv::st0601` (Stable) and `klv::st0806` (Provisional): adding a
+  variant to any of these `#[non_exhaustive]` enums also changes the length of a
+  public constant. `MuxError::kind()` lost its in-crate wildcard, so the compiler
+  pins that too. `tst-core`'s public API grows by 40 lines (24 items), none
+  removed.
+- **Retired rails.** `scripts/check/rust/mux-error-kind-coverage.sh` goes with
+  `MuxError::kind()`'s wildcard, closing the family this arc retired
+  (`*-error-mapping-coverage`, raw-mapper, shell-error-kind and the
+  `scripts/ratchets/error-mapping.tsv` drivers, all superseded by the
+  kind-equivalence rail and owning-crate matches). **Kept on purpose:**
+  `pipeline-kind-classification.sh`, `rust/kind-table-coverage.sh` and
+  `python/non-conformant-kind-coverage.sh` all match tst-core's
+  `#[non_exhaustive]` enums from ANOTHER crate, where a wildcard is mandatory and
+  the compiler cannot help; `server-error-mapping-coverage.sh` is a
+  producer-existence rail, not an exhaustiveness one, despite the filename; and
+  `repo/ratchet-self-test.sh` still self-tests a live rail — the three
+  fail-closed cases of `scripts/check/c/header-conditional-sections.sh`.
+- **New rail `no-unreachable-expect-in-bindings.sh`:** binding production sources
+  contain no `unreachable!` and no `.expect(`, and the last poison sites (the C
+  event arena and stream-stats buffers, the JVM version string, the JVM handle
+  registry's `with_poisoning`) recover or report instead of aborting. A file's
+  production region ends at a COLUMN-0 `#[cfg(test)]` — an indented one marks a
+  single test-only item with production code after it — and comment-only lines
+  are skipped so prose explaining why a site does NOT panic survives its own
+  rail. `tests/` and `build.rs` are out of scope. Self-tested, 7 cases.
 
 ### Added — C ABI 0.22 (R3/R4)
 
