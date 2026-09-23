@@ -114,6 +114,8 @@ pub struct TstDemuxConfig {
     av1_carriage: Option<Av1CarriageMode>,
     // `None` = use Rust-side default (1 MiB).
     au_cell_cap_per_pid: Option<usize>,
+    // `None` = Rust default (4 MiB, `MAX_SYNC_BUF_BYTES`).
+    sync_buf_cap: Option<usize>,
     lenient_psi_reassembly: bool,
     unwrap_timestamps: bool,
 }
@@ -153,6 +155,7 @@ impl TstDemuxConfig {
             cfg.av1_carriage = mode;
         }
         cfg.au_cell_cap_per_pid = self.au_cell_cap_per_pid;
+        cfg.sync_buf_cap = self.sync_buf_cap;
         cfg
     }
 }
@@ -176,6 +179,7 @@ pub unsafe extern "C" fn tst_demux_config_new() -> *mut TstDemuxConfig {
             cfi_tolerance: true,
             av1_carriage: None,
             au_cell_cap_per_pid: None,
+            sync_buf_cap: None,
             lenient_psi_reassembly: false,
             unwrap_timestamps: false,
         }))
@@ -504,6 +508,40 @@ pub unsafe extern "C" fn tst_demux_config_set_unwrap_timestamps(
     })
 }
 
+/// Set the demuxer's pre-sync ingress ceiling in bytes (Rust
+/// `DemuxerConfig::sync_buf_cap`). `0` restores the Rust default (4 MiB).
+///
+/// The ceiling bounds the LIVE bytes one `tst_demuxer_feed` may leave in
+/// the pre-sync buffer (that call's input plus at most 187 unaligned
+/// residue bytes) — a single feed larger than it is rejected with
+/// `TST_E_TOO_LARGE` (`DemuxError::SyncBufExhausted`) and the buffered
+/// bytes are dropped. Raise it to feed a whole file in one call; lower it
+/// to bound memory on adversarial input. Distinct from the PES caps
+/// (`tst_demux_config_set_pes_cap`), which bound PES *reassembly*.
+///
+/// Returns 0 on success, `TST_E_INVALID_CONFIG` on null `cfg`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tst_demux_config_set_sync_buf_cap(
+    cfg: *mut TstDemuxConfig,
+    cap_bytes: size_t,
+) -> c_int {
+    crate::panic::ffi_catch(crate::error::TstError::PanicCaught as i32, || {
+        let Some(cfg) = (unsafe { cfg.as_mut() }) else {
+            crate::error::set_last_error(
+                crate::error::TstError::InvalidConfig,
+                "null config pointer",
+            );
+            return crate::error::TstError::InvalidConfig as i32;
+        };
+        cfg.sync_buf_cap = if cap_bytes == 0 {
+            None
+        } else {
+            Some(cap_bytes)
+        };
+        0
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -762,6 +800,33 @@ mod tests {
     #[test]
     fn set_unwrap_timestamps_null_cfg_returns_invalid_config() {
         let rc = unsafe { tst_demux_config_set_unwrap_timestamps(core::ptr::null_mut(), 1) };
+        assert_eq!(rc, crate::error::TstError::InvalidConfig as i32);
+    }
+
+    #[test]
+    fn sync_buf_cap_default_is_none() {
+        unsafe {
+            let cfg = tst_demux_config_new();
+            assert_eq!((*cfg).build_options().sync_buf_cap, None);
+            tst_demux_config_free(cfg);
+        }
+    }
+
+    #[test]
+    fn set_sync_buf_cap_sets_and_zero_restores_default() {
+        unsafe {
+            let cfg = tst_demux_config_new();
+            assert_eq!(tst_demux_config_set_sync_buf_cap(cfg, 16 * 1024 * 1024), 0);
+            assert_eq!((*cfg).build_options().sync_buf_cap, Some(16 * 1024 * 1024));
+            assert_eq!(tst_demux_config_set_sync_buf_cap(cfg, 0), 0);
+            assert_eq!((*cfg).build_options().sync_buf_cap, None);
+            tst_demux_config_free(cfg);
+        }
+    }
+
+    #[test]
+    fn set_sync_buf_cap_null_cfg_returns_invalid_config() {
+        let rc = unsafe { tst_demux_config_set_sync_buf_cap(core::ptr::null_mut(), 1024) };
         assert_eq!(rc, crate::error::TstError::InvalidConfig as i32);
     }
 }
