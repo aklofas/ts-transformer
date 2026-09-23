@@ -598,6 +598,12 @@ pub unsafe extern "C" fn tst_mux_sender_cancel(p: *mut TstMuxSender) -> libc::c_
 /// it — call `tst_mux_sender_cancel` first if that is not wanted. The
 /// handle must still be freed with `tst_mux_sender_close`.
 ///
+/// Note which code a reported drain failure carries: a send that met a
+/// dead peer returns `TST_E_TRANSPORT` and LATCHES the transport dead, so
+/// the drain here is refused at the dead-transport guard and `_finish`
+/// reports `TST_E_CLOSED` — not the code the failing send reported. The
+/// last-error string names the drain either way.
+///
 /// Returns `TST_E_INVALID_CONFIG` on a null pointer. Like every entry
 /// point, a call after `tst_mux_sender_close` has freed the pointer is a
 /// use-after-free, not an error code — `_close` consumes the handle.
@@ -1262,6 +1268,12 @@ pub unsafe extern "C" fn tst_managed_mux_sender_cancel(p: *mut TstManagedMuxSend
 /// reconnect backoff — holds the sender and `_finish` waits behind it;
 /// call `tst_managed_mux_sender_cancel` first if that is not wanted. The
 /// handle must still be freed with `tst_managed_mux_sender_close`.
+///
+/// Note which code a reported drain failure carries: a send that met a
+/// dead peer returns `TST_E_TRANSPORT` and LATCHES the transport dead, so
+/// the drain here is refused at the dead-transport guard and `_finish`
+/// reports `TST_E_CLOSED` — not the code the failing send reported. The
+/// last-error string names the drain either way.
 ///
 /// Returns `TST_E_INVALID_CONFIG` on a null pointer. Like every entry
 /// point, a call after `tst_managed_mux_sender_close` has freed the
