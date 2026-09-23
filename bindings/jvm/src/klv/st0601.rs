@@ -3410,9 +3410,9 @@ mod wire_inventory {
     //! codepoint tst-core itself defines, for every variant in `ALL`
     //! (Arc 2 R2 — replaces the hand-copied tables and their unreachable
     //! wildcard arms). The compile-time pin is tst-core's `variant_inventory`;
-    //! this is
-    //! the runtime half, which is all a binding crate can have (matching a
-    //! foreign `#[non_exhaustive]` enum without a wildcard is E0004).
+    //! this is the runtime half, which is all a binding crate can have
+    //! (matching a foreign `#[non_exhaustive]` enum without a wildcard is
+    //! E0004).
     use tst_core::klv::st0601::{
         IcingDetected, OperationalMode, PayloadType, PlatformStatus, SensorControlMode,
         SensorFovName,
@@ -3459,8 +3459,11 @@ mod wire_inventory {
     }
 
     /// The JNI codepoint IS tst-core's wire codepoint — not merely a
-    /// self-consistent local table. Without this a pair of mirrored local
-    /// tables could agree with each other and disagree with the wire.
+    /// self-consistent local table. This is a STRUCTURAL TRIPWIRE: the moment
+    /// anyone reintroduces a hand-copied table here (the shape Arc 2 R2
+    /// deleted), this test fails the first time that copy drifts, where the
+    /// round-trip test above would not — two mirrored local tables agree with
+    /// each other while disagreeing with the wire.
     #[test]
     fn the_jni_codepoint_is_tst_cores_wire_codepoint() {
         for v in IcingDetected::ALL {

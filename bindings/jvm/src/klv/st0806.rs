@@ -1022,7 +1022,8 @@ mod wire_inventory {
         }
     }
 
-    /// The JNI codepoint IS tst-core's wire codepoint (see the st0601 twin).
+    /// The JNI codepoint IS tst-core's wire codepoint — the structural
+    /// tripwire against a reintroduced local table (see the st0601 twin).
     #[test]
     fn the_jni_codepoint_is_tst_cores_wire_codepoint() {
         for v in RvtPoiType::ALL {
