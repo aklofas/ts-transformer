@@ -231,6 +231,18 @@ impl RecvTransport for UdpRecvTransport {
         if buf.is_empty() {
             return Ok(0);
         }
+        // Cancel/close win at entry, BEFORE any syscall. Ordering matters:
+        // the lazy restore below can fail and would then report `Broken`
+        // (latching the transport dead) on a receiver the caller had already
+        // cancelled or closed, and even when it succeeds it is a setsockopt
+        // spent on a transport that is going to refuse the read anyway. The
+        // loop re-checks both flags for a cancel that lands during the park.
+        if self.cancelled.load(Ordering::Acquire) {
+            return Err(TransportError::ExplicitClose);
+        }
+        if !self.alive.load(Ordering::Acquire) {
+            return Err(TransportError::Closed);
+        }
         // Lazy restore: if recv_timeout left the socket at a non-cancel-poll
         // timeout, restore it now so the cancel-poll guarantee holds for this
         // entire recv. One setsockopt per recv_bytes entry rather than one per
