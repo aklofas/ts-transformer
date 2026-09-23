@@ -756,7 +756,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nFinish(
             // Closed between the Java-side `peekHandle()` and here, or closed
             // outright: stay quiet, exactly like a second `finish()`.
             Err(HandleState::Closed) => {}
-            Err(state) => crate::error::throw_handle_state(env, "ManagedMuxSender", &state),
+            Err(state) => throw_handle_state(env, "ManagedMuxSender", &state),
         }
     })
 }
