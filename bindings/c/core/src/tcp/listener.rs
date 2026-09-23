@@ -23,9 +23,11 @@
 //! `tst_tcp_listener_accept_receiver` block until a connection arrives.
 //! For a non-blocking accept loop, call from a dedicated thread.
 //!
-//! **Cancel:** the Rust `TcpListener` exposes `cancel_handle()`/`close()`
-//! (since deep review #4 WP-4b); the C ABI does not yet expose a
-//! `tst_tcp_listener_cancel` entry point — additive candidate for ABI 0.22.
+//! **Cancel:** `tst_tcp_listener_cancel` (ABI 0.22) fires the Rust
+//! `TcpListener`'s own `cancel_handle()` (deep review #4 WP-4b); an
+//! `_accept_*` parked on another thread returns NULL with `TST_E_CLOSED`
+//! within one accept poll tick (~5 ms). The listener must still be freed
+//! with `tst_tcp_listener_free`.
 
 use std::net::SocketAddr;
 use std::os::raw::c_char;
@@ -242,6 +244,39 @@ pub unsafe extern "C" fn tst_tcp_listener_free(p: *mut TstTcpListener) {
         }
         drop(unsafe { Box::from_raw(p) });
     });
+}
+
+// ---------------------------------------------------------------------------
+// Cancel
+// ---------------------------------------------------------------------------
+
+/// Interrupt a `tst_tcp_listener_accept_sender` / `_accept_receiver` parked
+/// on another thread: it returns NULL with `TST_E_CLOSED` within one accept
+/// poll tick (~5 ms). Callable from any thread, idempotent; the listener
+/// must still be freed with `tst_tcp_listener_free`.
+///
+/// The OS socket stays bound until the listener is freed (std cannot shut a
+/// listening socket down explicitly), so bind the next listener on a fresh
+/// port or free this one first.
+///
+/// Returns 0, or `TST_E_INVALID_CONFIG` if `p` is null.
+///
+/// # Safety
+///
+/// `p` must be NULL or a valid non-freed `*mut TstTcpListener`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tst_tcp_listener_cancel(p: *mut TstTcpListener) -> libc::c_int {
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let Some(handle) = (unsafe { p.as_ref() }) else {
+            set_last_error(TstError::InvalidConfig, "null tcp listener pointer");
+            return TstError::InvalidConfig as i32;
+        };
+        // The listener handle holds a bare `TcpListener` (no `Owned` slot —
+        // accept takes `&self`), so the cancel goes through the Rust
+        // listener's own handle, which the parked accept polls.
+        handle.inner.cancel_handle().cancel();
+        0
+    })
 }
 
 // ---------------------------------------------------------------------------

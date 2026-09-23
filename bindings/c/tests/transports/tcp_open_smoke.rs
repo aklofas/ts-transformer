@@ -11,14 +11,16 @@
 //! Note: the lib name for `tst-c` is `tstrans` (see `[lib] name` in
 //! Cargo.toml); integration tests reference it as `tstrans`, not `tst_c`.
 //!
-//! There is no cancel surface on the TCP handles (the TCP transport does
-//! not expose `cancel_handle()`), so these tests do not exercise a cancel
-//! path.
+//! Cancel entry points (`tst_tcp_*_cancel`, ABI 0.22) are exercised below:
+//! a cancel from another thread ends a parked recv/accept with
+//! `TST_E_CLOSED`.
 #![cfg(feature = "tcp")]
 
 use std::ffi::CString;
 use std::net::TcpListener as StdTcpListener;
+use std::sync::mpsc;
 use std::thread;
+use std::time::{Duration, Instant};
 
 use tstrans::config::{
     TstVideoCodec, tst_mux_config_add_program, tst_mux_config_add_video_stream,
@@ -31,17 +33,20 @@ use tstrans::stats::{
     TstSenderStats, TstSocketStats, TstStreamCodecStats, TstStreamCodecStatsUnion,
 };
 use tstrans::tcp::{
-    tst_tcp_demux_receiver_close, tst_tcp_demux_receiver_get_socket_stats,
-    tst_tcp_demux_receiver_get_stats, tst_tcp_demux_receiver_get_stream_codec_stats,
-    tst_tcp_demux_receiver_get_stream_stats, tst_tcp_demux_receiver_next_event,
-    tst_tcp_demux_receiver_open, tst_tcp_demux_receiver_reset_stats,
-    tst_tcp_listener_accept_sender, tst_tcp_listener_bind, tst_tcp_listener_free,
-    tst_tcp_mux_sender_close, tst_tcp_mux_sender_finish, tst_tcp_mux_sender_get_mux_sender_stats,
+    tst_tcp_demux_receiver_cancel, tst_tcp_demux_receiver_close,
+    tst_tcp_demux_receiver_get_socket_stats, tst_tcp_demux_receiver_get_stats,
+    tst_tcp_demux_receiver_get_stream_codec_stats, tst_tcp_demux_receiver_get_stream_stats,
+    tst_tcp_demux_receiver_next_event, tst_tcp_demux_receiver_open,
+    tst_tcp_demux_receiver_reset_stats, tst_tcp_listener_accept_receiver,
+    tst_tcp_listener_accept_sender, tst_tcp_listener_bind, tst_tcp_listener_cancel,
+    tst_tcp_listener_free, tst_tcp_mux_sender_cancel, tst_tcp_mux_sender_close,
+    tst_tcp_mux_sender_finish, tst_tcp_mux_sender_get_mux_sender_stats,
     tst_tcp_mux_sender_get_socket_stats, tst_tcp_mux_sender_open, tst_tcp_mux_sender_reset_stats,
-    tst_tcp_receiver_close, tst_tcp_receiver_get_socket_stats, tst_tcp_receiver_get_stats,
-    tst_tcp_receiver_recv_ts, tst_tcp_receiver_reset_stats, tst_tcp_recv_open,
-    tst_tcp_sender_close, tst_tcp_sender_get_socket_stats, tst_tcp_sender_get_stats,
-    tst_tcp_sender_open, tst_tcp_sender_reset_stats, tst_tcp_sender_send_ts,
+    tst_tcp_receiver_cancel, tst_tcp_receiver_close, tst_tcp_receiver_get_socket_stats,
+    tst_tcp_receiver_get_stats, tst_tcp_receiver_recv_ts, tst_tcp_receiver_reset_stats,
+    tst_tcp_recv_open, tst_tcp_sender_cancel, tst_tcp_sender_close,
+    tst_tcp_sender_get_socket_stats, tst_tcp_sender_get_stats, tst_tcp_sender_open,
+    tst_tcp_sender_reset_stats, tst_tcp_sender_send_ts,
 };
 
 // ---------------------------------------------------------------------------
@@ -453,4 +458,194 @@ fn tcp_mux_sender_finish_then_close() {
     );
 
     unsafe { tst_tcp_mux_sender_close(h) };
+}
+
+// ---------------------------------------------------------------------------
+// `_cancel` — Arc 2 R4, ABI 0.22
+// ---------------------------------------------------------------------------
+
+/// `_close` is documented callable from any thread; the raw pointer just
+/// needs to cross the thread boundary to get there. `_cancel` is the same.
+struct SendRx(*mut tstrans::tcp::TstTcpReceiver);
+unsafe impl Send for SendRx {}
+
+struct SendListener(*mut tstrans::tcp::TstTcpListener);
+unsafe impl Send for SendListener {}
+
+/// Ask the kernel for a free loopback TCP port by binding and releasing.
+/// The C listener handle exposes no local-port getter, so a test that needs
+/// to know the port must pick it first.
+fn free_tcp_port() -> u16 {
+    StdTcpListener::bind("127.0.0.1:0")
+        .expect("bind ephemeral")
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
+/// Arc 2 R4: `tst_tcp_receiver_cancel` from another thread wakes a parked
+/// `recv_ts` with `TST_E_CLOSED`.
+///
+/// The peer accepts and HOLDS the socket open without writing, so the
+/// receiver genuinely parks in the read (a dropped peer would end it with
+/// clean EOF instead, proving nothing). Bounded by a 10 s watchdog that
+/// FAILS; the rescue drops the peer so the reader thread can always be
+/// joined, and if even that does not free it the test panics WITHOUT
+/// joining — a failing test must fail, never wedge.
+#[test]
+fn tcp_receiver_cancel_wakes_parked_recv_with_closed() {
+    let listener = StdTcpListener::bind("127.0.0.1:0").expect("bind ephemeral");
+    let port = listener.local_addr().unwrap().port();
+    let (hold_tx, hold_rx) = mpsc::channel::<()>();
+    let peer = thread::spawn(move || {
+        let accepted = listener.accept();
+        // Hold the accepted socket open until the test says it is done, so
+        // the C receiver has no EOF to end on.
+        let _ = hold_rx.recv_timeout(Duration::from_secs(15));
+        drop(accepted);
+    });
+
+    let url = CString::new(format!("tcp://127.0.0.1:{port}")).unwrap();
+    let h = unsafe { tst_tcp_recv_open(url.as_ptr()) };
+    assert!(!h.is_null(), "tst_tcp_recv_open failed: {}", unsafe {
+        tst_get_last_error()
+    });
+
+    let (done_tx, done_rx) = mpsc::channel::<i32>();
+    let reader_ptr = SendRx(h);
+    let reader = thread::spawn(move || {
+        let p = reader_ptr; // whole-struct capture: SendRx is Send, its field is not
+        let mut buf = vec![0u8; 1316];
+        let mut n = 0usize;
+        let rc = unsafe { tst_tcp_receiver_recv_ts(p.0, buf.as_mut_ptr(), buf.len(), &mut n) };
+        let _ = done_tx.send(rc);
+    });
+    thread::sleep(Duration::from_millis(300)); // reader is parked on a poll tick
+
+    let t0 = Instant::now();
+    assert_eq!(unsafe { tst_tcp_receiver_cancel(h) }, 0, "cancel rc");
+    let rc = match done_rx.recv_timeout(Duration::from_secs(10)) {
+        Ok(rc) => rc,
+        Err(_) => {
+            // Rescue: drop the peer so the read ends on EOF and the reader
+            // releases the slot; then fail loudly.
+            let _ = hold_tx.send(());
+            if done_rx.recv_timeout(Duration::from_secs(5)).is_ok() {
+                let _ = reader.join();
+                let _ = peer.join();
+                unsafe { tst_tcp_receiver_close(h) };
+            }
+            panic!("tst_tcp_receiver_cancel did not wake the parked _recv_ts within 10 s");
+        }
+    };
+    let _ = hold_tx.send(());
+    reader.join().expect("reader");
+    peer.join().expect("peer");
+    assert_eq!(
+        rc,
+        TstError::Closed as i32,
+        "expected TST_E_CLOSED (-7) after cancel, got {rc} (woke after {:?})",
+        t0.elapsed()
+    );
+    assert_eq!(
+        unsafe { tst_tcp_receiver_cancel(h) },
+        0,
+        "cancel is idempotent"
+    );
+    unsafe { tst_tcp_receiver_close(h) };
+}
+
+/// Every `tst_tcp_*_cancel` returns 0 on a live handle and
+/// `TST_E_INVALID_CONFIG` on NULL, and `_cancel` never consumes the handle
+/// (the `_close` after it still frees).
+#[test]
+fn tcp_cancel_entry_points_return_ok_and_null_is_invalid_config() {
+    let url_str = accept_one_background(|p| format!("tcp://127.0.0.1:{p}"));
+    let url = CString::new(url_str).unwrap();
+    let s = unsafe { tst_tcp_sender_open(url.as_ptr()) };
+    assert!(!s.is_null(), "tst_tcp_sender_open failed");
+    assert_eq!(unsafe { tst_tcp_sender_cancel(s) }, 0);
+    assert_eq!(unsafe { tst_tcp_sender_cancel(s) }, 0, "idempotent");
+    unsafe { tst_tcp_sender_close(s) };
+
+    assert_eq!(
+        unsafe { tst_tcp_sender_cancel(std::ptr::null_mut()) },
+        TstError::InvalidConfig as i32
+    );
+    assert_eq!(
+        unsafe { tst_tcp_mux_sender_cancel(std::ptr::null_mut()) },
+        TstError::InvalidConfig as i32
+    );
+    assert_eq!(
+        unsafe { tst_tcp_receiver_cancel(std::ptr::null_mut()) },
+        TstError::InvalidConfig as i32
+    );
+    assert_eq!(
+        unsafe { tst_tcp_demux_receiver_cancel(std::ptr::null_mut()) },
+        TstError::InvalidConfig as i32
+    );
+    assert_eq!(
+        unsafe { tst_tcp_listener_cancel(std::ptr::null_mut()) },
+        TstError::InvalidConfig as i32
+    );
+}
+
+/// `tst_tcp_listener_cancel` wakes a parked `accept_receiver` (Arc 1 WP-4b
+/// gave `TcpListener` the handle; this is its C reach). The listener binds
+/// on a port picked up front because the C ABI has no local-port getter —
+/// the rescue path needs to be able to connect to it.
+#[test]
+fn tcp_listener_cancel_wakes_parked_accept() {
+    let port = free_tcp_port();
+    let bind = CString::new(format!("127.0.0.1:{port}")).unwrap();
+    let l = unsafe { tst_tcp_listener_bind(bind.as_ptr()) };
+    assert!(!l.is_null(), "tst_tcp_listener_bind failed: {}", unsafe {
+        tst_get_last_error()
+    });
+
+    let (done_tx, done_rx) = mpsc::channel::<(bool, i32)>();
+    let lp = SendListener(l);
+    let acceptor = thread::spawn(move || {
+        let p = lp;
+        let r = unsafe { tst_tcp_listener_accept_receiver(p.0) };
+        let code = unsafe { tst_get_last_error() };
+        let _ = done_tx.send((r.is_null(), code));
+        if !r.is_null() {
+            unsafe { tst_tcp_receiver_close(r) };
+        }
+    });
+    thread::sleep(Duration::from_millis(300)); // acceptor is parked
+
+    let t0 = Instant::now();
+    assert_eq!(unsafe { tst_tcp_listener_cancel(l) }, 0, "cancel rc");
+    let (is_null, code) = match done_rx.recv_timeout(Duration::from_secs(10)) {
+        Ok(v) => v,
+        Err(_) => {
+            // Rescue: connect a peer so the accept returns and the thread
+            // can be joined; then fail loudly.
+            let _ = std::net::TcpStream::connect(("127.0.0.1", port));
+            if done_rx.recv_timeout(Duration::from_secs(5)).is_ok() {
+                let _ = acceptor.join();
+                unsafe { tst_tcp_listener_free(l) };
+            }
+            panic!("tst_tcp_listener_cancel did not wake the parked accept within 10 s");
+        }
+    };
+    acceptor.join().expect("acceptor");
+    assert!(
+        is_null,
+        "accept must return NULL after cancel (woke after {:?})",
+        t0.elapsed()
+    );
+    assert_eq!(
+        code,
+        TstError::Closed as i32,
+        "expected TST_E_CLOSED (-7), got {code}"
+    );
+    assert_eq!(
+        unsafe { tst_tcp_listener_cancel(l) },
+        0,
+        "cancel is idempotent"
+    );
+    unsafe { tst_tcp_listener_free(l) };
 }
