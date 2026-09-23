@@ -2138,7 +2138,23 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added — C ABI 0.22 (R3/R4)
 
-- (pending)
+- **C ABI 0.21 → 0.22 (additive).** `tst_demux_config_set_sync_buf_cap(cfg, bytes)`
+  (0 = Rust default) closes the last demuxer-config parity hole (ARCH-10).
+  Cancel entry points for the three transports that had none:
+  `tst_tcp_{sender,mux_sender,receiver,demux_receiver,listener}_cancel`,
+  `tst_udp_{sender,mux_sender,receiver,demux_receiver}_cancel`,
+  `tst_rist_{…}_cancel` — callable from any thread, lock-free, idempotent; a
+  parked data-path call returns `TST_E_CLOSED`. They never free, so the handle
+  still takes its `_close` / `_free`; on RIST that is the point, since a
+  `_recv_ts` never parks and a caller loop would race a freeing `_close`.
+- **`MuxSender::finish` parity (DEBT-14 decided).** C
+  `tst_mux_sender_finish` / `tst_managed_mux_sender_finish` /
+  `tst_{udp,tcp,rtp,rist}_mux_sender_finish`; Python and JVM `finish()` on
+  `srt.MuxSender`, `srt.ManagedMuxSender`, `rtp.MuxSender`. Drain, report the
+  first drain error, close; second call quiet; does not cancel first.
+- **Shell parity matrix** in `docs/reference/binding-authors.md`: Pairer-at-C and
+  live-shell DTS/MISP at C stay deferred with concrete triggers;
+  `FileTransport::finish` is n/a for bindings.
 
 ---
 
