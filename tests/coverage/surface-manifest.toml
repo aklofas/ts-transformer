@@ -6,6 +6,7 @@
 #   (a) every owning_tests path exists;
 #   (b) every binding column symbol resolves in that binding's source
 #       (feature-tagged entries are skipped when the feature is not built);
+#   (b2) every [[surface]] row carries all five binding columns (below);
 #   (c) closure: every mappable baseline item is mapped-or-exempted.
 #
 # Binding column prefixes are IDENTIFIERS, not filesystem paths:
@@ -14,8 +15,16 @@
 #   java:<dotted>    -> grepped in bindings/jvm/src/main/java/** (tst-jni surface-port)
 #   swift:/kotlin:<symbol> [feature=X] -> tst-uniffi (not shipped; presence-only)
 # Five-column rule (rule b2): EVERY [[surface]] row lists all five prefixes.
-# "<prefix>:deferred" = no twin in that binding today; "<prefix>:n/a" = no
-# twin by design. Sentinels are never resolved. Do not omit a column.
+# Do not omit a column — an omitted column is indistinguishable from a
+# forgotten one. Three sentinels stand in for a symbol, and none is resolved:
+#   "<prefix>:unaudited"  nobody has checked whether a twin exists. This is
+#                         the value the 2026-09 bulk migration wrote into the
+#                         c:/python:/java: columns of every pre-existing row;
+#                         it is a TODO, not a claim. Replace it with a real
+#                         symbol, :deferred or :n/a when you audit the row.
+#   "<prefix>:deferred"   no twin in that binding today (a real, checked gap).
+#   "<prefix>:n/a"        no twin by design.
+# swift:/kotlin: are :deferred everywhere: tst-uniffi does not exist yet.
 # The optional " [feature=X]" suffix marks a symbol absent from builds without X
 # (X in {srt,rtp,udp,tcp,hls,rist}); the ratchet skips resolving it unless X is built.
 
@@ -48,7 +57,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::klv::st0601::decode"
 owning_tests = ["crates/tst-core/tests/klv/st0601.rs"]
-bindings = ["python:decode_uas_datalink", "java:org.tstrans.klv.Klv.decodeUasDatalink", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:decode_uas_datalink", "java:org.tstrans.klv.Klv.decodeUasDatalink", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["h264-st0601-mp"]
 tier = "A"
 
@@ -57,7 +66,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::klv::st0601::encode"
 owning_tests = ["crates/tst-core/tests/klv/st0601.rs"]
-bindings = ["python:encode_uas_datalink", "java:org.tstrans.klv.Klv.encodeUasDatalink", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:encode_uas_datalink", "java:org.tstrans.klv.Klv.encodeUasDatalink", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["h264-st0601-mp"]
 tier = "A"
 
@@ -66,7 +75,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::klv::st0601::decode_strict"
 owning_tests = ["crates/tst-core/tests/klv/st0601.rs"]
-bindings = ["python:decode_uas_datalink", "java:org.tstrans.klv.Klv.decodeUasDatalink", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:decode_uas_datalink", "java:org.tstrans.klv.Klv.decodeUasDatalink", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["h264-st0601-mp"]
 tier = "A"
 
@@ -75,7 +84,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::klv::st0601::decode_strict_compliance"
 owning_tests = ["crates/tst-core/tests/klv/st0601.rs"]
-bindings = ["python:decode_uas_datalink", "java:org.tstrans.klv.Klv.decodeUasDatalink", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:decode_uas_datalink", "java:org.tstrans.klv.Klv.decodeUasDatalink", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -84,7 +93,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::klv::st0601::patch"
 owning_tests = ["crates/tst-core/src/klv/st0601/tests.rs"]
-bindings = ["python:patch_uas_datalink", "c:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:patch_uas_datalink", "c:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -93,7 +102,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::mux::MuxerConfig::from_program_map"
 owning_tests = ["crates/tst-core/tests/mpegts/from_program_map.rs"]
-bindings = ["python:MuxerConfig.from_program_map", "c:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:MuxerConfig.from_program_map", "c:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -102,7 +111,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::demux::event::StreamKind::tag"
 owning_tests = ["crates/tst-core/src/mpegts/demux/event.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -111,7 +120,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::klv::st0601::encode_strict_compliance"
 owning_tests = ["crates/tst-core/tests/klv/st0601.rs"]
-bindings = ["python:encode_uas_datalink_strict_compliance", "java:org.tstrans.klv.Klv.encodeUasDatalinkStrictCompliance", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:encode_uas_datalink_strict_compliance", "java:org.tstrans.klv.Klv.encodeUasDatalinkStrictCompliance", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -120,7 +129,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::klv::st0102::encode_strict_compliance"
 owning_tests = ["crates/tst-core/tests/klv/st0102_via_st0601.rs"]
-bindings = ["python:encode_security_strict_compliance", "java:org.tstrans.klv.Klv.encodeSecurityStrictCompliance", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:encode_security_strict_compliance", "java:org.tstrans.klv.Klv.encodeSecurityStrictCompliance", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -129,7 +138,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::klv::st0903::encode_strict_compliance"
 owning_tests = ["crates/tst-core/tests/klv/st0903_via_st0601.rs"]
-bindings = ["python:encode_vmti_strict_compliance", "java:org.tstrans.klv.Klv.encodeVmtiStrictCompliance", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:encode_vmti_strict_compliance", "java:org.tstrans.klv.Klv.encodeVmtiStrictCompliance", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -138,7 +147,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::klv::st0903::encode_standalone_strict_compliance"
 owning_tests = ["crates/tst-core/tests/klv/st0903_standalone_ul.rs"]
-bindings = ["python:encode_vmti_standalone_strict_compliance", "java:org.tstrans.klv.Klv.encodeVmtiStandaloneStrictCompliance", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:encode_vmti_standalone_strict_compliance", "java:org.tstrans.klv.Klv.encodeVmtiStandaloneStrictCompliance", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -147,7 +156,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::klv::st0605::decode"
 owning_tests = ["crates/tst-core/tests/klv/typed_set_proptest.rs"]
-bindings = ["python:decode_precision_timestamp", "java:org.tstrans.klv.Klv.decodePrecisionTimestamp", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:decode_precision_timestamp", "java:org.tstrans.klv.Klv.decodePrecisionTimestamp", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -156,7 +165,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::klv::st0605::encode"
 owning_tests = ["crates/tst-core/tests/klv/typed_set_proptest.rs"]
-bindings = ["python:encode_precision_timestamp", "java:org.tstrans.klv.Klv.encodePrecisionTimestamp", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:encode_precision_timestamp", "java:org.tstrans.klv.Klv.encodePrecisionTimestamp", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -165,7 +174,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::klv::st0102::decode"
 owning_tests = ["crates/tst-core/tests/klv/st0102_via_st0601.rs"]
-bindings = ["python:decode_security", "java:org.tstrans.klv.Klv.decodeSecurity", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:decode_security", "java:org.tstrans.klv.Klv.decodeSecurity", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -174,7 +183,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::klv::st0102::decode_strict"
 owning_tests = ["crates/tst-core/tests/klv/st0102_via_st0601.rs"]
-bindings = ["python:decode_security", "java:org.tstrans.klv.Klv.decodeSecurity", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:decode_security", "java:org.tstrans.klv.Klv.decodeSecurity", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -183,7 +192,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::klv::st0102::encode_to_vec"
 owning_tests = ["crates/tst-core/tests/klv/st0102_via_st0601.rs"]
-bindings = ["python:encode_security", "java:org.tstrans.klv.Klv.encodeSecurity", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:encode_security", "java:org.tstrans.klv.Klv.encodeSecurity", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -192,7 +201,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::klv::st0903::decode"
 owning_tests = ["crates/tst-core/tests/klv/st0903_via_st0601.rs"]
-bindings = ["python:decode_vmti", "java:org.tstrans.klv.Klv.decodeVmti", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:decode_vmti", "java:org.tstrans.klv.Klv.decodeVmti", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -201,7 +210,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::klv::st0903::decode_strict"
 owning_tests = ["crates/tst-core/tests/klv/st0903_via_st0601.rs"]
-bindings = ["python:decode_vmti", "java:org.tstrans.klv.Klv.decodeVmti", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:decode_vmti", "java:org.tstrans.klv.Klv.decodeVmti", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -210,7 +219,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::klv::st0903::encode_to_vec"
 owning_tests = ["crates/tst-core/tests/klv/st0903_via_st0601.rs"]
-bindings = ["python:encode_vmti", "java:org.tstrans.klv.Klv.encodeVmti", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:encode_vmti", "java:org.tstrans.klv.Klv.encodeVmti", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -219,7 +228,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::klv::st0903::encode_to_vec_standalone"
 owning_tests = ["crates/tst-core/tests/klv/st0903_standalone_ul.rs"]
-bindings = ["python:encode_vmti_standalone", "java:org.tstrans.klv.Klv.encodeVmtiStandalone", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:encode_vmti_standalone", "java:org.tstrans.klv.Klv.encodeVmtiStandalone", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -228,7 +237,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::klv::universal_label::UniversalLabel::is_st0601_family"
 owning_tests = ["crates/tst-core/tests/klv/st0601.rs"]
-bindings = ["python:is_st0601_family", "java:org.tstrans.klv.Klv.isSt0601Family", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:is_st0601_family", "java:org.tstrans.klv.Klv.isSt0601Family", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -237,7 +246,7 @@ kind = "rust"
 crate = "tst-udp"
 item = "tst_udp::transport::UdpTransport::connect"
 owning_tests = ["crates/tst-udp/tests/loopback_unicast.rs"]
-bindings = ["c:tst_udp_sender_open", "python:send", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:tst_udp_sender_open", "python:send", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -254,7 +263,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::codec::h264::parse_sps"
 owning_tests = ["crates/tst-core/tests/codec/codec_parameter_sets.rs"]
-bindings = ["python:parse_h264_sps", "java:org.tstrans.codec.Codec.parseH264Sps", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:parse_h264_sps", "java:org.tstrans.codec.Codec.parseH264Sps", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -263,7 +272,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::codec::h264::parse_pps"
 owning_tests = ["crates/tst-core/tests/codec/codec_parameter_sets.rs"]
-bindings = ["python:parse_h264_pps", "java:org.tstrans.codec.Codec.parseH264Pps", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:parse_h264_pps", "java:org.tstrans.codec.Codec.parseH264Pps", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -272,7 +281,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::codec::h264::parse_slice_header_light"
 owning_tests = ["crates/tst-core/tests/codec/codec_parameter_sets.rs"]
-bindings = ["python:parse_h264_slice_header_light", "java:org.tstrans.codec.Codec.parseH264SliceHeaderLight", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:parse_h264_slice_header_light", "java:org.tstrans.codec.Codec.parseH264SliceHeaderLight", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -281,7 +290,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::codec::h264::parse_parameter_sets"
 owning_tests = ["crates/tst-core/tests/codec/codec_parameter_sets.rs"]
-bindings = ["python:parse_h264_parameter_sets", "java:org.tstrans.codec.Codec.parseH264ParameterSets", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:parse_h264_parameter_sets", "java:org.tstrans.codec.Codec.parseH264ParameterSets", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -290,7 +299,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::codec::h265::parse_sps"
 owning_tests = ["crates/tst-core/tests/codec/codec_parameter_sets.rs"]
-bindings = ["python:parse_h265_sps", "java:org.tstrans.codec.Codec.parseH265Sps", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:parse_h265_sps", "java:org.tstrans.codec.Codec.parseH265Sps", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -299,7 +308,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::codec::h265::parse_pps"
 owning_tests = ["crates/tst-core/tests/codec/codec_parameter_sets.rs"]
-bindings = ["python:parse_h265_pps", "java:org.tstrans.codec.Codec.parseH265Pps", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:parse_h265_pps", "java:org.tstrans.codec.Codec.parseH265Pps", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -308,7 +317,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::codec::h265::parse_vps"
 owning_tests = ["crates/tst-core/tests/codec/codec_parameter_sets.rs"]
-bindings = ["python:parse_h265_vps", "java:org.tstrans.codec.Codec.parseH265Vps", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:parse_h265_vps", "java:org.tstrans.codec.Codec.parseH265Vps", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -317,7 +326,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::codec::h265::parse_slice_header_light"
 owning_tests = ["crates/tst-core/tests/codec/codec_parameter_sets.rs"]
-bindings = ["python:parse_h265_slice_header_light", "java:org.tstrans.codec.Codec.parseH265SliceHeaderLight", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:parse_h265_slice_header_light", "java:org.tstrans.codec.Codec.parseH265SliceHeaderLight", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -326,7 +335,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::codec::h265::parse_parameter_sets"
 owning_tests = ["crates/tst-core/tests/codec/codec_parameter_sets.rs"]
-bindings = ["python:parse_h265_parameter_sets", "java:org.tstrans.codec.Codec.parseH265ParameterSets", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:parse_h265_parameter_sets", "java:org.tstrans.codec.Codec.parseH265ParameterSets", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -335,7 +344,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::codec::h266::parse_sps"
 owning_tests = ["crates/tst-core/tests/codec/codec_parameter_sets.rs"]
-bindings = ["python:parse_h266_sps", "java:org.tstrans.codec.Codec.parseH266Sps", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:parse_h266_sps", "java:org.tstrans.codec.Codec.parseH266Sps", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -344,7 +353,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::codec::h266::parse_pps"
 owning_tests = ["crates/tst-core/tests/codec/codec_parameter_sets.rs"]
-bindings = ["python:parse_h266_pps", "java:org.tstrans.codec.Codec.parseH266Pps", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:parse_h266_pps", "java:org.tstrans.codec.Codec.parseH266Pps", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -353,7 +362,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::codec::h266::parse_vps"
 owning_tests = ["crates/tst-core/tests/codec/codec_parameter_sets.rs"]
-bindings = ["python:parse_h266_vps", "java:org.tstrans.codec.Codec.parseH266Vps", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:parse_h266_vps", "java:org.tstrans.codec.Codec.parseH266Vps", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -362,7 +371,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::codec::h266::parse_slice_header_light"
 owning_tests = ["crates/tst-core/tests/codec/codec_parameter_sets.rs"]
-bindings = ["python:parse_h266_slice_header_light", "java:org.tstrans.codec.Codec.parseH266SliceHeaderLight", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:parse_h266_slice_header_light", "java:org.tstrans.codec.Codec.parseH266SliceHeaderLight", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -371,7 +380,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::codec::h266::parse_parameter_sets"
 owning_tests = ["crates/tst-core/tests/codec/codec_parameter_sets.rs"]
-bindings = ["python:parse_h266_parameter_sets", "java:org.tstrans.codec.Codec.parseH266ParameterSets", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:parse_h266_parameter_sets", "java:org.tstrans.codec.Codec.parseH266ParameterSets", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -380,7 +389,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::codec::av1::parse_sequence_header"
 owning_tests = ["crates/tst-core/tests/codec/av1_codec_integration.rs"]
-bindings = ["python:parse_av1_sequence_header", "java:org.tstrans.codec.Codec.parseAv1SequenceHeader", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:parse_av1_sequence_header", "java:org.tstrans.codec.Codec.parseAv1SequenceHeader", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -389,7 +398,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::codec::av1::parse_frame_header_light"
 owning_tests = ["crates/tst-core/tests/codec/av1_codec_integration.rs"]
-bindings = ["python:parse_av1_frame_header_light", "java:org.tstrans.codec.Codec.parseAv1FrameHeaderLight", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:parse_av1_frame_header_light", "java:org.tstrans.codec.Codec.parseAv1FrameHeaderLight", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -398,7 +407,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::codec::av1::parse_obu_stream"
 owning_tests = ["crates/tst-core/tests/codec/av1_codec_integration.rs"]
-bindings = ["python:parse_av1_obu_stream", "java:org.tstrans.codec.Codec.parseAv1ObuStream", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:parse_av1_obu_stream", "java:org.tstrans.codec.Codec.parseAv1ObuStream", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -407,7 +416,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::codec::aac::frames"
 owning_tests = ["crates/tst-core/tests/codec/audio_frame_roundtrip.rs"]
-bindings = ["python:parse_aac_frames", "java:org.tstrans.codec.Codec.parseAacFrames", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:parse_aac_frames", "java:org.tstrans.codec.Codec.parseAacFrames", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["aac-audio-only"]
 tier = "A"
 
@@ -416,7 +425,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::codec::aac::frames_with_resync"
 owning_tests = ["crates/tst-core/tests/codec/audio_frame_roundtrip.rs"]
-bindings = ["python:parse_aac_frames_with_resync", "java:org.tstrans.codec.Codec.parseAacFramesWithResync", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:parse_aac_frames_with_resync", "java:org.tstrans.codec.Codec.parseAacFramesWithResync", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -425,7 +434,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::codec::mpegaudio::frames"
 owning_tests = ["crates/tst-core/tests/codec/audio_frame_roundtrip.rs"]
-bindings = ["python:parse_mpeg2_audio_frames", "java:org.tstrans.codec.Codec.parseMpeg2AudioFrames", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:parse_mpeg2_audio_frames", "java:org.tstrans.codec.Codec.parseMpeg2AudioFrames", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -434,7 +443,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::codec::mpegaudio::frames_with_resync"
 owning_tests = ["crates/tst-core/tests/codec/audio_frame_roundtrip.rs"]
-bindings = ["python:parse_mpeg2_audio_frames_with_resync", "java:org.tstrans.codec.Codec.parseMpeg2AudioFramesWithResync", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:parse_mpeg2_audio_frames_with_resync", "java:org.tstrans.codec.Codec.parseMpeg2AudioFramesWithResync", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -1857,7 +1866,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::codec::misp_time::MispTimeError"
 owning_tests = ["crates/tst-core/src/codec/misp_time.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "B"
 
 [[exempt]]
@@ -1877,7 +1886,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::codec::misp_time::MispTimeExtractError"
 owning_tests = ["crates/tst-core/src/codec/misp_time.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "B"
 
 [[exempt]]
@@ -1897,7 +1906,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::codec::misp_time::MispTimeKind"
 owning_tests = ["crates/tst-core/src/codec/misp_time.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "B"
 
 [[exempt]]
@@ -1917,7 +1926,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::codec::misp_time::MispTimestamp"
 owning_tests = ["crates/tst-core/src/codec/misp_time.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "B"
 
 [[surface]]
@@ -1925,7 +1934,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::codec::misp_time::MispTimestamp::micros"
 owning_tests = ["crates/tst-core/src/codec/misp_time.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "B"
 
 [[surface]]
@@ -1933,7 +1942,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::codec::misp_time::MispTimestamp::nanos"
 owning_tests = ["crates/tst-core/src/codec/misp_time.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "B"
 
 [[exempt]]
@@ -1953,7 +1962,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::codec::misp_time::MISP_MICROSEC_ID_H264"
 owning_tests = ["crates/tst-core/src/codec/misp_time.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "B"
 
 [[surface]]
@@ -1961,7 +1970,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::codec::misp_time::MISP_MICROSEC_ID_H265"
 owning_tests = ["crates/tst-core/src/codec/misp_time.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "B"
 
 [[surface]]
@@ -1969,7 +1978,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::codec::misp_time::MISP_NANOSEC_ID_H265"
 owning_tests = ["crates/tst-core/src/codec/misp_time.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "B"
 
 [[surface]]
@@ -1977,7 +1986,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::codec::misp_time::build_sei_nal"
 owning_tests = ["crates/tst-core/src/codec/misp_time.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "B"
 
 [[surface]]
@@ -1985,7 +1994,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::codec::misp_time::extract"
 owning_tests = ["crates/tst-core/src/codec/misp_time.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "B"
 
 [[surface]]
@@ -1993,7 +2002,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::codec::misp_time::identifier_for"
 owning_tests = ["crates/tst-core/src/codec/misp_time.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "B"
 
 [[exempt]]
@@ -2223,7 +2232,7 @@ item = "tst_core::io_file::TryDemuxFromFile"
 owning_tests = ["crates/tst-core/tests/io/io_file_smoke.rs"]
 # java: tst-jni io wave — Io.parseFile is the JVM fallible-streaming-from-file
 # analogue (surfaces demux errors as DemuxException, like TryDemuxFromFile yields Err).
-bindings = ["java:org.tstrans.io.parseFile", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.io.parseFile", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["h264-st0601-mp"]
 tier = "A"
 
@@ -2261,7 +2270,7 @@ crate = "tst-core"
 item = "tst_core::io_file::write_mux_to_file"
 owning_tests = ["crates/tst-core/tests/io/io_file_smoke.rs"]
 # java: tst-jni io wave — Muxer.writeFile is the JVM whole-file mux-to-disk analogue.
-bindings = ["java:org.tstrans.mpegts.Muxer.writeFile", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.mpegts.Muxer.writeFile", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -2538,7 +2547,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::klv::imapb::encode_imapb_special"
 owning_tests = ["crates/tst-core/src/klv/imapb.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -2769,7 +2778,7 @@ reason = "derive impl for the WP-B tag 126 coded enum; wire-code pins + round-tr
 [[surface]]
 item = "tst_core::klv::st0601::ImageHorizonPixels"
 owning_tests = ["crates/tst-core/src/klv/st0601/tests.rs", "crates/tst-core/src/klv/st0601/packs.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -2792,7 +2801,7 @@ reason = "derive impl for the WP-C tag 81 pack struct; exercised the same way"
 [[surface]]
 item = "tst_core::klv::st0601::ControlCommand"
 owning_tests = ["crates/tst-core/src/klv/st0601/tests.rs", "crates/tst-core/src/klv/st0601/packs.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -2811,7 +2820,7 @@ reason = "derive impl for the WP-C tag 115 pack struct; exercised the same way"
 [[surface]]
 item = "tst_core::klv::st0601::SdccFlpField"
 owning_tests = ["crates/tst-core/src/klv/st0601/tests.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -2830,7 +2839,7 @@ reason = "derive impl for the WP-C tag 102 pack struct; exercised the same way"
 [[surface]]
 item = "tst_core::klv::st0601::SensorFrameRate"
 owning_tests = ["crates/tst-core/src/klv/st0601/tests.rs", "crates/tst-core/src/klv/st0601/packs.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -2849,14 +2858,14 @@ reason = "derive impl for the WP-C tag 127 pack struct; exercised the same way"
 [[surface]]
 item = "tst_core::klv::st0601::SensorFrameRate::fps"
 owning_tests = ["crates/tst-core/src/klv/st0601/packs.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st0601::MetadataSubstreamId"
 owning_tests = ["crates/tst-core/src/klv/st0601/tests.rs", "crates/tst-core/src/klv/st0601/packs.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -2875,7 +2884,7 @@ reason = "derive impl for the WP-C tag 143 pack struct; exercised the same way"
 [[surface]]
 item = "tst_core::klv::st0601::CountryCodes"
 owning_tests = ["crates/tst-core/src/klv/st0601/tests.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -2898,7 +2907,7 @@ reason = "derive impl for the WP-C tag 122 pack struct; exercised the same way"
 [[surface]]
 item = "tst_core::klv::st0601::WavelengthRecord"
 owning_tests = ["crates/tst-core/src/klv/st0601/tests.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -2917,7 +2926,7 @@ reason = "derive impl for the WP-C tag 128 pack struct; exercised the same way"
 [[surface]]
 item = "tst_core::klv::st0601::Location"
 owning_tests = ["crates/tst-core/src/klv/st0601/tests.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -2940,7 +2949,7 @@ reason = "derive impl for the WP-C Location struct; exercised the same way"
 [[surface]]
 item = "tst_core::klv::st0601::AirbaseLocations"
 owning_tests = ["crates/tst-core/src/klv/st0601/tests.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -2975,7 +2984,7 @@ reason = "derive impl for the WP-C tag 138 Payload Type enum; wire-code pins + r
 [[surface]]
 item = "tst_core::klv::st0601::PayloadRecord"
 owning_tests = ["crates/tst-core/src/klv/st0601/tests.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -2994,7 +3003,7 @@ reason = "derive impl for the WP-C tag 138 pack struct; exercised the same way"
 [[surface]]
 item = "tst_core::klv::st0601::PayloadList"
 owning_tests = ["crates/tst-core/src/klv/st0601/tests.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -3013,42 +3022,42 @@ reason = "derive impl for the WP-C tag 138 pack struct; exercised the same way"
 [[surface]]
 item = "tst_core::klv::st0601::WeaponsStore"
 owning_tests = ["crates/tst-core/src/klv/st0601/tests.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st0601::WeaponsStore::fuze_enabled"
 owning_tests = ["crates/tst-core/src/klv/st0601/tests.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st0601::WeaponsStore::general_status"
 owning_tests = ["crates/tst-core/src/klv/st0601/tests.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st0601::WeaponsStore::laser_enabled"
 owning_tests = ["crates/tst-core/src/klv/st0601/tests.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st0601::WeaponsStore::target_enabled"
 owning_tests = ["crates/tst-core/src/klv/st0601/tests.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st0601::WeaponsStore::weapon_armed"
 owning_tests = ["crates/tst-core/src/klv/st0601/tests.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -3067,7 +3076,7 @@ reason = "derive impl for the WP-C tag 140 pack struct; exercised the same way"
 [[surface]]
 item = "tst_core::klv::st0601::Waypoint"
 owning_tests = ["crates/tst-core/src/klv/st0601/tests.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -3086,7 +3095,7 @@ reason = "derive impl for the WP-C tag 141 pack struct; exercised the same way"
 [[surface]]
 item = "tst_core::klv::st0601::ViewDomain"
 owning_tests = ["crates/tst-core/src/klv/st0601/tests.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -3109,7 +3118,7 @@ reason = "derive impl for the WP-C tag 142 pack struct; exercised the same way"
 [[surface]]
 item = "tst_core::klv::st0601::ViewDomainPair"
 owning_tests = ["crates/tst-core/src/klv/st0601/tests.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -3216,105 +3225,105 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 [[surface]]
 item = "tst_core::klv::st0806::RvtAoi"
 owning_tests = ["crates/tst-core/src/klv/st0806/tests.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st0806::RvtLs"
 owning_tests = ["crates/tst-core/src/klv/st0806/tests.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st0806::RvtPoi"
 owning_tests = ["crates/tst-core/src/klv/st0806/tests.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st0806::RvtUserData"
 owning_tests = ["crates/tst-core/src/klv/st0806/tests.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::RvtLs::aircraft_mgrs"
 owning_tests = ["crates/tst-core/src/klv/st0806/tests.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::RvtUserData::data_type"
 owning_tests = ["crates/tst-core/src/klv/st0806/tests.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::RvtUserData::numeric_id"
 owning_tests = ["crates/tst-core/src/klv/st0806/tests.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st0806::RVT_AOI_LS_UL"
 owning_tests = ["crates/tst-core/src/klv/st0806/tests.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st0806::RVT_LS_UL"
 owning_tests = ["crates/tst-core/src/klv/st0806/tests.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st0806::RVT_POI_LS_UL"
 owning_tests = ["crates/tst-core/src/klv/st0806/tests.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st0806::RVT_USER_DEFINED_LS_UL"
 owning_tests = ["crates/tst-core/src/klv/st0806/tests.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st0806::decode"
 owning_tests = ["crates/tst-core/src/klv/st0806/tests.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st0806::decode_standalone"
 owning_tests = ["crates/tst-core/src/klv/st0806/tests.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st0806::encode_to_vec"
 owning_tests = ["crates/tst-core/src/klv/st0806/tests.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st0806::encode_to_vec_standalone"
 owning_tests = ["crates/tst-core/src/klv/st0806/tests.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4011,7 +4020,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::demux::AudioCodec"
 owning_tests = ["crates/tst-core/tests/mpegts/demux.rs"]
-bindings = ["java:org.tstrans.mpegts.AudioCodec", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.mpegts.AudioCodec", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "A"
 
 [[surface]]
@@ -4019,7 +4028,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::demux::DemuxEvent"
 owning_tests = ["crates/tst-core/tests/mpegts/demux.rs"]
-bindings = ["java:org.tstrans.mpegts.DemuxEvent", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.mpegts.DemuxEvent", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "A"
 
 [[exempt]]
@@ -4031,7 +4040,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::demux::DemuxerConfigBuilder"
 owning_tests = ["crates/tst-core/tests/mpegts/demux.rs"]
-bindings = ["java:org.tstrans.mpegts.DemuxerConfig.Builder", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.mpegts.DemuxerConfig.Builder", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "A"
 
 [[exempt]]
@@ -4139,7 +4148,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::demux::DiscontinuityKind"
 owning_tests = ["crates/tst-core/tests/mpegts/demux.rs"]
-bindings = ["java:org.tstrans.mpegts.DiscontinuityKind", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.mpegts.DiscontinuityKind", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "A"
 
 [[exempt]]
@@ -4155,7 +4164,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::demux::MetadataKind"
 owning_tests = ["crates/tst-core/tests/mpegts/demux.rs"]
-bindings = ["java:org.tstrans.mpegts.MetadataKind", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.mpegts.MetadataKind", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "A"
 
 [[exempt]]
@@ -4167,7 +4176,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::demux::NonConformantIssue"
 owning_tests = ["crates/tst-core/tests/mpegts/demux.rs"]
-bindings = ["java:org.tstrans.mpegts.NonConformantKind", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.mpegts.NonConformantKind", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "A"
 
 [[exempt]]
@@ -4203,7 +4212,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::demux::StreamId"
 owning_tests = ["crates/tst-core/tests/mpegts/demux.rs"]
-bindings = ["java:org.tstrans.mpegts.StreamId", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.mpegts.StreamId", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "A"
 
 [[exempt]]
@@ -4215,7 +4224,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::demux::StreamKind"
 owning_tests = ["crates/tst-core/tests/mpegts/demux.rs"]
-bindings = ["java:org.tstrans.mpegts.StreamKind", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.mpegts.StreamKind", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "A"
 
 [[surface]]
@@ -4223,7 +4232,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::demux::StrictMode"
 owning_tests = ["crates/tst-core/tests/mpegts/demux.rs"]
-bindings = ["java:org.tstrans.mpegts.StrictMode", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.mpegts.StrictMode", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "A"
 
 [[surface]]
@@ -4231,7 +4240,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::demux::SubtitleCodec"
 owning_tests = ["crates/tst-core/tests/mpegts/demux.rs"]
-bindings = ["java:org.tstrans.mpegts.SubtitleCodec", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.mpegts.SubtitleCodec", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "A"
 
 [[surface]]
@@ -4239,7 +4248,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::demux::VideoCodec"
 owning_tests = ["crates/tst-core/tests/mpegts/demux.rs"]
-bindings = ["java:org.tstrans.mpegts.VideoCodec", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.mpegts.VideoCodec", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "A"
 
 [[surface]]
@@ -4247,7 +4256,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::mux::VideoCodec::from"
 owning_tests = ["crates/tst-core/src/codec/misp_time.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 # demux→mux codec bridge for misp_time::extract; tested in misp_time::tests::demux_codec_converts_for_extract
 tier = "B"
 
@@ -4327,7 +4336,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::demux::event::AudioCodec"
 owning_tests = ["crates/tst-core/tests/mpegts/demux.rs"]
-bindings = ["java:org.tstrans.mpegts.AudioCodec", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.mpegts.AudioCodec", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "A"
 
 [[exempt]]
@@ -4367,7 +4376,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::demux::event::DemuxEvent"
 owning_tests = ["crates/tst-core/tests/mpegts/demux.rs"]
-bindings = ["java:org.tstrans.mpegts.DemuxEvent", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.mpegts.DemuxEvent", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "A"
 
 [[exempt]]
@@ -4387,7 +4396,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::demux::event::DiscontinuityKind"
 owning_tests = ["crates/tst-core/tests/mpegts/demux.rs"]
-bindings = ["java:org.tstrans.mpegts.DiscontinuityKind", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.mpegts.DiscontinuityKind", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "A"
 
 [[exempt]]
@@ -4439,7 +4448,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::demux::event::MetadataKind"
 owning_tests = ["crates/tst-core/tests/mpegts/demux.rs"]
-bindings = ["java:org.tstrans.mpegts.MetadataKind", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.mpegts.MetadataKind", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "A"
 
 [[exempt]]
@@ -4503,7 +4512,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::demux::event::NonConformantIssue"
 owning_tests = ["crates/tst-core/tests/mpegts/demux.rs"]
-bindings = ["java:org.tstrans.mpegts.NonConformantKind", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.mpegts.NonConformantKind", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "A"
 
 [[exempt]]
@@ -4631,7 +4640,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::demux::event::StreamId"
 owning_tests = ["crates/tst-core/tests/mpegts/demux.rs"]
-bindings = ["java:org.tstrans.mpegts.StreamId", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.mpegts.StreamId", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "A"
 
 [[exempt]]
@@ -4671,7 +4680,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::demux::event::StreamKind"
 owning_tests = ["crates/tst-core/tests/mpegts/demux.rs"]
-bindings = ["java:org.tstrans.mpegts.StreamKind", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.mpegts.StreamKind", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "A"
 
 [[exempt]]
@@ -4695,7 +4704,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::demux::event::SubtitleCodec"
 owning_tests = ["crates/tst-core/tests/mpegts/demux.rs"]
-bindings = ["java:org.tstrans.mpegts.SubtitleCodec", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.mpegts.SubtitleCodec", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "A"
 
 [[exempt]]
@@ -4719,7 +4728,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::demux::event::VideoCodec"
 owning_tests = ["crates/tst-core/tests/mpegts/demux.rs"]
-bindings = ["java:org.tstrans.mpegts.VideoCodec", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.mpegts.VideoCodec", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "A"
 
 [[exempt]]
@@ -4951,7 +4960,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::demux::strict::StrictMode"
 owning_tests = ["crates/tst-core/tests/mpegts/demux.rs"]
-bindings = ["java:org.tstrans.mpegts.StrictMode", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.mpegts.StrictMode", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "A"
 
 [[exempt]]
@@ -5151,7 +5160,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::descriptors::descriptor_with_tag_unchecked"
 owning_tests = ["crates/tst-core/src/mpegts/descriptors/mod.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -5314,7 +5323,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::mux::Muxer::data_handles"
 owning_tests = ["crates/tst-core/tests/mpegts/mux_data.rs"]
-bindings = ["python:data_handles", "java:org.tstrans.mpegts.Muxer.dataHandles", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:data_handles", "java:org.tstrans.mpegts.Muxer.dataHandles", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -5323,7 +5332,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::mux::Muxer::data_handles_for_program"
 owning_tests = ["crates/tst-core/tests/mpegts/mux_data.rs"]
-bindings = ["python:data_handles_for_program", "c:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:data_handles_for_program", "c:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -5332,7 +5341,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::mux::Muxer::data_stream_handle"
 owning_tests = ["crates/tst-core/tests/mpegts/mux_data.rs"]
-bindings = ["python:data_stream_handle", "java:org.tstrans.mpegts.Muxer.dataStreamHandle", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:data_stream_handle", "java:org.tstrans.mpegts.Muxer.dataStreamHandle", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -5498,7 +5507,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::mux::MuxerConfigBuilder"
 owning_tests = ["crates/tst-core/tests/mpegts/mux.rs"]
-bindings = ["python:MuxerConfigBuilder", "java:org.tstrans.mpegts.MuxerConfig.Builder", "c:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:MuxerConfigBuilder", "java:org.tstrans.mpegts.MuxerConfig.Builder", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 tier = "A"
 
 # ---------------------------------------------------------------------------
@@ -5513,7 +5522,7 @@ kind = "rust"
 crate = "tst-srt"
 item = "tst_srt::SocketBuilder"
 owning_tests = ["crates/tst-srt/tests/builder/lifecycle.rs"]
-bindings = ["java:org.tstrans.srt.Builder", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.srt.Builder", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["h264-st0601-mp"]
 tier = "A"
 
@@ -5522,7 +5531,7 @@ kind = "rust"
 crate = "tst-srt"
 item = "tst_srt::Socket"
 owning_tests = ["crates/tst-srt/tests/builder/lifecycle.rs"]
-bindings = ["java:org.tstrans.srt.Socket", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.srt.Socket", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["h264-st0601-mp"]
 tier = "A"
 
@@ -5531,7 +5540,7 @@ kind = "rust"
 crate = "tst-srt"
 item = "tst_srt::Listener"
 owning_tests = ["crates/tst-srt/tests/builder/listener.rs"]
-bindings = ["java:org.tstrans.srt.Listener", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.srt.Listener", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["h264-st0601-mp"]
 tier = "A"
 
@@ -5544,7 +5553,7 @@ owning_tests = ["crates/tst-core/src/cancel.rs", "crates/tst-pipeline/tests/mana
 # inner transport's cancel handle through; re-exported by tst-pipeline as the
 # type alias FactoryCancel. Reached from the C ABI / Python / JVM managed
 # shells, never as a binding symbol of its own.
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -5556,7 +5565,7 @@ owning_tests = ["crates/tst-srt/tests/loopback/listener_accept_one_cancellable.r
 # Bind + one accept reachable through a CancelSlot — the body every SRT
 # listener reconnect factory used to copy. Called by the C, Python and JVM
 # listener factories, never exposed as a binding symbol of its own.
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -5569,7 +5578,7 @@ owning_tests = ["crates/tst-core/src/cancel.rs", "crates/tst-pipeline/tests/mana
 # inner transport's cancel handle through; re-exported by tst-pipeline as the
 # type alias FactoryCancel. Reached from the C ABI / Python / JVM managed
 # shells, never as a binding symbol of its own.
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -5582,7 +5591,7 @@ owning_tests = ["crates/tst-core/src/cancel.rs", "crates/tst-pipeline/tests/mana
 # inner transport's cancel handle through; re-exported by tst-pipeline as the
 # type alias FactoryCancel. Reached from the C ABI / Python / JVM managed
 # shells, never as a binding symbol of its own.
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -5595,7 +5604,7 @@ owning_tests = ["crates/tst-core/src/cancel.rs", "crates/tst-pipeline/tests/mana
 # inner transport's cancel handle through; re-exported by tst-pipeline as the
 # type alias FactoryCancel. Reached from the C ABI / Python / JVM managed
 # shells, never as a binding symbol of its own.
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -5608,7 +5617,7 @@ owning_tests = ["crates/tst-core/src/cancel.rs", "crates/tst-pipeline/tests/mana
 # inner transport's cancel handle through; re-exported by tst-pipeline as the
 # type alias FactoryCancel. Reached from the C ABI / Python / JVM managed
 # shells, never as a binding symbol of its own.
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -5621,7 +5630,7 @@ owning_tests = ["crates/tst-core/src/cancel.rs", "crates/tst-pipeline/tests/mana
 # inner transport's cancel handle through; re-exported by tst-pipeline as the
 # type alias FactoryCancel. Reached from the C ABI / Python / JVM managed
 # shells, never as a binding symbol of its own.
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -5634,7 +5643,7 @@ owning_tests = ["crates/tst-core/src/cancel.rs", "crates/tst-pipeline/tests/mana
 # inner transport's cancel handle through; re-exported by tst-pipeline as the
 # type alias FactoryCancel. Reached from the C ABI / Python / JVM managed
 # shells, never as a binding symbol of its own.
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -5643,7 +5652,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::SrtCancelHandle"
 owning_tests = ["crates/tst-srt/tests/loopback/cancellation_loopback.rs"]
-bindings = ["java:org.tstrans.srt.CancelHandle", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.srt.CancelHandle", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 # No scenario_ids: neither the owning Rust test nor the JVM loopback test
 # exercises CancelHandle via the h264-st0601-mp scenario (the loopback test
 # never calls cancelHandle()); coverage is the dedicated cancellation_loopback test.
@@ -5655,7 +5664,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::Sender"
 owning_tests = ["crates/tst-pipeline/tests/pipeline_ts_sender.rs"]
-bindings = ["java:org.tstrans.srt.Sender", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.srt.Sender", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["h264-st0601-mp"]
 tier = "A"
 
@@ -5664,7 +5673,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::Receiver"
 owning_tests = ["crates/tst-pipeline/tests/pipeline_receiver.rs"]
-bindings = ["java:org.tstrans.srt.Receiver", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.srt.Receiver", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["h264-st0601-mp"]
 tier = "A"
 
@@ -5990,7 +5999,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::net::io_classify::SendClass"
 owning_tests = ["crates/tst-core/src/net/io_classify.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -5999,7 +6008,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::net::io_classify::SendClass::eq"
 owning_tests = ["crates/tst-core/src/net/io_classify.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -6016,7 +6025,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::net::io_classify::classify_send_error"
 owning_tests = ["crates/tst-core/src/net/io_classify.rs", "crates/tst-tcp/src/transport.rs", "crates/tst-udp/src/transport.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -6025,7 +6034,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::net::SendClass"
 owning_tests = ["crates/tst-tcp/src/transport.rs", "crates/tst-udp/src/transport.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -6034,7 +6043,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::net::classify_send_error"
 owning_tests = ["crates/tst-tcp/src/transport.rs", "crates/tst-udp/src/transport.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -6263,7 +6272,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::transport::TransportError::is_connection_refused"
 owning_tests = ["crates/tst-core/src/transport.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -6275,7 +6284,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::transport::BrokenCause::eq"
 owning_tests = ["crates/tst-tcp/tests/loopback.rs", "crates/tst-tcp/tests/tls_hostname.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -6347,7 +6356,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::url::common::percent_decode"
 owning_tests = ["crates/tst-core/src/url/common.rs", "crates/tst-rtp/src/url.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -6390,7 +6399,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::BackoffStrategy"
 owning_tests = ["crates/tst-pipeline/tests/poison_policy.rs"]
-bindings = ["java:org.tstrans.srt.BackoffStrategy", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.srt.BackoffStrategy", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -6429,7 +6438,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::DemuxReceiver"
 owning_tests = ["crates/tst-pipeline/tests/demux_receiver_malformed_pes_recovery.rs"]
-bindings = ["java:org.tstrans.srt.DemuxReceiver", "java:org.tstrans.rtp.DemuxReceiver", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.srt.DemuxReceiver", "java:org.tstrans.rtp.DemuxReceiver", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -6472,7 +6481,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::ManagedDemuxReceiver"
 owning_tests = ["crates/tst-pipeline/tests/managed_demux_receiver_reconnect.rs"]
-bindings = ["java:org.tstrans.srt.ManagedDemuxReceiver", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.srt.ManagedDemuxReceiver", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -6483,7 +6492,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::ManagedRecvTransport"
 owning_tests = ["crates/tst-pipeline/tests/managed_receive_tracing.rs"]
-bindings = ["java:org.tstrans.srt.ManagedReceiver", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.srt.ManagedReceiver", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -6497,7 +6506,7 @@ owning_tests = ["crates/tst-pipeline/tests/managed_receive_cancel_factory.rs"]
 # factories (no direct binding symbol); their parity tests: tst-c
 # receiving::managed_listener_cancel, tst-py test_srt_managed_listener_cancel.py,
 # JVM SrtManagedListenerCancelTest.
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -6511,7 +6520,7 @@ owning_tests = ["crates/tst-pipeline/tests/managed_receive_cancel_factory.rs"]
 # factories (no direct binding symbol); their parity tests: tst-c
 # receiving::managed_listener_cancel, tst-py test_srt_managed_listener_cancel.py,
 # JVM SrtManagedListenerCancelTest.
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -6523,7 +6532,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::ManagedTransport"
 owning_tests = ["crates/tst-pipeline/tests/reconnect_reject_overflow.rs"]
-bindings = ["java:org.tstrans.srt.ManagedSender", "java:org.tstrans.srt.ManagedMuxSender", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.srt.ManagedSender", "java:org.tstrans.srt.ManagedMuxSender", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -6538,7 +6547,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::MuxSender"
 owning_tests = ["crates/tst-pipeline/tests/mux_sender_golden.rs"]
-bindings = ["java:org.tstrans.srt.MuxSender", "java:org.tstrans.rtp.MuxSender", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.srt.MuxSender", "java:org.tstrans.rtp.MuxSender", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["video-roundtrip"]
 tier = "A"
 
@@ -6553,7 +6562,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::OverflowPolicy"
 owning_tests = ["crates/tst-pipeline/tests/reconnect_reject_overflow.rs"]
-bindings = ["java:org.tstrans.srt.OverflowPolicy", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.srt.OverflowPolicy", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -6602,7 +6611,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::ReconnectPolicy"
 owning_tests = ["crates/tst-pipeline/tests/reconnect_reject_overflow.rs"]
-bindings = ["java:org.tstrans.srt.ReconnectPolicy", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.srt.ReconnectPolicy", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -6753,7 +6762,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::ext::file_transport::FileTransport"
 owning_tests = ["crates/tst-pipeline/src/ext/file_transport.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -6762,7 +6771,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::ext::file_transport::FileTransport::create"
 owning_tests = ["crates/tst-pipeline/src/ext/file_transport.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -6771,7 +6780,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::ext::file_transport::FileTransport::bytes_sent"
 owning_tests = ["crates/tst-pipeline/src/ext/file_transport.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -6780,7 +6789,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::ext::file_transport::FileTransport::finish"
 owning_tests = ["crates/tst-pipeline/src/ext/file_transport.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -6789,7 +6798,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::ext::file_transport::FileTransport::send_bytes"
 owning_tests = ["crates/tst-pipeline/src/ext/file_transport.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -6798,7 +6807,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::ext::file_transport::FileTransport::max_payload"
 owning_tests = ["crates/tst-pipeline/src/ext/file_transport.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -6807,7 +6816,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::ext::file_transport::FileTransport::is_alive"
 owning_tests = ["crates/tst-pipeline/src/ext/file_transport.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -6816,7 +6825,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::ext::file_transport::FileTransport::close"
 owning_tests = ["crates/tst-pipeline/src/ext/file_transport.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -6825,7 +6834,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::ext::file_transport::FileTransport::socket_stats"
 owning_tests = ["crates/tst-pipeline/src/ext/file_transport.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -6956,7 +6965,7 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 [[surface]]
 item = "tst_pipeline::ext::pairing::VideoSample::split_units"
 owning_tests = ["crates/tst-pipeline/src/ext/pairing/nearest.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 
 [[exempt]]
 item = "tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver"
@@ -7014,7 +7023,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::mux_sender::MuxSender"
 owning_tests = ["crates/tst-pipeline/src/mux_sender.rs", "crates/tst-pipeline/tests/mux_sender_golden.rs"]
-bindings = ["java:org.tstrans.srt.MuxSender", "java:org.tstrans.rtp.MuxSender", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.srt.MuxSender", "java:org.tstrans.rtp.MuxSender", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["video-roundtrip"]
 tier = "A"
 
@@ -7363,7 +7372,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::reconnect::ManagedStatsHandle"
 owning_tests = ["crates/tst-pipeline/tests/reconnect_background.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -7372,7 +7381,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::ManagedStatsHandle"
 owning_tests = ["crates/tst-pipeline/tests/reconnect_background.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -7381,7 +7390,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::reconnect::ManagedStatsHandle::stats"
 owning_tests = ["crates/tst-pipeline/tests/reconnect_background.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -7462,7 +7471,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::reconnect::RecvEndReasonHandle"
 owning_tests = ["crates/tst-pipeline/tests/managed_demux_receiver_reconnect.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -7471,7 +7480,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::RecvEndReasonHandle"
 owning_tests = ["crates/tst-pipeline/tests/managed_demux_receiver_reconnect.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -7480,7 +7489,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::RecvEndReasonHandle::get"
 owning_tests = ["crates/tst-pipeline/tests/managed_demux_receiver_reconnect.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -8017,7 +8026,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::MountHandle"
 owning_tests = ["crates/tst-rtp/tests/rtsp_server/mount.rs"]
-bindings = ["java:org.tstrans.rtp.MountHandle", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.rtp.MountHandle", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -8070,7 +8079,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::RtpCancelHandle"
 owning_tests = ["crates/tst-rtp/tests/rtp/loopback_unicast.rs"]
-bindings = ["java:org.tstrans.rtp.CancelHandle", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.rtp.CancelHandle", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -8087,7 +8096,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::RtpRecvSocketBuilder"
 owning_tests = ["crates/tst-rtp/tests/rtp/loopback_unicast.rs"]
-bindings = ["java:org.tstrans.rtp.Receiver", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.rtp.Receiver", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["h264-st0601-mp"]
 tier = "A"
 
@@ -8096,7 +8105,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::RtpRecvTransport"
 owning_tests = ["crates/tst-rtp/tests/rtp/loopback_unicast.rs"]
-bindings = ["java:org.tstrans.rtp.Receiver", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.rtp.Receiver", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["h264-st0601-mp"]
 tier = "A"
 
@@ -8105,7 +8114,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::RtpSocketBuilder"
 owning_tests = ["crates/tst-rtp/tests/rtp/loopback_unicast.rs"]
-bindings = ["java:org.tstrans.rtp.Sender", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.rtp.Sender", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["h264-st0601-mp"]
 tier = "A"
 
@@ -8114,7 +8123,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::RtpTransport"
 owning_tests = ["crates/tst-rtp/tests/rtp/loopback_unicast.rs"]
-bindings = ["java:org.tstrans.rtp.Sender", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.rtp.Sender", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["h264-st0601-mp"]
 tier = "A"
 
@@ -8127,7 +8136,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::RtspCancelHandle"
 owning_tests = ["crates/tst-rtp/tests/rtsp_client/setup_play.rs"]
-bindings = ["java:org.tstrans.rtp.RtspCancelHandle", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.rtp.RtspCancelHandle", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -8136,7 +8145,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::RtspClient"
 owning_tests = ["crates/tst-rtp/tests/rtsp_client/setup_play.rs"]
-bindings = ["java:org.tstrans.rtp.RtspClient", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.rtp.RtspClient", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -8145,7 +8154,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::RtspClientBuilder"
 owning_tests = ["crates/tst-rtp/tests/rtsp_client/setup_play.rs"]
-bindings = ["java:org.tstrans.rtp.RtspClient", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.rtp.RtspClient", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -8162,7 +8171,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::RtspServer"
 owning_tests = ["crates/tst-rtp/tests/rtsp_server/mount.rs"]
-bindings = ["java:org.tstrans.rtp.RtspServer", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.rtp.RtspServer", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -8171,7 +8180,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::RtspServerBuilder"
 owning_tests = ["crates/tst-rtp/tests/rtsp_server/auth_basic.rs"]
-bindings = ["java:org.tstrans.rtp.RtspServer", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.rtp.RtspServer", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -8180,7 +8189,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::RtspServerCancelHandle"
 owning_tests = ["crates/tst-rtp/tests/rtsp_server/shutdown.rs"]
-bindings = ["java:org.tstrans.rtp.RtspServerCancelHandle", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.rtp.RtspServerCancelHandle", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -8189,7 +8198,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::RtspSession"
 owning_tests = ["crates/tst-rtp/tests/rtsp_client/setup_play.rs"]
-bindings = ["java:org.tstrans.rtp.RtspSession", "c:deferred", "python:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.rtp.RtspSession", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -8224,7 +8233,7 @@ owning_tests = [
   "crates/tst-rtp/src/rtsp/client/end_reason.rs",
   "crates/tst-rtp/src/transport.rs",
 ]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -8353,7 +8362,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::builder::RtspClientBuilder::request_timeout"
 owning_tests = ["crates/tst-rtp/src/builder.rs", "crates/tst-rtp/tests/rtsp_client/builder_timeouts.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -8366,7 +8375,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::builder::RtspClientBuilder::transport_preference"
 owning_tests = ["crates/tst-rtp/src/builder.rs", "crates/tst-rtp/tests/h264/rtsp_session.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -8379,7 +8388,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::builder::RtspClientBuilder::tcp_keepalive"
 owning_tests = ["crates/tst-rtp/src/builder.rs", "crates/tst-rtp/src/rtsp/client/mod.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -8969,7 +8978,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::rtsp::client::end_reason::StreamEndReason::clone"
 owning_tests = ["crates/tst-rtp/src/rtsp/client/end_reason.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -8988,7 +8997,7 @@ owning_tests = [
   "crates/tst-rtp/src/rtsp/client/end_reason.rs",
   "crates/tst-rtp/src/transport.rs",
 ]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -9010,7 +9019,7 @@ owning_tests = [
   "crates/tst-rtp/src/rtsp/client/end_reason.rs",
   "crates/tst-rtp/src/transport.rs",
 ]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -9448,7 +9457,7 @@ owning_tests = [
   "crates/tst-rtp/src/transport.rs",
   "crates/tst-rtp/tests/rtsp_client/stream_end_reason.rs",
 ]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -9460,7 +9469,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::transport::RtpRecvTransport::end_reason_handle"
 owning_tests = ["crates/tst-rtp/src/transport.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -9496,7 +9505,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::transport::RtpRecvTransport::recv_timeout"
 owning_tests = ["crates/tst-rtp/src/transport.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -9509,7 +9518,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::transport::RtpRecvTransport::set_recv_timeout"
 owning_tests = ["crates/tst-rtp/src/transport.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -9869,7 +9878,7 @@ owning_tests = [
   "crates/tst-rtp/src/h264/receiver.rs",
   "crates/tst-rtp/tests/rtsp_client/stream_end_reason.rs",
 ]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -9896,7 +9905,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::h264::receiver::H264Receiver::recv_au_timeout"
 owning_tests = ["crates/tst-rtp/src/h264/receiver.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -9918,7 +9927,7 @@ owning_tests = [
   "crates/tst-rtp/src/h264/receiver.rs",
   "crates/tst-rtp/tests/h264/rtsp_session.rs",
 ]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -11222,7 +11231,7 @@ kind = "rust"
 crate = "tst-tcp"
 item = "tst_tcp::listener::TcpListener::cancel_handle"
 owning_tests = ["crates/tst-tcp/tests/loopback.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -11231,7 +11240,7 @@ kind = "rust"
 crate = "tst-tcp"
 item = "tst_tcp::listener::TcpListener::close"
 owning_tests = ["crates/tst-tcp/tests/loopback.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -11746,91 +11755,91 @@ reason = "DA-KLV-4 sentinel meaning lookup; exercised by mapping::tests::sentine
 [[surface]]
 item = "tst_core::klv::st0601::validate_mismms"
 owning_tests = ["crates/tst-core/src/klv/st0601/mismms.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st0601::MismmsViolation"
 owning_tests = ["crates/tst-core/src/klv/st0601/mismms.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st0601::MismmsViolation::AlternationConflict"
 owning_tests = ["crates/tst-core/src/klv/st0601/mismms.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st0601::MismmsViolation::AlternationConflict::tag_a"
 owning_tests = ["crates/tst-core/src/klv/st0601/mismms.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st0601::MismmsViolation::AlternationConflict::tag_b"
 owning_tests = ["crates/tst-core/src/klv/st0601/mismms.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st0601::MismmsViolation::MissingItem"
 owning_tests = ["crates/tst-core/src/klv/st0601/mismms.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st0601::MismmsViolation::MissingItem::name"
 owning_tests = ["crates/tst-core/src/klv/st0601/mismms.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st0601::MismmsViolation::MissingItem::tag"
 owning_tests = ["crates/tst-core/src/klv/st0601/mismms.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st0601::MismmsViolation::MissingSecurityItem"
 owning_tests = ["crates/tst-core/src/klv/st0601/mismms.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st0601::MismmsViolation::MissingSecurityItem::name"
 owning_tests = ["crates/tst-core/src/klv/st0601/mismms.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st0601::MismmsViolation::MissingSecurityItem::tag"
 owning_tests = ["crates/tst-core/src/klv/st0601/mismms.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st0601::MismmsViolation::ZeroLengthItem"
 owning_tests = ["crates/tst-core/src/klv/st0601/mismms.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st0601::MismmsViolation::ZeroLengthItem::tag"
 owning_tests = ["crates/tst-core/src/klv/st0601/mismms.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -11866,140 +11875,140 @@ reason = "ST 0604 MISP-SEI splice push with explicit DTS; exercised by video-mis
 [[surface]]
 item = "tst_core::klv::st1204::IdType"
 owning_tests = ["crates/tst-core/src/klv/st1204/mod.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st1204::IdType::Managed"
 owning_tests = ["crates/tst-core/src/klv/st1204/mod.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st1204::IdType::Physical"
 owning_tests = ["crates/tst-core/src/klv/st1204/mod.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st1204::IdType::Virtual"
 owning_tests = ["crates/tst-core/src/klv/st1204/mod.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st1204::St1204Error"
 owning_tests = ["crates/tst-core/src/klv/st1204/mod.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st1204::St1204Error::InvalidUsage"
 owning_tests = ["crates/tst-core/src/klv/st1204/mod.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st1204::St1204Error::ReservedBitsSet"
 owning_tests = ["crates/tst-core/src/klv/st1204/mod.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st1204::St1204Error::TrailingBytes"
 owning_tests = ["crates/tst-core/src/klv/st1204/mod.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st1204::St1204Error::Truncated"
 owning_tests = ["crates/tst-core/src/klv/st1204/mod.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st1204::St1204Error::UnsupportedVersion"
 owning_tests = ["crates/tst-core/src/klv/st1204/mod.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st1204::CoreId"
 owning_tests = ["crates/tst-core/src/klv/st1204/mod.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st1204::CoreId::minor"
 owning_tests = ["crates/tst-core/src/klv/st1204/mod.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st1204::CoreId::platform"
 owning_tests = ["crates/tst-core/src/klv/st1204/mod.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st1204::CoreId::sensor"
 owning_tests = ["crates/tst-core/src/klv/st1204/mod.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st1204::CoreId::version"
 owning_tests = ["crates/tst-core/src/klv/st1204/mod.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st1204::CoreId::window"
 owning_tests = ["crates/tst-core/src/klv/st1204/mod.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st1204::decode"
 owning_tests = ["crates/tst-core/src/klv/st1204/mod.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st1204::encode_to_vec"
 owning_tests = ["crates/tst-core/src/klv/st1204/mod.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st1204::check_value"
 owning_tests = ["crates/tst-core/src/klv/st1204/mod.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st1204::CoreId::new"
 owning_tests = ["bindings/python/tests/test_klv_st1204_mismms.py"]
-bindings = ["python:encode_core_id", "c:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:encode_core_id", "c:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12042,28 +12051,28 @@ reason = "derive impl for st1204 error; covered by error-path tests"
 [[surface]]
 item = "tst_core::klv::st1010::SdccFlp"
 owning_tests = ["crates/tst-core/src/klv/st1010.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st1010::SdccFlp::correlation"
 owning_tests = ["crates/tst-core/src/klv/st1010.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st1010::decode_sdcc_flp"
 owning_tests = ["crates/tst-core/src/klv/st1010.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st1010::encode_sdcc_flp_mode2"
 owning_tests = ["crates/tst-core/src/klv/st1010.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12094,35 +12103,35 @@ reason = "top-level re-export of tst_core::klv::st1010::encode_sdcc_flp_mode2; s
 [[surface]]
 item = "tst_core::klv::st0805::CotConfig"
 owning_tests = ["crates/tst-core/src/klv/st0805.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st0805::platform_position_xml"
 owning_tests = ["crates/tst-core/src/klv/st0805.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st0805::platform_uid"
 owning_tests = ["crates/tst-core/src/klv/st0805.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st0805::sensor_point_of_interest_xml"
 owning_tests = ["crates/tst-core/src/klv/st0805.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 item = "tst_core::klv::st0805::spi_uid"
 owning_tests = ["crates/tst-core/src/klv/st0805.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12350,7 +12359,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::Close"
 owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12359,7 +12368,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::Close::close"
 owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12368,7 +12377,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::Close::Error"
 owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12377,7 +12386,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::CloseFailure"
 owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12386,7 +12395,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::FlagCancel"
 owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12395,7 +12404,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::Owned"
 owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12404,7 +12413,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::owned::Close"
 owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12413,7 +12422,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::owned::Close::close"
 owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12422,7 +12431,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::owned::Close::Error"
 owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12431,7 +12440,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::owned::CloseFailure"
 owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12440,7 +12449,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::owned::FlagCancel"
 owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12449,7 +12458,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::owned::FlagCancel::cancel"
 owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12458,7 +12467,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::owned::FlagCancel::default"
 owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12467,7 +12476,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::owned::FlagCancel::fmt"
 owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12476,7 +12485,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::owned::FlagCancel::is_set"
 owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12485,7 +12494,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::owned::FlagCancel::new"
 owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12494,7 +12503,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::owned::HandleState::clone"
 owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12503,7 +12512,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::owned::HandleState::eq"
 owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12512,7 +12521,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::owned::HandleState::fmt"
 owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12521,7 +12530,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::owned::Owned"
 owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12530,7 +12539,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::panic::catch"
 owning_tests = ["crates/tst-pipeline/src/binding/panic.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12539,7 +12548,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::panic::payload_message"
 owning_tests = ["crates/tst-pipeline/src/binding/panic.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12548,7 +12557,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::RecvHalf"
 owning_tests = ["crates/tst-pipeline/src/binding/shells.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12557,7 +12566,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::SendHalf"
 owning_tests = ["crates/tst-pipeline/src/binding/shells.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12566,7 +12575,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::shells::RecvHalf"
 owning_tests = ["crates/tst-pipeline/src/binding/shells.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12575,7 +12584,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::shells::SendHalf"
 owning_tests = ["crates/tst-pipeline/src/binding/shells.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12588,7 +12597,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::BindingError"
 owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12597,7 +12606,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::kind::BindingError"
 owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12606,7 +12615,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::kind::BindingError::clone"
 owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12615,7 +12624,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::kind::BindingError::eq"
 owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12624,7 +12633,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::kind::BindingError::fmt"
 owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12633,7 +12642,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::kind::BindingError::from"
 owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12642,7 +12651,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::kind::BindingError::new"
 owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12651,7 +12660,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::kind::BindingErrorKind::ALL"
 owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12660,7 +12669,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::kind::BindingErrorKind::c_code"
 owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12669,7 +12678,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::kind::BindingErrorKind::c_projection"
 owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12678,7 +12687,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::kind::BindingErrorKind::clone"
 owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12687,7 +12696,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::kind::BindingErrorKind::eq"
 owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12696,7 +12705,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::kind::BindingErrorKind::fmt"
 owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12705,7 +12714,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::kind::BindingErrorKind::from"
 owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12714,7 +12723,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::kind::BindingErrorKind::hash"
 owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12723,7 +12732,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::kind::BindingErrorKind::is_c_frozen"
 owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12732,7 +12741,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::kind::BindingErrorKind::name"
 owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12741,7 +12750,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::kind::BindingErrorKind::variant_name"
 owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12750,7 +12759,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::kind::kind_of_codec"
 owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12759,7 +12768,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::kind::kind_of_demux"
 owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12768,7 +12777,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::kind::kind_of_klv_decode"
 owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12777,7 +12786,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::kind::kind_of_klv_encode"
 owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12786,7 +12795,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::kind::kind_of_klv_field"
 owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12795,7 +12804,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::kind::kind_of_mux"
 owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12804,7 +12813,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::kind::kind_of_transport"
 owning_tests = ["crates/tst-pipeline/src/binding/kind.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12817,7 +12826,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::ManagedHandles"
 owning_tests = ["crates/tst-pipeline/src/binding/handles.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12826,7 +12835,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::handles::ManagedHandles"
 owning_tests = ["crates/tst-pipeline/src/binding/handles.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12835,7 +12844,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::handles::ManagedHandles::clone"
 owning_tests = ["crates/tst-pipeline/src/binding/handles.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12844,7 +12853,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::handles::ManagedHandles::fmt"
 owning_tests = ["crates/tst-pipeline/src/binding/handles.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12853,7 +12862,7 @@ kind = "rust"
 crate = "tst-srt"
 item = "tst_srt::addr::join_host_port"
 owning_tests = ["crates/tst-srt/src/addr.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12862,7 +12871,7 @@ kind = "rust"
 crate = "tst-srt"
 item = "tst_srt::url::SrtUrl::connect"
 owning_tests = ["crates/tst-srt/tests/loopback/url_open.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12871,7 +12880,7 @@ kind = "rust"
 crate = "tst-srt"
 item = "tst_srt::url::SrtUrl::connect_recv"
 owning_tests = ["crates/tst-srt/tests/loopback/url_open.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12880,7 +12889,7 @@ kind = "rust"
 crate = "tst-srt"
 item = "tst_srt::url::SrtUrl::accept_one"
 owning_tests = ["crates/tst-srt/tests/loopback/url_open.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12889,7 +12898,7 @@ kind = "rust"
 crate = "tst-srt"
 item = "tst_srt::url::SrtUrl::clone"
 owning_tests = ["crates/tst-srt/tests/loopback/url_open.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12898,7 +12907,7 @@ kind = "rust"
 crate = "tst-srt"
 item = "tst_srt::transport::SrtTransport::srt_cancel_handle"
 owning_tests = ["crates/tst-srt/tests/loopback/url_open.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12907,7 +12916,7 @@ kind = "rust"
 crate = "tst-srt"
 item = "tst_srt::shells::managed_recv_transport_from_url"
 owning_tests = ["crates/tst-srt/tests/pipeline/shells_from_url.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12916,7 +12925,7 @@ kind = "rust"
 crate = "tst-srt"
 item = "tst_srt::shells::managed_demux_receiver_from_url"
 owning_tests = ["crates/tst-srt/tests/pipeline/shells_from_url.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12925,7 +12934,7 @@ kind = "rust"
 crate = "tst-srt"
 item = "tst_srt::shells::managed_receiver_from_url"
 owning_tests = ["crates/tst-srt/tests/pipeline/shells_from_url.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12934,7 +12943,7 @@ kind = "rust"
 crate = "tst-srt"
 item = "tst_srt::shells::managed_raw_receiver_from_url"
 owning_tests = ["crates/tst-srt/tests/pipeline/shells_from_url.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12943,7 +12952,7 @@ kind = "rust"
 crate = "tst-srt"
 item = "tst_srt::shells::managed_mux_sender_from_url"
 owning_tests = ["crates/tst-srt/tests/pipeline/shells_from_url.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12952,7 +12961,7 @@ kind = "rust"
 crate = "tst-srt"
 item = "tst_srt::shells::managed_sender_from_url"
 owning_tests = ["crates/tst-srt/tests/pipeline/shells_from_url.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12961,7 +12970,7 @@ kind = "rust"
 crate = "tst-srt"
 item = "tst_srt::shells::managed_raw_sender_from_url"
 owning_tests = ["crates/tst-srt/tests/pipeline/shells_from_url.rs"]
-bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 

@@ -96,10 +96,12 @@ un-catalogued. The ratchet (`scripts/check/repo/surface-manifest.sh`) enforces:
   `bindings/c/include/tstrans.h`; every `python:dotted.name` / `java:dotted.name`
   resolves its leaf component in the binding sources. Binding entries tagged
   `[feature=X]` are skipped when feature `X` is not built. **Every `[[surface]]`
-  row must list all five prefixes** (`c`, `python`, `java`, `swift`, `kotlin`);
-  a binding with no twin says `"<prefix>:deferred"` (or `"<prefix>:n/a"` by
-  design). `swift:` / `kotlin:` real symbols are accepted unresolved until
-  tst-uniffi ships.
+  row must list all five prefixes** (`c`, `python`, `java`, `swift`, `kotlin`).
+  Three sentinels stand in for a symbol and are never resolved:
+  `"<prefix>:unaudited"` (nobody has checked — the value the bulk migration
+  wrote, a TODO rather than a claim), `"<prefix>:deferred"` (a checked gap) and
+  `"<prefix>:n/a"` (no twin by design). `swift:` / `kotlin:` real symbols are
+  accepted unresolved until tst-uniffi ships.
 - **(c) closure** — every item extracted from the 8 `public-api.txt` baselines is
   present in the manifest as either a `[[surface]]` item or an `[[exempt]]` item.
 
@@ -113,7 +115,9 @@ un-catalogued items, then append them to the manifest.
 add a `[[surface]]` row with `owning_tests`, `bindings`, and optionally `scenario_ids`.
 When tst-uniffi lands, replace the `swift:deferred` / `kotlin:deferred` sentinels
 row by row with real symbols — rule (b2) already guarantees no row can forget the
-column.
+column. The same applies to `:unaudited`: auditing a row means replacing it with
+a real symbol, `:deferred` or `:n/a`, and the remaining count is the size of that
+backlog.
 
 **Feature-tagged binding columns:** use `"c:SYM [feature=srt]"` (space before `[`)
 to mark a binding symbol that only exists when feature `srt` is compiled in. The
