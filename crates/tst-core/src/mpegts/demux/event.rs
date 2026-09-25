@@ -499,6 +499,11 @@ pub enum NonConformantIssue {
     /// large-magnitude delta indicates a discontinuous jump (forward seek,
     /// missed packets, or non-conformant encoder). Convert to seconds by
     /// dividing by [`PCR_TICKS_PER_SECOND`](crate::mpegts::common::PCR_TICKS_PER_SECOND).
+    ///
+    /// Only reported for a PID some PMT declares as its `PCR_PID`. A PCR
+    /// on any other PID is ignored — neither compared nor remembered — so a
+    /// stray or corrupted packet cannot seed a timeline that a later stray
+    /// then "jumps" against. Before 0.7.0 every PCR-carrying PID was tracked.
     PcrAnomaly { delta: i64 },
     /// PSI section checksum mismatch. Lenient mode falls back to the
     /// previous PSI version; strict mode converts to error.
