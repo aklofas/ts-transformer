@@ -720,7 +720,8 @@ impl Tally {
                 };
                 a.on_signal(at, Some(stream.pid), sig);
             }
-            DemuxEvent::ProgramMap(_) | DemuxEvent::ReconnectDiscontinuity => {}
+            DemuxEvent::ReconnectDiscontinuity => a.on_reconnect(at),
+            DemuxEvent::ProgramMap(_) => {}
         }
     }
 
@@ -1980,6 +1981,68 @@ mod tests {
         // report as an unexplained one.
         assert!(
             !r.failures.iter().any(|f| f.starts_with("discontinuity")),
+            "{:?}",
+            r.failures
+        );
+    }
+
+    /// A `ReconnectDiscontinuity` reaches the attribution as a gap marker:
+    /// an injection resolved inside the gap is lost in transit under Lossy
+    /// and undetected under Strict.
+    #[test]
+    fn a_reconnect_marker_excuses_an_injection_inside_its_gap() {
+        use crate::corrupt::Class;
+        let hdr = corruption_header();
+        let wire = wire_for("baseline", 2.0);
+        let run = |mode: VerifyMode| {
+            let mut t = healthy_baseline_tally();
+            let mut inj = injection_at(Class::PsiFlip, 0, 50); // resolves at ordinal 50
+            inj.psi = true;
+            t.attach_attribution(attribution_for(mode, vec![inj], &hdr));
+            t.feed_at(&video_event(90 * FPS_STEP_TICKS, true), 20); // last media before the gap
+            t.feed_at(&DemuxEvent::ReconnectDiscontinuity, 60);
+            t.feed_at(&video_event(91 * FPS_STEP_TICKS, true), 70);
+            let r = t.finish(
+                profiles::by_name("baseline").unwrap(),
+                2.0,
+                NOMINAL_COUNT_SLACK,
+                mode,
+                &wire,
+            );
+            let a = r
+                .metrics
+                .corruption_attribution
+                .clone()
+                .expect("attribution");
+            (r, a)
+        };
+        let (r, a) = run(VerifyMode::Lossy);
+        assert_eq!(
+            (
+                a.reconnects_seen,
+                a.lost_in_reconnect_gap,
+                a.undetected_lost
+            ),
+            (1, 1, 1),
+            "{a:?}"
+        );
+        assert!(
+            !r.failures
+                .iter()
+                .any(|f| f.starts_with("corruption_detected")),
+            "{:?}",
+            r.failures
+        );
+        let (r, a) = run(VerifyMode::Strict);
+        assert_eq!(
+            (a.reconnects_seen, a.lost_in_reconnect_gap),
+            (1, 0),
+            "{a:?}"
+        );
+        assert!(
+            r.failures
+                .iter()
+                .any(|f| f.starts_with("corruption_detected")),
             "{:?}",
             r.failures
         );

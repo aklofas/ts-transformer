@@ -2812,14 +2812,16 @@ pub mod soak {
                             excused <= budget && unexplained_disc <= budget,
                             format!(
                                 "{leg_name}: {excused} excused ({} transport-loss events, of \
-                                 which {} PCR jumps beside a gap, {} undetected-lost, {} \
-                                 unrecovered-lost) and {unexplained_disc} unexplained \
-                                 discontinuities against budget {budget} (K={k} media PIDs x \
-                                 {outage_windows} outage window(s) + {EXCUSAL_BUDGET_BASE} + \
-                                 {EXCUSAL_PER_HOUR}/h x {budget_hours:.2}h)",
+                                 which {} PCR jumps beside a gap, {} undetected-lost, of which \
+                                 {} in a reconnect gap, {} unrecovered-lost) and \
+                                 {unexplained_disc} unexplained discontinuities against budget \
+                                 {budget} (K={k} media PIDs x {outage_windows} outage window(s) \
+                                 + {EXCUSAL_BUDGET_BASE} + {EXCUSAL_PER_HOUR}/h x \
+                                 {budget_hours:.2}h)",
                                 a.unexplained_transport_loss,
                                 a.pcr_anomalies_excused,
                                 a.undetected_lost,
+                                a.lost_in_reconnect_gap,
                                 a.unrecovered_lost
                             ),
                         ));

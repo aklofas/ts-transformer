@@ -1470,6 +1470,15 @@ pub struct AttributionReport {
     /// Lossy only; strict charges every one.
     #[serde(default)]
     pub pcr_anomalies_excused: u64,
+    /// `DemuxEvent::ReconnectDiscontinuity` markers the receiver fed.
+    #[serde(default)]
+    pub reconnects_seen: u64,
+    /// Of [`undetected_lost`](Self::undetected_lost), the injections whose
+    /// position resolved inside a reconnect gap — between the last media
+    /// before a marker and the marker's own window — and therefore never
+    /// arrived at all. Lossy only.
+    #[serde(default)]
+    pub lost_in_reconnect_gap: u64,
     pub resyncs: u64,
     pub injected_fraction: f64,
     pub attribution_window: u64,
@@ -1700,6 +1709,17 @@ pub struct Attribution {
     /// Settled by the first event more than a window later, or at `finish`.
     pending_pcr: Vec<PendingPcr>,
     pcr_anomalies_excused: u64,
+    /// Receiver ordinal of the last media event — the last packet known to
+    /// have arrived before a reconnect gap opens.
+    last_media_at: u64,
+    /// Every reconnect gap seen, as `(from, to)` receiver ordinals: `from`
+    /// is the last media before the marker, `to` the marker plus the widest
+    /// window an approximately-resolved injection can be placed in. An
+    /// injection resolved inside one never arrived. One entry per
+    /// reconnect — bounded by the run's outage count, not its length.
+    reconnect_gaps: Vec<(u64, u64)>,
+    reconnects_seen: u64,
+    lost_in_reconnect_gap: u64,
     unexplained_samples: Vec<String>,
     first_unexplained_nc: Option<String>,
     first_unexplained_disc: Option<String>,
@@ -1914,6 +1934,10 @@ impl Attribution {
             last_cc_jump_by_pid: BTreeMap::new(),
             pending_pcr: Vec::new(),
             pcr_anomalies_excused: 0,
+            last_media_at: 0,
+            reconnect_gaps: Vec::new(),
+            reconnects_seen: 0,
+            lost_in_reconnect_gap: 0,
             unexplained_samples: Vec::new(),
             first_unexplained_nc: None,
             first_unexplained_disc: None,
@@ -2177,10 +2201,17 @@ impl Attribution {
             return;
         };
         self.resolved += 1;
-        let lost = self.excuse_transport_loss && st.cc_jump_in_window;
+        let in_gap = self
+            .reconnect_gaps
+            .iter()
+            .any(|&(from, to)| from <= r && r <= to);
+        let lost = self.excuse_transport_loss && (st.cc_jump_in_window || in_gap);
         if inj.detectable && !st.detected {
             if lost {
                 self.undetected_lost += 1;
+                if in_gap {
+                    self.lost_in_reconnect_gap += 1;
+                }
             } else {
                 self.undetected_count += 1;
                 if self.undetected_samples.len() < MAX_SAMPLES {
@@ -2324,6 +2355,36 @@ impl Attribution {
     pub fn truncation_explains(&mut self, at: u64) -> bool {
         self.hit(at)
             .is_some_and(|i| self.tracked(i).class == Class::Truncate)
+    }
+
+    /// The retained injection closest to `at`, for an unexplained sample's
+    /// text: "what was nearby" is the first question a reader asks of an
+    /// event nothing explains. Scans only what is retained (bounded by
+    /// `PRUNE_BATCH` plus the sender's lookahead), on the rare unexplained
+    /// path, never per event.
+    fn nearest_context(&self, at: u64) -> String {
+        let mut best: Option<(u64, usize)> = None;
+        for i in self.base..self.base + self.inj.len() {
+            if let Some(r) = self.state(i).resolved_at {
+                let d = r.abs_diff(at);
+                if best.is_none_or(|(bd, _)| d < bd) {
+                    best = Some((d, i));
+                }
+            }
+        }
+        match best {
+            Some((d, i)) => {
+                let t = self.tracked(i);
+                let r = self.state(i).resolved_at.unwrap_or(0);
+                format!(
+                    " (nearest injection: {} on pid 0x{:04x} at packet {r}, {d} packets {})",
+                    t.class.name(),
+                    t.pid,
+                    if r <= at { "before" } else { "after" }
+                )
+            }
+            None => String::new(),
+        }
     }
 
     fn excuse_pcr_anomaly(&mut self) {
@@ -2491,7 +2552,10 @@ impl Attribution {
             // floor and the run would pass. Excused events now consume no
             // cap budget, and each family is counted without a cap.
             None => {
-                let text = format!("{sig:?} on pid {pid:?} at packet {at}");
+                let text = format!(
+                    "{sig:?} on pid {pid:?} at packet {at}{}",
+                    self.nearest_context(at)
+                );
                 match sig {
                     Signal::PcrAnomaly => {
                         if self.excuse_transport_loss {
@@ -2539,6 +2603,7 @@ impl Attribution {
     /// evidence the stream recovered from whatever preceded it.
     pub fn on_media(&mut self, at: u64, pid: u16) {
         self.settle_pending_pcr(at);
+        self.last_media_at = at;
         self.advance(at);
         for i in self.lo..self.hi {
             if self.state(i).recovered {
@@ -2567,6 +2632,22 @@ impl Attribution {
                 self.state_mut(i).recovered = true;
             }
         }
+    }
+
+    /// The receiver's managed transport rebuilt its connection and reset
+    /// the demuxer (`DemuxEvent::ReconnectDiscontinuity`) at receiver
+    /// ordinal `at`. Everything the sender logged between the last media
+    /// the receiver saw and this marker never arrived — including the PCR
+    /// anchors those injections were logged against, so they resolve
+    /// approximately against the first base AFTER the marker, just past
+    /// `at`. Under lossy judgement an injection resolved inside
+    /// `[last_media_at, at + window + APPROX_SLACK]` is judged lost in
+    /// transit rather than undetected; strict never excuses.
+    pub fn on_reconnect(&mut self, at: u64) {
+        self.settle_pending_pcr(at);
+        self.reconnects_seen += 1;
+        let to = at.saturating_add(self.window).saturating_add(APPROX_SLACK);
+        self.reconnect_gaps.push((self.last_media_at, to));
     }
 
     /// Final verdict over a capture of `packets_total` receiver packets.
@@ -2623,6 +2704,8 @@ impl Attribution {
             detected_by_reader_only_per_class: self.detected_by_reader_only_per_class,
             unexplained_transport_loss: self.unexplained_transport_loss,
             pcr_anomalies_excused: self.pcr_anomalies_excused,
+            reconnects_seen: self.reconnects_seen,
+            lost_in_reconnect_gap: self.lost_in_reconnect_gap,
             resyncs: self.resyncs,
             injected_fraction: self.logged as f64 / packets_total.max(1) as f64,
             attribution_window: self.window,
@@ -4411,6 +4494,103 @@ mod tests {
         a.on_signal(9990, Some(0x1011), Signal::PcrAnomaly);
         let r = a.finish(10_000);
         assert_eq!((r.events, r.unexplained_nonconformant), (1, 1), "{r:?}");
+    }
+
+    /// Everything the sender logged between the last media the receiver
+    /// saw and a reconnect marker never arrived. An injection whose
+    /// position resolves inside that gap is lost in transit, not
+    /// undetected — for the PAT/PMT shapes that no continuity jump can
+    /// ever excuse (the demuxer reports none on a PSI PID), and for the
+    /// media shapes a 90 s outage strands far outside a 500-packet window.
+    /// Run 3 (2026-09-17): all 12 `undetected` on the srt leg sat at the
+    /// 6-hour outage boundaries.
+    #[test]
+    fn an_injection_resolved_inside_a_reconnect_gap_is_lost_in_transit() {
+        // A PAT flip anchored at PCR base 1000, +10 packets.
+        let mut pat_flip = inj(1000, 10, Class::PsiFlip, 0, true);
+        pat_flip.psi = true;
+        let run = |lossy: bool| {
+            let mut a = if lossy {
+                Attribution::lossy(vec![pat_flip.clone()], &hdr())
+            } else {
+                Attribution::strict(vec![pat_flip.clone()], &hdr())
+            };
+            a.on_media(4000, 0x1011); // last media before the link died
+            a.on_reconnect(4900); // the marker
+            a.on_pcr(1000, 5000); // the anchor arrives only after the rebuild → resolves at 5010
+            a.on_media(5100, 0x1011);
+            a.finish(10_000)
+        };
+        let r = run(true);
+        assert_eq!(
+            (
+                r.reconnects_seen,
+                r.lost_in_reconnect_gap,
+                r.undetected_lost
+            ),
+            (1, 1, 1),
+            "{r:?}"
+        );
+        assert_eq!(r.undetected_count, 0, "{r:?}");
+        let r = run(false);
+        assert_eq!(
+            (
+                r.reconnects_seen,
+                r.lost_in_reconnect_gap,
+                r.undetected_count
+            ),
+            (1, 0, 1),
+            "{r:?}"
+        );
+
+        // Two markers with no media between them (a rebuild that broke
+        // again): both gaps open at the same last media, and an injection
+        // between them is still lost.
+        let mut a = Attribution::lossy(vec![pat_flip.clone()], &hdr());
+        a.on_media(4000, 0x1011);
+        a.on_reconnect(4500);
+        a.on_reconnect(4900);
+        a.on_pcr(1000, 5000);
+        a.on_media(5100, 0x1011);
+        let r = a.finish(10_000);
+        assert_eq!(
+            (r.reconnects_seen, r.lost_in_reconnect_gap),
+            (2, 1),
+            "{r:?}"
+        );
+
+        // Resolved AFTER the gap closes (marker + window + slack): judged
+        // on its own merits — here, undetected.
+        let mut a = Attribution::lossy(vec![pat_flip.clone()], &hdr());
+        a.on_media(4000, 0x1011);
+        a.on_reconnect(4000);
+        a.on_pcr(1000, 4000 + ATTRIBUTION_WINDOW + 200);
+        a.on_media(6000, 0x1011);
+        let r = a.finish(10_000);
+        assert_eq!(
+            (r.lost_in_reconnect_gap, r.undetected_count),
+            (0, 1),
+            "{r:?}"
+        );
+    }
+
+    /// An unexplained event's sample names the nearest resolved injection,
+    /// so a report can be read offline for "what was nearby" — the
+    /// question run 3's six PMT checksum failures could not answer.
+    #[test]
+    fn an_unexplained_sample_names_the_nearest_injection() {
+        let mut a = Attribution::strict(vec![inj(1000, 10, Class::Dup, 0x1011, false)], &hdr());
+        a.on_pcr(1000, 5000); // resolves at 5010
+        a.on_signal(7000, Some(0x1000), Signal::PsiChecksum);
+        let r = a.finish(10_000);
+        assert_eq!(
+            r.unexplained_events,
+            vec![
+                "PsiChecksum on pid Some(4096) at packet 7000 (nearest injection: dup on pid \
+                 0x1011 at packet 5010, 1990 packets before)"
+                    .to_string()
+            ],
+        );
     }
 
     /// The excusal is evidence-driven, not blanket: with NO continuity
