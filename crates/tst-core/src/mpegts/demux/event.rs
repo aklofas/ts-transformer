@@ -506,8 +506,8 @@ pub enum NonConformantIssue {
     /// then "jumps" against. History for a declared PID starts when the PMT
     /// declares it; an entry left behind by a PID the PMT later demoted is
     /// retired the next time a PCR arrives on it, so a re-promotion with no
-    /// PCR in between can still compare against the old value. Before 0.7.0
-    /// every PCR-carrying PID was tracked.
+    /// PCR in between can still compare against the old value. Before this
+    /// change every PCR-carrying PID was tracked.
     PcrAnomaly { delta: i64 },
     /// PSI section checksum mismatch. Lenient mode falls back to the
     /// previous PSI version; strict mode converts to error.
