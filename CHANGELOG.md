@@ -247,7 +247,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   PMT ever declared. A PCR on an undeclared PID is now ignored (neither
   compared nor remembered); `PcrMalformed` still fires on any PID because
   it describes the packet, not a timeline. History for a declared PID starts
-  when the PMT declares it. No API change.
+  when the PMT declares it; an entry left behind by a PID the PMT later
+  demoted is retired the next time a PCR arrives on it, so a re-promotion
+  with no PCR in between can still compare against the old value. No API
+  change.
 - **JVM: the plain srt `DemuxReceiver.close()` and `Receiver.close()` now
   cancel first.** Both used to take the receiver's resource lock and wait
   for a `next()` / `recvBytes()` parked on another thread to return on its
