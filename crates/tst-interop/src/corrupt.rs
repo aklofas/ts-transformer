@@ -1344,6 +1344,13 @@ pub enum Signal {
     OtherDiscontinuity,
     PsiChecksum,
     MalformedPes,
+    /// `NonConformantIssue::PcrAnomaly` — a PCR that jumped against the
+    /// previous one on its PID. Its own signal rather than
+    /// [`Signal::OtherNonConformant`] because under lossy judgement it has
+    /// one excusal the other non-conformances never get: a PCR jump that
+    /// COINCIDES with a continuity gap on the same PID is that gap's
+    /// timestamp signature, not corruption — see [`Attribution::on_signal`].
+    PcrAnomaly,
     OtherNonConformant,
 }
 
@@ -1456,6 +1463,13 @@ pub struct AttributionReport {
     /// still reconciles with the list a reader is shown.
     #[serde(default)]
     pub unexplained_transport_loss: u64,
+    /// Of [`unexplained_transport_loss`](Self::unexplained_transport_loss),
+    /// the `PcrAnomaly` signals excused as the timestamp signature of a
+    /// continuity gap on the same PID — a `ContinuityJump` within the
+    /// attribution window before them, or on the same packet after them.
+    /// Lossy only; strict charges every one.
+    #[serde(default)]
+    pub pcr_anomalies_excused: u64,
     pub resyncs: u64,
     pub injected_fraction: f64,
     pub attribution_window: u64,
@@ -1675,6 +1689,17 @@ pub struct Attribution {
     unexplained_discontinuities: u64,
     unexplained_nonconformant: u64,
     unexplained_transport_loss: u64,
+    /// Receiver ordinal of the last `ContinuityJump` seen per PID, explained
+    /// or not: the evidence that packets went missing on that PID around
+    /// there. Bounded by the PID space.
+    last_cc_jump_by_pid: BTreeMap<u16, u64>,
+    /// `PcrAnomaly` signals waiting to learn whether a continuity jump on
+    /// their PID lands on the SAME packet — `tst_core` queues a packet's
+    /// `PcrAnomaly` before its `ContinuityJump` (`check_pcr` runs before
+    /// `check_continuity`), so the gap evidence arrives one event late.
+    /// Settled by the first event more than a window later, or at `finish`.
+    pending_pcr: Vec<PendingPcr>,
+    pcr_anomalies_excused: u64,
     unexplained_samples: Vec<String>,
     first_unexplained_nc: Option<String>,
     first_unexplained_disc: Option<String>,
@@ -1682,6 +1707,14 @@ pub struct Attribution {
     /// APPENDED mid-capture can still trust its ordinal-0 anchor. See
     /// [`Attribution::append`].
     seen_pcr: bool,
+}
+
+#[derive(Clone, Debug)]
+struct PendingPcr {
+    at: u64,
+    pid: u16,
+    /// The sample text it is charged under if no gap claims it.
+    text: String,
 }
 
 /// How far `a` is ahead of `b` on the 33-bit PCR-base circle. A PCR base
@@ -1710,11 +1743,19 @@ fn expects(inj: &Tracked, sig: Signal) -> bool {
         // inside an otherwise intact packet. Measured: the `truncate`
         // positive control in `tests/corruption.rs` produces exactly one
         // `MalformedPes` on the video PID at the re-lock.
+        //
+        // A misaligned or overrun packet can parse a bogus PCR just as it
+        // parses a bogus PES header, so a `PcrAnomaly` counts here too —
+        // and ONLY here. `PsiFlip` and a PSI `BodyFlip` keep
+        // `OtherNonConformant` without it: a damaged section is rejected
+        // before it can move a program's clock, so those classes cannot
+        // cause a PCR jump.
         Class::Header | Class::Truncate | Class::Garbage => matches!(
             sig,
             Signal::Resync
                 | Signal::ContinuityJump
                 | Signal::MalformedPes
+                | Signal::PcrAnomaly
                 | Signal::OtherNonConformant
         ),
         Class::Drop => matches!(sig, Signal::ContinuityJump),
@@ -1796,8 +1837,11 @@ impl Attribution {
     ///   lossy contract says to do with them, and they land in
     ///   [`AttributionReport::unexplained_transport_loss`] instead.
     ///   Unexplained `Resync`/`PsiChecksum`/`MalformedPes`/
-    ///   `OtherNonConformant` still fail: a lost packet does not forge a
-    ///   bad CRC or a malformed PES header.
+    ///   `OtherNonConformant` still fail — with one exception: a
+    ///   `PcrAnomaly` beside a `ContinuityJump` on its own PID is the
+    ///   gap's timestamp signature and is excused (counted in
+    ///   [`AttributionReport::pcr_anomalies_excused`]). Otherwise a lost
+    ///   packet does not forge a bad CRC or a malformed PES header.
     /// - An undetected or unrecovered injection with a FOREIGN
     ///   `ContinuityJump` in its window is excused into
     ///   [`AttributionReport::undetected_lost`] /
@@ -1867,6 +1911,9 @@ impl Attribution {
             unexplained_discontinuities: 0,
             unexplained_nonconformant: 0,
             unexplained_transport_loss: 0,
+            last_cc_jump_by_pid: BTreeMap::new(),
+            pending_pcr: Vec::new(),
+            pcr_anomalies_excused: 0,
             unexplained_samples: Vec::new(),
             first_unexplained_nc: None,
             first_unexplained_disc: None,
@@ -2279,6 +2326,34 @@ impl Attribution {
             .is_some_and(|i| self.tracked(i).class == Class::Truncate)
     }
 
+    fn excuse_pcr_anomaly(&mut self) {
+        self.unexplained_transport_loss += 1;
+        self.pcr_anomalies_excused += 1;
+    }
+
+    fn charge_pcr_anomaly(&mut self, q: PendingPcr) {
+        self.first_unexplained_nc
+            .get_or_insert_with(|| q.text.clone());
+        self.unexplained_nonconformant += 1;
+        if self.unexplained_samples.len() < MAX_SAMPLES {
+            self.unexplained_samples.push(q.text);
+        }
+    }
+
+    /// Charge every pending PCR anomaly whose window `at` has passed.
+    fn settle_pending_pcr(&mut self, at: u64) {
+        let window = self.window;
+        let mut keep = Vec::with_capacity(self.pending_pcr.len());
+        for q in std::mem::take(&mut self.pending_pcr) {
+            if at > q.at.saturating_add(window) {
+                self.charge_pcr_anomaly(q);
+            } else {
+                keep.push(q);
+            }
+        }
+        self.pending_pcr = keep;
+    }
+
     /// An error-class event surfaced at receiver ordinal `at` (`pid` is
     /// `None` for a resync, which is not attributable to a PID).
     ///
@@ -2290,6 +2365,22 @@ impl Attribution {
     /// even when it lands squarely inside that injection's window:
     /// window position is proximity, not causation.
     pub fn on_signal(&mut self, at: u64, pid: Option<u16>, sig: Signal) {
+        self.settle_pending_pcr(at);
+        if sig == Signal::ContinuityJump {
+            if let Some(p) = pid {
+                self.last_cc_jump_by_pid.insert(p, at);
+                // A pending PCR jump on this PID at this very packet: the
+                // gap it was waiting for.
+                if let Some(k) = self
+                    .pending_pcr
+                    .iter()
+                    .position(|q| q.pid == p && q.at == at)
+                {
+                    self.pending_pcr.swap_remove(k);
+                    self.excuse_pcr_anomaly();
+                }
+            }
+        }
         self.events += 1;
         if sig == Signal::Resync {
             self.resyncs += 1;
@@ -2367,7 +2458,10 @@ impl Attribution {
                     None => self.attributed_events_unpinned += 1,
                 }
                 match sig {
-                    Signal::PsiChecksum | Signal::MalformedPes | Signal::OtherNonConformant => {
+                    Signal::PsiChecksum
+                    | Signal::MalformedPes
+                    | Signal::PcrAnomaly
+                    | Signal::OtherNonConformant => {
                         self.attributed_nonconformant += 1;
                     }
                     Signal::ContinuityJump | Signal::OtherDiscontinuity => {
@@ -2399,6 +2493,25 @@ impl Attribution {
             None => {
                 let text = format!("{sig:?} on pid {pid:?} at packet {at}");
                 match sig {
+                    Signal::PcrAnomaly => {
+                        if self.excuse_transport_loss {
+                            if let Some(p) = pid {
+                                let gap_before = self
+                                    .last_cc_jump_by_pid
+                                    .get(&p)
+                                    .is_some_and(|&j| at.saturating_sub(j) <= self.window);
+                                if gap_before {
+                                    self.excuse_pcr_anomaly();
+                                    return;
+                                }
+                                self.pending_pcr.push(PendingPcr { at, pid: p, text });
+                                return;
+                            }
+                        }
+                        self.first_unexplained_nc
+                            .get_or_insert_with(|| text.clone());
+                        self.unexplained_nonconformant += 1;
+                    }
                     Signal::PsiChecksum | Signal::MalformedPes | Signal::OtherNonConformant => {
                         self.first_unexplained_nc
                             .get_or_insert_with(|| text.clone());
@@ -2425,6 +2538,7 @@ impl Attribution {
     /// A Sample/Metadata event on `pid` surfaced at receiver ordinal `at` —
     /// evidence the stream recovered from whatever preceded it.
     pub fn on_media(&mut self, at: u64, pid: u16) {
+        self.settle_pending_pcr(at);
         self.advance(at);
         for i in self.lo..self.hi {
             if self.state(i).recovered {
@@ -2475,6 +2589,12 @@ impl Attribution {
                 .is_some_and(|r| r.saturating_add(self.recovery_bound) <= packets_total);
             self.judge(&inj, &st, closed);
         }
+        // A PCR anomaly still waiting for a gap when the capture ends is
+        // charged, never dropped: the evidence that would excuse it can
+        // no longer arrive.
+        for q in std::mem::take(&mut self.pending_pcr) {
+            self.charge_pcr_anomaly(q);
+        }
         AttributionReport {
             injected: self.logged,
             detectable: self.detectable,
@@ -2502,6 +2622,7 @@ impl Attribution {
             detected_by_reader_only: self.detected_by_reader_only,
             detected_by_reader_only_per_class: self.detected_by_reader_only_per_class,
             unexplained_transport_loss: self.unexplained_transport_loss,
+            pcr_anomalies_excused: self.pcr_anomalies_excused,
             resyncs: self.resyncs,
             injected_fraction: self.logged as f64 / packets_total.max(1) as f64,
             attribution_window: self.window,
@@ -4211,6 +4332,85 @@ mod tests {
             );
             assert_eq!(r.unexplained_transport_loss, 0, "{sig:?}");
         }
+    }
+
+    /// A PCR jump that coincides with a continuity gap on its own PID is
+    /// that gap's timestamp signature — packets went missing for longer
+    /// than the anomaly threshold — not corruption. Under lossy judgement
+    /// it is transport loss; strict has no transport and charges it. Run 3
+    /// (2026-09-17): ~17 such jumps on the srt video PID, 1–3 per outage
+    /// window, every one beside an excused continuity jump.
+    #[test]
+    fn a_pcr_jump_beside_a_continuity_gap_is_transport_loss_only_under_lossy() {
+        // Far-away, never-resolved injection so the log is non-empty.
+        let bystander = || vec![inj(1000, 0, Class::Drop, 0x1011, true)];
+        for (lossy, want_excused) in [(true, 1u64), (false, 0u64)] {
+            let mut a = if lossy {
+                Attribution::lossy(bystander(), &hdr())
+            } else {
+                Attribution::strict(bystander(), &hdr())
+            };
+            // Gap first, jump inside the window after it.
+            a.on_signal(5000, Some(0x1011), Signal::ContinuityJump);
+            a.on_signal(5000 + ATTRIBUTION_WINDOW, Some(0x1011), Signal::PcrAnomaly);
+            let r = a.finish(10_000);
+            assert_eq!(
+                r.pcr_anomalies_excused, want_excused,
+                "lossy={lossy}: {r:?}"
+            );
+            assert_eq!(
+                r.unexplained_nonconformant,
+                1 - want_excused,
+                "lossy={lossy}: {r:?}"
+            );
+        }
+
+        // Same packet, jump QUEUED FIRST (tst_core's check_pcr runs before
+        // check_continuity): the gap evidence arrives one event late.
+        let mut a = Attribution::lossy(bystander(), &hdr());
+        a.on_signal(5000, Some(0x1011), Signal::PcrAnomaly);
+        a.on_signal(5000, Some(0x1011), Signal::ContinuityJump);
+        let r = a.finish(10_000);
+        assert_eq!(
+            (r.pcr_anomalies_excused, r.unexplained_nonconformant),
+            (1, 0),
+            "{r:?}"
+        );
+
+        // A gap on a DIFFERENT PID is not this PID's signature.
+        let mut a = Attribution::lossy(bystander(), &hdr());
+        a.on_signal(5000, Some(0x1100), Signal::ContinuityJump);
+        a.on_signal(5010, Some(0x1011), Signal::PcrAnomaly);
+        assert_eq!(a.finish(10_000).unexplained_nonconformant, 1);
+
+        // Beyond the window, before or after: a finding.
+        let mut a = Attribution::lossy(bystander(), &hdr());
+        a.on_signal(5000, Some(0x1011), Signal::ContinuityJump);
+        a.on_signal(5001 + ATTRIBUTION_WINDOW, Some(0x1011), Signal::PcrAnomaly);
+        assert_eq!(a.finish(10_000).unexplained_nonconformant, 1);
+        let mut a = Attribution::lossy(bystander(), &hdr());
+        a.on_signal(5000, Some(0x1011), Signal::PcrAnomaly);
+        a.on_signal(
+            5001 + ATTRIBUTION_WINDOW,
+            Some(0x1011),
+            Signal::ContinuityJump,
+        );
+        let r = a.finish(10_000);
+        assert_eq!(r.unexplained_nonconformant, 1, "{r:?}");
+        assert!(
+            r.unexplained_events
+                .iter()
+                .any(|e| e.starts_with("PcrAnomaly on pid Some(4113)")),
+            "a charged pending anomaly keeps its sample text: {:?}",
+            r.unexplained_events
+        );
+
+        // A pending anomaly at the end of the capture is charged by finish,
+        // never dropped.
+        let mut a = Attribution::lossy(bystander(), &hdr());
+        a.on_signal(9990, Some(0x1011), Signal::PcrAnomaly);
+        let r = a.finish(10_000);
+        assert_eq!((r.events, r.unexplained_nonconformant), (1, 1), "{r:?}");
     }
 
     /// The excusal is evidence-driven, not blanket: with NO continuity
