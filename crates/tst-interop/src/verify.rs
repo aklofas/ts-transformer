@@ -1034,11 +1034,25 @@ impl Tally {
         // because the two counts come from independent paths — an
         // attribution driven directly in a unit test can legitimately
         // hold more attributed events than this tally ever saw).
-        let (attributed_nc, attributed_disc) = match &attribution {
-            Some(rep) => (rep.attributed_nonconformant, rep.attributed_discontinuities),
-            None => (0, 0),
+        let (attributed_nc, attributed_disc, pcr_excused) = match &attribution {
+            Some(rep) => (
+                rep.attributed_nonconformant,
+                rep.attributed_discontinuities,
+                rep.pcr_anomalies_excused,
+            ),
+            None => (0, 0, 0),
         };
-        let unexplained_nc = self.nonconformant.saturating_sub(attributed_nc);
+        // A PCR jump the attribution excused as a continuity gap's
+        // timestamp signature is UNATTRIBUTED but not a finding, so it
+        // has to come off here too — otherwise a lossy leg passes
+        // `corruption_attributed` and fails `nonconformant_event` for the
+        // very same event. `metrics.nonconformant` itself stays raw: it
+        // is documented as always counted. Zero under Strict, which
+        // excuses nothing, so this needs no mode branch.
+        let unexplained_nc = self
+            .nonconformant
+            .saturating_sub(attributed_nc)
+            .saturating_sub(pcr_excused);
         let unexplained_disc = self.discontinuities.saturating_sub(attributed_disc);
         // And the event these failures QUOTE must be an unexplained one.
         // `first_nonconformant`/`first_discontinuity` record the first
@@ -1915,6 +1929,17 @@ mod tests {
             !r.failures
                 .iter()
                 .any(|f| f.starts_with("corruption_attributed")),
+            "{:?}",
+            r.failures
+        );
+        // The OUTCOME, not just the mechanism: an excused anomaly is still
+        // a `DemuxEvent::NonConformant` in the tally's own raw count, so
+        // without the subtraction at `unexplained_nc` the leg would pass
+        // `corruption_attributed` and fail `recv_invariants` instead.
+        assert!(
+            !r.failures
+                .iter()
+                .any(|f| f.starts_with("nonconformant_event")),
             "{:?}",
             r.failures
         );
