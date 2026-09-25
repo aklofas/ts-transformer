@@ -2360,8 +2360,10 @@ impl Attribution {
     /// The retained injection closest to `at`, for an unexplained sample's
     /// text: "what was nearby" is the first question a reader asks of an
     /// event nothing explains. Scans only what is retained (bounded by
-    /// `PRUNE_BATCH` plus the sender's lookahead), on the rare unexplained
-    /// path, never per event.
+    /// `PRUNE_BATCH` plus the sender's lookahead), and only when a sample
+    /// is actually CHARGED — never for an excused event (a lossy
+    /// discontinuity, a PCR anomaly a gap explains), which is not a
+    /// finding and whose text nobody reads for context.
     fn nearest_context(&self, at: u64) -> String {
         let mut best: Option<(u64, usize)> = None;
         for i in self.base..self.base + self.inj.len() {
@@ -2552,31 +2554,48 @@ impl Attribution {
             // floor and the run would pass. Excused events now consume no
             // cap budget, and each family is counted without a cap.
             None => {
-                let text = format!(
-                    "{sig:?} on pid {pid:?} at packet {at}{}",
-                    self.nearest_context(at)
-                );
+                // The plain description first. The nearest-injection
+                // annotation is appended only where a sample is actually
+                // CHARGED — an excused event is not a finding, so nobody
+                // reads its text looking for what was nearby, and
+                // `nearest_context` scans the retained injection list.
+                let text = format!("{sig:?} on pid {pid:?} at packet {at}");
+                // The two excused shapes return here, before the scan.
                 match sig {
-                    Signal::PcrAnomaly => {
-                        if self.excuse_transport_loss {
-                            if let Some(p) = pid {
-                                let gap_before = self
-                                    .last_cc_jump_by_pid
-                                    .get(&p)
-                                    .is_some_and(|&j| at.saturating_sub(j) <= self.window);
-                                if gap_before {
-                                    self.excuse_pcr_anomaly();
-                                    return;
-                                }
-                                self.pending_pcr.push(PendingPcr { at, pid: p, text });
+                    Signal::PcrAnomaly if self.excuse_transport_loss => {
+                        if let Some(p) = pid {
+                            let gap_before = self
+                                .last_cc_jump_by_pid
+                                .get(&p)
+                                .is_some_and(|&j| at.saturating_sub(j) <= self.window);
+                            if gap_before {
+                                self.excuse_pcr_anomaly();
                                 return;
                             }
+                            // Still undecided: charged by `settle_pending_pcr`
+                            // or `finish` unless a gap claims it first, so it
+                            // carries the annotation it would be charged under.
+                            let text = text + &self.nearest_context(at);
+                            self.pending_pcr.push(PendingPcr { at, pid: p, text });
+                            return;
                         }
-                        self.first_unexplained_nc
-                            .get_or_insert_with(|| text.clone());
-                        self.unexplained_nonconformant += 1;
                     }
-                    Signal::PsiChecksum | Signal::MalformedPes | Signal::OtherNonConformant => {
+                    Signal::ContinuityJump | Signal::OtherDiscontinuity
+                        if self.excuse_transport_loss =>
+                    {
+                        self.first_unexplained_disc.get_or_insert(text);
+                        self.unexplained_transport_loss += 1;
+                        return;
+                    }
+                    _ => {}
+                }
+                // Everything from here is charged as a finding.
+                let text = text + &self.nearest_context(at);
+                match sig {
+                    Signal::PcrAnomaly
+                    | Signal::PsiChecksum
+                    | Signal::MalformedPes
+                    | Signal::OtherNonConformant => {
                         self.first_unexplained_nc
                             .get_or_insert_with(|| text.clone());
                         self.unexplained_nonconformant += 1;
@@ -2584,10 +2603,6 @@ impl Attribution {
                     Signal::ContinuityJump | Signal::OtherDiscontinuity => {
                         self.first_unexplained_disc
                             .get_or_insert_with(|| text.clone());
-                        if self.excuse_transport_loss {
-                            self.unexplained_transport_loss += 1;
-                            return;
-                        }
                         self.unexplained_discontinuities += 1;
                     }
                     Signal::Resync => self.unexplained_resyncs += 1,
