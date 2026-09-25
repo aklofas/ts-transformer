@@ -443,6 +443,30 @@ OUTAGE_DUR_S="${OUTAGE_DUR_S:-90}"
 # --reconnect-mode`. `blocking` (the default) stalls the producer for the
 # outage and replays it as a burst; `background` keeps it moving.
 SRT_RECONNECT_MODE="${SRT_RECONNECT_MODE:-blocking}" # send --reconnect-mode on the srt leg
+# Validate the env-overridable knobs HERE, before anything derives a flag
+# string from them. A typo would otherwise surface minutes later inside a
+# backgrounded worker (or not at all, as a silently wrong outage schedule),
+# which is exactly the kind of failure a drill cannot afford to diagnose.
+[[ "$OUTAGE_PERIOD_S" =~ ^[0-9]+$ ]] && [ "$OUTAGE_PERIOD_S" -gt 0 ] || {
+  echo "soak.sh: OUTAGE_PERIOD_S must be a positive integer (seconds), got: $OUTAGE_PERIOD_S" >&2
+  exit 2
+}
+[[ "$OUTAGE_DUR_S" =~ ^[0-9]+$ ]] && [ "$OUTAGE_DUR_S" -gt 0 ] || {
+  echo "soak.sh: OUTAGE_DUR_S must be a positive integer (seconds), got: $OUTAGE_DUR_S" >&2
+  exit 2
+}
+[ "$OUTAGE_DUR_S" -lt "$OUTAGE_PERIOD_S" ] || {
+  echo "soak.sh: OUTAGE_DUR_S ($OUTAGE_DUR_S) must be shorter than OUTAGE_PERIOD_S ($OUTAGE_PERIOD_S) \
+— an outage at least as long as its period never lets the link recover" >&2
+  exit 2
+}
+case "$SRT_RECONNECT_MODE" in
+  blocking | background) ;;
+  *)
+    echo "soak.sh: SRT_RECONNECT_MODE must be blocking|background, got: $SRT_RECONNECT_MODE" >&2
+    exit 2
+    ;;
+esac
 # The four FIXED-impairment knobs. Used only under --fixed-impairment:
 # the default run drives both proxies from a seeded --schedule instead,
 # whose phases override all four per phase (which is why the proxy
@@ -450,6 +474,11 @@ SRT_RECONNECT_MODE="${SRT_RECONNECT_MODE:-blocking}" # send --reconnect-mode on 
 # "is this failure the schedule's doing?" is a question a long run will
 # eventually raise, and the old single-level shape is the answer to it.
 LOSS_PCT="${LOSS_PCT:-2}" # env-overridable: LOSS_PCT=0 --fixed-impairment isolates outage effects from loss
+# Decimal-allowed (like --hours), so awk does the range check, not bash.
+[[ "$LOSS_PCT" =~ ^[0-9]+(\.[0-9]+)?$ ]] && awk -v l="$LOSS_PCT" 'BEGIN{exit !(l>=0 && l<100)}' || {
+  echo "soak.sh: LOSS_PCT must be a number in [0, 100), got: $LOSS_PCT" >&2
+  exit 2
+}
 JITTER_MS=20
 # Constant one-way base delay on top of the jitter — a realistic WAN
 # hop's worth of lag (both legs' senders otherwise talk to their proxy

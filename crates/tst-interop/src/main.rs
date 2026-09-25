@@ -317,6 +317,10 @@ fn run_send(args: &[String]) -> ! {
     let mut json_out: Option<String> = None;
     let mut managed = false;
     let mut reconnect_mode = tst_pipeline::ReconnectMode::Blocking;
+    // Tracked separately from the value: only `--managed` reads the mode,
+    // so passing it without `--managed` is a silently-ignored flag, not a
+    // default. Rejected below rather than dropped.
+    let mut reconnect_mode_set = false;
     let mut no_klv_digest = false;
     let mut au_sizes = AuSizeMode::Compact;
     let mut klv_set = KlvSet::Compact;
@@ -359,6 +363,7 @@ fn run_send(args: &[String]) -> ! {
                         std::process::exit(2);
                     }
                 };
+                reconnect_mode_set = true;
                 i += 2;
             }
             "--no-klv-digest" => {
@@ -420,6 +425,13 @@ fn run_send(args: &[String]) -> ! {
         eprintln!("send: unknown profile: {profile_name}");
         std::process::exit(2);
     });
+    // Only the managed path builds a `ReconnectPolicy`, so the mode is
+    // read nowhere else. Accepting it without `--managed` would silently
+    // drop it and let a drill believe it ran in a mode it never did.
+    if reconnect_mode_set && !managed {
+        eprintln!("send: --reconnect-mode is meaningful only with --managed");
+        std::process::exit(2);
+    }
 
     // A log with no tap would be an empty file nobody wrote to, and a
     // tap with no log would corrupt a stream whose damage nothing could
