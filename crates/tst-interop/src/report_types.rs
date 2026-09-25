@@ -136,6 +136,9 @@ pub struct KlvRichMetrics {
 /// "before any reconnect". Present only when a reconnect was seen.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct SinceReconnect {
+    /// `ReconnectDiscontinuity` markers the VERIFIER was fed, which can
+    /// legitimately differ from [`VerifyReport::reconnects`] — that one is
+    /// the managed transport's own rebuild counter, patched in by `recv`.
     pub reconnects: u64,
     pub bucket_edges_packets: [u64; 4],
     pub discontinuities: [u64; 6],

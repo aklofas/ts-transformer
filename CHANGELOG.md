@@ -1334,8 +1334,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   transport loss under lossy judgement (`pcr_anomalies_excused`; strict
   charges it); an injection resolved inside a reconnect gap
   (`Attribution::on_reconnect`, fed from `DemuxEvent::ReconnectDiscontinuity`)
-  never arrived and is `lost_in_reconnect_gap`, the only excusal a PSI-PID
-  injection can get; and every unexplained sample names the nearest resolved
+  never arrived and is `lost_in_reconnect_gap`, the only excusal a
+  PAT/PMT-flip injection can get; and every unexplained sample names the nearest resolved
   injection. New `CellMetrics.since_reconnect` buckets a leg's error events by
   packets since its last reconnect (absent from offline reports), the recv
   heartbeat prints `disc=`/`nc=`, `send --reconnect-mode blocking|background`

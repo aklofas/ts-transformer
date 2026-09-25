@@ -2003,6 +2003,11 @@ mod tests {
         );
         let (r, a) = run(VerifyMode::Strict);
         assert_eq!(a.pcr_anomalies_excused, 0, "{a:?}");
+        // The anomaly itself must be the charged finding. Without this the
+        // assertion below is non-discriminating: the co-fed continuity jump
+        // is also unexplained under Strict, so `corruption_attributed` would
+        // fire even if the PcrAnomaly had been silently dropped.
+        assert_eq!(a.unexplained_nonconformant, 1, "{a:?}");
         assert!(
             r.failures
                 .iter()
@@ -2064,7 +2069,13 @@ mod tests {
         t.feed_at(&discontinuity_event(), 10); // no reconnect yet
         t.feed_at(&DemuxEvent::ReconnectDiscontinuity, 100);
         t.feed_at(&discontinuity_event(), 600); // 500 after → < 1_000
+        // Exactly ON the first edge. The rule is `<`, not `<=`, so 1_000
+        // packets after the marker belongs to the NEXT bucket — feeding the
+        // edge is what keeps that from silently becoming off-by-one.
+        t.feed_at(&discontinuity_event(), 1_100);
         t.feed_at(&nonconformant_event(), 5_100); // 5_000 after → < 10_000
+        t.feed_at(&discontinuity_event(), 50_100); // 50_000 after → < 100_000
+        t.feed_at(&nonconformant_event(), 500_100); // 500_000 after → < 1_000_000
         t.feed_at(&discontinuity_event(), 2_000_100); // ≥ 1_000_000
         let s = finish(t)
             .metrics
@@ -2072,8 +2083,8 @@ mod tests {
             .expect("a reconnect was fed");
         assert_eq!(s.reconnects, 1);
         assert_eq!(s.bucket_edges_packets, [1_000, 10_000, 100_000, 1_000_000]);
-        assert_eq!(s.discontinuities, [1, 0, 0, 0, 1, 1]);
-        assert_eq!(s.nonconformant, [0, 1, 0, 0, 0, 0]);
+        assert_eq!(s.discontinuities, [1, 1, 1, 0, 1, 1]);
+        assert_eq!(s.nonconformant, [0, 1, 0, 1, 0, 0]);
 
         // No reconnect → the block is absent, and the JSON has no key:
         // an offline verify report must serialize as it always did.

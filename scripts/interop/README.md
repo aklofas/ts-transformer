@@ -710,8 +710,9 @@ four narrow things:
 - An injection whose position resolves inside a **reconnect gap** — between
   the last media before a `ReconnectDiscontinuity` and the marker's own
   window — never arrived at all and moves to `undetected_lost`, counted
-  separately in `lost_in_reconnect_gap`. This is the only excusal a PSI-PID
-  injection can ever get: the demuxer reports no continuity jump on a PSI PID.
+  separately in `lost_in_reconnect_gap`. This is the only excusal a
+  PAT/PMT-flip injection can ever get: the demuxer reports no continuity jump
+  on a PSI PID.
 
 Every unexplained sample names the nearest resolved injection —
 `… (nearest injection: psi_flip on pid 0x0000 at packet 41230, 118 packets
