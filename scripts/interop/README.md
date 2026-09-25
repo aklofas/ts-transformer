@@ -688,7 +688,7 @@ never recorded: the proxy's own configured loss, an SRT/RIST buffer overrun,
 the gap a reconnect leaves behind an outage window. The attribution engine
 cannot tell such a gap from one the tap made, so in Lossy mode — and ONLY
 there; offline `verify` is Strict and byte-for-byte unchanged — it excuses
-two narrow things:
+four narrow things:
 
 - An unexplained **discontinuity-family** signal (`ContinuityJump`,
   `OtherDiscontinuity`) moves out of `unexplained_events` into
@@ -702,6 +702,31 @@ two narrow things:
   load-bearing: an injection's OWN jump never excuses it, or a `drop` —
   whose only observable IS a continuity jump — would arrive pre-excused and
   its recovery obligation would evaporate.
+- A `PcrAnomaly` beside a continuity jump on its own PID — within the
+  attribution window before it, or on the same packet after it (tst-core
+  queues `check_pcr` before `check_continuity`) — is the gap's timestamp
+  signature and moves to `unexplained_transport_loss`, counted separately in
+  `pcr_anomalies_excused`. A PCR jump with no gap on its PID still FAILS.
+- An injection whose position resolves inside a **reconnect gap** — between
+  the last media before a `ReconnectDiscontinuity` and the marker's own
+  window — never arrived at all and moves to `undetected_lost`, counted
+  separately in `lost_in_reconnect_gap`. This is the only excusal a PSI-PID
+  injection can ever get: the demuxer reports no continuity jump on a PSI PID.
+
+Every unexplained sample names the nearest resolved injection —
+`… (nearest injection: psi_flip on pid 0x0000 at packet 41230, 118 packets
+before)` — so "what was nearby?", the first question a reader asks of an
+event nothing explains, is answerable from an archived report alone.
+
+A receiver also records WHEN its error events fell relative to its
+reconnects, in `metrics.since_reconnect`: `discontinuities` and
+`nonconformant`, each a six-bucket histogram of PACKETS since the last
+`ReconnectDiscontinuity` — under 1 000 (≈1 s at the soak's ~1 100 pkt/s),
+under 10 000, under 100 000, under 1 000 000, everything beyond, and finally
+everything before the first reconnect. Packets rather than a clock, so an
+offline re-judge of the same capture reproduces the same buckets. The whole
+block is ABSENT from a report whose capture saw no reconnect marker, which is
+every offline `verify` report and every interop matrix cell.
 
 What that costs is one mutation, honestly: a WITHHELD `drop` log line is not
 catchable on a lossy leg by construction, because nothing distinguishes a gap
@@ -976,12 +1001,17 @@ trustworthy.
 
 A live soak capture verifies in `VerifyMode::Lossy`, where packets go missing
 for reasons the log never recorded. An attribution built with
-`Attribution::lossy` then excuses exactly two things, and records each in its
+`Attribution::lossy` then excuses exactly four things, and records each in its
 own counter so nothing vanishes silently: an unexplained DISCONTINUITY-family
-signal moves to `unexplained_transport_loss` (non-conformances and resyncs
-still fail), and an undetected or unrecovered injection with a FOREIGN
+signal moves to `unexplained_transport_loss` (other non-conformances and
+resyncs still fail); an undetected or unrecovered injection with a FOREIGN
 continuity jump in its window moves to `undetected_lost` /
-`unrecovered_lost`. An injection's own jump excuses it only when a continuity
+`unrecovered_lost`; a `PcrAnomaly` beside a continuity jump on its own PID is
+that gap's timestamp signature and is excused into
+`unexplained_transport_loss`, counted in `pcr_anomalies_excused`; and an
+injection resolved inside a RECONNECT GAP never arrived, moving to
+`undetected_lost` and counted in `lost_in_reconnect_gap`. An injection's own
+jump excuses it only when a continuity
 jump is NOT one of the signals its class had to produce — for a `drop` or a
 `header` the jump IS the detection, so it never also excuses.
 `corruption_attributed` gates on an uncapped per-family count, not on the
