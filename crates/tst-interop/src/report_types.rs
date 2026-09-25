@@ -76,6 +76,10 @@ pub struct CellMetrics {
     /// [`KlvRichMetrics`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub klv_rich: Option<KlvRichMetrics>,
+    /// See [`SinceReconnect`]. `None` until the first reconnect marker,
+    /// so an offline `verify` report serializes exactly as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since_reconnect: Option<SinceReconnect>,
 }
 
 /// Per-record findings of the three rich-KLV oracles (spec §5.5), filled
@@ -118,6 +122,24 @@ pub struct KlvRichMetrics {
     pub damaged_by_injection: u64,
     /// The first record to trip any of the three oracles, described.
     pub first_problem: Option<String>,
+}
+
+/// Where a leg's error events sit relative to its reconnects — the
+/// question the 2026-09-17 72-h soak could not answer offline (its srt
+/// leg excused ~208 continuity gaps per outage window against a per-window
+/// allowance of 2, with nothing recording WHEN in the window they fell).
+///
+/// Buckets are PACKETS since the last `ReconnectDiscontinuity` — a count,
+/// not a clock, so an offline re-judge reproduces it — with edges
+/// `bucket_edges_packets` (`< 1 000` ≈ 1 s at the soak's ~1 100 pkt/s,
+/// `< 10 000`, `< 100 000`, `< 1 000 000`), then `>= 1 000 000`, then
+/// "before any reconnect". Present only when a reconnect was seen.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SinceReconnect {
+    pub reconnects: u64,
+    pub bucket_edges_packets: [u64; 4],
+    pub discontinuities: [u64; 6],
+    pub nonconformant: [u64; 6],
 }
 
 /// Outcome of checking one [`CellMetrics`] tally against a

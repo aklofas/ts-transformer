@@ -3081,6 +3081,7 @@ pub mod soak {
                 corruption: None,
                 corruption_attribution: None,
                 klv_rich: None,
+                since_reconnect: None,
             }
         }
 

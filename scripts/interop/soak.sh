@@ -70,6 +70,14 @@
 #     36 tags (mean ~27) carrying a nested ST 0102 security set on a
 #     seeded presence schedule, so the run exercises real metadata
 #     density rather than the matrix's minimal record.
+#   - Env overrides (drill knobs, all with the production defaults
+#     above): `OUTAGE_PERIOD_S` and `OUTAGE_DUR_S` reshape the srt leg's
+#     outage schedule so a short run can cover several windows;
+#     `LOSS_PCT` (with `--fixed-impairment`) isolates outage effects from
+#     loss when set to 0; `SRT_RECONNECT_MODE=blocking|background` picks
+#     how that leg's managed sender spends an outage. Set them in the
+#     environment, e.g. `OUTAGE_PERIOD_S=300 OUTAGE_DUR_S=30 bash
+#     soak.sh ...`.
 #
 # Every long-running process's stdout/stderr is redirected to
 # `--outdir/logs/*.log`; each PID is additionally recorded under
@@ -429,15 +437,19 @@ TOTAL_SECONDS=$(awk -v h="$HOURS" 'BEGIN{printf "%d", h*3600 + 0.5}')
 # and "21600" independently: OUTAGE_PERIOD_S is the single source of
 # truth, both the proxy's own `--outage` flag string and `report
 # soak`'s `--outage-period-s` are built from it.
-OUTAGE_PERIOD_S=21600 # 6h
-OUTAGE_DUR_S=90
+OUTAGE_PERIOD_S="${OUTAGE_PERIOD_S:-21600}" # 6h; env-overridable for a short outage-focused drill
+OUTAGE_DUR_S="${OUTAGE_DUR_S:-90}"
+# How the srt leg's managed sender spends an outage — see `send
+# --reconnect-mode`. `blocking` (the default) stalls the producer for the
+# outage and replays it as a burst; `background` keeps it moving.
+SRT_RECONNECT_MODE="${SRT_RECONNECT_MODE:-blocking}" # send --reconnect-mode on the srt leg
 # The four FIXED-impairment knobs. Used only under --fixed-impairment:
 # the default run drives both proxies from a seeded --schedule instead,
 # whose phases override all four per phase (which is why the proxy
 # refuses to accept them together). Kept — rather than deleted — because
 # "is this failure the schedule's doing?" is a question a long run will
 # eventually raise, and the old single-level shape is the answer to it.
-LOSS_PCT=2
+LOSS_PCT="${LOSS_PCT:-2}" # env-overridable: LOSS_PCT=0 --fixed-impairment isolates outage effects from loss
 JITTER_MS=20
 # Constant one-way base delay on top of the jitter — a realistic WAN
 # hop's worth of lag (both legs' senders otherwise talk to their proxy
@@ -791,7 +803,8 @@ sleep "$SETTLE"
 # `fixtures::AuSizeMode`.
 "$BIN" send --profile "$SRT_PROFILE" --url "srt://$SRT_PROXY_ADDR?latency=$SRT_LATENCY_MS" --managed \
   --seconds "$TOTAL_SECONDS" --json "$OUTDIR/srt/send-report.json" --no-klv-digest \
-  --au-sizes realistic "${KLV_ARGS[@]}" "${SRT_SEND_CORRUPT_ARGS[@]}" \
+  --au-sizes realistic --reconnect-mode "$SRT_RECONNECT_MODE" \
+  "${KLV_ARGS[@]}" "${SRT_SEND_CORRUPT_ARGS[@]}" \
   >"$OUTDIR/logs/srt-send.log" 2>&1 &
 record_pid srt-send $!
 

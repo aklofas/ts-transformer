@@ -18,7 +18,7 @@ use sha2::{Digest, Sha256};
 use tst_core::codec::misp_time::MispTimestamp;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::transport::{BrokenCause, Transport, TransportError};
-use tst_pipeline::{ManagedTransport, MuxSender, ReconnectPolicy};
+use tst_pipeline::{ManagedTransport, MuxSender, ReconnectMode, ReconnectPolicy};
 
 use crate::cli::write_json;
 use crate::corrupt::{CorruptConfig, Corrupter};
@@ -277,6 +277,9 @@ pub fn send_over_transport(
         // records; the sender builds the records and has nothing to
         // judge.
         klv_rich: None,
+        // A receiver-side bucketing of demux events against reconnect
+        // markers — the sender feeds no demuxer and sees no markers.
+        since_reconnect: None,
     })
 }
 
@@ -299,6 +302,11 @@ pub fn send_over_transport(
 /// worse failure mode than retrying indefinitely against a proxy
 /// address that's known to still be alive (it's discarding packets, not
 /// gone).
+///
+/// `mode` picks how the producer spends an outage. `Blocking` (the
+/// default and the soak's shape) stalls the producer for the outage and
+/// replays it as a burst afterwards; `Background` keeps the producer
+/// moving and drains the gap buffer beside live traffic.
 #[allow(clippy::too_many_arguments)]
 pub fn run_managed(
     p: &Profile,
@@ -310,6 +318,7 @@ pub fn run_managed(
     klv: KlvSet,
     klv_seed: u64,
     corrupt: Option<(CorruptConfig, PathBuf)>,
+    mode: ReconnectMode,
 ) -> Result<CellMetrics, String> {
     let initial = transport::make_send(url)?;
     let dial_url = url.to_string();
@@ -322,6 +331,7 @@ pub fn run_managed(
     };
     let policy = ReconnectPolicy {
         max_attempts: None,
+        mode,
         ..ReconnectPolicy::default()
     };
     let managed: Box<dyn Transport> = Box::new(ManagedTransport::new(initial, factory, policy));
