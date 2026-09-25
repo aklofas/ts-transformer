@@ -28,7 +28,7 @@ use crate::fixtures::{self, KlvSet};
 use crate::oracles::{self, Explained};
 use crate::profiles::{self, Profile};
 use crate::rawts::{self, WireSummary};
-use crate::report_types::{CellMetrics, KlvRichMetrics, VerifyReport};
+use crate::report_types::{CellMetrics, KlvRichMetrics, SinceReconnect, VerifyReport};
 
 /// Whether a captured cell may carry `Discontinuity` events and still
 /// pass. Both modes fail on `NonConformant` — that always indicates the
@@ -191,6 +191,11 @@ pub(crate) fn klv_set_hash(record_digests: &[String]) -> String {
 /// run are held to the identical bar.
 pub(crate) const NOMINAL_COUNT_SLACK: f64 = 0.7;
 
+/// Upper edges of the first four `since_reconnect` buckets, in PACKETS —
+/// see [`SinceReconnect`]. A fifth bucket takes everything at or beyond
+/// the last edge, and a sixth everything before the first reconnect.
+pub(crate) const SINCE_RECONNECT_EDGES: [u64; 4] = [1_000, 10_000, 100_000, 1_000_000];
+
 /// The minimum acceptable count for a `per_sec`-Hz signal over
 /// `seconds`, requiring at least `slack` (e.g. `0.7` = 70%) of the
 /// nominal total. Shared by `Tally::finish`'s whole-capture floors
@@ -291,6 +296,15 @@ pub struct Tally {
     rich_first_decode: Option<String>,
     rich_first_census: Option<String>,
     rich_first_security: Option<String>,
+    /// Receiver ordinal of the last `ReconnectDiscontinuity` fed, and how
+    /// many have been fed — see [`SinceReconnect`]. `None` means no
+    /// reconnect yet, which is its own bucket.
+    last_reconnect_at: Option<u64>,
+    reconnects_fed: u64,
+    /// Error events bucketed by packets since `last_reconnect_at`. Fixed
+    /// six-element arrays, so a multi-day soak accumulates nothing.
+    disc_since_reconnect: [u64; 6],
+    nc_since_reconnect: [u64; 6],
 }
 
 /// Which of the three rich oracles a problem belongs to — see
@@ -341,6 +355,36 @@ impl Tally {
             rich_first_decode: None,
             rich_first_census: None,
             rich_first_security: None,
+            last_reconnect_at: None,
+            reconnects_fed: 0,
+            disc_since_reconnect: [0; 6],
+            nc_since_reconnect: [0; 6],
+        }
+    }
+
+    /// `Discontinuity` events fed so far — for a live receiver's heartbeat.
+    pub fn discontinuities(&self) -> u64 {
+        self.discontinuities
+    }
+
+    /// `NonConformant` events fed so far — for a live receiver's heartbeat.
+    pub fn nonconformant(&self) -> u64 {
+        self.nonconformant
+    }
+
+    /// Which `since_reconnect` bucket an event at receiver ordinal `at`
+    /// falls in: index 5 before any reconnect, else the first edge `at`'s
+    /// distance from the last marker falls under, or 4 past them all.
+    fn since_reconnect_bucket(&self, at: u64) -> usize {
+        match self.last_reconnect_at {
+            None => 5,
+            Some(r) => {
+                let d = at.saturating_sub(r);
+                SINCE_RECONNECT_EDGES
+                    .iter()
+                    .position(|&e| d < e)
+                    .unwrap_or(4)
+            }
         }
     }
 
@@ -473,17 +517,24 @@ impl Tally {
             }
             DemuxEvent::Discontinuity { stream, kind } => {
                 self.discontinuities += 1;
+                let bucket = self.since_reconnect_bucket(at);
+                self.disc_since_reconnect[bucket] += 1;
                 *self.discontinuities_by_pid.entry(stream.pid).or_insert(0) += 1;
                 self.first_discontinuity
                     .get_or_insert_with(|| format!("{kind:?}"));
             }
             DemuxEvent::NonConformant { stream, issue } => {
                 self.nonconformant += 1;
+                let bucket = self.since_reconnect_bucket(at);
+                self.nc_since_reconnect[bucket] += 1;
                 *self.nonconformant_by_pid.entry(stream.pid).or_insert(0) += 1;
                 self.first_nonconformant
                     .get_or_insert_with(|| issue.to_string());
             }
-            DemuxEvent::ReconnectDiscontinuity => {}
+            DemuxEvent::ReconnectDiscontinuity => {
+                self.last_reconnect_at = Some(at);
+                self.reconnects_fed += 1;
+            }
         }
     }
 
@@ -1134,6 +1185,12 @@ impl Tally {
             corruption: None,
             corruption_attribution: attribution,
             klv_rich,
+            since_reconnect: (self.reconnects_fed > 0).then_some(SinceReconnect {
+                reconnects: self.reconnects_fed,
+                bucket_edges_packets: SINCE_RECONNECT_EDGES,
+                discontinuities: self.disc_since_reconnect,
+                nonconformant: self.nc_since_reconnect,
+            }),
         };
 
         VerifyReport {
@@ -1984,6 +2041,49 @@ mod tests {
             "{:?}",
             r.failures
         );
+    }
+
+    /// Error events are bucketed by packets since the last reconnect —
+    /// the question run 3 (2026-09-17) could not answer offline: WHEN in an
+    /// outage window its ~208 excused gaps fell.
+    #[test]
+    fn error_events_are_bucketed_by_packets_since_the_last_reconnect() {
+        let wire = wire_for("baseline", 2.0);
+        // `Tally::finish` consumes `self`, so the closure takes one by value.
+        let finish = |t: Tally| {
+            t.finish(
+                profiles::by_name("baseline").unwrap(),
+                2.0,
+                NOMINAL_COUNT_SLACK,
+                VerifyMode::Lossy,
+                &wire,
+            )
+        };
+        let mut t = Tally::new();
+        t.feed(&program_map_event());
+        t.feed_at(&discontinuity_event(), 10); // no reconnect yet
+        t.feed_at(&DemuxEvent::ReconnectDiscontinuity, 100);
+        t.feed_at(&discontinuity_event(), 600); // 500 after → < 1_000
+        t.feed_at(&nonconformant_event(), 5_100); // 5_000 after → < 10_000
+        t.feed_at(&discontinuity_event(), 2_000_100); // ≥ 1_000_000
+        let s = finish(t)
+            .metrics
+            .since_reconnect
+            .expect("a reconnect was fed");
+        assert_eq!(s.reconnects, 1);
+        assert_eq!(s.bucket_edges_packets, [1_000, 10_000, 100_000, 1_000_000]);
+        assert_eq!(s.discontinuities, [1, 0, 0, 0, 1, 1]);
+        assert_eq!(s.nonconformant, [0, 1, 0, 0, 0, 0]);
+
+        // No reconnect → the block is absent, and the JSON has no key:
+        // an offline verify report must serialize as it always did.
+        let mut t = Tally::new();
+        t.feed(&program_map_event());
+        t.feed_at(&discontinuity_event(), 10);
+        let r = finish(t);
+        assert!(r.metrics.since_reconnect.is_none());
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(!json.contains("since_reconnect"), "{json}");
     }
 
     /// A `ReconnectDiscontinuity` reaches the attribution as a gap marker:

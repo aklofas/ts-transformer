@@ -241,7 +241,8 @@ fn run_gen(args: &[String]) -> ! {
 }
 
 /// `send --profile NAME --url URL --seconds N [--json OUT] [--managed]
-/// [--no-klv-digest] [--au-sizes compact|realistic]
+/// [--reconnect-mode blocking|background] [--no-klv-digest]
+/// [--au-sizes compact|realistic]
 /// [--klv-set compact|rich] [--klv-seed N]
 /// [--corrupt SPEC --corruption-log PATH] [--seed N]`
 ///
@@ -265,6 +266,12 @@ fn run_gen(args: &[String]) -> ! {
 /// `soak.sh`'s SRT leg uses this to survive scheduled proxy outage
 /// windows. Rejected (exit 2) for the `hls://`/`rtsp://` serve schemes,
 /// which have no connect-mode transport to reconnect.
+///
+/// `--reconnect-mode` picks how a managed transport spends an outage —
+/// meaningful only with `--managed`, and `blocking` (the default) is the
+/// soak's shape: the producer stalls for the outage and replays it as a
+/// burst afterwards. `background` keeps the producer moving and drains
+/// the gap buffer beside live traffic.
 ///
 /// `--no-klv-digest` skips the per-record KLV digest accumulation
 /// `CellMetrics::klv_set_sha256` needs — that field comes back `null`
@@ -309,6 +316,7 @@ fn run_send(args: &[String]) -> ! {
     let mut seconds: Option<f64> = None;
     let mut json_out: Option<String> = None;
     let mut managed = false;
+    let mut reconnect_mode = tst_pipeline::ReconnectMode::Blocking;
     let mut no_klv_digest = false;
     let mut au_sizes = AuSizeMode::Compact;
     let mut klv_set = KlvSet::Compact;
@@ -339,6 +347,19 @@ fn run_send(args: &[String]) -> ! {
             "--managed" => {
                 managed = true;
                 i += 1;
+            }
+            "--reconnect-mode" => {
+                reconnect_mode = match require_value(args, i, "send: --reconnect-mode").as_str() {
+                    "blocking" => tst_pipeline::ReconnectMode::Blocking,
+                    "background" => tst_pipeline::ReconnectMode::Background,
+                    other => {
+                        eprintln!(
+                            "send: --reconnect-mode must be blocking|background, got {other}"
+                        );
+                        std::process::exit(2);
+                    }
+                };
+                i += 2;
             }
             "--no-klv-digest" => {
                 no_klv_digest = true;
@@ -468,6 +489,7 @@ fn run_send(args: &[String]) -> ! {
             klv_set,
             klv_seed,
             corrupt,
+            reconnect_mode,
         )
     } else {
         send::run(

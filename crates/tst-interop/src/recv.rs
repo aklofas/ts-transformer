@@ -301,9 +301,11 @@ pub fn recv_over_transport(
         if last_heartbeat.elapsed() >= crate::HEARTBEAT_INTERVAL {
             last_heartbeat = Instant::now();
             eprintln!(
-                "recv: heartbeat elapsed_s={} events={events_seen} wire_bytes={}",
+                "recv: heartbeat elapsed_s={} events={events_seen} wire_bytes={} disc={} nc={}",
                 start.elapsed().as_secs(),
                 transport::tee_bytes_so_far(&tap),
+                tally.discontinuities(),
+                tally.nonconformant(),
             );
         }
         match rx.recv_event() {
@@ -565,9 +567,12 @@ pub fn run_managed(
         if last_heartbeat.elapsed() >= crate::HEARTBEAT_INTERVAL {
             last_heartbeat = Instant::now();
             eprintln!(
-                "recv: heartbeat elapsed_s={} events={events_seen} wire_bytes={} reconnects={}",
+                "recv: heartbeat elapsed_s={} events={events_seen} wire_bytes={} disc={} nc={} \
+                 reconnects={}",
                 start.elapsed().as_secs(),
                 transport::tee_bytes_so_far(&tap),
+                tally.discontinuities(),
+                tally.nonconformant(),
                 rx.reconnects_count(),
             );
         }
