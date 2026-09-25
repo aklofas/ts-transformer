@@ -279,6 +279,102 @@ fn a_body_flip_under_a_section_crc_is_noticed() {
     );
 }
 
+/// F3 probe (soak run 3, 2026-09-17: six unexplained `PsiChecksum` on the
+/// rist leg's PMT PID, one per leg on the PAT). `expects()` lists no
+/// `PsiChecksum` for `Header | Truncate | Garbage`; this measures, through
+/// the real demuxer, what a receiver reports for framing damage on or
+/// beside a PSI packet, and the arm follows the measurement — never the
+/// reasoning (the file's own convention for every `expects` arm).
+fn psi_framing_shapes(bytes: &[u8]) -> Vec<(&'static str, Vec<u8>)> {
+    let pmt_at = bytes
+        .chunks_exact(188)
+        .position(|pk| {
+            let pk: &[u8; 188] = pk.try_into().expect("188-byte chunk");
+            tst_interop::rawts::classify_packet(pk).is_ok_and(|i| i.pid == 0x1000 && i.pusi)
+        })
+        .expect("the generator emits a PMT at the head of the capture");
+    let (before, pmt, after) = (
+        &bytes[..pmt_at * 188],
+        &bytes[pmt_at * 188..(pmt_at + 1) * 188],
+        &bytes[(pmt_at + 1) * 188..],
+    );
+    let mut garbage = vec![0x55u8; 100];
+    garbage[30] = 0x47; // a false sync candidate inside the run
+    let prev_at = pmt_at.checked_sub(1).expect("a PAT precedes the PMT");
+    vec![
+        (
+            "PMT truncated to 60 bytes",
+            [before, &pmt[..60], after].concat(),
+        ),
+        (
+            "100-byte garbage run after the PMT",
+            [before, pmt, &garbage, after].concat(),
+        ),
+        (
+            "packet before the PMT truncated to 60 bytes",
+            [
+                &bytes[..prev_at * 188],
+                &bytes[prev_at * 188..prev_at * 188 + 60],
+                pmt,
+                after,
+            ]
+            .concat(),
+        ),
+    ]
+}
+
+#[test]
+fn framing_damage_on_a_psi_packet_reports_what_expects_says_it_does() {
+    let p = baseline();
+    let bytes = gen_bytes(p, "psi-framing");
+    // An EMPTY log with a real header: every event the demuxer reports is
+    // then an unexplained sample whose text starts with the signal's name
+    // (`{sig:?} on pid …`), which is a stabler thing to read than the
+    // issue's `Display` text in the `nonconformant_event` failure.
+    let empty_log = (
+        LogHeader {
+            tap_version: 1,
+            seed: 1,
+            rate_per_10k: 5,
+            min_gap: 1000,
+            classes: Class::ALL.to_vec(),
+            attribution_window: ATTRIBUTION_WINDOW,
+            recovery_bound: RECOVERY_BOUND,
+        },
+        Vec::<Injection>::new(),
+    );
+    let mut observed = Vec::new();
+    for (name, wire) in psi_framing_shapes(&bytes) {
+        let r = verify_bytes_with_corruption(
+            &wire,
+            p,
+            SECONDS,
+            VerifyMode::Strict,
+            KlvExpect::compact(),
+            Some(&empty_log),
+        );
+        let a = r
+            .metrics
+            .corruption_attribution
+            .expect("an attribution was attached");
+        let psi_checksum = a.unexplained_events.iter().any(|e| {
+            e.starts_with("PsiChecksum on pid Some(4096)")
+                || e.starts_with("PsiChecksum on pid Some(0)")
+        });
+        eprintln!(
+            "{name}: nonconformant={} discontinuities={} resyncs={} unexplained={:?}",
+            r.metrics.nonconformant, r.metrics.discontinuities, a.resyncs, a.unexplained_events
+        );
+        observed.push((name, psi_checksum));
+    }
+    assert!(
+        observed.iter().all(|&(_, psi_checksum)| !psi_checksum),
+        "measured 2026-09-25: no framing shape on a PSI packet surfaces as PsiChecksum — the \
+         demuxer re-syncs past a damaged section without parsing it. If this ever flips, \
+         expects()'s framing arm must learn PsiChecksum: {observed:?}"
+    );
+}
+
 /// Every class at once, on every profile. `pts-rollover` needs a capture
 /// longer than its 7 s wrap window, which [`SECONDS`] clears.
 #[test]
