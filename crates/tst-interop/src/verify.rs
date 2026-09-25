@@ -712,6 +712,7 @@ impl Tally {
             DemuxEvent::NonConformant { stream, issue } => {
                 let sig = match issue {
                     NonConformantIssue::PsiChecksumMismatch { .. } => corrupt::Signal::PsiChecksum,
+                    NonConformantIssue::PcrAnomaly { .. } => corrupt::Signal::PcrAnomaly,
                     NonConformantIssue::MalformedPes { .. } | NonConformantIssue::PusiMidPes => {
                         corrupt::Signal::MalformedPes
                     }
@@ -1622,6 +1623,19 @@ mod tests {
         }
     }
 
+    /// A PCR jump on the video PID — `Signal::PcrAnomaly`, the one
+    /// non-conformance lossy judgement can excuse (beside a gap).
+    fn pcr_anomaly_event() -> DemuxEvent {
+        DemuxEvent::NonConformant {
+            stream: StreamId {
+                pid: VIDEO_PID,
+                kind: StreamKind::Video(VideoCodec::H264),
+                program_number: PROGRAM,
+            },
+            issue: NonConformantIssue::PcrAnomaly { delta: 54_000_000 },
+        }
+    }
+
     fn discontinuity_event() -> DemuxEvent {
         DemuxEvent::Discontinuity {
             stream: StreamId {
@@ -1859,6 +1873,57 @@ mod tests {
             r.failures
                 .iter()
                 .any(|f| f.starts_with("corruption_recovered")),
+            "{:?}",
+            r.failures
+        );
+    }
+
+    /// The Tally routes a `PcrAnomaly` as its own signal, in the order the
+    /// demuxer emits it (jump first, gap second, same packet), and the
+    /// tier decides: excused in Lossy, charged in Strict.
+    #[test]
+    fn a_pcr_jump_beside_a_gap_is_excused_in_lossy_and_charged_in_strict() {
+        use crate::corrupt::Class;
+        let hdr = corruption_header();
+        let wire = wire_for("baseline", 2.0);
+        let run = |mode: VerifyMode| {
+            let mut t = healthy_baseline_tally();
+            t.attach_attribution(attribution_for(
+                mode,
+                vec![injection_at(Class::Drop, KLV_PID, 0)],
+                &hdr,
+            ));
+            t.feed_at(&pcr_anomaly_event(), 30);
+            t.feed_at(&discontinuity_event(), 30);
+            let r = t.finish(
+                profiles::by_name("baseline").unwrap(),
+                2.0,
+                NOMINAL_COUNT_SLACK,
+                mode,
+                &wire,
+            );
+            let a = r
+                .metrics
+                .corruption_attribution
+                .clone()
+                .expect("attribution");
+            (r, a)
+        };
+        let (r, a) = run(VerifyMode::Lossy);
+        assert_eq!(a.pcr_anomalies_excused, 1, "{a:?}");
+        assert!(
+            !r.failures
+                .iter()
+                .any(|f| f.starts_with("corruption_attributed")),
+            "{:?}",
+            r.failures
+        );
+        let (r, a) = run(VerifyMode::Strict);
+        assert_eq!(a.pcr_anomalies_excused, 0, "{a:?}");
+        assert!(
+            r.failures
+                .iter()
+                .any(|f| f.starts_with("corruption_attributed")),
             "{:?}",
             r.failures
         );
