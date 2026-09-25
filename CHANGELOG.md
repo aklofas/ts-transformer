@@ -236,6 +236,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Demuxer: `PcrAnomaly` is reported only on a PMT-declared `PCR_PID`.**
+  `check_pcr` used to key its timeline by the on-wire PID of any packet
+  carrying a PCR, so a stray or corrupted packet (a damaged PID field can
+  name any 13-bit value) seeded a timeline that the next stray, hours later,
+  "jumped" against — and under `StrictMode::TimingOnly` / `Full` that
+  anomaly is a `StrictRejection`, so one corrupted PID field could end a
+  strict session. Measured on the 2026-09-17 72-h soak: 61 PCR-carrying
+  packets rewritten to 0x1FFE produced ~50 `PcrAnomaly` events on a PID no
+  PMT ever declared. A PCR on an undeclared PID is now ignored (neither
+  compared nor remembered); `PcrMalformed` still fires on any PID because
+  it describes the packet, not a timeline. History for a declared PID starts
+  when the PMT declares it. No API change.
 - **JVM: the plain srt `DemuxReceiver.close()` and `Receiver.close()` now
   cancel first.** Both used to take the receiver's resource lock and wait
   for a `next()` / `recvBytes()` parked on another thread to return on its

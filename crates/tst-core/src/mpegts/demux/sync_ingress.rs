@@ -163,6 +163,29 @@ impl super::demuxer::Demuxer {
         }
         // Nested if-let (not let-chain) for MSRV 1.85 — let-chains require 1.88.
         if let Some(now) = pkt.pcr_27mhz {
+            // A time base belongs to a program, and a program names the ONE
+            // PID that carries it (`PCR_PID`, H.222.0 §2.4.4.9). A PCR on any
+            // other PID is not a timeline this demuxer owes a report on: a
+            // stray or corrupted packet (a damaged PID field can name any
+            // 13-bit value) must neither seed `last_pcr_by_pid` nor, hours
+            // later, fire a `PcrAnomaly` against it — under
+            // `StrictMode::TimingOnly` that anomaly is a `StrictRejection`,
+            // so one corrupted PID field on the wire could end a session.
+            // Measured on the 2026-09-17 72-h soak: 61 PCR-carrying packets
+            // rewritten to 0x1FFE produced ~50 anomalies on a PID no PMT
+            // ever declared.
+            let declared = self.programs.values().any(|t| t.pcr_pid == Some(pkt.pid));
+            if !declared {
+                // A PID that HELD this declaration until a PMT version bump
+                // moved `PCR_PID` elsewhere may still carry a stale
+                // `last_pcr_by_pid` entry: the PSI-side cleanup (DA-DEMUX-2)
+                // only removes it when the old PCR PID also leaves the
+                // stream set entirely, not when it stays on as a plain
+                // elementary PID. Retire it here too, so a PCR that keeps
+                // arriving on the demoted PID is "not remembered" either.
+                self.last_pcr_by_pid.remove(&pkt.pid);
+                return;
+            }
             if let Some(&last) = self.last_pcr_by_pid.get(&pkt.pid) {
                 let diff = pcr_diff_27mhz(now, last);
                 if diff.abs() > PCR_ANOMALY_THRESHOLD {

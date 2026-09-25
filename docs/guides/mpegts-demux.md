@@ -384,7 +384,9 @@ Strict (`TimingOnly` or `Full`) converts to `StrictRejection`.
 **PCR jumps.** A PCR-bearing packet's clock jumps more than one second
 relative to the previous. The demuxer emits
 `NonConformantIssue::PcrAnomaly { delta }` (delta in 27 MHz ticks)
-and continues. A per-PID backward PTS step of more than one second
+and continues. Reported only on a PMT-declared `PCR_PID`; a PCR on an
+undeclared PID is ignored rather than tracked. A per-PID backward PTS
+step of more than one second
 (90 000 ticks, computed 33-bit-wrap-aware) is a separate variant,
 `NonConformantIssue::PtsAnomaly { delta }` (delta in 90 kHz ticks, negative).
 

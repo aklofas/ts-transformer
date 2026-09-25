@@ -3475,6 +3475,199 @@ mod tests {
         assert_eq!(delta, 54_000_000);
     }
 
+    /// A PCR on a PID no PMT names as `PCR_PID` is not a time base this
+    /// demuxer tracks (H.222.0 §2.4.4.9: the program names the one PID
+    /// that carries its clock). Measured on the 2026-09-17 72-h soak: the
+    /// harness's PID-rewrite corruption moved 61 PCR-carrying packets to
+    /// 0x1FFE and the demuxer answered with ~50 `PcrAnomaly` events on a
+    /// PID nothing declared. Neither the seed nor the anomaly may happen.
+    #[test]
+    fn pcr_on_an_undeclared_pid_is_ignored() {
+        let mut demuxer = Demuxer::new();
+        demuxer
+            .feed(&pat_packet_with_programs(&[(1, 0x1000)], 0))
+            .unwrap();
+        demuxer
+            .feed(&pmt_packet_for_test(
+                0x1000,
+                1,
+                0x1011,
+                &[(0x1B, 0x1011)],
+                0,
+            ))
+            .unwrap();
+        while demuxer.next_event().is_some() {}
+
+        // Two strays on 0x1FFE, 2 s apart at 27 MHz — twice the anomaly
+        // threshold, the shape that fired on the soak.
+        demuxer.feed(&pcr_packet_for_test(0x1FFE, 0)).unwrap();
+        demuxer
+            .feed(&pcr_packet_for_test(0x1FFE, 54_000_000))
+            .unwrap();
+        let events: Vec<_> = core::iter::from_fn(|| demuxer.next_event()).collect();
+        assert!(
+            !events.iter().any(|e| matches!(
+                e,
+                DemuxEvent::NonConformant {
+                    issue: NonConformantIssue::PcrAnomaly { .. },
+                    ..
+                }
+            )),
+            "a PCR on an undeclared PID must not report an anomaly: {events:?}"
+        );
+        assert!(
+            !demuxer.last_pcr_by_pid.contains_key(&0x1FFE),
+            "a stray PCR must not seed a timeline"
+        );
+
+        // The declared PCR PID is still tracked exactly as before.
+        demuxer.feed(&pcr_packet_for_test(0x1011, 0)).unwrap();
+        demuxer
+            .feed(&pcr_packet_for_test(0x1011, 54_000_000))
+            .unwrap();
+        let events: Vec<_> = core::iter::from_fn(|| demuxer.next_event()).collect();
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                DemuxEvent::NonConformant {
+                    issue: NonConformantIssue::PcrAnomaly { delta: 54_000_000 },
+                    ..
+                }
+            )),
+            "the declared PCR PID keeps its anomaly detection: {events:?}"
+        );
+    }
+
+    /// The consequence that matters to an integrator: under
+    /// `StrictMode::TimingOnly` a `PcrAnomaly` is a `StrictRejection`, so
+    /// before the gate one corrupted PID field on the wire could end a
+    /// strict session. A stray PCR must not be able to.
+    #[test]
+    fn pcr_on_an_undeclared_pid_does_not_reject_under_timing_only() {
+        let mut demuxer = Demuxer::with_config(
+            DemuxerConfig::builder()
+                .strict(StrictMode::TimingOnly)
+                .build(),
+        );
+        demuxer
+            .feed(&pat_packet_with_programs(&[(1, 0x1000)], 0))
+            .unwrap();
+        demuxer
+            .feed(&pmt_packet_for_test(
+                0x1000,
+                1,
+                0x1011,
+                &[(0x1B, 0x1011)],
+                0,
+            ))
+            .unwrap();
+        while demuxer.next_event().is_some() {}
+
+        demuxer.feed(&pcr_packet_for_test(0x1FFE, 0)).unwrap();
+        assert!(
+            demuxer
+                .feed(&pcr_packet_for_test(0x1FFE, 54_000_000))
+                .is_ok(),
+            "a stray PCR jump is not a timing violation of any program"
+        );
+        // …while a jump on the DECLARED PCR PID still is. Same assertion
+        // form as `pcr_malformed_strict_timing_rejects` below.
+        demuxer.feed(&pcr_packet_for_test(0x1011, 0)).unwrap();
+        assert!(matches!(
+            demuxer.feed(&pcr_packet_for_test(0x1011, 54_000_000)),
+            Err(DemuxError::StrictRejection(_))
+        ));
+    }
+
+    /// History starts when the PMT declares the PID: a PCR that arrived
+    /// before the PMT is not a baseline the first post-PMT PCR is judged
+    /// against.
+    #[test]
+    fn pcr_before_the_pmt_declares_its_pid_seeds_no_history() {
+        let mut demuxer = Demuxer::new();
+        demuxer.feed(&pcr_packet_for_test(0x1011, 0)).unwrap();
+        demuxer
+            .feed(&pat_packet_with_programs(&[(1, 0x1000)], 0))
+            .unwrap();
+        demuxer
+            .feed(&pmt_packet_for_test(
+                0x1000,
+                1,
+                0x1011,
+                &[(0x1B, 0x1011)],
+                0,
+            ))
+            .unwrap();
+        while demuxer.next_event().is_some() {}
+        demuxer
+            .feed(&pcr_packet_for_test(0x1011, 54_000_000))
+            .unwrap();
+        let events: Vec<_> = core::iter::from_fn(|| demuxer.next_event()).collect();
+        assert!(
+            !events.iter().any(|e| matches!(
+                e,
+                DemuxEvent::NonConformant {
+                    issue: NonConformantIssue::PcrAnomaly { .. },
+                    ..
+                }
+            )),
+            "{events:?}"
+        );
+    }
+
+    /// When a PMT re-declares `PCR_PID`, the new PID starts a fresh
+    /// timeline and the old PID stops being one: its next PCR is a stray.
+    #[test]
+    fn pcr_pid_change_starts_a_fresh_timeline_and_retires_the_old_pid() {
+        let mut demuxer = Demuxer::new();
+        demuxer
+            .feed(&pat_packet_with_programs(&[(1, 0x1000)], 0))
+            .unwrap();
+        demuxer
+            .feed(&pmt_packet_for_test(
+                0x1000,
+                1,
+                0x1011,
+                &[(0x1B, 0x1011)],
+                0,
+            ))
+            .unwrap();
+        demuxer.feed(&pcr_packet_for_test(0x1011, 0)).unwrap();
+        // PMT v1 (CC=1 so it is not swallowed as a duplicate of v0) moves
+        // the clock to a dedicated PCR PID.
+        demuxer
+            .feed(&pmt_packet_for_test_cc(
+                0x1000,
+                1,
+                0x0200,
+                &[(0x1B, 0x1011)],
+                1,
+                1,
+            ))
+            .unwrap();
+        while demuxer.next_event().is_some() {}
+
+        demuxer
+            .feed(&pcr_packet_for_test(0x0200, 54_000_000))
+            .unwrap(); // first PCR on the new PID: a seed, not a jump
+        demuxer
+            .feed(&pcr_packet_for_test(0x1011, 108_000_000))
+            .unwrap(); // the old PID is no longer declared: ignored
+        let events: Vec<_> = core::iter::from_fn(|| demuxer.next_event()).collect();
+        assert!(
+            !events.iter().any(|e| matches!(
+                e,
+                DemuxEvent::NonConformant {
+                    issue: NonConformantIssue::PcrAnomaly { .. },
+                    ..
+                }
+            )),
+            "{events:?}"
+        );
+        assert!(demuxer.last_pcr_by_pid.contains_key(&0x0200));
+        assert!(!demuxer.last_pcr_by_pid.contains_key(&0x1011));
+    }
+
     #[test]
     fn pat_removed_program_clears_cc_by_pid() {
         let mut demuxer = Demuxer::new();
