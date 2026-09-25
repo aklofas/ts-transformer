@@ -4166,6 +4166,62 @@ mod tests {
         );
     }
 
+    /// `PcrMalformed` describes one packet's bytes, not a timeline — unlike
+    /// `PcrAnomaly` it must keep firing on ANY PID, declared or not, so a
+    /// receiver sees wire-level corruption even on a PID no PMT ever named
+    /// as `PCR_PID`. The gate added for `pcr_on_an_undeclared_pid_is_ignored`
+    /// must not have swallowed this.
+    #[test]
+    fn pcr_malformed_still_fires_on_an_undeclared_pid() {
+        let mut demuxer = Demuxer::new();
+        demuxer
+            .feed(&pat_packet_with_programs(&[(1, 0x1000)], 0))
+            .unwrap();
+        demuxer
+            .feed(&pmt_packet_for_test(
+                0x1000,
+                1,
+                0x1011,
+                &[(0x1B, 0x1011)],
+                0,
+            ))
+            .unwrap();
+        while demuxer.next_event().is_some() {}
+
+        // Same malformed-PCR shape as pcr_malformed_does_not_seed_last_pcr_by_pid
+        // above (reserved bits malformed), but on 0x1FFE — a PID no PMT declared.
+        let mut buf = [0xFFu8; 188];
+        buf[0] = 0x47;
+        buf[1] = (0x1FFEu16 >> 8) as u8 & 0x1F;
+        buf[2] = (0x1FFEu16 & 0xFF) as u8;
+        buf[3] = 0x20;
+        buf[4] = 183;
+        buf[5] = 0x10;
+        buf[6] = 0;
+        buf[7] = 0;
+        buf[8] = 0;
+        buf[9] = 0;
+        buf[10] = 0x7C; // reserved bits malformed
+        buf[11] = 0;
+        demuxer.feed(&buf).unwrap();
+
+        let events: Vec<_> = core::iter::from_fn(|| demuxer.next_event()).collect();
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                DemuxEvent::NonConformant {
+                    issue: NonConformantIssue::PcrMalformed { .. },
+                    ..
+                }
+            )),
+            "PcrMalformed must still fire on an undeclared PID: {events:?}"
+        );
+        assert!(
+            !demuxer.last_pcr_by_pid.contains_key(&0x1FFE),
+            "a malformed PCR on an undeclared PID must not seed last_pcr_by_pid"
+        );
+    }
+
     #[test]
     fn reserved_adaptation_control_emits_nonconformant() {
         let mut demux = Demuxer::new();
