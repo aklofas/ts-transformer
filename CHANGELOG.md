@@ -1311,6 +1311,25 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   branch dispatch. Every oracle has a matching mutation test
   (`crates/tst-interop/tests/mutations.rs`, 14 tests) that removes the property
   it checks and asserts the oracle's named failure fires.
+- **Tooling: `tst-interop` attribution is reconnect-aware.** Four things the
+  2026-09-17 72-h soak (a harness-baseline run) showed the matcher could not
+  see: a `header` PID-rewrite injection now reaches the PID it moved the
+  packet to (`REWRITTEN_PID`, 0x1FFE); a `PcrAnomaly` beside a continuity
+  jump on its own PID is the gap's timestamp signature and is excused as
+  transport loss under lossy judgement (`pcr_anomalies_excused`; strict
+  charges it); an injection resolved inside a reconnect gap
+  (`Attribution::on_reconnect`, fed from `DemuxEvent::ReconnectDiscontinuity`)
+  never arrived and is `lost_in_reconnect_gap`, the only excusal a PSI-PID
+  injection can get; and every unexplained sample names the nearest resolved
+  injection. New `CellMetrics.since_reconnect` buckets a leg's error events by
+  packets since its last reconnect (absent from offline reports), the recv
+  heartbeat prints `disc=`/`nc=`, `send --reconnect-mode blocking|background`
+  selects the managed sender's `ReconnectMode`, and `soak.sh` honours
+  `OUTAGE_PERIOD_S` / `OUTAGE_DUR_S` / `LOSS_PCT` / `SRT_RECONNECT_MODE` from
+  the environment for outage-focused drills. Harness only; no library crate
+  is touched by this bullet. A measured negative is pinned too: framing damage
+  on or beside a PSI packet re-syncs without ever producing a `PsiChecksum`,
+  so run 3's six PMT checksum failures stay an open finding for the RC soak.
 
 ### Testing — interop harness (WP-7a, WP-7b)
 
