@@ -47,6 +47,13 @@ const PKT: usize = 188;
 /// their "independent" decisions would correlate.
 pub const CORRUPT_SALT: u64 = 0xC0FF_EE00_0BAD_F00D;
 
+/// Where [`Class::Header`]'s PID-rewrite sub-kind moves a packet: unassigned,
+/// and deliberately not 0x1FFF (the null PID), which a demuxer silently
+/// discards instead of reporting. The attribution engine reads it back
+/// through `Tracked::moved_to`: whatever a receiver says about the moved
+/// packet it says on THIS PID, not on the one the log names.
+pub const REWRITTEN_PID: u16 = 0x1FFE;
+
 /// How many receiver packets after a resolved injection an error event may
 /// surface and still be blamed on it (spec §4.3). Wide enough to cover a
 /// demuxer that only notices at the next PES/section boundary, narrow
@@ -916,11 +923,11 @@ impl<T: Transport> Corrupter<T> {
                         offsets.push(0);
                     }
                     1 => {
-                        // 0x1FFE: unassigned, and deliberately not 0x1FFF
-                        // (the null PID), which a demuxer would silently
-                        // discard instead of reporting.
-                        p[1] = (p[1] & 0xE0) | 0x1F;
-                        p[2] = 0xFE;
+                        // REWRITTEN_PID: unassigned, and deliberately not
+                        // 0x1FFF (the null PID), which a demuxer would
+                        // silently discard instead of reporting.
+                        p[1] = (p[1] & 0xE0) | (REWRITTEN_PID >> 8) as u8;
+                        p[2] = (REWRITTEN_PID & 0xFF) as u8;
                         offsets.extend([1, 2]);
                     }
                     2 => {
@@ -1578,6 +1585,10 @@ struct Tracked {
     /// sync byte (offset 0). Such an injection can surface on ANY PID;
     /// every other class is confined to [`Tracked::pid`].
     framing_wide: bool,
+    /// The PID a `Header` PID-rewrite (offsets `[1, 2]`) moved the packet
+    /// to — the receiver reports whatever it makes of that packet on THIS
+    /// PID, never on [`Tracked::pid`]. `None` for every other shape.
+    moved_to: Option<u16>,
 }
 
 impl From<&Injection> for Tracked {
@@ -1590,6 +1601,8 @@ impl From<&Injection> for Tracked {
             psi: i.psi,
             framing_wide: matches!(i.class, Class::Truncate | Class::Garbage)
                 || (i.class == Class::Header && i.offsets.first() == Some(&0)),
+            moved_to: (i.class == Class::Header && i.offsets.as_slice() == [1, 2])
+                .then_some(REWRITTEN_PID),
         }
     }
 }
@@ -1725,11 +1738,17 @@ fn expects(inj: &Tracked, sig: Signal) -> bool {
 /// that escape, or an injection on an unrelated media PID could explain
 /// away a PAT/PMT checksum failure it never came near; a framing-wide
 /// injection reaches everything; anything else has to land on the PID
-/// it damaged.
+/// it damaged — a PID rewrite reaches the PID it moved the packet to as
+/// well as the one it left.
 fn reaches(inj: &Tracked, pid: Option<u16>, sig: Signal) -> bool {
     match pid {
         None => true,
-        Some(p) => inj.framing_wide || (inj.psi && sig == Signal::PsiChecksum) || inj.pid == p,
+        Some(p) => {
+            inj.framing_wide
+                || (inj.psi && sig == Signal::PsiChecksum)
+                || inj.pid == p
+                || inj.moved_to == Some(p)
+        }
     }
 }
 
@@ -3166,6 +3185,46 @@ mod tests {
         a.on_media(5020, 0x1100);
         let r = a.finish(10_000);
         assert_eq!(r.unrecovered.len(), 1, "media on a different PID");
+    }
+
+    /// `Class::Header`'s PID-rewrite sub-kind moves the packet to
+    /// `REWRITTEN_PID`, so whatever the receiver reports about it, it
+    /// reports THERE. Run 3 (2026-09-17): ~50 events on 0x1FFE per leg
+    /// that nothing could explain because `reaches` only knew the
+    /// original PID.
+    #[test]
+    fn a_pid_rewrite_explains_a_signal_on_the_pid_it_moved_the_packet_to() {
+        let mut moved = inj(1000, 10, Class::Header, 0x1011, true);
+        moved.offsets = vec![1, 2];
+        let mut a = Attribution::strict(vec![moved], &hdr());
+        a.on_pcr(1000, 5000);
+        a.on_signal(5015, Some(REWRITTEN_PID), Signal::OtherNonConformant);
+        let r = a.finish(10_000);
+        assert_eq!(r.attributed_events, 1, "{r:?}");
+        assert!(
+            r.unexplained_events.is_empty(),
+            "{:?}",
+            r.unexplained_events
+        );
+
+        // Every other header shape stays confined to its own PID: a CC
+        // rewrite ([3]) and — the PSI shape, where the tap only ever
+        // destroys the sync byte ([0]) — must not reach 0x1FFE.
+        for (offsets, psi) in [(vec![3usize], false), (vec![0usize], true)] {
+            let mut other = inj(1000, 10, Class::Header, if psi { 0 } else { 0x1011 }, true);
+            other.offsets = offsets.clone();
+            other.psi = psi;
+            let mut a = Attribution::strict(vec![other], &hdr());
+            a.on_pcr(1000, 5000);
+            a.on_signal(5015, Some(REWRITTEN_PID), Signal::OtherNonConformant);
+            let r = a.finish(10_000);
+            // [0] is framing-wide and reaches everything by design; [3] is not.
+            let want_unexplained = u64::from(offsets != vec![0]);
+            assert_eq!(
+                r.unexplained_nonconformant, want_unexplained,
+                "{offsets:?}: {r:?}"
+            );
+        }
     }
 
     /// A derived anomaly (a PTS that stepped backwards) is asked about,
