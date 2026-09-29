@@ -23,13 +23,15 @@
 //! publisher so the caller can still `finish()` / `render_playlist()` /
 //! `local_addr()` it.
 //!
-//! GIL: each `send_*` releases the GIL via `py.allow_threads` (mirrors
-//! `rtp/mux_sender.rs`) — the inner muxer + HLS disk writes are pure
-//! Rust and never re-enter Python.
+//! GIL: every method that needs the shell takes the mutex inside
+//! `py.allow_threads` (`with_inner`), never while holding the GIL — a
+//! `send_*` on another thread holds that mutex with the GIL released and
+//! needs the GIL back to let go of it. `__repr__` takes no lock.
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -37,9 +39,9 @@ use pyo3::prelude::*;
 use tst_hls::HlsPublisher;
 use tst_pipeline::{MuxPublisher as RustMuxPublisher, MuxPublisherError};
 
-use crate::hls::map_mux_publisher_error;
 use crate::hls::publisher::PyHlsPublisher;
 use crate::hls::publisher_abc::PyPublisherStats;
+use crate::hls::{Locked, map_mux_publisher_error};
 use crate::mux::{PyMuxerProgramConfig, py_pts90khz};
 use crate::raise::{HLS, raise};
 use tst_pipeline::binding::{BindingError, BindingErrorKind};
@@ -112,28 +114,45 @@ pub(crate) struct PyMuxPublisher {
     /// `Mutex` because the push methods all take `&self` (the inner Rust
     /// `MuxPublisher` already holds its own `Mutex<Inner>` — the outer
     /// `Mutex<Option<...>>` only guards the take-on-finish).
+    ///
+    /// Only ever locked with the GIL released (`with_inner`): a push holds
+    /// it across its native call and needs the GIL back before the guard
+    /// drops, so a thread waiting for it with the GIL held would freeze
+    /// the interpreter.
     inner: Mutex<Option<RustMuxPublisher<HlsPublisher>>>,
+    /// Latched when `inner` is moved out, so `__repr__` never takes it.
+    finished: AtomicBool,
 }
 
 impl PyMuxPublisher {
+    /// Run `f` on the shell. The mutex is taken, used and released with
+    /// the GIL released; the exception is built afterwards.
     fn with_inner<F, R>(&self, py: Python<'_>, f: F) -> PyResult<R>
     where
         F: FnOnce(
-            &RustMuxPublisher<HlsPublisher>,
-        ) -> Result<R, MuxPublisherError<tst_hls::HlsError>>,
+                &RustMuxPublisher<HlsPublisher>,
+            ) -> Result<R, MuxPublisherError<tst_hls::HlsError>>
+            + Send,
+        R: Send,
     {
-        let guard = self
-            .inner
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("MuxPublisher mutex poisoned"))?;
-        let inner = guard.as_ref().ok_or_else(|| {
-            raise(
+        py.allow_threads(|| {
+            let guard = self.inner.lock().map_err(|_| Locked::Poisoned)?;
+            let inner = guard.as_ref().ok_or(Locked::Gone)?;
+            f(inner).map_err(Locked::Inner)
+        })
+        .map_err(|e| Self::raise_locked(py, e))
+    }
+
+    fn raise_locked(py: Python<'_>, e: Locked<MuxPublisherError<tst_hls::HlsError>>) -> PyErr {
+        match e {
+            Locked::Poisoned => PyRuntimeError::new_err("MuxPublisher mutex poisoned"),
+            Locked::Gone => raise(
                 py,
                 &HLS,
                 BindingError::new(BindingErrorKind::Closed, "MuxPublisher already finished"),
-            )
-        })?;
-        f(inner).map_err(|e| map_mux_publisher_error(py, e))
+            ),
+            Locked::Inner(e) => map_mux_publisher_error(py, e),
+        }
     }
 }
 
@@ -184,6 +203,7 @@ impl PyMuxPublisher {
             .map_err(|e| map_mux_publisher_error(py, e))?;
         Ok(Self {
             inner: Mutex::new(Some(mp)),
+            finished: AtomicBool::new(false),
         })
     }
 
@@ -202,9 +222,7 @@ impl PyMuxPublisher {
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, nal)?;
         let slice = coerced.as_bytes();
-        self.with_inner(py, |mp| {
-            py.allow_threads(|| mp.send_video(slice, rust_pts, key_frame))
-        })
+        self.with_inner(py, |mp| mp.send_video(slice, rust_pts, key_frame))
     }
 
     /// Push one KLV blob. `stream_index` selects the KLV stream when
@@ -220,9 +238,7 @@ impl PyMuxPublisher {
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, klv)?;
         let slice = coerced.as_bytes();
-        self.with_inner(py, |mp| {
-            py.allow_threads(|| mp.send_klv(slice, rust_pts, stream_index))
-        })
+        self.with_inner(py, |mp| mp.send_klv(slice, rust_pts, stream_index))
     }
 
     /// Push one or more pre-framed audio frames (ADTS for AAC,
@@ -237,7 +253,7 @@ impl PyMuxPublisher {
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, frames)?;
         let slice = coerced.as_bytes();
-        self.with_inner(py, |mp| py.allow_threads(|| mp.send_audio(slice, rust_pts)))
+        self.with_inner(py, |mp| mp.send_audio(slice, rust_pts))
     }
 
     /// Push one subtitle payload.
@@ -251,15 +267,13 @@ impl PyMuxPublisher {
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, payload)?;
         let slice = coerced.as_bytes();
-        self.with_inner(py, |mp| {
-            py.allow_threads(|| mp.send_subtitle(slice, rust_pts))
-        })
+        self.with_inner(py, |mp| mp.send_subtitle(slice, rust_pts))
     }
 
     /// Explicit segment-cut hint (IDR boundary). Cuts the current HLS
     /// segment so the next push starts a fresh decodable segment.
     fn cut_segment(&self, py: Python<'_>) -> PyResult<()> {
-        self.with_inner(py, |mp| py.allow_threads(|| mp.cut_segment()))
+        self.with_inner(py, |mp| mp.cut_segment())
     }
 
     // ── Stats ────────────────────────────────────────────────────────────────
@@ -282,29 +296,25 @@ impl PyMuxPublisher {
     /// should then `finish()` it (writes the final playlist + tears down
     /// the HTTP server). Raises `HlsError(CLOSED)` if already consumed.
     fn finish_into_publisher(&self, py: Python<'_>) -> PyResult<PyHlsPublisher> {
-        let mp = {
-            let mut guard = self
-                .inner
-                .lock()
-                .map_err(|_| PyRuntimeError::new_err("MuxPublisher mutex poisoned"))?;
-            guard.take().ok_or_else(|| {
-                raise(
-                    py,
-                    &HLS,
-                    BindingError::new(BindingErrorKind::Closed, "MuxPublisher already finished"),
-                )
-            })?
-        };
-        let hls = mp.finish().map_err(|e| map_mux_publisher_error(py, e))?;
+        let hls = py
+            .allow_threads(|| {
+                let mp = {
+                    let mut guard = self.inner.lock().map_err(|_| Locked::Poisoned)?;
+                    let mp = guard.take().ok_or(Locked::Gone)?;
+                    self.finished.store(true, Ordering::Release);
+                    mp
+                };
+                mp.finish().map_err(Locked::Inner)
+            })
+            .map_err(|e| Self::raise_locked(py, e))?;
         Ok(PyHlsPublisher::from_inner(hls))
     }
 
     fn __repr__(&self) -> String {
-        let open = self.inner.lock().map(|g| g.is_some()).unwrap_or(false);
-        if open {
-            "MuxPublisher(open)".to_string()
-        } else {
+        if self.finished.load(Ordering::Acquire) {
             "MuxPublisher(finished)".to_string()
+        } else {
+            "MuxPublisher(open)".to_string()
         }
     }
 }
