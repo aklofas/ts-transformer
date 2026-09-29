@@ -826,6 +826,25 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed — rtp (WP-4a)
 
+- **RTSP client: `request_timeout` and cancel are no longer stretched by a
+  longer `read_timeout`.** The request deadline and the cancel flag were
+  only checked between socket reads, and each read blocked for the full
+  `RtspClientBuilder::read_timeout`; a response that completed after the
+  deadline was returned as a success. With `read_timeout` = 5 s and
+  `request_timeout` = 100 ms a silent server held the call for 5 s, a
+  response 2 s late was `Ok`, and a cancel took up to 5 s to be seen. Now
+  each read while a request waits is bounded by the shortest of
+  `read_timeout`, a 100 ms cancel tick and the time left on the deadline
+  (the configured read timeout is restored on the socket afterwards), and
+  a response completed after the deadline is `RtspError::Timeout`. This
+  covers every request method including `teardown`, the interleaved path
+  (whose poll is now also capped by the time left) and `rtsps://`, where
+  one TLS read now performs at most one socket read so a peer dribbling a
+  record cannot hold it past the check. `request_timeout(None)` still
+  waits without a deadline. One wait is not covered: on an interleaved
+  session the pump holds the stream lock across its own read, so a
+  request's write can wait up to one `read_timeout` for that lock before
+  the response wait begins.
 - **RTSP client: repeated response headers are joined, not last-wins.** A
   401 whose `WWW-Authenticate` arrived as two lines (Digest first, Basic
   second — RFC 7235 §4.1, common on IP cameras) kept only the LAST line
