@@ -149,7 +149,9 @@ impl super::demuxer::Demuxer {
         // single PID's timeline; comparing across PIDs in a multi-program TS
         // produces spurious PcrAnomaly events (validate-1 B1 / Codex
         // TS-TIME-01). Key the last-seen map by `pkt.pid` (the on-wire PCR
-        // PID) — that's the canonical identifier of a time base.
+        // PID) — that's the canonical identifier of a time base. Only a PID
+        // that some program currently declares as `PCR_PID` is tracked, and
+        // its entry lives exactly as long as that declaration does.
         //
         // Malformed-PCR check fires first (validate-1 B12): if the on-wire
         // PCR field violated H.222.0 §2.4.3.5 syntax, the parser already
@@ -174,16 +176,12 @@ impl super::demuxer::Demuxer {
             // Measured on the 2026-09-17 72-h soak: 61 PCR-carrying packets
             // rewritten to 0x1FFE produced ~50 anomalies on a PID no PMT
             // ever declared.
-            let declared = self.programs.values().any(|t| t.pcr_pid == Some(pkt.pid));
-            if !declared {
-                // A PID that HELD this declaration until a PMT version bump
-                // moved `PCR_PID` elsewhere may still carry a stale
-                // `last_pcr_by_pid` entry: the PSI-side cleanup (DA-DEMUX-2)
-                // only removes it when the old PCR PID also leaves the
-                // stream set entirely, not when it stays on as a plain
-                // elementary PID. Retire it here too, so a PCR that keeps
-                // arriving on the demoted PID is "not remembered" either.
-                self.last_pcr_by_pid.remove(&pkt.pid);
+            //
+            // Nothing is retired here. The topology side drops a PID's entry
+            // as soon as no program declares it
+            // (`retire_undeclared_pcr_history`), so an undeclared PID never
+            // has one.
+            if !self.programs.values().any(|t| t.pcr_pid == Some(pkt.pid)) {
                 return;
             }
             if let Some(&last) = self.last_pcr_by_pid.get(&pkt.pid) {
