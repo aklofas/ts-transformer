@@ -1065,6 +1065,32 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Testing
 
+- **Tooling: `tst-interop`'s transport-loss excusals are causal, not
+  positional.** Three excusals of the reconnect-aware attribution accepted
+  proximity as cause, so each could pass a leg that should fail. (1) An
+  injection placed inside a reconnect gap was excused as lost by its
+  position alone, including one resolved exactly from a PCR the receiver
+  saw AFTER the reconnect marker — which arrived, so a demuxer that ignored
+  the damage passed. Now the gap excuses only an injection with nothing to
+  show it arrived (resolved approximately, from an anchor before the
+  marker, or with no anchor); one resolved exactly after the marker keeps
+  its detection obligation. (2) A `PcrAnomaly` on the PID a `header`
+  PID-rewrite moved its packet to (0x1FFE) was attributed to that
+  injection, in Strict and Lossy alike, although the demuxer reports a
+  `PcrAnomaly` only on a PMT-declared `PCR_PID` — so the one event that
+  would reveal a regression of that rule was explained away. Now a
+  `PcrAnomaly` on a PID no program declares as its PCR PID is never
+  attributed and never excused; the attribution learns the declared PIDs
+  from the receiver's `ProgramMap` events. The rewritten PID still explains
+  the other non-conformances reported on it. (3) Any `PcrAnomaly` within the
+  attribution window of a continuity gap on its PID was excused, whatever
+  its direction and however many claimed the same gap. Now the signed delta
+  is carried into the attribution: only a forward jump is excused (loss
+  never turns a clock back) and each gap excuses at most one anomaly (the
+  first PCR after a loss carries the whole jump). `validation-evidence.md`,
+  the interop README and `CellMetrics::nonconformant`'s doc comment, which
+  still said non-conformances are never excused, now state the exception
+  and its bounds. Harness only; no library crate is touched.
 - **tst-py: the two plain srt sender cross-thread-close tests no longer race
   their own worker.** `test_srt_sender_close_from_other_thread_during_send`
   and `…mux_sender_close_from_other_thread_during_send_video` asserted that
