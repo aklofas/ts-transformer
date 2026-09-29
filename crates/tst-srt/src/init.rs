@@ -8,6 +8,13 @@
 //! rationale (drop-order ambiguity vs. negligible OS-reclaimed leaks) — but
 //! it IS registered via `atexit` to run at process exit; see
 //! `register_exit_cleanup` below.
+//!
+//! The exit handler does one thing before `srt_cleanup()`: it closes every
+//! socket that is still open and waits, bounded, for the threads parked in
+//! libsrt to return (`crate::exit_guard`). Without that, a thread left in
+//! `accept()` makes `srt_cleanup()` — and with it process exit — hang.
+//! Closing and joining before exit remains the recommended shape; the guard
+//! is what keeps a program that did not from hanging.
 
 use std::sync::OnceLock;
 
@@ -48,8 +55,17 @@ pub(crate) fn ensure_initialized() {
 /// The design-doc decision to keep `srt_cleanup()` away from `Drop` impls
 /// (drop-order ambiguity between sockets/listeners) is unchanged; this is
 /// process-exit only.
+///
+/// `srt_cleanup()` joins libsrt's GC thread, which cannot finish while a
+/// thread is parked in `srt_accept`, so the handler first runs
+/// [`crate::exit_guard::release_parked_calls`]. With nothing open and no
+/// thread in a call that costs one uncontended lock and two atomic loads.
 fn register_exit_cleanup() {
     extern "C" fn srt_exit_cleanup() {
+        // Must not unwind out of an `extern "C"` function:
+        // `release_parked_calls` recovers poisoned locks and has no
+        // panicking path.
+        crate::exit_guard::release_parked_calls();
         unsafe {
             srt_sys::srt_cleanup();
         }

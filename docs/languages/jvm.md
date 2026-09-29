@@ -992,6 +992,24 @@ answers `true` rather than `false`. Before 0.7.0 each handle carried a private
 flag, so a second handle read `false` after the first cancelled and `close()`
 set nothing.
 
+### Exiting with a call still parked
+
+`close()` every shell (try-with-resources) and join your threads before the
+JVM exits — that is still the shape to write. If a thread is nevertheless
+inside an SRT native call when the JVM shuts down (`System.exit`, or `main`
+returning with only daemon threads left), the native library unparks it: its
+exit handler closes every SRT socket that is still open, waits for the parked
+calls to return (bounded, 2 s at most), and only then runs libsrt's own
+cleanup. Before 0.7.0 a thread left in an accept made that cleanup wait
+forever: the JVM ran its shutdown hooks and then never terminated.
+
+This matters most for the listener-mode opens — `DemuxReceiver.fromUrl`,
+`Receiver.fromUrl` and `ManagedDemuxReceiver.fromUrl` with `?mode=listener`
+block in their first accept BEFORE returning an object, so there is nothing
+to `close()` or cancel while they wait for a peer. The unparked thread does
+not get to observe an exception: the JVM is already past the point where Java
+code runs. A program that closed everything pays nothing at exit.
+
 ### SRT-specific Gotchas
 
 - **One-shot accept on `Receiver.fromUrl`.** `Receiver.fromUrl` binds,

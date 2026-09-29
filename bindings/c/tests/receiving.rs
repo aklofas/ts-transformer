@@ -9,6 +9,8 @@
 mod cancel_first;
 #[path = "receiving/demux_receiver_loopback.rs"]
 mod demux_receiver_loopback;
+#[path = "receiving/exit_with_parked_call.rs"]
+mod exit_with_parked_call;
 #[path = "receiving/live_pair.rs"]
 mod live_pair;
 #[path = "receiving/managed_listener_cancel.rs"]

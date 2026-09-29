@@ -37,6 +37,7 @@ pub mod transport;
 pub mod url;
 
 mod binding_kind;
+mod exit_guard;
 
 // Top-level re-exports for the most common types.
 pub use builder::{ListenerBuilder, SocketBuilder};

@@ -356,6 +356,21 @@ switch (ev.kind) {
 
 **Cancellation.** Every SRT and RTP shell has a `_cancel` (`tst_mux_sender_cancel`, `tst_demux_receiver_cancel`, …): lock-free, callable from any thread, idempotent. It closes the underlying socket (SRT) or flags the transport (RTP) so a thread parked in `_send` / `_recv` returns promptly. What that call returns: `TST_E_CLOSED` (-7) on every shell, managed or plain, for the call that observes the cancel and every call after it. libsrt reports the closed socket as a broken connection, but `SrtTransport` reads its own cancel latch afterwards and reports the cancel the caller asked for (0.7.0; through 0.6.x a plain SRT shell reported `TST_E_TRANSPORT` (-8) for the parked call and `TST_E_CLOSED` only for the ones after it). `_close` is cancel-first on every shell (SRT, RTP, UDP, TCP, RIST): it fires the same cancel, then frees. Since 0.7.0 every transport's cancel is a REAL handle, UDP and RIST included — calling `tst_udp_receiver_close` / `tst_udp_demux_receiver_close` (or the sender twins) from another thread ends a data-path call parked on the UDP 100 ms poll with `TST_E_CLOSED` within one tick, where before it waited for the next datagram. **RIST is the one family where a cross-thread `_close` is still not the answer:** a `tst_rist_*_recv_ts` / `_next_event` call does not park — it is a single ~100 ms librist poll that returns `TST_E_BUFFER_FULL` when nothing arrived, so callers poll in a loop, and because `_close` frees the handle, closing it from another thread while that loop runs is a use-after-free like any other post-free use. Close a RIST handle from the thread that polls it. The `tst_tcp_*_cancel` / `tst_udp_*_cancel` / `tst_rist_*_cancel` entry points — the non-freeing cross-thread cancel, and the only safe way to interrupt a RIST receive from another thread — are new symbols that ship with ABI 0.22. See [SRT cancel handle](/docs/reference/srt-cancel-handle.md) for the Rust-layer pattern.
 
+**Process exit with a call still parked.** Cancel, join and `_close` before
+the process exits — that is still the shape to write. If a thread is
+nevertheless inside an SRT call when `exit()` runs (or `main` returns), the
+library unparks it: its exit handler closes every SRT socket that is still
+open, waits for the parked calls to return (bounded, 2 s at most), and only
+then runs libsrt's own cleanup. Before 0.7.0 a thread left in an accept made
+that cleanup wait forever and the process never terminated. This matters most
+for the listener-mode opens (`tst_demux_receiver_open_listener`,
+`tst_managed_demux_receiver_open_listener`, …): they block in their first
+accept BEFORE returning a handle, so there is nothing to `_cancel` while they
+wait for a peer. The unparked call reports `TST_E_CLOSED` (a listener-mode
+open returns `NULL` with that code), but the process is already on its way
+out — treat it as a way to leave, not as an event to handle. A program that
+closed everything pays nothing at exit.
+
 ## Where this binding differs from the Rust core
 
 The C surface is `tst_pipeline` + `tst_srt` mechanically projected through `cbindgen`, with these structural deviations:

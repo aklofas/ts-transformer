@@ -354,6 +354,27 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A process that exits while a thread is parked inside libsrt now
+  terminates (C, JVM, Rust).** `tst-srt` runs `srt_cleanup()` from a C
+  `atexit` handler, and `srt_cleanup()` waits for libsrt's GC thread, which
+  cannot finish while a thread is parked in `srt_accept` — so a program that
+  called `exit()`, returned from `main`, or shut its JVM down with a listener
+  still waiting for a peer never terminated. The listener-mode opens made
+  this unavoidable from the caller's side: `tst_*_open_listener` and the
+  JVM's `fromUrl("…?mode=listener")` block in their first accept before they
+  return anything that could be cancelled or closed. The exit handler now
+  closes every SRT socket that is still open and waits for the parked calls
+  to return (bounded, 2 s at most) before `srt_cleanup()` runs. A program
+  that closed everything pays nothing: nothing is open and no thread is in a
+  call, so the handler goes straight to `srt_cleanup()`. The unparked call
+  reports a caller-side close (`TransportError::ExplicitClose`,
+  `TST_E_CLOSED`), and `Listener::accept_one_cancellable` reports a listener
+  closed this way as `ExplicitClose` too, so a reconnecting receiver does
+  not start another attempt while the process is on its way out. Closing
+  and joining before exit remains the recommended shape. Python's own
+  interpreter-exit guard is unchanged and still runs first. No public API
+  or C ABI change. Pinned by subprocess tests with a hard deadline in
+  tst-srt, tst-c and tst-jni.
 - **Python: `tstrans.srt.Receiver.close()` from another thread while
   `recv_bytes()` was parked raised `RuntimeError: Already borrowed`.**
   `recv_bytes` held the object's PyO3 mutable borrow for the whole blocking

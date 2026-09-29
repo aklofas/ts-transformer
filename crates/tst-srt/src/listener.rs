@@ -165,8 +165,10 @@ impl Listener {
         let mut os_addr = OsSocketAddr::new();
         let mut len = os_addr.capacity() as c_int;
 
-        let accepted =
-            unsafe { srt_sys::srt_accept(self.handle, os_addr.as_mut_ptr().cast(), &raw mut len) };
+        let accepted = {
+            let _in_call = crate::exit_guard::enter_blocking_call();
+            unsafe { srt_sys::srt_accept(self.handle, os_addr.as_mut_ptr().cast(), &raw mut len) }
+        };
         if accepted == SRT_INVALID_SOCK {
             return Err(last_error().into());
         }
@@ -258,6 +260,7 @@ impl Listener {
         let mut readfds: [srt_sys::SRTSOCKET; 1] = [SRT_INVALID_SOCK];
         let mut rnum: c_int = 1;
 
+        let in_call = crate::exit_guard::enter_blocking_call();
         let n = unsafe {
             srt_sys::srt_epoll_wait(
                 eid,
@@ -272,6 +275,7 @@ impl Listener {
                 std::ptr::null_mut(), // lwnum
             )
         };
+        drop(in_call);
 
         unsafe { srt_sys::srt_epoll_release(eid) };
 
@@ -456,7 +460,13 @@ impl Listener {
         slot.clear();
         match accepted {
             Ok((socket, _peer)) => Ok(SrtTransport::new(socket)),
-            Err(_) if slot.is_cancelled() => Err(TransportError::ExplicitClose),
+            // The listener never leaves this function, so its own latch can
+            // only have been set by the process-exit guard: report that as
+            // a close too, or a reconnecting transport would re-bind and
+            // park again while the process is on its way out.
+            Err(_) if slot.is_cancelled() || listener.cancel.is_cancelled() => {
+                Err(TransportError::ExplicitClose)
+            }
             Err(e) => Err(TransportError::Broken {
                 msg: format!("accept: {e}"),
                 errno_code: None,
