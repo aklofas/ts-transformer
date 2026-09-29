@@ -10,9 +10,11 @@ cargo run -p tst-examples --example managed_reconnect
 ```
 
 Wrap any `Transport` in `ManagedTransport` and the pipeline survives
-disconnects: bounded backoff, gap-buffer for in-flight bytes, and
-connection-state telemetry on the `tracing` facade. Drop a sender mid-
-flight, reconnect a few seconds later, watch the example recover.
+disconnects: bounded backoff, redelivery of the message that found the
+link broken, and connection-state telemetry on the `tracing` facade.
+This one runs the default `ReconnectMode::Blocking`: the send that hits
+the break stalls until the reconnect lands, so nothing queues up behind
+it (sizing the gap buffer for an outage is §2's subject).
 
 Cookbook: [Survive a flaky transport with reconnect + gap buffer](../../docs/cookbook/operations/managed-transport-reconnect.md).
 

@@ -503,11 +503,16 @@ pub enum NonConformantIssue {
     /// Only reported for a PID some PMT declares as its `PCR_PID`. A PCR
     /// on any other PID is ignored — neither compared nor remembered — so a
     /// stray or corrupted packet cannot seed a timeline that a later stray
-    /// then "jumps" against. History for a declared PID starts when the PMT
-    /// declares it; an entry left behind by a PID the PMT later demoted is
-    /// retired the next time a PCR arrives on it, so a re-promotion with no
-    /// PCR in between can still compare against the old value. Before this
-    /// change every PCR-carrying PID was tracked.
+    /// then "jumps" against.
+    ///
+    /// A PID's PCR history belongs to the declaration, not to the PID: it
+    /// is kept exactly while at least one program declares the PID as its
+    /// `PCR_PID` (two programs may share one), and dropped as soon as none
+    /// does — when the PMT moves the clock elsewhere or the program leaves
+    /// the PAT, not when a later PCR happens to arrive. A PID that is
+    /// declared again afterwards starts from a fresh seed: its first PCR is
+    /// remembered without being compared, so it is never judged against the
+    /// value an earlier declaration left off at.
     PcrAnomaly { delta: i64 },
     /// PSI section checksum mismatch. Lenient mode falls back to the
     /// previous PSI version; strict mode converts to error.

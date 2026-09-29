@@ -224,16 +224,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     //     bug in the backoff logic.
     //
     //   gap_buffer_capacity: 4
-    //     Deliberately tiny — real deployments default to 256 (see
-    //     `managed_reconnect.rs`). A capacity this small guarantees the
-    //     many messages produced while the link is down overflow it many
-    //     times over, so the stats printout below reliably shows
-    //     `DropOldest` evicting messages instead of leaving that to timing
-    //     luck.
+    //     Deliberately tiny — the default is 256. A capacity this small
+    //     guarantees the many messages produced while the link is down
+    //     overflow it many times over, so the stats printout below
+    //     reliably shows `DropOldest` evicting messages instead of leaving
+    //     that to timing luck.
+    //
+    //     This is the mode in which the capacity is a real sizing
+    //     decision, because the producer keeps sending during the outage
+    //     and every one of those messages lands here. Rule of thumb:
+    //     `longest outage you want to ride out × messages per second`. A
+    //     message is one TS chunk handed to the transport (up to 7 TS
+    //     packets, 1316 bytes), not one video frame, so measure the rate
+    //     rather than guessing it from the frame rate. What the buffer
+    //     holds is delivered, oldest first, when the link returns — so
+    //     the capacity is also how far behind "now" the receiver starts
+    //     after the outage. (In `Blocking` mode none of this applies: the
+    //     buffer only ever holds the one interrupted message — see
+    //     `managed_reconnect.rs`.)
     //
     //   overflow_policy: OverflowPolicy::DropOldest
     //     When the gap buffer is full, evict the oldest queued message and
-    //     accept the new one. This is where "Ok(()) != delivered" comes
+    //     accept the new one. The alternative, `Reject`, refuses the new
+    //     message with `Backpressure` and keeps what is queued.
+    //     `DropOldest` keeps the receiver close to "now" once the link
+    //     comes back, at the cost of the oldest part of the outage — for
+    //     live video the right trade, receivers want fresh frames.
+    //     `Reject` keeps the start of the outage intact and makes the
+    //     producer deal with the rest; reach for it when every message
+    //     matters more than freshness. This is where "Ok(()) != delivered" comes
     //     from: `send_video`/`send_klv` still return `Ok(())` for a
     //     message that gets queued and then evicted before the link comes
     //     back — the call succeeded at *accepting* the bytes, not at
@@ -282,9 +301,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(()) => sent_ok += 1,
             // An `Err` this loop only sees is the give-up report described
             // above (`max_attempts` exhausted, or a worker panic) — normal
-            // transient outages never surface here in `Background` mode,
-            // unlike `Blocking` mode where every outage produces visible
-            // per-call errors while the caller is stalled waiting.
+            // transient outages never surface here in `Background` mode.
+            // (`Blocking` mode does not report them as errors either; there
+            // an outage shows up as one call that stalls until the
+            // reconnect lands.)
             Err(e) => {
                 eprintln!("sender: send_video {i} -> {e:?}");
                 sent_err += 1;

@@ -6,9 +6,11 @@
 > - [guides/pipeline.md](/docs/guides/pipeline.md) — `ManagedTransport`, `ReconnectPolicy`, and gap-buffer behavior
 > - [Example: `managed_reconnect`](/examples/operations/managed_reconnect.rs)
 
-Reach for this when the wire is lossy — radio links, NAT timeouts, listener restarts. `ManagedTransport<T>` decorates any `Transport` impl with a reconnect loop and a bounded gap buffer; the wrapped sender shell sees a `Transport` that occasionally pauses but never fails on transient breakage.
+Reach for this when the wire is lossy — radio links, NAT timeouts, listener restarts. `ManagedTransport<T>` decorates any `Transport` impl with a reconnect loop and a bounded gap buffer; the wrapped sender shell sees a `Transport` that occasionally pauses but does not fail for an outage the retry budget covers.
 
 The factory closure rebuilds the inner transport on demand. `ReconnectPolicy` controls retries, backoff, and gap-buffer overflow behaviour.
+
+In the default `ReconnectMode::Blocking` (what the snippet below builds) the send that hits the break reconnects on the calling thread and delivers its own message before it returns; the gap buffer holds that one message and nothing else, so `gap_buffer_capacity` and `overflow_policy` are left at their defaults here. They become sizing decisions in [Background mode](#background-mode-never-stall-the-producer), where sends keep arriving during the outage.
 
 ```rust,no_run
 use tst_core::mpegts::mux::MuxerConfig;
@@ -88,6 +90,8 @@ let policy = ReconnectPolicy {
         base: Duration::from_millis(100),
         max: Duration::from_secs(10),
     },
+    // Size this one: worst-case outage × messages per second. Whatever
+    // does not fit is evicted (DropOldest) or refused (Reject).
     gap_buffer_capacity: 256,
     overflow_policy: OverflowPolicy::DropOldest,
 };

@@ -234,9 +234,9 @@ Fix: use the default `BackoffStrategy::Exponential { base: Duration::from_millis
 
 **Reconnect appears to succeed but no data flows after**
 
-The gap buffer overflowed during the disconnect window. With the default `OverflowPolicy::DropOldest` newer messages displace older ones; with `OverflowPolicy::Reject` new sends fail outright. Either way, some messages were lost between the break and the reconnect.
+Under `ReconnectMode::Background`: the gap buffer overflowed during the disconnect window. With the default `OverflowPolicy::DropOldest` newer messages displace older ones; with `OverflowPolicy::Reject` new sends fail outright. Either way, some messages were lost between the break and the reconnect. (Under the default `ReconnectMode::Blocking` the gap buffer cannot overflow — it holds only the message whose send found the link broken, and the caller is blocked for the rest of the outage — so look at the producer instead: whatever it could not hand over while `send_bytes` was blocked was lost upstream of the wrapper.)
 
-Fix: size `gap_buffer_capacity` to your worst-case disconnect window times your send rate. The default of 256 messages is fine for a 1 Hz KLV stream over a 4-minute outage; for higher-rate video you'll want to budget more aggressively. See [guides/pipeline.md](/docs/guides/pipeline.md) for the sizing math.
+Fix (`Background`): size `gap_buffer_capacity` to your worst-case disconnect window times your send rate. The default of 256 messages is fine for a 1 Hz KLV stream over a 4-minute outage; for higher-rate video you'll want to budget more aggressively. See [guides/pipeline.md](/docs/guides/pipeline.md) for the sizing math.
 
 **`max_attempts` exhausted; a send returns `TransportError::Broken`**
 
