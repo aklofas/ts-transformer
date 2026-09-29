@@ -670,6 +670,22 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed — core (WP-2)
 
+- **Demuxer: a PID's PCR history now lives exactly as long as some program
+  declares it as `PCR_PID`.** The baseline a `PcrAnomaly` is judged against
+  was retired by rules tied to the stream list of the program being
+  updated, which was wrong in both directions. *Kept too long:* when a PMT
+  update moved `PCR_PID` off a PID that stayed on as an elementary stream,
+  the old baseline survived, and a later update that moved `PCR_PID` back
+  had its first PCR compared against it — a false `PcrAnomaly`, and under
+  `StrictMode::TimingOnly` / `Full` a `StrictRejection` of a valid stream.
+  *Dropped too early:* when two programs shared one PCR PID and one of them
+  moved its clock elsewhere or left the PAT, the history was erased for
+  the program that still declared the PID, so a real jump on that clock
+  went unreported; the same happened when a program dropped the elementary
+  stream on its PCR PID but kept the PID as `PCR_PID`. The history is now
+  retired when a PMT update or a PAT change leaves no program declaring
+  the PID, and kept otherwise, whatever else the PID carries. No API
+  change.
 - **`DemuxerConfig::sync_buf_cap` below 1 MiB rejected ordinary aligned
   TS.** The ceiling was compared against the ingress buffer *including*
   bytes already consumed as packets, and that dead prefix is only
