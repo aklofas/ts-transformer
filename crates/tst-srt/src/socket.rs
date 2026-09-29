@@ -182,9 +182,16 @@ impl Socket {
                 continue;
             }
 
+            // Built BEFORE the connect, not after it: the handshake can
+            // block for the whole connect timeout, and the process-exit
+            // guard can only wake a socket it knows about.
+            let cancel = make_cancel_handle(handle);
             let os_addr = to_sockaddr(sa);
-            let rc = unsafe {
-                srt_sys::srt_connect(handle, os_addr.as_ptr().cast(), os_addr.len() as c_int)
+            let rc = {
+                let _in_call = crate::exit_guard::enter_blocking_call();
+                unsafe {
+                    srt_sys::srt_connect(handle, os_addr.as_ptr().cast(), os_addr.len() as c_int)
+                }
             };
             if rc < 0 {
                 let raw = last_error();
@@ -192,7 +199,7 @@ impl Socket {
                 // srt_close: once closed, libsrt's locateSocket returns null
                 // and srt_getrejectreason always yields SRT_REJ_UNKNOWN.
                 let reason = last_reject(handle);
-                unsafe { srt_sys::srt_close(handle) };
+                cancel.close_without_cancel();
                 last_err = Some(classify_connect_error(raw, reason));
                 continue;
             }
@@ -202,7 +209,7 @@ impl Socket {
 
             return Ok(Self {
                 handle,
-                cancel: make_cancel_handle(handle),
+                cancel,
                 cached_stream_id,
                 cached_payload_limit,
             });
@@ -285,12 +292,15 @@ impl Socket {
 
     /// Send a buffer. Returns bytes sent. Live mode requires `buf.len() ≤ payload_size`.
     pub fn send(&mut self, buf: &[u8]) -> Result<usize, SendError> {
-        let n = unsafe {
-            srt_sys::srt_send(
-                self.handle,
-                buf.as_ptr().cast::<c_char>(),
-                buf.len() as c_int,
-            )
+        let n = {
+            let _in_call = crate::exit_guard::enter_blocking_call();
+            unsafe {
+                srt_sys::srt_send(
+                    self.handle,
+                    buf.as_ptr().cast::<c_char>(),
+                    buf.len() as c_int,
+                )
+            }
         };
         if n >= 0 {
             return Ok(n as usize);
@@ -305,12 +315,15 @@ impl Socket {
 
     /// Receive into a buffer. Returns bytes received (one libsrt message).
     pub fn recv(&mut self, buf: &mut [u8]) -> Result<usize, RecvError> {
-        let n = unsafe {
-            srt_sys::srt_recv(
-                self.handle,
-                buf.as_mut_ptr().cast::<c_char>(),
-                buf.len() as c_int,
-            )
+        let n = {
+            let _in_call = crate::exit_guard::enter_blocking_call();
+            unsafe {
+                srt_sys::srt_recv(
+                    self.handle,
+                    buf.as_mut_ptr().cast::<c_char>(),
+                    buf.len() as c_int,
+                )
+            }
         };
         if n >= 0 {
             return Ok(n as usize);
@@ -994,14 +1007,10 @@ fn classify_recv_error(raw: crate::error::RawError, buf_len: usize) -> RecvError
     raw.into()
 }
 
-/// Build a SrtCancelHandle that closes the SRTSOCKET on first cancel.
+/// Build a SrtCancelHandle that closes the SRTSOCKET on first cancel, and
+/// make the socket reachable by the process-exit guard until then.
 pub(crate) fn make_cancel_handle(handle: srt_sys::SRTSOCKET) -> tst_core::SrtCancelHandle {
-    tst_core::SrtCancelHandle::new(handle as i64, |h| {
-        // SAFETY: h was the same SRTSOCKET we stored; libsrt accepts
-        // srt_close from any thread; the atomic-swap in SrtCancelHandle
-        // guarantees this runs at most once.
-        let _ = unsafe { srt_sys::srt_close(h as srt_sys::SRTSOCKET) };
-    })
+    crate::exit_guard::tracked_cancel_handle(handle)
 }
 
 #[cfg(test)]

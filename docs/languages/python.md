@@ -499,7 +499,9 @@ the process hangs instead of exiting. A program that closed everything
 pays nothing: shells whose cancel already latched are skipped, so neither
 the cancel walk nor the settle window runs. Only a shell left open costs
 the short settle window (woken threads need a moment to unwind before the
-interpreter shuts down).
+interpreter shuts down). The native library has the same guard in its own
+process-exit handler (it is what covers C, the JVM and Rust); Python's runs
+first because the woken threads need the interpreter to still be alive.
 
 One visible side effect: the call the hook wakes raises like any other
 cancelled call, so a worker thread that was parked in it and has no
