@@ -1580,7 +1580,7 @@ struct InjState {
     /// Receiver ordinal of the PCR packet this injection resolved from.
     /// `None` for one that carries no anchor (logged before the stream's
     /// first PCR). Together with `approx` this is the arrival evidence a
-    /// reconnect gap has to respect — see [`Attribution::judge`].
+    /// reconnect gap has to respect — see `Attribution::judge`.
     anchor_at: Option<u64>,
     /// Its anchor base fell more than `MAX_APPROX_TICKS` behind the first
     /// base the receiver saw afterwards, so it can never be placed. Kept
@@ -2754,7 +2754,7 @@ impl Attribution {
     /// `[last_media_at, at + window + APPROX_SLACK]` is judged lost in
     /// transit rather than undetected — unless it resolved exactly from
     /// an anchor received after the marker, which shows it arrived (see
-    /// [`Attribution::judge`]). Strict never excuses.
+    /// `Attribution::judge`). Strict never excuses.
     pub fn on_reconnect(&mut self, at: u64) {
         self.settle_pending_pcr(at);
         self.reconnects_seen += 1;
