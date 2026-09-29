@@ -45,9 +45,12 @@ impl Transport for AlwaysBroken {
     fn close(&mut self) {}
 }
 
-/// With `OverflowPolicy::Reject` + capacity 1, the second send must
+/// With `OverflowPolicy::Reject` and no room in the buffer, a send must
 /// surface `TransportError::Backpressure { msg: "gap buffer full", errno_code: None }` rather than
 /// silently dropping the new bytes.
+///
+/// Capacity 0: in `Blocking` mode a send that fails takes its message back
+/// out of the buffer, so a failed send cannot be what fills it.
 #[test]
 fn reject_policy_surfaces_backpressure_when_gap_full() {
     let factory = || -> Result<AlwaysBroken, TransportError> {
@@ -57,13 +60,11 @@ fn reject_policy_surfaces_backpressure_when_gap_full() {
             cause: BrokenCause::Unspecified,
         })
     };
-    // max_attempts: Some(1) + zero backoff keeps each send fast: one
-    // factory call, give up, return Broken. With our fix, the second
-    // send refuses BEFORE reconnect, so it returns Backpressure.
+    // The buffer refuses BEFORE any reconnect is attempted.
     let policy = ReconnectPolicy {
         max_attempts: Some(1),
         backoff: BackoffStrategy::Constant(Duration::from_millis(0)),
-        gap_buffer_capacity: 1,
+        gap_buffer_capacity: 0,
         overflow_policy: OverflowPolicy::Reject,
         ..Default::default()
     };
@@ -73,23 +74,13 @@ fn reject_policy_surfaces_backpressure_when_gap_full() {
     };
     let mut managed = ManagedTransport::new(inner, factory, policy);
 
-    // First send: transport returns Broken, bytes enqueue successfully
-    // (buffer was empty), reconnect attempt fails, ManagedTransport
-    // returns Broken("reconnect gave up..."). The byte stays queued.
-    let first = managed.send_bytes(b"first").unwrap_err();
+    // The transport returns Broken and the bytes have nowhere to queue.
+    // With Reject policy they MUST surface as Backpressure rather than be
+    // silently dropped.
+    let err = managed.send_bytes(b"first").unwrap_err();
     assert!(
-        matches!(first, TransportError::Broken { .. }),
-        "first send: expected Broken after give-up, got {first:?}"
-    );
-
-    // Second send: transport (rebuilt as None after first failed
-    // reconnect cycle) is dead; we fall through to the enqueue path.
-    // Buffer is full from the first byte. With Reject policy, the new
-    // bytes MUST surface as Backpressure rather than be silently dropped.
-    let second = managed.send_bytes(b"second").unwrap_err();
-    assert!(
-        matches!(second, TransportError::Backpressure { ref msg, .. } if msg.contains("gap buffer full")),
-        "second send: expected Backpressure(\"gap buffer full\"), got {second:?}"
+        matches!(err, TransportError::Backpressure { ref msg, .. } if msg.contains("gap buffer full")),
+        "expected Backpressure(\"gap buffer full\"), got {err:?}"
     );
 }
 
@@ -123,9 +114,9 @@ fn drop_oldest_policy_does_not_surface_backpressure_on_overflow() {
     let first = managed.send_bytes(b"first").unwrap_err();
     assert!(matches!(first, TransportError::Broken { .. }));
 
-    // Second send: buffer is full from "first", DropOldest evicts it,
-    // enqueues "second", reconnect fails, returns Broken (not
-    // Backpressure). The eviction is silent per the policy contract.
+    // Second send: same again. "first" went back to the caller with its
+    // error, so there is nothing to evict; either way DropOldest never
+    // answers with Backpressure.
     let second = managed.send_bytes(b"second").unwrap_err();
     assert!(
         matches!(second, TransportError::Broken { .. }),
