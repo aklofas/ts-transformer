@@ -275,9 +275,12 @@ impl Listener {
                 std::ptr::null_mut(), // lwnum
             )
         };
-        drop(in_call);
-
+        // Released INSIDE the bracket: `srt_epoll_release` takes a lock in
+        // libsrt's global state, which the exit handler's `srt_cleanup()`
+        // and the static destructors after it tear down. The handler waits
+        // for this guard, so the release must be done before it drops.
         unsafe { srt_sys::srt_epoll_release(eid) };
+        drop(in_call);
 
         if n == 0 {
             // Unreachable per libsrt's contract: srt_epoll_wait returns
