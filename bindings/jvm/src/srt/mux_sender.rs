@@ -40,7 +40,7 @@ use tst_pipeline::binding::{BindingErrorKind, HandleState, Owned};
 use tst_pipeline::{MuxSender as RustMuxSender, MuxSenderError, MuxSenderErrorSource};
 use tst_srt::{SrtTransport, SrtUrl, url::Mode};
 
-use crate::handle::OwnedRegistry;
+use crate::handle::{OwnedRegistry, StreamHandles};
 use crate::jutil::{build_socket_stats, checked_u8, decode_stream_handle, read_bytes};
 use crate::mpegts::build_muxer_stats;
 use crate::mpegts::muxer::{build_muxer_config_from_arrays, throw_mux_error};
@@ -50,7 +50,9 @@ use super::errors::{srt_error, throw_srt, transport_error};
 type Inner = RustMuxSender<SrtTransport>;
 
 /// Per-type `Owned`-backed registry for `org.tstrans.srt.MuxSender`.
-static REGISTRY: LazyLock<OwnedRegistry<Inner>> = LazyLock::new(OwnedRegistry::new);
+/// `S = StreamHandles`: the stream set is fixed at construction, so the
+/// `n*Handle` getters never take the slot a parked `send*` holds.
+static REGISTRY: LazyLock<OwnedRegistry<Inner, StreamHandles>> = LazyLock::new(OwnedRegistry::new);
 
 /// Map a `MuxSenderError` (from any `send_*`) to a thrown Java exception.
 /// `Mux(...)` → `MuxException`; `Transport(...)` → `SrtException` per
@@ -76,7 +78,8 @@ fn throw_mux_sender_error(env: &mut JNIEnv, e: &MuxSenderError) {
 /// The contract the C ABI's `tst_mux_sender_close` and the plain srt
 /// receivers already have.
 fn register(sender: Inner, cancel: Arc<dyn TransportCancel>) -> jlong {
-    REGISTRY.insert(Owned::new(sender, cancel, ())) as jlong
+    let streams = StreamHandles::of(&sender);
+    REGISTRY.insert(Owned::new(sender, cancel, streams)) as jlong
 }
 
 /// Build a `MuxSender<SrtTransport>` from a parsed caller-mode URL + a built
@@ -204,12 +207,12 @@ fn with_push(
     );
 }
 
-/// Lease the sender and return the first handle-of-kind (`-1` if none). A closed
-/// handle throws `IllegalStateException` and returns `-1`.
+/// Return the first handle-of-kind from the construction-time snapshot (`-1`
+/// if none). A closed handle throws `IllegalStateException` and returns `-1`.
 fn first_handle(
     env: &mut JNIEnv,
     handle: jlong,
-    pick: impl FnOnce(&Inner) -> Option<u32>,
+    pick: impl FnOnce(&StreamHandles) -> Option<u32>,
 ) -> jlong {
     crate::handle::first_handle(env, &REGISTRY, handle, "MuxSender", pick)
 }
@@ -491,11 +494,7 @@ pub extern "system" fn Java_org_tstrans_srt_MuxSender_nVideoHandle(
     _class: JClass<'_>,
     handle: jlong,
 ) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
-        first_handle(env, handle, |inner| {
-            inner.video_handles().into_iter().next().map(|h| h.raw())
-        })
-    })
+    crate::panic::jni_catch(&mut env, 0, |env| first_handle(env, handle, |s| s.video))
 }
 
 /// `nKlvHandle(handle)` — first configured KLV stream handle, or `-1`.
@@ -505,11 +504,7 @@ pub extern "system" fn Java_org_tstrans_srt_MuxSender_nKlvHandle(
     _class: JClass<'_>,
     handle: jlong,
 ) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
-        first_handle(env, handle, |inner| {
-            inner.klv_handles().into_iter().next().map(|h| h.raw())
-        })
-    })
+    crate::panic::jni_catch(&mut env, 0, |env| first_handle(env, handle, |s| s.klv))
 }
 
 /// `nAudioHandle(handle)` — first configured audio stream handle, or `-1`.
@@ -519,11 +514,7 @@ pub extern "system" fn Java_org_tstrans_srt_MuxSender_nAudioHandle(
     _class: JClass<'_>,
     handle: jlong,
 ) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
-        first_handle(env, handle, |inner| {
-            inner.audio_handles().into_iter().next().map(|h| h.raw())
-        })
-    })
+    crate::panic::jni_catch(&mut env, 0, |env| first_handle(env, handle, |s| s.audio))
 }
 
 /// `nSubtitleHandle(handle)` — first configured subtitle stream handle, or `-1`.
@@ -533,11 +524,7 @@ pub extern "system" fn Java_org_tstrans_srt_MuxSender_nSubtitleHandle(
     _class: JClass<'_>,
     handle: jlong,
 ) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
-        first_handle(env, handle, |inner| {
-            inner.subtitle_handles().into_iter().next().map(|h| h.raw())
-        })
-    })
+    crate::panic::jni_catch(&mut env, 0, |env| first_handle(env, handle, |s| s.subtitle))
 }
 
 /// `nDataHandle(handle)` — first configured data stream handle, or `-1`.
@@ -547,11 +534,7 @@ pub extern "system" fn Java_org_tstrans_srt_MuxSender_nDataHandle(
     _class: JClass<'_>,
     handle: jlong,
 ) -> jlong {
-    crate::panic::jni_catch(&mut env, 0, |env| {
-        first_handle(env, handle, |inner| {
-            inner.data_handles().into_iter().next().map(|h| h.raw())
-        })
-    })
+    crate::panic::jni_catch(&mut env, 0, |env| first_handle(env, handle, |s| s.data))
 }
 
 // ── Stats ──────────────────────────────────────────────────────────────────
@@ -677,7 +660,8 @@ pub extern "system" fn Java_org_tstrans_srt_MuxSender_nFinish(
     })
 }
 
-/// `nIsAlive(handle)` — whether the sender owns a live transport.
+/// `nIsAlive(handle)` — whether the sender owns a live transport. Non-blocking:
+/// a `send*` parked on another thread holds the slot, and reads as alive.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_org_tstrans_srt_MuxSender_nIsAlive(
     mut env: JNIEnv<'_>,
@@ -685,9 +669,7 @@ pub extern "system" fn Java_org_tstrans_srt_MuxSender_nIsAlive(
     handle: jlong,
 ) -> jboolean {
     crate::panic::jni_catch(&mut env, 0, |_env| {
-        REGISTRY
-            .with_ref(handle as u64, |inner| u8::from(inner.is_alive()))
-            .unwrap_or(0)
+        u8::from(REGISTRY.is_alive(handle as u64, |inner| inner.is_alive()))
     })
 }
 

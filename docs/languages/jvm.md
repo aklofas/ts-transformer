@@ -992,6 +992,35 @@ answers `true` rather than `false`. Before 0.7.0 each handle carried a private
 flag, so a second handle read `false` after the first cancelled and `close()`
 set nothing.
 
+### What answers while another thread is parked
+
+A blocking call holds its object for as long as it is parked, so what a
+second thread (a watchdog, a UI, a shutdown path) may ask of that object
+falls into two groups.
+
+**Answers at once, whatever the other thread is doing:**
+
+| Accessor | While a call is parked | Once closed |
+|---|---|---|
+| `close()`, `cancelHandle()`, `CancelHandle.cancel()` / `isCancelled()` | cancel first, then free | quiet |
+| `isAlive()` | `true` — a parked call means the object is open | `false` |
+| `localAddr()` (`Listener`, `H264Receiver`) | the value captured when the object was built | throws `IllegalStateException` |
+| `videoHandle()` … `dataHandle()` on the three `MuxSender` classes | the handles of the `MuxerConfig` the sender was built from | throws `IllegalStateException` |
+| `reconnectAttempts()`, `reconnectStats()` on the managed shells | live counters kept outside the object | throws `IllegalStateException` |
+| `endReason()` / `endDetail()` | the recorded reason, or `null`; `H264Receiver` answers `null` while a `recvAu()` is in flight | the reason recorded at close |
+
+**Waits for the parked call to return:** `stats()`, `socketStats()`,
+`srtStats()`, `depayStats()`, `rtpStats()` and `lastSeenMicros()`. These
+read counters that live inside the object and have nothing to report
+without it. Poll them from the thread that drives the send or receive
+loop, or give the receiver a `?recv_timeout=` so its blocking call returns
+on a cadence (the [`lastSeenMicros` caveat](#per-stream-staleness-lastseenmicros)
+spells this out). `finish()` is a blocking operation in its own right.
+
+Through 0.6.x `isAlive()` on every class except the two `DemuxReceiver`s,
+the `MuxSender` handle getters, and `H264Receiver.endReason()` /
+`endDetail()` were in the second group.
+
 ### Exiting with a call still parked
 
 `close()` every shell (try-with-resources) and join your threads before the
@@ -1631,7 +1660,9 @@ try (RtspSession session = RtspClient.connect(cfg);
   instrument, e.g. a plain `rtp://` receiver with no owning `RtspClient`).
   `rx.endDetail()` carries the free-text message for the three failure
   variants. Both stay readable after `close()` — the receiver snapshots
-  them at close time, before the underlying native handle is freed. Set
+  them at close time, before the underlying native handle is freed.
+  Neither ever waits behind a receive parked on another thread; on
+  `H264Receiver` they answer `null` while a `recvAu()` is in flight. Set
   `TSTRANS_LOG=tst_rtp=debug` before the first `System.load` of the
   native library (i.e. before touching any `org.tstrans.*` class) to
   also see the underlying pump/keepalive `tracing` events on stderr.

@@ -142,8 +142,11 @@ def test_srt_sender_close_from_other_thread_during_send() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def _srt_mux_sender_with_silent_peer(port: int):
-    """Listener-mode `srt.Receiver` (never reads) + caller `srt.MuxSender`."""
+def _srt_mux_sender_with_silent_peer(
+    port: int, program: object | None = None, peer_knobs: str = ""
+):
+    """Listener-mode `srt.Receiver` (never reads) + caller `srt.MuxSender`.
+    `peer_knobs` is appended to the listener URL."""
     import tstrans.srt as srt
 
     box: list[srt.Receiver] = []
@@ -151,14 +154,16 @@ def _srt_mux_sender_with_silent_peer(port: int):
 
     def accept_worker() -> None:
         try:
-            box.append(srt.Receiver.from_url(f"srt://:{port}?mode=listener"))
+            box.append(srt.Receiver.from_url(f"srt://:{port}?mode=listener{peer_knobs}"))
         except BaseException as exc:  # noqa: BLE001
             errs.append(exc)
 
     t = threading.Thread(target=accept_worker, daemon=True)
     t.start()
     time.sleep(0.1)
-    tx = srt.MuxSender.from_url(f"srt://127.0.0.1:{port}?mode=caller", _video_only_program())
+    tx = srt.MuxSender.from_url(
+        f"srt://127.0.0.1:{port}?mode=caller", program or _video_only_program()
+    )
     t.join(5.0)
     if errs or not box:
         tx.close()
@@ -446,7 +451,7 @@ def test_srt_managed_receiver_close_from_other_thread_while_recv_parked() -> Non
 # --------------------------------------------------------------------------- #
 
 
-def _managed_mux_sender_after_peer_drop(port: int):
+def _managed_mux_sender_after_peer_drop(port: int, program: object | None = None):
     """Caller `ManagedMuxSender` (outage policy, 0.5 s conntimeo) whose plain
     `srt.Receiver` peer accepted, took a few frames, then closed."""
     import tstrans.srt as srt
@@ -455,7 +460,7 @@ def _managed_mux_sender_after_peer_drop(port: int):
     accept_t, box = _plain_srt_receiver_on_thread(port)
     tx = srt.ManagedMuxSender.from_url(
         f"srt://127.0.0.1:{port}?mode=caller&conntimeo=500",
-        _video_only_program(),
+        program or _video_only_program(),
         policy=_outage_policy(),
     )
     accept_t.join(5.0)
@@ -1042,6 +1047,25 @@ def test_rist_recv_transport_close_from_other_thread_while_recv_parked() -> None
 # --------------------------------------------------------------------------- #
 
 
+def _call_with_hang_deadline(getter: Callable[[], object]) -> tuple[bool, dict[str, object]]:
+    """Run `getter()` on its own daemon thread and join with a generous
+    hang deadline. Returns `(blocked, outcome)`; the caller runs its rescue
+    BEFORE asserting on `blocked`, so a getter stuck behind a parked call
+    fails the test instead of wedging the process."""
+    outcome: dict[str, object] = {}
+
+    def getter_worker() -> None:
+        try:
+            outcome["value"] = getter()
+        except BaseException as exc:  # noqa: BLE001
+            outcome["exc"] = exc
+
+    g = threading.Thread(target=getter_worker, daemon=True)
+    g.start()
+    g.join(30.0)
+    return g.is_alive(), outcome
+
+
 def _assert_getter_does_not_wait_behind_park(
     what: str,
     park: Callable[[], object],
@@ -1056,33 +1080,40 @@ def _assert_getter_does_not_wait_behind_park(
     the one that has to connect / send to end it, so that is a deadlock,
     not slowness. The only bound is therefore a generous hang deadline;
     `end_park()` (the object's `close()`) always runs before the failure
-    so no daemon thread is left inside native code."""
-    outcome: dict[str, object] = {}
+    so no daemon thread is left inside native code.
+
+    The park is proven, not assumed: the worker latches `entered` before
+    the call and `returned` after it, and `returned` must still be clear
+    once the getter has answered."""
+    entered = threading.Event()
+    returned = threading.Event()
 
     def park_worker() -> None:
+        entered.set()
         try:
             park()
         except BaseException:  # noqa: BLE001
             pass
-
-    def getter_worker() -> None:
-        try:
-            outcome["value"] = getter()
-        except BaseException as exc:  # noqa: BLE001
-            outcome["exc"] = exc
+        finally:
+            returned.set()
 
     p = threading.Thread(target=park_worker, daemon=True)
     p.start()
-    time.sleep(0.3)  # parked with the GIL released
-    g = threading.Thread(target=getter_worker, daemon=True)
-    g.start()
-    g.join(30.0)
-    blocked = g.is_alive()
-    end_park()  # rescue: ends the park (and frees a slot-bound getter)
-    p.join(5.0)
-    g.join(5.0)
+    blocked: bool = True
+    outcome: dict[str, object] = {}
+    still_parked = False
+    try:
+        assert entered.wait(5.0), f"{what}: the parking call never started"
+        time.sleep(0.3)  # parked with the GIL released
+        assert not returned.is_set(), f"{what}: the call meant to park returned on its own"
+        blocked, outcome = _call_with_hang_deadline(getter)
+        still_parked = not returned.is_set()
+    finally:
+        end_park()  # rescue: ends the park (and frees a slot-bound getter)
+        p.join(5.0)
     assert not blocked, f"{what} waited behind the parked call instead of answering"
     assert "exc" not in outcome, f"{what} raised {outcome['exc']!r} while the call was parked"
+    assert still_parked, f"{what}: the parked call ended before the getter answered"
     return outcome.get("value")
 
 
@@ -1316,3 +1347,148 @@ def test_rist_recv_transport_repr_does_not_wait_behind_parked_recv() -> None:
     )
     assert got == before
     assert repr(rx) == "RecvTransport(closed)"
+
+
+def test_tcp_transport_peer_addr_and_repr_do_not_wait_behind_parked_recv() -> None:
+    """The peer address never changes after connect, so `peer_addr()` and
+    `repr()` answer from the connect-time snapshot while `recv()` is parked
+    on a peer that sends nothing."""
+    from tstrans import tcp
+
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    port = srv.getsockname()[1]
+    t = tcp.Transport.builder().url(f"tcp://127.0.0.1:{port}").build()
+    conn, _ = srv.accept()  # held open and silent for the whole test
+    try:
+        before = (t.peer_addr(), repr(t))
+        assert before == (f"127.0.0.1:{port}", f"Transport(peer=127.0.0.1:{port})")
+        got = _assert_getter_does_not_wait_behind_park(
+            "tcp.Transport.peer_addr() / repr()",
+            lambda: t.recv(bytearray(1024)),
+            lambda: (t.peer_addr(), repr(t)),
+            t.close,
+        )
+        assert got == before
+        assert (t.peer_addr(), repr(t)) == ("", "Transport(closed)")
+    finally:
+        t.close()
+        conn.close()
+        srv.close()
+
+
+def _stream_handles(tx) -> tuple[object, ...]:
+    return (
+        tx.video_handle(),
+        tx.klv_handle(),
+        tx.audio_handle(),
+        tx.subtitle_handle(),
+        tx.data_handle(),
+    )
+
+
+def _video_data_program() -> object:
+    from tstrans.mpegts import MuxerProgramConfigBuilder, VideoCodec
+
+    return (
+        MuxerProgramConfigBuilder(1, 0x100)
+        .add_video(0x101, VideoCodec.H264)
+        .add_data(0x1F0, 0xF0, carries_pts=True)
+        .build()
+    )
+
+
+def test_srt_managed_mux_sender_stream_handles_do_not_wait_behind_parked_send() -> None:
+    """The stream set is fixed by the program config the sender was built
+    from, so the five `*_handle()` getters answer while a `send_video()` is
+    parked in the Blocking reconnect loop."""
+    port = _free_tcp_port()
+    tx = _managed_mux_sender_after_peer_drop(port, _video_data_program())
+    before = _stream_handles(tx)
+    assert before[0] is not None and before[4] is not None
+    assert before[1:4] == (None, None, None)
+    w, stop, outcome = _park_send_video(tx)
+    blocked: bool = True
+    got: dict[str, object] = {}
+    still_parked = False
+    try:
+        blocked, got = _call_with_hang_deadline(lambda: _stream_handles(tx))
+        still_parked = w.is_alive() and "exc" not in outcome
+    finally:
+        stop.set()
+        tx.close()  # rescue: cancel-first, ends the parked send
+        w.join(5.0)
+    assert not blocked, "the handle getters waited behind the parked send_video()"
+    assert "exc" not in got, f"a handle getter raised {got['exc']!r}"
+    assert still_parked, "the parked send ended before the getters answered"
+    assert got["value"] == before
+    assert _stream_handles(tx) == (None,) * 5  # closed: no handle, as before
+
+
+def test_srt_mux_sender_accessors_do_not_wait_behind_parked_send() -> None:
+    """A plain `MuxSender` parks in libsrt's blocking send once its send
+    buffer is full. The peer never reads and is opened with `tlpktdrop=0`:
+    with too-late-packet-drop advertised the sender drops instead of
+    blocking. The handle getters and `is_alive()` answer while it is
+    parked."""
+    from tstrans.mpegts import Pts90khz
+
+    tx, peer = _srt_mux_sender_with_silent_peer(
+        _free_tcp_port(), _video_data_program(), peer_knobs="&tlpktdrop=0"
+    )
+    before = _stream_handles(tx)
+    assert before[0] is not None and before[4] is not None
+    blob = bytes(32 * 1024)
+    stop = threading.Event()
+    outcome: dict[str, object] = {}
+    progress = [0]
+
+    def worker() -> None:
+        def send_one() -> None:
+            tx.send_data(blob, pts=Pts90khz.from_raw(0))
+            progress[0] += 1
+
+        outcome.update(_spin_sender(send_one, stop))
+
+    w = threading.Thread(target=worker, daemon=True)
+    w.start()
+    blocked: bool = True
+    got: dict[str, object] = {}
+    still_parked = False
+    try:
+        _wait_until_parked(progress, "srt.MuxSender", budget_s=30.0)
+        blocked, got = _call_with_hang_deadline(lambda: (_stream_handles(tx), tx.is_alive()))
+        still_parked = w.is_alive() and "exc" not in outcome
+    finally:
+        stop.set()
+        tx.close()  # rescue: cancel-first, ends the parked send
+        w.join(5.0)
+        peer.close()
+    assert not blocked, "the accessors waited behind the parked send_data()"
+    assert "exc" not in got, f"an accessor raised {got['exc']!r}"
+    assert still_parked, "the parked send ended before the accessors answered"
+    assert got["value"] == (before, True)
+    assert _stream_handles(tx) == (None,) * 5  # closed: no handle, as before
+
+
+def test_rtp_mux_sender_stream_handles_are_the_configured_set_until_close() -> None:
+    """An RTP send is a UDP send and cannot be parked on demand, so this
+    pins the values the construction-time snapshot must answer: the
+    configured set while open, unchanged by sends, `None` once closed."""
+    from tstrans.mpegts import Pts90khz
+    import tstrans.rtp as rtp
+
+    sink, port = _udp_sink()
+    tx = rtp.MuxSender(f"rtp://127.0.0.1:{port}", _video_data_program())
+    try:
+        before = _stream_handles(tx)
+        assert before[0] is not None and before[4] is not None
+        assert before[1:4] == (None, None, None)
+        tx.send_video_to(before[0], NAL_IDR, pts=Pts90khz.from_raw(0), key_frame=True)
+        assert _stream_handles(tx) == before
+        tx.close()
+        assert _stream_handles(tx) == (None,) * 5
+    finally:
+        tx.close()
+        sink.close()

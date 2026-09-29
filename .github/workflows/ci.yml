@@ -267,6 +267,9 @@ jobs:
         # Arc 2 §3.2: a getter that is constant after `_open` must read the
         # handle's snapshot, never the shell slot a parked recv/accept holds
         # (the PR #234 hang class). Covers every binding under bindings/.
+        # In the Python and JVM bindings it also requires every function
+        # that calls the blocking `with_ref()` to be listed, with a reason,
+        # in scripts/ratchets/blocking-slot-readers.tsv.
         run: bash scripts/check/c/snapshot-getters.sh
 
       - name: Check lifecycle ffi_catch coverage

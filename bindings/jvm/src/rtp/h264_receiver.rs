@@ -550,7 +550,9 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nCancelHandle(
 /// this native — `H264Receiver.endReason()` reads the Java-side snapshot
 /// once `peekHandle()` is 0). Unlike `Receiver`/`DemuxReceiver`,
 /// `H264Receiver` has no `end_reason_handle()` — this reads the live
-/// receiver's own `&self` getter directly.
+/// receiver's own `&self` getter, without waiting for the slot: while a
+/// `recvAu` is in flight on another thread the reason is not final, and the
+/// answer is `-1` (tst-py's `end_reason()` answers `None` the same way).
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nEndReason(
     mut env: JNIEnv<'_>,
@@ -559,16 +561,19 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nEndReason(
 ) -> jint {
     crate::panic::jni_catch(&mut env, -1, |_env| {
         REGISTRY
-            .with_ref(handle as u64, |jdr| {
+            .try_with_ref(handle as u64, |jdr| {
                 super::end_reason::end_reason_ordinal(jdr.inner.end_reason().as_ref())
             })
+            .ok()
+            .flatten()
             .unwrap_or(-1)
     })
 }
 
 /// `H264Receiver.nEndDetail(handle)` — free-text detail for `nEndReason`;
-/// `null` for a detail-less reason, "hasn't ended yet", or a closed/absent
-/// handle.
+/// `null` for a detail-less reason, "hasn't ended yet" (which includes a
+/// `recvAu` in flight on another thread — see `nEndReason`), or a
+/// closed/absent handle.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nEndDetail<'local>(
     mut env: JNIEnv<'local>,
@@ -577,12 +582,13 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nEndDetail<'local>(
 ) -> JObject<'local> {
     crate::panic::jni_catch(&mut env, JObject::null(), |env| {
         let detail = REGISTRY
-            .with_ref(handle as u64, |jdr| {
+            .try_with_ref(handle as u64, |jdr| {
                 jdr.inner
                     .end_reason()
                     .and_then(|r| super::end_reason::end_reason_detail(&r).map(str::to_owned))
             })
             .ok()
+            .flatten()
             .flatten();
         match detail {
             Some(d) => match env.new_string(&d) {

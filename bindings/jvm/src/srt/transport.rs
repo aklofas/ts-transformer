@@ -247,7 +247,8 @@ pub extern "system" fn Java_org_tstrans_srt_Sender_nClose(
     })
 }
 
-/// Return whether the Sender transport is still live.
+/// Return whether the Sender transport is still live. Non-blocking: a
+/// `sendBytes` parked on another thread holds the slot, and reads as alive.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_org_tstrans_srt_Sender_nIsAlive(
     mut env: JNIEnv<'_>,
@@ -255,9 +256,7 @@ pub extern "system" fn Java_org_tstrans_srt_Sender_nIsAlive(
     handle: jlong,
 ) -> jboolean {
     crate::panic::jni_catch(&mut env, 0, |_env| {
-        REGISTRY_SENDER
-            .with_ref(handle as u64, |inner| u8::from(inner.is_alive()))
-            .unwrap_or(0)
+        u8::from(REGISTRY_SENDER.is_alive(handle as u64, |inner| inner.is_alive()))
     })
 }
 
@@ -441,7 +440,8 @@ pub extern "system" fn Java_org_tstrans_srt_Receiver_nClose(
     })
 }
 
-/// Return whether the Receiver transport is still live.
+/// Return whether the Receiver transport is still live. Non-blocking: a
+/// `recvBytes` parked on another thread holds the slot, and reads as alive.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_org_tstrans_srt_Receiver_nIsAlive(
     mut env: JNIEnv<'_>,
@@ -449,8 +449,6 @@ pub extern "system" fn Java_org_tstrans_srt_Receiver_nIsAlive(
     handle: jlong,
 ) -> jboolean {
     crate::panic::jni_catch(&mut env, 0, |_env| {
-        REGISTRY_RECEIVER
-            .with_ref(handle as u64, |inner| u8::from(inner.is_alive()))
-            .unwrap_or(0)
+        u8::from(REGISTRY_RECEIVER.is_alive(handle as u64, |inner| inner.is_alive()))
     })
 }
