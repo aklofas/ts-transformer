@@ -745,6 +745,37 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed — pipeline (WP-3)
 
+- **`ManagedTransport` (`ReconnectMode::Blocking`): a send refused with
+  `Backpressure` right after a reconnect was delivered twice.** The inner
+  send broke, the message went into the gap buffer, the reconnect succeeded,
+  and the drain into the fresh connection was refused; `send_bytes` returned
+  that `Backpressure` with the message still queued. `Backpressure` means
+  "not consumed, offer the same bytes again", so the retry drained the queued
+  copy and then sent the bytes a second time — and `MuxSender` / `Sender`
+  retain and re-offer on their own, so a managed sender duplicated the chunk
+  with no resend by the caller. The message is now taken back out of the gap
+  buffer before the error is returned. Messages queued by earlier calls stay
+  queued and drain first; an older message `DropOldest` evicted to make room
+  stays evicted and counted, and the hand-back itself is not counted as a
+  drop.
+- **`ManagedTransport` (`ReconnectMode::Background`): cancelling a send
+  parked in the inner transport returned `Ok(())`.** The inner reported the
+  cancel as `ExplicitClose`, the wrapper read that as an outage, queued the
+  message, started a reconnect worker and returned success; the worker saw
+  the cancel and exited without delivering. The interrupted call now returns
+  `ExplicitClose` and nothing is queued or spawned once the cancel has
+  latched. In both modes the cancel also outranks a full
+  `OverflowPolicy::Reject` buffer, which used to answer the interrupted call
+  with `Backpressure`, and `Blocking` no longer leaves the interrupted
+  message in the gap buffer. A send that completed before the cancel landed
+  still returns `Ok(())`.
+- **`ManagedRecvTransport`: `is_alive()` stayed `true` after a parked receive
+  was cancelled.** The cancelled `recv_bytes` returned `ExplicitClose`
+  without latching the wrapper closed, so liveness only turned `false` once
+  a further receive was attempted. `ManagedDemuxReceiver`, and a
+  `DemuxReceiver` / `Receiver` / `RawReceiver` built over the managed
+  transport, delegate liveness and reported the same. The cancelled call now
+  latches, and `is_alive()` is `false` as soon as it returns.
 - **`ManagedTransport` (send side): `close()` and `Drop` now wake a
   background worker parked inside the inner transport's `send_bytes`.**
   Both stored the close latch and signalled the backoff wait, but only
