@@ -1156,10 +1156,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   injection placed inside a reconnect gap was excused as lost by its
   position alone, including one resolved exactly from a PCR the receiver
   saw AFTER the reconnect marker — which arrived, so a demuxer that ignored
-  the damage passed. Now the gap excuses only an injection with nothing to
-  show it arrived (resolved approximately, from an anchor before the
-  marker, or with no anchor); one resolved exactly after the marker keeps
-  its detection obligation. (2) A `PcrAnomaly` on the PID a `header`
+  the damage passed. Now an injection inside the gap keeps its detection
+  obligation when it resolved exactly from an anchor received at or after
+  the marker AND the demuxer, which the reconnect reset, had produced media
+  again before it: on the injection's own PID for damage noticed as a
+  continuity jump (a `drop`, a rewritten PID or continuity counter), which
+  needs a previous counter on that PID, and on any PID for every other
+  class. Without both it stays `lost_in_reconnect_gap`, inside the same
+  excusal budget. (2) A `PcrAnomaly` on the PID a `header`
   PID-rewrite moved its packet to (0x1FFE) was attributed to that
   injection, in Strict and Lossy alike, although the demuxer reports a
   `PcrAnomaly` only on a PMT-declared `PCR_PID` — so the one event that
