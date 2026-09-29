@@ -153,8 +153,9 @@ impl Socket {
         config: &SocketConfig,
         addr: impl ToSocketAddrs,
     ) -> Result<Self, ConnectError> {
-        ensure_initialized();
-
+        // Resolved before the operation starts: a lookup can block for
+        // seconds, makes no libsrt call, and nothing can wake it, so it
+        // must not be something the process-exit guard waits for.
         let addrs: Vec<SocketAddr> = addr
             .to_socket_addrs()
             .map_err(|e| ConnectError::InvalidAddress(e.into()))?
@@ -165,8 +166,20 @@ impl Socket {
             ));
         }
 
+        // Held to the end of the function: the error tail below (reject
+        // reason, close) calls into libsrt as well.
+        let Some(_op) = crate::exit_guard::enter() else {
+            return Err(refused_connect());
+        };
+        ensure_initialized();
+
         let mut last_err: Option<ConnectError> = None;
         for sa in addrs {
+            // Process exit started during the walk (it cancelled the
+            // attempt before this one): stop, do not dial the next address.
+            if crate::exit_guard::is_exiting() {
+                return Err(last_err.unwrap_or_else(refused_connect));
+            }
             // Each iteration starts on a fresh handle. libsrt PRE options
             // must be set before srt_connect; once a handle has been
             // through a failed srt_connect we can't reuse it cleanly.
@@ -187,12 +200,10 @@ impl Socket {
             // guard can only wake a socket it knows about.
             let cancel = make_cancel_handle(handle);
             let os_addr = to_sockaddr(sa);
-            let rc = {
-                let _in_call = crate::exit_guard::enter_blocking_call();
-                unsafe {
-                    srt_sys::srt_connect(handle, os_addr.as_ptr().cast(), os_addr.len() as c_int)
-                }
+            let rc = unsafe {
+                srt_sys::srt_connect(handle, os_addr.as_ptr().cast(), os_addr.len() as c_int)
             };
+            crate::exit_guard::checkpoint(crate::exit_guard::Checkpoint::AfterBlockingCall);
             if rc < 0 {
                 let raw = last_error();
                 // MUST read the reject reason from the live handle BEFORE
@@ -292,15 +303,15 @@ impl Socket {
 
     /// Send a buffer. Returns bytes sent. Live mode requires `buf.len() ≤ payload_size`.
     pub fn send(&mut self, buf: &[u8]) -> Result<usize, SendError> {
-        let n = {
-            let _in_call = crate::exit_guard::enter_blocking_call();
-            unsafe {
-                srt_sys::srt_send(
-                    self.handle,
-                    buf.as_ptr().cast::<c_char>(),
-                    buf.len() as c_int,
-                )
-            }
+        let Some(_op) = crate::exit_guard::enter() else {
+            return Err(SendError::ConnectionBroken);
+        };
+        let n = unsafe {
+            srt_sys::srt_send(
+                self.handle,
+                buf.as_ptr().cast::<c_char>(),
+                buf.len() as c_int,
+            )
         };
         if n >= 0 {
             return Ok(n as usize);
@@ -315,15 +326,15 @@ impl Socket {
 
     /// Receive into a buffer. Returns bytes received (one libsrt message).
     pub fn recv(&mut self, buf: &mut [u8]) -> Result<usize, RecvError> {
-        let n = {
-            let _in_call = crate::exit_guard::enter_blocking_call();
-            unsafe {
-                srt_sys::srt_recv(
-                    self.handle,
-                    buf.as_mut_ptr().cast::<c_char>(),
-                    buf.len() as c_int,
-                )
-            }
+        let Some(_op) = crate::exit_guard::enter() else {
+            return Err(RecvError::ConnectionBroken);
+        };
+        let n = unsafe {
+            srt_sys::srt_recv(
+                self.handle,
+                buf.as_mut_ptr().cast::<c_char>(),
+                buf.len() as c_int,
+            )
         };
         if n >= 0 {
             return Ok(n as usize);
@@ -333,6 +344,9 @@ impl Socket {
     }
 
     pub fn peer_addr(&self) -> Result<SocketAddr, IoError> {
+        let Some(_op) = crate::exit_guard::enter() else {
+            return Err(IoError::SocketClosed);
+        };
         let mut os_addr = OsSocketAddr::new();
         let mut len = os_addr.capacity() as c_int;
         let rc = unsafe {
@@ -345,6 +359,9 @@ impl Socket {
     }
 
     pub fn local_addr(&self) -> Result<SocketAddr, IoError> {
+        let Some(_op) = crate::exit_guard::enter() else {
+            return Err(IoError::SocketClosed);
+        };
         let mut os_addr = OsSocketAddr::new();
         let mut len = os_addr.capacity() as c_int;
         let rc = unsafe {
@@ -384,6 +401,9 @@ impl Socket {
 
     /// Snapshot of libsrt's per-socket performance counters.
     pub fn stats(&self) -> Result<Stats, IoError> {
+        let Some(_op) = crate::exit_guard::enter() else {
+            return Err(IoError::SocketClosed);
+        };
         let mut perf: srt_sys::CBytePerfMon = unsafe { mem::zeroed() };
         let rc = unsafe { srt_sys::srt_bistats(self.handle, &raw mut perf, 0, 0) };
         if rc < 0 {
@@ -393,11 +413,17 @@ impl Socket {
     }
 
     pub fn set_send_timeout(&mut self, timeout: Option<Duration>) -> Result<(), OptionError> {
+        let Some(_op) = crate::exit_guard::enter() else {
+            return Err(OptionError::InvalidState);
+        };
         let ms = timeout.map(duration_to_ms).unwrap_or(-1);
         set_int(self.handle, srt_sys::SRT_SOCKOPT_SRTO_SNDTIMEO, ms)
     }
 
     pub fn set_recv_timeout(&mut self, timeout: Option<Duration>) -> Result<(), OptionError> {
+        let Some(_op) = crate::exit_guard::enter() else {
+            return Err(OptionError::InvalidState);
+        };
         let ms = timeout.map(duration_to_ms).unwrap_or(-1);
         set_int(self.handle, srt_sys::SRT_SOCKOPT_SRTO_RCVTIMEO, ms)
     }
@@ -1005,6 +1031,16 @@ fn classify_recv_error(raw: crate::error::RawError, buf_len: usize) -> RecvError
         };
     }
     raw.into()
+}
+
+/// What `connect_with` answers once process exit has started.
+/// `ConnectError` has no closed variant; `Other` is also what a connect
+/// cancelled by a close reports.
+fn refused_connect() -> ConnectError {
+    ConnectError::Other {
+        kind: SrtErrno::Unknown(0),
+        message: crate::exit_guard::REFUSED.into(),
+    }
 }
 
 /// Build a SrtCancelHandle that closes the SRTSOCKET on first cancel, and

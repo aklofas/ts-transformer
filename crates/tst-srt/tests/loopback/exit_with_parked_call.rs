@@ -4,8 +4,9 @@
 //! joins libsrt's `SRT:GC` thread. With a thread parked in `srt_accept` the
 //! GC thread cannot finish (it destroys the condition variable the accept
 //! is waiting on), so the process never exits. The exit handler therefore
-//! closes every socket that is still open and waits for the parked calls to
-//! return BEFORE it calls `srt_cleanup()` — see `src/exit_guard.rs`.
+//! refuses new operations, closes every socket that is still open and waits
+//! for the operations in flight to return BEFORE it calls `srt_cleanup()` —
+//! see `src/exit_guard.rs`.
 //!
 //! A regression here is a HANG, which no in-process assertion can catch, so
 //! every test re-executes this test binary as a child process and gives it
@@ -16,7 +17,7 @@
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tst_core::mpegts::demux::DemuxerConfig;
 use tst_pipeline::ReconnectPolicy;
@@ -34,15 +35,28 @@ const PARKED: &str = "PARKED";
 /// nextest's 20 s kill for the network group.
 const CHILD_DEADLINE: Duration = Duration::from_secs(12);
 
-/// Entered/returned latch around a blocking call, the same shape the Python
-/// exit test uses: `entered` is set immediately before the call and
-/// `returned` after it, so "entered and not returned" proves the thread is
-/// inside the call. Without that proof a test whose call failed at once
-/// would pass with the guard removed.
+/// How long the child waits for its worker to park.
+const PARK_DEADLINE: Duration = Duration::from_secs(8);
+
+/// How long the park has to hold before the child believes it.
+const PARK_LOOK: Duration = Duration::from_millis(200);
+
+/// Proof that a worker is parked inside a `tst-srt` call.
+///
+/// `entered` / `returned` bracket the call, but on their own they prove
+/// little: a worker descheduled right after it set `entered` looks the same
+/// as one inside libsrt. The observation is the library's own count of
+/// operations in flight — non-zero means a thread has entered a `tst-srt`
+/// operation and has not returned from it. The park is proven when, for
+/// the whole of [`PARK_LOOK`], that count is non-zero, the call has not
+/// returned, and `progress` has not moved (a worker that calls in a loop
+/// bumps it after every call that completed). Without that proof a test
+/// whose call failed at once would pass with the guard removed.
 #[derive(Clone, Default)]
 struct ParkLatch {
     entered: Arc<AtomicBool>,
     returned: Arc<AtomicBool>,
+    progress: Arc<AtomicU64>,
 }
 
 impl ParkLatch {
@@ -59,18 +73,31 @@ impl ParkLatch {
         });
     }
 
-    /// Wait for the thread to reach the call, then require the call to
-    /// still be outstanding after a short bounded look.
+    /// Wait for the thread to reach the call, then require the park to
+    /// hold for [`PARK_LOOK`]. The look starts over whenever the worker is
+    /// seen outside an operation or making progress, up to
+    /// [`PARK_DEADLINE`].
     fn assert_parked(&self) {
         crate::common::wait_for_ready(&self.entered);
-        let look_until = Instant::now() + Duration::from_millis(200);
-        while Instant::now() < look_until && !self.returned.load(Ordering::SeqCst) {
-            std::thread::sleep(Duration::from_millis(10));
+        let deadline = Instant::now() + PARK_DEADLINE;
+        let mut seen = self.progress.load(Ordering::SeqCst);
+        let mut held_since = Instant::now();
+        while held_since.elapsed() < PARK_LOOK {
+            assert!(
+                !self.returned.load(Ordering::SeqCst),
+                "the blocking call returned; nothing is parked"
+            );
+            assert!(
+                Instant::now() < deadline,
+                "no thread stayed inside a tst-srt operation within {PARK_DEADLINE:?}"
+            );
+            let now = self.progress.load(Ordering::SeqCst);
+            if tst_srt::operations_in_flight() == 0 || now != seen {
+                seen = now;
+                held_since = Instant::now();
+            }
+            std::thread::sleep(Duration::from_millis(5));
         }
-        assert!(
-            !self.returned.load(Ordering::SeqCst),
-            "the blocking call returned; nothing is parked"
-        );
         println!("{PARKED}");
         std::io::stdout().flush().expect("flush stdout");
     }
@@ -237,6 +264,59 @@ fn exit_is_clean_with_a_socket_parked_in_recv() {
     latch.park(move || {
         let mut buf = [0u8; 1500];
         socket.recv(&mut buf)
+    });
+    latch.assert_parked();
+    std::process::exit(0);
+}
+
+/// A connected socket parked in `send()`: the peer never reads, so its
+/// receive buffer fills, the flow window closes, and the sender's own
+/// buffer fills behind it. Too-late packet drop is off on both sides —
+/// with it on, the sender discards what it could not deliver in time and
+/// the buffer never stays full.
+#[test]
+fn exit_is_clean_with_a_socket_parked_in_send() {
+    if !is_child() {
+        expect_child_exits_cleanly(
+            "exit_with_parked_call::exit_is_clean_with_a_socket_parked_in_send",
+            true,
+        );
+        return;
+    }
+    require_loopback!();
+    let mut listener = ListenerBuilder::new()
+        .too_late_packet_drop(false)
+        .bind("127.0.0.1:0")
+        .expect("bind 127.0.0.1:0");
+    let port = listener.local_addr().expect("local_addr").port();
+    let cancel_accept = listener.cancel_handle();
+    let accept = std::thread::spawn(move || listener.accept());
+    let mut socket = SocketBuilder::new()
+        .too_late_packet_drop(false)
+        .connect(format!("127.0.0.1:{port}"))
+        .expect("connect");
+    // The accept is queued by the time connect returned; the cancel only
+    // rescues the join if it somehow is not.
+    let joined_by = Instant::now() + crate::common::ACCEPT_DEADLINE;
+    while !accept.is_finished() {
+        if Instant::now() >= joined_by {
+            cancel_accept.cancel();
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    // Kept open and never read.
+    let _accepted = accept.join().expect("join accept").expect("accept");
+
+    let latch = ParkLatch::default();
+    let progress = latch.progress.clone();
+    latch.park(move || {
+        let packet = [0x47u8; 1316];
+        loop {
+            if socket.send(&packet).is_err() {
+                return;
+            }
+            progress.fetch_add(1, Ordering::SeqCst);
+        }
     });
     latch.assert_parked();
     std::process::exit(0);

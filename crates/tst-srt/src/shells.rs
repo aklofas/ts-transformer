@@ -64,10 +64,13 @@ use crate::url::{Mode, SrtUrl};
 /// shape. Everything else (the typed [`ConnectError`](crate::ConnectError)
 /// from [`SrtUrl::connect`]) becomes the recoverable `Broken` the
 /// reconnect loop retries, message-prefixed the way the bindings'
-/// `connect_srt` did.
+/// `connect_srt` did. Once process exit has started there is nothing to
+/// retry: a dial refused or cancelled by the exit guard is
+/// `ExplicitClose`, which ends the reconnect loop.
 fn open_error_to_transport(e: SrtError) -> TransportError {
     match e {
         SrtError::Transport(t) => t,
+        _ if crate::exit_guard::is_exiting() => TransportError::ExplicitClose,
         other => TransportError::Broken {
             msg: format!("connect: {other}"),
             errno_code: None,

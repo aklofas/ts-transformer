@@ -53,3 +53,8 @@ pub use transport::SrtTransport;
 // `tst_srt::SrtCancelHandle` works without an explicit `tst_core` import.
 pub use tst_core::SrtCancelHandle;
 pub use url::{SrtUrl, UrlError, UrlOverlay};
+
+/// Number of `tst-srt` operations that have entered and not yet returned.
+/// **Unstable; exists so the exit tests can observe a parked thread.**
+#[doc(hidden)]
+pub use exit_guard::operations_in_flight;

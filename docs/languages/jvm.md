@@ -1026,11 +1026,20 @@ the `MuxSender` handle getters, and `H264Receiver.endReason()` /
 `close()` every shell (try-with-resources) and join your threads before the
 JVM exits — that is still the shape to write. If a thread is nevertheless
 inside an SRT native call when the JVM shuts down (`System.exit`, or `main`
-returning with only daemon threads left), the native library unparks it: its
-exit handler closes every SRT socket that is still open, waits for the parked
-calls to return (bounded, 2 s at most), and only then runs libsrt's own
-cleanup. Before 0.7.0 a thread left in an accept made that cleanup wait
+returning with only daemon threads left), the native library gets it out: its
+exit handler refuses every SRT call that has not started yet, closes every SRT
+socket that is still open, waits for the native calls in flight to return —
+the whole call, not only the part that blocks — and only then runs libsrt's
+own cleanup. Before 0.7.0 a thread left in an accept made that cleanup wait
 forever: the JVM ran its shutdown hooks and then never terminated.
+
+Two limits. The wait is bounded at 2 s; if a call is still in flight after
+that, libsrt's cleanup runs anyway and that thread may crash or hang the
+exiting JVM, which is what every such program risked before the guard
+existed. And the 2 s does not bound exit as a whole: closing a connected
+sender that still has unsent data takes up to that socket's linger time
+(`?linger=` on the URL; 5 s by default on the sender opens), and the handler
+closes the open sockets one after the other before the wait starts.
 
 This matters most for the listener-mode opens — `DemuxReceiver.fromUrl`,
 `Receiver.fromUrl` and `ManagedDemuxReceiver.fromUrl` with `?mode=listener`

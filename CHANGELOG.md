@@ -457,7 +457,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   JVM's `fromUrl("…?mode=listener")` block in their first accept before they
   return anything that could be cancelled or closed. The exit handler now
   closes every SRT socket that is still open and waits for the parked calls
-  to return (bounded, 2 s at most) before `srt_cleanup()` runs. A program
+  to return (a wait bounded at 2 s) before `srt_cleanup()` runs. A program
   that closed everything pays nothing: nothing is open and no thread is in a
   call, so the handler goes straight to `srt_cleanup()`. The unparked call
   reports a caller-side close (`TransportError::ExplicitClose`,
@@ -468,6 +468,32 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   interpreter-exit guard is unchanged and still runs first. No public API
   or C ABI change. Pinned by subprocess tests with a hard deadline in
   tst-srt, tst-c and tst-jni.
+- **The SRT exit handler waits for whole operations and admits no new
+  ones.** The handler counted threads inside a BLOCKING libsrt call only,
+  so it could see zero and run `srt_cleanup()` while a thread was between
+  two calls: a `connect` whose `srt_connect` had just returned still reads
+  the reject reason and closes its socket, and those calls take a lock in
+  libsrt's global state that the teardown destroys. The same held for every
+  call outside the bracket (options, addresses, stats, bind/listen, the
+  epoll setup of `accept_timeout`, `srt_close`), a thread could ENTER libsrt
+  after the handler had looked, and a close in progress on another thread
+  was not counted at all. Now every `tst-srt` entry point that calls into
+  libsrt is counted from before its first libsrt call until after its last;
+  closes are counted; and once the handler has started, a new call is
+  refused without touching libsrt — `TransportError::ExplicitClose` from
+  the transports and the URL open path (`TST_E_CLOSED`),
+  `SendError`/`RecvError::ConnectionBroken`, `AcceptError::ListenerClosed`,
+  `IoError::SocketClosed`, `OptionError::InvalidState`, and
+  `ConnectError`/`BindError::Other` with the message "the process is
+  exiting". `Socket::connect_with`, `Listener::bind_with` and
+  `Listener::accept_one_cancellable` stop at that point instead of trying
+  the next address or binding again. `connect_with` and `bind_with` now
+  resolve the address before they start libsrt up, so an unresolvable
+  address no longer initializes it. Documented limits: if operations are
+  still in flight when the 2 s wait expires, `srt_cleanup()` runs anyway
+  (one `tracing` warning names how many), and the 2 s does not include the
+  closes themselves — a connected socket with unsent data takes up to its
+  `SRTO_LINGER` to close. No public API or C ABI change.
 - **Python: `tstrans.srt.Receiver.close()` from another thread while
   `recv_bytes()` was parked raised `RuntimeError: Already borrowed`.**
   `recv_bytes` held the object's PyO3 mutable borrow for the whole blocking
