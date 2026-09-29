@@ -539,6 +539,25 @@ give the receiver a `?recv_timeout=` so its blocking call returns on a
 cadence. `finish()` and `accept_blocking()` are blocking operations in
 their own right.
 
+**The HLS classes** (`hls.HlsPublisher`, `hls.MuxPublisher`) follow the
+same split, with one difference: nothing in them parks. A push is disk
+work, so the calls in the second group wait for the push in flight to
+finish, not for a peer.
+
+| Accessor | While a push is in flight on another thread | Once finished |
+|---|---|---|
+| `HlsPublisher.local_addr()` / `local_port()` | the address captured when the publisher was built | raises `HlsError(FINISHED)` |
+| `repr()` on both classes | the `open` form | the `finished` form |
+| `HlsPublisher.stats()` / `hls_stats()` / `render_playlist()`, `MuxPublisher.stats()` / `publisher_stats()` | waits for the push, GIL released | raises `FINISHED` (`MuxPublisher`: `CLOSED`) |
+| `push_ts()`, `cut_segment()`, `send_*()` from a second thread | waits its turn, GIL released; calls are serialized, never interleaved | raises `FINISHED` / `CLOSED` |
+| `finish()`, `finish_serving()`, `close()`, `finish_into_publisher()` | waits for the push, then consumes the publisher | `close()` is quiet, the others raise |
+
+No `hls` call waits for the publisher while holding the GIL, so a getter
+on one thread cannot freeze a push on another (through 0.6.x it could:
+any of these calls made during a push deadlocked the interpreter).
+`HlsServerHandle` has no call that overlaps another: `shutdown()` takes
+the server out before it stops it.
+
 ### SRT convenience (`MuxSender` / `DemuxReceiver`)
 
 `MuxSender` bundles a `Muxer` + an SRT `Sender`: send encoded elementary
@@ -1244,6 +1263,11 @@ pub.finish()
 `HlsError(UNALIGNED_PUSH_TS)` otherwise; once consumed (by `finish()` or
 `with_config_hls`) further calls raise `HlsError(FINISHED)`.
 `HlsMode.LIVE` / `EVENT` / `VOD` selects playlist behavior.
+
+Both classes may be shared between threads — a pusher and a thread that
+polls `stats()` or reads `local_addr()`, say. What each call does while a
+push is in flight is listed under
+[What answers while another thread is parked](#what-answers-while-another-thread-is-parked).
 
 ### Keeping a completed VOD / EVENT playlist served
 
