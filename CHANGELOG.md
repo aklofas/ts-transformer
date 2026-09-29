@@ -375,8 +375,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **Docs and examples: gap-buffer sizing is `ReconnectMode::Background`
   guidance.** The `managed_reconnect` examples (Rust and C), the pipeline
-  guide, the reconnect cookbook recipe, the troubleshooting entry and the
-  architecture page still described the default `Blocking` mode as queueing
+  guide, the reconnect cookbook recipe and the troubleshooting entry
+  still described the default `Blocking` mode as queueing
   an outage's messages: size `gap_buffer_capacity` as outage × send rate,
   let `DropOldest` keep the receiver caught up. In `Blocking` mode the
   caller is parked inside the send for the whole outage and the buffer
