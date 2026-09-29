@@ -302,8 +302,18 @@ impl RtspClientBuilder {
         self
     }
 
-    /// Per-read socket timeout (poll interval for cancel + interleaved
-    /// frame reads). Default 100 ms.
+    /// Per-read socket timeout: the poll interval of the interleaved
+    /// (RTP-over-TCP) read pump, and therefore how quickly that pump
+    /// notices a cancel or yields the connection to a request write.
+    /// Default 100 ms. Must be non-zero.
+    ///
+    /// It does not set how long a request waits — that is
+    /// [`Self::request_timeout`]. While a request method waits for its
+    /// response, each read is bounded by the shortest of this value, a
+    /// 100 ms cancel tick and the time left on the request deadline, so
+    /// a `read_timeout` longer than `request_timeout` neither delays the
+    /// `Timeout` nor a cancel. The configured value is put back on the
+    /// socket when the request returns.
     pub fn read_timeout(mut self, t: Duration) -> Self {
         self.read_timeout = t;
         self
@@ -316,6 +326,11 @@ impl RtspClientBuilder {
     /// (the pre-`request_timeout` behaviour: a silent server parks the
     /// call until the cancel handle fires). Default 10 s, the same as
     /// [`Self::connect_timeout`].
+    ///
+    /// The deadline holds whatever [`Self::read_timeout`] is set to: no
+    /// read waits past the time left, and a response that completes after
+    /// the deadline is a `Timeout`, not a late success. With `None`, a
+    /// cancel is still seen within ~100 ms.
     ///
     /// The clock starts just before the write, so it also covers the
     /// (normally instant) write itself — but the write is not actively

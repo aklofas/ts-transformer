@@ -77,6 +77,26 @@ impl Write for Stream {
     }
 }
 
+impl Stream {
+    /// Set the read timeout of the underlying TCP socket (for
+    /// `Stream::Tls`, the socket beneath rustls — that is where a TLS
+    /// read actually blocks). `t` must be non-zero.
+    pub(crate) fn set_read_timeout(&self, t: Duration) -> std::io::Result<()> {
+        match self {
+            Stream::Plain(s) => s.set_read_timeout(Some(t)),
+            #[cfg(feature = "tls")]
+            Stream::Tls(s) => s.set_read_timeout(t),
+        }
+    }
+}
+
+/// Longest a request/response wait blocks before it re-checks the cancel
+/// flag and the request deadline, whatever
+/// [`RtspClientBuilder::read_timeout`](crate::RtspClientBuilder::read_timeout)
+/// is configured to. Equal to the default `read_timeout`, so a default
+/// client never touches the socket option for this.
+pub(crate) const REQUEST_POLL_TICK: Duration = Duration::from_millis(100);
+
 /// Sync RTSP client. One instance per server.
 ///
 /// Construct via [`Self::connect`] / [`Self::connect_with`], then drive
@@ -147,6 +167,11 @@ pub struct RtspClient {
     /// to `"tst-rtp/0.1"` when using the bare `connect`/`connect_with`
     /// entry points.
     pub(crate) user_agent: String,
+    /// The socket read timeout the caller configured
+    /// ([`crate::RtspClientBuilder::read_timeout`]). A request/response
+    /// exchange may shorten the socket's timeout while it waits; it
+    /// restores this value before returning.
+    pub(crate) read_timeout: Duration,
     /// Per-request response deadline
     /// ([`crate::RtspClientBuilder::request_timeout`]); `None` = unbounded.
     /// Applied by `send_and_read` and `teardown`.
@@ -473,6 +498,7 @@ impl RtspClient {
             keepalive_interval_shared: None,
             keepalive_interval_overridden: false,
             user_agent: params.user_agent,
+            read_timeout: params.read_timeout,
             request_timeout: params.request_timeout,
             keepalive_thread: None,
             pump_state: None,

@@ -196,3 +196,243 @@ fn request_timeout_duration_max_does_not_panic() {
 
     server.join().unwrap();
 }
+
+// --- `request_timeout` vs a longer `read_timeout` ---
+//
+// The request deadline and the cancel flag must be honored whatever the
+// per-read socket timeout is configured to. These are deadline tests, so
+// they assert on elapsed time, with a bound 20x the configured deadline
+// and well under the 5 s read timeout, so the outcomes cannot be confused.
+// None of them can hang: the 5 s socket read timeout ends the client call
+// even without the behavior under test, and each server thread has its
+// own cap.
+
+const SHORT_REQUEST_TIMEOUT: Duration = Duration::from_millis(100);
+const LONG_READ_TIMEOUT: Duration = Duration::from_secs(5);
+const PROMPT: Duration = Duration::from_secs(2);
+
+/// Accept one connection and hold it open, silent, until `done` fires.
+fn silent_peer() -> (
+    u16,
+    std::sync::mpsc::Sender<()>,
+    std::thread::JoinHandle<()>,
+) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+    let server = std::thread::spawn(move || {
+        if let Ok((sock, _)) = listener.accept() {
+            let _ = done_rx.recv_timeout(Duration::from_secs(20));
+            drop(sock);
+        }
+    });
+    (port, done_tx, server)
+}
+
+/// A silent peer ends the call at the request deadline, not at the (much
+/// longer) socket read timeout.
+#[test]
+fn request_timeout_is_not_stretched_by_a_longer_read_timeout() {
+    let (port, done_tx, server) = silent_peer();
+
+    let url = format!("rtsp://127.0.0.1:{port}/x");
+    let mut client = tst_rtp::RtspClientBuilder::new(&url)
+        .unwrap()
+        .no_auto_keepalive(true)
+        .read_timeout(LONG_READ_TIMEOUT)
+        .request_timeout(Some(SHORT_REQUEST_TIMEOUT))
+        .connect()
+        .unwrap();
+
+    let start = Instant::now();
+    let err = client.options().err();
+    let elapsed = start.elapsed();
+    let _ = done_tx.send(());
+
+    assert!(
+        matches!(err, Some(tst_rtp::RtspError::Timeout)),
+        "expected RtspError::Timeout, got {err:?} after {elapsed:?}"
+    );
+    assert!(
+        elapsed < PROMPT,
+        "request_timeout = {SHORT_REQUEST_TIMEOUT:?} but the call took {elapsed:?} \
+         (read_timeout = {LONG_READ_TIMEOUT:?})"
+    );
+
+    drop(client);
+    server.join().unwrap();
+}
+
+/// A well-formed response that arrives 2 s after the request — twenty
+/// request deadlines late — is a `Timeout`, not a success.
+#[test]
+fn response_after_the_request_deadline_is_a_timeout() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+    let server = std::thread::spawn(move || {
+        if let Ok((mut sock, _)) = listener.accept() {
+            sock.set_read_timeout(Some(Duration::from_secs(5))).ok();
+            let mut buf = vec![0u8; 4096];
+            let mut acc = String::new();
+            loop {
+                let n = match sock.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => n,
+                };
+                acc.push_str(std::str::from_utf8(&buf[..n]).unwrap_or(""));
+                if acc.contains("\r\n\r\n") {
+                    break;
+                }
+            }
+            let cseq = acc
+                .to_ascii_lowercase()
+                .lines()
+                .find_map(|l| l.strip_prefix("cseq:").map(|v| v.trim().to_string()))
+                .unwrap_or_else(|| "1".to_string());
+            // Stay silent for 2 s (or until the client is already done).
+            let _ = done_rx.recv_timeout(Duration::from_secs(2));
+            let _ = sock.write_all(
+                format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nPublic: OPTIONS\r\n\r\n").as_bytes(),
+            );
+        }
+    });
+
+    let url = format!("rtsp://127.0.0.1:{port}/x");
+    let mut client = tst_rtp::RtspClientBuilder::new(&url)
+        .unwrap()
+        .no_auto_keepalive(true)
+        .read_timeout(LONG_READ_TIMEOUT)
+        .request_timeout(Some(SHORT_REQUEST_TIMEOUT))
+        .connect()
+        .unwrap();
+
+    let start = Instant::now();
+    let result = client.options();
+    let elapsed = start.elapsed();
+    let _ = done_tx.send(());
+
+    assert!(
+        matches!(result, Err(tst_rtp::RtspError::Timeout)),
+        "a response 2 s after a request with a {SHORT_REQUEST_TIMEOUT:?} deadline \
+         must be a Timeout; got {:?} after {elapsed:?}",
+        result.as_ref().map(|_| "Ok(<response>)")
+    );
+    assert!(
+        elapsed < PROMPT,
+        "request_timeout = {SHORT_REQUEST_TIMEOUT:?} but the call took {elapsed:?}"
+    );
+
+    drop(client);
+    server.join().unwrap();
+}
+
+/// A cancel is seen within a short tick even with no request deadline and
+/// a long socket read timeout.
+#[test]
+fn cancel_latency_does_not_depend_on_read_timeout() {
+    let (port, done_tx, server) = silent_peer();
+
+    let url = format!("rtsp://127.0.0.1:{port}/x");
+    let mut client = tst_rtp::RtspClientBuilder::new(&url)
+        .unwrap()
+        .no_auto_keepalive(true)
+        .read_timeout(LONG_READ_TIMEOUT)
+        .request_timeout(None)
+        .connect()
+        .unwrap();
+    let cancel = client.cancel_handle();
+    let canceller = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(50));
+        cancel.cancel();
+    });
+
+    let start = Instant::now();
+    let err = client.options().err();
+    let elapsed = start.elapsed();
+    let _ = done_tx.send(());
+
+    assert!(
+        matches!(err, Some(tst_rtp::RtspError::LocalCancel)),
+        "expected RtspError::LocalCancel, got {err:?} after {elapsed:?}"
+    );
+    assert!(
+        elapsed < PROMPT,
+        "cancel took {elapsed:?} to be seen (read_timeout = {LONG_READ_TIMEOUT:?})"
+    );
+
+    canceller.join().unwrap();
+    drop(client);
+    server.join().unwrap();
+}
+
+/// `rtsps://`: the same bound holds when the blocking read sits beneath
+/// rustls. The peer completes the TLS handshake and then never answers.
+#[cfg(feature = "tls")]
+#[test]
+fn request_timeout_is_not_stretched_by_a_longer_read_timeout_over_tls() {
+    let certs = crate::fixtures::tls_certs::SelfSignedCert::generate();
+    let chain: Vec<_> = rustls_pemfile::certs(&mut certs.root_pem.as_bytes())
+        .map(|c| c.unwrap())
+        .collect();
+    let key_pem = std::fs::read(&certs.key_path).unwrap();
+    let key = rustls_pemfile::private_key(&mut key_pem.as_slice())
+        .unwrap()
+        .unwrap();
+    let mut roots = rustls::RootCertStore::empty();
+    for cert in &chain {
+        roots.add(cert.clone()).unwrap();
+    }
+    let config = std::sync::Arc::new(
+        rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(chain, key)
+            .unwrap(),
+    );
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+    let server = std::thread::spawn(move || {
+        if let Ok((mut sock, _)) = listener.accept() {
+            // Bound the handshake so a client that never completes it
+            // cannot park this thread.
+            sock.set_read_timeout(Some(Duration::from_secs(5))).ok();
+            let mut conn = rustls::ServerConnection::new(config).unwrap();
+            while conn.is_handshaking() {
+                if conn.complete_io(&mut sock).is_err() {
+                    return;
+                }
+            }
+            let _ = done_rx.recv_timeout(Duration::from_secs(20));
+        }
+    });
+
+    let url = format!("rtsps://127.0.0.1:{port}/x");
+    let mut client = tst_rtp::RtspClientBuilder::new(&url)
+        .unwrap()
+        .no_auto_keepalive(true)
+        .read_timeout(LONG_READ_TIMEOUT)
+        .request_timeout(Some(SHORT_REQUEST_TIMEOUT))
+        .tls_root_certs(roots)
+        .connect()
+        .unwrap();
+
+    let start = Instant::now();
+    let err = client.options().err();
+    let elapsed = start.elapsed();
+    let _ = done_tx.send(());
+
+    assert!(
+        matches!(err, Some(tst_rtp::RtspError::Timeout)),
+        "expected RtspError::Timeout, got {err:?} after {elapsed:?}"
+    );
+    assert!(
+        elapsed < PROMPT,
+        "request_timeout = {SHORT_REQUEST_TIMEOUT:?} but the call took {elapsed:?} \
+         (read_timeout = {LONG_READ_TIMEOUT:?})"
+    );
+
+    drop(client);
+    server.join().unwrap();
+}
