@@ -12,9 +12,13 @@
 //! - `HlsError` / `HlsErrorKind` (in `tstrans.exceptions`) + error
 //!   mapping — T14
 //!
-//! GIL boundaries: `push_ts` / `cut_segment` / `finish` / builder
-//! `build` release the GIL via `py.allow_threads` (disk + HTTP work is
-//! pure Rust). Read-only getters do not release it.
+//! GIL boundaries: `HlsPublisher` and `MuxPublisher` guard their inner
+//! publisher with a mutex, and a push holds it with the GIL released. A
+//! thread that waited for that mutex while holding the GIL would freeze the
+//! interpreter (the push needs the GIL back before its guard can drop), so
+//! every method of both classes takes, uses and releases the mutex inside
+//! `py.allow_threads` and raises once the GIL is back — see [`Locked`]. The
+//! construction constants (`local_addr`, `local_port`, `repr`) take no lock.
 //!
 //! Error mapping goes through `crate::raise` (Arc 2 WP-B2):
 //! `From<HlsError>`/`From<HlsUrlError>` for `BindingError` live next to
@@ -45,6 +49,18 @@ pub(crate) mod publisher_abc;
 // ---------------------------------------------------------------------------
 // Error mapping
 // ---------------------------------------------------------------------------
+
+/// Why a call that takes a publisher's mutex produced no value. Built
+/// inside `py.allow_threads`, where nothing can be raised, and turned into
+/// the exception after the GIL is back.
+pub(crate) enum Locked<E> {
+    /// The mutex is poisoned.
+    Poisoned,
+    /// The inner publisher was already consumed.
+    Gone,
+    /// The native call itself failed.
+    Inner(E),
+}
 
 /// Map a `tst_pipeline::MuxPublisherError<HlsError>` raised by a
 /// `MuxPublisher` send/cut.

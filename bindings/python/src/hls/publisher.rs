@@ -16,23 +16,26 @@
 //!   via `take_inner()` (moving it into the shell). Either path leaves
 //!   the handle closed.
 //!
-//! GIL: `push_ts` / `cut_segment` / `finish` release the GIL via
-//! `py.allow_threads` (the disk + HTTP work is pure Rust). Fast read-only
-//! getters (`stats`, `hls_stats`, `local_addr`, `render_playlist`) don't
-//! release it.
+//! GIL: every `HlsPublisher` method that needs the inner publisher takes
+//! the mutex inside `py.allow_threads`, never while holding the GIL — a
+//! `push_ts` on another thread holds that mutex with the GIL released and
+//! needs the GIL back to let go of it. `local_addr` / `local_port` /
+//! `__repr__` read construction-time state and take no lock.
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
 use std::net::SocketAddr;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
 use tst_core::publisher::Publisher;
-use tst_hls::{HlsMode, HlsPublisher, HlsPublisherBuilder, HlsServerHandle};
+use tst_hls::{HlsError, HlsMode, HlsPublisher, HlsPublisherBuilder, HlsServerHandle};
 
+use crate::hls::Locked;
 use crate::hls::config::{PyHlsMode, PyHlsStats};
 use crate::hls::publisher_abc::PyPublisherStats;
 use crate::raise::{HLS, raise};
@@ -62,7 +65,19 @@ pub(crate) struct PyHlsPublisher {
     /// the inner publisher out while leaving the PyClass addressable.
     /// `Mutex` to allow `&self` methods (push_ts / cut_segment) plus a
     /// `take()` on finish.
+    ///
+    /// Only ever locked with the GIL released (`with_inner` / `take`): a
+    /// `push_ts` holds it across its native call and needs the GIL back
+    /// before the guard drops, so a thread waiting for it with the GIL
+    /// held would freeze the interpreter.
     inner: Mutex<Option<HlsPublisher>>,
+    /// The HTTP server's bound address, read once at construction — it
+    /// cannot change while the publisher is open, so `local_addr` /
+    /// `local_port` never take `inner`.
+    local_addr: Option<SocketAddr>,
+    /// Latched when `inner` is moved out, so `__repr__` and the address
+    /// getters know the handle is finished without taking `inner`.
+    finished: AtomicBool,
 }
 
 impl PyHlsPublisher {
@@ -70,6 +85,8 @@ impl PyHlsPublisher {
     /// `MuxPublisher.finish_into_publisher`).
     pub(crate) fn from_inner(inner: HlsPublisher) -> Self {
         Self {
+            local_addr: inner.local_addr(),
+            finished: AtomicBool::new(false),
             inner: Mutex::new(Some(inner)),
         }
     }
@@ -77,7 +94,52 @@ impl PyHlsPublisher {
     /// Move the inner publisher out (consumes the handle). Used by
     /// `MuxPublisher.with_config_hls`. Returns `None` if already consumed.
     pub(crate) fn take_inner(&mut self) -> Option<HlsPublisher> {
-        self.inner.get_mut().ok().and_then(|o| o.take())
+        let taken = self.inner.get_mut().ok().and_then(|o| o.take());
+        if taken.is_some() {
+            self.finished.store(true, Ordering::Release);
+        }
+        taken
+    }
+
+    fn finished_error(py: Python<'_>, detail: &'static str) -> PyErr {
+        raise(
+            py,
+            &HLS,
+            BindingError::new(BindingErrorKind::HlsFinished, detail),
+        )
+    }
+
+    /// Run `f` on the inner publisher. The mutex is taken, used and
+    /// released with the GIL released; the exception is built afterwards.
+    fn with_inner<R, F>(&self, py: Python<'_>, f: F) -> PyResult<R>
+    where
+        F: FnOnce(&mut HlsPublisher) -> Result<R, HlsError> + Send,
+        R: Send,
+    {
+        py.allow_threads(|| {
+            let mut guard = self.inner.lock().map_err(|_| Locked::Poisoned)?;
+            let inner = guard.as_mut().ok_or(Locked::Gone)?;
+            f(inner).map_err(Locked::Inner)
+        })
+        .map_err(|e| match e {
+            Locked::Poisoned => PyRuntimeError::new_err("HlsPublisher mutex poisoned"),
+            Locked::Gone => Self::finished_error(py, "HlsPublisher finished"),
+            Locked::Inner(e) => raise(py, &HLS, BindingError::from(e)),
+        })
+    }
+
+    /// Move the inner publisher out for a consuming call; `None` if it is
+    /// already gone. Same locking rule as `with_inner`.
+    fn take(&self, py: Python<'_>) -> PyResult<Option<HlsPublisher>> {
+        py.allow_threads(|| {
+            let mut guard = self.inner.lock().map_err(|_| ())?;
+            let taken = guard.take();
+            if taken.is_some() {
+                self.finished.store(true, Ordering::Release);
+            }
+            Ok(taken)
+        })
+        .map_err(|()| PyRuntimeError::new_err("HlsPublisher mutex poisoned"))
     }
 }
 
@@ -97,77 +159,28 @@ impl PyHlsPublisher {
         // the stack pinning the bytes; the borrowed slice is `Ungil` even
         // though the `Bound` itself is not.
         let slice: &[u8] = coerced.as_bytes();
-        let mut guard = self
-            .inner
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("HlsPublisher mutex poisoned"))?;
-        let inner = guard.as_mut().ok_or_else(|| {
-            raise(
-                py,
-                &HLS,
-                BindingError::new(BindingErrorKind::HlsFinished, "HlsPublisher finished"),
-            )
-        })?;
-        py.allow_threads(|| Publisher::push_ts(inner, slice))
-            .map_err(|e| raise(py, &HLS, BindingError::from(e)))
+        self.with_inner(py, |inner| Publisher::push_ts(inner, slice))
     }
 
     /// Hint that the next `push_ts` should start a new segment.
     fn cut_segment(&self, py: Python<'_>) -> PyResult<()> {
-        let mut guard = self
-            .inner
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("HlsPublisher mutex poisoned"))?;
-        let inner = guard.as_mut().ok_or_else(|| {
-            raise(
-                py,
-                &HLS,
-                BindingError::new(BindingErrorKind::HlsFinished, "HlsPublisher finished"),
-            )
-        })?;
-        py.allow_threads(|| Publisher::cut_segment(inner))
-            .map_err(|e| raise(py, &HLS, BindingError::from(e)))
+        self.with_inner(py, Publisher::cut_segment)
     }
 
     /// Hint a new segment, supplying its media-presentation duration in
     /// microseconds. Records this as `#EXTINF` instead of wall-clock time.
     fn cut_segment_with_duration(&self, py: Python<'_>, media_duration_us: u64) -> PyResult<()> {
-        let mut guard = self
-            .inner
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("HlsPublisher mutex poisoned"))?;
-        let inner = guard.as_mut().ok_or_else(|| {
-            raise(
-                py,
-                &HLS,
-                BindingError::new(BindingErrorKind::HlsFinished, "HlsPublisher finished"),
-            )
-        })?;
         let dur = std::time::Duration::from_micros(media_duration_us);
-        py.allow_threads(|| Publisher::cut_segment_with_duration(inner, dur))
-            .map_err(|e| raise(py, &HLS, BindingError::from(e)))
+        self.with_inner(py, |inner| Publisher::cut_segment_with_duration(inner, dur))
     }
 
     /// Finalize: flush the open segment, write the terminal playlist,
     /// tear down the HTTP server. **Consumes** the inner publisher;
     /// subsequent calls raise `HlsError(FINISHED)`.
     fn finish(&self, py: Python<'_>) -> PyResult<()> {
-        let inner = {
-            let mut guard = self
-                .inner
-                .lock()
-                .map_err(|_| PyRuntimeError::new_err("HlsPublisher mutex poisoned"))?;
-            guard.take().ok_or_else(|| {
-                raise(
-                    py,
-                    &HLS,
-                    BindingError::new(
-                        BindingErrorKind::HlsFinished,
-                        "HlsPublisher already finished",
-                    ),
-                )
-            })?
-        };
+        let inner = self
+            .take(py)?
+            .ok_or_else(|| Self::finished_error(py, "HlsPublisher already finished"))?;
         py.allow_threads(|| Publisher::finish(inner))
             .map_err(|e| raise(py, &HLS, BindingError::from(e)))
     }
@@ -183,22 +196,9 @@ impl PyHlsPublisher {
         // zero the Option first — a failure leaves the handle finished (the
         // Rust side already flipped its `finished` flag) rather than leaking a
         // half-consumed publisher.
-        let inner = {
-            let mut guard = self
-                .inner
-                .lock()
-                .map_err(|_| PyRuntimeError::new_err("HlsPublisher mutex poisoned"))?;
-            guard.take().ok_or_else(|| {
-                raise(
-                    py,
-                    &HLS,
-                    BindingError::new(
-                        BindingErrorKind::HlsFinished,
-                        "HlsPublisher already finished",
-                    ),
-                )
-            })?
-        };
+        let inner = self
+            .take(py)?
+            .ok_or_else(|| Self::finished_error(py, "HlsPublisher already finished"))?;
         let handle = py
             .allow_threads(|| inner.finish_serving())
             .map_err(|e| raise(py, &HLS, BindingError::from(e)))?;
@@ -207,99 +207,47 @@ impl PyHlsPublisher {
 
     /// Universal cross-publisher stats (`PublisherStats`).
     fn stats(&self, py: Python<'_>) -> PyResult<PyPublisherStats> {
-        let guard = self
-            .inner
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("HlsPublisher mutex poisoned"))?;
-        let inner = guard.as_ref().ok_or_else(|| {
-            raise(
-                py,
-                &HLS,
-                BindingError::new(BindingErrorKind::HlsFinished, "HlsPublisher finished"),
-            )
-        })?;
-        Ok(PyPublisherStats::from_core(Publisher::stats(inner)))
+        let stats = self.with_inner(py, |inner| Ok(Publisher::stats(inner)))?;
+        Ok(PyPublisherStats::from_core(stats))
     }
 
     /// Richer HLS-specific stats (`HlsStats`).
     fn hls_stats(&self, py: Python<'_>) -> PyResult<PyHlsStats> {
-        let guard = self
-            .inner
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("HlsPublisher mutex poisoned"))?;
-        let inner = guard.as_ref().ok_or_else(|| {
-            raise(
-                py,
-                &HLS,
-                BindingError::new(BindingErrorKind::HlsFinished, "HlsPublisher finished"),
-            )
-        })?;
-        Ok(PyHlsStats::from(inner.hls_stats()))
+        let stats = self.with_inner(py, |inner| Ok(inner.hls_stats()))?;
+        Ok(PyHlsStats::from(stats))
     }
 
-    /// Local socket address the HTTP server bound to, as `"ip:port"`, or
-    /// `None` if the server is no longer running (e.g. after `finish`).
+    /// Local socket address the HTTP server bound to, as `"ip:port"`
+    /// (`None` if the publisher was built without a server). Raises
+    /// `HlsError(FINISHED)` if consumed. A construction constant: answers
+    /// without waiting while another thread is inside a push.
     fn local_addr(&self, py: Python<'_>) -> PyResult<Option<String>> {
-        let guard = self
-            .inner
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("HlsPublisher mutex poisoned"))?;
-        let inner = guard.as_ref().ok_or_else(|| {
-            raise(
-                py,
-                &HLS,
-                BindingError::new(BindingErrorKind::HlsFinished, "HlsPublisher finished"),
-            )
-        })?;
-        Ok(inner.local_addr().map(|a| a.to_string()))
+        if self.finished.load(Ordering::Acquire) {
+            return Err(Self::finished_error(py, "HlsPublisher finished"));
+        }
+        Ok(self.local_addr.map(|a| a.to_string()))
     }
 
     /// Convenience: the bound TCP port (0 if no server). Raises
     /// `HlsError(FINISHED)` if consumed.
     fn local_port(&self, py: Python<'_>) -> PyResult<u16> {
-        let guard = self
-            .inner
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("HlsPublisher mutex poisoned"))?;
-        let inner = guard.as_ref().ok_or_else(|| {
-            raise(
-                py,
-                &HLS,
-                BindingError::new(BindingErrorKind::HlsFinished, "HlsPublisher finished"),
-            )
-        })?;
-        Ok(inner.local_addr().map(|a| a.port()).unwrap_or(0))
+        if self.finished.load(Ordering::Acquire) {
+            return Err(Self::finished_error(py, "HlsPublisher finished"));
+        }
+        Ok(self.local_addr.map(|a| a.port()).unwrap_or(0))
     }
 
     /// Render the current playlist text. `is_event` selects the terminal
     /// (final) form when true (writes `#EXT-X-ENDLIST`).
     #[pyo3(signature = (is_event = false))]
     fn render_playlist(&self, py: Python<'_>, is_event: bool) -> PyResult<String> {
-        let guard = self
-            .inner
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("HlsPublisher mutex poisoned"))?;
-        let inner = guard.as_ref().ok_or_else(|| {
-            raise(
-                py,
-                &HLS,
-                BindingError::new(BindingErrorKind::HlsFinished, "HlsPublisher finished"),
-            )
-        })?;
-        Ok(inner.render_playlist(is_event))
+        self.with_inner(py, |inner| Ok(inner.render_playlist(is_event)))
     }
 
     /// Close = `finish()` semantics but never raises if already finished
     /// (idempotent). Useful in `with`-style cleanup.
     fn close(&self, py: Python<'_>) -> PyResult<()> {
-        let inner = {
-            let mut guard = self
-                .inner
-                .lock()
-                .map_err(|_| PyRuntimeError::new_err("HlsPublisher mutex poisoned"))?;
-            guard.take()
-        };
-        if let Some(inner) = inner {
+        if let Some(inner) = self.take(py)? {
             py.allow_threads(|| Publisher::finish(inner))
                 .map_err(|e| raise(py, &HLS, BindingError::from(e)))?;
         }
@@ -307,11 +255,10 @@ impl PyHlsPublisher {
     }
 
     fn __repr__(&self) -> String {
-        let open = self.inner.lock().map(|g| g.is_some()).unwrap_or(false);
-        if open {
-            "HlsPublisher(open)".to_string()
-        } else {
+        if self.finished.load(Ordering::Acquire) {
             "HlsPublisher(finished)".to_string()
+        } else {
+            "HlsPublisher(open)".to_string()
         }
     }
 }
@@ -483,7 +430,9 @@ pub(crate) struct PyHlsServerHandle {
     /// `Option` so `shutdown()` can move the handle out (its Rust
     /// `shutdown(self)` consumes by value) while leaving the PyClass
     /// addressable; `Mutex` to allow the `&self` methods plus a `take()` on
-    /// shutdown.
+    /// shutdown. Locked with the GIL held, which is sound because no
+    /// method keeps the guard across `py.allow_threads` (`shutdown` moves
+    /// the handle out and drops the guard first).
     inner: Mutex<Option<HlsServerHandle>>,
 }
 
