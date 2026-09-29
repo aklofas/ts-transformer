@@ -21,8 +21,8 @@ use tst_core::transport::conformance::{
 };
 use tst_core::transport::{BrokenCause, RecvTransport, Transport, TransportCancel, TransportError};
 use tst_pipeline::{
-    BackoffStrategy, ManagedRecvTransport, ManagedTransport, OverflowPolicy, ReconnectMode,
-    ReconnectPolicy,
+    BackoffStrategy, ManagedDemuxReceiver, ManagedDemuxReceiverConfig, ManagedRecvTransport,
+    ManagedTransport, OverflowPolicy, ReconnectMode, ReconnectPolicy, ShellErrorKind,
 };
 
 struct Wire {
@@ -378,4 +378,84 @@ fn managed_recv_contract() {
         RecvRow::ALL,
     );
     kit::recv_max_payload_ge_ceiling(&managed_recv(&Wire::new()), 1316);
+}
+
+/// Run `recv` on its own thread, prove it is parked INSIDE
+/// `MockRecv::recv_bytes`, fire `cancel`, and hand back what that same
+/// invocation returned together with the receiver it ran on.
+fn cancel_a_parked_recv<R, O>(
+    wire: &Arc<Wire>,
+    mut receiver: R,
+    cancel: Arc<dyn TransportCancel + Send + Sync>,
+    recv: impl FnOnce(&mut R) -> O + Send + 'static,
+) -> (O, R)
+where
+    R: Send + 'static,
+    O: Send + 'static,
+{
+    // Firing the inner's own handle releases the parked receive whatever
+    // the wrapper does, so a failure below never leaves the worker parked.
+    let rescue = WireCancel(Arc::clone(wire));
+    let (tx, rx) = mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let out = recv(&mut receiver);
+        let _ = tx.send(());
+        (out, receiver)
+    });
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while wire.in_call.load(Ordering::SeqCst) != 1 {
+        if Instant::now() >= deadline {
+            rescue.cancel();
+            panic!("the managed receive never entered the inner recv_bytes");
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    cancel.cancel();
+    if rx.recv_timeout(Duration::from_secs(10)).is_err() {
+        rescue.cancel();
+        panic!("the cancelled receive did not return within 10 s");
+    }
+    // The receive has returned, so this join is bounded.
+    worker.join().expect("recv worker did not panic")
+}
+
+/// The cancel is terminal for the receive it interrupts: liveness reads
+/// false as soon as that call has returned, without a further receive
+/// having to run into the entry gate first.
+#[test]
+fn managed_recv_parked_in_inner_is_not_alive_after_the_cancel() {
+    let wire = Wire::new();
+    let m = managed_recv(&wire);
+    assert!(m.is_alive(), "precondition: alive before the receive");
+    let handle = RecvTransport::cancel_handle(&m).expect("managed recv has a cancel handle");
+
+    let (result, m) = cancel_a_parked_recv(&wire, m, handle, |m| {
+        let mut buf = [0u8; 1316];
+        m.recv_bytes(&mut buf)
+    });
+
+    assert!(
+        matches!(result, Err(TransportError::ExplicitClose)),
+        "got {result:?}"
+    );
+    assert!(!m.is_alive(), "alive after its receive was cancelled");
+}
+
+/// `ManagedDemuxReceiver` delegates liveness to the managed transport, so
+/// the same holds one layer up.
+#[test]
+fn managed_demux_receiver_is_not_alive_after_the_cancel() {
+    let wire = Wire::new();
+    let shell =
+        ManagedDemuxReceiver::new(managed_recv(&wire), ManagedDemuxReceiverConfig::default());
+    assert!(shell.is_alive(), "precondition: alive before the receive");
+    let handle = shell
+        .cancel_handle()
+        .expect("managed demux receiver has a cancel handle");
+
+    let (result, shell) = cancel_a_parked_recv(&wire, shell, handle, |s| s.recv_event());
+
+    let err = result.expect_err("the parked recv_event reports the cancel");
+    assert_eq!(err.kind, ShellErrorKind::Closed, "got {err:?}");
+    assert!(!shell.is_alive(), "alive after its receive was cancelled");
 }
