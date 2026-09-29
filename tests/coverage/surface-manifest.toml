@@ -11,7 +11,12 @@
 #
 # Binding column prefixes are IDENTIFIERS, not filesystem paths:
 #   c:<symbol>       -> grepped in bindings/c/include/tstrans.h
-#   python:<dotted>  -> grepped in bindings/python/python/tstrans/ (all .py/.pyi)
+#   python:<name>    -> a DEFINITION in bindings/python/python/tstrans/ (.pyi/.py):
+#                       function | Class | Class.member, optionally prefixed
+#                       tstrans.<module>. — a method always carries its class,
+#                       and a name several modules define carries its module.
+#                       A row for `Owner::leaf` whose Owner has a Python class
+#                       must name that class or one of its members.
 #   java:<dotted>    -> grepped in bindings/jvm/src/main/java/** (tst-jni surface-port)
 #   swift:/kotlin:<symbol> [feature=X] -> tst-uniffi (not shipped; presence-only)
 # Five-column rule (rule b2): EVERY [[surface]] row lists all five prefixes.
@@ -39,7 +44,7 @@ crate = "tst-core"
 item = "tst_core::mpegts::demux::demuxer::Demuxer::feed"
 owning_tests = ["crates/tst-core/tests/mpegts/demux.rs"]
 # java: column added by tst-jni surface-port; that is the §8.5 parity gate
-bindings = ["c:tst_demuxer_feed", "python:decode_uas_datalink", "java:org.tstrans.mpegts.Demuxer.feed", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:tst_demuxer_feed", "python:Demuxer.feed", "java:org.tstrans.mpegts.Demuxer.feed", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["h264-st0601-mp", "malformed-pes-lenient"]
 tier = "A"
 
@@ -48,7 +53,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::mux::Muxer::push_video"
 owning_tests = ["crates/tst-core/tests/mpegts/mux.rs"]
-bindings = ["c:tst_muxer_push_video", "python:push_video", "java:org.tstrans.mpegts.Muxer.pushVideo", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:tst_muxer_push_video", "python:Muxer.push_video", "java:org.tstrans.mpegts.Muxer.pushVideo", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["video-roundtrip", "audio-klv-roundtrip"]
 tier = "A"
 
@@ -246,7 +251,8 @@ kind = "rust"
 crate = "tst-udp"
 item = "tst_udp::transport::UdpTransport::connect"
 owning_tests = ["crates/tst-udp/tests/loopback_unicast.rs"]
-bindings = ["c:tst_udp_sender_open", "python:send", "java:unaudited", "swift:deferred", "kotlin:deferred"]
+# python: there is no one-call connect; the URL open is the builder's build().
+bindings = ["c:tst_udp_sender_open", "python:tstrans.udp.TransportBuilder.build", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4289,7 +4295,7 @@ crate = "tst-core"
 item = "tst_core::mpegts::demux::demuxer::Demuxer::flush"
 owning_tests = ["crates/tst-core/tests/mpegts/demux.rs"]
 # java: column added by tst-jni surface-port (§8.5 parity gate).
-bindings = ["c:tst_demuxer_flush", "python:flush", "java:org.tstrans.mpegts.Demuxer.flush", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:tst_demuxer_flush", "python:Demuxer.flush", "java:org.tstrans.mpegts.Demuxer.flush", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["h264-st0601-mp"]
 tier = "A"
 
@@ -4307,7 +4313,7 @@ crate = "tst-core"
 item = "tst_core::mpegts::demux::demuxer::Demuxer::next_event"
 owning_tests = ["crates/tst-core/tests/mpegts/demux.rs"]
 # java: Java is camelCase -> nextEvent (tst-jni surface-port, §8.5 parity gate).
-bindings = ["c:tst_demuxer_next_event", "python:DemuxEvent", "java:org.tstrans.mpegts.Demuxer.nextEvent", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:tst_demuxer_next_event", "python:Demuxer.next_event", "java:org.tstrans.mpegts.Demuxer.nextEvent", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["h264-st0601-mp"]
 tier = "A"
 
@@ -5323,7 +5329,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::mux::Muxer::data_handles"
 owning_tests = ["crates/tst-core/tests/mpegts/mux_data.rs"]
-bindings = ["python:data_handles", "java:org.tstrans.mpegts.Muxer.dataHandles", "c:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:Muxer.data_handles", "java:org.tstrans.mpegts.Muxer.dataHandles", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -5332,7 +5338,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::mux::Muxer::data_handles_for_program"
 owning_tests = ["crates/tst-core/tests/mpegts/mux_data.rs"]
-bindings = ["python:data_handles_for_program", "c:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:Muxer.data_handles_for_program", "c:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -5341,7 +5347,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::mux::Muxer::data_stream_handle"
 owning_tests = ["crates/tst-core/tests/mpegts/mux_data.rs"]
-bindings = ["python:data_stream_handle", "java:org.tstrans.mpegts.Muxer.dataStreamHandle", "c:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:Muxer.data_stream_handle", "java:org.tstrans.mpegts.Muxer.dataStreamHandle", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -5374,7 +5380,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::mux::Muxer::pull"
 owning_tests = ["crates/tst-core/tests/mpegts/mux.rs"]
-bindings = ["c:tst_muxer_pull", "python:pull", "java:org.tstrans.mpegts.Muxer.pull", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:tst_muxer_pull", "python:Muxer.pull", "java:org.tstrans.mpegts.Muxer.pull", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["video-roundtrip"]
 tier = "A"
 
@@ -5383,7 +5389,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::mux::Muxer::push_audio"
 owning_tests = ["crates/tst-core/tests/mpegts/mux.rs"]
-bindings = ["c:tst_muxer_push_audio", "python:push_audio", "java:org.tstrans.mpegts.Muxer.pushAudio", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:tst_muxer_push_audio", "python:Muxer.push_audio", "java:org.tstrans.mpegts.Muxer.pushAudio", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["audio-klv-roundtrip"]
 tier = "A"
 
@@ -5396,7 +5402,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::mux::Muxer::push_data"
 owning_tests = ["crates/tst-core/tests/mpegts/mux_data.rs"]
-bindings = ["c:tst_muxer_push_data", "python:push_data", "java:org.tstrans.mpegts.Muxer.pushData", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:tst_muxer_push_data", "python:Muxer.push_data", "java:org.tstrans.mpegts.Muxer.pushData", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -5405,7 +5411,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::mux::Muxer::push_data_to"
 owning_tests = ["crates/tst-core/tests/mpegts/mux_data.rs"]
-bindings = ["c:tst_muxer_push_data_to", "python:push_data_to", "java:org.tstrans.mpegts.Muxer.pushDataTo", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:tst_muxer_push_data_to", "python:Muxer.push_data_to", "java:org.tstrans.mpegts.Muxer.pushDataTo", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -5414,7 +5420,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::mux::Muxer::push_klv"
 owning_tests = ["crates/tst-core/tests/mpegts/mux.rs"]
-bindings = ["c:tst_muxer_push_klv", "python:push_klv", "java:org.tstrans.mpegts.Muxer.pushKlv", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:tst_muxer_push_klv", "python:Muxer.push_klv", "java:org.tstrans.mpegts.Muxer.pushKlv", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["audio-klv-roundtrip"]
 tier = "A"
 
@@ -5427,7 +5433,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::mux::Muxer::push_subtitle"
 owning_tests = ["crates/tst-core/tests/mpegts/mux.rs"]
-bindings = ["c:tst_muxer_push_subtitle", "python:push_subtitle", "java:org.tstrans.mpegts.Muxer.pushSubtitle", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:tst_muxer_push_subtitle", "python:Muxer.push_subtitle", "java:org.tstrans.mpegts.Muxer.pushSubtitle", "swift:deferred", "kotlin:deferred"]
 tier = "A"
 
 [[exempt]]
@@ -5738,7 +5744,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::mux::MuxerProgramConfigBuilder::add_data"
 owning_tests = ["crates/tst-core/tests/mpegts/mux_data.rs", "crates/tst-core/src/mpegts/mux/tests/config.rs"]
-bindings = ["c:tst_mux_config_add_data_stream", "python:add_data", "java:org.tstrans.mpegts.MuxerConfig.Builder.addData", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:tst_mux_config_add_data_stream", "python:MuxerProgramConfigBuilder.add_data", "java:org.tstrans.mpegts.MuxerConfig.Builder.addData", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -5783,7 +5789,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::mux::MuxerProgramConfigBuilder::stream_descriptors_for_data"
 owning_tests = ["crates/tst-core/tests/mpegts/mux_data.rs", "crates/tst-core/src/mpegts/mux/tests/config.rs"]
-bindings = ["c:tst_mux_config_set_stream_descriptors_for_data", "c:tst_mux_config_add_data_descriptor", "python:stream_descriptors_for_data", "java:org.tstrans.mpegts.MuxerConfig.Builder.streamDescriptorsForData", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:tst_mux_config_set_stream_descriptors_for_data", "c:tst_mux_config_add_data_descriptor", "python:MuxerProgramConfigBuilder.stream_descriptors_for_data", "java:org.tstrans.mpegts.MuxerConfig.Builder.streamDescriptorsForData", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -12008,7 +12014,7 @@ tier = "A"
 [[surface]]
 item = "tst_core::klv::st1204::CoreId::new"
 owning_tests = ["bindings/python/tests/test_klv_st1204_mismms.py"]
-bindings = ["python:encode_core_id", "c:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["python:CoreId", "c:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 

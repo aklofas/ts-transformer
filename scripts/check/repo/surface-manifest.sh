@@ -5,6 +5,8 @@
 #   (a) every owning_tests path in tests/coverage/surface-manifest.toml exists on disk;
 #   (b) every binding column symbol resolves in that binding's source
 #       (feature-tagged "[feature=X]" entries are skipped unless X is in BUILT_FEATURES);
+#       c: and java: are substring matches; python: names a definition
+#       (function | Class | Class.member, see check_python_symbols);
 #   (b2) every [[surface]] row carries all five binding columns (c, python, java,
 #       swift, kotlin) — "<prefix>:unaudited" / ":deferred" / ":n/a" declare a
 #       column whose twin is unchecked / absent today / absent by design;
@@ -20,7 +22,8 @@
 #   SURFACE_CRATES          space-separated list of crate names to check
 #   SURFACE_BUILT_FEATURES  space-separated features considered built (default: all)
 #   SURFACE_C_HEADER        path to the C binding header
-#   SURFACE_PYI_DIR         directory to search for Python binding symbols
+#   SURFACE_PYI_DIR         the Python package directory (.pyi stubs + .py sources)
+#   SURFACE_PY_PACKAGE      the package name a module-qualified cell starts with
 #   SURFACE_REQUIRED_PREFIXES  binding columns every [[surface]] row must carry
 set -euo pipefail
 
@@ -53,6 +56,133 @@ extract_items() {
       if (line != "") print line
     }
   '
+}
+
+# ---------------------------------------------------------------------------
+# py_index: stdout is one line per Python DEFINITION under SURFACE_PYI_DIR
+# (.pyi stubs and .py sources), as "<module>\t<name>\t<kind>":
+#   kind=class   a module-level class            name = Class
+#   kind=def     a module-level function         name = function
+#   kind=member  a method/attribute of a class   name = Class.member
+# <module> is the dotted path below the package ("klv", "pandas.frames").
+# Only module-level classes and their direct (4-space) members are indexed;
+# inherited members are not — name the class that defines the member.
+# ---------------------------------------------------------------------------
+py_index() {
+  local f rel mod
+  find "$SURFACE_PYI_DIR" -type f \( -name '*.pyi' -o -name '*.py' \) | sort \
+  | while IFS= read -r f; do
+    rel="${f#"$SURFACE_PYI_DIR"/}"
+    mod="${rel%.*}"
+    mod="${mod//\//.}"
+    mod="${mod%.__init__}"
+    [ "$mod" = "__init__" ] && mod=""
+    awk -v mod="$mod" '
+      function ident(s) { sub(/[^A-Za-z0-9_].*$/, "", s); return s }
+      /^class [A-Za-z_]/ {
+        cls = ident(substr($0, 7)); print mod "\t" cls "\tclass"; next
+      }
+      /^def [A-Za-z_]/       { cls = ""; print mod "\t" ident(substr($0, 5))  "\tdef"; next }
+      /^async def [A-Za-z_]/ { cls = ""; print mod "\t" ident(substr($0, 11)) "\tdef"; next }
+      /^[A-Za-z_]/ { cls = "" }   # any other module-level statement ends the class body
+      cls != "" && /^    def [A-Za-z_]/       { print mod "\t" cls "." ident(substr($0, 9))  "\tmember"; next }
+      cls != "" && /^    async def [A-Za-z_]/ { print mod "\t" cls "." ident(substr($0, 15)) "\tmember"; next }
+      cls != "" && /^    [A-Za-z_][A-Za-z0-9_]*[ ]*[:=]/ { print mod "\t" cls "." ident(substr($0, 5)) "\tmember" }
+    ' "$f"
+  done | sort -u
+}
+
+# ---------------------------------------------------------------------------
+# check_python_symbols: rule (b) for the python: column. stdout is FAIL lines.
+#
+# A python: cell names a DEFINITION, not a string that occurs somewhere:
+#   python:function              a module-level def
+#   python:Class                 a module-level class
+#   python:Class.member          a method/attribute defined on that class
+#   python:tstrans.<module>.<one of the above>   the same, in that module only
+# The unqualified forms must be defined in exactly ONE module; a name several
+# modules define (`Transport`, `CancelHandle`, ...) has to carry its module.
+#
+# Owner rule: when the Rust item is `...::Owner::leaf` and the binding has a
+# Python class called `Owner`, the twin is that class or one of its members.
+# This is what keeps a cell honest about WHICH symbol it names: before it, a
+# leaf was substring-matched against every file, so `Demuxer::feed` could
+# point at `decode_uas_datalink`, `Demuxer::next_event` at the `DemuxEvent`
+# type and `UdpTransport::connect` at `send`, and all three "resolved".
+# ---------------------------------------------------------------------------
+check_python_symbols() {
+  local idx; idx="$(mktemp)"
+  py_index > "$idx"
+  awk '
+    /^\[\[(surface|exempt)\]\]/ { item = "?" }
+    /^item = / { item = $0; sub(/^item = "/, "", item); sub(/".*$/, "", item) }
+    /^bindings = / {
+      line = $0
+      while (match(line, /"python:[^"]*"/)) {
+        print item "\t" substr(line, RSTART + 8, RLENGTH - 9)
+        line = substr(line, RSTART + RLENGTH)
+      }
+    }
+  ' "$SURFACE_MANIFEST" \
+  | awk -F '\t' -v pkg="${SURFACE_PY_PACKAGE:-tstrans}" -v built="$SURFACE_BUILT_FEATURES" '
+    BEGIN { nb = split(built, B, " "); for (i = 1; i <= nb; i++) BUILT[B[i]] = 1 }
+    FNR == NR {
+      MODS[$1] = 1
+      DEF[$1 SUBSEP $2] = 1
+      WHERE[$2] = (WHERE[$2] == "" ? "" : WHERE[$2] ", ") ($1 == "" ? pkg : pkg "." $1)
+      COUNT[$2]++
+      if ($3 == "class") CLASS[$2] = 1
+      next
+    }
+    {
+      item = $1; sym = $2; shown = sym
+      if (sym ~ /^(unaudited|deferred|n\/a)$/) next
+      if (match(sym, / *\[feature=[a-z]+\]/)) {
+        feat = substr(sym, RSTART, RLENGTH); gsub(/[^a-z=]/, "", feat); sub(/^feature=/, "", feat)
+        sym = substr(sym, 1, RSTART - 1)
+        if (!(feat in BUILT)) next
+      }
+      mod = ""; hasmod = 0; rest = sym
+      if (index(sym, pkg ".") == 1) {
+        rest = substr(sym, length(pkg) + 2)
+        # longest module prefix that exists ("pandas.frames" before "pandas")
+        n = split(rest, P, "."); best = 0; cand = ""
+        for (i = 1; i < n; i++) {
+          cand = (i == 1 ? P[1] : cand "." P[i])
+          if (cand in MODS) { best = i; mod = cand }
+        }
+        if (best == 0) {
+          print "FAIL: python symbol unresolved: " shown " (row " item "): no module " pkg "." P[1]
+          next
+        }
+        hasmod = 1
+        rest = P[best + 1]; for (i = best + 2; i <= n; i++) rest = rest "." P[i]
+      }
+      if (rest !~ /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/) {
+        print "FAIL: python symbol malformed: " shown " (row " item "): want function, Class or Class.member, optionally prefixed " pkg ".<module>."
+        next
+      }
+      if (hasmod) {
+        if (!((mod SUBSEP rest) in DEF)) {
+          print "FAIL: python symbol unresolved: " shown " (row " item "): " pkg "." mod " defines no " rest
+          next
+        }
+      } else if (!(rest in COUNT)) {
+        print "FAIL: python symbol unresolved: " shown " (row " item "): not a module-level def/class or a Class.member in the Python binding (a method needs its class: Class." rest ")"
+        next
+      } else if (COUNT[rest] > 1) {
+        print "FAIL: python symbol ambiguous: " shown " (row " item "): defined in " WHERE[rest] " — write " pkg ".<module>." rest
+        next
+      }
+      n = split(item, S, "::")
+      if (n >= 2 && S[n - 1] ~ /^[A-Z]/ && (S[n - 1] in CLASS)) {
+        owner = S[n - 1]
+        if (rest != owner && index(rest, owner ".") != 1)
+          print "FAIL: python symbol is not the twin: " shown " (row " item "): " owner " has a Python class, so the twin is " owner " or " owner ".<member>"
+      }
+    }
+  ' "$idx" -
+  rm -f "$idx"
 }
 
 # ---------------------------------------------------------------------------
@@ -112,15 +242,7 @@ run_check() {
         grep -Fq "${sym#c:}" "$SURFACE_C_HEADER" \
           || echo "FAIL: c symbol unresolved: ${sym#c:}" ;;
       python:*)
-        leaf="${sym#python:}"
-        leaf="${leaf##*.}"   # last dotted component
-        # NOTE: this is an UNBOUNDED SUBSTRING match anywhere in the binding
-        # sources — it can false-pass (e.g. the leaf appears only in a comment
-        # or a longer identifier). Intentional looseness for the L3 bootstrap;
-        # tighten to a word-boundary (`grep -w`) or AST-aware check when a row
-        # graduates and column (b) must be trustworthy for that symbol.
-        grep -rFq "$leaf" "$SURFACE_PYI_DIR" \
-          || echo "FAIL: python symbol unresolved: ${sym#python:} (leaf: $leaf)" ;;
+        : ;;   # resolved by DEFINITION, per row, in check_python_symbols below
       java:*)
         leaf="${sym#java:}"
         leaf="${leaf##*.}"   # last dotted component (e.g. feed/nextEvent/Demuxer)
@@ -135,6 +257,9 @@ run_check() {
         echo "FAIL: unknown binding prefix: $sym" ;;
     esac
   done >> "$errs"
+
+  # (b) continued — python: symbols, by definition and per row.
+  check_python_symbols >> "$errs"
 
   # (b2) five-column rule (Arc 2 R1 / X-META-02): every [[surface]] row's
   # `bindings` array carries at least one entry per required prefix. A
@@ -242,6 +367,46 @@ self_test() {
   printf '[[surface]]\nitem = "demo::a"\nowning_tests = ["tests/coverage/README.md"]\nbindings = ["c:deferred", "python:deferred"]\n[[exempt]]\nitem = "demo::B"\n' > "$tmp/m.toml"
   expect fail "a two-column row under the default prefix set" || return 1
   SURFACE_REQUIRED_PREFIXES="c python" expect pass "the same row under SURFACE_REQUIRED_PREFIXES='c python'" || return 1
+
+  # (7) python: cells resolve by definition. A fake package with one class
+  # defined in two modules, one module-level function and one unique class.
+  mkdir -p "$tmp/py"
+  printf 'class Transport:\n    def send(self, payload: bytes) -> None: ...\n\ndef decode_thing(buf: bytes) -> int: ...\n' > "$tmp/py/udp.pyi"
+  printf 'class Transport:\n    def send(self, payload: bytes) -> None: ...\n' > "$tmp/py/tcp.pyi"
+  printf 'class B:\n    count: int\n    def feed(self, buf: bytes) -> None: ...\n\nclass BEvent: ...\n' > "$tmp/py/mpegts.pyi"
+  export SURFACE_PYI_DIR="$tmp/py"
+  py_row() { # <item> <python cell>
+    printf '[[surface]]\nitem = "%s"\nowning_tests = ["tests/coverage/README.md"]\nbindings = ["c:deferred", "python:%s", "java:deferred", "swift:deferred", "kotlin:deferred"]\n[[exempt]]\nitem = "%s"\n' \
+      "$1" "$2" "$3" > "$tmp/m.toml"
+  }
+  py_row "demo::a" "decode_thing" "demo::B"
+  expect pass "python: module-level function, unqualified" || return 1
+  py_row "demo::a" "send" "demo::B"
+  expect fail "python: bare method name (the old leaf match resolved it)" || return 1
+  py_row "demo::a" "Transport.send" "demo::B"
+  expect fail "python: Class.member defined in two modules, no module given" || return 1
+  py_row "demo::a" "tstrans.udp.Transport.send" "demo::B"
+  expect pass "python: module-qualified Class.member" || return 1
+  py_row "demo::a" "tstrans.tcp.decode_thing" "demo::B"
+  expect fail "python: defined, but not in the module the cell names" || return 1
+  py_row "demo::a" "B.nope" "demo::B"
+  expect fail "python: class exists, member does not" || return 1
+  py_row "demo::a" "B.count" "demo::B"
+  expect pass "python: class attribute" || return 1
+  py_row "demo::a" "decode_thing [feature=rist]" "demo::B"
+  expect pass "python: unbuilt feature is skipped" || return 1
+  py_row "demo::a" "send [feature=srt]" "demo::B"
+  expect fail "python: built feature is resolved" || return 1
+  # Owner rule: demo::B::x is a member of B, and B has a Python class.
+  printf 'pub fn demo::a()\npub fn demo::B::x()\n' > "$tmp/crates/demo/public-api.txt"
+  py_row "demo::B::x" "decode_thing" "demo::a"
+  expect fail "python: a real function that is not the owner class's member" || return 1
+  py_row "demo::B::x" "BEvent" "demo::a"
+  expect fail "python: a real class that is not the owner class" || return 1
+  py_row "demo::B::x" "B.feed" "demo::a"
+  expect pass "python: the owner class's member" || return 1
+  py_row "demo::B::x" "B" "demo::a"
+  expect pass "python: the owner class itself" || return 1
 
   echo "self-test: PASS"
 }
