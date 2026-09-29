@@ -397,6 +397,26 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Python: a `tstrans.hls` call made while another thread is pushing no
+  longer freezes the interpreter.** `HlsPublisher` and `MuxPublisher` hold
+  an internal lock across a push's native work with the GIL released, and
+  need the GIL back before they can let go of it. Every other method took
+  the same lock while still holding the GIL, so `local_addr()`,
+  `local_port()`, `repr()`, `stats()`, `hls_stats()`, `publisher_stats()`,
+  `render_playlist()`, `cut_segment()`, `finish()`, `close()` or a second
+  `push_ts()` / `send_*()` called from another thread during a push
+  deadlocked the two threads and, with the GIL held by one of them, the
+  whole process — however short the push. Now every method takes that lock
+  with the GIL released and raises afterwards; `local_addr()` /
+  `local_port()` answer from a value captured at construction and `repr()`
+  from a finished flag, none of them taking the lock. Results, exceptions
+  and kinds are unchanged, including `HlsError(FINISHED)` from
+  `local_addr()` / `local_port()` on a finished publisher. The
+  `snapshot-getters.sh` rail gained a third check: in the Python binding a
+  `.lock()` taken while the GIL is held must be listed, with the reason the
+  lock is never held across a GIL release, in
+  `scripts/ratchets/gil-held-locks.tsv`.
+
 - **Python, JVM: getters and liveness probes no longer wait behind a call
   parked on another thread.** A blocking call (`recv`, a send into a full
   buffer, a send inside a Blocking-mode reconnect) holds the shell for as
