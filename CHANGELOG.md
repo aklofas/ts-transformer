@@ -373,6 +373,28 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   so `docs/project/deferred-features.md` now records the lapsed clause
   and triggers on a binding consumer asking instead.
 
+- **Docs and examples: gap-buffer sizing is `ReconnectMode::Background`
+  guidance.** The `managed_reconnect` examples (Rust and C), the pipeline
+  guide, the reconnect cookbook recipe, the troubleshooting entry and the
+  architecture page still described the default `Blocking` mode as queueing
+  an outage's messages: size `gap_buffer_capacity` as outage × send rate,
+  let `DropOldest` keep the receiver caught up. In `Blocking` mode the
+  caller is parked inside the send for the whole outage and the buffer
+  holds only that call's message, so neither knob does anything there
+  except at capacity 0. The sizing rule and the `DropOldest` / `Reject`
+  trade-off now sit with the `Background` examples and sections, and the
+  `Blocking` text says what that mode trades instead (the producer stalls,
+  the wrapper drops nothing). The same examples named the give-up error as
+  `Closed` / `TST_E_CLOSED`; it is `Broken` / `TST_E_TRANSPORT`, and the
+  next send starts a fresh reconnect cycle. Comments only — no example
+  changes behavior.
+- **Rustdoc: `NonConformantIssue::PcrAnomaly` describes when PCR history is
+  retired.** It said a demoted PID's history was retired the next time a
+  PCR arrived on it and that a re-promotion could compare against the old
+  value. The history is kept exactly while some program declares the PID
+  as its `PCR_PID` and dropped when none does; a PID declared again starts
+  from a fresh seed.
+
 ### Fixed
 
 - **Python, JVM: getters and liveness probes no longer wait behind a call
@@ -1743,6 +1765,19 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   runs it Mondays 06:00 UTC (step summary + artifact, read-only
   permissions); the in-tree ledger `docs/project/ci-health.csv` is appended
   by the maintainer at closeouts.
+
+- **Surface manifest: an empty Python definition index no longer passes
+  every `python:` cell.** The rail's resolver read the definition index and
+  then the manifest rows in one awk program and told them apart with
+  `FNR == NR`. With an empty index (a `SURFACE_PYI_DIR` holding no `.pyi` /
+  `.py`, or an extraction that matched nothing) that test stayed true for
+  the whole manifest, every row was read as an index row, and no cell was
+  checked: the rail was green with nothing resolved. The two inputs are now
+  separated by an explicit phase, and a manifest that names a Python symbol
+  against an empty index fails with one line saying so; sentinel cells
+  (`:deferred`, `:n/a`, `:unaudited`) and cells of an unbuilt feature still
+  pass. Two self-test cases cover both sides. No other awk program under
+  `scripts/` uses the idiom.
 
 ### Changed — binding layer (WP-A1)
 

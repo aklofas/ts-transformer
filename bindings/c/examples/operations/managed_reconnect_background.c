@@ -304,13 +304,28 @@ int main(void) {
      *     Step 4 on why this demo usually shows attempts=1 anyway.
      *
      *   gap_buffer_capacity = 4
-     *     Deliberately tiny (production default 256, see the sibling). A
-     *     capacity this small guarantees the messages produced during the
-     *     outage overflow it many times over, so the stats reliably show
-     *     eviction.
+     *     Deliberately tiny (the default is 256). A capacity this small
+     *     guarantees the messages produced during the outage overflow it
+     *     many times over, so the stats reliably show eviction.
+     *
+     *     This is the mode in which the capacity is a real sizing
+     *     decision, because the producer keeps sending during the outage
+     *     and every one of those chunks lands here. Rule of thumb: longest
+     *     outage you want to ride out × chunks per second. A chunk is one
+     *     TS bundle handed to the transport (up to 7 TS packets, 1316
+     *     bytes), not one video frame, so measure the rate rather than
+     *     guessing it from the frame rate. What the buffer holds is
+     *     delivered, oldest first, when the link returns — so the capacity
+     *     is also how far behind "now" the receiver starts after the
+     *     outage. (In BLOCKING mode none of this applies: the buffer only
+     *     ever holds the one interrupted chunk — see managed_reconnect.c.)
      *
      *   overflow_policy = DROP_OLDEST
-     *     Evict the oldest queued chunk when full. This is where
+     *     Evict the oldest queued chunk when full; REJECT would refuse the
+     *     new chunk (TST_E_BUFFER_FULL) and keep what is queued.
+     *     DROP_OLDEST keeps the receiver close to "now" once the link
+     *     returns, at the cost of the oldest part of the outage — for live
+     *     video the right trade, receivers want fresh frames. This is where
      *     "0 != delivered" comes from: send_video returns 0 for a frame
      *     that is queued and then evicted before the link returns — the
      *     call succeeded at ACCEPTING the bytes, not at delivering them. A

@@ -4,10 +4,11 @@
  *
  * A peer thread accepts a connection, reads a few messages, DROPS it, and
  * re-listens — twice — then drains to a clean close. The sender on the
- * main thread is the MANAGED mux sender: on each break it queues outbound
- * TS chunks in a gap buffer, reconnects with exponential backoff, drains
- * the queue, and carries on. The application code never sees the outage
- * as an error — that is the property this example demonstrates.
+ * main thread is the MANAGED mux sender: the send that hits a break holds
+ * its one TS chunk, reconnects with exponential backoff, delivers that
+ * chunk on the new link, and carries on. The application code sees the
+ * outage as a slow call, never as an error — that is the property this
+ * example demonstrates.
  *
  * The C twin of the Rust `examples/operations/managed_reconnect.rs`. One
  * structural difference: the Rust example supplies a FACTORY closure that
@@ -19,10 +20,12 @@
  *
  * Reconnect mode: this example uses the DEFAULT, TST_RECONNECT_MODE_BLOCKING
  * — a send that hits a broken link blocks the CALLER inside the send call
- * until reconnect succeeds or max_attempts runs out. The sibling
- * `managed_reconnect_background.c` flips exactly one knob
- * (TST_RECONNECT_MODE_BACKGROUND) and shows how differently the producing
- * thread experiences the same outage.
+ * until reconnect succeeds or max_attempts runs out. Nothing accumulates
+ * while the link is down, because the producer is parked inside that call.
+ * The sibling `managed_reconnect_background.c` flips the mode knob
+ * (TST_RECONNECT_MODE_BACKGROUND), shows how differently the producing
+ * thread experiences the same outage, and is where sizing the gap buffer
+ * for an outage is explained — that is a BACKGROUND-mode decision.
  *
  * Peer-side mechanics worth knowing before reading `flaky_peer` below:
  *   - `tst_raw_receiver_open_listener` = bind + accept in ONE blocking
@@ -172,8 +175,8 @@ struct peer_ctx {
  * This thread SIMULATES a flaky receiver — its job is to drop the link on
  * purpose so the sender can demonstrate reconnect. Real receivers accept
  * once and drain; this one misbehaves so the whole failure-handling stack
- * (managed transport, policy, gap buffer, backoff) is exercised inside one
- * process with no external harness.
+ * (managed transport, policy, backoff, redelivery of the interrupted
+ * chunk) is exercised inside one process with no external harness.
  *
  *   round 0: accept → read 5 messages → close (induce disconnect #1)
  *   round 1: accept → read 5 messages → close (induce disconnect #2)
@@ -285,10 +288,12 @@ int main(void) {
      *     visible — see the header, and managed_reconnect_background.c)
      *
      *   max_attempts = 20
-     *     Up to 20 reconnect attempts per outage before the policy gives
-     *     up and sends start failing with TST_E_CLOSED. -1 would mean
-     *     retry forever; 20 keeps this demo finite even if the peer thread
-     *     dies. The budget resets after every successful reconnect.
+     *     Up to 20 reconnect attempts per outage. When they run out, the
+     *     send that was waiting fails with TST_E_TRANSPORT ("reconnect
+     *     gave up after 20 attempts"). That is not terminal: the next send
+     *     starts a fresh cycle with a fresh budget. -1 would mean retry
+     *     forever; 20 keeps this demo finite even if the peer thread dies.
+     *     The budget also resets after every successful reconnect.
      *
      *   backoff = exponential, base 50 ms, cap 2 s
      *     wait = 50 ms × 2^(attempt-1), capped. The base is short so the
@@ -297,17 +302,31 @@ int main(void) {
      *     stays down.
      *
      *   gap_buffer_capacity = 256
-     *     Max TS chunks queued while disconnected. Rule of thumb: max
-     *     disconnect window × send rate. The peer here is back within
-     *     milliseconds, so 256 is two orders of magnitude of headroom —
-     *     cheap, and the production default.
+     *     The production default, and in THIS mode not a sizing decision.
+     *     In BLOCKING mode the gap buffer holds exactly one chunk: the one
+     *     whose send found the link broken. It goes in, the reconnect runs
+     *     on this thread, the chunk is delivered on the new link, and the
+     *     buffer is empty again when the call returns — or, if the call
+     *     fails, the chunk is taken back out and handed back to the
+     *     sender. Nothing else can arrive meanwhile: the only producer is
+     *     the thread parked in that call. So do NOT size this as outage
+     *     duration × send rate here; there is no backlog to hold, and a
+     *     longer outage just means a longer block. The only value that
+     *     changes BLOCKING behavior is 0 (buffer nothing). The
+     *     outage × rate rule belongs to BACKGROUND mode, where sends keep
+     *     arriving during the outage — see managed_reconnect_background.c.
      *
      *   overflow_policy = DROP_OLDEST
-     *     When the gap buffer is full, evict the oldest queued chunk and
-     *     accept the new one (REJECT would surface an error instead).
-     *     Keeps the receiver caught up to "now" once the link returns, at
-     *     the cost of the tail of the gap — for live video, the right
-     *     trade: receivers want fresh frames, not stale ones.
+     *     What a FULL gap buffer does with a new chunk: evict the oldest
+     *     (DROP_OLDEST) or refuse the new one (REJECT). With one chunk in
+     *     a 256-slot buffer it never fills, so in BLOCKING mode this knob
+     *     is inert too (again except at capacity 0). The
+     *     freshness-versus-completeness trade it expresses is a
+     *     BACKGROUND-mode decision. What BLOCKING trades instead is time:
+     *     the managed transport drops nothing, and the producer pays for
+     *     that by stalling for the whole outage — fine for a file or
+     *     batch sender, wrong for a thread that is also draining a live
+     *     encoder.
      */
     tst_reconnect_policy_t *policy = tst_reconnect_policy_new();
     if (!policy) {
@@ -349,10 +368,10 @@ int main(void) {
      * both are freed right after, on both branches.
      *
      * End-to-end the path is: NAL+KLV → muxer → 188-byte TS packets →
-     * managed transport (gap buffer + reconnect) → SRT → wire. The muxer
-     * cannot tell it is sitting on a managed transport; it just sees a
-     * transport that occasionally pauses and never fails for transient
-     * breakage.
+     * managed transport (reconnect) → SRT → wire. The muxer cannot tell
+     * it is sitting on a managed transport; it just sees a transport that
+     * occasionally pauses (for the length of a reconnect) and does not
+     * fail for an outage the retry budget covers.
      */
     tst_managed_mux_sender_t *s = tst_managed_mux_sender_open(connect_url, cfg, policy);
     tst_mux_config_free(cfg);
@@ -369,15 +388,21 @@ int main(void) {
      * ── Step 5: Push frames straight through two outages ─────────────────
      *
      * Send results here are INFORMATIONAL, not fatal. The managed
-     * transport absorbs broken-link errors internally (queues the chunk,
-     * reconnects, drains) and returns 0. Only catastrophic failures — the
-     * reconnect budget exhausted (TST_E_CLOSED) or an oversized payload —
-     * come back non-zero, so the loop logs and keeps going: the very next
-     * send may well succeed once the reconnect lands.
+     * transport absorbs a broken link inside the call (reconnects, then
+     * delivers this call's chunk) and returns 0. What does come back
+     * non-zero is a reconnect that gave up (TST_E_TRANSPORT, budget
+     * exhausted), backpressure from the fresh link, or an oversized
+     * payload. In each of those the managed transport has kept nothing:
+     * the mux sender retains the chunk it was refused and offers it again
+     * on the next call, which also starts a fresh reconnect cycle. So the
+     * loop logs and keeps going: the very next send may well succeed.
      *
      * In BLOCKING mode the outage is visible only as latency: a send that
-     * hits the dead link returns after the reconnect completes, and the
-     * frames that queued up meanwhile go out in a burst on the new link.
+     * hits the dead link returns after the reconnect completes. No frames
+     * pile up behind it — this loop IS the producer, and it is parked in
+     * that call — so nothing goes out in a burst afterwards; the stream
+     * simply resumes late by the length of the outage. (A producer that
+     * cannot afford to stall is the BACKGROUND-mode case.)
      */
     fprintf(stderr, "sender: sending %d frames; peer drops after %d messages, %d rounds\n",
             NUM_FRAMES, PEER_DROP_AFTER, PEER_ROUNDS);

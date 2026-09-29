@@ -2,8 +2,13 @@
 //!
 //! Spawns a listener thread that accepts a connection, reads a few messages,
 //! drops the connection, then re-accepts. The sender uses ManagedTransport
-//! wrapping SrtTransport; on each break, it queues outbound bytes in the
-//! gap buffer, reconnects with exponential backoff, and drains.
+//! wrapping SrtTransport in the default `ReconnectMode::Blocking`: the send
+//! that hits the break holds its one message, reconnects with exponential
+//! backoff on the calling thread, delivers that message on the new link and
+//! only then returns. Nothing accumulates while the link is down, because
+//! the producer is parked inside that call. (The sibling
+//! `managed_reconnect_background.rs` is the mode that queues an outage's
+//! messages — and the place to read about sizing the gap buffer.)
 //!
 //!   cargo run -p tst-examples --example managed_reconnect
 //!
@@ -73,8 +78,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // reconnect behavior. Real receivers do not behave this way; they
     // accept once and drain. We spawn a peer that misbehaves on purpose
     // so the example exercises the failure-handling stack
-    // (`ManagedTransport`, `ReconnectPolicy`, gap buffer, backoff)
-    // end-to-end inside a single process, with no external test harness.
+    // (`ManagedTransport`, `ReconnectPolicy`, backoff, redelivery of the
+    // interrupted message) end-to-end inside a single process, with no
+    // external test harness.
     //
     // Pattern across rounds:
     //   round 0: accept → drain 5 messages → drop (induce disconnect #1)
@@ -82,8 +88,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     //   round 2: accept → drain to clean close (let the sender finish)
     //
     // Two simulated outages followed by a clean tail. This is the minimum
-    // shape that exercises both the gap-buffer and the backoff-then-retry
-    // path more than once, while still terminating in finite time.
+    // shape that exercises the backoff-then-retry path, and the redelivery
+    // of the message that found the break, more than once, while still
+    // terminating in finite time.
     // ---------------------------------------------------------------------
     let peer_done = listener_done.clone();
     let peer_handle = thread::spawn(
@@ -119,9 +126,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 // broken connection on its next `send`, which
                                 // surfaces as `TransportError::Broken`.
                                 // *That* is what triggers `ManagedTransport`'s
-                                // gap-buffer-and-reconnect path. So this
-                                // single line `drop(socket)` is the entire
-                                // disconnect simulation.
+                                // reconnect path. So this single line
+                                // `drop(socket)` is the entire disconnect
+                                // simulation.
                                 drop(socket);
                                 break;
                             }
@@ -202,11 +209,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let initial = factory().map_err(|e| format!("initial connect: {e:?}"))?;
 
     // ---------------------------------------------------------------------
-    // ReconnectPolicy — the four knobs that govern reconnect behavior.
+    // ReconnectPolicy — the four knobs set here, plus `mode`, which is left
+    // at its default (`ReconnectMode::Blocking`) by `..Default::default()`.
+    // Two of the four do their real work only in the OTHER mode; they are
+    // spelled out anyway so the literal shows the whole policy.
     //
     //   max_attempts: Some(20)
-    //     Up to 20 reconnect attempts before the policy gives up and
-    //     `send_*` starts returning `TransportError::Closed`. `None` would
+    //     Up to 20 reconnect attempts per outage. When they run out, the
+    //     `send_*` call that was waiting returns an error wrapping
+    //     `TransportError::Broken` ("reconnect gave up after 20 attempts").
+    //     That is not terminal: the wrapper does not latch closed, and the
+    //     next send starts a fresh cycle with a fresh budget. `None` would
     //     mean retry forever; `Some(20)` is bounded so this example
     //     terminates even if the peer thread crashes (defensive).
     //
@@ -217,20 +230,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     //     waits if the peer stays down.
     //
     //   gap_buffer_capacity: 256
-    //     Maximum number of TS chunks queued while disconnected. Rule of
-    //     thumb: `max disconnect window × send rate`. The peer drops after
-    //     5 messages and reconnects almost immediately, so 256 is two
-    //     orders of magnitude more headroom than this demo needs — but
-    //     that headroom is cheap and matches the production default.
+    //     The production default, and in THIS mode not a sizing decision.
+    //     In `Blocking` mode the gap buffer holds exactly one message: the
+    //     one whose send found the link broken. It goes in, the reconnect
+    //     runs on this thread, the message is delivered on the new link,
+    //     and the buffer is empty again when the call returns — or, if the
+    //     call returns an error, the message is taken back out and is the
+    //     caller's to resend. Nothing else can arrive meanwhile, because
+    //     the only producer is the thread parked in that call. So do NOT
+    //     size this as `outage duration × send rate` here: there is no
+    //     backlog to hold, and a longer outage just means a longer block.
+    //     The only value that changes `Blocking` behavior is 0 (buffer
+    //     nothing, so even the interrupted message is dropped or refused).
+    //     The `outage × rate` rule belongs to `ReconnectMode::Background`,
+    //     where sends keep arriving during the outage — see
+    //     `managed_reconnect_background.rs`.
     //
     //   overflow_policy: DropOldest
-    //     When the gap buffer is full, evict the oldest queued message and
-    //     accept the new one. The alternative is `Reject`, which would
-    //     surface an error to the caller. `DropOldest` keeps the receiver
-    //     caught up to "now" once the link comes back, at the cost of
-    //     losing the tail of the gap. For live video that's the right
-    //     trade — receivers don't want stale frames, they want fresh
-    //     ones.
+    //     What a FULL gap buffer does with a new message: evict the oldest
+    //     (`DropOldest`) or refuse the new one (`Reject`). With one message
+    //     in a 256-slot buffer it never fills, so in `Blocking` mode this
+    //     knob is inert too (again except at capacity 0). The
+    //     freshness-versus-completeness trade it expresses — after an
+    //     outage, would the receiver rather have the newest frames or
+    //     every frame? — is a `Background`-mode decision. What `Blocking`
+    //     trades instead is time: no message is dropped by the wrapper,
+    //     and the producer pays for that by stalling for the whole
+    //     outage. Fine for a file or batch sender; wrong for a thread that
+    //     is also draining a live encoder.
     // ---------------------------------------------------------------------
     let policy = ReconnectPolicy {
         max_attempts: Some(20),
@@ -249,7 +276,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // NAL+KLV → mux → 188-byte TS packets → ManagedTransport → SrtTransport
     // → libsrt → wire. The `ManagedTransport` decorator is invisible to
     // `MuxSender` — it just sees a `Transport` impl that occasionally pauses
-    // (during reconnects) and never fails for transient breakage.
+    // (for the length of a reconnect) and does not fail for an outage the
+    // retry budget covers.
     let sender = MuxSender::new(managed, MuxerConfig::default())?;
 
     eprintln!("sender: sending {NUM_FRAMES} frames; peer drops after {FRAMES_BEFORE_DROP}");
@@ -268,12 +296,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(()) => sent_ok += 1,
             Err(e) => {
                 // Errors here are *informational*, not fatal. The
-                // `ManagedTransport` decorator absorbs `Broken` errors
-                // internally (queues bytes, schedules reconnect) and
-                // returns Ok. Only catastrophic failures — `Closed`
-                // (max_attempts exhausted) or oversized payloads — bubble
-                // up to us. So we log and keep going; the very next
-                // `send_*` call may well succeed once reconnect lands.
+                // `ManagedTransport` decorator absorbs a broken link
+                // inside the call (reconnects, then delivers this call's
+                // bytes) and returns Ok — the outage shows up as a slow
+                // call, not as an error. What does bubble up is a
+                // reconnect that gave up (`Broken`, max_attempts
+                // exhausted), backpressure from the fresh link, or an
+                // oversized payload. In each of those the wrapper has
+                // kept nothing: `MuxSender` retains the chunk it was
+                // refused and offers it again on the next call, which
+                // also starts a fresh reconnect cycle. So we log and keep
+                // going; the very next `send_*` may well succeed.
                 eprintln!("sender: send_video {i} -> {e:?}");
                 sent_err += 1;
             }

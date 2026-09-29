@@ -378,7 +378,11 @@ materialises or `max_attempts` is exhausted. On reconnect the gap
 buffer drains before the call returns. If the call returns an error
 instead, its bytes are taken back out of the gap buffer first: a send
 that failed is the caller's to retry, and nothing is left queued to be
-delivered behind its back.
+delivered behind its back. Either way the gap buffer is empty again
+when a `Blocking` call returns: it only ever holds the one message
+whose send found the link broken, so in this mode
+`gap_buffer_capacity` and `overflow_policy` change nothing except at
+capacity 0.
 
 `ReconnectPolicy.mode` picks where that reconnect loop runs. The
 default, `ReconnectMode::Blocking`, runs it on the calling thread — a
@@ -426,8 +430,10 @@ Defaults (`ReconnectPolicy::default()`):
   caller. Set to `None` to retry forever.
 - `backoff: BackoffStrategy::Exponential { base: 100ms, max: 10s }` —
   see §11 for the actual variants.
-- `gap_buffer_capacity: 256` — messages.
-- `overflow_policy: OverflowPolicy::DropOldest` — see §12.
+- `gap_buffer_capacity: 256` — messages. Accumulates an outage's
+  messages only under `ReconnectMode::Background`.
+- `overflow_policy: OverflowPolicy::DropOldest` — see §12. Likewise a
+  `Background`-mode knob.
 - `mode: ReconnectMode::Blocking` — reconnect on the caller's thread.
   Set to `ReconnectMode::Background` to run reconnect on a per-outage
   worker thread instead; see the cookbook recipe linked above.
@@ -457,27 +463,40 @@ Two variants:
   caller decides what to do.
 
 Trade-off: `DropOldest` keeps the receiver caught up to "now" once
-reconnect lands, at the cost of losing the tail of the gap — the
-right call for live video. `Reject` preserves every message at the
-cost of stalling once the disconnect window exceeds the buffer; reach
-for it when correctness matters more than freshness (telemetry,
-control-plane messages, audit-logged events).
+reconnect lands, at the cost of losing the oldest part of the gap — the
+right call for live video. `Reject` keeps what is already queued and
+refuses new messages with `Backpressure` once the disconnect window
+exceeds the buffer; reach for it when correctness matters more than
+freshness (telemetry, control-plane messages, audit-logged events).
+
+The policy only has something to decide under
+`ReconnectMode::Background`, where sends keep arriving while the link
+is down. Under `ReconnectMode::Blocking` the buffer holds one message
+at a time and never fills; the one exception is
+`gap_buffer_capacity: 0`, where `DropOldest` drops the interrupted
+message and `Reject` refuses it.
 
 ## Choosing a backoff and gap-buffer size
 
 Reasonable starting point: `BackoffStrategy::Exponential { base: 100ms,
-max: 10s }` plus
+max: 10s }` plus, **for `ReconnectMode::Background`**,
 
 ```text
 gap_buffer_capacity = ceil(max_disconnect_window × send_rate)
 ```
+
+Under the default `ReconnectMode::Blocking` there is nothing to size:
+the caller is parked inside `send_bytes` for the whole outage, so no
+backlog builds up in the wrapper, and a longer outage costs a longer
+block rather than more buffer. Leave the capacity at its default.
 
 Worked example: a five-second worst-case disconnect on a 30 fps stream
 with one KLV record per frame produces 150 video messages plus 150 KLV
 messages = 300 entries. Round up to 512. The 256-message default fits
 roughly 4 seconds of that load.
 
-If your worst-case window is longer than the buffer can hold, either
+If your worst-case window is longer than the buffer can hold (still
+`Background` mode), either
 raise the capacity (cheap — each entry is a `Vec<u8>` of at most
 `max_payload` bytes) or accept `DropOldest` as a deliberate
 freshness-over-completeness choice.
@@ -872,8 +891,9 @@ Send side:
   — `Sender` reading a `.ts` file and relaying to an SRT peer.
 - [../examples/operations/managed_reconnect.rs](/examples/operations/managed_reconnect.rs)
   — `ManagedTransport<SrtTransport>` plus a deliberately flaky peer
-  thread; demonstrates the reconnect + gap-buffer + drain cycle
-  end-to-end.
+  thread; demonstrates the `Blocking` reconnect cycle end-to-end
+  (its sibling `managed_reconnect_background.rs` is the one that fills
+  and overflows the gap buffer).
 - [../examples/sending/custom_transport.rs](/examples/sending/custom_transport.rs)
   — implementing the `Transport` trait against an in-memory byte
   collector. Template for any non-SRT sink.
