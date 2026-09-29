@@ -1,0 +1,40 @@
+# Functions in the Python binding that call `.lock()` while they hold the GIL.
+# Read by scripts/check/c/snapshot-getters.sh (check 3), which fails on any
+# such function not listed here AND on any row whose function no longer does.
+#
+# Columns (TAB-separated): path, Type::function (bare name for a free
+# function), reason.
+#
+# A row is a claim about the LOCK, not only the function: no holder of it
+# keeps the guard while the GIL is released. If one did, it would need the GIL
+# back before the guard could drop, and a function listed here — waiting for
+# the guard with the GIL held — would freeze the interpreter. The reason names
+# the lock and says why that cannot happen; re-check every row that shares the
+# lock when a holder changes.
+#
+# Not a candidate for this list — fix the function instead:
+#   - the lock is held across `py.allow_threads` anywhere (a push, a send, a
+#     recv): take it inside `allow_threads` and raise after the GIL is back;
+#   - the value cannot change after construction: capture it at construction;
+#   - open/finished for `repr`: an atomic latch.
+bindings/python/src/hls/publisher.rs	PyHlsServerHandle::__repr__	inner: no holder releases the GIL with the guard; shutdown moves the handle out and drops the guard before its allow_threads
+bindings/python/src/hls/publisher.rs	PyHlsServerHandle::local_addr	inner: no holder releases the GIL with the guard; shutdown moves the handle out and drops the guard before its allow_threads
+bindings/python/src/hls/publisher.rs	PyHlsServerHandle::local_port	inner: no holder releases the GIL with the guard; shutdown moves the handle out and drops the guard before its allow_threads
+bindings/python/src/hls/publisher.rs	PyHlsServerHandle::shutdown	inner: takes the handle out and drops the guard before releasing the GIL for the native shutdown
+bindings/python/src/rtp/client.rs	PyRtspSession::cancel_handle	client: pause/play/teardown hold it with the GIL released but take &mut self, so the borrow flag refuses this &self call while one is in flight; a holder never needs the GIL to let go
+bindings/python/src/rtp/client.rs	PyRtspSession::into_demux_receiver	h264_depay_config and session: only ever locked with the GIL held, for a take; never held across allow_threads
+bindings/python/src/rtp/client.rs	PyRtspSession::into_h264_receiver	h264_depay_config and session: only ever locked with the GIL held, for a take; never held across allow_threads
+bindings/python/src/rtp/demux_receiver.rs	PyDemuxReceiver::__next__	sink_error: every holder has the GIL for as long as it has the guard (the sink locks inside with_gil), so nobody waits
+bindings/python/src/rtp/demux_receiver.rs	PyDemuxReceiver::add_byte_sink	sink_error: locked by the sink inside with_gil; every holder has the GIL for as long as it has the guard
+bindings/python/src/rtp/h264_receiver.rs	H264Held::close	closed_end_reason: runs inside Owned::close; holds the guard for one assignment and needs no GIL to let go
+bindings/python/src/rtp/h264_receiver.rs	PyH264Receiver::current_end_reason	closed_end_reason: the one other holder is H264Held::close, a single assignment that needs no GIL to let go
+bindings/python/src/srt/demux_receiver.rs	PyDemuxReceiver::__next__	sink_error: every holder has the GIL for as long as it has the guard (the sink locks inside with_gil), so nobody waits
+bindings/python/src/srt/demux_receiver.rs	PyDemuxReceiver::add_byte_sink	sink_error: locked by the sink inside with_gil; every holder has the GIL for as long as it has the guard
+bindings/python/src/srt/lowlevel.rs	PySocket::close	inner: no Socket method releases the GIL; the handle is taken and the guard dropped before the native close
+bindings/python/src/srt/lowlevel.rs	PySocket::is_alive	inner: no Socket method releases the GIL, so the guard is never held across a park
+bindings/python/src/srt/lowlevel.rs	PySocket::local_addr	inner: no Socket method releases the GIL, so the guard is never held across a park
+bindings/python/src/srt/lowlevel.rs	PySocket::peer_addr	inner: no Socket method releases the GIL, so the guard is never held across a park
+bindings/python/src/srt/lowlevel.rs	PySocket::stream_id	inner: no Socket method releases the GIL, so the guard is never held across a park
+bindings/python/src/srt/lowlevel.rs	PySocket::take_socket	inner: no Socket method releases the GIL, so the guard is never held across a park
+bindings/python/src/util.rs	CancelSource::new	exit registry: held for one push/retain of Weak pointers; no holder releases or needs the GIL while it has the guard
+bindings/python/src/util.rs	fire_cancel_sources_at_exit	exit registry: the guard is a temporary dropped at the end of the drain statement, before allow_threads
