@@ -117,20 +117,36 @@ fn wait_for(flag: &AtomicBool, what: &str) {
     }
 }
 
-/// CHILD half, last step: `entered` was set immediately before the C ABI
-/// call and `returned` after it, so "entered and still not returned after a
-/// short bounded look" proves the thread is inside the call. Without that
-/// proof a call that failed at once would pass with the guard removed.
+/// How long the park has to hold before the child believes it.
+const PARK_LOOK: Duration = Duration::from_millis(200);
+
+/// CHILD half, last step. `entered` was set immediately before the C ABI
+/// call and `returned` after it, but on their own they prove little: a
+/// worker descheduled right after it set `entered` looks the same as one
+/// inside libsrt. The observation is the SRT layer's own count of
+/// operations in flight — non-zero means a thread has entered one and has
+/// not returned from it. The park is proven when, for the whole of
+/// [`PARK_LOOK`], that count is non-zero and the call has not returned.
+/// Without that proof a call that failed at once would pass with the guard
+/// removed.
 fn prove_parked_then_exit(entered: &AtomicBool, returned: &AtomicBool) -> ! {
     wait_for(entered, "the worker must reach the C ABI call");
-    let look_until = Instant::now() + Duration::from_millis(200);
-    while Instant::now() < look_until && !returned.load(Ordering::SeqCst) {
-        std::thread::sleep(Duration::from_millis(10));
+    let deadline = Instant::now() + SETUP_DEADLINE;
+    let mut held_since = Instant::now();
+    while held_since.elapsed() < PARK_LOOK {
+        assert!(
+            !returned.load(Ordering::SeqCst),
+            "the C ABI call returned; nothing is parked"
+        );
+        assert!(
+            Instant::now() < deadline,
+            "no thread stayed inside an SRT operation within {SETUP_DEADLINE:?}"
+        );
+        if tst_srt::operations_in_flight() == 0 {
+            held_since = Instant::now();
+        }
+        std::thread::sleep(Duration::from_millis(5));
     }
-    assert!(
-        !returned.load(Ordering::SeqCst),
-        "the C ABI call returned; nothing is parked"
-    );
     println!("{PARKED}");
     std::io::stdout().flush().expect("flush stdout");
     // What a C program's `exit(0)` / return from `main` does. No `_cancel`,

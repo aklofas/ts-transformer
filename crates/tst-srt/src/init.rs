@@ -2,19 +2,26 @@
 //!
 //! `srt_startup()` must be called once before any libsrt API use. Lazy via
 //! `OnceLock` from any constructor that needs libsrt (`Socket::connect_with`,
-//! `Listener::bind_with`, etc.).
+//! `Listener::bind_with`, etc.). Each of them is admitted by the exit guard
+//! first, so the startup — and the registration of the exit handler at its
+//! end — happens inside an operation the handler waits for.
 //!
 //! `srt_cleanup()` is never tied to value drops — see the design doc for
 //! rationale (drop-order ambiguity vs. negligible OS-reclaimed leaks) — but
 //! it IS registered via `atexit` to run at process exit; see
 //! `register_exit_cleanup` below.
 //!
-//! The exit handler does one thing before `srt_cleanup()`: it closes every
-//! socket that is still open and waits, bounded, for the threads parked in
-//! libsrt to return (`crate::exit_guard`). Without that, a thread left in
-//! `accept()` makes `srt_cleanup()` — and with it process exit — hang.
-//! Closing and joining before exit remains the recommended shape; the guard
-//! is what keeps a program that did not from hanging.
+//! Before `srt_cleanup()` the exit handler gets every other thread out of
+//! libsrt (`crate::exit_guard`): it refuses operations that have not
+//! started, closes every socket that is still open, and waits, bounded, for
+//! the operations in flight to return — each one whole, from its first
+//! libsrt call to its last. Without that, a thread left in `accept()` makes
+//! `srt_cleanup()` — and with it process exit — hang, and a thread that
+//! calls into libsrt after the teardown uses state that is gone. If the
+//! bound expires, `srt_cleanup()` runs anyway. The bound does not cover the
+//! closes: a connected socket with unsent data takes up to its
+//! `SRTO_LINGER` to close. Closing and joining before exit remains the
+//! recommended shape; the guard is for the program that did not.
 
 use std::sync::OnceLock;
 
@@ -32,6 +39,12 @@ pub(crate) fn ensure_initialized() {
         install_log_handler();
         register_exit_cleanup();
     });
+}
+
+/// Whether `srt_startup()` has run in this process. For the tests.
+#[cfg(test)]
+pub(crate) fn is_initialized() -> bool {
+    SRT_INITIALIZED.get().is_some()
 }
 
 /// Register `srt_cleanup()` to run at process exit.
@@ -58,8 +71,9 @@ pub(crate) fn ensure_initialized() {
 ///
 /// `srt_cleanup()` joins libsrt's GC thread, which cannot finish while a
 /// thread is parked in `srt_accept`, so the handler first runs
-/// [`crate::exit_guard::release_parked_calls`]. With nothing open and no
-/// thread in a call that costs one uncontended lock and two atomic loads.
+/// `crate::exit_guard::release_parked_calls`. With nothing open and no
+/// operation in flight that costs one uncontended lock, one atomic store
+/// and one atomic load.
 fn register_exit_cleanup() {
     extern "C" fn srt_exit_cleanup() {
         // Must not unwind out of an `extern "C"` function:

@@ -182,8 +182,12 @@ impl SrtTransport {
     /// A genuine wire break that raced the cancel is reported as the
     /// cancel (spec §11: the caller asked for the close, and the managed
     /// decorator treats both as terminal).
+    ///
+    /// Process exit counts as the cancel: the exit guard refuses the op
+    /// before it closes (and latches) this socket, and a reconnecting
+    /// decorator must see the terminal reason either way.
     fn cancelled_or(&mut self, e: TransportError) -> TransportError {
-        if self.cancel.is_cancelled() {
+        if self.cancel.is_cancelled() || crate::exit_guard::is_exiting() {
             self.socket = None;
             TransportError::ExplicitClose
         } else {
@@ -210,7 +214,9 @@ impl SrtTransport {
         if self.closed {
             return Err(TransportError::Closed);
         }
-        if self.cancel.is_cancelled() {
+        // Process exit reads as the cancel, before the exit guard has
+        // reached this socket's latch too — see `cancelled_or`.
+        if self.cancel.is_cancelled() || crate::exit_guard::is_exiting() {
             self.socket = None;
             return Err(TransportError::ExplicitClose);
         }

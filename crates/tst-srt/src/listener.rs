@@ -105,8 +105,7 @@ impl Listener {
     /// signal. Subsequent calls reuse the once-initialized state and do
     /// not re-trigger the startup path.
     pub fn bind_with(config: &ListenerConfig, addr: impl ToSocketAddrs) -> Result<Self, BindError> {
-        ensure_initialized();
-
+        // Resolved before the operation starts — see `Socket::connect_with`.
         let addrs: Vec<SocketAddr> = addr
             .to_socket_addrs()
             .map_err(|e| BindError::InvalidAddress(e.into()))?
@@ -117,8 +116,18 @@ impl Listener {
             )));
         }
 
+        let Some(_op) = crate::exit_guard::enter() else {
+            return Err(refused_bind());
+        };
+        ensure_initialized();
+
         let mut last_err: Option<BindError> = None;
         for sa in addrs {
+            // Process exit started during the walk: stop, do not bind the
+            // next address.
+            if crate::exit_guard::is_exiting() {
+                return Err(last_err.unwrap_or_else(refused_bind));
+            }
             let handle = unsafe { srt_sys::srt_create_socket() };
             if handle == SRT_INVALID_SOCK {
                 last_err = Some(last_error().into());
@@ -162,13 +171,16 @@ impl Listener {
 
     /// Block until an incoming connection completes the SRT handshake.
     pub fn accept(&mut self) -> Result<(Socket, SocketAddr), AcceptError> {
+        // Held to the end of the function: wrapping the accepted socket
+        // reads and sets options on it.
+        let Some(_op) = crate::exit_guard::enter() else {
+            return Err(AcceptError::ListenerClosed);
+        };
         let mut os_addr = OsSocketAddr::new();
         let mut len = os_addr.capacity() as c_int;
 
-        let accepted = {
-            let _in_call = crate::exit_guard::enter_blocking_call();
-            unsafe { srt_sys::srt_accept(self.handle, os_addr.as_mut_ptr().cast(), &raw mut len) }
-        };
+        let accepted =
+            unsafe { srt_sys::srt_accept(self.handle, os_addr.as_mut_ptr().cast(), &raw mut len) };
         if accepted == SRT_INVALID_SOCK {
             return Err(last_error().into());
         }
@@ -208,6 +220,11 @@ impl Listener {
         &mut self,
         timeout: Duration,
     ) -> Result<(Socket, SocketAddr), AcceptError> {
+        // Covers the epoll set, the probe with its option restore, the
+        // wait and the accept after it.
+        let Some(_op) = crate::exit_guard::enter() else {
+            return Err(AcceptError::ListenerClosed);
+        };
         // Create an epoll set for this call only.
         let eid = unsafe { srt_sys::srt_epoll_create() };
         if eid < 0 {
@@ -260,7 +277,6 @@ impl Listener {
         let mut readfds: [srt_sys::SRTSOCKET; 1] = [SRT_INVALID_SOCK];
         let mut rnum: c_int = 1;
 
-        let in_call = crate::exit_guard::enter_blocking_call();
         let n = unsafe {
             srt_sys::srt_epoll_wait(
                 eid,
@@ -275,12 +291,7 @@ impl Listener {
                 std::ptr::null_mut(), // lwnum
             )
         };
-        // Released INSIDE the bracket: `srt_epoll_release` takes a lock in
-        // libsrt's global state, which the exit handler's `srt_cleanup()`
-        // and the static destructors after it tear down. The handler waits
-        // for this guard, so the release must be done before it drops.
         unsafe { srt_sys::srt_epoll_release(eid) };
-        drop(in_call);
 
         if n == 0 {
             // Unreachable per libsrt's contract: srt_epoll_wait returns
@@ -359,6 +370,9 @@ impl Listener {
     }
 
     pub fn local_addr(&self) -> Result<SocketAddr, IoError> {
+        let Some(_op) = crate::exit_guard::enter() else {
+            return Err(IoError::SocketClosed);
+        };
         let mut os_addr = OsSocketAddr::new();
         let mut len = os_addr.capacity() as c_int;
         let rc = unsafe {
@@ -377,6 +391,9 @@ impl Listener {
     /// time-bound the accept call, use [`accept_timeout`](Self::accept_timeout)
     /// instead.
     pub fn set_recv_timeout(&mut self, timeout: Option<Duration>) -> Result<(), OptionError> {
+        let Some(_op) = crate::exit_guard::enter() else {
+            return Err(OptionError::InvalidState);
+        };
         let ms = timeout.map(duration_to_ms).unwrap_or(-1);
         set_int(self.handle, srt_sys::SRT_SOCKOPT_SRTO_RCVTIMEO, ms)?;
         self.accepted_recv_timeout = timeout;
@@ -453,10 +470,22 @@ impl Listener {
         if slot.is_cancelled() {
             return Err(TransportError::ExplicitClose);
         }
-        let mut listener = Self::bind_with(cfg, addr).map_err(|e| TransportError::Broken {
-            msg: format!("bind: {e}"),
-            errno_code: None,
-            cause: BrokenCause::Unspecified,
+        // One operation for bind, accept and the listener's close on the
+        // way out. Refused once process exit has started: a reconnecting
+        // transport calls this again after every peer loss, and it must
+        // stop then, not bind again.
+        let Some(_op) = crate::exit_guard::enter() else {
+            return Err(TransportError::ExplicitClose);
+        };
+        let mut listener = Self::bind_with(cfg, addr).map_err(|e| {
+            if crate::exit_guard::is_exiting() {
+                return TransportError::ExplicitClose;
+            }
+            TransportError::Broken {
+                msg: format!("bind: {e}"),
+                errno_code: None,
+                cause: BrokenCause::Unspecified,
+            }
         })?;
         slot.install(Arc::new(listener.cancel_handle()));
         let accepted = listener.accept();
@@ -466,8 +495,14 @@ impl Listener {
             // The listener never leaves this function, so its own latch can
             // only have been set by the process-exit guard: report that as
             // a close too, or a reconnecting transport would re-bind and
-            // park again while the process is on its way out.
-            Err(_) if slot.is_cancelled() || listener.cancel.is_cancelled() => {
+            // park again while the process is on its way out. The flag
+            // itself covers an accept the guard refused before it reached
+            // this listener.
+            Err(_)
+                if slot.is_cancelled()
+                    || listener.cancel.is_cancelled()
+                    || crate::exit_guard::is_exiting() =>
+            {
                 Err(TransportError::ExplicitClose)
             }
             Err(e) => Err(TransportError::Broken {
@@ -476,6 +511,15 @@ impl Listener {
                 cause: BrokenCause::Unspecified,
             }),
         }
+    }
+}
+
+/// What `bind_with` answers once process exit has started. `BindError` has
+/// no closed variant.
+fn refused_bind() -> BindError {
+    BindError::Other {
+        kind: crate::error::SrtErrno::Unknown(0),
+        message: crate::exit_guard::REFUSED.into(),
     }
 }
 

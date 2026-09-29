@@ -23,9 +23,14 @@ public final class ExitWithParkedCallChild {
         String shape = args[0];
         String how = args[1];
 
-        // Set immediately before the native call and after it: "entered and
-        // not returned" is what proves the thread is inside the call. Without
-        // it an open that failed at once would pass with the guard removed.
+        // Set immediately before the native call and after it. "Entered and
+        // not returned" is an inference, not an observation: it shows that
+        // the open did not fail at once (which would pass with the guard
+        // removed), but a worker descheduled between entered.set(true) and
+        // the native call looks exactly the same. The Rust and C exit tests
+        // read the native library's count of operations in flight instead;
+        // the JVM binding has no native entry for it and does not get one
+        // for a test.
         AtomicBoolean entered = new AtomicBoolean();
         AtomicBoolean returned = new AtomicBoolean();
 

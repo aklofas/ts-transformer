@@ -499,9 +499,15 @@ the process hangs instead of exiting. A program that closed everything
 pays nothing: shells whose cancel already latched are skipped, so neither
 the cancel walk nor the settle window runs. Only a shell left open costs
 the short settle window (woken threads need a moment to unwind before the
-interpreter shuts down). The native library has the same guard in its own
+interpreter shuts down). The native library has a guard of its own in its
 process-exit handler (it is what covers C, the JVM and Rust); Python's runs
 first because the woken threads need the interpreter to still be alive.
+The native one then refuses every SRT call that has not started yet, closes
+whatever is still open and waits for the calls in flight to return before
+libsrt is torn down. That wait is bounded at 2 s — past it the teardown runs
+anyway, with the risk every such program carried before the guard existed —
+and it does not include the closes themselves: a connected sender with
+unsent data takes up to its linger time (`?linger=` on the URL) to close.
 
 One visible side effect: the call the hook wakes raises like any other
 cancelled call, so a worker thread that was parked in it and has no

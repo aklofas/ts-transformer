@@ -359,10 +359,23 @@ switch (ev.kind) {
 **Process exit with a call still parked.** Cancel, join and `_close` before
 the process exits — that is still the shape to write. If a thread is
 nevertheless inside an SRT call when `exit()` runs (or `main` returns), the
-library unparks it: its exit handler closes every SRT socket that is still
-open, waits for the parked calls to return (bounded, 2 s at most), and only
-then runs libsrt's own cleanup. Before 0.7.0 a thread left in an accept made
-that cleanup wait forever and the process never terminated. This matters most
+library gets it out: its exit handler refuses every SRT call that has not
+started yet, closes every SRT socket that is still open, waits for the calls
+in flight to return — the whole call, not only the part that blocks — and
+only then runs libsrt's own cleanup. Before 0.7.0 a thread left in an accept
+made that cleanup wait forever and the process never terminated.
+
+Two limits. The wait is bounded at 2 s; if a call is still in flight after
+that, libsrt's cleanup runs anyway and that thread may crash or hang the
+exiting process, which is what every such program risked before the guard
+existed. And the 2 s does not bound exit as a whole: closing a connected
+sender that still has unsent data takes up to that socket's linger time
+(`?linger=` on the URL; 5 s by default on the sender opens), and the handler
+closes the open sockets one after the other before the wait starts. A call
+made after the handler has started — from a thread that is still running
+while the process exits — returns `TST_E_CLOSED` without entering libsrt.
+
+This matters most
 for the listener-mode opens (`tst_demux_receiver_open_listener`,
 `tst_managed_demux_receiver_open_listener`, …): they block in their first
 accept BEFORE returning a handle, so there is nothing to `_cancel` while they
