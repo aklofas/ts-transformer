@@ -126,7 +126,12 @@ check_python_symbols() {
   ' "$SURFACE_MANIFEST" \
   | awk -F '\t' -v pkg="${SURFACE_PY_PACKAGE:-tstrans}" -v built="$SURFACE_BUILT_FEATURES" '
     BEGIN { nb = split(built, B, " "); for (i = 1; i <= nb; i++) BUILT[B[i]] = 1 }
-    FNR == NR {
+    # The two inputs are told apart by an explicit phase (assignment operands
+    # below), never by `FNR == NR`: with an EMPTY index that test stays true
+    # through the whole manifest, every row is swallowed as an index row and
+    # no cell is checked at all.
+    phase == 1 {
+      nidx++
       MODS[$1] = 1
       DEF[$1 SUBSEP $2] = 1
       WHERE[$2] = (WHERE[$2] == "" ? "" : WHERE[$2] ", ") ($1 == "" ? pkg : pkg "." $1)
@@ -141,6 +146,13 @@ check_python_symbols() {
         feat = substr(sym, RSTART, RLENGTH); gsub(/[^a-z=]/, "", feat); sub(/^feature=/, "", feat)
         sym = substr(sym, 1, RSTART - 1)
         if (!(feat in BUILT)) next
+      }
+      if (!nidx) {
+        # Fail closed, once: nothing can resolve, and one line that names the
+        # cause reads better than an "unresolved" line per row.
+        if (!warned++)
+          print "FAIL: python definition index is empty (no def/class under SURFACE_PYI_DIR) but the manifest names python symbols, first: " shown " (row " item ")"
+        next
       }
       mod = ""; hasmod = 0; rest = sym
       if (index(sym, pkg ".") == 1) {
@@ -181,7 +193,7 @@ check_python_symbols() {
           print "FAIL: python symbol is not the twin: " shown " (row " item "): " owner " has a Python class, so the twin is " owner " or " owner ".<member>"
       }
     }
-  ' "$idx" -
+  ' phase=1 "$idx" phase=2 -
   rm -f "$idx"
 }
 
@@ -407,6 +419,16 @@ self_test() {
   expect pass "python: the owner class's member" || return 1
   py_row "demo::B::x" "B" "demo::a"
   expect pass "python: the owner class itself" || return 1
+
+  # (8) An EMPTY definition index resolves nothing. A package directory with
+  # no .pyi/.py in it (a moved tree, a wrong SURFACE_PYI_DIR) must fail every
+  # python: cell that names a symbol; only sentinel cells survive it.
+  mkdir -p "$tmp/py-empty"
+  export SURFACE_PYI_DIR="$tmp/py-empty"
+  py_row "demo::a" "no_such_function" "demo::B::x"
+  expect fail "python: a named symbol against an empty definition index" || return 1
+  py_row "demo::a" "deferred" "demo::B::x"
+  expect pass "python: sentinel cells against an empty definition index" || return 1
 
   echo "self-test: PASS"
 }
