@@ -768,10 +768,25 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   copy and then sent the bytes a second time — and `MuxSender` / `Sender`
   retain and re-offer on their own, so a managed sender duplicated the chunk
   with no resend by the caller. The message is now taken back out of the gap
-  buffer before the error is returned. Messages queued by earlier calls stay
-  queued and drain first; an older message `DropOldest` evicted to make room
-  stays evicted and counted, and the hand-back itself is not counted as a
+  buffer before the error is returned; the hand-back is not counted as a
   drop.
+- **`ManagedTransport` (`ReconnectMode::Blocking`): a send that failed with
+  `Broken` or `TooLarge` was delivered later anyway, and twice under a
+  sender shell.** The same ownership fault on the other error exits: when
+  the reconnect budget ran out, or the fresh connection broke under the
+  drain, `send_bytes` returned `Broken` and kept the message queued.
+  `MuxSender` / `Sender` retain a refused chunk after any transport error
+  and re-offer it on the next call, which queued a second copy; once the
+  link came back both went out (and during a long outage every call added
+  another copy). A message the rebuilt connection refused as `TooLarge`
+  stayed at the front of the queue and failed every later send. **Behavior
+  change:** in `Blocking` mode an error from `send_bytes` now always hands
+  the message back — nothing stays in the gap buffer between calls, so a
+  caller driving `ManagedTransport` directly (or through `RawSender`) that
+  relied on a failed send being delivered by a later call's reconnect must
+  resend it, and `OverflowPolicy::Reject` only refuses in this mode at
+  `gap_buffer_capacity == 0`. `Background` mode is unchanged: what it
+  accepted with `Ok(())` stays queued.
 - **`ManagedTransport` (`ReconnectMode::Background`): cancelling a send
   parked in the inner transport returned `Ok(())`.** The inner reported the
   cancel as `ExplicitClose`, the wrapper read that as an outage, queued the

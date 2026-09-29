@@ -216,6 +216,13 @@ impl ManagedStatsHandle {
 /// After the inner transport reconnects, the gap buffer is drained
 /// before resuming new sends.
 ///
+/// A message stays in the gap buffer only while the wrapper still owes
+/// its delivery. In `Blocking` mode that is the span of one `send_bytes`
+/// call: `Ok(())` means it was delivered, and an `Err` hands it back to
+/// the caller (nothing stays queued for a later call to deliver). In
+/// `Background` mode `Ok(())` means accepted, and accepted messages stay
+/// queued across calls until the worker delivers or evicts them.
+///
 /// `ManagedTransport` itself implements `Transport`, so all three sender
 /// shells (`MuxSender`, `Sender`, `RawSender`) compose with it
 /// transparently:
@@ -236,7 +243,10 @@ impl ManagedStatsHandle {
 ///   reconnect loop runs synchronously on the caller's thread, with the
 ///   configured backoff, inline inside the `send_bytes` call that first
 ///   observed `Broken`. That call blocks until reconnect succeeds or the
-///   policy's `max_attempts` budget is exhausted.
+///   policy's `max_attempts` budget is exhausted. The gap buffer holds
+///   that one call's message and is empty again when the call returns,
+///   so `gap_buffer_capacity` / `overflow_policy` only matter here at
+///   capacity 0.
 /// - **`ReconnectMode::Background`** — a per-outage worker thread owns
 ///   the factory/backoff/drain loop instead. While that worker is active,
 ///   or the gap buffer is non-empty, `send_bytes` never touches the inner
@@ -457,11 +467,13 @@ impl<T: Transport + 'static> ManagedTransport<T> {
     /// The check reads a published atomic rather than the `inner` lock —
     /// see locking invariant 4.
     ///
-    /// `Blocking` mode: when the drain that follows a reconnect is refused
-    /// with `Backpressure`, this call's message is taken back out of the
-    /// gap buffer before the error is returned, so the retry the error
-    /// invites cannot put it on the wire twice. Messages queued by earlier
-    /// calls stay queued and drain ahead of that retry.
+    /// `Blocking` mode: an `Err` from this call never leaves the call's
+    /// message in the gap buffer. Whether the drain that follows a
+    /// reconnect was refused (`Backpressure`, `TooLarge`), broke again, or
+    /// the reconnect gave up, the message is taken back out before the
+    /// error is returned — the caller that was told it failed is its only
+    /// owner, so a retry (the caller's, or the one `MuxSender` / `Sender`
+    /// make on their own) cannot put it on the wire twice.
     ///
     /// A cancel that interrupts the direct inner send is reported by this
     /// call as `ExplicitClose`, in either mode, and the interrupted bytes
@@ -714,21 +726,26 @@ impl<T: Transport + 'static> ManagedTransport<T> {
             return Ok(());
         }
         let result = self.reconnect_and_drain();
-        if let (Err(TransportError::Backpressure { .. }), Some(seq)) = (&result, queued) {
-            // `Backpressure` tells the caller its bytes were not consumed
-            // and may be offered again — and the sender shells re-offer on
-            // their own. Leaving this call's message queued as well would
-            // put it on the wire twice: once from the gap buffer, once from
-            // the retry. Take it back so the caller is its only owner.
-            // Messages queued by earlier calls stay, ahead of the retry.
+        if let (Err(_), Some(seq)) = (&result, queued) {
+            // An error hands the message back to the caller, whichever
+            // error it is. `Backpressure` says so outright (not consumed,
+            // offer the same bytes again), and `MuxSender` / `Sender`
+            // retain what they were refused and re-offer it after ANY
+            // transport error — a give-up's `Broken` included. Leaving this
+            // call's message queued as well would put it on the wire twice:
+            // once from the gap buffer, once from the re-offer. Take it
+            // back so the caller is its only owner. (After a cancel the
+            // wrapper never sends again, so there it only keeps `gap_len`
+            // honest.)
             //
             // Named by sequence number rather than "the back entry", though
             // in this mode they are the same thing: `send_bytes` is `&mut
             // self`, there is no worker, and the stats observer only reads,
-            // so nothing else enqueues between the push above and here. For
-            // the same reason the message cannot have been delivered
-            // already — the drain is FIFO and this is the last entry, so a
-            // drain that reached it and sent it ends `Ok`, not here.
+            // so nothing else enqueues between the push above and here. A
+            // message the drain already delivered is no longer queued and
+            // is left alone: the drain is FIFO and this is the last entry,
+            // so that drain ended `Ok`, and the only error that can follow
+            // it is the close latch's.
             self.gap
                 .lock()
                 .expect("BUG: gap lock poisoned — gap buffer is invariant-critical")

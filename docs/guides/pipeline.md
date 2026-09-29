@@ -373,7 +373,10 @@ the caller without triggering reconnect. `Broken` or `Closed` queues
 the new bytes into the gap buffer (subject to `OverflowPolicy`) and
 calls the factory with the configured backoff until a fresh transport
 materialises or `max_attempts` is exhausted. On reconnect the gap
-buffer drains before the call returns.
+buffer drains before the call returns. If the call returns an error
+instead, its bytes are taken back out of the gap buffer first: a send
+that failed is the caller's to retry, and nothing is left queued to be
+delivered behind its back.
 
 `ReconnectPolicy.mode` picks where that reconnect loop runs. The
 default, `ReconnectMode::Blocking`, runs it on the calling thread — a
