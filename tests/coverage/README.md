@@ -93,8 +93,12 @@ un-catalogued. The ratchet (`scripts/check/repo/surface-manifest.sh`) enforces:
 
 - **(a) owning-test existence** — every `owning_tests` path must exist on disk.
 - **(b) binding symbol resolution + five columns** — every `c:SYM` is grepped in
-  `bindings/c/include/tstrans.h`; every `python:dotted.name` / `java:dotted.name`
-  resolves its leaf component in the binding sources. Binding entries tagged
+  `bindings/c/include/tstrans.h`; every `java:dotted.name` resolves its leaf
+  component in the binding sources; every `python:` cell names a definition in
+  the Python package — a module-level function or class, or `Class.member`,
+  optionally prefixed `tstrans.<module>.` (required when several modules
+  define the name), and a row for `Owner::leaf` whose `Owner` has a Python
+  class must name that class or one of its members. Binding entries tagged
   `[feature=X]` are skipped when feature `X` is not built. **Every `[[surface]]`
   row must list all five prefixes** (`c`, `python`, `java`, `swift`, `kotlin`).
   Three sentinels stand in for a symbol and are never resolved:
