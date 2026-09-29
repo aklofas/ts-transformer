@@ -467,6 +467,16 @@ impl<R: RecvTransport> RecvTransport for ManagedRecvTransport<R> {
                     self.reconnecting.store(true, Ordering::Release);
                     continue;
                 }
+                Err(TransportError::ExplicitClose) => {
+                    // The parked receive was cancelled. That is terminal —
+                    // the inner answers every later call the same way — so
+                    // latch here, as every other cancel exit in this loop
+                    // does, rather than leave `is_alive()` reporting live
+                    // until the next call reaches the entry gate.
+                    self.closed = true;
+                    self.explicit_close = true;
+                    return Err(TransportError::ExplicitClose);
+                }
                 Err(e) => return Err(e),
             }
         }
