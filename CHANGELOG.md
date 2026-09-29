@@ -1241,6 +1241,35 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Testing
 
+- **Tooling: `tst-interop`'s attribution judges against the current
+  reconnect epoch.** Two excusals kept state from a connection that no
+  longer existed, so each could pass a leg that should fail. (1) A reconnect
+  gap ran to its own window (marker + 628 packets) whatever happened
+  inside it, and an injection was excused if ANY gap covered it without
+  holding it. After two reconnects in quick succession the older gap still
+  covered the first ~600 packets of the newer connection and, having seen no
+  media of its own, held nothing there — so a detectable injection that
+  arrived after the second reconnect, behind media from the reset demuxer,
+  and that the demuxer never reported, was counted `lost_in_reconnect_gap`
+  instead of undetected. Now a gap ends at the next reconnect marker.
+  Everything that was legitimately lost stays excused: resolved
+  approximately, anchored before the marker, never anchored, or placed
+  before the demuxer's first media after it. (2) The set of PMT-declared
+  PCR PIDs, which decides whether a `PcrAnomaly` may be attributed or
+  excused at all, only ever grew: a reconnect did not empty it, and an
+  attribution attached mid-capture was handed every program the tally had
+  ever seen. A forward `PcrAnomaly` on a PID declared only before a
+  reconnect, beside a continuity gap, was excused as transport loss (and a
+  `header` injection could explain it, in Strict as well). Now a
+  `ReconnectDiscontinuity` empties the set until a program map is reported
+  again, a program map replaces the declaration of its own program and of
+  any program that held its PMT PID, and continuity gaps seen before a
+  reconnect excuse no anomaly after it. `programs_seen` still counts every
+  program reported over the capture. One topology change stays invisible
+  to the harness, because the demuxer emits no event for it: a PAT that
+  drops a program and leaves its PMT PID unused.
+  `Attribution::on_program_map` takes the PMT PID as well.
+
 - **Tooling: `tst-interop`'s transport-loss excusals are causal, not
   positional.** Three excusals of the reconnect-aware attribution accepted
   proximity as cause, so each could pass a leg that should fail. (1) An

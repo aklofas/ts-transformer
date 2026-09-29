@@ -10,7 +10,7 @@
 //! (and, for `Sample`, which [`SamplePayload`] variant) arrived, so two
 //! streams sharing a `stream_type` byte never conflate their counts.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::io;
 use std::path::Path;
 
@@ -242,10 +242,14 @@ pub struct Tally {
     audio_frames: u64,
     /// Per-`program_number` media counts — see [`ProgramCounts`].
     per_program: BTreeMap<u16, ProgramCounts>,
-    /// Programs seen, each with the `PCR_PID` its latest PMT declared —
-    /// kept so an attribution attached after a PMT still learns which
-    /// PIDs carry a time base (see [`Tally::attach_attribution`]).
-    programs_seen: BTreeMap<u16, u16>,
+    /// Every program a PMT was reported for, over the whole capture: the
+    /// census `programs seen` is judged on. History, not topology — a
+    /// program stays counted after a reconnect or a PAT change.
+    programs_seen: BTreeSet<u16>,
+    /// The `PCR_PID`s the demuxer declares NOW — kept so an attribution
+    /// attached after a PMT still learns which PIDs carry a time base
+    /// (see [`Tally::attach_attribution`]). Emptied by a reconnect.
+    pcr_pids_declared: corrupt::DeclaredPcrPids,
     /// Distinct video codecs observed across all `Sample` events. Normally
     /// a singleton (one codec per profile); tracked as a set so an
     /// unexpected second codec is visible too.
@@ -338,7 +342,8 @@ impl Tally {
             track_klv_digests: true,
             audio_frames: 0,
             per_program: BTreeMap::new(),
-            programs_seen: BTreeMap::new(),
+            programs_seen: BTreeSet::new(),
+            pcr_pids_declared: corrupt::DeclaredPcrPids::default(),
             video_codecs_seen: HashSet::new(),
             klv_carriage_seen: HashSet::new(),
             misp_sei_seen: false,
@@ -438,7 +443,9 @@ impl Tally {
         }
         match ev {
             DemuxEvent::ProgramMap(m) => {
-                self.programs_seen.insert(m.program_number, m.pcr_pid);
+                self.programs_seen.insert(m.program_number);
+                self.pcr_pids_declared
+                    .declare(m.program_number, m.pmt_pid, m.pcr_pid);
             }
             DemuxEvent::Sample {
                 stream,
@@ -537,6 +544,9 @@ impl Tally {
             DemuxEvent::ReconnectDiscontinuity => {
                 self.last_reconnect_at = Some(at);
                 self.reconnects_fed += 1;
+                // The managed receiver reset the demuxer: it declares
+                // nothing until it reports a program map again.
+                self.pcr_pids_declared.clear();
             }
         }
     }
@@ -696,12 +706,14 @@ impl Tally {
     /// capture would report the injections it never saw evidence for as
     /// undetected.
     ///
-    /// The PMTs already seen are handed over here: the attribution
+    /// The declarations in force are handed over here: the attribution
     /// refuses a `PcrAnomaly` on a PID no PMT declares as `PCR_PID`, and
     /// which PIDs are declared does not depend on when it was attached.
+    /// Only those in force — a program seen before the last reconnect
+    /// and not since is history, and declares nothing.
     pub fn attach_attribution(&mut self, mut a: corrupt::Attribution) {
-        for (&program, &pcr_pid) in &self.programs_seen {
-            a.on_program_map(program, pcr_pid);
+        for (program, pmt_pid, pcr_pid) in self.pcr_pids_declared.iter() {
+            a.on_program_map(program, pmt_pid, pcr_pid);
         }
         self.attribution = Some(a);
     }
@@ -784,7 +796,7 @@ impl Tally {
                 a.on_signal(at, Some(stream.pid), sig);
             }
             DemuxEvent::ReconnectDiscontinuity => a.on_reconnect(at),
-            DemuxEvent::ProgramMap(m) => a.on_program_map(m.program_number, m.pcr_pid),
+            DemuxEvent::ProgramMap(m) => a.on_program_map(m.program_number, m.pmt_pid, m.pcr_pid),
         }
     }
 
@@ -3198,5 +3210,96 @@ mod tests {
             r.failures,
             r.metrics.corruption_attribution
         );
+    }
+
+    /// Two reconnects in quick succession, then a damaged PAT that
+    /// arrived in the newest epoch after the reset demuxer had produced
+    /// media again. The older reconnect's window still reaches that far,
+    /// and it must not excuse what the newest epoch holds to detection.
+    /// The report must fail `corruption_detected`.
+    #[test]
+    fn a_second_reconnect_does_not_excuse_an_injection_the_demuxer_ignored() {
+        use crate::corrupt::{Class, Coord};
+        let hdr = corruption_header();
+        let wire = wire_for("baseline", 3.0);
+        let mut t = healthy_baseline_tally();
+        let mut inj = injection_at(Class::PsiFlip, 0, 10);
+        inj.psi = true;
+        inj.coord = Coord {
+            pcr_base: Some(1000),
+            since_pcr: 10,
+        };
+        t.attach_attribution(attribution_for(VerifyMode::Lossy, vec![inj], &hdr));
+        t.feed_at(&video_event(90 * FPS_STEP_TICKS, true), 20); // last media before the gap
+        t.feed_at(&DemuxEvent::ReconnectDiscontinuity, 60);
+        t.feed_at(&DemuxEvent::ReconnectDiscontinuity, 62); // the rebuild broke again
+        t.note_pcrs(&[(1000, 65)]); // exact anchor, after both markers: resolves at 75
+        t.feed_at(&video_event(91 * FPS_STEP_TICKS, false), 70);
+        t.feed_at(&video_event(92 * FPS_STEP_TICKS, false), 80);
+        let r = finish_baseline(t, VerifyMode::Lossy, &wire);
+        assert!(
+            r.failures
+                .iter()
+                .any(|f| f.starts_with("corruption_detected")),
+            "pass={} failures={:?} attribution={:?}",
+            r.pass,
+            r.failures,
+            r.metrics.corruption_attribution
+        );
+    }
+
+    /// Program 1 declared its time base on the video PID; after a
+    /// reconnect only program 2 is declared, on the KLV PID. A forward
+    /// `PcrAnomaly` on the video PID beside a gap there means the demuxer
+    /// kept a timeline the reset should have dropped. The report must
+    /// fail, whether the attribution heard the topology as it changed or
+    /// was attached afterwards and handed what the tally had seen.
+    #[test]
+    fn a_pcr_anomaly_on_a_pid_declared_only_before_a_reconnect_fails_the_report() {
+        let hdr = corruption_header();
+        let wire = wire_for("baseline", 3.0);
+        let program_2 = DemuxEvent::ProgramMap(ProgramMap {
+            program_number: 2,
+            pcr_pid: KLV_PID,
+            pmt_pid: 0x1001,
+            streams: Vec::new(),
+            klv_links: Vec::new(),
+        });
+        for attach_late in [false, true] {
+            let mut t = healthy_baseline_tally();
+            if !attach_late {
+                t.attach_attribution(attribution_for(VerifyMode::Lossy, vec![], &hdr));
+            }
+            t.feed_at(&DemuxEvent::ReconnectDiscontinuity, 100);
+            t.feed_at(&program_2, 110);
+            if attach_late {
+                t.attach_attribution(attribution_for(VerifyMode::Lossy, vec![], &hdr));
+            }
+            t.feed_at(&discontinuity_event(), 5000);
+            t.feed_at(&pcr_anomaly_event(), 5010);
+            let r = finish_baseline(t, VerifyMode::Lossy, &wire);
+            let a = r
+                .metrics
+                .corruption_attribution
+                .clone()
+                .expect("attribution");
+            assert_eq!(
+                (a.pcr_anomalies_excused, a.unexplained_nonconformant),
+                (0, 1),
+                "attach_late={attach_late}: {a:?}"
+            );
+            assert!(
+                r.failures
+                    .iter()
+                    .any(|f| f.starts_with("corruption_attributed"))
+                    && r.failures
+                        .iter()
+                        .any(|f| f.starts_with("nonconformant_event")),
+                "attach_late={attach_late}: failures={:?}",
+                r.failures
+            );
+            // The census is history, not topology: both programs were seen.
+            assert_eq!(r.metrics.programs_seen, 2, "attach_late={attach_late}");
+        }
     }
 }

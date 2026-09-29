@@ -1479,7 +1479,8 @@ pub struct AttributionReport {
     /// the `PcrAnomaly` signals excused as the timestamp signature of a
     /// continuity gap on the same PID — a `ContinuityJump` within the
     /// attribution window before them, or on the same packet after them.
-    /// Only a forward jump, only on a PID a PMT declares as `PCR_PID`, and
+    /// Only a forward jump, only on a PID a PMT currently declares as
+    /// `PCR_PID`, only against a gap seen since the last reconnect, and
     /// at most one per gap. Lossy only; strict charges every one.
     #[serde(default)]
     pub pcr_anomalies_excused: u64,
@@ -1488,7 +1489,8 @@ pub struct AttributionReport {
     pub reconnects_seen: u64,
     /// Of [`undetected_lost`](Self::undetected_lost), the injections whose
     /// position resolved inside a reconnect gap — between the last media
-    /// before a marker and the marker's own window — that the demuxer
+    /// before a marker and the marker's own window, or the next marker if
+    /// that comes first — that the demuxer
     /// was never in a position to notice: resolved approximately, or from
     /// an anchor the receiver saw before the marker, or placed before the
     /// reset demuxer had produced media again (on the injection's own PID
@@ -1747,10 +1749,10 @@ pub struct Attribution {
     /// Every reconnect gap seen. One entry per reconnect — bounded by the
     /// run's outage count, not its length.
     reconnect_gaps: Vec<ReconnectGap>,
-    /// `PCR_PID` per program, from the PMTs the receiver's demuxer
-    /// reported. The demuxer keeps a PCR timeline only for these, so they
-    /// are the only PIDs a `PcrAnomaly` can honestly surface on.
-    pcr_pid_by_program: BTreeMap<u16, u16>,
+    /// The `PCR_PID`s the receiver's demuxer CURRENTLY declares, as far as
+    /// its events show. The demuxer keeps a PCR timeline only for these,
+    /// so they are the only PIDs a `PcrAnomaly` can honestly surface on.
+    declared: DeclaredPcrPids,
     reconnects_seen: u64,
     lost_in_reconnect_gap: u64,
     unexplained_samples: Vec<String>,
@@ -1760,6 +1762,59 @@ pub struct Attribution {
     /// APPENDED mid-capture can still trust its ordinal-0 anchor. See
     /// [`Attribution::append`].
     seen_pcr: bool,
+}
+
+/// Which PIDs the demuxer currently declares as a program's `PCR_PID`,
+/// rebuilt from the only three things its events say about topology.
+///
+/// - A `ProgramMap` declares a program's `PCR_PID`. The demuxer emits one
+///   for a program's first PMT and for every PMT version after it, so a
+///   later map for the same program REPLACES the PID.
+/// - The demuxer keeps one program per PMT PID. A map for another program
+///   on a PMT PID already in the set therefore shows that the PAT gave
+///   that PID away, and the program that held it is gone.
+/// - A reconnect resets the demuxer ([`DeclaredPcrPids::clear`]): it
+///   holds no program at all until it reads a PAT and a PMT again.
+///
+/// What the events do NOT say is that a PAT dropped a program and left its
+/// PMT PID unused: the demuxer retires that program and its PCR history
+/// without an event. Such a program stays in this set until a reconnect or
+/// a map supersedes it, so a `PcrAnomaly` on its former `PCR_PID` would
+/// still be treated as one on a declared PID. The set can only be too
+/// large, never too small — every PID the demuxer does declare reached it
+/// through a `ProgramMap` — so the error can excuse, and cannot charge.
+#[derive(Clone, Debug, Default)]
+pub struct DeclaredPcrPids {
+    /// Program number to `(pmt_pid, pcr_pid)`. Bounded by the program
+    /// count.
+    by_program: BTreeMap<u16, (u16, u16)>,
+}
+
+impl DeclaredPcrPids {
+    /// A `ProgramMap`: `program_number`, whose PMT rides `pmt_pid`,
+    /// carries its time base on `pcr_pid`.
+    pub fn declare(&mut self, program_number: u16, pmt_pid: u16, pcr_pid: u16) {
+        self.by_program.retain(|_, &mut (pmt, _)| pmt != pmt_pid);
+        self.by_program.insert(program_number, (pmt_pid, pcr_pid));
+    }
+
+    /// The demuxer was reset: nothing is declared.
+    pub fn clear(&mut self) {
+        self.by_program.clear();
+    }
+
+    /// Whether any program declares `pid` as its `PCR_PID`.
+    #[must_use]
+    pub fn declares(&self, pid: u16) -> bool {
+        self.by_program.values().any(|&(_, pcr)| pcr == pid)
+    }
+
+    /// Every declaration, as `(program_number, pmt_pid, pcr_pid)`.
+    pub fn iter(&self) -> impl Iterator<Item = (u16, u16, u16)> + '_ {
+        self.by_program
+            .iter()
+            .map(|(&program, &(pmt, pcr))| (program, pmt, pcr))
+    }
 }
 
 /// One continuity gap, as PCR-anomaly evidence.
@@ -1783,9 +1838,11 @@ struct ReconnectGap {
     from: u64,
     /// The `ReconnectDiscontinuity` marker itself.
     marker: u64,
-    /// The marker plus the widest window an approximately-resolved
-    /// injection can be placed in.
-    to: u64,
+    /// One past the last ordinal the gap covers: the marker plus the
+    /// widest window an approximately-resolved injection can be placed
+    /// in, or the next reconnect's marker if that comes first — see
+    /// [`Attribution::on_reconnect`].
+    end: u64,
     /// The first media event on each PID after the marker, as long as it
     /// falls inside the gap: the evidence that the demuxer, which the
     /// reconnect reset, was parsing that PID again. Read by
@@ -2060,7 +2117,7 @@ impl Attribution {
             pcr_anomalies_excused: 0,
             last_media_at: 0,
             reconnect_gaps: Vec::new(),
-            pcr_pid_by_program: BTreeMap::new(),
+            declared: DeclaredPcrPids::default(),
             reconnects_seen: 0,
             lost_in_reconnect_gap: 0,
             unexplained_samples: Vec::new(),
@@ -2329,11 +2386,13 @@ impl Attribution {
         self.resolved += 1;
         // Position inside a reconnect gap is not enough: an injection
         // that arrived at a demuxer able to notice it owes the detection
-        // wherever it sits — see `ReconnectGap::holds`.
+        // wherever it sits — see `ReconnectGap::holds`. No gap reaches
+        // past the marker of the reconnect after it, so from a marker
+        // onwards the only gap with a say is that marker's own.
         let in_gap = self
             .reconnect_gaps
             .iter()
-            .any(|g| g.from <= r && r <= g.to && !g.holds(inj, st, r));
+            .any(|g| g.from <= r && r < g.end && !g.holds(inj, st, r));
         let lost = self.excuse_transport_loss && (st.cc_jump_in_window || in_gap);
         if inj.detectable && !st.detected {
             if lost {
@@ -2591,7 +2650,7 @@ impl Attribution {
         // explains a packet APPEARING on the PID it was moved to, not
         // that. Never attributed and never excused, in either tier.
         let undeclared_pcr = matches!(sig, Signal::PcrAnomaly { .. })
-            && !pid.is_some_and(|p| self.pcr_pid_by_program.values().any(|&d| d == p));
+            && !pid.is_some_and(|p| self.declared.declares(p));
         let attributed_to = self.explainer(at, pid, sig).filter(|_| !undeclared_pcr);
         // A continuity jump is the one signal that also means "packets
         // went missing here", so it is recorded against every injection
@@ -2777,7 +2836,7 @@ impl Attribution {
         self.last_media_at = at;
         // Only the latest gap: media after an older marker says nothing
         // once a later reconnect has reset the demuxer again.
-        if let Some(g) = self.reconnect_gaps.last_mut().filter(|g| at <= g.to) {
+        if let Some(g) = self.reconnect_gaps.last_mut().filter(|g| at < g.end) {
             g.first_media.entry(pid).or_insert(at);
         }
         self.advance(at);
@@ -2824,23 +2883,62 @@ impl Attribution {
     /// needs to notice it: media on the injection's own PID for damage
     /// noticed as a continuity jump, on any PID for the rest. Strict
     /// never excuses.
+    ///
+    /// The marker also ends everything that described the connection
+    /// before it: the previous reconnect's gap, the declared `PCR_PID`s
+    /// and the continuity gaps seen so far.
     pub fn on_reconnect(&mut self, at: u64) {
         self.settle_pending_pcr(at);
         self.reconnects_seen += 1;
+        // A gap belongs to one reconnect epoch, and this marker ends the
+        // previous one, so the previous gap stops HERE rather than at its
+        // own window. From `at` on, a packet that arrived came through
+        // the connection this marker opened, and what the demuxer could
+        // notice is what it re-acquired after THIS reset. The older gap
+        // knows neither — `on_media` records only into the latest — so
+        // left to reach past `at` it would never hold anything there and
+        // would excuse what the newest gap holds to detection.
+        //
+        // Nothing legitimately lost is given up. Below `at` the older gap
+        // keeps its whole reach. From `at` on the new gap covers at least
+        // as far as the old one did (its window opens later), and it
+        // excuses by the same rule: resolved approximately, anchored
+        // before this marker, never anchored, or placed before the
+        // demuxer's first media after it.
+        //
+        // `end` is exclusive because a marker is a packet COUNT: the
+        // packet with ordinal `at` is the first of the new epoch.
+        if let Some(g) = self.reconnect_gaps.last_mut() {
+            g.end = g.end.min(at);
+        }
         self.reconnect_gaps.push(ReconnectGap {
             from: self.last_media_at,
             marker: at,
-            to: at.saturating_add(self.window).saturating_add(APPROX_SLACK),
+            end: at
+                .saturating_add(self.window)
+                .saturating_add(APPROX_SLACK)
+                .saturating_add(1),
             first_media: BTreeMap::new(),
         });
+        // The reset demuxer holds no program until it reads a PAT and a
+        // PMT again, and says so with a `ProgramMap` before it can report
+        // a `PcrAnomaly`: it keeps a PCR baseline only for a PID a program
+        // declares, and adopts a declaration in the same step that queues
+        // the map.
+        self.declared.clear();
+        // It holds no PCR baseline either, so an anomaly from here on is
+        // a jump between two PCRs of the NEW connection. A continuity gap
+        // seen on the old one is not its cause.
+        self.last_cc_jump_by_pid.clear();
     }
 
-    /// The receiver's demuxer reported a PMT: `program_number` carries its
-    /// time base on `pcr_pid`. A later PMT for the same program replaces
-    /// the PID. Until one is fed no PID is declared, and every
-    /// `PcrAnomaly` is a finding.
-    pub fn on_program_map(&mut self, program_number: u16, pcr_pid: u16) {
-        self.pcr_pid_by_program.insert(program_number, pcr_pid);
+    /// The receiver's demuxer reported a PMT: `program_number`, whose PMT
+    /// rides `pmt_pid`, carries its time base on `pcr_pid`. It replaces
+    /// what it supersedes — see [`DeclaredPcrPids`]. Until one is fed no
+    /// PID is declared, at the start of the capture and again after every
+    /// reconnect, and every `PcrAnomaly` is a finding.
+    pub fn on_program_map(&mut self, program_number: u16, pmt_pid: u16, pcr_pid: u16) {
+        self.declared.declare(program_number, pmt_pid, pcr_pid);
     }
 
     /// Final verdict over a capture of `packets_total` receiver packets.
@@ -4622,7 +4720,7 @@ mod tests {
         } else {
             Attribution::strict(log, &hdr())
         };
-        a.on_program_map(1, 0x1011);
+        a.on_program_map(1, 0x1000, 0x1011);
         a
     }
 
@@ -5334,5 +5432,183 @@ mod tests {
         a.on_media(5015, KLV);
         let r = a.finish(10_000);
         assert_eq!((r.undetected_count, r.lost_in_reconnect_gap), LOST, "{r:?}");
+    }
+
+    /// A gap belongs to one reconnect epoch. Two reconnects in quick
+    /// succession leave the older gap's window reaching past the newer
+    /// marker, and the older gap saw no media of its own — so if it still
+    /// had a say there, a second reconnect would switch detection off for
+    /// everything the newer epoch demonstrably delivered.
+    #[test]
+    fn an_older_reconnect_gap_does_not_excuse_what_the_newest_epoch_holds() {
+        let mut pat_flip = inj(1000, 10, Class::PsiFlip, 0, true);
+        pat_flip.psi = true;
+        let mut a = Attribution::lossy(vec![pat_flip.clone()], &hdr());
+        a.on_media(4000, 0x1011);
+        a.on_reconnect(4900);
+        a.on_reconnect(4950);
+        a.on_pcr(1000, 5000); // exact, after the newest marker: resolves at 5010
+        a.on_media(5005, 0x1011); // the reset demuxer is parsing again
+        a.on_media(5100, 0x1011);
+        let r = a.finish(10_000);
+        assert_eq!(
+            (r.undetected_count, r.lost_in_reconnect_gap),
+            (1, 0),
+            "arrived in the newest epoch, after its media, and nothing was reported: {r:?}"
+        );
+
+        // The twin that IS lost: placed between the two markers, in an
+        // epoch that ended before the demuxer produced any media.
+        let mut a = Attribution::lossy(vec![pat_flip], &hdr());
+        a.on_media(4000, 0x1011);
+        a.on_reconnect(4900);
+        a.on_pcr(1000, 4905); // exact, after the first marker: resolves at 4915
+        a.on_reconnect(4950);
+        a.on_media(5005, 0x1011);
+        a.on_media(5100, 0x1011);
+        let r = a.finish(10_000);
+        assert_eq!(
+            (r.undetected_count, r.lost_in_reconnect_gap),
+            (0, 1),
+            "{r:?}"
+        );
+    }
+
+    /// The declared `PCR_PID`s are the demuxer's CURRENT topology. A
+    /// reconnect resets the demuxer, so a PID declared before it is
+    /// declared no longer, and a `PcrAnomaly` there means a timeline
+    /// outlived its declaration: never excused, never attributed.
+    #[test]
+    fn a_pcr_pid_declared_before_a_reconnect_is_not_declared_after_it() {
+        let mut on_video = inj(1000, 10, Class::Header, 0x1011, true);
+        on_video.offsets = vec![4];
+        for lossy in [false, true] {
+            // Program 1 before the reconnect, only program 2 after it.
+            let run = |log: Vec<Injection>| {
+                let mut a = with_video_pcr(lossy, log);
+                a.on_reconnect(4000);
+                a.on_program_map(2, 0x1001, 0x1100);
+                a
+            };
+
+            // Beside a gap nothing else claims.
+            let mut a = run(vec![]);
+            a.on_signal(5000, Some(0x1011), Signal::ContinuityJump);
+            a.on_signal(5010, Some(0x1011), PCR_FORWARD);
+            let r = a.finish(10_000);
+            assert_eq!(
+                (r.pcr_anomalies_excused, r.unexplained_nonconformant),
+                (0, 1),
+                "lossy={lossy}: {r:?}"
+            );
+
+            // Inside the window of an injection that could otherwise
+            // explain it.
+            let mut a = run(vec![on_video.clone()]);
+            a.on_pcr(1000, 5000); // resolves at 5010
+            a.on_media(5005, 0x1100);
+            a.on_signal(5012, Some(0x1011), PCR_FORWARD);
+            let r = a.finish(10_000);
+            assert_eq!(
+                (r.attributed_events, r.unexplained_nonconformant),
+                (0, 1),
+                "lossy={lossy}: {r:?}"
+            );
+        }
+
+        // The healthy twin: the anomaly is on the PID the new topology
+        // declares, beside its own gap.
+        let mut a = with_video_pcr(true, vec![]);
+        a.on_reconnect(4000);
+        a.on_program_map(2, 0x1001, 0x1100);
+        a.on_signal(5000, Some(0x1100), Signal::ContinuityJump);
+        a.on_signal(5010, Some(0x1100), PCR_FORWARD);
+        let r = a.finish(10_000);
+        assert_eq!(
+            (r.pcr_anomalies_excused, r.unexplained_nonconformant),
+            (1, 0),
+            "{r:?}"
+        );
+
+        // After a reconnect nothing is declared until a program map says
+        // so — the same fail-closed rule as at the start of a capture.
+        let mut a = with_video_pcr(true, vec![]);
+        a.on_reconnect(4000);
+        a.on_signal(5000, Some(0x1011), Signal::ContinuityJump);
+        a.on_signal(5010, Some(0x1011), PCR_FORWARD);
+        a.on_program_map(1, 0x1000, 0x1011);
+        let r = a.finish(10_000);
+        assert_eq!(
+            (r.pcr_anomalies_excused, r.unexplained_nonconformant),
+            (0, 1),
+            "{r:?}"
+        );
+    }
+
+    /// Without a reconnect the declarations follow the program maps: a
+    /// later map for the same program replaces its `PCR_PID`, and a map
+    /// for a different program on the same PMT PID replaces the program
+    /// (the demuxer keeps one program per PMT PID).
+    #[test]
+    fn a_program_map_replaces_the_declaration_it_supersedes() {
+        let excused_on = |a: &mut Attribution, at: u64, pid: u16| {
+            a.on_signal(at, Some(pid), Signal::ContinuityJump);
+            a.on_signal(at + 10, Some(pid), PCR_FORWARD);
+        };
+
+        // Program 1 moves its time base from 0x1011 to 0x1100.
+        let mut a = with_video_pcr(true, vec![]);
+        a.on_program_map(1, 0x1000, 0x1100);
+        excused_on(&mut a, 5000, 0x1011);
+        excused_on(&mut a, 6000, 0x1100);
+        let r = a.finish(10_000);
+        assert_eq!(
+            (r.pcr_anomalies_excused, r.unexplained_nonconformant),
+            (1, 1),
+            "{r:?}"
+        );
+
+        // Program 2 takes over program 1's PMT PID.
+        let mut a = with_video_pcr(true, vec![]);
+        a.on_program_map(2, 0x1000, 0x1100);
+        excused_on(&mut a, 5000, 0x1011);
+        excused_on(&mut a, 6000, 0x1100);
+        let r = a.finish(10_000);
+        assert_eq!(
+            (r.pcr_anomalies_excused, r.unexplained_nonconformant),
+            (1, 1),
+            "{r:?}"
+        );
+
+        // A second program on its own PMT PID removes nothing.
+        let mut a = with_video_pcr(true, vec![]);
+        a.on_program_map(2, 0x1001, 0x1100);
+        excused_on(&mut a, 5000, 0x1011);
+        excused_on(&mut a, 6000, 0x1100);
+        let r = a.finish(10_000);
+        assert_eq!(
+            (r.pcr_anomalies_excused, r.unexplained_nonconformant),
+            (2, 0),
+            "{r:?}"
+        );
+    }
+
+    /// A continuity gap is evidence about the connection it was seen on.
+    /// After a reconnect the demuxer holds no PCR baseline from before it,
+    /// so a jump it reports is between two PCRs of the NEW connection and
+    /// a gap from the old one is not its cause.
+    #[test]
+    fn a_continuity_gap_from_before_a_reconnect_excuses_no_pcr_anomaly_after_it() {
+        let mut a = with_video_pcr(true, vec![]);
+        a.on_signal(3990, Some(0x1011), Signal::ContinuityJump);
+        a.on_reconnect(4000);
+        a.on_program_map(1, 0x1000, 0x1011);
+        a.on_signal(4010, Some(0x1011), PCR_FORWARD);
+        let r = a.finish(10_000);
+        assert_eq!(
+            (r.pcr_anomalies_excused, r.unexplained_nonconformant),
+            (0, 1),
+            "{r:?}"
+        );
     }
 }
