@@ -11,7 +11,12 @@ import java.util.Optional;
 public final class KlvEncodeException extends BindingException {
     private static final long serialVersionUID = 1L;
 
-    /** Discriminant; values map from the Rust {@code KlvEncodeError} variants. */
+    /**
+     * Discriminant; values map from the Rust {@code KlvEncodeError} variants.
+     *
+     * <p>Persist {@link #name()}, never {@link #ordinal()}: the declaration order is not part of the API
+     * (0.7.0 moved {@code DUPLICATE_TARGET_ID} and {@code FORBIDDEN_STANDALONE_OFFSET} down one ordinal).
+     */
     public enum Kind {
         BUFFER_TOO_SMALL, RECORD_TOO_LARGE, OUT_OF_RANGE, STRING_TOO_LONG,
         UNSUPPORTED_IMAPB_LENGTH, INVALID_IMAPB_PARAMS,

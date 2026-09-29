@@ -10,6 +10,12 @@ package org.tstrans;
 public final class RtpException extends BindingException {
     private static final long serialVersionUID = 1L;
 
+    /**
+     * Failure category.
+     *
+     * <p>Persist {@link #name()}, never {@link #ordinal()}: the declaration order is not part of the API
+     * (0.7.0 replaced every constant, so ordinals 0-3 name different kinds than they did in 0.6.x).
+     */
     public enum Kind {
         BACKPRESSURE,
         /** The transport is dead (send/recv I/O failure); reopen. */

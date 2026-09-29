@@ -18,8 +18,11 @@ domain prefix stripped (`BindingErrorKind::UdpIo` → `UdpErrorKind.IO`).
 The native extension resolves every member it can raise at
 `import tstrans`, so a table/enum mismatch is an `ImportError`, never a
 surprise in an `except` clause. Members retired by that alignment stay as
-value-compatible deprecated aliases for 0.7.x and are removed in 0.8.0;
-each enum's docstring lists its own.
+deprecated aliases for 0.7.x and are removed in 0.8.0; each enum's
+docstring lists its own. An alias IS its successor, so it carries the
+successor's `.name` and `.value`: on the `IntEnum`s the integer is the one
+the old member had, on the string-valued `DemuxErrorKind` the string changed
+(see its docstring).
 
 `KlvEncodeErrorKind` accompanies the `klv.encode_*` Python wrappers.
 """
@@ -120,6 +123,14 @@ class DemuxErrorKind(enum.Enum):
     `UNRECOVERABLE`, `BAD_PMT` → `MALFORMED_PSI`, `BAD_PES` → `MALFORMED_PES`,
     `SYNC_LOSS` → `SYNC_BUF_EXHAUSTED`. `UNEXPECTED_EOF` is removed — it was
     never produced (truncation is a clean EOF, read failures are `OSError`).
+
+    The aliases keep the NAME only. This enum is string-valued, and each
+    alias now carries its successor's value: `DemuxErrorKind.BAD_PMT.value`
+    is `"malformed_psi"`, and `DemuxErrorKind("bad_pmt")` — like
+    `"internal"`, `"bad_pes"`, `"sync_loss"` and `"unexpected_eof"` —
+    raises `ValueError`. Compare members, and rewrite stored 0.6.x strings
+    before looking them up.
+
     Matchers should include a default arm — the Rust ``DemuxError`` enum is
     ``#[non_exhaustive]`` and new variants may appear in minor releases.
     """
@@ -408,10 +419,10 @@ class SrtErrorKind(enum.IntEnum):
     Construction: `CONNECT_FAILED` / `ACCEPT_FAILED` / `TIMEOUT` /
     `CONFIG_INVALID` (URL, mode, option and address errors). Runtime:
     `CLOSED` (own close; a cancel/close from another thread — detail
-    "cancelled from another thread"; a call on a closed handle), `BROKEN`
-    (wire failure — and, until the SRT transport-level cancel change lands
-    later in 0.7.0, what a cancelled parked call on a plain shell may still
-    raise), `BACKPRESSURE` (libsrt would-block / send queue full; retry),
+    "cancelled from another thread", on the plain and the managed shells
+    alike, for the parked call that observes the cancel and every call
+    after it; a call on a closed handle), `BROKEN` (wire failure; never a
+    cancel), `BACKPRESSURE` (libsrt would-block / send queue full; retry),
     `TOO_LARGE` (payload over the `payloadsize` cap; was `CONFIG_INVALID`),
     `INPUT_MALFORMED` (TS framing lost sync in `send_bytes`; was
     `CONFIG_INVALID`), `END_OF_STREAM` (the peer closed cleanly on a

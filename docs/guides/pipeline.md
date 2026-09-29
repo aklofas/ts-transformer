@@ -254,20 +254,22 @@ internally where their thread-safety contract requires it.
   refused the bytes. Retrying the same slice is reasonable. `errno_code`
   carries the wire-level code (libsrt major category for `SrtTransport`)
   or `None` for transports that don't expose one.
-- `Broken { msg, errno_code }` — transport is dead; rebuild it (or rely
-  on `ManagedTransport` to do so).
+- `Broken { msg, errno_code, cause }` — transport is dead; rebuild it (or
+  rely on `ManagedTransport` to do so). `cause` is `BrokenCause::CleanEof`
+  when the peer ended the stream cleanly, `Unspecified` otherwise.
 - `Closed` — peer closed the connection / end-of-stream observed on the
   wire (bare transports also map a caller-initiated close to `Closed`).
 - `TooLarge { len, max }` — message exceeds `max_payload`. Caller is
   responsible for chunking on their own framing semantics.
-- `ExplicitClose` — caller invoked `close()` / `cancel()`. Produced by
-  `ManagedRecvTransport` (its own cancel signal, before or during a
-  reconnect), by the RTP transports (`RtpTransport` / `RtpRecvTransport`
-  when their cancel handle fires under a parked call), and by
-  `tst_srt::Listener::accept_one_cancellable` (cancelled before or during
-  the accept). Bare `SrtTransport` does not produce it: a cancel closes the
-  socket under the parked call, which surfaces as `Broken`; bare
-  `TcpTransport` surfaces a cancel as `Closed`.
+- `ExplicitClose` — a cancel handle fired. Every transport reports it the
+  same way: a call parked in `send_bytes` / `recv_bytes` when `cancel()`
+  runs returns `ExplicitClose`, and so does every call after it — SRT,
+  TCP/TLS, RTP, UDP, RIST and both managed wrappers, as well as
+  `tst_srt::Listener::accept_one_cancellable`. `SrtTransport`'s cancel
+  closes the socket under the parked call and libsrt reports a connection
+  error, but the transport reads its own cancel latch and reports the
+  cancel; a cancel never surfaces as `Broken`. `ManagedRecvTransport` also
+  reports `ExplicitClose` after its own `close()`.
 
 Implement `Transport` for any byte sink that isn't an SRT socket: UDP,
 file, in-memory test harness, named pipe, TCP, your own protocol. The
@@ -826,8 +828,8 @@ back-pressure built up) would block the close indefinitely.
 Every shell exposes a `cancel_handle()` that returns a clone-able,
 `Send + Sync` token. Calling `.cancel()` on that token from any thread
 atomically closes the underlying SRT handle, which causes any thread
-parked inside libsrt to return promptly (typically as
-`TransportError::Broken`).
+parked inside libsrt to return promptly with
+`TransportError::ExplicitClose` (shell kind `Closed`).
 
 `MuxSender::close()` already does this internally — a `close()` call from
 a watchdog thread wakes any sender thread parked inside `send_video`

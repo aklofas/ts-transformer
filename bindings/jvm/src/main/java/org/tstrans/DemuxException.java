@@ -12,6 +12,9 @@ public final class DemuxException extends BindingException {
     /**
      * Discriminant; the names are the {@code BindingErrorKind} members,
      * verified against this enum at load time by {@link NativeLoader}.
+     *
+     * <p>Persist {@link #name()}, never {@link #ordinal()}: the declaration order is not part of the API
+     * (0.7.0 reordered this enum: every ordinal names a different kind than it did in 0.6.x).
      */
     public enum Kind {
         STRICT_REJECTION, INTERNAL,

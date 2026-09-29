@@ -14,6 +14,9 @@ public final class SrtException extends BindingException {
      * SRT failure category. Names are the Rust {@code BindingErrorKind} variant
      * names in SCREAMING_SNAKE_CASE (the kind rule, 0.7.0); the native library
      * verifies at load time that every kind it can raise resolves here.
+     *
+     * <p>Persist {@link #name()}, never {@link #ordinal()}: the declaration order is not part of the API
+     * (0.7.0 removed {@code WOULD_BLOCK}, which moved {@code IO} from ordinal 7 to 6).
      */
     public enum Kind {
         CONFIG_INVALID, CONNECT_FAILED, ACCEPT_FAILED, TIMEOUT,

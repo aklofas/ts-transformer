@@ -11,7 +11,11 @@ package org.tstrans;
 public final class CodecParseException extends BindingException {
     private static final long serialVersionUID = 1L;
 
-    /** Discriminant; values map 1:1 from the Rust {@code CodecParseError} variants. */
+    /**
+     * Discriminant; values map 1:1 from the Rust {@code CodecParseError} variants.
+     *
+     * <p>Persist {@link #name()}, never {@link #ordinal()}: the declaration order is not part of the API.
+     */
     public enum Kind {
         TRUNCATED_RBSP, INVALID_GOLOMB, RESERVED_VALUE, UNSUPPORTED_PROFILE,
         DANGLING_SPS_REFERENCE, DANGLING_VPS_REFERENCE, ENGINE_ERROR,
