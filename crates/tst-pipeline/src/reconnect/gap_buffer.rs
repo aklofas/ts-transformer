@@ -98,6 +98,14 @@ impl GapBuffer {
     /// other `DropOldest` eviction. Under `Reject` a zero capacity
     /// returns `Err(Full)` for every message.
     pub fn enqueue(&mut self, msg: Vec<u8>) -> Result<(), GapBufferError> {
+        self.enqueue_tracked(msg).map(|_| ())
+    }
+
+    /// [`Self::enqueue`], also returning the sequence number the message
+    /// was queued under so the caller can later name exactly that entry
+    /// ([`Self::reclaim`]). `Ok(None)` is the zero-capacity `DropOldest`
+    /// case: accepted, dropped on arrival, never queued.
+    pub(crate) fn enqueue_tracked(&mut self, msg: Vec<u8>) -> Result<Option<u64>, GapBufferError> {
         if self.queue.len() >= self.capacity {
             match self.overflow {
                 OverflowPolicy::DropOldest => {
@@ -115,7 +123,7 @@ impl GapBuffer {
                         // the documented transient overshoot instead.)
                         self.bytes_dropped += msg.len() as u64;
                         self.messages_dropped += 1;
-                        return Ok(());
+                        return Ok(None);
                     }
                 }
                 OverflowPolicy::Reject => return Err(GapBufferError::Full),
@@ -124,7 +132,28 @@ impl GapBuffer {
         let seq = self.next_seq;
         self.next_seq = self.next_seq.wrapping_add(1);
         self.queue.push_back((seq, msg));
-        Ok(())
+        Ok(Some(seq))
+    }
+
+    /// Take the message queued under `seq` back out, wherever it sits in
+    /// the queue. `None` when it is no longer queued (already sent, or
+    /// evicted). Not a drop: the caller that enqueued it is taking
+    /// ownership back, so the drop counters are untouched — and an older
+    /// message that `DropOldest` evicted to make room for this one stays
+    /// evicted and stays counted.
+    ///
+    /// # Panics
+    ///
+    /// Debug builds assert that `seq` is not the in-flight entry: those
+    /// bytes are already in the transport's hands.
+    pub(crate) fn reclaim(&mut self, seq: u64) -> Option<Vec<u8>> {
+        debug_assert_ne!(
+            self.in_flight,
+            Some(seq),
+            "BUG: reclaim of the message a send is in flight for"
+        );
+        let at = self.queue.iter().rposition(|(s, _)| *s == seq)?;
+        self.queue.remove(at).map(|(_, msg)| msg)
     }
 
     /// Pop the front message.
@@ -347,6 +376,35 @@ mod tests {
         assert_eq!(buf.messages_dropped, 1);
         assert_eq!(buf.finish_send(seq).unwrap(), vec![1]);
         assert_eq!(buf.len(), 1, "back within capacity");
+        assert_eq!(buf.pop_front().unwrap(), vec![3]);
+    }
+
+    #[test]
+    fn reclaim_takes_back_exactly_the_named_message() {
+        let mut buf = GapBuffer::new(2, OverflowPolicy::DropOldest);
+        buf.enqueue(vec![1]).unwrap();
+        buf.enqueue(vec![2]).unwrap();
+        // Full: [1] is evicted to make room, and that eviction stands.
+        let seq = buf.enqueue_tracked(vec![3]).unwrap().expect("queued");
+        assert_eq!(buf.reclaim(seq), Some(vec![3]));
+        assert_eq!(buf.reclaim(seq), None, "no longer queued");
+        assert_eq!(
+            (buf.messages_dropped, buf.bytes_dropped),
+            (1, 1),
+            "the eviction is counted; the reclaim is not a drop"
+        );
+        assert_eq!(buf.pop_front().unwrap(), vec![2]);
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn reclaim_from_the_middle_keeps_the_order_of_the_rest() {
+        let mut buf = GapBuffer::new(4, OverflowPolicy::DropOldest);
+        buf.enqueue(vec![1]).unwrap();
+        let seq = buf.enqueue_tracked(vec![2]).unwrap().expect("queued");
+        buf.enqueue(vec![3]).unwrap();
+        assert_eq!(buf.reclaim(seq), Some(vec![2]));
+        assert_eq!(buf.pop_front().unwrap(), vec![1]);
         assert_eq!(buf.pop_front().unwrap(), vec![3]);
     }
 

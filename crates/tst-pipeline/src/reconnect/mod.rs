@@ -457,6 +457,12 @@ impl<T: Transport + 'static> ManagedTransport<T> {
     /// The check reads a published atomic rather than the `inner` lock —
     /// see locking invariant 4.
     ///
+    /// `Blocking` mode: when the drain that follows a reconnect is refused
+    /// with `Backpressure`, this call's message is taken back out of the
+    /// gap buffer before the error is returned, so the retry the error
+    /// invites cannot put it on the wire twice. Messages queued by earlier
+    /// calls stay queued and drain ahead of that retry.
+    ///
     /// A cancel that lands mid-drain, right after a factory reconnect,
     /// surfaces here as `Err(TransportError::ExplicitClose)` rather than
     /// the drain's own wire-looking `Broken`. A cancel that instead lands
@@ -655,7 +661,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
         // `OverflowPolicy::DropOldest` continues to return `Ok(())` from
         // `enqueue` (it evicts and pushes) so this path is unchanged for
         // that policy.
-        {
+        let queued = {
             // Plan B mutex sweep (documented panic): gap-accumulator is
             // invariant-critical. A poisoned lock means a previous panic
             // happened while modifying the buffer's invariants (length
@@ -668,12 +674,15 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                 .gap
                 .lock()
                 .expect("BUG: gap lock poisoned — gap buffer is invariant-critical");
-            if let Err(gap_buffer::GapBufferError::Full) = gap.enqueue(bytes.to_vec()) {
-                return Err(TransportError::Backpressure {
-                    msg: "gap buffer full".into(),
-                    errno_code: None,
-                });
-            }
+            let queued = match gap.enqueue_tracked(bytes.to_vec()) {
+                Ok(seq) => seq,
+                Err(gap_buffer::GapBufferError::Full) => {
+                    return Err(TransportError::Backpressure {
+                        msg: "gap buffer full".into(),
+                        errno_code: None,
+                    });
+                }
+            };
             if self.policy.mode == ReconnectMode::Background {
                 // Under the gap lock (invariant 2); spawn happens after
                 // the lock drops (invariant 3).
@@ -681,12 +690,34 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                     .bg_active
                     .store(true, std::sync::atomic::Ordering::Release);
             }
-        }
+            queued
+        };
         if self.policy.mode == ReconnectMode::Background {
             self.spawn_worker();
             return Ok(());
         }
-        self.reconnect_and_drain()
+        let result = self.reconnect_and_drain();
+        if let (Err(TransportError::Backpressure { .. }), Some(seq)) = (&result, queued) {
+            // `Backpressure` tells the caller its bytes were not consumed
+            // and may be offered again — and the sender shells re-offer on
+            // their own. Leaving this call's message queued as well would
+            // put it on the wire twice: once from the gap buffer, once from
+            // the retry. Take it back so the caller is its only owner.
+            // Messages queued by earlier calls stay, ahead of the retry.
+            //
+            // Named by sequence number rather than "the back entry", though
+            // in this mode they are the same thing: `send_bytes` is `&mut
+            // self`, there is no worker, and the stats observer only reads,
+            // so nothing else enqueues between the push above and here. For
+            // the same reason the message cannot have been delivered
+            // already — the drain is FIFO and this is the last entry, so a
+            // drain that reached it and sent it ends `Ok`, not here.
+            self.gap
+                .lock()
+                .expect("BUG: gap lock poisoned — gap buffer is invariant-critical")
+                .reclaim(seq);
+        }
+        result
     }
 
     /// Drain the gap buffer if the inner transport is alive.
