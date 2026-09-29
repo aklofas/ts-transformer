@@ -52,7 +52,7 @@ class ExitWithParkedCallTest {
     void jvmExitsWithAListenerOpenParkedInItsFirstAccept(String shape, String how, @TempDir Path tmp)
             throws Exception {
         assumeTrue(isLinux(),
-            "SRT live-socket test gated to Linux (same as the Rust/C twins)");
+            "SRT live-socket test gated to Linux, like the other JVM live-socket tests");
 
         Path out = tmp.resolve("child.out");
         String java = Path.of(System.getProperty("java.home"), "bin", "java").toString();

@@ -16,10 +16,10 @@ mod accept_handle;
 mod cancellation_loopback;
 #[path = "loopback/connect_timeout.rs"]
 mod connect_timeout;
-#[path = "loopback/exit_with_parked_call.rs"]
-mod exit_with_parked_call;
 #[path = "loopback/encrypted_packet_filter.rs"]
 mod encrypted_packet_filter;
+#[path = "loopback/exit_with_parked_call.rs"]
+mod exit_with_parked_call;
 #[path = "loopback/getaddrinfo_walk.rs"]
 mod getaddrinfo_walk;
 #[path = "loopback/handshake.rs"]
