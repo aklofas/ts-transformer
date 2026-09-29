@@ -13,8 +13,8 @@
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
-use std::time::Duration;
+use std::sync::{Arc, Condvar, Mutex, mpsc};
+use std::time::{Duration, Instant};
 
 use tst_core::transport::conformance::{
     self as kit, BrokenSource, PostCloseKind, RecvOptions, RecvRow, SendPark, SendRow,
@@ -176,6 +176,10 @@ impl Transport for MockSend {
 }
 
 fn policy() -> ReconnectPolicy {
+    policy_in(ReconnectMode::Blocking)
+}
+
+fn policy_in(mode: ReconnectMode) -> ReconnectPolicy {
     ReconnectPolicy {
         // One attempt, zero backoff: the kit never wants a reconnect, and the
         // factories below refuse anyway — the budget just keeps a refusal
@@ -184,7 +188,7 @@ fn policy() -> ReconnectPolicy {
         backoff: BackoffStrategy::Constant(Duration::from_millis(0)),
         gap_buffer_capacity: 64,
         overflow_policy: OverflowPolicy::DropOldest,
-        mode: ReconnectMode::Blocking,
+        mode,
     }
 }
 
@@ -197,17 +201,17 @@ fn refuse<T>() -> Result<T, TransportError> {
 }
 
 fn managed_send() -> ManagedTransport<MockSend> {
-    managed_send_on(&Wire::new())
+    managed_send_on(&Wire::new(), policy())
 }
 
-fn managed_send_on(wire: &Arc<Wire>) -> ManagedTransport<MockSend> {
+fn managed_send_on(wire: &Arc<Wire>, policy: ReconnectPolicy) -> ManagedTransport<MockSend> {
     ManagedTransport::new(
         MockSend {
             wire: Arc::clone(wire),
             alive: true,
         },
         refuse,
-        policy(),
+        policy,
     )
 }
 
@@ -244,41 +248,105 @@ fn managed_send_contract_all_but_the_cancel_rows() {
 
 #[test]
 fn managed_send_cancel_rows_are_explicit_close() {
-    kit::send_cancel_during_park_is_explicit_close(managed_send(), SendPark::Loop);
-    kit::send_cancel_before_op_is_explicit_close(managed_send());
+    for mode in [ReconnectMode::Blocking, ReconnectMode::Background] {
+        let managed = || managed_send_on(&Wire::new(), policy_in(mode));
+        kit::send_cancel_during_park_is_explicit_close(managed(), SendPark::Loop);
+        kit::send_cancel_before_op_is_explicit_close(managed());
+    }
+}
+
+/// What the invocation that was parked in the inner send reported, and what
+/// the wrapper was left holding.
+struct Interrupted {
+    result: Result<(), TransportError>,
+    gap_len: u64,
+    alive: bool,
 }
 
 /// PROVABLE park (handoff validation 2026-09-18, A2-V4): the inner mock's
 /// `in_call` shows the managed `send_bytes` is INSIDE `MockSend::send_bytes`
 /// when the MANAGED cancel handle fires; the result of that same invocation
-/// is asserted — no retry loop, no `SETTLE`. Cancel-after-completion is the
-/// permitted race and is not what this test exercises: the send cannot
-/// complete while the inner parks.
-#[test]
-fn managed_send_parked_in_inner_is_interrupted_in_place() {
+/// is returned — no retry loop, no `SETTLE`. Cancel-after-completion is the
+/// permitted race and is not what this exercises: the send cannot complete
+/// while the inner parks.
+fn cancel_a_send_parked_in_the_inner(policy: ReconnectPolicy) -> Interrupted {
     let wire = Wire::new();
-    let mut m = managed_send_on(&wire);
+    let mut m = managed_send_on(&wire, policy);
     let handle = Transport::cancel_handle(&m).expect("ManagedTransport has a cancel handle");
-    let worker = std::thread::spawn(move || m.send_bytes(&[0x47; 188]));
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let stats = m.stats_handle();
+    // Firing the inner's own handle releases the parked send whatever the
+    // wrapper does, so a failure below never leaves the worker parked.
+    let rescue = WireCancel(Arc::clone(&wire));
+
+    let (tx, rx) = mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let r = m.send_bytes(&[0x47; 188]);
+        let _ = tx.send(r);
+        m // kept alive until the gauges below are read
+    });
+    let deadline = Instant::now() + Duration::from_secs(5);
     while wire.in_call.load(Ordering::SeqCst) != 1 {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the managed send never entered the inner send_bytes"
-        );
+        if Instant::now() >= deadline {
+            rescue.cancel();
+            panic!("the managed send never entered the inner send_bytes");
+        }
         std::thread::sleep(Duration::from_millis(5));
     }
     handle.cancel();
-    let result = worker.join().expect("send worker did not panic");
-    assert!(
-        matches!(result, Err(TransportError::ExplicitClose)),
-        "got {result:?}"
-    );
+    let Ok(result) = rx.recv_timeout(Duration::from_secs(10)) else {
+        rescue.cancel();
+        panic!("the cancelled send did not return within 10 s");
+    };
     assert_eq!(
         wire.in_call.load(Ordering::SeqCst),
         0,
         "the inner call exited"
     );
+    // The result has been sent, so the worker is past its last blocking
+    // call: this join is bounded.
+    let m = worker.join().expect("send worker did not panic");
+    Interrupted {
+        result,
+        gap_len: stats.stats().expect("gap lock not poisoned").gap_len,
+        alive: m.is_alive(),
+    }
+}
+
+/// Both modes: the cancel is reported by the invocation it interrupted, and
+/// the interrupted message is not left queued behind the cancelled wrapper
+/// (in `Background` that used to be an `Ok(())` for a message handed to a
+/// worker that saw the latch and exited).
+#[test]
+fn managed_send_parked_in_inner_is_interrupted_in_place() {
+    for mode in [ReconnectMode::Blocking, ReconnectMode::Background] {
+        let o = cancel_a_send_parked_in_the_inner(policy_in(mode));
+        assert!(
+            matches!(o.result, Err(TransportError::ExplicitClose)),
+            "{mode:?}: got {:?} (gap_len = {})",
+            o.result,
+            o.gap_len
+        );
+        assert_eq!(o.gap_len, 0, "{mode:?}: queued after the cancel");
+        assert!(!o.alive, "{mode:?}: alive after the cancel");
+    }
+}
+
+/// The cancel outranks a full `Reject` buffer: with nowhere to queue, the
+/// interrupted invocation still reports the cancel, not `Backpressure`.
+#[test]
+fn managed_send_cancel_outranks_a_full_reject_buffer() {
+    for mode in [ReconnectMode::Blocking, ReconnectMode::Background] {
+        let o = cancel_a_send_parked_in_the_inner(ReconnectPolicy {
+            gap_buffer_capacity: 0,
+            overflow_policy: OverflowPolicy::Reject,
+            ..policy_in(mode)
+        });
+        assert!(
+            matches!(o.result, Err(TransportError::ExplicitClose)),
+            "{mode:?}: got {:?}",
+            o.result
+        );
+    }
 }
 
 #[test]
