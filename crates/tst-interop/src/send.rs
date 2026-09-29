@@ -25,7 +25,7 @@ use crate::corrupt::{CorruptConfig, Corrupter};
 use crate::fixtures::{self, AuSizeMode, KlvSet};
 use crate::mux_setup;
 use crate::profiles::{KlvMode, Profile, VideoCodec};
-use crate::report_types::CellMetrics;
+use crate::report_types::{CellMetrics, ManagedSendStats};
 use crate::schedule::{self, Event, PTS_HZ};
 use crate::transport::{self, Teeing};
 use crate::verify;
@@ -280,6 +280,10 @@ pub fn send_over_transport(
         // A receiver-side bucketing of demux events against reconnect
         // markers — the sender feeds no demuxer and sees no markers.
         since_reconnect: None,
+        // This function is handed an already-built `dyn Transport` and
+        // cannot tell a managed one from a plain one; `run_managed`,
+        // which built it, fills this in.
+        managed_send: None,
     })
 }
 
@@ -334,12 +338,19 @@ pub fn run_managed(
         mode,
         ..ReconnectPolicy::default()
     };
-    let managed: Box<dyn Transport> = Box::new(ManagedTransport::new(initial, factory, policy));
+    let gap_buffer_capacity = policy.gap_buffer_capacity as u64;
+    let managed = ManagedTransport::new(initial, factory, policy);
+    // Taken BEFORE the transport moves into the sender shell, which is
+    // the only moment it can be: the handle shares the transport's
+    // counters and outlives it, so the snapshot below is read after the
+    // push loop has dropped the transport and the numbers are final.
+    let reconnect_stats = managed.stats_handle();
+    let managed: Box<dyn Transport> = Box::new(managed);
 
     // The tap wraps the MANAGED transport, so one continuous corruption
     // stream (and one log) spans every reconnect — a fresh tap per
     // connection would restart its PRNG and re-emit a header line.
-    let metrics = send_over_transport(
+    let mut metrics = send_over_transport(
         p,
         managed,
         seconds,
@@ -349,6 +360,17 @@ pub fn run_managed(
         klv_seed,
         corrupt,
     )?;
+    // `None` only if the gap-buffer lock was poisoned, i.e. a send
+    // panicked while holding it — which would have unwound out of the
+    // push loop above rather than reach here. Left as `None` rather than
+    // unwrapped: a telemetry read must not be what fails a finished run.
+    metrics.managed_send = reconnect_stats.stats().map(|s| ManagedSendStats {
+        reconnect_attempts: s.reconnect_attempts,
+        reconnect_successes: s.reconnect_successes,
+        gap_messages_dropped: s.gap_messages_dropped,
+        gap_bytes_dropped: s.gap_bytes_dropped,
+        gap_buffer_capacity,
+    });
     if let Some(target) = json_out {
         write_json(target, &metrics)?;
     }

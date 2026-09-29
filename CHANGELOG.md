@@ -1345,6 +1345,23 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   is touched by this bullet. A measured negative is pinned too: framing damage
   on or beside a PSI packet re-syncs without ever producing a `PsiChecksum`,
   so run 3's six PMT checksum failures stay an open finding for the RC soak.
+- **Tooling: `tst-interop send --reconnect-mode background` is tested over a
+  live SRT link.** Until now the harness's Background path had no test and
+  the mode itself had none over a real transport. A new cell
+  (`tests/proxy.rs`) runs a managed Background sender through the harness
+  proxy into a managed SRT listener, breaks the link with a 7 s outage window
+  and checks, from counters only: both ends reconnected, media arrived before
+  the outage and after the reconnect, the producer went on being accepted
+  while the transport was down (the 256-message gap buffer evicted), and the
+  receiver's bytes plus the evicted bytes do not exceed what the producer
+  handed over. It fails if `send::run_managed` ignores its `mode`. To make
+  the send side observable, a `send --managed` report now carries
+  `managed_send` — the managed transport's final `reconnect_attempts`,
+  `reconnect_successes`, `gap_messages_dropped`, `gap_bytes_dropped` and its
+  `gap_buffer_capacity`; the key is absent from every other report and an
+  archived report without it still loads. `--reconnect-mode`'s two usage
+  errors (an unknown value; the flag without `--managed`) gain CLI tests.
+  Harness only; no library crate is touched by this bullet.
 
 ### Testing — interop harness (WP-7a, WP-7b)
 

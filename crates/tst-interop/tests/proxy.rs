@@ -21,6 +21,11 @@
 //! hard kill; 40s on Windows via the platform override) instead of the
 //! default profile's 30s/2 (60s) global safety net.
 //!
+//! [`srt_background_reconnect_keeps_producing_through_an_outage`] is in
+//! the group too, by the same mechanism (`reconnect`): a live SRT link
+//! whose break and re-dial are both libsrt timers. Its doc comment
+//! accounts for its ~13 s against that 20 s kill.
+//!
 //! Every other test here ([`transparent_relay_preserves_order_and_bytes`],
 //! [`outage_windows_produce_periodic_gaps`],
 //! [`scheduled_proxy_echoes_its_phase_table_and_per_phase_counters`],
@@ -54,7 +59,7 @@ use std::net::{SocketAddr, UdpSocket};
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -1226,5 +1231,370 @@ fn schedule_combined_with_per_run_knobs_is_accepted() {
         Some(0),
         "a scheduled run with only per-run knobs must succeed, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// A counting UDP relay the background-reconnect test puts between the
+/// harness proxy and the SRT listener. It impairs nothing; it exists
+/// because nothing else in this topology can be read WHILE it runs —
+/// `send::run_managed` and `recv::run_managed` report when they return,
+/// and `proxy::run` writes its stats every 10 s and at exit. The test
+/// needs one live fact ("media is flowing, start the outage now") and
+/// one exact count ("this many datagrams reached the listener's port
+/// before the outage"), and a relay that counts what it forwards gives
+/// both without a sleep standing in for either.
+struct CountingRelay {
+    addr: SocketAddr,
+    /// Datagrams relayed TOWARDS the listener (data, plus the caller's
+    /// handshake and control packets). The reverse direction is relayed
+    /// but not counted.
+    forwarded: Arc<AtomicU64>,
+    stop: Arc<AtomicBool>,
+    handle: thread::JoinHandle<()>,
+}
+
+fn spawn_counting_relay(forward: SocketAddr) -> CountingRelay {
+    let sock = UdpSocket::bind("127.0.0.1:0").expect("bind counting relay");
+    // Short poll so the stop flag is seen promptly.
+    sock.set_read_timeout(Some(Duration::from_millis(50)))
+        .expect("counting relay set_read_timeout");
+    let addr = sock.local_addr().expect("counting relay local_addr");
+    let forwarded = Arc::new(AtomicU64::new(0));
+    let stop = Arc::new(AtomicBool::new(false));
+    let handle = {
+        let forwarded = Arc::clone(&forwarded);
+        let stop = Arc::clone(&stop);
+        thread::spawn(move || {
+            // The only client this relay ever has is the harness proxy,
+            // whose two instances bind the same port one after the other
+            // (see the test), so "the last forward-direction source" is
+            // always the right place to send a reply.
+            let mut client: Option<SocketAddr> = None;
+            let mut buf = vec![0u8; 65536];
+            while !stop.load(Ordering::Relaxed) {
+                match sock.recv_from(&mut buf) {
+                    Ok((n, peer)) if peer == forward => {
+                        if let Some(client) = client {
+                            let _ = sock.send_to(&buf[..n], client);
+                        }
+                    }
+                    Ok((n, peer)) => {
+                        client = Some(peer);
+                        // Counted only once it has actually been handed
+                        // to the kernel for the listener's port.
+                        if sock.send_to(&buf[..n], forward).is_ok() {
+                            forwarded.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+                    // Poll timeout, or a transient error (an ICMP
+                    // port-unreachable surfacing as ECONNRESET while the
+                    // listener is between two binds): keep relaying.
+                    Err(_) => {}
+                }
+            }
+        })
+    };
+    CountingRelay {
+        addr,
+        forwarded,
+        stop,
+        handle,
+    }
+}
+
+/// `send --managed --reconnect-mode background` over a live SRT link
+/// that an outage really breaks: the one reconnect path the next
+/// release-candidate soak runs its SRT leg on, and one that until this
+/// test had only ever been exercised by hand. `tst-pipeline`'s own
+/// Background tests drive mock transports; this is the mode over libsrt,
+/// through the harness functions the soak calls.
+///
+/// # Topology
+///
+/// `send::run_managed` (Background) → harness proxy → counting relay →
+/// `recv::run_managed` (SRT listener). The same shape as `soak.sh`'s SRT
+/// leg, plus the relay (see [`CountingRelay`]).
+///
+/// # Placing the outage
+///
+/// `impair::Engine::in_outage` puts a window at the START of every
+/// period — `[0, dur)`, `[period, period + dur)`, … measured from the
+/// proxy's own start — so a single proxy cannot give a test traffic
+/// first and an outage second without sitting through a whole window
+/// before the first packet. Two proxy instances on the same port do: a
+/// transparent one carries the opening of the stream, and once the relay
+/// has counted enough of it, that proxy is stopped and one configured
+/// with an outage window is started in its place, which is therefore in
+/// outage from its first packet. The window is the harness's own
+/// (`ImpairConfig::outage_dur_s`); only its phase is the test's.
+///
+/// # How long the outage has to be, and why the test takes 13 seconds
+///
+/// An SRT connection that stops hearing from its peer breaks after
+/// libsrt's peer-idle timeout, 5 s, and `tst-srt`'s URL vocabulary has no
+/// key that shortens it (`peeridletimeo` is recognized and rejected as
+/// unsupported). Every reconnect test over a silent link therefore pays
+/// those 5 s, and the numbers below follow from that one. Measured on an
+/// idle machine, from the start of the outage:
+///
+/// - **+5.1 s** both ends break, together. (The proxy impairs the
+///   forward direction only; the sender's connection still went down
+///   with the receiver's rather than 5 s after it.)
+/// - **+7.1 s** is the earliest the proxy will route replies to a new
+///   sender. Each reconnect attempt dials from a fresh ephemeral port,
+///   and the proxy re-aims its return path only once the previous client
+///   has been quiet for 2 s (`CLIENT_RELEARN_GRACE` in `proxy.rs`) — so
+///   a managed sender cannot reconnect through this proxy sooner than
+///   2 s after it broke, however short the outage. The sender's first
+///   attempt starts at the break and spends its whole 2 s connect
+///   timeout inside that grace.
+/// - **+7.4 s** the second attempt connects and media flows again.
+///
+/// `OUTAGE_S = 7` covers the first of those with 2 s to spare (the
+/// window has to outlast the idle timeout or nothing breaks at all) and
+/// ends before the second, so it is not what the reconnect waits for.
+/// Those 2 s of grace are also the floor under assertion (3) below: the
+/// sender is without a transport for at least that long, which at this
+/// profile's rate is some 400 sends against a 256-message buffer.
+/// `SEND_SECONDS = 10` leaves about 2.5 s of stream after the reconnect.
+/// The receiver's capture ends `RECV_SECONDS + 2 s` after its first
+/// event, and `recv::run_managed` then returns within one accept
+/// timeout (`conntimeo=2000`, the value `tests/loopback.rs` settled on
+/// for a managed listener). That is about 12 s of test and 13 s of
+/// process — libsrt's teardown at exit is the last second — against the
+/// `network` group's 20 s kill (this test's name matches
+/// `test(reconnect)`).
+///
+/// The sender's URL carries no keys: `transport.rs`'s defaults (2 s
+/// connect timeout, 120 ms latency) are what a reconnect attempt through
+/// a dead link needs — an attempt that fails inside the outage costs 2 s
+/// and the next one starts 100 ms later.
+///
+/// # What is asserted, and from what
+///
+/// Nothing here measures a duration. Every claim is a counter.
+///
+/// 1. **The link broke and both ends reconnected** — the sender's own
+///    `reconnect_successes` and the receiver's `reconnects`.
+/// 2. **Media arrived before and after** — before: the relay had
+///    forwarded `PRE_OUTAGE_DATAGRAMS` to the listener when the outage
+///    began. After: the receiver tallied more bytes than every datagram
+///    forwarded before the outage could have carried at SRT's maximum
+///    payload, and its verifier was fed a reconnect marker, which the
+///    managed receiver only raises once bytes flow on the new connection.
+/// 3. **The producer kept producing while the transport was down** —
+///    `gap_messages_dropped > 0`. The gap buffer evicts only when a send
+///    arrives with the buffer full, so one eviction means more than
+///    `gap_buffer_capacity` sends were accepted with no transport to
+///    carry them. `Blocking` cannot produce this: it parks the producer
+///    inside the first send that finds the transport dead, and the
+///    buffer never holds more than that one message. This is the
+///    assertion that fails if `send::run_managed` ignores its `mode`.
+/// 4. **The replay was bounded** — what the buffer evicted was never
+///    sent, so the receiver's byte total plus the evicted bytes cannot
+///    exceed what the sender's tee counted. (The tee sits above the
+///    managed transport and counts a message when the producer hands it
+///    over, delivered or not.) The receiver is short of the sender by
+///    more than that — the sends libsrt accepted during the 5 s before
+///    the break are lost too — but that part has no counter to check it
+///    against, so the bound asserted is the one that has.
+/// 5. **The run ends cleanly** — both harness calls return `Ok`, and
+///    every thread this test started is joined against a deadline before
+///    any assertion runs, so a failed assertion cannot leave a thread
+///    parked inside libsrt at process exit.
+///
+/// `report.pass` is NOT asserted, and is in fact `false`: the receiver
+/// judges its tally against the nominal count for its capture length,
+/// and half of this capture was an outage.
+#[test]
+fn srt_background_reconnect_keeps_producing_through_an_outage() {
+    const SEND_SECONDS: f64 = 10.0;
+    const RECV_SECONDS: f64 = 8.5;
+    const OUTAGE_S: u64 = 7;
+    /// Forward datagrams the relay must have counted before the outage
+    /// starts. About half a second of the realistic profile (~200
+    /// datagrams/s) — enough that it is media and not just the two
+    /// handshake packets, little enough to cost almost nothing.
+    const PRE_OUTAGE_DATAGRAMS: u64 = 100;
+    /// SRT live mode's maximum payload per datagram, and therefore the
+    /// most application bytes one forwarded datagram can have carried.
+    const SRT_MAX_PAYLOAD: u64 = 1316;
+
+    let profile = profiles::by_name("baseline").expect("baseline profile must exist");
+
+    let listener_port = free_port();
+    let recv_url = format!("srt://127.0.0.1:{listener_port}?mode=listener&conntimeo=2000");
+    let recv_handle = thread::spawn(move || {
+        recv::run_managed(
+            &recv_url,
+            profile,
+            RECV_SECONDS,
+            None,
+            false,
+            false,
+            KlvExpect::compact(),
+            None,
+        )
+    });
+
+    let relay = spawn_counting_relay(format!("127.0.0.1:{listener_port}").parse().unwrap());
+    let (proxy_addr, clear_proxy, clear_proxy_stop) = spawn_proxy(
+        "127.0.0.1:0".parse().unwrap(),
+        relay.addr,
+        ImpairConfig::default(),
+        None,
+        None,
+        30,
+    );
+
+    let send_url = format!("srt://127.0.0.1:{}", proxy_addr.port());
+    let send_handle = thread::spawn(move || {
+        // Same retry as `send_with_retry`, for the same reason: the
+        // listener thread above may not have bound yet, and a connect
+        // that fails has sent nothing. Only the FIRST connect can fail
+        // this way — once `run_managed` is streaming, a broken link is
+        // the managed transport's to handle and never comes back as an
+        // `Err` (`max_attempts: None`).
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match send::run_managed(
+                profile,
+                &send_url,
+                SEND_SECONDS,
+                None,
+                false,
+                // Realistic sizes are what make the outage outrun the
+                // gap buffer: ~200 messages/s fills its 256 slots in
+                // little over a second. The compact fixtures produce
+                // about 6 messages/s and would need a 40 s outage.
+                tst_interop::fixtures::AuSizeMode::Realistic,
+                tst_interop::fixtures::KlvSet::Compact,
+                0,
+                None,
+                tst_pipeline::ReconnectMode::Background,
+            ) {
+                Ok(metrics) => return metrics,
+                Err(e) => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "send::run_managed kept failing to connect: {e}"
+                    );
+                    thread::sleep(Duration::from_millis(100));
+                }
+            }
+        }
+    });
+
+    // Latch, not a sleep: the outage starts once media has demonstrably
+    // reached the listener's port, however long the connect took.
+    let latch_deadline = Instant::now() + Duration::from_secs(8);
+    while relay.forwarded.load(Ordering::Relaxed) < PRE_OUTAGE_DATAGRAMS {
+        assert!(
+            Instant::now() < latch_deadline,
+            "no media reached the listener within 8s of starting the sender (relay forwarded {})",
+            relay.forwarded.load(Ordering::Relaxed)
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    // Swap the proxies. Read the relay's count only AFTER the transparent
+    // proxy has returned: from then until the outage window closes
+    // nothing can reach the relay, so this is exactly what was forwarded
+    // before the outage.
+    clear_proxy_stop.store(true, Ordering::Relaxed);
+    let clear_stats = join_with_timeout(clear_proxy, Duration::from_secs(5));
+    let forwarded_before_outage = relay.forwarded.load(Ordering::Relaxed);
+    let (_, outage_proxy, outage_proxy_stop) = spawn_proxy(
+        proxy_addr,
+        relay.addr,
+        ImpairConfig {
+            // One window: the period only has to outlast the test.
+            outage_period_s: Some(3600),
+            outage_dur_s: OUTAGE_S,
+            ..ImpairConfig::default()
+        },
+        None,
+        None,
+        30,
+    );
+
+    // Join everything before asserting anything — see (5) in the doc
+    // comment. The deadlines are hang detectors, not expectations.
+    let send_metrics = join_with_timeout(send_handle, Duration::from_secs(15));
+    let recv_result = join_with_timeout(recv_handle, Duration::from_secs(15));
+    outage_proxy_stop.store(true, Ordering::Relaxed);
+    let outage_stats = join_with_timeout(outage_proxy, Duration::from_secs(5));
+    relay.stop.store(true, Ordering::Relaxed);
+    join_with_timeout(relay.handle, Duration::from_secs(5));
+
+    let report = recv_result.expect("recv::run_managed must return Ok");
+    clear_stats.expect("the transparent proxy must succeed");
+    let outage_stats = outage_stats.expect("the outage proxy must succeed");
+    let managed = send_metrics
+        .managed_send
+        .clone()
+        .expect("a managed send must report its reconnect stats");
+
+    // The outage window did what it was configured to do.
+    assert!(
+        outage_stats.dropped > 0 && outage_stats.forwarded > 0,
+        "the outage proxy must have both dropped (the window) and forwarded (after it): {outage_stats:?}"
+    );
+
+    // (1) The link broke and both ends reconnected.
+    assert!(
+        managed.reconnect_successes >= 1,
+        "the sender must have reconnected at least once: {managed:?}"
+    );
+    assert!(
+        report.reconnects.is_some_and(|n| n >= 1),
+        "the receiver must have rebuilt its transport at least once, got {:?}",
+        report.reconnects
+    );
+
+    // (2) Media before the outage, and after the reconnect.
+    assert!(
+        forwarded_before_outage >= PRE_OUTAGE_DATAGRAMS,
+        "the latch guarantees this; got {forwarded_before_outage}"
+    );
+    assert!(
+        report.metrics.bytes > forwarded_before_outage * SRT_MAX_PAYLOAD,
+        "the receiver tallied {} bytes, no more than the {forwarded_before_outage} datagrams \
+         forwarded before the outage could have carried — nothing arrived after the reconnect",
+        report.metrics.bytes
+    );
+    assert!(
+        report
+            .metrics
+            .since_reconnect
+            .as_ref()
+            .is_some_and(|s| s.reconnects >= 1),
+        "the verifier must have been fed a reconnect marker, got {:?}",
+        report.metrics.since_reconnect
+    );
+
+    // (3) The producer kept producing while the transport was down.
+    assert!(
+        managed.gap_messages_dropped > 0,
+        "Background mode must have accepted more sends during the outage than the gap buffer \
+         holds ({} messages) and evicted the excess; no eviction means the producer was \
+         stalled instead: {managed:?}",
+        managed.gap_buffer_capacity
+    );
+
+    // (4) The replay was bounded: evicted bytes were never delivered.
+    assert!(
+        managed.gap_bytes_dropped > 0
+            && report.metrics.bytes + managed.gap_bytes_dropped <= send_metrics.bytes,
+        "received ({}) + evicted ({}) must not exceed what the producer handed over ({})",
+        report.metrics.bytes,
+        managed.gap_bytes_dropped,
+        send_metrics.bytes
+    );
+    assert!(
+        report.metrics.video_aus > 0 && report.metrics.video_aus < send_metrics.video_aus,
+        "the receiver must be short of the sender by the outage's frames: sent {}, received {}",
+        send_metrics.video_aus,
+        report.metrics.video_aus
     );
 }
