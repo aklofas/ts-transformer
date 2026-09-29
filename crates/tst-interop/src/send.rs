@@ -385,8 +385,8 @@ pub fn run_managed(
         gap_messages_dropped: s.gap_messages_dropped,
         gap_bytes_dropped: s.gap_bytes_dropped,
         gap_buffer_capacity,
-        reconnect_mode: reconnect_mode.clone(),
-        overflow_policy: Some(overflow_policy.clone()),
+        reconnect_mode,
+        overflow_policy: Some(overflow_policy),
     });
     if let Some(target) = json_out {
         write_json(target, &metrics)?;
