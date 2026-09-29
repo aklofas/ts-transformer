@@ -1,6 +1,6 @@
 //! PSI section dispatch + PAT/PMT topology tracking.
 //!
-//! Hosts 9 helper methods on `Demuxer`:
+//! Hosts 10 helper methods on `Demuxer`:
 //!
 //! - `handle_psi` — router from `process_packet` into PAT vs PMT
 //!   continuation logic, including strict-mode CC-discontinuity drop.
@@ -11,6 +11,8 @@
 //! - `apply_pat_programs` — diffs a parsed PAT's program list against
 //!   tracked state, dropping programs (and their elementary PID state)
 //!   that disappeared.
+//! - `retire_undeclared_pcr_history` — drops the PCR history of every PID
+//!   that no program declares as its `PCR_PID` any more.
 //! - `drop_elementary_pid_state` — clears every per-PID cache entry for
 //!   an elementary PID no longer reachable (program left the PAT, or the
 //!   stream was dropped by a PMT version change).
@@ -325,11 +327,6 @@ impl super::demuxer::Demuxer {
                 for stream in &tracker.streams {
                     self.drop_elementary_pid_state(stream.pid);
                 }
-                // The PCR PID lives outside `tracker.streams` when it's a
-                // PCR-only PID, so clean it explicitly.
-                if let Some(pcr_pid) = tracker.pcr_pid {
-                    self.last_pcr_by_pid.remove(&pcr_pid);
-                }
                 // CORR-07: the per-program unwrap reference is keyed by
                 // program_number, so it is unreachable once the program is
                 // gone — and a later program re-using the number must not
@@ -342,6 +339,9 @@ impl super::demuxer::Demuxer {
                 self.last_pkt_raw_by_pid.remove(&pmt_pid);
             }
         }
+        // The removed programs' PCR PIDs lose their history here, unless a
+        // surviving program declares the same PID.
+        self.retire_undeclared_pcr_history();
 
         // Add empty trackers for programs that are new in this PAT version.
         // PMT contents will populate them when handle_pmt_section fires.
@@ -364,17 +364,37 @@ impl super::demuxer::Demuxer {
         }
     }
 
+    /// Retire the PCR history of every PID that no program declares as its
+    /// `PCR_PID` any more. Called after every change to the program set or to
+    /// a program's `PCR_PID`.
+    ///
+    /// The history belongs to the declaration, not to the PID: it is kept
+    /// while at least one program names the PID as its clock (two programs
+    /// may share one PCR PID, and one of them moving away must not erase the
+    /// other's baseline), and dropped once none does, whatever else the PID
+    /// still carries. A PID that is declared again later then starts from a
+    /// seed instead of being judged against an earlier declaration's
+    /// baseline.
+    pub(super) fn retire_undeclared_pcr_history(&mut self) {
+        let programs = &self.programs;
+        self.last_pcr_by_pid
+            .retain(|pid, _| programs.values().any(|t| t.pcr_pid == Some(*pid)));
+    }
+
     /// Remove every per-PID demuxer cache entry for an elementary `pid` that is
     /// no longer reachable — its program left the PAT, or its stream was dropped
     /// by a PMT version change. Sharing this between PAT removal and the
     /// PMT-version path keeps topology cleanup consistent (validate-1 B8 + F-01).
+    ///
+    /// PCR history is not elementary-PID state and is left alone here: a PID
+    /// dropped from a stream list may still be some program's `PCR_PID`. See
+    /// [`Self::retire_undeclared_pcr_history`].
     pub(super) fn drop_elementary_pid_state(&mut self, pid: u16) {
         self.stream_kind_by_pid.remove(&pid);
         self.pid_to_program.remove(&pid);
         self.cc_by_pid.remove(&pid);
         self.dup_by_pid.remove(&pid);
         self.last_pkt_raw_by_pid.remove(&pid);
-        self.last_pcr_by_pid.remove(&pid);
         self.last_pts_by_pid.remove(&pid);
         // CORR-07: the opt-in unwrap accumulator is per-PID timeline state.
         // A replacement stream reusing this PID must anchor on its program's
@@ -674,12 +694,6 @@ impl super::demuxer::Demuxer {
             self.unwrap_state.remove(&pid);
         }
 
-        // DA-DEMUX-2: capture the old PCR PID before the mutable tracker borrow.
-        // If the PCR PID changed and the old PID was PCR-only (not in the new
-        // stream set), its `last_pcr_by_pid` entry would otherwise leak — the PAT
-        // removal path cleans it up (`:319`) but the PMT-version path did not.
-        let old_pcr_pid = self.programs.get(&pmt_pid).and_then(|t| t.pcr_pid);
-
         // Build klv_links from the accepted streams.
         let prog_map = self.build_program_map(pmt_pid, &pmt, program_number, &stream_infos);
 
@@ -696,15 +710,10 @@ impl super::demuxer::Demuxer {
         tracker.streams = stream_infos;
         tracker.klv_mismatch_coalesce.clear();
 
-        // DA-DEMUX-2: remove the stale PCR timing entry when the PCR PID changed
-        // and the old PID was not in the new stream set (PCR-only PID dropped).
-        // The != guard avoids dropping a live baseline when the PCR PID is
-        // unchanged (a PMT re-emit with same pcr_pid must not lose timing history).
-        if let Some(old_pid) = old_pcr_pid {
-            if old_pid != pmt.pcr_pid && !new_pids.contains(&old_pid) {
-                self.last_pcr_by_pid.remove(&old_pid);
-            }
-        }
+        // DA-DEMUX-2: if this update moved `PCR_PID`, the old PID's history is
+        // retired unless another program still declares it. An unchanged
+        // `PCR_PID` keeps its baseline across the version bump.
+        self.retire_undeclared_pcr_history();
 
         // Emit ProgramMap event.
         self.queue.push_back(DemuxEvent::ProgramMap(prog_map));

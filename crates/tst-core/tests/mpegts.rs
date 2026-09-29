@@ -30,6 +30,8 @@ mod demux_local;
 mod demux_psi_program_number;
 #[path = "mpegts/demux_multi_program.rs"]
 mod demux_multi_program;
+#[path = "mpegts/demux_pcr_history.rs"]
+mod demux_pcr_history;
 #[path = "mpegts/demux_pes_validation.rs"]
 mod demux_pes_validation;
 #[path = "mpegts/demux_robustness.rs"]
