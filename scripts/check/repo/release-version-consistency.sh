@@ -61,9 +61,10 @@ RVC_C_HEADER="${RVC_C_HEADER:-$ROOT/bindings/c/include/tstrans.h}"
 RVC_PY_TEST="${RVC_PY_TEST:-$ROOT/bindings/python/tests/test_version.py}"
 
 # The 9 Cargo.toml files that carry an internal path-dependency `version =`
-# key (12 keys total: tst-srt has 3 incl. a dev-dependency, tst-rist has 2,
-# the rest have 1 each). Not every crates/*/Cargo.toml has one — e.g. tst-core
-# has no internal path deps with a `version` key.
+# key. The number of keys is not written down here: it moves whenever a crate
+# gains a dependency (dev-dependencies count), so the check counts what it
+# compared and the OK line prints it. Not every crates/*/Cargo.toml has one —
+# e.g. tst-core has no internal path deps with a `version` key.
 RVC_DEP_TOMLS="${RVC_DEP_TOMLS:-$ROOT/crates/srt-sys/Cargo.toml $ROOT/crates/rist-sys/Cargo.toml $ROOT/crates/tst-pipeline/Cargo.toml $ROOT/crates/tst-srt/Cargo.toml $ROOT/crates/tst-rist/Cargo.toml $ROOT/crates/tst-udp/Cargo.toml $ROOT/crates/tst-tcp/Cargo.toml $ROOT/crates/tst-hls/Cargo.toml $ROOT/crates/tst-rtp/Cargo.toml}"
 
 # ---------------------------------------------------------------------------
@@ -176,11 +177,12 @@ run_check() { # [EXPECTED_VERSION]
 
   # (2.5) every internal path-dependency `version` key must equal $first too
   # (see the ADDITIONALLY note in the file header for why this matters).
-  local dep_mismatch=0 dep_toml dep_site dep_ver
+  local dep_mismatch=0 dep_keys=0 dep_toml dep_site dep_ver
   for dep_toml in $RVC_DEP_TOMLS; do
     [ -f "$dep_toml" ] || continue
     while IFS=$'\t' read -r dep_site dep_ver; do
       [ -n "$dep_site" ] || continue
+      dep_keys=$((dep_keys + 1))
       if [ "$dep_ver" != "$first" ]; then
         echo "FAIL: internal dep version key at $dep_site = \"$dep_ver\" (workspace is $first)" >&2
         dep_mismatch=1
@@ -198,9 +200,9 @@ run_check() { # [EXPECTED_VERSION]
 
   # (4) success.
   if [ -n "$expected" ]; then
-    echo "release-version-consistency: OK — all sources agree at $first (matches expected $expected)"
+    echo "release-version-consistency: OK — all sources and $dep_keys internal dep version keys agree at $first (matches expected $expected)"
   else
-    echo "release-version-consistency: OK — all sources agree at $first"
+    echo "release-version-consistency: OK — all sources and $dep_keys internal dep version keys agree at $first"
   fi
 }
 
