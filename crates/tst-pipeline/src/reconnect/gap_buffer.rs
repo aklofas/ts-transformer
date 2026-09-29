@@ -144,10 +144,14 @@ impl GapBuffer {
     ///
     /// # Panics
     ///
-    /// Debug builds assert that `seq` is not the in-flight entry: those
-    /// bytes are already in the transport's hands.
+    /// Panics in **all** builds if `seq` is the in-flight entry: those
+    /// bytes are already in the transport's hands, and taking the entry
+    /// out would leave the worker's `finish_send` to pop whatever message
+    /// came after it. Only the `Blocking` path reclaims, and it runs no
+    /// worker, so nothing is in flight there; the check is for the change
+    /// that one day calls this with a worker running.
     pub(crate) fn reclaim(&mut self, seq: u64) -> Option<Vec<u8>> {
-        debug_assert_ne!(
+        assert_ne!(
             self.in_flight,
             Some(seq),
             "BUG: reclaim of the message a send is in flight for"
@@ -395,6 +399,16 @@ mod tests {
         );
         assert_eq!(buf.pop_front().unwrap(), vec![2]);
         assert!(buf.is_empty());
+    }
+
+    /// Not `cfg(debug_assertions)`: the check holds in release builds too.
+    #[test]
+    #[should_panic(expected = "BUG: reclaim of the message a send is in flight for")]
+    fn reclaim_of_the_in_flight_message_panics() {
+        let mut buf = GapBuffer::new(2, OverflowPolicy::DropOldest);
+        let seq = buf.enqueue_tracked(vec![1]).unwrap().expect("queued");
+        let _ = buf.begin_send().expect("non-empty");
+        let _ = buf.reclaim(seq);
     }
 
     #[test]

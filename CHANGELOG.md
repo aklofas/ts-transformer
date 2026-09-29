@@ -881,6 +881,36 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed — pipeline (WP-3)
 
+- **`tst-pipeline`: a Background-mode managed send can no longer be
+  accepted after the cancel.** `ManagedTransport::send_bytes` checked the
+  close latch on entry and then, in `ReconnectMode::Background` with a
+  worker active or a backlog queued, took the gap buffer's lock and
+  enqueued. A cancel (or the wrapper's own `close()`) landing between the
+  two was missed: the send returned `Ok(())` for a message handed to a
+  worker that only saw the latch and exited, and with a full
+  `OverflowPolicy::Reject` buffer it returned `Backpressure` instead of the
+  close. The latch is now read again under the gap buffer's lock, ahead of
+  the enqueue, as it already was for the enqueue that follows a failed
+  direct send: a send is accepted only if it was queued before the latch
+  was set, and otherwise reports `ExplicitClose` (`Closed` after the
+  wrapper's own close) and queues nothing.
+- **`tst-pipeline`: a managed sender whose inner transport was cancelled
+  stops instead of reconnecting.** An inner transport reports
+  `ExplicitClose` only when it was cancelled — through a cancel handle
+  taken from it before it was wrapped, or by a process-exit path that
+  closes every open socket directly. `ManagedTransport` read that as an
+  outage: `Blocking` mode called the factory again from the failed send,
+  and the `Background` worker kept dialling, so a process on its way out
+  went on opening connections. An inner `ExplicitClose` from the direct
+  send, from the drain that follows a reconnect, or from the background
+  worker's drain, and a factory that returns `ExplicitClose`, now latch the
+  wrapper exactly as its own cancel handle does: no factory call follows,
+  `is_alive()` reads false, and every send reports `ExplicitClose`. In
+  `Blocking` mode the failed send's message goes back to the caller. In
+  `Background` mode the worker exits and the next send reports the close;
+  messages accepted earlier stay queued and undelivered (`gap_len` keeps
+  counting them, the drop counters do not). `ManagedRecvTransport` already
+  behaved this way.
 - **`ManagedTransport` (`ReconnectMode::Blocking`): a send refused with
   `Backpressure` right after a reconnect was delivered twice.** The inner
   send broke, the message went into the gap buffer, the reconnect succeeded,
@@ -2523,6 +2553,15 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Testing — rails (R1/R2)
 
+- **`tst-pipeline`: the `DropOldest` overflow test overflows.**
+  `drop_oldest_policy_does_not_surface_backpressure_on_overflow` ran in
+  `Blocking` mode, where a failed send takes its message back out of the
+  gap buffer, so the buffer never filled and the test passed unchanged
+  with `OverflowPolicy::Reject` in place of `DropOldest`. It now runs in
+  `Background` mode with the reconnect factory held, fills the buffer,
+  sends one message more, and asserts the eviction counters and which
+  messages are delivered. `GapBuffer::reclaim` refuses the in-flight
+  message in release builds too (it was a debug assertion).
 - **`scripts/check/c/snapshot-getters.sh` now catches every binding function
   that takes the shell with the blocking `with_ref()`.** Its pattern only
   matched closures that called something named `local_addr(`, `local_port(`
