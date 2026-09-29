@@ -103,5 +103,76 @@ expect "slot readers: a stale allowlist row fails"              1 env SG_ONLY_RE
 expect "slot readers: an allowlist row without a reason fails"  1 env SG_ONLY_READERS=1 SG_ROOTS="$tmp/sg/blocking" SG_ALLOWLIST="$tmp/sg/noreason.tsv" bash "$SG"
 expect "slot readers: a scan that matches nothing fails closed" 1 env SG_ONLY_READERS=1 SG_ROOTS="$tmp/sg/clean"    SG_ALLOWLIST="$tmp/sg/empty.tsv"    bash "$SG"
 
+# ---- locks taken with the GIL held (same script, check 3) ------------------
+# A `.lock()` outside `allow_threads(` must be caught unless its function is
+# allowlisted with a reason — per TYPE, so allowlisting one class's getter
+# does not excuse another's of the same name. A lock taken inside
+# `allow_threads(` must not be reported, one inside a `with_gil(` nested in
+# it must; a stale row, a row without a reason and an empty scan all fail.
+mkdir -p "$tmp/gl/held" "$tmp/gl/clean"
+cat > "$tmp/gl/held/shell.rs" <<'EOF'
+impl Publisher {
+    fn push(&self, py: Python<'_>, data: &[u8]) -> PyResult<()> {
+        // the defect: .lock() here, guard held across the GIL release
+        let mut guard = self
+            .inner
+            .lock()
+            .map_err(|_| poisoned())?;
+        py.allow_threads(|| guard.push(data)).map_err(to_py)
+    }
+    fn local_addr(&self) -> String {
+        self.inner.lock().unwrap().local_addr()
+    }
+    fn stats(&self, py: Python<'_>) -> Stats {
+        py.allow_threads(|| self.inner.lock().unwrap().stats())
+    }
+    fn add_sink(&self, py: Python<'_>, cb: Py<PyAny>) {
+        let errors = self.errors.clone();
+        py.allow_threads(move || {
+            self.inner.lock().unwrap().add_sink(Box::new(move |pkt: &[u8]| {
+                Python::with_gil(|py| {
+                    if let Err(e) = cb.call1(py, (pkt,)) {
+                        *errors.lock().unwrap() = Some(e);
+                    }
+                });
+            }));
+        })
+    }
+}
+
+impl Handle {
+    fn local_addr(&self) -> String {
+        self.inner.lock().unwrap().local_addr()
+    }
+}
+#[cfg(test)]
+mod tests {
+    fn in_a_test() { M.lock().unwrap(); }
+}
+EOF
+cat > "$tmp/gl/clean/shell.rs" <<'EOF'
+impl Publisher {
+    fn stats(&self, py: Python<'_>) -> Stats {
+        py.allow_threads(|| self.inner.lock().unwrap().stats())
+    }
+    fn local_addr(&self) -> String { self.local_addr.to_string() }
+}
+EOF
+GLF="$tmp/gl/held/shell.rs"
+printf '# none\n' > "$tmp/gl/empty.tsv"
+printf '%s\t%s\t%s\n' "$GLF" Publisher::push "fixture" "$GLF" Publisher::local_addr "fixture" \
+                      "$GLF" Publisher::add_sink "fixture" "$GLF" Handle::local_addr "fixture" > "$tmp/gl/listed.tsv"
+printf '%s\t%s\t%s\n' "$GLF" Publisher::push "fixture" "$GLF" Publisher::local_addr "fixture" \
+                      "$GLF" Publisher::add_sink "fixture" > "$tmp/gl/othertype.tsv"
+{ cat "$tmp/gl/listed.tsv"; printf '%s\t%s\t%s\n' "$GLF" Publisher::stats "fixture"; } > "$tmp/gl/stale.tsv"
+{ grep -v 'Handle::' "$tmp/gl/listed.tsv"; printf '%s\t%s\n' "$GLF" Handle::local_addr; } > "$tmp/gl/noreason.tsv"
+
+expect "gil locks: a .lock() taken with the GIL held is caught"         1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/held"  SG_LOCK_ALLOWLIST="$tmp/gl/empty.tsv"     bash "$SG"
+expect "gil locks: the same functions, allowlisted, pass"               0 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/held"  SG_LOCK_ALLOWLIST="$tmp/gl/listed.tsv"    bash "$SG"
+expect "gil locks: a row for one type does not excuse another's getter" 1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/held"  SG_LOCK_ALLOWLIST="$tmp/gl/othertype.tsv" bash "$SG"
+expect "gil locks: a lock inside allow_threads is not a finding (stale row fails)" 1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/held" SG_LOCK_ALLOWLIST="$tmp/gl/stale.tsv" bash "$SG"
+expect "gil locks: an allowlist row without a reason fails"             1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/held"  SG_LOCK_ALLOWLIST="$tmp/gl/noreason.tsv"  bash "$SG"
+expect "gil locks: a scan that matches nothing fails closed"            1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/clean" SG_LOCK_ALLOWLIST="$tmp/gl/empty.tsv"     bash "$SG"
+
 if [[ "$fail" == 0 ]]; then echo "self-test: ALL OK"; fi
 exit "$fail"
