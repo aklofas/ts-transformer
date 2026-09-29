@@ -463,6 +463,11 @@ impl<T: Transport + 'static> ManagedTransport<T> {
     /// invites cannot put it on the wire twice. Messages queued by earlier
     /// calls stay queued and drain ahead of that retry.
     ///
+    /// A cancel that interrupts the direct inner send is reported by this
+    /// call as `ExplicitClose`, in either mode, and the interrupted bytes
+    /// are not queued. A send that completed before the cancel landed
+    /// returns `Ok(())`; the next call reports the cancel.
+    ///
     /// A cancel that lands mid-drain, right after a factory reconnect,
     /// surfaces here as `Err(TransportError::ExplicitClose)` rather than
     /// the drain's own wire-looking `Broken`. A cancel that instead lands
@@ -674,6 +679,18 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                 .gap
                 .lock()
                 .expect("BUG: gap lock poisoned — gap buffer is invariant-critical");
+            // The inner send above is where a caller-side cancel lands: the
+            // fired wake handle returns the parked send with
+            // `ExplicitClose`, which reads as "inner is down" to the match
+            // above. It is not an outage. The invocation the cancel
+            // interrupted reports it, and nothing is queued (or, in
+            // `Background`, handed to a worker that would only see the
+            // latch and exit) behind a wrapper that will never send again.
+            // Ahead of the enqueue, so it also outranks a full `Reject`
+            // buffer's `Backpressure`.
+            if self.closed.load(std::sync::atomic::Ordering::Acquire) {
+                return Err(self.latched_error());
+            }
             let queued = match gap.enqueue_tracked(bytes.to_vec()) {
                 Ok(seq) => seq,
                 Err(gap_buffer::GapBufferError::Full) => {
