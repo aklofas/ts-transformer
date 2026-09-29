@@ -22,9 +22,11 @@
 //! GIL boundaries:
 //! - `send`, `recv`, `build()` (both builders), `accept_blocking` ->
 //!   `py.allow_threads(...)` so concurrent Python threads remain live.
-//! - `close`, `stats`, `peer_addr`, `repr` -> also release the GIL during
-//!   mutex acquisition; `close` fires the cancel handle first so a parked
-//!   `recv` unblocks within ≤100 ms, making the lock promptly available.
+//! - `close`, `stats` -> also release the GIL during mutex acquisition;
+//!   `close` fires the cancel handle first so a parked `recv` unblocks
+//!   within ≤100 ms, making the lock promptly available.
+//! - `peer_addr`, `repr` -> read the connect-time snapshot; they take no
+//!   lock and never wait behind a parked `recv`.
 //! - `Listener.close` / `local_port` / `repr` -> likewise release the GIL
 //!   around the lock, and `Listener.close` fires the listener's own cancel
 //!   handle first so a parked `accept_blocking` returns within ≤100 ms.
@@ -40,6 +42,7 @@
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use pyo3::exceptions::PyValueError;
@@ -53,7 +56,7 @@ use tst_tcp::error::TcpError;
 use tst_tcp::{TcpListener, TcpStats, TcpTransport};
 
 use crate::raise::{TCP, pyok, pyres, raise};
-use crate::util::{CancelSource, close_owned};
+use crate::util::{CancelSource, close_owned, open_snapshot};
 
 // ---------------------------------------------------------------------------
 // PyTcpStats — frozen mirror of TcpStats
@@ -130,7 +133,9 @@ pub(crate) struct PyTcpTransport {
     /// `Arc<dyn TransportCancel>` is a `CancelSource` over the real
     /// `TcpCancelHandle`, so `close()` fires the handle before taking the
     /// slot and a parked `recv()` ends within about one poll boundary.
-    owned: Owned<SendHalf<TcpTransport>>,
+    /// Snapshot = the peer address, fixed at connect / accept, so
+    /// `peer_addr()` and `repr()` never wait behind a parked `recv()`.
+    owned: Owned<SendHalf<TcpTransport>, SocketAddr>,
 }
 
 #[pymethods]
@@ -240,10 +245,11 @@ impl PyTcpTransport {
     /// Peer address as a `"host:port"` string. Returns `""` if the transport
     /// has been closed.
     ///
-    /// Releases the GIL during mutex acquisition so a concurrent `recv()`
-    /// parked in another thread cannot freeze the interpreter.
-    fn peer_addr(&self, py: Python<'_>) -> String {
-        py.allow_threads(|| self.owned.with_ref(|t| t.0.peer().to_string()))
+    /// Answered from the connect-time snapshot, never the slot, so it does
+    /// not wait behind a `recv()` parked on another thread.
+    fn peer_addr(&self) -> String {
+        open_snapshot(&self.owned)
+            .map(ToString::to_string)
             .unwrap_or_default()
     }
 
@@ -286,13 +292,10 @@ impl PyTcpTransport {
         Ok(false)
     }
 
-    fn __repr__(&self, py: Python<'_>) -> String {
-        match py.allow_threads(|| {
-            self.owned
-                .with_ref(|t| format!("Transport(peer={})", t.0.peer()))
-        }) {
-            Ok(s) => s,
-            Err(_) => "Transport(closed)".to_string(),
+    fn __repr__(&self) -> String {
+        match open_snapshot(&self.owned) {
+            Some(peer) => format!("Transport(peer={peer})"),
+            None => "Transport(closed)".to_string(),
         }
     }
 }
@@ -306,8 +309,9 @@ fn make_py_tcp_transport(t: TcpTransport) -> PyTcpTransport {
     // (Python `close()` goes through it); `Owned` is where the transport's
     // latch is ORed in.
     let cancel = CancelSource::new(Arc::new(t.cancel_handle()));
+    let peer = t.peer();
     PyTcpTransport {
-        owned: Owned::new(SendHalf(t), cancel.as_dyn(), ()),
+        owned: Owned::new(SendHalf(t), cancel.as_dyn(), peer),
     }
 }
 

@@ -12,11 +12,13 @@ The bug (before fix):
   freezes completely.
 
 The fix:
-  `stats`, `peer_addr`, `__repr__`, and `close` now call `py.allow_threads`
-  before acquiring the mutex.  The GIL is released while waiting, so other
-  Python threads remain alive.  `close()` additionally fires the cancel handle
-  before locking so the recv loop exits within ≤100 ms, making the mutex
-  promptly available.
+  `stats` and `close` now call `py.allow_threads` before acquiring the
+  mutex.  The GIL is released while waiting, so other Python threads remain
+  alive.  `close()` additionally fires the cancel handle before locking so
+  the recv loop exits within ≤100 ms, making the mutex promptly available.
+  `peer_addr` and `__repr__` no longer take the mutex at all: they answer
+  from the connect-time snapshot (test_cross_thread_close.py pins that they
+  answer while the recv is still parked).
 
 What this test verifies:
   (a) With recv parked in another thread, calling stats() in a sub-thread does
@@ -151,8 +153,9 @@ def test_tcp_stats_close_not_gil_blocked_with_parked_recv() -> None:
     main_ran.set()  # main thread can run Python → GIL is not frozen
     assert main_ran.is_set(), "main thread was frozen (GIL not released by stats)"
 
-    # Also verify peer_addr and repr return (they also release GIL before mutex).
-    # They won't return until close() releases the mutex, so run them in threads.
+    # Also verify peer_addr and repr return. They read the connect-time
+    # snapshot and answer at once; they still run on threads so a regression
+    # that sends them back through the mutex cannot wedge this test.
     peer_done = threading.Event()
     repr_done = threading.Event()
 

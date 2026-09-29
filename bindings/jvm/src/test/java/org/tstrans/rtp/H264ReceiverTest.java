@@ -9,6 +9,10 @@ import java.net.DatagramSocket;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.tstrans.RtpException;
@@ -294,6 +298,61 @@ class H264ReceiverTest {
             ch.cancel();
             ch.close();
         }
+    }
+
+    // ── Test 6b: endReason()/endDetail() answer while recvAu() is parked ─────
+
+    /**
+     * {@code endReason()} / {@code endDetail()} are non-blocking reads: with a
+     * {@code recvAu()} parked on another thread (nothing is sent to the bound
+     * port) they answer {@code null} — the session has not ended — instead of
+     * waiting for the parked call. The parked call runs on a daemon thread and
+     * {@code close()} (cancel-first) is the rescue on every path.
+     */
+    @Test
+    @Timeout(60)
+    void endReasonAnswersWhileRecvAuIsParked() throws Exception {
+        H264Receiver rx = H264Receiver.listen("rtp://127.0.0.1:0?pt=96");
+        CountDownLatch entered = new CountDownLatch(1);
+        CompletableFuture<Object> returned = new CompletableFuture<>();
+        Thread reader = new Thread(() -> {
+            entered.countDown();
+            try {
+                returned.complete(String.valueOf(rx.recvAu()));
+            } catch (Throwable t) {
+                returned.complete(t);
+            }
+        }, "parked-recv-au");
+        reader.setDaemon(true);
+        reader.start();
+        try {
+            assertTrue(entered.await(5, TimeUnit.SECONDS), "recvAu() never started");
+            Thread.sleep(300); // inside the native receive, holding the resource lock
+            assertFalse(returned.isDone(), "recvAu() returned on its own; nothing was sent");
+
+            CompletableFuture<Object[]> answer = CompletableFuture.supplyAsync(
+                () -> new Object[] {rx.endReason(), rx.endDetail()},
+                r -> {
+                    Thread t = new Thread(r, "end-reason-getter");
+                    t.setDaemon(true);
+                    t.start();
+                });
+            Object[] got;
+            try {
+                got = answer.get(5, TimeUnit.SECONDS);
+            } catch (TimeoutException te) {
+                fail("endReason()/endDetail() waited behind the parked recvAu()");
+                return;
+            }
+            assertFalse(returned.isDone(), "recvAu() ended before the getters answered");
+            assertNull(got[0], "the session has not ended while a receive is in flight");
+            assertNull(got[1]);
+        } finally {
+            rx.close();
+        }
+        returned.get(5, TimeUnit.SECONDS);
+        assertEquals(StreamEndReason.CANCELLED, rx.endReason(),
+            "close() records the end reason and it stays readable");
     }
 
     // ── Test 7: listen without ?pt= must throw RtpException ──────────────────

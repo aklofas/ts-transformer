@@ -53,7 +53,7 @@ use crate::mux::{
 };
 use crate::raise::{SRT, pyok, raise};
 use crate::srt::transport::{PyCancelHandle, PySocketStats, srt_cancel_source};
-use crate::util::{CancelSource, alive_probe, close_owned};
+use crate::util::{CancelSource, StreamHandles, alive_probe, close_owned, open_snapshot};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -106,7 +106,7 @@ pub(crate) struct PyMuxSender {
     /// slot only inside `with_mut`, always under `py.allow_threads`, so a
     /// push in flight on another thread never trips PyO3's borrow check
     /// and `close()` (cancel-first) ends it instead of waiting behind it.
-    owned: Owned<RustMuxSender<SrtTransport>>,
+    owned: Owned<RustMuxSender<SrtTransport>, StreamHandles>,
     /// Shared cancel state — see `crate::util::CancelSource`.
     cancel: Arc<CancelSource>,
 }
@@ -126,8 +126,11 @@ impl PyMuxSender {
         let cancel = srt_cancel_source(&transport);
         let sender =
             RustMuxSender::new(transport, muxer_cfg).map_err(|e| mux_error_to_pyerr(py, e))?;
+        // Read before the sender moves into the slot: the handle getters
+        // answer from this, never from the slot a parked send holds.
+        let streams = StreamHandles::of(&sender);
         Ok(Self {
-            owned: Owned::new(sender, cancel.as_dyn(), ()),
+            owned: Owned::new(sender, cancel.as_dyn(), streams),
             cancel,
         })
     }
@@ -422,57 +425,44 @@ impl PyMuxSender {
     // Single-program convenience — return the first configured handle
     // of each kind across all programs (which for our single-program
     // ctor is also the only program).
+    //
+    // Answered from the construction-time snapshot, never the slot: the
+    // stream set cannot change after the sender is built, so these do not
+    // wait behind a `send_*` parked on another thread. A closed sender
+    // answers `None`.
 
     /// First configured video stream handle, or `None`.
-    fn video_handle(&self, py: Python<'_>) -> Option<PyVideoStreamHandle> {
-        py.allow_threads(|| {
-            self.owned
-                .with_ref(|s| s.video_handles().into_iter().next())
-        })
-        // `with_ref` RECOVERS a poisoned mutex and documents "never
-        // Poisoned", so `.ok()` here only turns a CLOSED slot into
-        // `None` — the same answer the pre-Arc-2 `with_slot` gave for an
-        // empty slot.
-        .ok()
-        .flatten()
-        .map(PyVideoStreamHandle)
+    fn video_handle(&self) -> Option<PyVideoStreamHandle> {
+        open_snapshot(&self.owned)
+            .and_then(|s| s.video)
+            .map(PyVideoStreamHandle)
     }
 
     /// First configured KLV stream handle, or `None`.
-    fn klv_handle(&self, py: Python<'_>) -> Option<PyKlvStreamHandle> {
-        py.allow_threads(|| self.owned.with_ref(|s| s.klv_handles().into_iter().next()))
-            .ok()
-            .flatten()
+    fn klv_handle(&self) -> Option<PyKlvStreamHandle> {
+        open_snapshot(&self.owned)
+            .and_then(|s| s.klv)
             .map(PyKlvStreamHandle)
     }
 
     /// First configured audio stream handle, or `None`.
-    fn audio_handle(&self, py: Python<'_>) -> Option<PyAudioStreamHandle> {
-        py.allow_threads(|| {
-            self.owned
-                .with_ref(|s| s.audio_handles().into_iter().next())
-        })
-        .ok()
-        .flatten()
-        .map(PyAudioStreamHandle)
+    fn audio_handle(&self) -> Option<PyAudioStreamHandle> {
+        open_snapshot(&self.owned)
+            .and_then(|s| s.audio)
+            .map(PyAudioStreamHandle)
     }
 
     /// First configured subtitle stream handle, or `None`.
-    fn subtitle_handle(&self, py: Python<'_>) -> Option<PySubtitleStreamHandle> {
-        py.allow_threads(|| {
-            self.owned
-                .with_ref(|s| s.subtitle_handles().into_iter().next())
-        })
-        .ok()
-        .flatten()
-        .map(PySubtitleStreamHandle)
+    fn subtitle_handle(&self) -> Option<PySubtitleStreamHandle> {
+        open_snapshot(&self.owned)
+            .and_then(|s| s.subtitle)
+            .map(PySubtitleStreamHandle)
     }
 
     /// First configured data stream handle, or `None`.
-    fn data_handle(&self, py: Python<'_>) -> Option<PyDataStreamHandle> {
-        py.allow_threads(|| self.owned.with_ref(|s| s.data_handles().into_iter().next()))
-            .ok()
-            .flatten()
+    fn data_handle(&self) -> Option<PyDataStreamHandle> {
+        open_snapshot(&self.owned)
+            .and_then(|s| s.data)
             .map(PyDataStreamHandle)
     }
 

@@ -512,6 +512,33 @@ traceback to stderr during shutdown. The process still exits 0 — it is
 the guard doing its job, not a failure. `close()` your shells before
 exit, or catch `BaseException` in the worker, to keep the output clean.
 
+### What answers while another thread is parked
+
+A blocking call holds its object for as long as it is parked, so what a
+second thread (a watchdog, a UI, a shutdown path) may ask of that object
+falls into two groups.
+
+**Answers at once, whatever the other thread is doing:**
+
+| Accessor | While a call is parked | Once closed |
+|---|---|---|
+| `close()`, `cancel_handle()`, `CancelHandle.cancel()` / `is_cancelled()` | cancel first, then free | quiet |
+| `is_alive()` | `True` — a parked call means the object is open | `False` |
+| `repr()` | the open form | the `closed` form |
+| `local_addr()` / `local_port()` / `local_addr_port()`, `tcp.Transport.peer_addr()` | the value captured when the object was built | raises `CLOSED` (`peer_addr()` returns `""`) |
+| `video_handle()` … `data_handle()` on the three `MuxSender` classes | the handles of the program config the sender was built from | `None` |
+| `reconnect_attempts()`, `reconnect_stats()` on the managed shells | live counters kept outside the object | `reconnect_attempts()` keeps its last value; `reconnect_stats()` raises `CLOSED` |
+| `end_reason()` / `end_detail()` | the recorded reason, or `None`; `H264Receiver` answers `None` while a `recv_au()` is in flight | the reason recorded at close |
+
+**Waits for the parked call to return** (with the GIL released, so other
+threads keep running): `stats()`, `socket_stats()`, `srt_stats()`,
+`depay_stats()`, `rtp_stats()` and `last_seen_micros()`. These read
+counters that live inside the object and have nothing to report without
+it. Poll them from the thread that drives the send or receive loop, or
+give the receiver a `?recv_timeout=` so its blocking call returns on a
+cadence. `finish()` and `accept_blocking()` are blocking operations in
+their own right.
+
 ### SRT convenience (`MuxSender` / `DemuxReceiver`)
 
 `MuxSender` bundles a `Muxer` + an SRT `Sender`: send encoded elementary
@@ -544,7 +571,9 @@ with MuxSender.from_url(
 / `send_klv` / `send_audio` / `send_subtitle` / `send_data` (raw
 private-data bytes, passed through verbatim), plus the handle-targeted
 `send_*_to` variants for multi-stream programs and the first-of-kind handle
-accessors (`video_handle()`, `klv_handle()`, …, `data_handle()`). `stats()`
+accessors (`video_handle()`, `klv_handle()`, …, `data_handle()`), which
+answer from the program config the sender was built from and never wait
+behind a parked send. `stats()`
 returns a `(SocketStats, MuxerStats)` tuple. There is no `flush()` — bytes
 flush per-send and again on `close()`.
 
@@ -839,7 +868,9 @@ long as the silence lasts. Give the receiver a `?recv_timeout=` deadline
 (the iterator then raises `RtpError(BACKPRESSURE)` /
 `SrtError(BACKPRESSURE)` every `<ms>` and the lock cycles), or poll `last_seen_micros()` from the
 consuming thread between events. The `end_reason()` getters, by contrast,
-are lock-free and safe to poll from a watchdog at any time.
+are lock-free and safe to poll from a watchdog at any time — see
+[What answers while another thread is parked](#what-answers-while-another-thread-is-parked)
+for the full split.
 
 The same method exists on `tstrans.srt.DemuxReceiver` and
 `tstrans.srt.ManagedDemuxReceiver`.

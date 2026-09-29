@@ -1,0 +1,74 @@
+# Functions in the Python and JVM bindings that may call the BLOCKING
+# `with_ref()` — i.e. take the shell slot and wait behind a call parked on
+# another thread. Read by scripts/check/c/snapshot-getters.sh, which fails on
+# any caller not listed here AND on any row whose function no longer calls it.
+#
+# Columns (TAB-separated): path, function, class, reason.
+#
+# A row names a (file, function) pair; two classes in one file that share a
+# method name (`srt/transport.rs` `socket_stats` on Sender and Receiver) are
+# one row.
+#
+# Classes:
+#   blocking-op  the function is itself a blocking operation; waiting for the
+#                slot is its contract.
+#   needs-slot   a dynamic read of state that lives inside the shell, with no
+#                meaningful answer while the slot is held. It waits for the
+#                parked call to return; the language guides say so.
+#   primitive    the registry method the other rows call.
+#
+# Not a candidate for this list — fix the function instead:
+#   - a value that cannot change after construction (addresses, ports, stream
+#     handles, URL text): capture it at construction, read `Owned::snapshot()`;
+#   - liveness, `repr`, end reason: `try_with_ref()` / `is_closed()`, which
+#     answer "held" without waiting (a parked call means open).
+bindings/jvm/src/handle.rs	with_ref	primitive	OwnedRegistry::with_ref, the blocking reader the needs-slot rows go through
+bindings/jvm/src/rtp/demux_receiver.rs	Java_org_tstrans_rtp_DemuxReceiver_nLastSeenMicros	needs-slot	per-PID timestamp lives in the demuxer stats inside the shell; blocking caveat documented with the watchdog recipe
+bindings/jvm/src/rtp/demux_receiver.rs	Java_org_tstrans_rtp_DemuxReceiver_nStats	needs-slot	counters live inside the shell and have no value to report while a parked call holds it
+bindings/jvm/src/rtp/h264_receiver.rs	Java_org_tstrans_rtp_H264Receiver_nDepayStats	needs-slot	counters live inside the shell and have no value to report while a parked call holds it
+bindings/jvm/src/rtp/h264_receiver.rs	Java_org_tstrans_rtp_H264Receiver_nRtpStats	needs-slot	counters live inside the shell and have no value to report while a parked call holds it
+bindings/jvm/src/rtp/h264_receiver.rs	Java_org_tstrans_rtp_H264Receiver_nSocketStats	needs-slot	counters live inside the shell and have no value to report while a parked call holds it
+bindings/jvm/src/rtp/mux_sender.rs	Java_org_tstrans_rtp_MuxSender_nFinish	blocking-op	lossless shutdown: drains the muxer through the transport, documented to wait behind a send in flight
+bindings/jvm/src/rtp/mux_sender.rs	Java_org_tstrans_rtp_MuxSender_nStats	needs-slot	counters live inside the shell and have no value to report while a parked call holds it
+bindings/jvm/src/rtp/transport.rs	Java_org_tstrans_rtp_Receiver_nSocketStats	needs-slot	counters live inside the shell and have no value to report while a parked call holds it
+bindings/jvm/src/rtp/transport.rs	Java_org_tstrans_rtp_Sender_nSocketStats	needs-slot	counters live inside the shell and have no value to report while a parked call holds it
+bindings/jvm/src/srt/demux_receiver.rs	Java_org_tstrans_srt_DemuxReceiver_nLastSeenMicros	needs-slot	per-PID timestamp lives in the demuxer stats inside the shell; blocking caveat documented with the watchdog recipe
+bindings/jvm/src/srt/demux_receiver.rs	Java_org_tstrans_srt_DemuxReceiver_nSocketStats	needs-slot	counters live inside the shell and have no value to report while a parked call holds it
+bindings/jvm/src/srt/demux_receiver.rs	Java_org_tstrans_srt_DemuxReceiver_nStats	needs-slot	counters live inside the shell and have no value to report while a parked call holds it
+bindings/jvm/src/srt/managed_basic.rs	Java_org_tstrans_srt_ManagedReceiver_nSocketStats	needs-slot	counters live inside the shell and have no value to report while a parked call holds it
+bindings/jvm/src/srt/managed_basic.rs	Java_org_tstrans_srt_ManagedSender_nSocketStats	needs-slot	counters live inside the shell and have no value to report while a parked call holds it
+bindings/jvm/src/srt/managed_convenience.rs	Java_org_tstrans_srt_ManagedDemuxReceiver_nLastSeenMicros	needs-slot	per-PID timestamp lives in the demuxer stats inside the shell; blocking caveat documented with the watchdog recipe
+bindings/jvm/src/srt/managed_convenience.rs	Java_org_tstrans_srt_ManagedDemuxReceiver_nSocketStats	needs-slot	counters live inside the shell and have no value to report while a parked call holds it
+bindings/jvm/src/srt/managed_convenience.rs	Java_org_tstrans_srt_ManagedDemuxReceiver_nSrtStats	needs-slot	counters live inside the shell and have no value to report while a parked call holds it
+bindings/jvm/src/srt/managed_convenience.rs	Java_org_tstrans_srt_ManagedMuxSender_nFinish	blocking-op	lossless shutdown: drains the muxer through the transport, documented to wait behind a send in flight
+bindings/jvm/src/srt/managed_convenience.rs	Java_org_tstrans_srt_ManagedMuxSender_nStats	needs-slot	counters live inside the shell and have no value to report while a parked call holds it
+bindings/jvm/src/srt/mux_sender.rs	Java_org_tstrans_srt_MuxSender_nFinish	blocking-op	lossless shutdown: drains the muxer through the transport, documented to wait behind a send in flight
+bindings/jvm/src/srt/mux_sender.rs	Java_org_tstrans_srt_MuxSender_nStats	needs-slot	counters live inside the shell and have no value to report while a parked call holds it
+bindings/jvm/src/srt/transport.rs	Java_org_tstrans_srt_Receiver_nSocketStats	needs-slot	counters live inside the shell and have no value to report while a parked call holds it
+bindings/jvm/src/srt/transport.rs	Java_org_tstrans_srt_Receiver_nSrtStats	needs-slot	counters live inside the shell and have no value to report while a parked call holds it
+bindings/jvm/src/srt/transport.rs	Java_org_tstrans_srt_Sender_nSocketStats	needs-slot	counters live inside the shell and have no value to report while a parked call holds it
+bindings/jvm/src/srt/transport.rs	Java_org_tstrans_srt_Sender_nSrtStats	needs-slot	counters live inside the shell and have no value to report while a parked call holds it
+bindings/python/src/rist/mod.rs	stats	needs-slot	counters live inside the shell and have no value to report while a parked call holds it
+bindings/python/src/rtp/demux_receiver.rs	last_seen_micros	needs-slot	per-PID timestamp lives in the demuxer stats inside the shell; blocking caveat documented with the watchdog recipe
+bindings/python/src/rtp/demux_receiver.rs	stats	needs-slot	counters live inside the shell and have no value to report while a parked call holds it
+bindings/python/src/rtp/h264_receiver.rs	depay_stats	needs-slot	counters live inside the shell and have no value to report while a parked call holds it
+bindings/python/src/rtp/h264_receiver.rs	rtp_stats	needs-slot	counters live inside the shell and have no value to report while a parked call holds it
+bindings/python/src/rtp/h264_receiver.rs	socket_stats	needs-slot	counters live inside the shell and have no value to report while a parked call holds it
+bindings/python/src/rtp/mux_sender.rs	finish	blocking-op	lossless shutdown: drains the muxer through the transport, documented to wait behind a send in flight
+bindings/python/src/rtp/mux_sender.rs	stats	needs-slot	counters live inside the shell and have no value to report while a parked call holds it
+bindings/python/src/rtp/transport.rs	stats	needs-slot	counters live inside the shell and have no value to report while a parked call holds it
+bindings/python/src/srt/demux_receiver.rs	last_seen_micros	needs-slot	per-PID timestamp lives in the demuxer stats inside the shell; blocking caveat documented with the watchdog recipe
+bindings/python/src/srt/demux_receiver.rs	socket_stats	needs-slot	counters live inside the shell and have no value to report while a parked call holds it
+bindings/python/src/srt/demux_receiver.rs	stats	needs-slot	counters live inside the shell and have no value to report while a parked call holds it
+bindings/python/src/srt/managed_basic.rs	socket_stats	needs-slot	counters live inside the shell and have no value to report while a parked call holds it
+bindings/python/src/srt/managed_convenience.rs	finish	blocking-op	lossless shutdown: drains the muxer through the transport, documented to wait behind a send in flight
+bindings/python/src/srt/managed_convenience.rs	last_seen_micros	needs-slot	per-PID timestamp lives in the demuxer stats inside the shell; blocking caveat documented with the watchdog recipe
+bindings/python/src/srt/managed_convenience.rs	socket_stats	needs-slot	counters live inside the shell and have no value to report while a parked call holds it
+bindings/python/src/srt/managed_convenience.rs	stats	needs-slot	counters live inside the shell and have no value to report while a parked call holds it
+bindings/python/src/srt/mux_sender.rs	finish	blocking-op	lossless shutdown: drains the muxer through the transport, documented to wait behind a send in flight
+bindings/python/src/srt/mux_sender.rs	stats	needs-slot	counters live inside the shell and have no value to report while a parked call holds it
+bindings/python/src/srt/transport.rs	socket_stats	needs-slot	counters live inside the shell and have no value to report while a parked call holds it
+bindings/python/src/srt/transport.rs	srt_stats	needs-slot	counters live inside the shell and have no value to report while a parked call holds it
+bindings/python/src/tcp/mod.rs	accept_blocking	blocking-op	the accept itself; Listener methods take &self so it holds the slot through with_ref
+bindings/python/src/tcp/mod.rs	stats	needs-slot	counters live inside the shell and have no value to report while a parked call holds it
+bindings/python/src/udp/mod.rs	stats	needs-slot	counters live inside the shell and have no value to report while a parked call holds it

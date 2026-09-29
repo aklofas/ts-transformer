@@ -299,13 +299,11 @@ public final class H264Receiver extends NativeHandle implements Iterable<H264Acc
      * after {@link #close()} — the close path snapshots the reason before
      * the underlying native resource is freed.
      *
-     * <p><b>Blocking:</b> while open, this takes the same internal resource
-     * lock a parked {@link #recvAu()} holds — if a recv is currently in
-     * flight on this receiver, {@code endReason()} blocks until it returns
-     * (an AU, EOS, or an error). Call after the recv loop observes its
-     * terminal outcome, or from the same thread driving the recv loop, to
-     * avoid blocking. Once closed, this never blocks (returns the cached
-     * snapshot).
+     * <p><b>Never blocks.</b> While a {@link #recvAu()} is in flight on
+     * another thread the reason is not final, and this answers {@code null}
+     * without waiting for that call (through 0.6.x it waited until the
+     * receive returned). Read it after the recv loop has observed its
+     * terminal outcome. Once closed, it returns the cached snapshot.
      *
      * <p><b>Cross-thread close race:</b> a concurrent call from another
      * thread while {@link #close()} is in flight may briefly observe
@@ -323,8 +321,9 @@ public final class H264Receiver extends NativeHandle implements Iterable<H264Acc
      * Free-text detail for {@link #endReason()} — the message carried by
      * {@code KEEPALIVE_FAILED} / {@code TRANSPORT_FAILED} /
      * {@code PROTOCOL_ERROR}; {@code null} for every other reason (including
-     * "hasn't ended yet"). Still readable after {@link #close()}. Same
-     * blocking / cross-thread-close-race caveats as {@link #endReason()}.
+     * "hasn't ended yet"). Still readable after {@link #close()}. Never
+     * blocks, and has the same in-flight-receive and cross-thread-close-race
+     * caveats as {@link #endReason()}.
      */
     public String endDetail() {
         long h = peekHandle();

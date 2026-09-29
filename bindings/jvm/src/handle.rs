@@ -90,8 +90,9 @@ use std::sync::{Arc, Mutex};
 
 use jni::JNIEnv;
 use jni::sys::jlong;
-use tst_pipeline::RecvEndReason;
+use tst_core::transport::Transport;
 use tst_pipeline::binding::{HandleState, Owned};
+use tst_pipeline::{MuxSender, RecvEndReason};
 
 /// An optional cross-thread cancel hook fired by [`HandleRegistry::close`] *before*
 /// the resource is taken, so a parked native op (a blocked `recv`/`accept`) wakes
@@ -481,8 +482,11 @@ impl<T: Send + 'static, S: Send + Sync + 'static> OwnedRegistry<T, S> {
         result
     }
 
-    /// Reader path (stats / isAlive / getters): [`Owned::with_ref`] —
-    /// recovers a poisoned slot.
+    /// Reader path (stats): [`Owned::with_ref`] — recovers a poisoned slot.
+    /// BLOCKING: it waits behind a parked op, so it is only for reads that
+    /// have no answer without the slot. Liveness goes through
+    /// [`Self::is_alive`], construction-constant getters through
+    /// [`Self::snapshot`].
     ///
     /// # Errors
     ///
@@ -516,8 +520,20 @@ impl<T: Send + 'static, S: Send + Sync + 'static> OwnedRegistry<T, S> {
         }
     }
 
-    /// Construction-constant reads (local addr, reconnect handles, stats
-    /// handle): [`Owned::snapshot`], never the slot.
+    /// Non-blocking liveness for the `nIsAlive` natives: `alive(&T)` when the
+    /// slot can be inspected now, `true` while a parked op holds it (a parked
+    /// call means open), `false` for an empty slot or a closed/absent id.
+    /// Never waits behind the call a watchdog thread is watching.
+    pub(crate) fn is_alive(&self, id: u64, alive: impl FnOnce(&T) -> bool) -> bool {
+        match self.try_with_ref(id, alive) {
+            Ok(Some(b)) => b,
+            Ok(None) => true,
+            Err(_) => false,
+        }
+    }
+
+    /// Construction-constant reads (local addr, stream handles, reconnect
+    /// handles, stats handle): [`Owned::snapshot`], never the slot.
     pub(crate) fn snapshot<R>(&self, id: u64, f: impl FnOnce(&S) -> R) -> Option<R> {
         self.lease(id).map(|e| f(e.owned.snapshot()))
     }
@@ -570,21 +586,56 @@ pub(crate) fn with_push<T: Send + 'static, S: Send + Sync + 'static, E>(
     }
 }
 
-/// Lease `handle` on `registry` and return the first handle-of-kind picked out
-/// by `pick` (`-1` if none). A closed/absent handle throws
-/// `IllegalStateException` naming `what` and returns `-1`.
+/// The first configured stream handle of each kind, as raw `u32`s — the
+/// `Owned` snapshot (or part of it) of every `MuxSender`-shaped shell.
+///
+/// The stream set is fixed by the `MuxerConfig` the sender is built from (the
+/// muxer has no way to add a stream afterwards), so the handles are read once,
+/// before the sender moves into its slot. The `n*Handle` natives then never
+/// wait behind a `send*` parked on a full send buffer or in a Blocking
+/// reconnect (spec §3.2's snapshot rule).
+#[derive(Clone, Copy)]
+pub(crate) struct StreamHandles {
+    pub video: Option<u32>,
+    pub klv: Option<u32>,
+    pub audio: Option<u32>,
+    pub subtitle: Option<u32>,
+    pub data: Option<u32>,
+}
+
+impl StreamHandles {
+    /// Read the handles off a freshly built sender.
+    pub(crate) fn of<T: Transport>(sender: &MuxSender<T>) -> Self {
+        Self {
+            video: sender.video_handles().into_iter().next().map(|h| h.raw()),
+            klv: sender.klv_handles().into_iter().next().map(|h| h.raw()),
+            audio: sender.audio_handles().into_iter().next().map(|h| h.raw()),
+            subtitle: sender
+                .subtitle_handles()
+                .into_iter()
+                .next()
+                .map(|h| h.raw()),
+            data: sender.data_handles().into_iter().next().map(|h| h.raw()),
+        }
+    }
+}
+
+/// Return the first handle-of-kind `pick` reads out of the entry's
+/// construction-time snapshot (`-1` if none). Never takes the slot. A
+/// closed/absent handle throws `IllegalStateException` naming `what` and
+/// returns `-1`.
 pub(crate) fn first_handle<T: Send + 'static, S: Send + Sync + 'static>(
     env: &mut JNIEnv,
     registry: &OwnedRegistry<T, S>,
     handle: jlong,
     what: &str,
-    pick: impl FnOnce(&T) -> Option<u32>,
+    pick: impl FnOnce(&S) -> Option<u32>,
 ) -> jlong {
-    match registry.with_ref(handle as u64, |inner| pick(inner)) {
-        Ok(Some(raw)) => i64::from(raw),
-        Ok(None) => -1,
-        Err(state) => {
-            crate::error::throw_handle_state(env, what, &state);
+    match registry.snapshot(handle as u64, pick) {
+        Some(Some(raw)) => i64::from(raw),
+        Some(None) => -1,
+        None => {
+            crate::error::throw_handle_state(env, what, &HandleState::Closed);
             -1
         }
     }

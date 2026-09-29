@@ -352,6 +352,36 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Python, JVM: getters and liveness probes no longer wait behind a call
+  parked on another thread.** A blocking call (`recv`, a send into a full
+  buffer, a send inside a Blocking-mode reconnect) holds the shell for as
+  long as it is parked, and these accessors took the shell to answer — so a
+  watchdog thread asking a question of an object waited for as long as the
+  call it was watching, forever on a silent link:
+  - Python `tcp.Transport.peer_addr()` and `repr()`;
+  - Python `video_handle()` / `klv_handle()` / `audio_handle()` /
+    `subtitle_handle()` / `data_handle()` on `srt.MuxSender`,
+    `srt.ManagedMuxSender` and `rtp.MuxSender`, and the JVM twins
+    `videoHandle()` … `dataHandle()` on the same three classes;
+  - JVM `isAlive()` on `srt.Sender`, `srt.Receiver`, `srt.MuxSender`,
+    `srt.ManagedSender`, `srt.ManagedReceiver`, `srt.ManagedMuxSender`,
+    `srt.ManagedDemuxReceiver` and `rtp.MuxSender`;
+  - JVM `rtp.H264Receiver.endReason()` / `endDetail()`.
+
+  The peer address and the stream handles cannot change after construction
+  (the muxer has no way to add a stream to a built sender), so they are now
+  captured at construction and read without any lock. `isAlive()` is a
+  non-blocking probe, as it already was in Python and on the two JVM
+  `DemuxReceiver`s: while another thread holds the shell it answers `true` (a
+  parked call means the object is open). `H264Receiver.endReason()` /
+  `endDetail()` answer `null` while a `recvAu()` is in flight, as Python's
+  `end_reason()` does — **a behaviour change**: they used to wait for that
+  call to return. Values and closed-object behaviour are otherwise unchanged
+  (Python handle getters answer `None` and `peer_addr()` `""` once closed;
+  the JVM getters throw `IllegalStateException`). `stats()`,
+  `socket_stats()` / `srtStats()` and `last_seen_micros()` /
+  `lastSeenMicros()` still need the shell and still wait; the language
+  guides list which accessors are which. No signature, stub or C ABI change.
 - **A process that exits while a thread is parked inside libsrt now
   terminates (C, JVM, Rust).** `tst-srt` runs `srt_cleanup()` from a C
   `atexit` handler, and `srt_cleanup()` waits for libsrt's GC thread, which
@@ -2249,6 +2279,32 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Testing — rails (R1/R2)
 
+- **`scripts/check/c/snapshot-getters.sh` now catches every binding function
+  that takes the shell with the blocking `with_ref()`.** Its pattern only
+  matched closures that called something named `local_addr(`, `local_port(`
+  or `repr(`, and stopped at the first `;`, so a getter that waited behind a
+  parked call under any other name passed. It keeps that check and adds a
+  second one over the Python and JVM bindings: every function that calls
+  `with_ref()` must be listed, with a class and a reason, in
+  `scripts/ratchets/blocking-slot-readers.tsv` (blocking operations such as
+  `finish()` and `accept_blocking()`, and the stats readers that have no
+  answer without the shell). The list is exact in both directions — a row
+  whose function no longer calls `with_ref()` fails — and the rail fails if
+  its scan finds no caller at all. `scripts/ratchets/tests/self_test.sh`
+  carries the permanent negative cases (an unlisted getter, a stale row, a
+  row without a reason, a scan that matches nothing). bash 3.2 / POSIX awk.
+- **tst-py, tst-jni: accessors are tested against a call that is proven
+  parked.** `test_cross_thread_close.py` gains tests for
+  `tcp.Transport.peer_addr()` / `repr()` behind a parked `recv()` and for the
+  stream-handle getters and `is_alive()` behind a parked send on
+  `srt.MuxSender` (full send buffer) and `srt.ManagedMuxSender` (Blocking
+  reconnect); its shared helper now latches that the parking call was
+  entered and had not returned when the getter answered. JUnit gains
+  `AccessorsAnswerWhileParkedTest` (seven srt shells) and
+  `H264ReceiverTest.endReasonAnswersWhileRecvAuIsParked`. Every parked call
+  runs on a daemon thread with `close()` as the rescue. An RTP send cannot
+  be parked on demand, so `rtp.MuxSender` is covered by a value test and the
+  rail.
 - **Surface manifest: five binding columns per row.** Every `[[surface]]` row
   (348 today) in `tests/coverage/surface-manifest.toml` lists `c:` / `python:` /
   `java:` / `swift:` / `kotlin:`. Three sentinels stand in for a symbol and are
