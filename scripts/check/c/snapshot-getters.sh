@@ -85,11 +85,24 @@ trap 'rm -rf "$tmp"' EXIT
 # One line per (file, function) that calls the blocking `with_ref(`.
 # `try_with_ref(` does not match (the character before `with_ref` is `_`),
 # nor does the definition `fn with_ref<R>(` (a `<` follows the name). Comment
-# lines and everything from a file's `#[cfg(test)]` module on are skipped.
+# lines and the items guarded by a column-0 `#[cfg(test)]` are skipped.
 # shellcheck disable=SC2086  # ROOTS is a deliberate word list
 find $ROOTS -type f -name '*.rs' | LC_ALL=C sort | while IFS= read -r f; do
     awk -v file="$f" '
-        /^#\[cfg\(test\)\]/ { exit }
+        # Skip the one item a column-0 `#[cfg(test)]` guards, not the rest
+        # of the file: a one-line item ends at its `;`, a block at the
+        # closing brace rustfmt puts in column 0.
+        /^#\[cfg\(test\)\]/ { guarded = 1; next }
+        guarded == 1 {
+            if ($0 ~ /^#\[/) next
+            if ($0 ~ /;[ \t]*$/ && $0 !~ /\{/) { guarded = 0; next }
+            guarded = 2
+            next
+        }
+        guarded == 2 {
+            if ($0 ~ /^\}/) guarded = 0
+            next
+        }
         {
             line = $0
             sub(/^[ \t]+/, "", line)
