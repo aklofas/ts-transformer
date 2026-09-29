@@ -772,12 +772,27 @@ four narrow things:
   `PcrAnomaly` anywhere else is a library finding that nothing excuses and no
   injection explains, in Strict as well as Lossy. A PCR jump with no gap on
   its PID still FAILS.
+
+  Both the declarations and the gaps are those of the CURRENT connection. A
+  `ReconnectDiscontinuity` empties the declared set (the managed receiver
+  reset the demuxer, which reports a `ProgramMap` again before it can report
+  a `PcrAnomaly`) and retires every continuity gap seen before it. Between
+  reconnects a `ProgramMap` replaces the `PCR_PID` of its own program, and
+  removes any other program that held its PMT PID (the demuxer keeps one
+  program per PMT PID). One change is invisible: the demuxer emits no event
+  when a PAT drops a program and leaves its PMT PID unused, so that program
+  stays declared here until a reconnect or a superseding map, and a
+  `PcrAnomaly` on its former `PCR_PID` would still be judged as one on a
+  declared PID. `programs_seen` is unaffected by all of this: it counts every
+  program reported over the whole capture.
 - An injection whose position resolves inside a **reconnect gap** — between
   the last media before a `ReconnectDiscontinuity` and the marker's own
   window — that the receiver was never in a position to notice moves to
-  `undetected_lost`, counted separately in `lost_in_reconnect_gap`. Inside
-  the gap an injection is HELD to detection only when both of these are
-  shown:
+  `undetected_lost`, counted separately in `lost_in_reconnect_gap`. A gap
+  ends at the next marker: from there on only the newer reconnect's gap has
+  a say, so a reconnect shortly after another does not excuse what arrived
+  after the second. Inside the gap an injection is HELD to detection only
+  when both of these are shown:
   - It arrived: it resolved EXACTLY, from an anchor received at or after the
     marker. One resolved approximately (its own PCR anchor never arrived),
     from an anchor received before the marker (the link died between the
@@ -1096,7 +1111,9 @@ continuity jump in its window moves to `undetected_lost` /
 continuity jump on that PID is that gap's timestamp signature and is excused
 into `unexplained_transport_loss`, counted in `pcr_anomalies_excused`, at most
 one per gap (a backward jump, or one on a PID no PMT declares as `PCR_PID`,
-is never excused and never attributed); and an injection resolved inside a
+is never excused and never attributed; after a reconnect no PID is declared
+until a program map is reported again, and a gap seen before it excuses
+nothing); and an injection resolved inside a
 RECONNECT GAP that the receiver was never in a position to notice moves to
 `undetected_lost` and is counted in `lost_in_reconnect_gap` (one resolved
 exactly from an anchor received after the marker, with media from the reset

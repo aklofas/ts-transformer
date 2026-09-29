@@ -428,13 +428,23 @@ reset, had already produced media again before it — on the injection's own
 PID for damage that is noticed as a continuity jump (a dropped packet, a
 rewritten PID or continuity counter), on any PID for everything else.
 Otherwise it is counted as lost in the reconnect gap, inside the same
-excusal budget. An injection's own gap never
+excusal budget. A reconnect gap ends at the next reconnect, so an injection
+is judged against the reconnect it arrived after and an earlier one cannot
+excuse it. An injection's own gap never
 excuses that injection. Resyncs are never excused. Non-conformances are
 never excused either, with one bounded exception: a PCR anomaly that jumps
 forward, on a PID a PMT declares as the program's PCR PID, beside a
 continuity gap on that same PID, is that gap's timestamp signature, and each
 gap excuses at most one. A backward PCR jump, a PCR anomaly on any other
 PID, and a second anomaly against the same gap all still fail the leg. The
+declared PCR PIDs and the continuity gaps are those of the current
+connection: a reconnect resets the demuxer, so after one no PID is declared
+until a program map is reported again, and a gap seen before it excuses
+nothing after it. Between reconnects a program map replaces the declaration
+of its own program and of any program that held its PMT PID. The demuxer
+reports no event when a PAT drops a program, so the harness cannot see that
+removal, and a PCR anomaly on such a program's former PCR PID would still be
+judged as one on a declared PID. The
 rich-KLV oracles
 skip a record an injection demonstrably damaged, counting it separately so
 every failure string reports how many records went unexamined. Offline
