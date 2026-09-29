@@ -7,7 +7,11 @@ package org.tstrans;
 public final class KlvDecodeException extends BindingException {
     private static final long serialVersionUID = 1L;
 
-    /** Discriminant; values map 1:1 from the Rust {@code KlvDecodeError} variants. */
+    /**
+     * Discriminant; values map 1:1 from the Rust {@code KlvDecodeError} variants.
+     *
+     * <p>Persist {@link #name()}, never {@link #ordinal()}: the declaration order is not part of the API.
+     */
     public enum Kind {
         TRUNCATED_SET, BAD_UNIVERSAL_LABEL, CHECKSUM_MISMATCH,
         DUPLICATE_TAG, MISSING_REQUIRED_TAG, MALFORMED_BYTES, INTERNAL

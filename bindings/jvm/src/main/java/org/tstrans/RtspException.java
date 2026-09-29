@@ -10,7 +10,11 @@ package org.tstrans;
 public final class RtspException extends BindingException {
     private static final long serialVersionUID = 1L;
 
-    /** RTSP failure category. Names match tst-py {@code RtspErrorKind} 1:1. */
+    /**
+     * RTSP failure category. Names match tst-py {@code RtspErrorKind} 1:1.
+     *
+     * <p>Persist {@link #name()}, never {@link #ordinal()}: the declaration order is not part of the API.
+     */
     public enum Kind {
         PROTOCOL, AUTH_FAILED, AUTH_REQUIRED, NOT_FOUND, UNSUPPORTED_TRANSPORT,
         TLS, IO, TIMEOUT, SERVER, MOUNT

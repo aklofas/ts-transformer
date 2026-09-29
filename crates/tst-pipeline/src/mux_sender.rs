@@ -117,7 +117,7 @@ pub struct MuxSenderStats {
 /// 2. **Explicit prompt close** — call [`Self::close`]. Cancels the
 ///    transport *before* taking the inner lock, so a peer thread parked
 ///    in `send_video` / `send_klv` returns
-///    [`MuxSenderErrorSource::Transport`]`(`[`TransportError::Broken`]`)` within
+///    [`MuxSenderErrorSource::Transport`]`(`[`TransportError::ExplicitClose`]`)` within
 ///    one libsrt I/O cycle (~3-10 ms). Idempotent. Prompt by
 ///    construction — the price is that `pending_bytes` retained from a
 ///    prior transient send error are abandoned.
@@ -141,7 +141,7 @@ pub struct MuxSenderStats {
 /// | Kotlin | Wrap as `AutoCloseable`; `.use { }` calls `close()` on exit |
 /// | Swift | `deinit` calls drop; `defer { handle.cancel() }` for explicit cross-thread |
 /// | Python | Wrap as `__enter__`/`__exit__`; `with ... as sender:` calls `close()` on exit |
-/// | C | `tst_mux_sender_close(sender)` (explicit; mirrors [`Self::close`] — prompt, abandons the retained tail; no C mirror of [`Self::finish`] yet) |
+/// | C | `tst_mux_sender_close(sender)` (explicit; mirrors [`Self::close`] — prompt, abandons the retained tail) or `tst_mux_sender_finish(sender)` (mirrors [`Self::finish`]) |
 ///
 /// See [`docs/reference/srt-cancel-handle.md`](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/srt-cancel-handle.md) for the full cancel-handle pattern.
 ///
@@ -1000,7 +1000,7 @@ impl<T: Transport> MuxSender<T> {
     /// Cancels the underlying transport BEFORE acquiring the inner lock,
     /// so a peer thread parked inside `send_video` / `send_klv` /
     /// `send_*_to` (e.g. libsrt's `srt_sendmsg` blocked on a full send
-    /// buffer) returns [`TransportError::Broken`] within one transport
+    /// buffer) returns [`TransportError::ExplicitClose`] within one transport
     /// I/O cycle (~3-10 ms on SRT) — `close()` never deadlocks against a
     /// parked send and never waits on a slow network. This is the
     /// emergency/prompt shutdown primitive; its price is that
@@ -1037,8 +1037,8 @@ impl<T: Transport> MuxSender<T> {
     /// with no send timeout (the same bound `Drop`'s best-effort drain
     /// has always had). A watchdog holding [`Self::cancel_handle`] can
     /// unblock a stuck `finish` from another thread: the parked drain
-    /// send returns [`TransportError::Broken`], which `finish` surfaces
-    /// as its error.
+    /// send returns [`TransportError::ExplicitClose`], which `finish`
+    /// surfaces as its error.
     ///
     /// # Errors
     ///

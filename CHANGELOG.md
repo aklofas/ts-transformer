@@ -229,12 +229,35 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `"peer closed connection"` was the only way to tell a clean peer close
   from a read error (both carry `errno_code: None`). Reconnect and
   end-reason behavior are unchanged: `Broken` remains the managed
-  wrappers' reconnect trigger whatever the cause. `#[non_exhaustive]`
-  (match with a wildcard arm); the `Broken` variant was already
-  `#[non_exhaustive]`, so `..` patterns keep compiling. Not yet exposed
-  through the C / Python / JVM bindings (see deferred-features).
+  wrappers' reconnect trigger whatever the cause. `BrokenCause` is
+  `#[non_exhaustive]` (match with a wildcard arm). The new field is a
+  source-breaking change to `TransportError::Broken` — see "Changed". Not
+  yet exposed through the C / Python / JVM bindings (see
+  deferred-features).
 
 ### Changed
+
+- **BREAKING (source) — two public types gained a field and are not
+  `#[non_exhaustive]` at the level the field was added.** Both additions
+  break code that names every field; code that already used `..` compiles
+  unchanged.
+  - `tst_core::mpegts::demux::DemuxerStats` gained
+    `unwrap_reanchors: u64`. The struct has all-public fields and no
+    `#[non_exhaustive]`, so an exhaustive struct literal
+    (`DemuxerStats { program_maps_seen: 0, /* … every field … */ }`) and
+    an exhaustive pattern (`let DemuxerStats { discontinuities, /* … */ } =
+    stats;`) no longer compile. Migration: `DemuxerStats` implements
+    `Default`, so end a literal with `..Default::default()`, and end a
+    pattern with `..`.
+  - `tst_core::transport::TransportError::Broken` gained
+    `cause: BrokenCause`. `TransportError` is `#[non_exhaustive]`, but that
+    attribute covers the enum's variant list, not a variant's fields, and
+    the `Broken` variant itself carries no `#[non_exhaustive]` — so a
+    `Transport` / `RecvTransport` implementation that constructs
+    `TransportError::Broken { msg, errno_code }` no longer compiles, nor
+    does a pattern that binds both fields without `..`. Migration: add
+    `cause: BrokenCause::Unspecified` (or `CleanEof` where the peer ended
+    the stream cleanly) to every constructor; end patterns with `..`.
 
 - **Demuxer: `PcrAnomaly` is reported only on a PMT-declared `PCR_PID`.**
   `check_pcr` used to key its timeline by the on-wire PID of any packet
@@ -774,10 +797,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   now re-anchored onto its program's running clock when that clock is
   fresher than the PID's last sample and places the new sample more
   than half an epoch from it; short reorders keep their own backward
-  step. New additive `DemuxerStats::unwrap_reanchors: u64` counts
-  re-anchors (C / Python / JVM stats mirrors deferred — see
-  `docs/project/deferred-features.md`), and the field's rustdoc states
-  the remaining bound (a dormant PID with no flowing sibling).
+  step. New `DemuxerStats::unwrap_reanchors: u64` counts re-anchors
+  (a source-breaking field addition — see "Changed"; C / Python / JVM
+  stats mirrors deferred — see `docs/project/deferred-features.md`), and
+  the field's rustdoc states the remaining bound (a dormant PID with no
+  flowing sibling).
 - **KLV.** `st0102::decode_strict` reports the real buffer offset of a
   duplicate tag (was always `0`); `st0903::decode_strict` reports
   buffer-absolute offsets for non-canonical BER lengths, truncation and
@@ -1659,6 +1683,24 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Testing — CI/rails (WP-8)
 
+- **Surface manifest: a `python:` cell now names a definition.** The rail
+  (`scripts/check/repo/surface-manifest.sh`) resolved a Python symbol by
+  searching every binding source for its last dotted component as a
+  substring, so `python:send` or `python:DemuxEvent` passed whatever row
+  they sat on. Three rows named a symbol that exists but is not the twin
+  (`Demuxer::feed` → `decode_uas_datalink`, `Demuxer::next_event` →
+  `DemuxEvent`, `UdpTransport::connect` → `send`). A cell is now a
+  module-level function, a class, or `Class.member`, optionally prefixed
+  `tstrans.<module>.` (required when several modules define the name), and
+  is looked up among the definitions in the `.pyi` stubs and `.py`
+  sources; a row for `Owner::leaf` whose `Owner` has a Python class must
+  name that class or one of its members. 17 rows were corrected: the three
+  above, 13 methods that named the right method without its class, and
+  `CoreId::new` (→ `CoreId`, was `encode_core_id`). The `c:` and `java:`
+  columns are still substring matches.
+- **`release-version-consistency.sh` prints how many internal
+  dependency `version` keys it compared** (18 today) instead of a comment
+  that said 12; `docs/project/releasing.md` follows.
 - **Header rail fails closed.** `scripts/check/c/header-conditional-sections.sh`
   now treats a cbindgen failure as `FAIL` (stderr preserved), requires the
   generated header to carry a non-trivial declaration set (≥ 200 `tst_*`
@@ -1999,8 +2041,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   raise `pyo3_runtime.PanicException` if the underlying close panics (it was
   silently infallible before); a transport-level close failure is still
   logged, not raised. `srt.Receiver.connect_recv(...)` is unchanged —
-  same URL handling, same kinds. Observed kind changes (old → new; values
-  of surviving members unchanged):
+  same URL handling, same kinds. Observed kind changes (old → new; the
+  integer value of every surviving `IntEnum` member is unchanged, the
+  string values of four `DemuxErrorKind` members are not — see the
+  breaking note under the table):
 
   | Producer | Python today → 0.7.0 |
   |---|---|
@@ -2014,7 +2058,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   | tst-rtp `ConnectError::{PayloadTypeParam, MissingPayloadTypeParam, Url, HostNotLiteral, Io, IfaceUnsupported}` (and `RtpUrlError`) | rtp `TRANSPORT` → **`PAYLOAD_TYPE_PARAM` / `MISSING_PAYLOAD_TYPE_PARAM` / `URL` / `HOST_NOT_LITERAL` / `IO` / `IFACE_UNSUPPORTED`** |
   | `SenderErrorSource::Framing` (TS sync loss in `Sender.send_bytes`) | srt `CONFIG_INVALID` → **`INPUT_MALFORMED`** |
   | `MuxError::InvalidNal` / `KlvTooLarge` / `InvalidAv1Obu` / `MispTime` | mux `INPUT_MALFORMED` → **`INVALID_NAL` / `KLV_TOO_LARGE` / `INVALID_AV1_OBU` / `MISP_TIME`** |
-  | `DemuxError::Unrecoverable` / `MalformedPsi` / `MalformedPes` / `SyncBufExhausted` | `INTERNAL` / `BAD_PMT` / `BAD_PES` / `SYNC_LOSS` → **`UNRECOVERABLE` / `MALFORMED_PSI` / `MALFORMED_PES` / `SYNC_BUF_EXHAUSTED`** (`STRICT_REJECTION` unchanged; `UNEXPECTED_EOF` removed — never produced). **`DemuxErrorKind` is now a `str`-valued `enum.Enum`, not an `IntEnum`** — `.value` is the member's lowercase name, so code comparing `.value` to an integer must compare the member instead |
+  | `DemuxError::Unrecoverable` / `MalformedPsi` / `MalformedPes` / `SyncBufExhausted` | `INTERNAL` / `BAD_PMT` / `BAD_PES` / `SYNC_LOSS` → **`UNRECOVERABLE` / `MALFORMED_PSI` / `MALFORMED_PES` / `SYNC_BUF_EXHAUSTED`** (`STRICT_REJECTION` unchanged; `UNEXPECTED_EOF` removed — never produced). `DemuxErrorKind` stays the string-valued `enum.Enum` it was in 0.6.0; the four old names survive as aliases whose **`.value` changed** — see the breaking note below |
   | `RtspError::AuthUnsupported` | `AUTH_FAILED` → **`AUTH_REQUIRED`** |
   | `RtspError::{NoMp2tMedia, MultipleMp2tMedia, NoH264Media, MultipleH264Media}` | `MOUNT` → **`NOT_FOUND`** |
   | `RtspSession.cancel_handle()` after teardown, and a second `into_demux_receiver()` / `into_h264_receiver()` | `PROTOCOL` → **`CLOSED`** (`RtspErrorKind.CLOSED`, new member) |
@@ -2048,6 +2092,34 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   of its own, the Rust `BindingErrorKind::name()` is the only source, and
   the per-kind Python error-mapping CI ratchet is retired in favour of
   `scripts/ratchets/kind-equivalence.tsv` plus the import-time check.
+
+  **BREAKING — four `DemuxErrorKind` values changed.** `DemuxErrorKind` is
+  string-valued, and an alias carries its successor's value, so the old
+  strings are gone even though the old names resolve:
+
+  | Member (0.6.0 name, kept as an alias) | `.value` in 0.6.0 | `.value` in 0.7.0 | `.name` in 0.7.0 |
+  |---|---|---|---|
+  | `INTERNAL` | `"internal"` | `"unrecoverable"` | `UNRECOVERABLE` |
+  | `BAD_PMT` | `"bad_pmt"` | `"malformed_psi"` | `MALFORMED_PSI` |
+  | `BAD_PES` | `"bad_pes"` | `"malformed_pes"` | `MALFORMED_PES` |
+  | `SYNC_LOSS` | `"sync_loss"` | `"sync_buf_exhausted"` | `SYNC_BUF_EXHAUSTED` |
+
+  `DemuxErrorKind("bad_pmt")` — a lookup by a value stored or logged under
+  0.6.x — now raises `ValueError`, as do `"internal"`, `"bad_pes"`,
+  `"sync_loss"` and the removed `"unexpected_eof"`; `KlvErrorKind("unknown_set")`
+  does too (member removed). A comparison such as
+  `e.kind.value == "bad_pmt"` silently stops matching. Migration: compare
+  members (`e.kind is DemuxErrorKind.MALFORMED_PSI`), and rewrite stored
+  strings with the table above before looking them up. Every other
+  `*ErrorKind` is an `IntEnum` whose surviving members and aliases keep
+  their 0.6.0 integers (`MuxErrorKind`, `KlvEncodeErrorKind`,
+  `CodecErrorKind`, `RtspErrorKind`, `RtpErrorKind`, `SrtErrorKind`,
+  `UdpErrorKind`, `TcpErrorKind`, `HlsErrorKind`, `RistErrorKind`); what
+  changes there is `.name`, which on an alias is the successor's spelling,
+  so a stored 0.6.x NAME such as `"WOULD_BLOCK"` still resolves through
+  `SrtErrorKind["WOULD_BLOCK"]` but no longer round-trips.
+  `KlvFieldErrorKind`, `NonConformantKind` and the other `mpegts` / `klv`
+  enums are unchanged.
 
   **Exiting with a shell still open no longer hangs.** `tstrans` registers
   an `atexit` hook that cancels every still-open shell before libsrt's own
@@ -2089,6 +2161,33 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     `RtspException.Kind` keeps its ten names, but two producers move bucket:
     `AuthUnsupported` → `AUTH_REQUIRED` (was `AUTH_FAILED`) and the four
     SDP-media errors → `NOT_FOUND` (was `MOUNT`).
+  - **BREAKING — `Kind.ordinal()` shifted on four enums.** The `Kind` enums
+    carry no explicit codes, so a consumer that stored `ordinal()` (a
+    database column, an `EnumMap` dump, a wire byte) reads a different kind
+    after the upgrade, with no error. **`RtpException.Kind` is the one to
+    check first: ordinals 0–3 are all still valid and all mean something
+    else** — 0 `TRANSPORT` → `BACKPRESSURE`, 1 `MALFORMED_PACKET` →
+    `BROKEN`, 2 `CANCELLED` → `CLOSED`, 3 `TIMEOUT` → `TOO_LARGE` — so a
+    stored 0.6.x timeout (3) decodes as an oversize payload and a stored
+    cancel (2) happens to land on its successor. `DemuxException.Kind`:
+    0 `SYNC_LOSS` → `STRICT_REJECTION`, 1 `BAD_PMT` → `INTERNAL`, 2
+    `BAD_PES` → `UNRECOVERABLE`, 3 `UNEXPECTED_EOF` → `MALFORMED_PSI`, 4
+    `STRICT_REJECTION` → `MALFORMED_PES`, 5 `INTERNAL` →
+    `SYNC_BUF_EXHAUSTED` (`STRICT_REJECTION` moved 4 → 0, `INTERNAL` 5 → 1).
+    `SrtException.Kind`: 0–5 unchanged; 6 `WOULD_BLOCK` → `IO`, 7 `IO` →
+    `BACKPRESSURE` (`IO` moved 7 → 6; 8–10 are new).
+    `KlvEncodeException.Kind`: 0–7 unchanged; 8 `VTARGET_PACK_EMPTY` →
+    `DUPLICATE_TARGET_ID`, 9 `DUPLICATE_TARGET_ID` →
+    `FORBIDDEN_STANDALONE_OFFSET`, 10 `FORBIDDEN_STANDALONE_OFFSET` →
+    `V_TARGET_PACK_EMPTY`. `MuxException.Kind` and
+    `CodecParseException.Kind` only grew at the end, and
+    `RtspException.Kind` / `KlvDecodeException.Kind` are unchanged, so
+    their ordinals hold. Migration: map stored ordinals through the 0.6.0
+    order above to a NAME, then through the retired-members list to the
+    0.7.0 constant, and store `name()` from now on — the javadoc on every
+    `*Exception.Kind` now says the declaration order is not part of the
+    API. Java serialization of an exception is unaffected (enums serialize
+    by name), apart from the removed names.
   - **`NativeLoader.load()` now verifies the kind tables**: every kind the
     native library can raise is resolved against this JAR's `*Exception.Kind`
     enums, so a JAR/native mismatch is an `IllegalStateException` naming both

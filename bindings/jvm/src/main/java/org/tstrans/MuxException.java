@@ -8,7 +8,11 @@ package org.tstrans;
 public final class MuxException extends BindingException {
     private static final long serialVersionUID = 1L;
 
-    /** Discriminant; values match the Rust {@code MuxErrorKind} variants. */
+    /**
+     * Discriminant; values match the Rust {@code MuxErrorKind} variants.
+     *
+     * <p>Persist {@link #name()}, never {@link #ordinal()}: the declaration order is not part of the API.
+     */
     public enum Kind {
         INPUT_MALFORMED, CONFIG_INVALID, INVALID_USAGE, BACKPRESSURE, INTERNAL,
         /** {@code MuxError::InvalidNal} — not Annex-B / not a NAL. */
