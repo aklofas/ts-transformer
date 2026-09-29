@@ -405,8 +405,18 @@ have been placed on the receiver's own timeline.
 Two attribution rules keep those verdicts honest on a link that really does
 lose packets. A live capture is judged in the lossy tier, where an
 unexplained continuity gap is excused as transport loss rather than charged
-to the corruption tap (non-conformances and resyncs are never excused, and an
-injection's own gap never excuses that injection); and the rich-KLV oracles
+to the corruption tap, and an injection the link demonstrably lost is not
+charged as undetected: one with a foreign continuity gap in its window, or
+one placed inside a reconnect gap with nothing to show it arrived (an
+injection resolved exactly from a PCR received after the reconnect did
+arrive, and keeps its detection obligation). An injection's own gap never
+excuses that injection. Resyncs are never excused. Non-conformances are
+never excused either, with one bounded exception: a PCR anomaly that jumps
+forward, on a PID a PMT declares as the program's PCR PID, beside a
+continuity gap on that same PID, is that gap's timestamp signature, and each
+gap excuses at most one. A backward PCR jump, a PCR anomaly on any other
+PID, and a second anomaly against the same gap all still fail the leg. The
+rich-KLV oracles
 skip a record an injection demonstrably damaged, counting it separately so
 every failure string reports how many records went unexamined. Offline
 verification remains in the strict tier and sees neither excusal.

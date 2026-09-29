@@ -10,7 +10,7 @@
 //! (and, for `Sample`, which [`SamplePayload`] variant) arrived, so two
 //! streams sharing a `stream_type` byte never conflate their counts.
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::io;
 use std::path::Path;
 
@@ -242,7 +242,10 @@ pub struct Tally {
     audio_frames: u64,
     /// Per-`program_number` media counts — see [`ProgramCounts`].
     per_program: BTreeMap<u16, ProgramCounts>,
-    programs_seen: BTreeSet<u16>,
+    /// Programs seen, each with the `PCR_PID` its latest PMT declared —
+    /// kept so an attribution attached after a PMT still learns which
+    /// PIDs carry a time base (see [`Tally::attach_attribution`]).
+    programs_seen: BTreeMap<u16, u16>,
     /// Distinct video codecs observed across all `Sample` events. Normally
     /// a singleton (one codec per profile); tracked as a set so an
     /// unexpected second codec is visible too.
@@ -335,7 +338,7 @@ impl Tally {
             track_klv_digests: true,
             audio_frames: 0,
             per_program: BTreeMap::new(),
-            programs_seen: BTreeSet::new(),
+            programs_seen: BTreeMap::new(),
             video_codecs_seen: HashSet::new(),
             klv_carriage_seen: HashSet::new(),
             misp_sei_seen: false,
@@ -435,7 +438,7 @@ impl Tally {
         }
         match ev {
             DemuxEvent::ProgramMap(m) => {
-                self.programs_seen.insert(m.program_number);
+                self.programs_seen.insert(m.program_number, m.pcr_pid);
             }
             DemuxEvent::Sample {
                 stream,
@@ -692,7 +695,14 @@ impl Tally {
     /// the first event: an attribution that missed the start of the
     /// capture would report the injections it never saw evidence for as
     /// undetected.
-    pub fn attach_attribution(&mut self, a: corrupt::Attribution) {
+    ///
+    /// The PMTs already seen are handed over here: the attribution
+    /// refuses a `PcrAnomaly` on a PID no PMT declares as `PCR_PID`, and
+    /// which PIDs are declared does not depend on when it was attached.
+    pub fn attach_attribution(&mut self, mut a: corrupt::Attribution) {
+        for (&program, &pcr_pid) in &self.programs_seen {
+            a.on_program_map(program, pcr_pid);
+        }
         self.attribution = Some(a);
     }
 
@@ -743,8 +753,8 @@ impl Tally {
     }
 
     /// Offer one event to the attached attribution: an error-class event
-    /// as a signal, a media event as evidence of recovery, anything else
-    /// (a PMT, a reconnect marker) not at all.
+    /// as a signal, a media event as evidence of recovery, a reconnect
+    /// marker as a gap, a PMT as the declaration of its `PCR_PID`.
     fn route_to_attribution(&mut self, ev: &DemuxEvent, at: u64) {
         let Some(a) = self.attribution.as_mut() else {
             return;
@@ -763,7 +773,9 @@ impl Tally {
             DemuxEvent::NonConformant { stream, issue } => {
                 let sig = match issue {
                     NonConformantIssue::PsiChecksumMismatch { .. } => corrupt::Signal::PsiChecksum,
-                    NonConformantIssue::PcrAnomaly { .. } => corrupt::Signal::PcrAnomaly,
+                    NonConformantIssue::PcrAnomaly { delta } => {
+                        corrupt::Signal::PcrAnomaly { delta: *delta }
+                    }
                     NonConformantIssue::MalformedPes { .. } | NonConformantIssue::PusiMidPes => {
                         corrupt::Signal::MalformedPes
                     }
@@ -772,7 +784,7 @@ impl Tally {
                 a.on_signal(at, Some(stream.pid), sig);
             }
             DemuxEvent::ReconnectDiscontinuity => a.on_reconnect(at),
-            DemuxEvent::ProgramMap(_) => {}
+            DemuxEvent::ProgramMap(m) => a.on_program_map(m.program_number, m.pcr_pid),
         }
     }
 
@@ -1697,7 +1709,7 @@ mod tests {
         }
     }
 
-    /// A PCR jump on the video PID — `Signal::PcrAnomaly`, the one
+    /// A forward PCR jump on the video PID — `Signal::PcrAnomaly`, the one
     /// non-conformance lossy judgement can excuse (beside a gap).
     fn pcr_anomaly_event() -> DemuxEvent {
         DemuxEvent::NonConformant {
@@ -3059,5 +3071,132 @@ mod tests {
         let none_lossy = t.explained(VerifyMode::Lossy, None);
         assert_eq!(none_lossy.for_pid(VIDEO_PID), 1, "{none_lossy:?}");
         assert_eq!(none_lossy.for_pid(KLV_PID), 1, "{none_lossy:?}");
+    }
+
+    // ---- Negative controls for the transport-loss excusals ----
+    //
+    // The shapes `corrupt.rs` refuses to excuse, driven through
+    // `Tally::finish` so the assertion is on the OUTCOME: whether any
+    // verdict of the report still fails. Each asserts the report fails.
+
+    fn finish_baseline(t: Tally, mode: VerifyMode, wire: &WireSummary) -> VerifyReport {
+        t.finish(
+            profiles::by_name("baseline").unwrap(),
+            3.0,
+            NOMINAL_COUNT_SLACK,
+            mode,
+            wire,
+        )
+    }
+
+    /// A damaged PAT whose own PCR anchor
+    /// arrived, exactly, after the reconnect marker, with media flowing
+    /// on both sides of it. The demuxer reported nothing. The report must
+    /// fail `corruption_detected`.
+    #[test]
+    fn an_arrived_post_reconnect_injection_the_demuxer_ignored_fails_the_report() {
+        use crate::corrupt::{Class, Coord};
+        let hdr = corruption_header();
+        let wire = wire_for("baseline", 3.0);
+        let mut t = healthy_baseline_tally();
+        let mut inj = injection_at(Class::PsiFlip, 0, 10);
+        inj.psi = true;
+        inj.coord = Coord {
+            pcr_base: Some(1000),
+            since_pcr: 10,
+        };
+        t.attach_attribution(attribution_for(VerifyMode::Lossy, vec![inj], &hdr));
+        t.feed_at(&video_event(90 * FPS_STEP_TICKS, true), 20); // last media before the gap
+        t.feed_at(&DemuxEvent::ReconnectDiscontinuity, 60);
+        t.note_pcrs(&[(1000, 65)]); // exact anchor, after the marker → resolves at 75
+        t.feed_at(&video_event(91 * FPS_STEP_TICKS, false), 70);
+        t.feed_at(&video_event(92 * FPS_STEP_TICKS, false), 80);
+        let r = finish_baseline(t, VerifyMode::Lossy, &wire);
+        assert!(
+            r.failures
+                .iter()
+                .any(|f| f.starts_with("corruption_detected")),
+            "pass={} failures={:?} attribution={:?}",
+            r.pass,
+            r.failures,
+            r.metrics.corruption_attribution
+        );
+    }
+
+    /// A `PcrAnomaly` on the rewritten PID,
+    /// which the PMT (PCR PID = the video PID) does not declare. That
+    /// event means the demuxer kept a PCR timeline for an undeclared PID.
+    /// The report must fail in both tiers.
+    #[test]
+    fn a_pcr_anomaly_on_the_undeclared_rewritten_pid_fails_the_report() {
+        use crate::corrupt::{Class, REWRITTEN_PID};
+        let hdr = corruption_header();
+        let wire = wire_for("baseline", 3.0);
+        for mode in [VerifyMode::Strict, VerifyMode::Lossy] {
+            let mut t = healthy_baseline_tally();
+            let mut inj = injection_at(Class::Header, VIDEO_PID, 10);
+            inj.offsets = vec![1, 2];
+            t.attach_attribution(attribution_for(mode, vec![inj], &hdr));
+            t.feed_at(
+                &DemuxEvent::NonConformant {
+                    stream: StreamId {
+                        pid: REWRITTEN_PID,
+                        kind: StreamKind::Unknown(0),
+                        program_number: 0,
+                    },
+                    issue: NonConformantIssue::PcrAnomaly {
+                        delta: 27_000_000 * 3600,
+                    },
+                },
+                10,
+            );
+            // The rewrite's own, legitimate evidence: the packet vanished
+            // from the video PID. The injection is detected either way.
+            t.feed_at(&discontinuity_event(), 11);
+            t.feed_at(&video_event(90 * FPS_STEP_TICKS, false), 20);
+            let r = finish_baseline(t, mode, &wire);
+            assert!(
+                !r.pass,
+                "{mode:?}: failures={:?} attribution={:?}",
+                r.failures, r.metrics.corruption_attribution
+            );
+        }
+    }
+
+    /// A continuity gap on the video PID, then
+    /// a PCR that went BACKWARDS by a second ten packets later. Packet
+    /// loss moves a clock forward, never back. The report must fail.
+    #[test]
+    fn backward_pcr_after_gap_remains_fatal() {
+        let hdr = corruption_header();
+        let wire = wire_for("baseline", 3.0);
+        let mut t = healthy_baseline_tally();
+        // An empty log: nothing was injected anywhere near, so nothing but
+        // the gap excusal can take the anomaly.
+        t.attach_attribution(attribution_for(VerifyMode::Lossy, vec![], &hdr));
+        t.feed_at(&discontinuity_event(), 5000);
+        t.feed_at(
+            &DemuxEvent::NonConformant {
+                stream: StreamId {
+                    pid: VIDEO_PID,
+                    kind: StreamKind::Video(VideoCodec::H264),
+                    program_number: PROGRAM,
+                },
+                issue: NonConformantIssue::PcrAnomaly { delta: -27_000_000 },
+            },
+            5010,
+        );
+        let r = finish_baseline(t, VerifyMode::Lossy, &wire);
+        // Named verdicts, not `!r.pass`: the report must fail BECAUSE of
+        // the clock, not for some unrelated reason.
+        assert!(
+            r.failures.iter().any(|f| {
+                f.starts_with("nonconformant_event") || f.starts_with("corruption_attributed")
+            }),
+            "pass={} failures={:?} attribution={:?}",
+            r.pass,
+            r.failures,
+            r.metrics.corruption_attribution
+        );
     }
 }

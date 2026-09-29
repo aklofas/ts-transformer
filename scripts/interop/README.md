@@ -702,17 +702,30 @@ four narrow things:
   load-bearing: an injection's OWN jump never excuses it, or a `drop` —
   whose only observable IS a continuity jump — would arrive pre-excused and
   its recovery obligation would evaporate.
-- A `PcrAnomaly` beside a continuity jump on its own PID — within the
+- A FORWARD `PcrAnomaly` beside a continuity jump on its own PID — within the
   attribution window before it, or on the same packet after it (tst-core
   queues `check_pcr` before `check_continuity`) — is the gap's timestamp
   signature and moves to `unexplained_transport_loss`, counted separately in
-  `pcr_anomalies_excused`. A PCR jump with no gap on its PID still FAILS.
+  `pcr_anomalies_excused`. Three bounds keep that causal. The jump must be
+  forward: lost packets take their share of the timeline with them, so loss
+  never turns a clock back, and a backward jump beside a gap still FAILS.
+  Each gap excuses at most ONE anomaly: the first PCR after a loss carries
+  the whole jump and the demuxer re-bases on it, so a second anomaly needs a
+  second loss, which leaves a gap of its own. And the PID must be one a PMT
+  declares as `PCR_PID`: the demuxer keeps no timeline for any other, so a
+  `PcrAnomaly` anywhere else is a library finding that nothing excuses and no
+  injection explains, in Strict as well as Lossy. A PCR jump with no gap on
+  its PID still FAILS.
 - An injection whose position resolves inside a **reconnect gap** — between
   the last media before a `ReconnectDiscontinuity` and the marker's own
-  window — never arrived at all and moves to `undetected_lost`, counted
-  separately in `lost_in_reconnect_gap`. This is the only excusal a
-  PAT/PMT-flip injection can ever get: the demuxer reports no continuity jump
-  on a PSI PID.
+  window — with nothing to show it arrived moves to `undetected_lost`,
+  counted separately in `lost_in_reconnect_gap`. That covers an injection
+  resolved approximately (its own PCR anchor never arrived), one resolved
+  from an anchor received before the marker (the link died between the two),
+  and one logged before the stream's first PCR. An injection resolved EXACTLY
+  from an anchor received after the marker arrived with it, and must be
+  detected like any other. This is the only excusal a PAT/PMT-flip injection
+  can ever get: the demuxer reports no continuity jump on a PSI PID.
 
 Every unexplained sample names the nearest resolved injection —
 `… (nearest injection: psi_flip on pid 0x0000 at packet 41230, 118 packets
@@ -1007,11 +1020,14 @@ own counter so nothing vanishes silently: an unexplained DISCONTINUITY-family
 signal moves to `unexplained_transport_loss` (other non-conformances and
 resyncs still fail); an undetected or unrecovered injection with a FOREIGN
 continuity jump in its window moves to `undetected_lost` /
-`unrecovered_lost`; a `PcrAnomaly` beside a continuity jump on its own PID is
-that gap's timestamp signature and is excused into
-`unexplained_transport_loss`, counted in `pcr_anomalies_excused`; and an
-injection resolved inside a RECONNECT GAP never arrived, moving to
-`undetected_lost` and counted in `lost_in_reconnect_gap`. An injection's own
+`unrecovered_lost`; a forward `PcrAnomaly` on a PMT-declared PCR PID beside a
+continuity jump on that PID is that gap's timestamp signature and is excused
+into `unexplained_transport_loss`, counted in `pcr_anomalies_excused`, at most
+one per gap (a backward jump, or one on a PID no PMT declares as `PCR_PID`,
+is never excused and never attributed); and an injection resolved inside a
+RECONNECT GAP with nothing to show it arrived moves to `undetected_lost` and
+is counted in `lost_in_reconnect_gap` (one resolved exactly from an anchor
+received after the marker did arrive and is not). An injection's own
 jump excuses it only when a continuity
 jump is NOT one of the signals its class had to produce — for a `drop` or a
 `header` the jump IS the detection, so it never also excuses.

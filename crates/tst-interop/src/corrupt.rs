@@ -1347,10 +1347,19 @@ pub enum Signal {
     /// `NonConformantIssue::PcrAnomaly` — a PCR that jumped against the
     /// previous one on its PID. Its own signal rather than
     /// [`Signal::OtherNonConformant`] because under lossy judgement it has
-    /// one excusal the other non-conformances never get: a PCR jump that
-    /// COINCIDES with a continuity gap on the same PID is that gap's
-    /// timestamp signature, not corruption — see [`Attribution::on_signal`].
-    PcrAnomaly,
+    /// one excusal the other non-conformances never get: a FORWARD PCR
+    /// jump that coincides with a continuity gap on the same PID is that
+    /// gap's timestamp signature, not corruption — see
+    /// [`Attribution::on_signal`].
+    ///
+    /// `delta` is the demuxer's signed difference (27 MHz ticks, new minus
+    /// previous). The sign is what the excusal turns on: packets that went
+    /// missing took their share of the timeline with them, so the clock
+    /// the receiver sees can only jump ahead. A clock that went BACK is
+    /// never the signature of loss.
+    PcrAnomaly {
+        delta: i64,
+    },
     OtherNonConformant,
 }
 
@@ -1403,8 +1412,11 @@ pub struct AttributionReport {
     #[serde(default)]
     pub unexplained_discontinuities: u64,
     /// Uncapped count of unexplained non-conformance-family events
-    /// (`PsiChecksum` / `MalformedPes` / `OtherNonConformant`). Never
-    /// excused in either tier: a lost packet does not forge a bad CRC.
+    /// (`PsiChecksum` / `MalformedPes` / `PcrAnomaly` /
+    /// `OtherNonConformant`). Never excused in either tier — a lost packet
+    /// does not forge a bad CRC — except the PCR anomalies counted in
+    /// [`pcr_anomalies_excused`](Self::pcr_anomalies_excused), which never
+    /// reach this count.
     #[serde(default)]
     pub unexplained_nonconformant: u64,
     /// First UNEXPLAINED event of each family, uncapped and
@@ -1467,7 +1479,8 @@ pub struct AttributionReport {
     /// the `PcrAnomaly` signals excused as the timestamp signature of a
     /// continuity gap on the same PID — a `ContinuityJump` within the
     /// attribution window before them, or on the same packet after them.
-    /// Lossy only; strict charges every one.
+    /// Only a forward jump, only on a PID a PMT declares as `PCR_PID`, and
+    /// at most one per gap. Lossy only; strict charges every one.
     #[serde(default)]
     pub pcr_anomalies_excused: u64,
     /// `DemuxEvent::ReconnectDiscontinuity` markers the receiver fed.
@@ -1475,8 +1488,11 @@ pub struct AttributionReport {
     pub reconnects_seen: u64,
     /// Of [`undetected_lost`](Self::undetected_lost), the injections whose
     /// position resolved inside a reconnect gap — between the last media
-    /// before a marker and the marker's own window — and therefore never
-    /// arrived at all. Lossy only.
+    /// before a marker and the marker's own window — with nothing to show
+    /// they arrived: resolved approximately, or from an anchor the
+    /// receiver saw before the marker. One resolved exactly from an anchor
+    /// received after the marker arrived with it and is never counted
+    /// here. Lossy only.
     #[serde(default)]
     pub lost_in_reconnect_gap: u64,
     pub resyncs: u64,
@@ -1561,6 +1577,11 @@ struct InjState {
     /// Resolved against a LATER base than the one logged (the logged one
     /// never arrived), so the position is approximate.
     approx: bool,
+    /// Receiver ordinal of the PCR packet this injection resolved from.
+    /// `None` for one that carries no anchor (logged before the stream's
+    /// first PCR). Together with `approx` this is the arrival evidence a
+    /// reconnect gap has to respect — see [`Attribution::judge`].
+    anchor_at: Option<u64>,
     /// Its anchor base fell more than `MAX_APPROX_TICKS` behind the first
     /// base the receiver saw afterwards, so it can never be placed. Kept
     /// distinct from "not resolved yet" so the scan cursors can move past
@@ -1698,10 +1719,11 @@ pub struct Attribution {
     unexplained_discontinuities: u64,
     unexplained_nonconformant: u64,
     unexplained_transport_loss: u64,
-    /// Receiver ordinal of the last `ContinuityJump` seen per PID, explained
-    /// or not: the evidence that packets went missing on that PID around
-    /// there. Bounded by the PID space.
-    last_cc_jump_by_pid: BTreeMap<u16, u64>,
+    /// The last `ContinuityJump` seen per PID, explained or not: the
+    /// evidence that packets went missing on that PID around there, and
+    /// whether a PCR anomaly has already claimed it. Bounded by the PID
+    /// space.
+    last_cc_jump_by_pid: BTreeMap<u16, CcGap>,
     /// `PcrAnomaly` signals waiting to learn whether a continuity jump on
     /// their PID lands on the SAME packet — `tst_core` queues a packet's
     /// `PcrAnomaly` before its `ContinuityJump` (`check_pcr` runs before
@@ -1712,12 +1734,13 @@ pub struct Attribution {
     /// Receiver ordinal of the last media event — the last packet known to
     /// have arrived before a reconnect gap opens.
     last_media_at: u64,
-    /// Every reconnect gap seen, as `(from, to)` receiver ordinals: `from`
-    /// is the last media before the marker, `to` the marker plus the widest
-    /// window an approximately-resolved injection can be placed in. An
-    /// injection resolved inside one never arrived. One entry per
-    /// reconnect — bounded by the run's outage count, not its length.
-    reconnect_gaps: Vec<(u64, u64)>,
+    /// Every reconnect gap seen. One entry per reconnect — bounded by the
+    /// run's outage count, not its length.
+    reconnect_gaps: Vec<ReconnectGap>,
+    /// `PCR_PID` per program, from the PMTs the receiver's demuxer
+    /// reported. The demuxer keeps a PCR timeline only for these, so they
+    /// are the only PIDs a `PcrAnomaly` can honestly surface on.
+    pcr_pid_by_program: BTreeMap<u16, u16>,
     reconnects_seen: u64,
     lost_in_reconnect_gap: u64,
     unexplained_samples: Vec<String>,
@@ -1727,6 +1750,32 @@ pub struct Attribution {
     /// APPENDED mid-capture can still trust its ordinal-0 anchor. See
     /// [`Attribution::append`].
     seen_pcr: bool,
+}
+
+/// One continuity gap, as PCR-anomaly evidence.
+#[derive(Clone, Copy, Debug)]
+struct CcGap {
+    at: u64,
+    /// A PCR anomaly has been excused against this gap. One gap is one
+    /// span of lost packets on the PID, and the first PCR to arrive after
+    /// it carries the whole jump: the demuxer re-bases its timeline on
+    /// that PCR, so the next one compares against a value from AFTER the
+    /// loss and is in step again. A second anomaly needs a second loss,
+    /// which leaves its own gap. One gap therefore accounts for at most
+    /// one anomaly.
+    claimed: bool,
+}
+
+/// One reconnect, as receiver ordinals.
+#[derive(Clone, Copy, Debug)]
+struct ReconnectGap {
+    /// The last media before the marker.
+    from: u64,
+    /// The `ReconnectDiscontinuity` marker itself.
+    marker: u64,
+    /// The marker plus the widest window an approximately-resolved
+    /// injection can be placed in.
+    to: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -1766,7 +1815,8 @@ fn expects(inj: &Tracked, sig: Signal) -> bool {
         //
         // A misaligned or overrun packet can parse a bogus PCR just as it
         // parses a bogus PES header, so a `PcrAnomaly` counts here too —
-        // and ONLY here. `PsiFlip` and a PSI `BodyFlip` keep
+        // of either sign, since a bogus value can land on either side of
+        // the real clock — and ONLY here. `PsiFlip` and a PSI `BodyFlip` keep
         // `OtherNonConformant` without it: a damaged section is rejected
         // before it can move a program's clock, so those classes cannot
         // cause a PCR jump.
@@ -1775,7 +1825,7 @@ fn expects(inj: &Tracked, sig: Signal) -> bool {
             Signal::Resync
                 | Signal::ContinuityJump
                 | Signal::MalformedPes
-                | Signal::PcrAnomaly
+                | Signal::PcrAnomaly { .. }
                 | Signal::OtherNonConformant
         ),
         Class::Drop => matches!(sig, Signal::ContinuityJump),
@@ -1857,11 +1907,12 @@ impl Attribution {
     ///   lossy contract says to do with them, and they land in
     ///   [`AttributionReport::unexplained_transport_loss`] instead.
     ///   Unexplained `Resync`/`PsiChecksum`/`MalformedPes`/
-    ///   `OtherNonConformant` still fail — with one exception: a
+    ///   `OtherNonConformant` still fail — with one exception: a forward
     ///   `PcrAnomaly` beside a `ContinuityJump` on its own PID is the
-    ///   gap's timestamp signature and is excused (counted in
-    ///   [`AttributionReport::pcr_anomalies_excused`]). Otherwise a lost
-    ///   packet does not forge a bad CRC or a malformed PES header.
+    ///   gap's timestamp signature and is excused, one per gap (counted
+    ///   in [`AttributionReport::pcr_anomalies_excused`]). A backward one
+    ///   is not: loss never turns a clock back. Otherwise a lost packet
+    ///   does not forge a bad CRC or a malformed PES header.
     /// - An undetected or unrecovered injection with a FOREIGN
     ///   `ContinuityJump` in its window is excused into
     ///   [`AttributionReport::undetected_lost`] /
@@ -1936,6 +1987,7 @@ impl Attribution {
             pcr_anomalies_excused: 0,
             last_media_at: 0,
             reconnect_gaps: Vec::new(),
+            pcr_pid_by_program: BTreeMap::new(),
             reconnects_seen: 0,
             lost_in_reconnect_gap: 0,
             unexplained_samples: Vec::new(),
@@ -2054,6 +2106,7 @@ impl Attribution {
             let st = self.state_mut(i);
             st.resolved_at = Some(at.saturating_add(since));
             st.approx = b != pcr_base;
+            st.anchor_at = Some(at);
             self.next_unresolved += 1;
         }
     }
@@ -2201,10 +2254,25 @@ impl Attribution {
             return;
         };
         self.resolved += 1;
+        // Position inside a reconnect gap is not enough: the excusal is
+        // that the injection never ARRIVED, and an injection resolved
+        // exactly from an anchor the receiver saw after the marker did.
+        // Its own PCR packet came through the rebuilt connection and it
+        // sits `since_pcr` packets behind that, so the demuxer was handed
+        // the damage and owes the detection. What stays excused is what
+        // the gap was opened for: an anchor that never arrived (`approx`),
+        // an anchor from before the marker (the link died between it and
+        // the injection), or no anchor at all.
+        //
+        // `>=`, not `>`: a PCR is stamped with its packet's 0-based
+        // ordinal and the marker with the COUNT of packets received when
+        // it surfaced, so an anchor stamped equal to the marker is the
+        // first packet after it.
+        let arrived_after = |marker: u64| !st.approx && st.anchor_at.is_some_and(|a| a >= marker);
         let in_gap = self
             .reconnect_gaps
             .iter()
-            .any(|&(from, to)| from <= r && r <= to);
+            .any(|g| g.from <= r && r <= g.to && !arrived_after(g.marker));
         let lost = self.excuse_transport_loss && (st.cc_jump_in_window || in_gap);
         if inj.detectable && !st.detected {
             if lost {
@@ -2431,24 +2499,39 @@ impl Attribution {
         self.settle_pending_pcr(at);
         if sig == Signal::ContinuityJump {
             if let Some(p) = pid {
-                self.last_cc_jump_by_pid.insert(p, at);
                 // A pending PCR jump on this PID at this very packet: the
-                // gap it was waiting for.
-                if let Some(k) = self
+                // gap it was waiting for. It takes the gap with it — one
+                // gap, one anomaly (see `CcGap::claimed`) — so a second
+                // anomaly pending on the same packet stays pending and is
+                // charged.
+                let claimed = match self
                     .pending_pcr
                     .iter()
                     .position(|q| q.pid == p && q.at == at)
                 {
-                    self.pending_pcr.swap_remove(k);
-                    self.excuse_pcr_anomaly();
-                }
+                    Some(k) => {
+                        self.pending_pcr.swap_remove(k);
+                        self.excuse_pcr_anomaly();
+                        true
+                    }
+                    None => false,
+                };
+                self.last_cc_jump_by_pid.insert(p, CcGap { at, claimed });
             }
         }
         self.events += 1;
         if sig == Signal::Resync {
             self.resyncs += 1;
         }
-        let attributed_to = self.explainer(at, pid, sig);
+        // The demuxer keeps a PCR timeline only for a PID some PMT
+        // declares as `PCR_PID`, so a `PcrAnomaly` anywhere else is not
+        // something an injection or a lost packet can have caused: it
+        // means a timeline was kept for a PID that has none. A PID rewrite
+        // explains a packet APPEARING on the PID it was moved to, not
+        // that. Never attributed and never excused, in either tier.
+        let undeclared_pcr = matches!(sig, Signal::PcrAnomaly { .. })
+            && !pid.is_some_and(|p| self.pcr_pid_by_program.values().any(|&d| d == p));
+        let attributed_to = self.explainer(at, pid, sig).filter(|_| !undeclared_pcr);
         // A continuity jump is the one signal that also means "packets
         // went missing here", so it is recorded against every injection
         // whose window contains it — EXCEPT the injection it is attributed
@@ -2523,7 +2606,7 @@ impl Attribution {
                 match sig {
                     Signal::PsiChecksum
                     | Signal::MalformedPes
-                    | Signal::PcrAnomaly
+                    | Signal::PcrAnomaly { .. }
                     | Signal::OtherNonConformant => {
                         self.attributed_nonconformant += 1;
                     }
@@ -2562,13 +2645,25 @@ impl Attribution {
                 let text = format!("{sig:?} on pid {pid:?} at packet {at}");
                 // The two excused shapes return here, before the scan.
                 match sig {
-                    Signal::PcrAnomaly if self.excuse_transport_loss => {
+                    // Forward only. Lost packets take their share of the
+                    // timeline with them, so the PCR after a gap is AHEAD
+                    // of the one before it by about the lost span. No
+                    // amount of loss produces a PCR behind its
+                    // predecessor, so a backward jump beside a gap is
+                    // still a finding. The size of a forward jump is not
+                    // bounded here: a continuity counter says packets
+                    // went missing, not how many.
+                    Signal::PcrAnomaly { delta }
+                        if self.excuse_transport_loss && !undeclared_pcr && delta > 0 =>
+                    {
                         if let Some(p) = pid {
-                            let gap_before = self
+                            let window = self.window;
+                            if let Some(gap) = self
                                 .last_cc_jump_by_pid
-                                .get(&p)
-                                .is_some_and(|&j| at.saturating_sub(j) <= self.window);
-                            if gap_before {
+                                .get_mut(&p)
+                                .filter(|g| !g.claimed && at.saturating_sub(g.at) <= window)
+                            {
+                                gap.claimed = true;
                                 self.excuse_pcr_anomaly();
                                 return;
                             }
@@ -2592,7 +2687,7 @@ impl Attribution {
                 // Everything from here is charged as a finding.
                 let text = text + &self.nearest_context(at);
                 match sig {
-                    Signal::PcrAnomaly
+                    Signal::PcrAnomaly { .. }
                     | Signal::PsiChecksum
                     | Signal::MalformedPes
                     | Signal::OtherNonConformant => {
@@ -2657,12 +2752,25 @@ impl Attribution {
     /// approximately against the first base AFTER the marker, just past
     /// `at`. Under lossy judgement an injection resolved inside
     /// `[last_media_at, at + window + APPROX_SLACK]` is judged lost in
-    /// transit rather than undetected; strict never excuses.
+    /// transit rather than undetected — unless it resolved exactly from
+    /// an anchor received after the marker, which shows it arrived (see
+    /// [`Attribution::judge`]). Strict never excuses.
     pub fn on_reconnect(&mut self, at: u64) {
         self.settle_pending_pcr(at);
         self.reconnects_seen += 1;
-        let to = at.saturating_add(self.window).saturating_add(APPROX_SLACK);
-        self.reconnect_gaps.push((self.last_media_at, to));
+        self.reconnect_gaps.push(ReconnectGap {
+            from: self.last_media_at,
+            marker: at,
+            to: at.saturating_add(self.window).saturating_add(APPROX_SLACK),
+        });
+    }
+
+    /// The receiver's demuxer reported a PMT: `program_number` carries its
+    /// time base on `pcr_pid`. A later PMT for the same program replaces
+    /// the PID. Until one is fed no PID is declared, and every
+    /// `PcrAnomaly` is a finding.
+    pub fn on_program_map(&mut self, program_number: u16, pcr_pid: u16) {
+        self.pcr_pid_by_program.insert(program_number, pcr_pid);
     }
 
     /// Final verdict over a capture of `packets_total` receiver packets.
@@ -4432,25 +4540,37 @@ mod tests {
         }
     }
 
-    /// A PCR jump that coincides with a continuity gap on its own PID is
-    /// that gap's timestamp signature — packets went missing for longer
-    /// than the anomaly threshold — not corruption. Under lossy judgement
-    /// it is transport loss; strict has no transport and charges it. Run 3
-    /// (2026-09-17): ~17 such jumps on the srt video PID, 1–3 per outage
-    /// window, every one beside an excused continuity jump.
+    /// A forward PCR jump of two seconds, the shape a span of lost packets
+    /// leaves behind.
+    const PCR_FORWARD: Signal = Signal::PcrAnomaly { delta: 54_000_000 };
+
+    /// A lossy or strict attribution over `log` whose receiver reported
+    /// one program with its time base on the video PID.
+    fn with_video_pcr(lossy: bool, log: Vec<Injection>) -> Attribution {
+        let mut a = if lossy {
+            Attribution::lossy(log, &hdr())
+        } else {
+            Attribution::strict(log, &hdr())
+        };
+        a.on_program_map(1, 0x1011);
+        a
+    }
+
+    /// A forward PCR jump that coincides with a continuity gap on its own
+    /// PID is that gap's timestamp signature — packets went missing for
+    /// longer than the anomaly threshold — not corruption. Under lossy
+    /// judgement it is transport loss; strict has no transport and charges
+    /// it. Run 3 (2026-09-17): ~17 such jumps on the srt video PID, 1–3 per
+    /// outage window, every one beside an excused continuity jump.
     #[test]
     fn a_pcr_jump_beside_a_continuity_gap_is_transport_loss_only_under_lossy() {
         // Far-away, never-resolved injection so the log is non-empty.
         let bystander = || vec![inj(1000, 0, Class::Drop, 0x1011, true)];
         for (lossy, want_excused) in [(true, 1u64), (false, 0u64)] {
-            let mut a = if lossy {
-                Attribution::lossy(bystander(), &hdr())
-            } else {
-                Attribution::strict(bystander(), &hdr())
-            };
+            let mut a = with_video_pcr(lossy, bystander());
             // Gap first, jump inside the window after it.
             a.on_signal(5000, Some(0x1011), Signal::ContinuityJump);
-            a.on_signal(5000 + ATTRIBUTION_WINDOW, Some(0x1011), Signal::PcrAnomaly);
+            a.on_signal(5000 + ATTRIBUTION_WINDOW, Some(0x1011), PCR_FORWARD);
             let r = a.finish(10_000);
             assert_eq!(
                 r.pcr_anomalies_excused, want_excused,
@@ -4465,8 +4585,8 @@ mod tests {
 
         // Same packet, jump QUEUED FIRST (tst_core's check_pcr runs before
         // check_continuity): the gap evidence arrives one event late.
-        let mut a = Attribution::lossy(bystander(), &hdr());
-        a.on_signal(5000, Some(0x1011), Signal::PcrAnomaly);
+        let mut a = with_video_pcr(true, bystander());
+        a.on_signal(5000, Some(0x1011), PCR_FORWARD);
         a.on_signal(5000, Some(0x1011), Signal::ContinuityJump);
         let r = a.finish(10_000);
         assert_eq!(
@@ -4476,18 +4596,18 @@ mod tests {
         );
 
         // A gap on a DIFFERENT PID is not this PID's signature.
-        let mut a = Attribution::lossy(bystander(), &hdr());
+        let mut a = with_video_pcr(true, bystander());
         a.on_signal(5000, Some(0x1100), Signal::ContinuityJump);
-        a.on_signal(5010, Some(0x1011), Signal::PcrAnomaly);
+        a.on_signal(5010, Some(0x1011), PCR_FORWARD);
         assert_eq!(a.finish(10_000).unexplained_nonconformant, 1);
 
         // Beyond the window, before or after: a finding.
-        let mut a = Attribution::lossy(bystander(), &hdr());
+        let mut a = with_video_pcr(true, bystander());
         a.on_signal(5000, Some(0x1011), Signal::ContinuityJump);
-        a.on_signal(5001 + ATTRIBUTION_WINDOW, Some(0x1011), Signal::PcrAnomaly);
+        a.on_signal(5001 + ATTRIBUTION_WINDOW, Some(0x1011), PCR_FORWARD);
         assert_eq!(a.finish(10_000).unexplained_nonconformant, 1);
-        let mut a = Attribution::lossy(bystander(), &hdr());
-        a.on_signal(5000, Some(0x1011), Signal::PcrAnomaly);
+        let mut a = with_video_pcr(true, bystander());
+        a.on_signal(5000, Some(0x1011), PCR_FORWARD);
         a.on_signal(
             5001 + ATTRIBUTION_WINDOW,
             Some(0x1011),
@@ -4498,23 +4618,160 @@ mod tests {
         assert!(
             r.unexplained_events
                 .iter()
-                .any(|e| e.starts_with("PcrAnomaly on pid Some(4113)")),
+                .any(|e| e.starts_with("PcrAnomaly { delta: 54000000 } on pid Some(4113)")),
             "a charged pending anomaly keeps its sample text: {:?}",
             r.unexplained_events
         );
 
         // A pending anomaly at the end of the capture is charged by finish,
         // never dropped.
-        let mut a = Attribution::lossy(bystander(), &hdr());
-        a.on_signal(9990, Some(0x1011), Signal::PcrAnomaly);
+        let mut a = with_video_pcr(true, bystander());
+        a.on_signal(9990, Some(0x1011), PCR_FORWARD);
         let r = a.finish(10_000);
         assert_eq!((r.events, r.unexplained_nonconformant), (1, 1), "{r:?}");
     }
 
+    /// The shape run 3 measured, 1–3 anomalies per outage window: every
+    /// anomaly beside a gap of its own, so every one is excused. One gap,
+    /// one anomaly is a bound on what ONE loss explains, not on the run.
+    #[test]
+    fn each_pcr_jump_beside_its_own_gap_is_excused() {
+        let mut a = with_video_pcr(true, vec![inj(1000, 0, Class::Drop, 0x1011, true)]);
+        for at in [5000, 5040, 5090] {
+            // The order tst_core emits them in, on one packet.
+            a.on_signal(at, Some(0x1011), PCR_FORWARD);
+            a.on_signal(at, Some(0x1011), Signal::ContinuityJump);
+        }
+        // And the other order: the gap a few packets before its PCR.
+        a.on_signal(5200, Some(0x1011), Signal::ContinuityJump);
+        a.on_signal(5205, Some(0x1011), PCR_FORWARD);
+        let r = a.finish(10_000);
+        assert_eq!(
+            (r.pcr_anomalies_excused, r.unexplained_nonconformant),
+            (4, 0),
+            "{r:?}"
+        );
+    }
+
+    /// One continuity gap is one span of lost packets. The first PCR after
+    /// it carries the whole jump and the demuxer re-bases on it, so the gap
+    /// is the cause of that one anomaly and of no later one: a further
+    /// anomaly on the PID, with no further gap, is a clock misbehaving on
+    /// packets that all arrived.
+    #[test]
+    fn one_gap_excuses_at_most_one_pcr_anomaly() {
+        let mut a = with_video_pcr(true, vec![inj(1000, 0, Class::Drop, 0x1011, true)]);
+        a.on_signal(5000, Some(0x1011), Signal::ContinuityJump);
+        a.on_signal(5010, Some(0x1011), PCR_FORWARD);
+        a.on_signal(5020, Some(0x1011), PCR_FORWARD);
+        a.on_signal(5030, Some(0x1011), PCR_FORWARD);
+        let r = a.finish(10_000);
+        assert_eq!(
+            (r.pcr_anomalies_excused, r.unexplained_nonconformant),
+            (1, 2),
+            "{r:?}"
+        );
+
+        // The same bound when the anomaly arrives first and the gap on its
+        // packet claims it: the gap is spent, and the next anomaly is not
+        // excused against it.
+        let mut a = with_video_pcr(true, vec![inj(1000, 0, Class::Drop, 0x1011, true)]);
+        a.on_signal(5000, Some(0x1011), PCR_FORWARD);
+        a.on_signal(5000, Some(0x1011), Signal::ContinuityJump);
+        a.on_signal(5010, Some(0x1011), PCR_FORWARD);
+        let r = a.finish(10_000);
+        assert_eq!(
+            (r.pcr_anomalies_excused, r.unexplained_nonconformant),
+            (1, 1),
+            "{r:?}"
+        );
+    }
+
+    /// Packets that go missing take their share of the timeline with
+    /// them, so loss moves the clock FORWARD. A PCR behind its predecessor
+    /// is never a gap's signature, however close the gap: before it, or on
+    /// the same packet.
+    #[test]
+    fn a_backward_pcr_jump_beside_a_gap_is_a_finding() {
+        let back = Signal::PcrAnomaly { delta: -27_000_000 };
+        let mut a = with_video_pcr(true, vec![inj(1000, 0, Class::Drop, 0x1011, true)]);
+        a.on_signal(5000, Some(0x1011), Signal::ContinuityJump);
+        a.on_signal(5010, Some(0x1011), back);
+        a.on_signal(6000, Some(0x1011), back);
+        a.on_signal(6000, Some(0x1011), Signal::ContinuityJump);
+        let r = a.finish(10_000);
+        assert_eq!(
+            (r.pcr_anomalies_excused, r.unexplained_nonconformant),
+            (0, 2),
+            "{r:?}"
+        );
+    }
+
+    /// The demuxer keeps a PCR timeline only for a PID some PMT declares
+    /// as `PCR_PID`, so it can never honestly report a `PcrAnomaly` on
+    /// `REWRITTEN_PID`. A PID rewrite explains a packet APPEARING there —
+    /// a non-conformance of that one packet, say — not a timeline being
+    /// kept for it, so it must not be able to claim the event in either
+    /// tier.
+    #[test]
+    fn a_pcr_anomaly_on_a_pid_no_pmt_declares_is_never_attributed() {
+        let mut moved = inj(1000, 10, Class::Header, 0x1011, true);
+        moved.offsets = vec![1, 2];
+        for lossy in [false, true] {
+            let mut a = with_video_pcr(lossy, vec![moved.clone()]);
+            a.on_pcr(1000, 5000); // resolves at 5010
+            a.on_signal(5010, Some(REWRITTEN_PID), PCR_FORWARD);
+            a.on_media(5100, 0x1011);
+            let r = a.finish(10_000);
+            assert_eq!(
+                (r.attributed_events, r.unexplained_nonconformant),
+                (0, 1),
+                "lossy={lossy}: a PCR anomaly on a PID no PMT declares is a library finding: {r:?}"
+            );
+
+            // Nor excused: a gap on that PID does not make it loss.
+            let mut a = with_video_pcr(lossy, vec![]);
+            a.on_signal(5000, Some(REWRITTEN_PID), Signal::ContinuityJump);
+            a.on_signal(5010, Some(REWRITTEN_PID), PCR_FORWARD);
+            let r = a.finish(10_000);
+            assert_eq!(
+                (r.pcr_anomalies_excused, r.unexplained_nonconformant),
+                (0, 1),
+                "lossy={lossy}: {r:?}"
+            );
+
+            // The same injection still explains an anomaly on the PID it
+            // left, which IS declared, and a non-conformance on the PID it
+            // moved the packet to, which needs no timeline.
+            let mut a = with_video_pcr(lossy, vec![moved.clone()]);
+            a.on_pcr(1000, 5000);
+            a.on_signal(5010, Some(REWRITTEN_PID), Signal::OtherNonConformant);
+            a.on_signal(5012, Some(0x1011), PCR_FORWARD);
+            let r = a.finish(10_000);
+            assert_eq!(
+                (r.attributed_events, r.unexplained_nonconformant),
+                (2, 0),
+                "lossy={lossy}: {r:?}"
+            );
+        }
+
+        // Before any PMT is reported nothing is declared at all.
+        let mut a = Attribution::lossy(vec![], &hdr());
+        a.on_signal(5000, Some(0x1011), Signal::ContinuityJump);
+        a.on_signal(5010, Some(0x1011), PCR_FORWARD);
+        let r = a.finish(10_000);
+        assert_eq!(
+            (r.pcr_anomalies_excused, r.unexplained_nonconformant),
+            (0, 1),
+            "{r:?}"
+        );
+    }
+
     /// Everything the sender logged between the last media the receiver
-    /// saw and a reconnect marker never arrived. An injection whose
-    /// position resolves inside that gap is lost in transit, not
-    /// undetected — for the PAT/PMT shapes that no continuity jump can
+    /// saw and a reconnect marker never arrived — its PCR anchor included,
+    /// so it resolves approximately, against the first base the rebuilt
+    /// connection delivers. An injection placed inside that gap this way
+    /// is lost in transit, not undetected — for the PAT/PMT shapes that no continuity jump can
     /// ever excuse (the demuxer reports none on a PSI PID), and for the
     /// media shapes a 90 s outage strands far outside a 500-packet window.
     /// Run 3 (2026-09-17): all 12 `undetected` on the srt leg sat at the
@@ -4532,7 +4789,10 @@ mod tests {
             };
             a.on_media(4000, 0x1011); // last media before the link died
             a.on_reconnect(4900); // the marker
-            a.on_pcr(1000, 5000); // the anchor arrives only after the rebuild → resolves at 5010
+            // Base 1000 went down with the link. The first base the
+            // rebuilt connection delivers is a later one, so the injection
+            // resolves approximately, at 5010.
+            a.on_pcr(1500, 5000);
             a.on_media(5100, 0x1011);
             a.finish(10_000)
         };
@@ -4565,12 +4825,27 @@ mod tests {
         a.on_media(4000, 0x1011);
         a.on_reconnect(4500);
         a.on_reconnect(4900);
-        a.on_pcr(1000, 5000);
+        a.on_pcr(1500, 5000);
         a.on_media(5100, 0x1011);
         let r = a.finish(10_000);
         assert_eq!(
             (r.reconnects_seen, r.lost_in_reconnect_gap),
             (2, 1),
+            "{r:?}"
+        );
+
+        // The anchor arrived, and the link died between it and the
+        // injection: resolved exactly, but from BEFORE the marker, so
+        // nothing says the injection itself came through.
+        let mut a = Attribution::lossy(vec![pat_flip.clone()], &hdr());
+        a.on_pcr(1000, 3995); // resolves at 4005
+        a.on_media(4000, 0x1011);
+        a.on_reconnect(4900);
+        a.on_media(5100, 0x1011);
+        let r = a.finish(10_000);
+        assert_eq!(
+            (r.lost_in_reconnect_gap, r.undetected_count),
+            (1, 0),
             "{r:?}"
         );
 
@@ -4875,5 +5150,39 @@ mod tests {
             r.undetected.is_empty(),
             "an unresolved injection is not judged"
         );
+    }
+
+    /// The reconnect excusal is for injections that never arrived. This
+    /// one did: its own anchor base arrives, exactly, AFTER the marker,
+    /// and media flows on both sides of its resolved position with no
+    /// continuity jump anywhere. A demuxer that said nothing about the
+    /// damaged PAT has missed it, inside the gap's window or not.
+    #[test]
+    fn an_injection_resolved_exactly_after_a_reconnect_marker_is_not_lost() {
+        let mut pat_flip = inj(1000, 10, Class::PsiFlip, 0, true);
+        pat_flip.psi = true;
+        // 4900 is the first packet after the marker: a marker is stamped
+        // with the count of packets received, a PCR with its 0-based
+        // ordinal.
+        for anchor_at in [5000, 4900] {
+            let mut a = Attribution::lossy(vec![pat_flip.clone()], &hdr());
+            a.on_media(4000, 0x1011); // last media before the link died
+            a.on_reconnect(4900); // the marker
+            a.on_pcr(1000, anchor_at); // the injection's OWN anchor, exact
+            a.on_media(anchor_at + 5, 0x1011); // media just before the injected packet...
+            a.on_media(anchor_at + 15, 0x1011); // ...and just after it
+            a.on_media(anchor_at + 100, 0x1011);
+            let r = a.finish(10_000);
+            assert_eq!(
+                (
+                    r.undetected_count,
+                    r.lost_in_reconnect_gap,
+                    r.undetected_lost
+                ),
+                (1, 0, 0),
+                "anchor at {anchor_at}: an injection anchored exactly on a post-reconnect PCR \
+                 arrived and must be detected: {r:?}"
+            );
+        }
     }
 }

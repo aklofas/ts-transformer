@@ -41,9 +41,15 @@ pub struct CellMetrics {
     /// moves on — see `verify::VerifyMode`'s own doc comment).
     #[serde(default)]
     pub discontinuities: u64,
-    /// `NonConformant` demux events seen. Always counted, and always
-    /// fatal to `pass` — unlike `discontinuities`, this fails the check
-    /// in both `VerifyMode::Strict` and `VerifyMode::Lossy`.
+    /// `NonConformant` demux events seen. Always counted, excused or not.
+    /// Fatal to `pass` in both `VerifyMode::Strict` and
+    /// `VerifyMode::Lossy` — unlike `discontinuities` — except for the
+    /// events a corruption log accounts for: the ones attributed to an
+    /// injection that can cause them, and, in `Lossy` only, a forward
+    /// `PcrAnomaly` on a PMT-declared PCR PID beside a continuity gap on
+    /// that PID, at most one per gap
+    /// (`corrupt::AttributionReport::pcr_anomalies_excused`). Without a
+    /// corruption log every one is fatal.
     #[serde(default)]
     pub nonconformant: u64,
     /// Sender-side corruption tap counters (`send --corrupt`), `None`
