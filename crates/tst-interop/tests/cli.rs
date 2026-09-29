@@ -190,6 +190,131 @@ fn send_profile_followed_by_another_flag_names_profile() {
     );
 }
 
+/// `--reconnect-mode` takes exactly two values. Anything else must be a
+/// usage error naming the flag — never a silent fall-back to `blocking`,
+/// which would let a drill believe it ran in a mode it never did. Exits
+/// during argument parsing, before any transport is built, so the URL is
+/// never dialed.
+#[test]
+fn send_reconnect_mode_with_an_unknown_value_exits_2() {
+    let output = Command::new(env!("CARGO_BIN_EXE_tst-interop"))
+        .args([
+            "send",
+            "--profile",
+            "baseline",
+            "--url",
+            "udp://127.0.0.1:1",
+            "--seconds",
+            "1",
+            "--managed",
+            "--reconnect-mode",
+            "eventually",
+        ])
+        .output()
+        .expect("spawn tst-interop binary");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "an unknown --reconnect-mode value must exit 2, stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("--reconnect-mode") && stderr.contains("eventually"),
+        "usage error should name the flag and the rejected value, got: {stderr}"
+    );
+}
+
+/// Only the managed path builds a `ReconnectPolicy`, so without
+/// `--managed` the mode would be parsed and then read by nothing. That
+/// is rejected rather than dropped — again before any transport is
+/// built.
+#[test]
+fn send_reconnect_mode_without_managed_exits_2() {
+    let output = Command::new(env!("CARGO_BIN_EXE_tst-interop"))
+        .args([
+            "send",
+            "--profile",
+            "baseline",
+            "--url",
+            "udp://127.0.0.1:1",
+            "--seconds",
+            "1",
+            "--reconnect-mode",
+            "background",
+        ])
+        .output()
+        .expect("spawn tst-interop binary");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "--reconnect-mode without --managed must exit 2, stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("--reconnect-mode") && stderr.contains("--managed"),
+        "usage error should say what the flag depends on, got: {stderr}"
+    );
+}
+
+/// Positive control for the two rejections above, and the CLI half of
+/// `managed_send`: `--managed --reconnect-mode background` is accepted,
+/// runs, and the JSON it prints carries the managed transport's own
+/// account of the run. Over UDP to a socket this test holds open — there
+/// is no outage here and nothing to reconnect to, so every counter is
+/// zero; what is pinned is that the flag parses and the block is
+/// written. The reconnect itself is
+/// `tests/proxy.rs::srt_background_reconnect_keeps_producing_through_an_outage`'s
+/// job.
+#[test]
+fn send_managed_background_is_accepted_and_reports_managed_send() {
+    let sink = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind udp sink");
+    let url = format!(
+        "udp://127.0.0.1:{}",
+        sink.local_addr().expect("sink local_addr").port()
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_tst-interop"))
+        .args([
+            "send",
+            "--profile",
+            "baseline",
+            "--url",
+            &url,
+            "--seconds",
+            "0.2",
+            "--json",
+            "-",
+            "--managed",
+            "--reconnect-mode",
+            "background",
+        ])
+        .output()
+        .expect("spawn tst-interop binary");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "a managed background send must succeed, stderr: {stderr}"
+    );
+    let metrics: tst_interop::report_types::CellMetrics = serde_json::from_str(stdout.trim())
+        .unwrap_or_else(|e| panic!("stdout must be the metrics JSON ({e}), got: {stdout}"));
+    let managed = metrics
+        .managed_send
+        .expect("a managed send's JSON must carry managed_send");
+    assert_eq!(
+        (managed.reconnect_attempts, managed.gap_messages_dropped),
+        (0, 0),
+        "nothing broke, so nothing was retried or evicted: {managed:?}"
+    );
+    assert_eq!(
+        managed.gap_buffer_capacity, 256,
+        "the harness runs the policy's default gap buffer"
+    );
+}
+
 #[test]
 fn verify_file_followed_by_another_flag_names_file() {
     let output = Command::new(env!("CARGO_BIN_EXE_tst-interop"))

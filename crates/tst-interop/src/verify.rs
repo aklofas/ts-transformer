@@ -1191,6 +1191,8 @@ impl Tally {
                 discontinuities: self.disc_since_reconnect,
                 nonconformant: self.nc_since_reconnect,
             }),
+            // A send-side account; a verifier sends nothing.
+            managed_send: None,
         };
 
         VerifyReport {

@@ -80,6 +80,44 @@ pub struct CellMetrics {
     /// so an offline `verify` report serializes exactly as before.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub since_reconnect: Option<SinceReconnect>,
+    /// See [`ManagedSendStats`]. `Some` only on the report of a
+    /// `send --managed` run; every other producer of this struct (a plain
+    /// `send`, `recv`, `verify`) has no managed send transport to ask, and
+    /// a report archived before the field existed loads as `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed_send: Option<ManagedSendStats>,
+}
+
+/// What a `send --managed` run's `tst_pipeline::ManagedTransport` said
+/// about its own reconnects and gap buffer, read once the push loop has
+/// finished and the transport has been dropped — the final values of
+/// `tst_pipeline::ManagedTransportStats`' counters.
+///
+/// The SEND side's own account, and the only one there is: a receiver
+/// counts its own rebuilds ([`VerifyReport::reconnects`]) but cannot see
+/// what the sender's gap buffer accepted or evicted during an outage.
+/// That is exactly what tells the two reconnect modes apart after the
+/// fact. `Blocking` parks the producer inside the one send that found
+/// the transport dead, so the gap buffer never holds more than that
+/// message and evicts nothing. `Background` keeps accepting sends while
+/// the transport is down, so an outage longer than the buffer shows up
+/// here as evictions — every one a message the producer was told `Ok`
+/// for and the wire never carried.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ManagedSendStats {
+    /// Every reconnect-factory call, successful or not.
+    pub reconnect_attempts: u64,
+    /// Factory calls that produced a transport that was installed.
+    pub reconnect_successes: u64,
+    /// Messages evicted from the gap buffer (oldest first) to make room
+    /// for newer ones, plus any dropped as oversized after a reconnect.
+    pub gap_messages_dropped: u64,
+    /// Bytes lost to the same.
+    pub gap_bytes_dropped: u64,
+    /// The gap buffer's capacity in messages — the policy value the run
+    /// was built with, recorded so a reader can bound what an outage
+    /// could have replayed without knowing which revision wrote the file.
+    pub gap_buffer_capacity: u64,
 }
 
 /// Per-record findings of the three rich-KLV oracles (spec §5.5), filled
@@ -185,4 +223,48 @@ pub struct VerifyReport {
     /// evidence names the wrong wire shape.
     #[serde(default)]
     pub profile: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A send report exactly as written before `managed_send` existed.
+    const ARCHIVED_SEND_REPORT: &str = r#"{
+        "video_aus": 90, "keyframes": 3, "klv_records": 30,
+        "klv_set_sha256": null, "audio_frames": 0, "programs_seen": 1,
+        "pts_monotonic": true, "misp_sei_seen": false,
+        "bytes": 25004, "stream_sha256": "00"
+    }"#;
+
+    /// Archived soak evidence is read back by `report soak`, and a new
+    /// optional field must not invalidate it. Pins `managed_send`'s
+    /// `#[serde(default)]`.
+    #[test]
+    fn cell_metrics_without_managed_send_still_deserialize() {
+        let parsed: CellMetrics =
+            serde_json::from_str(ARCHIVED_SEND_REPORT).expect("archived report must parse");
+        assert_eq!(parsed.video_aus, 90);
+        assert!(parsed.managed_send.is_none());
+    }
+
+    /// And the other direction: a report with nothing to say about a
+    /// managed send (every `recv`, every `verify`, every plain `send`)
+    /// serializes without the key, so those files are byte-for-byte what
+    /// they were. Pins the `skip_serializing_if`.
+    #[test]
+    fn cell_metrics_without_managed_send_omit_the_key() {
+        let mut metrics: CellMetrics =
+            serde_json::from_str(ARCHIVED_SEND_REPORT).expect("archived report must parse");
+        let json = serde_json::to_string(&metrics).expect("serialize");
+        assert!(!json.contains("managed_send"), "got: {json}");
+
+        metrics.managed_send = Some(ManagedSendStats {
+            gap_messages_dropped: 3,
+            ..ManagedSendStats::default()
+        });
+        let json = serde_json::to_string(&metrics).expect("serialize");
+        let back: CellMetrics = serde_json::from_str(&json).expect("round trip");
+        assert_eq!(back, metrics);
+    }
 }
