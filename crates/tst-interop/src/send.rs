@@ -18,7 +18,7 @@ use sha2::{Digest, Sha256};
 use tst_core::codec::misp_time::MispTimestamp;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::transport::{BrokenCause, Transport, TransportError};
-use tst_pipeline::{ManagedTransport, MuxSender, ReconnectMode, ReconnectPolicy};
+use tst_pipeline::{ManagedTransport, MuxSender, OverflowPolicy, ReconnectMode, ReconnectPolicy};
 
 use crate::cli::write_json;
 use crate::corrupt::{CorruptConfig, Corrupter};
@@ -339,6 +339,21 @@ pub fn run_managed(
         ..ReconnectPolicy::default()
     };
     let gap_buffer_capacity = policy.gap_buffer_capacity as u64;
+    // Named here, from the policy the transport is about to be built
+    // with, because the stats handle read after the run reports counters
+    // only. `ReconnectMode` is `#[non_exhaustive]`: a mode added after
+    // this was written is recorded as absent, which fails `report soak`'s
+    // declared-mode check instead of being reported under a wrong name.
+    let reconnect_mode = match policy.mode {
+        ReconnectMode::Blocking => Some("blocking".to_string()),
+        ReconnectMode::Background => Some("background".to_string()),
+        _ => None,
+    };
+    let overflow_policy = match policy.overflow_policy {
+        OverflowPolicy::DropOldest => "drop_oldest",
+        OverflowPolicy::Reject => "reject",
+    }
+    .to_string();
     let managed = ManagedTransport::new(initial, factory, policy);
     // Taken BEFORE the transport moves into the sender shell, which is
     // the only moment it can be: the handle shares the transport's
@@ -370,6 +385,8 @@ pub fn run_managed(
         gap_messages_dropped: s.gap_messages_dropped,
         gap_bytes_dropped: s.gap_bytes_dropped,
         gap_buffer_capacity,
+        reconnect_mode: reconnect_mode.clone(),
+        overflow_policy: Some(overflow_policy.clone()),
     });
     if let Some(target) = json_out {
         write_json(target, &metrics)?;

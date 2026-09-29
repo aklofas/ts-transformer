@@ -658,7 +658,8 @@ likewise load-bearing and likewise frozen.
 #### The declarations, and the phase-integrated drop verdict
 
 `soak-config.json` gains a `corruption` flag and a `legs` map — one
-`LegDeclaration { profile, schedule: { seed, phases, phase_s } }` per leg,
+`LegDeclaration { profile, schedule: { seed, phases, phase_s } }` per leg
+(since extended with `klv_set`, `klv_seed` and `reconnect_mode`),
 written before any worker launches. `parse_soak_config` rejects an unknown
 profile name AND an unknown leg key, and `soak.sh` runs `report soak
 --validate-only` before launch so a typo surfaces then rather than 72 hours
@@ -679,6 +680,61 @@ total. The verdict detail names the phase count, so a one-phase reading is
 `--fixed-impairment` and a twelve-phase reading is the schedule. A stats
 file whose phase-counter count disagrees with its own schedule echo fails
 LOUD as a malformed artifact — it never falls back to a partial computation.
+
+#### The reconnect mode, declared and observed
+
+Four knobs are read from the environment rather than from flags, all with
+the production value as the default. They are drill knobs: a short run sets
+them to cover several outage windows, or to take loss out of the picture.
+
+| variable | default | what it does |
+|---|---|---|
+| `OUTAGE_PERIOD_S` | `21600` | Seconds between the srt leg's outage windows. |
+| `OUTAGE_DUR_S` | `90` | Length of each window; must be shorter than the period. |
+| `LOSS_PCT` | `2` | The fixed loss level; used only with `--fixed-impairment`. |
+| `SRT_RECONNECT_MODE` | `blocking` | `blocking` or `background`: passed to the srt leg's sender as `send --managed --reconnect-mode`. |
+
+The two reconnect modes spend an outage differently. `blocking` parks the
+producer inside the send that found the link dead and replays the backlog
+once the link returns. `background` keeps the producer going, holds a bounded
+number of messages in the gap buffer and drops the rest. A run therefore
+exercises one or the other, and says which in three places:
+
+- **Declared** — `soak-config.json` carries `legs.<leg>.reconnect_mode`:
+  `"blocking"` or `"background"` for a leg whose sender is managed (srt),
+  `null` for one whose sender is not (rist). `parse_soak_config` rejects any
+  other string, so `report soak --validate-only` stops a mistyped mode before
+  a worker launches. An archived config without the key loads as `null`.
+- **Observed** — a `send --managed` report's `managed_send` block carries
+  `reconnect_mode` (the same two names) and `overflow_policy`
+  (`"drop_oldest"` or `"reject"`) beside its counters
+  (`reconnect_attempts`, `reconnect_successes`, `gap_messages_dropped`,
+  `gap_bytes_dropped`, `gap_buffer_capacity`). Both keys are absent from a
+  report archived before they existed, which still loads.
+- **Checked** — **`reconnect_mode_declared_<leg>`**, non-provisional: passes
+  when the two agree, fails when they differ, and fails when a mode was
+  declared but the send report carries none (no `managed_send` block, or one
+  without a mode). A leg that declared no mode passes with a detail that
+  begins "not applicable", so an archive from before the declaration is not
+  failed retroactively.
+
+`soak-results.json` copies the `managed_send` block onto its leg
+(`legs[].managed_send`, `null` for an unmanaged sender), next to
+`send_video_aus` and `recv_video_aus`, and `summary.txt` prints one line per
+leg from the same fields:
+
+```
+srt: video AUs sent=… received=…  managed send (recorded, not gated): mode=background overflow_policy=drop_oldest reconnect_attempts=… reconnect_successes=… gap_messages_dropped=… gap_bytes_dropped=… gap_buffer_capacity=256
+rist: video AUs sent=… received=…  managed send (recorded, not gated): none (sender not managed)
+```
+
+These counters are recorded, not gated, and the gap-buffer pair is not a
+complete account of what an outage cost. They count what the gap buffer
+evicted after the sender knew the link was down. What the transport itself
+had accepted and never delivered in the seconds before it noticed the break
+is in neither of them, and has been measured as most of an outage's loss.
+The sent and received access-unit totals on the same line are the fuller
+figure.
 
 #### Lossy-mode transport loss
 

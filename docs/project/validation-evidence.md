@@ -383,10 +383,23 @@ can check the run did what it said it would.
   27) carrying a nested ST 0102 security set on a seeded presence schedule,
   rather than the matrix's 4-tag minimal record.
 
+The SRT leg's managed sender runs in one of two reconnect modes, and the
+run records which: declared in the config before launch, reported by the
+sender afterwards, and compared by `reconnect_mode_declared_<leg>`. The two
+modes support different claims. A Blocking leg stalls its producer for the
+outage and replays the backlog, so it exercises the replay and a source that
+waits. A Background leg keeps producing into a bounded buffer that drops what
+it cannot hold: it shows that both ends reconnect and that the received
+stream recovers, but it does not show delivery of every source frame, and it
+does not exercise the Blocking replay. The sender's reconnect and gap-buffer
+counters are recorded beside each leg's sent and received totals and are not
+gated.
+
 The verdict document gains three groups on top of the existing ones. The
-first is four declaration checks — `profile_declared_<leg>`,
-`schedule_declared_<leg>`, `corruption_declared_<leg>` and
-`klv_declared_<leg>` — which fail a run whose proxy, sender or receiver did
+first is five declaration checks — `profile_declared_<leg>`,
+`schedule_declared_<leg>`, `corruption_declared_<leg>`,
+`klv_declared_<leg>` and `reconnect_mode_declared_<leg>` — which fail a run
+whose proxy, sender or receiver did
 not actually run what the config declared, so a drift between the recipe and
 the run cannot pass unnoticed. Each is worth its own check because each
 failure is silent: a leg declared rich whose receiver was launched in

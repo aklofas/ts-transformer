@@ -124,7 +124,27 @@ pub struct ManagedSendStats {
     /// was built with, recorded so a reader can bound what an outage
     /// could have replayed without knowing which revision wrote the file.
     pub gap_buffer_capacity: u64,
+    /// The `tst_pipeline::ReconnectMode` the transport was built with, as
+    /// one of [`RECONNECT_MODES`]. The counters above cannot stand in for
+    /// it: a run whose outages all fit the gap buffer evicts nothing in
+    /// either mode. `report soak` checks this against the mode the run
+    /// declared (`reconnect_mode_declared_<leg>`).
+    ///
+    /// `None` on a report archived before the field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reconnect_mode: Option<String>,
+    /// The gap buffer's `tst_pipeline::OverflowPolicy` — `"drop_oldest"`
+    /// or `"reject"` — which decides whether a full buffer shows up as
+    /// the evictions counted above or as a failed send. Recorded, not
+    /// checked. `None` on a report archived before the field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overflow_policy: Option<String>,
 }
+
+/// The reconnect-mode names shared by `send --reconnect-mode`, a soak
+/// config's declared `legs.<leg>.reconnect_mode` and
+/// [`ManagedSendStats::reconnect_mode`].
+pub const RECONNECT_MODES: [&str; 2] = ["blocking", "background"];
 
 /// Per-record findings of the three rich-KLV oracles (spec §5.5), filled
 /// in only for a capture judged with `--klv-set rich`.
@@ -252,6 +272,54 @@ mod tests {
             serde_json::from_str(ARCHIVED_SEND_REPORT).expect("archived report must parse");
         assert_eq!(parsed.video_aus, 90);
         assert!(parsed.managed_send.is_none());
+    }
+
+    /// A managed send report exactly as written before the mode and the
+    /// overflow policy were recorded beside the counters.
+    const ARCHIVED_MANAGED_SEND_REPORT: &str = r#"{
+        "video_aus": 90, "keyframes": 3, "klv_records": 30,
+        "klv_set_sha256": null, "audio_frames": 0, "programs_seen": 1,
+        "pts_monotonic": true, "misp_sei_seen": false,
+        "bytes": 25004, "stream_sha256": "00",
+        "managed_send": {
+            "reconnect_attempts": 4, "reconnect_successes": 2,
+            "gap_messages_dropped": 7, "gap_bytes_dropped": 9212,
+            "gap_buffer_capacity": 256
+        }
+    }"#;
+
+    /// Pins the `#[serde(default)]` on both new fields: the counters of an
+    /// archived report still load, with no mode and no policy to report.
+    #[test]
+    fn managed_send_without_a_reconnect_mode_still_deserializes() {
+        let parsed: CellMetrics =
+            serde_json::from_str(ARCHIVED_MANAGED_SEND_REPORT).expect("archived report must parse");
+        let managed = parsed.managed_send.expect("the counters were recorded");
+        assert_eq!(managed.gap_messages_dropped, 7);
+        assert_eq!(managed.gap_buffer_capacity, 256);
+        assert!(managed.reconnect_mode.is_none());
+        assert!(managed.overflow_policy.is_none());
+    }
+
+    /// The written shape: both names are lowercase strings, and they
+    /// survive a round trip.
+    #[test]
+    fn managed_send_records_the_mode_and_policy_as_lowercase_strings() {
+        let mut metrics: CellMetrics =
+            serde_json::from_str(ARCHIVED_SEND_REPORT).expect("archived report must parse");
+        metrics.managed_send = Some(ManagedSendStats {
+            reconnect_mode: Some("background".to_string()),
+            overflow_policy: Some("drop_oldest".to_string()),
+            ..ManagedSendStats::default()
+        });
+        let json = serde_json::to_string(&metrics).expect("serialize");
+        assert!(json.contains(r#""reconnect_mode":"background""#), "{json}");
+        assert!(
+            json.contains(r#""overflow_policy":"drop_oldest""#),
+            "{json}"
+        );
+        let back: CellMetrics = serde_json::from_str(&json).expect("round trip");
+        assert_eq!(back, metrics);
     }
 
     /// And the other direction: a report with nothing to say about a

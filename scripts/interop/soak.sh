@@ -39,7 +39,7 @@
 # DECLARED in `soak-config.json` before launch so `report soak` can check
 # the run actually did what it said it would (`profile_declared_<leg>` /
 # `schedule_declared_<leg>` / `corruption_declared_<leg>` /
-# `klv_declared_<leg>`).
+# `klv_declared_<leg>` / `reconnect_mode_declared_<leg>`).
 #
 #   - Per-leg stream profile (`--profile auto`, the default): the two
 #     legs run two DISTINCT profiles drawn from the seed by
@@ -75,7 +75,9 @@
 #     outage schedule so a short run can cover several windows;
 #     `LOSS_PCT` (with `--fixed-impairment`) isolates outage effects from
 #     loss when set to 0; `SRT_RECONNECT_MODE=blocking|background` picks
-#     how that leg's managed sender spends an outage. Set them in the
+#     how that leg's managed sender spends an outage, and is declared in
+#     `soak-config.json` (`legs.srt.reconnect_mode`) and checked against
+#     what the sender reports it ran. Set them in the
 #     environment, e.g. `OUTAGE_PERIOD_S=300 OUTAGE_DUR_S=30 bash
 #     soak.sh ...`.
 #
@@ -616,7 +618,10 @@ echo "soak: profiles — srt=$SRT_PROFILE rist=$RIST_PROFILE (--profile $PROFILE
 # check stance one level down: which profile each leg was launched with,
 # and which impairment schedule its proxy was given (`null` under
 # --fixed-impairment), checked afterwards against the recv report's own
-# `profile` field and the proxy's own schedule echo.
+# `profile` field and the proxy's own schedule echo. `reconnect_mode`
+# is the mode the leg's MANAGED sender is launched with, checked against
+# the send report's `managed_send.reconnect_mode`; the rist leg's sender
+# is not managed (see the header), so it declares `null`.
 RSS_CADENCE_S=30
 if [[ "$CORRUPT" -eq 1 ]]; then
   CORRUPTION_DECL=true
@@ -641,13 +646,16 @@ jq -n --argjson dur "$TOTAL_SECONDS" --argjson cad "$RSS_CADENCE_S" \
   --arg srt_profile "$SRT_PROFILE" --arg rist_profile "$RIST_PROFILE" \
   --argjson schedule "$SCHEDULE_DECL" \
   --arg klv_set "$KLV_SET" --argjson klv_seed "$SEED" \
+  --arg srt_reconnect_mode "$SRT_RECONNECT_MODE" \
   '{expected_duration_s: $dur, rss_cadence_s: $cad, warmup_fraction: 0.1667,
     sampler_end_slack_s: $slack, expected_worker_exits: {},
     corruption: $corruption, corruption_spec: $corruption_spec,
     legs: {srt: {profile: $srt_profile, schedule: $schedule,
-                 klv_set: $klv_set, klv_seed: $klv_seed},
+                 klv_set: $klv_set, klv_seed: $klv_seed,
+                 reconnect_mode: $srt_reconnect_mode},
            rist: {profile: $rist_profile, schedule: $schedule,
-                  klv_set: $klv_set, klv_seed: $klv_seed}}}' >"$OUTDIR/soak-config.json"
+                  klv_set: $klv_set, klv_seed: $klv_seed,
+                  reconnect_mode: null}}}' >"$OUTDIR/soak-config.json"
 
 # Fail fast on a declared config that could never pass its own
 # completeness verdicts (e.g. an `--hours` value small enough that the
@@ -1055,6 +1063,7 @@ REPORT_RC=0
   echo "outdir: $OUTDIR"
   echo "hours: $HOURS  seed: $SEED  outage_period_s: $OUTAGE_PERIOD_S  outage_dur_s: $OUTAGE_DUR_S"
   echo "profiles: srt=$SRT_PROFILE rist=$RIST_PROFILE (--profile $PROFILE)  klv_set: rich  au_sizes: realistic"
+  echo "reconnect_mode (declared): srt=$SRT_RECONNECT_MODE  rist=none (sender not managed)"
   if [[ "$FIXED_IMPAIRMENT" -eq 1 ]]; then
     echo "impairment: FIXED  loss_pct: $LOSS_PCT  jitter_ms: $JITTER_MS  delay_ms: $DELAY_MS  reorder: $REORDER"
   else
@@ -1073,6 +1082,23 @@ REPORT_RC=0
   # summary must still get written rather than dying here under
   # `pipefail` on the missing file.
   if [[ -s "$OUTDIR/soak-results.json" ]]; then
+    # Per leg: what was sent and received, and beside it the managed
+    # sender's own account of its reconnects and gap buffer. Recorded,
+    # not gated — and the gap counters are not the whole of an outage's
+    # loss, which is why the access-unit totals are on the same line.
+    jq -r '.legs[]
+      | "\(.leg): video AUs sent=\(.send_video_aus) received=\(.recv_video_aus)  managed send (recorded, not gated): "
+        + (if .managed_send == null then "none (sender not managed)"
+           else (.managed_send
+             | "mode=\(.reconnect_mode // "unrecorded") overflow_policy=\(.overflow_policy // "unrecorded")"
+               + " reconnect_attempts=\(.reconnect_attempts) reconnect_successes=\(.reconnect_successes)"
+               + " gap_messages_dropped=\(.gap_messages_dropped) gap_bytes_dropped=\(.gap_bytes_dropped)"
+               + " gap_buffer_capacity=\(.gap_buffer_capacity)")
+           end)' "$OUTDIR/soak-results.json"
+    echo "note: gap_messages_dropped/gap_bytes_dropped count what the gap buffer evicted after the sender"
+    echo "      knew the link was down. What the transport had already accepted and never delivered in the"
+    echo "      seconds before it noticed the break is not in them (measured: most of an outage's loss)."
+    echo
     jq '{overall_pass, run_duration_s, expected_duration_s, warmup_s, rss_slope_threshold_kb_per_hour,
          rss_slopes, coverage, process_exits, worker_exits, legs, limitations}' "$OUTDIR/soak-results.json"
   else
