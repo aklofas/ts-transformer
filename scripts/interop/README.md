@@ -718,13 +718,29 @@ four narrow things:
   its PID still FAILS.
 - An injection whose position resolves inside a **reconnect gap** — between
   the last media before a `ReconnectDiscontinuity` and the marker's own
-  window — with nothing to show it arrived moves to `undetected_lost`,
-  counted separately in `lost_in_reconnect_gap`. That covers an injection
-  resolved approximately (its own PCR anchor never arrived), one resolved
-  from an anchor received before the marker (the link died between the two),
-  and one logged before the stream's first PCR. An injection resolved EXACTLY
-  from an anchor received after the marker arrived with it, and must be
-  detected like any other. This is the only excusal a PAT/PMT-flip injection
+  window — that the receiver was never in a position to notice moves to
+  `undetected_lost`, counted separately in `lost_in_reconnect_gap`. Inside
+  the gap an injection is HELD to detection only when both of these are
+  shown:
+  - It arrived: it resolved EXACTLY, from an anchor received at or after the
+    marker. One resolved approximately (its own PCR anchor never arrived),
+    from an anchor received before the marker (the link died between the
+    two), or logged before the stream's first PCR shows nothing of the kind.
+  - The demuxer could notice it. A reconnect resets the demuxer: no PAT, no
+    PMT, no continuity counter on any PID. A `drop`, and a `header` that
+    rewrites the PID or the continuity counter, are noticed only as a
+    continuity jump on the injection's own PID, which needs a previous
+    counter on that PID and the PID resolved by a PMT — so the evidence is a
+    media event on THAT PID, after the marker and before the injection.
+    Every other class (a PAT/PMT flip, an adaptation-field-length overrun,
+    destroyed framing) needs no per-PID history, only the PAT and a PMT read
+    and the packets in sync — so the evidence is a media event on ANY PID in
+    that interval.
+
+  Media events are all the engine sees of the demuxer, and a sample surfaces
+  when its PES completes, so an injection in the last access unit before
+  that first media event is excused although the demuxer may already have
+  been able to notice it. This is the only excusal a PAT/PMT-flip injection
   can ever get: the demuxer reports no continuity jump on a PSI PID.
 
 Every unexplained sample names the nearest resolved injection —
@@ -1025,9 +1041,11 @@ continuity jump on that PID is that gap's timestamp signature and is excused
 into `unexplained_transport_loss`, counted in `pcr_anomalies_excused`, at most
 one per gap (a backward jump, or one on a PID no PMT declares as `PCR_PID`,
 is never excused and never attributed); and an injection resolved inside a
-RECONNECT GAP with nothing to show it arrived moves to `undetected_lost` and
-is counted in `lost_in_reconnect_gap` (one resolved exactly from an anchor
-received after the marker did arrive and is not). An injection's own
+RECONNECT GAP that the receiver was never in a position to notice moves to
+`undetected_lost` and is counted in `lost_in_reconnect_gap` (one resolved
+exactly from an anchor received after the marker, with media from the reset
+demuxer before it — on its own PID if it is noticed as a continuity jump, on
+any PID otherwise — is held to detection instead). An injection's own
 jump excuses it only when a continuity
 jump is NOT one of the signals its class had to produce — for a `drop` or a
 `header` the jump IS the detection, so it never also excuses.

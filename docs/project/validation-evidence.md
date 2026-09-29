@@ -407,9 +407,15 @@ lose packets. A live capture is judged in the lossy tier, where an
 unexplained continuity gap is excused as transport loss rather than charged
 to the corruption tap, and an injection the link demonstrably lost is not
 charged as undetected: one with a foreign continuity gap in its window, or
-one placed inside a reconnect gap with nothing to show it arrived (an
-injection resolved exactly from a PCR received after the reconnect did
-arrive, and keeps its detection obligation). An injection's own gap never
+one placed inside a reconnect gap that the receiver was never in a position
+to notice. Inside such a gap an injection keeps its detection obligation
+only when two things are shown: that it arrived (it resolved exactly from a
+PCR received after the reconnect), and that the demuxer, which the reconnect
+reset, had already produced media again before it — on the injection's own
+PID for damage that is noticed as a continuity jump (a dropped packet, a
+rewritten PID or continuity counter), on any PID for everything else.
+Otherwise it is counted as lost in the reconnect gap, inside the same
+excusal budget. An injection's own gap never
 excuses that injection. Resyncs are never excused. Non-conformances are
 never excused either, with one bounded exception: a PCR anomaly that jumps
 forward, on a PID a PMT declares as the program's PCR PID, beside a

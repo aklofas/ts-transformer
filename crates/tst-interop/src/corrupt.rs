@@ -1488,11 +1488,13 @@ pub struct AttributionReport {
     pub reconnects_seen: u64,
     /// Of [`undetected_lost`](Self::undetected_lost), the injections whose
     /// position resolved inside a reconnect gap — between the last media
-    /// before a marker and the marker's own window — with nothing to show
-    /// they arrived: resolved approximately, or from an anchor the
-    /// receiver saw before the marker. One resolved exactly from an anchor
-    /// received after the marker arrived with it and is never counted
-    /// here. Lossy only.
+    /// before a marker and the marker's own window — that the demuxer
+    /// was never in a position to notice: resolved approximately, or from
+    /// an anchor the receiver saw before the marker, or placed before the
+    /// reset demuxer had produced media again (on the injection's own PID
+    /// for damage noticed as a continuity jump, on any PID otherwise).
+    /// One resolved exactly from an anchor received after the marker, with
+    /// that media before it, is never counted here. Lossy only.
     #[serde(default)]
     pub lost_in_reconnect_gap: u64,
     pub resyncs: u64,
@@ -1580,7 +1582,7 @@ struct InjState {
     /// Receiver ordinal of the PCR packet this injection resolved from.
     /// `None` for one that carries no anchor (logged before the stream's
     /// first PCR). Together with `approx` this is the arrival evidence a
-    /// reconnect gap has to respect — see `Attribution::judge`.
+    /// reconnect gap has to respect — see [`ReconnectGap::holds`].
     anchor_at: Option<u64>,
     /// Its anchor base fell more than `MAX_APPROX_TICKS` behind the first
     /// base the receiver saw afterwards, so it can never be placed. Kept
@@ -1633,6 +1635,12 @@ struct Tracked {
     /// to — the receiver reports whatever it makes of that packet on THIS
     /// PID, never on [`Tracked::pid`]. `None` for every other shape.
     moved_to: Option<u16>,
+    /// Damage a receiver notices as a continuity jump on
+    /// [`Tracked::pid`] and in no other way: a `Drop`, and the `Header`
+    /// sub-kinds that rewrite the PID (offsets `[1, 2]`, the packet goes
+    /// missing from its PID) or the counter itself (`[3]`). Such a jump
+    /// needs a previous counter on that PID — see [`ReconnectGap::holds`].
+    noticed_by_continuity: bool,
 }
 
 impl From<&Injection> for Tracked {
@@ -1647,6 +1655,8 @@ impl From<&Injection> for Tracked {
                 || (i.class == Class::Header && i.offsets.first() == Some(&0)),
             moved_to: (i.class == Class::Header && i.offsets.as_slice() == [1, 2])
                 .then_some(REWRITTEN_PID),
+            noticed_by_continuity: i.class == Class::Drop
+                || (i.class == Class::Header && matches!(i.offsets.as_slice(), [1, 2] | [3])),
         }
     }
 }
@@ -1767,7 +1777,7 @@ struct CcGap {
 }
 
 /// One reconnect, as receiver ordinals.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct ReconnectGap {
     /// The last media before the marker.
     from: u64,
@@ -1776,6 +1786,69 @@ struct ReconnectGap {
     /// The marker plus the widest window an approximately-resolved
     /// injection can be placed in.
     to: u64,
+    /// The first media event on each PID after the marker, as long as it
+    /// falls inside the gap: the evidence that the demuxer, which the
+    /// reconnect reset, was parsing that PID again. Read by
+    /// [`ReconnectGap::holds`]. Bounded by the multiplex's PID count.
+    first_media: BTreeMap<u16, u64>,
+}
+
+impl ReconnectGap {
+    /// Whether an injection placed at `r` inside this gap is HELD to its
+    /// detection obligation rather than excused as lost.
+    ///
+    /// Two things have to be shown, because the excusal is that the
+    /// demuxer was never in a position to notice the damage.
+    ///
+    /// That the injection ARRIVED: it resolved exactly, from an anchor the
+    /// receiver saw after the marker. Its own PCR packet came through the
+    /// rebuilt connection and it sits `since_pcr` packets behind that. An
+    /// anchor that never arrived (`approx`), one from before the marker
+    /// (the link died between it and the injection) and no anchor at all
+    /// show nothing of the kind. `>=`, not `>`: a PCR is stamped with its
+    /// packet's 0-based ordinal and the marker with the COUNT of packets
+    /// received when it surfaced, so an anchor stamped equal to the
+    /// marker is the first packet after it.
+    ///
+    /// That the demuxer COULD DETECT it. The reconnect reset the demuxer:
+    /// no PAT, no PMT, no continuity counter on any PID. What it needs
+    /// back depends on how the class is noticed.
+    ///
+    /// - A `Drop`, a PID rewrite and a continuity-counter rewrite are
+    ///   noticed as a continuity jump on the injection's own PID, which
+    ///   the demuxer reports only when it holds a previous counter for
+    ///   that PID and the PMT has resolved the PID to a stream. A media
+    ///   event on that PID shows both at once: a sample is only ever
+    ///   emitted for a resolved stream, from packets whose counters were
+    ///   recorded on the way. Media on another PID shows neither for this
+    ///   one.
+    /// - Everything else is noticed without per-PID history. A damaged
+    ///   PAT fails its CRC on PID 0, which is always parsed; a damaged PMT
+    ///   fails it once the PAT has named the PMT's PID; an overrun
+    ///   adaptation-field length is rejected packet by packet; destroyed
+    ///   framing is a resync. Media on ANY PID shows all of it: no sample
+    ///   is emitted before the PAT and a PMT are read, and none without
+    ///   packet sync.
+    ///
+    /// A media event is the evidence because events are all the engine
+    /// sees of the demuxer. It is sufficient, and it arrives a little
+    /// after the demuxer became able — a sample surfaces when its PES
+    /// completes — so an injection in that last stretch is excused though
+    /// it could have been noticed. The stretch is one access unit on the
+    /// PID in question and cannot outlast the gap's own window.
+    ///
+    /// The media has to precede the injection (`<= r`: an event is
+    /// stamped with a packet count, so the packets behind it have
+    /// ordinals below the stamp).
+    fn holds(&self, inj: &Tracked, st: &InjState, r: u64) -> bool {
+        let arrived = !st.approx && st.anchor_at.is_some_and(|a| a >= self.marker);
+        let first_media = if inj.noticed_by_continuity {
+            self.first_media.get(&inj.pid).copied()
+        } else {
+            self.first_media.values().copied().min()
+        };
+        arrived && first_media.is_some_and(|m| m <= r)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -2254,25 +2327,13 @@ impl Attribution {
             return;
         };
         self.resolved += 1;
-        // Position inside a reconnect gap is not enough: the excusal is
-        // that the injection never ARRIVED, and an injection resolved
-        // exactly from an anchor the receiver saw after the marker did.
-        // Its own PCR packet came through the rebuilt connection and it
-        // sits `since_pcr` packets behind that, so the demuxer was handed
-        // the damage and owes the detection. What stays excused is what
-        // the gap was opened for: an anchor that never arrived (`approx`),
-        // an anchor from before the marker (the link died between it and
-        // the injection), or no anchor at all.
-        //
-        // `>=`, not `>`: a PCR is stamped with its packet's 0-based
-        // ordinal and the marker with the COUNT of packets received when
-        // it surfaced, so an anchor stamped equal to the marker is the
-        // first packet after it.
-        let arrived_after = |marker: u64| !st.approx && st.anchor_at.is_some_and(|a| a >= marker);
+        // Position inside a reconnect gap is not enough: an injection
+        // that arrived at a demuxer able to notice it owes the detection
+        // wherever it sits — see `ReconnectGap::holds`.
         let in_gap = self
             .reconnect_gaps
             .iter()
-            .any(|g| g.from <= r && r <= g.to && !arrived_after(g.marker));
+            .any(|g| g.from <= r && r <= g.to && !g.holds(inj, st, r));
         let lost = self.excuse_transport_loss && (st.cc_jump_in_window || in_gap);
         if inj.detectable && !st.detected {
             if lost {
@@ -2714,6 +2775,11 @@ impl Attribution {
     pub fn on_media(&mut self, at: u64, pid: u16) {
         self.settle_pending_pcr(at);
         self.last_media_at = at;
+        // Only the latest gap: media after an older marker says nothing
+        // once a later reconnect has reset the demuxer again.
+        if let Some(g) = self.reconnect_gaps.last_mut().filter(|g| at <= g.to) {
+            g.first_media.entry(pid).or_insert(at);
+        }
         self.advance(at);
         for i in self.lo..self.hi {
             if self.state(i).recovered {
@@ -2753,8 +2819,11 @@ impl Attribution {
     /// `at`. Under lossy judgement an injection resolved inside
     /// `[last_media_at, at + window + APPROX_SLACK]` is judged lost in
     /// transit rather than undetected — unless it resolved exactly from
-    /// an anchor received after the marker, which shows it arrived (see
-    /// `Attribution::judge`). Strict never excuses.
+    /// an anchor received after the marker, which shows it arrived, and
+    /// media after the marker shows the demuxer had re-acquired what it
+    /// needs to notice it: media on the injection's own PID for damage
+    /// noticed as a continuity jump, on any PID for the rest. Strict
+    /// never excuses.
     pub fn on_reconnect(&mut self, at: u64) {
         self.settle_pending_pcr(at);
         self.reconnects_seen += 1;
@@ -2762,6 +2831,7 @@ impl Attribution {
             from: self.last_media_at,
             marker: at,
             to: at.saturating_add(self.window).saturating_add(APPROX_SLACK),
+            first_media: BTreeMap::new(),
         });
     }
 
@@ -5184,5 +5254,85 @@ mod tests {
                  arrived and must be detected: {r:?}"
             );
         }
+    }
+
+    /// A reconnect resets the demuxer, and until it has re-acquired what
+    /// a class is noticed by, an injection that arrived still could not
+    /// have been noticed. Each shape twice: placed before the media that
+    /// shows the demuxer able (lost in the gap), and after it (held).
+    #[test]
+    fn a_post_reconnect_injection_is_held_only_once_the_demuxer_could_notice_it() {
+        const VIDEO: u16 = 0x1011;
+        const KLV: u16 = 0x1100;
+        // Marker 4900, exact anchor 5000, injection at 5010, on `inj`'s
+        // PID; `media_before` is fed between the anchor and the injection.
+        let run = |inj: &Injection, media_before: &[u16]| {
+            let mut a = Attribution::lossy(vec![inj.clone()], &hdr());
+            a.on_media(4000, VIDEO); // before the marker: says nothing about after it
+            a.on_media(4000, KLV);
+            a.on_reconnect(4900);
+            a.on_pcr(1000, 5000);
+            for &pid in media_before {
+                a.on_media(5005, pid);
+            }
+            a.on_media(5015, VIDEO); // after the injection: too late to show anything
+            a.on_media(5015, KLV);
+            let r = a.finish(10_000);
+            (r.undetected_count, r.lost_in_reconnect_gap)
+        };
+        const HELD: (u64, u64) = (1, 0);
+        const LOST: (u64, u64) = (0, 1);
+
+        // Noticed as a continuity jump on its own PID: needs a previous
+        // counter THERE. Media on the other PID is not that.
+        let drop = inj(1000, 10, Class::Drop, KLV, true);
+        let mut pid_rewrite = inj(1000, 10, Class::Header, KLV, true);
+        pid_rewrite.offsets = vec![1, 2];
+        let mut cc_rewrite = inj(1000, 10, Class::Header, KLV, true);
+        cc_rewrite.offsets = vec![3];
+        for (name, i) in [
+            ("drop", &drop),
+            ("pid rewrite", &pid_rewrite),
+            ("cc rewrite", &cc_rewrite),
+        ] {
+            assert_eq!(run(i, &[]), LOST, "{name}, no media");
+            assert_eq!(run(i, &[VIDEO]), LOST, "{name}, media on another PID");
+            assert_eq!(run(i, &[KLV]), HELD, "{name}, media on its own PID");
+        }
+
+        // Noticed without per-PID history: media on any PID shows the
+        // PAT and a PMT read and the packets in sync.
+        let mut pat_flip = inj(1000, 10, Class::PsiFlip, 0, true);
+        pat_flip.psi = true;
+        let mut pmt_body_flip = inj(1000, 10, Class::BodyFlip, 0x1000, true);
+        pmt_body_flip.psi = true;
+        let mut af_overrun = inj(1000, 10, Class::Header, KLV, true);
+        af_overrun.offsets = vec![4];
+        let mut sync_byte = inj(1000, 10, Class::Header, KLV, true);
+        sync_byte.offsets = vec![0];
+        let truncate = inj(1000, 10, Class::Truncate, KLV, true);
+        let garbage = inj(1000, 10, Class::Garbage, KLV, true);
+        for (name, i) in [
+            ("pat flip", &pat_flip),
+            ("pmt body flip", &pmt_body_flip),
+            ("adaptation-field overrun", &af_overrun),
+            ("sync byte", &sync_byte),
+            ("truncate", &truncate),
+            ("garbage", &garbage),
+        ] {
+            assert_eq!(run(i, &[]), LOST, "{name}, no media");
+            assert_eq!(run(i, &[VIDEO]), HELD, "{name}, media on any PID");
+        }
+
+        // A second reconnect resets the demuxer again: media after the
+        // first marker shows nothing about the state after the second.
+        let mut a = Attribution::lossy(vec![drop.clone()], &hdr());
+        a.on_reconnect(4900);
+        a.on_media(4950, KLV);
+        a.on_reconnect(4990);
+        a.on_pcr(1000, 5000);
+        a.on_media(5015, KLV);
+        let r = a.finish(10_000);
+        assert_eq!((r.undetected_count, r.lost_in_reconnect_gap), LOST, "{r:?}");
     }
 }
