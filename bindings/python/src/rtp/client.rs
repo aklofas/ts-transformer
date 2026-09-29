@@ -807,8 +807,8 @@ impl PyRtspSession {
 
     /// Cancel handle — flipping `cancel()` breaks any in-flight
     /// `pause` / `play` / `teardown` out of blocking I/O at the next
-    /// poll (typically <100ms — the client's TCP read timeout is
-    /// 100ms for cancel-responsiveness).
+    /// poll (typically <100ms — a waiting request re-checks the
+    /// cancel flag at least every 100ms).
     ///
     /// Returns a fresh `PyRtspCancelHandle` each call; all handles
     /// share the same backing `Arc<AtomicBool>` flag (cloned from

@@ -78,14 +78,27 @@ impl TlsStream {
         }
         Ok(Self { conn, sock })
     }
+
+    /// Set the read timeout of the TCP socket beneath rustls — the only
+    /// place a TLS read blocks.
+    pub(crate) fn set_read_timeout(&self, t: std::time::Duration) -> std::io::Result<()> {
+        self.sock.set_read_timeout(Some(t))
+    }
 }
 
 impl Read for TlsStream {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         // Pull any pending ciphertext from the wire before handing
-        // plaintext up. We loop until the rustls reader has data —
-        // post-handshake `wants_read()` toggles as TLS records arrive
-        // out-of-order with application reads.
+        // plaintext up — post-handshake `wants_read()` toggles as TLS
+        // records arrive out-of-order with application reads.
+        //
+        // At most ONE socket read per call: the socket read timeout
+        // bounds a single `read_tls`, so a call that kept pulling until a
+        // whole record decrypted could be held past the caller's
+        // cancel/deadline check by a peer that dribbles a record a few
+        // bytes at a time. After one pull with still no plaintext, report
+        // `WouldBlock` — every caller treats it as "poll again".
+        let mut pulled = false;
         loop {
             // Try to satisfy from the rustls buffered plaintext first;
             // this lets short application reads succeed without a
@@ -104,6 +117,9 @@ impl Read for TlsStream {
                 }
                 Err(e) => return Err(e),
             }
+            if pulled {
+                return Err(std::io::ErrorKind::WouldBlock.into());
+            }
             // Bring more ciphertext in. read_tls forwards the underlying
             // socket's error (incl. WouldBlock / TimedOut), so callers
             // get the same cancel-loop behavior they get with plain TCP.
@@ -111,6 +127,7 @@ impl Read for TlsStream {
             self.conn
                 .process_new_packets()
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+            pulled = true;
         }
     }
 }

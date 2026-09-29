@@ -248,9 +248,9 @@ impl RtspClient {
     ///
     /// 1. **Pump inactive** (UDP transport or pre-SETUP): writes + reads
     ///    happen under a single stream-mutex acquisition. The cancel
-    ///    flag is checked between read polls; the underlying stream has
-    ///    a short read timeout (100 ms, set in
-    ///    [`RtspClient::connect_with`]), so each
+    ///    flag is checked between read polls; each read is bounded by
+    ///    the shorter of the configured read timeout and a 100 ms tick
+    ///    (and by the time left on the request deadline), so each
     ///    `WouldBlock`/`TimedOut` round-trip is a cancel-check
     ///    opportunity. Holding the lock through the whole exchange
     ///    means the keepalive thread waits if a request is in flight —
@@ -283,10 +283,12 @@ impl RtspClient {
 
     /// Variant of [`Self::send_and_read`] with an optional hard deadline,
     /// honored on BOTH read paths. When `deadline` elapses with no
-    /// complete response, returns [`RtspError::Timeout`]. Deadline
-    /// granularity is one read-poll cycle (~100 ms — the stream read
-    /// timeout set in [`RtspClient::connect_with`]) on the non-pump path,
-    /// one `ctrl_rx` poll on the pump path.
+    /// complete response, returns [`RtspError::Timeout`] — also when the
+    /// response completes after the deadline. No read or `ctrl_rx` poll
+    /// is allowed to outlast the time left on the deadline, so the
+    /// configured socket read timeout does not stretch it; the non-pump
+    /// path shortens the socket's read timeout as needed and restores
+    /// the configured value before returning.
     pub(crate) fn send_and_read_with_deadline(
         &mut self,
         request_bytes: &[u8],
@@ -298,14 +300,53 @@ impl RtspClient {
         let mut s = crate::rtsp::client::lock_unpoisoned(&self.stream);
         s.write_all(request_bytes)
             .map_err(|e| RtspError::Io(e.kind()))?;
+        let mut applied = self.read_timeout;
+        let r = self.read_response(&mut s, deadline, &mut applied);
+        if applied != self.read_timeout {
+            // Put the configured read timeout back so later exchanges and
+            // the interleaved pump see what the builder set. Best-effort:
+            // this only fails on a socket that is already unusable, and
+            // that surfaces on the next read.
+            let _ = s.set_read_timeout(self.read_timeout);
+        }
+        r
+    }
+
+    /// Read loop of the non-pump path of
+    /// [`Self::send_and_read_with_deadline`]. `applied` is the read
+    /// timeout currently installed on the socket; it is updated whenever
+    /// this loop changes it so the caller can restore the configured one.
+    fn read_response(
+        &self,
+        s: &mut crate::rtsp::client::Stream,
+        deadline: Option<std::time::Instant>,
+        applied: &mut std::time::Duration,
+    ) -> Result<RtspResponse, RtspError> {
         let mut buf = Vec::with_capacity(4096);
         let mut chunk = [0u8; 4096];
         loop {
             if self.cancel.load(std::sync::atomic::Ordering::Relaxed) {
                 return Err(RtspError::LocalCancel);
             }
-            if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
-                return Err(RtspError::Timeout);
+            // No single read may outlast the cancel tick or the time left
+            // on the deadline — the configured `read_timeout` can be far
+            // longer than either. The socket option is only rewritten when
+            // the bound changes (never, for a default client, until the
+            // last tick before the deadline).
+            let mut tick = self
+                .read_timeout
+                .min(crate::rtsp::client::REQUEST_POLL_TICK);
+            if let Some(d) = deadline {
+                let remaining = d.saturating_duration_since(std::time::Instant::now());
+                if remaining.is_zero() {
+                    return Err(RtspError::Timeout);
+                }
+                tick = tick.min(remaining);
+            }
+            if tick != *applied {
+                s.set_read_timeout(tick)
+                    .map_err(|e| RtspError::Io(e.kind()))?;
+                *applied = tick;
             }
             match s.read(&mut chunk) {
                 Ok(0) => return Err(RtspError::Io(std::io::ErrorKind::UnexpectedEof)),
@@ -359,6 +400,11 @@ impl RtspClient {
                                     );
                                     buf.drain(..total_len);
                                     continue;
+                                }
+                                // A response completed after the deadline
+                                // is a timeout, not a late success.
+                                if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+                                    return Err(RtspError::Timeout);
                                 }
                                 return Ok(resp);
                             }
@@ -433,22 +479,32 @@ impl RtspClient {
             if self.cancel.load(std::sync::atomic::Ordering::Relaxed) {
                 return Err(RtspError::LocalCancel);
             }
+            // The wait is on the pump's channel, not the socket, so the
+            // configured `read_timeout` never enters it; only the time
+            // left on the deadline can shorten the poll.
+            let mut tick = crate::rtsp::client::REQUEST_POLL_TICK;
             if let Some(d) = deadline {
-                if std::time::Instant::now() >= d {
+                let remaining = d.saturating_duration_since(std::time::Instant::now());
+                if remaining.is_zero() {
                     return Err(RtspError::Timeout);
                 }
+                tick = tick.min(remaining);
             }
-            match pump
-                .ctrl_rx
-                .recv_timeout(std::time::Duration::from_millis(100))
-            {
+            match pump.ctrl_rx.recv_timeout(tick) {
                 Ok(msg_bytes) => {
                     let (resp, _consumed) = match RtspResponse::parse(&msg_bytes) {
                         Ok(p) => p,
                         Err(_) => continue,
                     };
                     match (req_cseq, resp.cseq()) {
-                        (Some(req), Some(got)) if req == got => return Ok(resp),
+                        (Some(req), Some(got)) if req == got => {
+                            // Same rule as the non-pump path: a response
+                            // matched after the deadline is a timeout.
+                            if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+                                return Err(RtspError::Timeout);
+                            }
+                            return Ok(resp);
+                        }
                         _ => continue,
                     }
                 }
@@ -839,6 +895,105 @@ mod tests {
             a5.contains("nc=00000002"),
             "same nonce keeps counting; got {a5}"
         );
+        h.join().unwrap();
+    }
+
+    // --- request deadline vs the configured socket read timeout ---
+
+    /// Accept one connection and hold it open, silent, until `done` fires
+    /// (capped so the thread cannot outlive a failed test for long).
+    fn silent_peer() -> (
+        u16,
+        std::sync::mpsc::Sender<()>,
+        std::thread::JoinHandle<()>,
+    ) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+        let h = std::thread::spawn(move || {
+            if let Ok((sock, _)) = listener.accept() {
+                let _ = done_rx.recv_timeout(Duration::from_secs(20));
+                drop(sock);
+            }
+        });
+        (port, done_tx, h)
+    }
+
+    /// The exchange shortens the socket read timeout to honor the
+    /// deadline; afterwards the socket must carry the configured value
+    /// again, or later calls and the interleaved pump would poll at the
+    /// wrong cadence.
+    #[test]
+    fn configured_read_timeout_is_restored_after_a_bounded_exchange() {
+        let (port, done_tx, h) = silent_peer();
+        let url = crate::url::RtspUrl::parse(&format!("rtsp://127.0.0.1:{port}/test")).unwrap();
+        let configured = Duration::from_secs(5);
+        let mut client = RtspClient::connect_with_params(
+            &url,
+            None,
+            crate::rtsp::client::ConnectParams {
+                read_timeout: configured,
+                request_timeout: Some(Duration::from_millis(50)),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let err = client.options().unwrap_err();
+        assert!(matches!(err, RtspError::Timeout), "got {err:?}");
+
+        let installed = match &*crate::rtsp::client::lock_unpoisoned(&client.stream) {
+            crate::rtsp::client::Stream::Plain(tcp) => tcp.read_timeout().unwrap(),
+            #[cfg(feature = "tls")]
+            crate::rtsp::client::Stream::Tls(_) => {
+                unreachable!("plain rtsp:// connects yield Stream::Plain")
+            }
+        };
+        assert_eq!(installed, Some(configured));
+
+        let _ = done_tx.send(());
+        drop(client);
+        h.join().unwrap();
+    }
+
+    /// Pump-active path: a matching response that reaches `ctrl_rx` after
+    /// the deadline — but inside what used to be one fixed 100 ms poll —
+    /// is a `Timeout`. No elapsed-time assertion: the sender sleeps past
+    /// the deadline before sending, so the response is late by
+    /// construction.
+    #[test]
+    fn pump_path_response_after_the_deadline_is_a_timeout() {
+        let (port, done_tx, h) = silent_peer();
+        let mut client = RtspClient::connect(&format!("rtsp://127.0.0.1:{port}/test")).unwrap();
+        // Stand in for an active interleaved pump: only the control
+        // channel matters to the path under test.
+        let (ctrl_tx, ctrl_rx) = std::sync::mpsc::sync_channel::<bytes::Bytes>(1);
+        client.pump_state = Some(crate::rtsp::client::InterleavedPumpState {
+            cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            write_gate: client.write_gate.clone(),
+            ctrl_rx,
+            thread: None,
+        });
+
+        let deadline = std::time::Instant::now() + Duration::from_millis(150);
+        let sender = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(180));
+            let _ = ctrl_tx.try_send(bytes::Bytes::from_static(
+                b"RTSP/1.0 200 OK\r\nCSeq: 7\r\n\r\n",
+            ));
+        });
+        let r = client.send_and_read_via_pump_with_deadline(
+            b"OPTIONS rtsp://127.0.0.1/test RTSP/1.0\r\nCSeq: 7\r\n\r\n",
+            Some(deadline),
+        );
+        assert!(
+            matches!(r, Err(RtspError::Timeout)),
+            "expected Timeout, got {r:?}"
+        );
+
+        sender.join().unwrap();
+        let _ = done_tx.send(());
+        drop(client);
         h.join().unwrap();
     }
 }
