@@ -269,7 +269,10 @@ internally where their thread-safety contract requires it.
   closes the socket under the parked call and libsrt reports a connection
   error, but the transport reads its own cancel latch and reports the
   cancel; a cancel never surfaces as `Broken`. `ManagedRecvTransport` also
-  reports `ExplicitClose` after its own `close()`.
+  reports `ExplicitClose` after its own `close()`. Both managed wrappers
+  treat an `ExplicitClose` from the transport they wrap (it was cancelled
+  through its own handle, not the wrapper's) as terminal: they report it
+  and do not reconnect.
 
 Implement `Transport` for any byte sink that isn't an SRT socket: UDP,
 file, in-memory test harness, named pipe, TCP, your own protocol. The

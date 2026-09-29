@@ -317,6 +317,21 @@ impl ManagedStatsHandle {
 /// `Drop` never blocks: it fires the same signal and detaches, leaving
 /// the worker to observe it and exit on its own.
 ///
+/// An inner transport that reports `TransportError::ExplicitClose` runs the
+/// same transition. An inner says that only when it was cancelled, and if
+/// the wrapper's latch is not set yet the cancel did not come through the
+/// wrapper: a handle taken from the inner before it was wrapped, or a
+/// process-exit path that closes every open socket directly. Neither is an
+/// outage, so no reconnect follows. Whichever of the direct send, the drain
+/// after a reconnect, the background worker's drain, or the factory itself
+/// reports it, the wrapper latches as if its own handle had been fired and
+/// reports `ExplicitClose` from then on. `Blocking`: the call that ran into
+/// it returns the error and its message goes back to the caller.
+/// `Background`: the worker exits and the next `send_bytes` reports it;
+/// messages accepted earlier stay queued and undelivered (`gap_len` keeps
+/// counting them; they are not counted as dropped), as they do after a
+/// cancel through the wrapper's own handle.
+///
 /// # Lock poisoning policy (post-Wave-6.F)
 ///
 /// - **Inner-transport lock** (poisoned mid-mutation):
@@ -482,7 +497,10 @@ impl<T: Transport + 'static> ManagedTransport<T> {
     ///
     /// A cancel that lands mid-drain, right after a factory reconnect,
     /// surfaces here as `Err(TransportError::ExplicitClose)` rather than
-    /// the drain's own wire-looking `Broken`. A cancel that instead lands
+    /// the drain's own wire-looking `Broken`. In `Background` a cancel that
+    /// lands after the entry gate let this call in, and before it reaches
+    /// the gap buffer, is reported by this call too, and its bytes are not
+    /// queued. A cancel that instead lands
     /// after the drain has already fully succeeded also returns
     /// `ExplicitClose` on this call — the entry gate above would return it
     /// on the next one anyway. The wrapper's OWN `close()`/`Drop` reports
@@ -561,11 +579,26 @@ impl<T: Transport + 'static> ManagedTransport<T> {
             // send would leapfrog queued bytes) and keeps send latency
             // independent of reconnect/drain. Checked under the gap lock
             // to linearize with the worker's Empty-exit (invariant 2).
+            #[cfg(test)]
+            before_gap_lock::run();
             let need_worker = {
                 let mut gap = self
                     .gap
                     .lock()
                     .expect("BUG: gap lock poisoned — gap buffer is invariant-critical");
+                // The entry gate ran before this lock was taken, and the
+                // cancel path takes no lock (invariant 5), so the latch can
+                // have been set in between. This load is the linearization
+                // point: a send is accepted if and only if its enqueue
+                // happened before the latch was set, as observed under the
+                // gap lock. Without it the message went to a worker that
+                // only sees the latch and exits, and the caller was told
+                // `Ok(())`. Ahead of the enqueue, so it also outranks a full
+                // `Reject` buffer's `Backpressure` (same order as the
+                // enqueue after the direct send, below).
+                if self.closed.load(std::sync::atomic::Ordering::Acquire) {
+                    return Err(self.latched_error());
+                }
                 let worker_active = self
                     .shared
                     .bg_active
@@ -628,6 +661,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
         // binding introduced a deadlock on any successful-reconnect path.
         // Final-review caught this; existing tests didn't because all
         // tests use always-failing factories.
+        let mut inner_cancelled = false;
         {
             let mut transport_guard = self.inner.lock().map_err(|_| TransportError::Broken {
                 msg: "reconnect: inner lock poisoned during in-line send peek".into(),
@@ -654,6 +688,11 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                     Err(TransportError::Broken { .. }) | Err(TransportError::Closed) => {
                         // Fall through to reconnect path.
                     }
+                    Err(TransportError::ExplicitClose) => {
+                        // The inner was cancelled: terminal, not an outage.
+                        // Settled below, once `inner` is released.
+                        inner_cancelled = true;
+                    }
                     Err(_) => {
                         // Phase 1: Unknown future variant — treat as broken and reconnect.
                         // Fall through to reconnect path.
@@ -661,6 +700,11 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                 }
             }
         } // transport_guard dropped here — inner lock released before reconnect_and_drain
+        if inner_cancelled {
+            // Nothing is queued: the caller is told the send failed and
+            // keeps its message, in either mode.
+            return Err(self.inner_cancelled());
+        }
 
         // Inner is broken/closed. Queue this message and attempt reconnect.
         //
@@ -692,9 +736,10 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                 .lock()
                 .expect("BUG: gap lock poisoned — gap buffer is invariant-critical");
             // The inner send above is where a caller-side cancel lands: the
-            // fired wake handle returns the parked send with
-            // `ExplicitClose`, which reads as "inner is down" to the match
-            // above. It is not an outage. The invocation the cancel
+            // fired wake handle returns the parked send, and an inner that
+            // answers with anything but `ExplicitClose` (a socket closed
+            // under a write reports `Broken`) reads as "inner is down" to
+            // the match above. It is not an outage. The invocation the cancel
             // interrupted reports it, and nothing is queued (or, in
             // `Background`, handed to a worker that would only see the
             // latch and exit) behind a wrapper that will never send again.
@@ -825,6 +870,14 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                         cause: BrokenCause::Unspecified,
                     });
                 }
+                Err(TransportError::ExplicitClose) => {
+                    // The inner was cancelled: terminal for the wrapper.
+                    // Both locks go first, so the wake handle is never
+                    // fired under `inner`.
+                    drop(gap);
+                    drop(transport_guard);
+                    return Err(self.inner_cancelled());
+                }
                 Err(e) => return Err(e),
             }
         }
@@ -918,6 +971,10 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                     }
                     return drained;
                 }
+                Err(TransportError::ExplicitClose) => {
+                    // The dial was cancelled, not refused: stop dialling.
+                    return Err(self.inner_cancelled());
+                }
                 Err(_) => {
                     continue; // try again
                 }
@@ -943,6 +1000,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
             factory: Arc::clone(&self.factory),
             gap: Arc::clone(&self.gap),
             closed: Arc::clone(&self.closed),
+            cancelled: Arc::clone(&self.cancelled),
             shutdown: Arc::clone(&self.shutdown),
             shared: Arc::clone(&self.shared),
             policy: self.policy.clone(),
@@ -956,6 +1014,13 @@ impl<T: Transport + 'static> ManagedTransport<T> {
     /// its impl carries no `'static` bound.
     fn terminal_signal(&self) {
         terminal_signal(&self.closed, &self.shutdown, &self.active);
+    }
+
+    /// Latch the cancel an inner reported (see [`latch_inner_cancel`]) and
+    /// return the error to report for it. Callers hold neither lock.
+    fn inner_cancelled(&self) -> TransportError {
+        latch_inner_cancel(&self.closed, &self.cancelled, &self.shutdown, &self.active);
+        self.latched_error()
     }
 
     /// The error a latched-closed wrapper reports: the cancel if one fired,
@@ -1136,6 +1201,51 @@ fn terminal_signal(
     closed.store(true, std::sync::atomic::Ordering::Release);
     shutdown.signal();
     active.cancel();
+}
+
+/// The terminal transition for an inner transport (or the factory) that
+/// reported `ExplicitClose`, shared by the inline paths and the background
+/// worker. Called with neither lock held (locking invariant 5).
+///
+/// If the wrapper is already latched, its own `close()` / `Drop` /
+/// `cancel()` fired the inner's wake handle and the inner is reporting
+/// exactly that: the reason is recorded and stays as it is (`Closed` for an
+/// own close). Otherwise the inner was cancelled from outside the wrapper,
+/// which is recorded as a cancel, in `ManagedCancel::cancel`'s order.
+fn latch_inner_cancel(
+    closed: &std::sync::atomic::AtomicBool,
+    cancelled: &std::sync::atomic::AtomicBool,
+    shutdown: &Shutdown,
+    active: &CancelSlot,
+) {
+    if closed.load(std::sync::atomic::Ordering::Acquire) {
+        return;
+    }
+    cancelled.store(true, std::sync::atomic::Ordering::Release);
+    terminal_signal(closed, shutdown, active);
+}
+
+/// Test-only checkpoint between `send_managed`'s entry gate and its
+/// Background enqueue decision: the one place a cancel can land after a send
+/// was let in and before the gap lock is taken. Per thread and one-shot, so a
+/// test arms it for its own next send and nothing else sees it.
+#[cfg(test)]
+mod before_gap_lock {
+    use std::cell::RefCell;
+
+    thread_local! {
+        static HOOK: RefCell<Option<Box<dyn FnOnce()>>> = const { RefCell::new(None) };
+    }
+
+    pub(super) fn arm(hook: impl FnOnce() + 'static) {
+        HOOK.with(|h| *h.borrow_mut() = Some(Box::new(hook)));
+    }
+
+    pub(super) fn run() {
+        if let Some(hook) = HOOK.with(|h| h.borrow_mut().take()) {
+            hook();
+        }
+    }
 }
 
 struct ManagedCancel {
@@ -1642,6 +1752,86 @@ mod cancel_tests {
             ),
             (2, 1)
         );
+    }
+
+    /// A `Background` wrapper in an outage that will not end: the inner is
+    /// broken, the factory refuses, and the worker sits in a 30 s backoff
+    /// that only the terminal signal interrupts. One message is queued.
+    fn background_in_outage(
+        capacity: usize,
+        overflow: OverflowPolicy,
+    ) -> ManagedTransport<BrokenT> {
+        let factory = || -> Result<BrokenT, TransportError> {
+            Err(TransportError::Broken {
+                msg: "factory down".into(),
+                errno_code: None,
+                cause: BrokenCause::Unspecified,
+            })
+        };
+        let policy = ReconnectPolicy {
+            max_attempts: None,
+            backoff: BackoffStrategy::Constant(std::time::Duration::from_secs(30)),
+            gap_buffer_capacity: capacity,
+            overflow_policy: overflow,
+            mode: ReconnectMode::Background,
+        };
+        let mut managed = ManagedTransport::new(BrokenT, factory, policy);
+        managed
+            .send_bytes(b"queued")
+            .expect("the break is accepted into the gap buffer");
+        managed
+    }
+
+    /// A cancel that lands after the entry gate let the send in, and before
+    /// the send reaches the gap lock, is still ahead of the enqueue: the
+    /// send reports the cancel and queues nothing.
+    #[test]
+    fn background_send_let_in_before_a_cancel_is_not_accepted_after_it() {
+        let mut managed = background_in_outage(4, OverflowPolicy::DropOldest);
+        let stats = managed.stats_handle();
+        let cancel = managed.cancel_handle().expect("managed has a handle");
+        before_gap_lock::arm(move || cancel.cancel());
+
+        let result = managed.send_bytes(b"late");
+
+        assert_eq!(result, Err(TransportError::ExplicitClose));
+        let s = stats.stats().expect("no poison");
+        assert_eq!(s.gap_len, 1, "the refused message was queued anyway");
+        assert_eq!(s.gap_messages_dropped, 0);
+    }
+
+    /// Same window, full `Reject` buffer: the cancel outranks the
+    /// `Backpressure` the buffer would answer with.
+    #[test]
+    fn background_cancel_before_the_enqueue_outranks_a_full_reject_buffer() {
+        let mut managed = background_in_outage(1, OverflowPolicy::Reject);
+        let stats = managed.stats_handle();
+        let cancel = managed.cancel_handle().expect("managed has a handle");
+        before_gap_lock::arm(move || cancel.cancel());
+
+        let result = managed.send_bytes(b"late");
+
+        assert_eq!(result, Err(TransportError::ExplicitClose));
+        assert_eq!(stats.stats().expect("no poison").gap_len, 1);
+    }
+
+    /// The wrapper's own `close()` in that window is reported as `Closed`.
+    /// `close()` needs `&mut`, so the latch is set the way `Drop` sets it.
+    #[test]
+    fn background_close_before_the_enqueue_is_reported_as_closed() {
+        let mut managed = background_in_outage(4, OverflowPolicy::DropOldest);
+        let stats = managed.stats_handle();
+        let (closed, shutdown, active) = (
+            Arc::clone(&managed.closed),
+            Arc::clone(&managed.shutdown),
+            Arc::clone(&managed.active),
+        );
+        before_gap_lock::arm(move || terminal_signal(&closed, &shutdown, &active));
+
+        let result = managed.send_bytes(b"late");
+
+        assert_eq!(result, Err(TransportError::Closed));
+        assert_eq!(stats.stats().expect("no poison").gap_len, 1);
     }
 
     /// CORR-10: the wrapper latches `closed` on cancel (and every later

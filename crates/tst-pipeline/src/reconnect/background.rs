@@ -42,7 +42,7 @@ use tst_core::cancel::CancelSlot;
 use tst_core::mpegts::common::SRT_TS_BUNDLE_BYTES;
 use tst_core::transport::{Transport, TransportError};
 
-use super::{GapBuffer, ReconnectPolicy};
+use super::{GapBuffer, ReconnectPolicy, latch_inner_cancel};
 
 /// Interruptible sleep. `wait_timeout(dur)` parks up to `dur`, returning
 /// early (`true`) if `signal()` fired. A poisoned mutex reads as signaled
@@ -167,6 +167,10 @@ pub(crate) struct WorkerCtx<T: Transport> {
     pub(crate) factory: Arc<dyn Fn() -> Result<T, TransportError> + Send + Sync>,
     pub(crate) gap: Arc<Mutex<GapBuffer>>,
     pub(crate) closed: Arc<AtomicBool>,
+    /// The wrapper's cancel-only latch, set here when an inner (or the
+    /// factory) reports `ExplicitClose` without the wrapper having been
+    /// cancelled — see `latch_inner_cancel`.
+    pub(crate) cancelled: Arc<AtomicBool>,
     pub(crate) shutdown: Arc<Shutdown>,
     pub(crate) shared: Arc<ManagedShared>,
     pub(crate) policy: ReconnectPolicy,
@@ -263,6 +267,8 @@ enum DrainStep {
     Empty,
     Backpressure,
     Broken,
+    /// The inner reported `ExplicitClose`: terminal, no rebuild.
+    Cancelled,
 }
 
 /// What the drain step's first (gap-locked) phase decided. Split out so
@@ -351,7 +357,9 @@ impl Drop for ActiveClearGuard {
 
 /// One outage's worth of reconnect + drain. Spawned on break, exits when
 /// the gap fully drains (Empty protocol), the budget exhausts (give-up),
-/// or shutdown is signaled.
+/// shutdown is signaled, or the inner or the factory reports
+/// `ExplicitClose` (which latches the wrapper; the next `send_bytes`
+/// reports it, and the backlog stays queued).
 pub(crate) fn worker_run<T: Transport>(ctx: WorkerCtx<T>) {
     // Cleared on every exit path via Drop — including an unwind. See
     // ActiveClearGuard's doc comment for why that matters (and for the
@@ -400,6 +408,12 @@ pub(crate) fn worker_run<T: Transport>(ctx: WorkerCtx<T>) {
             .fetch_add(1, Ordering::Relaxed);
         let new_inner = match (ctx.factory)() {
             Ok(t) => t,
+            Err(TransportError::ExplicitClose) => {
+                // The dial was cancelled, not refused: stop dialling. No
+                // lock is held here.
+                latch_inner_cancel(&ctx.closed, &ctx.cancelled, &ctx.shutdown, &ctx.active);
+                return;
+            }
             Err(_) => continue 'reconnect,
         };
         match install_fresh_inner(&ctx.inner, &ctx.active, &ctx.closed, &ctx.shared, new_inner) {
@@ -518,6 +532,14 @@ pub(crate) fn worker_run<T: Transport>(ctx: WorkerCtx<T>) {
                                 );
                                 DrainStep::Sent
                             }
+                            Err(TransportError::ExplicitClose) => {
+                                // The inner was cancelled: terminal, not a
+                                // break. The message stays queued (accepted,
+                                // undelivered). The latch is set once both
+                                // locks are released, below.
+                                gap.abort_send(seq);
+                                DrainStep::Cancelled
+                            }
                             Err(_) => {
                                 // Broken / Closed / unknown-future —
                                 // rebuild. Front message stays queued for
@@ -544,6 +566,10 @@ pub(crate) fn worker_run<T: Transport>(ctx: WorkerCtx<T>) {
                     }
                 }
                 DrainStep::Broken => continue 'reconnect,
+                DrainStep::Cancelled => {
+                    latch_inner_cancel(&ctx.closed, &ctx.cancelled, &ctx.shutdown, &ctx.active);
+                    return; // the guard clears bg_active on the way out
+                }
             }
         }
     }
