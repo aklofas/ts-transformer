@@ -146,11 +146,7 @@ plug together.
 
 `ManagedTransport<T>` is itself a `Transport` implementation — it
 implements the trait by delegating to an inner `T` and adding reconnect
-plus a gap buffer. In the default `ReconnectMode::Blocking` that buffer
-holds the one message whose send found the link broken, until the
-reconnect (run inside that same call) delivers it; in
-`ReconnectMode::Background` it holds everything sent while the inner
-transport is down.
+plus a gap buffer that holds messages while the inner transport is down.
 Because it satisfies `Transport`, it slots between any sender shell and
 the underlying transport without the shell needing to know about
 reconnect at all. The shell sees a `Transport`; whether that `Transport`
@@ -158,8 +154,7 @@ is plain `SrtTransport` or `ManagedTransport<SrtTransport>` is a
 construction-time choice.
 
 For worked examples, see [examples/operations/managed_reconnect.rs](/examples/operations/managed_reconnect.rs)
-(reconnect in action; `managed_reconnect_background.rs` next to it shows
-the gap buffer filling) and
+(reconnect + gap buffer in action) and
 [examples/sending/custom_transport.rs](/examples/sending/custom_transport.rs)
 (implementing the `Transport` trait against something other than SRT).
 
