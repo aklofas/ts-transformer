@@ -1107,7 +1107,7 @@ pub mod soak {
     use serde::{Deserialize, Serialize};
 
     use crate::proxy::ProxyStats;
-    use crate::report_types::{CellMetrics, VerifyReport};
+    use crate::report_types::{CellMetrics, ManagedSendStats, RECONNECT_MODES, VerifyReport};
 
     /// Absolute ceiling on the warmup excluded from the RSS regression,
     /// in seconds. The actual warmup is `min(MAX_WARMUP_S,
@@ -1431,6 +1431,15 @@ pub mod soak {
         /// count as a census mismatch.
         #[serde(default)]
         pub klv_seed: Option<u64>,
+        /// The `send --reconnect-mode` this leg's managed sender was
+        /// launched with (`"blocking"` / `"background"`) — rejected at
+        /// parse time if unknown — or `None` for a leg whose sender is
+        /// not managed. The two modes exercise different things across
+        /// an outage (a stalled producer and a replayed backlog, against
+        /// a producer that keeps going and a bounded buffer that drops),
+        /// and nothing else in a run's artifacts says which one it was.
+        #[serde(default)]
+        pub reconnect_mode: Option<String>,
     }
 
     /// The declared half of the corruption tap's configuration, compared
@@ -1559,6 +1568,19 @@ pub mod soak {
                     return Err(format!(
                         "soak-config.json: legs.{leg}.klv_set {set:?} is not a known KLV set \
                          (want \"compact\" or \"rich\")"
+                    ));
+                }
+            }
+            // Exact, lowercase names only: the verdict compares this
+            // string with the one the sender wrote, so a spelling the
+            // sender can never write is a declaration that can never be
+            // met.
+            if let Some(mode) = &decl.reconnect_mode {
+                if !RECONNECT_MODES.contains(&mode.as_str()) {
+                    return Err(format!(
+                        "soak-config.json: legs.{leg}.reconnect_mode {mode:?} is not a known \
+                         reconnect mode (want one of {RECONNECT_MODES:?}, or null for a leg whose \
+                         sender is not managed)"
                     ));
                 }
             }
@@ -1814,6 +1836,14 @@ pub mod soak {
         /// declare `corruption` or the recv report carries no attribution.
         #[serde(default)]
         pub corruption_injected: Option<u64>,
+        /// The send report's `managed_send` block, carried over unchanged
+        /// so the leg's reconnect and gap-buffer counters sit beside its
+        /// sent and received access-unit totals. `None` for a leg whose
+        /// sender was not managed. Recorded, never gated — and not a
+        /// complete account of what an outage cost: see the
+        /// `gap_messages_dropped` entry in [`SoakResults::limitations`].
+        #[serde(default)]
+        pub managed_send: Option<ManagedSendStats>,
     }
 
     /// The full `soak-results.json` document: [`build_soak_results`]'s
@@ -2537,6 +2567,67 @@ pub mod soak {
                 detail: klv_detail,
             });
 
+            // Fourth declaration check. The two reconnect modes spend an
+            // outage differently — `blocking` stalls the producer and
+            // replays the backlog, `background` keeps producing into a
+            // bounded buffer that drops — so a run in the wrong mode
+            // exercised something other than what its evidence says, and
+            // every other verdict would still pass. Only the declared
+            // side decides whether there is anything to check: a leg
+            // that declared no mode has no managed sender, or predates
+            // the declaration.
+            let managed_send = artifacts.send_metrics.managed_send.as_ref();
+            let observed_mode = managed_send.and_then(|m| m.reconnect_mode.as_deref());
+            let declared_mode = declared.and_then(|d| d.reconnect_mode.as_deref());
+            let (mode_pass, mode_detail) = match (declared_mode, observed_mode) {
+                (None, None) => (
+                    true,
+                    format!(
+                        "{leg_name}: not applicable — no reconnect mode declared (a leg whose \
+                         sender is not managed, or a config that predates the declaration)"
+                    ),
+                ),
+                (None, Some(o)) => (
+                    true,
+                    format!(
+                        "{leg_name}: not applicable — no reconnect mode declared (a config that \
+                         predates the declaration); the send report says {o:?}"
+                    ),
+                ),
+                (Some(d), Some(o)) if d == o => (
+                    true,
+                    format!("{leg_name}: the managed sender ran the declared reconnect mode {o:?}"),
+                ),
+                (Some(d), Some(o)) => (
+                    false,
+                    format!(
+                        "{leg_name}: config declared reconnect mode {d:?} but the send report \
+                         says the managed sender ran {o:?}"
+                    ),
+                ),
+                (Some(d), None) if managed_send.is_some() => (
+                    false,
+                    format!(
+                        "{leg_name}: config declared reconnect mode {d:?} but the send report's \
+                         managed_send block carries no reconnect mode (written before `send` \
+                         recorded it, or by a mode this harness has no name for)"
+                    ),
+                ),
+                (Some(d), None) => (
+                    false,
+                    format!(
+                        "{leg_name}: config declared reconnect mode {d:?} but the send report \
+                         carries no managed_send block (send ran without --managed?)"
+                    ),
+                ),
+            };
+            verdicts.push(SoakVerdict {
+                name: format!("reconnect_mode_declared_{leg_name}"),
+                pass: mode_pass,
+                provisional: false,
+                detail: mode_detail,
+            });
+
             // `corruption_attributed`/`corruption_detected`/`corruption_recovered`
             // judge the recv side's `AttributionReport` (present iff the
             // capture was made with `recv --corruption-log`). Declared-off
@@ -2846,6 +2937,7 @@ pub mod soak {
                 send_video_aus: artifacts.send_metrics.video_aus,
                 recv_video_aus: artifacts.recv_report.metrics.video_aus,
                 corruption_injected: corr.map(|a| a.injected),
+                managed_send: managed_send.cloned(),
             });
         }
 
@@ -2864,8 +2956,8 @@ pub mod soak {
             verdicts,
             overall_pass,
             limitations: vec![
-                "ManagedTransport (send side) exposes no reconnect-cycle counter \
-                 (deferred-features: 'Reconnect counters on ManagedTransport stats'); \
+                "A managed sender's own reconnect counters (legs[].managed_send's \
+                 reconnect_attempts / reconnect_successes) are recorded, not gated. \
                  recv --managed's ManagedRecvTransport::reconnects_count IS a real observed \
                  count, but a single outage window has not been confirmed to always drive \
                  exactly one rebuild (a short 8s-outage dry-run observed a second rebuild \
@@ -2891,6 +2983,14 @@ pub mod soak {
                  recv-report/proxy-stats) makes report soak hard-error (exit 2) instead of \
                  reaching this function and producing a worker_exits verdict at all — both \
                  outcomes are nonzero, but only the latter names which role and status failed."
+                    .to_string(),
+                "legs[].managed_send's gap_messages_dropped / gap_bytes_dropped are recorded, \
+                 not gated, and are not the whole of what an outage cost: they count what the \
+                 managed sender's gap buffer evicted once it knew the link was down. What the \
+                 transport had already accepted and never delivered in the seconds before it \
+                 noticed the break is in neither counter, and has been measured as most of an \
+                 outage's loss. The difference between send_video_aus and recv_video_aus is \
+                 the fuller figure."
                     .to_string(),
             ],
         })
@@ -5468,6 +5568,7 @@ pub mod soak {
                     schedule,
                     klv_set: None,
                     klv_seed: None,
+                    reconnect_mode: None,
                 },
             );
         }
@@ -5649,6 +5750,200 @@ pub mod soak {
             let v = verdict(&r, "schedule_declared_srt");
             assert!(v.pass && !v.provisional, "{}", v.detail);
             assert!(r.overall_pass, "{:?}", r.verdicts);
+        }
+
+        /// Declare the `srt` leg's reconnect mode and say what its send
+        /// report observed, on an otherwise [`healthy_inputs`] run.
+        /// `observed: None` is a managed send report that carries the
+        /// counters but no mode — the shape written before the mode was
+        /// recorded.
+        fn reconnect_mode_inputs(declared: Option<&str>, observed: Option<&str>) -> SoakInputs {
+            let mut inputs = healthy_inputs();
+            declare_srt(&mut inputs, "baseline", None);
+            inputs.legs[0].1.recv_report.profile = Some("baseline".to_string());
+            inputs
+                .config
+                .legs
+                .get_mut("srt")
+                .expect("declared above")
+                .reconnect_mode = declared.map(str::to_string);
+            inputs.legs[0].1.send_metrics.managed_send = Some(ManagedSendStats {
+                reconnect_attempts: 3,
+                reconnect_successes: 2,
+                gap_messages_dropped: 41,
+                gap_bytes_dropped: 53_956,
+                gap_buffer_capacity: 256,
+                reconnect_mode: observed.map(str::to_string),
+                overflow_policy: Some("drop_oldest".to_string()),
+            });
+            inputs
+        }
+
+        #[test]
+        fn reconnect_mode_declared_passes_when_the_sender_ran_the_declared_mode() {
+            for mode in ["blocking", "background"] {
+                let r = build_soak_results(reconnect_mode_inputs(Some(mode), Some(mode))).unwrap();
+                let v = verdict(&r, "reconnect_mode_declared_srt");
+                assert!(v.pass && !v.provisional, "{}", v.detail);
+                assert!(v.detail.contains(mode), "{}", v.detail);
+                assert!(r.overall_pass, "{:?}", r.verdicts);
+            }
+        }
+
+        /// The hole this verdict exists for: a run launched in one mode
+        /// whose evidence says it exercised the other.
+        #[test]
+        fn reconnect_mode_declared_fails_when_the_sender_ran_the_other_mode() {
+            let r = build_soak_results(reconnect_mode_inputs(Some("background"), Some("blocking")))
+                .unwrap();
+            let v = verdict(&r, "reconnect_mode_declared_srt");
+            assert!(!v.pass && !v.provisional, "{}", v.detail);
+            assert!(
+                v.detail.contains("background") && v.detail.contains("blocking"),
+                "{}",
+                v.detail
+            );
+            assert_eq!(
+                r.verdicts
+                    .iter()
+                    .filter(|v| !v.provisional && !v.pass)
+                    .map(|v| v.name.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["reconnect_mode_declared_srt"],
+                "only the reconnect-mode verdict may fail here"
+            );
+            assert!(!r.overall_pass);
+        }
+
+        /// Declared, but nothing in the send report to check it against:
+        /// once with a managed block that carries no mode, once with no
+        /// managed block at all (the sender was never launched
+        /// `--managed`). Neither is a silent pass.
+        #[test]
+        fn reconnect_mode_declared_fails_when_the_send_report_carries_no_mode() {
+            let r = build_soak_results(reconnect_mode_inputs(Some("background"), None)).unwrap();
+            let v = verdict(&r, "reconnect_mode_declared_srt");
+            assert!(!v.pass && !v.provisional, "{}", v.detail);
+            assert!(v.detail.contains("no reconnect mode"), "{}", v.detail);
+            assert!(!r.overall_pass);
+
+            let mut unmanaged = reconnect_mode_inputs(Some("background"), None);
+            unmanaged.legs[0].1.send_metrics.managed_send = None;
+            let r = build_soak_results(unmanaged).unwrap();
+            let v = verdict(&r, "reconnect_mode_declared_srt");
+            assert!(!v.pass, "{}", v.detail);
+            assert!(v.detail.contains("no managed_send"), "{}", v.detail);
+        }
+
+        /// A config that declares no mode — a leg whose sender is not
+        /// managed, or an archive written before the declaration existed
+        /// — is not applicable, which this report spells as a passing
+        /// verdict that says so. With and without a leg entry.
+        #[test]
+        fn reconnect_mode_declared_is_not_applicable_when_nothing_was_declared() {
+            let r = build_soak_results(reconnect_mode_inputs(None, None)).unwrap();
+            let v = verdict(&r, "reconnect_mode_declared_srt");
+            assert!(v.pass && !v.provisional, "{}", v.detail);
+            assert!(v.detail.contains("not applicable"), "{}", v.detail);
+            assert!(r.overall_pass, "{:?}", r.verdicts);
+
+            let r = build_soak_results(healthy_inputs()).unwrap(); // no `legs` entries
+            let v = verdict(&r, "reconnect_mode_declared_srt");
+            assert!(v.pass && !v.provisional, "{}", v.detail);
+            assert!(v.detail.contains("not applicable"), "{}", v.detail);
+        }
+
+        /// The counters ride along into the leg's results beside its
+        /// access-unit totals, and gate nothing: a leg that evicted from
+        /// its gap buffer still passes.
+        #[test]
+        fn managed_send_counters_are_recorded_on_the_leg_and_never_gate() {
+            let r = build_soak_results(reconnect_mode_inputs(
+                Some("background"),
+                Some("background"),
+            ))
+            .unwrap();
+            let leg = &r.legs[0];
+            assert_eq!((leg.send_video_aus, leg.recv_video_aus), (1000, 1000));
+            let managed = leg.managed_send.as_ref().expect("recorded on the leg");
+            assert_eq!(
+                (managed.gap_messages_dropped, managed.gap_bytes_dropped),
+                (41, 53_956)
+            );
+            assert!(r.overall_pass, "{:?}", r.verdicts);
+            assert!(
+                r.limitations
+                    .iter()
+                    .any(|l| l.contains("gap_messages_dropped") && l.contains("recorded")),
+                "the report must say what the gap counters do not cover: {:?}",
+                r.limitations
+            );
+
+            // A leg with no managed sender records none.
+            let r = build_soak_results(healthy_inputs()).unwrap();
+            assert!(r.legs[0].managed_send.is_none());
+        }
+
+        /// A `soak-config.json` and a `soak-results.json` leg exactly as
+        /// written before the reconnect mode was declared or the managed
+        /// counters were carried onto the leg: both must still load.
+        #[test]
+        fn archives_written_before_the_reconnect_mode_still_load() {
+            let cfg = parse_soak_config(
+                r#"{"expected_duration_s": 259200, "rss_cadence_s": 30, "warmup_fraction": 0.1667,
+                    "sampler_end_slack_s": 35, "expected_worker_exits": {}, "corruption": true,
+                    "corruption_spec": {"rate_per_10k": 5, "min_gap": 1000, "classes": ["drop"]},
+                    "legs": {"srt": {"profile": "misp",
+                                     "schedule": {"seed": 11, "phases": 12, "phase_s": 21600},
+                                     "klv_set": "rich", "klv_seed": 11},
+                             "rist": {"profile": "audio",
+                                      "schedule": {"seed": 11, "phases": 12, "phase_s": 21600},
+                                      "klv_set": "rich", "klv_seed": 11}}}"#,
+            )
+            .expect("an archived config must parse");
+            assert!(cfg.legs["srt"].reconnect_mode.is_none());
+            assert!(cfg.legs["rist"].reconnect_mode.is_none());
+
+            let leg: LegResult = serde_json::from_str(
+                r#"{"leg": "srt", "outage_period_s": 21600, "outage_dur_s": 90,
+                    "expected_outage_windows": 12, "proxy_forwarded": 10, "proxy_dropped": 1,
+                    "loss_pct": 2.0, "observed_drop_fraction": 0.02,
+                    "expected_drop_fraction": 0.02, "drop_fraction_tolerance": 0.01,
+                    "phases": 12, "recv_pass": true, "recv_failures": [],
+                    "send_video_aus": 100, "recv_video_aus": 98,
+                    "corruption_injected": 3}"#,
+            )
+            .expect("an archived leg result must parse");
+            assert!(leg.managed_send.is_none());
+        }
+
+        /// Both modes validate, `null` validates (a leg with no managed
+        /// sender), and anything else is a typo caught before launch.
+        #[test]
+        fn soak_config_rejects_an_unknown_declared_reconnect_mode() {
+            let config = |mode: &str| {
+                format!(
+                    r#"{{"expected_duration_s": 3600, "rss_cadence_s": 30, "warmup_fraction": 0.1,
+                        "sampler_end_slack_s": 35,
+                        "legs": {{"srt": {{"profile": "baseline", "reconnect_mode": {mode}}}}}}}"#
+                )
+            };
+            for (mode, want) in [
+                (r#""blocking""#, Some("blocking")),
+                (r#""background""#, Some("background")),
+                ("null", None),
+            ] {
+                let cfg = parse_soak_config(&config(mode))
+                    .unwrap_or_else(|e| panic!("reconnect_mode {mode} must validate: {e}"));
+                assert_eq!(cfg.legs["srt"].reconnect_mode.as_deref(), want);
+            }
+            for mode in [r#""backgroud""#, r#""Blocking""#, r#""""#] {
+                let e = parse_soak_config(&config(mode)).unwrap_err();
+                assert!(
+                    e.contains("legs.srt.reconnect_mode") && e.contains("blocking"),
+                    "{mode}: {e}"
+                );
+            }
         }
 
         /// A declaration naming a profile that doesn't exist can never

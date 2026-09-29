@@ -313,6 +313,128 @@ fn send_managed_background_is_accepted_and_reports_managed_send() {
         managed.gap_buffer_capacity, 256,
         "the harness runs the policy's default gap buffer"
     );
+    assert_eq!(
+        (
+            managed.reconnect_mode.as_deref(),
+            managed.overflow_policy.as_deref()
+        ),
+        (Some("background"), Some("drop_oldest")),
+        "the report must name the mode and the overflow policy the transport ran"
+    );
+}
+
+/// The other mode, reached the way `soak.sh` reaches it by default: a
+/// `--managed` send with no `--reconnect-mode` at all reports `blocking`,
+/// so a reader never has to know what the flag's default was at the
+/// revision that wrote the file.
+#[test]
+fn send_managed_without_a_mode_reports_blocking() {
+    let sink = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind udp sink");
+    let url = format!(
+        "udp://127.0.0.1:{}",
+        sink.local_addr().expect("sink local_addr").port()
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_tst-interop"))
+        .args([
+            "send",
+            "--profile",
+            "baseline",
+            "--url",
+            &url,
+            "--seconds",
+            "0.2",
+            "--json",
+            "-",
+            "--managed",
+        ])
+        .output()
+        .expect("spawn tst-interop binary");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "a managed send must succeed, stderr: {stderr}"
+    );
+    let metrics: tst_interop::report_types::CellMetrics = serde_json::from_str(stdout.trim())
+        .unwrap_or_else(|e| panic!("stdout must be the metrics JSON ({e}), got: {stdout}"));
+    let managed = metrics
+        .managed_send
+        .expect("a managed send's JSON must carry managed_send");
+    assert_eq!(managed.reconnect_mode.as_deref(), Some("blocking"));
+}
+
+/// The launch gate: `soak.sh` runs `report soak --validate-only` on the
+/// config it has just written, before any worker starts. A declared
+/// reconnect mode that names neither mode must stop the run there, with
+/// exit 2 and the field named — not 72 hours later as a verdict that can
+/// never match.
+#[test]
+fn report_soak_validate_only_rejects_an_unknown_declared_reconnect_mode() {
+    let dir = std::env::temp_dir().join(format!(
+        "tst-interop-cli-validate-reconnect-mode-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time moves forward")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    let validate = |name: &str, reconnect_mode: &str| {
+        let path = dir.join(name);
+        std::fs::write(
+            &path,
+            format!(
+                r#"{{"expected_duration_s": 3600, "rss_cadence_s": 30, "warmup_fraction": 0.1667,
+                    "sampler_end_slack_s": 35, "expected_worker_exits": {{}},
+                    "legs": {{"srt": {{"profile": "baseline", "reconnect_mode": {reconnect_mode}}},
+                             "rist": {{"profile": "baseline", "reconnect_mode": null}}}}}}"#
+            ),
+        )
+        .expect("write config");
+        Command::new(env!("CARGO_BIN_EXE_tst-interop"))
+            .args([
+                "report",
+                "soak",
+                "--config",
+                path.to_str().unwrap(),
+                "--validate-only",
+            ])
+            .output()
+            .expect("spawn tst-interop binary")
+    };
+
+    let good = validate("good.json", r#""background""#);
+    assert_eq!(
+        good.status.code(),
+        Some(0),
+        "a known mode must validate, stderr: {}",
+        String::from_utf8_lossy(&good.stderr)
+    );
+
+    // Wrong name, wrong case, and wrong type. The last is refused by the
+    // JSON parser, whose message gives a position rather than a field
+    // path, so only the first two are held to naming the field.
+    for (name, value, names_the_field) in [
+        ("typo.json", r#""backgroud""#, true),
+        ("case.json", r#""Background""#, true),
+        ("type.json", "1", false),
+    ] {
+        let bad = validate(name, value);
+        let stderr = String::from_utf8_lossy(&bad.stderr);
+        assert_eq!(
+            bad.status.code(),
+            Some(2),
+            "reconnect_mode {value} must fail the launch gate, stderr: {stderr}"
+        );
+        assert!(
+            !names_the_field || stderr.contains("legs.srt.reconnect_mode"),
+            "the error must name the field, got: {stderr}"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

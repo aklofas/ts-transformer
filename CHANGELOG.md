@@ -1480,6 +1480,26 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Testing — interop harness (WP-7a, WP-7b)
 
+- **Tooling: a soak run records which reconnect mode it exercised, and is
+  failed if that is not the mode it declared.** Before, nothing
+  machine-readable in a run's artifacts said whether the srt leg's managed
+  sender ran `blocking` or `background`, so an archived run could not be read
+  for what it covered and a run launched in the wrong mode passed. Now
+  `soak.sh` declares `legs.<leg>.reconnect_mode` in `soak-config.json` (the
+  value of `SRT_RECONNECT_MODE` on the srt leg, `null` on the rist leg, whose
+  sender is not managed), a `send --managed` report's `managed_send` block
+  carries `reconnect_mode` and `overflow_policy` as lowercase strings, and
+  `report soak` compares the two in a new non-provisional verdict,
+  `reconnect_mode_declared_<leg>`: it fails on a mismatch and on a declared
+  mode the send report does not carry, and reads "not applicable" (passing)
+  for a leg that declared none. `report soak --validate-only` rejects a
+  declared mode that is neither name. `soak-results.json` carries the
+  `managed_send` block on each leg beside its sent and received access-unit
+  totals and `summary.txt` prints it; these counters are recorded and gate
+  nothing, and the report says that the gap-buffer counters leave out what
+  the transport accepted and never delivered before it noticed a break.
+  Archived configs, send reports and results without the new keys still
+  load. Harness only; no library crate is touched by this bullet.
 - **`free_port` probes the protocol the cell actually binds.** The shell
   orchestrator's allocator (`scripts/interop/lib.sh`) asked the kernel for a
   free **UDP** port and handed it to cells that bind **TCP** — rtsp-serve,
