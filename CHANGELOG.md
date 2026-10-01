@@ -1810,6 +1810,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Testing — CI/rails (WP-8)
 
+- CI windows prerequisites: `pkg-config` now comes from the PyPI `pkgconf`
+  wheel (real pkgconf binary plus a `pkg-config` console script on the
+  Scripts PATH, the mechanism meson already uses) instead of the
+  `pkgconfiglite` choco package, whose sourceforge download 404/522'd
+  on 2026-10-01 and failed the job twice.
 - **Surface manifest: a `python:` cell now names a definition.** The rail
   (`scripts/check/repo/surface-manifest.sh`) resolved a Python symbol by
   searching every binding source for its last dotted component as a
