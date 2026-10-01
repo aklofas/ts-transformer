@@ -21,6 +21,6 @@ case "${1:-}" in
   --stdout) exec python3 "$ROOT/scripts/gen/loc_report.py" ;;
   --json)   exec python3 "$ROOT/scripts/gen/loc_report.py" --json ;;
   "")       exec python3 "$ROOT/scripts/gen/loc_report.py" --update "$ROOT/docs/project/code-size.md" ;;
-  -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
   *) echo "unknown arg: $1" >&2; exit 2 ;;
 esac

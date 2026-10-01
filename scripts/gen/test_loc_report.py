@@ -84,6 +84,22 @@ class RustClassification(unittest.TestCase):
         )
 
 
+    def test_char_literals_do_not_confuse_depth(self):
+        self.assertEqual(
+            classify("rust", """
+                #[cfg(test)]
+                mod tests {
+                    const A: char = '}';
+                    const B: char = '"';
+                    const C: char = '\\'';
+                    fn t<'a>(x: &'a str) {}
+                }
+                fn prod() {}
+            """),
+            ["test"] * 7 + ["code"],
+        )
+
+
 class OtherLanguages(unittest.TestCase):
     def test_python_docstring_and_hash_comment(self):
         self.assertEqual(
