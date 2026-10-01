@@ -5,7 +5,7 @@
 //! slot, and the factory then reports `ExplicitClose`.
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::time::{Duration, Instant};
 use tst_core::transport::{BrokenCause, RecvTransport, TransportCancel, TransportError};
 use tst_pipeline::{BackoffStrategy, FactoryCancel, ManagedRecvTransport, ReconnectPolicy};
@@ -115,6 +115,120 @@ fn cancel_wakes_a_factory_parked_on_its_installed_handle() {
     assert!(
         !managed.is_alive(),
         "managed transport must latch closed after cancel"
+    );
+}
+
+/// Stand-in for a handle installed into a `FactoryCancel` slot by a factory
+/// that polls the slot itself (rather than treating its own wake-up as the
+/// signal, as `ParkedAccept` above does): `cancel()` only notifies a
+/// `Condvar` the factory is waiting on; the factory then re-checks
+/// `slot.is_cancelled()` after waking, the shape a native re-accept helper
+/// uses when it is woken by something other than the cancel itself (e.g. a
+/// spurious wake or a poll interval).
+struct NotifyOnCancel(Arc<(Mutex<bool>, Condvar)>);
+
+impl TransportCancel for NotifyOnCancel {
+    fn cancel(&self) {
+        let (woken, cvar) = &*self.0;
+        *woken.lock().unwrap() = true;
+        cvar.notify_all();
+    }
+    fn is_cancelled(&self) -> bool {
+        *self.0.0.lock().unwrap()
+    }
+}
+
+/// R7-01 (review #7): the factory can observe a cancel itself — by polling
+/// the `FactoryCancel` slot after waking from whatever it was parked on —
+/// and report `ExplicitClose` directly, rather than the wrapper's own
+/// cancel-handle check catching it. That result must be just as terminal
+/// as an inner receive's `ExplicitClose`: no further factory call, and
+/// `is_alive()` false from then on.
+#[test]
+fn factory_observed_cancel_is_terminal_and_not_retried() {
+    let factory_cancel = Arc::new(FactoryCancel::new());
+    let factory_calls = Arc::new(AtomicU32::new(0));
+    let park = Arc::new((Mutex::new(false), Condvar::new()));
+
+    let fc = Arc::clone(&factory_cancel);
+    let calls = Arc::clone(&factory_calls);
+    let park_cl = Arc::clone(&park);
+    let factory: Box<dyn FnMut() -> Result<DeadInner, TransportError> + Send> =
+        Box::new(move || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            let handle: Arc<dyn TransportCancel + Send + Sync> =
+                Arc::new(NotifyOnCancel(Arc::clone(&park_cl)));
+            fc.install(handle);
+            // Park like a blocking re-accept; a 5 s cap keeps a regression
+            // from hanging the test binary rather than asserting any
+            // particular wake latency.
+            let (lock, cvar) = &*park_cl;
+            let mut woken = lock.lock().unwrap();
+            while !*woken {
+                let (guard, timeout) = cvar.wait_timeout(woken, Duration::from_secs(5)).unwrap();
+                woken = guard;
+                if timeout.timed_out() {
+                    break;
+                }
+            }
+            fc.clear();
+            if fc.is_cancelled() {
+                Err(TransportError::ExplicitClose)
+            } else {
+                Err(TransportError::Broken {
+                    msg: "parked factory timed out without a cancel".into(),
+                    errno_code: None,
+                    cause: BrokenCause::Unspecified,
+                })
+            }
+        });
+
+    let policy = ReconnectPolicy {
+        max_attempts: Some(2),
+        backoff: BackoffStrategy::Constant(Duration::from_millis(0)),
+        ..Default::default()
+    };
+    let canceller_slot = Arc::clone(&factory_cancel);
+    let mut managed =
+        ManagedRecvTransport::new_with_factory_cancel(DeadInner, factory, policy, factory_cancel);
+
+    let canceller = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(150));
+        // Fire the `FactoryCancel` slot directly — NOT the wrapper's own
+        // `cancel_handle()`. The wrapper's handle also latches
+        // `self.cancelled`, which the entry gate's own top-of-loop check
+        // catches independently of the factory match arm this test exists
+        // to cover; firing only the slot isolates the factory's own
+        // `ExplicitClose` report as the sole path to a terminal result.
+        canceller_slot.cancel();
+    });
+
+    // `recv_bytes` blocks inside the parked factory until the canceller
+    // fires; run it on its own thread and latch-and-poll the result against
+    // a 5 s deadline so a regression (the factory's `ExplicitClose` getting
+    // retried instead of latched) hangs this one channel recv, not the test
+    // binary.
+    let (tx, rx) = mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let mut buf = [0u8; 1316];
+        let first = managed.recv_bytes(&mut buf);
+        let second = managed.recv_bytes(&mut buf);
+        let _ = tx.send((first, second, managed.is_alive()));
+    });
+
+    let (first, second, alive) = rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("parked recv_bytes did not return within the deadline");
+    canceller.join().expect("canceller thread");
+    worker.join().expect("recv_bytes worker thread");
+
+    assert_eq!(first, Err(TransportError::ExplicitClose));
+    assert_eq!(second, Err(TransportError::ExplicitClose));
+    assert!(!alive, "managed transport must latch closed after cancel");
+    assert_eq!(
+        factory_calls.load(Ordering::SeqCst),
+        1,
+        "a terminal factory result must not be retried"
     );
 }
 

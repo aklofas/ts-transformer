@@ -588,11 +588,16 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                     .expect("BUG: gap lock poisoned — gap buffer is invariant-critical");
                 // The entry gate ran before this lock was taken, and the
                 // cancel path takes no lock (invariant 5), so the latch can
-                // have been set in between. This load is the linearization
-                // point: a send is accepted if and only if its enqueue
-                // happened before the latch was set, as observed under the
-                // gap lock. Without it the message went to a worker that
-                // only sees the latch and exits, and the caller was told
+                // have been set in between. This load, under the gap lock,
+                // is what the call reports on: a cancel observed here is
+                // reported by this call; a cancel that lands after it is
+                // reported by the next call, and (on the enqueue branch)
+                // this message stays queued undelivered — the same outcome
+                // as a cancel landing just after `send_bytes` returned. The
+                // canceller takes no lock, so nothing stronger (real-time
+                // ordering of enqueue against the latch) is promised.
+                // Without this check the message went to a worker that only
+                // sees the latch and exits, and the caller was told
                 // `Ok(())`. Ahead of the enqueue, so it also outranks a full
                 // `Reject` buffer's `Backpressure` (same order as the
                 // enqueue after the direct send, below).

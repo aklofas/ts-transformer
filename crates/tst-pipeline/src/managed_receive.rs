@@ -448,6 +448,19 @@ impl<R: RecvTransport> RecvTransport for ManagedRecvTransport<R> {
                         // new inner is in place.
                         self.reconnects.fetch_add(1, Ordering::Release);
                     }
+                    Err(TransportError::ExplicitClose) => {
+                        // The factory itself reports a cancel: the listener's
+                        // slot was fired directly, or the process is exiting
+                        // (`tst-srt` refuses new sockets with this once its
+                        // exit handler runs). Terminal, exactly as the
+                        // inner-receive arm below: latch both flags so
+                        // `is_alive()` is false now and re-entry reports the
+                        // caller-initiated close, and never call the factory
+                        // again — it would answer the same way.
+                        self.closed = true;
+                        self.explicit_close = true;
+                        return Err(TransportError::ExplicitClose);
+                    }
                     Err(_) => continue,
                 }
             }
@@ -647,6 +660,68 @@ mod tests {
         // via factory and the new inner returns Ok(1).
         assert_eq!(managed.recv_bytes(&mut buf).unwrap(), 1);
         assert!(*factory_calls.lock().unwrap() >= 1);
+    }
+
+    /// R7-01 (review #7): a factory that reports `ExplicitClose` — the SRT
+    /// listener's slot was fired directly, or the process is exiting — is
+    /// terminal, exactly like an inner receive that reports it. The wrapper
+    /// must not retry the factory and must not report `Closed`
+    /// (end-of-stream to the bindings) at budget exhaustion.
+    #[test]
+    fn factory_explicit_close_is_terminal_without_wrapper_cancel() {
+        let calls = Arc::new(Mutex::new(0u32));
+        let observed = Arc::clone(&calls);
+        let factory = move || -> Result<FlakyRecv, TransportError> {
+            *observed.lock().unwrap() += 1;
+            Err(TransportError::ExplicitClose)
+        };
+        // ok_until: 0 → the first recv on the initial inner reports Broken,
+        // which sends the wrapper into the factory.
+        let mut rx = ManagedRecvTransport::new(
+            FlakyRecv {
+                calls: 0,
+                ok_until: 0,
+            },
+            Box::new(factory),
+            fast_policy(Some(2)),
+        );
+        let mut bytes = [0u8; 1];
+        let first = rx.recv_bytes(&mut bytes);
+        let again = rx.recv_bytes(&mut bytes);
+        assert_eq!(
+            *calls.lock().unwrap(),
+            1,
+            "a terminal factory result must not be retried"
+        );
+        assert_eq!(first, Err(TransportError::ExplicitClose));
+        assert_eq!(again, Err(TransportError::ExplicitClose));
+        assert!(!rx.is_alive());
+    }
+
+    /// Same, with no attempt budget: before the fix this loop had no exit.
+    #[test]
+    fn factory_explicit_close_is_terminal_with_unbounded_attempts() {
+        let calls = Arc::new(Mutex::new(0u32));
+        let observed = Arc::clone(&calls);
+        let factory = move || -> Result<FlakyRecv, TransportError> {
+            *observed.lock().unwrap() += 1;
+            Err(TransportError::ExplicitClose)
+        };
+        let mut rx = ManagedRecvTransport::new(
+            FlakyRecv {
+                calls: 0,
+                ok_until: 0,
+            },
+            Box::new(factory),
+            fast_policy(None),
+        );
+        let mut bytes = [0u8; 1];
+        assert_eq!(
+            rx.recv_bytes(&mut bytes),
+            Err(TransportError::ExplicitClose)
+        );
+        assert_eq!(*calls.lock().unwrap(), 1);
+        assert!(!rx.is_alive());
     }
 
     /// When the reconnect budget is exhausted, `recv_bytes` returns

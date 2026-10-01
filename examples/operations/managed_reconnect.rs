@@ -304,9 +304,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // exhausted), backpressure from the fresh link, or an
                 // oversized payload. In each of those the wrapper has
                 // kept nothing: `MuxSender` retains the chunk it was
-                // refused and offers it again on the next call, which
-                // also starts a fresh reconnect cycle. So we log and keep
-                // going; the very next `send_*` may well succeed.
+                // refused and offers it again on the next call. A retry
+                // after an exhausted budget starts a fresh reconnect
+                // cycle; a retry after Backpressure reuses the live link;
+                // an oversized payload is rejected without touching the
+                // link. So we log and keep going; the very next `send_*`
+                // may well succeed.
                 eprintln!("sender: send_video {i} -> {e:?}");
                 sent_err += 1;
             }
