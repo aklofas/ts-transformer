@@ -197,6 +197,10 @@ impl Default for StepThresholds {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamArtifacts {
     pub index: u32,
+    /// The stream's leg name as the sampler CSVs and `exits.json` spell
+    /// it (`<transport>-<k>`). Carried rather than derived from the
+    /// step's transport: the hold step mixes transports.
+    pub leg: String,
     pub send: CellMetrics,
     pub recv: VerifyReport,
     pub proxy: Option<ProxyStats>,
@@ -258,9 +262,16 @@ pub struct StepResults {
     pub samples_used: usize,
 }
 
-/// The three processes of one stream's triple, as named in the sampler
-/// CSVs and in `exits.json` (`<leg>-<role>`).
-const ROLES: [&str; 3] = ["send", "proxy", "recv"];
+/// The processes one stream runs, as named in the sampler CSVs and in
+/// `exits.json` (`<leg>-<role>`). A stream without proxy stats (TCP:
+/// send connects straight to recv) has no proxy process to expect.
+fn roles(s: &StreamArtifacts) -> &'static [&'static str] {
+    if s.proxy.is_some() {
+        &["send", "proxy", "recv"]
+    } else {
+        &["send", "recv"]
+    }
+}
 
 /// Same floor as soak's `MIN_SAMPLE_COVERAGE`: below it a resource
 /// verdict rests on too few points to mean anything.
@@ -307,10 +318,6 @@ fn by_process<S: Sampled>(samples: &[S], warmup_s: f64) -> BTreeMap<(String, Str
             .push(s);
     }
     groups
-}
-
-fn leg_name(decl: &StepDeclaration, index: u32) -> String {
-    format!("{}-{}", decl.transport, index)
 }
 
 /// CPU seconds one process burned between its first and last
@@ -366,7 +373,7 @@ pub fn build_step_results(inputs: StepInputs) -> Result<StepResults, String> {
     let rss_groups = by_process(&rss, decl.warmup_s);
 
     let mut verdicts = Vec::new();
-    verdicts.push(verdict_worker_exits(&decl, &worker_exits, &streams));
+    verdicts.push(verdict_worker_exits(&worker_exits, &streams));
     verdicts.push(verdict_recv_invariants(&streams));
     verdicts.push(verdict_delivery_complete(
         &streams,
@@ -417,15 +424,11 @@ pub fn build_step_results(inputs: StepInputs) -> Result<StepResults, String> {
 
 /// Every role of every stream must have exited 0. A missing role is a
 /// failure too: an absent status is not evidence of a clean exit.
-fn verdict_worker_exits(
-    decl: &StepDeclaration,
-    exits: &BTreeMap<String, i32>,
-    streams: &[StreamArtifacts],
-) -> StepVerdict {
+fn verdict_worker_exits(exits: &BTreeMap<String, i32>, streams: &[StreamArtifacts]) -> StepVerdict {
     let mut required = Vec::new();
     for s in streams {
-        for role in ROLES {
-            required.push(format!("{}-{role}", leg_name(decl, s.index)));
+        for role in roles(s) {
+            required.push(format!("{}-{role}", s.leg));
         }
     }
     let mut problems = Vec::new();
@@ -458,7 +461,7 @@ fn verdict_recv_invariants(streams: &[StreamArtifacts]) -> StepVerdict {
     let failing: Vec<String> = streams
         .iter()
         .filter(|s| !s.recv.pass)
-        .map(|s| format!("stream {}: {}", s.index, s.recv.failures.join(", ")))
+        .map(|s| format!("{}: {}", s.leg, s.recv.failures.join(", ")))
         .collect();
     StepVerdict {
         name: "recv_invariants".into(),
@@ -480,17 +483,18 @@ fn verdict_delivery_complete(streams: &[StreamArtifacts], slack: f64) -> StepVer
     let mut notes = Vec::new();
     for s in streams {
         let ratio = if s.send.video_aus == 0 {
-            notes.push(format!("stream {}: sender reported 0 video AUs", s.index));
+            notes.push(format!("{}: sender reported 0 video AUs", s.leg));
             0.0
         } else {
-            s.recv.metrics.video_aus as f64 / s.send.video_aus as f64
+            let ratio = s.recv.metrics.video_aus as f64 / s.send.video_aus as f64;
+            if ratio < slack {
+                notes.push(format!(
+                    "{}: {}/{} AUs = {ratio:.4}",
+                    s.leg, s.recv.metrics.video_aus, s.send.video_aus
+                ));
+            }
+            ratio
         };
-        if ratio < slack {
-            notes.push(format!(
-                "stream {}: {}/{} AUs = {ratio:.4}",
-                s.index, s.recv.metrics.video_aus, s.send.video_aus
-            ));
-        }
         min_ratio = min_ratio.min(ratio);
     }
     StepVerdict {
@@ -524,20 +528,36 @@ fn verdict_cpu_headroom(
     });
     let window_s = hi - lo;
     let mut total_cpu_s = 0.0;
+    let mut usable = 0usize;
     let mut unusable = Vec::new();
     for ((leg, process), samples) in groups {
         match process_cpu_seconds(samples, decl.clk_tck) {
-            Some(cpu_s) => total_cpu_s += cpu_s,
+            Some(cpu_s) => {
+                total_cpu_s += cpu_s;
+                usable += 1;
+            }
             None => unusable.push(format!("{leg}/{process}")),
         }
     }
-    if !window_s.is_finite() || window_s <= 0.0 {
+    // Either case would report 0 % CPU from no measurement at all — a
+    // vacuous pass, so it fails instead.
+    let no_figure = if !window_s.is_finite() || window_s <= 0.0 {
+        Some("post-warm-up window is empty — no CPU figure".to_string())
+    } else if usable == 0 {
+        Some(format!(
+            "no process has 2 usable tick samples — no CPU figure: {}",
+            unusable.join(", ")
+        ))
+    } else {
+        None
+    };
+    if let Some(detail) = no_figure {
         let verdict = StepVerdict {
             name: "cpu_headroom".into(),
             pass: false,
             observed: 0.0,
             threshold: max,
-            detail: "post-warm-up window is empty — no CPU figure".into(),
+            detail,
         };
         return (verdict, 0.0);
     }
@@ -640,7 +660,7 @@ fn verdict_flat(
 }
 
 /// Post-warm-up RSS ticks observed per `(leg, process)` ÷ the ticks the
-/// hold should have produced. Every declared stream's three roles are
+/// hold should have produced. Every declared stream's roles are
 /// expected even if the sampler never wrote a row for them.
 fn verdict_sample_coverage(
     decl: &StepDeclaration,
@@ -650,8 +670,8 @@ fn verdict_sample_coverage(
     let expected = decl.hold_s / decl.sample_cadence_s;
     let mut counts: BTreeMap<(String, String), usize> = BTreeMap::new();
     for s in streams {
-        for role in ROLES {
-            counts.insert((leg_name(decl, s.index), role.to_string()), 0);
+        for role in roles(s) {
+            counts.insert((s.leg.clone(), role.to_string()), 0);
         }
     }
     for (key, samples) in groups {
@@ -701,7 +721,7 @@ fn stream_figures(
     streams
         .iter()
         .map(|s| {
-            let leg = leg_name(decl, s.index);
+            let leg = s.leg.clone();
             let mut cpu_seconds = BTreeMap::new();
             let mut threads_max = BTreeMap::new();
             let mut fds_max = BTreeMap::new();
@@ -743,7 +763,7 @@ fn stream_figures(
 
 #[cfg(test)]
 mod tests {
-    use super::super::soak::tests::{cell_metrics, passing_recv_report};
+    use super::super::soak::tests::{cell_metrics, passing_recv_report, proxy_stats};
     use super::*;
 
     fn decl(streams: u32, scale: u32) -> StepDeclaration {
@@ -811,9 +831,10 @@ mod tests {
     fn stream_artifacts(index: u32, sent: u64, received: u64) -> StreamArtifacts {
         StreamArtifacts {
             index,
+            leg: format!("srt-{index}"),
             send: cell_metrics(sent),
             recv: passing_recv_report(received),
-            proxy: None,
+            proxy: Some(proxy_stats(sent, 0, 0.0, None, 0)),
         }
     }
     fn inputs(streams: u32, cpu_ticks_per_tick: u64) -> StepInputs {
@@ -983,6 +1004,136 @@ mod tests {
             .find(|v| v.name == "delivery_complete")
             .unwrap();
         assert!((v.observed - 0.6667).abs() < 0.001);
+    }
+
+    fn verdict<'a>(r: &'a StepResults, name: &str) -> &'a StepVerdict {
+        r.verdicts
+            .iter()
+            .find(|v| v.name == name)
+            .unwrap_or_else(|| panic!("no verdict {name}"))
+    }
+
+    #[test]
+    fn proxyless_stream_is_not_expected_to_have_a_proxy() {
+        // TCP: send connects straight to recv — no proxy process, no
+        // proxy rows, no proxy exit status, no proxy stats.
+        let mut inp = inputs(1, 30);
+        inp.proc.retain(|s| s.process != "proxy");
+        inp.rss.retain(|s| s.process != "proxy");
+        inp.worker_exits.remove("srt-0-proxy");
+        inp.streams[0].proxy = None;
+        let r = build_step_results(inp).unwrap();
+        assert!(r.pass, "{:?}", r.failing);
+        assert!(verdict(&r, "sample_coverage").pass);
+        assert!(verdict(&r, "worker_exits").pass);
+        assert_eq!(r.per_stream[0].proxy_forwarded, None);
+    }
+
+    #[test]
+    fn per_stream_lookups_use_the_declared_leg() {
+        // The hold step mixes transports: a stream's leg comes from its
+        // artifacts, not from `decl.transport`.
+        let mut inp = inputs(1, 30);
+        inp.decl.transport = "all".into();
+        let r = build_step_results(inp).unwrap();
+        assert!(r.pass, "{:?}", r.failing);
+        assert_eq!(r.per_stream[0].leg, "srt-0");
+        assert_eq!(r.per_stream[0].cpu_seconds.len(), 3);
+    }
+
+    #[test]
+    fn missing_exit_status_fails_worker_exits() {
+        let mut inp = inputs(1, 30);
+        inp.worker_exits.remove("srt-0-send");
+        let r = build_step_results(inp).unwrap();
+        let v = verdict(&r, "worker_exits");
+        assert!(!v.pass);
+        assert!(
+            v.detail.contains("srt-0-send: no exit status recorded"),
+            "{}",
+            v.detail
+        );
+    }
+
+    #[test]
+    fn undeclared_nonzero_exit_fails_worker_exits() {
+        let mut inp = inputs(1, 30);
+        inp.worker_exits.insert("srt-9-send".into(), 1);
+        let r = build_step_results(inp).unwrap();
+        let v = verdict(&r, "worker_exits");
+        assert!(!v.pass);
+        assert!(
+            v.detail.contains("srt-9-send: exit 1 (undeclared worker)"),
+            "{}",
+            v.detail
+        );
+    }
+
+    #[test]
+    fn coverage_shortfall_fails_sample_coverage() {
+        // Keep every other post-warm-up row of srt-0/recv: 10 of 20.
+        let mut inp = inputs(1, 30);
+        inp.rss.retain(|s| {
+            !(s.process == "recv" && s.elapsed_s >= 60.0 && (s.elapsed_s / 30.0) as u64 % 2 == 1)
+        });
+        let r = build_step_results(inp).unwrap();
+        let v = verdict(&r, "sample_coverage");
+        assert!(!v.pass);
+        assert!((v.observed - 0.5).abs() < 1e-9, "{}", v.observed);
+        assert!(v.detail.contains("srt-0/recv: 10 of 20"), "{}", v.detail);
+    }
+
+    #[test]
+    fn one_post_warmup_rss_row_is_insufficient() {
+        let mut inp = inputs(1, 30);
+        inp.rss
+            .retain(|s| !(s.process == "send" && s.elapsed_s >= 60.0 && s.elapsed_s != 60.0));
+        let r = build_step_results(inp).unwrap();
+        let v = verdict(&r, "rss_slope_srt-0_send");
+        assert!(!v.pass);
+        assert!(
+            v.detail.contains("insufficient samples (1)"),
+            "{}",
+            v.detail
+        );
+    }
+
+    #[test]
+    fn cpu_headroom_fails_without_a_measurement() {
+        // Every proc row before warm-up: the window is empty.
+        let mut inp = inputs(1, 30);
+        inp.proc.retain(|s| s.elapsed_s < 60.0);
+        let r = build_step_results(inp).unwrap();
+        let v = verdict(&r, "cpu_headroom");
+        assert!(!v.pass);
+        assert!(v.detail.contains("window is empty"), "{}", v.detail);
+        assert_eq!(r.aggregate_cpu_fraction, 0.0);
+
+        // A window, but no process with two rows carrying both tick
+        // fields: 0 % would be a measurement of nothing.
+        let mut inp = inputs(1, 30);
+        for s in inp.proc.iter_mut() {
+            s.stime_ticks = None;
+        }
+        let r = build_step_results(inp).unwrap();
+        let v = verdict(&r, "cpu_headroom");
+        assert!(!v.pass);
+        assert!(
+            v.detail.contains("no process has 2 usable tick samples"),
+            "{}",
+            v.detail
+        );
+    }
+
+    #[test]
+    fn sender_with_zero_aus_fails_delivery_with_one_note() {
+        let mut inp = inputs(2, 30);
+        inp.streams[1] = stream_artifacts(1, 0, 0);
+        let r = build_step_results(inp).unwrap();
+        let v = verdict(&r, "delivery_complete");
+        assert!(!v.pass);
+        assert_eq!(v.observed, 0.0);
+        assert_eq!(v.detail, "srt-1: sender reported 0 video AUs");
     }
 
     #[test]

@@ -3080,7 +3080,7 @@ pub mod soak {
     pub(crate) mod tests {
         use super::*;
 
-        fn proxy_stats(
+        pub(crate) fn proxy_stats(
             forwarded: u64,
             dropped: u64,
             loss_pct: f64,
