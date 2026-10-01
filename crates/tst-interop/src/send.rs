@@ -385,6 +385,7 @@ pub fn run_managed(
         gap_messages_dropped: s.gap_messages_dropped,
         gap_bytes_dropped: s.gap_bytes_dropped,
         gap_buffer_capacity,
+        gap_len_at_exit: s.gap_len,
         reconnect_mode,
         overflow_policy: Some(overflow_policy),
     });

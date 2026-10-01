@@ -1676,6 +1676,15 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Testing — interop harness (WP-7a, WP-7b)
 
+- **Tooling: `report soak` records the gap-buffer backlog stranded at exit,
+  and the reconnect marker is stamped where the discarded chunk began.**
+  `report soak`'s `managed_send` block records `gap_len_at_exit` (the
+  backlog stranded in the gap buffer when the sender was dropped; recorded
+  beside the drop counters, not gated); the reconnect marker is stamped at
+  the ordinal where the discarded first chunk began, so an injection
+  anchored at a PCR from that chunk is no longer excused as reconnect
+  loss. Review #7 R7-03 / R7-05 (internal).
+
 - **Tooling: a soak run records which reconnect mode it exercised, and is
   failed if that is not the mode it declared.** Before, nothing
   machine-readable in a run's artifacts said whether the srt leg's managed

@@ -64,6 +64,7 @@
 //! caveat that this one is unverified — this crate's tests don't
 //! exercise a RIST cell yet).
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -474,6 +475,18 @@ pub(crate) struct TeeState {
     /// a fresh connection deserves a fresh chance to stay in sync, not a
     /// sticky failure carried over from the connection that just broke.
     reader_error: Option<String>,
+    /// The managed transport's successful-rebuild counter, when this tap
+    /// sits under one (`recv --managed`; see [`tee_watch_reconnects`]).
+    reconnects: Option<Arc<AtomicU64>>,
+    /// That counter's value at the previous `recv_bytes`.
+    reconnects_seen: u64,
+    /// The reader's packet count when the first `recv_bytes` after a
+    /// rebuild began — the ordinal of the first packet the fresh
+    /// connection delivered, which is where the demuxer's reconnect marker
+    /// belongs. Held until [`tee_take_chunk_start`] takes it for that
+    /// marker; a second rebuild before the marker keeps the first value,
+    /// since the demuxer folds both into one marker.
+    chunk_start: Option<u64>,
 }
 
 impl TeeState {
@@ -489,6 +502,9 @@ impl TeeState {
             // sample median, which no oracle's tolerance can tell apart.
             reader: crate::rawts::Reader::with_retention(crate::rawts::Retention::Bounded),
             reader_error: None,
+            reconnects: None,
+            reconnects_seen: 0,
+            chunk_start: None,
         }
     }
 }
@@ -572,6 +588,21 @@ impl<T: Transport> Transport for Teeing<T> {
 
 impl<T: RecvTransport> RecvTransport for Teeing<T> {
     fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
+        // Note where this chunk begins if the managed transport rebuilt
+        // its connection since the last call: it bumps the counter after
+        // installing the fresh inner and before this, that inner's first
+        // read. Locked and released before the inner call, which can park.
+        {
+            let mut s = self.tap.lock().expect("tee mutex poisoned");
+            if let Some(now) = s.reconnects.as_ref().map(|c| c.load(Ordering::Acquire)) {
+                if now > s.reconnects_seen {
+                    s.reconnects_seen = now;
+                    if s.chunk_start.is_none() {
+                        s.chunk_start = Some(s.reader.packets());
+                    }
+                }
+            }
+        }
         let n = self.inner.recv_bytes(buf)?;
         let mut s = self.tap.lock().expect("tee mutex poisoned");
         s.bytes += n as u64;
@@ -624,6 +655,30 @@ pub(crate) fn tee_coord(tap: &Arc<Mutex<TeeState>>) -> TeeCoord {
     TeeCoord {
         packets: s.reader.packets(),
     }
+}
+
+/// Watch a managed transport's successful-rebuild counter
+/// (`ManagedRecvTransport::reconnects_handle`) so the tee can note where
+/// each rebuilt connection's first chunk began — see
+/// [`tee_take_chunk_start`].
+pub(crate) fn tee_watch_reconnects(tap: &Arc<Mutex<TeeState>>, reconnects: Arc<AtomicU64>) {
+    let mut s = tap.lock().expect("tee mutex poisoned");
+    s.reconnects_seen = reconnects.load(Ordering::Acquire);
+    s.reconnects = Some(reconnects);
+}
+
+/// The packet ordinal where the first chunk after the latest unmarked
+/// rebuild began, taken (so each rebuild's value stamps one marker).
+/// `None` when the tap watches no reconnect counter or no rebuild has
+/// happened since the last take.
+///
+/// The demuxer discards that chunk and only then yields
+/// `DemuxEvent::ReconnectDiscontinuity`, but the tee has already fed it
+/// to the raw reader; stamping the marker with the reader's count at the
+/// event would put every PCR decoded from the discarded chunk before the
+/// marker (review #7 R7-05).
+pub(crate) fn tee_take_chunk_start(tap: &Arc<Mutex<TeeState>>) -> Option<u64> {
+    tap.lock().expect("tee mutex poisoned").chunk_start.take()
 }
 
 /// Turn the tap reader's sync-recovery mode on or off — see

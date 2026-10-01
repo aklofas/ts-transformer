@@ -3248,6 +3248,122 @@ mod tests {
         );
     }
 
+    /// R7-05 (review #7, internal): the first chunk the fresh inner returns
+    /// is fed to the raw reader BEFORE the demuxer discards it and yields the
+    /// reconnect marker, so PCRs decoded from that chunk were stamped below
+    /// the marker and an injection anchored at one of them read as "not
+    /// arrived" — excused as reconnect loss even though the reset demuxer
+    /// parsed the packets it resolved into. The marker must be stamped at the
+    /// ordinal where the discarded chunk began.
+    ///
+    /// The marker's ordinal is not chosen here: it is what `recv`'s managed
+    /// path computes, through the same transport wiring
+    /// (`recv::managed_teed_transport`) and the same stamping
+    /// (`recv::event_ordinal`), over scripted connections — 53 packets, a
+    /// break, then the fresh connection's first 7-packet chunk (53..=59).
+    #[test]
+    fn an_injection_anchored_in_the_discarded_first_chunk_is_not_excused() {
+        use crate::corrupt::{Class, Coord};
+        use std::collections::VecDeque;
+        use tst_core::transport::{BrokenCause, RecvTransport, TransportError};
+        use tst_pipeline::{BackoffStrategy, ReconnectPolicy};
+
+        /// Hands out its chunks in order, then reports a broken link.
+        struct Scripted(VecDeque<Vec<u8>>);
+        impl RecvTransport for Scripted {
+            fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
+                match self.0.pop_front() {
+                    Some(c) => {
+                        buf[..c.len()].copy_from_slice(&c);
+                        Ok(c.len())
+                    }
+                    None => Err(TransportError::Broken {
+                        msg: "scripted break".to_string(),
+                        errno_code: None,
+                        cause: BrokenCause::Unspecified,
+                    }),
+                }
+            }
+            fn max_payload(&self) -> usize {
+                1316
+            }
+            fn is_alive(&self) -> bool {
+                true
+            }
+        }
+        /// `n` null packets, one chunk.
+        fn nulls(n: usize) -> Vec<u8> {
+            let mut pkt = [0xFFu8; 188];
+            pkt[..4].copy_from_slice(&[0x47, 0x1F, 0xFF, 0x10]);
+            pkt.repeat(n)
+        }
+
+        let mut first: VecDeque<Vec<u8>> = (0..7).map(|_| nulls(7)).collect();
+        first.push_back(nulls(4)); // 53 packets, then the break
+        let mut fresh = Some(VecDeque::from(vec![nulls(7)]));
+        let policy = ReconnectPolicy {
+            max_attempts: Some(1),
+            backoff: BackoffStrategy::Constant(std::time::Duration::ZERO),
+            ..ReconnectPolicy::default()
+        };
+        let (mut managed, tap) = crate::recv::managed_teed_transport(
+            Box::new(Scripted(first)),
+            move || {
+                let chunks = fresh.take().ok_or("dialed twice")?;
+                Ok(Box::new(Scripted(chunks)) as Box<dyn RecvTransport>)
+            },
+            policy,
+        );
+
+        let hdr = corruption_header();
+        let wire = wire_for("baseline", 3.0);
+        let mut t = healthy_baseline_tally();
+        let mut inj = injection_at(Class::PsiFlip, 0, 30);
+        inj.psi = true;
+        inj.coord = Coord {
+            pcr_base: Some(1000),
+            since_pcr: 30,
+        };
+        t.attach_attribution(attribution_for(VerifyMode::Lossy, vec![inj], &hdr));
+        t.feed_at(&video_event(90 * FPS_STEP_TICKS, true), 20); // last media before the gap
+
+        let mut buf = [0u8; 1316];
+        for _ in 0..8 {
+            managed.recv_bytes(&mut buf).expect("first connection");
+        }
+        assert_eq!(crate::transport::tee_coord(&tap).packets, 53);
+        // The break, the rebuild, and the fresh connection's first chunk —
+        // the one the demuxer discards before it yields the marker.
+        managed.recv_bytes(&mut buf).expect("fresh connection");
+        assert_eq!(crate::transport::tee_coord(&tap).packets, 60);
+        t.note_pcrs(&[(1000, 59)]); // a PCR decoded from that chunk: resolves at 89
+        let marker = DemuxEvent::ReconnectDiscontinuity;
+        let at = crate::recv::event_ordinal(&mut t, &tap, &marker);
+        t.feed_at(&marker, at);
+        t.feed_at(&video_event(91 * FPS_STEP_TICKS, false), 70);
+        t.feed_at(&video_event(92 * FPS_STEP_TICKS, false), 80);
+
+        let r = finish_baseline(t, VerifyMode::Lossy, &wire);
+        let a = r
+            .metrics
+            .corruption_attribution
+            .clone()
+            .expect("attribution");
+        assert_eq!(
+            (a.lost_in_reconnect_gap, a.undetected_count),
+            (0, 1),
+            "marker stamped at {at}: {a:?}"
+        );
+        assert!(
+            r.failures
+                .iter()
+                .any(|f| f.starts_with("corruption_detected")),
+            "pass={} failures={:?}",
+            r.pass,
+            r.failures
+        );
+    }
+
     /// Program 1 declared its time base on the video PID; after a
     /// reconnect only program 2 is declared, on the KLV PID. A forward
     /// `PcrAnomaly` on the video PID beside a gap there means the demuxer
