@@ -1,4 +1,19 @@
 #!/bin/bash -eu
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+################################################################################
 # OSS-Fuzz build script for ts-transformer.
 #
 # Invoked inside the OSS-Fuzz base-builder-rust container by:
@@ -19,22 +34,29 @@ set -euo pipefail
 # Vendored libsrt + mbedTLS build path, matches CI.
 export SRT_FORCE_VENDORED=1
 
+# The OSS-Fuzz base image pins its nightly through RUSTUP_TOOLCHAIN, which
+# takes precedence over the workspace's rust-toolchain.toml (stable 1.85 —
+# no -Zsanitizer). Outside the image fall back to the local `nightly`. A
+# literal `cargo +nightly` would ignore the image's pin and auto-install
+# whatever nightly is current, so the toolchain is selected here instead.
+export RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-nightly}"
+
 # cargo-fuzz target dir (per cargo-fuzz convention).
 TARGET_DIR=target/x86_64-unknown-linux-gnu/release
 
 # Build tst-core fuzz targets.
 pushd crates/tst-core
-cargo +nightly fuzz build --release
+cargo fuzz build --release
 popd
 
 # Build tst-rtp fuzz targets.
 pushd crates/tst-rtp
-cargo +nightly fuzz build --release
+cargo fuzz build --release
 popd
 
 # Build tst-srt fuzz targets.
 pushd crates/tst-srt
-cargo +nightly fuzz build --release
+cargo fuzz build --release
 popd
 
 # Copy fuzz drivers to $OUT/, counting executable drivers only (corpora,

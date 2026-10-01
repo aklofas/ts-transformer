@@ -1346,6 +1346,21 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Testing
 
+- **OSS-Fuzz enrollment PR submitted.** The `oss-fuzz/` bundle was brought
+  up to what `google/oss-fuzz` accepts for a Rust project and submitted
+  upstream: `project.yaml` now lists libFuzzer + AddressSanitizer only
+  (OSS-Fuzz supports no other engine or sanitizer for Rust; `undefined` was
+  listed before), the Dockerfile initialises only the libsrt and mbedTLS
+  submodules (recursively — mbedTLS 3.6's `framework` submodule is needed
+  by its CMake configure) instead of recursing into every vendor tree, and
+  `build.sh` selects the toolchain through `RUSTUP_TOOLCHAIN` so the base
+  image's pinned nightly is used (a literal `cargo +nightly` would have
+  auto-installed whichever nightly was current). Both files carry the
+  Apache-2.0 header the upstream repo requires. The bundle was re-verified
+  against the OSS-Fuzz builder and runner images with no host bind mounts
+  (recipe in `oss-fuzz/README.md`, run recorded in `oss-fuzz/VERIFICATION.md`).
+  Until the upstream PR merges there is still no continuous fleet coverage.
+
 - **Tooling: `tst-interop`'s attribution judges against the current
   reconnect epoch.** Two excusals kept state from a connection that no
   longer existed, so each could pass a leg that should fail. (1) A reconnect

@@ -45,14 +45,47 @@ git commit -m "Add ts-transformer project"
 git push origin main
 ```
 
-The PR review by Google's OSS-Fuzz maintainers usually completes within 1-2 business days if `check_build` passes locally. After merge, the OSS-Fuzz fleet starts fuzzing all bundled targets within 24 hours (currently 32: 27 in `tst-core`, 4 in `tst-rtp`, 1 in `tst-srt` — `build.sh` asserts the shipped-driver count against the `fuzz_targets/*.rs` inventory so this figure cannot silently drift).
+The PR review by Google's OSS-Fuzz maintainers usually completes within 1-2 business days if `check_build` passes locally. After merge, the OSS-Fuzz fleet starts fuzzing all bundled targets within 24 hours (currently 33: 27 in `tst-core`, 5 in `tst-rtp`, 1 in `tst-srt` — `build.sh` asserts the shipped-driver count against the `fuzz_targets/*.rs` inventory so this figure cannot silently drift).
 
-> **Status (2026-08-18):** submission has NOT happened yet — the project is
-> not enrolled upstream and there is no continuous OSS-Fuzz coverage today.
-> The last local `helper.py` verification (see `VERIFICATION.md`) predates
-> the target-inventory expansion to 31; re-run the full
-> build_image/build_fuzzers/check_build/run_fuzzer sequence above before
-> opening the upstream PR.
+> **Status (2026-10-01):** the bundle was re-verified against the current
+> 33-target inventory with the bind-mount-free sequence below (same images
+> and `compile` / `test_all.py` entry points `helper.py` drives) — see
+> `VERIFICATION.md` for the recorded run — and the upstream PR to
+> `google/oss-fuzz` was opened from it. Until that PR merges there is no
+> continuous OSS-Fuzz coverage. `project.yaml` restricts the project to
+> libFuzzer + AddressSanitizer because those are the only engine and
+> sanitizer OSS-Fuzz supports for Rust.
+
+### Verifying without `helper.py` bind mounts
+
+`helper.py` runs the builder and runner images with `-v <host dir>:/out`.
+When the docker client talks to a daemon on another host or filesystem
+namespace (docker-outside-of-docker setups, remote daemons), that bind
+mount resolves on the daemon's side and the artifacts land there as root.
+The same verification works without any bind mount — build the image from
+this directory, run `compile` inside it, copy `/out` back, then feed the
+copy to the runner's `test_all.py`:
+
+```bash
+cd /path/to/ts-transformer/oss-fuzz
+docker build -t ts-transformer-oss-fuzz .
+docker run --name tst-compile \
+  -e FUZZING_ENGINE=libfuzzer -e SANITIZER=address -e ARCHITECTURE=x86_64 -e FUZZING_LANGUAGE=rust \
+  ts-transformer-oss-fuzz bash -c 'mkdir -p /out /work && compile'
+docker cp tst-compile:/out ./out && docker rm tst-compile
+
+# check_build equivalent: the runner image's bad-build checks over the copied /out.
+docker create --name tst-check \
+  -e FUZZING_ENGINE=libfuzzer -e SANITIZER=address -e ARCHITECTURE=x86_64 -e FUZZING_LANGUAGE=rust \
+  gcr.io/oss-fuzz-base/base-runner test_all.py
+docker cp ./out/. tst-check:/out/ && docker start -a tst-check; docker rm tst-check
+
+# run_fuzzer equivalent: smoke one driver for 1000 iterations, again by copy.
+docker create --name tst-smoke -e FUZZING_ENGINE=libfuzzer -e SANITIZER=address \
+  -e RUN_FUZZER_MODE=interactive \
+  gcr.io/oss-fuzz-base/base-runner run_fuzzer demux_feed -runs=1000
+docker cp ./out/. tst-smoke:/out/ && docker start -a tst-smoke; docker rm tst-smoke
+```
 
 ## Local rebuild (anytime, post-submission)
 
