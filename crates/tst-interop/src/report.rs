@@ -3077,7 +3077,7 @@ pub mod soak {
     }
 
     #[cfg(test)]
-    mod tests {
+    pub(crate) mod tests {
         use super::*;
 
         fn proxy_stats(
@@ -3168,7 +3168,7 @@ pub mod soak {
             s
         }
 
-        fn cell_metrics(video_aus: u64) -> CellMetrics {
+        pub(crate) fn cell_metrics(video_aus: u64) -> CellMetrics {
             CellMetrics {
                 video_aus,
                 keyframes: video_aus / 30,
@@ -3190,7 +3190,7 @@ pub mod soak {
             }
         }
 
-        fn passing_recv_report(video_aus: u64) -> VerifyReport {
+        pub(crate) fn passing_recv_report(video_aus: u64) -> VerifyReport {
             VerifyReport {
                 pass: true,
                 failures: Vec::new(),
