@@ -181,14 +181,28 @@ def unit_for(path: str) -> str:
 # Line classification
 # --------------------------------------------------------------------------
 
+_CHAR_LIT_RE = re.compile(r"'(\\u\{[0-9a-fA-F]+\}|\\.|[^\\'])'")
+
+
 def _strip_strings(s: str) -> str:
-    """Blank out the contents of simple string/char literals so brace and
-    comment scanning does not see delimiters inside them."""
+    """Blank out the contents of double-quoted string literals and of
+    single-quoted char literals (`'}'`, `'"'`, `'\\''`) so brace and comment
+    scanning does not see delimiters inside them. Lifetimes (`'a`) have no
+    closing quote and pass through untouched. Raw strings with embedded
+    quotes (`r#"..."#`) are not understood and can still mis-count a line."""
     out = []
     i, n = 0, len(s)
     while i < n:
         ch = s[i]
-        if ch == '"':
+        if ch == "'":
+            m = _CHAR_LIT_RE.match(s, i)
+            if m:
+                out.append("''")
+                i = m.end()
+                continue
+            out.append(ch)
+            i += 1
+        elif ch == '"':
             out.append('"')
             i += 1
             while i < n and s[i] != '"':
