@@ -1,5 +1,87 @@
 # OSS-Fuzz local verification log
 
+## Run 2026-10-01 — pre-submission re-verification (current bundle)
+
+**Tree:** `e86dd9ea` (main, cloned by the Dockerfile) · **Bundle:** the
+`oss-fuzz/` files as submitted upstream (libFuzzer + AddressSanitizer only,
+targeted recursive submodule init, toolchain via `RUSTUP_TOOLCHAIN`).
+**Images:** `base-builder-rust@sha256:2d04d044…cd4cae8` (pinned
+`nightly-2025-09-05`), `base-runner@sha256:29ffac3c…6405df`.
+**Method:** the bind-mount-free sequence in `README.md` — `docker build`
+of this directory, `compile` inside the builder container, `docker cp` of
+`/out`, then the runner image's `test_all.py` and `run_fuzzer` fed by copy.
+Same entry points `helper.py build_fuzzers` / `check_build` / `run_fuzzer`
+invoke; only the transport of `/out` differs.
+
+### compile
+
+```
+INFO: shipped 33/33 fuzz drivers to $OUT
+```
+
+A first attempt with a non-recursive submodule init failed in mbedTLS's
+CMake configure (`No module named 'mbedtls_framework'` — the nested
+`framework` submodule); the Dockerfile now passes `--recursive`.
+
+### check_build (`test_all.py`) — PASS
+
+All 33 drivers passed the bad-build checks (`test_all.py` exit 0).
+
+### Artifact inventory in `/out` — 54 files
+
+- 33 fuzz drivers (+ `llvm-symbolizer`)
+- 13 `*_seed_corpus.zip`: audio_frame_iter, demux_feed, demux_pes_reassembly,
+  demux_psi, klv_st0601_decode, mpegts_au_cell_read, mux_pull, mux_push_klv,
+  mux_push_video, parse_av1_sequence_header, parse_parameter_sets, ts_parser,
+  url_parse
+- 4 `*.options`: demux_feed, demux_pes_reassembly, demux_psi, ts_parser
+- 3 `*.dict`: klv_st0102_decode, klv_st0601_decode, klv_st0903_decode
+
+### run_fuzzer smoke — 33/33 clean at 1000 iterations
+
+| target | rc | cov | ft | corp |
+|---|---|---|---|---|
+| `audio_frame_iter` | 0 | 77 | 83 | 14/76b |
+| `audio_syncframe` | 0 | 67 | 93 | 17/84b |
+| `demux_feed` | 0 | 277 | 488 | 30/12974b |
+| `demux_pes_reassembly` | 0 | 133 | 143 | 9/1801b |
+| `demux_psi` | 0 | 84 | 85 | 8/94b |
+| `h264_slice_header_light` | 0 | 295 | 402 | 45/128b |
+| `h265_slice_header_light` | 0 | 88 | 149 | 30/78b |
+| `h266_slice_header_light` | 0 | 30 | 31 | 2/9b |
+| `klv_imapb` | 0 | 19 | 20 | 1/1b |
+| `klv_st0102_decode` | 0 | 404 | 593 | 50/162b |
+| `klv_st0601_decode` | 0 | 1178 | 2584 | 133/27Kb |
+| `klv_st0601_patch` | 0 | 75 | 76 | 1/1b |
+| `klv_st0605_decode` | 0 | 21 | 22 | 1/1b |
+| `klv_st0806_decode` | 0 | 134 | 165 | 27/83b |
+| `klv_st0903_decode` | 0 | 438 | 538 | 43/138b |
+| `klv_st1010_decode` | 0 | 161 | 190 | 32/97b |
+| `klv_st1204_decode` | 0 | 41 | 42 | 9/30b |
+| `misp_sei_extract` | 0 | 53 | 67 | 19/91b |
+| `mpegts_au_cell_read` | 0 | 34 | 35 | 4/21b |
+| `mux_pull` | 0 | 451 | 453 | 5/12b |
+| `mux_push_klv` | 0 | 487 | 488 | 1/1b |
+| `mux_push_video` | 0 | 506 | 663 | 44/558b |
+| `nal_framing` | 0 | 180 | 272 | 32/155b |
+| `parse_av1_sequence_header` | 0 | 258 | 348 | 74/583b |
+| `parse_parameter_sets` | 0 | 1330 | 2201 | 224/6308b |
+| `rtp_h264_depacketize` | 0 | 161 | 168 | 9/75b |
+| `rtp_packet_decode` | 0 | 22 | 23 | 1/1b |
+| `rtsp_client_pump_framing` | 0 | 82 | 96 | 13/60b |
+| `rtsp_message_decode` | 0 | 71 | 105 | 19/122b |
+| `rtsp_request_decode` | 0 | 51 | 65 | 9/56b |
+| `split_video` | 0 | 152 | 183 | 30/98b |
+| `ts_parser` | 0 | 15 | 16 | 1/1b |
+| `url_parse` | 0 | 299 | 402 | 62/1961b |
+
+Deep pass: `demux_feed -runs=10000` clean —
+`#10000 DONE cov: 298 ft: 671 corp: 89/51Kb rss: 52Mb`.
+
+---
+
+## Run 2026-05-15 (historical — 16-target bundle)
+
 **Run:** 2026-05-15
 **Reviewer:** andrew.klofas@gmail.com
 

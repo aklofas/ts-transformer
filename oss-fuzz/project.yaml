@@ -1,13 +1,16 @@
 homepage: "https://github.com/aklofas/ts-transformer"
 language: rust
 primary_contact: "andrew.klofas@gmail.com"
-auto_ccs: []
+# The address the repository's commits are signed with (OSS-Fuzz verifies the
+# primary contact against VCS logs; both addresses belong to the maintainer).
+auto_ccs:
+  - "aklofas@gmail.com"
 main_repo: "https://github.com/aklofas/ts-transformer.git"
 fuzzing_engines:
   - libfuzzer
+# Rust projects on OSS-Fuzz are limited to libFuzzer + AddressSanitizer.
 sanitizers:
   - address
-  - undefined
 architectures:
   - x86_64
 file_github_issue: false
