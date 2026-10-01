@@ -18,11 +18,13 @@ fn usage() -> String {
     "usage: tst-interop <subcommand> [options...]
 
 Subcommands:
-  gen       Generate synthetic test fixtures
+  gen       Generate synthetic test fixtures (--au-sizes realistic
+            [--au-scale N] scales the realistic AU payload sizes)
   send      Send test data to endpoint (hls:// and rtsp:// URLs BIND and
             serve instead of connecting — see `send`'s own doc comment;
             --corrupt rate=N[,min_gap=N][,classes=a+b] --corruption-log PATH
-            [--seed N] turn on the seeded TS corruption tap)
+            [--seed N] turn on the seeded TS corruption tap; --au-sizes
+            realistic [--au-scale N] scales the realistic AU payload sizes)
   recv      Receive test data from endpoint (--corruption-log PATH judges the
             capture against a `send --corrupt` peer's log — start recv FIRST)
   verify    Verify interop test results
@@ -90,6 +92,38 @@ fn parse_au_sizes(raw: &str, context: &str) -> AuSizeMode {
     }
 }
 
+/// Parse `--au-scale N`: an integer in `1..=fixtures::MAX_AU_SCALE`, or
+/// exit 2 naming the subcommand. Applied to the `--au-sizes` mode after
+/// both flags are parsed (see `apply_au_scale`), because the scale only
+/// has meaning for realistic fixtures.
+fn parse_au_scale(raw: &str, context: &str) -> u32 {
+    match raw.parse::<u32>() {
+        Ok(n) if (1..=tst_interop::fixtures::MAX_AU_SCALE).contains(&n) => n,
+        _ => {
+            eprintln!(
+                "{context}: --au-scale must be an integer in 1..={}, got '{raw}' (the largest \
+                 scaled keyframe must stay under the demuxer's 4 MiB per-PID PES cap)",
+                tst_interop::fixtures::MAX_AU_SCALE
+            );
+            std::process::exit(2);
+        }
+    }
+}
+
+/// Fold a parsed `--au-scale` into the `--au-sizes` mode. `None` (flag
+/// absent) leaves the mode alone; a scale with compact fixtures is a
+/// usage error — silently ignoring it would publish a bitrate that was
+/// never sent.
+fn apply_au_scale(au_sizes: AuSizeMode, au_scale: Option<u32>, context: &str) -> AuSizeMode {
+    match au_scale {
+        None => au_sizes,
+        Some(scale) => au_sizes.with_scale(scale).unwrap_or_else(|| {
+            eprintln!("{context}: --au-scale requires --au-sizes realistic");
+            std::process::exit(2);
+        }),
+    }
+}
+
 /// Parse a `--klv-seed N` value, or exit 2 naming the subcommand.
 fn parse_klv_seed(raw: &str, context: &str) -> u64 {
     raw.parse::<u64>().unwrap_or_else(|e| {
@@ -148,7 +182,7 @@ fn main() {
 
 /// `gen --profile NAME --seconds N --out PATH
 /// [--klv-set compact|rich] [--klv-seed N]
-/// [--au-sizes compact|realistic]`
+/// [--au-sizes compact|realistic] [--au-scale N]`
 ///
 /// Generates `N` seconds of profile `NAME`'s synthetic MPEG-TS/KLV traffic
 /// (offline pacing, no transport) and writes it to `PATH`. Exits 0 on
@@ -169,6 +203,12 @@ fn main() {
 /// byte-identical to what this subcommand has always written; the
 /// matrix runner passes `realistic` so its cells exercise a real
 /// encoder's size regime.
+///
+/// `--au-scale N` (only meaningful with `--au-sizes realistic`; exit 2
+/// otherwise) multiplies the realistic AU payload sizes — ≈1.7 Mb/s × N
+/// at the schedule's 30 fps — bounded by `fixtures::MAX_AU_SCALE`
+/// (1..=78; the largest scaled keyframe must stay under the demuxer's
+/// 4 MiB per-PID PES cap).
 fn run_gen(args: &[String]) -> ! {
     let mut profile: Option<String> = None;
     let mut seconds: Option<f64> = None;
@@ -176,6 +216,7 @@ fn run_gen(args: &[String]) -> ! {
     let mut klv_set = KlvSet::Compact;
     let mut klv_seed: u64 = 0;
     let mut au_sizes = AuSizeMode::Compact;
+    let mut au_scale: Option<u32> = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -204,12 +245,20 @@ fn run_gen(args: &[String]) -> ! {
                 au_sizes = parse_au_sizes(&require_value(args, i, "gen: --au-sizes"), "gen");
                 i += 2;
             }
+            "--au-scale" => {
+                au_scale = Some(parse_au_scale(
+                    &require_value(args, i, "gen: --au-scale"),
+                    "gen",
+                ));
+                i += 2;
+            }
             other => {
                 eprintln!("gen: unknown argument: {other}");
                 std::process::exit(2);
             }
         }
     }
+    let au_sizes = apply_au_scale(au_sizes, au_scale, "gen");
 
     let profile_name = profile.unwrap_or_else(|| {
         eprintln!("gen: --profile is required");
@@ -242,7 +291,7 @@ fn run_gen(args: &[String]) -> ! {
 
 /// `send --profile NAME --url URL --seconds N [--json OUT] [--managed]
 /// [--reconnect-mode blocking|background] [--no-klv-digest]
-/// [--au-sizes compact|realistic]
+/// [--au-sizes compact|realistic] [--au-scale N]
 /// [--klv-set compact|rich] [--klv-seed N]
 /// [--corrupt SPEC --corruption-log PATH] [--seed N]`
 ///
@@ -289,6 +338,11 @@ fn run_gen(args: &[String]) -> ! {
 /// interop-matrix invocation is unaffected. See
 /// `fixtures::AuSizeMode`.
 ///
+/// `--au-scale N` (only meaningful with `--au-sizes realistic`; exit 2
+/// otherwise) multiplies those payload sizes — ≈1.7 Mb/s × N at 30 fps
+/// — bounded by `fixtures::MAX_AU_SCALE` (1..=78; the largest scaled
+/// keyframe must stay under the demuxer's 4 MiB per-PID PES cap).
+///
 /// `--klv-set rich` / `--klv-seed N` pick the ST 0601 record factory —
 /// see `gen`'s own doc comment. Forwarded unchanged to the `hls://` /
 /// `rtsp://` serve modes below. Independent of `--seed` (the corruption
@@ -323,6 +377,7 @@ fn run_send(args: &[String]) -> ! {
     let mut reconnect_mode_set = false;
     let mut no_klv_digest = false;
     let mut au_sizes = AuSizeMode::Compact;
+    let mut au_scale: Option<u32> = None;
     let mut klv_set = KlvSet::Compact;
     let mut klv_seed: u64 = 0;
     let mut corrupt_spec: Option<String> = None;
@@ -374,6 +429,13 @@ fn run_send(args: &[String]) -> ! {
                 au_sizes = parse_au_sizes(&require_value(args, i, "send: --au-sizes"), "send");
                 i += 2;
             }
+            "--au-scale" => {
+                au_scale = Some(parse_au_scale(
+                    &require_value(args, i, "send: --au-scale"),
+                    "send",
+                ));
+                i += 2;
+            }
             "--klv-set" => {
                 klv_set = parse_klv_set(&require_value(args, i, "send: --klv-set"), "send");
                 i += 2;
@@ -408,6 +470,7 @@ fn run_send(args: &[String]) -> ! {
             }
         }
     }
+    let au_sizes = apply_au_scale(au_sizes, au_scale, "send");
 
     let profile_name = profile.unwrap_or_else(|| {
         eprintln!("send: --profile is required");

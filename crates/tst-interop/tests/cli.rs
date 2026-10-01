@@ -24,6 +24,10 @@
 
 use std::process::Command;
 
+fn tst_interop_cmd() -> std::process::Command {
+    std::process::Command::new(env!("CARGO_BIN_EXE_tst-interop"))
+}
+
 #[test]
 fn report_merge_cells_dir_followed_by_another_flag_names_cells_dir() {
     let output = Command::new(env!("CARGO_BIN_EXE_tst-interop"))
@@ -458,4 +462,86 @@ fn verify_file_followed_by_another_flag_names_file() {
         !stderr.contains("unknown argument"),
         "must not misreport this as an unrecognized argument, got: {stderr}"
     );
+}
+
+#[test]
+fn au_scale_without_realistic_is_a_usage_error() {
+    let out = tst_interop_cmd()
+        .args([
+            "gen",
+            "--profile",
+            "baseline",
+            "--seconds",
+            "1",
+            "--out",
+            "-",
+            "--au-scale",
+            "2",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("--au-scale requires --au-sizes realistic"),
+        "{err}"
+    );
+}
+
+#[test]
+fn au_scale_above_the_pes_cap_is_refused() {
+    let out = tst_interop_cmd()
+        .args([
+            "gen",
+            "--profile",
+            "baseline",
+            "--seconds",
+            "1",
+            "--out",
+            "-",
+            "--au-sizes",
+            "realistic",
+            "--au-scale",
+            "79",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("must be an integer in 1..=78"));
+}
+
+#[test]
+fn au_scale_grows_the_generated_stream() {
+    let dir = std::env::temp_dir().join(format!("tst-interop-au-scale-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let one = dir.join("one.ts");
+    let four = dir.join("four.ts");
+    for (scale, path) in [("1", &one), ("4", &four)] {
+        let st = tst_interop_cmd()
+            .args([
+                "gen",
+                "--profile",
+                "baseline",
+                "--seconds",
+                "2",
+                "--au-sizes",
+                "realistic",
+                "--au-scale",
+                scale,
+                "--out",
+                path.to_str().unwrap(),
+            ])
+            .status()
+            .unwrap();
+        assert!(st.success());
+    }
+    let (a, b) = (
+        std::fs::metadata(&one).unwrap().len(),
+        std::fs::metadata(&four).unwrap().len(),
+    );
+    assert!(
+        b > 3 * a,
+        "scale 4 must be roughly 4x the bytes of scale 1: {a} vs {b}"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
 }
