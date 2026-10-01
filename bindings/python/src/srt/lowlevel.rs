@@ -449,9 +449,10 @@ impl PyBuilder {
 pub(crate) struct PySocket {
     /// `&self` everywhere (cross-thread `close()` / getters never trip
     /// PyO3's borrow check); a plain `Mutex` suffices because no `Socket`
-    /// method releases the GIL — nothing ever holds this lock across a
-    /// park. `Option` so the `into_*` promotions and `close()` can take
-    /// the handle.
+    /// method holds this guard across a GIL release — nothing ever holds
+    /// this lock across a park (`close()`'s native call releases the GIL
+    /// only after the guard is already dropped). `Option` so the `into_*`
+    /// promotions and `close()` can take the handle.
     inner: Mutex<Option<SrtSocket>>,
 }
 
@@ -572,12 +573,17 @@ impl PySocket {
 
     /// Close the socket. Subsequent `into_sender` / `into_receiver`
     /// calls raise `SrtError(kind=CLOSED)`. Idempotent; safe from any
-    /// thread.
-    fn close(&self) {
+    /// thread. `srt_close` takes libsrt's global locks and, on a
+    /// connected socket with unsent data, waits up to `SRTO_LINGER`; that
+    /// wait must not hold the GIL (review #7 §7.11 general-review #2/#3),
+    /// so the native close runs with the GIL released.
+    fn close(&self, py: Python<'_>) {
         let taken = self.inner.lock().unwrap_or_else(|e| e.into_inner()).take();
         if let Some(socket) = taken {
             // SrtSocket::close consumes self and is documented as always-Ok.
-            let _ = socket.close();
+            py.allow_threads(|| {
+                let _ = socket.close();
+            });
         }
     }
 
@@ -595,11 +601,12 @@ impl PySocket {
 
     fn __exit__(
         &self,
+        py: Python<'_>,
         _exc_type: &Bound<'_, PyAny>,
         _exc_value: &Bound<'_, PyAny>,
         _traceback: &Bound<'_, PyAny>,
     ) -> bool {
-        self.close();
+        self.close(py);
         false
     }
 

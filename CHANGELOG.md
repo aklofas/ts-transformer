@@ -1304,6 +1304,15 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   answered without touching the slot; the closed-handle contract is
   unchanged (`CLOSED` / `TRANSPORT` after `close()`, `is_alive`-style
   non-blocking liveness read while a call is parked).
+- **`tstrans.srt.Socket.close()` releases the GIL for the native close.**
+  `srt_close` takes libsrt's global locks and, on a connected socket with
+  unsent data, waits up to `SRTO_LINGER` (5 s by the sender defaults);
+  that wait used to hold the GIL and stall every Python thread. Review #7.
+- **`tstrans.hls.MuxPublisher.with_config_hls` no longer panics when
+  another thread is inside `push_ts` on the publisher it consumes.** It
+  took a PyO3 `borrow_mut()` ("Already borrowed" → `PanicException`);
+  it now takes the publisher through its own mutex, so the outcome is
+  success or `HlsError(FINISHED)`. Review #7.
 
 ### Fixed — jvm (WP-6)
 
@@ -1922,6 +1931,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`:deferred`, `:n/a`, `:unaudited`) and cells of an unbuilt feature still
   pass. Two self-test cases cover both sides. No other awk program under
   `scripts/` uses the idiom.
+- The GIL-held-lock rail (`snapshot-getters.sh` check 3) scans `.read()`,
+  `.write()`, `.try_lock()` and UFCS `Mutex::lock(` / `RwLock::read(` /
+  `RwLock::write(` beside `.lock()`, and refuses a lock taken outside any
+  function (a `macro_rules!` body) instead of silently skipping it;
+  self-test fixtures for both. Review #7 R7-03 / R7-06.
 
 ### Changed — binding layer (WP-A1)
 

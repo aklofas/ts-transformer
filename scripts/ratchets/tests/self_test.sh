@@ -174,5 +174,100 @@ expect "gil locks: a lock inside allow_threads is not a finding (stale row fails
 expect "gil locks: an allowlist row without a reason fails"             1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/held"  SG_LOCK_ALLOWLIST="$tmp/gl/noreason.tsv"  bash "$SG"
 expect "gil locks: a scan that matches nothing fails closed"            1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/clean" SG_LOCK_ALLOWLIST="$tmp/gl/empty.tsv"     bash "$SG"
 
+# ---- gil locks: every lock spelling, and a lock inside a macro body -------
+# review #7 R7-03 / R7-06: a line scanner looking only for `.lock()` misses
+# `.read()` / `.write()` / `.try_lock()` / the UFCS forms, and a lock taken
+# inside a macro_rules! body has no enclosing `fn` the scanner can attribute
+# it to — it must be a hard failure, not a silent skip.
+mkdir -p "$tmp/gl/rwlock" "$tmp/gl/macro"
+cat > "$tmp/gl/rwlock/shell.rs" <<'EOF'
+impl Publisher {
+    fn local_addr(&self) -> String {
+        self.inner.read().unwrap().local_addr()
+    }
+    fn set_name(&self, n: &str) {
+        self.inner.write().unwrap().name = n.into();
+    }
+    fn peek(&self) -> bool {
+        self.inner.try_lock().is_ok()
+    }
+    fn ufcs(&self) -> u64 {
+        Mutex::lock(&self.inner).unwrap().count
+    }
+}
+EOF
+printf '%s\t%s\t%s\n' "$tmp/gl/rwlock/shell.rs" Publisher::local_addr "fixture" \
+                      "$tmp/gl/rwlock/shell.rs" Publisher::set_name  "fixture" \
+                      "$tmp/gl/rwlock/shell.rs" Publisher::peek      "fixture" \
+                      "$tmp/gl/rwlock/shell.rs" Publisher::ufcs      "fixture" > "$tmp/gl/rwlock-allow.tsv"
+cat > "$tmp/gl/macro/shell.rs" <<'EOF'
+macro_rules! held_guard {
+    ($m:expr) => { $m.lock().unwrap() };
+}
+impl Publisher {
+    fn push(&self, py: Python<'_>) {
+        let guard = held_guard!(self.inner);
+        py.allow_threads(|| std::thread::yield_now());
+        drop(guard);
+    }
+}
+fn allowed() {
+    let guard = SAFE.lock().unwrap();
+    drop(guard);
+}
+EOF
+printf '%s\t%s\t%s\n' "$tmp/gl/macro/shell.rs" allowed 'SAFE has no holder that releases the GIL' > "$tmp/gl/macro-allow.tsv"
+
+# review #7 PR 271 reviewer finding: `fn` was never reset at a closing brace,
+# so a macro_rules! body AFTER a function inherited that function's name and
+# its allowlist row silently excused it. Here `allowed` comes FIRST (its own
+# closing `}` must clear `fn`) and the macro comes after; with only `allowed`
+# allowlisted, the macro's lock must still be a hard <unattributed:...>
+# failure, not silently excused by `allowed`'s row.
+mkdir -p "$tmp/gl/macro-after-fn"
+cat > "$tmp/gl/macro-after-fn/shell.rs" <<'EOF'
+fn allowed() {
+    let guard = SAFE.lock().unwrap();
+    drop(guard);
+}
+macro_rules! held_guard {
+    ($m:expr) => { $m.lock().unwrap() };
+}
+EOF
+printf '%s\t%s\t%s\n' "$tmp/gl/macro-after-fn/shell.rs" allowed 'SAFE has no holder that releases the GIL' > "$tmp/gl/macro-after-fn-allow.tsv"
+
+expect "gil locks: .read()/.write()/.try_lock()/UFCS spellings are caught" 1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/rwlock" SG_LOCK_ALLOWLIST="$tmp/gl/empty.tsv" bash "$SG"
+expect "gil locks: allowlisting all four rwlock/UFCS functions passes"    0 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/rwlock" SG_LOCK_ALLOWLIST="$tmp/gl/rwlock-allow.tsv" bash "$SG"
+expect "gil locks: a lock inside a macro body is refused, not skipped"    1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/macro"  SG_LOCK_ALLOWLIST="$tmp/gl/macro-allow.tsv" bash "$SG"
+expect "gil locks: a macro body AFTER an allowlisted fn is not excused by that fn's row" 1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/macro-after-fn" SG_LOCK_ALLOWLIST="$tmp/gl/macro-after-fn-allow.tsv" bash "$SG"
+
+# ---- gil locks: a UFCS spelling's trailing "(" must stay paren-balanced ---
+# review #7 PR 271 Copilot finding: the UFCS forms end in "(" with an
+# argument following, not a balanced "()" like the dotted spellings. Skipping
+# that "(" without counting it under-closes `at`/`wg` when its matching ")"
+# is later seen, so a second lock later in the SAME allow_threads block was
+# misclassified as GIL-held. `inside` (two UFCS/dotted locks back to back,
+# both inside allow_threads) must never be flagged; `outside` (a bare UFCS
+# lock with the GIL held) must.
+mkdir -p "$tmp/gl/ufcs-paren"
+cat > "$tmp/gl/ufcs-paren/shell.rs" <<'EOF'
+impl Publisher {
+    fn inside(&self, py: Python<'_>) -> u64 {
+        py.allow_threads(|| {
+            let a = Mutex::lock(&self.x).unwrap().count;
+            let b = self.y.lock().unwrap().count;
+            a + b
+        })
+    }
+    fn outside(&self) -> u64 {
+        Mutex::lock(&self.x).unwrap().count
+    }
+}
+EOF
+printf '%s\t%s\t%s\n' "$tmp/gl/ufcs-paren/shell.rs" Publisher::outside "fixture" > "$tmp/gl/ufcs-paren-allow.tsv"
+
+expect "gil locks: a UFCS lock immediately followed by another, both inside allow_threads, is never a finding (only the outside one is)" 1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/ufcs-paren" SG_LOCK_ALLOWLIST="$tmp/gl/empty.tsv" bash "$SG"
+expect "gil locks: allowlisting only the outside UFCS lock passes"                                                                      0 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/ufcs-paren" SG_LOCK_ALLOWLIST="$tmp/gl/ufcs-paren-allow.tsv" bash "$SG"
+
 if [[ "$fail" == 0 ]]; then echo "self-test: ALL OK"; fi
 exit "$fail"

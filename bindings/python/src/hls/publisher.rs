@@ -13,8 +13,8 @@
 //!   playlist, tears down the HTTP server). Stored as `Option<...>` +
 //!   `take()` on finish; subsequent ops raise `HlsError(FINISHED)`.
 //! - `MuxPublisher.with_config_hls(pub, ...)` *also* consumes the inner
-//!   via `take_inner()` (moving it into the shell). Either path leaves
-//!   the handle closed.
+//!   via `take()` (moving it into the shell). Either path leaves the
+//!   handle closed.
 //!
 //! GIL: every `HlsPublisher` method that needs the inner publisher takes
 //! the mutex inside `py.allow_threads`, never while holding the GIL — a
@@ -91,16 +91,6 @@ impl PyHlsPublisher {
         }
     }
 
-    /// Move the inner publisher out (consumes the handle). Used by
-    /// `MuxPublisher.with_config_hls`. Returns `None` if already consumed.
-    pub(crate) fn take_inner(&mut self) -> Option<HlsPublisher> {
-        let taken = self.inner.get_mut().ok().and_then(|o| o.take());
-        if taken.is_some() {
-            self.finished.store(true, Ordering::Release);
-        }
-        taken
-    }
-
     fn finished_error(py: Python<'_>, detail: &'static str) -> PyErr {
         raise(
             py,
@@ -129,8 +119,11 @@ impl PyHlsPublisher {
     }
 
     /// Move the inner publisher out for a consuming call; `None` if it is
-    /// already gone. Same locking rule as `with_inner`.
-    fn take(&self, py: Python<'_>) -> PyResult<Option<HlsPublisher>> {
+    /// already gone. Same locking rule as `with_inner`. Used by
+    /// `MuxPublisher.with_config_hls` through a shared `borrow()` — a
+    /// `borrow_mut()` there panicked ("Already borrowed") while another
+    /// thread's `push_ts(&self, ...)` call was in flight (review #7).
+    pub(crate) fn take(&self, py: Python<'_>) -> PyResult<Option<HlsPublisher>> {
         py.allow_threads(|| {
             let mut guard = self.inner.lock().map_err(|_| ())?;
             let taken = guard.take();

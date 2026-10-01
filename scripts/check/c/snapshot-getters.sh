@@ -28,22 +28,28 @@
 #    blanket pass. The check also fails if it finds no `with_ref` caller at
 #    all (the allowlisted readers exist, so zero means the scan drifted).
 #
-# 3. Python: FAIL on any function that calls `.lock()` while it holds the
-#    GIL and is not listed in scripts/ratchets/gil-held-locks.tsv. A mutex
-#    whose holder releases the GIL (`py.allow_threads`) while it holds the
-#    guard needs the GIL back before the guard can drop; a second thread
-#    that waits for that mutex with the GIL held never lets it have it, and
-#    the interpreter is frozen. The rule:
+# 3. Python: FAIL on any function that calls `.lock()`, `.read()`,
+#    `.write()`, `.try_lock()`, or the UFCS `Mutex::lock(` / `RwLock::read(`
+#    / `RwLock::write(` forms while it holds the GIL and is not listed in
+#    scripts/ratchets/gil-held-locks.tsv. A mutex or rwlock whose holder
+#    releases the GIL (`py.allow_threads`) while it holds the guard needs
+#    the GIL back before the guard can drop; a second thread that waits
+#    for that lock with the GIL held never lets it have it, and the
+#    interpreter is frozen. The rule:
 #      - take, use and release the lock inside `py.allow_threads`, and raise
 #        after the GIL is back;
 #      - or read a construction-time snapshot / an atomic latch instead;
 #      - only a lock that NO holder keeps across a GIL release may be taken
 #        with the GIL held — and the function says so, with its reason, in
 #        the allowlist.
-#    "Holds the GIL" is lexical: a `.lock()` is exempt when it sits inside
-#    the parentheses of an `allow_threads(` call and not inside a
-#    `with_gil(` nested in it. The allowlist is exact in both directions
-#    and the check fails if it finds no `.lock()` at all.
+#    "Holds the GIL" is lexical: a lock is exempt when it sits inside the
+#    parentheses of an `allow_threads(` call and not inside a `with_gil(`
+#    nested in it. A lock taken outside any function (a `macro_rules!`
+#    body, or other module-level code) has no `fn` the scanner can
+#    attribute it to — that is a hard failure (`<unattributed:…>`), never a
+#    silent skip: take the lock in a function the scanner can attribute.
+#    The allowlist is exact in both directions and the check fails if it
+#    finds no lock at all.
 #
 #    What a line scanner cannot see, so review has to:
 #      - a function that locks and is only ever CALLED from inside an
@@ -53,8 +59,11 @@
 #        closure is not reported;
 #      - whether the other holders of an allowlisted lock release the GIL is
 #        the judgement the row's reason records — the scan does not prove it;
+#      - a guard returned by a helper the binding names itself (e.g.
+#        `fn lock_inner(&self) -> MutexGuard<…>`) is not one of the scanned
+#        spellings and is invisible to this check;
 #      - locks taken through a wrapper (`Owned::with_ref`, check 2) or
-#        inside another crate are not `.lock()` calls here;
+#        inside another crate are not scanned here;
 #      - parentheses inside string or char literals, and a `//` comment
 #        after code that itself contains ` //` in a string, skew the count
 #        until the next `fn`, where it resets.
@@ -123,6 +132,9 @@ if [ "${SG_ONLY_READERS:-}" != "1" ]; then
     # shellcheck disable=SC2086  # LOCK_ROOTS is a deliberate word list
     find $LOCK_ROOTS -type f -name '*.rs' | LC_ALL=C sort | while IFS= read -r f; do
         awk -v file="$f" '
+            BEGIN {
+                nsp = split(".lock() .read() .write() .try_lock() Mutex::lock( RwLock::read( RwLock::write(", sp, " ")
+            }
             /^#\[cfg\(test\)\]/ { guarded = 1; next }
             guarded == 1 {
                 if ($0 ~ /^#\[/) next
@@ -143,7 +155,12 @@ if [ "${SG_ONLY_READERS:-}" != "1" ]; then
                 n = split(t, parts, "::")
                 type = parts[n]
             }
-            /^\}/ { type = "" }
+            /^\}/ { type = ""; fn = "" }
+            # A macro_rules! body is not attributed to whatever fn came
+            # before it (nor, nested inside a fn, to the rest of that fn
+            # after it -- fail-closed until the next `fn` line, rather than
+            # proper brace-depth tracking).
+            /macro_rules!/ { fn = "" }
             {
                 line = $0
                 sub(/^[ \t]+/, "", line)
@@ -158,12 +175,33 @@ if [ "${SG_ONLY_READERS:-}" != "1" ]; then
                 i = 1
                 while (i <= len) {
                     rest = substr(line, i)
-                    if (index(rest, ".lock()") == 1) {
-                        if ((at == 0 || wg > 0) && fn != "") {
-                            print file "\t" (type == "" ? fn : type "::" fn)
+                    matched = 0
+                    for (k = 1; k <= nsp; k++) {
+                        if (index(rest, sp[k]) == 1) {
+                            if (fn == "") {
+                                # a lock outside any fn: a macro_rules! body or
+                                # module-level code the scanner cannot attribute.
+                                print file "\t<unattributed:" sp[k] ">"
+                            } else if (at == 0 || wg > 0) {
+                                print file "\t" (type == "" ? fn : type "::" fn)
+                            }
+                            if (substr(sp[k], length(sp[k]), 1) == "(") {
+                                # UFCS form (Mutex::lock(/RwLock::read(/
+                                # RwLock::write(): the trailing "(" opens on
+                                # an argument, not a balanced "()" like the
+                                # dotted spellings -- leave it for the
+                                # per-character counter below so its matching
+                                # ")" does not under-close at/wg.
+                                i += length(sp[k]) - 1
+                            } else {
+                                i += length(sp[k])
+                            }
+                            matched = 1
+                            break
                         }
-                        i += 7
-                    } else if (at == 0 && index(rest, "allow_threads(") == 1) {
+                    }
+                    if (matched) continue
+                    if (at == 0 && index(rest, "allow_threads(") == 1) {
                         at = 1
                         i += 14
                     } else if (at > 0 && wg == 0 && index(rest, "with_gil(") == 1) {
@@ -200,13 +238,26 @@ if [ "${SG_ONLY_READERS:-}" != "1" ]; then
     awk -F '\t' '!/^#/ && NF >= 2 { print $1 "\t" $2 }' "$LOCK_ALLOWLIST" | LC_ALL=C sort -u > "$tmp/lock_allowed"
 
     if [ ! -s "$tmp/lock_found" ]; then
-        echo "FAIL: no .lock() taken with the GIL held found under: $LOCK_ROOTS"
+        echo "FAIL: no lock taken with the GIL held found under: $LOCK_ROOTS"
         echo "      the allowlisted functions exist, so the scan matched nothing — the pattern drifted."
         exit 1
     fi
 
-    LC_ALL=C comm -23 "$tmp/lock_found" "$tmp/lock_allowed" > "$tmp/lock_unlisted"
-    LC_ALL=C comm -13 "$tmp/lock_found" "$tmp/lock_allowed" > "$tmp/lock_stale"
+    # A lock taken outside any function (a macro_rules! body, or module-level
+    # code) has no fn the scanner can attribute it to -- that is a hard
+    # failure, never a silent skip. Pulled out before the allowlist diff so
+    # it cannot be allowlisted away.
+    unattributed=0
+    if grep -q "$(printf '\t<unattributed:')" "$tmp/lock_found"; then
+        unattributed=1
+        echo "FAIL: lock taken outside any function (macro_rules! body?) — take the lock in a function the scanner can attribute:"
+        grep "$(printf '\t<unattributed:')" "$tmp/lock_found" | sed 's/^/    /'
+        status=1
+    fi
+    grep -v "$(printf '\t<unattributed:')" "$tmp/lock_found" > "$tmp/lock_found_attributed" || true
+
+    LC_ALL=C comm -23 "$tmp/lock_found_attributed" "$tmp/lock_allowed" > "$tmp/lock_unlisted"
+    LC_ALL=C comm -13 "$tmp/lock_found_attributed" "$tmp/lock_allowed" > "$tmp/lock_stale"
 
     if [ -s "$tmp/lock_unlisted" ]; then
         echo "FAIL: these functions wait for a lock while holding the GIL:"
@@ -224,8 +275,8 @@ if [ "${SG_ONLY_READERS:-}" != "1" ]; then
         echo "      remove the rows."
         status=1
     fi
-    if [ ! -s "$tmp/lock_unlisted" ] && [ ! -s "$tmp/lock_stale" ]; then
-        n=$(wc -l < "$tmp/lock_found" | tr -d ' ')
+    if [ ! -s "$tmp/lock_unlisted" ] && [ ! -s "$tmp/lock_stale" ] && [ "$unattributed" -eq 0 ]; then
+        n=$(wc -l < "$tmp/lock_found_attributed" | tr -d ' ')
         echo "OK: all $n functions under ($LOCK_ROOTS) that lock while holding the GIL are allowlisted with a reason"
     fi
 fi
