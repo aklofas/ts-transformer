@@ -491,9 +491,17 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   resolve the address before they start libsrt up, so an unresolvable
   address no longer initializes it. Documented limits: if operations are
   still in flight when the 2 s wait expires, `srt_cleanup()` runs anyway
-  (one `tracing` warning names how many), and the 2 s does not include the
+  (one stderr note names how many), and the 2 s does not include the
   closes themselves — a connected socket with unsent data takes up to its
   `SRTO_LINGER` to close. No public API or C ABI change.
+- **`tst-srt`: the exit handler's ceiling note no longer goes through
+  `tracing`.** With a `tracing_subscriber::fmt` layer installed, the
+  "operations still inside libsrt" warning formatted into a thread-local
+  that glibc had already destroyed (thread-local destructors run before
+  `atexit` handlers), which panicked inside the `extern "C"` handler and
+  aborted the process instead of warning; the note is now a raw stderr
+  write, and the libsrt log callback returns early once exit has started.
+  Review #7 R7-01 (internal).
 - **Python: `tstrans.srt.Receiver.close()` from another thread while
   `recv_bytes()` was parked raised `RuntimeError: Already borrowed`.**
   `recv_bytes` held the object's PyO3 mutable borrow for the whole blocking

@@ -112,6 +112,11 @@ fn install_log_handler() {
         _area: *const c_char,
         message: *const c_char,
     ) {
+        // libsrt logs from inside `srt_cleanup()`; the exit handler's rule
+        // (no `tracing` once exit started) applies here too.
+        if crate::exit_guard::is_exiting() {
+            return;
+        }
         if message.is_null() {
             return;
         }

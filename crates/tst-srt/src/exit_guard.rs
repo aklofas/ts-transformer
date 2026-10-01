@@ -32,6 +32,10 @@
 //! empty, the count is zero, and the handler goes straight to
 //! `srt_cleanup()`. On the data path an operation costs one atomic
 //! increment and decrement and two atomic loads; no lock is taken.
+//!
+//! Nothing after `EXITING` is set may use `tracing`: the handler runs after
+//! glibc has destroyed the exiting thread's thread-locals, and a fmt
+//! subscriber formats into one (see [`exit_note`]).
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -262,12 +266,50 @@ pub(crate) fn checkpoint(at: Checkpoint) {
 #[inline(always)]
 pub(crate) fn checkpoint(_at: Checkpoint) {}
 
+/// The one message the exit handler can emit. Written with a raw
+/// `write(2)` on unix (`std::io::stderr` on windows): `tracing` is off
+/// limits here — a fmt subscriber formats into a thread-local whose
+/// destructor glibc has already run by the time `atexit` handlers execute,
+/// and `LocalKey::with` on a destroyed key panics, which aborts an
+/// `extern "C"` function. libsrt's own `CUDTUnited::cleanup` carries the
+/// same rule ("NO LOGGING AT ALL").
+fn exit_note(in_flight: usize) {
+    use std::io::Write as _;
+    let mut buf = [0u8; 160];
+    let mut cur = std::io::Cursor::new(&mut buf[..]);
+    let _ = writeln!(
+        cur,
+        "tst-srt: process exit: {in_flight} operation(s) still inside libsrt after {RELEASE_CEILING:?}; running srt_cleanup() anyway"
+    );
+    let n = cur.position() as usize;
+    #[cfg(unix)]
+    {
+        // SAFETY: fd 2 is stderr for the process lifetime; `buf[..n]` is
+        // initialised. A failed write is ignored — there is nowhere to
+        // report it.
+        let _ = unsafe { libc::write(2, buf.as_ptr().cast(), n) };
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = std::io::stderr().write_all(&buf[..n]);
+    }
+}
+
 /// Refuse new operations, close every socket that is still open, then wait
 /// (bounded by [`RELEASE_CEILING`]) until no operation is in flight.
 ///
 /// The ceiling covers the wait only. The closes before it are not bounded
 /// here: each `srt_close` can take up to its socket's `SRTO_LINGER` when
 /// unsent data is queued (see [`RELEASE_CEILING`]).
+///
+/// The handler cannot shorten that with `srt_setsockopt(SRTO_LINGER)`:
+/// libsrt's `CUDT::setOpt` takes `m_ConnectionLock`, `m_SendLock` and
+/// `m_RecvLock` (core.cpp:547-549), and a parked blocking connect or send
+/// holds the first or second for the whole call (core.cpp:3695, ~6986)
+/// until the close wakes it. With a setsockopt before each close,
+/// `exit_with_parked_call::exit_is_clean_with_a_caller_parked_in_connect`
+/// hung for its full 12 s. So each serial close keeps its socket's
+/// configured linger.
 ///
 /// If the ceiling expires with operations still in flight, `srt_cleanup()`
 /// runs anyway. That is what happened before this guard existed, with the
@@ -303,11 +345,7 @@ pub(crate) fn release_parked_calls() {
             return;
         }
         if Instant::now() >= deadline {
-            tracing::warn!(
-                in_flight,
-                "process exit: operations still inside libsrt after {RELEASE_CEILING:?}; \
-                 running srt_cleanup() anyway"
-            );
+            exit_note(in_flight);
             return;
         }
         std::thread::sleep(Duration::from_millis(1));
@@ -552,6 +590,30 @@ mod tests {
             !crate::init::is_initialized(),
             "a refused open must not call srt_startup"
         );
+    }
+
+    /// R7-01 (review #7, internal): the ceiling warning used to go through
+    /// `tracing`. A `tracing_subscriber::fmt` layer formats into a
+    /// destructor-bearing thread-local; glibc runs thread-local
+    /// destructors BEFORE `atexit` handlers, so the first event emitted
+    /// from the exit handler on a thread that had logged before panicked
+    /// inside an `extern "C"` function and aborted the process. The
+    /// child must print the note and exit 0.
+    #[test]
+    fn ceiling_warning_does_not_abort_the_exiting_process() {
+        if !in_own_process("exit_guard::tests::ceiling_warning_does_not_abort_the_exiting_process")
+        {
+            return;
+        }
+        tracing_subscriber::fmt()
+            .with_writer(std::io::stderr)
+            .init();
+        tracing::info!("one event on the exiting thread, so the fmt layer's buffer exists");
+        crate::init::ensure_initialized();
+        // An operation that is never released: the handler waits out the
+        // ceiling and takes the warning path.
+        let _op = std::mem::ManuallyDrop::new(enter().expect("admitted"));
+        std::process::exit(0);
     }
 
     /// A closed socket leaves the registry, so the exit walk can neither
