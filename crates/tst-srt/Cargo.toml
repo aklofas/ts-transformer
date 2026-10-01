@@ -44,3 +44,7 @@ srt-sys   = { package = "tstrans-srt-sys", path = "../srt-sys", version = "0.6.0
 # the test binary), which is needed for integration tests that assert on warns
 # emitted by tst-core library code.
 tracing-test = { version = "0.2", features = ["no-env-filter"] }
+# A real fmt subscriber for the exit-handler test: its per-thread format
+# buffer is the thread-local that is already destroyed when `atexit`
+# handlers run.
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }
