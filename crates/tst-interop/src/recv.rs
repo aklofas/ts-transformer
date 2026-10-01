@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use tst_core::mpegts::demux::DemuxEvent;
 use tst_core::transport::{BrokenCause, RecvTransport, TransportError};
 use tst_pipeline::{
     DemuxReceiver, ManagedDemuxReceiver, ManagedDemuxReceiverConfig, ManagedRecvTransport,
@@ -41,6 +42,10 @@ const POST_START_GRACE: Duration = Duration::from_secs(2);
 /// `type_complexity` lint).
 type ManagedRecvFactory =
     Box<dyn FnMut() -> Result<Teeing<Box<dyn RecvTransport>>, TransportError> + Send>;
+
+/// The managed transport `run_managed` receives through — every
+/// connection it builds teed into one shared tap.
+type TeedManagedRecv = ManagedRecvTransport<Teeing<Box<dyn RecvTransport>>>;
 
 /// Split `tee_tally`'s wire result into a usable [`WireSummary`]
 /// (falling back to an empty default) and an optional trailing-bytes
@@ -163,6 +168,63 @@ fn drain_final_wire_evidence(tally: &mut Tally, tap: &Arc<Mutex<transport::TeeSt
     drain_wire_evidence(tally, tap);
     if let Some(t) = transport::tee_trailing_resync(tap) {
         tally.note_trailing_resync(&t);
+    }
+}
+
+/// Build `run_managed`'s managed transport around `initial_raw`, with a
+/// factory that redials through `dial` — every connection teed into ONE
+/// shared tap, returned beside the transport.
+///
+/// The factory rebuilds a fresh raw transport on every reconnect but
+/// must tee into the SAME shared tap — a factory that called
+/// `Teeing::new` instead would silently start a fresh, empty byte tally
+/// on every reconnect, discarding everything counted before the most
+/// recent rebuild. See `Teeing::with_tap`'s own doc comment.
+pub(crate) fn managed_teed_transport(
+    initial_raw: Box<dyn RecvTransport>,
+    mut dial: impl FnMut() -> Result<Box<dyn RecvTransport>, String> + Send + 'static,
+    policy: ReconnectPolicy,
+) -> (TeedManagedRecv, Arc<Mutex<transport::TeeState>>) {
+    let (initial_teed, tap) = Teeing::new(initial_raw);
+    let tap_for_factory = Arc::clone(&tap);
+    let factory: ManagedRecvFactory = Box::new(move || {
+        let raw = dial().map_err(|e| TransportError::Broken {
+            msg: e,
+            errno_code: None,
+            cause: BrokenCause::Unspecified,
+        })?;
+        // A successfully-dialed replacement transport starts delivering
+        // bytes at a fresh packet boundary of its own — any partial
+        // packet still sitting in the shared tap's raw-TS reader (from
+        // the connection that just broke) can never be validly
+        // completed by it, and a sync-loss error latched from that same
+        // dead connection shouldn't follow the new one either. See
+        // `transport::tee_resync`'s own doc comment.
+        transport::tee_resync(&tap_for_factory);
+        Ok(Teeing::with_tap(raw, Arc::clone(&tap_for_factory)))
+    });
+    let managed = ManagedRecvTransport::new(initial_teed, factory, policy);
+    transport::tee_watch_reconnects(&tap, managed.reconnects_handle());
+    (managed, tap)
+}
+
+/// The receive-side coordinate to stamp `ev` with: folds the tee's new
+/// wire evidence into `tally` first (see [`drain_wire_evidence`]).
+///
+/// A reconnect marker belongs where the discarded chunk began, not after
+/// it: the tee fed that chunk to the raw reader before the demuxer reset
+/// and yielded the marker (review #7 R7-05; see
+/// [`transport::tee_take_chunk_start`]).
+pub(crate) fn event_ordinal(
+    tally: &mut Tally,
+    tap: &Arc<Mutex<transport::TeeState>>,
+    ev: &DemuxEvent,
+) -> u64 {
+    let at = drain_wire_evidence(tally, tap);
+    if matches!(ev, DemuxEvent::ReconnectDiscontinuity) {
+        transport::tee_take_chunk_start(tap).unwrap_or(at)
+    } else {
+        at
     }
 }
 
@@ -320,7 +382,7 @@ pub fn recv_over_transport(
                 // with no PCR anchor is still placeable (see
                 // `corrupt::Attribution::append`).
                 poll_corruption_log(&mut tally, tail.as_mut())?;
-                let at = drain_wire_evidence(&mut tally, &tap);
+                let at = event_ordinal(&mut tally, &tap, &ev);
                 tally.feed_at(&ev, at);
             }
             Ok(None) => break,
@@ -460,38 +522,13 @@ pub fn run_managed(
     corruption_log: Option<&Path>,
 ) -> Result<VerifyReport, String> {
     let initial_raw = transport::make_recv(url)?;
-    let (initial_teed, tap) = Teeing::new(initial_raw);
-
-    // The factory rebuilds a fresh raw transport on every reconnect but
-    // must tee into the SAME shared tap `tap` above — a factory that
-    // called `Teeing::new` instead would silently start a fresh, empty
-    // byte tally on every reconnect, discarding everything counted
-    // before the most recent rebuild. See `Teeing::with_tap`'s own doc
-    // comment.
     let dial_url = url.to_string();
-    let tap_for_factory = Arc::clone(&tap);
-    let factory: ManagedRecvFactory = Box::new(move || {
-        let raw = transport::make_recv(&dial_url).map_err(|e| TransportError::Broken {
-            msg: e,
-            errno_code: None,
-            cause: BrokenCause::Unspecified,
-        })?;
-        // A successfully-dialed replacement transport starts delivering
-        // bytes at a fresh packet boundary of its own — any partial
-        // packet still sitting in the shared tap's raw-TS reader (from
-        // the connection that just broke) can never be validly
-        // completed by it, and a sync-loss error latched from that same
-        // dead connection shouldn't follow the new one either. See
-        // `transport::tee_resync`'s own doc comment.
-        transport::tee_resync(&tap_for_factory);
-        Ok(Teeing::with_tap(raw, Arc::clone(&tap_for_factory)))
-    });
-
     let policy = ReconnectPolicy {
         max_attempts: None,
         ..ReconnectPolicy::default()
     };
-    let managed = ManagedRecvTransport::new(initial_teed, factory, policy);
+    let (managed, tap) =
+        managed_teed_transport(initial_raw, move || transport::make_recv(&dial_url), policy);
     // Built per-profile, not `ManagedDemuxReceiver::new` — see
     // `profiles::demuxer_config`'s doc comment.
     let mut rx = ManagedDemuxReceiver::with_demux_options(
@@ -587,7 +624,7 @@ pub fn run_managed(
                 // See `recv_over_transport`'s loop for why the tail is
                 // polled before the event is stamped.
                 poll_corruption_log(&mut tally, tail.as_mut())?;
-                let at = drain_wire_evidence(&mut tally, &tap);
+                let at = event_ordinal(&mut tally, &tap, &ev);
                 tally.feed_at(&ev, at);
             }
             Ok(None) => break,

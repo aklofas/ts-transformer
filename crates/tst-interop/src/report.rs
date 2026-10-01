@@ -2990,7 +2990,8 @@ pub mod soak {
                  transport had already accepted and never delivered in the seconds before it \
                  noticed the break is in neither counter, and has been measured as most of an \
                  outage's loss. The difference between send_video_aus and recv_video_aus is \
-                 the fuller figure."
+                 the fuller figure. gap_len_at_exit is the backlog stranded at exit, recorded \
+                 beside the drop counters and not gated."
                     .to_string(),
             ],
         })
@@ -5773,6 +5774,7 @@ pub mod soak {
                 gap_messages_dropped: 41,
                 gap_bytes_dropped: 53_956,
                 gap_buffer_capacity: 256,
+                gap_len_at_exit: 5,
                 reconnect_mode: observed.map(str::to_string),
                 overflow_policy: Some("drop_oldest".to_string()),
             });
@@ -5867,8 +5869,12 @@ pub mod soak {
             assert_eq!((leg.send_video_aus, leg.recv_video_aus), (1000, 1000));
             let managed = leg.managed_send.as_ref().expect("recorded on the leg");
             assert_eq!(
-                (managed.gap_messages_dropped, managed.gap_bytes_dropped),
-                (41, 53_956)
+                (
+                    managed.gap_messages_dropped,
+                    managed.gap_bytes_dropped,
+                    managed.gap_len_at_exit
+                ),
+                (41, 53_956, 5)
             );
             assert!(r.overall_pass, "{:?}", r.verdicts);
             assert!(
@@ -5876,6 +5882,13 @@ pub mod soak {
                     .iter()
                     .any(|l| l.contains("gap_messages_dropped") && l.contains("recorded")),
                 "the report must say what the gap counters do not cover: {:?}",
+                r.limitations
+            );
+            assert!(
+                r.limitations
+                    .iter()
+                    .any(|l| l.contains("gap_len_at_exit") && l.contains("not gated")),
+                "the report must name the stranded backlog beside the drop counters: {:?}",
                 r.limitations
             );
 

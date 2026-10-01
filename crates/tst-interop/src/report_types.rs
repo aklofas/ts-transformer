@@ -124,6 +124,13 @@ pub struct ManagedSendStats {
     /// was built with, recorded so a reader can bound what an outage
     /// could have replayed without knowing which revision wrote the file.
     pub gap_buffer_capacity: u64,
+    /// Messages still in the gap buffer when the sender was dropped:
+    /// accepted by `send_bytes` in Background mode, never delivered and
+    /// never counted as dropped (a terminal cancel or the end-of-run Drop
+    /// strands the backlog). `0` for Blocking mode and for archived
+    /// reports written before this field existed. Recorded, not gated.
+    #[serde(default)]
+    pub gap_len_at_exit: u64,
     /// The `tst_pipeline::ReconnectMode` the transport was built with, as
     /// one of [`RECONNECT_MODES`]. The counters above cannot stand in for
     /// it: a run whose outages all fit the gap buffer evicts nothing in
@@ -299,6 +306,30 @@ mod tests {
         assert_eq!(managed.gap_buffer_capacity, 256);
         assert!(managed.reconnect_mode.is_none());
         assert!(managed.overflow_policy.is_none());
+        // Written before the stranded backlog was recorded: reads as none.
+        assert_eq!(managed.gap_len_at_exit, 0);
+    }
+
+    /// The backlog stranded in the gap buffer at exit is read back as
+    /// written (review #7 R7-03).
+    #[test]
+    fn managed_send_records_the_gap_len_at_exit() {
+        let json = ARCHIVED_MANAGED_SEND_REPORT.replace(
+            r#""gap_buffer_capacity": 256"#,
+            r#""gap_buffer_capacity": 256, "gap_len_at_exit": 4"#,
+        );
+        assert!(json.contains("gap_len_at_exit"), "the replace must apply");
+        let parsed: CellMetrics = serde_json::from_str(&json).expect("report must parse");
+        let managed = parsed
+            .managed_send
+            .as_ref()
+            .expect("the counters were recorded");
+        assert_eq!(managed.gap_len_at_exit, 4);
+        assert_eq!(managed.gap_messages_dropped, 7);
+        let back: CellMetrics =
+            serde_json::from_str(&serde_json::to_string(&parsed).expect("serialize"))
+                .expect("round trip");
+        assert_eq!(back.managed_send.expect("kept").gap_len_at_exit, 4);
     }
 
     /// The written shape: both names are lowercase strings, and they
