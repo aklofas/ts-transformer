@@ -77,9 +77,16 @@
 #     loss when set to 0; `SRT_RECONNECT_MODE=blocking|background` picks
 #     how that leg's managed sender spends an outage, and is declared in
 #     `soak-config.json` (`legs.srt.reconnect_mode`) and checked against
-#     what the sender reports it ran. Set them in the
-#     environment, e.g. `OUTAGE_PERIOD_S=300 OUTAGE_DUR_S=30 bash
-#     soak.sh ...`.
+#     what the sender reports it ran. Unlike the others it has NO
+#     default and the script refuses to launch without it: the two modes
+#     exercise different library code (a Blocking outage replays the
+#     backlog as a burst; Background drains a bounded gap buffer), the
+#     declared-vs-observed verdict only checks the run did what was
+#     declared, and a run that silently inherited a default would pass
+#     that verdict while exercising the wrong mode — the 0.7.0 RC soak
+#     exists to exercise `background`. Set them in the environment, e.g.
+#     `SRT_RECONNECT_MODE=background OUTAGE_PERIOD_S=300 OUTAGE_DUR_S=30
+#     bash soak.sh ...`.
 #
 # Every long-running process's stdout/stderr is redirected to
 # `--outdir/logs/*.log`; each PID is additionally recorded under
@@ -143,10 +150,25 @@
 # command itself for 72 hours; instead poll for `soak-results.json`
 # (or `pids/*.pid` + `ps`) to detect completion:
 #
-#   nohup bash scripts/interop/soak.sh --outdir ~/interop-soak-$(date +%F) --seed 1 &
+#   SRT_RECONNECT_MODE=background nohup bash scripts/interop/soak.sh --outdir ~/interop-soak-$(date +%F) --seed 1 &
 #
 # Expected outputs under `--outdir`:
 #   rss.csv            - elapsed_s,leg,process,pid,rss_kb (6 PIDs, 3 process names, both legs)
+#   proc.csv           - elapsed_s,leg,process,pid,utime_ticks,stime_ticks,threads,fds — the
+#                         same 6 PIDs on the same tick as rss.csv: cumulative CPU time
+#                         (user/system clock ticks from /proc/<pid>/stat; divide by the
+#                         `clk_tck` recorded in provenance.json for seconds), thread count
+#                         and open-descriptor count. RECORDED, NOT GATED — `report soak`
+#                         never reads it. It exists so a finished run also yields CPU per
+#                         stream and so a thread or descriptor leak is visible in the
+#                         archive before anyone writes a verdict for it.
+#   host.csv           - elapsed_s,load1,load5,load15,procs_running,mem_available_kb — one
+#                         row per tick from /proc/loadavg + /proc/meminfo, so a per-process
+#                         anomaly can be told apart from host contention. Recorded, not gated.
+#   provenance.json    - what was run and where: source SHA (+ dirty flag), submodule
+#                         pins, rustc/cargo versions, host (kernel, cpus, memory, clk_tck),
+#                         this script's argv and the env knobs, written BEFORE the build.
+#                         The drill archives used to carry the SHA typed in by hand.
 #   soak-config.json   - the run's declared parameters, written BEFORE any
 #                         evidence exists (`report soak`'s `--config`)
 #   exits.json          - every worker's reaped exit status (`report soak`'s `--exits`)
@@ -239,6 +261,9 @@ source "$SCRIPT_DIR/lib.sh"
 # at their modest info volume.
 export RUST_BACKTRACE=1
 export RUST_LOG="${RUST_LOG:-info}"
+
+# Kept verbatim for provenance.json (the parse loop below consumes "$@").
+SCRIPT_ARGV=("$@")
 
 HOURS=72
 OUTDIR=""
@@ -426,6 +451,13 @@ done
 mkdir -p "$OUTDIR/srt" "$OUTDIR/rist" "$OUTDIR/logs" "$OUTDIR/pids"
 RSS_CSV="$OUTDIR/rss.csv"
 printf 'elapsed_s,leg,process,pid,rss_kb\n' >"$RSS_CSV"
+# Two more time series from the same sampler tick — see the header's
+# outputs list. Separate files rather than new columns on rss.csv so the
+# RSS-slope verdict's input keeps its exact shape (`report soak --rss`).
+PROC_CSV="$OUTDIR/proc.csv"
+printf 'elapsed_s,leg,process,pid,utime_ticks,stime_ticks,threads,fds\n' >"$PROC_CSV"
+HOST_CSV="$OUTDIR/host.csv"
+printf 'elapsed_s,load1,load5,load15,procs_running,mem_available_kb\n' >"$HOST_CSV"
 
 # Timestamped lifecycle event log — see the header's outputs list.
 EVENTS_LOG="$OUTDIR/soak-events.log"
@@ -442,9 +474,18 @@ TOTAL_SECONDS=$(awk -v h="$HOURS" 'BEGIN{printf "%d", h*3600 + 0.5}')
 OUTAGE_PERIOD_S="${OUTAGE_PERIOD_S:-21600}" # 6h; env-overridable for a short outage-focused drill
 OUTAGE_DUR_S="${OUTAGE_DUR_S:-90}"
 # How the srt leg's managed sender spends an outage — see `send
-# --reconnect-mode`. `blocking` (the default) stalls the producer for the
-# outage and replays it as a burst; `background` keeps it moving.
-SRT_RECONNECT_MODE="${SRT_RECONNECT_MODE:-blocking}" # send --reconnect-mode on the srt leg
+# --reconnect-mode`. `blocking` stalls the producer for the outage and
+# replays it as a burst; `background` keeps it moving and drains a bounded
+# gap buffer. REQUIRED, no default (see the header's "Realism knobs"): the
+# first three runs defaulted to `blocking` and the 0.7.0 RC soak needs
+# `background`; an inherited default is the one misconfiguration the
+# declared-vs-observed verdict cannot catch, because the declaration would
+# be wrong in the same way the run is.
+[[ -n "${SRT_RECONNECT_MODE:-}" ]] || {
+  echo "soak.sh: SRT_RECONNECT_MODE is required (no default) — set it to 'blocking' or 'background' in the \
+environment; it picks how the srt leg's managed sender spends an outage and is declared in soak-config.json" >&2
+  exit 2
+}
 # Validate the env-overridable knobs HERE, before anything derives a flag
 # string from them. A typo would otherwise surface minutes later inside a
 # backgrounded worker (or not at all, as a silently wrong outage schedule),
@@ -580,6 +621,67 @@ PROXY_ADDR_POLL_TIMEOUT_S=10
 # both proxies' `--run-seconds` gain this much extra margin, so neither
 # fix alone has to carry the full burden.
 SAMPLER_END_SLACK_S=35
+
+# Provenance: WHAT ran, from WHICH tree, on WHAT host — written before the
+# build so even a run that dies in `cargo build` leaves it behind. Every
+# earlier archive recorded its source SHA by hand in a status note (and the
+# forced-break drill's note had to be corrected after the fact); a 72-hour
+# result that cannot be tied to an exact tree, submodule set and toolchain
+# is not reproducible evidence. Recorded, not gated: `report soak` never
+# reads this file. `git` is optional here — a tarball checkout records
+# `null`s rather than failing the launch.
+#
+# `argv` is this script's own argument vector; `env` is the four knobs the
+# header documents plus RUST_LOG, i.e. everything that can change the run
+# without appearing in argv. `clk_tck` is what proc.csv's CPU tick columns
+# divide by to become seconds (`getconf CLK_TCK`, 100 on every Linux this
+# has run on, recorded rather than assumed).
+git_or_null() { # <git args...> -> JSON string or null
+  local out
+  if out=$(cd "$REPO_ROOT" && git "$@" 2>/dev/null); then
+    jq -Rn --arg v "$out" '$v'
+  else
+    echo null
+  fi
+}
+SUBMODULES_JSON=$(
+  if (cd "$REPO_ROOT" && git submodule status --recursive 2>/dev/null) >/dev/null; then
+    (cd "$REPO_ROOT" && git submodule status --recursive) \
+      | awk '{sha=$1; sub(/^[-+U]/, "", sha); print $2 "\t" sha}' \
+      | jq -Rn '[inputs | split("\t") | {key: .[0], value: .[1]}] | from_entries'
+  else
+    echo null
+  fi
+)
+GIT_DIRTY=$(if (cd "$REPO_ROOT" && git diff --quiet HEAD -- 2>/dev/null); then echo false; else echo true; fi)
+jq -n \
+  --arg written_utc "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --argjson head "$(git_or_null rev-parse HEAD)" \
+  --argjson describe "$(git_or_null describe --tags --always --dirty)" \
+  --argjson branch "$(git_or_null rev-parse --abbrev-ref HEAD)" \
+  --argjson dirty "$GIT_DIRTY" \
+  --argjson submodules "$SUBMODULES_JSON" \
+  --arg rustc "$(cd "$REPO_ROOT" && rustc -V 2>/dev/null || echo unknown)" \
+  --arg cargo "$(cd "$REPO_ROOT" && cargo -V 2>/dev/null || echo unknown)" \
+  --arg hostname "$(hostname 2>/dev/null || echo unknown)" \
+  --arg kernel "$(uname -srm)" \
+  --argjson cpus "$(nproc)" \
+  --argjson mem_total_kb "$(awk '/^MemTotal:/{print $2}' /proc/meminfo)" \
+  --argjson clk_tck "$(getconf CLK_TCK)" \
+  --argjson argv "$(printf '%s\n' "${SCRIPT_ARGV[@]}" | jq -Rn '[inputs]')" \
+  --arg outage_period_s "$OUTAGE_PERIOD_S" --arg outage_dur_s "$OUTAGE_DUR_S" \
+  --arg srt_reconnect_mode "$SRT_RECONNECT_MODE" --arg loss_pct "$LOSS_PCT" \
+  --arg rust_log "$RUST_LOG" \
+  '{written_utc: $written_utc,
+    source: {head: $head, describe: $describe, branch: $branch, dirty: $dirty,
+             submodules: $submodules},
+    toolchain: {rustc: $rustc, cargo: $cargo},
+    host: {hostname: $hostname, kernel: $kernel, cpus: $cpus,
+           mem_total_kb: $mem_total_kb, clk_tck: $clk_tck},
+    argv: $argv,
+    env: {OUTAGE_PERIOD_S: $outage_period_s, OUTAGE_DUR_S: $outage_dur_s,
+          SRT_RECONNECT_MODE: $srt_reconnect_mode, LOSS_PCT: $loss_pct,
+          RUST_LOG: $rust_log}}' >"$OUTDIR/provenance.json"
 
 # The build comes BEFORE the config declaration (it used to follow it)
 # because the declaration now includes the drawn per-leg profiles, and
@@ -895,7 +997,8 @@ RIST_PROXY_ADDR=$(wait_for_bound_addr "$RIST_PROXY_STDOUT")
 record_pid rist-send $!
 
 # ---------------------------------------------------------------------
-# RSS sampler: every 30s, VmRSS of all 6 PIDs -> rss.csv
+# Sampler: every 30s, VmRSS of all 6 PIDs -> rss.csv; on the same tick,
+# CPU ticks/threads/fds per PID -> proc.csv and host load/memory -> host.csv
 # ---------------------------------------------------------------------
 
 START_EPOCH=$(date +%s)
@@ -908,7 +1011,7 @@ DEADLINE=$((START_EPOCH + TOTAL_SECONDS))
 SAMPLER_DEADLINE=$((DEADLINE - SAMPLER_END_SLACK_S))
 echo "soak: running until $(date -u -d "@$DEADLINE" +%Y-%m-%dT%H:%M:%SZ) (${HOURS}h, seed=$SEED)..." >&2
 
-# sample_rss_loop <deadline_epoch> <start_epoch> <out_csv> <leg:process:pid>...
+# sample_rss_loop <deadline_epoch> <start_epoch> <rss_csv> <proc_csv> <host_csv> <leg:process:pid>...
 #
 # Sanctioned `until <cond>; do ...; sleep N; done` shape (see lib.sh's
 # header and this file's own header) rather than a bare `while true`
@@ -917,11 +1020,27 @@ echo "soak: running until $(date -u -d "@$DEADLINE" +%Y-%m-%dT%H:%M:%SZ) (${HOUR
 # empty rss_kb field, which is exactly report.rs's `soak::RssSample`
 # crash signal — never fails this loop itself, so one dead process
 # doesn't stop sampling the other five.
+#
+# proc.csv and host.csv are written on the SAME tick with the same
+# elapsed_s so the three series join on (elapsed_s, pid). They are
+# recorded, not gated — nothing downstream reads them yet (the ROADMAP's
+# stress-harness item turns thread/fd ceilings into verdicts later; this
+# collects the series those verdicts will be pinned from). Every field
+# is best-effort and empty on failure, same as rss_kb, and nothing here
+# may fail the loop: `set -e` is inherited by this background job, so
+# every read is `|| field=""`.
+#
+# /proc/<pid>/stat: fields 14 (utime) and 15 (stime) are cumulative CPU
+# ticks; the comm field (2) can itself contain spaces, so the line is
+# split AFTER its closing ')' and the indices below are relative to
+# field 3 (utime = 12th, stime = 13th after the paren). fds = entry
+# count of /proc/<pid>/fd (own-user processes, always readable here).
 sample_rss_loop() {
-  local deadline=$1 start=$2 out=$3
-  shift 3
+  local deadline=$1 start=$2 out=$3 proc_out=$4 host_out=$5
+  shift 5
   local -a entries=("$@")
   local entry leg rest process pid rss_kb elapsed
+  local utime stime threads fds load_fields mem_avail
   until [[ $(date +%s) -ge $deadline ]]; do
     elapsed=$(($(date +%s) - start))
     for entry in "${entries[@]}"; do
@@ -930,16 +1049,35 @@ sample_rss_loop() {
       process=${rest%%:*}
       pid=${rest#*:}
       rss_kb=""
+      utime=""
+      stime=""
+      threads=""
+      fds=""
       if [[ -r "/proc/$pid/status" ]]; then
         rss_kb=$(awk '/^VmRSS:/{print $2}' "/proc/$pid/status" 2>/dev/null) || rss_kb=""
+        threads=$(awk '/^Threads:/{print $2}' "/proc/$pid/status" 2>/dev/null) || threads=""
+      fi
+      if [[ -r "/proc/$pid/stat" ]]; then
+        read -r utime stime < <(awk '{s=$0; sub(/^.*\) /, "", s); split(s, f, " "); print f[12], f[13]}' "/proc/$pid/stat" 2>/dev/null) || {
+          utime=""
+          stime=""
+        }
+      fi
+      if [[ -d "/proc/$pid/fd" ]]; then
+        fds=$(find "/proc/$pid/fd" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l) || fds=""
       fi
       printf '%s,%s,%s,%s,%s\n' "$elapsed" "$leg" "$process" "$pid" "$rss_kb" >>"$out"
+      printf '%s,%s,%s,%s,%s,%s,%s,%s\n' "$elapsed" "$leg" "$process" "$pid" "$utime" "$stime" "$threads" "$fds" >>"$proc_out"
     done
+    # /proc/loadavg: "load1 load5 load15 running/total lastpid".
+    load_fields=$(awk '{split($4, rt, "/"); print $1 "," $2 "," $3 "," rt[1]}' /proc/loadavg 2>/dev/null) || load_fields=",,,"
+    mem_avail=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo 2>/dev/null) || mem_avail=""
+    printf '%s,%s,%s\n' "$elapsed" "$load_fields" "$mem_avail" >>"$host_out"
     sleep "$RSS_CADENCE_S"
   done
 }
 
-sample_rss_loop "$SAMPLER_DEADLINE" "$START_EPOCH" "$RSS_CSV" \
+sample_rss_loop "$SAMPLER_DEADLINE" "$START_EPOCH" "$RSS_CSV" "$PROC_CSV" "$HOST_CSV" \
   "srt:send:${PIDS[srt-send]}" "srt:proxy:${PIDS[srt-proxy]}" "srt:recv:${PIDS[srt-recv]}" \
   "rist:send:${PIDS[rist-send]}" "rist:proxy:${PIDS[rist-proxy]}" "rist:recv:${PIDS[rist-recv]}" &
 record_pid sampler $!
@@ -1075,6 +1213,7 @@ REPORT_RC=0
     echo "corruption: disabled (--no-corrupt)"
   fi
   echo "worker exits: $(cat "$OUTDIR/exits.json")"
+  echo "recorded (not gated): proc.csv (cpu ticks/threads/fds per pid), host.csv (load/mem), provenance.json (source $(jq -r '.source.describe // "unknown"' "$OUTDIR/provenance.json"))"
   [[ -z "$PREMATURE_DEATH" ]] || echo "PREMATURE DEATH: $PREMATURE_DEATH (fail-fast — see soak-FAILED + soak-events.log)"
   echo
   # On the fail-fast path `report soak` typically exits 2 with no

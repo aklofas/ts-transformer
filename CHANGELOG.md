@@ -1710,6 +1710,21 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Testing — interop harness (WP-7a, WP-7b)
 
+- **Tooling: `soak.sh` requires `SRT_RECONNECT_MODE` and records
+  provenance plus per-process CPU/thread/fd and host load series.** The
+  srt leg's reconnect mode no longer defaults to `blocking`; the script
+  exits 2 before building unless the environment names `blocking` or
+  `background`. The declared-vs-observed verdict only checks that a run did
+  what it declared, so a run that silently inherited a default would pass it
+  while exercising the wrong code path — the one misconfiguration the
+  verdict cannot catch. Three new files land in `--outdir`, none read by
+  `report soak`: `provenance.json` (source SHA + dirty flag, submodule pins,
+  rustc/cargo, host kernel/cpus/memory/`clk_tck`, argv, env knobs; written
+  before the build), `proc.csv` (per sampler tick and PID: cumulative
+  user/system CPU ticks, thread count, open-descriptor count) and `host.csv`
+  (per tick: load averages, running processes, `MemAvailable`). `rss.csv`
+  is byte-for-byte unchanged in shape. Recorded, not gated.
+
 - **Tooling: `report soak` records the gap-buffer backlog stranded at exit,
   and the reconnect marker is stamped where the discarded chunk began.**
   `report soak`'s `managed_send` block records `gap_len_at_exit` (the

@@ -538,6 +538,18 @@ tool/session wrapper, which can enforce its own lifetime cap short of the
 run's actual duration). `--hours` accepts a decimal (e.g. `--hours 0.05` for
 a ~3-minute drill), not just whole hours.
 
+`soak.sh` also records three files `report soak` does **not** read — they
+are archive evidence, not verdict inputs: **`provenance.json`** (source SHA,
+dirty flag, submodule pins, rustc/cargo versions, host kernel/cpus/memory/
+`clk_tck`, the script's argv and the env knobs — written before the build),
+**`proc.csv`** (per sampler tick and PID: cumulative user/system CPU ticks
+from `/proc/<pid>/stat`, thread count, open-descriptor count; divide ticks by
+`clk_tck` for seconds) and **`host.csv`** (per tick: 1/5/15-minute load,
+running processes, `MemAvailable`). The two CSVs share `elapsed_s` with
+`rss.csv`, so the three series join on `(elapsed_s, pid)`. Nothing is gated on
+them yet; they exist so a finished run also yields CPU per stream and so a
+thread or descriptor leak is visible before anyone writes a verdict for it.
+
 `soak.sh` writes two additional declaration/observation files under
 `--outdir` that `report soak` now requires:
 
@@ -692,7 +704,7 @@ them to cover several outage windows, or to take loss out of the picture.
 | `OUTAGE_PERIOD_S` | `21600` | Seconds between the srt leg's outage windows. |
 | `OUTAGE_DUR_S` | `90` | Length of each window; must be shorter than the period. |
 | `LOSS_PCT` | `2` | The fixed loss level; used only with `--fixed-impairment`. |
-| `SRT_RECONNECT_MODE` | `blocking` | `blocking` or `background`: passed to the srt leg's sender as `send --managed --reconnect-mode`. |
+| `SRT_RECONNECT_MODE` | *(none — required)* | `blocking` or `background`: passed to the srt leg's sender as `send --managed --reconnect-mode`. The script refuses to launch without it (exit 2): the two modes exercise different library code, and the declared-vs-observed verdict below cannot catch a run that silently inherited a default, because its declaration would be wrong in the same way. |
 
 The two reconnect modes spend an outage differently. `blocking` parks the
 producer inside the send that found the link dead and replays the backlog
