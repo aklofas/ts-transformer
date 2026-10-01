@@ -368,16 +368,8 @@ done
 # lexicographically (exact for digit strings of any size). Only after
 # this is the arithmetic further down safe by construction. Each cap is
 # the field's real Rust type, narrowed where this script's own
-# arithmetic needs headroom.
-canon_int() { # <value> <max> <flag-name> -> canonical value on stdout
-  local v=$1 max=$2 flag=$3
-  v=$(printf '%s' "$v" | sed -E 's/^0+([0-9])/\1/')
-  if [[ ${#v} -gt ${#max} ]] || { [[ ${#v} -eq ${#max} ]] && [[ "$v" > "$max" ]]; }; then
-    echo "soak.sh: $flag must be <= $max, got: $1" >&2
-    return 2
-  fi
-  printf '%s' "$v"
-}
+# arithmetic needs headroom. The helper itself, canon_int, lives in
+# lib.sh (shared with stress.sh).
 
 [[ "$SEED" =~ ^[0-9]+$ ]] || {
   echo "soak.sh: --seed must be a non-negative integer, got: $SEED" >&2
@@ -461,9 +453,7 @@ printf 'elapsed_s,load1,load5,load15,procs_running,mem_available_kb\n' >"$HOST_C
 
 # Timestamped lifecycle event log — see the header's outputs list.
 EVENTS_LOG="$OUTDIR/soak-events.log"
-event() {
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*" >>"$EVENTS_LOG"
-}
+event() { event_to "$EVENTS_LOG" "$@"; }
 
 TOTAL_SECONDS=$(awk -v h="$HOURS" 'BEGIN{printf "%d", h*3600 + 0.5}')
 # Outage schedule (srt leg only — see this file's header). Kept as
@@ -636,52 +626,15 @@ SAMPLER_END_SLACK_S=35
 # without appearing in argv. `clk_tck` is what proc.csv's CPU tick columns
 # divide by to become seconds (`getconf CLK_TCK`, 100 on every Linux this
 # has run on, recorded rather than assumed).
-git_or_null() { # <git args...> -> JSON string or null
-  local out
-  if out=$(cd "$REPO_ROOT" && git "$@" 2>/dev/null); then
-    jq -Rn --arg v "$out" '$v'
-  else
-    echo null
-  fi
-}
-SUBMODULES_JSON=$(
-  if (cd "$REPO_ROOT" && git submodule status --recursive 2>/dev/null) >/dev/null; then
-    (cd "$REPO_ROOT" && git submodule status --recursive) \
-      | awk '{sha=$1; sub(/^[-+U]/, "", sha); print $2 "\t" sha}' \
-      | jq -Rn '[inputs | split("\t") | {key: .[0], value: .[1]}] | from_entries'
-  else
-    echo null
-  fi
-)
-GIT_DIRTY=$(if (cd "$REPO_ROOT" && git diff --quiet HEAD -- 2>/dev/null); then echo false; else echo true; fi)
-jq -n \
-  --arg written_utc "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  --argjson head "$(git_or_null rev-parse HEAD)" \
-  --argjson describe "$(git_or_null describe --tags --always --dirty)" \
-  --argjson branch "$(git_or_null rev-parse --abbrev-ref HEAD)" \
-  --argjson dirty "$GIT_DIRTY" \
-  --argjson submodules "$SUBMODULES_JSON" \
-  --arg rustc "$(cd "$REPO_ROOT" && rustc -V 2>/dev/null || echo unknown)" \
-  --arg cargo "$(cd "$REPO_ROOT" && cargo -V 2>/dev/null || echo unknown)" \
-  --arg hostname "$(hostname 2>/dev/null || echo unknown)" \
-  --arg kernel "$(uname -srm)" \
-  --argjson cpus "$(nproc)" \
-  --argjson mem_total_kb "$(awk '/^MemTotal:/{print $2}' /proc/meminfo)" \
-  --argjson clk_tck "$(getconf CLK_TCK)" \
-  --argjson argv "$(printf '%s\n' "${SCRIPT_ARGV[@]}" | jq -Rn '[inputs]')" \
+ARGV_JSON=$(printf '%s\n' "${SCRIPT_ARGV[@]}" | jq -Rn '[inputs]')
+ENV_JSON=$(jq -n \
   --arg outage_period_s "$OUTAGE_PERIOD_S" --arg outage_dur_s "$OUTAGE_DUR_S" \
   --arg srt_reconnect_mode "$SRT_RECONNECT_MODE" --arg loss_pct "$LOSS_PCT" \
   --arg rust_log "$RUST_LOG" \
-  '{written_utc: $written_utc,
-    source: {head: $head, describe: $describe, branch: $branch, dirty: $dirty,
-             submodules: $submodules},
-    toolchain: {rustc: $rustc, cargo: $cargo},
-    host: {hostname: $hostname, kernel: $kernel, cpus: $cpus,
-           mem_total_kb: $mem_total_kb, clk_tck: $clk_tck},
-    argv: $argv,
-    env: {OUTAGE_PERIOD_S: $outage_period_s, OUTAGE_DUR_S: $outage_dur_s,
-          SRT_RECONNECT_MODE: $srt_reconnect_mode, LOSS_PCT: $loss_pct,
-          RUST_LOG: $rust_log}}' >"$OUTDIR/provenance.json"
+  '{OUTAGE_PERIOD_S: $outage_period_s, OUTAGE_DUR_S: $outage_dur_s,
+    SRT_RECONNECT_MODE: $srt_reconnect_mode, LOSS_PCT: $loss_pct,
+    RUST_LOG: $rust_log}')
+write_provenance "$REPO_ROOT" "$OUTDIR/provenance.json" "$ARGV_JSON" "$ENV_JSON"
 
 # The build comes BEFORE the config declaration (it used to follow it)
 # because the declaration now includes the drawn per-leg profiles, and
@@ -774,36 +727,9 @@ that could never pass its own completeness verdicts" >&2
 
 declare -A PIDS
 
-# record_pid <role> <pid> — writes both the tracking array entry and
-# the on-disk pidfile Task 16's `nohup ... &` invocation needs.
-record_pid() {
-  local role=$1 pid=$2
-  PIDS[$role]=$pid
-  echo "$pid" >"$OUTDIR/pids/$role.pid"
-  event "LAUNCHED role=$role pid=$pid"
-}
-
-# wait_for_bound_addr <stdout_file> -- polls (sanctioned `until ...; do
-# sleep N; done` shape — see lib.sh's header on why a bare loop+sleep
-# is avoided) for `proxy::run`'s `{"listening": "host:port"}` stdout
-# line and echoes the address, or exits 1 after
-# PROXY_ADDR_POLL_TIMEOUT_S with a named error.
-wait_for_bound_addr() {
-  local stdout_file=$1 deadline addr
-  deadline=$(($(date +%s) + PROXY_ADDR_POLL_TIMEOUT_S))
-  addr=""
-  until [[ -n "$addr" || $(date +%s) -ge $deadline ]]; do
-    if [[ -s "$stdout_file" ]]; then
-      addr=$(jq -r '.listening // empty' "$stdout_file" 2>/dev/null) || addr=""
-    fi
-    [[ -n "$addr" ]] || sleep 0.2
-  done
-  if [[ -z "$addr" ]]; then
-    echo "soak: proxy never reported its bound address within ${PROXY_ADDR_POLL_TIMEOUT_S}s (see $stdout_file)" >&2
-    exit 1
-  fi
-  printf '%s' "$addr"
-}
+# record_pid <role> <pid> — record_pid_to (lib.sh) with this run's
+# pids dir and event log: PIDS[role], `pids/<role>.pid`, LAUNCHED event.
+record_pid() { record_pid_to "$OUTDIR/pids" "$EVENTS_LOG" "$1" "$2"; }
 
 # ---------------------------------------------------------------------
 # Shared launch arguments
@@ -908,7 +834,7 @@ SRT_PROXY_STDOUT="$OUTDIR/logs/srt-proxy.stdout"
   --stats-json "$OUTDIR/srt/proxy-stats.json" --run-seconds "$SRT_PROXY_RUN_SECONDS" \
   >"$SRT_PROXY_STDOUT" 2>"$OUTDIR/logs/srt-proxy.log" &
 record_pid srt-proxy $!
-SRT_PROXY_ADDR=$(wait_for_bound_addr "$SRT_PROXY_STDOUT")
+SRT_PROXY_ADDR=$(wait_for_bound_addr "$SRT_PROXY_STDOUT" "$PROXY_ADDR_POLL_TIMEOUT_S" soak)
 
 echo "soak: srt proxy warming up ${SRT_PROXY_WARMUP_S}s past its initial outage window before starting send/recv..." >&2
 sleep "$SRT_PROXY_WARMUP_S"
@@ -988,7 +914,7 @@ RIST_PROXY_RUN_SECONDS=$((TOTAL_SECONDS + SAMPLER_END_SLACK_S))
   --stats-json "$OUTDIR/rist/proxy-stats.json" --run-seconds "$RIST_PROXY_RUN_SECONDS" \
   >"$RIST_PROXY_STDOUT" 2>"$OUTDIR/logs/rist-proxy.log" &
 record_pid rist-proxy $!
-RIST_PROXY_ADDR=$(wait_for_bound_addr "$RIST_PROXY_STDOUT")
+RIST_PROXY_ADDR=$(wait_for_bound_addr "$RIST_PROXY_STDOUT" "$PROXY_ADDR_POLL_TIMEOUT_S" soak)
 
 "$BIN" send --profile "$RIST_PROFILE" --url "rist://$RIST_PROXY_ADDR?buffer=$RIST_BUFFER_MS" \
   --seconds "$TOTAL_SECONDS" --json "$OUTDIR/rist/send-report.json" --no-klv-digest \
@@ -1011,75 +937,12 @@ DEADLINE=$((START_EPOCH + TOTAL_SECONDS))
 SAMPLER_DEADLINE=$((DEADLINE - SAMPLER_END_SLACK_S))
 echo "soak: running until $(date -u -d "@$DEADLINE" +%Y-%m-%dT%H:%M:%SZ) (${HOURS}h, seed=$SEED)..." >&2
 
-# sample_rss_loop <deadline_epoch> <start_epoch> <rss_csv> <proc_csv> <host_csv> <leg:process:pid>...
-#
-# Sanctioned `until <cond>; do ...; sleep N; done` shape (see lib.sh's
-# header and this file's own header) rather than a bare `while true`
-# loop with `sleep` in its body. Runs as its own background job for the
-# whole soak duration; a missing PID (process already gone) writes an
-# empty rss_kb field, which is exactly report.rs's `soak::RssSample`
-# crash signal — never fails this loop itself, so one dead process
-# doesn't stop sampling the other five.
-#
-# proc.csv and host.csv are written on the SAME tick with the same
-# elapsed_s so the three series join on (elapsed_s, pid). They are
-# recorded, not gated — nothing downstream reads them yet (the ROADMAP's
-# stress-harness item turns thread/fd ceilings into verdicts later; this
-# collects the series those verdicts will be pinned from). Every field
-# is best-effort and empty on failure, same as rss_kb, and nothing here
-# may fail the loop: `set -e` is inherited by this background job, so
-# every read is `|| field=""`.
-#
-# /proc/<pid>/stat: fields 14 (utime) and 15 (stime) are cumulative CPU
-# ticks; the comm field (2) can itself contain spaces, so the line is
-# split AFTER its closing ')' and the indices below are relative to
-# field 3 (utime = 12th, stime = 13th after the paren). fds = entry
-# count of /proc/<pid>/fd (own-user processes, always readable here).
-sample_rss_loop() {
-  local deadline=$1 start=$2 out=$3 proc_out=$4 host_out=$5
-  shift 5
-  local -a entries=("$@")
-  local entry leg rest process pid rss_kb elapsed
-  local utime stime threads fds load_fields mem_avail
-  until [[ $(date +%s) -ge $deadline ]]; do
-    elapsed=$(($(date +%s) - start))
-    for entry in "${entries[@]}"; do
-      leg=${entry%%:*}
-      rest=${entry#*:}
-      process=${rest%%:*}
-      pid=${rest#*:}
-      rss_kb=""
-      utime=""
-      stime=""
-      threads=""
-      fds=""
-      if [[ -r "/proc/$pid/status" ]]; then
-        rss_kb=$(awk '/^VmRSS:/{print $2}' "/proc/$pid/status" 2>/dev/null) || rss_kb=""
-        threads=$(awk '/^Threads:/{print $2}' "/proc/$pid/status" 2>/dev/null) || threads=""
-      fi
-      if [[ -r "/proc/$pid/stat" ]]; then
-        read -r utime stime < <(awk '{s=$0; sub(/^.*\) /, "", s); split(s, f, " "); print f[12], f[13]}' "/proc/$pid/stat" 2>/dev/null) || {
-          utime=""
-          stime=""
-        }
-      fi
-      if [[ -d "/proc/$pid/fd" ]]; then
-        fds=$(find "/proc/$pid/fd" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l) || fds=""
-      fi
-      printf '%s,%s,%s,%s,%s\n' "$elapsed" "$leg" "$process" "$pid" "$rss_kb" >>"$out"
-      printf '%s,%s,%s,%s,%s,%s,%s,%s\n' "$elapsed" "$leg" "$process" "$pid" "$utime" "$stime" "$threads" "$fds" >>"$proc_out"
-    done
-    # /proc/loadavg: "load1 load5 load15 running/total lastpid".
-    load_fields=$(awk '{split($4, rt, "/"); print $1 "," $2 "," $3 "," rt[1]}' /proc/loadavg 2>/dev/null) || load_fields=",,,"
-    mem_avail=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo 2>/dev/null) || mem_avail=""
-    printf '%s,%s,%s\n' "$elapsed" "$load_fields" "$mem_avail" >>"$host_out"
-    sleep "$RSS_CADENCE_S"
-  done
-}
-
-sample_rss_loop "$SAMPLER_DEADLINE" "$START_EPOCH" "$RSS_CSV" "$PROC_CSV" "$HOST_CSV" \
-  "srt:send:${PIDS[srt-send]}" "srt:proxy:${PIDS[srt-proxy]}" "srt:recv:${PIDS[srt-recv]}" \
-  "rist:send:${PIDS[rist-send]}" "rist:proxy:${PIDS[rist-proxy]}" "rist:recv:${PIDS[rist-recv]}" &
+# sample_loop (lib.sh) re-reads pids/*.pid every tick and writes one
+# rss.csv + proc.csv row per worker and one host.csv row per tick; the
+# sampler's own pidfile is excluded. Every worker's pidfile is written
+# above, before this launch.
+sample_loop "$SAMPLER_DEADLINE" "$START_EPOCH" "$RSS_CSV" "$PROC_CSV" "$HOST_CSV" \
+  "$OUTDIR/pids" "$RSS_CADENCE_S" sampler &
 record_pid sampler $!
 
 # ---------------------------------------------------------------------
