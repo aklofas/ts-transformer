@@ -847,6 +847,236 @@ fn stream_figures(
         .collect()
 }
 
+/// The step's position on its axis: `streams` for `Axis::Streams`/
+/// `Axis::Hold` (the hold step is judged as a streams step — its stream
+/// count is what was held), `au_scale` for `Axis::Bitrate`.
+fn step_load(decl: &StepDeclaration) -> u32 {
+    match decl.axis {
+        Axis::Bitrate => decl.au_scale,
+        Axis::Streams | Axis::Hold => decl.streams,
+    }
+}
+
+fn axis_dir_name(axis: Axis) -> &'static str {
+    match axis {
+        Axis::Streams => "streams",
+        Axis::Bitrate => "bitrate",
+        Axis::Hold => "hold",
+    }
+}
+
+/// One axis of the sweep (one transport × `streams` or `bitrate`), its
+/// steps in ascending load order, and the ceiling rule's verdict on
+/// them.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AxisResult {
+    pub transport: String,
+    pub axis: Axis,
+    pub steps: Vec<StepResults>,
+    pub ceiling: Option<u32>,
+    pub first_fail: Option<u32>,
+    pub first_fail_verdicts: Vec<String>,
+}
+
+/// The ceiling rule: `steps` must already be sorted ascending by load
+/// (callers sort — this walks in order, it does not re-sort). The
+/// ceiling is the load of the last PASS before the first FAIL (`None`
+/// if the very first step fails); `first_fail` is the load of that
+/// first FAIL (`None` if every step passes, in which case the ceiling
+/// is the top of the ladder rather than a measured limit).
+pub fn ceiling_of(steps: &[StepResults]) -> (Option<u32>, Option<u32>, Vec<String>) {
+    let mut ceiling = None;
+    for step in steps {
+        if step.pass {
+            ceiling = Some(step_load(&step.decl));
+        } else {
+            return (ceiling, Some(step_load(&step.decl)), step.failing.clone());
+        }
+    }
+    (ceiling, None, Vec::new())
+}
+
+/// `hold/hold-config.json`, written by `stress.sh` before the 24 h
+/// hold: how many streams per transport it holds, and the ceiling the
+/// sweep found for each transport — declared ahead of time so the hold
+/// can be checked against the sweep rather than against itself.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HoldDeclaration {
+    pub n_hold: BTreeMap<String, u32>,
+    pub ceilings_declared: BTreeMap<String, u32>,
+    pub cpu_scale_factor: f64,
+}
+
+/// The hold step's own judged results, plus the sizing verdicts that
+/// compare its declaration against the sweep.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HoldResults {
+    pub decl: HoldDeclaration,
+    pub step: StepResults,
+    pub hold_verdicts: Vec<StepVerdict>,
+    pub pass: bool,
+}
+
+/// The whole stress harness's verdict: one `AxisResult` per
+/// transport/axis, the optional hold, folded into a single pass/fail
+/// plus the reasons (if any) a ceiling should be read as provisional
+/// rather than a measured limit.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StressResults {
+    pub sweep: Vec<AxisResult>,
+    pub hold: Option<HoldResults>,
+    pub overall_pass: bool,
+    pub limitations: Vec<String>,
+}
+
+/// floor(0.7 × ceiling) — the hold must run well inside the sweep's
+/// found ceiling, not at its edge.
+fn max_hold_for_ceiling(ceiling: u32) -> u32 {
+    (0.7 * ceiling as f64).floor() as u32
+}
+
+/// Fold the sweep's `AxisResult`s and the optional hold into one
+/// verdict. Appends a `hold_sizing_declared` verdict to
+/// `hold.hold_verdicts` (and folds its failure into `hold.pass`) before
+/// computing `overall_pass`.
+pub fn build_stress_results(sweep: Vec<AxisResult>, hold: Option<HoldResults>) -> StressResults {
+    let all_have_ceiling = sweep.iter().all(|a| a.ceiling.is_some());
+    let mut limitations = Vec::new();
+    for axis in &sweep {
+        if axis.first_fail.is_none() {
+            limitations.push(format!(
+                "{}/{}: never failed — the ceiling is the top of the ladder, not a measured limit",
+                axis.transport,
+                axis_dir_name(axis.axis)
+            ));
+        }
+    }
+
+    let mut hold = hold;
+    if let Some(h) = hold.as_mut() {
+        let mut problems = Vec::new();
+        for (transport, &n_hold) in &h.decl.n_hold {
+            let declared = h.decl.ceilings_declared.get(transport).copied();
+            let computed = sweep
+                .iter()
+                .find(|a| &a.transport == transport && a.axis == Axis::Streams)
+                .and_then(|a| a.ceiling);
+            match (declared, computed) {
+                (Some(d), Some(c)) if d == c => {
+                    let max_hold = max_hold_for_ceiling(c);
+                    if n_hold > max_hold {
+                        problems.push(format!(
+                            "{transport}: n_hold {n_hold} > floor(0.7 × ceiling {c}) = {max_hold}"
+                        ));
+                    }
+                }
+                (d, c) => problems.push(format!(
+                    "{transport}: declared ceiling {d:?} does not match the sweep's computed streams ceiling {c:?}"
+                )),
+            }
+        }
+        let pass = problems.is_empty();
+        h.hold_verdicts.push(StepVerdict {
+            name: "hold_sizing_declared".into(),
+            pass,
+            observed: problems.len() as f64,
+            threshold: 0.0,
+            detail: if pass {
+                "every held transport's n_hold is \u{2264} floor(0.7 \u{d7} its declared ceiling)"
+                    .into()
+            } else {
+                problems.join("; ")
+            },
+        });
+        if !pass {
+            h.pass = false;
+        }
+    }
+
+    let overall_pass = all_have_ceiling && hold.as_ref().map(|h| h.pass).unwrap_or(true);
+    StressResults {
+        sweep,
+        hold,
+        overall_pass,
+        limitations,
+    }
+}
+
+/// Fold every step of the sweep plus the optional hold into
+/// `outdir/stress-results.json`.
+pub fn run_stress(outdir: &std::path::Path) -> Result<StressResults, String> {
+    let sweep_root = outdir.join("sweep");
+    let mut sweep = Vec::new();
+    for transport in sorted_dirs(&sweep_root)? {
+        for axis_name in sorted_dirs(&sweep_root.join(&transport))? {
+            let axis = match axis_name.as_str() {
+                "streams" => Axis::Streams,
+                "bitrate" => Axis::Bitrate,
+                other => return Err(format!("sweep/{transport}/{other}: unknown axis directory")),
+            };
+            let axis_dir = sweep_root.join(&transport).join(&axis_name);
+            let mut loads: Vec<u32> = sorted_dirs(&axis_dir)?
+                .iter()
+                .map(|d| {
+                    d.parse::<u32>().map_err(|_| {
+                        format!(
+                            "{}: step directory name must be the load integer",
+                            axis_dir.join(d).display()
+                        )
+                    })
+                })
+                .collect::<Result<_, _>>()?;
+            loads.sort_unstable();
+            let mut steps = Vec::new();
+            for load in loads {
+                steps.push(read_json::<StepResults>(
+                    &axis_dir.join(load.to_string()).join("step-results.json"),
+                )?);
+            }
+            let (ceiling, first_fail, first_fail_verdicts) = ceiling_of(&steps);
+            sweep.push(AxisResult {
+                transport: transport.clone(),
+                axis,
+                steps,
+                ceiling,
+                first_fail,
+                first_fail_verdicts,
+            });
+        }
+    }
+    if sweep.is_empty() {
+        return Err(format!(
+            "{}: no sweep/<transport>/<axis>/<load>/step-results.json found",
+            outdir.display()
+        ));
+    }
+    let hold_path = outdir.join("hold").join("hold-results.json");
+    let hold = if hold_path.exists() {
+        Some(read_json::<HoldResults>(&hold_path)?)
+    } else {
+        None
+    };
+    let results = build_stress_results(sweep, hold);
+    let out = outdir.join("stress-results.json");
+    std::fs::write(
+        &out,
+        serde_json::to_string_pretty(&results).expect("serializes"),
+    )
+    .map_err(|e| format!("write {}: {e}", out.display()))?;
+    Ok(results)
+}
+
+fn sorted_dirs(dir: &std::path::Path) -> Result<Vec<String>, String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .map_err(|e| format!("read_dir {}: {e}", dir.display()))?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    Ok(names)
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::soak::tests::{cell_metrics, passing_recv_report, proxy_stats};
@@ -1465,5 +1695,145 @@ mod tests {
         assert_eq!(rows[0].load1, Some(0.5));
         assert_eq!(rows[0].mem_available_kb, Some(1_000_000));
         assert_eq!(rows[1].load1, None);
+    }
+
+    fn step_result(load: u32, axis: Axis, pass: bool, failing: &[&str]) -> StepResults {
+        let mut d = decl(load, 1);
+        d.axis = axis;
+        if matches!(axis, Axis::Bitrate) {
+            d.streams = 1;
+            d.au_scale = load;
+        }
+        StepResults {
+            decl: d,
+            thresholds: thresholds(),
+            pass,
+            verdicts: Vec::new(),
+            failing: failing.iter().map(|s| s.to_string()).collect(),
+            per_stream: Vec::new(),
+            aggregate_cpu_fraction: 0.1,
+            cpu_fraction_per_stream: 0.1 / load as f64,
+            aggregate_wire_mbps: 1.7 * load as f64,
+            samples_used: 20,
+        }
+    }
+
+    #[test]
+    fn ceiling_is_last_pass_before_first_fail() {
+        let steps = vec![
+            step_result(1, Axis::Streams, true, &[]),
+            step_result(2, Axis::Streams, true, &[]),
+            step_result(4, Axis::Streams, false, &["cpu_headroom"]),
+        ];
+        assert_eq!(
+            ceiling_of(&steps),
+            (Some(2), Some(4), vec!["cpu_headroom".to_string()])
+        );
+    }
+
+    #[test]
+    fn ceiling_none_when_first_step_fails() {
+        let steps = vec![step_result(1, Axis::Streams, false, &["delivery_complete"])];
+        assert_eq!(
+            ceiling_of(&steps),
+            (None, Some(1), vec!["delivery_complete".to_string()])
+        );
+    }
+
+    #[test]
+    fn ceiling_is_top_of_ladder_when_nothing_fails() {
+        let steps = vec![
+            step_result(1, Axis::Bitrate, true, &[]),
+            step_result(2, Axis::Bitrate, true, &[]),
+        ];
+        assert_eq!(ceiling_of(&steps), (Some(2), None, vec![]));
+        let r = build_stress_results(
+            vec![AxisResult {
+                transport: "udp".into(),
+                axis: Axis::Bitrate,
+                steps,
+                ceiling: Some(2),
+                first_fail: None,
+                first_fail_verdicts: vec![],
+            }],
+            None,
+        );
+        assert!(r.overall_pass);
+        assert!(
+            r.limitations
+                .iter()
+                .any(|l| l.contains("udp/bitrate") && l.contains("top of the ladder"))
+        );
+    }
+
+    #[test]
+    fn hold_sizing_must_match_the_sweep() {
+        let steps = vec![
+            step_result(8, Axis::Streams, true, &[]),
+            step_result(16, Axis::Streams, false, &["cpu_headroom"]),
+        ];
+        let axis = AxisResult {
+            transport: "srt".into(),
+            axis: Axis::Streams,
+            ceiling: Some(8),
+            first_fail: Some(16),
+            first_fail_verdicts: vec!["cpu_headroom".into()],
+            steps,
+        };
+        let hold = HoldResults {
+            decl: HoldDeclaration {
+                n_hold: [("srt".to_string(), 7)].into(),
+                ceilings_declared: [("srt".to_string(), 8)].into(),
+                cpu_scale_factor: 1.0,
+            },
+            step: step_result(7, Axis::Hold, true, &[]),
+            hold_verdicts: vec![],
+            pass: true,
+        };
+        let r = build_stress_results(vec![axis.clone()], Some(hold.clone()));
+        assert!(!r.overall_pass, "7 > floor(0.7 × 8) = 5");
+        let v = r
+            .hold
+            .unwrap()
+            .hold_verdicts
+            .into_iter()
+            .find(|v| v.name == "hold_sizing_declared")
+            .unwrap();
+        assert!(!v.pass);
+
+        let mut ok = hold;
+        ok.decl.n_hold.insert("srt".into(), 5);
+        let r = build_stress_results(vec![axis], Some(ok));
+        assert!(r.overall_pass);
+    }
+
+    #[test]
+    fn run_stress_walks_the_sweep_tree_numerically() {
+        let out = temp_step_dir("tree");
+        for (load, pass) in [(1u32, true), (2, true), (16, false), (4, true), (8, true)] {
+            let dir = out.join("sweep/srt/streams").join(load.to_string());
+            std::fs::create_dir_all(&dir).unwrap();
+            let mut s = step_result(
+                load,
+                Axis::Streams,
+                pass,
+                if pass { &[] } else { &["cpu_headroom"] },
+            );
+            s.decl.streams = load;
+            std::fs::write(
+                dir.join("step-results.json"),
+                serde_json::to_string(&s).unwrap(),
+            )
+            .unwrap();
+        }
+        let r = run_stress(&out).unwrap();
+        assert_eq!(r.sweep.len(), 1);
+        assert_eq!(
+            r.sweep[0].ceiling,
+            Some(8),
+            "16 must sort after 8, not between 1 and 2"
+        );
+        assert!(out.join("stress-results.json").exists());
+        std::fs::remove_dir_all(&out).unwrap();
     }
 }
