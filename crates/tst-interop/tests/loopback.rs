@@ -794,7 +794,7 @@ fn srt_realistic_au_sizes_round_trip_and_match() {
         &send_url,
         SECONDS,
         Duration::from_secs(5),
-        AuSizeMode::Realistic,
+        AuSizeMode::REALISTIC,
     );
 
     let recv_report =

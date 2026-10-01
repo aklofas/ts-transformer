@@ -1467,7 +1467,7 @@ fn srt_background_reconnect_keeps_producing_through_an_outage() {
                 // gap buffer: ~200 messages/s fills its 256 slots in
                 // little over a second. The compact fixtures produce
                 // about 6 messages/s and would need a 40 s outage.
-                tst_interop::fixtures::AuSizeMode::Realistic,
+                tst_interop::fixtures::AuSizeMode::REALISTIC,
                 tst_interop::fixtures::KlvSet::Compact,
                 0,
                 None,

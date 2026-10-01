@@ -283,7 +283,7 @@ fn hls_serve_round_trip_matches_baseline() {
 /// `au_sizes` being dropped somewhere along the serve path.
 #[test]
 fn hls_serve_round_trip_at_realistic_sizes() {
-    let report = hls_serve_round_trip(AuSizeMode::Realistic);
+    let report = hls_serve_round_trip(AuSizeMode::REALISTIC);
     assert!(
         report.pass,
         "realistic-size HLS-served capture failed verification: {:?}",

@@ -43,9 +43,9 @@ use crate::schedule::{self, Event, PTS_HZ};
 ///
 /// `au_sizes` picks the video AU size regime: [`AuSizeMode::Compact`]
 /// (tens of bytes per AU — byte-identical to what this function wrote
-/// before the parameter existed) or [`AuSizeMode::Realistic`]
-/// (GOP-structured keyframes/inter frames, ~1.7 Mb/s at 30 fps). See
-/// [`fixtures::video_au_sized`].
+/// before the parameter existed) or [`AuSizeMode::Realistic`] `{ scale }`
+/// (GOP-structured keyframes/inter frames, ~1.7 Mb/s × `scale` at 30
+/// fps). See [`fixtures::video_au_sized`].
 pub fn run(
     p: &Profile,
     seconds: f64,
