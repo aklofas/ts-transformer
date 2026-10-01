@@ -23,6 +23,7 @@ use crate::report_types::{CellMetrics, VerifyReport};
 
 const PROC_HEADER: &str = "elapsed_s,leg,process,pid,utime_ticks,stime_ticks,threads,fds";
 const HOST_HEADER: &str = "elapsed_s,load1,load5,load15,procs_running,mem_available_kb";
+const RSS_HEADER: &str = "elapsed_s,leg,process,pid,rss_kb";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProcSample {
@@ -107,6 +108,33 @@ pub fn parse_proc_csv(text: &str) -> Result<Vec<ProcSample>, String> {
                 stime_ticks: opt(f[5], "stime_ticks", n)?,
                 threads: opt(f[6], "threads", n)?,
                 fds: opt(f[7], "fds", n)?,
+            })
+        })
+        .collect()
+}
+
+/// Parse the stress harness's own `rss.csv`. Same shape as
+/// `super::soak::parse_rss_csv` (same header, same columns) but WITHOUT
+/// that function's `KNOWN_LEGS` allowlist (`srt`/`rist` only, sized for
+/// `soak.sh`'s fixed two-leg design): a stress step runs N concurrent
+/// streams of one transport, each with its own leg (`<transport>-<k>`,
+/// see `StreamArtifacts::leg`), so soak's allowlist would reject every
+/// real stress artifact. `RssSample` itself is still the shared type —
+/// only the parsing/validation is duplicated here.
+pub fn parse_rss_csv(text: &str) -> Result<Vec<RssSample>, String> {
+    csv_rows(text, RSS_HEADER, 5, "rss.csv")?
+        .into_iter()
+        .map(|(n, f)| {
+            Ok(RssSample {
+                elapsed_s: f[0]
+                    .parse()
+                    .map_err(|_| format!("rss.csv line {n}: bad elapsed_s"))?,
+                leg: f[1].to_string(),
+                process: f[2].to_string(),
+                pid: f[3]
+                    .parse()
+                    .map_err(|_| format!("rss.csv line {n}: bad pid"))?,
+                rss_kb: opt(f[4], "rss_kb", n)?,
             })
         })
         .collect()
@@ -702,6 +730,64 @@ fn verdict_sample_coverage(
     }
 }
 
+fn read_to_string(path: &std::path::Path) -> Result<String, String> {
+    std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))
+}
+fn read_json<T: for<'de> Deserialize<'de>>(path: &std::path::Path) -> Result<T, String> {
+    serde_json::from_str(&read_to_string(path)?)
+        .map_err(|e| format!("parse {}: {e}", path.display()))
+}
+
+pub fn run_step(
+    step_dir: &std::path::Path,
+    thresholds: StepThresholds,
+) -> Result<StepResults, String> {
+    let decl: StepDeclaration = read_json(&step_dir.join("config.json"))?;
+    let rss = parse_rss_csv(&read_to_string(&step_dir.join("rss.csv"))?)?;
+    let proc = parse_proc_csv(&read_to_string(&step_dir.join("proc.csv"))?)?;
+    let host = parse_host_csv(&read_to_string(&step_dir.join("host.csv"))?)?;
+    let worker_exits =
+        super::soak::parse_worker_exits(&read_to_string(&step_dir.join("exits.json"))?)?;
+    let mut streams = Vec::with_capacity(decl.streams as usize);
+    for i in 0..decl.streams {
+        let sdir = step_dir.join("streams").join(i.to_string());
+        let leg_path = sdir.join("leg.txt");
+        let leg = if leg_path.exists() {
+            read_to_string(&leg_path)?.trim().to_string()
+        } else {
+            format!("{}-{}", decl.transport, i)
+        };
+        let proxy_path = sdir.join("proxy-stats.json");
+        streams.push(StreamArtifacts {
+            index: i,
+            leg,
+            send: read_json(&sdir.join("send-report.json"))?,
+            recv: read_json(&sdir.join("recv-report.json"))?,
+            proxy: if proxy_path.exists() {
+                Some(read_json(&proxy_path)?)
+            } else {
+                None
+            },
+        });
+    }
+    let results = build_step_results(StepInputs {
+        decl,
+        thresholds,
+        rss,
+        proc,
+        host,
+        worker_exits,
+        streams,
+    })?;
+    let out = step_dir.join("step-results.json");
+    std::fs::write(
+        &out,
+        serde_json::to_string_pretty(&results).expect("serializes"),
+    )
+    .map_err(|e| format!("write {}: {e}", out.display()))?;
+    Ok(results)
+}
+
 /// Nearest-rank 99th percentile.
 fn p99(values: &mut [u64]) -> Option<u64> {
     if values.is_empty() {
@@ -1180,6 +1266,195 @@ mod tests {
             err.contains("line 2") && err.contains("utime_ticks"),
             "{err}"
         );
+    }
+
+    fn write(dir: &std::path::Path, rel: &str, text: &str) {
+        let p = dir.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, text).unwrap();
+    }
+    fn temp_step_dir(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("tst-stress-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+    fn write_healthy_step(dir: &std::path::Path, streams: u32) {
+        let inp = inputs(streams, 30);
+        write(
+            dir,
+            "config.json",
+            &serde_json::to_string(&inp.decl).unwrap(),
+        );
+        let mut proc_csv = format!("{PROC_HEADER}\n");
+        for s in &inp.proc {
+            proc_csv.push_str(&format!(
+                "{},{},{},{},{},{},{},{}\n",
+                s.elapsed_s,
+                s.leg,
+                s.process,
+                s.pid,
+                s.utime_ticks.unwrap(),
+                s.stime_ticks.unwrap(),
+                s.threads.unwrap(),
+                s.fds.unwrap()
+            ));
+        }
+        write(dir, "proc.csv", &proc_csv);
+        let mut rss_csv = String::from("elapsed_s,leg,process,pid,rss_kb\n");
+        for s in &inp.rss {
+            rss_csv.push_str(&format!(
+                "{},{},{},{},{}\n",
+                s.elapsed_s,
+                s.leg,
+                s.process,
+                s.pid,
+                s.rss_kb.unwrap()
+            ));
+        }
+        write(dir, "rss.csv", &rss_csv);
+        write(
+            dir,
+            "host.csv",
+            &format!("{HOST_HEADER}\n0,0.1,0.1,0.1,1,1000000\n"),
+        );
+        write(
+            dir,
+            "exits.json",
+            &serde_json::to_string(&inp.worker_exits).unwrap(),
+        );
+        for a in &inp.streams {
+            write(
+                dir,
+                &format!("streams/{}/send-report.json", a.index),
+                &serde_json::to_string(&a.send).unwrap(),
+            );
+            write(
+                dir,
+                &format!("streams/{}/recv-report.json", a.index),
+                &serde_json::to_string(&a.recv).unwrap(),
+            );
+        }
+    }
+
+    #[test]
+    fn run_step_reads_a_step_dir_and_writes_results() {
+        let dir = temp_step_dir("ok");
+        write_healthy_step(&dir, 2);
+        let r = run_step(&dir, thresholds()).unwrap();
+        assert!(r.pass);
+        let written: StepResults =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("step-results.json")).unwrap())
+                .unwrap();
+        assert_eq!(written.decl.streams, 2);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn step_with_no_stream_reports_is_an_error() {
+        let dir = temp_step_dir("nostreams");
+        write_healthy_step(&dir, 2);
+        std::fs::remove_dir_all(dir.join("streams")).unwrap();
+        let err = run_step(&dir, thresholds()).unwrap_err();
+        assert!(err.contains("streams/0/send-report.json"), "{err}");
+        assert!(
+            !dir.join("step-results.json").exists(),
+            "no results file on error"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn step_missing_one_streams_recv_report_is_an_error() {
+        let dir = temp_step_dir("onemissing");
+        write_healthy_step(&dir, 2);
+        std::fs::remove_file(dir.join("streams/1/recv-report.json")).unwrap();
+        assert!(
+            run_step(&dir, thresholds())
+                .unwrap_err()
+                .contains("streams/1/recv-report.json")
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn run_step_reads_leg_txt_when_present() {
+        // A stream's leg.txt wins over the `<decl.transport>-<index>`
+        // default: stream 0 here is "srt-7", not "srt-0" (the hold step
+        // mixes transports and indices don't line up with legs there).
+        let dir = temp_step_dir("legtxt");
+        let inp = inputs(1, 30);
+        write(
+            &dir,
+            "config.json",
+            &serde_json::to_string(&inp.decl).unwrap(),
+        );
+        let (proc, rss) = healthy_stream("srt-7", 30);
+        let mut proc_csv = format!("{PROC_HEADER}\n");
+        for s in &proc {
+            proc_csv.push_str(&format!(
+                "{},{},{},{},{},{},{},{}\n",
+                s.elapsed_s,
+                s.leg,
+                s.process,
+                s.pid,
+                s.utime_ticks.unwrap(),
+                s.stime_ticks.unwrap(),
+                s.threads.unwrap(),
+                s.fds.unwrap()
+            ));
+        }
+        write(&dir, "proc.csv", &proc_csv);
+        let mut rss_csv = String::from("elapsed_s,leg,process,pid,rss_kb\n");
+        for s in &rss {
+            rss_csv.push_str(&format!(
+                "{},{},{},{},{}\n",
+                s.elapsed_s,
+                s.leg,
+                s.process,
+                s.pid,
+                s.rss_kb.unwrap()
+            ));
+        }
+        write(&dir, "rss.csv", &rss_csv);
+        write(
+            &dir,
+            "host.csv",
+            &format!("{HOST_HEADER}\n0,0.1,0.1,0.1,1,1000000\n"),
+        );
+        let mut exits = BTreeMap::new();
+        for role in ["send", "proxy", "recv"] {
+            exits.insert(format!("srt-7-{role}"), 0);
+        }
+        write(&dir, "exits.json", &serde_json::to_string(&exits).unwrap());
+        write(&dir, "streams/0/leg.txt", "srt-7\n");
+        write(
+            &dir,
+            "streams/0/send-report.json",
+            &serde_json::to_string(&cell_metrics(18_000)).unwrap(),
+        );
+        write(
+            &dir,
+            "streams/0/recv-report.json",
+            &serde_json::to_string(&passing_recv_report(18_000)).unwrap(),
+        );
+
+        let r = run_step(&dir, thresholds()).unwrap();
+        assert!(r.pass, "{:?}", r.failing);
+        assert_eq!(r.per_stream[0].leg, "srt-7");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn rss_csv_accepts_per_stream_legs_and_empty_rss() {
+        // Unlike super::soak::parse_rss_csv, the stress-local parser has
+        // no KNOWN_LEGS allowlist: "tcp-12" is a per-stream leg, not one
+        // of soak.sh's two fixed legs.
+        let text = "elapsed_s,leg,process,pid,rss_kb\n30,tcp-12,send,100,\n";
+        let rows = parse_rss_csv(text).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].leg, "tcp-12");
+        assert_eq!(rows[0].rss_kb, None);
     }
 
     #[test]
