@@ -899,26 +899,38 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `OverflowPolicy::Reject` buffer it returned `Backpressure` instead of the
   close. The latch is now read again under the gap buffer's lock, ahead of
   the enqueue, as it already was for the enqueue that follows a failed
-  direct send: a send is accepted only if it was queued before the latch
-  was set, and otherwise reports `ExplicitClose` (`Closed` after the
-  wrapper's own close) and queues nothing.
-- **`tst-pipeline`: a managed sender whose inner transport was cancelled
-  stops instead of reconnecting.** An inner transport reports
-  `ExplicitClose` only when it was cancelled — through a cancel handle
-  taken from it before it was wrapped, or by a process-exit path that
-  closes every open socket directly. `ManagedTransport` read that as an
-  outage: `Blocking` mode called the factory again from the failed send,
-  and the `Background` worker kept dialling, so a process on its way out
-  went on opening connections. An inner `ExplicitClose` from the direct
-  send, from the drain that follows a reconnect, or from the background
-  worker's drain, and a factory that returns `ExplicitClose`, now latch the
-  wrapper exactly as its own cancel handle does: no factory call follows,
-  `is_alive()` reads false, and every send reports `ExplicitClose`. In
-  `Blocking` mode the failed send's message goes back to the caller. In
-  `Background` mode the worker exits and the next send reports the close;
-  messages accepted earlier stay queued and undelivered (`gap_len` keeps
-  counting them, the drop counters do not). `ManagedRecvTransport` already
-  behaved this way.
+  direct send. A send that observes the latch under the gap lock reports
+  `ExplicitClose` (`Closed` after the wrapper's own close) and queues
+  nothing. A cancel landing after that check is reported by the next
+  send, and the message already queued stays undelivered.
+- **`tst-pipeline`: a managed sender whose inner transport was cancelled stops
+  instead of reconnecting — a behaviour change.** An inner transport reports
+  `ExplicitClose` only when it was cancelled — through a cancel handle taken
+  from it before it was wrapped, or by a process-exit path that closes every
+  open socket directly. `ManagedTransport` read that as an outage: `Blocking`
+  mode called the factory again from the failed send, and the `Background`
+  worker kept dialling, so a process on its way out went on opening
+  connections. An inner `ExplicitClose` from the direct send, from the drain
+  that follows a reconnect, or from the background worker's drain, and a
+  factory that returns `ExplicitClose`, now latch the wrapper exactly as its
+  own cancel handle does: no factory call follows, `is_alive()` reads false,
+  and every send reports `ExplicitClose`. In `Blocking` mode the failed send's
+  message goes back to the caller. In `Background` mode the worker exits and
+  the next send reports the close; messages accepted earlier stay queued and
+  undelivered (`gap_len` keeps counting them, the drop counters do not).
+  `ManagedRecvTransport` already behaved this way. Migration: a consumer that
+  cancelled the inner socket through a handle taken before wrapping, to force a
+  rebuild, should instead cancel the wrapper's own handle (terminal) or build a
+  new wrapper; a link that breaks or that the peer closes still triggers a
+  reconnect.
+- **`tst-pipeline`: a managed receiver whose reconnect factory reports a
+  cancel stops instead of retrying.** `ManagedRecvTransport` handled an
+  inner receive's `ExplicitClose` as terminal but retried the factory on
+  the same error, so an SRT listener refused at process exit — or a
+  factory slot cancelled directly — was retried until the attempt budget
+  ran out (then reported as `Closed`, end-of-stream to the bindings) or,
+  with no budget, forever. The factory's `ExplicitClose` now latches the
+  wrapper exactly as the inner's does. Review #7 R7-01.
 - **`ManagedTransport` (`ReconnectMode::Blocking`): a send refused with
   `Backpressure` right after a reconnect was delivered twice.** The inner
   send broke, the message went into the gap buffer, the reconnect succeeded,

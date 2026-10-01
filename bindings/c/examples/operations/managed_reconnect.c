@@ -394,7 +394,9 @@ int main(void) {
      * exhausted), backpressure from the fresh link, or an oversized
      * payload. In each of those the managed transport has kept nothing:
      * the mux sender retains the chunk it was refused and offers it again
-     * on the next call, which also starts a fresh reconnect cycle. So the
+     * on the next call. A retry after an exhausted budget starts a fresh
+     * reconnect cycle; a retry after Backpressure reuses the live link;
+     * an oversized payload is rejected without touching the link. So the
      * loop logs and keeps going: the very next send may well succeed.
      *
      * In BLOCKING mode the outage is visible only as latency: a send that
