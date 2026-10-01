@@ -1060,33 +1060,63 @@ fn verdict_reconnect_count(decl: &StepDeclaration, per_stream: &[StreamFigures])
 /// Every receiver restart must be followed, within
 /// `RESTART_RECOVERY_WINDOW_S`, by a sender heartbeat whose
 /// `reconnects` exceeds the last value before the restart.
+///
+/// A restart later than `hold_s − RESTART_RECOVERY_WINDOW_S` is
+/// unjudgeable: the hold ends before its recovery window does, so no
+/// heartbeat can follow it. Such events are left out of both observed
+/// and threshold and named in the detail. This matters most for the
+/// short smoke hold, where the final restart routinely lands in the
+/// last 120 s; counting it as unrecovered would fail every smoke run.
 fn verdict_peer_restart_recovery(
     decl: &StepDeclaration,
     heartbeats: &BTreeMap<&str, Vec<Heartbeat>>,
     restarts: &[RestartEvent],
 ) -> StepVerdict {
     let name = "peer_restart_recovery".to_string();
-    if restarts.is_empty() {
+    let window = RESTART_RECOVERY_WINDOW_S as f64;
+    let (judgeable, unjudgeable): (Vec<&RestartEvent>, Vec<&RestartEvent>) = restarts
+        .iter()
+        .partition(|ev| ev.elapsed_s <= decl.hold_s - window);
+    let unjudgeable_note = if unjudgeable.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "; unjudgeable (within the final {RESTART_RECOVERY_WINDOW_S} s): {}",
+            unjudgeable
+                .iter()
+                .map(|ev| format!("{}@{}s", ev.role, ev.elapsed_s))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    if judgeable.is_empty() {
         let due = decl
             .restart_period_s
             .is_some_and(|p| decl.hold_s >= p as f64);
+        let head = if due {
+            "restarts were declared but none happened"
+        } else {
+            "not applicable: no restart was due inside the hold"
+        };
         return StepVerdict {
             name,
             pass: !due,
             observed: 0.0,
             threshold: 0.0,
-            detail: if due {
-                "restarts were declared but none happened".into()
-            } else {
-                "not applicable: no restart was due inside the hold".into()
-            },
+            detail: format!("{head}{unjudgeable_note}"),
         };
     }
-    let window = RESTART_RECOVERY_WINDOW_S as f64;
     let mut unrecovered = Vec::new();
-    for ev in restarts {
+    for ev in &judgeable {
         let leg = ev.role.strip_suffix("-recv").unwrap_or(&ev.role);
         let hbs = heartbeats.get(leg).map(Vec::as_slice).unwrap_or(&[]);
+        if hbs.is_empty() {
+            unrecovered.push(format!(
+                "{}@{}s (no heartbeats for leg {leg})",
+                ev.role, ev.elapsed_s
+            ));
+            continue;
+        }
         let before = hbs
             .iter()
             .filter(|h| h.elapsed_s as f64 <= ev.elapsed_s)
@@ -1101,23 +1131,24 @@ fn verdict_peer_restart_recovery(
             unrecovered.push(format!("{}@{}s", ev.role, ev.elapsed_s));
         }
     }
-    let recovered = restarts.len() - unrecovered.len();
+    let recovered = judgeable.len() - unrecovered.len();
+    let head = if unrecovered.is_empty() {
+        format!(
+            "all {} judgeable restart(s) recovered within {RESTART_RECOVERY_WINDOW_S} s",
+            judgeable.len()
+        )
+    } else {
+        format!(
+            "not recovered within {RESTART_RECOVERY_WINDOW_S} s: {}",
+            unrecovered.join(", ")
+        )
+    };
     StepVerdict {
         name,
         pass: unrecovered.is_empty(),
         observed: recovered as f64,
-        threshold: restarts.len() as f64,
-        detail: if unrecovered.is_empty() {
-            format!(
-                "all {} restart(s) recovered within {RESTART_RECOVERY_WINDOW_S} s",
-                restarts.len()
-            )
-        } else {
-            format!(
-                "not recovered within {RESTART_RECOVERY_WINDOW_S} s: {}",
-                unrecovered.join(", ")
-            )
-        },
+        threshold: judgeable.len() as f64,
+        detail: format!("{head}{unjudgeable_note}"),
     }
 }
 
@@ -2393,7 +2424,8 @@ send: heartbeat elapsed_s=180 video_aus=5400 keyframes=180 klv_records=1800 audi
     /// A healthy 1-stream hold dir: `write_healthy_step` plus the
     /// hold-only artifacts. The step keeps its 600 s window (the step
     /// verdicts are calibrated to it); `config.json` gains the hold axis
-    /// and a declared restart period, with no outage schedule.
+    /// and a declared restart period, with no outage schedule. The one
+    /// restart (300 s) sits inside the judgeable part of the window.
     fn write_healthy_hold(dir: &std::path::Path) {
         write_healthy_step(dir, 1);
         let mut d: StepDeclaration =
@@ -2416,14 +2448,14 @@ send: heartbeat elapsed_s=180 video_aus=5400 keyframes=180 klv_records=1800 audi
         write(
             dir,
             "restart-events.log",
-            "7200 RESTART role=srt-0-recv old_pid=10 new_pid=20\n",
+            "300 RESTART role=srt-0-recv old_pid=10 new_pid=20\n",
         );
         write(
             dir,
             "logs/srt-0-send.log",
             "send: starting\n\
-             send: heartbeat elapsed_s=7140 video_aus=1 keyframes=1 klv_records=1 audio_frames=0 wire_bytes=1 reconnects=7 gap_len=0\n\
-             send: heartbeat elapsed_s=7260 video_aus=1 keyframes=1 klv_records=1 audio_frames=0 wire_bytes=1 reconnects=8 gap_len=10\n",
+             send: heartbeat elapsed_s=240 video_aus=1 keyframes=1 klv_records=1 audio_frames=0 wire_bytes=1 reconnects=7 gap_len=0\n\
+             send: heartbeat elapsed_s=360 video_aus=1 keyframes=1 klv_records=1 audio_frames=0 wire_bytes=1 reconnects=8 gap_len=10\n",
         );
         let mut send = cell_metrics(18_000);
         send.managed_send = Some(crate::report_types::ManagedSendStats {
@@ -2452,6 +2484,8 @@ send: heartbeat elapsed_s=180 video_aus=5400 keyframes=180 klv_records=1800 audi
             ]
         );
         assert!(r.pass, "{:?}", r.hold_verdicts);
+        let rr = hb_verdict(&r.hold_verdicts, "peer_restart_recovery");
+        assert_eq!((rr.observed, rr.threshold), (1.0, 1.0), "{}", rr.detail);
         let q = hb_verdict(&r.hold_verdicts, "queue_depth_p99");
         assert_eq!(q.observed, 10.0);
         assert!((q.threshold - 230.4).abs() < 0.01);
@@ -2495,5 +2529,92 @@ send: heartbeat elapsed_s=180 video_aus=5400 keyframes=180 klv_records=1800 audi
         assert!(err.contains("restart-events.log line 1"), "{err}");
         assert!(!dir.join("hold-results.json").exists());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn hb_line(t: u64, reconnects: u64) -> String {
+        format!(
+            "send: heartbeat elapsed_s={t} video_aus=1 keyframes=1 klv_records=1 audio_frames=0 wire_bytes=1 reconnects={reconnects} gap_len=0\n"
+        )
+    }
+
+    fn restart_verdict(d: &StepDeclaration, log: String, events: &[f64]) -> StepVerdict {
+        let logs = [("srt-0".to_string(), log)].into();
+        let restarts: Vec<RestartEvent> = events
+            .iter()
+            .map(|&t| RestartEvent {
+                elapsed_s: t,
+                role: "srt-0-recv".into(),
+            })
+            .collect();
+        let v = hold_verdicts(
+            d,
+            &step_result(1, Axis::Hold, true, &[]),
+            &logs,
+            &restarts,
+            256,
+            0.9,
+        );
+        hb_verdict(&v, "peer_restart_recovery").clone()
+    }
+
+    #[test]
+    fn restart_in_the_final_window_is_unjudgeable() {
+        // hold_s 300: the event at 240 is past 300 − 120 = 180, so no
+        // heartbeat can follow it; it is excluded, not failed.
+        let mut d = hold_decl();
+        d.hold_s = 300.0;
+        d.restart_period_s = Some(60);
+        let log = hb_line(30, 0) + &hb_line(90, 1) + &hb_line(210, 1);
+        let r = restart_verdict(&d, log, &[60.0, 240.0]);
+        assert!(r.pass, "{}", r.detail);
+        assert_eq!((r.observed, r.threshold), (1.0, 1.0));
+        assert!(
+            r.detail.contains("unjudgeable (within the final 120 s)") && r.detail.contains("240"),
+            "{}",
+            r.detail
+        );
+    }
+
+    #[test]
+    fn only_unjudgeable_restarts_with_a_due_period_fail() {
+        let mut d = hold_decl();
+        d.hold_s = 300.0;
+        d.restart_period_s = Some(240);
+        let r = restart_verdict(&d, hb_line(210, 0), &[240.0]);
+        assert!(!r.pass);
+        assert!(r.detail.contains("none happened"), "{}", r.detail);
+        assert!(r.detail.contains("unjudgeable"), "{}", r.detail);
+    }
+
+    #[test]
+    fn recovery_window_edge_is_inclusive() {
+        let at_edge = hb_line(7140, 7) + &hb_line(7320, 8);
+        let r = restart_verdict(&hold_decl(), at_edge, &[7200.0]);
+        assert!(r.pass, "{}", r.detail);
+        let past_edge = hb_line(7140, 7) + &hb_line(7321, 8);
+        let r = restart_verdict(&hold_decl(), past_edge, &[7200.0]);
+        assert!(!r.pass, "{}", r.detail);
+    }
+
+    #[test]
+    fn restart_on_a_leg_without_heartbeats_says_so() {
+        let v = hold_verdicts(
+            &hold_decl(),
+            &step_result(1, Axis::Hold, true, &[]),
+            &BTreeMap::new(),
+            &[RestartEvent {
+                elapsed_s: 7200.0,
+                role: "srt-0-recv".into(),
+            }],
+            256,
+            0.9,
+        );
+        let r = hb_verdict(&v, "peer_restart_recovery");
+        assert!(!r.pass);
+        assert!(
+            r.detail.contains("no heartbeats for leg srt-0"),
+            "{}",
+            r.detail
+        );
     }
 }
