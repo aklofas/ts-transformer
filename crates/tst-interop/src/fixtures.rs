@@ -18,37 +18,49 @@ pub enum AuSizeMode {
     /// The original tiny fixtures (tens of bytes per AU) — byte-
     /// identical to what [`video_au`] has always produced, and what the
     /// 157-cell interop matrix's expectations were validated against.
-    /// Stays the default everywhere except where a caller explicitly
-    /// opts in to `Realistic`.
     Compact,
     /// GOP-structured sizes matching a real encoder's output shape:
     /// keyframes tens of KB, inter frames single-digit KB, both varying
-    /// per frame (seeded from `frame_idx`, so the same frame is always
-    /// byte-identical across processes and replays). At the schedule's
-    /// 30 fps this lands the video elementary stream near ~1.7 Mb/s —
-    /// the soak's "true bandwidth" regime, exercising real PES/TS
-    /// packetization bursts (a keyframe spans hundreds of TS packets)
-    /// instead of the compact fixtures' one-or-two.
-    Realistic,
+    /// per frame (seeded from `frame_idx`). At 30 fps and `scale: 1`
+    /// this lands the video elementary stream near ~1.7 Mb/s — the
+    /// soak's regime. `scale` multiplies every drawn payload length, so
+    /// `scale: F` is ≈1.7 Mb/s × F — the stress harness's bitrate axis.
+    /// `scale` is bounded by [`MAX_AU_SCALE`]: the parser refuses more.
+    Realistic { scale: u32 },
 }
 
-/// Realistic-mode slice payload size bounds (bytes), drawn uniformly
-/// per frame. Keyframe ~28-52 KiB, inter ~2-10 KiB: at 30 fps / 30-frame
-/// GOPs that averages ~217 KB/s ≈ 1.7 Mb/s of elementary stream —
-/// representative of a modest HD gimbal feed, and comfortably under the
-/// demuxer's 4 MiB per-PID PES reassembly cap.
+impl AuSizeMode {
+    /// `Realistic { scale: 1 }` — the soak's shape, byte-identical to
+    /// the realistic mode before `scale` existed.
+    pub const REALISTIC: AuSizeMode = AuSizeMode::Realistic { scale: 1 };
+
+    /// `Realistic` with its scale replaced; `None` for `Compact`, whose
+    /// fixtures have no payload to scale (a caller passing `--au-scale`
+    /// with compact fixtures is a usage error, not a silent no-op).
+    pub fn with_scale(self, scale: u32) -> Option<AuSizeMode> {
+        match self {
+            AuSizeMode::Compact => None,
+            AuSizeMode::Realistic { .. } => Some(AuSizeMode::Realistic { scale }),
+        }
+    }
+}
+
+/// Realistic-mode slice payload size bounds (bytes) at scale 1, drawn
+/// uniformly per frame. Keyframe ~28-52 KiB, inter ~2-10 KiB: at 30 fps
+/// / 30-frame GOPs that averages ~217 KB/s ≈ 1.7 Mb/s of elementary
+/// stream, comfortably under the demuxer's 4 MiB per-PID PES cap.
 const REALISTIC_KEY_PAYLOAD: (usize, usize) = (28_672, 53_248);
 const REALISTIC_INTER_PAYLOAD: (usize, usize) = (2_048, 10_240);
 
-/// Deterministic per-frame slice payload for [`AuSizeMode::Realistic`]:
-/// length drawn from the bounds above, bytes drawn from a PRNG seeded
-/// by `frame_idx` alone (same frame → identical bytes, forever). Every
-/// byte is remapped to non-zero so the payload can never contain an
-/// Annex-B `00 00 01` sequence — it rides inside a single NAL, where a
-/// bogus start code would break the demuxer's AU splitting (real
-/// encoders solve this with emulation-prevention bytes; a fixture can
-/// simply never emit 0x00).
-fn realistic_slice_payload(frame_idx: u32, keyframe: bool) -> Vec<u8> {
+/// Largest `AuSizeMode::Realistic { scale }` the fixtures accept: the
+/// biggest scaled keyframe (`REALISTIC_KEY_PAYLOAD.1 × scale`) must stay
+/// under tst-core's default 4 MiB per-PID PES reassembly cap
+/// (`DEFAULT_PES_CAP_PER_PID`), or the receiver drops every keyframe and
+/// a "bitrate ceiling" would really be a demux cap. 4 MiB / 53 248 B =
+/// 78.77, so 78.
+pub const MAX_AU_SCALE: u32 = (4 * 1024 * 1024 / REALISTIC_KEY_PAYLOAD.1) as u32;
+
+fn realistic_slice_payload(frame_idx: u32, keyframe: bool, scale: u32) -> Vec<u8> {
     let mut rng = XorShift64::new(
         (frame_idx as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0x5EED_AB1E_F1E1_D000,
     );
@@ -57,7 +69,9 @@ fn realistic_slice_payload(frame_idx: u32, keyframe: bool) -> Vec<u8> {
     } else {
         REALISTIC_INTER_PAYLOAD
     };
-    let len = lo + (rng.next_u64() as usize) % (hi - lo + 1);
+    // Draw the unscaled length first so the PRNG sequence (and therefore
+    // every byte) is identical across scales; only the length grows.
+    let len = (lo + (rng.next_u64() as usize) % (hi - lo + 1)) * scale as usize;
     let mut buf = vec![0u8; len];
     for chunk in buf.chunks_mut(8) {
         let mut v = rng.next_u64();
@@ -89,7 +103,7 @@ pub fn video_au_sized(codec: VideoCodec, frame_idx: u32, mode: AuSizeMode) -> (V
     let keyframe = frame_idx % KEYFRAME_INTERVAL == 0;
     let extra = match mode {
         AuSizeMode::Compact => Vec::new(),
-        AuSizeMode::Realistic => realistic_slice_payload(frame_idx, keyframe),
+        AuSizeMode::Realistic { scale } => realistic_slice_payload(frame_idx, keyframe, scale),
     };
     let bytes = match codec {
         VideoCodec::H264 => h264_au(frame_idx, keyframe, &extra),
@@ -1018,7 +1032,7 @@ mod tests {
             VideoCodec::H266,
             VideoCodec::Av1,
         ] {
-            let (key, is_key) = video_au_sized(codec, 0, AuSizeMode::Realistic);
+            let (key, is_key) = video_au_sized(codec, 0, AuSizeMode::REALISTIC);
             assert!(is_key, "{codec:?} frame 0 must be a keyframe");
             assert!(
                 key.len() >= 20_000,
@@ -1027,7 +1041,7 @@ mod tests {
             );
             let mut inter_lens = std::collections::HashSet::new();
             for idx in 1..30u32 {
-                let (inter, k) = video_au_sized(codec, idx, AuSizeMode::Realistic);
+                let (inter, k) = video_au_sized(codec, idx, AuSizeMode::REALISTIC);
                 assert!(!k);
                 assert!(
                     inter.len() >= 1_000 && inter.len() < key.len(),
@@ -1041,7 +1055,7 @@ mod tests {
                 "{codec:?}: inter AU sizes must vary across a GOP, got {} distinct",
                 inter_lens.len()
             );
-            let (key2, _) = video_au_sized(codec, 0, AuSizeMode::Realistic);
+            let (key2, _) = video_au_sized(codec, 0, AuSizeMode::REALISTIC);
             assert_eq!(
                 key, key2,
                 "{codec:?}: same frame_idx must be byte-identical"
@@ -1082,14 +1096,14 @@ mod tests {
         let start_code_count =
             |au: &[u8]| au.windows(3).filter(|w| w == &[0x00, 0x00, 0x01]).count();
         // H.264 keyframe = SPS + PPS + IDR = 3 NALs; inter = 1 NAL.
-        let (key, _) = video_au_sized(VideoCodec::H264, 0, AuSizeMode::Realistic);
+        let (key, _) = video_au_sized(VideoCodec::H264, 0, AuSizeMode::REALISTIC);
         assert_eq!(start_code_count(&key), 3);
-        let (inter, _) = video_au_sized(VideoCodec::H264, 1, AuSizeMode::Realistic);
+        let (inter, _) = video_au_sized(VideoCodec::H264, 1, AuSizeMode::REALISTIC);
         assert_eq!(start_code_count(&inter), 1);
         // H.265/H.266 keyframes carry their parameter sets + slice.
-        let (key265, _) = video_au_sized(VideoCodec::H265, 0, AuSizeMode::Realistic);
+        let (key265, _) = video_au_sized(VideoCodec::H265, 0, AuSizeMode::REALISTIC);
         assert_eq!(start_code_count(&key265), 1); // single-NAL keyframe shape
-        let (key266, _) = video_au_sized(VideoCodec::H266, 0, AuSizeMode::Realistic);
+        let (key266, _) = video_au_sized(VideoCodec::H266, 0, AuSizeMode::REALISTIC);
         assert_eq!(start_code_count(&key266), 4); // VPS + SPS + PPS + IDR
     }
 
@@ -1099,7 +1113,7 @@ mod tests {
     #[test]
     fn realistic_av1_au_walks_cleanly_by_leb128_obu_sizes() {
         for idx in [0u32, 1, 15] {
-            let (au, _) = video_au_sized(VideoCodec::Av1, idx, AuSizeMode::Realistic);
+            let (au, _) = video_au_sized(VideoCodec::Av1, idx, AuSizeMode::REALISTIC);
             let mut pos = 0usize;
             let mut obus = 0usize;
             while pos < au.len() {
@@ -1142,5 +1156,53 @@ mod tests {
         assert_eq!(frame.sample_rate_hz, 48_000);
         assert_eq!(frame.channel_configuration, 2);
         assert!(frames.next().is_none(), "buffer holds exactly one frame");
+    }
+
+    /// Scale 1 must be byte-identical to the unscaled realistic mode:
+    /// every existing soak and interop artifact was produced at scale 1.
+    #[test]
+    fn realistic_scale_one_is_byte_identical_to_realistic() {
+        for idx in [0u32, 1, 17, 30, 59] {
+            let (a, _) = video_au_sized(VideoCodec::H264, idx, AuSizeMode::REALISTIC);
+            let (b, _) = video_au_sized(VideoCodec::H264, idx, AuSizeMode::Realistic { scale: 1 });
+            assert_eq!(a, b, "frame {idx}");
+        }
+    }
+
+    /// Scale F multiplies the drawn payload length exactly, so a step's
+    /// declared bitrate (1.7 Mb/s × F) is what the sender actually emits.
+    #[test]
+    fn realistic_scale_multiplies_payload_length() {
+        let (one, _) = video_au_sized(VideoCodec::H264, 0, AuSizeMode::Realistic { scale: 1 });
+        let (four, _) = video_au_sized(VideoCodec::H264, 0, AuSizeMode::Realistic { scale: 4 });
+        let (compact, _) = video_au_sized(VideoCodec::H264, 0, AuSizeMode::Compact);
+        let fixed = compact.len();
+        assert_eq!(four.len() - fixed, 4 * (one.len() - fixed));
+        let (inter1, _) = video_au_sized(VideoCodec::H264, 1, AuSizeMode::Realistic { scale: 1 });
+        let (inter4, _) = video_au_sized(VideoCodec::H264, 1, AuSizeMode::Realistic { scale: 4 });
+        let (cinter, _) = video_au_sized(VideoCodec::H264, 1, AuSizeMode::Compact);
+        assert_eq!(
+            inter4.len() - cinter.len(),
+            4 * (inter1.len() - cinter.len())
+        );
+    }
+
+    /// The largest keyframe at MAX_AU_SCALE must stay under the
+    /// demuxer's default 4 MiB per-PID PES cap, and one scale step more
+    /// must not — that is the whole reason the constant exists.
+    #[test]
+    fn max_au_scale_sits_just_under_the_pes_cap() {
+        const PES_CAP: usize = 4 * 1024 * 1024;
+        assert!(REALISTIC_KEY_PAYLOAD.1 * MAX_AU_SCALE as usize <= PES_CAP);
+        assert!(REALISTIC_KEY_PAYLOAD.1 * (MAX_AU_SCALE as usize + 1) > PES_CAP);
+    }
+
+    #[test]
+    fn with_scale_refuses_compact_and_accepts_realistic() {
+        assert_eq!(AuSizeMode::Compact.with_scale(4), None);
+        assert_eq!(
+            AuSizeMode::REALISTIC.with_scale(4),
+            Some(AuSizeMode::Realistic { scale: 4 })
+        );
     }
 }

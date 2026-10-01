@@ -166,7 +166,7 @@ fn every_profile_roundtrips_at_realistic_sizes() {
             std::process::id()
         ));
 
-        let result = r#gen::run(p, seconds, &path, KlvSet::Compact, 0, AuSizeMode::Realistic)
+        let result = r#gen::run(p, seconds, &path, KlvSet::Compact, 0, AuSizeMode::REALISTIC)
             .and_then(|()| verify::verify_file(&path, p, seconds));
         let _ = std::fs::remove_file(&path);
 

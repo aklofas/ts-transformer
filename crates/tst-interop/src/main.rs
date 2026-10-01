@@ -82,7 +82,7 @@ fn parse_klv_set(raw: &str, context: &str) -> KlvSet {
 fn parse_au_sizes(raw: &str, context: &str) -> AuSizeMode {
     match raw {
         "compact" => AuSizeMode::Compact,
-        "realistic" => AuSizeMode::Realistic,
+        "realistic" => AuSizeMode::REALISTIC,
         other => {
             eprintln!("{context}: --au-sizes must be 'compact' or 'realistic', got '{other}'");
             std::process::exit(2);

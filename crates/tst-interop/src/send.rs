@@ -45,8 +45,8 @@ use crate::verify;
 ///
 /// `au_sizes` picks the video AU size regime — `Compact` (the
 /// original tiny fixtures every interop-matrix cell uses) or
-/// `Realistic` (GOP-structured multi-KB AUs, the soak's true-bandwidth
-/// mode); see [`AuSizeMode`].
+/// `Realistic { scale }` (GOP-structured multi-KB AUs, the soak's
+/// true-bandwidth mode × `scale`); see [`AuSizeMode`].
 ///
 /// `klv`/`klv_seed` pick the ST 0601 record factory — see `gen::run`'s
 /// doc comment; `Compact` is the default and keeps every interop-matrix
