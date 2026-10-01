@@ -158,6 +158,84 @@ pub fn parse_host_csv(text: &str) -> Result<Vec<HostSample>, String> {
         .collect()
 }
 
+/// One `send: heartbeat ...` line a `tst-interop send` prints every
+/// 60 s. `reconnects`/`gap_len` are printed only by a managed sender.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Heartbeat {
+    pub elapsed_s: u64,
+    pub reconnects: Option<u64>,
+    pub gap_len: Option<u64>,
+}
+
+/// Every heartbeat in a send log. Any other line (start-up chatter,
+/// warnings) is ignored, as is a heartbeat line without a numeric
+/// `elapsed_s` — a send log is free-form, not a declared artifact.
+pub fn parse_send_heartbeats(log: &str) -> Vec<Heartbeat> {
+    log.lines()
+        .filter_map(|line| line.strip_prefix("send: heartbeat "))
+        .filter_map(|rest| {
+            let mut elapsed_s = None;
+            let mut reconnects = None;
+            let mut gap_len = None;
+            for (k, v) in rest.split_whitespace().filter_map(|kv| kv.split_once('=')) {
+                match k {
+                    "elapsed_s" => elapsed_s = v.parse().ok(),
+                    "reconnects" => reconnects = v.parse().ok(),
+                    "gap_len" => gap_len = v.parse().ok(),
+                    _ => {}
+                }
+            }
+            Some(Heartbeat {
+                elapsed_s: elapsed_s?,
+                reconnects,
+                gap_len,
+            })
+        })
+        .collect()
+}
+
+/// One line of the hold's `restart-events.log`, written by `stress.sh`
+/// each time it kills and relaunches a receiver.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RestartEvent {
+    pub elapsed_s: f64,
+    /// `<leg>-recv`.
+    pub role: String,
+}
+
+/// Parse `<elapsed_s> RESTART role=<leg>-recv old_pid=N new_pid=N`
+/// lines. Blank lines are skipped; anything else malformed is an `Err`
+/// naming the line — this file is the evidence the restarts happened.
+pub fn parse_restart_events(text: &str) -> Result<Vec<RestartEvent>, String> {
+    let mut out = Vec::new();
+    for (i, line) in text.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let bad = || format!("restart-events.log line {}: malformed: {line:?}", i + 1);
+        let f: Vec<&str> = line.split_whitespace().collect();
+        let [elapsed, "RESTART", role, old_pid, new_pid] = f.as_slice() else {
+            return Err(bad());
+        };
+        let elapsed_s: f64 = elapsed.parse().map_err(|_| bad())?;
+        let role = role.strip_prefix("role=").ok_or_else(bad)?;
+        for (field, key) in [(old_pid, "old_pid="), (new_pid, "new_pid=")] {
+            field
+                .strip_prefix(key)
+                .and_then(|v| v.parse::<u64>().ok())
+                .ok_or_else(bad)?;
+        }
+        if role.is_empty() || !elapsed_s.is_finite() {
+            return Err(bad());
+        }
+        out.push(RestartEvent {
+            elapsed_s,
+            role: role.to_string(),
+        });
+    }
+    Ok(out)
+}
+
 /// Which axis of the sweep a step belongs to — the ceiling rule walks
 /// each axis separately.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -915,6 +993,232 @@ pub struct HoldResults {
     pub step: StepResults,
     pub hold_verdicts: Vec<StepVerdict>,
     pub pass: bool,
+}
+
+/// How long after a receiver restart the sender has to show a fresh
+/// reconnect: the 60 s recovery budget plus one 60 s heartbeat cadence
+/// (the reconnect may land just after a heartbeat).
+pub const RESTART_RECOVERY_WINDOW_S: u64 = 120;
+
+/// The hold-only verdicts, in order: `reconnect_count`,
+/// `peer_restart_recovery`, `queue_depth_p99`. `send_logs` maps each
+/// MANAGED stream's leg to its send log text.
+pub fn hold_verdicts(
+    decl: &StepDeclaration,
+    step: &StepResults,
+    send_logs: &BTreeMap<String, String>,
+    restarts: &[RestartEvent],
+    gap_capacity: u64,
+    queue_depth_fraction: f64,
+) -> Vec<StepVerdict> {
+    let heartbeats: BTreeMap<&str, Vec<Heartbeat>> = send_logs
+        .iter()
+        .map(|(leg, log)| (leg.as_str(), parse_send_heartbeats(log)))
+        .collect();
+    vec![
+        verdict_reconnect_count(decl, &step.per_stream),
+        verdict_peer_restart_recovery(decl, &heartbeats, restarts),
+        verdict_queue_depth_p99(&heartbeats, gap_capacity, queue_depth_fraction),
+    ]
+}
+
+/// Mirrors soak: each SRT receiver must rebuild at least once per
+/// outage window, less one (the last window may straddle the end).
+fn verdict_reconnect_count(decl: &StepDeclaration, per_stream: &[StreamFigures]) -> StepVerdict {
+    let srt: Vec<&StreamFigures> = per_stream
+        .iter()
+        .filter(|s| s.leg.starts_with("srt-"))
+        .collect();
+    let name = "reconnect_count".to_string();
+    let period = match decl.outage_period_s {
+        Some(p) if p > 0 && !srt.is_empty() => p,
+        _ => {
+            return StepVerdict {
+                name,
+                pass: true,
+                observed: 0.0,
+                threshold: 0.0,
+                detail: "not applicable: no outage schedule or no SRT stream".into(),
+            };
+        }
+    };
+    let windows = (decl.hold_s / period as f64).floor() as u64;
+    let required = srt.len() as u64 * windows.saturating_sub(1);
+    let observed: u64 = srt.iter().map(|s| s.reconnects.unwrap_or(0)).sum();
+    StepVerdict {
+        name,
+        pass: observed >= required,
+        observed: observed as f64,
+        threshold: required as f64,
+        detail: format!(
+            "{} SRT stream(s) × ({windows} outage windows − 1) = {required} reconnects required, {observed} observed",
+            srt.len()
+        ),
+    }
+}
+
+/// Every receiver restart must be followed, within
+/// `RESTART_RECOVERY_WINDOW_S`, by a sender heartbeat whose
+/// `reconnects` exceeds the last value before the restart.
+fn verdict_peer_restart_recovery(
+    decl: &StepDeclaration,
+    heartbeats: &BTreeMap<&str, Vec<Heartbeat>>,
+    restarts: &[RestartEvent],
+) -> StepVerdict {
+    let name = "peer_restart_recovery".to_string();
+    if restarts.is_empty() {
+        let due = decl
+            .restart_period_s
+            .is_some_and(|p| decl.hold_s >= p as f64);
+        return StepVerdict {
+            name,
+            pass: !due,
+            observed: 0.0,
+            threshold: 0.0,
+            detail: if due {
+                "restarts were declared but none happened".into()
+            } else {
+                "not applicable: no restart was due inside the hold".into()
+            },
+        };
+    }
+    let window = RESTART_RECOVERY_WINDOW_S as f64;
+    let mut unrecovered = Vec::new();
+    for ev in restarts {
+        let leg = ev.role.strip_suffix("-recv").unwrap_or(&ev.role);
+        let hbs = heartbeats.get(leg).map(Vec::as_slice).unwrap_or(&[]);
+        let before = hbs
+            .iter()
+            .filter(|h| h.elapsed_s as f64 <= ev.elapsed_s)
+            .next_back()
+            .and_then(|h| h.reconnects)
+            .unwrap_or(0);
+        let recovered = hbs.iter().any(|h| {
+            let t = h.elapsed_s as f64;
+            t > ev.elapsed_s && t <= ev.elapsed_s + window && h.reconnects.unwrap_or(0) > before
+        });
+        if !recovered {
+            unrecovered.push(format!("{}@{}s", ev.role, ev.elapsed_s));
+        }
+    }
+    let recovered = restarts.len() - unrecovered.len();
+    StepVerdict {
+        name,
+        pass: unrecovered.is_empty(),
+        observed: recovered as f64,
+        threshold: restarts.len() as f64,
+        detail: if unrecovered.is_empty() {
+            format!(
+                "all {} restart(s) recovered within {RESTART_RECOVERY_WINDOW_S} s",
+                restarts.len()
+            )
+        } else {
+            format!(
+                "not recovered within {RESTART_RECOVERY_WINDOW_S} s: {}",
+                unrecovered.join(", ")
+            )
+        },
+    }
+}
+
+/// Nearest-rank p99 of `gap_len` pooled over every managed stream's
+/// heartbeats must stay at or under `fraction × gap_capacity`.
+fn verdict_queue_depth_p99(
+    heartbeats: &BTreeMap<&str, Vec<Heartbeat>>,
+    gap_capacity: u64,
+    fraction: f64,
+) -> StepVerdict {
+    let mut gaps: Vec<u64> = heartbeats
+        .values()
+        .flatten()
+        .filter_map(|h| h.gap_len)
+        .collect();
+    let threshold = fraction * gap_capacity as f64;
+    match p99(&mut gaps) {
+        Some(v) => StepVerdict {
+            name: "queue_depth_p99".into(),
+            pass: v as f64 <= threshold,
+            observed: v as f64,
+            threshold,
+            detail: format!(
+                "p99 gap_len {v} over {} heartbeat(s) vs {fraction} × capacity {gap_capacity}",
+                gaps.len()
+            ),
+        },
+        None => StepVerdict {
+            name: "queue_depth_p99".into(),
+            pass: false,
+            observed: 0.0,
+            threshold,
+            detail: "no managed heartbeat found".into(),
+        },
+    }
+}
+
+/// Judge the hold dir: `run_step` over it, then the hold-only verdicts
+/// from `hold-config.json`, `restart-events.log` (absent = no restarts)
+/// and `logs/<leg>-send.log` for every stream whose `send-report.json`
+/// carries `managed_send`. Writes `hold-results.json` on success.
+pub fn run_hold(
+    hold_dir: &std::path::Path,
+    thresholds: StepThresholds,
+) -> Result<HoldResults, String> {
+    let step = run_step(hold_dir, thresholds.clone())?;
+    let decl: HoldDeclaration = read_json(&hold_dir.join("hold-config.json"))?;
+    let restart_path = hold_dir.join("restart-events.log");
+    let restarts = if restart_path.exists() {
+        parse_restart_events(&read_to_string(&restart_path)?)?
+    } else {
+        Vec::new()
+    };
+    let mut send_logs = BTreeMap::new();
+    let mut capacities = Vec::new();
+    for s in &step.per_stream {
+        let send: CellMetrics = read_json(
+            &hold_dir
+                .join("streams")
+                .join(s.index.to_string())
+                .join("send-report.json"),
+        )?;
+        if let Some(m) = send.managed_send {
+            capacities.push(m.gap_buffer_capacity);
+            let log = read_to_string(&hold_dir.join("logs").join(format!("{}-send.log", s.leg)))?;
+            send_logs.insert(s.leg.clone(), log);
+        }
+    }
+    let gap_capacity = capacities.iter().copied().min().unwrap_or(0);
+    let mut hold_verdicts = hold_verdicts(
+        &step.decl,
+        &step,
+        &send_logs,
+        &restarts,
+        gap_capacity,
+        thresholds.queue_depth_fraction,
+    );
+    if capacities.iter().any(|&c| c != gap_capacity) {
+        if let Some(q) = hold_verdicts
+            .iter_mut()
+            .find(|v| v.name == "queue_depth_p99")
+        {
+            q.detail.push_str(&format!(
+                "; managed streams declared differing gap capacities {capacities:?}, judged against the minimum"
+            ));
+        }
+    }
+    let pass = step.pass && hold_verdicts.iter().all(|v| v.pass);
+    let results = HoldResults {
+        decl,
+        step,
+        hold_verdicts,
+        pass,
+    };
+    let out = hold_dir.join("hold-results.json");
+    std::fs::write(
+        &out,
+        serde_json::to_string_pretty(&results).expect("serializes"),
+    )
+    .map_err(|e| format!("write {}: {e}", out.display()))?;
+    Ok(results)
 }
 
 /// The whole stress harness's verdict: one `AxisResult` per
@@ -1835,5 +2139,361 @@ mod tests {
         );
         assert!(out.join("stress-results.json").exists());
         std::fs::remove_dir_all(&out).unwrap();
+    }
+
+    const LOG: &str = "\
+send: heartbeat elapsed_s=60 video_aus=1800 keyframes=60 klv_records=600 audio_frames=0 wire_bytes=1 reconnects=0 gap_len=3
+some other line
+send: heartbeat elapsed_s=120 video_aus=3600 keyframes=120 klv_records=1200 audio_frames=0 wire_bytes=2 reconnects=1 gap_len=250
+send: heartbeat elapsed_s=180 video_aus=5400 keyframes=180 klv_records=1800 audio_frames=0 wire_bytes=3 reconnects=1 gap_len=0
+";
+
+    #[test]
+    fn heartbeats_parse_only_heartbeat_lines() {
+        let hb = parse_send_heartbeats(LOG);
+        assert_eq!(hb.len(), 3);
+        assert_eq!(hb[1].reconnects, Some(1));
+        assert_eq!(hb[1].gap_len, Some(250));
+        let legacy = parse_send_heartbeats(
+            "send: heartbeat elapsed_s=60 video_aus=1 keyframes=1 klv_records=1 audio_frames=0 wire_bytes=1\n",
+        );
+        assert_eq!(legacy[0].reconnects, None);
+        assert_eq!(legacy[0].gap_len, None);
+    }
+
+    #[test]
+    fn restart_events_parse() {
+        let ev = parse_restart_events(
+            "7200 RESTART role=srt-0-recv old_pid=10 new_pid=20\n14400.5 RESTART role=srt-0-recv old_pid=20 new_pid=30\n",
+        )
+        .unwrap();
+        assert_eq!(ev.len(), 2);
+        assert_eq!(ev[1].role, "srt-0-recv");
+        assert_eq!(ev[1].elapsed_s, 14400.5);
+        let err = parse_restart_events("garbage\n").unwrap_err();
+        assert!(err.contains("garbage"), "{err}");
+    }
+
+    fn hold_decl() -> StepDeclaration {
+        let mut d = decl(2, 1);
+        d.axis = Axis::Hold;
+        d.hold_s = 86_400.0;
+        d.outage_period_s = Some(900);
+        d.outage_dur_s = Some(30);
+        d.restart_period_s = Some(7200);
+        d
+    }
+
+    fn hb_verdict<'a>(v: &'a [StepVerdict], name: &str) -> &'a StepVerdict {
+        v.iter()
+            .find(|v| v.name == name)
+            .unwrap_or_else(|| panic!("no verdict {name}"))
+    }
+
+    #[test]
+    fn restart_recovered_within_window_passes() {
+        let log = "send: heartbeat elapsed_s=7140 video_aus=1 keyframes=1 klv_records=1 audio_frames=0 wire_bytes=1 reconnects=7 gap_len=0\n\
+                   send: heartbeat elapsed_s=7260 video_aus=1 keyframes=1 klv_records=1 audio_frames=0 wire_bytes=1 reconnects=8 gap_len=10\n";
+        let logs = [("srt-0".to_string(), log.to_string())].into();
+        let restarts = vec![RestartEvent {
+            elapsed_s: 7200.0,
+            role: "srt-0-recv".into(),
+        }];
+        let v = hold_verdicts(
+            &hold_decl(),
+            &step_result(2, Axis::Hold, true, &[]),
+            &logs,
+            &restarts,
+            256,
+            0.9,
+        );
+        let r = hb_verdict(&v, "peer_restart_recovery");
+        assert!(r.pass, "{}", r.detail);
+        assert_eq!((r.observed, r.threshold), (1.0, 1.0));
+    }
+
+    #[test]
+    fn restart_without_recovery_heartbeat_fails() {
+        let log = "send: heartbeat elapsed_s=7140 video_aus=1 keyframes=1 klv_records=1 audio_frames=0 wire_bytes=1 reconnects=7 gap_len=0\n";
+        let logs = [("srt-0".to_string(), log.to_string())].into();
+        let restarts = vec![RestartEvent {
+            elapsed_s: 7200.0,
+            role: "srt-0-recv".into(),
+        }];
+        let v = hold_verdicts(
+            &hold_decl(),
+            &step_result(2, Axis::Hold, true, &[]),
+            &logs,
+            &restarts,
+            256,
+            0.9,
+        );
+        let r = hb_verdict(&v, "peer_restart_recovery");
+        assert!(!r.pass);
+        assert!(r.detail.contains("7200"), "{}", r.detail);
+    }
+
+    #[test]
+    fn recovery_heartbeat_after_the_window_does_not_count() {
+        // reconnects rises only at 7200 + 180 s: outside the 120 s window.
+        let log = "send: heartbeat elapsed_s=7140 video_aus=1 keyframes=1 klv_records=1 audio_frames=0 wire_bytes=1 reconnects=7 gap_len=0\n\
+                   send: heartbeat elapsed_s=7260 video_aus=1 keyframes=1 klv_records=1 audio_frames=0 wire_bytes=1 reconnects=7 gap_len=0\n\
+                   send: heartbeat elapsed_s=7380 video_aus=1 keyframes=1 klv_records=1 audio_frames=0 wire_bytes=1 reconnects=8 gap_len=0\n";
+        let logs = [("srt-0".to_string(), log.to_string())].into();
+        let restarts = vec![RestartEvent {
+            elapsed_s: 7200.0,
+            role: "srt-0-recv".into(),
+        }];
+        let v = hold_verdicts(
+            &hold_decl(),
+            &step_result(2, Axis::Hold, true, &[]),
+            &logs,
+            &restarts,
+            256,
+            0.9,
+        );
+        assert!(!hb_verdict(&v, "peer_restart_recovery").pass);
+    }
+
+    #[test]
+    fn declared_restarts_that_never_happened_fail() {
+        let v = hold_verdicts(
+            &hold_decl(),
+            &step_result(2, Axis::Hold, true, &[]),
+            &BTreeMap::new(),
+            &[],
+            256,
+            0.9,
+        );
+        let r = hb_verdict(&v, "peer_restart_recovery");
+        assert!(!r.pass);
+        assert!(r.detail.contains("none happened"), "{}", r.detail);
+    }
+
+    #[test]
+    fn undeclared_restarts_are_not_applicable() {
+        let mut d = hold_decl();
+        d.restart_period_s = None;
+        let v = hold_verdicts(
+            &d,
+            &step_result(2, Axis::Hold, true, &[]),
+            &BTreeMap::new(),
+            &[],
+            256,
+            0.9,
+        );
+        let r = hb_verdict(&v, "peer_restart_recovery");
+        assert!(r.pass, "{}", r.detail);
+        assert!(r.detail.contains("not applicable"), "{}", r.detail);
+    }
+
+    #[test]
+    fn queue_depth_p99_uses_nearest_rank() {
+        // 98 heartbeats at gap 0 and two at 255: p99 (nearest rank,
+        // n=100 → rank 99) lands on the second-highest value, 255 →
+        // fail against 0.9 × 256 = 230.4. With only ONE at 255, rank 99
+        // would land on 0 and pass.
+        let mut log = String::new();
+        for i in 0..100u64 {
+            let g = if i >= 98 { 255 } else { 0 };
+            log.push_str(&format!(
+                "send: heartbeat elapsed_s={} video_aus=1 keyframes=1 klv_records=1 audio_frames=0 wire_bytes=1 reconnects=0 gap_len={g}\n",
+                60 * (i + 1)
+            ));
+        }
+        let logs = [("srt-0".to_string(), log)].into();
+        let v = hold_verdicts(
+            &hold_decl(),
+            &step_result(2, Axis::Hold, true, &[]),
+            &logs,
+            &[RestartEvent {
+                elapsed_s: 1.0,
+                role: "x-recv".into(),
+            }],
+            256,
+            0.9,
+        );
+        let q = hb_verdict(&v, "queue_depth_p99");
+        assert!(!q.pass);
+        assert_eq!(q.observed, 255.0);
+        assert!((q.threshold - 230.4).abs() < 0.01);
+    }
+
+    #[test]
+    fn queue_depth_without_managed_heartbeats_fails() {
+        let v = hold_verdicts(
+            &hold_decl(),
+            &step_result(2, Axis::Hold, true, &[]),
+            &BTreeMap::new(),
+            &[],
+            256,
+            0.9,
+        );
+        let q = hb_verdict(&v, "queue_depth_p99");
+        assert!(!q.pass);
+        assert!(
+            q.detail.contains("no managed heartbeat found"),
+            "{}",
+            q.detail
+        );
+    }
+
+    fn figures(leg: &str, reconnects: Option<u64>) -> StreamFigures {
+        StreamFigures {
+            index: 0,
+            leg: leg.into(),
+            cpu_seconds: BTreeMap::new(),
+            rss_kb_p99: BTreeMap::new(),
+            threads_max: BTreeMap::new(),
+            fds_max: BTreeMap::new(),
+            recv_video_aus: 0,
+            send_video_aus: 0,
+            wire_mbps: 0.0,
+            reconnects,
+            proxy_forwarded: None,
+            proxy_dropped: None,
+        }
+    }
+
+    #[test]
+    fn reconnect_count_counts_srt_streams_only() {
+        // 86_400 / 900 = 96 windows; two SRT streams need ≥ 2 × 95 = 190.
+        let mut step = step_result(3, Axis::Hold, true, &[]);
+        step.per_stream = vec![
+            figures("srt-0", Some(95)),
+            figures("srt-1", Some(95)),
+            figures("rist-0", Some(0)),
+        ];
+        let v = hold_verdicts(&hold_decl(), &step, &BTreeMap::new(), &[], 256, 0.9);
+        let r = hb_verdict(&v, "reconnect_count");
+        assert!(r.pass, "{}", r.detail);
+        assert_eq!((r.observed, r.threshold), (190.0, 190.0));
+
+        step.per_stream[1].reconnects = Some(94);
+        let v = hold_verdicts(&hold_decl(), &step, &BTreeMap::new(), &[], 256, 0.9);
+        assert!(!hb_verdict(&v, "reconnect_count").pass);
+
+        step.per_stream[1].reconnects = None;
+        let v = hold_verdicts(&hold_decl(), &step, &BTreeMap::new(), &[], 256, 0.9);
+        assert_eq!(hb_verdict(&v, "reconnect_count").observed, 95.0);
+    }
+
+    #[test]
+    fn reconnect_count_without_outages_is_not_applicable() {
+        let mut d = hold_decl();
+        d.outage_period_s = None;
+        let mut step = step_result(1, Axis::Hold, true, &[]);
+        step.per_stream = vec![figures("srt-0", None)];
+        let v = hold_verdicts(&d, &step, &BTreeMap::new(), &[], 256, 0.9);
+        let r = hb_verdict(&v, "reconnect_count");
+        assert!(r.pass);
+        assert!(r.detail.contains("not applicable"), "{}", r.detail);
+    }
+
+    /// A healthy 1-stream hold dir: `write_healthy_step` plus the
+    /// hold-only artifacts. The step keeps its 600 s window (the step
+    /// verdicts are calibrated to it); `config.json` gains the hold axis
+    /// and a declared restart period, with no outage schedule.
+    fn write_healthy_hold(dir: &std::path::Path) {
+        write_healthy_step(dir, 1);
+        let mut d: StepDeclaration =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("config.json")).unwrap())
+                .unwrap();
+        d.axis = Axis::Hold;
+        d.outage_period_s = None;
+        d.restart_period_s = Some(7200);
+        write(dir, "config.json", &serde_json::to_string(&d).unwrap());
+        let hold_decl = HoldDeclaration {
+            n_hold: [("srt".to_string(), 1)].into(),
+            ceilings_declared: [("srt".to_string(), 2)].into(),
+            cpu_scale_factor: 1.0,
+        };
+        write(
+            dir,
+            "hold-config.json",
+            &serde_json::to_string(&hold_decl).unwrap(),
+        );
+        write(
+            dir,
+            "restart-events.log",
+            "7200 RESTART role=srt-0-recv old_pid=10 new_pid=20\n",
+        );
+        write(
+            dir,
+            "logs/srt-0-send.log",
+            "send: starting\n\
+             send: heartbeat elapsed_s=7140 video_aus=1 keyframes=1 klv_records=1 audio_frames=0 wire_bytes=1 reconnects=7 gap_len=0\n\
+             send: heartbeat elapsed_s=7260 video_aus=1 keyframes=1 klv_records=1 audio_frames=0 wire_bytes=1 reconnects=8 gap_len=10\n",
+        );
+        let mut send = cell_metrics(18_000);
+        send.managed_send = Some(crate::report_types::ManagedSendStats {
+            gap_buffer_capacity: 256,
+            ..Default::default()
+        });
+        write(
+            dir,
+            "streams/0/send-report.json",
+            &serde_json::to_string(&send).unwrap(),
+        );
+    }
+
+    #[test]
+    fn run_hold_reads_a_hold_dir_and_writes_results() {
+        let dir = temp_step_dir("hold");
+        write_healthy_hold(&dir);
+        let r = run_hold(&dir, thresholds()).unwrap();
+        let names: Vec<&str> = r.hold_verdicts.iter().map(|v| v.name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "reconnect_count",
+                "peer_restart_recovery",
+                "queue_depth_p99"
+            ]
+        );
+        assert!(r.pass, "{:?}", r.hold_verdicts);
+        let q = hb_verdict(&r.hold_verdicts, "queue_depth_p99");
+        assert_eq!(q.observed, 10.0);
+        assert!((q.threshold - 230.4).abs() < 0.01);
+        let written: HoldResults =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("hold-results.json")).unwrap())
+                .unwrap();
+        assert!(written.pass);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn run_hold_without_restart_log_sees_zero_events() {
+        let dir = temp_step_dir("hold-nolog");
+        write_healthy_hold(&dir);
+        std::fs::remove_file(dir.join("restart-events.log")).unwrap();
+        let r = run_hold(&dir, thresholds()).unwrap();
+        let v = hb_verdict(&r.hold_verdicts, "peer_restart_recovery");
+        // hold_s 600 < restart_period_s 7200: no restart was due.
+        assert!(v.pass, "{}", v.detail);
+        assert_eq!(v.threshold, 0.0);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn run_hold_managed_stream_without_send_log_is_an_error() {
+        let dir = temp_step_dir("hold-nosendlog");
+        write_healthy_hold(&dir);
+        std::fs::remove_file(dir.join("logs/srt-0-send.log")).unwrap();
+        let err = run_hold(&dir, thresholds()).unwrap_err();
+        assert!(err.contains("logs/srt-0-send.log"), "{err}");
+        assert!(!dir.join("hold-results.json").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn run_hold_malformed_restart_line_is_an_error() {
+        let dir = temp_step_dir("hold-badrestart");
+        write_healthy_hold(&dir);
+        write(&dir, "restart-events.log", "7200 RESTART role=srt-0-recv\n");
+        let err = run_hold(&dir, thresholds()).unwrap_err();
+        assert!(err.contains("restart-events.log line 1"), "{err}");
+        assert!(!dir.join("hold-results.json").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
