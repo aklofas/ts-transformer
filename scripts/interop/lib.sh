@@ -477,3 +477,210 @@ emit_skipped() {
 declare_cell() {
   printf '%s\t%s\n' "$1" "$PROFILE" >>"$INVENTORY_TSV"
 }
+
+# ---------------------------------------------------------------------
+# Long-run helpers (soak.sh + stress.sh)
+# ---------------------------------------------------------------------
+#
+# Moved out of soak.sh so stress.sh launches and samples its processes
+# the same way. Every helper takes its state as arguments; the one
+# global is PIDS (record_pid_to writes it), which the CALLER declares
+# with `declare -A PIDS`.
+
+# canon_int <value> <max> <flag-name> -> canonical value on stdout.
+# Canonicalizes a user-supplied digit string WITHOUT bash arithmetic:
+# strips leading zeros as a STRING, then compares by length and
+# lexicographically (exact for digit strings of any size). The caller
+# has already checked `^[0-9]+$`. See soak.sh's argument parsing for
+# the two hazards (octal leading zeros, signed 64-bit wrap) this avoids.
+canon_int() {
+  local v=$1 max=$2 flag=$3
+  v=$(printf '%s' "$v" | sed -E 's/^0+([0-9])/\1/')
+  if [[ ${#v} -gt ${#max} ]] || { [[ ${#v} -eq ${#max} ]] && [[ "$v" > "$max" ]]; }; then
+    echo "${0##*/}: $flag must be <= $max, got: $1" >&2
+    return 2
+  fi
+  printf '%s' "$v"
+}
+
+# event_to <events_log> <text...> — appends "<utc> text" to the
+# timestamped lifecycle event log. (soak.sh wraps it as `event <text...>`.)
+event_to() {
+  local log=$1
+  shift
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*" >>"$log"
+}
+
+# record_pid_to <pids_dir> <events_log> <role> <pid> — writes both the
+# caller's PIDS[role] entry and the on-disk pidfile `<pids_dir>/<role>.pid`
+# (what an operator watching a detached `nohup ... &` run polls, and what
+# sample_loop re-reads every tick), then logs LAUNCHED.
+record_pid_to() {
+  local pids_dir=$1 events_log=$2 role=$3 pid=$4
+  PIDS[$role]=$pid
+  echo "$pid" >"$pids_dir/$role.pid"
+  event_to "$events_log" "LAUNCHED role=$role pid=$pid"
+}
+
+# wait_for_bound_addr <stdout_file> <timeout_s> <who> -- polls
+# (sanctioned `until ...; do sleep N; done` shape — see this file's
+# header on why a bare loop+sleep is avoided) for `proxy::run`'s
+# `{"listening": "host:port"}` stdout line and echoes the address, or
+# exits 1 after <timeout_s> with an error prefixed `<who>:`.
+wait_for_bound_addr() {
+  local stdout_file=$1 timeout_s=$2 who=$3 deadline addr
+  deadline=$(($(date +%s) + timeout_s))
+  addr=""
+  until [[ -n "$addr" || $(date +%s) -ge $deadline ]]; do
+    if [[ -s "$stdout_file" ]]; then
+      addr=$(jq -r '.listening // empty' "$stdout_file" 2>/dev/null) || addr=""
+    fi
+    [[ -n "$addr" ]] || sleep 0.2
+  done
+  if [[ -z "$addr" ]]; then
+    echo "$who: proxy never reported its bound address within ${timeout_s}s (see $stdout_file)" >&2
+    exit 1
+  fi
+  printf '%s' "$addr"
+}
+
+# git_or_null <repo_root> <git args...> -> JSON string or null
+git_or_null() {
+  local repo_root=$1 out
+  shift
+  if out=$(cd "$repo_root" && git "$@" 2>/dev/null); then
+    jq -Rn --arg v "$out" '$v'
+  else
+    echo null
+  fi
+}
+
+# write_provenance <repo_root> <out_json> <argv_json> <env_json>
+#
+# WHAT ran, from WHICH tree, on WHAT host. Recorded, not gated. `git` is
+# optional — a tarball checkout records `null`s rather than failing the
+# launch. <argv_json> is the caller's own argument vector as a JSON
+# array; <env_json> is a JSON object of every env knob that can change
+# the run without appearing in argv (each caller declares its own).
+# `clk_tck` is what proc.csv's CPU tick columns divide by to become
+# seconds (`getconf CLK_TCK`, recorded rather than assumed).
+write_provenance() {
+  local repo_root=$1 out_json=$2 argv_json=$3 env_json=$4
+  local submodules_json git_dirty
+  submodules_json=$(
+    if (cd "$repo_root" && git submodule status --recursive 2>/dev/null) >/dev/null; then
+      (cd "$repo_root" && git submodule status --recursive) \
+        | awk '{sha=$1; sub(/^[-+U]/, "", sha); print $2 "\t" sha}' \
+        | jq -Rn '[inputs | split("\t") | {key: .[0], value: .[1]}] | from_entries'
+    else
+      echo null
+    fi
+  )
+  git_dirty=$(if (cd "$repo_root" && git diff --quiet HEAD -- 2>/dev/null); then echo false; else echo true; fi)
+  jq -n \
+    --arg written_utc "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --argjson head "$(git_or_null "$repo_root" rev-parse HEAD)" \
+    --argjson describe "$(git_or_null "$repo_root" describe --tags --always --dirty)" \
+    --argjson branch "$(git_or_null "$repo_root" rev-parse --abbrev-ref HEAD)" \
+    --argjson dirty "$git_dirty" \
+    --argjson submodules "$submodules_json" \
+    --arg rustc "$(cd "$repo_root" && rustc -V 2>/dev/null || echo unknown)" \
+    --arg cargo "$(cd "$repo_root" && cargo -V 2>/dev/null || echo unknown)" \
+    --arg hostname "$(hostname 2>/dev/null || echo unknown)" \
+    --arg kernel "$(uname -srm)" \
+    --argjson cpus "$(nproc)" \
+    --argjson mem_total_kb "$(awk '/^MemTotal:/{print $2}' /proc/meminfo)" \
+    --argjson clk_tck "$(getconf CLK_TCK)" \
+    --argjson argv "$argv_json" \
+    --argjson env "$env_json" \
+    '{written_utc: $written_utc,
+      source: {head: $head, describe: $describe, branch: $branch, dirty: $dirty,
+               submodules: $submodules},
+      toolchain: {rustc: $rustc, cargo: $cargo},
+      host: {hostname: $hostname, kernel: $kernel, cpus: $cpus,
+             mem_total_kb: $mem_total_kb, clk_tck: $clk_tck},
+      argv: $argv,
+      env: $env}' >"$out_json"
+}
+
+# sample_loop <deadline_epoch> <start_epoch> <rss_csv> <proc_csv> <host_csv>
+#             <pids_dir> <cadence_s> <exclude_role>...
+#
+# Sanctioned `until <cond>; do ...; sleep N; done` shape (see this
+# file's header) rather than a bare `while true` loop with `sleep` in
+# its body. Runs as its own background job for the whole run.
+#
+# Every tick it RE-READS <pids_dir>/*.pid, so a role restarted under a
+# new pid is sampled from the next tick on. role = the pidfile's
+# basename without `.pid`; process = the text after its LAST '-', leg =
+# the text before it (`srt-send` -> srt/send, `srt-3-send` -> srt-3/send).
+# Roles named in <exclude_role>... (the sampler itself, a supervisor)
+# are skipped. Rows within a tick follow glob (alphabetical) order;
+# `report soak` groups by (leg, process) and does not depend on it.
+#
+# A missing PID (process already gone) writes an empty rss_kb field,
+# which is exactly report.rs's `soak::RssSample` crash signal — never
+# fails this loop itself, so one dead process doesn't stop sampling the
+# others.
+#
+# proc.csv and host.csv are written on the SAME tick with the same
+# elapsed_s so the three series join on (elapsed_s, pid). Every field
+# is best-effort and empty on failure, same as rss_kb, and nothing here
+# may fail the loop: a caller's `set -e` is inherited by this background
+# job, so every read is `|| field=""`.
+#
+# /proc/<pid>/stat: fields 14 (utime) and 15 (stime) are cumulative CPU
+# ticks; the comm field (2) can itself contain spaces, so the line is
+# split AFTER its closing ')' and the indices below are relative to
+# field 3 (utime = 12th, stime = 13th after the paren). fds = entry
+# count of /proc/<pid>/fd (own-user processes, always readable here).
+sample_loop() {
+  local deadline=$1 start=$2 out=$3 proc_out=$4 host_out=$5 pids_dir=$6 cadence_s=$7
+  shift 7
+  local -a exclude=("$@")
+  local -a entries
+  local pidfile role ex entry leg rest process pid rss_kb elapsed
+  local utime stime threads fds load_fields mem_avail
+  until [[ $(date +%s) -ge $deadline ]]; do
+    elapsed=$(($(date +%s) - start))
+    entries=()
+    for pidfile in "$pids_dir"/*.pid; do
+      [[ -e "$pidfile" ]] || continue
+      role=$(basename "$pidfile" .pid)
+      for ex in "${exclude[@]}"; do [[ "$role" == "$ex" ]] && continue 2; done
+      pid=$(cat "$pidfile" 2>/dev/null) || continue
+      entries+=("${role%-*}:${role##*-}:$pid")
+    done
+    for entry in "${entries[@]}"; do
+      leg=${entry%%:*}
+      rest=${entry#*:}
+      process=${rest%%:*}
+      pid=${rest#*:}
+      rss_kb=""
+      utime=""
+      stime=""
+      threads=""
+      fds=""
+      if [[ -r "/proc/$pid/status" ]]; then
+        rss_kb=$(awk '/^VmRSS:/{print $2}' "/proc/$pid/status" 2>/dev/null) || rss_kb=""
+        threads=$(awk '/^Threads:/{print $2}' "/proc/$pid/status" 2>/dev/null) || threads=""
+      fi
+      if [[ -r "/proc/$pid/stat" ]]; then
+        read -r utime stime < <(awk '{s=$0; sub(/^.*\) /, "", s); split(s, f, " "); print f[12], f[13]}' "/proc/$pid/stat" 2>/dev/null) || {
+          utime=""
+          stime=""
+        }
+      fi
+      if [[ -d "/proc/$pid/fd" ]]; then
+        fds=$(find "/proc/$pid/fd" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l) || fds=""
+      fi
+      printf '%s,%s,%s,%s,%s\n' "$elapsed" "$leg" "$process" "$pid" "$rss_kb" >>"$out"
+      printf '%s,%s,%s,%s,%s,%s,%s,%s\n' "$elapsed" "$leg" "$process" "$pid" "$utime" "$stime" "$threads" "$fds" >>"$proc_out"
+    done
+    # /proc/loadavg: "load1 load5 load15 running/total lastpid".
+    load_fields=$(awk '{split($4, rt, "/"); print $1 "," $2 "," $3 "," rt[1]}' /proc/loadavg 2>/dev/null) || load_fields=",,,"
+    mem_avail=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo 2>/dev/null) || mem_avail=""
+    printf '%s,%s,%s\n' "$elapsed" "$load_fields" "$mem_avail" >>"$host_out"
+    sleep "$cadence_s"
+  done
+}
