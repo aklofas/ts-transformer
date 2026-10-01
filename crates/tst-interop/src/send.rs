@@ -18,7 +18,9 @@ use sha2::{Digest, Sha256};
 use tst_core::codec::misp_time::MispTimestamp;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::transport::{BrokenCause, Transport, TransportError};
-use tst_pipeline::{ManagedTransport, MuxSender, OverflowPolicy, ReconnectMode, ReconnectPolicy};
+use tst_pipeline::{
+    ManagedStatsHandle, ManagedTransport, MuxSender, OverflowPolicy, ReconnectMode, ReconnectPolicy,
+};
 
 use crate::cli::write_json;
 use crate::corrupt::{CorruptConfig, Corrupter};
@@ -77,11 +79,41 @@ pub fn run(
         klv,
         klv_seed,
         corrupt,
+        None,
     )?;
     if let Some(target) = json_out {
         write_json(target, &metrics)?;
     }
     Ok(metrics)
+}
+
+/// One progress heartbeat line (stderr → the soak/stress per-process
+/// log). The six legacy counters are always present; a managed sender
+/// appends its live `reconnects=` (successes) and `gap_len=` so the
+/// stress harness's `queue_depth_p99` and `peer_restart_recovery`
+/// verdicts can be read from the log without a new stats channel. The
+/// shape is parsed by `report::stress::parse_send_heartbeats` — change
+/// both together.
+pub fn heartbeat_line(
+    elapsed_s: u64,
+    video_aus: u64,
+    keyframes: u64,
+    klv_records: u64,
+    audio_frames: u64,
+    wire_bytes: u64,
+    managed: Option<&ManagedStatsHandle>,
+) -> String {
+    let mut line = format!(
+        "send: heartbeat elapsed_s={elapsed_s} video_aus={video_aus} keyframes={keyframes} \
+         klv_records={klv_records} audio_frames={audio_frames} wire_bytes={wire_bytes}"
+    );
+    if let Some(stats) = managed.and_then(|h| h.stats()) {
+        line.push_str(&format!(
+            " reconnects={} gap_len={}",
+            stats.reconnect_successes, stats.gap_len
+        ));
+    }
+    line
 }
 
 /// Core of [`run`], split out so a caller that already holds a
@@ -107,6 +139,7 @@ pub fn send_over_transport(
     klv: KlvSet,
     klv_seed: u64,
     corrupt: Option<(CorruptConfig, PathBuf)>,
+    managed_stats: Option<&ManagedStatsHandle>,
 ) -> Result<CellMetrics, String> {
     let cfg = mux_setup::build_config(p);
     let (teeing, tap) = Teeing::new(transport);
@@ -159,10 +192,16 @@ pub fn send_over_transport(
         if last_heartbeat.elapsed() >= crate::HEARTBEAT_INTERVAL {
             last_heartbeat = Instant::now();
             eprintln!(
-                "send: heartbeat elapsed_s={} video_aus={video_aus} keyframes={keyframes} \
-                 klv_records={klv_records} audio_frames={audio_frames} wire_bytes={}",
-                wall_start.elapsed().as_secs(),
-                transport::tee_bytes_so_far(&tap),
+                "{}",
+                heartbeat_line(
+                    wall_start.elapsed().as_secs(),
+                    video_aus,
+                    keyframes,
+                    klv_records,
+                    audio_frames,
+                    transport::tee_bytes_so_far(&tap),
+                    managed_stats,
+                )
             );
         }
         // Wall-clock pacing: sleep until this event's target offset from
@@ -374,6 +413,7 @@ pub fn run_managed(
         klv,
         klv_seed,
         corrupt,
+        Some(&reconnect_stats),
     )?;
     // `None` only if the gap-buffer lock was poisoned, i.e. a send
     // panicked while holding it — which would have unwound out of the
@@ -393,4 +433,54 @@ pub fn run_managed(
         write_json(target, &metrics)?;
     }
     Ok(metrics)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn heartbeat_line_without_managed_stats_is_the_legacy_shape() {
+        let line = heartbeat_line(60, 1800, 60, 600, 0, 12_345_678, None);
+        assert_eq!(
+            line,
+            "send: heartbeat elapsed_s=60 video_aus=1800 keyframes=60 klv_records=600 \
+             audio_frames=0 wire_bytes=12345678"
+        );
+    }
+
+    /// Discards everything; exists so a `ManagedTransport` can be
+    /// built without a socket. (`corrupt.rs`'s tests have a similar
+    /// `VecTransport`, private to that module.)
+    struct NullTransport;
+    impl Transport for NullTransport {
+        fn send_bytes(&mut self, _msg: &[u8]) -> Result<(), TransportError> {
+            Ok(())
+        }
+        fn max_payload(&self) -> usize {
+            1316
+        }
+        fn is_alive(&self) -> bool {
+            true
+        }
+        fn close(&mut self) {}
+    }
+
+    #[test]
+    fn heartbeat_line_with_managed_stats_appends_reconnects_and_gap_len() {
+        let managed = ManagedTransport::new(
+            NullTransport,
+            || {
+                Err(TransportError::Broken {
+                    msg: "no".into(),
+                    errno_code: None,
+                    cause: BrokenCause::Unspecified,
+                })
+            },
+            ReconnectPolicy::default(),
+        );
+        let handle = managed.stats_handle();
+        let line = heartbeat_line(120, 1, 1, 1, 0, 188, Some(&handle));
+        assert!(line.ends_with(" reconnects=0 gap_len=0"), "{line}");
+    }
 }
