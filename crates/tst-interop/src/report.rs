@@ -978,6 +978,9 @@ pub fn append_github_summary(path: &Path, markdown: &str) -> Result<(), String> 
 // `report soak`
 // ---------------------------------------------------------------------
 
+/// `report step` / `report stress` — the stress harness's verdicts; see `report/stress.rs`.
+pub mod stress;
+
 /// `report soak`: turn one multi-day soak run's raw artifacts (an RSS
 /// time series plus each leg's proxy/recv/send evidence) into
 /// `soak-results.json` — the endurance half of this arc's published
@@ -1613,7 +1616,7 @@ pub mod soak {
     /// as KB of RSS per second of elapsed wall-clock time. Returns `0.0`
     /// for fewer than 2 points or a degenerate (all-same-x) input rather
     /// than dividing by zero.
-    fn linear_regression_slope(points: &[(f64, f64)]) -> f64 {
+    pub(crate) fn linear_regression_slope(points: &[(f64, f64)]) -> f64 {
         let n = points.len() as f64;
         if n < 2.0 {
             return 0.0;
