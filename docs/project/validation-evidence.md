@@ -25,8 +25,10 @@ SRT_FORCE_VENDORED=1 RIST_FORCE_VENDORED=1 cargo build --release -p tst-interop
 bash scripts/interop/run-matrix.sh --outdir /tmp/interop-run --seconds 8
 
 # One-hour soak smoke (the same shape as the 72-hour run below, at
-# 1/72nd the duration and the same fixed seed):
-bash scripts/interop/soak.sh --outdir /tmp/interop-soak-smoke --hours 1 --seed 1
+# 1/72nd the duration and the same fixed seed). SRT_RECONNECT_MODE is
+# required — the script refuses to launch without it; `blocking` is the
+# mode the recorded 72-hour run exercised, `background` the other:
+SRT_RECONNECT_MODE=blocking bash scripts/interop/soak.sh --outdir /tmp/interop-soak-smoke --hours 1 --seed 1
 ```
 
 `run-matrix.sh` requires `jq` and `python3` on `PATH`, plus whichever peer
@@ -545,8 +547,10 @@ lost both senders to a fixture bug 14.5 hours in — a synthetic-KLV
 latitude walk crossing ST 0601's encode range, not a library bug —
 and idled undetected) was armed throughout and never fired: the run's
 event log holds exactly seven launch lines. The reproduction recipe is
-unchanged — `scripts/interop/soak.sh --seed 1` with the fixed seed
-making the impairment engine's decision sequence deterministic — and
+unchanged — `SRT_RECONNECT_MODE=blocking scripts/interop/soak.sh --seed 1`
+with the fixed seed making the impairment engine's decision sequence
+deterministic (the mode is now a required setting; this run predates
+Background mode and so exercised the blocking path) — and
 the full artifact set (30-second-cadence RSS samples, per-leg
 send/recv/proxy reports, per-process logs, `soak-results.json`) is
 retained offline by the maintainer.
