@@ -315,6 +315,65 @@ def test_mux_publisher_video_then_finish_into_publisher() -> None:
         assert ei2.value.kind == HlsErrorKind.CLOSED
 
 
+def test_with_config_hls_racing_push_ts_never_panics() -> None:
+    """Review #7 §7.11 general-review #2/#3: `with_config_hls` took a PyO3
+    `borrow_mut()` on the `HlsPublisher` handle it consumes. PyO3's own
+    borrow check marks that handle borrowed for the whole duration of ANY
+    `&self` method call on it, including `push_ts`'s native work inside
+    `py.allow_threads` — so a `with_config_hls` landing on another thread
+    while a `push_ts` call was still in flight panicked ("Already
+    borrowed" -> PanicException) instead of raising a Python exception.
+    It must take ownership through the publisher's own mutex (a shared
+    `borrow()` + `take(py)`) instead: the outcome is success (this call
+    won the take) or HlsError(FINISHED) — never a panic, on either
+    thread.
+
+    Characterisation test: the race is probabilistic, so the pusher thread
+    is given a moment to get into its tight push loop (mirroring the
+    `started.wait()` pattern in test_hls_cross_thread.py's `hammer()`)
+    before the single `with_config_hls` attempt; a mutation that restores
+    `borrow_mut()` fails this reliably.
+
+    `pyo3_runtime.PanicException` derives from `BaseException`, not
+    `Exception` — the pusher must catch `BaseException` or a panic would
+    pass straight through unrecorded. Every recorded exception on either
+    thread must be exactly `HlsError` (not just "not a panic"), so an
+    unexpected `RuntimeError` (e.g. a poisoned-mutex path) fails the test
+    too instead of being silently absorbed.
+    """
+    import threading
+
+    with tempfile.TemporaryDirectory() as d:
+        pub = HlsPublisher.builder().bind("127.0.0.1:0").output_dir(d).build()
+        program = _video_program()
+        started = threading.Event()
+        stop = threading.Event()
+        errors: list[str] = []
+
+        def pusher() -> None:
+            while not stop.is_set():
+                try:
+                    pub.push_ts(TS_TWO_PACKETS)
+                    started.set()
+                except BaseException as exc:  # FINISHED once the take wins is expected
+                    errors.append(type(exc).__name__)
+                    started.set()
+
+        t = threading.Thread(target=pusher, daemon=True)
+        t.start()
+        try:
+            assert started.wait(10.0), "the pusher never completed a push"
+            try:
+                MuxPublisher.with_config_hls(pub, program)
+            except HlsError as e:
+                assert e.kind == HlsErrorKind.FINISHED
+        finally:
+            stop.set()
+            t.join(5)
+        assert not t.is_alive(), "the pusher thread did not stop"
+        assert all(n == "HlsError" for n in errors), errors
+
+
 def test_mux_publisher_klv_preserved_in_ts_segment() -> None:
     with tempfile.TemporaryDirectory() as d:
         pub = HlsPublisher.builder().bind("127.0.0.1:0").output_dir(d).build()

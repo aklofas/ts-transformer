@@ -30,11 +30,11 @@ bindings/python/src/rtp/h264_receiver.rs	H264Held::close	closed_end_reason: runs
 bindings/python/src/rtp/h264_receiver.rs	PyH264Receiver::current_end_reason	closed_end_reason: the one other holder is H264Held::close, a single assignment that needs no GIL to let go
 bindings/python/src/srt/demux_receiver.rs	PyDemuxReceiver::__next__	sink_error: every holder has the GIL for as long as it has the guard (the sink locks inside with_gil), so nobody waits
 bindings/python/src/srt/demux_receiver.rs	PyDemuxReceiver::add_byte_sink	sink_error: locked by the sink inside with_gil; every holder has the GIL for as long as it has the guard
-bindings/python/src/srt/lowlevel.rs	PySocket::close	inner: no Socket method releases the GIL; the handle is taken and the guard dropped before the native close
-bindings/python/src/srt/lowlevel.rs	PySocket::is_alive	inner: no Socket method releases the GIL, so the guard is never held across a park
-bindings/python/src/srt/lowlevel.rs	PySocket::local_addr	inner: no Socket method releases the GIL, so the guard is never held across a park
-bindings/python/src/srt/lowlevel.rs	PySocket::peer_addr	inner: no Socket method releases the GIL, so the guard is never held across a park
-bindings/python/src/srt/lowlevel.rs	PySocket::stream_id	inner: no Socket method releases the GIL, so the guard is never held across a park
-bindings/python/src/srt/lowlevel.rs	PySocket::take_socket	inner: no Socket method releases the GIL, so the guard is never held across a park
+bindings/python/src/srt/lowlevel.rs	PySocket::close	inner: no Socket method holds this guard across a GIL release; close takes the handle out and drops the guard before releasing the GIL for the native close
+bindings/python/src/srt/lowlevel.rs	PySocket::is_alive	inner: no Socket method holds this guard across a GIL release, so the guard is never held across a park
+bindings/python/src/srt/lowlevel.rs	PySocket::local_addr	inner: no Socket method holds this guard across a GIL release, so the guard is never held across a park
+bindings/python/src/srt/lowlevel.rs	PySocket::peer_addr	inner: no Socket method holds this guard across a GIL release, so the guard is never held across a park
+bindings/python/src/srt/lowlevel.rs	PySocket::stream_id	inner: no Socket method holds this guard across a GIL release, so the guard is never held across a park
+bindings/python/src/srt/lowlevel.rs	PySocket::take_socket	inner: no Socket method holds this guard across a GIL release, so the guard is never held across a park
 bindings/python/src/util.rs	CancelSource::new	exit registry: held for one push/retain of Weak pointers; no holder releases or needs the GIL while it has the guard
 bindings/python/src/util.rs	fire_cancel_sources_at_exit	exit registry: the guard is a temporary dropped at the end of the drain statement, before allow_threads

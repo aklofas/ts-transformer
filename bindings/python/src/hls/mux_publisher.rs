@@ -172,9 +172,12 @@ impl PyMuxPublisher {
         program_config: PyRef<'_, PyMuxerProgramConfig>,
     ) -> PyResult<Self> {
         // 1. Take ownership of the inner HlsPublisher (consumes the handle).
+        //    Through the publisher's own mutex with the GIL released — a
+        //    PyO3 `borrow_mut()` here panicked ("Already borrowed") while
+        //    another thread was inside `push_ts` (review #7).
         let hls = {
-            let mut pub_ref = publisher.borrow_mut();
-            pub_ref.take_inner().ok_or_else(|| {
+            let pub_ref = publisher.borrow();
+            pub_ref.take(py)?.ok_or_else(|| {
                 raise(
                     py,
                     &HLS,
