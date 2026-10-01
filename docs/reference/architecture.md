@@ -42,12 +42,25 @@ Cargo workspace members; `embedded/*` are `exclude`d (separate build roots).
 ## Crate graph
 
 ```
-srt-sys (raw FFI)  ──→  tst-core  ──→  tst-c (cdylib + staticlib + cbindgen)
-                              │
-                              ├──→  tst-pipeline (pipeline shells)
-                              ├──→  tst-srt      (SRT transports)
-                              ├──→  tst-jni      (JVM JNI bindings)
-                              └──→  tst-uniffi   (planned)
+tstrans-mbedtls-src ─(build)─→ tstrans-srt-sys  (raw libsrt FFI)  ──→ tst-srt
+   (mbedTLS source)  ─(build)─→ tstrans-rist-sys (raw librist FFI) ──→ tst-rist
+
+tst-core (engine: mux / demux / klv / codec + Transport traits)
+   ├──→ tst-pipeline (sender / receiver shells, ManagedTransport)
+   ├──→ tst-srt   (SRT;  + tstrans-srt-sys)   ┐
+   ├──→ tst-rtp   (RTP / RTSP)                │ transports — each depends on
+   ├──→ tst-udp   (UDP)                       │ tst-core + tst-pipeline (the
+   ├──→ tst-tcp   (TCP / TLS)                 │ shared `binding` layer: error
+   ├──→ tst-hls   (HLS)                       │ kinds, handles; tst-rtp also
+   └──→ tst-rist  (RIST; + tstrans-rist-sys)  ┘ wraps the shells)
+
+bindings (every one depends on tst-core + tst-pipeline + transports,
+never on a *-sys crate):
+   tst-c   ──→ tst-c-core ──→ tst-core + tst-pipeline + all six transports
+                              (each transport behind an opt-in cargo feature)
+   tst-py  ──→ tst-core + tst-pipeline + all six transports (default-on)
+   tst-jni ──→ tst-core + tst-pipeline + tst-srt + tst-rtp
+   tst-uniffi (planned) — same shape as tst-jni
 
 dev-only: tst-test-helpers (publish = false; shared test fixtures and
 helpers consumed by tst-core / tst-pipeline / tst-srt test suites)
@@ -57,21 +70,32 @@ vendored (bundled per-crate, not at the workspace root): crates/srt-sys/vendor/s
 ```
 
 The layering rule is one-directional: lower layers do not depend on upper
-layers. Binding crates (`tst-c`, `tst-jni`, `tst-uniffi`) depend on
-`tst-pipeline` + `tst-srt` (and transitively `tst-core`) — never on
-`srt-sys` directly. This keeps every binding's surface area defined by
-the same safe Rust API and means a fix in `tst-core` reaches every
-binding without per-binding patches.
+layers. `tst-core` depends on no other workspace crate and on no native
+library. `tst-pipeline` depends on `tst-core` only. The transport crates
+depend on `tst-core` and on `tst-pipeline` — not for the shells (a shell
+and a transport still meet through the `Transport` / `RecvTransport`
+traits, not through a crate dependency) but for `tst_pipeline::binding`,
+the one error-kind vocabulary and handle model every language binding
+is built from; `tst-rtp` additionally wraps the shells for its RTSP
+mount surface. Binding crates (`tst-c` via `tst-c-core`, `tst-py`, `tst-jni`,
+the planned `tst-uniffi`) depend on `tst-core` + `tst-pipeline` + the
+transport crates they expose — never on a `*-sys` crate directly. This
+keeps every binding's surface area defined by the same safe Rust API and
+means a fix in `tst-core` reaches every binding without per-binding
+patches.
 
 `srt-sys` (published as `tstrans-srt-sys`) is the raw FFI layer — bindgen-generated against libsrt 1.5.7,
 exposing roughly 72 `srt_*` functions and the full `SRT_*` constant
 surface, with `mbedtls` wired in as the encryption backend by default.
-`tst-core` is the safe Rust API; nothing above it should ever pull
-`srt-sys` into its dependency graph. The vendored libsrt and mbedTLS
-submodules are pinned by tag (`v1.5.7`, `v3.6.7` LTS); submodule advances
-are deliberate, separate commits. Both vendored builds link statically,
-so `tst-c`'s shared library has no runtime dependency on a system libsrt
-or libmbedtls.
+`rist-sys` (published as `tstrans-rist-sys`) is its librist twin. Both
+sys crates build the vendored mbedTLS tree supplied by
+`tstrans-mbedtls-src` (a build-dependency only). `tst-srt` is the only
+consumer of `srt-sys` and `tst-rist` the only consumer of `rist-sys`;
+`tst-core` is the safe Rust API and never sees either. The vendored
+libsrt, librist and mbedTLS submodules are pinned by tag (`v1.5.7`,
+`v0.2.20`, `v3.6.7` LTS); submodule advances are deliberate, separate
+commits. All vendored builds link statically, so `tst-c`'s shared library
+has no runtime dependency on a system libsrt, librist or libmbedtls.
 
 ## Inside `tst-core`: four modules
 
@@ -102,8 +126,8 @@ into a builder overlay using libsrt's documented option vocabulary,
 and `addr::*` handles IPv4 / IPv6 sockaddr marshalling. See
 [guides/srt.md](/docs/guides/srt.md) for the full surface.
 
-`tst-pipeline` is the composition layer that depends on the other crates.
-It is deliberately thin: its job is composition, not new behaviour. The
+`tst-pipeline` is the composition layer; it depends on `tst-core` only and
+is generic over the transport it is handed. It is deliberately thin: its job is composition, not new behaviour. The
 send shells delegate framing to `mpegts::mux::Muxer` and wire transport to
 a `Transport` implementation; the receive shells delegate framing recovery
 to `mpegts::demux::Demuxer` and bytes-in to a `RecvTransport`
@@ -146,8 +170,11 @@ plug together.
 
 `ManagedTransport<T>` is itself a `Transport` implementation — it
 implements the trait by delegating to an inner `T` and adding reconnect
-plus a gap buffer that holds messages while the inner transport is down.
-Because it satisfies `Transport`, it slots between any sender shell and
+plus a gap buffer. In `ReconnectMode::Background` the gap buffer holds
+messages for the whole outage while a worker reconnects; in the default
+`ReconnectMode::Blocking` the caller's `send_bytes` rides out the
+reconnect itself, and a send that still fails is handed back to the
+caller — nothing stays queued between calls. Because it satisfies `Transport`, it slots between any sender shell and
 the underlying transport without the shell needing to know about
 reconnect at all. The shell sees a `Transport`; whether that `Transport`
 is plain `SrtTransport` or `ManagedTransport<SrtTransport>` is a
@@ -178,7 +205,8 @@ contract that satisfies none of the use cases well. The shells also
 differ in what they do on transient failure. `MuxSender` carries an
 in-flight buffer and replays buffered bytes on reconnect, so a brief
 outage is invisible to the receiver above the transport gap-buffer
-window. `Sender` re-establishes sync alignment on the byte stream
+window (in `ReconnectMode::Background`; in `Blocking` mode a failed
+send surfaces to the caller instead). `Sender` re-establishes sync alignment on the byte stream
 after a transport failure — RECOVER mode auto-resyncs to the next sync
 byte, STRICT mode fails fast. `RawSender` has no recovery contract by
 construction; one `send` either lands as one SRT message or returns an
