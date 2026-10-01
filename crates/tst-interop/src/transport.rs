@@ -676,7 +676,7 @@ pub(crate) fn tee_watch_reconnects(tap: &Arc<Mutex<TeeState>>, reconnects: Arc<A
 /// `DemuxEvent::ReconnectDiscontinuity`, but the tee has already fed it
 /// to the raw reader; stamping the marker with the reader's count at the
 /// event would put every PCR decoded from the discarded chunk before the
-/// marker (review #7 R7-05).
+/// marker (review #7, internal report R7-05).
 pub(crate) fn tee_take_chunk_start(tap: &Arc<Mutex<TeeState>>) -> Option<u64> {
     tap.lock().expect("tee mutex poisoned").chunk_start.take()
 }

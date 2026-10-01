@@ -3248,7 +3248,7 @@ mod tests {
         );
     }
 
-    /// R7-05 (review #7, internal): the first chunk the fresh inner returns
+    /// R7-05 (review #7, internal report): the first chunk the fresh inner returns
     /// is fed to the raw reader BEFORE the demuxer discards it and yields the
     /// reconnect marker, so PCRs decoded from that chunk were stamped below
     /// the marker and an injection anchored at one of them read as "not

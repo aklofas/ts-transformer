@@ -311,7 +311,7 @@ mod tests {
     }
 
     /// The backlog stranded in the gap buffer at exit is read back as
-    /// written (review #7 R7-03).
+    /// written (review #7, internal report R7-03).
     #[test]
     fn managed_send_records_the_gap_len_at_exit() {
         let json = ARCHIVED_MANAGED_SEND_REPORT.replace(
