@@ -113,13 +113,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # pkgconfiglite provides pkg-config so librist's meson can find the
-          # shared crates/mbedtls-src/vendor/mbedtls 3.6.x tree via
-          # PKG_CONFIG_PATH (rist-sys build.rs) instead of falling back to its
-          # bundled contrib/mbedtls 2.26.0 — a version mismatch with libsrt's
-          # mbedTLS would corrupt shared state.
-          choco install -y --no-progress ninja ripgrep pkgconfiglite
-          python -m pip install --upgrade meson
+          # pkg-config comes from the PyPI `pkgconf` wheel (a real pkgconf
+          # binary plus a `pkg-config` console script dropped into the Python
+          # Scripts dir) so librist's meson can find the shared
+          # crates/mbedtls-src/vendor/mbedtls 3.6.x tree via PKG_CONFIG_PATH
+          # (rist-sys build.rs) instead of falling back to its bundled
+          # contrib/mbedtls 2.26.0 — a version mismatch with libsrt's mbedTLS
+          # would corrupt shared state. It is installed via pip for the same
+          # PATH reason as meson below. The former `pkgconfiglite` choco
+          # package fetched its zip from sourceforge, which 404/522'd on
+          # 2026-10-01 and failed this step twice (run 36819765562) — one
+          # external single point of failure removed.
+          choco install -y --no-progress ninja ripgrep
+          python -m pip install --upgrade meson pkgconf
           # Verify each prerequisite is actually on PATH — choco can return 0
           # without installing a package (feed 504), and a silently-missing tool
           # must red THIS step, not a confusing later one.
@@ -127,6 +133,7 @@ jobs:
             command -v "$tool" >/dev/null 2>&1 || { echo "FAIL: '$tool' not on PATH after prereq install (choco/pip fetch likely failed)"; exit 1; }
           done
           rg --version | head -1
+          pkg-config --version | head -1
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
