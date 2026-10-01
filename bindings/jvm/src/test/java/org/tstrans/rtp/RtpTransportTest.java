@@ -1,18 +1,25 @@
 package org.tstrans.rtp;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.tstrans.TestSupport.freeUdpPort;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.tstrans.RtpException;
 
+/**
+ * Ports are kernel-picked per test ({@code TestSupport.freeUdpPort()}): fixed
+ * ports collided with other suites on the windows (2026-09-23) and macOS
+ * (2026-10-01) runners.
+ */
 class RtpTransportTest {
 
     @Test
     void senderConstructsStatsCancelClose() throws Exception {
         // UDP "connect" sets the default destination; no peer is required, so
         // construction succeeds with no receiver listening.
-        try (Sender s = Sender.fromUrl("rtp://127.0.0.1:50000")) {
+        int port = freeUdpPort();
+        try (Sender s = Sender.fromUrl("rtp://127.0.0.1:" + port)) {
             SocketStats st = s.socketStats();
             assertNotNull(st);
             assertEquals(0L, st.bytesSent());
@@ -24,7 +31,8 @@ class RtpTransportTest {
 
     @Test
     void senderClosedThenSendThrowsIllegalState() throws Exception {
-        Sender s = Sender.fromUrl("rtp://127.0.0.1:50001");
+        int port = freeUdpPort();
+        Sender s = Sender.fromUrl("rtp://127.0.0.1:" + port);
         s.close();
         s.close(); // idempotent
         assertThrows(IllegalStateException.class, () -> s.send(new byte[] {0x47}));
@@ -38,15 +46,17 @@ class RtpTransportTest {
     }
 
     @Test
-    void senderNegativePktSizeThrowsIllegalArgument() {
+    void senderNegativePktSizeThrowsIllegalArgument() throws Exception {
+        int port = freeUdpPort();
         assertThrows(IllegalArgumentException.class,
-            () -> Sender.fromUrl("rtp://127.0.0.1:50002", -1, null));
+            () -> Sender.fromUrl("rtp://127.0.0.1:" + port, -1, null));
     }
 
     @Test
-    void senderSsrcOutOfRangeThrowsIllegalArgument() {
+    void senderSsrcOutOfRangeThrowsIllegalArgument() throws Exception {
+        int port = freeUdpPort();
         assertThrows(IllegalArgumentException.class,
-            () -> Sender.fromUrl("rtp://127.0.0.1:50003", 1316, 0x1_0000_0000L));
+            () -> Sender.fromUrl("rtp://127.0.0.1:" + port, 1316, 0x1_0000_0000L));
     }
 
     @Test
@@ -88,7 +98,8 @@ class RtpTransportTest {
         // RtpRecvSocketBuilder::from_url). A quiet socket (no sender) must throw
         // RtpException(BACKPRESSURE) once the deadline expires — distinct from
         // TRANSPORT, since the receiver stays open and usable (retry recv() again).
-        try (Receiver r = Receiver.fromUrl("rtp://127.0.0.1:50004?recv_timeout=200")) {
+        int port = freeUdpPort();
+        try (Receiver r = Receiver.fromUrl("rtp://127.0.0.1:" + port + "?recv_timeout=200")) {
             RtpException ex = assertThrows(RtpException.class, r::recv);
             assertEquals(RtpException.Kind.BACKPRESSURE, ex.kind());
             // The receiver is still alive after a BACKPRESSURE — a second recv on the
@@ -114,15 +125,17 @@ class RtpTransportTest {
     @Test
     void recvPerCallTimeoutRaisesTimeoutThenDeliversRealBytes() throws Exception {
         // No `?recv_timeout=` URL knob here — the deadline comes solely from
-        // the per-call `recv(Integer)` argument.
-        try (Receiver r = Receiver.fromUrl("rtp://127.0.0.1:50005")) {
+        // the per-call `recv(Integer)` argument. Sender and receiver share one
+        // reserved port.
+        int port = freeUdpPort();
+        try (Receiver r = Receiver.fromUrl("rtp://127.0.0.1:" + port)) {
             RtpException ex = assertThrows(RtpException.class, () -> r.recv(200));
             assertEquals(RtpException.Kind.BACKPRESSURE, ex.kind());
 
             // The receiver stays alive after a BACKPRESSURE (retryable): a real send
             // must be delivered on a subsequent recv(timeoutMs) call.
             byte[] sent = tsPacket((byte) 0xAB);
-            try (Sender s = Sender.fromUrl("rtp://127.0.0.1:50005")) {
+            try (Sender s = Sender.fromUrl("rtp://127.0.0.1:" + port)) {
                 s.send(sent);
             }
             byte[] received = r.recv(2000);
@@ -152,13 +165,15 @@ class RtpTransportTest {
         // native socket read, so an unbounded native call guarded only by
         // @Timeout is a real, unkillable-hang risk in CI (this exact class of
         // bug pinned a Gradle daemon for 44 minutes during this test's
-        // development — see task-D2-report.md).
-        try (Receiver r = Receiver.fromUrl("rtp://127.0.0.1:50006?recv_timeout=4000")) {
+        // development — see task-D2-report.md). Sender and receiver share one
+        // reserved port.
+        int port = freeUdpPort();
+        try (Receiver r = Receiver.fromUrl("rtp://127.0.0.1:" + port + "?recv_timeout=4000")) {
             byte[] sent = tsPacket((byte) 0xCD);
             Thread sender = new Thread(() -> {
                 try {
                     Thread.sleep(300);
-                    try (Sender s = Sender.fromUrl("rtp://127.0.0.1:50006")) {
+                    try (Sender s = Sender.fromUrl("rtp://127.0.0.1:" + port)) {
                         s.send(sent);
                     }
                 } catch (Exception e) {

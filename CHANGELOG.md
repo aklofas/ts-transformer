@@ -1674,6 +1674,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   errors (an unknown value; the flag without `--managed`) gain CLI tests.
   Harness only; no library crate is touched by this bullet.
 
+- **JVM `RtpTransportTest` binds kernel-picked UDP ports.** It now calls
+  `TestSupport.freeUdpPort()` instead of using fixed `50000–50006`; the
+  fixed ports collided with other suites on the windows (2026-09-23) and
+  macOS (2026-10-01) runners.
+
 ### Testing — interop harness (WP-7a, WP-7b)
 
 - **Tooling: a soak run records which reconnect mode it exercised, and is
