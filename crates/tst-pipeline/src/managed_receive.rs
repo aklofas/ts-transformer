@@ -662,7 +662,7 @@ mod tests {
         assert!(*factory_calls.lock().unwrap() >= 1);
     }
 
-    /// R7-01 (review #7): a factory that reports `ExplicitClose` — the SRT
+    /// R7-01 (review #7, external report): a factory that reports `ExplicitClose` — the SRT
     /// listener's slot was fired directly, or the process is exiting — is
     /// terminal, exactly like an inner receive that reports it. The wrapper
     /// must not retry the factory and must not report `Closed`

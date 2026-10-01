@@ -501,7 +501,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `atexit` handlers), which panicked inside the `extern "C"` handler and
   aborted the process instead of warning; the note is now a raw stderr
   write, and the libsrt log callback returns early once exit has started.
-  Review #7 R7-01 (internal).
+  Review #7, internal report R7-01.
 - **Python: `tstrans.srt.Receiver.close()` from another thread while
   `recv_bytes()` was parked raised `RuntimeError: Already borrowed`.**
   `recv_bytes` held the object's PyO3 mutable borrow for the whole blocking
@@ -930,7 +930,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   factory slot cancelled directly — was retried until the attempt budget
   ran out (then reported as `Closed`, end-of-stream to the bindings) or,
   with no budget, forever. The factory's `ExplicitClose` now latches the
-  wrapper exactly as the inner's does. Review #7 R7-01.
+  wrapper exactly as the inner's does. Review #7, external report R7-01.
 - **`ManagedTransport` (`ReconnectMode::Blocking`): a send refused with
   `Backpressure` right after a reconnect was delivered twice.** The inner
   send broke, the message went into the gap buffer, the reconnect succeeded,
@@ -1717,7 +1717,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   beside the drop counters, not gated); the reconnect marker is stamped at
   the ordinal where the discarded first chunk began, so an injection
   anchored at a PCR from that chunk is no longer excused as reconnect
-  loss. Review #7 R7-03 / R7-05 (internal).
+  loss. Review #7, internal report R7-03 / R7-05.
 
 - **Tooling: a soak run records which reconnect mode it exercised, and is
   failed if that is not the mode it declared.** Before, nothing
@@ -1935,7 +1935,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `.write()`, `.try_lock()` and UFCS `Mutex::lock(` / `RwLock::read(` /
   `RwLock::write(` beside `.lock()`, and refuses a lock taken outside any
   function (a `macro_rules!` body) instead of silently skipping it;
-  self-test fixtures for both. Review #7 R7-03 / R7-06.
+  self-test fixtures for both. Review #7, external report R7-03 = internal
+  report R7-06.
 
 ### Changed — binding layer (WP-A1)
 

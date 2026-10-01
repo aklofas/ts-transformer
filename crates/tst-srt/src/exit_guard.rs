@@ -412,6 +412,53 @@ mod tests {
         false
     }
 
+    /// Like [`in_own_process`], but the parent half also captures the
+    /// child's stderr instead of only checking its exit code — for a test
+    /// that needs to assert on what the exit handler actually wrote, not
+    /// just that the process exited cleanly.
+    ///
+    /// Returns `None` in the child (continue running the test body there,
+    /// same as `in_own_process` returning `true`); `Some` in the parent,
+    /// carrying everything the child wrote to stderr, after the same
+    /// deadline-bounded wait and the same clean-exit assertion as
+    /// `in_own_process`.
+    fn in_own_process_capturing_stderr(test_name: &str) -> Option<Vec<u8>> {
+        use std::io::Read as _;
+
+        if std::env::var_os(CHILD_ENV).is_some() {
+            return None;
+        }
+        let exe = std::env::current_exe().expect("current_exe");
+        let mut child = Command::new(exe)
+            .args([test_name, "--exact", "--nocapture", "--test-threads=1"])
+            .env(CHILD_ENV, "1")
+            .stdin(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn the child test process");
+        let deadline = Instant::now() + DEADLINE;
+        let status = loop {
+            if let Some(status) = child.try_wait().expect("try_wait") {
+                break status;
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("{test_name}: the child did not exit within {DEADLINE:?}");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert_eq!(status.code(), Some(0), "{test_name}: the child failed");
+        let mut stderr = Vec::new();
+        child
+            .stderr
+            .take()
+            .expect("stderr was piped")
+            .read_to_end(&mut stderr)
+            .expect("read the child's stderr");
+        Some(stderr)
+    }
+
     fn loopback_available() -> bool {
         std::env::var_os("SKIP_LOOPBACK").is_none()
             && std::net::TcpListener::bind("127.0.0.1:0").is_ok()
@@ -592,28 +639,47 @@ mod tests {
         );
     }
 
-    /// R7-01 (review #7, internal): the ceiling warning used to go through
+    /// R7-01 (review #7, internal report): the ceiling warning used to go through
     /// `tracing`. A `tracing_subscriber::fmt` layer formats into a
     /// destructor-bearing thread-local; glibc runs thread-local
     /// destructors BEFORE `atexit` handlers, so the first event emitted
     /// from the exit handler on a thread that had logged before panicked
     /// inside an `extern "C"` function and aborted the process. The
-    /// child must print the note and exit 0.
+    /// child must print the note and exit 0. The note assertion below is
+    /// exercised on unix only: `std::process::exit` maps to Windows'
+    /// `ExitProcess`, which skips the executable's `atexit` table
+    /// entirely, so the exit handler never runs in this child there.
     #[test]
-    fn ceiling_warning_does_not_abort_the_exiting_process() {
-        if !in_own_process("exit_guard::tests::ceiling_warning_does_not_abort_the_exiting_process")
+    fn ceiling_note_does_not_abort_the_exiting_process() {
+        let Some(stderr) = in_own_process_capturing_stderr(
+            "exit_guard::tests::ceiling_note_does_not_abort_the_exiting_process",
+        ) else {
+            tracing_subscriber::fmt()
+                .with_writer(std::io::stderr)
+                .init();
+            tracing::info!("one event on the exiting thread, so the fmt layer's buffer exists");
+            crate::init::ensure_initialized();
+            // An operation that is never released: the handler waits out the
+            // ceiling and takes the warning path.
+            let _op = std::mem::ManuallyDrop::new(enter().expect("admitted"));
+            std::process::exit(0);
+        };
+        // Windows: `std::process::exit` → `ExitProcess` skips the
+        // executable's `atexit` table, so the exit handler does not run in
+        // this child and no note is written; the exit-code check (already
+        // done by the helper, above) is the whole assertion there.
+        #[cfg(unix)]
         {
-            return;
+            let stderr = String::from_utf8_lossy(&stderr);
+            assert!(
+                stderr.contains("still inside libsrt"),
+                "expected the exit note on the child's stderr, got: {stderr:?}"
+            );
         }
-        tracing_subscriber::fmt()
-            .with_writer(std::io::stderr)
-            .init();
-        tracing::info!("one event on the exiting thread, so the fmt layer's buffer exists");
-        crate::init::ensure_initialized();
-        // An operation that is never released: the handler waits out the
-        // ceiling and takes the warning path.
-        let _op = std::mem::ManuallyDrop::new(enter().expect("admitted"));
-        std::process::exit(0);
+        #[cfg(not(unix))]
+        {
+            let _ = stderr;
+        }
     }
 
     /// A closed socket leaves the registry, so the exit walk can neither

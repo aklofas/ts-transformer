@@ -175,10 +175,11 @@ expect "gil locks: an allowlist row without a reason fails"             1 env SG
 expect "gil locks: a scan that matches nothing fails closed"            1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/clean" SG_LOCK_ALLOWLIST="$tmp/gl/empty.tsv"     bash "$SG"
 
 # ---- gil locks: every lock spelling, and a lock inside a macro body -------
-# review #7 R7-03 / R7-06: a line scanner looking only for `.lock()` misses
-# `.read()` / `.write()` / `.try_lock()` / the UFCS forms, and a lock taken
-# inside a macro_rules! body has no enclosing `fn` the scanner can attribute
-# it to — it must be a hard failure, not a silent skip.
+# review #7, external report R7-03 = internal report R7-06: a line scanner
+# looking only for `.lock()` misses `.read()` / `.write()` / `.try_lock()` /
+# the UFCS forms, and a lock taken inside a macro_rules! body has no
+# enclosing `fn` the scanner can attribute it to — it must be a hard
+# failure, not a silent skip.
 mkdir -p "$tmp/gl/rwlock" "$tmp/gl/macro"
 cat > "$tmp/gl/rwlock/shell.rs" <<'EOF'
 impl Publisher {
