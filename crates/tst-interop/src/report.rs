@@ -1598,6 +1598,8 @@ pub mod soak {
                 min_gap: spec.min_gap,
                 classes: spec.classes.clone(),
                 seed: 0,
+                // The soak always sends at AU scale 1.
+                geometry_scale: 1,
             }
             .validate()
             .map_err(|e| format!("soak-config.json: corruption_spec: {e}"))?;

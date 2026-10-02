@@ -29,7 +29,10 @@
 #   - tcp:  recv `tcp://127.0.0.1:PORT?listen=1`, send `tcp://127.0.0.1:PORT`.
 #
 # Every sender runs `--profile baseline --au-sizes realistic --au-scale F
-# --klv-set rich` with the corruption tap on (`rate=5,min_gap=1000`), and
+# --klv-set rich` with the corruption tap on (`rate=5`; the tap's packet
+# geometry — min_gap, attribution window, recovery bound — follows
+# --au-scale, so it is NOT pinned here: at scale 4 a keyframe spans ~1160
+# packets and the soak's literal `min_gap=1000` would be refused), and
 # every receiver judges its stream against the sender's corruption log,
 # so the correctness verdicts keep their meaning under load. Stream `i`
 # (zero-based) uses KLV seed `SEED + i` and corruption seed `SEED + 1 + i`.
@@ -126,6 +129,11 @@
 #                                   same rule and reasoning as soak.sh
 #   RSS_SLOPE_THRESHOLD_KB_PER_HOUR REQUIRED, > 0 (exit 2 if unset) — `report step`
 #                                   has no default for it on purpose
+#   RSS_SLOPE_UNGATED=rist/send     sweep steps only: comma-separated transport/process
+#                                   whose rss_slope verdict is recorded, not gated
+#                                   (librist's sender settles ~6 MB over its first
+#                                   hour; a 10-min step can only sample that ramp —
+#                                   the hold judges it over 24 h). Empty = gate all.
 #   STRESS_MAX_AGG_MBPS=2000        refuse a step above this aggregate nominal bitrate
 #   CPU_HEADROOM_MAX=0.80           report step thresholds (see `report step`)
 #   FD_DELTA_MAX=2
@@ -275,6 +283,24 @@ fi
 : "${STRESS_MAX_AGG_MBPS:=2000}" "${CPU_HEADROOM_MAX:=0.80}"
 : "${FD_DELTA_MAX:=2}" "${THREAD_DELTA_MAX:=1}"
 : "${DELIVERY_SLACK:=0.7}" "${QUEUE_DEPTH_FRACTION:=0.9}"
+# Sweep steps only (never passed to `report hold`). `${VAR-default}`, not
+# `:=`: an explicitly EMPTY value means "gate every process".
+RSS_SLOPE_UNGATED=${RSS_SLOPE_UNGATED-rist/send}
+
+# rss_slope_ungated_json — RSS_SLOPE_UNGATED as a JSON array (empty → []).
+rss_slope_ungated_json() {
+  if [[ -z "$RSS_SLOPE_UNGATED" ]]; then
+    printf '[]'
+  else
+    printf '%s' "$RSS_SLOPE_UNGATED" | tr ',' '\n' | jq -Rn '[inputs]'
+  fi
+}
+
+# rss_slope_ungated_args — the `report step` flag for RSS_SLOPE_UNGATED
+# (nothing when empty). Sweep steps only; the hold gates every process.
+rss_slope_ungated_args() {
+  [[ -z "$RSS_SLOPE_UNGATED" ]] || printf '%s\n' --rss-slope-ungated "$RSS_SLOPE_UNGATED"
+}
 : "${STRESS_SMOKE_FORCE_FAIL:=0}"
 
 # ---------------------------------------------------------------------
@@ -692,10 +718,13 @@ ENV_JSON=$(jq -n \
   '$ARGS.named')
 write_provenance "$REPO_ROOT" "$OUTDIR/provenance.json" "$ARGV_JSON" "$ENV_JSON"
 
-# Fixed per-stream wiring, declared below.
+# Fixed per-stream wiring, declared below. The corrupt spec names only the
+# rate: `send` derives min_gap / attribution window / recovery bound from
+# --au-scale (crates/tst-interop/src/corrupt.rs, ATTRIBUTION_WINDOW) and
+# records the resulting geometry in each stream's corruption.jsonl header.
 PROFILE=baseline
 KLV_SET=rich
-CORRUPT_SPEC="rate=5,min_gap=1000"
+CORRUPT_SPEC="rate=5"
 # Receive-side latency budget for SRT and recovery buffer for RIST, in ms:
 # soak.sh's numbers and reasoning (sized for the hold's impairment
 # schedule; harmless on the sweep's clean link, and one value for both
@@ -731,6 +760,7 @@ jq -n \
   --argjson rss "$RSS_SLOPE_THRESHOLD_KB_PER_HOUR" --argjson cpu "$CPU_HEADROOM_MAX" \
   --argjson fd "$FD_DELTA_MAX" --argjson thr "$THREAD_DELTA_MAX" \
   --argjson slack "$DELIVERY_SLACK" --argjson qdf "$QUEUE_DEPTH_FRACTION" \
+  --argjson ungated "$(rss_slope_ungated_json)" \
   --argjson hop "$HOLD_OUTAGE_PERIOD_S" --argjson hod "$HOLD_OUTAGE_DUR_S" \
   --argjson hrp "$HOLD_RESTART_PERIOD_S" --argjson hro "$HOLD_RESTART_OFFSET_S" \
   --argjson hsp "$HOLD_SCHEDULE_PHASES" \
@@ -745,7 +775,8 @@ jq -n \
     srt_latency_ms: $srt_latency_ms, rist_buffer_ms: $rist_buffer_ms,
     thresholds: {rss_slope_kb_per_hour: $rss, cpu_headroom_max: $cpu,
                  fd_delta_max: $fd, thread_delta_max: $thr,
-                 delivery_slack: $slack, queue_depth_fraction: $qdf},
+                 delivery_slack: $slack, queue_depth_fraction: $qdf,
+                 rss_slope_ungated: $ungated},
     hold: {outage_period_s: $hop, outage_dur_s: $hod, restart_period_s: $hrp,
            restart_offset_s: $hro, schedule_phases: $hsp},
     smoke_forced_fail_step: (if $forced == "" then null else $forced end)}' \
@@ -891,26 +922,29 @@ workers_alive() {
   return 1
 }
 
-# thresholds_json <cpu_headroom_max> — `report step`'s StepThresholds as
-# this run passes them.
+# thresholds_json <cpu_headroom_max> <ungated-json> — `report step`'s
+# StepThresholds as this run passes them (a sweep step passes
+# `$(rss_slope_ungated_json)`, the hold `[]`).
 thresholds_json() {
   jq -n --argjson rss "$RSS_SLOPE_THRESHOLD_KB_PER_HOUR" --argjson fd "$FD_DELTA_MAX" \
     --argjson thr "$THREAD_DELTA_MAX" --argjson cpu "$1" \
     --argjson slack "$DELIVERY_SLACK" --argjson qdf "$QUEUE_DEPTH_FRACTION" \
+    --argjson ungated "$2" \
     '{rss_slope_kb_per_hour: $rss, fd_delta_max: $fd, thread_delta_max: $thr,
-      cpu_headroom_max: $cpu, delivery_slack: $slack, queue_depth_fraction: $qdf}'
+      cpu_headroom_max: $cpu, delivery_slack: $slack, queue_depth_fraction: $qdf,
+      rss_slope_ungated: $ungated}'
 }
 
-# fallback_step_results <dir> <cpu_headroom_max> <failing>... — print a
+# fallback_step_results <dir> <cpu_headroom_max> <ungated-json> <failing>... — print a
 # FAIL verdict document for a step (or the hold) `report step` could not
 # judge. It has the full StepResults shape, empty where nothing was
 # judged, because `report stress` deserializes every step-results.json
 # (and the hold's `step`) strictly.
 fallback_step_results() {
-  local dir=$1 cpu_max=$2
-  shift 2
+  local dir=$1 cpu_max=$2 ungated=$3
+  shift 3
   jq -n --slurpfile decl "$dir/config.json" \
-    --argjson thresholds "$(thresholds_json "$cpu_max")" \
+    --argjson thresholds "$(thresholds_json "$cpu_max" "$ungated")" \
     --argjson failing "$(printf '%s\n' "$@" | jq -Rn '[inputs]')" \
     '{decl: $decl[0], thresholds: $thresholds, pass: false, verdicts: [],
       failing: $failing, per_stream: [], aggregate_cpu_fraction: 0,
@@ -1034,11 +1068,13 @@ run_step() {
     event "FORCED-FAIL step=$CURRENT_STEP cpu_headroom_max=$cpu_max (STRESS_SMOKE_FORCE_FAIL=1)"
   fi
   rc=0
+  local -a ungated_args=()
+  mapfile -t ungated_args < <(rss_slope_ungated_args)
   "$BIN" report step --dir "$step_dir" \
     --rss-slope-threshold-kb-per-hour "$RSS_SLOPE_THRESHOLD_KB_PER_HOUR" \
     --fd-delta-max "$FD_DELTA_MAX" --thread-delta-max "$THREAD_DELTA_MAX" \
     --cpu-headroom-max "$cpu_max" --delivery-slack "$DELIVERY_SLACK" \
-    --queue-depth-fraction "$QUEUE_DEPTH_FRACTION" || rc=$?
+    --queue-depth-fraction "$QUEUE_DEPTH_FRACTION" "${ungated_args[@]}" || rc=$?
 
   if [[ $rc -eq 2 ]] && any_nonzero_exit "$step_dir/exits.json"; then
     # Overload rule: the evidence is unjudgeable BECAUSE a worker died or
@@ -1046,7 +1082,7 @@ run_step() {
     local -a failing=(step_unjudgeable)
     [[ $timed_out -eq 0 ]] || failing=(step_timeout step_unjudgeable)
     event "STEP-UNJUDGEABLE step=$CURRENT_STEP report step exited 2 with a nonzero worker exit or a timeout — FAIL"
-    fallback_step_results "$step_dir" "$cpu_max" "${failing[@]}" >"$step_dir/.step-results.json.tmp"
+    fallback_step_results "$step_dir" "$cpu_max" "$(rss_slope_ungated_json)" "${failing[@]}" >"$step_dir/.step-results.json.tmp"
     mv -f "$step_dir/.step-results.json.tmp" "$step_dir/step-results.json"
     rc=1
   elif [[ $timed_out -eq 1 ]]; then
@@ -1057,7 +1093,7 @@ run_step() {
         "$step_dir/step-results.json" >"$step_dir/.step-results.json.tmp"
       mv -f "$step_dir/.step-results.json.tmp" "$step_dir/step-results.json"
     else
-      fallback_step_results "$step_dir" "$cpu_max" step_timeout >"$step_dir/.step-results.json.tmp"
+      fallback_step_results "$step_dir" "$cpu_max" "$(rss_slope_ungated_json)" step_timeout >"$step_dir/.step-results.json.tmp"
       mv -f "$step_dir/.step-results.json.tmp" "$step_dir/step-results.json"
     fi
   fi
@@ -1385,7 +1421,7 @@ run_hold() {
     [[ $timed_out -eq 0 ]] || failing=(hold_timeout hold_unjudgeable)
     event "HOLD-UNJUDGEABLE report hold exited 2 with a nonzero worker exit or a timeout — FAIL"
     jq -n --slurpfile hc "$hold_dir/hold-config.json" \
-      --argjson step "$(fallback_step_results "$hold_dir" "$CPU_HEADROOM_MAX" "${failing[@]}")" \
+      --argjson step "$(fallback_step_results "$hold_dir" "$CPU_HEADROOM_MAX" '[]' "${failing[@]}")" \
       '{decl: $hc[0], step: $step, hold_verdicts: [], pass: false}' >"$hold_dir/.hold-results.json.tmp"
     mv -f "$hold_dir/.hold-results.json.tmp" "$hold_dir/hold-results.json"
     rc=1

@@ -1346,6 +1346,39 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Testing
 
+- **Tooling: `tst-interop`'s corruption-attribution geometry follows
+  `--au-scale`.** The tap's packet-count constants — attribution window
+  (500), recovery bound (600), approximate-resolution slack (128) and the
+  default `min_gap` (1000) — were calibrated for the realistic fixtures at
+  scale 1, where a keyframe spans ~290 packets. The events they bound (the
+  next PES boundary, the next PCR, the next packet on a PID) are fixed in
+  time, so at scale F they sit F× further apart in packets; the first
+  measured stress run (2026-10-02) ended every bitrate axis at scale 4 on a
+  `body_flip` inside a 1158-packet keyframe that could not be "recovered
+  within 600 packets", on SRT, TCP and UDP alike. `send` now multiplies all
+  four by `--au-scale`, validates an explicit `min_gap` against the scaled
+  floor (so the soak's literal `min_gap=1000` is refused at scale 4 instead of
+  silently making attribution ambiguous), and writes the resulting geometry
+  into the corruption log header (new `approx_slack` field; archived logs
+  read as 128). The receiver judges with the header's values, never the
+  constants. Scale 1 is byte-for-byte unchanged, so every soak judgement
+  stands. `stress.sh` passes `rate=5` alone and lets the geometry follow the
+  step's scale.
+
+- **Tooling: `report step --rss-slope-ungated <transport>/<process>,...`
+  — an RSS-slope verdict recorded, not gated.** librist's sender grows
+  ~6 MB over its first hour and is flat after (measured on the 2026-09-25
+  harness run and the 2026-10-01 RC soak, flat at 21 h); a 10-minute sweep
+  step can only ever sample that ramp, and the first measured stress run
+  failed every RIST step on it (7.0 MB/h against a 6.8 MB/h window
+  allowance), which refused the 24 h hold for all four transports. The
+  verdict is still computed and reported, a failure lands in the step's
+  `recorded_not_gated` list and in `report stress`'s limitations ("recorded,
+  not gated"), and it never fails the step. `stress.sh` declares it in
+  `stress-config.json` (`RSS_SLOPE_UNGATED`, default `rist/send`, empty =
+  gate all) and passes it to sweep steps only — the hold, whose 24 h window
+  can resolve a real slope, gates every process as before.
+
 - **OSS-Fuzz enrollment PR submitted.** The `oss-fuzz/` bundle was brought
   up to what `google/oss-fuzz` accepts for a Rust project and submitted
   upstream: `project.yaml` now lists libFuzzer + AddressSanitizer only

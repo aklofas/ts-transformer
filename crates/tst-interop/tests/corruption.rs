@@ -30,8 +30,8 @@
 use std::sync::{Arc, Mutex};
 use tst_core::transport::Transport;
 use tst_interop::corrupt::{
-    ATTRIBUTION_WINDOW, AttributionReport, Class, Corrupter, Injection, LogHeader, RECOVERY_BOUND,
-    parse_corrupt, parse_log,
+    APPROX_SLACK, ATTRIBUTION_WINDOW, AttributionReport, Class, Corrupter, Injection, LogHeader,
+    RECOVERY_BOUND, parse_corrupt, parse_log,
     testing::{VecTransport, VecWriter},
 };
 use tst_interop::fixtures::{AuSizeMode, KlvSet};
@@ -84,7 +84,7 @@ fn tap(bytes: &[u8], spec: &str, seed: u64) -> (Vec<u8>, LogHeader, Vec<Injectio
     let log = Arc::new(Mutex::new(Vec::new()));
     let mut tap = Corrupter::new(
         VecTransport(Arc::clone(&wire)),
-        parse_corrupt(spec, seed).expect("the spec parses"),
+        parse_corrupt(spec, seed, 1).expect("the spec parses"),
         Box::new(VecWriter(Arc::clone(&log))),
     )
     .expect("the tap config validates");
@@ -340,6 +340,7 @@ fn framing_damage_on_a_psi_packet_reports_what_expects_says_it_does() {
             classes: Class::ALL.to_vec(),
             attribution_window: ATTRIBUTION_WINDOW,
             recovery_bound: RECOVERY_BOUND,
+            approx_slack: APPROX_SLACK,
         },
         Vec::<Injection>::new(),
     );
@@ -734,6 +735,7 @@ fn unlogged_psi_damage_fails_nonconformant_and_attributed() {
         classes: Class::ALL.to_vec(),
         attribution_window: ATTRIBUTION_WINDOW,
         recovery_bound: RECOVERY_BOUND,
+        approx_slack: APPROX_SLACK,
     };
     let r = judge(&bytes, p, Some(&(header, Vec::new())));
     assert_failure_starting_with(&r, "corruption_attributed");
