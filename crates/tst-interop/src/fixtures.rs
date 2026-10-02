@@ -60,6 +60,22 @@ const REALISTIC_INTER_PAYLOAD: (usize, usize) = (2_048, 10_240);
 /// 78.77, so 78.
 pub const MAX_AU_SCALE: u32 = (4 * 1024 * 1024 / REALISTIC_KEY_PAYLOAD.1) as u32;
 
+/// Upper bound on the bytes of any video AU [`video_au_sized`] produces
+/// in `mode`: the largest scaled keyframe payload plus the slice/tile
+/// headers around it (a few dozen bytes; 1 KiB is generous). The muxer's
+/// outbound buffer is sized from this — a push larger than that buffer
+/// fails atomically (`MuxError::BufferFull`), so a scale whose keyframe
+/// outgrows the default `buffer_packets` (10 000 ≈ 1.8 MB; scale ≥ 35)
+/// could never send a single frame. Run 2 (2026-10-02) ended every
+/// bitrate axis at scale 64 exactly this way.
+pub fn max_video_au_bytes(mode: AuSizeMode) -> usize {
+    const HEADROOM: usize = 1024;
+    match mode {
+        AuSizeMode::Compact => HEADROOM,
+        AuSizeMode::Realistic { scale } => REALISTIC_KEY_PAYLOAD.1 * scale as usize + HEADROOM,
+    }
+}
+
 fn realistic_slice_payload(frame_idx: u32, keyframe: bool, scale: u32) -> Vec<u8> {
     let mut rng = XorShift64::new(
         (frame_idx as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0x5EED_AB1E_F1E1_D000,

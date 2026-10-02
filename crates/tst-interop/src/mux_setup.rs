@@ -19,6 +19,7 @@ use tst_core::mpegts::mux::{
     AudioCodec, KlvStreamType, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec as MuxVideoCodec,
 };
 
+use crate::fixtures::{self, AuSizeMode};
 use crate::profiles::{KlvMode, Profile, VideoCodec};
 
 /// Program 1's PIDs — the same conventional values `MuxerConfig::default()`
@@ -55,7 +56,7 @@ fn mux_video_codec(c: VideoCodec) -> MuxVideoCodec {
 ///
 /// `two-program` gets a second program (own PIDs) mirroring the first;
 /// the caller pushes the same content onto both programs' handles.
-pub fn build_config(p: &Profile) -> MuxerConfig {
+pub fn build_config(p: &Profile, au_sizes: AuSizeMode) -> MuxerConfig {
     let codec = mux_video_codec(p.video);
     let (klv_stream_type, carries_pts) = match p.klv {
         KlvMode::Sync => (KlvStreamType::SynchronousMetadata, true),
@@ -84,22 +85,95 @@ pub fn build_config(p: &Profile) -> MuxerConfig {
     if let Some(mode) = p.av1_mode {
         builder.av1_carriage(mode);
     }
+    builder.buffer_packets(buffer_packets_for(au_sizes));
 
     builder
         .build()
         .expect("every registered Profile must build a valid MuxerConfig")
 }
 
+/// The muxer's outbound buffer, in TS packets, for the AU sizes this
+/// run pushes: never below the library default (10 000, which every
+/// scale-1 run has always used), otherwise twice the packet span of
+/// the largest AU — one AU is pushed whole, so the buffer must take all
+/// of it on top of whatever PSI/PCR/KLV packets are already queued, and
+/// the factor of two is that headroom. See [`fixtures::max_video_au_bytes`].
+pub fn buffer_packets_for(au_sizes: AuSizeMode) -> usize {
+    const DEFAULT: usize = 10_000;
+    const TS_PAYLOAD: usize = 184;
+    let au_packets = fixtures::max_video_au_bytes(au_sizes).div_ceil(TS_PAYLOAD);
+    DEFAULT.max(2 * au_packets)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Scale 1 keeps the library default (every soak and every run-1/2
+    /// step used 10 000); a scale whose keyframe outgrows it gets a buffer
+    /// that holds the whole AU twice over.
+    #[test]
+    fn buffer_packets_follow_the_largest_au() {
+        assert_eq!(buffer_packets_for(AuSizeMode::Compact), 10_000);
+        assert_eq!(
+            buffer_packets_for(AuSizeMode::Realistic { scale: 1 }),
+            10_000
+        );
+        assert_eq!(
+            buffer_packets_for(AuSizeMode::Realistic { scale: 34 }),
+            10_000.max(2 * (53_248usize * 34 + 1024).div_ceil(184))
+        );
+        let b64 = buffer_packets_for(AuSizeMode::Realistic { scale: 64 });
+        assert!(b64 >= 2 * (53_248 * 64 / 184), "{b64}");
+        let p = crate::profiles::by_name("baseline").expect("baseline profile");
+        assert_eq!(
+            build_config(p, AuSizeMode::Realistic { scale: 1 }).buffer_packets,
+            10_000
+        );
+        assert_eq!(
+            build_config(p, AuSizeMode::Realistic { scale: 64 }).buffer_packets,
+            b64
+        );
+    }
+
+    /// The run-2 failure, as a unit: a scale-64 keyframe (~3.4 MB, ~18 500
+    /// TS packets) pushed into a muxer built for scale 64 must be accepted;
+    /// into the scale-1 config it is `BufferFull` at the first push.
+    #[test]
+    fn a_scale_64_keyframe_fits_the_buffer_built_for_it() {
+        use tst_core::mpegts::common::Pts90khz;
+        use tst_core::mpegts::mux::Muxer;
+        let p = crate::profiles::by_name("baseline").expect("baseline profile");
+        let (au, keyframe) =
+            fixtures::video_au_sized(p.video, 0, AuSizeMode::Realistic { scale: 64 });
+        assert!(
+            keyframe && au.len() > 10_000 * 184,
+            "frame 0 must be an oversize keyframe"
+        );
+
+        let mut small = Muxer::new(build_config(p, AuSizeMode::Realistic { scale: 1 })).unwrap();
+        let vid = small.video_handles()[0];
+        assert!(
+            matches!(
+                small.push_video_to(vid, &au, Pts90khz::new(0), true),
+                Err(tst_core::MuxError::BufferFull { .. })
+            ),
+            "the scale-1 buffer cannot take a 3.4 MB AU"
+        );
+
+        let mut sized = Muxer::new(build_config(p, AuSizeMode::Realistic { scale: 64 })).unwrap();
+        let vid = sized.video_handles()[0];
+        sized
+            .push_video_to(vid, &au, Pts90khz::new(0), true)
+            .expect("the sized buffer takes the whole AU");
+    }
     use crate::profiles;
     use tst_core::mpegts::mux::{Av1CarriageMode, Muxer, StreamSpec};
 
     #[test]
     fn single_program_profile_has_one_video_and_klv_handle_no_audio() {
         let p = profiles::by_name("baseline").expect("baseline profile must exist");
-        let cfg = build_config(p);
+        let cfg = build_config(p, AuSizeMode::Compact);
         assert_eq!(cfg.programs.len(), 1);
         // Handles are only meaningful off a live Muxer built from this
         // config (see this module's doc comment) — construct one here
@@ -113,7 +187,7 @@ mod tests {
     #[test]
     fn audio_profile_has_one_audio_handle() {
         let p = profiles::by_name("audio").expect("audio profile must exist");
-        let cfg = build_config(p);
+        let cfg = build_config(p, AuSizeMode::Compact);
         let muxer = Muxer::new(cfg).expect("valid config must construct");
         assert_eq!(muxer.audio_handles().len(), 1);
     }
@@ -121,7 +195,7 @@ mod tests {
     #[test]
     fn two_program_profile_has_two_video_and_klv_handles() {
         let p = profiles::by_name("two-program").expect("two-program profile must exist");
-        let cfg = build_config(p);
+        let cfg = build_config(p, AuSizeMode::Compact);
         assert_eq!(cfg.programs.len(), 2);
         let muxer = Muxer::new(cfg).expect("valid config must construct");
         assert_eq!(muxer.video_handles().len(), 2);
@@ -131,7 +205,7 @@ mod tests {
     #[test]
     fn klv_sync_profile_sets_synchronous_metadata_carries_pts() {
         let p = profiles::by_name("klv-sync").expect("klv-sync profile must exist");
-        let cfg = build_config(p);
+        let cfg = build_config(p, AuSizeMode::Compact);
         let klv_spec = cfg.programs[0]
             .streams
             .iter()
@@ -153,21 +227,21 @@ mod tests {
     #[test]
     fn av1_klv_a_profile_carries_the_configured_carriage_mode() {
         let p = profiles::by_name("av1-klv-a").expect("av1-klv-a profile must exist");
-        let cfg = build_config(p);
+        let cfg = build_config(p, AuSizeMode::Compact);
         assert_eq!(cfg.av1_carriage, Av1CarriageMode::InteropRawObu);
     }
 
     #[test]
     fn av1_klv_b_profile_carries_the_configured_carriage_mode() {
         let p = profiles::by_name("av1-klv-b").expect("av1-klv-b profile must exist");
-        let cfg = build_config(p);
+        let cfg = build_config(p, AuSizeMode::Compact);
         assert_eq!(cfg.av1_carriage, Av1CarriageMode::Mpeg2TsBinding);
     }
 
     #[test]
     fn pcr_tight_profile_config_matches_its_pcr_and_psi_intervals() {
         let p = profiles::by_name("pcr-tight").expect("pcr-tight profile must exist");
-        let cfg = build_config(p);
+        let cfg = build_config(p, AuSizeMode::Compact);
         assert_eq!(cfg.pcr_interval_ms, p.pcr_interval_ms);
         assert_eq!(cfg.psi_interval_ms, p.psi_interval_ms);
     }
@@ -175,7 +249,7 @@ mod tests {
     #[test]
     fn pcr_sparse_profile_config_matches_its_pcr_and_psi_intervals() {
         let p = profiles::by_name("pcr-sparse").expect("pcr-sparse profile must exist");
-        let cfg = build_config(p);
+        let cfg = build_config(p, AuSizeMode::Compact);
         assert_eq!(cfg.pcr_interval_ms, p.pcr_interval_ms);
         assert_eq!(cfg.psi_interval_ms, p.psi_interval_ms);
     }

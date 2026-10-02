@@ -2982,7 +2982,7 @@ mod tests {
         use tst_core::mpegts::mux::Muxer;
 
         let p = profiles::by_name("baseline").expect("baseline profile must exist");
-        let cfg = crate::mux_setup::build_config(p);
+        let cfg = crate::mux_setup::build_config(p, crate::fixtures::AuSizeMode::Compact);
         let mut mux = Muxer::new(cfg).expect("muxer must construct");
 
         for i in 0..60u32 {

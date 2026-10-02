@@ -144,7 +144,7 @@ fn run_hls_inner(
         .ok_or_else(|| "HLS publisher has no bound HTTP address".to_string())?;
     println!("{{\"serving\": \"http://{addr}/playlist.m3u8\"}}");
 
-    let cfg = mux_setup::build_config(p);
+    let cfg = mux_setup::build_config(p, au_sizes);
     let shell = MuxPublisher::with_config(publisher, cfg)
         .map_err(|e| format!("MuxPublisher::with_config: {e}"))?;
 
@@ -237,7 +237,7 @@ pub fn run_rtsp(
         ));
     }
 
-    let cfg = mux_setup::build_config(p);
+    let cfg = mux_setup::build_config(p, au_sizes);
     let server = RtspServer::bind(&format!("rtsp://{bind_addr}"))
         .map_err(|e| format!("RtspServer::bind: {e}"))?;
     let mount_handle = server
