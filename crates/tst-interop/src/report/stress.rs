@@ -1309,6 +1309,34 @@ pub struct HoldResults {
 /// (the reconnect may land just after a heartbeat).
 pub const RESTART_RECOVERY_WINDOW_S: u64 = 120;
 
+/// The part of `stress.sh`'s `hold-schedule.json` the hold verdicts
+/// read. Every instant is in hold time (seconds since the hold's
+/// START_EPOCH, the clock the senders' heartbeats share to within the
+/// launch span); the file's other keys are recorded, not read.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HoldSchedule {
+    /// Warm-up plus hold: when every worker is told to stop.
+    pub run_s: f64,
+    #[serde(default)]
+    pub restart_instants_s: Vec<f64>,
+    pub outage_dur_s: f64,
+    /// Every SRT outage window's start inside the run.
+    #[serde(default)]
+    pub outage_starts_s: Vec<f64>,
+}
+
+/// After an outage window ends, how long a sender's gap buffer may take
+/// to replay before its heartbeats count toward `queue_depth_p99` again.
+pub const OUTAGE_RECOVERY_MARGIN_S: f64 = 60.0;
+
+/// `gap_drains_after_outage`: some heartbeat within this long after an
+/// outage window ends must show the gap buffer drained.
+pub const GAP_DRAIN_WINDOW_S: f64 = 180.0;
+
+/// `gap_drains_after_outage`: "drained" means `gap_len` at or under
+/// this fraction of the buffer's capacity.
+pub const GAP_DRAINED_FRACTION: f64 = 0.1;
+
 /// What the hold-only verdicts read besides the judged step.
 #[derive(Debug, Clone, Default)]
 pub struct HoldEvidence {
@@ -1319,12 +1347,15 @@ pub struct HoldEvidence {
     /// has no `managed_send` block.
     pub reconnect_successes: BTreeMap<String, Option<u64>>,
     pub restarts: Vec<RestartEvent>,
+    /// `hold-schedule.json`, when the hold dir has one.
+    pub schedule: Option<HoldSchedule>,
     pub gap_capacity: u64,
     pub queue_depth_fraction: f64,
 }
 
 /// The hold-only verdicts, in order: `reconnect_count`,
-/// `peer_restart_recovery`, `queue_depth_p99`.
+/// `peer_restart_recovery`, `queue_depth_p99`,
+/// `gap_drains_after_outage`.
 pub fn hold_verdicts(
     decl: &StepDeclaration,
     step: &StepResults,
@@ -1343,8 +1374,42 @@ pub fn hold_verdicts(
             &ev.restarts,
         ),
         verdict_peer_restart_recovery(decl, &heartbeats, &ev.restarts),
-        verdict_queue_depth_p99(&heartbeats, ev.gap_capacity, ev.queue_depth_fraction),
+        verdict_queue_depth_p99(
+            &heartbeats,
+            &excluded_windows(ev),
+            ev.gap_capacity,
+            ev.queue_depth_fraction,
+        ),
+        verdict_gap_drains_after_outage(&heartbeats, ev.schedule.as_ref(), ev.gap_capacity),
     ]
+}
+
+/// The heartbeat windows `queue_depth_p99` leaves out, as `(from, to,
+/// from_inclusive)`: every outage `[o, o + dur + OUTAGE_RECOVERY_MARGIN_S]`
+/// (the gap buffer fills by design while the link is down and replays
+/// after it is back) and every receiver restart `(t, t +
+/// RESTART_RECOVERY_WINDOW_S]`, from the restart log and the schedule.
+fn excluded_windows(ev: &HoldEvidence) -> Vec<(f64, f64, bool)> {
+    let mut w = Vec::new();
+    let restart_window = RESTART_RECOVERY_WINDOW_S as f64;
+    if let Some(sch) = &ev.schedule {
+        for &o in &sch.outage_starts_s {
+            w.push((o, o + sch.outage_dur_s + OUTAGE_RECOVERY_MARGIN_S, true));
+        }
+        for &t in &sch.restart_instants_s {
+            w.push((t, t + restart_window, false));
+        }
+    }
+    for r in &ev.restarts {
+        w.push((r.elapsed_s, r.elapsed_s + restart_window, false));
+    }
+    w
+}
+
+fn in_windows(t: f64, windows: &[(f64, f64, bool)]) -> bool {
+    windows
+        .iter()
+        .any(|&(from, to, incl)| (t > from || (incl && t == from)) && t <= to)
 }
 
 /// Mirrors soak: each SRT stream must rebuild at least once per outage
@@ -1523,16 +1588,28 @@ fn verdict_peer_restart_recovery(
 
 /// Nearest-rank p99 of `gap_len` pooled over every managed stream's
 /// heartbeats must stay at or under `fraction × gap_capacity`.
+/// Heartbeats inside `excluded` (outage and restart windows, see
+/// `excluded_windows`) are left out and counted in the detail: a
+/// Background-mode sender's buffer fills during every outage by design,
+/// so pooling them would measure how often a heartbeat lands in an
+/// outage, not the queue's health. Draining is judged separately by
+/// `gap_drains_after_outage`.
 fn verdict_queue_depth_p99(
     heartbeats: &BTreeMap<&str, Vec<Heartbeat>>,
+    excluded: &[(f64, f64, bool)],
     gap_capacity: u64,
     fraction: f64,
 ) -> StepVerdict {
-    let mut gaps: Vec<u64> = heartbeats
-        .values()
-        .flatten()
-        .filter_map(|h| h.gap_len)
-        .collect();
+    let mut n_excluded = 0usize;
+    let mut gaps: Vec<u64> = Vec::new();
+    for h in heartbeats.values().flatten() {
+        let Some(g) = h.gap_len else { continue };
+        if in_windows(h.elapsed_s as f64, excluded) {
+            n_excluded += 1;
+        } else {
+            gaps.push(g);
+        }
+    }
     let threshold = fraction * gap_capacity as f64;
     match p99(&mut gaps) {
         Some(v) => StepVerdict {
@@ -1541,7 +1618,8 @@ fn verdict_queue_depth_p99(
             observed: v as f64,
             threshold,
             detail: format!(
-                "p99 gap_len {v} over {} heartbeat(s) vs {fraction} × capacity {gap_capacity}",
+                "p99 gap_len {v} over {} heartbeat(s) vs {fraction} × capacity {gap_capacity}; \
+                 {n_excluded} excluded inside outage/restart windows",
                 gaps.len()
             ),
         },
@@ -1550,14 +1628,94 @@ fn verdict_queue_depth_p99(
             pass: false,
             observed: 0.0,
             threshold,
-            detail: "no managed heartbeat found".into(),
+            detail: if n_excluded == 0 {
+                "no managed heartbeat found".into()
+            } else {
+                format!(
+                    "no managed heartbeat outside outage/restart windows ({n_excluded} excluded)"
+                )
+            },
+        },
+    }
+}
+
+/// After every outage window that ends at least `GAP_DRAIN_WINDOW_S`
+/// before the run does, each managed sender must show a heartbeat in
+/// `(o + dur, o + dur + GAP_DRAIN_WINDOW_S]` with `gap_len ≤
+/// GAP_DRAINED_FRACTION × capacity`: the buffer the outage filled was
+/// replayed rather than left standing. `observed` is the number of
+/// (stream, outage) pairs that drained, `threshold` the number judged.
+fn verdict_gap_drains_after_outage(
+    heartbeats: &BTreeMap<&str, Vec<Heartbeat>>,
+    schedule: Option<&HoldSchedule>,
+    gap_capacity: u64,
+) -> StepVerdict {
+    let name = "gap_drains_after_outage".to_string();
+    let not_applicable = |why: &str| StepVerdict {
+        name: name.clone(),
+        pass: true,
+        observed: 0.0,
+        threshold: 0.0,
+        detail: format!("not applicable: {why}"),
+    };
+    let Some(sch) = schedule else {
+        return not_applicable("no hold-schedule.json");
+    };
+    let judged: Vec<f64> = sch
+        .outage_starts_s
+        .iter()
+        .copied()
+        .filter(|&o| o + sch.outage_dur_s + GAP_DRAIN_WINDOW_S <= sch.run_s)
+        .collect();
+    if judged.is_empty() {
+        return not_applicable(&format!(
+            "no outage window ends {GAP_DRAIN_WINDOW_S} s before the run does ({} in the run)",
+            sch.outage_starts_s.len()
+        ));
+    }
+    if heartbeats.is_empty() {
+        return not_applicable("no managed stream");
+    }
+    let limit = GAP_DRAINED_FRACTION * gap_capacity as f64;
+    let mut undrained = Vec::new();
+    let mut total = 0usize;
+    for (leg, hbs) in heartbeats {
+        for &o in &judged {
+            total += 1;
+            let end = o + sch.outage_dur_s;
+            let drained = hbs.iter().any(|h| {
+                let t = h.elapsed_s as f64;
+                t > end
+                    && t <= end + GAP_DRAIN_WINDOW_S
+                    && h.gap_len.is_some_and(|g| g as f64 <= limit)
+            });
+            if !drained {
+                undrained.push(format!("{leg}@{o}s"));
+            }
+        }
+    }
+    StepVerdict {
+        name,
+        pass: undrained.is_empty(),
+        observed: (total - undrained.len()) as f64,
+        threshold: total as f64,
+        detail: if undrained.is_empty() {
+            format!(
+                "every one of {total} (stream, outage) pair(s) drained to \u{2264} {limit} within {GAP_DRAIN_WINDOW_S} s of the outage's end"
+            )
+        } else {
+            format!(
+                "gap_len not \u{2264} {limit} within {GAP_DRAIN_WINDOW_S} s after: {}",
+                undrained.join(", ")
+            )
         },
     }
 }
 
 /// Judge the hold dir: the step verdicts over it (restart-aware), then
 /// the hold-only verdicts
-/// from `hold-config.json`, `restart-events.log` (absent = no restarts)
+/// from `hold-config.json`, `hold-schedule.json` (absent = no outage
+/// windows known), `restart-events.log` (absent = no restarts)
 /// and `logs/<leg>-send.log` for every stream whose `send-report.json`
 /// carries `managed_send`. Writes `hold-results.json` on success.
 pub fn run_hold(
@@ -1569,6 +1727,12 @@ pub fn run_hold(
         parse_restart_events(&read_to_string(&restart_path)?)?
     } else {
         Vec::new()
+    };
+    let schedule_path = hold_dir.join("hold-schedule.json");
+    let schedule: Option<HoldSchedule> = if schedule_path.exists() {
+        Some(read_json(&schedule_path)?)
+    } else {
+        None
     };
     // The step verdicts need the restarts too: `delivery_complete`
     // judges a restarted leg on its last segment only.
@@ -1602,6 +1766,7 @@ pub fn run_hold(
             send_logs,
             reconnect_successes,
             restarts,
+            schedule,
             gap_capacity,
             queue_depth_fraction: thresholds.queue_depth_fraction,
         },
@@ -2808,6 +2973,182 @@ send: heartbeat elapsed_s=180 video_aus=5400 keyframes=180 klv_records=1800 audi
         );
     }
 
+    fn gap_line(t: u64, gap: u64) -> String {
+        format!(
+            "send: heartbeat elapsed_s={t} video_aus=1 keyframes=1 klv_records=1 audio_frames=0 wire_bytes=1 reconnects=0 gap_len={gap}\n"
+        )
+    }
+
+    /// 24 h-shaped schedule: outages every 900 s for 30 s from 840 s.
+    fn day_schedule() -> HoldSchedule {
+        HoldSchedule {
+            run_s: 86_460.0,
+            restart_instants_s: Vec::new(),
+            outage_dur_s: 30.0,
+            outage_starts_s: (0..96).map(|n| 840.0 + 900.0 * n as f64).collect(),
+        }
+    }
+
+    fn sched_verdicts(log: String, schedule: Option<HoldSchedule>) -> Vec<StepVerdict> {
+        hold_verdicts(
+            &hold_decl(),
+            &step_result(1, Axis::Hold, true, &[]),
+            &HoldEvidence {
+                send_logs: [("srt-0".to_string(), log)].into(),
+                schedule,
+                gap_capacity: 256,
+                queue_depth_fraction: 0.9,
+                ..Default::default()
+            },
+        )
+    }
+
+    /// 100 heartbeats every 60 s from 60 s, gap 0, except `full` at 256.
+    fn day_log(full: &[u64]) -> String {
+        (1..=100u64)
+            .map(|i| gap_line(60 * i, if full.contains(&(60 * i)) { 256 } else { 0 }))
+            .collect()
+    }
+
+    #[test]
+    fn queue_depth_p99_excludes_outage_windows() {
+        // Two heartbeats at a full buffer (256): inside the outage
+        // windows [840, 930] and [1740, 1830] they are excluded and p99
+        // passes; two at 256 OUTSIDE any window fail it.
+        let v = sched_verdicts(day_log(&[900, 1800]), Some(day_schedule()));
+        let q = hb_verdict(&v, "queue_depth_p99");
+        assert!(q.pass, "{}", q.detail);
+        assert_eq!(q.observed, 0.0);
+        assert!(q.detail.contains("2 excluded"), "{}", q.detail);
+
+        let v = sched_verdicts(day_log(&[600, 1200]), Some(day_schedule()));
+        let q = hb_verdict(&v, "queue_depth_p99");
+        assert!(!q.pass, "{}", q.detail);
+        assert_eq!(q.observed, 256.0);
+    }
+
+    #[test]
+    fn queue_depth_p99_excludes_restart_windows() {
+        // A heartbeat in (t, t + 120] of a logged restart is excluded;
+        // the one at t itself is not.
+        let log = day_log(&[1200, 1260]);
+        let v = hold_verdicts(
+            &hold_decl(),
+            &step_result(1, Axis::Hold, true, &[]),
+            &HoldEvidence {
+                send_logs: [("srt-0".to_string(), log.clone())].into(),
+                restarts: vec![RestartEvent {
+                    elapsed_s: 1150.0,
+                    role: "srt-0-recv".into(),
+                }],
+                gap_capacity: 256,
+                queue_depth_fraction: 0.9,
+                ..Default::default()
+            },
+        );
+        assert!(hb_verdict(&v, "queue_depth_p99").pass);
+        let v = hold_verdicts(
+            &hold_decl(),
+            &step_result(1, Axis::Hold, true, &[]),
+            &HoldEvidence {
+                send_logs: [("srt-0".to_string(), log)].into(),
+                restarts: vec![RestartEvent {
+                    elapsed_s: 1200.0,
+                    role: "srt-0-recv".into(),
+                }],
+                gap_capacity: 256,
+                queue_depth_fraction: 0.9,
+                ..Default::default()
+            },
+        );
+        let q = hb_verdict(&v, "queue_depth_p99");
+        assert!(!q.pass, "{}", q.detail);
+    }
+
+    #[test]
+    fn gap_drain_after_each_judgeable_outage() {
+        // 96 outages; the heartbeat log covers 60..6000 s, so outages
+        // from 6240 s on have no heartbeat after them. Drain is judged
+        // per outage that ends 180 s before run_s.
+        let mut sch = day_schedule();
+        sch.run_s = 6_100.0;
+        // Outages in the run: 840, 1740, 2640, 3540, 4440, 5340 (5340 +
+        // 30 + 180 = 5550 ≤ 6100: judged); a later start is cut off.
+        sch.outage_starts_s.retain(|&o| o < 6_100.0);
+        let v = sched_verdicts(day_log(&[]), Some(sch.clone()));
+        let g = hb_verdict(&v, "gap_drains_after_outage");
+        assert!(g.pass, "{}", g.detail);
+        assert_eq!((g.observed, g.threshold), (6.0, 6.0));
+
+        // After the 2640 s outage (ends 2670) every heartbeat in
+        // (2670, 2850] — 2700, 2760, 2820 — still reads 256.
+        let v = sched_verdicts(day_log(&[2700, 2760, 2820]), Some(sch.clone()));
+        let g = hb_verdict(&v, "gap_drains_after_outage");
+        assert!(!g.pass, "{}", g.detail);
+        assert_eq!((g.observed, g.threshold), (5.0, 6.0));
+        assert!(g.detail.contains("srt-0@2640s"), "{}", g.detail);
+
+        // At exactly 0.1 × 256 = 25.6 → 25 drains; 26 does not.
+        let log: String = (1..=100u64)
+            .map(|i| {
+                gap_line(
+                    60 * i,
+                    if (2700..=2820).contains(&(60 * i)) {
+                        26
+                    } else {
+                        0
+                    },
+                )
+            })
+            .collect();
+        assert!(
+            !hb_verdict(
+                &sched_verdicts(log, Some(sch.clone())),
+                "gap_drains_after_outage"
+            )
+            .pass
+        );
+        let log: String = (1..=100u64)
+            .map(|i| {
+                gap_line(
+                    60 * i,
+                    if (2700..=2820).contains(&(60 * i)) {
+                        25
+                    } else {
+                        0
+                    },
+                )
+            })
+            .collect();
+        assert!(hb_verdict(&sched_verdicts(log, Some(sch)), "gap_drains_after_outage").pass);
+    }
+
+    #[test]
+    fn gap_drain_is_not_applicable_without_judgeable_outages() {
+        let v = sched_verdicts(day_log(&[]), None);
+        let g = hb_verdict(&v, "gap_drains_after_outage");
+        assert!(
+            g.pass && g.detail.contains("no hold-schedule.json"),
+            "{}",
+            g.detail
+        );
+        // The smoke: one outage at 305 s, dur 10, run 420 — ends 105 s
+        // before the run does.
+        let smoke = HoldSchedule {
+            run_s: 420.0,
+            restart_instants_s: vec![50.0, 170.0],
+            outage_dur_s: 10.0,
+            outage_starts_s: vec![305.0],
+        };
+        let v = sched_verdicts(day_log(&[]), Some(smoke));
+        let g = hb_verdict(&v, "gap_drains_after_outage");
+        assert!(
+            g.pass && g.detail.contains("not applicable"),
+            "{}",
+            g.detail
+        );
+    }
+
     fn figures(leg: &str, reconnects: Option<u64>) -> StreamFigures {
         StreamFigures {
             index: 0,
@@ -3020,6 +3361,13 @@ send: heartbeat elapsed_s=180 video_aus=5400 keyframes=180 klv_records=1800 audi
             "restart-events.log",
             "300 RESTART role=srt-0-recv old_pid=10 new_pid=20\n",
         );
+        // stress.sh's shape, extra keys included; no outage windows.
+        write(
+            dir,
+            "hold-schedule.json",
+            r#"{"clock":"seconds since the hold START_EPOCH","warmup_s":60,"hold_s":600,"run_s":660,
+                "restart_instants_s":[300],"outage_period_s":900,"outage_dur_s":30,"outage_starts_s":[]}"#,
+        );
         // The relaunched receiver's report covers only the 360 s after
         // the restart of the 660 s run: 18000 × 360/660 ≈ 9818 AUs.
         write(
@@ -3057,15 +3405,25 @@ send: heartbeat elapsed_s=180 video_aus=5400 keyframes=180 klv_records=1800 audi
             [
                 "reconnect_count",
                 "peer_restart_recovery",
-                "queue_depth_p99"
+                "queue_depth_p99",
+                "gap_drains_after_outage"
             ]
         );
         assert!(r.pass, "{:?}", r.hold_verdicts);
         let rr = hb_verdict(&r.hold_verdicts, "peer_restart_recovery");
         assert_eq!((rr.observed, rr.threshold), (1.0, 1.0), "{}", rr.detail);
+        // The 360 s heartbeat (gap 10) is inside the 300 s restart's
+        // recovery window, so only the 240 s one (gap 0) is pooled.
         let q = hb_verdict(&r.hold_verdicts, "queue_depth_p99");
-        assert_eq!(q.observed, 10.0);
+        assert_eq!(q.observed, 0.0, "{}", q.detail);
+        assert!(q.detail.contains("1 excluded"), "{}", q.detail);
         assert!((q.threshold - 230.4).abs() < 0.01);
+        let g = hb_verdict(&r.hold_verdicts, "gap_drains_after_outage");
+        assert!(
+            g.pass && g.detail.contains("not applicable"),
+            "{}",
+            g.detail
+        );
         let written: HoldResults =
             serde_json::from_str(&std::fs::read_to_string(dir.join("hold-results.json")).unwrap())
                 .unwrap();
