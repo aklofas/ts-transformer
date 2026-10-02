@@ -352,8 +352,10 @@ pub struct StreamFigures {
     pub fds_max: BTreeMap<String, u64>,
     pub recv_video_aus: u64,
     pub send_video_aus: u64,
-    /// For a leg that was restarted, the receiver report covers only
-    /// the last segment while the divisor is the full hold, so this
+    /// The receiver's bytes over its whole window, warm-up plus hold
+    /// (its `--seconds`), in Mb/s. For a leg that was restarted, the
+    /// receiver report covers only the last segment while the divisor
+    /// is the full run, so this
     /// figure is understated by the same fraction `delivery_complete`
     /// corrects for; it is recorded, never gated.
     pub wire_mbps: f64,
@@ -1225,7 +1227,7 @@ fn stream_figures(
                 fds_max,
                 recv_video_aus: s.recv.metrics.video_aus,
                 send_video_aus: s.send.video_aus,
-                wire_mbps: s.recv.metrics.bytes as f64 * 8.0 / decl.hold_s / 1e6,
+                wire_mbps: s.recv.metrics.bytes as f64 * 8.0 / (decl.warmup_s + decl.hold_s) / 1e6,
                 reconnects: s.recv.reconnects,
                 proxy_forwarded: s.proxy.as_ref().map(|p| p.forwarded),
                 proxy_dropped: s.proxy.as_ref().map(|p| p.dropped),
@@ -2059,6 +2061,20 @@ mod tests {
             streams: arts,
             restarts: Vec::new(),
         }
+    }
+
+    #[test]
+    fn wire_mbps_divides_by_the_whole_receiver_window() {
+        // The receiver counts bytes over warm-up + hold (60 + 600 s):
+        // 82.5 MB × 8 / 660 s = 1.0 Mb/s, not 1.1 over the hold alone.
+        let mut inp = inputs(1, 30);
+        inp.streams[0].recv.metrics.bytes = 82_500_000;
+        let r = build_step_results(inp).unwrap();
+        assert!(
+            (r.per_stream[0].wire_mbps - 1.0).abs() < 1e-9,
+            "{}",
+            r.per_stream[0].wire_mbps
+        );
     }
 
     #[test]
