@@ -563,7 +563,7 @@ something stops holding steady, then holds a system sized at 70% of that
 ceiling for 24 hours under the soak's own impairment schedule. **A stress
 run is not a soak PASS, and a soak is not a ceiling** — the soak evidence
 above proves endurance at a size already chosen; a stress run is what
-chooses that size. See [`benchmarks.md`](benchmarks.md) for the verdict
+chooses that size. See [`benchmarks.md`](/docs/project/benchmarks.md) for the verdict
 definitions, how to read a ceiling, and the measured results once a run
 has landed. Archives from each run are kept outside this repo under a
 `soak-archives/stress-<date>/` directory: a results file, a provenance

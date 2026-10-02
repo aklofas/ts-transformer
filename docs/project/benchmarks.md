@@ -52,7 +52,7 @@ of its ceiling actually survive a full day of real-world disruption."
 | `fd_count_flat_*` | File-descriptor count range per process after a 60-second warm-up. | max − min ≤ 2 |
 | `thread_count_flat_*` | Thread count range per process after the same warm-up. | max − min ≤ 1 |
 | `sample_coverage` | Fraction of expected sampler ticks actually recorded. | ≥ 90% |
-| `reconnect_count` *(hold only)* | Each SRT receiver rebuilds its transport at least once per outage window it lived through. | ≥ (outage windows − 1) |
+| `reconnect_count` *(hold only)* | Each SRT receiver rebuilds its transport at least once per outage window it lived through. | ≥ (outage windows − 1); one less than the window count because the final window can coincide with teardown |
 | `peer_restart_recovery` *(hold only)* | After each scheduled receiver restart, the sender reconnects. | within 120 seconds; a restart in the run's final 120 seconds is unjudgeable |
 | `queue_depth_p99` *(hold only)* | The managed sender's gap-length distribution. | p99 ≤ 0.9× its configured capacity |
 | `hold_sizing_declared` *(hold only)* | The hold's configured stream counts actually match the sizing rule. | ⌊0.7 × ceiling⌋ per transport, at least 1 |
