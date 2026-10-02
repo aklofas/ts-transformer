@@ -182,7 +182,7 @@ jobs:
           # Intel-Mac users install from the sdist. See
           # docs/project/deferred-features.md "macOS x86_64 (Intel)".
           - target: aarch64-apple-darwin
-            runner: macos-14
+            runner: macos-15
             continue-on-error: false
     continue-on-error: ${{ matrix.continue-on-error }}
     steps:
@@ -206,11 +206,11 @@ jobs:
       # ninja is on the image now — emits an "already installed" warning).
       - name: Install librist build prerequisites (meson + ninja)
         run: |
-          # The macos-14 image ships a pre-tapped third-party `aws/tap`, and
+          # The macos-14 image shipped a pre-tapped third-party `aws/tap`, and
           # Homebrew 6 requires explicit tap trust: until it is untapped every
           # brew call prints a `::warning::` annotation about it. Nothing here
-          # uses that tap. (Observed 2026-09-05; drop when the image stops
-          # shipping it.)
+          # uses that tap. (Observed 2026-09-05 on macos-14; kept — harmless
+          # when absent — until a macos-15 log confirms the tap is gone.)
           brew untap aws/tap >/dev/null 2>&1 || true
           for pkg in meson ninja; do
             brew list --formula "$pkg" >/dev/null 2>&1 || brew install "$pkg"

@@ -40,7 +40,7 @@ jobs:
             runner: ubuntu-24.04-arm
             continue: false
           - name: macos-arm64
-            runner: macos-14
+            runner: macos-15
             continue: false
           - name: windows-msvc
             runner: windows-latest
@@ -56,7 +56,7 @@ jobs:
 
       - name: Install build prerequisites (Linux)
         # apt-get is Linux-only; macOS / Windows runners come with cmake +
-        # perl pre-installed (macos-14, windows-latest) and pkg-config is
+        # perl pre-installed (macos-15, windows-latest) and pkg-config is
         # absent on both but the build falls through to vendored via
         # SRT_FORCE_VENDORED=1.
         if: startsWith(matrix.name, 'linux-')
@@ -76,16 +76,16 @@ jobs:
         # on PATH; cmake is pre-installed. ripgrep backs
         # scripts/check/c/no-direct-not-available-not-found-cast.sh (fails closed if `rg`
         # is missing). Install only what's absent: `ninja` (and sometimes others)
-        # is now pre-installed on the macos-14 image, and `brew install` on an
+        # is pre-installed on the macOS image, and `brew install` on an
         # already-present formula emits a `::warning::` — guard with `brew list`
         # to keep the log clean.
         if: matrix.name == 'macos-arm64'
         run: |
-          # The macos-14 image ships a pre-tapped third-party `aws/tap`, and
+          # The macos-14 image shipped a pre-tapped third-party `aws/tap`, and
           # Homebrew 6 requires explicit tap trust: until it is untapped every
           # brew call prints a `::warning::` annotation about it. Nothing here
-          # uses that tap. (Observed 2026-09-05; drop when the image stops
-          # shipping it.)
+          # uses that tap. (Observed 2026-09-05 on macos-14; kept — harmless
+          # when absent — until a macos-15 log confirms the tap is gone.)
           brew untap aws/tap >/dev/null 2>&1 || true
           for pkg in meson ninja ripgrep; do
             brew list --formula "$pkg" >/dev/null 2>&1 || brew install "$pkg"
