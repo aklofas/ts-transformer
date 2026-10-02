@@ -1309,35 +1309,61 @@ pub struct HoldResults {
 /// (the reconnect may land just after a heartbeat).
 pub const RESTART_RECOVERY_WINDOW_S: u64 = 120;
 
+/// What the hold-only verdicts read besides the judged step.
+#[derive(Debug, Clone, Default)]
+pub struct HoldEvidence {
+    /// Each MANAGED stream's leg → its send log text.
+    pub send_logs: BTreeMap<String, String>,
+    /// Each stream's leg → its sender's whole-run
+    /// `managed_send.reconnect_successes`; `None` when the send report
+    /// has no `managed_send` block.
+    pub reconnect_successes: BTreeMap<String, Option<u64>>,
+    pub restarts: Vec<RestartEvent>,
+    pub gap_capacity: u64,
+    pub queue_depth_fraction: f64,
+}
+
 /// The hold-only verdicts, in order: `reconnect_count`,
-/// `peer_restart_recovery`, `queue_depth_p99`. `send_logs` maps each
-/// MANAGED stream's leg to its send log text.
+/// `peer_restart_recovery`, `queue_depth_p99`.
 pub fn hold_verdicts(
     decl: &StepDeclaration,
     step: &StepResults,
-    send_logs: &BTreeMap<String, String>,
-    restarts: &[RestartEvent],
-    gap_capacity: u64,
-    queue_depth_fraction: f64,
+    ev: &HoldEvidence,
 ) -> Vec<StepVerdict> {
-    let heartbeats: BTreeMap<&str, Vec<Heartbeat>> = send_logs
+    let heartbeats: BTreeMap<&str, Vec<Heartbeat>> = ev
+        .send_logs
         .iter()
         .map(|(leg, log)| (leg.as_str(), parse_send_heartbeats(log)))
         .collect();
     vec![
-        verdict_reconnect_count(decl, &step.per_stream),
-        verdict_peer_restart_recovery(decl, &heartbeats, restarts),
-        verdict_queue_depth_p99(&heartbeats, gap_capacity, queue_depth_fraction),
+        verdict_reconnect_count(
+            decl,
+            &step.per_stream,
+            &ev.reconnect_successes,
+            &ev.restarts,
+        ),
+        verdict_peer_restart_recovery(decl, &heartbeats, &ev.restarts),
+        verdict_queue_depth_p99(&heartbeats, ev.gap_capacity, ev.queue_depth_fraction),
     ]
 }
 
-/// Mirrors soak: each SRT receiver must rebuild at least once per
-/// outage window, less one (the last window may straddle the end).
-/// Judged per stream, never on the sum, so one busy receiver cannot
-/// mask one that never rebuilt: `observed` is the smallest per-stream
-/// count, `threshold` is `windows − 1`, and the detail lists every
-/// stream that falls short.
-fn verdict_reconnect_count(decl: &StepDeclaration, per_stream: &[StreamFigures]) -> StepVerdict {
+/// Mirrors soak: each SRT stream must rebuild at least once per outage
+/// window, less one (the last window may straddle the end). Counted on
+/// the SENDER's whole-run `managed_send.reconnect_successes`, not the
+/// receiver's `reconnects`: a restarted receiver's report covers only
+/// its last segment. Each receiver restart also forces one sender
+/// reconnect, so a leg's restarts are subtracted before the comparison.
+/// Judged per stream, never on the sum, so one busy stream cannot mask
+/// one that never rebuilt: `observed` is the smallest per-stream
+/// `successes − restarts`, `threshold` is `windows − 1`, and the detail
+/// lists every stream that falls short. A stream whose send report has
+/// no `managed_send` fails, named.
+fn verdict_reconnect_count(
+    decl: &StepDeclaration,
+    per_stream: &[StreamFigures],
+    reconnect_successes: &BTreeMap<String, Option<u64>>,
+    restarts: &[RestartEvent],
+) -> StepVerdict {
     let srt: Vec<&StreamFigures> = per_stream
         .iter()
         .filter(|s| s.leg.starts_with("srt-"))
@@ -1357,16 +1383,30 @@ fn verdict_reconnect_count(decl: &StepDeclaration, per_stream: &[StreamFigures])
     };
     let windows = (decl.hold_s / period as f64).floor() as u64;
     let required = windows.saturating_sub(1);
-    let counts: Vec<(&str, u64)> = srt
-        .iter()
-        .map(|s| (s.leg.as_str(), s.reconnects.unwrap_or(0)))
-        .collect();
-    let observed = counts.iter().map(|&(_, n)| n).min().unwrap_or(0);
-    let shortfalls: Vec<String> = counts
-        .iter()
-        .filter(|&&(_, n)| n < required)
-        .map(|&(leg, n)| format!("{leg}: {n} < {required}"))
-        .collect();
+    let mut observed = u64::MAX;
+    let mut shortfalls = Vec::new();
+    for s in &srt {
+        let leg = s.leg.as_str();
+        let n_restarts = restarts
+            .iter()
+            .filter(|ev| ev.role.strip_suffix("-recv") == Some(leg))
+            .count() as u64;
+        match reconnect_successes.get(leg).copied().flatten() {
+            None => {
+                observed = 0;
+                shortfalls.push(format!("{leg}: send report has no managed_send"));
+            }
+            Some(successes) => {
+                let net = successes.saturating_sub(n_restarts);
+                observed = observed.min(net);
+                if net < required {
+                    shortfalls.push(format!(
+                        "{leg}: {successes} sender reconnects − {n_restarts} restart(s) = {net} < {required}"
+                    ));
+                }
+            }
+        }
+    }
     StepVerdict {
         name,
         pass: shortfalls.is_empty(),
@@ -1374,12 +1414,12 @@ fn verdict_reconnect_count(decl: &StepDeclaration, per_stream: &[StreamFigures])
         threshold: required as f64,
         detail: if shortfalls.is_empty() {
             format!(
-                "every one of {} SRT stream(s) reconnected \u{2265} {windows} outage windows − 1 = {required} times (min {observed})",
+                "every one of {} SRT sender(s) reconnected \u{2265} {windows} outage windows − 1 = {required} times beyond its receiver restarts (min {observed})",
                 srt.len()
             )
         } else {
             format!(
-                "SRT streams below {windows} outage windows − 1 = {required} reconnects: {}",
+                "SRT senders below {windows} outage windows − 1 = {required} reconnects: {}",
                 shortfalls.join(", ")
             )
         },
@@ -1535,6 +1575,7 @@ pub fn run_hold(
     let step = judge_step_dir(hold_dir, thresholds.clone(), restarts.clone())?;
     let decl: HoldDeclaration = read_json(&hold_dir.join("hold-config.json"))?;
     let mut send_logs = BTreeMap::new();
+    let mut reconnect_successes = BTreeMap::new();
     let mut capacities = Vec::new();
     for s in &step.per_stream {
         let send: CellMetrics = read_json(
@@ -1543,6 +1584,10 @@ pub fn run_hold(
                 .join(s.index.to_string())
                 .join("send-report.json"),
         )?;
+        reconnect_successes.insert(
+            s.leg.clone(),
+            send.managed_send.as_ref().map(|m| m.reconnect_successes),
+        );
         if let Some(m) = send.managed_send {
             capacities.push(m.gap_buffer_capacity);
             let log = read_to_string(&hold_dir.join("logs").join(format!("{}-send.log", s.leg)))?;
@@ -1553,10 +1598,13 @@ pub fn run_hold(
     let mut hold_verdicts = hold_verdicts(
         &step.decl,
         &step,
-        &send_logs,
-        &restarts,
-        gap_capacity,
-        thresholds.queue_depth_fraction,
+        &HoldEvidence {
+            send_logs,
+            reconnect_successes,
+            restarts,
+            gap_capacity,
+            queue_depth_fraction: thresholds.queue_depth_fraction,
+        },
     );
     if capacities.iter().any(|&c| c != gap_capacity) {
         if let Some(q) = hold_verdicts
@@ -2599,6 +2647,27 @@ send: heartbeat elapsed_s=180 video_aus=5400 keyframes=180 klv_records=1800 audi
         d
     }
 
+    /// `hold_verdicts` with no sender reconnect counts, capacity 256 and
+    /// fraction 0.9.
+    fn hv(
+        d: &StepDeclaration,
+        step: &StepResults,
+        logs: &BTreeMap<String, String>,
+        restarts: &[RestartEvent],
+    ) -> Vec<StepVerdict> {
+        hold_verdicts(
+            d,
+            step,
+            &HoldEvidence {
+                send_logs: logs.clone(),
+                restarts: restarts.to_vec(),
+                gap_capacity: 256,
+                queue_depth_fraction: 0.9,
+                ..Default::default()
+            },
+        )
+    }
+
     fn hb_verdict<'a>(v: &'a [StepVerdict], name: &str) -> &'a StepVerdict {
         v.iter()
             .find(|v| v.name == name)
@@ -2614,13 +2683,11 @@ send: heartbeat elapsed_s=180 video_aus=5400 keyframes=180 klv_records=1800 audi
             elapsed_s: 7200.0,
             role: "srt-0-recv".into(),
         }];
-        let v = hold_verdicts(
+        let v = hv(
             &hold_decl(),
             &step_result(2, Axis::Hold, true, &[]),
             &logs,
             &restarts,
-            256,
-            0.9,
         );
         let r = hb_verdict(&v, "peer_restart_recovery");
         assert!(r.pass, "{}", r.detail);
@@ -2635,13 +2702,11 @@ send: heartbeat elapsed_s=180 video_aus=5400 keyframes=180 klv_records=1800 audi
             elapsed_s: 7200.0,
             role: "srt-0-recv".into(),
         }];
-        let v = hold_verdicts(
+        let v = hv(
             &hold_decl(),
             &step_result(2, Axis::Hold, true, &[]),
             &logs,
             &restarts,
-            256,
-            0.9,
         );
         let r = hb_verdict(&v, "peer_restart_recovery");
         assert!(!r.pass);
@@ -2659,26 +2724,22 @@ send: heartbeat elapsed_s=180 video_aus=5400 keyframes=180 klv_records=1800 audi
             elapsed_s: 7200.0,
             role: "srt-0-recv".into(),
         }];
-        let v = hold_verdicts(
+        let v = hv(
             &hold_decl(),
             &step_result(2, Axis::Hold, true, &[]),
             &logs,
             &restarts,
-            256,
-            0.9,
         );
         assert!(!hb_verdict(&v, "peer_restart_recovery").pass);
     }
 
     #[test]
     fn declared_restarts_that_never_happened_fail() {
-        let v = hold_verdicts(
+        let v = hv(
             &hold_decl(),
             &step_result(2, Axis::Hold, true, &[]),
             &BTreeMap::new(),
             &[],
-            256,
-            0.9,
         );
         let r = hb_verdict(&v, "peer_restart_recovery");
         assert!(!r.pass);
@@ -2689,13 +2750,11 @@ send: heartbeat elapsed_s=180 video_aus=5400 keyframes=180 klv_records=1800 audi
     fn undeclared_restarts_are_not_applicable() {
         let mut d = hold_decl();
         d.restart_period_s = None;
-        let v = hold_verdicts(
+        let v = hv(
             &d,
             &step_result(2, Axis::Hold, true, &[]),
             &BTreeMap::new(),
             &[],
-            256,
-            0.9,
         );
         let r = hb_verdict(&v, "peer_restart_recovery");
         assert!(r.pass, "{}", r.detail);
@@ -2717,7 +2776,7 @@ send: heartbeat elapsed_s=180 video_aus=5400 keyframes=180 klv_records=1800 audi
             ));
         }
         let logs = [("srt-0".to_string(), log)].into();
-        let v = hold_verdicts(
+        let v = hv(
             &hold_decl(),
             &step_result(2, Axis::Hold, true, &[]),
             &logs,
@@ -2725,8 +2784,6 @@ send: heartbeat elapsed_s=180 video_aus=5400 keyframes=180 klv_records=1800 audi
                 elapsed_s: 1.0,
                 role: "x-recv".into(),
             }],
-            256,
-            0.9,
         );
         let q = hb_verdict(&v, "queue_depth_p99");
         assert!(!q.pass);
@@ -2736,13 +2793,11 @@ send: heartbeat elapsed_s=180 video_aus=5400 keyframes=180 klv_records=1800 audi
 
     #[test]
     fn queue_depth_without_managed_heartbeats_fails() {
-        let v = hold_verdicts(
+        let v = hv(
             &hold_decl(),
             &step_result(2, Axis::Hold, true, &[]),
             &BTreeMap::new(),
             &[],
-            256,
-            0.9,
         );
         let q = hb_verdict(&v, "queue_depth_p99");
         assert!(!q.pass);
@@ -2770,45 +2825,160 @@ send: heartbeat elapsed_s=180 video_aus=5400 keyframes=180 klv_records=1800 audi
         }
     }
 
+    /// `reconnect_count` over SRT/RIST legs: `legs` are (leg, receiver
+    /// reconnects), `successes` (leg, sender reconnect_successes),
+    /// `restarts` (hold time, role).
+    fn reconnect_verdict(
+        d: &StepDeclaration,
+        legs: &[(&str, Option<u64>)],
+        successes: &[(&str, Option<u64>)],
+        restarts: &[(f64, &str)],
+    ) -> StepVerdict {
+        let mut step = step_result(legs.len() as u32, Axis::Hold, true, &[]);
+        step.per_stream = legs.iter().map(|&(l, r)| figures(l, r)).collect();
+        let v = hold_verdicts(
+            d,
+            &step,
+            &HoldEvidence {
+                reconnect_successes: successes.iter().map(|&(l, n)| (l.to_string(), n)).collect(),
+                restarts: restarts
+                    .iter()
+                    .map(|&(t, role)| RestartEvent {
+                        elapsed_s: t,
+                        role: role.into(),
+                    })
+                    .collect(),
+                gap_capacity: 256,
+                queue_depth_fraction: 0.9,
+                ..Default::default()
+            },
+        );
+        hb_verdict(&v, "reconnect_count").clone()
+    }
+
     #[test]
-    fn reconnect_count_counts_srt_streams_only() {
-        // 86_400 / 900 = 96 windows: each SRT stream needs ≥ 95. The
-        // RIST stream's 0 is not judged.
-        let mut step = step_result(3, Axis::Hold, true, &[]);
-        step.per_stream = vec![
-            figures("srt-0", Some(96)),
-            figures("srt-1", Some(95)),
-            figures("rist-0", Some(0)),
-        ];
-        let v = hold_verdicts(&hold_decl(), &step, &BTreeMap::new(), &[], 256, 0.9);
-        let r = hb_verdict(&v, "reconnect_count");
+    fn reconnect_count_counts_srt_senders_only() {
+        // 86_400 / 900 = 96 windows: each SRT sender needs ≥ 95. The
+        // RIST stream (unmanaged, no count) is not judged.
+        let legs = [("srt-0", None), ("srt-1", None), ("rist-0", None)];
+        let r = reconnect_verdict(
+            &hold_decl(),
+            &legs,
+            &[("srt-0", Some(96)), ("srt-1", Some(95)), ("rist-0", None)],
+            &[],
+        );
         assert!(r.pass, "{}", r.detail);
         assert_eq!((r.observed, r.threshold), (95.0, 95.0));
 
-        step.per_stream[1].reconnects = Some(94);
-        let v = hold_verdicts(&hold_decl(), &step, &BTreeMap::new(), &[], 256, 0.9);
-        let r = hb_verdict(&v, "reconnect_count");
+        let r = reconnect_verdict(
+            &hold_decl(),
+            &legs,
+            &[("srt-0", Some(96)), ("srt-1", Some(94)), ("rist-0", None)],
+            &[],
+        );
         assert!(!r.pass);
         assert_eq!(r.observed, 94.0);
-        assert!(r.detail.contains("srt-1: 94 < 95"), "{}", r.detail);
+        assert!(
+            r.detail.contains("srt-1: 94 sender reconnects"),
+            "{}",
+            r.detail
+        );
+    }
 
-        step.per_stream[1].reconnects = None;
-        let v = hold_verdicts(&hold_decl(), &step, &BTreeMap::new(), &[], 256, 0.9);
-        let r = hb_verdict(&v, "reconnect_count");
+    #[test]
+    fn reconnect_count_subtracts_the_restarted_legs_restarts() {
+        // A 24 h hold: srt-0's receiver was restarted twice, so its LAST
+        // segment saw only 8 outages, but its sender rebuilt 97 times:
+        // 97 − 2 restarts = 95 ≥ 96 − 1.
+        let restarts = [(450.0, "srt-0-recv"), (79_650.0, "srt-0-recv")];
+        let r = reconnect_verdict(
+            &hold_decl(),
+            &[("srt-0", Some(8)), ("srt-1", Some(95))],
+            &[("srt-0", Some(97)), ("srt-1", Some(95))],
+            &restarts,
+        );
+        assert!(r.pass, "{}", r.detail);
+        assert_eq!((r.observed, r.threshold), (95.0, 95.0));
+
+        // Its twin: 96 − 2 = 94 falls short, and only srt-0 is named.
+        let r = reconnect_verdict(
+            &hold_decl(),
+            &[("srt-0", Some(8)), ("srt-1", Some(95))],
+            &[("srt-0", Some(96)), ("srt-1", Some(95))],
+            &restarts,
+        );
+        assert!(!r.pass);
+        assert_eq!(r.observed, 94.0);
+        assert!(
+            r.detail
+                .contains("srt-0: 96 sender reconnects − 2 restart(s) = 94 < 95"),
+            "{}",
+            r.detail
+        );
+        assert!(!r.detail.contains("srt-1:"), "{}", r.detail);
+    }
+
+    #[test]
+    fn reconnect_count_ignores_the_receivers_count() {
+        // A busy receiver count cannot rescue a sender that never rebuilt…
+        let r = reconnect_verdict(
+            &hold_decl(),
+            &[("srt-0", Some(200))],
+            &[("srt-0", Some(10))],
+            &[],
+        );
+        assert!(!r.pass, "{}", r.detail);
+        // …and a receiver that reports nothing does not sink a sender
+        // that did.
+        let r = reconnect_verdict(
+            &hold_decl(),
+            &[("srt-0", None)],
+            &[("srt-0", Some(95))],
+            &[],
+        );
+        assert!(r.pass, "{}", r.detail);
+    }
+
+    #[test]
+    fn reconnect_count_without_managed_send_fails_naming_the_stream() {
+        let r = reconnect_verdict(
+            &hold_decl(),
+            &[("srt-0", Some(95)), ("srt-1", Some(95))],
+            &[("srt-0", Some(95)), ("srt-1", None)],
+            &[],
+        );
+        assert!(!r.pass);
         assert_eq!(r.observed, 0.0);
-        assert!(r.detail.contains("srt-1: 0 < 95"), "{}", r.detail);
+        assert!(
+            r.detail.contains("srt-1: send report has no managed_send"),
+            "{}",
+            r.detail
+        );
+        // Absent from the map entirely reads the same.
+        let r = reconnect_verdict(&hold_decl(), &[("srt-0", Some(95))], &[], &[]);
+        assert!(
+            r.detail.contains("srt-0: send report has no managed_send"),
+            "{}",
+            r.detail
+        );
     }
 
     #[test]
     fn reconnect_count_one_busy_stream_does_not_mask_a_dead_one() {
         // The aggregate (190) would meet 2 × 95, but srt-1 never rebuilt.
-        let mut step = step_result(2, Axis::Hold, true, &[]);
-        step.per_stream = vec![figures("srt-0", Some(190)), figures("srt-1", Some(0))];
-        let v = hold_verdicts(&hold_decl(), &step, &BTreeMap::new(), &[], 256, 0.9);
-        let r = hb_verdict(&v, "reconnect_count");
+        let r = reconnect_verdict(
+            &hold_decl(),
+            &[("srt-0", None), ("srt-1", None)],
+            &[("srt-0", Some(190)), ("srt-1", Some(0))],
+            &[],
+        );
         assert!(!r.pass, "{}", r.detail);
         assert_eq!((r.observed, r.threshold), (0.0, 95.0));
-        assert!(r.detail.contains("srt-1: 0 < 95"), "{}", r.detail);
+        assert!(
+            r.detail.contains("srt-1: 0 sender reconnects"),
+            "{}",
+            r.detail
+        );
         assert!(!r.detail.contains("srt-0:"), "{}", r.detail);
     }
 
@@ -2816,10 +2986,7 @@ send: heartbeat elapsed_s=180 video_aus=5400 keyframes=180 klv_records=1800 audi
     fn reconnect_count_without_outages_is_not_applicable() {
         let mut d = hold_decl();
         d.outage_period_s = None;
-        let mut step = step_result(1, Axis::Hold, true, &[]);
-        step.per_stream = vec![figures("srt-0", None)];
-        let v = hold_verdicts(&d, &step, &BTreeMap::new(), &[], 256, 0.9);
-        let r = hb_verdict(&v, "reconnect_count");
+        let r = reconnect_verdict(&d, &[("srt-0", None)], &[], &[]);
         assert!(r.pass);
         assert!(r.detail.contains("not applicable"), "{}", r.detail);
     }
@@ -2961,14 +3128,7 @@ send: heartbeat elapsed_s=180 video_aus=5400 keyframes=180 klv_records=1800 audi
                 role: "srt-0-recv".into(),
             })
             .collect();
-        let v = hold_verdicts(
-            d,
-            &step_result(1, Axis::Hold, true, &[]),
-            &logs,
-            &restarts,
-            256,
-            0.9,
-        );
+        let v = hv(d, &step_result(1, Axis::Hold, true, &[]), &logs, &restarts);
         hb_verdict(&v, "peer_restart_recovery").clone()
     }
 
@@ -3013,7 +3173,7 @@ send: heartbeat elapsed_s=180 video_aus=5400 keyframes=180 klv_records=1800 audi
 
     #[test]
     fn restart_on_a_leg_without_heartbeats_says_so() {
-        let v = hold_verdicts(
+        let v = hv(
             &hold_decl(),
             &step_result(1, Axis::Hold, true, &[]),
             &BTreeMap::new(),
@@ -3021,8 +3181,6 @@ send: heartbeat elapsed_s=180 video_aus=5400 keyframes=180 klv_records=1800 audi
                 elapsed_s: 7200.0,
                 role: "srt-0-recv".into(),
             }],
-            256,
-            0.9,
         );
         let r = hb_verdict(&v, "peer_restart_recovery");
         assert!(!r.pass);
