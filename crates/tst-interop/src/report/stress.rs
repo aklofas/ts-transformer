@@ -1941,7 +1941,13 @@ mod tests {
         write_healthy_step(&dir, 2);
         std::fs::remove_dir_all(dir.join("streams")).unwrap();
         let err = run_step(&dir, thresholds()).unwrap_err();
-        assert!(err.contains("streams/0/send-report.json"), "{err}");
+        let expected = dir
+            .join("streams")
+            .join("0")
+            .join("send-report.json")
+            .display()
+            .to_string();
+        assert!(err.contains(&expected), "{err}");
         assert!(
             !dir.join("step-results.json").exists(),
             "no results file on error"
@@ -1953,11 +1959,17 @@ mod tests {
     fn step_missing_one_streams_recv_report_is_an_error() {
         let dir = temp_step_dir("onemissing");
         write_healthy_step(&dir, 2);
-        std::fs::remove_file(dir.join("streams/1/recv-report.json")).unwrap();
+        std::fs::remove_file(dir.join("streams").join("1").join("recv-report.json")).unwrap();
+        let expected = dir
+            .join("streams")
+            .join("1")
+            .join("recv-report.json")
+            .display()
+            .to_string();
         assert!(
             run_step(&dir, thresholds())
                 .unwrap_err()
-                .contains("streams/1/recv-report.json")
+                .contains(&expected)
         );
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -2552,9 +2564,14 @@ send: heartbeat elapsed_s=180 video_aus=5400 keyframes=180 klv_records=1800 audi
     fn run_hold_managed_stream_without_send_log_is_an_error() {
         let dir = temp_step_dir("hold-nosendlog");
         write_healthy_hold(&dir);
-        std::fs::remove_file(dir.join("logs/srt-0-send.log")).unwrap();
+        std::fs::remove_file(dir.join("logs").join("srt-0-send.log")).unwrap();
         let err = run_hold(&dir, thresholds()).unwrap_err();
-        assert!(err.contains("logs/srt-0-send.log"), "{err}");
+        let expected = dir
+            .join("logs")
+            .join("srt-0-send.log")
+            .display()
+            .to_string();
+        assert!(err.contains(&expected), "{err}");
         assert!(!dir.join("hold-results.json").exists());
         std::fs::remove_dir_all(&dir).unwrap();
     }
