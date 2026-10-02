@@ -445,29 +445,29 @@ type Groups<'a, S> = BTreeMap<(String, String), Vec<Segment<'a, S>>>;
 /// a `(leg, process)` whose every segment is empty is left out, as a
 /// process with no post-warm-up row always was.
 fn by_process<S: Sampled>(samples: &[S], warmup_s: f64) -> Groups<'_, S> {
-    let mut first: BTreeMap<(&str, &str, u32), f64> = BTreeMap::new();
+    // One pass into (leg, process, pid) → (first elapsed_s, rows): the
+    // 24 h hold's CSVs run to ~550k rows.
+    type PidRows<'s, S> = BTreeMap<(&'s str, &'s str, u32), (f64, Vec<&'s S>)>;
+    let mut by_pid: PidRows<'_, S> = BTreeMap::new();
     for s in samples {
-        let t = first
+        let (t0, rows) = by_pid
             .entry((s.leg(), s.process(), s.pid()))
-            .or_insert(s.elapsed_s());
-        *t = t.min(s.elapsed_s());
+            .or_insert((s.elapsed_s(), Vec::new()));
+        *t0 = t0.min(s.elapsed_s());
+        rows.push(s);
     }
+    let mut order: Vec<_> = by_pid.into_iter().collect();
+    order.sort_by(|a, b| a.1.0.total_cmp(&b.1.0));
     let mut groups: Groups<'_, S> = BTreeMap::new();
-    let mut order: Vec<(&(&str, &str, u32), &f64)> = first.iter().collect();
-    order.sort_by(|a, b| a.1.total_cmp(b.1));
-    for (&(leg, process, pid), &t0) in order {
-        let seg = Segment {
-            pid,
-            samples: samples
-                .iter()
-                .filter(|s| s.leg() == leg && s.process() == process && s.pid() == pid)
-                .filter(|s| s.elapsed_s() >= t0 + warmup_s)
-                .collect(),
-        };
+    for ((leg, process, pid), (t0, rows)) in order {
+        let samples = rows
+            .into_iter()
+            .filter(|s| s.elapsed_s() >= t0 + warmup_s)
+            .collect();
         groups
             .entry((leg.to_string(), process.to_string()))
             .or_default()
-            .push(seg);
+            .push(Segment { pid, samples });
     }
     groups.retain(|_, segs| segs.iter().any(|seg| !seg.samples.is_empty()));
     groups
@@ -547,7 +547,7 @@ pub fn build_step_results(inputs: StepInputs) -> Result<StepResults, String> {
     verdicts.push(verdict_delivery_complete(
         &streams,
         &restarts,
-        decl.hold_s,
+        decl.warmup_s + decl.hold_s,
         thresholds.delivery_slack,
     ));
     let (cpu_verdict, cpu_fraction) =
@@ -651,22 +651,33 @@ fn verdict_recv_invariants(streams: &[StreamArtifacts]) -> StepVerdict {
     }
 }
 
-/// Received ÷ expected video AUs, worst stream. A stream that sent
-/// nothing scores 0: no traffic is not delivery.
+/// Upper bound on a stream's received ÷ expected AUs. Above it the
+/// receiver counted more than the sender could have sent into its
+/// window: its report did not reset across a restart, or the
+/// accounting is wrong — never a delivery pass.
+const DELIVERY_RATIO_MAX: f64 = 1.2;
+
+/// Received ÷ expected video AUs per stream: the worst must reach
+/// `slack`, and none may exceed `DELIVERY_RATIO_MAX`. A stream that
+/// sent nothing scores 0: no traffic is not delivery.
 ///
 /// Expected is the sender's count, except on a leg the hold restarted:
 /// the relaunched receiver writes `recv-report.json` afresh, so it
 /// covers only the time after the leg's LAST restart `t_last`. The
-/// sender paces at a constant rate, so that segment should hold
-/// `send × (hold_s − t_last) / hold_s` AUs (to within a frame or two).
+/// sender and the restart clock both run `run_s` = warm-up + hold from
+/// the same start, and the sender paces at a constant rate, so that
+/// segment should hold `send × (run_s − t_last) / run_s` AUs (to within
+/// a frame or two).
 fn verdict_delivery_complete(
     streams: &[StreamArtifacts],
     restarts: &[RestartEvent],
-    hold_s: f64,
+    run_s: f64,
     slack: f64,
 ) -> StepVerdict {
     let mut min_ratio = f64::INFINITY;
+    let mut max_ratio = f64::NEG_INFINITY;
     let mut notes = Vec::new();
+    let mut over = Vec::new();
     let mut scaled = Vec::new();
     for s in streams {
         let role = format!("{}-recv", s.leg);
@@ -675,7 +686,7 @@ fn verdict_delivery_complete(
             .filter(|ev| ev.role == role)
             .map(|ev| ev.elapsed_s)
             .reduce(f64::max);
-        let fraction = t_last.map_or(1.0, |t| ((hold_s - t) / hold_s).max(0.0));
+        let fraction = t_last.map_or(1.0, |t| ((run_s - t) / run_s).max(0.0));
         let expected = s.send.video_aus as f64 * fraction;
         if let Some(t) = t_last {
             scaled.push(format!(
@@ -687,8 +698,10 @@ fn verdict_delivery_complete(
             notes.push(format!("{}: sender reported 0 video AUs", s.leg));
             0.0
         } else if expected <= 0.0 {
+            // expected ≤ 0 ⇔ t_last ≥ run_s: the restart came at or
+            // after the end of the run.
             notes.push(format!(
-                "{}: last restart at {} s leaves no segment of the {hold_s} s hold to judge",
+                "{}: last restart at {} s leaves no segment of the {run_s} s run to judge",
                 s.leg,
                 t_last.unwrap_or_default()
             ));
@@ -700,24 +713,40 @@ fn verdict_delivery_complete(
                     "{}: {}/{expected:.0} AUs = {ratio:.4}",
                     s.leg, s.recv.metrics.video_aus
                 ));
+            } else if ratio > DELIVERY_RATIO_MAX {
+                over.push(format!(
+                    "{}: recv exceeds expected — report did not reset or accounting mismatch \
+                     ({}/{expected:.0} AUs = {ratio:.4} > {DELIVERY_RATIO_MAX})",
+                    s.leg, s.recv.metrics.video_aus
+                ));
             }
             ratio
         };
         min_ratio = min_ratio.min(ratio);
+        max_ratio = max_ratio.max(ratio);
     }
+    let low = min_ratio < slack;
+    notes.extend(over.iter().cloned());
     let mut detail = if notes.is_empty() {
-        format!("worst stream delivered {min_ratio:.4} of expected AUs")
+        format!("delivered {min_ratio:.4}..{max_ratio:.4} of expected AUs across streams")
     } else {
         notes.join("; ")
     };
     if !scaled.is_empty() {
         detail.push_str(&format!("; restarted: {}", scaled.join("; ")));
     }
+    // A shortfall is reported against `slack`; otherwise an excess is
+    // reported against the upper bound.
+    let (observed, threshold) = if !low && !over.is_empty() {
+        (max_ratio, DELIVERY_RATIO_MAX)
+    } else {
+        (min_ratio, slack)
+    };
     StepVerdict {
         name: "delivery_complete".into(),
-        pass: min_ratio >= slack,
-        observed: min_ratio,
-        threshold: slack,
+        pass: !low && over.is_empty(),
+        observed,
+        threshold,
         detail,
     }
 }
@@ -798,7 +827,9 @@ fn verdict_cpu_headroom(
 /// Split a `(leg, process)`'s segments into the judgeable ones (≥ 2
 /// usable values) and the rest. When none is judgeable the segments
 /// with ≥ 1 value are returned instead, so a process sampled once is
-/// judged as it always was; `skipped` names every segment left out.
+/// judged as it always was (delta 0, a PASS); `skipped` names every
+/// segment left out. Serves the flat verdicts only: the RSS slope
+/// judges segments by time span instead (`verdict_rss_slopes`).
 fn judgeable<T>(per_seg: &[(u32, Vec<T>)]) -> (Vec<&(u32, Vec<T>)>, Vec<String>) {
     let mut judged: Vec<&(u32, Vec<T>)> = per_seg.iter().filter(|(_, v)| v.len() >= 2).collect();
     if judged.is_empty() {
@@ -823,69 +854,94 @@ fn skipped_note(skipped: &[String]) -> String {
     }
 }
 
-/// RSS growth per process in KB/hour. A short step cannot resolve a
-/// small slope from noise, so its allowance scales up by 3600/hold.
-/// Each pid segment is fit on its own (pooling a restarted process's
-/// pids would fit a sawtooth); the verdict judges the steepest.
+/// RSS growth per process in KB/hour, fit per pid segment (pooling a
+/// restarted process's pids would fit a sawtooth).
+///
+/// A short span cannot resolve a small slope from noise, so each
+/// segment's allowance is `threshold × 3600 / span` when its judged
+/// span (last − first post-warm-up elapsed_s) is under an hour. A
+/// segment spanning less than two sampler cadences is skipped and
+/// named, unless no segment is long enough (then FAIL "insufficient
+/// samples"). The verdict reports the segment furthest over (or
+/// nearest to) its own allowance.
 fn verdict_rss_slopes(
     decl: &StepDeclaration,
     groups: &Groups<'_, RssSample>,
     threshold: f64,
 ) -> Vec<StepVerdict> {
-    let allowed = if decl.hold_s < 3600.0 {
-        threshold * 3600.0 / decl.hold_s
-    } else {
-        threshold
-    };
+    let min_span_s = 2.0 * decl.sample_cadence_s;
     groups
         .iter()
         .map(|((leg, process), segs)| {
-            let per_seg: Vec<(u32, Vec<(f64, f64)>)> = segs
-                .iter()
-                .map(|seg| {
-                    let points = seg
-                        .samples
-                        .iter()
-                        .filter_map(|s| s.rss_kb.map(|kb| (s.elapsed_s / 3600.0, kb as f64)))
-                        .collect();
-                    (seg.pid, points)
-                })
-                .collect();
             let name = format!("rss_slope_{leg}_{process}");
-            let (judged, skipped) = judgeable(&per_seg);
-            let judged: Vec<_> = judged.into_iter().filter(|(_, p)| p.len() >= 2).collect();
-            if judged.is_empty() {
-                let n: usize = per_seg.iter().map(|(_, p)| p.len()).sum();
+            let mut judged = Vec::new();
+            let mut skipped = Vec::new();
+            let mut n_points = 0usize;
+            for seg in segs {
+                let points: Vec<(f64, f64)> = seg
+                    .samples
+                    .iter()
+                    .filter_map(|s| s.rss_kb.map(|kb| (s.elapsed_s, kb as f64)))
+                    .collect();
+                n_points += points.len();
+                let span_s = match (points.first(), points.last()) {
+                    (Some(a), Some(b)) => b.0 - a.0,
+                    _ => 0.0,
+                };
+                if points.len() < 2 || span_s < min_span_s {
+                    skipped.push(format!(
+                        "pid {} ({} samples over {span_s:.0} s)",
+                        seg.pid,
+                        points.len()
+                    ));
+                    continue;
+                }
+                let per_hour: Vec<(f64, f64)> =
+                    points.iter().map(|&(t, kb)| (t / 3600.0, kb)).collect();
+                let slope = linear_regression_slope(&per_hour);
+                let allowed = if span_s < 3600.0 {
+                    threshold * 3600.0 / span_s
+                } else {
+                    threshold
+                };
+                judged.push((seg.pid, slope, allowed, points.len(), span_s));
+            }
+            let skipped_note = if skipped.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "; skipped (span < 2 × {} s cadence): {}",
+                    decl.sample_cadence_s,
+                    skipped.join(", ")
+                )
+            };
+            let Some(&(worst_pid, slope, allowed, n, span_s)) = judged
+                .iter()
+                .max_by(|a, b| (a.1 / a.2).total_cmp(&(b.1 / b.2)))
+            else {
                 return StepVerdict {
                     name,
                     pass: false,
                     observed: 0.0,
-                    threshold: allowed,
-                    detail: format!("insufficient samples ({n}){}", skipped_note(&skipped)),
+                    threshold,
+                    detail: format!("insufficient samples ({n_points}){skipped_note}"),
                 };
-            }
-            let slopes: Vec<(u32, f64, usize)> = judged
-                .iter()
-                .map(|(pid, points)| (*pid, linear_regression_slope(points), points.len()))
-                .collect();
-            let &(worst_pid, slope, n) = slopes
-                .iter()
-                .max_by(|a, b| a.1.total_cmp(&b.1))
-                .expect("judged is non-empty");
+            };
             let mut detail = format!(
-                "{slope:.1} KB/h over {n} samples of pid {worst_pid} (allowed {allowed:.1})"
+                "{slope:.1} KB/h over {n} samples ({span_s:.0} s) of pid {worst_pid} \
+                 (allowed {allowed:.1})"
             );
-            if slopes.len() > 1 {
-                let all: Vec<String> = slopes
+            if judged.len() > 1 {
+                let all: Vec<String> = judged
                     .iter()
-                    .map(|(pid, sl, _)| format!("pid {pid} {sl:.1}"))
+                    .map(|(pid, sl, al, _, _)| format!("pid {pid} {sl:.1}/{al:.1}"))
                     .collect();
-                detail.push_str(&format!("; per pid: {}", all.join(", ")));
+                detail.push_str(&format!("; per pid (slope/allowed): {}", all.join(", ")));
             }
-            detail.push_str(&skipped_note(&skipped));
+            detail.push_str(&skipped_note);
             StepVerdict {
                 name,
-                pass: slope <= allowed,
+                pass: judged.iter().all(|j| j.1 <= j.2),
                 observed: slope,
                 threshold: allowed,
                 detail,
@@ -1833,8 +1889,8 @@ mod tests {
     #[test]
     fn rss_slope_threshold_is_scaled_for_short_steps() {
         // +100 KB per 30 s tick = 12 MB/h: fails a 1024 KB/h threshold
-        // unscaled, and the 10-minute step scales the allowance ×6 to
-        // 6144 KB/h — still a fail. Then a +10 KB/tick ramp (1.2 MB/h)
+        // unscaled, and the 570 s judged span scales the allowance to
+        // 1024 × 3600/570 ≈ 6467 KB/h — still a fail. Then a +10 KB/tick ramp (1.2 MB/h)
         // must pass the scaled 6144 KB/h allowance.
         let mut inp = inputs(1, 30);
         for (i, s) in inp
@@ -1853,8 +1909,8 @@ mod tests {
             .unwrap();
         assert!(!v.pass);
         assert!(
-            (v.threshold - 6144.0).abs() < 1.0,
-            "allowed = 1024 × 3600/600 = {}",
+            (v.threshold - 1024.0 * 3600.0 / 570.0).abs() < 1.0,
+            "allowed = 1024 × 3600/570 (judged span 60..630 s) = {}",
             v.threshold
         );
 
@@ -2715,6 +2771,13 @@ send: heartbeat elapsed_s=180 video_aus=5400 keyframes=180 klv_records=1800 audi
             "restart-events.log",
             "300 RESTART role=srt-0-recv old_pid=10 new_pid=20\n",
         );
+        // The relaunched receiver's report covers only the 360 s after
+        // the restart of the 660 s run: 18000 × 360/660 ≈ 9818 AUs.
+        write(
+            dir,
+            "streams/0/recv-report.json",
+            &serde_json::to_string(&passing_recv_report(9_818)).unwrap(),
+        );
         write(
             dir,
             "logs/srt-0-send.log",
@@ -2892,37 +2955,71 @@ send: heartbeat elapsed_s=180 video_aus=5400 keyframes=180 klv_records=1800 audi
 
     #[test]
     fn delivery_is_judged_on_a_restarted_legs_last_segment() {
-        // srt-0's receiver was restarted at 300 s of a 600 s hold: its
-        // report covers only the last 300 s, i.e. half of what was sent.
-        let mut inp = inputs(2, 30);
-        inp.streams[0] = stream_artifacts(0, 18_000, 9_000);
-        inp.restarts = vec![RestartEvent {
-            elapsed_s: 300.0,
-            role: "srt-0-recv".into(),
-        }];
-        let r = build_step_results(inp).unwrap();
+        // The sender and the restart clock both run warm-up + hold =
+        // 660 s from launch. srt-0's receiver was restarted at 300 s:
+        // its report covers only the last 360 s, i.e. 360/660 of what
+        // was sent (18000 × 360/660 ≈ 9818 AUs).
+        let restarted = |recv: u64| {
+            let mut inp = inputs(2, 30);
+            inp.streams[0] = stream_artifacts(0, 18_000, recv);
+            inp.restarts = vec![RestartEvent {
+                elapsed_s: 300.0,
+                role: "srt-0-recv".into(),
+            }];
+            build_step_results(inp).unwrap()
+        };
+        let r = restarted(9_818);
         let v = verdict(&r, "delivery_complete");
         assert!(v.pass, "{}", v.detail);
-        assert!((v.observed - 1.0).abs() < 1e-9, "{}", v.observed);
+        assert!((v.observed - 1.0).abs() < 1e-3, "{}", v.observed);
         assert!(
-            v.detail.contains("srt-0") && v.detail.contains("300") && v.detail.contains("0.5"),
+            v.detail.contains("srt-0") && v.detail.contains("300") && v.detail.contains("0.5455"),
             "{}",
             v.detail
         );
+        // A few hundred AUs short of the segment is still inside slack.
+        let v = verdict(&restarted(9_000), "delivery_complete").clone();
+        assert!(v.pass, "{}", v.detail);
+        assert!((v.observed - 0.9167).abs() < 1e-3, "{}", v.observed);
 
-        // The same receive count without the restart is half delivery.
+        // The same receive count without the restart is ≈ 0.545 delivery.
         let mut inp = inputs(2, 30);
-        inp.streams[0] = stream_artifacts(0, 18_000, 9_000);
+        inp.streams[0] = stream_artifacts(0, 18_000, 9_818);
         let r = build_step_results(inp).unwrap();
         let v = verdict(&r, "delivery_complete");
         assert!(!v.pass);
-        assert!((v.observed - 0.5).abs() < 1e-9, "{}", v.observed);
+        assert!((v.observed - 0.5454).abs() < 1e-3, "{}", v.observed);
+    }
+
+    #[test]
+    fn delivery_above_the_upper_bound_fails() {
+        // recv twice what was sent: the report did not reset across a
+        // restart, or the accounting is wrong. Either way, not a pass.
+        let mut inp = inputs(2, 30);
+        inp.streams[1] = stream_artifacts(1, 18_000, 36_000);
+        let r = build_step_results(inp).unwrap();
+        let v = verdict(&r, "delivery_complete");
+        assert!(!v.pass, "{}", v.detail);
+        assert!((v.observed - 2.0).abs() < 1e-9, "{}", v.observed);
+        assert_eq!(v.threshold, DELIVERY_RATIO_MAX);
+        assert!(
+            v.detail.contains(
+                "srt-1: recv exceeds expected — report did not reset or accounting mismatch"
+            ),
+            "{}",
+            v.detail
+        );
+        // 1.2 itself is inside the bound.
+        let mut inp = inputs(1, 30);
+        inp.streams[0] = stream_artifacts(0, 18_000, 21_600);
+        assert!(verdict(&build_step_results(inp).unwrap(), "delivery_complete").pass);
     }
 
     #[test]
     fn delivery_uses_the_legs_last_restart_only() {
+        // Last restart at 400 s of a 660 s run: 18000 × 260/660 ≈ 7091.
         let mut inp = inputs(1, 30);
-        inp.streams[0] = stream_artifacts(0, 18_000, 6_000);
+        inp.streams[0] = stream_artifacts(0, 18_000, 7_091);
         inp.restarts = vec![
             RestartEvent {
                 elapsed_s: 200.0,
@@ -2940,7 +3037,7 @@ send: heartbeat elapsed_s=180 video_aus=5400 keyframes=180 klv_records=1800 audi
         ];
         let r = build_step_results(inp).unwrap();
         let v = verdict(&r, "delivery_complete");
-        assert!((v.observed - 1.0).abs() < 1e-9, "{}", v.detail);
+        assert!((v.observed - 1.0).abs() < 1e-3, "{}", v.detail);
         assert!(v.detail.contains("400"), "{}", v.detail);
     }
 
@@ -3073,19 +3170,97 @@ send: heartbeat elapsed_s=180 video_aus=5400 keyframes=180 klv_records=1800 audi
 
     #[test]
     fn run_hold_scales_a_restarted_legs_delivery() {
-        // The healthy hold restarts srt-0's receiver at 300 s; the new
-        // receiver's report holds only the last 300 s of AUs.
+        // The healthy hold restarts srt-0's receiver at 300 s of a
+        // 660 s run; the new receiver's report holds only the last
+        // 360 s of AUs (`write_healthy_hold` writes 9818).
         let dir = temp_step_dir("hold-restart-delivery");
         write_healthy_hold(&dir);
-        write(
-            &dir,
-            "streams/0/recv-report.json",
-            &serde_json::to_string(&passing_recv_report(9_000)).unwrap(),
-        );
         let r = run_hold(&dir, thresholds()).unwrap();
         let v = verdict(&r.step, "delivery_complete");
         assert!(v.pass, "{}", v.detail);
-        assert!((v.observed - 1.0).abs() < 1e-9, "{}", v.observed);
+        assert!((v.observed - 1.0).abs() < 1e-3, "{}", v.observed);
+        // Without the restart log the same report is 0.545 delivery.
+        std::fs::remove_file(dir.join("restart-events.log")).unwrap();
+        let r = run_hold(&dir, thresholds()).unwrap();
+        assert!(!verdict(&r.step, "delivery_complete").pass);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// srt-0/recv over a 3600 s hold: pid 1 judged 60..450 s (a 390 s
+    /// segment) rising `rise_kb` linearly, then pid 2 from 480 s, flat.
+    fn segmented_rss_inputs(rise_kb: u64) -> StepInputs {
+        let mut inp = inputs(1, 30);
+        inp.decl.hold_s = 3600.0;
+        inp.rss.retain(|s| s.process != "recv");
+        for i in 0..123u64 {
+            let t = i as f64 * 30.0;
+            let (pid, kb) = if t < 480.0 {
+                let judged = (t - 60.0).max(0.0);
+                (1, 50_000 + rise_kb * judged as u64 / 390)
+            } else {
+                (2, 50_000)
+            };
+            let mut r = rss_row(t, "srt-0", "recv", kb);
+            r.pid = pid;
+            inp.rss.push(r);
+        }
+        inp
+    }
+
+    #[test]
+    fn rss_allowance_scales_per_segment_span() {
+        // +600 KB over pid 1's 390 s segment ≈ 5538 KB/h: inside
+        // 1024 × 3600/390 ≈ 9452 KB/h for that segment, although the
+        // 3600 s hold itself would allow only the unscaled 1024.
+        let r = build_step_results(segmented_rss_inputs(600)).unwrap();
+        let v = verdict(&r, "rss_slope_srt-0_recv");
+        assert!(v.pass, "{}", v.detail);
+        assert!(
+            v.detail.contains("pid 1") && v.detail.contains("pid 2"),
+            "{}",
+            v.detail
+        );
+
+        // The same rate held over the full hold by one pid is judged
+        // against the unscaled threshold and fails.
+        let mut inp = inputs(1, 30);
+        inp.decl.hold_s = 3600.0;
+        inp.rss.retain(|s| s.process != "recv");
+        for i in 0..123u64 {
+            let t = i as f64 * 30.0;
+            inp.rss
+                .push(rss_row(t, "srt-0", "recv", 50_000 + (t as u64) * 600 / 390));
+        }
+        let r = build_step_results(inp).unwrap();
+        let v = verdict(&r, "rss_slope_srt-0_recv");
+        assert!(!v.pass, "{}", v.detail);
+        assert_eq!(v.threshold, 1024.0);
+    }
+
+    #[test]
+    fn rss_segment_shorter_than_two_cadences_is_skipped() {
+        // pid 3 judged at 3540 and 3570 s only (span 30 s < 2 × 30 s):
+        // skipped and named, even though it carries a steep rise.
+        let mut inp = segmented_rss_inputs(0);
+        inp.rss
+            .retain(|s| !(s.process == "recv" && s.elapsed_s >= 3480.0));
+        for (t, kb) in [(3480.0, 1_000), (3540.0, 1_000), (3570.0, 9_000)] {
+            let mut r = rss_row(t, "srt-0", "recv", kb);
+            r.pid = 3;
+            inp.rss.push(r);
+        }
+        let r = build_step_results(inp).unwrap();
+        let v = verdict(&r, "rss_slope_srt-0_recv");
+        assert!(v.pass, "{}", v.detail);
+        assert!(v.detail.contains("pid 3"), "{}", v.detail);
+
+        // As the ONLY segment, a short span is insufficient.
+        let mut inp = inputs(1, 30);
+        inp.rss
+            .retain(|s| !(s.process == "send" && s.elapsed_s > 90.0));
+        let r = build_step_results(inp).unwrap();
+        let v = verdict(&r, "rss_slope_srt-0_send");
+        assert!(!v.pass);
+        assert!(v.detail.contains("insufficient samples"), "{}", v.detail);
     }
 }
