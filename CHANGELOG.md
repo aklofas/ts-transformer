@@ -1346,6 +1346,15 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Testing
 
+- **CI: macOS legs moved from `macos-14` to `macos-15`.** GitHub retires the
+  macOS 14 runner image on 2026-11-02, with brownouts from 2026-10-05 during
+  which `macos-14` jobs fail outright. `ci.yml` (the gating macos-arm64
+  leg), `jvm-jar.yml`, `python-wheels.yml` and `apple-ios.yml` now request
+  `macos-15` (arm64, the closest listed replacement; `macos-latest` floats to
+  macos-26 and was not chosen so image changes arrive deliberately). The
+  `aws/tap` untap workaround stays until a macos-15 log confirms the tap is
+  no longer pre-shipped.
+
 - **Tooling: `tst-interop`'s corruption-attribution geometry follows
   `--au-scale`.** The tap's packet-count constants — attribution window
   (500), recovery bound (600), approximate-resolution slack (128) and the

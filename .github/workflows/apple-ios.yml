@@ -14,7 +14,7 @@ on:
   # spike must be proven on a real macOS runner before merge, and a
   # `workflow_dispatch`-only workflow can't be dispatched until it's on the
   # default branch. Scoped to the Apple paths so it never burdens unrelated
-  # PRs (the expensive macos-14 job stays off the normal push/PR path).
+  # PRs (the expensive macOS job stays off the normal push/PR path).
   pull_request:
     paths:
       - "scripts/apple/**"
@@ -25,8 +25,8 @@ permissions:
 
 jobs:
   xcframework:
-    name: iOS spike + XCFramework (macos-14)
-    runs-on: macos-14
+    name: iOS spike + XCFramework (macos-15)
+    runs-on: macos-15
     timeout-minutes: 30
     env:
       SRT_FORCE_VENDORED: "1"

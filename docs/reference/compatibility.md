@@ -43,7 +43,7 @@ deferred — see `deferred-features.md` for triggers to revisit.
 |------------------------------|-------------------------|-----------------------------------|------------------------------------------------|
 | Linux x86_64 (GNU)           | Tier 1, gating          | Every PR + scrub/ratchet scripts  | Reference platform                             |
 | Linux aarch64 (GNU)          | Tier 1, gating          | Every PR + cargo build/test       | GHA `ubuntu-24.04-arm`; native build           |
-| macOS arm64 (Apple Silicon)  | Tier 1, gating          | Every PR + cargo build/test       | GHA `macos-14`; native build; Intel not supported |
+| macOS arm64 (Apple Silicon)  | Tier 1, gating          | Every PR + cargo build/test       | GHA `macos-15`; native build; Intel not supported |
 | Windows x86_64 (MSVC)        | Tier 1, gating          | Every PR + cargo build/test       | GHA `windows-latest`; MSVC toolchain only      |
 | Linux x86_64 (musl)          | Tier 2                  | `tst-core` + `tst-pipeline` only  | libsrt-bound crates not supported under musl   |
 | Bare-metal `thumbv7em-none-eabihf` | Tier 2 (runtime-gate) | `tst-core`+`tst-pipeline` (sender+receiver) build + QEMU runtime | Cortex-M4F/M7F (STM32F4/F7/H7); `#![no_std]`+`alloc` |

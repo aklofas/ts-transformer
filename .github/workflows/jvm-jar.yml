@@ -26,7 +26,7 @@ jobs:
             runner: ubuntu-24.04-arm
             continue: false
           - triple: macos-aarch64
-            runner: macos-14
+            runner: macos-15
             continue: false
           - triple: windows-x86_64
             runner: windows-latest
