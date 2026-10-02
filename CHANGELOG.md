@@ -1377,7 +1377,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   restarts in the hold. Only when no transport has a ceiling is the hold
   refused. `--dry-run-ceilings` previews the exclusion; `--smoke` gains
   `STRESS_SMOKE_FORCE_FAIL=streams` (fail the first transport's first
-  streams step) to run the excluded-hold path end to end.
+  streams step) to run the excluded-hold path end to end — which exposed
+  that `report hold`'s `queue_depth_p99` failed a hold with no managed
+  stream on "no managed heartbeat found"; it now reads "not applicable",
+  while a managed stream that logs no heartbeat still fails.
 
 - **Tooling: `report step --rss-slope-ungated <transport>/<process>,...`
   — an RSS-slope verdict recorded, not gated.** librist's sender grows
