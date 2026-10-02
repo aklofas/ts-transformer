@@ -85,7 +85,7 @@ pub fn build_config(p: &Profile, au_sizes: AuSizeMode) -> MuxerConfig {
     if let Some(mode) = p.av1_mode {
         builder.av1_carriage(mode);
     }
-    builder.buffer_packets(buffer_packets_for(au_sizes));
+    builder.buffer_packets(buffer_packets_for(au_sizes, p.programs));
 
     builder
         .build()
@@ -94,15 +94,18 @@ pub fn build_config(p: &Profile, au_sizes: AuSizeMode) -> MuxerConfig {
 
 /// The muxer's outbound buffer, in TS packets, for the AU sizes this
 /// run pushes: never below the library default (10 000, which every
-/// scale-1 run has always used), otherwise twice the packet span of
-/// the largest AU — one AU is pushed whole, so the buffer must take all
-/// of it on top of whatever PSI/PCR/KLV packets are already queued, and
-/// the factor of two is that headroom. See [`fixtures::max_video_au_bytes`].
-pub fn buffer_packets_for(au_sizes: AuSizeMode) -> usize {
+/// scale-1 run has always used), otherwise `programs + 1` times the
+/// packet span of the largest AU. One AU is pushed whole, so the buffer
+/// must take all of it on top of whatever is already queued; `MuxSender`
+/// drains after every push, but the offline `gen` pushes the same AU to
+/// every program's handle before it drains, so a two-program profile can
+/// hold two copies at once — the `+ 1` is the headroom for the PSI/PCR/KLV
+/// packets queued around them. See [`fixtures::max_video_au_bytes`].
+pub fn buffer_packets_for(au_sizes: AuSizeMode, programs: u8) -> usize {
     const DEFAULT: usize = 10_000;
     const TS_PAYLOAD: usize = 184;
     let au_packets = fixtures::max_video_au_bytes(au_sizes).div_ceil(TS_PAYLOAD);
-    DEFAULT.max(2 * au_packets)
+    DEFAULT.max((usize::from(programs) + 1) * au_packets)
 }
 
 #[cfg(test)]
@@ -114,17 +117,21 @@ mod tests {
     /// that holds the whole AU twice over.
     #[test]
     fn buffer_packets_follow_the_largest_au() {
-        assert_eq!(buffer_packets_for(AuSizeMode::Compact), 10_000);
+        assert_eq!(buffer_packets_for(AuSizeMode::Compact, 1), 10_000);
         assert_eq!(
-            buffer_packets_for(AuSizeMode::Realistic { scale: 1 }),
+            buffer_packets_for(AuSizeMode::Realistic { scale: 1 }, 2),
             10_000
         );
         assert_eq!(
-            buffer_packets_for(AuSizeMode::Realistic { scale: 34 }),
+            buffer_packets_for(AuSizeMode::Realistic { scale: 34 }, 1),
             10_000.max(2 * (53_248usize * 34 + 1024).div_ceil(184))
         );
-        let b64 = buffer_packets_for(AuSizeMode::Realistic { scale: 64 });
+        let b64 = buffer_packets_for(AuSizeMode::Realistic { scale: 64 }, 1);
         assert!(b64 >= 2 * (53_248 * 64 / 184), "{b64}");
+        // A two-program profile pushes each AU twice before `gen` drains.
+        let two = buffer_packets_for(AuSizeMode::Realistic { scale: 64 }, 2);
+        assert_eq!(two, 3 * (53_248usize * 64 + 1024).div_ceil(184), "{two}");
+        assert!(two > b64);
         let p = crate::profiles::by_name("baseline").expect("baseline profile");
         assert_eq!(
             build_config(p, AuSizeMode::Realistic { scale: 1 }).buffer_packets,
