@@ -1340,6 +1340,11 @@ pub struct HoldDeclaration {
     pub n_hold: BTreeMap<String, u32>,
     pub ceilings_declared: BTreeMap<String, u32>,
     pub cpu_scale_factor: f64,
+    /// Transports the sweep found no streams ceiling for, so the hold ran
+    /// without them (stress.sh's hold rule since 2026-10-02; before it,
+    /// one such transport refused the hold for all). Never in `n_hold`.
+    #[serde(default)]
+    pub excluded_transports: Vec<String>,
 }
 
 /// The hold step's own judged results, plus the sizing verdicts that
@@ -1928,6 +1933,28 @@ pub fn build_stress_results(sweep: Vec<AxisResult>, hold: Option<HoldResults>) -
                 (d, c) => problems.push(format!(
                     "{transport}: declared ceiling {d:?} does not match the sweep's computed streams ceiling {c:?}"
                 )),
+            }
+        }
+        // Every swept transport is either held or declared excluded, and
+        // an exclusion is justified only by the sweep finding no streams
+        // ceiling for it. A justified exclusion is a limitation of the
+        // run, not a verdict failure.
+        for axis in sweep.iter().filter(|a| a.axis == Axis::Streams) {
+            let t = &axis.transport;
+            let held = h.decl.n_hold.contains_key(t);
+            let excluded = h.decl.excluded_transports.contains(t);
+            match (held, excluded, axis.ceiling) {
+                (true, true, _) => problems.push(format!("{t}: both held and declared excluded")),
+                (false, false, _) => {
+                    problems.push(format!("{t}: swept but neither held nor declared excluded"))
+                }
+                (false, true, Some(c)) => problems.push(format!(
+                    "{t}: declared excluded but the sweep found a streams ceiling of {c}"
+                )),
+                (false, true, None) => limitations.push(format!(
+                    "hold ran without {t}: no streams ceiling in the sweep"
+                )),
+                (true, false, _) => {}
             }
         }
         let pass = problems.is_empty();
@@ -2900,6 +2927,7 @@ mod tests {
                 n_hold: [("srt".to_string(), 7)].into(),
                 ceilings_declared: [("srt".to_string(), 8)].into(),
                 cpu_scale_factor: 1.0,
+                excluded_transports: vec![],
             },
             step: step_result(7, Axis::Hold, true, &[]),
             hold_verdicts: vec![],
@@ -2920,6 +2948,101 @@ mod tests {
         ok.decl.n_hold.insert("srt".into(), 5);
         let r = build_stress_results(vec![axis], Some(ok));
         assert!(r.overall_pass);
+    }
+
+    /// A transport with no streams ceiling is excluded from the hold,
+    /// declared as such, and surfaced as a limitation; the hold's sizing
+    /// check still passes for the transports it did hold. An exclusion
+    /// the sweep does not justify, or a transport that is neither held
+    /// nor excluded, fails `hold_sizing_declared`.
+    #[test]
+    fn hold_runs_without_a_transport_that_has_no_ceiling() {
+        let srt = AxisResult {
+            transport: "srt".into(),
+            axis: Axis::Streams,
+            ceiling: Some(8),
+            first_fail: Some(16),
+            first_fail_verdicts: vec!["cpu_headroom".into()],
+            steps: vec![
+                step_result(8, Axis::Streams, true, &[]),
+                step_result(16, Axis::Streams, false, &["cpu_headroom"]),
+            ],
+        };
+        let rist = AxisResult {
+            transport: "rist".into(),
+            axis: Axis::Streams,
+            ceiling: None,
+            first_fail: Some(1),
+            first_fail_verdicts: vec!["rss_slope_rist-0_send".into()],
+            steps: vec![step_result(
+                1,
+                Axis::Streams,
+                false,
+                &["rss_slope_rist-0_send"],
+            )],
+        };
+        let hold = HoldResults {
+            decl: HoldDeclaration {
+                n_hold: [("srt".to_string(), 5)].into(),
+                ceilings_declared: [("srt".to_string(), 8), ("rist".to_string(), 0)].into(),
+                cpu_scale_factor: 1.0,
+                excluded_transports: vec!["rist".into()],
+            },
+            step: step_result(5, Axis::Hold, true, &[]),
+            hold_verdicts: vec![],
+            pass: true,
+        };
+        let sizing = |r: &StressResults| {
+            r.hold
+                .as_ref()
+                .unwrap()
+                .hold_verdicts
+                .iter()
+                .find(|v| v.name == "hold_sizing_declared")
+                .unwrap()
+                .clone()
+        };
+
+        let r = build_stress_results(vec![srt.clone(), rist.clone()], Some(hold.clone()));
+        let v = sizing(&r);
+        assert!(v.pass, "{}", v.detail);
+        assert!(r.hold.as_ref().unwrap().pass);
+        assert!(
+            !r.overall_pass,
+            "a transport without a ceiling never passes the run"
+        );
+        assert!(
+            r.limitations
+                .iter()
+                .any(|l| l.contains("hold ran without rist") && l.contains("no streams ceiling")),
+            "{:?}",
+            r.limitations
+        );
+
+        // Excluding a transport the sweep DID find a ceiling for is a
+        // declaration error, not a limitation.
+        let mut bad = hold.clone();
+        bad.decl.excluded_transports = vec!["rist".into(), "srt".into()];
+        let r = build_stress_results(vec![srt.clone(), rist.clone()], Some(bad));
+        let v = sizing(&r);
+        assert!(!v.pass);
+        assert!(
+            v.detail.contains("srt") && v.detail.contains("excluded"),
+            "{}",
+            v.detail
+        );
+
+        // A swept transport that is neither held nor excluded went missing.
+        let mut missing = hold;
+        missing.decl.excluded_transports.clear();
+        let r = build_stress_results(vec![srt, rist], Some(missing));
+        let v = sizing(&r);
+        assert!(!v.pass);
+        assert!(
+            v.detail.contains("rist") && v.detail.contains("neither"),
+            "{}",
+            v.detail
+        );
     }
 
     #[test]
@@ -3533,6 +3656,7 @@ send: heartbeat elapsed_s=180 video_aus=5400 keyframes=180 klv_records=1800 audi
             n_hold: [("srt".to_string(), 1)].into(),
             ceilings_declared: [("srt".to_string(), 2)].into(),
             cpu_scale_factor: 1.0,
+            excluded_transports: vec![],
         };
         write(
             dir,
@@ -3931,6 +4055,7 @@ send: heartbeat elapsed_s=180 video_aus=5400 keyframes=180 klv_records=1800 audi
                 n_hold: [("tcp".to_string(), 1)].into(),
                 ceilings_declared: [("tcp".to_string(), 1)].into(),
                 cpu_scale_factor: 1.0,
+                excluded_transports: vec![],
             },
             step: step_result(1, Axis::Hold, true, &[]),
             hold_verdicts: vec![],

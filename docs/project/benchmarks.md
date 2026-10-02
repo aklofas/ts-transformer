@@ -55,7 +55,7 @@ of its ceiling actually survive a full day of real-world disruption."
 | `reconnect_count` *(hold only)* | Each SRT receiver rebuilds its transport at least once per outage window it lived through. | ≥ (outage windows − 1); one less than the window count because the final window can coincide with teardown |
 | `peer_restart_recovery` *(hold only)* | After each scheduled receiver restart, the sender reconnects. | within 120 seconds; a restart in the run's final 120 seconds is unjudgeable |
 | `queue_depth_p99` *(hold only)* | The managed sender's gap-length distribution. | p99 ≤ 0.9× its configured capacity |
-| `hold_sizing_declared` *(hold only)* | The hold's configured stream counts actually match the sizing rule. | ⌊0.7 × ceiling⌋ per transport, at least 1 |
+| `hold_sizing_declared` *(hold only)* | The hold's configured stream counts actually match the sizing rule, and every swept transport is either held or excluded because the sweep found it no streams ceiling (an exclusion is listed under the run's limitations). | ⌊0.7 × ceiling⌋ per held transport, at least 1 |
 
 ## Reference machine and reproduction
 

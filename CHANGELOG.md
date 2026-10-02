@@ -1374,6 +1374,20 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   stands. `stress.sh` passes `rate=5` alone and lets the geometry follow the
   step's scale.
 
+- **Tooling: `stress.sh`'s hold runs on the transports that have a streams
+  ceiling.** A transport whose streams axis never passed used to refuse the
+  24 h hold for all four transports (the first measured run lost its hold
+  day to one RIST step). It is now excluded: `hold-config.json` gains
+  `excluded_transports`, the supervisor logs `HOLD-EXCLUDED`, `report
+  stress` adds the limitation "hold ran without <t>: no streams ceiling in
+  the sweep", and `hold_sizing_declared` checks that every swept transport
+  is either held or justifiably excluded. The run still exits 1 (that
+  transport has no ceiling). An excluded `srt` means no outages or receiver
+  restarts in the hold. Only when no transport has a ceiling is the hold
+  refused. `--dry-run-ceilings` previews the exclusion; `--smoke` gains
+  `STRESS_SMOKE_FORCE_FAIL=streams` (fail the first transport's first
+  streams step) to run the excluded-hold path end to end.
+
 - **Tooling: `report step --rss-slope-ungated <transport>/<process>,...`
   — an RSS-slope verdict recorded, not gated.** librist's sender grows
   ~6 MB over its first hour and is flat after (measured on the 2026-09-25
