@@ -64,8 +64,11 @@
 # 0.70/predicted (cpu_scale_factor). A transport with no passing streams
 # step refuses the hold (exit 1). Stream i (global, 0-based over every
 # transport) has leg `<t>-<k>` (k per transport), KLV seed SEED + i,
-# corruption seed SEED + 1 + i, and a proxy running the seeded schedule
-# `seed=SEED+i,phases=HOLD_SCHEDULE_PHASES,phase_s=hold_s/phases`. SRT
+# corruption seed SEED + 1 + i. SRT and RIST proxies run the seeded
+# schedule `seed=SEED+i,phases=HOLD_SCHEDULE_PHASES,phase_s=hold_s/phases`;
+# UDP proxies run the sweep's clean link (raw UDP has no loss recovery and
+# nothing to reconnect, so impairing it measures the network, not the
+# library), and TCP stays direct. SRT
 # proxies also cut the link for HOLD_OUTAGE_DUR_S every
 # HOLD_OUTAGE_PERIOD_S, and are launched SRT_PROXY_WARMUP_S =
 # HOLD_OUTAGE_DUR_S + 30 s before the hold clock starts (soak.sh's
@@ -1131,9 +1134,14 @@ assoc_json() {
     jq -Rn '[inputs | split("\t") | {key: .[0], value: (.[1] | tonumber)}] | from_entries'
 }
 
-# hold_proxy_args <i> — stream i's seeded impairment schedule and seed.
+# hold_proxy_args <i> <transport> — stream i's proxy impairment and seed:
+# the seeded schedule for srt/rist, the sweep's clean link for udp.
 hold_proxy_args() {
-  PROXY_IMPAIR_ARGS=(--schedule "seed=$((SEED + $1)),phases=$HOLD_PHASES,phase_s=${HOLD_PHASE_S}s")
+  if [[ "$2" == udp ]]; then
+    PROXY_IMPAIR_ARGS=(--loss 0 --jitter 0 --delay 0 --reorder 0,0)
+  else
+    PROXY_IMPAIR_ARGS=(--schedule "seed=$((SEED + $1)),phases=$HOLD_PHASES,phase_s=${HOLD_PHASE_S}s")
+  fi
   PROXY_SEED=$((SEED + $1))
 }
 
@@ -1271,7 +1279,7 @@ run_hold() {
     PROXY_EXTRA_S=$SRT_PROXY_WARMUP_S
     for ((i = 0; i < total; i++)); do
       [[ "${s_t[$i]}" == srt ]] || continue
-      hold_proxy_args "$i"
+      hold_proxy_args "$i" srt
       launch_stream proxy srt "$i" "${s_leg[$i]}" "$hold_dir/streams/$i" "$HOLD_RUN_S" 1 1 "$outage"
       roles+=("${s_leg[$i]}-proxy")
     done
@@ -1291,7 +1299,7 @@ run_hold() {
     managed=0
     [[ "$t" != srt ]] || managed=1
     if [[ "$t" != srt ]]; then
-      hold_proxy_args "$i"
+      hold_proxy_args "$i" "$t"
       launch_stream proxy "$t" "$i" "$leg" "$hold_dir/streams/$i" "$HOLD_RUN_S" 1 0 -
       [[ "$t" == tcp ]] || roles+=("$leg-proxy")
     fi

@@ -907,7 +907,10 @@ the sweep's per-stream CPU cost predicts more than 70% of the box for the
 total, every count is scaled down by the same factor. A transport with no
 passing streams step refuses the hold, and the run exits 1.
 
-Every hold proxy runs its own seeded impairment schedule. SRT proxies also
+Every SRT and RIST hold proxy runs its own seeded impairment schedule. UDP
+proxies run the sweep's clean link: raw UDP has no loss recovery and nothing
+to reconnect, so impairing it would measure the network, not the library.
+TCP stays direct. SRT proxies also
 cut the link for `HOLD_OUTAGE_DUR_S` every `HOLD_OUTAGE_PERIOD_S`. They start
 `HOLD_OUTAGE_DUR_S + 30` seconds before the hold clock, as in `soak.sh`, so
 their first outage is over before any handshake. Every
@@ -966,6 +969,11 @@ cadence and a 6-minute hold with shortened outage and restart periods. With
 `STRESS_SMOKE_FORCE_FAIL=1`, the last bitrate step of
 the last transport is judged with an impossible CPU budget. That exercises
 the fail path and the ceiling rule on purpose.
+
+Run the smoke with `RSS_SLOPE_THRESHOLD_KB_PER_HOUR=4096`. A 6-minute hold
+cannot tell the RSS steps of a few reconnects (about 1.5, 1.3 and 0.2 MB in
+the first smoke) from a leak; the 24-hour hold decides that, at the
+production 1024.
 
 ## Corruption tap (`send --corrupt`)
 
