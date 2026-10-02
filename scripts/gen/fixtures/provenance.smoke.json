@@ -1,0 +1,56 @@
+{
+ "written_utc": "2026-10-02T01:59:06Z",
+ "source": {
+  "head": "e3d7567d4fb72b43edeae8c4f50093cd445d4827",
+  "describe": "v0.6.0-645-ge3d7567d",
+  "branch": "stress/harness-script",
+  "dirty": false,
+  "submodules": {
+   "crates/mbedtls-src/vendor/mbedtls": "068ff080b369adfac81509f9b57b2afabaf82dc5",
+   "crates/mbedtls-src/vendor/mbedtls/framework": "dde0c4a0e448a0552f18817dcea633bb851fd288",
+   "crates/rist-sys/vendor/librist": "4f45ef8f78983892d52ccd52d9f675435b23738f",
+   "crates/srt-sys/vendor/srt": "899348d8318eb9a3c5a5b6ec43c4a1114288773a",
+   "crates/srt-sys/vendor/srt/submodules/abi-compliance-checker": "7c175c45a8ba9ac41b8e47d8ebbab557b623b18e",
+   "embedded/vendor/freertos-kernel": "3a22924e0a9ddbbc8b0758881c33b3422a5cc20d",
+   "embedded/vendor/freertos-kernel/portable/ThirdParty/Community-Supported-Ports": "bae4c7aa19009825ba48071a8fe25dcb8be84880",
+   "embedded/vendor/freertos-kernel/portable/ThirdParty/Partner-Supported-Ports": "abc22103e1e6634b33457d4127bff1ab62f27f90",
+   "embedded/vendor/freertos-plus-posix": "f8cc8e38451e19084ed24a2f33fbb0a31e590cd8",
+   "embedded/vendor/lwip": "77dcd25a72509eb83f72b033d219b1d40cd8eb95"
+  }
+ },
+ "toolchain": {
+  "rustc": "rustc 1.85.1 (4eb161250 2025-03-15)",
+  "cargo": "cargo 1.85.1 (d73d2caf9 2024-12-31)"
+ },
+ "host": {
+  "hostname": "devbox",
+  "kernel": "Linux 7.0.0-34-generic x86_64",
+  "cpus": 32,
+  "mem_total_kb": 65615660,
+  "clk_tck": 100
+ },
+ "argv": [
+  "--outdir",
+  "/tmp/stress-smoke",
+  "--seed",
+  "11",
+  "--smoke"
+ ],
+ "env": {
+  "SRT_RECONNECT_MODE": "background",
+  "RSS_SLOPE_THRESHOLD_KB_PER_HOUR": "1024",
+  "STRESS_MAX_AGG_MBPS": "2000",
+  "CPU_HEADROOM_MAX": "0.80",
+  "FD_DELTA_MAX": "2",
+  "THREAD_DELTA_MAX": "1",
+  "DELIVERY_SLACK": "0.7",
+  "QUEUE_DEPTH_FRACTION": "0.9",
+  "HOLD_OUTAGE_PERIOD_S": "345",
+  "HOLD_OUTAGE_DUR_S": "10",
+  "HOLD_RESTART_PERIOD_S": "120",
+  "HOLD_RESTART_OFFSET_S": "50",
+  "HOLD_SCHEDULE_PHASES": "96",
+  "STRESS_SMOKE_FORCE_FAIL": "1",
+  "RUST_LOG": "info"
+ }
+}

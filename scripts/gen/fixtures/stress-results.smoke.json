@@ -1,0 +1,1708 @@
+{
+ "sweep": [
+  {
+   "transport": "srt",
+   "axis": "bitrate",
+   "steps": [
+    {
+     "decl": {
+      "transport": "srt",
+      "axis": "bitrate",
+      "streams": 1,
+      "au_scale": 1,
+      "warmup_s": 15.0,
+      "hold_s": 60.0,
+      "sample_cadence_s": 5.0,
+      "vcpus": 32,
+      "clk_tck": 100,
+      "nominal_mbps_per_stream": 1.7,
+      "managed": true,
+      "outage_period_s": null,
+      "outage_dur_s": null,
+      "restart_period_s": null
+     },
+     "thresholds": {
+      "rss_slope_kb_per_hour": 1024.0,
+      "fd_delta_max": 2,
+      "thread_delta_max": 1,
+      "cpu_headroom_max": 0.8,
+      "delivery_slack": 0.7,
+      "queue_depth_fraction": 0.9
+     },
+     "pass": true,
+     "verdicts": [
+      {
+       "name": "worker_exits",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 0.0,
+       "detail": "every worker exited 0"
+      },
+      {
+       "name": "recv_invariants",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 0.0,
+       "detail": "every receiver passed its profile invariants"
+      },
+      {
+       "name": "delivery_complete",
+       "pass": true,
+       "observed": 0.984,
+       "threshold": 0.7,
+       "detail": "delivered 0.9840..0.9840 of expected AUs across streams"
+      },
+      {
+       "name": "cpu_headroom",
+       "pass": true,
+       "observed": 0.0009488636363636364,
+       "threshold": 0.8,
+       "detail": "1.7 CPU-s over 55 s on 32 vCPUs"
+      },
+      {
+       "name": "rss_slope_srt-0_proxy",
+       "pass": true,
+       "observed": 352.44755244736984,
+       "threshold": 67025.45454545454,
+       "detail": "352.4 KB/h over 12 samples (55 s) of pid 605913 (allowed 67025.5)"
+      },
+      {
+       "name": "rss_slope_srt-0_recv",
+       "pass": true,
+       "observed": 2024.055944055068,
+       "threshold": 67025.45454545454,
+       "detail": "2024.1 KB/h over 12 samples (55 s) of pid 605907 (allowed 67025.5)"
+      },
+      {
+       "name": "rss_slope_srt-0_send",
+       "pass": true,
+       "observed": 3323.076923075829,
+       "threshold": 67025.45454545454,
+       "detail": "3323.1 KB/h over 12 samples (55 s) of pid 605922 (allowed 67025.5)"
+      },
+      {
+       "name": "fd_count_flat_srt-0_proxy",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 2.0,
+       "detail": "min 4, max 4 over 12 samples of pid 605913"
+      },
+      {
+       "name": "fd_count_flat_srt-0_recv",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 2.0,
+       "detail": "min 5, max 5 over 12 samples of pid 605907"
+      },
+      {
+       "name": "fd_count_flat_srt-0_send",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 2.0,
+       "detail": "min 5, max 5 over 12 samples of pid 605922"
+      },
+      {
+       "name": "thread_count_flat_srt-0_proxy",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 1.0,
+       "detail": "min 1, max 1 over 12 samples of pid 605913"
+      },
+      {
+       "name": "thread_count_flat_srt-0_recv",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 1.0,
+       "detail": "min 6, max 6 over 12 samples of pid 605907"
+      },
+      {
+       "name": "thread_count_flat_srt-0_send",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 1.0,
+       "detail": "min 4, max 4 over 12 samples of pid 605922"
+      },
+      {
+       "name": "sample_coverage",
+       "pass": true,
+       "observed": 1.0,
+       "threshold": 0.9,
+       "detail": "every process has \u2265 0.9 of 12 expected ticks"
+      }
+     ],
+     "failing": [],
+     "per_stream": [
+      {
+       "index": 0,
+       "leg": "srt-0",
+       "cpu_seconds": {
+        "proxy": 0.2,
+        "recv": 0.73,
+        "send": 0.74
+       },
+       "rss_kb_p99": {
+        "proxy": 6408,
+        "recv": 10312,
+        "send": 9480
+       },
+       "threads_max": {
+        "proxy": 1,
+        "recv": 6,
+        "send": 4
+       },
+       "fds_max": {
+        "proxy": 4,
+        "recv": 5,
+        "send": 5
+       },
+       "recv_video_aus": 2214,
+       "send_video_aus": 2250,
+       "wire_mbps": 2.316344133333333,
+       "reconnects": 0,
+       "proxy_forwarded": 17977,
+       "proxy_dropped": 0
+      }
+     ],
+     "aggregate_cpu_fraction": 0.0009488636363636364,
+     "cpu_fraction_per_stream": 0.0009488636363636364,
+     "aggregate_wire_mbps": 2.316344133333333,
+     "samples_used": 36
+    },
+    {
+     "decl": {
+      "transport": "srt",
+      "axis": "bitrate",
+      "streams": 1,
+      "au_scale": 2,
+      "warmup_s": 15.0,
+      "hold_s": 60.0,
+      "sample_cadence_s": 5.0,
+      "vcpus": 32,
+      "clk_tck": 100,
+      "nominal_mbps_per_stream": 3.4,
+      "managed": true,
+      "outage_period_s": null,
+      "outage_dur_s": null,
+      "restart_period_s": null
+     },
+     "thresholds": {
+      "rss_slope_kb_per_hour": 1024.0,
+      "fd_delta_max": 2,
+      "thread_delta_max": 1,
+      "cpu_headroom_max": 0.8,
+      "delivery_slack": 0.7,
+      "queue_depth_fraction": 0.9
+     },
+     "pass": true,
+     "verdicts": [
+      {
+       "name": "worker_exits",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 0.0,
+       "detail": "every worker exited 0"
+      },
+      {
+       "name": "recv_invariants",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 0.0,
+       "detail": "every receiver passed its profile invariants"
+      },
+      {
+       "name": "delivery_complete",
+       "pass": true,
+       "observed": 0.984,
+       "threshold": 0.7,
+       "detail": "delivered 0.9840..0.9840 of expected AUs across streams"
+      },
+      {
+       "name": "cpu_headroom",
+       "pass": true,
+       "observed": 0.0010965909090909093,
+       "threshold": 0.8,
+       "detail": "1.9 CPU-s over 55 s on 32 vCPUs"
+      },
+      {
+       "name": "rss_slope_srt-0_proxy",
+       "pass": true,
+       "observed": 352.44755244736984,
+       "threshold": 67025.45454545454,
+       "detail": "352.4 KB/h over 12 samples (55 s) of pid 606692 (allowed 67025.5)"
+      },
+      {
+       "name": "rss_slope_srt-0_recv",
+       "pass": true,
+       "observed": 9365.03496503388,
+       "threshold": 67025.45454545454,
+       "detail": "9365.0 KB/h over 12 samples (55 s) of pid 606686 (allowed 67025.5)"
+      },
+      {
+       "name": "rss_slope_srt-0_send",
+       "pass": true,
+       "observed": 523.6363636353387,
+       "threshold": 67025.45454545454,
+       "detail": "523.6 KB/h over 12 samples (55 s) of pid 606703 (allowed 67025.5)"
+      },
+      {
+       "name": "fd_count_flat_srt-0_proxy",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 2.0,
+       "detail": "min 4, max 4 over 12 samples of pid 606692"
+      },
+      {
+       "name": "fd_count_flat_srt-0_recv",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 2.0,
+       "detail": "min 5, max 5 over 12 samples of pid 606686"
+      },
+      {
+       "name": "fd_count_flat_srt-0_send",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 2.0,
+       "detail": "min 5, max 5 over 12 samples of pid 606703"
+      },
+      {
+       "name": "thread_count_flat_srt-0_proxy",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 1.0,
+       "detail": "min 1, max 1 over 12 samples of pid 606692"
+      },
+      {
+       "name": "thread_count_flat_srt-0_recv",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 1.0,
+       "detail": "min 6, max 6 over 12 samples of pid 606686"
+      },
+      {
+       "name": "thread_count_flat_srt-0_send",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 1.0,
+       "detail": "min 4, max 4 over 12 samples of pid 606703"
+      },
+      {
+       "name": "sample_coverage",
+       "pass": true,
+       "observed": 1.0,
+       "threshold": 0.9,
+       "detail": "every process has \u2265 0.9 of 12 expected ticks"
+      }
+     ],
+     "failing": [],
+     "per_stream": [
+      {
+       "index": 0,
+       "leg": "srt-0",
+       "cpu_seconds": {
+        "proxy": 0.22,
+        "recv": 0.83,
+        "send": 0.88
+       },
+       "rss_kb_p99": {
+        "proxy": 6376,
+        "recv": 11080,
+        "send": 9724
+       },
+       "threads_max": {
+        "proxy": 1,
+        "recv": 6,
+        "send": 4
+       },
+       "fds_max": {
+        "proxy": 4,
+        "recv": 5,
+        "send": 5
+       },
+       "recv_video_aus": 2214,
+       "send_video_aus": 2250,
+       "wire_mbps": 4.5248327999999995,
+       "reconnects": 0,
+       "proxy_forwarded": 30821,
+       "proxy_dropped": 0
+      }
+     ],
+     "aggregate_cpu_fraction": 0.0010965909090909093,
+     "cpu_fraction_per_stream": 0.0010965909090909093,
+     "aggregate_wire_mbps": 4.5248327999999995,
+     "samples_used": 36
+    }
+   ],
+   "ceiling": 2,
+   "first_fail": null,
+   "first_fail_verdicts": []
+  },
+  {
+   "transport": "srt",
+   "axis": "streams",
+   "steps": [
+    {
+     "decl": {
+      "transport": "srt",
+      "axis": "streams",
+      "streams": 1,
+      "au_scale": 1,
+      "warmup_s": 15.0,
+      "hold_s": 60.0,
+      "sample_cadence_s": 5.0,
+      "vcpus": 32,
+      "clk_tck": 100,
+      "nominal_mbps_per_stream": 1.7,
+      "managed": true,
+      "outage_period_s": null,
+      "outage_dur_s": null,
+      "restart_period_s": null
+     },
+     "thresholds": {
+      "rss_slope_kb_per_hour": 1024.0,
+      "fd_delta_max": 2,
+      "thread_delta_max": 1,
+      "cpu_headroom_max": 0.8,
+      "delivery_slack": 0.7,
+      "queue_depth_fraction": 0.9
+     },
+     "pass": true,
+     "verdicts": [
+      {
+       "name": "worker_exits",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 0.0,
+       "detail": "every worker exited 0"
+      },
+      {
+       "name": "recv_invariants",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 0.0,
+       "detail": "every receiver passed its profile invariants"
+      },
+      {
+       "name": "delivery_complete",
+       "pass": true,
+       "observed": 0.984,
+       "threshold": 0.7,
+       "detail": "delivered 0.9840..0.9840 of expected AUs across streams"
+      },
+      {
+       "name": "cpu_headroom",
+       "pass": true,
+       "observed": 0.00109375,
+       "threshold": 0.8,
+       "detail": "2.0 CPU-s over 56 s on 32 vCPUs"
+      },
+      {
+       "name": "rss_slope_srt-0_proxy",
+       "pass": true,
+       "observed": 347.2710788761898,
+       "threshold": 65828.57142857143,
+       "detail": "347.3 KB/h over 12 samples (56 s) of pid 603796 (allowed 65828.6)"
+      },
+      {
+       "name": "rss_slope_srt-0_recv",
+       "pass": true,
+       "observed": 1908.685403444304,
+       "threshold": 65828.57142857143,
+       "detail": "1908.7 KB/h over 12 samples (56 s) of pid 603793 (allowed 65828.6)"
+      },
+      {
+       "name": "rss_slope_srt-0_send",
+       "pass": true,
+       "observed": 3329.10244786909,
+       "threshold": 65828.57142857143,
+       "detail": "3329.1 KB/h over 12 samples (56 s) of pid 603808 (allowed 65828.6)"
+      },
+      {
+       "name": "fd_count_flat_srt-0_proxy",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 2.0,
+       "detail": "min 4, max 4 over 12 samples of pid 603796"
+      },
+      {
+       "name": "fd_count_flat_srt-0_recv",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 2.0,
+       "detail": "min 5, max 5 over 12 samples of pid 603793"
+      },
+      {
+       "name": "fd_count_flat_srt-0_send",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 2.0,
+       "detail": "min 5, max 5 over 12 samples of pid 603808"
+      },
+      {
+       "name": "thread_count_flat_srt-0_proxy",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 1.0,
+       "detail": "min 1, max 1 over 12 samples of pid 603796"
+      },
+      {
+       "name": "thread_count_flat_srt-0_recv",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 1.0,
+       "detail": "min 6, max 6 over 12 samples of pid 603793"
+      },
+      {
+       "name": "thread_count_flat_srt-0_send",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 1.0,
+       "detail": "min 4, max 4 over 12 samples of pid 603808"
+      },
+      {
+       "name": "sample_coverage",
+       "pass": true,
+       "observed": 1.0,
+       "threshold": 0.9,
+       "detail": "every process has \u2265 0.9 of 12 expected ticks"
+      }
+     ],
+     "failing": [],
+     "per_stream": [
+      {
+       "index": 0,
+       "leg": "srt-0",
+       "cpu_seconds": {
+        "proxy": 0.2,
+        "recv": 0.88,
+        "send": 0.88
+       },
+       "rss_kb_p99": {
+        "proxy": 6400,
+        "recv": 10380,
+        "send": 9380
+       },
+       "threads_max": {
+        "proxy": 1,
+        "recv": 6,
+        "send": 4
+       },
+       "fds_max": {
+        "proxy": 4,
+        "recv": 5,
+        "send": 5
+       },
+       "recv_video_aus": 2214,
+       "send_video_aus": 2250,
+       "wire_mbps": 2.316344133333333,
+       "reconnects": 0,
+       "proxy_forwarded": 18022,
+       "proxy_dropped": 0
+      }
+     ],
+     "aggregate_cpu_fraction": 0.00109375,
+     "cpu_fraction_per_stream": 0.00109375,
+     "aggregate_wire_mbps": 2.316344133333333,
+     "samples_used": 36
+    },
+    {
+     "decl": {
+      "transport": "srt",
+      "axis": "streams",
+      "streams": 2,
+      "au_scale": 1,
+      "warmup_s": 15.0,
+      "hold_s": 60.0,
+      "sample_cadence_s": 5.0,
+      "vcpus": 32,
+      "clk_tck": 100,
+      "nominal_mbps_per_stream": 1.7,
+      "managed": true,
+      "outage_period_s": null,
+      "outage_dur_s": null,
+      "restart_period_s": null
+     },
+     "thresholds": {
+      "rss_slope_kb_per_hour": 1024.0,
+      "fd_delta_max": 2,
+      "thread_delta_max": 1,
+      "cpu_headroom_max": 0.8,
+      "delivery_slack": 0.7,
+      "queue_depth_fraction": 0.9
+     },
+     "pass": true,
+     "verdicts": [
+      {
+       "name": "worker_exits",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 0.0,
+       "detail": "every worker exited 0"
+      },
+      {
+       "name": "recv_invariants",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 0.0,
+       "detail": "every receiver passed its profile invariants"
+      },
+      {
+       "name": "delivery_complete",
+       "pass": true,
+       "observed": 0.984,
+       "threshold": 0.7,
+       "detail": "delivered 0.9840..0.9840 of expected AUs across streams"
+      },
+      {
+       "name": "cpu_headroom",
+       "pass": true,
+       "observed": 0.0022045454545454547,
+       "threshold": 0.8,
+       "detail": "3.9 CPU-s over 55 s on 32 vCPUs"
+      },
+      {
+       "name": "rss_slope_srt-0_proxy",
+       "pass": true,
+       "observed": 352.447552447919,
+       "threshold": 67025.45454545454,
+       "detail": "352.4 KB/h over 12 samples (55 s) of pid 604603 (allowed 67025.5)"
+      },
+      {
+       "name": "rss_slope_srt-0_recv",
+       "pass": true,
+       "observed": 2024.055944055066,
+       "threshold": 67025.45454545454,
+       "detail": "2024.1 KB/h over 12 samples (55 s) of pid 604597 (allowed 67025.5)"
+      },
+      {
+       "name": "rss_slope_srt-0_send",
+       "pass": true,
+       "observed": 3323.0769230769247,
+       "threshold": 67025.45454545454,
+       "detail": "3323.1 KB/h over 12 samples (55 s) of pid 604646 (allowed 67025.5)"
+      },
+      {
+       "name": "rss_slope_srt-1_proxy",
+       "pass": true,
+       "observed": 352.44755244736945,
+       "threshold": 67025.45454545454,
+       "detail": "352.4 KB/h over 12 samples (55 s) of pid 604614 (allowed 67025.5)"
+      },
+      {
+       "name": "rss_slope_srt-1_recv",
+       "pass": true,
+       "observed": 2074.405594405083,
+       "threshold": 67025.45454545454,
+       "detail": "2074.4 KB/h over 12 samples (55 s) of pid 604608 (allowed 67025.5)"
+      },
+      {
+       "name": "rss_slope_srt-1_send",
+       "pass": true,
+       "observed": 1550.7692307686457,
+       "threshold": 67025.45454545454,
+       "detail": "1550.8 KB/h over 12 samples (55 s) of pid 604659 (allowed 67025.5)"
+      },
+      {
+       "name": "fd_count_flat_srt-0_proxy",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 2.0,
+       "detail": "min 4, max 4 over 12 samples of pid 604603"
+      },
+      {
+       "name": "fd_count_flat_srt-0_recv",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 2.0,
+       "detail": "min 5, max 5 over 12 samples of pid 604597"
+      },
+      {
+       "name": "fd_count_flat_srt-0_send",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 2.0,
+       "detail": "min 5, max 5 over 12 samples of pid 604646"
+      },
+      {
+       "name": "fd_count_flat_srt-1_proxy",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 2.0,
+       "detail": "min 4, max 4 over 12 samples of pid 604614"
+      },
+      {
+       "name": "fd_count_flat_srt-1_recv",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 2.0,
+       "detail": "min 5, max 5 over 12 samples of pid 604608"
+      },
+      {
+       "name": "fd_count_flat_srt-1_send",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 2.0,
+       "detail": "min 5, max 5 over 12 samples of pid 604659"
+      },
+      {
+       "name": "thread_count_flat_srt-0_proxy",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 1.0,
+       "detail": "min 1, max 1 over 12 samples of pid 604603"
+      },
+      {
+       "name": "thread_count_flat_srt-0_recv",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 1.0,
+       "detail": "min 6, max 6 over 12 samples of pid 604597"
+      },
+      {
+       "name": "thread_count_flat_srt-0_send",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 1.0,
+       "detail": "min 4, max 4 over 12 samples of pid 604646"
+      },
+      {
+       "name": "thread_count_flat_srt-1_proxy",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 1.0,
+       "detail": "min 1, max 1 over 12 samples of pid 604614"
+      },
+      {
+       "name": "thread_count_flat_srt-1_recv",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 1.0,
+       "detail": "min 6, max 6 over 12 samples of pid 604608"
+      },
+      {
+       "name": "thread_count_flat_srt-1_send",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 1.0,
+       "detail": "min 4, max 4 over 12 samples of pid 604659"
+      },
+      {
+       "name": "sample_coverage",
+       "pass": true,
+       "observed": 1.0,
+       "threshold": 0.9,
+       "detail": "every process has \u2265 0.9 of 12 expected ticks"
+      }
+     ],
+     "failing": [],
+     "per_stream": [
+      {
+       "index": 0,
+       "leg": "srt-0",
+       "cpu_seconds": {
+        "proxy": 0.17,
+        "recv": 0.64,
+        "send": 0.64
+       },
+       "rss_kb_p99": {
+        "proxy": 6228,
+        "recv": 10216,
+        "send": 9652
+       },
+       "threads_max": {
+        "proxy": 1,
+        "recv": 6,
+        "send": 4
+       },
+       "fds_max": {
+        "proxy": 4,
+        "recv": 5,
+        "send": 5
+       },
+       "recv_video_aus": 2214,
+       "send_video_aus": 2250,
+       "wire_mbps": 2.316344133333333,
+       "reconnects": 0,
+       "proxy_forwarded": 18076,
+       "proxy_dropped": 0
+      },
+      {
+       "index": 1,
+       "leg": "srt-1",
+       "cpu_seconds": {
+        "proxy": 0.23,
+        "recv": 1.08,
+        "send": 1.12
+       },
+       "rss_kb_p99": {
+        "proxy": 6196,
+        "recv": 10184,
+        "send": 9484
+       },
+       "threads_max": {
+        "proxy": 1,
+        "recv": 6,
+        "send": 4
+       },
+       "fds_max": {
+        "proxy": 4,
+        "recv": 5,
+        "send": 5
+       },
+       "recv_video_aus": 2214,
+       "send_video_aus": 2250,
+       "wire_mbps": 2.3153270666666668,
+       "reconnects": 0,
+       "proxy_forwarded": 17990,
+       "proxy_dropped": 0
+      }
+     ],
+     "aggregate_cpu_fraction": 0.0022045454545454547,
+     "cpu_fraction_per_stream": 0.0011022727272727271,
+     "aggregate_wire_mbps": 4.6316711999999995,
+     "samples_used": 72
+    }
+   ],
+   "ceiling": 2,
+   "first_fail": null,
+   "first_fail_verdicts": []
+  },
+  {
+   "transport": "tcp",
+   "axis": "bitrate",
+   "steps": [
+    {
+     "decl": {
+      "transport": "tcp",
+      "axis": "bitrate",
+      "streams": 1,
+      "au_scale": 1,
+      "warmup_s": 15.0,
+      "hold_s": 60.0,
+      "sample_cadence_s": 5.0,
+      "vcpus": 32,
+      "clk_tck": 100,
+      "nominal_mbps_per_stream": 1.7,
+      "managed": false,
+      "outage_period_s": null,
+      "outage_dur_s": null,
+      "restart_period_s": null
+     },
+     "thresholds": {
+      "rss_slope_kb_per_hour": 1024.0,
+      "fd_delta_max": 2,
+      "thread_delta_max": 1,
+      "cpu_headroom_max": 0.8,
+      "delivery_slack": 0.7,
+      "queue_depth_fraction": 0.9
+     },
+     "pass": true,
+     "verdicts": [
+      {
+       "name": "worker_exits",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 0.0,
+       "detail": "every worker exited 0"
+      },
+      {
+       "name": "recv_invariants",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 0.0,
+       "detail": "every receiver passed its profile invariants"
+      },
+      {
+       "name": "delivery_complete",
+       "pass": true,
+       "observed": 1.0,
+       "threshold": 0.7,
+       "detail": "delivered 1.0000..1.0000 of expected AUs across streams"
+      },
+      {
+       "name": "cpu_headroom",
+       "pass": true,
+       "observed": 0.0002443181818181818,
+       "threshold": 0.8,
+       "detail": "0.4 CPU-s over 55 s on 32 vCPUs"
+      },
+      {
+       "name": "rss_slope_tcp-0_recv",
+       "pass": true,
+       "observed": 2879.999999998759,
+       "threshold": 67025.45454545454,
+       "detail": "2880.0 KB/h over 12 samples (55 s) of pid 616397 (allowed 67025.5)"
+      },
+      {
+       "name": "rss_slope_tcp-0_send",
+       "pass": true,
+       "observed": 1772.3076923066328,
+       "threshold": 67025.45454545454,
+       "detail": "1772.3 KB/h over 12 samples (55 s) of pid 616401 (allowed 67025.5)"
+      },
+      {
+       "name": "fd_count_flat_tcp-0_recv",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 2.0,
+       "detail": "min 5, max 5 over 12 samples of pid 616397"
+      },
+      {
+       "name": "fd_count_flat_tcp-0_send",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 2.0,
+       "detail": "min 5, max 5 over 12 samples of pid 616401"
+      },
+      {
+       "name": "thread_count_flat_tcp-0_recv",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 1.0,
+       "detail": "min 1, max 1 over 12 samples of pid 616397"
+      },
+      {
+       "name": "thread_count_flat_tcp-0_send",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 1.0,
+       "detail": "min 1, max 1 over 12 samples of pid 616401"
+      },
+      {
+       "name": "sample_coverage",
+       "pass": true,
+       "observed": 1.0,
+       "threshold": 0.9,
+       "detail": "every process has \u2265 0.9 of 12 expected ticks"
+      }
+     ],
+     "failing": [],
+     "per_stream": [
+      {
+       "index": 0,
+       "leg": "tcp-0",
+       "cpu_seconds": {
+        "recv": 0.18,
+        "send": 0.25
+       },
+       "rss_kb_p99": {
+        "recv": 7992,
+        "send": 7848
+       },
+       "threads_max": {
+        "recv": 1,
+        "send": 1
+       },
+       "fds_max": {
+        "recv": 5,
+        "send": 5
+       },
+       "recv_video_aus": 2250,
+       "send_video_aus": 2250,
+       "wire_mbps": 2.3514124,
+       "reconnects": null,
+       "proxy_forwarded": null,
+       "proxy_dropped": null
+      }
+     ],
+     "aggregate_cpu_fraction": 0.0002443181818181818,
+     "cpu_fraction_per_stream": 0.0002443181818181818,
+     "aggregate_wire_mbps": 2.3514124,
+     "samples_used": 24
+    },
+    {
+     "decl": {
+      "transport": "tcp",
+      "axis": "bitrate",
+      "streams": 1,
+      "au_scale": 2,
+      "warmup_s": 15.0,
+      "hold_s": 60.0,
+      "sample_cadence_s": 5.0,
+      "vcpus": 32,
+      "clk_tck": 100,
+      "nominal_mbps_per_stream": 3.4,
+      "managed": false,
+      "outage_period_s": null,
+      "outage_dur_s": null,
+      "restart_period_s": null
+     },
+     "thresholds": {
+      "rss_slope_kb_per_hour": 1024.0,
+      "fd_delta_max": 2,
+      "thread_delta_max": 1,
+      "cpu_headroom_max": 1e-06,
+      "delivery_slack": 0.7,
+      "queue_depth_fraction": 0.9
+     },
+     "pass": false,
+     "verdicts": [
+      {
+       "name": "worker_exits",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 0.0,
+       "detail": "every worker exited 0"
+      },
+      {
+       "name": "recv_invariants",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 0.0,
+       "detail": "every receiver passed its profile invariants"
+      },
+      {
+       "name": "delivery_complete",
+       "pass": true,
+       "observed": 1.0,
+       "threshold": 0.7,
+       "detail": "delivered 1.0000..1.0000 of expected AUs across streams"
+      },
+      {
+       "name": "cpu_headroom",
+       "pass": false,
+       "observed": 0.00027343749999999997,
+       "threshold": 1e-06,
+       "detail": "0.5 CPU-s over 56 s on 32 vCPUs"
+      },
+      {
+       "name": "rss_slope_tcp-0_recv",
+       "pass": true,
+       "observed": 107.23267635739488,
+       "threshold": 65828.57142857143,
+       "detail": "107.2 KB/h over 12 samples (56 s) of pid 616946 (allowed 65828.6)"
+      },
+      {
+       "name": "rss_slope_tcp-0_send",
+       "pass": true,
+       "observed": 4222.527423525053,
+       "threshold": 65828.57142857143,
+       "detail": "4222.5 KB/h over 12 samples (56 s) of pid 616957 (allowed 65828.6)"
+      },
+      {
+       "name": "fd_count_flat_tcp-0_recv",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 2.0,
+       "detail": "min 5, max 5 over 12 samples of pid 616946"
+      },
+      {
+       "name": "fd_count_flat_tcp-0_send",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 2.0,
+       "detail": "min 5, max 5 over 12 samples of pid 616957"
+      },
+      {
+       "name": "thread_count_flat_tcp-0_recv",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 1.0,
+       "detail": "min 1, max 1 over 12 samples of pid 616946"
+      },
+      {
+       "name": "thread_count_flat_tcp-0_send",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 1.0,
+       "detail": "min 1, max 1 over 12 samples of pid 616957"
+      },
+      {
+       "name": "sample_coverage",
+       "pass": true,
+       "observed": 1.0,
+       "threshold": 0.9,
+       "detail": "every process has \u2265 0.9 of 12 expected ticks"
+      }
+     ],
+     "failing": [
+      "cpu_headroom"
+     ],
+     "per_stream": [
+      {
+       "index": 0,
+       "leg": "tcp-0",
+       "cpu_seconds": {
+        "recv": 0.19,
+        "send": 0.3
+       },
+       "rss_kb_p99": {
+        "recv": 7816,
+        "send": 7896
+       },
+       "threads_max": {
+        "recv": 1,
+        "send": 1
+       },
+       "fds_max": {
+        "recv": 5,
+        "send": 5
+       },
+       "recv_video_aus": 2250,
+       "send_video_aus": 2250,
+       "wire_mbps": 4.593229200000001,
+       "reconnects": null,
+       "proxy_forwarded": null,
+       "proxy_dropped": null
+      }
+     ],
+     "aggregate_cpu_fraction": 0.00027343749999999997,
+     "cpu_fraction_per_stream": 0.00027343749999999997,
+     "aggregate_wire_mbps": 4.593229200000001,
+     "samples_used": 24
+    }
+   ],
+   "ceiling": 1,
+   "first_fail": 2,
+   "first_fail_verdicts": [
+    "cpu_headroom"
+   ]
+  },
+  {
+   "transport": "tcp",
+   "axis": "streams",
+   "steps": [
+    {
+     "decl": {
+      "transport": "tcp",
+      "axis": "streams",
+      "streams": 1,
+      "au_scale": 1,
+      "warmup_s": 15.0,
+      "hold_s": 60.0,
+      "sample_cadence_s": 5.0,
+      "vcpus": 32,
+      "clk_tck": 100,
+      "nominal_mbps_per_stream": 1.7,
+      "managed": false,
+      "outage_period_s": null,
+      "outage_dur_s": null,
+      "restart_period_s": null
+     },
+     "thresholds": {
+      "rss_slope_kb_per_hour": 1024.0,
+      "fd_delta_max": 2,
+      "thread_delta_max": 1,
+      "cpu_headroom_max": 0.8,
+      "delivery_slack": 0.7,
+      "queue_depth_fraction": 0.9
+     },
+     "pass": true,
+     "verdicts": [
+      {
+       "name": "worker_exits",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 0.0,
+       "detail": "every worker exited 0"
+      },
+      {
+       "name": "recv_invariants",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 0.0,
+       "detail": "every receiver passed its profile invariants"
+      },
+      {
+       "name": "delivery_complete",
+       "pass": true,
+       "observed": 1.0,
+       "threshold": 0.7,
+       "detail": "delivered 1.0000..1.0000 of expected AUs across streams"
+      },
+      {
+       "name": "cpu_headroom",
+       "pass": true,
+       "observed": 0.00023295454545454547,
+       "threshold": 0.8,
+       "detail": "0.4 CPU-s over 55 s on 32 vCPUs"
+      },
+      {
+       "name": "rss_slope_tcp-0_recv",
+       "pass": true,
+       "observed": 2879.999999998759,
+       "threshold": 67025.45454545454,
+       "detail": "2880.0 KB/h over 12 samples (55 s) of pid 614916 (allowed 67025.5)"
+      },
+      {
+       "name": "rss_slope_tcp-0_send",
+       "pass": true,
+       "observed": 1772.3076923077317,
+       "threshold": 67025.45454545454,
+       "detail": "1772.3 KB/h over 12 samples (55 s) of pid 614920 (allowed 67025.5)"
+      },
+      {
+       "name": "fd_count_flat_tcp-0_recv",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 2.0,
+       "detail": "min 5, max 5 over 12 samples of pid 614916"
+      },
+      {
+       "name": "fd_count_flat_tcp-0_send",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 2.0,
+       "detail": "min 5, max 5 over 12 samples of pid 614920"
+      },
+      {
+       "name": "thread_count_flat_tcp-0_recv",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 1.0,
+       "detail": "min 1, max 1 over 12 samples of pid 614916"
+      },
+      {
+       "name": "thread_count_flat_tcp-0_send",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 1.0,
+       "detail": "min 1, max 1 over 12 samples of pid 614920"
+      },
+      {
+       "name": "sample_coverage",
+       "pass": true,
+       "observed": 1.0,
+       "threshold": 0.9,
+       "detail": "every process has \u2265 0.9 of 12 expected ticks"
+      }
+     ],
+     "failing": [],
+     "per_stream": [
+      {
+       "index": 0,
+       "leg": "tcp-0",
+       "cpu_seconds": {
+        "recv": 0.18,
+        "send": 0.23
+       },
+       "rss_kb_p99": {
+        "recv": 8040,
+        "send": 7800
+       },
+       "threads_max": {
+        "recv": 1,
+        "send": 1
+       },
+       "fds_max": {
+        "recv": 5,
+        "send": 5
+       },
+       "recv_video_aus": 2250,
+       "send_video_aus": 2250,
+       "wire_mbps": 2.3514124,
+       "reconnects": null,
+       "proxy_forwarded": null,
+       "proxy_dropped": null
+      }
+     ],
+     "aggregate_cpu_fraction": 0.00023295454545454547,
+     "cpu_fraction_per_stream": 0.00023295454545454547,
+     "aggregate_wire_mbps": 2.3514124,
+     "samples_used": 24
+    },
+    {
+     "decl": {
+      "transport": "tcp",
+      "axis": "streams",
+      "streams": 2,
+      "au_scale": 1,
+      "warmup_s": 15.0,
+      "hold_s": 60.0,
+      "sample_cadence_s": 5.0,
+      "vcpus": 32,
+      "clk_tck": 100,
+      "nominal_mbps_per_stream": 1.7,
+      "managed": false,
+      "outage_period_s": null,
+      "outage_dur_s": null,
+      "restart_period_s": null
+     },
+     "thresholds": {
+      "rss_slope_kb_per_hour": 1024.0,
+      "fd_delta_max": 2,
+      "thread_delta_max": 1,
+      "cpu_headroom_max": 0.8,
+      "delivery_slack": 0.7,
+      "queue_depth_fraction": 0.9
+     },
+     "pass": true,
+     "verdicts": [
+      {
+       "name": "worker_exits",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 0.0,
+       "detail": "every worker exited 0"
+      },
+      {
+       "name": "recv_invariants",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 0.0,
+       "detail": "every receiver passed its profile invariants"
+      },
+      {
+       "name": "delivery_complete",
+       "pass": true,
+       "observed": 1.0,
+       "threshold": 0.7,
+       "detail": "delivered 1.0000..1.0000 of expected AUs across streams"
+      },
+      {
+       "name": "cpu_headroom",
+       "pass": true,
+       "observed": 0.00046875,
+       "threshold": 0.8,
+       "detail": "0.8 CPU-s over 56 s on 32 vCPUs"
+      },
+      {
+       "name": "rss_slope_tcp-0_recv",
+       "pass": true,
+       "observed": 2798.7339214753724,
+       "threshold": 65828.57142857143,
+       "detail": "2798.7 KB/h over 12 samples (56 s) of pid 615480 (allowed 65828.6)"
+      },
+      {
+       "name": "rss_slope_tcp-0_send",
+       "pass": true,
+       "observed": 1722.2977978315278,
+       "threshold": 65828.57142857143,
+       "detail": "1722.3 KB/h over 12 samples (56 s) of pid 615489 (allowed 65828.6)"
+      },
+      {
+       "name": "rss_slope_tcp-1_recv",
+       "pass": true,
+       "observed": 755.4448110983,
+       "threshold": 65828.57142857143,
+       "detail": "755.4 KB/h over 12 samples (56 s) of pid 615485 (allowed 65828.6)"
+      },
+      {
+       "name": "rss_slope_tcp-1_send",
+       "pass": true,
+       "observed": -5.29196189865857e-10,
+       "threshold": 65828.57142857143,
+       "detail": "-0.0 KB/h over 12 samples (56 s) of pid 615492 (allowed 65828.6)"
+      },
+      {
+       "name": "fd_count_flat_tcp-0_recv",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 2.0,
+       "detail": "min 5, max 5 over 12 samples of pid 615480"
+      },
+      {
+       "name": "fd_count_flat_tcp-0_send",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 2.0,
+       "detail": "min 5, max 5 over 12 samples of pid 615489"
+      },
+      {
+       "name": "fd_count_flat_tcp-1_recv",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 2.0,
+       "detail": "min 5, max 5 over 12 samples of pid 615485"
+      },
+      {
+       "name": "fd_count_flat_tcp-1_send",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 2.0,
+       "detail": "min 5, max 5 over 12 samples of pid 615492"
+      },
+      {
+       "name": "thread_count_flat_tcp-0_recv",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 1.0,
+       "detail": "min 1, max 1 over 12 samples of pid 615480"
+      },
+      {
+       "name": "thread_count_flat_tcp-0_send",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 1.0,
+       "detail": "min 1, max 1 over 12 samples of pid 615489"
+      },
+      {
+       "name": "thread_count_flat_tcp-1_recv",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 1.0,
+       "detail": "min 1, max 1 over 12 samples of pid 615485"
+      },
+      {
+       "name": "thread_count_flat_tcp-1_send",
+       "pass": true,
+       "observed": 0.0,
+       "threshold": 1.0,
+       "detail": "min 1, max 1 over 12 samples of pid 615492"
+      },
+      {
+       "name": "sample_coverage",
+       "pass": true,
+       "observed": 1.0,
+       "threshold": 0.9,
+       "detail": "every process has \u2265 0.9 of 12 expected ticks"
+      }
+     ],
+     "failing": [],
+     "per_stream": [
+      {
+       "index": 0,
+       "leg": "tcp-0",
+       "cpu_seconds": {
+        "recv": 0.17,
+        "send": 0.24
+       },
+       "rss_kb_p99": {
+        "recv": 7784,
+        "send": 7796
+       },
+       "threads_max": {
+        "recv": 1,
+        "send": 1
+       },
+       "fds_max": {
+        "recv": 5,
+        "send": 5
+       },
+       "recv_video_aus": 2250,
+       "send_video_aus": 2250,
+       "wire_mbps": 2.3514124,
+       "reconnects": null,
+       "proxy_forwarded": null,
+       "proxy_dropped": null
+      },
+      {
+       "index": 1,
+       "leg": "tcp-1",
+       "cpu_seconds": {
+        "recv": 0.18,
+        "send": 0.25
+       },
+       "rss_kb_p99": {
+        "recv": 7904,
+        "send": 7736
+       },
+       "threads_max": {
+        "recv": 1,
+        "send": 1
+       },
+       "fds_max": {
+        "recv": 5,
+        "send": 5
+       },
+       "recv_video_aus": 2250,
+       "send_video_aus": 2250,
+       "wire_mbps": 2.3504204,
+       "reconnects": null,
+       "proxy_forwarded": null,
+       "proxy_dropped": null
+      }
+     ],
+     "aggregate_cpu_fraction": 0.00046875,
+     "cpu_fraction_per_stream": 0.000234375,
+     "aggregate_wire_mbps": 4.7018328,
+     "samples_used": 48
+    }
+   ],
+   "ceiling": 2,
+   "first_fail": null,
+   "first_fail_verdicts": []
+  }
+ ],
+ "hold": {
+  "decl": {
+   "n_hold": {
+    "srt": 1,
+    "tcp": 1
+   },
+   "ceilings_declared": {
+    "srt": 2,
+    "tcp": 2
+   },
+   "cpu_scale_factor": 1.0
+  },
+  "step": {
+   "decl": {
+    "transport": "all",
+    "axis": "hold",
+    "streams": 4,
+    "au_scale": 1,
+    "warmup_s": 60.0,
+    "hold_s": 360.0,
+    "sample_cadence_s": 5.0,
+    "vcpus": 32,
+    "clk_tck": 100,
+    "nominal_mbps_per_stream": 1.7,
+    "managed": true,
+    "outage_period_s": 345,
+    "outage_dur_s": 10,
+    "restart_period_s": 120
+   },
+   "thresholds": {
+    "rss_slope_kb_per_hour": 1024.0,
+    "fd_delta_max": 2,
+    "thread_delta_max": 1,
+    "cpu_headroom_max": 0.8,
+    "delivery_slack": 0.7,
+    "queue_depth_fraction": 0.9
+   },
+   "pass": false,
+   "verdicts": [
+    {
+     "name": "worker_exits",
+     "pass": false,
+     "observed": 1.0,
+     "threshold": 0.0,
+     "detail": "udp-0-recv: exit 1 (expected 0)"
+    },
+    {
+     "name": "recv_invariants",
+     "pass": false,
+     "observed": 1.0,
+     "threshold": 0.0,
+     "detail": "udp-0: corruption_attributed: 15 unexplained event(s) (52814 excused as transport loss), first: Some(\"Resync on pid None at packet 46978 (nearest injection: psi_flip on pid 0x0000 at packet 45326, 1652 packets before)\"), corruption_detected: 1 detectable injection(s) produced no event, first: Some(\"psi_flip on pid 0x0000 at packet 496311\"), PTS non-monotonic on at least one PID (rollover-aware check)"
+    },
+    {
+     "name": "delivery_complete",
+     "pass": true,
+     "observed": 0.9356,
+     "threshold": 0.7,
+     "detail": "delivered 0.9356..0.9997 of expected AUs across streams; restarted: srt-0: last restart at 170 s, expecting 0.5952 of 12600 sent AUs"
+    },
+    {
+     "name": "cpu_headroom",
+     "pass": true,
+     "observed": 0.0013377808988764047,
+     "threshold": 0.8,
+     "detail": "15.2 CPU-s over 356 s on 32 vCPUs; < 2 usable samples (counted as 0): srt-0/recv pid 617644"
+    },
+    {
+     "name": "rss_slope_srt-0_proxy",
+     "pass": true,
+     "observed": 757.1912890912322,
+     "threshold": 10355.056179775282,
+     "detail": "757.2 KB/h over 71 samples (356 s) of pid 617561 (allowed 10355.1)"
+    },
+    {
+     "name": "rss_slope_srt-0_recv",
+     "pass": true,
+     "observed": 4636.613953322,
+     "threshold": 20144.262295081968,
+     "detail": "4636.6 KB/h over 37 samples (183 s) of pid 622330 (allowed 20144.3); per pid (slope/allowed): pid 619193 2491.4/72282.4, pid 622330 4636.6/20144.3; skipped (span < 2 \u00d7 5 s cadence): pid 617644 (0 samples over 0 s)"
+    },
+    {
+     "name": "rss_slope_srt-0_send",
+     "pass": false,
+     "observed": 19789.862843397244,
+     "threshold": 10355.056179775282,
+     "detail": "19789.9 KB/h over 71 samples (356 s) of pid 617655 (allowed 10355.1)"
+    },
+    {
+     "name": "rss_slope_tcp-0_recv",
+     "pass": true,
+     "observed": 176.5886956519779,
+     "threshold": 10355.056179775282,
+     "detail": "176.6 KB/h over 71 samples (356 s) of pid 617695 (allowed 10355.1)"
+    },
+    {
+     "name": "rss_slope_tcp-0_send",
+     "pass": true,
+     "observed": -1.1028804241668499e-10,
+     "threshold": 10355.056179775282,
+     "detail": "-0.0 KB/h over 71 samples (356 s) of pid 617698 (allowed 10355.1)"
+    },
+    {
+     "name": "fd_count_flat_srt-0_proxy",
+     "pass": true,
+     "observed": 0.0,
+     "threshold": 2.0,
+     "detail": "min 4, max 4 over 71 samples of pid 617561"
+    },
+    {
+     "name": "fd_count_flat_srt-0_recv",
+     "pass": true,
+     "observed": 1.0,
+     "threshold": 2.0,
+     "detail": "min 5, max 6 over 37 samples of pid 622330; per pid: pid 619193 \u03940, pid 622330 \u03941; skipped (< 2 post-warm-up samples): pid 617644 (0 usable)"
+    },
+    {
+     "name": "fd_count_flat_srt-0_send",
+     "pass": true,
+     "observed": 1.0,
+     "threshold": 2.0,
+     "detail": "min 5, max 6 over 71 samples of pid 617655"
+    },
+    {
+     "name": "fd_count_flat_tcp-0_recv",
+     "pass": true,
+     "observed": 0.0,
+     "threshold": 2.0,
+     "detail": "min 5, max 5 over 71 samples of pid 617695"
+    },
+    {
+     "name": "fd_count_flat_tcp-0_send",
+     "pass": true,
+     "observed": 0.0,
+     "threshold": 2.0,
+     "detail": "min 5, max 5 over 71 samples of pid 617698"
+    },
+    {
+     "name": "thread_count_flat_srt-0_proxy",
+     "pass": true,
+     "observed": 0.0,
+     "threshold": 1.0,
+     "detail": "min 1, max 1 over 71 samples of pid 617561"
+    },
+    {
+     "name": "thread_count_flat_srt-0_recv",
+     "pass": true,
+     "observed": 1.0,
+     "threshold": 1.0,
+     "detail": "min 5, max 6 over 37 samples of pid 622330; per pid: pid 619193 \u03940, pid 622330 \u03941; skipped (< 2 post-warm-up samples): pid 617644 (0 usable)"
+    },
+    {
+     "name": "thread_count_flat_srt-0_send",
+     "pass": false,
+     "observed": 3.0,
+     "threshold": 1.0,
+     "detail": "min 4, max 7 over 71 samples of pid 617655"
+    },
+    {
+     "name": "thread_count_flat_tcp-0_recv",
+     "pass": true,
+     "observed": 0.0,
+     "threshold": 1.0,
+     "detail": "min 1, max 1 over 71 samples of pid 617695"
+    },
+    {
+     "name": "thread_count_flat_tcp-0_send",
+     "pass": true,
+     "observed": 0.0,
+     "threshold": 1.0,
+     "detail": "min 1, max 1 over 71 samples of pid 617698"
+    },
+    {
+     "name": "sample_coverage",
+     "pass": true,
+     "observed": 0.9861111111111112,
+     "threshold": 0.9,
+     "detail": "every process has \u2265 0.9 of 72 expected ticks"
+    }
+   ],
+   "failing": [
+    "worker_exits",
+    "recv_invariants",
+    "rss_slope_srt-0_send",
+    "thread_count_flat_srt-0_send"
+   ],
+   "per_stream": [
+    {
+     "index": 0,
+     "leg": "srt-0",
+     "cpu_seconds": {
+      "proxy": 1.17,
+      "recv": 2.08,
+      "send": 3.55
+     },
+     "rss_kb_p99": {
+      "proxy": 6792,
+      "recv": 11224,
+      "send": 12784
+     },
+     "threads_max": {
+      "proxy": 1,
+      "recv": 6,
+      "send": 7
+     },
+     "fds_max": {
+      "proxy": 4,
+      "recv": 6,
+      "send": 6
+     },
+     "recv_video_aus": 7017,
+     "send_video_aus": 12600,
+     "wire_mbps": 1.2273835333333334,
+     "reconnects": 1,
+     "proxy_forwarded": 148104,
+     "proxy_dropped": 3541
+    },
+    {
+     "index": 3,
+     "leg": "tcp-0",
+     "cpu_seconds": {
+      "recv": 0.66,
+      "send": 0.79
+     },
+     "rss_kb_p99": {
+      "recv": 7692,
+      "send": 7964
+     },
+     "threads_max": {
+      "recv": 1,
+      "send": 1
+     },
+     "fds_max": {
+      "recv": 5,
+      "send": 5
+     },
+     "recv_video_aus": 12596,
+     "send_video_aus": 12600,
+     "wire_mbps": 2.199756888888889,
+     "reconnects": null,
+     "proxy_forwarded": null,
+     "proxy_dropped": null
+    }
+   ],
+   "aggregate_cpu_fraction": 0.0013377808988764047,
+   "cpu_fraction_per_stream": 0.0003344452247191012,
+   "aggregate_wire_mbps": 3.427140422222222,
+   "samples_used": 758
+  },
+  "hold_verdicts": [
+   {
+    "name": "reconnect_count",
+    "pass": true,
+    "observed": 1.0,
+    "threshold": 0.0,
+    "detail": "every one of 1 SRT stream(s) reconnected \u2265 1 outage windows \u2212 1 = 0 times (min 1)"
+   },
+   {
+    "name": "peer_restart_recovery",
+    "pass": true,
+    "observed": 2.0,
+    "threshold": 2.0,
+    "detail": "all 2 judgeable restart(s) recovered within 120 s"
+   },
+   {
+    "name": "queue_depth_p99",
+    "pass": true,
+    "observed": 0.0,
+    "threshold": 230.4,
+    "detail": "p99 gap_len 0 over 6 heartbeat(s) vs 0.9 \u00d7 capacity 256"
+   },
+   {
+    "name": "hold_sizing_declared",
+    "pass": true,
+    "observed": 0.0,
+    "threshold": 0.0,
+    "detail": "every held transport's n_hold is \u2264 max(1, floor(0.7 \u00d7 its declared ceiling))"
+   }
+  ],
+  "pass": false
+ },
+ "overall_pass": false,
+ "limitations": [
+  "rist/bitrate: never failed \u2014 the ceiling is the top of the ladder, not a measured limit",
+  "rist/streams: never failed \u2014 the ceiling is the top of the ladder, not a measured limit",
+  "srt/bitrate: never failed \u2014 the ceiling is the top of the ladder, not a measured limit",
+  "srt/streams: never failed \u2014 the ceiling is the top of the ladder, not a measured limit",
+  "tcp/streams: never failed \u2014 the ceiling is the top of the ladder, not a measured limit",
+  "udp/bitrate: never failed \u2014 the ceiling is the top of the ladder, not a measured limit",
+  "udp/streams: never failed \u2014 the ceiling is the top of the ladder, not a measured limit"
+ ]
+}
