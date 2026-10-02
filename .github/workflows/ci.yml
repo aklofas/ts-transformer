@@ -32,19 +32,35 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # `phase` splits the slowest leg. The three nextest passes (default /
+        # no-default-features / all-features) are ~8 min each on windows-latest
+        # and the whole job ran ~44 min against ~30–33 for every other leg
+        # (measured 2026-10-02, run 37064257995), so it set the wall-clock of
+        # every PR. Windows now runs as two parallel legs of ~26 min each:
+        # `default` = clippy + doc tests + default build/test + the tst-c
+        # per-feature builds; `features` = the no-default-features and
+        # all-features build/test pairs. Everything else runs `all`.
         include:
           - name: linux-x86_64
             runner: ubuntu-latest
             continue: false
+            phase: all
           - name: linux-aarch64
             runner: ubuntu-24.04-arm
             continue: false
+            phase: all
           - name: macos-arm64
             runner: macos-15
             continue: false
+            phase: all
           - name: windows-msvc
             runner: windows-latest
             continue: false
+            phase: default
+          - name: windows-msvc-features
+            runner: windows-latest
+            continue: false
+            phase: features
     # Pin to MSRV via env so rust-toolchain.toml ("stable" for local dev)
     # doesn't relax the verification done in CI.
     env:
@@ -100,7 +116,7 @@ jobs:
         # rist-sys build.rs couldn't find `meson` on $PATH and panicked (CI red
         # 2026-05-29). pip drops meson.exe into the Python Scripts dir that is
         # already on PATH, sidestepping the MSI PATH-refresh problem entirely.
-        if: matrix.name == 'windows-msvc'
+        if: startsWith(matrix.name, 'windows-')
         # Run under bash with `set -euo pipefail`, NOT the default pwsh. pwsh
         # only checks the LAST command's exit code, so a choco failure followed
         # by a successful `pip install` was marked success — and choco can even
@@ -440,6 +456,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: cargo clippy
+        if: matrix.phase != 'features'
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Install nightly toolchain (for doc lints)
@@ -468,6 +485,7 @@ jobs:
         run: cargo +nightly doc --workspace --no-deps --all-features
 
       - name: cargo test --doc
+        if: matrix.phase != 'features'
         # Enabled on windows-msvc 2026-05-29: the plan #65 SRT-loopback hang
         # did NOT reproduce on the cl-built libsrt (diag_win_srt_close showed
         # blocking recv wakes on peer-close immediately, same as Linux), so the
@@ -481,9 +499,11 @@ jobs:
       # tst-c's smoke test asserts on target/debug/libtstrans.so, so we need an
       # explicit `cargo build` to produce the cdylib + staticlib first.
       - name: cargo build (all crate types, with mbedtls)
+        if: matrix.phase != 'features'
         run: cargo build --workspace
 
       - name: cargo test (default features, with mbedtls)
+        if: matrix.phase != 'features'
         # Runs under nextest (all platforms): per-test `terminate-after`
         # (.config/nextest.toml) kills any hung test and keeps going — one hang
         # can't stall the job and every failure surfaces in one run — while the
@@ -493,14 +513,17 @@ jobs:
         run: cargo nextest run --workspace --no-fail-fast
 
       - name: cargo build (all crate types, no-default-features)
+        if: matrix.phase != 'default'
         run: cargo build --workspace --no-default-features
 
       - name: cargo test (no-default-features, no encryption)
+        if: matrix.phase != 'default'
         # Enabled on windows-msvc 2026-05-29 — see cargo test --doc comment above.
         timeout-minutes: 20
         run: cargo nextest run --workspace --no-default-features --no-fail-fast
 
       - name: Build tst-c per-feature (srt/rtp/udp/tcp/hls/rist) — catch single-feature breakage
+        if: matrix.phase != 'features'
         # All six transport features are now default-off (opt-in), so the
         # default build above and the all-features build below don't exercise
         # each one in isolation. These explicit single-feature builds catch
@@ -538,6 +561,7 @@ jobs:
           done
 
       - name: cargo build (all crate types, all-features)
+        if: matrix.phase != 'default'
         # `cargo test` only rebuilds the rlib of crates with multiple
         # crate-types, so the cdylib at target/debug/libtstrans.{so,dylib}
         # is whatever the LAST explicit `cargo build` left it — which is the
@@ -551,6 +575,7 @@ jobs:
         run: cargo build --workspace --all-features
 
       - name: cargo test (all features)
+        if: matrix.phase != 'default'
         # The default feature set no longer includes the transports
         # (srt/rtp/udp/tcp/hls/rist are all opt-in), so this rail is the
         # only one that exercises the full tst-c transport surface + its
