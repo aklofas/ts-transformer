@@ -639,22 +639,33 @@ write_provenance() {
 # ticks; the comm field (2) can itself contain spaces, so the line is
 # split AFTER its closing ')' and the indices below are relative to
 # field 3 (utime = 12th, stime = 13th after the paren). fds = entry
-# count of /proc/<pid>/fd (own-user processes, always readable here).
+# count of /proc/<pid>/fd (own-user processes, always readable here;
+# empty if it is not).
+#
+# Ticks sit on ABSOLUTE slots, start + k x cadence: after a tick the loop
+# sleeps until the next slot after "now", so the work of a tick never
+# stretches the period, and a tick that overran a slot skips it rather
+# than sampling twice. Per pid the loop forks nothing: every /proc read
+# is a bash `read`, fds are a glob count, the clock is `printf '%(%s)T'`.
+# At hundreds of processes a fork per field made a tick take seconds.
 sample_loop() {
   local deadline=$1 start=$2 out=$3 proc_out=$4 host_out=$5 pids_dir=$6 cadence_s=$7
   shift 7
   local -a exclude=("$@")
-  local -a entries
-  local pidfile role ex entry leg rest process pid rss_kb elapsed
-  local utime stime threads fds load_fields mem_avail
-  until [[ $(date +%s) -ge $deadline ]]; do
-    elapsed=$(($(date +%s) - start))
+  local -a entries stat_f
+  local pidfile role ex entry leg rest process pid rss_kb elapsed now next
+  local utime stime threads fds load_fields mem_avail key val line l1 l5 l15 rt
+  printf -v now '%(%s)T' -1
+  until [[ $now -ge $deadline ]]; do
+    elapsed=$((now - start))
     entries=()
     for pidfile in "$pids_dir"/*.pid; do
       [[ -e "$pidfile" ]] || continue
-      role=$(basename "$pidfile" .pid)
+      role=${pidfile##*/}
+      role=${role%.pid}
       for ex in "${exclude[@]}"; do [[ "$role" == "$ex" ]] && continue 2; done
-      pid=$(cat "$pidfile" 2>/dev/null) || continue
+      pid=""
+      read -r pid <"$pidfile" 2>/dev/null || [[ -n "$pid" ]] || continue
       entries+=("${role%-*}:${role##*-}:$pid")
     done
     for entry in "${entries[@]}"; do
@@ -668,25 +679,48 @@ sample_loop() {
       threads=""
       fds=""
       if [[ -r "/proc/$pid/status" ]]; then
-        rss_kb=$(awk '/^VmRSS:/{print $2}' "/proc/$pid/status" 2>/dev/null) || rss_kb=""
-        threads=$(awk '/^Threads:/{print $2}' "/proc/$pid/status" 2>/dev/null) || threads=""
+        {
+          while IFS=$': \t' read -r key val _; do
+            case $key in
+              VmRSS) rss_kb=$val ;;
+              Threads) threads=$val ;;
+            esac
+          done <"/proc/$pid/status"
+        } 2>/dev/null || true
       fi
       if [[ -r "/proc/$pid/stat" ]]; then
-        read -r utime stime < <(awk '{s=$0; sub(/^.*\) /, "", s); split(s, f, " "); print f[12], f[13]}' "/proc/$pid/stat" 2>/dev/null) || {
-          utime=""
-          stime=""
-        }
+        line=""
+        read -r line <"/proc/$pid/stat" 2>/dev/null || line=""
+        if [[ "$line" == *") "* ]]; then
+          read -ra stat_f <<<"${line##*) }" || stat_f=()
+          utime=${stat_f[11]:-}
+          stime=${stat_f[12]:-}
+        fi
       fi
-      if [[ -d "/proc/$pid/fd" ]]; then
-        fds=$(find "/proc/$pid/fd" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l) || fds=""
+      if [[ -r "/proc/$pid/fd" && -x "/proc/$pid/fd" ]]; then
+        set -- "/proc/$pid/fd"/*
+        # No match leaves the pattern itself, which is not a symlink
+        # (every real entry is, even a socket's dangling one).
+        if [[ $# -eq 1 && ! -L "$1" ]]; then fds=0; else fds=$#; fi
       fi
       printf '%s,%s,%s,%s,%s\n' "$elapsed" "$leg" "$process" "$pid" "$rss_kb" >>"$out"
       printf '%s,%s,%s,%s,%s,%s,%s,%s\n' "$elapsed" "$leg" "$process" "$pid" "$utime" "$stime" "$threads" "$fds" >>"$proc_out"
     done
     # /proc/loadavg: "load1 load5 load15 running/total lastpid".
-    load_fields=$(awk '{split($4, rt, "/"); print $1 "," $2 "," $3 "," rt[1]}' /proc/loadavg 2>/dev/null) || load_fields=",,,"
-    mem_avail=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo 2>/dev/null) || mem_avail=""
+    load_fields=",,,"
+    if read -r l1 l5 l15 rt _ </proc/loadavg 2>/dev/null; then
+      load_fields="$l1,$l5,$l15,${rt%%/*}"
+    fi
+    mem_avail=""
+    {
+      while IFS=$': \t' read -r key val _; do
+        [[ "$key" == MemAvailable ]] && { mem_avail=$val; break; }
+      done </proc/meminfo
+    } 2>/dev/null || true
     printf '%s,%s,%s\n' "$elapsed" "$load_fields" "$mem_avail" >>"$host_out"
-    sleep "$cadence_s"
+    printf -v now '%(%s)T' -1
+    next=$((start + ((now - start) / cadence_s + 1) * cadence_s))
+    sleep $((next - now))
+    printf -v now '%(%s)T' -1
   done
 }
