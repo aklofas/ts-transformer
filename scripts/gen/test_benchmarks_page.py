@@ -1,0 +1,98 @@
+"""Unit tests for scripts/gen/benchmarks_page.py.
+
+Run:  python3 -m unittest scripts/gen/test_benchmarks_page.py
+"""
+import json
+import os
+import sys
+import unittest
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import benchmarks_page as bp  # noqa: E402
+
+FIX = os.path.join(os.path.dirname(__file__), "fixtures")
+
+
+def load():
+    with open(os.path.join(FIX, "stress-results.smoke.json")) as f:
+        r = json.load(f)
+    with open(os.path.join(FIX, "provenance.smoke.json")) as f:
+        p = json.load(f)
+    return r, p
+
+
+class Render(unittest.TestCase):
+    def test_reference_machine_from_provenance(self):
+        r, p = load()
+        md = bp.render(r, p)
+        self.assertIn(p["host"]["kernel"], md)
+        self.assertIn(str(p["host"]["cpus"]), md)
+        self.assertIn(p["source"]["head"][:12], md)
+
+    def test_stream_table_has_one_row_per_step_and_a_ceiling_line(self):
+        r, p = load()
+        md = bp.render(r, p)
+        srt = next(a for a in r["sweep"] if a["transport"] == "srt" and a["axis"] == "streams")
+        for step in srt["steps"]:
+            self.assertRegex(md, rf"\|\s*{step['decl']['streams']}\s*\|")
+        self.assertIn("Ceiling:", md)
+
+    def test_forced_fail_step_renders_as_fail_with_its_verdict(self):
+        r, p = load()
+        md = bp.render(r, p)
+        failed = [a for a in r["sweep"] if a["first_fail"] is not None]
+        self.assertTrue(failed, "fixture must contain the smoke's forced failure")
+        self.assertIn(failed[0]["first_fail_verdicts"][0], md)
+
+    def test_limitations_verbatim(self):
+        r, p = load()
+        md = bp.render(r, p)
+        for line in r["limitations"]:
+            self.assertIn(line, md)
+
+    def test_replace_block_requires_markers(self):
+        with self.assertRaises(ValueError):
+            bp.replace_block("no markers here", "body")
+        doc = "a\n<!-- bench:begin -->\nold\n<!-- bench:end -->\nb"
+        self.assertEqual(bp.replace_block(doc, "new"), "a\n<!-- bench:begin -->\nnew<!-- bench:end -->\nb")
+
+
+class RenderShape(unittest.TestCase):
+    """Extra shape checks beyond the brief's five, covering what the spec
+    §7 contract adds (the bitrate table, the hold, section order) without
+    asserting any specific number."""
+
+    def test_section_order(self):
+        r, p = load()
+        md = bp.render(r, p)
+        order = ["### Reference machine", "### Stream scaling", "### Single-stream throughput", "### The hold", "### Limitations"]
+        positions = [md.index(h) for h in order]
+        self.assertEqual(positions, sorted(positions))
+
+    def test_bitrate_table_has_one_row_per_step_and_a_scale_ceiling_line(self):
+        r, p = load()
+        md = bp.render(r, p)
+        tcp = next(a for a in r["sweep"] if a["transport"] == "tcp" and a["axis"] == "bitrate")
+        for step in tcp["steps"]:
+            self.assertRegex(md, rf"\|\s*{step['decl']['au_scale']}\s*\|")
+        self.assertRegex(md, r"Ceiling:\s*\d+\s*scale")
+
+    def test_hold_section_has_transport_rows_and_verdict_names(self):
+        r, p = load()
+        md = bp.render(r, p)
+        hold = r["hold"]
+        for t in hold["decl"]["n_hold"]:
+            self.assertRegex(md, rf"\|\s*{t}\s*\|")
+        for v in hold["step"]["verdicts"] + hold["hold_verdicts"]:
+            self.assertIn(v["name"], md)
+
+    def test_hold_none_renders_no_hold_message(self):
+        r, p = load()
+        r = dict(r)
+        r["hold"] = None
+        md = bp.render(r, p)
+        self.assertIn("No hold in this run.", md)
+
+
+if __name__ == "__main__":
+    unittest.main()
