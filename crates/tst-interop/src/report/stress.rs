@@ -960,10 +960,27 @@ fn verdict_rss_slopes(
         .collect()
 }
 
-/// `max − min` of one per-process counter (fds, threads) must stay
+/// Median of a non-empty slice (mean of the middle two for an even
+/// length).
+fn median(v: &[u64]) -> f64 {
+    let mut s = v.to_vec();
+    s.sort_unstable();
+    let m = s.len() / 2;
+    if s.len() % 2 == 1 {
+        s[m] as f64
+    } else {
+        (s[m - 1] as f64 + s[m] as f64) / 2.0
+    }
+}
+
+/// The growth of one per-process counter (fds, threads) must stay
 /// within `delta_max`: a steady-state process does not accumulate them.
-/// Judged per pid segment (a restarted process starts its counters
-/// over); the verdict judges the segment with the largest delta.
+/// Growth is `median(last 3 post-warm-up values) − median(first 3)`
+/// (fewer than 3 → what exists), not `max − min`: a reconnect's worker
+/// threads come and go, and a leak detector must not trip on them. The
+/// peak is reported for information only. Judged per pid segment (a
+/// restarted process starts its counters over); the verdict judges the
+/// segment with the largest delta.
 fn verdict_flat(
     groups: &Groups<'_, ProcSample>,
     prefix: &str,
@@ -984,11 +1001,24 @@ fn verdict_flat(
                 .collect();
             let name = format!("{prefix}_{leg}_{process}");
             let (judged, skipped) = judgeable(&per_seg);
-            let ranges: Vec<(u32, u64, u64, usize)> = judged
+            // (pid, start median, end median, peak, samples)
+            let ranges: Vec<(u32, f64, f64, u64, usize)> = judged
                 .iter()
-                .filter_map(|(pid, v)| Some((*pid, *v.iter().min()?, *v.iter().max()?, v.len())))
+                .filter_map(|(pid, v)| {
+                    let k = v.len().min(3);
+                    Some((
+                        *pid,
+                        median(&v[..k]),
+                        median(&v[v.len() - k..]),
+                        *v.iter().max()?,
+                        v.len(),
+                    ))
+                })
                 .collect();
-            let Some(&(worst_pid, lo, hi, n)) = ranges.iter().max_by_key(|r| r.2 - r.1) else {
+            let Some(&(worst_pid, start, end, peak, n)) = ranges
+                .iter()
+                .max_by(|a, b| (a.2 - a.1).total_cmp(&(b.2 - b.1)))
+            else {
                 return StepVerdict {
                     name,
                     pass: false,
@@ -997,19 +1027,23 @@ fn verdict_flat(
                     detail: format!("no post-warm-up samples{}", skipped_note(&skipped)),
                 };
             };
-            let mut detail = format!("min {lo}, max {hi} over {n} samples of pid {worst_pid}");
+            let delta = end - start;
+            let mut detail = format!(
+                "start {start}, end {end} (medians of first/last 3), peak={peak} over {n} samples \
+                 of pid {worst_pid}"
+            );
             if ranges.len() > 1 {
                 let all: Vec<String> = ranges
                     .iter()
-                    .map(|(pid, lo, hi, _)| format!("pid {pid} Δ{}", hi - lo))
+                    .map(|(pid, start, end, _, _)| format!("pid {pid} Δ{}", end - start))
                     .collect();
                 detail.push_str(&format!("; per pid: {}", all.join(", ")));
             }
             detail.push_str(&skipped_note(&skipped));
             StepVerdict {
                 name,
-                pass: hi - lo <= delta_max,
-                observed: (hi - lo) as f64,
+                pass: delta <= delta_max as f64,
+                observed: delta,
                 threshold: delta_max as f64,
                 detail,
             }
@@ -1894,6 +1928,44 @@ mod tests {
             !r.failing.iter().any(|f| f.contains("proxy")),
             "untouched processes stay green"
         );
+    }
+
+    /// Overwrite srt-0/send's post-warm-up thread counts with `pattern`,
+    /// each value held for an equal share of the samples.
+    fn send_threads_pattern(pattern: &[u64]) -> StepInputs {
+        let mut inp = inputs(1, 30);
+        let warmup = inp.decl.warmup_s;
+        let mut post: Vec<&mut ProcSample> = inp
+            .proc
+            .iter_mut()
+            .filter(|s| s.process == "send" && s.elapsed_s >= warmup)
+            .collect();
+        let n = post.len();
+        assert!(
+            n >= 2 * pattern.len(),
+            "need >= 2 samples per pattern value"
+        );
+        for (k, s) in post.iter_mut().enumerate() {
+            s.threads = Some(pattern[k * pattern.len() / n]);
+        }
+        inp
+    }
+
+    #[test]
+    fn transient_thread_spike_passes_and_names_its_peak() {
+        let r = build_step_results(send_threads_pattern(&[4, 4, 7, 7, 4, 4])).unwrap();
+        let v = verdict(&r, "thread_count_flat_srt-0_send");
+        assert!(v.pass, "{}", v.detail);
+        assert_eq!(v.observed, 0.0, "{}", v.detail);
+        assert!(v.detail.contains("peak=7"), "{}", v.detail);
+    }
+
+    #[test]
+    fn steady_thread_growth_fails_its_flat_verdict() {
+        let r = build_step_results(send_threads_pattern(&[4, 4, 5, 5, 6, 6])).unwrap();
+        let v = verdict(&r, "thread_count_flat_srt-0_send");
+        assert!(!v.pass, "{}", v.detail);
+        assert_eq!(v.observed, 2.0, "{}", v.detail);
     }
 
     #[test]
