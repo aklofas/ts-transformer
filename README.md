@@ -138,7 +138,10 @@ A continuously-refreshed public evidence run exchanges real traffic with those s
 live SRT / RIST / UDP / TCP / HLS / RTSP sessions, plus a seeded impairment-soak harness (72-hour
 run published: zero crashes, 12/12 outage reconnects, flat memory) — see
 [`docs/project/validation-evidence.md`](docs/project/validation-evidence.md) for the current
-census, methodology, and every documented gap.
+census, methodology, and every documented gap. Deployment sizing — how many
+streams or how much bitrate one host can carry before something gives out —
+is a separate measurement; see
+[`docs/project/benchmarks.md`](docs/project/benchmarks.md).
 
 ## Status
 
