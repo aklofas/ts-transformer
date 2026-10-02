@@ -791,3 +791,56 @@ fn report_step_requires_the_rss_threshold() {
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn report_stress_folds_a_sweep_tree() {
+    let outdir = temp_dir("report-stress");
+    let step_dir = outdir.join("sweep").join("srt").join("streams").join("1");
+    std::fs::create_dir_all(&step_dir).expect("create sweep/srt/streams/1");
+    write_healthy_step_dir(&step_dir, 1);
+
+    let out = tst_interop_cmd()
+        .args([
+            "report",
+            "step",
+            "--dir",
+            step_dir.to_str().unwrap(),
+            "--rss-slope-threshold-kb-per-hour",
+            "1024",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let out = tst_interop_cmd()
+        .args(["report", "stress", "--outdir", outdir.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(outdir.join("stress-results.json").exists());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("report stress: overall_pass=true"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let empty = temp_dir("report-stress-empty");
+    let out = tst_interop_cmd()
+        .args(["report", "stress", "--outdir", empty.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+
+    std::fs::remove_dir_all(&outdir).unwrap();
+    std::fs::remove_dir_all(&empty).unwrap();
+}
