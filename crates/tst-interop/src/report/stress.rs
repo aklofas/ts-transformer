@@ -1973,7 +1973,7 @@ mod tests {
         // +100 KB per 30 s tick = 12 MB/h: fails a 1024 KB/h threshold
         // unscaled, and the 570 s judged span scales the allowance to
         // 1024 × 3600/570 ≈ 6467 KB/h — still a fail. Then a +10 KB/tick ramp (1.2 MB/h)
-        // must pass the scaled 6144 KB/h allowance.
+        // must pass the scaled ≈ 6467 KB/h allowance.
         let mut inp = inputs(1, 30);
         for (i, s) in inp
             .rss
