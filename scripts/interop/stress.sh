@@ -79,6 +79,13 @@
 # window is a usage error (exit 2), refused before anything launches:
 # its recovery would be indistinguishable from the outage's.
 #
+# Accepted race: an SRT stream's receiver port is probed free when its
+# proxy launches, but the receiver binds it only SRT_PROXY_WARMUP_S
+# later, so another process can take it in between (about 0.1% of runs
+# at 128 SRT streams). The receiver then fails to bind, the supervisor
+# sees it dead at its first poll (minute 1) and the run aborts with
+# stress-FAILED. Rerun it.
+#
 # # Usage
 #
 #   stress.sh --outdir DIR --seed N [--transports srt,rist,udp,tcp]
@@ -429,6 +436,7 @@ OUTAGE_STARTS=()
 SCHEDULE_ROWS=()
 COLLISIONS=()
 if [[ "$SKIP_HOLD" -eq 0 && "$HOLD_HAS_SRT" -eq 1 ]]; then
+  # Window 0, [-W, -30], ends before START_EPOCH and every handshake: deliberately not checked.
   for ((n = 1; n * HOLD_OUTAGE_PERIOD_S - SRT_PROXY_WARMUP_S < HOLD_RUN_S; n++)); do
     OUTAGE_STARTS+=("$((n * HOLD_OUTAGE_PERIOD_S - SRT_PROXY_WARMUP_S))")
   done
@@ -764,14 +772,14 @@ BIN="$REPO_ROOT/target/release/tst-interop"
 # `proxy`, and the stream's port is taken by whichever runs first. Three
 # hold-only knobs, all neutral for the sweep: PROXY_SEED (empty = SEED,
 # the sweep's one proxy seed), PROXY_EXTRA_S (added to the proxy's
-# --run-seconds: an SRT proxy launched early must also end later), and
-# RECV_LOG_APPEND=1 (a restarted receiver appends to its log).
+# --run-seconds: an SRT proxy launched early must also end later). The
+# receiver log is always opened for append: a step's log is new, and a
+# restarted receiver continues its predecessor's.
 declare -A STREAM_PORT
 declare -A USED_PORTS
 PROXY_IMPAIR_ARGS=()
 PROXY_SEED=""
 PROXY_EXTRA_S=0
-RECV_LOG_APPEND=0
 
 # stream_port <transport> <leg> — the leg's port, allocated on first use.
 # Re-probes while the candidate is already taken by an earlier stream of
@@ -813,19 +821,11 @@ launch_stream() {
         udp) recv_url="udp://127.0.0.1:$port" ;;
         tcp) recv_url="tcp://127.0.0.1:$port?listen=1" ;;
       esac
-      if [[ "$RECV_LOG_APPEND" -eq 1 ]]; then
-        "$BIN" recv --url "$recv_url" --expect "$PROFILE" --seconds "$seconds" \
-          --json "$stream_dir/recv-report.json" --no-klv-digest \
-          --klv-set "$KLV_SET" --klv-seed "$((SEED + idx))" \
-          --corruption-log "$stream_dir/corruption.jsonl" "${managed_recv[@]}" \
-          >>"$logs/$leg-recv.log" 2>&1 &
-      else
-        "$BIN" recv --url "$recv_url" --expect "$PROFILE" --seconds "$seconds" \
-          --json "$stream_dir/recv-report.json" --no-klv-digest \
-          --klv-set "$KLV_SET" --klv-seed "$((SEED + idx))" \
-          --corruption-log "$stream_dir/corruption.jsonl" "${managed_recv[@]}" \
-          >"$logs/$leg-recv.log" 2>&1 &
-      fi
+      "$BIN" recv --url "$recv_url" --expect "$PROFILE" --seconds "$seconds" \
+        --json "$stream_dir/recv-report.json" --no-klv-digest \
+        --klv-set "$KLV_SET" --klv-seed "$((SEED + idx))" \
+        --corruption-log "$stream_dir/corruption.jsonl" "${managed_recv[@]}" \
+        >>"$logs/$leg-recv.log" 2>&1 &
       record_pid_to "$pids" "$EVENTS_LOG" "$leg-recv" "$!"
       ;;
     proxy)
@@ -1154,9 +1154,7 @@ restart_srt0() {
       >"$hold_dir/.restart-exits.json.tmp"
   mv -f "$hold_dir/.restart-exits.json.tmp" "$hold_dir/restart-exits.json"
   now=$(date +%s)
-  RECV_LOG_APPEND=1
   launch_stream recv srt "$SRT0_IDX" srt-0 "$hold_dir/streams/$SRT0_IDX" "$((HOLD_DEADLINE - now))" 1 1 -
-  RECV_LOG_APPEND=0
   new=${PIDS[srt-0-recv]}
   printf '%s RESTART role=srt-0-recv old_pid=%s new_pid=%s\n' "$elapsed" "$old" "$new" >>"$hold_dir/restart-events.log"
   event "RESTART role=srt-0-recv old_pid=$old old_status=$rc new_pid=$new elapsed_s=$elapsed"
@@ -1320,7 +1318,9 @@ run_hold() {
     [[ $next -le $now ]] || sleep "$((next - now))"
     now=$(date +%s)
     [[ $now -lt $HOLD_DEADLINE ]] || break
-    for role in "${roles[@]}"; do
+    # The sampler too: without it there are no CSV rows and the hold
+    # cannot be judged.
+    for role in "${roles[@]}" sampler; do
       kill -0 "${PIDS[$role]}" 2>/dev/null ||
         abort_run "hold worker $role (pid ${PIDS[$role]}) died at hold elapsed $((now - START_EPOCH))s"
     done
