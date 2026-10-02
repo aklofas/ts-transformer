@@ -22,7 +22,13 @@
 //! exercise `main.rs`'s argument loop directly — it calls
 //! `std::process::exit`, so it can't be unit-tested in-process).
 
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use tst_interop::proxy::{ConfigEcho, PhaseCounters, ProxyStats};
+use tst_interop::report::stress::{Axis, StepDeclaration};
+use tst_interop::report_types::{CellMetrics, VerifyReport};
 
 fn tst_interop_cmd() -> std::process::Command {
     std::process::Command::new(env!("CARGO_BIN_EXE_tst-interop"))
@@ -543,5 +549,245 @@ fn au_scale_grows_the_generated_stream() {
         b > 3 * a,
         "scale 4 must be roughly 4x the bytes of scale 1: {a} vs {b}"
     );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+// --- `report step`/`report hold`/`report stress` ---------------------
+//
+// `report::stress::run_step` reads a whole directory tree (sampler
+// CSVs + per-stream JSON reports), not a single file, so exercising
+// the CLI end to end needs a fixture writer. `write_healthy_step_dir`
+// below mirrors the healthy fixture `report/stress.rs`'s own
+// `write_healthy_step` test helper writes (same 22-tick-at-30s shape,
+// same stream counts) — that helper is `#[cfg(test)]`-private to its
+// module, unreachable from this integration test binary, so this is a
+// field-for-field twin kept in sync by hand rather than a shared import.
+
+/// A fresh, process-and-time-unique temp dir for one test, matching the
+/// uniqueness scheme the other tests in this file already inline (pid +
+/// nanos) rather than introducing a new shared counter.
+fn temp_dir(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "tst-interop-cli-{name}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time moves forward")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    dir
+}
+
+/// A `CellMetrics` with nothing to report beyond the AU count — every
+/// field is public plain data, so this constructs one directly rather
+/// than going through `report/stress.rs`'s `pub(crate)` test builder.
+fn healthy_cell_metrics(video_aus: u64) -> CellMetrics {
+    CellMetrics {
+        video_aus,
+        keyframes: video_aus / 30,
+        klv_records: 0,
+        klv_set_sha256: Some(String::new()),
+        audio_frames: 0,
+        programs_seen: 1,
+        pts_monotonic: true,
+        misp_sei_seen: false,
+        bytes: 0,
+        stream_sha256: String::new(),
+        discontinuities: 0,
+        nonconformant: 0,
+        corruption: None,
+        corruption_attribution: None,
+        klv_rich: None,
+        since_reconnect: None,
+        managed_send: None,
+    }
+}
+
+fn healthy_recv_report(video_aus: u64) -> VerifyReport {
+    VerifyReport {
+        pass: true,
+        failures: Vec::new(),
+        metrics: healthy_cell_metrics(video_aus),
+        reconnects: None,
+        profile: None,
+    }
+}
+
+fn healthy_proxy_stats(forwarded: u64) -> ProxyStats {
+    ProxyStats {
+        forwarded,
+        dropped: 0,
+        duped: 0,
+        reordered: 0,
+        seed: 1,
+        config: ConfigEcho {
+            loss_pct: 0.0,
+            dup_pct: 0.0,
+            reorder_pct: 0.0,
+            reorder_hold: 0,
+            jitter_ms_max: 0,
+            base_delay_ms: 0,
+            outage_period_s: None,
+            outage_dur_s: 0,
+            schedule: None,
+        },
+        phases: vec![PhaseCounters {
+            index: 0,
+            forwarded,
+            dropped: 0,
+            duped: 0,
+            outage_dropped: 0,
+        }],
+    }
+}
+
+/// Writes a minimal, healthy stress-step directory with `streams`
+/// concurrent `srt-<i>` legs: `config.json`, `rss.csv`/`proc.csv`
+/// (22 ticks at the declared 30 s cadence — 20 of them land at or past
+/// the declared 60 s warm-up, matching `hold_s / sample_cadence_s` = 20
+/// so `sample_coverage` reads exactly 1.0) and `host.csv` (one row per
+/// tick), `exits.json`, and per-stream
+/// `streams/<i>/{send-report,recv-report,proxy-stats}.json` — enough
+/// for `report::stress::run_step`/`run_hold` to judge the directory and
+/// pass every verdict at the default thresholds.
+fn write_healthy_step_dir(dir: &Path, streams: u32) {
+    let decl = StepDeclaration {
+        transport: "srt".to_string(),
+        axis: Axis::Streams,
+        streams,
+        au_scale: 1,
+        warmup_s: 60.0,
+        hold_s: 600.0,
+        sample_cadence_s: 30.0,
+        vcpus: 8,
+        clk_tck: 100,
+        nominal_mbps_per_stream: 1.7,
+        managed: true,
+        outage_period_s: None,
+        outage_dur_s: None,
+        restart_period_s: None,
+    };
+    std::fs::write(
+        dir.join("config.json"),
+        serde_json::to_string(&decl).unwrap(),
+    )
+    .expect("write config.json");
+
+    let mut proc_csv =
+        String::from("elapsed_s,leg,process,pid,utime_ticks,stime_ticks,threads,fds\n");
+    let mut rss_csv = String::from("elapsed_s,leg,process,pid,rss_kb\n");
+    let mut worker_exits = BTreeMap::new();
+    for i in 0..streams {
+        let leg = format!("srt-{i}");
+        for tick in 0..22u64 {
+            let t = tick as f64 * 30.0;
+            let utime = tick * 30;
+            for process in ["send", "proxy", "recv"] {
+                proc_csv.push_str(&format!("{t},{leg},{process},1,{utime},0,4,5\n"));
+                rss_csv.push_str(&format!("{t},{leg},{process},1,50000\n"));
+            }
+        }
+        for role in ["send", "proxy", "recv"] {
+            worker_exits.insert(format!("{leg}-{role}"), 0);
+        }
+    }
+    std::fs::write(dir.join("proc.csv"), proc_csv).expect("write proc.csv");
+    std::fs::write(dir.join("rss.csv"), rss_csv).expect("write rss.csv");
+
+    let mut host_csv =
+        String::from("elapsed_s,load1,load5,load15,procs_running,mem_available_kb\n");
+    for tick in 0..22u64 {
+        let t = tick as f64 * 30.0;
+        host_csv.push_str(&format!("{t},0.1,0.1,0.1,1,1000000\n"));
+    }
+    std::fs::write(dir.join("host.csv"), host_csv).expect("write host.csv");
+
+    std::fs::write(
+        dir.join("exits.json"),
+        serde_json::to_string(&worker_exits).unwrap(),
+    )
+    .expect("write exits.json");
+
+    for i in 0..streams {
+        let sdir = dir.join("streams").join(i.to_string());
+        std::fs::create_dir_all(&sdir).expect("create stream dir");
+        std::fs::write(
+            sdir.join("send-report.json"),
+            serde_json::to_string(&healthy_cell_metrics(18_000)).unwrap(),
+        )
+        .expect("write send-report.json");
+        std::fs::write(
+            sdir.join("recv-report.json"),
+            serde_json::to_string(&healthy_recv_report(18_000)).unwrap(),
+        )
+        .expect("write recv-report.json");
+        std::fs::write(
+            sdir.join("proxy-stats.json"),
+            serde_json::to_string(&healthy_proxy_stats(18_000)).unwrap(),
+        )
+        .expect("write proxy-stats.json");
+    }
+}
+
+#[test]
+fn report_step_judges_a_directory_and_exits_by_verdict() {
+    let dir = temp_dir("report-step");
+    write_healthy_step_dir(&dir, 1);
+
+    let out = tst_interop_cmd()
+        .args([
+            "report",
+            "step",
+            "--dir",
+            dir.to_str().unwrap(),
+            "--rss-slope-threshold-kb-per-hour",
+            "1024",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(dir.join("step-results.json").exists());
+
+    // An impossible cpu ceiling flips it to exit 1.
+    let out = tst_interop_cmd()
+        .args([
+            "report",
+            "step",
+            "--dir",
+            dir.to_str().unwrap(),
+            "--rss-slope-threshold-kb-per-hour",
+            "1024",
+            "--cpu-headroom-max",
+            "0.0001",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("cpu_headroom"));
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn report_step_requires_the_rss_threshold() {
+    let dir = temp_dir("report-step-norss");
+    write_healthy_step_dir(&dir, 1);
+
+    let out = tst_interop_cmd()
+        .args(["report", "step", "--dir", dir.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&out.stderr)
+            .contains("--rss-slope-threshold-kb-per-hour is required")
+    );
+
     std::fs::remove_dir_all(&dir).unwrap();
 }

@@ -31,7 +31,12 @@ Subcommands:
   proxy     UDP impairment relay (loss/dup/reorder/jitter/scheduled outage;
             --schedule seed=N,phases=K,phase_s=DUR walks a seeded phase
             table instead of one fixed impairment level)
-  report    Generate interop report
+  report    Generate interop report (merge|render|soak judge an interop
+            matrix/soak run; step/hold judge one stress-sweep directory
+            `stress.sh` already populated — `report step --dir D
+            --rss-slope-threshold-kb-per-hour F`, `report hold --dir D
+            --rss-slope-threshold-kb-per-hour F`; `report stress --outdir D`
+            folds a whole sweep + hold into one overall_pass verdict)
   pick-profiles --seed N --legs K
             Print K distinct profile names, drawn deterministically from
             the seed (soak.sh --profile auto's per-leg selection)
@@ -1167,16 +1172,20 @@ fn run_pick_profiles(args: &[String]) -> ! {
     }
 }
 
-/// `report merge|render|soak` — dispatches to the `report` sub-subcommands.
+/// `report merge|render|soak|step|hold|stress` — dispatches to the
+/// `report` sub-subcommands.
 fn run_report(args: &[String]) -> ! {
     if args.is_empty() {
-        eprintln!("report: expected a subcommand (merge|render|soak)");
+        eprintln!("report: expected a subcommand (merge|render|soak|step|hold|stress)");
         std::process::exit(2);
     }
     match args[0].as_str() {
         "merge" => run_report_merge(&args[1..]),
         "render" => run_report_render(&args[1..]),
         "soak" => run_report_soak(&args[1..]),
+        "step" => run_report_step(&args[1..]),
+        "hold" => run_report_hold(&args[1..]),
+        "stress" => run_report_stress(&args[1..]),
         other => {
             eprintln!("report: unknown subcommand: {other}");
             std::process::exit(2);
@@ -1632,5 +1641,217 @@ fn run_report_soak(args: &[String]) -> ! {
         results.verdicts.len(),
         results.verdicts.iter().filter(|v| v.provisional).count()
     );
+    std::process::exit(if results.overall_pass { 0 } else { 1 });
+}
+
+/// Shared flag parsing for `report step`/`report hold`: `--dir DIR
+/// --rss-slope-threshold-kb-per-hour F [--fd-delta-max N]
+/// [--thread-delta-max N] [--cpu-headroom-max F] [--delivery-slack F]
+/// [--queue-depth-fraction F]`. `context` is `"report step"` or
+/// `"report hold"`, used as the prefix of every error message below.
+///
+/// `--dir` and `--rss-slope-threshold-kb-per-hour` are required: the
+/// latter's `StepThresholds::default()` value (0.0) means "unset" to
+/// `report::stress::build_step_results` (see that type's doc comment),
+/// so a caller who never names a real limit is stopped here rather
+/// than reaching a confusing library error far from the omitted flag.
+/// A value given but not `> 0` is deliberately NOT re-checked here —
+/// `build_step_results` already rejects it, and `run_step`/`run_hold`'s
+/// caller reports that `Err` the same way it reports any other.
+/// Every other flag defaults from `StepThresholds::default()`.
+fn parse_step_thresholds(
+    args: &[String],
+    context: &str,
+) -> (PathBuf, report::stress::StepThresholds) {
+    let mut dir: Option<PathBuf> = None;
+    let mut thresholds = report::stress::StepThresholds::default();
+    let mut rss_slope_given = false;
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--dir" => {
+                dir = Some(PathBuf::from(require_value(
+                    args,
+                    i,
+                    &format!("{context}: --dir"),
+                )));
+                i += 2;
+            }
+            "--rss-slope-threshold-kb-per-hour" => {
+                let v = require_value(
+                    args,
+                    i,
+                    &format!("{context}: --rss-slope-threshold-kb-per-hour"),
+                );
+                thresholds.rss_slope_kb_per_hour = v.parse().unwrap_or_else(|_| {
+                    eprintln!(
+                        "{context}: --rss-slope-threshold-kb-per-hour must be a number, got '{v}'"
+                    );
+                    std::process::exit(2);
+                });
+                rss_slope_given = true;
+                i += 2;
+            }
+            "--fd-delta-max" => {
+                let v = require_value(args, i, &format!("{context}: --fd-delta-max"));
+                thresholds.fd_delta_max = v.parse().unwrap_or_else(|_| {
+                    eprintln!(
+                        "{context}: --fd-delta-max must be a non-negative integer, got '{v}'"
+                    );
+                    std::process::exit(2);
+                });
+                i += 2;
+            }
+            "--thread-delta-max" => {
+                let v = require_value(args, i, &format!("{context}: --thread-delta-max"));
+                thresholds.thread_delta_max = v.parse().unwrap_or_else(|_| {
+                    eprintln!(
+                        "{context}: --thread-delta-max must be a non-negative integer, got '{v}'"
+                    );
+                    std::process::exit(2);
+                });
+                i += 2;
+            }
+            "--cpu-headroom-max" => {
+                let v = require_value(args, i, &format!("{context}: --cpu-headroom-max"));
+                thresholds.cpu_headroom_max = v.parse().unwrap_or_else(|_| {
+                    eprintln!("{context}: --cpu-headroom-max must be a number, got '{v}'");
+                    std::process::exit(2);
+                });
+                i += 2;
+            }
+            "--delivery-slack" => {
+                let v = require_value(args, i, &format!("{context}: --delivery-slack"));
+                thresholds.delivery_slack = v.parse().unwrap_or_else(|_| {
+                    eprintln!("{context}: --delivery-slack must be a number, got '{v}'");
+                    std::process::exit(2);
+                });
+                i += 2;
+            }
+            "--queue-depth-fraction" => {
+                let v = require_value(args, i, &format!("{context}: --queue-depth-fraction"));
+                thresholds.queue_depth_fraction = v.parse().unwrap_or_else(|_| {
+                    eprintln!("{context}: --queue-depth-fraction must be a number, got '{v}'");
+                    std::process::exit(2);
+                });
+                i += 2;
+            }
+            other => {
+                eprintln!("{context}: unknown argument: {other}");
+                std::process::exit(2);
+            }
+        }
+    }
+
+    let dir = dir.unwrap_or_else(|| {
+        eprintln!("{context}: --dir is required");
+        std::process::exit(2);
+    });
+    if !rss_slope_given {
+        eprintln!("{context}: --rss-slope-threshold-kb-per-hour is required");
+        std::process::exit(2);
+    }
+
+    (dir, thresholds)
+}
+
+/// `report step --dir STEP_DIR --rss-slope-threshold-kb-per-hour F
+/// [threshold flags...]`
+///
+/// Judges one stress-sweep step directory already populated by
+/// `stress.sh` against `report::stress::run_step`, writing
+/// `STEP_DIR/step-results.json`. Exits 0 if the step passes, 1 if it
+/// fails (the failing verdict names are printed), 2 on a usage/IO/parse
+/// error (including a non-positive RSS slope threshold, which
+/// `run_step` itself rejects — see `parse_step_thresholds`).
+fn run_report_step(args: &[String]) -> ! {
+    let (dir, thresholds) = parse_step_thresholds(args, "report step");
+
+    let results = report::stress::run_step(&dir, thresholds).unwrap_or_else(|e| {
+        eprintln!("report step: {e}");
+        std::process::exit(2);
+    });
+
+    eprintln!(
+        "report step: pass={} failing=[{}]",
+        results.pass,
+        results.failing.join(",")
+    );
+    std::process::exit(if results.pass { 0 } else { 1 });
+}
+
+/// `report hold --dir HOLD_DIR --rss-slope-threshold-kb-per-hour F
+/// [threshold flags...]`
+///
+/// Judges one 24 h hold directory against `report::stress::run_hold`
+/// (the hold's own step, plus the hold-only sizing/reconnect/queue-depth
+/// verdicts), writing `HOLD_DIR/hold-results.json`. Exits 0/1/2 exactly
+/// as `report step` does; the printed failing-verdict list is the
+/// step's own `failing` plus the names of any failing hold-only
+/// verdict.
+fn run_report_hold(args: &[String]) -> ! {
+    let (dir, thresholds) = parse_step_thresholds(args, "report hold");
+
+    let results = report::stress::run_hold(&dir, thresholds).unwrap_or_else(|e| {
+        eprintln!("report hold: {e}");
+        std::process::exit(2);
+    });
+
+    let mut failing = results.step.failing.clone();
+    failing.extend(
+        results
+            .hold_verdicts
+            .iter()
+            .filter(|v| !v.pass)
+            .map(|v| v.name.clone()),
+    );
+    eprintln!(
+        "report hold: pass={} failing=[{}]",
+        results.pass,
+        failing.join(",")
+    );
+    std::process::exit(if results.pass { 0 } else { 1 });
+}
+
+/// `report stress --outdir DIR`
+///
+/// Folds every `sweep/<transport>/<axis>/<load>/step-results.json`
+/// under `DIR` (each already written by a prior `report step`) plus an
+/// optional `hold/hold-results.json` into `DIR/stress-results.json` via
+/// `report::stress::run_stress`. Exits 0 iff the result's
+/// `overall_pass` is true, 1 otherwise, 2 on a usage/IO/parse error.
+fn run_report_stress(args: &[String]) -> ! {
+    let mut outdir: Option<PathBuf> = None;
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--outdir" => {
+                outdir = Some(PathBuf::from(require_value(
+                    args,
+                    i,
+                    "report stress: --outdir",
+                )));
+                i += 2;
+            }
+            other => {
+                eprintln!("report stress: unknown argument: {other}");
+                std::process::exit(2);
+            }
+        }
+    }
+
+    let outdir = outdir.unwrap_or_else(|| {
+        eprintln!("report stress: --outdir is required");
+        std::process::exit(2);
+    });
+
+    let results = report::stress::run_stress(&outdir).unwrap_or_else(|e| {
+        eprintln!("report stress: {e}");
+        std::process::exit(2);
+    });
+
+    eprintln!("report stress: overall_pass={}", results.overall_pass);
     std::process::exit(if results.overall_pass { 0 } else { 1 });
 }
