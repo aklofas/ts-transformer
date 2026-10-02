@@ -861,6 +861,73 @@ decode error still fails `klv_rich_decode_clean`. Without this, the tap's
 rich-KLV failures over 72 hours, and the arc's headline soak could not pass
 with its own default settings.
 
+## Stress sweep (`stress.sh`)
+
+`stress.sh` measures how much load one box carries before a verdict fails,
+per transport. `soak.sh` asks a different question: whether one fixed load
+survives days of impairment. Never run `stress.sh` on a host that is running
+a soak. It drives the box to its limits on purpose, which would spoil both
+runs' resource evidence. Its header comment has the full topology, knobs and
+outputs.
+
+One stream is one `send -> proxy -> recv` triple of `tst-interop` processes.
+TCP has no proxy. Every sender runs realistic AU sizes, rich KLV and the
+corruption tap, and every receiver judges its stream against that tap's log.
+The sweep's proxies relay a clean link with zero loss, jitter, delay and
+reorder. For each transport, the sweep runs two ladders:
+
+- **Streams axis.** N streams at `--au-scale 1`, with N from
+  `--stream-ladder` (default `1,2,4,8,16,32,64,128`).
+- **Bitrate axis.** One stream at `--au-scale F`, with F from
+  `--scale-ladder` (default `1,2,4,8,16,32,64`). F is capped at 78, the
+  largest scale whose keyframe still fits the receiver's 4 MiB PES cap.
+
+Each step runs a warm-up plus a hold, 60 s and 600 s by default, then reaps
+every process. `tst-interop report step` then judges the step directory. An
+axis stops at its first failing step, and `tst-interop report stress` turns
+the steps into ceilings. Two env knobs are required, each refused with exit 2
+when unset:
+
+- `SRT_RECONNECT_MODE` follows the same rule as in `soak.sh`.
+- `RSS_SLOPE_THRESHOLD_KB_PER_HOUR` has no default in `report step`.
+
+`--dry-run` validates everything and prints the step list without building or
+launching anything:
+
+```bash
+SRT_RECONNECT_MODE=background RSS_SLOPE_THRESHOLD_KB_PER_HOUR=1024 \
+  bash scripts/interop/stress.sh --outdir ~/stress-x --seed 1 --dry-run
+```
+
+A real run must be launched detached, for the reason `soak.sh`'s header
+gives. Until the 24 h hold lands, a run without `--skip-hold` exits 3 before
+it starts:
+
+```bash
+SRT_RECONNECT_MODE=background RSS_SLOPE_THRESHOLD_KB_PER_HOUR=1024 \
+  nohup bash scripts/interop/stress.sh --outdir ~/stress-$(date +%F) --seed 1 --skip-hold &
+```
+
+Outputs under `--outdir`:
+
+- `provenance.json` and `stress-config.json` are written before any process
+  launches.
+- `stress-events.log` records every launch, step start, pass, fail and
+  timeout. `pids/stress.pid` holds the supervisor's own pid.
+- `sweep/<transport>/<streams|bitrate>/<load>/` holds one step. It contains
+  `config.json`, `rss.csv`, `proc.csv`, `host.csv`, `exits.json`,
+  `step-results.json`, `logs/` and `pids/`, plus
+  `streams/<i>/{leg.txt,send-report.json,recv-report.json,proxy-stats.json,corruption.jsonl}`.
+  Streams are numbered from 0.
+- `stress-results.json` and `summary.txt` hold the per-axis ceilings and first
+  failures.
+- `stress-FAILED` appears only on a harness error.
+
+`--smoke` is the end-to-end check: ladders `1,2`, short steps and a 5 s
+sampler cadence. With `STRESS_SMOKE_FORCE_FAIL=1`, the last bitrate step of
+the last transport is judged with an impossible CPU budget. That exercises
+the fail path and the ceiling rule on purpose.
+
 ## Corruption tap (`send --corrupt`)
 
 `send --corrupt` wraps the sender's `Transport` in a seeded tap that damages

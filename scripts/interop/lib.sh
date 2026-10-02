@@ -515,10 +515,16 @@ event_to() {
 # caller's PIDS[role] entry and the on-disk pidfile `<pids_dir>/<role>.pid`
 # (what an operator watching a detached `nohup ... &` run polls, and what
 # sample_loop re-reads every tick), then logs LAUNCHED.
+#
+# The pidfile is written to a dotfile and renamed into place, so a
+# sampler tick that races a relaunch (stress.sh's hold restarts a
+# receiver under the same role) reads either the old pid or the new one,
+# never an empty or half-written file. sample_loop's `*.pid` glob does
+# not match the `.<role>.pid.tmp` dotfile (no dotglob).
 record_pid_to() {
   local pids_dir=$1 events_log=$2 role=$3 pid=$4
   PIDS[$role]=$pid
-  echo "$pid" >"$pids_dir/$role.pid"
+  printf '%s\n' "$pid" >"$pids_dir/.$role.pid.tmp" && mv -f "$pids_dir/.$role.pid.tmp" "$pids_dir/$role.pid"
   event_to "$events_log" "LAUNCHED role=$role pid=$pid"
 }
 
