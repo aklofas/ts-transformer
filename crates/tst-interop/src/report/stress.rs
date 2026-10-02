@@ -898,6 +898,15 @@ fn skipped_note(skipped: &[String]) -> String {
     }
 }
 
+/// Whether `leg`'s `process` is in the `<transport>/<process>` list
+/// ([`StepThresholds::rss_slope_ungated`]). A leg is `<transport>-<k>`.
+fn rss_slope_is_ungated(leg: &str, process: &str, ungated: &[String]) -> bool {
+    let transport = leg.rsplit_once('-').map_or(leg, |(t, _)| t);
+    ungated
+        .iter()
+        .any(|u| u.split_once('/') == Some((transport, process)))
+}
+
 /// RSS growth per process in KB/hour, fit per pid segment (pooling a
 /// restarted process's pids would fit a sawtooth).
 ///
@@ -908,15 +917,6 @@ fn skipped_note(skipped: &[String]) -> String {
 /// named, unless no segment is long enough (then FAIL "insufficient
 /// samples"). The verdict reports the segment furthest over (or
 /// nearest to) its own allowance.
-/// Whether `leg`'s `process` is in the `<transport>/<process>` list
-/// ([`StepThresholds::rss_slope_ungated`]). A leg is `<transport>-<k>`.
-fn rss_slope_is_ungated(leg: &str, process: &str, ungated: &[String]) -> bool {
-    let transport = leg.rsplit_once('-').map_or(leg, |(t, _)| t);
-    ungated
-        .iter()
-        .any(|u| u.split_once('/') == Some((transport, process)))
-}
-
 fn verdict_rss_slopes(
     decl: &StepDeclaration,
     groups: &Groups<'_, RssSample>,
