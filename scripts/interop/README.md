@@ -891,21 +891,52 @@ when unset:
 - `SRT_RECONNECT_MODE` follows the same rule as in `soak.sh`.
 - `RSS_SLOPE_THRESHOLD_KB_PER_HOUR` has no default in `report step`.
 
-`--dry-run` validates everything and prints the step list without building or
-launching anything:
+A step that `report step` cannot judge, while a worker exited nonzero or the
+step timed out, counts as overloaded. It fails with `step_unjudgeable` and
+stops the axis instead of aborting the run.
+
+### The hold
+
+After the sweep, every transport runs together for `--hold-hours`, 24 h by
+default. Each transport holds 70% of its streams ceiling, rounded down and at
+least one stream. The ceiling is the highest streams step that passed. If
+the sweep's per-stream CPU cost predicts more than 70% of the box for the
+total, every count is scaled down by the same factor. A transport with no
+passing streams step refuses the hold, and the run exits 1.
+
+Every hold proxy runs its own seeded impairment schedule. SRT proxies also
+cut the link for `HOLD_OUTAGE_DUR_S` every `HOLD_OUTAGE_PERIOD_S`. They start
+`HOLD_OUTAGE_DUR_S + 30` seconds before the hold clock, as in `soak.sh`, so
+their first outage is over before any handshake. Every
+`HOLD_RESTART_PERIOD_S`, starting at `HOLD_RESTART_OFFSET_S`, the supervisor
+kills the `srt-0` receiver and relaunches it on the same port.
+`tst-interop report hold` then requires that stream's sender to reconnect
+within 120 s. No restart is scheduled in the last 120 s of the hold, because
+it could not be judged. A restart that falls within an outage's guard band is
+refused before anything launches, with exit 2. The band runs from one outage
+length plus 60 s before the restart to 120 s after it.
+
+`--dry-run` validates everything and prints the step list and the hold's
+restart schedule without building or launching anything. The test-only flags
+`--dry-run-ceilings` and `--dry-run-cpu` also preview the hold sizing:
 
 ```bash
 SRT_RECONNECT_MODE=background RSS_SLOPE_THRESHOLD_KB_PER_HOUR=1024 \
   bash scripts/interop/stress.sh --outdir ~/stress-x --seed 1 --dry-run
 ```
 
+```bash
+SRT_RECONNECT_MODE=background RSS_SLOPE_THRESHOLD_KB_PER_HOUR=1024 \
+  bash scripts/interop/stress.sh --outdir ~/stress-x --seed 1 --dry-run \
+  --dry-run-ceilings srt=16,rist=8,udp=64,tcp=64 --dry-run-cpu srt=0.05,rist=0.04,udp=0.01,tcp=0.01
+```
+
 A real run must be launched detached, for the reason `soak.sh`'s header
-gives. Until the 24 h hold lands, a run without `--skip-hold` exits 3 before
-it starts:
+gives. `--skip-hold` runs the sweep only:
 
 ```bash
 SRT_RECONNECT_MODE=background RSS_SLOPE_THRESHOLD_KB_PER_HOUR=1024 \
-  nohup bash scripts/interop/stress.sh --outdir ~/stress-$(date +%F) --seed 1 --skip-hold &
+  nohup bash scripts/interop/stress.sh --outdir ~/stress-$(date +%F) --seed 1 &
 ```
 
 Outputs under `--outdir`:
@@ -919,12 +950,17 @@ Outputs under `--outdir`:
   `step-results.json`, `logs/` and `pids/`, plus
   `streams/<i>/{leg.txt,send-report.json,recv-report.json,proxy-stats.json,corruption.jsonl}`.
   Streams are numbered from 0.
-- `stress-results.json` and `summary.txt` hold the per-axis ceilings and first
-  failures.
+- `hold/` holds the hold, laid out like one step whose `config.json` says
+  transport `all` and axis `hold`. It adds `hold-config.json` (the sizing),
+  `hold-schedule.json` (restart instants and outage starts, in hold time),
+  `restart-events.log`, `restart-exits.json` and `hold-results.json`.
+- `stress-results.json` and `summary.txt` hold the per-axis ceilings, the
+  first failures and the hold's verdict.
 - `stress-FAILED` appears only on a harness error.
 
-`--smoke` is the end-to-end check: ladders `1,2`, short steps and a 5 s
-sampler cadence. With `STRESS_SMOKE_FORCE_FAIL=1`, the last bitrate step of
+`--smoke` is the end-to-end check: ladders `1,2`, short steps, a 5 s sampler
+cadence and a 6-minute hold with shortened outage and restart periods. With
+`STRESS_SMOKE_FORCE_FAIL=1`, the last bitrate step of
 the last transport is judged with an impossible CPU budget. That exercises
 the fail path and the ceiling rule on purpose.
 
