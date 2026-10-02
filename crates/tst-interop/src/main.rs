@@ -1187,7 +1187,9 @@ fn run_report(args: &[String]) -> ! {
         "hold" => run_report_hold(&args[1..]),
         "stress" => run_report_stress(&args[1..]),
         other => {
-            eprintln!("report: unknown subcommand: {other}");
+            eprintln!(
+                "report: unknown subcommand: {other} (expected merge|render|soak|step|hold|stress)"
+            );
             std::process::exit(2);
         }
     }
