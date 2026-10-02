@@ -310,7 +310,7 @@ esac
 pos_decimal "$RSS_SLOPE_THRESHOLD_KB_PER_HOUR" RSS_SLOPE_THRESHOLD_KB_PER_HOUR
 
 pos_decimal "$STRESS_MAX_AGG_MBPS" STRESS_MAX_AGG_MBPS
-pos_decimal "$CPU_HEADROOM_MAX" CPU_HEADROOM_MAX
+pos_decimal "$CPU_HEADROOM_MAX" CPU_HEADROOM_MAX 1
 pos_decimal "$DELIVERY_SLACK" DELIVERY_SLACK 1
 pos_decimal "$QUEUE_DEPTH_FRACTION" QUEUE_DEPTH_FRACTION 1
 FD_DELTA_MAX=$(nonneg_int "$FD_DELTA_MAX" 1000000 FD_DELTA_MAX)
@@ -395,6 +395,47 @@ mkdir -p "$OUTDIR/sweep" "$OUTDIR/pids"
 OUTDIR="$(cd "$OUTDIR" && pwd)"
 EVENTS_LOG="$OUTDIR/stress-events.log"
 event() { event_to "$EVENTS_LOG" "$@"; }
+
+# ---------------------------------------------------------------------
+# Process bookkeeping and the harness-error path
+# ---------------------------------------------------------------------
+
+# The CURRENT step's processes (reset per step), role -> pid.
+declare -A PIDS
+CURRENT_STEP=""
+# Set immediately before every DELIBERATE exit from here on. Any other
+# exit — a `set -e` abort on a failed jq/mkdir/free_port, a failed build —
+# is a harness error, and the EXIT trap turns it into one.
+RUN_DONE=0
+
+# abort_run <reason> — a harness error (not a verdict): kill every process
+# of the current step (workers and sampler), record stress-FAILED, exit 2.
+# Harness errors never exit 1, which is reserved for a failed verdict or a
+# refused step. Reached three ways: called directly, from the INT/TERM trap
+# (so killing pids/stress.pid takes the step's workers with it), and from
+# the EXIT trap on any unplanned exit.
+abort_run() {
+  local role last_event
+  trap - INT TERM EXIT
+  for role in "${!PIDS[@]}"; do kill -9 "${PIDS[$role]}" 2>/dev/null || true; done
+  last_event=$(tail -n 1 "$EVENTS_LOG" 2>/dev/null) || last_event=""
+  {
+    echo "step=${CURRENT_STEP:-none}"
+    echo "reason=$1"
+    echo "last_event=${last_event:-none}"
+    echo "detected_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  } >"$OUTDIR/stress-FAILED"
+  event "HARNESS-ERROR step=${CURRENT_STEP:-none} $1"
+  echo "stress: harness error at step ${CURRENT_STEP:-none}: $1 (see stress-FAILED)" >&2
+  exit 2
+}
+on_exit() {
+  local rc=$1
+  [[ "$RUN_DONE" -eq 1 ]] || abort_run "unexpected exit rc=$rc"
+}
+trap 'abort_run "interrupted by signal"' INT TERM
+trap 'on_exit $?' EXIT
+
 # Written directly, not through record_pid_to: this pid is not a worker,
 # and must never be in PIDS (abort_run kills everything in PIDS).
 printf '%s\n' "$$" >"$OUTDIR/pids/.stress.pid.tmp" && mv -f "$OUTDIR/pids/.stress.pid.tmp" "$OUTDIR/pids/stress.pid"
@@ -480,31 +521,6 @@ echo "stress: building tst-interop (release)..." >&2
 (cd "$REPO_ROOT" && SRT_FORCE_VENDORED=1 RIST_FORCE_VENDORED=1 cargo build --release -p tst-interop)
 BIN="$REPO_ROOT/target/release/tst-interop"
 
-# ---------------------------------------------------------------------
-# Process bookkeeping and the harness-error path
-# ---------------------------------------------------------------------
-
-# The CURRENT step's processes (reset per step), role -> pid.
-declare -A PIDS
-CURRENT_STEP=""
-
-# abort_run <reason> — a harness error (not a verdict): kill every process
-# of the current step, record stress-FAILED, exit 2. Also the INT/TERM
-# path, so killing pids/stress.pid takes the step's workers with it.
-abort_run() {
-  local role
-  trap - INT TERM
-  for role in "${!PIDS[@]}"; do kill -9 "${PIDS[$role]}" 2>/dev/null || true; done
-  {
-    echo "step=${CURRENT_STEP:-none}"
-    echo "reason=$1"
-    echo "detected_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  } >"$OUTDIR/stress-FAILED"
-  event "HARNESS-ERROR step=${CURRENT_STEP:-none} $1"
-  echo "stress: harness error at step ${CURRENT_STEP:-none}: $1 (see stress-FAILED)" >&2
-  exit 2
-}
-trap 'abort_run "interrupted by signal"' INT TERM
 
 # ---------------------------------------------------------------------
 # One stream
@@ -526,6 +542,7 @@ trap 'abort_run "interrupted by signal"' INT TERM
 # clean link; the hold will set the seeded schedule). <outage_spec> is
 # applied to SRT proxies only, and is `-` throughout the sweep.
 declare -A STREAM_PORT
+declare -A USED_PORTS
 PROXY_IMPAIR_ARGS=()
 
 launch_stream() {
@@ -542,7 +559,14 @@ launch_stream() {
 
   case "$phase" in
     listen)
-      if [[ "$transport" == "tcp" ]]; then port=$(free_port tcp); else port=$(free_port udp); fi
+      # Re-probe while the candidate is already taken by an earlier stream
+      # of this step: those receivers may not have bound yet, so the
+      # kernel can hand the same free port out twice.
+      port=""
+      until [[ -n "$port" && -z "${USED_PORTS[$port]:-}" ]]; do
+        if [[ "$transport" == "tcp" ]]; then port=$(free_port tcp); else port=$(free_port udp); fi
+      done
+      USED_PORTS[$port]=1
       STREAM_PORT[$leg]=$port
       case "$transport" in
         srt) recv_url="srt://:$port?mode=listener&latency=$SRT_LATENCY_MS" ;;
@@ -629,6 +653,7 @@ run_step() {
   if over_cap "$agg"; then
     event "REFUSED step=$CURRENT_STEP agg_mbps=$agg max=$STRESS_MAX_AGG_MBPS"
     echo "stress: refusing $CURRENT_STEP: $agg Mb/s > STRESS_MAX_AGG_MBPS=$STRESS_MAX_AGG_MBPS" >&2
+    RUN_DONE=1
     exit 1
   fi
   managed=0
@@ -652,6 +677,7 @@ run_step() {
 
   PIDS=()
   STREAM_PORT=()
+  USED_PORTS=()
   PROXY_IMPAIR_ARGS=(--loss 0 --jitter 0 --delay 0 --reorder 0,0)
   seconds=$((STEP_WARMUP_S + STEP_HOLD_S))
   event "STEP-START step=$CURRENT_STEP streams=$streams au_scale=$scale agg_mbps=$agg seconds=$seconds"
@@ -728,7 +754,7 @@ run_step() {
     # A timed-out step FAILs whatever the report made of its partial evidence.
     rc=1
     if [[ -s "$step_dir/step-results.json" ]]; then
-      jq '.pass = false | .failing = ((.failing // []) + ["step_timeout"] | unique)' \
+      jq '.pass = false | .failing = ((.failing // []) | if any(.[]; . == "step_timeout") then . else . + ["step_timeout"] end)' \
         "$step_dir/step-results.json" >"$step_dir/.step-results.json.tmp"
       mv -f "$step_dir/.step-results.json.tmp" "$step_dir/step-results.json"
     else
@@ -768,6 +794,7 @@ sweep_axis() {
 # above already refused a run without --skip-hold.
 run_hold() {
   echo "hold: not implemented (Task 12)" >&2
+  RUN_DONE=1
   exit 3
 }
 
@@ -801,18 +828,24 @@ event "REPORT-STRESS rc=$REPORT_RC"
   echo
   if [[ -s "$OUTDIR/stress-results.json" ]]; then
     printf '%-6s %-8s %-8s %-10s %s\n' transport axis ceiling first_fail failing_verdicts
-    jq -r '.sweep[] | [.transport, .axis, (.ceiling // "none" | tostring),
-                       (.first_fail // "-" | tostring),
-                       ((.first_fail_verdicts // []) | join(",") | if . == "" then "-" else . end)]
-           | @tsv' "$OUTDIR/stress-results.json" |
-      while IFS=$'\t' read -r a b c d e; do printf '%-6s %-8s %-8s %-10s %s\n' "$a" "$b" "$c" "$d" "$e"; done
+    # Every read is guarded: a malformed results file must not abort the
+    # summary (set -e/pipefail) and lose REPORT_RC.
+    {
+      jq -r '.sweep[] | [.transport, .axis, (.ceiling // "none" | tostring),
+                         (.first_fail // "-" | tostring),
+                         ((.first_fail_verdicts // []) | join(",") | if . == "" then "-" else . end)]
+             | @tsv' "$OUTDIR/stress-results.json" |
+        while IFS=$'\t' read -r a b c d e; do printf '%-6s %-8s %-8s %-10s %s\n' "$a" "$b" "$c" "$d" "$e"; done
+    } || echo "summary: stress-results.json unreadable"
     echo
-    echo "overall_pass: $(jq -r '.overall_pass' "$OUTDIR/stress-results.json")"
-    jq -r '(.limitations // [])[] | "limitation: " + .' "$OUTDIR/stress-results.json"
+    echo "overall_pass: $(jq -r '.overall_pass' "$OUTDIR/stress-results.json" 2>/dev/null || echo unreadable)"
+    jq -r '(.limitations // [])[] | "limitation: " + .' "$OUTDIR/stress-results.json" ||
+      echo "summary: stress-results.json unreadable"
   else
     echo "no stress-results.json (report stress rc=$REPORT_RC). Last passing load per axis, from this script:"
     for key in "${!LAST_PASS[@]}"; do echo "  $key: ${LAST_PASS[$key]}"; done
   fi
 } | tee "$OUTDIR/summary.txt" >&2
 
+RUN_DONE=1
 exit "$REPORT_RC"
