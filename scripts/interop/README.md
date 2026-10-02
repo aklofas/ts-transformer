@@ -883,7 +883,10 @@ reorder. For each transport, the sweep runs two ladders:
   largest scale whose keyframe still fits the receiver's 4 MiB PES cap.
 
 Each step runs a warm-up plus a hold, 60 s and 600 s by default, then reaps
-every process. `tst-interop report step` then judges the step directory. An
+every process. The hold must be at least 4 sampler cadences (30 s, or 5 s
+under `--smoke`), or the run is refused with exit 2: the RSS-slope verdict
+needs a span of 2 cadences and fails a step it cannot judge. `tst-interop
+report step` then judges the step directory. An
 axis stops at its first failing step, and `tst-interop report stress` turns
 the steps into ceilings. Two env knobs are required, each refused with exit 2
 when unset:

@@ -349,6 +349,12 @@ parse_ladder "$SCALE_LADDER_RAW" "$MAX_AU_SCALE" --scale-ladder SCALE_LADDER
 
 STEP_WARMUP_S=$(pos_int "$STEP_WARMUP_S" 86400 --step-warmup-s)
 STEP_HOLD_S=$(pos_int "$STEP_HOLD_S" 86400 --step-hold-s)
+# `report step` judges RSS slope only over a span of >= 2 sampler
+# cadences inside the hold window and FAILS a step it cannot judge, so a
+# shorter hold fails every step by construction. 4 cadences (not 3)
+# leaves room for the sampler's own drift.
+((STEP_HOLD_S >= 4 * SAMPLE_CADENCE_S)) || die "--step-hold-s $STEP_HOLD_S is shorter than 4 x the \
+${SAMPLE_CADENCE_S}s sampler cadence: no step could be judged (RSS slope needs a >= 2-cadence span)"
 pos_decimal "$HOLD_HOURS" --hold-hours 1000
 
 # The two required knobs, in this order (the dry-run checks rely on it).
