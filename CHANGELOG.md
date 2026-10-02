@@ -1358,6 +1358,16 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   configured exactly as before. The library's error text ("drain via pull
   and retry") is still misleading for an oversize AU — a rider.
 
+- **CI: the Windows build leg runs as two parallel jobs.** `build
+  (windows-msvc)` took ~44 min against ~30–33 for every other leg (its three
+  nextest passes are ~8 min each on `windows-latest`), so it set every PR's
+  wall-clock. The matrix gains a `phase`: `windows-msvc` (`default`: clippy,
+  doc tests, default build + test, the tst-c per-feature builds) and
+  `windows-msvc-features` (`features`: the no-default-features and
+  all-features build + test pairs) — measured 24 and 27–31 min on the first
+  runs against the 44 min baseline; the other legs run `all`.
+  Nothing is skipped — every step runs on exactly one Windows leg.
+
 - **CI: macOS legs moved from `macos-14` to `macos-15`.** GitHub retires the
   macOS 14 runner image on 2026-11-02, with brownouts from 2026-10-05 during
   which `macos-14` jobs fail outright. `ci.yml` (the gating macos-arm64
