@@ -48,7 +48,7 @@ of its ceiling actually survive a full day of real-world disruption."
 | `recv_invariants` | Every receiver's own internal invariants hold throughout. | no violation |
 | `delivery_complete` | Received video access units against sent. | ≥ 0.7×, and > 1.2× fails as an accounting mismatch rather than a pass |
 | `cpu_headroom` | Sum of worker CPU-seconds over wall-seconds over vCPU count. | ≤ 0.80 |
-| `rss_slope_<leg>_<process>` | Memory growth rate per process, judged after warm-up and scaled for a window shorter than an hour. | ≤ a required KB/hour threshold |
+| `rss_slope_<leg>_<process>` | Memory growth rate per process, judged after warm-up and scaled for a window shorter than an hour. A process declared `rss_slope_ungated` (default: the RIST sender, whose librist buffers settle over about an hour) is recorded, not gated, in sweep steps — the hold gates it — and every such case is listed under the run's limitations. | ≤ a required KB/hour threshold |
 | `fd_count_flat_*` | File-descriptor count range per process after a 60-second warm-up. | max − min ≤ 2 |
 | `thread_count_flat_*` | Thread count range per process after the same warm-up. | max − min ≤ 1 |
 | `sample_coverage` | Fraction of expected sampler ticks actually recorded. | ≥ 90% |
@@ -65,6 +65,7 @@ Ubuntu noble. Launch recipe:
 ```bash
 SRT_RECONNECT_MODE=background RSS_SLOPE_THRESHOLD_KB_PER_HOUR=<value> \
   nohup bash scripts/interop/stress.sh --outdir <dir> --seed <N> & disown
+# RSS_SLOPE_UNGATED=rist/send is the default; set it empty to gate every process.
 ```
 
 and once it finishes, render this page's measured block from the resulting

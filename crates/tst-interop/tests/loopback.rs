@@ -379,7 +379,7 @@ fn udp_send_with_corruption_writes_a_log_and_recv_without_it_fails() {
     // 1000-packet floor the config validator enforces) alone sets the
     // count — exactly one injection over a ~180-packet 3s capture,
     // independent of the seed.
-    let cfg = parse_corrupt("rate=10000,min_gap=1000,classes=truncate", 5)
+    let cfg = parse_corrupt("rate=10000,min_gap=1000,classes=truncate", 5, 1)
         .expect("the corruption spec must parse");
     let metrics = send::run(
         profile,
@@ -479,7 +479,7 @@ fn udp_recv_with_the_corruption_log_passes_and_explains_the_damage() {
         })
     };
 
-    let cfg = parse_corrupt("rate=10000,min_gap=1000,classes=truncate", 9)
+    let cfg = parse_corrupt("rate=10000,min_gap=1000,classes=truncate", 9, 1)
         .expect("the corruption spec must parse");
     let metrics = send::run(
         profile,

@@ -59,29 +59,45 @@ pub const CORRUPT_SALT: u64 = 0xC0FF_EE00_0BAD_F00D;
 pub const REWRITTEN_PID: u16 = 0x1FFE;
 
 /// How many receiver packets after a resolved injection an error event may
-/// surface and still be blamed on it (spec §4.3). Wide enough to cover a
-/// demuxer that only notices at the next PES/section boundary, narrow
-/// enough that an unrelated event a second later is not silently excused.
+/// surface and still be blamed on it (spec §4.3), at AU scale 1. Wide
+/// enough to cover a demuxer that only notices at the next PES/section
+/// boundary, narrow enough that an unrelated event a second later is not
+/// silently excused.
+///
+/// Every packet-count constant here (this, [`RECOVERY_BOUND`],
+/// [`DEFAULT_MIN_GAP`], [`APPROX_SLACK`]) was calibrated against the
+/// realistic fixtures at `--au-scale 1`: a keyframe spans ~290 packets, a
+/// PCR interval ~110, a KLV record arrives every ~450. The events they
+/// bound — the next PES boundary, the next PCR, the next packet on a PID —
+/// are fixed in TIME, so at `--au-scale F` they sit F× further apart in
+/// packets. [`CorruptConfig::geometry_scale`] multiplies all four by F so
+/// the tap judges the same stream the same way at every scale; the
+/// scaled values travel in the log header and the receiver reads them
+/// from there. The first measured stress run (2026-10-02) ended every
+/// bitrate axis at scale 4 on exactly this: a `body_flip` inside a 1158-
+/// packet keyframe cannot be "recovered within 600 packets".
 pub const ATTRIBUTION_WINDOW: u64 = 500;
 
 /// How many receiver packets after a resolved injection the stream must
 /// have produced media again for the injection to count as recovered-from
-/// (spec §4.3).
+/// (spec §4.3), at AU scale 1 (≈ 2× the packet span of a realistic
+/// keyframe — see [`ATTRIBUTION_WINDOW`] for the scaling rule).
 pub const RECOVERY_BOUND: u64 = 600;
 
-/// Default `min_gap` — the floor on the packet distance between two
-/// injections. Keeping injections farther apart than
+/// Default `min_gap` at AU scale 1 — the floor on the packet distance
+/// between two injections. Keeping injections farther apart than
 /// [`ATTRIBUTION_WINDOW`] + [`RECOVERY_BOUND`] is what makes attribution
 /// unambiguous: at most one injection's window can ever contain a given
-/// event.
+/// event. Scales with the geometry (see [`ATTRIBUTION_WINDOW`]).
 pub const DEFAULT_MIN_GAP: u64 = 1000;
 
 /// Extra attribution slack granted to an injection whose PCR base the
 /// receiver never saw, so it resolved against the *next* base instead. The
 /// error is then bounded by one PCR interval; 128 packets is comfortably
-/// more than the ≤100 ms interval H.222.0 §2.4.2.2 allows at any bitrate
-/// this harness generates.
-const APPROX_SLACK: u64 = 128;
+/// more than the ≤100 ms interval H.222.0 §2.4.2.2 allows at AU scale 1
+/// (the receiver takes the scaled value from the log header's
+/// `approx_slack`; this constant is what pre-scaling logs read as).
+pub const APPROX_SLACK: u64 = 128;
 
 /// How far ahead of an injection's own PCR base a later base may be and
 /// still resolve it approximately — four 100 ms PCR intervals in 90 kHz
@@ -231,9 +247,28 @@ pub struct CorruptConfig {
     pub classes: Vec<Class>,
     /// Run seed (salted with [`CORRUPT_SALT`] before use).
     pub seed: u64,
+    /// The sender's `--au-scale`: multiplies every packet-count constant
+    /// of the attribution geometry (see [`ATTRIBUTION_WINDOW`]). `1` is
+    /// the soak's shape and leaves every number as it always was.
+    pub geometry_scale: u32,
 }
 
 impl CorruptConfig {
+    /// [`ATTRIBUTION_WINDOW`] at this config's geometry scale.
+    pub fn attribution_window(&self) -> u64 {
+        ATTRIBUTION_WINDOW * u64::from(self.geometry_scale)
+    }
+
+    /// [`RECOVERY_BOUND`] at this config's geometry scale.
+    pub fn recovery_bound(&self) -> u64 {
+        RECOVERY_BOUND * u64::from(self.geometry_scale)
+    }
+
+    /// [`APPROX_SLACK`] at this config's geometry scale.
+    pub fn approx_slack(&self) -> u64 {
+        APPROX_SLACK * u64::from(self.geometry_scale)
+    }
+
     /// Reject configurations whose evidence could not be judged.
     ///
     /// The `min_gap` floor is the load-bearing one: with two injections
@@ -262,13 +297,18 @@ impl CorruptConfig {
                 self.rate_per_10k
             ));
         }
-        if self.min_gap < 2 * ATTRIBUTION_WINDOW || self.min_gap <= RECOVERY_BOUND {
+        if self.geometry_scale == 0 {
+            return Err("--corrupt: the geometry scale (--au-scale) must be >= 1".into());
+        }
+        if self.min_gap < 2 * self.attribution_window() || self.min_gap <= self.recovery_bound() {
             return Err(format!(
                 "--corrupt: min_gap={} is too small; it must be >= {} (2 * attribution window) \
-                 and > {} (recovery bound) so at most one injection can explain any event",
+                 and > {} (recovery bound) so at most one injection can explain any event \
+                 (both scaled by --au-scale {})",
                 self.min_gap,
-                2 * ATTRIBUTION_WINDOW,
-                RECOVERY_BOUND
+                2 * self.attribution_window(),
+                self.recovery_bound(),
+                self.geometry_scale
             ));
         }
         if self.classes.is_empty() {
@@ -285,9 +325,17 @@ impl CorruptConfig {
 /// Unknown keys, a missing `rate=`, and any out-of-range value are all
 /// errors — a typo must not silently degrade into "no corruption", which
 /// would make a whole soak run's evidence vacuous.
-pub fn parse_corrupt(s: &str, seed: u64) -> Result<CorruptConfig, String> {
+///
+/// `geometry_scale` is the sender's `--au-scale`: an omitted `min_gap`
+/// defaults to [`DEFAULT_MIN_GAP`] × scale, and an explicit one is
+/// validated against the scaled window and recovery bound (see
+/// [`ATTRIBUTION_WINDOW`]). `rate` is NOT scaled: it is per packet, so a
+/// stream carrying F× the packets takes F× the injections per second —
+/// more corruption stress at higher bitrates, which is the point of the
+/// bitrate axis — and the scaled `min_gap` keeps each one judgeable.
+pub fn parse_corrupt(s: &str, seed: u64, geometry_scale: u32) -> Result<CorruptConfig, String> {
     let mut rate = None;
-    let mut min_gap = DEFAULT_MIN_GAP;
+    let mut min_gap = DEFAULT_MIN_GAP * u64::from(geometry_scale);
     let mut classes = Class::ALL.to_vec();
     for part in s.split(',') {
         let (key, val) = part.split_once('=').ok_or_else(|| {
@@ -330,6 +378,7 @@ pub fn parse_corrupt(s: &str, seed: u64) -> Result<CorruptConfig, String> {
         min_gap,
         classes,
         seed,
+        geometry_scale,
     };
     cfg.validate()?;
     Ok(cfg)
@@ -387,7 +436,11 @@ pub struct Injection {
     pub pes_start: bool,
 }
 
-/// First JSONL line of the log — `{"header":{...}}`.
+/// First JSONL line of the log — `{"header":{...}}`. `min_gap`,
+/// `attribution_window`, `recovery_bound` and `approx_slack` are the
+/// tap's packet geometry AT ITS AU SCALE (see [`ATTRIBUTION_WINDOW`]);
+/// the receiver's [`Attribution`] judges with these, never with the
+/// scale-1 constants.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LogHeader {
     pub tap_version: u32,
@@ -397,6 +450,14 @@ pub struct LogHeader {
     pub classes: Vec<Class>,
     pub attribution_window: u64,
     pub recovery_bound: u64,
+    /// Logs written before the geometry scaled carry no slack field and
+    /// were all scale 1, so they read as [`APPROX_SLACK`].
+    #[serde(default = "default_approx_slack")]
+    pub approx_slack: u64,
+}
+
+fn default_approx_slack() -> u64 {
+    APPROX_SLACK
 }
 
 /// Counters for the whole tap run.
@@ -539,6 +600,7 @@ impl LogTail {
                 classes: Vec::new(),
                 attribution_window: ATTRIBUTION_WINDOW,
                 recovery_bound: RECOVERY_BOUND,
+                approx_slack: APPROX_SLACK,
             },
             carry: Vec::new(),
             next_line: 1,
@@ -707,8 +769,9 @@ impl<T: Transport> Corrupter<T> {
             rate_per_10k: me.cfg.rate_per_10k,
             min_gap: me.cfg.min_gap,
             classes: me.cfg.classes.clone(),
-            attribution_window: ATTRIBUTION_WINDOW,
-            recovery_bound: RECOVERY_BOUND,
+            attribution_window: me.cfg.attribution_window(),
+            recovery_bound: me.cfg.recovery_bound(),
+            approx_slack: me.cfg.approx_slack(),
         };
         me.write_line(&LogLine::Header(header))
             .map_err(|e| format!("writing the corruption log header: {e}"))?;
@@ -1541,6 +1604,10 @@ pub struct AttributionReport {
     pub min_gap: u64,
     #[serde(default)]
     pub classes: Vec<Class>,
+    /// The header's `approx_slack`, so a report shows the whole geometry
+    /// it was judged with (pre-scaling reports read as [`APPROX_SLACK`]).
+    #[serde(default = "default_approx_slack")]
+    pub approx_slack: u64,
 }
 
 impl AttributionReport {
@@ -1699,6 +1766,8 @@ pub struct Attribution {
     base: usize,
     window: u64,
     recovery_bound: u64,
+    /// The header's approximate-resolution slack (see [`APPROX_SLACK`]).
+    approx_slack: u64,
     /// The sender's declared tap spec, carried from the log header into
     /// the report unchanged.
     rate_per_10k: u32,
@@ -2111,6 +2180,7 @@ impl Attribution {
             base: 0,
             window: header.attribution_window,
             recovery_bound: header.recovery_bound,
+            approx_slack: header.approx_slack,
             rate_per_10k: header.rate_per_10k,
             min_gap: header.min_gap,
             classes: header.classes.clone(),
@@ -2352,7 +2422,7 @@ impl Attribution {
     fn backward_reach(&self, i: usize) -> u64 {
         let budget = self
             .min_gap
-            .saturating_sub(self.window.saturating_add(APPROX_SLACK))
+            .saturating_sub(self.window.saturating_add(self.approx_slack))
             .saturating_sub(1);
         self.tracked(i).coord.since_pcr.min(budget)
     }
@@ -2380,7 +2450,7 @@ impl Attribution {
         {
             self.hi += 1;
         }
-        let span = self.window.max(self.recovery_bound) + APPROX_SLACK;
+        let span = self.window.max(self.recovery_bound) + self.approx_slack;
         while self.lo < self.hi
             && (self.state(self.lo).stranded
                 || self
@@ -2525,7 +2595,7 @@ impl Attribution {
             return false;
         };
         let w = if self.state(i).approx {
-            self.window + APPROX_SLACK
+            self.window + self.approx_slack
         } else {
             self.window
         };
@@ -2978,7 +3048,7 @@ impl Attribution {
             marker: at,
             end: at
                 .saturating_add(self.window)
-                .saturating_add(APPROX_SLACK)
+                .saturating_add(self.approx_slack)
                 .saturating_add(1),
             first_media: BTreeMap::new(),
         });
@@ -3066,6 +3136,7 @@ impl Attribution {
             rate_per_10k: self.rate_per_10k,
             min_gap: self.min_gap,
             classes: self.classes,
+            approx_slack: self.approx_slack,
         }
     }
 }
@@ -3182,6 +3253,7 @@ mod tests {
             min_gap,
             classes: classes.to_vec(),
             seed: 7,
+            geometry_scale: 1,
         }
     }
 
@@ -3391,32 +3463,114 @@ mod tests {
 
     #[test]
     fn parse_corrupt_accepts_the_documented_grammar_and_rejects_bad_gaps() {
-        let c = parse_corrupt("rate=5,min_gap=1000", 3).unwrap();
+        let c = parse_corrupt("rate=5,min_gap=1000", 3, 1).unwrap();
         assert_eq!(
             c,
             CorruptConfig {
                 rate_per_10k: 5,
                 min_gap: 1000,
                 classes: Class::ALL.to_vec(),
-                seed: 3
+                seed: 3,
+                geometry_scale: 1,
             }
         );
-        let c = parse_corrupt("rate=50,min_gap=1200,classes=header+psi_flip", 3).unwrap();
+        let c = parse_corrupt("rate=50,min_gap=1200,classes=header+psi_flip", 3, 1).unwrap();
         assert_eq!(c.classes, vec![Class::Header, Class::PsiFlip]);
         assert!(
-            parse_corrupt("rate=5,min_gap=999", 3).is_err(),
+            parse_corrupt("rate=5,min_gap=999", 3, 1).is_err(),
             "min_gap < 2*window"
         );
-        assert!(parse_corrupt("rate=5,min_gap=1000,classes=bogus", 3).is_err());
+        assert!(parse_corrupt("rate=5,min_gap=1000,classes=bogus", 3, 1).is_err());
         assert!(
-            parse_corrupt("rate=0,min_gap=1000", 3).is_err(),
+            parse_corrupt("rate=0,min_gap=1000", 3, 1).is_err(),
             "rate 0 is 'disabled', reject"
         );
-        assert!(parse_corrupt("min_gap=1000", 3).is_err(), "rate required");
         assert!(
-            parse_corrupt("rate=5,min_gap=1000,bogus=1", 3).is_err(),
+            parse_corrupt("min_gap=1000", 3, 1).is_err(),
+            "rate required"
+        );
+        assert!(
+            parse_corrupt("rate=5,min_gap=1000,bogus=1", 3, 1).is_err(),
             "unknown keys fail closed"
         );
+    }
+
+    /// The packet geometry follows `--au-scale`: the phenomena it bounds
+    /// (next PES boundary, next PCR, next packet on a PID) are fixed in
+    /// time, so at scale F they are F× further apart in packets. An
+    /// omitted `min_gap` scales with it; an explicit one is held to the
+    /// scaled floor, so the soak's literal `min_gap=1000` cannot be
+    /// carried unchanged into a scaled run and silently make its
+    /// attribution ambiguous.
+    #[test]
+    fn parse_corrupt_scales_the_packet_geometry_with_the_au_scale() {
+        let c = parse_corrupt("rate=5", 3, 4).unwrap();
+        assert_eq!(c.geometry_scale, 4);
+        assert_eq!(c.min_gap, 4000, "default min_gap scales");
+        assert_eq!(c.attribution_window(), 2000);
+        assert_eq!(c.recovery_bound(), 2400);
+        assert_eq!(c.approx_slack(), 512);
+        assert_eq!(parse_corrupt("rate=5", 3, 1).unwrap().min_gap, 1000);
+        let e = parse_corrupt("rate=5,min_gap=1000", 3, 4).unwrap_err();
+        assert!(
+            e.contains("4000") && e.contains("2400") && e.contains("--au-scale 4"),
+            "the floor must name the scaled numbers: {e}"
+        );
+        assert!(parse_corrupt("rate=5,min_gap=4000", 3, 4).is_ok());
+        assert!(
+            parse_corrupt("rate=5", 3, 0).is_err(),
+            "scale 0 is not a geometry"
+        );
+    }
+
+    /// What the tap writes is what the receiver judges with: the header
+    /// carries the SCALED geometry, not the scale-1 constants.
+    #[test]
+    fn the_log_header_carries_the_scaled_geometry() {
+        let b = baseline_bytes(10.0, "geometry");
+        let mut c = cfg(&Class::ALL, 10_000, 4000);
+        c.geometry_scale = 4;
+        let (_, text, _) = run_tap(&b, c);
+        let first = text.lines().next().unwrap();
+        let LogLine::Header(h) = serde_json::from_str::<LogLine>(first).unwrap() else {
+            panic!("first line is not a header: {first}");
+        };
+        assert_eq!(
+            (
+                h.min_gap,
+                h.attribution_window,
+                h.recovery_bound,
+                h.approx_slack
+            ),
+            (4000, 2000, 2400, 512)
+        );
+        // Scale 1 is byte-for-byte the geometry every archived log used.
+        let (_, text, _) = run_tap(&b, cfg(&Class::ALL, 10_000, 1000));
+        let LogLine::Header(h) =
+            serde_json::from_str::<LogLine>(text.lines().next().unwrap()).unwrap()
+        else {
+            panic!("no header");
+        };
+        assert_eq!(
+            (
+                h.min_gap,
+                h.attribution_window,
+                h.recovery_bound,
+                h.approx_slack
+            ),
+            (1000, 500, 600, 128)
+        );
+    }
+
+    /// Archived logs (every soak before the geometry scaled) have no
+    /// `approx_slack`; they were all scale 1, so they must read as 128.
+    #[test]
+    fn an_archived_header_without_approx_slack_reads_as_scale_one() {
+        let json = r#"{"header":{"tap_version":1,"seed":12,"rate_per_10k":5,"min_gap":1000,"classes":["body_flip"],"attribution_window":500,"recovery_bound":600}}"#;
+        let LogLine::Header(h) = serde_json::from_str::<LogLine>(json).unwrap() else {
+            panic!("not a header");
+        };
+        assert_eq!(h.approx_slack, APPROX_SLACK);
     }
 
     #[test]
@@ -3966,6 +4120,7 @@ mod tests {
             classes: Class::ALL.to_vec(),
             attribution_window: ATTRIBUTION_WINDOW,
             recovery_bound: RECOVERY_BOUND,
+            approx_slack: APPROX_SLACK,
         };
         let mk = |pcr_base: Option<u64>, since: u64| Injection {
             ordinal: 0,
@@ -4074,6 +4229,7 @@ mod tests {
             classes: Class::ALL.to_vec(),
             attribution_window: ATTRIBUTION_WINDOW,
             recovery_bound: RECOVERY_BOUND,
+            approx_slack: APPROX_SLACK,
         };
         let mut a = Attribution::strict(Vec::new(), &hdr);
         a.append(vec![Injection {
@@ -4143,6 +4299,7 @@ mod tests {
             classes: Class::ALL.to_vec(),
             attribution_window: ATTRIBUTION_WINDOW,
             recovery_bound: RECOVERY_BOUND,
+            approx_slack: APPROX_SLACK,
         }
     }
     fn inj(coord_pcr: u64, since: u64, class: Class, pid: u16, detectable: bool) -> Injection {
@@ -4368,6 +4525,49 @@ mod tests {
             gap <= 2,
             "windows must be adjacent for this to test anything, gap {gap}"
         );
+    }
+
+    /// The same disjointness at AU scale 4, where every number in the
+    /// header is 4× — including the slack an approximate resolution
+    /// widens by. An engine that kept the scale-1 slack would fund a
+    /// backward reach 384 packets too generous and let a successor's
+    /// window overlap its predecessor's widened edge.
+    #[test]
+    fn backward_reach_is_clamped_with_the_headers_scaled_slack() {
+        let mut h = hdr();
+        h.min_gap = 4000;
+        h.attribution_window = 2000;
+        h.recovery_bound = 2400;
+        h.approx_slack = 512;
+        let budget = h.min_gap - (h.attribution_window + h.approx_slack) - 1;
+        let wide = budget + 200;
+        let mut a = Attribution::strict(
+            vec![
+                inj(1000, 10, Class::Header, 0x1011, true),
+                inj(2000, wide, Class::Header, 0x1011, true),
+            ],
+            &h,
+        );
+        a.on_pcr(1090, 5000);
+        a.on_pcr(2000, 5010 + h.min_gap - wide);
+        assert!(a.state(0).approx);
+        assert_eq!(a.state(1).resolved_at, Some(5010 + h.min_gap));
+        assert_eq!(
+            a.backward_reach(1),
+            budget,
+            "the clamp must use the header's slack, not the scale-1 constant"
+        );
+        let (lo0, hi1) = (
+            a.window_lo(0).unwrap(),
+            a.state(1).resolved_at.unwrap() + h.attribution_window,
+        );
+        for at in lo0..=hi1 {
+            let covered = (0..2).filter(|&i| a.window_contains(i, at)).count();
+            assert!(covered <= 1, "packet {at} covered by {covered} windows");
+        }
+        let gap = a.window_lo(1).unwrap()
+            - (a.state(0).resolved_at.unwrap() + h.attribution_window + h.approx_slack);
+        assert!(gap <= 2, "windows must be adjacent, gap {gap}");
     }
 
     /// Ruling B. A continuity jump inside an injection's window, on the

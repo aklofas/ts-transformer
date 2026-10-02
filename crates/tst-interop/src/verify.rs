@@ -1797,6 +1797,7 @@ mod tests {
             classes: crate::corrupt::Class::ALL.to_vec(),
             attribution_window: crate::corrupt::ATTRIBUTION_WINDOW,
             recovery_bound: TEST_RECOVERY_BOUND,
+            approx_slack: crate::corrupt::APPROX_SLACK,
         }
     }
 
@@ -2589,7 +2590,7 @@ mod tests {
         // `rate=10000` corrupts every eligible packet, so `min_gap`
         // alone decides the count. Truncation is the class that actually
         // breaks packet framing, which is what exercises resync mode.
-        let cfg = parse_corrupt("rate=10000,min_gap=1000,classes=truncate", 7)
+        let cfg = parse_corrupt("rate=10000,min_gap=1000,classes=truncate", 7, 1)
             .expect("the spec must parse");
         let wire = Arc::new(Mutex::new(Vec::new()));
         let log = Arc::new(Mutex::new(Vec::<u8>::new()));

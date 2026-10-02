@@ -34,7 +34,8 @@ Subcommands:
   report    Generate interop report (merge|render|soak judge an interop
             matrix/soak run; step/hold judge one stress-sweep directory
             `stress.sh` already populated — `report step --dir D
-            --rss-slope-threshold-kb-per-hour F`, `report hold --dir D
+            --rss-slope-threshold-kb-per-hour F [--rss-slope-ungated
+            transport/process,...]`, `report hold --dir D
             --rss-slope-threshold-kb-per-hour F`; `report stress --outdir D`
             folds a whole sweep + hold into one overall_pass verdict)
   pick-profiles --seed N --legs K
@@ -506,10 +507,14 @@ fn run_send(args: &[String]) -> ! {
     // ever explain. Both directions are usage errors.
     let corrupt = match (corrupt_spec, corruption_log) {
         (Some(spec), Some(path)) => {
-            let cfg = tst_interop::corrupt::parse_corrupt(&spec, seed).unwrap_or_else(|e| {
-                eprintln!("send: {e}");
-                std::process::exit(2);
-            });
+            // The tap's packet geometry follows the AU scale (see
+            // `corrupt::ATTRIBUTION_WINDOW`): bigger AUs put the events it
+            // bounds proportionally further apart in packets.
+            let cfg = tst_interop::corrupt::parse_corrupt(&spec, seed, au_scale.unwrap_or(1))
+                .unwrap_or_else(|e| {
+                    eprintln!("send: {e}");
+                    std::process::exit(2);
+                });
             Some((cfg, path))
         }
         (Some(_), None) => {
@@ -1649,8 +1654,9 @@ fn run_report_soak(args: &[String]) -> ! {
 /// Shared flag parsing for `report step`/`report hold`: `--dir DIR
 /// --rss-slope-threshold-kb-per-hour F [--fd-delta-max N]
 /// [--thread-delta-max N] [--cpu-headroom-max F] [--delivery-slack F]
-/// [--queue-depth-fraction F]`. `context` is `"report step"` or
-/// `"report hold"`, used as the prefix of every error message below.
+/// [--queue-depth-fraction F] [--rss-slope-ungated T/P,...]`. `context`
+/// is `"report step"` or `"report hold"`, used as the prefix of every
+/// error message below.
 ///
 /// `--dir` and `--rss-slope-threshold-kb-per-hour` are required: the
 /// latter's `StepThresholds::default()` value (0.0) means "unset" to
@@ -1737,6 +1743,30 @@ fn parse_step_thresholds(
                     eprintln!("{context}: --queue-depth-fraction must be a number, got '{v}'");
                     std::process::exit(2);
                 });
+                i += 2;
+            }
+            // Comma-separated `<transport>/<process>` entries whose RSS
+            // slope is recorded, not gated (see
+            // `StepThresholds::rss_slope_ungated`). Each entry must have
+            // exactly one `/` with both halves non-empty: a typo here
+            // would silently gate the process it meant to exempt — or
+            // exempt nothing — so it fails closed.
+            "--rss-slope-ungated" => {
+                let v = require_value(args, i, &format!("{context}: --rss-slope-ungated"));
+                for entry in v.split(',') {
+                    match entry.split_once('/') {
+                        Some((t, p)) if !t.is_empty() && !p.is_empty() && !p.contains('/') => {
+                            thresholds.rss_slope_ungated.push(entry.to_string());
+                        }
+                        _ => {
+                            eprintln!(
+                                "{context}: --rss-slope-ungated entries are <transport>/<process> \
+                                 (e.g. rist/send), got '{entry}'"
+                            );
+                            std::process::exit(2);
+                        }
+                    }
+                }
                 i += 2;
             }
             other => {

@@ -283,6 +283,17 @@ pub struct StepThresholds {
     pub cpu_headroom_max: f64,
     pub delivery_slack: f64,
     pub queue_depth_fraction: f64,
+    /// `<transport>/<process>` entries (e.g. `rist/send`) whose
+    /// `rss_slope_*` verdict is RECORDED, NOT GATED in this step: it is
+    /// still computed and reported, and a failure is listed in
+    /// [`StepResults::recorded_not_gated`], but it does not fail the
+    /// step. For a process with a known settle ramp longer than the step
+    /// (librist's sender grows ~6 MB over its first hour and is flat
+    /// after — measured 2026-09-25 and 2026-10-02) a 10-minute window can
+    /// only ever sample the ramp, so its slope is judged where the window
+    /// is long enough: the hold, which `stress.sh` runs WITHOUT this list.
+    #[serde(default)]
+    pub rss_slope_ungated: Vec<String>,
 }
 
 impl Default for StepThresholds {
@@ -291,6 +302,7 @@ impl Default for StepThresholds {
             rss_slope_kb_per_hour: 0.0,
             fd_delta_max: 2,
             thread_delta_max: 1,
+            rss_slope_ungated: Vec::new(),
             cpu_headroom_max: 0.80,
             delivery_slack: 0.7,
             queue_depth_fraction: 0.9,
@@ -373,6 +385,11 @@ pub struct StepResults {
     pub pass: bool,
     pub verdicts: Vec<StepVerdict>,
     pub failing: Vec<String>,
+    /// Verdicts that failed but were declared recorded-not-gated
+    /// ([`StepThresholds::rss_slope_ungated`]); never in `failing`, never
+    /// in `pass`, surfaced as a limitation by `report stress`.
+    #[serde(default)]
+    pub recorded_not_gated: Vec<String>,
     pub per_stream: Vec<StreamFigures>,
     pub aggregate_cpu_fraction: f64,
     pub cpu_fraction_per_stream: f64,
@@ -563,6 +580,7 @@ pub fn build_step_results(inputs: StepInputs) -> Result<StepResults, String> {
         &decl,
         &rss_groups,
         thresholds.rss_slope_kb_per_hour,
+        &thresholds.rss_slope_ungated,
     ));
     verdicts.extend(verdict_flat(
         &proc_groups,
@@ -579,14 +597,28 @@ pub fn build_step_results(inputs: StepInputs) -> Result<StepResults, String> {
     verdicts.push(verdict_sample_coverage(&decl, &rss, &streams));
 
     let per_stream = stream_figures(&decl, &proc_groups, &rss_groups, &streams);
-    let failing: Vec<String> = verdicts
-        .iter()
-        .filter(|v| !v.pass)
-        .map(|v| v.name.clone())
-        .collect();
+    // An ungated rss_slope verdict is the only kind that can fail
+    // without failing the step; it is named by its (leg, process) so
+    // the same rule that marked it decides here.
+    let is_ungated = |v: &StepVerdict| {
+        rss_groups.keys().any(|(leg, process)| {
+            v.name == format!("rss_slope_{leg}_{process}")
+                && rss_slope_is_ungated(leg, process, &thresholds.rss_slope_ungated)
+        })
+    };
+    let mut failing = Vec::new();
+    let mut recorded_not_gated = Vec::new();
+    for v in verdicts.iter().filter(|v| !v.pass) {
+        if is_ungated(v) {
+            recorded_not_gated.push(v.name.clone());
+        } else {
+            failing.push(v.name.clone());
+        }
+    }
     let aggregate_wire_mbps = per_stream.iter().map(|s| s.wire_mbps).sum();
     Ok(StepResults {
         pass: failing.is_empty(),
+        recorded_not_gated,
         cpu_fraction_per_stream: cpu_fraction / decl.streams.max(1) as f64,
         aggregate_cpu_fraction: cpu_fraction,
         aggregate_wire_mbps,
@@ -876,16 +908,27 @@ fn skipped_note(skipped: &[String]) -> String {
 /// named, unless no segment is long enough (then FAIL "insufficient
 /// samples"). The verdict reports the segment furthest over (or
 /// nearest to) its own allowance.
+/// Whether `leg`'s `process` is in the `<transport>/<process>` list
+/// ([`StepThresholds::rss_slope_ungated`]). A leg is `<transport>-<k>`.
+fn rss_slope_is_ungated(leg: &str, process: &str, ungated: &[String]) -> bool {
+    let transport = leg.rsplit_once('-').map_or(leg, |(t, _)| t);
+    ungated
+        .iter()
+        .any(|u| u.split_once('/') == Some((transport, process)))
+}
+
 fn verdict_rss_slopes(
     decl: &StepDeclaration,
     groups: &Groups<'_, RssSample>,
     threshold: f64,
+    ungated: &[String],
 ) -> Vec<StepVerdict> {
     let min_span_s = 2.0 * decl.sample_cadence_s;
     groups
         .iter()
         .map(|((leg, process), segs)| {
             let name = format!("rss_slope_{leg}_{process}");
+            let gated = !rss_slope_is_ungated(leg, process, ungated);
             let mut judged = Vec::new();
             let mut skipped = Vec::new();
             let mut n_points = 0usize;
@@ -951,6 +994,9 @@ fn verdict_rss_slopes(
                 detail.push_str(&format!("; per pid (slope/allowed): {}", all.join(", ")));
             }
             detail.push_str(&skipped_note);
+            if !gated {
+                detail.push_str("; recorded, not gated (declared rss_slope_ungated)");
+            }
             StepVerdict {
                 name,
                 pass: judged.iter().all(|j| j.1 <= j.2),
@@ -1833,6 +1879,32 @@ pub fn build_stress_results(sweep: Vec<AxisResult>, hold: Option<HoldResults>) -
                 axis_dir_name(axis.axis)
             ));
         }
+        // Verdicts that failed but were declared recorded-not-gated: the
+        // rung still counts, and the page must carry the caveat.
+        let mut by_verdict: BTreeMap<&str, Vec<u32>> = BTreeMap::new();
+        for step in &axis.steps {
+            for name in &step.recorded_not_gated {
+                by_verdict
+                    .entry(name.as_str())
+                    .or_default()
+                    .push(step_load(&step.decl));
+            }
+        }
+        if !by_verdict.is_empty() {
+            let parts: Vec<String> = by_verdict
+                .iter()
+                .map(|(name, loads)| {
+                    let steps: Vec<String> = loads.iter().map(|l| format!("step {l}")).collect();
+                    format!("{name} over its allowance at {}", steps.join(", "))
+                })
+                .collect();
+            limitations.push(format!(
+                "{}/{}: {} — recorded, not gated (declared rss_slope_ungated; the hold gates it)",
+                axis.transport,
+                axis_dir_name(axis.axis),
+                parts.join("; ")
+            ));
+        }
     }
 
     let mut hold = hold;
@@ -2195,6 +2267,63 @@ mod tests {
         let v = verdict(&r, "thread_count_flat_srt-0_send");
         assert!(!v.pass, "{}", v.detail);
         assert_eq!(v.observed, 2.0, "{}", v.detail);
+    }
+
+    /// A process declared `rss_slope_ungated` still gets its slope
+    /// computed and reported, but an over-allowance slope is recorded
+    /// (`recorded_not_gated`) instead of failing the step. The
+    /// declaration is `<transport>/<process>`; the same process on
+    /// another transport, or another process on the same transport,
+    /// stays gated.
+    #[test]
+    fn rss_slope_ungated_process_is_recorded_not_gated() {
+        let ramp = |ungated: &[&str]| {
+            let mut inp = inputs(1, 30);
+            for (i, s) in inp
+                .rss
+                .iter_mut()
+                .filter(|s| s.process == "send")
+                .enumerate()
+            {
+                s.rss_kb = Some(50_000 + 100 * i as u64);
+            }
+            inp.thresholds.rss_slope_ungated = ungated.iter().map(|s| s.to_string()).collect();
+            build_step_results(inp).unwrap()
+        };
+
+        let r = ramp(&["srt/send"]);
+        let v = r
+            .verdicts
+            .iter()
+            .find(|v| v.name == "rss_slope_srt-0_send")
+            .expect("the verdict is still computed and reported");
+        assert!(!v.pass, "the slope is still judged against its allowance");
+        assert!(
+            v.detail.contains("recorded, not gated"),
+            "the detail must say so: {}",
+            v.detail
+        );
+        assert!(
+            r.pass,
+            "an ungated failure does not fail the step: {:?}",
+            r.failing
+        );
+        assert!(r.failing.is_empty(), "{:?}", r.failing);
+        assert_eq!(
+            r.recorded_not_gated,
+            vec!["rss_slope_srt-0_send".to_string()]
+        );
+
+        for other in [&["srt/recv"][..], &["rist/send"][..], &[][..]] {
+            let r = ramp(other);
+            assert!(!r.pass, "{other:?} must leave srt/send gated");
+            assert!(r.failing.contains(&"rss_slope_srt-0_send".to_string()));
+            assert!(
+                r.recorded_not_gated.is_empty(),
+                "{other:?}: {:?}",
+                r.recorded_not_gated
+            );
+        }
     }
 
     #[test]
@@ -2658,6 +2787,7 @@ mod tests {
             pass,
             verdicts: Vec::new(),
             failing: failing.iter().map(|s| s.to_string()).collect(),
+            recorded_not_gated: Vec::new(),
             per_stream: Vec::new(),
             aggregate_cpu_fraction: 0.1,
             cpu_fraction_per_stream: 0.1 / load as f64,
@@ -2712,6 +2842,43 @@ mod tests {
                 .iter()
                 .any(|l| l.contains("udp/bitrate") && l.contains("top of the ladder"))
         );
+    }
+
+    /// A step that passed only because a verdict was recorded-not-gated
+    /// is still a passing rung, but the run must SAY so: the sweep's
+    /// limitations name the axis, the verdict and the steps.
+    #[test]
+    fn ungated_rss_failures_become_a_stress_limitation() {
+        let mut one = step_result(1, Axis::Streams, true, &[]);
+        one.recorded_not_gated = vec!["rss_slope_rist-0_send".into()];
+        let mut two = step_result(2, Axis::Streams, true, &[]);
+        two.recorded_not_gated = vec![
+            "rss_slope_rist-0_send".into(),
+            "rss_slope_rist-1_send".into(),
+        ];
+        let r = build_stress_results(
+            vec![AxisResult {
+                transport: "rist".into(),
+                axis: Axis::Streams,
+                steps: vec![one, two],
+                ceiling: Some(2),
+                first_fail: None,
+                first_fail_verdicts: vec![],
+            }],
+            None,
+        );
+        assert!(r.overall_pass, "recorded-not-gated never fails the run");
+        let l = r
+            .limitations
+            .iter()
+            .find(|l| l.contains("recorded, not gated"))
+            .unwrap_or_else(|| panic!("no recorded-not-gated limitation in {:?}", r.limitations));
+        assert!(l.starts_with("rist/streams:"), "{l}");
+        assert!(
+            l.contains("rss_slope_rist-0_send") && l.contains("rss_slope_rist-1_send"),
+            "{l}"
+        );
+        assert!(l.contains("step 1") && l.contains("step 2"), "{l}");
     }
 
     #[test]
