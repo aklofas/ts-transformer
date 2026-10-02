@@ -1664,6 +1664,18 @@ fn verdict_queue_depth_p99(
         }
     }
     let threshold = fraction * gap_capacity as f64;
+    // `heartbeats` is keyed by MANAGED leg (the caller reads only the
+    // senders whose report carries `managed_send`): no key at all means
+    // the hold held no managed stream, so there is no gap buffer to judge.
+    if heartbeats.is_empty() {
+        return StepVerdict {
+            name: "queue_depth_p99".into(),
+            pass: true,
+            observed: 0.0,
+            threshold,
+            detail: "not applicable: no managed stream in the hold".into(),
+        };
+    }
     match p99(&mut gaps) {
         Some(v) => StepVerdict {
             name: "queue_depth_p99".into(),
@@ -3232,6 +3244,23 @@ send: heartbeat elapsed_s=180 video_aus=5400 keyframes=180 klv_records=1800 audi
         assert!(r.detail.contains("not applicable"), "{}", r.detail);
     }
 
+    /// A hold with no managed stream (srt excluded for want of a
+    /// ceiling, or never requested) has no gap buffer to judge:
+    /// `queue_depth_p99` is not applicable, not a failure (contrast
+    /// `queue_depth_without_managed_heartbeats_fails`).
+    #[test]
+    fn queue_depth_p99_is_not_applicable_without_a_managed_stream() {
+        let v = hv(
+            &hold_decl(),
+            &step_result(2, Axis::Hold, true, &[]),
+            &BTreeMap::new(),
+            &[],
+        );
+        let q = hb_verdict(&v, "queue_depth_p99");
+        assert!(q.pass, "{}", q.detail);
+        assert!(q.detail.contains("not applicable"), "{}", q.detail);
+    }
+
     #[test]
     fn queue_depth_p99_uses_nearest_rank() {
         // 98 heartbeats at gap 0 and two at 255: p99 (nearest rank,
@@ -3262,12 +3291,15 @@ send: heartbeat elapsed_s=180 video_aus=5400 keyframes=180 klv_records=1800 audi
         assert!((q.threshold - 230.4).abs() < 0.01);
     }
 
+    /// A managed stream whose sender logged no heartbeat at all is a
+    /// finding (the queue was never observable), not "not applicable".
     #[test]
     fn queue_depth_without_managed_heartbeats_fails() {
+        let logs = [("srt-0".to_string(), String::new())].into();
         let v = hv(
             &hold_decl(),
             &step_result(2, Axis::Hold, true, &[]),
-            &BTreeMap::new(),
+            &logs,
             &[],
         );
         let q = hb_verdict(&v, "queue_depth_p99");
