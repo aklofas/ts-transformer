@@ -21,7 +21,11 @@
 //! carried in the stream itself, so both ends can name the same instant
 //! without a shared clock, and a receiver resolves a coordinate the moment
 //! it sees that base (or, if the injection destroyed the packet carrying
-//! it, the first base after it — see [`Attribution::on_pcr`]).
+//! it, the first base after it — see [`Attribution::on_pcr`]). An
+//! injection whose log line is read only AFTER its anchor base was seen —
+//! a zero-latency link can deliver the PCR before the sender logs the
+//! injection behind it — is resolved by replaying the recent PCR history
+//! (see [`Attribution::append`]).
 //!
 //! Determinism is the other invariant: given the same seed, the same
 //! config and the same input bytes, the tap emits byte-identical wire
@@ -101,6 +105,16 @@ pub const MAX_APPROX_TICKS: u64 = 4 * 9000;
 /// `since_pcr` has been measured at up to ~2.3 PCR intervals (see
 /// [`Attribution::backward_reach`]); 64 PCRs is over 2.5 s even at the
 /// 40 ms cadence, ample headroom at a constant cost.
+///
+/// If the ring were ever outrun — an injection's anchor base already
+/// evicted when its line is appended — the replay would treat the anchor
+/// like a destroyed one. An anchor up to [`MAX_APPROX_TICKS`] older than
+/// the oldest retained base resolves approximately against that base: it
+/// is judged, but at a position up to one PCR interval late, so it could
+/// surface as a false unexplained/undetected pair. An anchor older than
+/// that is stranded: counted `unresolved` and never judged. Neither case
+/// is reachable at the measured lag of ~2.3 intervals against a 64-entry
+/// ring.
 const PCR_HISTORY: usize = 64;
 
 /// Format version of the JSONL log. Bump when a field's MEANING changes
@@ -2395,8 +2409,9 @@ impl Attribution {
     /// process the run's own `rss_slope_*_recv` verdict gates at 200
     /// KiB/h.
     ///
-    /// `next_unresolved` only moves when [`Attribution::on_pcr`] is fed,
-    /// so a receiver that stopped seeing PCRs entirely would stop
+    /// `next_unresolved` only moves when a PCR is fed — by
+    /// [`Attribution::on_pcr`] directly, or by [`Attribution::append`]
+    /// replaying the ones already seen — so a receiver that stopped seeing PCRs entirely would stop
     /// retiring. That is not a memory hazard worth guarding: a capture
     /// with no PCR resolves no coordinate at all, and its whole
     /// corruption verdict is already `unresolved`.
@@ -4015,6 +4030,35 @@ mod tests {
         assert_eq!(rep.attributed_events, 1, "{rep:?}");
         assert!(rep.undetected.is_empty(), "{rep:?}");
         assert!(rep.unexplained_events.is_empty(), "{rep:?}");
+    }
+
+    /// The order in which the log tail and the wire deliver the same
+    /// evidence must not change the verdict: an injection read before its
+    /// anchor PCR and one read just after it are the same injection.
+    #[test]
+    fn appending_before_or_after_the_anchor_pcr_gives_the_same_report() {
+        let i1 = || inj(100, 2, Class::Drop, 0x1011, true);
+        let i2 = || inj(3700, 3, Class::Header, 0x1011, true);
+        let run = |log_first: bool| {
+            let mut a = Attribution::strict(Vec::new(), &hdr());
+            for (i, base, at) in [(i1(), 100, 10), (i2(), 3700, 1500)] {
+                if log_first {
+                    a.append(vec![i]);
+                    a.on_pcr(base, at);
+                } else {
+                    a.on_pcr(base, at);
+                    a.append(vec![i]);
+                }
+                a.on_signal(at + 3, Some(0x1011), Signal::ContinuityJump);
+                a.on_media(at + 10, 0x1011);
+            }
+            a.on_pcr(7300, 3000);
+            a.finish(4000)
+        };
+        let (log_first, pcr_first) = (run(true), run(false));
+        assert_eq!(log_first.attributed_events, 2, "{log_first:?}");
+        assert!(log_first.undetected.is_empty(), "{log_first:?}");
+        assert_eq!(log_first, pcr_first);
     }
 
     /// Before the first PCR there is nothing to strand against, so an
