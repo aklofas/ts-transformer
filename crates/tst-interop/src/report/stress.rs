@@ -1024,6 +1024,10 @@ pub fn hold_verdicts(
 
 /// Mirrors soak: each SRT receiver must rebuild at least once per
 /// outage window, less one (the last window may straddle the end).
+/// Judged per stream, never on the sum, so one busy receiver cannot
+/// mask one that never rebuilt: `observed` is the smallest per-stream
+/// count, `threshold` is `windows − 1`, and the detail lists every
+/// stream that falls short.
 fn verdict_reconnect_count(decl: &StepDeclaration, per_stream: &[StreamFigures]) -> StepVerdict {
     let srt: Vec<&StreamFigures> = per_stream
         .iter()
@@ -1043,17 +1047,33 @@ fn verdict_reconnect_count(decl: &StepDeclaration, per_stream: &[StreamFigures])
         }
     };
     let windows = (decl.hold_s / period as f64).floor() as u64;
-    let required = srt.len() as u64 * windows.saturating_sub(1);
-    let observed: u64 = srt.iter().map(|s| s.reconnects.unwrap_or(0)).sum();
+    let required = windows.saturating_sub(1);
+    let counts: Vec<(&str, u64)> = srt
+        .iter()
+        .map(|s| (s.leg.as_str(), s.reconnects.unwrap_or(0)))
+        .collect();
+    let observed = counts.iter().map(|&(_, n)| n).min().unwrap_or(0);
+    let shortfalls: Vec<String> = counts
+        .iter()
+        .filter(|&&(_, n)| n < required)
+        .map(|&(leg, n)| format!("{leg}: {n} < {required}"))
+        .collect();
     StepVerdict {
         name,
-        pass: observed >= required,
+        pass: shortfalls.is_empty(),
         observed: observed as f64,
         threshold: required as f64,
-        detail: format!(
-            "{} SRT stream(s) × ({windows} outage windows − 1) = {required} reconnects required, {observed} observed",
-            srt.len()
-        ),
+        detail: if shortfalls.is_empty() {
+            format!(
+                "every one of {} SRT stream(s) reconnected \u{2265} {windows} outage windows − 1 = {required} times (min {observed})",
+                srt.len()
+            )
+        } else {
+            format!(
+                "SRT streams below {windows} outage windows − 1 = {required} reconnects: {}",
+                shortfalls.join(", ")
+            )
+        },
     }
 }
 
@@ -2388,25 +2408,44 @@ send: heartbeat elapsed_s=180 video_aus=5400 keyframes=180 klv_records=1800 audi
 
     #[test]
     fn reconnect_count_counts_srt_streams_only() {
-        // 86_400 / 900 = 96 windows; two SRT streams need ≥ 2 × 95 = 190.
+        // 86_400 / 900 = 96 windows: each SRT stream needs ≥ 95. The
+        // RIST stream's 0 is not judged.
         let mut step = step_result(3, Axis::Hold, true, &[]);
         step.per_stream = vec![
-            figures("srt-0", Some(95)),
+            figures("srt-0", Some(96)),
             figures("srt-1", Some(95)),
             figures("rist-0", Some(0)),
         ];
         let v = hold_verdicts(&hold_decl(), &step, &BTreeMap::new(), &[], 256, 0.9);
         let r = hb_verdict(&v, "reconnect_count");
         assert!(r.pass, "{}", r.detail);
-        assert_eq!((r.observed, r.threshold), (190.0, 190.0));
+        assert_eq!((r.observed, r.threshold), (95.0, 95.0));
 
         step.per_stream[1].reconnects = Some(94);
         let v = hold_verdicts(&hold_decl(), &step, &BTreeMap::new(), &[], 256, 0.9);
-        assert!(!hb_verdict(&v, "reconnect_count").pass);
+        let r = hb_verdict(&v, "reconnect_count");
+        assert!(!r.pass);
+        assert_eq!(r.observed, 94.0);
+        assert!(r.detail.contains("srt-1: 94 < 95"), "{}", r.detail);
 
         step.per_stream[1].reconnects = None;
         let v = hold_verdicts(&hold_decl(), &step, &BTreeMap::new(), &[], 256, 0.9);
-        assert_eq!(hb_verdict(&v, "reconnect_count").observed, 95.0);
+        let r = hb_verdict(&v, "reconnect_count");
+        assert_eq!(r.observed, 0.0);
+        assert!(r.detail.contains("srt-1: 0 < 95"), "{}", r.detail);
+    }
+
+    #[test]
+    fn reconnect_count_one_busy_stream_does_not_mask_a_dead_one() {
+        // The aggregate (190) would meet 2 × 95, but srt-1 never rebuilt.
+        let mut step = step_result(2, Axis::Hold, true, &[]);
+        step.per_stream = vec![figures("srt-0", Some(190)), figures("srt-1", Some(0))];
+        let v = hold_verdicts(&hold_decl(), &step, &BTreeMap::new(), &[], 256, 0.9);
+        let r = hb_verdict(&v, "reconnect_count");
+        assert!(!r.pass, "{}", r.detail);
+        assert_eq!((r.observed, r.threshold), (0.0, 95.0));
+        assert!(r.detail.contains("srt-1: 0 < 95"), "{}", r.detail);
+        assert!(!r.detail.contains("srt-0:"), "{}", r.detail);
     }
 
     #[test]
