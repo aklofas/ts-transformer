@@ -323,6 +323,12 @@ pub struct StepInputs {
     pub host: Vec<HostSample>,
     pub worker_exits: BTreeMap<String, i32>,
     pub streams: Vec<StreamArtifacts>,
+    /// The hold's receiver restarts (`restart-events.log`); empty for a
+    /// sweep step. A restarted leg's `recv-report.json` covers only the
+    /// segment after its LAST restart, so `delivery_complete` scales
+    /// that stream's expected AUs to the segment.
+    #[serde(default)]
+    pub restarts: Vec<RestartEvent>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -383,11 +389,12 @@ fn roles(s: &StreamArtifacts) -> &'static [&'static str] {
 /// verdict rests on too few points to mean anything.
 const MIN_SAMPLE_COVERAGE: f64 = 0.9;
 
-/// A sampler row keyed by `(leg, process)` at an elapsed time.
+/// A sampler row keyed by `(leg, process, pid)` at an elapsed time.
 trait Sampled {
     fn elapsed_s(&self) -> f64;
     fn leg(&self) -> &str;
     fn process(&self) -> &str;
+    fn pid(&self) -> u32;
 }
 
 impl Sampled for ProcSample {
@@ -399,6 +406,9 @@ impl Sampled for ProcSample {
     }
     fn process(&self) -> &str {
         &self.process
+    }
+    fn pid(&self) -> u32 {
+        self.pid
     }
 }
 
@@ -412,17 +422,54 @@ impl Sampled for RssSample {
     fn process(&self) -> &str {
         &self.process
     }
+    fn pid(&self) -> u32 {
+        self.pid
+    }
 }
 
-/// Post-warm-up samples grouped by `(leg, process)`, in input order.
-fn by_process<S: Sampled>(samples: &[S], warmup_s: f64) -> BTreeMap<(String, String), Vec<&S>> {
-    let mut groups: BTreeMap<(String, String), Vec<&S>> = BTreeMap::new();
-    for s in samples.iter().filter(|s| s.elapsed_s() >= warmup_s) {
-        groups
-            .entry((s.leg().to_string(), s.process().to_string()))
-            .or_default()
-            .push(s);
+/// One pid's post-warm-up samples of a `(leg, process)`. A process the
+/// hold restarts has one segment per pid; every other process has one.
+struct Segment<'a, S> {
+    pid: u32,
+    samples: Vec<&'a S>,
+}
+
+type Groups<'a, S> = BTreeMap<(String, String), Vec<Segment<'a, S>>>;
+
+/// Samples grouped by `(leg, process)`, split into one segment per pid
+/// (in order of each pid's first row). Each segment drops the rows
+/// within `warmup_s` of THAT pid's first row, so a restarted process's
+/// start-up ramp is excluded the same way the original's is; for a pid
+/// first sampled at ~0 s this is the plain `elapsed_s >= warmup_s`
+/// rule. A segment left empty is kept (verdicts name it as skipped);
+/// a `(leg, process)` whose every segment is empty is left out, as a
+/// process with no post-warm-up row always was.
+fn by_process<S: Sampled>(samples: &[S], warmup_s: f64) -> Groups<'_, S> {
+    let mut first: BTreeMap<(&str, &str, u32), f64> = BTreeMap::new();
+    for s in samples {
+        let t = first
+            .entry((s.leg(), s.process(), s.pid()))
+            .or_insert(s.elapsed_s());
+        *t = t.min(s.elapsed_s());
     }
+    let mut groups: Groups<'_, S> = BTreeMap::new();
+    let mut order: Vec<(&(&str, &str, u32), &f64)> = first.iter().collect();
+    order.sort_by(|a, b| a.1.total_cmp(b.1));
+    for (&(leg, process, pid), &t0) in order {
+        let seg = Segment {
+            pid,
+            samples: samples
+                .iter()
+                .filter(|s| s.leg() == leg && s.process() == process && s.pid() == pid)
+                .filter(|s| s.elapsed_s() >= t0 + warmup_s)
+                .collect(),
+        };
+        groups
+            .entry((leg.to_string(), process.to_string()))
+            .or_default()
+            .push(seg);
+    }
+    groups.retain(|_, segs| segs.iter().any(|seg| !seg.samples.is_empty()));
     groups
 }
 
@@ -441,6 +488,21 @@ fn process_cpu_seconds(samples: &[&ProcSample], clk_tck: u64) -> Option<f64> {
     Some(last.saturating_sub(first) as f64 / clk_tck as f64)
 }
 
+/// A `(leg, process)`'s CPU seconds summed over its pid segments (each
+/// pid's ticks count from its own start). `None` when no segment has a
+/// figure; the pids without one are returned for the detail.
+fn segments_cpu_seconds(segs: &[Segment<'_, ProcSample>], clk_tck: u64) -> (Option<f64>, Vec<u32>) {
+    let mut total = None;
+    let mut missing = Vec::new();
+    for seg in segs {
+        match process_cpu_seconds(&seg.samples, clk_tck) {
+            Some(cpu_s) => *total.get_or_insert(0.0) += cpu_s,
+            None => missing.push(seg.pid),
+        }
+    }
+    (total, missing)
+}
+
 /// Judge one step. Errors (never a vacuous PASS) when the thresholds
 /// are unset, the declaration is degenerate, or there is no evidence.
 pub fn build_step_results(inputs: StepInputs) -> Result<StepResults, String> {
@@ -452,6 +514,7 @@ pub fn build_step_results(inputs: StepInputs) -> Result<StepResults, String> {
         host: _host,
         worker_exits,
         streams,
+        restarts,
     } = inputs;
     if thresholds.rss_slope_kb_per_hour <= 0.0 {
         return Err(
@@ -483,10 +546,12 @@ pub fn build_step_results(inputs: StepInputs) -> Result<StepResults, String> {
     verdicts.push(verdict_recv_invariants(&streams));
     verdicts.push(verdict_delivery_complete(
         &streams,
+        &restarts,
+        decl.hold_s,
         thresholds.delivery_slack,
     ));
     let (cpu_verdict, cpu_fraction) =
-        verdict_cpu_headroom(&decl, &proc, &proc_groups, thresholds.cpu_headroom_max);
+        verdict_cpu_headroom(&decl, &proc_groups, thresholds.cpu_headroom_max);
     verdicts.push(cpu_verdict);
     verdicts.extend(verdict_rss_slopes(
         &decl,
@@ -505,7 +570,7 @@ pub fn build_step_results(inputs: StepInputs) -> Result<StepResults, String> {
         |s| s.threads,
         thresholds.thread_delta_max,
     ));
-    verdicts.push(verdict_sample_coverage(&decl, &rss_groups, &streams));
+    verdicts.push(verdict_sample_coverage(&decl, &rss, &streams));
 
     let per_stream = stream_figures(&decl, &proc_groups, &rss_groups, &streams);
     let failing: Vec<String> = verdicts
@@ -519,7 +584,11 @@ pub fn build_step_results(inputs: StepInputs) -> Result<StepResults, String> {
         cpu_fraction_per_stream: cpu_fraction / decl.streams.max(1) as f64,
         aggregate_cpu_fraction: cpu_fraction,
         aggregate_wire_mbps,
-        samples_used: proc.iter().filter(|s| s.elapsed_s >= decl.warmup_s).count(),
+        samples_used: proc_groups
+            .values()
+            .flatten()
+            .map(|seg| seg.samples.len())
+            .sum(),
         decl,
         thresholds,
         verdicts,
@@ -582,53 +651,90 @@ fn verdict_recv_invariants(streams: &[StreamArtifacts]) -> StepVerdict {
     }
 }
 
-/// Received ÷ sent video AUs, worst stream. A stream that sent nothing
-/// scores 0: no traffic is not delivery.
-fn verdict_delivery_complete(streams: &[StreamArtifacts], slack: f64) -> StepVerdict {
+/// Received ÷ expected video AUs, worst stream. A stream that sent
+/// nothing scores 0: no traffic is not delivery.
+///
+/// Expected is the sender's count, except on a leg the hold restarted:
+/// the relaunched receiver writes `recv-report.json` afresh, so it
+/// covers only the time after the leg's LAST restart `t_last`. The
+/// sender paces at a constant rate, so that segment should hold
+/// `send × (hold_s − t_last) / hold_s` AUs (to within a frame or two).
+fn verdict_delivery_complete(
+    streams: &[StreamArtifacts],
+    restarts: &[RestartEvent],
+    hold_s: f64,
+    slack: f64,
+) -> StepVerdict {
     let mut min_ratio = f64::INFINITY;
     let mut notes = Vec::new();
+    let mut scaled = Vec::new();
     for s in streams {
+        let role = format!("{}-recv", s.leg);
+        let t_last = restarts
+            .iter()
+            .filter(|ev| ev.role == role)
+            .map(|ev| ev.elapsed_s)
+            .reduce(f64::max);
+        let fraction = t_last.map_or(1.0, |t| ((hold_s - t) / hold_s).max(0.0));
+        let expected = s.send.video_aus as f64 * fraction;
+        if let Some(t) = t_last {
+            scaled.push(format!(
+                "{}: last restart at {t} s, expecting {fraction:.4} of {} sent AUs",
+                s.leg, s.send.video_aus
+            ));
+        }
         let ratio = if s.send.video_aus == 0 {
             notes.push(format!("{}: sender reported 0 video AUs", s.leg));
             0.0
+        } else if expected <= 0.0 {
+            notes.push(format!(
+                "{}: last restart at {} s leaves no segment of the {hold_s} s hold to judge",
+                s.leg,
+                t_last.unwrap_or_default()
+            ));
+            0.0
         } else {
-            let ratio = s.recv.metrics.video_aus as f64 / s.send.video_aus as f64;
+            let ratio = s.recv.metrics.video_aus as f64 / expected;
             if ratio < slack {
                 notes.push(format!(
-                    "{}: {}/{} AUs = {ratio:.4}",
-                    s.leg, s.recv.metrics.video_aus, s.send.video_aus
+                    "{}: {}/{expected:.0} AUs = {ratio:.4}",
+                    s.leg, s.recv.metrics.video_aus
                 ));
             }
             ratio
         };
         min_ratio = min_ratio.min(ratio);
     }
+    let mut detail = if notes.is_empty() {
+        format!("worst stream delivered {min_ratio:.4} of expected AUs")
+    } else {
+        notes.join("; ")
+    };
+    if !scaled.is_empty() {
+        detail.push_str(&format!("; restarted: {}", scaled.join("; ")));
+    }
     StepVerdict {
         name: "delivery_complete".into(),
         pass: min_ratio >= slack,
         observed: min_ratio,
         threshold: slack,
-        detail: if notes.is_empty() {
-            format!("worst stream delivered {min_ratio:.4} of sent AUs")
-        } else {
-            notes.join("; ")
-        },
+        detail,
     }
 }
 
 /// Total CPU of every sampled process over the post-warm-up window, as
-/// a fraction of the host's cores. Returns the verdict and the
+/// a fraction of the host's cores. A restarted process contributes the
+/// sum of its pid segments' tick deltas. Returns the verdict and the
 /// fraction.
 fn verdict_cpu_headroom(
     decl: &StepDeclaration,
-    proc: &[ProcSample],
-    groups: &BTreeMap<(String, String), Vec<&ProcSample>>,
+    groups: &Groups<'_, ProcSample>,
     max: f64,
 ) -> (StepVerdict, f64) {
-    let warm_t = proc
-        .iter()
-        .map(|s| s.elapsed_s)
-        .filter(|&t| t >= decl.warmup_s);
+    let warm_t = groups
+        .values()
+        .flatten()
+        .flat_map(|seg| seg.samples.iter().map(|s| s.elapsed_s));
     let (lo, hi) = warm_t.fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), t| {
         (lo.min(t), hi.max(t))
     });
@@ -636,13 +742,14 @@ fn verdict_cpu_headroom(
     let mut total_cpu_s = 0.0;
     let mut usable = 0usize;
     let mut unusable = Vec::new();
-    for ((leg, process), samples) in groups {
-        match process_cpu_seconds(samples, decl.clk_tck) {
-            Some(cpu_s) => {
-                total_cpu_s += cpu_s;
-                usable += 1;
-            }
-            None => unusable.push(format!("{leg}/{process}")),
+    for ((leg, process), segs) in groups {
+        let (cpu_s, missing) = segments_cpu_seconds(segs, decl.clk_tck);
+        if let Some(cpu_s) = cpu_s {
+            total_cpu_s += cpu_s;
+            usable += 1;
+        }
+        for pid in missing {
+            unusable.push(format!("{leg}/{process} pid {pid}"));
         }
     }
     // Either case would report 0 % CPU from no measurement at all — a
@@ -688,11 +795,41 @@ fn verdict_cpu_headroom(
     (verdict, fraction)
 }
 
+/// Split a `(leg, process)`'s segments into the judgeable ones (≥ 2
+/// usable values) and the rest. When none is judgeable the segments
+/// with ≥ 1 value are returned instead, so a process sampled once is
+/// judged as it always was; `skipped` names every segment left out.
+fn judgeable<T>(per_seg: &[(u32, Vec<T>)]) -> (Vec<&(u32, Vec<T>)>, Vec<String>) {
+    let mut judged: Vec<&(u32, Vec<T>)> = per_seg.iter().filter(|(_, v)| v.len() >= 2).collect();
+    if judged.is_empty() {
+        judged = per_seg.iter().filter(|(_, v)| !v.is_empty()).collect();
+    }
+    let skipped = per_seg
+        .iter()
+        .filter(|seg| !judged.iter().any(|j| j.0 == seg.0))
+        .map(|(pid, v)| format!("pid {pid} ({} usable)", v.len()))
+        .collect();
+    (judged, skipped)
+}
+
+fn skipped_note(skipped: &[String]) -> String {
+    if skipped.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "; skipped (< 2 post-warm-up samples): {}",
+            skipped.join(", ")
+        )
+    }
+}
+
 /// RSS growth per process in KB/hour. A short step cannot resolve a
 /// small slope from noise, so its allowance scales up by 3600/hold.
+/// Each pid segment is fit on its own (pooling a restarted process's
+/// pids would fit a sawtooth); the verdict judges the steepest.
 fn verdict_rss_slopes(
     decl: &StepDeclaration,
-    groups: &BTreeMap<(String, String), Vec<&RssSample>>,
+    groups: &Groups<'_, RssSample>,
     threshold: f64,
 ) -> Vec<StepVerdict> {
     let allowed = if decl.hold_s < 3600.0 {
@@ -702,31 +839,56 @@ fn verdict_rss_slopes(
     };
     groups
         .iter()
-        .map(|((leg, process), samples)| {
-            let points: Vec<(f64, f64)> = samples
+        .map(|((leg, process), segs)| {
+            let per_seg: Vec<(u32, Vec<(f64, f64)>)> = segs
                 .iter()
-                .filter_map(|s| s.rss_kb.map(|kb| (s.elapsed_s / 3600.0, kb as f64)))
+                .map(|seg| {
+                    let points = seg
+                        .samples
+                        .iter()
+                        .filter_map(|s| s.rss_kb.map(|kb| (s.elapsed_s / 3600.0, kb as f64)))
+                        .collect();
+                    (seg.pid, points)
+                })
                 .collect();
             let name = format!("rss_slope_{leg}_{process}");
-            if points.len() < 2 {
+            let (judged, skipped) = judgeable(&per_seg);
+            let judged: Vec<_> = judged.into_iter().filter(|(_, p)| p.len() >= 2).collect();
+            if judged.is_empty() {
+                let n: usize = per_seg.iter().map(|(_, p)| p.len()).sum();
                 return StepVerdict {
                     name,
                     pass: false,
                     observed: 0.0,
                     threshold: allowed,
-                    detail: format!("insufficient samples ({})", points.len()),
+                    detail: format!("insufficient samples ({n}){}", skipped_note(&skipped)),
                 };
             }
-            let slope = linear_regression_slope(&points);
+            let slopes: Vec<(u32, f64, usize)> = judged
+                .iter()
+                .map(|(pid, points)| (*pid, linear_regression_slope(points), points.len()))
+                .collect();
+            let &(worst_pid, slope, n) = slopes
+                .iter()
+                .max_by(|a, b| a.1.total_cmp(&b.1))
+                .expect("judged is non-empty");
+            let mut detail = format!(
+                "{slope:.1} KB/h over {n} samples of pid {worst_pid} (allowed {allowed:.1})"
+            );
+            if slopes.len() > 1 {
+                let all: Vec<String> = slopes
+                    .iter()
+                    .map(|(pid, sl, _)| format!("pid {pid} {sl:.1}"))
+                    .collect();
+                detail.push_str(&format!("; per pid: {}", all.join(", ")));
+            }
+            detail.push_str(&skipped_note(&skipped));
             StepVerdict {
                 name,
                 pass: slope <= allowed,
                 observed: slope,
                 threshold: allowed,
-                detail: format!(
-                    "{slope:.1} KB/h over {} samples (allowed {allowed:.1})",
-                    points.len()
-                ),
+                detail,
             }
         })
         .collect()
@@ -734,32 +896,56 @@ fn verdict_rss_slopes(
 
 /// `max − min` of one per-process counter (fds, threads) must stay
 /// within `delta_max`: a steady-state process does not accumulate them.
+/// Judged per pid segment (a restarted process starts its counters
+/// over); the verdict judges the segment with the largest delta.
 fn verdict_flat(
-    groups: &BTreeMap<(String, String), Vec<&ProcSample>>,
+    groups: &Groups<'_, ProcSample>,
     prefix: &str,
     field: impl Fn(&ProcSample) -> Option<u64>,
     delta_max: u64,
 ) -> Vec<StepVerdict> {
     groups
         .iter()
-        .map(|((leg, process), samples)| {
-            let values: Vec<u64> = samples.iter().filter_map(|s| field(s)).collect();
+        .map(|((leg, process), segs)| {
+            let per_seg: Vec<(u32, Vec<u64>)> = segs
+                .iter()
+                .map(|seg| {
+                    (
+                        seg.pid,
+                        seg.samples.iter().filter_map(|s| field(s)).collect(),
+                    )
+                })
+                .collect();
             let name = format!("{prefix}_{leg}_{process}");
-            match (values.iter().min(), values.iter().max()) {
-                (Some(&lo), Some(&hi)) => StepVerdict {
-                    name,
-                    pass: hi - lo <= delta_max,
-                    observed: (hi - lo) as f64,
-                    threshold: delta_max as f64,
-                    detail: format!("min {lo}, max {hi} over {} samples", values.len()),
-                },
-                _ => StepVerdict {
+            let (judged, skipped) = judgeable(&per_seg);
+            let ranges: Vec<(u32, u64, u64, usize)> = judged
+                .iter()
+                .filter_map(|(pid, v)| Some((*pid, *v.iter().min()?, *v.iter().max()?, v.len())))
+                .collect();
+            let Some(&(worst_pid, lo, hi, n)) = ranges.iter().max_by_key(|r| r.2 - r.1) else {
+                return StepVerdict {
                     name,
                     pass: false,
                     observed: 0.0,
                     threshold: delta_max as f64,
-                    detail: "no post-warm-up samples".into(),
-                },
+                    detail: format!("no post-warm-up samples{}", skipped_note(&skipped)),
+                };
+            };
+            let mut detail = format!("min {lo}, max {hi} over {n} samples of pid {worst_pid}");
+            if ranges.len() > 1 {
+                let all: Vec<String> = ranges
+                    .iter()
+                    .map(|(pid, lo, hi, _)| format!("pid {pid} Δ{}", hi - lo))
+                    .collect();
+                detail.push_str(&format!("; per pid: {}", all.join(", ")));
+            }
+            detail.push_str(&skipped_note(&skipped));
+            StepVerdict {
+                name,
+                pass: hi - lo <= delta_max,
+                observed: (hi - lo) as f64,
+                threshold: delta_max as f64,
+                detail,
             }
         })
         .collect()
@@ -767,10 +953,13 @@ fn verdict_flat(
 
 /// Post-warm-up RSS ticks observed per `(leg, process)` ÷ the ticks the
 /// hold should have produced. Every declared stream's roles are
-/// expected even if the sampler never wrote a row for them.
+/// expected even if the sampler never wrote a row for them. This counts
+/// sampler ticks, not judgeable samples: rows of every pid at or after
+/// the step's warm-up count, so a restarted process's own warm-up does
+/// not read as missing ticks.
 fn verdict_sample_coverage(
     decl: &StepDeclaration,
-    groups: &BTreeMap<(String, String), Vec<&RssSample>>,
+    rss: &[RssSample],
     streams: &[StreamArtifacts],
 ) -> StepVerdict {
     let expected = decl.hold_s / decl.sample_cadence_s;
@@ -780,11 +969,13 @@ fn verdict_sample_coverage(
             counts.insert((s.leg.clone(), role.to_string()), 0);
         }
     }
-    for (key, samples) in groups {
-        counts.insert(
-            key.clone(),
-            samples.iter().filter(|s| s.rss_kb.is_some()).count(),
-        );
+    for s in rss
+        .iter()
+        .filter(|s| s.elapsed_s >= decl.warmup_s && s.rss_kb.is_some())
+    {
+        *counts
+            .entry((s.leg.clone(), s.process.clone()))
+            .or_default() += 1;
     }
     let mut min_coverage = f64::INFINITY;
     let mut low = Vec::new();
@@ -819,6 +1010,15 @@ fn read_json<T: for<'de> Deserialize<'de>>(path: &std::path::Path) -> Result<T, 
 pub fn run_step(
     step_dir: &std::path::Path,
     thresholds: StepThresholds,
+) -> Result<StepResults, String> {
+    judge_step_dir(step_dir, thresholds, Vec::new())
+}
+
+/// `run_step`'s body; `run_hold` passes its parsed restart events.
+fn judge_step_dir(
+    step_dir: &std::path::Path,
+    thresholds: StepThresholds,
+    restarts: Vec<RestartEvent>,
 ) -> Result<StepResults, String> {
     let decl: StepDeclaration = read_json(&step_dir.join("config.json"))?;
     let rss = parse_rss_csv(&read_to_string(&step_dir.join("rss.csv"))?)?;
@@ -856,6 +1056,7 @@ pub fn run_step(
         host,
         worker_exits,
         streams,
+        restarts,
     })?;
     let out = step_dir.join("step-results.json");
     std::fs::write(
@@ -876,10 +1077,13 @@ fn p99(values: &mut [u64]) -> Option<u64> {
     Some(values[rank.saturating_sub(1)])
 }
 
+/// Per-stream figures; a restarted process's pids are folded together
+/// (CPU summed per segment, p99 RSS and max threads/fds over every
+/// post-warm-up sample of every pid).
 fn stream_figures(
     decl: &StepDeclaration,
-    proc_groups: &BTreeMap<(String, String), Vec<&ProcSample>>,
-    rss_groups: &BTreeMap<(String, String), Vec<&RssSample>>,
+    proc_groups: &Groups<'_, ProcSample>,
+    rss_groups: &Groups<'_, RssSample>,
     streams: &[StreamArtifacts],
 ) -> Vec<StreamFigures> {
     streams
@@ -889,20 +1093,25 @@ fn stream_figures(
             let mut cpu_seconds = BTreeMap::new();
             let mut threads_max = BTreeMap::new();
             let mut fds_max = BTreeMap::new();
-            for ((_, process), samples) in proc_groups.iter().filter(|((l, _), _)| *l == leg) {
-                if let Some(cpu_s) = process_cpu_seconds(samples, decl.clk_tck) {
+            for ((_, process), segs) in proc_groups.iter().filter(|((l, _), _)| *l == leg) {
+                if let (Some(cpu_s), _) = segments_cpu_seconds(segs, decl.clk_tck) {
                     cpu_seconds.insert(process.clone(), cpu_s);
                 }
-                if let Some(t) = samples.iter().filter_map(|x| x.threads).max() {
+                let samples = || segs.iter().flat_map(|seg| seg.samples.iter());
+                if let Some(t) = samples().filter_map(|x| x.threads).max() {
                     threads_max.insert(process.clone(), t);
                 }
-                if let Some(f) = samples.iter().filter_map(|x| x.fds).max() {
+                if let Some(f) = samples().filter_map(|x| x.fds).max() {
                     fds_max.insert(process.clone(), f);
                 }
             }
             let mut rss_kb_p99 = BTreeMap::new();
-            for ((_, process), samples) in rss_groups.iter().filter(|((l, _), _)| *l == leg) {
-                let mut kb: Vec<u64> = samples.iter().filter_map(|x| x.rss_kb).collect();
+            for ((_, process), segs) in rss_groups.iter().filter(|((l, _), _)| *l == leg) {
+                let mut kb: Vec<u64> = segs
+                    .iter()
+                    .flat_map(|seg| seg.samples.iter())
+                    .filter_map(|x| x.rss_kb)
+                    .collect();
                 if let Some(v) = p99(&mut kb) {
                     rss_kb_p99.insert(process.clone(), v);
                 }
@@ -1206,7 +1415,8 @@ fn verdict_queue_depth_p99(
     }
 }
 
-/// Judge the hold dir: `run_step` over it, then the hold-only verdicts
+/// Judge the hold dir: the step verdicts over it (restart-aware), then
+/// the hold-only verdicts
 /// from `hold-config.json`, `restart-events.log` (absent = no restarts)
 /// and `logs/<leg>-send.log` for every stream whose `send-report.json`
 /// carries `managed_send`. Writes `hold-results.json` on success.
@@ -1214,14 +1424,16 @@ pub fn run_hold(
     hold_dir: &std::path::Path,
     thresholds: StepThresholds,
 ) -> Result<HoldResults, String> {
-    let step = run_step(hold_dir, thresholds.clone())?;
-    let decl: HoldDeclaration = read_json(&hold_dir.join("hold-config.json"))?;
     let restart_path = hold_dir.join("restart-events.log");
     let restarts = if restart_path.exists() {
         parse_restart_events(&read_to_string(&restart_path)?)?
     } else {
         Vec::new()
     };
+    // The step verdicts need the restarts too: `delivery_complete`
+    // judges a restarted leg on its last segment only.
+    let step = judge_step_dir(hold_dir, thresholds.clone(), restarts.clone())?;
+    let decl: HoldDeclaration = read_json(&hold_dir.join("hold-config.json"))?;
     let mut send_logs = BTreeMap::new();
     let mut capacities = Vec::new();
     for s in &step.per_stream {
@@ -1284,10 +1496,11 @@ pub struct StressResults {
     pub limitations: Vec<String>,
 }
 
-/// floor(0.7 × ceiling) — the hold must run well inside the sweep's
-/// found ceiling, not at its edge.
+/// max(1, floor(0.7 × ceiling)) — the hold must run well inside the
+/// sweep's found ceiling, not at its edge; a ceiling of 1 still allows
+/// a 1-stream hold (as `stress.sh` sizes it), rather than none.
 fn max_hold_for_ceiling(ceiling: u32) -> u32 {
-    (0.7 * ceiling as f64).floor() as u32
+    ((0.7 * ceiling as f64).floor() as u32).max(1)
 }
 
 /// Fold the sweep's `AxisResult`s and the optional hold into one
@@ -1321,7 +1534,7 @@ pub fn build_stress_results(sweep: Vec<AxisResult>, hold: Option<HoldResults>) -
                     let max_hold = max_hold_for_ceiling(c);
                     if n_hold > max_hold {
                         problems.push(format!(
-                            "{transport}: n_hold {n_hold} > floor(0.7 × ceiling {c}) = {max_hold}"
+                            "{transport}: n_hold {n_hold} > max(1, floor(0.7 × ceiling {c})) = {max_hold}"
                         ));
                     }
                 }
@@ -1337,7 +1550,7 @@ pub fn build_stress_results(sweep: Vec<AxisResult>, hold: Option<HoldResults>) -
             observed: problems.len() as f64,
             threshold: 0.0,
             detail: if pass {
-                "every held transport's n_hold is \u{2264} floor(0.7 \u{d7} its declared ceiling)"
+                "every held transport's n_hold is \u{2264} max(1, floor(0.7 \u{d7} its declared ceiling))"
                     .into()
             } else {
                 problems.join("; ")
@@ -1531,6 +1744,7 @@ mod tests {
             host: Vec::new(),
             worker_exits: exits,
             streams: arts,
+            restarts: Vec::new(),
         }
     }
 
@@ -2672,5 +2886,206 @@ send: heartbeat elapsed_s=180 video_aus=5400 keyframes=180 klv_records=1800 audi
             "{}",
             r.detail
         );
+    }
+
+    // --- restart-aware delivery, per-pid resources, hold sizing floor ---
+
+    #[test]
+    fn delivery_is_judged_on_a_restarted_legs_last_segment() {
+        // srt-0's receiver was restarted at 300 s of a 600 s hold: its
+        // report covers only the last 300 s, i.e. half of what was sent.
+        let mut inp = inputs(2, 30);
+        inp.streams[0] = stream_artifacts(0, 18_000, 9_000);
+        inp.restarts = vec![RestartEvent {
+            elapsed_s: 300.0,
+            role: "srt-0-recv".into(),
+        }];
+        let r = build_step_results(inp).unwrap();
+        let v = verdict(&r, "delivery_complete");
+        assert!(v.pass, "{}", v.detail);
+        assert!((v.observed - 1.0).abs() < 1e-9, "{}", v.observed);
+        assert!(
+            v.detail.contains("srt-0") && v.detail.contains("300") && v.detail.contains("0.5"),
+            "{}",
+            v.detail
+        );
+
+        // The same receive count without the restart is half delivery.
+        let mut inp = inputs(2, 30);
+        inp.streams[0] = stream_artifacts(0, 18_000, 9_000);
+        let r = build_step_results(inp).unwrap();
+        let v = verdict(&r, "delivery_complete");
+        assert!(!v.pass);
+        assert!((v.observed - 0.5).abs() < 1e-9, "{}", v.observed);
+    }
+
+    #[test]
+    fn delivery_uses_the_legs_last_restart_only() {
+        let mut inp = inputs(1, 30);
+        inp.streams[0] = stream_artifacts(0, 18_000, 6_000);
+        inp.restarts = vec![
+            RestartEvent {
+                elapsed_s: 200.0,
+                role: "srt-0-recv".into(),
+            },
+            RestartEvent {
+                elapsed_s: 400.0,
+                role: "srt-0-recv".into(),
+            },
+            // Another leg's restart does not touch srt-0.
+            RestartEvent {
+                elapsed_s: 500.0,
+                role: "srt-7-recv".into(),
+            },
+        ];
+        let r = build_step_results(inp).unwrap();
+        let v = verdict(&r, "delivery_complete");
+        assert!((v.observed - 1.0).abs() < 1e-9, "{}", v.detail);
+        assert!(v.detail.contains("400"), "{}", v.detail);
+    }
+
+    /// srt-0/recv as two processes: pid 1 for t < 300 s (flat at 4
+    /// threads / 5 fds), pid 2 from 300 s whose threads ramp 1→4 and
+    /// fds 2→5 over its first 30 s, then flat. CPU ticks restart at 0
+    /// in pid 2.
+    fn restarted_recv_inputs() -> StepInputs {
+        let mut inp = inputs(1, 30);
+        inp.proc.retain(|s| s.process != "recv");
+        inp.rss.retain(|s| s.process != "recv");
+        for i in 0..22u64 {
+            let t = i as f64 * 30.0;
+            let (pid, ticks, th, fd) = match i {
+                0..10 => (1, i * 30, 4, 5),
+                10 => (2, 0, 1, 2),
+                _ => (2, (i - 10) * 30, 4, 5),
+            };
+            let mut p = proc_row(t, "srt-0", "recv", ticks, 0, th, fd);
+            p.pid = pid;
+            inp.proc.push(p);
+            let mut r = rss_row(t, "srt-0", "recv", 50_000);
+            r.pid = pid;
+            inp.rss.push(r);
+        }
+        inp
+    }
+
+    #[test]
+    fn restarted_process_is_judged_per_pid() {
+        let r = build_step_results(restarted_recv_inputs()).unwrap();
+        for name in [
+            "thread_count_flat_srt-0_recv",
+            "fd_count_flat_srt-0_recv",
+            "rss_slope_srt-0_recv",
+        ] {
+            let v = verdict(&r, name);
+            assert!(v.pass, "{name}: {}", v.detail);
+            assert!(
+                v.detail.contains("pid 1") && v.detail.contains("pid 2"),
+                "{name} must name both pids: {}",
+                v.detail
+            );
+        }
+        // pid 1: ticks 60..270 after warm-up = 2.1 s; pid 2: its own
+        // warm-up ends at 360 s, ticks 60..330 = 2.7 s. Sum = 4.8 s.
+        let cpu = r.per_stream[0].cpu_seconds["recv"];
+        assert!((cpu - 4.8).abs() < 1e-9, "{cpu}");
+        assert!(verdict(&r, "sample_coverage").pass);
+        assert!(r.pass, "{:?}", r.failing);
+    }
+
+    #[test]
+    fn per_pid_flat_verdict_still_catches_growth_inside_one_pid() {
+        let mut inp = restarted_recv_inputs();
+        // pid 2 leaks one fd per tick after its warm-up.
+        for s in inp
+            .proc
+            .iter_mut()
+            .filter(|s| s.process == "recv" && s.pid == 2 && s.elapsed_s >= 360.0)
+        {
+            s.fds = Some(5 + ((s.elapsed_s - 360.0) / 30.0) as u64);
+        }
+        let r = build_step_results(inp).unwrap();
+        let v = verdict(&r, "fd_count_flat_srt-0_recv");
+        assert!(!v.pass, "{}", v.detail);
+        assert!(v.detail.contains("pid 2"), "{}", v.detail);
+    }
+
+    #[test]
+    fn segment_too_short_to_judge_is_skipped_and_named() {
+        let mut inp = restarted_recv_inputs();
+        // pid 3 appears at 600 s: still inside its own warm-up at the
+        // end of the step, so it has no usable samples.
+        for t in [600.0, 630.0] {
+            let mut p = proc_row(t, "srt-0", "recv", 0, 0, 1, 2);
+            p.pid = 3;
+            inp.proc.push(p);
+            let mut r = rss_row(t, "srt-0", "recv", 10);
+            r.pid = 3;
+            inp.rss.push(r);
+        }
+        let r = build_step_results(inp).unwrap();
+        let v = verdict(&r, "thread_count_flat_srt-0_recv");
+        assert!(v.pass, "{}", v.detail);
+        assert!(v.detail.contains("pid 3"), "{}", v.detail);
+        let v = verdict(&r, "rss_slope_srt-0_recv");
+        assert!(v.pass, "{}", v.detail);
+        assert!(v.detail.contains("pid 3"), "{}", v.detail);
+    }
+
+    #[test]
+    fn hold_sizing_floor_is_one() {
+        assert_eq!(max_hold_for_ceiling(1), 1);
+        assert_eq!(max_hold_for_ceiling(2), 1);
+        assert_eq!(max_hold_for_ceiling(8), 5);
+        let axis = AxisResult {
+            transport: "tcp".into(),
+            axis: Axis::Streams,
+            steps: vec![
+                step_result(1, Axis::Streams, true, &[]),
+                step_result(2, Axis::Streams, false, &["cpu_headroom"]),
+            ],
+            ceiling: Some(1),
+            first_fail: Some(2),
+            first_fail_verdicts: vec!["cpu_headroom".into()],
+        };
+        let hold = HoldResults {
+            decl: HoldDeclaration {
+                n_hold: [("tcp".to_string(), 1)].into(),
+                ceilings_declared: [("tcp".to_string(), 1)].into(),
+                cpu_scale_factor: 1.0,
+            },
+            step: step_result(1, Axis::Hold, true, &[]),
+            hold_verdicts: vec![],
+            pass: true,
+        };
+        let r = build_stress_results(vec![axis], Some(hold));
+        let v = r
+            .hold
+            .as_ref()
+            .unwrap()
+            .hold_verdicts
+            .iter()
+            .find(|v| v.name == "hold_sizing_declared")
+            .unwrap();
+        assert!(v.pass, "{}", v.detail);
+        assert!(r.overall_pass);
+    }
+
+    #[test]
+    fn run_hold_scales_a_restarted_legs_delivery() {
+        // The healthy hold restarts srt-0's receiver at 300 s; the new
+        // receiver's report holds only the last 300 s of AUs.
+        let dir = temp_step_dir("hold-restart-delivery");
+        write_healthy_hold(&dir);
+        write(
+            &dir,
+            "streams/0/recv-report.json",
+            &serde_json::to_string(&passing_recv_report(9_000)).unwrap(),
+        );
+        let r = run_hold(&dir, thresholds()).unwrap();
+        let v = verdict(&r.step, "delivery_complete");
+        assert!(v.pass, "{}", v.detail);
+        assert!((v.observed - 1.0).abs() < 1e-9, "{}", v.observed);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
