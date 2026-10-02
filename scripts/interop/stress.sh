@@ -65,7 +65,12 @@
 # floor(0.7 x C_t)). If the sweep's per-stream CPU cost predicts more
 # than 70% of the box for the sum, every n_t is scaled down by
 # 0.70/predicted (cpu_scale_factor). A transport with no passing streams
-# step refuses the hold (exit 1). Stream i (global, 0-based over every
+# step is EXCLUDED from the hold (declared in hold-config.json's
+# excluded_transports, event HOLD-EXCLUDED, a `report stress` limitation;
+# the run still exits 1 because that transport has no ceiling); the hold
+# runs on the rest. If srt is excluded there are no outages or restarts.
+# Only when NO transport has a ceiling is the hold refused. Stream i
+# (global, 0-based over every held
 # transport) has leg `<t>-<k>` (k per transport), KLV seed SEED + i,
 # corruption seed SEED + 1 + i. SRT and RIST proxies run the seeded
 # schedule `seed=SEED+i,phases=HOLD_SCHEDULE_PHASES,phase_s=hold_s/phases`;
@@ -106,7 +111,9 @@
 #              HOLD_OUTAGE_DUR_S=10 HOLD_RESTART_PERIOD_S=120
 #              HOLD_RESTART_OFFSET_S=50). Explicit flags and env knobs win.
 #              With STRESS_SMOKE_FORCE_FAIL=1 the LAST bitrate step of the
-#              LAST transport is judged with `--cpu-headroom-max 0.000001`,
+#              LAST transport (=streams: the FIRST streams step of the
+#              FIRST transport, so that transport has no ceiling and the
+#              hold runs without it) is judged with `--cpu-headroom-max 0.000001`,
 #              so the FAIL path and the ceiling rule run end to end
 #              (declared as `smoke_forced_fail_step`). The env var is
 #              refused without --smoke.
@@ -121,7 +128,8 @@
 #   --dry-run-ceilings, --dry-run-cpu  TEST-ONLY, --dry-run only: stand-in
 #              streams ceilings and per-stream CPU fractions, one per
 #              transport, so --dry-run also prints the hold sizing (a
-#              ceiling of 0 = no passing step -> exit 1, as a real run).
+#              ceiling of 0 = no passing step -> that transport is
+#              excluded and the preview exits 1, as a real run would).
 #
 # # Knobs (environment; all declared in stress-config.json)
 #
@@ -419,7 +427,14 @@ case "$STRESS_SMOKE_FORCE_FAIL" in
     [[ "$SMOKE" -eq 1 ]] || die "STRESS_SMOKE_FORCE_FAIL=1 is a --smoke knob; refusing it on a real run"
     SMOKE_FORCED_FAIL_STEP="${TRANSPORTS[-1]}/bitrate/${SCALE_LADDER[-1]}"
     ;;
-  *) die "STRESS_SMOKE_FORCE_FAIL must be 0 or 1, got: $STRESS_SMOKE_FORCE_FAIL" ;;
+  streams)
+    # The FIRST streams step of the FIRST transport: that transport gets
+    # no streams ceiling, so the hold must run WITHOUT it (and, when it is
+    # srt, without outages or restarts) — the exclusion rule end to end.
+    [[ "$SMOKE" -eq 1 ]] || die "STRESS_SMOKE_FORCE_FAIL=streams is a --smoke knob; refusing it on a real run"
+    SMOKE_FORCED_FAIL_STEP="${TRANSPORTS[0]}/streams/${STREAM_LADDER[0]}"
+    ;;
+  *) die "STRESS_SMOKE_FORCE_FAIL must be 0, 1 or streams, got: $STRESS_SMOKE_FORCE_FAIL" ;;
 esac
 
 for dep in jq python3 awk nproc getconf; do
@@ -532,10 +547,14 @@ fi
 HOLD_CPU_BUDGET=0.70
 
 # size_hold <ceilings-assoc> <cpu-fraction-assoc> — the hold sizing rule
-# (see the header): sets HOLD_N, HOLD_N_UNSCALED, HOLD_PRED_CPU and
-# HOLD_CPU_SCALE_FACTOR. Returns 1, having named it, at the first
-# transport whose streams ceiling is unset or 0 (no passing step).
+# (see the header): sets HOLD_T (the held transports, in TRANSPORTS
+# order), HOLD_EXCLUDED (those with no passing streams step: ceiling
+# unset or 0), HOLD_N, HOLD_N_UNSCALED, HOLD_PRED_CPU and
+# HOLD_CPU_SCALE_FACTOR. Returns 1, having said so, only when NO
+# transport has a ceiling — one without a ceiling is excluded, not fatal.
 declare -A HOLD_N
+HOLD_T=()
+HOLD_EXCLUDED=()
 HOLD_N_UNSCALED=""
 HOLD_PRED_CPU=0
 HOLD_CPU_SCALE_FACTOR=1.0
@@ -543,23 +562,31 @@ size_hold() {
   local -n sh_ceil=$1 sh_cpu=$2
   local t n terms=""
   HOLD_N=()
+  HOLD_T=()
+  HOLD_EXCLUDED=()
   for t in "${TRANSPORTS[@]}"; do
     if [[ -z "${sh_ceil[$t]:-}" || "${sh_ceil[$t]}" -eq 0 ]]; then
-      echo "stress: $t has no passing stream step; refusing to size a hold for it" >&2
-      return 1
+      echo "stress: $t has no passing streams step; the hold runs without it" >&2
+      HOLD_EXCLUDED+=("$t")
+      continue
     fi
     n=$((sh_ceil[$t] * 7 / 10))
     [[ $n -ge 1 ]] || n=1
+    HOLD_T+=("$t")
     HOLD_N[$t]=$n
     terms+="$n ${sh_cpu[$t]} "
   done
-  HOLD_N_UNSCALED=$(for t in "${TRANSPORTS[@]}"; do printf '%s=%s ' "$t" "${HOLD_N[$t]}"; done)
+  if [[ ${#HOLD_T[@]} -eq 0 ]]; then
+    echo "stress: no transport has a passing streams step; refusing the hold" >&2
+    return 1
+  fi
+  HOLD_N_UNSCALED=$(for t in "${HOLD_T[@]}"; do printf '%s=%s ' "$t" "${HOLD_N[$t]}"; done)
   HOLD_N_UNSCALED=${HOLD_N_UNSCALED% }
   HOLD_PRED_CPU=$(awk -v terms="$terms" 'BEGIN{k = split(terms, a, " "); s = 0; for (i = 1; i < k; i += 2) s += a[i] * a[i + 1]; printf "%.6g", s}')
   if awk -v p="$HOLD_PRED_CPU" -v b="$HOLD_CPU_BUDGET" 'BEGIN{exit !(p > b)}'; then
     # One rounded factor, both recorded and applied.
     HOLD_CPU_SCALE_FACTOR=$(awk -v p="$HOLD_PRED_CPU" -v b="$HOLD_CPU_BUDGET" 'BEGIN{printf "%.6g", b / p}')
-    for t in "${TRANSPORTS[@]}"; do
+    for t in "${HOLD_T[@]}"; do
       HOLD_N[$t]=$(awk -v n="${HOLD_N[$t]}" -v f="$HOLD_CPU_SCALE_FACTOR" 'BEGIN{v = int(n * f); if (v < 1) v = 1; print v}')
     done
   else
@@ -570,12 +597,15 @@ size_hold() {
 # print_hold_sizing — the sizing, one fact per line (dry-run and summary).
 print_hold_sizing() {
   local t line=""
+  if [[ ${#HOLD_EXCLUDED[@]} -gt 0 ]]; then
+    echo "excluded (no passing streams step): ${HOLD_EXCLUDED[*]}"
+  fi
   echo "n_hold $HOLD_N_UNSCALED"
   if [[ "$HOLD_CPU_SCALE_FACTOR" == "1.0" ]]; then
     echo "predicted_cpu $HOLD_PRED_CPU <= $HOLD_CPU_BUDGET -> cpu_scale_factor 1.0"
   else
     echo "predicted_cpu $HOLD_PRED_CPU > $HOLD_CPU_BUDGET -> cpu_scale_factor $(awk -v f="$HOLD_CPU_SCALE_FACTOR" 'BEGIN{printf "%.3f", f}')"
-    for t in "${TRANSPORTS[@]}"; do line+="$t=${HOLD_N[$t]} "; done
+    for t in "${HOLD_T[@]}"; do line+="$t=${HOLD_N[$t]} "; done
     echo "n_hold ${line% }"
   fi
 }
@@ -638,6 +668,8 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   if [[ -n "$DRY_RUN_CEILINGS_RAW" ]]; then
     size_hold DRY_CEIL DRY_CPU || exit 1
     print_hold_sizing
+    # A real run with an excluded transport exits 1 (no ceiling for it).
+    [[ ${#HOLD_EXCLUDED[@]} -eq 0 ]] || exit 1
   elif [[ "$SKIP_HOLD" -eq 0 ]]; then
     echo "hold sizing: from the sweep's ceilings (pass --dry-run-ceilings/--dry-run-cpu to preview it)"
   fi
@@ -1065,7 +1097,7 @@ run_step() {
   cpu_max=$CPU_HEADROOM_MAX
   if [[ "$CURRENT_STEP" == "$SMOKE_FORCED_FAIL_STEP" ]]; then
     cpu_max=0.000001
-    event "FORCED-FAIL step=$CURRENT_STEP cpu_headroom_max=$cpu_max (STRESS_SMOKE_FORCE_FAIL=1)"
+    event "FORCED-FAIL step=$CURRENT_STEP cpu_headroom_max=$cpu_max (STRESS_SMOKE_FORCE_FAIL=$STRESS_SMOKE_FORCE_FAIL)"
   fi
   rc=0
   local -a ungated_args=()
@@ -1137,7 +1169,7 @@ RESTART_TERM_GRACE_S=30
 # within a few seconds of START_EPOCH; a launch span this long or longer
 # is logged as a WARNING.
 HOLD_LAUNCH_SPAN_WARN_S=30
-# Results the summary reads. HOLD_REFUSED=1: a transport had no passing
+# Results the summary reads. HOLD_REFUSED=1: no transport had a passing
 # streams step, so no hold ran and the run exits 1.
 HOLD_REFUSED=0
 HOLD_RESTARTS_DONE=0
@@ -1164,9 +1196,15 @@ hold_ceiling() {
 
 # assoc_json <assoc-name> — {"<t>": N, ...} over TRANSPORTS, in order.
 assoc_json() {
-  local -n aj=$1
+  assoc_json_over "$1" TRANSPORTS
+}
+
+# assoc_json_over <assoc-name> <keys-array-name> — {"<t>": N, ...} over
+# the named key list, in its order.
+assoc_json_over() {
+  local -n aj=$1 keys=$2
   local t
-  for t in "${TRANSPORTS[@]}"; do printf '%s\t%s\n' "$t" "${aj[$t]}"; done |
+  for t in "${keys[@]}"; do printf '%s\t%s\n' "$t" "${aj[$t]}"; done |
     jq -Rn '[inputs | split("\t") | {key: .[0], value: (.[1] | tonumber)}] | from_entries'
 }
 
@@ -1238,13 +1276,26 @@ run_hold() {
     cpu_map[$t]=$cpu
   done
   if ! size_hold ceil_map cpu_map; then
-    event "HOLD-REFUSED no passing streams step for a transport (see stderr)"
+    event "HOLD-REFUSED no transport has a passing streams step (see stderr)"
     HOLD_REFUSED=1
     CURRENT_STEP=""
     return 0
   fi
+  if [[ ${#HOLD_EXCLUDED[@]} -gt 0 ]]; then
+    event "HOLD-EXCLUDED transports=${HOLD_EXCLUDED[*]} reason=no passing streams step"
+    for t in "${HOLD_EXCLUDED[@]}"; do
+      # Outages are cut on SRT proxies and the restarted receiver is
+      # srt-0's: without a held SRT stream there is nothing to schedule.
+      if [[ "$t" == srt ]]; then
+        HOLD_HAS_SRT=0
+        RESTART_INSTANTS=()
+        OUTAGE_STARTS=()
+        event "HOLD-EXCLUDED srt: no outages or receiver restarts in this hold"
+      fi
+    done
+  fi
 
-  for t in "${TRANSPORTS[@]}"; do
+  for t in "${HOLD_T[@]}"; do
     for ((k = 0; k < HOLD_N[$t]; k++)); do
       s_t+=("$t")
       s_leg+=("$t-$k")
@@ -1254,10 +1305,12 @@ run_hold() {
   for ((i = 0; i < total; i++)); do [[ "${s_leg[$i]}" != srt-0 ]] || SRT0_IDX=$i; done
 
   mkdir -p "$hold_dir/streams" "$hold_dir/logs" "$hold_dir/pids"
-  # Exactly the three keys `report hold` reads (HoldDeclaration).
-  jq -n --argjson n "$(assoc_json HOLD_N)" --argjson c "$(assoc_json ceil_map)" \
+  # Exactly the keys `report hold` reads (HoldDeclaration): n_hold over
+  # the HELD transports, ceilings over every swept one (0 = none).
+  jq -n --argjson n "$(assoc_json_over HOLD_N HOLD_T)" --argjson c "$(assoc_json ceil_map)" \
     --argjson f "$HOLD_CPU_SCALE_FACTOR" \
-    '{n_hold: $n, ceilings_declared: $c, cpu_scale_factor: $f}' >"$hold_dir/hold-config.json"
+    --argjson x "$(printf '%s\n' "${HOLD_EXCLUDED[@]}" | jq -Rn '[inputs | select(length > 0)]')" \
+    '{n_hold: $n, ceilings_declared: $c, cpu_scale_factor: $f, excluded_transports: $x}' >"$hold_dir/hold-config.json"
   local srt_json restart_json
   srt_json=$([[ $HOLD_HAS_SRT -eq 1 ]] && echo true || echo false)
   restart_json=$([[ ${#RESTART_INSTANTS[@]} -gt 0 ]] && echo true || echo false)
@@ -1305,7 +1358,7 @@ run_hold() {
   PIDS=()
   STREAM_PORT=()
   USED_PORTS=()
-  event "HOLD-START streams=$total n_hold=$(assoc_json HOLD_N | jq -c .) cpu_scale_factor=$HOLD_CPU_SCALE_FACTOR hold_s=$HOLD_S run_s=$HOLD_RUN_S restarts=${#RESTART_INSTANTS[@]}"
+  event "HOLD-START streams=$total n_hold=$(assoc_json_over HOLD_N HOLD_T | jq -c .) cpu_scale_factor=$HOLD_CPU_SCALE_FACTOR hold_s=$HOLD_S run_s=$HOLD_RUN_S restarts=${#RESTART_INSTANTS[@]}"
   echo "stress: hold — $total stream(s) for ${HOLD_RUN_S}s (${HOLD_WARMUP_S}s warm-up + ${HOLD_S}s)..." >&2
 
   # SRT proxies first, SRT_PROXY_WARMUP_S ahead of the hold clock, so
@@ -1492,7 +1545,7 @@ event "REPORT-STRESS rc=$REPORT_RC"
   if [[ "$SKIP_HOLD" -eq 1 ]]; then
     echo "hold: skipped (--skip-hold)"
   elif [[ "$HOLD_REFUSED" -eq 1 ]]; then
-    echo "hold: refused — a transport had no passing streams step (exit 1)"
+    echo "hold: refused — no transport had a passing streams step (exit 1)"
   else
     print_hold_sizing | sed 's/^/hold: /'
     echo "hold: restarts performed: $HOLD_RESTARTS_DONE of ${#RESTART_INSTANTS[@]} scheduled"
