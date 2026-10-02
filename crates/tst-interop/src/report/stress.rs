@@ -352,6 +352,10 @@ pub struct StreamFigures {
     pub fds_max: BTreeMap<String, u64>,
     pub recv_video_aus: u64,
     pub send_video_aus: u64,
+    /// For a leg that was restarted, the receiver report covers only
+    /// the last segment while the divisor is the full hold, so this
+    /// figure is understated by the same fraction `delivery_complete`
+    /// corrects for; it is recorded, never gated.
     pub wire_mbps: f64,
     pub reconnects: Option<u64>,
     /// Recorded from the proxy's stats, never gated: the sweep's link
@@ -755,6 +759,12 @@ fn verdict_delivery_complete(
 /// a fraction of the host's cores. A restarted process contributes the
 /// sum of its pid segments' tick deltas. Returns the verdict and the
 /// fraction.
+///
+/// CPU burned during a restarted pid's own warm-up (the first
+/// `warmup_s` after its first sample) is excluded while the wall-clock
+/// window still spans it, so a restarted process's fraction is
+/// understated: under 1 % over a 24 h hold, about a third of the
+/// restarted receiver's CPU in the 6-minute smoke.
 fn verdict_cpu_headroom(
     decl: &StepDeclaration,
     groups: &Groups<'_, ProcSample>,
