@@ -27,7 +27,7 @@
 //! config and the same input bytes, the tap emits byte-identical wire
 //! output and a byte-identical log. Nothing here reads the clock.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::io::Write;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -91,6 +91,17 @@ const APPROX_SLACK: u64 = 128;
 /// see them. Beyond the bound an injection stays unresolved instead, which
 /// means it is never judged.
 pub const MAX_APPROX_TICKS: u64 = 4 * 9000;
+
+/// How many of the most recent `(pcr_base, at)` pairs [`Attribution`]
+/// keeps so an injection logged AFTER its anchor PCR already reached the
+/// receiver can still resolve against it — see [`Attribution::append`].
+/// The lag that needs covering is the stream distance from an anchor PCR
+/// to the injected packet: the sender is paced in real time, so an
+/// injection `since_pcr` packets after its PCR is logged that much later.
+/// `since_pcr` has been measured at up to ~2.3 PCR intervals (see
+/// [`Attribution::backward_reach`]); 64 PCRs is over 2.5 s even at the
+/// 40 ms cadence, ample headroom at a constant cost.
+const PCR_HISTORY: usize = 64;
 
 /// Format version of the JSONL log. Bump when a field's MEANING changes
 /// (adding a field does not need a bump — serde fills the rest from
@@ -1762,6 +1773,10 @@ pub struct Attribution {
     /// APPENDED mid-capture can still trust its ordinal-0 anchor. See
     /// [`Attribution::append`].
     seen_pcr: bool,
+    /// The last [`PCR_HISTORY`] `(pcr_base, at)` pairs fed to
+    /// [`Attribution::on_pcr`], oldest first — replayed by
+    /// [`Attribution::append`].
+    recent_pcrs: VecDeque<(u64, u64)>,
 }
 
 /// Which PIDs the demuxer currently declares as a program's `PCR_PID`,
@@ -2124,6 +2139,7 @@ impl Attribution {
             first_unexplained_nc: None,
             first_unexplained_disc: None,
             seen_pcr: false,
+            recent_pcrs: VecDeque::with_capacity(PCR_HISTORY),
         }
     }
 
@@ -2178,7 +2194,23 @@ impl Attribution {
     /// injection appended now belongs to a part of the stream it can no
     /// longer place: it is stranded instead, counted `unresolved` and
     /// never judged. Absent evidence is not evidence of a failure.
+    ///
+    /// An appended injection's anchor PCR may ALREADY have been fed to
+    /// [`Attribution::on_pcr`]. The tap logs once per `send_bytes`
+    /// message, so an injection in the message after the one carrying its
+    /// PCR is written only after that PCR left the sender — and over a
+    /// zero-latency link (UDP or TCP on loopback) the receiver can have
+    /// read it already. Resolving such an injection against the NEXT base
+    /// instead would misplace it by a whole PCR interval, past the event
+    /// it caused, which then reads as unexplained and the injection as
+    /// undetected. So the recent PCRs are replayed, oldest first, over the
+    /// newly appended injections; a link with real latency never needs
+    /// them, because its log runs ahead of the receiver and every new
+    /// anchor is still in the future.
     pub fn append(&mut self, injections: Vec<Injection>) {
+        if injections.is_empty() {
+            return;
+        }
         for i in injections {
             let anchorless = i.coord.pcr_base.is_none();
             let st = InjState {
@@ -2192,6 +2224,10 @@ impl Attribution {
             self.inj.push(Tracked::from(&i));
             self.st.push(st);
             self.logged += 1;
+        }
+        for k in 0..self.recent_pcrs.len() {
+            let (base, at) = self.recent_pcrs[k];
+            self.resolve_against(base, at);
         }
     }
 
@@ -2207,6 +2243,17 @@ impl Attribution {
     /// injection stays unresolved and is never judged.
     pub fn on_pcr(&mut self, pcr_base: u64, at: u64) {
         self.seen_pcr = true;
+        if self.recent_pcrs.len() == PCR_HISTORY {
+            self.recent_pcrs.pop_front();
+        }
+        self.recent_pcrs.push_back((pcr_base, at));
+        self.resolve_against(pcr_base, at);
+    }
+
+    /// Resolve every not-yet-resolved injection that the base `pcr_base`,
+    /// seen at receiver ordinal `at`, places — the body of
+    /// [`Attribution::on_pcr`], also replayed by [`Attribution::append`].
+    fn resolve_against(&mut self, pcr_base: u64, at: u64) {
         while self.next_unresolved < self.end() {
             let i = self.next_unresolved;
             let Some(b) = self.tracked(i).coord.pcr_base else {
@@ -3944,6 +3991,30 @@ mod tests {
             "{:?}",
             rep.unexplained_events
         );
+    }
+
+    /// A zero-latency transport (UDP/TCP straight over loopback) hands the
+    /// receiver a PCR packet before the sender has even logged the
+    /// injection anchored at it: the tap logs per `send_bytes` message,
+    /// so an injection in the message AFTER the one carrying its PCR is
+    /// written only once that PCR is already on the receiver's side. The
+    /// late line must still resolve against the base it names, not
+    /// against whichever base the receiver sees next — that is a full PCR
+    /// interval downstream, past the event the injection caused.
+    #[test]
+    fn an_injection_logged_after_its_anchor_pcr_arrived_still_resolves_exactly() {
+        let mut a = Attribution::strict(Vec::new(), &hdr());
+        a.on_pcr(100, 10);
+        a.append(vec![inj(100, 2, Class::Drop, 0x1011, true)]);
+        a.on_signal(13, Some(0x1011), Signal::ContinuityJump);
+        a.on_media(20, 0x1011);
+        // The next base, one 40 ms PCR interval and 80 packets later.
+        a.on_pcr(100 + 3600, 90);
+        let rep = a.finish(2000);
+        assert_eq!(rep.resolved, 1);
+        assert_eq!(rep.attributed_events, 1, "{rep:?}");
+        assert!(rep.undetected.is_empty(), "{rep:?}");
+        assert!(rep.unexplained_events.is_empty(), "{rep:?}");
     }
 
     /// Before the first PCR there is nothing to strand against, so an
