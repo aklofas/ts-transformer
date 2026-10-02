@@ -74,11 +74,12 @@ def _g(x) -> str:
 # --------------------------------------------------------------------------
 
 def _rss_mib_per_stream(per_stream: list[dict]) -> float:
-    """Worst single stream's RSS footprint: sum rss_kb_p99 over its own
-    processes (send+proxy+recv), then take the max across the step's
-    streams, converted KB -> MiB."""
+    """Average per-stream RSS footprint: sum rss_kb_p99 over each stream's
+    own processes (send+proxy+recv), then the mean across the step's
+    streams — consistent with `cpu_fraction_per_stream`, which is itself an
+    average, not a worst-case figure — converted KB -> MiB."""
     sums = [sum(ps["rss_kb_p99"].values()) for ps in per_stream]
-    return (max(sums) / 1024.0) if sums else 0.0
+    return (sum(sums) / len(sums) / 1024.0) if sums else 0.0
 
 
 def _max_metric(per_stream: list[dict], key: str) -> int:
@@ -109,7 +110,7 @@ def _reference_machine(provenance: dict) -> str:
     lines = [
         f"- Kernel: {host['kernel']}",
         f"- vCPUs: {host['cpus']}",
-        f"- Memory: {mem_gib:.1f} GiB",
+        f"- Memory: {_mib(mem_gib)} GiB",
         f"- Toolchain: {provenance['toolchain']['rustc']}",
         f"- Source: `{source['head'][:12]}` ({source['describe']})",
         f"- Recorded: {provenance['written_utc']}",
@@ -207,13 +208,14 @@ def render(results: dict, provenance: dict) -> str:
 
     parts.append("### Stream scaling\n")
     for transport, entry in _axes_by_transport(results["sweep"], "streams"):
-        parts.append(f"#### {transport}\n")
+        parts.append(f"#### {transport.upper()}\n")
         parts.append(_stream_table(entry))
+        parts.append("Per-stream figures are averages over the step's streams.\n")
         parts.append(_ceiling_line(entry, "streams") + "\n")
 
     parts.append("### Single-stream throughput\n")
     for transport, entry in _axes_by_transport(results["sweep"], "bitrate"):
-        parts.append(f"#### {transport}\n")
+        parts.append(f"#### {transport.upper()}\n")
         parts.append(_bitrate_table(entry))
         parts.append(_ceiling_line(entry, "scale") + "\n")
 
@@ -247,7 +249,11 @@ def main(argv=None) -> int:
     ap.add_argument("--results", required=True, metavar="R.json", help="stress-results.json from the archive")
     ap.add_argument("--provenance", required=True, metavar="P.json", help="provenance.json from the archive")
     ap.add_argument("--update", metavar="MD", help="rewrite the bench block in this Markdown file")
-    ap.add_argument("--stdout", action="store_true", help="print Markdown to stdout (the default when --update is omitted)")
+    ap.add_argument(
+        "--stdout", action="store_true",
+        help="print Markdown to stdout; this is already the default when --update is omitted — "
+             "the flag is accepted (and otherwise ignored) for symmetry with benchmarks-page.sh's own --stdout argument",
+    )
     args = ap.parse_args(argv)
 
     with open(args.results, encoding="utf-8") as fh:

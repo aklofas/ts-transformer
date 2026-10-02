@@ -4,6 +4,7 @@ Run:  python3 -m unittest scripts/gen/test_benchmarks_page.py
 """
 import json
 import os
+import re
 import sys
 import unittest
 
@@ -21,6 +22,19 @@ def load():
     return r, p
 
 
+def subsection(md, section_heading, transport_heading):
+    """The text under `#### <transport_heading>` inside the
+    `### <section_heading>` block, up to the next `####` or `###` heading —
+    so a test scoped to one transport's table can't be satisfied by a
+    different transport's table (or a different section's) still being
+    present elsewhere in the page."""
+    sec = re.search(rf"^### {re.escape(section_heading)}\n(.*?)(?=^### |\Z)", md, re.M | re.S)
+    assert sec, f"section '### {section_heading}' not found"
+    sub = re.search(rf"^#### {re.escape(transport_heading)}\n(.*?)(?=^#### |\Z)", sec.group(1), re.M | re.S)
+    assert sub, f"subsection '#### {transport_heading}' not found under '### {section_heading}'"
+    return sub.group(1)
+
+
 class Render(unittest.TestCase):
     def test_reference_machine_from_provenance(self):
         r, p = load()
@@ -33,9 +47,10 @@ class Render(unittest.TestCase):
         r, p = load()
         md = bp.render(r, p)
         srt = next(a for a in r["sweep"] if a["transport"] == "srt" and a["axis"] == "streams")
+        sub = subsection(md, "Stream scaling", "SRT")
         for step in srt["steps"]:
-            self.assertRegex(md, rf"\|\s*{step['decl']['streams']}\s*\|")
-        self.assertIn("Ceiling:", md)
+            self.assertRegex(sub, rf"\|\s*{step['decl']['streams']}\s*\|")
+        self.assertIn("Ceiling:", sub)
 
     def test_forced_fail_step_renders_as_fail_with_its_verdict(self):
         r, p = load()
@@ -73,9 +88,10 @@ class RenderShape(unittest.TestCase):
         r, p = load()
         md = bp.render(r, p)
         tcp = next(a for a in r["sweep"] if a["transport"] == "tcp" and a["axis"] == "bitrate")
+        sub = subsection(md, "Single-stream throughput", "TCP")
         for step in tcp["steps"]:
-            self.assertRegex(md, rf"\|\s*{step['decl']['au_scale']}\s*\|")
-        self.assertRegex(md, r"Ceiling:\s*\d+\s*scale")
+            self.assertRegex(sub, rf"\|\s*{step['decl']['au_scale']}\s*\|")
+        self.assertRegex(sub, r"Ceiling:\s*\d+\s*scale")
 
     def test_hold_section_has_transport_rows_and_verdict_names(self):
         r, p = load()
