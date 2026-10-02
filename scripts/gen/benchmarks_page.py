@@ -4,8 +4,8 @@
 Renders the measured tables in `docs/project/benchmarks.md` from a stress
 harness archive's `stress-results.json` (the sweep steps, their verdicts,
 and the 24 h hold) and `provenance.json` (host, toolchain, and source
-commit) — see `docs/specs/2026-10-01-stress-harness.md` §7 for the shape of
-both inputs and the rendering contract.
+commit) — each a flat JSON document produced by the stress harness, read
+here only to format what it already recorded.
 
 The page's prose is hand-written; only the block between
 `<!-- bench:begin -->` and `<!-- bench:end -->` is generated, and the
@@ -131,7 +131,7 @@ def _ceiling_line(entry: dict, unit: str) -> str:
     return f"Ceiling: {ceiling} {unit} — ended by {verdicts}"
 
 
-_STREAM_HEADER = ["N", "CPU/stream (fraction of a core)", "RSS/stream p99 (MiB)", "threads max", "fds max", "wire Mb/s", "pass"]
+_STREAM_HEADER = ["N", "CPU/stream (cores)", "RSS/stream p99 (MiB)", "threads max", "fds max", "wire Mb/s", "pass"]
 
 
 def _stream_table(entry: dict) -> str:
@@ -140,7 +140,7 @@ def _stream_table(entry: dict) -> str:
         d = step["decl"]
         rows.append([
             str(d["streams"]),
-            _cpu(step["cpu_fraction_per_stream"]),
+            _cpu(step["cpu_fraction_per_stream"] * d["vcpus"]),
             _mib(_rss_mib_per_stream(step["per_stream"])),
             str(_max_metric(step["per_stream"], "threads_max")),
             str(_max_metric(step["per_stream"], "fds_max")),
@@ -150,7 +150,7 @@ def _stream_table(entry: dict) -> str:
     return _table(_STREAM_HEADER, rows)
 
 
-_BITRATE_HEADER = ["scale", "declared Mb/s", "observed Mb/s", "CPU fraction", "pass"]
+_BITRATE_HEADER = ["scale", "declared Mb/s", "observed Mb/s", "CPU (cores)", "pass"]
 
 
 def _bitrate_table(entry: dict) -> str:
@@ -161,7 +161,7 @@ def _bitrate_table(entry: dict) -> str:
             str(d["au_scale"]),
             _mbps(d["nominal_mbps_per_stream"]),
             _mbps(step["aggregate_wire_mbps"]),
-            _cpu(step["cpu_fraction_per_stream"]),
+            _cpu(step["aggregate_cpu_fraction"] * d["vcpus"]),
             _passfail(step["pass"]),
         ])
     return _table(_BITRATE_HEADER, rows)
