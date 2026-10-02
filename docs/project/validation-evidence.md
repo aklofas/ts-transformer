@@ -565,9 +565,9 @@ run is not a soak PASS, and a soak is not a ceiling** — the soak evidence
 above proves endurance at a size already chosen; a stress run is what
 chooses that size. See [`benchmarks.md`](/docs/project/benchmarks.md) for the verdict
 definitions, how to read a ceiling, and the measured results once a run
-has landed. Archives from each run are kept outside this repo under a
-`soak-archives/stress-<date>/` directory: a results file, a provenance
-file, and one subdirectory per sweep step holding that step's raw logs.
+has landed. Archives from each run — a results file, a provenance file,
+and one subdirectory per sweep step holding that step's raw logs — are
+retained offline by the maintainer.
 
 ## Reading `expectations.toml`
 

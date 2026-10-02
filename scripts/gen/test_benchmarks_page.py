@@ -52,6 +52,18 @@ class Render(unittest.TestCase):
             self.assertRegex(sub, rf"\|\s*{step['decl']['streams']}\s*\|")
         self.assertIn("Ceiling:", sub)
 
+    def test_stream_table_cpu_column_is_cores_per_stream(self):
+        # The column is cpu_fraction_per_stream converted to cores by
+        # multiplying by the step's vCPU count (I2) — not the raw fraction
+        # of the whole host.
+        r, p = load()
+        md = bp.render(r, p)
+        srt = next(a for a in r["sweep"] if a["transport"] == "srt" and a["axis"] == "streams")
+        sub = subsection(md, "Stream scaling", "SRT")
+        step = next(s for s in srt["steps"] if s["decl"]["streams"] == 2)
+        expected_cores = f"{step['cpu_fraction_per_stream'] * step['decl']['vcpus']:.3f}"
+        self.assertRegex(sub, rf"\|\s*2\s*\|\s*{re.escape(expected_cores)}\s*\|")
+
     def test_forced_fail_step_renders_as_fail_with_its_verdict(self):
         r, p = load()
         md = bp.render(r, p)
