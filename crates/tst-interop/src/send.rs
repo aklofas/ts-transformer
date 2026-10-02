@@ -141,7 +141,7 @@ pub fn send_over_transport(
     corrupt: Option<(CorruptConfig, PathBuf)>,
     managed_stats: Option<&ManagedStatsHandle>,
 ) -> Result<CellMetrics, String> {
-    let cfg = mux_setup::build_config(p);
+    let cfg = mux_setup::build_config(p, au_sizes);
     let (teeing, tap) = Teeing::new(transport);
     // Held past the `MuxSender` that owns the tap itself: the tap's
     // counters live behind an `Arc`, which is the only way to read them

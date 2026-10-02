@@ -54,7 +54,7 @@ pub fn run(
     klv_seed: u64,
     au_sizes: AuSizeMode,
 ) -> io::Result<()> {
-    let cfg = mux_setup::build_config(p);
+    let cfg = mux_setup::build_config(p, au_sizes);
     let mut mux = Muxer::new(cfg).expect("mux_setup::build_config always returns a valid config");
     // Handles must come from THIS muxer, not a throwaway one built from a
     // cloned config elsewhere — see mux_setup's doc comment on why

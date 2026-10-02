@@ -1346,6 +1346,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Testing
 
+- **Tooling: `tst-interop` sizes the muxer's outbound buffer from the AU
+  scale.** `MuxerConfig::buffer_packets` defaults to 10 000 TS packets
+  (≈ 1.8 MB of payload) and a push larger than the buffer fails atomically
+  (`MuxError::BufferFull`), so at `--au-scale ≥ 35` a single realistic
+  keyframe could never be sent: stress run 2 (2026-10-02) ended every
+  bitrate axis at scale 64 with the sender exiting on its FIRST frame. The
+  harness's `MuxerConfig` now takes `max(10 000, 2 × ⌈largest AU / 184⌉)`
+  packets (`fixtures::max_video_au_bytes`, `mux_setup::buffer_packets_for`);
+  scale 1 keeps the default, so every soak and every run-1/run-2 step is
+  configured exactly as before. The library's error text ("drain via pull
+  and retry") is still misleading for an oversize AU — a rider.
+
 - **CI: macOS legs moved from `macos-14` to `macos-15`.** GitHub retires the
   macOS 14 runner image on 2026-11-02, with brownouts from 2026-10-05 during
   which `macos-14` jobs fail outright. `ci.yml` (the gating macos-arm64
