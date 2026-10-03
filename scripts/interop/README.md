@@ -877,7 +877,13 @@ The sweep's proxies relay a clean link with zero loss, jitter, delay and
 reorder. For each transport, the sweep runs two ladders:
 
 - **Streams axis.** N streams at `--au-scale 1`, with N from
-  `--stream-ladder` (default `1,2,4,8,16,32,64,128`).
+  `--stream-ladder` (default `1,2,4,8,16,32,64,128,256,512,1024`; 128 was
+  never a ceiling in runs 1–3). A streams step the box's memory cannot hold
+  is skipped rather than run: when N × the previous passing step's
+  per-stream RSS × `STEP_MEM_HEADROOM` (1.25) exceeds `HOLD_MEM_BUDGET` ×
+  MemTotal, the step is recorded as a failed rung with the single verdict
+  `memory_budget`, the axis ends there, and `report stress` lists the
+  ceiling as a box limit rather than a transport verdict.
 - **Bitrate axis.** One stream at `--au-scale F`, with F from
   `--scale-ladder` (default `1,2,4,8,16,32,64`). F is capped at 78, the
   largest scale whose keyframe still fits the receiver's 4 MiB PES cap.
@@ -896,7 +902,13 @@ when unset:
 
 A step that `report step` cannot judge, while a worker exited nonzero or the
 step timed out, counts as overloaded. It fails with `step_unjudgeable` and
-stops the axis instead of aborting the run.
+stops the axis instead of aborting the run. The RIST sender's RSS slope is
+recorded, not gated, in sweep steps (`RSS_SLOPE_UNGATED`, default
+`rist/send`: librist settles over about an hour, longer than a step); the
+hold gates it. UDP receivers and their proxies get a socket buffer sized to
+the step's largest keyframe burst (`UDP_RCVBUF_BURST_FACTOR`, default 2×)
+whenever the kernel default could not hold it; the pre-flight refuses a run
+that `net.core.rmem_max` would clamp.
 
 ### The hold
 
@@ -904,8 +916,15 @@ After the sweep, every transport runs together for `--hold-hours`, 24 h by
 default. Each transport holds 70% of its streams ceiling, rounded down and at
 least one stream. The ceiling is the highest streams step that passed. If
 the sweep's per-stream CPU cost predicts more than 70% of the box for the
-total, every count is scaled down by the same factor. A transport with no
-passing streams step refuses the hold, and the run exits 1.
+total, every count is scaled down by the same factor (`cpu_scale_factor`);
+then likewise for memory: the per-stream RSS each transport showed at its
+ceiling step, times `HOLD_MEM_HEADROOM` (2.5), summed over the hold, must
+stay under `HOLD_MEM_BUDGET` (0.70) × MemTotal, or every count is scaled
+down by the same `mem_scale_factor`. Both factors and the figures are in
+`hold/hold-config.json`. A transport with no passing streams step is
+excluded from the hold (declared in `excluded_transports`, listed as a
+limitation) and the hold runs on the rest; the run still exits 1. Only when
+no transport has a ceiling is the hold refused.
 
 Every SRT and RIST hold proxy runs its own seeded impairment schedule. UDP
 proxies run the sweep's clean link: raw UDP has no loss recovery and nothing
@@ -922,9 +941,12 @@ it could not be judged. A restart that falls within an outage's guard band is
 refused before anything launches, with exit 2. The band runs from one outage
 length plus 60 s before the restart to 120 s after it.
 
-`--dry-run` validates everything and prints the step list and the hold's
-restart schedule without building or launching anything. The test-only flags
-`--dry-run-ceilings` and `--dry-run-cpu` also preview the hold sizing:
+`--dry-run` validates everything and prints the step list, the UDP
+receive-buffer rule per scale and the hold's restart schedule without
+building or launching anything. The test-only flags `--dry-run-ceilings`
+and `--dry-run-cpu` also preview the hold sizing, `--dry-run-rss srt=MB,...`
+adds its memory step, and `DRY_RUN_MEM_TOTAL_KB=N` (env; `--dry-run` or
+`--smoke` only) stands in another box's MemTotal:
 
 ```bash
 SRT_RECONNECT_MODE=background RSS_SLOPE_THRESHOLD_KB_PER_HOUR=1024 \
@@ -934,7 +956,8 @@ SRT_RECONNECT_MODE=background RSS_SLOPE_THRESHOLD_KB_PER_HOUR=1024 \
 ```bash
 SRT_RECONNECT_MODE=background RSS_SLOPE_THRESHOLD_KB_PER_HOUR=1024 \
   bash scripts/interop/stress.sh --outdir ~/stress-x --seed 1 --dry-run \
-  --dry-run-ceilings srt=16,rist=8,udp=64,tcp=64 --dry-run-cpu srt=0.05,rist=0.04,udp=0.01,tcp=0.01
+  --dry-run-ceilings srt=16,rist=8,udp=64,tcp=64 --dry-run-cpu srt=0.05,rist=0.04,udp=0.01,tcp=0.01 \
+  --dry-run-rss srt=27,rist=27,udp=22,tcp=16
 ```
 
 A real run must be launched detached, for the reason `soak.sh`'s header
