@@ -1345,6 +1345,24 @@ pub struct HoldDeclaration {
     /// one such transport refused the hold for all). Never in `n_hold`.
     #[serde(default)]
     pub excluded_transports: Vec<String>,
+    /// The memory rule's scale-down (1.0 = none): stress.sh since
+    /// 2026-10-03 keeps `Σ n_t × rss_kb_per_stream_t × headroom` under a
+    /// fraction of MemTotal, after the CPU rule — run 2's hold (356 streams,
+    /// 979 processes on 16 GiB) was OOM-killed 190 s in without it. Older
+    /// declarations read as 1.0 with the figures absent.
+    #[serde(default = "one")]
+    pub mem_scale_factor: f64,
+    #[serde(default)]
+    pub predicted_mem_kb: Option<u64>,
+    #[serde(default)]
+    pub mem_budget_kb: Option<u64>,
+    /// Per-stream RSS (KB) each held transport showed at its ceiling step.
+    #[serde(default)]
+    pub rss_kb_per_stream: BTreeMap<String, u64>,
+}
+
+fn one() -> f64 {
+    1.0
 }
 
 /// The hold step's own judged results, plus the sizing verdicts that
@@ -1968,6 +1986,22 @@ pub fn build_stress_results(sweep: Vec<AxisResult>, hold: Option<HoldResults>) -
                 )),
                 (true, false, _) => {}
             }
+        }
+        // A hold scaled down for memory still ran at the sizing rule's
+        // ceilings-fraction minus that factor; the page must say so.
+        if h.decl.mem_scale_factor < 1.0 {
+            limitations.push(format!(
+                "hold scaled to {:.0}% by memory: predicted {} MB vs budget {} MB (n_hold {})",
+                h.decl.mem_scale_factor * 100.0,
+                h.decl.predicted_mem_kb.map_or(0, |k| k / 1024),
+                h.decl.mem_budget_kb.map_or(0, |k| k / 1024),
+                h.decl
+                    .n_hold
+                    .iter()
+                    .map(|(t, n)| format!("{t}={n}"))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            ));
         }
         let pass = problems.is_empty();
         h.hold_verdicts.push(StepVerdict {
@@ -2920,6 +2954,64 @@ mod tests {
         assert!(l.contains("step 1") && l.contains("step 2"), "{l}");
     }
 
+    /// A hold the memory rule scaled down is a valid, smaller hold — the
+    /// sizing verdict passes (n_hold is below the ceilings fraction) and
+    /// the run carries a limitation naming the factor and the figures. A
+    /// pre-2026-10-03 declaration without the fields reads as unscaled.
+    #[test]
+    fn a_memory_scaled_hold_is_a_limitation_not_a_failure() {
+        let steps = vec![step_result(128, Axis::Streams, true, &[])];
+        let axis = AxisResult {
+            transport: "srt".into(),
+            axis: Axis::Streams,
+            ceiling: Some(128),
+            first_fail: None,
+            first_fail_verdicts: vec![],
+            steps,
+        };
+        let hold = HoldResults {
+            decl: HoldDeclaration {
+                n_hold: [("srt".to_string(), 48)].into(),
+                ceilings_declared: [("srt".to_string(), 128)].into(),
+                cpu_scale_factor: 1.0,
+                excluded_transports: vec![],
+                mem_scale_factor: 0.547,
+                predicted_mem_kb: Some(20_573_184),
+                mem_budget_kb: Some(11_253_916),
+                rss_kb_per_stream: [("srt".to_string(), 26_931)].into(),
+            },
+            step: step_result(48, Axis::Hold, true, &[]),
+            hold_verdicts: vec![],
+            pass: true,
+        };
+        let r = build_stress_results(vec![axis], Some(hold));
+        let sizing = r
+            .hold
+            .as_ref()
+            .unwrap()
+            .hold_verdicts
+            .iter()
+            .find(|v| v.name == "hold_sizing_declared")
+            .unwrap();
+        assert!(sizing.pass, "{}", sizing.detail);
+        let l = r
+            .limitations
+            .iter()
+            .find(|l| l.starts_with("hold scaled to 55% by memory"))
+            .unwrap_or_else(|| panic!("{:?}", r.limitations));
+        assert!(
+            l.contains("20091 MB") && l.contains("10990 MB") && l.contains("srt=48"),
+            "{l}"
+        );
+
+        let old: HoldDeclaration = serde_json::from_str(
+            r#"{"n_hold":{"srt":7},"ceilings_declared":{"srt":8},"cpu_scale_factor":1.0}"#,
+        )
+        .unwrap();
+        assert_eq!(old.mem_scale_factor, 1.0);
+        assert!(old.predicted_mem_kb.is_none() && old.rss_kb_per_stream.is_empty());
+    }
+
     #[test]
     fn hold_sizing_must_match_the_sweep() {
         let steps = vec![
@@ -2940,6 +3032,10 @@ mod tests {
                 ceilings_declared: [("srt".to_string(), 8)].into(),
                 cpu_scale_factor: 1.0,
                 excluded_transports: vec![],
+                mem_scale_factor: 1.0,
+                predicted_mem_kb: None,
+                mem_budget_kb: None,
+                rss_kb_per_stream: BTreeMap::new(),
             },
             step: step_result(7, Axis::Hold, true, &[]),
             hold_verdicts: vec![],
@@ -2999,6 +3095,10 @@ mod tests {
                 ceilings_declared: [("srt".to_string(), 8), ("rist".to_string(), 0)].into(),
                 cpu_scale_factor: 1.0,
                 excluded_transports: vec!["rist".into()],
+                mem_scale_factor: 1.0,
+                predicted_mem_kb: None,
+                mem_budget_kb: None,
+                rss_kb_per_stream: BTreeMap::new(),
             },
             step: step_result(5, Axis::Hold, true, &[]),
             hold_verdicts: vec![],
@@ -3689,6 +3789,10 @@ send: heartbeat elapsed_s=180 video_aus=5400 keyframes=180 klv_records=1800 audi
             ceilings_declared: [("srt".to_string(), 2)].into(),
             cpu_scale_factor: 1.0,
             excluded_transports: vec![],
+            mem_scale_factor: 1.0,
+            predicted_mem_kb: None,
+            mem_budget_kb: None,
+            rss_kb_per_stream: BTreeMap::new(),
         };
         write(
             dir,
@@ -4088,6 +4192,10 @@ send: heartbeat elapsed_s=180 video_aus=5400 keyframes=180 klv_records=1800 audi
                 ceilings_declared: [("tcp".to_string(), 1)].into(),
                 cpu_scale_factor: 1.0,
                 excluded_transports: vec![],
+                mem_scale_factor: 1.0,
+                predicted_mem_kb: None,
+                mem_budget_kb: None,
+                rss_kb_per_stream: BTreeMap::new(),
             },
             step: step_result(1, Axis::Hold, true, &[]),
             hold_verdicts: vec![],
