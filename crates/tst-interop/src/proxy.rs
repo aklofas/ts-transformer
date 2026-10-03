@@ -444,11 +444,30 @@ pub fn run(
     run_seconds: Option<u64>,
     on_bound: Option<Box<dyn FnOnce(SocketAddr) + Send>>,
     stop: Option<Arc<AtomicBool>>,
+    rcvbuf: Option<usize>,
 ) -> Result<ProxyStats, String> {
     let socket = UdpSocket::bind(listen).map_err(|e| format!("proxy bind {listen}: {e}"))?;
     socket
         .set_read_timeout(Some(RECV_POLL))
         .map_err(|e| format!("proxy set_read_timeout: {e}"))?;
+    // The proxy's own receive socket is the first hop a sender's burst
+    // lands on: a UDP sender emits a whole AU per push, and the kernel
+    // default buffer (~208 KiB) holds about half its own value in payload,
+    // so a keyframe burst of a few hundred KB overflows HERE before the
+    // receiver ever sees it. stress.sh sizes this from the step's largest
+    // keyframe (the same value it gives the receiver's `?rcvbuf=`). The
+    // kernel clamps a request above net.core.rmem_max silently; the
+    // caller checks that cap, so the applied size is read back and
+    // reported rather than re-checked here.
+    if let Some(n) = rcvbuf {
+        let sock = socket2::SockRef::from(&socket);
+        sock.set_recv_buffer_size(n)
+            .map_err(|e| format!("proxy set_recv_buffer_size({n}): {e}"))?;
+        let applied = sock
+            .recv_buffer_size()
+            .map_err(|e| format!("proxy recv_buffer_size: {e}"))?;
+        eprintln!("proxy: rcvbuf requested={n} applied={applied}");
+    }
     let bound_addr = socket
         .local_addr()
         .map_err(|e| format!("proxy local_addr: {e}"))?;

@@ -137,10 +137,11 @@
 #                                   same rule and reasoning as soak.sh
 #   RSS_SLOPE_THRESHOLD_KB_PER_HOUR REQUIRED, > 0 (exit 2 if unset) — `report step`
 #                                   has no default for it on purpose
-#   UDP_RCVBUF_BURST_FACTOR=2       UDP receivers: when a step's largest keyframe burst
-#                                   (53 248 B x au_scale, as TS packets) would not fit the
-#                                   kernel's default socket buffer (net.core.rmem_default /
-#                                   2), the receiver URL gets ?rcvbuf=<factor x burst>; the
+#   UDP_RCVBUF_BURST_FACTOR=2       UDP receivers AND their proxies: when a step's largest
+#                                   keyframe burst (53 248 B x au_scale, as TS packets) would
+#                                   not fit the kernel's default socket buffer
+#                                   (net.core.rmem_default / 2), the receiver URL gets
+#                                   ?rcvbuf=<factor x burst> and the proxy --rcvbuf; the
 #                                   pre-flight refuses a real run whose largest need exceeds
 #                                   net.core.rmem_max (the kernel clamps silently). Run 2
 #                                   lost udp/bitrate/4 to exactly that overflow (R2-F2).
@@ -321,13 +322,14 @@ keyframe_burst_bytes() {
   echo $(((au + 183) / 184 * 188))
 }
 
-# udp_rcvbuf_for <scale> — the ?rcvbuf= a UDP receiver gets at this scale,
-# or empty when the kernel default already holds the burst (or the rule is
-# off). A UDP sender emits a whole AU per push — a real encoder does the
-# same — so the receiver's socket buffer must absorb one keyframe burst
-# (~165 datagrams at scale 4) between two reads; the default (rmem_default,
-# ~208 KiB) holds about half its own value in payload (skb overhead), which
-# run 2 overran at scale 4 (R2-F2: 509 lost datagrams, verdict failed).
+# udp_rcvbuf_for <scale> — the receive-socket buffer a UDP receiver (URL
+# ?rcvbuf=) and its proxy (--rcvbuf) get at this scale, or empty when the
+# kernel default already holds the burst (or the rule is off). A UDP sender
+# emits a whole AU per push — a real encoder does the same — so each hop's
+# socket buffer must absorb one keyframe burst (~165 datagrams at scale 4)
+# between two reads; the default (rmem_default, ~208 KiB) holds about half
+# its own value in payload (skb overhead), which run 2 overran at scale 4
+# (R2-F2: 509 lost datagrams, verdict failed).
 udp_rcvbuf_for() {
   local burst
   burst=$(keyframe_burst_bytes "$1")
@@ -1003,8 +1005,15 @@ launch_stream() {
       if [[ "$outage" != "-" && "$transport" == "srt" ]]; then
         outage_args=(--outage "$outage")
       fi
+      # The proxy's receive socket is the first hop the sender's burst lands
+      # on; give it the same buffer the receiver gets (see udp_rcvbuf_for).
+      local -a rcvbuf_args=()
+      if [[ "$transport" == udp ]]; then
+        rcvbuf=$(udp_rcvbuf_for "$scale")
+        [[ -z "$rcvbuf" ]] || rcvbuf_args=(--rcvbuf "$rcvbuf")
+      fi
       "$BIN" proxy --listen 127.0.0.1:0 --forward "127.0.0.1:$port" \
-        "${PROXY_IMPAIR_ARGS[@]}" --seed "${PROXY_SEED:-$SEED}" "${outage_args[@]}" \
+        "${PROXY_IMPAIR_ARGS[@]}" --seed "${PROXY_SEED:-$SEED}" "${outage_args[@]}" "${rcvbuf_args[@]}" \
         --stats-json "$stream_dir/proxy-stats.json" \
         --run-seconds "$((seconds + PROXY_EXTRA_S + PROXY_END_SLACK_S))" \
         >"$logs/$leg-proxy.stdout" 2>"$logs/$leg-proxy.log" &

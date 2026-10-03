@@ -1363,15 +1363,17 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Testing
 
-- **Tooling: `stress.sh` sizes UDP receivers' socket buffers from the step's
-  keyframe burst.** A UDP sender emits a whole AU per push (as a real encoder
+- **Tooling: `stress.sh` sizes UDP receivers' and proxies' socket buffers from
+  the step's keyframe burst.** A UDP sender emits a whole AU per push (as a real encoder
   does), so the receiver's socket buffer must absorb one keyframe burst
   between reads; the kernel default (`net.core.rmem_default`, ~208 KiB)
   holds about half its own value in payload and overflowed at `--au-scale 4`
   in stress run 2 (`udp/bitrate/4`: 509 datagrams lost on a clean loopback,
   verdict failed). When a step's largest burst (53 248 B × scale, as TS
   packets) would not fit, the UDP receiver URL now gets
-  `?rcvbuf=<UDP_RCVBUF_BURST_FACTOR (2) × burst>`; scale 1 never qualifies,
+  `?rcvbuf=<UDP_RCVBUF_BURST_FACTOR (2) × burst>` and the UDP proxy (the
+  first hop the burst lands on) the same value through a new
+  `tst-interop proxy --rcvbuf BYTES`; scale 1 never qualifies,
   so streams-axis steps are configured exactly as before. The pre-flight
   refuses a real run whose largest need exceeds `net.core.rmem_max` (the
   kernel clamps `SO_RCVBUF` silently) and prints the `sysctl` to run;

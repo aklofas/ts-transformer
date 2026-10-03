@@ -887,7 +887,10 @@ fn run_verify(args: &[String]) -> ! {
 /// `proxy --listen ADDR --forward ADDR [--loss PCT] [--dup PCT]
 /// [--reorder PCT,HOLD_MS] [--jitter MS] [--delay MS] [--seed N]
 /// [--outage period=DUR,dur=DUR] [--schedule seed=N,phases=K,phase_s=DUR]
-/// [--stats-json PATH] [--run-seconds N]`
+/// [--stats-json PATH] [--run-seconds N] [--rcvbuf BYTES]`
+///
+/// `--rcvbuf` sizes the proxy's own receive socket (`SO_RCVBUF`; the kernel
+/// clamps above `net.core.rmem_max` silently — the caller checks the cap).
 ///
 /// `--delay` is a constant base delay applied to every non-dropped
 /// packet (a link's one-way WAN latency), on top of which `--jitter`
@@ -926,6 +929,7 @@ fn run_proxy(args: &[String]) -> ! {
     let mut outage_period_s: Option<u64> = None;
     let mut outage_dur_s = 0u64;
     let mut stats_json: Option<PathBuf> = None;
+    let mut rcvbuf: Option<usize> = None;
     let mut run_seconds: Option<u64> = None;
     let mut schedule: Option<(u64, u32, u64)> = None;
     // Which of the four per-phase-overridden impairment flags were
@@ -1038,6 +1042,14 @@ fn run_proxy(args: &[String]) -> ! {
                 );
                 i += 2;
             }
+            "--rcvbuf" => {
+                let v = require_value(args, i, "proxy: --rcvbuf");
+                rcvbuf = Some(v.parse::<usize>().unwrap_or_else(|_| {
+                    eprintln!("proxy: --rcvbuf must be a byte count, got '{v}'");
+                    std::process::exit(2);
+                }));
+                i += 2;
+            }
             "--run-seconds" => {
                 run_seconds = Some(
                     args.get(i + 1)
@@ -1095,6 +1107,7 @@ fn run_proxy(args: &[String]) -> ! {
         run_seconds,
         None,
         None,
+        rcvbuf,
     ) {
         Ok(stats) => {
             eprintln!(
