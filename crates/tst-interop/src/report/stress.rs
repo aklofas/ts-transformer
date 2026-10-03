@@ -1914,6 +1914,19 @@ pub fn build_stress_results(sweep: Vec<AxisResult>, hold: Option<HoldResults>) -
                 axis_dir_name(axis.axis)
             ));
         }
+        // stress.sh skips a streams step its memory guard predicts the box
+        // cannot hold and records it as a FAILED rung with this one verdict:
+        // the ceiling is then the box's memory, not a transport limit.
+        if axis.first_fail_verdicts == ["memory_budget"] {
+            limitations.push(format!(
+                "{}/{}: ended by the memory budget at {} — the box's memory, not a transport verdict; \
+                 {} is the last load that fit",
+                axis.transport,
+                axis_dir_name(axis.axis),
+                axis.first_fail.map_or("?".to_string(), |n| n.to_string()),
+                axis.ceiling.map_or("no load".to_string(), |c| c.to_string())
+            ));
+        }
         // Verdicts that failed but were declared recorded-not-gated: the
         // rung still counts, and the page must carry the caveat.
         let mut by_verdict: BTreeMap<&str, Vec<u32>> = BTreeMap::new();
@@ -3010,6 +3023,45 @@ mod tests {
         .unwrap();
         assert_eq!(old.mem_scale_factor, 1.0);
         assert!(old.predicted_mem_kb.is_none() && old.rss_kb_per_stream.is_empty());
+    }
+
+    /// A streams axis the memory guard ended is a measured box limit: the
+    /// ceiling stands, the first failing load carries the single verdict
+    /// `memory_budget`, and the run says so as a limitation.
+    #[test]
+    fn a_memory_guarded_axis_is_a_box_limit_limitation() {
+        let steps = vec![
+            step_result(256, Axis::Streams, true, &[]),
+            step_result(512, Axis::Streams, false, &["memory_budget"]),
+        ];
+        let (ceiling, first_fail, verdicts) = ceiling_of(&steps);
+        assert_eq!((ceiling, first_fail), (Some(256), Some(512)));
+        assert_eq!(verdicts, vec!["memory_budget".to_string()]);
+        let r = build_stress_results(
+            vec![AxisResult {
+                transport: "udp".into(),
+                axis: Axis::Streams,
+                steps,
+                ceiling,
+                first_fail,
+                first_fail_verdicts: verdicts,
+            }],
+            None,
+        );
+        assert!(r.overall_pass, "a guarded axis still has a ceiling");
+        let l = r
+            .limitations
+            .iter()
+            .find(|l| l.starts_with("udp/streams: ended by the memory budget at 512"))
+            .unwrap_or_else(|| panic!("{:?}", r.limitations));
+        assert!(l.contains("256 is the last load that fit"), "{l}");
+        assert!(
+            !r.limitations
+                .iter()
+                .any(|l| l.contains("top of the ladder")),
+            "{:?}",
+            r.limitations
+        );
     }
 
     #[test]
