@@ -137,6 +137,15 @@
 #                                   same rule and reasoning as soak.sh
 #   RSS_SLOPE_THRESHOLD_KB_PER_HOUR REQUIRED, > 0 (exit 2 if unset) — `report step`
 #                                   has no default for it on purpose
+#   UDP_RCVBUF_BURST_FACTOR=2       UDP receivers: when a step's largest keyframe burst
+#                                   (53 248 B x au_scale, as TS packets) would not fit the
+#                                   kernel's default socket buffer (net.core.rmem_default /
+#                                   2), the receiver URL gets ?rcvbuf=<factor x burst>; the
+#                                   pre-flight refuses a real run whose largest need exceeds
+#                                   net.core.rmem_max (the kernel clamps silently). Run 2
+#                                   lost udp/bitrate/4 to exactly that overflow (R2-F2).
+#                                   Scale 1 never qualifies, so streams-axis steps are
+#                                   configured as in runs 1-2. 0 = never set rcvbuf.
 #   RSS_SLOPE_UNGATED=rist/send     sweep steps only: comma-separated transport/process
 #                                   whose rss_slope verdict is recorded, not gated
 #                                   (librist's sender settles ~6 MB over its first
@@ -294,6 +303,56 @@ fi
 # Sweep steps only (never passed to `report hold`). `${VAR-default}`, not
 # `:=`: an explicitly EMPTY value means "gate every process".
 RSS_SLOPE_UNGATED=${RSS_SLOPE_UNGATED-rist/send}
+: "${UDP_RCVBUF_BURST_FACTOR:=2}"
+[[ "$UDP_RCVBUF_BURST_FACTOR" =~ ^[0-9]+$ ]] || die "UDP_RCVBUF_BURST_FACTOR must be a non-negative integer, got: $UDP_RCVBUF_BURST_FACTOR"
+
+# The kernel's UDP socket-buffer default and cap (Linux: sysctl). Empty when
+# unreadable (not Linux): the rcvbuf rule then still sets the URL knob but
+# cannot check it, and says so once.
+RMEM_DEFAULT=$(sysctl -n net.core.rmem_default 2>/dev/null || true)
+RMEM_MAX=$(sysctl -n net.core.rmem_max 2>/dev/null || true)
+[[ "$RMEM_DEFAULT" =~ ^[0-9]+$ ]] || RMEM_DEFAULT=""
+[[ "$RMEM_MAX" =~ ^[0-9]+$ ]] || RMEM_MAX=""
+
+# keyframe_burst_bytes <scale> — the largest AU of a step on the wire, in
+# bytes: `fixtures::max_video_au_bytes(scale)` as 188-byte TS packets.
+keyframe_burst_bytes() {
+  local au=$((KEYFRAME_MAX_BYTES * $1 + KEYFRAME_HEADROOM_BYTES))
+  echo $(((au + 183) / 184 * 188))
+}
+
+# udp_rcvbuf_for <scale> — the ?rcvbuf= a UDP receiver gets at this scale,
+# or empty when the kernel default already holds the burst (or the rule is
+# off). A UDP sender emits a whole AU per push — a real encoder does the
+# same — so the receiver's socket buffer must absorb one keyframe burst
+# (~165 datagrams at scale 4) between two reads; the default (rmem_default,
+# ~208 KiB) holds about half its own value in payload (skb overhead), which
+# run 2 overran at scale 4 (R2-F2: 509 lost datagrams, verdict failed).
+udp_rcvbuf_for() {
+  local burst
+  burst=$(keyframe_burst_bytes "$1")
+  [[ "$UDP_RCVBUF_BURST_FACTOR" -gt 0 ]] || return 0
+  if [[ -n "$RMEM_DEFAULT" && $((burst * 2)) -le "$RMEM_DEFAULT" ]]; then
+    return 0
+  fi
+  echo $((burst * UDP_RCVBUF_BURST_FACTOR))
+}
+
+# udp_rcvbuf_max_needed — the largest rcvbuf any swept or held UDP step asks
+# for (empty when none does).
+udp_rcvbuf_max_needed() {
+  local t sc best=""
+  for t in "${TRANSPORTS[@]}"; do
+    [[ "$t" == udp ]] || continue
+    for sc in "${SCALE_LADDER[@]}" 1; do
+      local v
+      v=$(udp_rcvbuf_for "$sc")
+      [[ -n "$v" ]] || continue
+      if [[ -z "$best" || "$v" -gt "$best" ]]; then best=$v; fi
+    done
+  done
+  printf '%s' "$best"
+}
 
 # rss_slope_ungated_json — RSS_SLOPE_UNGATED as a JSON array (empty → []).
 rss_slope_ungated_json() {
@@ -379,6 +438,11 @@ done
 # keyframe (53 248 B) = 78, `fixtures::MAX_AU_SCALE` — `send` refuses
 # more, so refuse it here before anything launches.
 MAX_AU_SCALE=78
+# The largest realistic keyframe payload at scale 1 (`fixtures::
+# REALISTIC_KEY_PAYLOAD.1`) and the slack `fixtures::max_video_au_bytes`
+# adds for slice headers; `udp_rcvbuf_for` scales these.
+KEYFRAME_MAX_BYTES=53248
+KEYFRAME_HEADROOM_BYTES=1024
 STREAM_LADDER=()
 SCALE_LADDER=()
 parse_ladder "$STREAM_LADDER_RAW" 4096 --stream-ladder STREAM_LADDER
@@ -664,7 +728,32 @@ if [[ ${#REFUSED[@]} -gt 0 ]]; then
   printf '  %s\n' "${REFUSED[@]}" >&2
   exit 1
 fi
+# UDP receive-buffer rule: refuse a real run the kernel would silently clamp
+# (setsockopt(SO_RCVBUF) above net.core.rmem_max is capped without an
+# error), because the step would then measure the kernel default, not the
+# transport. --dry-run and --smoke only warn: neither is a measurement.
+UDP_RCVBUF_NEEDED=$(udp_rcvbuf_max_needed)
+if [[ -n "$UDP_RCVBUF_NEEDED" ]]; then
+  if [[ -z "$RMEM_MAX" ]]; then
+    echo "stress.sh: WARNING net.core.rmem_max unreadable — cannot verify the UDP rcvbuf rule (largest need $UDP_RCVBUF_NEEDED bytes)" >&2
+  elif [[ "$UDP_RCVBUF_NEEDED" -gt "$RMEM_MAX" ]]; then
+    msg="UDP rcvbuf rule needs $UDP_RCVBUF_NEEDED bytes at the top of the scale ladder but net.core.rmem_max=$RMEM_MAX would clamp it silently; run \`sudo sysctl -w net.core.rmem_max=$UDP_RCVBUF_NEEDED\` first (or UDP_RCVBUF_BURST_FACTOR=0 to measure the kernel default on purpose)"
+    if [[ "$DRY_RUN" -eq 1 || "$SMOKE" -eq 1 ]]; then
+      echo "stress.sh: WARNING $msg" >&2
+    else
+      die "$msg"
+    fi
+  fi
+fi
 if [[ "$DRY_RUN" -eq 1 ]]; then
+  for t in "${TRANSPORTS[@]}"; do
+    [[ "$t" == udp ]] || continue
+    for sc in 1 "${SCALE_LADDER[@]}"; do
+      v=$(udp_rcvbuf_for "$sc")
+      echo "udp rcvbuf: scale $sc burst $(keyframe_burst_bytes "$sc") -> ${v:-kernel default (rmem_default=${RMEM_DEFAULT:-unknown})}"
+    done | awk '!seen[$0]++'
+    break
+  done
   if [[ -n "$DRY_RUN_CEILINGS_RAW" ]]; then
     size_hold DRY_CEIL DRY_CPU || exit 1
     print_hold_sizing
@@ -789,6 +878,8 @@ jq -n \
   --arg profile "$PROFILE" --arg klv_set "$KLV_SET" --arg corrupt_spec "$CORRUPT_SPEC" \
   --arg srt_reconnect_mode "$SRT_RECONNECT_MODE" \
   --argjson srt_latency_ms "$SRT_LATENCY_MS" --argjson rist_buffer_ms "$RIST_BUFFER_MS" \
+  --argjson udp_rcvbuf_burst_factor "$UDP_RCVBUF_BURST_FACTOR" \
+  --argjson rmem_default "${RMEM_DEFAULT:-null}" --argjson rmem_max "${RMEM_MAX:-null}" \
   --argjson rss "$RSS_SLOPE_THRESHOLD_KB_PER_HOUR" --argjson cpu "$CPU_HEADROOM_MAX" \
   --argjson fd "$FD_DELTA_MAX" --argjson thr "$THREAD_DELTA_MAX" \
   --argjson slack "$DELIVERY_SLACK" --argjson qdf "$QUEUE_DEPTH_FRACTION" \
@@ -805,6 +896,7 @@ jq -n \
     profile: $profile, klv_set: $klv_set, au_sizes: "realistic", corrupt_spec: $corrupt_spec,
     srt_reconnect_mode: $srt_reconnect_mode,
     srt_latency_ms: $srt_latency_ms, rist_buffer_ms: $rist_buffer_ms,
+    udp_rcvbuf: {burst_factor: $udp_rcvbuf_burst_factor, rmem_default: $rmem_default, rmem_max: $rmem_max},
     thresholds: {rss_slope_kb_per_hour: $rss, cpu_headroom_max: $cpu,
                  fd_delta_max: $fd, thread_delta_max: $thr,
                  delivery_slack: $slack, queue_depth_fraction: $qdf,
@@ -871,7 +963,7 @@ launch_stream() {
   local phase=$1 transport=$2 idx=$3 leg=$4 stream_dir=$5 seconds=$6 scale=$7 managed=$8 outage=$9
   local step_dir=${stream_dir%/streams/*}
   local logs=$step_dir/logs pids=$step_dir/pids
-  local port addr recv_url send_url
+  local port addr recv_url send_url rcvbuf
   local -a managed_recv=() managed_send=() outage_args=()
 
   if [[ "$managed" -eq 1 ]]; then
@@ -890,7 +982,11 @@ launch_stream() {
       case "$transport" in
         srt) recv_url="srt://:$port?mode=listener&latency=$SRT_LATENCY_MS" ;;
         rist) recv_url="rist://@0.0.0.0:$port?buffer=$RIST_BUFFER_MS" ;;
-        udp) recv_url="udp://127.0.0.1:$port" ;;
+        udp)
+          recv_url="udp://127.0.0.1:$port"
+          rcvbuf=$(udp_rcvbuf_for "$scale")
+          [[ -z "$rcvbuf" ]] || recv_url+="?rcvbuf=$rcvbuf"
+          ;;
         tcp) recv_url="tcp://127.0.0.1:$port?listen=1" ;;
       esac
       "$BIN" recv --url "$recv_url" --expect "$PROFILE" --seconds "$seconds" \
@@ -1022,11 +1118,12 @@ run_step() {
     --argjson vcpus "$VCPUS" --argjson clk_tck "$CLK_TCK" \
     --argjson sample_cadence_s "$SAMPLE_CADENCE_S" --argjson nominal "$nominal" \
     --argjson managed "$([[ $managed -eq 1 ]] && echo true || echo false)" \
+    --argjson udp_rcvbuf "$([[ "$transport" == udp ]] && udp_rcvbuf_for "$scale" | grep . || echo null)" \
     '{transport: $transport, axis: $axis, streams: $streams, au_scale: $au_scale,
       warmup_s: $warmup_s, hold_s: $hold_s, vcpus: $vcpus, clk_tck: $clk_tck,
       sample_cadence_s: $sample_cadence_s, nominal_mbps_per_stream: $nominal,
       managed: $managed, outage_period_s: null, outage_dur_s: null,
-      restart_period_s: null}' >"$step_dir/config.json"
+      restart_period_s: null, udp_rcvbuf: $udp_rcvbuf}' >"$step_dir/config.json"
   printf 'elapsed_s,leg,process,pid,rss_kb\n' >"$step_dir/rss.csv"
   printf 'elapsed_s,leg,process,pid,utime_ticks,stime_ticks,threads,fds\n' >"$step_dir/proc.csv"
   printf 'elapsed_s,load1,load5,load15,procs_running,mem_available_kb\n' >"$step_dir/host.csv"
