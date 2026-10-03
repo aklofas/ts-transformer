@@ -54,20 +54,38 @@ use tstrans::tcp::{
 // ---------------------------------------------------------------------------
 
 /// Bind a TCP listener on an OS-assigned port, spawn a thread that accepts
-/// and immediately drops the connection, and return the `tcp://127.0.0.1:N`
-/// URL the caller should connect to.
+/// one connection and HOLDS it open for the rest of the test, and return the
+/// `tcp://127.0.0.1:N` URL the caller should connect to — with a short
+/// `connect_timeout` appended so a connect that stalls fails into the
+/// callers' existing "open returned null → skip" arms instead of eating the
+/// per-test budget.
 ///
 /// This lets caller-side tests (`tst_tcp_*_open`) succeed on the first
 /// `connect(2)` without hanging on the three-way handshake.
+///
+/// The peer used to be dropped the instant it was accepted, which made the
+/// client's socket state a race against the accept thread (a RST or FIN could
+/// land anywhere in the test body, including inside `_close`). Holding it for
+/// a bounded window longer than any test here (`PEER_HOLD`) removes the only
+/// nondeterministic interaction these smoke tests had; the thread then drops
+/// it and exits (nextest runs each test in its own process, and a sleeping
+/// thread never blocks a test binary's exit). The one Windows CI sighting of
+/// `tcp_sender_stats_and_reset` hitting the 40 s kill (2026-10-02) had no
+/// visible stall in the test's own calls — connect is capped, close does no
+/// I/O with nothing buffered — so this bounds the test's own worst case and
+/// leaves runner starvation as the only remaining explanation.
 fn accept_one_background(url_template: impl Fn(u16) -> String) -> String {
+    const PEER_HOLD: std::time::Duration = std::time::Duration::from_secs(10);
     let listener = StdTcpListener::bind("127.0.0.1:0").expect("bind ephemeral");
     let port = listener.local_addr().unwrap().port();
     thread::spawn(move || {
-        // Accept one connection and drop it. Ignore errors from the
-        // subsequent close race between the test thread and this thread.
-        let _ = listener.accept();
+        let conn = listener.accept();
+        thread::sleep(PEER_HOLD);
+        drop(conn);
     });
-    url_template(port)
+    let url = url_template(port);
+    let sep = if url.contains('?') { '&' } else { '?' };
+    format!("{url}{sep}connect_timeout=3")
 }
 
 // ---------------------------------------------------------------------------
