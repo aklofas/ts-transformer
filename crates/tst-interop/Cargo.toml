@@ -14,6 +14,7 @@ tst-tcp = { path = "../tst-tcp" }
 tst-rist = { path = "../tst-rist" }
 tst-rtp = { path = "../tst-rtp" }
 tst-hls = { path = "../tst-hls" }
+socket2 = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1" }
 sha2 = "0.10"

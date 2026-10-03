@@ -166,6 +166,7 @@ fn spawn_proxy(
                     let _ = tx.send(addr);
                 })),
                 Some(stop),
+                None,
             )
         })
     };
