@@ -1363,6 +1363,20 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Testing
 
+- **Tooling: `stress.sh`'s hold sizing budgets memory as well as CPU.** The
+  24 h hold took ⌊0.7 × ceiling⌋ streams per transport and scaled that only by
+  predicted CPU; stress run 2 (2026-10-03) therefore launched 356 streams /
+  979 processes on a 16 GiB box, reached 17.3 GB resident in 160 s and was
+  OOM-killed 190 s into the hold. The sizing now also predicts the hold's
+  memory from the per-stream RSS each transport showed at its ceiling step
+  (every process, last sample) times `HOLD_MEM_HEADROOM` (2.5 — the hold's
+  footprint measured ~2× the sweep's), keeps it under `HOLD_MEM_BUDGET`
+  (0.70) × MemTotal, and scales every transport down by the same recorded
+  `mem_scale_factor` when it does not (48 per transport with run 2's figures).
+  `hold-config.json` carries the factor, the predicted and budget figures and
+  `rss_kb_per_stream`; `report stress` lists a scaled hold as a limitation;
+  `--dry-run-rss srt=MB,...` (+ `DRY_RUN_MEM_TOTAL_KB`) previews the rule.
+
 - **Tooling: `stress.sh` sizes UDP receivers' and proxies' socket buffers from
   the step's keyframe burst.** A UDP sender emits a whole AU per push (as a real encoder
   does), so the receiver's socket buffer must absorb one keyframe burst

@@ -64,7 +64,15 @@
 # streams load whose step-results.json passed): n_t = max(1,
 # floor(0.7 x C_t)). If the sweep's per-stream CPU cost predicts more
 # than 70% of the box for the sum, every n_t is scaled down by
-# 0.70/predicted (cpu_scale_factor). A transport with no passing streams
+# 0.70/predicted (cpu_scale_factor). Then the same for MEMORY: the
+# per-stream RSS measured at each transport's ceiling step (sum over its
+# send/proxy/recv processes at the last sample), times HOLD_MEM_HEADROOM
+# (the hold's footprint — impairment proxies, Background gap buffers,
+# 4 transports at once — measured ~2x the sweep's), summed over the hold,
+# must stay under HOLD_MEM_BUDGET x MemTotal, else every n_t is scaled
+# down by the same mem_scale_factor (recorded in hold-config.json). Run 2
+# (2026-10-03) had no memory rule: 356 streams / 979 processes on 16 GiB
+# were OOM-killed 190 s into the hold. A transport with no passing streams
 # step is EXCLUDED from the hold (declared in hold-config.json's
 # excluded_transports, event HOLD-EXCLUDED, a `report stress` limitation;
 # the run still exits 1 because that transport has no ceiling); the hold
@@ -103,7 +111,7 @@
 #             [--stream-ladder 1,2,4,8,16,32,64,128] [--scale-ladder 1,2,4,8,16,32,64]
 #             [--step-warmup-s 60] [--step-hold-s 600] [--hold-hours 24]
 #             [--skip-hold] [--smoke] [--dry-run]
-#             [--dry-run-ceilings srt=C,...] [--dry-run-cpu srt=F,...]
+#             [--dry-run-ceilings srt=C,...] [--dry-run-cpu srt=F,...] [--dry-run-rss srt=MB,...]
 #
 #   --smoke    the end-to-end smoke shape: ladders 1,2 / 1,2, warm-up 15s,
 #              step hold 60s, sampler cadence 5s, hold 0.1h, and the hold
@@ -125,6 +133,11 @@
 #              windows, the collision verdict). Exit codes as a real
 #              run's pre-flight: 2 bad argument/env/schedule, 1 a
 #              refused step.
+#   --dry-run-rss  TEST-ONLY, --dry-run only, optional beside the two below:
+#              stand-in per-stream RSS in MB per transport (`srt=26,...`) so
+#              the memory rule can be previewed; without it the preview
+#              skips the memory step and says so. DRY_RUN_MEM_TOTAL_KB=N
+#              (env, --dry-run only) previews it for another box's MemTotal.
 #   --dry-run-ceilings, --dry-run-cpu  TEST-ONLY, --dry-run only: stand-in
 #              streams ceilings and per-stream CPU fractions, one per
 #              transport, so --dry-run also prints the hold sizing (a
@@ -158,6 +171,13 @@
 #   THREAD_DELTA_MAX=1
 #   DELIVERY_SLACK=0.7
 #   QUEUE_DEPTH_FRACTION=0.9
+#   HOLD_MEM_BUDGET=0.70            hold sizing: predicted hold RSS must stay under this
+#   HOLD_MEM_HEADROOM=2.5             fraction of MemTotal; predicted = sum over held streams
+#                                   of (per-stream RSS at the ceiling step x headroom) —
+#                                   run 2's hold measured ~2x its sweep per-stream RSS
+#                                   before it was OOM-killed, 2.5 leaves room for the gap
+#                                   buffers to fill. Scaled like the CPU rule
+#                                   (mem_scale_factor, recorded).
 #   HOLD_OUTAGE_PERIOD_S=900        hold only: SRT outage every 15 min,
 #   HOLD_OUTAGE_DUR_S=30              30s long,
 #   HOLD_RESTART_PERIOD_S=7200        one SRT receiver restarted every 2h,
@@ -255,6 +275,7 @@ SMOKE=0
 DRY_RUN=0
 DRY_RUN_CEILINGS_RAW=""
 DRY_RUN_CPU_RAW=""
+DRY_RUN_RSS_RAW=""
 
 need_value() { [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || die "$1 requires a value"; }
 
@@ -273,6 +294,7 @@ while [[ $# -gt 0 ]]; do
     --dry-run) DRY_RUN=1; shift ;;
     --dry-run-ceilings) need_value "$@"; DRY_RUN_CEILINGS_RAW=$2; shift 2 ;;
     --dry-run-cpu) need_value "$@"; DRY_RUN_CPU_RAW=$2; shift 2 ;;
+    --dry-run-rss) need_value "$@"; DRY_RUN_RSS_RAW=$2; shift 2 ;;
     -h | --help)
       awk 'NR >= 2 { if ($0 !~ /^#/) exit; print }' "$0" | sed 's/^# \{0,1\}//'
       exit 0
@@ -577,8 +599,8 @@ if [[ "$SKIP_HOLD" -eq 0 && "$HOLD_HAS_SRT" -eq 1 ]]; then
   done
 fi
 
-# The two test-only --dry-run inputs: `t=V,...`, one per transport.
-declare -A DRY_CEIL DRY_CPU
+# The test-only --dry-run inputs: `t=V,...`, one per transport.
+declare -A DRY_CEIL DRY_CPU DRY_RSS
 parse_kv() {
   local raw=$1 kind=$2 flag=$3 kv t v
   local -n kv_out=$4
@@ -608,25 +630,52 @@ if [[ -n "$DRY_RUN_CEILINGS_RAW" || -n "$DRY_RUN_CPU_RAW" ]]; then
     [[ -n "${DRY_CPU[$t]:-}" ]] || die "--dry-run-cpu has no value for transport '$t'"
   done
 fi
+if [[ -n "$DRY_RUN_RSS_RAW" ]]; then
+  [[ -n "$DRY_RUN_CEILINGS_RAW" ]] || die "--dry-run-rss goes with --dry-run-ceilings/--dry-run-cpu"
+  parse_kv "$DRY_RUN_RSS_RAW" dec --dry-run-rss DRY_RSS
+  # MB in, KB inside (what rss.csv carries).
+  for t in "${!DRY_RSS[@]}"; do DRY_RSS[$t]=$(awk -v v="${DRY_RSS[$t]}" 'BEGIN{printf "%d", v * 1024}'); done
+fi
 
 # Hold CPU budget: the sizing keeps the predicted aggregate under this.
 HOLD_CPU_BUDGET=0.70
+# Hold memory budget (fraction of MemTotal) and the headroom multiplier on
+# the sweep's per-stream RSS — see the header's "The hold".
+: "${HOLD_MEM_BUDGET:=0.70}" "${HOLD_MEM_HEADROOM:=2.5}"
+pos_decimal "$HOLD_MEM_BUDGET" HOLD_MEM_BUDGET 1
+pos_decimal "$HOLD_MEM_HEADROOM" HOLD_MEM_HEADROOM
+MEM_TOTAL_KB=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || true)
+[[ "$MEM_TOTAL_KB" =~ ^[0-9]+$ ]] || MEM_TOTAL_KB=""
+# TEST-ONLY, --dry-run only: preview the memory rule for another box's
+# MemTotal (e.g. the 16 GiB stress VM from a 64 GiB dev box).
+if [[ -n "${DRY_RUN_MEM_TOTAL_KB:-}" ]]; then
+  [[ "$DRY_RUN" -eq 1 ]] || die "DRY_RUN_MEM_TOTAL_KB is a --dry-run knob; refusing it on a real run"
+  [[ "$DRY_RUN_MEM_TOTAL_KB" =~ ^[1-9][0-9]*$ ]] || die "DRY_RUN_MEM_TOTAL_KB must be a positive integer (KB), got: $DRY_RUN_MEM_TOTAL_KB"
+  MEM_TOTAL_KB=$DRY_RUN_MEM_TOTAL_KB
+fi
 
-# size_hold <ceilings-assoc> <cpu-fraction-assoc> — the hold sizing rule
-# (see the header): sets HOLD_T (the held transports, in TRANSPORTS
-# order), HOLD_EXCLUDED (those with no passing streams step: ceiling
-# unset or 0), HOLD_N, HOLD_N_UNSCALED, HOLD_PRED_CPU and
-# HOLD_CPU_SCALE_FACTOR. Returns 1, having said so, only when NO
-# transport has a ceiling — one without a ceiling is excluded, not fatal.
+# size_hold <ceilings-assoc> <cpu-fraction-assoc> <rss-kb-per-stream-assoc>
+# — the hold sizing rule (see the header): sets HOLD_T (the held
+# transports, in TRANSPORTS order), HOLD_EXCLUDED (those with no passing
+# streams step: ceiling unset or 0), HOLD_N, HOLD_N_UNSCALED, HOLD_PRED_CPU,
+# HOLD_CPU_SCALE_FACTOR, HOLD_PRED_MEM_KB, HOLD_MEM_BUDGET_KB and
+# HOLD_MEM_SCALE_FACTOR. The memory step is skipped (factor 1.0, said so in
+# HOLD_MEM_NOTE) when MemTotal is unreadable or a held transport has no RSS
+# figure. Returns 1, having said so, only when NO transport has a ceiling
+# — one without a ceiling is excluded, not fatal.
 declare -A HOLD_N
 HOLD_T=()
 HOLD_EXCLUDED=()
 HOLD_N_UNSCALED=""
 HOLD_PRED_CPU=0
 HOLD_CPU_SCALE_FACTOR=1.0
+HOLD_PRED_MEM_KB=0
+HOLD_MEM_BUDGET_KB=0
+HOLD_MEM_SCALE_FACTOR=1.0
+HOLD_MEM_NOTE=""
 size_hold() {
-  local -n sh_ceil=$1 sh_cpu=$2
-  local t n terms=""
+  local -n sh_ceil=$1 sh_cpu=$2 sh_rss=$3
+  local t n terms="" mterms=""
   HOLD_N=()
   HOLD_T=()
   HOLD_EXCLUDED=()
@@ -658,6 +707,32 @@ size_hold() {
   else
     HOLD_CPU_SCALE_FACTOR=1.0
   fi
+
+  # Memory, after CPU: the per-stream RSS each transport showed at its
+  # ceiling step, times the headroom, over the hold's stream counts.
+  HOLD_MEM_SCALE_FACTOR=1.0
+  HOLD_PRED_MEM_KB=0
+  HOLD_MEM_BUDGET_KB=0
+  HOLD_MEM_NOTE=""
+  if [[ -z "$MEM_TOTAL_KB" ]]; then
+    HOLD_MEM_NOTE="memory rule skipped: MemTotal unreadable"
+    return 0
+  fi
+  for t in "${HOLD_T[@]}"; do
+    if [[ -z "${sh_rss[$t]:-}" ]]; then
+      HOLD_MEM_NOTE="memory rule skipped: no per-stream RSS for $t"
+      return 0
+    fi
+    mterms+="${HOLD_N[$t]} ${sh_rss[$t]} "
+  done
+  HOLD_MEM_BUDGET_KB=$(awk -v m="$MEM_TOTAL_KB" -v b="$HOLD_MEM_BUDGET" 'BEGIN{printf "%d", m * b}')
+  HOLD_PRED_MEM_KB=$(awk -v terms="$mterms" -v h="$HOLD_MEM_HEADROOM" 'BEGIN{k = split(terms, a, " "); s = 0; for (i = 1; i < k; i += 2) s += a[i] * a[i + 1]; printf "%d", s * h}')
+  if [[ "$HOLD_PRED_MEM_KB" -gt "$HOLD_MEM_BUDGET_KB" ]]; then
+    HOLD_MEM_SCALE_FACTOR=$(awk -v p="$HOLD_PRED_MEM_KB" -v b="$HOLD_MEM_BUDGET_KB" 'BEGIN{printf "%.6g", b / p}')
+    for t in "${HOLD_T[@]}"; do
+      HOLD_N[$t]=$(awk -v n="${HOLD_N[$t]}" -v f="$HOLD_MEM_SCALE_FACTOR" 'BEGIN{v = int(n * f); if (v < 1) v = 1; print v}')
+    done
+  fi
 }
 
 # print_hold_sizing — the sizing, one fact per line (dry-run and summary).
@@ -671,6 +746,15 @@ print_hold_sizing() {
     echo "predicted_cpu $HOLD_PRED_CPU <= $HOLD_CPU_BUDGET -> cpu_scale_factor 1.0"
   else
     echo "predicted_cpu $HOLD_PRED_CPU > $HOLD_CPU_BUDGET -> cpu_scale_factor $(awk -v f="$HOLD_CPU_SCALE_FACTOR" 'BEGIN{printf "%.3f", f}')"
+  fi
+  if [[ -n "$HOLD_MEM_NOTE" ]]; then
+    echo "$HOLD_MEM_NOTE"
+  elif [[ "$HOLD_MEM_SCALE_FACTOR" == "1.0" ]]; then
+    echo "predicted_mem $((HOLD_PRED_MEM_KB / 1024)) MB (x$HOLD_MEM_HEADROOM) <= budget $((HOLD_MEM_BUDGET_KB / 1024)) MB ($HOLD_MEM_BUDGET x MemTotal) -> mem_scale_factor 1.0"
+  else
+    echo "predicted_mem $((HOLD_PRED_MEM_KB / 1024)) MB (x$HOLD_MEM_HEADROOM) > budget $((HOLD_MEM_BUDGET_KB / 1024)) MB ($HOLD_MEM_BUDGET x MemTotal) -> mem_scale_factor $(awk -v f="$HOLD_MEM_SCALE_FACTOR" 'BEGIN{printf "%.3f", f}')"
+  fi
+  if [[ "$HOLD_CPU_SCALE_FACTOR" != "1.0" || "$HOLD_MEM_SCALE_FACTOR" != "1.0" ]]; then
     for t in "${HOLD_T[@]}"; do line+="$t=${HOLD_N[$t]} "; done
     echo "n_hold ${line% }"
   fi
@@ -757,7 +841,7 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
     break
   done
   if [[ -n "$DRY_RUN_CEILINGS_RAW" ]]; then
-    size_hold DRY_CEIL DRY_CPU || exit 1
+    size_hold DRY_CEIL DRY_CPU DRY_RSS || exit 1
     print_hold_sizing
     # A real run with an excluded transport exits 1 (no ceiling for it).
     [[ ${#HOLD_EXCLUDED[@]} -eq 0 ]] || exit 1
@@ -1360,9 +1444,9 @@ restart_srt0() {
 # returns (abort_run).
 run_hold() {
   local hold_dir="$OUTDIR/hold"
-  local t k i n ceil last cpu leg managed total now next r_at r_idx=0 role rc timed_out launch_end
+  local t k i n ceil last cpu rss leg managed total now next r_at r_idx=0 role rc timed_out launch_end
   local outage="period=${HOLD_OUTAGE_PERIOD_S}s,dur=${HOLD_OUTAGE_DUR_S}s"
-  local -A ceil_map=() cpu_map=()
+  local -A ceil_map=() cpu_map=() rss_map=()
   local -a s_t=() s_leg=() roles=() failing=()
   CURRENT_STEP=hold
 
@@ -1380,8 +1464,13 @@ run_hold() {
     [[ "$cpu" =~ ^[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?$ ]] ||
       abort_run "sweep/$t/streams/$ceil/step-results.json: cpu_fraction_per_stream is not a number: $cpu"
     cpu_map[$t]=$cpu
+    # Per-stream RSS at the ceiling step: every process of every stream at
+    # the LAST sample (the step's steady state), divided by the stream count.
+    rss=$(awk -F, -v n="$ceil" 'NR > 1 {last = $1; r[$1] += $5} END {if (last == "") print ""; else printf "%d", r[last] / n}' "$OUTDIR/sweep/$t/streams/$ceil/rss.csv")
+    [[ "$rss" =~ ^[0-9]+$ ]] || abort_run "sweep/$t/streams/$ceil/rss.csv: no per-stream RSS could be read"
+    rss_map[$t]=$rss
   done
-  if ! size_hold ceil_map cpu_map; then
+  if ! size_hold ceil_map cpu_map rss_map; then
     event "HOLD-REFUSED no transport has a passing streams step (see stderr)"
     HOLD_REFUSED=1
     CURRENT_STEP=""
@@ -1414,9 +1503,12 @@ run_hold() {
   # Exactly the keys `report hold` reads (HoldDeclaration): n_hold over
   # the HELD transports, ceilings over every swept one (0 = none).
   jq -n --argjson n "$(assoc_json_over HOLD_N HOLD_T)" --argjson c "$(assoc_json ceil_map)" \
-    --argjson f "$HOLD_CPU_SCALE_FACTOR" \
+    --argjson f "$HOLD_CPU_SCALE_FACTOR" --argjson mf "$HOLD_MEM_SCALE_FACTOR" \
+    --argjson pm "$HOLD_PRED_MEM_KB" --argjson mb "$HOLD_MEM_BUDGET_KB" \
+    --argjson rss "$(assoc_json_over rss_map HOLD_T)" \
     --argjson x "$(printf '%s\n' "${HOLD_EXCLUDED[@]}" | jq -Rn '[inputs | select(length > 0)]')" \
-    '{n_hold: $n, ceilings_declared: $c, cpu_scale_factor: $f, excluded_transports: $x}' >"$hold_dir/hold-config.json"
+    '{n_hold: $n, ceilings_declared: $c, cpu_scale_factor: $f, excluded_transports: $x,
+      mem_scale_factor: $mf, predicted_mem_kb: $pm, mem_budget_kb: $mb, rss_kb_per_stream: $rss}' >"$hold_dir/hold-config.json"
   local srt_json restart_json
   srt_json=$([[ $HOLD_HAS_SRT -eq 1 ]] && echo true || echo false)
   restart_json=$([[ ${#RESTART_INSTANTS[@]} -gt 0 ]] && echo true || echo false)
@@ -1464,7 +1556,7 @@ run_hold() {
   PIDS=()
   STREAM_PORT=()
   USED_PORTS=()
-  event "HOLD-START streams=$total n_hold=$(assoc_json_over HOLD_N HOLD_T | jq -c .) cpu_scale_factor=$HOLD_CPU_SCALE_FACTOR hold_s=$HOLD_S run_s=$HOLD_RUN_S restarts=${#RESTART_INSTANTS[@]}"
+  event "HOLD-START streams=$total n_hold=$(assoc_json_over HOLD_N HOLD_T | jq -c .) cpu_scale_factor=$HOLD_CPU_SCALE_FACTOR mem_scale_factor=$HOLD_MEM_SCALE_FACTOR predicted_mem_kb=$HOLD_PRED_MEM_KB mem_budget_kb=$HOLD_MEM_BUDGET_KB hold_s=$HOLD_S run_s=$HOLD_RUN_S restarts=${#RESTART_INSTANTS[@]}"
   echo "stress: hold — $total stream(s) for ${HOLD_RUN_S}s (${HOLD_WARMUP_S}s warm-up + ${HOLD_S}s)..." >&2
 
   # SRT proxies first, SRT_PROXY_WARMUP_S ahead of the hold clock, so
