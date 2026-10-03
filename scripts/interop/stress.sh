@@ -67,8 +67,9 @@
 # 0.70/predicted (cpu_scale_factor). Then the same for MEMORY: the
 # per-stream RSS measured at each transport's ceiling step (sum over its
 # send/proxy/recv processes at the last sample), times HOLD_MEM_HEADROOM
-# (the hold's footprint — impairment proxies, Background gap buffers,
-# 4 transports at once — measured ~2x the sweep's), summed over the hold,
+# (the hold's footprint over the sweep's: Background gap buffers filling
+# across outages, the per-reconnect RSS steps, 4 transports at once —
+# a 2.5x margin), summed over the hold,
 # must stay under HOLD_MEM_BUDGET x MemTotal, else every n_t is scaled
 # down by the same mem_scale_factor (recorded in hold-config.json). Run 2
 # (2026-10-03) had no memory rule: 356 streams / 979 processes on 16 GiB
@@ -181,10 +182,13 @@
 #   HOLD_MEM_BUDGET=0.70            hold sizing: predicted hold RSS must stay under this
 #   HOLD_MEM_HEADROOM=2.5             fraction of MemTotal; predicted = sum over held streams
 #                                   of (per-stream RSS at the ceiling step x headroom) —
-#                                   run 2's hold measured ~2x its sweep per-stream RSS
-#                                   before it was OOM-killed, 2.5 leaves room for the gap
-#                                   buffers to fill. Scaled like the CPU rule
-#                                   (mem_scale_factor, recorded).
+#                                   margin for what a 10-min sweep step cannot show: gap
+#                                   buffers filling across outages, per-reconnect RSS
+#                                   steps. (Runs 2-3 measured ~2x / ~3x the sweep's
+#                                   per-stream RSS, but that was R3-F1 — the sender
+#                                   materialised its whole --seconds schedule, ~53 MB for
+#                                   24 h — fixed in tst-interop, not a hold effect.)
+#                                   Scaled like the CPU rule (mem_scale_factor, recorded).
 #   HOLD_OUTAGE_PERIOD_S=900        hold only: SRT outage every 15 min,
 #   HOLD_OUTAGE_DUR_S=30              30s long,
 #   HOLD_RESTART_PERIOD_S=7200        one SRT receiver restarted every 2h,

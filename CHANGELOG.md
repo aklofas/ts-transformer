@@ -1363,6 +1363,23 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Testing
 
+- **Tooling: `tst-interop`'s event schedule is lazy — a sender's memory no
+  longer grows with `--seconds`.** `schedule::build_schedule` materialised
+  every video/KLV/audio event of the window up front and sorted it, so a 24 h
+  `send` (`--seconds 86460`) carried ~3.5 M events ≈ 53 MB per process that a
+  660 s stress sweep step never showed: stress run 3's hold (2026-10-03)
+  launched 48 streams per transport predicted from the sweep's ~10 MB senders
+  and found them at ~63 MB each, 12.0 GB used on the box against the hold's
+  own 11.25 GB budget (R3-F1 — the "~2×" that runs 2–3 attributed to the
+  hold's gap buffers was this). The schedule is now a three-way merge
+  iterator over the three cadences (a few counters whatever the window;
+  video before KLV before audio on a shared tick, exactly the former stable
+  sort's order — a test diffs it against the eager reference and another
+  pins the iterator's size), so a sweep step's per-stream RSS now predicts a
+  hold sender's; measured 7 MB for both 660 s and 86 460 s windows. Run 4's
+  hold and step memory guards size from the same figures. `stress.sh`'s
+  `HOLD_MEM_HEADROOM` comment no longer cites the ~2× as a hold effect.
+
 - **Tooling: `stress.sh`'s stream ladder continues to 1024, guarded by memory.**
   128 streams was never a ceiling (runs 1–3 passed it on every transport at
   ≤ 27 % CPU), so the default `--stream-ladder` is now
