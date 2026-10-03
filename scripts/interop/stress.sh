@@ -108,7 +108,7 @@
 # # Usage
 #
 #   stress.sh --outdir DIR --seed N [--transports srt,rist,udp,tcp]
-#             [--stream-ladder 1,2,4,8,16,32,64,128] [--scale-ladder 1,2,4,8,16,32,64]
+#             [--stream-ladder 1,2,4,8,16,32,64,128,256,512,1024] [--scale-ladder 1,2,4,8,16,32,64]
 #             [--step-warmup-s 60] [--step-hold-s 600] [--hold-hours 24]
 #             [--skip-hold] [--smoke] [--dry-run]
 #             [--dry-run-ceilings srt=C,...] [--dry-run-cpu srt=F,...] [--dry-run-rss srt=MB,...]
@@ -137,7 +137,8 @@
 #              stand-in per-stream RSS in MB per transport (`srt=26,...`) so
 #              the memory rule can be previewed; without it the preview
 #              skips the memory step and says so. DRY_RUN_MEM_TOTAL_KB=N
-#              (env, --dry-run only) previews it for another box's MemTotal.
+#              (env, --dry-run or --smoke only) stands in another box's
+#              MemTotal (preview the hold rule; trip the step memory guard).
 #   --dry-run-ceilings, --dry-run-cpu  TEST-ONLY, --dry-run only: stand-in
 #              streams ceilings and per-stream CPU fractions, one per
 #              transport, so --dry-run also prints the hold sizing (a
@@ -171,6 +172,12 @@
 #   THREAD_DELTA_MAX=1
 #   DELIVERY_SLACK=0.7
 #   QUEUE_DEPTH_FRACTION=0.9
+#   STEP_MEM_HEADROOM=1.25          sweep guard: a streams step is SKIPPED (axis ends,
+#                                   failing verdict `memory_budget`, ceiling = last pass) when
+#                                   streams x per-stream RSS of the previous passing step x
+#                                   this headroom exceeds HOLD_MEM_BUDGET x MemTotal — the
+#                                   box's memory limit is reported as such instead of the
+#                                   kernel OOM-killing the step (which would end the RUN).
 #   HOLD_MEM_BUDGET=0.70            hold sizing: predicted hold RSS must stay under this
 #   HOLD_MEM_HEADROOM=2.5             fraction of MemTotal; predicted = sum over held streams
 #                                   of (per-stream RSS at the ceiling step x headroom) —
@@ -313,7 +320,11 @@ if [[ "$SMOKE" -eq 1 ]]; then
   : "${HOLD_OUTAGE_PERIOD_S:=345}" "${HOLD_OUTAGE_DUR_S:=10}"
   : "${HOLD_RESTART_PERIOD_S:=120}" "${HOLD_RESTART_OFFSET_S:=50}"
 else
-  : "${STREAM_LADDER_RAW:=1,2,4,8,16,32,64,128}" "${SCALE_LADDER_RAW:=1,2,4,8,16,32,64}"
+  # 128 was never a ceiling (runs 1–3: every transport passed it at ≤ 27% CPU),
+  # so the ladder continues to 1024 (× 1.7 Mb/s = 1741 Mb/s, under
+  # STRESS_MAX_AGG_MBPS). Memory ends an axis before CPU does on a 16 GiB box
+  # (~27 MB per SRT stream): see the step memory guard in sweep_axis.
+  : "${STREAM_LADDER_RAW:=1,2,4,8,16,32,64,128,256,512,1024}" "${SCALE_LADDER_RAW:=1,2,4,8,16,32,64}"
   : "${STEP_WARMUP_S:=60}" "${STEP_HOLD_S:=600}" "${HOLD_HOURS:=24}"
   SAMPLE_CADENCE_S=30
 fi
@@ -641,15 +652,17 @@ fi
 HOLD_CPU_BUDGET=0.70
 # Hold memory budget (fraction of MemTotal) and the headroom multiplier on
 # the sweep's per-stream RSS — see the header's "The hold".
-: "${HOLD_MEM_BUDGET:=0.70}" "${HOLD_MEM_HEADROOM:=2.5}"
+: "${HOLD_MEM_BUDGET:=0.70}" "${HOLD_MEM_HEADROOM:=2.5}" "${STEP_MEM_HEADROOM:=1.25}"
 pos_decimal "$HOLD_MEM_BUDGET" HOLD_MEM_BUDGET 1
 pos_decimal "$HOLD_MEM_HEADROOM" HOLD_MEM_HEADROOM
+pos_decimal "$STEP_MEM_HEADROOM" STEP_MEM_HEADROOM
 MEM_TOTAL_KB=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || true)
 [[ "$MEM_TOTAL_KB" =~ ^[0-9]+$ ]] || MEM_TOTAL_KB=""
-# TEST-ONLY, --dry-run only: preview the memory rule for another box's
-# MemTotal (e.g. the 16 GiB stress VM from a 64 GiB dev box).
+# TEST-ONLY, --dry-run or --smoke only: stand in another box's MemTotal
+# (preview the hold rule for the 16 GiB stress VM from a 64 GiB dev box, or
+# make a smoke's step memory guard trip on purpose).
 if [[ -n "${DRY_RUN_MEM_TOTAL_KB:-}" ]]; then
-  [[ "$DRY_RUN" -eq 1 ]] || die "DRY_RUN_MEM_TOTAL_KB is a --dry-run knob; refusing it on a real run"
+  [[ "$DRY_RUN" -eq 1 || "$SMOKE" -eq 1 ]] || die "DRY_RUN_MEM_TOTAL_KB is a --dry-run/--smoke knob; refusing it on a real run"
   [[ "$DRY_RUN_MEM_TOTAL_KB" =~ ^[1-9][0-9]*$ ]] || die "DRY_RUN_MEM_TOTAL_KB must be a positive integer (KB), got: $DRY_RUN_MEM_TOTAL_KB"
   MEM_TOTAL_KB=$DRY_RUN_MEM_TOTAL_KB
 fi
@@ -1181,6 +1194,36 @@ any_nonzero_exit() { jq -e 'any(.[]; . != 0)' "$1" >/dev/null 2>&1; }
 # a harness error never returns (abort_run). Called plainly, not as
 # `run_step || rc=$?`, so `set -e` stays in force inside it.
 STEP_RC=0
+# write_step_declaration <step_dir> <transport> <axis> <streams> <scale>
+# <nominal_mbps> <managed 0|1> — the step's config.json (`report step`'s
+# StepDeclaration), written BEFORE launch so a step is judged against what
+# was declared. Also used for a step the memory guard skips, so its
+# fallback verdict document has the declaration `report stress` expects.
+write_step_declaration() {
+  local step_dir=$1 transport=$2 axis=$3 streams=$4 scale=$5 nominal=$6 managed=$7
+  mkdir -p "$step_dir/streams" "$step_dir/logs" "$step_dir/pids"
+  jq -n --arg transport "$transport" --arg axis "$axis" \
+    --argjson streams "$streams" --argjson au_scale "$scale" \
+    --argjson warmup_s "$STEP_WARMUP_S" --argjson hold_s "$STEP_HOLD_S" \
+    --argjson vcpus "$VCPUS" --argjson clk_tck "$CLK_TCK" \
+    --argjson sample_cadence_s "$SAMPLE_CADENCE_S" --argjson nominal "$nominal" \
+    --argjson managed "$([[ $managed -eq 1 ]] && echo true || echo false)" \
+    --argjson udp_rcvbuf "$([[ "$transport" == udp ]] && udp_rcvbuf_for "$scale" | grep . || echo null)" \
+    '{transport: $transport, axis: $axis, streams: $streams, au_scale: $au_scale,
+      warmup_s: $warmup_s, hold_s: $hold_s, vcpus: $vcpus, clk_tck: $clk_tck,
+      sample_cadence_s: $sample_cadence_s, nominal_mbps_per_stream: $nominal,
+      managed: $managed, outage_period_s: null, outage_dur_s: null,
+      restart_period_s: null, udp_rcvbuf: $udp_rcvbuf}' >"$step_dir/config.json"
+}
+
+# step_rss_kb_per_stream <transport> <load> — every process's RSS at the LAST
+# sample of a finished streams step, divided by its stream count; empty when
+# the file has no data row.
+step_rss_kb_per_stream() {
+  awk -F, -v n="$2" 'NR > 1 {last = $1; r[$1] += $5} END {if (last != "") printf "%d", r[last] / n}' \
+    "$OUTDIR/sweep/$1/streams/$2/rss.csv" 2>/dev/null
+}
+
 run_step() {
   local transport=$1 axis=$2 load=$3
   local step_dir="$OUTDIR/sweep/$transport/$axis/$load"
@@ -1204,19 +1247,7 @@ run_step() {
   managed=0
   [[ "$transport" != "srt" ]] || managed=1
 
-  mkdir -p "$step_dir/streams" "$step_dir/logs" "$step_dir/pids"
-  jq -n --arg transport "$transport" --arg axis "$axis" \
-    --argjson streams "$streams" --argjson au_scale "$scale" \
-    --argjson warmup_s "$STEP_WARMUP_S" --argjson hold_s "$STEP_HOLD_S" \
-    --argjson vcpus "$VCPUS" --argjson clk_tck "$CLK_TCK" \
-    --argjson sample_cadence_s "$SAMPLE_CADENCE_S" --argjson nominal "$nominal" \
-    --argjson managed "$([[ $managed -eq 1 ]] && echo true || echo false)" \
-    --argjson udp_rcvbuf "$([[ "$transport" == udp ]] && udp_rcvbuf_for "$scale" | grep . || echo null)" \
-    '{transport: $transport, axis: $axis, streams: $streams, au_scale: $au_scale,
-      warmup_s: $warmup_s, hold_s: $hold_s, vcpus: $vcpus, clk_tck: $clk_tck,
-      sample_cadence_s: $sample_cadence_s, nominal_mbps_per_stream: $nominal,
-      managed: $managed, outage_period_s: null, outage_dur_s: null,
-      restart_period_s: null, udp_rcvbuf: $udp_rcvbuf}' >"$step_dir/config.json"
+  write_step_declaration "$step_dir" "$transport" "$axis" "$streams" "$scale" "$nominal" "$managed"
   printf 'elapsed_s,leg,process,pid,rss_kb\n' >"$step_dir/rss.csv"
   printf 'elapsed_s,leg,process,pid,utime_ticks,stime_ticks,threads,fds\n' >"$step_dir/proc.csv"
   printf 'elapsed_s,load1,load5,load15,procs_running,mem_available_kb\n' >"$step_dir/host.csv"
@@ -1331,10 +1362,54 @@ run_step() {
 # for the hold's sizing (Task 12); `report stress` recomputes the
 # authoritative ceiling from the step results.
 declare -A LAST_PASS
+# step_over_memory_budget <transport> <load> — on the streams axis, with a
+# previous passing step to measure from: predicted = load x that step's
+# per-stream RSS x STEP_MEM_HEADROOM; true (and the figures in
+# STEP_MEM_PREDICTED_KB / STEP_MEM_BUDGET_KB) when it exceeds
+# HOLD_MEM_BUDGET x MemTotal. Per-stream RSS was flat across 1..128 streams
+# in run 2 (SRT 27.0 MB at every count), so the previous step predicts the
+# next one closely; the headroom covers launch-time peaks. Without this a
+# step past the box's memory is OOM-killed mid-sweep, which the fail-fast
+# rule turns into the END OF THE RUN (run 2's hold, 2026-10-03) instead of
+# the axis's ceiling.
+STEP_MEM_PREDICTED_KB=0
+STEP_MEM_BUDGET_KB=0
+STEP_MEM_PER_STREAM_KB=0
+step_over_memory_budget() {
+  local transport=$1 load=$2 prev rss
+  [[ -n "$MEM_TOTAL_KB" ]] || return 1
+  prev=${LAST_PASS[$transport/streams]:-}
+  [[ -n "$prev" ]] || return 1
+  rss=$(step_rss_kb_per_stream "$transport" "$prev")
+  [[ "$rss" =~ ^[0-9]+$ && "$rss" -gt 0 ]] || return 1
+  STEP_MEM_PER_STREAM_KB=$rss
+  STEP_MEM_PREDICTED_KB=$(awk -v n="$load" -v r="$rss" -v h="$STEP_MEM_HEADROOM" 'BEGIN{printf "%d", n * r * h}')
+  STEP_MEM_BUDGET_KB=$(awk -v m="$MEM_TOTAL_KB" -v b="$HOLD_MEM_BUDGET" 'BEGIN{printf "%d", m * b}')
+  [[ "$STEP_MEM_PREDICTED_KB" -gt "$STEP_MEM_BUDGET_KB" ]]
+}
+
+# skip_step_for_memory <transport> <load> — record the step the guard
+# refused as a FAILED rung (verdict `memory_budget`) so `report stress`
+# sees the axis end there: ceiling = the last pass, first_fail = this load.
+skip_step_for_memory() {
+  local transport=$1 load=$2 step_dir="$OUTDIR/sweep/$1/streams/$2" managed=0
+  [[ "$transport" != "srt" ]] || managed=1
+  write_step_declaration "$step_dir" "$transport" streams "$load" 1 "$(per_stream_mbps 1)" "$managed"
+  fallback_step_results "$step_dir" "$CPU_HEADROOM_MAX" "$(rss_slope_ungated_json)" memory_budget >"$step_dir/.step-results.json.tmp"
+  mv -f "$step_dir/.step-results.json.tmp" "$step_dir/step-results.json"
+  event "STEP-SKIPPED step=$transport/streams/$load memory_budget predicted_kb=$STEP_MEM_PREDICTED_KB budget_kb=$STEP_MEM_BUDGET_KB per_stream_kb=$STEP_MEM_PER_STREAM_KB headroom=$STEP_MEM_HEADROOM"
+  echo "stress: $transport/streams/$load would need ~$((STEP_MEM_PREDICTED_KB / 1024)) MB (x$STEP_MEM_HEADROOM) against a budget of $((STEP_MEM_BUDGET_KB / 1024)) MB — skipped, axis stops here (memory_budget)" >&2
+}
+
 sweep_axis() {
   local transport=$1 axis=$2 load
   shift 2
   for load in "$@"; do
+    if [[ "$axis" == streams ]] && step_over_memory_budget "$transport" "$load"; then
+      skip_step_for_memory "$transport" "$load"
+      event "STEP-FAIL step=$transport/$axis/$load failing=[\"memory_budget\"]"
+      break
+    fi
     run_step "$transport" "$axis" "$load"
     if [[ $STEP_RC -eq 0 ]]; then
       LAST_PASS[$transport/$axis]=$load

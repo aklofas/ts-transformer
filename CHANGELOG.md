@@ -1363,6 +1363,20 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Testing
 
+- **Tooling: `stress.sh`'s stream ladder continues to 1024, guarded by memory.**
+  128 streams was never a ceiling (runs 1–3 passed it on every transport at
+  ≤ 27 % CPU), so the default `--stream-ladder` is now
+  `1,2,4,8,16,32,64,128,256,512,1024`. Because memory ends an axis before CPU
+  does on a 16 GiB box (~27 MB per SRT stream, flat across stream counts), a
+  streams step whose predicted memory — streams × the previous passing step's
+  per-stream RSS × `STEP_MEM_HEADROOM` (1.25) — exceeds `HOLD_MEM_BUDGET` ×
+  MemTotal is skipped: recorded as a failed rung with the single verdict
+  `memory_budget` (event `STEP-SKIPPED`), the axis ends, the ceiling is the
+  last load that fit, and `report stress` lists it as a box limit rather than
+  a transport verdict. Without the guard the kernel would OOM-kill the step
+  and the fail-fast rule would end the whole run. `DRY_RUN_MEM_TOTAL_KB` is
+  now also honoured under `--smoke`, so the guard can be tripped on purpose.
+
 - **Tooling: `stress.sh`'s hold sizing budgets memory as well as CPU.** The
   24 h hold took ⌊0.7 × ceiling⌋ streams per transport and scaled that only by
   predicted CPU; stress run 2 (2026-10-03) therefore launched 356 streams /
