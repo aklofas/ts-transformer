@@ -293,6 +293,91 @@ fn tcps_explicit_close_loopback_ends_the_peer_read() {
     }
 }
 
+/// `close()` followed at once by `drop()` — the common shape in every binding
+/// (`with`, `try`, `AutoCloseable`, `tst_*_close` + free) — must still reach
+/// the peer as `close_notify`, even when the peer only gets round to reading
+/// after both have happened.
+///
+/// A TLS 1.3 server sends `NewSessionTicket` records right after the
+/// handshake (rustls: two of them by default). A write-only client never reads
+/// them, so they sit unread in its receive buffer. A socket closed or shut
+/// down with unread receive data is answered by the kernel with RST instead of
+/// FIN (Windows at `shutdown`, Linux at `close`), and a RST can overtake and
+/// purge the `close_notify` we just wrote, so the peer sees a reset
+/// (`BrokenCause::Unspecified`) instead of a clean EOF. Seen twice on the
+/// windows-msvc leg (2026-09-14, 2026-10-02) as
+/// `tcps_explicit_close_loopback_ends_the_peer_read` failing. The fix drains
+/// the already-received records before the alert; this test pins it on the
+/// shape that trips the kernel on every platform (close + drop), with the
+/// peer's read deliberately late so the drop has landed before it looks.
+#[test]
+fn tcps_close_then_drop_loopback_still_reaches_the_peer_as_close_notify() {
+    let (_dir, cert_path, key_path) = gen_dns_only_cert();
+    let ca_path = cert_path.clone();
+
+    let listener = TcpListener::from_url(&format!(
+        "tcps://127.0.0.1:0?listen=1&cert={}&key={}",
+        cert_path.display(),
+        key_path.display(),
+    ))
+    .expect("TLS listener bind");
+    let port = listener.local_addr().expect("local_addr after bind").port();
+
+    let (ready_tx, ready_rx) = mpsc::channel::<()>();
+    let (closed_tx, closed_rx) = mpsc::channel::<()>();
+    let (result_tx, result_rx) = mpsc::channel::<Result<usize, TransportError>>();
+    let srv = thread::spawn(move || {
+        let mut conn = listener.accept_blocking().expect("server accept");
+        let mut buf = [0u8; 4];
+        let n = conn.recv_bytes(&mut buf).expect("server recv ping");
+        assert_eq!(n, 4, "server must see the full 4-byte ping");
+        let _ = ready_tx.send(());
+        // Read only once the client has closed AND dropped, so whatever the
+        // kernel did at close time has already reached this side.
+        let _ = closed_rx.recv_timeout(Duration::from_secs(5));
+        thread::sleep(Duration::from_millis(200));
+        let mut after = [0u8; 16];
+        let _ = result_tx.send(conn.recv_bytes(&mut after));
+    });
+
+    let dial_url = format!("tcps://localhost:{port}?ca={}", ca_path.display());
+    let parsed = TcpUrl::parse(&dial_url).expect("URL parse");
+    let mut client =
+        TcpTransport::connect_with_config(&parsed, &SocketConfig::default()).expect("tcps connect");
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        match client.send_bytes(b"ping") {
+            Ok(()) => break,
+            Err(TransportError::Backpressure { .. }) if std::time::Instant::now() < deadline => {
+                continue;
+            }
+            Err(e) => panic!("client send: {e:?}"),
+        }
+    }
+    ready_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("server did not complete the TLS handshake");
+    // Give the server's post-handshake records time to land in the client's
+    // receive buffer: that unread data is the trigger under test.
+    thread::sleep(Duration::from_millis(100));
+
+    Transport::close(&mut client);
+    drop(client);
+    let _ = closed_tx.send(());
+
+    let observed = result_rx.recv_timeout(Duration::from_secs(5));
+    srv.join().expect("server thread panicked");
+    let observed = observed.expect("peer read did not end after close + drop");
+    match observed {
+        Err(TransportError::Broken { cause, .. }) => assert_eq!(
+            cause,
+            BrokenCause::CleanEof,
+            "peer must see close_notify (clean EOF), not a reset"
+        ),
+        other => panic!("peer read must end with Broken (close_notify EOF), got {other:?}"),
+    }
+}
+
 /// The two edges of the same close path: closing a TLS transport *before* the
 /// lazy handshake has run (no keys yet, so `send_close_notify` has nothing to
 /// encrypt) and closing twice (the socket is already shut down the second

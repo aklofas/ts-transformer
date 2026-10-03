@@ -33,28 +33,68 @@ impl TlsStream {
         }
     }
 
-    /// Best-effort TLS shutdown: queue a `close_notify` alert, make one attempt
-    /// to flush it, then shut the TCP socket down in both directions.
+    /// Best-effort TLS shutdown: consume whatever the peer already sent,
+    /// queue a `close_notify` alert, make one attempt to flush it, then shut
+    /// the TCP socket down in both directions.
     ///
     /// Every step is deliberately best-effort and non-blocking on the peer:
+    /// the drain reads only what is already in the socket buffer,
     /// `write_tls` is called exactly once (never looped) and we never wait for
     /// the peer's own `close_notify`, so a wedged or already-gone peer cannot
     /// stall `Transport::close`. If that single write cannot flush the alert,
     /// the socket shutdown that follows still gives the peer an EOF.
+    ///
+    /// The drain is what makes the alert reliably *arrive*. A TLS 1.3 server
+    /// sends `NewSessionTicket` records right after the handshake (rustls:
+    /// two by default); a write-only caller never reads them, so they sit
+    /// unread in the receive buffer. The kernel answers a shutdown or close
+    /// of a socket with unread receive data with RST instead of FIN (Windows
+    /// at `shutdown`, Linux at `close`), and a RST can overtake and purge the
+    /// `close_notify` just written, so the peer sees a reset
+    /// (`BrokenCause::Unspecified`) rather than a clean EOF. Seen on the
+    /// windows-msvc CI leg (2026-09-14, 2026-10-02).
     pub(crate) fn shutdown(&mut self) {
         match self {
             Self::Client(s) => {
+                drain_unread(&mut s.conn, &mut s.sock);
                 s.conn.send_close_notify();
                 let _ = s.conn.write_tls(&mut s.sock);
                 let _ = s.sock.shutdown(std::net::Shutdown::Both);
             }
             Self::Server(s) => {
+                drain_unread(&mut s.conn, &mut s.sock);
                 s.conn.send_close_notify();
                 let _ = s.conn.write_tls(&mut s.sock);
                 let _ = s.sock.shutdown(std::net::Shutdown::Both);
             }
         }
     }
+}
+
+/// Read and discard the TLS records the peer has already delivered, without
+/// ever waiting for more: the socket is switched to non-blocking for the
+/// duration, every outcome other than "a record was read" ends the loop, and
+/// the loop is capped so a peer still streaming cannot hold `close()` either.
+/// Application data consumed here is discarded — the caller is closing.
+fn drain_unread<C, D>(conn: &mut C, sock: &mut TcpStream)
+where
+    C: std::ops::DerefMut<Target = rustls::ConnectionCommon<D>>,
+{
+    const MAX_READS: usize = 32;
+    if sock.set_nonblocking(true).is_err() {
+        return;
+    }
+    for _ in 0..MAX_READS {
+        match conn.read_tls(sock) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {
+                if conn.process_new_packets().is_err() {
+                    break;
+                }
+            }
+        }
+    }
+    let _ = sock.set_nonblocking(false);
 }
 
 /// Build a TLS-wrapped TcpTransport (caller side).

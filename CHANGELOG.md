@@ -397,6 +397,23 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`tcps://` `close()` drains the peer's unread TLS records before sending
+  `close_notify`.** A TLS 1.3 server sends `NewSessionTicket` records right
+  after the handshake (rustls: two by default); a write-only caller never
+  reads them, so they sat unread in the socket's receive buffer. The kernel
+  answers a shutdown or close of a socket with unread receive data with RST
+  instead of FIN (Windows at `shutdown`, Linux at `close`), and that RST
+  could overtake and purge the `close_notify` just written — the peer's read
+  then ended in `Broken { cause: Unspecified }` (a reset) instead of the clean
+  `CleanEof`. `InnerStream::shutdown` now reads and discards whatever the peer
+  has already delivered, non-blocking and capped at 32 records, before queuing
+  the alert; it never waits on the peer. Seen twice on the windows-msvc CI leg
+  as `tcps_explicit_close_loopback_ends_the_peer_read` failing (2026-09-14,
+  2026-10-02); Linux happens to hand the queued alert to the reader before
+  reporting the reset, which is why only Windows ever showed it. New test
+  `tcps_close_then_drop_loopback_still_reaches_the_peer_as_close_notify`
+  pins the close-then-drop shape every binding uses.
+
 - **Python: a `tstrans.hls` call made while another thread is pushing no
   longer freezes the interpreter.** `HlsPublisher` and `MuxPublisher` hold
   an internal lock across a push's native work with the GIL released, and
@@ -1345,6 +1362,16 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Documentation only — no behaviour change.
 
 ### Testing
+
+- **tst-c `tcp_open_smoke` holds its loopback peer open.** The helper every
+  `tst_tcp_*_open` smoke test uses accepted one connection and dropped it on
+  the spot, so the client's socket state raced the accept thread (a RST or
+  FIN could land anywhere in the test body, including inside `_close`). It
+  now holds the accepted connection for a bounded 10 s and appends
+  `connect_timeout=3` to the URL, so a stalled connect fails into the
+  existing "open returned null → skip" arms instead of eating the per-test
+  budget. Prompted by one windows-msvc `tcp_sender_stats_and_reset` 40 s
+  kill (2026-10-02) with no visible stall in the test's own calls.
 
 - **Tooling: `tst-interop` sizes the muxer's outbound buffer from the AU
   scale.** `MuxerConfig::buffer_packets` defaults to 10 000 TS packets
