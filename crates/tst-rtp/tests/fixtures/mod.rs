@@ -2,6 +2,7 @@
 
 #![allow(dead_code)] // not every test uses every helper
 
+pub mod raw_rtsp;
 pub mod rtsp_loopback_server;
 
 #[cfg(feature = "tls")]

@@ -1114,6 +1114,33 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   arrives, under `OverflowPolicy::Reject` every message is refused. Any
   capacity >= 1 is bit-for-bit unchanged.
 
+### Fixed — RTSP server (review 9)
+
+- **A viewer that leaves without TEARDOWN no longer leaves its RTP fanout
+  running.** When the control connection ended any way other than
+  TEARDOWN — idle reap, EOF, read error, server cancel — the session state
+  was dropped but nothing cancelled the per-peer fanout task: in the
+  client-default UDP mode the server kept sending RTP to the dead address
+  and held its UDP port pair until the server was dropped (an unconnected
+  `send_to` to a closed port never errors), `peer_count()` kept counting
+  the ghost, and interleaved peers kept receiving frames after "closing
+  session". `ServerSessionState` now cancels the fanout and aborts its
+  task on drop; the fanout also watches the server's graceful cancel; a
+  second PLAY without PAUSE replaces the fanout instead of detaching it
+  (two streams with independent sequence spaces to one peer); and the
+  session shuts its write half on every exit so interleaved clients see
+  FIN. Public API: `impl Drop for ServerSessionState` (additive).
+  Review #9, internal R9-02.
+- **The idle reaper now follows the advertised session timeout.** SETUP
+  answered `Session: <id>;timeout=60` (`RtspServerBuilder::session_timeout`,
+  default 60 s) while the request loop re-armed a fixed 30 s read-idle
+  timer, so a conformant client pinging at `timeout / 2` — ours, ffmpeg —
+  was reaped at its second ping; only the orphan fanout above kept media
+  flowing, which is why nothing noticed. Once a session exists the bound
+  is `timeout + max(timeout / 2, 2 s)` (90 s at the default; RFC 7826
+  §18.49); before SETUP the 30 s slow-loris bound is unchanged. Review #9,
+  internal R9-03.
+
 ### Fixed — rtp (WP-4a)
 
 - **RTSP client: `request_timeout` and cancel are no longer stretched by a

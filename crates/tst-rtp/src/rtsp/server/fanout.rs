@@ -74,6 +74,7 @@ impl PeerDropCounter {
 ///
 /// The task exits when:
 /// - `cancel` is triggered (graceful or hard).
+/// - `server_cancel` (the server's graceful cancel) is triggered.
 /// - The broadcast channel is closed (mount removed / server shutting down).
 /// - The peer transport returns a fatal I/O error.
 ///
@@ -87,10 +88,15 @@ impl PeerDropCounter {
 /// that value in the PLAY `RTP-Info` `rtptime` field (RFC 7826 §18.45),
 /// so the RTP timestamps in the first packets correspond to what the
 /// client was told to expect.
+// Eight positional arguments: the two cancel tokens, the three RTP seeds
+// and the two shared handles are each spawn-time constants with one
+// caller (`handle_play`); a struct would only move the same list.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_peer_fanout(
     mut rx: broadcast::Receiver<Bytes>,
     transport: PeerTransport,
     cancel: CancellationToken,
+    server_cancel: CancellationToken,
     ssrc: u32,
     initial_seq: u16,
     clock: RtpClock,
@@ -165,6 +171,12 @@ pub(crate) fn spawn_peer_fanout(
                 _ = cancel.cancelled() => {
                     return;
                 }
+                // The server's graceful cancel: belt-and-braces beside the
+                // session Drop (review 9, int R9-02) so a fanout can never
+                // outlive `RtspServer::stop`.
+                _ = server_cancel.cancelled() => {
+                    return;
+                }
             }
         }
     })
@@ -196,6 +208,7 @@ mod tests {
             rx,
             transport,
             cancel.clone(),
+            CancellationToken::new(),
             0x12345678,
             1000,
             RtpClock::new(0),
@@ -252,6 +265,7 @@ mod tests {
             rx,
             transport,
             cancel.clone(),
+            CancellationToken::new(),
             0xCAFEBABE,
             1,
             RtpClock::new(0),
@@ -293,6 +307,7 @@ mod tests {
             rx,
             transport,
             cancel.clone(),
+            CancellationToken::new(),
             0xCAFEBABE,
             1,
             RtpClock::new(0),
@@ -331,6 +346,7 @@ mod tests {
             rx,
             transport,
             cancel.clone(),
+            CancellationToken::new(),
             0,
             0,
             RtpClock::new(0),
@@ -341,6 +357,39 @@ mod tests {
         tokio::time::timeout(std::time::Duration::from_secs(2), handle)
             .await
             .expect("fanout task did not exit on cancel")
+            .unwrap();
+    }
+
+    /// Review 9 (int R9-02): the server's graceful cancel alone ends the
+    /// fanout; the per-peer `cancel` is never fired here.
+    #[tokio::test]
+    async fn server_cancel_exits_task() {
+        let send_sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let peer = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let peer_addr = peer.local_addr().unwrap();
+        let (_tx, rx) = broadcast::channel::<Bytes>(8);
+        let cancel = CancellationToken::new();
+        let server_cancel = CancellationToken::new();
+        let drop_counter = Arc::new(PeerDropCounter::default());
+        let transport = PeerTransport::Udp {
+            socket: send_sock,
+            peer_addr,
+        };
+        let handle = spawn_peer_fanout(
+            rx,
+            transport,
+            cancel,
+            server_cancel.clone(),
+            0,
+            0,
+            RtpClock::new(0),
+            drop_counter,
+        );
+        server_cancel.cancel();
+        // Should exit within a reasonable bound.
+        tokio::time::timeout(std::time::Duration::from_secs(2), handle)
+            .await
+            .expect("fanout task did not exit on server cancel")
             .unwrap();
     }
 
@@ -374,6 +423,7 @@ mod tests {
             rx,
             transport,
             cancel.clone(),
+            CancellationToken::new(),
             0xDEAD_BEEF,
             initial_seq,
             clock,

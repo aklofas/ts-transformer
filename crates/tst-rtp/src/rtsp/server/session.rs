@@ -54,11 +54,23 @@ impl Drop for SessionSlot {
     }
 }
 
-/// Per-connection idle read timeout. If no bytes arrive within this window
-/// the session closes. Bounds slow-loris attacks that drip bytes slowly
-/// toward a huge declared Content-Length, keeping the connection alive
-/// (and memory growing) indefinitely.
+/// Per-read idle bound BEFORE a session exists (pre-SETUP): closes the
+/// slow-loris window on a connection that has nothing to keep alive yet.
+/// Once SETUP has advertised a timeout the window is deliberately the
+/// longer `timeout + grace` of [`post_setup_idle_bound`] (90 s at the
+/// default) per RFC 7826 §18.49 — do not shorten it back to this constant;
+/// memory is still bounded by the request-buffer cap, not by this timer.
 const READ_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Idle bound once SETUP has advertised `Session: <id>;timeout=N` (review
+/// 9, int R9-03): RFC 7826 §18.49 lets the server reap a session that sent
+/// nothing for `timeout`; clients ping at `timeout / 2` (ours, ffmpeg) or
+/// close to `timeout` (live555 derivatives), so the bound is
+/// `timeout + max(timeout / 2, 2 s)` — never less than advertised. The old
+/// fixed 30 s reaped every default-mode (60 s) session at its second ping.
+fn post_setup_idle_bound(session_timeout: std::time::Duration) -> std::time::Duration {
+    session_timeout.saturating_add((session_timeout / 2).max(std::time::Duration::from_secs(2)))
+}
 
 /// Per-session state. Lives for the duration of one client's TCP
 /// connection. Tracks transport choice and allocated UDP sockets /
@@ -147,6 +159,20 @@ impl ServerSessionState {
             peer_drop_counter: None,
             tcp_write: None,
             peer_addr: std::net::SocketAddr::from(([0, 0, 0, 0], 0)),
+        }
+    }
+}
+
+impl Drop for ServerSessionState {
+    /// Every exit of `serve_requests` — clean EOF, read error, idle reap,
+    /// graceful or per-session cancel — drops the session; without this the
+    /// fanout task kept streaming RTP to the departed peer and held its UDP
+    /// port pair until the server was dropped (review 9, int R9-02).
+    /// TEARDOWN and PAUSE still cancel explicitly; this is the safety net.
+    fn drop(&mut self) {
+        self.peer_cancel.cancel();
+        if let Some(handle) = self.fanout_handle.take() {
+            handle.abort();
         }
     }
 }
@@ -247,7 +273,15 @@ where
         // that advertises a large Content-Length but then sends bytes very
         // slowly would cause the buffer cap (below) to trigger eventually,
         // but could hold the connection open for a long time before it does.
-        // READ_IDLE_TIMEOUT per-read bounds that window.
+        // The per-read bound closes that window: `READ_IDLE_TIMEOUT` before
+        // SETUP, `post_setup_idle_bound` (the advertised session timeout
+        // plus grace) once a session exists — so a conformant client's
+        // keepalives at `timeout / 2` are never raced (review 9, R9-03).
+        let idle_bound = if session.session_id.is_some() {
+            post_setup_idle_bound(state.builder.session_timeout)
+        } else {
+            READ_IDLE_TIMEOUT
+        };
         let mut chunk = [0u8; 4096];
         let n = tokio::select! {
             r = read_half.read(&mut chunk) => match r {
@@ -261,11 +295,11 @@ where
                     break;
                 }
             },
-            _ = tokio::time::sleep(READ_IDLE_TIMEOUT) => {
+            _ = tokio::time::sleep(idle_bound) => {
                 tracing::warn!(
                     target: "tst_rtp::server",
                     peer = %peer,
-                    timeout_secs = READ_IDLE_TIMEOUT.as_secs(),
+                    timeout_secs = idle_bound.as_secs(),
                     "idle read timeout; closing session"
                 );
                 break;
@@ -426,6 +460,16 @@ where
             return Ok(());
         }
     }
+    // Stop the fanout BEFORE shutting the write half so no RTP frame STARTS
+    // after FIN (the Drop above is what cancels it; `abort` drops the task
+    // at its next poll, so a frame already mid-`write_all` may still land
+    // partially). Idle / EOF / error / cancel exits all land here (TEARDOWN
+    // and the cap rejections shut down on their own path).
+    drop(session);
+    {
+        let mut guard = write_half.lock().await;
+        let _ = guard.shutdown().await;
+    }
     tracing::info!(target: "tst_rtp::server", peer = %peer, "session closed");
     Ok(())
 }
@@ -559,6 +603,23 @@ async fn handle_connection_tls_inner(
 mod session_tests {
     use super::*;
     use tokio::net::TcpListener;
+
+    #[test]
+    fn post_setup_idle_bound_is_never_below_the_advertised_timeout() {
+        use std::time::Duration;
+        assert_eq!(
+            post_setup_idle_bound(Duration::from_secs(60)),
+            Duration::from_secs(90)
+        );
+        assert_eq!(
+            post_setup_idle_bound(Duration::from_secs(1)),
+            Duration::from_secs(3)
+        );
+        assert_eq!(
+            post_setup_idle_bound(Duration::ZERO),
+            Duration::from_secs(2)
+        );
+    }
 
     /// Spin up a local TCP listener, accept one connection, run the
     /// session loop. Client sends OPTIONS, we read the 200 OK response.
@@ -978,5 +1039,44 @@ mod session_tests {
 
         drop(client);
         let _ = server_handle.await;
+    }
+
+    /// Review Focus 4: PAUSE replaces `peer_cancel` with a fresh token, so
+    /// Drop must cancel whichever token is CURRENT and abort the fanout.
+    #[tokio::test]
+    async fn dropping_a_session_cancels_its_peer_token_and_aborts_the_fanout() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        struct Flag(Arc<AtomicBool>);
+        impl Drop for Flag {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Release);
+            }
+        }
+        let aborted = Arc::new(AtomicBool::new(false));
+        let flag = Flag(Arc::clone(&aborted));
+        let mut session = ServerSessionState::new();
+        let first = session.peer_cancel.clone();
+        session.fanout_handle = Some(tokio::spawn(async move {
+            let _flag = flag;
+            std::future::pending::<()>().await;
+        }));
+        // What PAUSE does: cancel, then replace.
+        session.peer_cancel.cancel();
+        session.peer_cancel = tokio_util::sync::CancellationToken::new();
+        let current = session.peer_cancel.clone();
+        drop(session);
+        assert!(first.is_cancelled());
+        assert!(
+            current.is_cancelled(),
+            "Drop must cancel the replaced token"
+        );
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+        while !aborted.load(Ordering::Acquire) {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "fanout task was not aborted"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
     }
 }
