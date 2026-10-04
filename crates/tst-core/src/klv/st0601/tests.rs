@@ -3634,6 +3634,45 @@ fn repeated_sdcc_history_cannot_expand_quadratically() {
     }
     // `wpc_sdcc_positional_capture` pins that a pack which CAN hold its
     // matrix (the C1 golden, N = 3) is still captured positionally.
+
+    // Review 10 (R10-02): standard-deviation-only packs are no longer held
+    // to the Bit Vector bound, so the cheapest accepted pack per N is now
+    // Mode 1 with Slen = 1 (N + 2 bytes for N < 128, N + 3 above). At the
+    // largest accepted N (the ST 1010 decoder's matrix ceiling), every
+    // occurrence's history copy is still paid for by its own wire bytes.
+    let n = crate::klv::st1010::MAX_MATRIX_SIZE as usize;
+    let mut body = tlv(2, &[0; 8]);
+    body.extend(tlv(65, &[19]));
+    for _ in 0..n {
+        crate::klv::pack::emit_ber_oid_tlv(258, &[], &mut body).unwrap();
+    }
+    let mut pack = [0u8; 5];
+    let used = crate::klv::length::write_ber_oid(n as u32, &mut pack).unwrap();
+    let mut pack = pack[..used].to_vec();
+    pack.push(0x10); // Mode 1: Slen = 1, CS = 0, Clen = 0
+    pack.resize(pack.len() + n, 0);
+    for _ in 0..n {
+        body.extend(tlv(102, &pack));
+    }
+    let wire = wrap_st0601(&body);
+    let decoded = decode_strict_compliance(&wire).expect("framing and checksum are valid");
+    assert_eq!(decoded.sdcc_flps.len(), n, "every occurrence is captured");
+    assert!(
+        decoded
+            .sdcc_flps
+            .iter()
+            .all(|s| s.preceding_tags.len() == n)
+    );
+    let copied_bytes: usize = decoded
+        .sdcc_flps
+        .iter()
+        .map(|s| s.preceding_tags.len() * core::mem::size_of::<u32>())
+        .sum();
+    assert!(
+        copied_bytes <= 4 * wire.len(),
+        "{copied_bytes} bytes of history copies for {} wire bytes",
+        wire.len()
+    );
 }
 
 /// Now that Tag 102 is typed (`sdcc_flps`), it is rejected from
