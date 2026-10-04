@@ -68,10 +68,14 @@ pub enum KlvDecodeError {
     #[error("Precision Time Stamp Pack body must be 9 bytes, got {got}")]
     BadTimeStampPackLength { got: usize },
 
-    /// Not produced by `klv::st0605::decode` (which is permissive about
-    /// reserved bits per its doc); call `time_status.reserved_bits_valid()`
-    /// on the decoded pack and raise this if a stricter caller wants it.
-    #[error("Time Status reserved bits 4-0 must be 0b11111, got {got:#04x}")]
+    /// Reserved bits that the standard requires to read as all ones did not.
+    /// Produced by `mpegts::au_cell::read_metadata_au_cell` for the low
+    /// nibble of a Metadata_AU_cell flags byte (H.222.0 V9 Table 2-156).
+    /// NOT produced by `klv::st0605::decode` (permissive about the Time
+    /// Status reserved bits per its doc); call
+    /// `time_status.reserved_bits_valid()` and raise this if a stricter
+    /// caller wants it.
+    #[error("reserved bits must be all ones, got {got:#04x}")]
     ReservedBitsInvalid { got: u8 },
 
     #[error("Tag 2 (timestamp) must be the first element per ST 0601.8-09")]

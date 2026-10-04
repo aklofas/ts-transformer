@@ -71,6 +71,25 @@ pub enum ReassemblyOutcome {
     /// demuxer can emit a NonConformant. `stream_id` is the observed PES
     /// stream_id, carried for diagnostics. REF-PES-01.
     ZeroLengthNonVideo { pid: u16, stream_id: u8 },
+    /// A PES on this PID could not be parsed (the payload of
+    /// `DemuxError::MalformedPes`). Surfaced as an outcome, IN WIRE ORDER
+    /// beside the completions of the same `push`, so the caller sees it
+    /// without losing a valid PES that completed in the same call (review 9,
+    /// ext R9-01). The demuxer turns it into a `NonConformant` event in
+    /// lenient mode and into the error in strict mode.
+    Malformed { pid: u16, reason: &'static str },
+}
+
+/// `parse_complete` constructs only `MalformedPes`; keep the PID and a fixed
+/// reason rather than dropping the outcome if that ever changes.
+fn malformed(pid: u16, e: DemuxError) -> ReassemblyOutcome {
+    match e {
+        DemuxError::MalformedPes { pid, reason } => ReassemblyOutcome::Malformed { pid, reason },
+        _ => ReassemblyOutcome::Malformed {
+            pid,
+            reason: "unparseable PES",
+        },
+    }
 }
 
 #[derive(Debug)]
@@ -92,7 +111,9 @@ impl Reassembler {
     }
 
     /// Feed one TS-packet's payload bytes for `pid`. `pusi=true` means
-    /// this packet begins a new PES on this PID.
+    /// this packet begins a new PES on this PID. A PES that fails to parse
+    /// is reported as `ReassemblyOutcome::Malformed` in wire order; `push`
+    /// itself never fails.
     ///
     /// `random_access_indicator` is sourced from the TS adaptation-field
     /// RAI bit (ISO/IEC 13818-1 §2.4.3.4). Only the value carried on the
@@ -116,14 +137,8 @@ impl Reassembler {
         pusi: bool,
         random_access_indicator: bool,
         is_video: bool,
-    ) -> Result<Vec<ReassemblyOutcome>, DemuxError> {
+    ) -> Vec<ReassemblyOutcome> {
         let mut out = Vec::new();
-        // Deferred error from finalizing a malformed prior PES at PUSI.
-        // We accumulate the new PES on this PID first (so lenient-mode
-        // recovery in `Demuxer::handle_process_packet_result` can keep
-        // parsing after the demuxer converts this to a `NonConformant`
-        // event), then return the error at the end of `push`.
-        let mut deferred_err: Option<DemuxError> = None;
         if pusi {
             // PUSI: drain whatever was in flight on this PID first.
             let prev = self.by_pid.remove(&pid);
@@ -143,21 +158,21 @@ impl Reassembler {
                 match parse_complete(pid, &prev.buf, prev.random_access_indicator) {
                     Ok(Some(pes)) => out.push(ReassemblyOutcome::Complete(pes)),
                     Ok(None) => {}
-                    Err(e) => deferred_err = Some(e),
+                    Err(e) => out.push(malformed(pid, e)),
                 }
             }
         }
         // Append payload to whatever partial exists for this PID.
         let part = match self.by_pid.get_mut(&pid) {
             Some(p) => p,
-            None => return Ok(out), // bytes before we ever saw a PUSI; drop.
+            None => return out, // bytes before we ever saw a PUSI; drop.
         };
         if part.buf.len() + payload.len() > self.cap_per_pid {
             // Cap-per-PID exceeded. Drop, surface, resume from next PUSI on this PID.
             self.total_buffered = self.total_buffered.saturating_sub(part.buf.len());
             self.by_pid.remove(&pid);
             out.push(ReassemblyOutcome::Overflow { pid });
-            return Ok(out);
+            return out;
         }
         part.buf.extend_from_slice(payload);
         self.total_buffered += payload.len();
@@ -185,7 +200,7 @@ impl Reassembler {
                 self.total_buffered = self.total_buffered.saturating_sub(part.buf.len());
                 self.by_pid.remove(&pid);
                 out.push(ReassemblyOutcome::ZeroLengthNonVideo { pid, stream_id });
-                return Ok(out);
+                return out;
             }
         }
         // Aggregate cap check.
@@ -193,7 +208,7 @@ impl Reassembler {
             self.by_pid.clear();
             self.total_buffered = 0;
             out.push(ReassemblyOutcome::OverflowTotal);
-            return Ok(out);
+            return out;
         }
         // Length-driven completion.
         //
@@ -237,18 +252,13 @@ impl Reassembler {
             }
         }
         if let Some(buf) = completed_now {
-            if let Some(pes) = parse_complete(pid, &buf, completed_rai)? {
-                out.push(ReassemblyOutcome::Complete(pes));
+            match parse_complete(pid, &buf, completed_rai) {
+                Ok(Some(pes)) => out.push(ReassemblyOutcome::Complete(pes)),
+                Ok(None) => {}
+                Err(e) => out.push(malformed(pid, e)),
             }
         }
-        // Surface a deferred prior-PES parse error AFTER the new PES on
-        // this PID has been recorded. Lenient mode in the demuxer
-        // converts this into a `NonConformant` event and the next call
-        // continues building the new PES; strict mode propagates fatally.
-        if let Some(e) = deferred_err {
-            return Err(e);
-        }
-        Ok(out)
+        out
     }
 
     pub fn drain_partial(&mut self) -> Vec<PesPayload> {
@@ -474,6 +484,70 @@ mod tests {
         s
     }
 
+    /// Review 9 (ext R9-01): a completed PES survives a malformed predecessor
+    /// on the same PID, and both are reported in wire order.
+    #[test]
+    fn completed_pes_survives_a_malformed_predecessor() {
+        let mut r = Reassembler::new(4 << 20, 64 << 20);
+        // PUSI #1: stream_id 0xBD, PTS flagged, declared length 64, but only
+        // these 10 bytes ever arrive (the rest is lost).
+        let short = [0x00, 0x00, 0x01, 0xBD, 0x00, 0x40, 0x84, 0x80, 0x05, 0x21];
+        assert!(r.push(0x200, &short, true, false, false).is_empty());
+        // PUSI #2: a complete bounded PES that length-completes in this call.
+        let good = build_pes(0xBD, Some(90_000), b"klv-bytes-here");
+        let outcomes = r.push(0x200, &good, true, false, false);
+        assert_eq!(outcomes.len(), 2, "{outcomes:?}");
+        assert!(
+            matches!(
+                outcomes[0],
+                ReassemblyOutcome::Malformed {
+                    pid: 0x200,
+                    // header_data_length (5) is checked before the PTS
+                    // bytes themselves, so this is the reason that fires.
+                    reason: "PES too short for declared header_data_length"
+                }
+            ),
+            "{outcomes:?}"
+        );
+        assert!(
+            matches!(&outcomes[1], ReassemblyOutcome::Complete(p) if p.payload == b"klv-bytes-here"),
+            "{outcomes:?}"
+        );
+    }
+
+    /// Review 9 (ext R9-01), mirror order: a valid predecessor flushed at
+    /// PUSI survives a corrupt BOUNDED follower that length-completes in the
+    /// same `push`; both are reported in wire order `[Complete, Malformed]`.
+    #[test]
+    fn completed_predecessor_survives_a_malformed_follower() {
+        let mut r = Reassembler::new(4 << 20, 64 << 20);
+        // PUSI #1: an unbounded (PES_packet_length = 0) video PES, so only
+        // the next PUSI completes it.
+        let mut good = build_pes(0xE0, Some(90_000), b"video-bytes");
+        good[4] = 0;
+        good[5] = 0;
+        assert!(r.push(0x100, &good, true, false, true).is_empty());
+        // PUSI #2: bounded (declared total 6 + 4 = 10 bytes, all present) but
+        // header_data_length 5 overruns it, so it completes AND fails to parse.
+        let bad = [0x00, 0x00, 0x01, 0xE0, 0x00, 0x04, 0x80, 0x80, 0x05, 0x21];
+        let outcomes = r.push(0x100, &bad, true, false, true);
+        assert_eq!(outcomes.len(), 2, "{outcomes:?}");
+        assert!(
+            matches!(&outcomes[0], ReassemblyOutcome::Complete(p) if p.payload == b"video-bytes"),
+            "{outcomes:?}"
+        );
+        assert!(
+            matches!(
+                outcomes[1],
+                ReassemblyOutcome::Malformed {
+                    pid: 0x100,
+                    reason: "PES too short for declared header_data_length"
+                }
+            ),
+            "{outcomes:?}"
+        );
+    }
+
     #[test]
     fn reassembles_one_pes_via_pusi_then_pusi() {
         let mut pes = build_pes(0xE0, Some(900_000), b"hello");
@@ -486,7 +560,7 @@ mod tests {
         // Split across two PUSI calls: first PUSI starts the PES, second PUSI
         // emits it.
         let mut r = Reassembler::new(1 << 20, 4 << 20);
-        let out = r.push(0x100, &pes, true, false, true).unwrap();
+        let out = r.push(0x100, &pes, true, false, true);
         assert!(out.is_empty());
         // A second PUSI on the same PID closes the previous one. Zero this
         // PES's length field too so it doesn't immediately length-complete
@@ -494,7 +568,7 @@ mod tests {
         let mut pes2 = build_pes(0xE0, None, b"");
         pes2[4] = 0;
         pes2[5] = 0;
-        let out = r.push(0x100, &pes2, true, false, true).unwrap();
+        let out = r.push(0x100, &pes2, true, false, true);
         assert_eq!(out.len(), 1);
         match &out[0] {
             ReassemblyOutcome::Complete(p) => {
@@ -509,7 +583,7 @@ mod tests {
     fn length_driven_completion() {
         let pes = build_pes(0xE0, Some(0), b"abc");
         let mut r = Reassembler::new(1 << 20, 4 << 20);
-        let out = r.push(0x100, &pes, true, false, true).unwrap();
+        let out = r.push(0x100, &pes, true, false, true);
         // PES_packet_length is set => completion when all bytes seen.
         assert_eq!(out.len(), 1);
     }
@@ -517,18 +591,16 @@ mod tests {
     #[test]
     fn per_pid_overflow_emits_event_and_clears() {
         let mut r = Reassembler::new(64, 1 << 20);
-        let _ = r
-            .push(
-                0x100,
-                b"\x00\x00\x01\xE0\x00\x00\x80\x00\x00",
-                true,
-                false,
-                true,
-            )
-            .unwrap();
+        let _ = r.push(
+            0x100,
+            b"\x00\x00\x01\xE0\x00\x00\x80\x00\x00",
+            true,
+            false,
+            true,
+        );
         // Now flood until overflow.
         let big = vec![0xCC; 256];
-        let out = r.push(0x100, &big, false, false, true).unwrap();
+        let out = r.push(0x100, &big, false, false, true);
         assert!(matches!(out[0], ReassemblyOutcome::Overflow { pid: 0x100 }));
         assert_eq!(r.buffered_bytes(), 0);
     }
@@ -536,17 +608,15 @@ mod tests {
     #[test]
     fn aggregate_overflow() {
         let mut r = Reassembler::new(1 << 20, 200);
-        let _ = r
-            .push(
-                0x100,
-                b"\x00\x00\x01\xE0\x00\x00\x80\x00\x00",
-                true,
-                false,
-                true,
-            )
-            .unwrap();
+        let _ = r.push(
+            0x100,
+            b"\x00\x00\x01\xE0\x00\x00\x80\x00\x00",
+            true,
+            false,
+            true,
+        );
         let big = vec![0xCC; 300];
-        let out = r.push(0x100, &big, false, false, true).unwrap();
+        let out = r.push(0x100, &big, false, false, true);
         assert!(
             out.iter()
                 .any(|o| matches!(o, ReassemblyOutcome::OverflowTotal))
@@ -563,14 +633,14 @@ mod tests {
         pes[5] = 0;
         let mut r = Reassembler::new(1 << 20, 4 << 20);
         // PUSI=1 with RAI=true latches RAI on the in-flight PES.
-        let _ = r.push(0x100, &pes, true, true, true).unwrap();
+        let _ = r.push(0x100, &pes, true, true, true);
         // Continuation with RAI=false MUST NOT overwrite the latched value.
-        let _ = r.push(0x100, b"world", false, false, true).unwrap();
+        let _ = r.push(0x100, b"world", false, false, true);
         // Second PUSI closes the previous PES.
         let mut pes2 = build_pes(0xE0, None, b"");
         pes2[4] = 0;
         pes2[5] = 0;
-        let out = r.push(0x100, &pes2, true, false, true).unwrap();
+        let out = r.push(0x100, &pes2, true, false, true);
         assert_eq!(out.len(), 1);
         match &out[0] {
             ReassemblyOutcome::Complete(p) => {
@@ -594,7 +664,7 @@ mod tests {
         let mut combined = pes.clone();
         combined.extend_from_slice(b"GARBAGE_NEXT_PES_BYTES");
         let mut r = Reassembler::new(1 << 20, 4 << 20);
-        let out = r.push(0x100, &combined, true, false, true).unwrap();
+        let out = r.push(0x100, &combined, true, false, true);
         assert_eq!(
             out.len(),
             1,
@@ -632,7 +702,7 @@ mod tests {
         let mut chunk_a = pes_a.clone();
         chunk_a.extend_from_slice(&[0xAA; 7]); // simulate trailing bytes
         let mut r = Reassembler::new(1 << 20, 4 << 20);
-        let out = r.push(0x200, &chunk_a, true, false, true).unwrap();
+        let out = r.push(0x200, &chunk_a, true, false, true);
         assert_eq!(out.len(), 1);
         match &out[0] {
             ReassemblyOutcome::Complete(p) => {
@@ -648,7 +718,7 @@ mod tests {
     fn random_access_indicator_false_when_pusi_packet_clears_it() {
         let pes = build_pes(0xE0, Some(0), b"abc");
         let mut r = Reassembler::new(1 << 20, 4 << 20);
-        let out = r.push(0x100, &pes, true, false, true).unwrap();
+        let out = r.push(0x100, &pes, true, false, true);
         assert_eq!(out.len(), 1);
         match &out[0] {
             ReassemblyOutcome::Complete(p) => {
@@ -755,7 +825,7 @@ mod tests {
         pes[4] = 0;
         pes[5] = 0;
         // is_video=false: PMT classifies this PID as non-video.
-        let out = r.push(0x101, &pes, true, false, false).unwrap();
+        let out = r.push(0x101, &pes, true, false, false);
         assert!(
             out.iter().any(|o| matches!(
                 o,
@@ -777,7 +847,7 @@ mod tests {
         pes[4] = 0;
         pes[5] = 0; // zero length is LEGAL for video
         // is_video=true: PMT classifies this PID as video.
-        let out = r.push(0x100, &pes, true, false, true).unwrap();
+        let out = r.push(0x100, &pes, true, false, true);
         assert!(
             !out.iter()
                 .any(|o| matches!(o, ReassemblyOutcome::ZeroLengthNonVideo { .. })),
@@ -795,7 +865,7 @@ mod tests {
         let mut pes = build_pes(0xBD, Some(0), b"abcdef");
         pes[4] = 0;
         pes[5] = 0;
-        let out = r.push(0x100, &pes, true, false, true).unwrap();
+        let out = r.push(0x100, &pes, true, false, true);
         assert!(
             !out.iter()
                 .any(|o| matches!(o, ReassemblyOutcome::ZeroLengthNonVideo { .. })),
@@ -813,7 +883,7 @@ mod tests {
         let mut pes = build_pes(0xBD, Some(0), b"abcdef");
         pes[4] = 0;
         pes[5] = 0;
-        let out = r.push(0x102, &pes, true, false, false).unwrap();
+        let out = r.push(0x102, &pes, true, false, false);
         assert!(
             out.iter().any(|o| matches!(
                 o,

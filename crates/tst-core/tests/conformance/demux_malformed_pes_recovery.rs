@@ -243,3 +243,67 @@ fn feed_aligned_strict_mode_escalates_malformed_pes_to_error() {
         "strict feed_aligned should escalate MalformedPes (got {err:?})"
     );
 }
+
+/// Review 9 (ext R9-01): a valid PES that LENGTH-COMPLETES in the same
+/// `push` as a malformed neighbour on the same PID used to be dropped with
+/// the neighbour's error (`Reassembler::push` returned `Err` instead of its
+/// outcomes). Both orders, both feed entry points. The helper's two video
+/// PESes are unbounded; here the second one is made bounded (its
+/// `PES_packet_length` set to the payload remaining in its PUSI packet) so
+/// it completes inside that packet's push.
+#[test]
+fn malformed_pes_preserves_a_valid_adjacent_bounded_completion() {
+    for bad_first in [true, false] {
+        let (mut bytes, _) = build_stream_with_malformed_pes();
+        let mut starts = 0;
+        for pkt in bytes.chunks_exact_mut(188) {
+            let pid = (u16::from(pkt[1] & 0x1f) << 8) | u16::from(pkt[2]);
+            if pid != 0x100 || pkt[1] & 0x40 == 0 {
+                continue;
+            }
+            let afc = (pkt[3] >> 4) & 3;
+            let off = if afc & 2 != 0 {
+                5 + usize::from(pkt[4])
+            } else {
+                4
+            };
+            starts += 1;
+            if starts == 1 {
+                // The helper already corrupted this byte; restore or keep it.
+                pkt[off + 2] = if bad_first { 0xff } else { 1 };
+            } else if starts == 2 {
+                pkt[off + 2] = if bad_first { 1 } else { 0xff };
+                let len = (188 - off - 6) as u16;
+                pkt[off + 4..off + 6].copy_from_slice(&len.to_be_bytes());
+            }
+        }
+        assert_eq!(starts, 2, "fixture must carry exactly two video PUSIs");
+        for aligned in [false, true] {
+            let mut d = Demuxer::new();
+            if aligned {
+                for chunk in bytes.chunks_exact(188) {
+                    d.feed_aligned(chunk.try_into().unwrap()).unwrap();
+                }
+            } else {
+                d.feed(&bytes).unwrap();
+            }
+            d.flush();
+            let (mut malformed, mut video) = (0, 0);
+            while let Some(event) = d.next_event() {
+                match event {
+                    DemuxEvent::NonConformant {
+                        issue: NonConformantIssue::MalformedPes { .. },
+                        ..
+                    } => malformed += 1,
+                    DemuxEvent::Sample {
+                        payload: SamplePayload::Video { .. },
+                        ..
+                    } => video += 1,
+                    _ => {}
+                }
+            }
+            assert_eq!(malformed, 1, "bad_first={bad_first}, aligned={aligned}");
+            assert_eq!(video, 1, "bad_first={bad_first}, aligned={aligned}");
+        }
+    }
+}

@@ -908,14 +908,39 @@ impl Demuxer {
         crate::mpegts::common::Pts90khz::new(offset.saturating_add(raw.as_ticks()))
     }
 
+    /// The one lenient/strict policy point for a malformed PES on `pid`:
+    /// lenient (`StrictMode::Off`) queues `NonConformantIssue::MalformedPes`
+    /// and continues; a strict mode that rejects the issue returns
+    /// `DemuxError::MalformedPes`. Called from `handle_pes_packet` for each
+    /// `ReassemblyOutcome::Malformed` (review 9, ext R9-01), and from the
+    /// defensive arm of `handle_process_packet_result`.
+    pub(super) fn surface_malformed_pes(
+        &mut self,
+        pid: u16,
+        reason: &'static str,
+    ) -> Result<(), DemuxError> {
+        let issue = NonConformantIssue::MalformedPes { pid, reason };
+        if self.options.strict.rejects(&issue) {
+            return Err(DemuxError::MalformedPes { pid, reason });
+        }
+        let stream = self
+            .lookup_stream(pid)
+            .unwrap_or_else(|| StreamId::anonymous(pid, self.program_number_for_pid(pid)));
+        self.queue_nonconformant(stream, issue);
+        Ok(())
+    }
+
     /// Convert a `process_packet` result into lenient/strict policy.
     ///
-    /// Lenient mode (`StrictMode::Off`): `DemuxError::MalformedPes` becomes
-    /// a `NonConformant` event with `NonConformantIssue::MalformedPes` so
-    /// the receive loop survives a single corrupt PES on one PID. Strict
-    /// modes that reject `NonConformantIssue::MalformedPes` (today only
-    /// `StrictMode::Full`) propagate the original error so callers see the
-    /// failure rather than a silently-buried event.
+    /// The `DemuxError::MalformedPes` arm is defensive. Since review 9
+    /// (ext R9-01) the PES reassembler reports malformed PESes as
+    /// `ReassemblyOutcome::Malformed`, and `handle_pes_packet` applies the
+    /// policy per outcome via [`Self::surface_malformed_pes`], so the only
+    /// `MalformedPes` that reaches this arm today is the strict-mode error
+    /// that call already returned, and re-evaluating it returns the same
+    /// error. The arm is kept so any future non-reassembler producer of
+    /// that error still gets the lenient `NonConformant` / strict error
+    /// policy instead of passing through unexamined.
     ///
     /// All other `DemuxError` variants (`MalformedPsi`, `Unrecoverable`,
     /// `StrictRejection`, `SyncBufExhausted`) are pass-through — those
@@ -928,15 +953,7 @@ impl Demuxer {
         match result {
             Ok(()) => Ok(()),
             Err(DemuxError::MalformedPes { pid, reason }) => {
-                let issue = NonConformantIssue::MalformedPes { pid, reason };
-                if self.options.strict.rejects(&issue) {
-                    return Err(DemuxError::MalformedPes { pid, reason });
-                }
-                let stream = self
-                    .lookup_stream(pid)
-                    .unwrap_or_else(|| StreamId::anonymous(pid, self.program_number_for_pid(pid)));
-                self.queue_nonconformant(stream, issue);
-                Ok(())
+                self.surface_malformed_pes(pid, reason)
             }
             Err(other) => Err(other),
         }

@@ -4979,6 +4979,9 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::demux::low_le
 impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::demux::low_level::PsiParseError
 pub enum tst_core::mpegts::demux::low_level::ReassemblyOutcome
 pub tst_core::mpegts::demux::low_level::ReassemblyOutcome::Complete(tst_core::mpegts::demux::low_level::PesPayload)
+pub tst_core::mpegts::demux::low_level::ReassemblyOutcome::Malformed
+pub tst_core::mpegts::demux::low_level::ReassemblyOutcome::Malformed::pid: u16
+pub tst_core::mpegts::demux::low_level::ReassemblyOutcome::Malformed::reason: &'static str
 pub tst_core::mpegts::demux::low_level::ReassemblyOutcome::Overflow
 pub tst_core::mpegts::demux::low_level::ReassemblyOutcome::Overflow::pid: u16
 pub tst_core::mpegts::demux::low_level::ReassemblyOutcome::OverflowTotal
@@ -5127,7 +5130,7 @@ impl tst_core::mpegts::demux::low_level::Reassembler
 pub fn tst_core::mpegts::demux::low_level::Reassembler::buffered_bytes(&self) -> usize
 pub fn tst_core::mpegts::demux::low_level::Reassembler::drain_partial(&mut self) -> alloc::vec::Vec<tst_core::mpegts::demux::low_level::PesPayload>
 pub fn tst_core::mpegts::demux::low_level::Reassembler::new(usize, usize) -> Self
-pub fn tst_core::mpegts::demux::low_level::Reassembler::push(&mut self, u16, &[u8], bool, bool, bool) -> core::result::Result<alloc::vec::Vec<tst_core::mpegts::demux::low_level::ReassemblyOutcome>, tst_core::error::DemuxError>
+pub fn tst_core::mpegts::demux::low_level::Reassembler::push(&mut self, u16, &[u8], bool, bool, bool) -> alloc::vec::Vec<tst_core::mpegts::demux::low_level::ReassemblyOutcome>
 pub fn tst_core::mpegts::demux::low_level::Reassembler::remove_pid(&mut self, u16)
 impl core::fmt::Debug for tst_core::mpegts::demux::low_level::Reassembler
 pub fn tst_core::mpegts::demux::low_level::Reassembler::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result

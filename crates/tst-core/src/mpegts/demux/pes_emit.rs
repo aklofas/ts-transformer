@@ -94,7 +94,7 @@ impl super::demuxer::Demuxer {
             pkt.payload_unit_start,
             pkt.random_access_indicator,
             is_video,
-        )?;
+        );
         for outcome in outcomes {
             match outcome {
                 ReassemblyOutcome::Complete(pes) => {
@@ -118,6 +118,14 @@ impl super::demuxer::Demuxer {
                         stream,
                         NonConformantIssue::ZeroLengthPesNonVideo { pid, stream_id },
                     );
+                }
+                ReassemblyOutcome::Malformed { pid, reason } => {
+                    // Wire order with the completions beside it: a lenient
+                    // demuxer queues the NonConformant and keeps going; a
+                    // strict one returns the error here and the remaining
+                    // outcomes of this packet go with it (strict is fatal
+                    // for the stream anyway).
+                    self.surface_malformed_pes(pid, reason)?;
                 }
             }
         }
