@@ -42,6 +42,8 @@ mod demux_strict;
 mod demux_subtitle;
 #[path = "mpegts/from_program_map.rs"]
 mod from_program_map;
+#[path = "mpegts/large_async_klv.rs"]
+mod large_async_klv;
 #[path = "mpegts/mux.rs"]
 mod mux;
 #[path = "mpegts/mux_audio.rs"]

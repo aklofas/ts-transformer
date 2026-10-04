@@ -814,6 +814,47 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the loop consults, with unit tests driving it directly (the plain socket
   cannot be made to produce `EINTR` deterministically).
 
+### Fixed — demux (review 9)
+
+- **Async KLV packets of 13 319 bytes or more are no longer dropped by the
+  demuxer.** A bare SMPTE KLV packet starts `06 0E 2B 34 02 …`; those five
+  bytes also read as an H.222.0 `Metadata_AU_cell` header (`cfi = Middle`,
+  `AU_cell_data_length = 0x3402` = 13 314), and `classify_klv` tested the
+  cell shape before the UL, so once the payload reached 5 + 13 314 bytes
+  the packet went to the AU-cell reassembler as an orphan Middle cell and
+  was discarded (`NonConformant { MultiCellAu { reason: Orphan } }`, no
+  `Metadata` event) — every ST 0601 record above ~13 KB (VMTI-sized sets)
+  on every async KLV path, our own muxer included. The UL is now tested
+  first, and `read_metadata_au_cell` rejects a flags byte whose reserved
+  low nibble is not `1111` (`KlvDecodeError::ReservedBitsInvalid`), so the
+  sync path cannot be fooled either. *Behaviour change:* a sync-metadata
+  PES whose first cell carries a cleared (non-`1111`) reserved nibble is no
+  longer parsed as a cell; it now surfaces as a raw `SamplePayload::Unknown`
+  sample. (A non-conformant nibble on a later cell of the same PES still
+  ends the cell walk there, as any malformed trailing cell did before.)
+  Regression: `tests/mpegts/large_async_klv.rs` (13 000 / 13 319 /
+  20 000-byte round trips, and a hand-built sync PES whose first cell's
+  flags byte is `0xC0`). Review #9, int R9-01.
+- **A valid PES is no longer dropped beside a malformed one.** The PES
+  reassembler returned a malformed neighbour's error INSTEAD of the
+  outcomes of the same TS packet, so a bounded PES that completed in the
+  packet after a corrupt predecessor (or a completed predecessor flushed by
+  a corrupt bounded follower) was silently lost on the lenient recovery
+  path every demux receiver uses; the malformed one was reported, the
+  valid one simply never appeared. Malformed PESes are now a reassembly
+  outcome in wire order and the demuxer applies its lenient/strict policy
+  per outcome: lenient mode queues the `NonConformant { MalformedPes }`
+  event and emits the neighbour; strict modes still fail the feed, and
+  now also deliver the completions that precede the malformed PES in the
+  same packet (previously they were dropped with it).
+  *Breaking (experimental `mpegts::demux::low_level` surface):*
+  `Reassembler::push` now returns `Vec<ReassemblyOutcome>` instead of
+  `Result<Vec<ReassemblyOutcome>, DemuxError>`, and `ReassemblyOutcome`
+  gains a `Malformed { pid, reason }` variant. Regression:
+  `malformed_pes_preserves_a_valid_adjacent_bounded_completion` (both
+  orders, `feed` and `feed_aligned`). Review #9, external R9-01 / internal
+  R9-12.
+
 ### Fixed — core (WP-2)
 
 - **Demuxer: a PID's PCR history now lives exactly as long as some program

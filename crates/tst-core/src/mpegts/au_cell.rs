@@ -121,6 +121,8 @@ pub enum AuCellError {
 /// # Errors
 /// Returns [`KlvDecodeError::Truncated`] if `buf` is shorter than the 5-byte
 /// header or if the declared `AU_cell_data_length` exceeds `buf.len() - 5`.
+/// Returns [`KlvDecodeError::ReservedBitsInvalid`] if the flags byte's
+/// reserved low nibble is not `1111`.
 pub fn read_metadata_au_cell(buf: &[u8]) -> Result<(AuCellHeader, &[u8]), KlvDecodeError> {
     if buf.len() < 5 {
         return Err(KlvDecodeError::Truncated {
@@ -132,6 +134,13 @@ pub fn read_metadata_au_cell(buf: &[u8]) -> Result<(AuCellHeader, &[u8]), KlvDec
     let metadata_service_id = buf[0];
     let sequence_number = buf[1];
     let flags = buf[2];
+    // H.222.0 V9 Table 2-156: the low nibble of the flags byte is
+    // `reserved`, and MPEG-2 systems reserved bits read as all ones (our
+    // writer emits 0b1111). Anything else is not an AU cell header — most
+    // likely the fifth byte of a bare SMPTE UL (review 9, int R9-01).
+    if flags & 0x0F != 0x0F {
+        return Err(KlvDecodeError::ReservedBitsInvalid { got: flags & 0x0F });
+    }
     let cfi = (flags >> 6) & 0b11;
     let cell_fragment_indication = match cfi {
         0 => CellFragmentIndication::Middle,
@@ -219,6 +228,27 @@ mod tests {
         buf.extend_from_slice(&[0xAA; 50]);
         let res = read_metadata_au_cell(&buf);
         assert!(matches!(res, Err(KlvDecodeError::Truncated { .. })));
+    }
+
+    /// H.222.0 V9 Table 2-156: the flags byte's low nibble is reserved and
+    /// reads as all ones (our writer emits 0b1111). Anything else is not a
+    /// cell header — most likely the fifth byte of a bare SMPTE UL, which is
+    /// how a 13 319+ byte async KLV packet used to pass as a Middle cell
+    /// (review 9, int R9-01).
+    #[test]
+    fn read_rejects_a_reserved_nibble_that_is_not_all_ones() {
+        // cfi = 11, dcf = 0, rai = 0, reserved = 0000; length 0.
+        let buf = [0x00, 0x42, 0xC0, 0x00, 0x00];
+        assert!(matches!(
+            read_metadata_au_cell(&buf),
+            Err(KlvDecodeError::ReservedBitsInvalid { got: 0x0 })
+        ));
+        // The UL case the demuxer mis-took for a cell: flags byte 0x2B.
+        let buf = [0x06, 0x0E, 0x2B, 0x00, 0x00];
+        assert!(matches!(
+            read_metadata_au_cell(&buf),
+            Err(KlvDecodeError::ReservedBitsInvalid { got: 0xB })
+        ));
     }
 
     #[test]

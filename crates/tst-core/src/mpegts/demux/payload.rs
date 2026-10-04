@@ -537,14 +537,20 @@ pub enum KlvShape {
 pub fn classify_klv(payload: &[u8]) -> KlvShape {
     use crate::mpegts::au_cell::read_metadata_au_cell;
 
-    if payload.len() >= 5 && read_metadata_au_cell(payload).is_ok() {
-        return KlvShape::Sync;
-    }
-
+    // UL first (review 9, int R9-01). A SMPTE KLV packet always starts
+    // `06 0E 2B 34`; a conformant H.222.0 Metadata_AU_cell never can, because
+    // its byte 2 is the flags byte whose reserved low nibble must read `1111`
+    // and 0x2B's low nibble is `1011`. Testing the cell shape first let every
+    // async KLV packet of >= 13 319 bytes parse as a Middle cell with
+    // AU_cell_data_length 0x3402 and vanish in the AU-cell reassembler.
     if payload.len() >= 16 && payload[0..4] == [0x06, 0x0E, 0x2B, 0x34] {
         return KlvShape::Async {
             klv: payload.to_vec(),
         };
+    }
+
+    if payload.len() >= 5 && read_metadata_au_cell(payload).is_ok() {
+        return KlvShape::Sync;
     }
 
     KlvShape::Other
@@ -708,6 +714,40 @@ mod tests {
         let mut buf = vec![0x06, 0x0E, 0x2B, 0x34];
         buf.extend(core::iter::repeat_n(0xAA, 30));
         assert_eq!(classify_klv(&buf), KlvShape::Async { klv: buf });
+    }
+
+    /// Review 9 (int R9-01): an ST 0601 LS of total length >= 13 319 bytes.
+    /// Its first five bytes (`06 0E 2B 34 02`) also parse as an AU-cell
+    /// header with cfi = Middle and AU_cell_data_length = 0x3402 (13 314),
+    /// so the cell length check passes; classify_klv must still say Async.
+    #[test]
+    fn classifies_large_async_klv_as_async_not_sync_cell() {
+        let body_len = 13_300usize;
+        let mut buf = vec![
+            0x06, 0x0E, 0x2B, 0x34, 0x02, 0x0B, 0x01, 0x01, 0x0E, 0x01, 0x03, 0x01, 0x01, 0x00,
+            0x00, 0x00,
+        ];
+        buf.extend_from_slice(&[0x82, (body_len >> 8) as u8, body_len as u8]);
+        buf.extend(core::iter::repeat_n(0xAA, body_len));
+        assert!(buf.len() >= 13_319);
+        assert!(
+            matches!(classify_klv(&buf), KlvShape::Async { .. }),
+            "a 13 319+ byte async KLV packet must stay Async"
+        );
+    }
+
+    /// Review Focus 1: a cell header whose reserved nibble is not all ones
+    /// (flags 0xC0: cfi = Complete, dcf = 0, rai = 0, reserved = 0000) with a
+    /// consistent length is NOT a cell — it classifies as Other (the emit
+    /// path hands it out as a raw Unknown sample) and the cell walk reports
+    /// the parse error instead of a cell.
+    #[test]
+    fn a_cell_header_with_a_cleared_reserved_nibble_is_not_sync() {
+        let mut buf = vec![0x00, 0x01, 0xC0, 0x00, 0x04];
+        buf.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+        assert_eq!(classify_klv(&buf), KlvShape::Other);
+        let cells: Vec<_> = iter_au_cells(&buf).collect();
+        assert!(matches!(cells.as_slice(), [Err(_)]), "{cells:?}");
     }
 
     #[test]

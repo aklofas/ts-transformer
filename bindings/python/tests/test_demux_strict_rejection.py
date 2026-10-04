@@ -48,7 +48,10 @@ def _build_au_cell(inner: bytes) -> bytes:
       byte 1: sequence_number = 0x00
       byte 2: cfi(2) | decoder_config_flag(1) | random_access_indicator(1) |
                reserved(4).
-               Complete(0b11) + no decoder_config + random_access → 0b1101_0000 = 0xD0
+               reserved bits read as all ones (H.222.0 V9 Table 2-156; a
+               nibble other than 1111 is not a cell header).
+               Complete(0b11) + no decoder_config + random_access + reserved
+               1111 → 0b1101_1111 = 0xDF
       byte 3: AU_cell_data_length_high = (len >> 8) & 0xFF
       byte 4: AU_cell_data_length_low  = len & 0xFF
     """
@@ -56,7 +59,7 @@ def _build_au_cell(inner: bytes) -> bytes:
     header = bytes([
         0x00,                       # metadata_service_id
         0x00,                       # sequence_number
-        0xD0,                       # cfi=Complete(3<<6), random_access=1, reserved=0
+        0xDF,                       # cfi=Complete(3<<6), random_access=1, reserved=1111
         (length >> 8) & 0xFF,       # AU_cell_data_length high
         length & 0xFF,              # AU_cell_data_length low
     ])
