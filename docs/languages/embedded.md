@@ -26,8 +26,8 @@ Pull in `tst-core` and the pipeline sender and receiver shells with the standard
 
 ```toml
 [dependencies]
-tst-core     = { version = "0.6.0", default-features = false }
-tst-pipeline = { version = "0.6.0", default-features = false }
+tst-core     = { version = "0.7.0", default-features = false }
+tst-pipeline = { version = "0.7.0", default-features = false }
 ```
 
 `default-features = false` drops the `std` feature on both crates. What you get:
@@ -56,7 +56,7 @@ bash embedded/scripts/check/qemu-runtime.sh
 
 ### Gotchas
 
-- **`std` is on by default.** A bare `tst-core = { version = "0.6.0" }` pulls in the standard library. Always add `default-features = false` for bare-metal targets — the compiler will reject the build if you forget (the `*-none-*` target has no `std`).
+- **`std` is on by default.** A bare `tst-core = { version = "0.7.0" }` pulls in the standard library. Always add `default-features = false` for bare-metal targets — the compiler will reject the build if you forget (the `*-none-*` target has no `std`).
 - **Final binaries need a `#[global_allocator]`.** Both crates are `#![no_std]` + `alloc`, which requires a heap. Library crates that consume `tst-core` do not need to provide one; the final binary (your firmware) does. `embedded/baremetal-qemu/` uses `embedded-alloc` + `cortex-m-rt` as one approach.
 - **The `embedded/` tree is workspace-excluded on purpose.** The sub-projects pin bare-metal targets and profiles that are incompatible with a host-target workspace build. They consume the workspace crates by path and carry their own committed `Cargo.lock` files; CI builds them with `--locked`.
 - **One sender per task.** Under `no_std` the pipeline shells' internal lock is a spin lock with no priority inheritance and no interrupt masking. Drive each `MuxSender`/`Sender`/`RawSender` — and, in the C firmware path, each `tst_*` handle — from a single task. Sharing one across preemptive tasks can livelock a higher-priority task against a preempted lock-holder.

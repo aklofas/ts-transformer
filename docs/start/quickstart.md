@@ -58,7 +58,7 @@ All `ts-transformer` crates are published on crates.io:
 
 ```toml
 [dependencies]
-tst-core = "0.6"
+tst-core = "0.7"
 ```
 
 Note on cold builds: `tst-core` itself is pure Rust — it has no

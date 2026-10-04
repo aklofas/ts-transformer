@@ -42,8 +42,7 @@ on `tstrans` and its topic submodules — `tstrans.io`, `tstrans.mpegts`,
 into `tstrans._native` directly; it may reorganize between versions.
 
 Wheels ship the UDP, TCP, RTP/RTSP, SRT, RIST, and HLS surfaces
-on by default — with one caveat: **RIST is excluded from the Windows
-wheel** (the Linux and macOS wheels include it). The HLS publisher
+on by default, on every platform (Linux, macOS, and Windows). The HLS publisher
 (`tstrans.hls`) imports out of the box from a published wheel (see
 [HLS publisher](#hls-publisher-tstranshls) below); it is unavailable only
 in a `--no-default-features` source build that omits `hls`.
@@ -1738,9 +1737,6 @@ output directly when absolute byte offsets matter.
   published wheel (the `hls` feature is default-on); it raises
   `ImportError` only in a `--no-default-features` source build that omits
   `hls`.
-- **RIST is excluded from the Windows wheel.** The Linux and macOS wheels
-  bundle librist; the Windows wheel does not. (UDP / TCP / RTP / SRT ship
-  on every platform.)
 - **RTSP passwords never round-trip to Python.** `BasicAuth` /
   `DigestAuth` hold the password in Rust memory; only `user` / `realm`
   (and `DigestAuth.algorithm`) are readable. `RtspServerConfig.tls_cert` /

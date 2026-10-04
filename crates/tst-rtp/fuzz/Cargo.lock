@@ -538,7 +538,7 @@ dependencies = [
 
 [[package]]
 name = "tst-core"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "hashbrown 0.15.5",
  "libc",
@@ -555,7 +555,7 @@ dependencies = [
 
 [[package]]
 name = "tst-pipeline"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "spin",
  "thiserror",
@@ -565,7 +565,7 @@ dependencies = [
 
 [[package]]
 name = "tst-rtp"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "base64",
  "bytes",

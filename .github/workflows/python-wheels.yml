@@ -238,11 +238,8 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 45
     needs: version-preflight
-    # Best-effort: tst-c has windows-msvc compile+link only (runtime
-    # tests deferred — see project_plan_65). The tst-py wheel may build
-    # but isn't runtime-verified. We still cut a wheel so Windows users
-    # who want to try it have a path; we just don't gate the publish on
-    # its success.
+    # Best-effort: the Windows wheel is built but not runtime-verified on
+    # this leg; it does not gate the publish.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v5
@@ -257,23 +254,42 @@ jobs:
         with:
           toolchain: "1.85"
 
+      # librist's vendored build is meson + ninja-driven (NOT cmake) and
+      # finds the shared mbedTLS tree through pkg-config — the same
+      # prerequisites as the gating ci.yml Windows leg, installed the same
+      # way: ninja via choco, meson + pkgconf via pip (pip drops them into the
+      # Python Scripts dir already on PATH; choco's meson MSI updates only the
+      # registry PATH the running job never re-reads). bash with `set -e` plus
+      # a per-tool PATH check, because choco can exit 0 without installing.
+      - name: Install librist build prerequisites (meson + ninja + pkg-config)
+        shell: bash
+        run: |
+          set -euo pipefail
+          choco install -y --no-progress ninja
+          python -m pip install --upgrade meson pkgconf
+          for tool in ninja meson pkg-config; do
+            command -v "$tool" >/dev/null 2>&1 || { echo "FAIL: '$tool' not on PATH after prereq install"; exit 1; }
+          done
+
       - uses: PyO3/maturin-action@v1
         with:
           working-directory: bindings/python
-          # rist is intentionally excluded from the Windows wheel: vendored
-          # librist's rist_destroy hangs ≥14 s on teardown on Windows (a
-          # librist bug, not ours). Shipping a module that hangs on drop is
-          # worse than not shipping it. linux + macos wheels keep rist.
-          #
-          # `--no-default-features` is REQUIRED here: cargo/maturin features are
-          # ADDITIVE, so without it the crate's `default` set (which includes
-          # `rist`) would re-enable rist regardless of the `--features` list
-          # below. We therefore disable defaults and list the exact Windows set
-          # (everything in `default` EXCEPT rist; `pipeline` is pure-Rust and
-          # kept for parity with the linux/macos wheels).
-          args: --release --out dist --no-default-features --features rtp,srt,udp,tcp,hls,pipeline,tls
+          args: --release --out dist --features rtp,srt,udp,tcp,hls,rist,tls
         env:
           SRT_FORCE_VENDORED: "1"
+          RIST_FORCE_VENDORED: "1"
+
+      # Import smoke: install the wheel just built into the setup-python
+      # interpreter and import the native transports, so a wheel that builds
+      # but cannot load (e.g. a missing librist / libsrt DLL) is caught here.
+      # Runs from the repo root, where no `tstrans` source dir shadows the
+      # installed package. Best-effort like the rest of this job.
+      - name: Import smoke (installed wheel)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --no-index --find-links bindings/python/dist tstrans
+          python -c "import tstrans, tstrans.rist, tstrans.srt; print(tstrans.__version__)"
 
       - uses: actions/upload-artifact@v7
         with:

@@ -547,7 +547,7 @@ dependencies = [
 
 [[package]]
 name = "tst-core"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "hashbrown 0.15.5",
  "libc",
@@ -564,7 +564,7 @@ dependencies = [
 
 [[package]]
 name = "tst-pipeline"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "spin",
  "thiserror",
@@ -574,7 +574,7 @@ dependencies = [
 
 [[package]]
 name = "tst-srt"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "libc",
  "os_socketaddr",
@@ -588,11 +588,11 @@ dependencies = [
 
 [[package]]
 name = "tstrans-mbedtls-src"
-version = "0.6.0+3.6.7"
+version = "0.7.0+3.6.7"
 
 [[package]]
 name = "tstrans-srt-sys"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "bindgen",
  "cmake",

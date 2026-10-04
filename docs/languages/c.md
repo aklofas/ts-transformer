@@ -57,7 +57,7 @@ Every release exposes two pairs of macros in `tstrans.h` plus matching runtime a
 
 ```c
 #define TST_VERSION_MAJOR        0   // package (Cargo.toml) version
-#define TST_VERSION_MINOR        6
+#define TST_VERSION_MINOR        7
 #define TST_VERSION_PATCH        0
 #define TST_ABI_VERSION_MAJOR    0   // C ABI contract version
 #define TST_ABI_VERSION_MINOR    22

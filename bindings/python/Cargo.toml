@@ -6,7 +6,7 @@ publish     = false
 # (per spec: docs/specs/2026-05-22-tst-py-design.md — "tst-py crate
 # version is independent of the rest of the workspace; v1 starts at
 # 0.1.0"). Keep this in sync with pyproject.toml's `[project] version`.
-version     = "0.6.0"
+version     = "0.7.0"
 edition.workspace      = true
 rust-version.workspace = true
 license.workspace      = true
