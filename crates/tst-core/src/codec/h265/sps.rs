@@ -59,12 +59,16 @@ pub struct H265Sps {
 impl H265Sps {
     /// Coded picture width before conformance-window crop is applied
     /// (luma samples). Equal to `width + crop_left + crop_right`.
+    /// Cannot overflow for an SPS returned by `parse_sps`, which rejects a
+    /// crop whose sum reaches the raw dimension.
     pub fn coded_width(&self) -> u32 {
         self.width + self.crop_left + self.crop_right
     }
 
     /// Coded picture height before conformance-window crop is applied
     /// (luma samples). Equal to `height + crop_top + crop_bottom`.
+    /// Cannot overflow for an SPS returned by `parse_sps`, which rejects a
+    /// crop whose sum reaches the raw dimension.
     pub fn coded_height(&self) -> u32 {
         self.height + self.crop_top + self.crop_bottom
     }
@@ -239,8 +243,18 @@ pub fn parse_sps(rbsp: &[u8]) -> Result<H265Sps, CodecParseError> {
 
     let raw_w = pic_width_in_luma_samples;
     let raw_h = pic_height_in_luma_samples;
-    let width = raw_w.saturating_sub(crop_x_left.saturating_add(crop_x_right));
-    let height = raw_h.saturating_sub(crop_y_top.saturating_add(crop_y_bottom));
+    let width = crate::codec::apply_crop(
+        "conf_win_left_offset + conf_win_right_offset",
+        raw_w,
+        crop_x_left,
+        crop_x_right,
+    )?;
+    let height = crate::codec::apply_crop(
+        "conf_win_top_offset + conf_win_bottom_offset",
+        raw_h,
+        crop_y_top,
+        crop_y_bottom,
+    )?;
 
     Ok(H265Sps {
         sps_seq_parameter_set_id,

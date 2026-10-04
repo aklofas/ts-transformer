@@ -321,8 +321,18 @@ pub fn parse_sps(rbsp: &[u8]) -> Result<H264Sps, CodecParseError> {
     let crop_top = crop_t.saturating_mul(step_y);
     let crop_bottom = crop_b.saturating_mul(step_y);
 
-    let width = coded_width.saturating_sub(crop_left.saturating_add(crop_right));
-    let height = coded_height.saturating_sub(crop_top.saturating_add(crop_bottom));
+    let width = crate::codec::apply_crop(
+        "frame_crop_left_offset + frame_crop_right_offset",
+        coded_width,
+        crop_left,
+        crop_right,
+    )?;
+    let height = crate::codec::apply_crop(
+        "frame_crop_top_offset + frame_crop_bottom_offset",
+        coded_height,
+        crop_top,
+        crop_bottom,
+    )?;
 
     let has_b_frames = compute_has_b_frames(profile_idc, constraint_set_flags, &vui);
 

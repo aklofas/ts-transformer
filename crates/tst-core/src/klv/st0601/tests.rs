@@ -3596,6 +3596,46 @@ fn wpc_sdcc_malformed_header_is_field_error_not_panic() {
     assert_eq!(ls.field_errors.len(), 1);
 }
 
+/// Review 9 (ext R9-02): a Tag 102 whose Matrix Size names more items than
+/// the pack's own bytes can describe is rejected (`TruncatedField`), never
+/// captured — before the fix every such occurrence cloned
+/// `tags_seen[len - N..]`, so n occurrences after n fields retained n² tags
+/// (~63 KB of wire → ~309 MiB through `decode_strict_compliance`, the C /
+/// Python / JVM typed decoders included).
+#[test]
+fn repeated_sdcc_history_cannot_expand_quadratically() {
+    fn wire(n: usize) -> Vec<u8> {
+        let mut body = tlv(2, &[0; 8]); // Precision Time Stamp
+        body.extend(tlv(65, &[19])); // UAS Datalink LS version
+        for _ in 0..n {
+            // Unknown multi-byte tag 258 with an empty value: one history entry each.
+            crate::klv::pack::emit_ber_oid_tlv(258, &[], &mut body).unwrap();
+        }
+        let mut oid = [0u8; 5];
+        let used = crate::klv::length::write_ber_oid(n as u32, &mut oid).unwrap();
+        for _ in 0..n {
+            // A "pack" that is only a Matrix Size: no Parse Control, no data.
+            body.extend(tlv(102, &oid[..used]));
+        }
+        wrap_st0601(&body)
+    }
+    for n in [256usize, 512] {
+        let decoded = decode_strict_compliance(&wire(n)).expect("framing and checksum are valid");
+        assert!(
+            decoded.sdcc_flps.is_empty(),
+            "n={n}: {} occurrences captured",
+            decoded.sdcc_flps.len()
+        );
+        assert_eq!(
+            decoded.field_errors.len(),
+            n,
+            "one TruncatedField per rejected occurrence"
+        );
+    }
+    // `wpc_sdcc_positional_capture` pins that a pack which CAN hold its
+    // matrix (the C1 golden, N = 3) is still captured positionally.
+}
+
 /// Now that Tag 102 is typed (`sdcc_flps`), it is rejected from
 /// `unknown` on encode — the same `ReservedTagInUnknown` contract as
 /// every other typed tag (mirrors

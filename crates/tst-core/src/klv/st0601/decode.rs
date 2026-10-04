@@ -622,11 +622,15 @@ fn apply_typed_tag(
             // MULTI-INSTANCE (ST 0601.19 Table 1 "Multiples Allowed" =
             // Yes) — every occurrence appends, it never overwrites.
             // Positional capture, not a full `st1010::decode_sdcc_flp`
-            // parse: only the Matrix Size (Element 1) needs peeking here
-            // to know how many of `tags_seen`'s most-recent entries this
-            // occurrence refines; the raw bytes are kept verbatim so a
-            // malformed-but-peekable pack still round-trips, and callers
-            // decode the pack itself on demand.
+            // parse: `peek_matrix_size` reads the Matrix Size (Element 1)
+            // and the Parse Control (Element 2) and applies
+            // `check_matrix_size_fits`, so `N` — how many of `tags_seen`'s
+            // most-recent entries this occurrence refines — is bounded by
+            // what the pack's own bytes can hold. An occurrence whose
+            // matrix cannot fit is rejected as `TruncatedField` and not
+            // captured (review 9, ext R9-02). Elements 3–5 are not
+            // validated: the raw bytes of an accepted pack are kept
+            // verbatim, and callers decode the pack itself on demand.
             102 => {
                 let n = crate::klv::st1010::peek_matrix_size(f.value)
                     .ok_or(KlvFieldError::TruncatedField { tag })?;

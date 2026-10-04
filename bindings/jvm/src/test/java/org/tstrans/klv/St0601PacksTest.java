@@ -575,12 +575,14 @@ class St0601PacksTest {
         }
         UasDatalinkLs rec = new UasDatalinkLs.Builder()
                 .universalLabel(ByteBuffer.wrap(UL))
-                .sdccFlps(List.of(new SdccFlpField(preceding, ByteBuffer.wrap(hex("038404")))))
+                .sdccFlps(List.of(new SdccFlpField(preceding, ByteBuffer.wrap(hex("03 84 04 3F800000 40000000 40800000 3F000000 00000000 BF000000")))))
                 .build();
         byte[] encoded = Klv.encodeUasDatalink(rec); // must not crash the JVM
         UasDatalinkLs back = Klv.decodeUasDatalink(encoded);
         assertEquals(1, back.sdccFlps().size());
-        assertArrayEquals(hex("038404"), readByteBuffer(back.sdccFlps().get(0).bytes()));
+        assertArrayEquals(
+                hex("03 84 04 3F800000 40000000 40800000 3F000000 00000000 BF000000"),
+                readByteBuffer(back.sdccFlps().get(0).bytes()));
     }
 
     @Test
@@ -920,8 +922,8 @@ class St0601PacksTest {
                 new ViewDomainPair(-75.0, 50.0),
                 new ViewDomainPair(350.0, 20.0));
         List<SdccFlpField> sdccFlps = List.of(
-                new SdccFlpField(List.of(1L, 2L, 3L), ByteBuffer.wrap(hex("038404"))),
-                new SdccFlpField(List.of(4L, 5L), ByteBuffer.wrap(hex("038404"))));
+                new SdccFlpField(List.of(1L, 2L, 3L), ByteBuffer.wrap(hex("03 84 04 3F800000 40000000 40800000 3F000000 00000000 BF000000"))),
+                new SdccFlpField(List.of(4L, 5L), ByteBuffer.wrap(hex("03 84 04 3F800000 40000000 40800000 3F000000 00000000 BF000000"))));
 
         UasDatalinkLs rec = new UasDatalinkLs.Builder()
                 .universalLabel(ByteBuffer.wrap(UL))

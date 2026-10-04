@@ -363,6 +363,30 @@ pub enum CodecParseError {
     BufferTooSmall { needed: usize, have: usize },
 }
 
+/// Apply one conformance-window / frame-crop pair to a raw luma dimension.
+/// `a` and `b` are the two crop amounts already scaled to luma samples
+/// (saturating, so a hostile offset arrives as `u32::MAX`). The standards
+/// require `a + b < raw` (H.264 §7.4.2.1.1, H.265 §7.4.3.2.1, H.266
+/// §7.4.3.4); anything else is rejected at parse time so the public
+/// `coded_width()` / `coded_height()` getters (`width + crop_a + crop_b`)
+/// can never overflow (review 9, ext R9-03). A raw dimension of 0 with no
+/// crop is left to the caller as before.
+pub(crate) fn apply_crop(
+    field: &'static str,
+    raw: u32,
+    a: u32,
+    b: u32,
+) -> Result<u32, CodecParseError> {
+    let total = u64::from(a) + u64::from(b);
+    if total != 0 && total >= u64::from(raw) {
+        return Err(CodecParseError::ReservedValue {
+            field,
+            value: u32::try_from(total).unwrap_or(u32::MAX),
+        });
+    }
+    Ok(raw - total as u32)
+}
+
 /// Read the ITU-T H.273 colour_primaries / transfer_characteristics /
 /// matrix_coefficients triplet common to H.264 §E.2.1, H.265 §E.2.1,
 /// and H.266 §7.3.2.5 / H.274 §7.2 VUI colour-description blocks.
@@ -656,5 +680,23 @@ pub(crate) mod test_util {
                 self.write(0, 1);
             }
         }
+    }
+
+    /// Insert emulation-prevention bytes (`00 00 0x` → `00 00 03 0x`, x ≤ 3)
+    /// so a hand-built RBSP reads back through `BitReader` exactly as
+    /// written. Hostile ue(v) values carry 30-bit zero runs, which the raw
+    /// writer output would otherwise hand to the reader as stray EPBs.
+    pub(crate) fn escape_emulation(raw: &[u8]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(raw.len() + raw.len() / 64 + 4);
+        let mut zeros = 0u32;
+        for &b in raw {
+            if zeros >= 2 && b <= 3 {
+                out.push(3);
+                zeros = 0;
+            }
+            out.push(b);
+            zeros = if b == 0 { zeros + 1 } else { 0 };
+        }
+        out
     }
 }

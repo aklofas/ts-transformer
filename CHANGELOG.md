@@ -945,6 +945,36 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   there instead of dropping the whole pack as `TruncatedField { tag: 101 }`
   (strict decode still rejects; framing errors still drop the pack).
 
+### Fixed — KLV and codec parsers (review 9)
+
+- **ST 0601 Tag 102 (SDCC-FLP) can no longer be used to inflate a record
+  quadratically.** The typed decoder captured, for every Tag 102
+  occurrence, the `N` wire-order tags preceding it — with `N` read straight
+  off the pack's Matrix Size and never checked against the pack: 9 000
+  empty items followed by 9 000 three-byte "packs" declaring `N = 9 000`
+  (~63 KB on the wire) retained ~309 MiB of tag arrays through
+  `decode_strict_compliance` / `tst_st0601_decode` /
+  `decode_uas_datalink` (C, Python, JVM alike; a correct checksum does not
+  help, and an allocation failure is not catchable at the FFI boundary).
+  The peek now requires the pack's Parse Control and applies the same
+  size bound `decode_sdcc_flp` applies before allocating
+  (`check_matrix_size_fits`): an occurrence whose matrix the pack cannot
+  hold is a `TruncatedField` field error, not a capture. Legitimate packs
+  (the ST 1010 goldens) are captured exactly as before. Review #9,
+  external R9-02.
+- **H.264 / H.265 / H.266 SPS parsers reject a crop that reaches the raw
+  picture dimension.** The parsers scaled hostile conformance-window /
+  frame-crop offsets with saturating arithmetic and returned a successful
+  `*Sps` whose `coded_width()` / `coded_height()` (`width + crop_left +
+  crop_right`) then overflowed — a panic in debug builds, a wrapped wrong
+  dimension in release builds, through every binding's SPS wrapper. The
+  standards require the luma crop sum to be strictly less than the raw
+  dimension; a parse now fails with
+  `CodecParseError::ReservedValue { field: "<left> + <right>" | "<top> +
+  <bottom>", value }` instead, and the getters can no longer overflow.
+  Valid crops (bottom-8 1080p etc.) parse exactly as before. Review #9,
+  external R9-03.
+
 ### Fixed — pipeline (WP-3)
 
 - **`tst-pipeline`: a Background-mode managed send can no longer be
