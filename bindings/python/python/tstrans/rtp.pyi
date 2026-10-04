@@ -359,7 +359,9 @@ class RtspStats:
 class RtspCancelHandle:
     """RTSP control-plane cancel handle. Frozen. Flipping `.cancel()`
     breaks any in-flight `connect` / `pause` / `play` / `teardown` out
-    of blocking I/O at the next poll (typically <100 ms).
+    of blocking I/O at the next poll (typically <100 ms). The interrupted
+    call raises `RtspError(CLOSED)` — the one cancel outcome every tstrans
+    handle shares.
     """
 
     def cancel(self) -> None: ...
@@ -388,15 +390,13 @@ class RtspSession:
     `pause` / `play` / `teardown` and expose RTCP-derived stats.
 
     `into_demux_receiver()` — consume the data plane for MPEG-TS demuxing
-    (created by `RtspClient.connect()`). Raises `RtspError(PROTOCOL)` when
-    called on an H.264 session (created by `RtspClient.connect_h264()`) or
-    when the data plane has already been consumed.
+    (created by `RtspClient.connect()`).
     `into_h264_receiver()` — consume the data plane for H.264 AU iteration
-    (created by `RtspClient.connect_h264()`). Raises `RtspError(PROTOCOL)`
-    when called on an MPEG-TS session (created by `RtspClient.connect()`)
-    or when the data plane has already been consumed.
-    Both directions are guarded — calling the wrong method for the session
-    type raises `RtspError(PROTOCOL)`.
+    (created by `RtspClient.connect_h264()`).
+    The data plane is taken once: any `into_*` call after it has been
+    consumed (by either method) raises `RtspError(CLOSED)`. Both directions
+    are guarded — calling the wrong method on a fresh session raises
+    `RtspError(PROTOCOL)` and leaves the data plane in place.
     """
 
     def pause(self) -> None: ...

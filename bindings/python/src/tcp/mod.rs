@@ -59,6 +59,42 @@ use crate::raise::{TCP, pyok, pyres, raise};
 use crate::util::{CancelSource, close_owned, open_snapshot};
 
 // ---------------------------------------------------------------------------
+// PyTcpCancelHandle — the shell's shared cancel state, exposed to Python
+// ---------------------------------------------------------------------------
+
+/// Python-side cancel handle for `tcp.Transport` / `tcp.Listener`. Wraps the
+/// shell's shared [`CancelSource`] over the real `TcpCancelHandle` — the
+/// same object `close()` fires first — so `is_cancelled()` reports the
+/// shell's state, not this wrapper's history (review 9, R9-14; the udp /
+/// rist twins have the same shape).
+#[pyclass(frozen, name = "CancelHandle", module = "tstrans.tcp")]
+pub(crate) struct PyTcpCancelHandle {
+    src: Arc<CancelSource>,
+}
+
+#[pymethods]
+impl PyTcpCancelHandle {
+    /// Signal cancellation. Idempotent. A `recv()` / `send()` /
+    /// `accept_blocking()` parked on the originating object raises
+    /// `TcpError(CLOSED)` ("cancelled from another thread") within about one
+    /// 100 ms slice, and every later call on it raises the same. The object
+    /// itself is NOT closed — `close()` afterwards is quiet.
+    fn cancel(&self) {
+        tst_core::transport::TransportCancel::cancel(&*self.src);
+    }
+
+    /// `True` once the shell was cancelled or closed through ANY handle or
+    /// its own `close()` (shared state).
+    fn is_cancelled(&self) -> bool {
+        self.src.is_cancelled()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("CancelHandle(cancelled={})", self.is_cancelled())
+    }
+}
+
+// ---------------------------------------------------------------------------
 // PyTcpStats — frozen mirror of TcpStats
 // ---------------------------------------------------------------------------
 
@@ -136,6 +172,9 @@ pub(crate) struct PyTcpTransport {
     /// Snapshot = the peer address, fixed at connect / accept, so
     /// `peer_addr()` and `repr()` never wait behind a parked `recv()`.
     owned: Owned<SendHalf<TcpTransport>, SocketAddr>,
+    /// Shared cancel state beside the slot so `cancel_handle()` never waits
+    /// behind an in-flight call — the udp shape.
+    cancel: Arc<CancelSource>,
 }
 
 #[pymethods]
@@ -144,6 +183,17 @@ impl PyTcpTransport {
     #[staticmethod]
     fn builder() -> PyTcpTransportBuilder {
         PyTcpTransportBuilder::default()
+    }
+
+    /// Obtain a cross-thread cancel handle. Lock-free: never waits behind a
+    /// parked `recv()` or `send()` (the handle lives outside the slot).
+    fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<PyTcpCancelHandle>> {
+        Py::new(
+            py,
+            PyTcpCancelHandle {
+                src: Arc::clone(&self.cancel),
+            },
+        )
     }
 
     /// Send a payload over the TCP connection. Accepts any bytes-like object:
@@ -312,6 +362,7 @@ fn make_py_tcp_transport(t: TcpTransport) -> PyTcpTransport {
     let peer = t.peer();
     PyTcpTransport {
         owned: Owned::new(SendHalf(t), cancel.as_dyn(), peer),
+        cancel,
     }
 }
 
@@ -478,6 +529,9 @@ pub(crate) struct PyTcpListener {
     /// bound port read at `build()`, so `local_port()` never waits behind a
     /// parked `accept_blocking()`.
     owned: Owned<TcpListenerHeld, Option<u16>>,
+    /// Shared cancel state beside the slot so `cancel_handle()` never waits
+    /// behind a parked `accept_blocking()` — the udp shape.
+    cancel: Arc<CancelSource>,
 }
 
 #[pymethods]
@@ -486,6 +540,17 @@ impl PyTcpListener {
     #[staticmethod]
     fn builder() -> PyTcpListenerBuilder {
         PyTcpListenerBuilder::default()
+    }
+
+    /// Obtain a cross-thread cancel handle. Lock-free: never waits behind a
+    /// parked `accept_blocking()` (the handle lives outside the slot).
+    fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<PyTcpCancelHandle>> {
+        Py::new(
+            py,
+            PyTcpCancelHandle {
+                src: Arc::clone(&self.cancel),
+            },
+        )
     }
 
     /// Block until a new inbound connection arrives. Returns a `Transport`
@@ -702,6 +767,7 @@ impl PyTcpListenerBuilder {
                 let local_port = l.local_addr().ok().map(|a| a.port());
                 Ok(PyTcpListener {
                     owned: Owned::new(TcpListenerHeld(l), cancel.as_dyn(), local_port),
+                    cancel,
                 })
             }
             Err(e) => Err(raise(py, &TCP, BindingError::from(e))),
@@ -824,6 +890,7 @@ impl PyClientCert {
 
 pub(crate) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new_bound(parent.py(), "tcp")?;
+    m.add_class::<PyTcpCancelHandle>()?;
     m.add_class::<PyTcpStats>()?;
     m.add_class::<PyTcpTransport>()?;
     m.add_class::<PyTcpTransportBuilder>()?;

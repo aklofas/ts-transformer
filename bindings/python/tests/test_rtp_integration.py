@@ -236,6 +236,14 @@ def test_full_pipeline_rtsp_server_to_rtsp_client() -> None:
                     session.into_demux_receiver()
                 assert double_take.value.kind == RtspErrorKind.CLOSED
 
+                # Review 9: the consumed check runs before the H.264
+                # wrong-constructor check, so taking the data plane the
+                # other way on a consumed MP2T session is CLOSED too
+                # (it was PROTOCOL).
+                with pytest.raises(RtspError) as other_take:
+                    session.into_h264_receiver()
+                assert other_take.value.kind == RtspErrorKind.CLOSED
+
                 def consumer() -> None:
                     try:
                         for ev in demux:

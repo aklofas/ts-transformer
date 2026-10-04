@@ -588,14 +588,28 @@ pub(crate) fn record_recv_closed(cancelled: bool) -> i32 {
 /// reaching C is a hard `TST_E_TRANSPORT`.
 ///
 /// A cancelled plain-SRT operation arrives as `ExplicitClose` → kind
-/// `Closed` and takes the first arm (-7): `SrtTransport` reads its cancel
-/// latch after the libsrt failure and reports the cancel rather than the
-/// broken connection `srt_close` provoked.
+/// `Closed` and takes the first arm (-7) — unconditionally, not via the
+/// latch: `SrtTransport` reads its cancel latch after the libsrt failure and
+/// reports the cancel rather than the broken connection `srt_close` provoked.
 #[cfg(feature = "std")]
 #[allow(dead_code)] // transport-feature-gated callers; unused in minimal builds
 pub(crate) fn record_recv_error<E: ShellError>(e: &E, cancelled: bool, broken_is_eos: bool) -> i32 {
     match e.kind() {
-        ShellErrorKind::Closed | ShellErrorKind::EndOfStream => record_recv_closed(cancelled),
+        // A typed caller-side close (`ExplicitClose` → `Closed`) is -7
+        // whether or not the C-side latch saw the cancel: the inner or
+        // factory transport can report it on its own at process exit
+        // (review 9, ext R9-05). On the receive direction a peer EOS is
+        // `EndOfStream`, never `Closed`, so this arm is never a disconnect.
+        ShellErrorKind::Closed => {
+            set_last_error(
+                TstError::Closed,
+                "receiver was cancelled or closed by caller",
+            );
+            TstError::Closed as i32
+        }
+        // The ambiguous end of stream still consults the latch so a caller
+        // close and a peer EOS can be told apart.
+        ShellErrorKind::EndOfStream => record_recv_closed(cancelled),
         ShellErrorKind::TransportBroken if broken_is_eos && !cancelled => {
             record_eos();
             TstError::EndOfStream as i32
@@ -699,6 +713,33 @@ mod tests {
     use alloc::{vec, vec::Vec};
     #[cfg(feature = "std")]
     use tst_pipeline::TransportError;
+
+    /// Review 9 (ext R9-05): a typed caller-side close on the receive path
+    /// is -7 even when the C-side cancel latch never saw a cancel — the
+    /// inner or factory transport reports `ExplicitClose` on its own at
+    /// process exit. Only the ambiguous end-of-stream consults the latch.
+    #[cfg(feature = "std")]
+    #[test]
+    fn explicit_close_is_closed_even_without_an_outer_cancel_latch() {
+        let closed = tst_pipeline::ReceiverError::from(TransportError::ExplicitClose);
+        assert_eq!(
+            record_recv_error(&closed, false, false),
+            TstError::Closed as i32
+        );
+        assert_eq!(
+            record_recv_error(&closed, false, true),
+            TstError::Closed as i32
+        );
+        let eos = tst_pipeline::ReceiverError::from(TransportError::Closed);
+        assert_eq!(
+            record_recv_error(&eos, false, false),
+            TstError::EndOfStream as i32
+        );
+        assert_eq!(
+            record_recv_error(&eos, true, false),
+            TstError::Closed as i32
+        );
+    }
 
     #[test]
     fn set_then_get_roundtrips() {

@@ -139,7 +139,7 @@ pub fn connect_tls(url: &TcpUrl, cfg: &SocketConfig) -> Result<TcpTransport, Tcp
 
     let (socket, peer) =
         crate::transport::connect_stream(&url.host, url.port, cfg.connect_timeout_or_default())
-            .map_err(TcpError::Io)?;
+            .map_err(|e| crate::transport::map_connect_err(e, cfg))?;
     apply_knobs(&socket, cfg).map_err(TcpError::Io)?;
 
     let stream = StreamOwned::new(conn, socket);

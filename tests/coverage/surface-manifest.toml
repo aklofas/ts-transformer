@@ -11237,7 +11237,7 @@ kind = "rust"
 crate = "tst-tcp"
 item = "tst_tcp::listener::TcpListener::cancel_handle"
 owning_tests = ["crates/tst-tcp/tests/loopback.rs"]
-bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:tstrans.tcp.Listener.cancel_handle", "java:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 

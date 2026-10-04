@@ -7,6 +7,7 @@ Covers:
 """
 
 import threading
+import time
 
 import pathlib
 
@@ -494,3 +495,97 @@ def test_tcp_error_wiring_via_test_helper() -> None:
         with pytest.raises(TcpError) as excinfo:
             _raise_tcp_error_for_test(kind.name, f"test {kind.name}")
         assert excinfo.value.kind == kind
+
+
+# ---------------------------------------------------------------------------
+# cancel_handle() (review 9, R9-14)
+# ---------------------------------------------------------------------------
+
+
+def test_tcp_cancel_handle_unparks_recv_and_later_calls_are_closed() -> None:
+    """R9-14: tcp was the one shell without `cancel_handle()`. The handle
+    ends a parked recv() with TcpError(CLOSED) without freeing the object,
+    every later call raises CLOSED, and close() afterwards is quiet."""
+    listener, port = _listener_and_port()
+    ready = threading.Event()
+    hold = threading.Event()
+
+    def server_thread() -> None:
+        ready.set()
+        peer = listener.accept_blocking()
+        hold.wait(timeout=10.0)  # keep the peer open, send nothing
+        peer.close()
+
+    t = threading.Thread(target=server_thread, daemon=True)
+    caller = None
+    w = None
+    captured: list[BaseException] = []
+    try:
+        t.start()
+        assert ready.wait(timeout=2.0), "server thread did not start"
+        caller = tcp.Transport.builder().url(f"tcp://127.0.0.1:{port}").build()
+        ch = caller.cancel_handle()
+        assert not ch.is_cancelled()
+        assert repr(ch) == "CancelHandle(cancelled=false)"
+        parked = threading.Event()
+
+        def worker() -> None:
+            buf = bytearray(4096)
+            parked.set()
+            try:
+                caller.recv(buf)
+            except BaseException as exc:  # noqa: BLE001 — capture whatever is raised
+                captured.append(exc)
+
+        w = threading.Thread(target=worker, daemon=True)
+        w.start()
+        assert parked.wait(timeout=2.0), "worker thread did not start"
+        time.sleep(0.2)  # let recv() enter its poll loop
+        ch.cancel()
+        w.join(timeout=5.0)
+        assert not w.is_alive(), "recv() did not unpark after cancel()"
+        assert len(captured) == 1 and isinstance(captured[0], TcpError)
+        assert captured[0].kind == TcpErrorKind.CLOSED
+        assert ch.is_cancelled()
+        with pytest.raises(TcpError) as later:
+            caller.send(b"x")
+        assert later.value.kind == TcpErrorKind.CLOSED
+        caller.close()  # quiet after a cancel
+    finally:
+        # Runs even when an assertion fails above, so no thread is left
+        # parked in native recv()/accept() at interpreter exit.
+        hold.set()
+        if caller is not None:
+            caller.close()  # idempotent; fires the cancel first
+        listener.close()  # unparks a still-pending accept_blocking()
+        if w is not None:
+            w.join(timeout=5.0)
+        t.join(timeout=5.0)
+    assert not t.is_alive(), "server thread did not exit"
+
+
+def test_tcp_listener_cancel_handle_unparks_accept() -> None:
+    listener, _port = _listener_and_port()
+    captured: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            listener.accept_blocking()
+        except BaseException as exc:  # noqa: BLE001
+            captured.append(exc)
+
+    w = threading.Thread(target=worker, daemon=True)
+    try:
+        ch = listener.cancel_handle()
+        w.start()
+        time.sleep(0.2)
+        ch.cancel()
+        w.join(timeout=5.0)
+        assert not w.is_alive(), "accept_blocking() did not unpark after cancel()"
+        assert len(captured) == 1
+        assert isinstance(captured[0], TcpError) and captured[0].kind == TcpErrorKind.CLOSED
+        assert ch.is_cancelled()
+    finally:
+        listener.close()  # fires the cancel first; a parked accept ends
+        if w.is_alive():
+            w.join(timeout=5.0)

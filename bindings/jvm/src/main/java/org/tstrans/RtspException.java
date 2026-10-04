@@ -17,7 +17,7 @@ public final class RtspException extends BindingException {
      */
     public enum Kind {
         PROTOCOL, AUTH_FAILED, AUTH_REQUIRED, NOT_FOUND, UNSUPPORTED_TRANSPORT,
-        TLS, IO, TIMEOUT, SERVER, MOUNT
+        TLS, IO, TIMEOUT, SERVER, MOUNT, CLOSED
     }
 
     private final Kind kind;

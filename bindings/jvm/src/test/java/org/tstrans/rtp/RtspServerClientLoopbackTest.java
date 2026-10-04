@@ -98,6 +98,11 @@ class RtspServerClientLoopbackTest {
                     RtspSession session = RtspClient.connect(RtspClientConfig.of(url));
                     DemuxReceiver rx = session.intoDemuxReceiver();
                     rxRef.set(rx);
+                    // 0.7.0 (review 9): the data plane is a consumable handle —
+                    // a second take is CLOSED, as in Python; it was PROTOCOL.
+                    RtspException twice = assertThrows(RtspException.class,
+                        session::intoDemuxReceiver);
+                    assertEquals("CLOSED", twice.kind().name());
                     String sha = null;
                     try {
                         for (DemuxEvent e : rx) {
@@ -117,6 +122,13 @@ class RtspServerClientLoopbackTest {
                             throw re;
                         }
                     }
+                    // Review 9: the consumed check runs before the H.264
+                    // wrong-constructor check, so taking the data plane the
+                    // other way is CLOSED too (it was PROTOCOL). After the
+                    // stream check: this consuming call tears the session down.
+                    RtspException otherTake = assertThrows(RtspException.class,
+                        session::intoH264Receiver);
+                    assertEquals("CLOSED", otherTake.kind().name());
                     if (sha == null) {
                         shaFuture.completeExceptionally(
                             new AssertionError("no typed Video event arrived"));

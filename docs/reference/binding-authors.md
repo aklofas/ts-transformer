@@ -206,17 +206,21 @@ latch — every clone, and a handle obtained after the cancel, agrees.
 **One outcome.** A cancel that lands while an op is parked ends that op
 with `TransportError::ExplicitClose`, and every later op returns it at
 its entry check, on every transport that has a handle and on the managed
-wrappers — the normative table lives in the `tst_core::transport` rustdoc
+wrappers — and on the RTSP control plane: a cancelled `RtspClient` call
+(`RtspError::LocalCancel`) projects to the same `Closed` kind (review 9)
+— the normative table lives in the `tst_core::transport` rustdoc
 and `tst_core::transport::conformance` pins it in each crate's
 `tests/conformance.rs`. Bindings therefore project one kind for a cancel:
 `TstError::Closed` (−7) / `SrtError(CLOSED)` / `SrtException(CLOSED)`, via
 `BindingErrorKind`. The detail is `cancelled from another thread` wherever
 the `BindingError` reaches the caller unchanged — the Rust binding layer,
 Python, the JVM, and the C **send** path. The C **receive** path is the one
-exception: a receive that ends `Closed`/`EndOfStream` goes through
-`record_recv_closed`, which picks its message from the shared cancel flag so
-a caller close and a peer EOS can be told apart, and writes
-`receiver was cancelled or closed by caller` instead. Key on the CODE, not
+exception: a receive that ends `EndOfStream` goes through
+`record_recv_closed`, which picks its code and message from the shared cancel
+flag so a caller close and a peer EOS can be told apart; a typed `Closed` (a
+cancel or close, whichever handle issued it) is −7 regardless of the flag.
+Either way a −7 there carries `receiver was cancelled or closed by caller`
+instead. Key on the CODE, not
 the message (see "C ABI error-mapping contract" above). The
 transport's OWN `close()` keeps producing `Closed` (`ExplicitClose` on
 `ManagedRecvTransport`, whose close is a caller-initiated end); the

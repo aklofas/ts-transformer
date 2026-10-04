@@ -89,10 +89,11 @@ pub enum RtspError {
     #[error("RTSP request timed out waiting for the server's response")]
     Timeout,
 
-    /// Caller invoked `RtspCancelHandle::cancel` (lands Wave B) mid-request.
-    /// The TCP write/read returned early; no server state was
-    /// necessarily mutated, so caller should treat the session as
-    /// indeterminate.
+    /// Caller invoked `RtspCancelHandle::cancel` mid-request. The TCP
+    /// write/read returned early; no server state was necessarily mutated,
+    /// so treat the session as indeterminate. Bindings project this as the
+    /// one cancel outcome, `Closed` (`TST_E_CLOSED`, `RtspError(CLOSED)`,
+    /// `RtspException(CLOSED)`).
     #[error("RTSP request canceled by caller")]
     LocalCancel,
 

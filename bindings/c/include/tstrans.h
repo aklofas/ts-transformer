@@ -6795,6 +6795,7 @@ void tst_rtsp_server_free(struct TstRtspServer *server);
  * Sets the session's cancel flag so that any thread blocked inside a RTSP
  * request/response cycle (e.g. a blocking DESCRIBE or PLAY) will break out
  * at the next poll interval.  Safe to call from any thread. Idempotent.
+ * The interrupted call returns `TST_E_CLOSED` (-7).
  *
  * Note: cancels the RTSP *control plane* only. If
  * [`tst_rtsp_session_into_demux_receiver`] has already been called, the
@@ -10735,8 +10736,8 @@ int tst_tcp_demux_receiver_next_event(struct TstTcpDemuxReceiver *p,
  * URL grammar:
  * - `tcp://host:port` — connect to a plain TCP listener
  * - `tcps://host:port` — connect with TLS (disabled if built without `tls` feature)
- * - Query params: `?nodelay=1`, `?rcvbuf=N`, `?sndbuf=N`, `?pkt_size=N`,
- *   `?connect_timeout=Ns`
+ * - Query params: `?nodelay=1`, `?rcvbuf=N`, `?sndbuf=N`,
+ *   `?connect_timeout=N` (seconds)
  *
  * # Safety
  *
@@ -10955,8 +10956,8 @@ int tst_tcp_mux_sender_get_stream_codec_stats(struct TstTcpMuxSender *p,
  * URL grammar:
  * - `tcp://host:port` — connect to a plain TCP listener
  * - `tcps://host:port` — connect with TLS (disabled if built without `tls` feature)
- * - Query params: `?nodelay=1`, `?rcvbuf=N`, `?sndbuf=N`, `?pkt_size=N`,
- *   `?connect_timeout=Ns`
+ * - Query params: `?nodelay=1`, `?rcvbuf=N`, `?sndbuf=N`,
+ *   `?connect_timeout=N` (seconds)
  *
  * # Safety
  *
@@ -11251,8 +11252,8 @@ int tst_tcp_receiver_reset_stats(struct TstTcpReceiver *p);
  * URL grammar:
  * - `tcp://host:port` — connect to a plain TCP listener
  * - `tcps://host:port` — connect with TLS (disabled if built without `tls` feature)
- * - Query params: `?nodelay=1`, `?rcvbuf=N`, `?sndbuf=N`, `?pkt_size=N`,
- *   `?connect_timeout=Ns`
+ * - Query params: `?nodelay=1`, `?rcvbuf=N`, `?sndbuf=N`,
+ *   `?connect_timeout=N` (seconds)
  *
  * For a listener-accepted connection, use `tst_tcp_listener_accept_receiver`
  * instead.
@@ -11311,11 +11312,11 @@ int tst_tcp_sender_get_stats(struct TstTcpSender *p, struct tst_sender_stats_t *
  * URL grammar:
  * - `tcp://host:port` — plain TCP caller
  * - `tcps://host:port` — TLS caller (disabled if built without `tls` feature)
- * - Query params: `?nodelay=1`, `?rcvbuf=N`, `?sndbuf=N`, `?pkt_size=N`,
- *   `?connect_timeout=Ns`
+ * - Query params: `?nodelay=1`, `?rcvbuf=N`, `?sndbuf=N`,
+ *   `?connect_timeout=N` (seconds)
  *
  * The connection is established synchronously. Default connect timeout is
- * 10 seconds; override via `?connect_timeout=`.
+ * 10 seconds; override via `?connect_timeout=N` (integer seconds).
  *
  * # Safety
  *

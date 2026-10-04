@@ -1867,6 +1867,19 @@ mean **Deferred**. An entry whose feature has shipped must never read
   harness gains a shared TLS-cert-provisioning helper cheap enough to
   extend to these three transports without a bespoke setup per cell.
 
+## `?pkt_size=` URL knob for the C TCP openers
+
+- **Status:** Deferred (0.7.0). The C docs advertised `?pkt_size=N` on
+  `tst_tcp_*_open`, but `TcpUrl::parse` ignores unknown query keys and the
+  C ABI has no other way to set the send chunk size (64 KiB default);
+  Python has `TransportBuilder.pkt_size`. The claim was removed from the
+  C docs at 0.7.0 (review 9, R9-13).
+- **Why deferred:** a parser addition (`TcpUrl.pkt_size` +
+  `SocketConfig::merge_from_url` arm) after the 0.7.0 tag, red-first
+  (`pkt_size_url_knob_is_honoured` in `tst-tcp/src/config.rs`).
+- **Trigger to revisit:** the first 0.7.x rider PR, or a C consumer asking
+  for a non-default TCP chunk size.
+
 ## `release-validation.sh` consolidation into the interop matrix
 
 - **Status:** Not done. The maintainer's local pre-release validation
@@ -2283,10 +2296,10 @@ Entries whose feature shipped. Kept for the record (dates, PR numbers, the decis
   deadline) and a typed `RtpError(TIMEOUT)` — renamed `BACKPRESSURE` in
   0.7.0, with `TIMEOUT` kept as a deprecated alias. JVM (PR #167) mirrors it
   with `recv(Integer timeoutMs)` / `recvAu(Integer timeoutMs)`
-  overloads plus a new `RtpException.Kind.TIMEOUT`, and additionally
-  ships a checked `DemuxReceiver.recvEvent()` so a demux-side timeout
-  is also a typed `TIMEOUT` rather than an ambiguous EOS-shaped `null`
-  from the plain iterator-style `next()`.
+  overloads plus a typed rtp recv-deadline kind (renamed `BACKPRESSURE`
+  in 0.7.0), and additionally ships a checked `DemuxReceiver.recvEvent()`
+  so a demux-side timeout is also that typed kind rather than an
+  ambiguous EOS-shaped `null` from the plain iterator-style `next()`.
 
 ### `ManagedRecvTransport::max_payload` during reconnect
 

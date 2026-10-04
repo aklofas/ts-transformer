@@ -974,7 +974,8 @@ with RtspClient.connect(cfg) as session:
   self-signed camera cert instead.
 - **Cancellation.** Obtain a `RtspCancelHandle` from
   `session.cancel_handle()` *before* a blocking control call, then flip
-  `cancel()` from another thread to break it out.
+  `cancel()` from another thread to break it out. The interrupted call
+  raises `RtspError(CLOSED)`.
 - **Why did the stream end?** When `for event in rx` exits or a call
   raises, `rx.end_reason()` (on `DemuxReceiver`, `Receiver`, and
   `H264Receiver` alike) answers with a `StreamEndReason` member —
@@ -1189,7 +1190,11 @@ land in the buffer at the length you passed. `Listener.close()` and
 `accept_blocking()` / `recv()` ends with `TcpError(CLOSED)` within
 ~100 ms, and so does a `send()` stalled behind a full socket buffer (the
 send loop re-checks the cancel at its ~100 ms write-deadline tick,
-`tst_tcp` `transport.rs:76-79`).
+`tst_tcp` `transport.rs:76-79`). `Transport.cancel_handle()` /
+`Listener.cancel_handle()` return a `tcp.CancelHandle` (`cancel()` /
+`is_cancelled()`) that ends a parked call with `TcpError(CLOSED)` without
+freeing the object — the same flag `close()` fires first, as on every
+other shell.
 
 ### RIST (`tstrans.rist`)
 
