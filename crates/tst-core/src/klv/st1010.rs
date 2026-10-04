@@ -129,7 +129,11 @@ impl SdccFlp {
 /// [`KlvFieldError::TruncatedField`] on a short buffer, or
 /// [`KlvFieldError::InvalidLength`] on trailing bytes after a fully
 /// decoded pack (or, per the module doc's Mode-2 IMAP-std-dev policy, when
-/// `Sf=1` — the Parent-Document-defined range is unknowable here).
+/// `Sf=1` — the Parent-Document-defined range is unknowable here, or when
+/// the Parse Control declares neither standard deviations nor correlations,
+/// `Slen==0 && Clen==0`, which ST 1010.2-12 forbids).
+/// [`KlvFieldError::OutOfRange`] when the Matrix Size exceeds 256, the
+/// largest matrix this decoder reconstructs.
 /// IMAPB-substrate errors from correlation decode ([`decode_imapb`])
 /// propagate as-is.
 pub fn decode_sdcc_flp(bytes: &[u8]) -> Result<SdccFlp, KlvFieldError> {
@@ -190,8 +194,9 @@ pub fn decode_sdcc_flp(bytes: &[u8]) -> Result<SdccFlp, KlvFieldError> {
     // overrides the "CS==0 => all slots present" default below.
     //
     // Sparse-mode preflight (Copilot review): `check_matrix_size_fits`
-    // already bounds `m` to at most `remaining*8` at Parse-Control time,
-    // so the `present`/`correlations` allocations below can never
+    // already bounds `m` at Parse-Control time (to at most `remaining*8`
+    // in sparse mode, and to `corr_slots(MAX_MATRIX_SIZE)` always), so the
+    // `present`/`correlations` allocations below can never
     // themselves abort the process — but per this project's precedent
     // (the H.264 `max_au_bytes` arc), invalid input should never pay even
     // a bounded allocation before failing. A truncated payload can still
@@ -339,6 +344,17 @@ fn corr_slots(n: usize) -> usize {
     n.saturating_sub(1) * n / 2
 }
 
+/// Largest Matrix Size `N` this decoder reconstructs. The dense
+/// `corr_slots(N)` correlation + presence vectors cost 9 bytes per slot,
+/// i.e. `9·N(N-1)/2` bytes, while a standard-deviation-only pack carries
+/// only `N·Slen` wire bytes — about `4.5·N/Slen` bytes allocated per wire
+/// byte, growing with `N`. 256 caps the reconstruction at about 287 KiB
+/// (~290× a 1 027-byte binary32 pack; ~1 150× per byte at `Slen = 1`),
+/// still covers the binary64 Bit-Vector boundary (N = 129/130), and is
+/// 7.5× the largest ST 0601 Tag 102 matrix (the Refined Source List is
+/// at most the 34 SDCC-eligible items).
+pub(crate) const MAX_MATRIX_SIZE: u64 = 256;
+
 /// Rejects a Matrix Size `N` whose implied Std-Dev / Correlation vectors
 /// could not possibly be backed by `remaining` — the wire bytes still
 /// unread after Elements 1-2 (Matrix Size + Parse Control).
@@ -354,6 +370,12 @@ fn corr_slots(n: usize) -> usize {
 /// `u64` (always safe — `corr_slots` of `u32::MAX` is a few percent under
 /// `u64::MAX`) and only narrowed to `usize` once a passing bound proves it
 /// small.
+///
+/// Two kinds of bound live here, kept apart: the wire bounds (each element
+/// the Parse Control declares must fit in `remaining` — `TruncatedField`),
+/// and the resource ceiling [`MAX_MATRIX_SIZE`] on the dense reconstruction
+/// (`OutOfRange`). A Parse Control declaring no data at all (`Slen==0 &&
+/// Clen==0`) is malformed per ST 1010.2-12 (`InvalidLength`).
 fn check_matrix_size_fits(
     n_raw: u32,
     remaining: usize,
@@ -364,6 +386,34 @@ fn check_matrix_size_fits(
     let n64 = u64::from(n_raw);
     let remaining64 = remaining as u64;
     let slots64 = n64.saturating_sub(1).saturating_mul(n64) / 2;
+
+    // ST 1010.2-12: "The SDCC-FLP shall contain one or both conditional
+    // parameters" — a Parse Control declaring neither standard deviations
+    // (Slen==0) nor correlations (Clen==0) describes a malformed pack. It
+    // is also the only layout whose wire bytes would bound N not at all.
+    if slen == 0 && clen == 0 {
+        // `expected: 0, got: 0`: no element length is valid here — both
+        // declared lengths are zero, so there is no data to read at all.
+        return Err(KlvFieldError::InvalidLength {
+            tag: 0,
+            expected: 0,
+            got: 0,
+        });
+    }
+
+    // Resource ceiling, independent of the wire layout: the decoder always
+    // reconstructs dense `corr_slots(N)` vectors (`Vec<f64>` + `Vec<bool>`,
+    // 9 bytes per slot), and a standard-deviation-only pack bounds N only
+    // linearly by its bytes, which would make that reconstruction
+    // quadratic in the input.
+    if n64 > MAX_MATRIX_SIZE {
+        return Err(KlvFieldError::OutOfRange {
+            tag: 0,
+            value: n64 as f64,
+            min: 0.0,
+            max: MAX_MATRIX_SIZE as f64,
+        });
+    }
 
     // Element 4: N * Slen std-dev bytes, present iff Slen>0 (Table 4).
     if slen > 0 && n64.saturating_mul(slen as u64) > remaining64 {
@@ -380,14 +430,10 @@ fn check_matrix_size_fits(
 
     // Element 3 (Bit Vector, read whenever CS==1 regardless of Clen —
     // see the Element-3 comment below) needs ceil(corr_slots(N)/8) bytes,
-    // i.e. corr_slots(N) <= remaining*8. Applied UNCONDITIONALLY, not
-    // only when CS==1: it is also the only wire-derived anchor for the
-    // Slen==0 && Clen==0 && CS==0 combination — a spec-legal, data-free
-    // pack (Table 4: both are "present iff >0") that transmits zero bytes
-    // for either element, yet still has `present`/`correlations` sized to
-    // `corr_slots(N)` below. Without this unconditional check that
-    // combination would leave N completely unbounded.
-    if slots64 > remaining64.saturating_mul(8) {
+    // i.e. corr_slots(N) <= remaining*8. Only when CS==1: a pack without
+    // a Bit Vector (e.g. standard deviations only — ST 1010.3 §6.3.2.3,
+    // "the Bit Vector is not necessary") is bounded by Elements 4/5 above.
+    if cs && slots64 > remaining64.saturating_mul(8) {
         return Err(KlvFieldError::TruncatedField { tag: 0 });
     }
 
@@ -431,8 +477,9 @@ pub(crate) fn bit_vector_slots(bitvec: &[u8], n: usize) -> Vec<bool> {
 /// applies before it allocates — so a hostile `N` cannot make the caller
 /// copy a tag history the pack could never describe (review 9, ext R9-02:
 /// n occurrences after n items retained n² tags). Returns `None` on a
-/// truncated/malformed BER-OID, a missing Parse Control, or a size the pack
-/// cannot hold; Elements 3–5 are not validated here.
+/// truncated/malformed BER-OID, a missing Parse Control, a data-free Parse
+/// Control, or a size the pack cannot hold or that exceeds
+/// [`MAX_MATRIX_SIZE`]; Elements 3–5 are not validated here.
 pub(crate) fn peek_matrix_size(bytes: &[u8]) -> Option<usize> {
     let (n_raw, rest) = read_ber_oid(bytes).ok()?;
     let (pc1, rest) = rest.split_first()?;
@@ -752,6 +799,157 @@ mod tests {
         assert!(decode_sdcc_flp(&bytes).is_err());
     }
 
+    /// A complete standard-deviation-only pack (Slen > 0, Clen = 0, CS = 0 —
+    /// ST 1010.3 §6.3.2.3: "the Bit Vector is not necessary") for matrix
+    /// size `n`: BER-OID `n`, the Parse Control bytes `pc`, then `n` copies
+    /// of `value`.
+    fn stddev_only_pack(n: usize, pc: &[u8], value: &[u8]) -> Vec<u8> {
+        let mut oid = [0u8; 5];
+        let used = crate::klv::length::write_ber_oid(n as u32, &mut oid).unwrap();
+        let mut bytes = oid[..used].to_vec();
+        bytes.extend_from_slice(pc);
+        for _ in 0..n {
+            bytes.extend_from_slice(value);
+        }
+        bytes
+    }
+
+    fn assert_stddev_only_decodes(n: usize, bytes: &[u8], what: &str) {
+        let decoded = decode_sdcc_flp(bytes)
+            .unwrap_or_else(|e| panic!("N={n} {what}: complete std-dev-only pack rejected: {e:?}"));
+        assert_eq!(decoded.matrix_size, n as u64);
+        assert_eq!(decoded.std_devs, alloc::vec![1.0; n]);
+        assert_eq!(decoded.correlations.len(), n * (n - 1) / 2);
+        assert!(decoded.correlations.iter().all(|&v| v == 0.0));
+        assert!(decoded.correlation_present.iter().all(|&v| !v));
+    }
+
+    /// Review 10 (R10-02): a complete standard-deviation-only pack carries
+    /// no Bit Vector, so the Bit Vector's size bound (`N <= 16 * Slen + 1`)
+    /// must not reject it. Before the fix N = 66 (binary32) was
+    /// `TruncatedField` although all 264 value bytes were present.
+    #[test]
+    fn r10_02_complete_stddev_only_mode2_matrix_is_not_truncated() {
+        for n in [65usize, 66] {
+            let bytes = stddev_only_pack(n, &[0x80, 0x04], &1.0f32.to_be_bytes());
+            assert_stddev_only_decodes(n, &bytes, "Mode2 f32");
+        }
+    }
+
+    #[test]
+    fn r10_02_complete_stddev_only_mode1_matrix_is_not_truncated() {
+        // Mode 1 PC 0x40: Slen = 4, CS = 0, Clen = 0 (std devs assumed IEEE).
+        for n in [65usize, 66] {
+            let bytes = stddev_only_pack(n, &[0x40], &1.0f32.to_be_bytes());
+            assert_stddev_only_decodes(n, &bytes, "Mode1 f32");
+        }
+    }
+
+    #[test]
+    fn r10_02_complete_stddev_only_mode2_f64_matrix_is_not_truncated() {
+        // Binary64 crosses the old bound at 129/130; N >= 128 needs a
+        // two-byte BER-OID.
+        for n in [129usize, 130] {
+            let bytes = stddev_only_pack(n, &[0x80, 0x08], &1.0f64.to_be_bytes());
+            assert_stddev_only_decodes(n, &bytes, "Mode2 f64");
+        }
+        // The same N = 129 pack with its Matrix Size spelled out by hand:
+        // BER-OID `81 01` = 1·128 + 1, independent of `write_ber_oid`.
+        let mut literal = hex("81 01 80 08");
+        for _ in 0..129 {
+            literal.extend_from_slice(&1.0f64.to_be_bytes());
+        }
+        assert_stddev_only_decodes(129, &literal, "Mode2 f64 literal 81 01");
+        assert_eq!(peek_matrix_size(&literal), Some(129));
+    }
+
+    /// The Bit Vector bound applies when CS = 1: N = 5 has 10 correlation
+    /// slots, so its Bit Vector needs two bytes. With Slen = 0 and Clen > 0
+    /// this is the only wire bound on N — without it the peek would accept
+    /// any N up to the ceiling from a one-byte Bit Vector (ext R9-02).
+    #[test]
+    fn r10_02_sparse_pack_is_bounded_by_its_bit_vector() {
+        // Mode 2 PC A4 00: CS = 1, Cf = 0 (IEEE), Clen = 4, Slen = 0.
+        let short = hex("05 A4 00 00"); // one Bit Vector byte of two
+        assert!(matches!(
+            decode_sdcc_flp(&short),
+            Err(KlvFieldError::TruncatedField { tag: 0 })
+        ));
+        assert_eq!(peek_matrix_size(&short), None);
+
+        // Two all-zero Bit Vector bytes: every slot absent, no correlation
+        // bytes follow — a complete pack.
+        let fits = hex("05 A4 00 00 00");
+        let m = decode_sdcc_flp(&fits).expect("complete sparse pack");
+        assert_eq!(m.matrix_size, 5);
+        assert!(m.std_devs.is_empty());
+        assert_eq!(m.correlations, alloc::vec![0.0; 10]);
+        assert!(m.correlation_present.iter().all(|&p| !p));
+        assert_eq!(peek_matrix_size(&fits), Some(5));
+    }
+
+    #[test]
+    fn r10_02_peek_matrix_size_accepts_complete_stddev_only_packs() {
+        for n in [65usize, 66] {
+            let bytes = stddev_only_pack(n, &[0x80, 0x04], &1.0f32.to_be_bytes());
+            assert_eq!(peek_matrix_size(&bytes), Some(n), "peek Mode2 N={n}");
+            let bytes = stddev_only_pack(n, &[0x40], &1.0f32.to_be_bytes());
+            assert_eq!(peek_matrix_size(&bytes), Some(n), "peek Mode1 N={n}");
+        }
+    }
+
+    /// The dense reconstruction has an explicit ceiling: a complete
+    /// std-dev-only pack at `MAX_MATRIX_SIZE` decodes, one above it is
+    /// `OutOfRange` (not `TruncatedField` — every value byte is present),
+    /// in both the decoder and the peek.
+    #[test]
+    fn r10_02_matrix_size_above_ceiling_is_out_of_range() {
+        let max = MAX_MATRIX_SIZE as usize;
+        let at = stddev_only_pack(max, &[0x80, 0x04], &1.0f32.to_be_bytes());
+        assert_stddev_only_decodes(max, &at, "Mode2 f32 at the ceiling");
+        assert_eq!(peek_matrix_size(&at), Some(max));
+
+        let over = stddev_only_pack(max + 1, &[0x80, 0x04], &1.0f32.to_be_bytes());
+        let err = decode_sdcc_flp(&over).unwrap_err();
+        assert!(
+            matches!(err, KlvFieldError::OutOfRange { tag: 0, value, max: m, .. }
+                if value == (max + 1) as f64 && m == max as f64),
+            "expected OutOfRange, got {err:?}"
+        );
+        assert_eq!(peek_matrix_size(&over), None);
+
+        // The hostile u32::MAX-class Matrix Size reports the ceiling too.
+        let hostile = hex("8F FF FF FF 7F 84 00");
+        assert!(matches!(
+            decode_sdcc_flp(&hostile),
+            Err(KlvFieldError::OutOfRange { tag: 0, .. })
+        ));
+    }
+
+    /// ST 1010.2-12: "The SDCC-FLP shall contain one or both conditional
+    /// parameters" — a Parse Control with Slen = Clen = 0 is malformed in
+    /// either mode, with or without the CS bit, whatever bytes follow.
+    #[test]
+    fn r10_02_pack_with_no_data_is_rejected() {
+        for bytes in [
+            hex("01 00"),       // Mode 1, N = 1
+            hex("03 00 00"),    // Mode 1, N = 3, one trailing byte
+            hex("03 08 00"),    // Mode 1, CS = 1, one Bit Vector byte
+            hex("03 80 00"),    // Mode 2, N = 3
+            hex("03 A0 00 E0"), // Mode 2, CS = 1, Bit Vector present
+            hex("00 80 00"),    // Mode 2, N = 0
+        ] {
+            assert!(
+                matches!(
+                    decode_sdcc_flp(&bytes),
+                    Err(KlvFieldError::InvalidLength { tag: 0, .. })
+                ),
+                "{bytes:02X?}: data-free pack must be rejected"
+            );
+            assert_eq!(peek_matrix_size(&bytes), None, "{bytes:02X?}");
+        }
+    }
+
     /// Review 9 (ext R9-02): the peek is bounded by what the pack's own
     /// bytes can hold — Parse Control + `check_matrix_size_fits` — so an ST
     /// 0601 Tag 102 occurrence can never make its caller copy a tag history
@@ -768,12 +966,12 @@ mod tests {
         // No Parse Control at all is not a pack.
         assert_eq!(peek_matrix_size(&[0x03]), None);
         assert_eq!(peek_matrix_size(&[]), None);
-        // Mode 1, data-free (Slen = 0, Clen = 0, CS = 0): the unconditional
-        // bit-vector rule bounds N(N-1)/2 <= 8 * remaining.
-        assert_eq!(peek_matrix_size(&[0x01, 0x00]), Some(1));
-        assert_eq!(peek_matrix_size(&[0x03, 0x00]), None); // 3 slots > 0
-        assert_eq!(peek_matrix_size(&[0x03, 0x00, 0x00]), Some(3)); // 3 slots <= 8 (Review Focus 3)
-        assert_eq!(peek_matrix_size(&[0x05, 0x00, 0x00]), None); // 10 slots > 8
+        // Mode 1, data-free (Slen = 0, Clen = 0, CS = 0): malformed per
+        // ST 1010.2-12 whatever N and whatever follows (review 10, R10-02).
+        assert_eq!(peek_matrix_size(&[0x01, 0x00]), None);
+        assert_eq!(peek_matrix_size(&[0x03, 0x00]), None);
+        assert_eq!(peek_matrix_size(&[0x03, 0x00, 0x00]), None);
+        assert_eq!(peek_matrix_size(&[0x05, 0x00, 0x00]), None);
         // Mode 1 with Slen = 1 (0x10): N std-dev bytes must fit.
         assert_eq!(peek_matrix_size(&[0x03, 0x10, 0xAA, 0xBB, 0xCC]), Some(3));
         assert_eq!(peek_matrix_size(&[0x03, 0x10, 0xAA, 0xBB]), None);

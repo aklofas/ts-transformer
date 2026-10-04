@@ -1131,6 +1131,13 @@ The integrator-facing changes at a glance (full detail in the sections below):
   <bottom>", value }` instead, and the getters can no longer overflow.
   Valid crops (bottom-8 1080p etc.) parse exactly as before. Review #9,
   external R9-03.
+- **`decode_sdcc_flp` accepts complete standard-deviation-only SDCC-FLP
+  packs.** It accepts them at any size the pack's bytes can hold (the
+  bit-vector bound applies only when correlation data is present); a pack
+  with no data at all is rejected as malformed, and a declared matrix above
+  256 is `OutOfRange`. Behaviour change: a pack declaring neither standard
+  deviations nor correlations (e.g. `01 00`) used to decode and now fails
+  with `InvalidLength`. Review #10, R10-02.
 
 ### Fixed — pipeline (WP-3)
 
