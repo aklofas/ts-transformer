@@ -25,8 +25,8 @@ const POLL_TIMEOUT_MS: i32 = 100;
 /// unit-tested without a live RIST session.
 #[derive(Debug, PartialEq, Eq)]
 enum BlockDisposition {
-    /// Payload that fits (≤ buf) — copy `n` bytes (`n` may be 0 for an
-    /// empty/zero-length block).
+    /// Payload that fits (≤ buf) — copy `n` bytes (`n` ≥ 1; a zero-length
+    /// block is [`BlockDisposition::SkipEmpty`]).
     Accept(usize),
     /// `payload_len > buf.len()` — caller buffer too small; drop the datagram
     /// (non-fatal, retryable) rather than killing the transport.
@@ -34,10 +34,17 @@ enum BlockDisposition {
     /// `payload_len > 0` with a NULL payload pointer — malformed block from
     /// librist; drop it (non-fatal, retryable).
     DropMalformed,
+    /// A zero-length block. librist has no end of stream and the shells read
+    /// `Ok(0)` as "closed", so the block is freed and the tick reports
+    /// `Backpressure` (review 9, int R9-04).
+    SkipEmpty,
 }
 
 /// Classify a librist block. `payload_null` is `payload_ptr.is_null()`.
 fn classify_block(payload_len: usize, payload_null: bool, buf_len: usize) -> BlockDisposition {
+    if payload_len == 0 {
+        return BlockDisposition::SkipEmpty;
+    }
     if payload_len > 0 && payload_null {
         return BlockDisposition::DropMalformed;
     }
@@ -325,6 +332,21 @@ impl RecvTransport for RistRecvTransport {
                     errno_code: None,
                 })
             }
+            BlockDisposition::SkipEmpty => {
+                // SAFETY: block is non-null (rc > 0); freed exactly once here.
+                unsafe {
+                    rist_sys::rist_receiver_data_block_free2(&mut block);
+                }
+                // Still a received packet (the old `Accept(0)` path counted
+                // it); keeps the count consistent with tst-udp.
+                if let Ok(mut s) = self.stats.lock() {
+                    s.packets_received = s.packets_received.wrapping_add(1);
+                }
+                Err(TransportError::Backpressure {
+                    msg: "rist recv: skipped a zero-length block".into(),
+                    errno_code: None,
+                })
+            }
             BlockDisposition::Accept(copy_n) => {
                 if copy_n > 0 && !payload_ptr.is_null() {
                     // SAFETY: payload_ptr valid for payload_len bytes until free;
@@ -421,8 +443,8 @@ mod tests {
         assert_eq!(classify_block(200, false, 200), Accept(200)); // exact fit
         assert_eq!(classify_block(201, false, 200), DropOversize); // 1 over
         assert_eq!(classify_block(50, true, 200), DropMalformed); // null+len>0
-        assert_eq!(classify_block(0, true, 200), Accept(0)); // null+len==0 is OK (empty)
-        assert_eq!(classify_block(0, false, 200), Accept(0));
+        assert_eq!(classify_block(0, true, 200), SkipEmpty); // empty block: not EOS (R9-04)
+        assert_eq!(classify_block(0, false, 200), SkipEmpty);
     }
 
     /// Regression: after an error path sets alive=false WITHOUT destroying ctx,

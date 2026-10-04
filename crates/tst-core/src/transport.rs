@@ -478,7 +478,11 @@ pub trait RecvTransport: Send {
     /// - `Err(TransportError::Backpressure)` on a recv timeout — the
     ///   transport is still alive and the caller may retry;
     /// - `Ok(0)` immediately for an EMPTY `buf`, touching nothing
-    ///   (X-CORR-07; the kit row `empty_recv_is_noop`).
+    ///   (X-CORR-07; the kit row `empty_recv_is_noop`);
+    /// - never `Ok(0)` for a NON-empty `buf`: a datagram transport that
+    ///   receives an empty datagram skips it (tst-udp, tst-rtp) or reports
+    ///   `Backpressure` (tst-rist) — the receive shells treat `Ok(0)` as
+    ///   "closed" (review 9, R9-04).
     fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError>;
 
     /// Upper bound on the bytes a single `recv_bytes` call may deliver.

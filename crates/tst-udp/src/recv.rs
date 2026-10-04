@@ -269,6 +269,14 @@ impl RecvTransport for UdpRecvTransport {
                 return Err(TransportError::Closed);
             }
             match self.socket.recv(buf) {
+                Ok(0) => {
+                    // A zero-length datagram (a port probe, an empty
+                    // keepalive) is not end of stream — UDP has none. The
+                    // shells read `Ok(0)` as "closed", so count it and loop
+                    // back to the flag checks (review 9, int R9-04).
+                    self.stats.datagrams_received = self.stats.datagrams_received.saturating_add(1);
+                    continue;
+                }
                 Ok(n) => {
                     self.stats.datagrams_received = self.stats.datagrams_received.saturating_add(1);
                     self.stats.bytes_received = self.stats.bytes_received.saturating_add(n as u64);
