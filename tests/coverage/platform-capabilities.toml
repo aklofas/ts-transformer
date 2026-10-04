@@ -83,6 +83,27 @@ passes when the fixtures dir is absent. Gated by convention to the primary
 Tier-A runner, not by an upstream bug or a code gap.
 """
 
+[[platform_skip]]
+file = "crates/tst-rtp/tests/rtsp_server/interleaved_frame_boundary.rs"
+platform = "windows-msvc"
+capability = "tcp_fin_after_sd_send"
+class = "portability"
+note = """
+Nothing is skipped: both tests run on every platform. Only the FINAL
+assertion of `a_fanout_retired_by_pause_on_a_stalled_peer_dies_with_the_reaped_session`
+is cfg-split. The platform-independent verdict is the reap latch
+(`peer_count() == 0`: the fanout retired by PAUSE died with the reaped
+session) and that the drained stream then goes quiet. On Linux/macOS the
+session's exit path `shutdown()` (SD_SEND) produces a FIN right after the
+drained bytes, so a quiesced stream WITHOUT FIN/reset is a failure there. On
+Windows a `shutdown(SD_SEND)` issued while the peer still had unread data
+queued defers the graceful FIN until the socket is fully closed (at
+`server.stop()`, after the drain), so the FIN is not observable in that
+window — CI measured the reap passing and only the FIN wait timing out
+(137 KB drained, then no EOF). `#[cfg(windows)]` therefore accepts
+drained-then-quiescent; `#[cfg(not(windows))]` requires FIN/reset.
+"""
+
 # ─── declarative platform capability + CI-promotion state (I4) ──────────────
 
 [[capability]]

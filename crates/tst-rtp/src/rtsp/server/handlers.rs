@@ -659,11 +659,15 @@ pub(crate) fn handle_play(
     };
     // A second PLAY without PAUSE (RFC 7826 §13.4 allows it) replaces the
     // fanout; detaching the old task kept it streaming to the same peer
-    // with its own sequence space (review 9, R9-02 sibling).
-    if let Some(handle) = session.fanout_handle.take() {
-        session.peer_cancel.cancel();
+    // with its own sequence space (review 9, R9-02 sibling). Retire via
+    // the token the fanout checks between frames — never `abort()`, which
+    // could cut an interleaved frame mid-write and let the PLAY response
+    // land inside it (see `ServerSessionState::retire_fanout`). The old
+    // task exits at its next frame boundary; the session's Drop is the
+    // backstop for a peer that never reads.
+    if session.fanout_handle.is_some() {
+        session.retire_fanout();
         session.peer_cancel = tokio_util::sync::CancellationToken::new();
-        handle.abort();
     }
     // Snapshot the initial RTP seq and clock timestamp before spawning.
     // These values are handed to both spawn_peer_fanout (which uses them
@@ -752,18 +756,19 @@ pub(crate) fn handle_pause(
     let Some(session_id) = session.session_id.clone() else {
         return error_response(req, 454, "Session Not Found");
     };
-    // Cancel the current fanout task. The session's `peer_cancel` was
-    // passed into `spawn_peer_fanout` at PLAY; cancelling here exits
-    // the task. Replace with a fresh token so future PLAY can spawn
-    // anew.
-    session.peer_cancel.cancel();
+    // Retire the current fanout task. The session's `peer_cancel` was
+    // passed into `spawn_peer_fanout` at PLAY; cancelling it exits the
+    // task at its next frame boundary. Replace with a fresh token so a
+    // future PLAY can spawn anew. The handle is retired, not `abort()`ed:
+    // an abort could cut an interleaved frame mid-`write_all` and the
+    // 200 OK would then be written into the hole (see
+    // `ServerSessionState::retire_fanout`); we don't `await` it either —
+    // the dispatcher loop never blocks on the task's drain. A peer that
+    // never reads defers that boundary exit indefinitely (the task stays
+    // parked in its frame write, holding the writer); the session's Drop
+    // aborts retired fanouts and is the backstop for that case.
+    session.retire_fanout();
     session.peer_cancel = tokio_util::sync::CancellationToken::new();
-    if let Some(handle) = session.fanout_handle.take() {
-        // `abort()` rather than `await` — we don't block the dispatcher
-        // loop on the task's drain. The task exits at its next select!
-        // poll.
-        handle.abort();
-    }
 
     let mut headers = HashMap::new();
     if let Some(cseq) = req.headers.get("cseq") {
@@ -800,10 +805,10 @@ pub(crate) fn handle_teardown(
         return challenge;
     }
     let session_id = session.session_id.clone().unwrap_or_default();
-    session.peer_cancel.cancel();
-    if let Some(handle) = session.fanout_handle.take() {
-        handle.abort();
-    }
+    // Retire, don't `abort()` — the 200 OK is written on the same
+    // connection before FIN and must not land inside a half-written
+    // interleaved frame (see `ServerSessionState::retire_fanout`).
+    session.retire_fanout();
     // Clear all session state; the session task closes the TCP after
     // observing the 200 OK + TEARDOWN method.
     session.session_id = None;
@@ -1194,7 +1199,8 @@ mod tests {
             .unwrap()
             .fanout
             .clone();
-        // The aborted task drops its broadcast receiver at its next poll.
+        // The cancelled task drops its broadcast receiver when it exits at
+        // its next frame boundary (its next poll here: nothing is in flight).
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
         while fanout.receiver_count() != 1 {
             assert!(
@@ -1206,6 +1212,194 @@ mod tests {
         }
         let bye = make_req(RtspMethod::Teardown, "rtsp://127.0.0.1:8554/live");
         assert_eq!(handle_teardown(&bye, &state, &mut session).status, 200);
+    }
+
+    /// A second PLAY on a TCP-interleaved session must not cut the RTP
+    /// frame the fanout is writing: the old task finishes its frame (or
+    /// never starts one) before the PLAY response goes out on the same
+    /// connection.
+    ///
+    /// The old fanout is modelled by a task parked inside a `write_all`
+    /// under the shared writer, having put the `$`-channel-length header
+    /// and the first payload byte on the wire. Without the fix the
+    /// handler `abort()`ed that task, the mutex was released with 15
+    /// payload bytes still owed, and the `RTSP/1.0 200 OK` text landed
+    /// where the interleaved client expected RTP payload — a framing
+    /// desync on a connection the server keeps serving.
+    #[tokio::test]
+    async fn play_replacement_preserves_an_in_progress_interleaved_frame() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::{TcpListener, TcpStream};
+        use tokio::sync::{Mutex, oneshot};
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (client, accepted) = tokio::join!(TcpStream::connect(addr), listener.accept());
+        let mut client = client.unwrap();
+        let (server, _) = accepted.unwrap();
+        let (_read, write) = server.into_split();
+        let writer = std::sync::Arc::new(Mutex::new(write));
+
+        let state = make_state_with_mount();
+        let mut session = ServerSessionState::new();
+        session.tcp_write = Some(writer.clone());
+        let mut setup = make_req(RtspMethod::Setup, "rtsp://127.0.0.1:8554/live");
+        setup.headers.insert(
+            "transport".into(),
+            "RTP/AVP/TCP;unicast;interleaved=0-1".into(),
+        );
+        assert_eq!(handle_setup(&setup, &state, &mut session).status, 200);
+        let channel = session.interleaved_channels.unwrap().0;
+
+        let (ready_tx, ready_rx) = oneshot::channel();
+        let (resume_tx, resume_rx) = oneshot::channel();
+        let old_writer = writer.clone();
+        session.fanout_handle = Some(tokio::spawn(async move {
+            let mut g = old_writer.lock().await;
+            // A 16-byte payload, suspended after its first byte.
+            g.write_all(&[b'$', channel, 0, 16, 0x55]).await.unwrap();
+            let _ = ready_tx.send(());
+            let _ = resume_rx.await;
+            g.write_all(&[0x55; 15]).await.unwrap();
+        }));
+        ready_rx.await.unwrap();
+
+        let play = make_req(RtspMethod::Play, "rtsp://127.0.0.1:8554/live");
+        let response = handle_play(&play, &state, &mut session);
+        assert_eq!(response.status, 200);
+        let _ = resume_tx.send(());
+
+        let control = tokio::spawn(async move {
+            let mut g = writer.lock().await;
+            g.write_all(&response.encode()).await.unwrap();
+            g.shutdown().await.unwrap();
+        });
+        let mut wire = Vec::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            client.read_to_end(&mut wire),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        control.await.unwrap();
+        assert!(wire.len() >= 20);
+        assert_eq!(
+            &wire[5..20],
+            &[0x55; 15],
+            "control response replaced the unfinished RTP payload"
+        );
+    }
+
+    /// Model of a fanout parked inside an interleaved frame write on a
+    /// peer that never reads: it holds the session's shared writer and
+    /// never reaches its cancel check. Resolves `ready` once it holds the
+    /// lock; sets `ended` when the task is dropped (aborted).
+    fn parked_fanout(
+        writer: std::sync::Arc<tokio::sync::Mutex<tokio::net::tcp::OwnedWriteHalf>>,
+        ready: tokio::sync::oneshot::Sender<()>,
+        ended: std::sync::Arc<AtomicBool>,
+    ) -> tokio::task::JoinHandle<()> {
+        struct Flag(std::sync::Arc<AtomicBool>);
+        impl Drop for Flag {
+            fn drop(&mut self) {
+                self.0.store(true, std::sync::atomic::Ordering::Release);
+            }
+        }
+        tokio::spawn(async move {
+            let _flag = Flag(ended);
+            let _g = writer.lock().await;
+            let _ = ready.send(());
+            std::future::pending::<()>().await;
+        })
+    }
+
+    /// Set up an interleaved session whose fanout is `parked_fanout`;
+    /// returns the session, the shared writer, and the parked task's
+    /// `ended` flag. The client end is returned too so the TCP stays open.
+    async fn session_with_parked_fanout() -> (
+        Arc<ServerState>,
+        ServerSessionState,
+        std::sync::Arc<tokio::sync::Mutex<tokio::net::tcp::OwnedWriteHalf>>,
+        std::sync::Arc<AtomicBool>,
+        tokio::net::TcpStream,
+    ) {
+        use tokio::net::{TcpListener, TcpStream};
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (client, accepted) = tokio::join!(TcpStream::connect(addr), listener.accept());
+        let (server, _) = accepted.unwrap();
+        let (_read, write) = server.into_split();
+        let writer = std::sync::Arc::new(tokio::sync::Mutex::new(write));
+
+        let state = make_state_with_mount();
+        let mut session = ServerSessionState::new();
+        session.tcp_write = Some(writer.clone());
+        let mut setup = make_req(RtspMethod::Setup, "rtsp://127.0.0.1:8554/live");
+        setup.headers.insert(
+            "transport".into(),
+            "RTP/AVP/TCP;unicast;interleaved=0-1".into(),
+        );
+        assert_eq!(handle_setup(&setup, &state, &mut session).status, 200);
+
+        let ended = std::sync::Arc::new(AtomicBool::new(false));
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        session.fanout_handle = Some(parked_fanout(writer.clone(), ready_tx, ended.clone()));
+        ready_rx.await.unwrap();
+        (state, session, writer, ended, client.unwrap())
+    }
+
+    /// Wait (bounded) for the parked task to be ended and the writer to
+    /// become lockable again — both must follow from dropping the session.
+    async fn assert_parked_fanout_ended(
+        writer: &tokio::sync::Mutex<tokio::net::tcp::OwnedWriteHalf>,
+        ended: &AtomicBool,
+        what: &str,
+    ) {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+        while !ended.load(std::sync::atomic::Ordering::Acquire) {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "the fanout retired by {what} outlived the session's Drop"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        let _reacquired = tokio::time::timeout(std::time::Duration::from_secs(2), writer.lock())
+            .await
+            .unwrap_or_else(|_| {
+                panic!("the writer is still held after the {what}-retired fanout ended")
+            });
+    }
+
+    /// A fanout retired by PAUSE exits at its next frame boundary, which a
+    /// never-reading peer defers indefinitely; the session's Drop must end
+    /// it anyway (the terminal path, FIN follows) so it never outlives the
+    /// session nor keeps the writer locked.
+    #[tokio::test]
+    async fn dropping_a_session_ends_a_fanout_retired_by_pause() {
+        let (state, mut session, writer, ended, _client) = session_with_parked_fanout().await;
+        let pause = make_req(RtspMethod::Pause, "rtsp://127.0.0.1:8554/live");
+        assert_eq!(handle_pause(&pause, &state, &mut session).status, 200);
+        assert!(
+            !ended.load(std::sync::atomic::Ordering::Acquire),
+            "PAUSE must not abort a fanout mid-frame"
+        );
+        drop(session);
+        assert_parked_fanout_ended(&writer, &ended, "PAUSE").await;
+    }
+
+    /// Same contract for the fanout a second PLAY replaces.
+    #[tokio::test]
+    async fn dropping_a_session_ends_a_fanout_retired_by_a_second_play() {
+        let (state, mut session, writer, ended, _client) = session_with_parked_fanout().await;
+        let play = make_req(RtspMethod::Play, "rtsp://127.0.0.1:8554/live");
+        assert_eq!(handle_play(&play, &state, &mut session).status, 200);
+        assert!(
+            !ended.load(std::sync::atomic::Ordering::Acquire),
+            "a second PLAY must not abort the old fanout mid-frame"
+        );
+        drop(session);
+        assert_parked_fanout_ended(&writer, &ended, "second PLAY").await;
     }
 
     #[test]

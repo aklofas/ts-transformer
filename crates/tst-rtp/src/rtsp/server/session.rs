@@ -120,6 +120,14 @@ pub struct ServerSessionState {
     /// with a fresh token so a subsequent PLAY can re-spawn; TEARDOWN
     /// cancels + drops the handle without replacement.
     pub peer_cancel: tokio_util::sync::CancellationToken,
+    /// Fanouts retired by PAUSE, TEARDOWN or a second PLAY (see
+    /// [`Self::retire_fanout`]). Their token is cancelled and they exit at
+    /// their next frame boundary — which an interleaved peer that never
+    /// reads defers indefinitely (the task stays parked inside its frame
+    /// write, holding `tcp_write`). The session's `Drop` aborts whatever
+    /// is left here so a retired fanout never outlives its session.
+    /// Finished entries are pruned on each retire.
+    pub(crate) retired_fanouts: Vec<tokio::task::JoinHandle<()>>,
     /// Drop counter observed by `MountStats::frames_dropped_total`. Held
     /// here so the session can keep the `Arc` alive for the duration of
     /// the fanout task even after PAUSE drops the JoinHandle. Field is
@@ -156,9 +164,27 @@ impl ServerSessionState {
             interleaved_channels: None,
             fanout_handle: None,
             peer_cancel: tokio_util::sync::CancellationToken::new(),
+            retired_fanouts: Vec::new(),
             peer_drop_counter: None,
             tcp_write: None,
             peer_addr: std::net::SocketAddr::from(([0, 0, 0, 0], 0)),
+        }
+    }
+
+    /// Retire the current fanout: cancel its token so it exits at its next
+    /// frame boundary and keep its handle in `retired_fanouts` for `Drop`
+    /// to abort if it is still running when the session ends. Never
+    /// `abort()`s here — an interleaved fanout may be parked inside a
+    /// multi-poll `write_all` under the shared `tcp_write` mutex, and
+    /// aborting it there releases the lock with a partial `$` frame on the
+    /// wire, which the next RTSP response then completes with RTSP text
+    /// (framing desync). Callers that allow a later PLAY replace
+    /// `peer_cancel` with a fresh token afterwards.
+    pub(crate) fn retire_fanout(&mut self) {
+        self.peer_cancel.cancel();
+        if let Some(handle) = self.fanout_handle.take() {
+            self.retired_fanouts.retain(|h| !h.is_finished());
+            self.retired_fanouts.push(handle);
         }
     }
 }
@@ -172,6 +198,13 @@ impl Drop for ServerSessionState {
     fn drop(&mut self) {
         self.peer_cancel.cancel();
         if let Some(handle) = self.fanout_handle.take() {
+            handle.abort();
+        }
+        // Fanouts retired by PAUSE, TEARDOWN or a second PLAY exit at their
+        // next frame boundary — which a peer that never reads defers
+        // indefinitely. This terminal path (FIN follows) is their backstop;
+        // a frame cut here is acceptable exactly as for the current one.
+        for handle in self.retired_fanouts.drain(..) {
             handle.abort();
         }
     }
@@ -258,7 +291,7 @@ where
     // Bounded read buffer — RTSP requests are typically << 4 KiB.
     let mut buf: Vec<u8> = Vec::with_capacity(8192);
 
-    loop {
+    'serve: loop {
         // Cancellation guard — hard cancel exits the loop immediately,
         // graceful cancel observed via the tokio::select! below.
         if state.hard_cancel.is_cancelled() {
@@ -399,12 +432,43 @@ where
             }
             let bytes = response.encode();
             // Lock the write half to serialize against the fanout task
-            // (which holds it for RFC 7826 §14 interleaved frames).
-            {
-                let mut guard = write_half.lock().await;
-                if let Err(e) = guard.write_all(&bytes).await {
+            // (which holds it for RFC 7826 §14 interleaved frames). Bounded
+            // by the same idle bound and cancels as the read: a fanout this
+            // very request retired (PAUSE, TEARDOWN, a second PLAY) may be
+            // parked mid-frame on a peer that never reads, holding the
+            // lock — unbounded, this wait would be unreachable by the idle
+            // reaper and the server's cancel, and the session (its slot,
+            // its registry entry, the retired fanout's subscription) would
+            // live as long as the peer kept the TCP open. On the bound we
+            // leave the loop: the exit path drops the session, whose Drop
+            // aborts the retired fanout and frees the lock, then shuts the
+            // write half so the peer sees FIN once it drains. A write cut
+            // by the bound mid-`write_all` leaves a partial RTSP response
+            // on the wire before that FIN — fine on a terminal path, the
+            // same class as the frame the Drop's abort may cut.
+            let written = tokio::select! {
+                r = async {
+                    let mut guard = write_half.lock().await;
+                    guard.write_all(&bytes).await
+                } => Some(r),
+                _ = tokio::time::sleep(idle_bound) => None,
+                _ = state.cancel_token.cancelled() => None,
+                _ = session_entry.cancel.cancelled() => None,
+            };
+            match written {
+                Some(Ok(())) => {}
+                Some(Err(e)) => {
                     tracing::warn!(target: "tst_rtp::server", peer = %peer, error = %e, "write failed");
                     return Ok(());
+                }
+                None => {
+                    tracing::warn!(
+                        target: "tst_rtp::server",
+                        peer = %peer,
+                        timeout_secs = idle_bound.as_secs(),
+                        "response write parked past the idle bound or cancelled; closing session"
+                    );
+                    break 'serve;
                 }
             }
             if response.status == 401 {
@@ -463,8 +527,10 @@ where
     // Stop the fanout BEFORE shutting the write half so no RTP frame STARTS
     // after FIN (the Drop above is what cancels it; `abort` drops the task
     // at its next poll, so a frame already mid-`write_all` may still land
-    // partially). Idle / EOF / error / cancel exits all land here (TEARDOWN
-    // and the cap rejections shut down on their own path).
+    // partially — acceptable ONLY here because FIN follows and nothing else
+    // is written; PLAY/PAUSE/TEARDOWN never abort, see `handle_play`). Idle
+    // / EOF / error / cancel exits all land here (TEARDOWN and the cap
+    // rejections shut down on their own path).
     drop(session);
     {
         let mut guard = write_half.lock().await;
