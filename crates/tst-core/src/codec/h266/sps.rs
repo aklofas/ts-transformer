@@ -33,11 +33,15 @@ pub struct H266Sps {
 impl H266Sps {
     /// Pre-crop luma width — the value of `pic_width_max_in_luma_samples`
     /// before conformance-window cropping was applied.
+    /// Cannot overflow for an SPS returned by `parse_sps`, which rejects a
+    /// crop whose sum reaches the raw dimension.
     pub fn coded_width(&self) -> u32 {
         self.width + self.crop_left + self.crop_right
     }
     /// Pre-crop luma height — the value of `pic_height_max_in_luma_samples`
     /// before conformance-window cropping was applied.
+    /// Cannot overflow for an SPS returned by `parse_sps`, which rejects a
+    /// crop whose sum reaches the raw dimension.
     pub fn coded_height(&self) -> u32 {
         self.height + self.crop_top + self.crop_bottom
     }
@@ -144,10 +148,18 @@ pub fn parse_sps(rbsp: &[u8]) -> Result<H266Sps, CodecParseError> {
     };
 
     // Width/height after conformance-window cropping.
-    let width =
-        pic_width_max_in_luma_samples.saturating_sub(crop_x_left.saturating_add(crop_x_right));
-    let height =
-        pic_height_max_in_luma_samples.saturating_sub(crop_y_top.saturating_add(crop_y_bottom));
+    let width = crate::codec::apply_crop(
+        "sps_conf_win_left_offset + sps_conf_win_right_offset",
+        pic_width_max_in_luma_samples,
+        crop_x_left,
+        crop_x_right,
+    )?;
+    let height = crate::codec::apply_crop(
+        "sps_conf_win_top_offset + sps_conf_win_bottom_offset",
+        pic_height_max_in_luma_samples,
+        crop_y_top,
+        crop_y_bottom,
+    )?;
 
     // SPS body walk per H.266 V4 §7.3.2.4 — entropy_coding_sync,
     // log2_max_pic_order_cnt, partition constraints, ... up to the VUI

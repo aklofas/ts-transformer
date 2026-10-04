@@ -121,6 +121,7 @@ fn parse_sps_returns_err_on_garbage() {
 /// keeping the test bytes debuggable by reading the field-write
 /// sequence top-to-bottom.
 use crate::codec::test_util::BitWriter;
+use crate::codec::test_util::escape_emulation;
 
 /// Construct a minimal but complete H.265 SPS RBSP with caller-specified
 /// bit_depth_luma_minus8 value. All other fields use safe defaults that allow
@@ -733,31 +734,52 @@ fn build_sps_with_conf_window_offsets(
 /// `chroma_format_idc = 1` (sub_w = 2), the case `(1 << 30, 1 << 30)`
 /// triggers the addition path (`(1<<31) + (1<<31) = 1<<32`); the case
 /// `(1 << 31, 0)` triggers the multiplication path (`2 * (1<<31) = 1<<32`).
-/// Bug closed = parse returns `Ok(sps)` with bounded dims or a typed
-/// `CodecParseError`; no panic in either build mode.
+/// Both are rejected at parse time as `ReservedValue` (review 9, ext
+/// R9-03); the fixture is emulation-escaped so the hostile ue(v) values
+/// read back exactly as written.
 #[test]
 fn parse_sps_saturates_crop_on_adversarial_offsets() {
     for (conf_left, conf_right) in [(1u32 << 30, 1u32 << 30), (1u32 << 31, 0u32)] {
         let rbsp = build_sps_with_conf_window_offsets(conf_left, conf_right, 0, 0);
-        let result = parse_sps(&rbsp);
-        match result {
-            Ok(sps) => {
-                assert!(
-                    sps.width <= 1920,
-                    "post-crop width must not exceed coded pic_width; got {} for ({}, {})",
-                    sps.width,
-                    conf_left,
-                    conf_right
-                );
+        match parse_sps(&escape_emulation(&rbsp)) {
+            Err(CodecParseError::ReservedValue { field, .. }) => {
+                assert!(field.starts_with("conf_win_left"), "{field}")
             }
-            Err(
-                CodecParseError::ReservedValue { .. }
-                | CodecParseError::TruncatedRbsp { .. }
-                | CodecParseError::InvalidGolomb { .. },
-            ) => {
-                // Typed error is also acceptable per the plan.
+            other => panic!("({conf_left}, {conf_right}) must be rejected, got {other:?}"),
+        }
+    }
+}
+
+/// Review 9 (ext R9-03): a conformance window that eats the whole picture
+/// is rejected at parse time, so `coded_width()` / `coded_height()` can
+/// never overflow (they panicked in debug and wrapped in release).
+#[test]
+fn hostile_crop_cannot_escape_into_an_overflowing_getter() {
+    let valid = escape_emulation(&build_sps_with_conf_window_offsets(0, 0, 0, 0));
+    let sps = parse_sps(&valid).unwrap();
+    assert_eq!((sps.coded_width(), sps.coded_height()), (1920, 1088));
+    // A legitimate window still crops: 4:2:0 doubles every offset.
+    let cropped = escape_emulation(&build_sps_with_conf_window_offsets(2, 2, 0, 4));
+    let sps = parse_sps(&cropped).unwrap();
+    assert_eq!((sps.width, sps.height), (1912, 1080));
+    assert_eq!((sps.coded_width(), sps.coded_height()), (1920, 1088));
+    // Just under the raw width is still a (2-sample-wide) picture: accepted.
+    let edge = escape_emulation(&build_sps_with_conf_window_offsets(959, 0, 0, 0));
+    let sps = parse_sps(&edge).unwrap();
+    assert_eq!(sps.width, 2);
+    assert_eq!(sps.coded_width(), 1920);
+    for (left, right, top, bottom) in [
+        (1u32 << 30, 1u32 << 30, 0u32, 0u32), // sum wraps past u32
+        (0, 0, 1 << 30, 1 << 30),
+        (960, 0, 0, 0), // exactly the width: not < raw
+        (0, 0, 0, 544), // exactly the height
+    ] {
+        let raw = build_sps_with_conf_window_offsets(left, right, top, bottom);
+        match parse_sps(&escape_emulation(&raw)) {
+            Err(CodecParseError::ReservedValue { field, .. }) => {
+                assert!(field.starts_with("conf_win_"), "{field}")
             }
-            Err(e) => panic!("unexpected error variant for ({conf_left}, {conf_right}): {e:?}"),
+            other => panic!("({left},{right},{top},{bottom}) must be rejected, got {other:?}"),
         }
     }
 }

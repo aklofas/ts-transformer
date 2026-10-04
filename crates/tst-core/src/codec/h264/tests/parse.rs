@@ -1,6 +1,7 @@
 //! H.264 parameter-set parser tests.
 
 use crate::codec::h264::{parse_parameter_sets, parse_pps, parse_sps};
+use crate::codec::test_util::{BitWriter, escape_emulation};
 use crate::codec::{
     ChromaFormat, CodecParseError, ColourPrimaries, MatrixCoefficients, TransferCharacteristics,
 };
@@ -787,4 +788,58 @@ fn parse_sps_scaling_list_large_delta_does_not_panic() {
     ];
     // Must return a Result (Ok or Err) — never panic.
     let _ = parse_sps(&rbsp);
+}
+
+/// Hand-built Baseline SPS, 1920×1088, 4:2:0 (the Baseline profile has no
+/// chroma_format_idc block), `frame_cropping_flag = 1` with caller-supplied
+/// offsets in chroma units (×2 luma for 4:2:0 frame pictures). Mirrors the
+/// H.265 / H.266 fixtures; emulation-escaped like a real NAL.
+fn build_h264_sps_with_frame_crop(left: u32, right: u32, top: u32, bottom: u32) -> Vec<u8> {
+    let mut bw = BitWriter::new();
+    bw.write(66, 8); // profile_idc = Baseline
+    bw.write(0, 8); // constraint_set flags + reserved_zero_2bits
+    bw.write(30, 8); // level_idc 3.0
+    bw.write_ue(0); // seq_parameter_set_id
+    bw.write_ue(0); // log2_max_frame_num_minus4
+    bw.write_ue(2); // pic_order_cnt_type = 2 (no POC fields follow)
+    bw.write_ue(1); // max_num_ref_frames
+    bw.write(0, 1); // gaps_in_frame_num_value_allowed_flag
+    bw.write_ue(119); // pic_width_in_mbs_minus1 → 1920
+    bw.write_ue(67); // pic_height_in_map_units_minus1 → 1088
+    bw.write(1, 1); // frame_mbs_only_flag
+    bw.write(1, 1); // direct_8x8_inference_flag
+    bw.write(1, 1); // frame_cropping_flag
+    bw.write_ue(left);
+    bw.write_ue(right);
+    bw.write_ue(top);
+    bw.write_ue(bottom);
+    bw.write(0, 1); // vui_parameters_present_flag
+    bw.end_rbsp();
+    escape_emulation(&bw.bytes)
+}
+
+/// Review 9 (ext R9-03): H.264 sibling of the H.265 getter-overflow case.
+#[test]
+fn hostile_frame_crop_is_rejected_at_parse_time() {
+    let sps = parse_sps(&build_h264_sps_with_frame_crop(0, 0, 0, 4)).unwrap();
+    assert_eq!((sps.width, sps.height), (1920, 1080));
+    assert_eq!((sps.coded_width(), sps.coded_height()), (1920, 1088));
+    // Just under the raw width is still a (2-sample-wide) picture: accepted.
+    let sps = parse_sps(&build_h264_sps_with_frame_crop(959, 0, 0, 0)).unwrap();
+    assert_eq!(sps.width, 2);
+    assert_eq!(sps.coded_width(), 1920);
+    for (l, r, t, b) in [
+        (1u32 << 30, 1u32 << 30, 0u32, 0u32),
+        (1 << 31, 0, 0, 0), // multiply-saturation path: 2 * 2^31 -> u32::MAX
+        (0, 0, 1 << 30, 1 << 30),
+        (960, 0, 0, 0),
+        (0, 0, 272, 272),
+    ] {
+        match parse_sps(&build_h264_sps_with_frame_crop(l, r, t, b)) {
+            Err(CodecParseError::ReservedValue { field, .. }) => {
+                assert!(field.starts_with("frame_crop_"), "{field}")
+            }
+            other => panic!("({l},{r},{t},{b}) must be rejected, got {other:?}"),
+        }
+    }
 }

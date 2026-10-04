@@ -1,7 +1,7 @@
 //! H.266 SPS parser tests.
 
 use crate::codec::h266::parse_sps;
-use crate::codec::test_util::BitWriter;
+use crate::codec::test_util::{BitWriter, escape_emulation};
 use crate::codec::{ChromaFormat, CodecParseError, Rational};
 
 /// Construct a minimal valid H.266 SPS bitstream:
@@ -323,8 +323,9 @@ fn h266_sps_surfaces_conformance_window_offsets_invariant() {
 /// `chroma_format_idc = 1` (sub_w = 2), the case `(1<<30, 1<<30, 0, 0)`
 /// triggers the addition path (`(1<<31) + (1<<31) = 1<<32`); the case
 /// `(1<<31, 0, 0, 0)` triggers the multiplication path (`2 * (1<<31) = 1<<32`).
-/// Bug closed = parse returns `Ok(sps)` with bounded dims or a typed
-/// `CodecParseError`; no panic in either build mode.
+/// Both are rejected at parse time as `ReservedValue` (review 9, ext
+/// R9-03); the fixture is emulation-escaped so the hostile ue(v) values
+/// read back exactly as written.
 #[test]
 fn parse_sps_saturates_crop_on_adversarial_offsets() {
     for offsets in [
@@ -332,27 +333,44 @@ fn parse_sps_saturates_crop_on_adversarial_offsets() {
         (1u32 << 31, 0u32, 0u32, 0u32),
     ] {
         let rbsp = minimal_sps_rbsp_with_conformance_window(offsets);
-        let result = parse_sps(&rbsp);
-        match result {
-            Ok(sps) => {
-                assert!(
-                    sps.width <= 320,
-                    "post-crop width must not exceed coded pic_width; got {} for {:?}",
-                    sps.width,
-                    offsets
-                );
+        match parse_sps(&escape_emulation(&rbsp)) {
+            Err(CodecParseError::ReservedValue { field, .. }) => {
+                assert!(field.starts_with("sps_conf_win_left"), "{field}")
             }
-            Err(
-                CodecParseError::ReservedValue { .. }
-                | CodecParseError::Truncated { .. }
-                | CodecParseError::TruncatedRbsp { .. }
-                | CodecParseError::InvalidGolomb { .. }
-                | CodecParseError::UnsupportedProfile { .. },
-            ) => {
-                // Typed error is also acceptable per the plan — body
-                // walk may bail past the crop for various reasons.
+            other => panic!("{offsets:?} must be rejected, got {other:?}"),
+        }
+    }
+}
+
+/// Review 9 (ext R9-03): H.266 sibling — 320×240, 4:2:0.
+#[test]
+fn hostile_conformance_window_is_rejected_at_parse_time() {
+    let sps = parse_sps(&escape_emulation(
+        &minimal_sps_rbsp_with_conformance_window((1, 2, 3, 4)),
+    ))
+    .unwrap();
+    assert_eq!((sps.width, sps.height), (314, 226));
+    assert_eq!((sps.coded_width(), sps.coded_height()), (320, 240));
+    // Just under the raw width is still a (2-sample-wide) picture: accepted.
+    let sps = parse_sps(&escape_emulation(
+        &minimal_sps_rbsp_with_conformance_window((159, 0, 0, 0)),
+    ))
+    .unwrap();
+    assert_eq!(sps.width, 2);
+    assert_eq!(sps.coded_width(), 320);
+    for offsets in [
+        (1u32 << 30, 1u32 << 30, 0u32, 0u32),
+        (0, 0, 1 << 30, 1 << 30),
+        (160, 0, 0, 0),
+        (0, 0, 0, 120),
+    ] {
+        match parse_sps(&escape_emulation(
+            &minimal_sps_rbsp_with_conformance_window(offsets),
+        )) {
+            Err(CodecParseError::ReservedValue { field, .. }) => {
+                assert!(field.starts_with("sps_conf_win_"), "{field}")
             }
-            Err(e) => panic!("unexpected error variant for {offsets:?}: {e:?}"),
+            other => panic!("{offsets:?} must be rejected, got {other:?}"),
         }
     }
 }

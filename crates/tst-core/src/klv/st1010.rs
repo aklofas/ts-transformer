@@ -423,15 +423,34 @@ pub(crate) fn bit_vector_slots(bitvec: &[u8], n: usize) -> Vec<bool> {
         .collect()
 }
 
-/// Cheap peek at just Element 1 (Matrix Size), for callers (e.g. an ST 0601
-/// Tag 102 walker) that need `N` before deciding how many preceding Local
-/// Set items belong to a given SDCC-FLP occurrence. Returns `None` on a
-/// truncated/malformed BER-OID; does not validate the rest of the pack.
-///
-/// Consumer: `st0601::decode::apply_typed_tag`'s Tag 102 positional
-/// capture.
+/// Cheap peek at Element 1 (Matrix Size) for callers that need `N` before
+/// deciding how many preceding Local Set items an SDCC-FLP occurrence
+/// refines (`st0601::decode::apply_typed_tag`'s Tag 102 arm). `N` is
+/// bounded by what the pack's own bytes can hold — Element 2's Parse
+/// Control plus [`check_matrix_size_fits`], the rule `decode_sdcc_flp`
+/// applies before it allocates — so a hostile `N` cannot make the caller
+/// copy a tag history the pack could never describe (review 9, ext R9-02:
+/// n occurrences after n items retained n² tags). Returns `None` on a
+/// truncated/malformed BER-OID, a missing Parse Control, or a size the pack
+/// cannot hold; Elements 3–5 are not validated here.
 pub(crate) fn peek_matrix_size(bytes: &[u8]) -> Option<usize> {
-    read_ber_oid(bytes).ok().map(|(n, _)| n as usize)
+    let (n_raw, rest) = read_ber_oid(bytes).ok()?;
+    let (pc1, rest) = rest.split_first()?;
+    let (cs, clen, slen, rest) = if pc1 & 0x80 == 0 {
+        // Mode 1 (one byte): same field layout as `decode_sdcc_flp`.
+        (
+            (pc1 >> 3) & 0x01 != 0,
+            (pc1 & 0x07) as usize,
+            ((pc1 >> 4) & 0x07) as usize,
+            rest,
+        )
+    } else {
+        let (pc2, rest) = rest.split_first()?;
+        let (cs, _cf_imap, clen, _sf_imap, slen) = parse_mode2(*pc1, *pc2);
+        (cs, clen, slen, rest)
+    };
+    check_matrix_size_fits(n_raw, rest.len(), slen, clen, cs).ok()?;
+    Some(n_raw as usize)
 }
 
 /// Row-major (i<j) presence bit vector, MSB-first, `ceil(len/8)` bytes —
@@ -733,12 +752,30 @@ mod tests {
         assert!(decode_sdcc_flp(&bytes).is_err());
     }
 
+    /// Review 9 (ext R9-02): the peek is bounded by what the pack's own
+    /// bytes can hold — Parse Control + `check_matrix_size_fits` — so an ST
+    /// 0601 Tag 102 occurrence can never make its caller copy a tag history
+    /// the pack could not describe.
     #[test]
-    fn peek_matrix_size_reads_element_1_only() {
-        // Cheap header-only peek — for Task C4's Tag 102 walker, which
-        // needs N before deciding how many preceding LS items to capture.
-        // Ignores everything past the BER-OID Matrix Size.
-        assert_eq!(peek_matrix_size(&[0x03, 0xFF, 0xFF]), Some(3));
+    fn peek_matrix_size_is_bounded_by_what_the_pack_can_hold() {
+        // The C1 full golden: N = 3, Mode 2 (0x84 0x04 → Slen = 4, Clen = 4,
+        // CS = 0), 3 std-devs + 3 correlations = 24 data bytes.
+        let golden: [u8; 27] = [
+            0x03, 0x84, 0x04, 0x3F, 0x80, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x40, 0x80, 0x00,
+            0x00, 0x3F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xBF, 0x00, 0x00, 0x00,
+        ];
+        assert_eq!(peek_matrix_size(&golden), Some(3));
+        // No Parse Control at all is not a pack.
+        assert_eq!(peek_matrix_size(&[0x03]), None);
         assert_eq!(peek_matrix_size(&[]), None);
+        // Mode 1, data-free (Slen = 0, Clen = 0, CS = 0): the unconditional
+        // bit-vector rule bounds N(N-1)/2 <= 8 * remaining.
+        assert_eq!(peek_matrix_size(&[0x01, 0x00]), Some(1));
+        assert_eq!(peek_matrix_size(&[0x03, 0x00]), None); // 3 slots > 0
+        assert_eq!(peek_matrix_size(&[0x03, 0x00, 0x00]), Some(3)); // 3 slots <= 8 (Review Focus 3)
+        assert_eq!(peek_matrix_size(&[0x05, 0x00, 0x00]), None); // 10 slots > 8
+        // Mode 1 with Slen = 1 (0x10): N std-dev bytes must fit.
+        assert_eq!(peek_matrix_size(&[0x03, 0x10, 0xAA, 0xBB, 0xCC]), Some(3));
+        assert_eq!(peek_matrix_size(&[0x03, 0x10, 0xAA, 0xBB]), None);
     }
 }

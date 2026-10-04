@@ -47,12 +47,16 @@ pub struct H264Sps {
 impl H264Sps {
     /// Coded picture width before `frame_crop` is applied (luma samples).
     /// Equal to `width + crop_left + crop_right`.
+    /// Cannot overflow for an SPS returned by `parse_sps`, which rejects a
+    /// crop whose sum reaches the raw dimension.
     pub fn coded_width(&self) -> u32 {
         self.width + self.crop_left + self.crop_right
     }
 
     /// Coded picture height before `frame_crop` is applied (luma samples).
     /// Equal to `height + crop_top + crop_bottom`.
+    /// Cannot overflow for an SPS returned by `parse_sps`, which rejects a
+    /// crop whose sum reaches the raw dimension.
     pub fn coded_height(&self) -> u32 {
         self.height + self.crop_top + self.crop_bottom
     }

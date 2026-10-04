@@ -660,7 +660,13 @@ pub struct UasDatalinkLs {
 /// keeps the raw pack bytes rather than a parsed
 /// [`crate::klv::st1010::SdccFlp`] so a malformed or foreign-encoder
 /// pack still round-trips byte-exact even when this crate cannot parse
-/// its interior.
+/// its interior — provided its declared matrix size fits the pack's own
+/// bytes (Parse Control plus the ST 1010 size bound); otherwise the
+/// occurrence is recorded as a
+/// [`crate::error::KlvFieldError::TruncatedField`] and not captured. The
+/// encoder still emits caller-supplied `sdcc_flps` bytes verbatim, so a
+/// caller who supplies a pack whose matrix cannot fit will see it
+/// rejected on decode.
 ///
 /// **Capture semantics (decode):** `preceding_tags` is the `N` wire-order
 /// item tags — known or unknown, but never another Tag 102 — immediately
