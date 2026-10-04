@@ -9386,6 +9386,10 @@ item = "tst_rtp::rtsp::server::session::ServerSessionState"
 reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
 
 [[exempt]]
+item = "tst_rtp::rtsp::server::session::ServerSessionState::drop"
+reason = "added review 9 (R9-02) 2026-10-04: Drop cancels the per-peer fanout; server-internal type, catalogued like its RtspServer::drop sibling (exempt)"
+
+[[exempt]]
 item = "tst_rtp::sdp::Sdp"
 reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
 

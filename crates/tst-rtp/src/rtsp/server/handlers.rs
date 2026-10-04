@@ -657,6 +657,14 @@ pub(crate) fn handle_play(
             }
         }
     };
+    // A second PLAY without PAUSE (RFC 7826 §13.4 allows it) replaces the
+    // fanout; detaching the old task kept it streaming to the same peer
+    // with its own sequence space (review 9, R9-02 sibling).
+    if let Some(handle) = session.fanout_handle.take() {
+        session.peer_cancel.cancel();
+        session.peer_cancel = tokio_util::sync::CancellationToken::new();
+        handle.abort();
+    }
     // Snapshot the initial RTP seq and clock timestamp before spawning.
     // These values are handed to both spawn_peer_fanout (which uses them
     // to seed the first packet's header fields) and play_response_ok
@@ -670,6 +678,7 @@ pub(crate) fn handle_play(
         rx,
         peer_transport,
         session.peer_cancel.clone(),
+        state.cancel_token.clone(),
         crate::rtsp::server::rand_ssrc(),
         initial_seq,
         clock,
@@ -1159,6 +1168,44 @@ mod tests {
         assert!(session.udp_sockets.is_some());
         assert!(session.interleaved_channels.is_none());
         assert_eq!(session.mount_path.as_deref(), Some("/live"));
+    }
+
+    /// Review 9 (R9-02 sibling): a second PLAY without PAUSE replaces the
+    /// fanout instead of detaching the old task, which kept streaming to the
+    /// same peer with its own sequence space.
+    #[tokio::test]
+    async fn play_twice_replaces_the_fanout_instead_of_detaching_it() {
+        let state = make_state_with_mount();
+        let mut session = ServerSessionState::new();
+        let mut setup = make_req(RtspMethod::Setup, "rtsp://127.0.0.1:8554/live");
+        setup.headers.insert(
+            "transport".into(),
+            "RTP/AVP;unicast;client_port=5004-5005".into(),
+        );
+        assert_eq!(handle_setup(&setup, &state, &mut session).status, 200);
+        let play = make_req(RtspMethod::Play, "rtsp://127.0.0.1:8554/live");
+        assert_eq!(handle_play(&play, &state, &mut session).status, 200);
+        assert_eq!(handle_play(&play, &state, &mut session).status, 200);
+        let fanout = state
+            .mounts
+            .lock()
+            .unwrap()
+            .get("/live")
+            .unwrap()
+            .fanout
+            .clone();
+        // The aborted task drops its broadcast receiver at its next poll.
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+        while fanout.receiver_count() != 1 {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "second PLAY left {} fanout receivers",
+                fanout.receiver_count()
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        let bye = make_req(RtspMethod::Teardown, "rtsp://127.0.0.1:8554/live");
+        assert_eq!(handle_teardown(&bye, &state, &mut session).status, 200);
     }
 
     #[test]

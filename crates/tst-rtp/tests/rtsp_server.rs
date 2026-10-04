@@ -45,5 +45,9 @@ mod tls;
 mod tls_handshake_timeout;
 #[path = "rtsp_server/oom_guard.rs"]
 mod oom_guard;
+#[path = "rtsp_server/orphan_fanout.rs"]
+mod orphan_fanout;
+#[path = "rtsp_server/idle_timeout.rs"]
+mod idle_timeout;
 #[path = "rtsp_server/unsupported_method.rs"]
 mod unsupported_method;

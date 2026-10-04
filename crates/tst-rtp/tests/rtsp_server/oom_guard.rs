@@ -259,7 +259,7 @@ fn over_cap_body_request_gets_413() {
 /// `HeadersTooLong` / `BadContentLength` head already sitting in `buf`
 /// got no 413 until the NEXT read — which, once the client has sent
 /// everything it's going to send and is just awaiting responses, never
-/// comes — or the 30 s idle timeout. `reject_if_over_cap` now also runs
+/// comes — or the pre-SETUP 30 s idle timeout. `reject_if_over_cap` now also runs
 /// right after the drain loop, so the oversized head is rejected the
 /// moment it becomes the buffer head instead of waiting on a read that
 /// isn't coming.
@@ -305,8 +305,8 @@ fn pipelined_over_cap_head_gets_413_without_another_read() {
     );
 
     // Read the second response. The 2 s read timeout is the discriminator:
-    // pre-fix, the oversized second head sits unrejected until the 30 s
-    // idle timeout closes the connection, so this read times out. Post-fix
+    // pre-fix, the oversized second head sits unrejected until the pre-SETUP
+    // 30 s idle timeout closes the connection, so this read times out. Post-fix
     // the 413 fires immediately after the drain loop, well inside 2 s.
     let start = Instant::now();
     buf.clear();
@@ -330,7 +330,7 @@ fn pipelined_over_cap_head_gets_413_without_another_read() {
             }
             Err(e) => panic!(
                 "no response to the pipelined over-cap OPTIONS within 2 s \
-                 (pre-fix: it waits on the 30 s idle timeout instead of the \
+                 (pre-fix: it waits on the pre-SETUP 30 s idle timeout instead of the \
                  immediate 413): {e}"
             ),
         }

@@ -1225,6 +1225,8 @@ pub tst_rtp::rtsp::server::session::ServerSessionState::peer_cancel: tokio_util:
 pub tst_rtp::rtsp::server::session::ServerSessionState::session_id: core::option::Option<alloc::string::String>
 pub tst_rtp::rtsp::server::session::ServerSessionState::transport: core::option::Option<tst_rtp::rtsp::client::transport_negotiation::TransportResponse>
 pub tst_rtp::rtsp::server::session::ServerSessionState::udp_sockets: core::option::Option<(alloc::sync::Arc<tokio::net::udp::UdpSocket>, alloc::sync::Arc<tokio::net::udp::UdpSocket>)>
+impl core::ops::drop::Drop for tst_rtp::rtsp::server::session::ServerSessionState
+pub fn tst_rtp::rtsp::server::session::ServerSessionState::drop(&mut self)
 impl core::marker::Freeze for tst_rtp::rtsp::server::session::ServerSessionState
 impl core::marker::Send for tst_rtp::rtsp::server::session::ServerSessionState
 impl core::marker::Sync for tst_rtp::rtsp::server::session::ServerSessionState
