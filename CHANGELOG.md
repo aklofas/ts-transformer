@@ -1162,6 +1162,21 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   unrepresentable duration behaves as "no deadline" instead of panicking.
   Pinned by `request_timeout_duration_max_does_not_panic`.
 
+### Fixed — UDP/RIST receive (review 9)
+
+- **One zero-length datagram no longer ends a UDP or RIST receiver.**
+  `UdpRecvTransport::recv_bytes` returned the kernel's `Ok(0)` for an empty
+  datagram and `RistRecvTransport::recv_bytes` did the same for a
+  zero-length block; the receive shells treat `Ok(0)` as "closed", so a
+  port probe (`nc -zu`), a NAT "UDP ping" or an empty keepalive from any
+  host that could reach the port ended a `Receiver` / `DemuxReceiver` with
+  `EndOfStream` — terminal on the managed wrappers and in every binding.
+  UDP skips the datagram inside its cancel-aware poll loop (it still
+  counts in `datagrams_received`); RIST frees the block and reports the
+  retryable `Backpressure` its other non-fatal dispositions use. tst-rtp
+  already skipped empty datagrams. The `RecvTransport::recv_bytes`
+  contract now says so. Review #9, internal R9-04.
+
 ### Fixed — tcp/udp (WP-4b)
 
 - **TCP: a ≥ 100 ms send stall after a partial write no longer tears the
