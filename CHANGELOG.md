@@ -1336,6 +1336,13 @@ The integrator-facing changes at a glance (full detail in the sections below):
   is `timeout + max(timeout / 2, 2 s)` (90 s at the default; RFC 7826
   §18.49); before SETUP the 30 s slow-loris bound is unchanged. Review #9,
   internal R9-03.
+- A second PLAY, a PAUSE or a TEARDOWN on an interleaved session no longer
+  cuts an RTP frame mid-write before the RTSP response: the fanout exits at
+  the next frame boundary (the session's Drop still aborts it). A fanout
+  retired by PAUSE or a second PLAY is still ended by the session's Drop,
+  and a response write that a never-reading peer parks behind that
+  fanout's writer lock is abandoned at the session's idle bound, so the
+  session is reaped (and the peer sees FIN) instead of waiting forever.
 
 ### Fixed — rtp (WP-4a)
 

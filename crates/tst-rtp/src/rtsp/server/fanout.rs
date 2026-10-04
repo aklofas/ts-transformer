@@ -78,6 +78,13 @@ impl PeerDropCounter {
 /// - The broadcast channel is closed (mount removed / server shutting down).
 /// - The peer transport returns a fatal I/O error.
 ///
+/// Every exit lands at a FRAME BOUNDARY: a frame write runs to completion
+/// inside its select arm, and the cancel arms are polled first (`biased;`)
+/// so a cancelled task never sends one more stale frame. PLAY-replacement,
+/// PAUSE and TEARDOWN rely on this — an interleaved frame is written under
+/// the session's shared TCP writer, and only `JoinHandle::abort()` (the
+/// session's Drop, where FIN follows) may ever cut one in half.
+///
 /// `ssrc` is the RTP SSRC for this peer (random per-peer to keep peer-side
 /// jitter buffers isolated even though they all carry identical TS bytes).
 /// `initial_seq` is the starting RTP sequence number (random per
@@ -114,6 +121,18 @@ pub(crate) fn spawn_peer_fanout(
             Vec::with_capacity(4 + RTP_HEADER_LEN + crate::url::DEFAULT_PKT_SIZE);
         loop {
             tokio::select! {
+                // Cancel arms first, biased: when a payload and a cancel are
+                // both ready the task exits instead of writing the frame.
+                biased;
+                _ = cancel.cancelled() => {
+                    return;
+                }
+                // The server's graceful cancel: belt-and-braces beside the
+                // session Drop (review 9, int R9-02) so a fanout can never
+                // outlive `RtspServer::stop`.
+                _ = server_cancel.cancelled() => {
+                    return;
+                }
                 payload_res = rx.recv() => match payload_res {
                     Ok(payload) => {
                         // Build RTP datagram: 12-byte header + payload.
@@ -168,15 +187,6 @@ pub(crate) fn spawn_peer_fanout(
                         return;
                     }
                 },
-                _ = cancel.cancelled() => {
-                    return;
-                }
-                // The server's graceful cancel: belt-and-braces beside the
-                // session Drop (review 9, int R9-02) so a fanout can never
-                // outlive `RtspServer::stop`.
-                _ = server_cancel.cancelled() => {
-                    return;
-                }
             }
         }
     })

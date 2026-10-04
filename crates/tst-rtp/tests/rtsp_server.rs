@@ -49,5 +49,7 @@ mod oom_guard;
 mod orphan_fanout;
 #[path = "rtsp_server/idle_timeout.rs"]
 mod idle_timeout;
+#[path = "rtsp_server/interleaved_frame_boundary.rs"]
+mod interleaved_frame_boundary;
 #[path = "rtsp_server/unsupported_method.rs"]
 mod unsupported_method;
