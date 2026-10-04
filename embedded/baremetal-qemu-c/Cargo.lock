@@ -300,7 +300,7 @@ checksum = "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a"
 
 [[package]]
 name = "tst-c-core"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "critical-section",
  "libc",
@@ -312,7 +312,7 @@ dependencies = [
 
 [[package]]
 name = "tst-core"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "hashbrown",
  "libc",
@@ -326,7 +326,7 @@ dependencies = [
 
 [[package]]
 name = "tst-pipeline"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "spin",
  "thiserror",

@@ -45,7 +45,7 @@ The JVM binding is published to Maven Central as
 <dependency>
   <groupId>org.tstrans</groupId>
   <artifactId>tstrans-jvm</artifactId>
-  <version>0.6.0</version>
+  <version>0.7.0</version>
 </dependency>
 ```
 
@@ -76,7 +76,7 @@ works — print the version string:
 ```java
 import org.tstrans.Version;
 
-System.out.println(Version.versionString());  // e.g. "0.6.0"
+System.out.println(Version.versionString());  // e.g. "0.7.0"
 ```
 
 ## First send

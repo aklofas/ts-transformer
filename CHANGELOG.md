@@ -9,6 +9,141 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+Nothing yet.
+
+---
+
+## [0.7.0] — 2026-10-05
+
+<!-- TODO(release): the date `2026-10-05` above is a placeholder; set it to the tag day and delete this comment (gate: `rg -n 'TODO\((release|harvest)' CHANGELOG.md docs/` prints nothing). -->
+
+Post-v0.6.0: deep review #4 Arc 2 — one binding layer (`tst_pipeline::binding`)
+under C, Python and the JVM, one error-kind table (`BindingErrorKind`), one
+cancel outcome on every transport — plus the remediation of deep reviews #5–#9
+(managed-transport message ownership, the SRT process-exit guard, getters that
+never wait, and review #9's before-tag demux, RTSP-server, datagram and parser
+fixes), C ABI 0.21 → 0.22, a stress harness beside the soak, and a 72-hour
+release soak in `ReconnectMode::Background` (SRT leg PASS; the RIST leg's
+corruption-attribution FAIL traces to two harness defects, both reproduced in the harness, see
+Validation). Source-breaking field and
+trait additions and the error-kind vocabulary change make this 0.7.0 — a
+`"0.6"` requirement will not auto-update into it.
+
+### Release highlights
+
+The integrator-facing changes at a glance (full detail in the sections below):
+
+- **Why this is 0.7.0 (compile-time breaks):** `TransportError::Broken`
+  gained `cause: BrokenCause` and `DemuxerStats` gained `unwrap_reanchors`
+  (end literals with `..Default::default()`, patterns with `..`);
+  `TransportCancel::is_cancelled` is a required trait method; the new
+  inherent `cancel_handle()` on the UDP / RIST transports shadows the trait
+  method for code that forwards it from a concrete field (qualify as
+  `Transport::cancel_handle(&x)`). In the experimental
+  `mpegts::demux::low_level` namespace, `Reassembler::push` is now
+  infallible (it returns `Vec<ReassemblyOutcome>`) and `ReassemblyOutcome`
+  gains `Malformed { pid, reason }`. `impl Drop for ServerSessionState`
+  (tst-rtp): code that moves a field out of it must now clone or `take()`
+  it.
+- **One cancel outcome:** a cancelled call returns
+  `TransportError::ExplicitClose` — `TST_E_CLOSED` (-7), `SrtError(CLOSED)`,
+  `SrtException(CLOSED)`, detail "cancelled from another thread" — on plain
+  and managed shells alike (plain SRT reported `Broken` / -8 / `BROKEN`
+  through 0.6.x). `SrtCancelHandle::is_cancelled` /
+  `TcpCancelHandle::is_cancelled` now report the caller's intent only, never
+  a peer EOF — use `is_alive()`. UDP and RIST gain real cross-thread cancel
+  handles (`_cancel` at the C ABI). An RTSP control-plane cancel
+  (`RtspError::LocalCancel`) maps to the same `TST_E_CLOSED` / `CLOSED` kind
+  since review #9.
+- **One error-kind table:** Python kinds are the Rust variant names; 15
+  deprecated aliases survive for 0.7.x (removed in 0.8.0) but four
+  `DemuxErrorKind` string VALUES changed (`"bad_pmt"` → `"malformed_psi"` …);
+  the JVM removes the retired constants and the `ordinal()` of
+  `RtpException.Kind`, `DemuxException.Kind`, `SrtException.Kind`,
+  `KlvEncodeException.Kind` shifted — store `name()`. C codes that move:
+  `Backpressure` is -4 on every path; RTSP 404 / 401 → -19 / -18;
+  `RtspServerError` splits into -22 / -21 / -16 / -25. JVM
+  `RtspException.Kind` gains `CLOSED` (appended; ordinals unchanged) —
+  exhaustive `switch` expressions without a default must add the arm.
+- **Managed transports own their messages:** in `Blocking` mode a failed
+  `send_bytes` always hands the message back (nothing stays queued between
+  calls — resend it); a cancel of the INNER transport, or a reconnect
+  factory returning `ExplicitClose`, ENDS a managed sender or receiver
+  instead of starting another reconnect cycle; `gap_buffer_capacity == 0`
+  buffers nothing; `max_payload()` reports the last installed inner's
+  ceiling during a reconnect.
+- **Process exit with a thread parked in libsrt now terminates** (C, JVM,
+  Rust): the exit guard closes open sockets, waits ≤ 2 s, and refuses new
+  libsrt calls with `ExplicitClose` / `TST_E_CLOSED` / "the process is
+  exiting"; address resolution now precedes libsrt startup.
+- **Every sender `open` refuses `?mode=listener`** (`TST_E_INVALID_CONFIG` /
+  `SrtError::Option`) instead of silently dialling out as a caller.
+- **Other behaviour you may notice:** every `tcps://` close drains unread
+  TLS records before `close_notify` (the peer normally sees a clean
+  `CleanEof`, not an RST); getters, `repr()` and `is_alive()` in every
+  binding answer without waiting behind a parked call;
+  `tst_managed_transport_stats_t.reconnect_attempts` on the receive handles
+  counts attempts, not successes; Python HLS methods take their lock with
+  the GIL released; a UDP `Broken` latches the transport dead. From review
+  #9: a sync-metadata PES whose first cell's reserved nibble is not `1111`
+  surfaces as a raw `Unknown` sample instead of being parsed as a cell; a
+  consumed `RtspSession` data plane is `CLOSED` on every take path (Python
+  and JVM); a timed-out `tcps://` connect is `ConnectTimeout` (-32), as
+  `tcp://` already was; a C receive handle reports a typed caller-side
+  close as `TST_E_CLOSED` (-7) even without the cancel latch; Python's
+  `tcp.Transport` / `Listener` gain `cancel_handle()`.
+- **C ABI 0.21 → 0.22 (additive):** `tst_{tcp,udp,rist}_*_cancel`,
+  `tst_demux_config_set_sync_buf_cap`, `_finish` on every mux sender
+  (Python / JVM `finish()` too); 0.21 brought the ST 0601 C decoder
+  (`tst_st0601_*`), Annex-B ↔ length-prefixed helpers, `unwrap_timestamps`,
+  managed-receiver `end_reason`, and the iOS / XCFramework tooling.
+- **Fixes worth reading:** review #9's before-tag set — async KLV records
+  above ~13 KB were dropped by the demuxer, a valid PES beside a malformed
+  one was lost, an RTSP viewer that left without TEARDOWN kept its RTP
+  fanout and the server reaped sessions at half the advertised timeout, one
+  empty datagram ended a UDP/RIST receiver, repeated ST 0601 Tag 102 could
+  inflate a record quadratically, hostile SPS crops overflowed the
+  coded-dimension getters; RIST `?aes-type=` without `?secret=` is rejected
+  (it configured a PLAINTEXT link) and a librist queue-full is
+  `Backpressure`, not a rebuild; a TCP partial-write stall no longer tears
+  the connection down; RTSP requests have a deadline (`request_timeout`,
+  10 s) and repeated `WWW-Authenticate` lines prefer Digest; `PcrAnomaly`
+  fires only on a declared PCR PID; `unwrap_timestamps` re-anchors a PID
+  silent for over half an epoch.
+- **Validation:** the 157-cell interop census holds at 92 PASS / 0 FAIL /
+  65 documented at realistic access-unit sizes. The 0.7.0 release soak ran
+  to completion: 259,137 of 259,200 s, in `ReconnectMode::Background`,
+  under the seeded impairment schedule with the corruption tap on, seed 11,
+  on the `e86dd9ea` binary. Its harness verdict is `overall_pass=false`
+  (41 verdicts: 36 gating PASS, 3 gating FAIL, 2 provisional PASS).
+  - The SRT leg passed every gating verdict: 12 reconnects for 12 outage
+    windows, and 0 unexplained, undetected or unrecovered corruption
+    events (3 excused in reconnect gaps).
+  - The RIST leg failed corruption attribution with 8 unexplained events.
+    That FAIL is the harness's verdict, and all eight events trace to two
+    harness attribution defects, both reproduced in the harness. The library and the
+    transport behaved correctly.
+    - Six events: a truncated PMT packet produces a correct PSI-checksum
+      error that the harness's expectation table does not admit.
+    - Two events: a mis-framed packet's implausible PCR anchor stranded the
+      pending injections that caused them.
+
+    Both fixes are tracked for the harness.
+  - No process failed the RSS gate (the worst slope was 22.8 KiB/h against
+    200).
+  - The deep-review-#9 fixes were checked for regressions on `effc7f9c`
+    by the interop census, the four sanitizer jobs, a 260-capture corpus
+    comparison and a one-hour soak smoke (`overall_pass=true`). The
+    synthetic reproductions in the entries above prove the fixes
+    themselves.
+
+  Full figures are in `docs/project/validation-evidence.md`. A stress
+  harness is new in this release (`scripts/interop/stress.sh`); its first
+  measured run is not yet published in `docs/project/benchmarks.md`. The
+  Windows wheel now ships `tstrans.rist` like the Linux and macOS wheels:
+  librist 0.2.18 fixed the Windows teardown hang that kept it out, and the
+  gating windows-msvc CI leg runs the RIST tests.
+
 ### Added
 
 - **`ALL` + public `to_wire` / `from_wire` on the eight ST 0601 / ST 0806
@@ -405,14 +540,21 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of FIN (Windows at `shutdown`, Linux at `close`), and that RST
   could overtake and purge the `close_notify` just written — the peer's read
   then ended in `Broken { cause: Unspecified }` (a reset) instead of the clean
-  `CleanEof`. `InnerStream::shutdown` now reads and discards whatever the peer
-  has already delivered, non-blocking and capped at 32 records, before queuing
-  the alert; it never waits on the peer. Seen twice on the windows-msvc CI leg
+  `CleanEof`. `InnerStream::shutdown` now performs up to 32 non-blocking
+  `read_tls` calls (≤ 4 KiB each; rustls stops at 16 KiB of pending
+  plaintext) and discards what they deliver, before queuing the alert; it
+  never waits on the peer. Seen twice on the windows-msvc CI leg
   as `tcps_explicit_close_loopback_ends_the_peer_read` failing (2026-09-14,
   2026-10-02); Linux happens to hand the queued alert to the reader before
   reporting the reset, which is why only Windows ever showed it. New test
   `tcps_close_then_drop_loopback_still_reaches_the_peer_as_close_notify`
-  pins the close-then-drop shape every binding uses.
+  pins the close-then-drop shape every binding uses. *Behaviour change:*
+  every `tcps://` close in every binding now does this before
+  `close_notify`; application data the caller never read is consumed rather
+  than left for the kernel to discard (it was discarded either way) —
+  finish your reads before `close()`. A receiver closing against a peer that
+  is still streaming can still exceed the bound and keep the pre-#287 RST
+  path on Windows.
 
 - **Python: a `tstrans.hls` call made while another thread is pushing no
   longer freezes the interpreter.** `HlsPublisher` and `MuxPublisher` hold
@@ -510,7 +652,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   still in flight when the 2 s wait expires, `srt_cleanup()` runs anyway
   (one stderr note names how many), and the 2 s does not include the
   closes themselves — a connected socket with unsent data takes up to its
-  `SRTO_LINGER` to close. No public API or C ABI change.
+  `SRTO_LINGER` to close. No public API or C ABI change. *Behaviour change:*
+  once the process has started exiting, every tst-srt entry point refuses
+  with `TransportError::ExplicitClose` / `TST_E_CLOSED` (or
+  `ConnectionBroken` / `ListenerClosed` / `SocketClosed` / `InvalidState` /
+  `Other("the process is exiting")` on the low-level surfaces). Resolve and
+  connect before shutdown and handle the closed outcomes.
 - **`tst-srt`: the exit handler's ceiling note no longer goes through
   `tracing`.** With a `tracing_subscriber::fmt` layer installed, the
   "operations still inside libsrt" warning formatted into a thread-local
@@ -533,6 +680,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   parity test for the JVM change above. `ManagedReceiver.recv_bytes` keeps
   the mutable borrow; its documented pattern (take `cancel_handle()` before
   the first receive) is unchanged.
+  (Superseded later in this release — see "cancel contract (WP-C)" below:
+  plain shells now surface `CLOSED` too.)
 - **`ManagedTransport` (send side): a cancel that lands while the reconnect
   factory is running is honored instead of lost.** The blocking reconnect
   path installed the fresh connection's wake handle into the already
@@ -544,7 +693,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and reports `TransportError::Closed` — the same post-install check the
   receive side gained under CORR-02 and the background worker already had
   at its loop top. Regression test `managed_send_cancel_factory.rs` (red
-  on the previous code: the send returned `Ok(())`).
+  on the previous code: the send returned `Ok(())`). (The pipeline (WP-3)
+  entry below generalises this post-install latch check to the background
+  worker.)
 - **Tooling: the bare no_std test plane of `tst-c-core` compiles, passes,
   and is gated in CI.** `cargo test -p tst-c-core --no-default-features`
   had 43 compile errors — test modules assumed the std prelude (`vec!`,
@@ -827,7 +978,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   on every async KLV path, our own muxer included. The UL is now tested
   first, and `read_metadata_au_cell` rejects a flags byte whose reserved
   low nibble is not `1111` (`KlvDecodeError::ReservedBitsInvalid`), so the
-  sync path cannot be fooled either. *Behaviour change:* a sync-metadata
+  sync path cannot be fooled either. (`KlvDecodeError::ReservedBitsInvalid`'s
+  `Display` text was generalised from the ST 0605 Time Status wording to
+  "reserved bits must be all ones, got …"; no code pins it.)
+  *Behaviour change:* a sync-metadata
   PES whose first cell carries a cleared (non-`1111`) reserved nibble is no
   longer parsed as a cell; it now surfaces as a raw `SamplePayload::Unknown`
   sample. (A non-conformant nibble on a later cell of the same PES still
@@ -992,8 +1146,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   nothing. A cancel landing after that check is reported by the next
   send, and the message already queued stays undelivered.
 - **`tst-pipeline`: a managed sender whose inner transport was cancelled stops
-  instead of reconnecting — a behaviour change.** An inner transport reports
-  `ExplicitClose` only when it was cancelled — through a cancel handle taken
+  instead of reconnecting.** *Behaviour change:* an inner
+  transport reports `ExplicitClose` only when it was cancelled — through a cancel handle taken
   from it before it was wrapped, or by a process-exit path that closes every
   open socket directly. `ManagedTransport` read that as an outage: `Blocking`
   mode called the factory again from the failed send, and the `Background`
@@ -1159,7 +1313,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   second PLAY without PAUSE replaces the fanout instead of detaching it
   (two streams with independent sequence spaces to one peer); and the
   session shuts its write half on every exit so interleaved clients see
-  FIN. Public API: `impl Drop for ServerSessionState` (additive).
+  FIN. Public API: `impl Drop for ServerSessionState` — source-breaking for
+  code that moves a field out of the struct (its fields are `pub`; E0509):
+  clone or `take()` the field instead.
   Review #9, internal R9-02.
 - **The idle reaper now follows the advertised session timeout.** SETUP
   answered `Session: <id>;timeout=60` (`RtspServerBuilder::session_timeout`,
@@ -1427,6 +1583,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `flush()` first when the tail matters (`MuxSender` was already
   cancel-first). `docs/languages/python.md` had claimed `ManagedReceiver`
   surfaced `SrtError(CLOSED)` on a cross-thread close — now true.
+  (Superseded later in this release — see "cancel contract (WP-C)" below:
+  plain shells now surface `CLOSED` too.)
 - **`srt.MuxSender.cancel_handle()` and `srt.ManagedMuxSender.cancel_handle()`
   (additive).** The two primary SRT sending objects had no cross-thread
   interrupt path at all; both now return the same `CancelHandle` the
@@ -6116,8 +6274,6 @@ SRT-only / RTP-only consumers). Build the new transports explicitly, e.g.
   10 design decisions Q1-Q10).
 - Plan: `docs/plans/2026-05-27-tst-py-srt.md` (~2800 lines, 11 tasks,
   4 waves of parallel subagents).
-- Memory anchor: `project_phase_8_tst_py_srt_planned.md` (transitions to
-  `project_phase_8_tst_py_srt_shipped.md` after this commit).
 
 #### Phase 7 unblock
 
@@ -6400,7 +6556,7 @@ transports out of the box.
   `TST_E_*` defines in `tstrans.h`.
 - **4 new C examples**: `sending/rtp_basic.c`, `receiving/rtp_recv_basic.c`,
   `receiving/rtsp_client_camera.c`, `sending/rtsp_server_publish.c` —
-  rich teaching comments per `feedback_examples_are_teaching_code.md`.
+  rich teaching comments per the examples-are-teaching-code convention.
 - **3 new bash ratchets**: `check-c-header-conditional-sections.sh` (cbindgen
   feature-gating regression guard), `check-rtsp-error-mapping-coverage.sh`
   (RtspError / MountError / RtspServerError → TstError variant coverage).
@@ -7076,8 +7232,6 @@ crates (tst-core / tst-pipeline / tst-srt) are unaffected.
 - Corpus walk: outside-repo corpus-validation notebook
   (sensitive). 251 files / 37 GB, 0 parse errors,
   381,211 NonConformant events (~99% CFI tolerated).
-- Industry survey memo (outside-repo; agent memory):
-  `reference_cfi_industry_state.md`.
 - ITU-T H.222.0 v9 (08/2023) Table 2-157 — canonical CFI bit mapping.
 - MISB ST 1402.2 Appendix B Table 2 — the implementer-facing spec
   that omits CFI semantics.
@@ -8149,8 +8303,7 @@ Codex review at `docs/validate-1/15-sprint-4-5-review-codex.md`.
   Sprint 4 G2 added the resync iterator but the `pes_emit` and
   `push_audio` stats sites were still calling strict `frames()`. The
   user-visible symptom Sprint 4 G2 named ("stats undercount on first
-  parse error") is now actually fixed; this is the pattern documented in
-  the `feedback_g2_pattern_plan_says_fix_symptom.md` memo.
+  parse error") is now actually fixed.
 - **`ManagedDemuxReceiver` data-loss budget rustdoc + no-dead-tail test**
   (commit `feffff8`, follow-up #3). Documents the reconnect drop budget
   (≤ `max_payload` bytes, typically ~7 TS packets, never an entire flow)
@@ -8236,8 +8389,7 @@ slices.** Shipped as 10 commits on `main` (`7275ae8..6182f02`) on
 - **`F2+F5` cross-worktree integration fix** (commit `6182f02`).
   `ManagedDemuxReceiver` was constructing the demuxer via the
   post-F5-renamed `Demuxer::with_config` after the rename landed on a
-  separate worktree; integrated fix-up applied per
-  `feedback_cherry_pick_build_between_parallel_worktrees.md`.
+  separate worktree; integrated fix-up applied.
 
 **Fixed (Medium):**
 
@@ -8275,7 +8427,7 @@ slices.** Shipped as 10 commits on `main` (`7275ae8..6182f02`) on
 
 **Three follow-up fixes from a 2026-05-20 Codex review of Sprints 1-3.**
 Codex re-reviewed the response and corrected the Sprint 3 BASELINE wave
-attribution per `feedback_baseline_attribution_verify_via_ci_yml_diff.md`.
+attribution, verified against the `ci.yml` diff.
 
 **Fixed:**
 
@@ -8457,7 +8609,7 @@ linear history.
   reserved 6 bits + extension ≤ 299 per H.222.0 §2.4.3.5.
   `NonConformantIssue::PcrMalformed { kind }` + `PcrMalformedKind` enum.
 
-**Fixed (Medium, breaking — pre-1.0 per `feedback_break_freely_prerelease.md`):**
+**Fixed (Medium, breaking — pre-1.0):**
 
 - **Descriptor builders return Result** (commit `f88f036`, C5,
   Codex 02 #5). `descriptors::{registration, user_private,
@@ -8492,11 +8644,9 @@ linear history.
   `PesHeaderMalformedKind`, `PcrMalformedKind`, `NalHeaderKind`,
   `Av1ObuHeaderKind`, `AacChannelLayout`, `LatmFramingKind`,
   `Av1CarriageMode`, `Ac3SyncInfo`, `DvbSubStripResult`. The remaining
-  +8 are comment/rustdoc mentions counted by `rg -c` per
-  `feedback_baseline_count_projection_undercount.md`.
+  +8 are comment/rustdoc mentions counted by `rg -c`.
 - New `.gitignore` entry `/.worktrees/` (commit `145c46b`) enables
-  parallel-subagent worktree isolation per
-  `feedback_per_subagent_worktree_for_parallel_code_changes.md`.
+  parallel-subagent worktree isolation.
 - C ABI variant codes 21-31 assigned to new `TstNonConformantCode`
   entries; `tstrans.h` regenerated.
 
@@ -8507,7 +8657,6 @@ two-stage review (spec compliance + code quality) before merge; 4 items
 landed APPROVED_WITH_NOTES with minor polish deferred; 2 items required
 implementer-iteration fix cycles (B3+B7 critical bug, C8+C9 wire format).
 
-Closeout memory: `project_validate_1_sprint_2_shipped.md`.
 **Sprints 3-5 (Waves D/E/F/G/H/I) remain pending** — see
 `docs/validate-1/11-phase-2-plan.md` for the per-wave dispositions.
 
@@ -8631,8 +8780,7 @@ performed after plan #92 closed the first round of Codex Wave 6 findings:
   the 5-byte `Metadata_AU_cell` header (which the muxer auto-prepends for
   `SynchronousMetadata` streams per ITU-T H.222.0 V9 §2.12.4.2 —
   double-wrapping produces unparseable metadata). New rustdoc on each
-  entry mirrors the contract documented in
-  `memory/reference_klv_au_cell_caller_responsibility.md`. Regenerated
+  entry mirrors the caller-responsibility contract for KLV AU cells. Regenerated
   `tstrans.h` propagates the new blocks into the MUX SENDER section.
 
 - **User-facing docs refreshed for Waves 2-4 API renames.** `guide-mpegts-mux.md`'s
@@ -8876,8 +9024,7 @@ variant routing plus 2 kind-property tests. All 8 bash ratchets green.
 - `cargo public-api -p tst-srt --simplified` byte-identical to pre-plan.
 - `#[non_exhaustive]` BASELINE in `.github/workflows/ci.yml` unchanged by this
   plan (Wave 6.C-codec already bumped 87→105 — that plan's entry was
-  inadvertently omitted from CHANGELOG during its ship; covered by memory
-  entry `project_plan_87_wave_6_C_codec_reorg_shipped.md`).
+  inadvertently omitted from CHANGELOG during its ship).
 
 **Test coverage:** 761 `tst-core` lib tests pass (unchanged count). All 4
 KLV-touching fuzz targets (`klv_iter`, `klv_st0601_decode`, `klv_st0102_decode`,
@@ -9026,8 +9173,7 @@ and the project moves to `tst-jni` binding work.
 
 - Retrofitted `bindings/c/examples/c/muxing/send_synthetic.c` from
   88 LoC / 19% comment density to 249 LoC / 64% density. Aligned with
-  the teaching-code convention bar set by `mux_dual_camera.c` per
-  `feedback_examples_are_teaching_code.md`: multi-line header banner,
+  the teaching-code convention bar set by `mux_dual_camera.c`: multi-line header banner,
   WHY comments on every non-obvious API call, explicit error-check
   pattern using `tst_get_last_error_str()`, label-based `goto fail`
   cleanup.
@@ -9211,8 +9357,8 @@ same struct layouts, same sizeof asserts):**
 - **Step 9 (PCR jitter).** New test tool `measure_pcr_jitter` at
   `crates/tst-core/tests/tools/measure_pcr_jitter.rs` walks PCR samples +
   computes inter-PCR delta median + p95 (in milliseconds). Thresholds:
-  median > 67 ms or p95 > 100 ms → fail (per
-  `reference_ts_corpus_cadence.md` baseline). PCR extraction inlined per
+  median > 67 ms or p95 > 100 ms → fail (the measured corpus cadence
+  baseline). PCR extraction inlined per
   ISO/IEC 13818-1 §2.4.3.4-5 because `parse_ts_packet` is `pub(super)`.
 
 **Internal (no public-API surface delta):**
@@ -9263,8 +9409,7 @@ same struct layouts, same sizeof asserts):**
   `crates/tst-pipeline/tests/transport_error_discrimination.rs`
   (5 tests covering `TransportError` variants flowing through shell
   errors: Backpressure, Broken, Closed→EndOfStream on receiver,
-  ExplicitClose, TooLarge). Per
-  `feedback_audit_test_not_always_discriminating.md`, these assert on
+  ExplicitClose, TooLarge). So that they discriminate, these assert on
   the specific variant via `matches!` — not on `is_err()`.
 - `docs/binding-authors.md` gained a new "Transient vs persistent error
   codes" subsection clarifying the contract on `TST_E_NOT_AVAILABLE` (-13)
@@ -9365,9 +9510,7 @@ same struct layouts, same sizeof asserts):**
   attribute-only count today: 67 (`rg -c` inflated count: 87; difference: 20
   comment-line mentions across `crates/`). Comment sites include the
   `kind_from_transport` pattern notes, the `ShellErrorKind` variant rustdoc,
-  and shell-error-source struct docs. See memory entry
-  `feedback_baseline_count_projection_undercount.md` for the systemic root
-  cause; the CI `BASELINE` constant continues to track the inflated `rg -c`
+  and shell-error-source struct docs. The CI `BASELINE` constant continues to track the inflated `rg -c`
   count for compatibility with the existing guard expression.
 
 ---
@@ -9705,9 +9848,7 @@ Closes the P1 "codec-specific stats on `StreamStats`" backlog entry
   cancellation; likely the whole loopback test family affected).
   Most plausible root cause: `srt_close` peer-EOS propagation
   semantics differ on winsock vs BSD sockets. Diagnosis requires
-  Windows hardware on hand to iterate. Memory note with full
-  diagnostic plan at
-  `project_plan_65_windows_runtime_test_deferral.md`.
+  Windows hardware on hand to iterate.
 
 #### Skipped on windows-msvc (pending deferred follow-up)
 - **`cargo test --doc`, `cargo test` (default / no-default /

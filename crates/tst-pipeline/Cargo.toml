@@ -21,7 +21,7 @@ default = ["std"]
 std = ["tst-core/std", "tracing/std"]
 
 [dependencies]
-tst-core  = { path = "../tst-core", version = "0.6.0", default-features = false }
+tst-core  = { path = "../tst-core", version = "0.7.0", default-features = false }
 thiserror = { workspace = true }
 # Single facade for diagnostics workspace-wide. `default-features = false`
 # keeps the macros usable under no_std+alloc; the `std` feature re-adds the

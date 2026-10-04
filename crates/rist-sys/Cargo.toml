@@ -36,7 +36,7 @@ bindgen             = { workspace = true }
 cc                  = { workspace = true }
 cmake               = { workspace = true }
 pkg-config          = { workspace = true }
-tstrans-mbedtls-src = { path = "../mbedtls-src", version = "0.6.0" }
+tstrans-mbedtls-src = { path = "../mbedtls-src", version = "0.7.0" }
 
 [dev-dependencies]
 libc = { workspace = true }
