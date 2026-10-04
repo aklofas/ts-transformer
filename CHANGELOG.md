@@ -120,13 +120,16 @@ The integrator-facing changes at a glance (full detail in the sections below):
     windows, and 0 unexplained, undetected or unrecovered corruption
     events (3 excused in reconnect gaps).
   - The RIST leg failed corruption attribution with 8 unexplained events.
-    That FAIL is the harness's verdict, and all eight events trace to two
-    harness attribution defects, both reproduced in the harness. The library and the
-    transport behaved correctly.
+    That FAIL is the harness's verdict. Six of the eight events match a
+    reproduced harness expectation-table defect; the other two are
+    attributed, as a high-confidence inference, to a reproduced harness
+    anchor-stranding defect (the run's own anchors were not archived). No
+    evidence from the run contradicts the library or the transport.
     - Six events: a truncated PMT packet produces a correct PSI-checksum
       error that the harness's expectation table does not admit.
-    - Two events: a mis-framed packet's implausible PCR anchor stranded the
-      pending injections that caused them.
+    - Two events: consistent with a mis-framed packet's implausible PCR
+      anchor stranding the pending injections that caused them (reproduced
+      mechanism; historical anchors not archived).
 
     Both fixes are tracked for the harness.
   - No process failed the RSS gate (the worst slope was 22.8 KiB/h against

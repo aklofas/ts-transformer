@@ -11,7 +11,8 @@ reorder.
 
 Every number below comes from the `tst-interop` crate and the two driver
 scripts at `scripts/interop/` — nothing on this page is hand-measured or
-estimated. Re-run either script yourself to reproduce it:
+estimated, except where a sentence says so (the ad-hoc checkpoint readings
+and the inferred event positions below). Re-run either script yourself to reproduce it:
 
 ```bash
 # Build the interop driver (native deps: vendored libsrt + librist + mbedTLS).
@@ -583,11 +584,18 @@ spread from 13.8 h to 71.6 h into the run; none falls at teardown.
   The reproduction forces the anchor; the soak's own anchors are inferred
   from its counters, since its PCR stream was not archived.
 
-All eight unexplained RIST events are therefore defects in the harness's
-verdict, with two reproduced causes. The receiver, the demuxer and the
-RIST transport behaved correctly in each. The `overall_pass=false` above
-is the harness's verdict on this run, and this page does not re-label it
-as a pass.
+Six of the eight unexplained RIST events match the reproduced
+expectation-table defect directly (each is a PSI-checksum error five
+packets after a PMT truncation past byte 44). The other two are attributed
+to the reproduced anchor-stranding defect as a high-confidence inference:
+the mechanism is reproduced, each event has a plausible cause 1–6 packets
+earlier, and the receiver logged no decode or transport error — but the
+run's own PCR anchors were not archived, so the attribution is inferred
+from the counters rather than observed. No evidence from this run
+contradicts the receiver, the demuxer or the RIST transport; none of the
+eight events is explained by a library defect. The `overall_pass=false`
+above is the harness's verdict on this run, and this page does not
+re-label it as a pass.
 
 Both fixes are in the harness, not the library, and are tracked for the
 harness follow-up:
@@ -673,9 +681,15 @@ figures below are observations, not verdicts.
   receiver 10.0 MB, proxies 7.0 and 6.5 MB.
 - **CPU over the whole run** (one core = 100 %): SRT sender 2.14 %, SRT
   receiver 2.07 %, RIST receiver 1.71 %, RIST sender 1.63 %, proxies 0.76 %
-  and 0.54 %. Host load stayed at or under 0.11.
-- **Threads and descriptors:** flat for every process. The SRT pair added
-  one thread for a moment at each outage window (the rebuild).
+  and 0.54 %. One-minute host load (2 vCPUs) had a median of 0.06 and a
+  mean of 0.08; 26 % of the 30-second samples were above 0.11 and the
+  maximum was 0.73 (at 131 073 s, outside any outage window).
+- **Threads and descriptors:** the two RIST processes and both proxies held
+  the same counts in every sample after launch. The SRT pair returned to its
+  baseline (sender 4 threads / 5 descriptors, receiver 6 / 5) after each of
+  the 12 outage windows, with bounded transients of up to 90 s inside them: the
+  receiver 5 threads / 6 descriptors, the sender 3 or 5 threads (once 7, at
+  237 482 s) and 4 to 6 descriptors. There was no drift across the run.
 
 **Which binary this is evidence for.** The soak exercised the `e86dd9ea`
 binary, not the tree tagged 0.7.0. The library changes that landed after it
