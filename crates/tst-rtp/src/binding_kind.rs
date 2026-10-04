@@ -25,7 +25,10 @@ impl From<ConnectError> for BindingError {
 /// C and Python/JVM disagreed (K5): 401/404 are `AUTH_REQUIRED`/`NOT_FOUND`
 /// (C emitted −16 for both), `AuthUnsupported` is `AUTH_REQUIRED` (Python/JVM
 /// said `AUTH_FAILED`), the four SDP-media variants are `NOT_FOUND`
-/// (Python/JVM said `MOUNT`).
+/// (Python/JVM said `MOUNT`). `LocalCancel` is the one-cancel-outcome kind
+/// `Closed` (review 9, R9-05): a cancelled connect/play/pause/teardown is
+/// `TST_E_CLOSED` / `RtspError(CLOSED)` / `RtspException(CLOSED)`,
+/// indistinguishable from no other RTSP failure.
 impl From<RtspError> for BindingError {
     fn from(e: RtspError) -> Self {
         let kind = match &e {
@@ -41,7 +44,7 @@ impl From<RtspError> for BindingError {
             RtspError::UnsupportedTransport => K::RtspUnsupportedTransport,
             RtspError::SessionExpired => K::RtspProtocol,
             RtspError::Timeout => K::RtspTimeout,
-            RtspError::LocalCancel => K::RtspProtocol,
+            RtspError::LocalCancel => K::Closed,
             RtspError::NoMp2tMedia => K::RtspNotFound,
             RtspError::MultipleMp2tMedia { .. } => K::RtspNotFound,
             RtspError::NoH264Media => K::RtspNotFound,
@@ -185,10 +188,7 @@ mod tests {
             K::RtspProtocol
         );
         assert_eq!(BindingError::from(RtspError::Timeout).kind, K::RtspTimeout);
-        assert_eq!(
-            BindingError::from(RtspError::LocalCancel).kind,
-            K::RtspProtocol
-        );
+        assert_eq!(BindingError::from(RtspError::LocalCancel).kind, K::Closed);
         assert_eq!(
             BindingError::from(RtspError::NoMp2tMedia).kind,
             K::RtspNotFound

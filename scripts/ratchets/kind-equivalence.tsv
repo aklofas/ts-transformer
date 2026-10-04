@@ -16,7 +16,7 @@ INPUT_MALFORMED	INPUT_MALFORMED	-3	-3	SrtErrorKind.INPUT_MALFORMED;MuxErrorKind.
 BACKPRESSURE	BACKPRESSURE	-4	-4	SrtErrorKind.BACKPRESSURE;RtpErrorKind.BACKPRESSURE;UdpErrorKind.BACKPRESSURE;TcpErrorKind.BACKPRESSURE;RistErrorKind.BACKPRESSURE;MuxErrorKind.BACKPRESSURE	ok	MuxException.Kind.BACKPRESSURE;SrtException.Kind.BACKPRESSURE;RtpException.Kind.BACKPRESSURE	ok
 KLV_TOO_LARGE	KLV_TOO_LARGE	-5	-5	MuxErrorKind.KLV_TOO_LARGE	ok	MuxException.Kind.KLV_TOO_LARGE	ok
 TOO_LARGE	TOO_LARGE	-6	-6	SrtErrorKind.TOO_LARGE;RtpErrorKind.TOO_LARGE;UdpErrorKind.TOO_LARGE;TcpErrorKind.TOO_LARGE;RistErrorKind.TOO_LARGE	ok	SrtException.Kind.TOO_LARGE;RtpException.Kind.TOO_LARGE	ok
-CLOSED	CLOSED	-7	-7	SrtErrorKind.CLOSED;RtpErrorKind.CLOSED;RtspErrorKind.CLOSED;UdpErrorKind.CLOSED;TcpErrorKind.CLOSED;HlsErrorKind.CLOSED;RistErrorKind.CLOSED	ok	SrtException.Kind.CLOSED;RtpException.Kind.CLOSED	ok
+CLOSED	CLOSED	-7	-7	SrtErrorKind.CLOSED;RtpErrorKind.CLOSED;RtspErrorKind.CLOSED;UdpErrorKind.CLOSED;TcpErrorKind.CLOSED;HlsErrorKind.CLOSED;RistErrorKind.CLOSED	ok	SrtException.Kind.CLOSED;RtpException.Kind.CLOSED;RtspException.Kind.CLOSED	ok
 BROKEN	BROKEN	-8	-8	SrtErrorKind.BROKEN;RtpErrorKind.BROKEN;UdpErrorKind.BROKEN;TcpErrorKind.BROKEN;RistErrorKind.BROKEN	ok	SrtException.Kind.BROKEN;RtpException.Kind.BROKEN	ok
 INVALID_USAGE	INVALID_USAGE	-9	-9	MuxErrorKind.INVALID_USAGE	ok	MuxException.Kind.INVALID_USAGE	ok
 INTERNAL	INTERNAL	-10	-10	HlsErrorKind.INTERNAL;MuxErrorKind.INTERNAL;KlvErrorKind.INTERNAL	ok	MuxException.Kind.INTERNAL;DemuxException.Kind.INTERNAL;KlvDecodeException.Kind.INTERNAL	ok

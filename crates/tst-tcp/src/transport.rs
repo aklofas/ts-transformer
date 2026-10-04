@@ -193,6 +193,19 @@ pub(crate) fn connect_stream(
     }))
 }
 
+/// The one connect-error mapping for `tcp://` and `tcps://` (review 9,
+/// R9-06): a connect that ran out `connect_timeout` is `ConnectTimeout`
+/// (`TCP_CONNECT_TIMEOUT`, -32); anything else from the socket is `Io`.
+pub(crate) fn map_connect_err(e: std::io::Error, cfg: &SocketConfig) -> TcpError {
+    if e.kind() == std::io::ErrorKind::TimedOut {
+        TcpError::ConnectTimeout {
+            seconds: cfg.connect_timeout_or_default().as_secs(),
+        }
+    } else {
+        TcpError::Io(e)
+    }
+}
+
 impl TcpTransport {
     /// Build a caller-side `TcpTransport` from a URL (TLS automatically
     /// applied for `tcps://`).
@@ -222,15 +235,7 @@ impl TcpTransport {
         }
 
         let (socket, peer) = connect_stream(&url.host, url.port, cfg.connect_timeout_or_default())
-            .map_err(|e| {
-                if e.kind() == std::io::ErrorKind::TimedOut {
-                    TcpError::ConnectTimeout {
-                        seconds: cfg.connect_timeout_or_default().as_secs(),
-                    }
-                } else {
-                    TcpError::Io(e)
-                }
-            })?;
+            .map_err(|e| map_connect_err(e, cfg))?;
         apply_knobs(&socket, cfg).map_err(TcpError::Io)?;
 
         Ok(Self {
@@ -802,6 +807,24 @@ mod connect_stream_tests {
             connect_stream("localhost", port, std::time::Duration::from_secs(5)).unwrap();
         assert_eq!(peer.port(), port);
         drop((s, l));
+    }
+
+    #[test]
+    fn map_connect_err_maps_timed_out_to_connect_timeout_and_the_rest_to_io() {
+        let cfg = crate::config::SocketConfig {
+            connect_timeout: Some(std::time::Duration::from_secs(3)),
+            ..Default::default()
+        };
+        let e = std::io::Error::from(std::io::ErrorKind::TimedOut);
+        assert!(matches!(
+            super::map_connect_err(e, &cfg),
+            crate::error::TcpError::ConnectTimeout { seconds: 3 }
+        ));
+        let e = std::io::Error::from(std::io::ErrorKind::ConnectionRefused);
+        assert!(matches!(
+            super::map_connect_err(e, &cfg),
+            crate::error::TcpError::Io(_)
+        ));
     }
 
     #[test]

@@ -84,7 +84,7 @@ public final class RtspSession extends NativeHandle {
      * Consume the session's RTP data plane and return a {@link DemuxReceiver} over
      * the demuxed {@code DemuxEvent} stream. The control methods remain usable
      * afterward (only the internal data-plane transport is consumed). Calling this
-     * twice raises {@link RtspException} of kind {@code PROTOCOL}.
+     * twice raises {@link RtspException} of kind {@code CLOSED}.
      *
      * <p><b>Lease semantics (contrast with {@link #intoH264Receiver()}):</b> this
      * method BORROWS the session handle — a sanctioned lease per the
@@ -94,7 +94,7 @@ public final class RtspSession extends NativeHandle {
      * remain usable (matching the Python binding). {@code intoH264Receiver()}
      * instead consumes the whole session — see its Javadoc for why. The Rust
      * layer enforces single use of the data plane: a second call throws
-     * {@link RtspException} of kind {@code PROTOCOL}.
+     * {@link RtspException} of kind {@code CLOSED}.
      *
      * @param demuxConfig demuxer configuration (must not be null; use
      *     {@link #intoDemuxReceiver()} for defaults)
@@ -118,12 +118,18 @@ public final class RtspSession extends NativeHandle {
      * Consume this session and wrap its data plane in an {@link H264Receiver} for
      * iterating reassembled H.264 Access Units.
      *
-     * <p>Raises {@link RtspException} of kind {@code PROTOCOL} when:
+     * <p>Raises {@link RtspException}:
      * <ul>
-     *   <li>this session was created via {@link RtspClient#connect(RtspClientConfig)}
-     *       (not {@link RtspClient#connectH264}), or
-     *   <li>{@link #intoDemuxReceiver()} has already consumed the data plane.
+     *   <li>of kind {@code CLOSED} when {@link #intoDemuxReceiver()} has already
+     *       consumed the data plane — checked first, so this holds for a session
+     *       from either constructor;
+     *   <li>of kind {@code PROTOCOL} when a fresh session was created via
+     *       {@link RtspClient#connect(RtspClientConfig)} (not
+     *       {@link RtspClient#connectH264}).
      * </ul>
+     * A second {@code intoH264Receiver()} on this (already consumed) wrapper
+     * throws {@link IllegalStateException}, the JVM closed-handle convention,
+     * not {@link RtspException}.
      *
      * <p><b>Consumption semantics:</b> unlike {@link #intoDemuxReceiver()} (which
      * leaves this wrapper's control-plane methods usable), the H.264 path follows
@@ -152,10 +158,11 @@ public final class RtspSession extends NativeHandle {
      * backed by this session will reach EOS on its next iteration.
      *
      * @return an {@link H264Receiver} over the post-SETUP RTP data plane
-     * @throws RtspException {@code PROTOCOL} if the session was not created by
-     *     {@code connectH264}, or if the data plane has already been consumed
-     *     (this wrapper is consumed even when the call fails)
-     * @throws IllegalStateException if this session is already closed
+     * @throws RtspException {@code CLOSED} if the data plane has already been
+     *     consumed; {@code PROTOCOL} if a fresh session was not created by
+     *     {@code connectH264} (this wrapper is consumed even when the call fails)
+     * @throws IllegalStateException if this session is already closed or
+     *     consumed (including by an earlier {@code intoH264Receiver()})
      */
     public H264Receiver intoH264Receiver() throws RtspException {
         ensureOpen("RtspSession is closed");

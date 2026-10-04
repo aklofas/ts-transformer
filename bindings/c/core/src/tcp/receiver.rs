@@ -52,8 +52,8 @@ pub struct TstTcpReceiver {
 /// URL grammar:
 /// - `tcp://host:port` — connect to a plain TCP listener
 /// - `tcps://host:port` — connect with TLS (disabled if built without `tls` feature)
-/// - Query params: `?nodelay=1`, `?rcvbuf=N`, `?sndbuf=N`, `?pkt_size=N`,
-///   `?connect_timeout=Ns`
+/// - Query params: `?nodelay=1`, `?rcvbuf=N`, `?sndbuf=N`,
+///   `?connect_timeout=N` (seconds)
 ///
 /// For a listener-accepted connection, use `tst_tcp_listener_accept_receiver`
 /// instead.

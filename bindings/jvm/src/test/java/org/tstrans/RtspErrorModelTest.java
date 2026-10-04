@@ -10,16 +10,17 @@ class RtspErrorModelTest {
      * The members are exactly the rtsp domain's {@code BindingErrorKind} subset
      * (WP-B3 / spec §3.3). Names are unchanged in 0.7.0; two PRODUCERS moved
      * bucket ({@code AuthUnsupported} → {@code AUTH_REQUIRED}, the four
-     * SDP-media errors → {@code NOT_FOUND}).
+     * SDP-media errors → {@code NOT_FOUND}). {@code CLOSED} added for 0.7.0
+     * (review 9): a cancelled control-plane call and a consumed data plane.
      */
     @Test void kindMembersMatchTheRtspDomain() {
         Set<String> expected = Set.of("PROTOCOL", "AUTH_FAILED", "AUTH_REQUIRED", "NOT_FOUND",
-            "UNSUPPORTED_TRANSPORT", "TLS", "IO", "TIMEOUT", "SERVER", "MOUNT");
+            "UNSUPPORTED_TRANSPORT", "TLS", "IO", "TIMEOUT", "SERVER", "MOUNT", "CLOSED");
         Set<String> actual = Arrays.stream(RtspException.Kind.values())
             .map(Enum::name)
             .collect(Collectors.toSet());
         assertEquals(expected, actual);
-        assertEquals(10, RtspException.Kind.values().length);
+        assertEquals(11, RtspException.Kind.values().length);
     }
     @Test void carriesKindAndMessage() {
         var e = new RtspException(RtspException.Kind.TLS, "boom");

@@ -22,6 +22,9 @@ ListenerBuilder
     ``rcvbuf``, ``sndbuf``, ``pkt_size`` knobs before ``build()``.
 SocketStats
     Frozen stats snapshot returned by ``Transport.stats()``.
+CancelHandle
+    Cross-thread cancel handle from ``Transport.cancel_handle()`` /
+    ``Listener.cancel_handle()``.
 TlsConfig
     Forward-compat TLS configuration dataclass. Working ``tcps://`` knobs:
     ``?ca=`` URL param for callers, ``ListenerBuilder.tls(cert, key)`` for
@@ -53,6 +56,7 @@ TransportBuilder = _tcp.TransportBuilder
 Listener = _tcp.Listener
 ListenerBuilder = _tcp.ListenerBuilder
 SocketStats = _tcp.SocketStats
+CancelHandle = _tcp.CancelHandle
 TlsConfig = _tcp.TlsConfig
 ClientCert = _tcp.ClientCert
 
@@ -66,6 +70,7 @@ __all__: list[str] = [
     "Listener",
     "ListenerBuilder",
     "SocketStats",
+    "CancelHandle",
     "TlsConfig",
     "ClientCert",
     "TcpError",

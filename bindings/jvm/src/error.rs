@@ -98,7 +98,9 @@ pub(crate) const RTP_KINDS: &[K] = &[
     K::RtpIo,
     K::RtpIfaceUnsupported,
 ];
-/// `org.tstrans.RtspException.Kind` — ten names unchanged since v0.1.0.
+/// `org.tstrans.RtspException.Kind` — the ten names unchanged since v0.1.0
+/// plus `CLOSED` (review 9: a cancelled control-plane call, a consumed data
+/// plane).
 pub(crate) const RTSP_KINDS: &[K] = &[
     K::RtspProtocol,
     K::RtspAuthFailed,
@@ -110,6 +112,7 @@ pub(crate) const RTSP_KINDS: &[K] = &[
     K::RtspTimeout,
     K::RtspServer,
     K::RtspMount,
+    K::Closed,
 ];
 /// `org.tstrans.DemuxException.Kind` (`Internal` = the JNI event-conversion
 /// failure and A2's wildcard, not a `DemuxError` variant).
@@ -937,7 +940,7 @@ mod tests {
         for (d, n) in [
             (Domain::Srt, 11),
             (Domain::Rtp, 10),
-            (Domain::Rtsp, 10),
+            (Domain::Rtsp, 11), // + CLOSED (review 9, R9-05)
             (Domain::Demux, 6),
             (Domain::Mux, 9),
             (Domain::KlvDecode, 7),

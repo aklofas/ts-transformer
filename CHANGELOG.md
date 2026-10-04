@@ -1347,6 +1347,53 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   RTSP server's Basic verifier. `subtle` is a new `serve`-gated dependency
   of `tst-hls` (already in the workspace lockfile via `tst-rtp`).
 
+### Fixed — binding kinds and docs (review 9)
+
+- **An RTSP control-plane cancel is `CLOSED`, like every other cancel.**
+  `RtspError::LocalCancel` (a cancelled `connect` / `play` / `pause` /
+  `teardown`) projected to `PROTOCOL` — `TST_E_RTSP_PROTOCOL` (-16),
+  `RtspError(PROTOCOL)`, `RtspException(PROTOCOL)` — indistinguishable from
+  a real 4xx/5xx and the one exception to the 0.7.0 one-cancel-outcome
+  contract. It is now `TST_E_CLOSED` (-7) / `RtspError(CLOSED)` /
+  `RtspException(CLOSED)` on C, Python and the JVM. **JVM:**
+  `RtspException.Kind` gains `CLOSED` (appended; existing ordinals
+  unchanged). Review #9, internal R9-05.
+- **A consumed `RtspSession` is `CLOSED` on every take path.** Both bindings
+  now check "data plane already consumed" first, before the H.264
+  wrong-constructor check: `into_demux_receiver()` / `into_h264_receiver()`
+  (Python) and `intoDemuxReceiver()` / `intoH264Receiver()` (JVM) on a
+  consumed data plane raise `CLOSED`, whichever method consumed it. Before,
+  the JVM threw `PROTOCOL` for every consumed take, and both bindings
+  reported `into_demux_receiver()` followed by `into_h264_receiver()` as
+  `PROTOCOL`. Calling the wrong method on a fresh session stays `PROTOCOL`
+  and leaves the data plane in place. A second `intoH264Receiver()` on the
+  already-consumed JVM wrapper remains `IllegalStateException` (the JVM
+  closed-handle convention). Stubs, rustdoc and javadoc that said
+  `PROTOCOL` for the consumed case are corrected. Review #9, internal R9-05.
+- **`tcps://` connect timeout is `ConnectTimeout`, not `Io`.** The TLS
+  caller mapped a timed-out connect to `TcpError::Io` (`TCP_IO`, -30)
+  while `tcp://` reported `ConnectTimeout` (`TCP_CONNECT_TIMEOUT`, -32,
+  `TcpError(CONNECT_TIMEOUT)`); one shared mapping now serves both
+  schemes. Review #9, internal R9-06.
+- **C: a typed caller-side close on a receive handle is `TST_E_CLOSED`
+  without the cancel latch.** `record_recv_error` sent both `Closed` and
+  `EndOfStream` through the latch, so an inner or factory transport that
+  reported `ExplicitClose` on its own (process-exit refusal on a managed
+  receiver) surfaced as `TST_E_END_OF_STREAM` (-12) with no cancel ever
+  issued from C. `Closed` is -7 unconditionally; only `EndOfStream` still
+  consults the latch to tell a caller close from a peer EOS. Review #9,
+  external R9-05.
+- **Python: `tstrans.tcp.Transport` / `Listener` gain `cancel_handle()`**
+  (`tcp.CancelHandle` with `cancel()` / `is_cancelled()`), the one shell
+  without one; the 0.7.0 shell-parity matrix in `binding-authors.md` is
+  now true for every Python shell. Review #9, internal R9-14.
+- **Docs:** the C TCP openers no longer advertise `?pkt_size=N` (the URL
+  parser ignores it; a deferred-features entry owns the follow-up) and
+  write the connect timeout as `?connect_timeout=N` (integer seconds —
+  the documented `Ns` form failed the open); `docs/languages/jvm.md`'s
+  recv-deadline example uses `RtpException.Kind.BACKPRESSURE`, the member
+  that exists. Review #9, internal R9-13 / R9-16.
+
 ### Fixed — python (WP-5)
 
 - **Every sender-side `close()` is now safe from another thread; every

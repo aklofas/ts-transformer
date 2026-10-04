@@ -52,11 +52,11 @@ pub struct TstTcpSender {
 /// URL grammar:
 /// - `tcp://host:port` — plain TCP caller
 /// - `tcps://host:port` — TLS caller (disabled if built without `tls` feature)
-/// - Query params: `?nodelay=1`, `?rcvbuf=N`, `?sndbuf=N`, `?pkt_size=N`,
-///   `?connect_timeout=Ns`
+/// - Query params: `?nodelay=1`, `?rcvbuf=N`, `?sndbuf=N`,
+///   `?connect_timeout=N` (seconds)
 ///
 /// The connection is established synchronously. Default connect timeout is
-/// 10 seconds; override via `?connect_timeout=`.
+/// 10 seconds; override via `?connect_timeout=N` (integer seconds).
 ///
 /// # Safety
 ///

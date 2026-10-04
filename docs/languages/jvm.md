@@ -1579,7 +1579,7 @@ try (DemuxReceiver rx = DemuxReceiver.fromUrl("rtp://0.0.0.0:5004?recv_timeout=5
         try {
             event = rx.recvEvent();
         } catch (RtpException e) {
-            if (e.kind() == RtpException.Kind.TIMEOUT) {
+            if (e.kind() == RtpException.Kind.BACKPRESSURE) {
                 System.out.println("quiet for 5s — still connected, just nothing to say");
                 continue;
             }
@@ -1648,7 +1648,8 @@ try (RtspSession session = RtspClient.connect(cfg);
   `Optional<Object>` that is a `BasicAuth` or `DigestAuth` — match with `instanceof`.
 - **Cancellation.** Obtain a `RtspCancelHandle` from `session.cancelHandle()` BEFORE
   a blocking control call; flip `cancel()` from another thread to break it out.
-  `close()` is a best-effort teardown, not a cross-thread interruptor.
+  `close()` is a best-effort teardown, not a cross-thread interruptor. The
+  interrupted call throws `RtspException(CLOSED)`.
 - **TLS (`rtsps://`) is supported.** The binding links rustls; an `rtsps://`
   URL negotiates TLS on connect. `tlsRootCertsPem` supplies a PEM bundle of
   custom trust anchors (private-CA cameras) — without it the handshake
@@ -1818,7 +1819,7 @@ usable after the call.
 
 **Failure path note.** If `intoDemuxReceiver()` previously consumed the data
 plane, a subsequent `intoH264Receiver()` still consumes and tears down the
-session (the native returns `PROTOCOL`) — a live `DemuxReceiver` on it will
+session (the native throws `RtspException(CLOSED)`) — a live `DemuxReceiver` on it will
 reach EOS on its next iteration. Ensure only one `into*` call is made per
 session.
 

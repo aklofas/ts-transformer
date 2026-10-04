@@ -24,6 +24,7 @@ bindings/python/src/hls/publisher.rs	PyHlsServerHandle::shutdown	inner: takes th
 bindings/python/src/rtp/client.rs	PyRtspSession::cancel_handle	client: pause/play/teardown hold it with the GIL released but take &mut self, so the borrow flag refuses this &self call while one is in flight; a holder never needs the GIL to let go
 bindings/python/src/rtp/client.rs	PyRtspSession::into_demux_receiver	h264_depay_config and session: only ever locked with the GIL held, for a take; never held across allow_threads
 bindings/python/src/rtp/client.rs	PyRtspSession::into_h264_receiver	h264_depay_config and session: only ever locked with the GIL held, for a take; never held across allow_threads
+bindings/python/src/rtp/client.rs	PyRtspSession::refuse_if_consumed	session: only ever locked with the GIL held (this is_none check and the two into_* takes); never held across allow_threads
 bindings/python/src/rtp/demux_receiver.rs	PyDemuxReceiver::__next__	sink_error: every holder has the GIL for as long as it has the guard (the sink locks inside with_gil), so nobody waits
 bindings/python/src/rtp/demux_receiver.rs	PyDemuxReceiver::add_byte_sink	sink_error: locked by the sink inside with_gil; every holder has the GIL for as long as it has the guard
 bindings/python/src/rtp/h264_receiver.rs	H264Held::close	closed_end_reason: runs inside Owned::close; holds the guard for one assignment and needs no GIL to let go

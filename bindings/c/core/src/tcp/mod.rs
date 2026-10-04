@@ -20,7 +20,7 @@
 //! - `tcp://addr:port?listen=1` — listener (via `tst_tcp_listener_from_url`)
 //!
 //! Common query params for caller-side handles: `?nodelay=1`, `?rcvbuf=N`,
-//! `?sndbuf=N`, `?pkt_size=N`, `?connect_timeout=Ns`.
+//! `?sndbuf=N`, `?connect_timeout=N` (seconds).
 //!
 //! **Cancel:** `tst_tcp_<shell>_cancel` (ABI 0.22) reaches `TcpTransport`'s
 //! cross-thread `cancel_handle()` (`TcpCancelHandle`) on all four data

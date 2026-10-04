@@ -373,6 +373,7 @@ pub unsafe extern "C" fn tst_rtsp_session_teardown_and_free(
 /// Sets the session's cancel flag so that any thread blocked inside a RTSP
 /// request/response cycle (e.g. a blocking DESCRIBE or PLAY) will break out
 /// at the next poll interval.  Safe to call from any thread. Idempotent.
+/// The interrupted call returns `TST_E_CLOSED` (-7).
 ///
 /// Note: cancels the RTSP *control plane* only. If
 /// [`tst_rtsp_session_into_demux_receiver`] has already been called, the

@@ -27,6 +27,7 @@ __all__: list[str] = [
     "Listener",
     "ListenerBuilder",
     "SocketStats",
+    "CancelHandle",
     "TlsConfig",
     "ClientCert",
     "TcpError",
@@ -150,6 +151,39 @@ class TlsConfig:
 
 
 # ---------------------------------------------------------------------------
+# CancelHandle -- cross-thread cancel for Transport / Listener
+# ---------------------------------------------------------------------------
+
+
+@final
+class CancelHandle:
+    """Cross-thread cancel handle for ``Transport`` / ``Listener``.
+
+    ``cancel()`` from any thread ends a ``recv()`` / ``send()`` /
+    ``accept_blocking()`` parked on the originating object with
+    ``TcpError(kind=CLOSED)`` ("cancelled from another thread") within
+    about one 100 ms slice, and every later call on that object raises
+    the same. The object is not closed by a cancel — ``close()``
+    afterwards is quiet.
+
+    Obtain one with ``Transport.cancel_handle()`` /
+    ``Listener.cancel_handle()``. Every handle from the same object
+    shares one flag, which ``close()`` also sets.
+    """
+
+    def cancel(self) -> None:
+        """Signal cancellation. Idempotent."""
+        ...
+
+    def is_cancelled(self) -> bool:
+        """``True`` once this object was cancelled or closed through any
+        handle."""
+        ...
+
+    def __repr__(self) -> str: ...
+
+
+# ---------------------------------------------------------------------------
 # Transport -- TCP transport (send + recv on one handle)
 # ---------------------------------------------------------------------------
 
@@ -171,6 +205,11 @@ class Transport:
     @staticmethod
     def builder() -> TransportBuilder:
         """Return a fresh builder. Chain setters then call ``.build()``."""
+        ...
+
+    def cancel_handle(self) -> CancelHandle:
+        """Lock-free cross-thread cancel handle; never waits behind a
+        parked call."""
         ...
 
     def send(self, payload: _BytesLike) -> None:
@@ -330,6 +369,11 @@ class Listener:
     @staticmethod
     def builder() -> ListenerBuilder:
         """Return a fresh builder. Chain setters then call ``.build()``."""
+        ...
+
+    def cancel_handle(self) -> CancelHandle:
+        """Lock-free cross-thread cancel handle; never waits behind a
+        parked call."""
         ...
 
     def accept_blocking(self) -> Transport:

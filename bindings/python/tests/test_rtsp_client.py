@@ -10,6 +10,9 @@ The actual RTSP wire exchange is covered by `test_rtsp_loopback.py`
 T25 follow-up).
 """
 
+import socket
+import threading
+
 import pytest
 
 from tstrans.exceptions import RtspError, RtspErrorKind
@@ -229,3 +232,115 @@ def test_rtsp_session_class_exposed():
     for m in ("play", "pause", "teardown", "cancel_handle", "stats",
               "into_demux_receiver", "__enter__", "__exit__", "is_torn_down"):
         assert hasattr(RtspSession, m), f"RtspSession missing method {m}"
+
+
+# ---------------------------------------------------------------------------
+# Cancel outcome (review 9, R9-05)
+# ---------------------------------------------------------------------------
+
+_SDP = (
+    b"v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=tst test\r\nt=0 0\r\n"
+    b"a=control:*\r\nm=video 0 RTP/AVP 33\r\na=control:trackID=0\r\n"
+)
+
+
+def _header(request: str, name: str) -> str:
+    for line in request.split("\r\n")[1:]:
+        key, _, value = line.partition(":")
+        if key.strip().lower() == name:
+            return value.strip()
+    return ""
+
+
+def _silent_on_pause_peer():
+    """A hand-rolled RTSP peer: answers OPTIONS / DESCRIBE (one MP2T
+    track) / SETUP (echoes the requested Transport) / PLAY, then reads
+    PAUSE and never answers it, so the client's PAUSE parks until a
+    cancel. Returns (port, done event, server thread)."""
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    listener.settimeout(10)
+    port = listener.getsockname()[1]
+    done = threading.Event()
+
+    def serve() -> None:
+        try:
+            sock, _ = listener.accept()
+        except OSError:
+            return
+        finally:
+            listener.close()
+        with sock:
+            sock.settimeout(10)
+            buf = b""
+            try:
+                while True:
+                    while b"\r\n\r\n" not in buf:
+                        chunk = sock.recv(8192)
+                        if not chunk:
+                            return
+                        buf += chunk
+                    head, buf = buf.split(b"\r\n\r\n", 1)
+                    req = head.decode("latin-1")
+                    method = req.split(None, 1)[0]
+                    if method == "PAUSE":
+                        done.wait(10)
+                        return
+                    extra, body = "", b""
+                    if method == "OPTIONS":
+                        extra = "Public: OPTIONS, DESCRIBE, SETUP, PLAY, PAUSE, TEARDOWN\r\n"
+                    elif method == "DESCRIBE":
+                        body = _SDP
+                        extra = (
+                            "Content-Type: application/sdp\r\n"
+                            f"Content-Length: {len(body)}\r\n"
+                        )
+                    elif method == "SETUP":
+                        extra = (
+                            "Session: DEADBEEF;timeout=60\r\n"
+                            f"Transport: {_header(req, 'transport')}\r\n"
+                        )
+                    elif method == "PLAY":
+                        extra = "Session: DEADBEEF\r\n"
+                    cseq = _header(req, "cseq") or "1"
+                    sock.sendall(
+                        f"RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\n{extra}\r\n".encode()
+                        + body
+                    )
+            except OSError:
+                return
+
+    server = threading.Thread(target=serve, daemon=True)
+    server.start()
+    return port, done, server
+
+
+def test_cancel_of_a_parked_control_call_is_closed():
+    """A cancel fired while `pause()` is parked on a silent peer ends the
+    call with `RtspError(CLOSED)` — the one cancel outcome (review 9,
+    R9-05; it was PROTOCOL). The handle only exists on a live session,
+    so the parked call is PAUSE, not connect. Asserts the kind only."""
+    port, done, server = _silent_on_pause_peer()
+    cfg = RtspClientConfig(
+        url=f"rtsp://127.0.0.1:{port}/x",
+        transport_pref=TransportPref.TCP,
+        rtcp=False,
+        keepalive=False,
+    )
+    try:
+        with RtspClient.connect(cfg) as session:
+            handle = session.cancel_handle()
+            # Whether the cancel lands before or after PAUSE parks, the
+            # call ends at its next poll with the same kind.
+            canceller = threading.Timer(0.2, handle.cancel)
+            canceller.start()
+            try:
+                with pytest.raises(RtspError) as exc_info:
+                    session.pause()
+            finally:
+                canceller.cancel()
+            assert exc_info.value.kind == RtspErrorKind.CLOSED
+    finally:
+        done.set()
+        server.join(timeout=5)

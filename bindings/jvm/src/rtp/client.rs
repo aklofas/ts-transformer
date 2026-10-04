@@ -482,7 +482,7 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspSession_nCancelHandle(
 
 /// `RtspSession.nIntoDemuxReceiver` — take the SETUP-time RtspSession, convert to
 /// an RtpRecvTransport, build a wave-B DemuxReceiver handle. Double-consume →
-/// RtspException(PROTOCOL) + 0. Ports `PyRtspSession::into_demux_receiver`.
+/// RtspException(CLOSED) + 0. Ports `PyRtspSession::into_demux_receiver`.
 #[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
 pub extern "system" fn Java_org_tstrans_rtp_RtspSession_nIntoDemuxReceiver(
@@ -507,7 +507,7 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspSession_nIntoDemuxReceiver(
             crate::error::throw_closed(env, "RtspSession");
             return 0;
         };
-        // Take the data-plane RtspSession; double-consume = protocol error.
+        // Take the data-plane RtspSession; double-consume = CLOSED.
         let session = {
             let mut guard = match session_slot.lock() {
                 Ok(g) => g,
@@ -525,7 +525,7 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspSession_nIntoDemuxReceiver(
                 None => {
                     throw_rtsp(
                         env,
-                        BindingErrorKind::RtspProtocol,
+                        BindingErrorKind::Closed,
                         "RtspSession.intoDemuxReceiver: already consumed",
                     );
                     return 0;
@@ -587,10 +587,12 @@ fn teardown_best_effort(slot: &JniRtspSession) {
 ///   control plane (`RtspClient` + `torn_down` flag) into the receiver's slot
 ///   so the RTSP control connection + keepalive stay alive while AUs flow;
 ///   `H264Receiver.nClose` then performs the best-effort TEARDOWN.
-/// - failure (plain-`nConnect` session / data plane already consumed) →
-///   `RtspException(PROTOCOL)` and the session tears down best-effort — the
-///   session is consumed either way (mirrors `Socket`'s "consumed even if the
-///   config is rejected" semantics).
+/// - failure → the session tears down best-effort and is consumed either way
+///   (mirrors `Socket`'s "consumed even if the config is rejected"
+///   semantics): a data plane already consumed by `nIntoDemuxReceiver` is
+///   `RtspException(CLOSED)` — checked FIRST, so it is CLOSED on both session
+///   types (review 9) — and a fresh plain-`nConnect` session is
+///   `RtspException(PROTOCOL)`.
 ///
 /// Ports `PyRtspSession::into_h264_receiver` (Python keeps its session object
 /// alive instead; the consumption asymmetry is a deliberate JVM adjudication).
@@ -609,10 +611,41 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspSession_nIntoH264Receiver(
             return 0;
         };
 
-        // Step 2: take the H264DepayConfig. None = wrong path (plain connect) or
-        // already consumed. The session is consumed even on failure: tear it down
-        // best-effort before throwing (dropping `slot` then closes the control
-        // connection).
+        // Step 2: take the data-plane RtspSession. None = already consumed by
+        // `nIntoDemuxReceiver` → CLOSED. Checked BEFORE the H.264 config so a
+        // consumed MP2T session is not misreported as PROTOCOL (review 9).
+        // Taken here, before the fallible `into_h264_receiver` call
+        // (double-free lesson — mirrors Python's `guard.take()` before
+        // conversion); the whole slot is consumed on every outcome anyway.
+        let session = {
+            let taken = match slot.session.lock() {
+                Ok(mut g) => g.take(),
+                Err(_) => {
+                    throw_rtsp(
+                        env,
+                        BindingErrorKind::RtspProtocol,
+                        "RtspSession data-plane lock poisoned",
+                    );
+                    return 0;
+                }
+            };
+            match taken {
+                Some(sess) => sess,
+                None => {
+                    teardown_best_effort(&slot);
+                    throw_rtsp(
+                        env,
+                        BindingErrorKind::Closed,
+                        "RtspSession.intoH264Receiver: data plane already consumed",
+                    );
+                    return 0;
+                }
+            }
+        };
+
+        // Step 3: take the H264DepayConfig. None = wrong path (plain connect).
+        // The session is consumed even on failure: tear it down best-effort
+        // before throwing (dropping `slot` then closes the control connection).
         let depay_config = {
             let taken = match slot.h264_depay_config.lock() {
                 Ok(mut g) => g.take(),
@@ -633,36 +666,7 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspSession_nIntoH264Receiver(
                         env,
                         BindingErrorKind::RtspProtocol,
                         "RtspSession.intoH264Receiver: session was not created by \
-                         connectH264(), or the H264DepayConfig has already been consumed",
-                    );
-                    return 0;
-                }
-            }
-        };
-
-        // Step 3: take the data-plane RtspSession. Double-consume = protocol error.
-        // This is zeroed BEFORE the fallible `into_h264_receiver` call
-        // (double-free lesson — mirrors Python's `guard.take()` before conversion).
-        let session = {
-            let taken = match slot.session.lock() {
-                Ok(mut g) => g.take(),
-                Err(_) => {
-                    throw_rtsp(
-                        env,
-                        BindingErrorKind::RtspProtocol,
-                        "RtspSession data-plane lock poisoned",
-                    );
-                    return 0;
-                }
-            };
-            match taken {
-                Some(sess) => sess,
-                None => {
-                    teardown_best_effort(&slot);
-                    throw_rtsp(
-                        env,
-                        BindingErrorKind::RtspProtocol,
-                        "RtspSession.intoH264Receiver: data plane already consumed",
+                         connectH264()",
                     );
                     return 0;
                 }
