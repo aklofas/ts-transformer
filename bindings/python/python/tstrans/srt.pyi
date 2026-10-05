@@ -1,6 +1,6 @@
 """Type stubs for `tstrans.srt` — SRT transport bindings.
 
-Mirrors the Wave A / Wave B / Wave C public surface exported from
+Mirrors the public surface exported from
 `bindings/python/python/tstrans/srt.py`. Continues `py.typed` discipline.
 mypy --strict clean.
 
@@ -43,7 +43,7 @@ from tstrans.mpegts import (
 
 # A bytes-like input — `bytes`, `bytearray`, `memoryview`, NumPy uint8,
 # or any object implementing the buffer protocol. Concrete extraction
-# happens in Rust via a two-path fast/fallback pattern (audit #10).
+# happens in Rust via a two-path fast/fallback pattern.
 _BytesLike = Union[bytes, bytearray, memoryview, Any]
 
 __all__: list[str] = [
@@ -95,7 +95,7 @@ class RecvEndReason(enum.IntEnum):
 
 
 # ---------------------------------------------------------------------------
-# T2 — transport types (Sender / Receiver / SocketStats / SrtStats /
+# Transport types (Sender / Receiver / SocketStats / SrtStats /
 # CancelHandle)
 # ---------------------------------------------------------------------------
 
@@ -258,7 +258,7 @@ class Receiver:
 
 
 # ---------------------------------------------------------------------------
-# T3 — low-level primitives (Builder / Socket / Listener)
+# Low-level primitives (Builder / Socket / Listener)
 # ---------------------------------------------------------------------------
 
 
@@ -388,7 +388,7 @@ class Listener:
 
 
 # ---------------------------------------------------------------------------
-# T5 — MuxSender + DemuxReceiver convenience wrappers
+# MuxSender + DemuxReceiver convenience wrappers
 # ---------------------------------------------------------------------------
 
 
@@ -546,7 +546,7 @@ class DemuxReceiver:
 
 
 # ---------------------------------------------------------------------------
-# T6 — reconnect policy (BackoffStrategy / OverflowPolicy /
+# Reconnect policy (BackoffStrategy / OverflowPolicy /
 # ReconnectPolicy)
 # ---------------------------------------------------------------------------
 
@@ -670,7 +670,7 @@ class ManagedTransportStats:
 
 
 # ---------------------------------------------------------------------------
-# T7 — auto-reconnect basic-bytes wrappers (ManagedSender /
+# Auto-reconnect basic-bytes wrappers (ManagedSender /
 # ManagedReceiver)
 # ---------------------------------------------------------------------------
 
@@ -760,7 +760,7 @@ class ManagedReceiver:
 
 
 # ---------------------------------------------------------------------------
-# T8 — auto-reconnect convenience wrappers (ManagedMuxSender /
+# Auto-reconnect convenience wrappers (ManagedMuxSender /
 # ManagedDemuxReceiver)
 # ---------------------------------------------------------------------------
 

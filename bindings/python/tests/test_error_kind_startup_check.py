@@ -1,4 +1,4 @@
-"""Spec Arc 2 §3.3: a `BindingErrorKind::name()` the Python enum cannot
+"""A `BindingErrorKind::name()` the Python enum cannot
 resolve is a STARTUP failure, not a runtime one. `tstrans._native`
 resolves every member of every domain's `KINDS` at module init.
 

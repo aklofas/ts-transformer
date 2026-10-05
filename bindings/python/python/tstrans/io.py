@@ -216,10 +216,10 @@ def extract_klv(
       (the default), the exception propagates so data corruption is
       not silently lost. When True, the offending row is skipped.
 
-    These two knobs are independent on purpose: prior to the audit-#3
-    fix, a single `skip_unknown=True` overload swallowed both unknown
-    ULs and `KlvError` from known ULs, hiding decoder bugs and
-    upstream corruption. Catching `KlvError` specifically (rather than
+    These two knobs are independent on purpose: a single overload would
+    swallow both unknown ULs and `KlvError` from known ULs, hiding
+    decoder bugs and upstream corruption. Catching `KlvError`
+    specifically (rather than
     bare `Exception`) also lets binding-shape regressions (TypeError,
     AttributeError) surface naturally instead of being suppressed.
 
@@ -389,7 +389,7 @@ class Transmuxer:
     - Video → `push_video_wire_to(handle, raw, pts, dts, key_frame)`;
       emits the demuxed bytes verbatim (no re-wrapping). For AV1
       binding-mode this avoids the double-wrap that would otherwise
-      produce an empty AU (AV1-01). `dts=None` is preserved as a
+      produce an empty AU. `dts=None` is preserved as a
       PTS-only PES, not coerced to dts=pts.
     - Audio → `push_audio_to(handle, raw, pts)` (the mux push API
       carries no audio dts; dts≠pts audio does not occur for
@@ -666,7 +666,7 @@ class Transmuxer:
             # Wire-push: emit `ev.raw` verbatim without re-wrapping. For AV1
             # binding-mode, `ev.raw` is already `ts_open_bitstream_unit()`-
             # framed; re-wrapping via `push_video_to_with_dts` would produce
-            # an empty AU (AV1-01). For H.26x the wire bytes are identical
+            # an empty AU. For H.26x the wire bytes are identical
             # to what `push_video_to_with_dts` would write, so this is safe.
             self._proxy.push_video_wire_to(
                 handle,

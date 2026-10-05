@@ -1,4 +1,4 @@
-//! Plan A5b Wave C T12 — `HlsPublisher` + `HlsPublisherBuilder`.
+//! `HlsPublisher` + `HlsPublisherBuilder`.
 //!
 //! `tstrans.hls.HlsPublisher` wraps `tst_hls::HlsPublisher`: an
 //! outbound-only, segment-aware MPEG-TS sink that writes `.ts` segments +
@@ -121,8 +121,8 @@ impl PyHlsPublisher {
     /// Move the inner publisher out for a consuming call; `None` if it is
     /// already gone. Same locking rule as `with_inner`. Used by
     /// `MuxPublisher.with_config_hls` through a shared `borrow()` — a
-    /// `borrow_mut()` there panicked ("Already borrowed") while another
-    /// thread's `push_ts(&self, ...)` call was in flight (review #7).
+    /// `borrow_mut()` there would panic ("Already borrowed") while another
+    /// thread's `push_ts(&self, ...)` call is in flight.
     pub(crate) fn take(&self, py: Python<'_>) -> PyResult<Option<HlsPublisher>> {
         py.allow_threads(|| {
             let mut guard = self.inner.lock().map_err(|_| ())?;

@@ -1,4 +1,4 @@
-"""Audit-2 finding #1 — SamplePayload::Unknown must surface as a typed
+"""SamplePayload::Unknown must surface as a typed
 event carrying raw stream_type + payload bytes, not collapse to a
 NonConformant diagnostic."""
 

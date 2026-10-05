@@ -1,4 +1,4 @@
-"""Tests for `tstrans.srt.Builder` (Wave A T3).
+"""Tests for `tstrans.srt.Builder`.
 
 Builder is the hybrid fluent + kwargs SRT URL constructor. These tests
 cover construction (URL-only + kwargs), mode setter chaining, URL
@@ -260,7 +260,7 @@ def test_connect_timeout_triggers_timeout_kind() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# URL precedence (Q4-A: URL wins over kwargs)                                 #
+# URL precedence (URL wins over kwargs)                                       #
 # --------------------------------------------------------------------------- #
 
 

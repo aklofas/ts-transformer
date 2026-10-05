@@ -1,4 +1,4 @@
-"""Arc 2 rider R-EXIT: leaving a shell parked in a native call must not
+"""Leaving a shell parked in a native call must not
 wedge (or abort) interpreter exit.
 
 `tst_srt` registers `srt_cleanup` with C `atexit`, and `srt_cleanup` joins
@@ -101,7 +101,7 @@ PARKED_LISTENER = (
 
 # The ONE shape `util::SlotCancel` / `register_accept_slot` exist for: the
 # FIRST accept happens INSIDE `Receiver.from_url`, so no Python handle exists
-# yet and nothing the user can hold could cancel it (DEBT-16). The binding
+# yet and nothing the user can hold could cancel it. The binding
 # registers the `CancelSlot` it hands `SrtUrl::accept_one` for the duration of
 # the call, purely so the exit hook can reach it.
 PARKED_IN_FROM_URL = (
@@ -143,7 +143,7 @@ def test_exit_is_clean_with_a_listener_parked_in_accept() -> None:
 
 def test_exit_is_clean_with_a_udp_receiver_parked_in_recv() -> None:
     """udp parks in a pure-kernel poll loop with no C `atexit` partner, so
-    it exited cleanly even before the guard — pinned so a future WP-D
+    it does not depend on the exit guard — pinned so a future
     change to the udp recv loop cannot regress it."""
     r = _run(PARKED_UDP_RECEIVER, what=" with a udp receiver parked in recv()")
     assert "PARKED" in r.stdout, r.stderr
@@ -195,8 +195,8 @@ def test_exit_is_clean_with_a_thread_parked_in_the_first_accept() -> None:
     """`Receiver.from_url` in listener mode parks inside libsrt's `accept()`
     before returning anything the caller could cancel. Without
     `util::register_accept_slot` the exit hook has nothing to fire and
-    `srt_cleanup` deadlocks joining `SRT:GC` — this is the hang that rider
-    R-EXIT's adapter exists to prevent, and the only one no user-visible
+    `srt_cleanup` deadlocks joining `SRT:GC` — this is the hang the exit
+    hook exists to prevent, and the only one no user-visible
     handle can reach."""
     r = _run(PARKED_IN_FROM_URL, what=" with a thread parked in from_url's first accept")
     assert "PARKED" in r.stdout, r.stderr

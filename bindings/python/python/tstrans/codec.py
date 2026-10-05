@@ -1,7 +1,8 @@
 """tstrans.codec — codec frame parsers.
 
-Wraps `tst_core::codec::*`. Decode-only in v1; encoders / NumPy views
-arrive in later releases per `docs/specs/2026-05-22-tst-py-design.md`.
+Wraps `tst_core::codec::*`. Decode-only; there are no encoders. NumPy
+snapshot views (`.payload_np`, `.raw_rbsp_np`, `.raw_np`) are available
+when NumPy is installed (the `[pandas]` extra provides it).
 
 Exposes shared types (ChromaFormat, Rational, ColorInfo, colour
 primaries, transfer characteristics, matrix coefficients), typed
@@ -91,11 +92,11 @@ iter_mpeg2_audio_frames_with_resync = _native_mod.iter_mpeg2_audio_frames_with_r
 parse_mpeg2_audio_frames = _native_mod.parse_mpeg2_audio_frames
 parse_mpeg2_audio_frames_with_resync = _native_mod.parse_mpeg2_audio_frames_with_resync
 
-# Opt-in ES parse functions (Task 4.1)
+# Opt-in ES parse functions
 split_units = _native_mod.split_units
 parse_audio = _native_mod.parse_audio
 
-# MISP timestamp (ST 0604) — Task 10
+# MISP timestamp (ST 0604)
 MispTimeKind = _native_mod.MispTimeKind
 MispTimestamp = _native_mod.MispTimestamp
 extract_misp_timestamp = _native_mod.extract_misp_timestamp

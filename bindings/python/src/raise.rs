@@ -1,4 +1,4 @@
-//! The ONE Rust→Python raise path (Arc 2 WP-B2, spec §3.3 + §5).
+//! The ONE Rust→Python raise path.
 //!
 //! Every failure reaches Python as a `tst_pipeline::binding::BindingError`
 //! (built by the `From<…>` impls next to each Rust error type) and is raised
@@ -14,16 +14,16 @@
 //! `except` clause.
 //!
 //! Two kinds have no member on purpose: `PanicCaught` (a panic inside the
-//! slot, isolated by `Owned::with_mut`) → PyO3's `pyo3_runtime.PanicException`,
-//! the type a panic surfaced as before Arc 2; and `Internal` on a domain that
-//! does not list it (`HandleState::Poisoned`, A2's K7 forward-compat wildcards
-//! for a future `#[non_exhaustive]` variant) → `RuntimeError`. Domains that DO
+//! slot, isolated by `Owned::with_mut`) → PyO3's `pyo3_runtime.PanicException`;
+//! and `Internal` on a domain that does not list it (`HandleState::Poisoned`,
+//! the forward-compat wildcards for a future `#[non_exhaustive]` variant) →
+//! `RuntimeError`. Domains that DO
 //! list `Internal` (hls, mux, klv-decode) raise their own `INTERNAL`.
 //!
 //! The mux / demux / klv / codec exceptions carry per-variant attributes
 //! (`pid`, `tag`, `offset_bits`, the `write_file` breadcrumb), so their
 //! mappers keep constructing the class themselves — with the member taken
-//! from A2's `kind_of_*(&e).name()` — and only their `KINDS` live here, for
+//! from `kind_of_*(&e).name()` — and only their `KINDS` live here, for
 //! the import-time check.
 
 use pyo3::exceptions::{PyImportError, PyRuntimeError};
@@ -346,7 +346,7 @@ pub(crate) fn kind_by_name(d: &Domain, name: &str) -> Option<K> {
     d.kinds.iter().copied().find(|k| k.name() == name)
 }
 
-/// Spec §3.3 startup check: every member of every domain must resolve.
+/// Startup check: every member of every domain must resolve.
 pub(crate) fn check_error_kinds(py: Python<'_>) -> PyResult<()> {
     let exceptions = py.import_bound(intern!(py, "tstrans.exceptions"))?;
     for d in DOMAINS {

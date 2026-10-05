@@ -1,4 +1,4 @@
-"""Phase 6: NumPy snapshot-view accessor tests for tstrans.codec types."""
+"""NumPy snapshot-view accessor tests for tstrans.codec types."""
 
 import pytest
 

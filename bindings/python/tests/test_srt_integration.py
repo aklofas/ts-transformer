@@ -1,4 +1,4 @@
-"""Wave D Task 10 — end-to-end integration tests across all 18 PyClasses
+"""End-to-end integration tests across all 18 PyClasses
 of `tstrans.srt`.
 
 Each test exercises a realistic user flow that crosses MULTIPLE

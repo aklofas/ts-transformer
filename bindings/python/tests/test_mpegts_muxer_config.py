@@ -1,4 +1,4 @@
-"""Phase 4 Muxer config family tests."""
+"""Muxer config family tests."""
 
 import pytest
 
@@ -62,7 +62,7 @@ def test_stream_spec_subclasses_inherit_from_stream_spec_abc():
 
 
 def test_handle_raw_round_trip():
-    # Closeout audit Finding 1: `from_raw` now validates against the
+    # `from_raw` validates against the
     # canonical 8-bit packed layout. Choose a value with no high bits
     # set so the round-trip succeeds. Forged-handle rejection is
     # covered by tests/test_handle_forge.py.
@@ -87,7 +87,7 @@ def test_handles_are_distinct_types():
 
 
 def test_handle_repr_includes_class_name_and_raw():
-    # Closeout audit Finding 1: `from_raw` now validates the canonical
+    # `from_raw` validates the canonical
     # 8-bit packed layout; 0xDEAD has high bits set and would reject.
     # Use 0xAD = 173 (program=10, within=13) — within the canonical
     # region while still distinctive in repr output.
@@ -105,7 +105,7 @@ def test_handle_unpack():
     assert isinstance(within_idx, int)
 
 
-# --- Task 4: MuxerProgramConfig + MuxerProgramConfigBuilder ---
+# --- MuxerProgramConfig + MuxerProgramConfigBuilder ---
 
 from tstrans.mpegts import MuxerProgramConfig, MuxerProgramConfigBuilder
 
@@ -183,7 +183,7 @@ def test_program_config_is_frozen():
         cfg.program_number = 99  # type: ignore[misc]
 
 
-# --- Task 5: MuxerConfig + MuxerConfigBuilder ---
+# --- MuxerConfig + MuxerConfigBuilder ---
 
 from tstrans.exceptions import MuxError, MuxErrorKind
 from tstrans.mpegts import MuxerConfig, MuxerConfigBuilder
@@ -208,7 +208,7 @@ def test_muxer_config_pcr_psi_defaults_reasonable():
 def test_muxer_config_av1_default_is_mpeg2_ts_binding():
     prog = MuxerProgramConfigBuilder(1, 0x100).add_video(0x101, VideoCodec.AV1).build()
     cfg = MuxerConfigBuilder().add_program(prog).build()
-    # Variant name from actual Rust (Task 2 finding).
+    # Variant name from actual Rust.
     assert cfg.av1_carriage is Av1CarriageMode.MPEG2_TS_BINDING
 
 
@@ -222,7 +222,7 @@ def test_muxer_config_invalid_pid_collision_raises():
     )
     with pytest.raises(MuxError) as ei:
         MuxerConfigBuilder().add_program(prog).build()
-    # Use CONFIG_INVALID — the actual Rust variant name (Task 1 finding).
+    # Use CONFIG_INVALID — the actual Rust variant name.
     # If actual rejection variant is different, adjust to the value seen.
     assert ei.value.kind in (
         MuxErrorKind.CONFIG_INVALID,
@@ -249,7 +249,7 @@ def test_muxer_config_static_builder_constructor():
     assert isinstance(b, MuxerConfigBuilder)
 
 
-# --- W3: data streams (add_data + stream_descriptors_for_data) ---
+# --- Data streams (add_data + stream_descriptors_for_data) ---
 
 
 def test_add_data_accepts_user_private_stream_type():

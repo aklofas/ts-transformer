@@ -25,7 +25,7 @@ from typing import Any, ClassVar, Optional
 
 # The compiled extension. Imported at module top (not just at the bottom
 # re-export block) because `_VideoEvent` / `_AudioEvent` wrap their `.raw`
-# in `_native.RawBytes` (WP-E PY-01). `_native` is self-contained and does
+# in `_native.RawBytes`. `_native` is self-contained and does
 # not import `tstrans.mpegts`, so this is not a circular import.
 from tstrans import _native
 
@@ -43,7 +43,7 @@ class Pts90khz:
     raw: int
 
     def __post_init__(self) -> None:
-        # Audit-2 #4 — fail-fast on out-of-i64 values; Rust extracts as
+        # Fail fast on out-of-i64 values; Rust extracts as
         # i64 and would raise OverflowError later anyway, but the early
         # ValueError points at the user's construction site.
         if not -(1 << 63) <= self.raw <= (1 << 63) - 1:
@@ -626,7 +626,7 @@ class _ProgramMapEvent(DemuxEvent):
 
 # `_VideoEvent` / `_AudioEvent` are hand-written frozen classes rather than
 # `@dataclass(frozen=True, slots=True)` because their `.raw` is materialized
-# LAZILY (WP-E PY-01): the demuxer hands a native `_native.RawBytes` holder (a
+# LAZILY: the demuxer hands a native `_native.RawBytes` holder (a
 # cheap Arc clone — no payload copy) and the Python `bytes` is only produced on
 # first `.raw` access, then cached. A value cannot be both a dataclass field
 # (`raw: bytes`, eagerly stored) AND a computed `@property` of the same name, so
@@ -639,7 +639,7 @@ class _ProgramMapEvent(DemuxEvent):
 # Arc inside `RawBytes`) alive until the event is dropped, even if `.raw` is
 # never materialized. The win is pay-per-access (lazy) materialization, not
 # zero-copy at the boundary — abi3 copies the bytes into a fresh `bytes`
-# regardless (see docs/specs/2026-06-08-raw-first-sample-model-design.md §4.1).
+# regardless.
 
 class _VideoEvent(DemuxEvent):
     __slots__ = (
@@ -918,10 +918,8 @@ class _UnknownSampleEvent(DemuxEvent):
     """Sample on a PID whose stream_type the demuxer does not classify
     as Video / Audio / Subtitle / KLV. The raw stream_type byte (per
     PMT) and the unparsed PES payload are preserved verbatim so callers
-    can archive, forward, or post-process.
-
-    Audit-2 finding #1 — prior versions collapsed unknown samples into
-    a NonConformant diagnostic and discarded the payload bytes.
+    can archive, forward, or post-process (not collapsed into a
+    NonConformant diagnostic).
 
     Hand-written frozen class (see `_VideoEvent`) so `.payload` can be a
     lazily-materialized property; `SamplePayload::Unknown.raw` is
@@ -1053,7 +1051,7 @@ class DemuxerConfig:
     - `strict_mode` — Off / TimingOnly / PsiOnly / Full ladder.
     - `pes_cap_per_pid`, `pes_cap_total` — reassembly memory caps.
     - `cfi_tolerance` — lenient AU-cell CFI substitution; **default
-      `True`** since the 2026-05-24 default flip (industry-wide
+      `True`** (industry-wide
       producer bug — see field docstring on `cfi_tolerance` below for
       the rationale, and `MultiCellAuReason` / `CellFragmentIndication`
       for the underlying enums).
@@ -1148,7 +1146,7 @@ class DemuxerConfig:
     unwrap_timestamps: bool = False
 
     def __post_init__(self) -> None:
-        # F10 — fail-fast on primitive-shape violations at construction.
+        # Fail fast on primitive-shape violations at construction.
         # Without this, invalid values fail deep inside `build_demuxer`
         # in Rust (e.g. negative `pes_cap_per_pid` raises an opaque
         # `OverflowError` from `usize` extraction) instead of pointing
@@ -1371,8 +1369,8 @@ def _drain_muxer_to_file(muxer: "Muxer", fh) -> None:
     """
 
     buf = bytearray(_DRAIN_CHUNK_BYTES)
-    # F11 — hoist memoryview outside the loop. `view[:n]` is a zero-copy
-    # slice; `bytes(buf[:n])` (the prior form) allocated + copied n bytes
+    # Hoist memoryview outside the loop. `view[:n]` is a zero-copy
+    # slice; `bytes(buf[:n])` would allocate + copy n bytes
     # per chunk. Real file handles (`io.BufferedWriter`) accept any
     # buffer-protocol object, including memoryview slices, so this
     # works transparently.
@@ -1507,7 +1505,7 @@ class MuxerFileSink:
         return self._proxy
 
     def __exit__(self, exc_type, exc, tb) -> None:
-        # Audit-2 #2: drive cleanup with one outer try/finally so that
+        # Drive cleanup with one outer try/finally so that
         # even if drain/close raises, the atomic-mode .partial file is
         # always removed (or replaced on success). Do not suppress the
         # caller's exception.

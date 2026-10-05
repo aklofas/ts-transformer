@@ -1,4 +1,4 @@
-"""Phase 4 Muxer push + drain tests."""
+"""Muxer push + drain tests."""
 
 import pytest
 
@@ -58,7 +58,7 @@ def test_capacity_packets_is_positive():
 
 
 # ---------------------------------------------------------------------------
-# Task 7 — push_video / push_video_to / push_video_to_with_dts
+# push_video / push_video_to / push_video_to_with_dts
 # ---------------------------------------------------------------------------
 
 
@@ -92,7 +92,7 @@ def test_push_video_to_with_invalid_handle_raises_invalid_usage():
     """An out-of-range handle surfaces as InvalidStreamHandle →
     INVALID_USAGE per the MuxErrorKind classifier in
     tst-core/src/error.rs. Uses a within-canonical-layout-but-not-configured
-    handle (program=15, within=15 = 0xFF) so the closeout audit's
+    handle (program=15, within=15 = 0xFF) so the
     `from_raw` validation passes and the push-time range check fires.
     Forged handles with bits outside the canonical layout are covered
     by `tests/test_handle_forge.py`."""
@@ -149,7 +149,7 @@ def test_push_video_key_frame_arg_accepted():
 
 
 # ---------------------------------------------------------------------------
-# Task 8 — push_audio + push_klv + push_subtitle (single-stream + handle forms)
+# push_audio + push_klv + push_subtitle (single-stream + handle forms)
 # ---------------------------------------------------------------------------
 
 
@@ -168,8 +168,8 @@ def _minimal_klv_ls() -> bytes:
     """16-byte SMPTE UL + 1-byte BER + 0-byte body = minimal LS bytes.
 
     The muxer auto-prepends the 5-byte `Metadata_AU_cell` header per
-    ITU-T H.222.0 §2.12.4.2 for SynchronousMetadata streams (CLAUDE.md
-    "KLV AU cell auto-wrap"), so callers pass raw KLV LS bytes only.
+    ITU-T H.222.0 §2.12.4.2 for SynchronousMetadata streams, so callers
+    pass raw KLV LS bytes only.
     """
     return b"\x06\x0E\x2B\x34\x02\x0B\x01\x01\x0E\x01\x03\x01\x01\x00\x00\x00\x00"
 
@@ -212,7 +212,7 @@ def test_push_audio_invalid_handle_raises():
     m = Muxer(_simple_config())
     bad = AudioStreamHandle.from_raw(0xFF)
     with pytest.raises(MuxError) as ei:
-        # Audit #9 normalized arg order: (handle, frames, *, pts).
+        # Arg order: (handle, frames, *, pts).
         m.push_audio_to(bad, _minimal_aac_frame(), pts=Pts90khz.from_raw(900_000))
     assert ei.value.kind is MuxErrorKind.INVALID_USAGE
 
@@ -714,7 +714,7 @@ def test_dvb_teletext_config_rejects_bytearray_language():
 
 
 # ---------------------------------------------------------------------------
-# Task 9 — handle getters (video/audio/klv/subtitle × list + by_program + by_index)
+# Handle getters (video/audio/klv/subtitle × list + by_program + by_index)
 # ---------------------------------------------------------------------------
 #
 # Rust surface coverage (verified against tst-core/src/mpegts/mux/*.rs):
@@ -835,9 +835,7 @@ def test_video_handle_round_trips_through_push_video_to():
 
 
 # ---------------------------------------------------------------------------
-# Audit #9 — pts is keyword-only on every push_* method, and push_audio_to
-# now takes `frames` positionally before its kw-only `pts` (normalized to
-# match push_audio's `(frames, *, pts)` shape).
+# pts is keyword-only on every push_* method; push_audio_to takes (handle, frames, *, pts).
 #
 # These tests pin the Pythonic signature shape: positional `pts` MUST raise
 # `TypeError` at the PyO3 argument-extraction boundary; the kwarg form MUST
@@ -846,7 +844,7 @@ def test_video_handle_round_trips_through_push_video_to():
 
 
 def test_push_video_pts_positional_raises_type_error():
-    """Audit #9: pts must be passed as a kwarg on push_video."""
+    """pts must be passed as a keyword argument to push_video."""
     m = Muxer(_simple_config())
     nal = _minimal_h264_nal_aud()
     with pytest.raises(TypeError):
@@ -857,7 +855,7 @@ def test_push_video_pts_positional_raises_type_error():
 
 
 def test_push_video_to_pts_positional_raises_type_error():
-    """Audit #9: pts must be passed as a kwarg on push_video_to."""
+    """pts must be passed as a keyword argument to push_video_to."""
     m = Muxer(_simple_config())
     handle = m.video_handles()[0]
     nal = _minimal_h264_nal_aud()
@@ -869,7 +867,7 @@ def test_push_video_to_pts_positional_raises_type_error():
 
 
 def test_push_audio_pts_positional_raises_type_error():
-    """Audit #9: pts must be passed as a kwarg on push_audio."""
+    """pts must be passed as a keyword argument to push_audio."""
     m = Muxer(_simple_config())
     frames = _minimal_aac_frame()
     with pytest.raises(TypeError):
@@ -884,8 +882,8 @@ def test_push_audio_pts_positional_raises_type_error():
 
 
 def test_push_audio_to_normalized_arg_order_and_kwonly_pts():
-    """Audit #9: push_audio_to is now (handle, frames, *, pts) — `frames`
-    moved before `pts` to match push_audio's `(frames, *, pts)` shape; pts
+    """push_audio_to takes (handle, frames, *, pts) — `frames` comes
+    before `pts` to match push_audio's `(frames, *, pts)` shape; pts
     is keyword-only."""
     m = Muxer(_simple_config())
     handle = m.audio_handles()[0]
@@ -905,7 +903,7 @@ def test_push_audio_to_normalized_arg_order_and_kwonly_pts():
 
 
 def test_push_klv_pts_positional_raises_type_error():
-    """Audit #9: pts must be passed as a kwarg on push_klv."""
+    """pts must be passed as a keyword argument to push_klv."""
     m = Muxer(_simple_config())
     klv = _minimal_klv_ls()
     with pytest.raises(TypeError):
@@ -920,7 +918,7 @@ def test_push_klv_pts_positional_raises_type_error():
 
 
 def test_push_klv_to_pts_positional_raises_type_error():
-    """Audit #9: pts must be passed as a kwarg on push_klv_to."""
+    """pts must be passed as a keyword argument to push_klv_to."""
     m = Muxer(_simple_config())
     handle = m.klv_handles()[0]
     klv = _minimal_klv_ls()
@@ -936,7 +934,7 @@ def test_push_klv_to_pts_positional_raises_type_error():
 
 
 # ---------------------------------------------------------------------------
-# W3 — push_data / push_data_to + data handle accessors
+# push_data / push_data_to + data handle accessors
 # ---------------------------------------------------------------------------
 #
 # Data streams are a PES pass-through (no AU-cell wrap, no framing, one
@@ -1105,7 +1103,7 @@ def test_push_data_to_invalid_handle_raises_invalid_usage():
 
 
 def test_push_data_pts_positional_raises_type_error():
-    """pts is keyword-only on push_data / push_data_to (audit #9 shape)."""
+    """pts is keyword-only on push_data / push_data_to."""
     m = Muxer(_data_config())
     handle = m.data_handles()[0]
     with pytest.raises(TypeError):
@@ -1120,8 +1118,8 @@ def test_push_data_pts_positional_raises_type_error():
 
 
 def test_push_video_to_with_dts_signature_unchanged():
-    """Audit #9: push_video_to_with_dts was already kw-only — this test
-    pins that the audit-9 sweep didn't accidentally regress its shape."""
+    """push_video_to_with_dts keeps its keyword-only `pts` / `dts`
+    signature."""
     m = Muxer(_simple_config())
     handle = m.video_handles()[0]
     m.push_video_to_with_dts(
@@ -1142,7 +1140,7 @@ def test_push_video_to_with_dts_signature_unchanged():
 
 
 # ---------------------------------------------------------------------------
-# DA-PY-3 settling tests — bytearray and memoryview coercion
+# Settling tests — bytearray and memoryview coercion
 #
 # PyO3 0.22 abi3 extracts `&[u8]` only from `bytes`; the shared
 # `coerce_bytes_like` helper in `util.rs` routes `bytearray`/`memoryview`
@@ -1252,7 +1250,7 @@ def test_push_video_bytes_fast_path_unchanged():
 
 
 # ---------------------------------------------------------------------------
-# Task 10 — push_video_misp_to + extract_misp_timestamp round-trip
+# push_video_misp_to + extract_misp_timestamp round-trip
 # ---------------------------------------------------------------------------
 
 

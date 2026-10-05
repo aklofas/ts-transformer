@@ -5,13 +5,13 @@ Available when tstrans was built with the `rtp` cargo feature
 will fail to import this submodule with a friendly ImportError.
 
 Submodule contents are populated by `tstrans._native.rtp`:
-- `Sender`, `Receiver`, `SocketStats`, `CancelHandle`   (Wave A T20)
-- `MuxSender`, `DemuxReceiver`                           (Wave B T23)
+- `Sender`, `Receiver`, `SocketStats`, `CancelHandle`
+- `MuxSender`, `DemuxReceiver`
 - `RtspClient`, `RtspSession`, `BasicAuth`, `DigestAuth`,
   `RtspClientConfig`, `RtspStats`, `RtspCancelHandle`,
-  `DigestAlgorithm`, `TransportPref`, `RtspVersion`     (Wave A T21)
+  `DigestAlgorithm`, `TransportPref`, `RtspVersion`
 - `RtspServer`, `MountHandle`, `RtspServerConfig`,
-  `ServerStats`, `MountStats`, `RtspServerCancelHandle` (Wave A T22)
+  `ServerStats`, `MountStats`, `RtspServerCancelHandle`
 """
 
 from __future__ import annotations
@@ -62,20 +62,20 @@ class StreamEndReason(enum.IntEnum):
     CANCELLED = 6
 
 
-# Wave A T20 — RTP transport types.
+# RTP transport types.
 Sender = _rtp.Sender
 Receiver = _rtp.Receiver
 SocketStats = _rtp.SocketStats
 CancelHandle = _rtp.CancelHandle
 
-# Wave B T23 — MuxSender + DemuxReceiver convenience wrappers.
+# MuxSender + DemuxReceiver convenience wrappers.
 MuxSender = _rtp.MuxSender
 DemuxReceiver = _rtp.DemuxReceiver
 
-# Wave A T21 — RtspClient, RtspSession, auth, config, stats.
+# RtspClient, RtspSession, auth, config, stats.
 # BasicAuth + DigestAuth are PyClass-backed dataclass-equivalents living
-# in src/rtp/client.rs (NOT pure-Python). Both T21 client auth and T22
-# server auth use these same classes.
+# in src/rtp/client.rs (NOT pure-Python). Client auth and server auth use
+# these same classes.
 RtspClient = _rtp.RtspClient
 RtspSession = _rtp.RtspSession
 RtspClientConfig = _rtp.RtspClientConfig
@@ -87,14 +87,14 @@ DigestAlgorithm = _rtp.DigestAlgorithm
 TransportPref = _rtp.TransportPref
 RtspVersion = _rtp.RtspVersion
 
-# Wave A T22 — RtspServer + MountHandle + server-side stats.
+# RtspServer + MountHandle + server-side stats.
 RtspServer = _rtp.RtspServer
 MountHandle = _rtp.MountHandle
 ServerStats = _rtp.ServerStats
 MountStats = _rtp.MountStats
 RtspServerCancelHandle = _rtp.RtspServerCancelHandle
 
-# WP-3 RFC 6184 — H.264 depacketizer + blocking receiver.
+# RFC 6184 — H.264 depacketizer + blocking receiver.
 ParameterSetInjection = _rtp.ParameterSetInjection
 H264DepayConfig = _rtp.H264DepayConfig
 H264AccessUnit = _rtp.H264AccessUnit
@@ -104,7 +104,7 @@ H264Receiver = _rtp.H264Receiver
 
 
 # ---------------------------------------------------------------------------
-# T22 — RtspServerConfig dataclass. Lives Python-side (not PyClass) because
+# RtspServerConfig dataclass. Lives Python-side (not PyClass) because
 # the underlying Rust builder takes a stream of fluent setter calls rather
 # than a typed config struct; the dataclass is the natural Python shape and
 # `RtspServer.start(cfg)` reads its attributes in `src/rtp/server.rs`.
@@ -181,16 +181,16 @@ class RtspServerConfig:
 
 
 __all__: list[str] = [
-    # T20 transport
+    # transport
     "StreamEndReason",
     "Sender",
     "Receiver",
     "SocketStats",
     "CancelHandle",
-    # T23 mux/demux convenience wrappers
+    # mux/demux convenience wrappers
     "MuxSender",
     "DemuxReceiver",
-    # T21 RTSP client
+    # RTSP client
     "RtspClient",
     "RtspSession",
     "RtspClientConfig",
@@ -201,14 +201,14 @@ __all__: list[str] = [
     "DigestAlgorithm",
     "TransportPref",
     "RtspVersion",
-    # T22 RTSP server
+    # RTSP server
     "RtspServer",
     "MountHandle",
     "ServerStats",
     "MountStats",
     "RtspServerCancelHandle",
     "RtspServerConfig",
-    # WP-3 RFC 6184 H.264 receiver
+    # RFC 6184 H.264 receiver
     "ParameterSetInjection",
     "H264DepayConfig",
     "H264AccessUnit",

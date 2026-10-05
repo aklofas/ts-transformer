@@ -1,16 +1,16 @@
 //! Python bindings for tst-hls (`tstrans.hls`). Gated on `feature = "hls"`.
 //!
-//! Populated by Plan A5b Wave C. HLS lives in the `tst-hls` crate
+//! HLS lives in the `tst-hls` crate
 //! (`tst_hls`) — the `hls` cargo feature here pulls
 //! `tst-hls` + `tst-pipeline` (for the `MuxPublisher` shell).
 //!
 //! Surface (module `"tstrans.hls"`):
-//! - `Publisher` (ABC) + `PublisherStats` — T10
-//! - `MuxPublisher` + `MuxPublisherStats` — T11
-//! - `HlsPublisher` + `HlsPublisherBuilder` — T12
-//! - `HlsMode` + `HlsStats` — T13
+//! - `Publisher` (ABC) + `PublisherStats`
+//! - `MuxPublisher` + `MuxPublisherStats`
+//! - `HlsPublisher` + `HlsPublisherBuilder`
+//! - `HlsMode` + `HlsStats`
 //! - `HlsError` / `HlsErrorKind` (in `tstrans.exceptions`) + error
-//!   mapping — T14
+//!   mapping
 //!
 //! GIL boundaries: `HlsPublisher` and `MuxPublisher` guard their inner
 //! publisher with a mutex, and a push holds it with the GIL released. A
@@ -20,7 +20,7 @@
 //! `py.allow_threads` and raises once the GIL is back — see [`Locked`]. The
 //! construction constants (`local_addr`, `local_port`, `repr`) take no lock.
 //!
-//! Error mapping goes through `crate::raise` (Arc 2 WP-B2):
+//! Error mapping goes through `crate::raise`:
 //! `From<HlsError>`/`From<HlsUrlError>` for `BindingError` live next to
 //! the Rust types, and `raise` resolves the kind's `name()` on
 //! `tstrans.exceptions.HlsErrorKind` — checked at `import tstrans`, so
@@ -67,10 +67,9 @@ pub(crate) enum Locked<E> {
 ///
 /// The source decides the CLASS: a MUX-sourced failure keeps
 /// `mux_error_to_pyerr` (a `MuxError` carrying `.pid` and the `write_file`
-/// breadcrumb — it was flattened to `HlsError(INVALID_CONFIG)` before
-/// 0.7.0), everything else is a `BindingError` on the HLS domain via A2's
+/// breadcrumb), everything else is a `BindingError` on the HLS domain via
 /// `From<MuxPublisherError<E>>`: `Publisher(e)` keeps the inner HLS kind,
-/// `Closed` is `CLOSED` (was `FINISHED`), a poisoned lock is `INTERNAL`.
+/// `Closed` is `CLOSED`, a poisoned lock is `INTERNAL`.
 pub(crate) fn map_mux_publisher_error(py: Python<'_>, e: MuxPublisherError<HlsError>) -> PyErr {
     match e {
         MuxPublisherError::Mux(mux_err) => crate::errors::mux_error_to_pyerr(py, mux_err),
@@ -84,17 +83,17 @@ pub(crate) fn map_mux_publisher_error(py: Python<'_>, e: MuxPublisherError<HlsEr
 
 pub(crate) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new_bound(parent.py(), "hls")?;
-    // T10 — PublisherStats. The `Publisher` ABC itself is a pure-Python
+    // PublisherStats. The `Publisher` ABC itself is a pure-Python
     // `abc.ABC` defined in `tstrans/hls.py` (see the NOTE below).
     m.add_class::<publisher_abc::PyPublisherStats>()?;
-    // T13 — HlsMode + HlsStats.
+    // HlsMode + HlsStats.
     m.add_class::<config::PyHlsMode>()?;
     m.add_class::<config::PyHlsStats>()?;
-    // T12 — HlsPublisher + builder + server handle.
+    // HlsPublisher + builder + server handle.
     m.add_class::<publisher::PyHlsPublisher>()?;
     m.add_class::<publisher::PyHlsPublisherBuilder>()?;
     m.add_class::<publisher::PyHlsServerHandle>()?;
-    // T11 — MuxPublisher + MuxPublisherStats.
+    // MuxPublisher + MuxPublisherStats.
     m.add_class::<mux_publisher::PyMuxPublisher>()?;
     m.add_class::<mux_publisher::PyMuxPublisherStats>()?;
 

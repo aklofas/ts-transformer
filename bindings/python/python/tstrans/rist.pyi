@@ -1,4 +1,4 @@
-"""Type stubs for tstrans.rist (Plan A5b Wave D T18).
+"""Type stubs for `tstrans.rist` — RIST transport bindings.
 
 Available when tstrans was built with the ``rist`` cargo feature
 (default-on in published wheels).

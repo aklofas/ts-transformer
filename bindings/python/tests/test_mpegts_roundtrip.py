@@ -1,4 +1,4 @@
-"""End-to-end round-trip tests for the Phase 4 build path."""
+"""End-to-end round-trip tests for the Muxer build path."""
 
 import tempfile
 from pathlib import Path
@@ -115,7 +115,7 @@ def test_synthetic_round_trip_byte_alignment():
 
 
 def test_full_synthetic_round_trip_event_by_event():
-    """Audit-2 #9: in-process synthetic full round-trip.
+    """In-process synthetic full round-trip.
 
     Build a TS with video + KLV streams, write to a tempfile, demux it back,
     and assert per-event structural equivalence:
@@ -123,10 +123,9 @@ def test_full_synthetic_round_trip_event_by_event():
       - Video events with H.264 codec.
       - KLV events (at least as many as pushed).
 
-    This replaces the previously deferred "real-fixture round-trip" test that
-    skipped unconditionally (see Phase 4 closeout follow-up). A real-fixture
-    round-trip (full config-from-probe reconstruction) remains a follow-up
-    item; the synthetic path exercises the full mux→write→parse pipeline.
+    A real-fixture round-trip (full config-from-probe reconstruction) is
+    not covered here; the synthetic path exercises the full
+    mux→write→parse pipeline.
     """
     m = Muxer(_synthetic_config())
     with tempfile.TemporaryDirectory() as tmp:

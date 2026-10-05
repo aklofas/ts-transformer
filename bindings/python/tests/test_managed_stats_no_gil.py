@@ -1,4 +1,4 @@
-"""Regression test for DA-PY-2: ManagedDemuxReceiver.socket_stats() GIL freeze.
+"""Regression test: ManagedDemuxReceiver.socket_stats() GIL freeze.
 
 The bug (before fix):
   `ManagedDemuxReceiver.__next__` acquires the outer

@@ -108,7 +108,7 @@ def test_write_file_no_pushes_writes_initial_psi():
         assert path.exists()
 
 
-# audit #13 — atomic-write opt-in via `Muxer.write_file(path, atomic=True)`.
+# Atomic-write opt-in via `Muxer.write_file(path, atomic=True)`.
 
 
 class _MyTestError(Exception):
@@ -170,12 +170,12 @@ def test_atomic_kwarg_default_is_false(tmp_path):
     assert path.exists()
 
 
-# Audit-2 #2 — atomic-mode drain/close failures must still clean up
+# Atomic-mode drain/close failures must still clean up
 # the .partial tempfile so it doesn't persist on the filesystem.
 
 
 def test_atomic_sink_cleans_partial_when_drain_raises(tmp_path: Path) -> None:
-    """Audit-2 #2 — if _drain_muxer_to_file raises during __exit__, the
+    """If _drain_muxer_to_file raises during __exit__, the
     .partial tempfile must still be removed in atomic mode."""
     from tstrans.mpegts import _drain_muxer_to_file  # noqa: F401 (import path check)
     m = Muxer(_cfg())
@@ -193,7 +193,7 @@ def test_atomic_sink_cleans_partial_when_drain_raises(tmp_path: Path) -> None:
 
 
 def test_atomic_sink_cleans_partial_when_close_raises(tmp_path: Path) -> None:
-    """Audit-2 #2 — if the underlying file.close() raises, .partial must
+    """If the underlying file.close() raises, .partial must
     still be removed."""
     dest = tmp_path / "out.ts"
     m = Muxer(_cfg())
@@ -236,7 +236,7 @@ def test_atomic_sink_user_exception_still_cleans_partial(tmp_path: Path) -> None
     assert sorted(p.name for p in tmp_path.iterdir()) == []
 
 
-# v0.2.0 Wave 3 (#6) — write_file overflow investigation outcome.
+# write_file overflow contract.
 #
 # The drain proxy is correct: pushes routed through the object yielded
 # by `with m.write_file(...) as proxy:` drain after every push and never
@@ -253,7 +253,7 @@ def test_write_file_long_push_loop_never_overflows(tmp_path):
     # the sink suite pushed at most 5 AUs — far below capacity, so a
     # drain regression would go unnoticed.)
     m = Muxer(_cfg())
-    # Derived from the live capacity (Copilot, PR #29) so the loop keeps
+    # Derived from the live capacity so the loop keeps
     # its overflows-without-drain property if the default ever changes.
     n_pushes = m.capacity_packets() + 2_000
     path = tmp_path / "out.ts"
@@ -267,8 +267,8 @@ def test_write_file_long_push_loop_never_overflows(tmp_path):
 
 
 def test_write_file_long_data_push_loop_never_overflows(tmp_path):
-    # push_data / push_data_to joined the proxy's _PUSH_METHODS set in
-    # private-data W3 (transmux routes UnknownSample through the drain
+    # push_data / push_data_to are in the proxy's _PUSH_METHODS set
+    # (transmux routes UnknownSample through the drain
     # proxy). Without the drain wrap a long data push loop overflows
     # exactly like the video regression above — `__getattr__` would
     # delegate to the raw muxer push with no post-push drain.
@@ -325,8 +325,7 @@ def test_drain_proxy_push_methods_match_muxer_surface():
     # `_PUSH_METHODS` set would delegate through `__getattr__` WITHOUT
     # the post-push drain — long push loops via that method would
     # overflow the packet buffer inside an active `write_file` block.
-    # (Exactly what happened to push_data/push_data_to in private-data
-    # W3 review.) Compare the live `Muxer` push surface to the set, both
+    # Compare the live `Muxer` push surface to the set, both
     # directions, so the set can neither lag nor carry phantom entries.
     assert {
         n for n in dir(Muxer) if n.startswith("push_")

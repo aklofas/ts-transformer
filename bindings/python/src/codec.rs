@@ -2937,7 +2937,7 @@ impl AdtsFrameIterPy {
 #[pyfunction]
 #[pyo3(name = "iter_aac_frames")]
 fn iter_aac_frames_py(py: Python<'_>, bytes_buf: &[u8]) -> PyResult<AdtsFrameIterPy> {
-    // GIL-release rationale (audit #11): the eager collect is the heavy
+    // GIL release: the eager collect is the heavy
     // work — it scans `bytes_buf` and copies every frame into an owned
     // Vec. `bytes_buf` borrows from a `Py<PyBytes>` held by the caller's
     // frame, safe to access without the GIL. Per-iter `__next__` stays
@@ -3744,10 +3744,10 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
         parse_mpeg2_audio_frames_with_resync_py,
         m
     )?)?;
-    // Opt-in ES parse functions (Task 4.1)
+    // Opt-in ES parse functions
     m.add_function(wrap_pyfunction!(split_units, m)?)?;
     m.add_function(wrap_pyfunction!(parse_audio, m)?)?;
-    // MISP timestamp (ST 0604) — Task 10
+    // MISP timestamp (ST 0604)
     m.add_class::<MispTimeKindPy>()?;
     m.add_class::<MispTimestampPy>()?;
     m.add_function(wrap_pyfunction!(extract_misp_timestamp, m)?)?;

@@ -33,11 +33,10 @@ mod pipeline;
 
 use pyo3::prelude::*;
 
-/// `TSTRANS_LOG` bridge (Task C7) — the Rust core (`tst-core`/`tst-rtp`/
+/// `TSTRANS_LOG` bridge — the Rust core (`tst-core`/`tst-rtp`/
 /// `tst-pipeline`) emits `tracing` events, but embedding them in a
 /// Python process installs no subscriber, so every `info!`/`warn!`/
-/// `debug!` call is silently discarded — a field integrator lost a
-/// diagnosis day to exactly this. Iff `TSTRANS_LOG` is set at import
+/// `debug!` call is silently discarded. Iff `TSTRANS_LOG` is set at import
 /// time, install a stderr subscriber filtered by its value (the same
 /// syntax as `RUST_LOG`/`EnvFilter`); unset ⇒ install nothing, so a
 /// bare `import tstrans` has zero subscriber overhead beyond the env
@@ -65,11 +64,11 @@ fn init_tracing_bridge() {
 #[pymodule]
 fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     init_tracing_bridge();
-    // Spec Arc 2 §3.3: a kind member the Python enum lacks fails `import tstrans`.
+    // A kind member the Python enum lacks fails `import tstrans`.
     raise::check_error_kinds(_py)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_function(wrap_pyfunction!(raise::check_error_kinds_py, m)?)?;
-    // Arc 2 rider R-EXIT: a thread parked inside libsrt at process exit
+    // A thread parked inside libsrt at process exit
     // deadlocks `atexit(srt_cleanup)` (it joins `SRT:GC`, which cannot
     // finish while a socket is parked). Python's atexit callbacks run
     // before the C-level ones, so cancelling every live shell here lets

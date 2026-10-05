@@ -1,4 +1,4 @@
-"""Tests for `tstrans.srt.Listener` (Wave A T3).
+"""Tests for `tstrans.srt.Listener`.
 
 Listener has both blocking accept(timeout_ms=...) and an iterator
 (__iter__/__next__) shape. Tests cover:
@@ -264,10 +264,9 @@ def test_socket_into_sender_consumes_handle() -> None:
 
 
 def test_socket_into_demux_receiver_consumes_socket() -> None:
-    """`Socket.into_demux_receiver()` consumes the socket — the
-    NotImplementedError stub from T3 is replaced by a real
-    implementation in T5. After consumption, the original socket
-    handle reports closed.
+    """`Socket.into_demux_receiver()` consumes the socket (a real
+    implementation, not a NotImplementedError stub). After consumption,
+    the original socket handle reports closed.
 
     The mux-side promotion is covered by
     `test_srt_mux_demux.py::test_socket_into_mux_sender_promotion`.

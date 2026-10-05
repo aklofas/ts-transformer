@@ -5,7 +5,7 @@ this submodule imports out of the box. It is unavailable only in a
 `--no-default-features` source build (or one that selects features without
 `hls`); such a build will fail to import this submodule.
 
-Surface (Plan A5b Wave C):
+Surface:
 
 - ``Publisher`` — abstract base class for byte-sink publishers. Mirrors
   the Rust ``tst_core::publisher::Publisher`` trait (``push_ts`` /

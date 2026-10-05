@@ -1,4 +1,4 @@
-"""Phase 5 Task 11: H.266 codec surface tests.
+"""H.266 codec surface tests.
 
 Fixture bytes are the RBSP payloads used by tst-core's Rust H.266 parameter-set
 tests — extracted from the on-disk binaries at

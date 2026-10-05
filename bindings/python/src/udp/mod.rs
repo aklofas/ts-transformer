@@ -1,6 +1,6 @@
 //! Python bindings for tst-udp (`tstrans.udp`). Gated on `feature = "udp"`.
 //!
-//! Populated by Plan A5b Wave A (Tasks 3-5). Mirrors the rtp/ module
+//! Mirrors the rtp/ module
 //! structure: concrete transport wrappers + builder PyClasses + SocketStats
 //! + error mapping.
 //!
@@ -11,7 +11,7 @@
 //!   waits for a parked call.
 //!
 //! Cross-thread cancel/close: both `tst_udp` transports expose a real
-//! cancel handle (Arc 2 WP-D) and the shell's `CancelSource` forwards into
+//! cancel handle and the shell's `CancelSource` forwards into
 //! it, so `close()` cancels first and `Transport.cancel_handle()` /
 //! `RecvTransport.cancel_handle()` hand the same shared state to Python as
 //! `udp.CancelHandle`. `RecvTransport.recv()` still polls the socket in
@@ -157,14 +157,14 @@ impl PyUdpStats {
 /// the kernel `sendto` blocks.
 #[pyclass(name = "Transport", module = "tstrans.udp")]
 pub(crate) struct PyUdpTransport {
-    /// The binding layer's handle state machine (Arc 2): a `send` in
+    /// The binding layer's handle state machine: a `send` in
     /// flight on another thread holds the slot with the GIL released and
     /// `close()` cancels-then-takes, so the next `send` raises
     /// `UdpError(CLOSED)` rather than `RuntimeError: Already borrowed`.
     owned: Owned<SendHalf<UdpTransport>>,
     /// Shared cancel state, wrapping the transport's real `UdpCancelHandle`
-    /// (Arc 2 WP-D). Held beside the slot so `cancel_handle()` never waits
-    /// behind an in-flight `send` (the PR #189 lease-bug class).
+    /// Held beside the slot so `cancel_handle()` never waits
+    /// behind an in-flight `send`.
     cancel: Arc<CancelSource>,
 }
 
@@ -382,12 +382,12 @@ enum UdpRecvOutcome {
 /// waiting for a datagram.
 #[pyclass(name = "RecvTransport", module = "tstrans.udp")]
 pub(crate) struct PyUdpRecvTransport {
-    /// The binding layer's handle state machine (Arc 2). Snapshot = the
+    /// The binding layer's handle state machine. Snapshot = the
     /// bound port read at `build()`, so `local_addr_port()` never waits
     /// behind a parked `recv`.
     owned: Owned<UdpRecvInner, u16>,
     /// Shared cancel state, wrapping the transport's real `UdpCancelHandle`
-    /// (Arc 2 WP-D). `close()` and `cancel_handle().cancel()` both latch it
+    /// `close()` and `cancel_handle().cancel()` both latch it
     /// and the poll loop checks it between slices, so a parked `recv()`
     /// ends within about one slice.
     cancel: Arc<CancelSource>,

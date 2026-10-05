@@ -72,23 +72,23 @@ class RecvEndReason(enum.IntEnum):
     CANCELLED = 3
 
 
-# Wave A T2 — transport-layer types.
+# Transport-layer types.
 Sender = _srt.Sender
 Receiver = _srt.Receiver
 SocketStats = _srt.SocketStats
 SrtStats = _srt.SrtStats
 CancelHandle = _srt.CancelHandle
 
-# Wave A T3 — low-level primitives.
+# Low-level primitives.
 Builder = _srt.Builder
 Socket = _srt.Socket
 Listener = _srt.Listener
 
-# Wave B T5 — MuxSender + DemuxReceiver convenience wrappers.
+# MuxSender + DemuxReceiver convenience wrappers.
 MuxSender = _srt.MuxSender
 DemuxReceiver = _srt.DemuxReceiver
 
-# Wave B T6 — reconnect policy ergonomics.
+# Reconnect policy ergonomics.
 BackoffStrategy = _srt.BackoffStrategy
 OverflowPolicy = _srt.OverflowPolicy
 ReconnectPolicy = _srt.ReconnectPolicy
@@ -97,11 +97,11 @@ ReconnectPolicy = _srt.ReconnectPolicy
 ReconnectMode = _srt.ReconnectMode
 ManagedTransportStats = _srt.ManagedTransportStats
 
-# Wave C T7 — auto-reconnect basic-bytes wrappers.
+# Auto-reconnect basic-bytes wrappers.
 ManagedSender = _srt.ManagedSender
 ManagedReceiver = _srt.ManagedReceiver
 
-# Wave C T8 — auto-reconnect MuxSender + DemuxReceiver convenience wrappers.
+# Auto-reconnect MuxSender + DemuxReceiver convenience wrappers.
 ManagedMuxSender = _srt.ManagedMuxSender
 ManagedDemuxReceiver = _srt.ManagedDemuxReceiver
 
@@ -109,29 +109,29 @@ ManagedDemuxReceiver = _srt.ManagedDemuxReceiver
 __all__: list[str] = [
     # Managed receive-session end reason
     "RecvEndReason",
-    # T2 transport
+    # transport
     "Sender",
     "Receiver",
     "SocketStats",
     "SrtStats",
     "CancelHandle",
-    # T3 low-level
+    # low-level
     "Builder",
     "Socket",
     "Listener",
-    # T5 mux/demux convenience wrappers
+    # mux/demux convenience wrappers
     "MuxSender",
     "DemuxReceiver",
-    # T6 policy
+    # policy
     "BackoffStrategy",
     "OverflowPolicy",
     "ReconnectPolicy",
     "ReconnectMode",
     "ManagedTransportStats",
-    # T7 managed basic
+    # managed basic
     "ManagedSender",
     "ManagedReceiver",
-    # T8 managed convenience wrappers
+    # managed convenience wrappers
     "ManagedMuxSender",
     "ManagedDemuxReceiver",
 ]

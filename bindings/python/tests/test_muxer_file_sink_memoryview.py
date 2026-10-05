@@ -1,8 +1,8 @@
-"""F11 — MuxerFileSink writes via memoryview slice (no per-chunk bytes copy).
+"""MuxerFileSink writes via memoryview slice (no per-chunk bytes copy).
 
-This is mostly a regression test confirming the `bytes(buf[:n])` →
-`view[:n]` rewrite in `_drain_muxer_to_file` doesn't break any sink
-that accepts only one of the two buffer-protocol shapes.
+This is mostly a regression test confirming that the `view[:n]` slices
+`_drain_muxer_to_file` writes (instead of `bytes(buf[:n])` copies) don't
+break any sink that accepts only one of the two buffer-protocol shapes.
 
 `io.BufferedWriter` (the real `open(path, "wb")` handle) accepts both
 `bytes` and `memoryview` transparently, so the production path is
@@ -58,7 +58,7 @@ class _BufferOnlyFile:
 
 
 def test_drain_uses_memoryview_slices() -> None:
-    """The post-F11 drain hands `memoryview` slices to `fh.write`, not
+    """The drain hands `memoryview` slices to `fh.write`, not
     freshly-allocated `bytes`. Verify directly by intercepting writes."""
     m = Muxer(_cfg())
     # Push enough video to force at least one drain chunk.
@@ -83,8 +83,8 @@ def test_drain_uses_memoryview_slices() -> None:
 
 
 def test_drain_chunk_size_is_seven_packets() -> None:
-    """F11 polish — _DRAIN_CHUNK_PACKETS bumped from 4 to 7 to align with
-    the 1316-byte SRT payload size. Locked here so a future change is
+    """_DRAIN_CHUNK_PACKETS is 7, aligned with the 1316-byte SRT payload
+    size. Locked here so a future change is
     a deliberate decision."""
     assert mpegts_mod._DRAIN_CHUNK_PACKETS == 7
     assert mpegts_mod._DRAIN_CHUNK_BYTES == 7 * 188

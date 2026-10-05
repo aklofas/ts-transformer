@@ -1,4 +1,4 @@
-"""Audit #3 — `extract_klv(parsed=True)` error mode matrix.
+"""`extract_klv(parsed=True)` error mode matrix.
 
 Splits the previously-overloaded `skip_unknown` kwarg into two distinct
 knobs:
@@ -13,7 +13,7 @@ two payload conditions: unknown UL and malformed-known UL.
 
 A mux+demux round-trip seeds the test files: the muxer's KLV pid
 preserves caller bytes verbatim (`push_klv` takes raw LS bytes per the
-CLAUDE.md AU-cell auto-wrap contract), so a hand-built malformed
+AU-cell auto-wrap contract), so a hand-built malformed
 payload survives unchanged through the file.
 """
 
@@ -159,7 +159,7 @@ def test_malformed_skipped_when_skip_malformed_true(malformed_ts: Path):
 
 def test_malformed_raises_even_with_skip_unknown_true(malformed_ts: Path):
     """`skip_unknown=True` (the default) MUST NOT mask malformed-known
-    payloads — that conflation was the audit's chief concern."""
+    payloads — conflating the two would hide decoder bugs and corruption."""
 
     with pytest.raises(KlvError):
         list(extract_klv(malformed_ts, parsed=True, skip_unknown=True))

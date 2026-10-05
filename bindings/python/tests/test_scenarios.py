@@ -1,4 +1,4 @@
-"""Python adapter for the cross-binding scenario harness (WS-5).
+"""Python adapter for the cross-binding scenario harness.
 
 For each scenario in ``crates/tst-integration/tests/fixtures/scenarios/
 scenarios.toml`` this test:
@@ -67,7 +67,7 @@ Lifecycle binding contracts
   contract with no Python equivalent (PyO3 has no raw opaque handle), so the
   Python adapter does a STRUCTURAL-only assertion (the committed golden
   parses with ``code:"INVALID_HANDLE"`` + ``contract:"forged_handle"``) and
-  defers the runtime teeth to the C adapter (Task 13) — mirroring how the
+  defers the runtime teeth to the C adapter — mirroring how the
   Rust adapter scoped the raw-pointer-deref portion.
 
 Unknown golden event tags
@@ -682,7 +682,7 @@ def _run_forged_handle(
     confirms the committed input artifact is the expected 4-byte LE forged value
     and emits the ``INVALID_HANDLE`` sentinel that the committed golden carries.
     The runtime teeth (a forged opaque pointer must not be dereferenced) are
-    deferred to the C adapter (Task 13) — mirroring exactly how the Rust adapter
+    deferred to the C adapter — mirroring exactly how the Rust adapter
     scoped the raw-pointer-deref portion as a C-adapter concern.
     """
     # The committed artifact is the forged handle value as 4 little-endian bytes
@@ -705,7 +705,7 @@ def _run_forged_handle(
 
 def _run_cancelled_recv_kind(scenario_id: str, rescue_frame: bytes) -> list[dict[str, Any]]:
     """One cancelled plain SRT receive; the observed kind name is the golden's
-    code (Arc 2 spec 3.3 / 6).
+    code.
 
     Listener-mode ``Receiver`` opened on a daemon thread (``from_url`` blocks in
     the one-shot accept), caller-mode ``Sender`` that never sends, the receive
@@ -788,7 +788,7 @@ def _run_binding_contract(
     Each contract exercises its nearest honest Python guarantee and emits the
     sentinel/umbrella code its committed golden carries.  See the per-runner
     docstrings for the exact mechanism and what (if anything) is deferred to the
-    C adapter (Task 13).
+    C adapter.
     """
     input_bytes = input_path.read_bytes()
 

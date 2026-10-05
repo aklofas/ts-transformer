@@ -180,13 +180,13 @@ def test_vmti_bytes_preserved():
 
 
 # ---------------------------------------------------------------------------
-# WP-A: new fields default to None + coded enum member sanity
+# New fields default to None + coded enum member sanity
 # ---------------------------------------------------------------------------
 
 
 def test_wpa_new_fields_default_to_none():
-    """A bare UasDatalinkLs() leaves every WP-A field unset, same as the
-    pre-existing fields (the synthetic fixtures predate WP-A and don't
+    """A bare UasDatalinkLs() leaves every extended field unset, same as the
+    base fields (the synthetic fixtures don't
     populate tags 34-135, so fixture-decode assertions for these fields
     would be vacuous — this checks the dataclass surface directly)."""
     rec = UasDatalinkLs()
@@ -246,12 +246,12 @@ def test_operational_mode_enum_members():
 
 
 # ---------------------------------------------------------------------------
-# WP-B: new fields default to None + coded enum member sanity
+# New fields default to None + coded enum member sanity
 # ---------------------------------------------------------------------------
 
 
 def test_wpb_new_fields_default_to_none():
-    """A bare UasDatalinkLs() leaves every WP-B field unset."""
+    """A bare UasDatalinkLs() leaves every IMAPB / var-length field unset."""
     rec = UasDatalinkLs()
     for name in (
         "target_width_extended_m",

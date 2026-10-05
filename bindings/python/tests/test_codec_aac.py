@@ -1,4 +1,4 @@
-"""Phase 5 Task 13: AAC codec surface tests.
+"""AAC codec surface tests.
 
 Fixtures are synthetic ADTS frames built from the ADTS bit-field spec
 (ISO/IEC 13818-7 §1.A), mirroring the ``build_frame`` helper in

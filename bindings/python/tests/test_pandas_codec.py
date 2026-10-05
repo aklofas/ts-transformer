@@ -1,4 +1,4 @@
-"""Phase 6: NAL / OBU / audio frame DataFrame adapter tests."""
+"""NAL / OBU / audio frame DataFrame adapter tests."""
 
 import pytest
 

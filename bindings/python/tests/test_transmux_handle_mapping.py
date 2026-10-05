@@ -1,4 +1,4 @@
-"""PY-02: _build_handles completeness guards in Transmuxer.
+"""_build_handles completeness guards in Transmuxer.
 
 Covers:
 - Normal transmux (no drop=) copies all streams: regression baseline.
@@ -120,7 +120,7 @@ def _collect_audio(path: Path) -> list[bytes]:
 
 def test_normal_transmux_copies_all_streams(tmp_path: Path) -> None:
     """Normal transmux with no drop= must map every stream and copy it
-    byte-faithfully.  This is the PY-02 regression baseline: if _build_handles
+    byte-faithfully.  This is the regression baseline: if _build_handles
     ever truncates via zip() the output stream count would drop silently."""
     src, dst = tmp_path / "src.ts", tmp_path / "out.ts"
     _write_video_audio_src(src)

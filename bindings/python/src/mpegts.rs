@@ -83,7 +83,7 @@ impl PyDemuxer {
     fn feed(&mut self, py: Python<'_>, bytes: &Bound<'_, PyAny>) -> PyResult<()> {
         // Fast path: real `bytes` extracts to a borrowed &[u8].
         //
-        // GIL-release rationale (audit #11): the `&[u8]` borrows from a
+        // GIL release: the `&[u8]` borrows from a
         // `Py<PyBytes>` whose strong reference is held by the calling
         // Python frame for the duration of this call. Python's GC cannot
         // collect a referenced object, so the slice remains valid without
@@ -760,7 +760,7 @@ fn convert_sample_event(
             Ok(cls.call((), Some(&kwargs))?.into())
         }
         SamplePayload::Unknown { stream_type, raw } => {
-            // Audit-2 #1: preserve raw bytes + stream_type instead of
+            // Preserve raw bytes + stream_type instead of
             // collapsing to a NonConformant diagnostic.
             let cls = de.getattr(intern!(py, "UnknownSample"))?;
             let kwargs = PyDict::new_bound(py);
@@ -951,7 +951,7 @@ fn non_conformant_kind_name(issue: &NonConformantIssue) -> &'static str {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn demux_error_to_pyerr(py: Python<'_>, e: &DemuxError) -> PyErr {
-    // A2's K3: the members are the Rust variant names since 0.7.0.
+    // The members are the Rust variant names.
     let kind = tst_pipeline::binding::kind::kind_of_demux(e).name();
     let msg = format!("{e}");
     make_kinded_error(py, "DemuxError", "DemuxErrorKind", kind, &msg)

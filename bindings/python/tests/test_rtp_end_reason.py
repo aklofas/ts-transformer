@@ -1,5 +1,5 @@
 """Tests for `end_reason()` / `end_detail()` + `StreamEndReason` on
-`tstrans.rtp.Receiver` / `DemuxReceiver` / `H264Receiver` (Task C5).
+`tstrans.rtp.Receiver` / `DemuxReceiver` / `H264Receiver`.
 
 Per the STANDING TEST RULE, these tests assert kinds/outcomes only — no
 wall-clock duration asserts.

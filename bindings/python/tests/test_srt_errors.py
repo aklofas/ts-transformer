@@ -1,4 +1,4 @@
-"""Wave A T4 — verify every `SrtErrorKind` variant is raisable from a
+"""Verify every `SrtErrorKind` variant is raisable from a
 real `tstrans.srt` code path.
 
 Each test triggers a real failure (bad URL, unreachable port, wrong
@@ -101,7 +101,7 @@ def test_closed_after_sender_explicit_close() -> None:
 # --------------------------------------------------------------------------- #
 # BROKEN / BACKPRESSURE / ACCEPT_FAILED / IO — covered via the test helper.  #
 # These variants need a live SRT session to trigger naturally — covered by    #
-# the T2 transport tests; here we use the helper as a second-line check on    #
+# the transport tests; here we use the helper as a second-line check on       #
 # the kind-string → exception-class wiring.                                   #
 # --------------------------------------------------------------------------- #
 

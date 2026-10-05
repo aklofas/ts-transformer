@@ -1,4 +1,4 @@
-"""Wave C Task 25 — end-to-end integration tests for `tstrans.rtp.*`.
+"""End-to-end integration tests for `tstrans.rtp.*`.
 
 These tests exercise the full Python surface as a real consumer would:
 
@@ -11,13 +11,13 @@ These tests exercise the full Python surface as a real consumer would:
 2. `test_full_pipeline_rtsp_server_to_rtsp_client`
    The full RTSP path — `RtspServer.add_unicast_mount(...)` →
    `RtspClient.connect(...)` → `session.into_demux_receiver()` (the
-   Wave B T23 bridge). A background producer thread pushes a video NAL
+   session → DemuxReceiver bridge). A background producer thread pushes a video NAL
    through the mount; the foreground consumer iterates the demux
    receiver and asserts a `Video` event arrives within a 5 s deadline.
    Closes the client + server cleanly via `__exit__`.
 
 Both tests construct the program shape inline (`_build_test_program`)
-to avoid coupling to the Wave A/B test fixtures.
+to avoid coupling to the other test modules' fixtures.
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ def _build_test_program():
     """Single H.264 video stream on PID 0x101 in program 1 (PMT PID
     0x100). Matches the shape used by `test_rtp_mux_sender.py` and
     `test_rtsp_server.py` so the integration tests stay aligned with
-    the Wave A/B suite."""
+    the rest of the suite."""
     return (
         MuxerProgramConfigBuilder(1, 0x100)
         .add_video(0x101, VideoCodec.H264)
@@ -141,13 +141,13 @@ def test_rtp_loopback_round_trip_mux_sender_to_demux_receiver() -> None:
 
 
 def test_full_pipeline_rtsp_server_to_rtsp_client() -> None:
-    """End-to-end exercise of the Wave A/B RTSP surface:
+    """End-to-end exercise of the RTSP surface:
 
     1. Start an `RtspServer` bound to `127.0.0.1:0` (kernel-picked port).
     2. Add a unicast mount with a single H.264 stream.
     3. Read the server's bound port via `local_addr()`.
     4. From the same process, `RtspClient.connect()` to the mount.
-    5. `session.into_demux_receiver()` — the T23 bridge.
+    5. `session.into_demux_receiver()` — the session → DemuxReceiver bridge.
     6. In a background thread, the mount keeps pushing IDR NALs.
     7. Foreground consumer iterates the demux receiver, asserts a
        `Video` event arrives within 5 s.
@@ -221,25 +221,25 @@ def test_full_pipeline_rtsp_server_to_rtsp_client() -> None:
 
         try:
             with RtspClient.connect(client_cfg) as session:
-                # The T23 bridge: consume the SETUP-time RtspSession
-                # into a Wave-B DemuxReceiver that reads from the RTP
+                # The bridge: consume the SETUP-time RtspSession
+                # into a DemuxReceiver that reads from the RTP
                 # socket pair (UDP) or the TCP-interleaved mpsc rx.
                 demux = session.into_demux_receiver()
 
                 # 0.7.0: the data plane is a consumable handle, so a
                 # second take is a closed-handle condition (`CLOSED`),
-                # not a protocol error. Pins the one RtspErrorKind
-                # member Arc 2 added.
+                # not a protocol error. Pins the `CLOSED` RtspErrorKind
+                # member.
                 from tstrans.exceptions import RtspError, RtspErrorKind
 
                 with pytest.raises(RtspError) as double_take:
                     session.into_demux_receiver()
                 assert double_take.value.kind == RtspErrorKind.CLOSED
 
-                # Review 9: the consumed check runs before the H.264
+                # The consumed check runs before the H.264
                 # wrong-constructor check, so taking the data plane the
                 # other way on a consumed MP2T session is CLOSED too
-                # (it was PROTOCOL).
+                # (not PROTOCOL).
                 with pytest.raises(RtspError) as other_take:
                     session.into_h264_receiver()
                 assert other_take.value.kind == RtspErrorKind.CLOSED

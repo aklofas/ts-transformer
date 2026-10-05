@@ -297,7 +297,7 @@ class OperationalMode(enum.Enum):
     TEST = 5
 
 # ---------------------------------------------------------------------------
-# ST 0601.19 WP-B coded enums (Items 125, 126)
+# ST 0601.19 coded enums (Items 125, 126)
 # ---------------------------------------------------------------------------
 
 class PlatformStatus(enum.Enum):
@@ -325,7 +325,7 @@ class SensorControlMode(enum.Enum):
     AUTO_TRACKING = 6
 
 # ---------------------------------------------------------------------------
-# ST 0601.19 WP-C pack & list items (Table C1)
+# ST 0601.19 pack & list items
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True, slots=True)

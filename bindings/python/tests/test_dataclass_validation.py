@@ -1,4 +1,4 @@
-"""Audit-2 #4 — fixed-width dataclasses must fail at construction time
+"""Fixed-width dataclasses must fail at construction time
 for primitive-shape violations, not later at PyO3/encoder boundary."""
 
 import pytest

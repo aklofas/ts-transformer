@@ -70,7 +70,7 @@ b = MuxerConfigBuilder()
 assert_type(b.buffer_packets(1024), MuxerConfigBuilder)
 assert_type(VideoCodec.H264, Literal[VideoCodec.H264])
 
-# W3 data-stream surface — builder add_data/stream_descriptors_for_data
+# Data-stream surface — builder add_data/stream_descriptors_for_data
 # chain, the push_data pair, the handle-accessor trio, and the
 # DataStreamHandle members (mirrors how the klv handles are smoked).
 pb = MuxerProgramConfigBuilder(1, 0x100)

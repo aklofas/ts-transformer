@@ -1,21 +1,18 @@
-"""Wave A Task 21 — loopback end-to-end test for RtspClient.
+"""Loopback end-to-end test for RtspClient.
 
 The tst-rtp test fixture `crates/tst-rtp/tests/fixtures/rtsp_loopback_server.rs`
 is gated under `#[cfg(test)]` and not reachable from a separate crate
-(tst-py is a separate crate, even within the same workspace). Wave A's
+(tst-py is a separate crate, even within the same workspace). This
 loopback test is therefore SKIPPED — the wire-level RtspClient.connect
 path is covered by tst-rtp's own integration tests in `crates/tst-rtp/
 tests/rtsp_client_setup_play.rs` and friends, which exercise the exact
-same `RtspClient` we wrap.
+same `RtspClient` we wrap, and by `test_rtp_integration.py`, which runs
+the Python `RtspServer` → `RtspClient` path end to end.
 
-T25 (Wave C integration) will either:
-- expose the fixture as `pub` behind a `test-fixtures` cargo feature
-  on tst-rtp, OR
-- spawn the fixture via a subprocess that links the test-built binary.
-
-For Wave A we keep this file as a documented `@pytest.mark.skip` so the
-test discovery surface stays stable — the file's existence anchors the
-follow-up.
+Running it would need the fixture exposed as `pub` behind a
+`test-fixtures` cargo feature on tst-rtp, or spawned via a subprocess
+that links the test-built binary. The file stays as a documented
+`@pytest.mark.skip` so the test discovery surface is stable.
 """
 
 import pytest
@@ -28,7 +25,7 @@ from tstrans.rtp import RtspClient, RtspClientConfig
     "tst-rtp's own integration tests already exercise the wire path"
 )
 def test_connect_to_unauth_loopback_then_teardown():
-    # Sketch (executes once T25 lands):
+    # Sketch (executes once the fixture is reachable):
     #
     # from tstrans._test_fixtures import rtsp_loopback  # NOT YET
     # with rtsp_loopback(port=0, auth=None) as (host, port):

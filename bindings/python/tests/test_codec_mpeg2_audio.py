@@ -1,4 +1,4 @@
-"""Phase 5 Task 14: MPEG-2 audio codec surface tests.
+"""MPEG-2 audio codec surface tests.
 
 Fixtures are synthetic MPEG audio frames built from the MPEG-1/2 header
 bit-field spec (ISO/IEC 11172-3 §2.4.2), mirroring the header constants

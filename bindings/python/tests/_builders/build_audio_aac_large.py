@@ -19,7 +19,7 @@ Generates two files:
     a background Python thread can increment a counter >50 times while
     Demuxer.next_event() is parsing audio frames. Parsing 4095 frames per PES
     event takes ~0.4 ms, long enough for the background thread to get CPU time
-    when the GIL is released (Task 3 fix). With one frame per PES (~0.001 ms
+    when the GIL is released. With one frame per PES (~0.001 ms
     per event), the demux loop completes too quickly for the test to be
     reliable.
 
@@ -29,8 +29,6 @@ frame literal is taken from test_codec_aac.py:
   FRAME_MPEG2_LC_44100_STEREO = fff95080021ffc000000000000000000
 
 No audio will play from this file; it is a structural fixture only.
-
-Audit-2 finding #9 — unblocks fixture-gated test skips.
 """
 
 from __future__ import annotations
@@ -137,7 +135,7 @@ def build_aac_large() -> bytes:
 
     Each PES holds 4095 ADTS frames (~65 KB). The demuxer emits 20 Audio
     events; the demux loop takes ~8–10ms total — enough for the background
-    thread to exceed 50 increments when the GIL is released (Task 3 fix).
+    thread to exceed 50 increments when the GIL is released.
 
     20 pushes (vs. 10) is chosen for headroom: on a lightly loaded machine
     parsing 10 events at ~0.4ms each touches 4ms, but scheduling variance

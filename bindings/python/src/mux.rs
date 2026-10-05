@@ -138,7 +138,7 @@ impl PyVideoStreamHandle {
     /// Reconstruct a `VideoStreamHandle` from a raw `u32`.
     ///
     /// Validates the canonical bit layout (low 8 bits only) and rejects
-    /// any forged value with high bits set — the audit caveat is that a
+    /// any forged value with high bits set — a
     /// forged `valid.raw() | 0x100` would otherwise mask down to the
     /// valid low byte and route the push to the wrong elementary stream.
     /// Raises `tstrans.exceptions.MuxError(INVALID_USAGE)` on rejection.
@@ -324,8 +324,7 @@ impl PyDataStreamHandle {
 // rendering uses the flat Python `SubtitleCodec` enum (variant tag
 // only) for the streams listing. Construction of mux-side subtitles
 // from Python uses the `SubtitleCodecConfig` dataclass family in
-// `tstrans.mpegts` and the `py_subtitle_codec` converter below
-// (closeout audit finding 3).
+// `tstrans.mpegts` and the `py_subtitle_codec` converter below.
 
 /// Translate a Python `VideoCodec` enum to the mux-side Rust variant.
 fn py_video_codec(v: &Bound<'_, PyAny>) -> PyResult<RustVideoCodec> {
@@ -682,8 +681,7 @@ impl PyMuxerProgramConfigBuilder {
     /// etc.) — see each class's docstring for the field ranges.
     ///
     /// Returns `self` for fluent chaining. Mirrors Rust
-    /// `MuxerProgramConfigBuilder::add_subtitle` (closeout audit
-    /// finding 3 — the previously-deferred construction surface).
+    /// `MuxerProgramConfigBuilder::add_subtitle`.
     pub fn add_subtitle<'py>(
         mut slf: PyRefMut<'py, Self>,
         pid: u16,
@@ -1181,7 +1179,7 @@ impl PyMuxer {
         // does not retain it. The GIL is held for the whole call, so
         // Python cannot mutate or resize the bytearray concurrently.
         //
-        // Audit #11 / GIL-release decision: `pull` is NOT wrapped in
+        // GIL release: `pull` is NOT wrapped in
         // `py.allow_threads` even though the rest of the `push_*`
         // family is. Rationale: `PyByteArray` is mutable + resizable
         // from any Python thread that holds a reference, so releasing
@@ -1226,7 +1224,7 @@ impl PyMuxer {
     /// an Annex-B start code; `MuxError(BACKPRESSURE)` if the queue
     /// would exceed `MuxerConfig.buffer_packets`.
     ///
-    /// `pts` is keyword-only — pass as `pts=...` (audit #9 normalization
+    /// `pts` is keyword-only — pass as `pts=...` (uniform
     /// across all `push_*` methods).
     #[pyo3(signature = (nal, *, pts, key_frame = false))]
     pub fn push_video(
@@ -1239,7 +1237,7 @@ impl PyMuxer {
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, nal)?;
         let nal_slice = coerced.as_bytes();
-        // GIL-release rationale (audit #11): `nal_slice` borrows from
+        // GIL release: `nal_slice` borrows from
         // `coerced`, a `Bound<'_, PyBytes>` held on the Rust stack for
         // the duration of this call. Python GC cannot collect it while
         // we hold a strong reference. `push_video` is pure computation
@@ -1266,7 +1264,7 @@ impl PyMuxer {
     /// `MuxError(INPUT_MALFORMED)` on a bad Annex-B payload, or
     /// `MuxError(BACKPRESSURE)` on a full queue.
     ///
-    /// `pts` is keyword-only — pass as `pts=...` (audit #9 normalization
+    /// `pts` is keyword-only — pass as `pts=...` (uniform
     /// across all `push_*` methods).
     #[pyo3(signature = (handle, nal, *, pts, key_frame = false))]
     pub fn push_video_to(
@@ -1280,7 +1278,7 @@ impl PyMuxer {
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, nal)?;
         let nal_slice = coerced.as_bytes();
-        // GIL-release rationale (audit #11): see `push_video`. `handle.0`
+        // GIL release: see `push_video`. `handle.0`
         // is a `Copy` u32 newtype; capturing it does not retain the
         // `PyRef`. `nal_slice` is GIL-safe per the `push_video` argument.
         let handle_inner = handle.0;
@@ -1336,7 +1334,7 @@ impl PyMuxer {
         };
         let coerced = crate::util::coerce_bytes_like(py, nal)?;
         let nal_slice = coerced.as_bytes();
-        // GIL-release rationale (audit #11): see `push_video`. `handle.0`
+        // GIL release: see `push_video`. `handle.0`
         // copied out before release; `nal_slice` is GIL-safe.
         let handle_inner = handle.0;
         let res = py.allow_threads(|| match rust_dts {
@@ -1418,7 +1416,7 @@ impl PyMuxer {
     /// it skips that method's Annex-B start-code validation (the input is
     /// trusted and emitted verbatim, so the error behavior differs). Use
     /// this in transmux loops to avoid the binding-mode double-wrap that
-    /// would produce an empty AU (AV1-01).
+    /// would produce an empty AU.
     ///
     /// `dts=None` (default) emits a PTS-only PES header; supply `dts`
     /// for reordered streams that carry a genuine decode timestamp.
@@ -1463,13 +1461,12 @@ impl PyMuxer {
     // push_audio + push_klv + push_subtitle (single + handle).
     // -----------------------------------------------------------------
     //
-    // Audit #9 (2026-05-24) normalized the Python `push_*` surface:
+    // The Python `push_*` surface is uniform:
     // `pts` (and `dts` where applicable) is keyword-only on every
     // method, and `push_audio_to` takes `frames` positionally BEFORE
     // its kw-only `pts` so the `_to` variant mirrors the single-stream
-    // variant's `(frames, *, pts)` shape rather than Rust's internally
-    // inconsistent `(handle, pts, frames)`. The Rust API is unchanged;
-    // the inconsistency was in the Python surface only.
+    // variant's `(frames, *, pts)` shape rather than Rust's
+    // `(handle, pts, frames)`.
 
     /// Push one encoded audio frame (codec-native framing — ADTS for
     /// AAC, raw frame for MP2 / AC-3 / AAC-LATM) onto the lone
@@ -1484,7 +1481,7 @@ impl PyMuxer {
     /// for the configured codec; `MuxError(BACKPRESSURE)` on a full
     /// queue.
     ///
-    /// `pts` is keyword-only — pass as `pts=...` (audit #9 normalization
+    /// `pts` is keyword-only — pass as `pts=...` (uniform
     /// across all `push_*` methods).
     #[pyo3(signature = (frames, *, pts))]
     pub fn push_audio(
@@ -1496,7 +1493,7 @@ impl PyMuxer {
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, frames)?;
         let frames_slice = coerced.as_bytes();
-        // GIL-release rationale (audit #11): see `push_video` — `frames_slice`
+        // GIL release: see `push_video` — `frames_slice`
         // borrows from `coerced`, a `Bound<'_, PyBytes>` on the Rust stack.
         let res = py.allow_threads(|| self.inner.push_audio(frames_slice, rust_pts));
         res.map_err(|e| crate::errors::mux_error_to_pyerr(py, e))
@@ -1510,7 +1507,7 @@ impl PyMuxer {
     /// shape) and `pts` is keyword-only. This intentionally diverges
     /// from the lower-level Rust `(handle, pts, frames)` order; the
     /// Python surface normalizes to a consistent `(target?, payload, *,
-    /// pts)` shape across all `push_*` methods (audit #9).
+    /// pts)` shape across all `push_*` methods.
     ///
     /// Raises `MuxError(INVALID_USAGE)` on an out-of-range handle,
     /// `MuxError(INPUT_MALFORMED)` on a codec parse failure, or
@@ -1526,7 +1523,7 @@ impl PyMuxer {
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, frames)?;
         let frames_slice = coerced.as_bytes();
-        // GIL-release rationale (audit #11): see `push_video`.
+        // GIL release: see `push_video`.
         let handle_inner = handle.0;
         let res = py.allow_threads(|| {
             self.inner
@@ -1553,7 +1550,7 @@ impl PyMuxer {
     /// Raises `MuxError(INPUT_MALFORMED)` if `klv` is too large for a
     /// single PES; `MuxError(BACKPRESSURE)` on a full queue.
     ///
-    /// `pts` is keyword-only — pass as `pts=...` (audit #9 normalization
+    /// `pts` is keyword-only — pass as `pts=...` (uniform
     /// across all `push_*` methods).
     #[pyo3(signature = (klv, *, pts, metadata_service_id = 0))]
     pub fn push_klv(
@@ -1566,7 +1563,7 @@ impl PyMuxer {
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, klv)?;
         let klv_slice = coerced.as_bytes();
-        // GIL-release rationale (audit #11): see `push_video` — `klv_slice`
+        // GIL release: see `push_video` — `klv_slice`
         // borrows from `coerced`, a `Bound<'_, PyBytes>` on the Rust stack.
         let res = py.allow_threads(|| {
             self.inner
@@ -1586,7 +1583,7 @@ impl PyMuxer {
     /// `MuxError(INPUT_MALFORMED)` on oversized payload, or
     /// `MuxError(BACKPRESSURE)` on a full queue.
     ///
-    /// `pts` is keyword-only — pass as `pts=...` (audit #9 normalization
+    /// `pts` is keyword-only — pass as `pts=...` (uniform
     /// across all `push_*` methods).
     #[pyo3(signature = (handle, klv, *, pts, metadata_service_id = 0))]
     pub fn push_klv_to(
@@ -1600,7 +1597,7 @@ impl PyMuxer {
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, klv)?;
         let klv_slice = coerced.as_bytes();
-        // GIL-release rationale (audit #11): see `push_video`.
+        // GIL release: see `push_video`.
         let handle_inner = handle.0;
         let res = py.allow_threads(|| {
             self.inner
@@ -1612,10 +1609,10 @@ impl PyMuxer {
     /// Push one subtitle payload onto the lone configured subtitle
     /// stream. Python-normalized argument order: `(payload, *, pts)` —
     /// the underlying Rust API is `push_subtitle(pts, payload)`, but
-    /// audit #9 normalized all Python `push_*` methods to a uniform
+    /// every Python `push_*` method takes a uniform
     /// `(payload, *, pts)` shape.
     ///
-    /// `pts` is keyword-only — pass as `pts=...` (audit #9 normalization
+    /// `pts` is keyword-only — pass as `pts=...` (uniform
     /// across all `push_*` methods).
     ///
     /// Construct a configured subtitle stream via
@@ -1638,7 +1635,7 @@ impl PyMuxer {
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, payload)?;
         let payload_slice = coerced.as_bytes();
-        // GIL-release rationale (audit #11): see `push_video` — `payload_slice`
+        // GIL release: see `push_video` — `payload_slice`
         // borrows from `coerced`, a `Bound<'_, PyBytes>` on the Rust stack.
         let res = py.allow_threads(|| self.inner.push_subtitle(rust_pts, payload_slice));
         res.map_err(|e| crate::errors::mux_error_to_pyerr(py, e))
@@ -1666,7 +1663,7 @@ impl PyMuxer {
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, payload)?;
         let payload_slice = coerced.as_bytes();
-        // GIL-release rationale (audit #11): see `push_video`.
+        // GIL release: see `push_video`.
         let handle_inner = handle.0;
         let res = py.allow_threads(|| {
             self.inner
@@ -1699,8 +1696,8 @@ impl PyMuxer {
     /// PES_packet_length ceiling (65532 bytes without PTS, 65527
     /// with); `MuxError(BACKPRESSURE)` on a full queue.
     ///
-    /// `pts` is keyword-only — pass as `pts=...` (audit #9
-    /// normalization across all `push_*` methods).
+    /// `pts` is keyword-only — pass as `pts=...` (uniform
+    /// across all `push_*` methods).
     #[pyo3(signature = (data, *, pts))]
     pub fn push_data(
         &mut self,
@@ -1711,7 +1708,7 @@ impl PyMuxer {
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, data)?;
         let data_slice = coerced.as_bytes();
-        // GIL-release rationale (audit #11): see `push_video` — `data_slice`
+        // GIL release: see `push_video` — `data_slice`
         // borrows from `coerced`, a `Bound<'_, PyBytes>` on the Rust stack.
         let res = py.allow_threads(|| self.inner.push_data(data_slice, rust_pts));
         res.map_err(|e| crate::errors::mux_error_to_pyerr(py, e))
@@ -1730,8 +1727,8 @@ impl PyMuxer {
     /// `MuxError(INPUT_MALFORMED)` on oversized payload, or
     /// `MuxError(BACKPRESSURE)` on a full queue.
     ///
-    /// `pts` is keyword-only — pass as `pts=...` (audit #9
-    /// normalization across all `push_*` methods).
+    /// `pts` is keyword-only — pass as `pts=...` (uniform
+    /// across all `push_*` methods).
     #[pyo3(signature = (handle, data, *, pts))]
     pub fn push_data_to(
         &mut self,
@@ -1743,7 +1740,7 @@ impl PyMuxer {
         let rust_pts = py_pts90khz(pts)?;
         let coerced = crate::util::coerce_bytes_like(py, data)?;
         let data_slice = coerced.as_bytes();
-        // GIL-release rationale (audit #11): see `push_video`.
+        // GIL release: see `push_video`.
         let handle_inner = handle.0;
         let res = py.allow_threads(|| self.inner.push_data_to(handle_inner, data_slice, rust_pts));
         res.map_err(|e| crate::errors::mux_error_to_pyerr(py, e))

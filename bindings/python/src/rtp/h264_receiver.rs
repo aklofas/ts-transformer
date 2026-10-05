@@ -11,8 +11,8 @@
 //!
 //! # GIL release discipline
 //!
-//! `recv_au` releases the GIL via `py.allow_threads(|| ...)` (the DA-PY-1
-//! lesson): the blocking Rust call parks the calling thread on a kernel
+//! `recv_au` releases the GIL via `py.allow_threads(|| ...)`: the blocking
+//! Rust call parks the calling thread on a kernel
 //! read timeout and must not hold the GIL, or all other Python threads
 //! freeze.  All other methods are fast (stat reads, flag flips) and do
 //! not release the GIL.
@@ -397,7 +397,7 @@ impl PyRtpStats {
 /// subsequent `recv_au()` calls raise `RtpError(CLOSED)`. Idempotent.
 #[pyclass(name = "H264Receiver", module = "tstrans.rtp")]
 pub struct PyH264Receiver {
-    /// The binding layer's handle state machine (Arc 2). The snapshot is
+    /// The binding layer's handle state machine. The snapshot is
     /// `H264Receiver::local_addr()` read once at construction (fixed for
     /// the receiver's lifetime), so `local_addr()` never waits behind a
     /// parked `recv_au` — the thread asking for the address is usually the

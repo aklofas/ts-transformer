@@ -1,4 +1,4 @@
-"""Tests for `tstrans.srt.ManagedSender` / `ManagedReceiver` (Wave C T7).
+"""Tests for `tstrans.srt.ManagedSender` / `ManagedReceiver`.
 
 Auto-reconnect ergonomics on top of `tst_pipeline::ManagedTransport
 <SrtTransport>` (send side) and `ManagedRecvTransport<SrtTransport>`
@@ -88,7 +88,7 @@ def test_module_re_exports() -> None:
 def test_managed_sender_round_trip_via_loopback() -> None:
     """A `ManagedSender` to a live listener should send bytes that the
     paired `ManagedReceiver` reads back. Verifies the wrap doesn't add
-    behavioral drift over T2's `Sender`."""
+    behavioral drift over the plain `Sender`."""
     port = _free_tcp_port()
     sender, receiver = _make_managed_pair(port)
     try:
@@ -98,7 +98,7 @@ def test_managed_sender_round_trip_via_loopback() -> None:
         for _ in range(7):
             sender.send_bytes(payload)
         # Receive at least the first packet — opportunistic drain
-        # quantum from T2's recv_bytes semantics.
+        # quantum from the plain Receiver's recv_bytes semantics.
         received = receiver.recv_bytes(max_len=1500)
         assert len(received) >= 188
         assert len(received) % 188 == 0
@@ -141,7 +141,7 @@ def test_managed_receiver_round_trip_via_loopback() -> None:
 
 def test_managed_sender_accepts_reconnect_policy() -> None:
     """`ManagedSender.from_url(url, policy=ReconnectPolicy(...))` must
-    accept the T6 PyClass directly. The initial connect doesn't trigger
+    accept the ReconnectPolicy PyClass directly. The initial connect doesn't trigger
     any reconnect, so the underlying counter isn't exposed on the
     sender (drift documented in module rustdoc)."""
     port = _free_tcp_port()
@@ -179,7 +179,7 @@ def test_managed_sender_accepts_reconnect_policy() -> None:
 
 
 def test_managed_sender_default_policy() -> None:
-    """Omitting `policy=` falls back to `ReconnectPolicy()` (T6
+    """Omitting `policy=` falls back to `ReconnectPolicy()` (the
     defaults). Verifies the kwarg is optional, not required."""
     port = _free_tcp_port()
     listener_url = f"srt://:{port}?mode=listener"

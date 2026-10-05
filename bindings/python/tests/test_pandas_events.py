@@ -1,21 +1,15 @@
-"""Phase 6: DemuxEvent DataFrame adapter tests.
+"""DemuxEvent DataFrame adapter tests.
 
 Tests `tstrans.pandas.events_to_dataframe` — the union-schema dispatcher
 across all DemuxEvent kinds. Fixture availability drives skips for the
 real-stream paths; an unconditional hand-built path covers the empty and
 NonConformantEvent cases.
 
-Plan-vs-Rust drift notes (from Task 5 pre-flight):
-  - Plan referenced `_KlvMetadataEvent` / `_NonConformantIssueEvent` /
-    `_PatEvent` — actual classes are `_MetadataEvent` / `_NonConformantEvent`,
-    and there is no separate `_PatEvent` (PAT data lives on
-    `_ProgramMapEvent.programs`). The adapter `kind_map` reflects the real
-    names.
-  - Plan-cited fixtures `h264_aac_klv_sample.ts` and
-    `codec/h264/baseline_30fps.ts` do not exist. Tests use
-    `audio/aac-adts.ts` (Video + Audio + ProgramMap) and
-    `subtitles/subtitle_with_klv_same_program.ts` (Subtitle + KLV +
-    ProgramMap) instead.
+There is no separate `_PatEvent`: PAT data lives on
+`_ProgramMapEvent.programs`. Tests use
+`audio/aac-adts.ts` (Video + Audio + ProgramMap) and
+`subtitles/subtitle_with_klv_same_program.ts` (Subtitle + KLV +
+ProgramMap).
 """
 
 import pathlib
@@ -199,7 +193,7 @@ def test_events_to_dataframe_discontinuity_has_kind_only():
 
 
 def test_events_to_dataframe_unknown_sample_row_shape():
-    """Audit-2 #1 — UnknownSample rows must carry kind='unknown_sample',
+    """UnknownSample rows must carry kind='unknown_sample',
     pid, raw stream_type int, and payload_len."""
     sid = StreamId(
         pid=0x101,

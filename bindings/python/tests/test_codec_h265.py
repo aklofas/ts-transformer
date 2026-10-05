@@ -1,4 +1,4 @@
-"""Phase 5 Task 10: H.265 codec surface tests.
+"""H.265 codec surface tests.
 
 Fixture bytes are the same RBSP payloads used by tst-core's Rust H.265
 parameter-set tests — extracted from the on-disk binaries at

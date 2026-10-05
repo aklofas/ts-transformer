@@ -122,7 +122,7 @@ def test_srt_sender_close_from_other_thread_during_send() -> None:
         # race, not a guarantee `send_bytes()` makes — a plain srt.Sender
         # with an idle peer never parks, so on a loaded CI runner the
         # worker can legitimately see `stop` first and exit clean, leaving
-        # `outcome` empty (PR #232 run 35182377345). `close()` above
+        # `outcome` empty. `close()` above
         # already returned, which deterministically guarantees the slot is
         # empty; call `send_bytes()` directly to prove a post-close send is
         # rejected without depending on the worker's own timing (the same
@@ -212,8 +212,9 @@ def test_srt_mux_sender_close_from_other_thread_during_send_video() -> None:
 
 
 def test_srt_mux_sender_cancel_handle_wakes_send_from_other_thread() -> None:
-    """`MuxSender.cancel_handle()` did not exist: the primary SRT sending
-    object had no cross-thread interrupt path at all (CORR-02)."""
+    """`MuxSender.cancel_handle()` wakes a send parked on another thread;
+    without it the primary SRT sending object has no cross-thread interrupt
+    path at all."""
     from tstrans.exceptions import SrtError, SrtErrorKind
     from tstrans.mpegts import Pts90khz
     from tstrans.srt import CancelHandle
@@ -855,8 +856,8 @@ def test_udp_transport_close_from_other_thread_during_send() -> None:
         # before noticing `stop` is a scheduling race, not a guarantee —
         # a UDP `send()` never parks, so there is even less reason to
         # expect the worker to land another send before `stop` becomes
-        # visible to it. (`udp.Transport` DOES have a cancel handle since
-        # Arc 2 WP-D — it just has nothing to unblock on the send side.) `close()`
+        # visible to it. (`udp.Transport` DOES have a cancel handle — it just
+        # has nothing to unblock on the send side.) `close()`
         # already returned, so the slot is deterministically empty; call
         # `send()` directly to prove a post-close send is rejected without
         # depending on the worker's own timing.
@@ -1118,7 +1119,7 @@ def _assert_getter_does_not_wait_behind_park(
 
 
 # --------------------------------------------------------------------------- #
-# udp / rist cancel handles (Arc 2 WP-D) — cancel from a side thread, the      #
+# udp / rist cancel handles — cancel from a side thread, the                  #
 # object is NOT closed, the parked call ends CLOSED, a later close() is quiet  #
 # --------------------------------------------------------------------------- #
 

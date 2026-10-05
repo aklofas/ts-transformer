@@ -1,4 +1,4 @@
-"""Tests for `tstrans.rtp.H264Receiver` and `RtspClient.connect_h264` (Task 14).
+"""Tests for `tstrans.rtp.H264Receiver` and `RtspClient.connect_h264`.
 
 Exercises the RFC 6184 H.264 receiver Python surface:
 

@@ -1,13 +1,13 @@
 //! Rust-side helpers that construct the Python exception classes
 //! defined in `tstrans.exceptions`, for the OFFLINE domains only — mux,
 //! demux, KLV and the three `srt.Socket` lowlevel sites. Every transport
-//! and shell error goes through `crate::raise` instead (Arc 2 WP-B2),
+//! and shell error goes through `crate::raise` instead,
 //! which resolves `BindingErrorKind::name()` on the domain's kind enum.
 //!
 //! The attribute-carrying mappers below (`mux_error_to_pyerr`,
 //! `demux_error_to_pyerr`, `klv_decode_error_to_pyerr`,
 //! `klv_encode_error_to_pyerr`, `codec_parse_error_to_pyerr`) take their
-//! member from the A2 classifiers (`kind_of_mux`, `kind_of_demux`, …) and
+//! member from the classifiers (`kind_of_mux`, `kind_of_demux`, …) and
 //! add the per-variant attributes the Python classes expose.
 //!
 //! Implementation note: we deliberately do NOT use PyO3's
@@ -86,13 +86,11 @@ pub(crate) fn make_kinded_error(
     }
 }
 
-// The per-prefix `make_<name>_error` wrappers were deleted in 0.7.0 with
-// the Python error-mapping ratchet that counted their literal call sites
-// (Arc 2 WP-B2): the kind vocabulary is now proven Rust-side by
-// scripts/check/rust/kind-table-coverage.sh and binding-side by
-// `crate::raise::check_error_kinds` at `import tstrans`, so there is
-// nothing left for a per-kind call-site census to check. The handful of
-// remaining callers name the class and the enum at the call site.
+// There are no per-kind `make_<name>_error` wrappers: the kind vocabulary
+// is proven Rust-side by scripts/check/rust/kind-table-coverage.sh and
+// binding-side by `crate::raise::check_error_kinds` at `import tstrans`.
+// The handful of remaining callers name the class and the enum at the call
+// site.
 
 /// Test-only: raise `member` (a `BindingErrorKind::name()` string) through
 /// the real raise path, so the pytest kind-wiring suites exercise `raise.rs`
@@ -191,7 +189,7 @@ pub fn raise_rist_error_for_test(py: Python<'_>, kind: &str, message: &str) -> P
 
 /// Map a Rust `MuxError` to a Python `MuxError` instance. Routes
 /// via the 5-variant `MuxErrorKind` coarse classification —
-/// the muxer's `kind()` accessor (plan #91) is the source of truth
+/// the muxer's `kind()` accessor is the source of truth
 /// for which Python `MuxErrorKind` variant to use.
 ///
 /// The `MuxErrorKind` enum is `#[non_exhaustive]`; the wildcard
@@ -202,9 +200,9 @@ pub fn raise_rist_error_for_test(py: Python<'_>, kind: &str, message: &str) -> P
 /// Called from Muxer wrappers.
 #[allow(dead_code)]
 pub(crate) fn mux_error_to_pyerr(py: Python<'_>, e: tst_core::MuxError) -> PyErr {
-    // A2's K4 ruling: `INVALID_NAL` / `KLV_TOO_LARGE` / `INVALID_AV1_OBU` /
-    // `MISP_TIME` are precise kinds since 0.7.0 — the five coarse buckets of
-    // `MuxErrorKind` no longer flatten them.
+    // `INVALID_NAL` / `KLV_TOO_LARGE` / `INVALID_AV1_OBU` / `MISP_TIME` are
+    // precise kinds — the five coarse buckets of `MuxErrorKind` do not
+    // flatten them.
     let kind_str = tst_pipeline::binding::kind::kind_of_mux(&e).name();
     // BufferFull gets a Python-only breadcrumb: the most common way to
     // hit it is pushing on the original Muxer inside an active
@@ -255,11 +253,10 @@ pub(crate) fn codec_parse_error_to_pyerr(
         Ok(c) => c,
         Err(e) => return e,
     };
-    // The KIND comes from A2's one table (`kind_of_codec`); this match only
+    // The KIND comes from the one kind table (`kind_of_codec`); this match only
     // harvests the per-variant ATTRIBUTES the `CodecError` class carries.
-    // `BufferTooSmall` gained its own `BUFFER_TOO_SMALL` member in 0.7.0
-    // (it folded into `ENGINE_ERROR` before) and now carries `needed` /
-    // `have` — still unreachable from Python, since the write-into-a-caller
+    // `BufferTooSmall` has its own `BUFFER_TOO_SMALL` member and carries
+    // `needed` / `have` — unreachable from Python, since the write-into-a-caller
     // -buffer entry points have no binding.
     let kind_name = tst_pipeline::binding::kind::kind_of_codec(err).name();
     let extra_attrs: Vec<(&str, PyObject)> = match err {
@@ -360,11 +357,11 @@ pub(crate) fn codec_parse_error_to_pyerr(
 #[allow(dead_code)]
 pub(crate) fn klv_encode_error_to_pyerr(py: Python<'_>, e: tst_core::KlvEncodeError) -> PyErr {
     use tst_core::error::KlvEncodeError as RustE;
-    // `tag` is `Option<u64>` so the VTarget Pack `target_id` (a u64 since
-    // REF-KLV-04) reaches `.tag` losslessly; the KLV-tag-number variants
+    // `tag` is `Option<u64>` so the VTarget Pack `target_id` (a u64)
+    // reaches `.tag` losslessly; the KLV-tag-number variants
     // widen their u16/u32 tag values to u64 (lossless). PyO3 maps `u64` →
     // Python `int` (unbounded), matching the `.tag: Optional[int]` stub.
-    // The KIND comes from A2's one table; this match only harvests `.tag`
+    // The KIND comes from the one kind table; this match only harvests `.tag`
     // (a KLV tag for most variants, a VTarget Pack `target_id` for two).
     let kind_str = tst_pipeline::binding::kind::kind_of_klv_encode(&e).name();
     let tag: Option<u64> = match &e {

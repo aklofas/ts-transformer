@@ -2,7 +2,7 @@
 //!
 //! Auto-reconnect ergonomics on top of `tst_pipeline::ManagedTransport
 //! <SrtTransport>` (send side) and `ManagedRecvTransport<SrtTransport>`
-//! (receive side). Consumes T6's `ReconnectPolicy` PyClass directly via
+//! (receive side). Consumes the `ReconnectPolicy` PyClass directly via
 //! its `pub(crate) inner: RustPolicy` field, so no re-translation is
 //! needed at the boundary.
 //!
@@ -28,7 +28,7 @@
 //! - The two `new(...)` signatures differ: `ManagedTransport::new` takes
 //!   a `Fn() -> Result<T, TransportError> + Send + Sync + 'static`;
 //!   `ManagedRecvTransport::new` takes a boxed `FnMut() -> ... + Send`.
-//!   Both factory closures re-execute the T2 URL-parse + connect /
+//!   Both factory closures re-execute the URL-parse + connect /
 //!   bind+accept pattern.
 //!
 //! - Factory closure errors must map into `TransportError`, NOT
@@ -40,13 +40,12 @@
 //! Concurrency: both wrappers hold their pipeline shell in a
 //! `tst_pipeline::binding::Owned`, which takes the slot only inside
 //! `with_mut` / `with_ref` (GIL released) and makes `close()` cancel-first
-//! — the cross-thread close contract of PR #209, which a `&mut self`
-//! send/recv could not meet (PyO3 raised `RuntimeError: Already borrowed`
-//! on the closer).
+//! — the cross-thread close contract, which a `&mut self`
+//! send/recv could not meet (PyO3 would raise `RuntimeError: Already
+//! borrowed` on the closer).
 //!
 //! The open, the reconnect factory and the handle snapshots all live in
-//! `tst_srt::shells` since Arc 2 (the binding used to carry its own copy
-//! of each).
+//! `tst_srt::shells`.
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
@@ -93,7 +92,7 @@ pub(crate) struct PyManagedSender {
     /// construction. `ManagedTransport::cancel_handle` always returns
     /// `Some(...)` (it wraps both the latched-close flag and the
     /// current inner transport's cancel handle).
-    /// Shared cancel state (Arc 2 WP-B2): the same `Arc` every
+    /// Shared cancel state: the same `Arc` every
     /// `CancelHandle` this shell hands out holds, so `close()` here and
     /// `cancel()` through any handle flip one observable flag.
     cancel: Arc<CancelSource>,
@@ -111,7 +110,7 @@ impl PyManagedSender {
     /// Performs the initial connect under `py.allow_threads`. On any
     /// subsequent transport break, `send_bytes` triggers an in-line
     /// reconnect under the policy. Default `policy = ReconnectPolicy()`
-    /// applies T6's defaults (10 attempts, 100ms..=10s exponential
+    /// applies the policy defaults (10 attempts, 100ms..=10s exponential
     /// backoff, 256-message gap buffer with DROP_OLDEST).
     #[staticmethod]
     #[pyo3(signature = (url, *, policy=None))]
@@ -134,8 +133,8 @@ impl PyManagedSender {
             ));
         }
         let policy_inner = policy.map(|p| p.inner.clone()).unwrap_or_default();
-        // A3 owns the open + the reconnect factory + the handle snapshots
-        // (the binding used to carry its own copy of each). The managed
+        // `tst_srt::shells` owns the open + the reconnect factory + the
+        // handle snapshots. The managed
         // family dials with `connect()` — the sender preset — matching the
         // C ABI.
         let (inner, handles, stats_handle) = py
@@ -318,7 +317,7 @@ pub(crate) struct PyManagedReceiver {
     /// Held independently of the wrapper's lifetime so callers can
     /// read it even mid-reconnect.
     reconnects: Arc<std::sync::atomic::AtomicU64>,
-    /// Shared cancel state (Arc 2 WP-B2): the same `Arc` every
+    /// Shared cancel state: the same `Arc` every
     /// `CancelHandle` this shell hands out holds, so `close()` here and
     /// `cancel()` through any handle flip one observable flag.
     cancel: Arc<CancelSource>,
@@ -357,11 +356,11 @@ impl PyManagedReceiver {
             ));
         }
         let policy_inner = policy.map(|p| p.inner.clone()).unwrap_or_default();
-        // A3 owns the bind+accept, the re-accept factory, the
+        // `tst_srt::shells` owns the bind+accept, the re-accept factory, the
         // `FactoryCancel` slot that wakes a parked re-accept, and the
         // handle snapshots. The INITIAL accept is still uncancellable in
         // practice: the handle that could fire it does not exist until
-        // this constructor returns (DEBT-16, documented in python.md).
+        // this constructor returns (documented in python.md).
         let (inner, handles) = py
             .allow_threads(|| tst_srt::shells::managed_receiver_from_url(&parsed, policy_inner))
             .map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
@@ -376,7 +375,7 @@ impl PyManagedReceiver {
 
     /// Receive bytes from the underlying transport. Blocks until the
     /// first 188-byte TS packet arrives, then returns it (same
-    /// one-quantum semantic as T2's `Receiver.recv_bytes`).
+    /// one-quantum semantic as `Receiver.recv_bytes`).
     ///
     /// Releases the GIL during the blocking recv AND during any
     /// in-line reconnect work (factory + backoff sleep). The slot is

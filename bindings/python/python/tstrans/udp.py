@@ -1,4 +1,4 @@
-"""tstrans.udp — raw UDP transport bindings (Plan A5b Wave A).
+"""tstrans.udp — raw UDP transport bindings.
 
 Available when tstrans was built with the `udp` cargo feature (default-on
 in published wheels). Raises `ImportError` on a source build without

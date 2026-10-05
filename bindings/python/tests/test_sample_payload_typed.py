@@ -36,7 +36,7 @@ _FIXTURE_BASE = (
 _AAC_ADTS_FIXTURE = _FIXTURE_BASE / "audio" / "aac-adts.ts"
 _MP2_FIXTURE = _FIXTURE_BASE / "audio" / "mp2.ts"
 
-# Phase 1 skip-closure (2026-05-25): all four audio fixtures are checked into
+# All four audio fixtures are checked into
 # crates/tst-core/tests/fixtures/audio/. A missing file is a packaging bug,
 # not a runtime skip condition.
 for _fx in (_AAC_ADTS_FIXTURE, _MP2_FIXTURE):

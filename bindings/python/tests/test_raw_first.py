@@ -1,6 +1,6 @@
-"""Tests for codec.split_units and codec.parse_audio opt-in parsers (Task 4.1)
-plus the DemuxEvent.Video/.Audio raw-first surface (Task 4.2)
-plus Task 5.3 end-to-end transmux acceptance test."""
+"""Tests for codec.split_units and codec.parse_audio opt-in parsers
+plus the DemuxEvent.Video/.Audio raw-first surface
+plus an end-to-end transmux acceptance test."""
 
 import dataclasses
 import tempfile
@@ -78,7 +78,7 @@ def test_parse_audio_aac_strict_raises_on_malformed():
 
 
 # ---------------------------------------------------------------------------
-# Task 4.2 — DemuxEvent.Video/.Audio raw-first surface
+# DemuxEvent.Video/.Audio raw-first surface
 # ---------------------------------------------------------------------------
 
 # Real audio fixtures live under the tst-core fixtures tree (same accessor
@@ -133,9 +133,9 @@ def test_audio_event_exposes_raw():
 
 
 # ---------------------------------------------------------------------------
-# WP-E E1 (PY-01) — lazy native `.raw` materialization for Video / Audio
+# Lazy native `.raw` materialization for Video / Audio
 #
-# The demuxer no longer eagerly copies each media payload into a PyBytes; the
+# The demuxer does not eagerly copy each media payload into a PyBytes; the
 # `.raw` Python `bytes` is materialized on first access (pay-per-access) and
 # cached, while value-equality + hashability are preserved over the content.
 # ---------------------------------------------------------------------------
@@ -234,7 +234,7 @@ def test_audio_event_value_equality_and_hash_over_raw_content():
 
 
 # ---------------------------------------------------------------------------
-# Task 4.3 — push_video_* accept dts=None (PTS-only PES, == push_video_to)
+# push_video_* accept dts=None (PTS-only PES, == push_video_to)
 # ---------------------------------------------------------------------------
 
 def _drain(mux) -> bytes:
@@ -295,7 +295,7 @@ def test_push_video_dts_none_equals_push_video_to():
 
 
 # ---------------------------------------------------------------------------
-# Task 5.3 — end-to-end transmux acceptance test
+# End-to-end transmux acceptance test
 #
 # Motivating workflow: demux SRC → for each KLV event, edit one metadata
 # field and re-emit; for each video event, forward the raw AU bytes
@@ -487,12 +487,12 @@ def test_transmux_edit_klv_copy_video_byte_faithful():
 
 
 # ---------------------------------------------------------------------------
-# DA-PERF-13 — lazy RawBytes for Subtitle / UnknownSample demux events
+# Lazy RawBytes for Subtitle / UnknownSample demux events
 #
 # `SamplePayload::Subtitle.payload` and `SamplePayload::Unknown.raw` are
 # `SharedBytes` in tst-core, so the Rust side passes a cheap Arc clone to a
 # `RawBytes` holder. The Python `bytes` is materialized only on first
-# `.payload` access. This mirrors the Video / Audio lazy pattern (WP-E).
+# `.payload` access. This mirrors the Video / Audio lazy pattern.
 #
 # Metadata is NOT lazy: `DemuxEvent::Metadata.payload` is `Vec<u8>` in
 # tst-core and `convert_event` takes `&DemuxEvent`, so no SharedBytes source

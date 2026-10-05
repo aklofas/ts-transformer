@@ -110,7 +110,7 @@ def test_malformed_record_raises(tmp_path):
 def test_short_payload_raises_instead_of_silent_skip(tmp_path):
     # A payload too short to carry a 16-byte UL is corruption, not an
     # identifiable "different set" — it must raise, not vanish
-    # (Copilot review: the family filter alone would silently skip it).
+    # (the family filter alone would silently skip it).
     path = _build_ts([b"\x06\x0e\x2b\x34"], tmp_path)
     with pytest.raises(KlvError):
         list(iter_uas_datalink(path))

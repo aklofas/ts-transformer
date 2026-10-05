@@ -222,8 +222,7 @@ def test_core_id_is_dataclass():
 def test_validate_mismms_alternation_conflict_tag75_and_104():
     """Tags 75 and 104 are mutually exclusive (15|75|104 group).
     Build a record with tag 75 (sensor_ellipsoid_height_m) and tag 104
-    (sensor_ellipsoid_height_extended_m, a WP-B typed field — this used
-    to be injected via `unknown` before tag 104 was typed-modeled)."""
+    (sensor_ellipsoid_height_extended_m, a typed field)."""
     # Start with a full compliant record, then set both tags 75 and 104.
     record = _full_mismms_record().with_(
         sensor_ellipsoid_height_m=100.5,  # Tag 75

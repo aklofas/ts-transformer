@@ -165,13 +165,11 @@ fn convert_precision_timestamp_pack(
 #[pyfunction]
 #[pyo3(name = "decode_precision_timestamp")]
 fn decode_precision_timestamp_py(py: Python<'_>, buf: &[u8]) -> PyResult<PyObject> {
-    // Audit #11 / GIL-release decision: NOT wrapped in `py.allow_threads`.
+    // GIL release: NOT wrapped in `py.allow_threads`.
     // The Rust `decode_st0605` call is ~1us for the 26-byte spec pack;
     // GIL transition overhead exceeds the decode time for any realistic
-    // payload size at this entry point. See `bindings/python/tests/
-    // test_gil_release.py` and the workspace reference memo
-    // `reference_pyo3_allow_threads_pattern.md` for the empirical
-    // breakeven point (~50us per call).
+    // payload size at this entry point (the measured breakeven is ~50us
+    // per call; see `bindings/python/tests/test_gil_release.py`).
     match decode_st0605(buf) {
         Ok(pack) => convert_precision_timestamp_pack(py, &pack),
         Err(e) => Err(klv_decode_error_to_pyerr(py, e)),
@@ -245,7 +243,7 @@ fn convert_unknown(py: Python<'_>, unknown: &[OwnedRawField]) -> PyResult<PyObje
 /// Python typed-set dataclass into a `Vec<OwnedRawField>` for the
 /// Rust struct. Each entry must be a 2-tuple `(int, bytes)`; malformed
 /// shapes raise `TypeError` / `ValueError` rather than silently
-/// corrupting the Rust side (audit #6's "validate-don't-drop" stance).
+/// corrupting the Rust side (validate, don't drop).
 ///
 /// `is_typed_tag` is the per-set predicate identifying tags the
 /// encoder's typed table covers. When a Python-supplied `unknown` entry
@@ -259,8 +257,7 @@ fn convert_unknown(py: Python<'_>, unknown: &[OwnedRawField]) -> PyResult<PyObje
 ///    collision pattern; filtering here keeps the four sets consistent
 ///    (the others' encoders would otherwise emit duplicate TLVs).
 /// 3. "Drop on collision" produces deterministic, valid wire output
-///    rather than failing the round-trip — matches the audit #5
-///    "deterministic precedence" requirement.
+///    rather than failing the round-trip (deterministic precedence).
 fn py_to_unknown(
     p: &Bound<'_, PyAny>,
     is_typed_tag: impl Fn(u32) -> bool,
@@ -299,15 +296,14 @@ fn is_st0102_typed_tag(tag: u32) -> bool {
 }
 
 /// ST 0601 LS typed + reserved tags — mirrors `tags::TAGS` in
-/// `crates/tst-core/src/klv/st0601/tags.rs` (142 entries as of WP-C:
+/// `crates/tst-core/src/klv/st0601/tags.rs` (142 entries:
 /// 1-65, 67-143). Tag 66 is the deprecated placeholder (permanently
 /// untyped by design — ST 0601.19 §8.66: "This item has been
 /// Deprecated") and 144..=255 are forward-compat; both may legitimately
 /// appear in `unknown` (66 and 200 are the durable unknown-tag test
-/// stand-ins used across this suite — never add them here). WP-C
-/// (Table C1) finished the sweep from 66's neighbors through 143,
-/// including Tag 102 (MULTI-INSTANCE SDCC-FLP, now typed via
-/// `sdcc_flps`) and Tag 115 (MULTI-INSTANCE Control Command, now typed
+/// stand-ins used across this suite — never add them here). The typed
+/// set includes Tag 102 (MULTI-INSTANCE SDCC-FLP, typed via
+/// `sdcc_flps`) and Tag 115 (MULTI-INSTANCE Control Command, typed
 /// via `control_commands`) — keep this in sync with `tags::TAGS` when
 /// new tags are typed, or a caller-supplied `unknown` entry for a
 /// newly-typed tag will slip past this filter and get rejected
@@ -456,7 +452,7 @@ fn convert_security_ls(py: Python<'_>, sec: &SecurityLs) -> PyResult<PyObject> {
 #[pyfunction]
 #[pyo3(name = "decode_security", signature = (buf, *, strict = false))]
 fn decode_security_py(py: Python<'_>, buf: &[u8], strict: bool) -> PyResult<PyObject> {
-    // Audit #11 / GIL-release decision: NOT wrapped — same rationale as
+    // GIL release: NOT wrapped — same rationale as
     // `decode_precision_timestamp_py`. ST 0102 records are typically
     // 20-200 bytes, well under the GIL-transition breakeven.
     let result = if strict {
@@ -508,7 +504,7 @@ fn enum_field_to_u64(p: &Bound<'_, PyAny>) -> PyResult<u64> {
 ///
 /// `unknown` IS round-tripped: forward-compat TLVs the decoder preserved
 /// are forwarded into the encoder so `decode -> encode -> decode` is
-/// lossless (audit #5). Entries whose tag collides with a typed field
+/// lossless. Entries whose tag collides with a typed field
 /// (see `is_st0102_typed_tag`) are silently dropped — typed wins.
 fn py_to_security_ls(p: &Bound<'_, PyAny>) -> PyResult<SecurityLs> {
     let mut r = SecurityLs::default();
@@ -765,7 +761,7 @@ fn convert_vmti_ls(py: Python<'_>, v: &VmtiLs) -> PyResult<PyObject> {
 #[pyfunction]
 #[pyo3(name = "decode_vmti", signature = (buf, *, strict = false))]
 fn decode_vmti_py(py: Python<'_>, buf: &[u8], strict: bool) -> PyResult<PyObject> {
-    // Audit #11 / GIL-release decision: NOT wrapped — same rationale as
+    // GIL release: NOT wrapped — same rationale as
     // `decode_precision_timestamp_py`. VMTI records can be large with
     // many targets, but the per-target convert step (which builds Py
     // objects) keeps cumulative GIL hold low even for big records.
@@ -790,7 +786,7 @@ fn decode_vmti_py(py: Python<'_>, buf: &[u8], strict: bool) -> PyResult<PyObject
 ///
 /// `field_errors` is a parser-only diagnostic and is not round-tripped.
 ///
-/// `unknown` IS round-tripped (audit #5): forward-compat TLVs preserved
+/// `unknown` IS round-tripped: forward-compat TLVs preserved
 /// by the VTargetPack decoder flow back into the encoder. Entries whose
 /// tag collides with a typed field (see `is_st0903_vtarget_typed_tag`)
 /// are silently dropped — typed wins.
@@ -834,7 +830,7 @@ fn py_to_vtarget_pack(p: &Bound<'_, PyAny>) -> PyResult<RustVTargetPack> {
     // target_color: Optional<tuple[int, int, int]> → Option<[u8; 3]>.
     // `None` is a valid value — the field is simply absent from the LS.
     // A non-None value with the wrong tuple length is a caller bug; raise
-    // instead of silently dropping (audit #6).
+    // instead of silently dropping.
     let tc = p.getattr(intern!(py, "target_color"))?;
     if !tc.is_none() {
         let arr: Vec<u8> = tc.extract()?;
@@ -876,7 +872,7 @@ fn py_to_vtarget_pack(p: &Bound<'_, PyAny>) -> PyResult<RustVTargetPack> {
 ///
 /// `field_errors` is parser-only and is not round-tripped.
 ///
-/// `unknown` IS round-tripped (audit #5): forward-compat TLVs preserved
+/// `unknown` IS round-tripped: forward-compat TLVs preserved
 /// by the VMTI LS decoder flow back into the encoder. Entries whose tag
 /// collides with a typed field (see `is_st0903_vmti_typed_tag`) are
 /// silently dropped — typed wins.
@@ -1025,7 +1021,7 @@ fn encode_vmti_standalone_strict_compliance_py(
 }
 
 // ---------------------------------------------------------------------------
-// ST 0601 — Tags 34/63/77 coded enums (WP-A Table A3)
+// ST 0601 — Tags 34/63/77 coded enums
 // ---------------------------------------------------------------------------
 //
 // `IcingDetected::to_wire`/`from_wire` (and the SensorFovName /
@@ -1146,10 +1142,10 @@ fn operational_mode_from_wire(b: u8) -> RustOperationalMode {
 }
 
 // ---------------------------------------------------------------------------
-// ST 0601 — Tags 125/126 coded enums (WP-B Table B2)
+// ST 0601 — Tags 125/126 coded enums
 // ---------------------------------------------------------------------------
 //
-// Same pattern as the Table A3 enums above: `PlatformStatus`/
+// Same pattern as the Tags 34/63/77 enums above: `PlatformStatus`/
 // `SensorControlMode::to_wire`/`from_wire` are `pub(crate)`-scoped to
 // tst-core, so the wire-code tables are duplicated locally here.
 
@@ -1242,7 +1238,7 @@ fn sensor_control_mode_from_wire(b: u8) -> RustSensorControlMode {
 }
 
 // ---------------------------------------------------------------------------
-// ST 1201.5 — imapb_specials side channel (WP-B)
+// ST 1201.5 — imapb_specials side channel
 // ---------------------------------------------------------------------------
 //
 // Crossing shape (DECIDED, shared with the JVM binding): a tuple of
@@ -1275,8 +1271,8 @@ fn imapb_special_to_code(s: RustImapbSpecial) -> PyResult<(&'static str, u64)> {
 }
 
 /// Inverse of `imapb_special_to_code`. Raises `ValueError` for a code
-/// string outside the 9-member set (audit #6 "validate-don't-drop" —
-/// same stance as `py_to_vtarget_pack`'s `target_color` length check).
+/// string outside the 9-member set (validate, don't drop — same stance as
+/// `py_to_vtarget_pack`'s `target_color` length check).
 fn imapb_special_from_code(code: &str, payload: u64) -> PyResult<RustImapbSpecial> {
     Ok(match code {
         "below_min" => RustImapbSpecial::BelowMin,
@@ -1299,7 +1295,7 @@ fn imapb_special_from_code(code: &str, payload: u64) -> PyResult<RustImapbSpecia
 }
 
 // ---------------------------------------------------------------------------
-// ST 0601 — WP-C pack & list items (Table C1), carried inside
+// ST 0601 — pack & list items, carried inside
 // UasDatalinkLs. Follows the VTargetPack nested-struct pattern: a
 // dataclass in klv.py + a `convert_*`/`py_to_*` pair here.
 // ---------------------------------------------------------------------------
@@ -1520,7 +1516,7 @@ fn py_to_airbase_locations(p: &Bound<'_, PyAny>) -> PyResult<RustAirbaseLocation
 }
 
 // `PayloadType::to_wire`/`from_wire` are `pub(crate)`-scoped to tst-core
-// (same rationale as the WP-A coded-enum comment above
+// (same rationale as the coded-enum comment above
 // `convert_icing_detected`) — the tiny wire-code table is duplicated
 // locally here.
 
@@ -1752,7 +1748,7 @@ fn py_to_sdcc_flp_field(p: &Bound<'_, PyAny>) -> PyResult<RustSdccFlpField> {
 // ST 1010.3 SDCC-FLP — general-purpose (not ST 0601-specific); entry
 // points further down. `SdccFlp` has no `py_to_*` inverse: the only
 // encoder, `encode_sdcc_flp_mode2`, takes plain std-dev/correlation
-// lists rather than a full struct (see the C1 outcome notes).
+// lists rather than a full struct.
 // ---------------------------------------------------------------------------
 
 /// Translate a Rust `SdccFlp` to a Python `tstrans.klv.SdccFlp` dataclass.
@@ -1913,7 +1909,7 @@ fn convert_uas_datalink_ls(py: Python<'_>, r: &UasDatalinkLs) -> PyResult<PyObje
     ob!("vmti", r.vmti);
     ob!("miis_core_id", r.miis_core_id);
 
-    // WP-A Table A1 — ranged f64 fields (tags 40-46, 35-38/49/53-55,
+    // ranged f64 fields (tags 40-46, 35-38/49/53-55,
     // 51/52/56-58/64/92/93, 67-69/71/76, 79-80).
     op!("target_location_lat_deg", r.target_location_lat_deg);
     op!("target_location_lon_deg", r.target_location_lon_deg);
@@ -1961,7 +1957,7 @@ fn convert_uas_datalink_ls(py: Python<'_>, r: &UasDatalinkLs) -> PyResult<PyObje
     op!("sensor_north_velocity", r.sensor_north_velocity);
     op!("sensor_east_velocity", r.sensor_east_velocity);
 
-    // WP-B Table B1 — IMAPB f64 fields (tags 96, 103-105, 109, 112-114,
+    // IMAPB f64 fields (tags 96, 103-105, 109, 112-114,
     // 117-120, 132, 134).
     op!("target_width_extended_m", r.target_width_extended_m);
     op!("density_altitude_extended_m", r.density_altitude_extended_m);
@@ -1984,7 +1980,7 @@ fn convert_uas_datalink_ls(py: Python<'_>, r: &UasDatalinkLs) -> PyResult<PyObje
     op!("transmission_frequency_mhz", r.transmission_frequency_mhz);
     op!("zoom_percentage", r.zoom_percentage);
 
-    // WP-B Table B2 — var-length int/enum fields (tags 110-139).
+    // var-length int/enum fields (tags 110-139).
     op!("time_airborne_s", r.time_airborne_s);
     op!("propulsion_unit_speed_rpm", r.propulsion_unit_speed_rpm);
     op!("navsats_in_view", r.navsats_in_view);
@@ -2001,7 +1997,7 @@ fn convert_uas_datalink_ls(py: Python<'_>, r: &UasDatalinkLs) -> PyResult<PyObje
     op!("correction_offset_us", r.correction_offset_us);
     ob!("active_payloads", r.active_payloads);
 
-    // WP-A Table A4 — named nested-set raw fields (tags 73, 95, 97-101).
+    // named nested-set raw fields (tags 73, 95, 97-101).
     ob!("rvt", r.rvt);
     ob!("sar_mi_local_set", r.sar_mi_local_set);
     ob!("range_image_local_set", r.range_image_local_set);
@@ -2010,7 +2006,7 @@ fn convert_uas_datalink_ls(py: Python<'_>, r: &UasDatalinkLs) -> PyResult<PyObje
     ob!("segment_local_set", r.segment_local_set);
     ob!("amend_local_set", r.amend_local_set);
 
-    // WP-A Table A2 — raw/simple scalar + string fields (tags 39, 60-62,
+    // raw/simple scalar + string fields (tags 39, 60-62,
     // 70, 72, 106-108, 129, 135).
     op!("outside_air_temp_c", r.outside_air_temp_c);
     op!("weapon_load", r.weapon_load);
@@ -2024,7 +2020,7 @@ fn convert_uas_datalink_ls(py: Python<'_>, r: &UasDatalinkLs) -> PyResult<PyObje
     os!("target_id", r.target_id);
     os!("communications_method", r.communications_method);
 
-    // WP-A Table A3 — coded enums (tags 34, 63, 77). Known codepoints
+    // coded enums (tags 34, 63, 77). Known codepoints
     // become a Python enum instance; wire-unknown `Other(code)` becomes a
     // raw int (mirrors the ST 0102 `SecurityClassification::Unknown(b)`
     // asymmetry).
@@ -2038,7 +2034,7 @@ fn convert_uas_datalink_ls(py: Python<'_>, r: &UasDatalinkLs) -> PyResult<PyObje
         kwargs.set_item("operational_mode", convert_operational_mode(py, v)?)?;
     }
 
-    // WP-C Table C1 — pack & list items (tags 81/102/115/116/121/122/
+    // pack & list items (tags 81/102/115/116/121/122/
     // 127/128/130/138/140/141/142/143).
     if let Some(h) = r.image_horizon {
         kwargs.set_item("image_horizon", convert_image_horizon(py, &h)?)?;
@@ -2166,7 +2162,7 @@ fn decode_uas_datalink_py(
     strict: bool,
     compliance: bool,
 ) -> PyResult<PyObject> {
-    // Audit #11 / GIL-release decision: NOT wrapped — same rationale as
+    // GIL release: NOT wrapped — same rationale as
     // `decode_precision_timestamp_py`. Even at the upper end (~10 KB
     // record with 100 unknown TLVs), Rust decode is ~10us per call,
     // below the GIL transition breakeven. Worse, the 80-field
@@ -2197,7 +2193,7 @@ fn decode_uas_datalink_py(
 ///
 /// `field_errors` is a parser-only diagnostic and is not round-tripped.
 ///
-/// `unknown` IS round-tripped (audit #5): forward-compat TLVs preserved
+/// `unknown` IS round-tripped: forward-compat TLVs preserved
 /// by the ST 0601 decoder flow back into the encoder. Entries whose tag
 /// collides with a typed field (see `is_st0601_typed_tag`) are silently
 /// dropped — typed wins. Without this filter, ST 0601's encoder would
@@ -2210,7 +2206,7 @@ fn py_to_uas_datalink_ls(p: &Bound<'_, PyAny>) -> PyResult<UasDatalinkLs> {
 
     // universal_label: 16-byte bytes → UniversalLabel. Any other length
     // is a caller bug; raise instead of silently leaving the field at the
-    // default 16-byte zero UL (audit #6).
+    // default 16-byte zero UL.
     let ul_bytes: Vec<u8> = p.getattr(intern!(p.py(), "universal_label"))?.extract()?;
     if ul_bytes.len() != 16 {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -2311,7 +2307,7 @@ fn py_to_uas_datalink_ls(p: &Bound<'_, PyAny>) -> PyResult<UasDatalinkLs> {
     ob!(vmti);
     ob!(miis_core_id);
 
-    // WP-A Table A1 — ranged f64 fields.
+    // ranged f64 fields.
     op!(target_location_lat_deg, f64);
     op!(target_location_lon_deg, f64);
     op!(target_location_elev_m, f64);
@@ -2343,7 +2339,7 @@ fn py_to_uas_datalink_ls(p: &Bound<'_, PyAny>) -> PyResult<UasDatalinkLs> {
     op!(sensor_north_velocity, f64);
     op!(sensor_east_velocity, f64);
 
-    // WP-B Table B1 — IMAPB f64 fields.
+    // IMAPB f64 fields.
     op!(target_width_extended_m, f64);
     op!(density_altitude_extended_m, f64);
     op!(sensor_ellipsoid_height_extended_m, f64);
@@ -2359,7 +2355,7 @@ fn py_to_uas_datalink_ls(p: &Bound<'_, PyAny>) -> PyResult<UasDatalinkLs> {
     op!(transmission_frequency_mhz, f64);
     op!(zoom_percentage, f64);
 
-    // WP-B Table B2 — var-length int/enum fields.
+    // var-length int/enum fields.
     op!(time_airborne_s, u32);
     op!(propulsion_unit_speed_rpm, u32);
     op!(navsats_in_view, u8);
@@ -2382,7 +2378,7 @@ fn py_to_uas_datalink_ls(p: &Bound<'_, PyAny>) -> PyResult<UasDatalinkLs> {
     op!(correction_offset_us, i64);
     ob!(active_payloads);
 
-    // WP-A Table A4 — named nested-set raw fields.
+    // named nested-set raw fields.
     ob!(rvt);
     ob!(sar_mi_local_set);
     ob!(range_image_local_set);
@@ -2391,7 +2387,7 @@ fn py_to_uas_datalink_ls(p: &Bound<'_, PyAny>) -> PyResult<UasDatalinkLs> {
     ob!(segment_local_set);
     ob!(amend_local_set);
 
-    // WP-A Table A2 — raw/simple scalar + string fields.
+    // raw/simple scalar + string fields.
     op!(outside_air_temp_c, i8);
     op!(weapon_load, u16);
     op!(weapon_fired, u8);
@@ -2404,7 +2400,7 @@ fn py_to_uas_datalink_ls(p: &Bound<'_, PyAny>) -> PyResult<UasDatalinkLs> {
     os!(target_id);
     os!(communications_method);
 
-    // WP-A Table A3 — coded enums. `enum_field_to_u8` accepts either a
+    // coded enums. `enum_field_to_u8` accepts either a
     // Python enum instance or a raw int (wire-unknown pass-through).
     let icing_obj = p.getattr(intern!(p.py(), "icing_detected"))?;
     if !icing_obj.is_none() {
@@ -2419,7 +2415,7 @@ fn py_to_uas_datalink_ls(p: &Bound<'_, PyAny>) -> PyResult<UasDatalinkLs> {
         r.operational_mode = Some(operational_mode_from_wire(enum_field_to_u8(&opmode_obj)?));
     }
 
-    // WP-C Table C1 — pack & list items.
+    // pack & list items.
     macro_rules! ou64vec {
         ($field:ident) => {
             if let Some(v) = p

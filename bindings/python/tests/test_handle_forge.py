@@ -1,4 +1,4 @@
-"""Closeout audit Finding 1: forged stream handles must be rejected.
+"""Forged stream handles must be rejected.
 
 A caller-provided raw `u32` with bits set outside the canonical 4-bit
 program + 4-bit within layout aliases a valid low-byte handle once the
@@ -119,9 +119,9 @@ def test_push_video_to_with_forged_handle_rejects():
 
 
 def test_push_video_with_valid_handle_still_works():
-    """Sanity: valid handles obtained from the muxer still work after the
-    closeout fix. Regression check that we didn't tighten the canonical
-    region by mistake.
+    """Sanity: valid handles obtained from the muxer still work.
+    Regression check that the canonical form is still accepted by the
+    handle validation.
     """
     m = Muxer(_simple_config())
     handles = m.video_handles()

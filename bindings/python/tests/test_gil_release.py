@@ -1,4 +1,4 @@
-"""Audit #11 — verify heavy Rust work releases the GIL.
+"""Verify heavy Rust work releases the GIL.
 
 These tests verify that the hot-path PyO3 methods (`Demuxer.feed`,
 `Muxer.push_*`, codec eager-collect iterators) wrap their Rust work
@@ -7,8 +7,7 @@ in `py.allow_threads` so other Python threads can run concurrently.
 KLV decode entry points are intentionally NOT GIL-released — the
 typical record size keeps per-call Rust work below the GIL transition
 breakeven point (~50us), and wrapping produces lock-contention
-pathology under hot batch loops. See `klv.rs` decision comments and
-`reference_pyo3_allow_threads_pattern.md` for the empirical analysis.
+pathology under hot batch loops. See the `klv.rs` decision comments.
 
 ## Technique — a structural probe, not a throughput ratio
 
@@ -49,9 +48,9 @@ for the ENTIRE combined duration of the workload's Rust calls, which is
 why every workload is sized to spend well over `_MIN_WORKLOAD_MS`
 inside Rust — the longer the window, the more robust the proof. The
 earlier ratio form (probe iterations during the workload / solo
-iterations ≥ 60 %) flaked twice in CI under host load
-(`push_video_to_with_dts` on 2026-09-14, the AAC iterator on
-2026-09-15) because a starved probe thread simply iterates less; the
+iterations ≥ 60 %) flaked in CI under host load
+(`push_video_to_with_dts`, the AAC iterator) because a starved probe
+thread simply iterates less; the
 structural form only asks whether it ran at all.
 
 The probe stamps exactly once and then blocks on an `Event` (which

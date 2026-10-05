@@ -1,4 +1,4 @@
-"""Basic smoke tests for tstrans.rist (Plan A5b Wave D T15-T18).
+"""Basic smoke tests for tstrans.rist.
 
 Tests are designed to work with the `rist` feature enabled but without
 requiring a fully functional librist loopback (which can be flaky on CI
@@ -32,7 +32,7 @@ from tstrans import _native
 
 
 # ---------------------------------------------------------------------------
-# T15: module structure
+# Module structure
 # ---------------------------------------------------------------------------
 
 
@@ -67,7 +67,7 @@ def test_recv_transport_builder_returns_builder():
 
 
 # ---------------------------------------------------------------------------
-# T15: RecvTransport open + close (port 0 not valid for librist — use any
+# RecvTransport open + close (port 0 not valid for librist — use any
 # free even port; we try a range and skip the test if all are busy)
 # ---------------------------------------------------------------------------
 
@@ -127,7 +127,7 @@ def test_recv_transport_stats_fields():
 
 
 # ---------------------------------------------------------------------------
-# T15: stats after close raises RistError(CLOSED)
+# Stats after close raises RistError(CLOSED)
 # ---------------------------------------------------------------------------
 
 
@@ -147,7 +147,7 @@ def test_recv_transport_stats_after_close_raises():
 
 
 # ---------------------------------------------------------------------------
-# T16: EncryptionKey SecretString discipline
+# EncryptionKey SecretString discipline
 # ---------------------------------------------------------------------------
 
 
@@ -188,7 +188,7 @@ def test_encryption_key_aes192():
 
 
 # ---------------------------------------------------------------------------
-# T17: RistErrorKind count and mapping
+# RistErrorKind count and mapping
 # ---------------------------------------------------------------------------
 
 
@@ -233,7 +233,7 @@ def test_rist_error_kind_variant_mapping_via_raise():
 
 
 # ---------------------------------------------------------------------------
-# T17: URL error — malformed scheme raises RistError(URL or INVALID_CONFIG)
+# URL error — malformed scheme raises RistError(URL or INVALID_CONFIG)
 # ---------------------------------------------------------------------------
 
 
@@ -259,7 +259,7 @@ def test_recv_transport_builder_rejects_non_bind_url():
 
 
 # ---------------------------------------------------------------------------
-# T16/T17: AES-256 encryption probe (mbedtls ships in the default build)
+# AES-256 encryption probe (mbedtls ships in the default build)
 # ---------------------------------------------------------------------------
 
 
@@ -291,7 +291,7 @@ def test_encryption_key_aes256_probe():
 
 
 # ---------------------------------------------------------------------------
-# T18: rist.pyi — validate rist.py can be imported (py_compile done separately)
+# rist.pyi — validate rist.py can be imported (py_compile done separately)
 # ---------------------------------------------------------------------------
 
 
@@ -310,7 +310,7 @@ def test_rist_error_construction():
 
 
 # ---------------------------------------------------------------------------
-# T15: Simple profile loopback (tolerant — skip if ports busy or timing issues)
+# Simple profile loopback (tolerant — skip if ports busy or timing issues)
 # ---------------------------------------------------------------------------
 
 

@@ -1,4 +1,4 @@
-"""Transmux fidelity over local capture files (W3 arc acceptance).
+"""Transmux fidelity over local capture files.
 
 Scans `tests/local_fixtures/*.ts` — a gitignored, machine-local
 directory — and proves that private/application data streams (PMT
