@@ -116,8 +116,22 @@ fn tcps_hostname_loopback_handshake_and_roundtrip() {
     let mut client = TcpTransport::connect_with_config(&parsed, &SocketConfig::default())
         .expect("tcps connect (hostname dial must succeed with dnsName SAN)");
 
-    // Trigger the TLS handshake and exercise the full round-trip.
-    client.send_bytes(b"ping").expect("client send");
+    // Trigger the TLS handshake and exercise the full round-trip. The handshake
+    // runs inside this first send, under the 100 ms cancel-poll socket timeouts
+    // the connect applied; a loaded runner can stall the server's reply past
+    // one tick, which surfaces as a zero-progress Backpressure. That outcome is
+    // retryable per Transport::send_bytes (the slice is intact), so retry it
+    // within a bounded budget, as the sibling tests below do.
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        match client.send_bytes(b"ping") {
+            Ok(()) => break,
+            Err(TransportError::Backpressure { .. }) if std::time::Instant::now() < deadline => {
+                continue;
+            }
+            Err(e) => panic!("client send: {e:?}"),
+        }
+    }
 
     let mut buf = [0u8; 4];
     let n = client.recv_bytes(&mut buf).expect("client recv");
