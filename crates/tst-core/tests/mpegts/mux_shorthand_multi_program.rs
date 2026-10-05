@@ -1,7 +1,6 @@
-//! Regression tests for multi-program shorthand routing bug
-//! (codex pass-1 Hotspot 1). `push_video()` and `push_klv()` previously
-//! used `pack(0, 0)` which misroutes when the lone stream of that kind
-//! sits in program-index >= 1.
+//! Regression tests for multi-program shorthand routing: `push_video()`
+//! and `push_klv()` must not use `pack(0, 0)`, which misroutes when the
+//! lone stream of that kind sits in program-index >= 1.
 
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{

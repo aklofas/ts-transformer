@@ -39,11 +39,8 @@ pub use parse::{
 ///   PSI.
 /// - [`DescriptorError::TooLarge`] — the payload would overflow the
 ///   8-bit `descriptor_length` field (H.222.0 §2.6: max body 255 bytes).
-///   Previously the builders silently truncated trailing bytes in
-///   release builds via `debug_assert!` + `body_len.min(MAX)`; that
-///   behavior was changed to a hard error in validate-1 C5 because
-///   silent truncation produces malformed PSI without surfacing the bug
-///   to the caller.
+///   A hard error, not silent truncation: truncation produces malformed
+///   PSI without surfacing the bug to the caller.
 /// - [`DescriptorError::InvalidComponent`] — invalid `stream_content_ext`
 ///   / `stream_content` combination passed to [`component`] per
 ///   EN 300 468 §6.2.8.
@@ -103,9 +100,8 @@ pub enum DescriptorError {
 ///
 /// # Errors
 ///
-/// Returns [`DescriptorError::TooLarge`] when `additional.len() > 251`.
-/// Pre-validate-1 builds silently truncated; the C5 fix surfaces the
-/// overflow as a hard error so malformed PSI never goes on the wire.
+/// Returns [`DescriptorError::TooLarge`] when `additional.len() > 251`, so
+/// malformed PSI never goes on the wire.
 pub fn registration(
     format_identifier: [u8; 4],
     additional: &[u8],
@@ -614,8 +610,7 @@ mod tests {
     #[test]
     fn registration_rejects_oversized_additional() {
         // additional.len() == 252 would overflow the u8 descriptor_length;
-        // pre-validate-1 silently truncated to 247 in release builds. C5
-        // converts the overflow to a hard error.
+        // the overflow is a hard error, never a silent truncation.
         let long = vec![0xAAu8; 252];
         let err = registration(*b"TEST", &long).unwrap_err();
         assert_eq!(
@@ -936,7 +931,7 @@ mod tests {
         assert_eq!(single, multi);
     }
 
-    // ── Empty-entries rejection (audit Subt-A symmetry fix) ──────────────
+    // ── Empty-entries rejection ──────────────────────────────────────────
 
     #[test]
     fn subtitling_descriptor_multi_rejects_empty_entries() {

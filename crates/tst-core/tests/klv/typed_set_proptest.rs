@@ -33,7 +33,7 @@
 //! A property failure here means value-space exploration surfaced a
 //! real bug in the encoder/decoder. Capture the regression seed
 //! (proptest does this automatically in `.proptest-regressions`) and
-//! file a follow-up plan. Do NOT mask with `prop_assume!` without
+//! file an issue. Do NOT mask with `prop_assume!` without
 //! recording the bug — silent suppression defeats the point of the
 //! property test.
 
@@ -342,10 +342,8 @@ proptest! {
             6 => record.uas_ls_version = Some(v_u8),
             7 => record.timestamp_us = Some(v_u64),
             8 => record.generic_flag_data = Some(v_u8),
-            // Tag 48 security_local_set: opaque pass-through to ST 0102
-            // sibling layer (per convention #1 in
-            // reference_klv_typed_set_conventions). Round-trip is
-            // byte-identical at the ST 0601 layer.
+            // Tag 48 security_local_set: opaque pass-through to ST 0102 sibling
+            // layer. Round-trip is byte-identical at the ST 0601 layer.
             9 => record.security_local_set = Some(bytes.clone()),
             _ => unreachable!(),
         }
@@ -361,8 +359,7 @@ proptest! {
 
     /// Tag 74 vmti opaque pass-through (separate so failure messages
     /// localize when the ST 0903 sibling layering breaks the parent's
-    /// byte-passthrough contract). Plan #35 ratified this surface
-    /// (memory: project_klv_st0903_shipped).
+    /// byte-passthrough contract).
     #[test]
     fn st0601_vmti_passthrough_roundtrip(
         bytes in proptest::collection::vec(any::<u8>(), 1..=64),
@@ -442,7 +439,7 @@ proptest! {
             ImapbTag { id: 90, min: -90.0, max: 90.0,
                 set: |r, v| r.platform_pitch_full_deg = Some(v),
                 get: |r| r.platform_pitch_full_deg },
-            // Tag 50: platform_angle_of_attack ±20° (i16 → 2 bytes; renamed by plan #44)
+            // Tag 50: platform_angle_of_attack ±20° (i16 → 2 bytes)
             ImapbTag { id: 50, min: -20.0, max: 20.0,
                 set: |r, v| r.platform_angle_of_attack_deg = Some(v),
                 get: |r| r.platform_angle_of_attack_deg },

@@ -136,7 +136,7 @@ fn push_subtitle_payload_too_large_rejected() {
     );
 }
 
-// ── DVB teletext PES_packet_length boundary (Validate-1 A1) ───────────────
+// ── DVB teletext PES_packet_length boundary ───────────────────────────────
 //
 // Spec: EN 300 472 §4.2 — `PES_packet_length = (N * 184) - 6`, where N is
 // the number of TS payload areas the PES occupies. H.222.0 V9 §2.4.3.7

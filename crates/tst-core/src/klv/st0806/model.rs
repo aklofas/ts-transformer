@@ -339,7 +339,7 @@ fn mgrs_string(
 
 #[cfg(test)]
 mod variant_inventory {
-    //! Exhaustiveness for this module's wire-code enums (Arc 2 R2). See
+    //! Exhaustiveness for this module's wire-code enums. See
     //! [`crate::klv::inventory_test`].
     use super::*;
     use crate::klv::inventory_test;

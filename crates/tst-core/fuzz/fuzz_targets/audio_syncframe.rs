@@ -1,9 +1,9 @@
 #![no_main]
 //! Fuzz target — AC-3 / AAC-LATM syncframe parsing and ADTS resync path.
 //!
-//! Closes audit finding codec F-02: `parse_syncframe` (AC-3) and
-//! `validate_latm_sync` (AAC-LATM) had no libFuzzer coverage; the existing
-//! `audio_frame_iter` target only exercised the strict ADTS iterator.
+//! Gives `parse_syncframe` (AC-3) and `validate_latm_sync` (AAC-LATM)
+//! libFuzzer coverage; the `audio_frame_iter` target only exercises the
+//! strict ADTS iterator.
 //!
 //! # Input layout
 //!

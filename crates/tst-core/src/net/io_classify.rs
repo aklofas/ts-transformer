@@ -7,8 +7,8 @@
 //! wakes to re-check its cancel flag; `std` spells that expiry as
 //! `WouldBlock` on Linux/macOS (`EAGAIN`) and as `TimedOut` on Windows
 //! (`WSAETIMEDOUT`). The receive paths already treat both as the poll tick;
-//! before this module the send paths matched only `WouldBlock`, so a Windows
-//! send stall latched the transport dead (CORR-24).
+//! a send path matching only `WouldBlock` would latch the transport dead on
+//! a Windows send stall.
 
 use std::io;
 
@@ -44,7 +44,7 @@ mod tests {
     use super::{SendClass, classify_send_error};
     use std::io::{Error, ErrorKind};
 
-    /// CORR-24: the synthetic Windows spelling of a send-deadline expiry.
+    /// The synthetic Windows spelling of a send-deadline expiry.
     /// There is no Linux RED for this (Linux reports `WouldBlock`), so this
     /// unit test is the pin.
     #[test]

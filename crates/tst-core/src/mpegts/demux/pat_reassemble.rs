@@ -1,4 +1,4 @@
-//! Surgical multi-section PAT reassembly (REF-PSI-02). PMT multi-section is
+//! Surgical multi-section PAT reassembly. PMT multi-section is
 //! intentionally NOT reassembled (still rejected); see psi.rs/parse_pat.
 //!
 //! Distinct from `PsiSectionAssembler` (one section across TS PACKETS) — this

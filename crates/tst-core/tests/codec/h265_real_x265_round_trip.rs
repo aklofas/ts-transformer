@@ -1,8 +1,8 @@
 //! Integration test: real x265 SPS bytes → parse → field surface.
 //!
-//! Plan #29 Task 4.3. Confirms the full SPS parse path (including the
-//! RPS walker added in Task 4.1) works end-to-end on real x265 output —
-//! not just synthetic walker tests + synthetic SPS fixtures.
+//! Confirms the full SPS parse path (including the RPS walker) works end-to-end
+//! on real x265 output — not just synthetic walker tests + synthetic SPS
+//! fixtures.
 //!
 //! Note: real x265 with `repeat-headers=1` encodes RPS in slice headers
 //! rather than the SPS, so these fixtures have `num_short_term_ref_pic_sets=0`

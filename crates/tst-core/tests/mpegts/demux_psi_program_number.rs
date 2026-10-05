@@ -1,4 +1,4 @@
-//! REF-PSI-01 — PMT body `program_number` must match PAT assignment.
+//! PMT body `program_number` must match PAT assignment.
 //!
 //! A validly-checksummed PMT whose body carries `program_number = M` that
 //! arrives on a PMT PID whose PAT entry declared `program_number = N` (N ≠ M)
@@ -27,7 +27,7 @@ fn build_pat_section(program_number: u16, pmt_pid: u16) -> Vec<u8> {
 ///
 /// `program_number` goes into the PMT body's `program_number` field — caller
 /// sets this to a value that may differ from the PAT's declared number to
-/// trigger REF-PSI-01.
+/// trigger the mismatch.
 fn build_pmt_section(program_number: u16, pcr_pid: u16, video_pid: u16) -> Vec<u8> {
     psi_builders::build_pmt_section(program_number, pcr_pid, 0, &[(0x1B, video_pid, &[])])
 }
@@ -115,7 +115,7 @@ fn build_mismatched_stream() -> Vec<u8> {
     buf
 }
 
-/// REF-PSI-01 lenient (default StrictMode::Off):
+/// Lenient (default StrictMode::Off):
 ///   - a `PmtProgramNumberMismatch` event is emitted,
 ///   - NO `ProgramMap` event is emitted (topology NOT adopted),
 ///   - the video PID is not registered (no Sample events possible).
@@ -162,7 +162,7 @@ fn pmt_program_number_mismatch_emits_nonconformant_event() {
     );
 }
 
-/// REF-PSI-01 Display: the issue formats to a string that mentions the PID
+/// Display: the issue formats to a string that mentions the PID
 /// and both program numbers.
 #[test]
 fn pmt_program_number_mismatch_display() {
@@ -183,7 +183,7 @@ fn pmt_program_number_mismatch_display() {
     );
 }
 
-/// REF-PSI-01 strict rejection: StrictMode::Full converts the mismatch into a
+/// Strict rejection: StrictMode::Full converts the mismatch into a
 /// fatal `DemuxError::StrictRejection` returned from `feed`.
 #[test]
 fn pmt_program_number_mismatch_strict_full_rejects() {

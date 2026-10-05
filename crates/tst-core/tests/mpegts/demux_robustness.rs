@@ -151,7 +151,7 @@ fn corrupted_pat_surfaces_psi_checksum_event() {
     );
 }
 
-/// Validate-1 B7 — Sync re-acquisition must verify N-of-M (5 of 7) packet
+/// Sync re-acquisition must verify N-of-M (5 of 7) packet
 /// boundaries before declaring sync, not blindly accept any 0x47. Without
 /// this check, a random 0x47 byte inside a payload (TS packets routinely
 /// carry 0x47 in PES payload, descriptors, etc.) was treated as the start
@@ -196,7 +196,7 @@ fn sync_reacquisition_strays_at_non_188_stride_do_not_acquire() {
     );
 }
 
-/// Companion B7 check — the fix MUST still accept legitimate sync when
+/// Companion N-of-M check — the demuxer MUST still accept legitimate sync when
 /// N-of-M aligns. Feed pure garbage prefix then the clean stream; the
 /// real stream's 188-aligned 0x47s satisfy the N-of-M check at the very
 /// first candidate (7-of-7), so sync is acquired and the stream parses.
@@ -226,7 +226,7 @@ fn sync_reacquisition_accepts_n_of_m_aligned_stream() {
     );
 }
 
-/// Validate-1 B3 — PUSI handler must NOT discard the section continuation
+/// PUSI handler must NOT discard the section continuation
 /// bytes preceding `pointer_field`. Per H.222.0 §2.4.4.1, when PUSI is set
 /// and `pointer_field > 0`, bytes `payload[1..1+pointer_field]` complete
 /// the prior partial section that started in an earlier packet, and
@@ -361,15 +361,14 @@ fn pusi_pointer_field_preserves_prior_section_continuation() {
     );
 }
 
-/// Validate-1 B3+B7 follow-up Critical Issue 1 — mid-stream-join scenario.
-/// When the demuxer attaches to an in-progress stream and the first PAT
-/// packet has `PUSI=1` with `pointer_field > 0` (i.e. carries the tail of
-/// some prior PAT section we never saw the start of, then a new section),
-/// the `append_continuation` call on the leading bytes silently drops
+/// Mid-stream-join scenario. When the demuxer attaches to an in-progress stream
+/// and the first PAT packet has `PUSI=1` with `pointer_field > 0` (i.e. carries
+/// the tail of some prior PAT section we never saw the start of, then a new
+/// section), the `append_continuation` call on the leading bytes silently drops
 /// them (no prior PUSI state → §2.4.4.4 mandates discard) and returns
-/// `Ok(None)`. The pre-fix code conflated this with "bail" and discarded
-/// the new section at `payload[1+pointer_field..]` too — losing the
-/// fresh PAT that the demuxer's PSI dispatch was actively waiting for.
+/// `Ok(None)`. Conflating this with "bail" discards the new section at
+/// `payload[1+pointer_field..]` too — losing the fresh PAT that the demuxer's
+/// PSI dispatch is actively waiting for.
 ///
 /// The fix splits the helper return into `Completed` / `Incomplete` /
 /// `Overflowed`. Only `Overflowed` (4 KiB DoS cap) bails. `Incomplete`
@@ -524,11 +523,11 @@ fn cc_jump_emits_discontinuity() {
     );
 }
 
-// ---- DA-DEMUX-1 regression tests (H.222.0 §2.4.3.3 spec-legal duplicates) ----
+// ---- H.222.0 §2.4.3.3 spec-legal duplicate regression tests ----
 
 /// Collect per-AU raw bytes from all video Sample events in the demuxer's
 /// event queue. The demuxer surfaces video as raw-first `SamplePayload::Video
-/// { raw, .. }` (WP-E raw-first model). Used to byte-compare two demux runs.
+/// { raw, .. }`. Used to byte-compare two demux runs.
 fn collect_video_raw_bytes(d: &mut Demuxer) -> Vec<Vec<u8>> {
     let mut aus = Vec::new();
     while let Some(ev) = d.next_event() {
@@ -593,7 +592,7 @@ fn insert_pmt_packet_duplicate(stream: &[u8]) -> Vec<u8> {
     out
 }
 
-/// DA-DEMUX-1 (a): a spec-legal duplicate TS packet (same CC, no
+/// (a): a spec-legal duplicate TS packet (same CC, no
 /// `discontinuity_indicator`) is suppressed — the reassembled ES byte
 /// content is identical to a clean stream without the duplicate.
 #[test]
@@ -654,7 +653,7 @@ fn cc_duplicate_suppressed_es_bytes_identical() {
     );
 }
 
-/// DA-DEMUX-1 (b): a spec-legal duplicate PMT packet is suppressed — the PSI
+/// (b): a spec-legal duplicate PMT packet is suppressed — the PSI
 /// reassembler receives the section exactly once and delivers a `ProgramMap`.
 /// No `PsiCcDiscontinuity` event is emitted.
 #[test]
@@ -697,7 +696,7 @@ fn cc_duplicate_on_pmt_psi_survives() {
     );
 }
 
-/// DA-DEMUX-1 (c): `StrictMode::Full` does not reject a stream that contains
+/// (c): `StrictMode::Full` does not reject a stream that contains
 /// exactly one spec-legal duplicate. Duplicates are suppressed before any
 /// strict evaluation path.
 #[test]
@@ -731,11 +730,10 @@ fn count_continuity_jumps(d: &mut Demuxer) -> usize {
     jumps
 }
 
-/// DA-DEMUX-1 (d): a THIRD packet with the same CC (the "only-two" rule
+/// (d): a THIRD packet with the same CC (the "only-two" rule
 /// violation per H.222.0 §2.4.3.3) is treated as a real discontinuity and
-/// surfaces EXACTLY ONE `ContinuityJump` event (regression: an earlier
-/// draft recorded the jump twice — once in the only-two branch and again
-/// in the generic CC-jump check).
+/// surfaces EXACTLY ONE `ContinuityJump` event, not one from the only-two
+/// branch and another from the generic CC-jump check.
 #[test]
 fn cc_third_same_cc_fires_discontinuity_exactly_once() {
     let clean = build_clean_stream();
@@ -755,7 +753,7 @@ fn cc_third_same_cc_fires_discontinuity_exactly_once() {
     );
 }
 
-/// DA-DEMUX-1 (f): the only-two enforcement does not reset mid-run — in a
+/// (f): the only-two enforcement does not reset mid-run — in a
 /// FOUR-in-a-row identical same-CC run, the 3rd and 4th packets each fire
 /// one `ContinuityJump` (the 4th must NOT be silently re-suppressed as a
 /// fresh "first duplicate").
@@ -806,13 +804,12 @@ fn insert_video_packet_same_cc_different_payload(stream: &[u8], nth: usize) -> V
     out
 }
 
-/// DA-DEMUX-1 (e): a same-CC packet whose bytes DIFFER from its predecessor
+/// (e): a same-CC packet whose bytes DIFFER from its predecessor
 /// is NOT a spec-legal duplicate (H.222.0 §2.4.3.3 requires duplicates to be
 /// bit-identical apart from a refreshed PCR). It must be routed like any
 /// other packet — surfacing a `ContinuityJump` — so differing data is never
-/// silently swallowed. Regression test for the fix-round on the original
-/// CC-only detection, which mis-suppressed the malformed-pes-lenient
-/// scenario's deliberately-different packet.
+/// silently swallowed; CC-only detection mis-suppresses the
+/// malformed-pes-lenient scenario's deliberately-different packet.
 #[test]
 fn cc_same_cc_different_payload_not_suppressed() {
     let clean = build_clean_stream();

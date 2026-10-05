@@ -46,7 +46,7 @@ fn read_pack_inner(bytes: &[u8], strict: bool) -> Result<(VTargetPack, usize), V
 
     // 2. Walk the LS-encoded body. Each field is a BER-OID tag per
     //    ST 0107.5 §6.3.1 + BER-encoded length + value. Mirrors the
-    //    top-level ST 0903 walker (post-E5) and the sibling ST 0102
+    //    top-level ST 0903 walker and the sibling ST 0102
     //    / ST 0601 walkers.
     let mut cursor = rest;
     let mut consumed = header_consumed;
@@ -83,7 +83,7 @@ fn read_pack_inner(bytes: &[u8], strict: bool) -> Result<(VTargetPack, usize), V
                 return Err(e);
             }
             // Lenient: record and keep walking — the sibling convention
-            // (`SecurityLs::field_errors`, `VmtiLs::field_errors`). CORR-29e.
+            // (`SecurityLs::field_errors`, `VmtiLs::field_errors`).
             pack.field_errors.push(field_error(e, value.len()));
         }
     }
@@ -210,7 +210,7 @@ fn decode_field(tag: u32, value: &[u8], pack: &mut VTargetPack) -> Result<(), VT
             // pack tags use 3-byte IMAPB per §10.2.2.11–.17.
             let length = if tag_u8 == 12 { 2 } else { 3 };
             let params = ImapbParams { min, max, length };
-            // A7: decode_imapb returns DecodedImapb (ST 1201.5 §7.2.2/.3
+            // decode_imapb returns DecodedImapb (ST 1201.5 §7.2.2/.3
             // special values + bounds check). VTargetPack treats every
             // non-Value result as MalformedImapb — special-value
             // signaling at the per-target pack layer isn't a use case

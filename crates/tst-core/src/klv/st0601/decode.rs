@@ -218,7 +218,7 @@ fn strict_body_walk(body: &[u8], body_offset_in_buf: usize) -> Result<Vec<u32>, 
                 have: after_len.len(),
             });
         }
-        // Duplicate-tag check (E1) — only meaningful for typed tags
+        // Duplicate-tag check — only meaningful for typed tags
         // that fit in u8 AND are present in the ST 0601 table. Tags 115
         // and 102 are exempted: they are the spec's only two items with
         // "Multiples Allowed" = Yes (ST 0601.19 Table 1), so repeating
@@ -518,7 +518,7 @@ fn apply_typed_tag(
         Encoding::Imapb {
             min, max, max_len, ..
         } => {
-            // `max_len` is a per-tag business-rule cap (Table B1) narrower
+            // `max_len` is a per-tag business-rule cap narrower
             // than the substrate's fixed L<=8 ceiling that `decode_imapb`
             // itself enforces — check it here so an over-long wire value
             // for a narrow-max_len tag surfaces as InvalidLength rather
@@ -628,7 +628,7 @@ fn apply_typed_tag(
             // most-recent entries this occurrence refines — is bounded by
             // what the pack's own bytes can hold. An occurrence whose
             // matrix cannot fit is rejected as `TruncatedField` and not
-            // captured (review 9, ext R9-02). Elements 3–5 are not
+            // captured. Elements 3–5 are not
             // validated: the raw bytes of an accepted pack are kept
             // verbatim, and callers decode the pack itself on demand.
             102 => {
@@ -1028,7 +1028,7 @@ pub(super) static RANGED_FIELDS: &[RangedEntry] = &[
         get: |r| r.platform_sideslip_full_deg,
         set: |r, v| r.platform_sideslip_full_deg = Some(v),
     },
-    // WP-B Table B1: ST 1201.5 IMAPB extended-range items. `spec.range`
+    // ST 1201.5 IMAPB extended-range items. `spec.range`
     // is `None` for these (encoding dispatch happens on `Encoding::Imapb`
     // instead), but they share this same `Option<f64>` accessor table.
     RangedEntry {

@@ -95,7 +95,7 @@ impl BitWriter {
 /// sps_id=0, vps_id=0, 320x240, 8-bit 4:2:0, Main 10 profile @ Level 4.0.
 /// Mirror of `codec::h266::sps::tests::minimal_sps_rbsp`.
 ///
-/// Extended in Task 4.2 to write all body-walk fields through
+/// Writes all body-walk fields through
 /// sps_vui_parameters_present_flag=0, matching the updated
 /// minimal_sps_rbsp_full() in sps.rs.
 fn minimal_sps_rbsp() -> Vec<u8> {

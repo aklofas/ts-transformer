@@ -1,10 +1,9 @@
 //! Demuxer resource-cap regression tests.
 //!
-//! Phase 0: validates that hostile input cannot grow `Demuxer::sync_buf`
-//! past the 4 MiB hard ceiling. A peer feeding bytes with no 0x47 sync
-//! byte previously grew the buffer unboundedly — `extend_from_slice` ran
-//! before the `SYNC_SEARCH_WINDOW` check, so a single multi-GB `feed` call
-//! could OOM the host before the loop got a chance to bail.
+//! Validates that hostile input cannot grow `Demuxer::sync_buf` past the
+//! 4 MiB hard ceiling. If `extend_from_slice` ran before the
+//! `SYNC_SEARCH_WINDOW` check, a peer feeding a single multi-GB `feed` with
+//! no 0x47 sync byte could OOM the host before the loop got a chance to bail.
 
 use tst_core::error::DemuxError;
 use tst_core::mpegts::demux::{Demuxer, DemuxerConfig};

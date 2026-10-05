@@ -195,8 +195,8 @@ fn parse_one_nal(
             // catch any regression that routes AV1 here.
             //
             // Typed-error promotion (`parse_one_nal -> Result<Option<_>, _>`)
-            // is deferred to Phase 1's SemVer ratchet — would cascade through
-            // `split_nals`, its call sites, and existing tests.
+            // is deferred — it would cascade through `split_nals`, its call
+            // sites, and existing tests.
             debug_assert!(
                 false,
                 "internal: AV1 reached NAL splitter; split dispatch is inconsistent"
@@ -340,7 +340,7 @@ pub fn split_obus(es_payload: &SharedBytes) -> (Vec<Obu>, Vec<NonConformantIssue
 ///   REQUIRES framing, so its absence is non-conformant).
 /// - **`InteropRawObu`** ([`crate::mpegts::mux::Av1CarriageMode::InteropRawObu`]):
 ///   splits raw OBUs directly and does NOT surface `Av1MissingTsObuFraming`
-///   — absent framing is correct for interop carriage (AV1-03).
+///   — absent framing is correct for interop carriage.
 ///
 /// Pass the `av1_carriage` field from the demux
 /// [`crate::mpegts::demux::SamplePayload::Video`] to get the right behavior.
@@ -375,7 +375,7 @@ pub fn split_video(
             },
             Av1CarriageMode::InteropRawObu => {
                 // Interop carriage carries raw OBUs by design — split directly
-                // and do NOT flag missing framing (AV1-03).
+                // and do NOT flag missing framing.
                 let (obus, issues) = split_obus(raw);
                 (VideoPayload::Obus(obus), issues)
             }
@@ -391,7 +391,7 @@ pub fn split_video(
 /// The `av1_carriage` parameter is passed through to [`split_video`]; see its
 /// doc for carriage semantics. Pass the `av1_carriage` field from the demux
 /// [`crate::mpegts::demux::SamplePayload::Video`] so that interop samples
-/// parse cleanly under interop carriage (AV1-03).
+/// parse cleanly under interop carriage.
 pub fn split_video_strict(
     raw: &SharedBytes,
     codec: VideoCodec,
@@ -537,7 +537,7 @@ pub enum KlvShape {
 pub fn classify_klv(payload: &[u8]) -> KlvShape {
     use crate::mpegts::au_cell::read_metadata_au_cell;
 
-    // UL first (review 9, int R9-01). A SMPTE KLV packet always starts
+    // UL first. A SMPTE KLV packet always starts
     // `06 0E 2B 34`; a conformant H.222.0 Metadata_AU_cell never can, because
     // its byte 2 is the flags byte whose reserved low nibble must read `1111`
     // and 0x2B's low nibble is `1011`. Testing the cell shape first let every
@@ -716,7 +716,7 @@ mod tests {
         assert_eq!(classify_klv(&buf), KlvShape::Async { klv: buf });
     }
 
-    /// Review 9 (int R9-01): an ST 0601 LS of total length >= 13 319 bytes.
+    /// An ST 0601 LS of total length >= 13 319 bytes.
     /// Its first five bytes (`06 0E 2B 34 02`) also parse as an AU-cell
     /// header with cfi = Middle and AU_cell_data_length = 0x3402 (13 314),
     /// so the cell length check passes; classify_klv must still say Async.
@@ -863,7 +863,7 @@ mod tests {
     fn split_nals_no_start_codes() {
         // Bytes with no start code at all produce no NALs. Garbage
         // before/between expected boundaries is silently discarded —
-        // sync recovery is the demuxer state machine's job (Task 7),
+        // sync recovery is the demuxer state machine's job,
         // not the leaf NAL splitter's.
         let buf = SharedBytes::from_vec(vec![0xAA, 0xBB, 0xCC, 0xDD, 0xEE]);
         let (nals, issues) = split_nals(&buf, VideoCodec::H264);
@@ -1078,7 +1078,7 @@ mod tests {
     // pin both behaviors.
     //
     // Typed-error promotion (`parse_one_nal -> Result<Option<NalUnit>, _>`)
-    // is deferred to Phase 1 where signature SemVer ratchets are in scope.
+    // is deferred: it changes signatures across the splitter's call sites.
 
     #[cfg(debug_assertions)]
     #[test]
@@ -1103,8 +1103,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // B9 — NAL-header constraint enforcement tests
-    // (validate-1 Phase 2 Wave B Task 9)
+    // NAL-header constraint enforcement tests
     // -----------------------------------------------------------------
 
     #[test]
@@ -1243,8 +1242,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // B10 — AV1 OBU header bit validation tests
-    // (validate-1 Phase 2 Wave B Task 10)
+    // AV1 OBU header bit validation tests
     // -----------------------------------------------------------------
 
     #[test]

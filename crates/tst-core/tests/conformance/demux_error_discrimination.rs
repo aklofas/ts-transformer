@@ -1,9 +1,8 @@
 //! Discriminating-variant tests for [`DemuxError`].
 //!
 //! Each test asserts on the **specific error variant** via `matches!` with
-//! destructured fields, per `feedback_audit_test_not_always_discriminating.md`.
-//! Asserting on `is_err()` alone cannot catch a future regression that swaps
-//! which variant is returned.
+//! destructured fields. Asserting on `is_err()` alone cannot catch a future
+//! regression that swaps which variant is returned.
 //!
 //! ## Coverage
 //!
@@ -58,8 +57,8 @@ use tst_core::mpegts::mux::{Muxer, MuxerConfig, MuxerProgramConfigBuilder, Video
 /// The `observed` field equals the buffer length at the moment the ceiling
 /// fired; `max` is always `4 * 1024 * 1024`.
 ///
-/// This test exercises the primary safety-hardening path added in plan #36
-/// (Phase 0 quality refactor) to bound adversarial-input memory growth.
+/// This test exercises the primary safety-hardening path that bounds
+/// adversarial-input memory growth.
 #[test]
 fn sync_buf_exhausted_when_no_sync_byte_for_4mib() {
     const MIB_4: usize = 4 * 1024 * 1024;

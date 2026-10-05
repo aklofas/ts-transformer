@@ -1,4 +1,4 @@
-//! Minimal LATM/LOAS sync validator (validate-1 C11).
+//! Minimal LATM/LOAS sync validator.
 //!
 //! Spec: ISO/IEC 14496-3 §1.7 (LATM / LOAS framing) — referenced by
 //! ITU-T H.222.0 Table 2-34 stream_type `0x11` (`AudioAacLatm`).
@@ -29,20 +29,19 @@
 //!
 //! ## Rationale
 //!
-//! Pre-C11 the demuxer advertised `stream_type=0x11` (AAC-LATM) without
-//! any sync validation: malformed LATM streams (truncated PES, wrong
-//! syncword, audio shipped without LATM wrapping on a 0x11 PID) silently
-//! produced `Sample` events with garbage payload. Downstream decoders
-//! report cryptic parse errors that don't correlate back to the
+//! Without sync validation, a demuxer that advertises `stream_type=0x11`
+//! (AAC-LATM) lets malformed LATM streams (truncated PES, wrong syncword,
+//! audio shipped without LATM wrapping on a 0x11 PID) silently produce
+//! `Sample` events with garbage payload. Downstream decoders then report
+//! cryptic parse errors that don't correlate back to the
 //! conformance bug. This validator surfaces the framing violation as
 //! [`crate::mpegts::demux::NonConformantIssue::LatmFraming`].
 //!
-//! ## C11 lenient vs. strict
+//! ## Lenient vs. strict LATM validation
 //!
 //! Lenient mode (`StrictMode::Off`): the demuxer surfaces the issue as
-//! a `NonConformant` event alongside the `Sample` event (today's
-//! permissive behavior — consumers may still want the bytes for forensic
-//! analysis).
+//! a `NonConformant` event alongside the `Sample` event (permissive —
+//! consumers may still want the bytes for forensic analysis).
 //! Strict mode (`StrictMode::Full`): the `Sample` event is suppressed
 //! and the issue propagates as `DemuxError::StrictRejection`.
 
@@ -147,7 +146,7 @@ mod tests {
         );
     }
 
-    /// C11 — primary lenient-mode test: PES that does not begin with the
+    /// Primary lenient-mode test: PES that does not begin with the
     /// LOAS syncword on a `stream_type=0x11` PID is non-conformant.
     #[test]
     fn missing_syncword_returns_missing_syncword() {

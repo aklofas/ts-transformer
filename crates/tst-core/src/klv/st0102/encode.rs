@@ -199,11 +199,11 @@ pub fn encode_strict_compliance(record: &SecurityLs) -> Result<Vec<u8>, KlvEncod
             });
         }
     }
-    // ST 0107.5 §6.3.3: sanitize all string fields before encoding —
-    // remove banned control chars everywhere (ST 0107.3-13) and trim
-    // leading/trailing null/tab/LF/CR/space (ST 0107.3-12). Sanitization
-    // runs before the DA-KLV-1 empty-string mapping, so a field that
-    // sanitizes to "" encodes as [0x00].
+    // ST 0107.5 §6.3.3: sanitize all string fields before encoding — remove
+    // banned control chars everywhere (ST 0107.3-13) and trim leading/trailing
+    // null/tab/LF/CR/space (ST 0107.3-12). Sanitization runs before the
+    // ST 0107.5 §6.3.3.2 empty-string mapping, so a field that sanitizes to
+    // "" encodes as [0x00].
     let mut r = record.clone();
     sanitize_strings_st0102(&mut r);
     encode_to_vec(&r)

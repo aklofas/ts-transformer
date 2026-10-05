@@ -100,7 +100,7 @@ fn strict_ber_walk(buf: &[u8]) -> Result<(), KlvDecodeError> {
     let mut offset = 0usize;
     // ST 0107.5 §6.3.4: each item at most once per set. Checked here, where
     // the item's buffer-relative start is known, so `offset` points at the
-    // repeated tag byte (CORR-29a).
+    // repeated tag byte.
     let mut seen: hashbrown::HashSet<u32> = hashbrown::HashSet::new();
     while !rest.is_empty() {
         let item_start = offset;

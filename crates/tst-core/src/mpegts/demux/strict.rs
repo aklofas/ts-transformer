@@ -28,7 +28,7 @@ pub enum StrictMode {
     /// Hard-fail on every `NonConformantIssue` variant including
     /// future-added ones. Exception: a multi-section PAT
     /// (`PsiMultiSectionUnsupported { table_id: 0x00, .. }`) degrades to a
-    /// surface-only event (REF-PSI-02 — don't blame the sender); a
+    /// surface-only event (don't blame the sender); a
     /// multi-section PMT (table_id 0x02) and every other variant are still
     /// rejected.
     Full,
@@ -58,7 +58,7 @@ impl StrictMode {
             ),
             StrictMode::Full => !matches!(
                 issue,
-                // REF-PSI-02: a multi-section PAT (table_id 0x00) degrades to a
+                // A multi-section PAT (table_id 0x00) degrades to a
                 // surface-only event — never a hard fail ("don't blame the
                 // sender"). PMT multi-section (table_id 0x02) is still rejected.
                 NonConformantIssue::PsiMultiSectionUnsupported { table_id: 0x00, .. }
@@ -123,7 +123,7 @@ mod tests {
 
     #[test]
     fn timing_only_rejects_pts_anomaly_and_missing_required_pts() {
-        // validate-1 B4 — PTS timing concerns join the timing-only cascade.
+        // PTS timing concerns join the timing-only cascade.
         let m = StrictMode::TimingOnly;
         assert!(m.rejects(&NonConformantIssue::PtsAnomaly { delta: -100_000 }));
         assert!(m.rejects(&NonConformantIssue::MissingRequiredPts { pid: 0x100 }));
@@ -131,7 +131,7 @@ mod tests {
 
     #[test]
     fn ac3_sync_missing_only_rejected_by_full() {
-        // validate-1 C12 — AC-3 syncframe alignment is a content-layer
+        // AC-3 syncframe alignment is a content-layer
         // concern, neither timing nor descriptor; only StrictMode::Full
         // escalates it.
         let issue = NonConformantIssue::Ac3SyncMissing { pid: 0x300 };
@@ -192,7 +192,7 @@ mod tests {
         assert!(StrictMode::Full.rejects(&issue));
     }
 
-    /// C11 — LATM framing is data-conformance (the bitstream itself, not
+    /// LATM framing is data-conformance (the bitstream itself, not
     /// timing or descriptors). Only `Full` strict mode rejects it; the
     /// narrower `TimingOnly` / `DescriptorsOnly` modes leave it as a
     /// surface-only NonConformant event.
@@ -211,7 +211,7 @@ mod tests {
 
     #[test]
     fn full_does_not_reject_multi_section_pat() {
-        // REF-PSI-02: a PAT multi-section diagnostic (table_id 0x00) is a
+        // A PAT multi-section diagnostic (table_id 0x00) is a
         // "don't blame the sender" degradation, never a hard fail — even in Full.
         let issue = NonConformantIssue::PsiMultiSectionUnsupported {
             pid: 0x0000,

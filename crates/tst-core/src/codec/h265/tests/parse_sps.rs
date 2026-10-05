@@ -405,9 +405,9 @@ fn h265_main10_sps_with_scaling_list_data_present() -> Vec<u8> {
 }
 
 /// Conformant HDR Main10 streams routinely set
-/// `scaling_list_data_present_flag=1`. Prior to validate-1 item H265-V1-M02
-/// the parser surfaced this as `UnsupportedProfile { profile_idc: 2 }`,
-/// misdirecting consumers debugging HDR streams. The cause is a parser
+/// `scaling_list_data_present_flag=1`. Surfacing this as
+/// `UnsupportedProfile { profile_idc: 2 }` would misdirect consumers
+/// debugging HDR streams. The cause is a parser
 /// gap (`scaling_list_data()` at H.265 §7.3.4 is not implemented) — it is
 /// surfaced via `EngineError` referencing `scaling_list`.
 #[test]
@@ -631,7 +631,7 @@ fn build_synthetic_sps_with_inter_predicted_rps() -> Vec<u8> {
     })
 }
 
-/// Full RPS walk: after plan #29 Task 4.1, the parser walks past
+/// Full RPS walk: the parser walks past
 /// `num_short_term_ref_pic_sets > 0` and populates VUI fields.
 /// Structural fields verified alongside VUI fields to confirm the
 /// bit cursor is correctly positioned end-to-end.
@@ -734,9 +734,8 @@ fn build_sps_with_conf_window_offsets(
 /// `chroma_format_idc = 1` (sub_w = 2), the case `(1 << 30, 1 << 30)`
 /// triggers the addition path (`(1<<31) + (1<<31) = 1<<32`); the case
 /// `(1 << 31, 0)` triggers the multiplication path (`2 * (1<<31) = 1<<32`).
-/// Both are rejected at parse time as `ReservedValue` (review 9, ext
-/// R9-03); the fixture is emulation-escaped so the hostile ue(v) values
-/// read back exactly as written.
+/// Both are rejected at parse time as `ReservedValue`; the fixture is
+/// emulation-escaped so the hostile ue(v) values read back exactly as written.
 #[test]
 fn parse_sps_saturates_crop_on_adversarial_offsets() {
     for (conf_left, conf_right) in [(1u32 << 30, 1u32 << 30), (1u32 << 31, 0u32)] {
@@ -750,9 +749,9 @@ fn parse_sps_saturates_crop_on_adversarial_offsets() {
     }
 }
 
-/// Review 9 (ext R9-03): a conformance window that eats the whole picture
-/// is rejected at parse time, so `coded_width()` / `coded_height()` can
-/// never overflow (they panicked in debug and wrapped in release).
+/// A conformance window that eats the whole picture is rejected at parse
+/// time, so `coded_width()` / `coded_height()` can never overflow (which
+/// panics in debug and wraps in release).
 #[test]
 fn hostile_crop_cannot_escape_into_an_overflowing_getter() {
     let valid = escape_emulation(&build_sps_with_conf_window_offsets(0, 0, 0, 0));

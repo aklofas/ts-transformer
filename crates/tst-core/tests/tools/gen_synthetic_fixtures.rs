@@ -110,12 +110,11 @@ fn field_errors_record() -> Vec<u8> {
     // wrong length (3 bytes instead of the spec-required 4) inside an
     // otherwise-valid ST 0601 Local Set carrying a Tag 2 timestamp.
     //
-    // The public encoder will not produce this — validate-1 E3 added a
-    // filter that rejects typed/reserved tags routed through the
-    // `unknown` pass-through bag, since that path was historically used
-    // here to smuggle a malformed Tag 13 onto the wire. Building the
-    // bytes by hand keeps the fixture intentional-malformation while
-    // letting the encoder enforce conformance everywhere else.
+    // The public encoder will not produce this — it rejects typed/reserved tags
+    // routed through the `unknown` pass-through bag, so that path cannot
+    // smuggle a malformed Tag 13 onto the wire. Building the bytes by hand
+    // keeps the fixture intentional-malformation while letting the encoder
+    // enforce conformance everywhere else.
     let mut body: Vec<u8> = Vec::new();
     // Tag 2 (Precision Time Stamp): 8-byte big-endian u64 = 789.
     body.extend_from_slice(&[0x02, 0x08]);
@@ -126,7 +125,7 @@ fn field_errors_record() -> Vec<u8> {
     // fits in 7 bits. Emitted before Tag 13 because the typed-encoder
     // pass (TAGS order) ran before the unknown pass — preserving that
     // wire order keeps this fixture byte-for-byte identical to the
-    // committed file generated under the pre-E3 encoder.
+    // committed file generated before the reserved-tag filter existed.
     body.extend_from_slice(&[0x41, 0x01, 0x13]);
     // Tag 13 (Sensor Latitude): declared len = 3 bytes, malformed
     // (spec = 4). Appended via the old `unknown` path, hence ordered

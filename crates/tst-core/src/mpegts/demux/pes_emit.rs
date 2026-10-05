@@ -72,7 +72,7 @@ impl super::demuxer::Demuxer {
         &mut self,
         pkt: &crate::mpegts::demux::ts::TsPacket<'_>,
     ) -> Result<(), crate::error::DemuxError> {
-        // REF-PES-01: zero PES_packet_length is legal only for video. Key the
+        // Zero PES_packet_length is legal only for video. Key the
         // decision on the PMT-declared stream type, not the PES stream_id — the
         // PID's kind is always known here (process_packet only routes to
         // handle_pes_packet when stream_kind_by_pid contains pkt.pid). A PID
@@ -143,7 +143,7 @@ impl super::demuxer::Demuxer {
             kind,
             program_number,
         };
-        // B5 — surface PES header structural issues collected during
+        // Surface PES header structural issues collected during
         // parse_complete. These travel through the strict-mode cascade
         // like any other NonConformantIssue. We process them BEFORE the
         // PTS / DTS dispatch so consumers see the issue alongside the
@@ -157,12 +157,11 @@ impl super::demuxer::Demuxer {
                 },
             );
         }
-        // B4 — PTS distinct from PCR. Only update `last_pts_by_pid`
-        // when an actual PTS arrived; never write 0 as a fallback (the
-        // prior code corrupted the monotonicity check for streams that
-        // omit PTS sporadically). For stream types where H.222.0 §2.7.4
-        // makes PTS mandatory (audio + video), emit
-        // `MissingRequiredPts` when absent.
+        // PTS distinct from PCR. Only update `last_pts_by_pid` when an
+        // actual PTS arrived; never write 0 as a fallback (that corrupts
+        // the monotonicity check for streams that omit PTS sporadically).
+        // For stream types where H.222.0 §2.7.4 makes PTS mandatory (audio +
+        // video), emit `MissingRequiredPts` when absent.
         let pts = pes.pts.unwrap_or(Pts90khz::new(0));
         if pes.pts.is_none() && stream_type_requires_pts(&kind) {
             self.queue_nonconformant(
@@ -531,11 +530,10 @@ impl super::demuxer::Demuxer {
             StreamKind::Audio(codec) => {
                 let payload_len = pes.payload.len();
                 self.record_item(&stream, program_number, payload_len);
-                // C11 — for AAC-LATM (stream_type 0x11) validate the LOAS
-                // syncword at the start of the PES payload. Pre-C11 we
-                // advertised LATM without any framing check, so malformed
-                // streams produced opaque Sample events that downstream
-                // decoders couldn't parse. Lenient mode surfaces the
+                // For AAC-LATM (stream_type 0x11) validate the LOAS
+                // syncword at the start of the PES payload. Without a
+                // framing check, malformed streams produce opaque Sample
+                // events that downstream decoders can't parse. Lenient mode surfaces the
                 // NonConformantIssue alongside the Sample (callers may
                 // want the raw bytes for forensic analysis); strict mode
                 // (Full) suppresses the sample.
@@ -561,13 +559,12 @@ impl super::demuxer::Demuxer {
                 // `StreamCodecStats::Unknown` via the stats_per_stream-only
                 // path).
                 //
-                // validate-1 followup-2: use the resync variants
-                // (`frames_with_resync`) so a single malformed syncframe in
-                // the middle of a PES payload doesn't drop the rest of the
-                // frame count — the strict `frames()` iterators terminate
-                // on first parse error and undercount stats. Strict
-                // `frames()` remains available for fail-fast conformance
-                // callers (fuzzers, spec tests).
+                // Use the resync variants (`frames_with_resync`) so a single
+                // malformed syncframe in the middle of a PES payload doesn't
+                // drop the rest of the frame count — the strict `frames()`
+                // iterators terminate on first parse error and undercount
+                // stats. Strict `frames()` remains available for fail-fast
+                // conformance callers (fuzzers, spec tests).
                 let frames_delta: u64 = match codec {
                     AudioCodec::Aac => crate::codec::aac::frames_with_resync(&pes.payload)
                         .filter_map(Result::ok)
@@ -584,7 +581,7 @@ impl super::demuxer::Demuxer {
                         frames_delta,
                     );
                 }
-                // C12 — AC-3 syncframe alignment enforcement.
+                // AC-3 syncframe alignment enforcement.
                 //
                 // ATSC A/52:2018 §A.6.3 mandates `data_alignment_indicator=1`
                 // for every AC-3 PES, with the implication that the PES
@@ -625,7 +622,7 @@ impl super::demuxer::Demuxer {
                 entry.label.get_or_insert_with(|| {
                     crate::mpegts::stats::demux_subtitle_codec_label(codec).to_string()
                 });
-                // B6 — EN 300 743 §6.2 (DVB-sub) + EN 300 472 §4.2
+                // EN 300 743 §6.2 (DVB-sub) + EN 300 472 §4.2
                 // (teletext) mandate `data_alignment_indicator = 1`.
                 // CEA-708 standalone and WebVTT-in-TS don't formally
                 // require it but conventionally set it. Surface a
@@ -661,7 +658,7 @@ impl super::demuxer::Demuxer {
                 // sample so consumers can fail closed.
                 let raw = &pes.payload;
                 let surfaced_payload = if alignment_rejected {
-                    // Strict-mode B6 rejection suppresses the sample so
+                    // Strict-mode alignment rejection suppresses the sample so
                     // the receive loop can fail closed (parallel to the
                     // DvbSubDataIdentifier strict-mode path).
                     None

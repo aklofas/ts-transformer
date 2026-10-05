@@ -192,7 +192,7 @@ pub enum RecvRow {
     IsCancelledFlips,
     /// After a cancel and one op, `is_alive()` is false.
     NotAliveAfterCancel,
-    /// An empty destination buffer is a no-op returning `Ok(0)` (X-CORR-07).
+    /// An empty destination buffer is a no-op returning `Ok(0)`.
     EmptyRecvIsNoop,
     /// After a peer-side break and one op, `is_alive()` is false and the op
     /// reported `Broken`.
@@ -578,7 +578,7 @@ pub fn recv_close_twice_is_ok<R: RecvTransport>(mut r: R) {
 /// the very invocation that was parked returns `ExplicitClose` — is pinned
 /// where a transport can be observed from inside: the kit self-tests
 /// `parked_recv_is_interrupted_in_place` / `parked_send_is_interrupted_in_place`
-/// (the in-memory `Wire` counts `in_call`) and the C1.5 pipeline row
+/// (the in-memory `Wire` counts `in_call`) and the pipeline row
 /// `managed_send_parked_in_inner_is_interrupted_in_place`. Permitted race:
 /// a cancel that lands after an operation has already COMPLETED cannot
 /// change that completed result; this row asserts only the terminal
@@ -705,7 +705,7 @@ pub fn recv_not_alive_after_cancel<R: RecvTransport + 'static>(r: R) {
     }
 }
 
-/// X-CORR-07: an empty destination is a no-op — `Ok(0)` at once, nothing
+/// An empty destination is a no-op — `Ok(0)` at once, nothing
 /// touched — and the transport still delivers afterwards.
 pub fn recv_empty_recv_is_noop<R: RecvTransport + 'static>(r: R, feed: &dyn Fn(&[u8])) {
     const ROW: &str = "empty_recv_is_noop";
@@ -749,7 +749,7 @@ pub fn recv_empty_recv_is_noop<R: RecvTransport + 'static>(r: R, feed: &dyn Fn(&
 ///
 /// `is_cancelled()` means "the caller called `cancel()` on this handle",
 /// never "the transport is dead". A transport that aliases liveness there
-/// (tst-tcp's handle read `!alive` before WP-C1) makes every clean peer EOF
+/// (a handle that reads `!alive`) makes every clean peer EOF
 /// look like a caller close to the bindings, which relabel the end reason
 /// from exactly this bit — `TST_E_CLOSED` instead of `TST_E_END_OF_STREAM`.
 ///
@@ -867,7 +867,7 @@ pub fn not_alive_after_broken_recv<R: RecvTransport + 'static>(mut r: R, induce:
 
 /// `RecvTransport::max_payload` must be the protocol's deliverable
 /// ceiling (what a conformant foreign sender can legally produce), never
-/// the local send budget — the PR #97 truncation class.
+/// the local send budget, which truncates larger foreign payloads.
 pub fn recv_max_payload_ge_ceiling<R: RecvTransport>(r: &R, ceiling: usize) {
     const ROW: &str = "recv_max_payload_ge_ceiling";
     let got = r.max_payload();
@@ -1201,11 +1201,10 @@ mod tests {
         }
     }
 
-    /// The PROVABLE form of the park row (handoff validation 2026-09-18):
-    /// wait until the worker is INSIDE `recv_bytes` (`in_call == 1`), fire the
-    /// cancel, and assert the result of THAT invocation — no retry loop, no
-    /// `SETTLE`. Mutation pin: comment out `InCall::enter` in `MemRecv` →
-    /// the wait times out with "never entered".
+    /// The PROVABLE form of the park row: wait until the worker is INSIDE
+    /// `recv_bytes` (`in_call == 1`), fire the cancel, and assert the result of
+    /// THAT invocation — no retry loop, no `SETTLE`. Mutation pin: comment out
+    /// `InCall::enter` in `MemRecv` → the wait times out with "never entered".
     #[test]
     fn parked_recv_is_interrupted_in_place() {
         let wire = Wire::new(false);
@@ -1408,7 +1407,7 @@ mod tests {
     /// tst-tcp `!alive` shape) and this row fails.
     #[test]
     fn peer_break_that_latched_is_cancelled_is_rejected() {
-        /// A handle that aliases liveness — exactly what WP-C1 forbids.
+        /// A handle that aliases liveness — exactly what the contract forbids.
         struct AliasingCancel(Arc<Wire>);
         impl TransportCancel for AliasingCancel {
             fn cancel(&self) {

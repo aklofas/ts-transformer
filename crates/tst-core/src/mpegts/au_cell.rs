@@ -137,7 +137,7 @@ pub fn read_metadata_au_cell(buf: &[u8]) -> Result<(AuCellHeader, &[u8]), KlvDec
     // H.222.0 V9 Table 2-156: the low nibble of the flags byte is
     // `reserved`, and MPEG-2 systems reserved bits read as all ones (our
     // writer emits 0b1111). Anything else is not an AU cell header — most
-    // likely the fifth byte of a bare SMPTE UL (review 9, int R9-01).
+    // likely the fifth byte of a bare SMPTE UL.
     if flags & 0x0F != 0x0F {
         return Err(KlvDecodeError::ReservedBitsInvalid { got: flags & 0x0F });
     }
@@ -232,9 +232,8 @@ mod tests {
 
     /// H.222.0 V9 Table 2-156: the flags byte's low nibble is reserved and
     /// reads as all ones (our writer emits 0b1111). Anything else is not a
-    /// cell header — most likely the fifth byte of a bare SMPTE UL, which is
-    /// how a 13 319+ byte async KLV packet used to pass as a Middle cell
-    /// (review 9, int R9-01).
+    /// cell header — most likely the fifth byte of a bare SMPTE UL; without
+    /// this check a 13 319+ byte async KLV packet passes as a Middle cell.
     #[test]
     fn read_rejects_a_reserved_nibble_that_is_not_all_ones() {
         // cfi = 11, dcf = 0, rai = 0, reserved = 0000; length 0.

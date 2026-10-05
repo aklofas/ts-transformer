@@ -76,7 +76,7 @@ pub enum PsiParseError {
 
 /// A single parsed PAT section (ISO/IEC 13818-1 §2.4.4.3), including its
 /// program loop. Unlike [`parse_pat`], this does NOT reject multi-section
-/// tables — the caller reassembles them (REF-PSI-02).
+/// tables — the caller reassembles them.
 #[derive(Debug)]
 pub(super) struct PatSection {
     pub(super) transport_stream_id: u16,
@@ -111,7 +111,7 @@ pub(super) fn parse_pat_section(section: &[u8]) -> Result<PatSection, PsiParseEr
     // PAT minimum: 5 fixed bytes (transport_stream_id 2 + flags 1 +
     // section_number 1 + last_section_number 1) + 4 CRC = 9. Without
     // this guard, section_length < 4 underflows `total_len - 4` on
-    // the CRC slice below (OSS-Fuzz: plan #54 / VERIFICATION.md).
+    // the CRC slice below (found by OSS-Fuzz; see oss-fuzz/VERIFICATION.md).
     const PAT_MIN_SECTION_LENGTH: u16 = 9;
     if section_length < PAT_MIN_SECTION_LENGTH {
         return Err(PsiParseError::SectionTooShort {
@@ -181,7 +181,7 @@ pub(super) fn parse_pat_section(section: &[u8]) -> Result<PatSection, PsiParseEr
 /// verifies the CRC over the section header + payload.
 ///
 /// This function rejects multi-section tables (`last_section_number != 0`);
-/// multi-section reassembly is handled internally by the `Demuxer` (REF-PSI-02).
+/// multi-section reassembly is handled internally by the `Demuxer`.
 pub fn parse_pat(section: &[u8]) -> Result<Pat, PsiParseError> {
     let s = parse_pat_section(section)?;
     if s.last_section_number != 0 {
@@ -309,7 +309,7 @@ mod pat_tests {
         }
     }
 
-    /// Bug surfaced by OSS-Fuzz local smoke (plan #53 → plan #54).
+    /// Bug surfaced by an OSS-Fuzz local smoke run.
     /// section_length = 0 makes total_len = 3, so total_len - 4 underflows
     /// in usize when computing the CRC slice. The fuzz harness panicked
     /// at psi.rs:90 on `&section[..total_len - 4]`. Guard should catch
@@ -557,7 +557,7 @@ pub fn parse_pmt(section: &[u8]) -> Result<Pmt, PsiParseError> {
     // section_number 1 + last_section_number 1 + pcr_pid 2 +
     // program_info_length 2) + 4 CRC = 13. Without this guard,
     // section_length < 4 underflows `total_len - 4` on the CRC slice
-    // below (parallel to parse_pat fix in Task 1).
+    // below (the same guard as parse_pat's).
     const PMT_MIN_SECTION_LENGTH: u16 = 13;
     if section_length < PMT_MIN_SECTION_LENGTH {
         return Err(PsiParseError::SectionTooShort {
@@ -835,7 +835,7 @@ mod pmt_tests {
         }
     }
 
-    /// Mirror of Task 1's PAT test but for parse_pmt. section_length = 0
+    /// Mirror of the PAT section_length = 0 test, for parse_pmt. section_length = 0
     /// makes total_len = 3, which underflows the CRC slice at psi.rs's
     /// parse_pmt CRC slice. PMT minimum section_length: 9 fixed bytes
     /// (program_number 2 + flags 1 + section_number 1 + last_section_number 1 +

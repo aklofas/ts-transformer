@@ -11,8 +11,7 @@ use crate::klv::st0903::vtarget_pack::VTargetPack;
 
 /// Build a minimal LS containing only Tag 1 (Checksum) + Tag 2 (PTS)
 /// + Tag 4 (Version) — the three commonly-required tags. (Strict
-///   mode validates a tighter set per Task 6 — see §10.1 carriage
-///   rules.)
+///   mode validates a tighter set — see §10.1 carriage rules.)
 fn minimal_ls_bytes() -> Vec<u8> {
     // tag 1 (Checksum, U16Be) = 0
     // tag 2 (PTS, U64Be) = 1_700_000_000_000_000
@@ -54,18 +53,16 @@ fn decode_unknown_tag_preserved() {
 fn decode_truncated_value_lenient_field_error() {
     // tag 4 (Version, V2) declares BER length 5 but only 1 byte
     // of value is present. Lenient decode does not panic;
-    // field_errors capture the truncation. Strict mode rejects
-    // (Task 6).
+    // field_errors capture the truncation. Strict mode rejects.
     let bytes = [4u8, 5, 0x01];
     let ls = decode(&bytes).unwrap();
     assert!(!ls.field_errors.is_empty());
 }
 
-/// Regression for Phase 0 Task 1.5: hostile bytes targeting the
-/// U64Be (Tag 2 PTS) decode path must never panic. The upstream
-/// `value.len() != 8` length check intercepts wrong-sized slices
-/// before the `try_into` runs, so the fallible-conversion safety
-/// net added in Task 1.5 is defense-in-depth — both the well-formed
+/// Hostile bytes targeting the U64Be (Tag 2 PTS) decode path must
+/// never panic. The upstream `value.len() != 8` length check
+/// intercepts wrong-sized slices before the `try_into` runs, so the
+/// fallible-conversion safety net is defense-in-depth — both the well-formed
 /// and malformed cases below exercise the contract that decode
 /// returns a value (lenient: with field_errors / strict: Err)
 /// instead of panicking.
@@ -106,8 +103,8 @@ fn strict_decode_tag2_pts_wrong_length_rejected() {
 
 #[test]
 fn decode_tag2_pts_well_formed_still_works() {
-    // Sanity check that the Task 1.5 fix didn't regress the happy
-    // path. 8-byte PTS decodes to the expected u64.
+    // The happy path still works: an 8-byte PTS decodes to the
+    // expected u64.
     let mut bytes = vec![2u8, 8];
     bytes.extend_from_slice(&1_700_000_000_000_000u64.to_be_bytes());
     let ls = decode(&bytes).unwrap();
@@ -219,13 +216,8 @@ fn decode_imapb_happy_path() {
     // FOV = 90.0° encoded as IMAPB(0, 180, 2) per ST 0903.6
     // §10.1.11 worked example. The spec-correct encoding for
     // 90.0° in this range is the byte pair 0x2D 0x00.
-    //
-    // Historical note: the pre-fix substrate used a signed-
-    // midpoint formula that produced 0xAD 0x00 for the same
-    // input (and this test was transcribed from that wrong
-    // output). Tasks 1–5 of plan
-    // 2026-05-10-klv-wire-format-critical-fixes corrected the
-    // substrate; this test now codifies the spec result.
+    // A signed-midpoint formula yields the wrong 0xAD 0x00 for the
+    // same input; this test pins the spec result.
     let mut bytes = minimal_ls_bytes();
     bytes.extend_from_slice(&[11, 2, 0x2D, 0x00]);
     let ls = decode(&bytes).unwrap();
@@ -235,11 +227,11 @@ fn decode_imapb_happy_path() {
 }
 
 // ------------------------------------------------------------------
-// Task 6 — `decode_strict` tests.
+// `decode_strict` tests.
 // ------------------------------------------------------------------
 
 /// Build the minimum LS that satisfies `decode_strict`'s required-tag
-/// gate per Task 2's audit: Tag 4 (Version) + Tag 6 (numTargetsReported).
+/// gate: Tag 4 (Version) + Tag 6 (numTargetsReported).
 /// Tags 1/2/11/12/13 are conditional and NOT enforced by `decode_strict`
 /// (consumers needing carriage-aware validation post-validate).
 fn minimal_strict_ls_bytes() -> Vec<u8> {
@@ -369,7 +361,7 @@ fn strict_decode_invalid_vtargetpack_rejected() {
 
 #[test]
 fn strict_vtarget_series_non_canonical_length_reports_buffer_offset() {
-    // CORR-29(b): Tag 101 value = one valid pack (`04` + 4 body bytes:
+    // Tag 101 value = one valid pack (`04` + 4 body bytes:
     // target_id 1, tag 4 priority len 1 value 5) followed by `81 05`, a
     // long-form BER length whose value fits the short form. The
     // offending byte sits at series offset 5; the series value starts at
@@ -387,10 +379,10 @@ fn strict_vtarget_series_non_canonical_length_reports_buffer_offset() {
 
 #[test]
 fn lenient_decode_keeps_a_target_pack_with_a_field_error() {
-    // CORR-29(e): pack = target_id 1, then tag 10 (centroid_lat_offset,
-    // 3-byte IMAPB) with a 1-byte value. A per-field error must land in
-    // the pack's `field_errors`; the pack used to be dropped wholesale
-    // and reported as `TruncatedField { tag: 101 }` on the parent.
+    // Pack = target_id 1, then tag 10 (centroid_lat_offset, 3-byte
+    // IMAPB) with a 1-byte value. A per-field error must land in the
+    // pack's `field_errors`, not drop the pack wholesale as
+    // `TruncatedField { tag: 101 }` on the parent.
     let mut bytes = minimal_strict_ls_bytes();
     bytes.extend_from_slice(&[101, 5, 0x04, 0x01, 0x0A, 0x01, 0x00]);
     let ls = decode(&bytes).unwrap();
@@ -409,7 +401,7 @@ fn lenient_decode_keeps_a_target_pack_with_a_field_error() {
 }
 
 // ------------------------------------------------------------------
-// Task 7 — `encode` + `encoded_len` round-trip + canonical-bytes.
+// `encode` + `encoded_len` round-trip + canonical-bytes.
 // ------------------------------------------------------------------
 
 #[test]
@@ -562,7 +554,7 @@ fn encode_canonical_byte_layout() {
     );
 }
 
-// --- Phase 1 (KLV-OTHER-02) regression tests added 2026-05-10 ---
+// --- Checksum-placement regression tests ---
 
 #[test]
 fn encode_omits_tag1_checksum_per_st0903_6_120() {
@@ -591,7 +583,7 @@ fn encode_omits_tag1_checksum_per_st0903_6_120() {
 fn encode_drops_caller_supplied_checksum() {
     // The two encode entry points have asymmetric contracts:
     // `encode_to_vec` (embedded) drops `ls.checksum`; the new
-    // `encode_to_vec_standalone` (Task 4) computes its own.
+    // `encode_to_vec_standalone` computes its own.
     // Pin the embedded-side drop contract.
     let ls_with = VmtiLs {
         checksum: Some(0xABCD),
@@ -704,7 +696,7 @@ fn encoded_len_standalone_matches_encode_standalone() {
     assert_eq!(bytes.len(), encoded_len_standalone(&ls));
 }
 
-// ---------- Validate-1 E5: BER-OID walker round-trip tests ----------
+// ---------- BER-OID walker round-trip tests ----------
 //
 // The ST 0903 §10.1 typed universe (tags 1..=103) all fit in a single
 // BER-OID byte (`write_ber_oid(N) == [N]` for `N ≤ 127`). The walker
@@ -712,12 +704,12 @@ fn encoded_len_standalone_matches_encode_standalone() {
 // decode is byte-identical for these. The tests below pin that
 // invariant and exercise the multi-byte boundaries (128 / 16383 /
 // 16384) that the migration unlocks for forward-compat tags. Mirrors
-// the ST 0102 E4 test suite (`unknown_tag_*_round_trips_*_byte_ber_oid`).
+// the ST 0102 BER-OID test suite (`unknown_tag_*_round_trips_*_byte_ber_oid`).
 
 /// Byte-identical encode for the typed universe: a maximally-populated
-/// LS using only defined tags 1..=103 emits the same wire bytes
-/// pre- and post-E5 because BER-OID(N) == [N] for N ≤ 127. Pins the
-/// fact that the walker rewrite did not regress legacy emission.
+/// LS using only defined tags 1..=103 emits the same wire bytes as
+/// single-byte tags because BER-OID(N) == [N] for N ≤ 127, so legacy
+/// emission is unchanged.
 #[test]
 fn defined_tags_byte_identical_pre_and_post_e5() {
     use crate::klv::st0903::vtarget_pack::VTargetPack;
@@ -744,7 +736,7 @@ fn defined_tags_byte_identical_pre_and_post_e5() {
     };
 
     let bytes = encode_to_vec(&ls).unwrap();
-    // Pre-E5 baseline: each tag emits as a single byte. Spot-check
+    // Baseline: each tag emits as a single byte. Spot-check
     // the first few wire bytes — tag 2 (PTS, U64Be) header is
     // `[0x02, 0x08, ...]`. If the walker ever regressed to a
     // 2-byte BER-OID for a < 128 value, this would catch it.
@@ -784,11 +776,10 @@ fn unknown_tag_127_round_trips_single_byte_ber_oid() {
 
 /// BER-OID round-trip boundary: unknown tag 128 — first multi-byte
 /// value (`0x81 0x00`). The continuation bit `0x80` on the first byte
-/// signals "more bytes follow". Pre-E5 this tag would have been
-/// silently dropped on encode (the `field.tag <= 0xFF` guard kept it,
-/// but the cast `as u8` truncated to `0x80`, and the decoder's
-/// `cursor[0]` would have read that `0x80` as start of a BER length).
-/// Post-E5 it survives a full encode/decode round-trip.
+/// signals "more bytes follow". A single-byte tag path would corrupt it
+/// (the `as u8` cast truncates to `0x80`, and a `cursor[0]` decoder reads
+/// that `0x80` as start of a BER length); it must survive a full
+/// encode/decode round-trip.
 #[test]
 fn unknown_tag_128_round_trips_multi_byte_ber_oid() {
     let ls = VmtiLs {
@@ -887,10 +878,10 @@ fn strict_decode_preserves_multi_byte_ber_oid_unknown() {
     assert_eq!(decoded.unknown[0].value, b"forward-compat");
 }
 
-/// Strict mode catches a duplicate multi-byte BER-OID tag. Pre-E5
-/// the `[bool; 256]` seen array would have silently collided tag
-/// 256 with tag 0 (`as u8`-narrowing); post-E5 the dedup runs on
-/// the full `u32` tag value so multi-byte duplicates are caught.
+/// Strict mode catches a duplicate multi-byte BER-OID tag. A `[bool; 256]`
+/// seen array would silently collide tag 256 with tag 0 (`as u8`-narrowing);
+/// the dedup runs on the full `u32` tag value so multi-byte duplicates are
+/// caught.
 #[test]
 fn strict_decode_rejects_duplicate_multi_byte_ber_oid_tag() {
     // Hand-craft a body with two copies of BER-OID tag 200 (encoded
@@ -911,7 +902,7 @@ fn strict_decode_rejects_duplicate_multi_byte_ber_oid_tag() {
 }
 
 // ------------------------------------------------------------------
-// Task 1 (WP-F / REF-KLV-03): unknown-bucket typed-tag guard tests.
+// Unknown-bucket typed-tag guard tests.
 // ------------------------------------------------------------------
 
 #[test]
@@ -994,8 +985,7 @@ fn encode_allows_truly_unknown_tag_in_vtargetpack_unknown() {
 }
 
 // ------------------------------------------------------------------
-// Task 4 (WP-F / REF-KLV-03): encode_strict_compliance +
-// encode_standalone_strict_compliance tests.
+// encode_strict_compliance + encode_standalone_strict_compliance tests.
 // ------------------------------------------------------------------
 
 /// Helper: a VmtiLs satisfying standalone-required fields (tags 2+4+6+11+12+13).

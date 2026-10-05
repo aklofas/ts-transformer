@@ -1,4 +1,4 @@
-//! DA-MUX-3: descriptor body length bound corrected from 253 to 255.
+//! Descriptor body length bound is 255, not 253.
 //!
 //! H.222.0 §2.6 defines `descriptor_length` as an 8-bit field, so any
 //! body length in 0..=255 bytes is structurally valid. The old guard
@@ -112,8 +112,8 @@ fn descriptor_length_byte_mismatch_is_malformed() {
 /// This test exercises the full Muxer → Demuxer pipeline: the descriptor
 /// must survive byte-for-byte through the PMT section.
 ///
-/// Note: this test was GREEN before the DA-MUX-3 fix (160 ≤ 253, so the old
-/// guard never triggered here). It exists to pin the pipeline contract —
+/// Note: this test passes under a 253-byte guard too (160 ≤ 253, so that
+/// guard never triggers here). It exists to pin the pipeline contract —
 /// a descriptor within the PMT budget must round-trip verbatim — not as TDD
 /// RED evidence of the bug. The RED evidence is in the 254/255-byte tests above.
 ///

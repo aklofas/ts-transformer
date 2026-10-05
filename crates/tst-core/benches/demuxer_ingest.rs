@@ -9,7 +9,7 @@
 //!   byte-sink fan-out / file ingest where the caller hands a large buffer.
 //!
 //! The gap between the two is the measurement target for the `feed_aligned`
-//! optimisation (Task 9): per-packet should approach whole-stream throughput
+//! optimisation: per-packet should approach whole-stream throughput
 //! once the demuxer avoids the per-call sync_buf shuffle overhead.
 //!
 //! Run: `cargo bench -p tst-core --bench demuxer_ingest`
@@ -84,7 +84,7 @@ fn bench_feed_per_packet(c: &mut Criterion) {
             let mut d = Demuxer::new();
             for i in 0..n_packets {
                 let start = i * 188;
-                // Use feed_aligned — the Task-9 fast path for callers that
+                // Use feed_aligned — the fast path for callers that
                 // already hold a single aligned 188-byte TS packet, which is
                 // exactly the shape produced by pipeline::Receiver.
                 // The stream is well-formed so pkt[0] == 0x47; unwrap is safe.

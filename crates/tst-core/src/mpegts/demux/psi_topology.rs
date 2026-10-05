@@ -46,10 +46,9 @@ use hashbrown::{HashMap, HashSet};
 
 /// Three-state outcome from `Demuxer::dispatch_psi_result`. Replaces the
 /// earlier two-state `bool` return that conflated "section incomplete /
-/// silently dropped" with "DoS cap fired" (Validate-1 B3+B7 follow-up
-/// Critical Issue 1 — without disambiguation, a mid-stream join that
-/// produced an `Ok(None)` from `append_continuation` was indistinguishable
-/// from an overflow bail, and the new section header at
+/// silently dropped" with "DoS cap fired" (without disambiguation, a mid-stream
+/// join that produced an `Ok(None)` from `append_continuation` was
+/// indistinguishable from an overflow bail, and the new section header at
 /// `payload[1+pointer_field..]` was silently discarded).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PsiStep {
@@ -147,9 +146,8 @@ impl super::demuxer::Demuxer {
             // ever seen on this PID and `append_continuation` dropped
             // the bytes per §2.4.4.4. Both are normal — Step 2 must
             // still run to start the NEW section at `payload[1+pf..]`.
-            // The pre-fix code bailed on `Ok(false)` here and silently
-            // discarded the new section header in the mid-stream-join
-            // scenario (Validate-1 follow-up Critical Issue 1).
+            // Bailing on `Ok(false)` here would silently discard the new
+            // section header in the mid-stream-join scenario.
             if pointer_field > 0 {
                 let cont = &payload[1..1 + pointer_field];
                 let assembler = self.psi_assemblers.entry(pid).or_default();
@@ -258,12 +256,11 @@ impl super::demuxer::Demuxer {
             }
             Err(_) => return,
         };
-        // REF-PSI-03: validate fixed/reserved PSI syntax fields. This now runs
-        // per-section for multi-section PATs too (intentional — previously
-        // multi-section PATs were rejected by parse_pat before this check ran).
+        // Validate fixed/reserved PSI syntax fields. This runs per-section
+        // for multi-section PATs too (intentional).
         self.check_psi_syntax(0x0000, 0x00, section);
 
-        // REF-PSI-02: route multi-section PATs through the reassembler so
+        // Route multi-section PATs through the reassembler so
         // the topology diff fires atomically only on a complete section set.
         // Single-section PATs (last_section_number == 0) bypass the reassembler.
         let (version, programs) = if parsed.last_section_number == 0 {
@@ -305,11 +302,11 @@ impl super::demuxer::Demuxer {
             .collect();
 
         // Drop trackers whose PMT PID disappeared from this PAT version, OR
-        // whose PMT PID was reassigned to a different program_number (F-03 —
-        // PID reuse across programs). A reassigned PMT PID must tear down the
+        // whose PMT PID was reassigned to a different program_number (PID
+        // reuse across programs). A reassigned PMT PID must tear down the
         // stale program so the new program's PMT is adopted cleanly instead of
         // being rejected as PmtProgramNumberMismatch against the old identity.
-        // Per-PID cleanup (validate-1 B8) is shared with the PMT-version path
+        // Per-PID cleanup is shared with the PMT-version path
         // via `drop_elementary_pid_state`: every per-PID map keyed by an
         // elementary PID of the dropped program is otherwise unreachable and
         // would leak under PAT rotation.
@@ -327,7 +324,7 @@ impl super::demuxer::Demuxer {
                 for stream in &tracker.streams {
                     self.drop_elementary_pid_state(stream.pid);
                 }
-                // CORR-07: the per-program unwrap reference is keyed by
+                // The per-program unwrap reference is keyed by
                 // program_number, so it is unreachable once the program is
                 // gone — and a later program re-using the number must not
                 // anchor its first sample onto this one's epoch.
@@ -384,7 +381,7 @@ impl super::demuxer::Demuxer {
     /// Remove every per-PID demuxer cache entry for an elementary `pid` that is
     /// no longer reachable — its program left the PAT, or its stream was dropped
     /// by a PMT version change. Sharing this between PAT removal and the
-    /// PMT-version path keeps topology cleanup consistent (validate-1 B8 + F-01).
+    /// PMT-version path keeps topology cleanup consistent.
     ///
     /// PCR history is not elementary-PID state and is left alone here: a PID
     /// dropped from a stream list may still be some program's `PCR_PID`. See
@@ -396,7 +393,7 @@ impl super::demuxer::Demuxer {
         self.dup_by_pid.remove(&pid);
         self.last_pkt_raw_by_pid.remove(&pid);
         self.last_pts_by_pid.remove(&pid);
-        // CORR-07: the opt-in unwrap accumulator is per-PID timeline state.
+        // The opt-in unwrap accumulator is per-PID timeline state.
         // A replacement stream reusing this PID must anchor on its program's
         // clock, not inherit the dead stream's epoch.
         self.unwrap_state.remove(&pid);
@@ -450,7 +447,7 @@ impl super::demuxer::Demuxer {
             None => return, // PMT arriving on PID not in PAT — drop.
         };
 
-        // REF-PSI-01: reject PMT whose body program_number doesn't match PAT.
+        // Reject PMT whose body program_number doesn't match PAT.
         // A validly-checksummed PMT for program B arriving on program A's PMT
         // PID is a structural violation per H.222.0 §2.4.4.8. Do NOT adopt
         // topology; emit a NonConformant diagnostic.
@@ -466,7 +463,7 @@ impl super::demuxer::Demuxer {
             return;
         }
 
-        // REF-PSI-03: validate fixed/reserved PSI syntax fields.
+        // Validate fixed/reserved PSI syntax fields.
         self.check_psi_syntax(pmt_pid, 0x02, section);
         // Dedup: re-emit only if version changed or first ever.
         if let Some(tracker) = self.programs.get(&pmt_pid) {
@@ -636,7 +633,7 @@ impl super::demuxer::Demuxer {
             self.stream_kind_by_pid.insert(pid, kind);
         }
 
-        // F-01: a PMT version bump may drop or reassign elementary PIDs. Clear
+        // A PMT version bump may drop or reassign elementary PIDs. Clear
         // the full per-PID state for any PID the prior version owned that is
         // gone from the new stream set — the same cleanup PAT program removal
         // performs — so a removed PID can no longer route stale PES, timing, or
@@ -658,7 +655,7 @@ impl super::demuxer::Demuxer {
             self.drop_elementary_pid_state(pid);
         }
 
-        // DA-DEMUX-3: flush PES / CC / PTS state for PIDs that persist across
+        // Flush PES / CC / PTS state for PIDs that persist across
         // this PMT version bump but whose stream kind changed. A partial video PES
         // buffered before the bump must not be emitted under the new kind (e.g.
         // audio), and the stale CC / PTS baselines would produce false anomaly
@@ -688,7 +685,7 @@ impl super::demuxer::Demuxer {
             self.dup_by_pid.remove(&pid);
             self.last_pkt_raw_by_pid.remove(&pid);
             self.last_pts_by_pid.remove(&pid);
-            // CORR-07: same reasoning as the removal path — a PID whose kind
+            // Same reasoning as the removal path — a PID whose kind
             // changed carries a different stream, so its unwrap accumulator
             // belongs to the old timeline.
             self.unwrap_state.remove(&pid);
@@ -710,7 +707,7 @@ impl super::demuxer::Demuxer {
         tracker.streams = stream_infos;
         tracker.klv_mismatch_coalesce.clear();
 
-        // DA-DEMUX-2: if this update moved `PCR_PID`, the old PID's history is
+        // If this update moved `PCR_PID`, the old PID's history is
         // retired unless another program still declares it. An unchanged
         // `PCR_PID` keeps its baseline across the version bump.
         self.retire_undeclared_pcr_history();
@@ -798,7 +795,7 @@ impl super::demuxer::Demuxer {
         }
     }
 
-    /// REF-PSI-03. Validate fixed/reserved PSI syntax fields on a section
+    /// Validate fixed/reserved PSI syntax fields on a section
     /// whose CRC already passed. `section_syntax_indicator`/`section_number`
     /// are checked in every mode; reserved-bit checks are gated behind
     /// `strict != Off`. `pid` is the PID the section arrived on (0x0000 for
@@ -817,9 +814,9 @@ impl super::demuxer::Demuxer {
             );
         }
         // section_number (byte 6) must be 0 only on a single-section table
-        // (last_section_number, byte 7, == 0). Multi-section PATs (REF-PSI-02)
+        // (last_section_number, byte 7, == 0). Multi-section PATs
         // legitimately carry section_number 1..=last_section_number, so a
-        // non-zero section_number there is valid, not a syntax violation (F-02).
+        // non-zero section_number there is valid, not a syntax violation.
         if section[7] == 0 && section[6] != 0 {
             self.queue_nonconformant(
                 stream(),
@@ -981,7 +978,7 @@ mod tests {
     /// Like `wrap_section_in_ts_packet` but sets the 4-bit CC field to `cc`.
     ///
     /// Use this in tests that feed two PSI packets on the same PID: the second
-    /// must use `cc=1` so that DA-DEMUX-1's duplicate-suppression does not
+    /// must use `cc=1` so that the demuxer's duplicate-suppression does not
     /// swallow it.
     fn wrap_section_in_ts_packet_cc(pid: u16, section: &[u8], cc: u8) -> Vec<u8> {
         let mut pkt = wrap_section_in_ts_packet(pid, section);
@@ -998,7 +995,7 @@ mod tests {
         events
     }
 
-    // REF-PSI-03: section_syntax_indicator=0 flagged on PAT
+    // section_syntax_indicator=0 flagged on PAT
     #[test]
     fn pat_section_syntax_indicator_unset_flagged() {
         let mut section = build_pat_section(0x0001, 0, &[(1, 0x1000)]);
@@ -1028,7 +1025,7 @@ mod tests {
         }
     }
 
-    // REF-PSI-03: section_number != 0 flagged on PAT
+    // section_number != 0 flagged on PAT
     #[test]
     fn pat_section_number_nonzero_flagged() {
         let mut section = build_pat_section(0x0001, 0, &[(1, 0x1000)]);
@@ -1060,7 +1057,7 @@ mod tests {
         }
     }
 
-    // REF-PSI-03: reserved-bit violation NOT emitted under StrictMode::Off
+    // Reserved-bit violation NOT emitted under StrictMode::Off
     #[test]
     fn pat_reserved_bits_not_flagged_in_lenient_mode() {
         let mut section = build_pat_section(0x0001, 0, &[(1, 0x1000)]);
@@ -1091,7 +1088,7 @@ mod tests {
         );
     }
 
-    // REF-PSI-03: reserved-bit violation emitted and rejected under StrictMode::Full
+    // Reserved-bit violation emitted and rejected under StrictMode::Full
     #[test]
     fn pat_reserved_bits_flagged_and_rejected_in_full_mode() {
         let mut section = build_pat_section(0x0001, 0, &[(1, 0x1000)]);
@@ -1130,7 +1127,7 @@ mod tests {
         );
     }
 
-    // REF-PSI-03: section_syntax_indicator=0 flagged on PMT
+    // section_syntax_indicator=0 flagged on PMT
     #[test]
     fn pmt_section_syntax_indicator_unset_flagged() {
         // First feed a valid PAT so the demuxer creates a tracker for the PMT PID
@@ -1175,7 +1172,7 @@ mod tests {
         }
     }
 
-    // REF-PSI-03: PMT-specific reserved-bit violation gated by StrictMode
+    // PMT-specific reserved-bit violation gated by StrictMode
     // (NOT emitted under Off; emitted AND rejected under Full).
     #[test]
     fn pmt_reserved_bits_flagged_and_rejected_in_full_mode() {
@@ -1238,7 +1235,7 @@ mod tests {
         );
     }
 
-    // REF-PSI-03: section_number != 0 flagged on PMT (fires in all modes).
+    // section_number != 0 flagged on PMT (fires in all modes).
     #[test]
     fn pmt_section_number_non_zero_flagged() {
         let pat_section = build_pat_section(0x0001, 0, &[(1, 0x1000)]);
@@ -1278,7 +1275,7 @@ mod tests {
         }
     }
 
-    // DA-DEMUX-2: PMT PCR-PID change must remove the stale last_pcr_by_pid entry
+    // PMT PCR-PID change must remove the stale last_pcr_by_pid entry
     // when the old PCR PID was a PCR-only PID not present in the new stream set.
     #[test]
     fn pmt_pcr_pid_change_removes_stale_pcr_entry() {
@@ -1326,7 +1323,7 @@ mod tests {
         );
     }
 
-    // DA-DEMUX-3: a PID that persists across a PMT version bump but changes
+    // A PID that persists across a PMT version bump but changes
     // stream kind must have its PES / CC / PTS state flushed so stale reassembly
     // state from the old kind can't pollute events under the new kind.
     #[test]
@@ -1405,7 +1402,7 @@ mod tests {
         );
     }
 
-    // CORR-07: the opt-in PTS/DTS unwrap accumulator is per-PID state and must
+    // The opt-in PTS/DTS unwrap accumulator is per-PID state and must
     // follow the same topology cleanup as `last_pts_by_pid` / `cc_by_pid`. A
     // PID whose stream left the PAT/PMT can be reused by an unrelated
     // replacement stream; inheriting the dead stream's epoch would splice two
@@ -1433,9 +1430,9 @@ mod tests {
         );
     }
 
-    // CORR-07: a PID that persists across a PMT version bump but changes stream
+    // A PID that persists across a PMT version bump but changes stream
     // kind carries a different stream on the same PID — its unwrap accumulator
-    // must be flushed with the rest of its per-PID state (DA-DEMUX-3).
+    // must be flushed with the rest of its per-PID state.
     #[test]
     fn pmt_persisting_pid_with_kind_change_clears_unwrap_state() {
         let pat = build_pat_section(1, 0, &[(1, 0x1000)]);
@@ -1471,7 +1468,7 @@ mod tests {
         );
     }
 
-    // CORR-07: the per-PROGRAM unwrap reference is keyed by program_number, so
+    // The per-PROGRAM unwrap reference is keyed by program_number, so
     // it becomes unreachable once the program leaves the PAT. A later program
     // re-using that number must not anchor its first sample onto the dead
     // program's epoch.

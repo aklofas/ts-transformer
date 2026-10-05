@@ -2,7 +2,7 @@
 //!
 //! `MuxerConfig::validate` enforces program/stream caps and uniqueness rules
 //! at builder-time. The chainable builders (`MuxerConfigBuilder`,
-//! `MuxerProgramConfigBuilder`) follow the Phase 3 `&mut self -> &mut Self`
+//! `MuxerProgramConfigBuilder`) follow the `&mut self -> &mut Self`
 //! shape. Production muxer code lives in `mod.rs`.
 
 use crate::error::MuxError;
@@ -674,7 +674,7 @@ impl MuxerConfig {
                     // is always 0..=255 (H.222.0 §2.6 — `descriptor_length`
                     // is an 8-bit field). Configs whose descriptor makes the
                     // PMT section exceed 183 bytes are caught below by the
-                    // `PmtTooLarge` check (DA-MUX-3).
+                    // `PmtTooLarge` check.
                 }
             }
 

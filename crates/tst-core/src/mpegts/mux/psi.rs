@@ -123,7 +123,7 @@ pub(crate) const MAX_PMT_SECTION_BYTES: usize = 183;
 ///
 /// Derived directly from `build_pmt_descriptor_cache` so the estimator and
 /// the emitter are structurally identical — any suppression rule added or
-/// changed in the cache builder is automatically reflected here (DA-MUX-2).
+/// changed in the cache builder is automatically reflected here.
 /// The only overhead vs. real construction is an extra `Vec` allocation at
 /// validation time; this is construction-time cost, not per-push.
 pub(crate) fn estimate_pmt_section_size(prog: &crate::mpegts::mux::MuxerProgramConfig) -> usize {
@@ -339,17 +339,16 @@ mod tests {
         assert_eq!(buf[187], 0xFF);
     }
 
-    /// Regression for audit 2026-05-05 §3 Critical #1:
-    /// `estimate_pmt_section_size` only accounted for KLVA auto-emit;
-    /// missed AV01 (6 B), DVB subtitling (10 B), DVB teletext (7 B),
-    /// CEA-708 GA94 (6 B), WebVTT VTTC (6 B). Configs near the 183-byte
-    /// budget passed `validate()` then failed at PMT emission with
-    /// `PmtTooLarge` — defeating build-time validation.
+    /// `estimate_pmt_section_size` must count every auto-emitted
+    /// descriptor: KLVA, AV01 (6 B), DVB subtitling (10 B), DVB teletext
+    /// (7 B), CEA-708 GA94 (6 B), WebVTT VTTC (6 B). Counting KLVA alone
+    /// lets configs near the 183-byte budget pass `validate()` and then
+    /// fail at PMT emission with `PmtTooLarge`.
     ///
     /// This test builds a config with 15 DVB-sub streams whose auto-emit
-    /// (10 bytes each = 150 bytes) blows past the budget. Pre-fix
-    /// `validate()` returned Ok (estimate ignored auto-emit, came in at
-    /// ~96 bytes); post-fix it correctly returns Err(PmtTooLarge).
+    /// (10 bytes each = 150 bytes) blows past the budget. An estimate that
+    /// ignores auto-emit comes in at ~96 bytes and returns Ok; `validate()`
+    /// must return Err(PmtTooLarge).
     #[test]
     fn estimate_pmt_size_includes_subtitle_auto_emit() {
         use crate::mpegts::mux::SubtitleCodec;
@@ -385,11 +384,10 @@ mod tests {
         }
     }
 
-    /// Regression for audit 2026-05-05 §2 Critical #1: caller-supplied
-    /// program-level descriptors were silently dropped by the PMT writer.
-    /// Per H.222.0 V9 §2.4.4.9 Table 2-33 (PDF p.79), the descriptor()_loop
-    /// between program_info_length and the per-stream loop carries program-
-    /// level descriptors. Public builder method
+    /// Caller-supplied program-level descriptors must reach the PMT, not be
+    /// silently dropped by the PMT writer. Per H.222.0 V9 §2.4.4.9 Table 2-33 (PDF
+    /// p.79), the descriptor()_loop between program_info_length and the per-stream
+    /// loop carries program-level descriptors. Public builder method
     /// `MuxerProgramConfigBuilder::program_descriptors(...)` accepted them, but the
     /// writer hardcoded `program_info_length=0` and never wrote the bytes.
     #[test]

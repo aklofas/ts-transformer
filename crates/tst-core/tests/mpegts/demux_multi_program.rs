@@ -19,7 +19,7 @@ fn pat_packet_with_programs(programs: &[(u16, u16)], version: u8) -> Vec<u8> {
 /// Like `pat_packet_with_programs` but with a custom continuity counter.
 ///
 /// Use this when a test feeds two PAT packets on the same PID: the second
-/// must use `cc=1` so DA-DEMUX-1's duplicate-suppression does not swallow it.
+/// must use `cc=1` so the demuxer's duplicate-suppression does not swallow it.
 fn pat_packet_with_programs_cc(programs: &[(u16, u16)], version: u8, cc: u8) -> Vec<u8> {
     psi_packet(0x0000, &build_pat_section(version, programs), cc)
 }
@@ -175,7 +175,7 @@ fn demuxer_stats_programs_seen_reflects_pat_size() {
 }
 
 // ---------------------------------------------------------------------------
-// Multi-program PCR tracking (validate-1 B1 — Codex TS-TIME-01)
+// Multi-program PCR tracking
 // ---------------------------------------------------------------------------
 
 /// Build a 188-byte TS packet carrying a PCR in its adaptation field on
@@ -306,6 +306,6 @@ fn pcr_anomaly_fires_for_same_pid_jump() {
     );
 }
 
-// White-box B8 (PAT cleanup) tests live in the demuxer.rs #[cfg(test)] mod
+// White-box PAT-cleanup tests live in the demuxer.rs #[cfg(test)] mod
 // (alongside the existing PAT/PMT tracker tests that use `programs_for_test`).
 // See `pat_remove_program_clears_per_pid_state` etc. there.

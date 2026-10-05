@@ -1,4 +1,4 @@
-//! AV1-01 B0 guard: feeding already-carried (binding-framed) bytes to the
+//! Guard: feeding already-carried (binding-framed) bytes to the
 //! WRAPPING push must return a typed error, never emit an empty AU.
 use tst_core::error::MuxError;
 use tst_core::mpegts::common::Pts90khz;

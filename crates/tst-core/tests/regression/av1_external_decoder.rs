@@ -1,11 +1,9 @@
-//! Validate-1 Sprint 5 Wave I2 — AV1-in-MPEG-2-TS binding external
-//! decoder acceptance.
+//! AV1-in-MPEG-2-TS binding external decoder acceptance.
 //!
 //! Background
 //! ----------
-//! Validate-1 Sprint 2 item C8 (SHAs 5394c00, 78d9b8e, 2d73294, 9f83250)
-//! implemented binding-conformant AV1 carriage as the default mux + demux
-//! mode. The binding spec (AV1-in-MPEG-2-TS, AOM 2020) requires:
+//! Binding-conformant AV1 carriage is the default mux + demux mode. The
+//! binding spec (AV1-in-MPEG-2-TS, AOM 2020) requires:
 //!
 //!   - PMT stream_type 0x06 + `format_identifier "AV01"`
 //!     registration_descriptor (§2.1)
@@ -17,23 +15,22 @@
 //!     emulation-prevention `0x03` bytes inserted after any
 //!     `0x00 0x00 0xX` (X ≤ 0x03) in the body (§3.2)
 //!
-//! Sprint 5 / Wave I2's empirical question:
+//! The empirical question:
 //!
 //!   > "do spec-compliant AV1 receivers (libaom, ffmpeg, dav1d) actually
 //!   >  accept our binding-conformant output?"
 //!
 //! Why this matters
 //! ----------------
-//! `Av1CarriageMode::InteropRawObu` is the de-facto carriage used by
-//! ffmpeg / hls.js / mediamtx today: PES `stream_id=0xE0`, raw OBU
-//! payload, no `ts_open_bitstream_unit` framing. Plan-1 decision D-1
-//! flipped the default from interop-mode to binding-mode for spec
-//! conformance — this test validates that decision empirically by
-//! comparing both modes through the same external tools and asserting
-//! the **container-layer** acceptance of each. It is NOT a pixel-
-//! decoding interop test: the AV1 OBU bodies here are synthetic, so
-//! libaom / dav1d cannot decode pixels — but they CAN tell us whether
-//! the container parser of each tool dispatches the bytes correctly.
+//! `Av1CarriageMode::InteropRawObu` is the de-facto carriage used by ffmpeg /
+//! hls.js / mediamtx today: PES `stream_id=0xE0`, raw OBU payload, no
+//! `ts_open_bitstream_unit` framing. The default is binding-mode for spec
+//! conformance — this test validates that choice empirically by comparing both
+//! modes through the same external tools and asserting the **container-layer**
+//! acceptance of each. It is NOT a pixel-decoding interop test: the AV1 OBU
+//! bodies here are synthetic, so libaom / dav1d cannot decode pixels — but they
+//! CAN tell us whether the container parser of each tool dispatches the bytes
+//! correctly.
 //!
 //! What we observe
 //! ---------------
@@ -46,8 +43,8 @@
 //! - **tsanalyze** (tsduck) reports `PES stream id: 0xBD (Private
 //!   stream 1)` for the AV1 video PID — exact spec match.
 //! - The on-wire PES payload starts with `0x00 0x00 0x01` and
-//!   contains one start code per OBU (validated by Sprint 2 follow-up
-//!   9f83250 + `av1_carriage_roundtrip::av1_binding_mode_emits_one_start_code_per_obu_on_wire`).
+//!   contains one start code per OBU (pinned by
+//!   `av1_carriage_roundtrip::av1_binding_mode_emits_one_start_code_per_obu_on_wire`).
 //!
 //! Tools used
 //! ----------
@@ -232,7 +229,7 @@ fn run(cmd: &mut Command) -> Output {
 /// Specifically: confirms (a) the PMT registration descriptor carries
 /// `AV01`, (b) the first video PES starts with the 3-byte
 /// `ts_open_bitstream_unit` start code, and (c) the wire stream contains
-/// AT LEAST one start code per OBU per AU (Sprint 2 9f83250 invariant).
+/// AT LEAST one start code per OBU per AU (the per-OBU framing invariant).
 #[test]
 fn binding_mode_wire_format_invariants_hold() {
     let ts = build_av1_ts(Av1CarriageMode::Mpeg2TsBinding);
@@ -249,10 +246,9 @@ fn binding_mode_wire_format_invariants_hold() {
 
     // Count `0x00 0x00 0x01` occurrences in the wire stream. The 30
     // AUs contain 30 TDs + 2 SHs (on keys 0 and 15) + 30 FHs + 30 TGs
-    // = 92 OBUs => ≥92 binding start codes (Sprint 2 9f83250 per-OBU
-    // framing). A pre-9f83250 implementation that wrapped once per AU
-    // would yield only ~30 start codes; this lower-bound catches any
-    // regression to that earlier shape.
+    // = 92 OBUs => ≥92 binding start codes (per-OBU framing). Wrapping
+    // once per AU would yield only ~30 start codes; this lower bound
+    // catches any regression to that shape.
     let n_start_codes = ts.windows(3).filter(|w| *w == [0x00, 0x00, 0x01]).count();
     assert!(
         n_start_codes >= 92,

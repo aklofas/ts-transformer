@@ -2,9 +2,9 @@
 //!   * `encode_imapb` / `decode_imapb` (Value case within one quantisation step)
 //!   * `encode_imapb_special` / `decode_imapb` (Special case exact round-trip)
 //!
-//! Closes audit finding KLV F-01: the special-value path and lengths
-//! L ∈ {1, 4..8} were never exercised by the existing ST 0903 fuzz coverage
-//! (which only reaches IMAPB indirectly via fixed-L table entries).
+//! Covers the special-value path and lengths L ∈ {1, 4..8}, which the
+//! ST 0903 fuzz coverage never reaches (it hits IMAPB only indirectly via
+//! fixed-L table entries).
 //!
 //! # Input layout
 //!
@@ -91,7 +91,7 @@ fuzz_target!(|data: &[u8]| {
                 match decoded {
                     DecodedImapb::Value(v_back) => {
                         // Value must be finite — a non-finite Value violates
-                        // the decode contract (PR #84 guard).
+                        // the decode contract.
                         assert!(
                             v_back.is_finite(),
                             "decode returned Value({v_back}) which is non-finite; \
@@ -108,7 +108,7 @@ fuzz_target!(|data: &[u8]| {
                     }
                     // OutOfRange with a non-finite decoded value: this is the
                     // correct outcome when the decode formula overflows due to
-                    // an enormous sR (degenerate range, PR #84). The encode
+                    // an enormous sR (degenerate range). The encode
                     // succeeded for v_raw ∈ [min, max], but the round-trip
                     // can't be guaranteed when sR is large enough that
                     // sR·Zoffset + |min| exceeds f64::MAX.

@@ -1,7 +1,6 @@
-//! Regression tests for sub-phase 1.1.4 / Phase 3 sub-phase 3.4.2:
-//! descriptor-index builder methods must never panic; out-of-range indices
-//! surface as [`MuxError::DescriptorIndexOutOfRange`] from the descriptor
-//! setter call itself (immediate-error semantics post-Phase-3).
+//! Regression tests: descriptor-index builder methods must never panic;
+//! out-of-range indices surface as [`MuxError::DescriptorIndexOutOfRange`]
+//! from the descriptor setter call itself (immediate-error semantics).
 
 use tst_core::MuxError;
 use tst_core::mpegts::mux::{

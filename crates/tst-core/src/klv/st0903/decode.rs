@@ -165,7 +165,7 @@ pub fn decode(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
                 // §10.1.3 / §10.1.10 char caps (V32 / V128 — characters,
                 // not bytes; UTF-8 expansion may exceed the byte count).
                 // Lenient: surface a field_error if too long, but keep
-                // the value (strict mode rejects in Task 6).
+                // the value (strict mode rejects).
                 if s.chars().count() > max_chars {
                     ls.field_errors.push(KlvFieldError::InvalidLength {
                         tag: tag as u32,
@@ -203,7 +203,7 @@ pub fn decode(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
                     max,
                     length: expected_len,
                 };
-                // A7: decode_imapb returns DecodedImapb (special values + bounds
+                // decode_imapb returns DecodedImapb (special values + bounds
                 // check per ST 1201.5 §7.2.2 step 1 + §7.2.3). The lenient
                 // top-level walker treats special values and out-of-range as
                 // "field unavailable" — surface InvalidLength as a generic
@@ -286,7 +286,7 @@ fn decode_vtarget_series(
         match vtarget_pack::read_pack(pack_bytes) {
             Ok((pack, _)) => targets.push(pack),
             Err(_) => {
-                // `read_pack` is itself lenient now (CORR-29e): a
+                // `read_pack` is itself lenient: a
                 // per-field value error lands in the pack's own
                 // `field_errors` and this arm never sees it. Only a
                 // pack-level FRAMING failure (truncated target ID,
@@ -498,7 +498,7 @@ pub fn decode_strict(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
                     max,
                     length: expected_len,
                 };
-                // A7: strict mode rejects special values + out-of-range as
+                // Strict mode rejects special values + out-of-range as
                 // InvalidLength (the most caller-friendly map onto existing
                 // error vocabulary). Future tightening could promote these
                 // to dedicated KlvFieldError variants.
@@ -521,7 +521,7 @@ pub fn decode_strict(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
                 101 => {
                     // `item_start + consumed` = buffer offset of `value[0]`,
                     // so series-internal errors report buffer-absolute
-                    // offsets (CORR-29b).
+                    // offsets.
                     ls.targets = decode_vtarget_series_strict(value, item_start + consumed)?;
                 }
                 102 => ls.algorithm_series = Some(value.to_vec()),
@@ -531,7 +531,7 @@ pub fn decode_strict(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
         }
     }
 
-    // Required-tag validation per Task 2's audit: required = {4, 6}.
+    // Required-tag validation: required = {4, 6}.
     // Both are typed (u8) tags so `seen_u8` is the right index.
     for spec in TAGS {
         if spec.required && !seen_u8[spec.id as usize] {
@@ -561,7 +561,7 @@ fn decode_vtarget_series_strict(
         let before_len = cursor.len();
         let (pack_len, after_len) = read_ber_strict(cursor).map_err(|mut e| {
             // `read_ber_strict` reports 0 / 1 relative to `cursor` — rebase
-            // onto the pack's buffer position (CORR-29b).
+            // onto the pack's buffer position.
             rebase_offset(&mut e, offset);
             e
         })?;

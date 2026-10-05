@@ -164,11 +164,11 @@ pub fn encode_strict_compliance(record: &UasDatalinkLs) -> Result<Vec<u8>, KlvEn
             name: "Precision Time Stamp",
         });
     }
-    // ST 0107.5 §6.3.3: sanitize all string fields before encoding —
-    // remove banned control chars everywhere (ST 0107.3-13) and trim
-    // leading/trailing null/tab/LF/CR/space (ST 0107.3-12). Sanitization
-    // runs before the DA-KLV-1 empty-string mapping, so a field that
-    // sanitizes to "" encodes as [0x00].
+    // ST 0107.5 §6.3.3: sanitize all string fields before encoding — remove
+    // banned control chars everywhere (ST 0107.3-13) and trim leading/trailing
+    // null/tab/LF/CR/space (ST 0107.3-12). Sanitization runs before the
+    // ST 0107.5 §6.3.3.2 empty-string mapping, so a field that sanitizes to
+    // "" encodes as [0x00].
     let mut r = record.clone();
     sanitize_strings_st0601(&mut r);
     encode_to_vec(&r)
@@ -341,7 +341,7 @@ pub(super) fn each_typed_field<F: FnMut(u8, usize)>(
                 .communications_method
                 .as_ref()
                 .map(|s| str_wire_len(s)),
-            // WP-B Table B2 var-length int/enum fields — shortest-form
+            // Var-length int/enum fields — shortest-form
             // length, computed without allocating the value bytes.
             110 => record
                 .time_airborne_s
@@ -374,7 +374,7 @@ pub(super) fn each_typed_field<F: FnMut(u8, usize)>(
                 .correction_offset_us
                 .map(crate::klv::length::var_int_min_len),
             139 => record.active_payloads.as_ref().map(|v| v.len()),
-            // WP-C Table C1 pack/list items (single-instance; Tags 102
+            // Pack/list items (single-instance; Tags 102
             // and 115 are multi-instance and are handled after this loop).
             81 => record.image_horizon.map(|h| packs::image_horizon_len(&h)),
             116 => record
@@ -413,7 +413,7 @@ pub(super) fn each_typed_field<F: FnMut(u8, usize)>(
             // so that `byte_length` comes from the single `tags::TAGS` source.
             _ if spec.range.is_some() => super::decode::ranged_entry(spec.id)
                 .and_then(|e| (e.get)(record).map(|_| spec.range.as_ref().unwrap().byte_length)),
-            // The 14 WP-B IMAPB extended-range fields — always sized at
+            // The 14 IMAPB extended-range fields — always sized at
             // default_len whether the eventual bytes are a normal-range
             // encode or (under OutOfRangePolicy::Indicator) a special;
             // both are default_len bytes. An Error-policy out-of-range
@@ -544,7 +544,7 @@ pub(super) fn encode_tag_value(
             .as_ref()
             .map(|s| check_string(135, s, &spec.encoding).map(|_| str_to_bytes(s)))
             .transpose()?,
-        // WP-B Table B2 var-length int/enum fields — always shortest-form.
+        // Var-length int/enum fields — always shortest-form.
         110 => record
             .time_airborne_s
             .map(|v| crate::klv::length::write_var_uint_min(v as u64)),
@@ -576,7 +576,7 @@ pub(super) fn encode_tag_value(
             .correction_offset_us
             .map(crate::klv::length::write_var_int_min),
         139 => record.active_payloads.clone(),
-        // WP-C Table C1 pack/list items (single-instance). Tags 102 and
+        // Pack/list items (single-instance). Tags 102 and
         // 115 are MULTI-INSTANCE and fall to the `_ => None` arm below —
         // their TLVs are emitted directly by `write_typed_fields`'s
         // inline loops over `record.sdcc_flps` / `record.control_commands`,
@@ -681,7 +681,7 @@ pub(super) fn encode_tag_value(
                 None
             }
         }
-        // The 14 WP-B IMAPB extended-range fields (Table B1) — share the
+        // The 14 IMAPB extended-range fields — share the
         // RANGED_FIELDS accessor table with the LinearRange fields above;
         // the wire format is what differs (encode_imapb_field vs encode_ranged).
         _ if matches!(spec.encoding, Encoding::Imapb { .. }) => {

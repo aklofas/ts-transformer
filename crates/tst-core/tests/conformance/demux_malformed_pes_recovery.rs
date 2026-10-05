@@ -1,9 +1,9 @@
 //! Lenient-mode recovery from `DemuxError::MalformedPes` on both feed paths.
 //!
-//! Background: prior to plan #69 Task 7, `Demuxer::feed` and
-//! `Demuxer::feed_aligned` both propagated `MalformedPes` fatally, which
-//! ended the receive loop in `tst_pipeline::DemuxReceiver`. A single corrupt
-//! PES header on one PID would tear down the whole receiver. This file
+//! Background: if `Demuxer::feed` and `Demuxer::feed_aligned` propagated
+//! `MalformedPes` fatally, that would end the receive loop in
+//! `tst_pipeline::DemuxReceiver`: a single corrupt PES header on one PID
+//! would tear down the whole receiver. This file
 //! verifies that lenient mode (default) converts the error to a
 //! `NonConformantIssue::MalformedPes` event and continues parsing, on
 //! BOTH the byte-stream `feed` path and the aligned-packet `feed_aligned`
@@ -244,10 +244,10 @@ fn feed_aligned_strict_mode_escalates_malformed_pes_to_error() {
     );
 }
 
-/// Review 9 (ext R9-01): a valid PES that LENGTH-COMPLETES in the same
-/// `push` as a malformed neighbour on the same PID used to be dropped with
-/// the neighbour's error (`Reassembler::push` returned `Err` instead of its
-/// outcomes). Both orders, both feed entry points. The helper's two video
+/// A valid PES that LENGTH-COMPLETES in the same `push` as a malformed
+/// neighbour on the same PID must survive; returning `Err` from
+/// `Reassembler::push` instead of its outcomes drops it with the
+/// neighbour's error. Both orders, both feed entry points. The helper's two video
 /// PESes are unbounded; here the second one is made bounded (its
 /// `PES_packet_length` set to the payload remaining in its PUSI packet) so
 /// it completes inside that packet's push.

@@ -26,11 +26,10 @@
 //!
 //! Shared rows, every transport: a second `close()` is a no-op;
 //! `cancel_handle()` returns `Some` (bare test mocks may return `None`);
-//! `RecvTransport::max_payload()` is the protocol's deliverable ceiling
-//! (never the local send budget); an EMPTY destination buffer makes
-//! `recv_bytes` return `Ok(0)` without touching the socket or the liveness
-//! flag (X-CORR-07 — every transport). A cancel that
-//! lands after a successful op is not an error — the NEXT op fails with
+//! `RecvTransport::max_payload()` is the protocol's deliverable ceiling (never
+//! the local send budget); an EMPTY destination buffer makes `recv_bytes`
+//! return `Ok(0)` without touching the socket or the liveness flag. A cancel
+//! that lands after a successful op is not an error — the NEXT op fails with
 //! `ExplicitClose`. `Broken` after a cancel is impossible by construction.
 //!
 //! # `is_cancelled()` — the caller's intent, never liveness
@@ -39,7 +38,7 @@
 //! `false` on a fresh handle; `true` after `cancel()` on it or any alias,
 //! and after the caller's own `close()` where that close is implemented by
 //! firing the same handle (`Socket::close`, the managed wrappers'
-//! `terminal_signal` — X-CORR-01, so `ManagedCancel` also reads `true`
+//! `terminal_signal`, so `ManagedCancel` also reads `true`
 //! after `close()`/`Drop` of the wrapper).
 //!
 //! It is **never** a liveness proxy: a peer EOF or a wire failure leaves it
@@ -422,7 +421,7 @@ pub trait Transport: Send {
 /// caller-initiated end from exactly this bit. Where a transport's own
 /// `close()` is implemented by firing the same handle — `Socket::close` and
 /// the send-side `ManagedCancel` (whose `close()`/`Drop` run the same
-/// `terminal_signal`, X-CORR-01) — `is_cancelled()` also reads `true` after
+/// `terminal_signal`) — `is_cancelled()` also reads `true` after
 /// that `close()`. `ManagedRecvCancel` does NOT: its `close()` only clears
 /// the slot, so it reads `true` for a cross-thread cancel alone. Callers
 /// that need "cancelled by someone else" keep their own flag on top (the
@@ -478,11 +477,11 @@ pub trait RecvTransport: Send {
     /// - `Err(TransportError::Backpressure)` on a recv timeout — the
     ///   transport is still alive and the caller may retry;
     /// - `Ok(0)` immediately for an EMPTY `buf`, touching nothing
-    ///   (X-CORR-07; the kit row `empty_recv_is_noop`);
+    ///   (the kit row `empty_recv_is_noop`);
     /// - never `Ok(0)` for a NON-empty `buf`: a datagram transport that
     ///   receives an empty datagram skips it (tst-udp, tst-rtp) or reports
     ///   `Backpressure` (tst-rist) — the receive shells treat `Ok(0)` as
-    ///   "closed" (review 9, R9-04).
+    ///   "closed".
     fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError>;
 
     /// Upper bound on the bytes a single `recv_bytes` call may deliver.

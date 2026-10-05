@@ -11,9 +11,8 @@
 //!
 //! Shipped: H.264 ([`h264`]), H.265 ([`h265`]), H.266 ([`h266`]),
 //! AV1 ([`av1`]), MPEG audio Layer I/II/III ([`mpegaudio`]), AAC ADTS
-//! ([`aac`]), AC-3 syncframe header ([`ac3`]). AAC LATM frame iterator
-//! is deferred to a follow-up plan; AC-3 full-frame iteration (vs the
-//! header-only parser shipped) is deferred to a follow-up plan.
+//! ([`aac`]), AC-3 syncframe header ([`ac3`]). An AAC LATM frame iterator
+//! and AC-3 full-frame iteration (vs the header-only parser) are deferred.
 
 use alloc::string::String;
 pub mod aac;
@@ -369,8 +368,8 @@ pub enum CodecParseError {
 /// require `a + b < raw` (H.264 §7.4.2.1.1, H.265 §7.4.3.2.1, H.266
 /// §7.4.3.4); anything else is rejected at parse time so the public
 /// `coded_width()` / `coded_height()` getters (`width + crop_a + crop_b`)
-/// can never overflow (review 9, ext R9-03). A raw dimension of 0 with no
-/// crop is left to the caller as before.
+/// can never overflow. A raw dimension of 0 with no crop is left to the
+/// caller.
 pub(crate) fn apply_crop(
     field: &'static str,
     raw: u32,

@@ -1,21 +1,17 @@
-//! Wave I1 — empirical interop matrix for WebVTT-in-TS + CEA-708
+//! Empirical interop matrix for WebVTT-in-TS + CEA-708
 //! standalone carriage.
 //!
 //! # Why this exists
 //!
-//! Plan §2.9 (Wave I) asks one question: do external MPEG-TS receivers
+//! One question: do external MPEG-TS receivers
 //! **ignore** our auto-emitted `registration_descriptor` markers
 //! `"VTTC"` (WebVTT-in-TS) and `"GA94"` (CEA-708 standalone), letting
 //! the PIDs pass through as opaque private PES once they fail to
 //! recognize the codec? Or do they actively **reject** the stream
-//! because of the unknown markers? This question came out of
-//! Validate-1 finding H7 (Slice 08 SUB-01/SUB-02): the original
-//! rustdoc on `format_identifier_vttc` / `format_identifier_ga94`
-//! claimed "informal industry convention recognized by ffmpeg / hls.js
-//! / mediamtx", which we couldn't substantiate. Wave H softened the
-//! claims to "library-internal round-trip only — external-tool
-//! interop has not been empirically verified" (decision D-2). This
-//! harness is the empirical follow-up.
+//! because of the unknown markers? The rustdoc on
+//! `format_identifier_vttc` / `format_identifier_ga94` claims only
+//! "library-internal round-trip only — external-tool interop has not
+//! been empirically verified"; this harness gathers that evidence.
 //!
 //! # The pass/fail model
 //!
@@ -27,7 +23,7 @@
 //!   no parser-fatal stderr.
 //! - **reject (bad)**: tool exits non-zero or emits "Invalid data"
 //!   / "could not find codec" *attributable to the VTTC/GA94 markers
-//!   specifically*. If found, H7's soft-doc stance fails and we need
+//!   specifically*. If found, the soft-doc stance fails and we need
 //!   to change the markers (or drop the auto-emit).
 //! - **skip**: the tool isn't on PATH on this machine. CI may not
 //!   have ffmpeg/gstreamer/tsduck installed; the test must not fail
@@ -38,7 +34,7 @@
 //! "Ignore" here means *the container parser accepts the stream*,
 //! not *the receiver extracts the WebVTT cue text*. WebVTT-in-TS
 //! decoding requires demuxer-specific support (Apple HLS variant).
-//! H7 only claims pass-through compatibility (the unknown PID
+//! The rustdoc only claims pass-through compatibility (the unknown PID
 //! doesn't cause the rest of the program to be rejected). That is
 //! what we measure here.
 //!
@@ -63,7 +59,7 @@
 //! or `--quit-on-end` flags that aren't worth the complexity for a
 //! container-acceptance question already covered by three independent
 //! parsers. ffmpeg is the most widely deployed receiver and the one
-//! H7's old docs specifically named, so its result is load-bearing.
+//! earlier docs specifically named, so its result is load-bearing.
 //!
 //! # `ffmpeg -c copy -f null` was intentionally dropped
 //!
@@ -84,11 +80,6 @@
 //! `cargo test --workspace`, which executes default-pass tests with
 //! all tools optional via runtime `which`-style detection. Missing
 //! tools yield `skip`, never failure.
-//!
-//! # Author / history
-//!
-//! Created 2026-05-20 as Validate-1 Sprint 5 / Wave I1. Results
-//! recorded in the out-of-tree results doc; see plan §2.9.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -114,9 +105,9 @@ struct ProbeResult {
 enum Action {
     /// Tool accepted the structure (parser exit-code 0, no fatal
     /// stderr, subtitle PID either ignored or labelled as opaque
-    /// data). H7's soft-doc claim holds for this cell.
+    /// data). The soft-doc claim holds for this cell.
     Ignore,
-    /// Tool rejected the stream because of the marker. H7's claim
+    /// Tool rejected the stream because of the marker. The claim
     /// fails for this cell — caller should investigate.
     Reject,
     /// Tool not present on PATH; cell not measured. CI must
@@ -125,7 +116,7 @@ enum Action {
     /// Tool ran but failed for a reason unrelated to the markers
     /// (e.g. the synthetic fixture's empty H.264 stream tripping a
     /// downstream codec parser). Treated as informational, not a
-    /// rejection signal for H7.
+    /// rejection signal for the claim.
     UnrelatedFailure,
 }
 

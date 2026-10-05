@@ -22,13 +22,12 @@
 //! short enough to give a stable measurement within criterion's default
 //! sampling budget.
 //!
-//! ## Phase role
+//! ## Role
 //!
-//! These are Phase 4 tripwire benches: they record baseline throughput so that
-//! Phase 5 (fuzz-target relocation + codec module splits) can be verified not
-//! to degrade hot paths. The video parsers are expected to take 1–30 µs each
-//! (single-invocation); the audio iterators are expected to complete 50 frames
-//! in 5–100 µs.
+//! These are tripwire benches: they record baseline throughput so that
+//! refactors can be verified not to degrade hot paths. The video parsers are
+//! expected to take 1–30 µs each (single-invocation); the audio iterators are
+//! expected to complete 50 frames in 5–100 µs.
 //!
 //! Run: `cargo bench -p tst-core --bench codec_parsers`.
 //! Quick mode (shorter warmup): add `-- --quick` at the end.

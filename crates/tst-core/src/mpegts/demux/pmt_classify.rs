@@ -8,9 +8,8 @@
 //! except `classify_pmt_stream`, which is `pub(crate)` so the mux-side
 //! `StreamSpec::Data` acceptance rule can call it.
 //!
-//! Per Wave 6.B Decision DB6, free functions stay as free functions (not
-//! wrapped in a struct). The audit's recommended `stream_classifier.rs`
-//! shape is collapsed into this module — narrower scope (PMT-specific).
+//! These stay free functions (not wrapped in a struct): they hold no state
+//! of their own, and the classifier's scope is PMT-specific.
 
 use crate::mpegts::demux::event::{AudioCodec, StreamKind, SubtitleCodec, VideoCodec};
 use crate::mpegts::demux::psi::{
@@ -67,7 +66,7 @@ pub(crate) fn classify_pmt_stream(stream_type: u8, descriptors: &[RawDescriptor]
 /// (MPEG-1/MPEG-2/MPEG-4 video), which [`classify_pmt_stream`] therefore
 /// returns as [`StreamKind::Unknown`].
 ///
-/// Used by REF-PES-01 (zero-`PES_packet_length` handling, H.222.0 §2.4.3.7):
+/// Used by the zero-`PES_packet_length` rule (H.222.0 §2.4.3.7):
 /// an unbounded PES is legal whenever the payload is a *video* elementary
 /// stream — not only the codecs `tst-core` recognizes as
 /// [`StreamKind::Video`]. Keying the zero-length rule on
@@ -250,7 +249,7 @@ mod tests {
         assert!(is_video_stream_type(0x24)); // H.265
         assert!(is_video_stream_type(0x33)); // H.266
         // Video codecs tst-core does NOT parse (classified Unknown) but which
-        // are still video elementary streams (REF-PES-01 zero-length permission).
+        // are still video elementary streams (zero-length permission).
         assert!(is_video_stream_type(0x01)); // MPEG-1 video
         assert!(is_video_stream_type(0x02)); // MPEG-2 video (H.262)
         assert!(is_video_stream_type(0x10)); // MPEG-4 Part 2 visual

@@ -1,5 +1,5 @@
 //! Top-level `Demuxer` state machine — the coordinator that wires
-//! together the sibling-submodule helpers extracted during Wave 6.B:
+//! together the sibling-submodule helpers:
 //!
 //! - `sync_ingress` — byte-aligned 188-byte packet detection + PCR / CC
 //!   anomaly checks.
@@ -7,12 +7,12 @@
 //! - `pmt_classify` — PMT stream classification + descriptor recognition.
 //! - `pes_emit` — PES reassembly dispatch + event construction.
 //! - `stats_recorder` — counter bumping + nonconformant event queueing.
-//! - `strict` (unchanged from Phase 5) — `StrictMode` policy enum.
+//! - `strict` — `StrictMode` policy enum.
 //!
 //! Public API (`new`, `with_config`, `feed`, `feed_aligned`,
 //! `next_event`, `flush`, `stats`, `reset_stats`, `stream_codec_stats`)
 //! lives here in the coordinator. Implementation helpers are
-//! `pub(super)` and live in the sibling submodules per Decision DB2/DB3.
+//! `pub(super)` and live in the sibling submodules.
 
 use crate::error::DemuxError;
 use crate::mpegts::demux::event::{
@@ -174,7 +174,7 @@ pub struct Demuxer {
     /// (`is_synced = true`), in `reset_sync`, `feed_aligned`, and the two
     /// `SyncBufExhausted` clear paths. `unrecoverable_window` derives it
     /// from whether a candidate byte is still retained in `sync_buf` — an
-    /// EMPTY buffer keeps the CORR-15 fresh-demuxer contract (a leading
+    /// EMPTY buffer keeps the fresh-demuxer contract (a leading
     /// `0x47` on the next `feed` is initial acquisition, not resync), while
     /// a retained candidate must still be confirmed. See
     /// `retained_candidate_after_unrecoverable_still_needs_n_of_m`.
@@ -226,7 +226,7 @@ pub struct Demuxer {
     /// AUs. Single-cell (`Complete`) AUs pass through unchanged. Cleared
     /// wholesale on [`Self::reset_sync`] and on PMT version change.
     pub(super) au_reassembler: crate::mpegts::demux::au_reassemble::AuCellReassembler,
-    /// Multi-section PAT reassembler (REF-PSI-02). Buffers sections of one
+    /// Multi-section PAT reassembler. Buffers sections of one
     /// PAT table by `(tsid, version, current_next)` key and fires atomically
     /// on a complete `0..=last_section_number` set. Cleared on
     /// [`Self::reset_sync`]. `pub(super)` — invisible outside `mpegts::demux`.
@@ -350,8 +350,7 @@ impl Demuxer {
         // `compact_sync_buf` reclaims lazily below its 1 MiB floor. When
         // the projected total would trip the cap only because of that
         // dead prefix, reclaim it first so a cap below the floor (a
-        // documented, binding-exposed knob) accepts steady aligned feeds
-        // (CORR-01).
+        // documented, binding-exposed knob) accepts steady aligned feeds.
         if self.sync_consumed > 0 && self.sync_buf.len().saturating_add(bytes.len()) > cap {
             self.sync_buf.drain(..self.sync_consumed);
             self.sync_consumed = 0;
@@ -403,7 +402,7 @@ impl Demuxer {
         // us in resync mode across the call boundary so the next 0x47 we
         // find still has to pass N-of-M — including a candidate that
         // survived a window verdict with `bytes_since_sync` already reset to
-        // zero (CORR-15 follow-up: see `resync_required`'s doc comment).
+        // zero (see `resync_required`'s doc comment).
         let mut resyncing = !self.is_synced && self.resync_required;
         loop {
             let live = &self.sync_buf[self.sync_consumed..];
@@ -557,14 +556,14 @@ impl Demuxer {
     /// verdict is per window: the caller has already consumed the
     /// scanned span, and the counter restarts at zero so the next `feed`
     /// begins a fresh search instead of re-scanning the same bytes and
-    /// re-reporting a doubled count (CORR-15).
+    /// re-reporting a doubled count.
     ///
     /// A scan can close the window sitting ON a candidate `0x47` (the byte
     /// the scan stopped at, ≥ 188 bytes still behind it in `sync_buf`) —
     /// that candidate was never scanned past, so it's still buffered, not
     /// discarded. Derive `resync_required` from whether such a candidate
     /// remains: an empty buffer means the next `feed`'s leading `0x47` (if
-    /// any) is fresh initial acquisition per CORR-15; a non-empty one means
+    /// any) is fresh initial acquisition; a non-empty one means
     /// it must still pass N-of-M before the demuxer trusts it (see
     /// `retained_candidate_after_unrecoverable_still_needs_n_of_m`).
     fn unrecoverable_window(&mut self) -> DemuxError {
@@ -651,7 +650,6 @@ impl Demuxer {
         // state and surface as random malformation. Drop the packet (no
         // payload routed) and surface UnsupportedScrambling so consumers can
         // distinguish "unsupported scrambling" from "random corruption".
-        // REF-TS-01.
         if pkt.transport_scrambling_control != 0 {
             let stream = self
                 .lookup_stream(pkt.pid)
@@ -665,7 +663,7 @@ impl Demuxer {
             );
             return Ok(());
         }
-        // REF-TS-02: surface adaptation-field control/length violations.
+        // Surface adaptation-field control/length violations.
         // ReservedControl (00) routes neither adaptation nor payload by
         // construction; BadLengthForControl / ShortPcr may still carry a
         // routable payload — continue best-effort (lenient).
@@ -755,12 +753,11 @@ impl Demuxer {
         }
     }
 
-    /// Dormant-PID re-anchor (deep review #4, X-CORR-08 / Q3). A PID's own
-    /// signed 33-bit delta is unambiguous only while its silence stays
-    /// under half an epoch (`2^32` ticks, ~13.3 h at 90 kHz); past that
-    /// the signed modular difference lands a full epoch low. The program
-    /// clock — the last value emitted on ANY sibling PID — is the freshest
-    /// evidence available. Returns `Some(value)` when BOTH hold:
+    /// Dormant-PID re-anchor. A PID's own signed 33-bit delta is unambiguous
+    /// only while its silence stays under half an epoch (`2^32` ticks, ~13.3 h
+    /// at 90 kHz); past that the signed modular difference lands a full epoch
+    /// low. The program clock — the last value emitted on ANY sibling PID — is
+    /// the freshest evidence available. Returns `Some(value)` when BOTH hold:
     ///
     /// 1. the program clock is fresher than this PID's last sample
     ///    (`reference.last_unwrapped > state.last_unwrapped`), and
@@ -912,7 +909,7 @@ impl Demuxer {
     /// lenient (`StrictMode::Off`) queues `NonConformantIssue::MalformedPes`
     /// and continues; a strict mode that rejects the issue returns
     /// `DemuxError::MalformedPes`. Called from `handle_pes_packet` for each
-    /// `ReassemblyOutcome::Malformed` (review 9, ext R9-01), and from the
+    /// `ReassemblyOutcome::Malformed`, and from the
     /// defensive arm of `handle_process_packet_result`.
     pub(super) fn surface_malformed_pes(
         &mut self,
@@ -932,8 +929,8 @@ impl Demuxer {
 
     /// Convert a `process_packet` result into lenient/strict policy.
     ///
-    /// The `DemuxError::MalformedPes` arm is defensive. Since review 9
-    /// (ext R9-01) the PES reassembler reports malformed PESes as
+    /// The `DemuxError::MalformedPes` arm is defensive. The PES
+    /// reassembler reports malformed PESes as
     /// `ReassemblyOutcome::Malformed`, and `handle_pes_packet` applies the
     /// policy per outcome via [`Self::surface_malformed_pes`], so the only
     /// `MalformedPes` that reaches this arm today is the strict-mode error
@@ -1061,7 +1058,7 @@ impl Demuxer {
         // Drop all in-flight AU cell reassembly buffers. Operational reset
         // — no NonConformant emitted; pre-reconnect cells are simply gone.
         self.au_reassembler.reset_all();
-        // Drop any partially-assembled multi-section PAT (REF-PSI-02).
+        // Drop any partially-assembled multi-section PAT.
         self.pat_reassembler.clear();
     }
 
@@ -1203,7 +1200,7 @@ mod tests {
             .expect("raised ceiling must accept a whole-file feed");
     }
 
-    /// CORR-01 (deep review #4): the ceiling must be measured against
+    /// The ceiling must be measured against
     /// LIVE bytes. Consumed-but-uncompacted bytes below the 1 MiB
     /// compaction floor used to count toward it, so any cap under 1 MiB
     /// rejected ordinary aligned TS every ~cap/188 packets and dropped
@@ -1317,7 +1314,7 @@ mod tests {
         assert!(matches!(err, DemuxError::Unrecoverable { .. }));
     }
 
-    /// CORR-15 (deep review #4): `Unrecoverable` is a per-window verdict,
+    /// `Unrecoverable` is a per-window verdict,
     /// not a latch. The old path returned BEFORE consuming the scanned
     /// span, so the next feed re-scanned it, reported a doubled count and
     /// kept doing so forever (only `reset_sync` escaped).
@@ -1350,8 +1347,8 @@ mod tests {
         );
     }
 
-    /// Shared prefix for the two `resync_required` regression tests below
-    /// (Task 3, post-Arc-1 review): `SYNC_SEARCH_WINDOW + 1` garbage bytes
+    /// Shared prefix for the two `resync_required` regression tests below:
+    /// `SYNC_SEARCH_WINDOW + 1` garbage bytes
     /// so the scan closes the window ON a candidate `0x47` with a full
     /// 188-byte packet's worth of bytes still behind it (`Unrecoverable`),
     /// immediately followed by that stray `0x47` and 187 more bytes that
@@ -1372,14 +1369,13 @@ mod tests {
         data
     }
 
-    /// Task 3 (post-Arc-1 review, Medium): a candidate `0x47` retained in
-    /// `sync_buf` when a sync-search window closes with `Unrecoverable`
-    /// must still pass N-of-M on the next `feed` — including an EMPTY one.
-    /// Before the `resync_required` fix, `unrecoverable_window` zeroed
-    /// `bytes_since_sync` and the resync predicate derived straight from
-    /// that counter, so the very next `feed` computed `resyncing = false`
-    /// and parsed the retained candidate as "confirmed" sync with no
-    /// re-validation at all.
+    /// A candidate `0x47` retained in `sync_buf` when a sync-search window
+    /// closes with `Unrecoverable` must still pass N-of-M on the next `feed` —
+    /// including an EMPTY one. Before the `resync_required` fix,
+    /// `unrecoverable_window` zeroed `bytes_since_sync` and the resync
+    /// predicate derived straight from that counter, so the very next `feed`
+    /// computed `resyncing = false` and parsed the retained candidate as
+    /// "confirmed" sync with no re-validation at all.
     #[test]
     fn retained_candidate_after_unrecoverable_still_needs_n_of_m() {
         let mut d = Demuxer::new();
@@ -1518,7 +1514,7 @@ mod tests {
         // Once a PMT arrives the demuxer's stats_per_stream map populates
         // entries for PAT/PMT PIDs; full integration coverage of the
         // "seen but uncounted → Some(Unknown)" path lives in
-        // crates/tst-core/tests/codec_stats.rs (Task 5).
+        // crates/tst-core/tests/codec/codec_stats.rs.
         let demux = Demuxer::new();
         assert_eq!(demux.stream_codec_stats(0x0000), None);
     }
@@ -2725,7 +2721,7 @@ mod tests {
         );
     }
 
-    /// Audit finding (Demux-C): the muxer wraps DVB-sub PES payloads in the
+    /// The muxer wraps DVB-sub PES payloads in the
     /// EN 300 743 §6.2 envelope (`0x20 + 0x00 + segments + 0xFF`), so the
     /// demuxer must strip that envelope before surfacing to callers. Without
     /// the strip, libavcodec's `dvbsubdec` rejects the buffer at
@@ -3180,7 +3176,7 @@ mod tests {
         );
     }
 
-    // --- DEMUX-01 regression tests (multi-section PSI handling) ---
+    // --- multi-section PSI handling regression tests ---
 
     /// Helper: build a PAT TS packet for one section of a multi-section table.
     ///
@@ -3226,7 +3222,7 @@ mod tests {
     /// Like `pat_packet_with_programs` but sets the 4-bit CC field to `cc`.
     ///
     /// Use this in tests that feed two PAT packets on the same PID: the second
-    /// packet must use `cc=1` (or any value != the first) so that DA-DEMUX-1's
+    /// packet must use `cc=1` (or any value != the first) so that the demuxer's
     /// spec-legal duplicate suppression does not swallow it.
     fn pat_packet_with_programs_cc(programs: &[(u16, u16)], version: u8, cc: u8) -> Vec<u8> {
         let mut pkt = pat_packet_with_programs(programs, version);
@@ -3272,7 +3268,7 @@ mod tests {
         events
     }
 
-    /// REF-PSI-02: a complete 2-section PAT must reassemble such that BOTH
+    /// A complete 2-section PAT must reassemble such that BOTH
     /// declared programs produce trackers end-to-end, and must NOT emit
     /// PsiMultiSectionUnsupported.
     #[test]
@@ -3330,7 +3326,7 @@ mod tests {
         );
     }
 
-    /// REF-PSI-02: an INCOMPLETE multi-section PAT (only section 0 of 2) must
+    /// An INCOMPLETE multi-section PAT (only section 0 of 2) must
     /// stay pending — no ProgramMap AND no PsiMultiSectionUnsupported.
     #[test]
     fn demuxer_does_not_emit_program_map_for_incomplete_multi_section_pat() {
@@ -3406,7 +3402,7 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
-    // PAT cleanup on program removal (validate-1 B8)
+    // PAT cleanup on program removal
     // -------------------------------------------------------------------------
     //
     // When PAT removes a program, per-PID state for that program's PIDs is
@@ -3444,7 +3440,7 @@ mod tests {
         buf
     }
 
-    /// CORR-13 (deep review #4): a PCR jump on a DEDICATED PCR PID — one
+    /// A PCR jump on a DEDICATED PCR PID — one
     /// the PMT names as `PCR_PID` but that carries no elementary stream
     /// (broadcast / hardware muxes, TSDuck output) — must still surface
     /// `PcrAnomaly`. The anomaly arm only queued the issue when
@@ -3494,7 +3490,7 @@ mod tests {
 
     /// A PCR on a PID no PMT names as `PCR_PID` is not a time base this
     /// demuxer tracks (H.222.0 §2.4.4.9: the program names the one PID
-    /// that carries its clock). Measured on the 2026-09-17 72-h soak: the
+    /// that carries its clock). Measured on a 72-h soak: the
     /// harness's PID-rewrite corruption moved 61 PCR-carrying packets to
     /// 0x1FFE and the demuxer answered with ~50 `PcrAnomaly` events on a
     /// PID nothing declared. Neither the seed nor the anomaly may happen.
@@ -3815,8 +3811,7 @@ mod tests {
             .feed(&pat_packet_with_programs_cc(&[(1, 0x1000)], 1, 1))
             .unwrap();
 
-        // Pre-existing behavior (already in place before B8) — sanity that
-        // we haven't broken what was working.
+        // Sanity: the removed program's PID also leaves the routing maps.
         assert!(
             !demuxer.stream_kind_by_pid.contains_key(&0x1111),
             "stream_kind_by_pid must drop removed program's PID"
@@ -3827,7 +3822,7 @@ mod tests {
         );
     }
 
-    /// F-01: a PMT version change that drops an elementary PID must clear that
+    /// A PMT version change that drops an elementary PID must clear that
     /// PID's per-PID routing state, exactly as PAT program removal does. Before
     /// the fix, `stream_kind_by_pid` retained the removed PID so later packets
     /// on it were still routed as PES (stale-sample emission).
@@ -3874,7 +3869,7 @@ mod tests {
         );
     }
 
-    /// F-02 (lenient): a valid multi-section PAT must NOT surface a false
+    /// Lenient: a valid multi-section PAT must NOT surface a false
     /// `PsiSyntax(SectionNumberNonZero)` for its section_number>0 sections.
     #[test]
     fn valid_multi_section_pat_emits_no_psi_syntax_event() {
@@ -3897,7 +3892,7 @@ mod tests {
         );
     }
 
-    /// F-02 (strict): `StrictMode::Full` must accept a valid multi-section PAT —
+    /// Strict: `StrictMode::Full` must accept a valid multi-section PAT —
     /// the section_number>0 of section 1 is conformant, not a hard failure.
     #[test]
     fn strict_full_accepts_valid_multi_section_pat() {
@@ -3917,7 +3912,7 @@ mod tests {
         );
     }
 
-    /// F-03: a PAT version that reassigns an existing PMT PID to a different
+    /// A PAT version that reassigns an existing PMT PID to a different
     /// program_number must adopt the new program — its PMT must be accepted,
     /// not rejected as `PmtProgramNumberMismatch` against the stale identity.
     #[test]
@@ -4027,7 +4022,7 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
-    // PCR field validation (validate-1 B12)
+    // PCR field validation
     // -------------------------------------------------------------------------
     //
     // Parser-level validation lives in `ts.rs` unit tests; these tests cover
@@ -4333,12 +4328,12 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
-    // REF-PES-01: zero PES_packet_length on a non-video stream (WP-D Task 3)
+    // Zero PES_packet_length on a non-video stream
     // -------------------------------------------------------------------------
 
     #[test]
     fn zero_length_non_video_pes_emits_nonconformant_no_sample() {
-        // REF-PES-01: a PES with zero PES_packet_length on an audio PID must
+        // A PES with zero PES_packet_length on an audio PID must
         // surface NonConformantIssue::ZeroLengthPesNonVideo and must NOT emit
         // an audio Sample. stream_type 0x04 = MPEG-1 Audio, stream_id 0xC0.
         const AUDIO_PID: u16 = 0x0101;
@@ -4374,7 +4369,7 @@ mod tests {
         buf[5] = 0x00; // PES start code prefix byte 2
         buf[6] = 0x01; // PES start code prefix byte 3
         buf[7] = 0xC0; // stream_id = audio
-        buf[8] = 0x00; // PES_packet_length hi = 0 (unbounded — REF-PES-01 violation)
+        buf[8] = 0x00; // PES_packet_length hi = 0 (unbounded — illegal on non-video)
         buf[9] = 0x00; // PES_packet_length lo = 0
         // remaining bytes are 0xFF (pad)
         demuxer.feed(&buf).unwrap();
@@ -4407,7 +4402,7 @@ mod tests {
 
     #[test]
     fn zero_length_unrecognized_video_stream_type_not_flagged() {
-        // REF-PES-01: stream_type 0x02 (ITU-T H.262 / MPEG-2 video) is a VIDEO
+        // stream_type 0x02 (ITU-T H.262 / MPEG-2 video) is a VIDEO
         // elementary stream even though tst-core does not parse it (classified
         // StreamKind::Unknown(0x02)). A zero PES_packet_length is legal for any
         // video stream (H.222.0 §2.4.3.7), so it must NOT be flagged as
@@ -4587,7 +4582,7 @@ mod tests {
         assert_eq!(out.as_ticks(), 100);
     }
 
-    /// X-CORR-08: a PID silent for more than half an epoch while a
+    /// A PID silent for more than half an epoch while a
     /// sibling advanced must re-anchor onto the program clock (and count).
     #[test]
     fn unwrap_pts_dormant_pid_reanchors_onto_fresher_program_clock() {
@@ -4611,7 +4606,7 @@ mod tests {
         );
     }
 
-    /// X-CORR-08 control: a small reorder keeps the PID's own delta and
+    /// Control: a small reorder keeps the PID's own delta and
     /// does not count as a re-anchor.
     #[test]
     fn unwrap_pts_small_reorder_keeps_own_delta_and_does_not_count() {
@@ -4650,14 +4645,12 @@ mod tests {
         assert_eq!(out.as_ticks(), 42);
     }
 
-    /// Fix round 1 (Finding 1 + 2) — the straddle case: PTS has already
-    /// wrapped (small raw) while this AU's DTS is still pre-wrap (large
-    /// raw). The pre-fix code (`unwrap_secondary_ts`, bare per-PID
-    /// offset) put the DTS a full `1 << 33` epoch above where it
-    /// belongs. Numbers mirror the reviewer's worked trace:
-    /// `pts_diff_33bit(1<<33-200, 100) == -300`, so the unwrapped DTS is
-    /// `(1<<33+100) + (-300) == 1<<33-200` — in the PRE-wrap epoch,
-    /// below the unwrapped PTS, NOT `1<<33 + (1<<33-200)`.
+    /// The straddle case: PTS has already wrapped (small raw) while this AU's
+    /// DTS is still pre-wrap (large raw). A bare per-PID offset
+    /// (`unwrap_secondary_ts`) puts the DTS a full `1 << 33` epoch above where
+    /// it belongs. Worked trace: `pts_diff_33bit(1<<33-200, 100) == -300`, so
+    /// the unwrapped DTS is `(1<<33+100) + (-300) == 1<<33-200` — in the
+    /// PRE-wrap epoch, below the unwrapped PTS, NOT `1<<33 + (1<<33-200)`.
     #[test]
     fn unwrap_dts_with_pts_straddling_wrap_stays_in_pre_wrap_epoch() {
         let pts_raw = Pts90khz::new(100);
@@ -4675,10 +4668,9 @@ mod tests {
         );
     }
 
-    /// Fix round 1 — same-epoch regression guard: when DTS and PTS are
-    /// both on the same side of any wrap (the common case), the fix must
-    /// reproduce today's correct behavior exactly.
-    /// `pts_diff_33bit(87_000, 90_000) == -3000`, so unwrapped DTS ==
+    /// Same-epoch regression guard: when DTS and PTS are both on the same side
+    /// of any wrap (the common case), the DTS must equal the plain same-epoch
+    /// answer. `pts_diff_33bit(87_000, 90_000) == -3000`, so unwrapped DTS ==
     /// `90_000 + (-3000) == 87_000` (offset 0, matches the raw value).
     #[test]
     fn unwrap_dts_with_pts_same_epoch_matches_raw_delta() {

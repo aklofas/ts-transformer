@@ -18,10 +18,10 @@ fn obu_with_size(obu_type: u8, payload: &[u8]) -> Vec<u8> {
 
 #[test]
 fn av1_end_to_end_parses_seq_header_via_obu_stream() {
-    // Bytes captured from codec::av1::sequence_header::tests::minimal_sequence_header
-    // (Task 23). Same Main profile / 320x240 / 8-bit 4:2:0 minimal SH.
+    // Bytes captured from codec::av1::sequence_header::tests::minimal_sequence_header.
+    // Same Main profile / 320x240 / 8-bit 4:2:0 minimal SH.
     let seq_payload: Vec<u8> = vec![0, 0, 0, 4, 60, 255, 188, 0, 0, 0];
-    // Keyframe header from Task 24's keyframe_header_body().
+    // Keyframe header from keyframe_header_body().
     let frame_payload: Vec<u8> = vec![0x10];
 
     let cfg = {

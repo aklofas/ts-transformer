@@ -219,7 +219,7 @@ impl Muxer {
         self.pes_scratch.extend_from_slice(effective_klv);
 
         let klv_packets = ts_packets_for(self.pes_scratch.len());
-        // Validate-1 C3: see push_video for the rationale. KLV is the
+        // See push_video for the rationale. KLV is the
         // most-likely-affected push path because KLV streams are frequently
         // configured on a non-PCR PID with low push cadence relative to
         // the PCR PID's own (zero, here) push cadence.

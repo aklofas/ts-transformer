@@ -1,12 +1,7 @@
-//! Wave I3 — ST 1201.5 IMAPB spec-vector regression suite.
+//! ST 1201.5 IMAPB spec-vector regression suite: each IMAPB special-value
+//! branch, bounds, and decode/encode symmetry.
 //!
-//! Plan: `docs/validate-1/11-phase-2-plan.md` §2.9 row I3 says:
-//!
-//! > Each IMAPB special-value branch (A7) + bounds (A7) + decode/encode
-//! > symmetry.
-//!
-//! Sprint 1 A7 (SHA `9c29400`) introduced the [`DecodedImapb`] enum
-//! whose §7.2.3 Table 2 special-value branches and §8.6 Eq.12
+//! The [`DecodedImapb`] enum's §7.2.3 Table 2 special-value branches and §8.6 Eq.12
 //! out-of-range diagnostic are exercised below as pure hex-byte
 //! vectors. Naming convention: `imapb_<intent>_<spec_section>` so
 //! cross-reference back to ST 1201.5 is one grep away.
@@ -17,7 +12,7 @@ use tst_core::error::{KlvEncodeError, KlvFieldError};
 use tst_core::klv::imapb::{DecodedImapb, ImapbParams, ImapbSpecial, decode_imapb, encode_imapb};
 
 // ============================================================================
-// Subtask 3a (i) — §7.2.3 special-value PATTERNS (decode side)
+// §7.2.3 special-value PATTERNS (decode side)
 // ============================================================================
 //
 // ST 1201.5 §7.2.2 step 1 detects special values by testing the top two
@@ -150,7 +145,7 @@ fn imapb_decodes_reserved_special_st1201_5_7_2_3_table2() {
 }
 
 // ============================================================================
-// Subtask 3a (ii) — §7.2.3 Table 1 normal-range PATTERNS (decode side)
+// §7.2.3 Table 1 normal-range PATTERNS (decode side)
 // ============================================================================
 
 /// ST 1201.5 §7.1.2 Starting Point B: integer 0 decodes to exactly `min`.
@@ -220,7 +215,7 @@ fn imapb_decodes_inter_band_as_out_of_range_st1201_5_8_6_eq12() {
 }
 
 // ============================================================================
-// Subtask 3a (iii) — encode-side vectors (ST 1201.5 Appendix A)
+// Encode-side vectors (ST 1201.5 Appendix A)
 // ============================================================================
 //
 // Encoding is `y = truncate(sF·(value − min) + Zoffset)` with L-byte
@@ -272,7 +267,7 @@ fn imapb_encodes_appendix_a_test_3_zero_mapping_with_zoffset() {
 }
 
 // ============================================================================
-// Subtask 3a (iv) — bounds / length parameter exhaustively (1..=8)
+// Bounds / length parameter exhaustively (1..=8)
 // ============================================================================
 //
 // ST 1201.5 §6 defines IMAPB for any L-byte mapping; this Rust
@@ -382,7 +377,7 @@ fn imapb_decode_rejects_length_nine_st1201_5_section_6() {
 }
 
 // ============================================================================
-// Subtask 3a (v) — finite-domain rejection per ST 1201.5 §7.2.1
+// Finite-domain rejection per ST 1201.5 §7.2.1
 // ============================================================================
 //
 // The encoder rejects values outside `[min, max]` (and NaN / ±∞) with
@@ -480,7 +475,7 @@ fn imapb_decode_rejects_wrong_value_length_st1201_5_7_2_2() {
 }
 
 // ============================================================================
-// Subtask 3a (vi) — interior normal-range sweep (decode side)
+// Interior normal-range sweep (decode side)
 // ============================================================================
 //
 // Cross-check that interior values quantize within ST 1201.5 §8.9

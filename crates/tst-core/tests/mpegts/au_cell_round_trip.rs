@@ -81,7 +81,7 @@ fn sync_klv_mux_demux_round_trip() {
         {
             assert_eq!(payload, inner, "inner KLV must round-trip byte-for-byte");
             assert_eq!(pts.as_ticks(), 90_000, "PES PTS must surface unchanged");
-            // Mux defaults from Plan #25 Task 2:
+            // Mux defaults:
             assert_eq!(metadata_service_id, 0x00, "ST 1402.2 App. B default");
             assert_eq!(sequence_number, 0, "first push starts at seq 0");
             assert_eq!(
@@ -200,14 +200,11 @@ fn sync_klv_sequence_number_increments_across_pushes() {
     assert_eq!(next_seq_num(&mut mux), 2);
 }
 
-// ── Task 3.4 — MultiCellAu detect-only tests ─────────────────────────────────
+// ── MultiCellAu detect-only tests ────────────────────────────────────────────
 
 /// Unit test: classify_klv returns Sync regardless of CFI; iter_au_cells
-/// surfaces the per-cell CFI for downstream handling.
-///
-/// Pre-Task-2 `classify_klv` had a `PartialAuCell { dropped_bytes }` variant
-/// for non-Complete CFI. Task 2 shrinks classify_klv to a SHAPE sniff —
-/// per-cell field access moves to `iter_au_cells`.
+/// surfaces the per-cell CFI for downstream handling: `classify_klv` is a
+/// SHAPE sniff, and per-cell field access lives in `iter_au_cells`.
 #[test]
 fn classify_klv_returns_sync_on_any_cfi_with_iter_surfacing_cfi() {
     use tst_core::mpegts::au_cell::{AuCellHeader, CellFragmentIndication, write_metadata_au_cell};
@@ -293,14 +290,14 @@ fn classify_klv_complete_cfi_returns_sync_and_iter_recovers_inner() {
     assert_eq!(*inner_recovered, &inner_klv[..]);
 }
 
-/// Opaque-inner AU cells surface as KlvShape::Sync (Task 3.5 broadening).
+/// Opaque-inner AU cells surface as KlvShape::Sync.
 ///
-/// Pre-Task-3.5 the demuxer required `inner[0..4] == [0x06, 0x0E, 0x2B, 0x34]`
-/// (the SMPTE UL header) before treating a cell as sync. Legitimate non-LS
-/// sync metadata (proprietary metadata payloads wrapped in an H.222.0 AU
-/// cell per §2.12.4.2 — receiver classification of the inner is the
-/// consumer's concern, not the demuxer's) was misclassified as Other and
-/// the wrapper info (sequence_number, service_id, RAI) was lost.
+/// Requiring `inner[0..4] == [0x06, 0x0E, 0x2B, 0x34]` (the SMPTE UL header)
+/// before treating a cell as sync would misclassify legitimate non-LS sync
+/// metadata (proprietary metadata payloads wrapped in an H.222.0 AU cell per
+/// §2.12.4.2 — receiver classification of the inner is the consumer's
+/// concern, not the demuxer's) as Other and lose the wrapper info
+/// (sequence_number, service_id, RAI).
 #[test]
 fn classify_klv_opaque_inner_complete_cfi_returns_sync() {
     use tst_core::mpegts::au_cell::{AuCellHeader, CellFragmentIndication, write_metadata_au_cell};
@@ -347,8 +344,7 @@ fn classify_klv_opaque_inner_complete_cfi_returns_sync() {
 /// reassembler reports `MultiCellAuReason::Orphan` and the demuxer
 /// surfaces a `MultiCellAu` NonConformantIssue.
 ///
-/// Before Task 4: any non-Complete CFI (First/Middle/Last) was treated as
-/// detect-only NonConformant. Now Task 4 actually reassembles, so we test
+/// Non-Complete CFI (First/Middle/Last) is reassembled, so we test
 /// the orphan case (Last with empty state) rather than First — a First
 /// cell with no continuation simply buffers and emits nothing.
 ///
@@ -585,7 +581,7 @@ fn metadata_service_id_propagates_from_push_klv_to_au_cell() {
     assert_eq!(inner, &raw_klv[..], "inner KLV must pass through verbatim");
 }
 
-// ── Task 2 — iter_au_cells tests ──────────────────────────────────────────────
+// ── iter_au_cells tests ───────────────────────────────────────────────────────
 
 /// Helper: synthesize a PES payload containing N back-to-back AU cells.
 fn make_pes_payload(cells: &[(AuCellHeader, &[u8])]) -> Vec<u8> {

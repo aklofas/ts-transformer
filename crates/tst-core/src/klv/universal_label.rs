@@ -154,7 +154,7 @@ mod tests {
 
     /// Per MISB ST 0601.19 §6.2 (PDF p.4): the registered UL is
     ///   06.0E.2B.34.02.0B.01.01.0E.01.03.01.01.00.00.00 (CRC 56773).
-    /// Bytes 13/14/15 are all 0x00. Corpus check 2026-05-05 confirms byte
+    /// Bytes 13/14/15 are all 0x00. A corpus check confirms byte
     /// 13 = 0x00 in 210,886/210,886 ST 0601 ULs across 30 sampled real
     /// captures. The historical "byte 13 carries document version"
     /// convention is forbidden going forward per ST 0601.8-19

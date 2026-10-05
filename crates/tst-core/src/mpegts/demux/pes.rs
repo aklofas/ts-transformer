@@ -34,8 +34,8 @@ pub struct PesPayload {
     /// (H.222.0 V9 §2.12.4.1). For codecs that don't require it the bit
     /// is informational. `false` when the PES has no optional header.
     pub data_alignment_indicator: bool,
-    /// PES header structural issues detected during parsing
-    /// (validate-1 B5). These are best-effort observations: the
+    /// PES header structural issues detected during parsing.
+    /// These are best-effort observations: the
     /// dispatcher decides whether to escalate via `queue_nonconformant`.
     /// Empty for conformant PESes.
     pub header_issues: Vec<PesHeaderMalformedKind>,
@@ -69,13 +69,13 @@ pub enum ReassemblyOutcome {
     /// payload is a video elementary stream; the reassembler drops the
     /// partial (does not flush a bogus sample) and surfaces this so the
     /// demuxer can emit a NonConformant. `stream_id` is the observed PES
-    /// stream_id, carried for diagnostics. REF-PES-01.
+    /// stream_id, carried for diagnostics.
     ZeroLengthNonVideo { pid: u16, stream_id: u8 },
     /// A PES on this PID could not be parsed (the payload of
     /// `DemuxError::MalformedPes`). Surfaced as an outcome, IN WIRE ORDER
     /// beside the completions of the same `push`, so the caller sees it
-    /// without losing a valid PES that completed in the same call (review 9,
-    /// ext R9-01). The demuxer turns it into a `NonConformant` event in
+    /// without losing a valid PES that completed in the same call. The
+    /// demuxer turns it into a `NonConformant` event in
     /// lenient mode and into the error in strict mode.
     Malformed { pid: u16, reason: &'static str },
 }
@@ -127,7 +127,7 @@ impl Reassembler {
     /// video codecs it does not (MPEG-1/2/4, classified
     /// [`StreamKind::Unknown`](crate::mpegts::demux::StreamKind::Unknown) but a
     /// video `stream_type`). It gates the zero-`PES_packet_length` rule
-    /// (REF-PES-01, H.222.0 §2.4.3.7): an unbounded PES is legal only when the
+    /// (H.222.0 §2.4.3.7): an unbounded PES is legal only when the
     /// payload is a video elementary stream. Callers without a PMT entry for
     /// `pid` pass `false` (conservatively flag).
     pub fn push(
@@ -195,7 +195,7 @@ impl Reassembler {
                 // (which also use 0xBD) are non-video and must be caught.
                 // On a non-video stream a zero length would buffer until the
                 // next PUSI / cap and flush a bogus sample — drop the partial
-                // and surface the violation. REF-PES-01. `stream_id` is kept
+                // and surface the violation. `stream_id` is kept
                 // purely as the diagnostic payload on the event.
                 self.total_buffered = self.total_buffered.saturating_sub(part.buf.len());
                 self.by_pid.remove(&pid);
@@ -223,8 +223,7 @@ impl Reassembler {
         // corrupt the current sample and silently consume the start of the
         // next one.
         //
-        // Residual disposition (deliberate, see Validate-1 Sprint 1-3
-        // Codex review Finding #2): we discard `part.buf[total..]` and
+        // Residual disposition (deliberate): we discard `part.buf[total..]` and
         // remove the per-PID state. Recovering the residual into a fresh
         // `Partial` would require a PUSI signal AND a fresh adaptation-field
         // RAI value, neither of which is available at this completion site
@@ -234,7 +233,7 @@ impl Reassembler {
         let mut completed_rai = false;
         if let Some(total) = part.declared_total_len {
             if part.buf.len() >= total {
-                // DA-PERF-14: avoid the intermediate Vec allocation from
+                // Avoid the intermediate Vec allocation from
                 // `drain(..total).collect()`. Capture the residual count
                 // before truncating so the total_buffered accounting is
                 // correct, then take ownership of the (now-truncated) buf
@@ -276,7 +275,7 @@ impl Reassembler {
     /// Used by the demuxer when PAT removes a program — per-PID reassembly
     /// state for that program's PIDs is no longer reachable (no PSI binding
     /// connects the PID to a stream), so leaving the buffer in place is a
-    /// bounded leak under PAT rotation (validate-1 B8).
+    /// bounded leak under PAT rotation.
     pub fn remove_pid(&mut self, pid: u16) {
         if let Some(p) = self.by_pid.remove(&pid) {
             self.total_buffered = self.total_buffered.saturating_sub(p.buf.len());
@@ -291,7 +290,7 @@ impl Reassembler {
 /// Parse a fully-buffered PES packet (header + body) into a `PesPayload`.
 /// Returns `None` if the buffer is too short to be a valid PES.
 ///
-/// Per validate-1 B5, performs structural validation on the PES header:
+/// Performs structural validation on the PES header:
 /// `flags1` marker bits, `PTS_DTS_flags` (forbidden 0b01), PTS/DTS
 /// 4-bit prefixes, and PTS/DTS 5-byte trailing marker bits. Issues are
 /// collected onto `PesPayload::header_issues` rather than thrown as
@@ -484,7 +483,7 @@ mod tests {
         s
     }
 
-    /// Review 9 (ext R9-01): a completed PES survives a malformed predecessor
+    /// A completed PES survives a malformed predecessor
     /// on the same PID, and both are reported in wire order.
     #[test]
     fn completed_pes_survives_a_malformed_predecessor() {
@@ -515,7 +514,7 @@ mod tests {
         );
     }
 
-    /// Review 9 (ext R9-01), mirror order: a valid predecessor flushed at
+    /// Mirror order: a valid predecessor flushed at
     /// PUSI survives a corrupt BOUNDED follower that length-completes in the
     /// same `push`; both are reported in wire order `[Complete, Malformed]`.
     #[test]
@@ -729,7 +728,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // B5 — PES header structural validation (validate-1)
+    // PES header structural validation
     // ------------------------------------------------------------------
 
     #[test]
@@ -857,7 +856,7 @@ mod tests {
 
     #[test]
     fn zero_length_av1_0xbd_pes_still_unbounded() {
-        // REF-PES-01: AV1 *video* in MPEG-2-TS-binding carriage rides
+        // AV1 *video* in MPEG-2-TS-binding carriage rides
         // stream_id=0xBD (private_stream_1) yet is StreamKind::Video — so an
         // unbounded PES on 0xBD must NOT be flagged when is_video=true. This
         // proves the exemption is kind-based, not a stream_id allowlist.

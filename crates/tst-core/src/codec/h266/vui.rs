@@ -231,7 +231,7 @@ mod tests {
         bw.bytes
     }
 
-    /// CORR-16: zero `sar_height` must read as "unspecified", never
+    /// Zero `sar_height` must read as "unspecified", never
     /// `Rational { den: 0 }`.
     #[test]
     fn extended_sar_with_zero_height_is_unspecified_not_div_by_zero() {

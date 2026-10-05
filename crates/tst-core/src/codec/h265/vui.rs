@@ -153,9 +153,9 @@ mod tests {
         bw.bytes
     }
 
-    /// CORR-16: H.265 §E.3.1 — a zero `sar_width` / `sar_height` means
-    /// "unspecified"; the parser used to surface `Rational { den: 0 }`,
-    /// a ÷0 hazard for every consumer. Mirrors the H.264 guard.
+    /// H.265 §E.3.1 — a zero `sar_width` / `sar_height` means
+    /// "unspecified"; surfacing `Rational { den: 0 }` would be a ÷0 hazard
+    /// for every consumer. Mirrors the H.264 guard.
     #[test]
     fn extended_sar_with_zero_height_is_unspecified_not_div_by_zero() {
         let bytes = vui_with_extended_sar(16, 0);

@@ -319,7 +319,7 @@ fn chroma_format_idc_5_rejected_with_reserved_value() {
     }
 }
 
-// --- A8 regression tests (seq_parameter_set_id range + cross-validation) ---
+// --- seq_parameter_set_id range + cross-validation regression tests ---
 
 /// Hand-craft a PPS RBSP with the given `pic_parameter_set_id` and
 /// `seq_parameter_set_id`, no NAL header. Per H.264 V15 §7.3.2.2 the PPS
@@ -386,7 +386,7 @@ fn parse_pps_with_sps_id_31_succeeds() {
 }
 
 /// Per H.264 V15 §7.4.2.2, 32 is just past the spec bound and must be
-/// rejected with a typed error. Was silently accepted before A8 closed.
+/// rejected with a typed error, not silently accepted.
 #[test]
 fn parse_pps_with_sps_id_32_returns_typed_range_error() {
     let rbsp = craft_pps(0, 32);
@@ -647,7 +647,7 @@ fn craft_sps_with_chroma_loc(top_loc_ue: u32) -> Vec<u8> {
     bw.bytes
 }
 
-/// DA-H26X-2: `num_units_in_tick == 0` must not produce a zero denominator
+/// `num_units_in_tick == 0` must not produce a zero denominator
 /// in the frame_rate ratio. H.265 VUI already guards this (`if num_units_in_tick > 0`);
 /// H.264 VUI had a gap where `0 * 2 = 0 != u32::MAX` flowed to
 /// `Some(Rational { den: 0 })`, a ÷0 hazard for consumers. Post-fix, the
@@ -662,7 +662,7 @@ fn num_units_in_tick_zero_yields_none_not_den0() {
     );
 }
 
-/// DA-H26X-3: chroma_sample_loc_type_top_field ∈ [0,5] per H.264 §E.2.1.
+/// chroma_sample_loc_type_top_field ∈ [0,5] per H.264 §E.2.1.
 /// Value 5 (at the boundary) must be accepted.
 #[test]
 fn chroma_sample_loc_type_5_accepted() {
@@ -672,7 +672,7 @@ fn chroma_sample_loc_type_5_accepted() {
     assert_eq!(color.chroma_loc, Some(5));
 }
 
-/// DA-H26X-3: value 6 is out of the H.264 §E.2.1 [0,5] range and must
+/// Value 6 is out of the H.264 §E.2.1 [0,5] range and must
 /// be rejected as ReservedValue rather than silently passing.
 #[test]
 fn chroma_sample_loc_type_6_rejected() {
@@ -689,9 +689,9 @@ fn chroma_sample_loc_type_6_rejected() {
     }
 }
 
-/// DA-H26X-3: adversarial value 256 truncates to 0 via `as u8` without the
-/// guard — a valid value that hides the malformed input. Post-fix it must
-/// be rejected before any narrowing cast.
+/// Adversarial value 256 truncates to 0 via `as u8` without the guard —
+/// a valid value that hides the malformed input. It must be rejected
+/// before any narrowing cast.
 #[test]
 fn chroma_sample_loc_type_256_rejected_not_silently_truncated() {
     let rbsp = craft_sps_with_chroma_loc(256);
@@ -731,7 +731,7 @@ fn craft_sps_with_log2_fields(frame_num_minus4: u32, poc_lsb_minus4: u32) -> Vec
     bw.bytes
 }
 
-/// DA-H26X-4: H.264 §7.4.2.1.1 specifies log2_max_frame_num_minus4 ∈ [0, 12].
+/// H.264 §7.4.2.1.1 specifies log2_max_frame_num_minus4 ∈ [0, 12].
 /// Value 12 (the spec maximum) must be accepted.
 #[test]
 fn log2_max_frame_num_minus4_12_accepted() {
@@ -739,9 +739,9 @@ fn log2_max_frame_num_minus4_12_accepted() {
     let _sps = parse_sps(&rbsp).expect("log2_max_frame_num_minus4=12 is in-spec");
 }
 
-/// DA-H26X-4: value 13 is beyond the [0,12] spec range and must be rejected.
-/// The previous u8::try_from pattern accepted 13 (it fits in u8), silently
-/// enabling malformed streams.
+/// Value 13 is beyond the [0,12] spec range and must be rejected; a plain
+/// u8::try_from accepts 13 (it fits in u8), silently enabling malformed
+/// streams.
 #[test]
 fn log2_max_frame_num_minus4_13_rejected() {
     let rbsp = craft_sps_with_log2_fields(13, 0);
@@ -754,7 +754,7 @@ fn log2_max_frame_num_minus4_13_rejected() {
     }
 }
 
-/// DA-H26X-4: H.264 §7.4.2.1.1 specifies log2_max_pic_order_cnt_lsb_minus4 ∈ [0, 12].
+/// H.264 §7.4.2.1.1 specifies log2_max_pic_order_cnt_lsb_minus4 ∈ [0, 12].
 /// Value 12 must be accepted (pic_order_cnt_type = 0 path).
 #[test]
 fn log2_max_pic_order_cnt_lsb_minus4_12_accepted() {
@@ -762,8 +762,8 @@ fn log2_max_pic_order_cnt_lsb_minus4_12_accepted() {
     let _sps = parse_sps(&rbsp).expect("log2_max_pic_order_cnt_lsb_minus4=12 is in-spec");
 }
 
-/// DA-H26X-4: value 13 is beyond the [0,12] spec range and must be rejected.
-/// Previously unchecked — any u32 was silently accepted.
+/// Value 13 is beyond the [0,12] spec range and must be rejected, not
+/// silently accepted.
 #[test]
 fn log2_max_pic_order_cnt_lsb_minus4_13_rejected() {
     let rbsp = craft_sps_with_log2_fields(0, 13);
@@ -776,7 +776,7 @@ fn log2_max_pic_order_cnt_lsb_minus4_13_rejected() {
     }
 }
 
-/// F-01 (codec): a non-conformant scaling-list `delta_scale` (outside the
+/// A non-conformant scaling-list `delta_scale` (outside the
 /// H.264 §7.4.2.1.1.1 [-128,127] range) must not panic. Before the fix, the
 /// `last_scale + delta_scale + 256` i32 add in `skip_scaling_list` overflowed
 /// on this crafted ~14-byte High-profile SPS (panic in overflow-checked builds,
@@ -818,7 +818,7 @@ fn build_h264_sps_with_frame_crop(left: u32, right: u32, top: u32, bottom: u32) 
     escape_emulation(&bw.bytes)
 }
 
-/// Review 9 (ext R9-03): H.264 sibling of the H.265 getter-overflow case.
+/// H.264 sibling of the H.265 getter-overflow case.
 #[test]
 fn hostile_frame_crop_is_rejected_at_parse_time() {
     let sps = parse_sps(&build_h264_sps_with_frame_crop(0, 0, 0, 4)).unwrap();

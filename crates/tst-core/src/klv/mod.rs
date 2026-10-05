@@ -68,7 +68,7 @@ pub use st0903::{VMTI_LS_UL, VTargetPack, VTargetPackError, VmtiLs};
 pub use st1010::{SdccFlp, decode_sdcc_flp, encode_sdcc_flp_mode2};
 pub use universal_label::UniversalLabel;
 
-/// Shared body of the wire-code enums' `variant_inventory` tests (Arc 2 R2).
+/// Shared body of the wire-code enums' `variant_inventory` tests.
 ///
 /// Generates one `#[test]` that walks `<Enum>::ALL` and pins the inventory
 /// TWICE:

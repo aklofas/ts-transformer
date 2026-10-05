@@ -2,8 +2,6 @@
 //! under `tests/fixtures/conformance/<codec>/` is parsed by the relevant
 //! `tst_core::codec` entry point and validated against the sidecar's
 //! declared expectations.
-//!
-//! See `docs/plans/2026-05-15-codec-conformance-bitstreams.md` for design.
 
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -13,7 +11,7 @@ use tst_core::codec::{ChromaFormat, CodecParseError};
 
 /// Fixtures with known parser bugs. The test runner SKIPS these fixtures
 /// instead of asserting against them. Each entry must have a TODO comment
-/// pointing at the follow-up plan or issue tracker.
+/// pointing at the issue tracker.
 ///
 /// When the parser is fixed, REMOVE the entry from this list and let the
 /// test exercise the fixture normally. If the sidecar's expected.fields

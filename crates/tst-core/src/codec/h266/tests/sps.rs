@@ -96,7 +96,7 @@ fn minimal_sps_rbsp_full(
     bw.write(0, 1); // sps_subpic_info_present_flag = 0
     bw.write_ue(bitdepth_minus8); // sps_bitdepth_minus8
 
-    // ── body walk fields (Task 4.2) ──────────────────────────────────────
+    // ── body walk fields ─────────────────────────────────────────────────
     // All flags set to 0 / false; all ue(v) values = 0.  This produces the
     // simplest valid SPS that the walk can traverse without any conditional
     // branches being taken.
@@ -323,9 +323,8 @@ fn h266_sps_surfaces_conformance_window_offsets_invariant() {
 /// `chroma_format_idc = 1` (sub_w = 2), the case `(1<<30, 1<<30, 0, 0)`
 /// triggers the addition path (`(1<<31) + (1<<31) = 1<<32`); the case
 /// `(1<<31, 0, 0, 0)` triggers the multiplication path (`2 * (1<<31) = 1<<32`).
-/// Both are rejected at parse time as `ReservedValue` (review 9, ext
-/// R9-03); the fixture is emulation-escaped so the hostile ue(v) values
-/// read back exactly as written.
+/// Both are rejected at parse time as `ReservedValue`; the fixture is
+/// emulation-escaped so the hostile ue(v) values read back exactly as written.
 #[test]
 fn parse_sps_saturates_crop_on_adversarial_offsets() {
     for offsets in [
@@ -342,7 +341,7 @@ fn parse_sps_saturates_crop_on_adversarial_offsets() {
     }
 }
 
-/// Review 9 (ext R9-03): H.266 sibling — 320×240, 4:2:0.
+/// H.266 sibling of the hostile-crop case — 320×240, 4:2:0.
 #[test]
 fn hostile_conformance_window_is_rejected_at_parse_time() {
     let sps = parse_sps(&escape_emulation(

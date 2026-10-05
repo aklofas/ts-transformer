@@ -488,7 +488,7 @@ fn single_program_muxer_stats_programs_configured_is_one() {
     }
 }
 
-// ── PSI multi-program backpressure (validate-1 B2) ───────────────────────────
+// ── PSI multi-program backpressure ───────────────────────────────────────────
 
 /// Build a 4-program H.264 config used by the backpressure-reservation tests
 /// below. Each program has a single video stream so PSI tick = 1 PAT + 4 PMTs
@@ -507,7 +507,7 @@ fn four_program_video_config() -> MuxerConfig {
 
 #[test]
 fn psi_reservation_accounts_for_one_pat_plus_n_pmts() {
-    // Defect (Codex TS-PSI-03): each push path reserved a hardcoded 2 PSI
+    // Defect: each push path reserved a hardcoded 2 PSI
     // packets, but `maybe_emit_psi` emits 1 PAT + N PMTs. With N ≥ 3 programs
     // and a tight `buffer_packets`, a push that the bug accepted on the basis
     // of "2 reserved" would actually overflow the queue past
@@ -556,11 +556,11 @@ fn psi_reservation_accounts_for_one_pat_plus_n_pmts() {
 
 #[test]
 fn psi_emit_updates_psi_last_for_all_programs() {
-    // Defect (Codex TS-PSI-04): `maybe_emit_psi` only wrote
-    // `self.psi_last[prog_idx] = Some(masked_pts)` for the triggering
-    // program. With other programs' `psi_last[i]` still `None`, a subsequent
-    // push on program `i` inside the same PSI window re-fired the entire
-    // PAT+PMTs set because `psi_due(i, ..)` returns true for any None entry.
+    // Defect: `maybe_emit_psi` only wrote
+    // `self.psi_last[prog_idx] = Some(masked_pts)` for the triggering program.
+    // With other programs' `psi_last[i]` still `None`, a subsequent push on
+    // program `i` inside the same PSI window re-fired the entire PAT+PMTs set
+    // because `psi_due(i, ..)` returns true for any None entry.
     //
     // The fix writes the masked timestamp to every entry of `self.psi_last`
     // on emit, so a push on a different program inside the interval window

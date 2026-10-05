@@ -140,10 +140,10 @@ mod tests {
 
     #[test]
     fn uvlc_consumes_marker_bit_on_32_leading_zeros_overflow_sentinel() {
-        // Validate-1 B10: pre-fix, the uvlc loop exited at `leading_zeros == 32`
-        // without consuming the trailing marker `1`-bit. A subsequent f(1) call
-        // would then read what should have been the marker, leaving cursors
-        // 1 bit short on every downstream read.
+        // The uvlc loop must consume the trailing marker `1`-bit even when it
+        // exits at `leading_zeros == 32`; otherwise a subsequent f(1) call
+        // reads the marker, leaving cursors 1 bit short on every downstream
+        // read.
         //
         // Stream layout: 32 leading zeros + 1 marker + sentinel-trailing bit
         // we'll read after uvlc(). 32 zero bits = 4 zero bytes. Then byte 4

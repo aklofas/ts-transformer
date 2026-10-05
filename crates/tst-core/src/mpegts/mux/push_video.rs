@@ -312,7 +312,7 @@ impl Muxer {
     /// provenance and feed `raw` straight back here. For AV1 in
     /// `Mpeg2TsBinding` mode the input is expected to already be
     /// `ts_open_bitstream_unit()`-framed (the demuxer's raw payload);
-    /// [`Self::push_video_to`] would re-wrap it and corrupt it (AV1-01).
+    /// [`Self::push_video_to`] would re-wrap it and corrupt it.
     ///
     /// For elementary OBU / Annex-B input use [`Self::push_video_to`].
     ///
@@ -476,7 +476,7 @@ impl Muxer {
         self.pes_scratch.extend_from_slice(payload_bytes);
 
         let video_packets = ts_packets_for(self.pes_scratch.len());
-        // Validate-1 C3: when the PCR PID hasn't received payload within
+        // When the PCR PID hasn't received payload within
         // `pcr_interval_ms`, the muxer injects a standalone PCR-only
         // adaptation-only packet on it. Reserve one packet for that.
         // Returns 0 when the current push lands on the PCR PID (the

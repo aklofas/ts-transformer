@@ -45,7 +45,7 @@ portable-atomic = { version = "1", default-features = false, features = ["fallba
 # in lib.rs, so the dep and the module are always in sync.
 # The "all" feature is required for Socket::set_reuse_port, which is only
 # compiled on the BSD/macOS cfg arm — a Linux-only build check cannot catch
-# its absence (caught by macOS CI on PR #71).
+# its absence (macOS CI does).
 socket2      = { workspace = true, optional = true, features = ["all"] }
 
 [dev-dependencies]

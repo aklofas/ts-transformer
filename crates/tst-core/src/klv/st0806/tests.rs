@@ -225,11 +225,10 @@ fn sentinel_error_value_reemits_on_encode() {
 
 #[test]
 fn unknown_tag_clobbering_timestamp_rejected() {
-    // D4 fix-round regression: without a duplicate-tag guard, a
-    // caller-stuffed `unknown` entry at a typed tag id silently
-    // overwrites the typed field on round-trip with no error. Exact
-    // scenario from the task review: Tag 2 (timestamp) is both set via
-    // the typed field AND stuffed into `unknown`.
+    // Regression: without a duplicate-tag guard, a caller-stuffed `unknown`
+    // entry at a typed tag id silently overwrites the typed field on round-trip
+    // with no error. Scenario: Tag 2 (timestamp) is both set via the typed
+    // field AND stuffed into `unknown`.
     let ls = RvtLs {
         timestamp_us: Some(1),
         unknown: alloc::vec![OwnedRawField {
@@ -348,10 +347,10 @@ fn unknown_fields_pass_through_when_not_typed() {
 
 #[test]
 fn rvt_uls_are_pairwise_distinct_and_pinned_at_byte_12() {
-    // D3-review fold-in: the manifest [[surface]] entries for
-    // RVT_POI_LS_UL/RVT_AOI_LS_UL/RVT_USER_DEFINED_LS_UL cited this file
-    // as their owning test without ever naming the constants — this test
-    // makes that cataloguing honest AND pins the four wire constants.
+    // The manifest [[surface]] entries for
+    // RVT_POI_LS_UL/RVT_AOI_LS_UL/RVT_USER_DEFINED_LS_UL cite this file as
+    // their owning test; this test names those constants AND pins the four
+    // wire constants.
     let uls = [
         (RVT_LS_UL, 0x02u8),
         (RVT_POI_LS_UL, 0x0C),

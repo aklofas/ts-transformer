@@ -111,7 +111,7 @@ pub fn encode(ls: &VmtiLs, out: &mut Vec<u8>) -> Result<(), KlvEncodeError> {
     // multi-byte BER-OID encoding per ST 0107.5 §6.3.1 for values ≥ 128,
     // so a future ST 0903.7+ tag in the unknown bucket round-trips
     // losslessly. Tags 1..=103 (the §10.1 typed universe) are all ≤ 127
-    // and encode as a single byte, byte-identical to the pre-E5 emit.
+    // and encode as a single byte, byte-identical to a raw single-byte tag.
     // `encoded_len` mirrors this via `ber_oid_len(field.tag)`.
     for field in &ls.unknown {
         // Reject reserved/typed tags before emitting. Without this guard,
@@ -289,7 +289,7 @@ pub fn encoded_len(ls: &VmtiLs) -> usize {
     // Unknown tags use BER-OID tag + BER length + value (mirrors the
     // `write_ber_oid` emit in `encode`). For tags ≤ 127 (the §10.1
     // typed universe), `ber_oid_len(tag) == 1` so this collapses to
-    // the same byte count as the pre-E5 `tlv_len(value.len())`.
+    // the same byte count as `tlv_len(value.len())`.
     for field in &ls.unknown {
         total += ber_oid_len(field.tag) + ber_len(field.value.len()) + field.value.len();
     }
@@ -297,7 +297,7 @@ pub fn encoded_len(ls: &VmtiLs) -> usize {
 }
 
 // ---------------------------------------------------------------------------
-// Strict-compliance encoders (REF-KLV-03)
+// Strict-compliance encoders
 // ---------------------------------------------------------------------------
 
 /// Encode a VMTI Local Set body (embedded mode) with strict conformance

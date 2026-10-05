@@ -72,7 +72,7 @@ proptest! {
         // prop_assume skips those samples; the round-trip property
         // only applies when encode succeeds.
         prop_assume!(encode_imapb(&params, value, &mut buf).is_ok());
-        // A7: decode_imapb returns DecodedImapb (ST 1201.5 §7.2.2/.3
+        // decode_imapb returns DecodedImapb (ST 1201.5 §7.2.2/.3
         // special values + bounds check). The round-trip property only
         // applies when encode produced normal-range output, so chain
         // `.value()` to extract the f64; if the legitimate encoded
