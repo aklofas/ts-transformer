@@ -10,7 +10,8 @@ here only to format what it already recorded.
 The page's prose is hand-written; only the block between
 `<!-- bench:begin -->` and `<!-- bench:end -->` is generated, and the
 renderer computes nothing but unit conversions (KB -> MiB, declared /
-observed figures are read straight off the results JSON).
+observed figures are read straight off the results JSON) and the collapse
+of a limitation naming many same-kind processes into a count + pattern.
 
 Usage:
   scripts/gen/benchmarks_page.py --results R.json --provenance P.json
@@ -25,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 
 # --------------------------------------------------------------------------
@@ -196,11 +198,49 @@ def _hold_section(hold: dict | None) -> str:
     return _hold_stream_table(hold) + "\n" + _hold_verdict_table(hold)
 
 
+# A limitation line is `<axis>: <item>; <item>; … — <note>`. When more than
+# COLLAPSE_MIN items name the same verdict on processes of one leg kind
+# (`rss_slope_rist-17_send …`), they render as one count + pattern; the full
+# per-process list stays in the archive's stress-results.json.
+COLLAPSE_MIN = 3
+_ITEM = re.compile(r"^(?P<verdict>[a-z_]+?)_(?P<leg>[a-z]+)-(?P<n>\d+)_(?P<proc>[a-z]+) (?P<rest>over its allowance) at .+$")
+
+
+def _collapse(line: str) -> str:
+    head, sep, body = line.partition(": ")
+    body, dash, note = body.partition(" — ")
+    if not sep:
+        return line
+    groups: dict[tuple[str, str, str, str], set[str]] = {}
+    order: list[object] = []
+    for item in body.split("; "):
+        m = _ITEM.match(item)
+        if not m:
+            order.append(item)
+            continue
+        key = (m["verdict"], m["leg"], m["proc"], m["rest"])
+        if key not in groups:
+            groups[key] = set()
+            order.append(key)
+        groups[key].add(m["n"])
+    if all(len(v) <= COLLAPSE_MIN for v in groups.values()):
+        return line
+    out = []
+    for entry in order:
+        if isinstance(entry, str):
+            out.append(entry)
+            continue
+        verdict, leg, proc, rest = entry
+        out.append(f"{verdict} {rest} for {len(groups[entry])} processes matching `{leg}-*_{proc}` "
+                   f"(per-process list in stress-results.json)")
+    return head + sep + "; ".join(out) + (dash + note if dash else "")
+
+
 def _limitations(results: dict) -> str:
     lines = results.get("limitations") or []
     if not lines:
         return "None.\n"
-    return "\n".join(f"- {line}" for line in lines) + "\n"
+    return "\n".join(f"- {_collapse(line)}" for line in lines) + "\n"
 
 
 def render(results: dict, provenance: dict) -> str:

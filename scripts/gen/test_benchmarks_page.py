@@ -122,5 +122,33 @@ class RenderShape(unittest.TestCase):
         self.assertIn("No hold in this run.", md)
 
 
+class LimitationCollapse(unittest.TestCase):
+    """A limitation naming many processes of one kind collapses to a count
+    and a pattern; without the collapse a 128-stream RIST sweep renders one
+    8 KB line listing every sender."""
+
+    def _long_line(self, n):
+        items = [f"rss_slope_rist-{i}_send over its allowance at step 64, step 128" for i in range(n)]
+        return ("rist/streams: " + "; ".join(items)
+                + " — recorded, not gated (declared rss_slope_ungated; the hold gates it)")
+
+    def test_many_processes_collapse_to_count_and_pattern(self):
+        r, p = load()
+        r = dict(r, limitations=[self._long_line(128)])
+        md = bp.render(r, p)
+        line = next(ln for ln in md.splitlines() if ln.startswith("- rist/streams:"))
+        self.assertLess(len(line), 300, line)
+        self.assertIn("128 processes", line)
+        self.assertIn("`rist-*_send`", line)
+        self.assertIn("recorded, not gated", line)
+        self.assertNotIn("rist-127", line)
+
+    def test_few_processes_stay_verbatim(self):
+        r, p = load()
+        short = self._long_line(2)
+        r = dict(r, limitations=[short])
+        self.assertIn(short, bp.render(r, p))
+
+
 if __name__ == "__main__":
     unittest.main()
