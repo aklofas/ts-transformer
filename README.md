@@ -54,7 +54,7 @@ use tst_core::mpegts::demux::Demuxer;
 let mut demux = Demuxer::new();
 demux.feed(&buf[..n])?;
 while let Some(event) = demux.next_event() {
-    println!("{event:?}"); // DemuxEvent::Video / Metadata (KLV) / Audio / …
+    println!("{event:?}"); // DemuxEvent::ProgramMap / Sample / Metadata (KLV) / …
 }
 ```
 
@@ -72,7 +72,7 @@ ships in Python (`tstrans`), C (`tstrans.h`), and the JVM (`org.tstrans`).
 | **Video** | H.264, H.265, H.266 / VVC, AV1 |
 | **Audio** | AAC (ADTS + LATM), MPEG-2 Audio (MP2 / MP3), AC-3 |
 | **Subtitles** | DVB subtitling, DVB teletext, CEA-708, WebVTT-in-TS |
-| **Metadata** | MISB ST 0601 (FMV), ST 0102 (security), ST 0605 (amend tags), ST 0903 (VMTI), ST 1204 (Core ID), ST 0806 (RVT), ST 1010 (SDCC error covariance), ST 0805 (KLV→CoT conversion); ST 1402 carriage, H.222.0 §2.12.4.2 Metadata AU cells, ST 0604 MISP timestamps |
+| **Metadata** | MISB ST 0601 (FMV), ST 0102 (security), ST 0605 (precision time stamp), ST 0903 (VMTI), ST 1204 (Core ID), ST 0806 (RVT), ST 1010 (SDCC error covariance), ST 0805 (KLV→CoT conversion); ST 1402 carriage, H.222.0 §2.12.4.2 Metadata AU cells, ST 0604 MISP timestamps |
 | **Transport** | UDP, raw TCP / TLS, RTP (incl. RTSP client + server), SRT 1.5 (Haivision libsrt, vendored), RIST (VideoLAN librist), and an HLS publisher (segmenter + optional built-in HTTP server) — all shipping. See the [HLS guide](docs/guides/hls.md). |
 | **Encryption** | AES-128 / 192 / 256 over SRT via vendored mbedTLS 3.6 LTS, on by default |
 
@@ -99,15 +99,16 @@ The Rust core and C bindings build from source:
 
 ```bash
 git clone --recurse-submodules https://github.com/aklofas/ts-transformer.git
-cd ts-transformer/ts-transformer
+cd ts-transformer
 
 SRT_FORCE_VENDORED=1 cargo build --release            # Rust workspace
-SRT_FORCE_VENDORED=1 cargo build --release -p tst-c   # C bindings → cdylib + staticlib + tstrans.h + tstrans.pc
+SRT_FORCE_VENDORED=1 cargo build --release -p tst-c --features srt   # C bindings → cdylib + staticlib + tstrans.h + tstrans.pc
 ```
 
 The build vendors and compiles libsrt 1.5.7 + mbedTLS 3.6 LTS from submodules — ~3–5 minutes
 cold, seconds warm. Feature flags (`mbedtls`, `file`, per-transport) are documented in
-[`docs/languages/rust.md`](docs/languages/rust.md).
+[`docs/languages/rust.md`](docs/languages/rust.md); the C bindings' transports are opt-in
+features (`srt`, `rtp`, `udp`, `tcp`, `hls`, `rist`), see [`docs/languages/c.md`](docs/languages/c.md).
 
 - **Python** — `pip install tstrans` (core) or `pip install tstrans[pandas]` (DataFrame + NumPy adapters). See [`docs/languages/python.md`](docs/languages/python.md).
 - **JVM** — `org.tstrans:tstrans-jvm` on Maven Central. See [`docs/languages/jvm.md`](docs/languages/jvm.md).

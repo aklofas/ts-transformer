@@ -38,7 +38,8 @@ Running `cargo` inside the workspace auto-uses 1.85 via rustup.
 | ------------- | --------- | ------- | ---------------------------------------------------------------- |
 | `srt-sys` (published as `tstrans-srt-sys`) | `mbedtls` | on | Vendored mbedTLS, `USE_ENCLIB=mbedtls`. Disable for unencrypted. |
 | `tst-srt`     | `mbedtls` | on      | Propagates to `srt-sys/mbedtls`.                                 |
-| `tst-core`    | `file`    | on      | Gates file I/O helpers. Disable for embedded targets without `std::fs`. |
+| `tst-core`    | `std`     | on      | Standard library: file I/O, net helpers, JSON/TOML. Off = `#![no_std]` + `alloc` (see [embedded](/docs/languages/embedded.md)). |
+| `tst-core`    | `file`    | on      | File I/O helpers. `file` and `std` imply each other, so they switch on and off together. |
 
 A clean rebuild compiles libsrt 1.5.7 and mbedTLS 3.6.7 from vendored
 submodules — expect **3–5 minutes** on a cold cache, seconds when warm.
@@ -101,7 +102,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 2. Wrap muxer + transport. Default config = 1 program, H.264 + async KLV.
     //    Argument order is (transport, config).
-    let mut sender: MuxSender<SrtTransport> =
+    let sender: MuxSender<SrtTransport> =
         MuxSender::new(transport, MuxerConfig::default())?;
 
     // 3. Push payloads. Each push muxes into TS packets and ships them.
@@ -215,9 +216,9 @@ enums in this workspace are marked `#[non_exhaustive]` so new variants
 land without a major version bump. Your `match` arms must include a
 `_ => { ... }` catch-all; the compiler error is explicit when you
 forget. The current `#[non_exhaustive]` count is ratcheted in CI (see
-`BASELINE=269` in `.github/workflows/ci.yml`).
+`BASELINE` in `.github/workflows/ci.yml`).
 
-**SRT initialization is automatic.** `srt-sys` calls `srt_startup` /
+**SRT initialization is automatic.** `tst-srt` calls `srt_startup` /
 `srt_cleanup` on your behalf — don't call them manually. Cleanup runs
 at process exit. If you build with `--no-default-features`, encryption
 (mbedTLS) is omitted but the libsrt init / teardown path is unchanged.
@@ -239,10 +240,9 @@ the full state machine.
 
 **Feature flag interactions.** `--no-default-features` on `tst-srt`
 disables mbedTLS and turns the libsrt build into unencrypted-only.
-`--no-default-features --features file` on `tst-core` keeps file I/O
-helpers while dropping the (currently-empty for `tst-core`) default set
-— relevant for embedded `no_std`-ish targets. The two flag sets are
-independent.
+`tst-core`'s `file` feature implies `std`, so a `no_std` target builds
+`tst-core` with `--no-default-features` and no `file`. The two flag sets
+are independent.
 
 **Builders use bind-then-step, not single-chain.** `SocketBuilder` and
 `ListenerBuilder` mutators take `&mut self` but their terminal methods
@@ -257,7 +257,7 @@ let socket = sb.connect(addr)?; // &self
 
 **Pairing KLV to video.** The demuxer emits KLV and video as independent
 events on the same PTS clock; aligning them is the consumer's job. The
-`Pairer` shell in `tst-pipeline::pairing` is the standard solution —
+`Pairer` shell in `tst_pipeline::ext::pairing` is the standard solution —
 configurable window, drop policy, and event-order preservation. See the
 [`pairing/` examples directory](/examples/pairing/) and
 [`/docs/cookbook/index.md`](/docs/cookbook/index.md).
@@ -278,6 +278,9 @@ out each binding's deviations relative to this surface:
   offline file I/O plus the full live-transport surface (UDP / TCP / RTP+RTSP /
   SRT / RIST), `match`-friendly `DemuxEvent` subclasses, pandas /
   NumPy adapters, GIL release on long calls.
+- **JVM:** [`/docs/languages/jvm.md`](/docs/languages/jvm.md) — the
+  offline, RTP and SRT surface for JDK 17+, heap-copied `ByteBuffer`
+  payloads.
 
 The "Where this binding differs" section on each of those pages is the
 authoritative gap list. Anything not called out there matches Rust 1:1.
@@ -317,7 +320,7 @@ It covers every step with rich `// why + how` commentary.
 ### Minimal direct-UDP form
 
 ```rust,no_run
-use tst_rtp::{H264DepayConfig, H264Receiver};
+use tst_rtp::H264Receiver;
 
 let mut rx = H264Receiver::listen("rtp://0.0.0.0:5004?pt=96")?;
 // `into_h264_receiver` from an RTSP session is the more common path.
@@ -356,8 +359,8 @@ while let Some(au) = rx.recv_au()? {
   `muxer.push_video` and the matching KLV (from a separate UDP or SRT feed)
   to `muxer.push_klv` using the same `pts`. See [Ingest H.264 from an RTSP camera and remux to MPEG-TS](/docs/cookbook/receiving/recv-rtsp-h264-to-ts.md) in the cookbook.
 
-- **RTCP is not implemented on the H.264 path (v1 decision).** No RTCP
-  socket is bound; no RR/SR is sent or received. See
+- **RTCP is not processed on the H.264 path.** No RR/SR is sent, and
+  received RTCP is discarded. See
   [`/docs/project/deferred-features.md`](/docs/project/deferred-features.md).
 
 ## Where to go next

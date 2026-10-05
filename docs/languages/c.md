@@ -17,8 +17,8 @@ The C ABI ships as the `tst-c` crate in the workspace; its build emits the artif
 | Artifact | Path (after `cargo build`) | Purpose |
 |---|---|---|
 | `libtstrans.so` (Linux) / `libtstrans.dylib` (macOS) / `tstrans.dll` (Windows-MSVC) | `target/debug/` or `target/release/` | Shared library |
-| `libtstrans.a` (`tstrans.lib` on MSVC) | same | Static library — libsrt + mbedTLS + libstdc++ statically embedded |
-| `tstrans.h` | `bindings/c/include/` | Single-file C header (~350 KB), `cbindgen`-generated |
+| `libtstrans.a` (`tstrans.lib` on MSVC) | same | Static library — libsrt + mbedTLS embedded; link the C++ runtime yourself (`tstrans.pc` lists it) |
+| `tstrans.h` | `target/<profile>/include/` | Single-file C header (~450 KB), `cbindgen`-generated for the features you built. The committed `bindings/c/include/tstrans.h` is the `srt,rtp` rendering. |
 | `tstrans.pc` | `target/<profile>/` | pkg-config file (substituted by `build.rs` from `tstrans.pc.in`) |
 
 ### From source
@@ -26,25 +26,26 @@ The C ABI ships as the `tst-c` crate in the workspace; its build emits the artif
 ```sh
 git clone https://github.com/aklofas/ts-transformer
 cd ts-transformer
-SRT_FORCE_VENDORED=1 cargo build -p tst-c --release
-# Artifacts land in target/release/ + bindings/c/include/tstrans.h
+# Transports are opt-in features: srt, rtp, udp, tcp, hls, rist.
+SRT_FORCE_VENDORED=1 cargo build -p tst-c --release --features srt
+# Artifacts land in target/release/ (header: target/release/include/tstrans.h)
 ```
 
-The build vendors libsrt 1.5.7 + mbedTLS 3.6.x statically — your `libtstrans.so` has no external dependencies beyond libc, libpthread, libstdc++, libdl, and libm. Verify with `ldd target/release/libtstrans.so`.
+The build vendors libsrt 1.5.7 + mbedTLS 3.6.x statically — your `libtstrans.so` has no external dependencies beyond the C and C++ runtimes (libc, libm, libstdc++, libgcc_s; older glibc also splits out libpthread and libdl). Verify with `ldd target/release/libtstrans.so`.
 
 ### Compile + link
 
 Direct gcc/clang:
 
 ```sh
-gcc -I bindings/c/include \
+gcc -I target/release/include \
     -L target/release \
     -Wl,-rpath,target/release \
     -Wall -Werror -o myapp \
     myapp.c -ltstrans
 ```
 
-With pkg-config (recommended for build systems):
+With pkg-config (recommended for build systems). The generated `tstrans.pc` assumes an install under `/usr/local` (`lib/` and `include/`), so copy the library and header there first:
 
 ```sh
 export PKG_CONFIG_PATH=$PWD/target/release:$PKG_CONFIG_PATH
@@ -76,11 +77,11 @@ if (tst_get_abi_version_minor() < TST_ABI_VERSION_MINOR) {
 }
 ```
 
-See [`examples/getting-started/version_check.c`](../../bindings/c/examples/getting-started/version_check.c) for the canonical startup pattern (matches what `tst-jni` and `tst-uniffi` will do in `JNI_OnLoad` / the UniFFI init hook).
+See [`examples/getting-started/version_check.c`](../../bindings/c/examples/getting-started/version_check.c) for the canonical startup pattern.
 
 ## Hello world
 
-Build one MPEG-TS frame in memory containing one H.264 access unit + one KLV record — no SRT, no files. The full example is at [`examples/getting-started/hello_world.c`](../../bindings/c/examples/getting-started/hello_world.c); the core is ten lines:
+Build MPEG-TS in memory containing one H.264 access unit + one KLV record — no SRT, no files. The full example is at [`examples/getting-started/hello_world.c`](../../bindings/c/examples/getting-started/hello_world.c); the core is a dozen lines:
 
 ```c
 #include "tstrans.h"
@@ -90,12 +91,15 @@ int main(void) {
     tst_mux_config_t *cfg = tst_mux_config_new();
     tst_program_handle_t prog = tst_mux_config_add_program(cfg, 1, 0x1000);
     tst_mux_config_add_video_stream(cfg, prog, 0x100, TST_VIDEO_CODEC_H264);
+    tst_mux_config_add_klv_stream(cfg, prog, 0x101, TST_KLV_STREAM_TYPE_PRIVATE_DATA, /*carries_pts=*/false);
 
     tst_muxer_t *mux = tst_muxer_open(cfg);
     tst_mux_config_free(cfg);
 
     static const uint8_t aud_nal[] = { 0x00, 0x00, 0x00, 0x01, 0x09, 0x10 };
     tst_muxer_push_video(mux, aud_nal, sizeof(aud_nal), /*pts_90khz=*/0, /*key_frame=*/true);
+    static const uint8_t klv[33] = { 0x06,0x0E,0x2B,0x34,0x02,0x0B,0x01,0x01, 0x0E,0x01,0x03,0x01,0x01,0x00,0x00,0x00, 0x10 };
+    tst_muxer_push_klv(mux, klv, sizeof(klv), /*pts_90khz=*/0);
 
     uint8_t pkt[188];
     size_t total = 0;
@@ -110,13 +114,13 @@ int main(void) {
 Run it:
 
 ```sh
-gcc -I bindings/c/include -L target/release -Wl,-rpath,target/release \
+gcc -I target/release/include -L target/release -Wl,-rpath,target/release \
     -o /tmp/hello hello.c -ltstrans
 /tmp/hello
 # built 752 bytes of MPEG-TS
 ```
 
-The output is byte-identical to the Rust [`hello_world.rs`](../../examples/getting-started/hello_world.rs) example.
+The Rust twin is [`hello_world.rs`](../../examples/getting-started/hello_world.rs): the same PIDs and the same four packets (PAT, PMT, one video PES, one KLV PES); its KLV record is an encoded ST 0601 set rather than a zero-filled one.
 
 ## First send
 
@@ -137,7 +141,7 @@ int main(int argc, char **argv) {
                                   TST_KLV_STREAM_TYPE_SYNCHRONOUS_METADATA,
                                   /*carries_pts=*/true);
 
-    /* 2. Open an SRT-backed mux sender. The config is consumed; free it. */
+    /* 2. Open an SRT-backed mux sender. The open copies the config; free it. */
     tst_mux_sender_t *snd = tst_mux_sender_open(url, cfg);
     tst_mux_config_free(cfg);
     if (!snd) {
@@ -303,7 +307,7 @@ The ABI-19 additions carry MISB ST 0604 MISP timestamps through the C ABI:
 - `tst_misp_time_extract` scans an Annex-B access unit and returns the first MISP timestamp found.
 - Error codes `TST_E_MISP_TIME` (−45, SEI build/splice failure) and `TST_E_MISP_TIME_MALFORMED` (−46, present-but-malformed timestamp).
 
-Typed KLV set encode/decode (including the ST 1204 Core ID codec) intentionally stays out of the C ABI — C carries raw KLV bytes via the `push_klv` families; see the [STANAG 4609 reference](/docs/reference/stanag-4609.md).
+On the decode side the C ABI carries one typed KLV set: ST 0601, through `tst_st0601_decode`, the curated `tst_st0601_geometry` getter and the per-tag `tst_st0601_get_f64` / `_get_u64` / `_state` accessors (ABI 21). Every other typed set (including the ST 1204 Core ID codec) and all typed encode stay out of the C ABI — C carries raw KLV bytes via the `push_klv` families; see the [STANAG 4609 reference](/docs/reference/stanag-4609.md).
 
 See the [HLS guide](/docs/guides/hls.md) for serving guidance, the KLV ride-along carriage modes, and latency tuning.
 
@@ -317,7 +321,7 @@ See the [HLS guide](/docs/guides/hls.md) for serving guidance, the KLV ride-alon
 
 Treat handles as moved-into the close call: set your local variable to `NULL` immediately after, or wrap close in an `if (handle) { ...close...; handle = NULL; }` guard.
 
-**Configs are consumed by `_open`.** `tst_mux_sender_open(url, cfg)`, `tst_muxer_open(cfg)`, and their managed variants consume the config internally. You should still call `tst_mux_config_free(cfg)` afterward (it's a free-the-shell call, not a free-the-data call — internally idempotent against the consumed contents).
+**Configs are copied, not consumed, by `_open`.** `tst_mux_sender_open(url, cfg)`, `tst_muxer_open(cfg)`, and their managed variants copy what they need from the config; the caller still owns it and frees it with `tst_mux_config_free(cfg)`, right after the open or after reusing it for further opens.
 
 **Error surface.** Errors are flat negative `TST_E_*` integers returned directly by the function. The most recent error is also written to a thread-local slot:
 

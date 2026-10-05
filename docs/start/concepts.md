@@ -70,7 +70,7 @@ The military / ISR community settled on the **MISB** (Motion Imagery Standards B
 
 - **MISB ST 0601** — Full Motion Video (FMV) metadata. The big one. Defines ~140 keys for aircraft platform position + sensor pointing + mission context.
 - **MISB ST 0102** — Security metadata (classification, releasability).
-- **MISB ST 0605** — Amend tags (corrections to previously-sent records).
+- **MISB ST 0605** — Precision Time Stamp (a time-status byte plus a microsecond timestamp, carried as its own KLV pack).
 - **MISB ST 0903** — VMTI (Video Moving Target Indicator) — per-target detection bounding boxes inside the video.
 
 ts-transformer ships typed Rust structs for all four sets — `UasDatalinkLs` (ST 0601), `SecurityLs` (ST 0102), `PrecisionTimeStampPack` (ST 0605), and `VmtiLs` (ST 0903): encode a typed record into KLV bytes, or decode KLV bytes into the typed struct. Sibling typed layers cover items nested inside an ST 0601 record too — ST 0806 (Remote Video Terminal, Tag 73) and ST 1010 (SDCC-FLP error covariance, Tag 102) — plus a one-way ST 0805 KLV→Cursor-on-Target conversion. See [`guides/klv.md`](/docs/guides/klv.md).
@@ -109,7 +109,7 @@ Compare:
 
 **Latency.** SRT trades latency for reliability. You configure how long the receiver waits for missing packets before giving up and playing forward. Default ~120 ms; tune up (seconds) for satellite, tune down (tens of ms) for low-latency local links. ts-transformer's `SocketBuilder` exposes this as `latency_ms`.
 
-**Encryption.** SRT supports AES-128, AES-192, AES-256 with a shared passphrase. ts-transformer enables encryption **by default** — the vendored mbedTLS 3.6.x LTS is statically linked. You set a passphrase via `SocketBuilder::passphrase("…")` and both sender and receiver use the same one. Disable encryption with `--no-default-features` only if you have a reason.
+**Encryption.** SRT supports AES-128, AES-192, AES-256 with a shared passphrase. ts-transformer enables encryption **by default** — the vendored mbedTLS 3.6.x LTS is statically linked. You set a passphrase via `SocketBuilder::passphrase(Passphrase::new("…")?)` and both sender and receiver use the same one. Disable encryption with `--no-default-features` only if you have a reason.
 
 **Reconnect.** Reconnection is **not** part of the SRT protocol itself — when a socket drops, it stays dropped. ts-transformer adds a `ManagedTransport` wrapper that automatically retries with exponential backoff and emits discontinuity events when a reconnect happens, so the receiver knows the stream had a gap. See [`guides/pipeline.md`](/docs/guides/pipeline.md).
 

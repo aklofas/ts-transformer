@@ -31,8 +31,8 @@ Optional extras:
 pip install 'tstrans[pandas]'   # pandas DataFrame adapters + NumPy snapshot views
 ```
 
-**Minimum Python is 3.10** (bumped from 3.9 mid-Phase-2 to enable PEP 604
-union syntax and `match` statements without compat hacks).
+**Minimum Python is 3.10**, so the binding uses PEP 604 union syntax and
+`match` statements without compat hacks.
 
 The compiled extension is imported as `tstrans._native`. Public API lives
 on `tstrans` and its topic submodules — `tstrans.io`, `tstrans.mpegts`,
@@ -56,7 +56,7 @@ in a `--no-default-features` source build that omits `hls`.
 > via `pip install tstrans[pandas]`, the live transports
 > `tstrans.{srt,rtp,udp,tcp,rist}` (with RTSP client + server and SRT
 > auto-reconnect), the HLS publisher (`tstrans.hls`), and
-> `tstrans.pipeline.Pairer`. ~1240 pytest tests.
+> `tstrans.pipeline.Pairer`.
 
 ## Hello world
 
@@ -349,8 +349,8 @@ entry (raw stream_type byte + descriptor loop verbatim) and each
 demuxer substitutes 0 for a PTS-less source PES, so a source sample
 with no PTS re-emerges with a literal PTS of 0.
 Pass kinds in `drop=` (e.g. `drop=(StreamKindTag.UNKNOWN,)`) to
-exclude streams instead; their events are then skipped by `write`. v1
-supports single-program sources (a second program raises
+exclude streams instead; their events are then skipped by `write`. Only
+single-program sources are supported (a second program raises
 `ValueError`).
 `atomic=True` writes through a same-directory `*.partial` temp file and
 `os.replace`s it into place only on clean exit, so no partial output can
@@ -452,7 +452,7 @@ it.
 Every transport shell — `Sender` / `Receiver` / `Listener`, `MuxSender` /
 `DemuxReceiver`, the four `Managed*` shells, and their `tstrans.rtp` /
 `udp` / `tcp` / `rist` siblings — exposes `close()` that is safe to call
-from ANY thread, and (except rtp `MuxSender` / `DemuxReceiver` and tcp) a
+from ANY thread, and (except rtp `MuxSender` / `DemuxReceiver`) a
 `cancel_handle()`. Both go through one Rust state machine
 (`tst_pipeline::binding::Owned`): **cancel first, then free**. A call
 parked on another thread (`send_bytes`, `recv_bytes`, `accept`,
@@ -980,8 +980,8 @@ with RtspClient.connect(cfg) as session:
   `H264Receiver` alike) answers with a `StreamEndReason` member —
   `CLEAN_TEARDOWN`, `SESSION_EXPIRED`, `KEEPALIVE_FAILED`,
   `TRANSPORT_FAILED`, `PROTOCOL_ERROR`, or `CANCELLED` — or `None` if
-  the session hasn't ended yet (or ended through a path this arc
-  doesn't instrument, e.g. a plain `rtp://` receiver with no owning
+  the session hasn't ended yet (or ended through a path that records
+  no reason, e.g. a plain `rtp://` receiver with no owning
   `RtspClient`). `rx.end_detail()` carries the free-text message for
   the three failure variants. Both stay readable after `close()`. Set
   `TSTRANS_LOG=tst_rtp=debug` before `import tstrans` to also see the
@@ -1100,8 +1100,8 @@ with RtspClient.connect_h264(cfg) as session:
   `mux.push_klv(klv_bytes, pts=Pts90khz.from_raw(au.pts), metadata_service_id=0x00)`.
   Pair by PTS using `Pairer` if the feeds are asynchronous.
 
-- **RTCP is not implemented on the H.264 path (v1 decision).** No RTCP
-  socket is bound; no RR/SR is sent or received.
+- **RTCP is not processed on the H.264 path.** No RR/SR is sent, and
+  received RTCP is discarded.
 
 - **Stats accessors:** `rx.depay_stats()`, `rx.rtp_stats()`,
   `rx.socket_stats()` (returns a `SocketStats` — not Optional, unlike the
@@ -1120,8 +1120,7 @@ and the cookbook recipe [Ingest H.264 from an RTSP camera and remux to MPEG-TS](
 
 These three are the raw datagram / stream transports — lighter than SRT or
 RTP (no muxer shells), used to move pre-muxed TS bytes. Each exposes a
-fluent builder. All three ship in published wheels (RIST on Linux + macOS
-only — see the caveat under [Install](#install)). Their error types
+fluent builder. All three ship in published wheels. Their error types
 (`UdpError`, `TcpError`, `RistError` and the matching `*ErrorKind`
 `IntEnum`s) live in `tstrans.exceptions` and are also re-exported from each
 submodule.
@@ -1188,8 +1187,7 @@ land in the buffer at the length you passed. `Listener.close()` and
 `Transport.close()` are safe from another thread — a parked
 `accept_blocking()` / `recv()` ends with `TcpError(CLOSED)` within
 ~100 ms, and so does a `send()` stalled behind a full socket buffer (the
-send loop re-checks the cancel at its ~100 ms write-deadline tick,
-`tst_tcp` `transport.rs:76-79`). `Transport.cancel_handle()` /
+send loop re-checks the cancel at its ~100 ms write-deadline tick). `Transport.cancel_handle()` /
 `Listener.cancel_handle()` return a `tcp.CancelHandle` (`cancel()` /
 `is_cancelled()`) that ends a parked call with `TcpError(CLOSED)` without
 freeing the object — the same flag `close()` fires first, as on every
@@ -1371,12 +1369,10 @@ counters without touching demuxer stats.
 
 - **GIL released in `push_*` methods.** Long-running CPU work (large NAL
   parses, big KLV blobs) doesn't block other Python threads. The
-  `add_subtitle()` and `push_subtitle*()` methods also release the GIL
-  (added in plan #96 Wave C).
+  `push_subtitle*()` methods release it too.
 - **Subtitle config dataclasses reject `bool`-as-`int`.** PyO3 strictness
   means `True` is not silently coerced to integer `1` for fields that
   expect an integer codec selector. Same with `bytearray` vs `bytes`.
-  (Came from plan #96 validation pass.)
 - **`MuxerFileSink` is a context manager — push on the proxy it
   yields.** Use `with m.write_file("out.ts") as proxy: ...` and route
   every `push_*` through `proxy`. Only proxy pushes drain to the file;
@@ -1481,7 +1477,7 @@ record in the batch has one the DataFrame falls back to
 `platform_pitch_deg`, `platform_roll_deg` are direct top-level columns
 (no dotted composite namespacing). Enum-valued fields collapse to their
 variant name string (e.g. `"FullyEncrypted"`). Per-field parse errors
-(Phase 3 `KlvFieldError`) collapse to a single string `field_errors`
+(`KlvFieldError` entries) collapse to a single string `field_errors`
 column using a `|` joiner with the per-error format
 `tag<N>:<kind>:<message>` — the `|` (not `,`) joiner keeps the column
 parseable even when an error `message` contains commas.
@@ -1623,11 +1619,10 @@ arr = nal.payload_np  # one copy from Rust
 # use `arr` repeatedly — no further copy
 ```
 
-A future plan may implement the Python buffer protocol directly on the
-Rust types, eliminating the bytes copy. This is non-trivial because
-each of the ~15 PyClass types would need `__getbuffer__` /
-`__releasebuffer__` magic methods over stable Rust-owned storage.
-Tracked as a v2 optimization.
+Implementing the Python buffer protocol directly on the Rust types would
+remove the bytes copy. It is not done because each of the ~15 PyClass
+types would need `__getbuffer__` / `__releasebuffer__` magic methods
+over stable Rust-owned storage.
 
 For users who don't want the `.payload_np` indirection, the snapshot
 is one line of stdlib NumPy:
@@ -1720,7 +1715,7 @@ output directly when absolute byte offsets matter.
   Rust `tst_pipeline::binding::BindingErrorKind` table, spelled as the
   Rust variant in SCREAMING_SNAKE, and `import tstrans` fails (not a
   later `except`) if the two ever disagree. The 0.7.0 old→new table is in
-  the CHANGELOG (`### Changed — Python binding (WP-B2)`); the retired
+  the CHANGELOG's 0.7.0 "Changed — Python binding" entry; the retired
   spellings survive as deprecated aliases of their successors through
   0.7.x and are removed in 0.8.0.
   A poisoned handle raises `RuntimeError`; a panic inside a MUTATING call
@@ -1745,8 +1740,6 @@ output directly when absolute byte offsets matter.
   enums for subtitle codec config; Python wraps each variant as a
   separate dataclass (`DvbSubtitlingConfig`, `DvbTeletextConfig`,
   `Cea708StandaloneConfig`, `WebVttInTsConfig`).
-- **`add_subtitle()` and `push_subtitle*()` release the GIL.** Added in
-  plan #96 Wave C.
 - **`end_detail()` reads the Rust enum field directly, not a
   last-error channel.** The C ABI's `TstStreamEndReason` accessors read
   a recorded `KeepaliveFailed` / `TransportFailed` / `ProtocolError`
@@ -1770,12 +1763,8 @@ output directly when absolute byte offsets matter.
 [Pandas + NumPy adapters](#pandas--numpy-adapters) sub-section under
 "Language-specific gotchas" above.)
 
-## Roadmap
+## Known gap
 
-The full surface has shipped — offline file I/O, typed KLV decode /
-encode, codec parsers, pandas / NumPy adapters, the UDP / TCP / RTP / RTSP /
-SRT / RIST transports, the HLS publisher, and `tstrans.pipeline.Pairer`.
-Wheels publish to PyPI on tagged releases. The remaining item is
-incremental: a zero-copy Python-buffer-protocol path for the NumPy accessors
-(today each access copies once — see
+The NumPy accessors copy once per access; there is no zero-copy
+Python-buffer-protocol path (see
 [Snapshot vs zero-copy](#snapshot-vs-zero-copy)).
