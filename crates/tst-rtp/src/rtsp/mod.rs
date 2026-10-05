@@ -1,5 +1,5 @@
-//! RTSP/1.0 + RTSP/2.0 client (sync facade) — Phase 2.
-//! RTSP server (sync facade over internal tokio Runtime) — Phase 3.
+//! RTSP/1.0 + RTSP/2.0 client (sync facade).
+//! RTSP server (sync facade over internal tokio Runtime).
 //!
 //! **Stability: Provisional** — see the
 //! [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).

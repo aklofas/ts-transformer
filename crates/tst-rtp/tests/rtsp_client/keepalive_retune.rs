@@ -1,7 +1,7 @@
 //! Regression: the keepalive cadence must follow the server-advertised
 //! session timeout, and post-SETUP pings must be bound to the session.
 //!
-//! Field report (2026-07-24): the keepalive thread was spawned at connect
+//! Before the retune, the keepalive thread was spawned at connect
 //! time with its interval frozen from the DEFAULT 60 s session timeout —
 //! a `Session: <id>;timeout=N` parsed later at SETUP updated the client
 //! field but never reached the running thread, so any server advertising
@@ -20,8 +20,8 @@ use crate::fixtures::rtsp_loopback_server::*;
 /// Server advertises `timeout=1` → the auto-keepalive (spawned at connect
 /// against the 60 s default → 30 s cadence) must retune to 500 ms at
 /// SETUP and bind its pings to the session. In the 2.5 s observation
-/// window the retuned cadence yields ~4 session-bound pings; the frozen
-/// pre-fix cadence yields zero.
+/// window the retuned cadence yields ~4 session-bound pings; a frozen
+/// 30 s cadence yields zero.
 #[test]
 fn keepalive_retunes_to_server_advertised_timeout() {
     let cfg = FixtureConfig {
@@ -53,8 +53,7 @@ fn keepalive_retunes_to_server_advertised_timeout() {
 }
 
 /// Keepalive pings authenticate end-to-end against a server that
-/// challenges OPTIONS per-request (closes the deferred
-/// "challenged-OPTIONS loopback" coverage): the fixture 401s any OPTIONS
+/// challenges OPTIONS per-request: the fixture 401s any OPTIONS
 /// without a valid `Authorization`, so the session-bound ping count only
 /// climbs if each ping pre-emptively signs with the challenge cached at
 /// DESCRIBE. Uses SHA-256 + `qop="auth"` so the per-ping nonce-count

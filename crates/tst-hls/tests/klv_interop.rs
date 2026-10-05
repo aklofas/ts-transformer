@@ -5,7 +5,7 @@
 //! payloads are bare SMPTE-UL-anchored KLV with monotonic 90 kHz PTS.
 //!
 //! This is the test that PINS the whole feature's client contract:
-//!   (a) segments open PAT → PMT → IDR (Task 10 independent decodability), and
+//!   (a) segments open PAT → PMT → IDR (independent decodability), and
 //!   (b) KLV round-trips byte-identically in the async, UL-anchored shape.
 //!
 //! Serve-gated because constructing `MuxPublisher<HlsPublisher>` pulls the
@@ -129,8 +129,8 @@ fn segments_are_self_contained_and_carry_klv() {
 
     // Three GOPs, each = 1 keyframe AU + 2 non-key AUs, PTS step 3003 ticks
     // (~29.97 fps). One KLV LS per GOP, emitted at the keyframe PTS — a
-    // plausible telemetry cadence. Keyframes BEGIN segments (Task 10's
-    // cut-before-push), so GOP N opens segment N.
+    // plausible telemetry cadence. Keyframes BEGIN segments
+    // (cut-before-push), so GOP N opens segment N.
     const GOP: usize = 3;
     const STEP: i64 = 3003;
     let mut sent_klv: Vec<Vec<u8>> = Vec::new();
@@ -257,7 +257,7 @@ fn segments_are_self_contained_and_carry_klv() {
         }
 
         // (6) Independent decodability of the VIDEO ES: in each non-first
-        //     segment (which opens with a keyframe under Task 10's
+        //     segment (which opens with a keyframe under
         //     cut-before-push), the FIRST recovered video sample is an IDR AU
         //     — witnessed by the synthetic AU's known Annex-B head.
         if seg_idx > 0 {

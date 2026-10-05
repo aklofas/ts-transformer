@@ -1,7 +1,7 @@
 //! Validate the experimental RTCP SR/RR reporter's default + opt-in
 //! behavior.
 //!
-//! As of H2 the outgoing SR/RR reporter is **off by default** (it emits
+//! The outgoing SR/RR reporter is **off by default** (it emits
 //! placeholder zero statistics and is not RFC 3550-conformant). These
 //! tests assert that default and that the opt-in path still spawns the
 //! companion socket. RTCP *reception* (ingest) is covered by the unit

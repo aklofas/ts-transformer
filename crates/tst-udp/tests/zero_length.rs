@@ -1,9 +1,9 @@
-//! Review 9 (int R9-04): a zero-length datagram — `nc -zu`, a NAT "UDP
-//! ping", an empty keepalive from a misconfigured peer — made
-//! `UdpRecvTransport::recv_bytes` return `Ok(0)`, which the receive shells
-//! read as "closed": one packet from any host that could reach the port
-//! ended a `Receiver` / `DemuxReceiver` with `EndOfStream` (terminal on the
-//! managed wrappers too). UDP has no end of stream; the datagram is skipped.
+//! A zero-length datagram — `nc -zu`, a NAT "UDP ping", an empty keepalive
+//! from a misconfigured peer — must be skipped: UDP has no end of stream.
+//! If `UdpRecvTransport::recv_bytes` returned `Ok(0)` for it, the receive
+//! shells would read that as "closed" and one packet from any host that
+//! could reach the port would end a `Receiver` / `DemuxReceiver` with
+//! `EndOfStream` (terminal on the managed wrappers too).
 
 use std::net::UdpSocket;
 use std::sync::Arc;
@@ -89,7 +89,7 @@ fn an_empty_datagram_mid_stream_does_not_end_a_receiver_shell() {
     watchdog.join().unwrap();
 }
 
-/// Review Focus 5: empty datagrams are skipped, and a cancel that lands while
+/// Empty datagrams are skipped, and a cancel that lands while
 /// only empty datagrams arrive is still observed — the skip loops back
 /// through the flag checks. Two phases so no assertion depends on scheduling.
 #[test]
@@ -99,7 +99,7 @@ fn empty_datagrams_do_not_hide_a_cancel() {
     let handle = recv.cancel_handle();
     let s = UdpSocket::bind("127.0.0.1:0").unwrap();
 
-    // Phase 1 — the skip path, deterministically: one loopback socket pair
+    // Part 1 — the skip path, deterministically: one loopback socket pair
     // delivers in FIFO order, so the first `recv_bytes` must skip the three
     // empties and return the sentinel. Queued before the worker starts.
     for _ in 0..3 {
@@ -130,7 +130,7 @@ fn empty_datagrams_do_not_hide_a_cancel() {
         "3 skipped empties + 1 delivered sentinel"
     );
 
-    // Phase 2 — empties do not hide a cancel. Nothing here counts on timing:
+    // Part 2 — empties do not hide a cancel. Nothing here counts on timing:
     // if the skip loop stopped re-checking the cancel flag, the second
     // `recv_bytes` would never return and the bounded wait below fails.
     entering_rx

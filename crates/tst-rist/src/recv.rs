@@ -36,7 +36,7 @@ enum BlockDisposition {
     DropMalformed,
     /// A zero-length block. librist has no end of stream and the shells read
     /// `Ok(0)` as "closed", so the block is freed and the tick reports
-    /// `Backpressure` (review 9, int R9-04).
+    /// `Backpressure`.
     SkipEmpty,
 }
 
@@ -189,7 +189,7 @@ impl RistRecvTransport {
         // stats::register_stats_callback). The order is load-bearing: librist
         // >= 0.2.20's protocol thread re-reads the stats interval lock-free on
         // every tick, so registering once that thread is running is a data
-        // race (TSan-caught on the 2026-08-31 nightly). librist's own tools
+        // race that TSan reports. librist's own tools
         // register before start too.
         let (stats, stats_arg) = crate::stats::register_stats_callback(ctx);
 
@@ -235,7 +235,7 @@ impl RistRecvTransport {
     }
 
     /// Count one dropped datagram (oversize / malformed). Centralized so the
-    /// counter source is consistent now that stats live behind a lock (Task 3).
+    /// counter source is consistent with stats living behind a lock.
     fn bump_dropped(&self) {
         if let Ok(mut s) = self.stats.lock() {
             s.packets_dropped = s.packets_dropped.wrapping_add(1);
@@ -245,7 +245,7 @@ impl RistRecvTransport {
 
 impl RecvTransport for RistRecvTransport {
     fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
-        // X-CORR-07: an empty destination is a no-op — `Ok(0)` before librist
+        // An empty destination is a no-op — `Ok(0)` before librist
         // or either flag is consulted (the kit row `empty_recv_is_noop`;
         // without this an empty read burns a 100 ms tick and reports
         // `Backpressure`, or drops a delivered block as `DropOversize`).
@@ -279,7 +279,7 @@ impl RecvTransport for RistRecvTransport {
         if rc == 0 || block.is_null() {
             // The tick elapsed with nothing to read. A cancel that landed
             // while we were parked is reported HERE — one tick of latency,
-            // never a Backpressure that hides it (spec §3.5, RIST row).
+            // never a Backpressure that hides it.
             if self.cancelled.load(Ordering::Acquire) {
                 return Err(TransportError::ExplicitClose);
             }
@@ -337,8 +337,8 @@ impl RecvTransport for RistRecvTransport {
                 unsafe {
                     rist_sys::rist_receiver_data_block_free2(&mut block);
                 }
-                // Still a received packet (the old `Accept(0)` path counted
-                // it); keeps the count consistent with tst-udp.
+                // Still a received packet; keeps the count consistent with
+                // tst-udp.
                 if let Ok(mut s) = self.stats.lock() {
                     s.packets_received = s.packets_received.wrapping_add(1);
                 }
@@ -443,7 +443,7 @@ mod tests {
         assert_eq!(classify_block(200, false, 200), Accept(200)); // exact fit
         assert_eq!(classify_block(201, false, 200), DropOversize); // 1 over
         assert_eq!(classify_block(50, true, 200), DropMalformed); // null+len>0
-        assert_eq!(classify_block(0, true, 200), SkipEmpty); // empty block: not EOS (R9-04)
+        assert_eq!(classify_block(0, true, 200), SkipEmpty); // empty block: not EOS
         assert_eq!(classify_block(0, false, 200), SkipEmpty);
     }
 

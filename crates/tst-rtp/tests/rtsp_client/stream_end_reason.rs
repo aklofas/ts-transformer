@@ -1,4 +1,4 @@
-//! Task A4: `StreamEndReason` recorded at every session-death site.
+//! `StreamEndReason` recorded at every session-death site.
 //!
 //! `clean_teardown_records_clean_teardown` uses the shared tokio fixture
 //! (`fixtures::rtsp_loopback_server`) — its TEARDOWN handler already

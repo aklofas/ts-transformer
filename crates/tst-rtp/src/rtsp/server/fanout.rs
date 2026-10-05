@@ -21,7 +21,7 @@ use crate::packet::{RTP_HEADER_LEN, RtpHeader};
 /// per-session TCP stream.
 ///
 /// Multicast mounts don't spawn per-peer tasks — they have a single
-/// shared sender; see Task 14's multicast module for that path.
+/// shared sender; see the `multicast` module for that path.
 pub(crate) enum PeerTransport {
     Udp {
         socket: Arc<tokio::net::UdpSocket>,
@@ -69,7 +69,7 @@ impl PeerDropCounter {
 }
 
 /// Spawn the per-peer fanout subscriber task. Returns a `JoinHandle` +
-/// the per-peer drop counter so the caller (Wave D Task 17 / session
+/// the per-peer drop counter so the caller (the PLAY handler / session
 /// state) can observe progress.
 ///
 /// The task exits when:
@@ -128,8 +128,8 @@ pub(crate) fn spawn_peer_fanout(
                     return;
                 }
                 // The server's graceful cancel: belt-and-braces beside the
-                // session Drop (review 9, int R9-02) so a fanout can never
-                // outlive `RtspServer::stop`.
+                // session Drop so a fanout can never outlive
+                // `RtspServer::stop`.
                 _ = server_cancel.cancelled() => {
                     return;
                 }
@@ -370,8 +370,9 @@ mod tests {
             .unwrap();
     }
 
-    /// Review 9 (int R9-02): the server's graceful cancel alone ends the
-    /// fanout; the per-peer `cancel` is never fired here.
+    /// The server's graceful cancel alone ends the fanout; the per-peer
+    /// `cancel` is never fired here. Without the `server_cancel` arm the
+    /// task would keep sending until its broadcast closed.
     #[tokio::test]
     async fn server_cancel_exits_task() {
         let send_sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());

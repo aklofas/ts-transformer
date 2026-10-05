@@ -269,9 +269,9 @@ impl RtspClient {
         &mut self,
         request_bytes: &[u8],
     ) -> Result<RtspResponse, RtspError> {
-        // `RtspClientBuilder::request_timeout` (CORR-26): every request
+        // `RtspClientBuilder::request_timeout`: every request
         // method funnels through here, so this one line is the producer of
-        // `RtspError::Timeout`. `None` keeps the unbounded pre-knob wait.
+        // `RtspError::Timeout`. `None` waits unbounded.
         // `checked_add` mirrors `H264Receiver::recv_au`'s idiom: a timeout
         // too large to represent as an `Instant` (e.g. `Duration::MAX`)
         // saturates to "no deadline" rather than panicking on overflow.
@@ -357,11 +357,11 @@ impl RtspClient {
                     // session request loop uses, so client and server agree
                     // byte-for-byte:
                     //
-                    // Phase 1 — pre-terminator (no CRLFCRLF yet): header
+                    // Before the terminator (no CRLFCRLF yet): header
                     // accumulation is capped at MAX_RTSP_MESSAGE_BYTES (64 KiB),
                     // preserving the unterminated-header DoS bound.
                     //
-                    // Phase 2 — post-terminator: the declared Content-Length is
+                    // After the terminator: the declared Content-Length is
                     // parsed up front; a malformed/duplicate/over-cap
                     // (> MAX_RTSP_BODY_BYTES) value is fatal NOW rather than read
                     // toward EOF. A legitimate body up to 1 MiB is awaited in
@@ -679,10 +679,10 @@ mod tests {
         h.join().unwrap();
     }
 
-    // --- B2: bounded client response accumulation (adversarial + positive) ---
+    // --- Bounded client response accumulation (adversarial + positive) ---
 
-    /// POSITIVE regression guard for Finding 1 (false-reject of valid large
-    /// bodies). A legitimate DESCRIBE-style response with a body well above the
+    /// POSITIVE regression guard against false-rejecting valid large
+    /// bodies. A legitimate DESCRIBE-style response with a body well above the
     /// 64 KiB accumulation cap but ≤ `MAX_RTSP_BODY_BYTES` (1 MiB) — e.g. a
     /// large SDP with many media sections — must be ACCEPTED and fully parsed,
     /// not rejected at 64 KiB. Guards against the body-unaware cap ever

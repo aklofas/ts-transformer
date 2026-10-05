@@ -6,8 +6,9 @@ use thiserror::Error;
 
 /// All errors that can be returned from `tst-udp` operations.
 ///
-/// The `kind()` accessor projects to [`UdpErrorKind`] for C-ABI mapping in
-/// downstream binding crates.
+/// The `kind()` accessor projects to [`UdpErrorKind`]. The bindings do not
+/// read it; they map `UdpError` through `BindingError` (see
+/// `binding_kind.rs`).
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum UdpError {
@@ -21,8 +22,9 @@ pub enum UdpError {
     InvalidConfig(String),
 }
 
-/// Flat error-variant projection. Used by future C ABI / Python bindings
-/// (A5 bindings batch) to map errors into a stable numeric code.
+/// Flat error-variant projection with a stable numeric code per variant.
+/// The bindings do not read it; they map `UdpError` through
+/// `BindingError` (see `binding_kind.rs`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 #[repr(u32)]

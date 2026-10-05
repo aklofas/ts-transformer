@@ -1,6 +1,6 @@
 //! Server-side challenge generation + Authorization verification.
 //!
-//! Symmetric with the Phase 2 client-side primitives in
+//! Symmetric with the client-side primitives in
 //! `crate::rtsp::auth`: the wire shapes of `WWW-Authenticate` and
 //! `Authorization` are direct mirrors. Server emits challenges; client
 //! emits responses; server verifies by recomputing the same Digest math.
@@ -183,7 +183,7 @@ fn verify_digest(
         return Err(AuthVerifyError::StaleNonce);
     }
 
-    // DA-RTP-4(a): reject when the client's realm doesn't match ours.
+    // Reject when the client's realm doesn't match ours.
     // A mismatched realm means HA1 was computed against a different domain;
     // the response will never verify. Surface as BadDigestSyntax (structural
     // violation of the challenge-response contract).
@@ -196,7 +196,7 @@ fn verify_digest(
         });
     }
 
-    // DA-RTP-4(b): reject nc replays and regressions.
+    // Reject nc replays and regressions.
     // The server always offers qop=auth, so nc MUST be present when qop is
     // non-empty. If nc is absent or unparseable, treat as a syntax error.
     if !qop.is_empty() {
@@ -221,7 +221,7 @@ fn verify_digest(
         *nc_hwm = nc_val;
     }
 
-    // DA-RTP-4(c): reject the RFC 2617 no-qop downgrade when the server
+    // Reject the RFC 2617 no-qop downgrade when the server
     // challenge offered qop=auth. Our build_challenge_header always adds
     // qop="auth" for DigestMd5/DigestSha256; a client that omits qop is
     // deliberately downgrading (or is a broken implementation).
@@ -292,7 +292,7 @@ fn compute_digest_response(
 /// backslash and keep that character literally. `parse_kv_pairs`'s scanner
 /// already walks past every `\X` pair to find the closing `"`; this makes
 /// the STORED value match what the client actually meant, not the raw
-/// escaped wire bytes — e.g. a percent-decoded username `a"b` (CORR-21)
+/// escaped wire bytes — e.g. a percent-decoded username `a"b`
 /// arrives as `\"` inside `username="a\"b"` and must compare equal to the
 /// configured `a"b`, not the literal three bytes `a\"b`.
 fn unescape_quoted_string(s: &str) -> String {
@@ -678,9 +678,9 @@ mod tests {
         assert!(matches!(e, AuthVerifyError::BadDigestSyntax { .. }));
     }
 
-    // ── DA-RTP-4 hardening tests ────────────────────────────────────────
+    // ── Digest hardening tests ──────────────────────────────────────────
 
-    /// DA-RTP-4(a): client supplies a realm that differs from the server's
+    /// Client supplies a realm that differs from the server's
     /// configured realm — the response would be computed against the wrong
     /// domain. Expect BadDigestSyntax.
     #[test]
@@ -701,7 +701,7 @@ mod tests {
         );
     }
 
-    /// DA-RTP-4(b): nc replay — sending nc=00000001 twice with the same
+    /// nc replay — sending nc=00000001 twice with the same
     /// nonce must be rejected.
     #[test]
     fn verify_digest_nc_replay_rejected() {
@@ -743,7 +743,7 @@ mod tests {
         assert_eq!(hwm, 1, "hwm must not advance on rejection");
     }
 
-    /// DA-RTP-4(b): nc must advance monotonically (regression rejected).
+    /// nc must advance monotonically (regression rejected).
     #[test]
     fn verify_digest_nc_regression_rejected() {
         let cfg = digest_md5_cfg();
@@ -781,7 +781,7 @@ mod tests {
         assert_eq!(hwm, 5, "hwm must not change on rejected request");
     }
 
-    /// DA-RTP-4(c): no-qop downgrade is rejected even with correct
+    /// No-qop downgrade is rejected even with correct
     /// credentials — the server always offers qop=auth.
     #[test]
     fn verify_digest_qop_downgrade_rejected() {
@@ -813,13 +813,13 @@ mod tests {
         // rule: `\"` -> `"` (the scanner still uses the raw `\"` to find
         // the correct closing `"`, but what's stored is what the client
         // MEANT, not the wire bytes). A percent-decoded username
-        // (CORR-21) can carry a literal `"` this way.
+        // can carry a literal `"` this way.
         let m = parse_kv_pairs(r#"a="he said \"hi\"", b=ok"#);
         assert_eq!(m.get("a").map(String::as_str), Some(r#"he said "hi""#));
         assert_eq!(m.get("b").map(String::as_str), Some("ok"));
     }
 
-    /// CORR-21 follow-on: a username containing `"` must round-trip
+    /// A username containing `"` must round-trip
     /// through `parse_kv_pairs` back to its real value, not the escaped
     /// wire form — `escape_quoted_string` (`crate::rtsp::auth`, client
     /// side) and this function are inverses.

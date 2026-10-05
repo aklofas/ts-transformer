@@ -1,4 +1,4 @@
-//! Phase 3 Wave F Task 23 — UDP loopback round-trip test.
+//! UDP loopback round-trip test.
 //!
 //! Our [`RtspClient`] against our [`RtspServer`] over plain UDP. The
 //! tests exercise the full client-driven OPTIONS → DESCRIBE → SETUP →
@@ -8,8 +8,7 @@
 //! Full RTP byte-flow assertion (push_video → DemuxReceiver yields the
 //! same frame) is NOT covered here — `spawn_peer_fanout` for the
 //! Unicast UDP variant runs on the server runtime; this test verifies
-//! the handshake + control-plane wire-up, leaving end-to-end byte
-//! identity for the Wave G validation pass.
+//! the handshake + control-plane wire-up only.
 
 use std::time::Duration;
 use tst_core::mpegts::common::Pts90khz;
@@ -50,19 +49,15 @@ fn client_describes_server_mount_returns_mp2t_sdp() {
 /// SETUP succeeds; PLAY succeeds — full handshake round-trip against
 /// our own server runtime over plain UDP.
 ///
-/// FAILING: the client's `setup_mp2t_auto` appends the SDP
-/// `a=control:trackID=0` attribute to the mount URL, producing a SETUP
-/// request URI of `rtsp://host:port/live/trackID=0`. The server's
-/// `extract_mount_path` (see `crates/tst-rtp/src/rtsp/server/handlers.rs`)
-/// returns the full path verbatim and the mount lookup misses → 404
-/// Not Found. End-to-end SETUP wiring requires either (a) the server's
-/// `extract_mount_path` to strip the trailing `trackID=N` segment
-/// before lookup, or (b) the server's SDP builder to emit an absolute
-/// `a=control:` URL matching the registered mount path. Filed as a
-/// Wave G follow-up — the per-handler unit tests in
+/// The client's `setup_mp2t_auto` appends the SDP `a=control:trackID=0`
+/// attribute to the mount URL, producing a SETUP request URI of
+/// `rtsp://host:port/live/trackID=0`. The server's `extract_mount_path`
+/// (see `crates/tst-rtp/src/rtsp/server/handlers.rs`) strips the trailing
+/// `trackID=N` segment before the mount lookup; without that the lookup
+/// misses → 404 Not Found. The per-handler unit tests in
 /// `handlers.rs::setup_with_udp_transport_returns_200_with_server_port`
-/// hand-craft the URI as the bare `/live` so they exercise the SETUP
-/// allocator without going through this integration seam.
+/// hand-craft the URI as the bare `/live`, so only this test covers that
+/// integration seam.
 #[test]
 fn client_setup_play_against_server_returns_200() {
     let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();

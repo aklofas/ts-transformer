@@ -148,10 +148,10 @@ fn mux_via_tcp_demux_round_trip_recovers_program_map() {
     assert!(ok, "DemuxReceiver did not emit a ProgramMap event");
 }
 
-/// E4: a `ManagedRecvTransport<TcpTransport>` parked in `recv_bytes` against
+/// A `ManagedRecvTransport<TcpTransport>` parked in `recv_bytes` against
 /// a real (silent) TCP peer must be cancellable from another thread.
 ///
-/// Before E1 wired `TcpTransport::cancel_handle` through the trait-level
+/// Without `TcpTransport::cancel_handle` wired through the trait-level
 /// `Transport`/`RecvTransport` overrides, `ManagedRecvTransport` — which can
 /// only reach the inner through `dyn RecvTransport` — got `None` back from
 /// `inner.cancel_handle()` at construction and never installed a wake handle

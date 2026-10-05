@@ -4,10 +4,9 @@
 //! lacks multicast support (CI runners on certain providers), the test
 //! prints a skip message and returns rather than failing.
 //!
-//! The IPv4 round-trip runs on Windows since 2026-05-29 (the send-side
-//! `?iface=127.0.0.1` no longer errors now that `set_multicast_if_v4` has a
-//! socket2 Windows path, and the receiver-side IP_MULTICAST_LOOP is set on
-//! Windows; CI `diag_win_multicast` confirmed delivery). The IPv6 case stays
+//! The IPv4 round-trip runs on Windows too: the send-side
+//! `?iface=127.0.0.1` goes through `set_multicast_if_v4`'s socket2 Windows
+//! path, and the receiver-side IP_MULTICAST_LOOP is set on Windows. The IPv6 case stays
 //! gated off Windows: `IPV6_MULTICAST_IF` takes an interface index there
 //! (not yet wired) and IPv6 multicast loopback is unverified on the runner.
 

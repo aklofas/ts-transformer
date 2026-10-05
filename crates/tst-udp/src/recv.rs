@@ -146,13 +146,13 @@ impl UdpRecvTransport {
     /// binding guarantees this). The cancel handle is not observed inside
     /// this call; a caller polling in slices checks
     /// [`UdpCancelHandle::is_cancelled`] between them. An empty `buf`
-    /// returns `Ok(Some(0))` immediately (X-CORR-07).
+    /// returns `Ok(Some(0))` immediately.
     pub fn recv_timeout(
         &mut self,
         buf: &mut [u8],
         deadline: std::time::Duration,
     ) -> Result<Option<usize>, crate::error::UdpError> {
-        // X-CORR-07: an empty destination is a no-op — answer before the
+        // An empty destination is a no-op — answer before the
         // socket is touched, so the caller's queued datagram survives.
         if buf.is_empty() {
             return Ok(Some(0));
@@ -188,7 +188,7 @@ impl UdpRecvTransport {
 ///
 /// Split out as a pure function so the transient/fatal decision is unit
 /// testable: `EINTR` in particular cannot be provoked deterministically
-/// from a plain socket, and the arm it feeds now latches the transport
+/// from a plain socket, and the arm it feeds latches the transport
 /// dead, so the classification is worth pinning directly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RecvAction {
@@ -205,8 +205,8 @@ enum RecvAction {
 /// `recv`, which is exactly what the SIGINT-handler shutdown pattern
 /// delivers. The send path already treats it as transient
 /// (`tst_core::net::classify_send_error`) and `tst-tcp`'s receive path
-/// retries it for the same reason: since Arc 2 WP-D a fatal receive
-/// latches `alive = false`, so letting a handled signal through to that
+/// retries it for the same reason: a fatal receive latches
+/// `alive = false`, so letting a handled signal through to that
 /// arm would leave the receiver permanently dead with every later call
 /// reporting `Closed`. Everything else is terminal.
 fn classify_recv_error(kind: std::io::ErrorKind) -> RecvAction {
@@ -220,7 +220,7 @@ fn classify_recv_error(kind: std::io::ErrorKind) -> RecvAction {
 
 impl RecvTransport for UdpRecvTransport {
     fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
-        // X-CORR-07: an empty destination is a no-op — `Ok(0)` before the
+        // An empty destination is a no-op — `Ok(0)` before the
         // socket or either flag is consulted (the kit row `empty_recv_is_noop`;
         // without this an empty read is served by a zero-length `recv` that
         // silently consumes a queued datagram).
@@ -273,7 +273,7 @@ impl RecvTransport for UdpRecvTransport {
                     // A zero-length datagram (a port probe, an empty
                     // keepalive) is not end of stream — UDP has none. The
                     // shells read `Ok(0)` as "closed", so count it and loop
-                    // back to the flag checks (review 9, int R9-04).
+                    // back to the flag checks.
                     self.stats.datagrams_received = self.stats.datagrams_received.saturating_add(1);
                     continue;
                 }
@@ -291,7 +291,7 @@ impl RecvTransport for UdpRecvTransport {
                 }
                 Err(e) => {
                     self.stats.recv_errors = self.stats.recv_errors.saturating_add(1);
-                    // Spec §3.5: a Broken receive latches dead (was: no latch).
+                    // A Broken receive latches dead.
                     self.alive.store(false, Ordering::Release);
                     return Err(TransportError::Broken {
                         msg: format!("recv error: {e}"),
@@ -388,7 +388,7 @@ mod tests {
         );
     }
 
-    /// DA-PERF-7: the `applied_timeout` cache must track setsockopt state correctly.
+    /// The `applied_timeout` cache must track setsockopt state correctly.
     ///
     /// After construction the cache is `CANCEL_POLL_INTERVAL`. After a `recv_timeout`
     /// call the cache holds `deadline`. After `recv_bytes` returns, the cache is back
@@ -425,10 +425,10 @@ mod tests {
         );
     }
 
-    /// DA-NET-8: datagrams larger than the default `pkt_size` (1316 bytes)
-    /// must be delivered in full. Before the fix, `max_payload()` returned
-    /// `pkt_size` so pipeline shells allocated a 1316-byte buffer; the OS
-    /// would silently truncate larger datagrams to 1316 bytes on `recv`.
+    /// Datagrams larger than the default `pkt_size` (1316 bytes) must be
+    /// delivered in full. If `max_payload()` returned `pkt_size`, pipeline
+    /// shells would allocate a 1316-byte buffer and the OS would silently
+    /// truncate larger datagrams to 1316 bytes on `recv`.
     ///
     /// Send 2000 bytes, assert 2000 bytes arrive.
     #[test]
@@ -478,7 +478,7 @@ mod tests {
         );
     }
 
-    /// DA-NET-7: two receivers joining the same multicast group on loopback
+    /// Two receivers joining the same multicast group on loopback
     /// must both bind AND both receive the same datagram.
     ///
     /// Mirrors the pattern in `crates/tst-rtp/tests/rtp/loopback_multicast.rs`:
@@ -503,7 +503,7 @@ mod tests {
 
         // Second receiver joins the same group:port — requires SO_REUSEADDR.
         // recv1 succeeding proves this platform supports multicast bind+join,
-        // so an AddrInUse here IS the DA-NET-7 regression: hard-fail. Other
+        // so an AddrInUse here IS the missing-SO_REUSEADDR regression: hard-fail. Other
         // errors (e.g. a second-join quirk) still degrade gracefully.
         let mut recv2 = match UdpRecvTransport::listen(&format!(
             "udp://@239.255.42.1:{port}?iface=127.0.0.1"
@@ -591,7 +591,7 @@ mod tests {
         assert_eq!(&got2[..], &payload[..], "recv2 payload mismatch");
     }
 
-    /// Spec §3.5: UDP `is_alive()` after `Broken` = false (was: no latch).
+    /// UDP `is_alive()` after `Broken` is false.
     /// The only deterministic `recv` error on a datagram socket is the
     /// ICMP port-unreachable that a CONNECTED socket surfaces as
     /// `ECONNREFUSED` on its next `recv` — so this test connects the private
@@ -651,7 +651,7 @@ mod recv_classify_tests {
     fn interrupted_retries_like_the_send_path() {
         // EINTR: a signal landed on the thread parked in `recv`. The send
         // path classifies it Transient; treating it as fatal here would
-        // latch `alive = false` (Arc 2 WP-D) and kill the receiver for good
+        // latch `alive = false` and kill the receiver for good
         // on a signal that was meant to be handled and resumed.
         assert_eq!(
             classify_recv_error(ErrorKind::Interrupted),

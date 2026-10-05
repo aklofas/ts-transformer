@@ -287,7 +287,7 @@ mod tests {
         assert!(h.contains("interleaved=0-1"));
     }
 
-    // --- B5: adversarial Transport endpoint parsing / port-overflow tests ---
+    // --- Adversarial Transport endpoint parsing / port-overflow tests ---
 
     #[test]
     fn build_udp_request_rejects_max_port_companion_overflow() {

@@ -244,16 +244,15 @@ mod tests {
     fn listener_builder_rejects_url_missing_listen_flag() {
         // A caller-shaped URL (no ?listen=1) must be rejected here, at
         // from_url, matching this fn's own doc promise — not silently
-        // coerced into a listener (the old format_url-based build() used
-        // to append ?listen=1 unconditionally) and not deferred to a
-        // confusing failure inside build().
+        // coerced into a listener and not deferred to a confusing failure
+        // inside build().
         let err = TcpListenerBuilder::from_url("tcp://0.0.0.0:5000").unwrap_err();
         assert!(matches!(err, TcpUrlError::NotAListenerUrl(_)));
     }
 
     #[test]
     fn ipv6_loopback_listener_builds() {
-        // build() now goes straight from the parsed TcpUrl to TcpListener::
+        // build() goes straight from the parsed TcpUrl to TcpListener::
         // from_parsed — no format-then-reparse round trip to bracket IPv6
         // literals for. Binds a real socket on IPv6 loopback -- "loopback"
         // in the name is what routes it into nextest.toml's serialized

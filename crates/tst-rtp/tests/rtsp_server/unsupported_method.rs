@@ -1,4 +1,4 @@
-//! CORR-25: a complete request the server cannot parse — an RTSP method we
+//! A complete request the server cannot parse — an RTSP method we
 //! don't implement, or a malformed request line — gets an answer (501 or
 //! 400) and is drained, so the requests queued behind it are served.
 //! Before the fix `RtspRequest::parse`'s error was treated as "need more
@@ -38,7 +38,8 @@ fn connect(server: &RtspServer) -> TcpStream {
     let port = server.local_addr().unwrap().port();
     let tcp = TcpStream::connect(("127.0.0.1", port)).unwrap();
     tcp.set_nodelay(true).unwrap();
-    // Both timeouts before the first write (the oom_guard.rs macOS lesson).
+    // Both timeouts before the first write: once the server rejects and
+    // closes, a setsockopt on the reset socket fails with EINVAL on macOS.
     tcp.set_write_timeout(Some(Duration::from_secs(2))).unwrap();
     tcp.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
     tcp

@@ -1,4 +1,4 @@
-//! WP-C1 — the tst-core transport conformance kit over tst-rtp's three
+//! The tst-core transport conformance kit over tst-rtp's three
 //! receive/send shapes: plain `rtp://` sender, plain `rtp://` receiver, and
 //! the receiver an `RtspClient` session hands out (`into_recv_transport`)
 //! against the in-crate `RtspServer`.

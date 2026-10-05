@@ -159,7 +159,7 @@ impl RistUrl {
 
         // `bandwidth` is an alias of `recovery_maxbitrate` (both set librist's
         // `recovery_maxbitrate`, the retransmit-bandwidth cap). Two different
-        // values is a contradiction, not a precedence question (CORR-23).
+        // values is a contradiction, not a precedence question.
         if let (Some(bw), Some(rm)) = (bandwidth_kbps, recovery_maxbitrate_kbps) {
             if bw != rm {
                 return Err(RistUrlError::BadQueryValue {
@@ -320,7 +320,7 @@ mod tests {
         assert_eq!(native_endpoint(&v4, true), "rist://@127.0.0.1:9000");
     }
 
-    /// CORR-23: `bandwidth` and `recovery_maxbitrate` both write librist's
+    /// `bandwidth` and `recovery_maxbitrate` both write librist's
     /// `recovery_maxbitrate`. Different values must be a parse error, not
     /// last-writer-wins.
     #[test]

@@ -1,12 +1,12 @@
-//! `From<…> for BindingError` — the RTP / RTSP rows of the kind table
-//! (spec §3.3); see `tst-srt/src/binding_kind.rs` for the why.
+//! `From<…> for BindingError` — the RTP / RTSP rows of the kind
+//! table; see `tst-srt/src/binding_kind.rs` for the why.
 
 use crate::error::{MountError, RtspError, RtspServerError};
 use crate::transport::ConnectError;
 use tst_pipeline::binding::{BindingError, BindingErrorKind as K};
 
-/// K3: the six `ConnectError` variants were folded into `TRANSPORT` by both
-/// bindings; each is a kind now (C keeps −15 for all of them).
+/// Each of the six `ConnectError` variants is its own kind (C keeps −15
+/// for all of them).
 impl From<ConnectError> for BindingError {
     fn from(e: ConnectError) -> Self {
         let kind = match &e {
@@ -21,12 +21,11 @@ impl From<ConnectError> for BindingError {
     }
 }
 
-/// RTSP keeps its ten-name classification (K3); the finer bucket wins where
-/// C and Python/JVM disagreed (K5): 401/404 are `AUTH_REQUIRED`/`NOT_FOUND`
-/// (C emitted −16 for both), `AuthUnsupported` is `AUTH_REQUIRED` (Python/JVM
-/// said `AUTH_FAILED`), the four SDP-media variants are `NOT_FOUND`
-/// (Python/JVM said `MOUNT`). `LocalCancel` is the one-cancel-outcome kind
-/// `Closed` (review 9, R9-05): a cancelled connect/play/pause/teardown is
+/// RTSP keeps its ten-name classification, and the finer bucket wins:
+/// 401/404 are `AUTH_REQUIRED`/`NOT_FOUND`, `AuthUnsupported` is
+/// `AUTH_REQUIRED`, the four SDP-media variants are `NOT_FOUND`.
+/// `LocalCancel` is the one-cancel-outcome kind
+/// `Closed`: a cancelled connect/play/pause/teardown is
 /// `TST_E_CLOSED` / `RtspError(CLOSED)` / `RtspException(CLOSED)`,
 /// indistinguishable from no other RTSP failure.
 impl From<RtspError> for BindingError {
@@ -57,8 +56,7 @@ impl From<RtspError> for BindingError {
     }
 }
 
-/// Server errors take the client-side buckets where one applies (K5 — C
-/// emitted −24 for every server variant; Python/JVM already split them).
+/// Server errors take the client-side buckets where one applies.
 impl From<RtspServerError> for BindingError {
     fn from(e: RtspServerError) -> Self {
         let kind = match &e {

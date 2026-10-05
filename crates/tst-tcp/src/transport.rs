@@ -96,7 +96,7 @@ impl InnerStream {
 #[derive(Clone, Debug)]
 pub struct TcpCancelHandle {
     alive: Arc<AtomicBool>,
-    /// The cancel latch proper, SEPARATE from `alive` (WP-C1).
+    /// The cancel latch proper, SEPARATE from `alive`.
     ///
     /// `alive` is a liveness flag: the transport drops it on a clean peer
     /// EOF and on a broken read as well as on a cancel, so `!alive` cannot
@@ -171,7 +171,7 @@ pub struct TcpTransport {
 
 /// Resolve `host:port` (IP literal or DNS name) and connect with `timeout`
 /// applied per candidate address, returning the stream + the address that
-/// accepted. DA-NET-9: hostnames resolve here, never at URL-parse time.
+/// accepted. Hostnames resolve here, never at URL-parse time.
 pub(crate) fn connect_stream(
     host: &str,
     port: u16,
@@ -193,8 +193,8 @@ pub(crate) fn connect_stream(
     }))
 }
 
-/// The one connect-error mapping for `tcp://` and `tcps://` (review 9,
-/// R9-06): a connect that ran out `connect_timeout` is `ConnectTimeout`
+/// The one connect-error mapping for `tcp://` and `tcps://`: a connect
+/// that ran out `connect_timeout` is `ConnectTimeout`
 /// (`TCP_CONNECT_TIMEOUT`, -32); anything else from the socket is `Io`.
 pub(crate) fn map_connect_err(e: std::io::Error, cfg: &SocketConfig) -> TcpError {
     if e.kind() == std::io::ErrorKind::TimedOut {
@@ -322,9 +322,9 @@ impl TcpTransport {
 /// ticking over). In that second case the loop keeps writing
 /// `&msg[written..]`, re-checking `alive` at every tick so a cancel or close
 /// from another thread bounds the wait — the same poll shape `recv_bytes`
-/// uses. Tearing the connection down here instead is what used to desync
-/// the peer's 188-byte TS framing: the managed reconnect started a fresh
-/// connection mid-message.
+/// uses. Tearing the connection down here instead would desync the peer's
+/// 188-byte TS framing: the managed reconnect starts a fresh connection
+/// mid-message.
 ///
 /// Returns `Ok(())` on a full write. On error the `bool` is `true` when the
 /// transport must be marked dead (`Ok(0)` or a hard error) and `false` for a
@@ -482,8 +482,8 @@ impl RecvTransport for TcpTransport {
     /// `TcpStream::read(&mut [])` returns `Ok(0)` on an open peer, and the
     /// `Ok(0)` arm below is the peer-EOF discriminator — letting an empty
     /// read reach it would report a clean EOF (`Broken { cause: CleanEof }`)
-    /// and latch the transport dead while the peer is still connected
-    /// (X-CORR-07). The guard sits above `InnerStream`, so `tcps://` follows
+    /// and latch the transport dead while the peer is still connected.
+    /// The guard sits above `InnerStream`, so `tcps://` follows
     /// the same rule.
     ///
     /// A dead transport reports WHICH death at the loop's entry check (the
@@ -652,7 +652,7 @@ mod write_loop_tests {
         }
     }
 
-    /// CORR-22 / Q6: the kernel accepted the first 100 bytes *in order*, so
+    /// The kernel accepted the first 100 bytes *in order*, so
     /// the stream is intact — a `WouldBlock` after that is the 100 ms send
     /// deadline ticking over, not a desync. `write_loop` must keep writing
     /// `&msg[written..]` and finish when the peer drains.
@@ -701,7 +701,7 @@ mod write_loop_tests {
         }
     }
 
-    /// WP-C2: a cross-thread cancel mid-message is reported as the cancel
+    /// A cross-thread cancel mid-message is reported as the cancel
     /// (`ExplicitClose`); the transport's own close() keeps reporting
     /// `Closed` (`partial_then_close_returns_closed` above).
     #[test]
@@ -729,7 +729,7 @@ mod write_loop_tests {
         }
     }
 
-    /// CORR-24: `TimedOut` is what Windows reports when `SO_SNDTIMEO` expires
+    /// `TimedOut` is what Windows reports when `SO_SNDTIMEO` expires
     /// (`WSAETIMEDOUT`); Linux/macOS report `WouldBlock` (`EAGAIN`) for the
     /// same event. Both are the deadline ticking over: zero progress is
     /// `Backpressure`, progress keeps writing — never `Broken`.

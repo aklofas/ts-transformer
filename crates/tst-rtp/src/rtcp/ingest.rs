@@ -9,8 +9,8 @@
 //! needs the timestamp of OUR SR that we sent to the peer — and the SR
 //! reporter in `transport.rs` sends `ntp_timestamp: 0`. That mismatch makes
 //! a value computed here meaningless, so it stays unwired until the SR
-//! reporter carries a real NTP timestamp. The helper itself no longer
-//! truncates: the µs narrowing saturates and anything above 60 s (a wrapped
+//! reporter carries a real NTP timestamp. The helper itself does not
+//! truncate: the µs narrowing saturates and anything above 60 s (a wrapped
 //! subtraction on peer-controlled `last_sr` / `delay_since_last_sr`) is
 //! `None`. Full RFC 3550 RTT is deferred; see
 //! `docs/project/deferred-features.md` (RTCP statistics reporting).
@@ -139,11 +139,11 @@ mod tests {
         assert_eq!(mid >> 16, (3_976_214_400u64 & 0xFFFF) as u32);
     }
 
-    /// CORR-28: the 16.16 s → µs conversion must not wrap. An LSR "from the
+    /// The 16.16 s → µs conversion must not wrap. An LSR "from the
     /// future" (anchor and `last_sr` half an NTP-mid epoch — 32 768 s —
     /// ahead of now) makes the wrapping subtraction come out ≈ 0x8000_0000;
-    /// before the fix `((diff as u64) * 1_000_000) >> 16` (≈ 3.3e10) was cast
-    /// `as u32` and reported as 2_703_228_928 µs (~45 min) — a
+    /// `((diff as u64) * 1_000_000) >> 16` (≈ 3.3e10) cast `as u32` would
+    /// report 2_703_228_928 µs (~45 min) — a
     /// plausible-looking lie. The value is deterministic regardless of the
     /// few ticks between the two `SystemTime::now()` calls.
     #[test]

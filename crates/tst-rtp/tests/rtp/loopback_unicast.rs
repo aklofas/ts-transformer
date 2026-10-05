@@ -19,7 +19,7 @@ use tst_rtp::{RtpRecvTransport, RtpTransport};
 
 /// 188 bytes of arbitrary payload — one MPEG-TS packet's worth.
 /// Realistic enough to exercise the wire path without pulling in
-/// `tst-pipeline` for this Phase 1 integration test.
+/// `tst-pipeline` for this integration test.
 fn synthetic_ts_packet(seq_byte: u8) -> [u8; 188] {
     let mut out = [seq_byte; 188];
     out[0] = 0x47; // TS sync byte
@@ -66,7 +66,7 @@ fn free_rtp_port_base() -> u16 {
 fn unicast_loopback_round_trip() {
     // 1. Bind the receiver first so the sender's send-buffer flushes
     //    immediately. An ephemeral base (with base+1 free for the RTCP
-    //    companion auto-bound per Phase 2 Task 10 / RFC 3550 §11) avoids
+    //    companion auto-bound per RFC 3550 §11) avoids
     //    the Windows reserved-range WSAEACCES flake of fixed ports.
     let base = free_rtp_port_base();
     let url = format!("rtp://127.0.0.1:{base}");
@@ -150,10 +150,10 @@ fn send_stats_increment_per_packet() {
     let _ = Arc::<()>::default(); // silence unused-arc lint
 }
 
-// --- Phase 2 Task 10: RTCP socket-pair retrofit ---
+// --- RTCP socket pair ---
 //
 // Why these tests live in the existing loopback file: they probe the
-// same `listen()` / builder entry points the Phase 1 tests cover. Putting
+// same `listen()` / builder entry points the tests above cover. Putting
 // them here keeps the per-port test grouping in one spot and avoids a
 // separate test binary for three tiny tests.
 
@@ -162,7 +162,7 @@ fn rtcp_socket_pair_off_by_default() {
     let base = free_rtp_port_base();
     let r = RtpRecvTransport::listen(&format!("rtp://127.0.0.1:{base}")).unwrap();
     // The experimental SR/RR reporter (and its companion RTCP socket on
-    // port+1) is OFF by default (H2). So port+1 must stay free — we can
+    // port+1) is OFF by default. So port+1 must stay free — we can
     // bind it ourselves. (A caller who explicitly opts in via
     // `.rtcp(true)` gets the socket — see `rtcp_socket_pair_opens_when_opted_in`.)
     let probe = std::net::UdpSocket::bind(("127.0.0.1", base + 1));
@@ -194,7 +194,7 @@ fn rtcp_opt_out_skips_second_socket() {
 
 #[test]
 fn rtcp_socket_pair_opens_when_opted_in() {
-    // The experimental reporter is off by default (H2); explicit opt-in
+    // The experimental reporter is off by default; explicit opt-in
     // must still bind the companion RTCP socket on port+1.
     let base = free_rtp_port_base();
     let r = tst_rtp::RtpRecvSocketBuilder::from_url(&format!("rtp://127.0.0.1:{base}"))
@@ -221,12 +221,12 @@ fn rtcp_stats_accessor_exists() {
     let r = RtpRecvTransport::listen(&format!("rtp://127.0.0.1:{base}")).unwrap();
     let stats = r.rtcp_stats();
     // Counter stays at zero — the experimental RR reporter is off by
-    // default (H2), so no reporter thread is spawned and no RR is sent.
+    // default, so no reporter thread is spawned and no RR is sent.
     assert_eq!(stats.rr_packets_sent, 0);
     drop(r);
 }
 
-// --- DA-RTP-5: UDP-path MP2T shape validation (loopback) ---
+// --- UDP-path MP2T shape validation (loopback) ---
 //
 // Sends a crafted raw UDP datagram carrying a valid RTP header (V=2, PT=33)
 // but a non-188-aligned payload to confirm the shape guard fires on the real
@@ -245,7 +245,7 @@ fn make_rtp_datagram(payload: &[u8]) -> Vec<u8> {
     pkt
 }
 
-/// DA-RTP-5: a datagram with a valid RTP header (PT=33) but a 100-byte
+/// A datagram with a valid RTP header (PT=33) but a 100-byte
 /// non-0x47 payload must be dropped. The recv transport returns only the
 /// subsequent valid packet and ticks malformed_packets=1.
 #[test]

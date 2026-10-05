@@ -85,10 +85,9 @@ impl RtspSession {
     }
 
     /// Construct a TCP-interleaved session, carrying both the pump's
-    /// data `mpsc::Receiver<Bytes>` (so [`Self::into_recv_transport`]
-    /// can hand it to [`RtpRecvTransport::from_mpsc_placeholder`] for
-    /// the consumer side) and the pump's RTCP `mpsc::Receiver<Bytes>`
-    /// (T28 will route into `RtcpReporterHandle`).
+    /// data `mpsc::Receiver<Bytes>` and the pump's RTCP
+    /// `mpsc::Receiver<Bytes>`; [`Self::into_recv_transport`] hands both
+    /// to `RtpRecvTransport::from_mpsc_with_rtcp` for the consumer side.
     pub(crate) fn new_interleaved_with_data_rx(
         sid: String,
         transport: TransportResponse,

@@ -186,7 +186,7 @@ impl RistTransport {
         // stats::register_stats_callback). The order is load-bearing: librist
         // >= 0.2.20's protocol thread re-reads the stats interval lock-free on
         // every tick, so registering once that thread is running is a data
-        // race (TSan-caught on the 2026-08-31 nightly). librist's own tools
+        // race that TSan reports. librist's own tools
         // register before start too.
         let (stats, stats_arg) = crate::stats::register_stats_callback(ctx);
 
@@ -256,7 +256,7 @@ impl Transport for RistTransport {
         }
         // librist returns -1 for `payload_len <= 0` with the context still
         // usable. Reject it here as an input error so the -1 never reaches
-        // the fatal arm below (CORR-04).
+        // the fatal arm below.
         if msg.is_empty() {
             return Err(TransportError::TooLarge {
                 len: 0,
@@ -417,7 +417,7 @@ pub(crate) fn apply_peer_overrides(
 
     // `bandwidth_kbps` is an alias of `recovery_maxbitrate_kbps` — both are
     // librist's `recovery_maxbitrate`. RistUrl::parse already refuses a
-    // conflicting URL; this catches the programmatic/builder route (CORR-23).
+    // conflicting URL; this catches the programmatic/builder route.
     let recovery_maxbitrate = match (cfg.bandwidth_kbps, cfg.recovery_maxbitrate_kbps) {
         (Some(bw), Some(rm)) if bw != rm => {
             return Err(RistError::InvalidConfig(format!(
@@ -528,8 +528,8 @@ mod tests {
     /// Regression: after an error path sets alive=false WITHOUT destroying ctx,
     /// a subsequent close() (or Drop) MUST still destroy and null the ctx.
     ///
-    /// Before the fix, close() used `alive.swap(false) &&` which short-circuited
-    /// when alive was already false, leaving ctx non-null (leaked rist_ctx).
+    /// A close() gated on `alive.swap(false) &&` would short-circuit when
+    /// alive is already false, leaving ctx non-null (a leaked rist_ctx).
     #[test]
     fn close_destroys_ctx_even_when_already_dead() {
         // Attempt to construct a real sender. Port 0 on loopback is enough for
@@ -550,7 +550,7 @@ mod tests {
         assert!(!t.ctx_is_null(), "ctx still non-null after force_dead");
         assert!(!t.is_alive(), "alive is false after force_dead");
 
-        // Now close() must destroy and null ctx even though alive is already false.
+        // close() must destroy and null ctx even though alive is already false.
         t.close();
         assert!(
             t.ctx_is_null(),
@@ -678,7 +678,7 @@ mod tests {
         assert_eq!(buf[15], 0);
     }
 
-    /// CORR-04 (a): librist refuses a zero-length block with `-1`. That is an
+    /// librist refuses a zero-length block with `-1`. That is an
     /// INPUT error — the context is untouched — so it must surface as the
     /// `TooLarge`-class input error and leave the transport alive, not as a
     /// latched `Broken` that makes `ManagedTransport` tear the context down.
@@ -721,7 +721,7 @@ mod tests {
         assert_eq!(classify_write_rc(1316), WriteOutcome::Sent);
     }
 
-    /// CORR-23 at the config layer: the builder / RistConfig expose both
+    /// The bandwidth alias conflict at the config layer: the builder / RistConfig expose both
     /// knobs, so a programmatic conflict must be refused before librist sees
     /// a last-writer-wins value.
     #[test]

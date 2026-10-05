@@ -6,12 +6,10 @@
 //! (typically `EADDRINUSE` or `ENODEV`), we skip with `#[ignore]`
 //! semantics by short-circuiting.
 //!
-//! Runs on Windows too since 2026-05-29: the prior failure was our
-//! `set_multicast_if_v4` being Unix-only (the send-side `?iface=127.0.0.1`
-//! errored), plus IP_MULTICAST_LOOP being receiver-side on Windows. Both are
-//! fixed in `tst_core::net::udp_socket` (socket2 IP_MULTICAST_IF + Windows
-//! receiver-loop), and CI `diag_win_multicast` confirmed loopback multicast
-//! delivers on the GHA runner. The `try_listen` skip-on-error path still
+//! Runs on Windows too: `tst_core::net::udp_socket` sets IP_MULTICAST_IF
+//! through socket2 (so the send-side `?iface=127.0.0.1` works there) and
+//! sets IP_MULTICAST_LOOP on the receiver, where Windows applies it;
+//! loopback multicast delivers on the GHA runner. The `try_listen` skip-on-error path still
 //! degrades gracefully where multicast routing is genuinely absent.
 
 use std::io;
@@ -71,7 +69,7 @@ fn ipv4_multicast_loopback_round_trip() {
     assert_eq!(got.as_slice(), &payload[..]);
 }
 
-/// DA-NET-7 (RTP propagation): two receivers joining the same RTP multicast
+/// Two receivers joining the same RTP multicast
 /// group on loopback must both bind AND both receive the same datagram.
 ///
 /// Uses a fixed group `239.55.55.4:55012` (distinct from the round-trip test

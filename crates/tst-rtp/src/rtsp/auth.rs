@@ -100,10 +100,9 @@ pub fn parse_challenges(www_authenticate: &str) -> Vec<AuthChallenge> {
             // token (RFC 7235 §2.1), so whitespace inside the would-be key
             // means the previous challenge ended and a new `<scheme> <params>`
             // starts at `key_start` — hand it back to the outer loop. Without
-            // this a joined `Digest …, Basic realm="r"` swallowed the second
+            // this a joined `Digest …, Basic realm="r"` would swallow the second
             // scheme into the first challenge's parameter list, and
-            // `Basic …, Digest …` kept the Digest→Basic downgrade CORR-05
-            // exists to close.
+            // `Basic …, Digest …` would reopen the Digest→Basic downgrade.
             if key_raw.contains(char::is_whitespace) {
                 i = key_start;
                 break;
@@ -227,8 +226,8 @@ pub struct DigestContext<'a> {
 /// Backslash-escape a value for placement inside a `key="value"`
 /// quoted-string (RFC 7616 §3.4, `quoted-string` production shared with
 /// RFC 7230 §3.2.6): `\` becomes `\\` and `"` becomes `\"`. Both bytes must
-/// be escaped so a caller-controlled value (a percent-decoded username,
-/// CORR-21, or a caller-supplied request-URI) can never close the quoted
+/// be escaped so a caller-controlled value (a percent-decoded username
+/// or a caller-supplied request-URI) can never close the quoted
 /// string early or reinterpret the byte that follows it.
 fn escape_quoted_string(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
@@ -296,7 +295,7 @@ pub fn build_digest_response(ctx: &DigestContext<'_>) -> String {
         DigestAlgorithm::Md5Sess => "MD5-sess",
         DigestAlgorithm::Sha256Sess => "SHA-256-sess",
     };
-    // `username` (percent-decoded from the URL, CORR-21) and `uri` (the
+    // `username` (percent-decoded from the URL) and `uri` (the
     // caller-supplied request-URI) are backslash-escaped per RFC 7616
     // §3.4 quoted-string syntax before going in a `key="value"` slot —
     // an un-escaped `"` would close the quoted string early and desync
@@ -442,8 +441,8 @@ mod basic_tests {
         );
     }
 
-    /// CORR-05: a joined multi-challenge header (what the response parser
-    /// now produces from two `WWW-Authenticate` lines) must split into BOTH
+    /// A joined multi-challenge header (what the response parser
+    /// produces from two `WWW-Authenticate` lines) must split into BOTH
     /// challenges in either order. An auth-param name is a single token
     /// (RFC 7235 §2.1), so whitespace inside a would-be key marks the start
     /// of the next `<scheme> <params>`.
@@ -606,9 +605,9 @@ mod digest_tests {
     }
 
     /// A username containing `"` must not close the quoted string early.
-    /// Userinfo is percent-decoded since CORR-21 (`crates/tst-core`'s
-    /// `percent_decode` + `RtspUrl::parse`), so `%22` in a URL now reaches
-    /// here as a literal `"` — before this fix the header would desync
+    /// Userinfo is percent-decoded (`crates/tst-core`'s
+    /// `percent_decode` + `RtspUrl::parse`), so `%22` in a URL reaches
+    /// here as a literal `"` — without the escaping the header would desync
     /// every auth-param after `username=`.
     #[test]
     fn build_digest_response_escapes_quoted_string_in_username() {

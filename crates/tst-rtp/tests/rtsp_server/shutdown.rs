@@ -1,7 +1,6 @@
-//! Phase 3 Task 22 — RtspServer graceful + hard shutdown integration
-//! tests. Exercises the registry/cancel path; the RFC 7826 §13.5.1
-//! Notice 5402 wire transmission is deferred (Wave E noted) and not
-//! exercised here.
+//! RtspServer graceful + hard shutdown integration tests. Exercises the
+//! registry/cancel path; the RFC 7826 §13.5.1 Notice 5402 wire
+//! transmission is covered by `notice_5402.rs`.
 
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};

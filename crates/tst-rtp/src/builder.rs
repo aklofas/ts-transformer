@@ -379,7 +379,7 @@ impl RtspClientBuilder {
         // Fail fast on header injection: a User-Agent or credential
         // (username/password) carrying CR/LF/NUL/control bytes would be
         // serialized verbatim into the User-Agent / Authorization header and
-        // smuggle a second header or whole request onto the wire (T1-UA-CRLF).
+        // smuggle a second header or whole request onto the wire.
         // Reject before opening the socket so a malicious value never reaches
         // the network. The encode path also re-validates as a backstop, but
         // catching it here gives a clean error and never touches the wire.
@@ -426,12 +426,12 @@ impl RtspClientBuilder {
 }
 
 // ----------------------------------------------------------------------
-// Phase 3 — server-side builder. Requires the `rtsp-server` feature: it
+// Server-side builder. Requires the `rtsp-server` feature: it
 // builds a `crate::rtsp::server::RtspServer`, which doesn't exist without
 // the feature's tokio Runtime.
 // ----------------------------------------------------------------------
 
-/// Server-side auth scheme. Internal — consumed by Task 7's
+/// Server-side auth scheme. Internal — consumed by
 /// `RtspServer::from_builder`.
 #[cfg(feature = "rtsp-server")]
 #[derive(Debug, Clone, Copy)]
@@ -442,7 +442,7 @@ pub(crate) enum ServerAuthScheme {
 }
 
 /// Server-side auth configuration carrier. Internal — consumed by
-/// Task 7's `RtspServer::from_builder`.
+/// `RtspServer::from_builder`.
 #[cfg(feature = "rtsp-server")]
 #[derive(Clone)]
 pub(crate) struct ServerAuthConfig {
@@ -639,7 +639,7 @@ impl RtspServerBuilder {
     }
 
     /// Consume the builder and produce an [`crate::rtsp::server::RtspServer`]
-    /// ready for `RtspServer::start` (introduced in Phase 3 Task 7).
+    /// ready for `RtspServer::start`.
     /// Internally constructs the tokio Runtime and validates the
     /// configuration.
     ///
@@ -695,8 +695,8 @@ mod tests {
         assert_eq!(b.url.tcp_keepalive, Some(Duration::from_secs(9)));
     }
 
-    // --- B6: User-Agent / credential header injection rejected at connect,
-    // before the socket opens (T1-UA-CRLF). ---
+    // --- User-Agent / credential header injection rejected at connect,
+    // before the socket opens. ---
 
     #[test]
     fn connect_rejects_crlf_user_agent_before_socket() {
@@ -835,10 +835,8 @@ mod phase3_server_builder_tests {
 
     #[test]
     fn rtsp_server_builder_build_succeeds_post_t7() {
-        // Originally this test asserted Err(NotStarted) because
-        // RtspServer::from_builder was a stub. The real Runtime-building impl
-        // replaced the stub, so build() now returns Ok.
-        // Test renamed + retargeted accordingly.
+        // build() constructs the real Runtime-backed server without
+        // starting it.
         let b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
         let server = b
             .build()

@@ -221,7 +221,7 @@ fn a_second_play_on_a_backpressured_interleaved_peer_never_splits_a_frame() {
                     Ok(n) => n,
                     Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
                         // The client is stalled: it is owed bytes that never
-                        // arrive. Pre-fix this is how the splice shows up — the
+                        // arrive. A mid-frame splice shows up this way — the
                         // response (~100 B) is shorter than the frame tail the
                         // header promised, so the parser waits forever.
                         panic!(

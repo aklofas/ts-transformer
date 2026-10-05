@@ -80,9 +80,9 @@ fn unicast_loopback_sends_via_hostname_url() {
     assert_eq!(got.as_slice(), &payload[..]);
 }
 
-/// P1 regression (integrator field report): a transient ICMP
-/// port-unreachable must never kill the sender. With the old connected
-/// socket, Linux surfaced it as a fatal ECONNREFUSED on the next send.
+/// A transient ICMP port-unreachable must never kill the sender. On a
+/// connected socket, Linux surfaces it as a fatal ECONNREFUSED on the next
+/// send.
 #[test]
 fn send_to_absent_peer_never_errors() {
     // Bind + drop to obtain a loopback port with nothing behind it.

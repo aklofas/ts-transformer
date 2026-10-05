@@ -1,8 +1,7 @@
-//! Phase 3 Wave F Task 26 — verification of Phase 2 deferred fix 1
-//! (TCP-interleaved producer thread wiring). Un-ignored at Phase 4
-//! Stage 3 T29 (2026-05-26) after the bounded teardown deadline in
-//! [`RtspClient::Drop`] resolved the post-PLAY hang caused by the
-//! server's lingering write-half references after `RtspServer::stop`.
+//! TCP-interleaved producer thread wiring, client against our server. The
+//! bounded teardown deadline in [`RtspClient::Drop`] keeps the post-PLAY
+//! teardown from hanging on the server's lingering write-half references
+//! after `RtspServer::stop`.
 //!
 //! Drives a real in-process `tst_rtp::RtspServer` as the client's peer —
 //! requires the `rtsp-server` feature.
@@ -20,9 +19,9 @@ fn make_muxer_cfg() -> MuxerConfig {
     b.build().unwrap()
 }
 
-/// `rtsp:// ?transport=tcp` end-to-end: [`RtspClient::play`] succeeds AND
-/// the underlying [`RtpRecvTransport`](tst_rtp::RtpRecvTransport)
-/// receives bytes through the interleaved pump.
+/// `rtsp:// ?transport=tcp` end-to-end: [`RtspClient::play`] succeeds with
+/// the interleaved pump feeding the underlying
+/// [`RtpRecvTransport`](tst_rtp::RtpRecvTransport), and teardown completes.
 #[test]
 fn tcp_interleaved_end_to_end_round_trips_ts_bytes() {
     let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
@@ -37,7 +36,7 @@ fn tcp_interleaved_end_to_end_round_trips_ts_bytes() {
     let _recv = session.into_recv_transport();
     client.play().unwrap();
 
-    // Wave H: push synthetic NAL into mount, run DemuxReceiver against
-    // recv, assert byte-identical TS bytes received.
+    // No payload is pushed: byte-identical TS delivery over the
+    // interleaved path is not asserted here.
     server.stop().ok();
 }

@@ -1,20 +1,18 @@
-//! Phase 3 Wave F Task 26 — verification of Phase 2 deferred fix 2
-//! (TLS-side keepalive).
+//! TLS-side keepalive.
 //!
-//! T21 shipped the `Arc<Mutex<Stream>>` refactor on
-//! [`RtspClient`](tst_rtp::RtspClient) that eliminates the prior
-//! `TcpStream::try_clone` limitation; the auto-keepalive thread (spawned
+//! [`RtspClient`](tst_rtp::RtspClient) shares its stream with the
+//! auto-keepalive thread as an `Arc<Mutex<Stream>>`, so the thread (spawned
 //! by
 //! [`spawn_keepalive_if_needed`](tst_rtp::RtspClient::spawn_keepalive_if_needed)
-//! from the builder) now works uniformly across `Stream::Plain` and
-//! `Stream::Tls`. Pre-T21 the TLS variant was silently a no-op because
-//! rustls `ClientConnection` isn't clonable.
+//! from the builder) works uniformly across `Stream::Plain` and
+//! `Stream::Tls`. A `TcpStream::try_clone`-based thread would be silently a
+//! no-op for TLS because rustls `ClientConnection` isn't clonable.
 //!
 //! Drives a real in-process `rtsps://` server using the
 //! [`SelfSignedCert`](crate::fixtures::tls_certs::SelfSignedCert) rcgen
 //! fixture (cert + key + matching root for the client trust store), so
 //! the keepalive thread is exercised over a live TLS session — verifying
-//! both the client's TLS keepalive (T21 `Arc<Mutex<Stream>>` share) and
+//! both the client's TLS keepalive (the `Arc<Mutex<Stream>>` share) and
 //! the server's TLS session loop handle periodic GET_PARAMETER pings.
 
 // Drives a real in-process `rtsps://` server via `RtspServerBuilder::tls_cert`
@@ -36,8 +34,8 @@ fn make_muxer_cfg() -> MuxerConfig {
 }
 
 /// Connect to an `rtsps://` server and verify the keepalive thread spawns
-/// over TLS (pre-T21 it silently no-op'd due to `try_clone` returning
-/// `Unsupported`). [`RtspClient::is_session_alive`](tst_rtp::RtspClient::is_session_alive)
+/// over TLS (a `try_clone`-based thread would silently no-op, `try_clone`
+/// returning `Unsupported`). [`RtspClient::is_session_alive`](tst_rtp::RtspClient::is_session_alive)
 /// returning `true` after the keepalive thread has been running for a
 /// few hundred ms is the observable check — if the thread had failed to
 /// spawn or had immediately errored on a control-TCP write, the
@@ -76,7 +74,7 @@ fn rtsps_keepalive_thread_spawns_on_connect() {
 
     // Drive an OPTIONS round trip so the connection is fully live, then
     // wait a few keepalive cycles. The keepalive thread shares
-    // `Arc<Mutex<Stream>>` with the main client (T21 refactor); a TLS
+    // `Arc<Mutex<Stream>>` with the main client; a TLS
     // write failure would flip `session_dead` and make
     // `is_session_alive` return false.
     client.options().unwrap();

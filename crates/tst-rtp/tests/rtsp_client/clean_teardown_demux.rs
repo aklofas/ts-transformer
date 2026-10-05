@@ -1,4 +1,4 @@
-//! Task A5: clean RTSP teardown must end the `DemuxReceiver` path as a
+//! Clean RTSP teardown must end the `DemuxReceiver` path as a
 //! clean `Ok(None)` end-of-stream, not a `TransportBroken` error.
 //!
 //! Companion regression pin to `stream_end_reason.rs`'s

@@ -11,9 +11,8 @@
 //! so the receive thread tolerates the librist-internal poll Backpressure
 //! timeouts that fire while the handshake settles.
 //!
-//! Runs on Windows too (un-gated 2026-07-26): formerly gated off windows-msvc
-//! by a vendored-librist teardown hang + zero-delivery bug, both fixed
-//! upstream in librist 0.2.18 — see `loopback.rs` for the history.
+//! Runs on Windows too: the librist ≤ 0.2.16 Windows teardown hang and
+//! zero-delivery bug are fixed upstream in librist 0.2.18 (see `loopback.rs`).
 
 use std::net::UdpSocket;
 use std::sync::Mutex;

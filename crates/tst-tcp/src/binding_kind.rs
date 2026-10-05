@@ -1,4 +1,4 @@
-//! `From<…> for BindingError` — the TCP rows of the kind table (spec §3.3);
+//! `From<…> for BindingError` — the TCP rows of the kind table;
 //! see `tst-srt/src/binding_kind.rs` for the why.
 
 use crate::error::TcpError;

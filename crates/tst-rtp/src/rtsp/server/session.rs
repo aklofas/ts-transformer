@@ -62,12 +62,12 @@ impl Drop for SessionSlot {
 /// memory is still bounded by the request-buffer cap, not by this timer.
 const READ_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
-/// Idle bound once SETUP has advertised `Session: <id>;timeout=N` (review
-/// 9, int R9-03): RFC 7826 §18.49 lets the server reap a session that sent
+/// Idle bound once SETUP has advertised `Session: <id>;timeout=N`:
+/// RFC 7826 §18.49 lets the server reap a session that sent
 /// nothing for `timeout`; clients ping at `timeout / 2` (ours, ffmpeg) or
 /// close to `timeout` (live555 derivatives), so the bound is
-/// `timeout + max(timeout / 2, 2 s)` — never less than advertised. The old
-/// fixed 30 s reaped every default-mode (60 s) session at its second ping.
+/// `timeout + max(timeout / 2, 2 s)` — never less than advertised. A fixed
+/// 30 s bound would reap every default (60 s) session at its second ping.
 fn post_setup_idle_bound(session_timeout: std::time::Duration) -> std::time::Duration {
     session_timeout.saturating_add((session_timeout / 2).max(std::time::Duration::from_secs(2)))
 }
@@ -85,8 +85,8 @@ pub struct ServerSessionState {
     /// every WWW-Authenticate; rotated by `challenge_response` on a
     /// stale re-challenge (which also resets `auth_nc_hwm`).
     pub auth_nonce: String,
-    /// Digest nc (nonce-count) high-water mark for replay detection
-    /// (DA-RTP-4b). Tracks the highest nc observed/consumed under the
+    /// Digest nc (nonce-count) high-water mark for replay detection.
+    /// Tracks the highest nc observed/consumed under the
     /// current nonce — it advances even when the digest-response check
     /// subsequently fails (see `verify_digest`), so a captured header
     /// can never be replayed. Reset to 0 whenever the nonce is rotated.
@@ -103,7 +103,7 @@ pub struct ServerSessionState {
     pub transport: Option<crate::rtsp::client::transport_negotiation::TransportResponse>,
     /// Server-allocated UDP RTP+RTCP pair (for UDP-transport sessions).
     /// `None` for TCP-interleaved sessions, multicast SETUPs, or
-    /// pre-SETUP. T17's PLAY handler hands these to the per-peer
+    /// pre-SETUP. The PLAY handler hands these to the per-peer
     /// fan-out task.
     pub udp_sockets: Option<(
         std::sync::Arc<tokio::net::UdpSocket>,
@@ -192,8 +192,8 @@ impl ServerSessionState {
 impl Drop for ServerSessionState {
     /// Every exit of `serve_requests` — clean EOF, read error, idle reap,
     /// graceful or per-session cancel — drops the session; without this the
-    /// fanout task kept streaming RTP to the departed peer and held its UDP
-    /// port pair until the server was dropped (review 9, int R9-02).
+    /// fanout task would keep streaming RTP to the departed peer and hold its
+    /// UDP port pair until the server was dropped.
     /// TEARDOWN and PAUSE still cancel explicitly; this is the safety net.
     fn drop(&mut self) {
         self.peer_cancel.cancel();
@@ -309,7 +309,7 @@ where
         // The per-read bound closes that window: `READ_IDLE_TIMEOUT` before
         // SETUP, `post_setup_idle_bound` (the advertised session timeout
         // plus grace) once a session exists — so a conformant client's
-        // keepalives at `timeout / 2` are never raced (review 9, R9-03).
+        // keepalives at `timeout / 2` are never raced.
         let idle_bound = if session.session_id.is_some() {
             post_setup_idle_bound(state.builder.session_timeout)
         } else {
@@ -350,15 +350,15 @@ where
 
         // Body-aware cap, coherent with the client `send_and_read` loop and
         // both interleaved pumps (all four share `rtsp_frame_decision` + the
-        // same MAX_RTSP_MESSAGE_BYTES / MAX_RTSP_BODY_BYTES constants). The
-        // earlier blanket "buf.len() > 64 KiB → 413" cap wrongly rejected a
-        // valid request whose body legitimately ran up to MAX_RTSP_BODY_BYTES
-        // (1 MiB) — the exact incoherence the B1/B2 reviewers flagged. Now:
+        // same MAX_RTSP_MESSAGE_BYTES / MAX_RTSP_BODY_BYTES constants). A
+        // blanket "buf.len() > 64 KiB → 413" cap would wrongly reject a
+        // valid request whose body legitimately runs up to MAX_RTSP_BODY_BYTES
+        // (1 MiB). Instead:
         //
-        //   Phase 1 (no CRLFCRLF yet): 413 only once the *headers* exceed
+        //   Before the terminator (no CRLFCRLF yet): 413 only once the *headers* exceed
         //     MAX_RTSP_MESSAGE_BYTES (64 KiB) — preserves the unterminated-
         //     header DoS bound.
-        //   Phase 2 (CRLFCRLF seen): parse the declared Content-Length up
+        //   After the terminator (CRLFCRLF seen): parse the declared Content-Length up
         //     front. An over-cap (> 1 MiB) / malformed / duplicate value is a
         //     413 NOW (don't read toward EOF). A legitimate body up to 1 MiB is
         //     awaited in full; the exact header + 4 + content_length ceiling
@@ -376,10 +376,10 @@ where
             return Ok(());
         }
 
-        // Parse complete request(s). Framing is decided FIRST (CORR-25): a
+        // Parse complete request(s). Framing is decided FIRST: a
         // frame that is complete but does not parse is answered — 501 for a
         // method we don't implement, 400 otherwise — and DRAINED, so a
-        // `SET_PARAMETER` no longer wedges every request queued behind it
+        // `SET_PARAMETER` never wedges every request queued behind it
         // until the idle timeout. An incomplete frame loops back to read.
         // `while let`, not `loop { match … }`: every non-`Complete` framing
         // outcome means "stop draining"; `NeedMore` then loops back to read
@@ -623,7 +623,7 @@ fn dispatch(
 /// TLS session is unsupported and returns 461 (see `handle_play`): the
 /// interleaved fanout writer is typed to the plain TCP `OwnedWriteHalf`.
 ///
-/// Listener (Task 8) calls this when the bind URL scheme is `rtsps://`.
+/// The listener calls this when the bind URL scheme is `rtsps://`.
 ///
 /// The accept loop reserves the `active_sessions` slot *before* the TLS
 /// handshake and moves the [`SessionSlot`] guard into the spawning task
@@ -794,7 +794,7 @@ mod session_tests {
         let mut client = tokio::net::TcpStream::connect(("127.0.0.1", port))
             .await
             .unwrap();
-        // T17 implemented the real TEARDOWN handler: 200 OK after auth
+        // The TEARDOWN handler answers 200 OK after auth
         // (no auth configured here), session state cleared, TCP closed
         // by the dispatcher after observing 200 + TEARDOWN method.
         client
@@ -1107,7 +1107,7 @@ mod session_tests {
         let _ = server_handle.await;
     }
 
-    /// Review Focus 4: PAUSE replaces `peer_cancel` with a fresh token, so
+    /// PAUSE replaces `peer_cancel` with a fresh token, so
     /// Drop must cancel whichever token is CURRENT and abort the fanout.
     #[tokio::test]
     async fn dropping_a_session_cancels_its_peer_token_and_aborts_the_fanout() {

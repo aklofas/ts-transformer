@@ -1,6 +1,6 @@
-//! Phase 3 Wave F Task 24 — server-side Digest auth integration tests.
+//! Server-side Digest auth integration tests.
 //!
-//! Mirror of `rtsp_server_auth_basic.rs` but exercises
+//! Mirror of `auth_basic.rs` but exercises
 //! `RtspServerBuilder::auth_digest_md5` and `auth_digest_sha256`.
 
 use secrecy::SecretString;
@@ -77,7 +77,7 @@ fn digest_sha256_valid_credentials_succeed() {
 
 /// A username containing `"` must still authenticate end-to-end. The URL
 /// carries the percent-encoded form (`a%22b`); `RtspUrl::parse`
-/// percent-decodes it to the literal `a"b` (CORR-21), the client's
+/// percent-decodes it to the literal `a"b`, the client's
 /// `Authorization:` header backslash-escapes it to `username="a\"b"`
 /// (`escape_quoted_string`), and the server must UN-escape it back to
 /// `a"b` before comparing against the configured username
@@ -120,9 +120,8 @@ fn digest_md5_wrong_password_returns_auth_failed() {
 /// Regression guard for the SETUP/PLAY auth gap: the server auth-gates
 /// EVERY method per request (like gortsplib/MediaMTX), so a full
 /// DESCRIBE → SETUP → PLAY → TEARDOWN session only succeeds if the client
-/// attaches credentials to every request — not just DESCRIBE. The
-/// pre-fix client authenticated only DESCRIBE and failed at SETUP with
-/// a 401.
+/// attaches credentials to every request — not just DESCRIBE. A client
+/// that authenticates only DESCRIBE fails at SETUP with a 401.
 #[test]
 fn digest_md5_full_session_authenticates_every_method() {
     let server = server_with_digest_md5();

@@ -1,8 +1,9 @@
-//! Review 9 (int R9-03): the server advertised `Session: <id>;timeout=60`
-//! but re-armed a fixed 30 s read-idle timer per request, so a conformant
-//! client pinging at timeout/2 (ours, ffmpeg) lost the race at the second
-//! ping. Only the orphan fanout (R9-02) hid it: media kept flowing after
-//! the reap. The idle bound now derives from what SETUP advertised.
+//! The server's post-SETUP read-idle bound derives from what SETUP
+//! advertised (`Session: <id>;timeout=N`). With a fixed 30 s timer under a
+//! 60 s advertisement, a conformant client pinging at timeout/2 (ours,
+//! ffmpeg) loses the race at the second ping; an orphaned fanout (see
+//! `orphan_fanout.rs`) would hide it, because media keeps flowing after
+//! the reap.
 
 use std::io::{ErrorKind, Read};
 use std::net::TcpStream;
@@ -43,18 +44,18 @@ fn interleaved_session(timeout_secs: u64) -> (tst_rtp::RtspServer, TcpStream, St
     (server, tcp, url, sid)
 }
 
-/// RED today: the connection stays open for the fixed 30 s.
+/// With a fixed 30 s timer the connection would stay open for 30 s.
 #[test]
 fn an_idle_session_is_reaped_at_the_advertised_timeout_plus_grace() {
     let (server, mut tcp, _url, _sid) = interleaved_session(1);
     // No keepalive. The bound is 1 s + max(0.5 s, 2 s) = 3 s; the 10 s
     // deadline (checked at each 5 s read timeout) is far above it and far
-    // below the old 30 s, so no timing is asserted.
+    // below a fixed 30 s, so no timing is asserted.
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut buf = [0u8; 4096];
     loop {
         match tcp.read(&mut buf) {
-            Ok(0) => break, // FIN: the server shut the write half (R9-02)
+            Ok(0) => break, // FIN: the server shut the write half
             Ok(_) => {}     // a stray interleaved frame; keep reading
             Err(e)
                 if matches!(
@@ -81,8 +82,7 @@ fn an_idle_session_is_reaped_at_the_advertised_timeout_plus_grace() {
 /// Guard against over-tightening: a client that keeps pinging inside the
 /// advertised timeout stays alive across several ping intervals (10 s
 /// advertised → 15 s bound; six pings 1 s apart span ≈ 6 s, so a runner
-/// stall of several seconds cannot reach the bound). Green before and
-/// after the fix.
+/// stall of several seconds cannot reach the bound).
 #[test]
 fn keepalive_pings_inside_the_timeout_keep_the_session_alive() {
     let (server, mut tcp, url, sid) = interleaved_session(10);

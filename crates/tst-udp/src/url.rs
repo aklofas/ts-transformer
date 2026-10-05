@@ -294,11 +294,11 @@ fn parse_byte_size(key: &str, value: &str) -> Result<usize, UdpUrlError> {
 
 #[cfg(test)]
 mod tests {
-    /// B04 regression set: `?localaddr=` and the peer must agree on IP
-    /// family. Literal mismatches are typed parse errors; hostname
-    /// resolution filters candidates to the local family (the old code
-    /// resolved IPv4-first BEFORE reading localaddr, then bound an IPv6
-    /// socket that could never send to the chosen IPv4 peer).
+    /// `?localaddr=` and the peer must agree on IP family. Literal
+    /// mismatches are typed parse errors; hostname resolution filters
+    /// candidates to the local family (resolving IPv4-first before reading
+    /// localaddr would bind an IPv6 socket that can never send to the
+    /// chosen IPv4 peer).
     #[test]
     fn localaddr_family_mismatch_literals_rejected() {
         let e = UdpUrl::parse("udp://239.0.0.1:5000?localaddr=::1").unwrap_err();
@@ -437,7 +437,7 @@ mod tests {
         assert!(!u.recv_bind);
     }
 
-    /// P3 residual: `localhost` resolves `[::1, 127.0.0.1]` on dual-stack
+    /// `localhost` resolves `[::1, 127.0.0.1]` on dual-stack
     /// hosts and a UDP connect-probe cannot detect an absent listener, so
     /// without an explicit preference the sender picks `::1` and dies
     /// against an IPv4-only listener. Documented preference: IPv4 first

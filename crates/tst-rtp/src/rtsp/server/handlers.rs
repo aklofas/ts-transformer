@@ -271,7 +271,7 @@ fn extract_mount_path(uri: &str) -> String {
 /// On 200, mutates `session` with: `session_id`, `mount_path`,
 /// `transport`, and either `udp_sockets` (unicast UDP) or
 /// `interleaved_channels` (TCP-interleaved). Multicast SETUP responses
-/// reuse the per-mount sender task (T14) so no per-session socket pair
+/// reuse the per-mount sender task so no per-session socket pair
 /// is allocated; the response just points the client at the multicast
 /// group.
 pub(crate) fn handle_setup(
@@ -348,7 +348,7 @@ pub(crate) fn handle_setup(
         RtspTransportKind::Udp => {
             if is_multicast {
                 // Multicast SETUP: server points the client at the
-                // group; the per-mount multicast sender task (T14) is
+                // group; the per-mount multicast sender task is
                 // already publishing there.
                 let (group, ttl) = match &mount.kind {
                     crate::rtsp::server::mount::MountKind::Multicast { group, ttl, .. } => {
@@ -488,7 +488,7 @@ fn generate_session_id() -> String {
 ///
 /// Returns `(rtp_socket, rtcp_socket, rtp_port)`. Each socket is wrapped
 /// as `Arc<tokio::net::UdpSocket>` so it can be cloned into the
-/// per-peer fan-out task in T17.
+/// per-peer fan-out task.
 fn bind_server_udp_pair(
     bind_ip: std::net::IpAddr,
 ) -> Result<
@@ -552,7 +552,7 @@ fn bind_server_udp_pair(
 ///   UDP socket pair missing despite the transport being UDP.
 ///
 /// On 200: returns Session + RTP-Info headers. For multicast mounts the
-/// per-mount sender (Task 14) drives sends, so PLAY just confirms;
+/// per-mount sender drives sends, so PLAY just confirms;
 /// no per-peer task is spawned. For TCP-interleaved unicast the
 /// per-session `OwnedWriteHalf` (populated by `handle_connection_inner`
 /// after the TCP split) is cloned into `PeerTransport::Interleaved` so
@@ -592,7 +592,7 @@ pub(crate) fn handle_play(
     };
     drop(mounts);
 
-    // Multicast mounts: the per-mount sender (Task 14) already drives
+    // Multicast mounts: the per-mount sender already drives
     // sends to the group. PLAY just confirms; no per-peer task spawn.
     // seq/rtptime are not meaningful for a multicast mount (the server
     // has been sending since the mount was created); report zeros per
@@ -658,8 +658,8 @@ pub(crate) fn handle_play(
         }
     };
     // A second PLAY without PAUSE (RFC 7826 §13.4 allows it) replaces the
-    // fanout; detaching the old task kept it streaming to the same peer
-    // with its own sequence space (review 9, R9-02 sibling). Retire via
+    // fanout; a detached old task would keep streaming to the same peer
+    // with its own sequence space. Retire via
     // the token the fanout checks between frames — never `abort()`, which
     // could cut an interleaved frame mid-write and let the PLAY response
     // land inside it (see `ServerSessionState::retire_fanout`). The old
@@ -1030,7 +1030,7 @@ mod tests {
         assert!(resp.headers.contains_key("server"));
     }
 
-    // ── DESCRIBE Content-Base test (DA-RTP-8) ────────────────────────────
+    // ── DESCRIBE Content-Base test ───────────────────────────────────────
 
     #[test]
     fn describe_response_includes_content_base_with_trailing_slash() {
@@ -1086,7 +1086,7 @@ mod tests {
         );
     }
 
-    // ── SETUP handler tests (T16) ─────────────────────────────────────────
+    // ── SETUP handler tests ───────────────────────────────────────────────
 
     use crate::rtsp::server::mount::{MountKind, MountState};
     use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
@@ -1175,9 +1175,9 @@ mod tests {
         assert_eq!(session.mount_path.as_deref(), Some("/live"));
     }
 
-    /// Review 9 (R9-02 sibling): a second PLAY without PAUSE replaces the
-    /// fanout instead of detaching the old task, which kept streaming to the
-    /// same peer with its own sequence space.
+    /// A second PLAY without PAUSE replaces the fanout instead of
+    /// detaching the old task, which would keep streaming to the same peer
+    /// with its own sequence space.
     #[tokio::test]
     async fn play_twice_replaces_the_fanout_instead_of_detaching_it() {
         let state = make_state_with_mount();
@@ -1468,7 +1468,7 @@ mod tests {
         assert!(transport_resp.contains("port=5004-5005"));
         assert!(transport_resp.contains("ttl=4"));
         // Multicast SETUP doesn't bind per-session UDP sockets — the
-        // per-mount sender (T14) drives the actual sends.
+        // per-mount sender drives the actual sends.
         assert!(session.udp_sockets.is_none());
         assert!(session.session_id.is_some());
     }
@@ -1495,7 +1495,7 @@ mod tests {
         );
     }
 
-    // ── B5: adversarial SETUP Transport parsing (unauthenticated path) ──
+    // ── Adversarial SETUP Transport parsing (unauthenticated path) ──────
 
     /// A reversed client_port pair (hi-lo) must be rejected with 400, not
     /// silently accepted as a bogus range.
@@ -1594,7 +1594,7 @@ mod tests {
         assert_ne!(a, b);
     }
 
-    // ── PLAY / PAUSE / TEARDOWN handler tests (T17) ──────────────────────
+    // ── PLAY / PAUSE / TEARDOWN handler tests ────────────────────────────
 
     #[test]
     fn play_before_setup_returns_454() {

@@ -1,4 +1,4 @@
-//! WP-C1 — the tst-core transport conformance kit over plain `tcp://`
+//! The tst-core transport conformance kit over plain `tcp://`
 //! loopback pairs. The transport under test is the caller; the accepted
 //! `std::net::TcpStream` is the silent peer (kept in `peer`, never read — so a
 //! send loop parks against a 4 KiB send buffer within milliseconds;
@@ -7,12 +7,11 @@
 //! rides the same `alive` / `cancelled` flags above `InnerStream`, so it is
 //! not repeated here.
 //!
-//! `peer_eof_is_not_a_cancel` is the row the WP-C1 `TcpCancelHandle` split
-//! exists for: the handle's `is_cancelled()` used to be `!alive`, and tst-tcp
-//! drops `alive` on a clean peer EOF as well as on a cancel — so once
-//! `Owned::is_cancelled` ORs the transport's latch in, every clean TCP EOF
-//! would have been relabelled a caller close (`TST_E_CLOSED` for
-//! `TST_E_END_OF_STREAM`).
+//! `peer_eof_is_not_a_cancel` is the row the separate `TcpCancelHandle` latch
+//! exists for: tst-tcp drops `alive` on a clean peer EOF as well as on a
+//! cancel, so an `is_cancelled()` spelled `!alive` — ORed into
+//! `Owned::is_cancelled` — would relabel every clean TCP EOF a caller close
+//! (`TST_E_CLOSED` for `TST_E_END_OF_STREAM`).
 
 use std::io::Write;
 use std::net::{TcpListener as StdTcpListener, TcpStream};

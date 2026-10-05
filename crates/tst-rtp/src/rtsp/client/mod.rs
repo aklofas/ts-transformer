@@ -569,8 +569,8 @@ impl RtspClient {
         // Share the same `Arc<Mutex<Stream>>` with the keepalive thread.
         // Per-ping the thread locks the mutex, writes the OPTIONS bytes,
         // unlocks. Works uniformly for `Stream::Plain` AND `Stream::Tls`
-        // — pre-T21 the Tls variant skipped keepalive entirely because
-        // rustls `ClientConnection` isn't clonable.
+        // — a `try_clone`d FD cannot work for TLS because rustls
+        // `ClientConnection` isn't clonable.
         let write_half = self.stream.clone();
         let cancel = self.cancel.clone();
         let session_dead = Arc::new(AtomicBool::new(false));
@@ -610,7 +610,9 @@ impl RtspClient {
     /// frames, routes RTP payloads to `data_rx` (one of the channels
     /// returned here — the session hands it to `RtpRecvTransport`),
     /// routes RTCP payloads to `rtcp_rx` (the other channel returned
-    /// here — T28 plumbs it into the `RtcpReporterHandle`), and routes
+    /// here — the session hands it to `RtpRecvTransport::from_mpsc_with_rtcp`,
+    /// whose ingest thread feeds `RtcpStats`, or on the H.264 path to
+    /// `H264Receiver::from_mpsc_with_rtcp_drain`), and routes
     /// RTSP responses to `InterleavedPumpState::ctrl_rx` so subsequent
     /// [`Self::send_and_read`] calls can match by CSeq.
     ///
@@ -619,12 +621,7 @@ impl RtspClient {
     /// flips, its `data_rx` becomes unfed and the receiver-transport
     /// side will see `mpsc::RecvError`).
     ///
-    /// Returns `(data_rx, rtcp_rx)`. Prior to Phase 4 Stage 3 (T27) the
-    /// pump's RTCP receiver was consumed by a tiny `rtsp-rtcp-drain`
-    /// std::thread that discarded everything; that drain has been
-    /// removed and the receiver is now returned upward so a caller (T28)
-    /// can route RTCP frames into the existing `RtcpReporterHandle`
-    /// instead of black-holing them.
+    /// Returns `(data_rx, rtcp_rx)`.
     ///
     /// # Errors
     ///
@@ -645,7 +642,7 @@ impl RtspClient {
             }
         }
 
-        // Bounded hand-off queues (B3 / T1-RTSP-QUEUE): a fast or malicious
+        // Bounded hand-off queues: a fast or malicious
         // server cannot flood these to OOM the client. Media drops newest +
         // counters on overflow; RTCP/control fail the session on overflow.
         // See the per-class `*_QUEUE_BOUND` rationale in `interleaved_pump`.
@@ -742,8 +739,8 @@ impl Drop for RtspClient {
             }
             // The pump's RTCP `mpsc::Sender` is dropped along with the
             // pump thread that just exited; the rtcp_rx end was returned
-            // upward at activate time (T27) and consumed by
-            // `RtpRecvTransport::from_mpsc_with_rtcp` (T28).
+            // upward at activate time and consumed by
+            // `RtpRecvTransport::from_mpsc_with_rtcp`.
         }
     }
 }

@@ -98,8 +98,8 @@ mod tests {
         );
     }
 
-    /// DA-PERF-10: the URL `nodelay=0` override must still turn Nagle back on
-    /// even though the default is now `Some(true)`.
+    /// The URL `nodelay=0` override must still turn Nagle back on even
+    /// though the default is `Some(true)`.
     #[test]
     fn nodelay_url_override_disables_nagle() {
         let mut cfg = SocketConfig::default();

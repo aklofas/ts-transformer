@@ -1,8 +1,8 @@
-//! Cross-thread cancel contract for `UdpTransport` / `UdpRecvTransport`
-//! (deep review #4 Arc 2, WP-D). Every test name carries `loopback` so
-//! nextest funnels the binary through the serialised `network` group.
+//! Cross-thread cancel contract for `UdpTransport` / `UdpRecvTransport`.
+//! Every test name carries `loopback` so nextest funnels the binary through
+//! the serialised `network` group.
 //!
-//! The contract these pin (spec §3.5, UDP rows):
+//! The contract these pin:
 //! - `cancel()` from any thread makes the *next* `send_bytes` return
 //!   `ExplicitClose`, and a `recv_bytes` parked on the 100 ms poll loop
 //!   returns `ExplicitClose` at its next tick;
@@ -32,8 +32,9 @@ fn sink() -> (UdpSocket, u16) {
 }
 
 /// A cancelled sender's NEXT send is `ExplicitClose` (not `Closed`, not a
-/// successful datagram), and the transport reports dead. RED on the
-/// pre-WP-D tree: `cancel_handle()` returns `None` and the `expect` fires.
+/// successful datagram), and the transport reports dead. If the transport
+/// does not expose its cancel latch through the trait, `cancel_handle()`
+/// returns `None` and the `expect` fires.
 #[test]
 fn send_after_cancel_loopback_is_explicit_close() {
     let (_sink, port) = sink();
@@ -77,14 +78,14 @@ fn send_after_close_loopback_is_closed_not_explicit_close() {
     assert!(!handle.is_cancelled(), "close() must not read as a cancel");
 }
 
-/// A fatal send error latches the transport dead (spec §3.5 table: UDP
-/// `is_alive()` after `Broken` = false; was: no latch). The deterministic
+/// A fatal send error latches the transport dead (`is_alive()` after
+/// `Broken` is false). The deterministic
 /// fatal error is `EMSGSIZE`: with `pkt_size` raised above the IPv4 UDP
 /// maximum (65 507 B) the `TooLarge` guard lets a 66 000-byte datagram
 /// through to `send_to`, which the kernel refuses on every platform
 /// (Linux/macOS `EMSGSIZE`, Windows `WSAEMSGSIZE`) — a non-transient
-/// `io::ErrorKind` per `classify_send_error`, hence `Broken`. RED on the
-/// pre-WP-D tree: `Broken` is returned but `is_alive()` stays `true`.
+/// `io::ErrorKind` per `classify_send_error`, hence `Broken`. Without the
+/// latch `Broken` is returned but `is_alive()` stays `true`.
 #[test]
 fn send_broken_loopback_latches_dead() {
     let (_sink, port) = sink();
@@ -108,7 +109,7 @@ fn send_broken_loopback_latches_dead() {
     );
 }
 
-/// The Arc 1 CORR-24 contract is untouched by the latch: a `Backpressure`
+/// The latch does not change the contract: a `Backpressure`
 /// (deadline / EINTR class) never latches. There is no loopback producer for
 /// a UDP send deadline, so this pins the alive-after-TooLarge half instead —
 /// an input error that must not latch either.
@@ -200,12 +201,13 @@ fn rescue(port: u16) {
 ///
 /// Bound: 2 s = 20 poll ticks. This is NOT an elapsed-time assert on the
 /// success path (nothing measures how long the cancel took); it is the
-/// failure bound after which the test rescues the worker and FAILS. Spec
-/// §11's "cancel returns < 1 s" is a property the 100 ms tick guarantees by
+/// failure bound after which the test rescues the worker and FAILS. "Cancel
+/// returns < 1 s" is a property the 100 ms tick guarantees by
 /// construction; the bound is 2× that so a loaded Windows runner (the
 /// nextest `network` group's slowest platform) cannot turn one late
-/// scheduling quantum into a red. RED on the pre-WP-D tree:
-/// `cancel_handle()` is `None` → the `expect` fires.
+/// scheduling quantum into a red. If the transport does not expose its
+/// cancel latch through the trait, `cancel_handle()` is `None` → the
+/// `expect` fires.
 #[test]
 fn recv_cancel_from_other_thread_loopback_returns_explicit_close() {
     let recv = UdpRecvTransport::listen("udp://@127.0.0.1:0").expect("bind");
@@ -255,8 +257,8 @@ fn recv_after_cancel_loopback_is_explicit_close_at_entry() {
 }
 
 /// `close()` stays `Closed` on the receive side too, and the poll loop still
-/// observes a close from the owning thread's flag (the pre-Arc-2 contract,
-/// kept): pin both so the cancel-first change cannot regress them.
+/// observes a close from the owning thread's flag: pin both so cancel
+/// handling cannot regress them.
 #[test]
 fn recv_after_close_loopback_is_closed() {
     let mut recv = UdpRecvTransport::listen("udp://@127.0.0.1:0").expect("bind");
@@ -271,7 +273,7 @@ fn recv_after_close_loopback_is_closed() {
 }
 
 /// A cancel that lands AFTER a successful receive does not rewrite that
-/// success (spec §5): the datagram is returned; only the NEXT call fails.
+/// success: the datagram is returned; only the NEXT call fails.
 #[test]
 fn recv_success_then_cancel_loopback_keeps_the_datagram() {
     let mut recv = UdpRecvTransport::listen("udp://@127.0.0.1:0").expect("bind");
@@ -289,10 +291,10 @@ fn recv_success_then_cancel_loopback_keeps_the_datagram() {
     assert!(matches!(r, Err(TransportError::ExplicitClose)), "got {r:?}");
 }
 
-/// X-CORR-07 (the kit row `empty_recv_is_noop`): `recv_bytes(&mut [])` is
+/// The kit row `empty_recv_is_noop`: `recv_bytes(&mut [])` is
 /// `Ok(0)` at once and leaves the transport alive and the queue untouched —
 /// the datagram sent BEFORE the empty read is still delivered by the next
-/// real read. RED on the pre-WP-D tree: the empty read is served by a
+/// real read. Without the empty-buffer guard the empty read is served by a
 /// zero-length `recv` that CONSUMES the queued datagram, so the follow-up
 /// read finds nothing (`Ok(None)`).
 #[test]

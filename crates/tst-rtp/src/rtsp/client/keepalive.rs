@@ -2,10 +2,9 @@
 //! (retuned in place when SETUP learns the server-advertised timeout).
 //!
 //! - Holds an `Arc<Mutex<Stream>>` clone — the SAME stream the main
-//!   thread uses (since T21). Works uniformly for plain TCP and TLS;
-//!   the pre-T21 path tried to `try_clone` the stream FD which failed
-//!   on rustls `ClientConnection` (silently disabling keepalive for
-//!   `rtsps://` sessions).
+//!   thread uses. Works uniformly for plain TCP and TLS; a
+//!   `try_clone`d stream FD fails on rustls `ClientConnection` (it
+//!   would silently disable keepalive for `rtsps://` sessions).
 //! - This thread only WRITES. Responses to its pings are consumed at
 //!   whichever site owns reads in the current mode (interleaved pump or
 //!   the main thread's `send_and_read`), classified by the CSeq range —

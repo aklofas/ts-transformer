@@ -6,7 +6,7 @@
 //! v1 supports the minimum compound packet needed for the receiver-side
 //! reports (RR + SDES with CNAME, RFC 3550 §6.5.1) and sender-side
 //! reports (SR + SDES with CNAME). NACK / REMB / PLI / RTPFB are out of
-//! scope (master spec §"Out of scope v2 candidates").
+//! scope.
 
 pub mod ingest;
 pub mod reporter;
@@ -490,10 +490,10 @@ mod tests {
         );
     }
 
-    // --- H1: fallible/validated encoder tests (T2-RTCP-ENC) ---
-    // Adversarial encode inputs that the old infallible encoders silently
-    // corrupted (5-bit RC mask, 16-bit length truncation) or PANICKED on
-    // (CNAME > 255). After the fix every one returns Err.
+    // --- Fallible/validated encoder tests ---
+    // Adversarial encode inputs that an infallible encoder would silently
+    // corrupt (5-bit RC mask, 16-bit length truncation) or PANIC on
+    // (CNAME > 255). Every one must return Err.
 
     fn dummy_block() -> ReportBlock {
         ReportBlock {

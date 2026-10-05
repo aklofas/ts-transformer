@@ -1,13 +1,12 @@
-//! Phase 3 Wave H — TCP-interleaved loopback test.
+//! TCP-interleaved loopback test.
 //!
-//! Both halves of the TCP-interleaved wire-up are now landed:
+//! Both halves of the TCP-interleaved wire-up:
 //!
-//! - **T1 (server-side)** — `handle_connection_inner` splits the
+//! - **Server side** — `handle_connection_inner` splits the
 //!   per-session TCP and shares the `Arc<Mutex<OwnedWriteHalf>>` with
 //!   the per-peer fanout task; `handle_play` for `TcpInterleaved`
-//!   spawns the fanout instead of returning 200 with a
-//!   `tracing::warn`.
-//! - **T4 (client-side)** — `RtspClient::activate_interleaved_pump` is
+//!   spawns the fanout.
+//! - **Client side** — `RtspClient::activate_interleaved_pump` is
 //!   called at SETUP, so subsequent `send_and_read` requests poll the
 //!   pump's `ctrl_rx` and binary `$`-framed RTP/RTCP demultiplex into
 //!   their own mpsc receivers.
@@ -30,8 +29,8 @@ fn make_muxer_cfg() -> MuxerConfig {
 }
 
 /// Server accepts a `?transport=tcp` client through PLAY without
-/// erroring. The fanout task is now spawned on the interleaved branch
-/// (T1) — it'll sit on `rx.recv()` waiting for frames that the test
+/// erroring. The fanout task is spawned on the interleaved branch
+/// — it'll sit on `rx.recv()` waiting for frames that the test
 /// doesn't push, which is the success path here.
 #[test]
 fn client_setup_with_transport_tcp_round_trips_ts() {
@@ -50,7 +49,6 @@ fn client_setup_with_transport_tcp_round_trips_ts() {
     );
     let _recv = session.into_recv_transport();
     client.play().unwrap();
-    // Full byte-identical round-trip assertion lives in
-    // `rtsp_client_interleaved_e2e.rs` (gated on T4 client pump
-    // wire-up).
+    // `rtsp_client/interleaved_e2e.rs` drives the same path through
+    // teardown; neither test asserts byte-identical delivery.
 }

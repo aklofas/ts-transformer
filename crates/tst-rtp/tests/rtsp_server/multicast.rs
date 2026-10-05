@@ -1,4 +1,4 @@
-//! Phase 3 Wave F Task 25 — multicast mount integration tests.
+//! Multicast mount integration tests.
 
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};

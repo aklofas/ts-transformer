@@ -245,11 +245,11 @@ fn setup_h264_auto_mode2_rejected_before_setup() {
 /// `H264Receiver::recv_au` to surface the MPSC_PUMP_DISCONNECTED sentinel —
 /// a false clean-EOS before any AU was received.
 ///
-/// This test confirms the fix by interleaving RTCP SR frames (channel 1)
-/// between RTP data frames. The session must deliver all expected AUs despite
-/// the RTCP frames. The test FAILS against the pre-fix code (verified by
-/// reading the pump exit logic at `rtsp/client/interleaved_pump.rs` line 316:
-/// `Err(mpsc::TrySendError::Disconnected(_)) => return` on the RTCP sender).
+/// This test interleaves RTCP SR frames (channel 1) between RTP data
+/// frames. The session must deliver all expected AUs despite the RTCP
+/// frames; with `rtcp_rx` dropped it fails, because the pump's
+/// `Err(mpsc::TrySendError::Disconnected(_)) => return` on the RTCP sender
+/// ends it.
 #[test]
 fn interleaved_rtcp_frames_do_not_kill_session() {
     let sps = sps_nalu();
@@ -325,7 +325,7 @@ fn interleaved_rtcp_frames_do_not_kill_session() {
     rx.close();
 }
 
-/// Task A2: the `?recv_timeout=<ms>` URL knob on `RtspUrl` must reach the
+/// The `?recv_timeout=<ms>` URL knob on `RtspUrl` must reach the
 /// `H264Receiver` returned by `into_h264_receiver` — the H.264 sibling of
 /// `rtsp_client/recv_timeout.rs`'s `into_recv_transport` test. No
 /// `play_data` is configured, so a receiver with no configured deadline
