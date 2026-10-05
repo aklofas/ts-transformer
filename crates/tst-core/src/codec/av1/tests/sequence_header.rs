@@ -78,7 +78,7 @@ fn write_timing_suffix(bw: &mut BitWriter) {
 use crate::codec::test_util::BitWriter;
 
 /// Build a minimal Sequence Header OBU body.
-/// Main profile, non-still-picture, level 2.0 tier 0, 320x240,
+/// Main profile, non-still-picture, level 2.0, seq_tier 0, 320x240,
 /// 8-bit 4:2:0, no color description, no timing info.
 /// Walks §5.5.1 in order — every `bw.write` is a single named
 /// syntax element from the spec.
@@ -221,7 +221,7 @@ fn minimal_sequence_header_full_range() -> Vec<u8> {
 
 #[test]
 fn parse_sequence_header_implicit_color_range_full() {
-    // Regression for validate-1 B11: when color_description_present_flag=0
+    // When color_description_present_flag=0
     // the parser must still read the color_range bit and surface it via
     // ColorInfo.full_range — not discard it.
     let payload = minimal_sequence_header_full_range();
@@ -430,7 +430,7 @@ fn seq_profile_above_2_is_reserved() {
 }
 
 // ---------------------------------------------------------------------------
-// REF-AV1-02: correct constant frame-rate denominator + reject zero timing
+// Correct constant frame-rate denominator + reject zero timing
 // ---------------------------------------------------------------------------
 
 /// ticks_minus_1 = 1 (uvlc `010`, 3 bits): denominator doubles.

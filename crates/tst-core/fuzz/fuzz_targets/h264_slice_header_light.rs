@@ -1,16 +1,15 @@
 #![no_main]
 //! Fuzz target — H.264 slice header light parser, no-SPS and SPS-context paths.
 //!
-//! The original version only exercised the `None` SPS path. This revision
-//! also exercises the `Some(&sps)` path where `frame_num` is read as a
-//! `u(v)` field with bit-width `log2_max_frame_num_minus4 + 4` (∈ 4..=16)
-//! derived from the SPS. Audit finding codec F-03.
+//! Exercises both the `None` SPS path and the `Some(&sps)` path, where
+//! `frame_num` is read as a `u(v)` field with bit-width
+//! `log2_max_frame_num_minus4 + 4` (∈ 4..=16) derived from the SPS.
 //!
 //! # Input layout
 //!
 //! ```text
 //! [0]     selector byte:
-//!           bit 7 = 0 → no-SPS path (original coverage)
+//!           bit 7 = 0 → no-SPS path
 //!           bit 7 = 1 → SPS-context path;
 //!                        log2_max_frame_num_minus4 = sel % 13  (→ 0..=12,
 //!                        folding the full byte — not just low bits)
@@ -18,7 +17,7 @@
 //! [1..]   slice RBSP bytes (fuzz-driven)
 //! ```
 //!
-//! // TODO(codec F-03): H.265 parse_slice_header_light has the same
+//! // TODO(h265): H.265 parse_slice_header_light has the same
 //! // log2_max_pic_order_cnt_lsb_minus4 SPS-context gap; deferred —
 //! // H.265 SPS synthesis needs profile_tier_level + sub-layer arrays.
 

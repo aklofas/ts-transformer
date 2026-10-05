@@ -158,7 +158,7 @@ mod tests {
     }
 
     /// Helper: build a 7-byte ADTS header with explicit `ID` bit
-    /// (`0` = MPEG-4, `1` = MPEG-2). Used by G3 tests that need to
+    /// (`0` = MPEG-4, `1` = MPEG-2). Used by the profile tests that need to
     /// exercise the MPEG version gating in `decode_profile`.
     fn build_header_with_id(
         id_bit: u8,                // 1 bit (0 = MPEG-4, 1 = MPEG-2)
@@ -204,7 +204,7 @@ mod tests {
         assert_eq!(h.raw_header_len, 7);
     }
 
-    /// C7 — `channel_configuration == 0` is a valid AAC streaming shape:
+    /// `channel_configuration == 0` is a valid AAC streaming shape:
     /// channel layout is carried in a Program Config Element (PCE) inside
     /// the raw_data_block. The header must parse successfully and surface
     /// `AacChannelLayout::PceDefined`.
@@ -271,7 +271,7 @@ mod tests {
         assert_eq!(h.samples_per_frame, 4096);
     }
 
-    /// G3 — when ID=0 (MPEG-4) the ADTS `profile` field carries an MPEG-4
+    /// When ID=0 (MPEG-4) the ADTS `profile` field carries an MPEG-4
     /// audio object type minus one; value `3` decodes to LongTermPrediction
     /// (AOT 4) and the header parses successfully.
     #[test]
@@ -282,7 +282,7 @@ mod tests {
         assert_eq!(h.profile, AacProfile::LongTermPrediction);
     }
 
-    /// G3 — when ID=1 (MPEG-2) profile=3 is reserved per ISO/IEC 13818-7
+    /// When ID=1 (MPEG-2) profile=3 is reserved per ISO/IEC 13818-7
     /// §1.A Table 8 and must surface as a typed parse error rather than
     /// the misleading `LongTermPrediction` MPEG-4 enum value.
     #[test]
@@ -297,7 +297,7 @@ mod tests {
         ));
     }
 
-    /// G3 — profiles `0..=2` (Main / LC / SSR) are valid under both ID
+    /// Profiles `0..=2` (Main / LC / SSR) are valid under both ID
     /// values; verify the MPEG-2 path still decodes them correctly.
     #[test]
     fn parse_header_profile_0_1_2_mpeg2_decode() {

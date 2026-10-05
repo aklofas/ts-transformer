@@ -270,8 +270,7 @@ pub fn decode_imapb(p: &ImapbParams, bytes: &[u8]) -> Result<DecodedImapb, KlvFi
     // Guard: degenerate ranges (e.g. min ≈ -f64::MAX, max = tiny subnormal)
     // can produce an enormous sR = 1/sF, making `value` non-finite even when
     // `y` is a valid normal-range wire integer. A non-finite decode is never a
-    // usable measurement; OutOfRange is the correct classification (fuzz-found,
-    // PR #84).
+    // usable measurement; OutOfRange is the correct classification (fuzz-found).
     if !value.is_finite() {
         return Ok(DecodedImapb::OutOfRange { decoded: value });
     }
@@ -286,7 +285,7 @@ pub fn decode_imapb(p: &ImapbParams, bytes: &[u8]) -> Result<DecodedImapb, KlvFi
     // is in the inter-band reserved space and MUST decode as OutOfRange —
     // using the float-epsilon upper bound here admitted y_max+1 as Value at
     // coarse grids (L=1) because the tolerance was exactly one quantization
-    // step and the comparison was not strictly greater (F-02).
+    // step and the comparison was not strictly greater.
     let y_max = (sf * (p.max - p.min) + z_offset).floor() as u64;
     if y > y_max {
         return Ok(DecodedImapb::OutOfRange { decoded: value });
@@ -315,7 +314,7 @@ pub fn decode_imapb(p: &ImapbParams, bytes: &[u8]) -> Result<DecodedImapb, KlvFi
 /// those to [`DecodedImapb::ReservedSpecial`]). `y` is the L-byte big-endian
 /// integer already accumulated by the caller.
 ///
-/// **Forward-compat asymmetry (audit F-03):** NaN families
+/// **Forward-compat asymmetry:** NaN families
 /// (`PositiveQuietNaN`, `NegativeQuietNaN`, `PositiveSignalingNaN`,
 /// `NegativeSignalingNaN`) surface non-zero `nan_id` / `signal` payloads
 /// verbatim. ST 1201.5 Table 2 defines only the zero NaN-Id, but its
@@ -532,7 +531,7 @@ mod tests {
         matches!(err, KlvFieldError::InvalidLength { .. });
     }
 
-    // --- Spec-vector regression tests (added 2026-05-10 for ST 1201.5 §10 + ST 0903.6 §10.1) ---
+    // --- Spec-vector regression tests (ST 1201.5 §10 + ST 0903.6 §10.1) ---
 
     #[test]
     fn st_0903_section_10_1_11_fov_12_5_deg() {
@@ -639,7 +638,7 @@ mod tests {
         );
     }
 
-    // --- A7 tests: ST 1201.5 §7.2.2 step 1 special-value detection + bounds ---
+    // --- ST 1201.5 §7.2.2 step 1 special-value detection + bounds ---
 
     #[test]
     fn imapb_decode_positive_infinity_wire_pattern_returns_special_variant() {
@@ -786,7 +785,7 @@ mod tests {
         }
     }
 
-    // --- ST 1201.5 §6 IMAPB precondition guards (validate-1 act-now M-02) ---
+    // --- ST 1201.5 §6 IMAPB precondition guards ---
     //
     // These tests pin the new `min < max` precondition on both the encode
     // and decode entry points, plus the evaluation-order contract between
@@ -938,7 +937,7 @@ mod tests {
         );
     }
 
-    // --- encode_imapb_special tests (REF-KLV-01 Task 3) ---
+    // --- encode_imapb_special tests ---
 
     #[test]
     fn encode_special_positive_infinity_zero_filled() {
@@ -996,7 +995,7 @@ mod tests {
         ));
     }
 
-    // --- REF-KLV-01 Task 4: decode full IMAPB special-value families ---
+    // --- decode full IMAPB special-value families ---
 
     #[test]
     fn decode_recognizes_all_nan_families() {
@@ -1037,7 +1036,7 @@ mod tests {
         );
     }
 
-    // --- PT-KLV-imapb-epsilon: exact reserved-space detection (F-02) ---
+    // --- exact reserved-space detection ---
 
     /// IMAPB(0,180,1): sF=0.5, y_max=90. The integer y=91 (top bits `01`,
     /// NOT in the §7.2.3 special-value space) arithmetic-decodes to 182.0,
@@ -1342,7 +1341,7 @@ mod tests {
         }
     }
 
-    /// Fuzz-found regression (PR #84): degenerate range (min ≈ −f64::MAX,
+    /// Fuzz-found regression: degenerate range (min ≈ −f64::MAX,
     /// max = tiny subnormal, L=4) produced an enormous sR = 1/sF, causing
     /// `value = sR*(y−Zoffset)+min` to overflow to −∞ when y=0.
     ///

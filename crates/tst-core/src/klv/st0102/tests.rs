@@ -144,7 +144,7 @@ fn decode_unknown_tag_lenient_preserves() {
 fn decode_duplicate_tag_lenient_last_wins() {
     // Sibling-pattern parity with klv::st0601 lenient mode:
     // duplicate tags overwrite silently, later occurrence wins.
-    // Strict mode (Task 6) rejects the same input as DuplicateTag.
+    // Strict mode rejects the same input as DuplicateTag.
     let buf = build_record(&[(1, &[0x01]), (1, &[0x02])]);
     let r = decode(&buf).expect("lenient tolerates duplicate, last wins");
     assert_eq!(
@@ -481,8 +481,8 @@ fn strict_rejects_duplicate_tag() {
 
 #[test]
 fn strict_duplicate_tag_reports_the_repeat_offset() {
-    // CORR-29(a): `[1,1,1, 1,1,2]` — the second Tag 1 starts at byte 3.
-    // The dedup used to run on the offset-blind `Iter` and hard-code 0.
+    // `[1,1,1, 1,1,2]` — the second Tag 1 starts at byte 3, and the
+    // error must report that offset, not 0.
     let err = decode_strict(&[1, 1, 1, 1, 1, 2]).unwrap_err();
     assert!(
         matches!(err, KlvDecodeError::DuplicateTag { tag: 1, offset: 3 }),
@@ -537,8 +537,8 @@ fn strict_rejects_truncated_value() {
 fn unknown_tags_above_127_preserved_via_ber_oid_on_encode() {
     // ST 0102 LS may grow new tags > 127 in future revisions; the
     // lenient decoder already preserves them per ST 0107.5 §6, and
-    // since the validate-1 E4 fix encode emits multi-byte BER-OID
-    // per ST 0107 §6.3.1 so the round-trip stays lossless.
+    // encode emits multi-byte BER-OID per ST 0107 §6.3.1 so the
+    // round-trip stays lossless.
     let r = SecurityLs {
         security_classification: Some(SecurityClassification::Unclassified),
         unknown: vec![
@@ -666,7 +666,7 @@ fn unknown_tag_16384_round_trips_three_byte_ber_oid() {
 }
 
 // ------------------------------------------------------------------
-// Task 1 (WP-F / REF-KLV-02): unknown-bucket typed-tag guard tests.
+// Unknown-bucket typed-tag guard tests.
 // ------------------------------------------------------------------
 
 #[test]
@@ -703,7 +703,7 @@ fn encode_allows_truly_unknown_tag_in_unknown() {
 }
 
 // ------------------------------------------------------------------
-// Task 5 (WP-G / REF-KLV-05): decode_strict canonical-BER rejection.
+// decode_strict canonical-BER rejection.
 // ------------------------------------------------------------------
 
 #[test]
@@ -742,7 +742,7 @@ fn security_ls_ul_reexport_matches_universal_label() {
 }
 
 // ------------------------------------------------------------------
-// Task 3 (WP-F / REF-KLV-02): encode_strict_compliance tests.
+// encode_strict_compliance tests.
 // ------------------------------------------------------------------
 
 #[test]
@@ -830,7 +830,7 @@ fn st0102_lenient_encode_still_accepts_partial() {
     encode(&r, &mut buf).expect("lenient encode must accept a partial record");
 }
 
-// -------- DA-KLV-1: ST 0107.5 §6.3.3.2 empty-string convention --------
+// -------- ST 0107.5 §6.3.3.2 empty-string convention --------
 
 #[test]
 fn st0102_empty_string_encodes_as_nul_and_round_trips() {
@@ -892,7 +892,7 @@ fn st0102_encoded_len_counts_nul_for_empty_string() {
     );
 }
 
-// -------- DA-KLV-2: control-char stripping in strict path only --------
+// -------- control-char stripping in strict path only --------
 
 fn minimal_strict_record() -> SecurityLs {
     // A minimal valid SecurityLs for encode_strict_compliance (all 6 required tags).

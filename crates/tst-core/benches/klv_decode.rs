@@ -5,9 +5,8 @@
 //! - st0102_lenient — typical Security LS payload (~80 bytes).
 //! - st0903_lenient — typical VMTI LS payload (~250 bytes, 3 targets).
 //!
-//! These benches are Phase 4 regression detectors: they record current
-//! decode throughput so that Phase 5 (fuzz target relocation + substrate
-//! visibility tightening) can be verified to not degrade hot paths.
+//! These benches are regression detectors: they record current decode
+//! throughput so that refactors can be verified to not degrade hot paths.
 //!
 //! Run: `cargo bench -p tst-core --bench klv_decode`.
 //! Quick mode (shorter warmup): add `-- --quick` at the end.

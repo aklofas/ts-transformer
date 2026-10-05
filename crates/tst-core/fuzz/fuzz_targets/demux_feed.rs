@@ -1,9 +1,8 @@
 #![no_main]
 
 //! Fuzz target — end-to-end demuxer panic-freedom across the config knobs
-//! and feed shapes the review found unfuzzed (CORR-01 lived in the
-//! `sync_buf_cap` path; `unwrap_timestamps`, chunked `feed`, `feed_aligned`
-//! and `reset_sync` were never driven).
+//! and feed shapes no other target drives: the `sync_buf_cap` path,
+//! `unwrap_timestamps`, chunked `feed`, `feed_aligned` and `reset_sync`.
 //!
 //! # Input layout
 //!

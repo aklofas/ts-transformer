@@ -8,7 +8,7 @@ use tst_core::klv::st0601::{
 fuzz_target!(|data: &[u8]| {
     let _ = decode(data);
     let _ = decode_strict(data);
-    // C-CORR-09: the full ST 0107.5 conformance walker was never fuzzed.
+    // The full ST 0107.5 conformance walker.
     let _ = decode_strict_compliance(data);
     if let Ok(record) = decode_unchecked(data) {
         // Round-trip property: re-encoding a decoded record produces a buffer

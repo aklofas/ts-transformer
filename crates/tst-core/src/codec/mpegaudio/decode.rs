@@ -301,7 +301,7 @@ pub(super) fn frames_next<'a>(it: &mut Frames<'a>) -> Option<Result<Frame<'a>, C
         Ok(h) => h,
         Err(e) => {
             if it.resync {
-                // G2 — advance cursor to next plausible syncword (or
+                // Advance cursor to next plausible syncword (or
                 // to end-of-buffer to terminate on subsequent call).
                 match find_next_sync(it.buf, it.cursor + 1) {
                     Some(next) => it.cursor = next,
@@ -365,7 +365,7 @@ mod tests {
     }
     #[test]
     fn bitrate_index0_is_free_format_rejected() {
-        // G1 — bitrate_index=0 surfaces as the distinct
+        // bitrate_index=0 surfaces as the distinct
         // `UnsupportedFreeFormat` variant (not `ReservedValue`) so callers
         // can tell "spec defines this but we don't decode it" apart from
         // "spec leaves this for future use".
@@ -572,8 +572,8 @@ mod tests {
         assert!(it.next().is_none());
     }
 
-    /// G2 — strict iterator terminates after the first parse error,
-    /// dropping every subsequent valid frame. Failing-test-first proof.
+    /// The strict iterator terminates after the first parse error,
+    /// dropping every subsequent valid frame.
     #[test]
     fn strict_iterator_drops_frames_after_first_corruption() {
         // Layout: [corrupted 4 bytes that fail parse_header] [valid frame].
@@ -595,7 +595,7 @@ mod tests {
         );
     }
 
-    /// G2 — resync iterator yields the error then resumes from the next
+    /// The resync iterator yields the error then resumes from the next
     /// plausible syncword, recovering the valid frame at position N+M.
     #[test]
     fn resync_iterator_recovers_valid_frame_after_corruption() {
@@ -624,7 +624,7 @@ mod tests {
         assert!(it.next().is_none());
     }
 
-    /// G2 — resync iterator over a buffer with no plausible syncword
+    /// A resync iterator over a buffer with no plausible syncword
     /// anywhere terminates after yielding the initial error (no infinite
     /// loop, no spurious extra yields).
     #[test]
@@ -646,7 +646,7 @@ mod tests {
         );
     }
 
-    /// validate-1 followup-2 — malformed-MIDDLE-frame regression test.
+    /// Malformed-MIDDLE-frame regression test.
     ///
     /// Layout: [valid frame] [8 bytes of garbage that fail parse_header]
     /// [valid frame]. Strict `frames()` parses the first valid frame, then
@@ -654,9 +654,8 @@ mod tests {
     /// (this is the stats-undercount bug). `frames_with_resync()` recovers
     /// past the garbage to the second syncword and yields 2 valid frames.
     ///
-    /// This exercises the same iterator switch that the mpegts demux + mux
-    /// audio stats sites now use (`frames_with_resync` replacing `frames`
-    /// at validate-1 followup-2).
+    /// This exercises the iterator the mpegts demux + mux audio stats sites
+    /// use (`frames_with_resync`, not `frames`).
     #[test]
     fn frames_with_resync_recovers_past_middle_garbage_two_valid_frames() {
         let header: [u8; 4] = V1L3_128K_44100_JS;
@@ -688,7 +687,7 @@ mod tests {
         );
     }
 
-    /// G1 — free-format MPEG audio (bitrate_index == 0) surfaces as the
+    /// Free-format MPEG audio (bitrate_index == 0) surfaces as the
     /// distinct `UnsupportedFreeFormat` error from the frame iterator
     /// (not `ReservedValue`).
     #[test]
@@ -704,7 +703,7 @@ mod tests {
         }
     }
 
-    /// G2 — `find_next_sync` returns None when no candidate exists.
+    /// `find_next_sync` returns None when no candidate exists.
     #[test]
     fn find_next_sync_no_candidate() {
         assert_eq!(find_next_sync(&[], 0), None);
@@ -714,7 +713,7 @@ mod tests {
         assert_eq!(find_next_sync(&[0xFF, 0x00], 0), None);
     }
 
-    /// G2 — `find_next_sync` locates the first plausible syncword.
+    /// `find_next_sync` locates the first plausible syncword.
     #[test]
     fn find_next_sync_finds_candidate() {
         // 0xFF at index 2, 0xE0 at index 3 — valid 11-bit sync.

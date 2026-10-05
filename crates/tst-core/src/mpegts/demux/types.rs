@@ -1,6 +1,5 @@
 //! Demuxer supporting types — stats, options, per-program tracker, and
-//! builder. Co-resident with the `Demuxer` impl in `demuxer.rs`
-//! before the Phase 5 split (audit theme I).
+//! builder, kept apart from the `Demuxer` impl in `demuxer.rs`.
 
 use crate::mpegts::demux::event::{StreamInfo, StreamKind};
 use crate::mpegts::demux::strict::StrictMode;

@@ -141,7 +141,7 @@ pub struct Frames<'a> {
     pub(super) buf: &'a [u8],
     pub(super) cursor: usize,
     pub(super) done: bool,
-    /// G2 — when `true`, parse errors do NOT terminate the iterator.
+    /// When `true`, parse errors do NOT terminate the iterator.
     /// Instead, `frames_next` scans forward from `cursor + 1` for the
     /// next plausible 11-bit MPEG audio syncword (`0x7FF` in the top
     /// 11 bits of a 16-bit window) and repositions there. The current

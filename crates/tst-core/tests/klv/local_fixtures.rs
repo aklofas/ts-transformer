@@ -79,7 +79,7 @@ fn local_fixtures_decode() {
             failures.push(format!("{}: {msg}", path.display()));
         }
 
-        // Task 8: ST 0102 sibling-layer probe (panic-freedom contract).
+        // ST 0102 sibling-layer probe (panic-freedom contract).
         // Probe runs after the per-shape assertions so a shape failure
         // doesn't block ST 0102 coverage on the same file.
         if let Some(probe_result) = probe_st0102(&bytes) {
@@ -102,7 +102,7 @@ fn local_fixtures_decode() {
             }
         }
 
-        // VMTI (ST 0903) sibling-layer probe — added 2026-05-08.
+        // VMTI (ST 0903) sibling-layer probe.
         //
         // On each non-empty Tag 74, attempt `klv::st0903::decode` and
         // assert the result is panic-free. Lenient mode always returns

@@ -1,9 +1,9 @@
 //! Per-commit smoke test for the PTS-rollover and PCR-jitter tools.
 //!
 //! Both binaries already exist at crates/tst-core/tests/tools/ as
-//! [[bin]] targets shipped by plan #83 for release-validation steps
-//! 8/9. Until now they sat unreachable from PR CI — a refactor
-//! breaking either main() would only surface at release-tag time.
+//! [[bin]] targets for release-validation steps 8/9. Without this test
+//! they are unreachable from PR CI — a refactor breaking either main()
+//! would only surface at release-tag time.
 //!
 //! Cargo injects each [[bin]]'s built path into CARGO_BIN_EXE_<name>
 //! for integration tests in the same package, so no recursive

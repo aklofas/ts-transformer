@@ -198,7 +198,7 @@ mod tests {
         assert!(matches!(err, AssemblerError::Overflow { .. }));
     }
 
-    /// Validate-1 B3 follow-up — leftover bytes after a completed section
+    /// Leftover bytes after a completed section
     /// must be retained in `self.buf` (via `split_off`) so the next
     /// `try_complete_section` call can drain them. Tests the section-mapped
     /// layout per H.222.0 §2.4.4.1: a single payload window carrying the
@@ -232,7 +232,7 @@ mod tests {
         );
     }
 
-    /// Validate-1 B3 follow-up — 0xFF as the first byte of leftover means
+    /// 0xFF as the first byte of leftover means
     /// stuffing per §2.4.4.5; `try_complete_section` must reset and stop.
     #[test]
     fn try_complete_section_resets_on_0xff_stuffing() {
@@ -254,7 +254,7 @@ mod tests {
         assert!(r3.is_some());
     }
 
-    /// Validate-1 B3 follow-up — empty-leftover case: section A completes
+    /// Empty-leftover case: section A completes
     /// exactly at the end of the payload window, no bytes spill into the
     /// next section. `try_complete_section` returns None on the next call.
     #[test]
@@ -269,7 +269,7 @@ mod tests {
         assert!(a.buf.is_empty());
     }
 
-    /// Validate-1 B3 follow-up — `try_complete_section` with leftover that
+    /// `try_complete_section` with leftover that
     /// already constitutes a full section returns it on the first call.
     /// Models the section-A-completes-then-section-B-fully-present case.
     #[test]

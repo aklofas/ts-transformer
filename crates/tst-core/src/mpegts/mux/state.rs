@@ -58,11 +58,10 @@ pub(super) struct DataStreamState {
 /// byte-stream syntax (ISO/IEC 14496-10 Annex B; ITU-T H.265 Annex B;
 /// ITU-T H.266 Annex B).
 ///
-/// Validate-1 C13: the prior implementation only checked the AU's leading
-/// prefix. That accepted malformed inputs whose first 3-4 bytes happened
-/// to be a start code but whose interior contained no real NAL units, or
-/// trailed off mid-start-code. This walker scans every start code in the
-/// buffer and rejects:
+/// Checking only the AU's leading prefix would accept malformed inputs
+/// whose first 3-4 bytes happen to be a start code but whose interior
+/// contains no real NAL units, or trails off mid-start-code. This walker
+/// scans every start code in the buffer and rejects:
 ///
 /// - inputs that do not start with `00 00 01` or `00 00 00 01`,
 /// - inputs that contain only start codes with no NAL body byte between
@@ -459,19 +458,8 @@ pub(super) fn resolve_pcr_pid(prog: &MuxerProgramConfig) -> u16 {
         .expect("validate() guarantees ≥1 PCR-eligible stream per program")
 }
 
-/// Build the per-stream PMT descriptor cache for one program. Each entry is
-/// the concatenated descriptor bytes for the corresponding `StreamSpec`,
-/// composed of (a) any auto-emitted descriptor (KLVA / AV01 / AC-3 / ISO 639 /
-/// subtitle disambiguator) followed by (b) the caller-supplied descriptors
-/// from `prog.stream_descriptors[i]`. The auto-emit on (a) is suppressed when
-/// the caller has already supplied an equivalent descriptor.
-///
-/// Mechanically extracted from `Muxer::new`; zero semantic change vs the
-/// pre-refactor inline version. See history pre-Wave 6 for the per-codec
-/// suppression rationale (KLVA / AV01 / AC-3 mirror each other; subtitle
-/// suppression matches the demux-side classifier).
 /// Emit tracing warnings for caller-supplied descriptor conflicts on KLV, AV1,
-/// and AC-3 streams. Hoisted out of `build_pmt_descriptor_cache` so that
+/// and AC-3 streams. Kept out of `build_pmt_descriptor_cache` so that
 /// function is pure (no side effects), and called once from `Muxer::new` —
 /// construction-time, after `validate()`, at most ≤16 programs × ≤16 streams.
 pub(super) fn warn_on_descriptor_conflicts(prog: &MuxerProgramConfig) {
@@ -529,6 +517,14 @@ pub(super) fn warn_on_descriptor_conflicts(prog: &MuxerProgramConfig) {
     }
 }
 
+/// Build the per-stream PMT descriptor cache for one program. Each entry is
+/// the concatenated descriptor bytes for the corresponding `StreamSpec`,
+/// composed of (a) any auto-emitted descriptor (KLVA / AV01 / AC-3 / ISO 639 /
+/// subtitle disambiguator) followed by (b) the caller-supplied descriptors
+/// from `prog.stream_descriptors[i]`. The auto-emit on (a) is suppressed when
+/// the caller has already supplied an equivalent descriptor (KLVA / AV01 /
+/// AC-3 suppression mirror each other; subtitle suppression matches the
+/// demux-side classifier).
 pub(super) fn build_pmt_descriptor_cache(prog: &MuxerProgramConfig) -> Vec<Vec<u8>> {
     let mut cache: Vec<Vec<u8>> = Vec::with_capacity(prog.streams.len());
     for (i, spec) in prog.streams.iter().enumerate() {
@@ -957,9 +953,7 @@ mod tests {
         // Empty input means "no OBUs to wrap" — produce empty output (no
         // start codes, no escape bytes). Per binding §3.2 the
         // `ts_open_bitstream_unit()` production is applied once per OBU,
-        // so zero OBUs in → zero start codes out. This invariant changed
-        // from the previous one-start-code-per-AU behavior (validate-1 C8
-        // follow-up).
+        // so zero OBUs in → zero start codes out.
         let mut wrapped = Vec::new();
         wrap_av1_obus_binding(&[], &mut wrapped);
         assert!(wrapped.is_empty());
@@ -1078,7 +1072,7 @@ mod tests {
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // Per-OBU start-code framing (validate-1 C8 follow-up; binding §3.2).
+    // Per-OBU start-code framing (binding §3.2).
     //
     // Spec rule: `ts_open_bitstream_unit()` is applied ONCE PER OBU, not
     // once per access unit. The wire shape for N OBUs is N copies of
@@ -1086,10 +1080,9 @@ mod tests {
     // independent (zero-run resets at each unit boundary). Mux+demux MUST
     // round-trip a multi-OBU input emitting AND recognizing N start codes.
     //
-    // These tests pair hand-built spec-byte assertions with round-trips —
-    // see feedback_closed_loop_roundtrip_insufficient_for_wire_spec.md for
-    // the rationale (closed-loop round-trip alone can pass even with a
-    // wrong wire format if mux+demux agree on the wrong encoding).
+    // These tests pair hand-built spec-byte assertions with round-trips: a
+    // closed-loop round-trip alone can pass even with a wrong wire format
+    // if mux+demux agree on the wrong encoding.
     // ─────────────────────────────────────────────────────────────────────
 
     /// MUX SPEC COMPLIANCE — wrapping two OBUs MUST emit exactly two

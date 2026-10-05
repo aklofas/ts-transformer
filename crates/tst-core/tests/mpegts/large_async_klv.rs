@@ -1,10 +1,10 @@
-//! Review 9 (int R9-01): an async KLV PES whose first five bytes
-//! `06 0E 2B 34 02` ALSO parse as an H.222.0 Metadata_AU_cell header
-//! (`cfi = Middle`, `AU_cell_data_length = 0x3402 = 13 314`) was classified
-//! as a sync cell once the payload reached 5 + 13 314 = 13 319 bytes, routed
-//! to the AU-cell reassembler as an orphan Middle cell, and DROPPED — our
-//! own `Muxer` → `Demuxer` round trip lost every ST 0601 record above ~13 KB
-//! (VMTI-sized sets). Below the threshold the same bytes round-tripped.
+//! An async KLV PES whose first five bytes `06 0E 2B 34 02` ALSO parse as an
+//! H.222.0 Metadata_AU_cell header (`cfi = Middle`,
+//! `AU_cell_data_length = 0x3402 = 13 314`) was classified as a sync cell once
+//! the payload reached 5 + 13 314 = 13 319 bytes, routed to the AU-cell
+//! reassembler as an orphan Middle cell, and DROPPED — our own `Muxer` →
+//! `Demuxer` round trip lost every ST 0601 record above ~13 KB (VMTI-sized
+//! sets). Below the threshold the same bytes round-tripped.
 
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{DemuxEvent, Demuxer, MetadataKind, SamplePayload};
@@ -114,11 +114,11 @@ fn async_klv_well_above_the_cell_threshold_round_trips() {
     assert!(other.is_empty(), "{other:?}");
 }
 
-/// Review 9 (Review Focus 1), Muxer-free: a sync-metadata PES (stream_type
-/// 0x15) whose first `Metadata_AU_cell` flags byte is `0xC0` (reserved
-/// nibble `0000`, not the required `1111`) is no longer parsed as a cell.
-/// It must still surface — as one raw `SamplePayload::Unknown` sample
-/// carrying the PES payload verbatim — never vanish.
+/// Muxer-free: a sync-metadata PES (stream_type 0x15) whose first
+/// `Metadata_AU_cell` flags byte is `0xC0` (reserved nibble `0000`, not the
+/// required `1111`) is not parsed as a cell. It must still surface — as one
+/// raw `SamplePayload::Unknown` sample carrying the PES payload verbatim —
+/// never vanish.
 #[test]
 fn sync_pes_with_a_cleared_reserved_nibble_surfaces_as_unknown() {
     const PMT_PID: u16 = 0x1000;

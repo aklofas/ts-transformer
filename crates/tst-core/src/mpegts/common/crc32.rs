@@ -60,8 +60,7 @@ mod tests {
     }
 
     /// Single zero byte: CRC-32/MPEG-2 reference value 0x4E08BFB4
-    /// (independently verified; the plan originally specified 0x4F5344CD,
-    /// which is incorrect).
+    /// (independently verified; not 0x4F5344CD).
     #[test]
     fn single_zero_byte() {
         assert_eq!(crc32_mpeg2(&[0x00]), 0x4E08_BFB4);

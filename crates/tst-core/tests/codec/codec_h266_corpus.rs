@@ -4,8 +4,8 @@
 //! parser's recovered width / height to ffprobe's decoded values on
 //! any `.ts` files present in `tests/fixtures/h266/` (typically
 //! produced by `regen.sh` if `ffmpeg --enable-libvvenc` is available
-//! locally). Same shape as `local_codec_corpus.rs` and plan #20's
-//! H.264 / H.265 cross-check.
+//! locally). Same shape as `local_codec_corpus.rs`'s H.264 / H.265
+//! cross-check.
 //!
 //! profile/level string comparison is intentionally skipped — ffprobe's
 //! H.266 profile/level strings vary by build / version and don't have

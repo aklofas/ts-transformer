@@ -159,7 +159,7 @@ fn fixture_field_errors_decodes() {
     let _ = parsed; // just verifies decode succeeds without panic
 }
 
-// -------- DA-KLV-1: ST 0107.5 §6.3.3.2 empty-string convention --------
+// -------- ST 0107.5 §6.3.3.2 empty-string convention --------
 
 #[test]
 fn st0601_empty_string_encodes_as_nul_and_round_trips() {
@@ -216,7 +216,7 @@ fn st0601_nul_byte_decodes_as_empty_string() {
     );
 }
 
-// -------- DA-KLV-2: control-char stripping in strict path only --------
+// -------- control-char stripping in strict path only --------
 
 #[test]
 fn st0601_strict_encode_strips_control_chars() {
@@ -238,7 +238,7 @@ fn st0601_strict_encode_strips_control_chars() {
 #[test]
 fn st0601_strict_encode_all_control_chars_strips_to_empty_nul() {
     // All-control-char content → strips to "" → [0x00] on wire (ST 0107.3-13
-    // composing with the DA-KLV-1 empty-string mapping).
+    // composing with the ST 0107.5 §6.3.3.2 empty-string mapping).
     let r = UasDatalinkLs {
         timestamp_us: Some(1_000_000_000_000_000),
         mission_id: Some("\x01\x02\x7F".to_owned()), // only control chars

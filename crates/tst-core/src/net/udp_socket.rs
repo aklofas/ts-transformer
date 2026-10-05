@@ -33,7 +33,7 @@ pub const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// current sleep before the next `accept()` attempt notices it. At
 /// `CANCEL_POLL_INTERVAL` (100 ms) that put up to ~100 ms of latency on
 /// every accept, tight enough to occasionally blow a caller's own ~100 ms
-/// I/O deadline (observed: a TLS handshake's first write, CORR-12 review).
+/// I/O deadline (observed: a TLS handshake's first write).
 /// 5 ms keeps an idle listener's wakeup cost negligible (200 Hz) while
 /// cutting worst-case accept latency 20×; a cancel is still observed within
 /// one tick either way.
@@ -189,7 +189,7 @@ pub fn set_multicast_hops_v6(socket: &UdpSocket, hops: u8) -> io::Result<()> {
 }
 
 /// Non-Unix fallback: report IPv6 multicast hop-limit knob as unsupported
-/// in Phase 1 rather than silently ignoring `?ttl=`.
+/// rather than silently ignoring `?ttl=`.
 #[cfg(not(unix))]
 pub fn set_multicast_hops_v6(_socket: &UdpSocket, _hops: u8) -> io::Result<()> {
     Err(io::Error::new(
@@ -203,7 +203,7 @@ pub fn set_multicast_hops_v6(_socket: &UdpSocket, _hops: u8) -> io::Result<()> {
 ///
 /// IPv4 path accepts a literal IPv4 address string (e.g. `"192.168.1.50"`).
 /// Name → IP resolution for interface names (e.g., `eth0`) is not done
-/// in Phase 1 — callers needing name-based binding can resolve via
+/// — callers needing name-based binding can resolve via
 /// `if_indextoname` and pass the IP. This is the same UX libsrt's
 /// `?iface=` query parameter ships with.
 pub fn apply_multicast_iface(socket: &UdpSocket, group: IpAddr, iface: &str) -> io::Result<()> {
@@ -289,7 +289,7 @@ pub fn set_multicast_if_v4(_socket: &UdpSocket, addr: Ipv4Addr) -> io::Result<()
 /// `join_multicast_v6(group, interface_index)`.
 ///
 /// `iface` parsing matches the send-side rules in [`apply_multicast_iface`]:
-/// IPv4 takes a literal IPv4 address; IPv6 is not supported in Phase 1.
+/// IPv4 takes a literal IPv4 address; IPv6 is not supported.
 pub fn apply_multicast_recv_join(
     socket: &UdpSocket,
     group: IpAddr,

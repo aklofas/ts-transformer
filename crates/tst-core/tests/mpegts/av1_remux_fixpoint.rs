@@ -1,4 +1,4 @@
-//! AV1-01 acceptance: mux -> demux raw -> remux is a PAYLOAD FIXPOINT in
+//! Acceptance: mux -> demux raw -> remux is a PAYLOAD FIXPOINT in
 //! BOTH carriage modes, using the pass-through wire push for the remux.
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::event::{DemuxEvent, SamplePayload};

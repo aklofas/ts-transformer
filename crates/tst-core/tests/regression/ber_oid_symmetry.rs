@@ -1,15 +1,12 @@
-//! Wave I3 — BER + BER-OID encode/decode symmetry across all three
-//! typed KLV sets (ST 0601, ST 0102, ST 0903).
+//! BER + BER-OID encode/decode symmetry across all three typed KLV sets
+//! (ST 0601, ST 0102, ST 0903). Covered behaviour:
 //!
-//! Plan: `docs/validate-1/11-phase-2-plan.md` §2.9 row I3 — "decode/
-//! encode symmetry." Sprint 3 SHAs:
+//!   - ST 0601 strict-mode duplicate-tag + canonical BER
+//!   - ST 0601 encode reserved-tag filter
+//!   - ST 0102 BER-OID encode
+//!   - ST 0903 BER-OID walker + VTargetPack inner walk
 //!
-//!   E1+E2 (76361ed)  ST 0601 strict-mode duplicate-tag + canonical BER
-//!   E3    (5f6ddd9)  ST 0601 encode reserved-tag filter
-//!   E4    (20d1038)  ST 0102 BER-OID encode
-//!   E5    (031b3c4 + 566789b)  ST 0903 BER-OID walker + VTargetPack inner walk
-//!
-//! Spec references (paths into `reference/`):
+//! Spec references:
 //!   ST 0107.5 §6.3.1  BER-OID canonical encoding ("0x80 forbidden as first byte")
 //!   ST 0107.5 §6.3.2  BER length canonical encoding ("fewest bytes")
 //!   ST 0601.13 §6.2 + ST 0601.24 §6  reserved structural tags 1, 2, 65
@@ -139,10 +136,10 @@ fn ber_encoder_emits_canonical_shortest_form_st0107_5_6_3_2() {
 }
 
 // ============================================================================
-// ST 0601 (E1+E2+E3) — round-trip + reserved-tag filter + duplicate-tag
+// ST 0601 — round-trip + reserved-tag filter + duplicate-tag
 // ============================================================================
 
-/// E1+E2: ST 0601 strict-compliance decode rejects duplicate occurrences
+/// ST 0601 strict-compliance decode rejects duplicate occurrences
 /// of typed tags per ST 0601.13-24 ("once per packet" for defined items).
 /// Hand-build a record with Tag 5 (`platform_heading_deg`, IMAPB(0, 360, 2))
 /// appearing twice in the body and confirm `decode_strict_compliance`
@@ -232,7 +229,7 @@ fn recompute_st0601_checksum(buf: &mut [u8]) {
     buf[value_offset + 1] = cksum as u8;
 }
 
-/// E3: encoder rejects a structural / typed tag in `record.unknown`
+/// The encoder rejects a structural / typed tag in `record.unknown`
 /// with [`KlvEncodeError::ReservedTagInUnknown`]. The `unknown` vec
 /// is for forward-compat pass-through ONLY — any tag in the typed
 /// table (or the 3 reserved structural tags 1/2/65) must come through
@@ -255,7 +252,7 @@ fn st0601_encode_rejects_reserved_tag_in_unknown_e3_filter() {
     );
 }
 
-/// E3: same filter blocks the reserved structural tags 1 (Checksum),
+/// The same filter blocks the reserved structural tags 1 (Checksum),
 /// 2 (PTS), and 65 (UAS LS Version). Sweep all three.
 #[test]
 fn st0601_encode_rejects_reserved_structural_tags_in_unknown_e3_filter() {
@@ -279,7 +276,7 @@ fn st0601_encode_rejects_reserved_structural_tags_in_unknown_e3_filter() {
     }
 }
 
-/// E5-style cross-check at ST 0601: a multi-byte BER-OID tag (e.g.
+/// Cross-check at ST 0601: a multi-byte BER-OID tag (e.g.
 /// 200, which encodes as `[0x81, 0x48]`) put in `record.unknown`
 /// should round-trip through encode→decode losslessly. ST 0601's
 /// `is_reserved_or_typed_tag` returns `false` for tag > 0xFF (the
@@ -308,7 +305,7 @@ fn st0601_unknown_multibyte_ber_oid_tag_round_trips_e5_cross_check() {
 /// the BODY (not just the outer). Hand-build a Tag 5 TLV with
 /// `[0x05 0x81 0x02 hi lo]` (length 2 encoded as long-form 0x81 0x02
 /// instead of canonical 0x02). Strict-compliance trips
-/// `NonCanonicalLength`. Demonstrates E1+E2's body-level strict reader
+/// `NonCanonicalLength`. Demonstrates the body-level strict reader
 /// integration.
 #[test]
 fn st0601_strict_compliance_rejects_non_canonical_length_in_body_st0107_5_6_3_2() {
@@ -342,14 +339,13 @@ fn st0601_strict_compliance_rejects_non_canonical_length_in_body_st0107_5_6_3_2(
 }
 
 // ============================================================================
-// ST 0102 (E4) — BER-OID encode + round-trip
+// ST 0102 — BER-OID encode + round-trip
 // ============================================================================
 
-/// E4: ST 0102 encoder MUST round-trip a multi-byte BER-OID `unknown`
-/// tag (tag ≥ 128). Pre-E4, the encoder used a hard-coded single-byte
-/// tag write; tag > 127 would silently truncate. Construct a
-/// SecurityLs with required tags + an unknown tag at id 200 and
-/// confirm round-trip preserves it.
+/// The ST 0102 encoder MUST round-trip a multi-byte BER-OID `unknown`
+/// tag (tag ≥ 128); a hard-coded single-byte tag write would silently
+/// truncate tag > 127. Construct a SecurityLs with required tags + an
+/// unknown tag at id 200 and confirm round-trip preserves it.
 #[test]
 fn st0102_encode_round_trips_multibyte_ber_oid_unknown_tag_e4_fix() {
     let mut security = SecurityLs {
@@ -427,10 +423,10 @@ fn st0102_strict_rejects_duplicate_typed_tag() {
 }
 
 // ============================================================================
-// ST 0903 (E5) — BER-OID walker symmetry on top-level and pack-level
+// ST 0903 — BER-OID walker symmetry on top-level and pack-level
 // ============================================================================
 
-/// E5: top-level VMTI walker rejects a non-canonical BER-OID tag
+/// The top-level VMTI walker rejects a non-canonical BER-OID tag
 /// (leading 0x80) per ST 0107.5 §6.3.1. Confirms the top-level
 /// `decode_strict` is routed through `read_ber_oid_strict`.
 #[test]
@@ -446,13 +442,13 @@ fn st0903_strict_walker_rejects_non_canonical_ber_oid_tag_st0107_5_6_3_1() {
     );
 }
 
-/// E5: top-level VMTI walker rejects a non-canonical BER length
+/// The top-level VMTI walker rejects a non-canonical BER length
 /// per ST 0107.5 §6.3.2.
 #[test]
 fn st0903_strict_walker_rejects_non_canonical_ber_length_st0107_5_6_3_2() {
     // `[0x02 0x81 0x08 ...]` = tag 2 (PTS) + long-form len 8 (non-
-    // canonical for value 8). Pre-E5 the walker accepted this; post-E5
-    // it returns NonCanonicalLength.
+    // canonical for value 8). The strict walker returns
+    // NonCanonicalLength.
     let mut body = vec![0x02, 0x81, 0x08];
     body.extend_from_slice(&1_700_000_000_000_000u64.to_be_bytes());
     let err = st0903::decode_strict(&body).unwrap_err();
@@ -462,7 +458,7 @@ fn st0903_strict_walker_rejects_non_canonical_ber_length_st0107_5_6_3_2() {
     );
 }
 
-/// E5: VMTI walker preserves a multi-byte BER-OID unknown tag in the
+/// The VMTI walker preserves a multi-byte BER-OID unknown tag in the
 /// top-level `unknown` field. Same forward-compat invariant as ST 0102 / ST 0601.
 #[test]
 fn st0903_round_trips_multibyte_ber_oid_unknown_tag_e5() {
@@ -470,8 +466,8 @@ fn st0903_round_trips_multibyte_ber_oid_unknown_tag_e5() {
         precision_time_stamp: Some(1_700_000_000_000_000),
         version_number: Some(6),
         num_targets_reported: Some(0),
-        // Tag 200 — multi-byte BER-OID. Pre-E5 the encoder wrote a single
-        // byte and the wire round-trip silently mis-encoded the tag.
+        // Tag 200 — multi-byte BER-OID; a single-byte tag write would
+        // silently mis-encode it.
         unknown: vec![OwnedRawField {
             tag: 200,
             value: vec![0x11, 0x22, 0x33],
@@ -488,7 +484,7 @@ fn st0903_round_trips_multibyte_ber_oid_unknown_tag_e5() {
     assert_eq!(preserved.value, &[0x11, 0x22, 0x33]);
 }
 
-/// E5 follow-up (`566789b`): VTargetPack inner walker preserves
+/// VTargetPack inner walker preserves
 /// multi-byte BER-OID unknown tags on each per-target pack.
 #[test]
 fn st0903_vtarget_pack_round_trips_multibyte_ber_oid_unknown_tag_e5_followup() {
@@ -519,9 +515,9 @@ fn st0903_vtarget_pack_round_trips_multibyte_ber_oid_unknown_tag_e5_followup() {
     assert_eq!(preserved.value, &[0xDE, 0xAD]);
 }
 
-/// E5: VMTI walker symmetry — decode → re-encode → decode produces
+/// VMTI walker symmetry — decode → re-encode → decode produces
 /// byte-identical wire output (modulo IMAPB quantization, which a
-/// pure-integer fixture sidesteps). Per the E5 spec, walker preserves
+/// pure-integer fixture sidesteps). The walker preserves
 /// field order so the inner bytes round-trip stably.
 #[test]
 fn st0903_decode_reencode_byte_identical_e5_walker_symmetry() {
@@ -545,13 +541,13 @@ fn st0903_decode_reencode_byte_identical_e5_walker_symmetry() {
 }
 
 // ============================================================================
-// Subtask 3d — cross-set composition (ST 0102 inside ST 0601 Tag 48,
+// Cross-set composition (ST 0102 inside ST 0601 Tag 48,
 //               ST 0903 inside ST 0601 Tag 74)
 // ============================================================================
 
 /// Cross-set: ST 0102 SecurityLs nested inside ST 0601 Tag 48. Mirrors
 /// `tests/klv_st0102_via_st0601.rs` but explicitly checks the outer
-/// walker descends correctly across both BER-OID layers (E3 + E4).
+/// walker descends correctly across both BER-OID layers.
 #[test]
 fn cross_st0601_tag_48_carries_st0102_security_ls() {
     let security = SecurityLs {

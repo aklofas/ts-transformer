@@ -9,19 +9,18 @@
 //!   <decimal-bit-position>  <field-name>  <value>
 //!
 //! Compare this line-for-line against the equivalent field block in
-//! `ffmpeg -bsf:v trace_headers` output on the same source `.bit` file
-//! (see plan §"Diagnostic ground-truth procedure").
+//! `ffmpeg -bsf:v trace_headers` output on the same source `.bit` file;
+//! ffmpeg's trace is the ground truth.
 //!
 //! NOTE: `tst_core::codec::bitreader` is `pub(crate)` and
 //! `validate_bit_depth_minus8` is `pub(crate)` — both unreachable from a
-//! `[[bin]]` target (separate crate). Per Task 1 guidance, this file
-//! mirrors `parse_sps` without expanding the production crate's public
-//! API: we inline a minimal duplicate of `BitReader` and the
-//! `validate_bit_depth_minus8` helper here. The inlined `BitReader` is
-//! behaviorally equivalent for the SPS-reading paths exercised by this
-//! tracer (it intentionally omits `read_se` and some explanatory comments
-//! from the production copy). If either helper is ever promoted to `pub`,
-//! replace the inlined copies with `use` imports.
+//! `[[bin]]` target (separate crate). This file mirrors `parse_sps` without
+//! expanding the production crate's public API: we inline a minimal duplicate
+//! of `BitReader` and the `validate_bit_depth_minus8` helper here. The inlined
+//! `BitReader` is behaviorally equivalent for the SPS-reading paths exercised
+//! by this tracer (it intentionally omits `read_se` and some explanatory
+//! comments from the production copy). If either helper is ever promoted to
+//! `pub`, replace the inlined copies with `use` imports.
 
 use std::env;
 use std::fs;

@@ -92,7 +92,7 @@ fn builder_routes_video_descriptors_by_video_index() {
 #[test]
 fn builder_rejects_out_of_range_video_index() {
     // Out-of-range video_idx surfaces immediately from the descriptor
-    // setter call (Phase 3 sub-phase 3.4.2).
+    // setter call.
     let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
     prog.add_video(0x100, VideoCodec::H264);
     let result = prog.stream_descriptors_for_video(
@@ -240,10 +240,10 @@ fn cache_async_klv_does_not_emit_metadata_descriptors() {
     assert_eq!(muxer.pmt_descriptor_caches[0][1][0], 0x05);
 }
 
-/// F-01 (mux): the PMT size estimator must count the auto-emitted 5-byte AC-3
-/// `audio_stream_descriptor` (tag 0x81). Before the fix, a config with enough
-/// AC-3 streams passed `validate()` but produced an over-large PMT that
-/// `PmtTooLarge` from `MuxerConfig::validate` (now in `config.rs`).
+/// The PMT size estimator must count the auto-emitted 5-byte AC-3
+/// `audio_stream_descriptor` (tag 0x81). Without it, a config with enough
+/// AC-3 streams passes `validate()` but produces an over-large PMT; it must
+/// get `PmtTooLarge` from `MuxerConfig::validate` (in `config.rs`).
 #[test]
 fn validate_counts_ac3_audio_stream_descriptor_and_rejects_oversized_pmt() {
     let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
@@ -259,7 +259,7 @@ fn validate_counts_ac3_audio_stream_descriptor_and_rejects_oversized_pmt() {
     );
 }
 
-/// DA-MUX-2 regression: the PMT size estimator must NOT add subtitle
+/// The PMT size estimator must NOT add subtitle
 /// auto-emit bytes when the caller has already supplied a recognized
 /// subtitle descriptor (tag 0x59 / 0x56 / 0x46, or GA94 / VTTC
 /// registration). The old estimator always added the subtitle auto-emit

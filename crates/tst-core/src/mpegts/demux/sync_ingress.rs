@@ -2,11 +2,10 @@
 //! detection + sync-recovery buffer compaction + per-packet PCR / CC
 //! anomaly checks.
 //!
-//! Hosts three module-level constants tuned in Phase 4 (`MAX_SYNC_BUF_BYTES`
+//! Hosts three module-level constants (`MAX_SYNC_BUF_BYTES`
 //! caps adversarial-input memory growth; `SYNC_SEARCH_WINDOW` bounds
 //! per-feed sync-hunt work; `PCR_ANOMALY_THRESHOLD` discriminates real PCR
-//! jumps from steady-state drift). Per Wave 6.B Decision DB7, constants
-//! follow their consumers.
+//! jumps from steady-state drift); constants live with their consumers.
 //!
 //! Helper methods are `pub(super)` so the `Demuxer` coordinator (`demuxer.rs`)
 //! can call them; the module itself is private (`mod sync_ingress` in
@@ -131,7 +130,7 @@ impl super::demuxer::Demuxer {
     /// elementary stream — common in broadcast and hardware muxes) has no
     /// stream entry, so fall back to an anonymous id whose
     /// `program_number` is the program that declared `pid` as its
-    /// `PCR_PID` (0 if none has). CORR-13.
+    /// `PCR_PID` (0 if none has).
     pub(super) fn pcr_stream_id(&self, pid: u16) -> StreamId {
         self.lookup_stream(pid).unwrap_or_else(|| {
             let program_number = self
@@ -145,15 +144,15 @@ impl super::demuxer::Demuxer {
 
     pub(super) fn check_pcr(&mut self, pkt: &crate::mpegts::demux::ts::TsPacket<'_>) {
         // Per ITU-T H.222.0 §2.4.3.5, each program carries its own time base
-        // via its declared PCR PID. PCR comparisons MUST stay within a
-        // single PID's timeline; comparing across PIDs in a multi-program TS
-        // produces spurious PcrAnomaly events (validate-1 B1 / Codex
-        // TS-TIME-01). Key the last-seen map by `pkt.pid` (the on-wire PCR
-        // PID) — that's the canonical identifier of a time base. Only a PID
-        // that some program currently declares as `PCR_PID` is tracked, and
-        // its entry lives exactly as long as that declaration does.
+        // via its declared PCR PID. PCR comparisons MUST stay within a single
+        // PID's timeline; comparing across PIDs in a multi-program TS produces
+        // spurious PcrAnomaly events. Key the last-seen map by `pkt.pid` (the
+        // on-wire PCR PID) — that's the canonical identifier of a time base.
+        // Only a PID that some program currently declares as `PCR_PID` is
+        // tracked, and its entry lives exactly as long as that declaration
+        // does.
         //
-        // Malformed-PCR check fires first (validate-1 B12): if the on-wire
+        // Malformed-PCR check fires first: if the on-wire
         // PCR field violated H.222.0 §2.4.3.5 syntax, the parser already
         // dropped the decoded value (`pcr_27mhz = None`) and recorded the
         // reason in `pcr_malformed`. Surface that here as a separate issue
@@ -173,7 +172,7 @@ impl super::demuxer::Demuxer {
             // later, fire a `PcrAnomaly` against it — under
             // `StrictMode::TimingOnly` that anomaly is a `StrictRejection`,
             // so one corrupted PID field on the wire could end a session.
-            // Measured on the 2026-09-17 72-h soak: 61 PCR-carrying packets
+            // Measured on a 72-h soak: 61 PCR-carrying packets
             // rewritten to 0x1FFE produced ~50 anomalies on a PID no PMT
             // ever declared.
             //
@@ -189,7 +188,7 @@ impl super::demuxer::Demuxer {
                 if diff.abs() > PCR_ANOMALY_THRESHOLD {
                     // Dedicated PCR PIDs have no `lookup_stream` entry —
                     // resolve through the PMT's PCR_PID instead of
-                    // dropping the issue (CORR-13).
+                    // dropping the issue.
                     let stream = self.pcr_stream_id(pkt.pid);
                     self.queue_nonconformant(
                         stream,
@@ -222,14 +221,13 @@ impl super::demuxer::Demuxer {
         pkt: &crate::mpegts::demux::ts::TsPacket<'_>,
     ) -> (bool, bool) {
         self.last_psi_cc_jump = None;
-        // Per ITU-T H.222.0 §2.4.3.3, the continuity_counter field on null
-        // PID (0x1FFF) packets is undefined and MUST NOT be validated. Null
-        // packets are >50% of bytes in CBR feeds, so tracking them would
-        // grow `cc_by_pid` with a sentinel entry that's never useful and
-        // could spuriously fire ContinuityJump (validate-1 act-now Slice 06
-        // M-02). PCR tracking is intentionally NOT skipped — PCR may
-        // legitimately ride null packets per §2.4.3.5 — that path lives in
-        // `check_pcr` and is keyed on `pcr_27mhz.is_some()`.
+        // Per ITU-T H.222.0 §2.4.3.3, the continuity_counter field on null PID
+        // (0x1FFF) packets is undefined and MUST NOT be validated. Null packets
+        // are >50% of bytes in CBR feeds, so tracking them would grow
+        // `cc_by_pid` with a sentinel entry that's never useful and could
+        // spuriously fire ContinuityJump. PCR tracking is intentionally NOT
+        // skipped — PCR may legitimately ride null packets per §2.4.3.5 — that
+        // path lives in `check_pcr` and is keyed on `pcr_27mhz.is_some()`.
         if pkt.pid == pid::NULL {
             return (false, false);
         }

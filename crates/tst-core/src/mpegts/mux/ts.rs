@@ -11,7 +11,7 @@
 //! - Payload fill from caller-supplied bytes
 //!
 //! Cadence decisions (when to emit PCR, when to emit PSI, when to start a
-//! new PES) live in the `Muxer` orchestrator (Task 8). This module is purely
+//! new PES) live in the `Muxer` orchestrator. This module is purely
 //! mechanical packet assembly.
 
 use crate::mpegts::common::{Pcr27mhz, TS_PACKET_SIZE, TS_SYNC_BYTE};
@@ -471,7 +471,7 @@ mod tests {
         }
     }
 
-    /// DA-MUX-1 — PCR-only heartbeat must repeat the last payload CC.
+    /// PCR-only heartbeat must repeat the last payload CC.
     ///
     /// H.222.0 §2.4.3.3: the continuity_counter is NOT incremented on
     /// adaptation-field-only packets (afc='10'). The heartbeat must carry the

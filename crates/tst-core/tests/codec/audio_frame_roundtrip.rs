@@ -2,7 +2,7 @@
 //! events, parse frames with the new iterator, and assert the reported
 //! (sample_rate, channel_count) is consistent across all frames per PID.
 //!
-//! Fixtures are committed by plan #21: ~3-second 440 Hz mono sine waves
+//! Fixtures are committed: ~3-second 440 Hz mono sine waves
 //! muxed with a synthetic H.264 video. We assert iterator behavior, not
 //! audio content (the parser doesn't decode audio).
 //!
@@ -99,7 +99,7 @@ fn aac_adts_roundtrip_parses_frames_consistently() {
                 Some(sr) => assert_eq!(f.sample_rate_hz, sr, "sample rate jumped mid-stream"),
                 None => seen_sample_rate = Some(f.sample_rate_hz),
             }
-            // C7 — `.channels()` returns `Some` for canonical layouts
+            // `.channels()` returns `Some` for canonical layouts
             // (`channel_configuration` 1..=7) and `None` for PCE-defined
             // (`channel_configuration == 0`). The conformant aac-adts
             // fixture uses canonical mono.

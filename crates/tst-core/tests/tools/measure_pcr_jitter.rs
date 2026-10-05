@@ -2,7 +2,7 @@
 //! delta median + 95th percentile (in milliseconds). Used by
 //! release-validation.sh Step 9 (PCR jitter test).
 //!
-//! Fail-exit conditions (per `reference_ts_corpus_cadence.md` memory):
+//! Fail-exit conditions (from the measured corpus PCR cadence):
 //!   median > 67 ms
 //!   p95    > 100 ms
 //!

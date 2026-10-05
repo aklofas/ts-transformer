@@ -446,7 +446,7 @@ fn audio_language_auto_emit_suppressed_when_caller_supplies() {
 
 #[test]
 fn ac3_audio_stream_descriptor_auto_emits_on_pmt() {
-    // validate-1 C6 — ATSC A/52:2018 §A.4.3 mandates the AC-3 audio
+    // ATSC A/52:2018 §A.4.3 mandates the AC-3 audio
     // descriptor (tag 0x81) on every AC-3 PMT entry. The muxer should
     // emit it automatically alongside the AC-3 Registration descriptor.
     let cfg = {

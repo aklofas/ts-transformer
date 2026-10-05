@@ -1,24 +1,23 @@
-//! Demuxer PES header & PTS validation tests (validate-1 B4 + B5 + B6 + C11).
+//! Demuxer PES header & PTS validation tests.
 //!
-//! Four discrete fixes, each verified by a failing-first integration test
-//! per the project's TDD convention:
+//! Four discrete checks, each pinned by an integration test:
 //!
-//! - **B4 — PTS anomaly distinct from PCR anomaly.** Backward-PTS detection
+//! - **PTS anomaly distinct from PCR anomaly.** Backward-PTS detection
 //!   is its own `NonConformantIssue::PtsAnomaly` variant (not `PcrAnomaly`),
 //!   PTS-required stream types (audio, video) surface `MissingRequiredPts`
-//!   when the PES omits PTS, and `last_pts_by_pid` is no longer corrupted
-//!   by writing 0 when PTS is absent.
+//!   when the PES omits PTS, and `last_pts_by_pid` is never overwritten
+//!   with 0 when PTS is absent.
 //!
-//! - **B5 — PES header structural validation.** Per H.222.0 V9 §2.4.3.6 +
-//!   §2.4.3.7 the demuxer now rejects `PTS_DTS_flags = 0b01` (forbidden),
+//! - **PES header structural validation.** Per H.222.0 V9 §2.4.3.6 +
+//!   §2.4.3.7 the demuxer rejects `PTS_DTS_flags = 0b01` (forbidden),
 //!   validates the byte-6 `'10'` marker bits, and validates the PTS/DTS
 //!   5-byte prefix nibbles and trailing marker bits.
 //!
-//! - **B6 — Subtitle data_alignment validation.** Per EN 300 743 §6.2 +
+//! - **Subtitle data_alignment validation.** Per EN 300 743 §6.2 +
 //!   EN 300 472 §4.2 the demuxer surfaces `SubtitleAlignmentMissing` when
 //!   a DVB-sub / teletext PES arrives with `data_alignment_indicator = 0`.
 //!
-//! - **C11 — AAC-LATM (stream_type 0x11) sync validation.** Per ISO/IEC
+//! - **AAC-LATM (stream_type 0x11) sync validation.** Per ISO/IEC
 //!   14496-3 §1.7 + H.222.0 Table 2-34 each LATM PES MUST begin with the
 //!   24-bit LOAS header (syncword 0x2B7 + 13-bit audioMuxLengthBytes). The
 //!   demuxer surfaces `LatmFraming` when the syncword is absent or the
@@ -48,7 +47,7 @@ fn drain_all(mux: &mut Muxer) -> Vec<u8> {
 }
 
 // =====================================================================
-// B4 — PTS anomaly distinct from PCR anomaly
+// PTS anomaly distinct from PCR anomaly
 // =====================================================================
 
 /// Build a synthetic TS stream with two H.264 PESes on PID 0x101 where the
@@ -88,8 +87,8 @@ fn demux_b4_backward_pts_emits_pts_anomaly_not_pcr_anomaly() {
     // The PES-path backward-PTS check must surface PtsAnomaly with delta in
     // 90 kHz ticks (≈ -900_000). The PCR-path may *separately* emit
     // PcrAnomaly with delta in 27 MHz ticks (≈ -270_000_000) because the
-    // muxer's PCR clock follows PTS — that's the PCR-side concern, not B4's.
-    // The B4 fix is asserted by: at least one event is PtsAnomaly (the new
+    // muxer's PCR clock follows PTS — that's the PCR-side concern.
+    // The PTS check is asserted by: at least one event is PtsAnomaly (the new
     // variant) instead of every backward-PTS being lumped under PcrAnomaly.
     let pts_anomaly_seen = events.iter().any(|e| {
         matches!(
@@ -221,7 +220,7 @@ fn demux_b4_missing_pts_on_required_stream_type_surfaces_issue() {
 }
 
 // =====================================================================
-// B5 — PES header structural validation
+// PES header structural validation
 // =====================================================================
 
 /// `PTS_DTS_flags = 0b01` is forbidden by H.222.0 §2.4.3.7. Build a valid
@@ -290,7 +289,7 @@ fn demux_b5_strict_full_escalates_pes_header_malformed() {
 }
 
 // =====================================================================
-// B6 — Subtitle data_alignment_indicator validation
+// Subtitle data_alignment_indicator validation
 // =====================================================================
 
 /// Build a DVB-sub PES via the muxer (sets data_alignment_indicator=1 per
@@ -467,13 +466,13 @@ fn patch_dvb_sub_pes_clear_data_alignment(mut bytes: Vec<u8>) -> Vec<u8> {
 }
 
 // =====================================================================
-// C11 — AAC-LATM (stream_type 0x11) sync validation
+// AAC-LATM (stream_type 0x11) sync validation
 // =====================================================================
 
 /// Build a TS byte stream containing one AAC-LATM PES on PID 0x150. The
 /// "LATM frame" is `payload` — used in conjunction with a conformant
 /// (`build_loas_record`) or non-conformant (`bad_latm_payload`) shape
-/// to drive C11 acceptance.
+/// to drive LATM acceptance.
 fn build_ts_with_aac_latm_pes(payload: &[u8]) -> Vec<u8> {
     let cfg = {
         let mut prog = MuxerProgramConfigBuilder::new(1, 0x100);
@@ -504,7 +503,7 @@ fn build_valid_loas_record(len: u16) -> Vec<u8> {
     out
 }
 
-/// C11 — primary lenient-mode test: PES that does not begin with the LOAS
+/// Primary lenient-mode test: PES that does not begin with the LOAS
 /// syncword on a `stream_type=0x11` PID surfaces
 /// `NonConformantIssue::LatmFraming { kind: MissingSyncword }`.
 ///
@@ -543,7 +542,7 @@ fn demux_c11_latm_missing_syncword_emits_issue() {
     );
 }
 
-/// C11 — overrun case: LOAS header parses but the declared
+/// Overrun case: LOAS header parses but the declared
 /// `audioMuxLengthBytes` runs past the PES payload.
 #[test]
 fn demux_c11_latm_audio_mux_length_overrun_emits_issue() {
@@ -580,7 +579,7 @@ fn demux_c11_latm_audio_mux_length_overrun_emits_issue() {
     );
 }
 
-/// C11 — valid LATM PES: no issue should fire, sample event present.
+/// Valid LATM PES: no issue should fire, sample event present.
 #[test]
 fn demux_c11_latm_valid_syncword_no_issue() {
     let payload = build_valid_loas_record(64);
@@ -619,7 +618,7 @@ fn demux_c11_latm_valid_syncword_no_issue() {
     assert!(sample_seen, "expected Sample event on PID 0x150");
 }
 
-/// C11 — strict mode `Full`: LATM framing violation suppresses the
+/// Strict mode `Full`: LATM framing violation suppresses the
 /// `Sample` event but still emits the `NonConformant` issue.
 #[test]
 fn demux_c11_latm_strict_full_suppresses_sample() {

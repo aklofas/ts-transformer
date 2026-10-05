@@ -3,7 +3,7 @@
 //! `Demuxer::feed`.
 //!
 //! All tests go through the public mux→demux path to avoid exposing
-//! internal PSI build helpers — keeps Phase 6 zero-API-change.
+//! internal PSI build helpers.
 
 use proptest::prelude::*;
 use tst_core::mpegts::common::Pts90khz;
@@ -196,7 +196,7 @@ proptest! {
         component_tag in any::<u8>(),
         language in any::<[u8; 3]>(),
         // Text length 0..=249 — the helper returns
-        // DescriptorError::TooLarge above 249 (validate-1 C5).
+        // DescriptorError::TooLarge above 249.
         text in "[ -~]{0,249}",
     ) {
         // EN 300 468 §6.2.8: ext must be 0xF for legacy content values 0x1..=0x8.

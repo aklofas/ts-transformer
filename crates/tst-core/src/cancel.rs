@@ -54,7 +54,7 @@ struct State {
     handle: AtomicI64,
     closer: Closer,
     /// The CALLER-visible cancel latch, deliberately separate from the
-    /// `handle` sentinel (WP-C1).
+    /// `handle` sentinel.
     ///
     /// The sentinel says "the closer has run", which happens on the owner's
     /// internal teardown too — `Socket::drop`, and every transport error
@@ -324,7 +324,7 @@ mod tests {
         assert!(h.is_cancelled());
     }
 
-    /// WP-C1: the owner's teardown path closes and wakes WITHOUT latching
+    /// The owner's teardown path closes and wakes WITHOUT latching
     /// the caller-visible latch.
     ///
     /// `Socket::drop` fires the handle, and `SrtTransport` drops its socket
@@ -357,7 +357,7 @@ mod tests {
         assert_eq!(runs.load(Ordering::SeqCst), 1, "the closer runs once");
     }
 
-    /// WP-C1: `is_cancelled` is part of the `TransportCancel` object contract,
+    /// `is_cancelled` is part of the `TransportCancel` object contract,
     /// reachable through the trait object every binding and managed wrapper
     /// holds — not only through the inherent method. Pinned via the trait
     /// path so a missing trait method is a compile failure here.

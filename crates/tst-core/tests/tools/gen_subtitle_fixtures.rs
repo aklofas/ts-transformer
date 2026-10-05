@@ -374,13 +374,12 @@ fn build_webvtt_multi_program() -> Vec<u8> {
 /// `SamplePayload::Audio` carrying the WebVTT bytes. The codec /
 /// payload mismatch is the caller's problem in that path.
 ///
-/// With `DemuxerConfig::treat_as.insert(0x200, StreamKind::Subtitle(
-/// WebVttInTs))`: demuxer reroutes PID 0x200 to the subtitle
-/// dispatch path, emits `SamplePayload::Subtitle`, AND emits
-/// `NonConformantIssue::SubtitleMissingDescriptor` because no
-/// subtitle descriptor is present in the PMT (Task 13 wires this
-/// emission). The Task 20 `treat_as` test uses exactly this fixture
-/// to verify both halves.
+/// With `DemuxerConfig::treat_as.insert(0x200, StreamKind::Subtitle(WebVttInTs))`:
+/// demuxer reroutes PID 0x200 to the subtitle dispatch path, emits
+/// `SamplePayload::Subtitle`, AND emits
+/// `NonConformantIssue::SubtitleMissingDescriptor` because no subtitle
+/// descriptor is present in the PMT. The `treat_as` test uses exactly this
+/// fixture to verify both halves.
 fn build_non_conformant_missing_descriptor() -> Vec<u8> {
     let cfg = {
         let mut prog = MuxerProgramConfigBuilder::new(1, 0x100);

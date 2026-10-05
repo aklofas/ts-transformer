@@ -1,4 +1,4 @@
-//! Plan #72 (Wave 2.3): the `MuxerProgramConfig.stream_descriptors`
+//! The `MuxerProgramConfig.stream_descriptors`
 //! length-mismatch invariant is enforced via the rich
 //! `MuxError::ConfigInvalid { reason: String }` variant. The reason
 //! string names the offending program_number plus both lengths so

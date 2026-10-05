@@ -122,7 +122,7 @@ fn av1_mux_demux_roundtrip_emits_obus() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// C8 — AV1-in-MPEG-2-TS binding-conformant round-trips
+// AV1-in-MPEG-2-TS binding-conformant round-trips
 // ─────────────────────────────────────────────────────────────────────────
 
 /// Default mux + default demux both use `Av1CarriageMode::Mpeg2TsBinding`.
@@ -350,13 +350,12 @@ fn av1_interop_round_trip_no_binding_issues() {
     assert!(saw_sample, "interop round-trip should emit Sample");
 }
 
-/// Spec-byte assertion (validate-1 C8 follow-up): for an AV1 binding-mode
+/// Spec-byte assertion: for an AV1 binding-mode
 /// access unit carrying N OBUs, the on-wire PES payload MUST contain
 /// EXACTLY N `0x00 0x00 0x01` start codes — one per `ts_open_bitstream_unit()`
-/// invocation per binding §3.2 syntax. The previous single-start-code-
-/// per-AU behavior shipped Sprint 2 was non-conformant; this test pairs
-/// the round-trip test above with a wire-format assertion to catch any
-/// regression to single-start-code framing.
+/// invocation per binding §3.2 syntax. Single-start-code-per-AU framing is
+/// non-conformant; this test pairs the round-trip test above with a
+/// wire-format assertion to catch any regression to it.
 #[test]
 fn av1_binding_mode_emits_one_start_code_per_obu_on_wire() {
     fn obu(obu_type: u8, body: &[u8]) -> Vec<u8> {
@@ -414,7 +413,7 @@ fn av1_binding_mode_emits_one_start_code_per_obu_on_wire() {
     );
 }
 
-/// Task 5 (AV1-01/AV1-03): the demux `SamplePayload::Video` is stamped with the
+/// The demux `SamplePayload::Video` is stamped with the
 /// carriage mode the demuxer was configured for. A binding-mode demuxer on a
 /// binding-mode sender must report `Some(Av1CarriageMode::Mpeg2TsBinding)`.
 #[test]
@@ -448,7 +447,7 @@ fn binding_demux_stamps_sample_with_binding_carriage() {
     assert_eq!(carriage, Some(Av1CarriageMode::Mpeg2TsBinding));
 }
 
-/// AV1-03: an interop sample (raw OBUs, no binding framing) must parse clean
+/// An interop sample (raw OBUs, no binding framing) must parse clean
 /// under `InteropRawObu` carriage and must surface `Av1MissingTsObuFraming`
 /// under `Mpeg2TsBinding` carriage. This pins the carriage-aware branch in
 /// `split_video` / `split_video_strict`.

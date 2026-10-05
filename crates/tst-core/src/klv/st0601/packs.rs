@@ -428,7 +428,7 @@ pub(crate) fn emit_metadata_substream_id(
 }
 
 // ============================================================================
-// Task C3 shared substrate: `[BER length][value bytes]` fields
+// Shared substrate: `[BER length][value bytes]` fields
 // ============================================================================
 
 /// Read one `[BER length][value bytes]` field, returning `(value_bytes,
@@ -1723,7 +1723,7 @@ mod tests {
 
 #[cfg(test)]
 mod variant_inventory {
-    //! Exhaustiveness for this module's wire-code enum (Arc 2 R2). See
+    //! Exhaustiveness for this module's wire-code enum. See
     //! [`crate::klv::inventory_test`].
     use super::*;
     use crate::klv::inventory_test;

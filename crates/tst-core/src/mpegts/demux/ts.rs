@@ -8,7 +8,6 @@ use crate::mpegts::common::{TS_PACKET_SIZE, TS_SYNC_BYTE};
 /// ITU-T H.222.0 §2.4.3.2 / §2.4.3.5. Surfaced on
 /// `TsPacket::adaptation_malformed` and, by the demuxer, as
 /// [`NonConformantIssue::AdaptationFieldMalformed`](crate::mpegts::demux::NonConformantIssue::AdaptationFieldMalformed).
-/// REF-TS-02.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum AdaptationFieldKind {
@@ -73,7 +72,7 @@ pub struct TsPacket<'a> {
     /// (in which case [`Self::pcr_malformed`] is populated).
     pub pcr_27mhz: Option<u64>,
     /// Set when `pcr_flag = 1` and the PCR field was syntactically
-    /// non-conformant per H.222.0 §2.4.3.5 (validate-1 B12). The demuxer
+    /// non-conformant per H.222.0 §2.4.3.5. The demuxer
     /// surfaces this as `NonConformantIssue::PcrMalformed`.
     pub pcr_malformed: Option<PcrMalformedKind>,
     /// Set when the adaptation field's control/length combination violated

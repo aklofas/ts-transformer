@@ -322,8 +322,8 @@ pub struct UasDatalinkLs {
     /// Values outside raise [`crate::error::KlvEncodeError::OutOfRange`].
     pub sensor_east_velocity: Option<f64>,
 
-    // Extended-range items (ST 1201.5 IMAPB-encoded, tags 96-134) — WP-B
-    // Table B1. Unlike the fixed-width LinearRange fields above, IMAPB
+    // Extended-range items (ST 1201.5 IMAPB-encoded, tags 96-134).
+    // Unlike the fixed-width LinearRange fields above, IMAPB
     // wire values decode at any length 1..=max_len and encode at
     // default_len; out-of-range encodes error by default or, under
     // `OutOfRangePolicy::Indicator`, emit the tag's ST 1201.5
@@ -416,7 +416,7 @@ pub struct UasDatalinkLs {
     /// [`crate::error::KlvEncodeError::OutOfRange`].
     pub zoom_percentage: Option<f64>,
 
-    // Var-length int/enum items (ST 0601 WP-B Table B2, tags 110-139) —
+    // Var-length int/enum items (ST 0601, tags 110-139) —
     // MISB variable-length truncatable integer encoding (see
     // `crate::klv::length::{read_var_uint, read_var_int}`): the TLV
     // length IS the byte count (not BER-OID), decode accepts any wire
@@ -553,7 +553,7 @@ pub struct UasDatalinkLs {
     /// See [`OperationalMode`].
     pub operational_mode: Option<OperationalMode>,
 
-    // Pack & list items (WP-C Table C1)
+    // Pack & list items
     /// Item 81: Image Horizon Pixels. See [`ImageHorizonPixels`].
     pub image_horizon: Option<ImageHorizonPixels>,
     /// Item 115: Control Command — MULTI-INSTANCE (ST 0601.19 Table 1
@@ -1452,7 +1452,7 @@ impl UasDatalinkLs {
 
 #[cfg(test)]
 mod variant_inventory {
-    //! Exhaustiveness for this module's wire-code enums (Arc 2 R2). See
+    //! Exhaustiveness for this module's wire-code enums. See
     //! [`crate::klv::inventory_test`] for what the generated test pins and why
     //! the compile-time half can only live inside tst-core.
     use super::*;

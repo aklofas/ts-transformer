@@ -658,7 +658,7 @@ mod tests {
         assert_eq!(extract(&au, VideoCodec::H264).unwrap(), Some(ts));
     }
 
-    // Finding 1: TruncatedSei when a confirmed MISP identifier is present but
+    // TruncatedSei when a confirmed MISP identifier is present but
     // the declared payload_size runs past the RBSP end.
     #[test]
     fn extract_truncated_misp_sei_errors() {
@@ -675,7 +675,7 @@ mod tests {
         );
     }
 
-    // Finding 1 companion: fewer than 16 bytes available = identifier
+    // Companion: fewer than 16 bytes available = identifier
     // unconfirmable = Ok(None) (not Err).
     #[test]
     fn extract_truncated_before_full_identifier_is_none() {
@@ -694,8 +694,7 @@ mod tests {
         );
     }
 
-    // Finding 3: H.265 SUFFIX_SEI (NAL type 40) is matched by the parser but
-    // was previously untested.
+    // H.265 SUFFIX_SEI (NAL type 40) is matched by the parser.
     #[test]
     fn demux_codec_converts_for_extract() {
         let d = crate::mpegts::demux::VideoCodec::H265;
@@ -725,7 +724,7 @@ mod tests {
         );
     }
 
-    // Finding 1 regression: a 0xFF-chain payload_size that overflows usize MUST NOT
+    // Regression: a 0xFF-chain payload_size that overflows usize MUST NOT
     // panic in debug builds. The RBSP here is: payload_type=5 (user_data_unregistered),
     // then 64 bytes of 0xFF (accumulated size = 64*255 = 16320, far past end), then a
     // non-0xFF terminator 0x00 ending the size accumulation, followed by 16 bytes
@@ -770,7 +769,7 @@ mod tests {
         );
     }
 
-    // Finding 2 regression: H.265 AU ending in a 1-byte truncated NAL stub whose
+    // Regression: H.265 AU ending in a 1-byte truncated NAL stub whose
     // single header byte pattern-matches a VCL type must NOT be treated as VCL.
     // AU: VPS (non-VCL type 32), then a 1-byte stub 0x26 (IDR_W_RADL first byte).
     // insert_sei_before_first_vcl must return Err(NoVclNal) — no complete VCL present.

@@ -140,7 +140,7 @@ fn truncated_field_value_rejected() {
 
 #[test]
 fn lenient_read_pack_records_field_error_and_keeps_the_pack() {
-    // CORR-29(e): target_id 1, then tag 10 (centroid_lat_offset, 3-byte
+    // target_id 1, then tag 10 (centroid_lat_offset, 3-byte
     // IMAPB) with a 1-byte value — a per-field error, not a framing
     // error. Lenient decode keeps the pack and records the error.
     let bytes = [0x01, 0x0A, 0x01, 0x00];
@@ -179,12 +179,11 @@ fn lenient_read_pack_still_rejects_framing_errors() {
 
 #[test]
 fn unknown_tags_preserved() {
-    // Build by hand: target_id=1, then unknown tag 200 with 3 bytes
-    // [0xAA 0xBB 0xCC]. Tag 200 is BER-OID-encoded as 0x81 0x48 per
-    // ST 0107.5 §6.3.1 (post-E5-followup the body walker reads tags
-    // as BER-OID, so multi-byte tag IDs need their proper encoding
-    // on the wire — a raw 0xC8 byte would be parsed as a continuation
-    // prefix and misframe the BER length).
+    // Build by hand: target_id=1, then unknown tag 200 with 3 bytes [0xAA 0xBB
+    // 0xCC]. Tag 200 is BER-OID-encoded as 0x81 0x48 per ST 0107.5 §6.3.1 (the
+    // body walker reads tags as BER-OID, so multi-byte tag IDs need their
+    // proper encoding on the wire — a raw 0xC8 byte would be parsed as a
+    // continuation prefix and misframe the BER length).
     let bytes = [0x01u8, 0x81, 0x48, 3, 0xAA, 0xBB, 0xCC];
     let (decoded, _) = read_pack(&bytes).unwrap();
     assert_eq!(decoded.target_id, 1);
@@ -270,11 +269,10 @@ fn round_trip_with_unknown_preserved() {
     assert_eq!(decoded.unknown[0].tag, 200);
 }
 
-/// E5 follow-up: the LS body walker reads tags as BER-OID per
-/// ST 0107.5 §6.3.1, so a future ST 0903.7+ pack tag ≥ 128 (which
-/// encodes as multi-byte BER-OID) survives the inner walk. Pre-fix,
-/// the walker read tags as `cursor[0]` and would have misframed the
-/// first continuation byte (0x81 0x..) as the start of the BER length.
+/// The LS body walker reads tags as BER-OID per ST 0107.5 §6.3.1, so a
+/// future ST 0903.7+ pack tag ≥ 128 (which encodes as multi-byte BER-OID)
+/// survives the inner walk. A walker reading tags as `cursor[0]` would
+/// misframe the first continuation byte (0x81 0x..) as the BER length.
 ///
 /// Verifies the two BER-OID size boundaries that matter for forward-
 /// compat: 128 (smallest multi-byte: 0x81 0x00) and 16384 (smallest
@@ -311,13 +309,12 @@ fn unknown_tag_multibyte_ber_oid_round_trips() {
     }
 }
 
-/// E5 follow-up: BER-OID-encoded tag IDs ≤ 127 are byte-identical to
-/// the pre-fix raw single-byte tags. Every §10.2 typed pack tag fits
-/// in this range (highest is 107), so legacy wire bytes encode bit-
-/// for-bit unchanged. This regression-pins the backward-compat
-/// guarantee for the §10.2.2 typed dispatch tags (4 U8 tags spot-
-/// checked: 4 priority, 5 confidence, 7 percentage, 23 detection;
-/// plus the BER-OID Target ID = 7 leading byte).
+/// BER-OID-encoded tag IDs ≤ 127 are byte-identical to raw single-byte tags.
+/// Every §10.2 typed pack tag fits in this range (highest is 107), so legacy
+/// wire bytes encode bit-for-bit unchanged. This regression-pins the
+/// backward-compat guarantee for the §10.2.2 typed dispatch tags (4 U8 tags
+/// spot-checked: 4 priority, 5 confidence, 7 percentage, 23 detection; plus the
+/// BER-OID Target ID = 7 leading byte).
 #[test]
 fn defined_pack_tags_byte_identical_pre_and_post_e5_followup() {
     let pack = VTargetPack {
@@ -330,7 +327,7 @@ fn defined_pack_tags_byte_identical_pre_and_post_e5_followup() {
     };
     let mut bytes = Vec::new();
     write_pack(&pack, &mut bytes).unwrap();
-    // Same exact layout the canonical-bytes test would emit pre-E5
+    // Same exact layout as single-byte-tag emission
     // (single-byte tags, BER length, value): a hand-built reference
     // catches drift if a future change accidentally widened the
     // BER-OID emit path for tags ≤ 127.
@@ -347,7 +344,7 @@ fn defined_pack_tags_byte_identical_pre_and_post_e5_followup() {
     );
 }
 
-// -------- REF-KLV-04b: u64 field round-trip tests --------
+// -------- u64 field round-trip tests --------
 
 #[test]
 fn vtarget_pack_target_id_above_u32_round_trips() {
@@ -377,7 +374,7 @@ fn vtarget_pack_pixel_above_u32_round_trips() {
     assert_eq!(decoded.centroid_pixel, Some(big_pixel));
 }
 
-// -------- DA-KLVC-1: wire-width cap enforcement --------
+// -------- wire-width cap enforcement --------
 
 const V3_MAX: u64 = (1u64 << 24) - 1; // 16_777_215
 const V4_MAX: u64 = u32::MAX as u64; // 4_294_967_295
@@ -562,7 +559,7 @@ fn centroid_pix_col_at_v4_cap_round_trips() {
     assert_eq!(decoded.centroid_pix_col, Some(V4_MAX));
 }
 
-// -------- Strictwire follow-up: completeness pinning test --------
+// -------- u64 encode-cap completeness pinning test --------
 //
 // All u64-typed VTargetPack fields (enumerated by grep for `u64` in
 // vtarget_pack/model.rs):
@@ -583,13 +580,10 @@ fn centroid_pix_col_at_v4_cap_round_trips() {
 // big-endian raw bytes); see `precision_time_stamp_u64_max_round_trips`
 // in st0903/tests.rs for the companion encode round-trip probe.
 
-/// Pins the invariant: every u64-typed VTargetPack field either
-/// encodes losslessly (target_id via BER-OID) or returns a structured
-/// OutOfRange error when the value exceeds its wire cap — no field
-/// silently truncates at u64::MAX.
-///
-/// This is the PT-KLV-strictwire follow-up closed as subsumed by
-/// WP10/DA-KLVC-1: the caps are verified complete for all u64 fields.
+/// Pins the invariant: every u64-typed VTargetPack field either encodes
+/// losslessly (target_id via BER-OID) or returns a structured OutOfRange error
+/// when the value exceeds its wire cap — no field silently truncates at
+/// u64::MAX. The caps are verified complete for all u64 fields.
 #[test]
 fn u64_typed_fields_never_silently_truncate_on_encode() {
     use super::decode::read_pack;

@@ -160,7 +160,7 @@ impl Muxer {
         write_subtitle_pes(&mut self.pes_scratch, pts.as_ticks(), pes_shape, payload);
 
         let subtitle_packets = ts_packets_for(self.pes_scratch.len());
-        // Validate-1 C3: validate() bans subtitle PIDs as PCR PIDs, so
+        // validate() bans subtitle PIDs as PCR PIDs, so
         // current_pid here will never equal self.pcr_pids[prog_idx] and
         // pcr_only_due reduces to the pure pcr_due predicate.
         // Subtitle pushes are sparse; this is the prototypical case where

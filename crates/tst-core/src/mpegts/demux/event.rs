@@ -631,7 +631,7 @@ pub enum NonConformantIssue {
     /// the issue propagates as a `DemuxError::StrictRejection`.
     DvbSubDataIdentifier { observed: u8 },
 
-    /// PTS anomaly distinct from PCR anomaly (validate-1 B4). Per ITU-T
+    /// PTS anomaly distinct from PCR anomaly. Per ITU-T
     /// H.222.0 V9 §2.4.3.6 the PTS clock is per-PES and must be
     /// monotonically non-decreasing on a given elementary stream PID
     /// (modulo the 33-bit wrap). A backward jump means either an
@@ -655,8 +655,8 @@ pub enum NonConformantIssue {
     /// and surfaces this issue. Strict mode (`StrictMode::Full`) rejects.
     MissingRequiredPts { pid: u16 },
 
-    /// PES header structural validation failure (validate-1 B5). Catches
-    /// spec violations the prior "too short for header" check missed.
+    /// PES header structural validation failure. Catches spec violations
+    /// a plain "too short for header" check misses.
     /// See [`PesHeaderMalformedKind`] for the specific violation.
     PesHeaderMalformed {
         pid: u16,
@@ -664,7 +664,7 @@ pub enum NonConformantIssue {
     },
 
     /// DVB subtitle or teletext PES arrived with
-    /// `data_alignment_indicator = 0` (validate-1 B6). Per ETSI EN 300
+    /// `data_alignment_indicator = 0`. Per ETSI EN 300
     /// 743 §6.2 and EN 300 472 §4.2, subtitle streams MUST set this
     /// flag (one complete composition page / one teletext block per
     /// PES). Lenient mode emits the sample anyway; strict mode rejects.
@@ -717,10 +717,10 @@ pub enum NonConformantIssue {
     /// the issue escalates to `DemuxError::StrictRejection`.
     Av1ObuHeader { pid: u16, kind: Av1ObuHeaderKind },
 
-    /// AAC-LATM PES (stream_type `0x11`) framing violation
-    /// (validate-1 C11). Per ISO/IEC 14496-3 §1.7 + H.222.0 Table 2-34,
-    /// each PES on a LATM-advertising PID MUST begin with a 24-bit LOAS
-    /// header (`syncword=0x2B7` + 13-bit `audioMuxLengthBytes`).
+    /// AAC-LATM PES (stream_type `0x11`) framing violation. Per ISO/IEC 14496-3
+    /// §1.7 + H.222.0 Table 2-34, each PES on a LATM-advertising PID MUST begin
+    /// with a 24-bit LOAS header (`syncword=0x2B7` + 13-bit
+    /// `audioMuxLengthBytes`).
     ///
     /// `kind` carries the specific violation;
     /// see [`crate::codec::aac::latm::LatmFramingKind`].
@@ -738,11 +738,11 @@ pub enum NonConformantIssue {
     /// PSI section reassembly observed a continuity-counter jump on a
     /// continuation packet. Per ISO/IEC 13818-1 §2.4.3.3 PSI continuation
     /// packets must increment the CC; a jump means an upstream packet drop.
-    /// Plan #29 strict mode (`DemuxerConfig::lenient_psi_reassembly = false`,
-    /// the default) drops the partial section and emits this issue,
-    /// matching ffmpeg's `mpegts.c:3118-3142` behavior. Lenient mode keeps
-    /// today's behavior of feeding the bytes through; the section then
-    /// either passes by luck or surfaces as `PsiChecksumMismatch`.
+    /// Strict reassembly (`DemuxerConfig::lenient_psi_reassembly = false`, the
+    /// default) drops the partial section and emits this issue, matching
+    /// ffmpeg's `mpegts.c:3118-3142` behavior. Lenient mode feeds the bytes
+    /// through; the section then either passes by luck or surfaces as
+    /// `PsiChecksumMismatch`.
     PsiCcDiscontinuity {
         pid: u16,
         expected: u8,
@@ -824,7 +824,7 @@ pub enum NonConformantIssue {
 
     /// AC-3 PES on a stream type `0x81` (System A) arrived with
     /// `data_alignment_indicator = 1` but the payload does not begin
-    /// with the AC-3 syncword `0x0B77` (validate-1 C12). Per ATSC
+    /// with the AC-3 syncword `0x0B77`. Per ATSC
     /// A/52:2018 §A.6.3, every AC-3 PES with the alignment flag set
     /// MUST start with a syncframe; receivers gating on the flag may
     /// drop or mis-decode misaligned payloads.
@@ -869,7 +869,7 @@ pub enum NonConformantIssue {
 
     /// A PMT section's body `program_number` (H.222.0 §2.4.4.8) does not match
     /// the `program_number` the PAT (§2.4.4.4) assigned to this PMT PID. The
-    /// mislabeled topology is NOT adopted. REF-PSI-01.
+    /// mislabeled topology is NOT adopted.
     PmtProgramNumberMismatch {
         /// The PMT PID on which the mislabeled section arrived.
         pid: u16,
@@ -885,7 +885,7 @@ pub enum NonConformantIssue {
     /// route the payload to PSI/PES reassembly, so scrambled bytes can't
     /// corrupt PSI/PES/codec/metadata state) and surfaces this issue.
     /// `StrictMode::Full` rejects. A subsequent clear (TSC=0) packet on the
-    /// same PID recovers normally. REF-TS-01.
+    /// same PID recovers normally.
     UnsupportedScrambling {
         /// The PID the scrambled packet arrived on.
         pid: u16,
@@ -897,7 +897,7 @@ pub enum NonConformantIssue {
     /// §2.4.3.2/§2.4.3.5 (reserved control 00, wrong length for the control
     /// value, or a PCR flag with too few bytes). See [`AdaptationFieldKind`].
     /// Lenient mode surfaces this and continues best-effort (control 00 routes
-    /// no payload by construction); `StrictMode::Full` rejects. REF-TS-02.
+    /// no payload by construction); `StrictMode::Full` rejects.
     AdaptationFieldMalformed {
         pid: u16,
         kind: crate::mpegts::demux::ts::AdaptationFieldKind,
@@ -908,7 +908,7 @@ pub enum NonConformantIssue {
     /// elementary stream; on audio/KLV/subtitle/private streams an unbounded
     /// PES would buffer until the next PUSI / cap and flush a bogus sample.
     /// The demuxer drops the partial and surfaces this; `StrictMode::Full`
-    /// rejects. `stream_id` is the PES stream_id byte. REF-PES-01.
+    /// rejects. `stream_id` is the PES stream_id byte.
     ZeroLengthPesNonVideo { pid: u16, stream_id: u8 },
 
     /// A PAT/PMT section violated a fixed/reserved syntax field per H.222.0
@@ -917,7 +917,7 @@ pub enum NonConformantIssue {
     /// violations are validated only when `StrictMode != Off` (real muxers set
     /// reserved bits inconsistently, so always-on checking would false-positive
     /// in default/lenient mode). `StrictMode::Full` rejects. `table_id` is the
-    /// PSI table_id (0x00 PAT, 0x02 PMT). REF-PSI-03.
+    /// PSI table_id (0x00 PAT, 0x02 PMT).
     PsiSyntax {
         pid: u16,
         table_id: u8,
@@ -1415,8 +1415,8 @@ mod tests {
         );
     }
 
-    /// CORR-17: a negative unwrapped PTS used to be cast `as u64` and
-    /// rendered as ~584,000 years.
+    /// A negative unwrapped PTS must clamp to zero; cast `as u64` it
+    /// renders as ~584,000 years.
     #[test]
     fn pts_to_duration_clamps_negative_ticks_to_zero() {
         assert_eq!(pts_to_duration(Pts90khz::new(-50)), Duration::ZERO);

@@ -101,7 +101,7 @@ fn demux_audio_pts_surfaces() {
     assert_eq!(*sample.1, None, "audio always has dts: None");
 }
 
-/// validate-1 C12 — AC-3 PES with `data_alignment_indicator=1` MUST start
+/// AC-3 PES with `data_alignment_indicator=1` MUST start
 /// with the syncword 0x0B77 (ATSC A/52:2018 §A.6.3). The mux side sets the
 /// flag unconditionally for AC-3 (`mpegts::mux::pes::write_audio_pes`), so
 /// any caller pushing non-syncframe bytes (a stub payload, a mis-aligned
@@ -111,7 +111,7 @@ fn demux_ac3_payload_missing_syncword_surfaces_nonconformant() {
     use tst_core::mpegts::demux::event::NonConformantIssue;
 
     // mux_audio_video pushes b"synthetic_audio_frame_payload" — first
-    // bytes are 0x73, 0x79, NOT 0x0B 0x77 — the C12 contract violation.
+    // bytes are 0x73, 0x79, NOT 0x0B 0x77 — the AC-3 syncword contract violation.
     let bytes = mux_audio_video(MuxAudioCodec::Ac3, 0x300);
     let mut demuxer = Demuxer::new();
     demuxer.feed(&bytes).unwrap();
@@ -153,7 +153,7 @@ fn demux_ac3_payload_missing_syncword_surfaces_nonconformant() {
     );
 }
 
-/// validate-1 C12 — valid AC-3 syncframe starting with 0x0B77 should NOT
+/// A valid AC-3 syncframe starting with 0x0B77 should NOT
 /// trigger Ac3SyncMissing. Smoke test using a minimal synthetic syncframe.
 #[test]
 fn demux_ac3_payload_with_syncword_no_nonconformant() {
@@ -163,7 +163,7 @@ fn demux_ac3_payload_with_syncword_no_nonconformant() {
     // zero-padded). 48 kHz, frmsizecod=20 (192 kbps, frame_length=768
     // bytes), bsid=8, bsmod=0, acmod=2, lfeon=false. The demux checks
     // only the first two bytes (0x0B 0x77) — body content irrelevant
-    // for the C12 contract.
+    // for the AC-3 syncword contract.
     let mut frame = vec![0u8; 768];
     frame[0] = 0x0B;
     frame[1] = 0x77;

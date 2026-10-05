@@ -107,7 +107,7 @@ impl Muxer {
         );
 
         let audio_packets = ts_packets_for(self.pes_scratch.len());
-        // Validate-1 C3: see push_video for the rationale. Audio is
+        // See push_video for the rationale. Audio is
         // typically high-cadence, but a low-frame-rate stream (sparse
         // language tracks, sign-language audio) could still drift.
         self.reserve_preamble(prog_idx, pts, audio_pid, audio_packets)?;
@@ -127,7 +127,7 @@ impl Muxer {
         // don't yet — those PIDs leave the codec counter unmaterialized
         // so the accessor returns Some(Unknown) via per_stream fallback.
         //
-        // validate-1 followup-2: count with the resync variants so a single
+        // Count with the resync variants so a single
         // malformed syncframe inside the caller-supplied buffer doesn't
         // truncate the rest of the frame count. Strict `frames()` is still
         // available for fail-fast conformance callers.

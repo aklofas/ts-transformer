@@ -1,6 +1,6 @@
 //! Integration test: real VVenC SPS bytes → parse → field surface.
 //!
-//! Plan #30 Task 4.4 (B6). Confirms the full SPS parse path works end-to-end
+//! Confirms the full SPS parse path works end-to-end
 //! on real VVenC output — body walk (AbsDeltaPocSt fix, timing_hrd walk) +
 //! VUI walker (parse_h266_vui per §7.3.2.5 / §E.2.1).
 //!

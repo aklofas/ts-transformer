@@ -185,7 +185,7 @@ pub(crate) fn write_pack(pack: &VTargetPack, out: &mut Vec<u8>) -> Result<usize,
     // byte BER-OID per ST 0107.5 §6.3.1 for values ≥ 128, so a future
     // ST 0903.7+ pack tag in the unknown bucket round-trips losslessly.
     // Tags 1..=107 (the §10.2 typed universe) are all ≤ 127 and encode
-    // as a single byte, byte-identical to the pre-E5-followup emit.
+    // as a single byte, byte-identical to a raw single-byte tag.
     // `encoded_len` mirrors this via `ber_oid_len(field.tag)`.
     for field in &pack.unknown {
         // Reject reserved/typed pack tags before emitting. Without this
@@ -296,7 +296,7 @@ pub(crate) fn encoded_len(pack: &VTargetPack) -> usize {
     // Unknown tags use BER-OID tag + BER length + value (mirrors
     // `write_pack`). For tags ≤ 127 (the §10.2 typed universe),
     // `ber_oid_len(tag) == 1` so this collapses to the same byte
-    // count as the pre-E5-followup `tlv_len(value.len())`.
+    // count as `tlv_len(value.len())`.
     for field in &pack.unknown {
         total += ber_oid_len(field.tag) + ber_len(field.value.len()) + field.value.len();
     }

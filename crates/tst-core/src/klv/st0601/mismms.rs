@@ -480,11 +480,10 @@ mod tests {
 
     #[test]
     fn wpb_mismms_typed_96_104() {
-        // WP-B: the extended-range IMAPB items (96/104) are wired into
-        // presence via `each_typed_field`'s generic Imapb match arm — no
-        // mismms.rs change was needed. This pins that: typed-only 96/104
-        // satisfy the 22|96 and 15|75|104 groups, and setting both 75 and
-        // 104 reaches the pre-existing exclusive-or conflict.
+        // The extended-range IMAPB items (96/104) are wired into presence via
+        // `each_typed_field`'s generic Imapb match arm. This pins that:
+        // typed-only 96/104 satisfy the 22|96 and 15|75|104 groups, and setting
+        // both 75 and 104 reaches the pre-existing exclusive-or conflict.
         let mut rec = full_mismms_record();
         rec.target_width_m = None;
         rec.target_width_extended_m = Some(100.0); // 22|96 satisfied via typed 96

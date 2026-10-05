@@ -409,7 +409,7 @@ fn ffprobe_roundtrip_each_audio_codec() {
     //   0x11 = ISO/IEC 14496-3 LATM AAC
     //   0x81 = User private (used for ATSC AC-3)
     //
-    // Special case for AC-3 (post plan #30 Task 1.2): the muxer auto-emits
+    // Special case for AC-3: the muxer auto-emits
     // a `registration_descriptor` with `format_identifier="AC-3"` per
     // ATSC A/53 Part 3 §5.1. ffmpeg's MPEG-TS parser then reports
     // `codec_tag` as the format_identifier ASCII bytes (little-endian
@@ -489,7 +489,7 @@ fn ffprobe_roundtrip_each_audio_codec() {
     }
 }
 
-// --- Subtitle ffprobe round-trip tests (subtitle plan Task 21) ---
+// --- Subtitle ffprobe round-trip tests ---
 //
 // These match the audio-codec round-trip pattern above: build a config with
 // the subtitle codec, push a few PES units, drain TS bytes, run ffprobe, and
@@ -500,7 +500,7 @@ fn ffprobe_roundtrip_each_audio_codec() {
 // standalone form cleanly.
 //
 // Gated behind `#[ignore = "ffprobe-only"]` so they run only with
-// `-- --ignored`, matching audio plan #21's pattern.
+// `-- --ignored`, matching the audio tests' pattern.
 
 #[test]
 #[ignore = "ffprobe-only"]
@@ -803,7 +803,7 @@ fn ffprobe_agrees_on_aac_adts_sample_rate_and_channels() {
                 .and_then(|r| r.ok())
             {
                 parsed_sr = Some(f.sample_rate_hz);
-                // C7 — `.channels()` returns `None` for PCE-defined
+                // `.channels()` returns `None` for PCE-defined
                 // layouts (`channel_configuration == 0`). The aac-adts
                 // fixture uses canonical stereo (config 2), so we expect
                 // `Some(2)`; assertion against ffprobe-derived count

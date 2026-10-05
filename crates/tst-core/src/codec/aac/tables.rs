@@ -114,12 +114,11 @@ mod tests {
         use crate::codec::aac::AacChannelLayout;
         assert_eq!(decode_channels(7).unwrap(), AacChannelLayout::Channels(8));
     }
-    /// C7 — `channel_configuration == 0` indicates the channel layout
-    /// is carried in a Program Config Element (PCE) inside the
-    /// raw_data_block, not derivable from the ADTS header. Per ISO/IEC
-    /// 14496-3 Table 1.19 this is a valid streaming shape. Previously
-    /// `decode_channels(0)` returned `ReservedValue`, which terminated
-    /// the iterator and dropped all subsequent frames.
+    /// `channel_configuration == 0` indicates the channel layout is carried
+    /// in a Program Config Element (PCE) inside the raw_data_block, not
+    /// derivable from the ADTS header. Per ISO/IEC 14496-3 Table 1.19 this is
+    /// a valid streaming shape; returning `ReservedValue` here would terminate
+    /// the iterator and drop all subsequent frames.
     #[test]
     fn channels_pce_defined_value_0() {
         use crate::codec::aac::AacChannelLayout;
@@ -150,7 +149,7 @@ mod tests {
         );
     }
 
-    /// G3 — per ISO/IEC 13818-7 §1.A Table 8, profile=3 is reserved when
+    /// Per ISO/IEC 13818-7 §1.A Table 8, profile=3 is reserved when
     /// ID=1 (MPEG-2). Only valid as LongTermPrediction when ID=0 (MPEG-4).
     #[test]
     fn profile_3_mpeg4_is_long_term_prediction() {

@@ -7,7 +7,7 @@
 //! always true), the PCR copy rule (the demuxed `pcr_pid` is copied only
 //! when it lands on a kept video or audio stream — KLV, data, and
 //! subtitle PIDs are PCR-ineligible),
-//! exact descriptor preservation for all typed stream kinds (MUX-01 / CFG-01),
+//! exact descriptor preservation for all typed stream kinds,
 //! and real mux→demux→`from_program_map` round-trips.
 
 use tst_core::MuxError;
@@ -103,7 +103,7 @@ fn happy_path_video_sync_klv_audio_with_language() {
         stream_type: KlvStreamType::SynchronousMetadata,
         carries_pts: true,
     }));
-    // Descriptors are now preserved verbatim for all typed kinds (MUX-01):
+    // Descriptors are preserved verbatim for all typed kinds:
     // add_audio is used (language: None) and the 0x0A descriptor passes
     // through stream_descriptors_for_audio instead of the language field.
     assert!(prog.streams.contains(&StreamSpec::Audio {
@@ -320,7 +320,7 @@ fn drop_video_from_audio_klv_program_validates_with_audio_pcr() {
     // Dropping the video also drops the demuxed PCR carrier, so the rebuilt
     // program has `pcr_pid: None`. The PCR fallback (first video → first
     // audio; KLV is never auto-selected) resolves to the audio PID 0x103 —
-    // the program validates successfully (MUX-02 fix).
+    // the program validates instead of failing for want of a PCR PID.
     let cfg =
         MuxerConfig::from_program_map(&p, &[StreamKindTag::Video]).expect("audio PCR resolves");
     let prog = &cfg.programs[0];
@@ -450,7 +450,7 @@ fn all_streams_dropped_is_an_error() {
 
 #[test]
 fn audio_descriptors_always_language_none_verbatim_pass_through() {
-    // Descriptors are now always preserved verbatim (MUX-01 / CFG-01):
+    // Descriptors are always preserved verbatim:
     // from_program_map uses add_audio (language: None) for every audio
     // stream, regardless of what the 0x0A descriptor contains. Both of
     // these streams have language: None in the stream spec; their raw
@@ -754,7 +754,7 @@ fn drop_unknown_still_excludes() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MUX-01 / CFG-01: exact descriptor preservation across all typed stream kinds
+// Exact descriptor preservation across all typed stream kinds
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Config-level helper: index of the stream with a given PID.
@@ -778,7 +778,7 @@ fn private_tlv(tag: u8, body: &[u8]) -> Vec<u8> {
 fn descriptor_preservation_video() {
     // A video stream carrying one extra private descriptor (tag 0xE0) must
     // land verbatim in the muxer config's stream_descriptors after
-    // from_program_map (MUX-01).
+    // from_program_map.
     let mut vid = stream(0x101, 0x1B, DemuxKind::Video(DemuxVideo::H264));
     vid.raw_descriptors = vec![RawDescriptor {
         tag: 0xE0,
@@ -799,7 +799,7 @@ fn descriptor_preservation_video() {
 #[test]
 fn descriptor_preservation_audio() {
     // An audio stream carrying one extra private descriptor (tag 0xE0, no
-    // ISO-639) must land verbatim in stream_descriptors (MUX-01).
+    // ISO-639) must land verbatim in stream_descriptors.
     let mut aud = stream(0x103, 0x0F, DemuxKind::Audio(DemuxAudio::Aac));
     aud.raw_descriptors = vec![RawDescriptor {
         tag: 0xE0,
@@ -824,7 +824,7 @@ fn descriptor_preservation_audio() {
 #[test]
 fn descriptor_preservation_klv_sync() {
     // A KLV-sync stream carrying an extra private descriptor (tag 0xE1) must
-    // land verbatim in stream_descriptors (MUX-01). The KLVA Registration is
+    // land verbatim in stream_descriptors. The KLVA Registration is
     // auto-emitted by the muxer — but that happens at mux time, not in the
     // config itself, so the config-level check only has the private descriptor.
     let mut klv = stream(
@@ -857,7 +857,7 @@ fn descriptor_preservation_klv_sync() {
 #[test]
 fn descriptor_preservation_klv_async() {
     // A KLV-async stream carrying an extra private descriptor must land
-    // verbatim in stream_descriptors (MUX-01).
+    // verbatim in stream_descriptors.
     let mut klv = stream(0x102, 0x06, DemuxKind::KlvAsync);
     klv.raw_descriptors = vec![RawDescriptor {
         tag: 0xE1,
@@ -882,7 +882,7 @@ fn descriptor_preservation_klv_async() {
 fn descriptor_preservation_subtitle_cea708() {
     // A CEA-708 subtitle stream carrying its GA94 Registration descriptor
     // plus an extra private descriptor must both land verbatim in
-    // stream_descriptors (MUX-01). The muxer's auto-emit suppression
+    // stream_descriptors. The muxer's auto-emit suppression
     // fires when the caller supplies any recognized subtitle descriptor
     // (GA94 registration tag 0x05 with format_identifier GA94), so the
     // output PMT has the caller's GA94 first, then the private 0xE2.
@@ -917,7 +917,7 @@ fn descriptor_preservation_subtitle_cea708() {
 fn descriptor_preservation_subtitle_webvtt() {
     // A WebVTT subtitle stream carrying its VTTC Registration descriptor
     // plus an extra private descriptor must both land verbatim in
-    // stream_descriptors (MUX-01).
+    // stream_descriptors.
     let mut sub = stream(0x105, 0x06, DemuxKind::Subtitle(DemuxSub::WebVttInTs));
     sub.raw_descriptors = vec![
         RawDescriptor {
@@ -950,7 +950,7 @@ fn audio_multi_language_verbatim() {
     // An audio stream with a multi-entry ISO-639 descriptor (two language
     // slots: "eng" audio_type=0x00 + "FRA" audio_type=0x01 — uppercase is
     // valid on the wire per ETSI EN 300 468 §6.2.41). Both entries must
-    // survive verbatim in stream_descriptors after from_program_map (CFG-01).
+    // survive verbatim in stream_descriptors after from_program_map.
     //
     // Tag 0x0A body layout: 4 bytes per entry (3-byte code + 1-byte
     // audio_type). Two entries → 8 bytes.
@@ -993,7 +993,7 @@ fn audio_iso639_dedup_no_double_emit() {
     // An audio stream whose raw PMT descriptors already carry an ISO-639
     // descriptor (tag 0x0A) must produce exactly ONE 0x0A descriptor in
     // the muxer config — the caller's, verbatim — not two (no auto-emit
-    // duplicate from the language field on the StreamSpec) (CFG-01).
+    // duplicate from the language field on the StreamSpec).
     let mut aud = stream(0x103, 0x0F, DemuxKind::Audio(DemuxAudio::Aac));
     aud.raw_descriptors = vec![RawDescriptor {
         tag: 0x0A,
@@ -1028,7 +1028,7 @@ fn audio_iso639_dedup_no_double_emit() {
 
 #[test]
 fn e2e_klva_dedup_no_auto_emit_duplicate() {
-    // MUX-01 end-to-end acceptance: an auto-generated descriptor must not
+    // End-to-end acceptance: an auto-generated descriptor must not
     // DUPLICATE a retained equivalent through a full
     // from_program_map → mux → demux round-trip.
     //

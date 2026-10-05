@@ -880,12 +880,12 @@ fn private_data_klv_does_not_auto_wrap() {
     );
 }
 
-// ── Validate-1 C4: push_video_to_with_dts (B-frame reorder) ──────────────
+// ── push_video_to_with_dts (B-frame reorder) ─────────────────────────────
 
 /// Reassemble the FULL TS payload (including PES header) for `target_pid`
 /// across the TS packets in `buf[..n]`. Used to inspect PES header bytes —
 /// the standard `reassemble_pes_payload_for_pid` helper strips the PES
-/// header. Validate-1 C4: needed to verify PTS_DTS_flags encoding.
+/// header, which is needed to verify PTS_DTS_flags encoding.
 fn reassemble_full_ts_payload_for_pid(buf: &[u8], n: usize, target_pid: u16) -> Vec<u8> {
     let mut payload = Vec::new();
     for pkt in buf[..n].chunks_exact(188) {
@@ -947,7 +947,7 @@ fn reassemble_pes_stream_id_and_payload(buf: &[u8], n: usize, target_pid: u16) -
 
 #[test]
 fn push_video_to_with_dts_emits_pts_dts_flags_11() {
-    // Validate-1 C4: reordered video (B-frames) must emit
+    // Reordered video (B-frames) must emit
     // PTS_DTS_flags='11' with separate PTS and DTS bytes per
     // ISO/IEC 13818-1 §2.4.3.6.
     let mut mux = Muxer::new(MuxerConfig::default()).unwrap();
@@ -1022,12 +1022,12 @@ fn read_5byte_pts(buf: &[u8]) -> u64 {
         | ((b4 >> 1) & 0x7F)
 }
 
-// ── Validate-1 C13: structural Annex-B validation ────────────────────────
+// ── structural Annex-B validation ────────────────────────────────────────
 
 #[test]
 fn push_video_rejects_start_code_only_no_nal_body() {
-    // Validate-1 C13: an input consisting solely of a start code with
-    // no NAL body must be rejected (prior check accepted this).
+    // An input consisting solely of a start code with no NAL body must
+    // be rejected.
     let mut m = Muxer::new(MuxerConfig::default()).unwrap();
     let bad = [0x00u8, 0x00, 0x00, 0x01]; // just the start code, no NAL byte
     assert!(matches!(
@@ -1048,7 +1048,7 @@ fn push_video_rejects_3byte_start_code_only() {
 
 #[test]
 fn push_video_rejects_adjacent_start_codes_no_body_between() {
-    // Validate-1 C13: two start codes with no NAL bytes between them
+    // Two start codes with no NAL bytes between them
     // (empty NAL unit) — forbidden by H.264/H.265/H.266.
     let mut m = Muxer::new(MuxerConfig::default()).unwrap();
     let bad = [
@@ -1064,7 +1064,7 @@ fn push_video_rejects_adjacent_start_codes_no_body_between() {
 
 #[test]
 fn push_video_rejects_trailing_start_code() {
-    // Validate-1 C13: the buffer ends with a start code (no body after) —
+    // The buffer ends with a start code (no body after) —
     // the final NAL would be empty.
     let mut m = Muxer::new(MuxerConfig::default()).unwrap();
     let bad = [
@@ -1079,7 +1079,7 @@ fn push_video_rejects_trailing_start_code() {
 
 #[test]
 fn push_video_accepts_multi_nal_au() {
-    // Validate-1 C13: a well-formed multi-NAL AU must continue to pass.
+    // A well-formed multi-NAL AU must pass.
     let mut m = Muxer::new(MuxerConfig::default()).unwrap();
     let good = [
         0x00u8, 0x00, 0x00, 0x01, 0x67, 0x42, 0xC0, 0x1F, // SPS NAL
@@ -1098,7 +1098,7 @@ fn push_video_accepts_single_nal_unchanged() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// C8 — AV1-in-MPEG-2-TS binding-conformant carriage (validate-1 Wave C)
+// AV1-in-MPEG-2-TS binding-conformant carriage
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -1137,7 +1137,7 @@ fn av1_default_uses_binding_mode_with_stream_id_bd_and_obu_framing() {
     // §3.2 — PES payload MUST begin with the 3-byte ts_open_bitstream_unit
     // start code 0x00 0x00 0x01 (obu_start_code is uimsbf(24) = 0x000001
     // per the binding syntax table). The production is applied ONCE PER
-    // OBU, so 2 OBUs → 2 start codes (validate-1 C8 follow-up).
+    // OBU, so 2 OBUs → 2 start codes.
     assert_eq!(
         &pes_payload[..3],
         &[0x00, 0x00, 0x01],
@@ -1192,7 +1192,7 @@ fn av1_interop_mode_preserves_existing_carriage() {
 
 #[test]
 fn av1_binding_mode_inserts_emulation_prevention_bytes() {
-    // Per-OBU emulation prevention (validate-1 C8 follow-up): a single OBU
+    // Per-OBU emulation prevention: a single OBU
     // whose body contains 0x00 0x00 0x01 MUST have a 0x03 inserted to
     // prevent the body bytes from being misread as a NEW start code.
     let cfg = MuxerConfig::default();
@@ -1244,7 +1244,7 @@ fn av1_binding_mode_inserts_emulation_prevention_bytes() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// C9 — AV01 registration descriptor MUST be FIRST in PMT ES descriptor loop
+// AV01 registration descriptor MUST be FIRST in PMT ES descriptor loop
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]

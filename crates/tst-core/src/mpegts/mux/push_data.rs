@@ -183,7 +183,7 @@ impl Muxer {
 
         // Count on the Ok path only — after all early-returns above.
         // Data PIDs get per_stream items/bytes but no stream_codec_counters
-        // entry (decision D6: they surface StreamCodecStats::Unknown).
+        // entry (by design: they surface StreamCodecStats::Unknown).
         if let Some(s) = self.per_stream.get_mut(&data_pid) {
             s.items += 1;
             s.touch_last_seen();

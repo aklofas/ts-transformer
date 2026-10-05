@@ -183,7 +183,7 @@ fn missing_pts_stays_zero_and_does_not_corrupt_following_pts() {
     // Strip PTS_DTS_flags + header_data_length on the FIRST PES only
     // (the needle scan returns the earliest match) so the demuxer parses
     // it with no PTS at all — the same technique used by
-    // `demux_pes_validation.rs`'s B4 coverage. The second PES's
+    // `demux_pes_validation.rs`'s missing-PTS coverage. The second PES's
     // PES_packet_length is untouched, so this patch is fully local to
     // the first PES's header.
     let patched = patch_pes_strip_pts(ts_buf, 0xE0);
@@ -215,7 +215,7 @@ fn missing_pts_stays_zero_and_does_not_corrupt_following_pts() {
     );
 }
 
-/// Test C2 (Fix round 1 regression) — the 33-bit wrap boundary can fall
+/// Test C2 — the 33-bit wrap boundary can fall
 /// BETWEEN one AU's DTS and PTS (DTS <= PTS always, so DTS can still be
 /// pre-wrap while PTS has already wrapped — once per ~26.5h on any
 /// B-frame stream). The unwrapped DTS must stay in the PRE-wrap epoch
@@ -280,7 +280,7 @@ fn dts_straddling_the_wrap_stays_below_unwrapped_pts() {
     );
 }
 
-/// Test E (CORR-04) — a REORDERED pre-wrap PTS arriving after the wrap
+/// Test E — a REORDERED pre-wrap PTS arriving after the wrap
 /// must not be pushed into a second epoch. `W-50` arrives numerically
 /// LARGER than the preceding (already-wrapped, small) `100`, so a
 /// detector that only bumps a running offset when `raw < last_raw`
@@ -403,7 +403,7 @@ fn video_and_klv_pids_share_one_wrap_aware_clock() {
     assert!(video[1] > video[0] && klv_out[1] > klv_out[0]);
 }
 
-/// Test F (CORR-06) — a PID whose FIRST sample arrives after the
+/// Test F — a PID whose FIRST sample arrives after the
 /// program's wire clock has already wrapped must anchor onto the
 /// program's running timeline, not at its own raw (post-wrap, small)
 /// value. Video on PID 0x100 crosses the boundary first (`W-100` then
@@ -467,7 +467,7 @@ fn late_starting_pid_anchors_to_its_programs_running_clock() {
     assert_eq!(klv_pts(&off, 0x101), vec![100]);
 }
 
-/// Test G (CORR-06 control) — programs are independent time bases
+/// Test G (control for F) — programs are independent time bases
 /// (ITU-T H.222.0 §2.4.3.5), so the per-program anchor must NEVER cross
 /// program boundaries. Program 1's video wraps; program 2's video then
 /// starts for the first time at a small raw value. Program 2 must anchor
@@ -512,7 +512,7 @@ fn independent_programs_do_not_share_an_anchor() {
     );
 }
 
-/// Test H (CORR-06 follow-up) — the program's running reference is simply
+/// Test H — the program's running reference is simply
 /// the LAST value emitted on any of its PIDs, so it can legitimately sit
 /// BELOW the 33-bit boundary after the program has already crossed it.
 /// The KLV PID delivers `WRAP-50` late, after `100`; its PES is
@@ -579,7 +579,7 @@ fn late_starting_pid_anchors_through_a_reordered_reference_sample() {
     );
 }
 
-// ── CORR-07 topology fixtures ───────────────────────────────────────────
+// ── Topology fixtures ───────────────────────────────────────────────────
 //
 // The `Muxer` always writes PSI at version 0, so it cannot express the PMT
 // version bump a PID removal/re-addition needs. The shared `psi_builders`
@@ -601,7 +601,7 @@ fn strip_psi(ts: &[u8], pmt_pid: u16) -> Vec<u8> {
     out
 }
 
-/// Test I (CORR-07) — a PID removed from the PMT and re-added after the
+/// Test I — a PID removed from the PMT and re-added after the
 /// program's wire clock has wrapped must anchor its first post-re-add
 /// sample onto the PROGRAM's running clock, never onto the accumulator its
 /// dead predecessor left behind. Here the stale entry is more than half a
@@ -710,15 +710,14 @@ fn pid_removed_and_readded_across_a_wrap_anchors_to_the_program_clock() {
     );
 }
 
-/// Test J (X-CORR-08, review experiment E08) — a PID that stays silent
-/// for more than half a 33-bit epoch while its siblings keep advancing
-/// must rejoin the program's epoch, not land one epoch below it. Both
-/// PIDs of one program start at raw 0; the video PID advances through
-/// `2^31` and `2^32` in steps that are each under half an epoch; the KLV
-/// PID then emits `2^32 + 100` after being silent since 0. Its own signed
-/// 33-bit delta reads that as `-2^32 + 100`; the program clock — fresher,
-/// and implying a gap of more than half an epoch — is the evidence that
-/// places it at `2^32 + 100`.
+/// Test J — a PID that stays silent for more than half a 33-bit epoch while its
+/// siblings keep advancing must rejoin the program's epoch, not land one epoch
+/// below it. Both PIDs of one program start at raw 0; the video PID advances
+/// through `2^31` and `2^32` in steps that are each under half an epoch; the
+/// KLV PID then emits `2^32 + 100` after being silent since 0. Its own signed
+/// 33-bit delta reads that as `-2^32 + 100`; the program clock — fresher, and
+/// implying a gap of more than half an epoch — is the evidence that places it
+/// at `2^32 + 100`.
 #[test]
 fn dormant_pid_reanchors_onto_its_programs_running_clock() {
     const HALF: i64 = 1i64 << 32;
@@ -782,7 +781,7 @@ fn dormant_pid_reanchors_onto_its_programs_running_clock() {
     assert_eq!(klv_pts(&off, 0x101), vec![0, HALF + 100]);
 }
 
-/// Test K (X-CORR-08 control) — a genuinely reordered late sample on a
+/// Test K (control for J) — a genuinely reordered late sample on a
 /// PID whose siblings advanced by far less than half an epoch keeps its
 /// own signed delta: the program clock implies only a small gap, so no
 /// re-anchor fires, the sample steps back by its true distance, and the

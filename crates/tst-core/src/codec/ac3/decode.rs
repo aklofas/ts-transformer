@@ -104,7 +104,7 @@ pub fn parse_syncframe(bytes: &[u8]) -> Result<Ac3SyncInfo, CodecParseError> {
     // as Forbidden or ReservedValue (from the AC-3 field constraints) instead
     // of UnsupportedProfile would be a diagnostic misclassification —
     // ATSC A/52 §5.4.2.1 establishes bsid as the authoritative bitstream-type
-    // indicator (DA-AV-3).
+    // indicator.
     let bsid = (bytes[5] >> 3) & 0b1_1111;
     let bsmod = bytes[5] & 0b0000_0111;
     if bsid >= 9 {

@@ -295,12 +295,11 @@ fn pcr_is_carried_on_video_pid_packets_by_default() {
 
 #[test]
 fn pcr_injected_as_adaptation_only_packet_when_pcr_pid_has_no_payload() {
-    // Validate-1 C3 (Codex TS-TIME-02): when the configured PCR PID receives
-    // no payload pushes within the configured `pcr_interval_ms`, the muxer
-    // must inject standalone PCR-only adaptation-field packets on that PID
-    // (H.222.0 Annex D max-100ms PCR interval). Without the fix, a config
-    // where PCR_PID == video_pid but the caller only pushes KLV produces
-    // zero PCR samples on the wire.
+    // When the configured PCR PID receives no payload pushes within the
+    // configured `pcr_interval_ms`, the muxer must inject standalone PCR-only
+    // adaptation-field packets on that PID (H.222.0 Annex D max-100ms PCR
+    // interval). Without the fix, a config where PCR_PID == video_pid but the
+    // caller only pushes KLV produces zero PCR samples on the wire.
     let mut cfg = MuxerConfig::default();
     // Pin PCR to the video PID (default fallback already picks it, but be
     // explicit so the test's intent is unmistakable).
@@ -402,7 +401,7 @@ fn pcr_only_packet_does_not_increment_continuity_counter() {
     let mut mux = Muxer::new(cfg).unwrap();
 
     // Two KLV pushes 50ms apart guarantees ≥4 PCR-only injection windows
-    // (the first push triggers initial PCR; subsequent need the C3 path).
+    // (the first push triggers initial PCR; subsequent need the PCR-only path).
     for i in 0..2u64 {
         mux.push_klv(
             &synthetic_nal::klv_blob(32),

@@ -25,8 +25,9 @@
 //! `stream_codec_stats`) stay in `demuxer.rs` (the coordinator) since
 //! they're part of the `Demuxer` public surface.
 //!
-//! Per Wave 6.B Decision DB3, no new struct wrapper — the audit's
-//! `DemuxStatsRecorder` proposal is deferred to a future ergonomics pass.
+//! No wrapper struct: the helpers write straight into the `Demuxer`'s own
+//! stats, counters and event queue, so recording needs no extra borrow or
+//! indirection.
 
 use crate::mpegts::demux::event::{DemuxEvent, DiscontinuityKind, NonConformantIssue, StreamId};
 

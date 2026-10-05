@@ -515,8 +515,8 @@ pub const MAX_PROGRAMS: usize = 16;
 
 #[cfg(test)]
 mod try_from_raw_tests {
-    //! Regression tests for the trust-boundary handle-validation path
-    //! added by the closeout audit. Each `try_from_raw` must reject any
+    //! Regression tests for the trust-boundary handle-validation path.
+    //! Each `try_from_raw` must reject any
     //! raw value with high bits set outside the 4-bit program + 4-bit
     //! within layout, even if the low byte aliases a valid handle.
     //!

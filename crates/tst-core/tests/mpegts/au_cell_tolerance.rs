@@ -1,7 +1,7 @@
 //! End-to-end demuxer tests for the opt-in malformed-CFI tolerance mode.
 //!
-//! Covers the 5 scenarios that Codex's review of the tolerance design called
-//! out as the minimum-discriminating set:
+//! Covers the 5 scenarios that form the minimum-discriminating set for the
+//! tolerance design:
 //!
 //! 1. Strict mode (default): orphan Middle/Last with self-consistent KLV
 //!    inside still emits only `NonConformantIssue::MultiCellAu { Orphan }`
@@ -140,10 +140,9 @@ fn collect_events_with(builder: DemuxerConfigBuilder, ts_bytes: &[u8]) -> Vec<De
     events
 }
 
-// `collect_events` (default `Demuxer::new()`) was removed when the strict
-// path was retargeted through `collect_events_with(DemuxerConfig::builder()
-// .cfi_tolerance(false), ...)` after the 2026-05-24 default flip. All
-// callers in this file pass an explicit builder now.
+// Tolerance is on by default, so every caller in this file passes an
+// explicit builder (`collect_events_with(DemuxerConfig::builder()
+// .cfi_tolerance(false), ...)` for the strict path).
 
 /// Pump enough video frames to advance PTS past the PSI cadence threshold
 /// (~100 ms), ensuring PMT lands before the KLV PES on the demuxer.

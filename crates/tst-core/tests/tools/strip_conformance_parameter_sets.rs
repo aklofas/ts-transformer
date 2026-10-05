@@ -1,6 +1,5 @@
 //! Strip parameter-set NAL/OBU bytes from official codec conformance
-//! bitstreams. Driven by `manifest.toml`. See `plan
-//! 2026-05-15-codec-conformance-bitstreams.md` for design.
+//! bitstreams. Driven by `manifest.toml`.
 
 #![allow(dead_code)]
 

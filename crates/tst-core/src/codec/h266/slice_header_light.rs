@@ -20,8 +20,7 @@ use alloc::vec::Vec;
 ///
 /// - **`slice_type`** always returns [`H266SliceType::I`] as a sentinel.
 ///   Accurate extraction requires SPS-driven walking through
-///   `picture_header_rbsp()` — deferred to a future Phase 5.x or Phase 7
-///   follow-up.
+///   `picture_header_rbsp()` — deferred.
 /// - **`pps_id`** always returns `0` as a sentinel for the same reason.
 /// - **`idr`** is accurate: derived solely from the NAL unit type (7 =
 ///   IDR_W_RADL, 8 = IDR_N_LP).
@@ -92,8 +91,7 @@ const fn is_idr_nal(nal_unit_type: u8) -> bool {
 /// `slice_type` and `pps_id` are returned as **sentinels** (always `I` and
 /// `0` respectively). Accurate extraction requires walking through
 /// `picture_header_rbsp()`, whose length is governed by SPS / PPS context
-/// fields that this light parser does not carry. This deferred work is
-/// tracked as a future Phase 5.x or Phase 7 follow-up.
+/// fields that this light parser does not carry.
 ///
 /// `pic_order_cnt_lsb` is `Some(0)` for IDR slices (implicit per H.266 spec)
 /// and `None` for non-IDR slices; the SPS-driven bit-width extraction is part

@@ -1,7 +1,7 @@
 //! End-to-end demuxer tests for multi-cell Metadata AU cell reassembly.
 //!
 //! Wires every state-table row from the per-PID `AuCellReassembler`
-//! (Task 3) through the full `Demuxer::feed` path (Task 4 wire-up):
+//! through the full `Demuxer::feed` path:
 //!
 //! 1. Single Complete AU → one `Sample`, `was_reassembled=false`, `cell_count=1`.
 //! 2. 3-cell First/Middle/Last across 3 PESes → one `Sample`,
@@ -678,8 +678,8 @@ fn reset_sync_clears_buffer_no_nonconformant() {
         "First-only buffering must not surface a MultiCellAu issue",
     );
 
-    // Operational reset — clears AU reassembly buffers silently per
-    // Task 4's wire-up (reset_sync calls au_reassembler.reset_all()).
+    // Operational reset — clears AU reassembly buffers silently
+    // (reset_sync calls au_reassembler.reset_all()).
     dem.reset_sync();
     let post_reset_events: Vec<_> = std::iter::from_fn(|| dem.next_event()).collect();
     assert!(

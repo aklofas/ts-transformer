@@ -193,7 +193,7 @@ pub fn decode_sdcc_flp(bytes: &[u8]) -> Result<SdccFlp, KlvFieldError> {
     // Clen==0 means no correlation values at all, regardless of CS — this
     // overrides the "CS==0 => all slots present" default below.
     //
-    // Sparse-mode preflight (Copilot review): `check_matrix_size_fits`
+    // Sparse-mode preflight: `check_matrix_size_fits`
     // already bounds `m` at Parse-Control time (to at most `remaining*8`
     // in sparse mode, and to `corr_slots(MAX_MATRIX_SIZE)` always), so the
     // `present`/`correlations` allocations below can never
@@ -475,8 +475,8 @@ pub(crate) fn bit_vector_slots(bitvec: &[u8], n: usize) -> Vec<bool> {
 /// bounded by what the pack's own bytes can hold — Element 2's Parse
 /// Control plus [`check_matrix_size_fits`], the rule `decode_sdcc_flp`
 /// applies before it allocates — so a hostile `N` cannot make the caller
-/// copy a tag history the pack could never describe (review 9, ext R9-02:
-/// n occurrences after n items retained n² tags). Returns `None` on a
+/// copy a tag history the pack could never describe (n occurrences after
+/// n items would retain n² tags). Returns `None` on a
 /// truncated/malformed BER-OID, a missing Parse Control, a data-free Parse
 /// Control, or a size the pack cannot hold or that exceeds
 /// [`MAX_MATRIX_SIZE`]; Elements 3–5 are not validated here.
@@ -655,7 +655,7 @@ mod tests {
 
     #[test]
     fn sdcc_full_3x3_ieee_golden() {
-        // Constructed golden (byte-verified 2026-07-16): N=3, Mode 2, all-IEEE binary32,
+        // Constructed golden (byte-verified): N=3, Mode 2, all-IEEE binary32,
         // sigma=[1,2,4], rho=[0.5,0.0,-0.5]. PC = 0x84 0x04.
         let bytes = hex(concat!(
             "03 84 04",
@@ -824,10 +824,10 @@ mod tests {
         assert!(decoded.correlation_present.iter().all(|&v| !v));
     }
 
-    /// Review 10 (R10-02): a complete standard-deviation-only pack carries
-    /// no Bit Vector, so the Bit Vector's size bound (`N <= 16 * Slen + 1`)
-    /// must not reject it. Before the fix N = 66 (binary32) was
-    /// `TruncatedField` although all 264 value bytes were present.
+    /// A complete standard-deviation-only pack carries no Bit Vector, so
+    /// the Bit Vector's size bound (`N <= 16 * Slen + 1`) must not reject
+    /// it; applying the bound makes N = 66 (binary32) `TruncatedField`
+    /// although all 264 value bytes are present.
     #[test]
     fn r10_02_complete_stddev_only_mode2_matrix_is_not_truncated() {
         for n in [65usize, 66] {
@@ -866,7 +866,7 @@ mod tests {
     /// The Bit Vector bound applies when CS = 1: N = 5 has 10 correlation
     /// slots, so its Bit Vector needs two bytes. With Slen = 0 and Clen > 0
     /// this is the only wire bound on N — without it the peek would accept
-    /// any N up to the ceiling from a one-byte Bit Vector (ext R9-02).
+    /// any N up to the ceiling from a one-byte Bit Vector.
     #[test]
     fn r10_02_sparse_pack_is_bounded_by_its_bit_vector() {
         // Mode 2 PC A4 00: CS = 1, Cf = 0 (IEEE), Clen = 4, Slen = 0.
@@ -950,13 +950,13 @@ mod tests {
         }
     }
 
-    /// Review 9 (ext R9-02): the peek is bounded by what the pack's own
+    /// The peek is bounded by what the pack's own
     /// bytes can hold — Parse Control + `check_matrix_size_fits` — so an ST
     /// 0601 Tag 102 occurrence can never make its caller copy a tag history
     /// the pack could not describe.
     #[test]
     fn peek_matrix_size_is_bounded_by_what_the_pack_can_hold() {
-        // The C1 full golden: N = 3, Mode 2 (0x84 0x04 → Slen = 4, Clen = 4,
+        // The full N = 3 golden: Mode 2 (0x84 0x04 → Slen = 4, Clen = 4,
         // CS = 0), 3 std-devs + 3 correlations = 24 data bytes.
         let golden: [u8; 27] = [
             0x03, 0x84, 0x04, 0x3F, 0x80, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x40, 0x80, 0x00,
@@ -967,7 +967,7 @@ mod tests {
         assert_eq!(peek_matrix_size(&[0x03]), None);
         assert_eq!(peek_matrix_size(&[]), None);
         // Mode 1, data-free (Slen = 0, Clen = 0, CS = 0): malformed per
-        // ST 1010.2-12 whatever N and whatever follows (review 10, R10-02).
+        // ST 1010.2-12 whatever N and whatever follows.
         assert_eq!(peek_matrix_size(&[0x01, 0x00]), None);
         assert_eq!(peek_matrix_size(&[0x03, 0x00]), None);
         assert_eq!(peek_matrix_size(&[0x03, 0x00, 0x00]), None);

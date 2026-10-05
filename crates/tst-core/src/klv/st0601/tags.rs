@@ -1432,7 +1432,7 @@ mod tests {
                     );
                 }
                 Encoding::Pack => {
-                    // WP-C pack/list marker: no length/range metadata of
+                    // Pack/list marker: no length/range metadata of
                     // its own (the per-tag wire shape lives in
                     // `packs.rs`) — pin that it never accidentally
                     // carries a LinearRange.

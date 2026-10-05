@@ -1,4 +1,4 @@
-//! AAC frame iterator (ADTS framing today; LATM is a follow-up plan).
+//! AAC frame iterator (ADTS framing; LATM frames are not iterated).
 //!
 //! **Stability: Provisional** — see the
 //! [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
@@ -245,7 +245,7 @@ pub struct AdtsFrames<'a> {
     pub(super) buf: &'a [u8],
     pub(super) cursor: usize,
     pub(super) done: bool,
-    /// G2 — when `true`, parse errors do NOT terminate the iterator.
+    /// When `true`, parse errors do NOT terminate the iterator.
     /// Instead, `next()` scans forward from `cursor + 1` for the next
     /// plausible 12-bit ADTS syncword (`0xFFF`) and repositions there.
     /// The current error is still yielded; subsequent `next()` calls
@@ -277,7 +277,7 @@ impl<'a> Iterator for AdtsFrames<'a> {
             Ok(h) => h,
             Err(e) => {
                 if self.resync {
-                    // G2 — advance cursor to next plausible syncword
+                    // Advance cursor to next plausible syncword
                     // (or to end-of-buffer to terminate on subsequent
                     // call). The error is still yielded so the caller
                     // can count corruption.

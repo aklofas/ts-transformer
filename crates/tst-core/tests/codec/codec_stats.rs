@@ -5,7 +5,7 @@
 //! * Typed `Video` / `Klv` / `Audio` variants for each codec family that
 //!   has a counter in v1
 //! * `Some(Unknown)` for known-but-uncounted PIDs (subtitles)
-//! * `reset_stats` CLEARS codec entries (per Task 3 — a reset PID returns
+//! * `reset_stats` CLEARS codec entries (a reset PID returns
 //!   `None`, not `Some(0-valued variant)`)
 //!
 //! All fixtures use the in-crate `mpegts::mux::Muxer` to produce TS bytes
@@ -271,7 +271,7 @@ fn stream_codec_stats_returns_unknown_for_subtitle_pid() {
 #[test]
 fn reset_stats_clears_codec_counters() {
     // Feed an H.264 fixture so PID 0x100 ends up with a Video counter.
-    // Then reset_stats(). Per the Task 3 fix, the counter is CLEARED
+    // Then reset_stats(). The counter is CLEARED
     // (not zeroed) — so the post-reset query returns None.
     let cfg = {
         let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);

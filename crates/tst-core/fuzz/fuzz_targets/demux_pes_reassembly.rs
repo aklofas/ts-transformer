@@ -8,7 +8,7 @@ use tst_core::mpegts::demux::low_level::Reassembler;
 // (matching the on-the-wire PID width in a TS header), bit 0 of byte 2
 // sets the payload_unit_start indicator, bit 1 sets the adaptation-
 // field random_access_indicator, and bit 2 sets the is_video flag (the
-// REF-PES-01 zero-PES_packet_length gate). The remainder is pushed as
+// zero-PES_packet_length gate). The remainder is pushed as
 // one packet's worth of payload bytes. Caps are sized generously
 // (1 MiB per PID, 4 MiB total) so the reassembler exercises completion
 // paths rather than just bouncing off cap-exceeded errors.

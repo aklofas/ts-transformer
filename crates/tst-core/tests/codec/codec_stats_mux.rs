@@ -2,20 +2,19 @@
 //!
 //! Five tests covering the sender-side accessor:
 //! * `Video` variant with `nals_or_obus` + `random_access_aus` bumps
-//!   driven by `push_video` (Task 7 wiring)
+//!   driven by `push_video`
 //! * `key_frame=false` exercising the non-RA branch
 //! * `Klv` variant counting one record per `push_klv` call
 //! * `Audio` variant counting AAC ADTS frames via the
 //!   `codec::aac::frames` iterator
 //! * `Some(Unknown)` for an AC-3 stream — no codec counter is
-//!   materialized (the AAC/MP2 dispatch in Task 7 returns 0 for AC-3),
+//!   materialized (the AAC/MP2 dispatch returns 0 for AC-3),
 //!   so the accessor falls back to the `per_stream.contains_key` path
 //!   and returns Unknown.
 //!
-//! The Muxer-driven shape mirrors `codec_stats.rs` (Demuxer side, plan #59
-//! codec-stats Task 5 — commit `482d18e`). The `build_adts_frame` helper
-//! is copy-pasted from that file; the duplication is a known issue from
-//! Task 5's review and is small enough to live with rather than promoting
+//! The Muxer-driven shape mirrors `codec_stats.rs` (Demuxer side). The
+//! `build_adts_frame` helper is copy-pasted from that file; the duplication
+//! is small enough to live with rather than promoting
 //! to `tests/common/mod.rs` (which currently only holds the unrelated
 //! `imapb_tol` helper).
 
@@ -139,7 +138,7 @@ fn h264_push_non_key_frame_does_not_bump_ra() {
     // One non-key NAL pushed with key_frame=false. Just an IDR slice
     // start code — the count_nal_units helper sees one Annex B start
     // code so nals_or_obus=1. random_access_aus stays at 0 because
-    // key_frame=false (Task 7: RA delta = u64::from(key_frame)).
+    // key_frame=false (RA delta = u64::from(key_frame)).
     let mut mux = build_one_video_muxer(MuxVideoCodec::H264, 0x100);
     let one_nal: &[u8] = &[0x00, 0x00, 0x00, 0x01, 0x65, 0xAA, 0xBB, 0xCC];
     mux.push_video(one_nal, Pts90khz::new(90_000), false)
@@ -164,11 +163,11 @@ fn h264_push_non_key_frame_does_not_bump_ra() {
 #[test]
 fn klv_push_three_records_counts_three() {
     // Three push_klv calls on the same SynchronousMetadata KLV stream.
-    // The muxer's contract is one record per call (Task 7
-    // `bump_klv_counters(.., 1)`), so records=3.
+    // The muxer's contract is one record per call
+    // (`bump_klv_counters(.., 1)`), so records=3.
     let mut mux = build_one_klv_muxer(0x200);
     // Anchor video push so the muxer has something to PCR on; not
-    // strictly required for the counter bump but matches Task 5's pattern.
+    // strictly required for the counter bump but matches codec_stats.rs.
     mux.push_video(&build_minimal_h264_au(), Pts90khz::new(90_000), true)
         .unwrap();
     let klv = build_dummy_klv();
@@ -186,7 +185,7 @@ fn klv_push_three_records_counts_three() {
 
 #[test]
 fn aac_push_two_frames_counts_two() {
-    // Two ADTS frames concatenated in one push_audio call. Task 7's
+    // Two ADTS frames concatenated in one push_audio call. The
     // dispatch uses `codec::aac::frames(...).filter_map(Result::ok).count()`
     // which sees 2 valid frames ⇒ frames=2.
     let mut mux = build_one_audio_muxer(MuxAudioCodec::Aac, 0x300);
@@ -207,7 +206,7 @@ fn aac_push_two_frames_counts_two() {
 fn ac3_push_audio_returns_unknown() {
     // AC-3 stream configured ⇒ per_stream has PID 0x300 (eager
     // population at config time). push_audio with AC-3 takes the
-    // `Ac3 => 0` arm in Task 7's dispatch, so bump_audio_counters is
+    // `Ac3 => 0` arm in the dispatch, so bump_audio_counters is
     // never called and stream_codec_counters has no entry. The
     // accessor falls back to per_stream.contains_key ⇒ Some(Unknown).
     //

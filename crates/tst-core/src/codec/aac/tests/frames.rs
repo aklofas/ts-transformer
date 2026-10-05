@@ -96,7 +96,7 @@ fn adts_frame_owned_roundtrip() {
     let reborrowed = owned.as_ref();
     assert_eq!(borrowed, reborrowed);
     assert_eq!(owned.body, vec![0xAA, 0xBB, 0xCC]);
-    // C7 — `.channels()` returns `Some(2)` for canonical layouts.
+    // `.channels()` returns `Some(2)` for canonical layouts.
     assert_eq!(borrowed.channels(), Some(2));
     assert_eq!(owned.channels(), Some(2));
     // Verify AdtsFrameOwned is constructible (all fields present)
@@ -115,8 +115,8 @@ fn adts_frame_owned_roundtrip() {
     };
 }
 
-/// G2 — strict iterator terminates after the first parse error,
-/// dropping every subsequent valid frame. Failing-test-first proof.
+/// The strict iterator terminates after the first parse error,
+/// dropping every subsequent valid frame.
 #[test]
 fn strict_iterator_drops_frames_after_first_corruption() {
     // Layout: [corrupted bytes that aren't a sync] [valid frame].
@@ -134,7 +134,7 @@ fn strict_iterator_drops_frames_after_first_corruption() {
     );
 }
 
-/// G2 — resync iterator yields the error then resumes from the next
+/// The resync iterator yields the error then resumes from the next
 /// plausible ADTS syncword, recovering the valid frame at position N+M.
 #[test]
 fn resync_iterator_recovers_valid_frame_after_corruption() {
@@ -158,7 +158,7 @@ fn resync_iterator_recovers_valid_frame_after_corruption() {
     assert!(it.next().is_none());
 }
 
-/// G2 — resync iterator over a buffer with no plausible syncword
+/// A resync iterator over a buffer with no plausible syncword
 /// anywhere terminates after yielding the initial error (no infinite
 /// loop, no spurious extra yields).
 #[test]
@@ -178,9 +178,9 @@ fn resync_iterator_no_syncword_terminates() {
     );
 }
 
-/// C7 — iterator continues past a frame with `channel_configuration == 0`
-/// (PCE-defined). Previously `decode_channels(0)` returned `ReservedValue`
-/// which terminated the iterator and dropped every subsequent frame.
+/// The iterator continues past a frame with `channel_configuration == 0`
+/// (PCE-defined); a `ReservedValue` from `decode_channels(0)` would
+/// terminate it and drop every subsequent frame.
 #[test]
 fn frames_iterator_continues_past_pce_defined_channel_configuration() {
     // Three back-to-back frames: first uses `channel_configuration == 0`

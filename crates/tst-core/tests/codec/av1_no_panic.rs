@@ -1,13 +1,12 @@
 //! Regression test: adversarial bitstreams must not panic in the AV1 parsers.
 //!
-//! Phase 0 inventory (plan #36) audited `crates/tst-core/src/codec/av1/`
-//! and found zero caller-controlled-input panic sites in production code.
-//! Every error path returns `Err(CodecParseError::*)` via `?`-propagation
-//! through `Av1BitReader::f()` / `read_leb128()`. This file is the
-//! permanent regression anchor: if a future edit re-introduces a
-//! `unwrap()` / `expect()` / `assert!` in a production code path that
-//! can be reached by a crafted bitstream, one of these tests will panic
-//! (instead of returning `Err`) and catch it.
+//! `crates/tst-core/src/codec/av1/` has zero caller-controlled-input panic
+//! sites in production code. Every error path returns `Err(CodecParseError::*)`
+//! via `?`-propagation through `Av1BitReader::f()` / `read_leb128()`. This file
+//! is the permanent regression anchor: if a future edit re-introduces a
+//! `unwrap()` / `expect()` / `assert!` in a production code path that can be
+//! reached by a crafted bitstream, one of these tests will panic (instead of
+//! returning `Err`) and catch it.
 //!
 //! Inputs are chosen to exercise every truncation / malformed-header
 //! variant that the parsers must handle gracefully.

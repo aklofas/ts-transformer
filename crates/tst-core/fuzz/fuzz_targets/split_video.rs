@@ -1,6 +1,6 @@
 #![no_main]
 
-//! Fuzz target — `split_video` / `split_video_strict` panic-freedom (demux-rest F-02).
+//! Fuzz target — `split_video` / `split_video_strict` panic-freedom.
 //!
 //! Exercises the NAL-unit walker (`split_nals`), OBU walker (`split_obus`),
 //! and the AV1 binding-unwrap path (`unwrap_av1_binding`) on arbitrary bytes

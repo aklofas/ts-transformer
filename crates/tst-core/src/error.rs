@@ -320,10 +320,9 @@ pub enum MuxError {
     /// (program numbers, actual vs expected lengths). Use this variant
     /// when the reason needs runtime context beyond a static string.
     ///
-    /// Introduced in plan #72 (Wave 2.3) for the
-    /// `MuxerProgramConfig.stream_descriptors` length invariant; future
-    /// `validate()` checks that need formatted reasons should also
-    /// route through this variant.
+    /// Used for the `MuxerProgramConfig.stream_descriptors` length
+    /// invariant; future `validate()` checks that need formatted reasons
+    /// should also route through this variant.
     #[error("muxer configuration is invalid: {reason}")]
     ConfigInvalid { reason: String },
 
@@ -721,8 +720,7 @@ impl MuxError {
     ///
     /// Per-variant routing is enforced by the compiler: the match below
     /// lives in [`MuxError`]'s own crate and carries no wildcard, so a new
-    /// variant without an arm here is a build error (Arc 2 R2 retired the
-    /// awk ratchet that used to check this).
+    /// variant without an arm here is a build error.
     ///
     /// See [`MuxErrorKind`] for the per-variant rationale.
     ///
@@ -738,8 +736,7 @@ impl MuxError {
     pub fn kind(&self) -> MuxErrorKind {
         use MuxErrorKind::*;
         // No wildcard on purpose: this match is inside the defining crate,
-        // so the compiler enforces exhaustiveness (Arc 2 R2 replaced the
-        // awk rail that used to check this).
+        // so the compiler enforces exhaustiveness.
         match self {
             // === InputMalformed (7 variants) ===
             // Caller pushed bytes that don't conform to the expected shape.

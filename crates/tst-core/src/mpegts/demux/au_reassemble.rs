@@ -539,7 +539,7 @@ mod tests {
         assert!(r.per_pid.is_empty());
     }
 
-    // ---- Aggregate-bound tests (C1 / T2-AUCELL) ----------------------
+    // ---- Aggregate-bound tests ---------------------------------------
 
     /// Many distinct PIDs each opening a `First` cell (never sending
     /// `Last`) must NOT grow retained bytes unboundedly: either the

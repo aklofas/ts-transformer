@@ -1,34 +1,27 @@
-//! Wave I3 — ST 0903.6 §10.1.11 + §10.1.12 spec vectors.
-//!
-//! Plan: `docs/validate-1/11-phase-2-plan.md` §2.9 row I3 cites
-//! "ST 0903.6 §10.1.11/12 incremental" — but the actual spec sections
-//! at those locations are:
+//! ST 0903.6 §10.1.11 + §10.1.12 spec vectors. The spec sections at
+//! those locations are:
 //!
 //!   §10.1.11  Horizontal_FOV  (Tag 11, IMAPB(0, 180, 2), units °)
 //!   §10.1.12  Vertical_FOV    (Tag 12, IMAPB(0, 180, 2), units °)
 //!
-//! ST 0903.6 (`reference/ST0903.6.pdf`) does NOT define an
-//! "incremental update" or "vTarget delete" flow at these section
-//! numbers — the plan text appears to have conflated ST 0903.6 with a
-//! different MISB document (possibly ST 0903 vTracker LS §10.3 or a
-//! draft revision). The substrate has no incremental-update logic to
-//! exercise. Surfacing this as an open question for the I3 results
-//! writeup (`docs/validate-1/13c-i3-klv-spec-vectors-results.md`).
+//! ST 0903.6 does NOT define an "incremental update" or "vTarget
+//! delete" flow at these section numbers (that may belong to a different
+//! MISB document, possibly ST 0903 vTracker LS §10.3 or a draft
+//! revision). The substrate has no incremental-update logic to exercise.
 //!
-//! These tests instead exercise the actual §10.1.11 + §10.1.12
-//! surface — Horizontal_FOV / Vertical_FOV IMAPB worked examples,
-//! edge values, top-level VMTI LS encode/decode symmetry, and
-//! interaction with the IMAPB special-value branches from Sprint 1
-//! A7 (since the top-level lenient walker funnels every non-Value
-//! decode result into `field_errors` per the §7.2.3 Table 2 ↔
-//! lenient-walker mapping in `crates/tst-core/src/klv/st0903/decode.rs`).
+//! These tests instead exercise the actual §10.1.11 + §10.1.12 surface —
+//! Horizontal_FOV / Vertical_FOV IMAPB worked examples, edge values, top-level
+//! VMTI LS encode/decode symmetry, and interaction with the IMAPB special-value
+//! branches (since the top-level lenient walker funnels every non-Value decode
+//! result into `field_errors` per the §7.2.3 Table 2 ↔ lenient-walker mapping
+//! in `crates/tst-core/src/klv/st0903/decode.rs`).
 
 use tst_core::error::KlvFieldError;
 use tst_core::klv::imapb::{ImapbParams, encode_imapb};
 use tst_core::klv::st0903::{self, VmtiLs};
 
 // ============================================================================
-// Subtask 3b (i) — §10.1.11 Horizontal_FOV worked example
+// §10.1.11 Horizontal_FOV worked example
 // ============================================================================
 
 /// ST 0903.6 §10.1.11 worked example: IMAPB(0, 180, 2) for 12.5° →
@@ -60,7 +53,7 @@ fn st0903_10_1_11_horizontal_fov_12_5_deg_via_vmti_encode() {
 }
 
 // ============================================================================
-// Subtask 3b (ii) — §10.1.12 Vertical_FOV worked example
+// §10.1.12 Vertical_FOV worked example
 // ============================================================================
 
 /// ST 0903.6 §10.1.12 worked example: IMAPB(0, 180, 2) for 10.0° →
@@ -84,7 +77,7 @@ fn st0903_10_1_12_vertical_fov_10_0_deg_via_vmti_encode() {
 }
 
 // ============================================================================
-// Subtask 3b (iii) — §10.1.11/12 range boundaries
+// §10.1.11/12 range boundaries
 // ============================================================================
 
 /// Bottom-of-range: IMAPB(0, 180, 2) value 0.0 → wire 0x0000.
@@ -141,12 +134,12 @@ fn st0903_10_1_11_horizontal_fov_180_deg_boundary() {
 }
 
 // ============================================================================
-// Subtask 3b (iv) — interaction between FOV tags and A7 IMAPB special values
+// Interaction between FOV tags and IMAPB special values
 // ============================================================================
 //
 // The lenient ST 0903 walker (`klv::st0903::decode::decode`) maps every
 // non-Value DecodedImapb result to `field_errors.push(InvalidLength)`
-// and continues. This is documented in the walker source as the A7-
+// and continues. This is documented in the walker source as the
 // integration choice: "the lenient top-level walker treats special
 // values and out-of-range as 'field unavailable'." Tests below
 // confirm that contract holds for the FOV tags specifically (since
@@ -215,7 +208,7 @@ fn st0903_lenient_walker_treats_out_of_range_decode_as_field_error() {
 }
 
 // ============================================================================
-// Subtask 3b (v) — strict walker rejects special-value signals
+// Strict walker rejects special-value signals
 // ============================================================================
 
 /// `decode_strict` must reject the §7.2.3 Table 2 BelowMin signal at
@@ -237,7 +230,7 @@ fn st0903_strict_walker_rejects_below_min_signal_on_horizontal_fov() {
 }
 
 // ============================================================================
-// Subtask 3b (vi) — full VMTI round-trip with both FOV tags + targets
+// Full VMTI round-trip with both FOV tags + targets
 // ============================================================================
 //
 // End-to-end §10.1.11 + §10.1.12 sanity check: a realistic VMTI LS
@@ -286,17 +279,16 @@ fn st0903_10_1_11_and_10_1_12_round_trip_via_full_vmti_ls() {
 }
 
 // ============================================================================
-// Subtask 3b (vii) — gap analysis: incremental update flows
+// Gap analysis: incremental update flows
 // ============================================================================
 //
-// The plan text mentions "vTarget create/incremental update/delete"
-// flows. ST 0903.6 §10.1.11 + §10.1.12 do NOT define these flows.
-// ST 0903.6 §10.2.2.24 (`detectionStatus`) carries codepoints
-// 0=Inactive, 1=Active-Moving, 2=Dropped, 3=Active-Stopped,
-// 4=Active-Coasting — these describe per-frame state per-target,
-// but the spec does NOT define an inter-frame state-machine that
-// requires the decoder to track create / update / delete across
-// VMTI LS instances. Each VMTI LS is self-contained.
+// "vTarget create/incremental update/delete" flows: ST 0903.6 §10.1.11 +
+// §10.1.12 do NOT define these flows. ST 0903.6 §10.2.2.24 (`detectionStatus`)
+// carries codepoints 0=Inactive, 1=Active-Moving, 2=Dropped, 3=Active-Stopped,
+// 4=Active-Coasting — these describe per-frame state per-target, but the spec
+// does NOT define an inter-frame state-machine that requires the decoder to
+// track create / update / delete across VMTI LS instances. Each VMTI LS is
+// self-contained.
 //
 // Tests below codify the current behavior — `decode` returns a
 // fresh `VmtiLs` per call; consumers wanting cross-LS continuity

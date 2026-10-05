@@ -10,7 +10,7 @@
 //! Add a helper here when it's needed by ≥2 integration-test files in
 //! THIS crate (`tst-core`) and the logic is test-specific (no production
 //! users). The pattern parallels `crates/tst-srt/tests/common/mod.rs`
-//! (Loopback helper from plan #57).
+//! (its Loopback helper).
 //!
 //! Promote to the workspace's `tst-test-helpers` dev-dep crate only
 //! when the helper is needed across CRATES — that's the established bar

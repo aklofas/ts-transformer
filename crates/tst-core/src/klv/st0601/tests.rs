@@ -200,7 +200,7 @@ fn out_of_range_corner_offset_names_the_absolute_corners() {
 
 #[test]
 fn out_of_range_restricted_tags_name_their_imapb_twins() {
-    // The three remaining WP-B restricted/extended twin pairs (38→103,
+    // The three other restricted/extended twin pairs (38→103,
     // 75→104, 76→105) must hint at their IMAPB twins, same as 22→96.
     let cases = [
         (
@@ -238,9 +238,8 @@ fn out_of_range_restricted_tags_name_their_imapb_twins() {
 #[test]
 fn out_of_range_without_twin_has_no_hint() {
     // Tag 13 (Sensor Latitude, +/-90 deg) has no full-range twin; the error
-    // message must NOT carry a hint (no ';' appended). (Moved off Tag 22
-    // in WP-B: Tag 22 now has a range_hint pointing at its new IMAPB twin,
-    // Tag 96 Target Width Extended.)
+    // message must NOT carry a hint (no ';' appended). (Tag 22 has a
+    // range_hint pointing at its IMAPB twin, Tag 96 Target Width Extended.)
     let rec = UasDatalinkLs {
         sensor_lat_deg: Some(95.0),
         ..UasDatalinkLs::default()
@@ -263,7 +262,7 @@ fn encode_string_too_long_rejects() {
     ));
 }
 
-// --- Reserved/typed-tag-in-unknown filter (validate-1 E3) ------------------
+// --- Reserved/typed-tag-in-unknown filter ----------------------------------
 // `record.unknown` is for forward-compat pass-through of tags the encoder
 // does not model. Putting a reserved structural tag (1 = Checksum, 2 = PTS,
 // 65 = UAS LS Version) or a typed tag (anything in `tags::TAGS`) there
@@ -464,9 +463,8 @@ fn decode_passes_through_unknown_tags() {
     // Tag 200 is outside the ST 0601 1-143 item range (see
     // `encode_accepts_genuinely_unknown_tag`), so it stays unknown
     // regardless of how many more spec items this crate types over time
-    // — unlike a spec-range placeholder tag, which risks colliding with
-    // a later WP-A task (Tag 99 did exactly this when Task A4 typed it
-    // as `composite_imaging_local_set`).
+    // — unlike a spec-range placeholder tag, which risks being typed
+    // later (as Tag 99 was, as `composite_imaging_local_set`).
     let mut r = UasDatalinkLs::default();
     r.unknown.push(OwnedRawField {
         tag: 200,
@@ -886,7 +884,7 @@ fn every_typed_tag_round_trips() {
             _ => {
                 // Ranged numeric: pick a value at the midpoint of the spec
                 // range. LinearRange tags carry their range in `spec.range`;
-                // Imapb (WP-B) tags carry it in `spec.encoding` instead.
+                // Imapb tags carry it in `spec.encoding` instead.
                 let (min, max) = match (spec.range, spec.encoding) {
                     (Some(r), _) => (r.min, r.max),
                     (None, Encoding::Imapb { min, max, .. }) => (min, max),
@@ -1119,7 +1117,7 @@ fn tag_59_is_platform_call_sign_utf8_per_spec() {
 }
 
 // ---------------------------------------------------------------------------
-// Regression — Validate-1 Phase 2 §A6: ST 0601 high-numbered BER-OID tags
+// Regression: ST 0601 high-numbered BER-OID tags
 // must not narrow to u8 and collide with known low-numbered tags.
 //
 // Per MISB ST 0107.3-04, decoders shall preserve unknown LS values without
@@ -1253,7 +1251,7 @@ fn known_tag_2_still_decodes_correctly_after_high_tag_fix() {
 }
 
 // ---------------------------------------------------------------------------
-// Validate-1 E1+E2: strict-mode duplicate-tag detection + canonical-BER walker
+// Strict-mode duplicate-tag detection + canonical-BER walker
 // ---------------------------------------------------------------------------
 
 /// Wrap a hand-crafted body into a full ST 0601 LS buffer (UL + outer BER
@@ -1327,9 +1325,8 @@ fn decode_strict_compliance_allows_duplicate_unknown_tag() {
     // "Deprecated" per ST 0601.19 §8.66 ("This item has been
     // deprecated."): a permanent placeholder that is never typed by
     // design, so it's a stable "genuinely unknown" stand-in for this
-    // test — unlike the two prior stand-ins, which each got typed by
-    // a later WP-A task and forced this test to move (70 → 63 by
-    // Task A2, 63 → 66 here by Task A3). Its BER-OID encoding is the
+    // test — unlike a spec-range tag, which can get typed later and
+    // force this test to move. Its BER-OID encoding is the
     // single byte 0x42 (high bit clear) — strict-canonical.
     let mut body = Vec::new();
     body.extend_from_slice(&[0x02, 0x08]); // Tag 2
@@ -1406,7 +1403,7 @@ fn decode_strict_compliance_rejects_non_canonical_per_item_tag() {
     );
 }
 
-// --- ST 0601 encode_strict_compliance (validate-1 act-now ST0601-NEW-01) ---
+// --- ST 0601 encode_strict_compliance ---
 //
 // Symmetric counterpart to decode_strict_compliance: the encoder now
 // refuses to emit a record missing any caller-supplied mandatory item.
@@ -1617,8 +1614,7 @@ fn patch_reencodes_every_occurrence_of_a_duplicated_tag_and_mirrors_missing_chec
 #[test]
 fn patch_unknown_escape_hatch_replaces_vendor_tlv() {
     // Tag 66 is a durable untyped stand-in (ST 0601 skips it between 65
-    // and 67; WP-A/WP-B have since typed most other former gaps out from
-    // under earlier stand-ins — see reference_klv_typed_set_conventions).
+    // and 67; most other former gaps are now typed).
     let rec = UasDatalinkLs {
         timestamp_us: Some(1),
         unknown: vec![OwnedRawField {
@@ -2232,11 +2228,11 @@ fn normal_signed_field_does_not_populate_sentinel_tags() {
 }
 
 // ============================================================================
-// WP-A: 30 remaining fixed-linear ranged fields (Table A1 spec vectors)
+// Fixed-linear ranged fields (spec vectors)
 // ============================================================================
 
 /// Build a single-TLV ST 0601 record with `tag`/`value` and decode it via
-/// [`decode`]. All WP-A ranged-field tags fit in a single-byte BER-OID tag
+/// [`decode`]. All these ranged-field tags fit in a single-byte BER-OID tag
 /// (< 128); every value is short-form BER length (≤ 4 bytes).
 fn decode_with_single_tlv(tag: u8, value: &[u8]) -> UasDatalinkLs {
     let mut tlv = vec![tag, value.len() as u8];
@@ -2255,14 +2251,14 @@ fn tlv_value(encoded: &[u8], tag: u8) -> Option<Vec<u8>> {
 /// Encode a default record with a single field set by `set`; returns the
 /// full encoded bytes (the record also carries the auto Tag 65 + trailing
 /// checksum, which [`tlv_value`] walks past). Encode-direction companion
-/// to [`decode_with_single_tlv`] for the WP-A spec-byte pins.
+/// to [`decode_with_single_tlv`] for the spec-byte pins.
 fn encode_with_field(set: impl FnOnce(&mut UasDatalinkLs)) -> Vec<u8> {
     let mut rec = UasDatalinkLs::default();
     set(&mut rec);
     encode_to_vec(&rec).expect("single-field record must encode")
 }
 
-/// ST 0601.19 §8 worked examples for the WP-A ranged fields — spec bytes,
+/// ST 0601.19 §8 worked examples for the ranged fields — spec bytes,
 /// not round-trip (closed-loop tests can't catch a wrong wire formula).
 #[test]
 fn wpa_ranged_spec_vectors() {
@@ -2327,11 +2323,11 @@ fn wpa_ranged_spec_vectors() {
 }
 
 // ============================================================================
-// WP-B: IMAPB extended-range fields (Table B1 spec vectors)
+// IMAPB extended-range fields (spec vectors)
 // ============================================================================
 
 /// Decode a single-TLV ST 0601 record where `tag` may need the 2-byte
-/// BER-OID encoding (id >= 128, e.g. Tags 132/134 in Table B1). Sibling of
+/// BER-OID encoding (id >= 128, e.g. Tags 132/134). Sibling of
 /// [`decode_with_single_tlv`], which only writes 1-byte tags.
 fn decode_with_single_tlv_ber_oid(tag: u32, value: &[u8]) -> UasDatalinkLs {
     let mut tag_buf = [0u8; 5];
@@ -2342,7 +2338,7 @@ fn decode_with_single_tlv_ber_oid(tag: u32, value: &[u8]) -> UasDatalinkLs {
     decode(&wrap_st0601(&tlv)).expect("single-tlv fixture must decode")
 }
 
-/// MISB ST 0601.19 §8 worked examples for the 14 WP-B Table B1 IMAPB
+/// MISB ST 0601.19 §8 worked examples for the 14 IMAPB
 /// items — spec bytes, not round-trip (closed-loop tests can't catch a
 /// wrong wire formula).
 #[test]
@@ -2380,7 +2376,7 @@ fn wpb_imapb_spec_vectors() {
         let step = 1.0 / 2f64.powi((8 * bytes.len() - 1) as i32 - (max - min).log2().ceil() as i32);
         assert!((got - value).abs() <= step, "tag {tag}: {got} vs {value}");
         // Encode at default_len must reproduce the spec bytes exactly
-        // (default_len == the example length by Table B1 construction).
+        // (default_len == the example length for these tags).
         let mut rec = UasDatalinkLs::default();
         (entry.set)(&mut rec, value);
         let out = crate::klv::st0601::encode_to_vec(&rec).unwrap();
@@ -2501,10 +2497,10 @@ fn wpb_imapb_indicator_policy() {
 }
 
 // ============================================================================
-// WP-A: raw/simple fields — new I8/U16 encodings (Table A2 spec vectors)
+// Raw/simple fields — I8/U16 encodings (spec vectors)
 // ============================================================================
 
-/// ST 0601.19 §8 worked examples for the WP-A raw/simple fields — spec
+/// ST 0601.19 §8 worked examples for the raw/simple fields — spec
 /// bytes in BOTH directions, not round-trip (closed-loop tests can't
 /// catch a wrong wire formula). No LSB tolerance: unlike the
 /// IMAPB-quantized ranged fields in [`wpa_ranged_spec_vectors`], these
@@ -2512,7 +2508,7 @@ fn wpb_imapb_indicator_policy() {
 /// encoded VALUE bytes must match the spec examples exactly.
 #[test]
 fn wpa_raw_spec_vectors() {
-    // Decode + encode against ST 0601.19 §8 examples (Appendix Table A2).
+    // Decode + encode against ST 0601.19 §8 examples.
     // Tag 39 — Outside Air Temperature (I8): 84 → 0x54.
     let ls = decode_with_single_tlv(39, &[0x54]);
     assert_eq!(ls.outside_air_temp_c, Some(84));
@@ -2609,10 +2605,9 @@ fn wpa_raw_spec_vectors() {
 }
 
 /// `encode_strict_compliance` must sanitize EVERY typed string field per
-/// ST 0107.5 §6.3.3 — including the six added by WP-A Task A2. Regression:
-/// the A2 commit extended the typed Utf8 set but missed
-/// `sanitize_strings_st0601`, so strict encode emitted raw control bytes
-/// for the new fields. U+0000 is a banned control char (ST 0107.3-13),
+/// ST 0107.5 §6.3.3. Regression: a typed Utf8 field missing from
+/// `sanitize_strings_st0601` makes strict encode emit raw control bytes
+/// for it. U+0000 is a banned control char (ST 0107.3-13),
 /// removed at any position, so "A\u{0}B" must come back as "AB".
 #[test]
 fn strict_encode_sanitizes_all_string_fields() {
@@ -2667,7 +2662,7 @@ fn strict_encode_sanitizes_all_string_fields() {
 }
 
 // ============================================================================
-// WP-A: coded enums — new tags 34/63/77 (Table A3)
+// Coded enums — tags 34/63/77
 // ============================================================================
 
 #[allow(clippy::field_reassign_with_default)]
@@ -2688,7 +2683,7 @@ fn wpa_coded_enums_round_trip_and_other() {
     assert_eq!(tlv_value(&bytes, 77), Some(vec![0x2A]));
 }
 
-/// ST 0601.19 §8 worked examples for the WP-A Task A3 coded enums — spec
+/// ST 0601.19 §8 worked examples for the coded enums — spec
 /// bytes in both directions (decode from example bytes AND `tlv_value`
 /// encode asserts), matching the rigor of `wpa_raw_spec_vectors`: these
 /// are identity codepoint encodings, so no LSB tolerance is needed. Also
@@ -2737,16 +2732,16 @@ fn wpa_coded_enum_spec_vectors() {
 }
 
 // ============================================================================
-// WP-A: named nested-set raw fields — new tags 73/95/97-101 (Table A4)
+// Named nested-set raw fields — tags 73/95/97-101
 // ============================================================================
 
 /// Tags 73/95/97-101 (nested-set bytes for RVT/SAR-MI/Range-Image/
-/// Geo-Registration/Composite-Imaging/Segment/Amend) used to fall through
-/// to `unknown` (no TagSpec entry). Table A4 gives each its own
-/// `Option<Vec<u8>>` field. Table-driven over `(tag, field-accessor)`
-/// pairs per the brief: proves the move off `unknown`, byte-exact
-/// round-trip, and that the now-typed tag is rejected from `unknown` on
-/// encode (same `ReservedTagInUnknown` contract as every other typed tag).
+/// Geo-Registration/Composite-Imaging/Segment/Amend) each have their own
+/// `Option<Vec<u8>>` field rather than falling through to `unknown`.
+/// Table-driven over `(tag, field-accessor)` pairs: proves the move off
+/// `unknown`, byte-exact round-trip, and that the now-typed tag is rejected
+/// from `unknown` on encode (same `ReservedTagInUnknown` contract as every
+/// other typed tag).
 #[test]
 #[allow(clippy::type_complexity)]
 fn wpa_nested_set_bytes_move_from_unknown_to_named_fields() {
@@ -2793,13 +2788,12 @@ fn wpa_nested_set_bytes_move_from_unknown_to_named_fields() {
 }
 
 // ============================================================================
-// WP-A: sentinel population + Indicator eligibility for the newly-typed
-// signed tags (Table A5)
+// Sentinel population + Indicator eligibility for the signed tags
 // ============================================================================
 
 /// Regression pin: the table-driven sentinel mechanism (already proven by
 /// `every_modelled_signed_tag_has_a_sentinel_meaning` and the Indicator-mode
-/// tests above) covers the ten signed tags WP-A newly typed as
+/// tests above) covers the ten signed tags typed as
 /// `UasDatalinkLs` fields — 40, 41, 51, 52, 67, 68, 79, 80, 92, 93. Also
 /// pins that `OutOfRangePolicy::Indicator` is now reachable for every
 /// OutOfRange-meaning tag (51 here) since all 11 are encodable fields, while
@@ -2845,11 +2839,11 @@ fn wpa_new_signed_tags_populate_sentinels_and_indicator() {
 }
 
 // ============================================================================
-// WP-B: var-length int/enum fields — new tags 110/111/123-126/131/133/
-// 136/137 + Tag 139 Active Payloads (Table B2 spec vectors)
+// Var-length int/enum fields — tags 110/111/123-126/131/133/136/137
+// + Tag 139 Active Payloads (spec vectors)
 // ============================================================================
 
-/// MISB ST 0601.19 §8 worked examples for the 10 WP-B Table B2
+/// MISB ST 0601.19 §8 worked examples for the 10
 /// var-length int/enum items plus Tag 139 — spec bytes in both
 /// directions (identity big-endian encodings, no quantization tolerance
 /// needed, matching the rigor of `wpa_raw_spec_vectors`). All ten
@@ -2894,7 +2888,7 @@ fn wpb_var_len_spec_vectors() {
     // Tags 131/133/136/137/139 are all >= 128 — need the 2-byte BER-OID
     // tag helper (`decode_with_single_tlv` only writes a literal 1-byte
     // tag, which a value >= 0x80 would misparse as a BER-OID continuation
-    // byte). Same reason Table B1's tags 132/134 used this helper.
+    // byte). Same reason the IMAPB tags 132/134 use this helper.
     let bytes131 = [0x05, 0x6F, 0x27, 0x1B, 0x5E, 0x41, 0xB7];
     let ls = decode_with_single_tlv_ber_oid(131, &bytes131);
     assert_eq!(ls.take_off_time_us, Some(1_529_588_637_122_999));
@@ -2933,7 +2927,7 @@ fn wpb_var_len_spec_vectors() {
 
 /// Var-length int decode accepts any wire length in `1..=max_len` (not
 /// just the spec example length) — mirrors
-/// `wpb_imapb_variable_length_decode_and_specials` for the Table B2
+/// `wpb_imapb_variable_length_decode_and_specials` for the var-length
 /// substrate. An over-`max_len` wire value is a per-field decode error
 /// collected in `field_errors`, not a fatal `decode()` failure. Tag
 /// 124's all-zero bitfield is non-conformant per spec (§8.124 declares
@@ -2968,7 +2962,7 @@ fn wpb_var_len_variable_length_decode_and_invalid_length() {
 }
 
 /// `PlatformStatus`/`SensorControlMode` keep the same `Other(code)`
-/// wire-unknown fallback as the WP-A coded enums (Tags 34/63/77) —
+/// wire-unknown fallback as the coded enums (Tags 34/63/77) —
 /// round-trips byte-exact.
 #[test]
 fn wpb_platform_status_and_sensor_control_mode_other_round_trip() {
@@ -3003,10 +2997,10 @@ fn wpb_active_payload_ids_multi_byte_extends_upward() {
 }
 
 // ============================================================================
-// WP-C Task C2: pack substrate + simple DLP packs (81/115/116/121/127/143)
+// Pack substrate + simple DLP packs (81/115/116/121/127/143)
 // ============================================================================
 
-/// Strip whitespace and parse a hex string into bytes — WP-C pack spec
+/// Strip whitespace and parse a hex string into bytes — pack spec
 /// vectors (mirrors the identical helper in `klv::st1010`'s test module).
 fn hex(s: &str) -> Vec<u8> {
     let clean: String = s.chars().filter(|c| !c.is_whitespace()).collect();
@@ -3035,7 +3029,7 @@ fn decode_body(body: &[u8]) -> UasDatalinkLs {
     decode_unchecked(&wrap_st0601(body)).expect("multi-tlv fixture must decode")
 }
 
-/// ST 0601.19 §8 worked examples for the 6 WP-C Task C2 pack/list items —
+/// ST 0601.19 §8 worked examples for the 6 pack/list items —
 /// spec bytes, not round-trip (closed-loop tests can't catch a wrong wire
 /// formula).
 #[test]
@@ -3144,13 +3138,12 @@ fn wpc_strict_allows_repeated_115_and_102() {
 }
 
 // ============================================================================
-// WP-C Task C3: VLP series packs (122/128/130/138/140/141/142)
+// VLP series packs (122/128/130/138/140/141/142)
 // ============================================================================
 
-/// ST 0601.19 §8.122 worked example (transcribed from the cached spec PDF,
-/// not just the plan's summary): Coding Method 14 (GENC 3-letter),
-/// Overflight "CAN", Operator unknown (length-0 marker), Manufacture
-/// "FRA". Byte-fidelity re-encode.
+/// ST 0601.19 §8.122 worked example (transcribed from the spec PDF): Coding
+/// Method 14 (GENC 3-letter), Overflight "CAN", Operator unknown (length-0
+/// marker), Manufacture "FRA". Byte-fidelity re-encode.
 #[test]
 fn wpc_country_codes_vector() {
     let v = hex("01 0E 03 43414E 00 03 465241");
@@ -3432,10 +3425,9 @@ fn wpc_weapons_stores_vector() {
     assert_eq!(tlv_value(&re_encoded, 140), Some(v));
 }
 
-/// ST 0601.19 §8.141 worked example (transcribed verbatim from the
-/// cached spec PDF, matching the plan's vector exactly): four Waypoint
-/// Records exercising all four `prosecution_order` cases (current,
-/// planned, cancelled, historical) plus a full Location on every
+/// ST 0601.19 §8.141 worked example (transcribed verbatim from the spec PDF):
+/// four Waypoint Records exercising all four `prosecution_order` cases
+/// (current, planned, cancelled, historical) plus a full Location on every
 /// record.
 #[test]
 fn wpc_waypoint_list_vector() {
@@ -3467,10 +3459,9 @@ fn wpc_waypoint_list_vector() {
     assert_eq!(tlv_value(&re_encoded, 141), Some(v));
 }
 
-/// ST 0601.19 §8.142 worked example (transcribed verbatim from the
-/// cached spec PDF, matching the plan's vector exactly): azimuth domain
-/// (210, 300), elevation domain (-75, 50), roll domain truncated away
-/// entirely (trailing truncation — no pair-length byte at all).
+/// ST 0601.19 §8.142 worked example (transcribed verbatim from the spec PDF):
+/// azimuth domain (210, 300), elevation domain (-75, 50), roll domain truncated
+/// away entirely (trailing truncation — no pair-length byte at all).
 #[test]
 fn wpc_view_domain_truncated_roll() {
     let v = hex("06 348000 4B0000 06 1A4000 0C8000");
@@ -3502,7 +3493,7 @@ fn wpc_view_domain_leading_unknown_pair() {
 }
 
 // ============================================================================
-// WP-C Task C4: Tag 102 SDCC-FLP positional capture
+// Tag 102 SDCC-FLP positional capture
 // ============================================================================
 
 /// Tag 13 (Sensor Latitude): signed 4-byte, [-90, 90].
@@ -3560,7 +3551,7 @@ fn enc_roll(v: f64) -> Vec<u8> {
 /// groups prove per-occurrence capture (not a single running list).
 #[test]
 fn wpc_sdcc_positional_capture() {
-    // Body: tag13, tag14, tag15 values then a 3x3 SDCC pack (the C1 full
+    // Body: tag13, tag14, tag15 values then a 3x3 SDCC pack (the full N = 3
     // golden), twice with different members to prove per-occurrence
     // capture.
     let pack = hex("03 84 04 3F800000 40000000 40800000 3F000000 00000000 BF000000");
@@ -3596,12 +3587,11 @@ fn wpc_sdcc_malformed_header_is_field_error_not_panic() {
     assert_eq!(ls.field_errors.len(), 1);
 }
 
-/// Review 9 (ext R9-02): a Tag 102 whose Matrix Size names more items than
-/// the pack's own bytes can describe is rejected (`TruncatedField`), never
-/// captured — before the fix every such occurrence cloned
-/// `tags_seen[len - N..]`, so n occurrences after n fields retained n² tags
-/// (~63 KB of wire → ~309 MiB through `decode_strict_compliance`, the C /
-/// Python / JVM typed decoders included).
+/// A Tag 102 whose Matrix Size names more items than the pack's own bytes can
+/// describe is rejected (`TruncatedField`), never captured — otherwise every
+/// such occurrence clones `tags_seen[len - N..]`, so n occurrences after n
+/// fields retain n² tags (~63 KB of wire → ~309 MiB through
+/// `decode_strict_compliance`, the C / Python / JVM typed decoders included).
 #[test]
 fn repeated_sdcc_history_cannot_expand_quadratically() {
     fn wire(n: usize) -> Vec<u8> {
@@ -3633,13 +3623,13 @@ fn repeated_sdcc_history_cannot_expand_quadratically() {
         );
     }
     // `wpc_sdcc_positional_capture` pins that a pack which CAN hold its
-    // matrix (the C1 golden, N = 3) is still captured positionally.
+    // matrix (the N = 3 golden) is still captured positionally.
 
-    // Review 10 (R10-02): standard-deviation-only packs are no longer held
-    // to the Bit Vector bound, so the cheapest accepted pack per N is now
-    // Mode 1 with Slen = 1 (N + 2 bytes for N < 128, N + 3 above). At the
-    // largest accepted N (the ST 1010 decoder's matrix ceiling), every
-    // occurrence's history copy is still paid for by its own wire bytes.
+    // Standard-deviation-only packs are not held to the Bit Vector bound, so
+    // the cheapest accepted pack per N is Mode 1 with Slen = 1 (N + 2 bytes for
+    // N < 128, N + 3 above). At the largest accepted N (the ST 1010 decoder's
+    // matrix ceiling), every occurrence's history copy is still paid for by its
+    // own wire bytes.
     let n = crate::klv::st1010::MAX_MATRIX_SIZE as usize;
     let mut body = tlv(2, &[0; 8]);
     body.extend(tlv(65, &[19]));

@@ -49,7 +49,7 @@ impl Muxer {
     /// `pcr_interval_ms` ceiling AND the current push is landing on a
     /// non-PCR PID (so the in-band PCR-on-push path won't run). Mirrors
     /// the role of `psi_due` for the PCR-only adaptation-only-packet
-    /// injection introduced for validate-1 C3.
+    /// injection.
     ///
     /// `current_pid` is the elementary PID the push path is about to
     /// write its payload onto. When it equals the PCR PID, the regular
