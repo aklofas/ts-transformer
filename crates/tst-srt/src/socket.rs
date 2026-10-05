@@ -33,8 +33,8 @@ const SRT_INVALID_SOCK: srt_sys::SRTSOCKET = -1;
 ///    once (idempotent with `close()`) but does NOT latch
 ///    `SrtCancelHandle::is_cancelled()`: Drop also runs on every transport
 ///    error path that retires a dead socket, and a peer disconnect must not
-///    read as a caller cancel. Bounded by `SRTO_LINGER` (libsrt default
-///    30 s, configurable via `SocketBuilder::linger` before construction).
+///    read as a caller cancel. Bounded by `SRTO_LINGER` (libsrt default off,
+///    sender preset 5 s, configurable via `SocketBuilder::linger` before construction).
 /// 2. **Explicit close** — call [`Self::close`] (consuming `self`). Same
 ///    `srt_close`, but it DOES latch `is_cancelled()` — a caller asked for
 ///    it. Always returns `Ok(())` (the inner `srt_close` rc is currently

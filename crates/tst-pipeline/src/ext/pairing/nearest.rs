@@ -16,10 +16,9 @@ use tst_core::mpegts::demux::DemuxEvent;
 ///     `PairerConfig::max_buffered_video`).
 ///   - `max_lag_ticks`: PTS-skew cap. A buffered video is force-released
 ///     once the newest observed KLV PTS is past `video.pts +
-///     max_lag_ticks`. The pre-Phase-3 implementation used
-///     `tolerance_ticks` for this check, which gave only a single knob;
-///     the new public `Buffered { max_lag: Duration }` decouples the
-///     "match window" (tolerance) from the "wait window" (max_lag).
+///     max_lag_ticks`. The public `Buffered { max_lag: Duration }`
+///     keeps the "wait window" (max_lag) separate from the "match
+///     window" (tolerance).
 #[derive(Clone, Copy)]
 pub(super) enum InternalMode {
     Realtime,
@@ -135,8 +134,8 @@ impl NearestState {
     /// (|video_pts - klv_pts| considered a match), max_lag is the wait
     /// window (how long we hold a video looking for a match before
     /// giving up). The constructor clamps `max_lag_ticks >=
-    /// tolerance_ticks`, so this is at least as permissive as the
-    /// pre-Phase-3 `tolerance_ticks`-only check.
+    /// tolerance_ticks`, so a video is never released before the full
+    /// match window has been tested.
     ///
     /// `force_all = true` means "no future KLV will arrive" (flush
     /// path); every buffered video must be classified now.

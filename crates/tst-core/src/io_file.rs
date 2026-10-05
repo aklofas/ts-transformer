@@ -97,8 +97,8 @@ pub fn demux_file_with_config(
 /// surface read or demux failures: both silently coerce to early
 /// EOF. That makes it impossible for a Rust consumer to distinguish
 /// a clean end-of-file from a truncated read or a malformed
-/// transport stream. Pre-1.0, this exists for backward compatibility
-/// with the original Phase-1 demos; new code should use
+/// transport stream. It is kept for backward compatibility; new code
+/// should use
 /// [`TryDemuxFromFile`] instead, which iterates
 /// `io::Result<DemuxEvent>` and emits an `Err` on the same
 /// conditions. See the module-level docs for the full file-helper

@@ -11,7 +11,7 @@
 //!    `MuxSender::new(transport, cfg)`
 //! 2. Caller + receiver: `TcpTransport::connect("tcp://host:port")` then
 //!    `DemuxReceiver::new(transport)`
-//! 3. Listener + sender: `TcpListener::bind("0.0.0.0:7001")?.accept_blocking()?`
+//! 3. Listener + sender: `TcpListener::bind("0.0.0.0:7001".parse()?)?.accept_blocking()?`
 //!    then `MuxSender::new(transport, cfg)`
 //! 4. Listener + receiver: same listener path then `DemuxReceiver::new`
 //!

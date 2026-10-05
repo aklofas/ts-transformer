@@ -10,7 +10,8 @@
 //!   (default-on)
 //!
 //! URL forms:
-//! - `rist://host:port` — Simple Profile sender (unicast UDP)
+//! - `rist://host:port` — sender (unicast UDP; Main Profile unless
+//!   `?profile=simple`)
 //! - `rist://@host:port` — receiver bind (ffmpeg `@` convention; same trick as
 //!   `tst-udp` / `tst-tcp`)
 //! - `rist://239.x.x.x:port` — multicast sender
@@ -18,8 +19,11 @@
 //! - `?recovery_maxbitrate=N` — retransmit-bandwidth cap, kbps (`?bandwidth=N`
 //!   is an alias; both with different values is a parse error)
 //! - `?buffer=N` — recovery buffer ms
-//! - `?aes-type=128|192|256&secret=...` — AES key (forces Main Profile)
+//! - `?aes-type=128|192|256&secret=...` — AES key (forces Main Profile;
+//!   `secret` alone means AES-256, `aes-type` alone is a parse error)
 //! - `?cname=...` — RTCP CNAME
+//! - `?session_timeout=N` — receiver session timeout, ms
+//! - `?compression=0|1` — NULL-packet deletion
 
 #![warn(rustdoc::broken_intra_doc_links)]
 

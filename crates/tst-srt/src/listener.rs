@@ -58,7 +58,7 @@ const SRT_EPOLL_IN: c_int = 0x1;
 /// | Kotlin | Wrap as `AutoCloseable`; `.use { }` calls drop on exit |
 /// | Swift | `deinit` calls drop; `defer { handle.cancel() }` for explicit cross-thread |
 /// | Python | Wrap as `__enter__`/`__exit__`; `with ... as listener:` calls drop on exit |
-/// | C | (deferred — `Listener` is not directly exposed at the C ABI today) |
+/// | C | Not exposed — the `tst_*_receiver_open_listener` calls bind, accept and drop it internally |
 ///
 /// See [`docs/reference/srt-cancel-handle.md`](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/srt-cancel-handle.md) for the full cancel-handle pattern.
 pub struct Listener {

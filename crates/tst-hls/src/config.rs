@@ -11,15 +11,17 @@ use crate::url::HlsUrl;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HlsMode {
     /// LIVE — rolling-window playlist; older segments evict from disk and
-    /// playlist.  No ENDLIST until [`Publisher::finish`].
+    /// playlist.  Never carries ENDLIST, not even after [`Publisher::finish`].
     ///
     /// [`Publisher::finish`]: tst_core::publisher::Publisher::finish
     Live,
     /// EVENT — playlist monotone-grows (no segments evicted) until finish.
     /// ENDLIST written on finish.
     Event,
-    /// VOD — same as Event but written all-at-once when finish is called
-    /// (no incremental playlist updates during the run).
+    /// VOD — same segment set as Event, tagged `#EXT-X-PLAYLIST-TYPE:VOD`;
+    /// ENDLIST written on finish. Like every mode, the on-disk playlist is
+    /// written at finish and the built-in server renders the growing
+    /// playlist from memory during the run.
     Vod,
 }
 
@@ -52,8 +54,9 @@ pub struct HlsConfig {
     /// each other's output and race on segment creation — give each publisher
     /// its own `output_dir`.
     pub output_dir: PathBuf,
-    /// Target segment duration.  Real segments cut on `cut_segment()` calls
-    /// (IDR-aligned) OR when this duration is exceeded since the segment opened.
+    /// Target segment duration (default 4 s; must be > 0).  Real segments cut
+    /// on `cut_segment()` calls (IDR-aligned) OR when this duration is
+    /// exceeded since the segment opened.
     pub segment_duration: Duration,
     /// Hard upper bound on an open segment's wall-clock age.
     ///
@@ -66,8 +69,10 @@ pub struct HlsConfig {
     /// In the raw pre-muxed `push_ts` relay flow (no keyframe signal) this is
     /// ignored — wall-clock cutting at `segment_duration` is unchanged.
     pub max_segment_duration: Option<Duration>,
-    /// Number of segments visible in the LIVE playlist (rolling window).
-    /// Ignored for Event/Vod modes.
+    /// Number of segments visible in the LIVE playlist (rolling window;
+    /// default 6). In Live mode it must hold at least 3 target durations
+    /// (RFC 8216 §6.2.2), which [`Self::validate`] checks. Ignored for
+    /// Event/Vod modes.
     pub playlist_window: usize,
     /// Playlist mode.
     pub mode: HlsMode,
@@ -75,10 +80,12 @@ pub struct HlsConfig {
     /// Ignored when the `serve` feature is disabled.
     pub basic_auth: Option<(String, String)>,
     /// Optional TLS server cert path (PEM).  Required if [`Self::tls_key`] set.
-    /// Ignored when the `serve` feature is disabled.
+    /// Without the `tls` feature, setting it is refused with
+    /// [`HlsError::TlsDisabled`](crate::HlsError::TlsDisabled).
     pub tls_cert: Option<PathBuf>,
     /// Optional TLS server key path (PEM).  Required if [`Self::tls_cert`] set.
-    /// Ignored when the `serve` feature is disabled.
+    /// Without the `tls` feature, setting it is refused with
+    /// [`HlsError::TlsDisabled`](crate::HlsError::TlsDisabled).
     pub tls_key: Option<PathBuf>,
     /// Whether the bind is required to be HTTPS. Set by
     /// [`Self::merge_from_url`] from an `hlss://` URL's scheme;

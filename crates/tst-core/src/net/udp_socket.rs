@@ -11,8 +11,7 @@
 //!
 //! All multicast iface/hop helpers that require raw `setsockopt` are
 //! `cfg(unix)` — the non-Unix paths return
-//! `io::Error::new(ErrorKind::Unsupported, …)` matching the Phase-1
-//! deferral documented in the Windows-runtime-test plan.
+//! `io::Error::new(ErrorKind::Unsupported, …)`.
 
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
@@ -198,13 +197,13 @@ pub fn set_multicast_hops_v6(_socket: &UdpSocket, _hops: u8) -> io::Result<()> {
     ))
 }
 
-/// Set `IP_MULTICAST_IF` for IPv4 (interface IP) or surface a Phase-1
-/// limitation for IPv6 (needs scope-id integer lookup, not yet wired).
+/// Set `IP_MULTICAST_IF` for IPv4 (interface IP) or surface a limitation
+/// for IPv6 (needs scope-id integer lookup, not yet wired).
 ///
 /// IPv4 path accepts a literal IPv4 address string (e.g. `"192.168.1.50"`).
 /// Name → IP resolution for interface names (e.g., `eth0`) is not done
 /// — callers needing name-based binding can resolve via
-/// `if_indextoname` and pass the IP. This is the same UX libsrt's
+/// `getifaddrs` and pass the IP. This is the same UX libsrt's
 /// `?iface=` query parameter ships with.
 pub fn apply_multicast_iface(socket: &UdpSocket, group: IpAddr, iface: &str) -> io::Result<()> {
     match group {

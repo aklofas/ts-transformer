@@ -534,7 +534,7 @@ impl RtspServerBuilder {
     /// Require Basic auth (RFC 7617). Mutually exclusive with the
     /// `auth_digest_*` methods — calling twice overwrites; calling with
     /// a different scheme at `build()` time has the final-call wins
-    /// behavior (this builder is single-user-only in v1).
+    /// behavior (the server holds one credential).
     pub fn auth_basic(&mut self, realm: &str, username: &str, password: SecretString) -> &mut Self {
         self.auth = Some(ServerAuthConfig {
             scheme: ServerAuthScheme::Basic,

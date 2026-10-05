@@ -116,7 +116,7 @@ pub struct RawSendStats {
 ///    (the explicit `close()` is the canonical close path). The
 ///    underlying transport's own `Drop` runs after this struct's `Drop`,
 ///    which closes the libsrt socket; bounded by `SRTO_LINGER` (libsrt
-///    default 30 s, configurable via `SocketBuilder::linger`).
+///    default off, sender preset 5 s, configurable via `SocketBuilder::linger`).
 /// 2. **Explicit close** — call [`Self::close`]. Closes the underlying
 ///    transport. Idempotent.
 /// 3. **Cross-thread cancel** — call [`Self::cancel_handle`] to obtain a

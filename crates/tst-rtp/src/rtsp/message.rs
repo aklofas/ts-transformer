@@ -638,7 +638,7 @@ impl RtspRequest {
     ///
     /// # Errors
     /// - [`RtspError::BadResponse`] (reused for request-side malformed
-    ///   text; we don't have a separate `BadRequest` variant in v1).
+    ///   text; there is no separate `BadRequest` variant).
     pub fn parse(input: &[u8]) -> Result<(Self, usize), RtspError> {
         // 1. Find CRLFCRLF terminating headers.
         let header_end =

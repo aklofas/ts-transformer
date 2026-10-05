@@ -1,18 +1,21 @@
-//! TS Transformer core — pure MPEG-TS mux/demux, KLV (MISB ST 0601),
-//! codec parameter-set parsers, and transport trait definitions.
+//! TS Transformer core — pure MPEG-TS mux/demux, KLV (MISB ST 0601 and
+//! the companion local sets under [`klv`]), codec parameter-set parsers,
+//! and transport trait definitions.
 //!
-//! No I/O, no threads, no transport implementations. The shells that
-//! consume the [`Transport`] / [`RecvTransport`] traits live in the
-//! companion crate `tst-pipeline`; concrete transport impls (SRT/UDP/
-//! RTP/TCP/RTSP) live in their own crates.
+//! No transport implementations. The shells that consume the
+//! [`Transport`] / [`RecvTransport`] traits live in the companion crate
+//! `tst-pipeline`; concrete transport impls (SRT/UDP/RTP/RTSP/TCP/RIST)
+//! live in their own crates, and `tst-hls` implements the
+//! [`Publisher`](publisher::Publisher) trait instead. The only I/O here is
+//! the `io_file` helpers
+//! (`file` feature) and the `net` socket helpers the transport crates
+//! share (`std` feature).
 //!
-//! A few trait-adjacent helpers carry SRT-flavored naming
-//! ([`SrtCancelHandle`], [`SocketStats`]) because today's only
-//! production transport is libsrt-backed. The code is transport-generic
-//! (no `srt-sys` dependency from this crate); the names reflect contract
-//! shape, not call sites. Future non-SRT transports may need their own
-//! cancel-handle / stats types if the libsrt-flavored contracts don't
-//! fit — flagged for post-1.0 review.
+//! Two trait-adjacent types carry SRT-flavored naming: [`SrtCancelHandle`]
+//! (used only by `tst-srt`) and [`SocketStats`] (its field set mirrors
+//! libsrt's statistics; every transport crate fills the fields it can).
+//! The code is transport-generic (no `srt-sys` dependency from this
+//! crate); the names reflect contract shape, not call sites.
 //!
 //! ## Quick start — round-trip a ST 0601 record
 //!
@@ -39,9 +42,9 @@
 //! - `std` (default-on) — pulls in the standard library: the `net`
 //!   helpers, the blocking thread/`Barrier` cancel path, and JSON/TOML
 //!   (`serde_json`/`toml`) export. With `--no-default-features` the crate
-//!   is `#![no_std]` + `alloc`: MPEG-TS mux/demux, KLV (incl. the in-crate
-//!   H.264/H.265/H.266/AV1 parameter-set parsers), codec parsers, and the
-//!   transport traits all compile for bare-metal / FreeRTOS senders. The
+//!   is `#![no_std]` + `alloc`: MPEG-TS mux/demux, KLV, the codec parsers
+//!   (H.264/H.265/H.266/AV1 parameter sets, MPEG audio, AAC, AC-3), and the
+//!   transport traits all compile for bare-metal / FreeRTOS targets. The
 //!   embedding binary must supply a `#[global_allocator]`. Verified in CI
 //!   against `thumbv7em-none-eabihf` (Cortex-M4F/M7F = STM32F4/F7/H7) and
 //!   `riscv32imac-unknown-none-elf` (e.g. ESP32-P4 bare-metal). The no_std
@@ -53,7 +56,7 @@
 //!   embedder-supplied hook needed), and KLV IMAP float math uses
 //!   `libm`. (The MPEG-TS PTS/PCR pacing math is integer-only and needs no
 //!   FPU; only KLV coordinate IMAP-B mapping uses `f64`.)
-//! - `file` (default-on, implies `std`) — enables std::fs-using helpers in
+//! - `file` (default-on; `file` and `std` imply each other) — enables std::fs-using helpers in
 //!   `io_file`. Embedded users without a filesystem disable via
 //!   `tst-core = { default-features = false }`.
 

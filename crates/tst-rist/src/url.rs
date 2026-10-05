@@ -1,7 +1,8 @@
 //! Parsing of `rist://` URLs.
 //!
 //! Supported forms:
-//! - `rist://host:port` — Simple Profile sender (unicast UDP)
+//! - `rist://host:port` — sender (unicast UDP; Main Profile unless
+//!   `?profile=simple`)
 //! - `rist://@host:port` — receiver bind (ffmpeg `@` convention)
 //! - `rist://239.x.x.x:port` — multicast sender
 //! - Query params: `profile`, `buffer`, `aes-type`, `secret`, `cname`,

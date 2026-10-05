@@ -276,14 +276,19 @@ pub enum CodecParseError {
     #[error("unsupported profile_idc {profile_idc}")]
     UnsupportedProfile { profile_idc: u8 },
 
-    /// `parse_pps` standalone references an SPS id that wasn't seen.
-    /// Does not fire from `parse_parameter_sets` (which collects SPSes
-    /// before resolving PPSes).
+    /// A PPS references an SPS id that is not in the input.
+    ///
+    /// Reserved — no parser returns it: H.264 `parse_parameter_sets` drops
+    /// such a PPS with a `tracing::warn!`, and a standalone `parse_pps`
+    /// sees no SPS set to check against.
     #[error("PPS references SPS id {sps_id} which was not in the input")]
     DanglingSpsReference { sps_id: u8 },
 
-    /// H.265 only: `parse_sps` standalone references a VPS id that
-    /// wasn't seen. Does not fire from `parse_parameter_sets`.
+    /// H.265 only: an SPS references a VPS id that is not in the input.
+    ///
+    /// Reserved — no parser returns it: H.265 `parse_parameter_sets` keeps
+    /// an SPS whatever VPS it names, and a standalone `parse_sps` sees no
+    /// VPS set to check against.
     #[error("SPS references VPS id {vps_id} which was not in the input")]
     DanglingVpsReference { vps_id: u8 },
 

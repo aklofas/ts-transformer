@@ -100,7 +100,9 @@ pub struct RistConfig {
     pub bandwidth_kbps: Option<u32>,
     /// Recovery buffer.
     pub buffer: Duration,
-    /// Encryption (None = unencrypted). Forces Main profile when Some.
+    /// Encryption (None = unencrypted). The builders' `encryption` call
+    /// and a URL `secret` also set [`Self::profile`] to Main; a config
+    /// built by hand is used as given.
     pub encryption: Option<EncryptionKey>,
     /// RTCP CNAME.
     pub cname: Option<String>,

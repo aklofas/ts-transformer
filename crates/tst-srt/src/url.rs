@@ -298,22 +298,23 @@ impl SrtUrl {
     /// with the overlay applied and the sender preset merged underneath
     /// it, and return the connected transport.
     ///
-    /// This is the one composition every binding's sender open shares (tst-c's
-    /// `connect_srt`, the Python and JVM mirrors):
-    /// [`UrlOverlay::apply_to_socket`] on a default [`SocketConfig`] →
+    /// The composition: [`UrlOverlay::apply_to_socket`] on a default [`SocketConfig`] →
     /// [`SocketConfig::merge_sender_defaults`] (15 s connect timeout, 5 s
     /// linger, `Role::Sender` — each only where the overlay left it unset, so
     /// the URL wins) → the shared dial tail.
     ///
     /// # Which one to call
     ///
-    /// - `connect` — the C sender open path. Applies the sender defaults
-    ///   where the URL left them unset. tst-c opens its caller-mode
-    ///   *receivers* through this preset too, so the managed receive
-    ///   family keeps it; nothing changes for them.
+    /// - `connect` — applies the sender defaults where the URL left them
+    ///   unset. The C plain opens (`tst_sender_open`, `tst_raw_sender_open`,
+    ///   `tst_mux_sender_open`, the caller-mode receivers) and every managed caller open in all
+    ///   three bindings use it, so a managed caller-mode receiver also
+    ///   gets the 5 s linger and `Role::Sender`.
     /// - [`connect_recv`](Self::connect_recv) — the plain/receive-side
-    ///   open path: overlay only, no preset. This is what the Python and
-    ///   JVM plain caller opens do today.
+    ///   open path: overlay only, no preset. The Python and JVM plain
+    ///   caller opens use it — senders included, so a plain Python/JVM
+    ///   sender keeps libsrt's linger-off default and no 15 s connect
+    ///   timeout.
     ///
     /// [`mode`](Self::mode) is not consulted: the caller chooses the
     /// direction by calling this or [`accept_one`](Self::accept_one)
@@ -336,7 +337,7 @@ impl SrtUrl {
     /// libsrt's own connect timeout and linger and stays
     /// [`Role::Receiver`](crate::options::Role::Receiver).
     ///
-    /// That is what the Python and JVM plain caller opens compose today,
+    /// That is what the Python and JVM plain caller opens compose,
     /// and why the split exists: routing them through
     /// [`connect`](Self::connect) would silently promote every plain
     /// receiver to `SRTO_SENDER=1` with a 5 s close linger. See
@@ -359,7 +360,7 @@ impl SrtUrl {
     /// is [`Listener::accept_one_cancellable`]; this method only builds
     /// the [`ListenerConfig`] from the overlay
     /// ([`UrlOverlay::apply_to_listener`]) and renders the bind address
-    /// the way the bindings' `listen_srt` did. Single-accept: the
+    /// (an empty host becomes `0.0.0.0`). Single-accept: the
     /// listener is dropped on return. Share the same `cancel` slot with
     /// a managed transport's `tst_pipeline::FactoryCancel` — a type alias
     /// for this very [`CancelSlot`] — so a
@@ -543,8 +544,8 @@ fn apply_latency(overlay: &mut UrlOverlay, key: &'static str, value: &str) -> Re
 
 fn apply_maxbw(overlay: &mut UrlOverlay, value: &str) -> Result<(), UrlError> {
     // SRTO_MAXBW is i64; we expose non-negative as Limited(u64).
-    // Negative-sentinel forms (Auto/Infinite) are not URL-settable
-    // under strict-A.
+    // The `-1` sentinel (`MaxBandwidth::Auto`, libsrt's infinite) is not
+    // URL-settable; `?maxbw=0` sends 0 (relative to the input rate).
     let n = parse_int_nonneg::<u64>("maxbw", value)?;
     overlay.max_bandwidth = Some(MaxBandwidth::Limited(n));
     Ok(())

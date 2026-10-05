@@ -14,8 +14,9 @@ use std::time::Duration;
 /// (LOS-over-terrain interruptions, antenna repointing, radio warm-up).
 const SENDER_DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// Sender-pipeline default for `SRTO_LINGER`. libsrt's default is off
-/// (`l_onoff=0` — drains in the background). 5s is long enough to drain a
+/// Sender-pipeline default for `SRTO_LINGER`. libsrt's live-mode default is
+/// off (`l_onoff=0` — close does not wait, and data still queued in the
+/// send buffer is dropped). 5s is long enough to drain a
 /// small backlog under healthy conditions, short enough to never stall a
 /// `ManagedTransport` reconnect cycle noticeably.
 const SENDER_DEFAULT_LINGER: Duration = Duration::from_secs(5);
@@ -41,12 +42,13 @@ pub struct SocketConfig {
     pub recv_timeout: Option<Duration>,
     /// Maximum time `connect_with` waits for handshake completion before
     /// giving up. `None` keeps libsrt's 3-second default. For radio links
-    /// (LOS interruptions, antenna repointing) the `pipeline::MuxSender`
-    /// defaults this to 15s.
+    /// (LOS interruptions, antenna repointing) [`Self::sender_defaults`],
+    /// [`Self::receiver_defaults`] and [`SrtUrl::connect`](crate::SrtUrl::connect)
+    /// set it to 15s where it is unset.
     pub connect_timeout: Option<Duration>,
     /// SRT linger timeout. `None` preserves libsrt's default — which is
     /// `l_onoff=0, l_linger=0` (linger off; close returns immediately and
-    /// libsrt's internal queue drains in the background). Note: this differs
+    /// data still queued in the send buffer is dropped). Note: this differs
     /// from the kernel SO_LINGER default; libsrt initializes its own
     /// `struct linger`. See `srtcore/socketconfig.h:333-336`.
     pub linger: Option<Duration>,
@@ -268,7 +270,7 @@ pub struct ListenerConfig {
 
     /// SRT linger timeout. `None` preserves libsrt's default — which is
     /// `l_onoff=0, l_linger=0` (linger off; close returns immediately and
-    /// libsrt's internal queue drains in the background). Note: this differs
+    /// data still queued in the send buffer is dropped). Note: this differs
     /// from the kernel SO_LINGER default; libsrt initializes its own
     /// `struct linger`. See `srtcore/socketconfig.h:333-336`. Inherited by
     /// accepted sockets via libsrt's option-inheritance (PRE options).

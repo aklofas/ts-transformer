@@ -397,8 +397,8 @@ impl ListenerBuilder {
     /// # C ABI
     ///
     /// No direct counterpart — `Listener` itself is not exposed at the C
-    /// ABI today. The receiver-side C surface (deferred) will lift the
-    /// listen/accept pair into a single `tst_*_open_listener`-shaped call.
+    /// ABI. The C receivers fold the bind/listen/accept sequence into
+    /// their `tst_*_receiver_open_listener` calls.
     ///
     /// # Errors
     /// Returns [`BindError`] on hostname-resolution failure, libsrt

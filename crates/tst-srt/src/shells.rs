@@ -27,14 +27,12 @@
 //!
 //! # Why the caller path uses [`SrtUrl::connect`], receivers included
 //!
-//! Every C caller-mode open — plain and managed, TS / raw / demux — goes
-//! through `connect_srt`, which applies
-//! [`SocketConfig::merge_sender_defaults`](crate::config::SocketConfig::merge_sender_defaults)
-//! (`bindings/c/core/src/sender/connect.rs:30`; receiver call sites
-//! `receiver/demux_receiver/managed.rs:220,231`, `receiver/ts_receiver.rs:94`,
-//! `receiver/raw_receiver.rs:99`). A managed caller-mode RECEIVER
-//! therefore runs today with the sender preset (15 s connect timeout, 5 s
-//! linger, `Role::Sender`), and this family preserves that exactly —
+//! Every C caller-mode open — plain and managed, TS / raw / demux — and
+//! every managed caller-mode open in the Python and JVM bindings goes
+//! through [`SrtUrl::connect`], which applies
+//! [`SocketConfig::merge_sender_defaults`](crate::config::SocketConfig::merge_sender_defaults).
+//! A managed caller-mode RECEIVER therefore runs with the sender preset
+//! (15 s connect timeout, 5 s linger, `Role::Sender`) —
 //! [`SrtUrl::connect_recv`] (the overlay-only open) is for the plain
 //! Python/JVM opens that never merged it, not for this family.
 
@@ -62,8 +60,8 @@ use crate::url::{Mode, SrtUrl};
 /// fault; `Broken { "bind: …" | "accept: …" }` is already the recoverable
 /// shape. Everything else (the typed [`ConnectError`](crate::ConnectError)
 /// from [`SrtUrl::connect`]) becomes the recoverable `Broken` the
-/// reconnect loop retries, message-prefixed the way the bindings'
-/// `connect_srt` did. Once process exit has started there is nothing to
+/// reconnect loop retries, its message prefixed `connect: `. Once
+/// process exit has started there is nothing to
 /// retry: a dial refused or cancelled by the exit guard is
 /// `ExplicitClose`, which ends the reconnect loop.
 fn open_error_to_transport(e: SrtError) -> TransportError {

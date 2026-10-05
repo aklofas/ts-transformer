@@ -1,6 +1,6 @@
 #![doc = include_str!("../README.md")]
 //!
-//! TS Transformer RTP transport — two receive shapes over RTP/RTSP:
+//! TS Transformer RTP transport — two payload shapes over RTP/RTSP:
 //!
 //! - **MPEG-TS-over-RTP (RFC 2250, PT=33):** an enclosing MPEG-TS stream rides
 //!   a single RTP flow. Use [`RtpTransport`] / [`RtpRecvTransport`] (raw) or

@@ -12,8 +12,8 @@
 //!   BER short/long and BER-OID length encodings, IMAPB integer↔float
 //!   mapping per ST 1201 §7, ST 0601 16-bit running-sum checksum, and
 //!   generic local-set / universal-set pack-and-iterate.
-//! - **Typed ST 0601 layer** (`st0601`) — the curated working subset of
-//!   ST 0601 tags as a flat `UasDatalinkLs` struct with eager `decode` /
+//! - **Typed ST 0601 layer** (`st0601`) — 142 of the 143 ST 0601.19 items
+//!   (all but the deprecated Tag 66) as a flat `UasDatalinkLs` struct with eager `decode` /
 //!   free-function `encode`. Anything not typed-modeled passes through as
 //!   `OwnedRawField` in `record.unknown`.
 //! - **Typed ST 0102 layer** (`st0102`) — the Security Metadata Local Set

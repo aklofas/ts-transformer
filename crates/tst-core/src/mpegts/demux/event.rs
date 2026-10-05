@@ -78,8 +78,9 @@ pub struct StreamId {
     pub kind: StreamKind,
     /// Program-number this stream belongs to. Populated by the demuxer from
     /// PMT; provides cross-program identity for multi-program TS where two
-    /// programs may reuse a PID (resolution policy is first-program-wins per
-    /// CLAUDE.md project conventions).
+    /// programs may reuse a PID (resolution policy is first-program-wins: a
+    /// later program's claim on an owned PID is skipped and reported as
+    /// [`NonConformantIssue::PidReusedAcrossPrograms`]).
     pub program_number: u16,
 }
 
@@ -562,8 +563,8 @@ pub enum NonConformantIssue {
     /// The classification cascade is tag-presence-based via
     /// `find_descriptor_tag`, so malformed descriptor bodies pass through.
     /// Typed-parser integration in the cascade — and therefore this
-    /// variant's first emission — is deferred to the typed WebVTT cue /
-    /// DVB-sub data-segment / teletext data-unit substrate session. Unlike
+    /// variant's first emission — waits on typed WebVTT cue / DVB-sub
+    /// data-segment / teletext data-unit parsers. Unlike
     /// [`Self::PusiMidPes`], this variant is not removable-in-spirit: it's
     /// on the C ABI (`TST_NONCONFORMANT_CODE_SUBTITLE_DESCRIPTOR_MALFORMED = 9`)
     /// and every binding's label table, so it stays reserved for

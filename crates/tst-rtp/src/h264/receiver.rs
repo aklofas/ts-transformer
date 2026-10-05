@@ -25,9 +25,10 @@
 //!
 //! # RTCP
 //!
-//! RTCP is **not** implemented on this path (v1 decision). No RTCP socket
-//! is bound; no RR/SR packets are sent or received. This is a recorded
-//! deferral: see `docs/project/deferred-features.md`.
+//! RTCP is **not** implemented on this path. No RTCP socket is bound; no
+//! RR/SR packets are sent or received. This is a recorded deferral: see
+//! `docs/project/deferred-features.md`, "RTP jitter/reorder buffer +
+//! H.264-path RTCP".
 //!
 //! # EOS contract
 //!
@@ -102,8 +103,8 @@ use crate::url::RtpUrl;
 ///
 /// # RTCP
 ///
-/// RTCP is not implemented on this path (v1 decision). No RTCP companion
-/// socket is bound. See `docs/project/deferred-features.md`.
+/// RTCP is not implemented on this path. No RTCP companion socket is
+/// bound. See `docs/project/deferred-features.md`.
 ///
 /// # Send
 ///
@@ -127,8 +128,8 @@ pub struct H264Receiver {
     /// explicit argument always wins for that call.
     recv_timeout: Option<Duration>,
     /// For TCP-interleaved sessions: the pump's RTCP channel (`rtcp_rx` from
-    /// `RtspSession`). RTCP is not processed on the H.264 path (v1 decision;
-    /// see `docs/project/deferred-features.md`), but if this receiver is
+    /// `RtspSession`). RTCP is not processed on the H.264 path (a recorded
+    /// deferral; see `docs/project/deferred-features.md`), but if this receiver is
     /// dropped the pump's `rtcp_tx.try_send()` returns `Disconnected` and the
     /// pump exits — which drops `data_tx` — causing `recv_au`'s next
     /// `recv_raw` to return `MPSC_PUMP_DISCONNECTED` (a clean-EOS sentinel)
@@ -155,8 +156,10 @@ impl H264Receiver {
     /// # Errors
     ///
     /// Returns [`ConnectError::MissingPayloadTypeParam`] when `?pt=` is
-    /// absent, [`ConnectError::Url`] on parse failure, or
-    /// [`ConnectError::Io`] on bind failure.
+    /// absent, [`ConnectError::Url`] on parse failure (including a `?pt=`
+    /// outside 1..=127 or equal to 33, and a receive-side `?pkt_size=`),
+    /// [`ConnectError::HostNotLiteral`] when the host is not a literal IP,
+    /// or [`ConnectError::Io`] on bind failure.
     pub fn listen(url: &str) -> Result<Self, ConnectError> {
         let parsed = RtpUrl::parse(url).map_err(ConnectError::Url)?;
         Self::listen_with(&parsed, H264DepayConfig::default())
@@ -168,7 +171,9 @@ impl H264Receiver {
     /// # Errors
     ///
     /// Returns [`ConnectError::MissingPayloadTypeParam`] when `url.pt` is
-    /// `None`, or [`ConnectError::Io`] on bind failure.
+    /// `None`, [`ConnectError::Url`] when `url.pkt_size` is set (a
+    /// send-side knob), [`ConnectError::HostNotLiteral`] when the host is
+    /// not a literal IP, or [`ConnectError::Io`] on bind failure.
     pub fn listen_with(url: &RtpUrl, mut config: H264DepayConfig) -> Result<Self, ConnectError> {
         if url.pkt_size.is_some() {
             return Err(ConnectError::Url(crate::url::UrlError::RecvPktSize));
@@ -230,7 +235,7 @@ impl H264Receiver {
     /// server RTCP Sender Report.
     ///
     /// RTCP frames are discarded here; no RTCP processing is done on the
-    /// H.264 path (v1 decision; see `docs/project/deferred-features.md`).
+    /// H.264 path (a recorded deferral; see `docs/project/deferred-features.md`).
     ///
     /// Used by the RTSP session bridge.
     pub(crate) fn from_mpsc_with_rtcp_drain(
@@ -444,7 +449,7 @@ impl H264Receiver {
     /// | [`SocketStats`] field | Source |
     /// |---|---|
     /// | `bytes_received` / `packets_received` | Local counters; incremented on every received datagram/chunk before RTP-header or PT validation. Malformed-but-received packets are counted here; their drops are separately tracked in [`RtpStats::malformed_packets`] via [`Self::rtp_stats`]. |
-    /// | `rtt_us` / `packets_lost_send` | Always 0 — RTCP is not implemented on this path (v1 decision; see the struct-level RTCP section). |
+    /// | `rtt_us` / `packets_lost_send` | Always 0 — RTCP is not implemented on this path (see the struct-level RTCP section). |
     /// | `bytes_sent` / `packets_sent` | 0 (this is the receive half) |
     /// | All other fields | 0 |
     pub fn socket_stats(&self) -> SocketStats {

@@ -144,7 +144,7 @@ impl crate::shell_error::ShellError for SenderError {
 ///
 /// 1. **Drop** — the [`Drop`] impl best-effort flushes any buffered
 ///    partial bundle and closes the underlying transport. Synchronous;
-///    bounded by `SRTO_LINGER` (libsrt default 30 s, configurable via
+///    bounded by `SRTO_LINGER` (libsrt default off, sender preset 5 s, configurable via
 ///    `SocketBuilder::linger`).
 /// 2. **Explicit close** — call [`Self::close`]. Best-effort flushes
 ///    any buffered partial bundle (same as Drop), marks the sender

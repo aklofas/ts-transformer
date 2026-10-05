@@ -65,8 +65,8 @@ pub enum UdpUrlError {
         value: String,
         detail: String,
     },
-    /// `?pkt_size=` supplied on a receive-side URL. Send-side only since
-    /// the recv-ceiling change: the receive buffer always accepts any
+    /// `?pkt_size=` supplied on a receive-side URL. Send-side only: the
+    /// receive buffer always accepts any
     /// legal datagram (65535 ceiling).
     #[error(
         "pkt_size is a send-side knob; receive buffers size to the transport's deliverable ceiling automatically — remove ?pkt_size= from receiver URLs"

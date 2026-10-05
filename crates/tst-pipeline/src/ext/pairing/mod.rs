@@ -230,10 +230,8 @@ impl Pairer {
 
     /// Construct a nearest-PTS pairer with the given options.
     ///
-    /// Replaces the pre-Phase-3 5-positional-arg `Pairer::nearest_pts`
-    /// constructor. Field-style construction is unit-explicit
-    /// (`Duration` instead of bare ticks) and translates cleanly to
-    /// future C ABI / JNI / UniFFI surfaces.
+    /// Field-style construction is unit-explicit (`Duration` instead of
+    /// bare ticks) and FFI-friendly.
     ///
     /// # Behavior
     ///

@@ -362,9 +362,11 @@ impl RtspServer {
     ///
     /// # Panics
     ///
-    /// None directly; the per-mount sender task is spawned on the
-    /// runtime — if it panics during send, tracing emits a warn but
-    /// the server stays up.
+    /// Only if the server's mount-table mutex is poisoned (a previous
+    /// panic while it was held). The per-mount sender runs as a task on
+    /// the server runtime: a panic inside it ends that task, not the
+    /// server, and a failure to build the multicast socket is logged at
+    /// `error` level and leaves the mount inactive.
     pub fn add_multicast_mount(
         &self,
         path: &str,
