@@ -1,8 +1,11 @@
 # Benchmarks + ceilings
 
-**No measured capacity results are published on this page yet.** The
-sections below describe the test method and how to reproduce it. Use
-measured results from your target system when choosing a deployment size.
+This page publishes the measured sweep of the stress run of 2026-10-03
+(tree `3a3f964f`, one AWS `c7i.2xlarge`) and the steady-state figures of
+the 72-hour 0.7.0 release-candidate soak (tree `e86dd9ea`). The stress
+run's 24-hour hold did not finish, so no 24-hour hold verdict is published
+yet. The figures are from one host each; use measured results from your
+target system when choosing a deployment size.
 
 This page answers a deployment-planning question the interop matrix and the
 soak evidence don't: how big a system can I build on one machine before
@@ -71,7 +74,7 @@ of its ceiling actually survive a full day of real-world disruption."
 
 ## Reference machine and reproduction
 
-The first measured run targets an AWS `c7i.2xlarge` (8 vCPU, 16 GiB) on
+The reference machine is an AWS `c7i.2xlarge` (8 vCPU, 16 GiB) on
 Ubuntu noble. Launch recipe:
 
 ```bash
@@ -93,9 +96,241 @@ and one subdirectory per sweep step with that step's raw logs and samples.
 
 ## Measured results
 
+The block below is generated from the 2026-10-03 run's sweep steps. Its
+hold section reads "No hold in this run" because the hold ended early and
+wrote no results file; what the hold did measure is under "Measured: stress
+run of 2026-10-03" below.
+
 <!-- bench:begin -->
-_No measured run has been rendered into this page yet. The first render comes from the c7i.2xlarge stress run; until then this block is empty on purpose rather than carrying numbers from the dev-box smoke, which is a harness check, not a measurement._
+### Reference machine
+
+- Kernel: Linux 7.0.0-1013-aws x86_64
+- vCPUs: 8
+- Memory: 15.3 GiB
+- Toolchain: rustc 1.85.1 (4eb161250 2025-03-15)
+- Source: `3a3f964f5c6b` (v0.6.0-669-g3a3f964f)
+- Recorded: 2026-10-03T07:14:04Z
+
+### Stream scaling
+
+#### SRT
+
+| N | CPU/stream (cores) | RSS/stream p99 (MiB) | threads max | fds max | wire Mb/s | pass |
+|---|---|---|---|---|---|---|
+| 1 | 0.033 | 26.1 | 6 | 5 | 1.9 | pass |
+| 2 | 0.031 | 26.5 | 6 | 5 | 3.8 | pass |
+| 4 | 0.028 | 26.4 | 6 | 5 | 7.5 | pass |
+| 8 | 0.020 | 26.5 | 6 | 5 | 15.1 | pass |
+| 16 | 0.016 | 26.4 | 6 | 5 | 30.1 | pass |
+| 32 | 0.016 | 26.4 | 6 | 5 | 60.2 | pass |
+| 64 | 0.016 | 26.4 | 6 | 5 | 120.4 | pass |
+| 128 | 0.017 | 26.5 | 6 | 5 | 240.8 | pass |
+
+Per-stream figures are averages over the step's streams.
+
+Ceiling: top of ladder (128), not a measured limit
+
+#### RIST
+
+| N | CPU/stream (cores) | RSS/stream p99 (MiB) | threads max | fds max | wire Mb/s | pass |
+|---|---|---|---|---|---|---|
+| 1 | 0.024 | 26.5 | 3 | 5 | 1.9 | pass |
+| 2 | 0.022 | 26.4 | 3 | 5 | 3.8 | pass |
+| 4 | 0.020 | 26.4 | 3 | 5 | 7.5 | pass |
+| 8 | 0.018 | 26.5 | 3 | 5 | 15.1 | pass |
+| 16 | 0.014 | 26.4 | 3 | 5 | 30.2 | pass |
+| 32 | 0.012 | 26.4 | 3 | 5 | 60.3 | pass |
+| 64 | 0.013 | 26.3 | 3 | 5 | 120.6 | pass |
+| 128 | 0.014 | 26.3 | 3 | 5 | 241.2 | pass |
+
+Per-stream figures are averages over the step's streams.
+
+Ceiling: top of ladder (128), not a measured limit
+
+#### UDP
+
+| N | CPU/stream (cores) | RSS/stream p99 (MiB) | threads max | fds max | wire Mb/s | pass |
+|---|---|---|---|---|---|---|
+| 1 | 0.008 | 22.5 | 1 | 5 | 1.9 | pass |
+| 2 | 0.007 | 22.1 | 1 | 5 | 3.8 | pass |
+| 4 | 0.007 | 22.2 | 1 | 5 | 7.5 | pass |
+| 8 | 0.007 | 21.9 | 1 | 5 | 15.1 | pass |
+| 16 | 0.007 | 22.0 | 1 | 5 | 30.2 | pass |
+| 32 | 0.006 | 22.1 | 1 | 5 | 60.3 | pass |
+| 64 | 0.006 | 22.1 | 1 | 5 | 120.6 | pass |
+| 128 | 0.005 | 22.1 | 1 | 5 | 241.2 | pass |
+
+Per-stream figures are averages over the step's streams.
+
+Ceiling: top of ladder (128), not a measured limit
+
+#### TCP
+
+| N | CPU/stream (cores) | RSS/stream p99 (MiB) | threads max | fds max | wire Mb/s | pass |
+|---|---|---|---|---|---|---|
+| 1 | 0.005 | 16.1 | 1 | 5 | 1.9 | pass |
+| 2 | 0.005 | 16.1 | 1 | 5 | 3.8 | pass |
+| 4 | 0.005 | 16.0 | 1 | 5 | 7.5 | pass |
+| 8 | 0.005 | 16.1 | 1 | 5 | 15.1 | pass |
+| 16 | 0.005 | 16.1 | 1 | 5 | 30.2 | pass |
+| 32 | 0.004 | 16.0 | 1 | 5 | 60.3 | pass |
+| 64 | 0.004 | 16.1 | 1 | 5 | 120.6 | pass |
+| 128 | 0.004 | 16.1 | 1 | 5 | 241.2 | pass |
+
+Per-stream figures are averages over the step's streams.
+
+Ceiling: top of ladder (128), not a measured limit
+
+### Single-stream throughput
+
+#### SRT
+
+| scale | declared Mb/s | observed Mb/s | CPU (cores) | pass |
+|---|---|---|---|---|
+| 1 | 1.7 | 1.9 | 0.033 | pass |
+| 2 | 3.4 | 3.7 | 0.036 | pass |
+| 4 | 6.8 | 7.3 | 0.042 | pass |
+| 8 | 13.6 | 14.4 | 0.054 | pass |
+| 16 | 27.2 | 28.8 | 0.078 | pass |
+| 32 | 54.4 | 57.5 | 0.128 | pass |
+| 64 | 108.8 | 115.0 | 0.231 | fail |
+
+Ceiling: 32 scale — ended by rss_slope_srt-0_send
+
+#### RIST
+
+| scale | declared Mb/s | observed Mb/s | CPU (cores) | pass |
+|---|---|---|---|---|
+| 1 | 1.7 | 1.9 | 0.024 | pass |
+| 2 | 3.4 | 3.7 | 0.027 | pass |
+| 4 | 6.8 | 7.3 | 0.032 | pass |
+| 8 | 13.6 | 14.5 | 0.044 | pass |
+| 16 | 27.2 | 28.8 | 0.068 | pass |
+| 32 | 54.4 | 57.6 | 0.124 | fail |
+
+Ceiling: 16 scale — ended by rss_slope_rist-0_recv
+
+#### UDP
+
+| scale | declared Mb/s | observed Mb/s | CPU (cores) | pass |
+|---|---|---|---|---|
+| 1 | 1.7 | 1.9 | 0.009 | pass |
+| 2 | 3.4 | 3.7 | 0.009 | pass |
+| 4 | 6.8 | 7.3 | 0.014 | pass |
+| 8 | 13.6 | 14.5 | 0.023 | pass |
+| 16 | 27.2 | 28.8 | 0.036 | pass |
+| 32 | 54.4 | 57.6 | 0.066 | pass |
+| 64 | 108.8 | 115.1 | 0.127 | fail |
+
+Ceiling: 32 scale — ended by rss_slope_udp-0_send
+
+#### TCP
+
+| scale | declared Mb/s | observed Mb/s | CPU (cores) | pass |
+|---|---|---|---|---|
+| 1 | 1.7 | 1.9 | 0.006 | pass |
+| 2 | 3.4 | 3.7 | 0.007 | pass |
+| 4 | 6.8 | 7.3 | 0.009 | pass |
+| 8 | 13.6 | 14.5 | 0.015 | pass |
+| 16 | 27.2 | 28.8 | 0.025 | pass |
+| 32 | 54.4 | 57.6 | 0.044 | fail |
+
+Ceiling: 16 scale — ended by rss_slope_tcp-0_send
+
+### The hold
+
+No hold in this run.
+
+### Limitations
+
+- rist/bitrate: rss_slope_rist-0_send over its allowance at step 1, step 2, step 4, step 8, step 16, step 32 — recorded, not gated (declared rss_slope_ungated; the hold gates it)
+- rist/streams: never failed — the ceiling is the top of the ladder, not a measured limit
+- rist/streams: rss_slope over its allowance for 128 processes matching `rist-*_send` (per-process list in stress-results.json) — recorded, not gated (declared rss_slope_ungated; the hold gates it)
+- srt/streams: never failed — the ceiling is the top of the ladder, not a measured limit
+- tcp/streams: never failed — the ceiling is the top of the ladder, not a measured limit
+- udp/streams: never failed — the ceiling is the top of the ladder, not a measured limit
 <!-- bench:end -->
+
+## Measured: stress run of 2026-10-03
+
+The run used tree `3a3f964f` on the reference machine above (8 vCPU,
+16 077 024 kB), with seed 11, all four transports, an RSS-slope threshold
+of 1024 KB/hour, and the RIST sender recorded, not gated, in sweep steps.
+The sweep ran 58 steps from 07:14Z to 18:21Z: 54 passed, and the 4 that
+failed are the rungs that end the four bitrate axes.
+
+**Stream count.** All four transports passed every rung up to 128
+concurrent streams, the top of this run's ladder. That is the highest load
+tested, not a measured limit. At 128 streams each transport carried about
+241 Mb/s on the wire. Measured as a fraction of the host's 8 vCPUs, SRT
+used 0.27, RIST 0.23, UDP 0.09 and TCP 0.06. Average RSS per stream (sender,
+proxy and receiver together) was flat across the ladder: about 26 MiB for
+SRT and RIST, 22 MiB for UDP, 16 MiB for TCP.
+
+**Per-stream bitrate.** The last passing `--au-scale` rung on one stream:
+
+| Transport | Ceiling (scale) | Declared rate at the ceiling | Ended at | Ended by |
+|---|---|---|---|---|
+| SRT | 32 | 54.4 Mb/s | 64 | `rss_slope_srt-0_send`, 10 150 KB/h against 6 827 allowed |
+| RIST | 16 | 27.2 Mb/s | 32 | `rss_slope_rist-0_recv`, 11 334 KB/h against 6 827 allowed |
+| UDP | 32 | 54.4 Mb/s | 64 | `rss_slope_udp-0_send`, 10 227 KB/h against 6 827 allowed |
+| TCP | 16 | 27.2 Mb/s | 32 | `rss_slope_tcp-0_send`, 8 855 KB/h against 6 827 allowed |
+
+Each axis ended on its memory-slope verdict alone; delivery, CPU,
+descriptor and thread verdicts passed at the failing rung. The allowance is
+the 1024 KB/hour threshold scaled to the step's 540-second judged window,
+so a one-time rise while buffers grow to a higher rate fails it. These
+ceilings therefore mark where a 10-minute step stops being able to tell
+warm-up from growth, not where a transport stops delivering.
+
+**The hold.** The sweep found no streams ceiling, so the hold was sized
+from the top rung: ⌊0.7 × 128⌋ = 89 per transport by CPU, then scaled by
+0.54 to fit the memory budget, giving 48 streams on each transport (192
+streams). It ran 58 081 of its 86 400 seconds (16 h 08 m) under the soak's
+impairment schedule, a 30-second outage on every SRT proxy every 15
+minutes and the 2-hourly SRT receiver restart. It ended when the receiver started at the ninth restart
+exited before reading data. The cause is in the harness: a restarted
+receiver re-reads the whole corruption log before its first read, and by
+the ninth restart that took longer than its 15-second no-data deadline. The
+SRT sender reconnected after that restart as it had after the eight
+before. The run therefore carries no 24-hour hold verdict.
+
+What the 16 hours do show: the SRT sender whose receiver was restarted
+stayed flat across restarts 3 to 9, with RSS 66 580 kB from the fourth
+hour to the end and a slope of 1.65 KB/hour from the first hour on. The
+SRT sender with no restarts plateaued at 65 568 kB, with a slope of 0.92
+KB/hour.
+
+## Measured: 72-hour 0.7.0 release-candidate soak
+
+The soak ran tree `e86dd9ea` in `ReconnectMode::Background`, seed 11, for
+259 137 of 259 200 seconds, on a 2-vCPU, 3.9 GB host (smaller than the
+stress reference machine). Its harness verdict is `overall_pass=false`
+(41 verdicts: 36 gating PASS, 3 gating FAIL, 2 provisional PASS). The SRT
+leg passed every gating verdict. The RIST leg failed corruption attribution
+with 8 unexplained events: six match a reproduced harness expectation-table
+defect, and the other two are attributed, as a high-confidence inference,
+to a reproduced harness anchor-stranding defect. All three gating FAILs
+(`worker_exits`, `recv_invariants_rist`, `corruption_attributed_rist`)
+stem from those 8 RIST events.
+[Validation evidence](/docs/project/validation-evidence.md) has the full
+account.
+
+Steady state, from the 30-second RSS series:
+
+| Process | Start | Steady state | Slope after the 30-minute warm-up |
+|---|---|---|---|
+| SRT sender | 171.3 MB | 172.1–173.2 MB from 6 h to the end | 9.2 KiB/h |
+| RIST sender | 76.6 MB | 181.3–181.4 MB from 8.3 h to the end (above 179 MB from 4.4 h) | 22.8 KiB/h |
+| SRT receiver | 10.1 MB | 11.4 MB at the end | 5.0 KiB/h |
+| RIST receiver | 7.5 MB | 10.0 MB at the end | 1.8 KiB/h |
+| SRT proxy | 6.4 MB | 7.0 MB at the end | 5.2 KiB/h |
+| RIST proxy | 5.9 MB | 6.5 MB at the end | 0.4 KiB/h |
+
+Every slope is under the 200 KiB/hour gate; the largest is 22.8. The SRT
+receiver rebuilt its transport 12 times for the 12 scheduled outage
+windows. The SRT receiver judged 2 580 965 rich ST 0601 KLV records and the
+RIST receiver 2 591 588, with 0 decode errors on either leg.
 
 ## Not measured yet
 

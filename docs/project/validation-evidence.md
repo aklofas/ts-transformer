@@ -865,8 +865,8 @@ ceiling for 24 hours under the soak's own impairment schedule. **A stress
 run is not a soak PASS, and a soak is not a ceiling** — the soak evidence
 above proves endurance at a size already chosen; a stress run is what
 chooses that size. See [`benchmarks.md`](/docs/project/benchmarks.md) for the verdict
-definitions, how to read a ceiling, and the measured results once a run
-has landed. Archives from each run — a results file, a provenance file,
+definitions, how to read a ceiling, and the measured results of the
+2026-10-03 stress run. Archives from each run — a results file, a provenance file,
 and one subdirectory per sweep step holding that step's raw logs — are
 retained offline by the maintainer.
 

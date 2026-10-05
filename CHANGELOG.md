@@ -141,8 +141,9 @@ The integrator-facing changes at a glance (full detail in the sections below):
     themselves.
 
   Full figures are in `docs/project/validation-evidence.md`. A stress
-  harness is new in this release (`scripts/interop/stress.sh`); its first
-  measured run is not yet published in `docs/project/benchmarks.md`. The
+  harness is new in this release (`scripts/interop/stress.sh`); the sweep
+  of its first measured run is published in `docs/project/benchmarks.md`,
+  and its 24-hour hold ended early on a harness defect and has no verdict. The
   Windows wheel now ships `tstrans.rist` like the Linux and macOS wheels:
   librist 0.2.18 fixed the Windows teardown hang that kept it out, and the
   gating windows-msvc CI leg runs the RIST tests.
