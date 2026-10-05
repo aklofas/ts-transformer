@@ -20,8 +20,12 @@ is never reported as a ceiling.
 Two sweeps and a hold, all four transports (SRT, RIST, UDP, TCP):
 
 - **Stream count**, at a fixed 1× bitrate per stream: 1, 2, 4, 8, … up to
-  128 concurrent streams on one transport, looking for the point where CPU,
-  memory, or file/thread accounting stops holding steady.
+  1024 concurrent streams on one transport, looking for the point where CPU,
+  memory, or file/thread accounting stops holding steady. A step whose
+  predicted memory (streams × the previous passing step's per-stream RSS ×
+  1.25) would exceed 70% of the host's memory is not launched: the axis
+  ends there with a `memory_budget` verdict, so the host's memory limit is
+  reported as a ceiling instead of the kernel killing the run.
 - **Per-stream bitrate**, at a fixed single stream: `--au-scale` 1, 2, 4,
   … up to 64, which scales a realistic access-unit size up to roughly
   1.7–110 Mb/s. The top of this ladder is bounded by a 4 MiB per-PID PES
@@ -33,10 +37,14 @@ legs connect directly — so a ceiling here is a measure of the host, not of
 link tolerance.
 
 The **hold** runs all four transports at once, each sized to ⌊0.7 × its own
-ceiling⌋ streams, for 24 hours, under the soak's seeded impairment
-schedule plus two extra disruptions on the SRT legs: a 30-second full-drop
-outage on every SRT proxy every 15 minutes, and a receiver restart on one
-SRT stream every 2 hours. It answers a different question than the
+ceiling⌋ streams — scaled down further, and declared, when the sweep's
+per-stream CPU or memory cost predicts more than 70% of the host — for 24
+hours. The SRT and RIST legs run the soak's seeded impairment schedule
+(UDP keeps the clean link, TCP stays direct), and the SRT legs take two
+extra disruptions: a 30-second full-drop outage on every SRT proxy every
+15 minutes, and a receiver restart on one SRT stream every 2 hours. A
+transport with no streams ceiling is excluded from the hold and listed
+under the run's limitations. It answers a different question than the
 ceiling does — not "how far can this go" but "does a system sized at 70%
 of its ceiling actually survive a full day of real-world disruption."
 
@@ -55,7 +63,7 @@ of its ceiling actually survive a full day of real-world disruption."
 | `reconnect_count` *(hold only)* | Each SRT receiver rebuilds its transport at least once per outage window it lived through. | ≥ (outage windows − 1); one less than the window count because the final window can coincide with teardown |
 | `peer_restart_recovery` *(hold only)* | After each scheduled receiver restart, the sender reconnects. | within 120 seconds; a restart in the run's final 120 seconds is unjudgeable |
 | `queue_depth_p99` *(hold only)* | The managed sender's gap-length distribution. | p99 ≤ 0.9× its configured capacity |
-| `hold_sizing_declared` *(hold only)* | The hold's configured stream counts actually match the sizing rule, and every swept transport is either held or excluded because the sweep found it no streams ceiling (an exclusion is listed under the run's limitations). | ⌊0.7 × ceiling⌋ per held transport, at least 1 |
+| `hold_sizing_declared` *(hold only)* | The hold's configured stream counts actually match the sizing rule, and every swept transport is either held or excluded because the sweep found it no streams ceiling (an exclusion is listed under the run's limitations). | each held transport ≤ max(1, ⌊0.7 × ceiling⌋); a CPU or memory scale-down is declared in the hold config |
 
 ## Reference machine and reproduction
 
@@ -87,8 +95,7 @@ _No measured run has been rendered into this page yet. The first render comes fr
 
 ## Not measured yet
 
-These are out of scope for the current harness, each tracked as part of
-the roadmap's stress-harness item:
+These are out of scope for the current harness:
 
 - FFI overhead for the Python, JVM, and C bindings — the sweeps above
   exercise the Rust core directly.
@@ -101,8 +108,7 @@ the roadmap's stress-harness item:
   ladder, which is bounded by the 4 MiB per-PID PES cap on keyframes
   rather than by anything this harness measures.
 - Hold variants beyond the one described above: aggressive impairment,
-  connection churn, and a deliberately slow receiver are all left for the
-  roadmap's benchmarks item to pick up next.
+  connection churn, and a deliberately slow receiver.
 
 ## Evidence rule
 

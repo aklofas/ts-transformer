@@ -55,7 +55,7 @@ If any of those checks finds an item being used through a canonical
 workflow (i.e., not a hidden field-poking workaround), the item:
 
 - Stays publicly accessible.
-- Moves under an explicit `low_level` namespace if the audit confirms
+- Moves under an explicit `low_level` namespace if those checks show
   the use is "advanced consumer territory" rather than "expected
   curated-API consumer territory."
 
@@ -112,9 +112,8 @@ The three binding crates — `bindings/c` (tst-c), `bindings/c/core`
   `py.typed` marker, the pytest suite, the ratchets under
   `scripts/check/python/`, and — since 0.7.0 — the error-kind vocabulary
   itself, which is `tst_pipeline::binding::BindingErrorKind::name()` checked
-  at `import tstrans` (the per-kind Python error-mapping ratchet was retired
-  in Arc 2 WP-B2; `scripts/ratchets/kind-equivalence.tsv` records the
-  Rust-C-Python-JVM member mapping instead).
+  at `import tstrans` (`scripts/ratchets/kind-equivalence.tsv` records the
+  Rust-C-Python-JVM member mapping).
 
 **Rule:** do not add `cargo public-api` baselines to binding crates unless
 they become actual CI release gates. Adding a baseline to a binding crate
@@ -132,7 +131,12 @@ declared in the CI public-api step (see `.github/workflows/ci.yml`, currently
 `std`/`core` paths render, which shows up as spurious whole-baseline drift, so
 an unpinned nightly cannot be trusted for rendering. To regenerate:
 
-    cargo +nightly-2026-07-03 public-api -p <crate> --simplified > crates/<crate>/public-api.txt
+    cargo +nightly-2026-07-03 public-api -p <package> --simplified > crates/<dir>/public-api.txt
+
+`<package>` is the Cargo package name and `<dir>` the crate's directory under
+`crates/`; they differ for the two source-provider crates
+(`tstrans-rist-sys` lives in `crates/rist-sys`, `tstrans-mbedtls-src` in
+`crates/mbedtls-src`). The CI step's `pkg:dir` list is the reference.
 
 To bump the pin: pick a new date, re-render all 10 baselines with it, and land
 the pin bump and the re-rendered baselines in the same commit.
@@ -148,8 +152,7 @@ the pin bump and the re-rendered baselines in the same commit.
 
 ## Examples in this codebase
 
-- `tst_core::mpegts::demux::low_level` (introduced 2026-05-19, plan
-  Wave 3.1 Plan A) — re-exports `Reassembler`, `parse_pat`, `parse_pmt`,
+- `tst_core::mpegts::demux::low_level` — re-exports `Reassembler`, `parse_pat`, `parse_pmt`,
   `KlvShape`, `classify_klv`, `walk_descriptors`, and related types so
   fuzz harnesses and advanced consumers reach them without depending on
   private submodule paths.

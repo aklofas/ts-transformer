@@ -168,5 +168,5 @@ python3 -m unittest scripts/gen/test_loc_report.py   # the counter's own tests
 
 Nothing in CI checks this page for staleness: line counts drift with every
 PR, so a drift gate would only generate noise. Regenerate it when the numbers
-matter, typically at a release or after a refactor arc, and commit the
+matter, typically at a release or after a large refactor, and commit the
 result.

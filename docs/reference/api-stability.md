@@ -59,17 +59,17 @@ its `rtsp` row), the more specific row wins for that path.
 | tst-core | klv::st0102 | Provisional | typed set, recent surface |
 | tst-core | klv::st0605 | Provisional | typed set, recent surface |
 | tst-core | klv::st0903 | Provisional | typed set, recent surface |
-| tst-core | klv::st0805 | Provisional | typed set, shipped 2026-07 |
-| tst-core | klv::st0806 | Provisional | typed set, shipped 2026-07 |
-| tst-core | klv::st1010 | Provisional | typed set, shipped 2026-07 |
-| tst-core | klv::st1204 | Provisional | typed set, shipped 2026-07 |
+| tst-core | klv::st0805 | Provisional | typed set, recent surface |
+| tst-core | klv::st0806 | Provisional | typed set, recent surface |
+| tst-core | klv::st1010 | Provisional | typed set, recent surface |
+| tst-core | klv::st1204 | Provisional | typed set, recent surface |
 | tst-core | codec | Stable | shared parameter types (`ChromaFormat`/`ColorInfo`/`Rational`/etc.) used by every codec parser below |
 | tst-core | codec::util | Stable | shared codec utility (NAL-unit counting), same tier as `codec` itself |
 | tst-core | codec::h264 | Stable | primary video codec path |
 | tst-core | codec::h265 | Stable | primary video codec path |
 | tst-core | codec::h266 | Provisional | newer codec, less field exposure |
 | tst-core | codec::av1 | Provisional | newer codec, less field exposure |
-| tst-core | codec::misp_time | Provisional | shipped with the ST 0604 arc |
+| tst-core | codec::misp_time | Provisional | MISB ST 0604 MISP timestamp helpers, recent surface |
 | tst-core | codec::aac | Provisional | audio parser |
 | tst-core | codec::ac3 | Provisional | audio parser |
 | tst-core | codec::mpegaudio | Provisional | audio parser |
@@ -77,7 +77,7 @@ its `rtsp` row), the more specific row wins for that path.
 | tst-core | transport | Stable | trait contract all transports implement |
 | tst-core | transport::conformance | Provisional | executable form of the transport cancel/close/liveness table; run by every transport crate's `tests/conformance.rs`; its row/option enums may still gain members before 1.0 (std-only) |
 | tst-core | error | Stable | error taxonomy |
-| tst-core | cancel | Stable | cancellation plumbing shared across transports; spec-silent, defaults to tst-core's tier. `CancelSlot` (shipped 2026-09-09, re-exported by `tst-pipeline` as the `FactoryCancel` alias) is Provisional — same divergence shape as `tst-rtp`'s `h264` row below |
+| tst-core | cancel | Stable | cancellation plumbing shared across transports; spec-silent, defaults to tst-core's tier. `CancelSlot` (re-exported by `tst-pipeline` as the `FactoryCancel` alias) is Provisional — same divergence shape as `tst-rtp`'s `h264` row below |
 | tst-core | io_file | Stable | file I/O convenience layer over mux/demux (`file` feature); spec-silent, defaults to tst-core's tier |
 | tst-core | net | Stable | shared socket-setup plumbing consumed by transport crates; spec-silent, defaults to tst-core's tier |
 | tst-core | publisher | Provisional | `Publisher` trait + stats for segment-publishing transports (HLS); its only implementor (`tst-hls`) and only consumer (`tst-pipeline::mux_publisher`) are both Provisional — no Stable-tier evidence backs the trait yet, unlike `transport`, whose implementors are mostly Stable |
@@ -96,24 +96,24 @@ its `rtsp` row), the more specific row wins for that path.
 | tst-pipeline | dyn_aliases | Stable | boxed-transport type aliases (plumbing/re-export); spec-silent, defaults to tst-pipeline's tier |
 | tst-pipeline | mux_publisher | Provisional | HLS-adjacent, newer |
 | tst-pipeline | ext | Provisional | extensions (pairing, file transport) — newer surface |
-| tst-pipeline | binding | Provisional | binding-shared handle layer (`Owned`, `HandleState`, panic helpers; error kinds + managed handles follow in Arc 2); `std`-only; shape may still move before 1.0 — see the Arc 2 decision log entry |
+| tst-pipeline | binding | Provisional | binding-shared handle layer (`Owned`, `HandleState`, panic helpers, `BindingErrorKind`, `ManagedHandles`); `std`-only; shape may still move before 1.0 |
 | tst-srt | (crate) | Stable | primary transport of the project scope |
-| tst-srt | shells | Provisional | URL → managed-shell open path + `ManagedHandles` (Arc 2 WP-A3); new surface, may still move before 1.0 |
+| tst-srt | shells | Provisional | URL → managed-shell open path returning `tst_pipeline::binding::ManagedHandles`; new surface, may still move before 1.0 |
 | tst-udp | (crate) | Stable | small, settled |
 | tst-tcp | (crate) | Stable | small, settled |
 | tst-rtp | builder | Stable | RTP transport builder / URL-connect surface |
 | tst-rtp | cancel | Stable | RTP cancellation handle |
 | tst-rtp | clock | Stable | RTP clock/timestamp helper |
 | tst-rtp | error | Stable | RTP error taxonomy |
-| tst-rtp | h264 | Stable | RFC 6184 H.264 depacketizer/receiver; `H264Receiver::set_recv_timeout` and `end_reason()` (shipped 2026-08-20) are Provisional — same divergence shape as `transport`'s row below |
+| tst-rtp | h264 | Stable | RFC 6184 H.264 depacketizer/receiver; `H264Receiver::set_recv_timeout` and `end_reason()` are Provisional — same divergence shape as `transport`'s row below |
 | tst-rtp | init | Stable | one-time RTP init |
 | tst-rtp | packet | Stable | RTP packet parse/build |
 | tst-rtp | rtcp | Stable | RTCP sender/receiver report handling |
 | tst-rtp | sdp | Stable | SDP parsing/media selection |
-| tst-rtp | transport | Stable | RTP transports (unicast/multicast, v4/v6); `RtpRecvTransport::{end_reason, end_reason_handle}` (shipped 2026-08-20) are Provisional — they return `StreamEndReason`/`StreamEndReasonHandle`, which live in and inherit the tier of the `rtsp` row below |
+| tst-rtp | transport | Stable | RTP transports (unicast/multicast, v4/v6); `RtpRecvTransport::{end_reason, end_reason_handle}` are Provisional — they return `StreamEndReason`/`StreamEndReasonHandle`, which live in and inherit the tier of the `rtsp` row below |
 | tst-rtp | url | Stable | `rtp(s)://`/`rtsp(s)://` URL parsing |
 | tst-rtp | rtsp | Provisional | server surface (`RtspServer`) still evolving; the client API (`RtspClient`) is stable in practice, but the module's tier is set by the server surface — the rail is module-granular, not sub-module. Also covers `rtsp::client::end_reason` (`StreamEndReason`, `StreamEndReasonHandle`, re-exported at the crate root) |
-| tst-hls | (crate) | Provisional | crate restructured 2026-07 |
+| tst-hls | (crate) | Provisional | crate split out of `tst-tcp` in 0.3.0 |
 | tst-rist | (crate) | Provisional | profile coverage still evolving |
 | tstrans-srt-sys | (crate) | Internal | raw FFI, no direct-consumer promise; documentation-only row — no `public-api.txt` baseline exists for this crate |
 | tstrans-rist-sys | (crate) | Internal | raw FFI, no direct-consumer promise |
@@ -147,8 +147,8 @@ not restated here.
 
 ### 2026-07-30 — MuxSender consumption-info fix: rejected alternatives
 
-The fix for external-review triage item 7 gives transport-source
-`MuxSenderError`s an `input_consumed: Option<bool>` field, set at the
+Transport-source `MuxSenderError`s carry an `input_consumed: Option<bool>`
+field, set at the
 failure site, so callers always know whether a failed `send_*` call
 touched this call's input: `Some(true)` — consumed (muxed and retained
 in the pending queue, draining on the next `send_*`) — do not resend;

@@ -26,9 +26,10 @@ Binding code constructs one of these by handing a `Box<dyn Transport>`
 
 ```rust
 use tst_pipeline::{BoxedMuxSender, MuxSender};
-use tst_srt::SrtTransport;
+use tst_srt::{SocketBuilder, SrtTransport};
 
-let transport: Box<dyn tst_core::Transport> = Box::new(SrtTransport::connect(/* ... */)?);
+let socket = SocketBuilder::new().connect("203.0.113.10:9000")?;
+let transport: Box<dyn tst_core::Transport> = Box::new(SrtTransport::new(socket));
 let mut sender: BoxedMuxSender = MuxSender::new(transport, config)?;
 ```
 
@@ -68,8 +69,8 @@ MuxSender.open(url, config).use { sender ->
 Not shipped. The planned `tst-uniffi` crate wraps the Rust crates directly
 (not the C ABI) over a binding-shared layer extracted from `tst-pipeline`;
 its shape — sync methods plus a cancel-token object, `ReconnectMode::Background`
-by default for managed senders, per-call receive timeouts — is decided in
-the tst-uniffi brainstorm and recorded here when it lands.
+by default for managed senders, per-call receive timeouts — is planned and
+is recorded here when the crate lands.
 
 ### Python (PyO3)
 
@@ -113,8 +114,8 @@ direct negative-return-value contract derives from one of two
 explicit-coverage paths in `bindings/c/core/src/error.rs`:
 
 **Shell-entry path (the common case).** Every C entry point that owns
-a shell handle (`tst_mux_sender_*`, `tst_ts_sender_*`,
-`tst_raw_sender_*`, `tst_demux_receiver_*`, `tst_ts_receiver_*`,
+a shell handle (`tst_mux_sender_*`, `tst_sender_*`,
+`tst_raw_sender_*`, `tst_demux_receiver_*`, `tst_receiver_*`,
 `tst_raw_receiver_*`) routes errors through one generic helper:
 
 ```rust
@@ -207,7 +208,7 @@ latch — every clone, and a handle obtained after the cancel, agrees.
 with `TransportError::ExplicitClose`, and every later op returns it at
 its entry check, on every transport that has a handle and on the managed
 wrappers — and on the RTSP control plane: a cancelled `RtspClient` call
-(`RtspError::LocalCancel`) projects to the same `Closed` kind (review 9)
+(`RtspError::LocalCancel`) projects to the same `Closed` kind
 — the normative table lives in the `tst_core::transport` rustdoc
 and `tst_core::transport::conformance` pins it in each crate's
 `tests/conformance.rs`. Bindings therefore project one kind for a cancel:
@@ -226,8 +227,8 @@ transport's OWN `close()` keeps producing `Closed` (`ExplicitClose` on
 `ManagedRecvTransport`, whose close is a caller-initiated end); the
 binding layer tells "cancelled" from "closed" with `Owned::is_cancelled()`,
 never by inspecting the variant. Through 0.6.x the plain SRT shells
-reported a cancel as `Broken` (the connection error `srt_close` provoked)
-— that decision (PR #209) is reversed. Bindings should expose the handle
+reported a cancel as `Broken` (the connection error `srt_close` provoked);
+since 0.7.0 they report `Closed` like every other transport. Bindings should expose the handle
 as a language-native shutdown primitive (e.g. Kotlin `Job.cancel()`
 analog, Swift `Task.cancel()` analog, Python `threading.Event`-shaped).
 See `docs/reference/srt-cancel-handle.md` for the full pattern.
@@ -244,7 +245,7 @@ shape translates directly to:
 | Java | `new MuxerConfigBuilder().addProgram(...).build()` |
 | Swift | `var b = MuxerConfigBuilder(); b.addProgram(...); b.build()` |
 | Python | `b = MuxerConfigBuilder(); b.add_program(...); b.build()` |
-| C | `tst_muxer_config_builder_t *b = ...; tst_muxer_config_builder_add_program(b, ...);` |
+| C | `tst_mux_config_t *cfg = tst_mux_config_new(); tst_mux_config_add_program(cfg, ...);` (the C config object is the builder) |
 
 ## Threading model
 
@@ -301,10 +302,10 @@ baseline (by design)" for the full rationale.
 - `TST_ABI_VERSION_MINOR` — incremented on additive, source-compatible
   changes (new event kinds, new C entry points, new error codes).
   **22** today. History (additive bumps only — major stays at 0 pre-1.0):
-    - `1` (plan #62): receiver-surface initial drop.
-    - `2` (validate-1 Phase 2 wrap-up): `ManagedDemuxReceiver` wired into
+    - `1`: receiver-surface initial drop.
+    - `2`: `ManagedDemuxReceiver` wired into
       `tst-c`; `TST_EVENT_KIND_RECONNECT_DISCONTINUITY = 6` added; TS-bytes
-      raw-receiver pull-loop hardening + F2 C-ABI shape additions.
+      raw-receiver pull-loop hardening + C-ABI shape additions.
     - `3` (AU cell reassembly, 2026-05-24): `TstMultiCellAuReason` +
       `multi_cell_au_reason` field on `TstEventNonConformant`.
     - `4` (AU cell CFI tolerance, 2026-05-24):
@@ -312,13 +313,13 @@ baseline (by design)" for the full rationale.
       enum + `tst_demux_config_set_cfi_tolerance` setter. The new variant
       reuses the existing `cc_expected` + `cc_observed` field carriers
       to surface `observed_cfi` + `treated_as` without growing the struct.
-    - `5` (plan #96 demuxer-config parity, 2026-05-25):
+    - `5` (demuxer-config parity, 2026-05-25):
       new C entry points `tst_demux_config_set_av1_carriage`,
       `tst_demux_config_set_au_cell_cap_per_pid`, and
       `tst_demux_config_set_lenient_psi_reassembly`, plus the
       `TstAv1CarriageMode` enum. Bridges Rust-only `DemuxerConfig`
       knobs through the C builder.
-    - `6` (Phase 4 Stage 1, 2026-05-26): RTP + RTSP C ABI surface.
+    - `6` (2026-05-26): RTP + RTSP C ABI surface.
       Cargo features `srt` + `rtp` (default-on through 2026-06-06, opt-in /
       default-**off** thereafter — like every other transport) gate the SRT
       and RTP/RTSP halves of the ABI; `TST_HAS_SRT` + `TST_HAS_RTP`
@@ -329,7 +330,7 @@ baseline (by design)" for the full rationale.
       `tst_rtsp_server_builder_*` + start + add_*_mount + mount push family
       + stats + cancel + stop (~37). 11 new error codes
       (`TST_E_RTP_TRANSPORT` through `TST_E_RTSP_MOUNT`, -15..-25).
-    - `7` (Plan A5a, 2026-05-27): UDP + TCP (+ listener) + HLS publisher
+    - `7` (2026-05-27): UDP + TCP (+ listener) + HLS publisher
       + RIST C ABI surface. Four new cargo features `udp` / `tcp` / `hls` /
       `rist` (all default-**off** — embedded `libtstrans.so` size stays
       unchanged for existing consumers); `TST_HAS_UDP` / `TST_HAS_TCP` /
@@ -339,7 +340,7 @@ baseline (by design)" for the full rationale.
       incl. the abstract `Publisher` trait projection + `MuxPublisher<P>`
       shell) + `tst_rist_*` (34) — each transport mirrors the RTP per-handle
       data-path surface (open/close/send_ts|recv_ts/push_*/next_event/stats)
-      minus cancel (these transports expose no `cancel_handle()`). 18 new
+      minus cancel (these transports had no `cancel_handle()` until `22`). 18 new
       error codes (`TST_E_UDP_IO` through `TST_E_RIST_IO`, -26..-43) +
       `TstPublisherKind` enum. **Note:** building with both `srt` and `rist`
       links two static mbedTLS copies; the cdylib build adds
@@ -373,23 +374,23 @@ baseline (by design)" for the full rationale.
       RTP-gated pair `tst_rtsp_mount_push_data` / `tst_rtsp_mount_push_data_to`
       (`TST_HAS_RTP`). Completes data-stream surface parity with the
       video/klv/audio/subtitle push families on both shells.
-    - `14` — AV1 carriage (WP-B): `TstError::InvalidAv1Obu` (-44) guard
+    - `14` — AV1 carriage: `TstError::InvalidAv1Obu` (-44) guard
       error code; `av1_carriage` provenance byte on `TstEventSample`
       (repurposed pad byte — 0=`MPEG2_TS_BINDING`, 1=`INTEROP_RAW_OBU`,
       0xFF=N/A for non-AV1); `tst_muxer_push_video_wire` /
       `tst_muxer_push_video_wire_to` pass-through push for byte-faithful
       transmux; `tst_mux_config_set_av1_carriage` mux-side carriage setter.
-    - `15` — REF-PSI-01: `TstNonConformantCode::PmtProgramNumberMismatch`
+    - `15` — `TstNonConformantCode::PmtProgramNumberMismatch`
       (= 33). PMT body `program_number` mismatch vs PAT assignment; `pid` is
       the PMT PID; `programs[0]` = `pat_program`, `programs[1]` =
       `pmt_program` (reuses `programs_buf` carrier). No struct layout change.
-    - `16` — WP-D demux trust-boundary diagnostics: four new
+    - `16` — demux trust-boundary diagnostics: four new
       `TstNonConformantCode` values (no struct layout change — all reuse
-      existing carriers): `UnsupportedScrambling` (= 34, REF-TS-01),
-      `AdaptationFieldMalformed` (= 35, REF-TS-02),
-      `ZeroLengthPesNonVideo` (= 36, REF-PES-01),
-      `PsiSyntax` (= 37, REF-PSI-03).
-    - `17` — BIND-01 (WP-I): DTS-aware video push through the C ABI.
+      existing carriers): `UnsupportedScrambling` (= 34),
+      `AdaptationFieldMalformed` (= 35),
+      `ZeroLengthPesNonVideo` (= 36),
+      `PsiSyntax` (= 37).
+    - `17` — DTS-aware video push through the C ABI.
       `tst_muxer_push_video_to_with_dts` and
       `tst_muxer_push_video_wire_to_with_dts` add a `dts_90khz` parameter
       to the targeted video push, emitting PES with `PTS_DTS_flags = '11'`
@@ -406,9 +407,9 @@ baseline (by design)" for the full rationale.
       NAL) + `tst_misp_time_extract`, with error codes `TST_E_MISP_TIME` (−45)
       and `TST_E_MISP_TIME_MALFORMED` (−46). Additive — no symbol, signature,
       or struct layout changed.
-    - `20` — bindings-parity bundle, items 6-9 (2026-08-20). All additive —
+    - `20` — bindings-parity bundle (2026-08-20). All additive —
       no existing symbol, signature, or struct layout changed:
-      - **Item 7, background reconnect:** `TstReconnectMode` enum
+      - **Background reconnect:** `TstReconnectMode` enum
         (`Blocking = 0`, `Background = 1`) + `tst_reconnect_policy_set_mode`
         setter on `tst_reconnect_policy_t` — both **unconditional**, like
         the rest of the reconnect-policy family (the builder module
@@ -418,7 +419,7 @@ baseline (by design)" for the full rationale.
         7-byte pad, size-pinned in the header trailer). `TST_HAS_SRT`
         gates only the three send-side getters that read it
         (`tst_managed_{sender,mux_sender,raw_sender}_get_reconnect_stats`).
-      - **Item 8, RTP stream-end reason:** `TstStreamEndReason` enum
+      - **RTP stream-end reason:** `TstStreamEndReason` enum
         (`None = 0`, `CleanTeardown = 1`, `SessionExpired = 2`,
         `KeepaliveFailed = 3`, `TransportFailed = 4`, `ProtocolError = 5`,
         `Cancelled = 6`) is defined outside the `rtp` module — also
@@ -434,13 +435,13 @@ baseline (by design)" for the full rationale.
         **Wildcard aliasing:** a future Rust `StreamEndReason` variant this
         binding doesn't know about yet maps to `TstStreamEndReason::None`
         until the C mapping is updated in a later release.
-      - **Item 9, per-stream last-seen gauges:**
+      - **Per-stream last-seen gauges:**
         `tst_*_get_stream_last_seen_micros` on all six demux-receiver
         families — plain + managed SRT (`TST_HAS_SRT`), RIST
         (`TST_HAS_RIST`), RTP (`TST_HAS_RTP`), TCP (`TST_HAS_TCP`), UDP
         (`TST_HAS_UDP`) — a `uint64_t` Unix epoch microsecond timestamp,
         `0` if the PID has never been observed.
-      - **Item 6, RTP receive-deadline parity — no new symbols:** the
+      - **RTP receive-deadline parity — no new symbols:** the
         `?recv_timeout=<ms>` URL key is now honored by `tst_rtp_recv_open`
         / `tst_rtp_demux_receiver_open` (it previously reached only the
         RTSP-converted path); deadline expiry surfaces as the existing
@@ -481,11 +482,11 @@ baseline (by design)" for the full rationale.
         likewise reuses the existing `tst_managed_transport_stats_t`
         struct from ABI 20. `tst_demux_config_set_unwrap_timestamps`
         (unconditional) is a new demuxer-config setter.
-    - `22` (deep-review-4 Arc 2 riders R3/R4, 2026-09) — additive; no
+    - `22` (2026-09) — additive; no
       existing symbol, signature, or struct layout changed, and no new C
       types or error codes:
       - **`tst_demux_config_set_sync_buf_cap`** (unconditional) — the
-        pre-sync ingress ceiling (`DemuxerConfig::sync_buf_cap`, ARCH-10);
+        pre-sync ingress ceiling (`DemuxerConfig::sync_buf_cap`);
         `0` restores the Rust default, the same sentinel
         `tst_demux_config_set_au_cell_cap_per_pid` uses.
       - **Cancel entry points for the three transports that had none:**
@@ -496,14 +497,14 @@ baseline (by design)" for the full rationale.
         `UdpCancelHandle` / `RistCancelHandle` through the shared
         `tst_pipeline::binding::Owned` slot without taking it, so it is
         callable from any thread while a data-path call is in flight, and
-        the interrupted call returns `TST_E_CLOSED` (the Arc 2
-        one-cancel-outcome contract). `_cancel` never frees — the handle
+        the interrupted call returns `TST_E_CLOSED` (the
+        one-cancel-outcome contract, see "Cancel handles"). `_cancel` never frees — the handle
         still takes its `_close` / `_free`. The tcp listener is the one
         exception to the mechanism: its handle holds a bare `TcpListener`,
         so `tst_tcp_listener_cancel` goes through
         `TcpListener::cancel_handle()` and a parked `_accept_*` returns
         NULL with `TST_E_CLOSED`.
-      - **`MuxSender::finish` parity** (DEBT-14): `tst_mux_sender_finish`,
+      - **`MuxSender::finish` parity:** `tst_mux_sender_finish`,
         `tst_managed_mux_sender_finish` and
         `tst_{udp,tcp,rtp,rist}_mux_sender_finish` — drain the muxer's
         pending bytes to the live transport, report the first drain error,
@@ -553,7 +554,7 @@ cycle on the reconnected stream.
 ## Muxer push surface parity matrix
 
 The table below captures the full muxer push capability surface across all
-four binding layers as of **v0.2.0 / ABI 17** (after BIND-01, WP-I).
+four binding layers; parity has been complete since **v0.2.0 / ABI 17**.
 
 | Capability | Rust core | C (`tst-c`) | Python (`tst-py`) | JVM (`tst-jni`) |
 |---|---|---|---|---|
@@ -570,15 +571,14 @@ four binding layers as of **v0.2.0 / ABI 17** (after BIND-01, WP-I).
   returns the `tst_video_stream_handle_t` directly and the caller retains it.
   The "n/a" reflects that the accessor pattern is not applicable at the C ABI
   level, not that the information is unavailable.
-- **AV1 mux carriage and the C targeted `*_to` family** — shipped in ABI 14
-  (WP-B); Python `push_video_to_with_dts` and handle accessors — shipped in
-  prior work. This PR (BIND-01/WP-I) completed DTS in C and targeted-push +
-  handle-accessors + DTS in JVM to reach full parity.
+- **AV1 mux carriage and the C targeted `*_to` family** — ABI 14; Python
+  `push_video_to_with_dts` and handle accessors predate ABI 17. ABI 17 added DTS
+  in C, and targeted push + handle accessors + DTS in the JVM, which
+  completed the parity.
 
-A machine-checked version of this matrix — where a CI rail verifies that each
-cell's claim matches the compiled binding — is a future enhancement noted in the
-2026-06-15 codebase audit's "checked artifact" recommendation; it is deferred
-pending a tooling decision on how to express cross-binding coverage assertions.
+No CI rail checks this matrix cell by cell against the compiled bindings
+yet; that waits on a decision on how to express cross-binding coverage
+assertions.
 
 ## Demux-config / managed-receiver-lifecycle parity matrix
 
@@ -608,11 +608,11 @@ follow-up:
   SRT managed-receiver-lifecycle reasons) have different member sets and
   no binding shares one type between them.
 
-## Shell parity matrix (DEBT-14, decided for 0.7.0)
+<a id="shell-parity-matrix-debt-14-decided-for-070"></a>
 
-Deep review #4 found the ledger's inputs for the shell-parity question were
-wrong (the Pairer entry claimed the JVM half was missing; the `MuxSender`
-DTS/MISP gap at C was unledgered). This table is the decided record — each
+## Shell parity matrix (decided for 0.7.0)
+
+This table is the decided record for the shell surfaces — each
 cell is either shipped, or deferred with the trigger that reopens it in
 `docs/project/deferred-features.md`.
 
@@ -623,7 +623,7 @@ cell is either shipped, or deferred with the trigger that reopens it in
 | `MuxSender::finish()` (drain, report, close) | ✅ | ✅ `tst_mux_sender_finish`, `tst_managed_mux_sender_finish`, `tst_{udp,tcp,rtp,rist}_mux_sender_finish` (ABI 0.22) | ✅ `MuxSender.finish()`, `ManagedMuxSender.finish()`, `rtp.MuxSender.finish()` | ✅ `MuxSender.finish()`, `ManagedMuxSender.finish()`, `rtp.MuxSender.finish()` |
 | `FileTransport::finish()` | ✅ | n/a — `FileTransport` is a Rust-only capture transport; no binding exposes it | n/a | n/a |
 | `DemuxerConfig::sync_buf_cap` | ✅ | ✅ `tst_demux_config_set_sync_buf_cap` (ABI 0.22) | ✅ `DemuxerConfig.sync_buf_cap` | ✅ `DemuxerConfig.Builder.syncBufCap(long)` |
-| Cross-thread cancel entry point | ✅ every transport (`cancel_handle()` is `Some` everywhere since Arc 2 WP-D) | ✅ `tst_<transport>_<shell>_cancel` for srt/rtp (since 0.6–0.21) and tcp/udp/rist (ABI 0.22) | ✅ `cancel_handle()` on every shell | ✅ `cancelHandle()` on every shell |
+| Cross-thread cancel entry point | ✅ every transport (`cancel_handle()` is `Some` everywhere since 0.7.0) | ✅ `tst_<transport>_<shell>_cancel` for srt/rtp (since 0.6–0.21) and tcp/udp/rist (ABI 0.22) | ✅ `cancel_handle()` on every shell | ✅ `cancelHandle()` on every shell |
 
 **Rule for new cells.** A ship-now cell must be under a day per binding
 (a `with_ref`/`with_mut` body plus one error projection, with a red-first

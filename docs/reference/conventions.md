@@ -2,13 +2,8 @@
 
 This file codifies workspace-wide policies that span crates. Per-policy
 rationale, with examples, follows each rule. New contributors check this
-file before introducing new public types or constructors; codex reviewers
-verify new code against these rules.
-
-For audit-trace context, this doc was created in plan #72 (Wave 2.3,
-2026-05-18) to consolidate the recommendations from
-`docs/refactor-1/02-naming-consistency.md` Findings 3, 4, 5 and
-`docs/refactor-1/03-architecture.md` Finding 6.
+file before introducing new public types or constructors; reviewers
+check new code against these rules.
 
 ---
 
@@ -19,11 +14,10 @@ are named `<Component>Config`. Do not use the `Options` suffix.
 
 **Why:** Two suffixes for the same concept (`MuxerConfig` vs
 `DemuxerOptions`) force readers to guess which suffix a particular type
-uses. The conventions audit found `Config` already dominates
+uses. The workspace's construction-parameter types use `Config`
 (`MuxerConfig`, `MuxerProgramConfig`, `SenderConfig`, `RawSenderConfig`,
-`SocketConfig`, `ListenerConfig`); the outliers (`DemuxerOptions`,
-`PairerOptions`, `EncodeOptions`) are migrated to `Config` in this
-plan.
+`SocketConfig`, `ListenerConfig`, `DemuxerConfig`, `PairerConfig`,
+`EncodeConfig`).
 
 **Examples:**
 
@@ -36,12 +30,12 @@ pub struct PairerConfig { ... }
 pub struct EncodeConfig { ... }
 
 // Bad — do not use:
-pub struct PairerOptions { ... }  // Was renamed PairerConfig in plan #72
+pub struct PairerOptions { ... }  // use PairerConfig
 ```
 
 **Note on naming collisions:** `MuxError` has both `InvalidConfig`
-(flat-string, pre-existing) and `ConfigInvalid` (new richer variant
-from plan #72). The two coexist; the latter is for diagnostics that
+(a flat static string) and `ConfigInvalid { reason }` (a formatted
+reason). The two coexist; the latter is for diagnostics that
 need a formatted reason. New error variants should also prefer the
 `<Subject><Adjective>` ordering used by the rest of the enum
 (`KlvTooLarge`, `BufferFull`, `AudioTooLarge`).
@@ -109,13 +103,13 @@ let pairer = Pairer::with_config(v, k, config);          // explicit knob still 
 - **`T::builder(...)`** is the builder factory entry point. Use the
   builder pattern when the "Builder vs Default" rule below applies.
 
-**Outliers surfaced by the plan #75 audit (listed for transparency,
-not silently renamed):**
+**Known outliers (listed for transparency, not silently renamed):**
 
 | Site | Convention concern | Disposition |
 |------|---------------------|-------------|
-| `DemuxReceiver::with_demux_options(transport, options)` | Uses over-specific `_demux_options` noun; rule recommends generic `with_config`. | Rename candidate for a future plan — touches the C ABI mirror at `bindings/c/core/src/receiver/demux_receiver/mod.rs:170, 664`, so a one-line audit isn't free. |
-| `SrtTransport::with_max_payload(self, n) -> Self` | Chainable `self -> Self` modifier on an already-constructed value; reads like a constructor by prefix but is a fluent modifier. | Borderline — the rustdoc at `crates/tst-srt/src/transport.rs:31` clarifies the modifier intent. No rename; reviewers should not flag new `with_*` modifiers on existing values, but new constructors should still match the `with_<aspect>` aspect-rule. |
+| `DemuxReceiver::with_demux_options(transport, options)` | Uses over-specific `_demux_options` noun; rule recommends generic `with_config`. | Rename candidate before 1.0 — every C-ABI demux-receiver open path calls it (`bindings/c/core/src/{receiver/demux_receiver,udp,tcp,rtp,rist,rtsp/client}`), so the rename is not a one-line change. |
+| `tst_core::transport::conformance::{SendOptions, RecvOptions}` | Per-transport knobs of the conformance test harness, not construction parameters of a transport or shell. | No rename; the module is Provisional (see `api-stability.md`). |
+| `SrtTransport::with_max_payload(self, n) -> Self` | Chainable `self -> Self` modifier on an already-constructed value; reads like a constructor by prefix but is a fluent modifier. | Borderline — the method's rustdoc (`crates/tst-srt/src/transport.rs`) clarifies the modifier intent. No rename; reviewers should not flag new `with_*` modifiers on existing values, but new constructors should still match the `with_<aspect>` aspect-rule. |
 
 ---
 
@@ -132,9 +126,8 @@ not silently renamed):**
 
 **Why:** Without a codified rule, future contributors will invent local
 verb vocabularies and reviewers will have to re-litigate "is this a
-wire op or a buffer op?" on every PR. The de-facto rule above already
-holds across the workspace (verified by the verb-audit done in plan
-#75 — see plan task 1 for the per-method classification table); making
+wire op or a buffer op?" on every PR. The rule above already holds
+across the workspace's public methods; making
 it explicit lets new code be reviewed against it and new public APIs
 be named consistently from the start.
 
@@ -180,8 +173,8 @@ Use `#[derive(Default)]` plain struct (or a manual `Default` impl) when:
 **Why:** No documented rule means new contributors invent local
 conventions. The rule above matches the workspace's existing shape:
 `MuxerConfigBuilder` + `MuxerProgramConfigBuilder` + `SocketBuilder` +
-`ListenerBuilder` use chainable `&mut self -> &mut Self` (the Phase 3
-shape). `RawSenderConfig` is empty/`#[derive(Default)]` with no builder.
+`ListenerBuilder` use chainable `&mut self -> &mut Self`.
+`RawSenderConfig` is empty/`#[derive(Default)]` with no builder.
 
 **Examples:**
 
@@ -190,7 +183,7 @@ shape). `RawSenderConfig` is empty/`#[derive(Default)]` with no builder.
 pub struct SocketBuilder { ... }
 impl SocketBuilder {
     pub fn new() -> Self { ... }
-    pub fn max_payload(&mut self, n: usize) -> &mut Self { ... }
+    pub fn payload_size(&mut self, n: u16) -> &mut Self { ... }
     pub fn passphrase(&mut self, p: Passphrase) -> &mut Self { ... }
     pub fn connect(&self, addr: ...) -> Result<Socket, ...> { ... }  // build + validate
 }
@@ -212,13 +205,12 @@ crate (per Rust E0639 for `#[non_exhaustive]`), so callers must use
 `Config::default()` and assign overrides, or use the corresponding
 builder where one exists.
 
-**Why:** Decided in the Wave 2 brainstorming session
-(`docs/refactor-1/_wave-2-plan-design.md`):
+**Why:**
 
 - **Considered alternative:** opaque builder-owned configs with all
   fields private. Rejected because the migration cost across ~20
-  workspace config types is substantial, and the user-confirmed
-  "break-freely pre-1.0" policy (`feedback_break_freely_prerelease.md`)
+  workspace config types is substantial, and the pre-1.0 policy of
+  breaking the API freely when needed
   means we can revisit this post-1.0 if the field-public shape proves
   problematic. For now, field-public + `#[non_exhaustive]` gives 95%
   of the future-proofing benefit at 10% of the implementation cost.
@@ -255,9 +247,11 @@ let cfg = SocketConfig { payload_size: Some(1316), ..Default::default() };
 
 **Rule:** Validation of cross-field invariants on `*Config` structs
 happens at the **constructor boundary** that consumes the config —
-`Muxer::new(config)`, `Sender::new(transport, config)`,
-`Socket::open(config)`, etc. — by calling `config.validate()` (or
-equivalent) and returning `Err(...)` on rejection.
+`Muxer::new(config)`, `MuxerConfigBuilder::build()`, etc. — by calling
+`config.validate()` and returning `Err(...)` on rejection. Where a config
+has no `validate()`, the consuming constructor checks each field as it
+applies it: `Socket::connect_with(&config, addr)` rejects a bad option
+with `ConnectError::InvalidOption`.
 
 **Why:** Public-field configs (per the rule above) can be hand-built
 with struct-update syntax (`SomeConfig { field: x, ..Default::default() }`
@@ -269,11 +263,7 @@ inside the muxer or transport.
 
 **Example — `MuxerProgramConfig.stream_descriptors` length invariant:**
 
-Pre-plan-#72, the check at `MuxerConfig::validate()` raised
-`MuxError::InvalidConfig("stream_descriptors.len() must equal streams.len()")` —
-a flat static string with no diagnostic context.
-
-Post-plan-#72, the check raises `MuxError::ConfigInvalid { reason }`
+`MuxerConfig::validate()` raises `MuxError::ConfigInvalid { reason }`
 with a formatted reason naming the program number, actual streams
 count, and actual stream_descriptors count. The richer diagnostic
 helps callers locate the offending program in a multi-program config
@@ -310,8 +300,7 @@ caller still has the config in hand to fix.
 
 ## See also
 
-- `docs/reference/binding-authors.md` § "Builder ownership patterns" — distinguishes
-  reusable builders (`SocketBuilder::connect(&self)`) from consuming
-  constructors (`Sender::new(transport, config)`).
+- `docs/reference/binding-authors.md` § "Builder shape" — the
+  `&mut self -> &mut Self` builder shape and how each binding language
+  spells it.
 - `docs/reference/architecture.md` — crate boundaries and ownership.
-- `feedback_break_freely_prerelease.md` (memory) — pre-1.0 break policy.

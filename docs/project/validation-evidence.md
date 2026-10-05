@@ -97,7 +97,7 @@ declared as allowed skips (`--allowed-skips 'decode/gst-play/*'`) rather
 than silently missing. The CI runner installs that tool and reports the
 full 92-PASS census:
 [run 34830892357](https://github.com/aklofas/ts-transformer/actions/runs/34830892357)
-(`workflow_dispatch`, 2026-09-14, `--seconds 10`, `au_sizes: realistic`,
+(`workflow_dispatch`, 2026-09-14 at `dc912eea`, `--seconds 10`, `au_sizes: realistic`,
 shape `full-157` with an empty allowed-skip list and an empty
 `stale_expectations`) — a second host, a different seconds-per-cell
 setting, and a different TSDuck point release (3.44-4676 against the dev
@@ -125,7 +125,7 @@ weekly on a schedule (Mondays 05:00 UTC), on every `workflow_dispatch`, and
 on any PR touching `crates/tst-interop/`, `scripts/interop/`,
 `crates/tst-core/src/mpegts/`, or the workflow file itself. The verified run cited above is
 [run 34830892357](https://github.com/aklofas/ts-transformer/actions/runs/34830892357)
-(the 2026-09-14 `workflow_dispatch` — the first public run at realistic
+(the 2026-09-14 `workflow_dispatch` at `dc912eea` — the first public run at realistic
 access-unit sizes — completed `success` with the census-completeness
 assert, the 157 / 92 / 0 / 65 / 0 census, and 157 per-cell result records
 with zero `FAIL` and no expectation drift: all 65 documented-gap rows
@@ -134,14 +134,15 @@ reproduced. The last compact-size run,
 (the 2026-08-31 weekly `schedule` run at `73ae1ced`, same census), the
 gst-play-enablement run
 [32400751057](https://github.com/aklofas/ts-transformer/actions/runs/32400751057)
-(`pull_request`, 2026-08-20 — the first 92-PASS census run), the
+(`pull_request`, 2026-08-20 at `eb2bc419` — the first 92-PASS census run), the
 0.5.1 release-gate run
 [32106462041](https://github.com/aklofas/ts-transformer/actions/runs/32106462041)
-at `47ceee90` — the last of the 80 / 0 / 65 / 12 predecessor-census
+(2026-08-18, at `47ceee90`) — the last of the 80 / 0 / 65 / 12 predecessor-census
 runs — the ancestor run
 [32103732958](https://github.com/aklofas/ts-transformer/actions/runs/32103732958)
-at `239e2d80`, and the 0.5.0-candidate run
+(2026-08-18, at `239e2d80`), and the 0.5.0-candidate run
 [31335394509](https://github.com/aklofas/ts-transformer/actions/runs/31335394509)
+(2026-08-09, at `049fd4e3`)
 remain as historical evidence) — its `results.json`/`results.md`,
 per-cell logs, and captures are attached as the `interop-evidence` artifact
 (90-day retention) and the run's own step summary. Every future weekly run
@@ -236,7 +237,7 @@ version, and root-cause argument behind each one.
 
 ### What each profile's oracle proves
 
-Since 2026-09-13 (PR #213) `tst-interop verify`/`recv` check every profile
+Since 2026-09-13 `tst-interop verify`/`recv` check every profile
 against demuxer-independent wire facts read by a deliberately naive
 raw-TS parser (`crates/tst-interop/src/rawts.rs`) in addition to the
 demuxed tallies, and every oracle has a mutation test that removes the
@@ -340,7 +341,7 @@ which measured that same sender at 0.1 KiB/hour over its final 24 hours:
 the residual was warm-up convergence toward a steady-state plateau, not
 growth.
 
-The soak rail was tightened on 2026-09-13 (PR #211): `report soak` now
+The soak rail was tightened on 2026-09-13: `report soak` now
 judges a run against a configured duration and RSS cadence
 (`soak-config.json`), requires ≥90 % of the cadence-implied post-warmup
 samples per process with the gap between consecutive samples strictly
@@ -693,7 +694,7 @@ figures below are observations, not verdicts.
 
 **Which binary this is evidence for.** The soak exercised the `e86dd9ea`
 binary, not the tree tagged 0.7.0. The library changes that landed after it
-are listed in the CHANGELOG under deep review #9:
+are listed in the CHANGELOG's 0.7.0 entry:
 
 - KLV classification and malformed-PES handling in the demuxer;
 - the ST 0601 Tag 102 and SPS-crop parser bounds;
@@ -710,10 +711,11 @@ all on `effc7f9c`, the last library change before the tag:
   `workflow_dispatch`, 2026-10-04);
 - all four sanitizer jobs, ASan and TSan over the pure-Rust and the
   native-linking crates
-  ([run 37181828490](https://github.com/aklofas/ts-transformer/actions/runs/37181828490));
+  ([run 37181828490](https://github.com/aklofas/ts-transformer/actions/runs/37181828490),
+  2026-10-04);
 - a comparison over the maintainer's local corpus of 260 captures (one of
   them a reconstruction, derived rather than captured raw; 41.5 GB),
-  demuxed by the tree before the deep-review-#9 fixes (`d2fa73dc`) and by
+  demuxed by the tree before those fixes (`d2fa73dc`) and by
   `effc7f9c`. The two outputs are byte-identical. No raw capture's KLV PID
   has an `Unknown` sample. The reconstruction has 32, and they are the
   same under both trees. This proves only that the fixes did not change
@@ -745,7 +747,9 @@ md5-checked against the VM before teardown: 32 matched and none failed.
 
 ### The previous run (2026-08-05 → 2026-08-08, seed 1; fixed impairment, Blocking mode)
 
-This run is kept as historical evidence. It predates the current soak
+This run is kept as historical evidence. It ran on a tree between the 0.4.0
+(2026-07-31) and 0.5.0 (2026-08-09) releases and was published with 0.5.0
+(CHANGELOG `## [0.5.0]`); its exact source commit was not recorded. It predates the current soak
 shape (it held one fixed impairment level, both legs ran the `baseline`
 profile, and nothing was corrupted). It also predates Background mode: its
 SRT leg ran the Blocking replay. Its delivery and drop-rate figures

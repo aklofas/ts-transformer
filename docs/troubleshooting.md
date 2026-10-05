@@ -38,7 +38,7 @@ Fix: wait it out. Run `cargo build -v` if you want to see what's actually execut
 
 The cdylib needs C++ runtime linkage because libsrt is C++. For `cargo build -p tst-c` this is handled automatically.
 
-Fix: if you're consuming `tstrans.h` from another build system, add `-lstdc++` (Linux) or `-lc++` (macOS) to your link line. The shipped `tstrans.pc` declares the correct `Libs.private`; using `pkg-config --static --libs tstrans` is the safest way to get the right flags.
+Fix: if you're consuming `tstrans.h` from another build system, add `-lstdc++` (Linux) or `-lc++` (macOS) to your link line. The generated `tstrans.pc` already lists the C++ runtime on its `Libs:` line; using `pkg-config --libs tstrans` is the safest way to get the right flags.
 
 ## Connection failures
 
@@ -101,7 +101,7 @@ Fix: build both sides with the same feature configuration. If you need encryptio
 
 `Socket::Drop` blocks the calling thread for as long as `SocketConfig::linger` is set to. This is not libsrt's out-of-the-box behavior: its own default is `l_onoff=0` (linger off) — `srt_close` returns immediately and the queued backlog drains in the background. (The commonly-cited 180-second linger default belongs to libsrt's *file*-mode `DEF_LINGER_S`, which this library never reaches — every transport here is message/live mode.) A hang happens only if you (or a builder default) set a non-zero linger and the peer never ACKs the pending sends.
 
-Fix: leave `linger` unset (`None`) for libsrt's immediate-return default, or set `SocketConfig::linger = Some(Duration::ZERO)` explicitly, or use the `SocketBuilder::linger(Duration)` setter to bound the wait. The `tst-c` connect path (`bindings/c/core/src/sender/connect.rs::connect_srt`) defaults to 5 seconds — long enough to drain a small backlog, short enough to never block reconnect noticeably.
+Fix: leave `linger` unset (`None`) for libsrt's immediate-return default, or set `SocketConfig::linger = Some(Duration::ZERO)` explicitly, or use the `SocketBuilder::linger(Duration)` setter to bound the wait. The C sender opens (`tst_mux_sender_open`, `tst_sender_open`, `tst_raw_sender_open`) and every managed sender (`tst_srt::shells`, which the C, Python and JVM managed senders use) open through `SrtUrl::connect`, which applies `SocketConfig::merge_sender_defaults`: an unset linger becomes 5 seconds — long enough to drain a small backlog, short enough to never block reconnect noticeably. The plain Python and JVM senders open through `SrtUrl::connect_recv` with no preset, so they keep libsrt's linger-off default.
 
 ## TCP / TLS (`tcps://`)
 
@@ -169,8 +169,10 @@ A multi-cell AU reassembly attempt failed on the named PID. `reason` discriminat
 - `SequenceGap` — a buffered AU's continuation cell had the wrong `sequence_number`. A cell was lost between the buffered `First`/`Middle` and the arriving cell.
 - `ConcurrentFirst` — a new `First` arrived while the previous AU was still buffering (its `Last` never appeared). The partial buffer is dropped before the new `First` is processed.
 - `Overflow` — the accumulated inner-byte total would exceed `DemuxerConfig::au_cell_cap_per_pid` (default 1 MiB). Tune the cap via `DemuxerConfigBuilder::au_cell_cap_per_pid(bytes)`.
+- `OverflowTotal` — the AU-cell bytes buffered across all PIDs would exceed the demuxer's aggregate cap.
+- `TooManyPids` — too many PIDs have an AU in flight at once.
 
-Fix: for `SequenceGap` and `Overflow`, investigate the upstream sender. If `ts-transformer`'s muxer is the sender, this is automatic — `Muxer::push_klv*` always emits `Complete` cells. Legitimate multi-cell streams reassemble transparently into a single `MetadataKind::KlvSyncAuCell` event with `was_reassembled = true` and `cell_count = N`.
+Fix: for `SequenceGap` and the three overflow reasons, investigate the upstream sender. If `ts-transformer`'s muxer is the sender, this is automatic — `Muxer::push_klv*` always emits `Complete` cells. Legitimate multi-cell streams reassemble transparently into a single `MetadataKind::KlvSyncAuCell` event with `was_reassembled = true` and `cell_count = N`.
 
 **I see `MultiCellAu{Orphan}` events but zero typed KLV from a malformed encoder**
 
@@ -314,8 +316,8 @@ filtering by kind is not the issue).
 Python equivalent) does not return when another thread tries to shut it
 down.
 
-**Diagnosis:** you are on an older release — the handles land in 0.7.0,
-which is still in development — or you never obtained the cancel handle.
+**Diagnosis:** you are on a release before 0.7.0, which added these
+handles, or you never obtained the cancel handle.
 From 0.7.0 every transport has one —
 `UdpTransport::cancel_handle()` / `UdpRecvTransport::cancel_handle()`
 return a `UdpCancelHandle`, and the RIST pair a `RistCancelHandle`
@@ -372,10 +374,10 @@ loop {
 }
 ```
 
-If you need to interrupt the recv from a thread that does not own the
-transport, consider switching to SRT, RTP, or TCP — all three expose a
-cloneable cancel handle that is safe to store and fire from any context.
-See [srt-cancel-handle.md](/docs/reference/srt-cancel-handle.md) for the
+On 0.7.0 and later, interrupting the recv from a thread that does not own
+the transport needs no stop flag: the cancel handle above is cloneable and
+safe to store and fire from any context. See
+[srt-cancel-handle.md](/docs/reference/srt-cancel-handle.md) for the
 cancel-handle pattern.
 
 ## Why did my RTSP stream end?
@@ -414,7 +416,7 @@ match transport.end_reason() {
 polling the same recorded value from a watchdog thread that doesn't
 own the transport (mirrors the `cancel_handle()` pattern above). `None`
 means either the session hasn't ended yet, or it ended through a path
-this arc doesn't instrument — most notably a plain `rtp://` transport
+that records no reason — most notably a plain `rtp://` transport
 with no owning `RtspClient`, which only records `Cancelled` (via its
 own `close()` / cancel-handle) and nothing else.
 
@@ -433,8 +435,7 @@ match handle.get() { /* same match as above */ }
 Keep the owning `RtspClient` alive, or drain the receiver, until
 end-of-stream is observed: dropping the client races the
 classification, since its `Drop` cancels the pump, which may record
-`Cancelled` before the server's EOF is read — that race reproduces the
-old `TransportBroken` shape.
+`Cancelled` before the server's EOF is read.
 
 **Python** (`tstrans.rtp`) mirrors this: `Receiver`, `DemuxReceiver`,
 and `H264Receiver` each expose `end_reason()` (a `StreamEndReason`

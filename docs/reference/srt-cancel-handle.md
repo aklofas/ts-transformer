@@ -135,7 +135,7 @@ primitive. The shape maps cleanly:
 | Java / Kotlin | `AutoCloseable` cancel-token; `Job.cancel()` analog inside coroutine wrappers |
 | Swift | `Task.cancel()` analog; the handle is held by a structured-concurrency parent |
 | Python | `threading.Event`-shaped wrapper; `event.set()` triggers the underlying `cancel()` |
-| C (`tst-c`) | `tst_cancel_handle_t *` opaque; `tst_cancel_handle_cancel(h)` (deferred to receiver-surface plan) |
+| C (`tst-c`) | no separate handle object: each shell has its own thread-safe `tst_<shell>_cancel(h)` entry point (`tst_mux_sender_cancel`, `tst_demux_receiver_cancel`, `tst_tcp_receiver_cancel`, …) |
 
 The Rust API is the source of truth — every binding crate forwards
 `cancel()` to the same idempotent atomic-swap inside `tst-core`.
@@ -174,7 +174,7 @@ for "another thread / signal handler / FFI consumer needs to wake the
 sender".
 
 `MuxSender::close()` internally invokes the cancel handle first
-("cancel-then-close" — see plan #18) so that a peer thread parked
+("cancel-then-close") so that a peer thread parked
 inside `send_video` returns promptly, before `close()` proceeds to
 flush and tear down. From the outside, `close()` is the right shape
 for "stop the shell now" *when the thread doing the close also owns
