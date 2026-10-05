@@ -17,7 +17,7 @@ package org.tstrans.srt;
  * RECONNECT_EXHAUSTED} arrives there as the vaguer {@code TransportFailed}.
  * This binding keeps the distinction.)
  *
- * <p><b>Which reasons are reachable today.</b> On the managed-SRT path a peer
+ * <p><b>Which reasons are reachable.</b> On the managed-SRT path a peer
  * FIN surfaces as a recoverable transport break that the reconnect decorator
  * retries, so a stream ends only when the reconnect budget runs out
  * ({@link #RECONNECT_EXHAUSTED}) or the caller stops it
@@ -42,7 +42,7 @@ package org.tstrans.srt;
 public enum RecvEndReason {
     /** The underlying transport reported a genuine clean end-of-stream that was
      *  not the reconnect-budget-exhausted path. Not produced by the managed-SRT
-     *  receiver today — see this enum's javadoc. */
+     *  receiver — see this enum's javadoc. */
     END_OF_STREAM,
     /** The reconnect decorator gave up after exhausting its
      *  {@link ReconnectPolicy} budget: the peer never came back within

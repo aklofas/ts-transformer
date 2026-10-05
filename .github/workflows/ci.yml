@@ -184,8 +184,8 @@ jobs:
       - name: Scrub guard (no pre-rename names in tree)
         # Fails the build if any pre-rename name (`srt-core`, `srt-rust`,
         # `srt-c`, `TsSender`, `TsReceiver`) or internal codeword (`v0`)
-        # leaks into the published tree. CLAUDE.md is the documented
-        # exception (per the repo-standalone guardrail); vendor/, target/,
+        # leaks into the published tree. The ignored maintainer notes
+        # file is the one exception (glob below); vendor/, target/,
         # and Cargo.lock are excluded. `rg` is installed in the Linux
         # prerequisites step above (the GHA image no longer ships it).
         # Linux-only — rg / bash invocation differs on Windows and this is
@@ -281,7 +281,7 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/rust/kind-table-coverage.sh
       - name: Kind-equivalence rail (C ≡ Python ≡ JVM per BindingErrorKind)
-        # spec §8; KIND_EQUIV_STRICT is set only by the arc's assembly task.
+        # Default mode; KIND_EQUIV_STRICT=1 (no `pending` *_parity row) is a manual gate.
         if: matrix.name == 'linux-x86_64'
         env:
           SRT_FORCE_VENDORED: "1"

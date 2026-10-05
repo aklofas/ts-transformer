@@ -73,8 +73,12 @@ tst-srt = "0.7"       # SRT sockets
 
 The raw socket examples use `tst-srt`; the video example also uses
 `tst-core` and `tst-pipeline`. A first build can take several minutes while
-the native SRT dependencies compile. For offline MPEG-TS or KLV processing,
-`tst-core` alone is enough and requires no C/C++ toolchain.
+the native SRT dependencies compile. Declaring
+`tst-srt = { version = "0.7", default-features = false }` skips the mbedTLS
+build for faster iteration; it also disables encryption, so use it only for
+testing (inside this repository, `--no-default-features` on `tst-srt` does
+the same). For offline MPEG-TS or KLV processing, `tst-core` alone is enough
+and requires no C/C++ toolchain.
 
 ## Send your first packet
 
@@ -91,8 +95,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     sb.latency(Duration::from_millis(120));
     let mut socket = sb.connect("127.0.0.1:9000")?;
     socket.send(b"hello, srt")?;
-    // Give this short loopback demo time to deliver its one message.
-    // send() queues bytes; it does not wait for the peer to read them.
+    // The receiver holds each message for its 120 ms latency before
+    // delivering it, and closing ends the connection with whatever it
+    // still holds (`linger` only waits for the ACK), so pause first.
     std::thread::sleep(Duration::from_millis(500));
     socket.close()?;
     Ok(())
@@ -100,7 +105,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 The 120 ms setting gives SRT time to recover missing packets before
-delivery. `connect` waits for the handshake; `send` queues the message.
+delivery; the handshake settles on the larger of the two peers'
+latencies. `connect` waits for the handshake; `send` queues the message.
 The pause is sufficient for this local demonstration, but is not an
 acknowledgment that a receiving application has processed the data.
 

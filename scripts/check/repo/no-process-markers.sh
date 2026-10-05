@@ -98,6 +98,13 @@ PATTERNS=(
   'docs/(analysis|plans|specs|validate-1)/'
   '(?i)\b(deep-)?review[- ][0-9]+\b'
   '(?i)\blesson\b'
+  # "this arc" / "the arc" as a project-arc name. Lower-case "arc" only, so
+  # Rust's `Arc` stays; not followed by " of", so "the arc of a trajectory"
+  # stays (ripgrep's default engine has no lookahead, hence the alternation).
+  '\b([Tt]his|[Tt]he) arc\b($|[^ ]| [^o]| o[^f])'
+  # out-of-tree maintainer files. A name right after `!` (an rg/glob
+  # exclusion) or a leading `/` (an ignore-file root entry) is not a pointer.
+  '(^|[^!/])CLAUDE\.md|\S/CLAUDE\.md|ROADMAP\.md|soak-archives/'
 )
 EXCL='^(CHANGELOG\.md$|crates/(srt-sys|mbedtls-src|rist-sys)/vendor/|embedded/vendor/|target/|\.git/|scripts/check/repo/no-process-markers|scripts/ratchets/process-markers-allowlist\.txt$)'
 
@@ -189,6 +196,8 @@ selftest() {
     'review-9 flagged it' \
     'deep-review-10 flagged it' \
     'a hard lesson here' \
+    'fixed in this arc' \
+    'see CLAUDE.md for the recipe' \
     > "$pos"
   printf '%s\n' \
     'Tier 1 platforms are gating' \
@@ -203,6 +212,12 @@ selftest() {
     'tests/symbol_audit.rs runs nm -D' \
     'MPEG-2 AC-3 AAC-LC' \
     'ABI version 0.22' \
+    'an arc of the trajectory' \
+    'the arc of the trajectory' \
+    'the Arc clone shares the buffer' \
+    'arcsine and arctan' \
+    '/CLAUDE.md' \
+    "--glob '!CLAUDE.md'" \
     > "$neg"
   n=$(grep -c . "$pos")
   out=$(TST_WS="$REPO" bash "$0" --mode fail -- "$pos"); rc=$?

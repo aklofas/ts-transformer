@@ -87,9 +87,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     //     `SrtTransport` collapses these into one `Broken` surface by design —
     //     it lets a managed-receive decorator distinguish a self-initiated close
     //     (`Closed`) from a peer-initiated break (`Broken`). For a non-managed
-    //     example like this one, both are terminal. Note: on `Broken` the
-    //     demuxer is NOT auto-flushed, so any trailing PES is lost (the receive
-    //     thread can't tell mid-stream hiccup from a clean end).
+    //     example like this one, both are terminal. On `Broken` the receiver
+    //     flushes the demuxer first, so any trailing PES arrives as events
+    //     before the `Err`.
     //     Inner source: `matches!(err.source, DemuxReceiverErrorSource::Transport(
     //     TransportError::Broken { .. }))` if you need variant discrimination.
     //

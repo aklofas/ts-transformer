@@ -1649,7 +1649,7 @@ impl AttributionReport {
     /// they existed deserializes with every one of them zero while its
     /// sample list still holds real findings. Gating on the counter alone
     /// would then read such a report as clean and pass a run that failed
-    /// — verified against this arc's own 1-hour smoke artifacts, where
+    /// — verified against a 1-hour smoke run's artifacts, where
     /// re-judging them under the new counters flipped both
     /// `corruption_detected_*` failures to passes while the verdict
     /// detail still quoted the finding.
@@ -2387,7 +2387,7 @@ impl Attribution {
     /// lateness, and the injection is reported undetected for damage the
     /// receiver noticed perfectly well.
     ///
-    /// Measured on the arc's 1-hour smoke: 3 of 1738 detectable
+    /// Measured on a 1-hour smoke run: 3 of 1738 detectable
     /// injections across two legs. Rare because the displacement usually
     /// loses to the lateness `ATTRIBUTION_WINDOW` was sized for, but the
     /// rate scales with run length and loss — order 100-200 over 72
@@ -2827,7 +2827,7 @@ impl Attribution {
                 // reached the receiver to be noticed. That is the
                 // transport-loss evidence `undetected_lost` exists for.
                 //
-                // Measured on the arc's 1-hour smoke: a PSI body flip on
+                // Measured on a 1-hour smoke run: a PSI body flip on
                 // the srt leg whose corrupted PMT packet the proxy
                 // dropped. The receiver emitted a `ContinuityJump` on
                 // PID 0x1000, `on_signal` attributed it to that very
@@ -4424,7 +4424,7 @@ mod tests {
     /// receiver noticed perfectly well.
     ///
     /// Measured live: 2 of 429 detectable `garbage`/`header` injections
-    /// on the arc's 1-hour rist leg, whose 100 ms PCR cadence gives the
+    /// on a 1-hour smoke run's rist leg, whose 100 ms PCR cadence gives the
     /// widest `since_pcr` spans.
     #[test]
     fn an_injections_own_event_may_surface_before_its_resolved_position() {
@@ -4462,8 +4462,8 @@ mod tests {
     /// prevent.
     ///
     /// `since_pcr` really does reach this far: measured at 302 packets on
-    /// a 40 ms-PCR profile and 393 on a 100 ms one over the arc's 1-hour
-    /// smoke, against the ~130 a one-PCR-interval model predicts. So the
+    /// a 40 ms-PCR profile and 393 on a 100 ms one over a 1-hour smoke
+    /// run, against the ~130 a one-PCR-interval model predicts. So the
     /// bound has to come from `min_gap`, not from a cadence assumption.
     #[test]
     fn a_wide_anchor_span_cannot_reach_into_its_predecessors_window() {

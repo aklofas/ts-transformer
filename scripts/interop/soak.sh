@@ -3,8 +3,8 @@
 # tst-interop driver pushing synthetic MPEG-TS/KLV traffic through an
 # impaired UDP proxy for hours at a time, sampling process RSS along
 # the way, then handing everything to `tst-interop report soak` for a
-# verdict. This is the "impaired endurance" half of this arc's
-# published evidence (run-matrix.sh's transport/format matrix is the
+# verdict. This is the "impaired endurance" half of the published
+# interop evidence (run-matrix.sh's transport/format matrix is the
 # "real tools, short runs" half).
 #
 # Topology (see crates/tst-interop/src/report.rs's `soak` module doc for
@@ -138,10 +138,10 @@
 #
 # **Launch this genuinely detached — `nohup ... & disown`, exactly as
 # shown below — and NEVER through a supervising tool/session mechanism
-# that can enforce its own lifetime cap on the invocation** (found the
-# hard way during this arc's own fix-wave validation: a session-tool
-# background-command wrapper silently killed a 1-hour smoke around the
-# ~60-minute mark, well short of even that short run's own deadline —
+# that can enforce its own lifetime cap on the invocation** (a
+# session-tool background-command wrapper has silently killed a 1-hour
+# smoke around the ~60-minute mark, well short of even that short run's
+# own deadline —
 # `nohup`+`disown` detaches the process from that supervision entirely,
 # so it keeps running past the launching tool call's own return and
 # past the launching session ending). Don't wait on the launching

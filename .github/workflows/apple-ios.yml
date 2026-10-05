@@ -1,7 +1,7 @@
 # Apple iOS spike + XCFramework — the validation gate for items 5b/5c of the
 # Apple/VideoToolbox PoC. Manual (workflow_dispatch) only: it's an expensive
 # macOS job that isn't needed on every push, and it proves the highest-risk
-# item of the arc — that libsrt + the vendored mbedTLS cross-compile and link
+# item of the PoC — that libsrt + the vendored mbedTLS cross-compile and link
 # into an iOS static lib — which cannot run off a Mac.
 #
 # Run it from the Actions tab; it builds the device / simulator / macOS slices,

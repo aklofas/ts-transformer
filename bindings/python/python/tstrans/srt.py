@@ -56,7 +56,7 @@ class RecvEndReason(enum.IntEnum):
     integers, so there is no cross-binding numeric contract here, unlike
     `StreamEndReason` which is pinned to the C enum.)
 
-    Only two variants are reachable on the managed-SRT path today:
+    Only two variants are reachable on the managed-SRT path:
     `RECONNECT_EXHAUSTED` (the reconnect decorator exhausted its
     `ReconnectPolicy` budget — this is also what a plain peer close
     reports under a zero-retry policy, because a peer FIN reaches the

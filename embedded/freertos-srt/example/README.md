@@ -6,7 +6,7 @@ The flagship `freertos-srt` target: a bare-metal SRT **caller** on a Cortex-M
 `tst-srt` listener that reconstructs the stream and verifies it **byte-exact** —
 unencrypted and with mbedTLS AES-128 + passphrase.
 
-This is the first off-device hop in the arc (the `tests/` are on-device
+This is the egress off-device hop (the `tests/` are on-device
 loopback). It proves the bytes actually leave the chip through a NIC driver and
 arrive intact at an independent SRT receiver.
 

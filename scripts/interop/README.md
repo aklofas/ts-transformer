@@ -9,7 +9,7 @@ UDP, TCP, HLS, RTSP) and every one of the 12 canonical stream profiles
 per "cell" (one peer, one direction, one transport-or-local-probe, one
 optional variant like encryption or profile).
 
-This is the arc's core deliverable: real tools talking to this codebase over
+The point is real tools talking to this codebase over
 a real wire (or a real local decode/analysis pass), not another closed-loop
 self-test.
 
@@ -86,7 +86,7 @@ see "Known, already-evidenced gaps" below) — running the full matrix exits
 0. Any *new* `FAIL` an expectations row doesn't already cover still exits
 nonzero: see `report.rs`'s module doc for why an unmatched `FAIL` must
 never be silently absorbed. Two more ways `report merge` now fails
-nonzero, both load-bearing since this arc: an `expected_unsupported` row
+nonzero: an `expected_unsupported` row
 whose (cell, profile) actually `PASS`ed this run — a *stale* row, reported
 as `stale_expectations` and fatal everywhere (no `--strict` flag, no
 warn-only mode: CI, a branch dispatch, and a local run all reject it the
@@ -529,7 +529,7 @@ similar at a glance:
 
 ## Multi-day soak (`soak.sh`)
 
-`soak.sh` is the other half of this arc's published evidence: a long-running
+`soak.sh` is the other half of the published interop evidence: a long-running
 two-leg (SRT + RIST) endurance run through an impaired proxy, judged by
 `tst-interop report soak` rather than by the cell-based matrix above. See
 `soak.sh`'s own header comment for the full topology, prerequisites, and the
@@ -858,7 +858,7 @@ how many were skipped, so a reader can tell "3 of 6000 records are wrong"
 from "3 are wrong and 200 more were never examined". An unexplained rich
 decode error still fails `klv_rich_decode_clean`. Without this, the tap's
 1-2 KLV-PID hits per ten minutes would scale to several hundred guaranteed
-rich-KLV failures over 72 hours, and the arc's headline soak could not pass
+rich-KLV failures over 72 hours, and a 72-hour soak could not pass
 with its own default settings.
 
 ## Stress sweep (`stress.sh`)
