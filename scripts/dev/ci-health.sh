@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# CI health snapshot (deep-review-4 META-03).
+# CI health snapshot.
 #
 # GitHub already records everything the flake ledger in the maintainer's
 # memory tries to track — run_attempt (>1 = somebody pressed rerun), per-job
 # conclusions per attempt, and run duration (a 6-hour cancel is the wedge
 # class). Nobody aggregated it: a rerun that passes shows as `success`, so
-# a 1-in-8 real race (PR #133's RTSP-burst case) was indistinguishable from
+# a 1-in-8 real race (an RTSP-burst case) was indistinguishable from
 # weather. This script turns the last N days of runs into one CSV row plus
 # per-job rerun counts, and prints ALERT lines for job names rerun >= 2×.
 #
@@ -80,7 +80,7 @@ fi
 rerun_jobs="$(sort "$tmp/rerun-jobs.txt" | uniq -c | sort -rn | awk '{c=$1; $1=""; sub(/^ /,""); printf "%s%s:%d", (NR>1?";":""), $0, c}')"
 # Human-readable display only: in offline mode (CI_HEALTH_RUNS_JSON) the jobs
 # endpoint is never queried, so an empty $rerun_jobs means "not computed", not
-# "zero reruns" — say so instead of printing "none" (Copilot review, PR #224).
+# "zero reruns" — say so instead of printing "none".
 # The CSV field itself stays the raw (possibly empty) $rerun_jobs — a prose
 # string there would break machine parsing of docs/project/ci-health.csv.
 if [ -n "${CI_HEALTH_RUNS_JSON:-}" ]; then
@@ -103,7 +103,7 @@ fi
   # jq's group_by assumes sorted input (it groups by contiguous run, not by
   # equal key across the whole array) — sort_by first, or identically-named
   # workflows split into multiple bogus groups if they weren't adjacent in
-  # the API's newest-first ordering (Copilot review, PR #224).
+  # the API's newest-first ordering.
   jq -r 'sort_by(.name) | group_by(.name) | .[] | "    \(.[0].name): \(length) runs, \([.[] | select(.run_attempt > 1)] | length) reruns, \([.[] | select(.conclusion == "failure")] | length) failures, max \(map(.minutes) | max) min"' "$tmp/runs.json"
 } | tee "$tmp/report.txt"
 

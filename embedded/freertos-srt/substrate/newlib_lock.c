@@ -1,4 +1,4 @@
-/* newlib locking backend for FreeRTOS (EMB-HEAP-1).
+/* newlib locking backend for FreeRTOS.
  *
  * Dual-mode: the build-time macro _RETARGETABLE_LOCKING (set in newlib.h)
  * selects which interface newlib's libc.a calls at runtime.

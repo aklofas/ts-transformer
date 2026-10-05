@@ -116,7 +116,7 @@ v_fault_smoke() {
 }
 
 # arq-connfail: a caller-side connect failure must abort the listener join
-# and report fast — EMB-JOIN-1 regression guard.
+# and report fast.
 v_arq_connfail() {
   grep -q 'FAIL\[s3_srt_plain\]: where=connect' <<<"$out" || {
     echo "  verdict: no labeled connect-failure verdict — a caller-side failure"

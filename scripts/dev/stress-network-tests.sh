@@ -3,9 +3,9 @@
 #
 # Test-binary consolidation raised intra-binary concurrency on the loopback /
 # RTSP / multicast tests (cargo runs binaries sequentially; libtest parallelises
-# within one). The result is a flake class that a single green run hides — see
-# feedback_test_binary_consolidation_concurrency.md and the known aarch64
-# `tst-srt builder::drop_closes_cleanly` accept/close race.
+# within one). The result is a flake class that a single green run hides,
+# including the known aarch64 `tst-srt builder::drop_closes_cleanly`
+# accept/close race.
 #
 # This rail re-runs the network binaries N times under two topologies:
 #   * serialized   (`--test-threads=1`) — exercises teardown/Drop ordering;

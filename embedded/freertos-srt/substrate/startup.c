@@ -116,7 +116,7 @@ extern void tst_heap_unlock(void);
 /* Self-contained heap for newlib malloc / the C++ runtime.
  * tst_heap_lock/unlock are no-ops before the scheduler starts; under a
  * running scheduler they suspend-all so concurrent malloc → _sbrk paths
- * can't race on the brk pointer (EMB-HEAP-1). */
+ * can't race on the brk pointer. */
 void *_sbrk(int incr) {
     static char *brk = 0;
     tst_heap_lock();

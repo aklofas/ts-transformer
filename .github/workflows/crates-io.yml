@@ -9,7 +9,7 @@
 # crates.io if either ever changes.
 #
 # Triggers (mirrors python-wheels.yml):
-# - tag push `v*` — REL-01 preflight, then the real ordered publish.
+# - tag push `v*` — preflight, then the real ordered publish.
 # - workflow_dispatch — full dry-run rehearsal (packages + verify-builds
 #   every crate in order, uploads nothing, needs no token).
 # - pull_request touching this file — same dry-run, so workflow

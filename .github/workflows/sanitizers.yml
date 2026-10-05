@@ -11,8 +11,7 @@ name: sanitizers
 #     -fsanitize through the srt-sys/rist-sys vendored cmake+meson builds
 #     so libsrt, librist and BOTH static mbedTLS copies are instrumented
 #     to match the Rust test binary (see the native_sanitizer_cflags
-#     helper in either build.rs). tsan-native landed 2026-08-19
-#     (WP-SAN-5, docs/plans/2026-07-24-native-sanitizer-coverage.md).
+#     helper in either build.rs). tsan-native landed 2026-08-19.
 #
 # Tests run under cargo-nextest with the `sanitizer` profile
 # (.config/nextest.toml): sanitizer-scaled per-test timeouts (ASan ~2x,
@@ -28,12 +27,11 @@ on:
     # surface on the morning of the following workday without competing
     # with PR-driven CI for GHA capacity.
     - cron: '0 3 * * *'
-  # PR path (deep-review-4 META-12): a race in tst-srt/tst-rist/tst-tcp or
-  # the managed reconnect paths used to reach main before TSan ever saw it
-  # (the #183 stats-callback race sat red four nights). Only `tsan-native`
-  # runs on pull_request — the other three jobs are `if`-gated below and
-  # keep running nightly. Hard-gating: there is no continue-on-error in
-  # this file (removed with PRs #159/#190) and none is added for PRs.
+  # PR path: a race in tst-srt/tst-rist/tst-tcp or the managed reconnect
+  # paths could reach main before TSan ever saw it. Only `tsan-native` runs
+  # on pull_request — the other three jobs are `if`-gated below and keep
+  # running nightly. Hard-gating: there is no continue-on-error in this
+  # file, and none is added for PRs.
   # ~10 min warm. The sys crates are listed so a vendor bump PR runs it
   # without a manual dispatch (the vendor-bump rail still reminds to
   # dispatch the full nightly set).

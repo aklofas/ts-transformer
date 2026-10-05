@@ -1,15 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Phase 3 ratchet (lives under scripts/check/rust/).
-#
 # Verifies every RtspServerError arm is constructed somewhere under
 # crates/tst-rtp/src/rtsp/server/ or crates/tst-rtp/src/builder.rs.
 # Intent: no silent error paths in the server lifecycle; every defined
 # arm has a visible construction site that maps to a real failure mode.
 #
 # A producer-existence rail, not an exhaustiveness rail despite the name —
-# same shape as the former check/rust/mux-error-kind-coverage.sh (plan #79,
-# deleted in Arc 2 R2 once the compiler could pin MuxError::kind()).
+# same shape as the former check/rust/mux-error-kind-coverage.sh (deleted
+# once the compiler could pin MuxError::kind()).
 
 src="crates/tst-rtp/src/error.rs"
 

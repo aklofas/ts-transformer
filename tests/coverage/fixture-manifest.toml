@@ -57,7 +57,7 @@ origin = "synthetic"
 generator = "scripts/gen/fuzz-targets.sh"
 no_private_corpus = true
 
-# Cross-binding scenario harness goldens (WS-5). Committed input artifacts +
+# Cross-binding scenario harness goldens. Committed input artifacts +
 # golden.json per scenario + the generated scenarios.toml manifest. Regenerate
 # with the generator below; gen-scenarios --check (scripts/check/repo/scenarios.sh)
 # fails CI if the committed set drifts. Synthetic-only by construction.

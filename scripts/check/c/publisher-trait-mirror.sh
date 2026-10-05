@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# 30th bash ratchet (Plan A5a Wave C).
 # Verifies every method on the tst_core::publisher::Publisher trait has a
 # corresponding tst_publisher_* C entry point in bindings/c/core/src/hls/ AND
 # appears in the generated bindings/c/include/tstrans.h.

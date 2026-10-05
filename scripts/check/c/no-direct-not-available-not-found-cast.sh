@@ -10,9 +10,6 @@
 # wrong shape. The TST_E_* code stays correct, but the last-error
 # message is stale.
 #
-# Per Codex re-review Required Finding 1 (plan #93,
-# docs/refactor-1/_codex-waves-1-6-comprehensive-rereview-report.md).
-#
 # Exclusions:
 # - `assert_eq` in test modules (documented enum-value assertions).
 # - bindings/c/core/src/error.rs (the helpers themselves contain the cast

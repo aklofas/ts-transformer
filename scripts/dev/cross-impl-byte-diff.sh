@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# I5 (validate-1 Sprint 5 / Wave I) — cross-implementation byte-diff harness.
+# Cross-implementation byte-diff harness.
 #
 # Compares our `Muxer` output against ffmpeg's MPEG-TS muxer and tsduck's
 # `tsp` muxer across a small content matrix that exercises representative

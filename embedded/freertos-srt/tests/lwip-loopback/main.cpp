@@ -1,4 +1,4 @@
-// lwip-loopback — Task 4 (payoff): the committed 564-byte video-roundtrip golden round-
+// lwip-loopback — the committed 564-byte video-roundtrip golden round-
 // trips through lwIP UDP on the loopback netif. Sender + receiver run as
 // FreeRTOS-Plus-POSIX pthreads (the threading API libsrt's sync_posix.cpp binds
 // to) concurrently with lwIP's own tcpip thread — the R2-hardening concurrency

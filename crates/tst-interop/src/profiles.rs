@@ -280,7 +280,7 @@ pub fn all() -> &'static [Profile] {
 /// Build the `Demuxer` config a conformant receiver of `p`'s traffic must
 /// use.
 ///
-/// The audit finding this closes: a default-constructed `Demuxer` assumes
+/// A default-constructed `Demuxer` assumes
 /// `Av1CarriageMode::Mpeg2TsBinding`, but `av1-klv-a` deliberately carries
 /// AV1 the `InteropRawObu` way (PES `stream_id=0xE0`, raw OBUs — see that
 /// profile's own `av1_mode`). Demuxing `av1-klv-a`'s traffic with a

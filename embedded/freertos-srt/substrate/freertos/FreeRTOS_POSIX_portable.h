@@ -30,7 +30,7 @@
 #include <sys/types.h>
 
 /* Use newlib's sched_param/sched_yield/etc. rather than the POSIX-layer copy. */
-/* Latent scheduling cliffs (2026-07-05 embedded audit, T-G) — documented, not
+/* Latent scheduling cliffs — documented, not
  * fixed, because no gate exercises them:
  * - SCHED_PARAM is disabled, so every pthread runs at the FreeRTOS-Plus-POSIX
  *   default priority (tskIDLE_PRIORITY, 0). All SRT worker threads time-slice

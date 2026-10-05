@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Plan #96 Wave D ratchet: keep ABI-version docs and ST 1910 citations
+# Keeps ABI-version docs and ST 1910 citations
 # from regressing.
 #
 # Four rules:
@@ -9,23 +9,21 @@
 #      TST_ABI_VERSION_MINOR in bindings/c/core/src/lib.rs.
 #
 #   2. Bare `ST 1910` (i.e. NOT followed by `.1`) must not appear in
-#      crates/ or README.md. The 2026-05-24 audit found 6 sites
-#      mis-citing MPEG-TS sync-metadata-AU-cell carriage as "ST 1910";
-#      the correct cite is H.222.0 §2.12.4.2 (with ST 1402 as the
-#      MISB-side mapping spec). ST 1910.1 itself is a real standard
-#      about KLV-in-CMAF-emsg delivery; references with the `.1`
-#      version suffix are legitimate (CMAF/HLS deferred-feature
-#      context).
+#      crates/ or README.md: MPEG-TS sync-metadata-AU-cell carriage is
+#      sometimes mis-cited as "ST 1910"; the correct cite is H.222.0
+#      §2.12.4.2 (with ST 1402 as the MISB-side mapping spec). ST 1910.1
+#      itself is a real standard about KLV-in-CMAF-emsg delivery;
+#      references with the `.1` version suffix are legitimate (CMAF/HLS
+#      deferred-feature context).
 #
 #   3. tst-c crate-level docs must not say receiver / demux surfaces
-#      are "pending" — those surfaces shipped in plan #62 + validate-1.
+#      are "pending" — those surfaces have shipped.
 #
 #   4. Pinned current-version doc sites must match the source constants
 #      (TST_ABI_VERSION_MINOR + the workspace Cargo.toml version) — the
 #      ABI-minor staleness class recurred at 0.17 → 0.18 → 0.19.
 #
-# Bash 3.2-portable: no `mapfile`, no `declare -A`, no `readarray`
-# (see feedback_bash_ratchets_macos_portability.md). Uses
+# Bash 3.2-portable: no `mapfile`, no `declare -A`, no `readarray`. Uses
 # `while IFS= read -r x; do arr+=("$x"); done < <(...)` pattern.
 
 # --self-test: build a fixture tree with a planted stale minor, expect FAIL;
@@ -69,9 +67,9 @@ cd "$ROOT"
 FAILED=0
 
 # Current ABI minor is derived ONCE, up front — every rule below compares
-# against it. (Before 2026-09-14 rule 1 hard-coded `0\.[0-4]` and went blind
-# the day the minor reached 0.5; a stale "ABI version 0.20" then sat on a
-# 0.21 tree unnoticed — deep review #4, META-07.)
+# against it. (An earlier version of rule 1 hard-coded `0\.[0-4]` and went
+# blind the day the minor reached 0.5; a stale "ABI version 0.20" then sat
+# on a 0.21 tree unnoticed.)
 CURRENT_MINOR=$(grep -E '^pub const TST_ABI_VERSION_MINOR' bindings/c/core/src/lib.rs | grep -oE '[0-9]+' | tail -1)
 if [ -z "$CURRENT_MINOR" ]; then
     echo "FAIL: cannot read TST_ABI_VERSION_MINOR from bindings/c/core/src/lib.rs"

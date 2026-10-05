@@ -260,8 +260,8 @@ tsp_analyze_counters_zero() {
 # ---------------------------------------------------------------------
 #
 # `decode/{ffplay,vlc,mpv,gst-play}/<profile>` cells are
-# CONTAINER-ACCEPTANCE probes (controller ruling, task 12 dispatch): pass
-# iff the player opens the file and no container/TS/PSI-level error
+# CONTAINER-ACCEPTANCE probes: pass iff the player opens the file and no
+# container/TS/PSI-level error
 # appears — NOT a full-decode assertion. `crates/tst-interop/src/fixtures.rs`'s
 # H.264/H.265/H.266/AV1/AAC generators only build real, decodable data on
 # keyframes; every inter-frame AU is filler bytes wrapped in a bare
@@ -300,9 +300,9 @@ tsp_analyze_counters_zero() {
 #     whose companion line names gst_audio_decoder_sink_eventfunc — a
 #     different suffix from the video/parse base classes, so it slipped
 #     past the anchor above and FAILed decode/gst-play/audio on 3 of 4
-#     PR #185 runs (2026-09-05; identical harness, tool versions and
-#     runner image on the one PASS — the EOS report is timing-dependent
-#     against the headless pulsesink failure, the phrasing is not).
+#     runs (identical harness, tool versions and runner image on the one
+#     PASS — the EOS report is timing-dependent against the headless
+#     pulsesink failure, the phrasing is not).
 #     av1-klv-*
 #     and h266-klv produce NO output at all under --quiet (GStreamer
 #     1.24 wires no AV1-in-TS / VVC decode path in playbin, so no
@@ -473,7 +473,7 @@ emit_skipped() {
 # and calls every cell shape once per profile BEFORE executing anything;
 # each shape records the id it WOULD run and returns). `report merge
 # --inventory` later compares the produced cells against this exact
-# multiset (release-gate audit RLS-B08).
+# multiset.
 declare_cell() {
   printf '%s\t%s\n' "$1" "$PROFILE" >>"$INVENTORY_TSV"
 }

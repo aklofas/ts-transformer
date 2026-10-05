@@ -54,7 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let transport = SrtTransport::new(socket);
 
     // `MuxSender::new(transport, config)` — argument order matches
-    // `Sender::new` and `RawSender::new` post-Phase-1 normalization.
+    // `Sender::new` and `RawSender::new`.
     // Default config: program 1, H.264 video on PID 0x1011, async KLV on
     // PID 0x1031. See `mux_to_file.rs` for the same defaults written to a
     // file instead.

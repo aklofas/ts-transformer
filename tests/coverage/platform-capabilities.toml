@@ -21,7 +21,7 @@
 # capability.status ∈ { A | A-soft | gating-pending }
 #   A-soft / gating-pending — soft_until REQUIRED (forces a promotion decision)
 
-# ─── test-level platform gates (retro-audit; one per gated file) ────────────
+# ─── test-level platform gates (one per gated file) ────────────
 
 [[platform_skip]]
 file = "crates/tst-rist/tests/loopback.rs"
@@ -44,7 +44,7 @@ platform = "windows-msvc"
 capability = "rist_runtime"
 class = "blocked_bug"
 resolved = "2026-07-26"
-note = "Same librist teardown hang as loopback.rs; fixed in librist 0.2.18, gate lifted 2026-07-26."
+note = "Same librist teardown hang as loopback.rs; fixed in librist 0.2.18."
 
 [[platform_skip]]
 file = "crates/tst-udp/tests/loopback_multicast.rs"
@@ -139,4 +139,4 @@ and it does not block the rest of the suite.
 platform = "windows-msvc"
 capability = "ipv4_multicast"
 status = "A"
-note = "Un-gated + green since 2026-05-29 (socket2 IP_MULTICAST_IF)."
+note = "Un-gated and green (socket2 IP_MULTICAST_IF)."

@@ -10,7 +10,7 @@
 //! shape as `send.rs`'s push loop), so a caller-driven external tool can
 //! pull it.
 //!
-//! # The `finish_serving` deadlock lesson
+//! # The `finish_serving` deadlock
 //!
 //! [`run_hls`] always finishes via `HlsPublisher::finish_serving` (never
 //! the plain `Publisher::finish`) once the profile's traffic has been
@@ -46,7 +46,7 @@ use crate::schedule::{self, Event, PTS_HZ};
 /// How long a completed serve (HLS `finish_serving` / RTSP
 /// push-complete) stays up before this module tears it down — gives a
 /// puller that hasn't started yet (or is mid-fetch) time to grab the
-/// whole capture. See the module doc's "finish_serving deadlock lesson".
+/// whole capture. See the module doc's "finish_serving deadlock" section.
 const LINGER: Duration = Duration::from_secs(10);
 
 /// HLS target segment duration used by [`run_hls`]. Short relative to

@@ -3,12 +3,12 @@
 # bindings/c/core/src/{sender,receiver}/ wraps its body in
 # `crate::panic::ffi_catch(...)`.
 #
-# Validate-1 Sprint 3 D1 wrapped 25 lifecycle entries (13 _close +
-# 12 _cancel) to close panic-unwind UB across the C frame. Two unit
-# tests in panic.rs pin that ffi_catch *itself* works, but they do
-# NOT pin the contract that each of the 25 wrappers actually uses
-# it — a future commit accidentally dropping the wrap from one
-# entry would slip through. This ratchet closes that gap.
+# Every lifecycle entry (24 today: 12 _close + 12 _cancel) wraps its body
+# in ffi_catch so a panic never unwinds across the C frame (UB). Two unit
+# tests in panic.rs pin that ffi_catch *itself* works, but they do NOT
+# pin the contract that each wrapper actually uses it — a future commit
+# accidentally dropping the wrap from one entry would slip through. This
+# ratchet closes that gap.
 #
 # Mechanic: enumerate every `pub (unsafe )?extern "C" fn
 # tst_<name>_(close|cancel)\b` signature, then assert that the
@@ -24,18 +24,16 @@ SRC_DIRS=(
 )
 
 # Window size (in lines) after the signature line where the
-# `crate::panic::ffi_catch(` call must appear. The D1 convention
-# places it on the line immediately after `{`, so 5 is comfortably
-# above the floor while still tight enough to catch accidental
-# unwrapping.
+# `crate::panic::ffi_catch(` call must appear. The convention places it
+# on the line immediately after `{`, so 5 is comfortably above the
+# floor while still tight enough to catch accidental unwrapping.
 WINDOW=5
 
 # Step 1: enumerate lifecycle entries (file:lineno pairs).
 #
 # Portable read-into-array pattern (bash 3.2+, including macOS default
 # bash 3.2.57). `mapfile`/`readarray` are bash 4.0+ only and silently
-# fail with "command not found" on macOS — see
-# `feedback_bash_ratchets_macos_portability.md`.
+# fail with "command not found" on macOS.
 ENTRIES=()
 while IFS= read -r entry; do
     ENTRIES+=("$entry")

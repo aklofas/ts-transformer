@@ -7,12 +7,10 @@
 # Enums (and their constants) that are not in the allowlist are silently
 # dropped from the generated header, even if they are referenced from
 # Rust-side doc comments that survive into the header. The au-cell CFI
-# tolerance feature (2026-05-24) shipped with `TstCellFragmentIndication`
-# defined in event.rs and quoted in tst-c rustdoc / NonConformantIssue
-# docs, but the symbol was never added to the include list — so C
-# callers got raw cc_expected/cc_observed bytes with no way to compare
-# against constants. Caught by Codex review (validation memo
-# docs/analysis/2026-05-24-codex-review-au-cell-cfi-fix-validation.md).
+# tolerance feature shipped with `TstCellFragmentIndication` defined in
+# event.rs and quoted in tst-c rustdoc / NonConformantIssue docs, but the
+# symbol was never added to the include list — so C callers got raw
+# cc_expected/cc_observed bytes with no way to compare against constants.
 # This ratchet prevents the next mirror enum from regressing the same way.
 #
 # Scope note: we deliberately do NOT verify the rendered header — that

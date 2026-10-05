@@ -9,7 +9,7 @@ extern "C" {
 }
 extern "C" void _exit(int);  // matches startup.c + the libc builtin (void, noreturn)
 
-// Task 5: re-run the concurrent C++ exception gate with the worker threads
+// Re-runs the concurrent C++ exception gate with the worker threads
 // created as FreeRTOS-Plus-POSIX *pthreads* — the threading API libsrt's
 // sync_posix.cpp binds to — to validate that the per-task __cxa_eh_globals
 // override (cxa_override.cpp) still isolates exception state when threads come
@@ -61,8 +61,8 @@ static void bootstrap_task(void*) {
     pthread_t th[N];
     // The default pthread stack (PTHREAD_STACK_MIN = configMINIMAL_STACK_SIZE *
     // sizeof(StackType_t) = 1 KiB) is far too small for the C++ exception
-    // unwinder. Match the 4 KiB (1024-word) stack the Task 4 raw xTaskCreate
-    // workers used so the two-phase unwind has room.
+    // unwinder. Match the 4 KiB (1024-word) stack this gate's raw-xTaskCreate
+    // workers originally used so the two-phase unwind has room.
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setstacksize(&attr, 4096);

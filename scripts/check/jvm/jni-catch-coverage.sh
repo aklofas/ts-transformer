@@ -9,8 +9,8 @@
 #   1. The body calls `jni_catch(...)` (the standard wrapper).
 #   2. The function name is in the trivially-infallible allowlist below.
 #
-# Bash 3.2-portable (no mapfile/readarray/declare -A; here-strings not pipes)
-# per feedback_bash_ratchets_macos_portability.md.
+# Bash 3.2-portable (no mapfile/readarray/declare -A; here-strings not
+# pipes).
 
 set -euo pipefail
 

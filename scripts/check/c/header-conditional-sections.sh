@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# 22nd bash ratchet (Phase 4 Stage 1).
 # Verifies tstrans.h contains TST_HAS_SRT + TST_HAS_RTP defines and
 # that every tst_rtp_*, tst_rtsp_*, and existing tst_*_open/SRT-specific
 # symbol is wrapped in the appropriate #ifdef guard.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Arc 2 R2 (META-04): no `unreachable!` and no `.expect(` in binding
+# No `unreachable!` and no `.expect(` in binding
 # production code. An `unreachable!` on a #[non_exhaustive] wildcard is a
 # latent abort the day tst-core adds a variant; an `.expect(` is a panic
 # the binding's own panic policy (binding::panic) must never have to

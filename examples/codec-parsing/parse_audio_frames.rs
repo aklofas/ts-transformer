@@ -1,6 +1,6 @@
 //! Walk a `.ts` file with the demuxer, parse audio frames per PID, and
 //! log first-change-only `(sample_rate, channel_count, profile/layer)`
-//! tuples. Same stance as `parse_video_parameters.rs` from plan #20:
+//! tuples. Same stance as `parse_video_parameters.rs`:
 //! we don't dump every frame's metadata (that's noise), only the points
 //! where the typed surface changes.
 //!
@@ -71,8 +71,8 @@ fn main() -> ExitCode {
             match codec {
                 AudioCodec::Mp2 => {
                     // Both Mp2 and the corpus's Layer III streams come
-                    // through here (plan #21 maps stream_type 0x03/0x04
-                    // to AudioCodec::Mp2; the layer is recovered from
+                    // through here (stream_type 0x03/0x04 maps to
+                    // AudioCodec::Mp2; the layer is recovered from
                     // the frame header itself).
                     for r in codec::mpegaudio::frames(&frames).filter_map(Result::ok) {
                         let new_state = AudioState {

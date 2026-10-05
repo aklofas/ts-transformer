@@ -1546,8 +1546,7 @@ impl Scenario for AudioKlvRoundtrip {
 /// (`PTS = 9000`, `DTS = 6000` ticks at 90 kHz) using
 /// `Muxer::push_video_to_with_dts`.  The golden records the whole-stream
 /// SHA-256; all three bindings (Rust, C, JVM) re-mux the identical recipe and
-/// assert the same digest, proving that BIND-01's cross-binding DTS parity
-/// requirement holds.
+/// assert the same digest, proving that cross-binding DTS parity holds.
 ///
 /// Using `push_video_to_with_dts` (via the explicit-handle path) forces the
 /// muxer to emit `PTS_DTS_flags = '11'` in the PES header — the DTS appears as
@@ -1772,7 +1771,7 @@ fn extract_misp_from_ts(ts_bytes: &[u8]) -> (u8, u8, u64) {
 /// contract-assertion carrier with the sentinel code `"DOUBLE_CLOSE_OK"` and an
 /// `extensions.contract = "drop_idempotence"` tag naming the contract. The
 /// sentinel is NOT a demux error code — it is a contract assertion defined by
-/// this suite; the C adapter (Task 13) maps it to its real
+/// this suite; the C adapter maps it to its real
 /// `tst_demuxer_close`-called-twice guard, the Python adapter to its `close()`
 /// idempotence.
 ///
@@ -1845,7 +1844,7 @@ impl Scenario for DropIdempotence {
 /// `MuxError::InvalidStreamHandle`. The Rust adapter asserts this rejection
 /// directly, so the `INVALID_HANDLE` sentinel corresponds to a real pure-Rust
 /// guard — not a fabricated assertion. The raw-pointer-deref teeth (a forged
-/// opaque pointer must not be dereferenced) remain a C-adapter concern (Task 13).
+/// opaque pointer must not be dereferenced) remain a C-adapter concern.
 ///
 /// The "input" artifact is the forged handle value as 4 little-endian bytes, so
 /// the C/Python adapters can read the same forged value the Rust side rejects.
@@ -1964,7 +1963,7 @@ impl Scenario for ExceptionKindStability {
 /// kind in every binding - Rust `BindingErrorKind::Closed` ("CLOSED"), C
 /// `TST_E_CLOSED` (-7), Python `SrtErrorKind.CLOSED`, JVM
 /// `SrtException.Kind.CLOSED` - with the detail `cancelled from another
-/// thread` (Arc 2 spec 3.3 / 6). The generator is socket-free: it writes the
+/// thread`. The generator is socket-free: it writes the
 /// one TS null packet the adapters' idle peer may send as a rescue and returns
 /// the expected envelope; the live cancel runs inside each adapter.
 ///

@@ -23,7 +23,7 @@ extern "C" {
 #define PORT   9001
 // The arq-connfail gate points the caller at a dead port to force a connect
 // failure (nothing listens there), proving a caller-side failure aborts the
-// listener instead of wedging pthread_join (EMB-JOIN-1).
+// listener instead of wedging pthread_join.
 #ifndef FREERTOS_SRT_CONNECT_PORT
 #define FREERTOS_SRT_CONNECT_PORT PORT
 #endif
@@ -60,7 +60,7 @@ static void fail(const char* w) {
     printf("FAIL-DETAIL: where=%s\n", w); fflush(stdout);
 }
 
-// EMB-JOIN-1: on any pre-connect caller failure, close the listen socket too.
+// On any pre-connect caller failure, close the listen socket too.
 // srt_accept has no deadline — without this, the listener stays parked in
 // srt_accept forever, run_task wedges in pthread_join, and the gate's outer
 // timeout kills QEMU with an empty transcript. Closing the listen socket makes

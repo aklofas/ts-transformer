@@ -16,11 +16,11 @@
 # MuxError itself is deliberately not a row: kind_of_mux keeps four overrides
 # and delegates everything else to MuxError::kind(), which lives INSIDE
 # tst-core and carries no wildcard, so the compiler pins its per-variant
-# coverage (Arc 2 R2 deleted the awk rail that used to). MuxErrorKind IS a
+# coverage (no awk rail is needed any more). MuxErrorKind IS a
 # row — the buckets kind_of_mux folds onto live in map_mux_kind, behind their
 # own wildcard, and nothing else watches them.
 #
-# Same extractor as scripts/check/c/raw-mapper-coverage.sh (deleted in WP-B1).
+# Same extractor as scripts/check/c/raw-mapper-coverage.sh (now deleted).
 # GNU grep -P → Linux only; CI runs it on the linux-x86_64 leg.
 
 set -euo pipefail

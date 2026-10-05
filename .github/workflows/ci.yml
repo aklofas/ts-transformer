@@ -232,6 +232,24 @@ jobs:
             *) echo "denylist scan errored (rc=$rc; malformed regex?) — failing closed" >&2; exit 1 ;;
           esac
 
+      - name: No process markers in the published tree
+        # Internal work-package, arc, wave, review and pull-request
+        # identifiers, maintainer memory-file names and out-of-tree paths
+        # must not appear in any tracked file except CHANGELOG.md (history).
+        # Patterns live in the script; domain-sense exceptions in
+        # scripts/ratchets/process-markers-allowlist.txt. Linux-only like the
+        # scrub guards above: a workspace-state check, run once.
+        if: matrix.name == 'linux-x86_64'
+        env:
+          NO_PROCESS_MARKERS_MODE: warn
+        run: bash scripts/check/repo/no-process-markers.sh
+
+      - name: No process markers — rail self-test
+        # Plants every pattern and a set of domain phrases; proves the rail
+        # detects the former and not the latter.
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/check/repo/no-process-markers-selftest.sh
+
       - name: check-c-abi-rustdoc-coverage
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/c/abi-rustdoc-coverage.sh
@@ -270,8 +288,8 @@ jobs:
           RIST_FORCE_VENDORED: "1"
         run: bash scripts/check/repo/kind-equivalence.sh
       - name: No srt_*/SRT_* symbol leak in libtstrans.so
-        # Plan B Wave 5.B ratchet — fails if libtstrans.so's dynamic
-        # export table contains any srt_*/SRT_* symbols (defense in depth
+        # Fails if libtstrans.so's dynamic export table contains any
+        # srt_*/SRT_* symbols (defense in depth
         # alongside the symbol_audit.rs Rust-side check). Linux-only
         # (uses GNU nm).
         if: matrix.name == 'linux-x86_64'
@@ -287,12 +305,12 @@ jobs:
         run: bash scripts/check/c/no-direct-from-raw-parts.sh
 
       - name: Check no slot-taking construction-constant getters in bindings
-        # Arc 2 §3.2: a getter that is constant after `_open` must read the
-        # handle's snapshot, never the shell slot a parked recv/accept holds
-        # (the PR #234 hang class). Covers every binding under bindings/.
-        # In the Python and JVM bindings it also requires every function
-        # that calls the blocking `with_ref()` to be listed, with a reason,
-        # in scripts/ratchets/blocking-slot-readers.tsv.
+        # A getter that is constant after `_open` must read the handle's
+        # snapshot, never the shell slot a parked recv/accept holds, so it
+        # never blocks behind a parked call. Covers every binding under
+        # bindings/. In the Python and JVM bindings it also requires every
+        # function that calls the blocking `with_ref()` to be listed, with
+        # a reason, in scripts/ratchets/blocking-slot-readers.tsv.
         run: bash scripts/check/c/snapshot-getters.sh
 
       - name: Check lifecycle ffi_catch coverage
@@ -309,7 +327,7 @@ jobs:
         # ffi_catch, Handle::with_inner_{mut,ref}, or be in the
         # trivially-infallible allowlist. Caught tst_demux_config_free
         # which had bypassed the lifecycle ratchet by being named
-        # _free (plan #96 Wave F finding #9).
+        # _free.
         # Linux-only (same rationale as the lifecycle check above):
         # platform-independent source scan whose ffi_catch guard uses
         # GNU-grep `\s`, which BSD grep on macOS would mis-match.
@@ -325,9 +343,9 @@ jobs:
         run: bash scripts/check/c/header-mirror-enum-export.sh
 
       - name: Check doc ABI and ST 1910 currency
-        # Plan #96 Wave D ratchet — fails on any non-current `ABI version 0.N`
-        # in README/docs/crate docs (current = TST_ABI_VERSION_MINOR; the
-        # pre-2026-09-14 regex was hard-coded to 0.[0-4] and blind above it),
+        # Fails on any non-current `ABI version 0.N` in README/docs/crate
+        # docs (current = TST_ABI_VERSION_MINOR; an earlier regex was
+        # hard-coded to 0.[0-4] and went blind above it),
         # on bare `ST 1910` mis-cites in README/crates (correct cite for
         # MPEG-TS Metadata_AU_cell is H.222.0 §2.12.4.2; `ST 1910.1` with the
         # .1 suffix is allowed everywhere since it's a distinct CMAF/HLS
@@ -338,9 +356,9 @@ jobs:
         run: bash scripts/check/repo/doc-abi-and-st1910-currency.sh --self-test && bash scripts/check/repo/doc-abi-and-st1910-currency.sh
 
       - name: Check rust.md feature-table currency
-        # Deep-review-#4 rail (META-07): every `| crate | feature |` row in
-        # docs/languages/rust.md must exist in that crate's [features]
-        # (rust.md carried a phantom tst-srt `log` feature for months).
+        # Every `| crate | feature |` row in docs/languages/rust.md must
+        # exist in that crate's [features] (rust.md carried a phantom
+        # tst-srt `log` feature for months).
         run: bash scripts/check/repo/feature-table-currency.sh --self-test && bash scripts/check/repo/feature-table-currency.sh
 
       - name: Check docs internal links
@@ -350,11 +368,10 @@ jobs:
         run: bash scripts/check/repo/docs-internal-links.sh
 
       - name: check-ratchet-self-test (fail-closed ratchets detect gaps)
-        # Validates that the fail-closed ratchets actually detect their failure
-        # mode. Arc 2 retired the error-mapping coverage drivers this started
-        # out guarding; the C-header rail's cases are what remains. Gated to
-        # linux-x86_64: the check is platform-independent (no signal from other
-        # runners) and its synthetic-fixture bash is GNU-leaning.
+        # Validates that the fail-closed ratchets actually detect their
+        # failure mode (today: the C-header rail's cases). Gated to
+        # linux-x86_64: the check is platform-independent (no signal from
+        # other runners) and its synthetic-fixture bash is GNU-leaning.
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/ratchet-self-test.sh
 
@@ -410,7 +427,7 @@ jobs:
       - name: check-surface-manifest (L3 closure + owning-test + binding-symbol + five columns)
         # Every mappable public-api.txt item is either mapped to an owning test
         # + binding columns, or explicitly exempted. Enforces closure so no new
-        # public item ships un-catalogued, and (Arc 2 R1, rule b2) that every
+        # public item ships un-catalogued, and (rule b2) that every
         # [[surface]] row carries all five binding columns — an absent twin is
         # spelled "<prefix>:deferred", never omitted. Gated to linux-x86_64 —
         # baselines are platform-independent.
@@ -433,7 +450,7 @@ jobs:
         run: bash scripts/check/repo/platform-capabilities.sh
 
       - name: check-release-version-consistency (cross-source version + tag)
-        # REL-01: every version source-of-truth (workspace/pyproject/tst-py
+        # Every version source-of-truth (workspace/pyproject/tst-py
         # Cargo, C version constants + header, python version test) must agree.
         # This workflow runs only on push/PR to main (never on tags), so here
         # the rail enforces cross-source EQUALITY; the tag == source-version
@@ -445,8 +462,8 @@ jobs:
         run: bash scripts/check/repo/release-version-consistency.sh --self-test && bash scripts/check/repo/release-version-consistency.sh
 
       - name: check-msrv-consistency (every pinned-toolchain site == rust-toolchain.toml)
-        # deep-review-4 DEBT-19: the MSRV is repeated at ~30 literal sites
-        # (workflows, crate manifests, embedded gate scripts, doc claims).
+        # The MSRV is repeated at ~30 literal sites (workflows, crate
+        # manifests, embedded gate scripts, doc claims).
         # Self-test first (planted drift must fail), then the tree. Gated to
         # linux-x86_64 — the sources are platform-independent.
         if: matrix.name == 'linux-x86_64'
@@ -486,12 +503,11 @@ jobs:
 
       - name: cargo test --doc
         if: matrix.phase != 'features'
-        # Enabled on windows-msvc 2026-05-29: the plan #65 SRT-loopback hang
-        # did NOT reproduce on the cl-built libsrt (diag_win_srt_close showed
-        # blocking recv wakes on peer-close immediately, same as Linux), so the
-        # old "hangs on Windows" deferral no longer applies. `timeout-minutes`
-        # bounds any residual hang (windows-msvc is gating as of 2026-05-30
-        # after a multi-run green streak).
+        # Enabled on windows-msvc: the SRT-loopback hang did NOT reproduce on
+        # the cl-built libsrt (diag_win_srt_close showed blocking recv wakes
+        # on peer-close immediately, same as Linux), so the old "hangs on
+        # Windows" deferral no longer applies. `timeout-minutes` bounds any
+        # residual hang.
         timeout-minutes: 15
         run: cargo test --doc --workspace --no-fail-fast
 
@@ -587,7 +603,7 @@ jobs:
         run: cargo nextest run --workspace --all-features --no-fail-fast
 
       - name: C scenario adapter (cross-binding parity check)
-        # WS-5: C adapter for the cross-binding scenario harness. Compiles
+        # C adapter for the cross-binding scenario harness. Compiles
         # bindings/c/examples/scenarios/run_scenarios.c against the
         # libtstrans.so produced by the "cargo build (all crate types,
         # all-features)" step above (the last cdylib-producing build; the
@@ -642,7 +658,7 @@ jobs:
         # handle the lib-name/package-name mismatch (lib name "tstrans" ≠
         # package name "tst-c"). To land an intentional SemVer-breaking
         # change, update the relevant crates/<name>/public-api.txt together
-        # with the code change so reviewers can audit the delta.
+        # with the code change so reviewers can review the delta.
         # Linux-only — cargo-public-api is platform-agnostic but workspace
         # state is the same regardless of platform; one run is enough.
         if: matrix.name == 'linux-x86_64'
@@ -683,9 +699,9 @@ jobs:
           done
 
       - name: non_exhaustive sweep guard
-        # Phase 1.2 added #[non_exhaustive] to all public error enums. CI step
-        # asserts the count never decreases (additions OK; removals fail the
-        # build). On adding a new error enum, bump the BASELINE constant.
+        # This CI step asserts the count of every #[non_exhaustive] attribute
+        # never decreases (additions OK; removals fail the build). On
+        # adding a new one, bump the BASELINE constant.
         if: matrix.name == 'linux-x86_64'
         run: |
           # 313->314 (2026-09-02): phantom doc-comment mention of
@@ -697,9 +713,8 @@ jobs:
           # lines across ~47 files that drifted the baseline on doc edits
           # (the 313->314 bump above was one). 186 is the real attribute
           # count, measured fresh on this tree.
-          # 187->189 (2026-09-22, Arc 2 WP-A1 + WP-A2):
-          # tst_pipeline::binding::owned::HandleState (WP-A1) and
-          # tst_pipeline::binding::kind::BindingErrorKind (WP-A2).
+          # 187->189 (2026-09-22): tst_pipeline::binding::owned::HandleState
+          # and tst_pipeline::binding::kind::BindingErrorKind.
           BASELINE=189
           OBSERVED=$(rg -c '^\s*#\[non_exhaustive\]' crates/ bindings/ --type rust | awk -F: '{sum += $2} END {print sum}')
           if [ "$OBSERVED" -lt "$BASELINE" ]; then
@@ -743,9 +758,9 @@ jobs:
       # needed. tst-srt and tst-c are out of scope here: vendored libsrt
       # cmake build has glibc dependencies (NSS resolver, dynamic-load
       # paths) that don't come up clean under musl without a deeper
-      # rework. Audit's call for a musl rail is satisfied by covering
-      # the MPEG-TS+KLV+codec work; libsrt-bound crates ride a future
-      # plan if musl-native libsrt support is requested.
+      # rework. Covering the MPEG-TS+KLV+codec work satisfies the need for
+      # a musl rail; libsrt-bound crates wait for musl-native libsrt support
+      # if that is ever requested.
       - name: cargo build (tst-core + tst-pipeline, musl)
         run: cargo build -p tst-core -p tst-pipeline --target x86_64-unknown-linux-musl
 
@@ -758,7 +773,7 @@ jobs:
     timeout-minutes: 15
     # The tokio-free client-only feature plane (`--no-default-features
     # --features tls`) is what the planned tst-uniffi mobile binding
-    # consumes (the PR #151 `rtsp-server` gate). No other CI job compiles
+    # consumes. No other CI job compiles
     # these targets — every other leg builds tst-rtp with default
     # features (rtsp-server on) — so without this leg a client-only
     # compile break or a tokio leak into the client plane would ship
@@ -798,8 +813,8 @@ jobs:
         with:
           tool: nextest
 
-      # The invariant PR #151 established: a client-only build ships no
-      # tokio (the server's runtime). Scoped to `-e normal` — tokio IS
+      # A client-only build ships no tokio (the server's runtime). Scoped
+      # to `-e normal` — tokio IS
       # present as a dev-dependency (the RTSP loopback test fixture runs
       # a tokio runtime), but dev-deps never reach consumers; the leak
       # this guards against is tokio re-entering the NORMAL tree.
@@ -929,7 +944,7 @@ jobs:
       # target is already installed for this job (see the toolchain step
       # above), so no new prerequisite here either.
 
-      # exceptions (was S0): concurrent per-task C++ throw/catch with exception
+      # exceptions: concurrent per-task C++ throw/catch with exception
       # isolation on FreeRTOS + FreeRTOS-Plus-POSIX (pthread backend). Hard-gate.
       # FREERTOS_SRT_REQUIRE_TOOLS=1 makes a missing prerequisite (the apt step
       # above installs them all) fail closed instead of skipping to a no-op pass,
@@ -938,28 +953,28 @@ jobs:
         env: { FREERTOS_SRT_REQUIRE_TOOLS: "1" }
         run: bash embedded/scripts/check/freertos-srt.sh exceptions
 
-      # lwip-loopback (was S1): the 564-byte golden round-trips through a lwIP UDP
+      # lwip-loopback: the 564-byte golden round-trips through a lwIP UDP
       # loopback socket (BSD sockets + select(), hi-res clock_gettime). Hard-gate.
       - name: QEMU runtime gate (freertos-srt lwip-loopback)
         env: { FREERTOS_SRT_REQUIRE_TOOLS: "1" }
         run: bash embedded/scripts/check/freertos-srt.sh lwip-loopback
 
-      # libsrt-smoke (was S2): cross-compiled libsrt (Generic -> ::select path,
+      # libsrt-smoke: cross-compiled libsrt (Generic -> ::select path,
       # pthread backend, logging+encryption OFF) boots srt_startup + create_socket
       # + close + cleanup against the FreeRTOS+lwIP substrate. Hard-gate.
       - name: QEMU runtime gate (freertos-srt libsrt-smoke)
         env: { FREERTOS_SRT_REQUIRE_TOOLS: "1" }
         run: bash embedded/scripts/check/freertos-srt.sh libsrt-smoke
 
-      # loopback-arq (was S3): SRT caller+listener data-plane proof -- streams the
+      # loopback-arq: SRT caller+listener data-plane proof -- streams the
       # golden x N over a lossy loopback netif (~20% deterministic loss) and
       # recovers it byte-exact, plain and mbedTLS-AES-128. Hard-gate.
       - name: QEMU runtime gate (freertos-srt loopback-arq ARQ + encryption)
         env: { FREERTOS_SRT_REQUIRE_TOOLS: "1" }
         run: bash embedded/scripts/check/freertos-srt.sh loopback-arq
 
-      # arq-connfail (EMB-JOIN-1): the loopback-arq caller pointed at a dead
-      # port must FAIL fast with a labeled where=connect verdict — proving a
+      # arq-connfail: the loopback-arq caller pointed at a dead port must
+      # FAIL fast with a labeled where=connect verdict — proving a
       # caller-side failure aborts the listener's srt_accept instead of
       # wedging pthread_join until the timeout kills QEMU with an empty
       # transcript (the historical flake presentation). Hard-gate.
@@ -967,28 +982,28 @@ jobs:
         env: { FREERTOS_SRT_REQUIRE_TOOLS: "1" }
         run: bash embedded/scripts/check/freertos-srt.sh arq-connfail
 
-      # fault-smoke (EMB-TRAP-1): deliberate __builtin_trap() must produce a
+      # fault-smoke: deliberate __builtin_trap() must produce a
       # labeled FAIL[hardfault] pc=0x... token and exit fast (<25 s), not hang
       # silently for the full timeout. Proves the speaking fault handlers work.
       - name: QEMU runtime gate (freertos-srt fault-smoke)
         env: { FREERTOS_SRT_REQUIRE_TOOLS: "1" }
         run: bash embedded/scripts/check/freertos-srt.sh fault-smoke
 
-      # malloc-stress (s5, WP-EMB-1): 4 tasks x 20000 malloc/free with per-block
-      # canaries + concurrent C++ throw/catch + per-task errno isolation checks.
-      # Regression proof for EMB-HEAP-1 (newlib malloc lock-free under preemption)
-      # and EMB-ERRNO-1 (shared _reent errno bleed). Hard-gate.
+      # malloc-stress: 4 tasks x 20000 malloc/free with per-block canaries +
+      # concurrent C++ throw/catch + per-task errno isolation checks.
+      # Regression proof for newlib malloc staying lock-free under
+      # preemption and for shared _reent errno bleed. Hard-gate.
       - name: QEMU runtime gate (freertos-srt malloc-stress)
         env: { FREERTOS_SRT_REQUIRE_TOOLS: "1" }
         run: bash embedded/scripts/check/freertos-srt.sh malloc-stress
 
-      # example (was S4): real-NIC egress. A bare-metal SRT caller streams the
-      # golden x N out a lan9118 NIC over QEMU SLIRP user-net to a host tst-srt
-      # listener that verifies byte-exact (plain + AES-128); the host process exit
-      # code is the verdict. Promoted to hard-gate after 12 consecutive green
-      # example steps on main (runs 28696404540..29004357578, checked 2026-07-09).
-      # WP-EMB-1's per-task _reent + retargetable-locking fix addressed the newlib
-      # flake class; this gate had already been green across that window.
+      # example: real-NIC egress. A bare-metal SRT caller streams the golden
+      # x N out a lan9118 NIC over QEMU SLIRP user-net to a host tst-srt
+      # listener that verifies byte-exact (plain + AES-128); the host
+      # process exit code is the verdict. Promoted to hard-gate after 12
+      # consecutive green example steps on main. The per-task _reent +
+      # retargetable-locking fix addressed the newlib flake class; this
+      # gate had already been green across that window.
       - name: QEMU runtime gate (freertos-srt NIC egress example)
         env: { FREERTOS_SRT_REQUIRE_TOOLS: "1" }
         run: bash embedded/scripts/check/freertos-srt.sh example
@@ -1048,8 +1063,7 @@ jobs:
       # `cargo +nightly fuzz check` (compile-only) catches fuzz-target
       # rot when a public API change breaks one. Compile-only because
       # corpus replay on every PR would burn CI minutes for low
-      # marginal coverage. Theme O of the Rust quality refactor audit
-      # called out "no fuzz smoke" as a gap.
+      # marginal coverage.
       - name: Compile-check tst-core fuzz targets
         run: |
           cd crates/tst-core/fuzz
@@ -1069,15 +1083,10 @@ jobs:
     name: tst-py default tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # Default (non-pandas) pytest suite. Phase 0/1 didn't add a python
-    # CI job; Phase 6 added `python-pandas-extra` for the optional extra;
-    # this job (added via audit #1, 2026-05-24) closes the gap by running
-    # the broader default-marker suite that exercises Demuxer, Muxer,
-    # KLV typed decode/encode, codec parsers, and io helpers. The former
-    # check-py-error-mapping-coverage fast-fail step was retired in 0.7.0
-    # (Arc 2 WP-B2): Python kinds now come from one Rust table and are
-    # resolved at `import tstrans`, so a gap fails the import (and the
-    # pytest suite) instead of needing a call-site grep.
+    # The default (non-pandas) pytest suite exercises Demuxer, Muxer, KLV
+    # typed decode/encode, codec parsers, and io helpers. Python kinds come
+    # from one Rust table, resolved at `import tstrans`, so a gap fails the
+    # import (and the pytest suite) instead of needing a call-site grep.
     env:
       # Same `RUSTUP_TOOLCHAIN` pin as `build` and `python-pandas-extra` —
       # avoids the pre-installed clippy / rustup-sync clash on
@@ -1090,15 +1099,15 @@ jobs:
           submodules: recursive
 
       - name: check-py-non-conformant-kind-coverage
-        # Plan #96 Wave G (Finding 12): NonConformantKind is the public
-        # analytics surface. Verify every Rust NonConformantIssue variant
-        # has an arm in `non_conformant_kind_name` and every output kind
+        # NonConformantKind is the public analytics surface. Verify every
+        # Rust NonConformantIssue variant has an arm in
+        # `non_conformant_kind_name` and every output kind
         # string is a member of the Python NonConformantKind enum.
         run: bash scripts/check/python/non-conformant-kind-coverage.sh
 
       - name: check-py-publisher-class-mirror
-        # Plan A5b Wave C T14 — verifies the Python Publisher ABC method
-        # list (tstrans/hls.pyi) mirrors the Rust tst_core Publisher trait.
+        # Verifies the Python Publisher ABC method list (tstrans/hls.pyi)
+        # mirrors the Rust tst_core Publisher trait.
         run: bash scripts/check/python/publisher-class-mirror.sh
 
       - name: Install build prerequisites
@@ -1297,12 +1306,12 @@ jobs:
 
       - name: Install cbindgen (pinned to Cargo.lock's cbindgen)
         # The header rail below renders a header with the cbindgen CLI. CI
-        # never installed it before 2026-09 (deep-review-4 X-META-01), so the
-        # rail always took its weak committed-header fallback; the rail now
-        # FAILs under CI without a generator. Pinned to Cargo.lock's cbindgen
-        # 0.29.2 so the CLI renders exactly what bindings/c/build.rs renders.
-        # taiki-e/install-action has no cbindgen manifest (checked
-        # 2026-09-14), hence a source install (~1-2 min with a warm registry).
+        # never installed it before, so the rail always took its weak
+        # committed-header fallback; the rail now FAILs under CI without a
+        # generator. Pinned to Cargo.lock's cbindgen 0.29.2 so the CLI
+        # renders exactly what bindings/c/build.rs renders.
+        # taiki-e/install-action has no cbindgen manifest, hence a source
+        # install (~1-2 min with a warm registry).
         # One leg is enough: the rail's verdict does not depend on the
         # matrix mode — it reads the committed header and renders its own
         # copy from tst-c-core directly.
@@ -1338,7 +1347,7 @@ jobs:
     name: cargo-deny (advisories + licenses)
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Dependency-advisory + license gate (deep-review-4 META-11). Reads
+    # Dependency-advisory + license gate. Reads
     # Cargo.lock and the RustSec advisory DB only — no build, no submodules
     # (the vendored native libs are not crates; see deny.toml's header).
     # Policy lives in deny.toml; `bans`/`sources` are intentionally off.

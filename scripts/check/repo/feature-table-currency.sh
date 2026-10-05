@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deep-review-#4 rail (META-07, 2026-09-14): every `| crate | feature |` row
+# Every `| crate | feature |` row
 # in docs/languages/rust.md must name a feature that exists in that crate's
 # Cargo.toml [features] table. rust.md documented a default-on tst-srt `log`
 # feature that never existed; nothing could see it.

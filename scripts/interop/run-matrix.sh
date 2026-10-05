@@ -5,11 +5,11 @@
 # sessions AND local per-profile analyzer/decode probes on this box,
 # and write one evidence JSON file per cell, across two axes:
 #   - transport axis: 25 cells, pinned to the "baseline" profile
-#     (srt/udp/rist/tcp/hls/rtsp — task 11's inventory).
+#     (srt/udp/rist/tcp/hls/rtsp — the transport-axis inventory).
 #   - format axis: analyze/{ffprobe,tsanalyze,tsp-analyze}/<profile>,
 #     decode/{ffplay,vlc,mpv,gst-play}/<profile>, and
 #     srt-live/{us-to-ffmpeg,ffmpeg-to-us,us-to-tsp,tsp-to-us}/<profile>,
-#     once per --profiles entry (task 12's inventory).
+#     once per --profiles entry (the format-axis inventory).
 #
 # Validated on linux-x86_64; linux-aarch64 is expected to work for the
 # orchestration itself but hasn't been validated yet, and separately
@@ -45,8 +45,8 @@
 #                      Only the format axis scales with this list — the
 #                      transport axis always runs against "baseline"
 #                      regardless of what's listed (see the per-profile
-#                      loop below for why: task 11's 25-cell inventory
-#                      was designed and evidenced against "baseline"
+#                      loop below for why: the 25-cell transport-axis
+#                      inventory was designed and evidenced against "baseline"
 #                      only; scaling it by profile too would multiply
 #                      that count for no new signal the format axis
 #                      doesn't already cover more precisely). Pass a
@@ -981,7 +981,7 @@ rtsp_cells() {
   # there is no way for tst-interop itself to be the RTSP client here.
   # "us" only brackets this cell (gen the source file / verify the
   # capture); expect flakiness (VLC's --sout RTSP serving is fiddly) —
-  # wired as `known_flaky` in expectations.toml starting Task 12.
+  # wired as `known_flaky` in expectations.toml.
   cell_selected "rtsp-consume/vlc-serve-ffmpeg-pull" || return 0
   if [[ -n "${DECLARE_ONLY:-}" ]]; then declare_cell "rtsp-consume/vlc-serve-ffmpeg-pull"; return 0; fi
   if ! have cvlc || ! have ffmpeg; then
@@ -1143,7 +1143,7 @@ srt_live_cells_for_profile() {
 run_axes_for_profile() {
   # Transport axis stays pinned to "baseline" regardless of how many
   # profiles --profiles lists — matches the ~25-cell transport-axis
-  # inventory task 11 built and verified (8 PASS/17 FAIL/0 SKIPPED);
+  # inventory built and verified (8 PASS/17 FAIL/0 SKIPPED);
   # scaling it by profile too would multiply that count by up to 12x
   # for no new signal the format axis below doesn't already cover more
   # precisely (analyze/decode/srt-live are the per-profile probes).
@@ -1244,7 +1244,7 @@ fi
 
 # Same per-seconds budget the per-cell shapes use — gen/verify here do
 # real work proportional to --seconds (this scales correctly even for a
-# very long --seconds, e.g. Task 14's eventual soak runs), unlike
+# very long --seconds, e.g. a soak run), unlike
 # REPORT_TIMEOUT's flat floor below (report merge/render's work scales
 # with cell *count*, not stream duration).
 bootstrap_budget=$(cell_timeout "$SECONDS_ARG")

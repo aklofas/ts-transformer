@@ -1,6 +1,6 @@
 name: ci-health
 
-# Weekly CI health snapshot (deep-review-4 META-03): rerun rate per job,
+# Weekly CI health snapshot: rerun rate per job,
 # wedges, first-attempt failures over the last 7 days, from the Actions
 # REST API. Output = step summary + a CSV artifact (90-day retention). The
 # in-tree ledger docs/project/ci-health.csv is appended by the maintainer

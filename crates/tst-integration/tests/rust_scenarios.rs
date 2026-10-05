@@ -207,8 +207,8 @@ fn run_roundtrip(id: &str, committed_output_ts: &[u8], golden: &Golden) -> Vec<C
 /// contract sentinel code rather than a demux error; each arm asserts the
 /// nearest honest pure-Rust guarantee and emits the sentinel. The
 /// `extensions.contract` tag (verified by the caller via the committed golden)
-/// names the contract. Some contracts are primarily exercised by the C adapter
-/// (Task 13) — see the per-arm comments for what is deferred and why.
+/// names the contract. Some contracts are primarily exercised by the C
+/// adapter — see the per-arm comments for what is deferred and why.
 fn run_binding_contract(id: &str, input: &[u8]) -> Vec<CoreEvent> {
     use tst_core::mpegts::demux::Demuxer;
     use tst_integration::scenarios::demux_error_code_pub;
@@ -254,7 +254,7 @@ fn run_binding_contract(id: &str, input: &[u8]) -> Vec<CoreEvent> {
             // also works. None of this panics — Rust's ownership makes it safe
             // by construction. The binding-specific double-`close()` teeth (a C
             // `tst_demuxer_close` called twice must not double-free) live in the
-            // C/Python adapters (Task 13).
+            // C/Python adapters.
             let mut demuxer = Demuxer::new();
             demuxer
                 .feed(input)
@@ -280,7 +280,7 @@ fn run_binding_contract(id: &str, input: &[u8]) -> Vec<CoreEvent> {
             // value lives in the committed input artifact (4 LE bytes) so the
             // C/Python adapters reject the identical value. The raw-POINTER
             // deref teeth (a forged opaque pointer must not be dereferenced)
-            // remain a C-adapter concern (Task 13) — pure Rust has no raw
+            // remain a C-adapter concern — pure Rust has no raw
             // handles, but the integer-rewrap guard is a genuine equivalent.
             use tst_core::mpegts::mux::VideoStreamHandle;
             use tst_integration::scenarios::FORGED_HANDLE_RAW;
@@ -325,7 +325,7 @@ fn run_binding_contract(id: &str, input: &[u8]) -> Vec<CoreEvent> {
         }
         "cancelled-recv-kind" => {
             // One cancelled plain SRT receive; the kind projected by the shared
-            // binding layer is the golden's code (Arc 2 spec 3.3 / 6).
+            // binding layer is the golden's code.
             // Choreography: listener on this thread, idle caller on a helper
             // thread, the recv parked on a worker thread, the cancel fired from
             // here. Every wait is bounded (10 s) and FAILS; the worker is never

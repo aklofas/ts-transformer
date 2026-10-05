@@ -66,9 +66,9 @@
 #
 # Every real row below is authored from actual run-log evidence (a full
 # --profiles run at --seconds 8, all 12 profiles, every peer tool
-# installed — see task 12's report / README.md's "Known,
-# already-evidenced gaps" section for the full mechanism + repro per
-# cluster). No row exists without a run that reproduced its exact
+# installed — see README.md's "Known, already-evidenced gaps" section
+# for the full mechanism + repro per cluster). No row exists without a
+# run that reproduced its exact
 # (cell, profile) FAIL first.
 
 [[expect]]

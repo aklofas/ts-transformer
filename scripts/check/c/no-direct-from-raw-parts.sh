@@ -3,13 +3,13 @@
 # route through ffi_slice/ffi_slice_mut (bindings/c/core/src/ffi_slice.rs),
 # which enforce the (NULL,0) and len<=isize::MAX preconditions.
 # A direct from_raw_parts on a caller-supplied length reintroduces the
-# NEW-CABI-1 soundness gap.
+# soundness gap these helpers close.
 #
 # Exclusions:
 # - src/ffi_slice.rs  — the helpers themselves contain the from_raw_parts calls.
 # - src/event.rs      — all from_raw_parts are in #[cfg(test)] blocks only,
 #                       reading arena-internal (not caller-supplied) lengths.
-#                       Re-audit if event.rs ever gains non-test slice construction.
+#                       Re-check if event.rs ever gains non-test slice construction.
 # - src/config/streams.rs lines matching `from_raw_parts(language, 3)` — three
 #                       ISO 639-2 fixed-length (literal 3) language-code reads;
 #                       not a caller-supplied length. Any other from_raw_parts in

@@ -273,7 +273,7 @@ run_check() {
   # (b) continued — python: symbols, by definition and per row.
   check_python_symbols >> "$errs"
 
-  # (b2) five-column rule (Arc 2 R1 / X-META-02): every [[surface]] row's
+  # (b2) five-column rule: every [[surface]] row's
   # `bindings` array carries at least one entry per required prefix. A
   # binding with no twin today says so explicitly with the sentinel
   # "<prefix>:deferred" (or "<prefix>:n/a" for by-design gaps) instead of
