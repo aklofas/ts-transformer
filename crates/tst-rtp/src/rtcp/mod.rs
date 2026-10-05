@@ -3,7 +3,7 @@
 //! **Stability: Stable** — see the
 //! [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
 //!
-//! v1 supports the minimum compound packet needed for the receiver-side
+//! Supports the minimum compound packet needed for the receiver-side
 //! reports (RR + SDES with CNAME, RFC 3550 §6.5.1) and sender-side
 //! reports (SR + SDES with CNAME). NACK / REMB / PLI / RTPFB are out of
 //! scope.

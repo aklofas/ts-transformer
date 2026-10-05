@@ -172,7 +172,7 @@ impl RtspSession {
     ///
     /// For UDP: takes the RTP socket from the SETUP-allocated UDP pair;
     /// the companion RTCP socket is dropped (RTCP is not implemented on
-    /// the H.264 path — v1 decision; see `docs/project/deferred-features.md`).
+    /// the H.264 path — a recorded deferral; see `docs/project/deferred-features.md`).
     ///
     /// For TCP-interleaved: takes both the pump's data channel and its RTCP
     /// channel. The RTCP channel is kept alive inside the receiver and drained

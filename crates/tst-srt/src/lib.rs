@@ -1,7 +1,8 @@
 #![doc = include_str!("../README.md")]
 //!
 //! TS Transformer SRT transport — safe libsrt wrapper, Socket / Listener /
-//! Builder, URL parsing, Transport + RecvTransport implementations.
+//! Builder, URL parsing, Transport + RecvTransport implementations, and the
+//! URL → managed-shell `from_url` family ([`shells`]).
 //!
 //! This crate provides the SRT-specific concrete types. The transport
 //! traits themselves live in [`tst_core`]; the transport-agnostic

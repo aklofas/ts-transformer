@@ -127,15 +127,25 @@ impl KeyLength {
 
 /// `SRTO_MAXBW` value. Wraps libsrt's overloaded sentinel ints.
 ///
-/// libsrt accepts `0` ("unlimited"), `-1` ("auto, derive from input bw"),
-/// or a positive byte/sec rate. Any other negative value is rejected.
+/// libsrt 1.5.7 reads `-1` as "infinite" (live mode caps at 1 Gbps;
+/// `congctl.cpp` `setMaxBW`), `0` as "relative to the input rate"
+/// (`SRTO_INPUTBW` × (1 + `SRTO_OHEADBW`/100), or in-buffer rate sampling
+/// when `SRTO_INPUTBW` is also 0; `core.cpp` `updateCC`), and a positive
+/// value as an absolute cap in bytes per second. Its default is `-1` in
+/// every mode; any value below `-1` is rejected. Each variant's doc names
+/// the value this crate sends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MaxBandwidth {
-    /// No cap (libsrt sentinel `0`). Default for live mode.
+    /// Sends `0`, which libsrt reads as "relative to the input rate"
+    /// (`SRTO_INPUTBW` × (1 + `SRTO_OHEADBW`/100), or in-buffer sampling
+    /// when `SRTO_INPUTBW` is 0) — not "no cap".
     Unlimited,
-    /// Auto-derive from `SRTO_INPUTBW` × (1 + `SRTO_OHEADBW`/100) (libsrt sentinel `-1`).
+    /// Sends `-1`, which libsrt reads as "infinite" (live mode caps at
+    /// 1 Gbps) — libsrt's own default, not an input-rate derivation.
     Auto,
-    /// Explicit cap in bytes per second.
+    /// Sends the value as an absolute cap in bytes per second.
+    /// `Limited(0)` (also what `?maxbw=0` produces) sends `0`, the same
+    /// relative-to-input behaviour as [`Self::Unlimited`].
     Limited(u64),
 }
 

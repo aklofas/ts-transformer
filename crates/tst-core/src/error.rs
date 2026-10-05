@@ -855,8 +855,10 @@ pub enum DemuxError {
     StrictRejection(String),
 
     /// PSI section claimed a length that doesn't fit a valid PAT/PMT.
-    /// Distinct from a checksum mismatch (which is `NonConformant` in
-    /// lenient mode); this is structurally impossible.
+    ///
+    /// Reserved — the demuxer does not return it: a structurally invalid
+    /// PAT/PMT section is dropped, and a CRC mismatch surfaces as
+    /// [`NonConformantIssue::PsiChecksumMismatch`](crate::mpegts::demux::NonConformantIssue::PsiChecksumMismatch).
     #[error("malformed PSI section at PID 0x{pid:04X}: {reason}")]
     MalformedPsi { pid: u16, reason: &'static str },
 

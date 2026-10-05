@@ -45,7 +45,8 @@ impl RistTransportBuilder {
         })
     }
 
-    /// Override profile. Forced to [`RistProfile::Main`] if encryption is set.
+    /// Override profile. [`Self::encryption`] sets [`RistProfile::Main`];
+    /// the later of the two calls wins.
     pub fn profile(mut self, profile: RistProfile) -> Self {
         self.config.profile = profile;
         self
@@ -147,7 +148,8 @@ impl RistRecvTransportBuilder {
         })
     }
 
-    /// Override profile. Forced to [`RistProfile::Main`] if encryption is set.
+    /// Override profile. [`Self::encryption`] sets [`RistProfile::Main`];
+    /// the later of the two calls wins.
     pub fn profile(mut self, profile: RistProfile) -> Self {
         self.config.profile = profile;
         self

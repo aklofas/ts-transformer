@@ -21,7 +21,9 @@ pub struct SocketConfig {
     /// SO_SNDBUF in bytes.
     pub sndbuf: Option<usize>,
     /// Send-side datagram size. Default 7×188 = 1316 bytes (STANAG 4609 op default).
-    /// Rejected on a recv-side config.
+    /// A receive-side URL carrying `?pkt_size=` is refused
+    /// ([`UdpUrlError::RecvPktSize`](crate::url::UdpUrlError::RecvPktSize)); the
+    /// receiver itself ignores this field.
     pub pkt_size: Option<usize>,
     /// Local bind address override (for sending from a specific NIC).
     pub localaddr: Option<IpAddr>,

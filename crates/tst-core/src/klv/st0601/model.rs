@@ -483,7 +483,7 @@ pub struct UasDatalinkLs {
     /// follows the worked example, not the printed type name.
     pub correction_offset_us: Option<i64>,
     /// Item 139: Active Payloads — bitmask of which Payload IDs (Item
-    /// 138, Payload List — not yet typed-modeled) are currently active.
+    /// 138, Payload List — [`Self::payload_list`]) are currently active.
     /// Raw bytes, LSB-first within each byte: bit *i* of byte 0 is
     /// Payload ID *i* (0-7), byte 1 covers IDs 8-15, and so on
     /// (multi-byte extends upward). Use [`Self::active_payload_ids`] to

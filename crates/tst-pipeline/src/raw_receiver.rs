@@ -42,7 +42,7 @@ pub struct RawRecvStats {
 ///
 /// 1. **Drop** — the [`Drop`] impl emits a tracing event and lets the
 ///    underlying transport's `Drop` close the libsrt socket. Synchronous;
-///    bounded by `SRTO_LINGER` (libsrt default 30 s, configurable via
+///    bounded by `SRTO_LINGER` (libsrt default off, sender preset 5 s, configurable via
 ///    `SocketBuilder::linger`).
 /// 2. **Explicit close** — call [`Self::close`]. Closes the underlying
 ///    transport; subsequent `recv_one` calls return

@@ -34,10 +34,8 @@ pub enum PairerMode {
 
 /// Options for [`Pairer::with_config`](super::Pairer::with_config).
 ///
-/// Replaces the pre-Phase-3 5-positional-arg `Pairer::nearest_pts`
-/// constructor. Field-style construction is unit-explicit
-/// (`Duration` instead of bare ticks) and FFI-friendly (the 5-arg
-/// shape didn't translate cleanly to UniFFI).
+/// Field-style construction is unit-explicit (`Duration` instead of bare
+/// ticks) and FFI-friendly.
 #[must_use]
 #[non_exhaustive]
 #[derive(Debug, Clone)]

@@ -125,7 +125,7 @@ struct ReconnectEpoch {
 /// 1. **Drop** — the [`Drop`] impl emits a tracing event and lets the
 ///    inner [`Receiver`] / transport `Drop` chain run, which closes the
 ///    libsrt socket. Synchronous; bounded by `SRTO_LINGER` (libsrt
-///    default 30 s, configurable via `SocketBuilder::linger`).
+///    default off, sender preset 5 s, configurable via `SocketBuilder::linger`).
 /// 2. **Explicit close** — call [`Self::close`]. Closes the underlying
 ///    recv transport; the next `recv_event` flushes the demuxer and
 ///    returns `Ok(None)` once the queue drains. Idempotent.
@@ -455,10 +455,10 @@ impl<R: RecvTransport> DemuxReceiver<R> {
             // Feed to demuxer via the aligned fast path — the Receiver
             // transport layer already produces [u8; 188] packets so no sync
             // buffering or 0x47 hunt is needed.  In lenient mode this only
-            // errors on Unrecoverable (caller violated alignment contract) or
-            // MalformedPsi (MalformedPes is converted to a NonConformant
-            // event by the inner demuxer). In strict mode it can also return
-            // StrictRejection.
+            // errors on Unrecoverable (caller violated alignment contract);
+            // MalformedPes is converted to a NonConformant event by the inner
+            // demuxer. In strict mode it can also return StrictRejection or
+            // MalformedPes.
             self.demux
                 .feed_aligned(&pkt)
                 .map_err(DemuxReceiverError::from)?;

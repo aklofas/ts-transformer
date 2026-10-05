@@ -514,10 +514,12 @@ impl Demuxer {
     ///
     /// Returns `Err(DemuxError::Unrecoverable { after_bytes: 0 })` if
     /// `pkt[0] != 0x47` — the caller violated the alignment contract.
-    /// All other errors mirror those of [`feed`](Self::feed): `MalformedPsi`
-    /// and (in strict mode) `StrictRejection` or `MalformedPes`. In lenient
-    /// mode (the default) `MalformedPes` is converted to a `NonConformant`
-    /// event so a single corrupt PES doesn't tear down the receive loop.
+    /// Otherwise it returns `StrictRejection` when the configured strict
+    /// mode rejects a `NonConformantIssue` raised by this packet, and
+    /// `MalformedPes` when a strict mode rejects a malformed PES header. In
+    /// lenient mode (the default) `MalformedPes` is converted to a
+    /// `NonConformant` event so a single corrupt PES doesn't tear down the
+    /// receive loop.
     /// The `SyncBufExhausted` and `Unrecoverable { after_bytes > 0 }` variants
     /// cannot be returned by this method (no sync buffer is involved).
     ///

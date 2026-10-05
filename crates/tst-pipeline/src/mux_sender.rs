@@ -103,7 +103,7 @@ pub struct MuxSenderStats {
 /// `stats`, `socket_stats`, `stream_codec_stats`, `reset_stats`,
 /// `is_alive`) return the corresponding safe default (`Vec::new()`,
 /// `MuxSenderStats::default()`, `None`, silent no-op, `false`). `close`
-/// and `Drop` already used `if let Ok` before this policy was formalized.
+/// and `Drop` skip the inner work on a poisoned lock.
 ///
 /// # Closing
 ///
@@ -112,7 +112,7 @@ pub struct MuxSenderStats {
 ///
 /// 1. **Drop** — the [`Drop`] impl best-effort drains `pending_bytes` and
 ///    closes the underlying transport. Synchronous; bounded by
-///    `SRTO_LINGER` (libsrt default 30 s, configurable via
+///    `SRTO_LINGER` (libsrt default off, sender preset 5 s, configurable via
 ///    `SocketBuilder::linger`).
 /// 2. **Explicit prompt close** — call [`Self::close`]. Cancels the
 ///    transport *before* taking the inner lock, so a peer thread parked

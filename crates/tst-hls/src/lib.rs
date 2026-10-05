@@ -2,14 +2,25 @@
 //!
 //! HLS publisher — segments MPEG-TS to disk + optional built-in HTTP server.
 //!
-//! See [`HlsPublisher`] for the entry point. Modes: LIVE (rolling window),
-//! EVENT (monotone-growing + ENDLIST on finish), VOD (all segments at once
-//! + ENDLIST on finish). KLV stays inside the .ts segments.
+//! See [`HlsPublisher`] for the entry point. Modes: LIVE (rolling window,
+//! never an ENDLIST), EVENT and VOD (every segment kept; `#EXT-X-ENDLIST`
+//! on finish; they differ only in `#EXT-X-PLAYLIST-TYPE`). KLV stays
+//! inside the .ts segments.
+//!
+//! Segment files are written to `output_dir` as bytes arrive. `playlist.m3u8` is
+//! written to disk only once, by the finish path ([`Publisher::finish`] /
+//! `HlsPublisher::finish_serving`); during the run the built-in server
+//! renders the playlist from memory on each request.
+//!
+//! [`Publisher::finish`]: tst_core::publisher::Publisher::finish
 //!
 //! The `serve` feature (default-on) provides the built-in HTTP server and
-//! `hls://` / `hlss://` URL parsing. Without it, the crate is a pure
-//! segmenter/playlist writer — bring your own web server (nginx, a media
-//! server, a CDN origin).
+//! `hls://` / `hlss://` URL parsing. Serving HTTPS additionally needs the
+//! `tls` feature (default-on, implies `serve`); without it a configured
+//! certificate or key is refused with [`HlsError::TlsDisabled`]. Without
+//! `serve`, the crate only writes segments plus the final playlist: an
+//! external web server (nginx, a media server, a CDN origin) can serve
+//! the finished output, but has no playlist to serve while the stream runs.
 
 #![warn(rustdoc::broken_intra_doc_links)]
 

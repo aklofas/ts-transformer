@@ -1,7 +1,7 @@
 //! Background thread emitting RR (receiver-side) or SR (sender-side)
 //! at randomized `RTCP_INTERVAL` per RFC 3550 §6.2 + §6.3.1.
 //!
-//! v1 simplification: we don't run the full RFC 3550 transmission-interval
+//! Simplification: we don't run the full RFC 3550 transmission-interval
 //! algorithm (which scales with session size); we use a fixed-base 5 s
 //! interval with ±50% randomization per §6.3.1. Single-source point-to-point
 //! flows don't benefit from the full algorithm.
@@ -74,8 +74,8 @@ fn next_jitter_word(state: &mut FallbackState) -> u32 {
 }
 
 /// Base RTCP transmission interval, RFC 3550 §6.2 says 5 s for the
-/// reduced minimum (after the initial RTCP_BANDWIDTH backoff). We
-/// don't scale by session size in v1.
+/// reduced minimum (after the initial RTCP_BANDWIDTH backoff). It is
+/// not scaled by session size.
 pub const RTCP_BASE_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Compute a randomized interval per RFC 3550 §6.3.1 — `interval *

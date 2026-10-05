@@ -45,7 +45,7 @@ impl std::fmt::Debug for TlsServerConfig {
 impl TlsServerConfig {
     /// Load a cert chain (PEM) + private key (PEM) from disk and build a
     /// rustls [`rustls::ServerConfig`] with no client cert verification
-    /// (v1 pattern; mTLS is a future-work item). Returns
+    /// (mTLS is not supported). Returns
     /// [`RtspServerError::Tls`] on any file open / PEM parse / keypair
     /// validation failure.
     pub(crate) fn load(cert_pem: &Path, key_pem: &Path) -> Result<Self, RtspServerError> {

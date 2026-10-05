@@ -146,7 +146,7 @@ pub struct H264DepayConfig {
     /// a single config object. [`H264Depacketizer::feed`] itself does **not**
     /// read it — the depacketizer processes whatever packet it is given,
     /// regardless of PT. PT filtering is the I/O layer's responsibility: the
-    /// receiver shell (arriving in the next PR) compares `header.payload_type`
+    /// receiver ([`H264Receiver`](crate::h264::H264Receiver)) compares `header.payload_type`
     /// against this value before calling `feed`. Callers that source packets
     /// from a foreign mux or socket must filter PT upstream before feeding.
     pub payload_type: u8,

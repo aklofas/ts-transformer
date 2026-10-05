@@ -2,10 +2,11 @@
 //! detection + sync-recovery buffer compaction + per-packet PCR / CC
 //! anomaly checks.
 //!
-//! Hosts three module-level constants (`MAX_SYNC_BUF_BYTES`
+//! Hosts the module-level constants (`MAX_SYNC_BUF_BYTES`
 //! caps adversarial-input memory growth; `SYNC_SEARCH_WINDOW` bounds
 //! per-feed sync-hunt work; `PCR_ANOMALY_THRESHOLD` discriminates real PCR
-//! jumps from steady-state drift); constants live with their consumers.
+//! jumps from steady-state drift; `SYNC_REACQ_N` / `SYNC_REACQ_M` set the
+//! N-of-M sync re-acquisition rule); constants live with their consumers.
 //!
 //! Helper methods are `pub(super)` so the `Demuxer` coordinator (`demuxer.rs`)
 //! can call them; the module itself is private (`mod sync_ingress` in

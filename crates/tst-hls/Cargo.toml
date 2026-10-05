@@ -11,8 +11,8 @@ categories = ["multimedia::video", "web-programming"]
 
 [features]
 # serve: the built-in HTTP server + hls:// URL parsing (tokio/hyper).
-# Disable for a segmenter-only build (writes segments + playlists to disk,
-# serving is the caller's business).
+# Disable for a segmenter-only build (writes segments to disk and the
+# playlist once, at finish; serving is the caller's business).
 default = ["serve", "tls"]
 serve = [
     "dep:tokio",
