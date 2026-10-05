@@ -1324,7 +1324,7 @@ impl core::fmt::Display for NonConformantIssue {
                 write!(
                     f,
                     "PMT on PID 0x{pid:04X} body program_number={pmt_program} does not match \
-                     PAT assignment program_number={pat_program} (H.222.0 §2.4.4.8 REF-PSI-01)"
+                     PAT assignment program_number={pat_program} (H.222.0 §2.4.4.8)"
                 )
             }
             NonConformantIssue::UnsupportedScrambling { pid, control } => {

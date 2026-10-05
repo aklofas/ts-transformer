@@ -39,7 +39,7 @@ ignore = [
     # attacker-controlled, non-UTF8-terminated input here, and
     # `PyCFunction::new_closure` (RUSTSEC-2026-0177) is not used at all —
     # tst-py exposes functions via `#[pyfunction]`, not runtime closures.
-    { id = "RUSTSEC-2025-0020", reason = "pyo3 0.22.6 is a deliberate pin (abi3-py310); fix requires an unreleased-here 0.24+ major bump, out of scope for WP-8 (no Rust code)" },   # added 2026-09-15
+    { id = "RUSTSEC-2025-0020", reason = "pyo3 0.22.6 is a deliberate pin (abi3-py310); fix requires an unreleased-here 0.24+ major bump; tst-py never calls PyString::from_object on untrusted non-UTF8-terminated input" },   # added 2026-09-15
     { id = "RUSTSEC-2026-0177", reason = "pyo3 0.22.6 is a deliberate pin (abi3-py310); fix requires an unreleased-here 0.29+ major bump; tst-py never calls PyCFunction::new_closure" },   # added 2026-09-15
     # rustls-pemfile 2.2.0 (direct dep of tst-hls/tst-jni/tst-py/tst-rtp/tst-tcp,
     # for loading TLS cert/key PEM files). Unmaintained advisory, no CVE — the

@@ -21,7 +21,7 @@ from tstrans.rtp import RtspClient, RtspClientConfig
 
 
 @pytest.mark.skip(
-    reason="needs tst-rtp test-fixtures feature (T25 — Wave C integration); "
+    reason="needs tst-rtp test-fixtures feature (an RTSP server fixture); "
     "tst-rtp's own integration tests already exercise the wire path"
 )
 def test_connect_to_unauth_loopback_then_teardown():

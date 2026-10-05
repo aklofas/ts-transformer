@@ -6,7 +6,7 @@
 #
 # URL provenance:
 #   H.264 — JVT-AVC draft_conformance at https://www.itu.int/wftp3/av-arch/jvt-site/draft_conformance/
-#            (directory listing live 2026-05-15; the top-level bitstream_exchange/ dir is empty)
+#            (the top-level bitstream_exchange/ dir is empty)
 #   H.265 — JCT-VC HEVC_v1 at https://www.itu.int/wftp3/av-arch/jctvc-site/bitstream_exchange/draft_conformance/HEVC_v1/
 #            RExt profile at https://www.itu.int/wftp3/av-arch/jctvc-site/bitstream_exchange/draft_conformance/RExt/
 #   H.266 — JVET draft6 at https://www.itu.int/wftp3/av-arch/jvet-site/bitstream_exchange/VVC/draft_conformance/draft6/
@@ -159,8 +159,8 @@ bit_depth_chroma = 10
 # Our parser returns EngineError when scaling_list_enabled_flag=1 AND
 # sps_scaling_list_data_present_flag=1 — the custom scaling-list walk
 # (H.265 §7.3.4) is not yet implemented, which is a parser gap, not a
-# profile-level rejection. (Pre validate-1 H265-V1-M02 this was misattributed
-# as UnsupportedProfile.) This vector was chosen to exercise that bail path.
+# profile-level rejection, so it must not surface as UnsupportedProfile.
+# This vector was chosen to exercise that bail path.
 # Source: RExt/QMATRIX_A_RExt_Sony_1.zip — quantization matrix (scaling list) test (2014-07-03).
 # Archive size: 236,406 bytes. Inner bitstream: 236,915 bytes.
 [[h265]]

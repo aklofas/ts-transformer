@@ -802,7 +802,7 @@ mod tests {
             assert_eq!(
                 h.with_inner_ref(|n| *n),
                 7,
-                "reader panics keep the slot (spec §3.2 as amended; 0.6.x with_inner_ref dropped it)"
+                "reader panics keep the slot (a reader panic must not drop the inner value)"
             );
         }
 

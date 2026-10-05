@@ -1069,7 +1069,7 @@ mod tests {
         assert_eq!(
             BindingErrorKind::ALL.len(),
             98,
-            "A2's table has 98 variants"
+            "the binding error-kind table has 98 variants"
         );
         for k in BindingErrorKind::ALL {
             let v = TstError::from_c_code(k.c_projection()).unwrap_or_else(|| {

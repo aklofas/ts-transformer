@@ -157,7 +157,7 @@ def test_st0601_unknown_survives_round_trip():
         for tag, value in rec2.unknown
     ), (
         "unknown TLV was dropped on re-encode (lossy round-trip) — "
-        "audit #5 regression"
+        "unknown tags must survive re-encoding"
     )
 
 

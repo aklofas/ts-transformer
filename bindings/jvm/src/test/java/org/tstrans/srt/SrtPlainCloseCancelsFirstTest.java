@@ -133,7 +133,7 @@ class SrtPlainCloseCancelsFirstTest {
         assertTrue(end instanceof SrtException,
             "expected the iteration to end with SrtException(CLOSED), got " + end);
         assertEquals(SrtException.Kind.CLOSED, ((SrtException) end).kind(),
-            "a close-initiated cancel surfaces as CLOSED on the plain shells too (Arc 2)");
+            "a close-initiated cancel surfaces as CLOSED on the plain shells too");
         sender.close();
     }
 
@@ -206,7 +206,7 @@ class SrtPlainCloseCancelsFirstTest {
         assertTrue(end instanceof SrtException,
             "expected recvBytes() to end with SrtException(CLOSED), got " + end);
         assertEquals(SrtException.Kind.CLOSED, ((SrtException) end).kind(),
-            "a close-initiated cancel surfaces as CLOSED on the plain shells too (Arc 2)");
+            "a close-initiated cancel surfaces as CLOSED on the plain shells too");
         sender.close();
     }
 

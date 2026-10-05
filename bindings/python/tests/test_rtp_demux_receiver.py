@@ -334,7 +334,7 @@ def test_last_seen_micros_reports_int_after_video_event() -> None:
 
 @pytest.mark.skip(
     reason="RtspSession.into_demux_receiver requires a real RTSP server fixture; "
-    "covered by Wave C T25 integration tests."
+    "covered by tst-rtp's RTSP integration tests."
 )
 def test_rtsp_session_into_demux_receiver() -> None:  # pragma: no cover
     """Bridge from `RtspSession` → `DemuxReceiver`. Verifying this

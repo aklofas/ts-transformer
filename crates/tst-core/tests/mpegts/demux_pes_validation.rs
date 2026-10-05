@@ -101,7 +101,7 @@ fn demux_b4_backward_pts_emits_pts_anomaly_not_pcr_anomaly() {
     });
     assert!(
         pts_anomaly_seen,
-        "expected PtsAnomaly variant on PID 0x101 (B4 fix), got {events:?}"
+        "expected PtsAnomaly variant on PID 0x101, got {events:?}"
     );
 
     // Specifically: the PES-path no longer emits PcrAnomaly with a 90-kHz-scale

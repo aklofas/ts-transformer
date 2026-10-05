@@ -225,7 +225,7 @@ jobs:
           pattern: native-*
           merge-multiple: true
 
-      - name: Assert version consistency (tag == source version) [REL-01]
+      - name: Assert version consistency (tag == source version)
         run: bash scripts/check/repo/release-version-consistency.sh
 
       # Builds + signs the fat jar + sources + javadoc and uploads them to the

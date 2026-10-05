@@ -1731,7 +1731,7 @@ mod cancel_tests {
         };
         assert!(
             wait_for(PROMPT, || reader.is_finished()),
-            "a counter handle waited on the parked sender (the PR #234 class)"
+            "a counter handle waited on the parked sender"
         );
         assert_eq!(
             reader.join().expect("reader thread"),

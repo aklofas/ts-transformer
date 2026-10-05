@@ -94,7 +94,7 @@ if [[ $missing -gt 0 ]]; then
     echo "FAIL: $missing of ${#ENTRIES[@]} JNI entry points bypass panic isolation"
     echo
     echo "Fix: wrap the body in crate::panic::jni_catch(&mut env, <default>, |env| { ... })"
-    echo "     (see the §B default table in docs/plans/2026-06-13-jni-panic-safety-sweep.md),"
+    echo "     (see the default-value table in bindings/jvm/src/panic.rs),"
     echo "     or, if provably infallible, add the fn name to the ALLOWLIST above."
     exit 1
 fi

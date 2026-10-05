@@ -120,7 +120,7 @@ v_fault_smoke() {
 v_arq_connfail() {
   grep -q 'FAIL\[s3_srt_plain\]: where=connect' <<<"$out" || {
     echo "  verdict: no labeled connect-failure verdict — a caller-side failure"
-    echo "  wedged the listener join instead of aborting it; EMB-JOIN-1 regressed"
+    echo "  wedged the listener join instead of aborting it"
     return 1; }
   [ $((t1 - t0)) -lt 30 ] || {
     echo "  verdict: failure was not fast: $((t1 - t0))s"; return 1; }

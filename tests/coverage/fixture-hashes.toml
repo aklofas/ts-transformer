@@ -72,7 +72,7 @@ sha256 = "8dde39aef6fa477d4b069b1122e57fa401692f2ad5d3ade3f2a8ac774678fb7c"
 
 [[file]]
 path = "crates/tst-core/tests/fixtures/codec/h265/README.md"
-sha256 = "54b24f00ab007214074dd0b1f2595ae19ce904a102d75ad26e458fed0877ac89"
+sha256 = "0e2e93426164749bdc436bbdab9a49cbf5d97f3b910b9773aaede679de9892fc"
 
 [[file]]
 path = "crates/tst-core/tests/fixtures/codec/h265/h265_1080p_main10_50_pq_pps.bin"
@@ -120,7 +120,7 @@ sha256 = "67e310bfdf7b13dae6eb348ef8fa375bfc44e34cf14cd9e56849a422da648e28"
 
 [[file]]
 path = "crates/tst-core/tests/fixtures/conformance/README.md"
-sha256 = "19c93153d071055cbea9e5aa5a67d9abae1e6f86fcf459a141959353449d2f07"
+sha256 = "9fe3b0ed7a0278ddfce3ae1edeb4c29a36b8fa02d8f694d23ad0501cfe22b51c"
 
 [[file]]
 path = "crates/tst-core/tests/fixtures/conformance/_cache/.gitkeep"
@@ -216,7 +216,7 @@ sha256 = "1d021e9a4e8cb06f8e195cb923f687b3c1c4ca925ed87a48019e58c2f8b4620c"
 
 [[file]]
 path = "crates/tst-core/tests/fixtures/conformance/manifest.toml"
-sha256 = "9dbf9b422d60b3db9b5fa691cafd35ba22fa5f54a5bb15ea7ffda53f2a12ab39"
+sha256 = "2f47e323352f277c2262d53da46ac27da2c4ffa72254c623ec2156b5da51e05a"
 
 [[file]]
 path = "crates/tst-core/tests/fixtures/st0601/README.md"
@@ -240,7 +240,7 @@ sha256 = "9cec60336f6fbc2146c2c034176dd9df456bbb79a31ceed6d2f52195f6525d69"
 
 [[file]]
 path = "crates/tst-core/tests/fixtures/subtitles/README.md"
-sha256 = "5cd6c7412e75fa4ce53ca43b1425c57c291c08ed85f24df484b1d74ac4da9b0b"
+sha256 = "08f1ea9d2d122be1e7b99afb8df14c4f7595ecd8d3a26aa861174caa45bcf44a"
 
 [[file]]
 path = "crates/tst-core/tests/fixtures/subtitles/cea708_standalone.ts"

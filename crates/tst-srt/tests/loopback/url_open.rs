@@ -117,7 +117,7 @@ fn connect_ipv6_literal_round_trips() {
     assert_eq!(url.host, "::1", "parse hands the host back bracket-less");
     let mut t = url
         .connect()
-        .expect("v6 caller connect through SrtUrl::connect (the #188 bracket class)");
+        .expect("v6 caller connect through SrtUrl::connect (bracketed IPv6 host)");
     t.send_bytes(b"hello over v6").expect("send_bytes");
 
     assert_eq!(accept.join(), b"hello over v6");

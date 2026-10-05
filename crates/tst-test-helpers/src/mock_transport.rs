@@ -43,8 +43,8 @@ impl MockTransport {
     /// Lock the log mutex, recovering from poisoning by taking the inner
     /// guard. Test helpers should not propagate poison panics — the inner
     /// `Vec<Vec<u8>>` is just an append-only sink, so any prior panic's
-    /// partial mutation is harmless to ignore. Mirrors the Wave 4 mutex
-    /// sweep pattern in the production crates; for test helpers we use
+    /// partial mutation is harmless to ignore. The production crates map a
+    /// poisoned mutex to a typed error; for test helpers we use
     /// `unwrap_or_else(|e| e.into_inner())` rather than mapping to a typed
     /// error because the test helper has no error channel to surface it
     /// on (the `Transport::send_bytes` errors are reserved for simulating

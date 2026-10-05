@@ -111,7 +111,7 @@ fn oversized_content_length_gets_413_response() {
     assert!(
         got_413 || got_close,
         "server must close or send 413 after the over-cap Content-Length \
-         (> MAX_RTSP_BODY_BYTES, 1 MiB) is rejected in Phase 2, but it stayed \
+         (> MAX_RTSP_BODY_BYTES, 1 MiB) is rejected by the body-phase cap, but it stayed \
          open silently for {elapsed:?}. Response so far: {:?}",
         String::from_utf8_lossy(&response_buf)
     );

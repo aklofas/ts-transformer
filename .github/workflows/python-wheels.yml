@@ -53,7 +53,7 @@ env:
 
 jobs:
   version-preflight:
-    name: version preflight (REL-01)
+    name: version preflight
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

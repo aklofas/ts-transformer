@@ -331,7 +331,7 @@ class St1204Test {
         boolean hasMissing22 = violations.stream()
                 .anyMatch(v -> "missing".equals(v.kind()) && v.tag() == 22);
         assertFalse(hasZeroLength,
-                "WP-B: tag 96 is now typed, so the unknown-list zero-length injection is silently "
+                "tag 96 is typed, so the unknown-list zero-length injection is silently "
                         + "dropped by the typed-wins collision policy before reaching the Rust "
                         + "validator — no zero_length violation should surface via this binding; got: "
                         + violations);
