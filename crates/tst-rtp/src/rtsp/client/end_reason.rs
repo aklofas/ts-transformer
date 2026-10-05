@@ -18,7 +18,7 @@ use std::sync::{Arc, OnceLock};
 /// Recorded once, first-writer-wins, at whichever site actually observed
 /// the death — see `EndReasonSlot`. `None` from
 /// [`StreamEndReasonHandle::get`] means the session either hasn't ended
-/// yet or ended through a path this arc doesn't instrument (e.g. a plain
+/// yet or ended through a path that records no reason (e.g. a plain
 /// `rtp://` transport that was never closed or cancelled).
 #[non_exhaustive]
 #[derive(Debug, Clone)]
@@ -92,7 +92,7 @@ impl StreamEndReasonHandle {
     }
 
     /// The recorded [`StreamEndReason`], or `None` if the session hasn't
-    /// ended yet (or ended through a path this arc doesn't instrument).
+    /// ended yet (or ended through a path that records no reason).
     pub fn get(&self) -> Option<StreamEndReason> {
         self.0.get()
     }

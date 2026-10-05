@@ -8,7 +8,7 @@ name: interop
 # the full cell inventory, tier semantics, and the known-gap catalogue
 # expectations.toml already documents.
 #
-# This is the arc's continuously-refreshed public evidence: the run's
+# This is the continuously-refreshed public interop evidence: the run's
 # GITHUB_STEP_SUMMARY table + uploaded artifacts are what a consumer reads
 # to see this codebase actually interoperate with real tools on a stock
 # runner, not another closed-loop self-test. linux-x86_64 only, matching
@@ -120,7 +120,7 @@ jobs:
       - name: Install TSDuck
         # Not in Ubuntu's apt repos — install the pinned upstream .deb
         # release directly, verified by sha256 before dpkg -i. A version
-        # bump is a deliberate PR (per the arc's spec), never an automatic
+        # bump is a deliberate PR, never an automatic
         # float. Asset picked to match ubuntu-latest's current OS (Ubuntu
         # 24.04 — see actions/runner-images' README; ubuntu-latest is a
         # migrating label, so a future bump to 26.04 should revisit this
@@ -203,7 +203,7 @@ jobs:
         # passing), is this system working as designed — not a bug in this
         # workflow. Add or adjust an expectations.toml row only when a
         # cell demonstrably diverges on this runner, and name the observed
-        # version in that row's `reason`, per the arc's own convention.
+        # version in that row's `reason`.
         run: |
           bash scripts/interop/run-matrix.sh \
             --outdir "$RUNNER_TEMP/interop" \

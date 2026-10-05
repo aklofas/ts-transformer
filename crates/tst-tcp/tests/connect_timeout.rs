@@ -37,7 +37,7 @@ fn full_backlog_port() -> (socket2::Socket, Vec<TcpStream>, u16) {
 fn ca_pem_file() -> tempfile::NamedTempFile {
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
     let file = tempfile::Builder::new()
-        .prefix("tst-tcp-r9-06-ca-")
+        .prefix("tst-tcp-ca-")
         .suffix(".pem")
         .tempfile()
         .unwrap();

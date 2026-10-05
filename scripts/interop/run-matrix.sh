@@ -838,8 +838,8 @@ srt_cells() {
     tsparse set-timestamps=true smoothing-latency=100000 ! \
     srtsink "uri=srt://127.0.0.1:$port?mode=caller"
 
-  # Encrypted (ffmpeg + tsp pairs only, per the plan — gst's srtsrc/
-  # srtsink encryption story wasn't part of this arc's scope).
+  # Encrypted cells cover the ffmpeg and tsp pairs only; there is no
+  # gst srtsrc/srtsink encrypted cell.
   port=$(free_port)
   run_send_peer_recv "srt/us-to-ffmpeg-encrypted" ffmpeg remux \
     "srt://127.0.0.1:$port?mode=caller&passphrase=$ENCRYPTION_PASSPHRASE" \

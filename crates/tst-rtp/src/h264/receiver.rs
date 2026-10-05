@@ -306,7 +306,7 @@ impl H264Receiver {
     }
 
     /// The recorded [`StreamEndReason`], or `None` if the session hasn't
-    /// ended yet (or ended through a path this arc doesn't instrument —
+    /// ended yet (or ended through a path that records no reason —
     /// see the field doc on `end_reason` for the plain-`rtp://` case).
     pub fn end_reason(&self) -> Option<StreamEndReason> {
         self.end_reason.get()

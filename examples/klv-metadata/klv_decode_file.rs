@@ -8,8 +8,11 @@
 //!
 //! To produce `.klv` blobs from a captured `.ts`:
 //!   cargo run -p tst-examples --example extract_klv -- path/to/capture.ts /tmp/klv_out
-//! (the second arg is an output *prefix*, producing `/tmp/klv_out_0000.klv`...
-//! 0-indexed via `enumerate()`)
+//! (the second arg is an output *prefix*, producing
+//! `/tmp/klv_out_0000_async.klv`, `/tmp/klv_out_0001_sync.klv`, ... — 0-indexed,
+//! suffixed `sync`, `async` or `unknown` by metadata kind). The committed
+//! synthetic records under `crates/tst-core/tests/fixtures/st0601/`
+//! (`synthetic_minimal.klv`, `synthetic_full.klv`, ...) also work as input.
 
 use std::env;
 use std::fs;

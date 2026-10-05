@@ -4,9 +4,9 @@
 //! Usage: `cargo run -p tst-examples --example extract_klv -- <input.ts> [output_prefix]`
 //!
 //! This is a teaching demo for the demuxer — every non-obvious choice has
-//! a `// why+how` comment, per the `ts-transformer/CLAUDE.md` examples
-//! convention. The companion `extract_video_au` example shows the same
-//! pattern for the video side.
+//! a `// why+how` comment, as every example in this repository does. The
+//! companion `extract_video_au` example shows the same pattern for the
+//! video side.
 //!
 //! Output: one `<prefix>_NNNN_<sync|async>.klv` file per metadata event,
 //! written next to the input file by default. The `_sync` / `_async`

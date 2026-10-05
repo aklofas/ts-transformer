@@ -983,7 +983,7 @@ pub mod stress;
 
 /// `report soak`: turn one multi-day soak run's raw artifacts (an RSS
 /// time series plus each leg's proxy/recv/send evidence) into
-/// `soak-results.json` — the endurance half of this arc's published
+/// `soak-results.json` — the endurance half of the published interop
 /// evidence (`merge`/`render`, above, is the interop-matrix half).
 ///
 /// `scripts/interop/soak.sh` runs two concurrent legs over the same
@@ -1021,7 +1021,7 @@ pub mod stress;
 ///   informational, never gating [`soak::SoakResults::overall_pass`] —
 ///   even when a real count is available: empirically, a single outage
 ///   window does not always drive exactly one rebuild (a short 8s-outage
-///   dry-run during this arc's own fix wave observed a SECOND rebuild
+///   dry-run observed a SECOND rebuild
 ///   cycle shortly after the first succeeded, before the one scheduled
 ///   outage window had even repeated), and the real 90s-outage-duration
 ///   ratio hasn't been confirmed by enough runs yet to assert a hard
@@ -1163,7 +1163,7 @@ pub mod soak {
     /// one-off [`EXCUSAL_BUDGET_BASE`] and the per-outage `K x windows`
     /// term.
     ///
-    /// Pinned from this arc's retained 1-hour smoke run (`report soak`
+    /// Pinned from a retained 1-hour smoke run (`report soak`
     /// over `/tmp/soak-resmoke`, 2026-09-14 — the newest run with all six
     /// workers healthy): the `srt`/baseline leg excused 0, the
     /// `rist`/pcr-sparse leg excused 9 (9 transport-loss events, 9
@@ -5089,10 +5089,10 @@ pub mod soak {
         }
 
         /// The counters the verdicts gate on are `#[serde(default)]`, so
-        /// a recv report written BEFORE this wave deserializes with every
-        /// one of them zero while its sample list still holds real
-        /// findings. Judging on the counter alone would read such a
-        /// report as clean — verified against this arc's own 1-hour smoke
+        /// a recv report written before these counters existed
+        /// deserializes with every one of them zero while its sample list
+        /// still holds real findings. Judging on the counter alone would read such a
+        /// report as clean — verified against a 1-hour smoke run's
         /// artifacts, where re-judging them flipped both
         /// `corruption_detected_*` failures to passes while the detail
         /// still quoted the finding.

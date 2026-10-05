@@ -57,7 +57,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 18/19 sensor relative azimuth / elevation. The lat/lon values
     // `33.68, -118.55` are generic Southern California offshore — chosen
     // to be over open water and therefore intentionally non-operational
-    // (per the project's sensitive-content guardrail; see CLAUDE.md).
+    // (no real-device positions or captures ship in the repository).
     rec.sensor_lat_deg = Some(33.6800);
     rec.sensor_lon_deg = Some(-118.5500);
     rec.sensor_alt_m = Some(3500.0);

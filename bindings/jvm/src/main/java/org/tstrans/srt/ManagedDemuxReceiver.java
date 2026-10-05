@@ -48,7 +48,8 @@ import org.tstrans.mpegts.DemuxerConfig;
  * <p><b>Stats:</b> both {@link #socketStats()} and {@link #srtStats()} return a
  * {@link SocketStats} — {@code srtStats()} returns the SAME value as
  * {@code socketStats()} (as in tst-py: {@code ManagedRecvTransport} exposes no
- * separate SRT-specific shape) and does NOT throw. There is NO combined {@code stats()} on this wrapper.
+ * separate SRT-specific shape) and does NOT throw. There is NO combined
+ * {@code stats()} on this wrapper.
  * {@link #reconnectAttempts()} counts every reconnect-factory invocation since
  * construction (an ATTEMPT counter).
  *

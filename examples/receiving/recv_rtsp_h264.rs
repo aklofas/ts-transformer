@@ -77,7 +77,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Default output lands in the OS temp dir so the example works
     // cross-platform without needing write permission in the cwd.
-    // (CLAUDE.md cross-platform-paths rule: use std::env::temp_dir().)
+    // (`std::env::temp_dir()`, not a hard-coded `/tmp`, so the example
+    // runs on every platform.)
     let default_out = env::temp_dir().join("recv_rtsp_h264.ts");
     let out_path = args
         .get(2)
