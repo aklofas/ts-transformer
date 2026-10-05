@@ -112,7 +112,7 @@ final class CancelHandleMidIterationTest {
             long wokeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
             assertTrue(wokeMs < 2_000, "cancel took " + wokeMs + " ms to wake next()");
             assertTrue(cause instanceof SrtException, "expected an SrtException, got " + cause);
-            // Since Arc 2 a cancel is CLOSED on every srt shell, plain or
+            // A cancel is CLOSED on every srt shell, plain or
             // managed: the plain transport closes the socket under the parked
             // recv and then reports the cancel it observed. Same verdict as the
             // Python twin (test_cancel_handle_cross_thread) and

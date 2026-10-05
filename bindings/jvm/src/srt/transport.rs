@@ -84,7 +84,7 @@ pub extern "system" fn Java_org_tstrans_srt_Sender_nFromUrl(
             return 0;
         }
 
-        // One open path (ARCH-01): `SrtUrl::connect_recv` applies the overlay to
+        // One open path: `SrtUrl::connect_recv` applies the overlay to
         // a default `SocketConfig` and brackets IPv6 itself — byte-for-byte what
         // this file composed by hand, minus the private `[{host}]:{port}` copy.
         // `connect_recv`, NOT `connect`: `connect` also merges the sender preset
@@ -109,7 +109,7 @@ pub extern "system" fn Java_org_tstrans_srt_Sender_nFromUrl(
 /// parked on another thread ends promptly (with `SrtException(CLOSED)`: the
 /// cancel closes the socket under the parked send and `SrtTransport` reports
 /// the cancel) instead of holding `close()` hostage. That is the
-/// cancel-on-close contract of PR #207.
+/// cancel-on-close contract.
 pub(super) fn register_sender(inner: PlSender<SrtTransport>) -> jlong {
     let cancel = super::srt_cancel(inner.transport());
     REGISTRY_SENDER.insert(Owned::new(inner, cancel, ())) as jlong
@@ -303,9 +303,9 @@ pub extern "system" fn Java_org_tstrans_srt_Receiver_nFromUrl(
         }
 
         // The one-shot accept of a plain receiver has no cancel handle yet (the
-        // object does not exist): a fresh, never-fired slot. DEBT-16 ruling
-        // (Arc 2): the FIRST accept inside a blocking constructor stays
-        // uncancellable; the `Receiver.fromUrl` javadoc line stands.
+        // object does not exist): a fresh, never-fired slot. By design, the
+        // FIRST accept inside a blocking constructor stays uncancellable;
+        // the `Receiver.fromUrl` javadoc line stands.
         // `accept_one` renders the empty-host → `0.0.0.0` bind and the IPv6
         // bracketing this file used to compose by hand.
         let slot = tst_core::cancel::CancelSlot::new();

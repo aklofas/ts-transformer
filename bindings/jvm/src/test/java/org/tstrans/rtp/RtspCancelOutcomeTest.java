@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Timeout;
 import org.tstrans.RtspException;
 
 /**
- * Review 9 (R9-05): a cancel fired while a control call is parked ends that
+ * A cancel fired while a control call is parked ends that
  * call with {@code RtspException(CLOSED)} — the one cancel outcome every
  * tstrans handle shares (it was {@code PROTOCOL}). The cancel handle only
  * exists on a live session, so the parked call is PAUSE, not connect: a

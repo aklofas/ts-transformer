@@ -37,7 +37,7 @@ pub(crate) fn cancel_view_handle(view: CancelView) -> jlong {
 
 /// The transport's cancel target in the shape `Owned::new` takes. Obtained
 /// BEFORE the transport moves into a shell (obtain-before-move). Infallible:
-/// A3's inherent accessor is never `Option`.
+/// the inherent accessor is never `Option`.
 pub(crate) fn srt_cancel(t: &tst_srt::SrtTransport) -> Arc<dyn TransportCancel> {
     Arc::new(t.srt_cancel_handle())
 }
@@ -46,14 +46,14 @@ pub(crate) fn srt_cancel(t: &tst_srt::SrtTransport) -> Arc<dyn TransportCancel> 
 /// `ManagedMuxSender`): the handles `tst_srt::shells` composed at open plus the
 /// reconnect/gap telemetry observer. Both live outside the slot, so
 /// `reconnectStats()` / `reconnectAttempts()` answer while a `send*` is parked
-/// in a Blocking reconnect (spec §3.2's snapshot rule).
+/// in a Blocking reconnect.
 pub(crate) struct ManagedSenderSnapshot {
     /// The open-time handles. `cancel` is consumed by `Owned::new` at
     /// registration; the counters are kept because the send side reports
     /// attempts from [`Self::stats`] (`ManagedTransportStats::reconnect_attempts`)
-    /// rather than from `ManagedHandles::attempts`, which A3 maintains on the
-    /// recv side. Held so a binding-side `reconnecting()` getter / the WP-D
-    /// cancel-handle work have the same snapshot to read as the receivers do.
+    /// rather than from `ManagedHandles::attempts`, which the recv side
+    /// maintains separately. Held so a binding-side `reconnecting()` getter
+    /// has the same snapshot to read as the receivers do.
     #[expect(
         dead_code,
         reason = "send side reads attempts from `stats`; kept for the binding-side `reconnecting()` / WP-D cancel-handle work"

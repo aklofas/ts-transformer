@@ -66,7 +66,7 @@ pub(crate) enum Domain {
 
 use BindingErrorKind as K;
 
-/// `org.tstrans.SrtException.Kind` (spec §3.3 + A2's SRT buckets).
+/// `org.tstrans.SrtException.Kind` (the binding layer's SRT buckets).
 pub(crate) const SRT_KINDS: &[K] = &[
     K::ConfigInvalid,
     K::SrtConnectFailed,
@@ -98,9 +98,8 @@ pub(crate) const RTP_KINDS: &[K] = &[
     K::RtpIo,
     K::RtpIfaceUnsupported,
 ];
-/// `org.tstrans.RtspException.Kind` — the ten names unchanged since v0.1.0
-/// plus `CLOSED` (review 9: a cancelled control-plane call, a consumed data
-/// plane).
+/// `org.tstrans.RtspException.Kind` — the ten original names plus `CLOSED`
+/// (a cancelled control-plane call, a consumed data plane).
 pub(crate) const RTSP_KINDS: &[K] = &[
     K::RtspProtocol,
     K::RtspAuthFailed,
@@ -115,7 +114,7 @@ pub(crate) const RTSP_KINDS: &[K] = &[
     K::Closed,
 ];
 /// `org.tstrans.DemuxException.Kind` (`Internal` = the JNI event-conversion
-/// failure and A2's wildcard, not a `DemuxError` variant).
+/// failure and the binding layer's wildcard, not a `DemuxError` variant).
 pub(crate) const DEMUX_KINDS: &[K] = &[
     K::DemuxUnrecoverable,
     K::DemuxMalformedPsi,
@@ -265,7 +264,7 @@ pub(crate) fn declared_member(
         return Some(kind.name());
     }
     // Callers that reach this directly (the `KlvEncodeException` /
-    // `CodecParseException` throwers, Task B3.5b) have no `throw_binding`
+    // `CodecParseException` throwers) have no `throw_binding`
     // wrapper above them, so guard here too: never clobber a pending exception.
     if env.exception_check().unwrap_or(false) {
         return None;
@@ -281,7 +280,7 @@ pub(crate) fn declared_member(
     None
 }
 
-/// The ONE [`HandleState`] → Java mapping (spec §5, JVM column):
+/// The ONE [`HandleState`] → Java mapping:
 /// `Closed` → `IllegalStateException("<what> is closed")` (the Java-side
 /// `NativeHandle.ensureOpen` guard throws the same type BEFORE the native
 /// runs, so a native-side `Closed` — only reachable in a close race — must
@@ -332,8 +331,7 @@ pub(crate) fn throw_handle_state(env: &mut JNIEnv, what: &str, state: &HandleSta
 /// and hands back a `JValueOwned::Object` — a JNI local ref jni-rs does not
 /// auto-delete. This loop visits 79 members across eight domains in one frame,
 /// well past the 16-slot default local-reference capacity, and `-Xcheck:jni`
-/// does not report local-ref accumulation (see
-/// `reference_xcheck_jni_local_ref_accumulation_unobservable`). The field ID
+/// does not report local-ref accumulation. The field ID
 /// lookup validates the member name AND its signature identically while
 /// minting no object reference at all.
 pub(crate) fn verify_kind_tables(env: &mut JNIEnv) {
@@ -461,7 +459,7 @@ fn throw_klv_encode_inner(
     env.throw(JThrowable::from(exc))
 }
 
-/// Map + throw a Rust `KlvDecodeError` through A2's classifier — one source of
+/// Map + throw a Rust `KlvDecodeError` through the shared classifier — one source of
 /// truth for the buckets, shared with C and Python (the hand table this used to
 /// carry is gone). `FieldError` routes through `kind_of_klv_field` so a field
 /// error keeps its own classification rather than collapsing into the
@@ -475,7 +473,7 @@ pub fn map_klv_decode_error(env: &mut JNIEnv, e: &KlvDecodeError) {
 }
 
 /// Map + throw a Rust `KlvEncodeError`. All 11 Kind literals appear inline
-/// (satisfies the error-mapping ratchet). Used by the per-set JNI fns (Tasks 1–4).
+/// (satisfies the error-mapping ratchet). Used by the per-set JNI fns.
 /// The forward-compat wildcard arm aliases to `BUFFER_TOO_SMALL` (matching
 /// tst-py's `klv_encode_error_to_pyerr`), not `INTERNAL`.
 pub fn map_klv_encode_error(env: &mut JNIEnv, e: &KlvEncodeError) {
@@ -822,7 +820,7 @@ pub fn map_codec_parse_error(env: &mut JNIEnv, e: &CodecParseError, codec: &str)
             };
             throw_codec(env, BindingErrorKind::CodecBufferTooSmall, codec, &f, &msg)
         }
-        // CodecParseError is #[non_exhaustive] (A2's K7): a future variant is
+        // CodecParseError is #[non_exhaustive]: a future variant is
         // ENGINE_ERROR with its Display text.
         _ => throw_codec(
             env,
@@ -932,15 +930,15 @@ mod tests {
         );
     }
 
-    /// The eight domains' declared sets have the sizes the Java enums will
-    /// have after Task B3.6 and contain no duplicate MEMBER (two kinds with
+    /// The eight domains' declared sets have the sizes the Java enums
+    /// declare and contain no duplicate MEMBER (two kinds with
     /// the same `name()` in one domain would be unresolvable by name).
     #[test]
     fn domain_kind_sets_are_deduplicated_and_sized() {
         for (d, n) in [
             (Domain::Srt, 11),
             (Domain::Rtp, 10),
-            (Domain::Rtsp, 11), // + CLOSED (review 9, R9-05)
+            (Domain::Rtsp, 11), // + CLOSED (a cancelled control call, a consumed data plane)
             (Domain::Demux, 6),
             (Domain::Mux, 9),
             (Domain::KlvDecode, 7),
@@ -962,11 +960,10 @@ mod tests {
     /// A receiver shell's clean end of stream projects to a kind the SRT
     /// domain DECLARES, so `throw_recv_transport` can raise it instead of
     /// hitting `throw_binding`'s undeclared-kind guard. The projection is
-    /// A2's exhaustive `From<ShellErrorKind>`, the same one C uses to reach
-    /// `TST_E_END_OF_STREAM` (-12) — this pins that the three bindings agree
-    /// on the kind, which a JVM-only loopback cannot demonstrate (no JVM
-    /// caller sets `SRTO_SENDER`, so no JVM peer hangs up cleanly — see the
-    /// WP-B3 report, g3).
+    /// the shared exhaustive `From<ShellErrorKind>`, the same one C uses to
+    /// reach `TST_E_END_OF_STREAM` (-12) — this pins that the three bindings
+    /// agree on the kind, which a JVM-only loopback cannot demonstrate (no
+    /// JVM caller sets `SRTO_SENDER`, so no JVM peer hangs up cleanly).
     #[test]
     fn end_of_stream_is_declared_for_srt() {
         use tst_pipeline::ShellErrorKind;
@@ -985,7 +982,7 @@ mod tests {
     }
 
     /// The demux / mux / klv / codec classifiers land inside their domains
-    /// (Task B3.5b routes them through `throw_binding`).
+    /// (routed through `throw_binding`).
     #[test]
     fn core_family_classifiers_are_declared() {
         use tst_core::error::{DemuxError, KlvDecodeError, MuxError};

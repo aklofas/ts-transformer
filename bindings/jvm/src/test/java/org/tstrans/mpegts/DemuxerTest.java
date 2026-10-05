@@ -91,7 +91,7 @@ class DemuxerTest {
 
     @Test
     void videoRawIsExactEncodedAccessUnit() throws Exception {
-        // Wave 5 transmux property: DemuxEvent.Video.raw is the exact
+        // Transmux property: DemuxEvent.Video.raw is the exact
         // encoded AU that was muxed — byte-for-byte — as a JVM-owned heap
         // copy (JDK < 22 forbids direct buffers over Rust memory).
         byte[] au = new byte[20];

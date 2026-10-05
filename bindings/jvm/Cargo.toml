@@ -39,14 +39,14 @@ tst-core = { path = "../../crates/tst-core" }
 # tst-pipeline (Sender/Receiver shells) + tst-srt (Socket/Listener/SrtTransport,
 # vendored libsrt + mbedTLS) back the org.tstrans.srt surface. First non-pure-Rust
 # JVM dep — cargo builds now link libsrt; set SRT_FORCE_VENDORED=1 (build.gradle +
-# CI). srt is unconditional in the JVM binding (single cdylib; spec §3.1).
+# CI). srt is unconditional in the JVM binding (single cdylib).
 tst-pipeline = { path = "../../crates/tst-pipeline" }
 tst-srt      = { path = "../../crates/tst-srt" }
 
 # tst-rtp (pure Rust: RTP-over-UDP + RTSP) backs the org.tstrans.rtp surface.
 # `tls` is ON: rtsps:// client (custom-CA roots via RtspClientConfig) and
 # rtsps:// server (cert/key paths) ship in the JAR — parity with tst-py's
-# post-#111 wheels. The direct rustls + rustls-pemfile deps below parse
+# wheels. The direct rustls + rustls-pemfile deps below parse
 # RtspClientConfig.tlsRootCertsPem into the rustls::RootCertStore that
 # RtspClientBuilder::tls_root_certs takes (same shape as tst-py). Server
 # support (RtspServer + mounts) is on by default in tst-rtp, so
@@ -59,12 +59,12 @@ tst-rtp = { path = "../../crates/tst-rtp", default-features = false, features = 
 # (mirrors tst-py's rtp feature: dep:secrecy). Workspace-pinned (0.10).
 secrecy = { workspace = true }
 
-# `TSTRANS_LOG` bridge (Task D8) — the Rust core emits `tracing` events
+# `TSTRANS_LOG` bridge — the Rust core emits `tracing` events
 # that are otherwise silently discarded because nothing installs a
 # subscriber inside the JVM cdylib. Not optional/feature-gated: the
 # bridge itself is always compiled in, but only installs a subscriber
 # at runtime when `TSTRANS_LOG` is set (see `lib.rs`). Mirrors tst-py's
-# identical dependency (Task C7).
+# identical dependency.
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 [dependencies.rustls]

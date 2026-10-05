@@ -26,7 +26,7 @@ import org.tstrans.mpegts.MuxerConfig;
 /**
  * Live-socket happy-path + stats-drift parity tests for the four managed
  * (auto-reconnect) SRT shells — {@link ManagedSender}, {@link ManagedReceiver},
- * {@link ManagedMuxSender}, and {@link ManagedDemuxReceiver} (sub-wave C).
+ * {@link ManagedMuxSender}, and {@link ManagedDemuxReceiver}.
  *
  * <p>This is the live-socket companion to the socket-free {@link SrtManagedTest}.
  * It opens real SRT socket pairs over loopback on ephemeral ports and proves two

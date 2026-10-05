@@ -1,8 +1,8 @@
 pluginManagement {
     repositories {
         // Plugin Portal first (canonical plugin source), Maven Central as a
-        // fallback: a transient Portal outage killed a CI leg at plugin
-        // RESOLUTION on 2026-08-01 ("Plugin ... was not found ... Searched
+        // fallback: a transient Portal outage once killed a CI leg at plugin
+        // RESOLUTION ("Plugin ... was not found ... Searched
         // in: Gradle Central Plugin Repository") while the same commit
         // resolved fine on the other legs. The vanniktech plugin marker +
         // implementation are mirrored on Central (verified end-to-end:

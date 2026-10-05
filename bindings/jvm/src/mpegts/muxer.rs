@@ -1179,7 +1179,7 @@ fn closed(env: &mut JNIEnv) {
 /// `mux_error_to_pyerr` (route via the 5-variant `MuxErrorKind`). Each
 /// inline literal is what the error-mapping ratchet greps for.
 pub(crate) fn throw_mux_error(env: &mut JNIEnv, e: &MuxError) {
-    // A2's classifier, not the coarse `MuxErrorKind` bucket: `InvalidNal`,
+    // The shared classifier, not the coarse `MuxErrorKind` bucket: `InvalidNal`,
     // `KlvTooLarge`, `InvalidAv1Obu` and `MispTime` now get their own members
     // (all four were `INPUT_MALFORMED`); everything else keeps its bucket.
     crate::error::throw_mux(env, kind_of_mux(e), &e.to_string());

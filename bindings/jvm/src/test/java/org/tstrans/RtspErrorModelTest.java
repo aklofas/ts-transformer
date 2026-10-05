@@ -7,11 +7,11 @@ import org.junit.jupiter.api.Test;
 
 class RtspErrorModelTest {
     /**
-     * The members are exactly the rtsp domain's {@code BindingErrorKind} subset
-     * (WP-B3 / spec §3.3). Names are unchanged in 0.7.0; two PRODUCERS moved
+     * The members are exactly the rtsp domain's {@code BindingErrorKind} subset.
+     * Names are unchanged in 0.7.0; two PRODUCERS moved
      * bucket ({@code AuthUnsupported} → {@code AUTH_REQUIRED}, the four
-     * SDP-media errors → {@code NOT_FOUND}). {@code CLOSED} added for 0.7.0
-     * (review 9): a cancelled control-plane call and a consumed data plane.
+     * SDP-media errors → {@code NOT_FOUND}). {@code CLOSED} added for 0.7.0:
+     * a cancelled control-plane call and a consumed data plane.
      */
     @Test void kindMembersMatchTheRtspDomain() {
         Set<String> expected = Set.of("PROTOCOL", "AUTH_FAILED", "AUTH_REQUIRED", "NOT_FOUND",

@@ -10,7 +10,7 @@ import org.tstrans.MuxException;
 /**
  * Verifies that the Rust-side config-enum ordinal decode helpers in
  * {@code build_muxer_config_from_arrays} reject out-of-range ordinals with
- * {@code CONFIG_INVALID} instead of silently falling back (DA-JVM-3).
+ * {@code CONFIG_INVALID} instead of silently falling back.
  *
  * <p>Drives {@code Muxer.nOpen} via reflection with ordinal 99 injected into
  * the relevant array slot — a value that the typed Java enum API cannot
@@ -128,8 +128,8 @@ class MuxerConfigOrdinalTest {
 
     @Test
     void klvTypeOrdinal1AcceptedAsPrivateData() throws MuxException {
-        // KlvStreamType.PRIVATE_DATA is ordinal 1. Before DA-JVM-3 the Rust arm
-        // was '_ => PrivateData' which covered ordinal 1 AND any out-of-range
+        // KlvStreamType.PRIVATE_DATA is ordinal 1. The Rust arm used to be
+        // '_ => PrivateData' which covered ordinal 1 AND any out-of-range
         // value; now both ordinals 0 and 1 are explicit. Verify ordinal 1 still
         // works. A video stream is included to provide a PCR-eligible stream
         // (a KLV-only program has no eligible PCR source and would throw

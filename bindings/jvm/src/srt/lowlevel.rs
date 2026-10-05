@@ -42,10 +42,10 @@ use crate::jutil::{checked_u16, join_host_port};
 pub(crate) static REGISTRY_SOCKET: LazyLock<HandleRegistry<SrtSocket>> =
     LazyLock::new(HandleRegistry::new);
 
-/// Construction-constant view of a `Listener` (spec §3.2): the bound address is
+/// Construction-constant view of a `Listener`: the bound address is
 /// captured at registration so `localAddr()` never takes the slot a parked
-/// `accept` holds — the PR #234 getter bug, JVM instance (`Listener.localAddr()`
-/// blocked behind `accept(null)` on another thread).
+/// `accept` holds — otherwise `Listener.localAddr()` blocks behind
+/// `accept(null)` on another thread.
 pub(crate) struct ListenerSnapshot {
     pub local_addr: Result<std::net::SocketAddr, String>,
 }
@@ -746,7 +746,8 @@ pub extern "system" fn Java_org_tstrans_srt_Listener_nLocalAddr<'local>(
 ) -> jobject {
     crate::panic::jni_catch(&mut env, std::ptr::null_mut(), |env| {
         // Lock-free: the bound address was snapshotted at registration, so this
-        // answers while `accept` is parked on the slot (PR #234's getter class).
+        // answers while `accept` is parked on the slot — a getter must never
+        // block behind a parked call.
         match REGISTRY_LISTENER.snapshot(handle as u64, |s| s.local_addr.clone()) {
             Some(Ok(addr)) => match build_host_port(env, addr) {
                 Ok(obj) => obj.into_raw(),

@@ -15,9 +15,9 @@ import org.tstrans.mpegts.DemuxEvent;
 
 /**
  * {@code CancelHandle.isCancelled()} reads the shell's ONE cancel state
- * (WP-B3, {@code Owned::is_cancelled}): it flips when ANY handle on the
+ * ({@code Owned::is_cancelled}): it flips when ANY handle on the
  * shell cancels and when the shell is {@code close()}d (close cancels
- * first). Before B3 each handle carried its own flag, so a second handle
+ * first). Each handle used to carry its own flag, so a second handle
  * stayed {@code false} and {@code close()} set nothing.
  *
  * <p>Loopback choreography as in {@link CancelHandleMidIterationTest}: an
@@ -112,7 +112,7 @@ final class CancelHandleObservesCloseTest {
                 rescue.cancel(); // frees the reader on a failed verdict; never asserted on
             }
             assertTrue(cause instanceof SrtException, "expected an SrtException, got " + cause);
-            // Since Arc 2 a cancel is CLOSED on every srt shell: the plain
+            // A cancel is CLOSED on every srt shell: the plain
             // transport closes the socket under the parked recv and then
             // reports the cancel it observed.
             SrtException.Kind kind = ((SrtException) cause).kind();

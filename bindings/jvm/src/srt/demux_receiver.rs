@@ -7,12 +7,12 @@
 //! `bindings/python/src/srt/demux_receiver.rs`, but with the JVM threading model
 //! instead of the GIL.
 //!
-//! Threading (spec §3.4): single-threaded per the `Receiver` model — `inner` is
+//! Threading: single-threaded per the `Receiver` model — `inner` is
 //! accessed `&mut` per call with no mutex (the Java `DemuxReceiver` is not
 //! thread-safe and is NOT `synchronized`). The sanctioned cross-thread stop is
 //! `cancelHandle().cancel()`, which wakes a parked `recv_event`.
 //!
-//! `add_byte_sink` discipline (spec §6, the load-bearing piece): the registered
+//! `add_byte_sink` discipline (the load-bearing piece): the registered
 //! `Box<dyn FnMut(&[u8]) + Send>` runs on the receiver's own thread inside
 //! `recv_event`, attaches to the JVM, and upcalls a `Consumer<byte[]>`. It holds
 //! NO Java monitor across the upcall (`DemuxReceiver.next()`/`addByteSink()`
@@ -51,7 +51,7 @@ use super::errors::{srt_error, throw_srt, transport_error, url_error};
 use super::mux_sender::build_transport_stats;
 
 /// Native backing for `org.tstrans.srt.DemuxReceiver`. Single-threaded per the
-/// `Receiver` model (spec §3.4) — `inner` is accessed under the registry's
+/// `Receiver` model — `inner` is accessed under the registry's
 /// resource lock per call. Only `sink_error` is shared: the `FnMut`+`Send`
 /// byte-sink closure needs owned `Send` capture, and it stashes the first
 /// byte-sink exception here as a `GlobalRef` for fail-loud re-raise from `nNext`.
@@ -118,8 +118,8 @@ fn build_from_url(
     }
 
     // The one-shot accept of a plain receiver has no cancel handle yet (the
-    // object does not exist): a fresh, never-fired slot. DEBT-16 ruling (Arc 2):
-    // the FIRST accept inside a blocking constructor stays uncancellable.
+    // object does not exist): a fresh, never-fired slot. By design, the
+    // FIRST accept inside a blocking constructor stays uncancellable.
     // `accept_one` renders the empty-host → `0.0.0.0` bind and the IPv6
     // bracketing this site composed by hand.
     let slot = tst_core::cancel::CancelSlot::new();
@@ -280,7 +280,7 @@ pub extern "system" fn Java_org_tstrans_srt_DemuxReceiver_nNext<'local>(
 }
 
 /// `nAddByteSink(handle, consumer)` — register a fan-out `Consumer<byte[]>` that
-/// fires once per 188-byte TS packet before demux. See the module doc / spec §6
+/// fires once per 188-byte TS packet before demux. See the module doc
 /// for the monitor discipline: the closure attaches to the JVM and upcalls with
 /// NO Rust lock and NO Java monitor held.
 #[unsafe(no_mangle)]

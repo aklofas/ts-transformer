@@ -22,8 +22,8 @@ import org.tstrans.mpegts.DemuxEvent;
  * the re-accept after its peer disconnected.
  *
  * <p>JVM mirror of tst-c's {@code loopback_cancel_wakes_managed_listener_parked_in_reaccept}
- * and tst-py's {@code test_cancel_wakes_managed_listener_parked_in_reaccept}
- * (ROADMAP "cancellable managed-listener re-accept"). Before the fix the
+ * and tst-py's {@code test_cancel_wakes_managed_listener_parked_in_reaccept}.
+ * Before the fix the
  * reconnect factory sat in {@code Listener::accept()} with nothing able to
  * reach that listener, and the backoff between attempts was an
  * uninterruptible sleep, so {@code cancel()} did nothing until the next peer
@@ -48,8 +48,8 @@ import org.tstrans.mpegts.DemuxEvent;
  *
  * <p>Two timings of {@code cancelHandle()} are covered. Obtained BEFORE the
  * reader iterates is the historical happy path. Obtained MID-ITERATION, while
- * the reader is parked in the re-accept, is the ROADMAP "JVM cancelHandle()
- * blocks while a native receive is in flight" rider: the native used to take
+ * the reader is parked in the re-accept, is the "JVM cancelHandle()
+ * blocks while a native receive is in flight" case: the native used to take
  * the receiver's registry lease, which {@code nNext} holds for the whole
  * duration of a native receive, so the call waited for a receive that — during
  * a re-accept — never returns. The cancel target is now captured at open and
@@ -60,7 +60,7 @@ import org.tstrans.mpegts.DemuxEvent;
  * {@code Receiver<ManagedRecvTransport<SrtTransport>>}. Its reconnect factory
  * shares the {@code FactoryCancel} slot with the demux twin, but that is a
  * separate JNI constructor and nothing pinned it: tst-py's matching wrapper was
- * found still on the plain, uncancellable factory (deep-review CORR-05), so the
+ * found still on the plain, uncancellable factory, so the
  * JVM sibling gets its own regression lock here.
  */
 class SrtManagedListenerCancelTest {

@@ -91,7 +91,7 @@ class SrtManagedEndReasonTest {
     /**
      * {@code endReason()} must answer while a native receive is in flight.
      *
-     * <p>Same rider {@link SrtManagedListenerCancelTest} locks for
+     * <p>The same contract {@link SrtManagedListenerCancelTest} pins:
      * {@code cancelHandle()}: {@code nNext} holds the receiver's registry
      * resource lease for the whole duration of a native receive, so any getter
      * routed through {@code REGISTRY.with()} waits for a receive that — parked

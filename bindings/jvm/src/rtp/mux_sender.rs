@@ -52,8 +52,7 @@ static REGISTRY: LazyLock<OwnedRegistry<Inner, StreamHandles>> = LazyLock::new(O
 
 /// Register a `MuxSender<RtpTransport>` as an `Owned` entry. `RtpTransport`
 /// always yields a cancel handle; the `None` arm is the trait's, not a
-/// reachable state, and is REPORTED rather than `expect`ed (spec §3.4 retires
-/// the `.expect("… always Some")` sites).
+/// reachable state, and is REPORTED rather than `expect`ed.
 fn register(env: &mut JNIEnv, sender: Inner) -> jlong {
     let cancel = match super::rtp_cancel(sender.cancel_handle(), "RtpTransport") {
         Ok(c) => c,

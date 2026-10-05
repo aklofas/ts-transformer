@@ -16,7 +16,7 @@ import org.tstrans.SrtException;
 import org.tstrans.mpegts.DemuxEvent;
 
 /**
- * Live-socket tests for {@code lastSeenMicros(int pid)} (task D7) on the two
+ * Live-socket tests for {@code lastSeenMicros(int pid)} on the two
  * srt convenience receivers: the plain {@link DemuxReceiver} and the managed
  * (auto-reconnect) {@link ManagedDemuxReceiver}. Each proves the same three
  * states as the rtp {@code DemuxReceiverTest} counterpart: {@code null}

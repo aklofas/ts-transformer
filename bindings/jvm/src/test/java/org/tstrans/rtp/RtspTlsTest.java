@@ -19,7 +19,7 @@ import org.tstrans.mpegts.VideoCodec;
 
 /**
  * rtsps:// end-to-end: server bound with the committed CA:FALSE fixture
- * cert/key (file paths — the post-#111 config shape), client trusting the
+ * cert/key (file paths), client trusting the
  * self-signed leaf via {@code tlsRootCertsPem}. Mirrors tst-py's
  * {@code test_rtp_integration.py} rtsps test; hang-proofing conventions
  * (producer daemon / client daemon / watchdog) follow

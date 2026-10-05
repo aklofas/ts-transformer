@@ -7,8 +7,8 @@ import java.util.stream.Collectors;
 
 class SrtErrorModelTest {
     /**
-     * The members are exactly the domain's {@code BindingErrorKind} subset
-     * (WP-B3 / spec §3.3). Eleven, not the ten of the original plan: {@code END_OF_STREAM} was added
+     * The members are exactly the domain's {@code BindingErrorKind} subset.
+     * Eleven, not the original ten: {@code END_OF_STREAM} was added
      * so the kind table is total with the C ABI's {@code TST_E_END_OF_STREAM}
      * (-12). {@code WOULD_BLOCK} retired — its only producer
      * ({@code TransportError::Backpressure}) now maps to {@code BACKPRESSURE}.

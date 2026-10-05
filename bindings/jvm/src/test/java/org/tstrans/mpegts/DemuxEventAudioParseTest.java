@@ -16,8 +16,8 @@ import org.tstrans.codec.Mpeg2AudioFrame;
 
 /**
  * Behavioural tests for the lazy {@link DemuxEvent.Audio#parse()} model
- * (DA-PERF-2 parity — mirrors tst-py's {@code DemuxEvent.Audio.parse()} and the
- * WP16 {@code Video} shape). Lives in {@code org.tstrans.mpegts} so it can drive
+ * (mirrors tst-py's {@code DemuxEvent.Audio.parse()} and the
+ * {@code Video} shape). Lives in {@code org.tstrans.mpegts} so it can drive
  * the package-private {@link DemuxEventAudioNatives#nParseAudio} companion
  * directly (ordinal-drift + strict/lenient malformed paths that a demux-driven
  * test can't reach).

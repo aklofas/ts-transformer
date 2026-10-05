@@ -1,6 +1,6 @@
 //! JNI surface for `org.tstrans.srt.ManagedMuxSender` and
 //! `org.tstrans.srt.ManagedDemuxReceiver` — the two convenience auto-reconnect
-//! SRT wrappers (sub-wave C, Task 2).
+//! SRT wrappers.
 //!
 //! Ports tst-py's `bindings/python/src/srt/managed_convenience.rs`. The sender
 //! wraps `MuxSender<ManagedTransport<SrtTransport>>`; the receiver wraps
@@ -13,11 +13,11 @@
 //!
 //! `nReconnectAttempts` reads `ManagedHandles.attempts` (factory invocations) —
 //! the same counter on all four managed shells since 0.7.0, composed once in
-//! `tst_srt::shells` instead of by a per-binding counting closure (ARCH-08).
+//! `tst_srt::shells` instead of by a per-binding counting closure.
 //! It is an ATTEMPT counter, not `reconnects` (the SUCCESS counter): a factory
 //! call parked in a re-accept has incremented `attempts` and not `reconnects`.
 //!
-//! ## Mode (SOURCE-WINS divergence #2)
+//! ## Mode
 //!
 //! `ManagedMuxSender` REQUIRES `?mode=caller` (CONFIG_INVALID otherwise).
 //! `ManagedDemuxReceiver` accepts BOTH `?mode=listener` (default) AND
@@ -32,7 +32,7 @@
 //! mutex; concurrent pushes are sound). `ManagedDemuxReceiver::nNext` uses
 //! `&mut *ptr` (`recv_event` is `&mut self`). The receiver has NO byte sink.
 //!
-//! ## Stats drift (SOURCE-WINS divergence #4)
+//! ## Stats drift
 //!
 //! `ManagedMuxSender` exposes a combined `TransportStats stats()` +
 //! `reconnectAttempts()` — NO `srtStats()`. `ManagedDemuxReceiver` exposes
@@ -230,7 +230,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nFromUrl<'local>(
             return 0;
         };
 
-        // One open path (ARCH-01 / ARCH-08): the initial dial, the reconnect
+        // One open path: the initial dial, the reconnect
         // factory, the attempt counter and the cancel/stats handles are composed
         // in tst-srt, once. A bad MuxerConfig stays a MuxException, as before.
         let (inner, handles, stats) =
@@ -241,8 +241,8 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nFromUrl<'local>(
                     return 0;
                 }
                 Err(e) => {
-                    // Initial connect failure → CONNECT_FAILED, as before, now
-                    // through A2's one `From<SrtError>` mapping.
+                    // Initial connect failure → CONNECT_FAILED, through the
+                    // shared `From<SrtError>` mapping.
                     srt_error(env, e);
                     return 0;
                 }
@@ -640,8 +640,8 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nReconnectAttempts(
     handle: jlong,
 ) -> jlong {
     crate::panic::jni_catch(&mut env, 0, |env| {
-        // The send side counts attempts in the reconnect stats (A3 keeps
-        // `ManagedHandles.attempts` for the recv side); both live in the
+        // The send side counts attempts in the reconnect stats (the recv side
+        // keeps its own `ManagedHandles.attempts`); both live in the
         // snapshot, so this is lock-free. A poisoned gap lock reads as 0 here —
         // `nReconnectStats` is where that condition throws `IO`.
         REGISTRY_MUX
@@ -773,7 +773,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedMuxSender_nIsAlive(
 // ---------------------------------------------------------------------------
 
 /// Native backing for `org.tstrans.srt.ManagedDemuxReceiver`. Single-threaded
-/// box (NO inner mutex, NO byte sink — divergence #5). The attempt counters and
+/// box (NO inner mutex, NO byte sink). The attempt counters and
 /// the cancel target live in the entry's `Owned` snapshot ([`ManagedHandles`]).
 struct JniManagedDemuxReceiver {
     inner: RustManagedDemuxReceiver<SrtTransport>,
@@ -792,7 +792,7 @@ static REGISTRY_DEMUX: LazyLock<OwnedRegistry<JniManagedDemuxReceiver, ManagedHa
     LazyLock::new(OwnedRegistry::new);
 
 /// Shared construction body for `nFromUrl` / `nFromUrlWithConfig`: parse the URL
-/// (accepting BOTH listener and caller mode — divergence #2), do the initial
+/// (accepting BOTH listener and caller mode), do the initial
 /// listen/connect, wrap in a `ManagedRecvTransport` + `ManagedDemuxReceiver`.
 /// Returns the boxed handle as `jlong`, or `0` with a pending exception.
 #[allow(clippy::too_many_arguments)]
@@ -838,7 +838,7 @@ fn build_demux_from_url(
         return 0;
     };
 
-    // Both modes (divergence #2) are A3's `from_url` dispatch: listener ⇒
+    // Both modes are the shared `from_url` dispatch: listener ⇒
     // `accept_one` through the FactoryCancel slot (a re-accept parked with no
     // peer in sight is reachable by cancel), caller ⇒ `connect`.
     let (inner, handles) = match tst_srt::shells::managed_demux_receiver_from_url(
@@ -963,7 +963,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nFromUrlWithCon
 /// `nNext(handle)` — block until the next `DemuxEvent`, returning it as a Java
 /// object; Java `null` on clean EOF. Throws `SrtException` / `DemuxException` on
 /// a recv-side error. Emits `DemuxEvent.ReconnectDiscontinuity` once after each
-/// transport reconnect. No byte sink (divergence #5), so no captured-exception
+/// transport reconnect. No byte sink, so no captured-exception
 /// drain.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nNext<'local>(
@@ -1057,7 +1057,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedDemuxReceiver_nSocketStats<'l
     })
 }
 
-/// `nSrtStats(handle)` — stats drift (divergence #4): returns the SAME
+/// `nSrtStats(handle)` — returns the SAME
 /// `SocketStats` view as `nSocketStats` and does NOT throw. Mirrors tst-py's
 /// `PyManagedDemuxReceiver::srt_stats`, which delegates to `socket_stats`.
 #[unsafe(no_mangle)]

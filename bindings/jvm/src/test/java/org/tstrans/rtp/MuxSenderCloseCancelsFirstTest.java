@@ -12,7 +12,7 @@ import org.junit.jupiter.api.Timeout;
 import org.tstrans.RtpException;
 
 /**
- * The rtp {@link MuxSender} is an {@code Owned} entry since WP-B3: {@code close()}
+ * The rtp {@link MuxSender} is an {@code Owned} entry: {@code close()}
  * from another thread cancels first, then frees. A {@code sendVideo} racing it
  * ends with {@code RtpException(CLOSED)} (the cancel landed mid-send) or
  * {@code IllegalStateException} (the handle was already claimed) — never a

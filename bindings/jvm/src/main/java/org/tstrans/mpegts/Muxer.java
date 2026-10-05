@@ -12,7 +12,7 @@ import org.tstrans.codec.MispTimestamp;
  * {@code push*} family, then drain assembled TS packets with {@link #pull}.
  * The muxer is deterministic — output is a function of inputs only.
  *
- * <p>One muxer is single-threaded; the consumer owns concurrency (spec §5.5).
+ * <p>One muxer is single-threaded; the consumer owns concurrency.
  * Although the underlying Rust {@code Muxer} owns no OS handles, the native
  * allocation is reclaimed by {@link #close()} — use try-with-resources.
  *
@@ -78,7 +78,7 @@ public final class Muxer extends NativeHandle {
      * destination muxer to the same {@link Av1CarriageMode} as the source, then
      * feed {@link DemuxEvent.Video#raw()} here instead of
      * {@link #pushVideo(byte[], long, boolean)} — {@code pushVideo} would re-wrap
-     * the wire bytes and corrupt an AV1 binding-mode stream (AV1-01).
+     * the wire bytes and corrupt an AV1 binding-mode stream.
      *
      * <p>For elementary OBU / Annex-B input (encoding directly, not re-muxing),
      * use {@link #pushVideo} instead.

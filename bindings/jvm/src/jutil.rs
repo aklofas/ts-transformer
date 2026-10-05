@@ -24,8 +24,8 @@ pub fn decode_stream_handle<H, E>(
 
 /// Copy `bytes` into a fresh Java `byte[]` and wrap it as a heap `ByteBuffer`
 /// (`java.nio.ByteBuffer.wrap`). The returned buffer is backed by JVM-owned
-/// memory, safe to retain past the next call / after `close()`. Used by klv
-/// Tasks 1–4.
+/// memory, safe to retain past the next call / after `close()`. Used across
+/// the per-set KLV modules.
 pub fn wrap_heap_byte_buffer<'local>(
     env: &mut JNIEnv<'local>,
     bytes: &[u8],
@@ -59,7 +59,7 @@ fn field_error_kind_and_tag(fe: &RustKlvFieldError) -> (&'static str, u32) {
 }
 
 /// Build a `java.util.List<KlvFieldError>` (an `ArrayList`) from a slice of
-/// `RustKlvFieldError`s. Used by klv Tasks 2–4.
+/// `RustKlvFieldError`s. Used by the per-set KLV modules.
 ///
 /// An ST 0601 record's `field_errors` can exceed the default 16-slot JNI
 /// local-ref table, so each iteration's element refs (the kind constant, the
@@ -106,8 +106,8 @@ pub fn build_field_errors<'local>(
 }
 
 /// Build a `java.util.List<KlvUnknownField>` (an `ArrayList`) from a slice of
-/// [`OwnedRawField`]s. Each entry is a heap `ByteBuffer` copy. Used by klv
-/// Tasks 2–4 (call sites pass `&record.unknown`).
+/// [`OwnedRawField`]s. Each entry is a heap `ByteBuffer` copy. Used by the
+/// per-set KLV modules (call sites pass `&record.unknown`).
 ///
 /// As with `build_field_errors`, an ST 0601 record's `unknown` list can exceed
 /// the default 16-slot JNI local-ref table, so each iteration's element refs
@@ -172,8 +172,8 @@ pub fn build_long_list<'local>(
 }
 
 /// Read a `java.util.List<Long>` into a `Vec<i64>`. Sibling of
-/// [`build_long_list`] for the read (encode) direction — used by klv WP-C
-/// (`controlCommandVerification`/`activeWavelengths`/`SdccFlpField.precedingTags`).
+/// [`build_long_list`] for the read (encode) direction — used by the ST 0601
+/// pack fields (`controlCommandVerification`/`activeWavelengths`/`SdccFlpField.precedingTags`).
 ///
 /// Each item is read inside its own 4-slot local frame (the `.get(i)` call
 /// mints one local ref; `longValue()` returns a primitive and mints none),
@@ -201,8 +201,8 @@ pub fn read_long_list(env: &mut JNIEnv, list: &JObject) -> jni::errors::Result<V
 }
 
 /// Read a `java.util.List<KlvUnknownField>` back into a `Vec<OwnedRawField>`,
-/// dropping any entry whose tag collides with a typed tag (typed wins). Used by klv
-/// Tasks 2–4 (call sites assign the result back to `record.unknown`).
+/// dropping any entry whose tag collides with a typed tag (typed wins). Used by
+/// the per-set KLV modules (call sites assign the result back to `record.unknown`).
 pub fn read_unknown_list(
     env: &mut JNIEnv,
     list: &JObject,

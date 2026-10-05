@@ -34,7 +34,7 @@ import org.tstrans.mpegts.VideoCodec;
  * completing a {@link CompletableFuture}; a watchdog daemon {@code close()}s the
  * obtained {@link DemuxReceiver} after the ceiling to unwedge a parked recv (the rtp
  * convenience wrapper has no {@code cancelHandle}; {@code close()} cancels-first then
- * frees — the wave-B proven safe path). Cleanup joins the client/producer threads
+ * frees — the proven safe path). Cleanup joins the client/producer threads
  * before the final free so there is provably no in-flight {@code nNext} at teardown.
  */
 class RtspServerClientLoopbackTest {
@@ -98,8 +98,8 @@ class RtspServerClientLoopbackTest {
                     RtspSession session = RtspClient.connect(RtspClientConfig.of(url));
                     DemuxReceiver rx = session.intoDemuxReceiver();
                     rxRef.set(rx);
-                    // 0.7.0 (review 9): the data plane is a consumable handle —
-                    // a second take is CLOSED, as in Python; it was PROTOCOL.
+                    // The data plane is a consumable handle: a second take is
+                    // CLOSED, as in Python.
                     RtspException twice = assertThrows(RtspException.class,
                         session::intoDemuxReceiver);
                     assertEquals("CLOSED", twice.kind().name());
@@ -122,7 +122,7 @@ class RtspServerClientLoopbackTest {
                             throw re;
                         }
                     }
-                    // Review 9: the consumed check runs before the H.264
+                    // The consumed check runs before the H.264
                     // wrong-constructor check, so taking the data plane the
                     // other way is CLOSED too (it was PROTOCOL). After the
                     // stream check: this consuming call tears the session down.

@@ -18,7 +18,7 @@ import org.junit.jupiter.api.Timeout;
 import org.tstrans.SrtException;
 
 /**
- * Arc 2 R3 (DEBT-14): {@code finish()} drains, reports, closes; a second call
+ * {@code finish()} drains, reports, closes; a second call
  * is quiet.
  *
  * <p>{@code close()} is cancel-first and abandons whatever the muxer still

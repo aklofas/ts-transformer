@@ -310,7 +310,7 @@ fn with_server<R>(env: &mut JNIEnv, handle: jlong, f: impl FnOnce(&ServerInner) 
 /// runtime-shutdown path (NOT the graceful `stop()`), so poisoning a torn
 /// mutator drops the server without a double-panic-in-Drop hazard.
 ///
-/// # Mixed-use poisoning contract (FFI audit F-03)
+/// # Mixed-use poisoning contract
 ///
 /// Poisoning the server drops its `REGISTRY_SERVER` entry and shuts down its tokio
 /// runtime via `Drop`. [`MountHandle`](super::server)s already created from this

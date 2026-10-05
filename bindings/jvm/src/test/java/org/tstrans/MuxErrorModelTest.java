@@ -15,8 +15,8 @@ class MuxErrorModelTest {
         assertEquals("bad config", e.getMessage());
     }
     /**
-     * The members are exactly the domain's {@code BindingErrorKind} subset
-     * (WP-B3 / spec §3.3). The four precise members were added in 0.7.0; nothing retired.
+     * The members are exactly the domain's {@code BindingErrorKind} subset.
+     * The four precise members were added in 0.7.0; nothing retired.
      */
     @Test
     void kindMembersMatchTheMuxDomain() {

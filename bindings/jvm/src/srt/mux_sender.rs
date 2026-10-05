@@ -116,7 +116,7 @@ fn build_from_url(
         return 0;
     }
 
-    // One open path (ARCH-01): `SrtUrl::connect_recv` applies the overlay to a
+    // One open path: `SrtUrl::connect_recv` applies the overlay to a
     // default `SocketConfig` and joins host:port (IPv6-bracketing included) —
     // exactly what this site composed via `join_host_port`. `connect_recv`, NOT
     // `connect`: this site has never merged the sender preset, and `connect`

@@ -13,7 +13,7 @@ import org.tstrans.mpegts.MuxerConfig;
 import org.tstrans.mpegts.VideoCodec;
 
 /**
- * Arc 2 R3 (DEBT-14): {@code org.tstrans.rtp.MuxSender.finish()} drains,
+ * {@code org.tstrans.rtp.MuxSender.finish()} drains,
  * reports, closes; a second call is quiet.
  *
  * <p>The RTP twin of {@code org.tstrans.srt.SrtMuxSenderFinishTest}. The peer

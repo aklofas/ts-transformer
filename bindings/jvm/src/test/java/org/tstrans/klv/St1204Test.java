@@ -280,13 +280,13 @@ class St1204Test {
     @Test
     void validateMismmsZeroLengthItem() {
         UasDatalinkLs base = fullMismmsRecord();
-        // WP-B TYPES tag 96 (targetWidthExtendedM): a zero-length wire value
+        // Tag 96 (targetWidthExtendedM) is typed: a zero-length wire value
         // for a now-typed tag can no longer be injected through the JVM
         // binding's `unknown` list — the JNI translator's
         // `is_st0601_typed_tag` collision-drop silently eats a tag-96
         // `unknown` entry before it ever reaches the Rust validator (typed
         // field wins per the documented collision policy; same fix as the
-        // Python binding's analogous WP-B carry-forward). The zero-length
+        // Python binding's analogous carry-forward). The zero-length
         // scenario itself is still exercised directly at the Rust-core
         // level (bypassing any binding predicate) by
         // `zero_length_unknown_tag_96_and_missing_group` in
@@ -347,7 +347,7 @@ class St1204Test {
     void validateMismmsAlternationConflict75And104() {
         // Build a record with both Tag 75 (sensorEllipsoidHeightM) and Tag 104
         // (sensorEllipsoidHeightExtendedM) present simultaneously — should
-        // trigger AlternationConflict. WP-B types tag 104, so it can no
+        // trigger AlternationConflict. Tag 104 is typed, so it can no
         // longer be injected via `unknown` (the typed-wins collision-drop
         // would eat it, same as the neighboring zero-length test above) —
         // set the typed field directly instead, mirroring the Rust

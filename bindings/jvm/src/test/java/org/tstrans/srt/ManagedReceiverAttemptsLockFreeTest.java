@@ -16,11 +16,11 @@ import org.junit.jupiter.api.Timeout;
 import org.tstrans.SrtException;
 
 /**
- * {@code ManagedReceiver.reconnectAttempts()} (WP-B3 / ARCH-08): counts
+ * {@code ManagedReceiver.reconnectAttempts()} counts
  * reconnect ATTEMPTS (factory invocations, {@code ManagedHandles.attempts})
  * and answers WITHOUT the resource lock — while the receive loop is parked
- * in a listener-mode re-accept with no peer in sight. Before B3 it returned
- * the SUCCESS counter and took the lock a parked {@code recvBytes()} holds.
+ * in a listener-mode re-accept with no peer in sight. It used to return
+ * the SUCCESS counter and take the lock a parked {@code recvBytes()} holds.
  *
  * <p>Attempts and reconnects are deliberately distinguished: the parked
  * re-accept is attempt #1 with ZERO successful rebuilds, so a getter still

@@ -27,7 +27,7 @@ import org.tstrans.mpegts.DemuxEvent;
  * <p>Both pairs end the parked call with {@code SrtException(CLOSED)}: the
  * plain cancel handle closes the libsrt socket under the parked
  * {@code srt_recvmsg}, and {@code SrtTransport} reports the cancel it observed
- * rather than the connection error it provoked (Arc 2). The plain shells
+ * rather than the connection error it provoked. The plain shells
  * record no end reason.
  *
  * <p>Both tests park a reader on a connected-but-silent peer, so nothing but the

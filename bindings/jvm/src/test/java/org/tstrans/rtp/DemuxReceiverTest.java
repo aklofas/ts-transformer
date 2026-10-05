@@ -14,7 +14,7 @@ import org.tstrans.mpegts.DemuxEvent;
 
 /**
  * Unit tests for the public {@link DemuxReceiver#recvEvent()} checked-exception
- * receive method (task D3) — the non-iterator counterpart to {@link
+ * receive method — the non-iterator counterpart to {@link
  * DemuxReceiver#iterator()}. The live cross-binding round-trip + byte-sink
  * fixture lives in {@link RtpMuxDemuxLoopbackTest}; this file is scoped to
  * {@code recvEvent()}'s own contract: a persistent {@code ?recv_timeout=}
@@ -59,12 +59,12 @@ class DemuxReceiverTest {
         assertNotNull(rx, "could not bind an rtp DemuxReceiver after 8 attempts");
 
         try (DemuxReceiver receiver = rx) {
-            // Phase 1: nothing has been sent. The persistent ?recv_timeout=200
+            // First, nothing has been sent. The persistent ?recv_timeout=200
             // deadline must expire as a checked, directly catchable RtpException.
             RtpException ex = assertThrows(RtpException.class, receiver::recvEvent);
             assertEquals(RtpException.Kind.BACKPRESSURE, ex.kind());
 
-            // Phase 2: resumable — push a real muxed TS stream (PAT/PMT + a
+            // Then, resumable — push a real muxed TS stream (PAT/PMT + a
             // handful of H.264 IDRs at distinct PTS values, so the demuxer
             // closes the first video PES well before the sender's final
             // close()-triggered flush) and confirm the SAME receiver's
@@ -83,7 +83,7 @@ class DemuxReceiverTest {
     }
 
     /**
-     * {@code lastSeenMicros(pid)} (task D7): {@code null} before any event has
+     * {@code lastSeenMicros(pid)}: {@code null} before any event has
      * arrived, {@code null} for an unrecognized PID, and a positive Unix-epoch
      * microsecond count for the configured video PID once at least one event
      * has been demuxed. Reuses the same bind-retry + {@code MuxSender} burst

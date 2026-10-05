@@ -17,7 +17,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 /**
  * Unit tests for the content-addressed extraction helpers and dev-override
- * property introduced by DA-JVM-2. All tests are Linux-runnable; the
+ * property. All tests are Linux-runnable; the
  * Windows-locked-DLL path (where {@link Files#delete} swallows
  * {@link IOException} on an in-use DLL) is documented but not exercised on CI.
  */

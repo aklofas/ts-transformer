@@ -17,7 +17,7 @@ class Av1Test {
     // Minimal Sequence Header OBU body — captured byte-for-byte from the
     // tst_core unit tests (codec::av1::decode::obu_stream::tests::
     // minimal_seq_header_body / sequence_header::tests). Main profile,
-    // level 2.0 tier 0, 320x240, 8-bit 4:2:0, no color desc, no timing info.
+    // level 2.0, seq_tier 0 (Main), 320x240, 8-bit 4:2:0, no color desc, no timing info.
     private static final byte[] SEQ_HEADER_320X240 =
             unsigned(0, 0, 0, 4, 60, 255, 188, 0, 0, 0);
 
