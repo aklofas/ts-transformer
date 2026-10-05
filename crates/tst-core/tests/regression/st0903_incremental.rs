@@ -166,7 +166,7 @@ fn st0903_lenient_walker_treats_below_min_signal_as_field_error() {
             .field_errors
             .iter()
             .any(|e| matches!(e, KlvFieldError::InvalidLength { tag: 11, .. })),
-        "expected InvalidLength field_error for tag 11 (A7 lenient mapping), got {:?}",
+        "expected InvalidLength field_error for tag 11 (lenient mapping), got {:?}",
         decoded.field_errors
     );
 }

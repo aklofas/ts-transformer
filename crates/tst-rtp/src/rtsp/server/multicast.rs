@@ -241,7 +241,7 @@ pub(crate) async fn build_multicast_send_socket(
                     return Err(RtspServerError::InvalidMulticastGroup {
                         addr: group.to_string(),
                         detail: format!(
-                            "IPv6 multicast iface binding is Unix-only in v1 (requested iface '{iface_str}')"
+                            "IPv6 multicast iface binding is Unix-only (requested iface '{iface_str}')"
                         ),
                     });
                 }

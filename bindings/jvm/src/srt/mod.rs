@@ -56,7 +56,7 @@ pub(crate) struct ManagedSenderSnapshot {
     /// has the same snapshot to read as the receivers do.
     #[expect(
         dead_code,
-        reason = "send side reads attempts from `stats`; kept for the binding-side `reconnecting()` / WP-D cancel-handle work"
+        reason = "send side reads attempts from `stats`; kept for the binding-side `reconnecting()` getter and cancel-handle use"
     )]
     pub handles: ManagedHandles,
     pub stats: tst_pipeline::ManagedStatsHandle,

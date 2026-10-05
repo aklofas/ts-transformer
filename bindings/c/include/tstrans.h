@@ -129,8 +129,8 @@
  *   (behind `TST_HAS_RTP`). Completes the data-stream surface parity with the
  *   video/klv/audio/subtitle push families on both shells. Additive — no
  *   symbol removed, no signature or struct layout changed.
- * - `14` — AV1 carriage: `TstError::InvalidAv1Obu` (-44) B0
- *   guard error code; `av1_carriage` provenance byte on `TstEventSample`
+ * - `14` — AV1 carriage: `TstError::InvalidAv1Obu` (-44) malformed-OBU
+ *   error code; `av1_carriage` provenance byte on `TstEventSample`
  *   (repurposed pad byte — 0=`MPEG2_TS_BINDING`, 1=`INTEROP_RAW_OBU`,
  *   0xFF=N/A for non-AV1); `tst_muxer_push_video_wire` /
  *   `tst_muxer_push_video_wire_to` pass-through push for byte-faithful
@@ -174,7 +174,7 @@
  *   `tst_muxer_push_video_misp_to_with_dts`, `tst_misp_time_extract`,
  *   `TST_E_MISP_TIME` (-45), `TST_E_MISP_TIME_MALFORMED` (-46).
  *   Additive — no struct growth, no signature changes.
- * - `20` (bindings parity): four addition
+ * - `20` (bindings parity): four new
  *   groups, all additive — no existing symbol, signature, or struct
  *   layout changed:
  *   - **Background reconnect:** `TstReconnectMode` enum

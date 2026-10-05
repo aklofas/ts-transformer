@@ -434,7 +434,7 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/surface-manifest.sh
 
-      - name: check-no-unreachable-expect-in-bindings (Arc 2 R2)
+      - name: check-no-unreachable-expect-in-bindings
         # Binding production code never aborts on a #[non_exhaustive]
         # wildcard or an .expect(); test tails / tests/ / build.rs excluded.
         if: matrix.name == 'linux-x86_64'

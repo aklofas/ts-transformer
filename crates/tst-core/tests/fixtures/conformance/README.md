@@ -20,7 +20,7 @@ for how the test runner consumes them.
 
 ## Starter fixture set
 
-The following 11 parameter-set fixtures shipped with this plan:
+The starter set holds these 11 parameter-set fixtures:
 
 | Codec | Fixture | Source vector | Profile | Level | Bit depth | Chroma | Notes |
 |---|---|---|---|---|---|---|---|

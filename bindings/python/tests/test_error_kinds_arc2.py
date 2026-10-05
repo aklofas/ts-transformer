@@ -186,7 +186,7 @@ REMOVED = {exc.DemuxErrorKind: ["UNEXPECTED_EOF"], exc.KlvErrorKind: ["UNKNOWN_S
 @pytest.mark.parametrize("enum_cls", list(EXPECTED), ids=lambda e: e.__name__)
 def test_canonical_member_set_is_exactly_the_arc2_table(enum_cls) -> None:
     canonical = {m.name: m.value for m in enum_cls}  # iteration excludes aliases
-    assert canonical == EXPECTED[enum_cls], f"{enum_cls.__name__} drifted from the Arc 2 kind table"
+    assert canonical == EXPECTED[enum_cls], f"{enum_cls.__name__} drifted from the canonical kind table"
 
 
 @pytest.mark.parametrize("enum_cls", list(ALIASES), ids=lambda e: e.__name__)

@@ -218,7 +218,7 @@ class SrtSenderCloseCancelsFirstTest {
         assertTrue(end instanceof SrtException,
             "expected sendData to end with SrtException(CLOSED), got " + end);
         assertEquals(SrtException.Kind.CLOSED, ((SrtException) end).kind(),
-            "a close-initiated cancel surfaces as CLOSED on the plain shells too (Arc 2)");
+            "a close-initiated cancel surfaces as CLOSED on the plain shells too");
     }
 
     /** Plain {@link Sender}: a parked {@code sendBytes()} ends CLOSED and {@code close()} returns. */
@@ -260,6 +260,6 @@ class SrtSenderCloseCancelsFirstTest {
         assertTrue(end instanceof SrtException,
             "expected sendBytes to end with SrtException(CLOSED), got " + end);
         assertEquals(SrtException.Kind.CLOSED, ((SrtException) end).kind(),
-            "a close-initiated cancel surfaces as CLOSED on the plain shells too (Arc 2)");
+            "a close-initiated cancel surfaces as CLOSED on the plain shells too");
     }
 }

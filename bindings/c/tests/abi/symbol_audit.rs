@@ -110,7 +110,7 @@ fn srt_symbols_not_exported() {
     }
     assert!(
         leaked.is_empty(),
-        "Plan B Task 4's symbol-hygiene wiring should hide all srt_*/SRT_* \
+        "the build's symbol-hygiene wiring should hide all srt_*/SRT_* \
          symbols, but found {} leaked: {leaked:?}",
         leaked.len(),
     );

@@ -359,7 +359,7 @@ fn flap_cycles_never_wedge_or_hang() {
                 .expect("background mode always accepts, direct or into the gap");
             assert!(
                 t0.elapsed() < Duration::from_secs(1),
-                "send_bytes blocked for {:?} on message {idx} — possible join() wedge (Finding B)",
+                "send_bytes blocked for {:?} on message {idx} — possible join() wedge",
                 t0.elapsed()
             );
             all_sent.push(idx);
@@ -432,7 +432,7 @@ fn flap_cycles_never_wedge_or_hang() {
                 .expect("background mode always accepts, direct or into the gap");
             assert!(
                 t0.elapsed() < Duration::from_secs(1),
-                "send_bytes blocked for {:?} on message {idx} (persisting-outage cycle) — possible join() wedge (Finding B)",
+                "send_bytes blocked for {:?} on message {idx} (persisting-outage cycle) — possible join() wedge",
                 t0.elapsed()
             );
             all_sent2.push(idx);

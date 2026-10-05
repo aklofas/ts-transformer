@@ -76,7 +76,7 @@ jobs:
           # libsrt/librist/mbedTLS trees.
           submodules: recursive
 
-      - name: Assert version consistency (REL-01)
+      - name: Assert version consistency
         # Same rail ci/python-wheels/jvm-jar run. On a v* tag push it also
         # forces source version == tag. Re-asserted at publish time because
         # it is the specific guard against stranding the ordered publish

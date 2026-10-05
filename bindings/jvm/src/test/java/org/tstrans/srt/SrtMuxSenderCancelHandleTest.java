@@ -130,7 +130,7 @@ class SrtMuxSenderCancelHandleTest {
             assertTrue(end instanceof SrtException,
                 "expected sendData to end with SrtException(CLOSED), got " + end);
             assertEquals(SrtException.Kind.CLOSED, ((SrtException) end).kind(),
-                "a cancel is reported as CLOSED on every shell (Arc 2, spec Q2)");
+                "a cancel is reported as CLOSED on every shell");
             cancel.close();
         }
     }

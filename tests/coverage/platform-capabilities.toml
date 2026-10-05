@@ -32,10 +32,9 @@ resolved = "2026-07-26"
 note = """
 Was: librist rist_destroy teardown hang (~14s+, both Simple and Main+AES
 profiles) + zero data-plane delivery; vendored-lib bug, not our code.
-Evidence: project_windows_multicast_rist_ci_evidence.md. RESOLVED: both bugs
-fixed upstream in librist 0.2.18 (vendored bump PR #125; diagnostic run
-30136835805 showed teardown 10-31 ms and full delivery on both profiles) —
-gate lifted 2026-07-26.
+RESOLVED: both bugs fixed upstream in librist 0.2.18 (evidence: a windows-msvc
+CI run against the vendored librist 0.2.18 showed teardown 10-31 ms and full
+delivery on both profiles) — gate lifted 2026-07-26.
 """
 
 [[platform_skip]]
@@ -120,9 +119,8 @@ note = "Gating."
 platform = "macos-arm64"
 status = "A"
 note = """
-Gating since 2026-05-30 (d5ef206a; plan #64 14-day phase-in complete). First
-clean all-green run 2026-05-30 (CI 26672638228); matrix `continue` = false in
-ci.yml + jvm-jar.yml.
+Gating after a 14-day phase-in that ended 2026-05-30 with a clean all-green
+run; matrix `continue` = false in ci.yml + jvm-jar.yml.
 """
 
 [[capability]]

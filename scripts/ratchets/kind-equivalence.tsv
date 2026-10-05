@@ -5,9 +5,8 @@
 #   py / jvm = ';'-separated Enum.MEMBER lists (or '-'); *_parity = ok | pending
 #   Python enums live in bindings/python/python/tstrans/exceptions.py; JVM enums in
 #   bindings/jvm/src/main/java/org/tstrans/<Family>Exception.java (`public enum Kind`).
-#   PR 2 spelled TODAY's members; WP-B3 rewrote the `jvm` cells and WP-B2 the
-#   `py` cells to <Enum>.<member> (the py column is derived mechanically from
-#   bindings/python/src/raise.rs DOMAINS order), both flipping parity to ok.
+#   The `jvm` and `py` cells are <Enum>.<member> lists (the py column is
+#   derived mechanically from bindings/python/src/raise.rs DOMAINS order).
 #   ROW ORDER IS PART OF THE CONTRACT: the rail diffs these rows against the
 #   print-kinds output line by line, so reordering a row fails the rail.
 CONFIG_INVALID	CONFIG_INVALID	-1	-1	SrtErrorKind.CONFIG_INVALID;MuxErrorKind.CONFIG_INVALID	ok	MuxException.Kind.CONFIG_INVALID;SrtException.Kind.CONFIG_INVALID	ok
@@ -21,7 +20,7 @@ BROKEN	BROKEN	-8	-8	SrtErrorKind.BROKEN;RtpErrorKind.BROKEN;UdpErrorKind.BROKEN;
 INVALID_USAGE	INVALID_USAGE	-9	-9	MuxErrorKind.INVALID_USAGE	ok	MuxException.Kind.INVALID_USAGE	ok
 INTERNAL	INTERNAL	-10	-10	HlsErrorKind.INTERNAL;MuxErrorKind.INTERNAL;KlvErrorKind.INTERNAL	ok	MuxException.Kind.INTERNAL;DemuxException.Kind.INTERNAL;KlvDecodeException.Kind.INTERNAL	ok
 # PANIC_CAUGHT: neither binding gives it an enum member — Python raises
-# pyo3_runtime.PanicException (WP-B2), the JVM a RuntimeException (WP-B3).
+# pyo3_runtime.PanicException, the JVM a RuntimeException.
 PANIC_CAUGHT	PANIC_CAUGHT	-11	-11	-	ok	-	ok
 END_OF_STREAM	END_OF_STREAM	-12	-12	SrtErrorKind.END_OF_STREAM;RtpErrorKind.END_OF_STREAM	ok	SrtException.Kind.END_OF_STREAM	ok
 NOT_AVAILABLE	NOT_AVAILABLE	-13	-13	-	ok	-	ok

@@ -5,9 +5,9 @@ SPS/VPS/PPS bytes are EBSP (NAL header stripped, emulation-prevention bytes
 preserved) — the same format the H.265 `BitReader` accepts.
 
 Note: x265 encodes short-term reference pictures in slice headers, not in
-the SPS `short_term_ref_pic_sets` list. The RPS walker added in plan #29
-Task 4.1 is exercised by the synthetic `build_synthetic_sps_with_*` helpers
-in `mod.rs::sps_tests`, not by these fixtures.
+the SPS `short_term_ref_pic_sets` list. The RPS walker is exercised by the
+synthetic `build_synthetic_sps_with_*` helpers in `mod.rs::sps_tests`, not by
+these fixtures.
 
 ## To regenerate
 

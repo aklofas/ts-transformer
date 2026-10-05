@@ -281,7 +281,7 @@ impl<R: Send + 'static> AcceptHandle<R> {
                         "AcceptHandle::join: accept() still parked after \
                          {accept_deadline:?} with no connection to dequeue — \
                          the libsrt accept-queue prune class (GC erased a \
-                         broken queued connection; PR #231). The caller's \
+                         broken queued connection). The caller's \
                          connect either never happened or its socket closed \
                          before the peer thread got scheduled. Woken by the \
                          cancel with: {e}"

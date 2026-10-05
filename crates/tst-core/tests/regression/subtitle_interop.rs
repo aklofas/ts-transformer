@@ -583,7 +583,7 @@ fn wave_i1_matrix_no_regression() {
     assert!(
         rejections.is_empty(),
         "external receiver rejected VTTC/GA94 marker stream(s):\n{}\n\
-         H7's soft-doc claim does NOT hold for these cells. \
+         the documented claim that external receivers tolerate the markers does NOT hold for these cells. \
          Consider removing the auto-emit or changing the marker.",
         rejections.join("\n")
     );

@@ -1003,7 +1003,7 @@ mod tests {
         };
         assert!(
             wait_for(PROMPT, || reader.is_finished()),
-            "a snapshot getter or cancel_arc() waited on the parked slot (the PR #234 / #189 classes)"
+            "a snapshot getter or cancel_arc() waited on the parked slot"
         );
         let (snap, reason, cancelled, handle) = reader.join().unwrap();
         assert_eq!(
@@ -1047,7 +1047,7 @@ mod tests {
         };
         assert!(
             wait_for(PROMPT, || prober.is_finished()),
-            "a non-blocking probe waited on the parked slot (the PR #234 class)"
+            "a non-blocking probe waited on the parked slot"
         );
         assert_eq!(
             prober.join().unwrap(),

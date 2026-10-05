@@ -29,9 +29,9 @@ crate = "tst-rtp"
 class = "blocked_bug"
 resolved = "2026-05-28"
 note = """
-The WS-1 CI-hang quarantine. Un-ignored in 0368fc8f and now passes on Linux
-x86_64 + aarch64 (run 26607873300). Root cause was the in-session RTSP PLAY
-write-lock starvation, fixed by the write_gate in 6de05208. Recorded here so
+A CI-hang quarantine, since un-ignored; it passes on Linux x86_64 + aarch64.
+Root cause was the in-session RTSP PLAY write-lock starvation, fixed by the
+RTSP session write_gate. Recorded here so
 the ledger preserves the history without normalizing an active skip.
 """
 

@@ -252,7 +252,7 @@ fn binding_mode_wire_format_invariants_hold() {
     let n_start_codes = ts.windows(3).filter(|w| *w == [0x00, 0x00, 0x01]).count();
     assert!(
         n_start_codes >= 92,
-        "expected ≥92 start codes for 92 OBUs across 30 AUs (Sprint 2 9f83250 per-OBU framing), \
+        "expected ≥92 start codes for 92 OBUs across 30 AUs (per-OBU framing), \
          got {n_start_codes}"
     );
 }
@@ -612,9 +612,9 @@ fn dav1d_handles_extracted_binding_bitstream_without_crashing() {
 /// Run with: `cargo test -p tst-core --test regression
 ///   av1_external_decoder::diagnostic_dump_for_results_doc -- --ignored --nocapture`
 #[test]
-#[ignore = "diagnostic — generates artifacts for docs/validate-1/13b-i2-av1-conformant-results.md"]
+#[ignore = "diagnostic — writes AV1 binding/interop streams and external-tool reports to the temp dir"]
 fn diagnostic_dump_for_results_doc() {
-    let dir = std::env::temp_dir().join("wave_i2_artifacts");
+    let dir = std::env::temp_dir().join("av1_diagnostic_artifacts");
     std::fs::create_dir_all(&dir).unwrap();
     let binding_ts = build_av1_ts(Av1CarriageMode::Mpeg2TsBinding);
     let interop_ts = build_av1_ts(Av1CarriageMode::InteropRawObu);

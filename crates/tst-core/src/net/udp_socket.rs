@@ -194,7 +194,7 @@ pub fn set_multicast_hops_v6(socket: &UdpSocket, hops: u8) -> io::Result<()> {
 pub fn set_multicast_hops_v6(_socket: &UdpSocket, _hops: u8) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
-        "IPV6_MULTICAST_HOPS via raw setsockopt is Unix-only in Phase 1",
+        "IPV6_MULTICAST_HOPS via raw setsockopt is Unix-only",
     ))
 }
 
@@ -223,7 +223,7 @@ pub fn apply_multicast_iface(socket: &UdpSocket, group: IpAddr, iface: &str) -> 
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
                 format!(
-                    "IPv6 multicast iface name lookup not implemented in Phase 1; \
+                    "IPv6 multicast iface name lookup is not implemented; \
                      pre-resolve to scope-id and use the URL form directly (iface='{iface}')"
                 ),
             ));
@@ -327,7 +327,7 @@ pub fn apply_multicast_recv_join(
                     return Err(io::Error::new(
                         io::ErrorKind::Unsupported,
                         format!(
-                            "IPv6 multicast iface name lookup not implemented in Phase 1; \
+                            "IPv6 multicast iface name lookup is not implemented; \
                              ?iface= must be omitted for ipv6 receive (iface='{iface_str}')"
                         ),
                     ));
