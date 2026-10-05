@@ -234,7 +234,8 @@ mod owned {
             }
         }
 
-        /// Lock-free: never touches the slot (the #189 lease-bug class).
+        /// Lock-free: never touches the slot a parked call holds, so the
+        /// cancel always reaches the call it must stop.
         #[allow(dead_code)] // consumed by the `_cancel` entry points (B1.5-B1.10)
         pub(crate) fn cancel(&self) {
             self.0.cancel();
@@ -716,7 +717,8 @@ mod tests {
             assert_eq!(h.with_inner_ref(|n| *n), 8);
         }
 
-        /// `cancel()` must never touch the slot (the #189 lease-bug class).
+        /// `cancel()` must never touch the slot: a parked call holds it, so a
+        /// slot-taking cancel would block behind the call it must wake.
         ///
         /// Latch-and-poll, never a bare blocking call: the cancel runs on its
         /// OWN thread with a `done` latch, and this thread polls that latch

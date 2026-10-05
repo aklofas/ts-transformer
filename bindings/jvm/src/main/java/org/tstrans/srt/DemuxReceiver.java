@@ -67,10 +67,10 @@ public final class DemuxReceiver extends NativeHandle implements Iterable<DemuxE
      *     respectively. Since 0.7.0 the bind/accept faults of this one-shot
      *     open are reported as {@code BROKEN} rather than
      *     {@code CONNECT_FAILED} / {@code ACCEPT_FAILED} / {@code TIMEOUT} /
-     *     {@code CLOSED}: the open now goes through the shared
-     *     {@code SrtUrl::accept_one} path, which is what the C ABI's
-     *     {@code listen_srt} has always done. {@link Listener#accept} is
-     *     unchanged and keeps the typed accept kinds.
+     *     {@code CLOSED}: the open goes through the shared
+     *     {@code SrtUrl::accept_one} path, the same one the C ABI's
+     *     listener-mode opens use. {@link Listener#accept} is unchanged
+     *     and keeps the typed accept kinds.
      */
     public static DemuxReceiver fromUrl(String url) throws SrtException {
         long h = nFromUrl(url);

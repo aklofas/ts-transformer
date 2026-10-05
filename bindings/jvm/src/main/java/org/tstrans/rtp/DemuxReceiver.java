@@ -259,7 +259,7 @@ public final class DemuxReceiver extends NativeHandle implements Iterable<DemuxE
 
     /**
      * Why the receive session ended, or {@code null} if it hasn't ended yet
-     * (or ended through a path this arc doesn't instrument). Still readable
+     * (or ended through a path this type doesn't instrument). Still readable
      * after {@link #close()} — the close path snapshots the reason before
      * the underlying native resource is freed.
      *

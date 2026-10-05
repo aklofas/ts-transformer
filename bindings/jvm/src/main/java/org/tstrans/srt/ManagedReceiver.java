@@ -24,9 +24,9 @@ import org.tstrans.SrtException;
  * <p><b>Closing:</b> use try-with-resources or call {@link #close()} explicitly.
  * After close, further calls throw {@code IllegalStateException}.
  *
- * <p><b>Stats drift:</b> {@link #srtStats()} ALWAYS throws {@code SrtException(IO)}
- * today (same drift as {@code ManagedSender}). Use {@link #socketStats()} for
- * the 16-field scheme-neutral view.
+ * <p><b>Stats:</b> {@link #srtStats()} ALWAYS throws {@code SrtException(IO)},
+ * as on {@code ManagedSender}. Use {@link #socketStats()} for the 16-field
+ * scheme-neutral view.
  *
  * <p><b>Reconnect mode:</b> {@link ReconnectMode#BACKGROUND} in the supplied
  * {@link ReconnectPolicy} is send-side only. A receiver accepts it structurally
@@ -170,14 +170,13 @@ public final class ManagedReceiver extends NativeHandle {
     }
 
     /**
-     * SRT-specific 17-field stats — <b>NOT available on a managed receiver today</b>.
+     * SRT-specific 17-field stats — <b>NOT available on a managed receiver</b>.
      * This method ALWAYS throws {@code SrtException(IO)}: {@code ManagedRecvTransport}
-     * has no SRT-rich stats accessor. Use {@link #socketStats()} instead. A
-     * future tst-pipeline accessor will expose this shape.
+     * has no SRT-specific stats accessor. Use {@link #socketStats()} instead.
      *
      * @return never returns normally
      * @throws IllegalStateException if the receiver is closed
-     * @throws SrtException always ({@code IO}) — documented stats drift
+     * @throws SrtException always ({@code IO})
      */
     public SrtStats srtStats() throws SrtException {
         ensureOpen("ManagedReceiver is closed");

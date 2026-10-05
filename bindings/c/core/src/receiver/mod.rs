@@ -21,10 +21,10 @@ pub mod ts_receiver;
 /// cancellable one the managed re-accept uses, so a future two-phase open
 /// only has to hand the slot out.
 ///
-/// Caller mode uses [`tst_srt::SrtUrl::connect`], NOT `connect_recv`: every
-/// C caller-mode open merged the sender preset through the old `connect_srt`
-/// (15 s connect timeout, 5 s linger, `Role::Sender`), and this preserves
-/// that exactly.
+/// Caller mode uses [`tst_srt::SrtUrl::connect`], NOT `connect_recv`: a C
+/// caller-mode receiver takes the sender preset (15 s connect timeout, 5 s
+/// linger, `Role::Sender`, each where the URL left it unset), the same
+/// defaults as the C sender opens.
 ///
 /// Records the failure to the thread-local last-error and returns `Err(())`
 /// so callers just `return std::ptr::null_mut()`.

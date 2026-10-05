@@ -11,6 +11,6 @@ import org.tstrans.mpegts.MuxerStats;
  * {@link org.tstrans.rtp.SocketStats} (RTP wire counters), not the SRT one.
  *
  * @param socketStats the RTP transport's wire-level counters
- * @param muxerStats  the inner muxer's / demuxer's program & packet totals
+ * @param muxerStats  the inner muxer's / demuxer's program and packet totals
  */
 public record TransportStats(SocketStats socketStats, MuxerStats muxerStats) {}

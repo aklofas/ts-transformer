@@ -241,7 +241,7 @@ jobs:
         # scrub guards above: a workspace-state check, run once.
         if: matrix.name == 'linux-x86_64'
         env:
-          NO_PROCESS_MARKERS_MODE: warn
+          NO_PROCESS_MARKERS_MODE: fail
         run: bash scripts/check/repo/no-process-markers.sh
 
       - name: No process markers — rail self-test

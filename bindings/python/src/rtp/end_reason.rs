@@ -31,7 +31,7 @@ use tst_rtp::StreamEndReason;
 /// `StreamEndReason` is non-exhaustive on the tst-rtp side; a
 /// future variant this binding doesn't know how to map yet returns
 /// `Ok(None)` rather than erroring — matching the "ended through a path
-/// this arc doesn't instrument" contract documented on
+/// this type doesn't instrument" contract documented on
 /// `StreamEndReasonHandle::get`.
 pub(crate) fn end_reason_to_py(py: Python<'_>, r: &StreamEndReason) -> PyResult<Option<PyObject>> {
     let name = match r {

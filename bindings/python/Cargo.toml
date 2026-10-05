@@ -60,7 +60,7 @@ pipeline = []
 # `RtspClientBuilder::tls_root_certs` takes (private-CA `rtsps://`
 # cameras). Omit the feature (`--no-default-features --features tcp,...`)
 # for a plaintext-only build. `tst-rtp?/rtsp-server-tls` ships the RTSP
-# server's TLS acceptor too (tst-py ships server TLS — PRs #110/#114);
+# server's TLS acceptor too (tst-py ships server TLS);
 # `tst-rtp?/rtsp-server-tls` already implies `tst-rtp/tls`, so
 # `tst-rtp?/tls` is redundant here — kept as the explicit-both-features form
 # for clarity (tst-py's `rtp` feature always forwards `tst-rtp?/rtsp-server`,

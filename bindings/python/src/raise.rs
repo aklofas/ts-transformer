@@ -95,7 +95,7 @@ pub(crate) static RTSP: Domain = Domain {
         K::RtspServer,
         K::RtspMount,
         // The shared closed-handle kind: `HandleState::Closed` reaches this
-        // domain through the rtsp client's closable slots (B2.9b). Without
+        // domain through the rtsp client's closable slots. Without
         // the member it would degrade to a misdiagnosing `RuntimeError`.
         K::Closed,
     ],

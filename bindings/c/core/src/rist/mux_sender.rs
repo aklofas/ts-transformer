@@ -23,7 +23,7 @@
 //! **Construction differs from UDP:** RIST uses a move-style builder
 //! (`RistTransportBuilder::new(url)?.connect()`) rather than UDP's
 //! `from_url()?.build()`. URL query params seed all RIST configuration;
-//! no separate builder-chain C functions are needed for v1.
+//! there are no separate builder-chain C functions.
 
 use std::os::raw::c_char;
 

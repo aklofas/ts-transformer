@@ -68,8 +68,9 @@ pub struct TstTcpListener {
 /// be in `host:port` form without a URL scheme. For URL-based construction,
 /// use `tst_tcp_listener_from_url` with a `tcp://addr:port?listen=1` URL.
 ///
-/// Port `0` causes the kernel to assign an ephemeral port; use
-/// `tst_tcp_listener_local_addr` (not yet exported) to retrieve it.
+/// Port `0` causes the kernel to assign an ephemeral port; the C surface
+/// has no getter for the bound address, so bind an explicit port when the
+/// peer needs to know it.
 ///
 /// # Safety
 ///

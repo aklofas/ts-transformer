@@ -4867,8 +4867,8 @@ int tst_demux_config_set_cfi_tolerance(struct tst_demux_config_t *cfg, int enabl
  * the in-flight partial section and emits a
  * `TST_NONCONFORMANT_CODE_PSI_CC_DISCONTINUITY` diagnostic (matches
  * ffmpeg `mpegts.c:3118-3142`). In lenient mode, the continuation
- * packets are accepted across the jump (today's permissive behavior —
- * the section either passes by luck or fails its CRC at the end).
+ * packets are accepted across the jump (the section either passes by
+ * luck or fails its CRC at the end).
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` on null `cfg`.
  */
@@ -4909,8 +4909,8 @@ int tst_demux_config_set_sync_buf_cap(struct tst_demux_config_t *cfg, size_t cap
 
 /**
  * Enable the opt-in PTS/DTS unwrap. `enable` is read as a C `bool`
- * (any non-zero value enables). Default is `false` (raw wire PTS/DTS,
- * matching today's behavior). See
+ * (any non-zero value enables). Default is `false` (raw wire PTS/DTS).
+ * See
  * `tst_core::mpegts::demux::DemuxerConfig::unwrap_timestamps` for the
  * full unwrap semantics: a per-PID accumulator adds each sample's
  * signed wrap-aware delta onto the previous unwrapped value, so a
@@ -5050,8 +5050,8 @@ int tst_demux_receiver_get_stream_last_seen_micros(struct tst_demux_receiver_t *
  *
  * Capped at `TST_STATS_MAX_STREAMS = 64` entries (BTreeMap ordering
  * preserved by ascending PID); excess streams are silently dropped.
- * `program_number` field is `0` for now — populated once `StreamStats`
- * surfaces it (currently absent from `tst_core::mpegts::stats::StreamStats`).
+ * `program_number` is the program that owns the stream (`0` for PSI PIDs
+ * and for a stream seen before its PMT arrived).
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` on any null pointer
  * arg, or `TST_E_CLOSED` if the receiver has been closed.
@@ -5166,7 +5166,7 @@ void tst_demuxer_close(struct TstDemuxer *p);
  *   boundary; the scanned bytes are discarded and the next feed starts
  *   a fresh window, except that a candidate sync byte the scan stopped
  *   on is retained and re-validated on the next feed rather than
- *   accepted outright), `MalformedPsi`, or `MalformedPes`.
+ *   accepted outright), or `MalformedPes`.
  * - `TST_E_TOO_LARGE` (-6) — `DemuxError::SyncBufExhausted` (one feed
  *   would push the pre-sync buffer past `sync_buf_cap`; the buffered
  *   bytes and this call's bytes are dropped and the next feed starts
@@ -10813,8 +10813,9 @@ struct TstTcpSender *tst_tcp_listener_accept_sender(struct TstTcpListener *p);
  * be in `host:port` form without a URL scheme. For URL-based construction,
  * use `tst_tcp_listener_from_url` with a `tcp://addr:port?listen=1` URL.
  *
- * Port `0` causes the kernel to assign an ephemeral port; use
- * `tst_tcp_listener_local_addr` (not yet exported) to retrieve it.
+ * Port `0` causes the kernel to assign an ephemeral port; the C surface
+ * has no getter for the bound address, so bind an explicit port when the
+ * peer needs to know it.
  *
  * # Safety
  *

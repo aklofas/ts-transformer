@@ -23,8 +23,8 @@
 //! UDP's single `from_url()?.build()?`. URL query params
 //! (`?profile=main`, `?buffer=200`, `?bandwidth=10000`,
 //! `?aes-type=256&secret=...`, `?cname=...`) are parsed directly by
-//! `RistTransportBuilder::new`; no separate C-level config chain is
-//! needed for v1.
+//! `RistTransportBuilder::new`; there is no separate C-level config
+//! chain.
 
 use std::os::raw::c_char;
 

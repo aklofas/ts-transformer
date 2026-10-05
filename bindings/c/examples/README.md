@@ -40,9 +40,11 @@ To compile every example in one go (what CI does on the linux leg):
 bash scripts/check/c/examples-compile.sh    # from the workspace root
 ```
 
-For pkg-config-using build systems, `tstrans.pc` is emitted alongside
-the cdylib once `tstrans.pc.in` has been substituted by the build —
-add `target/debug` to `PKG_CONFIG_PATH` and use
+For pkg-config-using build systems, the build writes `tstrans.pc` (from
+`tstrans.pc.in`) next to the cdylib in `target/<profile>/`. It assumes an
+install under `/usr/local` (`prefix=/usr/local`), so copy the library and
+header to `/usr/local/lib` and `/usr/local/include` first, then add
+`target/debug` to `PKG_CONFIG_PATH` and use
 `pkg-config --cflags --libs tstrans`.
 
 ## Read in this order
@@ -86,14 +88,14 @@ Expected output (versions will match your build):
 ```text
 Package version (matches Cargo.toml):
   TST_VERSION_MAJOR          runtime=0  header=0  [OK]
-  TST_VERSION_MINOR          runtime=1  header=1  [OK]
+  TST_VERSION_MINOR          runtime=7  header=7  [OK]
   TST_VERSION_PATCH          runtime=0  header=0  [OK]
-  packed (M<<16|m<<8|p)      runtime=256  header=256  [OK]
-  version string             runtime="0.1.0"
+  packed (M<<16|m<<8|p)      runtime=1792  header=1792  [OK]
+  version string             runtime="0.7.0"
 
 ABI contract version (breaking-change cadence):
   TST_ABI_VERSION_MAJOR      runtime=0  header=0  [OK]
-  TST_ABI_VERSION_MINOR      runtime=1  header=1  [OK]
+  TST_ABI_VERSION_MINOR      runtime=22  header=22  [OK]
 
 After tst_clear_last_error():
   tst_get_last_error()     = 0  (expect 0 = TST_E_SUCCESS)
@@ -127,9 +129,10 @@ Mirrors the Rust [`mux_dual_camera.rs`](../../../examples/muxing/mux_dual_camera
 
 Diff from §4: two PMTs in one PAT, each with its own video + KLV
 streams. Shows the `tst_program_handle_t` flow and the
-`tst_*_to(prog_handle, ...)` siblings. No Rust twin yet — the equivalent
-recipe lives in the cookbook ([Repack two single-program inputs into one multi-program TS](../../../docs/cookbook/muxing/repack-multi-program.md))
-under a different shape (demux + re-mux instead of synthetic frames).
+`tst_*_to(prog_handle, ...)` siblings. The nearest Rust example,
+[`repack_two_programs.rs`](../../../examples/muxing/repack_two_programs.rs),
+builds the same shape by demux + re-mux instead of synthetic frames (cookbook:
+[Repack two single-program inputs into one multi-program TS](../../../docs/cookbook/muxing/repack-multi-program.md)).
 
 ### 6. `operations/poll_socket_stats.c` — live libsrt wire-stats polling
 
@@ -374,3 +377,26 @@ raw/TS receiver) surfaces. Receiver-side C examples ship under
   shutdown ordering. Supersedes `recv_demux_to_console.c` for the
   managed+caller+KLV-decode case, and is the behavioral reference the
   Apple/Swift wrapper is written against.
+- [`receiving/recv_udp.c`](receiving/recv_udp.c),
+  [`receiving/recv_tcp.c`](receiving/recv_tcp.c),
+  [`receiving/recv_rist.c`](receiving/recv_rist.c) — raw 188-byte TS
+  packets in over plain UDP, a TCP listener, and RIST; each logs the TS
+  header fields. Require `TST_HAS_UDP` / `TST_HAS_TCP` / `TST_HAS_RIST`.
+
+## More sender and muxer examples
+
+- [`sending/send_udp.c`](sending/send_udp.c),
+  [`sending/send_tcp.c`](sending/send_tcp.c),
+  [`sending/send_rist.c`](sending/send_rist.c) — pre-built TS packets out
+  over plain UDP, TCP, and RIST (ARQ by librist): the raw-TS twins of
+  `send_rtp.c`, and the peers of the matching `recv_*` examples.
+- [`muxing/hls_publish.c`](muxing/hls_publish.c) — the publisher surface
+  (`tst_publisher_t`): pre-built TS packets in, rolling `.ts` segments +
+  `.m3u8` playlist written to a directory and served over the built-in
+  HTTP server. Requires `TST_HAS_HLS`.
+- [`muxing/mux_to_hls_with_klv.c`](muxing/mux_to_hls_with_klv.c) — the mux
+  publisher (`tst_mux_publisher_t`): H.264 + MISB ST 0601 KLV in, muxed
+  and segmented to HLS with the KLV kept inside the `.ts` segments.
+- [`muxing/mux_with_audio_klv_subtitles.c`](muxing/mux_with_audio_klv_subtitles.c)
+  — all four stream-handle types in one program: H.264 video, AAC-ADTS
+  audio, ST 0601 KLV, and DVB subtitles.

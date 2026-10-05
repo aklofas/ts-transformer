@@ -6,7 +6,7 @@
 //! discriminants and the Python `StreamEndReason` IntEnum): CLEAN_TEARDOWN=1,
 //! SESSION_EXPIRED=2, KEEPALIVE_FAILED=3, TRANSPORT_FAILED=4,
 //! PROTOCOL_ERROR=5, CANCELLED=6. `-1` is the "hasn't ended yet, or ended
-//! through a path this arc doesn't instrument" sentinel `nEndReason` (and the
+//! through a path this type doesn't instrument" sentinel `nEndReason` (and the
 //! ordinal slot of `nClose`'s snapshot — see below) returns; the Java side's
 //! `StreamEndReason.fromWireOrdinal` maps that (and any other unrecognized
 //! value) to `null`.

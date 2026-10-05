@@ -141,7 +141,8 @@ class DemuxErrorKind(enum.Enum):
     # Strict-mode policy rejection — StrictMode converted a non-conformance
     # into a fatal error.
     STRICT_REJECTION = "strict_rejection"
-    # `DemuxError::MalformedPsi` — PAT/PMT section structurally invalid.
+    # `DemuxError::MalformedPsi` — reserved; the demuxer does not produce it
+    # (a structurally invalid PAT/PMT section is dropped).
     MALFORMED_PSI = "malformed_psi"
     BAD_PMT = "malformed_psi"  # deprecated alias (0.7.x): use MALFORMED_PSI
     # `DemuxError::MalformedPes` — PES header/payload structurally invalid.

@@ -466,7 +466,7 @@ impl PyReceiver {
     }
 
     /// Why the receive session ended, or `None` if it hasn't ended yet
-    /// (or ended through a path this arc doesn't instrument). Still
+    /// (or ended through a path this type doesn't instrument). Still
     /// readable after `close()` — `end_reason` is a
     /// [`StreamEndReasonHandle`] captured at construction, independent of
     /// the slot's lifetime.

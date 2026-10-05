@@ -79,14 +79,13 @@ class RecvEndReason(enum.IntEnum):
     `tst_pipeline::RecvEndReason` 1:1, in Rust declaration order.
 
     Returned by `ManagedDemuxReceiver.end_reason()`; `None` means the
-    stream hasn't ended yet (or ended through a path this arc doesn't
+    stream hasn't ended yet (or ended through a path this type doesn't
     instrument). A dedicated type, not `tstrans.rtp.StreamEndReason` —
     the two are different types in Rust.
 
     Only `RECONNECT_EXHAUSTED` and `CANCELLED` are reachable on the
-    managed-SRT path today; `END_OF_STREAM` is reserved for a future
-    transport able to signal a clean EOS distinct from reconnect-budget
-    exhaustion.
+    managed-SRT path; `END_OF_STREAM` is reserved for a transport able to
+    signal a clean EOS distinct from reconnect-budget exhaustion.
     """
 
     END_OF_STREAM = 1
@@ -397,9 +396,9 @@ class MuxSender:
     """Convenience wrapper — `Sender` + `Muxer` constructed together.
 
     Construct via `MuxSender.from_url(url, program_config)`. URL must
-    specify `?mode=caller` (the SrtUrl default). Push methods accept any
+    specify `?mode=caller` (the SrtUrl default). Send methods accept any
     bytes-like input (`bytes`, `bytearray`, `memoryview`, NumPy `uint8`).
-    `pts` is keyword-only on every push method. The GIL is released
+    `pts` is keyword-only on every send method. The GIL is released
     around the muxer + transport work via `py.allow_threads()`.
     """
 
@@ -586,9 +585,7 @@ class OverflowPolicy:
     - `DROP_OLDEST` (default): evict the front of the queue to make room.
     - `REJECT`: refuse to enqueue; surface an error to the caller.
 
-    The plan sketched `DROP_NEWEST` + `BLOCK`, but the real Rust enum
-    at `tst_pipeline::reconnect::gap_buffer` only has `DropOldest`
-    (default) and `Reject`. This mirrors what Rust ships.
+    Mirrors `tst_pipeline::OverflowPolicy` (`DropOldest`, `Reject`).
     """
 
     DROP_OLDEST: OverflowPolicy
@@ -682,10 +679,9 @@ class ManagedSender:
     the inner socket, runs the captured URL through the reconnect
     factory under the configured policy and resumes sending.
 
-    `srt_stats()` raises `SrtError(IO)` today: `ManagedTransport`
-    doesn't expose the SRT-rich 17-field shape (no accessor in
-    tst-pipeline). Use `socket_stats()` for the 16-field
-    scheme-neutral view. A future tst-pipeline accessor will lift this.
+    `srt_stats()` raises `SrtError(IO)`: `ManagedTransport` has no
+    accessor for the SRT-specific 17-field shape. Use `socket_stats()`
+    for the 16-field scheme-neutral view.
     """
 
     @staticmethod
@@ -722,8 +718,8 @@ class ManagedReceiver:
     `reconnect_attempts()` exposes the total successful reconnect count
     (does NOT include the initial bind+accept).
 
-    `srt_stats()` raises `SrtError(IO)` today (same drift as
-    `ManagedSender`). Use `socket_stats()` for the 16-field view.
+    `srt_stats()` raises `SrtError(IO)`, as on `ManagedSender`. Use
+    `socket_stats()` for the 16-field view.
 
     `policy.mode` is send-side only: `ReconnectMode.BACKGROUND` on a
     policy handed here logs a warning and this receiver reconnects on
@@ -878,18 +874,17 @@ class ManagedDemuxReceiver:
     """Auto-reconnect DemuxReceiver — wraps `ManagedDemuxReceiver
     <SrtTransport>`. Construct via `ManagedDemuxReceiver.from_url(url,
     *, demux_config=..., policy=...)`. URL may specify `?mode=listener`
-    (default) or `?mode=caller`; the wrapper redials / re-binds on each
-    reconnect as appropriate.
+    or `?mode=caller` (the default when `?mode=` is absent); the wrapper
+    redials / re-binds on each reconnect as appropriate.
 
     On reconnect, emits a `tstrans.mpegts.DemuxEvent.ReconnectDiscontinuity`
     event before any post-reconnect events. Consumers should drop
     per-stream caches on receipt and rebuild from the next `ProgramMap`
     event.
 
-    Drift: `srt_stats()` returns `SocketStats` (NOT `SrtStats`) today —
-    `ManagedRecvTransport` doesn't expose a separate SRT stats
-    accessor; the SRT-flavored fields are already in the `SocketStats`
-    shape. Reserved for future projection if a richer accessor lands.
+    `srt_stats()` returns `SocketStats` (NOT `SrtStats`), the same value
+    as `socket_stats()`: `ManagedRecvTransport` has no separate SRT stats
+    accessor.
 
     `policy.mode` is send-side only: `ReconnectMode.BACKGROUND` on a
     policy handed here logs a warning and this receiver reconnects on

@@ -325,7 +325,7 @@ impl PyDemuxReceiver {
     }
 
     /// Why the receive session ended, or `None` if it hasn't ended yet
-    /// (or ended through a path this arc doesn't instrument). Still
+    /// (or ended through a path this type doesn't instrument). Still
     /// readable after `close()` — `end_reason` is a
     /// [`tst_rtp::StreamEndReasonHandle`] captured from the underlying
     /// transport at construction, independent of `inner`'s lifetime.

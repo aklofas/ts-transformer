@@ -5,7 +5,7 @@ package org.tstrans.rtp;
  *
  * <p>Returned by {@code endReason()} on {@link Receiver}, {@link DemuxReceiver},
  * and {@link H264Receiver}; {@code null} means the session either hasn't ended
- * yet or ended through a path this arc doesn't instrument (e.g. a plain
+ * yet or ended through a path this type doesn't instrument (e.g. a plain
  * {@code rtp://} receiver that was never closed or cancelled).
  *
  * <p>Numeric wire values are pinned across the C, Python, and JVM bindings

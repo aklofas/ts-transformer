@@ -2,10 +2,10 @@
 //! points. Gated on `feature = "hls"`.
 //!
 //! Exposes the HLS publisher (builder + concrete `HlsPublisher` handle
-//! that runs an internal tokio HTTP server) and the new
+//! that runs an internal tokio HTTP server) and the
 //! `MuxPublisher<P>` shell projection over `tst_core::publisher::Publisher`.
 //! KLV stays inside the .ts segments — no WebVTT sidecar, no
-//! EXT-X-DATERANGE metadata in v1.
+//! EXT-X-DATERANGE metadata.
 //!
 //! Surface map:
 //! - [`builder`] — `TstHlsPublisherBuilder` + the `tst_hls_publisher_builder_*`

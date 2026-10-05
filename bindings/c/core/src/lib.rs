@@ -6,10 +6,10 @@
 //! this core directly. Rust callers should consume `tst-pipeline` and
 //! `tst-srt` directly rather than going through the C ABI.
 //!
-//! Sender side complete; receiver side complete — raw byte, TS-aligned,
-//! and typed demux-event surfaces all ship today (`tst_raw_receiver_*` /
-//! `tst_ts_receiver_*` / `tst_receiver_*` / `tst_demux_receiver_*`),
-//! along with the reconnecting `tst_managed_*` variants. RTP and RTSP
+//! Both directions are covered: senders, and raw byte, TS-aligned and
+//! typed demux-event receivers (`tst_raw_receiver_*` / `tst_receiver_*` /
+//! `tst_demux_receiver_*`), along with the reconnecting `tst_managed_*`
+//! variants. RTP and RTSP
 //! transport surfaces are gated on the `rtp` cargo feature. The
 //! offline byte-feeding `tst_demuxer_*` surface is unconditional (no
 //! feature gate), as is the offline `tst_muxer_*` surface (un-gated from

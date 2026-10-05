@@ -414,7 +414,7 @@ pub extern "system" fn Java_org_tstrans_rtp_Receiver_nCancelHandle(
 }
 
 /// Why the receive session ended, or `-1` if it hasn't ended yet (or ended
-/// through a path this arc doesn't instrument). See `end_reason`'s module
+/// through a path this type doesn't instrument). See `end_reason`'s module
 /// doc for the wire-ordinal convention. Returns `-1` on a closed/absent
 /// handle rather than throwing (matches `endReason()`'s post-close-snapshot
 /// contract — the closed case never reaches this native at all, since
