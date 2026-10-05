@@ -1,7 +1,6 @@
-//! `tst_srt::shells` — the `from_url` family over a real SRT loopback
-//! (Arc 2 WP-A3). Each test is the shape a binding's `open` used to be.
-//! Every wait that could park is bounded by [`WATCHDOG`] and FAILS on
-//! expiry.
+//! `tst_srt::shells` — the `from_url` family over a real SRT loopback.
+//! Each test is the shape of a binding's `open`. Every wait that could
+//! park is bounded by [`WATCHDOG`] and FAILS on expiry.
 //!
 //! # Why every peer streams continuously instead of sending a fixed burst
 //!
@@ -179,8 +178,8 @@ fn managed_demux_receiver_from_url_reads_events() {
 /// `Closed`, and the end reason reads `Cancelled`.
 ///
 /// Inside the managed loop the SRT-level variant the wake produces is
-/// `ExplicitClose` (WP-C2); the observed shell kind stays `Closed`, so this
-/// test did not move when that kind changed.
+/// `ExplicitClose`; the observed shell kind stays `Closed`, so this test
+/// does not depend on that SRT-level kind.
 #[test]
 fn cancel_handle_ends_a_parked_recv_and_records_cancelled() {
     require_loopback!();
@@ -241,7 +240,7 @@ fn cancel_handle_ends_a_parked_recv_and_records_cancelled() {
     accept.join();
 }
 
-/// The #188 class through the whole composition: a `[::1]` URL opens.
+/// IPv6 bracketing through the whole composition: a `[::1]` URL opens.
 #[test]
 fn managed_demux_receiver_from_url_ipv6_literal() {
     if !ipv6_loopback_available() {
@@ -409,7 +408,8 @@ fn managed_receiver_from_url_in_listener_mode_accepts_a_dialling_peer() {
 /// passed, not one the function made up: a slot cancelled before the call
 /// makes `managed_recv_transport_from_url` return without binding
 /// anything. This is what `managed_recv_transport_from_url` exists for
-/// (DEBT-16 for Rust callers) and the only direct evidence that the first
+/// (a Rust caller that needs the FIRST accept cancellable) and the only
+/// direct evidence that the first
 /// accept and the re-accepts share one slot. No peer, no network.
 #[test]
 fn managed_recv_transport_from_url_first_accept_runs_through_the_caller_slot() {
@@ -444,9 +444,8 @@ fn managed_recv_transport_from_url_first_accept_runs_through_the_caller_slot() {
         .expect("port still bindable — the cancelled open left no listening socket");
 }
 
-/// The wiring the C recv-side getter used to get wrong (it copied
-/// `successes` into `reconnect_attempts` with an apology):
-/// [`ManagedHandles::attempts`] is the factory-CALL counter, and on a
+/// The wiring a recv-side getter can get wrong by copying `successes`
+/// into `reconnect_attempts`: [`ManagedHandles::attempts`] is the factory-CALL counter, and on a
 /// stream whose peer is gone for good the two must diverge — attempts
 /// climb to the budget while reconnects stay 0. This is the only test that
 /// tells the two handles apart through the whole `from_url` composition;

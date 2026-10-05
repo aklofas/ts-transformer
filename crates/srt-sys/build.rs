@@ -183,10 +183,10 @@ fn main() {
     // silently survives into a sanitized run — an invisible false-green.
     println!("cargo:rerun-if-env-changed=TST_NATIVE_SANITIZER");
 
-    // Symbol hygiene for downstream cdylib consumers (validate-1 D6) is wired
+    // Symbol hygiene for downstream cdylib consumers is wired
     // in each cdylib crate's OWN build.rs, not here: a `cargo:rustc-link-arg-cdylib`
     // directive applies only to a cdylib target in the SAME package, and srt-sys
-    // is rlib-only — so emitting it here did nothing except print a per-build
+    // is rlib-only — so emitting it here would do nothing except print a per-build
     // warning ("does not contain a cdylib target", rust-lang/cargo#9562). The
     // effective `-Wl,--exclude-libs=ALL` (Linux) lives in bindings/c/build.rs
     // (alongside the macOS exported_symbols_list path); the "no srt_*/SRT_*

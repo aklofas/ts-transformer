@@ -1110,8 +1110,8 @@ impl<T: Transport> MuxSender<T> {
         {
             // Keep the sender's span alive and entered across the final
             // drain so its tracing events still attribute to this
-            // MuxSender (the span used to be dropped first, orphaning
-            // the drain's events).
+            // MuxSender (dropping the span first would orphan the
+            // drain's events).
             let _enter = span.0.enter();
             let _ = inner.drain_pending();
         }
@@ -2014,8 +2014,7 @@ mod multi_stream_tests {
 
     #[test]
     fn finish_drains_pending_bytes() {
-        // The lossless explicit-shutdown path (PIPE-02's ask, reshaped at
-        // the 0.5.0 release gate): finish() must drain pending_bytes
+        // The lossless explicit-shutdown path: finish() must drain pending_bytes
         // before marking closed — close() is the prompt/lossy primitive
         // and deliberately does not make this guarantee.
         let cfg = {
@@ -2080,10 +2079,10 @@ mod multi_stream_tests {
     }
 
     /// Transport whose sends BLOCK until its cancel handle fires — the
-    /// blocking-transport-with-pending shape from the release-gate audit
-    /// (a ManagedTransport mid-reconnect after pending_bytes was seeded).
-    /// close() must return promptly by cancelling first; the 0.5.0-rc1
-    /// drain-first close() hung here indefinitely.
+    /// blocking-transport-with-pending shape (a ManagedTransport
+    /// mid-reconnect after pending_bytes was seeded). close() must return
+    /// promptly by cancelling first; a drain-first close() hangs here
+    /// indefinitely.
     struct BlocksUntilCancelled {
         cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
         fail_first: std::sync::atomic::AtomicUsize,
@@ -2448,10 +2447,10 @@ mod cancel_tests {
         sender
     }
 
-    /// PIPE-02 secondary regression: explicit `close()` on a `MuxSender`
-    /// whose inner mutex was poisoned by a panic-during-send must NOT
-    /// itself panic — it returns silently via the `if let Ok` branch,
-    /// matching `Drop`'s graceful poisoned-lock catch.
+    /// Explicit `close()` on a `MuxSender` whose inner mutex was poisoned by
+    /// a panic-during-send must NOT itself panic — it returns silently via
+    /// the `if let Ok` branch, matching `Drop`'s graceful poisoned-lock
+    /// catch.
     #[test]
     fn close_does_not_panic_on_poisoned_lock() {
         // Surviving the call IS the assertion.
@@ -2712,9 +2711,8 @@ mod cancel_tests {
 
     #[test]
     fn explicit_finish_drains_pending_without_cancel() {
-        // Reshaped at the 0.5.0 release gate: the lossless explicit
-        // shutdown is finish(), which drains WITHOUT cancelling (cancel
-        // is what forfeited the tail); close() is the prompt/lossy
+        // The lossless explicit shutdown is finish(), which drains WITHOUT
+        // cancelling (a cancel forfeits the tail); close() is the prompt/lossy
         // primitive and cancels first by contract.
         let state = Arc::new(std::sync::Mutex::new(TailLossState {
             reject_sends: true,

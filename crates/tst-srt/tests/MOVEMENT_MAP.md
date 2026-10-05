@@ -64,7 +64,7 @@ tst-core +16, tst-pipeline +3 (net zero).
 
 | old `tests/…` | new `tests/…` |
 | --- | --- |
-| (new 2026-09-16) | `loopback/accept_handle.rs` |
+| (new) | `loopback/accept_handle.rs` |
 | `cancellation_loopback.rs` | `loopback/cancellation_loopback.rs` |
 | `connect_timeout.rs` | `loopback/connect_timeout.rs` |
 | `encrypted_packet_filter.rs` | `loopback/encrypted_packet_filter.rs` |
@@ -72,11 +72,11 @@ tst-core +16, tst-pipeline +3 (net zero).
 | `handshake.rs` | `loopback/handshake.rs` |
 | `ipv6_loopback.rs` | `loopback/ipv6_loopback.rs` |
 | `listener_accept_timeout.rs` | `loopback/listener_accept_timeout.rs` |
-| (new 2026-09-06) | `loopback/listener_cancel.rs` |
+| (new) | `loopback/listener_cancel.rs` |
 | `maxbw_roundtrip.rs` | `loopback/maxbw_roundtrip.rs` |
 | `payload_limit.rs` | `loopback/payload_limit.rs` |
 | `srto_sender.rs` | `loopback/srto_sender.rs` |
-| (new 2026-09-21, Arc 2 WP-A3) | `loopback/url_open.rs` |
+| (new) | `loopback/url_open.rs` |
 
 ### `pipeline/` — pipeline shells (MuxSender/Receiver/Managed) over SRT transport. Needs SRT — stays in tst-srt.
 
@@ -86,7 +86,7 @@ tst-core +16, tst-pipeline +3 (net zero).
 | `pipeline_receiver_live.rs` | `pipeline/pipeline_receiver_live.rs` |
 | `pipeline_receiver_live_corpus.rs` | `pipeline/pipeline_receiver_live_corpus.rs` |
 | `pipeline_sender.rs` | `pipeline/pipeline_sender.rs` |
-| (new 2026-09-22, Arc 2 WP-A3) | `pipeline/shells_from_url.rs` |
+| (new) | `pipeline/shells_from_url.rs` |
 
 ## Cross-crate moves (ownership cleanup)
 

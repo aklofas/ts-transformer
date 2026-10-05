@@ -172,9 +172,8 @@ fn end_to_end_sender_to_receiver() {
     // close. 1 s comfortably covers SRT's 120 ms latency budget plus
     // loopback scheduling jitter on every platform.
     //
-    // Bumped from 200 ms in plan #66 — Darwin scheduling on Apple
-    // Silicon (macOS arm64) pushes event emission past the previous
-    // window. Linux loopback tolerates the smaller value but the
+    // Not 200 ms: Darwin scheduling on Apple Silicon (macOS arm64)
+    // pushes event emission past that window. Linux loopback tolerates the smaller value but the
     // extra headroom is platform-stable.
     thread::sleep(Duration::from_secs(1));
     sender.close();

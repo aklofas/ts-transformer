@@ -108,7 +108,7 @@ pub type FactoryCancel = tst_core::cancel::CancelSlot;
 /// on `Closed` / `Broken` failure, gated by a [`ReconnectPolicy`]. See
 /// the module docs for the full semantics.
 ///
-/// # Lock poisoning policy (post-Wave-4.B)
+/// # Lock poisoning policy
 ///
 /// - **`active` cancel slot** (publishes the live inner's cancel handle):
 ///   [`CancelSlot`] recovers its own lock on poison — its state is two plain
@@ -157,7 +157,7 @@ pub struct ManagedRecvTransport<R: RecvTransport> {
     /// lifetime.
     reconnects: Arc<AtomicU64>,
     /// Number of times the factory has been CALLED — every attempt,
-    /// whether or not it produced an inner (ARCH-08). `reconnects` above
+    /// whether or not it produced an inner. `reconnects` above
     /// counts the successes, so `attempts - reconnects` is the failed-call
     /// count a reconnect dashboard wants. Bumped immediately before each
     /// `(self.factory)()` call; exposed lock-free via
@@ -184,11 +184,11 @@ pub struct ManagedRecvTransport<R: RecvTransport> {
     /// fixed constant that could understate it. Deliberate asymmetry
     /// with the send-side wrapper (see `reconnect::mod` max_payload):
     /// understating a send budget is safe; understating a recv ceiling
-    /// was the PR #97 bug class.
+    /// makes callers size buffers too small and truncate deliveries.
     last_live_max_payload: usize,
     /// Interruptible backoff wait: `cancel_handle().cancel()` and `close()`
     /// signal it so a wait between reconnect attempts ends at once instead
-    /// of riding out the full delay (the send side's PR #158 shape).
+    /// of riding out the full delay (the same shape as the send side).
     shutdown: Arc<Shutdown>,
     /// Slot the reconnect factory installs its wake handle into while it
     /// blocks (listener re-accept); fired by the cancel handle. `None` for
@@ -322,8 +322,7 @@ impl<R: RecvTransport> RecvTransport for ManagedRecvTransport<R> {
         // to ShellErrorKind::Closed (→ TST_E_CLOSED -7), distinguishing from
         // peer-EOS which arrives as TransportError::Closed from the inner
         // transport's recv_bytes and maps to ShellErrorKind::EndOfStream
-        // (→ TST_E_END_OF_STREAM -12). See
-        // docs/plans/2026-05-20-transport-semantics-and-mutex-policy.md.
+        // (→ TST_E_END_OF_STREAM -12).
         //
         // The entry gate distinguishes two latched-close scenarios:
         // - explicit_close || cancelled → caller-initiated → ExplicitClose.
@@ -370,8 +369,7 @@ impl<R: RecvTransport> RecvTransport for ManagedRecvTransport<R> {
                     // "stream is over from the inner-transport's perspective." Shell's
                     // kind_from_transport maps Closed → EndOfStream (→ TST_E_END_OF_STREAM)
                     // for the receive side, distinguishing from caller-initiated ExplicitClose
-                    // above. See docs/plans/2026-05-20-transport-semantics-and-mutex-policy.md
-                    // for the disposition rationale.
+                    // above.
                     self.closed = true;
                     return Err(TransportError::Closed);
                 };
@@ -398,7 +396,7 @@ impl<R: RecvTransport> RecvTransport for ManagedRecvTransport<R> {
                     self.explicit_close = true;
                     return Err(TransportError::ExplicitClose);
                 }
-                // Count the CALL, not the outcome (ARCH-08) — the same
+                // Count the CALL, not the outcome — the same
                 // placement as the send side's `reconnect_attempts` bump.
                 //
                 // `Relaxed`, matching that counter (`reconnect/mod.rs`
@@ -662,11 +660,11 @@ mod tests {
         assert!(*factory_calls.lock().unwrap() >= 1);
     }
 
-    /// R7-01 (review #7, external report): a factory that reports `ExplicitClose` — the SRT
-    /// listener's slot was fired directly, or the process is exiting — is
-    /// terminal, exactly like an inner receive that reports it. The wrapper
-    /// must not retry the factory and must not report `Closed`
-    /// (end-of-stream to the bindings) at budget exhaustion.
+    /// A factory that reports `ExplicitClose` — the SRT listener's slot
+    /// was fired directly, or the process is exiting — is terminal, exactly
+    /// like an inner receive that reports it. The wrapper must not retry
+    /// the factory and must not report `Closed` (end-of-stream to the
+    /// bindings) at budget exhaustion.
     #[test]
     fn factory_explicit_close_is_terminal_without_wrapper_cancel() {
         let calls = Arc::new(Mutex::new(0u32));
@@ -698,7 +696,8 @@ mod tests {
         assert!(!rx.is_alive());
     }
 
-    /// Same, with no attempt budget: before the fix this loop had no exit.
+    /// Same, with no attempt budget: without the terminal check this loop
+    /// has no exit.
     #[test]
     fn factory_explicit_close_is_terminal_with_unbounded_attempts() {
         let calls = Arc::new(Mutex::new(0u32));

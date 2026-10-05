@@ -1,5 +1,5 @@
 //! Integration tests for [`ManagedDemuxReceiver`] reconnect-discontinuity
-//! semantics. Covers the 3 acceptance criteria for Validate-1 Sprint 4 / F2:
+//! semantics. Covers three behaviours:
 //!
 //! 1. Connection drops mid-TS-packet; reconnect; verify next packet
 //!    starts with a fresh sync and no spliced bytes.
@@ -146,7 +146,7 @@ fn connection_drops_mid_ts_packet_reconnect_resyncs_cleanly() {
     let factory = Box::new(move || -> Result<ScriptedInner, TransportError> {
         let n = calls_cl.fetch_add(1, Ordering::SeqCst);
         if n == 0 {
-            // Phase 2: clean aligned packets on a different PID.
+            // Second connection: clean aligned packets on a different PID.
             let p2_packets: Vec<[u8; 188]> = (0..5).map(|i| ts_packet(0x0200, i as u8)).collect();
             Ok(ScriptedInner {
                 chunks: vec![pack_chunk(&p2_packets)].into(),
@@ -286,7 +286,7 @@ fn reconnect_event_is_observable_via_public_api() {
 /// PMT in flight.
 #[test]
 fn reconnect_during_in_flight_psi_drops_partial_state() {
-    // Phase 1: PAT-only chunk that DOES NOT include the PMT (so the
+    // First connection: PAT-only chunk that DOES NOT include the PMT (so the
     // demuxer's PSI assembler holds a registered PMT PID but no
     // assembled PMT section).
     //
@@ -386,7 +386,7 @@ fn reconnect_during_in_flight_psi_drops_partial_state() {
 ///
 /// Setup: N TEI packets in phase 1 (chunk ends EXACTLY on a packet
 /// boundary — no dead-tail bytes). Inner exhausts with `Broken`,
-/// triggering reconnect. Phase 2 serves a long sequence of more TEI
+/// triggering reconnect. The second connection serves a long sequence of more TEI
 /// packets across multiple `recv_bytes` chunks so the receiver has
 /// enough bytes to (a) lock once, get the first packet dropped by the
 /// shell, then (b) re-lock cleanly on subsequent bytes and emit a
@@ -411,7 +411,7 @@ fn reconnect_during_in_flight_psi_drops_partial_state() {
 /// recv_bytes patterns.
 #[test]
 fn clean_reconnect_drops_first_post_reconnect_packet() {
-    // Phase 1: 8 TEI packets on PID 0x100. Chunk length is exactly
+    // First connection: 8 TEI packets on PID 0x100. Chunk length is exactly
     // 8 * 188 = 1504 bytes — no fractional / dead-tail bytes appended.
     let n: usize = 8;
     let p1_packets: Vec<[u8; 188]> = (0..n).map(|i| ts_packet_tei(0x100, i as u8)).collect();
@@ -431,7 +431,7 @@ fn clean_reconnect_drops_first_post_reconnect_packet() {
         },
     };
 
-    // Phase 2: M TEI packets delivered as TWO clean-aligned chunks. The
+    // Second connection: M TEI packets delivered as TWO clean-aligned chunks. The
     // shell's reset_sync clears the syncer buffer at reconnect time so
     // bytes already pulled-but-not-emitted in the first chunk are also
     // lost; the second chunk lets the syncer re-lock and drain a

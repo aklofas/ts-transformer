@@ -96,7 +96,7 @@ fn close_unblocks_libsrt_parked_send() {
 
     // Parked sender should return promptly with `ExplicitClose`: the
     // close fires the cancel handle first, libsrt's srt_sendmsg2 returns
-    // SRT_ECONNLOST, and (WP-C2) `SrtTransport` reads the fired latch and
+    // SRT_ECONNLOST, and `SrtTransport` reads the fired latch and
     // reports the cancel rather than the wire error it provoked.
     let join_start = Instant::now();
     let result = send_thread.join().expect("send thread panic");
@@ -111,7 +111,7 @@ fn close_unblocks_libsrt_parked_send() {
         // when `close()` won the send lock and closed the transport
         // (`Closed`), or it pumped every payload before close (unlikely
         // with SNDBUF=8). All three prove cancel works; we fail on stuck —
-        // and on `Broken`, which WP-C2 retired for this path.
+        // and on `Broken`, which this path never reports.
         Ok(_) => {}
         Err(ref err)
             if matches!(
@@ -124,7 +124,7 @@ fn close_unblocks_libsrt_parked_send() {
     }
 }
 
-/// Arc 2 WP-C2: after a cancel, EVERY later op reports `ExplicitClose` —
+/// After a cancel, EVERY later op reports `ExplicitClose` —
 /// not `ExplicitClose` once and `Closed` afterwards; after the transport's
 /// OWN `close()` the answer is `Closed` even though `Socket::close` fires
 /// the same libsrt cancel latch.

@@ -1,6 +1,6 @@
 //! A cancel must reach a `ManagedRecvTransport` whose reconnect is parked
-//! INSIDE the factory — the listener-mode re-accept case (ROADMAP Apple
-//! rider 2). The factory publishes the handle that can wake it through a
+//! INSIDE the factory — the listener-mode re-accept case. The factory
+//! publishes the handle that can wake it through a
 //! `FactoryCancel` slot; the managed transport's own cancel fires that
 //! slot, and the factory then reports `ExplicitClose`.
 
@@ -138,8 +138,8 @@ impl TransportCancel for NotifyOnCancel {
     }
 }
 
-/// R7-01 (review #7, external report): the factory can observe a cancel itself — by polling
-/// the `FactoryCancel` slot after waking from whatever it was parked on —
+/// The factory can observe a cancel itself — by polling the
+/// `FactoryCancel` slot after waking from whatever it was parked on —
 /// and report `ExplicitClose` directly, rather than the wrapper's own
 /// cancel-handle check catching it. That result must be just as terminal
 /// as an inner receive's `ExplicitClose`: no further factory call, and
@@ -282,7 +282,7 @@ impl TransportCancel for FlagCancel {
     }
 }
 
-/// CORR-02: a cancel that lands *while the factory runs* must not be lost.
+/// A cancel that lands *while the factory runs* must not be lost.
 /// The factory here succeeds after the cancel, so the wrapper holds a
 /// perfectly healthy fresh connection that the caller has already asked it
 /// to abandon: it must fire that connection's wake handle and report the

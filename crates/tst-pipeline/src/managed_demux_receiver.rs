@@ -312,10 +312,8 @@ impl<R: RecvTransport> ManagedDemuxReceiver<R> {
     /// # C ABI
     ///
     /// `tst_managed_demux_receiver_get_reconnect_stats`
-    /// (`reconnect_successes`). That getter still fills its
-    /// `reconnect_attempts` field from this counter; [`Self::attempts_handle`]
-    /// is the counter it should read instead, and WP-B1 re-points it. See
-    /// `bindings/c/include/tstrans.h`.
+    /// (`reconnect_successes`); its `reconnect_attempts` field reads
+    /// [`Self::attempts_handle`] instead. See `bindings/c/include/tstrans.h`.
     #[must_use]
     pub fn reconnects_handle(&self) -> Arc<AtomicU64> {
         Arc::clone(&self.reconnects)
@@ -573,7 +571,7 @@ mod tests {
     /// and the inner reconnect-count rises.
     #[test]
     fn reconnect_emits_discontinuity_event() {
-        // Phase 1: a few aligned packets (enough to lock the syncer,
+        // First connection: a few aligned packets (enough to lock the syncer,
         // then a fractional packet at the tail to test mid-PES reset).
         let p1_packets: Vec<[u8; 188]> = (0..6).map(|i| ts_packet(0x0100, i as u8)).collect();
         let mut p1 = chunk_of_aligned(&p1_packets);
@@ -586,7 +584,7 @@ mod tests {
             broken_after_exhaust: true, // exhausting triggers reconnect path
         };
 
-        // Phase 2: 4 fresh aligned packets after reconnect. The shell
+        // After the reconnect: 4 fresh aligned packets. The shell
         // should drop the dead tail, reset state, emit a
         // ReconnectDiscontinuity, then re-lock on these clean packets.
         let factory_calls = Arc::new(std::sync::atomic::AtomicU32::new(0));
@@ -652,7 +650,7 @@ mod tests {
     /// keeps rebuilding would loop forever.
     #[test]
     fn reconnect_clears_syncer_buffer_and_demux_state() {
-        // Phase 1: enough aligned packets to lock + a partial-packet
+        // First connection: enough aligned packets to lock + a partial-packet
         // tail of 187 bytes (< 188, won't form a full packet).
         let p1_packets: Vec<[u8; 188]> = (0..5).map(|i| ts_packet(0x0100, i as u8)).collect();
         let mut p1 = chunk_of_aligned(&p1_packets);

@@ -1,6 +1,5 @@
-//! Plan B poison-policy tests: covers Task 2 (ExplicitClose wiring) and
-//! Tasks 3-4 (hybrid mutex policy — 4 sites become typed errors, 2 sites
-//! become documented panics).
+//! Poison-policy tests: ExplicitClose wiring and the hybrid mutex policy
+//! (4 sites return typed errors, 2 sites are documented panics).
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -91,7 +90,7 @@ fn fast_policy(max_attempts: Option<u32>) -> ReconnectPolicy {
 }
 
 // ----------------------------------------------------------------
-// Task 2 — ExplicitClose vs Closed disambiguation
+// ExplicitClose vs Closed disambiguation
 // ----------------------------------------------------------------
 
 /// Caller calls cancel() mid-recv; the parked recv_bytes returns Closed
@@ -160,13 +159,13 @@ fn peer_eos_returns_closed_not_explicit_close() {
 }
 
 // ----------------------------------------------------------------
-// Task 3 — poisoned inner lock → TransportError::Broken
+// Poisoned inner lock → TransportError::Broken
 // ----------------------------------------------------------------
 
 /// Poison the inner-transport mutex pattern. ManagedTransport doesn't
 /// expose the raw inner Arc<Mutex<...>>, so this test validates the
 /// .lock().map_err(|_| Broken(...)) pattern directly against a hand-rolled
-/// Mutex. The production code in Task 3 applies the same pattern.
+/// Mutex. The production code applies the same pattern.
 #[test]
 fn poisoned_inner_lock_returns_broken_not_panic() {
     struct OkTransport;
@@ -202,7 +201,7 @@ fn poisoned_inner_lock_returns_broken_not_panic() {
     // Now m is poisoned.
     assert!(m.is_poisoned());
 
-    // The Plan B pattern: convert poison into TransportError::Broken with
+    // The pattern: convert poison into TransportError::Broken with
     // a site-specific message.
     let result: Result<i32, TransportError> = m
         .lock()
@@ -226,7 +225,7 @@ fn poisoned_inner_lock_returns_broken_not_panic() {
 }
 
 // ----------------------------------------------------------------
-// Regression: deadlock-on-successful-reconnect (caught in Plan B final review)
+// Regression: deadlock-on-successful-reconnect
 // ----------------------------------------------------------------
 
 /// Regression test for a same-thread deadlock in ManagedTransport::send_managed
@@ -237,9 +236,9 @@ fn poisoned_inner_lock_returns_broken_not_panic() {
 /// breaks (Broken from send_bytes), factory rebuilds a fresh transport
 /// successfully, reconnect_and_drain installs it via self.inner.lock() → deadlock.
 ///
-/// All Plan B's other tests used always-failing factories so the install path
-/// was never reached. This test uses a one-shot factory that fails once then
-/// succeeds, exercising the path that would deadlock without the scope-wrap fix.
+/// An always-failing factory never reaches the install path. This test uses
+/// a one-shot factory that fails once then succeeds, exercising the path that
+/// would deadlock without the scope-wrap.
 #[test]
 fn successful_reconnect_does_not_deadlock() {
     use std::sync::mpsc;
@@ -318,7 +317,7 @@ fn successful_reconnect_does_not_deadlock() {
 }
 
 // ----------------------------------------------------------------
-// Task 4 — poisoned gap lock → BUG: panic
+// Poisoned gap lock → BUG: panic
 // ----------------------------------------------------------------
 
 /// Verify that the .expect("BUG: gap lock poisoned ...") pattern panics
@@ -339,7 +338,7 @@ fn poisoned_gap_lock_panics_with_bug_prefix() {
     // Now m is poisoned.
     assert!(m.is_poisoned());
 
-    // The Plan B pattern: .expect("BUG: ...") on the gap lock.
+    // The pattern: .expect("BUG: ...") on the gap lock.
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let _g = m
             .lock()

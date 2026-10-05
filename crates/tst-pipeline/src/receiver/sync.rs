@@ -183,9 +183,9 @@ impl Syncer {
                     // `need` ensures the index we're about to peek at actually
                     // exists in the buffer before we read it: the candidate
                     // plus `count` full strides. Exactly four packets (752
-                    // bytes) therefore lock — no extra look-ahead byte, which
-                    // used to strand a four-packet stream and the last packets
-                    // before EOF after any resync (CORR-18).
+                    // bytes) therefore lock — no extra look-ahead byte; one
+                    // would strand a four-packet stream and the last packets
+                    // before EOF after any resync.
                     let need = TS_PACKET_SIZE * (count as usize + 1);
                     if self.len < need {
                         return None;
@@ -426,10 +426,10 @@ mod tests {
         }
     }
 
-    /// CORR-18: four aligned packets are exactly the four confirmations
-    /// VERIFY needs. The old `+ 1` look-ahead demanded one byte of a fifth
-    /// packet, so a four-packet stream (or the last four packets before
-    /// EOF after any resync) never emitted at all.
+    /// Four aligned packets are exactly the four confirmations VERIFY
+    /// needs. A `+ 1` look-ahead demands one byte of a fifth packet, so a
+    /// four-packet stream (or the last four packets before EOF after any
+    /// resync) would never emit at all.
     #[test]
     fn four_packets_lock_and_emit_without_a_fifth_byte() {
         let mut s = Syncer::new();

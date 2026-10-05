@@ -2,8 +2,7 @@
 //!
 //! These are the data shapes the caller sees on the `feed`/`flush`
 //! boundary. All are flat structs/enums; no methods. Designed to
-//! translate cleanly to future C ABI / JNI / UniFFI surfaces (deferred
-//! to the receiver-surface plan).
+//! translate cleanly to future C ABI / JNI / UniFFI surfaces.
 
 use std::time::Duration;
 use tst_core::mpegts::common::Pts90khz;
@@ -148,7 +147,7 @@ pub struct KlvSample {
 }
 
 /// Counter snapshot for telemetry. Symmetric with the rest of
-/// `tst-pipeline` (per plan #16 conventions).
+/// `tst-pipeline`.
 #[must_use]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PairerStats {

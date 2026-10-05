@@ -220,8 +220,8 @@ mod tests {
 
     #[test]
     fn freshness_check_no_panic_with_extreme_pts() {
-        // DA-PIPE-4 regression: `v.pts - s.sample.pts` with i64-extreme
-        // inputs overflows in the old direct subtraction. pts_distance
+        // `v.pts - s.sample.pts` with i64-extreme inputs overflows as a
+        // direct subtraction. pts_distance
         // saturates instead.
         //
         // klv.pts = i64::MIN+10, video.pts = i64::MAX-10. The

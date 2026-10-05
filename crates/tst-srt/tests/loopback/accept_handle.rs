@@ -9,9 +9,8 @@
 //! caller socket right after `connect` returns can therefore leave the
 //! peer's plain blocking `accept()` with nothing to dequeue — forever,
 //! because nothing else ever connects and the listener is owned by the
-//! parked thread. It bit tst-c's managed demux receiver test twice in CI
-//! (PR #231). No caller ever connects here, which is the same end state
-//! without the race.
+//! parked thread. No caller ever connects here, which is the same end
+//! state without the race.
 
 use std::net::UdpSocket;
 use std::panic::{AssertUnwindSafe, catch_unwind};

@@ -1,5 +1,4 @@
 //! Verifies SRTO_UDP_RCVBUF / SRTO_UDP_SNDBUF setters reach libsrt.
-//! Audit Issue 9.
 
 use std::ffi::c_int;
 use std::time::Duration;

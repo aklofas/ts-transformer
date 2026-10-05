@@ -1,5 +1,5 @@
 //! [`ManagedHandles`] — the five lock-free observers a binding keeps next
-//! to a managed shell, collected once at open time (Arc 2 spec §3.4).
+//! to a managed shell, collected once at open time.
 //!
 //! **Stability: Provisional** — see the
 //! [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
@@ -32,10 +32,9 @@ use crate::reconnect::RecvEndReasonHandle;
 #[derive(Clone)]
 pub struct ManagedHandles {
     /// The managed transport's cancel: latches the close, wakes a backoff
-    /// wait or a factory parked in a re-accept, and closes the live inner.
-    /// It never takes the shell's slot (the #189 lease-bug class), so it
-    /// is safe to fire from a watchdog thread while another thread is
-    /// parked inside the shell.
+    /// wait or a factory parked in a re-accept, and closes the live inner. It
+    /// never takes the shell's slot, so it is safe to fire from a watchdog
+    /// thread while another thread is parked inside the shell.
     pub cancel: Arc<dyn TransportCancel>,
     /// Why the stream ended, first-writer-wins. Recorded only by
     /// [`crate::ManagedDemuxReceiver`]. Every OTHER shell — the plain
@@ -46,9 +45,8 @@ pub struct ManagedHandles {
     /// Successful rebuilds — the factory returned a transport that was
     /// installed (`reconnect_successes` on the send side).
     pub reconnects: Arc<AtomicU64>,
-    /// Factory CALLS — every attempt, successful or not (ARCH-08). This is
-    /// what a binding's `reconnect_attempts` reports on both sides now; it
-    /// used to be computed by a per-binding counting closure.
+    /// Factory CALLS — every attempt, successful or not. This is what a
+    /// binding's `reconnect_attempts` reports on both sides.
     pub attempts: Arc<AtomicU64>,
     /// Receive side: `true` while the inner is absent (mid-rebuild, or
     /// permanently once the budget is exhausted — pair with `is_alive` to

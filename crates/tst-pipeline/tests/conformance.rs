@@ -1,13 +1,13 @@
-//! WP-C1 — the tst-core conformance kit over `ManagedTransport` /
+//! The tst-core conformance kit over `ManagedTransport` /
 //! `ManagedRecvTransport` wrapping an in-memory mock whose behaviour is the
-//! post-Arc-2 inner contract (parks until its handle fires, then
+//! inner contract (parks until its handle fires, then
 //! `ExplicitClose`; `Ok(0)` on an empty buffer).
 //!
 //! One row differs from the bare-transport defaults, documented in the
 //! `tst_core::transport` table: the receive wrapper answers `ExplicitClose`
 //! after its OWN `close()` (`managed_receive.rs` "close() is a
 //! caller-initiated path"), where the send wrapper answers `Closed`. Both
-//! answer `ExplicitClose` to a cancel (WP-C2: `ManagedTransport` latches a
+//! answer `ExplicitClose` to a cancel (`ManagedTransport` latches a
 //! cancel-only flag that `latched_error` reads at every `closed`-latch
 //! exit).
 
@@ -234,7 +234,7 @@ fn managed_send_contract_all_but_the_cancel_rows() {
     // reconnects through, and once the budget is exhausted the terminal it
     // reports is `Closed`, not `Broken`. So the row cannot assert what it
     // wants to and is skipped. Divergence recorded rather than papered over;
-    // WP-D should give `NotProducible` a caller-supplied reason string.
+    // `NotProducible` takes no caller-supplied reason string yet.
     kit::assert_send_rows(
         managed_send,
         BrokenSource::NotProducible,
@@ -263,12 +263,11 @@ struct Interrupted {
     alive: bool,
 }
 
-/// PROVABLE park (handoff validation 2026-09-18, A2-V4): the inner mock's
-/// `in_call` shows the managed `send_bytes` is INSIDE `MockSend::send_bytes`
-/// when the MANAGED cancel handle fires; the result of that same invocation
-/// is returned — no retry loop, no `SETTLE`. Cancel-after-completion is the
-/// permitted race and is not what this exercises: the send cannot complete
-/// while the inner parks.
+/// PROVABLE park: the inner mock's `in_call` shows the managed `send_bytes`
+/// is INSIDE `MockSend::send_bytes` when the MANAGED cancel handle fires; the
+/// result of that same invocation is returned — no retry loop, no `SETTLE`.
+/// Cancel-after-completion is the permitted race and is not what this
+/// exercises: the send cannot complete while the inner parks.
 fn cancel_a_send_parked_in_the_inner(policy: ReconnectPolicy) -> Interrupted {
     let wire = Wire::new();
     let mut m = managed_send_on(&wire, policy);
@@ -314,8 +313,8 @@ fn cancel_a_send_parked_in_the_inner(policy: ReconnectPolicy) -> Interrupted {
 
 /// Both modes: the cancel is reported by the invocation it interrupted, and
 /// the interrupted message is not left queued behind the cancelled wrapper
-/// (in `Background` that used to be an `Ok(())` for a message handed to a
-/// worker that saw the latch and exited).
+/// (in `Background` the failure is an `Ok(())` for a message handed to a
+/// worker that sees the latch and exits).
 #[test]
 fn managed_send_parked_in_inner_is_interrupted_in_place() {
     for mode in [ReconnectMode::Blocking, ReconnectMode::Background] {

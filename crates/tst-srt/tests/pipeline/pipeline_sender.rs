@@ -50,9 +50,9 @@ fn sender_round_trip_one_frame() {
     // w.r.t. close. 1 s covers the 120 ms latency budget plus
     // scheduling jitter on every platform.
     //
-    // Bumped from 200 ms in plan #66 — Darwin scheduling on
-    // Apple Silicon (macOS arm64) pushes timing past the previous
-    // window; the extra headroom is platform-stable.
+    // Not 200 ms: Darwin scheduling on Apple Silicon (macOS arm64)
+    // pushes timing past that window; the extra headroom is
+    // platform-stable.
     thread::sleep(Duration::from_secs(1));
     sender.close();
 

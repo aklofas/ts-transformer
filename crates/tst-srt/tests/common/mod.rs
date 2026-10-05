@@ -85,7 +85,6 @@ pub fn wait_for_ready(ready: &AtomicBool) {
 
 // ------------------------------------------------------------------------
 // SrtLoopback helper: bind + spawn accept + ready-signal in one type.
-// See plan: docs/plans/2026-05-15-srt-loopback-test-helper.md
 // ------------------------------------------------------------------------
 
 /// Loopback test fixture. Encapsulates the 15-line "bind listener, spawn
@@ -223,8 +222,7 @@ pub const ACCEPT_DEADLINE: Duration = Duration::from_secs(10);
 /// returns can lose that race when the accept thread is descheduled across
 /// the window (a loaded 2-vCPU CI runner). Nothing else ever connects and
 /// the listener is owned by the parked thread, so without help the test
-/// hangs to nextest's kill (tst-c's managed demux receiver test, twice, PR
-/// #231). Two guards, both driven by the listener's pre-obtained cancel
+/// hangs to nextest's kill. Two guards, both driven by the listener's pre-obtained cancel
 /// handle (`cancel()` closes the listening socket, which wakes a parked
 /// `accept()` with an error):
 ///

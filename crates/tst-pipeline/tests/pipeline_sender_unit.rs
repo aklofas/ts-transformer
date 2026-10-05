@@ -1,5 +1,6 @@
 //! Unit-level integration tests for `pipeline::MuxSender` using a mock
-//! `Transport`. End-to-end tests over a real Socket pair are in Task 10.
+//! `Transport`. End-to-end tests over a real Socket pair are in
+//! `tst-srt`'s `tests/pipeline/pipeline_sender.rs`.
 
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::MuxerConfig;

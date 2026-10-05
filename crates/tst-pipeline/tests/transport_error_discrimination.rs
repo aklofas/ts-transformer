@@ -1,9 +1,8 @@
 //! Discriminating coverage for [`TransportError`] variants flowing through
 //! the pipeline shell errors.
 //!
-//! Per `feedback_audit_test_not_always_discriminating.md`: each test asserts
-//! on the **specific `ShellErrorKind` AND inner-variant pair** via `matches!`
-//! — not on `is_err()`.
+//! Each test asserts on the **specific `ShellErrorKind` AND inner-variant
+//! pair** via `matches!` — not on `is_err()`, which any error satisfies.
 //!
 //! ## Coverage
 //!
@@ -166,7 +165,7 @@ fn closed_propagates_as_end_of_stream_on_receiver() {
 /// `TransportError::ExplicitClose` from the underlying send transport must
 /// propagate as `ShellErrorKind::Closed` + `RawSenderErrorSource::Transport(ExplicitClose)`.
 ///
-/// `ExplicitClose` is the caller-initiated variant (plan B's
+/// `ExplicitClose` is the caller-initiated variant (the
 /// `ManagedRecvTransport::cancel()` path). Unlike `Closed` (which on the
 /// sender side also maps to `Closed` kind), `ExplicitClose` is distinguished
 /// at the inner-source level. Binding authors don't differentiate the two at

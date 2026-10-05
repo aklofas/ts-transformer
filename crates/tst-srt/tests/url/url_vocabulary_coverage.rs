@@ -1,4 +1,4 @@
-//! Vocabulary-coverage drift test. Per spec §8.6.
+//! Vocabulary-coverage drift test.
 //!
 //! Asserts:
 //!   1. All 16 Group 1 honored keys parse to a `Some(_)` field on

@@ -1,13 +1,13 @@
-//! Validate-1 C2 (Codex PIPE-01): `OverflowPolicy::Reject` must surface
+//! `OverflowPolicy::Reject` must surface
 //! `TransportError::Backpressure { msg: "gap buffer full", errno_code: None }` to the caller when
 //! the gap buffer fills during a reconnect, not silently drop bytes.
 //!
-//! Before the C2 fix, `ManagedTransport::send_managed` discarded the
-//! `Err(GapBufferError::Full)` result with `let _ = gap.enqueue(...);`,
-//! violating the documented contract of `OverflowPolicy::Reject` ("refuse
-//! to enqueue; return an error to the caller"). After the fix, the error
-//! propagates as `TransportError::Backpressure` — the shells map it to
-//! `ShellErrorKind::Backpressure` and `tst-c` to `TST_E_BUFFER_FULL`.
+//! A `ManagedTransport::send_managed` that discards the
+//! `Err(GapBufferError::Full)` result violates the documented contract of
+//! `OverflowPolicy::Reject` ("refuse to enqueue; return an error to the
+//! caller"). The error propagates as `TransportError::Backpressure` — the
+//! shells map it to `ShellErrorKind::Backpressure` and `tst-c` to
+//! `TST_E_BUFFER_FULL`.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Condvar, Mutex};

@@ -1,6 +1,6 @@
 //! `Listener::cancel_handle()` is the sanctioned cross-thread wake for a
 //! parked `accept()`. This pins the property the managed-receiver
-//! cancellable re-accept (ROADMAP Apple rider 2) is built on: cancelling
+//! cancellable re-accept is built on: cancelling
 //! from another thread makes a blocked `accept()` return promptly.
 //! Requires libsrt loopback.
 

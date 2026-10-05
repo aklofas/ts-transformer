@@ -145,7 +145,7 @@ mod tests {
         assert!(t.is_alive());
         t.close();
         let bytes = std::fs::read(&path).unwrap();
-        // Remove the temp file BEFORE asserting — a failed assert used to
+        // Remove the temp file BEFORE asserting — a failed assert would
         // leak it into the temp dir. Nothing below touches the path
         // (post-close send_bytes never reaches the filesystem).
         let _ = std::fs::remove_file(&path);
@@ -192,7 +192,7 @@ mod tests {
         let err = t.send_bytes(&[0u8; 188]).unwrap_err();
         let alive_after_failure = t.is_alive();
         let second_send = t.send_bytes(&[0u8; 188]);
-        // Remove the temp file BEFORE asserting — a failed assert used to
+        // Remove the temp file BEFORE asserting — a failed assert would
         // leak it into the temp dir.
         let _ = std::fs::remove_file(&path);
         assert!(matches!(err, TransportError::Broken { .. }));
@@ -206,7 +206,7 @@ mod tests {
     /// A failure that occurs ONLY at final flush — every send accepted,
     /// bytes still in the userspace buffer — must surface through
     /// `finish()`. This is exactly the case the infallible `close()`
-    /// swallows (the audit's silent-tail-loss finding): 188 bytes fit
+    /// swallows, a silent tail loss: 188 bytes fit
     /// the buffer, so `send_bytes` succeeds; the read-only inner file
     /// rejects the write only when the buffer drains at finish.
     #[test]

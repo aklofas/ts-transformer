@@ -1,5 +1,4 @@
 //! Verifies `PayloadTooLarge` reports the actual configured limit, not 1316.
-//! Regression for audit Issue 5.
 
 use std::time::Duration;
 use tst_core::transport::Transport;
@@ -40,8 +39,8 @@ fn payload_too_large_reports_configured_limit() {
     }
 }
 
-/// Regression for validate-1 C1 (Codex SRT-01): `SrtTransport::new`
-/// previously hardcoded `max_payload = 1316`, so a socket configured
+/// `SrtTransport::new` must read `max_payload` from the socket: a
+/// hardcoded `max_payload = 1316` means a socket configured
 /// with `SRTO_PAYLOADSIZE = 1456` would be silently truncated by the
 /// transport-level pre-check at `send_bytes` — and on the receiver
 /// side a buffer sized from `transport.max_payload()` would be too

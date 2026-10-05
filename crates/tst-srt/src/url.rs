@@ -44,7 +44,7 @@ fn warn_if_suspicious_latency(key: &str, ms: i32) {
     }
 }
 
-/// Group 3 (spec §4.3): libsrt-URL keys we recognize but don't yet expose.
+/// Group 3: libsrt-URL keys we recognize but don't yet expose.
 /// Each entry maps the URL key to its `SRTO_*` name for error messages.
 const GROUP3_REJECTED: &[(&str, &str)] = &[
     ("bindtodevice", "SRTO_BINDTODEVICE"),
@@ -298,12 +298,12 @@ impl SrtUrl {
     /// with the overlay applied and the sender preset merged underneath
     /// it, and return the connected transport.
     ///
-    /// This is the one composition every binding's sender open used to
-    /// carry a private copy of (tst-c's `connect_srt`, the Python and JVM
-    /// mirrors): [`UrlOverlay::apply_to_socket`] on a default
-    /// [`SocketConfig`] → [`SocketConfig::merge_sender_defaults`] (15 s
-    /// connect timeout, 5 s linger, `Role::Sender` — each only where the
-    /// overlay left it unset, so the URL wins) → the shared dial tail.
+    /// This is the one composition every binding's sender open shares (tst-c's
+    /// `connect_srt`, the Python and JVM mirrors):
+    /// [`UrlOverlay::apply_to_socket`] on a default [`SocketConfig`] →
+    /// [`SocketConfig::merge_sender_defaults`] (15 s connect timeout, 5 s
+    /// linger, `Role::Sender` — each only where the overlay left it unset, so
+    /// the URL wins) → the shared dial tail.
     ///
     /// # Which one to call
     ///

@@ -1,5 +1,5 @@
 //! Verifies SRTO_LINGER setter reaches libsrt and short-linger lets Drop
-//! return promptly. Audit Issue 4.
+//! return promptly.
 
 use std::time::{Duration, Instant};
 use tst_srt::SocketBuilder;

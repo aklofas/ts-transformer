@@ -1,5 +1,5 @@
 //! [`Owned<T, S>`] — the one handle state machine behind every binding
-//! object (Arc 2 spec §3.2).
+//! object.
 //!
 //! A binding wraps a pipeline shell `T` in an `Owned` and reaches it only
 //! through [`Owned::with_mut`] / [`Owned::with_ref`]. Cross-thread cancel
@@ -9,8 +9,8 @@
 //! for the slot, but only for as long as the cancelled operation needs to
 //! unwind — never for the original blocking call to finish on its own.
 //! Construction-constant getters (local address, port, URL text) read the
-//! [`Owned::snapshot`] captured at construction, never the slot (the
-//! PR #234 hang class).
+//! [`Owned::snapshot`] captured at construction, never the slot, so a
+//! getter never hangs behind a parked call.
 //!
 //! # Rules (each pinned by a unit test below)
 //!
@@ -22,16 +22,16 @@
 //!   critical region.
 //! - **Poison policy**: readers (`with_ref`, `take`, `is_closed`, `close`)
 //!   RECOVER a poisoned mutex; the mutator `with_mut` REFUSES with
-//!   [`HandleState::Poisoned`] (the RTSP-client policy of PR #146).
+//!   [`HandleState::Poisoned`]: a reader only observes, while a mutator
+//!   would build on a value a panic may have left half-updated.
 //! - **Panic policy**: a panic inside the closure is caught and reported as
 //!   [`HandleState::Panicked`] for THAT call; the guard lives outside the
 //!   boundary, so the mutex is NOT poisoned. A panicking MUTATOR drops `T`
-//!   (later calls → [`HandleState::Closed`]); a panicking READER keeps it
-//!   (spec §3.2 as amended at plan review).
+//!   (later calls → [`HandleState::Closed`]); a panicking READER keeps it.
 //! - **Double close is quiet**: the second `close()` is `Ok(())`.
 //! - **Snapshot getters never take the slot**; **`cancel()` never takes the
-//!   slot** (the #189 lease class) — the cancel handle is an `Arc` read
-//!   lock-free.
+//!   slot** — the cancel handle is an `Arc` read lock-free, so a cancel
+//!   never waits behind the parked call it must wake.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, TryLockError};
@@ -56,10 +56,10 @@ pub trait Close {
 
 /// Why [`Owned::with_mut`] / [`Owned::with_ref`] could not run the closure.
 ///
-/// The only three failure modes of the state machine (spec Arc 2 §5); each
-/// has exactly one mapping per binding, implemented once in `binding::kind`
-/// (WP-A2): `Closed` → the binding's `CLOSED` kind, `Poisoned` → its
-/// internal-error kind, `Panicked` → its panic kind.
+/// The only three failure modes of the state machine; each has exactly one
+/// mapping per binding, implemented once in `binding::kind`: `Closed` →
+/// the binding's `CLOSED` kind, `Poisoned` → its internal-error kind,
+/// `Panicked` → its panic kind.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HandleState {
@@ -125,9 +125,7 @@ impl TransportCancel for OwnedCancel {
         // just saw was caller-initiated. Storing the latch afterwards loses
         // that race: the woken thread reads `false` and relabels a cancel as
         // a peer disconnect (`TST_E_END_OF_STREAM` at the C ABI instead of
-        // `TST_E_CLOSED`). The bindings' pre-Arc-2 `_cancel` bodies all
-        // stored their `was_cancelled` flag before firing the handle for
-        // exactly this reason; pinned by
+        // `TST_E_CLOSED`). Pinned by
         // `owned_cancel_latches_before_it_fires_the_transport_handle`.
         self.cancelled.store(true, Ordering::SeqCst);
         self.transport.cancel();
@@ -138,10 +136,10 @@ impl TransportCancel for OwnedCancel {
 }
 
 impl<T, S> Owned<T, S> {
-    /// Wrap `inner`. `cancel` is the value's own cancel handle (every shell
-    /// has one after WP-D; the managed wrappers' `ManagedCancel`, a
-    /// transport's `cancel_handle()`); `snapshot` is whatever the binding's
-    /// constant getters must answer without the slot.
+    /// Wrap `inner`. `cancel` is the value's own cancel handle (the managed
+    /// wrappers' `ManagedCancel`, a transport's `cancel_handle()`);
+    /// `snapshot` is whatever the binding's constant getters must answer
+    /// without the slot.
     pub fn new(inner: T, cancel: Arc<dyn TransportCancel>, snapshot: S) -> Self {
         Self {
             inner: Mutex::new(Some(inner)),
@@ -158,7 +156,7 @@ impl<T, S> Owned<T, S> {
     /// `tst_*_cancel_handle` / Python `cancel_handle()` / JVM
     /// `cancelHandle()`. A plain `Arc` clone: never touches the slot, so it
     /// can be obtained while another thread is parked in
-    /// [`Self::with_mut`] (the #189 lease class). `cancel()` on the returned
+    /// [`Self::with_mut`]. `cancel()` on the returned
     /// handle is [`Self::cancel`]: it fires the transport handle AND latches
     /// [`Self::is_cancelled`].
     pub fn cancel_arc(&self) -> Arc<dyn TransportCancel> {
@@ -187,7 +185,7 @@ impl<T, S> Owned<T, S> {
         // Our own latch first (set by `cancel()` / `close()` on THIS handle),
         // then the transport's: a cancel fired through a handle the caller
         // obtained directly from the shell (`cancel_handle()`) is still a
-        // cancel — WP-C1 made every `TransportCancel` able to say so. The
+        // cancel, and every `TransportCancel` can say so. The
         // transport's latch is a CANCEL latch, never a liveness proxy, so a
         // peer EOF does not reach this (see `TransportCancel`'s docs).
         self.cancel.cancelled.load(Ordering::SeqCst) || self.cancel.transport.is_cancelled()
@@ -195,7 +193,7 @@ impl<T, S> Owned<T, S> {
 
     /// The construction-time snapshot. Lock-free by construction — a plain
     /// field read — so a getter routed here can never park behind a
-    /// blocked `with_mut` (PR #234's five getters did exactly that).
+    /// blocked `with_mut`.
     pub fn snapshot(&self) -> &S {
         &self.snapshot
     }
@@ -213,21 +211,20 @@ impl<T, S> Owned<T, S> {
     ///
     /// # Errors
     ///
-    /// [`HandleState::Poisoned`] — the mutex is poisoned (a mutator refuses,
-    /// spec §3.2); [`HandleState::Closed`] — the slot is empty;
+    /// [`HandleState::Poisoned`] — the mutex is poisoned (a mutator
+    /// refuses); [`HandleState::Closed`] — the slot is empty;
     /// [`HandleState::Panicked`] — `f` panicked. In the last case the guard
     /// was held OUTSIDE the catch boundary, so the mutex is not poisoned —
     /// but a panic mid-mutation leaves `T` in an unknown state, so the slot
     /// is DROPPED: the panicking call reports `Panicked` and every later
-    /// call reports `Closed` (the std-poisoning model; also what the C and
-    /// JVM bindings did before Arc 2). That drop happens inside its own
-    /// panic boundary, so a panicking `T::Drop` cannot poison the mutex and
-    /// turn the promised `Closed` into `Poisoned` — the drop panic is
-    /// swallowed and the closure's original panic is what is reported.
-    /// Readers ([`Self::with_ref`]) keep
-    /// the slot: a `&T` closure can only mutate through interior mutability,
-    /// and every such interior (transport mutex, atomics) carries its own
-    /// poison/latch rule — A1.9 records the per-site audit.
+    /// call reports `Closed` (the std-poisoning model). That drop happens
+    /// inside its own panic boundary, so a panicking `T::Drop` cannot
+    /// poison the mutex and turn the promised `Closed` into `Poisoned` —
+    /// the drop panic is swallowed and the closure's original panic is what
+    /// is reported. Readers ([`Self::with_ref`]) keep the slot: a `&T`
+    /// closure can only mutate through interior mutability, and every such
+    /// interior (transport mutex, atomics) carries its own poison/latch
+    /// rule, which contains a reader panic.
     pub fn with_mut<R>(&self, f: impl FnOnce(&mut T) -> R) -> Result<R, HandleState> {
         let mut guard = self.inner.lock().map_err(|_| HandleState::Poisoned)?;
         if guard.is_none() {
@@ -271,7 +268,7 @@ impl<T, S> Owned<T, S> {
     /// currently holds (a parked receive) is by definition still open, so
     /// this answers `false` without waiting — the `is_alive()` / `repr()`
     /// probes the bindings run from a watchdog thread must never queue
-    /// behind the parked call (the PR #234 class). Recovers a poisoned
+    /// behind the parked call. Recovers a poisoned
     /// mutex.
     pub fn is_closed(&self) -> bool {
         match self.inner.try_lock() {
@@ -300,7 +297,7 @@ impl<T, S> Owned<T, S> {
 }
 
 impl<T: Close, S> Owned<T, S> {
-    /// Cancel-first close, the Arc 1 contract enforced once:
+    /// Cancel-first close, enforced once for every binding:
     ///
     /// 1. [`Self::cancel`] — a thread parked inside [`Self::with_mut`]
     ///    returns (its operation fails with `ExplicitClose`) and releases
@@ -361,12 +358,10 @@ impl<T: Close, S> Owned<T, S> {
 
 /// A cancel handle that is only a flag.
 ///
-/// For values that have no wake-up mechanism of their own — the `udp://`
-/// and `rist://` shells until their real handles ship (Arc 2 WP-D), and
-/// any binding object whose cancel is purely a state transition. Firing it
-/// latches [`Owned::is_cancelled`] via the normal [`Owned::cancel`] path;
-/// nothing parked is woken, which is exactly what those objects can offer.
-/// Replaces the JVM binding's `NoopCancel`.
+/// For values that have no wake-up mechanism of their own — any binding
+/// object whose cancel is purely a state transition. Firing it latches
+/// [`Owned::is_cancelled`] via the normal [`Owned::cancel`] path; nothing
+/// parked is woken, which is exactly what those objects can offer.
 ///
 /// The trait impl delegates to [`Self::is_set`].
 #[derive(Debug, Default)]
@@ -480,7 +475,7 @@ mod tests {
         }
     }
 
-    // ---- construction + lock-free half (Task A1.2) ----
+    // ---- construction + lock-free half ----
 
     #[test]
     fn fresh_handle_is_open_uncancelled_and_carries_its_snapshot() {
@@ -555,7 +550,7 @@ mod tests {
         assert_send_sync::<Owned<Mock, &'static str>>();
     }
 
-    // ---- slot access, poison + panic policy (Task A1.3) ----
+    // ---- slot access, poison + panic policy ----
 
     /// Poison the fixture's mutex the only way std allows: unwind while a
     /// guard is held, on another thread (the test's own `with_mut` cannot,
@@ -723,7 +718,7 @@ mod tests {
         );
     }
 
-    // ---- close (Task A1.4) ----
+    // ---- close ----
 
     #[test]
     fn close_cancels_first_then_closes_once_and_empties_the_slot() {
@@ -912,7 +907,7 @@ mod tests {
     }
 
     // ---- concurrency: nothing but with_mut/with_ref/take/is_closed/close
-    // waits on the slot (Task A1.5) ----
+    // waits on the slot ----
 
     const PARK_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
     /// Bound on how long a call that must NOT wait on the slot may take.
@@ -1002,7 +997,7 @@ mod tests {
         let reader = {
             let o = Arc::clone(&f.owned);
             std::thread::spawn(move || {
-                let handle = o.cancel_arc(); // must not lease the slot (the #189 class)
+                let handle = o.cancel_arc(); // must not lease the slot
                 (*o.snapshot(), o.end_reason(), o.is_cancelled(), handle)
             })
         };
@@ -1071,10 +1066,9 @@ mod tests {
     /// it just observed was caller-initiated. Latching afterwards loses that
     /// race: the woken reader sees `false` and relabels a caller cancel as a
     /// peer disconnect (at the C ABI: `TST_E_END_OF_STREAM` instead of
-    /// `TST_E_CLOSED`). Reproduced in Arc 2 WP-B1 as an intermittent failure
-    /// of the six `bindings/c/tests/receiving/cancel_first.rs` parked-recv
-    /// tests; the pre-Arc-2 bindings all stored their `was_cancelled` flag
-    /// before firing the handle for exactly this reason.
+    /// `TST_E_CLOSED`). With the order reversed this shows up as an
+    /// intermittent failure of the six
+    /// `bindings/c/tests/receiving/cancel_first.rs` parked-recv tests.
     ///
     /// Deterministic — no polling: the transport handle reads the `Owned`'s
     /// own latch from INSIDE its `cancel()`, exactly where a woken reader
@@ -1208,7 +1202,7 @@ mod tests {
         assert!(closer.join().unwrap().is_ok());
     }
 
-    // ---- FlagCancel (Task A1.6) ----
+    // ---- FlagCancel ----
 
     #[test]
     fn flag_cancel_starts_clear() {

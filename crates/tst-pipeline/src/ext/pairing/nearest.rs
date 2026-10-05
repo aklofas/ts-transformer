@@ -158,7 +158,7 @@ impl NearestState {
                 .klv_history
                 .iter()
                 // saturating_sub + saturating_abs guard against i64 overflow when
-                // PTS values approach the limit (PIPE-03 item 1). H.222.0 §2.4.3.7
+                // PTS values approach the limit. H.222.0 §2.4.3.7
                 // bounds the demuxer's per-event PTS at 0..(2^33 − 1) ≈ 9.55e9, so
                 // saturation is defensive against non-conformant sources.
                 .map(|e| {
@@ -201,7 +201,7 @@ impl NearestState {
         let mut best: Option<(usize, i64)> = None;
         for (i, entry) in self.klv_history.iter().enumerate() {
             // saturating_sub + saturating_abs guards against i64 overflow
-            // (PIPE-03 item 1) — see drain_buffered for the rationale.
+            // — see drain_buffered for the rationale.
             let dist = entry
                 .sample
                 .pts
@@ -572,7 +572,7 @@ mod tests {
         assert!(matches!(&out[0], PairerOutput::Paired { .. }));
     }
 
-    // --- PIPE-03 PTS saturation regression tests ---
+    // --- PTS saturation regression tests ---
 
     #[test]
     fn near_i64_max_pts_does_not_overflow_buffered_drain() {
@@ -616,7 +616,7 @@ mod tests {
         // Surviving this call IS the assertion.
     }
 
-    // --- PIPE-01: raw-first VideoSample ---
+    // --- raw-first VideoSample ---
 
     /// A video event carrying known raw bytes + random_access_indicator=true.
     fn video_event_with_raw(pts: i64, raw: Vec<u8>, rai: bool) -> DemuxEvent {
@@ -640,7 +640,7 @@ mod tests {
     #[test]
     fn raw_first_video_sample_carries_exact_raw_and_rai() {
         // Prove that paired VideoSample preserves raw + RAI verbatim, and that
-        // split_units() drives an opt-in parse (PIPE-01 contract).
+        // split_units() drives an opt-in parse (the raw-first contract).
         //
         // Minimal H.264 AU: AUD (nal_type=9) + IDR (nal_type=5), Annex-B.
         let raw_bytes = vec![

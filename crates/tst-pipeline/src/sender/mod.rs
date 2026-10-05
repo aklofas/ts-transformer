@@ -539,7 +539,7 @@ mod tests {
 
     #[test]
     fn close_flushes_buffered_partial_packets() {
-        // Reproduces PIPE-01: Sender::close must flush the framing buffer
+        // Sender::close must flush the framing buffer
         // before marking the sender closed; otherwise 1-6 partial TS packets
         // that fit inside TsFraming::buffer are silently dropped.
         //

@@ -191,13 +191,13 @@ impl Transport for DrainRaceInner {
     fn close(&mut self) {}
 }
 
-/// CORR-11: a cancel that lands DURING the post-reconnect gap drain — one
-/// step after the mid-factory window the test above closes — made the
-/// wrapper report the drain's `Broken("transport broken during drain")`
-/// instead of the caller-initiated close. Bindings map the two to
-/// different kinds, so a watchdog cancel surfaced as a transport fault.
-/// WP-C2: the caller-initiated answer is `ExplicitClose` — `Closed` is
-/// reserved for the wrapper's OWN `close()`/`Drop`.
+/// A cancel that lands DURING the post-reconnect gap drain — one step
+/// after the mid-factory window the test above closes — must be reported
+/// as the caller-initiated close, not as the drain's
+/// `Broken("transport broken during drain")`. Bindings map the two to
+/// different kinds, so the wrong one surfaces a watchdog cancel as a
+/// transport fault. The caller-initiated answer is `ExplicitClose` —
+/// `Closed` is reserved for the wrapper's OWN `close()`/`Drop`.
 #[test]
 fn cancel_during_post_reconnect_drain_reports_explicit_close() {
     let handle_cell: Arc<Mutex<Option<Arc<dyn TransportCancel + Send + Sync>>>> =
