@@ -6,9 +6,7 @@
 > **You will learn:**
 > - The NAL-unit model for H.264 / H.265 / H.266 (and the OBU model for AV1)
 > - How to extract SPS / PPS / VPS parameter sets for decoder warm-start
-> - The slice-header-light parsers added in tst-py Phase 5
 > - How audio frame parsers expose sample rate, channel layout, frame length
-> - How Python's `ev.parse()` typing varies by codec (NalUnit / Obu / AdtsFrame / Mpeg2AudioFrame)
 > - The AV1 `Mpeg2TsBinding` vs `InteropRawObu` carriage modes
 
 ## What this module is
@@ -108,16 +106,16 @@ while let Some(ev) = dx.next_event() {
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `width` / `height` | `u32` | Decoded from `pic_width_in_mbs_minus1` / `pic_height_in_map_units_minus1` + VUI crop rectangle. |
+| `width` / `height` | `u32` | Decoded from `pic_width_in_mbs_minus1` / `pic_height_in_map_units_minus1` minus the SPS frame-cropping offsets (`crop_left` / `crop_right` / `crop_top` / `crop_bottom`). |
 | `profile_idc` | `u8` | 66 = Baseline, 77 = Main, 100 = High, 110 = High 10, etc. |
 | `level_idc` | `u8` | `level × 10` — level 4.0 is stored as 40. |
 | `bit_depth_luma` / `bit_depth_chroma` | `u8` | 8 for most streams; 10 for HDR. |
-| `chroma_format` | `ChromaFormat` | `C420` / `C422` / `C444` / `Monochrome`. |
-| `color` | `Option<ColorInfo>` | VUI color information (`primaries`, `transfer`, `matrix`). `None` when VUI timing is absent. |
+| `chroma_format` | `ChromaFormat` | `Yuv420` / `Yuv422` / `Yuv444` / `Monochrome`. |
+| `color` | `Option<ColorInfo>` | VUI color information (`primaries`, `transfer`, `matrix`, `full_range`, `chroma_loc`, `sample_aspect_ratio`). `None` when the VUI signals none of video signal type, chroma location or aspect ratio. |
 | `frame_rate` | `Option<Rational>` | Derived from VUI `timing_info` (`num_units_in_tick` + `time_scale`). `None` when absent. |
 | `raw_rbsp` | `Vec<u8>` | The input bytes verbatim (emulation-prevention bytes included). |
 
-**`H264Pps` key fields:** `pps_id`, `sps_id`, `entropy_coding_mode` (`Cavlc` or `Cabac`), `raw_rbsp`.
+**`H264Pps` key fields:** `pic_parameter_set_id`, `seq_parameter_set_id`, `entropy_coding_mode` (`Cavlc` or `Cabac`), `raw_rbsp`.
 
 ## H.265 quick start
 
@@ -203,8 +201,7 @@ while let Some(ev) = dx.next_event() {
 }
 ```
 
-**`H266Vps` key fields:** `vps_id`, plus the headline `profile_tier_level`
-fields (carried on the VPS for the operating point set).
+**`H266Vps` key fields:** `vps_id`, `max_layers`, `max_sub_layers`.
 
 **`H266Sps` key fields:** `sps_id`, `vps_id`, `profile_tier_level`
 (`general_profile_idc` / `general_tier_flag` / `general_level_idc`),
@@ -219,10 +216,12 @@ fields (carried on the VPS for the operating point set).
   (type 19), and multi-layer streams (`nuh_layer_id != 0`) pass through
   unparsed.
 - Bails `CodecParseError::UnsupportedProfile` on `sps_subpic_info_present_flag = 1`
-  and `sps_scaling_list_data_present_flag = 1` (rare; not in reference
+  and `sps_explicit_scaling_list_enabled_flag = 1` (rare; not in reference
   encoder defaults).
-- `color_info` and `frame_rate` are surfaced as `None` today — VUI walking
-  is stubbed pending the deeper SPS field-walk.
+- `color_info` comes from the VUI and is `None` when
+  `sps_vui_parameters_present_flag` is unset; `frame_rate` comes from
+  `general_timing_hrd_parameters()` (H.266 moved timing out of the VUI) and
+  is `None` when no timing/HRD parameters are present.
 - See [project/deferred-features.md](/docs/project/deferred-features.md).
 
 ## AV1 quick start
@@ -233,6 +232,13 @@ with auto-emitted AV01 `registration_descriptor` per the AV1-in-MPEG-2-TS
 binding §2.1. For an AV1 AU, `split_video(&raw, codec, av1_carriage.unwrap_or_default())` returns
 `VideoPayload::Obus(Vec<Obu>)` rather than `Nals(_)` (and reverses the
 `ts_open_bitstream_unit()` binding framing along the way).
+
+The sample's `av1_carriage` field names the carriage the demuxer was
+configured for (`DemuxerConfig::av1_carriage`; `None` for non-AV1 streams). `Av1CarriageMode::Mpeg2TsBinding`
+(the default) is the conformant binding: PES `stream_id = 0xBD` and
+`ts_open_bitstream_unit()` framing. `Av1CarriageMode::InteropRawObu` matches
+the ffmpeg / hls.js / mediamtx toolchain: PES `stream_id = 0xE0` and raw OBUs
+with no framing. Muxer and demuxer must be configured with the same mode.
 
 ```rust,no_run
 use tst_core::codec::av1;
@@ -251,7 +257,7 @@ while let Some(ev) = dx.next_event() {
             continue;
         };
         let stream = av1::parse_obu_stream(&obus);
-        if let Some(seq) = &stream.sequence_header {
+        if let Some(seq) = stream.sequence_headers.first() {
             println!(
                 "AV1 {}x{} profile={} level={} tier={} {}-bit {:?}",
                 seq.max_frame_width,
@@ -278,18 +284,19 @@ while let Some(ev) = dx.next_event() {
 is always `None` in this slice — full per-frame decode would require
 reference-frame management beyond the parser's scope.
 
-**`Av1ObuStream` (returned by `parse_obu_stream`)** holds an optional
-`sequence_header` and a `Vec<Av1FrameHeaderLight>` collected from the
-input OBUs. Use it when you want a single call against an AU's OBU list
-rather than walking individual OBUs.
+**`Av1ObuStream` (returned by `parse_obu_stream`)** holds the
+`sequence_headers` and `frame_headers` collected from the input OBUs, plus
+`unparseable` (`(obu_type, CodecParseError)` for each OBU that failed). Use it
+when you want a single call against an AU's OBU list rather than walking
+individual OBUs.
 
 ### Known limitations
 
 - Sequence Header + Frame Header light scope; full Frame Header parsing
   crosses into "you want a decoder."
 - Operating points beyond 0 are walked past but not surfaced.
-- Tile Group / Metadata / Padding OBUs pass through as
-  `Obu::Other { obu_type, payload }` without further parsing.
+- Temporal Delimiter / Tile Group / Metadata / Padding OBUs stay plain
+  `Obu { obu_type, payload, .. }` values; `parse_obu_stream` skips them.
 - See [project/deferred-features.md](/docs/project/deferred-features.md).
 
 ## Error handling
@@ -428,9 +435,9 @@ modules:
 
 | Type | Description |
 | --- | --- |
-| `ChromaFormat` | `Monochrome` / `C420` / `C422` / `C444` |
+| `ChromaFormat` | `Monochrome` / `Yuv420` / `Yuv422` / `Yuv444` |
 | `Rational` | `{ num: u32, den: u32 }` — frame rate numerator / denominator |
-| `ColorInfo` | `{ primaries, transfer, matrix }` — H.273-faithful decoded enums |
+| `ColorInfo` | `{ primaries, transfer, matrix, full_range, chroma_loc, sample_aspect_ratio }` — H.273-faithful decoded enums plus range, chroma location and pixel aspect ratio |
 | `ColourPrimaries` | BT.709, BT.2020, DCI-P3, Unspecified, … (full ITU-T H.273 table) |
 | `TransferCharacteristics` | BT.709, SMPTE ST 2084 (PQ), HLG, IEC 61966-2-1 (sRGB), … |
 | `MatrixCoefficients` | BT.601, BT.709, BT.2020 NCL/CL, Identity, … |
@@ -498,8 +505,9 @@ recovers the actual layer and version from each header.
 if let SamplePayload::Audio { codec: AudioCodec::Aac, frames, .. } = payload {
     for frame in codec::aac::frames(&frames) {
         let f = frame?;
-        println!("profile={:?} sample_rate={} channels={} blocks={} samples_per_frame={}",
-            f.profile, f.sample_rate_hz, f.channels,
+        // `channels()` is `None` for a PCE-defined layout (channel_configuration 0).
+        println!("profile={:?} sample_rate={} channels={:?} blocks={} samples_per_frame={}",
+            f.profile, f.sample_rate_hz, f.channels(),
             f.num_raw_data_blocks, f.samples_per_frame);
     }
 }
@@ -517,15 +525,14 @@ Every audio module ships two iterator entry points:
 ```rust,ignore
 codec::mpegaudio::frames(&bytes)             // strict: first parse error ends iteration
 codec::mpegaudio::frames_with_resync(&bytes) // best-effort: skip garbage, find the next valid frame
-codec::aac::adts::frames(&bytes)             // (same pair on aac::adts)
-codec::aac::adts::frames_with_resync(&bytes) //
+codec::aac::frames(&bytes)                   // (same pair on aac, ADTS framing)
+codec::aac::frames_with_resync(&bytes)       //
 ```
 
 `frames_with_resync` walks past unparsable bytes until it finds the next
 valid header. Use it whenever you're populating stats from possibly-
-corrupted PES payloads (the demuxer's per-stream stats sites switched
-to this iterator after the Validate-1 G2 audit revealed first-parse-error
-stream-wide undercount). Use the strict `frames()` form when feeding
+corrupted PES payloads (the demuxer's per-stream audio frame counters use
+it, so one malformed frame mid-PES does not drop the rest of the count). Use the strict `frames()` form when feeding
 known-good test fixtures or when any parse error should abort the loop.
 
 `CodecParseError::UnsupportedFreeFormat { layer }` is distinct from
@@ -547,8 +554,7 @@ treats it as a recoverable error and continues past the affected frame.
 `codec::aac::latm` validates LOAS syncword (`0x2B7` 11-bit pattern) and
 `audioMuxLengthBytes` per ISO/IEC 14496-3 §1.7. `codec::ac3::parse_syncframe`
 parses A/52 §5.4.1 syncframes (sync word `0x0B77`, bsid, frame size,
-sample rate, channel layout). Both shipped in Validate-1 Sprint 2
-(commits `c9835b9` + `0ead2f9`).
+sample rate, channel layout).
 
 See `docs/project/deferred-features.md` for any remaining audio surface that
 hasn't shipped yet.

@@ -7,7 +7,7 @@
 > - [Pair sync-KLV with video AUs by nearest PTS](/docs/cookbook/pairing/pair-klv-by-pts.md) — the inline ~20-line equivalent
 > - [Example: `pair_klv_pipeline`](/examples/pairing/pair_klv_pipeline.rs)
 
-The cookbook recipe 12 inline pattern in ~20 lines, expressed through
+The [nearest-PTS](/docs/cookbook/pairing/pair-klv-by-pts.md) inline pattern in ~20 lines, expressed through
 the opt-in `tst_pipeline::ext::pairing::Pairer`. Same semantics, with
 bounded KLV history, telemetry counters, and typed projection structs
 on the output.
@@ -38,7 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     while let Some(e) = demux.next_event() {
         for o in pairer.feed(e) {
             if let PairerOutput::Paired { video, klv } = o {
-                // video.raw → decoder (Annex-B reconstitute, recipe 18)
+                // video.raw → decoder (see "Reconstitute Annex B parameter sets")
                 // klv.payload   → tst_core::klv::st0601::decode
                 let _ = (video, klv);
             }

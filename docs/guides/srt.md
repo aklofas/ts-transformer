@@ -104,8 +104,9 @@ Two equivalent forms construct the same `Socket`:
   `bind(addr)` taking `&self` and cloning the inner `ListenerConfig`.
 - The config struct — `SocketConfig` — is the canonical type. Every
   field is `pub`, so bindings (UniFFI dictionaries, JNI POJOs,
-  cbindgen C structs) consume it directly. Construct with struct-update
-  syntax and call `Socket::connect_with(&cfg, addr)`.
+  cbindgen C structs) consume it directly. It is `#[non_exhaustive]`, so
+  outside `tst-srt` you start from `SocketConfig::default()` (or a preset),
+  assign the fields you need, and call `Socket::connect_with(&cfg, addr)`.
 
 Rust callers prefer the builder; binding generators prefer the struct
 because it maps onto plain dictionary / POJO / C-struct shapes. The
@@ -124,10 +125,8 @@ fn build_via_builder() -> Result<Socket, Box<dyn std::error::Error>> {
 }
 
 fn build_via_config() -> Result<Socket, Box<dyn std::error::Error>> {
-    let cfg = SocketConfig {
-        latency: Some(Duration::from_millis(120)),
-        ..Default::default()
-    };
+    let mut cfg = SocketConfig::default();
+    cfg.latency = Some(Duration::from_millis(120));
     let s = Socket::connect_with(&cfg, "127.0.0.1:9000")?;
     Ok(s)
 }
@@ -170,7 +169,7 @@ use std::time::Duration;
 
 fn via_builder(passphrase: Passphrase) -> Result<Socket, Box<dyn std::error::Error>> {
     // Builder chain — pure-Rust idiomatic
-    let socket = Socket::builder()
+    let socket = SocketBuilder::new()
         .sender_defaults()
         .passphrase(passphrase)
         .latency(Duration::from_millis(200))
@@ -180,17 +179,15 @@ fn via_builder(passphrase: Passphrase) -> Result<Socket, Box<dyn std::error::Err
 
 fn via_struct(passphrase: Passphrase) -> Result<Socket, Box<dyn std::error::Error>> {
     // Struct construction — FFI / UniFFI / JNI dictionary mirror
-    let cfg = SocketConfig {
-        passphrase: Some(passphrase),
-        latency: Some(Duration::from_millis(200)),
-        ..SocketConfig::sender_defaults()
-    };
+    let mut cfg = SocketConfig::sender_defaults();
+    cfg.passphrase = Some(passphrase);
+    cfg.latency = Some(Duration::from_millis(200));
     let socket = Socket::connect_with(&cfg, "host:9000")?;
     Ok(socket)
 }
 ```
 
-The receiver side mirrors exactly: `Socket::builder().receiver_defaults()`
+The receiver side mirrors exactly: `SocketBuilder::new().receiver_defaults()`
 or `SocketConfig::receiver_defaults()`.
 
 ### Filling in defaults on an existing config
@@ -217,8 +214,9 @@ Calling the merge twice is idempotent.
 
 Don't call the preset — `SocketConfig::default()` gives all-`None` /
 `Role::Receiver`, which preserves libsrt's raw defaults across the
-board. The `tst-c` C ABI's six `tst_*_open` entry points apply the
-sender preset internally.
+board. Every caller-mode SRT open in the `tst-c` C ABI (`tst_*_open`,
+plain and managed, sender and receiver side) applies the sender preset
+internally.
 
 ## Encryption
 
@@ -292,10 +290,12 @@ see [guides/pipeline.md](/docs/guides/pipeline.md) for the full breakdown.
 
 ## Bandwidth and packet handling
 
-- `MaxBandwidth` (`SRTO_MAXBW`): `Unlimited` (the default — libsrt
-  derives the cap from input rate plus overhead percent), `Auto`, or
-  `Limited(bps)`. Most deployments leave `Unlimited`
-  and shape via `input_bandwidth` + `overhead_bandwidth_pct`.
+- `MaxBandwidth` (`SRTO_MAXBW`): leave it unset to keep libsrt's default
+  (`-1`: no limit; 1 Gbps cap in live mode). The variants set the raw
+  value: `Unlimited` → `0`, which libsrt treats as relative to the input
+  rate (`input_bandwidth` + `overhead_bandwidth_pct`) — the setting libsrt
+  recommends for live streams with a fairly constant bitrate; `Auto` → `-1`;
+  `Limited(n)` → an absolute cap of `n` bytes/s.
 - `Congestion::Live` vs. `Congestion::File`: `Live` drops late packets
   (TLPKTDROP) so the decoder isn't blocked on stale bytes — the right
   choice for video. `File` preserves every packet at the cost of
@@ -517,6 +517,17 @@ match listener.accept_timeout(Duration::from_millis(500)) {
 There is no `set_nonblocking`. Async support is deferred — see the
 sync-vs-async section in [reference/architecture.md](/docs/reference/architecture.md).
 
+## Cancelling a blocked call
+
+`Socket::cancel_handle()` and `Listener::cancel_handle()` return a
+clone-able `SrtCancelHandle` (`Send + Sync`, idempotent). Calling
+`cancel()` from any thread closes the underlying SRT socket: a thread
+parked in `send` / `recv` wakes with a connection error, and a parked
+`accept()` returns. Once the socket is wrapped in `SrtTransport`, the same
+cancel surfaces as `TransportError::ExplicitClose`. The full contract —
+including the pipeline shells' `cancel_handle()` — is in
+[reference/srt-cancel-handle.md](/docs/reference/srt-cancel-handle.md).
+
 ## URL parsing
 
 Senders accept `srt://host:port?key=value&...` URLs in addition to
@@ -610,8 +621,6 @@ Each item below maps to an entry in
   needs link bonding.
 - Key rotation (`SRTO_KMREFRESHRATE`, `SRTO_KMPREANNOUNCE`) — typical
   stream durations don't trigger AES rekey thresholds.
-- Linger tuning (`SRTO_LINGER`) — the library uses a sensible
-  internal value; live mode doesn't need a long linger.
 - Protocol-version pinning (`SRTO_PEERVERSION`, `SRTO_MINVERSION`) —
   libsrt 1.5.7 negotiates with anything 1.3 or newer.
 - Typed FEC / packet-filter builder — pass the libsrt spec string

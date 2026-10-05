@@ -52,7 +52,7 @@ for e in demux_events() {
 }
 ```
 
-Compared to recipe 14's inline pattern, the Pairer-based composition
+Compared to the inline EO + IR pattern, the Pairer-based composition
 adds telemetry counters per branch and the typed output projections,
 at the cost of one extra clone per KLV event (acceptable for typical
 1–10 KB ST 0601 records).

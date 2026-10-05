@@ -22,19 +22,18 @@ AV1 uses OBU framing — fundamentally different from the NAL-shaped codecs
 
 ```rust,no_run
 use tst_core::mpegts::common::Pts90khz;
-use tst_core::mpegts::mux::{MuxerConfig, KlvStreamType, Muxer, StreamSpec, VideoCodec};
+use tst_core::mpegts::mux::{
+    KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec,
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cfg = MuxerConfig {
-        streams: vec![
-            StreamSpec::Video { pid: 0x1011, codec: VideoCodec::Av1 },
-            StreamSpec::Klv {
-                pid: 0x1031,
-                stream_type: KlvStreamType::PrivateData,
-                carries_pts: false,
-            },
-        ],
-        ..MuxerConfig::default()
+    let cfg = {
+        let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+        prog.add_video(0x1011, VideoCodec::Av1);
+        prog.add_klv(0x1031, KlvStreamType::SynchronousMetadata, /*carries_pts=*/ true);
+        let mut b = MuxerConfig::builder();
+        b.add_program(prog.build());
+        b.build()?
     };
     let mut mux = Muxer::new(cfg)?;
     // `au_obus` is a contiguous OBU sequence (each with obu_has_size_field=1).

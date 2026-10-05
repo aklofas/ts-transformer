@@ -20,7 +20,7 @@ opts.tolerance = Duration::from_millis(300);
 opts.max_buffered_klv = 32;
 opts.max_buffered_video = 60; // ≈2 s @ 30 fps
 let mut pairer = Pairer::with_config(0x100, 0x102, opts);
-// feed loop unchanged from recipe 24.
+// feed loop unchanged from the Realtime recipe.
 ```
 
 Trade-off: up to ~2 s pairing-induced latency in exchange for picking

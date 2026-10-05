@@ -241,6 +241,10 @@ pub trait Transport: Send {
     fn max_payload(&self) -> usize;
     fn is_alive(&self) -> bool;
     fn close(&mut self);
+    // Provided (default `None`): override to expose a cross-thread cancel
+    // handle and per-socket statistics.
+    fn cancel_handle(&self) -> Option<Arc<dyn TransportCancel + Send + Sync>> { None }
+    fn socket_stats(&self) -> Option<SocketStats> { None }
 }
 ```
 
@@ -317,10 +321,11 @@ impl SrtTransport {
 
 `SrtTransport::new` wraps an already-connected `Socket`. Configure the
 socket (passphrase, latency, stream id, etc.) before wrapping —
-`SrtTransport` doesn't expose libsrt knobs of its own. `max_payload`
-defaults to 1316 (libsrt's `SRTO_PAYLOADSIZE` default) and is NOT
-queried from the socket; for a non-default payload size, call
-`with_max_payload`.
+`SrtTransport` doesn't expose libsrt knobs of its own. `max_payload` is
+read from the socket's negotiated `SRTO_PAYLOADSIZE`
+(`Socket::payload_limit`) — 1316 for an unconfigured socket, or e.g. 1456
+when `payloadsize=` / `SocketConfig::payload_size` was set. `DEFAULT_PAYLOAD`
+is the 1316-byte fallback constant; `with_max_payload` overrides the value.
 
 Error mapping from `SendError` → `TransportError`:
 
@@ -338,9 +343,11 @@ new `SrtTransport` is built.
 
 ### Default sender SocketConfig overrides (tst-c connect path)
 
-When you use the C ABI's `tst_*_open` family or call
-`tst_c::connect::connect_srt` directly, the underlying `SocketConfig`
-gets these overrides applied (only if the user hasn't set them):
+A caller-mode open from an `srt://` URL — `tst_srt::SrtUrl::connect`, and
+therefore every caller-mode `tst_*_open` in the C ABI — merges these
+overrides into the URL's `SocketConfig`
+(`SocketConfig::merge_sender_defaults`, only for fields the URL left
+unset):
 
 | Field | Default | libsrt default | Why |
 | --- | --- | --- | --- |
@@ -349,9 +356,8 @@ gets these overrides applied (only if the user hasn't set them):
 | `role` | `Role::Sender` | `Role::Receiver` (default) | Sets `SRTO_SENDER=1` for HSv4-peer compatibility |
 
 Pure-Rust users who build a `SrtTransport` via `SocketBuilder` directly
-do **not** get these defaults — set them explicitly via the builder if
-needed. The defaults live in the `tst-c` connect path because that's
-where the canonical "default sender Socket" is constructed.
+do **not** get these defaults — set them explicitly via the builder, or
+start from `SocketConfig::sender_defaults()`.
 
 ## `ManagedTransport<T>` — reconnect + gap buffer
 
@@ -432,10 +438,11 @@ Defaults (`ReconnectPolicy::default()`):
   surface `Broken("reconnect gave up after 10 attempts")` to the
   caller. Set to `None` to retry forever.
 - `backoff: BackoffStrategy::Exponential { base: 100ms, max: 10s }` —
-  see §11 for the actual variants.
+  see [`BackoffStrategy`](#backoffstrategy) for the variants.
 - `gap_buffer_capacity: 256` — messages. Accumulates an outage's
   messages only under `ReconnectMode::Background`.
-- `overflow_policy: OverflowPolicy::DropOldest` — see §12. Likewise a
+- `overflow_policy: OverflowPolicy::DropOldest` — see
+  [`OverflowPolicy`](#overflowpolicy). Likewise a
   `Background`-mode knob.
 - `mode: ReconnectMode::Blocking` — reconnect on the caller's thread.
   Set to `ReconnectMode::Background` to run reconnect on a per-outage
@@ -462,7 +469,8 @@ Two variants:
 - `DropOldest` (default) — when the gap buffer is full, drop the
   oldest queued message to make room. Counts the drop in
   `messages_dropped` / `bytes_dropped`.
-- `Reject` — return `GapBufferError::Full` from the enqueue path; the
+- `Reject` — refuse the new message: the full gap buffer surfaces to the
+  caller as `TransportError::Backpressure` ("gap buffer full"), and the
   caller decides what to do.
 
 Trade-off: `DropOldest` keeps the receiver caught up to "now" once
@@ -508,24 +516,25 @@ freshness-over-completeness choice.
 
 Where errors come from:
 
-- `MuxSenderError::Mux` — the encoder produced something the muxer
+- `MuxSenderErrorSource::Mux` — the encoder produced something the muxer
   rejects (`BufferFull`, `KlvTooLarge`, `InvalidNal`). Rare in
   practice with reasonable buffer sizing.
-- `MuxSenderError::Transport(TransportError)` — the transport layer
+- `MuxSenderErrorSource::Transport(TransportError)` — the transport layer
   reported an error (`MuxSender`).
-- `SenderError::Framing(TsFramingError)` — STRICT mode rejected
+- `SenderErrorSource::Framing(TsFramingError)` — STRICT mode rejected
   unaligned input (`SyncLost`). RECOVER mode returns
   `NoSyncAfterLimit` once scanning for sync consumes more than
   `max_unsynced_bytes` without acquiring it — see `max_unsynced_bytes`
   under the `SenderConfig` knobs above.
-- `SenderError::Transport(TransportError)` — transport error (`Sender`).
+- `SenderErrorSource::Transport(TransportError)` — transport error (`Sender`).
 - `RawSender::send` returns `RawSenderError`, which wraps the underlying
   `TransportError`.
 
 With `ManagedTransport` wrapping the inner transport, transient
 `Broken` errors are absorbed and the caller's `send_*` call appears to
-succeed once reconnect lands. Only `Closed` (after `max_attempts`
-exhausted) and `TooLarge` propagate. With a bare transport, every
+succeed once reconnect lands. Once `max_attempts` is exhausted the call
+returns `Broken` ("reconnect gave up after N attempts"); `Backpressure`,
+`TooLarge` and a cancel (`ExplicitClose`) propagate without a reconnect. With a bare transport, every
 `Broken` propagates — you reconnect by rebuilding the transport and
 re-creating the sender.
 
@@ -551,7 +560,8 @@ counterpart to `Transport`).
 
 - **Typed events out → `DemuxReceiver`.** Composes `Receiver → Demuxer`;
   emits `DemuxEvent` per call. Auto-flushes the demuxer's reassembly
-  state on `TransportError::Closed`. The default for "I want a stream
+  state when the stream ends, the transport breaks, or the receiver is
+  closed. The default for "I want a stream
   of NALs and KLV records out of an SRT socket."
 - **TS-aligned packets out → `Receiver`.** One 188-byte aligned TS
   packet per `next_packet` call. Internal sync recovery via the
@@ -608,7 +618,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         match item? {
             DemuxEvent::ProgramMap(m) => println!("PMT streams={}", m.streams.len()),
             DemuxEvent::Sample { stream, pts, .. } => {
-                println!("Sample PID=0x{:04X} pts={pts}", stream.pid);
+                println!("Sample PID=0x{:04X} pts={}", stream.pid, pts.as_ticks());
             }
             _ => {}
         }
@@ -680,6 +690,9 @@ pub trait RecvTransport: Send {
     fn max_payload(&self) -> usize;
     fn is_alive(&self) -> bool;
     fn close(&mut self) {}
+    // Provided (default `None`), as on `Transport`.
+    fn cancel_handle(&self) -> Option<Arc<dyn TransportCancel + Send + Sync>> { None }
+    fn socket_stats(&self) -> Option<SocketStats> { None }
 }
 ```
 
@@ -689,9 +702,13 @@ both — the same wrapper handles both directions on a connected socket.
 implementors can opt in only when they own a tear-down resource.
 
 `recv_bytes` returns the number of bytes written. Returns
-`TransportError::Closed` once the transport is closed or the connection
-has been broken; `TransportError::Backpressure` on a recv timeout
-(transport still alive, caller may retry).
+`TransportError::Closed` once the transport has been closed by its own
+`close()` or the peer ended the stream where the protocol can say so;
+`TransportError::Broken` on a wire failure; `TransportError::ExplicitClose`
+once the cancel handle has fired; `TransportError::Backpressure` on a recv
+timeout (transport still alive, caller may retry). It never returns
+`Ok(0)` for a non-empty buffer — the receive shells read `Ok(0)` as
+closed.
 
 Whether the timeout arm can fire is per-transport configuration: SRT
 via `SocketBuilder::recv_timeout` / `Socket::set_recv_timeout`
@@ -750,7 +767,7 @@ the demuxer's sync-recovery state.
 
 **What it adds over `DemuxReceiver<ManagedRecvTransport<R>>`:** on each
 underlying-transport reconnect, `ManagedDemuxReceiver` calls
-[`Demuxer::reset_sync`](#demuxerreset_sync) and emits a
+[`Demuxer::reset_sync`](/docs/guides/mpegts-demux.md#demuxer-methods) and emits a
 `DemuxEvent::ReconnectDiscontinuity` event so consumers can mark a hard
 discontinuity in their downstream state (PTS reset, PSI re-fetch, etc.)
 rather than guessing from the byte stream. The 188-byte sync rail is
@@ -758,11 +775,11 @@ re-VERIFIED on the first packet from the new transport — the demuxer
 does *not* assume the new connection picks up where the old one left
 off.
 
-**Data-loss budget on reconnect.** A few unfinished bytes from the old
-transport may be discarded when sync is rebuilt; the drop is bounded by
-`SocketConfig::max_payload` (typically ≈ 7 TS packets, never an entire
-flow). See the rustdoc on `ManagedDemuxReceiver` for the exact
-contract; cookbook recipe 22 has a runnable companion.
+**Data-loss budget on reconnect.** The first aligned packet after a
+reconnect is always dropped, and so are any bytes the syncer had buffered
+but not yet emitted — bounded by the transport's `max_payload` (≈ one SRT
+payload, 7 TS packets; never an entire flow). See the rustdoc on
+`ManagedDemuxReceiver` for the exact contract.
 
 ### Stream-end contract
 
@@ -780,9 +797,8 @@ The receive surface distinguishes three end-of-stream signals:
   error without parsing the message. `SrtTransport` collapses
   these into one `Broken` surface by design — it lets a managed-receive
   decorator distinguish a self-initiated close (`Closed`) from a peer-
-  initiated break (`Broken`). On `Broken` the demuxer is NOT auto-
-  flushed (the receive thread can't tell mid-stream hiccup from a
-  clean end).
+  initiated break (`Broken`). On `Broken` the demuxer is still flushed
+  first: any events the flush recovers are returned before the error.
 - **`Err` whose `source` is `DemuxReceiverErrorSource::Demux(_)`.** Strict-mode rejection or
   malformed PES. Re-entry into `recv_event` after a `MalformedPes` is
   discouraged — the demuxer's reassembly state is undefined past a bad
@@ -810,7 +826,8 @@ Use it when:
 - You want a typed `(VideoSample, KlvSample)` boundary instead of
   re-matching `DemuxEvent` arms after the pair.
 
-Stay with the inline `DemuxEvent` match (cookbook recipes 12–14) when:
+Stay with the inline `DemuxEvent` match (the first three pairing recipes
+in the cookbook) when:
 
 - You have non-canonical pairing semantics (e.g., custom multi-stream
   routing, KLV-driven indexing into a separate timeline, etc.).
@@ -826,7 +843,7 @@ Stay with the inline `DemuxEvent` match (cookbook recipes 12–14) when:
 | Async-KLV (1–10 Hz) against video frames | `Pairer::last_before_pts(...)` | n/a (past-only) |
 | EO + IR sharing one async-KLV stream | Two `Pairer::last_before_pts` instances side-by-side | n/a |
 
-See cookbook [Recipes 24–27](../cookbook/index.md#-receiving--consume-a-ts-stream-includes-klv-to-video-pairing) for runnable patterns.
+See the `Pairer` recipes in the [cookbook's pairing section](../cookbook/index.md#-pairing--align-klv-with-video-frames) for runnable patterns.
 
 ### What you give up
 
@@ -838,8 +855,9 @@ discovery and diagnostics are preserved. But a single `Pairer` is
 single-pair: multi-video shapes (EO+IR) compose at the call site with
 two instances, not via a single multi-pair builder.
 
-The pairer's C ABI / JNI / UniFFI exposure is deferred to the future
-receiver-surface plan — Rust API only for now.
+The Python (`tstrans.pipeline`) and JVM (`org.tstrans.pipeline.Pairer`)
+bindings expose the pairer; the C ABI does not (see
+[deferred-features.md](/docs/project/deferred-features.md)).
 
 ## Out-of-band cancellation
 
@@ -910,7 +928,7 @@ Receive side:
   — `Demuxer` driven by a file (no transport). Triage-grade
   diagnostic for any `.ts` capture.
 - [../examples/pairing/pair_sync_klv.rs](/examples/pairing/pair_sync_klv.rs)
-  — nearest-PTS pairing of KLV records with video AUs (Cookbook §12).
+  — nearest-PTS pairing of KLV records with video AUs.
 - [../examples/operations/tee_disk_and_demux.rs](/examples/operations/tee_disk_and_demux.rs)
   — `add_byte_sink` fan-out: write `.ts` to disk while consuming
   typed events, in a single pass.

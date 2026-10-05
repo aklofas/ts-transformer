@@ -18,9 +18,9 @@ use std::io::Read;
 use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Bind the builder before the terminal `connect` — mutators take
-    // `&mut self` and `connect` takes `&self`, so a fluent chain off
-    // the temporary `SocketBuilder::new()` doesn't compose.
+    // Mutators take `&mut self` and `connect` takes `&self`: a one-statement
+    // chain off `SocketBuilder::new()` also works, but binding the builder
+    // first lets you set options step by step and reuse it.
     let mut sb = SocketBuilder::new();
     sb.latency(Duration::from_millis(120));
     let socket = sb.connect("127.0.0.1:9000")?;

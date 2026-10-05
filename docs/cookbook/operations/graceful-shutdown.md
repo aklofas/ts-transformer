@@ -20,27 +20,23 @@ The parked syscall returns within one libsrt I/O cycle (typically
 
 ```rust,no_run
 use tst_pipeline::{Sender, SenderConfig, TransportCancel};
-use tst_core::transport::{Transport, TransportError};
+use tst_srt::{SocketBuilder, SrtTransport};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-# struct Sink;
-# impl Transport for Sink {
-#     fn send_bytes(&mut self, _: &[u8]) -> Result<(), TransportError> { Ok(()) }
-#     fn max_payload(&self) -> usize { 1316 }
-#     fn close(&mut self) {}
-#     fn is_alive(&self) -> bool { true }
-# }
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut sender = Sender::new(Sink, SenderConfig::default());
+    let socket = SocketBuilder::new().connect("127.0.0.1:9000")?;
+    let mut sender = Sender::new(SrtTransport::new(socket), SenderConfig::default());
 
     // Snapshot the cancel handle BEFORE the send loop. After this point
     // the handle is owned by the cancel thread; the sender keeps running
     // on the main thread until cancel() fires.
+    // `None` only for a transport without cancel support (e.g. a bare
+    // in-memory test sink); SrtTransport always returns `Some`.
     let cancel: Arc<dyn TransportCancel + Send + Sync> = sender
         .cancel_handle()
-        .expect("real transports return Some");
+        .expect("SrtTransport supports cancel");
 
     // Cancel thread: in a real program this is your signal handler
     // (e.g. via the `ctrlc` crate or `signal-hook`), a watchdog timer,
@@ -65,5 +61,4 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 See [`srt-cancel-handle.md`](/docs/reference/srt-cancel-handle.md) for the full pattern,
 threading guarantees, and per-language idiom table (Java/Kotlin,
-Swift, Python, C). No standalone example; the snippet above runs as
-a doctest.
+Swift, Python, C). No standalone example.

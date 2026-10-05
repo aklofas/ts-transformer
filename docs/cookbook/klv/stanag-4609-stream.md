@@ -77,13 +77,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF,
         0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF,
     ];
-    let core_id = CoreId {
-        version: 1,
-        sensor: Some((IdType::Physical, sensor_uuid)),
-        platform: None,
-        window: None,
-        minor: None,
-    };
+    // `CoreId` is `#[non_exhaustive]`: construct it with `CoreId::new`
+    // (version, sensor, platform, window, minor).
+    let core_id = CoreId::new(1, Some((IdType::Physical, sensor_uuid)), None, None, None);
     // Wire format: a sequence of 16-byte UUID blocks preceded by a 1-byte
     // version + 1-byte usage flag.  encode_to_vec handles the framing.
     let core_id_bytes = encode_core_id(&core_id);
@@ -197,7 +193,7 @@ from tstrans.mpegts import (
 # ── 1. Build the muxer config: H.264 + sync-KLV.
 prog = MuxerProgramConfigBuilder(1, 0x1000)
 prog.add_video(0x1011, VideoCodec.H264)
-prog.add_klv(0x1031, KlvStreamType.SynchronousMetadata, carries_pts=True)
+prog.add_klv(0x1031, KlvStreamType.SYNCHRONOUS_METADATA, carries_pts=True)
 cfg = MuxerConfig.builder().add_program(prog.build()).build()
 muxer = Muxer(cfg)
 

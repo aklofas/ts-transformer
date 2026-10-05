@@ -20,12 +20,11 @@ use tst_pipeline::MuxSender;
 use tst_udp::UdpTransport;
 
 let tx = UdpTransport::connect("udp://239.10.0.1:5004?iface=eth0&ttl=8")?;
-let cfg = MuxerConfig::builder()
-    // ... configure programs/streams as needed
-    .build()?;
-let mut sender = MuxSender::new(tx, cfg)?;
+// H.264 + async KLV; build a custom config with `MuxerConfig::builder()`.
+let cfg = MuxerConfig::default();
+let sender = MuxSender::new(tx, cfg)?;
 sender.send_video(&nal_bytes, pts, key_frame)?;
-sender.send_klv(&klv_bytes, pts)?;
+sender.send_klv(&klv_bytes, pts, /*metadata_service_id=*/ 0x00)?;
 ```
 
 ## Verify with ffmpeg

@@ -83,12 +83,14 @@ audio, and subtitle streams.
 program 1 with H.264 video at PID `0x1011`, KLV `PrivateData` (async,
 no PTS) at PID `0x1031`, PCR pinned to the video PID,
 `pcr_interval_ms: 40`, `psi_interval_ms: 100`, `buffer_packets:
-10_000`. Two equivalent ways to construct from defaults plus selected
-overrides:
+10_000`. `MuxerConfig` and `MuxerProgramConfig` are `#[non_exhaustive]`,
+so outside `tst-core` you start from the default (or a builder) and set
+fields, rather than writing a struct literal. Two ways to construct from
+defaults plus selected overrides:
 
 ```rust,no_run
 use tst_core::mpegts::mux::{
-    KlvStreamType, MuxerConfig, MuxerProgramConfig, StreamSpec, VideoCodec,
+    KlvStreamType, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec,
 };
 
 // Pure default — H.264 + async KLV.
@@ -97,27 +99,11 @@ let cfg_default = MuxerConfig::default();
 // Field-update form: replace the single default program with an H.265 +
 // synchronous-KLV program; keep cadence defaults (pcr_interval_ms,
 // psi_interval_ms, buffer_packets).
-let cfg_h265_sync = MuxerConfig {
-    programs: vec![MuxerProgramConfig {
-        program_number: 1,
-        pmt_pid: 0x1000,
-        streams: vec![
-            StreamSpec::Video {
-                pid: 0x1011,
-                codec: VideoCodec::H265,
-            },
-            StreamSpec::Klv {
-                pid: 0x1031,
-                stream_type: KlvStreamType::SynchronousMetadata,
-                carries_pts: true,
-            },
-        ],
-        pcr_pid: None,
-        program_descriptors: Vec::new(),
-        stream_descriptors: vec![Vec::new(), Vec::new()],
-    }],
-    ..MuxerConfig::default()
-};
+let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+prog.add_video(0x1011, VideoCodec::H265);
+prog.add_klv(0x1031, KlvStreamType::SynchronousMetadata, true);
+let mut cfg_h265_sync = MuxerConfig::default();
+cfg_h265_sync.programs = vec![prog.build()];
 ```
 
 ## `MuxerConfigBuilder`
@@ -136,9 +122,10 @@ FFI-binding semantics. Methods (all in `tst_core::mpegts::mux`):
 - `add_audio(&mut self, pid: u16, codec: AudioCodec) -> &mut Self`
 - `add_audio_with_language(&mut self, pid: u16, codec: AudioCodec, language: [u8; 3]) -> &mut Self`
 - `add_subtitle(&mut self, pid: u16, codec: SubtitleCodec) -> &mut Self`
+- `add_data(&mut self, pid: u16, stream_type: u8, carries_pts: bool) -> &mut Self`
 - `pcr_pid(&mut self, pid: u16) -> &mut Self`
 - `program_descriptors(&mut self, descs: Vec<Vec<u8>>) -> &mut Self`
-- `stream_descriptors_for_{video,klv,audio,subtitle,stream}(&mut self, idx: usize, descs: Vec<Vec<u8>>) -> Result<&mut Self, MuxError>`
+- `stream_descriptors_for_{video,klv,audio,subtitle,data,stream}(&mut self, idx: usize, descs: Vec<Vec<u8>>) -> Result<&mut Self, MuxError>`
 - `build(&self) -> MuxerProgramConfig`
 
 `MuxerConfigBuilder`:
@@ -147,6 +134,7 @@ FFI-binding semantics. Methods (all in `tst_core::mpegts::mux`):
 - `pcr_interval_ms(&mut self, ms: u32) -> &mut Self`
 - `psi_interval_ms(&mut self, ms: u32) -> &mut Self`
 - `buffer_packets(&mut self, n: usize) -> &mut Self`
+- `av1_carriage(&mut self, mode: Av1CarriageMode) -> &mut Self`
 - `build(&self) -> Result<MuxerConfig, MuxError>` — runs
   `MuxerConfig::validate`.
 
@@ -178,8 +166,8 @@ fn build() -> Result<MuxerConfig, tst_core::error::MuxError> {
 
 In transmux workflows — receive a live stream, inspect or edit its metadata,
 then re-mux byte-faithfully — you need a `MuxerConfig` that matches the
-source stream's topology without hand-coding every PID. Since the demuxer
-now surfaces `pmt_pid` on every `DemuxEvent::ProgramMap`, you have everything
+source stream's topology without hand-coding every PID. The demuxer
+surfaces `pmt_pid` on every `DemuxEvent::ProgramMap`, so you have everything
 you need in one event: program number, PMT PID, PCR PID, stream PIDs, codecs,
 and audio language descriptors. `MuxerConfig::from_program_map` turns that
 event directly into a muxer config, letting transmux callers skip the builder
@@ -198,7 +186,7 @@ them; DVB subtitling/teletext are the only such kinds.
 | `Video(H265)` — `0x24` | `add_video(pid, VideoCodec::H265)` | Codec-for-codec; Annex-B framing preserved. |
 | `Video(H266)` — `0x33` | `add_video(pid, VideoCodec::H266)` | Codec-for-codec; Annex-B framing preserved. |
 | `Video(Av1)` — `0x06` + `AV01` registration | `add_video(pid, VideoCodec::Av1)` | AV01 registration descriptor auto-re-emitted on the rebuilt PMT. |
-| `Audio(Mp2)` — `0x03` / `0x04` | `add_audio` | Demuxer recognizes both `0x03` (ISO/IEC 11172-3, MPEG-1 audio) and `0x04` (ISO/IEC 13818-3, MPEG-2 audio) as `Mp2`; rebuilt PMT emits `0x03`. Raw PMT descriptors are preserved verbatim in the rebuilt config (MUX-01): the ISO-639 `0x0A` descriptor passes through byte-for-byte — including uppercase codes, multiple entries, and the `audio_type` byte. The `language` field is not separately recovered; `add_audio` (not `add_audio_with_language`) is always used. Same exact-preservation rule applies to the three audio rows below. |
+| `Audio(Mp2)` — `0x03` / `0x04` | `add_audio` | Demuxer recognizes both `0x03` (ISO/IEC 11172-3, MPEG-1 audio) and `0x04` (ISO/IEC 13818-3, MPEG-2 audio) as `Mp2`; rebuilt PMT emits `0x03`. Raw PMT descriptors are preserved verbatim in the rebuilt config: the ISO-639 `0x0A` descriptor passes through byte-for-byte — including uppercase codes, multiple entries, and the `audio_type` byte. The `language` field is not separately recovered; `add_audio` (not `add_audio_with_language`) is always used. Same exact-preservation rule applies to the three audio rows below. |
 | `Audio(Aac)` — `0x0F` | `add_audio` | |
 | `Audio(AacLatm)` — `0x11` | `add_audio` | |
 | `Audio(Ac3)` — `0x81` | `add_audio` | AC-3 registration descriptor auto-re-emitted on the rebuilt PMT. |
@@ -363,7 +351,7 @@ output file.
 The diff between [../examples/muxing/mux_to_file.rs](/examples/muxing/mux_to_file.rs)
 (H.264 + async KLV via `MuxerConfig::default()`) and
 [../examples/muxing/mux_h265_with_klv.rs](/examples/muxing/mux_h265_with_klv.rs)
-(H.265 + sync KLV via the field-update form) is exactly the codec and
+(H.265 + sync KLV via `MuxerProgramConfigBuilder`) is exactly the codec and
 KLV-mode knobs:
 
 ```text
@@ -424,10 +412,12 @@ through unchanged.
 
 ## PCR cadence
 
-`pcr_interval_ms` defaults to `40` (validated `1..=100`). PCR is
-pinned to the first video PID by default; set `MuxerConfig::pcr_pid:
-Option<u16>` to override (the chosen PID must equal a configured
-stream's PID — `MuxerConfig::validate` enforces this). A 40 ms interval
+`pcr_interval_ms` defaults to `40` (validated `1..=100`) and applies to
+each program's PCR PID independently. PCR is pinned to the program's
+first video PID by default; set `MuxerProgramConfig::pcr_pid:
+Option<u16>` (builder: `pcr_pid(pid)`) to override (the chosen PID must
+equal a configured video or audio stream's PID — `MuxerConfig::validate`
+enforces this). A 40 ms interval
 gives 25 PCR samples per second, well inside the typical receiver
 expectation of "one PCR every 100 ms or better".
 
@@ -523,7 +513,9 @@ Required:
   Annex-B start code.
 - `BufferFull { capacity_packets: u64 }` — the resulting TS
   packets would exceed `MuxerConfig::buffer_packets`. Drain via `pull`
-  and retry. State is unchanged when this variant fires.
+  and retry. State is unchanged when this variant fires. An access unit
+  that alone needs more than `buffer_packets` packets (≈ 184 payload
+  bytes each) fails even on an empty queue — raise `buffer_packets`.
 - `KlvTooLarge { size: usize, max: usize }` — `push_klv` blob
   exceeds the `PES_packet_length` ceiling.
 
@@ -575,8 +567,9 @@ a single program (one PMT, one PAT). Use this shape when you need:
 - **Multi-metadata pods.** Vehicle telemetry on one KLV PID, sensor
   metadata on another (common when the sensor and platform are
   separately instrumented).
-- **Combinations of the above.** N video + M KLV in any ratio (N+M ≥ 1,
-  N ≤ 16, M ≤ 16).
+- **Combinations of the above.** N video + M KLV in any ratio (N ≥ 1
+  unless the program has an audio stream to carry the PCR; N ≤ 16,
+  M ≤ 16).
 
 ### Building a multi-stream MuxerConfig
 
@@ -603,11 +596,15 @@ Validation:
 
 - More than 16 streams of either kind → `MuxError::TooManyVideoStreams`
   / `TooManyKlvStreams` (cap is generous; ask if you need more).
-- Duplicate PIDs across any pair of streams → `MuxError::InvalidConfig`.
+- Duplicate PIDs across any pair of streams in a program →
+  `MuxError::InvalidConfig` (across programs:
+  `MuxError::DuplicatePidAcrossPrograms`).
 - `pcr_pid` (if set) must equal a configured stream's PID, or
-  validation rejects.
-- A `MuxerConfig` with at least one video OR at least one KLV stream is
-  valid. Video-only and KLV-only outputs are both supported.
+  validation rejects; a KLV, subtitle or data PID is rejected as a PCR
+  pin.
+- Each program needs at least one video or audio stream to carry the
+  PCR — otherwise `MuxError::NoPcrEligibleStream`. Video-only output is
+  supported; KLV-only output is not.
 
 ### Stream handles
 
@@ -655,16 +652,18 @@ the wrong stream when N > 1.
 
 ### PCR rule
 
-`MuxerConfig::pcr_pid` controls which PID carries the PCR:
+`MuxerProgramConfig::pcr_pid` controls which PID carries each program's PCR:
 
 - If unset, the muxer pins PCR to the first video stream's PID
   (or the first audio stream's PID if there is no video). KLV, data,
   and subtitle streams are never auto-selected.
 - If set to a value that matches no configured stream, validation
-  rejects with `MuxError::InvalidConfig`.
+  rejects with `MuxError::InvalidConfig`; a KLV, subtitle or data PID is
+  rejected with `KlvPidUsedAsPcrPid` / `SubtitlePidUsedAsPcrPid` /
+  `DataPidUsedAsPcrPid`.
 
-There is exactly one PCR pin per muxer — multi-program (multiple PMTs
-in one PAT) with per-program PCR is out of scope for this version.
+Each program carries its own PCR pin; a multi-program muxer (multiple
+PMTs in one PAT) re-emits each program's PCR independently.
 
 ### Runnable example
 
@@ -681,13 +680,14 @@ typedefs (`tst_video_stream_handle_t` / `tst_klv_stream_handle_t`)
 plus a `TST_INVALID_STREAM_HANDLE` sentinel back the C surface:
 
 ```c
-tst_mux_config_t* cfg = tst_mux_config_new();
+tst_mux_config_t* cfg = tst_mux_config_new();   /* empty: no programs yet */
+tst_program_handle_t prog = tst_mux_config_add_program(cfg, 1, 0x1000);
 tst_video_stream_handle_t h_eo =
-    tst_mux_config_add_video_stream(cfg, 0x1011, TST_VIDEO_CODEC_H264);
+    tst_mux_config_add_video_stream(cfg, prog, 0x1011, TST_VIDEO_CODEC_H264);
 tst_video_stream_handle_t h_ir =
-    tst_mux_config_add_video_stream(cfg, 0x1021, TST_VIDEO_CODEC_H264);
+    tst_mux_config_add_video_stream(cfg, prog, 0x1021, TST_VIDEO_CODEC_H264);
 tst_klv_stream_handle_t h_klv =
-    tst_mux_config_add_klv_stream(cfg, 0x1031, TST_KLV_STREAM_TYPE_PRIVATE_DATA, false);
+    tst_mux_config_add_klv_stream(cfg, prog, 0x1031, TST_KLV_STREAM_TYPE_PRIVATE_DATA, false);
 
 tst_muxer_t* mux = tst_muxer_open(cfg);
 tst_mux_config_free(cfg);
@@ -700,11 +700,10 @@ tst_muxer_push_klv_to(mux, h_klv, klv, sizeof(klv), pts);
 Same shape on the network senders: `tst_mux_sender_send_video_to` /
 `_send_klv_to` and `tst_managed_mux_sender_send_video_to` /
 `_send_klv_to`. The single-target entry points (`tst_*_send_video`,
-`tst_*_send_klv`) keep their original signatures and start returning
-`TST_E_INVALID_USAGE` (`MuxError::AmbiguousTarget`) on multi-stream
-muxers — single-stream callers see no behaviour change.
+`tst_*_send_klv`) return `TST_E_INVALID_USAGE` (`MuxError::AmbiguousTarget`)
+on multi-stream muxers and work unchanged on single-stream ones.
 
-The `tst_ts_sender_t` and `tst_raw_sender_t` variants do **not**
+The `tst_sender_t` and `tst_raw_sender_t` variants do **not**
 have handle-aware siblings — they take pre-muxed TS bytes
 (`send_ts(bytes)`) or opaque payload bytes (`send(bytes)`), so
 multi-stream fan-out doesn't apply.
@@ -733,7 +732,7 @@ descriptor types real-world senders actually emit:
 
 | Helper | Tag | Purpose |
 |---|---|---|
-| `registration(format_id, additional)` | 0x05 | "KLVA" on KLV PIDs (also auto-emitted on PrivateData), "HDMV" + trailing bytes on video PIDs |
+| `registration(format_id, additional)` | 0x05 | "KLVA" on KLV PIDs (the muxer auto-emits it on every KLV PID), "HDMV" + trailing bytes on video PIDs |
 | `metadata_klva(service_id)` | 0x26 | Canonical KLVA Metadata descriptor for `stream_type=0x15` KLV |
 | `metadata_std(in, buf, out)` | 0x27 | STD-buffer dimensions, paired with 0x26 |
 | `user_private(payload)` | 0xFF | De-facto label slot used in the wild ("VIDEO-ARS", "KLV_SYNC") |
@@ -788,8 +787,8 @@ indexing use `stream_descriptors_for_stream(absolute_idx, ...)`.
 
 ### Auto-emit and conflict suppression
 
-The muxer auto-emits Registration `KLVA` (tag 0x05) on KLV PIDs
-configured as `KlvStreamType::PrivateData`. If the caller supplies
+The muxer auto-emits Registration `KLVA` (tag 0x05) on every KLV PID,
+`PrivateData` and `SynchronousMetadata` alike. If the caller supplies
 their own Registration descriptor on the same PID (any
 `format_identifier`), the auto-emit is suppressed — TSDuck and
 ffprobe both flag duplicate Registration descriptors as malformed.
@@ -811,8 +810,7 @@ rejects oversized configurations with `MuxError::PmtTooLarge`.
 For typical configurations (3–4 streams with ~30 bytes of
 descriptors each), this is plenty. If you hit the limit, drop one
 or more user-supplied descriptors or shorten their payloads.
-Multi-section PMT support is not currently planned (see
-`deferred-features.md`).
+Multi-section PMT output is not supported.
 
 ## Multi-program output
 
@@ -935,7 +933,7 @@ let cfg = b.build()?;
 ```
 
 The plain `add_audio(pid, codec)` form keeps `language: None` and
-emits no descriptor — pre-Task-2.1 behavior. Suppression: caller-supplied
+emits no descriptor. Suppression: caller-supplied
 tag-`0x0A` via `stream_descriptors_for_audio` wins (their language code
 overrides; no double-emit).
 
@@ -1002,6 +1000,7 @@ the auto-emitted one (do NOT suppress; contrast with KLV's
 `KLVA`-suppression rule).
 
 ```rust
+use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{
     Muxer, MuxerConfig, MuxerProgramConfigBuilder, SubtitleCodec, VideoCodec,
 };
@@ -1017,7 +1016,7 @@ let mut mux = Muxer::new(cfg)?;
 let h = mux.subtitle_handles()[0];
 mux.push_subtitle_to(
     h,
-    90_000,
+    Pts90khz::new(90_000),
     b"WEBVTT\n\n00:00:01.000 --> 00:00:05.000\nhello\n",
 )?;
 // Drain TS bytes via `mux.pull(&mut buf)` in a loop until it
@@ -1121,7 +1120,7 @@ Data PIDs cannot serve as the PCR PID — pushes are caller-paced with
 no cadence guarantee, so a data PID cannot promise ETSI TR 101 290
 §5.6.1's 100 ms PCR ceiling. Pinning one rejects with
 `MuxError::DataPidUsedAsPcrPid`, and a program needs at least one
-PCR-eligible stream (video / KLV / audio) to validate.
+PCR-eligible stream (video / audio) to validate.
 
 `carries_pts = false` omits the PES PTS field entirely (the `pts`
 argument to `push_data_to` is ignored); the demuxer surfaces such
@@ -1143,8 +1142,10 @@ push to 65527 payload bytes with PTS, 65532 without
 - The Python binding mirrors the whole surface: `add_data` /
   `stream_descriptors_for_data` / `push_data(_to)` / the handle accessors
   on `tstrans.mpegts`, plus `push_data` / `push_data_to` / `data_handle()`
-  on the srt/rtp `MuxSender`s. The C and JVM bindings do not expose data
-  streams yet.
+  on the srt/rtp `MuxSender`s. The C binding (`tst_mux_config_add_data_stream`,
+  `tst_muxer_push_data` / `_to`) and the JVM binding
+  (`MuxerConfig.Builder.addData`, `Muxer.pushData` / `pushDataTo`) expose
+  data streams too.
 
 ## Examples
 
@@ -1153,7 +1154,7 @@ Three runnable examples cover the muxer's surface:
 - `cargo run -p tst-examples --example mux_to_file` — [examples/muxing/mux_to_file.rs](/examples/muxing/mux_to_file.rs)
   — H.264 + async KLV via `MuxerConfig::default()`, writes a `.ts` file.
 - `cargo run -p tst-examples --example mux_h265_with_klv` — [examples/muxing/mux_h265_with_klv.rs](/examples/muxing/mux_h265_with_klv.rs)
-  — H.265 + sync KLV via the field-update form, illustrating the
+  — H.265 + sync KLV via `MuxerProgramConfigBuilder`, illustrating the
   diff against the H.264 default.
 - `cargo run -p tst-examples --example send_pipeline_to_socket` — [examples/sending/send_pipeline_to_socket.rs](/examples/sending/send_pipeline_to_socket.rs)
   — the muxer composed inside `pipeline::MuxSender` and connected to an
@@ -1171,9 +1172,6 @@ Three runnable examples cover the muxer's surface:
 Each item below maps to an entry in
 [project/deferred-features.md](/docs/project/deferred-features.md).
 
-- Audio carriage in `mpegts::mux` — gimbaled-platform streams are
-  video + KLV today; no shipping consumer asks for audio. See
-  [project/deferred-features.md](/docs/project/deferred-features.md).
 - `private_stream_2` (0xBF) data carriage — `StreamSpec::Data` always
   emits private_stream_1 (0xBD); 0xBF has no PES header (no PTS
   possible) and no observed carriage. See
