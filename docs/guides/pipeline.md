@@ -13,23 +13,20 @@
 
 ## Introduction
 
-When you want a ready-made path from typed inputs (NAL units + KLV blobs, or
-pre-muxed TS bytes, or arbitrary application messages) to an SRT socket —
-optionally with reconnect and a gap buffer — `tst_pipeline` is the composition
-layer. It wires `mpegts::mux::Muxer`, the KLV codecs, and `srt::Socket` into
-ergonomic sender shells. The shells are thin: their job is to glue framing,
-metadata typing, and wire transport together with a stable contract, not to
-invent new behaviour.
+`tst-pipeline` connects media processing to network I/O. Its **shells** are
+wrappers that combine common steps: for example, `MuxSender` muxes encoded
+video and KLV into MPEG-TS, then sends the resulting bytes through a
+transport. `DemuxReceiver` receives bytes and turns them into demux events.
 
-Reach for `pipeline::*` when you want a ready-made path from NAL units
-plus KLV blobs (or pre-muxed TS bytes, or arbitrary application
-messages) to an SRT socket, optionally with reconnect and a gap
-buffer. Reach past it — straight to `mpegts::mux::Muxer` or
-`srt::Socket` — when you have a specialised need (custom buffering,
-non-SRT wire, your own reconnect strategy).
+Choose a shell for the data you have and a transport for the connection
+you need. The shells use the `Transport` and `RecvTransport` traits, so
+they can work with SRT, other supported transports, or your own
+implementation. Add a managed wrapper when you need automatic reconnect.
 
-For the higher-level composition story, see
-[reference/architecture.md](/docs/reference/architecture.md). This guide assumes that vocabulary.
+Use `Muxer` or `Demuxer` directly when your application already handles
+I/O. Use a raw socket when it already handles framing. The
+[architecture reference](/docs/reference/architecture.md) explains the
+crate boundaries in more detail.
 
 ## The composition model
 
@@ -413,9 +410,11 @@ otherwise. On `MuxSender` that spills over onto sends: it guards its
 muxer and transport with a single mutex, so a send on one thread queues
 behind a `socket_stats()` call another thread already has in flight.
 Use the stats handle for outage monitoring.
+When no worker is active and the gap buffer is empty, a send goes directly
+to the transport and can still block on network I/O.
 This is still a synchronous API, not an async
 runtime; see the
-[cookbook recipe](/docs/cookbook/operations/managed-transport-reconnect.md#background-mode-never-stall-the-producer)
+[cookbook recipe](/docs/cookbook/operations/managed-transport-reconnect.md#background-mode-reconnect-without-waiting-on-the-producer)
 for when to reach for it. True async/reactor exposure remains on the
 deferred-features list; see
 [project/deferred-features.md](/docs/project/deferred-features.md).

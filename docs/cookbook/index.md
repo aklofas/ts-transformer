@@ -1,13 +1,20 @@
 # Cookbook
 
-> **Who this is for:** You've read the guides and want to crib working code for a specific task. Most recipes are self-contained Rust snippets (or example pointers); a few binding-specific recipes (e.g. Python + PyAV, noted inline) cover tasks that are inherently language-specific. Paste them into your project.
+> **Who this is for:** You have a specific task, such as recording a stream, decoding KLV, or reconnecting after an outage. Most recipes use Rust; recipes for other languages say so on the page.
 
 > **You will learn:**
 > - Where to find a recipe by topic
 > - How recipes group by reader intent (muxing, sending, receiving, pairing, KLV, codecs, operations)
 > - Where to find the full runnable example for each recipe (where one exists)
 
-Recipes are task-named — find them by scanning the section that matches what you're doing. Within each section, recipes run simple → complex. Run any example with `cargo run -p tst-examples --example <name>`.
+Find your task in the sections below. Each recipe links to the background
+guide and, when available, a complete example. Some snippets show only the
+relevant part of a program and expect you to supply encoded media, a
+configuration, or an existing receive loop.
+
+Run Rust examples from the repository root with
+`cargo run -p tst-examples --example <name>`. A recipe's command includes
+any arguments or feature flags it needs.
 
 ## 🧱 Muxing — build a TS, no network
 

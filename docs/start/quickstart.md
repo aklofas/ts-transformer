@@ -1,7 +1,6 @@
 # Getting Started
 
-
-> **Who this is for:** You've installed ts-transformer (or are about to) and want a working sender + receiver in 10 minutes.
+> **Who this is for:** You write Rust and want to send and receive data over a local SRT connection. For other languages, start with the [C](/docs/languages/c.md), [Python](/docs/languages/python.md), or [JVM](/docs/languages/jvm.md) guide.
 
 > **You will learn:**
 > - How to add ts-transformer to a Rust project (C, Python and the JVM have their own language pages)
@@ -10,17 +9,14 @@
 > - How to record the received stream to a `.ts` file with the bundled example pair
 > - Where to go next based on what you're building
 
-When you want to send and receive bytes over SRT in 10 minutes, start here. The
-goal of this page is to get a working program in front of you fast — for
-background on how the pieces fit together, read
-[concepts.md](/docs/start/concepts.md) or
-[reference/architecture.md](/docs/reference/architecture.md) as a sibling read, not before
-this one.
+First, send a text message between two programs on your machine. Then
+replace the sender with one that builds MPEG-TS from video and metadata.
+Finally, use the repository's examples to record a stream to a `.ts` file.
+For background on the terms, see [concepts](/docs/start/concepts.md).
 
-This guide walks through three runnable snippets in order: a raw send,
-a raw receive, and a video-frame send through the pipeline shell. By
-the end you'll have a sender and receiver talking over loopback and a
-finished `.ts` file on disk.
+These examples use an unencrypted loopback connection. See the
+[encrypted-send recipe](/docs/cookbook/sending/send-encrypted.md) when you
+are ready to configure a passphrase on both peers.
 
 ## Prerequisites
 
@@ -37,6 +33,10 @@ finished `.ts` file on disk.
 
 ## Get the code
 
+Clone the repository to use its bundled examples in
+[Run the example pair](#run-the-example-pair). You can skip this step while
+working through the standalone sender and receiver below.
+
 ```bash
 git clone --recurse-submodules https://github.com/aklofas/ts-transformer.git
 cd ts-transformer
@@ -48,68 +48,75 @@ If you cloned without `--recurse-submodules`:
 git submodule update --init --recursive
 ```
 
-The submodules are `crates/srt-sys/vendor/srt` (libsrt 1.5.7) and
-`crates/mbedtls-src/vendor/mbedtls` (mbedTLS 3.6.x LTS). Both are required
-for the default build.
+The SRT examples need the native sources in `crates/srt-sys/vendor/srt`
+(libsrt) and `crates/mbedtls-src/vendor/mbedtls` (mbedTLS). The recursive
+clone initializes these along with the repository's other submodules.
 
 ## Add it to your project
 
-All `ts-transformer` crates are published on crates.io:
+In a directory outside the repository, create a small application:
+
+```bash
+cargo new srt-hello
+cd srt-hello
+mkdir -p src/bin
+```
+
+Add these crates under the existing `[dependencies]` heading in `Cargo.toml`:
 
 ```toml
 [dependencies]
-tst-core = "0.7"
+tst-core = "0.7"      # MPEG-TS and KLV
+tst-pipeline = "0.7"  # Combines the muxer with a transport
+tst-srt = "0.7"       # SRT sockets
 ```
 
-Note on cold builds: `tst-core` itself is pure Rust — it has no
-native dependencies and builds in seconds. It's adding `tst-srt` (or
-`tst-rist`) that compiles the vendored libsrt (librist for `tst-rist`)
-+ mbedTLS from source on the first build (~3-5 minutes; warm builds are seconds). Building
-`tst-srt` with `--no-default-features` skips the mbedTLS build for
-faster iteration (this also disables encryption — only do this for
-testing).
+The raw socket examples use `tst-srt`; the video example also uses
+`tst-core` and `tst-pipeline`. A first build can take several minutes while
+the native SRT dependencies compile. For offline MPEG-TS or KLV processing,
+`tst-core` alone is enough and requires no C/C++ toolchain.
 
 ## Send your first packet
+
+Save this as `src/bin/send.rs`. Create the receiver in the next section
+before running it.
 
 ```rust
 use tst_srt::SocketBuilder;
 use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Bind the builder before chaining: mutators take `&mut self` and
-    // return `&mut Self`, while `connect` takes `&self`, so a single
-    // fluent chain off the temporary `SocketBuilder::new()` would dangle.
+    // Configure the socket, then connect to the local receiver.
     let mut sb = SocketBuilder::new();
     sb.latency(Duration::from_millis(120));
     let mut socket = sb.connect("127.0.0.1:9000")?;
     socket.send(b"hello, srt")?;
-    // The receiver holds each message for its 120 ms latency before
-    // delivering it, and closing ends the connection with whatever it
-    // still holds (`linger` only waits for the ACK), so pause first.
+    // Give this short loopback demo time to deliver its one message.
+    // send() queues bytes; it does not wait for the peer to read them.
     std::thread::sleep(Duration::from_millis(500));
     socket.close()?;
     Ok(())
 }
 ```
 
-Run with `cargo run`. The 120 ms latency is the conventional starting
-point for live SRT; the handshake settles on the larger of the two
-peers' latencies. `connect` blocks
-until the SRT handshake completes; `send` blocks until the message is
-queued for the wire.
+The 120 ms setting gives SRT time to recover missing packets before
+delivery. `connect` waits for the handshake; `send` queues the message.
+The pause is sufficient for this local demonstration, but is not an
+acknowledgment that a receiving application has processed the data.
 
 ## Receive your first packet
+
+Save this as `src/bin/receive.rs`:
 
 ```rust
 use tst_srt::ListenerBuilder;
 use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Same bind-then-step pattern as `SocketBuilder`: mutators return
-    // `&mut Self`, terminal `bind` takes `&self`.
+    // Listen locally and wait for one sender to connect.
     let mut lb = ListenerBuilder::new();
     lb.latency(Duration::from_millis(120));
-    let mut listener = lb.bind("0.0.0.0:9000")?;
+    let mut listener = lb.bind("127.0.0.1:9000")?;
     let (mut socket, peer) = listener.accept()?;
     println!("accepted from {peer}");
     let mut buf = [0u8; 1500];
@@ -124,8 +131,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-Run the receiver in one terminal, then the sender from the previous
-section in another. The receiver prints
+From the `srt-hello` directory, start the receiver in terminal A:
+
+```bash
+cargo run --bin receive
+```
+
+It waits silently in `accept()` until a sender connects. In terminal B,
+also in `srt-hello`, run:
+
+```bash
+cargo run --bin send
+```
+
+The receiver prints an `accepted from ...` line followed by
 `recv 10 bytes: [104, 101, 108, 108, 111, 44, 32, 115, 114, 116]` and
 exits cleanly when the peer closes. The 1500-byte buffer is comfortably above the default
 SRT payload size (1316 bytes), so each `recv` returns one whole
@@ -133,9 +152,16 @@ message.
 
 ## Send a video frame
 
-Switch from raw bytes to a typed video sender:
+Now use `MuxSender` to combine video and KLV metadata into MPEG-TS before
+sending it. Replace `src/bin/send.rs` with the code below, then start the
+receiver and sender again using the same commands.
+
+The video bytes are a synthetic test payload, not a decodable picture.
+They demonstrate muxing without requiring an encoder. The KLV record is
+encoded from typed values.
 
 ```rust
+use tst_core::klv::st0601::{UasDatalinkLs, encode_to_vec};
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::MuxerConfig;
 use tst_pipeline::MuxSender;
@@ -143,41 +169,47 @@ use tst_srt::{SocketBuilder, SrtTransport};
 use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Bind-then-step: builder mutators return `&mut Self`, `connect`
-    // takes `&self`, so split the chain across statements on a bound
-    // builder.
     let mut sb = SocketBuilder::new();
     sb.latency(Duration::from_millis(120));
     let socket = sb.connect("127.0.0.1:9000")?;
     let transport = SrtTransport::new(socket);
     let sender = MuxSender::new(transport, MuxerConfig::default())?;
 
-    // Synthetic Annex-B IDR access unit + KLV blob.
-    let nal = vec![0x00, 0x00, 0x00, 0x01, 0x65, /* ... payload bytes ... */];
-    let klv = vec![0x06, 0x0E, 0x2B, 0x34, /* ... ST 0601 record ... */];
+    // Annex-B start code, IDR NAL header, and test bytes.
+    let nal = [0x00, 0x00, 0x00, 0x01, 0x65, 0xA5, 0xA5, 0xA5];
+    let record = UasDatalinkLs {
+        timestamp_us: Some(0), // Fixed test timestamp, not the current time.
+        ..UasDatalinkLs::default()
+    };
+    let klv = encode_to_vec(&record)?;
     sender.send_video(&nal, /*pts=*/ Pts90khz::new(0), /*key_frame=*/ true)?;
-    // metadata_service_id = 0x00 is the default per ST 1402.2 App. B Table 2.
+    // The default mux config carries KLV asynchronously, without a KLV PTS.
     sender.send_klv(&klv, /*pts=*/ Pts90khz::new(0), /*metadata_service_id=*/ 0x00)?;
 
-    sender.close();
+    // Allow delivery in this short demo before finishing the stream.
+    std::thread::sleep(Duration::from_millis(500));
+    sender.finish()?;
     Ok(())
 }
 ```
 
-`MuxSender` wraps an `mpegts::mux::Muxer` and an `SrtTransport`. It
-auto-mux's NAL units and KLV blobs into a single MPEG-TS stream and
-sends each TS chunk over SRT. `pts` is in 90 kHz ticks (the TS
-clock); `key_frame` should be true for IDR frames.
+`MuxSender` combines a `Muxer` with an `SrtTransport`: each `send_video`
+or `send_klv` call builds TS packets and sends them. The receiver still
+prints raw bytes; it does not decode the video or KLV.
 
-In production, replace the synthetic generator with your encoder's
-output. See
-[../examples/sending/send_pipeline_to_socket.rs](/examples/sending/send_pipeline_to_socket.rs)
-for a runnable version with five frames and pacing.
+`pts` uses 90 kHz ticks: 90,000 ticks is one second. Pass a complete encoded
+video access unit per call, and mark IDR frames with `key_frame: true`.
+The default configuration carries asynchronous KLV, so the KLV PTS is not
+written into the stream. For frame-aligned metadata, configure
+[synchronous KLV](/docs/guides/mpegts-mux.md).
+
+In an application, replace the test bytes with your encoder's output and
+populate the KLV fields from your metadata source.
 
 ## Run the example pair
 
-The fastest way to see end-to-end behavior is the bundled example
-pair:
+To record received MPEG-TS to disk, run this pair from the repository
+checkout created in [Get the code](#get-the-code), in two terminals:
 
 ```bash
 # terminal A
@@ -186,11 +218,13 @@ cargo run -p tst-examples --example srt_listener_to_file -- 127.0.0.1:9000 /tmp/
 cargo run -p tst-examples --example send_pipeline_to_socket -- 127.0.0.1:9000
 ```
 
-The receiver writes incoming bytes to `/tmp/out.ts`. After the sender
-exits, `file /tmp/out.ts` reports `MPEG transport stream data`. The
-sender produces five synthetic frames plus matching KLV records at
-roughly 30 fps, then closes; the receiver drains until the connection
-is broken and exits cleanly.
+The receiver writes incoming bytes to `/tmp/out.ts` and reports the byte
+count when the connection ends. The sender produces five synthetic video
+payloads and KLV-shaped test records, with a short pause between sends.
+This checks the muxing, transport, and file-writing path; the capture is
+not playable video or a source of valid telemetry. The example sources are
+[`srt_listener_to_file.rs`](/examples/receiving/srt_listener_to_file.rs) and
+[`send_pipeline_to_socket.rs`](/examples/sending/send_pipeline_to_socket.rs).
 
 ## Seeing what's happening — wiring `tracing-subscriber`
 

@@ -16,24 +16,21 @@
 > - The JVM-specific gotchas: heap-copied `ByteBuffer` payloads, nullable `Long` DTS
 > - How this binding differs from the Rust core
 
-> **Status:** the JVM binding ships the bootstrap
-> `org.tstrans.Version` hello-world; the complete `org.tstrans.mpegts` **demux**
-> surface (`Demuxer`, `DemuxerConfig`, the sealed `DemuxEvent` hierarchy,
-> `StreamId`, codec / kind enums); the offline **mux** surface (`Muxer`,
-> `MuxerConfig`, push family + `pull` + `writeFile` / `MuxerFileSink`); the full
-> **typed KLV** surface (`org.tstrans.klv` — decode/encode for ST 0601 / 0102 /
-> 0605 / 0903, the `parseUniversal` dispatcher, and the field-error model); the
-> **codec parsers** (`org.tstrans.codec` — H.264 / H.265 / H.266 / AV1 / AAC /
-> MPEG-2 audio, typed NAL / OBU / ADTS payloads on demux events); the **file I/O
-> helpers** (`org.tstrans.io` — `parseFile`, `probe`, `extractKlv`); the
-> **SRT transport** (`org.tstrans.srt` — `Sender`/`Receiver` pipeline shells,
-> the `Builder`/`Socket`/`Listener`/`CancelHandle` low-level surface, the
-> `MuxSender`/`DemuxReceiver` convenience shells, and the `Managed*`
-> auto-reconnect family); the **RTP transport** (`org.tstrans.rtp` —
-> `Sender`/`Receiver` transports, `MuxSender`/`DemuxReceiver` convenience
-> shells, and the RTSP client + server); and the **pipeline shells**
-> (`org.tstrans.pipeline` — the `Pairer` pairing shell).
-> This page documents only what exists today.
+Start with installation and the first examples below. For a specific task,
+jump to:
+
+- [Read or write files](#file-io-orgtstransio).
+- [Encode or decode KLV](#typed-klv-orgtstransklv).
+- [Parse video and audio headers](#codec-parsing-orgtstranscodec).
+- [Send or receive over SRT](#srt-convenience-muxsender--demuxreceiver),
+  [add reconnect](#srt-managed-reconnect-managed), or
+  [use RTP](#rtp-transport-orgtstransrtp).
+- [Connect to an RTSP source](#rtsp-client-orgtstransrtp) or
+  [run an RTSP server](#rtsp-server-orgtstransrtp).
+- [Pair video with metadata](#pipeline-pairing-orgtstranspipelinepairer).
+
+The JVM binding exposes SRT and RTP/RTSP. UDP, TCP, RIST, and HLS have no
+JVM binding; see [binding differences](#where-this-binding-differs-from-the-rust-core).
 
 ## Install
 
@@ -84,6 +81,10 @@ Build a single-program H.264 transport stream offline: configure the muxer,
 push one access unit, then drain assembled TS packets with `pull`. The muxer
 is deterministic — identical inputs produce byte-identical output across the
 Rust, Python, and JVM bindings.
+
+Supply `annexBNal` as a `byte[]` containing one complete Annex-B H.264
+access unit from your encoder. Put the executable statements below in a
+method that handles or declares the resulting exceptions.
 
 ```java
 import org.tstrans.mpegts.*;
@@ -1897,9 +1898,9 @@ try (Pairer pairer = new Pairer(videoPid, klvPid, cfg)) {
 The simplest form — `new Pairer(videoPid, klvPid)` — uses `PairerConfig.defaults()`
 (Realtime mode, 300 ms tolerance, 32/32 buffers, `linkKlvToVideo = true`) with
 demuxer defaults. To tolerate arrival skew, switch to Buffered mode: pass
-`new PairerMode.Buffered(Duration.ofMillis(200))` as the mode; `flush()` becomes
-load-bearing at end-of-stream because buffered samples are held until the lag window
-closes.
+`new PairerMode.Buffered(Duration.ofMillis(200))` as the mode. Buffered mode
+holds samples until the lag window closes; call `flush()` at end-of-stream
+to release any samples still waiting.
 
 `feed` returns a `List<PairerOutput>` containing all outputs produced from the
 supplied bytes; match each element with `instanceof` on the four sealed records:
@@ -1923,8 +1924,7 @@ Gotchas:
   unused KLV history as trailing `UnpairedKlv` (in both Realtime and Buffered —
   e.g. metadata that arrived after the last video access unit), and in Buffered
   mode it additionally force-drains the buffered video AUs (best-effort matched).
-  It is most load-bearing in Buffered mode, but skipping it in Realtime can still
-  drop tail metadata.
+  Skipping it can therefore lose buffered video or trailing metadata.
 - **`feed` throws checked `DemuxException`.** Declare it in `throws` or wrap it.
 - **Closed `Pairer` → `IllegalStateException`.** All methods (`feed`, `flush`,
   `stats`, `demuxerStats`, `resetStats`) throw `IllegalStateException` after

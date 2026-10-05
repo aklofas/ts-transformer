@@ -1,40 +1,45 @@
 # ts-transformer
 
-> ts-transformer reads, builds, and transforms MPEG-TS — mux + demux, typed
-> MISB ST 0601 KLV encode/decode, H.264 / H.265 / H.266 / AV1 parsing — and,
-> when you need a wire, streams it over UDP, TCP, RTP, SRT, or RIST (or
-> publishes HLS) with reconnect, encryption, and typed metadata decoding
-> handled. From a `.ts` file on disk to a live encrypted uplink in ~30 lines.
->
-> Rust core. C, Python, and JVM bindings.
+ts-transformer combines encoded video, audio, and KLV metadata into MPEG-TS
+streams, and extracts them again. Use it to process `.ts` files, relay live
+streams, or pair video with telemetry. It provides a Rust core with C,
+Python, and JVM bindings.
 
-> 🆕  **First time touching MPEG-TS, KLV, or SRT?**
-> Read [start/concepts.md](/docs/start/concepts.md) first — five minutes of plain-language explainers before anything else.
+The library handles the container, metadata, and network transport. Your
+application supplies the video encoder or decoder. If these terms are new,
+start with [MPEG-TS, KLV, and SRT in plain terms](/docs/start/concepts.md).
 
 ## Pick your starting point
 
-| | | |
+| What you want to do | Start here | Then read |
 |---|---|---|
-| **🆕 New to this domain** <br><br> Plain-English explainers before you read any API. <br><br> → [What is this?](/docs/start/overview.md) <br> → [MPEG-TS / KLV / SRT in 5 min](/docs/start/concepts.md) <br> → [Quickstart](/docs/start/quickstart.md) | **🔍 Evaluating the library** <br><br> "Is this what I need?" <br><br> → [Overview](/docs/start/overview.md) <br> → [Feature matrix](/docs/reference/compatibility.md) <br> → [Interop + soak evidence](/docs/project/validation-evidence.md) <br> → [Code size](/docs/project/code-size.md) <br> → [Benchmarks + ceilings](/docs/project/benchmarks.md) <br> → [What's not yet supported](/docs/project/deferred-features.md) <br> → [License: MIT or Apache-2.0](/README.md#license) | **⚡ Pick your language** <br><br> Drop-in for your app. <br><br> → [Rust](/docs/languages/rust.md) <br> → [C](/docs/languages/c.md) <br> → [Python](/docs/languages/python.md) <br> → [JVM](/docs/languages/jvm.md) <br> → [Embedded (no_std)](/docs/languages/embedded.md) <br> → [Decision table](#which-language-should-i-pick) (below) |
-| **🔧 Build something real** <br><br> Deep guides and recipes. <br><br> → [Mux MPEG-TS](/docs/guides/mpegts-mux.md) <br> → [Demux MPEG-TS](/docs/guides/mpegts-demux.md) <br> → [KLV](/docs/guides/klv.md) <br> → [HLS](/docs/guides/hls.md) <br> → [Cookbook (40+ recipes)](/docs/cookbook/index.md) | **📚 Look up a type or error** <br><br> Reference and API lookup. <br><br> → [Architecture](/docs/reference/architecture.md) <br> → [Public API policy](/docs/reference/public-api.md) <br> → [API stability tiers](/docs/reference/api-stability.md) <br> → [Conventions](/docs/reference/conventions.md) <br> → [STANAG 4609 / MISP conformance](/docs/reference/stanag-4609.md) <br> → [Troubleshooting](/docs/troubleshooting.md) | **🧩 Port a binding / contribute** <br><br> Wrap ts-transformer for a new language. <br><br> → [Binding-authors guide](/docs/reference/binding-authors.md) <br> → [Public API policy](/docs/reference/public-api.md) <br> → [SRT cancel-handle](/docs/reference/srt-cancel-handle.md) <br> → [Releasing](/docs/project/releasing.md) <br> → [Security policy](/SECURITY.md) |
+| Learn the domain | [Concepts](/docs/start/concepts.md) | [Overview](/docs/start/overview.md), then the [Rust quickstart](/docs/start/quickstart.md) or your [language guide](#which-language-should-i-pick) |
+| Evaluate the library | [Overview](/docs/start/overview.md) | [Feature matrix](/docs/reference/compatibility.md), [validation evidence](/docs/project/validation-evidence.md), [unsupported features](/docs/project/deferred-features.md) |
+| Add it to your application | [Choose a language](#which-language-should-i-pick) | Installation and first examples in that language's guide |
+| Build a specific workflow | [Cookbook](/docs/cookbook/index.md) | [Muxing](/docs/guides/mpegts-mux.md), [demuxing](/docs/guides/mpegts-demux.md), [KLV](/docs/guides/klv.md), or [HLS](/docs/guides/hls.md) |
+| Understand an API or diagnose a failure | [Architecture](/docs/reference/architecture.md) or [troubleshooting](/docs/troubleshooting.md) | [API stability](/docs/reference/api-stability.md), [STANAG 4609 / MISP conformance](/docs/reference/stanag-4609.md) |
+| Write a binding or contribute | [Binding-authors guide](/docs/reference/binding-authors.md) | [Public API policy](/docs/reference/public-api.md), [conventions](/docs/reference/conventions.md), [SRT cancellation](/docs/reference/srt-cancel-handle.md) |
+
+For deployment planning, see [code size](/docs/project/code-size.md) and
+[benchmarks and capacity testing](/docs/project/benchmarks.md). Project
+policies cover [licensing](/README.md#license),
+[security](/SECURITY.md), and [releasing](/docs/project/releasing.md).
 
 ## Which language should I pick?
 
 | Language | Surface | When to pick |
 |---|---|---|
-| **Rust** | Full `Sender` / `Receiver` + low-level primitives | Embedding in a Rust app; want type-level guarantees |
-| **C** | Full sender + receiver surface (`cdylib` + `staticlib` + `tstrans.h`) | Embedded targets; cross-language linkage; maximum ABI stability |
-| **Python** | Offline `.ts` inspect/build, typed KLV decode/encode, DataFrame adapters, **and** live UDP / TCP / RTP (incl. RTSP) / SRT / RIST transports, HLS publishing + Pairer | Notebooks; KLV-to-DataFrame ETL; offline processing; live ingest/egress |
-| **JVM** (`tstrans-jvm` / `org.tstrans` on Maven Central) | Mirrors the Python surface: mux + demux, typed KLV, RTP (incl. RTSP) + SRT transports, pairing | JVM backend consumers |
-| **Embedded** (bare-metal / RTOS) | `no_std` Rust core + C staticlib + FreeRTOS/lwIP/libsrt reference port, all QEMU-gated | No-OS or RTOS firmware; MCU with no host runtime |
+| **[Rust](/docs/languages/rust.md)** | Mux/demux, typed KLV, all transports, and low-level APIs | Rust applications; direct access to the core |
+| **[C](/docs/languages/c.md)** | Mux/demux and transport APIs through `tstrans.h`; transports are build-time options | C/C++ applications or another language's native interface |
+| **[Python](/docs/languages/python.md)** | File processing, typed KLV, pandas adapters, live transports, HLS publishing, and pairing | Notebooks, data analysis, and streaming applications |
+| **[JVM](/docs/languages/jvm.md)** | Mux/demux, typed KLV, SRT, RTP/RTSP, and pairing; no UDP, TCP, RIST, or HLS binding | Java, Kotlin, Scala, or other JVM applications |
+| **[Embedded](/docs/languages/embedded.md)** | `no_std` Rust core, offline C static library, and a FreeRTOS SRT reference port | Bare-metal or RTOS firmware |
 
 ## What kind of pages live here?
 
-This site organizes content four ways. Knowing which kind you're reading helps you spot what you need:
+Choose a page by the amount of guidance you need:
 
-- **Tutorials** — guided, end-to-end. Start at [`start/quickstart.md`](/docs/start/quickstart.md).
-- **How-to guides** — recipes for specific problems. See the [Cookbook](/docs/cookbook/index.md).
-- **Reference** — information lookup, structured. Lives under [`reference/`](/docs/reference/).
-- **Concepts** — explanations of the domain. Start with [`start/concepts.md`](/docs/start/concepts.md), then deep-dive in [`guides/`](/docs/guides/).
-
-(This is the [Diátaxis](https://diataxis.fr/) framework. You don't have to learn it — just notice that the page you're on is one of those four.)
+- **Follow a first example:** [Quickstart](/docs/start/quickstart.md).
+- **Solve a specific problem:** [Cookbook](/docs/cookbook/index.md).
+- **Look up details:** [Reference](/docs/reference/).
+- **Understand how it works:** [Concepts](/docs/start/concepts.md), followed by the topic [guides](/docs/guides/).

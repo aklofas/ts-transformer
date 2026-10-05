@@ -1,16 +1,29 @@
 # Survive a flaky transport with reconnect + gap buffer
 
-> **When to use this:** The wire is lossy — radio links, NAT timeouts, listener restarts.
+> **When to use this:** An SRT connection can break during a network outage, NAT timeout, or listener restart, and your sender needs to reconnect.
 
 > **Related:**
 > - [guides/pipeline.md](/docs/guides/pipeline.md) — `ManagedTransport`, `ReconnectPolicy`, and gap-buffer behavior
 > - [Example: `managed_reconnect`](/examples/operations/managed_reconnect.rs)
 
-Reach for this when the wire is lossy — radio links, NAT timeouts, listener restarts. `ManagedTransport<T>` decorates any `Transport` impl with a reconnect loop and a bounded gap buffer; the wrapped sender shell sees a `Transport` that occasionally pauses but does not fail for an outage the retry budget covers.
+`ManagedTransport<T>` wraps a transport and calls your factory to create a
+new connection when the old one breaks. With SRT, packet retransmission is
+already handled by the protocol; this wrapper handles rebuilding the
+connection after it fails.
 
 The factory closure rebuilds the inner transport on demand. `ReconnectPolicy` controls retries, backoff, and gap-buffer overflow behaviour.
 
-In the default `ReconnectMode::Blocking` (what the snippet below builds) the send that hits the break reconnects on the calling thread and delivers its own message before it returns; the gap buffer holds that one message and nothing else, so `gap_buffer_capacity` and `overflow_policy` are left at their defaults here. They become sizing decisions in [Background mode](#background-mode-never-stall-the-producer), where sends keep arriving during the outage.
+Choose how the producer should behave during an outage:
+
+| Mode | What a send call does | When to use it |
+|---|---|---|
+| `Blocking` (default) | Waits for reconnect and retries the interrupted send; returns an error if recovery fails. | The producer can pause while the connection recovers. |
+| `Background` | Queues data while a worker sends and reconnects; the overflow policy decides what happens when the queue fills. | The producer must keep accepting new data during an outage. |
+
+The example below configures **Blocking** mode. Its gap buffer holds the
+interrupted message, so the buffer settings are left at their defaults.
+In [Background mode](#background-mode-reconnect-without-waiting-on-the-producer), size the
+buffer for the traffic you want to retain during an outage.
 
 ```rust,no_run
 use tst_core::mpegts::mux::MuxerConfig;
@@ -23,7 +36,7 @@ use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let factory = || -> Result<SrtTransport, TransportError> {
-        // Bind-then-chain: mutators borrow, terminal `connect` borrows.
+        // Every reconnect opens a new socket with the same configuration.
         let mut sb = SocketBuilder::new();
         sb.latency(Duration::from_millis(120));
         let socket = sb
@@ -54,39 +67,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 Runnable: [examples/operations/managed_reconnect.rs](/examples/operations/managed_reconnect.rs).
 
-## Background mode: never stall the producer
+<a id="background-mode-never-stall-the-producer"></a>
 
-> **When to use this:** a single-threaded relay pump — one thread both
-> produces frames and calls `send_bytes`/`send_video` — where blocking
-> that thread through a whole reconnect window means the upstream
-> source backs up or drops frames on the floor anyway. If losing the
-> freshest frame is worse than losing an old one, "fresh beats
-> complete" is the right tradeoff, and `Background` mode is what makes
-> it possible: the producer thread never waits out the reconnect
-> backoff or a factory call.
+## Background mode: reconnect without waiting on the producer
 
-By default (`ReconnectMode::Blocking`) a `send_bytes` call that hits a
-broken transport blocks the caller for the whole reconnect window.
-Set `mode: ReconnectMode::Background` and a per-outage worker thread
-takes over the factory/backoff/drain loop instead — `send_bytes`
-enqueues into the gap buffer under `overflow_policy` without waiting
-on backoff or the factory call, whether or not the sink is currently
-reachable. It does not wait on the worker's in-flight inner send
-either (that one call is unbounded against a peer that has stopped
-reading), only on the gap buffer's own short critical sections — and
-the same holds for `stats_handle().stats()` and for a **send** through
-a sender shell (`MuxSender` / `Sender` / `RawSender`) wrapped around
-it. It does not extend to the liveness/socket-stats queries those
-shells forward: `socket_stats()` always asks the inner transport, so it
-waits for an in-flight inner send to return; `is_alive()` answers
-`true` straight from the reconnect flag while a worker is active (so it
-does not wait during an outage) but consults the inner otherwise.
-`MuxSender` guards its muxer and transport with one mutex, so on that
-shell a concurrent send on another thread queues behind a
-`socket_stats()` call that is itself waiting on an in-flight inner
-send. For
-monitoring, poll `stats_handle().stats()` — its `reconnecting` /
-`gap_len` / drop counters are what you want anyway:
+Use `ReconnectMode::Background` when one thread both receives upstream
+frames and forwards them. Waiting for reconnect on that thread would also
+stop upstream reads. Once recovery starts, a worker handles reconnect
+attempts, backoff, and draining queued data. While that worker is active
+or the queue is nonempty, the producer queues messages without waiting
+for those operations.
+
+When no worker is active and the queue is empty, sends go directly to the
+transport and can block on network I/O. Background mode moves reconnect
+work off the producer thread; it does not make every send nonblocking.
+
+For monitoring, use `stats_handle().stats()`. It reads queue and reconnect
+counters without waiting for the worker's network I/O. Both enqueueing
+and reading these counters still briefly lock the gap buffer.
+
+The same guarantee does **not** apply to every query on a sender shell:
+
+- `socket_stats()` queries the inner transport and can wait behind a
+  blocked network send.
+- `is_alive()` returns `true` while a reconnect worker is active; otherwise
+  it queries the inner transport.
+- `MuxSender` holds one mutex around its muxer and transport. A
+  `socket_stats()` call that blocks while holding that mutex can also delay
+  another thread's `send_video()` call.
+
+Obtain the managed stats handle before moving the transport into the sender:
 
 ```rust,ignore
 let policy = ReconnectPolicy {

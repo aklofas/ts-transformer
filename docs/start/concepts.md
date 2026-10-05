@@ -3,10 +3,10 @@
 > **Who this is for:** You're new to MPEG-TS / KLV / SRT and want to understand them well enough to read the rest of these docs — and to talk about your design — without getting lost.
 
 > **You will learn:**
-> - What MPEG-TS is and why people keep using a 1990s container
+> - How MPEG-TS carries video, audio, and metadata together
 > - What a PID, PES packet, and access unit are
 > - What KLV is (the metadata format) and how it gets carried alongside video
-> - What SRT is, and why pick it over RTMP / RTP / TCP
+> - How SRT handles packet loss on a live connection
 > - The glossary you'll hit in the API: PAT, PMT, PCR, DTS, PTS, IDR, GOP, SMPTE UL, BER
 
 This page is conceptual. There's no code here. For code, see [`quickstart.md`](/docs/start/quickstart.md). For deep dives, see [`guides/`](/docs/guides/).
@@ -17,13 +17,29 @@ This page is conceptual. There's no code here. For code, see [`quickstart.md`](/
 
 **MPEG-TS** (MPEG-2 Transport Stream) is the byte format used to multiplex live video, audio, and metadata into one continuous stream that can survive packet loss and let a viewer tune in mid-stream.
 
-Imagine a satellite TV channel that broadcasts 24/7. There's no "restart" — when you turn on your receiver, the stream is already in flight. Your receiver has to be able to start decoding from whatever byte it lands on. MPEG-TS solves this by chopping the byte stream into uniform **188-byte packets**, each one self-routing, each one carrying a small slice of one elementary stream (video frame, audio frame, or metadata chunk). The receiver scans for sync bytes, locks on, and starts decoding the next complete frame.
+Imagine joining a TV broadcast that's already running. The receiver first
+has to find packet boundaries and learn which packets carry video, audio,
+and metadata. MPEG-TS uses fixed **188-byte packets**, with an identifier in
+each packet's header, and repeats tables describing the streams. Finding
+these boundaries lets the receiver start extracting data. Displaying video
+also requires the decoder's setup data and a suitable random-access frame.
 
-Designed in the 1990s, MPEG-TS is everywhere streaming live media goes: digital television (DVB, ATSC), satellite, military / ISR video links, IPTV head-ends. It's the lingua franca of "live linear video over an unreliable channel." Newer container formats (MP4, fMP4, CMAF) handle file-based and on-demand streaming better, but for live + lossy, TS is still the right tool.
+MPEG-TS is used in digital television, IPTV, and sensor video links. Its
+packet structure helps a receiver recover alignment after a gap, but the
+container itself does not recover lost data. That is a separate job for
+the transport protocol.
 
 ### PIDs, programs, and the PAT/PMT/PCR ladder
 
-Inside one MPEG-TS byte stream, multiple **elementary streams** (one video, one audio, one KLV metadata track, etc.) are interleaved. Each elementary stream gets a **PID** (Packet IDentifier — a 13-bit channel number, 0x0000–0x1FFF). The receiver routes incoming packets by PID: PID 0x100 → video decoder, PID 0x101 → audio decoder, PID 0x1031 → KLV parser.
+Inside one MPEG-TS byte stream, multiple **elementary streams** (one video,
+one audio, one KLV metadata track, etc.) are interleaved. A **PID** (Packet
+Identifier) is the 13-bit number used to route packets. For example, a
+receiver might route PID 0x100 to a video decoder and PID 0x101 to a KLV
+parser. Some PIDs are reserved, so the full range 0x0000–0x1FFF is not
+available for assigning media streams.
+
+A **program** groups related streams, such as a camera's video, audio, and
+telemetry. One MPEG-TS byte stream can contain several programs.
 
 But PIDs alone don't tell you *which* PID carries which stream. That's where the table ladder comes in:
 
@@ -35,9 +51,16 @@ You usually don't think about this ladder directly — ts-transformer's `Muxer` 
 
 ### PES, access units, presentation time
 
-Inside the 188-byte TS packet layer is another packetization layer: **PES** (Packetized Elementary Stream). PES packets are the unit *one elementary stream's* data is chunked into before being sliced across TS packets. A single H.264 frame might span dozens of TS packets but is one PES packet. The PES header carries the per-frame metadata: timestamps, stream IDs.
+Media payloads are grouped into **PES** (Packetized Elementary Stream)
+packets, which are then split across TS packets. A PES header can carry
+timestamps for its payload. In ts-transformer's muxer, one video push
+becomes one PES packet, which may span many TS packets.
 
-**Access unit (AU)** = the smallest decodable unit of an elementary stream. For H.264 video that's one decoded picture (one frame, or one field for interlaced). For audio it's one decoded sample frame. For KLV sync metadata it's one complete KLV record.
+An **access unit (AU)** is encoded data for one presentation unit. For
+H.264 video, it represents one picture (a frame or field) and can contain
+several NAL units. An AU is not necessarily independently decodable: it may
+refer to earlier pictures. Pass the whole AU to `push_video`, rather than
+calling it separately for each NAL unit.
 
 **Presentation timestamps:**
 
@@ -46,7 +69,15 @@ Inside the 188-byte TS packet layer is another packetization layer: **PES** (Pac
 
 Both PTS and DTS live in the PES header, at 90 kHz tick resolution (so 90,000 ticks = 1 second). PTS lets the decoder play video and audio in sync. PCR (above) keeps the decoder's clock locked to the sender's clock so PTS comparisons are meaningful.
 
-The shorthand: **TS packet → PES packet → access unit → frame.** ts-transformer's API speaks at the access-unit level (`push_video(nal, pts, key_frame)`), so you mostly think in AUs. The library handles the PES + TS layering.
+For video, the data flows like this:
+
+```text
+encoder → encoded access unit → muxer → PES split across TS packets
+decoder ← encoded access unit ← demuxer ← TS packets
+```
+
+ts-transformer handles muxing and demuxing. Your encoder and decoder handle
+the conversion between encoded access units and pictures.
 
 ---
 
@@ -64,11 +95,15 @@ Worked example. An aircraft emits per-frame telemetry: latitude, longitude, alti
 
 ### Keys: SMPTE Universal Labels
 
-A KLV key is a **SMPTE Universal Label (UL)** — a 16-byte unique identifier registered with SMPTE (the Society of Motion Picture and Television Engineers). The first bytes of every UL identify the registration authority; the rest disambiguate the specific field.
+A top-level MISB KLV record starts with a **SMPTE Universal Label (UL)**, a
+16-byte identifier that tells the reader what kind of record follows.
+Inside a **local set**, fields use compact numeric tags instead of
+repeating a 16-byte label. For example, ST 0601 uses Tag 2 for its timestamp.
+The outer UL identifies the set; the set's standard defines its inner tags.
 
 The military / ISR community settled on the **MISB** (Motion Imagery Standards Board) standards as the authoritative key set:
 
-- **MISB ST 0601** — Full Motion Video (FMV) metadata. The big one. Defines ~140 keys for aircraft platform position + sensor pointing + mission context.
+- **MISB ST 0601** — Aircraft platform position, sensor pointing, timing, and mission context.
 - **MISB ST 0102** — Security metadata (classification, releasability).
 - **MISB ST 0605** — Precision Time Stamp (a time-status byte plus a microsecond timestamp, carried as its own KLV pack).
 - **MISB ST 0903** — VMTI (Video Moving Target Indicator) — per-target detection bounding boxes inside the video.
@@ -94,24 +129,38 @@ The full standard for KLV-in-TS is MISB **ST 1402** (multiplexing) + MISB **ST 1
 
 **SRT** stands for **Secure Reliable Transport**. It's a UDP-based protocol designed for live media on unreliable networks. Originally developed by Haivision; published as an IETF draft (`draft-sharabayko-srt`); the reference implementation is the open-source `libsrt` C++ library that ts-transformer wraps.
 
-Mental model: **TCP, but for video.** SRT recovers lost packets within a tunable latency budget, then ships forward. The video doesn't stall when the link recovers from a burst loss — the receiver plays through gaps if they exceed the budget, dropped packets become brief glitches rather than a long stall.
+SRT can request retransmission of missing packets. In live mode, the
+receiver waits within a configured latency budget; packets that arrive too
+late can be dropped. This trades some delay for a better chance of recovering
+loss. It does not guarantee uninterrupted pictures: a gap can still affect
+decoding until the next suitable frame.
 
 Compare:
 
-- **Plain UDP** — fire and forget. Lost packets are lost. Video glitches build up.
-- **TCP** — retransmit forever. A 1-second outage becomes a 30-second buffer-fill stall. Head-of-line blocks all subsequent packets behind any missed retransmission.
-- **RTMP** — TCP-based, so same head-of-line problem. Industry-standard for non-live ingest, but bad on lossy links.
-- **WebRTC** — better for two-way real-time (low latency), but heavyweight for one-way broadcast; depends on the browser ecosystem.
-- **RIST** — similar design to SRT, also UDP-based with retransmission. Different protocol; not interoperable.
-- **SRT** — UDP-based with selective retransmission inside a tunable latency budget. Perfect for satellite, cellular, mesh, mobile — anywhere bursty loss is the norm.
+- **Plain UDP** sends datagrams without recovering losses or restoring their order.
+- **TCP** provides an ordered byte stream. Missing bytes delay delivery of
+  later bytes while retransmission is attempted.
+- **SRT** sends messages over UDP and adds retransmission and a configurable
+  delivery delay for live media.
+- **RIST** also uses UDP with retransmission, but is a different protocol.
+  An SRT sender needs an SRT receiver; it cannot connect directly to a RIST receiver.
 
 ### Latency budget, encryption, reconnect
 
 **Latency.** SRT trades latency for reliability. You configure how long the receiver waits for missing packets before giving up and playing forward. Default ~120 ms; tune up (seconds) for satellite, tune down (tens of ms) for low-latency local links. ts-transformer's `SocketBuilder` exposes this as `latency_ms`.
 
-**Encryption.** SRT supports AES-128, AES-192, AES-256 with a shared passphrase. ts-transformer enables encryption **by default** — the vendored mbedTLS 3.6.x LTS is statically linked. You set a passphrase via `SocketBuilder::passphrase(Passphrase::new("…")?)` and both sender and receiver use the same one. Disable encryption with `--no-default-features` only if you have a reason.
+**Encryption.** SRT supports AES-128, AES-192, and AES-256. Encryption
+support is built into `tst-srt` by default, but a connection is encrypted
+only when you configure a passphrase. Set the same passphrase on both peers;
+in Rust, use `SocketBuilder::passphrase(Passphrase::new("…")?)` and the
+corresponding listener setter. See the
+[encrypted-send recipe](/docs/cookbook/sending/send-encrypted.md).
 
-**Reconnect.** Reconnection is **not** part of the SRT protocol itself — when a socket drops, it stays dropped. ts-transformer adds a `ManagedTransport` wrapper that automatically retries with exponential backoff and emits discontinuity events when a reconnect happens, so the receiver knows the stream had a gap. See [`guides/pipeline.md`](/docs/guides/pipeline.md).
+**Reconnect.** A broken SRT connection must be replaced with a new one.
+ts-transformer's managed wrappers can retry automatically with a configurable
+delay between attempts. On the receive side, `ManagedDemuxReceiver` also
+emits a discontinuity event after reconnect so your application can handle
+the gap. See the [pipeline guide](/docs/guides/pipeline.md).
 
 ---
 
@@ -125,12 +174,12 @@ Compact reference of terms you'll hit in the API and in these docs. Each links t
 | **PAT / PMT** | Tables that map programs to PIDs. Auto-generated by `Muxer`. |
 | **PCR** | Periodic 27 MHz clock reference. Keeps receiver clock locked to sender clock. |
 | **PES** | Per-elementary-stream packetization layer inside TS. |
-| **AU** | Access Unit — smallest decodable unit of an elementary stream (one video frame, one audio frame, one KLV record). |
+| **AU** | Access unit — encoded data for one presentation unit, such as a video picture; it may depend on other pictures. |
 | **PTS / DTS** | Presentation / Decode time stamps. 90 kHz ticks in the PES header. |
 | **NAL unit** | Network Abstraction Layer unit — H.264/H.265/H.266 elementary stream unit. ([guide](/docs/guides/codec.md)) |
 | **OBU** | Open Bitstream Unit — AV1's equivalent of a NAL unit. |
-| **IDR / I-frame** | Instantaneous Decoder Refresh — a video frame that decodes without referencing others. Stream cut-in points. |
-| **GOP** | Group of Pictures — the chunk of frames between consecutive IDRs. |
+| **I-frame / IDR** | An I-frame uses no other picture to decode itself. An IDR (Instantaneous Decoder Refresh) also prevents later pictures from referring to pictures before it, making it a useful place to join a stream. |
+| **GOP** | Group of Pictures — a sequence of coded pictures organized around an intra-coded picture; its structure affects compression and where playback can start. |
 | **KLV** | Key-Length-Value binary self-describing format. ([guide](/docs/guides/klv.md)) |
 | **UL** | Universal Label — the 16-byte SMPTE-registered key prefix for KLV. |
 | **BER** | Basic Encoding Rules — the length-prefix encoding KLV uses. |
