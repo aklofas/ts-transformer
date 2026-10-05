@@ -3,7 +3,7 @@
 //! `nDecodeUasDatalink(byte[], boolean strict, boolean compliance) -> UasDatalinkLs` —
 //! dispatches: `compliance=true` → `decode_strict_compliance`; else `strict=true` →
 //! `decode_strict`; else `decode` (lenient). Builds the Java `UasDatalinkLs` via its
-//! public mutable `Builder` (the Builder-marshalling pattern from Tasks 2–3).
+//! public mutable `Builder` (the Builder-marshalling pattern used throughout this module).
 //!
 //! `nEncodeUasDatalinkWithPolicy(UasDatalinkLs, int policy) -> byte[]` — reads all
 //! fields via accessor `call_method`s, builds a Rust `UasDatalinkLs`, calls
@@ -18,16 +18,14 @@
 //! ### JNI local-ref capacity (CRITICAL for 147-field set)
 //!
 //! `build_uas_datalink` and `read_uas_datalink` both call
-//! `env.ensure_local_capacity(320)` at the top. Bumped from 256 (WP-C's
-//! first cut — its sizing arithmetic was self-contradictory and left
-//! effectively zero margin, caught in review) to leave REAL headroom, not a
-//! tight fit. With 12 String fields + ~110 Double/Long/Integer/ByteBuffer
-//! fields (WP-A's 51 new fields pushed the total from 56 to 107; WP-B's 25
-//! new fields + the `imapbSpecials` list pushed it to 133), the pre-WP-C
-//! baseline already needed all 224 of its slots — there was little slack
-//! even before WP-C's 14 new fields. Honest per-field tally of WP-C's OWN
-//! additional outer-frame refs (excludes anything reclaimed inside a
-//! per-item `with_local_frame`, per the table below):
+//! `env.ensure_local_capacity(320)` at the top — 256 would leave effectively
+//! zero margin, so 320 leaves REAL headroom, not a tight fit. The record's
+//! 133 scalar fields (12 String + ~110 Double/Long/Integer/ByteBuffer fields
+//! plus the `imapbSpecials` list) already need 224 slots on their own, before
+//! counting the 14 pack/list fields below — there is little slack even
+//! before them. Honest per-field tally of those 14 fields' OWN additional
+//! outer-frame refs (excludes anything reclaimed inside a per-item
+//! `with_local_frame`, per the table below):
 //!
 //! | Field | Outer-frame refs (build ≈ read) |
 //! |---|---|
@@ -56,19 +54,19 @@
 //! requirement counting only NEW real object/array refs — it does NOT
 //! count the JNI-spec fact that every `Builder` fluent-setter call also
 //! returns (and, if discarded, still pins) one local ref for its own
-//! `this`-returning value, an overhead shared by every pre-existing scalar
-//! field too and not specific to WP-C; that mechanism is real but not
+//! `this`-returning value, an overhead shared by every scalar field too and
+//! not specific to the pack/list fields; that mechanism is real but not
 //! cheaply hand-countable field-by-field, which is exactly why 320 leaves
 //! real margin rather than a computed-to-the-slot number, and why
 //! `St0601PacksTest.fullyPopulatedWpcFieldsRoundTrip` exercises this
-//! empirically (WP-C's own worst case: every optional WP-C field set,
+//! empirically (the pack/list fields' own worst case: every one of them set,
 //! multi-item lists on every `Vec` field, plus a separate long-list
 //! stress case — not a claim that the record's other 133 pre-existing
 //! fields are populated too) rather than resting on this arithmetic
 //! alone. Skipping the capacity call entirely WILL crash the JVM for
 //! records with many populated fields.
 //!
-//! WP-C's list fields (`controlCommands`, `wavelengthsList`, `weaponsStores`,
+//! The list-shaped pack fields (`controlCommands`, `wavelengthsList`, `weaponsStores`,
 //! `waypointList`, `sdccFlps`, and `payloadList`'s nested `records`) follow the
 //! VTargetPack `with_local_frame` idiom: each list item is built/read inside
 //! its own local frame so per-item refs are reclaimed before the next
@@ -76,10 +74,9 @@
 //! length — see `build_vmti`/`read_vmti` in `st0903.rs` for the precedent.
 //! `controlCommandVerification`/`activeWavelengths`/`SdccFlpField.precedingTags`
 //! read via `jutil::read_long_list`, which applies the same per-item-frame
-//! discipline (added in review response — the original hand-rolled loops had
-//! no per-item frame, so a caller-constructed list longer than the ambient
+//! discipline: without it, a caller-constructed list longer than the ambient
 //! frame's spare capacity could exhaust the JNI local-ref table and abort the
-//! JVM rather than throw a catchable exception).
+//! JVM rather than throw a catchable exception.
 
 use jni::JNIEnv;
 use jni::objects::{JByteArray, JClass, JObject, JValue};
@@ -120,13 +117,13 @@ const BUILDER_SIG_BUF: &str = "(Ljava/nio/ByteBuffer;)Lorg/tstrans/klv/UasDatali
 const BUILDER_SIG_LIST: &str = "(Ljava/util/List;)Lorg/tstrans/klv/UasDatalinkLs$Builder;";
 
 /// ST 0601 LS typed + reserved tags — mirrors `tags::TAGS` in
-/// `crates/tst-core/src/klv/st0601/tags.rs` (142 entries as of WP-C: 1-65,
+/// `crates/tst-core/src/klv/st0601/tags.rs` (142 entries: 1-65,
 /// 67-143). Tag 66 is the deprecated placeholder (permanently untyped by
 /// design — ST 0601.19 §8.66: "This item has been Deprecated") and
 /// 144..=255 are forward-compat; both may legitimately appear in `unknown`
 /// (66 and 200 are the durable unknown-tag test stand-ins used across this
-/// suite — never add them here). WP-C (Table C1) finished the sweep from
-/// 66's neighbors through 143, including Tag 102 (MULTI-INSTANCE SDCC-FLP,
+/// suite — never add them here). The typed set covers 66's neighbors through
+/// 143, including Tag 102 (MULTI-INSTANCE SDCC-FLP,
 /// now typed via `sdccFlps`) and Tag 115 (MULTI-INSTANCE Control Command,
 /// now typed via `controlCommands`) — keep this in sync with `tags::TAGS`
 /// when new tags are typed, or a caller-supplied `unknown` entry for a
@@ -140,12 +137,12 @@ fn is_st0601_typed_tag(tag: u32) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// ST 0601 — Tags 34/63/77 coded enums (WP-A Table A3)
+// ST 0601 — Tags 34/63/77 coded enums
 // ---------------------------------------------------------------------------
 //
 // These helpers name the JNI crossing (raw codepoint `Integer`, no
 // Python-enum-instance step) and delegate to tst-core's own wire tables —
-// `to_wire`/`from_wire`, public since Arc 2 R2. No local copy, so no
+// `to_wire`/`from_wire`. No local copy, so no
 // `#[non_exhaustive]` wildcard and nothing to drift; tst-core's
 // `variant_inventory` tests pin the tables themselves.
 
@@ -180,7 +177,7 @@ fn operational_mode_from_code(b: u8) -> OperationalMode {
 }
 
 // ---------------------------------------------------------------------------
-// ST 0601 — Tags 125/126 coded enums (WP-B Table B2)
+// ST 0601 — Tags 125/126 coded enums
 // ---------------------------------------------------------------------------
 
 /// Extract the ST 0601.19 §8.125 wire codepoint from a `PlatformStatus`.
@@ -204,7 +201,7 @@ fn sensor_control_mode_from_code(b: u8) -> SensorControlMode {
 }
 
 // ---------------------------------------------------------------------------
-// ST 1201.5 — imapb_specials side channel (WP-B)
+// ST 1201.5 — imapb_specials side channel
 // ---------------------------------------------------------------------------
 //
 // Crossing shape (DECIDED, shared with the Python binding): a
@@ -244,7 +241,7 @@ fn imapb_special_to_code(
 }
 
 /// Inverse of [`imapb_special_to_code`]. Throws `IllegalArgumentException`
-/// for a code string outside the 9-member set (audit #6 "validate-don't-drop"
+/// for a code string outside the 9-member set (the "validate-don't-drop"
 /// stance — same as the Python `imapb_special_from_code`).
 fn imapb_special_from_code(
     env: &mut JNIEnv,
@@ -305,7 +302,7 @@ fn checked_i16(env: &mut JNIEnv, value: i64, field: &str) -> jni::errors::Result
 }
 
 // ---------------------------------------------------------------------------
-// ST 0601 — WP-C pack & list items (Table C1), carried inside UasDatalinkLs.
+// ST 0601 — pack & list items, carried inside UasDatalinkLs.
 // Each nested type is a plain Java record (not a Builder — small, mostly-
 // mandatory field counts, matching the `CoreId`/`GeoPoint` precedent rather
 // than `VTargetPack`'s many-optional-field Builder): a `build_*`/`read_*`
@@ -316,7 +313,7 @@ fn checked_i16(env: &mut JNIEnv, value: i64, field: &str) -> jni::errors::Result
 // ---------------------------------------------------------------------------
 
 /// Box an `Option<f64>` as a `java.lang.Double`, or `null` for `None`. Needed
-/// because the WP-C pack types are plain records, not Builders — there is no
+/// because the pack types are plain records, not Builders — there is no
 /// `if let Some(v) = ... { call_method(...) }` skip available; the canonical
 /// constructor always takes every argument positionally.
 fn boxed_double<'local>(
@@ -342,7 +339,7 @@ fn boxed_long<'local>(
 }
 
 /// Read a MANDATORY (non-null) `String` accessor. Sibling of
-/// `jutil::read_nullable_string` for the WP-C pack fields that are always
+/// `jutil::read_nullable_string` for the pack fields that are always
 /// present on the Rust side (no `Option` wrapper).
 fn read_string(env: &mut JNIEnv, obj: &JObject, method: &str) -> jni::errors::Result<String> {
     let s_obj = env
@@ -669,8 +666,8 @@ fn read_airbase_locations(
 
 // -- Item 138: Payload List ----------------------------------------------------
 //
-// Delegates to tst-core's `PayloadType::to_wire`/`from_wire` (public since
-// Arc 2 R2). Unlike `IcingDetected`'s narrow wire byte, `PayloadType::Other`
+// Delegates to tst-core's `PayloadType::to_wire`/`from_wire`.
+// Unlike `IcingDetected`'s narrow wire byte, `PayloadType::Other`
 // carries the type code's full BER-OID `u64` range, so the Java crossing
 // (`PayloadRecord.payloadTypeCode`) is a `long`, not an `int`.
 
@@ -1059,7 +1056,7 @@ pub extern "system" fn Java_org_tstrans_klv_Klv_nDecodeUasDatalink<'local>(
 /// - `0` → [`OutOfRangePolicy::Error`] (throws on any out-of-range value)
 /// - `1` → [`OutOfRangePolicy::Indicator`] (emits the spec's Out-of-Range
 ///   special for eligible linear-range tags: 6, 7, 50, 51, 52, 79, 80,
-///   90–93; separately, WP-B's 14 IMAPB tags — 96, 103-105, 109,
+///   90–93; separately, the 14 IMAPB tags — 96, 103-105, 109,
 ///   112-114, 117-120, 132, 134 — get their own ST 1201.5 BelowMin/AboveMax
 ///   special instead of the INT_MIN sentinel)
 ///
@@ -1217,16 +1214,15 @@ pub extern "system" fn Java_org_tstrans_klv_Klv_nSt0601SentinelMeaning<'local>(
 ///
 /// ### Local-ref capacity (MANDATORY)
 ///
-/// Calls `env.ensure_local_capacity(320)` at the top. The pre-WP-C baseline
-/// (133 fields: 12 Strings, ~83 Doubles, ~11 ByteBuffers, ~14 Integers, ~7
-/// Longs, an `imapbSpecials` list) already needed all 224 of its slots; WP-C
-/// adds ~34 more outer-frame refs across its 14 pack/list fields — see the
-/// module doc's per-field tally table for the honest breakdown. 224 + 34 ≈
-/// 258 is the bare-minimum requirement; 320 leaves real margin rather than a
-/// tight fit (the first-cut 256 was later found to leave effectively zero
-/// margin). Each WP-C list field's own items are built inside a per-item
-/// `with_local_frame`, so only the item COUNT — not the item length —
-/// affects this top-level budget.
+/// Calls `env.ensure_local_capacity(320)` at the top. The record's 133
+/// scalar fields (12 Strings, ~83 Doubles, ~11 ByteBuffers, ~14 Integers, ~7
+/// Longs, an `imapbSpecials` list) already need all 224 of those slots; the
+/// 14 pack/list fields add ~34 more outer-frame refs — see the module doc's
+/// per-field tally table for the honest breakdown. 224 + 34 ≈ 258 is the
+/// bare-minimum requirement; 320 leaves real margin rather than a tight fit
+/// (256 leaves effectively zero margin). Each pack/list field's own items
+/// are built inside a per-item `with_local_frame`, so only the item
+/// COUNT — not the item length — affects this top-level budget.
 fn build_uas_datalink(env: &mut JNIEnv<'_>, r: &UasDatalinkLs) -> jni::errors::Result<jobject> {
     // CRITICAL: must be called before any new_string / new_object below.
     // 320 slots covers 147 fields + builder + lists + JNI scratch with real margin.
@@ -1595,7 +1591,7 @@ fn build_uas_datalink(env: &mut JNIEnv<'_>, r: &UasDatalinkLs) -> jni::errors::R
         )?;
     }
 
-    // --- WP-A Table A1: ranged f64 fields (tags 35-93 subset) → double ---
+    // --- Ranged f64 fields (tags 35-93 subset) → double ---
     if let Some(v) = r.target_location_lat_deg {
         env.call_method(
             &b,
@@ -1827,7 +1823,7 @@ fn build_uas_datalink(env: &mut JNIEnv<'_>, r: &UasDatalinkLs) -> jni::errors::R
         )?;
     }
 
-    // --- WP-B Table B1: IMAPB f64 fields (tags 96, 103-105, 109, 112-114, 117-120, 132, 134) → double ---
+    // --- IMAPB f64 fields (tags 96, 103-105, 109, 112-114, 117-120, 132, 134) → double ---
     if let Some(v) = r.target_width_extended_m {
         env.call_method(
             &b,
@@ -1926,7 +1922,7 @@ fn build_uas_datalink(env: &mut JNIEnv<'_>, r: &UasDatalinkLs) -> jni::errors::R
         env.call_method(&b, "zoomPercentage", BUILDER_SIG_DBL, &[JValue::Double(v)])?;
     }
 
-    // --- WP-B Table B2: var-length int/enum fields (tags 110-139) ---
+    // --- Var-length int/enum fields (tags 110-139) ---
     // Tag 110 — timeAirborneS (u32 → long)
     if let Some(v) = r.time_airborne_s {
         env.call_method(
@@ -2023,7 +2019,7 @@ fn build_uas_datalink(env: &mut JNIEnv<'_>, r: &UasDatalinkLs) -> jni::errors::R
         )?;
     }
 
-    // --- WP-A Table A4: named nested-set raw byte fields → heap ByteBuffer ---
+    // --- Named nested-set raw byte fields → heap ByteBuffer ---
     // Tag 73 — rvt
     if let Some(ref bs) = r.rvt {
         let buf = wrap_heap_byte_buffer(env, bs).map_err(|()| jni::errors::Error::JavaException)?;
@@ -2090,7 +2086,7 @@ fn build_uas_datalink(env: &mut JNIEnv<'_>, r: &UasDatalinkLs) -> jni::errors::R
         )?;
     }
 
-    // --- WP-A Table A2: raw/simple scalar + string fields ---
+    // --- Raw/simple scalar + string fields ---
     // Tag 39 — outsideAirTempC (Option<i8> → Integer; safe widening, no narrowing here)
     if let Some(v) = r.outside_air_temp_c {
         env.call_method(
@@ -2192,7 +2188,7 @@ fn build_uas_datalink(env: &mut JNIEnv<'_>, r: &UasDatalinkLs) -> jni::errors::R
         )?;
     }
 
-    // --- WP-A Table A3: coded enums (tags 34/63/77) → raw-codepoint Integer ---
+    // --- Coded enums (tags 34/63/77) → raw-codepoint Integer ---
     // Tag 34 — icingDetectedCode
     if let Some(v) = r.icing_detected {
         env.call_method(
@@ -2221,7 +2217,7 @@ fn build_uas_datalink(env: &mut JNIEnv<'_>, r: &UasDatalinkLs) -> jni::errors::R
         )?;
     }
 
-    // --- WP-C Table C1: pack & list items ---
+    // --- Pack & list items ---
 
     // Item 81 — imageHorizon
     if let Some(ref h) = r.image_horizon {
@@ -2524,16 +2520,14 @@ fn build_uas_datalink(env: &mut JNIEnv<'_>, r: &UasDatalinkLs) -> jni::errors::R
 /// - `is_st0601_typed_tag` collision-drop on `unknown`
 /// - `field_errors` not round-tripped (decoder-only diagnostic)
 ///
-/// ### Local-ref capacity (MANDATORY, added WP-C)
+/// ### Local-ref capacity (MANDATORY)
 ///
-/// Calls `env.ensure_local_capacity(320)` at the top — this function had NO
-/// such call before WP-C (pre-existing debt found by the B6 review): every
-/// `read_nullable_*` accessor call mints a local ref that lives until this
-/// function returns, and the WP-C pack fields (each a nested-record read,
-/// several with their own list-of-records reads) multiply that pressure
-/// further. Sized to match `build_uas_datalink`'s budget — see that
-/// function's doc and the module doc's per-field tally table for the
-/// field-count rationale (320, not the first-cut 256 — see the module doc).
+/// Calls `env.ensure_local_capacity(320)` at the top: every `read_nullable_*`
+/// accessor call mints a local ref that lives until this function returns,
+/// and the pack fields (each a nested-record read, several with their own
+/// list-of-records reads) multiply that pressure further. Sized to match
+/// `build_uas_datalink`'s budget — see that function's doc and the module
+/// doc's per-field tally table for the field-count rationale.
 #[allow(clippy::field_reassign_with_default)]
 fn read_uas_datalink(
     env: &mut JNIEnv<'_>,
@@ -2730,7 +2724,7 @@ fn read_uas_datalink(
         }
     }
 
-    // --- WP-A Table A1: ranged f64 fields (tags 35-93 subset) ---
+    // --- Ranged f64 fields (tags 35-93 subset) ---
     if let Some(v) = read_nullable_double(env, rec, "targetLocationLatDeg")? {
         r.target_location_lat_deg = Some(v);
     }
@@ -2822,7 +2816,7 @@ fn read_uas_datalink(
         r.sensor_east_velocity = Some(v);
     }
 
-    // --- WP-B Table B1: IMAPB f64 fields ---
+    // --- IMAPB f64 fields ---
     if let Some(v) = read_nullable_double(env, rec, "targetWidthExtendedM")? {
         r.target_width_extended_m = Some(v);
     }
@@ -2866,7 +2860,7 @@ fn read_uas_datalink(
         r.zoom_percentage = Some(v);
     }
 
-    // --- WP-B Table B2: var-length int/enum fields ---
+    // --- Var-length int/enum fields ---
     // Tag 110 — timeAirborneS: nullable Long → Option<u32>
     if let Some(v) = read_nullable_long(env, rec, "timeAirborneS")? {
         r.time_airborne_s = Some(checked_u32(env, v, "timeAirborneS")?);
@@ -2913,7 +2907,7 @@ fn read_uas_datalink(
     // Tag 139 — activePayloads: nullable ByteBuffer → Option<Vec<u8>>
     r.active_payloads = read_nullable_byte_buffer(env, rec, "activePayloads")?;
 
-    // --- WP-A Table A4: named nested-set raw byte fields ---
+    // --- Named nested-set raw byte fields ---
     r.rvt = read_nullable_byte_buffer(env, rec, "rvt")?;
     r.sar_mi_local_set = read_nullable_byte_buffer(env, rec, "sarMiLocalSet")?;
     r.range_image_local_set = read_nullable_byte_buffer(env, rec, "rangeImageLocalSet")?;
@@ -2923,7 +2917,7 @@ fn read_uas_datalink(
     r.segment_local_set = read_nullable_byte_buffer(env, rec, "segmentLocalSet")?;
     r.amend_local_set = read_nullable_byte_buffer(env, rec, "amendLocalSet")?;
 
-    // --- WP-A Table A2: raw/simple scalar + string fields ---
+    // --- Raw/simple scalar + string fields ---
     // Tag 39 — outsideAirTempC: nullable Integer → Option<i8>
     if let Some(v) = read_nullable_int(env, rec, "outsideAirTempC")? {
         r.outside_air_temp_c = Some(checked_i8(env, i64::from(v), "outsideAirTempC")?);
@@ -2951,7 +2945,7 @@ fn read_uas_datalink(
     r.target_id = read_nullable_string(env, rec, "targetId")?;
     r.communications_method = read_nullable_string(env, rec, "communicationsMethod")?;
 
-    // --- WP-A Table A3: coded enums (tags 34/63/77) — nullable Integer raw code ---
+    // --- Coded enums (tags 34/63/77) — nullable Integer raw code ---
     if let Some(v) = read_nullable_int(env, rec, "icingDetectedCode")? {
         let c = checked_u8(env, i64::from(v), "icingDetectedCode")?;
         r.icing_detected = Some(icing_detected_from_code(c));
@@ -2965,7 +2959,7 @@ fn read_uas_datalink(
         r.operational_mode = Some(operational_mode_from_code(c));
     }
 
-    // --- WP-C Table C1: pack & list items ---
+    // --- Pack & list items ---
 
     // Item 81 — imageHorizon
     {
@@ -3264,8 +3258,8 @@ pub fn read_uas_datalink_for_validate(
 // ---------------------------------------------------------------------------
 // klv::st1010 SDCC-FLP — general-purpose, standalone entry points. NOT
 // ST 0601-specific (see the `SdccFlp`/`SdccFlpField` module docs) — kept in
-// this file per the WP-C task brief rather than a new module, since the only
-// caller-visible surface is `Klv.decodeSdccFlp`/`Klv.encodeSdccFlpMode2`.
+// this file rather than a new module, since the only caller-visible surface
+// is `Klv.decodeSdccFlp`/`Klv.encodeSdccFlpMode2`.
 // ---------------------------------------------------------------------------
 
 /// Map a standalone Rust `KlvFieldError` — e.g. from `decode_sdcc_flp`, which
@@ -3407,9 +3401,9 @@ pub extern "system" fn Java_org_tstrans_klv_Klv_encodeSdccFlpMode2Native<'local>
 #[cfg(test)]
 mod wire_inventory {
     //! Every tst-core wire-code variant crosses the JNI boundary as the
-    //! codepoint tst-core itself defines, for every variant in `ALL`
-    //! (Arc 2 R2 — replaces the hand-copied tables and their unreachable
-    //! wildcard arms). The compile-time pin is tst-core's `variant_inventory`;
+    //! codepoint tst-core itself defines, for every variant in `ALL` — no
+    //! hand-copied local table with an unreachable wildcard arm. The
+    //! compile-time pin is tst-core's `variant_inventory`;
     //! this is the runtime half, which is all a binding crate can have
     //! (matching a foreign `#[non_exhaustive]` enum without a wildcard is
     //! E0004).
@@ -3460,8 +3454,8 @@ mod wire_inventory {
 
     /// The JNI codepoint IS tst-core's wire codepoint — not merely a
     /// self-consistent local table. This is a STRUCTURAL TRIPWIRE: the moment
-    /// anyone reintroduces a hand-copied table here (the shape Arc 2 R2
-    /// deleted), this test fails the first time that copy drifts, where the
+    /// anyone reintroduces a hand-copied table here, this test fails the
+    /// first time that copy drifts, where the
     /// round-trip test above would not — two mirrored local tables agree with
     /// each other while disagreeing with the wire.
     #[test]

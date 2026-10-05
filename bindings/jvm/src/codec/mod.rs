@@ -1,9 +1,8 @@
 //! JVM `org.tstrans.codec` binding module.
 //!
-//! Task 1 lands the shared value-type marshalling helpers in [`shared`]
-//! (enum + `Rational`/`ColorInfo` + `NalUnit`/`Obu` builders). The per-codec
-//! parser JNI entry points (`parse_h264_sps`, …) land in the follow-on tasks
-//! and reuse these helpers.
+//! [`shared`] holds the value-type marshalling helpers (enum +
+//! `Rational`/`ColorInfo` + `NalUnit`/`Obu` builders). The per-codec parser
+//! JNI entry points (`parse_h264_sps`, …) reuse these helpers.
 
 pub mod aac;
 pub mod av1;

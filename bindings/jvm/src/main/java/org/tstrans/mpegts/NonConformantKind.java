@@ -10,15 +10,15 @@ public enum NonConformantKind {
     DVB_SUB_DATA_IDENTIFIER, AC3_SYNC_MISSING, LATM_FRAMING, AV1_WRONG_STREAM_ID,
     AV1_MISSING_TS_OBU_FRAMING, AV1_OBU_MISSING_SIZE_FIELD, AV1_TILE_LIST_NOT_ALLOWED,
     MISSING_METADATA_DESCRIPTOR, SUBTITLE_DESCRIPTOR_AMBIGUOUS, SUBTITLE_DESCRIPTOR_MALFORMED,
-    /** PMT body {@code program_number} does not match PAT assignment (REF-PSI-01). */
+    /** PMT body {@code program_number} does not match PAT assignment. */
     PMT_PROGRAM_NUMBER_MISMATCH,
-    /** transport_scrambling_control != 0; payload not routed (REF-TS-01). */
+    /** transport_scrambling_control != 0; payload not routed. */
     UNSUPPORTED_SCRAMBLING,
-    /** Adaptation-field control/length violation (REF-TS-02). */
+    /** Adaptation-field control/length violation. */
     ADAPTATION_FIELD_MALFORMED,
-    /** Zero PES_packet_length on a non-video stream; partial dropped (REF-PES-01). */
+    /** Zero PES_packet_length on a non-video stream; partial dropped. */
     ZERO_LENGTH_PES_NON_VIDEO,
-    /** PAT/PMT fixed/reserved syntax field violation (REF-PSI-03). */
+    /** PAT/PMT fixed/reserved syntax field violation. */
     PSI_SYNTAX,
     OTHER
 }

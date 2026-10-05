@@ -15,7 +15,7 @@ import org.tstrans.mpegts.VideoCodec;
  * {@code Builder.connect()} against a live peer. The fix is structural —
  * consume-first ordering means a thrown muxer-config rejection leaves the
  * socket handle already zeroed, so a subsequent {@code close()} is a no-op.
- * The live success path is exercised by the Task 4 loopback scenario test.
+ * The live success path is exercised by {@link SrtLoopbackScenarioTest}.
  */
 class SrtConvenienceTest {
 

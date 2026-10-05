@@ -8,7 +8,7 @@ import org.tstrans.NativeHandle;
 /**
  * Streaming MPEG-TS demuxer. Feed TS bytes, pull {@link DemuxEvent}s.
  * Mirrors {@code tstrans.mpegts.Demuxer}. One demuxer is single-threaded;
- * the consumer owns concurrency (spec §5.5).
+ * the consumer owns concurrency.
  *
  * <pre>{@code
  * try (Demuxer d = new Demuxer()) {

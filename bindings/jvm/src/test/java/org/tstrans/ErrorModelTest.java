@@ -17,8 +17,8 @@ class ErrorModelTest {
     }
 
     /**
-     * The members are exactly the domain's {@code BindingErrorKind} subset
-     * (WP-B3 / spec §3.3). Every member except {@code INTERNAL} maps 1:1 to a
+     * The members are exactly the domain's {@code BindingErrorKind} subset.
+     * Every member except {@code INTERNAL} maps 1:1 to a
      * {@code tst_core::mpegts::demux::DemuxError} variant; {@code INTERNAL} is the
      * JNI-side event-conversion failure. {@code UNEXPECTED_EOF} was parity-only
      * and had no producer at all.

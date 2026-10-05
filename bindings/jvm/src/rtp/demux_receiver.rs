@@ -441,7 +441,8 @@ pub extern "system" fn Java_org_tstrans_rtp_DemuxReceiver_nEndReason(
 ) -> jint {
     crate::panic::jni_catch(&mut env, -1, |_env| {
         // Lock-free: the cell is the entry's `Owned` snapshot, so this answers
-        // while `recvEvent()` is parked on the slot (the PR #234 getter class).
+        // while `recvEvent()` is parked on the slot — a getter must never
+        // block behind a parked call.
         REGISTRY
             .snapshot(handle as u64, |h| {
                 super::end_reason::end_reason_ordinal(h.get().as_ref())

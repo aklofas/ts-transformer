@@ -57,7 +57,7 @@ class NativeLoaderTest {
         assertDoesNotThrow(NativeLoader::load);
         // Every declared member resolves both ways: a name the native can
         // raise is a Java member (nVerifyKinds), and the Java enums are not
-        // silently wider than the native's declared sets (B3.6 pins sizes).
+        // silently wider than the native's declared sets.
         assertNotNull(SrtException.Kind.valueOf("BACKPRESSURE"));
         assertNotNull(SrtException.Kind.valueOf("INPUT_MALFORMED"));
         assertNotNull(RtpException.Kind.valueOf("CLOSED"));

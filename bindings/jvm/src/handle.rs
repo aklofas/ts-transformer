@@ -274,10 +274,10 @@ impl<T> HandleRegistry<T> {
         self.inner.lock().unwrap_or_else(|e| e.into_inner()).get(id)
     }
 
-    /// Lease `id` and run `f` on the resource under its lock — the common A2 path,
+    /// Lease `id` and run `f` on the resource under its lock — the common path,
     /// folded so call sites get a single `Option<R>` instead of a nested
     /// `Option<Option<R>>`. `None` if `id` is `0`/absent/closed OR the resource was
-    /// already taken by a concurrent `close`. A2 maps `None` → throw
+    /// already taken by a concurrent `close`. Callers map `None` → throw
     /// `IllegalStateException`.
     pub(crate) fn with<R>(&self, id: u64, f: impl FnOnce(&mut T) -> R) -> Option<R> {
         self.lease(id).and_then(|e| e.with(f))
@@ -402,7 +402,7 @@ pub(crate) struct CancelView(pub(crate) Arc<dyn CancelSurface>);
 
 /// An [`OwnedRegistry`] entry. Nothing here but the `Owned` — the slot,
 /// the cancel target, the cancelled latch, the end-reason cell and the
-/// construction-time snapshot all live inside it (spec §3.2).
+/// construction-time snapshot all live inside it.
 pub(crate) struct OwnedEntry<T, S> {
     owned: Owned<T, S>,
 }
@@ -500,8 +500,8 @@ impl<T: Send + 'static, S: Send + Sync + 'static> OwnedRegistry<T, S> {
 
     /// Non-blocking reader for the `isAlive` probes: `Ok(None)` when a
     /// parked op holds the slot (the receiver is live), so the probe never
-    /// waits behind a receive. Adapts A1's `Option<Result<_>>` (outer `None`
-    /// = held) to the registry's `Result<Option<_>>` (absent id = `Closed`).
+    /// waits behind a receive. Adapts `Owned::try_with_ref`'s `Option<Result<_>>`
+    /// (outer `None` = held) to the registry's `Result<Option<_>>` (absent id = `Closed`).
     ///
     /// # Errors
     ///
@@ -593,7 +593,7 @@ pub(crate) fn with_push<T: Send + 'static, S: Send + Sync + 'static, E>(
 /// muxer has no way to add a stream afterwards), so the handles are read once,
 /// before the sender moves into its slot. The `n*Handle` natives then never
 /// wait behind a `send*` parked on a full send buffer or in a Blocking
-/// reconnect (spec §3.2's snapshot rule).
+/// reconnect.
 #[derive(Clone, Copy)]
 pub(crate) struct StreamHandles {
     pub video: Option<u32>,
@@ -1093,9 +1093,9 @@ mod tests {
     }
 
     /// A panicking mutator is reported ONCE and then closes the Owned-backed
-    /// entry (spec §3.2 as amended at plan review — the JVM's existing
-    /// `with_poisoning` entry-removal semantics, one layer down); the mutex
-    /// is not poisoned and a later `close()` stays quiet.
+    /// entry (the JVM's existing `with_poisoning` entry-removal semantics,
+    /// one layer down); the mutex is not poisoned and a later `close()`
+    /// stays quiet.
     #[test]
     fn owned_registry_mutator_panic_is_reported_and_closes_the_entry() {
         let reg: OwnedRegistry<u64> = OwnedRegistry::new();
@@ -1129,8 +1129,8 @@ mod tests {
 
     /// `try_with_ref` never queues behind a parked op: `Ok(None)` while the
     /// slot is held (the `isAlive`-probe path), `Ok(Some(_))` when free and
-    /// `Err(Closed)` once the id is gone — the three answers Tasks B3.3-B3.5
-    /// project onto `isAlive()`/`repr()`.
+    /// `Err(Closed)` once the id is gone — the three answers this projects
+    /// onto `isAlive()`/`repr()`.
     #[test]
     fn owned_registry_try_with_ref_reports_held_free_and_closed() {
         let reg: Arc<OwnedRegistry<u64>> = Arc::new(OwnedRegistry::new());

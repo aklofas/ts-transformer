@@ -27,7 +27,7 @@ import org.tstrans.codec.MispTimestamp;
  *   <li>{@code video-roundtrip} — single H.264 IDR at PTS=0, PTS-only PES header.</li>
  *   <li>{@code video-dts-roundtrip} — single H.264 IDR at PTS=9000/DTS=6000 via
  *       {@link Muxer#pushVideoToWithDts}, emitting a PES header with both PTS and
- *       DTS fields (BIND-01 acceptance criterion).</li>
+ *       DTS fields.</li>
  * </ul>
  */
 class MuxRoundtripScenarioTest {
@@ -73,10 +73,10 @@ class MuxRoundtripScenarioTest {
         return acc.toByteArray();
     }
 
-    // ── video-dts-roundtrip (BIND-01) ───────────────────────────────────────
+    // ── video-dts-roundtrip ───────────────────────────────────────
 
     /**
-     * BIND-01 acceptance criterion: distinct PTS and DTS survive identically
+     * Distinct PTS and DTS survive identically
      * across core, C, and JVM.
      *
      * <p>Replicates {@code video_dts_roundtrip_ts_bytes()} from

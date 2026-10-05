@@ -68,7 +68,7 @@ struct JniH264Receiver {
 /// Per-type leased-handle registry for `org.tstrans.rtp.H264Receiver`. Registers
 /// a cancel hook so a cross-thread `close()` wakes a parked `recv_au`.
 /// `S = Option<SocketAddr>`: the bound address, constant after `listen`, so
-/// `nLocalAddr` never takes the slot a parked `recvAu` holds (spec §3.2).
+/// `nLocalAddr` never takes the slot a parked `recvAu` holds.
 static REGISTRY: LazyLock<OwnedRegistry<JniH264Receiver, Option<std::net::SocketAddr>>> =
     LazyLock::new(OwnedRegistry::new);
 

@@ -1,10 +1,10 @@
 //! JVM (JNI) bindings.
 //!
-//! Exports the bootstrap `org.tstrans.Version.versionString()` plus the Wave 1
+//! Exports the bootstrap `org.tstrans.Version.versionString()` plus the
 //! mpegts-demux keystone (`org.tstrans.mpegts.Demuxer` + `DemuxEvent`); see
 //! `mod mpegts`. The `srt` module backs `org.tstrans.srt` (Socket/Listener/
 //! Sender/Receiver/CancelHandle/Stats). The remaining `org.tstrans.*` modules
-//! (mirroring tst-py) land in the follow-on surface-port waves.
+//! mirror tst-py's surface.
 
 mod codec;
 mod error;
@@ -26,12 +26,12 @@ use jni::objects::JClass;
 use jni::sys::{JNI_VERSION_1_8, jint, jstring};
 use std::os::raw::c_void;
 
-/// `TSTRANS_LOG` bridge (Task D8) — the Rust core (`tst-core`/`tst-rtp`/
+/// `TSTRANS_LOG` bridge — the Rust core (`tst-core`/`tst-rtp`/
 /// `tst-pipeline`) emits `tracing` events, but embedding them in a JVM
 /// process installs no subscriber, so every `info!`/`warn!`/`debug!` call
 /// is silently discarded — a field integrator lost a diagnosis day to
-/// exactly this (the Python bridge, Task C7, is the same fix for the
-/// Python binding). Iff `TSTRANS_LOG` is set at load time, install a
+/// exactly this (the Python binding has the same bridge for the same
+/// reason). Iff `TSTRANS_LOG` is set at load time, install a
 /// stderr subscriber filtered by its value (the same syntax as
 /// `RUST_LOG`/`EnvFilter`); unset ⇒ install nothing, so a bare
 /// `System.load` has zero subscriber overhead beyond the env lookup.

@@ -10,9 +10,9 @@ class CodecErrorModelTest {
     @Test
     void kindHasAllFifteenRustVariants() {
         // Mirrors tst_core::codec::CodecParseError. A Rust-side rename or
-        // addition is caught here. Task B3.2 ADDED the three nal-framing
-        // converter errors that used to fold into the ENGINE_ERROR wildcard;
-        // nothing retires, so B3.6 leaves this at fifteen.
+        // addition is caught here. The three nal-framing converter errors
+        // each get their own member rather than folding into the
+        // ENGINE_ERROR wildcard; nothing retires, so this pins fifteen.
         CodecParseException.Kind[] ks = CodecParseException.Kind.values();
         assertEquals(15, ks.length);
         for (String n : new String[] {

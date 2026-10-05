@@ -219,7 +219,7 @@ public record UasDatalinkLs(
         byte[] miisCoreId,
 
         // ---------------------------------------------------------------
-        // WP-A Table A1 — ranged f64 fields (tags 35-93 subset, 30 fields)
+        // Ranged f64 fields (tags 35-93 subset, 30 fields)
         // ---------------------------------------------------------------
         Double targetLocationLatDeg,
         Double targetLocationLonDeg,
@@ -253,8 +253,8 @@ public record UasDatalinkLs(
         Double sensorEastVelocity,
 
         // ---------------------------------------------------------------
-        // WP-B Table B1 — IMAPB (ST 1201.5) f64 fields, extended-range
-        // twins of the narrower WP-A Table A1 items (tags 96, 103-105,
+        // IMAPB (ST 1201.5) f64 fields, extended-range
+        // twins of the narrower ranged-f64 items (tags 96, 103-105,
         // 109, 112-114, 117-120, 132, 134). Decode accepts any wire length
         // 1..=max_len; encode emits the tag's default_len.
         // ---------------------------------------------------------------
@@ -274,7 +274,7 @@ public record UasDatalinkLs(
         Double zoomPercentage,
 
         // ---------------------------------------------------------------
-        // WP-B Table B2 — MISB variable-length truncatable int/enum fields
+        // MISB variable-length truncatable int/enum fields
         // (tags 110-139). u32 fields cross as {@code Long} (Java has no
         // unsigned int); u8/enum fields cross as {@code Integer}.
         // ---------------------------------------------------------------
@@ -304,7 +304,7 @@ public record UasDatalinkLs(
         ByteBuffer activePayloads,
 
         // ---------------------------------------------------------------
-        // WP-A Table A4 — named nested-set raw byte fields (tags 73/95/97-101)
+        // Named nested-set raw byte fields (tags 73/95/97-101)
         // ---------------------------------------------------------------
         ByteBuffer rvt,
         ByteBuffer sarMiLocalSet,
@@ -315,7 +315,7 @@ public record UasDatalinkLs(
         ByteBuffer amendLocalSet,
 
         // ---------------------------------------------------------------
-        // WP-A Table A2 — raw/simple scalar + string fields (11 fields)
+        // Raw/simple scalar + string fields (11 fields)
         // ---------------------------------------------------------------
         Integer outsideAirTempC,
         /**
@@ -336,7 +336,7 @@ public record UasDatalinkLs(
         String communicationsMethod,
 
         // ---------------------------------------------------------------
-        // WP-A Table A3 — coded enums (tags 34/63/77), raw-codepoint boxed
+        // Coded enums (tags 34/63/77), raw-codepoint boxed
         // Integer record components (authoritative representation); use the
         // typed accessors below ({@link #icingDetected()} etc.) for the
         // enum view — null for both "absent" and "wire-unknown".
@@ -346,7 +346,7 @@ public record UasDatalinkLs(
         Integer operationalModeCode,
 
         // ---------------------------------------------------------------
-        // WP-C Table C1 — pack & list items (tags 81/102/115/116/121/122/
+        // Pack & list items (tags 81/102/115/116/121/122/
         // 127/128/130/138/140/141/142/143)
         // ---------------------------------------------------------------
         /** Item 81: Image Horizon Pixels. */
@@ -554,7 +554,7 @@ public record UasDatalinkLs(
     }
 
     // -----------------------------------------------------------------------
-    // WP-A Table A3 typed enum accessors — the raw *Code record components
+    // Coded-enum typed accessors — the raw *Code record components
     // above are authoritative; these are convenience views. Return null for
     // BOTH "absent" (code is null) and "wire-unknown" (code doesn't match a
     // named constant) — inspect the raw *Code() accessor to tell them apart.
@@ -576,8 +576,8 @@ public record UasDatalinkLs(
     }
 
     // -----------------------------------------------------------------------
-    // WP-B Table B2 typed enum accessors — same raw-code-is-authoritative
-    // convention as the WP-A Table A3 accessors above.
+    // Var-length typed enum accessors — same raw-code-is-authoritative
+    // convention as the coded-enum accessors above.
     // -----------------------------------------------------------------------
 
     /** Tag 125 Platform Status as a typed enum, or {@code null} (absent / wire-unknown). */
@@ -650,7 +650,7 @@ public record UasDatalinkLs(
         private ByteBuffer vmti;
         private byte[] miisCoreId;
 
-        // WP-A Table A1 — ranged f64 fields
+        // Ranged f64 fields
         private Double targetLocationLatDeg;
         private Double targetLocationLonDeg;
         private Double targetLocationElevM;
@@ -682,7 +682,7 @@ public record UasDatalinkLs(
         private Double sensorNorthVelocity;
         private Double sensorEastVelocity;
 
-        // WP-B Table B1 — IMAPB f64 fields
+        // IMAPB f64 fields
         private Double targetWidthExtendedM;
         private Double densityAltitudeExtendedM;
         private Double sensorEllipsoidHeightExtendedM;
@@ -698,7 +698,7 @@ public record UasDatalinkLs(
         private Double transmissionFrequencyMhz;
         private Double zoomPercentage;
 
-        // WP-B Table B2 — var-length int/enum fields
+        // Var-length int/enum fields
         private Long timeAirborneS;
         private Long propulsionUnitSpeedRpm;
         private Integer navsatsInView;
@@ -711,7 +711,7 @@ public record UasDatalinkLs(
         private Long correctionOffsetUs;
         private ByteBuffer activePayloads;
 
-        // WP-A Table A4 — named nested-set raw byte fields
+        // Named nested-set raw byte fields
         private ByteBuffer rvt;
         private ByteBuffer sarMiLocalSet;
         private ByteBuffer rangeImageLocalSet;
@@ -720,7 +720,7 @@ public record UasDatalinkLs(
         private ByteBuffer segmentLocalSet;
         private ByteBuffer amendLocalSet;
 
-        // WP-A Table A2 — raw/simple scalar + string fields
+        // Raw/simple scalar + string fields
         private Integer outsideAirTempC;
         private Integer weaponLoad;
         private Integer weaponFired;
@@ -733,12 +733,12 @@ public record UasDatalinkLs(
         private String targetId;
         private String communicationsMethod;
 
-        // WP-A Table A3 — coded enums (raw codepoint)
+        // Coded enums (raw codepoint)
         private Integer icingDetectedCode;
         private Integer sensorFovNameCode;
         private Integer operationalModeCode;
 
-        // WP-C Table C1 — pack & list items
+        // Pack & list items
         private ImageHorizonPixels imageHorizon;
         private List<ControlCommand> controlCommands = Collections.emptyList();
         private List<Long> controlCommandVerification;
@@ -815,7 +815,7 @@ public record UasDatalinkLs(
         public Builder vmti(ByteBuffer v) { this.vmti = v; return this; }
         public Builder miisCoreId(byte[] v) { this.miisCoreId = v; return this; }
 
-        // WP-A Table A1 — ranged f64 fields
+        // Ranged f64 fields
         public Builder targetLocationLatDeg(double v) { this.targetLocationLatDeg = v; return this; }
         public Builder targetLocationLonDeg(double v) { this.targetLocationLonDeg = v; return this; }
         public Builder targetLocationElevM(double v) { this.targetLocationElevM = v; return this; }
@@ -847,7 +847,7 @@ public record UasDatalinkLs(
         public Builder sensorNorthVelocity(double v) { this.sensorNorthVelocity = v; return this; }
         public Builder sensorEastVelocity(double v) { this.sensorEastVelocity = v; return this; }
 
-        // WP-B Table B1 — IMAPB f64 fields
+        // IMAPB f64 fields
         public Builder targetWidthExtendedM(double v) { this.targetWidthExtendedM = v; return this; }
         public Builder densityAltitudeExtendedM(double v) { this.densityAltitudeExtendedM = v; return this; }
         public Builder sensorEllipsoidHeightExtendedM(double v) { this.sensorEllipsoidHeightExtendedM = v; return this; }
@@ -863,7 +863,7 @@ public record UasDatalinkLs(
         public Builder transmissionFrequencyMhz(double v) { this.transmissionFrequencyMhz = v; return this; }
         public Builder zoomPercentage(double v) { this.zoomPercentage = v; return this; }
 
-        // WP-B Table B2 — var-length int/enum fields
+        // Var-length int/enum fields
         public Builder timeAirborneS(long v) { this.timeAirborneS = v; return this; }
         public Builder propulsionUnitSpeedRpm(long v) { this.propulsionUnitSpeedRpm = v; return this; }
         public Builder navsatsInView(int v) { this.navsatsInView = v; return this; }
@@ -876,7 +876,7 @@ public record UasDatalinkLs(
         public Builder correctionOffsetUs(long v) { this.correctionOffsetUs = v; return this; }
         public Builder activePayloads(ByteBuffer v) { this.activePayloads = v; return this; }
 
-        // WP-A Table A4 — named nested-set raw byte fields
+        // Named nested-set raw byte fields
         public Builder rvt(ByteBuffer v) { this.rvt = v; return this; }
         public Builder sarMiLocalSet(ByteBuffer v) { this.sarMiLocalSet = v; return this; }
         public Builder rangeImageLocalSet(ByteBuffer v) { this.rangeImageLocalSet = v; return this; }
@@ -885,7 +885,7 @@ public record UasDatalinkLs(
         public Builder segmentLocalSet(ByteBuffer v) { this.segmentLocalSet = v; return this; }
         public Builder amendLocalSet(ByteBuffer v) { this.amendLocalSet = v; return this; }
 
-        // WP-A Table A2 — raw/simple scalar + string fields
+        // Raw/simple scalar + string fields
         public Builder outsideAirTempC(int v) { this.outsideAirTempC = v; return this; }
         public Builder weaponLoad(int v) { this.weaponLoad = v; return this; }
         public Builder weaponFired(int v) { this.weaponFired = v; return this; }
@@ -898,13 +898,13 @@ public record UasDatalinkLs(
         public Builder targetId(String v) { this.targetId = v; return this; }
         public Builder communicationsMethod(String v) { this.communicationsMethod = v; return this; }
 
-        // WP-A Table A3 — coded enums (raw codepoint; the record component is
+        // Coded enums (raw codepoint; the record component is
         // authoritative, see UasDatalinkLs.icingDetected() etc. for the typed view)
         public Builder icingDetectedCode(int v) { this.icingDetectedCode = v; return this; }
         public Builder sensorFovNameCode(int v) { this.sensorFovNameCode = v; return this; }
         public Builder operationalModeCode(int v) { this.operationalModeCode = v; return this; }
 
-        // WP-C Table C1 — pack & list items
+        // Pack & list items
         public Builder imageHorizon(ImageHorizonPixels v) { this.imageHorizon = v; return this; }
         public Builder controlCommands(List<ControlCommand> v) { this.controlCommands = v; return this; }
         public Builder controlCommandVerification(List<Long> v) { this.controlCommandVerification = v; return this; }

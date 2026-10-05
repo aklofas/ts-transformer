@@ -15,10 +15,10 @@ class RtpErrorModelTest {
         assertEquals("wire broke", e.getMessage());
     }
     /**
-     * The members are exactly the domain's {@code BindingErrorKind} subset
-     * (WP-B3 / spec §3.3). The five {@code TransportError} projections an rtp shell can raise plus
-     * {@code tst_rtp::ConnectError}'s six variants. The four retired members had
-     * no producer left after WP-B3 re-pointed the rtp tables.
+     * The members are exactly the domain's {@code BindingErrorKind} subset:
+     * the five {@code TransportError} projections an rtp shell can raise plus
+     * {@code tst_rtp::ConnectError}'s six variants. The four retired members have
+     * no producer left now that the rtp tables point at the shared classifier.
      */
     @Test
     void kindMembersMatchTheRtpDomain() {

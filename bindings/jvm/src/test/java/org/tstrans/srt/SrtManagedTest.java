@@ -114,7 +114,7 @@ class SrtManagedTest {
             ReconnectPolicy.builder().mode(ReconnectMode.BLOCKING).build()).mode());
     }
 
-    // ── Convenience wrappers (sub-wave C, Task 2) ─────────────────────────
+    // ── Convenience wrappers ─────────────────────────
 
     private static MuxerConfig sampleProgram() {
         return MuxerConfig.builder()

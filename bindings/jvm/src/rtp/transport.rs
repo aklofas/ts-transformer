@@ -42,8 +42,8 @@ struct JniRtpReceiver {
 
 /// Per-type `Owned`-backed registries. `OwnedRegistry::close` cancels first, so
 /// a cross-thread `close()` wakes a parked `send`/`recv` before taking the slot.
-/// The sender holds A1's `SendHalf` newtype so all three bindings carry the same
-/// entry type for a raw transport.
+/// The sender holds the shared `SendHalf` newtype so all three bindings carry
+/// the same entry type for a raw transport.
 static REGISTRY_SENDER: LazyLock<OwnedRegistry<SendHalf<RtpTransport>>> =
     LazyLock::new(OwnedRegistry::new);
 /// `S = StreamEndReasonHandle`: the construction-time cell `nEndReason` /
@@ -428,7 +428,8 @@ pub extern "system" fn Java_org_tstrans_rtp_Receiver_nEndReason(
 ) -> jint {
     crate::panic::jni_catch(&mut env, -1, |_env| {
         // Lock-free: the cell is the entry's `Owned` snapshot, so this answers
-        // while a `recv` is parked on the slot (spec §3.2's getter rule).
+        // while a `recv` is parked on the slot — a getter must never block
+        // behind a parked call.
         REGISTRY_RECEIVER
             .snapshot(handle as u64, |h| {
                 super::end_reason::end_reason_ordinal(h.get().as_ref())

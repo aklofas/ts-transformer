@@ -1,6 +1,6 @@
 //! JNI surface for `org.tstrans.klv` — typed KLV decode/encode for
-//! ST 0601 / 0102 / 0605 / 0903. Per-set entry points live in submodules
-//! (filled across Tasks 1–4); this module houses the test-only forced-throw
+//! ST 0601 / 0102 / 0605 / 0903. Per-set entry points live in submodules;
+//! this module houses the test-only forced-throw
 //! helpers that let `KlvErrorModelTest` exercise the error-mapping wiring
 //! before the real decode/encode entry points exist.
 

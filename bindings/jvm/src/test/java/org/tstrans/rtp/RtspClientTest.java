@@ -4,9 +4,9 @@ import static org.junit.jupiter.api.Assertions.*;
 import org.junit.jupiter.api.Test;
 
 /**
- * Offline surface tests for the RTSP client (org.tstrans.rtp wave C). Mirrors
+ * Offline surface tests for the RTSP client. Mirrors
  * tst-py's {@code tests/test_rtsp_client.py}. No live RTSP server — the live
- * RtspClient↔RtspServer loopback is wave D's capstone.
+ * RtspClient↔RtspServer loopback is {@link RtspServerClientLoopbackTest}.
  */
 class RtspClientTest {
     // ---- enums ----

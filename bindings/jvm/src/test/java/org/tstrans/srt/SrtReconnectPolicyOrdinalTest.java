@@ -10,7 +10,7 @@ import org.tstrans.SrtException;
 /**
  * Verifies that the Rust-side reconnect-policy ordinal decode in
  * {@code build_reconnect_policy} rejects out-of-range ordinals with
- * {@code CONFIG_INVALID} instead of silently falling back (DA-JVM-3).
+ * {@code CONFIG_INVALID} instead of silently falling back.
  *
  * <p>Drives {@code ManagedSender.nFromUrl} via reflection with ordinal 99
  * injected into {@code backoffKind} or {@code overflowPolicy} — values that

@@ -1,7 +1,7 @@
 //! `org.tstrans.rtp` RTSP client JNI surface — `RtspClient`, `RtspSession`,
 //! `RtspCancelHandle`, and the auth/config/stats value types' native backing.
-//! Ports tst-py's `bindings/python/src/rtp/client.rs`. Natives added in Tasks 4-5.
-//! Task 15 adds `nConnectH264` (RtspClient) + `nIntoH264Receiver` (RtspSession).
+//! Ports tst-py's `bindings/python/src/rtp/client.rs`, including
+//! `nConnectH264` (RtspClient) + `nIntoH264Receiver` (RtspSession).
 
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -171,7 +171,7 @@ struct JniRtspSession {
     client: Arc<Mutex<Option<RustRtspClient>>>,
     session: Arc<Mutex<Option<RustRtspSession>>>,
     torn_down: Arc<AtomicBool>,
-    /// `Some(_)` only for `nConnectH264`-created sessions (Task 15). `None` for
+    /// `Some(_)` only for `nConnectH264`-created sessions. `None` for
     /// plain `nConnect` sessions and after `nIntoH264Receiver` has consumed it.
     h264_depay_config: Arc<Mutex<Option<H264DepayConfig>>>,
 }
@@ -481,7 +481,7 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspSession_nCancelHandle(
 }
 
 /// `RtspSession.nIntoDemuxReceiver` — take the SETUP-time RtspSession, convert to
-/// an RtpRecvTransport, build a wave-B DemuxReceiver handle. Double-consume →
+/// an RtpRecvTransport, build a DemuxReceiver handle. Double-consume →
 /// RtspException(CLOSED) + 0. Ports `PyRtspSession::into_demux_receiver`.
 #[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
@@ -591,7 +591,7 @@ fn teardown_best_effort(slot: &JniRtspSession) {
 ///   (mirrors `Socket`'s "consumed even if the config is rejected"
 ///   semantics): a data plane already consumed by `nIntoDemuxReceiver` is
 ///   `RtspException(CLOSED)` — checked FIRST, so it is CLOSED on both session
-///   types (review 9) — and a fresh plain-`nConnect` session is
+///   types — and a fresh plain-`nConnect` session is
 ///   `RtspException(PROTOCOL)`.
 ///
 /// Ports `PyRtspSession::into_h264_receiver` (Python keeps its session object
@@ -613,9 +613,9 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspSession_nIntoH264Receiver(
 
         // Step 2: take the data-plane RtspSession. None = already consumed by
         // `nIntoDemuxReceiver` → CLOSED. Checked BEFORE the H.264 config so a
-        // consumed MP2T session is not misreported as PROTOCOL (review 9).
+        // consumed MP2T session is not misreported as PROTOCOL.
         // Taken here, before the fallible `into_h264_receiver` call
-        // (double-free lesson — mirrors Python's `guard.take()` before
+        // (prevents a double free — mirrors Python's `guard.take()` before
         // conversion); the whole slot is consumed on every outcome anyway.
         let session = {
             let taken = match slot.session.lock() {

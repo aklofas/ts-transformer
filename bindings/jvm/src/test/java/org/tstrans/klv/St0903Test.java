@@ -461,11 +461,11 @@ class St0903Test {
     }
 
     // -----------------------------------------------------------------------
-    // DA-JVM-1: regression coverage for many-target local-ref reclamation
+    // Regression coverage for many-target local-ref reclamation
     // -----------------------------------------------------------------------
 
     /**
-     * Regression test for DA-JVM-1: {@code nDecodeVmti} leaked one JNI local
+     * Regression test: {@code nDecodeVmti} used to leak one JNI local
      * ref per VTarget into the outer native frame, causing HotSpot to grow the
      * local-ref table (or crash on constrained VMs) when the target count is
      * large. The fix builds and adds each VTargetPack inside its own
@@ -500,7 +500,7 @@ class St0903Test {
     }
 
     // -----------------------------------------------------------------------
-    // REF-KLV-04: large-value (>0xFFFF_FFFF) round-trip for target_id + pixels
+    // Large-value (>0xFFFF_FFFF) round-trip for target_id + pixels
     // -----------------------------------------------------------------------
 
     @Test

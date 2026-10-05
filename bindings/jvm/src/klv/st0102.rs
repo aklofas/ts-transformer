@@ -2,8 +2,8 @@
 //!
 //! `nDecodeSecurity(byte[], boolean strict) -> SecurityLs` — calls
 //! `tst_core::klv::st0102::decode` (lenient) or `decode_strict`, then builds
-//! the Java `SecurityLs` via its public mutable `Builder` (the pattern reused
-//! by Tasks 3–4). The 3 enum-typed fields are stored as boxed `Integer` raw
+//! the Java `SecurityLs` via its public mutable `Builder` (the pattern every
+//! KLV set's JNI module reuses). The 3 enum-typed fields are stored as boxed `Integer` raw
 //! codepoints via the `int`-taking Builder setters; absent `Option` fields are
 //! simply not set (null is the Builder default).
 //!
@@ -14,7 +14,7 @@
 //! nullable `Integer ...Code()` accessors (returning a boxed Integer or null)
 //! — identical to tst-py's `enum_field_to_u8` pattern.
 //!
-//! ### Builder-call pattern (reusable in Tasks 3–4)
+//! ### Builder-call pattern (reused by every KLV set's JNI module)
 //!
 //! ```text
 //! let b = env.new_object(BUILDER_CLASS, "()V", &[])?;
@@ -29,9 +29,10 @@
 //! ```
 //!
 //! VERIFY every descriptor against the actual Java Builder method signatures
-//! before adapting this to Tasks 3–4.
+//! — a mismatched signature fails at runtime with a `NoSuchMethodError`, not
+//! at compile time.
 //!
-//! ### JNI local-ref capacity (MANDATORY for Tasks 3–4)
+//! ### JNI local-ref capacity (MANDATORY)
 //!
 //! Each `new_string` / `new_object` in `build_<set>` creates a JNI local
 //! reference that stays live until the function returns. The default JNI
@@ -126,15 +127,16 @@ pub extern "system" fn Java_org_tstrans_klv_Klv_nDecodeSecurity<'local>(
 /// via the public mutable `Builder`. Only present (non-None) fields are set;
 /// the Builder leaves absent fields null by default.
 ///
-/// This is the canonical Builder-marshalling pattern for Tasks 2–4. Each
+/// This is the canonical Builder-marshalling pattern used by every KLV set's
+/// JNI module. Each
 /// `call_method` on `b` returns the same builder (mutates in place); the
 /// return value is discarded here since we hold `b` separately.
 fn build_security(env: &mut JNIEnv<'_>, s: &SecurityLs) -> jni::errors::Result<jobject> {
     // Each new_string below holds a JNI local ref live until this fn returns;
     // ST 0102 has 17 fields. Reserve enough table slots up front so a fully
     // populated record can't overflow the default ~16-slot table. See the
-    // module-level "JNI local-ref capacity" note — Tasks 3–4 MUST do the same,
-    // sized to their (larger) field counts.
+    // module-level "JNI local-ref capacity" note — every other KLV set's JNI
+    // module does the same, sized to its own field count.
     env.ensure_local_capacity(32)?;
 
     let b = env.new_object(BUILDER_CLASS, "()V", &[])?;

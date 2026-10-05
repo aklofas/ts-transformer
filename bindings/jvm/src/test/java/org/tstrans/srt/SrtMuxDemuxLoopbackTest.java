@@ -58,7 +58,7 @@ import org.tstrans.mpegts.MuxerConfig;
  * </ol>
  *
  * <h2>Why self-validating instead of a committed golden</h2>
- * The sub-wave-A {@link SrtLoopbackScenarioTest} replays a single committed
+ * The {@link SrtLoopbackScenarioTest} replays a single committed
  * {@code input.ts} and asserts a frozen {@code payload_sha256}. Here the send
  * side is a generative multi-push stream (N synthetic IDRs at increasing PTS),
  * so the resulting hash is a function of N and the IDR shape. Rather than freeze
@@ -72,7 +72,7 @@ import org.tstrans.mpegts.MuxerConfig;
  * {@link org.junit.jupiter.api.Assumptions#assumeTrue}. On macOS and Windows
  * the test is skipped (not failed) — identical to the Rust
  * {@code #![cfg(target_os = "linux")]} gate on the live-socket tests, and to the
- * sub-wave-A {@link SrtLoopbackScenarioTest}.
+ * {@link SrtLoopbackScenarioTest}.
  *
  * <h2>Threading / robustness</h2>
  * The receiver runs on a daemon thread; both the port hand-off and the result

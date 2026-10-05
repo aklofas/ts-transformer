@@ -34,7 +34,7 @@
 //! `build_rvt_ls`/`read_rvt_ls` both call `env.ensure_local_capacity(128)`.
 //! Honest per-call tally of the REAL object/array refs minted in the OUTER
 //! frame (excludes anything reclaimed inside a per-item `with_local_frame`,
-//! per the WP-C lesson that a hand-wavy estimate can leave zero margin):
+//! so a hand-wavy estimate does not leave zero margin):
 //!
 //! Build direction: 23 discarded `Builder` fluent-setter "this" refs
 //! (crc32/timestampUs/platformTrueAirspeed/platformIndicatedAirspeed/
@@ -55,8 +55,8 @@
 //! `areasOfInterest`) + 1 `unknown`-list-getter ref = 22 bare-minimum refs
 //! (`read_unknown_list`'s own internal per-entry refs are pre-existing
 //! shared-helper behavior, not counted here). 128 leaves ~4-6x headroom on
-//! both directions — "real headroom, not a tight fit" per the WP-C lesson
-//! (`st0601.rs`'s 320, bumped from a self-contradictory 256).
+//! both directions — real headroom, not a tight fit
+//! (`st0601.rs`'s 320 follows the same discipline).
 //!
 //! `RvtPoi`/`RvtAoi` (10 fields each) run inside their caller's 64-slot
 //! `with_local_frame`, matching `VTargetPack`'s precedent — no separate
@@ -116,7 +116,7 @@ fn is_st0806_poi_aoi_typed_tag(tag: u32) -> bool {
 }
 
 /// Map a Rust `RvtPoiType` to its ST 0806.4 Table 8-2 Tag 5 wire codepoint —
-/// tst-core's own table (`RvtPoiType::to_wire`, public since Arc 2 R2). No
+/// tst-core's own table (`RvtPoiType::to_wire`). No
 /// local copy, so no `#[non_exhaustive]` wildcard and nothing to drift.
 fn poi_type_code(v: RustRvtPoiType) -> u8 {
     v.to_wire()
@@ -128,7 +128,7 @@ fn poi_type_from_code(b: u8) -> RustRvtPoiType {
 }
 
 /// Map a Rust `RvtAoiType` to its ST 0806.4 Table 8-3 Tag 6 wire codepoint —
-/// tst-core's own table (`RvtAoiType::to_wire`, public since Arc 2 R2). Code 3
+/// tst-core's own table (`RvtAoiType::to_wire`). Code 3
 /// is "Reserved" here vs. "Target" for `RvtPoiType`.
 fn aoi_type_code(v: RustRvtAoiType) -> u8 {
     v.to_wire()
@@ -1008,7 +1008,7 @@ fn read_rvt_ls(env: &mut JNIEnv<'_>, rec: &JObject<'_>) -> jni::errors::Result<R
 #[cfg(test)]
 mod wire_inventory {
     //! RVT POI/AOI type codes cross the JNI boundary as tst-core's own wire
-    //! codepoints, for every variant in `ALL` (Arc 2 R2). See the twin module
+    //! codepoints, for every variant in `ALL`. See the twin module
     //! in `st0601.rs`.
     use tst_core::klv::st0806::{RvtAoiType, RvtPoiType};
 

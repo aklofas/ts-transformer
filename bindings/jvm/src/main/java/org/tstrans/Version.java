@@ -3,8 +3,8 @@ package org.tstrans;
 /**
  * Version information for the tstrans JVM binding.
  *
- * <p>Bootstrap surface: a single native method proving the JNI pipeline. The
- * full {@code org.tstrans.*} surface lands in the surface-port wave.
+ * <p>Exposes {@link #versionString()}, the one native method that proves
+ * the JNI pipeline is loaded and returns the Rust workspace crate version.
  */
 public final class Version {
     private Version() {}

@@ -9,7 +9,7 @@ import org.tstrans.codec.VideoUnit;
 
 /**
  * A demuxed event. Sealed sum type mirroring
- * {@code tst_core::mpegts::demux::DemuxEvent} (spec §5.2). The full top-level
+ * {@code tst_core::mpegts::demux::DemuxEvent}. The full top-level
  * event set is now surfaced: {@link ProgramMap}, the four sample records
  * ({@link Video} / {@link Audio} / {@link Subtitle} / {@link UnknownSample},
  * mirroring tst-py), {@link Metadata} (KLV), {@link NonConformant}
@@ -123,7 +123,7 @@ public sealed interface DemuxEvent
      * codecs with no typed parser (AAC-LATM, AC-3 — read {@link #raw()} directly).
      * The {@code codec} field disambiguates which. Mirrors tst-py's raw-first
      * model where {@code DemuxEvent.Audio.parse()} is the opt-in parse call, and
-     * the WP16 {@link Video} shape.
+     * the {@link Video} shape.
      *
      * @param stream the elementary stream this sample belongs to
      * @param pts    presentation timestamp in 90&nbsp;kHz ticks

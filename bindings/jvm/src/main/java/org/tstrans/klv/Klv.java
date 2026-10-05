@@ -10,8 +10,8 @@ import java.util.Optional;
  * Static facade for MISB typed-KLV decode/encode (ST 0601 / 0102 / 0605 / 0805 /
  * 0806 / 0903 / 1010 / 1204). Mirrors tst-py's {@code tstrans.klv} free functions.
  *
- * <p>Decode/encode methods for each set are added in Tasks 1–4. The UL accessors
- * and {@link #isSt0601Family} are available immediately.
+ * <p>The UL accessors and {@link #isSt0601Family} work independently of any
+ * specific set's decode/encode methods.
  */
 public final class Klv {
     private Klv() {}

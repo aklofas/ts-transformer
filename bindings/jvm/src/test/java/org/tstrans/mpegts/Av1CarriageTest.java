@@ -11,7 +11,7 @@ import org.tstrans.codec.Obu;
 import org.tstrans.codec.VideoUnit;
 
 /**
- * JVM surface tests for AV1 carriage provenance (AV1-01):
+ * JVM surface tests for AV1 carriage provenance:
  * <ul>
  *   <li>{@link DemuxEvent.Video#av1Carriage()} is populated for AV1 and null for H.264.
  *   <li>{@link Muxer#pushVideoWire} performs a byte-faithful AV1 transmux fixpoint.
@@ -183,7 +183,7 @@ class Av1CarriageTest {
 
     /**
      * parse() in INTEROP_RAW_OBU mode splits raw OBUs directly (no binding-framing
-     * unwrap — that is correct for interop carriage per AV1-03).  Same 3-OBU
+     * unwrap — that is correct for interop carriage).  Same 3-OBU
      * structural assertion as the binding-mode test pins this as a distinct code
      * path through split_video.
      */

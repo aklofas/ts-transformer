@@ -219,7 +219,7 @@ class St0805Test {
     }
 
     // -----------------------------------------------------------------------
-    // Negative jlong -> u64 wrap guards (Copilot round)
+    // Negative jlong -> u64 wrap guards
     // -----------------------------------------------------------------------
 
     @Test
@@ -248,7 +248,7 @@ class St0805Test {
      * than silently returning {@code null}: jni's own null guard surfaces as a
      * Rust-side {@code Err} with NO pending Java exception, so without an
      * explicit up-front check these natives returned null with no diagnostic
-     * at all (the WP-F documented-stopgap behavior this test retires).
+     * at all — the behavior this test retires.
      */
     @Test
     void nullRecordThrowsNpe() {

@@ -23,7 +23,7 @@
 //! the next pull, and a JDK-17-stable primitive for *defined*-on-stale-read
 //! zero-copy does not exist (the real one is FFM `Arena`/`MemorySegment`, stable
 //! only in JDK 22+). Real zero-copy is therefore deferred to a JDK-22+ FFM path;
-//! the keystone copies, which is unconditionally safe. See the design spec §5.4.
+//! the keystone copies, which is unconditionally safe.
 
 pub mod muxer;
 
@@ -231,10 +231,10 @@ pub extern "system" fn Java_org_tstrans_mpegts_Demuxer_nFeed<'local>(
 ///
 /// Shared by `nFeed` and the srt `DemuxReceiver.nNext` demux-error arm.
 pub(crate) fn throw_demux_error(env: &mut JNIEnv, e: &DemuxError) {
-    // A2's classifier, not a local table: `UNRECOVERABLE` / `MALFORMED_PSI` /
+    // The shared classifier, not a local table: `UNRECOVERABLE` / `MALFORMED_PSI` /
     // `MALFORMED_PES` / `SYNC_BUF_EXHAUSTED` each get their own member (they
     // were `INTERNAL` / `BAD_PMT` / `BAD_PES` / `SYNC_LOSS`); `STRICT_REJECTION`
-    // is unchanged and A2's K7 wildcard is `Internal`.
+    // is unchanged and its wildcard is `Internal`.
     crate::error::throw_demux(env, kind_of_demux(e), &e.to_string());
 }
 
@@ -579,7 +579,7 @@ pub(crate) fn convert_event<'local>(
                 SamplePayload::Audio { codec, frames } => {
                     // Raw-first: emit the encoded audio ES as a heap-copied
                     // ByteBuffer; typed-frame parsing is deferred to Audio.parse()
-                    // (opt-in), mirroring tst-py's model and the WP16 Video shape.
+                    // (opt-in), mirroring tst-py's model and the Video shape.
                     // JDK < 22 forbids direct buffers over Rust memory, so we copy.
                     let codec_obj =
                         enum_const(env, "mpegts", "AudioCodec", audio_codec_name(*codec))?;

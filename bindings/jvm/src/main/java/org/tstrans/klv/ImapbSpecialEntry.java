@@ -1,7 +1,7 @@
 package org.tstrans.klv;
 
 /**
- * One entry of {@link UasDatalinkLs#imapbSpecials()} — a WP-B ST 1201.5
+ * One entry of {@link UasDatalinkLs#imapbSpecials()} — an ST 1201.5
  * IMAPB item whose wire value decoded to a spec-defined special (§7.2.3)
  * rather than a normal-range float.
  *

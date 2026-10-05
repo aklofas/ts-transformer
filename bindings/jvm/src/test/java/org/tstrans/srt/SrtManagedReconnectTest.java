@@ -14,8 +14,8 @@ import org.tstrans.SrtException;
 import org.tstrans.mpegts.DemuxEvent;
 
 /**
- * Live-socket RECONNECT parity test for the managed (auto-reconnect) SRT shells
- * (sub-wave C). Proves that a {@link ManagedDemuxReceiver} survives a peer
+ * Live-socket RECONNECT parity test for the managed (auto-reconnect) SRT shells.
+ * Proves that a {@link ManagedDemuxReceiver} survives a peer
  * drop+restore: it surfaces a {@link DemuxEvent.ReconnectDiscontinuity} after the
  * inner SRT transport is rebuilt AND reports {@code reconnectAttempts() > 0}.
  *

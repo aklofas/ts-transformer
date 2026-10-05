@@ -387,7 +387,7 @@ class St0601Test {
     }
 
     // -----------------------------------------------------------------------
-    // DA-KLV-4: sentinel round-trip tests
+    // Sentinel round-trip tests
     // -----------------------------------------------------------------------
 
     /**
@@ -524,7 +524,7 @@ class St0601Test {
     }
 
     // -----------------------------------------------------------------------
-    // WP-A: new field round-trip tests (mirrors tst-py's WP-A test suite;
+    // New field round-trip tests (mirrors tst-py's test suite;
     // same fixture values as test_klv_encode_st0601.py's _F64_FIELDS /
     // _RAW_FIELDS / enum cases).
     // -----------------------------------------------------------------------
@@ -569,7 +569,7 @@ class St0601Test {
     }
 
     /**
-     * Table A1: every ranged f64 field survives encode -&gt; decode within its
+     * Every ranged f64 field survives encode -&gt; decode within its
      * fixed-point quantization step. Values and tolerances are pinned from
      * tst-py's {@code _F64_FIELDS} (same underlying Rust encoder/decoder).
      */
@@ -646,7 +646,7 @@ class St0601Test {
     }
 
     /**
-     * Table A2: raw int/string fields are not fixed-point quantized — they
+     * Raw int/string fields are not fixed-point quantized — they
      * round-trip byte-exact. Values pinned from tst-py's {@code _RAW_FIELDS}.
      */
     @Test
@@ -683,7 +683,7 @@ class St0601Test {
         assertTrue(decoded.fieldErrors().isEmpty());
     }
 
-    /** Table A4: named nested-set raw byte fields round-trip byte-exact. */
+    /** Named nested-set raw byte fields round-trip byte-exact. */
     @Test
     void wpaTableA4BytesFieldsRoundTripExact() throws KlvDecodeException, KlvEncodeException {
         byte[] rvtBytes = {(byte) 0xDE, (byte) 0xAD, (byte) 0xBE, (byte) 0xEF, 1};
@@ -732,7 +732,7 @@ class St0601Test {
     }
 
     // -----------------------------------------------------------------------
-    // WP-A Table A3: coded enums — known codepoint + wire-unknown round-trip.
+    // Coded enums — known codepoint + wire-unknown round-trip.
     // Enum access goes through the raw-code accessor + <Enum>.fromCode, per
     // the SecurityClassification precedent.
     // -----------------------------------------------------------------------
@@ -833,14 +833,14 @@ class St0601Test {
     }
 
     // -----------------------------------------------------------------------
-    // WP-A: spec-vector pins — hand-authored wire bytes, NOT the encoder's
+    // Spec-vector pins — hand-authored wire bytes, NOT the encoder's
     // own output. Closed-loop round-trips alone can't catch a symmetric
     // transcription error in the JNI layer's locally-duplicated enum
     // wire-code tables (a code swapped identically in both directions
     // round-trips cleanly while emitting the wrong byte on the wire), so
     // each field kind gets at least one decode-from-hand-built-bytes test
     // and one encoded-output-contains-exact-TLV test. Tag/value bytes are
-    // pinned from MISB ST 0601.19 via the WP-A plan tables.
+    // pinned from MISB ST 0601.19.
     // -----------------------------------------------------------------------
 
     /**
@@ -980,7 +980,7 @@ class St0601Test {
     }
 
     /**
-     * Table A1 representative — Tag 35 (0x23) Wind Direction: 235.924010 deg
+     * Tag 35 (0x23) Wind Direction: 235.924010 deg
      * maps to value bytes {@code A7 C4} per the ST 0601.19 uint16 [0, 360]
      * linear mapping. Both directions: encode must emit the exact TLV;
      * hand-authored bytes must decode back within the fixed-point step.
@@ -1000,7 +1000,7 @@ class St0601Test {
     }
 
     /**
-     * Table A2 representatives — Tag 39 (0x27) Outside Air Temp: 84 →
+     * Tag 39 (0x27) Outside Air Temp: 84 →
      * {@code 54} (raw i8); Tag 60 (0x3C) Weapon Load: 45016 → {@code AF D8}
      * (raw u16). Both directions.
      */
@@ -1025,7 +1025,7 @@ class St0601Test {
     }
 
     // -----------------------------------------------------------------------
-    // WP-A rider: ST 0601.19 §7.5 INT_MIN sentinel-meaning lookup
+    // ST 0601.19 §7.5 INT_MIN sentinel-meaning lookup
     // (parity with tst-py's st0601_sentinel_meaning — same four pins).
     // -----------------------------------------------------------------------
 
@@ -1039,7 +1039,7 @@ class St0601Test {
     }
 
     // -----------------------------------------------------------------------
-    // WP-B: new field round-trip tests (mirrors tst-py's WP-B test suite;
+    // New field round-trip tests (mirrors tst-py's test suite;
     // same fixture values as test_klv_encode_st0601.py's _IMAPB_F64_FIELDS /
     // _VARINT_FIELDS / imapb_specials cases).
     // -----------------------------------------------------------------------
@@ -1078,7 +1078,7 @@ class St0601Test {
     }
 
     /**
-     * Table B1: every IMAPB f64 field survives encode -&gt; decode within its
+     * Every IMAPB f64 field survives encode -&gt; decode within its
      * fixed-point quantization step. Values and tolerances are pinned from
      * tst-py's {@code _IMAPB_F64_FIELDS} (same underlying Rust encoder/decoder).
      */
@@ -1123,7 +1123,7 @@ class St0601Test {
     }
 
     /**
-     * Table B2: var-length int fields are not fixed-point quantized — they
+     * Var-length int fields are not fixed-point quantized — they
      * round-trip byte-exact. Values pinned from tst-py's {@code _VARINT_FIELDS}.
      */
     @Test
@@ -1167,7 +1167,7 @@ class St0601Test {
     }
 
     // -----------------------------------------------------------------------
-    // WP-B Table B2: coded enums — known codepoint + wire-unknown round-trip.
+    // Coded enums — known codepoint + wire-unknown round-trip.
     // -----------------------------------------------------------------------
 
     @Test
@@ -1219,7 +1219,7 @@ class St0601Test {
     }
 
     // -----------------------------------------------------------------------
-    // WP-B: imapb_specials side-channel — both directions.
+    // imapb_specials side-channel — both directions.
     // -----------------------------------------------------------------------
 
     @Test
@@ -1310,7 +1310,7 @@ class St0601Test {
     }
 
     // -----------------------------------------------------------------------
-    // WP-B: OutOfRangePolicy.INDICATOR for an IMAPB field (tag 113).
+    // OutOfRangePolicy.INDICATOR for an IMAPB field (tag 113).
     // -----------------------------------------------------------------------
 
     /**
@@ -1333,13 +1333,13 @@ class St0601Test {
     }
 
     // -----------------------------------------------------------------------
-    // WP-B: spec-vector pins — hand-authored wire bytes, same rationale as
-    // the WP-A spec-vector block above (a symmetric transcription error in
+    // Spec-vector pins — hand-authored wire bytes, same rationale as
+    // the spec-vector block above (a symmetric transcription error in
     // the locally-duplicated PlatformStatus/SensorControlMode wire-code
     // tables would round-trip cleanly while emitting the wrong byte).
     // -----------------------------------------------------------------------
 
-    /** Table B1 representative — Tag 96 (0x60) Target Width Extended. */
+    /** Tag 96 (0x60) Target Width Extended. */
     @Test
     void targetWidthExtendedMSpecVector() throws KlvDecodeException, KlvEncodeException {
         byte[] wire = Klv.encodeUasDatalink(new UasDatalinkLs.Builder()
@@ -1354,7 +1354,7 @@ class St0601Test {
         assertTrue(decoded.fieldErrors().isEmpty());
     }
 
-    /** Table B2 representative — Tag 110 (0x6E) Time Airborne. */
+    /** Tag 110 (0x6E) Time Airborne. */
     @Test
     void timeAirborneSSpecVector() throws KlvDecodeException, KlvEncodeException {
         byte[] wire = Klv.encodeUasDatalink(new UasDatalinkLs.Builder()

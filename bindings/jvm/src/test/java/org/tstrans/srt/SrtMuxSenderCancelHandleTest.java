@@ -30,7 +30,7 @@ import org.tstrans.srt.SrtSenderParkSupport.Pump;
  * {@code cancel()} ends the parked send with {@code CLOSED} on both shells:
  * the managed one latches its close flag in the reconnect backoff, and the
  * plain one closes the socket under {@code srt_sendmsg} and the transport
- * reports the cancel it observed. Closes {@code A-ARCH-02}'s two JVM gaps.
+ * reports the cancel it observed.
  */
 class SrtMuxSenderCancelHandleTest {
 

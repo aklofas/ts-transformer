@@ -24,7 +24,8 @@ import org.tstrans.mpegts.Demuxer;
 import org.tstrans.mpegts.VideoCodec;
 
 /**
- * Java adapter for the cross-binding scenario harness (WS-5), mirroring the
+ * Java adapter for the cross-binding scenario harness shared by Rust, Python,
+ * C and Java, mirroring the
  * Python in-process adapter at {@code bindings/python/tests/test_scenarios.py}.
  *
  * <p>It reads the SHARED committed fixtures under
@@ -40,7 +41,7 @@ import org.tstrans.mpegts.VideoCodec;
  *   <li><b>video.pts</b> — the 90&nbsp;kHz presentation timestamp.</li>
  *   <li><b>video.payload_sha256</b> — SHA-256 of the concatenated NAL RBSP
  *       payload bytes. {@link DemuxEvent.Video#parse()} returns the typed
- *       {@code List<VideoUnit>} on demand (codec wave); this test concatenates every
+ *       {@code List<VideoUnit>} on demand; this test concatenates every
  *       {@code ((NalUnit) unit).payload()} (Annex-B start codes already stripped
  *       by the demuxer) the same way the Rust/Python normalisers do
  *       (see {@code video_payload_bytes()} in the Rust normaliser), so the digest
@@ -52,9 +53,8 @@ import org.tstrans.mpegts.VideoCodec;
  *       ({@code "st0601"} or {@code "unknown"}). This mirrors {@code _klv_set_from_ul}
  *       in the Python adapter and {@code klv_set_from_ul()} in the Rust normaliser.</li>
  * </ul>
- * The test now reproduces BOTH the video subset AND the klv core event (pid +
- * UL-derived set) — {@code DemuxEvent.Metadata} surfaces in the binding since the
- * completion wave.
+ * The test reproduces BOTH the video subset AND the klv core event (pid +
+ * UL-derived set) — {@code DemuxEvent.Metadata} surfaces in the binding.
  *
  * <h2>What is out of scope here</h2>
  * <ul>
@@ -158,7 +158,7 @@ class ScenarioReproductionTest {
             "video payload_sha256 mismatch — the JNI keystone Video.payload bytes "
                 + "must equal the concatenated NAL RBSP bytes the golden hashes");
 
-        // Typed-structure cross-binding proof (codec wave): the raw-sha above proves
+        // Typed-structure cross-binding proof: the raw-sha above proves
         // the bytes agree; these assertions prove the JVM typed split agrees
         // STRUCTURALLY with Rust/Python — same codec discriminant, same VideoUnit
         // taxonomy, same NAL typing.
@@ -324,7 +324,7 @@ class ScenarioReproductionTest {
      * agrees structurally with Rust/Python — codec {@code AAC}, first frame an
      * {@link AdtsFrame} with {@code sampleRateHz == 44100} and
      * {@code channelConfiguration == 2} (stereo). The companion to the H.264 video
-     * proof; the audio split is the codec wave's responsibility too.
+     * proof; the audio split is covered here too.
      */
     @Test
     void reproducesAacAudioOnlyTypedPayload() throws Exception {

@@ -26,8 +26,7 @@ use crate::handle::{CancelView, HandleRegistry};
 /// parked op of its own, so it registers plain (cancel = None).
 ///
 /// `org.tstrans.rtp.CancelHandle` exposes only `cancel()` — no
-/// `isCancelled()`, unlike the srt twin. The view supports one if a later rider
-/// adds the method.
+/// `isCancelled()`, unlike the srt twin.
 static REGISTRY_CANCEL: LazyLock<HandleRegistry<CancelView>> = LazyLock::new(HandleRegistry::new);
 
 /// Register a cancel view and return its `org.tstrans.rtp.CancelHandle` key.

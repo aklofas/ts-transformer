@@ -8,7 +8,7 @@ plugins {
 }
 
 java {
-    // §8.3 RESOLVED: JDK 17 MSRV.
+    // JDK 17 MSRV.
     toolchain { languageVersion.set(JavaLanguageVersion.of(17)) }
 }
 
@@ -75,8 +75,8 @@ fun resourceLibName(triple: String): String = when {
     else -> "libtstjni.so"
 }
 
-// --- Dev mode: build current platform's cdylib (release) via cargo. As of the
-//     srt wave this links vendored libsrt + mbedTLS, so SRT_FORCE_VENDORED=1 is
+// --- Dev mode: build current platform's cdylib (release) via cargo. This
+//     links vendored libsrt + mbedTLS, so SRT_FORCE_VENDORED=1 is
 //     required; the first cold build compiles libsrt (~3-5 min), warm is seconds.
 val cargoBuild = tasks.register<Exec>("cargoBuild") {
     onlyIf { nativeStagingDir == null }
@@ -129,8 +129,8 @@ tasks.test {
     useJUnitPlatform()
     testLogging { showStandardStreams = true }
     // -Xcheck:jni: HotSpot's built-in JNI verifier. It catches the
-    // JNI-semantic bug class — invalid/stale handles, local-ref leaks
-    // (DA-JVM-1), env misuse across threads — which memory sanitizers
+    // JNI-semantic bug class — invalid/stale handles, local-ref leaks,
+    // env misuse across threads — which memory sanitizers
     // cannot see. Violations abort the JVM ("FATAL ERROR in native
     // method"), so regressions fail this gating test job loudly. Cost at
     // our test scale is negligible.
@@ -142,7 +142,7 @@ tasks.test {
     // Reflection-based ordinal-boundary tests (MuxerConfigOrdinalTest) call
     // Muxer.nOpen via setAccessible(true). No --add-opens is required: the
     // library JAR is on the classpath (unnamed module), so the module system
-    // doesn't restrict deep reflection (DA-JVM-3).
+    // doesn't restrict deep reflection.
 }
 
 // javac (like javadoc below) defaults to the platform charset, which is

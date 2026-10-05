@@ -9,7 +9,7 @@
 //!
 //! Handle lifecycle mirrors `transport.rs`:
 //! - `nFromUrl` opens through `tst_srt::shells::managed_{sender,receiver}_from_url`
-//!   — the ONE open path (ARCH-01): the initial dial, the reconnect factory,
+//!   — the ONE open path: the initial dial, the reconnect factory,
 //!   the attempt/success counters and the cancel handle are composed in
 //!   tst-srt, once, for every binding. The returned `ManagedHandles` (plus the
 //!   sender's `ManagedStatsHandle`) become the entry's `Owned` SNAPSHOT, so
@@ -125,7 +125,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedSender_nFromUrl(
             return 0;
         };
 
-        // One open path (ARCH-01 / ARCH-08): the initial dial, the reconnect
+        // One open path: the initial dial, the reconnect
         // factory (`SrtUrl::connect` per attempt), the attempt counter and the
         // cancel/stats/reconnect handles are composed in tst-srt, once.
         let (inner, handles, stats) = match tst_srt::shells::managed_sender_from_url(
@@ -388,7 +388,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedReceiver_nFromUrl(
             return 0;
         };
 
-        // One open path (ARCH-01 / ARCH-08): the initial bind+accept, the
+        // One open path: the initial bind+accept, the
         // reconnect factory (whose re-accept is reachable through the managed
         // `FactoryCancel` slot), the attempt/success counters and the cancel
         // handle are composed in tst-srt, once.
@@ -403,11 +403,10 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedReceiver_nFromUrl(
         // the slot, so a `recvBytes()` parked on another thread ends with CLOSED
         // instead of holding `close()` hostage (tst-py / C ABI contract).
         // No `with_end_reason`: `ManagedReceiver` exposes no `endReason()` native,
-        // and A3 documents that the plain `Receiver` never RECORDS one either
+        // and the plain `Receiver` never RECORDS one either
         // (`ManagedHandles::end_reason` is a fresh, never-set handle for every
         // shell but `ManagedDemuxReceiver`). Attaching it would advertise a
-        // capability that does not exist; the cell stays reachable through the
-        // `ManagedHandles` snapshot if a rider ever adds the native.
+        // capability that does not exist.
         let cancel = Arc::clone(&handles.cancel);
         REGISTRY_RECEIVER.insert(Owned::new(JniManagedReceiver { inner }, cancel, handles)) as jlong
     })
@@ -446,7 +445,7 @@ pub extern "system" fn Java_org_tstrans_srt_ManagedReceiver_nRecvBytes(
     })
 }
 
-/// Total factory invocations since construction (ARCH-08 — was the success
+/// Total factory invocations since construction (was the success
 /// counter). Lock-free: read off the `Owned` snapshot, so it answers while
 /// `recvBytes()` is parked in a re-accept that has not completed.
 #[unsafe(no_mangle)]

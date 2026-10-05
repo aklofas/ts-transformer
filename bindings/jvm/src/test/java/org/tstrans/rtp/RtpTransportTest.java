@@ -9,8 +9,7 @@ import org.tstrans.RtpException;
 
 /**
  * Ports are kernel-picked per test ({@code TestSupport.freeUdpPort()}): fixed
- * ports collided with other suites on the windows (2026-09-23) and macOS
- * (2026-10-01) runners.
+ * ports collided with other suites on the windows and macOS runners.
  */
 class RtpTransportTest {
 
