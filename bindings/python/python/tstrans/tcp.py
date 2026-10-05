@@ -1,4 +1,4 @@
-"""tstrans.tcp -- raw TCP transport bindings (Plan A5b Wave B).
+"""tstrans.tcp -- raw TCP transport bindings.
 
 Available when tstrans was built with the `tcp` cargo feature (default-on
 in published wheels). Raises `ImportError` on a source build without

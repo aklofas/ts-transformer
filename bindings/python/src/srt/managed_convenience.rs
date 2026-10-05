@@ -9,12 +9,12 @@
 //! reconnect factory on each `Broken`/`Closed` event from the inner SRT
 //! socket.
 //!
-//! ## Why a new file rather than extending T5
+//! ## Why a new file rather than extending `mux_sender` / `demux_receiver`
 //!
 //! The inner type of the wrapped pipeline shell changes
 //! (`SrtTransport` → `ManagedTransport<SrtTransport>` /
 //! `ManagedRecvTransport<SrtTransport>`), which cascades into the field
-//! type, every accessor, and the cancel-handle wiring. Sharing T5's code
+//! type, every accessor, and the cancel-handle wiring. Sharing that code
 //! via generics would force the PyClass methods to be generic too —
 //! pyo3 doesn't support generic `#[pymethods]`. Copy + adjust is the
 //! ergonomic shape.
@@ -23,10 +23,8 @@
 //!
 //! Both wrappers expose `reconnect_attempts() -> int` from
 //! `ManagedHandles.attempts` — the core's factory-invocation counter,
-//! owned by `ManagedTransport` / `ManagedRecvTransport` since Arc 2
-//! (ARCH-08). The binding used to keep its own `Arc<AtomicU64>` bumped
-//! from inside a factory closure; that closure, and the drift it allowed
-//! against `ManagedTransportStats.reconnect_attempts`, are gone.
+//! owned by `ManagedTransport` / `ManagedRecvTransport`, so it cannot
+//! drift from `ManagedTransportStats.reconnect_attempts`.
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
@@ -87,7 +85,7 @@ use crate::util::{CancelSource, StreamHandles, alive_probe, close_owned, open_sn
 /// ```
 #[pyclass(name = "ManagedMuxSender", module = "tstrans.srt")]
 pub(crate) struct PyManagedMuxSender {
-    /// Shared slot (PR #209 shape): every push holds it with the GIL
+    /// Shared slot: every push holds it with the GIL
     /// released — including while the managed transport sits in its
     /// reconnect loop — and `close()` fires `cancel` BEFORE taking it, so
     /// a push parked in a backoff ends with `SrtError(CLOSED)` instead of
@@ -95,14 +93,14 @@ pub(crate) struct PyManagedMuxSender {
     /// `close()` / `__exit__` can drop the inner shell while keeping the
     /// PyClass addressable for idempotent closes.
     owned: Owned<RustMuxSender<ManagedTransport<SrtTransport>>, StreamHandles>,
-    /// Shared cancel state (Arc 2 WP-B2): the same `Arc` every
+    /// Shared cancel state: the same `Arc` every
     /// `CancelHandle` this shell hands out holds, so `close()` here and
     /// `cancel()` through any handle flip one observable flag.
     cancel: Arc<CancelSource>,
     /// `ManagedHandles.attempts` — the CORE's own reconnect-attempt
-    /// counter (A3), read by `reconnect_attempts()`. Every
+    /// counter, read by `reconnect_attempts()`. Every
     /// `ManagedTransport::reconnect_and_drain` retry tick bumps it inside
-    /// the core, so the binding no longer wraps the factory to count.
+    /// the core, so the binding does not wrap the factory to count.
     attempts: Arc<AtomicU64>,
     /// Reconnect/gap telemetry observer, snapshotted from the
     /// `ManagedTransport` BEFORE it moves into `RustMuxSender::new`
@@ -151,8 +149,8 @@ impl PyManagedMuxSender {
             ));
         }
         let policy_inner = policy.map(|p| p.inner).unwrap_or_default();
-        // A3 owns the open, the reconnect factory (including the attempt
-        // counter, which now lives on `ManagedTransport` itself) and the
+        // `tst_srt::shells` owns the open, the reconnect factory (including
+        // the attempt counter, which lives on `ManagedTransport` itself) and the
         // handle snapshots. The managed family dials with `connect()` —
         // the sender preset — matching the C ABI.
         let (sender, handles, stats_handle) = py
@@ -427,7 +425,7 @@ impl PyManagedMuxSender {
 
     // ── Stats ──────────────────────────────────────────────────────────────
 
-    /// `(SocketStats, MuxerStats)` snapshot. Same shape as T5's
+    /// `(SocketStats, MuxerStats)` snapshot. Same shape as
     /// `MuxSender.stats()`. `SocketStats` may report zeros while the
     /// transport is mid-reconnect (the inner socket is `None`).
     ///
@@ -614,12 +612,12 @@ pub(crate) struct PyManagedDemuxReceiver {
     /// lock — wakes any thread parked in `__next__`'s `recv_event`,
     /// which then drops the mutex guard and the close path can take
     /// ownership of `inner` cleanly.
-    /// Shared cancel state (Arc 2 WP-B2): the same `Arc` every
+    /// Shared cancel state: the same `Arc` every
     /// `CancelHandle` this shell hands out holds, so `close()` here and
     /// `cancel()` through any handle flip one observable flag.
     cancel: Arc<CancelSource>,
-    /// `ManagedHandles.attempts` — the core's factory-invocation counter
-    /// (Arc 2 ARCH-08). Symmetric with `PyManagedMuxSender`.
+    /// `ManagedHandles.attempts` — the core's factory-invocation counter.
+    /// Symmetric with `PyManagedMuxSender`.
     attempts: Arc<AtomicU64>,
 }
 
@@ -657,10 +655,11 @@ impl PyManagedDemuxReceiver {
             Some(cfg_obj) => Some(crate::mpegts::build_demuxer_config(py, cfg_obj)?),
         };
         let policy_inner = policy.map(|p| p.inner).unwrap_or_default();
-        // A3 dispatches on `url.mode` (both modes are legal here), owns the
+        // `tst_srt::shells` dispatches on `url.mode` (both modes are legal here), owns the
         // re-accept `FactoryCancel` slot the cancel handle fires, and
         // snapshots the end-reason handle before the shell move. The FIRST
-        // accept stays uncancellable (DEBT-16, documented in python.md).
+        // accept stays uncancellable: no cancel handle exists until the
+        // constructor returns (documented in python.md).
         let (receiver, handles) = py
             .allow_threads(|| {
                 tst_srt::shells::managed_demux_receiver_from_url(

@@ -1,14 +1,12 @@
-//! Plan A5b Wave C T13 — `HlsMode` enum + `HlsStats` frozen dataclass.
+//! `HlsMode` enum + `HlsStats` frozen dataclass.
 //!
 //! `HlsMode` mirrors `tst_hls::HlsMode` (Live / Event / Vod). It is
 //! an int-comparable PyEnum (`#[pyclass(eq, eq_int)]`) so Python callers
 //! can do `mode == HlsMode.LIVE` and `IntEnum`-style ordering.
 //!
 //! `HlsStats` mirrors `tst_hls::HlsStats` — the richer per-impl
-//! snapshot (3 u64 fields). NOTE: this deviates from the plan T13 sketch,
-//! which guessed a 4-field shape with `current_segment_age_us` /
-//! `last_segment_duration_us`. The real upstream `HlsStats` carries
-//! `segments_written` / `bytes_pushed_total` / `open_segment_bytes`. The
+//! snapshot (3 u64 fields: `segments_written` / `bytes_pushed_total` /
+//! `open_segment_bytes`). The
 //! duration-style fields live on the universal `PublisherStats`
 //! (`HlsPublisher.stats()`), not on `HlsStats` (`HlsPublisher.hls_stats()`).
 

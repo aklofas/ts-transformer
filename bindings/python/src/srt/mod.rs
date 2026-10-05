@@ -1,7 +1,6 @@
 //! `tstrans.srt` — SRT transport bindings.
 //!
-//! See `docs/specs/2026-05-27-tst-py-srt-design.md` for the surface
-//! shape. Mirrors the `tstrans.rtp` pattern — same GIL-release boundaries,
+//! Mirrors the `tstrans.rtp` pattern — same GIL-release boundaries,
 //! same bytes-like extraction, same error mapping shape.
 //!
 //! Submodules:
@@ -13,7 +12,7 @@
 //! - `managed`:        ManagedSender, ManagedReceiver, ManagedMuxSender, ManagedDemuxReceiver
 //! - `end_reason`:     RecvEndReason conversion for ManagedDemuxReceiver.end_reason()
 //!
-//! Error mapping goes through `crate::raise` (Arc 2): every Rust error
+//! Error mapping goes through `crate::raise`: every Rust error
 //! type in this surface has a `From<…> for tst_pipeline::binding::BindingError`
 //! next to its own definition, and `raise` resolves the kind's `name()` on
 //! `tstrans.exceptions.SrtErrorKind` — checked at `import tstrans`.

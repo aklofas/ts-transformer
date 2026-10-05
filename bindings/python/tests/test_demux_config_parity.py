@@ -1,8 +1,6 @@
-"""DemuxerConfig parity — plan #96 Wave B.
+"""DemuxerConfig parity.
 
-Three Rust-side `DemuxerConfig` fields that were previously not bridged
-to Python (per the explicit "not yet bridged" warning in the dataclass
-docstring) are now exposed:
+Three Rust-side `DemuxerConfig` fields bridged to Python:
 
 - `av1_carriage: Optional[Av1CarriageMode]`
 - `au_cell_cap_per_pid: Optional[int]`
@@ -123,7 +121,7 @@ def test_demuxer_accepts_all_new_fields_together() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AV1 carriage mode end-to-end parity: the actual point of Wave B
+# AV1 carriage mode end-to-end parity
 # ---------------------------------------------------------------------------
 
 
@@ -299,9 +297,7 @@ def test_av1_interop_sender_into_binding_demuxer_surfaces_both_issues() -> None:
 
 def test_io_parse_file_threads_av1_carriage(tmp_path: Path) -> None:
     """`tstrans.io.parse_file(path, config=...)` must honor the new
-    fields. The audit found this kwarg already plumbs through, but
-    the previous DemuxerConfig didn't expose `av1_carriage` so the
-    end-to-end path was never exercised."""
+    fields, including `av1_carriage`, end to end."""
     import tstrans.io as io
 
     ts_path = tmp_path / "av1_interop.ts"

@@ -1,9 +1,9 @@
-"""TCP transport loopback + error-case tests (Plan A5b Wave B T6/T7/T8/T9).
+"""TCP transport loopback + error-case tests.
 
 Covers:
-- T6/T7: the 4 caller/listener x send/recv combo loopback round-trips
-- T8: TLS dataclass round-trip (forward-compat) + tcps:// loopback e2e
-- T9: error-kind propagation, TcpErrorKind count sentinel, test-helper wiring
+- the 4 caller/listener x send/recv combo loopback round-trips
+- TLS dataclass round-trip (forward-compat) + tcps:// loopback e2e
+- error-kind propagation, TcpErrorKind count sentinel, test-helper wiring
 """
 
 import threading
@@ -32,7 +32,7 @@ def _listener_and_port() -> tuple[tcp.Listener, int]:
 
 
 # ---------------------------------------------------------------------------
-# T6 + T7: 4 caller/listener x send/recv combos
+# 4 caller/listener x send/recv combos
 # ---------------------------------------------------------------------------
 
 
@@ -316,7 +316,7 @@ def test_tcp_transport_peer_addr() -> None:
 
 
 # ---------------------------------------------------------------------------
-# T8: TLS dataclass round-trip (forward-compat)
+# TLS dataclass round-trip (forward-compat)
 # ---------------------------------------------------------------------------
 
 
@@ -430,7 +430,7 @@ def test_tcp_tls_caller_rejects_untrusted_cert() -> None:
 
 
 # ---------------------------------------------------------------------------
-# T9: error-kind propagation + count sentinel + test-helper wiring
+# Error-kind propagation + count sentinel + test-helper wiring
 # ---------------------------------------------------------------------------
 
 
@@ -498,12 +498,12 @@ def test_tcp_error_wiring_via_test_helper() -> None:
 
 
 # ---------------------------------------------------------------------------
-# cancel_handle() (review 9, R9-14)
+# cancel_handle()
 # ---------------------------------------------------------------------------
 
 
 def test_tcp_cancel_handle_unparks_recv_and_later_calls_are_closed() -> None:
-    """R9-14: tcp was the one shell without `cancel_handle()`. The handle
+    """tcp exposes `cancel_handle()` like every other shell. The handle
     ends a parked recv() with TcpError(CLOSED) without freeing the object,
     every later call raises CLOSED, and close() afterwards is quiet."""
     listener, port = _listener_and_port()

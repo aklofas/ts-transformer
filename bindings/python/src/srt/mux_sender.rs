@@ -24,8 +24,8 @@
 //!
 //! Architectural notes (mirror `rtp/mux_sender.rs`):
 //!
-//! - `tst_pipeline::binding::Owned` + `&self` methods (Arc 2, carrying
-//!   the cross-thread close shape of PR #209): `close()` latches the
+//! - `tst_pipeline::binding::Owned` + `&self` methods (the cross-thread
+//!   close shape): `close()` latches the
 //!   shared cancel before taking the slot, and the slot's emptiness is
 //!   what keeps the PyClass instance addressable for idempotent closes.
 //! - Bytes-like extraction: fast `bytes` downcast, fallback through
@@ -102,7 +102,7 @@ pub(crate) fn mux_sender_err(py: Python<'_>, e: MuxSenderError) -> PyErr {
 /// ```
 #[pyclass(name = "MuxSender", module = "tstrans.srt")]
 pub(crate) struct PyMuxSender {
-    /// The binding layer's handle state machine (Arc 2): a push holds the
+    /// The binding layer's handle state machine: a push holds the
     /// slot only inside `with_mut`, always under `py.allow_threads`, so a
     /// push in flight on another thread never trips PyO3's borrow check
     /// and `close()` (cancel-first) ends it instead of waiting behind it.

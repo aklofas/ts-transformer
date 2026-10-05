@@ -16,7 +16,7 @@
 //!   waits for a parked call.
 //!
 //! Cross-thread cancel/close: both `tst_rist` transports expose a real
-//! cancel handle (Arc 2 WP-D) and the shell's `CancelSource` forwards into
+//! cancel handle and the shell's `CancelSource` forwards into
 //! it, so `close()` cancels first and `Transport.cancel_handle()` /
 //! `RecvTransport.cancel_handle()` hand the same shared state to Python as
 //! `rist.CancelHandle`. `RecvTransport.recv()` polls librist in 100 ms
@@ -267,7 +267,7 @@ impl PyRistCancelHandle {
 /// the kernel socket call blocks.
 #[pyclass(name = "Transport", module = "tstrans.rist")]
 pub(crate) struct PyRistTransport {
-    /// The binding layer's handle state machine (Arc 2): a `send` in
+    /// The binding layer's handle state machine: a `send` in
     /// flight on another thread holds the slot with the GIL released and
     /// `close()` cancels-then-takes, so the next `send` raises
     /// `RistError(CLOSED)` rather than `RuntimeError: Already borrowed`.
@@ -275,8 +275,8 @@ pub(crate) struct PyRistTransport {
     /// `peer_url()`, so `repr()` never waits behind a send.
     owned: Owned<SendHalf<RistTransport>, String>,
     /// Shared cancel state, wrapping the transport's real `RistCancelHandle`
-    /// (Arc 2 WP-D). Held beside the slot so `cancel_handle()` never waits
-    /// behind an in-flight `send` (the PR #189 lease-bug class).
+    /// Held beside the slot so `cancel_handle()` never waits
+    /// behind an in-flight `send`.
     cancel: Arc<CancelSource>,
 }
 
@@ -527,14 +527,14 @@ impl tst_pipeline::binding::Close for RistRecvInner {
 /// in the URL to set the recovery buffer size (milliseconds).
 #[pyclass(name = "RecvTransport", module = "tstrans.rist")]
 pub(crate) struct PyRistRecvTransport {
-    /// The binding layer's handle state machine (Arc 2): a parked `recv`
+    /// The binding layer's handle state machine: a parked `recv`
     /// holds the slot with the GIL released, and `close()` latches the
     /// cancel BEFORE taking it, so the parked recv ends with
     /// `RistError(CLOSED)` within one librist poll window. Snapshot =
     /// `bind_url()`, so `repr()` never waits behind a parked `recv`.
     owned: Owned<RistRecvInner, String>,
     /// Shared cancel state, wrapping the transport's real `RistCancelHandle`
-    /// (Arc 2 WP-D). `close()` and `cancel_handle().cancel()` both latch it
+    /// `close()` and `cancel_handle().cancel()` both latch it
     /// and the poll loop checks it between librist's 100 ms windows.
     cancel: Arc<CancelSource>,
 }

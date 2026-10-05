@@ -1,4 +1,4 @@
-"""Audit-2 #5 — parse_klv_universal must reject trailing bytes after the
+"""parse_klv_universal must reject trailing bytes after the
 declared outer BER length for ST 0102 and ST 0903 (it already does for
 ST 0601 / ST 0605 by virtue of strict family decoders)."""
 
@@ -62,7 +62,7 @@ def test_st0102_clean_decode_passes() -> None:
 
 
 def test_st0102_rejects_trailing_bytes() -> None:
-    """Audit-2 #5 — trailing bytes after the declared body must raise
+    """Trailing bytes after the declared body must raise
     KlvError(kind=MALFORMED_BYTES), not silently succeed."""
     payload = _minimal_st0102() + b"\xde\xad\xbe\xef"
     with pytest.raises(KlvError) as ei:
@@ -89,7 +89,7 @@ def test_st0903_clean_decode_passes() -> None:
 
 
 def test_st0903_rejects_trailing_bytes() -> None:
-    """Audit-2 #5 — trailing bytes after the declared body must raise
+    """Trailing bytes after the declared body must raise
     KlvError(kind=MALFORMED_BYTES)."""
     payload = _minimal_st0903() + b"\xff\xff"
     with pytest.raises(KlvError) as ei:

@@ -1,5 +1,5 @@
-"""Submodule shells exist and import cleanly. Phase 2-5 plans add real
-exports; this guards their existence."""
+"""Submodule shells exist and import cleanly; this guards their
+existence."""
 
 import importlib
 

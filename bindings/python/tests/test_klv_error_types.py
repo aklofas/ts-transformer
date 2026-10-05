@@ -65,7 +65,7 @@ def test_klv_field_error_equality():
 
 
 def test_klv_error_still_constructible():
-    # Confirm Phase 0+1 KlvError construction still works with the
+    # Confirm the original KlvError construction still works with the
     # extended enum.
     err = KlvError(kind=KlvErrorKind.CHECKSUM_MISMATCH, message="bad checksum")
     assert err.kind is KlvErrorKind.CHECKSUM_MISMATCH

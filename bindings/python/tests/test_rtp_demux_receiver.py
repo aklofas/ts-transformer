@@ -1,4 +1,4 @@
-"""Tests for `tstrans.rtp.DemuxReceiver` (Wave B Task 23).
+"""Tests for `tstrans.rtp.DemuxReceiver`.
 
 Loopback tests:
 - Build a small TS stream with `tstrans.mpegts.Muxer`; send the bytes
@@ -7,7 +7,7 @@ Loopback tests:
   the same loopback port. Push a video NAL; assert the receiver emits
   at least one ProgramMap + one Sample/Video event.
 - `RtspSession.into_demux_receiver` — skipped (no RTSP server in this
-  test; covered by Wave C T25 integration tests).
+  test; covered by `test_rtp_integration.py`).
 """
 
 from __future__ import annotations
@@ -338,7 +338,8 @@ def test_last_seen_micros_reports_int_after_video_event() -> None:
 )
 def test_rtsp_session_into_demux_receiver() -> None:  # pragma: no cover
     """Bridge from `RtspSession` → `DemuxReceiver`. Verifying this
-    end-to-end requires a real RTSP server, which lands in Wave C T25.
+    end-to-end requires a real RTSP server; `test_rtp_integration.py`
+    covers it.
 
     The bridge itself is wired in `bindings/python/src/rtp/client.rs`:
     `PyRtspClient::connect` retains the SETUP-time `RtspSession`; the

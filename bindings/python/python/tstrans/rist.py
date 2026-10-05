@@ -1,4 +1,4 @@
-"""tstrans.rist — tst-rist bindings (Plan A5b Wave D).
+"""tstrans.rist — tst-rist bindings.
 
 Available when tstrans was built with the `rist` cargo feature (default-on
 in published wheels). A source build without `--features rist` will fail to

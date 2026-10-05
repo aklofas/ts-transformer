@@ -62,11 +62,9 @@ def test_probe_packet_count_nonzero():
 
 
 def test_probe_packet_count_matches_file_size_div_188():
-    # Audit #4: `probe().packet_count` was previously a sum of unrelated
-    # demuxer stats (`program_maps_seen` + `pmt_versions_seen` + ...) which
-    # happened to be non-zero but had no semantic relation to actual TS
-    # packets. After the fix, packet_count is computed from bytes read by
-    # the probe scan / 188 — exact for properly-aligned TS files like the
+    # `probe().packet_count` is computed from bytes read by the probe scan
+    # / 188, not from unrelated demuxer stats (`program_maps_seen` +
+    # `pmt_versions_seen` + ...) — exact for properly-aligned TS files like the
     # fixture, which is 141940 bytes = 755 packets.
     r = probe(FIXTURE)
     fixture_size = FIXTURE.stat().st_size
@@ -84,7 +82,7 @@ def test_probe_has_audio_codec_for_mp2_fixture():
 
 
 # ---------------------------------------------------------------------------
-# Phase 3 extensions: extract_klv parsed=True path
+# extract_klv parsed=True path
 # ---------------------------------------------------------------------------
 
 import pytest

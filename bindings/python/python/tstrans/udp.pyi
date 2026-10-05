@@ -1,4 +1,4 @@
-"""Type stubs for `tstrans.udp` — raw UDP transport bindings (Plan A5b Wave A).
+"""Type stubs for `tstrans.udp` — raw UDP transport bindings.
 
 Mirrors the `Transport`, `RecvTransport`, `TransportBuilder`,
 `RecvTransportBuilder`, and `SocketStats` PyClass-backed types exported from

@@ -37,7 +37,7 @@ try:
 except ImportError:
     _SRT_AVAILABLE = False
 
-# Plan A5b — udp / tcp / hls / rist submodules (each default-on; same
+# udp / tcp / hls / rist submodules (each default-on; same
 # conditional-import shape as rtp/srt to surface a feature-off build at
 # package-import time).
 try:

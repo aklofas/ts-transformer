@@ -1,4 +1,4 @@
-"""Synthetic MPEG-TS builder for an unrecognized stream_type (Audit-2 #1).
+"""Synthetic MPEG-TS builder for an unrecognized stream_type.
 
 Constructs a minimal TS bitstream containing:
   - One PAT packet (PID 0x0000) advertising a single program whose PMT
@@ -6,7 +6,7 @@ Constructs a minimal TS bitstream containing:
   - One PMT packet (PID 0x0100) declaring a single elementary stream on
     PID 0x0101 with the caller-supplied (unknown) stream_type byte,
     optionally carrying ES_info descriptors and/or an additional H.264
-    video stream on PID 0x0102 (private-data W2: from_program_map needs
+    video stream on PID 0x0102 (from_program_map needs
     a PCR-eligible companion stream to convert an unknown-stream map).
   - PES packets (PID 0x0101, and 0x0102 when video is requested)
     carrying the raw payloads, padded to at least seven TS packets.
@@ -17,8 +17,7 @@ sync_ingress.rs). Supplying seven full 188-byte packets starting with
 0x47 satisfies that requirement unconditionally.
 
 No Muxer API is used — the raw bytes are composed here so that a new
-public add_private_stream() method is not needed (scope-limiter from the
-audit-2 task-1 plan).
+public add_private_stream() method is not needed.
 """
 from __future__ import annotations
 

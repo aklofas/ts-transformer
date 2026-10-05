@@ -18,7 +18,7 @@ Decode surface:
   `MetadataSubstreamId`, `CountryCodes`, `WavelengthRecord`, `Location`,
   `AirbaseLocations`, `PayloadType`, `PayloadRecord`, `PayloadList`,
   `WeaponsStore`, `Waypoint`, `ViewDomainPair`, `ViewDomain`,
-  `SdccFlpField` — ST 0601 §8 WP-C pack & list items (carried on
+  `SdccFlpField` — ST 0601 §8 pack & list items (carried on
   `UasDatalinkLs`)
 - `SdccFlp` — MISB ST 1010.3 SDCC-FLP pack (general-purpose; decode with
   `decode_sdcc_flp`, encode Mode 2 with `encode_sdcc_flp_mode2`)
@@ -49,9 +49,9 @@ class KlvFieldErrorKind(enum.Enum):
     """Mirrors Rust's `tst_core::error::KlvFieldError` variants.
 
     Field-level decode failures are recoverable — they do NOT raise;
-    they accumulate on the typed-set object's `.field_errors` list per
-    the design spec's "best-effort parse" semantics for ST 0601 in the
-    field. Marked `#[non_exhaustive]` on the Rust side; Python matchers
+    they accumulate on the typed-set object's `.field_errors` list
+    ("best-effort parse" semantics for ST 0601 in the
+    field). Marked `#[non_exhaustive]` on the Rust side; Python matchers
     should include a default arm."""
 
     OUT_OF_RANGE = "out_of_range"
@@ -127,7 +127,7 @@ class TimeStatus:
     raw: int
 
     def __post_init__(self) -> None:
-        # Audit-2 #4 — the wire field is a single byte (0..=255); reject
+        # The wire field is a single byte (0..=255); reject
         # out-of-range values early so callers see the construction site.
         if not 0 <= self.raw <= 0xFF:
             raise ValueError(f"TimeStatus.raw must be 0..=255; got {self.raw}")
@@ -174,7 +174,7 @@ class PrecisionTimeStampPack:
         return replace(self, **changes)
 
 
-# Spec-compat alias per design spec §API shape table.
+# Short alias for `PrecisionTimeStampPack`.
 Klv0605 = PrecisionTimeStampPack
 
 
@@ -346,7 +346,7 @@ class VTargetPack:
     target_id: int  # BER-OID, capped at u32::MAX
 
     def __post_init__(self) -> None:
-        # Audit-2 #4 — target_color encodes as a 3-byte RGB value on the
+        # target_color encodes as a 3-byte RGB value on the
         # wire (ST 0903.6 §10.2.2.8 Tag 8, 3 bytes); validate at
         # construction so callers see the error at their code site rather
         # than at the encode boundary.
@@ -555,7 +555,7 @@ class OperationalMode(enum.Enum):
 
 
 # ---------------------------------------------------------------------------
-# ST 0601.19 WP-B coded enums (Items 125, 126)
+# ST 0601.19 coded enums (Items 125, 126)
 # ---------------------------------------------------------------------------
 
 
@@ -590,7 +590,7 @@ class SensorControlMode(enum.Enum):
 
 
 # ---------------------------------------------------------------------------
-# ST 0601.19 WP-C pack & list items (Table C1), carried on UasDatalinkLs.
+# ST 0601.19 pack & list items, carried on UasDatalinkLs.
 # Follows the VTargetPack nested-struct-list pattern.
 # ---------------------------------------------------------------------------
 
@@ -870,7 +870,7 @@ class UasDatalinkLs:
     declared_version: int = 0
 
     def __post_init__(self) -> None:
-        # Audit-2 #4 — universal_label is the SMPTE UL identifying this LS;
+        # universal_label is the SMPTE UL identifying this LS;
         # it is always exactly 16 bytes on the wire. Reject other lengths
         # at construction rather than at the encoder/PyO3 boundary.
         if len(self.universal_label) != 16:
@@ -984,7 +984,7 @@ class UasDatalinkLs:
     mi_storage_percent_full: float | None = None
     transmission_frequency_mhz: float | None = None
     zoom_percentage: float | None = None
-    # Var-length int/enum items (ST 0601 WP-B Table B2, tags 110-139)
+    # Var-length int/enum items (ST 0601 tags 110-139)
     time_airborne_s: int | None = None
     propulsion_unit_speed_rpm: int | None = None
     navsats_in_view: int | None = None
@@ -1024,7 +1024,7 @@ class UasDatalinkLs:
     icing_detected: IcingDetected | int | None = None
     sensor_fov_name: SensorFovName | int | None = None
     operational_mode: OperationalMode | int | None = None
-    # Pack & list items (WP-C Table C1, tags 81/102/115/116/121/122/127/
+    # Pack & list items (tags 81/102/115/116/121/122/127/
     # 128/130/138/140/141/142/143)
     image_horizon: ImageHorizonPixels | None = None
     control_commands: tuple[ControlCommand, ...] = ()

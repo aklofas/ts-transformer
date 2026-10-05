@@ -10,7 +10,7 @@
 //!   then take, then `Close::close` inside a panic boundary. A call parked
 //!   on another thread therefore ends promptly instead of blocking the
 //!   close or tripping PyO3's borrow check.
-//! - Bytes-like extraction follows audit-backlog #10's two-path pattern:
+//! - Bytes-like extraction follows the two-path pattern:
 //!   fast `&[u8]` for real `bytes`, fallback through `builtins.bytes(x)`
 //!   for `bytearray` / `memoryview` (gated under PyO3's abi3-py310
 //!   because `PyBuffer` is hidden behind `not(Py_LIMITED_API)`).
@@ -18,10 +18,10 @@
 //!   `tst_pipeline::binding::BindingError` whose kind is resolved on
 //!   `tstrans.exceptions.SrtErrorKind` by name, checked at import.
 //!
-//! URL dispatch (the composition itself lives in `tst_srt`, Arc 2 A3):
+//! URL dispatch (the composition itself lives in `tst_srt`):
 //! - `Sender::from_url` requires `?mode=caller` (the SrtUrl default) and
 //!   dials through `SrtUrl::connect_recv` — overlay only, no sender
-//!   preset, which is what this open composed before Arc 2.
+//!   preset.
 //! - `Receiver::from_url` requires `?mode=listener` and goes through
 //!   `SrtUrl::accept_one`: bind, accept ONE peer, drop the listener. The
 //!   empty-host `0.0.0.0` rule and IPv6 bracketing live there, so this
@@ -29,7 +29,7 @@
 //!
 //! The Receiver one-shot semantics mirror libsrt: each accepted Socket
 //! is its own connection; for a listener that hosts many peers, callers
-//! should use the lower-level `Listener` PyClass (T3) and iterate.
+//! should use the lower-level `Listener` PyClass and iterate.
 //!
 //! There is NO separate receive-only transport type in the Rust crate —
 //! `tst_srt::SrtTransport` implements both `Transport` (send) and
@@ -205,7 +205,7 @@ impl PySrtStats {
 /// [`crate::util::CancelSource`]: every clone obtained from the same
 /// shell — and the shell's own `close()` — forwards into one
 /// `Arc<dyn TransportCancel>` and flips one flag, so `is_cancelled()`
-/// reports the shell's state, not this wrapper's history (Arc 2).
+/// reports the shell's state, not this wrapper's history.
 #[pyclass(frozen, name = "CancelHandle", module = "tstrans.srt")]
 pub(crate) struct PyCancelHandle {
     src: Arc<crate::util::CancelSource>,
@@ -243,7 +243,7 @@ impl PyCancelHandle {
 /// apply through `SrtUrl::connect_recv` (passphrase, latency, streamid, …).
 #[pyclass(name = "Sender", module = "tstrans.srt")]
 pub(crate) struct PySender {
-    /// The binding layer's handle state machine (Arc 2): the slot is
+    /// The binding layer's handle state machine: the slot is
     /// locked only inside `with_mut` / `with_ref`, always under
     /// `py.allow_threads`, so a `send_bytes` parked on another thread
     /// never trips PyO3's borrow check and `close()` (cancel-first)
@@ -266,7 +266,7 @@ impl PySender {
     }
 }
 
-/// A3's non-`Option` accessor (`SrtTransport::srt_cancel_handle()`, taken
+/// The non-`Option` accessor (`SrtTransport::srt_cancel_handle()`, taken
 /// BEFORE the transport moves into the shell): no `.expect`, no `Option`.
 pub(crate) fn srt_cancel_source(t: &SrtTransport) -> Arc<CancelSource> {
     CancelSource::new(Arc::new(t.srt_cancel_handle()))
@@ -279,9 +279,8 @@ impl PySender {
     /// mode, `SrtError(CONNECT_FAILED | TIMEOUT)` on handshake failure.
     ///
     /// Dials through `SrtUrl::connect_recv` — overlay only, no sender
-    /// preset — because that is exactly what this open composed before
-    /// Arc 2 (`SocketConfig::default()` + `apply_to_socket`). Routing it
-    /// through `SrtUrl::connect` would newly set `SRTO_SENDER`, a 15 s
+    /// preset (`SocketConfig::default()` + `apply_to_socket`). Routing it
+    /// through `SrtUrl::connect` would set `SRTO_SENDER`, a 15 s
     /// connect timeout and a 5 s linger on every plain sender.
     #[staticmethod]
     fn from_url(py: Python<'_>, url: &str) -> PyResult<Self> {
@@ -441,8 +440,8 @@ impl PyReceiver {
             ));
         }
         // Registered for the duration of the accept so the interpreter-exit
-        // hook can unpark it — the first accept has no Python handle
-        // (DEBT-16), and a thread parked here at exit deadlocks
+        // hook can unpark it — the first accept has no Python handle yet,
+        // so no caller can cancel it, and a thread parked here at exit deadlocks
         // `atexit(srt_cleanup)`. `_accept_guard` must outlive the accept.
         let slot = std::sync::Arc::new(tst_core::cancel::CancelSlot::new());
         let _accept_guard = crate::util::register_accept_slot(&slot);

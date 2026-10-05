@@ -1,4 +1,4 @@
-"""Audit-2 #8 — DemuxError raised by StrictMode policy must surface as
+"""DemuxError raised by StrictMode policy must surface as
 STRICT_REJECTION, not INTERNAL.
 
 The fixture builds a TS where the PMT declares the KLV PID as
@@ -105,13 +105,13 @@ def _build_strict_rejection_ts() -> bytes:
 
 
 def test_demux_error_kind_has_strict_rejection_variant() -> None:
-    """Audit-2 #8 pre-check — STRICT_REJECTION variant must exist in enum."""
+    """STRICT_REJECTION variant must exist in enum."""
     assert DemuxErrorKind.STRICT_REJECTION is not None
     assert DemuxErrorKind.STRICT_REJECTION.value == "strict_rejection"
 
 
 def test_strict_mode_rejection_is_strict_rejection_not_internal() -> None:
-    """Audit-2 #8 — DemuxError raised by StrictMode.FULL policy must carry
+    """DemuxError raised by StrictMode.FULL policy must carry
     DemuxErrorKind.STRICT_REJECTION, not INTERNAL."""
     bad_ts = _build_strict_rejection_ts()
 

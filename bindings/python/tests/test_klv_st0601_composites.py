@@ -1,6 +1,6 @@
 """ST 0601 composite read-only views — dataclass shape tests.
 Integration via `UasDatalinkLs.sensor_position()` etc. is tested in
-test_klv_st0601.py (Task 11)."""
+test_klv_st0601.py."""
 
 import pytest
 

@@ -50,7 +50,7 @@ def test_patch_unknown_field_name_raises_type_error():
 def test_patch_unknown_tlv_escape_hatch():
     # Tag 200 (out of range / permanently unmodeled) is this suite's
     # durable "genuinely unknown" stand-in — tag 103 (formerly used here)
-    # became a WP-B typed field (density_altitude_extended_m).
+    # is a typed field (density_altitude_extended_m).
     raw = klv.encode_uas_datalink(_base_ls(unknown=((200, b"\xde\xad"),)))
     out = klv.patch_uas_datalink(raw, {"unknown": ((200, b"\x01\x02\x03"),)})
     dec = klv.decode_uas_datalink(out)

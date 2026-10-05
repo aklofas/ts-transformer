@@ -1,12 +1,11 @@
-//! Wave B Task 23 — `MuxSender` convenience wrapper.
+//! `MuxSender` convenience wrapper.
 //!
 //! Wraps `tst_pipeline::MuxSender<tst_rtp::RtpTransport>`: build a UDP
 //! RTP sender from a URL and a `MuxerProgramConfig` in a single call,
 //! then push elementary streams through the muxer with each call
 //! ending in a `RtpTransport::send_bytes` flush.
 //!
-//! Architectural notes (Stage 1 tst-c lesson #1: handles concrete
-//! per-transport):
+//! Architectural notes (handles are concrete per-transport, as in tst-c):
 //!
 //! - This PyClass wraps `MuxSender<RtpTransport>` directly — NOT
 //!   `MuxSender<Box<dyn Transport>>`. Future SRT support lands as a
@@ -14,16 +13,16 @@
 //!   `MuxSender<SrtTransport>`.
 //! - The push methods mirror the
 //!   `bindings/python/src/rtp/server.rs::PyMountHandle` shape (single +
-//!   `_to` variants × video/klv/audio/subtitle; data added by the W3
-//!   private-data arc — not present on `PyMountHandle`).
-//! - Bytes-like extraction follows the audit-backlog #10 two-path
+//!   `_to` variants × video/klv/audio/subtitle, plus data — not present
+//!   on `PyMountHandle`).
+//! - Bytes-like extraction follows the two-path
 //!   pattern (fast `bytes` downcast, fallback through Python's
 //!   `bytes()` builtin coercion) — same shape as `PyMountHandle`.
 //! - Each push releases the GIL via `py.allow_threads(|| ...)`. The
 //!   `Py<PyBytes>` strong ref pinning the slice lives on the caller's
 //!   Python frame, so GC can't collect it while we hold the borrowed
 //!   `&[u8]` without the GIL.
-//! - Concurrency (Arc 2):
+//! - Concurrency:
 //!   Every wrapper holds a `tst_pipeline::binding::Owned`, which takes
 //!   the slot only inside `with_mut` / `with_ref` (GIL released) and
 //!   makes `close()` cancel-first.
@@ -92,7 +91,7 @@ fn mux_sender_err(py: Python<'_>, e: MuxSenderError) -> PyErr {
 /// ```
 #[pyclass(name = "MuxSender", module = "tstrans.rtp")]
 pub struct PyMuxSender {
-    /// Shared slot (PR #209 shape): every push holds it with the GIL
+    /// Shared slot: every push holds it with the GIL
     /// released; `close()` fires `cancel` BEFORE taking it, so a push in
     /// flight on another thread ends with `RtpError(CLOSED)` instead
     /// of the close raising `RuntimeError: Already borrowed`. `Option` so
@@ -154,7 +153,7 @@ impl PyMuxSender {
     // Mirror `bindings/python/src/rtp/server.rs::PyMountHandle` 1:1 for
     // surface consistency. Each method:
     //   - takes the payload bytes-like as the first positional arg,
-    //   - takes `pts` keyword-only (audit #9 normalization),
+    //   - takes `pts` keyword-only,
     //   - releases the GIL during the underlying push.
 
     /// Send one video access unit onto the lone configured video

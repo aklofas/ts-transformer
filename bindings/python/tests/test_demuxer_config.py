@@ -1,5 +1,6 @@
-"""DemuxerConfig — Phase 2 minimal config (strict mode + PES caps).
-Advanced knobs (link_klv, treat_as, av1_carriage) deferred."""
+"""DemuxerConfig — minimal config (strict mode + PES caps).
+`av1_carriage` is covered in test_demux_config_parity.py; `link_klv` and
+`treat_as` are Rust-only and not bridged to Python."""
 
 import pytest
 from tstrans.mpegts import DemuxerConfig, StrictMode

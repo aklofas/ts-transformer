@@ -1,13 +1,12 @@
-"""Wave A Task 21 — surface tests for tstrans.rtp.RtspClient + auth dataclasses.
+"""Surface tests for tstrans.rtp.RtspClient + auth dataclasses.
 
 Covers dataclass validation (RtspClientConfig accepts the auth shapes,
 rejects empty URL, rejects ad-hoc duck-typed auth objects), BasicAuth /
 DigestAuth construction + repr (passwords must NOT leak through repr),
 and the enum surface (TransportPref / DigestAlgorithm / RtspVersion).
 
-The actual RTSP wire exchange is covered by `test_rtsp_loopback.py`
-(currently skipped at Wave A — see that file's module docstring for the
-T25 follow-up).
+The actual RTSP wire exchange is covered by `test_rtp_integration.py`
+(`test_rtsp_loopback.py` is a documented skip — see its module docstring).
 """
 
 import socket
@@ -187,8 +186,8 @@ def test_rtsp_client_config_repr_redacts_pem_and_auth():
 def test_rtsp_stats_default_is_zero():
     # Construction directly from Python isn't supported (no __new__);
     # we exercise it indirectly via the (currently unused) classmethod
-    # surface. Use type-only checks here — wave-B `session.stats()` is
-    # exercised in test_rtsp_loopback.py.
+    # surface. Use type-only checks here — `session.stats()` needs a live
+    # session.
     assert RtspStats is not None
     assert hasattr(RtspStats, "__qualname__")
 
@@ -235,7 +234,7 @@ def test_rtsp_session_class_exposed():
 
 
 # ---------------------------------------------------------------------------
-# Cancel outcome (review 9, R9-05)
+# Cancel outcome
 # ---------------------------------------------------------------------------
 
 _SDP = (
@@ -318,8 +317,8 @@ def _silent_on_pause_peer():
 
 def test_cancel_of_a_parked_control_call_is_closed():
     """A cancel fired while `pause()` is parked on a silent peer ends the
-    call with `RtspError(CLOSED)` — the one cancel outcome (review 9,
-    R9-05; it was PROTOCOL). The handle only exists on a live session,
+    call with `RtspError(CLOSED)` — the one cancel outcome, never
+    PROTOCOL. The handle only exists on a live session,
     so the parked call is PAUSE, not connect. Asserts the kind only."""
     port, done, server = _silent_on_pause_peer()
     cfg = RtspClientConfig(

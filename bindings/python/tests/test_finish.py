@@ -1,4 +1,4 @@
-"""`MuxSender.finish()` parity (Arc 2 R3 / DEBT-14): drain, report, close.
+"""`MuxSender.finish()` parity: drain, report, close.
 
 `close()` is cancel-first and abandons whatever the muxer still holds;
 `finish()` is the lossless counterpart — it drains to the live transport,

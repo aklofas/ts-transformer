@@ -1,4 +1,4 @@
-"""Tests for `tstrans.hls` (Plan A5b Wave C).
+"""Tests for `tstrans.hls`.
 
 Covers:
 - Publisher ABC: cannot instantiate; subclass-method enforcement.
@@ -107,7 +107,7 @@ def test_module_re_exports() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Publisher ABC (T10)                                                         #
+# Publisher ABC                                                               #
 # --------------------------------------------------------------------------- #
 
 
@@ -160,7 +160,7 @@ def test_hls_publisher_is_virtual_subclass_of_publisher() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# HlsMode + stats dataclasses (T13)                                           #
+# HlsMode + stats dataclasses                                                 #
 # --------------------------------------------------------------------------- #
 
 
@@ -191,7 +191,7 @@ def test_hls_stats_fields() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# HlsPublisher direct push (T12)                                              #
+# HlsPublisher direct push                                                    #
 # --------------------------------------------------------------------------- #
 
 
@@ -270,7 +270,7 @@ def test_hls_builder_from_url_bad_scheme_raises_hls_error_url() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# MuxPublisher (T11)                                                          #
+# MuxPublisher                                                                #
 # --------------------------------------------------------------------------- #
 
 
@@ -316,15 +316,14 @@ def test_mux_publisher_video_then_finish_into_publisher() -> None:
 
 
 def test_with_config_hls_racing_push_ts_never_panics() -> None:
-    """Review #7 §7.11 general-review #2/#3: `with_config_hls` took a PyO3
-    `borrow_mut()` on the `HlsPublisher` handle it consumes. PyO3's own
-    borrow check marks that handle borrowed for the whole duration of ANY
-    `&self` method call on it, including `push_ts`'s native work inside
-    `py.allow_threads` — so a `with_config_hls` landing on another thread
-    while a `push_ts` call was still in flight panicked ("Already
-    borrowed" -> PanicException) instead of raising a Python exception.
-    It must take ownership through the publisher's own mutex (a shared
-    `borrow()` + `take(py)`) instead: the outcome is success (this call
+    """`with_config_hls` must take ownership of the `HlsPublisher` handle
+    through the publisher's own mutex (a shared `borrow()` + `take(py)`),
+    never a PyO3 `borrow_mut()`. PyO3's own borrow check marks that handle
+    borrowed for the whole duration of ANY `&self` method call on it,
+    including `push_ts`'s native work inside `py.allow_threads` — so a
+    `borrow_mut()` landing on another thread while a `push_ts` call is in
+    flight panics ("Already borrowed" -> PanicException) instead of
+    raising a Python exception. The outcome is success (this call
     won the take) or HlsError(FINISHED) — never a panic, on either
     thread.
 
@@ -397,7 +396,7 @@ def test_mux_publisher_klv_preserved_in_ts_segment() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Error-mapping wiring (T14)                                                  #
+# Error-mapping wiring                                                        #
 # --------------------------------------------------------------------------- #
 
 
@@ -429,7 +428,7 @@ def test_hls_error_round_trips_from_rust(kind_name: str) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Media-derived EXTINF (T15)                                                  #
+# Media-derived EXTINF                                                        #
 # --------------------------------------------------------------------------- #
 
 
@@ -490,7 +489,7 @@ def test_hls_publisher_cut_with_duration() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# finish_serving + HlsServerHandle (Task 14)                                  #
+# finish_serving + HlsServerHandle                                            #
 # --------------------------------------------------------------------------- #
 
 

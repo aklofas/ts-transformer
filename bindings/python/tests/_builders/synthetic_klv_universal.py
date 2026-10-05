@@ -9,8 +9,7 @@ Used by tests that previously skipped on a missing tests/fixtures/local/
 fixture. The returned bytes are valid SMPTE-UL-prefixed records suitable for
 passing directly to parse_klv_universal().
 
-Audit-2 finding #9 — replaces fixture-gated skips for ST 0102 and ST 0903
-pandas tests.
+Lets the ST 0102 and ST 0903 pandas tests run without a capture fixture.
 """
 
 from __future__ import annotations

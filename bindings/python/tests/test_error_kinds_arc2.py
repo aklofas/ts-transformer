@@ -1,9 +1,9 @@
-"""Arc 2 WP-B2: every Python *ErrorKind is a per-domain subset of
+"""Every Python *ErrorKind is a per-domain subset of
 `tst_pipeline::binding::BindingErrorKind`, spelled as
-`BindingErrorKind::name()` (spec §3.3 + A2's K1/K3/K4 rulings). Pins the
+`BindingErrorKind::name()`. Pins the
 canonical member sets, the deprecated aliases and the two removals; the
-Rust↔Python consistency itself is checked at `import tstrans` (Task B2.2)
-and by the kind-equivalence rail (WP-A2)."""
+Rust↔Python consistency itself is checked at `import tstrans`
+and by the kind-equivalence rail."""
 
 from __future__ import annotations
 

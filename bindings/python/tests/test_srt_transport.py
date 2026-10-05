@@ -1,5 +1,5 @@
 """Tests for `tstrans.srt.Sender` / `Receiver` / `SocketStats` /
-`SrtStats` / `CancelHandle` (Wave A T2).
+`SrtStats` / `CancelHandle`.
 
 Uses real libsrt loopback sockets — no external network. A listener-mode
 Receiver is spun up on a background thread before the Sender connects.
@@ -67,7 +67,7 @@ def _make_loopback_pair(
 
 
 def test_module_re_exports() -> None:
-    """`tstrans.srt` must expose the 5 T2 classes after Wave A T2."""
+    """`tstrans.srt` must expose the 5 transport classes."""
     assert tstrans.srt.Sender is not None
     assert tstrans.srt.Receiver is not None
     assert tstrans.srt.SocketStats is not None
@@ -426,7 +426,7 @@ def test_close_while_recv_parked_cancels_first() -> None:
 
 
 def test_cancel_handle_state_is_shared_per_shell() -> None:
-    """Arc 2: `is_cancelled()` observes the SHELL's cancel state, not a
+    """`is_cancelled()` observes the SHELL's cancel state, not a
     per-wrapper flag. Every clone from `cancel_handle()` and the shell's
     own `close()` flip the same state (a watchdog holding one clone sees
     a cancel issued through another, or through `close()`)."""
@@ -581,9 +581,8 @@ def test_no_srt_docstring_names_a_retired_kind() -> None:
 @pytest.mark.parametrize("mod_name", ["srt", "rtp", "udp", "tcp", "rist", "hls"])
 def test_every_public_transport_class_has_a_docstring(mod_name: str) -> None:
     """A `#[pyclass]` whose `///` block drifts onto a neighbouring item
-    silently loses `__doc__` and no rail notices — it happened twice during
-    the Arc 2 re-point (`srt.Listener`, then `tcp.Listener`, both when a
-    `Close`-impl struct was inserted between the doc block and the
+    silently loses `__doc__` and no rail notices (e.g. when a
+    `Close`-impl struct is inserted between the doc block and the
     `#[pyclass]`). Cheap guard over every transport module's public
     classes."""
     import importlib

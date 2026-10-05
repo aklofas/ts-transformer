@@ -86,7 +86,7 @@ def test_vtarget_pack_vmask_is_bytes_not_list():
 
 # ---------------------------------------------------------------------------
 # Encode-path validation: invalid `target_color` shapes must raise, not be
-# silently dropped (audit #6).
+# silently dropped.
 # ---------------------------------------------------------------------------
 
 
@@ -102,16 +102,16 @@ def _vmti_with_color(color):
 
 
 def test_encode_vtarget_pack_color_2tuple_raises():
-    """A 2-element target_color must raise ValueError. Audit-2 #4 moved
-    validation to construction time (__post_init__) so the error now fires
+    """A 2-element target_color must raise ValueError. Validation runs at
+    construction time (__post_init__), so the error fires
     at VTargetPack(...) rather than at encode_vmti(...)."""
     with pytest.raises(ValueError, match="target_color"):
         _vmti_with_color((1, 2))
 
 
 def test_encode_vtarget_pack_color_4tuple_raises():
-    """A 4-element target_color must raise ValueError. Audit-2 #4 moved
-    validation to construction time (__post_init__) so the error now fires
+    """A 4-element target_color must raise ValueError. Validation runs at
+    construction time (__post_init__), so the error fires
     at VTargetPack(...) rather than at encode_vmti(...)."""
     with pytest.raises(ValueError, match="target_color"):
         _vmti_with_color((1, 2, 3, 4))
@@ -135,10 +135,9 @@ def test_encode_vtarget_pack_color_none_ok():
 
 
 # ---------------------------------------------------------------------------
-# REF-KLV-04: large-value (>2**32) round-trip for target_id + pixel fields.
-# Python int is unbounded; the PyO3 bridge was extract::<u32> which would
-# silently truncate.  After the fix it's extract::<u64>, so values up to
-# u64::MAX round-trip correctly.
+# Large-value (>2**32) round-trip for target_id + pixel fields.
+# Python int is unbounded; the PyO3 bridge extracts u64, so values up to
+# u64::MAX round-trip (a u32 extract would silently truncate).
 # ---------------------------------------------------------------------------
 
 

@@ -87,7 +87,7 @@ def test_klv_error_carries_kind_and_message():
 
 
 # ---------------------------------------------------------------------------
-# Phase 4: MuxError + KlvEncodeError refinement
+# MuxError + KlvEncodeError refinement
 # ---------------------------------------------------------------------------
 
 
@@ -105,7 +105,7 @@ def test_klv_encode_error_class_exists_and_is_tst_error():
 
 
 def test_mux_error_positional_message_and_kind_kwarg():
-    # Phase 4 supports positional-message form alongside the legacy
+    # The positional-message form works alongside the legacy
     # keyword-only form used by `make_mux_error` in errors.rs.
     e = MuxError("bad config", kind=MuxErrorKind.CONFIG_INVALID)
     assert e.kind is MuxErrorKind.CONFIG_INVALID

@@ -6,7 +6,7 @@
 //! reads the dataclass attributes here, fluent-builds the Rust
 //! `RtspServerBuilder`, and returns a PyRtspServer.
 //!
-//! GIL release boundaries (per spec §"GIL release boundaries"):
+//! GIL release boundaries:
 //! - `start`, `stop`, `add_unicast_mount`, `add_multicast_mount`,
 //!   every `MountHandle.push_*` — wrap Rust work in `py.allow_threads`.
 //! - Dataclass construction, `__enter__`/`__exit__`, `cancel_handle`,
@@ -603,10 +603,9 @@ impl PyRtspServer {
                 ),
             ));
         }
-        // Belt-and-suspenders path validation. tst-rtp's start() now
-        // loads + validates the cert/key SYNCHRONOUSLY and fails typed
-        // (the old listener-loads-after-start() wart is fixed), so this
-        // guard is no longer load-bearing — it's kept for the friendlier
+        // Belt-and-suspenders path validation. tst-rtp's start()
+        // loads + validates the cert/key SYNCHRONOUSLY and fails typed,
+        // so this guard is not load-bearing — it's kept for the friendlier
         // Python-side error messages (names the exact path, catches
         // directories/permissions distinctly).
         #[cfg(feature = "tls")]

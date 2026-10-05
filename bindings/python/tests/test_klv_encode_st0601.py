@@ -118,21 +118,21 @@ def test_encode_strict_compliance_missing_mandatory_raises():
 
 # ---------------------------------------------------------------------------
 # Encode-path validation: invalid `universal_label` shapes must raise, not
-# be silently dropped (audit #6).
+# be silently dropped.
 # ---------------------------------------------------------------------------
 
 
 def test_encode_universal_label_3_bytes_raises():
-    """A 3-byte universal_label must raise ValueError. Audit-2 #4 moved
-    validation to construction time (__post_init__) so the error now fires
+    """A 3-byte universal_label must raise ValueError. Validation runs at
+    construction time (__post_init__), so the error fires
     at UasDatalinkLs(...) rather than at encode_uas_datalink(...)."""
     with pytest.raises(ValueError, match="universal_label"):
         UasDatalinkLs(universal_label=b"\x06\x0e\x2b")
 
 
 def test_encode_universal_label_17_bytes_raises():
-    """A 17-byte universal_label must raise ValueError. Audit-2 #4 moved
-    validation to construction time (__post_init__) so the error now fires
+    """A 17-byte universal_label must raise ValueError. Validation runs at
+    construction time (__post_init__), so the error fires
     at UasDatalinkLs(...) rather than at encode_uas_datalink(...)."""
     with pytest.raises(ValueError, match="universal_label"):
         UasDatalinkLs(universal_label=b"\x00" * 17)
@@ -147,7 +147,7 @@ def test_encode_universal_label_16_bytes_ok():
 
 
 # ---------------------------------------------------------------------------
-# DA-KLV-4: sentinel round-trip tests
+# Sentinel round-trip tests
 # ---------------------------------------------------------------------------
 
 
@@ -246,14 +246,14 @@ def test_encode_indicator_policy_ineligible_tag_still_raises():
 
 
 # ---------------------------------------------------------------------------
-# WP-A: Table A1 ranged f64 fields — round-trip within quantization tolerance
+# ranged f64 fields — round-trip within quantization tolerance
 # ---------------------------------------------------------------------------
 
 # (field, example value, tolerance). Tolerance is ~1.5x the fixed-point
-# quantization step for the field's range/byte-width (Appendix Table A1) —
+# quantization step for the field's range/byte-width —
 # tight enough to catch a wrong-field/wrong-scale marshalling bug, loose
 # enough not to flake on the encoder's actual rounding. Byte-level wire
-# correctness is already covered by the tst-core unit tests (Tasks A1-A5);
+# correctness is already covered by the tst-core unit tests;
 # this is a Python <-> Rust marshalling check.
 _F64_FIELDS = [
     ("wind_direction_deg", 235.924010, 0.01),
@@ -291,7 +291,7 @@ _F64_FIELDS = [
 
 @pytest.mark.parametrize("field,value,tol", _F64_FIELDS)
 def test_wpa_f64_field_round_trip(field, value, tol):
-    """Table A1: every ranged f64 field survives encode -> decode within
+    """Every ranged f64 field survives encode -> decode within
     its fixed-point quantization step."""
     rec = UasDatalinkLs(**{field: value})
     back = decode_uas_datalink(encode_uas_datalink(rec))
@@ -302,7 +302,7 @@ def test_wpa_f64_field_round_trip(field, value, tol):
 
 
 # ---------------------------------------------------------------------------
-# WP-A: Table A2 raw/simple scalar + string fields — exact round-trip
+# raw/simple scalar + string fields — exact round-trip
 # ---------------------------------------------------------------------------
 
 _RAW_FIELDS = [
@@ -322,7 +322,7 @@ _RAW_FIELDS = [
 
 @pytest.mark.parametrize("field,value", _RAW_FIELDS)
 def test_wpa_raw_field_round_trip_exact(field, value):
-    """Table A2: raw int/string fields are not fixed-point quantized —
+    """Raw int/string fields are not fixed-point quantized —
     they round-trip byte-exact."""
     rec = UasDatalinkLs(**{field: value})
     back = decode_uas_datalink(encode_uas_datalink(rec))
@@ -331,7 +331,7 @@ def test_wpa_raw_field_round_trip_exact(field, value):
 
 
 # ---------------------------------------------------------------------------
-# WP-A: Table A4 named nested-set raw byte fields — exact round-trip
+# named nested-set raw byte fields — exact round-trip
 # ---------------------------------------------------------------------------
 
 _BYTES_FIELDS = [
@@ -355,7 +355,7 @@ def test_wpa_bytes_field_round_trip_exact(field):
 
 
 # ---------------------------------------------------------------------------
-# WP-A: Table A3 coded enums — known codepoint + wire-unknown int round-trip
+# coded enums — known codepoint + wire-unknown int round-trip
 # ---------------------------------------------------------------------------
 
 
@@ -414,7 +414,7 @@ def test_operational_mode_unknown_int_round_trip():
 
 
 # ---------------------------------------------------------------------------
-# WP-A: representative combined round-trip
+# Representative combined round-trip
 # ---------------------------------------------------------------------------
 
 
@@ -436,7 +436,7 @@ def test_wpa_new_fields_round_trip():
 
 
 # ---------------------------------------------------------------------------
-# WP-A: ST 0601.19 INT_MIN sentinel meaning lookup
+# ST 0601.19 INT_MIN sentinel meaning lookup
 # ---------------------------------------------------------------------------
 
 
@@ -466,13 +466,13 @@ def test_sentinel_meaning_lookup_reserved_and_not_available_tags():
 
 
 # ---------------------------------------------------------------------------
-# WP-B: Table B1 IMAPB f64 fields — round-trip within quantization tolerance
+# IMAPB f64 fields — round-trip within quantization tolerance
 # ---------------------------------------------------------------------------
 
-# (field, example value from Table B1, tolerance ~2x the field's fixed-point
+# (field, example value, tolerance ~2x the field's fixed-point
 # IMAPB quantization step at its default_len). Wire-level byte correctness
-# is already covered by the tst-core spec-vector tests (Task B2); this is a
-# Python <-> Rust marshalling check, same rationale as the WP-A _F64_FIELDS
+# is already covered by the tst-core spec-vector tests; this is a
+# Python <-> Rust marshalling check, same rationale as the _F64_FIELDS
 # table above.
 _IMAPB_F64_FIELDS = [
     ("target_width_extended_m", 13898.5463, 0.5),
@@ -494,7 +494,7 @@ _IMAPB_F64_FIELDS = [
 
 @pytest.mark.parametrize("field,value,tol", _IMAPB_F64_FIELDS)
 def test_wpb_imapb_f64_field_round_trip(field, value, tol):
-    """Table B1: every IMAPB f64 field survives encode -> decode within
+    """Every IMAPB f64 field survives encode -> decode within
     its fixed-point quantization step."""
     rec = UasDatalinkLs(**{field: value})
     back = decode_uas_datalink(encode_uas_datalink(rec))
@@ -505,7 +505,7 @@ def test_wpb_imapb_f64_field_round_trip(field, value, tol):
 
 
 # ---------------------------------------------------------------------------
-# WP-B: Table B2 var-length int fields — exact round-trip
+# var-length int fields — exact round-trip
 # ---------------------------------------------------------------------------
 
 _VARINT_FIELDS = [
@@ -522,7 +522,7 @@ _VARINT_FIELDS = [
 
 @pytest.mark.parametrize("field,value", _VARINT_FIELDS)
 def test_wpb_varint_field_round_trip_exact(field, value):
-    """Table B2: var-length int fields are not fixed-point quantized —
+    """Var-length int fields are not fixed-point quantized —
     they round-trip byte-exact."""
     rec = UasDatalinkLs(**{field: value})
     back = decode_uas_datalink(encode_uas_datalink(rec))
@@ -538,7 +538,7 @@ def test_wpb_active_payloads_bytes_round_trip_exact():
 
 
 # ---------------------------------------------------------------------------
-# WP-B: Table B2 coded enums (platform_status, sensor_control_mode)
+# coded enums (platform_status, sensor_control_mode)
 # ---------------------------------------------------------------------------
 
 
@@ -570,7 +570,7 @@ def test_sensor_control_mode_unknown_int_round_trip():
 
 
 # ---------------------------------------------------------------------------
-# WP-B: imapb_specials side-channel — both directions
+# imapb_specials side-channel — both directions
 # ---------------------------------------------------------------------------
 
 
@@ -648,7 +648,7 @@ def test_imapb_specials_payload_too_large_for_tag_default_len_raises():
 
 
 # ---------------------------------------------------------------------------
-# WP-B: OutOfRangePolicy.INDICATOR for IMAPB fields (tag 113)
+# OutOfRangePolicy.INDICATOR for IMAPB fields (tag 113)
 # ---------------------------------------------------------------------------
 
 

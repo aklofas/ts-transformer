@@ -1,4 +1,4 @@
-"""Phase 5: shared codec types + NalUnit + Obu typed access."""
+"""Shared codec types + NalUnit + Obu typed access."""
 
 import pytest
 
@@ -82,7 +82,7 @@ def test_codec_module_exports():
 
 
 # ---------------------------------------------------------------------------
-# Task 10 — MispTimeKind, MispTimestamp, extract_misp_timestamp
+# MispTimeKind, MispTimestamp, extract_misp_timestamp
 # ---------------------------------------------------------------------------
 
 

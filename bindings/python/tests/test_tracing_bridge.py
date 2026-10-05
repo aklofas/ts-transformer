@@ -1,4 +1,4 @@
-"""Tests for the `TSTRANS_LOG` tracing-to-stderr bridge (Task C7, `[Q7]`).
+"""Tests for the `TSTRANS_LOG` tracing-to-stderr bridge.
 
 The Rust core (`tst-core`/`tst-rtp`/`tst-pipeline`) emits `tracing`
 events, but nothing installs a subscriber for the Python extension —

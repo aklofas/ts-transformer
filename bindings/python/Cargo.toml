@@ -2,10 +2,8 @@
 name        = "tst-py"
 description = "MPEG-TS video + MISB KLV streaming via PyO3 — mux/demux, typed KLV, codec parsers, and live SRT/RTP/UDP/TCP/RIST transports"
 publish     = false
-# tst-py versions independently from the rest of the workspace
-# (per spec: docs/specs/2026-05-22-tst-py-design.md — "tst-py crate
-# version is independent of the rest of the workspace; v1 starts at
-# 0.1.0"). Keep this in sync with pyproject.toml's `[project] version`.
+# tst-py versions independently from the rest of the workspace.
+# Keep this in sync with pyproject.toml's `[project] version`.
 version     = "0.7.0"
 edition.workspace      = true
 rust-version.workspace = true
@@ -37,7 +35,7 @@ rtp     = ["dep:tst-rtp", "dep:secrecy", "tst-rtp?/rtsp-server"]
 # wrapping user-passed passwords in `SecretString` before handing them
 # to the Rust builder).
 srt     = ["dep:tst-srt", "dep:secrecy"]
-# Plan A5b — udp / tcp / hls / rist transports (all default-on, matching
+# udp / tcp / hls / rist transports (all default-on, matching
 # rtp/srt; PyPI wheels ship everything). `hls` pulls tst-hls (with its
 # `serve` feature for the built-in HTTP server; the MuxPublisher shell comes
 # from the unconditional tst-pipeline). `rist` pulls secrecy for AES PSK
@@ -49,7 +47,7 @@ tcp     = ["dep:tst-tcp"]
 hls     = ["dep:tst-hls", "tst-hls?/serve"]
 rist    = ["dep:tst-rist", "tst-rist/mbedtls", "dep:secrecy"]
 # `pipeline` gates the ext::pairing PairingDemuxer composite. tst-pipeline
-# itself is an UNCONDITIONAL dependency since Arc 2 WP-B2: `src/raise.rs`
+# itself is an UNCONDITIONAL dependency: `src/raise.rs`
 # (the one Rust->Python raise path) and the mux / demux / klv / codec error
 # mappers use `tst_pipeline::binding` in every build, transports or not.
 pipeline = []
@@ -80,18 +78,18 @@ tst-tcp      = { path = "../../crates/tst-tcp", default-features = false, option
 tst-hls      = { path = "../../crates/tst-hls", default-features = false, optional = true }
 tst-rist     = { path = "../../crates/tst-rist", default-features = false, optional = true }
 pyo3         = { version = "0.22", features = ["extension-module", "abi3-py310"] }
-# Used by the `rtp` feature path — both T21 RtspClientBuilder::auth and
-# T22 server-side auth wrap user-passed passwords in `SecretString`
+# Used by the `rtp` feature path — both RtspClientBuilder::auth and
+# server-side auth wrap user-passed passwords in `SecretString`
 # before handing them to the Rust builder. Optional + gated on
 # `feature = "rtp"` so non-rtp builds don't pull it.
 secrecy      = { workspace = true, optional = true }
-# `TSTRANS_LOG` bridge (Task C7) — the Rust core emits `tracing` events
+# `TSTRANS_LOG` bridge — the Rust core emits `tracing` events
 # that are otherwise silently discarded because nothing installs a
 # subscriber inside the Python extension. Not optional/feature-gated:
 # the bridge itself is always compiled in, but only installs a
 # subscriber at runtime when `TSTRANS_LOG` is set (see `lib.rs`).
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-# Direct since Arc 2 WP-B2: `util::close_owned` logs a transport whose own
+# Direct dependency: `util::close_owned` logs a transport whose own
 # `close()` failed instead of raising (Python `close()` is documented
 # infallible + idempotent). Already linked transitively via tracing-subscriber.
 tracing = { workspace = true }

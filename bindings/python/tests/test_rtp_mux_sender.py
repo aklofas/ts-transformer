@@ -1,4 +1,4 @@
-"""Tests for `tstrans.rtp.MuxSender` (Wave B Task 23).
+"""Tests for `tstrans.rtp.MuxSender`.
 
 Loopback-only tests:
 - Construct a MuxSender + an OS UDP receiver socket; push a NAL via
@@ -45,7 +45,7 @@ def _video_klv_program() -> object:
 
 
 def _video_data_program() -> object:
-    """Video + one private data stream (bare PES-private 0x06, W3)."""
+    """Video + one private data stream (bare PES-private 0x06)."""
     return (
         MuxerProgramConfigBuilder(1, 0x100)
         .add_video(0x101, VideoCodec.H264)
@@ -74,7 +74,7 @@ DATA_RECORD = b"\x01\x02\x03\x04private-record"
 
 
 def test_mux_sender_module_re_exports() -> None:
-    """`tstrans.rtp.MuxSender` must be exposed after T23."""
+    """`tstrans.rtp.MuxSender` must be exposed."""
     assert tstrans.rtp.MuxSender is not None
     assert "MuxSender" in tstrans.rtp.__all__
 
@@ -169,7 +169,7 @@ def test_send_klv_to_handle() -> None:
 
 
 def test_send_data_and_send_data_to_handle() -> None:
-    """W3: `send_data` (single-stream shorthand) + `send_data_to`
+    """`send_data` (single-stream shorthand) + `send_data_to`
     (explicit handle from `data_handle()`) both land bytes on the
     transport. Pass-through contract — no framing, no inspection."""
     port = _free_udp_port()
@@ -214,7 +214,7 @@ def test_send_video_to_handle() -> None:
 
 def test_send_video_accepts_bytes_like() -> None:
     """The send family accepts bytes / bytearray / memoryview (the
-    audit-#10 two-path bytes-like extraction shared with PySender)."""
+    two-path bytes-like extraction shared with PySender)."""
     port = _free_udp_port()
     # Bind a UDP listener so the kernel doesn't return ICMP
     # "Connection refused" between sends — once libsrt-style ECONNREFUSED

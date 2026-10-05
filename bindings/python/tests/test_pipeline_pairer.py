@@ -227,7 +227,7 @@ def test_pairer_output_isinstance_hierarchy():
         assert isinstance(p, PairerOutput)
 
 
-# --- PIPE-01: raw-first VideoSample new contract tests ---
+# --- raw-first VideoSample contract tests ---
 
 def test_video_sample_raw_is_bytes():
     """Paired video sample carries raw bytes (not a parsed payload list)."""

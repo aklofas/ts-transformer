@@ -2,7 +2,7 @@
 
 Generates a minimal body-only synthetic fixture inline; standalone
 VMTI carriage (with UL prefix + outer BER length) is exercised via
-parse_klv_universal in Task 12."""
+parse_klv_universal."""
 
 import pytest
 

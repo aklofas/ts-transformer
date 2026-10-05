@@ -2,17 +2,17 @@
 //!
 //! PyO3 wrappers for `tst_rtp::RtpTransport` (send) and
 //! `tst_rtp::RtpRecvTransport` (recv).  Each PyClass wraps a single
-//! concrete transport — NOT generic over `T: Transport` — matching the
-//! Stage 1 tst-c lesson #1 (handles concrete per-transport).
+//! concrete transport — NOT generic over `T: Transport` — matching
+//! tst-c (handles concrete per-transport).
 //!
-//! GIL boundaries (per `docs/specs/2026-05-26-tst-rtp-phase-4-binding-exposure-design.md`):
+//! GIL boundaries:
 //! - `send`, `recv` → wrapped in `py.allow_threads(|| ...)` so concurrent
 //!   Python threads can keep working while UDP I/O blocks on the kernel.
 //! - `stats` → also releases the GIL: it waits for the slot a parked
 //!   `recv` / in-flight `send` on another thread holds.
 //! - `cancel_handle`, `cancel`, `end_reason`, `__enter__`, `__exit__` →
 //!   fast read-only / atomic operations; no GIL release.
-//! - Concurrency (Arc 2):
+//! - Concurrency:
 //!   Every wrapper holds a `tst_pipeline::binding::Owned`, which takes
 //!   the slot only inside `with_mut` / `with_ref` (GIL released) and
 //!   makes `close()` cancel-first.
@@ -42,7 +42,7 @@ use crate::util::{CancelSource, close_owned};
 /// the trait accessor is nonetheless an `Option`, so this converts the
 /// `None` that cannot happen into a loud raise instead of `.expect`.
 /// `Internal` is not an `RtpErrorKind` member, so `raise` surfaces it as
-/// a bare `RuntimeError` (spec §5's forward-compat rule) — deliberate:
+/// a bare `RuntimeError` (the forward-compat rule) — deliberate:
 /// it is a binding bug, not an RTP condition.
 pub(crate) fn rtp_cancel_source(
     py: Python<'_>,
@@ -67,8 +67,8 @@ pub(crate) fn rtp_cancel_source(
 
 /// Mirror of `tst_core::transport::SocketStats` exposed to Python as
 /// a frozen, get_all-decorated PyClass. Fields match the Rust struct
-/// 1:1 — `RtpTransport` populates `bytes_sent` / `packets_sent` only
-/// in Phase 1; `RtpRecvTransport` populates the receive-side counters.
+/// 1:1 — `RtpTransport` populates `bytes_sent` / `packets_sent` only;
+/// `RtpRecvTransport` populates the receive-side counters.
 /// The RTCP-derived fields (`rtt_us`, `packets_lost_*`) stay zero
 /// until RTCP RR/SR ingest is wired.
 #[pyclass(frozen, get_all, name = "SocketStats", module = "tstrans.rtp")]
@@ -136,7 +136,7 @@ impl PySocketStats {
 /// [`crate::util::CancelSource`]: every clone obtained from the same
 /// shell — and the shell's own `close()` — forwards into one
 /// `Arc<dyn TransportCancel>` and flips one flag, so `is_cancelled()`
-/// reports the shell's state, not this wrapper's history (Arc 2).
+/// reports the shell's state, not this wrapper's history.
 #[pyclass(frozen, name = "CancelHandle", module = "tstrans.rtp")]
 pub(crate) struct PyCancelHandle {
     src: Arc<crate::util::CancelSource>,
@@ -185,7 +185,7 @@ impl PyCancelHandle {
 /// can be embedded in the URL itself.
 #[pyclass(name = "Sender", module = "tstrans.rtp")]
 pub(crate) struct PySender {
-    /// The binding layer's handle state machine (Arc 2): a `send` in flight
+    /// The binding layer's handle state machine: a `send` in flight
     /// on another thread holds the slot only inside `with_mut`, under
     /// `py.allow_threads`; `close()` (cancel-first) ends it instead of
     /// waiting behind it or tripping PyO3's borrow check.
@@ -328,7 +328,7 @@ impl tst_pipeline::binding::Close for RtpRecvInner {
 /// returns just the TS payload bytes.
 #[pyclass(name = "Receiver", module = "tstrans.rtp")]
 pub(crate) struct PyReceiver {
-    /// The binding layer's handle state machine (Arc 2): a parked `recv`
+    /// The binding layer's handle state machine: a parked `recv`
     /// holds the slot only inside `with_mut`, under `py.allow_threads`;
     /// `close()` (cancel-first) ends it instead of waiting behind it.
     owned: Owned<RtpRecvInner>,
@@ -402,7 +402,7 @@ impl PyReceiver {
                 n.map(|n| n.map(|n| s.scratch[..n].to_vec()))
             })
         });
-        // A2's K6 peer-EOS rule lives on the pipeline SHELL impls; this
+        // The peer-EOS rule lives on the pipeline SHELL impls; this
         // class holds a raw `RtpRecvTransport`, so `From<TransportError>`
         // would flatten a peer EOS to `CLOSED`. Apply the shell rule here
         // instead, so `END_OF_STREAM` is reachable and a caller can tell a

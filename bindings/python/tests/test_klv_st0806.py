@@ -456,9 +456,8 @@ def test_rvt_ls_with_helper():
 
 
 # ---------------------------------------------------------------------------
-# Representative slice from the WP-D brief, verbatim behavior (exception
-# type corrected to the real `KlvError` -- there is no `KlvDecodeException`
-# in tstrans.exceptions; see the D6 report for detail).
+# Representative slice of the ST 0806 behavior (the exception type is
+# `KlvError` -- there is no `KlvDecodeException` in tstrans.exceptions).
 # ---------------------------------------------------------------------------
 
 

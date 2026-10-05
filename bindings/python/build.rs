@@ -1,7 +1,7 @@
 fn main() {
     pyo3_build_config::add_extension_module_link_args();
 
-    // Dual-mbedTLS coexistence (Plan A5b). srt-sys and rist-sys each build
+    // Dual-mbedTLS coexistence. srt-sys and rist-sys each build
     // their OWN static copy of the SAME shared source tree
     // (`crates/mbedtls-src/vendor/mbedtls`, reached via
     // `tstrans_mbedtls_src::source_dir()`) — rist-sys points librist's meson

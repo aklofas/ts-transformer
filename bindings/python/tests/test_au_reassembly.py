@@ -1,7 +1,7 @@
 """Python-side coverage for multi-cell AU cell reassembly.
 
-End-to-end reassembly behavior is verified in the Rust integration tests
-(Task 5). Python tests here cover only the binding surface — that the new
+End-to-end reassembly behavior is verified in the Rust integration tests.
+Python tests here cover only the binding surface — that the new
 fields exist on `_MetadataEvent`, that `MultiCellAuReason` is importable as a
 PyO3 `eq_int` enum, and that `_NonConformantEvent` carries the optional
 typed reason.

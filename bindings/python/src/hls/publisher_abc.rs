@@ -1,4 +1,4 @@
-//! Plan A5b Wave C T10 — `PublisherStats`.
+//! `PublisherStats`.
 //!
 //! The public `Publisher` ABC lives in the Python layer
 //! (`tstrans/hls.py`) as a pure `abc.ABC`: a real ABC mixes cleanly with

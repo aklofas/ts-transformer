@@ -1,21 +1,16 @@
-"""Phase 6: KLV record DataFrame adapter tests.
+"""KLV record DataFrame adapter tests.
 
 Tests `tstrans.pandas.klv_to_dataframe` — the polymorphic dispatcher across
 the 4 MISB sets (UasDatalinkLs / SecurityLs / PrecisionTimeStampPack /
 VmtiLs). Fixture availability drives skips: only ST 0601 fixtures ship in
 the workspace today; ST 0102 / 0605 / 0903 paths skip gracefully.
 
-Plan-vs-Rust drift notes (from Task 4 pre-flight):
-  - Plan referenced `precision_timestamp` for UAS — actual field is
-    `timestamp_us`. Tests use the real field name.
-  - Plan referenced `platform_position` composite — `UasDatalinkLs` has
-    no such attribute; composites are exposed via the `frame_center()`,
-    `sensor_position()`, `sensor_attitude()`, `platform_attitude()`,
-    `sensor_fov()`, and `corners()` synthesizer methods. The DataFrame
-    columns track flat scalar dataclass fields (`frame_center_lat_deg`,
-    `sensor_lat_deg`, etc.) — see test below.
-  - Plan referenced `time_status` as a raw byte — actual field is a
-    typed `TimeStatus` object with property accessors.
+Composites are exposed via the `frame_center()`,
+`sensor_position()`, `sensor_attitude()`, `platform_attitude()`,
+`sensor_fov()`, and `corners()` synthesizer methods; the DataFrame
+columns track flat scalar dataclass fields (`frame_center_lat_deg`,
+`sensor_lat_deg`, etc.) — see test below. `time_status` is a typed
+`TimeStatus` object with property accessors.
 """
 
 import pathlib
@@ -66,8 +61,8 @@ def _uas_minimal():
 def _security():
     """Return a synthetic SecurityLs decoded from a spec-minimal ST 0102 record.
 
-    Audit-2 #9: replaced fixture-gated skip with an in-process synthetic
-    builder so the test always runs without requiring a local corpus file.
+    Uses an in-process synthetic
+    builder, so the test always runs without requiring a local corpus file.
     The builder calls encode_security() on a known-good SecurityLs, prefixes
     the 16-byte SECURITY_LS_UL, and round-trips through parse_klv_universal().
     """
@@ -80,7 +75,7 @@ def _security():
 def _vmti():
     """Return a synthetic VmtiLs decoded from a spec-minimal ST 0903 record.
 
-    Audit-2 #9: replaced fixture-gated skip with an in-process synthetic
+    Uses an in-process synthetic
     builder. Contains 2 VTargetPacks so the targets-mode DataFrame has >0 rows.
     """
     from _builders.synthetic_klv_universal import synthetic_vmti_ls
@@ -270,12 +265,12 @@ def test_klv_to_dataframe_vmti_targets_mode():
     assert df.index.names == ["pts", "target_id"]
 
 
-# --- mode validation (audit-2 #7) ----------------------------------------
+# --- mode validation -----------------------------------------------------
 
 
 @pytest.mark.pandas
 def test_klv_to_dataframe_rejects_invalid_mode() -> None:
-    """Audit-2 #7 — typos like mode='target' must raise, not silently
+    """Typos like mode='target' must raise, not silently
     fall back to 'summary'."""
     records = []  # empty — function should still validate mode first
     with pytest.raises(ValueError, match="mode must be"):

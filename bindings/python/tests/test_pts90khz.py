@@ -57,7 +57,7 @@ def test_negative_raw_allowed():
     assert pts.raw == -100
 
 
-# Audit #2 — Pts90khz.ms must truncate toward zero (Rust integer division
+# Pts90khz.ms must truncate toward zero (Rust integer division
 # semantics), not floor toward -inf (Python's `//`). Boundary values around
 # ±90 ticks (= 1 ms) prove the divergence: e.g. -1 ticks floor-divided by 90
 # is -1 in Python, but truncated-divided is 0 — which is what Rust returns.

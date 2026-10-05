@@ -1,5 +1,4 @@
-"""Tests for `tstrans.srt.ManagedMuxSender` + `tstrans.srt.ManagedDemuxReceiver`
-(Wave C Task 8).
+"""Tests for `tstrans.srt.ManagedMuxSender` + `tstrans.srt.ManagedDemuxReceiver`.
 
 Loopback-only tests against a libsrt caller<->listener pair. Each test
 spawns a listener-side worker on a background thread before the
@@ -622,8 +621,8 @@ def test_recv_end_reason_enum_mirrors_rust() -> None:
         "RECONNECT_EXHAUSTED",
         "CANCELLED",
     ]
-    # Distinct from the RTP-side enum — Q8 ruled a dedicated type, because
-    # the two are different types in Rust (SOURCE WINS).
+    # Distinct from the RTP-side enum — a dedicated type, because
+    # the two are different types in Rust.
     assert tstrans.srt.RecvEndReason is not tstrans.rtp.StreamEndReason
     # No member is falsy: `None` already means "hasn't ended", so a
     # zero-valued member would make `if rx.end_reason():` ambiguous.
@@ -807,7 +806,7 @@ def test_recv_end_reason_reconnect_exhausted_on_peer_close() -> None:
 
 
 def test_reconnect_attempts_counts_factory_invocations_from_the_core_counter() -> None:
-    """Arc 2 ARCH-08: the attempt counter lives on `ManagedTransport` /
+    """The attempt counter lives on `ManagedTransport` /
     `ManagedRecvTransport` (`ManagedHandles.attempts`), not in a binding
     closure. A caller-mode `ManagedDemuxReceiver` whose peer vanishes makes
     one factory attempt per backoff tick; `reconnect_attempts()` must reflect

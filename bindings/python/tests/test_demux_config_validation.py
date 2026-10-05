@@ -1,6 +1,6 @@
-"""F10 — DemuxerConfig.__post_init__ fail-fast validation.
+"""DemuxerConfig.__post_init__ fail-fast validation.
 
-Mirrors the Audit-2 #4 pattern applied to `Pts90khz` and the KLV
+Mirrors the pattern applied to `Pts90khz` and the KLV
 dataclasses: invalid primitive shapes (wrong type, out-of-range) must
 fail at construction, not deep inside `build_demuxer` Rust extraction.
 """
@@ -85,9 +85,9 @@ def test_cfi_tolerance_non_bool_rejected_with_typeerror() -> None:
         DemuxerConfig(cfi_tolerance="false")  # type: ignore[arg-type]
 
 
-# Wave B + Wave H coordination — the 3 new fields bridged in Wave B
-# (av1_carriage, au_cell_cap_per_pid, lenient_psi_reassembly) also need
-# fail-fast validation, matching the audit-2 #4 policy.
+# The 3 bridged fields (av1_carriage, au_cell_cap_per_pid,
+# lenient_psi_reassembly) also need fail-fast validation, matching the
+# construction-time policy above.
 
 
 def test_av1_carriage_accepts_none_and_enum() -> None:

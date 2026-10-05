@@ -1,4 +1,4 @@
-"""Phase 6: verify friendly ImportError when [pandas] extra is missing.
+"""Verify friendly ImportError when [pandas] extra is missing.
 
 This test simulates the missing-extra scenario by patching sys.modules,
 then confirms every public adapter raises ImportError with the canonical

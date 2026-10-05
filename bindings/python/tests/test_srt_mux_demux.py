@@ -1,5 +1,4 @@
-"""Tests for `tstrans.srt.MuxSender` + `tstrans.srt.DemuxReceiver`
-(Wave B Task 5).
+"""Tests for `tstrans.srt.MuxSender` + `tstrans.srt.DemuxReceiver`.
 
 Loopback-only tests against a libsrt caller<->listener pair on a single
 host. Each test spawns a listener-side worker on a background thread
@@ -53,7 +52,7 @@ def _video_klv_program() -> object:
 
 
 def _video_data_program() -> object:
-    """Video + one private data stream (bare PES-private 0x06, W3)."""
+    """Video + one private data stream (bare PES-private 0x06)."""
     return (
         MuxerProgramConfigBuilder(1, 0x100)
         .add_video(0x101, VideoCodec.H264)
@@ -119,7 +118,7 @@ DATA_RECORD = b"\x01\x02\x03\x04private-record"
 
 
 def test_mux_demux_module_re_exports() -> None:
-    """`tstrans.srt.{MuxSender,DemuxReceiver}` must be exposed after T5."""
+    """`tstrans.srt.{MuxSender,DemuxReceiver}` must be exposed."""
     assert tstrans.srt.MuxSender is not None
     assert tstrans.srt.DemuxReceiver is not None
     assert "MuxSender" in tstrans.srt.__all__
@@ -271,7 +270,7 @@ def test_send_klv_via_loopback() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Test 2b: send_data via loopback + data handle accessor (W3)                 #
+# Test 2b: send_data via loopback + data handle accessor                      #
 # --------------------------------------------------------------------------- #
 
 
@@ -349,7 +348,7 @@ def test_handle_getters_and_send_to() -> None:
         # _to variant works.
         sender.send_video_to(vh, NAL_AUD, pts=Pts90khz.from_raw(0))
         # bytes-like coercion: bytearray + memoryview both round-trip
-        # through the audit-#10 two-path bytes-like helper.
+        # through the two-path bytes-like helper.
         sender.send_video(bytearray(NAL_AUD), pts=Pts90khz.from_raw(3000))
         sender.send_video(memoryview(bytearray(NAL_AUD)), pts=Pts90khz.from_raw(6000))
         # libsrt does not flush its `pktSentTotal` counter synchronously
@@ -469,8 +468,8 @@ def test_last_seen_micros_via_loopback() -> None:
 
 def test_socket_into_mux_sender_promotion() -> None:
     """`Builder.connect().into_mux_sender(program_config)` produces a
-    fully-functional MuxSender. Verifies the T3 NotImplementedError
-    stub is replaced by a real impl."""
+    fully-functional MuxSender (a real impl, not a NotImplementedError
+    stub)."""
     port = _free_tcp_port()
     # Listener side spawned by the helper, but we drive the caller side
     # manually via Builder + into_mux_sender.
@@ -506,8 +505,7 @@ def test_socket_into_mux_sender_promotion() -> None:
 
 def test_socket_into_demux_receiver_promotion() -> None:
     """`Listener.accept().into_demux_receiver()` produces a
-    DemuxReceiver. Verifies the second T3 NotImplementedError stub is
-    replaced."""
+    DemuxReceiver (a real impl, not a NotImplementedError stub)."""
     port = _free_tcp_port()
     # Spawn the listener-side accept on a worker thread, then connect a
     # MuxSender from the main thread (so libsrt actually accepts the
@@ -580,7 +578,7 @@ def test_demux_receiver_close_while_next_parked_cancels_first() -> None:
     """`close()` from another thread while `__next__` is parked cancels
     first: it returns promptly and the parked iteration ends with
     `SrtError(CLOSED)` (the plain cancel handle closes the libsrt socket;
-    since Arc 2 every shell, plain or managed, reports a cancel as CLOSED).
+    every shell, plain or managed, reports a cancel as CLOSED).
     The contract shared with the JVM plain `DemuxReceiver.close()` and the C
     ABI's `tst_demux_receiver_close`."""
     port = _free_tcp_port()
@@ -705,7 +703,7 @@ def test_demux_receiver_accepts_demux_config() -> None:
 
 
 def test_demux_sourced_failure_raises_demux_error_not_srt_error() -> None:
-    """Arc 2 WP-B2: `DemuxReceiver.__next__` splits on the error's SOURCE.
+    """`DemuxReceiver.__next__` splits on the error's SOURCE.
     A demuxer-side failure (here a PSI CRC mismatch, which `StrictMode.FULL`
     escalates to fatal) must stay a `DemuxError` carrying its own kind; only
     transport-side failures become `SrtError`. Without the split the whole

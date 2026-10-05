@@ -1,5 +1,5 @@
 """Tests for `tstrans.rtp.Sender` / `Receiver` / `SocketStats` /
-`CancelHandle` (Wave A Task 20).
+`CancelHandle`.
 
 These tests use UDP loopback exclusively — no external network. The
 Receiver-side tests rely on the 100 ms cancel-poll tick to verify
@@ -28,7 +28,7 @@ from _builders.ports import free_udp_port as _free_udp_port
 
 
 def test_sender_module_re_exports() -> None:
-    """`tstrans.rtp` must expose the 4 transport classes after T20."""
+    """`tstrans.rtp` must expose the 4 transport classes."""
     assert tstrans.rtp.Sender is not None
     assert tstrans.rtp.Receiver is not None
     assert tstrans.rtp.SocketStats is not None
@@ -51,7 +51,7 @@ def test_sender_send_to_loopback_advances_stats() -> None:
             assert stats.packets_sent == 1
             # RTP header is 12 bytes; 188-byte payload → 200 bytes on the wire.
             assert stats.bytes_sent == 200
-            # RTCP-derived counters stay zero in Phase 1.
+            # RTCP-derived counters stay zero on the raw sender.
             assert stats.rtt_us == 0
             assert stats.packets_lost_send == 0
         # Receive what landed — verify it was actually an RTP-wrapped

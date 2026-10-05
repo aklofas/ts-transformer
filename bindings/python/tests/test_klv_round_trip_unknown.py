@@ -1,8 +1,8 @@
 """Round-trip preservation of ``unknown`` TLVs through KLV encoders.
 
-Audit #5 — decoders preserve forward-compat unknown tags in the
+Decoders preserve forward-compat unknown tags in the
 typed-set dataclasses' ``unknown: tuple[tuple[int, bytes], ...]``
-field, and as of this change the inverse converters forward those
+field, and the inverse converters forward those
 entries into the Rust struct's ``Vec<OwnedRawField>`` so the bytes
 survive a ``decode -> encode -> decode`` round-trip.
 
@@ -106,8 +106,7 @@ def _populated_uas() -> UasDatalinkLs:
 # ---------------------------------------------------------------------------
 
 # ST 0601 typed tags occupy 1-65, 67-80, 82-101, 103-114, 117-120, 123-126,
-# 129, 131-137, 139 (WP-A extended this past the original 5..=91 + {1, 2,
-# 65, 94}; WP-B extended it further past 101; see `is_st0601_typed_tag` in
+# 129, 131-137, 139 (see `is_st0601_typed_tag` in
 # bindings/python/src/klv.rs). Item 66 is the
 # deprecated placeholder — permanently untyped by design (ST 0601.19
 # §8.66: "This item has been Deprecated") — so unlike a tag picked from a
@@ -124,7 +123,7 @@ def _hand_built_st0601_wire_with_unknown() -> bytes:
     one unknown TLV at tag 66, with a valid running-sum checksum so
     lenient decode accepts it.
 
-    Matches the audit's recommended test path: "decode a fixture with a
+    The test path: "decode a fixture with a
     known UL + one unknown tag → re-encode → decode → assert unknown
     survives byte-identical".
     """

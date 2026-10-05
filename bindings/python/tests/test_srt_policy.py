@@ -1,10 +1,10 @@
-"""Wave B T6 — `tstrans.srt.ReconnectPolicy` / `BackoffStrategy` /
+"""`tstrans.srt.ReconnectPolicy` / `BackoffStrategy` /
 `OverflowPolicy`.
 
 Pure-Python ergonomics: construction, defaults, accessors, validation,
 and `__repr__` shape. No transport interaction, no error mapping
-involvement — this is the ergonomic surface that Wave C T7+T8
-(`ManagedSender` etc.) will consume.
+involvement — this is the ergonomic surface the managed shells
+(`ManagedSender` etc.) consume.
 
 Defaults must match `tst_pipeline::ReconnectPolicy::default()` to keep
 the binding symmetric with the Rust crate:

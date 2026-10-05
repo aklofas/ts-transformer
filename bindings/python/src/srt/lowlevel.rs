@@ -1,14 +1,14 @@
 //! `Builder`, `Socket`, `Listener` (the low-level SRT primitives).
 //!
-//! Layered atop T2:
-//! - `Builder` is a hybrid fluent + kwargs SRT URL constructor (Q3).
-//!   URL-provided values WIN over kwargs (Q4-A) — we accumulate kwargs
+//! Layered atop `transport`:
+//! - `Builder` is a hybrid fluent + kwargs SRT URL constructor.
+//!   URL-provided values WIN over kwargs — we accumulate kwargs
 //!   into a `SocketConfig` / `ListenerConfig` FIRST, then call
 //!   `UrlOverlay::apply_to_{socket,listener}` AFTER so the overlay's
 //!   unconditional overwrites give the URL final say.
 //! - `Socket` is a handle that promotes via `into_sender` /
-//!   `into_receiver` into T2's PySender / PyReceiver, and via
-//!   `into_mux_sender` / `into_demux_receiver` into T5's PyMuxSender /
+//!   `into_receiver` into PySender / PyReceiver, and via
+//!   `into_mux_sender` / `into_demux_receiver` into PyMuxSender /
 //!   PyDemuxReceiver. Each consumes the socket handle.
 //! - `Listener` exposes both blocking `accept(timeout_ms=...)` and a
 //!   Python iterator (`for sock in listener: ...`). The iterator
@@ -16,7 +16,7 @@
 //!   `cancel()` call from another thread closes the loop cleanly.
 //!
 //! Error mapping for `UrlError`/`ConnectError`/`BindError`/`AcceptError`/
-//! `IoError` goes through `crate::raise` (Arc 2 WP-B2) — each has a
+//! `IoError` goes through `crate::raise` — each has a
 //! `From<…> for BindingError` next to its Rust definition, and `raise`
 //! resolves the kind's `name()` on `tstrans.exceptions.SrtErrorKind`.
 
@@ -364,7 +364,7 @@ impl PyBuilder {
             ));
         }
         // Apply kwargs FIRST then URL overlay AFTER — overlay does
-        // unconditional overwrite, so URL wins on conflict (Q4-A).
+        // unconditional overwrite, so URL wins on conflict.
         let mut cfg = self.socket_cfg.clone();
         parsed.overlay.apply_to_socket(&mut cfg);
         let addr = tst_srt::addr::join_host_port(&parsed.host, parsed.port);
@@ -575,8 +575,8 @@ impl PySocket {
     /// calls raise `SrtError(kind=CLOSED)`. Idempotent; safe from any
     /// thread. `srt_close` takes libsrt's global locks and, on a
     /// connected socket with unsent data, waits up to `SRTO_LINGER`; that
-    /// wait must not hold the GIL (review #7 §7.11 general-review #2/#3),
-    /// so the native close runs with the GIL released.
+    /// wait must not hold the GIL, so the native close runs with the GIL
+    /// released.
     fn close(&self, py: Python<'_>) {
         let taken = self.inner.lock().unwrap_or_else(|e| e.into_inner()).take();
         if let Some(socket) = taken {
@@ -704,8 +704,8 @@ impl PyListener {
     /// Local bound address as `(host, port)`. Useful when the URL
     /// requested port 0 (kernel-pick) — the bound port reads back via
     /// libsrt's `getsockname`. Answered ONLY from the construction-time
-    /// snapshot (spec §3.2), so it never waits behind an `accept()` parked
-    /// on another thread — the hang PR #234 fixed. Raises
+    /// snapshot, so it never waits behind an `accept()` parked
+    /// on another thread. Raises
     /// `SrtError(CLOSED)` once the listener is closed, and `SrtError(IO)`
     /// in the one case where the snapshot is absent: libsrt's
     /// construction-time `getsockname` failed, so there is no address to

@@ -65,8 +65,8 @@ use crate::util::{CancelSource, close_owned, open_snapshot};
 /// Python-side cancel handle for `tcp.Transport` / `tcp.Listener`. Wraps the
 /// shell's shared [`CancelSource`] over the real `TcpCancelHandle` — the
 /// same object `close()` fires first — so `is_cancelled()` reports the
-/// shell's state, not this wrapper's history (review 9, R9-14; the udp /
-/// rist twins have the same shape).
+/// shell's state, not this wrapper's history (the udp / rist twins have
+/// the same shape).
 #[pyclass(frozen, name = "CancelHandle", module = "tstrans.tcp")]
 pub(crate) struct PyTcpCancelHandle {
     src: Arc<CancelSource>,
@@ -165,7 +165,7 @@ impl PyTcpStats {
 /// ≤100 ms) and the lock becomes available without holding the GIL.
 #[pyclass(name = "Transport", module = "tstrans.tcp")]
 pub(crate) struct PyTcpTransport {
-    /// The binding layer's handle state machine (Arc 2). The shell's
+    /// The binding layer's handle state machine. The shell's
     /// `Arc<dyn TransportCancel>` is a `CancelSource` over the real
     /// `TcpCancelHandle`, so `close()` fires the handle before taking the
     /// slot and a parked `recv()` ends within about one poll boundary.
@@ -353,8 +353,8 @@ impl PyTcpTransport {
 /// Construct a `PyTcpTransport` from an already-connected `TcpTransport`.
 /// Used internally by `PyTcpListenerBuilder::build()` / `accept_blocking`.
 fn make_py_tcp_transport(t: TcpTransport) -> PyTcpTransport {
-    // tcp HAS a real cancel handle, and since WP-C1 its `is_cancelled()` is a
-    // cancel latch rather than `!alive`, so a clean peer EOF no longer reads
+    // tcp HAS a real cancel handle, and its `is_cancelled()` is a
+    // cancel latch rather than `!alive`, so a clean peer EOF does not read
     // as a caller cancel through it. `CancelSource` keeps its own latch
     // (Python `close()` goes through it); `Owned` is where the transport's
     // latch is ORed in.
@@ -525,7 +525,7 @@ impl tst_pipeline::binding::Close for TcpListenerHeld {
 /// remain live while waiting for a connection.
 #[pyclass(name = "Listener", module = "tstrans.tcp")]
 pub(crate) struct PyTcpListener {
-    /// The binding layer's handle state machine (Arc 2). Snapshot = the
+    /// The binding layer's handle state machine. Snapshot = the
     /// bound port read at `build()`, so `local_port()` never waits behind a
     /// parked `accept_blocking()`.
     owned: Owned<TcpListenerHeld, Option<u16>>,
@@ -571,9 +571,8 @@ impl PyTcpListener {
     /// Local bound port. Non-zero after successful `build()`.
     ///
     /// Use this to discover the ephemeral port when `.bind("127.0.0.1:0")`
-    /// was used. Answered ONLY from the `build()`-time snapshot (spec
-    /// §3.2's snapshot-getter rule), so it NEVER waits behind an
-    /// `accept_blocking()` parked on another thread — the PR #234 class.
+    /// was used. Answered ONLY from the `build()`-time snapshot, so it
+    /// NEVER waits behind an `accept_blocking()` parked on another thread.
     /// Raises `TcpError(kind=CLOSED)` once the listener is closed, and
     /// `TcpError(kind=IO)` in the one case where the snapshot is absent:
     /// the bound listener's `local_addr()` errored at `build()`, which the

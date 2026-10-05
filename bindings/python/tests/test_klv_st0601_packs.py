@@ -1,10 +1,10 @@
-"""WP-C ST 0601 pack & list items (Table C1) + `klv::st1010` SDCC-FLP —
+"""ST 0601 pack & list items + `klv::st1010` SDCC-FLP —
 Python wrap tests.
 
 Spec vectors are transcribed from the same MISB ST 0601.19 §8 worked
 examples the Rust test suite pins (`crates/tst-core/src/klv/st0601/
-tests.rs`, `wpc_*`), driven through `decode_uas_datalink` per the closed-
-loop-insufficient lesson: a hand-built spec-byte vector catches a wrong
+tests.rs`, `wpc_*`), driven through `decode_uas_datalink`: a hand-built
+spec-byte vector catches a wrong
 wire formula that a decode(encode(x)) round trip cannot. Each vector is
 also re-encoded and the resulting TLV bytes compared back against the
 original vector, exercising the Python -> Rust inverse translator.
@@ -178,7 +178,7 @@ def _reencoded_tag_value(tag: int, record: UasDatalinkLs) -> bytes | None:
 
 
 # ---------------------------------------------------------------------------
-# WP-C Task C2: simple DLP packs (81/115/116/121/127/143)
+# Simple DLP packs (81/115/116/121/127/143)
 # ---------------------------------------------------------------------------
 
 
@@ -212,7 +212,7 @@ def test_control_command_multi_instance_and_time_us():
 
 
 def test_control_command_with_time_us_round_trips():
-    # time_us presence isn't one of the Table C1 vectors (only its
+    # time_us presence isn't one of the spec vectors (only its
     # absence is spec-pinned above) — a closed-loop round trip is a
     # legitimate binding-fidelity check here, not a wire-spec claim.
     rec = UasDatalinkLs(
@@ -284,7 +284,7 @@ def test_strict_compliance_allows_repeated_115_and_102():
 
 
 # ---------------------------------------------------------------------------
-# WP-C Task C3: VLP series packs (122/128/130/138/140/141/142)
+# VLP series packs (122/128/130/138/140/141/142)
 # ---------------------------------------------------------------------------
 
 
@@ -466,7 +466,7 @@ def test_view_domain_leading_unknown_pair():
 
 
 # ---------------------------------------------------------------------------
-# WP-C Task C4: Tag 102 SDCC-FLP positional capture
+# Tag 102 SDCC-FLP positional capture
 # ---------------------------------------------------------------------------
 
 
@@ -535,7 +535,7 @@ def test_sdcc_tag_dropped_from_unknown_on_the_python_boundary():
 
 
 # ---------------------------------------------------------------------------
-# WP-C carry-forward: is_st0601_typed_tag predicate covers every WP-C tag
+# is_st0601_typed_tag predicate covers every pack & list tag
 # ---------------------------------------------------------------------------
 
 
@@ -543,11 +543,11 @@ def test_sdcc_tag_dropped_from_unknown_on_the_python_boundary():
     "tag", [81, 102, 115, 116, 121, 122, 127, 128, 130, 138, 140, 141, 142, 143]
 )
 def test_wpc_typed_tags_dropped_from_unknown_on_collision(tag):
-    """Every WP-C tag must be recognized as typed by
+    """Every pack & list tag must be recognized as typed by
     `is_st0601_typed_tag` — a caller-supplied `unknown` entry at that tag
     is silently dropped (typed wins) rather than surviving into the
-    encoded/decoded record. Before this predicate update, a WP-C tag
-    supplied via `unknown` would have slipped past the filter and hit
+    encoded/decoded record. If the predicate missed a tag, an entry
+    supplied via `unknown` would slip past the filter and hit
     the real Rust encoder's own (stricter) `ReservedTagInUnknown` check
     instead — this test would have failed with an unexpected raise."""
     rec = UasDatalinkLs(unknown=((tag, b"\x01"),))

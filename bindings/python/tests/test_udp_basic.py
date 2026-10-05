@@ -1,9 +1,9 @@
-"""UDP transport loopback + error-case tests (Plan A5b Wave A T3/T4/T5).
+"""UDP transport loopback + error-case tests.
 
 Covers:
-- T3: unicast loopback round-trip via Transport + RecvTransport
-- T4: builder URL validation, local_addr_port, stats fields
-- T5: TOO_LARGE error-kind propagation, UdpErrorKind variant count
+- unicast loopback round-trip via Transport + RecvTransport
+- builder URL validation, local_addr_port, stats fields
+- TOO_LARGE error-kind propagation, UdpErrorKind variant count
 """
 
 import pytest
@@ -13,7 +13,7 @@ from tstrans.exceptions import UdpError, UdpErrorKind
 
 
 # ---------------------------------------------------------------------------
-# T3: unicast loopback round-trip
+# Unicast loopback round-trip
 # ---------------------------------------------------------------------------
 
 
@@ -52,7 +52,7 @@ def test_udp_send_bytearray() -> None:
 
 
 # ---------------------------------------------------------------------------
-# T4: builders, URL validation, local_addr_port, stats
+# Builders, URL validation, local_addr_port, stats
 # ---------------------------------------------------------------------------
 
 
@@ -128,7 +128,7 @@ def test_udp_recv_transport_context_manager() -> None:
 
 
 # ---------------------------------------------------------------------------
-# T5: error-kind propagation + variant count sentinel
+# Error-kind propagation + variant count sentinel
 # ---------------------------------------------------------------------------
 
 
@@ -187,7 +187,7 @@ def test_recv_builder_rejects_pkt_size_url():
 
 
 def test_udp_recv_deadline_is_backpressure_and_keeps_the_handle_open() -> None:
-    """Arc 2: a recv deadline expiry is BACKPRESSURE (retryable), the
+    """A recv deadline expiry is BACKPRESSURE (retryable), the
     handle stays open, and a datagram delivered afterwards is received."""
     import socket as _socket
 

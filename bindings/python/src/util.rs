@@ -50,21 +50,20 @@ pub(crate) fn coerce_bytes_like<'py>(
 }
 
 // ---------------------------------------------------------------------------
-// Arc 2 WP-B2 — shared cancel state + the two `Owned` helpers every class uses
+// Shared cancel state + the two `Owned` helpers every class uses
 // ---------------------------------------------------------------------------
 
 /// The one cancel state a Python shell and every `CancelHandle` it hands
-/// out share (Arc 2 WP-B2). Handed to `Owned::new` as the shell's
+/// out share. Handed to `Owned::new` as the shell's
 /// `Arc<dyn TransportCancel>` AND cloned into each Python `CancelHandle`,
 /// so `close()` (which goes through `Owned::cancel`) and `handle.cancel()`
 /// flip the same flag, and `is_cancelled()` is observable from any clone.
 ///
 /// `inner` is always the transport's own handle — `SrtCancelHandle`,
 /// `RtpCancelHandle`, `TcpCancelHandle`, `UdpCancelHandle`,
-/// `RistCancelHandle` (both added by Arc 2 WP-D) or a
+/// `RistCancelHandle` or a
 /// `ManagedHandles.cancel`. For udp/rist the `cancelled` flag is also the
-/// stop flag their polled `recv()` loop checks between slices (the former
-/// per-class `stop: Arc<AtomicBool>` fields are deleted).
+/// stop flag their polled `recv()` loop checks between slices.
 ///
 /// `Owned` wraps whatever it is given in its own latching `OwnedCancel`, so
 /// `Owned::cancel` → `CancelSource::cancel` → flag; a `CancelHandle` fires
@@ -158,7 +157,7 @@ impl TransportCancel for CancelSource {
 /// (recover) → take → `T::close`, outside the GIL. A transport whose own
 /// close fails (`Listener::close` → `IoError`) is logged, not raised —
 /// `close()` is documented infallible and idempotent; a panic inside the
-/// inner close is re-raised as `PanicException` exactly as before Arc 2.
+/// inner close is re-raised as `PanicException`.
 #[allow(dead_code)] // every transport surface calls this; dead only in a
 // transport-less `--no-default-features` build.
 pub(crate) fn close_owned<T, S>(
@@ -191,8 +190,7 @@ where
 
 /// Non-blocking liveness: `alive(&T)` when the slot can be inspected now,
 /// `true` while another thread holds it (a parked call means open),
-/// `false` once it is empty. Never waits behind a parked call (the
-/// PR #234 class).
+/// `false` once it is empty. Never waits behind a parked call.
 #[allow(dead_code)] // every transport surface calls this; dead only in a
 // transport-less `--no-default-features` build.
 pub(crate) fn alive_probe<T, S>(owned: &Owned<T, S>, alive: impl FnOnce(&T) -> bool) -> bool {
@@ -210,7 +208,7 @@ pub(crate) fn alive_probe<T, S>(owned: &Owned<T, S>, alive: impl FnOnce(&T) -> b
 /// from (the muxer has no way to add a stream afterwards), so the handles
 /// are read once, before the sender moves into its slot. The `*_handle()`
 /// getters then never wait behind a `send_*` parked on a full send buffer
-/// or in a Blocking reconnect (the PR #234 class).
+/// or in a Blocking reconnect.
 #[allow(dead_code)] // dead only in a transport-less `--no-default-features` build.
 #[derive(Clone, Copy)]
 pub(crate) struct StreamHandles {
@@ -243,7 +241,7 @@ pub(crate) fn open_snapshot<T, S>(owned: &Owned<T, S>) -> Option<&S> {
     (!owned.is_closed()).then(|| owned.snapshot())
 }
 
-/// Cancel every still-live shell at interpreter exit (Arc 2 rider R-EXIT).
+/// Cancel every still-live shell at interpreter exit.
 ///
 /// A thread parked inside libsrt when the process exits deadlocks teardown:
 /// `tst_srt` registers `srt_cleanup` with C `atexit`, and `srt_cleanup`
@@ -310,7 +308,7 @@ pub(crate) fn fire_cancel_sources_at_exit(py: Python<'_>) -> usize {
 /// `TransportCancel` impl.
 ///
 /// This exists for ONE purpose: the first accept inside a listener-mode
-/// constructor parks before any Python handle exists (DEBT-16 — it stays
+/// constructor parks before any Python handle exists (it stays
 /// uncancellable BY THE CALLER, and that is deliberate), so without this
 /// the exit hook has nothing to fire and the process hangs. Wrapping the
 /// slot for the duration of the accept keeps it user-uncancellable while

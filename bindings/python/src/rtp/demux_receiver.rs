@@ -7,8 +7,7 @@
 //! Architectural notes:
 //!
 //! - The PyClass wraps `DemuxReceiver<RtpRecvTransport>` directly,
-//!   matching the Stage 1 tst-c lesson #1 (handles concrete
-//!   per-transport).
+//!   matching tst-c (handles concrete per-transport).
 //! - `__iter__` returns self; `__next__` blocks (releases the GIL) on
 //!   the next `recv_event()` until either an event arrives or the
 //!   transport closes / errors / cancels.
@@ -21,7 +20,7 @@
 //!   onto the Rust `tst_pipeline::DemuxReceiver::with_demux_options`
 //!   path via the existing `crate::mpegts::build_demuxer_config`
 //!   helper.
-//! - Concurrency (Arc 2):
+//! - Concurrency:
 //!   Every wrapper holds a `tst_pipeline::binding::Owned`, which takes
 //!   the slot only inside `with_mut` / `with_ref` (GIL released) and
 //!   makes `close()` cancel-first.
@@ -53,7 +52,7 @@ use crate::util::close_owned;
 
 /// Demux-sourced failures keep `demux_error_to_pyerr` (a `DemuxError`,
 /// not an `RtpError`); transport-sourced ones are `BindingError`s — and
-/// A2's K6 rule maps a receiver shell's peer EOS to `EndOfStream`, which
+/// the peer-EOS rule maps a receiver shell's peer EOS to `EndOfStream`, which
 /// an iterator reports as `StopIteration` (today's clean-EOF shape).
 fn demux_recv_err(py: Python<'_>, e: DemuxReceiverError) -> PyErr {
     match e.source {
@@ -93,7 +92,7 @@ fn demux_recv_err(py: Python<'_>, e: DemuxReceiverError) -> PyErr {
 /// ```
 #[pyclass(name = "DemuxReceiver", module = "tstrans.rtp")]
 pub struct PyDemuxReceiver {
-    /// The binding layer's handle state machine (Arc 2): a parked
+    /// The binding layer's handle state machine: a parked
     /// `__next__` holds the slot only inside `with_mut`, under
     /// `py.allow_threads`, so a concurrent `close()` from another thread
     /// ends it (cancel-first) instead of waiting behind it or tripping
@@ -269,8 +268,8 @@ impl PyDemuxReceiver {
                 // separate accessor that the pipeline shell doesn't expose
                 // directly; we synthesise a SocketStats with the
                 // bytes_received / packets_received fields populated from the
-                // pipeline projection. RTCP-derived fields stay zero until
-                // Stage 3 closes the deferred TCP RTCP wiring.
+                // pipeline projection. RTCP-derived fields stay zero: this
+                // projection does not carry them.
                 // `SocketStats` is `#[non_exhaustive]`; populate via mut spread.
                 let mut sock_stats = tst_core::transport::SocketStats::default();
                 sock_stats.bytes_received = combined.bytes_received;

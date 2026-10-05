@@ -90,9 +90,9 @@ def test_demuxer_stats_returns_dict():
 
 
 # ---------------------------------------------------------------------------
-# Bytes-like input matrix for Demuxer.feed (audit #10).
+# Bytes-like input matrix for Demuxer.feed.
 #
-# Demuxer.feed historically required `bytes`. After audit #10, it accepts
+# Demuxer.feed accepts
 # any object that exposes the Python buffer protocol: `bytes`, `bytearray`,
 # `memoryview`, NumPy arrays, etc. These tests pin the contract by feeding
 # the same fixture as four different bytes-like wrappers.

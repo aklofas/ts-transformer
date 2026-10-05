@@ -36,7 +36,7 @@ def test_enum_variants(cls, names):
 
 def test_nonconformant_kind_has_minimum_set():
     # NonConformantKind mirrors NonConformantIssue's 30+ variants.
-    # Phase 2 ships the catch-all set; per-variant subclasses can grow later.
+    # The catch-all set ships; per-variant subclasses can grow later.
     required = {
         "PCR_ANOMALY",
         "PSI_CHECKSUM_MISMATCH",

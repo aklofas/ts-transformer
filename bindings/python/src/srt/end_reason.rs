@@ -6,7 +6,7 @@
 //! avoid minting a second ABI type (see
 //! `bindings/c/core/src/receiver/demux_receiver/managed.rs`). Python has
 //! no such constraint and the two are genuinely different types in Rust,
-//! so the binding mirrors the Rust enum 1:1 — SOURCE WINS.
+//! so the binding mirrors the Rust enum 1:1.
 //!
 //! ★PURE-PYTHON ENUM, same as `crate::rtp::end_reason`: the member class
 //! lives in `bindings/python/python/tstrans/srt.py`, not in a

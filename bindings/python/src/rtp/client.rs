@@ -17,7 +17,7 @@
 //!   handed to `RtspClientBuilder::auth`, and never re-exposed to
 //!   Python (only `user` / `algorithm` are readable through getters).
 //!
-//! GIL release boundaries (per design spec "GIL release boundaries"):
+//! GIL release boundaries:
 //!
 //! - `py.allow_threads`: `connect`, `play`, `pause`, `teardown`.
 //! - **Not** wrapped: `cancel_handle()`, `stats()`, dataclass ctors,
@@ -431,7 +431,7 @@ impl PyRtspStats {
 ///
 /// Note: this is the *RTSP* cancel — the transport-side data-plane
 /// cancel (post-PLAY RTP data) is exposed by `tstrans.rtp.CancelHandle`
-/// from T20's `transport.rs`. The two flags are independent in the
+/// from `transport.rs`. The two flags are independent in the
 /// underlying Rust API; we expose them under distinct Python class
 /// names to keep the contracts honest.
 #[pyclass(name = "RtspCancelHandle", module = "tstrans.rtp", frozen)]
@@ -537,7 +537,7 @@ impl PyRtspClient {
 
         // 6. Drive the RTSP state machine to PLAY. Wrap in
         //    py.allow_threads for the full network exchange.
-        //    Wave B (T23): retain the `RtspSession` so
+        //    Retain the `RtspSession` so
         //    `RtspSession.into_demux_receiver` can consume its
         //    UDP-socket-pair (or TCP-interleaved mpsc rx) downstream.
         let result = py.allow_threads(
@@ -925,8 +925,8 @@ impl PyRtspSession {
     /// `cancel_handle`) remain usable after the call — only the data-plane
     /// `RtspSession` (the inner Rust value) is consumed.
     ///
-    /// Handle is zeroed BEFORE the fallible native work to avoid
-    /// double-free if the construction raises (the double-free lesson).
+    /// Handle is zeroed BEFORE the fallible native work (prevents a double
+    /// free if the construction raises).
     #[allow(clippy::wrong_self_convention)]
     fn into_h264_receiver(&mut self, py: Python<'_>) -> PyResult<PyH264Receiver> {
         // Step 0: a consumed data plane is CLOSED, checked before the
@@ -953,7 +953,8 @@ impl PyRtspSession {
         };
 
         // Step 2: take the SETUP-time RtspSession.
-        // Zero this BEFORE the fallible into_h264_receiver call (double-free lesson).
+        // Zero this BEFORE the fallible into_h264_receiver call (prevents a
+        // double free if it raises).
         let session = {
             let mut guard = self
                 .session

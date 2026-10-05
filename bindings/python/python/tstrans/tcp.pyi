@@ -1,4 +1,4 @@
-"""Type stubs for `tstrans.tcp` -- raw TCP transport bindings (Plan A5b Wave B).
+"""Type stubs for `tstrans.tcp` -- raw TCP transport bindings.
 
 Mirrors the `Transport`, `TransportBuilder`, `Listener`, `ListenerBuilder`,
 `SocketStats`, `TlsConfig`, and `ClientCert` PyClass-backed types exported from

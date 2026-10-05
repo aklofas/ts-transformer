@@ -1,4 +1,4 @@
-"""Phase 5: CodecError + CodecErrorKind shape tests."""
+"""CodecError + CodecErrorKind shape tests."""
 
 import pytest
 

@@ -1,6 +1,6 @@
 """Type stubs for `tstrans.rtp` — RTP + RTSP bindings.
 
-Mirrors the Wave A / Wave B public surface exported from
+Mirrors the public surface exported from
 `bindings/python/python/tstrans/rtp.py`. Continues `py.typed` discipline.
 mypy --strict clean.
 
@@ -44,7 +44,7 @@ from tstrans.mpegts import (
 
 # A bytes-like input — `bytes`, `bytearray`, `memoryview`, NumPy uint8,
 # or any object implementing the buffer protocol. Concrete extraction
-# happens in Rust via a two-path fast/fallback pattern (audit #10).
+# happens in Rust via a two-path fast/fallback pattern.
 _BytesLike = Union[bytes, bytearray, memoryview, Any]
 
 __all__: list[str] = [
@@ -80,7 +80,7 @@ __all__: list[str] = [
 ]
 
 # ---------------------------------------------------------------------------
-# T20 — RTP transport (Sender / Receiver / SocketStats / CancelHandle)
+# RTP transport (Sender / Receiver / SocketStats / CancelHandle)
 # ---------------------------------------------------------------------------
 
 
@@ -105,8 +105,8 @@ class SocketStats:
     """Frozen wire-level statistics snapshot. Mirror of
     `tst_core::transport::SocketStats`. All fields are integer-valued.
 
-    `RtpTransport` populates `bytes_sent` / `packets_sent` only in
-    Phase 1; `RtpRecvTransport` populates the receive-side counters.
+    `RtpTransport` populates `bytes_sent` / `packets_sent` only;
+    `RtpRecvTransport` populates the receive-side counters.
     RTCP-derived fields (`rtt_us`, `packets_lost_*`) stay zero until
     RTCP RR/SR ingest is wired through the receiver.
     """
@@ -206,7 +206,7 @@ class Receiver:
 
 
 # ---------------------------------------------------------------------------
-# T21 — RTSP client (enums, auth dataclasses, config, stats, session)
+# RTSP client (enums, auth dataclasses, config, stats, session)
 # ---------------------------------------------------------------------------
 
 
@@ -420,7 +420,7 @@ class RtspSession:
 
 
 # ---------------------------------------------------------------------------
-# T22 — RTSP server (RtspServer + MountHandle + stats)
+# RTSP server (RtspServer + MountHandle + stats)
 # ---------------------------------------------------------------------------
 
 
@@ -475,7 +475,7 @@ class MountHandle:
 
     All `push_*` methods release the GIL via `py.allow_threads()` so
     concurrent Python threads can run while the muxer/fanout work
-    proceeds. `pts` is keyword-only per Wave C normalization.
+    proceeds. `pts` is keyword-only.
     """
 
     # Identity / introspection.
@@ -565,7 +565,7 @@ class RtspServerConfig:
     """Pure-Python frozen dataclass — configuration for `RtspServer.start`.
 
     `auth` accepts the same `BasicAuth` / `DigestAuth` PyClass instances
-    that T21 introduced for the client side.
+    that the client side uses.
 
     `tls_cert` / `tls_key` are PEM certificate-chain / private-key *file
     paths* for an `rtsps://` bind (set together). Missing/unreadable
@@ -626,13 +626,7 @@ class RtspServer:
 
 
 # ---------------------------------------------------------------------------
-# T23 — MuxSender + DemuxReceiver convenience wrappers (Wave B).
-#
-# The Rust implementation is being authored in a parallel worktree; the
-# stub here mirrors the surface declared in the plan
-# (`docs/plans/2026-05-26-tst-rtp-phase-4-binding-exposure.md`,
-# Task 23 lines 2456-2470). The merge phase will reconcile if the
-# implementation diverges.
+# MuxSender + DemuxReceiver convenience wrappers
 # ---------------------------------------------------------------------------
 
 
@@ -746,9 +740,8 @@ class DemuxReceiver:
     GIL) on the underlying transport read.
 
     `stats()` returns a tuple `(SocketStats, Any)` — the second
-    element is the demuxer-side stats snapshot whose concrete type is
-    pending T23's final pick (no `DemuxerStats` PyClass exists in
-    `tstrans.mpegts` yet).
+    element is a `MuxerStats` projection of the demuxer-side counters
+    (no `DemuxerStats` PyClass exists in `tstrans.mpegts`).
 
     `end_reason()` / `end_detail()` report why the receive session
     ended (`StreamEndReason` / free-text detail), or `None` for both
@@ -783,7 +776,7 @@ class DemuxReceiver:
 
 
 # ---------------------------------------------------------------------------
-# WP-3 RFC 6184 — H.264 depacketizer types + H264Receiver
+# RFC 6184 — H.264 depacketizer types + H264Receiver
 # ---------------------------------------------------------------------------
 
 

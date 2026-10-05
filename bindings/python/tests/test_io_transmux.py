@@ -1,4 +1,4 @@
-"""tio.transmux — the v0.2.0 demux→edit→remux capstone (Wave 6).
+"""tio.transmux — the demux→edit→remux workflow.
 
 Covers: lazy muxer construction from the first ProgramMap, byte-faithful
 copy semantics, the corrector acceptance workflow (patch_uas_datalink),
@@ -111,9 +111,9 @@ def test_transmux_dst_not_created_for_psi_less_source(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Acceptance (umbrella spec Wave 6): the corrector workflow end-to-end.
-# Patch frame-center tags on a synthetic fixture via klv.patch_uas_datalink
-# (Wave 1), byte-compare every video AU out vs in, and verify the patched
+# Acceptance: the corrector workflow end-to-end.
+# Patch frame-center tags on a synthetic fixture via klv.patch_uas_datalink,
+# byte-compare every video AU out vs in, and verify the patched
 # KLV differs ONLY at the edited TLVs + checksum.
 # ---------------------------------------------------------------------------
 
@@ -268,7 +268,7 @@ def test_transmux_tolerates_identical_pm_reemission(tmp_path):
     assert out_videos == ORIG_AUS
 
 
-# Private-data pass-through (W3): two data streams — one user-private
+# Private-data pass-through: two data streams — one user-private
 # 0xF0 with a 0xFF name descriptor (carries_pts=True), one bare
 # ISO/IEC 13818-1 private-PES 0x06 (carries_pts=False). Distinct
 # payloads per stream so byte-faithfulness is distinguishable per
@@ -280,7 +280,7 @@ DATA_PAYLOADS_B = [b"\xaa\xbb-b0", b"\xcc\xdd-b1", b"\xee\xff-b2"]
 
 def _write_video_data_src(path: Path) -> None:
     """Synthetic single-program source: H.264 video + the two private
-    data streams above, built via the W3 muxer data surface."""
+    data streams above, built via the muxer data surface."""
     cfg = (
         MuxerConfigBuilder()
         .add_program(
@@ -304,8 +304,8 @@ def _write_video_data_src(path: Path) -> None:
 
 
 def test_transmux_passes_unknown_streams_through_byte_faithfully(tmp_path):
-    # W3 pass-through contract (replaces the W2 temporary ValueError
-    # guard): private/application data streams survive a transmux
+    # Pass-through contract: private/application data streams survive a
+    # transmux
     # byte-faithfully — PMT identity (raw stream_type + descriptor
     # bytes) via from_program_map, sample payloads via push_data_to.
     src, dst = tmp_path / "src.ts", tmp_path / "out.ts"
@@ -561,7 +561,7 @@ def test_transmux_audio_copied_byte_faithfully(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# AV1-01 / AV1-03 acceptance tests (WP-B Task 9)
+# AV1 transmux acceptance tests
 # ---------------------------------------------------------------------------
 #
 # Reuse the AV1 fixture builders from test_demux_config_parity.py — pytest
@@ -583,7 +583,7 @@ def _collect_av1(path: Path, demux_mode):
 
 def test_av1_binding_transmux_fixpoint(tmp_path: Path) -> None:
     """Binding-mode AV1 transmux: output AU must be non-empty and
-    byte-identical to the source AU (AV1-01 acceptance for Python)."""
+    byte-identical to the source AU."""
     from tstrans.mpegts import Av1CarriageMode
     src = tmp_path / "av1_binding_src.ts"
     src.write_bytes(_build_av1_ts(Av1CarriageMode.MPEG2_TS_BINDING))
@@ -606,7 +606,7 @@ def test_av1_binding_transmux_fixpoint(tmp_path: Path) -> None:
 
 def test_av1_interop_transmux_fixpoint(tmp_path: Path) -> None:
     """Interop-mode AV1 transmux: output AU must be non-empty and
-    byte-identical to the source AU (AV1-01, interop mode)."""
+    byte-identical to the source AU (interop mode)."""
     from tstrans.mpegts import Av1CarriageMode, DemuxerConfig
     src = tmp_path / "av1_interop_src.ts"
     src.write_bytes(_build_av1_ts(Av1CarriageMode.INTEROP_RAW_OBU))
@@ -653,7 +653,7 @@ def test_h264_event_av1_carriage_is_none(tmp_path: Path) -> None:
 
 
 def test_av1_parse_binding_mode_no_spurious_issues(tmp_path: Path) -> None:
-    """AV1-03 for Python: binding-mode ev.parse(strict=True) succeeds without
+    """Binding-mode ev.parse(strict=True) succeeds without
     raising (the demuxer carriage is forwarded to split_units automatically)."""
     from tstrans.mpegts import Av1CarriageMode, DemuxerConfig
     ts_path = tmp_path / "binding.ts"
@@ -670,7 +670,7 @@ def test_av1_parse_binding_mode_no_spurious_issues(tmp_path: Path) -> None:
 
 
 def test_av1_parse_interop_mode_no_spurious_issues(tmp_path: Path) -> None:
-    """AV1-03 for Python: interop-mode ev.parse(strict=True) succeeds without
+    """Interop-mode ev.parse(strict=True) succeeds without
     raising (carriage is threaded so raw-OBU AU parses cleanly)."""
     from tstrans.mpegts import Av1CarriageMode, DemuxerConfig
     ts_path = tmp_path / "interop.ts"

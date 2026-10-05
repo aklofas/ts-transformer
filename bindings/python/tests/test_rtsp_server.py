@@ -1,4 +1,4 @@
-"""Wave A Task 22 — tstrans.rtp.RtspServer / MountHandle / RtspServerConfig.
+"""tstrans.rtp.RtspServer / MountHandle / RtspServerConfig.
 
 Covers:
 - RtspServerConfig dataclass validation (max_sessions / fanout_capacity /
@@ -97,19 +97,18 @@ def test_rtsp_server_config_accepts_both_tls_paths_set():
 
 
 def test_rtsp_server_config_accepts_basic_auth():
-    # BasicAuth comes from T21 (src/rtp/client.rs PyClass) — same instance
+    # BasicAuth is the src/rtp/client.rs PyClass — same instance
     # type used by both RtspClientConfig.auth (client-side credentials) and
-    # RtspServerConfig.auth (server-side challenge). T21's BasicAuth shape
-    # is (user, password); the `realm` to advertise on WWW-Authenticate is
-    # a server-side concern Wave C T25 will plumb through alongside the
-    # end-to-end server-with-auth tests.
+    # RtspServerConfig.auth (server-side challenge). Its shape
+    # is (user, password, realm=None); the `realm` to advertise on
+    # WWW-Authenticate is a server-side concern (see the realm tests below).
     auth = BasicAuth(user="admin", password="hunter2")
     cfg = RtspServerConfig(auth=auth)
     assert cfg.auth is auth
 
 
 def test_rtsp_server_config_accepts_digest_auth():
-    # Same T21-canonical shape: (user, password, algorithm). `algorithm`
+    # Same client-side shape: (user, password, algorithm). `algorithm`
     # is the PyDigestAlgorithm enum (MD5 / SHA256), not a string.
     from tstrans.rtp import DigestAlgorithm
     auth = DigestAuth(user="admin", password="hunter2")
@@ -123,16 +122,14 @@ def test_digest_auth_accepts_sha256():
     assert a.algorithm == DigestAlgorithm.SHA256
 
 
-# T22-era placeholder tests `test_digest_auth_rejects_unknown_algorithm` and
-# `test_digest_auth_accepts_sha256_variants` (string-based algorithm) were
-# removed at the T20+T21+T22 merge — the algorithm is now a typed enum so
-# unknown strings cannot reach the constructor (Python raises TypeError on
-# bad enum extract before `__new__` body runs).
+# The digest algorithm is a typed enum, so unknown strings cannot reach the
+# constructor (Python raises TypeError on bad enum extract before the
+# `__new__` body runs).
 
 
 def test_basic_auth_realm_optional_with_default_none():
     """The realm kwarg defaults to None (client-side use) and is
-    exposed via a getter (added at the Stage 3 extract_auth fix)."""
+    exposed via a getter."""
     a = BasicAuth(user="x", password="x")
     assert a.user == "x"
     assert a.realm is None
@@ -148,7 +145,7 @@ def test_digest_auth_realm_optional_with_default_none():
 
 
 def test_server_start_with_basic_auth_requires_realm():
-    """Stage 3 extract_auth fix: BasicAuth without realm raises ValueError
+    """BasicAuth without realm raises ValueError
     when used as server-side config (the realm is what the server quotes
     in WWW-Authenticate)."""
     from tstrans.rtp import RtspServer

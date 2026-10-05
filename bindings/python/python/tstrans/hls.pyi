@@ -1,4 +1,4 @@
-"""Type stubs for `tstrans.hls` — HLS publisher bindings (Plan A5b Wave C).
+"""Type stubs for `tstrans.hls` — HLS publisher bindings.
 
 Mirrors the `Publisher`, `PublisherStats`, `HlsPublisher`,
 `HlsPublisherBuilder`, `MuxPublisher`, `MuxPublisherStats`, `HlsMode`, and

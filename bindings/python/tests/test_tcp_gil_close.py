@@ -1,4 +1,4 @@
-"""Regression test for DA-PY-1: TCP transport GIL freeze on stats/close/repr.
+"""Regression test: TCP transport GIL freeze on stats/close/repr.
 
 The bug (before fix):
   Thread A parks in `recv()` on a silent peer.  Internally, `recv()` acquires
@@ -324,7 +324,7 @@ def test_tcp_recv_empty_destination_raises_value_error_before_io() -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────── #
-# CORR-12: Listener.close() from another thread while accept_blocking() is parked
+# Listener.close() from another thread while accept_blocking() is parked
 # ─────────────────────────────────────────────────────────────────────────── #
 
 _LISTENER_CLOSE_CHILD = r"""

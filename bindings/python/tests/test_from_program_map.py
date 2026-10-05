@@ -2,8 +2,8 @@
 
 Covers: demux→mux round-trip via a captured DemuxEvent.ProgramMap,
 strict offender rejection (DVB subtitling/teletext) + the `drop`
-filter, the Unknown→DataStreamSpec mapping (private-data W2), exact
-descriptor preservation for all typed stream kinds (MUX-01/CFG-01),
+filter, the Unknown→DataStreamSpec mapping, exact
+descriptor preservation for all typed stream kinds,
 drop-argument validation, and sync-KLV kind reconstruction (codec=None)."""
 
 import pytest
@@ -93,7 +93,7 @@ def test_roundtrip_demuxed_program_map_rebuilds_working_muxer():
 
 
 def test_unknown_stream_maps_to_data_spec_and_droppable():
-    # Deliberate pre-1.0 behavior change (private-data W2): unknown
+    # Deliberate pre-1.0 behavior change: unknown
     # stream types are no longer strict offenders — they map to
     # DataStreamSpec PES pass-through entries keeping the raw PMT
     # stream_type byte. drop=[UNKNOWN] still excludes them entirely.
@@ -155,7 +155,7 @@ def test_from_program_map_unknown_to_data_introspection():
 
 
 def test_audio_iso639_descriptor_preserved_verbatim_language_none():
-    # MUX-01 / CFG-01: from_program_map uses add_audio (language=None) for
+    # from_program_map uses add_audio (language=None) for
     # every audio stream. The raw ISO-639 0x0A descriptor passes through
     # verbatim in stream_descriptors — it is NOT parsed into the `language`
     # field. This avoids re-encoding ambiguities (uppercase codes, multiple

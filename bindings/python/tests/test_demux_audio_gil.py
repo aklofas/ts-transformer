@@ -4,10 +4,8 @@ In the raw-first model `Demuxer.next_event()` no longer parses audio frames
 during conversion — every Audio event carries raw bytes on `.raw`, and frame
 parsing is opt-in via `.parse()`. This file verifies that observable shape.
 
-(The former Audit-2 #3 GIL-progress regression test was removed when audio
-parsing moved out of the conversion path — there is no longer GIL-held frame
-parsing inside `next_event()` for that test to guard. GIL release now happens
-inside the opt-in `tstrans.codec.parse_audio` / `.parse()`.)
+There is no GIL-held frame parsing inside `next_event()` to guard; GIL
+release happens inside the opt-in `tstrans.codec.parse_audio` / `.parse()`.
 """
 
 from pathlib import Path

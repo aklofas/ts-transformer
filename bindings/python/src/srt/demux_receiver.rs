@@ -11,7 +11,7 @@
 //!   `SrtTransport` implements both `Transport` and `RecvTransport`.
 //! - URL dispatch: `SrtUrl::parse` + `Listener::bind_with` + one-shot
 //!   `accept` instead of `RtpRecvSocketBuilder::from_url`. Mirrors the
-//!   T2 `PyReceiver::from_url` construction pattern.
+//!   `PyReceiver::from_url` construction pattern.
 //! - Error mapping: the one raise path (`crate::raise`), with
 //!   demux-sourced failures kept on `DemuxError` (`demux_recv_err`).
 //!   `DemuxReceiverErrorSource::Transport` collapses to `SrtError`.
@@ -29,7 +29,7 @@
 //!   dataclass; if `None`, defaults are used. Configuration is lifted
 //!   onto the Rust `tst_pipeline::DemuxReceiver::with_demux_options`
 //!   path via the existing `crate::mpegts::build_demuxer_config` helper.
-//! - Concurrency (Arc 2): the shell lives in a
+//! - Concurrency: the shell lives in a
 //!   `tst_pipeline::binding::Owned` and every PyMethod takes `&self`.
 //!   `Owned` serialises access to the inner; a concurrent `close()` /
 //!   `__exit__()` from another Python thread latches the shared cancel
@@ -62,7 +62,7 @@ use crate::util::{CancelSource, alive_probe, close_owned};
 
 /// Demux-sourced failures keep `demux_error_to_pyerr` (a `DemuxError`,
 /// not an `SrtError`); transport-sourced ones are `BindingError`s — and
-/// A2's K6 rule maps a receiver shell's `Transport(TransportError::Closed)`
+/// the peer-EOS rule maps a receiver shell's `Transport(TransportError::Closed)`
 /// (peer EOS) to `EndOfStream`, which an iterator reports as
 /// `StopIteration` (today's clean-EOF shape), never as an error.
 ///
@@ -106,7 +106,7 @@ pub(crate) fn demux_recv_err(py: Python<'_>, e: DemuxReceiverError) -> PyErr {
 /// ```
 #[pyclass(name = "DemuxReceiver", module = "tstrans.srt")]
 pub(crate) struct PyDemuxReceiver {
-    /// The binding layer's handle state machine (Arc 2): a `__next__`
+    /// The binding layer's handle state machine: a `__next__`
     /// parked in `recv_event` holds the slot only inside `with_mut`,
     /// under `py.allow_threads`; `close()` (cancel-first) ends it
     /// instead of waiting behind it.
@@ -186,11 +186,11 @@ impl PyDemuxReceiver {
             None => None,
             Some(cfg_obj) => Some(crate::mpegts::build_demuxer_config(py, cfg_obj)?),
         };
-        // A3 owns the bind-host rule (empty host => 0.0.0.0), the IPv6
+        // `tst_srt::shells` owns the bind-host rule (empty host => 0.0.0.0), the IPv6
         // bracketing and the single-accept listener.
         // Registered for the duration of the accept so the interpreter-exit
-        // hook can unpark it — the first accept has no Python handle
-        // (DEBT-16), and a thread parked here at exit deadlocks
+        // hook can unpark it — the first accept has no Python handle yet,
+        // so no caller can cancel it, and a thread parked here at exit deadlocks
         // `atexit(srt_cleanup)`. `_accept_guard` must outlive the accept.
         let slot = std::sync::Arc::new(tst_core::cancel::CancelSlot::new());
         let _accept_guard = crate::util::register_accept_slot(&slot);

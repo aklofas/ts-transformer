@@ -1,4 +1,4 @@
-//! Plan A5b Wave C T11 — `MuxPublisher` shell (concrete `HlsPublisher`).
+//! `MuxPublisher` shell (concrete `HlsPublisher`).
 //!
 //! `tstrans.hls.MuxPublisher` wraps
 //! `tst_pipeline::MuxPublisher<tst_hls::HlsPublisher>`: it owns a
@@ -6,15 +6,12 @@
 //! (video / klv / audio / subtitle), muxes them into MPEG-TS, and pushes
 //! the resulting bytes into the HLS sink (which segments + serves them).
 //!
-//! Design note (deviation from plan T11): the plan sketched a generic
-//! `PyBridgePublisher` adapting *any* Python `Publisher` subclass back to
-//! the Rust `Publisher` trait via per-call GIL acquisition. The shipped
-//! design monomorphizes over the concrete `HlsPublisher` (the only
-//! publisher impl that exists). This matches the Stage-1 tst-c lesson
-//! (handles are concrete per-transport, never `Box<dyn ...>`) and the
-//! `rtp/mux_sender.rs::PyMuxSender` template (concrete
-//! `MuxSender<RtpTransport>`). A generic Python-bridge publisher can be
-//! added later if a use case lands; it is not needed for HLS.
+//! Design note: the class monomorphizes over the concrete `HlsPublisher`
+//! (the only publisher impl that exists) instead of adapting *any* Python
+//! `Publisher` subclass back to the Rust `Publisher` trait via per-call GIL
+//! acquisition. This matches tst-c (handles are concrete per-transport,
+//! never `Box<dyn ...>`) and the `rtp/mux_sender.rs::PyMuxSender` template
+//! (concrete `MuxSender<RtpTransport>`).
 //!
 //! `with_config_hls(publisher, program_config)` *consumes* the
 //! `HlsPublisher` (moves its inner out of the `Option`); the source
@@ -173,8 +170,8 @@ impl PyMuxPublisher {
     ) -> PyResult<Self> {
         // 1. Take ownership of the inner HlsPublisher (consumes the handle).
         //    Through the publisher's own mutex with the GIL released — a
-        //    PyO3 `borrow_mut()` here panicked ("Already borrowed") while
-        //    another thread was inside `push_ts` (review #7).
+        //    PyO3 `borrow_mut()` here would panic ("Already borrowed") while
+        //    another thread is inside `push_ts`.
         let hls = {
             let pub_ref = publisher.borrow();
             pub_ref.take(py)?.ok_or_else(|| {

@@ -158,8 +158,7 @@ class KlvErrorKind(enum.Enum):
     collapsed to user-facing buckets. Only set-level (structural)
     errors raise as `KlvError` — per-field validation failures land
     on the decoded typed-set object as `.field_errors: list[KlvFieldError]`
-    instead. See `docs/specs/2026-05-22-tst-py-design.md` "Error
-    mapping" for the full mapping table.
+    instead.
 
     The Rust `KlvDecodeError` enum is `#[non_exhaustive]` — Python
     matchers should include a default arm. `UNKNOWN_SET` was removed in
@@ -455,7 +454,7 @@ class SrtError(_KindMessageError):
     kind: SrtErrorKind
 
 
-# ── Plan A5b — udp / tcp / hls / rist transport error classes ────────────
+# ── udp / tcp / hls / rist transport error classes ──────────────────────
 # Each kind enum is the domain's subset of the Rust
 # `tst_pipeline::binding::BindingErrorKind` table, spelled as `name()`.
 # The Rust side raises them through `crate::raise` (import-based, so

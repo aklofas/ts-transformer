@@ -1,11 +1,11 @@
 """cancel() must wake a listener-mode ManagedDemuxReceiver whose reconnect is
 parked in re-accept after its peer disconnected.
 
-Python mirror of tst-c's `loopback_cancel_wakes_managed_listener_parked_in_reaccept`
-(ROADMAP "cancellable managed-listener re-accept"). Before the fix the
-listener factory sat in `Listener::accept()` with nothing able to reach that
-listener, and the backoff between attempts was an uninterruptible sleep, so
-`cancel()` did nothing until the next peer happened to connect.
+Python mirror of tst-c's `loopback_cancel_wakes_managed_listener_parked_in_reaccept`.
+Without a cancellable re-accept the
+listener factory sits in `Listener::accept()` with nothing able to reach that
+listener, and the backoff between attempts is an uninterruptible sleep, so
+`cancel()` does nothing until the next peer happens to connect.
 
 Choreography:
   1. Accept thread: `ManagedDemuxReceiver.from_url("srt://:P?mode=listener")`
@@ -22,8 +22,7 @@ daemon thread can be joined and the test fails with a clear message rather
 than leaving a thread parked in native accept at interpreter exit.
 
 The second test runs the same choreography against the basic
-`srt.ManagedReceiver` (raw TS bytes, `recv_bytes` instead of iteration),
-which PR #188 missed.
+`srt.ManagedReceiver` (raw TS bytes, `recv_bytes` instead of iteration).
 """
 
 from __future__ import annotations
@@ -145,10 +144,9 @@ def test_cancel_wakes_managed_listener_parked_in_reaccept() -> None:
 def test_managed_receiver_cancel_wakes_reaccept() -> None:
     """The basic `srt.ManagedReceiver` sibling of the test above.
 
-    PR #188 made the re-accept cancellable for `ManagedDemuxReceiver` only;
-    `ManagedReceiver` kept the bare `Listener::accept()` factory, so a
-    `cancel()` while the factory was parked with no peer in sight did
-    nothing until someone happened to connect.
+    With a bare `Listener::accept()` factory, a
+    `cancel()` while the factory is parked with no peer in sight does
+    nothing until someone happens to connect.
     """
     port = _free_tcp_port()
     listener_url = f"srt://:{port}?mode=listener"

@@ -1,4 +1,4 @@
-"""Phase 5 Task 12: AV1 codec surface tests.
+"""AV1 codec surface tests.
 
 Fixtures come from the Rust AV1 unit tests in
 ``crates/tst-core/src/codec/av1/tests/sequence_header.rs`` and the
@@ -65,7 +65,7 @@ def test_parse_av1_sequence_header_dimensions():
 
 
 def test_parse_av1_sequence_header_level_and_tier():
-    """Level 2.0 (seq_level_idx=0) and tier 0."""
+    """Level 2.0 (seq_level_idx=0) and seq_tier=0."""
     seq = parse_av1_sequence_header(MINIMAL_SEQ_HEADER)
     assert seq.level == 0
     assert seq.tier == 0

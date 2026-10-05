@@ -1,4 +1,4 @@
-"""MuxerStats + per-stream codec stats tests (Phase 4 Task 10).
+"""MuxerStats + per-stream codec stats tests.
 
 Covers the three accessors `Muxer.stats()`, `Muxer.reset_stats()`,
 `Muxer.stream_codec_stats(pid)` and the Python-side dataclass shapes
