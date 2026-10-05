@@ -25,12 +25,12 @@ directory owns one concern:
 
 | Directory | Owns | Notes |
 |---|---|---|
-| `crates/` | The pure-Rust core: library + transports + test-infra | `srt-sys` (published as `tstrans-srt-sys`), `rist-sys` (published as `tstrans-rist-sys`) (raw FFI); `tst-core` (engine); `tst-pipeline` (shells); the transports `tst-srt` / `tst-rtp` / `tst-udp` / `tst-tcp` / `tst-rist`; `tst-integration`, `tst-test-helpers` (test infra) |
+| `crates/` | The pure-Rust core: library + transports + test-infra | `srt-sys` (published as `tstrans-srt-sys`), `rist-sys` (published as `tstrans-rist-sys`) (raw FFI); `tst-core` (engine); `tst-pipeline` (shells); the transports `tst-srt` / `tst-rtp` / `tst-udp` / `tst-tcp` / `tst-hls` / `tst-rist`; `tst-integration`, `tst-interop`, `tst-test-helpers` (test infra) |
 | `bindings/` | Language bindings for downstream consumers | `bindings/c` (crate `tst-c` — cdylib/staticlib + `include/tstrans.h`) with its embeddable rlib at `bindings/c/core` (crate `tst-c-core`); `bindings/python` (crate `tst-py`); `bindings/jvm` (crate `tst-jni`); `bindings/apple-android` planned |
 | `embedded/` | Bare-metal / QEMU firmware test harnesses (workspace-excluded) | `baremetal-qemu` (no_std muxer/pipeline QEMU smoke), `baremetal-qemu-c` (C-firmware staticlib glue), `freertos-srt` (libsrt-on-FreeRTOS) |
 | `examples/` | Runnable Rust examples (crate `tst-examples`, `publish = false`) | Task-oriented subfolders; C examples mirror this taxonomy under `bindings/c/examples/` |
 | `vendor/` (workspace root) | No longer used for `srt`/`librist`/`mbedtls` — each now bundles its native source inside its owning crate (crates.io requires a package to be self-contained) | `crates/srt-sys/vendor/srt` (libsrt 1.5.7), `crates/rist-sys/vendor/librist`, `crates/mbedtls-src/vendor/mbedtls` (3.6.7 LTS) |
-| `scripts/` | CI ratchets + generators + dev tools | `check/{c,python,rust,embedded,repo}/` rails, `gen/` generators, `dev/` tools, plus `ratchets/` (TSV-driven coverage) and `lib/` |
+| `scripts/` | CI ratchets + generators + dev tools | `check/{c,jvm,python,repo,rust}/` rails, `gen/` generators, `dev/` tools, `interop/` (interop, soak and stress harness drivers), `release/`, `apple/`, plus `ratchets/` (TSV-driven coverage); the embedded gates live in `embedded/scripts/check/` |
 | `tests/` | Cross-cutting advisory control plane | `tests/coverage/` manifests (fixture/skip-ledger/stream-matrix) |
 | `oss-fuzz/` | OSS-Fuzz packaging (options + seed corpora) | Per-crate fuzz targets live in `crates/<c>/fuzz/` |
 
@@ -63,7 +63,9 @@ never on a *-sys crate):
    tst-uniffi (planned) — same shape as tst-jni
 
 dev-only: tst-test-helpers (publish = false; shared test fixtures and
-helpers consumed by tst-core / tst-pipeline / tst-srt test suites)
+helpers consumed by tst-core / tst-pipeline / tst-srt test suites);
+tst-integration (cross-binding test harness) and tst-interop (the
+interop / soak / stress tool, `tst-interop`) — both publish = false
 vendored (bundled per-crate, not at the workspace root): crates/srt-sys/vendor/srt
 (libsrt 1.5.7), crates/rist-sys/vendor/librist, crates/mbedtls-src/vendor/mbedtls
 (3.6.7 LTS)
@@ -99,10 +101,10 @@ has no runtime dependency on a system libsrt, librist or libmbedtls.
 
 ## Inside `tst-core`: four modules
 
-- `klv::*` — KLV codec, generic substrate plus typed ST 0601 / ST 0605 / ST 0102 (sibling-layer Security LS) / ST 0903 (sibling-layer VMTI LS — top-level + per-target `VTargetPack`; nested LSes pass-through) layers.
+- `klv::*` — KLV codec, generic substrate plus typed ST 0601 / ST 0605 / ST 0102 (sibling-layer Security LS) / ST 0903 (sibling-layer VMTI LS — top-level + per-target `VTargetPack`; nested LSes pass-through) / ST 0805 / ST 0806 / ST 1010 / ST 1204 layers.
 - `mpegts::mux::*` — sender-side MPEG-TS muxer for H.264 / H.265 / H.266 / AV1 video + audio (MP2 / AAC ADTS / AAC LATM / AC-3) + subtitles (DVB-sub / DVB-teletext / CEA-708 / WebVTT-in-TS) + KLV.
 - `mpegts::demux::*` — receiver-side MPEG-TS demuxer; bytes in, typed `DemuxEvent` out.
-- `codec::*` — typed parameter-set parsers for H.264 / H.265 / H.266 / AV1 plus audio frame iterators for `mpegaudio` / `aac::adts`.
+- `codec::*` — typed parameter-set parsers for H.264 / H.265 / H.266 / AV1 plus audio frame parsers for `mpegaudio` / `aac::adts` / `ac3`.
 
 Each module is independently usable. A consumer who only needs KLV decode
 can pull in `tst-core` and use `klv::st0601::decode` without touching the
@@ -277,8 +279,8 @@ KLV record as an independent stream-tagged event with full timing.
 It does **not** pair sync-KLV with video AUs — pairing tolerance,
 sample-and-hold semantics, and multi-stream routing are
 consumer-domain decisions the library can't make correctly for
-everyone. The three canonical pairing patterns live as cookbook
-recipes (12, 13, 14) with runnable example companions
+everyone. The canonical pairing patterns live in the cookbook's
+[Pairing section](/docs/cookbook/index.md) with runnable example companions
 (`pair_sync_klv.rs`, `tee_disk_and_demux.rs`).
 
 ## Cross-thread shutdown — `SrtCancelHandle`
@@ -312,7 +314,8 @@ time-sliced polling. (When async lands later as a separate crate,
 **Sync vs. async** below.)
 
 See [`srt-cancel-handle.md`](./srt-cancel-handle.md) for the full pattern,
-threading guarantees, and per-language idiom table; cookbook recipe 31
+threading guarantees, and per-language idiom table; the cookbook recipe
+[Graceful shutdown from another thread](/docs/cookbook/operations/graceful-shutdown.md)
 is the runnable companion.
 
 ## Sync vs. async
@@ -364,9 +367,9 @@ an entry in [`docs/project/deferred-features.md`](/docs/project/deferred-feature
 - Bonding / connection groups (`SRTO_GROUP*`) — no consumer demand.
 - Other typed MISB sets — ST 0102 (Security LS), ST 0903 (top-level VMTI + per-target `VTargetPack`), and ST 0806 (RVT, plus nested POI/AOI/User Defined sub-sets) ship as sibling-layer typed views over the substrate; nested VMTI sets (VMask / VTracker / VChip / Algorithm Series / Ontology Series) remain pass-through.
 - Owned-projection variants on borrowed iterator types — `VTargetSeriesIter`, `KlvIterator`, and the indexed NAL iterator are borrow-coupled today; cross-language wrappability needs owned-by-value variants.
-- `serde` / `no_std` for `klv` — pure additive; behind feature flags when added.
-- `tst-c` receiver surface — fully shipped (`tst_raw_receiver_t` Phase 1 plan #59, `tst_receiver_t` Phase 2 plan #60, `tst_demux_receiver_t` + typed `tst_event_t` tagged union + multi-program demux Phase 3 plan #62), not deferred. Listed here for cross-reference only. The two genuinely-still-deferred C-ABI hooks are `add_byte_sink` fan-out and `tst_pairer_t` (both tracked in `docs/project/deferred-features.md`).
-- Rustdoc lift to docs.rs — these markdown files are written CommonMark-clean so the lift is mechanical when scheduled.
+- `serde` for typed KLV records — pure additive; behind a feature flag when added. (`klv` is already `no_std`-capable with the rest of `tst-core`.)
+- `tst-c` receiver surface — fully shipped (`tst_raw_receiver_t`, `tst_receiver_t`, `tst_demux_receiver_t` + typed `tst_event_t` tagged union + multi-program demux), not deferred. Listed here for cross-reference only. The C ABI has no `add_byte_sink` fan-out and no `tst_pairer_t`; the Pairer gap is tracked in `docs/project/deferred-features.md` ("`pipeline::ext::pairing` C ABI exposure").
+- Mirroring the `docs/` guide tree into rustdoc — not planned; each published crate's README is already rendered on crates.io / docs.rs, and the transport crates lift it into their crate-level rustdoc.
 
 See [`docs/project/deferred-features.md`](/docs/project/deferred-features.md) for the
 canonical list and the rationale for each entry.

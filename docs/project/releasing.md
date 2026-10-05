@@ -12,7 +12,7 @@ three workflows — treat them as one release transaction:
 A GitHub Release (notes seeded from the CHANGELOG highlights block) completes
 the set — 14 published artifacts per release in total.
 
-> **Release state (updated at the 0.5.0 gate).** All three registries are
+> **Release state.** All three registries are
 > live: crates.io (all 11 crates, first published at 0.4.0 and OIDC-wired
 > since), PyPI `tstrans` (since 0.2.0), and Maven Central
 > `org.tstrans:tstrans-jvm` (since 0.1.0). Standing cautions: every one of
@@ -51,7 +51,7 @@ the set — 14 published artifacts per release in total.
 
 ## Pre-tag checklist
 
-1. **Version consistency (REL-01 preflight).** The rail checks six sources —
+1. **Version consistency (release preflight).** The rail checks six sources —
    workspace `Cargo.toml`, `bindings/python/pyproject.toml`, the tst-py
    `bindings/python/Cargo.toml`, the C `TST_VERSION_*` constants in
    `bindings/c/core/src/lib.rs`, the committed `bindings/c/include/tstrans.h`
@@ -196,12 +196,11 @@ live on the index):
 3. `tst-core` (no internal path dependencies with a `version` key)
 4. `tst-pipeline` (depends on `tst-core`)
 5. `tst-udp`, `tst-tcp`, `tst-hls`, `tst-rtp`, `tst-srt`, `tst-rist` (each
-   depends on `tst-core`; `tst-srt` additionally depends on
-   `tstrans-srt-sys` and `tst-rist` on `tstrans-rist-sys` — both already
-   live from layer 2. `tst-pipeline` appears only as an unversioned
-   dev-dependency in some of these crates' test suites — not a real,
-   version-pinned publish-order dependency. Publish in any order once
-   layers 2-4 are live)
+   depends on `tst-core` and `tst-pipeline` — the shared
+   `tst_pipeline::binding` layer — with pinned `version` keys; `tst-srt`
+   additionally depends on `tstrans-srt-sys` and `tst-rist` on
+   `tstrans-rist-sys` — both already live from layer 2. Publish in any
+   order once layers 2-4 are live)
 
 For each crate, in the order above:
 

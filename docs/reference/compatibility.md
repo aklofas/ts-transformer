@@ -295,7 +295,7 @@ plain `[UL][len][body]`:
 | Shape | Status | Notes |
 | --- | --- | --- |
 | Plain ST 0601 record | ✅ Full | `decode` / `decode_unchecked` / `decode_strict` / `decode_strict_compliance`. |
-| Wrapped Precision Time Stamp Pack + ST 0601 LS (TRM 0909.4 §7) | ✅ Full | Phase A of the spec-compliance plan; first record decoded via `klv::st0605::decode`, rest via record-iter. |
+| Wrapped Precision Time Stamp Pack + ST 0601 LS (TRM 0909.4 §7) | ✅ Full | First record decoded via `klv::st0605::decode`, rest via record-iter. |
 | ST 1402.2 Synchronous Method 5-byte AU cell header | ✅ Full | Spec-conformant 5-byte parser ships in `mpegts::au_cell::read_metadata_au_cell` per H.222.0 V9 § 2.12.4.2 Tables 2-155+2-156. |
 | Broken-checksum captures | ✅ Full | `decode_unchecked` accepts; `decode` rejects with `ChecksumMismatch`. |
 
@@ -409,7 +409,7 @@ Composite views layered on top: `GeoPoint`, `Attitude`, `FieldOfView`,
 | `StrictMode::Off` (lenient default) | ✅ Full | `NonConformant` events surface as data; receive loop continues. |
 | `StrictMode::TimingOnly` | ✅ Full | Hard-fail on `PcrAnomaly`, `PusiMidPes` (vestigial — not currently emitted), `PsiChecksumMismatch`. |
 | `StrictMode::DescriptorsOnly` | ✅ Full | Hard-fail on `MissingMetadataDescriptor`, `StreamTypeMismatch{Sync,Async}OnPid`. |
-| `StrictMode::Full` | ✅ Full | Hard-fail on every `NonConformantIssue` variant including future-added ones; except PAT multi-section (table_id 0x00), which degrades to a surface-only event ("don't blame the sender" — REF-PSI-02). |
+| `StrictMode::Full` | ✅ Full | Hard-fail on every `NonConformantIssue` variant including future-added ones; except PAT multi-section (table_id 0x00), which degrades to a surface-only event ("don't blame the sender"). |
 | KLV-mismatch event coalescing | ✅ Full | One `StreamTypeMismatch*` event per (PID, PMT version); avoids flooding. |
 | PSI version-bump detection | ✅ Full | Re-emits `ProgramMap` only on PMT/PAT version change. |
 | PSI multi-section PAT (H.222.0 §2.4.4.5) | ⚙️ Partial | Multi-section PAT reassembled per §2.4.4.5; multi-section PMT is not supported (rejected with `PsiMultiSectionUnsupported`). Under `StrictMode::Full` a multi-section PAT degrades to a surface-only event (never a hard fail); PMT still hard-fails. |
@@ -418,7 +418,7 @@ Composite views layered on top: `GeoPoint`, `Attitude`, `FieldOfView`,
 | Subtitle classification on `stream_type 0x06` | ✅ Full | Cascade: subtitling/teletext/`VTTC`/`GA94` descriptors → `Subtitle` payload; KLV cases unchanged when no subtitle descriptor present. |
 | AV1 / H.266 codec variants on `VideoCodec` | ✅ Full | Recognized and tagged on `SamplePayload::Video.codec`. The opt-in `split_video(&raw, codec, av1_carriage.unwrap_or_default())` returns `VideoPayload::Nals(_)` for `H266` (`stream_type=0x33`) and `VideoPayload::Obus(_)` for `Av1` (`stream_type=0x06` + AV01 registration). |
 | Typed SPS/VPS/PPS payload parser | ✅ Full | `codec::h264` / `codec::h265` / `codec::h266` for NAL-shaped codecs; `codec::av1` for OBU-shaped. See `codec` block below. |
-| Sync-KLV ↔ video AU pairing helper | ❌ Out of scope | Pairing is a consumer-domain decision; cookbook recipes 12–14 are the canonical patterns. |
+| Sync-KLV ↔ video AU pairing helper | ❌ Out of scope | Pairing is a consumer-domain decision; the cookbook's [Pairing recipes](/docs/cookbook/index.md) are the canonical patterns (the opt-in `ext::pairing::Pairer` helper is below). |
 
 ## Pipeline composition (`tst-pipeline`)
 
@@ -451,10 +451,11 @@ Composite views layered on top: `GeoPoint`, `Attitude`, `FieldOfView`,
 
 | Surface | Status |
 |---|---|
-| Rust API (`Pairer::with_config`, `Pairer::last_before_pts`, `feed`/`flush`/`stats`) | Shipped 2026-05-07 |
-| C ABI exposure | Deferred to future receiver-surface plan |
+| Rust API (`Pairer::with_config`, `Pairer::last_before_pts`, `feed`/`flush`/`stats`) | Shipped |
+| C ABI exposure | Deferred — see `deferred-features.md`, "`pipeline::ext::pairing` C ABI exposure" |
+| Python exposure | Shipped — `tstrans.pipeline.Pairer` |
 | JNI exposure | Shipped — `org.tstrans.pipeline.Pairer` |
-| UniFFI exposure | Deferred to future `tst-uniffi` plan |
+| UniFFI exposure | Deferred with the planned `tst-uniffi` crate |
 
 ### Receive-side entry points
 
@@ -487,7 +488,7 @@ level, color, frame rate). See [`guide-codec.md`](/docs/guides/codec.md).
 
 | Codec | Rust core | C ABI |
 | --- | --- | --- |
-| H.264 SPS / PPS (`codec::h264`) | ✅ Full | ❌ Deferred (rides with receiver C ABI) |
+| H.264 SPS / PPS (`codec::h264`) | ✅ Full | ❌ Deferred |
 | H.265 VPS / SPS / PPS (`codec::h265`) | ⚙️ Partial | ❌ Deferred |
 | H.266 VPS / SPS / PPS (`codec::h266`) | ⚙️ Partial (VPS+SPS+PPS) | ❌ Deferred |
 | AV1 Sequence Header + Frame Header light (`codec::av1`) | ⚙️ Partial | ❌ Deferred |
@@ -542,8 +543,7 @@ as `Obu { obu_type, payload, .. }` without further parsing.
 
 The frame parsers surface header-level metadata (sample rate, channel
 count, layer/profile, frame length, samples per frame, has-CRC). They
-do not decode audio content or verify CRCs. C ABI exposure is deferred
-to ride with the future receiver-surface plan.
+do not decode audio content or verify CRCs. C ABI exposure is deferred.
 
 ---
 
@@ -553,25 +553,25 @@ to ride with the future receiver-surface plan.
 | --- | --- | --- |
 | `tst_muxer_t` standalone utility | ✅ Full | open/push_video/push_klv/pull/close. Internally synchronized; data-path callable from multiple threads. |
 | `tst_mux_sender_t` (plain L1) | ✅ Full | NAL+KLV in, TS+SRT out via `SrtTransport`. Internally synchronized. |
-| `tst_managed_mux_sender_t` (managed L2) | ✅ Full | reconnect + gap buffer over `ManagedTransport<SrtTransport>`; synchronous retries on caller's thread. |
-| `tst_ts_sender_t` / `tst_managed_ts_sender_t` | ✅ Full | pre-muxed TS bytes in; sync framing/recovery (RECOVER auto-resync + STRICT fail-fast); `_get_stats` accessor. |
+| `tst_managed_mux_sender_t` (managed L2) | ✅ Full | reconnect + gap buffer over `ManagedTransport<SrtTransport>`; retries on the caller's thread by default, or on a background worker with `tst_reconnect_policy_set_mode(.., TST_RECONNECT_MODE_BACKGROUND)`. |
+| `tst_sender_t` / `tst_managed_sender_t` | ✅ Full | pre-muxed TS bytes in; sync framing/recovery (RECOVER auto-resync + STRICT fail-fast); `_get_stats` accessor. |
 | `tst_raw_sender_t` / `tst_managed_raw_sender_t` | ✅ Full | one `_send` call = one outbound SRT message. `TST_E_TOO_LARGE` on `len > SRTO_PAYLOADSIZE`. |
-| Opaque builder configs | ✅ Full | `tst_mux_config_t`, `tst_ts_sender_config_t`, `tst_raw_sender_config_t`, `tst_reconnect_policy_t`. Internally cloned by `_open`; caller frees independently. |
-| Thread-local last-error idiom | ✅ Full | `tst_get_last_error()` + `tst_get_last_error_str()`; ten `TST_E_*` codes covering all `tst_core` failure shapes. |
+| Opaque builder configs | ✅ Full | `tst_mux_config_t`, `tst_sender_config_t`, `tst_raw_sender_config_t`, `tst_reconnect_policy_t`. Internally cloned by `_open`; caller frees independently. |
+| Thread-local last-error idiom | ✅ Full | `tst_get_last_error()` + `tst_get_last_error_str()`; one `TST_E_*` code per failure shape (the `TstError` enum in `tstrans.h`; see [`binding-authors.md`](/docs/reference/binding-authors.md) for the mapping contract). |
 | `TST_VERSION_MAJOR` / `MINOR` / `PATCH` macros | ✅ Full | Compile-time `#define`s in `tstrans.h`. |
 | Lifecycle (`_open` / `_close`) | ✅ Full | `_open` returns NULL on failure with last-error set; `_close` is NULL-safe (no-op on NULL); after a successful close the pointer is invalid and calling close again on the same non-null pointer is undefined behavior. Concurrent close-from-multiple-threads on the same live pointer is also UB — bindings must coordinate close against data-path use. |
 | URL parsing | ✅ Full | `srt://host:port?key=value&...` — IPv4 / DNS / bracketed IPv6 hosts plus the libsrt-URL Group 1 vocabulary (`streamid` / `passphrase` / `latency` / `payloadsize` / `congestion` / `conntimeo` / `linger` / `udprcvbuf` / `udpsndbuf` / etc.) plus a handful of ffmpeg-style aliases (`pkt_size`, `payload_size`, `srt_streamid`, `tsbpddelay`, `smoother`, `ffs`, `connect_timeout`, `recv_buffer_size`, `send_buffer_size`). See "FFmpeg URL interop quirks" below for unit divergence. |
-| Stats accessors | ✅ Full | Sender side: `tst_muxer_get_stats` / `_reset_stats`; `tst_mux_sender_*` and `tst_managed_mux_sender_*` (get + reset); `tst_ts_sender_*` and `tst_managed_ts_sender_*` (get + reset); `tst_raw_sender_*` and `tst_managed_raw_sender_*` (get + reset). Receiver side: `tst_raw_receiver_get_stats`, `tst_ts_receiver_get_stats`, `tst_receiver_get_stats`, `tst_demux_receiver_get_stats` + `tst_demux_receiver_get_stream_codec_stats`, plus `_get_socket_stats` for SRT-level counters. `tst_sender_stats_t` + `tst_muxer_stats_t` + `tst_raw_send_stats_t` + `tst_raw_recv_stats_t` + `tst_receiver_stats_t` + `tst_demux_receiver_stats_t` + `tst_stream_codec_stats_t` + `tst_socket_stats_t` `repr(C)` types. |
+| Stats accessors | ✅ Full | Sender side: `tst_muxer_get_stats` / `_reset_stats`; `tst_mux_sender_*` and `tst_managed_mux_sender_*` (get + reset); `tst_sender_*` and `tst_managed_sender_*` (get + reset); `tst_raw_sender_*` and `tst_managed_raw_sender_*` (get + reset). Receiver side: `tst_raw_receiver_get_stats`, `tst_receiver_get_stats`, `tst_demux_receiver_get_stats` + `tst_demux_receiver_get_stream_codec_stats`, plus `_get_socket_stats` for SRT-level counters. `tst_sender_stats_t` + `tst_muxer_stats_t` + `tst_raw_send_stats_t` + `tst_raw_recv_stats_t` + `tst_receiver_stats_t` + `tst_demux_receiver_stats_t` + `tst_stream_codec_stats_t` + `tst_socket_stats_t` `repr(C)` types. |
 | Multi-stream `mpegts::mux` fan-out | ✅ Full | `tst_video_stream_handle_t` / `tst_klv_stream_handle_t` typedefs (transparent `uint32_t`); `tst_mux_config_add_video_stream` / `_add_klv_stream` return handles at config time; `_video_to(handle, ...)` / `_klv_to(handle, ...)` siblings on `tst_muxer_t`, `tst_mux_sender_t`, and `tst_managed_mux_sender_t` (≤16 video + ≤16 KLV streams per program — same caps as the Rust core). Single-target entry points (`tst_*_send_video` / `_send_klv`) keep their signatures and surface `MuxError::AmbiguousTarget` as `TST_E_INVALID_USAGE` on multi-stream muxers. The `Sender` / `RawSender` variants don't carry a `Muxer`, so multi-stream is N/A there. |
 | Multi-program `mpegts::mux` config | ✅ Full | `tst_program_handle_t` (transparent `uint32_t`); `tst_mux_config_add_program` returns a handle; `tst_mux_config_add_video_stream_to_program` / `_add_klv_stream_to_program` scope streams to a program; ≤16 programs per muxer config. |
-| Multi-program demux at the C ABI | ✅ Full | `tst_demux_receiver_t` ships today (`tst_demux_receiver_open` / `_recv_event` / `_get_stats` / `_get_stream_codec_stats` / `_close`); typed `tst_event_t` carries the same `DemuxEvent` shapes the Rust API emits, including multi-program PAT/PMT events. Pairs with `tst_raw_receiver_*` and `tst_ts_receiver_*` for callers that want bytes or TS packets without the demux step. |
-| cbindgen-generated `tstrans.h` | ✅ Full | Committed at `bindings/c/include/tstrans.h`; CI verifies no drift via `tests/header_drift.rs`. |
-| Symbol-prefix audit | ✅ Full | `tests/symbol_audit.rs` runs `nm -D` and asserts every exported symbol matches `^(tst_|TST_|srt_)` (`srt_*` allowlisted because libsrt is statically linked). |
+| Multi-program demux at the C ABI | ✅ Full | `tst_demux_receiver_t` ships today (`tst_demux_receiver_open` / `_recv_event` / `_get_stats` / `_get_stream_codec_stats` / `_close`); typed `tst_event_t` carries the same `DemuxEvent` shapes the Rust API emits, including multi-program PAT/PMT events. Pairs with `tst_raw_receiver_*` and `tst_receiver_*` for callers that want bytes or TS packets without the demux step. |
+| cbindgen-generated `tstrans.h` | ✅ Full | Committed at `bindings/c/include/tstrans.h`; CI verifies no drift via `bindings/c/tests/abi/header_drift.rs`. |
+| Symbol-prefix audit | ✅ Full | `bindings/c/tests/abi/symbol_audit.rs` runs `nm -D` and asserts every exported symbol starts with `tst_` / `TST_`; a second test asserts no `srt_*` / `SRT_*` symbol is exported (the statically linked libsrt stays hidden). |
 | `pkg-config` metadata | ✅ Full | `tstrans.pc` generated by `build.rs` from `tstrans.pc.in`; substitutes `@VERSION@` and `@PREFIX@`. |
-| Static-link discipline | ✅ Full | libsrt + mbedTLS + libstdc++ statically embedded into `libtstrans.so` and `libtstrans.a`; `ldd` shows only libc / libpthread / libstdc++ / libdl / libm. |
+| Static-link discipline | ✅ Full | libsrt + mbedTLS (and librist when enabled) statically embedded into `libtstrans.so` and `libtstrans.a`; the C++ runtime stays dynamic (`ldd libtstrans.so` shows libstdc++ / libgcc_s / libm / libc; a static-archive consumer links the C++ runtime — `-lstdc++`, or `-lc++` on macOS — as the `Libs:` line of `tstrans.pc` says). |
 | Distribution artifacts | ✅ Full | `libtstrans.so` + `libtstrans.a` + `tstrans.h` + `tstrans.pc`. Tarball staged manually; GitHub Releases publishing not automated today. |
-| End-to-end C smoke test | ✅ Full | `tests/smoke.c` compiled by `cc` and linked against the cdylib at test time; exercises muxer push/pull + every NULL-close path + invalid-URL last-error. |
-| Live-socket roundtrip test | ✅ Full | `tests/live_pair.rs` binds a real `Listener` on 127.0.0.1, connects `tst_mux_sender_t`, sends a NAL, asserts the listener receives a TS sync byte. |
+| End-to-end C smoke test | ✅ Full | `bindings/c/tests/smoke.c` compiled by `cc` and linked against the cdylib at test time; exercises muxer push/pull + every NULL-close path + invalid-URL last-error. |
+| Live-socket roundtrip test | ✅ Full | `bindings/c/tests/receiving/live_pair.rs` binds a real `Listener` on 127.0.0.1, connects `tst_mux_sender_t`, sends a NAL, asserts the listener receives a TS sync byte. |
 | Multi-platform Tier 1 | ✅ Full — Linux x86_64 + aarch64 + macOS arm64 + Windows MSVC all gating | See "Build targets" section at top of this document. |
 | Pre-emptive close cancellation while parked in libsrt | ✅ Full | `Sender::close()` (and the underlying `Socket::cancel_handle()`) atomically closes the SRT handle from any thread, unblocking a peer thread parked in `srt_sendmsg`/`srt_recvmsg`. See [`pipeline.md`](/docs/guides/pipeline.md). |
 
@@ -649,7 +649,7 @@ covers.
 | Crate | Status | Target |
 | --- | --- | --- |
 | `tstrans-srt-sys` | ✅ Full | Bindgen-generated FFI to libsrt 1.5.7; encryption via mbedTLS. |
-| `tst-core` | ✅ Full | Safe Rust API — MPEG-TS mux/demux, KLV substrate + typed sets (ST 0601 / 0102 / 0605 / 0903 / 0806 / 1010 / 1204) + the ST 0805 KLV→CoT conversion layer, codec parsers (H.264 / H.265 / H.266 / AV1 / AAC / MPEG-2 audio), `Transport` + `RecvTransport` traits. No SRT dependency. |
+| `tst-core` | ✅ Full | Safe Rust API — MPEG-TS mux/demux, KLV substrate + typed sets (ST 0601 / 0102 / 0605 / 0903 / 0806 / 1010 / 1204) + the ST 0805 KLV→CoT conversion layer, codec parsers (H.264 / H.265 / H.266 / AV1 / AAC / AC-3 / MPEG-2 audio), `Transport` + `RecvTransport` traits. No SRT dependency. |
 | `tst-srt` | ✅ Full | SRT-specific safe wrapper — `Socket`, `Listener`, `SocketBuilder`, `SrtTransport` (implements both `Transport` and `RecvTransport`), `SrtCancelHandle`, URL parsing. Wraps libsrt 1.5.7. |
 | `tst-pipeline` | ✅ Full | Composition layer — `MuxSender<T>` / `Sender<T>` / `RawSender<T>` / `DemuxReceiver<R>` / `Receiver<R>` / `RawReceiver<R>` shells; `ManagedTransport` reconnect wrapper; `Pairer` KLV↔video alignment. Decoupled from libsrt via the `Transport`/`RecvTransport` traits. |
 | `tst-c` | ✅ Full | cdylib + staticlib + cbindgen-generated `tstrans.h` + pkg-config. ABI version **0.22** (additive minor bumps). Multi-platform Tier 1 (Linux x86_64 + aarch64 + macOS arm64 + Windows MSVC all gating). |
@@ -681,8 +681,11 @@ deliberate ergonomic adaptations for each language's idiom.
 ## Sanitizers
 
 Nightly GitHub Actions workflow `.github/workflows/sanitizers.yml`
-(trigger: `schedule: '0 3 * * *'` UTC + on-demand `workflow_dispatch`)
-runs four sanitizer jobs, all hard-gating. The workflow file is the
+(trigger: `schedule: '0 3 * * *'` UTC and on-demand `workflow_dispatch`)
+runs four sanitizer jobs, all hard-gating. Pull requests to `main` that
+touch `tst-srt`, `tst-rist`, `tst-tcp`, the reconnect module, the sys
+crates or the suppressions also trigger it, but only the `tsan-native`
+job runs there; the other three are skipped on `pull_request`. The workflow file is the
 source of truth for this section; the current scope is:
 
 - **AddressSanitizer + ThreadSanitizer, pure-Rust crates:** the six
@@ -693,10 +696,7 @@ source of truth for this section; the current scope is:
   `tst-srt`, `tst-rist`, and `tst-c` run under ASan and under TSan with
   the vendored native libraries (libsrt, librist, mbedTLS) themselves
   compiled `-fsanitize=address` / `-fsanitize=thread` via the
-  `TST_NATIVE_SANITIZER` build hook. The native ASan job has been
-  hard-gating since 2026-08-19 and the native TSan job since
-  2026-09-08, each after a dated phase-in window of job-level-green
-  nightlies. Known librist-internal races are suppressed by exact
+  `TST_NATIVE_SANITIZER` build hook. Known librist-internal races are suppressed by exact
   function name in `.sanitizer-suppressions/tsan.txt`, with the
   harvest evidence recorded inline.
 - JVM and Python memory-sanitizer coverage is deferred; see
