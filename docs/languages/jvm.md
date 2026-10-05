@@ -13,11 +13,10 @@
 > - How to use the file I/O helpers (`Io.parseFile`, `probe`, `extractKlv`, `Muxer.writeFile`)
 > - How to send and receive MPEG-TS over RTP and SRT (`org.tstrans.rtp` / `org.tstrans.srt`) — pre-muxed bytes or the `MuxSender`/`DemuxReceiver` shells — and how to drive RTSP (client + server)
 > - How to pair video with KLV metadata by PTS using `org.tstrans.pipeline.Pairer`
-> - The JVM-specific gotchas: heap-copied `ByteBuffer` payloads, nullable `Long` DTS, codec on `StreamId`
+> - The JVM-specific gotchas: heap-copied `ByteBuffer` payloads, nullable `Long` DTS
 > - How this binding differs from the Rust core
 
-> **Status (mpegts demux + offline mux + typed KLV + codec parsers + file I/O +
-> RTP + SRT transports shipped):** the JVM binding ships the bootstrap
+> **Status:** the JVM binding ships the bootstrap
 > `org.tstrans.Version` hello-world; the complete `org.tstrans.mpegts` **demux**
 > surface (`Demuxer`, `DemuxerConfig`, the sealed `DemuxEvent` hierarchy,
 > `StreamId`, codec / kind enums); the offline **mux** surface (`Muxer`,
@@ -289,7 +288,7 @@ itself a sealed interface: `Video(VideoCodec codec)`,
 - `MetadataKind` — `KLV_SYNC_AU_CELL`, `KLV_ASYNC`, `UNKNOWN`
 - `DiscontinuityKind` — `CONTINUITY_JUMP`, `PES_OVERSIZE`, `PES_TOTAL_OVERSIZE`, `ADAPTATION_FIELD_FLAG`
 - `CellFragmentIndication` — `MIDDLE`, `LAST`, `FIRST`, `COMPLETE`
-- `MultiCellAuReason` — `ORPHAN`, `SEQUENCE_GAP`, `CONCURRENT_FIRST`, `OVERFLOW`
+- `MultiCellAuReason` — `ORPHAN`, `SEQUENCE_GAP`, `CONCURRENT_FIRST`, `OVERFLOW`, `OVERFLOW_TOTAL`, `TOO_MANY_PIDS`
 - `StrictMode` — `OFF`, `TIMING_ONLY`, `PSI_ONLY`, `FULL`
 - `Av1CarriageMode` — `MPEG2_TS_BINDING`, `INTEROP_RAW_OBU`
 - `NonConformantKind` — a collapsed discriminant; the `issue` String carries the detail (see the gotcha below).
@@ -582,7 +581,7 @@ garbage by scanning for the next sync word instead of throwing.
 
 ## Typed sample payloads
 
-Since the codec wave, the demuxer hands back **typed** elementary units on
+The demuxer hands back **typed** elementary units on
 demand. `DemuxEvent.Video.parse()` returns a `List<VideoUnit>` — `NalUnit`s for
 H.264 / H.265 / H.266, `Obu`s for AV1 — by calling the native `split_video`
 only when the caller opts in. `DemuxEvent.Audio.parse()` likewise returns a
@@ -1463,8 +1462,8 @@ cancel.cancel();  // wakes rx.recv() → throws RtpException(CLOSED)
   wired; `RtpTransport` populates the send-side counters, `RtpRecvTransport` the
   receive-side.
 - **`rtp` `CancelHandle` has no `isCancelled()`.** Unlike the srt
-  `CancelHandle`, the RTP one exposes only `cancel()` (mirroring tst-py's
-  `tstrans.rtp.CancelHandle`).
+  `CancelHandle` (and tst-py's `tstrans.rtp.CancelHandle`), the JVM RTP
+  one exposes only `cancel()`.
 - **Closed handle → `IllegalStateException`.** Calling `send` / `recv` /
   `socketStats` / `cancelHandle` after `close()` throws `IllegalStateException`,
   the established JVM idiom (tst-py raises `RtpError` instead).
@@ -1666,8 +1665,8 @@ try (RtspSession session = RtspClient.connect(cfg);
   `H264Receiver` alike) answers with a `StreamEndReason` member —
   `CLEAN_TEARDOWN`, `SESSION_EXPIRED`, `KEEPALIVE_FAILED`,
   `TRANSPORT_FAILED`, `PROTOCOL_ERROR`, or `CANCELLED` — or `null` if the
-  session hasn't ended yet (or ended through a path this arc doesn't
-  instrument, e.g. a plain `rtp://` receiver with no owning `RtspClient`).
+  session hasn't ended yet (or ended through a path that records no
+  reason, e.g. a plain `rtp://` receiver with no owning `RtspClient`).
   `rx.endDetail()` carries the free-text message for the three failure
   variants. Both stay readable after `close()` — the receiver snapshots
   them at close time, before the underlying native handle is freed.
@@ -1718,14 +1717,11 @@ try (RtspServer server = RtspServer.start(cfg);
   `fanoutCapacity=256`, `gracefulShutdownDrainMs=2000`). Use
   `RtspServerConfig.builder()` to tune individual fields.
 - **Mount errors are `RtspException(MOUNT)`.** All `pushVideo`/`pushKlv`/
-  `pushAudio`/`pushSubtitle` calls on `MountHandle` throw `RtspException` of kind
+  `pushAudio`/`pushSubtitle`/`pushData` calls on `MountHandle` throw `RtspException` of kind
   `MOUNT` on failure (e.g. invalid config, server already stopped). This differs
   from `MuxSender`, which throws `MuxException`.
-- **No data push family yet on `MountHandle`.** `MountHandle` does not expose
-  `pushData` / `pushDataTo` — a recorded follow-up. Private-data streams on
-  the RTSP path currently push through the offline `Muxer` / `MuxerFileSink`.
-  The srt `ManagedMuxSender` and the plain srt / rtp `MuxSender`s do expose
-  the full `sendData` / `sendDataTo` family.
+- **`MountHandle` carries private data too.** `pushData` / `pushDataTo`
+  have the same pass-through and PTS semantics as `Muxer.pushData`.
 - **`MountHandle` is `Arc`-backed and thread-safe** on the push path (`&self`
   internally). Multiple producer threads may call `push*` concurrently. Do not
   race `close()` against a concurrent push — coordinate closes at the producer
@@ -1846,8 +1842,8 @@ no "no socket" code path once constructed.
 - **KLV pairing slot.** For a STANAG 4609 gateway, push KLV using
   `mux.pushKlv(klvBytes, /*pts=*/ au.pts(), /*metadataServiceId=*/ 0x00)`.
 
-- **RTCP is not implemented on the H.264 path (v1 decision).** No RTCP
-  socket is bound; no RR/SR is sent or received.
+- **RTCP is not processed on the H.264 path.** No RR/SR is sent, and
+  received RTCP is discarded.
 
 ## Pipeline pairing (`org.tstrans.pipeline.Pairer`)
 
@@ -1948,10 +1944,6 @@ Gotchas:
   foot-gun, so it is deliberately not offered here.
 - **`dts` is a nullable `Long`** — boxed, not a primitive `long`. It is
   `null` when the PES carried no DTS. Null-check before unboxing.
-- **`codec` lives on `StreamId.kind()`, not on the event record.** A
-  `Video` event does not carry its codec directly; read it from the stream:
-  `((StreamKind.Video) v.stream().kind()).codec()`. The event records
-  intentionally don't duplicate the codec.
 - **`Demuxer` is single-threaded** — the consumer owns concurrency. Don't
   share one `Demuxer` across threads without external synchronization.
   Iterating drains the currently-queued events; call `feed` / `flush` to
@@ -1974,9 +1966,7 @@ Gotchas:
 
 ## Where this binding differs from the Rust core
 
-- **Demux + offline mux + typed KLV + codec parsers + file I/O + SRT +
-  RTP transports shipped.**
-  The JVM binding surfaces the `org.tstrans.mpegts.Demuxer` receive path
+- **Surface.** The JVM binding surfaces the `org.tstrans.mpegts.Demuxer` receive path
   (feed bytes → typed `DemuxEvent`s with typed NAL / OBU / ADTS payloads),
   the offline `org.tstrans.mpegts.Muxer` send path (config builder → push
   family → `pull` / `writeFile`), the full `org.tstrans.klv` typed-KLV
@@ -2021,29 +2011,27 @@ See [`/docs/languages/rust.md`](/docs/languages/rust.md) for the full
 surface and [`/docs/languages/python.md`](/docs/languages/python.md) for the
 Python binding's gaps.
 
-## Roadmap
+## Surface by package
 
-- **Bootstrap (`org.tstrans.Version`) — SHIPPED.** Proves the
+- **`org.tstrans.Version`** — the bootstrap; proves the
   cargo → cdylib → Gradle → Java → JNI build pipeline and native loader.
-- **mpegts demux (`org.tstrans.mpegts.Demuxer` + `DemuxEvent` + `DemuxerConfig`) — SHIPPED.**
-- **mpegts mux (`org.tstrans.mpegts.Muxer` + `MuxerConfig` + push family + `pull`) — SHIPPED.**
-- **klv** — typed KLV decode/encode (ST 0601 / 0102 / 0605 / 0903, plus ST 0806 RVT, ST 1010 SDCC-FLP, and the ST 0805 KLV → CoT conversion layer) under `org.tstrans.klv` — **SHIPPED.**
+- **mpegts demux** — `org.tstrans.mpegts.Demuxer` + `DemuxEvent` + `DemuxerConfig`.
+- **mpegts mux** — `org.tstrans.mpegts.Muxer` + `MuxerConfig` + push family + `pull`.
+- **klv** — typed KLV decode/encode (ST 0601 / 0102 / 0605 / 0903, plus ST 0806 RVT, ST 1010 SDCC-FLP, and the ST 0805 KLV → CoT conversion layer) under `org.tstrans.klv`.
 - **codec** — H.264 / H.265 / H.266 / AV1 + audio parsers under
-  `org.tstrans.codec`; typed elementary-stream payloads (NAL / OBU / ADTS) — **SHIPPED.**
-- **io** — file inspection helpers (`Io.parseFile`, `probe`, `extractKlv`, `Muxer.writeFile`) — **SHIPPED.**
-- **srt (sub-wave A)** — `Sender` / `Receiver` pipeline shells + `Builder` /
-  `Socket` / `Listener` / `CancelHandle` / `SocketStats` / `SrtStats` — **SHIPPED.**
-- **srt (sub-wave B)** — `MuxSender` / `DemuxReceiver` high-level shells +
+  `org.tstrans.codec`; typed elementary-stream payloads (NAL / OBU / ADTS).
+- **io** — file inspection helpers (`Io.parseFile`, `probe`, `extractKlv`, `Muxer.writeFile`).
+- **srt** — `Sender` / `Receiver` pipeline shells + `Builder` /
+  `Socket` / `Listener` / `CancelHandle` / `SocketStats` / `SrtStats`;
+  `MuxSender` / `DemuxReceiver` high-level shells +
   `DemuxReceiver.addByteSink` fan-out + the `ReconnectPolicy` /
-  `BackoffStrategy` / `OverflowPolicy` types — **SHIPPED.**
-- **srt (sub-wave C)** — `Managed*` reconnect wrappers — **SHIPPED.**
+  `BackoffStrategy` / `OverflowPolicy` types; the `Managed*` reconnect wrappers.
 - **rtp** — MPEG-TS-over-RTP transport + `MuxSender` / `DemuxReceiver` +
-  RTSP client / server — **SHIPPED.**
-- **pipeline** — `org.tstrans.pipeline.Pairer` pairing shell — **SHIPPED.**
-- **multi-platform fat JAR + Maven Central publish** — single JAR bundling
+  RTSP client / server + `H264Receiver`.
+- **pipeline** — `org.tstrans.pipeline.Pairer` pairing shell.
+- **Packaging** — one fat JAR bundling the
   linux-x86_64 / linux-aarch64 / macos-arm64 / windows-x86_64
-  native libraries, published as `org.tstrans:tstrans-jvm` — **SHIPPED
-  (v0.1.0).**
+  native libraries, published to Maven Central as `org.tstrans:tstrans-jvm`.
 
 ## Where to go next
 

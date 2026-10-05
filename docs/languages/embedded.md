@@ -72,7 +72,7 @@ bash embedded/scripts/check/qemu-runtime.sh
 
 The resulting archive exposes the offline mux/demux C ABI — config, push, pull, event, error — usable from plain C firmware with no Rust toolchain in the firmware build system itself (only in the glue-crate build step).
 
-Network transports (SRT, RTP, UDP, TCP) are host-only; they require `std` and are not available through `tst-c-core`.
+Network transports (SRT, RTP, UDP, TCP, RIST) and the HLS publisher are host-only; they require `std` and are not available through `tst-c-core`.
 
 ```bash
 bash embedded/scripts/check/firmware-qemu.sh
@@ -112,7 +112,7 @@ Gate targets:
 ## Prerequisites
 
 ```bash
-git submodule update --init --recursive   # embedded/vendor/* + vendor/{srt,mbedtls}
+git submodule update --init --recursive   # embedded/vendor/* + crates/srt-sys/vendor/srt + crates/mbedtls-src/vendor/mbedtls
 sudo apt install qemu-system-arm qemu-system-misc gcc-arm-none-eabi libnewlib-arm-none-eabi \
                  libstdc++-arm-none-eabi-newlib cmake python3
 rustup target add thumbv7em-none-eabihf riscv32imac-unknown-none-elf

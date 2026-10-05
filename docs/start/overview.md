@@ -39,13 +39,13 @@ Each placement uses the same primitives differently. The [`guides/`](/docs/guide
 
 - **MPEG-TS mux + demux** — the Rust core (`tst-core`, `tst-pipeline`, `tst-srt`). Single-program or multi-program TS; auto-PCR insertion; PAT/PMT generation; the full ST 1402 KLV-in-TS multiplexing pipeline.
 - **Transports** — SRT (vendored libsrt 1.5.7; mbedTLS 3.6.x LTS encryption ON by default with AES-128/192/256), RTP (incl. RTSP client + server), raw TCP / TLS, UDP, and RIST (VideoLAN librist). A supported HLS publisher (segmenter + optional built-in HTTP server) ships too — see the [HLS guide](/docs/guides/hls.md).
-- **MISB KLV** — typed encode + decode for ST 0601 (Full Motion Video FMV), ST 0102 (Security Metadata), ST 0605 (Amend Tags), ST 0903 (VMTI per-target detections), ST 0806 (RVT), ST 1010 (SDCC error covariance); plus a one-way ST 0805 KLV→Cursor-on-Target conversion layer. H.222.0 §2.12.4.2 Metadata AU cell wrapping for synchronous KLV streams.
+- **MISB KLV** — typed encode + decode for ST 0601 (Full Motion Video FMV), ST 0102 (Security Metadata), ST 0605 (Precision Time Stamp), ST 0903 (VMTI per-target detections), ST 0806 (RVT), ST 1010 (SDCC error covariance); plus a one-way ST 0805 KLV→Cursor-on-Target conversion layer. H.222.0 §2.12.4.2 Metadata AU cell wrapping for synchronous KLV streams.
 - **Video codecs** — H.264, H.265, H.266/VVC, AV1. NAL/OBU parsers; SPS/PPS/VPS extraction; slice-header-light parsers for resolution + profile.
 - **Audio codecs** — AAC (ADTS full; LATM carriage + sync validation, full decode deferred), MPEG-2 Audio (MP2/MP3), AC-3. Frame-level parsers expose sample rate / channel count.
 - **Subtitles** — DVB subtitling, DVB teletext, CEA-708, WebVTT-in-TS.
 - **C bindings** (`tst-c`) — `cdylib` + `staticlib`, `tstrans.h` via cbindgen, `tstrans.pc` for pkg-config. Stable ABI versioned `TST_ABI_VERSION_MAJOR/MINOR`.
-- **Python bindings** (`tst-py`, on PyPI as `tstrans`) — offline `.ts` inspection/construction plus live UDP / TCP / RTP (incl. RTSP) / SRT / RIST; typed KLV decode/encode; raw-first `DemuxEvent.Video` / `DemuxEvent.Audio` (each carries the raw access-unit / frame bytes); optional pandas + NumPy adapters.
-- **JVM bindings** — `tst-jni`, distributed as `tstrans-jvm` (`org.tstrans`) on Maven Central. Package-for-package mirror of the Python surface (`org.tstrans.{io,codec,klv,mpegts,rtp,srt,pipeline}`).
+- **Python bindings** (`tst-py`, on PyPI as `tstrans`) — offline `.ts` inspection/construction plus live UDP / TCP / RTP (incl. RTSP) / SRT / RIST and the HLS publisher; typed KLV decode/encode; raw-first `DemuxEvent.Video` / `DemuxEvent.Audio` (each carries the raw access-unit / frame bytes); optional pandas + NumPy adapters.
+- **JVM bindings** — `tst-jni`, distributed as `tstrans-jvm` (`org.tstrans`) on Maven Central. Mirrors the Python surface package for package for the offline, RTP and SRT parts (`org.tstrans.{io,codec,klv,mpegts,rtp,srt,pipeline}`); UDP, TCP, RIST and HLS have no JVM binding.
 
 ## Scope boundaries — and what to pair it with
 

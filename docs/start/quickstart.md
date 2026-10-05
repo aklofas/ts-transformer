@@ -4,10 +4,10 @@
 > **Who this is for:** You've installed ts-transformer (or are about to) and want a working sender + receiver in 10 minutes.
 
 > **You will learn:**
-> - How to install ts-transformer in Rust, C, or Python (links per language)
-> - How to mux H.264 + KLV into a `.ts` file
-> - How to demux a `.ts` file and inspect the events
+> - How to add ts-transformer to a Rust project (C, Python and the JVM have their own language pages)
 > - How to wire a sender + receiver over loopback SRT
+> - How to mux H.264 + KLV and send it over SRT
+> - How to record the received stream to a `.ts` file with the bundled example pair
 > - Where to go next based on what you're building
 
 When you want to send and receive bytes over SRT in 10 minutes, start here. The
@@ -63,8 +63,8 @@ tst-core = "0.7"
 
 Note on cold builds: `tst-core` itself is pure Rust — it has no
 native dependencies and builds in seconds. It's adding `tst-srt` (or
-`tst-rist`) that compiles the vendored libsrt + mbedTLS from source on
-the first build (~3-5 minutes; warm builds are seconds). Building
+`tst-rist`) that compiles the vendored libsrt (librist for `tst-rist`)
++ mbedTLS from source on the first build (~3-5 minutes; warm builds are seconds). Building
 `tst-srt` with `--no-default-features` skips the mbedTLS build for
 faster iteration (this also disables encryption — only do this for
 testing).
@@ -83,13 +83,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     sb.latency(Duration::from_millis(120));
     let mut socket = sb.connect("127.0.0.1:9000")?;
     socket.send(b"hello, srt")?;
+    // The receiver holds each message for its 120 ms latency before
+    // delivering it, and closing ends the connection with whatever it
+    // still holds (`linger` only waits for the ACK), so pause first.
+    std::thread::sleep(Duration::from_millis(500));
     socket.close()?;
     Ok(())
 }
 ```
 
 Run with `cargo run`. The 120 ms latency is the conventional starting
-point for live SRT — both peers must agree on it. `connect` blocks
+point for live SRT; the handshake settles on the larger of the two
+peers' latencies. `connect` blocks
 until the SRT handshake completes; `send` blocks until the message is
 queued for the wire.
 
@@ -121,8 +126,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 Run the receiver in one terminal, then the sender from the previous
 section in another. The receiver prints
-`recv 10 bytes: [104, 101, 108, 108, 111, ...]` and exits cleanly when
-the peer closes. The 1500-byte buffer is comfortably above the default
+`recv 10 bytes: [104, 101, 108, 108, 111, 44, 32, 115, 114, 116]` and
+exits cleanly when the peer closes. The 1500-byte buffer is comfortably above the default
 SRT payload size (1316 bytes), so each `recv` returns one whole
 message.
 
