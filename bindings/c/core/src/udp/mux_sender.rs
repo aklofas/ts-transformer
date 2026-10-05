@@ -9,8 +9,8 @@
 //! literal `extern "C"` signature and doc-comment are preserved here
 //! so cbindgen can see and emit them to `tstrans.h`.
 //!
-//! **Cancel:** the UDP transport exposes a real cancel handle since Arc 2
-//! WP-D and this handle's `CHandle` slot holds it, so `_close` fires it
+//! **Cancel:** the UDP transport exposes a real cancel handle and
+//! this handle's `CHandle` slot holds it, so `_close` fires it
 //! before taking the slot. There is little for it to unblock on the send
 //! side (a UDP send never parks — `send_to` on a datagram socket returns at
 //! once), and `_close` FREES the handle: a push already in flight completes
@@ -112,7 +112,7 @@ pub unsafe extern "C" fn tst_udp_mux_sender_open(
                 return std::ptr::null_mut();
             }
         };
-        // `cancel_or_latch` resolves the shell's `Option`; since Arc 2 WP-D
+        // `cancel_or_latch` resolves the shell's `Option`;
         // this transport's `cancel_handle()` is `Some`, so the handle below
         // carries the REAL cancel and `_close` wakes what it can.
         let cancel = cancel_or_latch(mux_sender.cancel_handle());
@@ -174,7 +174,7 @@ pub unsafe extern "C" fn tst_udp_mux_sender_cancel(p: *mut TstUdpMuxSender) -> l
             return TstError::InvalidConfig as i32;
         };
         // `CHandle::cancel` → `Owned::cancel`: fires the transport's
-        // `UdpCancelHandle` (Arc 2 WP-D) without taking the slot, so it
+        // `UdpCancelHandle` without taking the slot, so it
         // answers while a data-path call is in flight.
         handle.inner.cancel();
         0

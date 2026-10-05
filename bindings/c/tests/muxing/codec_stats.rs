@@ -233,8 +233,8 @@ fn muxer_get_stream_codec_stats_after_push_video_returns_video_variant() {
 
 // --- Loopback: tst_mux_sender_t → tst_demux_receiver_t ---------------------
 //
-// Mirrors bindings/c/tests/demux_receiver_loopback.rs threading shape
-// (plan #62). The sender thread builds a single-program H.264 mux config,
+// Mirrors bindings/c/tests/receiving/demux_receiver_loopback.rs threading
+// shape. The sender thread builds a single-program H.264 mux config,
 // sends a few NAL bursts, then closes. The receiver thread drains events
 // until EOS and then queries codec stats:
 //   * video PID 0x1011 → kind=VIDEO with nals_or_obus > 0

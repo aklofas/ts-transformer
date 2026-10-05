@@ -4,7 +4,7 @@
  * exit cleanly on peer disconnect.
  *
  * Why this example:
- *   This is the flagship Phase 3 receiver-side example. It exercises
+ *   This is the flagship receiver-side example. It exercises
  *   the full typed-event API surface: ProgramMap topology events,
  *   per-sample video/audio/subtitle frames, KLV metadata records,
  *   discontinuity and non-conformance diagnostics. One switch statement

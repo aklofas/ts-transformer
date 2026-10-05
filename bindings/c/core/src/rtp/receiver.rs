@@ -218,8 +218,8 @@ pub unsafe extern "C" fn tst_rtp_receiver_cancel(p: *mut TstRtpReceiver) -> libc
 /// ended, if any.
 ///
 /// Writes `TstStreamEndReason::None` (returns `0`) when the session
-/// hasn't ended yet, or ended through a path this arc doesn't
-/// instrument (e.g. a plain `rtp://` receiver that was never `_cancel`'d
+/// hasn't ended yet, or ended through an uninstrumented path
+/// (e.g. a plain `rtp://` receiver that was never `_cancel`'d
 /// or `_close`'d) — and in that case the thread-local last-error channel
 /// is left untouched (any pending failure from an earlier call is still
 /// readable). A recorded reason is data, not a getter failure — this

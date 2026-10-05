@@ -6,9 +6,6 @@
 //! header macro agree at this build artifact. A drift would mean
 //! `examples/getting-started/version_check.c`'s cross-validation
 //! would silently lie about SO/header alignment.
-//!
-//! See `docs/plans/2026-05-21-c-abi-versioning-and-last-error-clear.md`
-//! Task 7 for the rationale + the broader 3-tier version model context.
 
 use std::ffi::CStr;
 

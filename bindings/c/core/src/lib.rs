@@ -162,7 +162,7 @@ pub mod rtp;
 #[cfg(feature = "rtp")]
 mod rtsp;
 
-// Plan A5a — udp / tcp / hls / rist transport surfaces (all default-off):
+// udp / tcp / hls / rist transport surfaces (all default-off):
 #[cfg(feature = "udp")]
 pub mod udp;
 #[cfg(feature = "tcp")]
@@ -251,31 +251,30 @@ pub const TST_ABI_VERSION_MAJOR: crate::c_types::c_int = 0;
 /// generated header. Runtime accessor: [`tst_get_abi_version_minor`].
 ///
 /// History (additive bumps only — major stays at 0 pre-1.0):
-/// - `1` (plan #62): receiver-surface initial drop.
-/// - `2` (raw-receiver hardening, `d711ecb`): TS-bytes raw-receiver
-///   pull-loop hardening + F2 C-ABI shape additions.
-/// - `3` (AU cell reassembly, `5527a9e`): `TstMultiCellAuReason` +
+/// - `1`: receiver surface.
+/// - `2` (raw-receiver hardening): TS-bytes raw-receiver
+///   pull-loop hardening + C-ABI shape additions.
+/// - `3` (AU cell reassembly): `TstMultiCellAuReason` +
 ///   `multi_cell_au_reason` field on `TstEventNonConformant`.
 /// - `4` (AU cell CFI tolerance): `TstNonConformantCode::CfiTolerated`
 ///   (= 32) + `TstCellFragmentIndication` enum + `tst_demux_config_set_cfi_tolerance`
 ///   setter. The new variant reuses the existing `cc_expected` + `cc_observed`
 ///   field carriers to surface `observed_cfi` + `treated_as` without growing
 ///   the struct.
-/// - `5` (demuxer-config parity, 2026-05-25):
+/// - `5` (demuxer-config parity):
 ///   `TstAv1CarriageMode` enum (mux side already had a mirror;
 ///   demux side reuses it) + three new C entry points —
 ///   `tst_demux_config_set_av1_carriage`,
 ///   `tst_demux_config_set_au_cell_cap_per_pid`, and
 ///   `tst_demux_config_set_lenient_psi_reassembly`. Bridges
 ///   Rust-only demux knobs through the C builder.
-/// - `6` (tst-rtp C binding exposure, 2026-05-26):
+/// - `6` (tst-rtp C binding exposure):
 ///   Introduces `srt` + `rtp` cargo features in `tst-c` with
 ///   cbindgen `TST_HAS_SRT` / `TST_HAS_RTP` conditional emission.
-///   Existing SRT surface now gated on `feature = "srt"` (default-on
-///   through 2026-06-06; opt-in / default-off thereafter, like every
-///   other transport).
-///   New RTP/RTSP entry points land behind `feature = "rtp"`.
-/// - `7` (network-protocol-stack expansion, 2026-05-27): UDP + TCP + HLS +
+///   The SRT surface is gated on `feature = "srt"` (opt-in /
+///   default-off, like every other transport).
+///   RTP/RTSP entry points sit behind `feature = "rtp"`.
+/// - `7` (network-protocol-stack expansion): UDP + TCP + HLS +
 ///   RIST entry points plus cargo feature flags `udp`/`tcp`/`hls`/`rist`
 ///   (all default-OFF — embedded `libtstrans.so` size stays unchanged for
 ///   existing consumers). Adds 4 new `TST_HAS_*` defines and ~95 new entry
@@ -321,37 +320,37 @@ pub const TST_ABI_VERSION_MAJOR: crate::c_types::c_int = 0;
 ///   (behind `TST_HAS_RTP`). Completes the data-stream surface parity with the
 ///   video/klv/audio/subtitle push families on both shells. Additive — no
 ///   symbol removed, no signature or struct layout changed.
-/// - `14` — AV1 carriage work (WP-B): `TstError::InvalidAv1Obu` (-44) B0
+/// - `14` — AV1 carriage: `TstError::InvalidAv1Obu` (-44) B0
 ///   guard error code; `av1_carriage` provenance byte on `TstEventSample`
 ///   (repurposed pad byte — 0=`MPEG2_TS_BINDING`, 1=`INTEROP_RAW_OBU`,
 ///   0xFF=N/A for non-AV1); `tst_muxer_push_video_wire` /
 ///   `tst_muxer_push_video_wire_to` pass-through push for byte-faithful
 ///   transmux; `tst_mux_config_set_av1_carriage` mux-side carriage setter.
-/// - `15` — REF-PSI-01: `TstNonConformantCode::PmtProgramNumberMismatch`
+/// - `15` — `TstNonConformantCode::PmtProgramNumberMismatch`
 ///   (= 33). PMT body `program_number` mismatch vs PAT assignment. Surfaces
 ///   on `TstEventNonConformant`; `pid` is the PMT PID; `programs[0]` =
 ///   `pat_program`, `programs[1]` = `pmt_program` (reuses the two-element
 ///   `programs_buf` carrier, same layout as `PidReusedAcrossPrograms`).
 ///   The mislabeled topology is NOT adopted. No struct layout change.
-/// - `16` — WP-D demux trust-boundary diagnostics. New
+/// - `16` — demux trust-boundary diagnostics. New
 ///   `TstNonConformantCode` values surfaced on `TstEventNonConformant`
 ///   (no struct layout change — all reuse existing carriers):
-///   `UnsupportedScrambling` (= 34, REF-TS-01; `pid` = scrambled PID,
+///   `UnsupportedScrambling` (= 34; `pid` = scrambled PID,
 ///   `table_id` = 2-bit transport_scrambling_control).
-///   `AdaptationFieldMalformed` (= 35, REF-TS-02; `table_id` = kind
+///   `AdaptationFieldMalformed` (= 35; `table_id` = kind
 ///   discriminator: 0=ReservedControl, 1=BadLengthForControl, 2=ShortPcr,
 ///   0xFF=unknown).
-///   `ZeroLengthPesNonVideo` (= 36, REF-PES-01; `table_id` = PES stream_id).
-///   `PsiSyntax` (= 37, REF-PSI-03; table_id = PSI table_id, obu_type = kind,
+///   `ZeroLengthPesNonVideo` (= 36; `table_id` = PES stream_id).
+///   `PsiSyntax` (= 37; table_id = PSI table_id, obu_type = kind,
 ///   cc_observed = section_number for SectionNumberNonZero).
-/// - `17` — BIND-01 (WP-I): DTS-aware video push through the C ABI.
+/// - `17`: DTS-aware video push.
 ///   `tst_muxer_push_video_to_with_dts` and
 ///   `tst_muxer_push_video_wire_to_with_dts` add a `dts_90khz` parameter to
 ///   the targeted video push, emitting PES with `PTS_DTS_flags = '11'`
 ///   (ISO/IEC 13818-1 §2.4.3.6) for B-frame-reordered streams. Additive —
 ///   no symbol removed, no signature or struct layout changed. (AV1 mux
-///   carriage and the targeted `*_to` push family already shipped in ABI 14.)
-/// - `18` (tst-hls promotion, 2026-07-11): HLS publisher hardening surface
+///   carriage and the targeted `*_to` push family are ABI 14.)
+/// - `18` (tst-hls promotion): HLS publisher hardening surface
 ///   (all gated `TST_HAS_HLS`) — `tst_hls_publisher_finish_serving` +
 ///   the opaque `TstHlsServerHandle` (`tst_hls_server_handle_local_addr` /
 ///   `_shutdown` / `_free`) that keeps the built-in HTTP server serving a
@@ -362,14 +361,14 @@ pub const TST_ABI_VERSION_MAJOR: crate::c_types::c_int = 0;
 ///   a getter — `TstHlsStats` layout unchanged). Additive — no existing
 ///   symbol or struct changed. The HLS surface moved from `tst-tcp` to the
 ///   new `tst-hls` crate (link-level only; no C ABI effect).
-/// - `19` (ST 0604 MISP timestamps, 2026-07-11): `tst_muxer_push_video_misp_to`,
+/// - `19` (ST 0604 MISP timestamps): `tst_muxer_push_video_misp_to`,
 ///   `tst_muxer_push_video_misp_to_with_dts`, `tst_misp_time_extract`,
 ///   `TST_E_MISP_TIME` (-45), `TST_E_MISP_TIME_MALFORMED` (-46).
 ///   Additive — no struct growth, no signature changes.
-/// - `20` (bindings-parity bundle, items 6-9, 2026-08-20): four addition
+/// - `20` (bindings parity): four addition
 ///   groups, all additive — no existing symbol, signature, or struct
 ///   layout changed:
-///   - **Background reconnect (item 7):** `TstReconnectMode` enum
+///   - **Background reconnect:** `TstReconnectMode` enum
 ///     (`Blocking = 0`, `Background = 1`) + `tst_reconnect_policy_set_mode`
 ///     setter on the opaque `tst_reconnect_policy_t` builder — both
 ///     **unconditional**, like the rest of the reconnect-policy family
@@ -383,7 +382,7 @@ pub const TST_ABI_VERSION_MAJOR: crate::c_types::c_int = 0;
 ///     `tst_managed_raw_sender_get_reconnect_stats` (send-side only,
 ///     matching Rust's `ManagedTransport::stats_handle()` — the recv-side
 ///     managed handles get no getter).
-///   - **Stream-end reason (item 8, RTP half):** `TstStreamEndReason` enum
+///   - **Stream-end reason (RTP):** `TstStreamEndReason` enum
 ///     (`None = 0`, `CleanTeardown = 1`, `SessionExpired = 2`,
 ///     `KeepaliveFailed = 3`, `TransportFailed = 4`, `ProtocolError = 5`,
 ///     `Cancelled = 6`) is defined outside the `rtp` module — also
@@ -404,10 +403,10 @@ pub const TST_ABI_VERSION_MAJOR: crate::c_types::c_int = 0;
 ///     See `tst_get_last_error`'s doc for the same note. **Forward-compat
 ///     wildcard:** a future Rust `StreamEndReason` variant this C binding
 ///     doesn't yet know about maps to `TstStreamEndReason::None` until the
-///     C mapping is updated in a later release — same as "ended through a
-///     path this arc doesn't instrument" already means for the Rust side's
+///     C mapping is updated in a later release — same as "ended through an
+///     uninstrumented path" already means for the Rust side's
 ///     own `None`.
-///   - **Per-stream last-seen gauges (item 9):** `tst_*_get_stream_last_seen_micros`
+///   - **Per-stream last-seen gauges:** `tst_*_get_stream_last_seen_micros`
 ///     added to all six demux-receiver handle families —
 ///     `tst_demux_receiver_*` / `tst_managed_demux_receiver_*` (`TST_HAS_SRT`),
 ///     `tst_rist_demux_receiver_*` (`TST_HAS_RIST`),
@@ -418,15 +417,14 @@ pub const TST_ABI_VERSION_MAJOR: crate::c_types::c_int = 0;
 ///     carried an item through the demuxer; `0` if the PID has never been
 ///     observed (mirrors `StreamStats.last_seen: Option<SystemTime>`,
 ///     `None` and a pre-epoch clock both collapsing to `0`).
-///   - **RTP receive-deadline parity (item 6, C half — no new symbols):**
-///     the `?recv_timeout=<ms>` URL key (already Rust-core-only prior to
-///     this release) is now honored by `tst_rtp_recv_open` and
+///   - **RTP receive-deadline parity (C side — no new symbols):**
+///     the `?recv_timeout=<ms>` URL key is honored by `tst_rtp_recv_open` and
 ///     `tst_rtp_demux_receiver_open` — deadline expiry surfaces as the
 ///     existing `TST_E_BUFFER_FULL` (-4), retryable, exactly like SRT's
 ///     recv-deadline expiry already does. Documented on
 ///     `tst_rtp_receiver_recv_ts` / `tst_rtp_demux_receiver_next_event`.
-/// - `21` (Apple-PoC C ABI arc, Task 7): C-callable MISB ST 0601 KLV
-///   decode surface — the first PR-2 addition, unconditional (no
+/// - `21`: C-callable MISB ST 0601 KLV
+///   decode surface, unconditional (no
 ///   feature gate; `tst-core` is a non-optional dependency). New
 ///   opaque handle `tst_st0601_t` (`tst_st0601_decode` /
 ///   `tst_st0601_free`), the `tst_st0601_field_state` enum
@@ -442,7 +440,7 @@ pub const TST_ABI_VERSION_MAJOR: crate::c_types::c_int = 0;
 ///   `bindings/c/core/src/klv_st0601.rs` for the tag table and the
 ///   corner-geometry fallback contract.
 ///
-///   Task 8 (same arc, additive within `21` — no further bump):
+///   Also within `21` (additive, no further bump):
 ///   `tst_annexb_to_length_prefixed` (Annex B → AVCC/HVCC length-prefixed
 ///   NAL conversion, two-call sizing idiom) and the parameter-set
 ///   extraction trio `tst_param_sets_extract` / `_count` / `_get` behind
@@ -451,10 +449,10 @@ pub const TST_ABI_VERSION_MAJOR: crate::c_types::c_int = 0;
 ///   `tst_core::codec::nal_framing::{annexb_to_length_prefixed,
 ///   extract_parameter_sets}`. No new error codes — reuses
 ///   `TST_E_BUFFER_FULL` / `TST_E_INVALID_CONFIG` / `TST_E_TOO_LARGE` /
-///   `TST_E_NOT_FOUND`. Unconditional module, matching Task 7. See
+///   `TST_E_NOT_FOUND`. Unconditional module, like the ST 0601 surface. See
 ///   `bindings/c/core/src/codec_framing.rs`.
 ///
-///   Task 9 (same arc, additive within `21` — no further bump): managed
+///   Also within `21` (additive, no further bump): managed
 ///   SRT demux-receiver lifecycle parity, both `TST_HAS_SRT`-gated —
 ///   `tst_managed_demux_receiver_end_reason` reuses the existing (ABI
 ///   20) `TstStreamEndReason` enum via a new
@@ -469,8 +467,8 @@ pub const TST_ABI_VERSION_MAJOR: crate::c_types::c_int = 0;
 ///   error codes. See
 ///   `bindings/c/core/src/receiver/demux_receiver/managed.rs` and
 ///   `bindings/c/core/src/demux_config.rs`.
-/// - `22` (deep-review-4 Arc 2 riders R3/R4, 2026-09): additive.
-///   `tst_demux_config_set_sync_buf_cap` (unconditional; ARCH-10 — the
+/// - `22`: additive; tcp/udp/rist cancel entry points.
+///   `tst_demux_config_set_sync_buf_cap` (unconditional; the
 ///   pre-sync ingress ceiling, 0 = Rust default). Cancel entry points for
 ///   the three transports that had none: `tst_tcp_{sender,mux_sender,
 ///   receiver,demux_receiver,listener}_cancel` (`TST_HAS_TCP`),
@@ -478,8 +476,8 @@ pub const TST_ABI_VERSION_MAJOR: crate::c_types::c_int = 0;
 ///   (`TST_HAS_UDP`), `tst_rist_{…}_cancel` (`TST_HAS_RIST`) — all reach
 ///   the Rust `TcpCancelHandle` / `UdpCancelHandle` / `RistCancelHandle`
 ///   through the shared `tst_pipeline::binding::Owned` slot, and a parked
-///   data-path call on another thread returns `TST_E_CLOSED` (the Arc 2
-///   one-cancel-outcome contract). `MuxSender::finish` parity (DEBT-14):
+///   data-path call on another thread returns `TST_E_CLOSED` (one cancel
+///   outcome on every transport). `MuxSender::finish` parity:
 ///   `tst_mux_sender_finish`, `tst_managed_mux_sender_finish`,
 ///   `tst_{udp,tcp,rtp,rist}_mux_sender_finish`. No new C types, no new
 ///   error codes. See `bindings/c/core/src/tcp/`, `demux_config.rs`, and

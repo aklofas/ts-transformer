@@ -54,7 +54,7 @@ fn rtp_feature_exposes_rtsp_server_builder() {
     let _ = tst_rtsp_server_builder_new;
 }
 
-// Plan A5a — udp / tcp / hls / rist feature gates. Each test is a pure
+// udp / tcp / hls / rist feature gates. Each test is a pure
 // compile-time existence check: the symbol resolving proves the cfg gate
 // is wired correctly for that feature.
 

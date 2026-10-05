@@ -69,10 +69,10 @@ use tstrans::tcp::{
 /// a bounded window longer than any test here (`PEER_HOLD`) removes the only
 /// nondeterministic interaction these smoke tests had; the thread then drops
 /// it and exits (nextest runs each test in its own process, and a sleeping
-/// thread never blocks a test binary's exit). The one Windows CI sighting of
-/// `tcp_sender_stats_and_reset` hitting the 40 s kill (2026-10-02) had no
-/// visible stall in the test's own calls — connect is capped, close does no
-/// I/O with nothing buffered — so this bounds the test's own worst case and
+/// thread never blocks a test binary's exit). A Windows CI run of
+/// `tcp_sender_stats_and_reset` hitting the 40 s kill showed no visible
+/// stall in the test's own calls — connect is capped, close does no I/O
+/// with nothing buffered — so this bounds the test's own worst case and
 /// leaves runner starvation as the only remaining explanation.
 fn accept_one_background(url_template: impl Fn(u16) -> String) -> String {
     const PEER_HOLD: std::time::Duration = std::time::Duration::from_secs(10);
@@ -434,7 +434,7 @@ fn null_next_event_returns_invalid_config() {
 }
 
 // ---------------------------------------------------------------------------
-// `_finish` — Arc 2 R3 (DEBT-14 "ship now" cell), ABI 0.22
+// `_finish` — ABI 0.22
 // ---------------------------------------------------------------------------
 
 /// `tst_tcp_mux_sender_finish` drains and closes.
@@ -485,7 +485,7 @@ fn tcp_mux_sender_finish_then_close() {
 }
 
 // ---------------------------------------------------------------------------
-// `_cancel` — Arc 2 R4, ABI 0.22
+// `_cancel` — ABI 0.22
 // ---------------------------------------------------------------------------
 
 /// `_close` is documented callable from any thread; the raw pointer just
@@ -507,7 +507,7 @@ fn free_tcp_port() -> u16 {
         .port()
 }
 
-/// Arc 2 R4: `tst_tcp_receiver_cancel` from another thread wakes a parked
+/// `tst_tcp_receiver_cancel` from another thread wakes a parked
 /// `recv_ts` with `TST_E_CLOSED`.
 ///
 /// The peer accepts and HOLDS the socket open without writing, so the
@@ -623,8 +623,8 @@ fn tcp_cancel_entry_points_return_ok_and_null_is_invalid_config() {
     );
 }
 
-/// `tst_tcp_listener_cancel` wakes a parked `accept_receiver` (Arc 1 WP-4b
-/// gave `TcpListener` the handle; this is its C reach). The listener binds
+/// `tst_tcp_listener_cancel` wakes a parked `accept_receiver` (the C reach
+/// of `TcpListener`'s cancel handle). The listener binds
 /// on a port picked up front because the C ABI has no local-port getter —
 /// the rescue path needs to be able to connect to it.
 #[test]

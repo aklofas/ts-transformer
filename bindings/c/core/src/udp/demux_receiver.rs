@@ -9,8 +9,8 @@
 //! (design §4.5), `ShellErrorKind` → error-code mapping, and the
 //! per-PID stats borrowed buffer are all handled generically.
 //!
-//! **Cancel:** the UDP transport exposes a real cancel handle since Arc 2
-//! WP-D and this handle's `CHandle` slot holds it, so `_close` from ANY
+//! **Cancel:** the UDP transport exposes a real cancel handle and
+//! this handle's `CHandle` slot holds it, so `_close` from ANY
 //! thread cancels first and a `_next_event` parked on the 100 ms poll loop
 //! returns `TST_E_CLOSED` within one tick (pinned by
 //! `tests/transports/udp_close_cancels_first.rs`).
@@ -92,7 +92,7 @@ pub unsafe extern "C" fn tst_udp_demux_receiver_open(
         } else {
             DemuxReceiver::new(transport)
         };
-        // `cancel_or_latch` resolves the shell's `Option`; since Arc 2 WP-D
+        // `cancel_or_latch` resolves the shell's `Option`;
         // this transport's `cancel_handle()` is `Some`, so the handle below
         // carries the REAL cancel and `_close` wakes what it can.
         let cancel = cancel_or_latch(receiver.cancel_handle());
@@ -156,7 +156,7 @@ pub unsafe extern "C" fn tst_udp_demux_receiver_cancel(p: *mut TstUdpDemuxReceiv
             return TstError::InvalidConfig as i32;
         };
         // `CHandle::cancel` → `Owned::cancel`: fires the transport's
-        // `UdpCancelHandle` (Arc 2 WP-D) without taking the slot, so it
+        // `UdpCancelHandle` without taking the slot, so it
         // answers while a data-path call is in flight.
         handle.inner.cancel();
         0

@@ -52,23 +52,23 @@ fn main() {
     // here based on the cargo features active for this build.
     inject_feature_defines(&header_path);
 
-    // Post-process 2: domain-grouping section dividers (audit Finding 5).
-    // Keys on symbol-name prefix; independent of Plan C's tst-c/src/
-    // reorg (cbindgen is symbol-based, not file-based, so symbol ordering
+    // Post-process 2: domain-grouping section dividers.
+    // Keys on symbol-name prefix, independent of the source-file layout
+    // (cbindgen is symbol-based, not file-based, so symbol ordering
     // stays stable across source-tree restructuring).
     add_section_dividers(&header_path);
 
     // ────────────────────────────────────────────────────────────────
-    // Symbol hygiene (audit 09-c-abi.md Finding 3): the libtstrans
+    // Symbol hygiene: the libtstrans
     // dynamic export table must contain only tst_*/TST_* symbols (the
     // srt_*/SRT_*/mbedtls_* symbols from the statically-linked libsrt /
     // mbedTLS must NOT leak).
     //
-    // Linux previously used `-Wl,--exclude-libs=ALL` for this. That flag
+    // Linux does NOT use `-Wl,--exclude-libs=ALL` for this. That flag
     // localizes the symbols of EVERY static archive on the link line —
-    // which, after the tst-c-core split, now includes the tst-c-core
+    // which includes the tst-c-core
     // rlib carrying our own #[no_mangle] tst_* entry points, so it would
-    // hide the entire public ABI. It is dropped here because it is
+    // hide the entire public ABI. It is also
     // redundant: rustc's auto-emitted anonymous version-script for a
     // cdylib already localizes every symbol that is not a crate-graph
     // `pub` `#[no_mangle]` export, so libsrt/mbedTLS symbols are emitted
@@ -77,13 +77,14 @@ fn main() {
     // test enforces this invariant (0 global srt_*/SRT_* symbols).
     //
     // macOS still uses -exported_symbols_list (whitelist by symbol-name
-    // pattern; the leaf crate's exports.txt). Windows MSVC is deferred to
-    // plan #65's follow-up.
+    // pattern; the leaf crate's exports.txt). Windows MSVC has no export
+    // restriction yet: the first Windows block below only handles the
+    // dual-mbedTLS link, and the second documents the missing .def file.
     // ────────────────────────────────────────────────────────────────
 
     #[cfg(target_os = "linux")]
     {
-        // Dual-mbedTLS coexistence (Plan A5a). srt-sys and rist-sys each build
+        // Dual-mbedTLS coexistence. srt-sys and rist-sys each build
         // their OWN static copy of the SAME shared source tree
         // (`crates/mbedtls-src/vendor/mbedtls`, reached via
         // `tstrans_mbedtls_src::source_dir()`) — rist-sys points librist's
@@ -100,9 +101,9 @@ fn main() {
         // suite (incl. SRT loopback + RIST) passes on all four gating
         // platforms (linux-x86_64/aarch64, macos-arm64, windows-msvc).
         // Scoped to the srt+rist combo so single-transport builds keep strict
-        // duplicate-symbol checking. The clean fix (one shared BUILD, not
-        // just one shared source tree) is the cross-crate-reuse v2 follow-up
-        // documented in crates/rist-sys/Cargo.toml.
+        // duplicate-symbol checking. The clean fix is one shared BUILD, not
+        // just one shared source tree (crates/rist-sys/Cargo.toml explains
+        // the shared tree).
         if std::env::var("CARGO_FEATURE_SRT").is_ok() && std::env::var("CARGO_FEATURE_RIST").is_ok()
         {
             println!("cargo:rustc-link-arg=-Wl,--allow-multiple-definition");
@@ -142,14 +143,13 @@ fn main() {
         // way -exported_symbols_list does above for macOS; both are
         // mechanically straightforward but nobody has authored the
         // tst-c.def symbol list yet. This is NOT blocked on Windows
-        // CI/hardware — windows-msvc has run the full nextest suite
-        // (--all-features, incl. RIST) as a gating platform since
-        // 2026-05-30. When the .def file lands, add:
+        // CI/hardware — windows-msvc runs the full nextest suite
+        // (--all-features, incl. RIST) as a gating platform. When the .def
+        // file lands, add:
         //   println!("cargo:rerun-if-changed=tst-c.def");
         //   println!("cargo:rustc-link-arg=/DEF:tst-c.def");
         // For now: compile+link still works (no export-restriction means
-        // all symbols remain exported, matching the pre-Plan-B Linux/macOS
-        // behavior).
+        // all symbols remain exported).
     }
 
     // pkg-config substitution.
@@ -197,7 +197,7 @@ fn inject_feature_defines(header_path: &std::path::Path) {
     if std::env::var("CARGO_FEATURE_RTP").is_ok() {
         defines.push_str("#define TST_HAS_RTP 1\n");
     }
-    // Plan A5a: udp / tcp / hls / rist transports (all default-off).
+    // udp / tcp / hls / rist transports (all default-off).
     if std::env::var("CARGO_FEATURE_UDP").is_ok() {
         defines.push_str("#define TST_HAS_UDP 1\n");
     }
@@ -244,9 +244,9 @@ fn inject_feature_defines(header_path: &std::path::Path) {
 /// grouping section-divider comments before each block of function
 /// declarations matching a known prefix.
 ///
-/// Per audit 09-c-abi.md Finding 5. Keys on symbol-name prefix (not
-/// source-file location), so Plan C's tst-c/src/ reorg doesn't affect
-/// the grouping. Section order in the header follows the table below.
+/// Keys on symbol-name prefix (not source-file location), so a source-tree
+/// reorg doesn't affect the grouping. Section order in the header follows
+/// the table below.
 ///
 /// 7 required domain sections (always emit) + 3 conditional sections
 /// (emit only when their bucket is non-empty):
@@ -261,7 +261,7 @@ fn inject_feature_defines(header_path: &std::path::Path) {
 /// - RAW RECEIVER:  tst_raw_receiver / tst_managed_raw_receiver
 ///
 /// Conditional (emit only when at least one symbol matched):
-/// - KLV:           tst_st0601_ (Task 7: ST 0601 KLV decode surface)
+/// - KLV:           tst_st0601_ (ST 0601 KLV decode surface)
 /// - LIFETIME:      *_close / *_cancel / *_free (catch-all cleanup)
 /// - OTHER:         catch-all safety net
 fn add_section_dividers(header_path: &std::path::Path) {

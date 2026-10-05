@@ -5,7 +5,7 @@
 # underscore prefix on C symbols, so the patterns are _tst_*/_TST_*).
 #
 # Consumed by build.rs via cargo:rustc-link-arg=-Wl,-exported_symbols_list,...
-# on macos-arm64 (phase-in until 2026-05-30).
+# on macOS.
 #
 # Apple ld uses positional one-pattern-per-line syntax (no braces, no
 # version tags). Linux's version_script.txt uses the parallel ld scheme.

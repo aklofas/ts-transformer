@@ -421,9 +421,9 @@ mod tests {
     }
 
     /// Twin of `ts_sender.rs`'s pin: `require_caller_mode` refuses
-    /// `?mode=listener` before any socket (Arc 2 WP-B1 behaviour change — it
-    /// used to dial out as a caller). Nothing is dialled, so port 1 is never
-    /// touched and the test needs no peer.
+    /// `?mode=listener` before any socket instead of dialling out as a
+    /// caller. Nothing is dialled, so port 1 is never touched and the test
+    /// needs no peer.
     #[test]
     fn open_with_listener_mode_url_is_refused_before_any_socket() {
         unsafe {

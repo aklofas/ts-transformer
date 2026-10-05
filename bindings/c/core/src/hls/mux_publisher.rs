@@ -45,7 +45,7 @@ pub struct TstMuxPublisher {
 
 /// Map a `MuxPublisherError<HlsError>` to a code + recorded last-error.
 ///
-/// One path, like every other error in tst-c since Arc 2: the shared
+/// One path, like every other error in tst-c: the shared
 /// `From<MuxPublisherError<E>>` classifies by SOURCE (`Mux` → the mux
 /// kind, `Publisher` → the sink's own kind, `Closed` → `CLOSED`,
 /// `LockPoisoned` → `INTERNAL`) and `record_binding_error` projects it.
@@ -476,9 +476,9 @@ mod tests {
         unsafe { crate::config::tst_mux_config_free(cfg) };
     }
 
-    /// Arc 2 WP-B1: `record_mux_publisher_error` classifies by SOURCE through
-    /// the shared `From<MuxPublisherError<E>>` instead of folding everything
-    /// but `Mux` through the coarse `kind()` projection, which reported
+    /// `record_mux_publisher_error` classifies by SOURCE through
+    /// the shared `From<MuxPublisherError<E>>`. Folding everything
+    /// but `Mux` through the coarse `kind()` projection would report
     /// `TST_E_TRANSPORT` (-8) for BOTH `Publisher(_)` and `LockPoisoned`
     /// (`MuxPublisherError::kind()` maps both to `TransportBroken`).
     ///

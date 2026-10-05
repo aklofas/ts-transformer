@@ -51,7 +51,7 @@
  *   cc -I target/debug/include -L target/debug -Wall -Werror \
  *      -o /tmp/send_srt bindings/c/examples/sending/send_srt.c -ltstrans
  *
- * Run (Terminal A — a listener to send into; verified 2026-09-06):
+ * Run (Terminal A — a listener to send into):
  *   cc -I target/debug/include -L target/debug -Wall -Werror \
  *      -o /tmp/recv_ts_to_file bindings/c/examples/receiving/recv_ts_to_file.c -ltstrans
  *   LD_LIBRARY_PATH=target/debug /tmp/recv_ts_to_file /tmp/out.ts     # binds srt://:7000

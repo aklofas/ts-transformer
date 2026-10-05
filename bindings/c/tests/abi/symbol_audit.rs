@@ -52,10 +52,10 @@ fn cdylib_exports_only_prefixed_symbols() {
         if name.starts_with("rust_") || name.starts_with("__rust_") {
             continue;
         }
-        // (Removed Plan B Task 5 — build.rs's --exclude-libs=ALL (Linux)
-        // / -exported_symbols_list (macOS) now restricts libtstrans.so
-        // dynamic exports to tst_*/TST_*. See the new test
-        // srt_symbols_not_exported below for defense-in-depth.)
+        // No allowance for srt_*/SRT_*/mbedtls_*: rustc's cdylib version
+        // script (Linux) / -exported_symbols_list (macOS) restricts the
+        // libtstrans dynamic exports to tst_*/TST_*. See
+        // srt_symbols_not_exported below for defense-in-depth.
         if !name.starts_with("tst_") && !name.starts_with("TST_") {
             bad.push(name.to_string());
         }
@@ -67,8 +67,8 @@ fn cdylib_exports_only_prefixed_symbols() {
 }
 
 /// Defense-in-depth: explicitly assert zero `srt_*` / `SRT_*` symbols in
-/// the dynamic export table after Plan B's build.rs symbol-hygiene work
-/// (Linux: `-Wl,--exclude-libs=ALL`; macOS: `-Wl,-exported_symbols_list`).
+/// the dynamic export table (Linux: rustc's cdylib version script; macOS:
+/// `-Wl,-exported_symbols_list`).
 /// The sibling test `cdylib_exports_only_prefixed_symbols` would also
 /// catch these (they don't start with `tst_`/`TST_`), but this test
 /// fails with a clearer message naming the specific leaked symbol —

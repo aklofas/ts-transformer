@@ -176,9 +176,8 @@ mod tests {
             "start must refuse TLS bytes it cannot honor"
         );
         let code = unsafe { crate::error::tst_get_last_error() };
-        // WP-A2 K5: `RtspServerError::Tls` now carries the RTSP `TLS` kind
-        // (TST_E_RTSP_TLS, -21) instead of the catch-all -24 the retired
-        // `rtsp_server_error_to_code` emitted for every server variant.
+        // `RtspServerError::Tls` carries the RTSP `TLS` kind
+        // (TST_E_RTSP_TLS, -21), not the catch-all server code -24.
         assert_eq!(code, TstError::RtspTls as i32);
         let msg = unsafe { std::ffi::CStr::from_ptr(crate::error::tst_get_last_error_str()) }
             .to_str()

@@ -1176,11 +1176,11 @@ mod tests {
         let m2 =
             unsafe { tst_rtsp_server_add_unicast_mount(server, path.as_ptr(), cfg2 as *const _) };
         assert!(m2.is_null(), "duplicate path should return null");
-        // Arc 2 WP-A2 (K5): the retired `rtsp_server_error_to_code` collapsed
-        // EVERY `RtspServerError` variant to `TST_E_RTSP_SERVER` (-24); the
-        // shared kind table splits them the way Python and the JVM already
-        // did. `DuplicateMount` is in the MOUNT bucket (-25), alongside
-        // `InvalidMountPath` / `InvalidMulticastGroup` / `InvalidConfig`.
+        // The shared kind table splits `RtspServerError` variants the way
+        // Python and the JVM do, rather than collapsing every variant to
+        // `TST_E_RTSP_SERVER` (-24). `DuplicateMount` is in the MOUNT bucket
+        // (-25), alongside `InvalidMountPath` / `InvalidMulticastGroup` /
+        // `InvalidConfig`.
         // (`Io`/`BindAddrInUse` → -22, `Tls` → -21 — pinned by
         // `start::tests::tls_cert_pem_on_plaintext_bind_fails_start` —,
         // `UrlParse` → -16; only `AlreadyStarted`/`NotStarted`/`Shutdown`

@@ -12,7 +12,7 @@
  *
  * The C twin of the Rust `examples/muxing/mux_h265_with_klv.rs`, reproducing
  * its config and synthetic payloads exactly so both produce byte-identical
- * output. Verified 2026-09-06 with `cmp` (150 frames = 228,044 bytes =
+ * output. Verified with `cmp` (150 frames = 228,044 bytes =
  * 1,213 TS packets from both).
  *
  * WHY synchronous KLV?

@@ -13,8 +13,8 @@
 // `cc -ltstrans`, but on the Windows runner `cc` is Strawberry's mingw gcc
 // (`collect2.exe`), which cannot link against the MSVC-ABI `tstrans.dll` /
 // `tstrans.dll.lib` import library. C examples are Linux-only by build
-// convention (see CLAUDE.md); verifying MSVC C-consumption of the cdylib
-// (compile with `cl`, link `tstrans.dll.lib`) is a separate follow-up.
+// convention; verifying MSVC C-consumption of the cdylib (compile with
+// `cl`, link `tstrans.dll.lib`) is not covered here.
 #![cfg(all(feature = "srt", not(target_os = "windows")))]
 
 use std::env;

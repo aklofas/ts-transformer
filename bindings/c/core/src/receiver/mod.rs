@@ -5,9 +5,9 @@
 //! - [`raw_receiver`]   — `tst_raw_receiver_t` + `tst_managed_raw_receiver_t`.
 //! - [`ts_receiver`]    — `tst_receiver_t` + `tst_managed_receiver_t`.
 //!
-//! The SRT open itself is not here any more: plain opens call
+//! The SRT open itself lives in tst-srt: plain opens call
 //! `tst_srt::SrtUrl::{connect, accept_one}` and managed opens call the
-//! `tst_srt::shells::managed_*_from_url` family (Arc 2 WP-A3), which is
+//! `tst_srt::shells::managed_*_from_url` family, which is
 //! also what the Python and JVM bindings use.
 
 pub mod demux_receiver;
@@ -17,7 +17,7 @@ pub mod ts_receiver;
 /// Open ONE plain SRT transport for the URL's mode. Listener mode goes
 /// through [`tst_srt::SrtUrl::accept_one`] with a fresh slot: nothing can
 /// fire it before `_open_listener` returns (the C caller has no pointer
-/// yet — DEBT-16, deferred in Arc 2), but the accept path is the same
+/// yet), but the accept path is the same
 /// cancellable one the managed re-accept uses, so a future two-phase open
 /// only has to hand the slot out.
 ///

@@ -1,15 +1,15 @@
 //! Pins multi-program demux event identity at the C ABI:
-//! - `program_number` survives end-to-end (Tasks 2 + 3)
-//! - `random_access_indicator` surfaces on Video samples (Task 4)
-//! - `stream_type` surfaces on Unknown samples (Task 4)
-//! - `PesOversize.variant_pid` is preserved (Task 5 — Option B)
+//! - `program_number` survives end-to-end
+//! - `random_access_indicator` surfaces on Video samples
+//! - `stream_type` surfaces on Unknown samples
+//! - `PesOversize.variant_pid` is preserved
 //! - Per-stream stats carry `program_number` with distinct PIDs across programs
 //!
-//! Scope note: Wave 1.2 stays scoped to valid multi-program streams with
+//! Scope note: these tests stay scoped to valid multi-program streams with
 //! DISTINCT elementary PIDs. Duplicate PIDs across programs trigger
 //! `NonConformantIssue::PidReusedAcrossPrograms` (first-program-wins) under
-//! the current demux design; redesigning stream identity / stats keys around
-//! `(program_number, pid)` is a separate later wave.
+//! the current demux design, where stream identity / stats keys are not
+//! `(program_number, pid)`.
 //!
 //! Test infrastructure:
 //! - All 5 tests drive a real `tst_raw_sender_t` → `tst_demux_receiver_t`
@@ -686,7 +686,7 @@ fn pes_oversize_discontinuity_carries_variant_pid() {
         ..
     } = disc
     {
-        // Per Option B (Task 5): `pid` is parent stream PID; `variant_pid`
+        // `pid` is parent stream PID; `variant_pid`
         // carries the discontinuity-variant-specific PID.
         assert_eq!(
             *variant_pid, pid,
@@ -701,7 +701,7 @@ fn pes_oversize_discontinuity_carries_variant_pid() {
 
 #[test]
 fn per_stream_stats_carry_program_number_with_distinct_pids() {
-    // Wave 1.2 stays scoped to distinct PIDs — see file docstring.
+    // Scoped to distinct PIDs — see file docstring.
     let p1_pid: u16 = 0x1011;
     let p2_pid: u16 = 0x1211;
     let stream = build_multi_program_stream_with_distinct_pids(p1_pid, p2_pid);

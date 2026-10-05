@@ -1,5 +1,5 @@
 //! C-ABI URL parsing tests for `tst_raw_sender_*` (plain + managed).
-//! Per spec §8.3 second paragraph (per-sender-variant roundtrip).
+//! Per-sender-variant roundtrip.
 
 use std::ffi::CString;
 use std::sync::mpsc;

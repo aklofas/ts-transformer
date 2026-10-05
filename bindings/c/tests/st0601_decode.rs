@@ -1,4 +1,4 @@
-//! C ABI: MISB ST 0601 KLV decode surface (Task 7, ABI 21).
+//! C ABI: MISB ST 0601 KLV decode surface (ABI 21).
 //!
 //! Exercises `tst_st0601_*` through the public `tstrans::klv_st0601`
 //! re-export — the same crate-external-caller path a real C consumer

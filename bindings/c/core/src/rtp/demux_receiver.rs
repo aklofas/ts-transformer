@@ -6,8 +6,8 @@
 //! `tst_rtp_demux_receiver_close`.
 //!
 //! Every body here is a thin forwarder to a generic impl in
-//! `crate::transport_impls` — `next_event` included, since Arc 2: the
-//! cancel state it needs to tell peer-EOF from caller-cancel now lives on
+//! `crate::transport_impls` — `next_event` included: the
+//! cancel state it needs to tell peer-EOF from caller-cancel lives on
 //! the handle's `CHandle`, which the generic body reads itself. The
 //! end-reason cell lives in that handle's snapshot.
 
@@ -207,8 +207,8 @@ pub unsafe extern "C" fn tst_rtp_demux_receiver_cancel(p: *mut TstRtpDemuxReceiv
 /// session ended, if any.
 ///
 /// Writes `TstStreamEndReason::None` (returns `0`) when the session
-/// hasn't ended yet, or ended through a path this arc doesn't
-/// instrument — and in that case the thread-local last-error channel is
+/// hasn't ended yet, or ended through an uninstrumented path — and in
+/// that case the thread-local last-error channel is
 /// left untouched (any pending failure from an earlier call is still
 /// readable). A recorded reason is data, not a getter failure — this
 /// only returns a nonzero code for a null-pointer argument.

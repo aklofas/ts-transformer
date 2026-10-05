@@ -13,7 +13,7 @@
  * EXACTLY, so the two programs produce byte-identical output for the same
  * duration. That equivalence is the point: it is proof that the C ABI's
  * config builder + muxer handle drive the same muxer with the same defaults
- * as the Rust API. Verified 2026-09-06 with `cmp` (5 s = 150 frames =
+ * as the Rust API. Verified with `cmp` (5 s = 150 frames =
  * 196,836 bytes = 1,047 TS packets from both).
  *
  * Handle lifecycle shown here (the same three-step shape every muxing

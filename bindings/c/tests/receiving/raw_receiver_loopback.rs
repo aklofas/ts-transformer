@@ -148,10 +148,9 @@ fn loopback_caller_sender_to_listener_receiver_delivers_bytes_and_eos() {
         // them. 1 s comfortably covers SRT's default 120 ms latency budget
         // plus loopback scheduling jitter on every platform.
         //
-        // Bumped from 200 ms in plan #66 — Darwin scheduling on Apple Silicon
-        // (macOS arm64, GHA macos-14 runner) pushes event emission past the
-        // previous window. Linux loopback tolerates the smaller value but
-        // the extra headroom is platform-stable.
+        // Darwin scheduling on Apple Silicon (macOS arm64 runners) pushes
+        // event emission past a 200 ms window. Linux loopback tolerates the
+        // smaller value but the extra headroom is platform-stable.
         thread::sleep(Duration::from_secs(1));
 
         // Closing the sender triggers libsrt's graceful shutdown sequence,

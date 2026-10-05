@@ -1,4 +1,4 @@
-//! C-ABI URL parsing integration tests. Per spec §8.3.
+//! C-ABI URL parsing integration tests.
 //!
 //! Each test opens a real listener on a random local port, opens a sender
 //! via the C ABI with a URL containing query params, and verifies the

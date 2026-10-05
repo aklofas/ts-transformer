@@ -176,7 +176,7 @@ mod tests {
         assert!(msg.contains("simulated connect"), "got: {msg}");
     }
 
-    /// Validate-1 D1: lifecycle entries (`_close` / `_cancel`) now wrap
+    /// Lifecycle entries (`_close` / `_cancel`) wrap
     /// their bodies in `ffi_catch` so a panic raised inside (e.g., a
     /// poisoned-mutex unwrap deep in `boxed.inner.close()`, or a
     /// `cancel_handle()` Drop that itself panics) cannot unwind across

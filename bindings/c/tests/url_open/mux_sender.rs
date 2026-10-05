@@ -1,5 +1,5 @@
 //! C-ABI URL parsing tests for `tst_mux_sender_*` (plain + managed).
-//! Per spec §8.3 second paragraph (per-sender-variant roundtrip).
+//! Per-sender-variant roundtrip.
 
 use std::ffi::CString;
 use std::sync::mpsc;
@@ -174,7 +174,7 @@ fn variant_managed_mux_sender_get_reconnect_stats() {
 }
 
 // ---------------------------------------------------------------------------
-// `_finish` — Arc 2 R3 (DEBT-14 "ship now" cell), ABI 0.22
+// `_finish` — ABI 0.22
 // ---------------------------------------------------------------------------
 
 /// Holds a loopback SRT peer alive for the whole test.
@@ -300,7 +300,7 @@ unsafe fn finish_test_config() -> *mut tstrans::config::TstMuxConfig {
     }
 }
 
-/// Arc 2 R3: `_finish` drains and closes; a second `_finish` is 0; the
+/// `_finish` drains and closes; a second `_finish` is 0; the
 /// handle still frees with `_close`.
 #[test]
 fn mux_sender_finish_drains_then_reports_zero_and_is_idempotent() {

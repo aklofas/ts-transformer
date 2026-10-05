@@ -211,7 +211,7 @@ LD_LIBRARY_PATH=../../target/debug /tmp/send_srt
 # -> "sent 100 TS packets (18800 bytes), flushed, closed." then the 10-row table
 ```
 
-Verified 2026-09-06: 18,800 bytes land in `/tmp/out.ts`; the table's last
+Verified: 18,800 bytes land in `/tmp/out.ts`; the table's last
 row (`srt://:9000?mode=listener` handed to a sender) fails at connect
 time, not validation — senders ignore `mode` entirely and dial whatever
 host the URL names (with a real host they connect as a caller as if the
@@ -235,7 +235,7 @@ LD_LIBRARY_PATH=../../target/debug /tmp/send_srt_encrypted
 
 A passphrase mismatch never yields a connected handle on either side: the
 caller's open fails with `TST_E_TRANSPORT` ("peer rejected connection:
-BadSecret") and the listener keeps waiting (verified 2026-09-06).
+BadSecret") and the listener keeps waiting.
 
 ### 11. `sending/send_srt_ts_file.c` — relay a recorded `.ts` over SRT, PCR-paced
 
@@ -258,7 +258,7 @@ LD_LIBRARY_PATH=../../target/debug /tmp/send_srt_ts_file /tmp/in.ts 127.0.0.1:70
 cmp /tmp/in.ts /tmp/copy.ts && echo identical
 ```
 
-Verified 2026-09-06 with the 5 s file from §12: byte-identical copy on the
+Verified with the 5 s file from §12: byte-identical copy on the
 receiver in both modes; the paced run takes the file's PCR span plus the
 connect and drain windows.
 
@@ -277,7 +277,7 @@ LD_LIBRARY_PATH=../../target/debug /tmp/mux_to_file /tmp/out.ts 5
 cargo run -p tst-examples --example mux_to_file -- /tmp/rust.ts 5 && cmp /tmp/out.ts /tmp/rust.ts
 ```
 
-Verified 2026-09-06: 150 frames = 196,836 bytes = 1,047 TS packets from
+Verified: 150 frames = 196,836 bytes = 1,047 TS packets from
 both; `ffprobe` reports h264 + KLV.
 
 ### 13. `muxing/mux_h265_with_klv.c` — H.265 + synchronous KLV
@@ -294,7 +294,7 @@ responsibility with sync KLV — pass raw KLV bytes, the muxer prepends the
 LD_LIBRARY_PATH=../../target/debug /tmp/mux_h265_with_klv /tmp/h265.ts
 ```
 
-Verified 2026-09-06: 150 frames = 228,044 bytes = 1,213 TS packets from
+Verified: 150 frames = 228,044 bytes = 1,213 TS packets from
 both; `ffprobe` reports hevc + KLV.
 
 ### 14. `operations/managed_reconnect.c` — the managed sender vs a flaky peer
@@ -318,7 +318,7 @@ LD_LIBRARY_PATH=../../target/debug /tmp/managed_reconnect
 #    "OK: completed run with reconnects (sent_ok=30, sent_err=0, successes=2)"
 ```
 
-Verified 2026-09-06: 5 of 5 consecutive runs, ~2 s each.
+Verified: 5 of 5 consecutive runs, ~2 s each.
 
 ### 15. `operations/managed_reconnect_background.c` — Background mode + eviction stats
 

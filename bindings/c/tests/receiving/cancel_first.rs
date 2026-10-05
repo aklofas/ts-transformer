@@ -2,7 +2,7 @@
 //! the op that observes a cross-thread cancel returns a specific code, and
 //! it returns PROMPTLY (10 s watchdog that FAILS, never hangs).
 //!
-//! Expected codes (WP-C2, PR 8):
+//! Expected codes:
 //!   managed SRT (send + recv) ....... TST_E_CLOSED (-7)   — ManagedRecv/ManagedTransport latch
 //!   plain SRT (send + recv) ......... TST_E_CLOSED (-7)   — `SrtTransport` reads its cancel latch
 //!                                     after the libsrt failure and reports ExplicitClose.
@@ -20,7 +20,7 @@ use tst_srt::ListenerBuilder;
 use tstrans::error::{TstError, tst_get_last_error_str};
 
 /// Plain-SRT code observed by the op that a cross-thread cancel interrupts.
-/// Same as the managed one since WP-C2: a cancelled plain SRT op reports
+/// Same as the managed one: a cancelled plain SRT op reports
 /// `ExplicitClose`, which the C ABI maps to `TST_E_CLOSED`.
 pub(crate) const PLAIN_SRT_CANCEL_CODE: i32 = TstError::Closed as i32;
 pub(crate) const MANAGED_SRT_CANCEL_CODE: i32 = TstError::Closed as i32;

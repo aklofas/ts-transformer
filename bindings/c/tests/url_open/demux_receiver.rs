@@ -8,7 +8,7 @@
 //! `tests/receiving/demux_receiver_loopback.rs`.
 //!
 //! This file also carries the managed-demux-receiver lifecycle test that
-//! needs a real SRT socket rendezvous (Task 9): stream-end reason,
+//! needs a real SRT socket rendezvous: stream-end reason,
 //! reconnect-stats baseline, and the `unwrap_timestamps` config knob. It
 //! lives here rather than in `receiving/demux_receiver_loopback.rs`
 //! because it exercises the `tst_managed_demux_receiver_*` *caller*-mode
@@ -38,8 +38,8 @@ use tstrans::stream_end_reason::TstStreamEndReason;
 use super::last_error_msg;
 
 /// Single managed-demux-receiver caller-mode connection, exercised
-/// against all three Task 9 additions in sequence to keep this file's
-/// contribution to the binary's process-wide SRT socket count to one
+/// against all three managed-lifecycle getters/knobs in sequence to keep
+/// this file's contribution to the binary's process-wide SRT socket count to one
 /// connection rather than three (see `accept_with_retry`'s doc for why
 /// that concurrency matters here):
 ///
@@ -125,7 +125,7 @@ fn managed_demux_receiver_end_reason_reconnect_stats_and_unwrap_config() {
         // (`CUDTUnited::checkBrokenSockets`) prunes a connection that
         // breaks while still sitting in the listener's accept queue. If
         // this thread is descheduled across that window (a loaded 2-vCPU
-        // CI runner; 2 sightings 2026-09-15/16), the queued connection
+        // CI runner), the queued connection
         // vanishes and a plain `accept()` would sleep forever — nothing
         // else ever connects. The test thread fires `listener_cancel`
         // before joining, which closes the listener and wakes a parked

@@ -703,7 +703,7 @@ const _TST_MOUNT_STATS_SIZE: () = assert!(
 );
 
 // ---------------------------------------------------------------------------
-// Plan A5a — HLS publisher stats (hls feature)
+// HLS publisher stats (hls feature)
 // ---------------------------------------------------------------------------
 
 /// `repr(C)` mirror of `tst_core::publisher::PublisherStats` — the
@@ -843,8 +843,7 @@ mod codec_stats_tests {
     // against a real Muxer/Demuxer. The variants themselves are
     // `#[non_exhaustive]` (not just the enum), so they cannot be
     // constructed via struct expression from outside tst-core
-    // (Rust E0639) — see memory note
-    // `reference_non_exhaustive_outside_crate_construction.md`. The
+    // (Rust E0639). The
     // discriminator + size invariants are covered above; the field
     // assignments in `codec_stats_to_c` are simple plumbing exercised
     // end-to-end by the integration tests.

@@ -1,7 +1,7 @@
 /*
  * Compiled and run from tests/smoke.rs. Exercises every C handle type
  * except live-socket connects (those need a Listener pair which is
- * easier to set up from Rust — see live_pair.rs in Task 12).
+ * easier to set up from Rust — see receiving/live_pair.rs).
  */
 
 #include "tstrans.h"

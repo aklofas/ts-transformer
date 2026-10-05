@@ -1,6 +1,6 @@
 //! Verifies that the committed header matches what cbindgen would emit
 //! against the current source tree, plus the build.rs post-process step
-//! that inserts domain-grouping section dividers (audit Finding 5).
+//! that inserts domain-grouping section dividers.
 //! Drift indicates a forgotten regenerate-and-commit step.
 
 // The committed header is generated with `srt` + `rtp` on (cbindgen emits
@@ -114,7 +114,7 @@ fn inject_feature_defines(content: &str) -> String {
 /// from a `tst_c::` path.
 ///
 /// The `strip_prefix(' ')` call below mirrors the leading-space strip
-/// added to build.rs in Audit-2 Task 11 — cbindgen 0.29.x emits
+/// in build.rs — cbindgen 0.29.x emits
 /// single-line declarations with one leading space; we strip it here
 /// so the test compares the same normalised form that build.rs produces.
 fn add_section_dividers(original: &str) -> String {

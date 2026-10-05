@@ -146,10 +146,9 @@ fn loopback_ts_sender_to_ts_receiver_delivers_aligned_packets_and_eos() {
         // 120 ms latency budget plus loopback scheduling jitter on every
         // platform.
         //
-        // Bumped from 200 ms in plan #66 — Darwin scheduling on Apple
-        // Silicon pushes timing past the previous window. Linux loopback
-        // tolerates the smaller value but the extra headroom is
-        // platform-stable.
+        // Darwin scheduling on Apple Silicon pushes timing past a 200 ms
+        // window. Linux loopback tolerates the smaller value but the extra
+        // headroom is platform-stable.
         thread::sleep(Duration::from_secs(1));
 
         unsafe { tst_sender_close(tx) };

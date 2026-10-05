@@ -7,8 +7,8 @@
 //! Data-path bodies (send_ts, get_stats, get_socket_stats, reset_stats)
 //! are thin forwarders to generic impls in `crate::transport_impls`.
 //!
-//! **Cancel:** the UDP transport exposes a real cancel handle since Arc 2
-//! WP-D and this handle's `CHandle` slot holds it, so `_close` fires it
+//! **Cancel:** the UDP transport exposes a real cancel handle and
+//! this handle's `CHandle` slot holds it, so `_close` fires it
 //! before taking the slot. There is little for it to unblock on the send
 //! side (a UDP send never parks — `send_to` on a datagram socket returns at
 //! once), and `_close` FREES the handle: a `_send_ts` already in flight
@@ -81,7 +81,7 @@ pub unsafe extern "C" fn tst_udp_sender_open(url: *const c_char) -> *mut TstUdpS
             }
         };
         let sender = Sender::new(transport, SenderConfig::default());
-        // `cancel_or_latch` resolves the shell's `Option`; since Arc 2 WP-D
+        // `cancel_or_latch` resolves the shell's `Option`;
         // this transport's `cancel_handle()` is `Some`, so the handle below
         // carries the REAL cancel and `_close` wakes what it can.
         let cancel = cancel_or_latch(sender.cancel_handle());
@@ -145,7 +145,7 @@ pub unsafe extern "C" fn tst_udp_sender_cancel(p: *mut TstUdpSender) -> libc::c_
             return TstError::InvalidConfig as i32;
         };
         // `CHandle::cancel` → `Owned::cancel`: fires the transport's
-        // `UdpCancelHandle` (Arc 2 WP-D) without taking the slot, so it
+        // `UdpCancelHandle` without taking the slot, so it
         // answers while a data-path call is in flight.
         handle.inner.cancel();
         0
