@@ -1,7 +1,7 @@
 //! RTP cancel-first characterization: a `_cancel` from another thread ends a
 //! PARKED receive with exactly `TST_E_CLOSED` (-7) — `RtpRecvTransport`
 //! already returns `ExplicitClose` once its cancel flag is set
-//! (`crates/tst-rtp/src/transport.rs`), and Arc 2's `Owned::cancel` latches
+//! (`crates/tst-rtp/src/transport.rs`), and `Owned::cancel` latches
 //! before it wakes the parked call, so the relabeller cannot race.
 //!
 //! The sibling `rtp_open_smoke.rs` covers cancel-then-recv (unparked); this

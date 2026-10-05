@@ -4,7 +4,7 @@
 //! at least one SAMPLE event with the expected codec discriminator,
 //! and a final TST_E_END_OF_STREAM on graceful sender close.
 //!
-//! Mirrors the ts_receiver_loopback.rs threading pattern from plan #60:
+//! Mirrors the ts_receiver_loopback.rs threading pattern:
 //! the receiver thread calls open_listener (which blocks on SRT accept),
 //! fires a ready signal once the peer has connected, then drains events.
 //! The sender thread retries connect in a loop until the listener is
@@ -182,12 +182,11 @@ fn loopback_mux_sender_to_demux_receiver_delivers_pmt_and_sample_and_eos() {
         // jitter, giving the demuxer time to surface PROGRAM_MAP +
         // Sample events before EOS propagates.
         //
-        // Bumped from 200 ms after plan #64's macOS arm64 (`macos-14`)
-        // matrix entry surfaced a "no PROGRAM_MAP event received" race
-        // on first post-ship run — Darwin's scheduling on Apple Silicon
-        // pushes PMT emission past the previous window. Linux loopback
-        // tolerates 200 ms but the extra headroom is cheap and keeps
-        // the test cross-platform-stable.
+        // At 200 ms macOS arm64 runners fail with "no PROGRAM_MAP event
+        // received" — Darwin's scheduling on Apple Silicon pushes PMT
+        // emission past that window. Linux loopback tolerates 200 ms but
+        // the extra headroom is cheap and keeps the test
+        // cross-platform-stable.
         thread::sleep(Duration::from_secs(1));
 
         unsafe { tst_mux_sender_close(tx) };

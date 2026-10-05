@@ -1,5 +1,5 @@
 //! End-to-end parity proof for the C-ABI `tst_demux_config_*` AV1
-//! carriage knob added in plan #96 Wave B.
+//! carriage knob.
 //!
 //! Builds two real AV1 access units (one carried in `Mpeg2TsBinding`
 //! mode, one in `InteropRawObu` mode) via the in-process Rust muxer,

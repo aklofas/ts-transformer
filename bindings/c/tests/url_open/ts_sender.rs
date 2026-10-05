@@ -1,6 +1,6 @@
 //! C-ABI URL parsing tests for `tst_sender_*` (TS-bytes sender) plus the
 //! URL-parser error paths and atomicity invariants, which all use
-//! `tst_sender_open` as their probe. Per spec §8.3.
+//! `tst_sender_open` as their probe.
 //!
 //! Test groups (in source order):
 //!   1. streamid roundtrip
@@ -644,7 +644,7 @@ fn ts_sender_packetfilter_url_open_succeeds() {
 
 // ============================================================================
 // Per-sender-variant roundtrip — confirms URL plumbing works in the ts_sender
-// + managed_ts_sender entry points (spec §8.3 second paragraph).
+// + managed_ts_sender entry points.
 // ============================================================================
 
 #[test]
@@ -1060,7 +1060,7 @@ fn url_userinfo_returns_null_with_passphrase_hint() {
 }
 
 // ============================================================================
-// Atomicity (spec §8.3) — caller's cfg is byte-unchanged after a failed parse.
+// Atomicity — caller's cfg is byte-unchanged after a failed parse.
 //
 // A failed URL parse must not poison the cfg. The same cfg must be usable for
 // a subsequent successful open against a valid URL. This tests the invariant
@@ -1119,17 +1119,17 @@ fn cfg_byte_unchanged_after_failed_parse() {
 }
 
 // ============================================================================
-// Managed-reconnect URL persistence (spec §8.3).
+// Managed-reconnect URL persistence.
 //
 // URL options are parsed once at construction. When the managed transport
 // reconnects after a broken connection, the SocketConfig (with streamid)
 // captured in the reconnect factory closure must be reused — not re-parsed
-// from the URL string. This is the core invariant of Task 14's design.
+// from the URL string.
 //
 // Listener lifecycle (single background thread, two phases):
-//   Phase 1 — bind :0, accept the initial connection, validate streamid,
+//   phase 1 — bind :0, accept the initial connection, validate streamid,
 //              send port + sid1 back to main, then drop everything.
-//   Phase 2 — rebind to the SAME port (200ms after drop), accept the
+//   phase 2 — rebind to the SAME port (200ms after drop), accept the
 //              reconnected sender, validate streamid, send sid2 back.
 //
 // Main thread triggers the reconnect by pushing valid TS data after phase 1
@@ -1159,13 +1159,13 @@ fn make_ts_bundle() -> Vec<u8> {
 #[test]
 fn managed_ts_sender_url_options_persist_across_reconnect() {
     let (port_tx, port_rx) = mpsc::channel::<u16>();
-    // Phase 1 result: streamid observed on first accept.
+    // phase 1 result: streamid observed on first accept.
     let (sid1_tx, sid1_rx) = mpsc::channel::<Option<String>>();
-    // Phase 2 result: streamid observed on reconnect accept.
+    // phase 2 result: streamid observed on reconnect accept.
     let (sid2_tx, sid2_rx) = mpsc::channel::<Option<String>>();
 
     let listener_thread = thread::spawn(move || {
-        // Phase 1: bind to :0, learn the port, accept the initial connection.
+        // phase 1: bind to :0, learn the port, accept the initial connection.
         let mut listener1 = ListenerBuilder::new()
             .recv_timeout(Duration::from_secs(5))
             .bind("127.0.0.1:0")
@@ -1189,7 +1189,7 @@ fn managed_ts_sender_url_options_persist_across_reconnect() {
         // but 200ms avoids a tight race with the phase 2 bind below.
         thread::sleep(Duration::from_millis(200));
 
-        // Phase 2: rebind to the SAME port so the managed sender's reconnect
+        // phase 2: rebind to the SAME port so the managed sender's reconnect
         // attempt reaches us. Allow up to 10s for the reconnect to complete.
         let mut listener2 = ListenerBuilder::new()
             .recv_timeout(Duration::from_secs(10))

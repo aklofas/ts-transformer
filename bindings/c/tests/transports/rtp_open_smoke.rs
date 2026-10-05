@@ -223,7 +223,7 @@ fn rtp_receiver_cancel_unblocks() {
     let mut n: usize = 0;
     let rc = unsafe { tst_rtp_receiver_recv_ts(h, buf.as_mut_ptr(), buf.len(), &mut n) };
     // After cancel this is exactly CLOSED: `RtpRecvTransport` returns
-    // `ExplicitClose` once its cancel flag is set, and Arc 2's `Owned::cancel`
+    // `ExplicitClose` once its cancel flag is set, and `Owned::cancel`
     // latches BEFORE it wakes the parked call, so the relabeller cannot race.
     assert_eq!(
         rc,
@@ -367,7 +367,7 @@ fn rtp_demux_receiver_cancel_unblocks_next_event() {
     let mut ev = TstEvent::default();
     let rc = unsafe { tst_rtp_demux_receiver_next_event(h, &mut ev) };
     // After cancel this is exactly CLOSED: `RtpRecvTransport` returns
-    // `ExplicitClose` once its cancel flag is set, and Arc 2's `Owned::cancel`
+    // `ExplicitClose` once its cancel flag is set, and `Owned::cancel`
     // latches BEFORE it wakes the parked call, so the relabeller cannot race.
     assert_eq!(
         rc,
@@ -566,7 +566,7 @@ fn null_next_event_returns_invalid_config() {
 }
 
 // ---------------------------------------------------------------------------
-// `_finish` — Arc 2 R3 (DEBT-14 "ship now" cell), ABI 0.22
+// `_finish` — ABI 0.22
 // ---------------------------------------------------------------------------
 
 /// `tst_rtp_mux_sender_finish` drains and closes. RTP rides UDP, so there

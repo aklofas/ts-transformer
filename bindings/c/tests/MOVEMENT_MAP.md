@@ -43,7 +43,7 @@ unchanged (484) and the test leaf-name multiset is byte-identical before/after
 
 ## Movement table
 
-### `abi/` — C ABI surface + hygiene: smoke, version, symbol audit, header drift, feature-matrix compile, error routing.
+### `abi/` — C ABI surface + hygiene: smoke, version, exported-symbol check, header drift, feature-matrix compile, error routing.
 
 | old `tests/…` | new `tests/…` |
 | --- | --- |
@@ -60,7 +60,7 @@ unchanged (484) and the test leaf-name multiset is byte-identical before/after
 | --- | --- |
 | `demux_receiver_loopback.rs` | `receiving/demux_receiver_loopback.rs` |
 | `live_pair.rs` | `receiving/live_pair.rs` |
-| (new 2026-09-06) | `receiving/managed_listener_cancel.rs` |
+| (new) | `receiving/managed_listener_cancel.rs` |
 | `raw_receiver_loopback.rs` | `receiving/raw_receiver_loopback.rs` |
 | `ts_receiver_loopback.rs` | `receiving/ts_receiver_loopback.rs` |
 
@@ -81,9 +81,9 @@ unchanged (484) and the test leaf-name multiset is byte-identical before/after
 | old `tests/…` | new `tests/…` |
 | --- | --- |
 | `hls_publish_smoke.rs` | `transports/hls_publish_smoke.rs` |
-| (new, Arc 2 R4) | `transports/rist_cancel_from_other_thread.rs` |
+| (new) | `transports/rist_cancel_from_other_thread.rs` |
 | `rist_open_smoke.rs` | `transports/rist_open_smoke.rs` |
 | `rtp_open_smoke.rs` | `transports/rtp_open_smoke.rs` |
 | `tcp_open_smoke.rs` | `transports/tcp_open_smoke.rs` |
-| (new, Arc 2 WP-D) | `transports/udp_close_cancels_first.rs` |
+| (new) | `transports/udp_close_cancels_first.rs` |
 | `udp_open_smoke.rs` | `transports/udp_open_smoke.rs` |

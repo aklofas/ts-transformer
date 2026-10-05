@@ -6,7 +6,7 @@
 //! original URL on transport breakage.
 //!
 //! Push and stats bodies forward to generic impls in
-//! `crate::transport_impls` (SIMP-CBIND-1). Open/close/cancel, the
+//! `crate::transport_impls`. Open/close/cancel, the
 //! SRT-specific data-stream entry points, and the `parse_c_srt_url*`
 //! helpers stay family-local.
 
@@ -1373,9 +1373,9 @@ mod tests {
     }
 
     /// Twin of `ts_sender.rs`'s pin: `require_caller_mode` refuses
-    /// `?mode=listener` before any socket (Arc 2 WP-B1 behaviour change — it
-    /// used to dial out as a caller). Nothing is dialled, so port 1 is never
-    /// touched and the test needs no peer.
+    /// `?mode=listener` before any socket instead of dialling out as a
+    /// caller. Nothing is dialled, so port 1 is never touched and the test
+    /// needs no peer.
     #[test]
     fn open_with_listener_mode_url_is_refused_before_any_socket() {
         unsafe {

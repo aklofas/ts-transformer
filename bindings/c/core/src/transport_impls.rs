@@ -1,4 +1,4 @@
-//! Generic transport body implementations (SIMP-CBIND-1).
+//! Generic transport body implementations.
 //!
 //! Each function here implements one logical C entry-point body, generic over
 //! a pipeline shell type (`MuxSender<T>`, `Sender<T>`, `Receiver<R>`,

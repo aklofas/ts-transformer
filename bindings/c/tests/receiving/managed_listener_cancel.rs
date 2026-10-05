@@ -1,8 +1,7 @@
 //! `tst_managed_demux_receiver_cancel` must wake a listener-mode managed
 //! receiver whose reconnect is parked in the re-accept after its peer
-//! disconnected (ROADMAP Apple rider 2: "cancellable managed-listener
-//! re-accept"). Before the fix the reader thread sat in `srt_accept` until
-//! a new peer showed up; `_cancel` was silently ignored.
+//! disconnected. Without a cancellable re-accept the reader thread would sit
+//! in `srt_accept` until a new peer showed up, silently ignoring `_cancel`.
 //!
 //! Choreography:
 //!   1. Reader thread: `_open_listener` (blocks until a peer connects),

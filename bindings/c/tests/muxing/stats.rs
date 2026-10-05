@@ -227,7 +227,7 @@ fn mux_sender_socket_stats_round_trip() {
         assert_eq!(rc, 0);
         // Drain pause before the stats read — SRT's send queue is
         // asynchronous. 100 ms worked on Linux but Darwin scheduling
-        // on Apple Silicon (plan #66) needs more headroom; 1 s covers
+        // on Apple Silicon needs more headroom; 1 s covers
         // SRT's 120 ms latency budget plus scheduling jitter on every
         // platform.
         std::thread::sleep(Duration::from_secs(1));
@@ -270,7 +270,7 @@ fn mux_sender_socket_stats_null_pointer_returns_invalid_config() {
         let rc = tst_mux_sender_get_socket_stats(std::ptr::null_mut(), &mut st);
         assert_ne!(rc, 0);
 
-        // null out pointer is hit via a live handle in Task 13's live test
+        // null out pointer is hit via a live handle in the loopback tests
         // — here we only need the null-handle path because constructing a
         // live tst_mux_sender_t requires a live SRT loopback.
     }

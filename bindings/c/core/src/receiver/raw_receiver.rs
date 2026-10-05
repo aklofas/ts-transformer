@@ -56,11 +56,8 @@ pub unsafe extern "C" fn tst_raw_receiver_open(
 /// requirement for an explicit `?mode=listener` does not apply here because
 /// the entry-point name is already the authoritative listener signal.
 ///
-/// (Simplification of the design spec §4.2, which originally proposed
-/// rejecting explicit `mode=caller` with `TST_E_INVALID_USAGE`. The
-/// simpler rule is more forgiving and matches what most C consumers
-/// expect from a `_listener`-suffixed entry point. The stricter check
-/// can land later if a consumer asks.)
+/// Accepting (not rejecting) `mode=caller` matches what most C consumers
+/// expect from a `_listener`-suffixed entry point.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_raw_receiver_open_listener(
     srt_url: *const libc::c_char,
@@ -316,8 +313,7 @@ pub unsafe extern "C" fn tst_managed_raw_receiver_open_listener(
 
 /// One managed open for both entry points; see `TstManagedReceiver`'s
 /// `managed_open_inner`. `managed_raw_receiver_from_url` applies
-/// `RawReceiverConfig::default()` internally — what this family passed by
-/// hand before Arc 2.
+/// `RawReceiverConfig::default()` internally.
 fn managed_open_inner(
     url: SrtUrl,
     policy: tst_pipeline::ReconnectPolicy,

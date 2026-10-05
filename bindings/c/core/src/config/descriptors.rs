@@ -5,13 +5,12 @@
 //!
 //! - `resolve_stream_descriptor_slot` — shared resolver for all 8 per-stream
 //!   descriptor fns (5 `add_*` + 3 `set_stream_descriptors_for_*`). Routes
-//!   **both** families through the `try_from_raw` trust-boundary guard
-//!   (closes DA-CABI-3 / SIMP-CBIND-2).
+//!   **both** families through the `try_from_raw` trust-boundary guard.
 //! - `desc_to_tlv_blob` — single-descriptor copy.
 //! - `parse_tlv_list` — multi-descriptor byte-stream parse. The
 //!   `with_capacity` reservation is clamped to `tlv_count.min(tlv_total_len
 //!   / 2 + 1)` to prevent a caller-controlled `tlv_count = 2e9` from
-//!   triggering an uncatchable `handle_alloc_error` abort (closes DA-CABI-1).
+//!   triggering an uncatchable `handle_alloc_error` abort.
 
 use super::{TstMuxConfig, TstProgramHandle};
 use crate::error::{TstError, set_last_error};
@@ -27,7 +26,7 @@ use tst_core::mpegts::mux::{
 };
 
 // ---------------------------------------------------------------------------
-// Shared slot resolver (DA-CABI-3 + SIMP-CBIND-2)
+// Shared slot resolver
 // ---------------------------------------------------------------------------
 
 /// Resolve a per-stream descriptor slot, shared by all 8 per-stream
@@ -611,13 +610,13 @@ pub unsafe extern "C" fn tst_mux_config_add_data_descriptor(
 }
 
 // ---------------------------------------------------------------------------
-// Internal helper: TLV byte-stream parser (DA-CABI-1 with_capacity clamp)
+// Internal helper: TLV byte-stream parser (with_capacity clamp)
 // ---------------------------------------------------------------------------
 
 // Internal helper: parse a concatenated TLV byte stream (tag + length + body
 // per descriptor) into a Vec<Vec<u8>>. Returns Err(TST_E_*) on malformed input.
 //
-// DA-CABI-1: `with_capacity` is clamped to `tlv_count.min(tlv_total_len / 2 + 1)`.
+// `with_capacity` is clamped to `tlv_count.min(tlv_total_len / 2 + 1)`.
 // Each TLV occupies at least 2 bytes (tag + length), so this is a tight upper
 // bound on the number of TLVs that can fit in `tlv_total_len` bytes. Without
 // the clamp, a caller-supplied `tlv_count = 2_000_000_000` with a 4-byte
@@ -692,15 +691,15 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // DA-CABI-1: with_capacity clamp
+    // with_capacity clamp
     // -----------------------------------------------------------------------
 
     /// Confirms that a caller-supplied `tlv_count = 2_000_000_000` paired with
     /// a tiny `tlv_total_len` returns an error code rather than aborting the
     /// process via an uncatchable `handle_alloc_error`.
     ///
-    /// Before the clamp fix, `Vec::with_capacity(2_000_000_000)` would attempt
-    /// a ~48 GB reservation and abort. After the fix the capacity is clamped to
+    /// Unclamped, `Vec::with_capacity(2_000_000_000)` would attempt a ~48 GB
+    /// reservation and abort. The capacity is clamped to
     /// `min(2e9, tlv_total_len / 2 + 1)` — a small number — and the subsequent
     /// loop immediately detects the TLV count / byte-stream mismatch and returns
     /// `TST_E_INVALID_CONFIG`.
@@ -727,13 +726,13 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // DA-CABI-3: forged handle rejection (add- and set-family parity)
+    // forged handle rejection (add- and set-family parity)
     // -----------------------------------------------------------------------
 
     /// Confirms that both the `add_*` and `set_stream_descriptors_for_*`
     /// families reject a forged video stream handle (high bits set) with
-    /// `TST_E_INVALID_USAGE`. Before DA-CABI-3 the `add_*` family used raw
-    /// bit-twiddling and silently masked the high bits.
+    /// `TST_E_INVALID_USAGE`; raw bit-twiddling in the `add_*` family would
+    /// silently mask the high bits instead.
     #[test]
     fn forged_video_handle_rejected_by_add_and_set_families() {
         unsafe {

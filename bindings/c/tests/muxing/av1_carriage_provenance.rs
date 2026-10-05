@@ -1,4 +1,4 @@
-//! C ABI provenance-byte and wire-push tests for AV1 carriage (WP-B Task 8).
+//! C ABI provenance-byte and wire-push tests for AV1 carriage.
 //!
 //! Verifies:
 //! 1. `ev.u.sample.av1_carriage` is set to 0 (`TST_AV1_CARRIAGE_MODE_MPEG2_TS_BINDING`)

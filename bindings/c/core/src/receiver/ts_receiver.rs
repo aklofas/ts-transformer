@@ -317,9 +317,9 @@ pub unsafe extern "C" fn tst_managed_receiver_open_listener(
 /// open (dispatched on `url.mode`), the re-open factory that re-dials or
 /// RE-ACCEPTS the same URL, the shared `FactoryCancel` slot that makes
 /// every re-accept wakeable, the decorator, the shell, and the observers
-/// taken before the move — lives in tst-srt (Arc 2 WP-A3). The FIRST accept
+/// taken before the move — lives in tst-srt. The FIRST accept
 /// runs through that same slot, but nothing can fire it before this call
-/// returns (DEBT-16, deferred in Arc 2).
+/// returns (the C caller has no handle yet).
 fn managed_open_inner(
     url: SrtUrl,
     policy: tst_pipeline::ReconnectPolicy,

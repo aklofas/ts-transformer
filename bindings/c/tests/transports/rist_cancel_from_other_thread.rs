@@ -1,7 +1,6 @@
 //! `tst_rist_receiver_cancel` from another thread must end a C-side RIST
-//! receive loop with `TST_E_CLOSED` (Arc 2: WP-D gave the RIST transport a
-//! real cancel handle, R4 gives the C ABI the non-freeing entry point that
-//! reaches it).
+//! receive loop with `TST_E_CLOSED`: the RIST transport has a real cancel
+//! handle, and `_cancel` is the non-freeing C entry point that reaches it.
 //!
 //! **Why a LOOP, not a parked call.** Unlike UDP, a `tst_rist_receiver_recv_ts`
 //! never parks: each call is ONE ~100 ms librist poll
@@ -18,10 +17,10 @@
 //! `ExplicitClose` (→ `TST_E_CLOSED`) within at most one tick rather than
 //! being hidden behind another `Backpressure`.
 //!
-//! Port 33100 is reserved for this C test by WP-D (EVEN — the Simple
+//! Port 33100 is reserved for this C test (EVEN — the Simple
 //! profile puts RTCP on `port + 1`, `rist.c:866`), disjoint from
 //! `loopback.rs` 33010–33026, `cancel.rs` 33040–33048, `conformance.rs`
-//! 33050–33098, R34.7's own 33104 and the pytest suite 34110–34150.
+//! 33050–33098, the null-guard test's 33104 and the pytest suite 34110–34150.
 //!
 //! Failure is bounded and NEVER hangs: the loop has a wall-clock deadline
 //! after which it FAILS, and every `_recv_ts` call in it returns on its own
@@ -45,7 +44,7 @@ use tstrans::rist::{
 struct SendPtr(*mut TstRistReceiver);
 unsafe impl Send for SendPtr {}
 
-/// Reserved by WP-D for this test; must be EVEN for the Simple profile.
+/// Reserved for this test; must be EVEN for the Simple profile.
 const PORT: u16 = 33100;
 
 #[test]

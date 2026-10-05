@@ -20,8 +20,7 @@ usize_is_size_t = true
 
 # Emit items alphabetically by symbol name (default would be source order).
 # Decouples header layout from Rust source-file layout so internal reorgs
-# (e.g. plan #84 Wave 5.C src/ subfolder reorg) don't churn tstrans.h.
-# Closes the Plan #83 follow-up flagged in CLAUDE.md plan list.
+# (e.g. moving modules between src/ subfolders) don't churn tstrans.h.
 sort_by = "Name"
 
 trailer = """
@@ -105,7 +104,7 @@ include = ["tst-core", "tst-pipeline", "tst-srt"]
 # cfg-gated symbols in the corresponding #ifdef / #endif block.
 "feature = srt" = "TST_HAS_SRT"
 "feature = rtp" = "TST_HAS_RTP"
-# Plan A5a — udp / tcp / hls / rist (all default-off).
+# udp / tcp / hls / rist (all default-off).
 "feature = udp"  = "TST_HAS_UDP"
 "feature = tcp"  = "TST_HAS_TCP"
 "feature = hls"  = "TST_HAS_HLS"
@@ -180,7 +179,7 @@ include = [
     "TstAudioCodec",
     "TstSubtitleCodec",
     "TstAv1CarriageMode",
-    # Plan A5a HLS publisher-kind discriminator (hls feature)
+    # HLS publisher-kind discriminator (hls feature)
     "TstPublisherKind",
     # RTSP client builder handle (rtp feature — emitted inside #if defined(TST_HAS_RTP))
     "TstRtspClientBuilder",
@@ -188,16 +187,16 @@ include = [
     # module so cbindgen emits it without a per-variant #if; only the
     # two getters that read it are TST_HAS_RTP-gated)
     "TstStreamEndReason",
-    # T10: RTSP server stats structs (rtp feature)
+    # RTSP server stats structs (rtp feature)
     "TstServerStats",
     "TstMountStats",
-    # T10: RTSP server cancel handle (rtp feature)
+    # RTSP server cancel handle (rtp feature)
     "TstRtspCancelHandle",
-    # Task 7: ST 0601 KLV decode surface (ABI 21, unconditional)
+    # ST 0601 KLV decode surface (ABI 21, unconditional)
     "TstSt0601",
     "TstSt0601Geometry",
     "TstSt0601FieldState",
-    # Task 8: Annex B <-> length-prefixed + parameter-set extraction
+    # Annex B <-> length-prefixed + parameter-set extraction
     # (ABI 21, unconditional)
     "TstParamSets",
 ]
@@ -287,16 +286,16 @@ include = [
 # RTP stream-end reason discriminator — no _t suffix so prefix_with_name
 # yields clean TST_STREAM_END_REASON_* variants
 "TstStreamEndReason"        = "tst_stream_end_reason"
-# T10: RTSP server stats structs
+# RTSP server stats structs
 "TstServerStats"            = "tst_server_stats_t"
 "TstMountStats"             = "tst_mount_stats_t"
-# T10: RTSP server cancel handle
+# RTSP server cancel handle
 "TstRtspCancelHandle"       = "tst_rtsp_cancel_handle_t"
-# Task 7: ST 0601 KLV decode surface (ABI 21)
+# ST 0601 KLV decode surface (ABI 21)
 "TstSt0601"                 = "tst_st0601_t"
 "TstSt0601Geometry"         = "tst_st0601_geometry_t"
 "TstSt0601FieldState"       = "tst_st0601_field_state"
-# Task 8: Annex B <-> length-prefixed + parameter-set extraction (ABI 21)
+# Annex B <-> length-prefixed + parameter-set extraction (ABI 21)
 "TstParamSets"              = "tst_param_sets_t"
 
 [enum]

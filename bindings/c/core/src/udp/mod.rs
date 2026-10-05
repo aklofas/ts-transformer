@@ -9,7 +9,7 @@
 //!
 //! The surface mirrors `bindings/c/core/src/rtp/` module-for-module,
 //! `_cancel` entry points included since ABI 0.22. The UDP transport
-//! exposes a real `cancel_handle()` since Arc 2 WP-D and every handle
+//! exposes a real `cancel_handle()` and every handle
 //! holds it, so `_close` from any thread cancels first and
 //! `tst_udp_<shell>_cancel` does the same WITHOUT freeing — see each
 //! handle module's **Cancel** note for what that unblocks.

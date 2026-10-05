@@ -67,7 +67,7 @@ fn muxer_push_video_to_invalid_handle_returns_invalid_usage() {
 
 #[test]
 fn muxer_push_video_to_forged_high_bit_handle_returns_invalid_usage() {
-    // Closeout audit Finding 1: a raw handle with high bits set outside
+    // A raw handle with high bits set outside
     // the canonical 4-bit program + 4-bit within layout MUST be rejected
     // — not silently masked into a valid low-byte handle. Without
     // `try_from_raw`, `valid.raw() | 0x100` aliases the genuine handle

@@ -25,7 +25,7 @@ pub enum TstEventKind {
     NonConformant = 5,
     /// Boundary marker emitted by `tst_managed_demux_receiver_*` after
     /// the underlying transport reconnects and the demuxer's sync /
-    /// PSI / PES state was reset (validate-1 Sprint 4 F2 + followup-1).
+    /// PSI / PES state was reset.
     ///
     /// **Carries no body** — the `u` union is zero-initialized for this
     /// kind. Consumers should drop any per-stream caches and wait for
@@ -133,21 +133,21 @@ pub enum TstNonConformantCode {
     /// exactly `0x20`. Reuses `table_id` field as the observed byte carrier
     /// (mirroring `SubtitleDescriptorMalformed`'s reuse).
     DvbSubDataIdentifier = 20,
-    /// PTS backward jump on an elementary stream PID (validate-1 B4).
+    /// PTS backward jump on an elementary stream PID.
     /// `pcr_delta` field carries the 90 kHz tick delta (re-used from
     /// PcrAnomaly; PTS and PCR anomalies never co-occur for a single
     /// event, so the storage is shared without ambiguity).
     PtsAnomaly = 21,
     /// PES on a PTS-required stream type (audio / video) arrived without
-    /// one (validate-1 B4). `pid` carries the stream PID.
+    /// one. `pid` carries the stream PID.
     MissingRequiredPts = 22,
-    /// PES header structural violation (validate-1 B5). Re-uses the
+    /// PES header structural violation. Re-uses the
     /// `table_id` field as the [`tst_core::mpegts::demux::PesHeaderMalformedKind`]
     /// discriminator (0=ForbiddenPtsDtsFlags, 1=InvalidMarkerBits,
     /// 2=InvalidPtsPrefix, 3=InvalidDtsPrefix, 4=InvalidPtsDtsMarkerBits).
     PesHeaderMalformed = 23,
     /// DVB subtitle / teletext PES arrived with
-    /// `data_alignment_indicator = 0` (validate-1 B6). `pid` carries the
+    /// `data_alignment_indicator = 0`. `pid` carries the
     /// stream PID.
     SubtitleAlignmentMissing = 24,
     /// H.222.0 §2.4.3.5 PCR field syntax violation (reserved bits not all 1,
@@ -170,10 +170,10 @@ pub enum TstNonConformantCode {
     /// variant (0=ForbiddenBit, 1=ReservedBit, 2=ExtensionReservedBits).
     Av1ObuHeader = 27,
     /// AC-3 PES with `data_alignment_indicator=1` did not start with
-    /// the syncword `0x0B77` (validate-1 C12; ATSC A/52:2018 §A.6.3).
+    /// the syncword `0x0B77` (ATSC A/52:2018 §A.6.3).
     /// `pid` carries the stream PID.
     Ac3SyncMissing = 28,
-    /// AAC-LATM (stream_type 0x11) PES framing violation (validate-1 C11).
+    /// AAC-LATM (stream_type 0x11) PES framing violation.
     /// `pid` carries the stream PID; `latm_framing_kind` byte
     /// (`obu_type` carrier) encodes which violation variant
     /// (0=MissingSyncword, 1=AudioMuxLengthOverrun, 2=Truncated).
@@ -199,22 +199,22 @@ pub enum TstNonConformantCode {
     CfiTolerated = 32,
     /// PMT body `program_number` (H.222.0 §2.4.4.8) does not match the
     /// `program_number` the PAT (§2.4.4.4) assigned to this PMT PID.
-    /// The mislabeled topology is NOT adopted (REF-PSI-01).
+    /// The mislabeled topology is NOT adopted.
     /// `pid` carries the PMT PID. `programs[0]` = `pat_program`;
     /// `programs[1]` = `pmt_program` (reuses the two-element `programs_buf`
     /// carrier, same layout as `PidReusedAcrossPrograms`).
     PmtProgramNumberMismatch = 33,
-    /// REF-TS-01. transport_scrambling_control != 0; payload not routed.
+    /// transport_scrambling_control != 0; payload not routed.
     /// `pid` = the scrambled PID; `table_id` carries the 2-bit control value.
     UnsupportedScrambling = 34,
-    /// REF-TS-02. Adaptation-field control/length violation. `pid` = the PID;
+    /// Adaptation-field control/length violation. `pid` = the PID;
     /// `table_id` carries the AdaptationFieldKind discriminator
     /// (0=ReservedControl, 1=BadLengthForControl, 2=ShortPcr, 0xFF=unknown).
     AdaptationFieldMalformed = 35,
-    /// REF-PES-01. Zero PES_packet_length on a non-video stream; partial
+    /// Zero PES_packet_length on a non-video stream; partial
     /// dropped. `pid` = the PID; `table_id` carries the PES stream_id byte.
     ZeroLengthPesNonVideo = 36,
-    /// REF-PSI-03. PAT/PMT fixed/reserved syntax violation. `pid` = the PID;
+    /// PAT/PMT fixed/reserved syntax violation. `pid` = the PID;
     /// `table_id` = the PSI table_id (0x00 PAT, 0x02 PMT); `obu_type` carries
     /// the PsiSyntaxKind discriminator (0=SectionSyntaxIndicatorUnset,
     /// 1=SectionNumberNonZero, 2=ReservedBits, 0xFF=unknown); for
@@ -642,11 +642,9 @@ impl Default for TstEvent {
 /// `convert()` call; capacity is retained.
 ///
 /// `payload_buf` owns the byte ranges that pointer fields on `TstEvent`,
-/// `TstNal`, `TstObu`, and `TstDescriptor` reference. Without this the
-/// fill_* helpers used to write `payload.as_ptr()` into the C structs
-/// while `payload` was borrowed from the input `DemuxEvent`, which is
-/// dropped at the end of the `recv_event` closure — leaving C callers
-/// with dangling pointers (validate-1 A2 / Codex CABI-02).
+/// `TstNal`, `TstObu`, and `TstDescriptor` reference. The input
+/// `DemuxEvent` is dropped at the end of the `recv_event` closure, so a
+/// pointer into its `payload` would dangle in the C caller's hands.
 pub(crate) struct EventArena {
     pub(crate) nals: Vec<TstNal>,
     pub(crate) obus: Vec<TstObu>,
@@ -668,7 +666,7 @@ pub(crate) struct EventArena {
     ///
     /// For H.26x video samples the AU copy is skipped; `last_payload`
     /// retains the Arc instead and NAL/payload pointers point directly
-    /// into its backing (DA-PERF-11).
+    /// into its backing.
     pub(crate) payload_buf: Vec<u8>,
     /// Retained `SharedBytes` Arc for the H.26x zero-copy AU path.
     /// Cleared (Arc dropped) at the start of each `convert()` call so
@@ -738,8 +736,8 @@ pub(crate) fn convert(
             payload,
         } => {
             // Pts90khz typed at the public Rust boundary; the C ABI keeps
-            // DTS as `int64_t` ticks per
-            // `reference_typed_pts_pcr_public_boundary.md`.
+            // PTS/DTS as plain `int64_t` 90 kHz ticks so C callers need no
+            // wrapper type.
             fill_sample(
                 arena,
                 stream,
@@ -766,7 +764,7 @@ pub(crate) fn convert(
         DemuxEvent::ReconnectDiscontinuity => {
             // No-payload event surfaced only by the managed demux
             // receiver after the underlying transport reconnects and
-            // sync / demux state was reset (followup-1). The union
+            // sync / demux state was reset. The union
             // body is left zero-initialized via the `*out =
             // TstEvent::default()` above.
             out.kind = TstEventKind::ReconnectDiscontinuity as c_int;
@@ -975,9 +973,9 @@ fn fill_sample(
         } => {
             // codec stays -1; surface the raw PMT stream_type byte so C
             // callers can discriminate without correlating back to the
-            // most recent ProgramMap event. `st` is StreamTypeCode (typed
-            // wrapper from plan #75); .as_byte() preserves the existing
-            // uint8_t C ABI for TstEventSample.stream_type per plan #71.
+            // most recent ProgramMap event. `st` is the typed
+            // StreamTypeCode; .as_byte() keeps TstEventSample.stream_type
+            // the plain uint8_t the C ABI exposes.
             stream_type = st.as_byte();
             arena.payload_buf.extend_from_slice(raw);
             payload_ptr = arena.payload_buf.as_ptr();
@@ -1074,9 +1072,9 @@ fn fill_discontinuity(
     use tst_core::mpegts::demux::DiscontinuityKind;
     // `variant_pid` preserves the variant-specific PID for kinds that carry
     // their own (currently only `PesOversize { pid }`); 0 for the others.
-    // Codex review pass-1 flagged the previous `pid: _` discard as
-    // identity-loss — the variant's PID usually matches `stream.pid` but
-    // the variant carries it independently for the rare divergence case.
+    // Discarding it would lose identity — the variant's PID usually
+    // matches `stream.pid` but is carried independently for the rare
+    // divergence case.
     let (tag, cc_expected, cc_observed, variant_pid) = match kind {
         DiscontinuityKind::ContinuityJump { expected, observed } => (
             TstDiscontinuityKindTag::ContinuityJump as c_int,
@@ -1424,7 +1422,7 @@ fn fill_nonconformant(
             pat_program,
             pmt_program,
         } => {
-            // REF-PSI-01. Reuse the `programs_buf` carrier (same two-element
+            // Reuse the `programs_buf` carrier (same two-element
             // layout as PidReusedAcrossPrograms): programs[0]=pat_program,
             // programs[1]=pmt_program. No struct growth needed.
             body.issue_code = TstNonConformantCode::PmtProgramNumberMismatch as c_int;
@@ -1617,15 +1615,14 @@ fn obu_to_c(o: &tst_core::mpegts::demux::Obu) -> TstObu {
 }
 
 // =========================================================================
-// Tests — arena ownership of payload bytes (validate-1 A2 / CABI-02)
+// Tests — arena ownership of payload bytes
 // =========================================================================
 //
 // The docstring at the top of this file promises that all pointer fields
 // on TstEvent borrow from the EventArena, valid until the next recv_event
-// or close on the same handle. Pre-A2, that contract was violated for
-// every byte-payload pointer field — they aliased the input DemuxEvent
-// storage, which is dropped at the end of the recv_event closure. C
-// callers would dereference dangling pointers.
+// or close on the same handle. A pointer field that aliased the input
+// DemuxEvent storage would dangle: that storage is dropped at the end of
+// the recv_event closure.
 //
 // These tests assert that after convert(), each C pointer field is NOT
 // the input Vec's data pointer (i.e., the arena holds an owned copy).
@@ -1752,7 +1749,7 @@ mod tests {
 
     #[test]
     fn h264_nal_payload_points_into_sharedbytes_backing() {
-        // DA-PERF-11 zero-copy path: the demuxer emits the encoded AU;
+        // Zero-copy path: the demuxer emits the encoded AU;
         // `convert` `split_video`s it and retains the SharedBytes Arc in
         // `arena.last_payload`. NAL payloads are subslices of that Arc —
         // their pointers MUST fall within the live SharedBytes backing range,
@@ -1828,10 +1825,10 @@ mod tests {
 
     #[test]
     fn h264_video_sample_payload_is_raw_au() {
-        // v0.2.0 Wave 5: video samples expose the raw encoded AU via
-        // `payload`/`payload_len` (NULL for video before). Two-NAL Annex-B
+        // Video samples expose the raw encoded AU via
+        // `payload`/`payload_len`. Two-NAL Annex-B
         // AU (SPS + PPS, 4-byte start codes) so the zero-copy path is
-        // exercised across multiple units (DA-PERF-11).
+        // exercised across multiple units.
         let au = vec![
             0x00u8, 0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x1E, // SPS
             0x00, 0x00, 0x00, 0x01, 0x68, 0xCE, 0x38, 0x80, // PPS
@@ -1861,7 +1858,7 @@ mod tests {
         );
         let raw_bytes = unsafe { core::slice::from_raw_parts(payload_ptr, payload_len) };
         assert_eq!(raw_bytes, &au[..], "payload must be the exact encoded AU");
-        // DA-PERF-11: payload_ptr must point INTO the live SharedBytes
+        // payload_ptr must point INTO the live SharedBytes
         // backing (zero-copy — no separate arena copy for H.26x).
         let p = payload_ptr as usize;
         assert!(
@@ -1983,7 +1980,7 @@ mod tests {
 
     #[test]
     fn reconnect_discontinuity_maps_to_event_kind_6() {
-        // Sprint 4-5 review followup-1: the managed demux receiver now
+        // The managed demux receiver
         // wires `DemuxEvent::ReconnectDiscontinuity` through to a
         // dedicated `TstEventKind::ReconnectDiscontinuity` (= 6) with a
         // zeroed union body. Verify the mapping here so the C ABI

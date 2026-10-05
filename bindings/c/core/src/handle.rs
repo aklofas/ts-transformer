@@ -7,7 +7,7 @@
 //! call `Handle::with_inner_mut`; `_close` calls `Handle::close`. Drop of
 //! the inner runs Drop, which closes the underlying transport / muxer.
 //!
-//! Since Arc 2 `Handle<T>` serves ONLY the three offline handles that must
+//! `Handle<T>` serves ONLY the three offline handles that must
 //! build without std (`TstMuxer`, `TstDemuxer`, `TstSt0601`). Every
 //! transport-bearing handle holds a `CHandle<T, S>` instead — the one
 //! handle state machine shared with the Python and JVM bindings, which
@@ -33,8 +33,7 @@ use std::sync::Mutex;
 /// Run `f` catching any panic (std). Returns `Ok(result)` or `Err(detail)`.
 ///
 /// Delegates to the shared binding-layer helper so C, Python and the JVM
-/// render panic payloads identically (spec §3.6: the `panic_payload_message`
-/// twin goes).
+/// render panic payloads identically.
 #[cfg(feature = "std")]
 fn catch<R>(f: impl FnOnce() -> R) -> Result<R, alloc::string::String> {
     tst_pipeline::binding::panic::catch(f)
@@ -216,8 +215,7 @@ mod owned {
         /// `Closed` → TST_E_CLOSED, `Poisoned` → TST_E_INTERNAL,
         /// `Panicked` → TST_E_PANIC_CAUGHT. As with the no_std `Handle`, a
         /// caught panic in a MUTATOR drops the inner (later calls are
-        /// `Closed`); [`Self::with_inner_ref`] keeps it (spec §3.2 as
-        /// amended at plan review).
+        /// `Closed`); [`Self::with_inner_ref`] keeps it.
         #[allow(dead_code)] // consumed by the data-path entry points (B1.5-B1.10)
         pub(crate) fn with_inner_mut(&self, f: impl FnOnce(&mut T) -> i32) -> i32 {
             match self.0.with_mut(f) {
@@ -275,17 +273,15 @@ mod owned {
     }
 
     /// The shells' `cancel_handle()` returns an `Option`; this is the ONE
-    /// place it is resolved. `None` → A1's `binding::FlagCancel` (a plain
+    /// place it is resolved. `None` → `binding::FlagCancel` (a plain
     /// latch that records the request and wakes nothing).
     ///
-    /// Since Arc 2 WP-D every transport this binding opens returns `Some`,
-    /// so the `None` arm is a defensive fallback rather than a live path —
-    /// UDP and RIST got their real handles there, and the udp/rist call
-    /// sites picked them up through this function with no change. The
-    /// function itself STAYS: the shell-level `cancel_handle()` is still
-    /// `Option`-typed, so all ~22 call sites across every family need the
-    /// resolution, and replacing it with `.expect()` would trade a safe
-    /// fallback for a panic path (R2's no-`expect` gate).
+    /// Every transport this binding opens returns `Some`, so the `None` arm
+    /// is a defensive fallback rather than a live path. The function stays
+    /// because the shell-level `cancel_handle()` is `Option`-typed, so all
+    /// ~22 call sites across every family need the resolution, and
+    /// replacing it with `.expect()` would trade a safe fallback for a
+    /// panic path.
     #[allow(dead_code)] // consumed by the udp/rist `_open` paths (B1.7/B1.10)
     pub(crate) fn cancel_or_latch(
         c: Option<Arc<dyn TransportCancel + Send + Sync>>,
@@ -297,9 +293,8 @@ mod owned {
     }
 }
 
-// Re-exported unconditionally so the family modules (B1.4-B1.10) import
-// `crate::handle::CHandle` exactly like `crate::handle::Handle`; until the
-// first family converts, the only consumers are this module's unit tests.
+// Re-exported unconditionally so the family modules import
+// `crate::handle::CHandle` exactly like `crate::handle::Handle`.
 #[cfg(feature = "std")]
 #[allow(unused_imports)]
 pub(crate) use owned::{CHandle, cancel_or_latch};
@@ -791,9 +786,9 @@ mod tests {
                 "got {}",
                 test_last_error_msg()
             );
-            // Plan-review amendment of spec §3.2: a MUTATOR panic drops the
-            // slot (same as the no_std `Handle` and 0.6.x C — see
-            // `panic_in_inner_closure_is_caught` above); later calls are Closed.
+            // A MUTATOR panic drops the slot (same as the no_std `Handle` —
+            // see `panic_in_inner_closure_is_caught` above); later calls are
+            // Closed.
             assert_eq!(h.with_inner_ref(|n| *n), TstError::Closed as i32);
             assert_eq!(test_last_error_code(), TstError::Closed as i32);
         }

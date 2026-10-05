@@ -9,8 +9,8 @@
 //! (design §4.5), `ShellErrorKind` → error-code mapping, and the
 //! per-PID stats borrowed buffer are all handled generically.
 //!
-//! **Cancel:** the RIST transport exposes a real cancel handle since Arc 2
-//! WP-D and this handle's `CHandle` slot holds it, so `_close` cancels
+//! **Cancel:** the RIST transport exposes a real cancel handle and
+//! this handle's `CHandle` slot holds it, so `_close` cancels
 //! first. Note the data path does NOT park: `_next_event` is one ~100 ms librist
 //! poll that reports `TST_E_BUFFER_FULL` when nothing arrived, so callers
 //! poll in a loop. A cancel is observed at the end of the current tick and
@@ -114,7 +114,7 @@ pub unsafe extern "C" fn tst_rist_demux_receiver_open(
         } else {
             DemuxReceiver::new(transport)
         };
-        // `cancel_or_latch` resolves the shell's `Option`; since Arc 2 WP-D
+        // `cancel_or_latch` resolves the shell's `Option`;
         // this transport's `cancel_handle()` is `Some`, so the handle below
         // carries the REAL cancel and `_close` wakes what it can.
         let cancel = cancel_or_latch(receiver.cancel_handle());
@@ -180,7 +180,7 @@ pub unsafe extern "C" fn tst_rist_demux_receiver_cancel(
             return TstError::InvalidConfig as i32;
         };
         // `CHandle::cancel` → `Owned::cancel`: fires the transport's
-        // `RistCancelHandle` (Arc 2 WP-D) without taking the slot, so it
+        // `RistCancelHandle` without taking the slot, so it
         // answers while a data-path call is in flight.
         handle.inner.cancel();
         0

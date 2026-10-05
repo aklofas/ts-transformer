@@ -197,8 +197,8 @@ static void print_event(const tst_event_t *ev) {
         case TST_EVENT_KIND_NON_CONFORMANT:
             /*
              * Non-fatal spec-compliance issue (CFI mismatch, AU cell header
-             * anomaly, etc.).  In CFI-tolerance mode (the default since
-             * plan #95) these appear as diagnostics rather than hard errors.
+             * anomaly, etc.).  In CFI-tolerance mode (the default) these
+             * appear as diagnostics rather than hard errors.
              * `detail` is a static string from the library — no need to free.
              */
             fprintf(stdout,

@@ -330,7 +330,7 @@ fn null_next_event_returns_invalid_config() {
 }
 
 // ---------------------------------------------------------------------------
-// `_finish` — Arc 2 R3 (DEBT-14 "ship now" cell), ABI 0.22
+// `_finish` — ABI 0.22
 // ---------------------------------------------------------------------------
 
 /// `tst_udp_mux_sender_finish` drains and closes. UDP is connectionless, so
@@ -364,7 +364,7 @@ fn udp_mux_sender_finish_then_close() {
 }
 
 // ---------------------------------------------------------------------------
-// `_cancel` — Arc 2 R4, ABI 0.22
+// `_cancel` — ABI 0.22
 // ---------------------------------------------------------------------------
 
 /// `_cancel` is documented callable from any thread; the raw pointer just
@@ -384,7 +384,7 @@ fn free_udp_port() -> u16 {
         .port()
 }
 
-/// Arc 2 R4: `tst_udp_receiver_cancel` from another thread wakes a parked
+/// `tst_udp_receiver_cancel` from another thread wakes a parked
 /// `recv_ts` with `TST_E_CLOSED`.
 ///
 /// UDP needs no peer: nothing is ever sent to the bound port, so the

@@ -3,8 +3,8 @@
 //!
 //! Wraps a `ManagedDemuxReceiver<SrtTransport>`. Per-reconnect sync /
 //! demux state reset is automatic — a `ReconnectDiscontinuity` event
-//! surfaces from `_recv_event` after each transport reconnect
-//! (validate-1 Sprint 4 F2 + followup-1). Open / lifecycle / event /
+//! surfaces from `_recv_event` after each transport reconnect.
+//! Open / lifecycle / event /
 //! stats surfaces mirror the plain receiver one-for-one with `managed_`
 //! infix on every C entry. The two notable shape changes vs the plain
 //! sibling:
@@ -189,9 +189,9 @@ pub unsafe extern "C" fn tst_managed_demux_receiver_open_listener_with_config(
 /// open dispatched on `url.mode`, the re-open factory that re-dials or
 /// RE-ACCEPTS the same URL through the shared `FactoryCancel` slot, the
 /// decorator, the shell, and the five observers taken before the move —
-/// lives in tst-srt (Arc 2 WP-A3). The FIRST accept runs through that same
-/// slot, but nothing can fire it before this call returns (DEBT-16,
-/// deferred in Arc 2).
+/// lives in tst-srt. The FIRST accept runs through that same
+/// slot, but nothing can fire it before this call returns (the C caller
+/// has no handle yet).
 fn managed_open_inner(
     url: SrtUrl,
     policy: tst_pipeline::ReconnectPolicy,
@@ -325,8 +325,8 @@ pub unsafe extern "C" fn tst_managed_demux_receiver_cancel(
 /// session ended, if any.
 ///
 /// Writes `TstStreamEndReason::None` (returns `0`) when the session
-/// hasn't ended yet, or ended through a path this arc doesn't
-/// instrument. A recorded reason is data, not a getter failure — this
+/// hasn't ended yet, or ended through an uninstrumented path.
+/// A recorded reason is data, not a getter failure — this
 /// only returns a nonzero code for a null-pointer argument.
 ///
 /// **Last-error is untouched only for the "hasn't ended yet" sub-case**

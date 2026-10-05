@@ -46,9 +46,9 @@ pub unsafe extern "C" fn tst_sender_open(
             Err(()) => return std::ptr::null_mut(),
         };
         // Plain senders have no listener path: refuse `?mode=listener` here,
-        // before any socket (Arc 2 WP-B1 behaviour change — it used to dial
-        // out as a caller regardless). `SrtUrl::connect` itself is
-        // mode-agnostic by design; see `require_caller_mode`.
+        // before any socket, rather than dial out as a caller regardless.
+        // `SrtUrl::connect` itself is mode-agnostic by design; see
+        // `require_caller_mode`.
         if require_caller_mode(&url).is_err() {
             return std::ptr::null_mut();
         }
@@ -236,7 +236,7 @@ pub unsafe extern "C" fn tst_managed_sender_open(
         // The whole managed open — initial connect, the reconnect factory
         // that re-dials the SAME url (so the overlay survives), the
         // decorator, the shell, and the observers taken before the move —
-        // is one call in tst-srt (Arc 2 WP-A3). It refuses `?mode=listener`
+        // is one call in tst-srt. It refuses `?mode=listener`
         // itself (`SrtError::Option`), so no `require_caller_mode` here.
         let (sender, handles, stats) =
             match tst_srt::shells::managed_sender_from_url(&url, policy, cfg) {
@@ -447,11 +447,11 @@ mod tests {
         assert_eq!(rc, TstError::InvalidConfig as i32);
     }
 
-    /// Arc 2 WP-B1 behaviour change: before this PR every C sender silently
-    /// dialled as a caller when the URL said `?mode=listener`. `SrtUrl::connect`
-    /// (and the send-side `from_url` family) now refuse it with
-    /// `SrtError::Option` BEFORE any socket is touched, which A2's kind table
-    /// projects to `TST_E_INVALID_CONFIG` — the code the URL parser already
+    /// A C sender must not silently dial as a caller when the URL says
+    /// `?mode=listener`. `SrtUrl::connect` (and the send-side `from_url`
+    /// family) refuse it with `SrtError::Option` BEFORE any socket is
+    /// touched, which the binding kind table projects to
+    /// `TST_E_INVALID_CONFIG` — the code the URL parser already
     /// uses for every other rejected URL. Nothing is dialled, so port 1 is
     /// never touched and the test needs no peer.
     #[test]

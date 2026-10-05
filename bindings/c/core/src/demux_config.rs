@@ -1,6 +1,6 @@
 //! `tst_demux_config_t` opaque builder + supporting C-ABI enums.
 //!
-//! Mirrors the `tst_mux_config_t` shape from plan #14: heap-allocated
+//! Mirrors the `tst_mux_config_t` shape: heap-allocated
 //! opaque builder, mutating setters returning `i32` codes, `_free`
 //! releases. The receiver clones what it needs at `_open_with_config`
 //! time; the caller still owns the builder and must `_free` it.
@@ -100,7 +100,7 @@ use tst_core::mpegts::mux::Av1CarriageMode;
 /// what it needs at `_open_with_config` time; the caller still owns
 /// the builder.
 ///
-/// Lifecycle mirrors `tst_mux_config_t` from plan #14 exactly.
+/// Lifecycle mirrors `tst_mux_config_t` exactly.
 pub struct TstDemuxConfig {
     strict: StrictMode,
     pes_cap_per_pid: Option<usize>,
@@ -174,8 +174,7 @@ pub unsafe extern "C" fn tst_demux_config_new() -> *mut TstDemuxConfig {
             pes_cap_total: None,
             klv_link_overrides: Vec::new(),
             stream_kind_overrides: BTreeMap::new(),
-            // Tolerance-by-default — see tst_core::DemuxerConfig rustdoc
-            // and CHANGELOG entry on the 2026-05-24 default flip.
+            // Tolerance-by-default — see tst_core::DemuxerConfig rustdoc.
             cfi_tolerance: true,
             av1_carriage: None,
             au_cell_cap_per_pid: None,

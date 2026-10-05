@@ -16,9 +16,9 @@
 //! `TcpCancelHandle`; a `tst_tcp_sender_send_ts` parked on another thread
 //! returns `TST_E_CLOSED`. `_close` is cancel-first for the same reason.
 //! That entry point is what unblocks a send against a peer that has
-//! stopped reading: since deep review #4 WP-4b such a send blocks until the
-//! peer resumes, the peer resets the connection, or the handle is cancelled
-//! or closed — it no longer returns `TST_E_TRANSPORT` after ~100 ms.
+//! stopped reading: such a send blocks until the peer resumes, the peer
+//! resets the connection, or the handle is cancelled or closed — there is
+//! no short send deadline that returns `TST_E_TRANSPORT`.
 
 use std::os::raw::c_char;
 

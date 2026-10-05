@@ -53,7 +53,7 @@ pub(crate) fn convert_end_reason(r: &StreamEndReason) -> TstStreamEndReason {
         // StreamEndReason is non-exhaustive on the tst-rtp side. A
         // future variant this binding doesn't know how to map yet
         // degrades to None with an empty detail rather than panicking —
-        // "ended through a path this arc doesn't instrument" is exactly
+        // "ended through an uninstrumented path" is exactly
         // true of it from the C ABI's perspective until the mapping
         // above is extended.
         _ => (TstStreamEndReason::None, ""),

@@ -41,7 +41,7 @@
  *   LD_LIBRARY_PATH=target/debug /tmp/managed_reconnect_background
  *   # stats lines show reconnecting=1 attempts=1 gap_len=4 and dropped_msgs
  *   # climbing by ~20 per line while the link is down; the final stats
- *   # line shows successes=1 and ~200 evictions. Verified 2026-09-06.
+ *   # line shows successes=1 and ~200 evictions.
  *
  * Reading the output honestly (both this and the Rust twin behave the same
  * way, and the numbers vary run to run):

@@ -28,7 +28,7 @@
 /// (`tst_rtp_receiver_end_reason` / `tst_rtp_demux_receiver_end_reason` /
 /// `tst_managed_demux_receiver_end_reason`) for which reasons each
 /// transport can actually produce. `None` (0) — "hasn't ended yet, or
-/// ended through a path this arc doesn't instrument" — is common to all
+/// ended through an uninstrumented path" — is common to all
 /// of them (the case each side's own end-reason handle reports as
 /// `Option::None`, e.g. a plain `rtp://` receiver that was never
 /// `_cancel`'d or `_close`'d). Some variants are transport-specific: the
@@ -40,8 +40,8 @@
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum TstStreamEndReason {
-    /// The session hasn't ended yet, or ended through a path this arc
-    /// doesn't instrument.
+    /// The session hasn't ended yet, or ended through an uninstrumented
+    /// path.
     None = 0,
     /// The peer closed the connection in an orderly way, with no
     /// protocol or transport error.

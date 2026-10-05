@@ -1,12 +1,12 @@
 /*
- * run_scenarios.c — C adapter for the cross-binding scenario harness (WS-5).
+ * run_scenarios.c — C adapter for the cross-binding scenario harness.
  *
  * WHY THIS FILE EXISTS
  * --------------------
  * The ts-transformer project has three binding layers: Rust (the core),
- * Python (tst-py / PyO3), and C (tst-c / cbindgen). WS-5 of the
- * test-architecture overhaul adds a cross-binding scenario harness that
- * proves all three bindings produce identical, deterministic output from the
+ * Python (tst-py / PyO3), and C (tst-c / cbindgen). The cross-binding
+ * scenario harness, shared by Rust, Python and C, proves all three
+ * bindings produce identical, deterministic output from the
  * same committed input artifacts. This file is the C adapter — the third
  * leg of that harness.
  *
@@ -1665,7 +1665,7 @@ static int contract_strict_psi(const char *scenarios_dir_path,
  * that "passing the same non-null pointer twice is undefined behavior
  * (use-after-free on the consumed Box)". There is no handle-validity registry,
  * so a literal close(p); close(p) on the SAME non-null pointer is UB (it
- * deadlocks the allocator in practice — observed during Task 13). The honest,
+ * deadlocks the allocator in practice). The honest,
  * ABI-sanctioned double-close-safe idiom is therefore "close then null then
  * close(NULL)" — which is exactly what a careful caller does and what this
  * contract asserts. A true double-free GUARD (validity-tracking close) would be

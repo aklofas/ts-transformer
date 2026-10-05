@@ -1,7 +1,7 @@
-//! DTS-aware video push entry points for the C ABI (BIND-01).
+//! DTS-aware video push entry points for the C ABI.
 //!
 //! Builds a single-stream H.264 muxer via the C ABI, pushes one IDR access
-//! unit with distinct PTS (9000) and DTS (6000) via the new
+//! unit with distinct PTS (9000) and DTS (6000) via the
 //! `tst_muxer_push_video_to_with_dts` function, and verifies that the
 //! emitted PES carries `PTS_DTS_flags = '11'` (bits 7–6 of PES optional
 //! header byte 3 both set) with the exact PTS/DTS values surviving

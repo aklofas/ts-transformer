@@ -200,7 +200,7 @@ fn null_next_event_returns_invalid_config() {
 }
 
 // ---------------------------------------------------------------------------
-// `_finish` — Arc 2 R3 (DEBT-14 "ship now" cell), ABI 0.22
+// `_finish` — ABI 0.22
 // ---------------------------------------------------------------------------
 
 /// `tst_rist_mux_sender_finish` drains and closes.
@@ -216,8 +216,8 @@ fn null_next_event_returns_invalid_config() {
 ///
 /// Port 33106 is EVEN (the Simple profile puts RTCP on `port + 1`) and
 /// disjoint from every other reserved range: `loopback.rs` 33010–33026,
-/// `cancel.rs` 33040–33048, `conformance.rs` 33050–33098, the WP-D
-/// cross-thread pin 33100, R34.7's null-guard test 33104 and the pytest
+/// `cancel.rs` 33040–33048, `conformance.rs` 33050–33098, the
+/// cross-thread pin 33100, the null-guard test 33104 and the pytest
 /// suite 34110–34150.
 #[test]
 fn rist_mux_sender_finish_then_close() {
@@ -252,7 +252,7 @@ fn rist_mux_sender_finish_then_close() {
 }
 
 // ---------------------------------------------------------------------------
-// `_cancel` — Arc 2 R4, ABI 0.22
+// `_cancel` — ABI 0.22
 // ---------------------------------------------------------------------------
 
 /// Every `tst_rist_*_cancel` returns 0 on a live handle and

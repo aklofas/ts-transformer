@@ -14,8 +14,8 @@
  *   Each TST_EVENT_KIND_METADATA event surfaces one KLV record.
  *   ev.u.metadata.payload is the inner KLV LS bytes (no AU cell
  *   wrap; the demuxer strips the 5-byte H.222.0 §2.12.4.2 header
- *   for sync KLV per plan #25). The payload pointer borrows from
- *   the receiver's EventArena per design §4.5 — if you need to
+ *   for sync KLV). The payload pointer borrows from
+ *   the receiver's EventArena — if you need to
  *   forward this elsewhere, memcpy before the next recv call.
  *
  * How to run:

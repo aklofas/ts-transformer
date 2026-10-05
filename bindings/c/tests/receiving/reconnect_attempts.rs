@@ -1,11 +1,10 @@
-//! `reconnect_attempts` MEANS attempts — the recv side's Arc 2 fix.
+//! `reconnect_attempts` MEANS attempts on the recv side too.
 //!
-//! Before 0.7.0 `tst_managed_demux_receiver_get_reconnect_stats` read the
-//! SUCCESS counter into BOTH fields (`let successes = handle.reconnects…;
-//! reconnect_attempts: successes, reconnect_successes: successes`), so a
-//! reconnect loop that only ever FAILED reported `attempts == 0` — "never
-//! attempted" — which is exactly the state an operator most needs to see.
-//! The two fields now come from `ManagedHandles::{attempts, reconnects}`.
+//! If `tst_managed_demux_receiver_get_reconnect_stats` read the SUCCESS
+//! counter into BOTH fields, a reconnect loop that only ever FAILED would
+//! report `attempts == 0` — "never attempted" — which is exactly the state
+//! an operator most needs to see. The two fields come from
+//! `ManagedHandles::{attempts, reconnects}`.
 //!
 //! Shape: bounded and latch-and-poll, never a wall-clock assert.
 //!   1. a real SRT listener accepts one caller, then goes away for good;

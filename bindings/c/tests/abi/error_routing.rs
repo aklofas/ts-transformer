@@ -1,6 +1,6 @@
 //! Per (shell × reachable-kind) C ABI round-trip code assertions.
 //!
-//! 22 cases covering every (shell, reachable-kind) pair from the Wave 4
+//! 22 cases covering every (shell, reachable-kind) pair from the
 //! applicability matrix:
 //!
 //! | Shell         | Reachable kinds                                              |

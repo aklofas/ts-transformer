@@ -9,8 +9,6 @@
  *   - TstKlvStreamHandle      (mux_dual_camera.c already covered this)
  *   - TstSubtitleStreamHandle (NEW in C — was only in Rust before)
  *
- * Audio and subtitle entries landed via commit 8a60e5c (Plan #84 Task 2.5).
- *
  * Mirrors two Rust examples:
  *   - examples/muxing/mux_audio_video_klv.rs       (video + audio + KLV)
  *   - examples/muxing/mux_with_webvtt_subtitles.rs (video + subtitle)

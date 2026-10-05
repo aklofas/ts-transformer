@@ -1,8 +1,8 @@
 //! Shared FFI byte-slice helper.
 //!
 //! Establishes the safe pattern for converting a C `(ptr, len)` pair into
-//! a Rust `&[u8]` or `&mut [u8]`. Replaces the per-call-site
-//! `if ptr.is_null() && len > 0` guard pattern that left UB on the table
+//! a Rust `&[u8]` or `&mut [u8]`. A bare
+//! `if ptr.is_null() && len > 0` guard leaves UB on the table
 //! for the `(NULL, 0)` case — Rust's [`std::slice::from_raw_parts`]
 //! requires the pointer to be non-null and aligned even for zero-length
 //! slices.
@@ -13,16 +13,11 @@
 //! Both helpers return `Ok(&[])` / `Ok(&mut [])` for that case without
 //! dereferencing the pointer. For `(NULL, len > 0)` or `(ptr, len >
 //! isize::MAX)` they record `InvalidConfig` to the per-thread last-error
-//! and return the negative code, matching the pre-existing pattern at the
-//! affected call sites.
+//! and return the negative code.
 //!
-//! The `len <= isize::MAX` ceiling is now checked inside the helper; callers
-//! no longer need to document it as a precondition.
-//!
-//! ## Audit reference
-//!
-//! Codex CABI-01 + Claude slice 17 TSTC-01 + NEW-CABI-1. Replaces the
-//! `slice::from_raw_parts(ptr, len)` sites across `tst-c/src/`.
+//! The `len <= isize::MAX` ceiling is checked inside the helper, so callers
+//! need not document it as a precondition. Use these helpers, never a
+//! direct `slice::from_raw_parts(ptr, len)`, on a C-supplied pair.
 
 use crate::error::{TstError, set_last_error};
 use alloc::format;

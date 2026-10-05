@@ -9,7 +9,7 @@
 //!
 //! The surface mirrors `bindings/c/core/src/udp/` module-for-module,
 //! `_cancel` entry points included since ABI 0.22. The RIST transport
-//! exposes a real `cancel_handle()` since Arc 2 WP-D and every handle holds
+//! exposes a real `cancel_handle()` and every handle holds
 //! it, so `_close` from any thread cancels first and
 //! `tst_rist_<shell>_cancel` does the same WITHOUT freeing — which on RIST
 //! is the only safe cross-thread interrupt, because a `_recv_ts` never

@@ -16,10 +16,9 @@
 //! **Cancel:** `tst_tcp_mux_sender_cancel` (ABI 0.22) fires the transport's
 //! `TcpCancelHandle`; a `push_*` parked on another thread returns
 //! `TST_E_CLOSED`. That entry point is what unblocks a push against a peer
-//! that has stopped reading: since deep review #4 WP-4b such a push blocks
-//! until the peer resumes, the peer resets the connection, or the handle is
-//! cancelled or closed — it no longer returns `TST_E_TRANSPORT` after
-//! ~100 ms.
+//! that has stopped reading: such a push blocks until the peer resumes, the
+//! peer resets the connection, or the handle is cancelled or closed — there
+//! is no short send deadline that returns `TST_E_TRANSPORT`.
 
 use std::os::raw::c_char;
 

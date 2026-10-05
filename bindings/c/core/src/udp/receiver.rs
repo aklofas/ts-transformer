@@ -8,8 +8,8 @@
 //! Data-path bodies are thin forwarders to generic impls in
 //! `crate::transport_impls`.
 //!
-//! **Cancel:** the UDP transport exposes a real cancel handle since Arc 2
-//! WP-D and this handle's `CHandle` slot holds it, so `_close` from ANY
+//! **Cancel:** the UDP transport exposes a real cancel handle and
+//! this handle's `CHandle` slot holds it, so `_close` from ANY
 //! thread cancels first and a `_recv_ts` parked on the 100 ms poll loop
 //! returns `TST_E_CLOSED` within one tick (pinned by
 //! `tests/transports/udp_close_cancels_first.rs`). `tst_udp_receiver_cancel`
@@ -78,7 +78,7 @@ pub unsafe extern "C" fn tst_udp_recv_open(url: *const c_char) -> *mut TstUdpRec
             }
         };
         let receiver = Receiver::new(transport, ReceiverConfig::default());
-        // `cancel_or_latch` resolves the shell's `Option`; since Arc 2 WP-D
+        // `cancel_or_latch` resolves the shell's `Option`;
         // this transport's `cancel_handle()` is `Some`, so the handle below
         // carries the REAL cancel and `_close` wakes what it can.
         let cancel = cancel_or_latch(receiver.cancel_handle());
@@ -141,7 +141,7 @@ pub unsafe extern "C" fn tst_udp_receiver_cancel(p: *mut TstUdpReceiver) -> libc
             return TstError::InvalidConfig as i32;
         };
         // `CHandle::cancel` → `Owned::cancel`: fires the transport's
-        // `UdpCancelHandle` (Arc 2 WP-D) without taking the slot, so it
+        // `UdpCancelHandle` without taking the slot, so it
         // answers while a data-path call is in flight.
         handle.inner.cancel();
         0
@@ -277,10 +277,9 @@ mod tests {
         assert_eq!(rc, TstError::InvalidConfig as i32);
     }
 
-    /// Copilot PR #77: the `buf_len < TS_PACKET_SIZE` guard moved into the
-    /// generic `transport_impls::receiver_recv_ts` body during the WP18 dedup,
-    /// and the old per-transport small-buffer tests went with the old bodies.
-    /// Exercise it through a VALID handle (ephemeral loopback bind, offline)
+    /// The `buf_len < TS_PACKET_SIZE` guard lives in the generic
+    /// `transport_impls::receiver_recv_ts` body; exercise it through a
+    /// VALID handle (ephemeral loopback bind, offline)
     /// so the guard — not the null-handle check — is what fires.
     #[test]
     fn small_buffer_recv_ts_returns_invalid_config() {

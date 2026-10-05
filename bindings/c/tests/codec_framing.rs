@@ -1,5 +1,5 @@
 //! C ABI: Annex B <-> length-prefixed conversion + parameter-set
-//! extraction (Task 8, ABI 21).
+//! extraction (ABI 21).
 //!
 //! Exercises `tst_annexb_to_length_prefixed` / `tst_param_sets_*`
 //! through the public `tstrans::codec_framing` re-export — the same

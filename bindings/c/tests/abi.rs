@@ -1,4 +1,4 @@
-//! Domain harness: C ABI surface + hygiene: smoke, version, symbol audit, header drift, feature matrix, error routing
+//! Domain harness: C ABI surface + hygiene: smoke, version, exported-symbol check, header drift, feature matrix, error routing
 //! (consolidated from the former per-file tests/*.rs — see tests/MOVEMENT_MAP.md).
 //!
 //! Each `mod` below is one former top-level integration-test file, now

@@ -1,10 +1,9 @@
 //! `tst_udp_receiver_close` from another thread must end a `_recv_ts`
-//! parked on the UDP poll loop with `TST_E_CLOSED` (Arc 2 WP-D: the UDP
-//! transport now has a real cancel handle, and `Owned::close` fires it
-//! before taking the slot). Before WP-D the handle's cancel slot held
-//! `binding::FlagCancel` — a latch the transport never read — so a
-//! cross-thread `_close` blocked on the handle mutex until a datagram
-//! arrived.
+//! parked on the UDP poll loop with `TST_E_CLOSED`: the UDP transport has a
+//! real cancel handle, and `Owned::close` fires it before taking the slot.
+//! With only a `binding::FlagCancel` latch in the slot (one the transport
+//! never reads), a cross-thread `_close` would block on the handle mutex
+//! until a datagram arrived.
 //!
 //! Why closing from another thread is safe here, even though `_close`
 //! FREES the handle: `Owned::close` cancels (lock-free) and then `take()`s

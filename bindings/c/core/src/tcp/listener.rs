@@ -24,7 +24,7 @@
 //! For a non-blocking accept loop, call from a dedicated thread.
 //!
 //! **Cancel:** `tst_tcp_listener_cancel` (ABI 0.22) fires the Rust
-//! `TcpListener`'s own `cancel_handle()` (deep review #4 WP-4b); an
+//! `TcpListener`'s own `cancel_handle()`; an
 //! `_accept_*` parked on another thread returns NULL with `TST_E_CLOSED`
 //! within one accept poll tick (~5 ms). The listener must still be freed
 //! with `tst_tcp_listener_free`.

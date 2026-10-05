@@ -109,7 +109,7 @@ pub enum TstError {
     /// (underlying MuxError, backpressure, closed).
     RtspMount = -25,
 
-    // Plan A5a — UDP error codes (-26..=-29).
+    // UDP error codes (-26..=-29).
     /// (-26) UDP transport I/O failure (bind, connect, send, recv).
     /// Maps from `tst_udp::UdpErrorKind::Io`.
     UdpIo = -26,
@@ -124,7 +124,7 @@ pub enum TstError {
     /// Reserved; not currently produced (no `UdpErrorKind` variant maps here).
     UdpIfaceUnsupported = -29,
 
-    // Plan A5a — TCP error codes (-30..=-33).
+    // TCP error codes (-30..=-33).
     /// (-30) TCP transport I/O failure (connect, accept, send, recv).
     /// Maps from `tst_tcp::TcpErrorKind::Io`.
     TcpIo = -30,
@@ -139,7 +139,7 @@ pub enum TstError {
     /// Maps from `TcpErrorKind::{Tls, TlsDisabled}`.
     TcpTls = -33,
 
-    // Plan A5a — HLS error codes (-34..=-37).
+    // HLS error codes (-34..=-37).
     /// (-34) HLS HTTP server bind/listen failure.
     /// Maps from `tst_hls::HlsErrorKind::{BindFailed, Io}`.
     HlsIo = -34,
@@ -155,7 +155,7 @@ pub enum TstError {
     /// Maps from `HlsErrorKind::{Tls, TlsDisabled}`.
     HlsTls = -37,
 
-    // Plan A5a — RIST error codes (-38..=-43).
+    // RIST error codes (-38..=-43).
     /// (-38) RIST librist FFI failure; check the message for the
     /// underlying librist function name + error code.
     /// Maps from `tst_rist::RistErrorKind::{Ffi, ContextCreateFailed, PeerCreateFailed}`.
@@ -271,7 +271,7 @@ impl TstError {
         })
     }
 
-    /// THE C projection of the binding-shared kind table (spec §3.3): A2's
+    /// THE C projection of the binding-shared kind table:
     /// `c_projection()` is the frozen TST_E number every kind folds to (its
     /// own discriminant for the 41 C-numbered kinds, the retired converter's
     /// code for the 57 new ones — the fold table lives in tst-pipeline, not
@@ -466,7 +466,7 @@ pub(crate) fn record_with_context(e: impl Into<BindingError>, ctx: &str) -> i32 
 
 /// Standalone-muxer path (`tst_muxer_*`, `tst_mux_config_*`): the
 /// per-variant routing now lives in `tst_pipeline::binding::kind::kind_of_mux`
-/// (K4: `InvalidNal` -2, `KlvTooLarge` -5, `InvalidAv1Obu` -44, `MispTime`
+/// (`InvalidNal` -2, `KlvTooLarge` -5, `InvalidAv1Obu` -44, `MispTime`
 /// -45 keep their precise codes; everything else folds through
 /// `MuxError::kind()`). `Display` still carries the spec-rich diagnostic.
 #[cfg(feature = "std")]
@@ -479,8 +479,8 @@ pub(crate) fn record_mux_error(e: &MuxError) {
 
 /// no_std twin of [`record_mux_error`]: `tst_pipeline::binding` is
 /// std-only, so the bare offline muxer keeps the fold locally. Same
-/// projection as the std path (both planes agree, including the K4/K6
-/// `InputMalformed` -> `TST_E_INVALID_TS` change).
+/// projection as the std path (both planes agree, including
+/// `InputMalformed` -> `TST_E_INVALID_TS`).
 #[cfg(not(feature = "std"))]
 pub(crate) fn record_mux_error(e: &MuxError) {
     use tst_core::error::MuxErrorKind;
@@ -505,7 +505,7 @@ pub(crate) fn record_mux_error(e: &MuxError) {
 /// last-error slot (the standalone offline demuxer path, `tst_demuxer_feed`).
 ///
 /// The per-variant routing lives in `tst_pipeline::binding::kind::kind_of_demux`
-/// (K3, 1:1 over the five variants); the transport-coupled
+/// (1:1 over the five variants); the transport-coupled
 /// `tst_demux_receiver_*` surface reaches the same table through
 /// `record_shell_error`.
 #[cfg(feature = "std")]
@@ -597,8 +597,8 @@ pub(crate) fn record_recv_error<E: ShellError>(e: &E, cancelled: bool, broken_is
     match e.kind() {
         // A typed caller-side close (`ExplicitClose` → `Closed`) is -7
         // whether or not the C-side latch saw the cancel: the inner or
-        // factory transport can report it on its own at process exit
-        // (review 9, ext R9-05). On the receive direction a peer EOS is
+        // factory transport can report it on its own at process exit.
+        // On the receive direction a peer EOS is
         // `EndOfStream`, never `Closed`, so this arm is never a disconnect.
         ShellErrorKind::Closed => {
             set_last_error(
@@ -623,9 +623,8 @@ pub(crate) fn record_recv_error<E: ShellError>(e: &E, cancelled: bool, broken_is
 /// "unavailable" condition (typically `socket_stats() -> None` mid-reconnect
 /// or after close).
 ///
-/// Replaces the direct `TstError::NotAvailable as i32` pattern that leaves
-/// stale last-error state visible to `tst_get_last_error()` (per Codex
-/// re-review finding 1, plan #93).
+/// Returning `TstError::NotAvailable as i32` directly would leave a stale
+/// last-error state visible to `tst_get_last_error()`.
 pub(crate) fn record_not_available(msg: &str) -> i32 {
     set_last_error(TstError::NotAvailable, msg);
     TstError::NotAvailable as i32
@@ -714,7 +713,7 @@ mod tests {
     #[cfg(feature = "std")]
     use tst_pipeline::TransportError;
 
-    /// Review 9 (ext R9-05): a typed caller-side close on the receive path
+    /// A typed caller-side close on the receive path
     /// is -7 even when the C-side cancel latch never saw a cancel — the
     /// inner or factory transport reports `ExplicitClose` on its own at
     /// process exit. Only the ambiguous end-of-stream consults the latch.
@@ -1060,7 +1059,7 @@ mod tests {
     }
 
     /// The projection is total over `BindingErrorKind`: every kind's
-    /// `c_projection()` (A2's fold table, always in -48..=-1) names a real
+    /// `c_projection()` (the fold table, always in -48..=-1) names a real
     /// `TstError` variant, a C-frozen kind projects to its own discriminant,
     /// and `from_kind` never falls back to `Internal` for a table entry.
     #[cfg(feature = "std")]
@@ -1108,9 +1107,8 @@ mod tests {
         assert!(TstError::from_c_code(1).is_none());
     }
 
-    /// The "two answers" defect (spec §3.3): `TransportError::Backpressure`
-    /// used to project to -8 on the raw path and -4 on the kind path. Now
-    /// there is one path and it says -4.
+    /// One path, one answer: `TransportError::Backpressure` projects to -4;
+    /// a second (raw) projection path would let it surface as -8.
     #[cfg(feature = "std")]
     #[test]
     fn backpressure_projects_to_buffer_full_on_the_one_path() {
