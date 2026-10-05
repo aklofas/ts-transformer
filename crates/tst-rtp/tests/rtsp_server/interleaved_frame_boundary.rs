@@ -270,7 +270,12 @@ fn a_fanout_retired_by_pause_on_a_stalled_peer_dies_with_the_reaped_session() {
     // to reap promptly, long enough that the push above cannot be raced
     // by the reap on a slow runner (the idle clock runs from the PLAY
     // response; a reap before the PAUSE would make this test vacuous).
-    b.session_timeout(Duration::from_secs(4));
+    let session_timeout = Duration::from_secs(4);
+    b.session_timeout(session_timeout);
+    // The server's post-SETUP idle bound for that config:
+    // `timeout + max(timeout / 2, 2 s)` (`post_setup_idle_bound` in the
+    // server's session module) = 6 s. The drain below is sized from it.
+    let idle_bound = session_timeout + (session_timeout / 2).max(Duration::from_secs(2));
     let server = b.build().unwrap();
     let mount = server.add_mount("/live", make_muxer_cfg()).unwrap();
     server.start().unwrap();
@@ -310,10 +315,25 @@ fn a_fanout_retired_by_pause_on_a_stalled_peer_dies_with_the_reaped_session() {
     // pushing new frames forever. `peer_count() == 0` above already proved
     // the reap; this only corroborates it. So EOF/reset is required on
     // non-Windows and accepted-or-quiesced on Windows.
+    //
+    // The non-Windows quiet window is long on purpose. The exit path queues
+    // the FIN as soon as it drops the session, but the FIN sits behind the
+    // bytes the kernel still holds for a peer whose tiny receive window has
+    // been closed for the whole idle bound; once the peer reads again,
+    // delivery can pause for seconds (zero-window probe backoff, seen on
+    // macOS) before the rest and the FIN arrive, so a window of a couple of
+    // seconds can end the drain before the FIN. Three idle bounds of
+    // silence is a stream that will not end; the overall deadline stays
+    // above that.
     tcp.set_read_timeout(Some(Duration::from_millis(500)))
         .unwrap();
-    let overall = Instant::now() + Duration::from_secs(30);
-    let quiet_window = Duration::from_secs(2);
+    let overall_bound = idle_bound * 5;
+    let overall = Instant::now() + overall_bound;
+    let quiet_window = if cfg!(windows) {
+        Duration::from_secs(2)
+    } else {
+        idle_bound * 3
+    };
     let mut chunk = [0u8; 65536];
     let mut drained = 0usize;
     let mut quiet_since: Option<Instant> = None;
@@ -328,8 +348,8 @@ fn a_fanout_retired_by_pause_on_a_stalled_peer_dies_with_the_reaped_session() {
                 // the overall deadline bounds that path too.
                 assert!(
                     Instant::now() < overall,
-                    "bytes still arriving 30 s after the reap ({drained} drained): the \
-                     retired fanout is still writing"
+                    "bytes still arriving {overall_bound:?} after the reap ({drained} drained): \
+                     the retired fanout is still writing"
                 );
             }
             Err(e)
@@ -346,8 +366,9 @@ fn a_fanout_retired_by_pause_on_a_stalled_peer_dies_with_the_reaped_session() {
                 let since = *quiet_since.get_or_insert_with(Instant::now);
                 assert!(
                     Instant::now() < overall,
-                    "stream neither ended nor quiesced within 30 s after draining \
-                     {drained} bytes: the session was never reaped / its write half never shut"
+                    "stream neither ended nor quiesced within {overall_bound:?} after \
+                     draining {drained} bytes: the session was never reaped / its write half \
+                     never shut"
                 );
                 // Drained something, then no more bytes for the quiet window:
                 // the fanout has stopped and the stream is quiescent.
