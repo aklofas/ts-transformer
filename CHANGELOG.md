@@ -532,6 +532,7 @@ The integrator-facing changes at a glance (full detail in the sections below):
   value. The history is kept exactly while some program declares the PID
   as its `PCR_PID` and dropped when none does; a PID declared again starts
   from a fresh seed.
+- Comments and documentation: internal process references removed throughout the tree (a new `no-process-markers` rail keeps them out); user-facing docs and API doc comments re-verified against 0.7.0.
 
 ### Fixed
 

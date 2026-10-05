@@ -74,7 +74,7 @@
 //!   Lock-free is the point: the slot is exactly what a parked `recv`/`accept`/
 //!   `send` holds, so resolving a cancel handle or a construction-constant getter
 //!   under it made the cross-thread stop unobtainable while the op it is meant to
-//!   stop was in flight (PRs #189, #234). `close` neither reads nor writes the
+//!   stop was in flight. `close` neither reads nor writes the
 //!   end-reason cell: the per-type `nClose` snapshots the reason off the shell it
 //!   exclusively owns, because the entry (and with it every side slot) is gone
 //!   once `close` returns.
@@ -1050,8 +1050,8 @@ mod tests {
     }
 
     /// `cancel_view` / `snapshot` / `end_reason` must answer while a parked
-    /// op holds the slot (the #189 lease bug and the #234 getter bug, both
-    /// in one test).
+    /// op holds the slot; a cancel lease or a getter that took the slot would
+    /// block behind it.
     #[test]
     fn owned_registry_side_reads_are_lock_free_while_parked() {
         let reg: Arc<OwnedRegistry<u64, &'static str>> = Arc::new(OwnedRegistry::new());

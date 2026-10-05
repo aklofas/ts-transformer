@@ -1,16 +1,16 @@
 # Runnable examples
 
 Hands-on, runnable companions to the cookbook recipes. Every example is
-self-contained, builds via `cargo`, and prints a forward-pointer at the
-end so you know what to read next.
+self-contained and builds via `cargo`; each folder's README gives the
+read-order.
 
 ```sh
 cargo run -p tst-examples --example <name>
 ```
 
-`<name>` is the basename without `.rs`. To list everything cargo knows
-about: `cargo build -p tst-examples --examples` (it'll tell you each
-example's name on the first build).
+`<name>` is the basename without `.rs`. To list every example name, run
+`cargo run -p tst-examples --example` with no name (cargo prints the
+available examples).
 
 ## Where to start
 
@@ -32,11 +32,11 @@ the progression is cumulative.
 | Folder | Covers | Cookbook |
 |---|---|---|
 | [`getting-started/`](getting-started/) | 1-page first-encounter example | [Send a single TS packet](../docs/cookbook/sending/send-single-packet.md) |
-| [`sending/`](sending/) | SRT + transport-trait senders | [Sending](../docs/cookbook/index.md#-sending--produce-a-ts-stream) |
-| [`muxing/`](muxing/) | File-only mux (no SRT); single + multi-program; codecs | [Sending (mux recipes)](../docs/cookbook/index.md#-sending--produce-a-ts-stream) |
-| [`receiving/`](receiving/) | SRT receivers + file-replay demux | [Receiving](../docs/cookbook/index.md#-receiving--consume-a-ts-stream-includes-klv-to-video-pairing) |
+| [`sending/`](sending/) | SRT + transport-trait senders | [Sending](../docs/cookbook/index.md#-sending--put-a-ts-on-the-wire) |
+| [`muxing/`](muxing/) | File-only mux (no SRT); single + multi-program; codecs | [Muxing](../docs/cookbook/index.md#-muxing--build-a-ts-no-network) |
+| [`receiving/`](receiving/) | SRT receivers + file-replay demux | [Receiving](../docs/cookbook/index.md#-receiving--take-a-ts-off-the-wire) |
 | [`klv-metadata/`](klv-metadata/) | ST 0601 / ST 0102 / ST 0903 encode + decode | [KLV](../docs/cookbook/index.md#-klv--encode-and-decode-metadata-directly) |
-| [`pairing/`](pairing/) | Video AU ↔ KLV pairing (manual + `Pairer` helper) | [Receiving (pairing recipes)](../docs/cookbook/index.md#-receiving--consume-a-ts-stream-includes-klv-to-video-pairing) |
+| [`pairing/`](pairing/) | Video AU ↔ KLV pairing (manual + `Pairer` helper) | [Pairing](../docs/cookbook/index.md#-pairing--align-klv-with-video-frames) |
 | [`codec-parsing/`](codec-parsing/) | H.264 / H.265 / H.266 / AV1 parameter sets, audio, subtitles | [Codecs](../docs/cookbook/index.md#-codecs--parse-video-and-audio-elementary-streams) |
 | [`operations/`](operations/) | Reconnect, fan-out, ops-flavored patterns | [Operations](../docs/cookbook/index.md#-operations--lifecycle-stats-shutdown-fixtures) |
 

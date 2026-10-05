@@ -36,7 +36,7 @@ class RecvEndReason(enum.IntEnum):
     `tst_pipeline::RecvEndReason` 1:1, in Rust declaration order.
 
     Returned by `ManagedDemuxReceiver.end_reason()`; `None` means the
-    stream hasn't ended yet (or ended through a path this arc doesn't
+    stream hasn't ended yet (or ended through a path this type doesn't
     instrument).
 
     A DEDICATED type, not `tstrans.rtp.StreamEndReason`: the C ABI reuses

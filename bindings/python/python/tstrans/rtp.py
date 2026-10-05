@@ -36,7 +36,7 @@ class StreamEndReason(enum.IntEnum):
 
     Returned by `.end_reason()` on `Receiver` / `DemuxReceiver` /
     `H264Receiver`; `None` means the session either hasn't ended yet or
-    ended through a path this arc doesn't instrument (e.g. a plain
+    ended through a path this type doesn't instrument (e.g. a plain
     `rtp://` receiver that was never closed or cancelled).
 
     Numeric values are pinned across the C, Python, and JVM bindings

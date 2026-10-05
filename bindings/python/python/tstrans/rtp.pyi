@@ -89,7 +89,7 @@ class StreamEndReason(enum.IntEnum):
 
     Returned by `.end_reason()` on `Receiver` / `DemuxReceiver` /
     `H264Receiver`; `None` means the session hasn't ended yet (or ended
-    through a path this arc doesn't instrument).
+    through a path this type doesn't instrument).
     """
 
     CLEAN_TEARDOWN = 1
@@ -634,9 +634,9 @@ class RtspServer:
 class MuxSender:
     """Convenience wrapper — `Sender` + `Muxer` constructed together.
 
-    Single-call constructor; push methods accept any bytes-like input
+    Single-call constructor; send methods accept any bytes-like input
     (`bytes`, `bytearray`, `memoryview`, NumPy `uint8`). `pts` is
-    keyword-only on every push method. The GIL is released around the
+    keyword-only on every send method. The GIL is released around the
     muxer + transport work via `py.allow_threads()`.
     """
 

@@ -454,8 +454,8 @@ pub unsafe extern "C" fn tst_demux_config_set_au_cell_cap_per_pid(
 /// the in-flight partial section and emits a
 /// `TST_NONCONFORMANT_CODE_PSI_CC_DISCONTINUITY` diagnostic (matches
 /// ffmpeg `mpegts.c:3118-3142`). In lenient mode, the continuation
-/// packets are accepted across the jump (today's permissive behavior —
-/// the section either passes by luck or fails its CRC at the end).
+/// packets are accepted across the jump (the section either passes by
+/// luck or fails its CRC at the end).
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` on null `cfg`.
 #[unsafe(no_mangle)]
@@ -477,8 +477,8 @@ pub unsafe extern "C" fn tst_demux_config_set_lenient_psi_reassembly(
 }
 
 /// Enable the opt-in PTS/DTS unwrap. `enable` is read as a C `bool`
-/// (any non-zero value enables). Default is `false` (raw wire PTS/DTS,
-/// matching today's behavior). See
+/// (any non-zero value enables). Default is `false` (raw wire PTS/DTS).
+/// See
 /// `tst_core::mpegts::demux::DemuxerConfig::unwrap_timestamps` for the
 /// full unwrap semantics: a per-PID accumulator adds each sample's
 /// signed wrap-aware delta onto the previous unwrapped value, so a

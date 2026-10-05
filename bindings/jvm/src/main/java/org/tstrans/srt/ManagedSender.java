@@ -21,10 +21,9 @@ import org.tstrans.SrtException;
  * <p><b>Closing:</b> use try-with-resources or call {@link #close()} explicitly.
  * After close, further calls throw {@code IllegalStateException}.
  *
- * <p><b>Stats drift:</b> {@link #srtStats()} ALWAYS throws {@code SrtException(IO)}
- * today — {@code ManagedTransport} does not expose the SRT-rich 17-field shape
- * (no accessor in tst-pipeline). Use {@link #socketStats()} for the 16-field
- * scheme-neutral view. A future tst-pipeline accessor will lift this.
+ * <p><b>Stats:</b> {@link #srtStats()} ALWAYS throws {@code SrtException(IO)}:
+ * {@code ManagedTransport} has no accessor for the SRT-specific 17-field shape.
+ * Use {@link #socketStats()} for the 16-field scheme-neutral view.
  *
  * <p>Mirrors {@code tstrans.srt.ManagedSender} in tst-py.
  */
@@ -127,14 +126,13 @@ public final class ManagedSender extends NativeHandle {
     }
 
     /**
-     * SRT-specific 17-field stats — <b>NOT available on a managed sender today</b>.
+     * SRT-specific 17-field stats — <b>NOT available on a managed sender</b>.
      * This method ALWAYS throws {@code SrtException(IO)}: {@code ManagedTransport}
-     * has no SRT-rich stats accessor. Use {@link #socketStats()} instead. A
-     * future tst-pipeline accessor will expose this shape.
+     * has no SRT-specific stats accessor. Use {@link #socketStats()} instead.
      *
      * @return never returns normally
      * @throws IllegalStateException if the sender is closed
-     * @throws SrtException always ({@code IO}) — documented stats drift
+     * @throws SrtException always ({@code IO})
      */
     public SrtStats srtStats() throws SrtException {
         ensureOpen("ManagedSender is closed");

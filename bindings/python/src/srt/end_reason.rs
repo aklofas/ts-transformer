@@ -18,7 +18,7 @@
 //! return value stays pure Python so `isinstance` / `IntEnum` /
 //! pattern-matching behave identically whether a caller names a member
 //! directly or receives one from this conversion. Keeping both
-//! end-reason enums the same kind is the point of the parity arc.
+//! end-reason enums the same kind keeps the bindings in parity.
 
 use pyo3::intern;
 use pyo3::prelude::*;

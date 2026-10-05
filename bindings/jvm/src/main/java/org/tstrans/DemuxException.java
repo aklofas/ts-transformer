@@ -25,9 +25,9 @@ public final class DemuxException extends BindingException {
          */
         UNRECOVERABLE,
         /**
-         * {@code DemuxError::MalformedPsi} — a PSI section claimed a length
-         * that cannot fit a valid PAT/PMT (structurally impossible, not a
-         * checksum mismatch).
+         * {@code DemuxError::MalformedPsi} — reserved: the demuxer does not
+         * produce it (a structurally invalid PAT/PMT section is dropped, and
+         * a CRC mismatch is reported as a non-conformance event).
          */
         MALFORMED_PSI,
         /**

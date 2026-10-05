@@ -276,8 +276,11 @@ class RecvTransport:
 
         Raises
         ------
+        UdpError(kind=BACKPRESSURE)
+            On timeout (message: "recv timed out"); the receiver stays
+            open and the call may be retried.
         UdpError(kind=IO)
-            On timeout (message: "recv timed out") or socket error.
+            On a socket error.
         UdpError(kind=CLOSED)
             If the transport has been closed.
         """

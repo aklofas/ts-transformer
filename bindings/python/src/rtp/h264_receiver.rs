@@ -626,7 +626,7 @@ impl PyH264Receiver {
     }
 
     /// Why the receive session ended, or `None` if it hasn't ended yet
-    /// (or ended through a path this arc doesn't instrument, or a
+    /// (or ended through a path this type doesn't instrument, or a
     /// `recv_au` is in flight on another thread — see
     /// `current_end_reason`). Still readable after `close()`.
     fn end_reason(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {

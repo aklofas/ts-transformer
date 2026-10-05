@@ -47,9 +47,8 @@ import org.tstrans.mpegts.DemuxerConfig;
  *
  * <p><b>Stats:</b> both {@link #socketStats()} and {@link #srtStats()} return a
  * {@link SocketStats} — {@code srtStats()} returns the SAME value as
- * {@code socketStats()} (a documented drift mirroring tst-py, where
- * {@code ManagedRecvTransport} exposes no separate SRT-rich shape) and does NOT
- * throw. There is NO combined {@code stats()} on this wrapper.
+ * {@code socketStats()} (as in tst-py: {@code ManagedRecvTransport} exposes no
+ * separate SRT-specific shape) and does NOT throw. There is NO combined {@code stats()} on this wrapper.
  * {@link #reconnectAttempts()} counts every reconnect-factory invocation since
  * construction (an ATTEMPT counter).
  *
@@ -224,8 +223,8 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
 
     /**
      * SRT-specific stats — <b>returns the same {@link SocketStats} view as
-     * {@link #socketStats()}</b> (documented drift; {@code ManagedRecvTransport}
-     * exposes no separate SRT-rich shape). Unlike {@code ManagedSender}/
+     * {@link #socketStats()}</b> ({@code ManagedRecvTransport} exposes no
+     * separate SRT-specific shape). Unlike {@code ManagedSender}/
      * {@code ManagedReceiver} this does NOT throw, and the return type is
      * {@code SocketStats}, not {@code SrtStats}.
      *

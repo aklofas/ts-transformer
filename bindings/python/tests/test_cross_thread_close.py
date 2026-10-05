@@ -1,5 +1,5 @@
 """`close()` from another thread while a call is parked — sender-side
-parity for the receiver-side contract PRs #205/#209 established.
+parity with the receiver-side contract.
 
 Every class below used to close through `&mut self`: a cross-thread
 `close()` during a parked (or in-flight, GIL-released) call tripped

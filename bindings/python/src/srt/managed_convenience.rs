@@ -778,7 +778,7 @@ impl PyManagedDemuxReceiver {
 
     /// Why this receive session ended — a `tstrans.srt.RecvEndReason`
     /// member, or `None` while the stream is still live (or if it ended
-    /// through a path this arc doesn't instrument).
+    /// through a path this type doesn't instrument).
     ///
     /// Recorded first-writer-wins by the underlying
     /// `tst_pipeline::ManagedDemuxReceiver`, so it survives `close()`:

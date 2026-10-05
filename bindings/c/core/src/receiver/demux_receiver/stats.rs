@@ -154,8 +154,8 @@ pub unsafe extern "C" fn tst_demux_receiver_reset_stats(p: *mut TstDemuxReceiver
 ///
 /// Capped at `TST_STATS_MAX_STREAMS = 64` entries (BTreeMap ordering
 /// preserved by ascending PID); excess streams are silently dropped.
-/// `program_number` field is `0` for now — populated once `StreamStats`
-/// surfaces it (currently absent from `tst_core::mpegts::stats::StreamStats`).
+/// `program_number` is the program that owns the stream (`0` for PSI PIDs
+/// and for a stream seen before its PMT arrived).
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` on any null pointer
 /// arg, or `TST_E_CLOSED` if the receiver has been closed.

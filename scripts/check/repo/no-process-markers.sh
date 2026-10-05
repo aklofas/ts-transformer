@@ -29,7 +29,7 @@
 # Portable: ripgrep for every match (bash 3.2 syntax only; no mapfile/declare -A).
 set -uo pipefail
 
-DEFAULT_MODE=warn
+DEFAULT_MODE=fail
 
 usage() {
   sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'

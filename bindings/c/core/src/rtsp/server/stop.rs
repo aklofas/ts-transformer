@@ -14,7 +14,7 @@
 //!
 //! # Two-phase server lifecycle
 //!
-//! Mirrors the `tst_muxer_close` / `tst_muxer_free` pattern:
+//! Mirrors the `tst_publisher_finish` / `tst_publisher_free` pattern:
 //! 1. `tst_rtsp_server_stop` — sends RFC 7826 §13.5.1 Notice 5402
 //!    "Server-Initiated TEARDOWN" to each session, cancels all sessions,
 //!    fires the global cancel, and sleeps for `graceful_shutdown_drain + 1 s`

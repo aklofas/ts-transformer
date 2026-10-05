@@ -2,8 +2,8 @@
 //! entry points + the HLS-specific `tst_hls_publisher_*` accessors.
 //!
 //! A `Publisher` is **not a transport** — it is an outbound-only,
-//! segment-aware sink (see `tst_core::publisher::Publisher`). Today the
-//! only concrete publisher is the HLS publisher, which runs an internal
+//! segment-aware sink (see `tst_core::publisher::Publisher`). The only
+//! concrete publisher is the HLS publisher, which runs an internal
 //! tokio HTTP server serving the rolling `.m3u8` playlist + `.ts`
 //! segments. Dropping a live `TstPublisher` shuts that server down.
 //!
@@ -12,7 +12,7 @@
 //! `tst_publisher_get_stats` — cover the wall-clock-cut path; the raw C
 //! surface intentionally exposes only `tst_publisher_cut_segment` (wall-clock
 //! hint) and not the media-presentation-derived `cut_segment_with_duration`
-//! method added to the `Publisher` trait in v0.2.0. Media-derived `#EXTINF`
+//! method of the `Publisher` trait. Media-derived `#EXTINF`
 //! durations flow through the `tst_mux_publisher_*` path, which derives them
 //! from PTS span internally. A new `tst_publisher_cut_segment_with_duration`
 //! C symbol would require a C ABI bump and is deferred until there is a
