@@ -13,8 +13,9 @@ The simplest possible sender: open a transport, push 188 bytes, drop.
 use tst_pipeline::{RawSender, RawSenderConfig};
 use tst_core::transport::{Transport, TransportError};
 
-// In-memory sink; real callers plug in a `tst_srt::SrtTransport` (recipe 11)
-// or any custom Transport (recipe 8).
+// In-memory sink; real callers plug in a `tst_srt::SrtTransport` (see
+// "Open a sender from an srt:// URL") or any custom Transport (see "Use a
+// custom (non-SRT) transport").
 struct Sink(Vec<u8>);
 impl Transport for Sink {
     fn send_bytes(&mut self, b: &[u8]) -> Result<(), TransportError> {

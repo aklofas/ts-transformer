@@ -36,10 +36,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // the correct elementary stream even when two programs carry the same
     // codec.  The bare push_video / push_klv reject with AmbiguousTarget
     // when more than one stream of that kind exists across all programs.
-    // let mux = Muxer::new(config)?;
-    // let [v1] = mux.video_handles_for_program(1)[..] else { ... };
-    // let [v2] = mux.video_handles_for_program(2)[..] else { ... };
-    // mux.push_video_to(v1, pts, dts, is_keyframe, &nal_bytes)?;
+    // let mut mux = Muxer::new(config)?;
+    // let v1 = mux.video_handles_for_program(1)?[0];
+    // let v2 = mux.video_handles_for_program(2)?[0];
+    // mux.push_video_to(v1, &nal_bytes, pts, key_frame)?;
     Ok(())
 }
 ```

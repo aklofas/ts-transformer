@@ -24,8 +24,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             DemuxEvent::Sample { stream, payload: SamplePayload::Video { .. }, pts, .. } => {
                 match stream.pid {
-                    0x100 => process_eo(pts, last_klv.as_deref()),
-                    0x101 => process_ir(pts, last_klv.as_deref()),
+                    0x100 => process_eo(pts.as_ticks(), last_klv.as_deref()),
+                    0x101 => process_ir(pts.as_ticks(), last_klv.as_deref()),
                     _ => {}
                 }
             }

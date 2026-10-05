@@ -6,7 +6,7 @@
 > - [guides/pipeline.md](/docs/guides/pipeline.md) — `Pairer::last_before_pts` and freshness ceilings
 > - [Sample-and-hold async-KLV against video frames](/docs/cookbook/pairing/sample-hold-klv.md) — the inline pattern this replaces
 
-Replaces the cookbook recipe 13 inline pattern. Each video frame
+Replaces the [sample-and-hold](/docs/cookbook/pairing/sample-hold-klv.md) inline pattern. Each video frame
 attaches the most recent KLV at `klv.pts <= video.pts`.
 
 ```rust,no_run
@@ -31,5 +31,5 @@ for e in demux_events() {
 let _ = pairer.flush();
 ```
 
-Pass `freshness = None` to attach regardless of staleness (matches
-cookbook recipe 13 default behavior).
+Pass `freshness = None` to attach regardless of staleness (the inline
+sample-and-hold recipe's default behavior).

@@ -6,7 +6,7 @@
 > - [guides/klv.md](/docs/guides/klv.md) — the extended-range precedence rule, the field-family list, and a scalar-only long-tail snippet
 > - [Decode ST 0601 from a captured `.klv` blob](/docs/cookbook/klv/decode-st0601-blob.md) — the decode-ladder starting point this recipe builds on
 
-`UasDatalinkLs` now types 142 of the 143 active ST 0601.19 items. Most
+`UasDatalinkLs` types 142 of the 143 active ST 0601.19 items. Most
 of the long tail is plain `Option<f64>`/`Option<u32>` scalars — see the
 guide above for those. This recipe covers the three long-tail shapes
 that need more than a field read: two **repeated-record lists**
@@ -52,7 +52,7 @@ fn walk_long_tail(buf: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // A couple of the newly-typed plain scalars, for context:
+    // A couple of the long-tail plain scalars, for context:
     if let Some(agl) = ls.altitude_agl_m {
         println!("altitude AGL: {agl:.1} m (Item 113, IMAPB)");
     }
@@ -102,7 +102,7 @@ if ls.weapons_stores is not None:
             f"armed={ws.weapon_armed} laser={ws.laser_enabled}"
         )
 
-# A couple of the newly-typed plain scalars, for context.
+# A couple of the long-tail plain scalars, for context.
 if ls.altitude_agl_m is not None:
     print(f"altitude AGL: {ls.altitude_agl_m:.1f} m (Item 113, IMAPB)")
 if ls.transmission_frequency_mhz is not None:
@@ -120,7 +120,7 @@ for field in ls.sdcc_flps:
 
 ## Notes
 
-**Other newly-typed long-tail families**, one line each — grep
+**Other long-tail families**, one line each — grep
 `crates/tst-core/src/klv/st0601/packs.rs` (Rust) or
 `bindings/python/python/tstrans/klv.py` (Python) for the type name:
 

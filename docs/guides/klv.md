@@ -1,7 +1,7 @@
 # KLV Codec Guide
 
 
-> **Who this is for:** You need to encode or decode MISB KLV metadata (ST 0601 FMV, ST 0102 security, ST 0605 amend tags, ST 0903 VMTI, ST 0806 RVT, ST 1010 SDCC error covariance) — typed Rust structs in, bytes out, or the inverse. A one-way ST 0805 layer additionally converts a decoded ST 0601 record to Cursor-on-Target XML (strings out, not KLV bytes).
+> **Who this is for:** You need to encode or decode MISB KLV metadata (ST 0601 FMV, ST 0102 security, ST 0605 Precision Time Stamp, ST 0903 VMTI, ST 0806 RVT, ST 1010 SDCC error covariance) — typed Rust structs in, bytes out, or the inverse. A one-way ST 0805 layer additionally converts a decoded ST 0601 record to Cursor-on-Target XML (strings out, not KLV bytes).
 
 > **You will learn:**
 > - The substrate: SMPTE UL tags, BER length, the encode/decode round-trip
@@ -30,7 +30,7 @@ What this module is *not*: a TS demuxer. Pulling KLV out of a captured
 `cargo run -p tst-examples --example extract_klv` (see "Working with real
 captures" below).
 
-> **Python:** `tstrans` ships `py.typed` type stubs for the core `io`/`codec`/`klv`/`mpegts` modules, so editors and `mypy` resolve these types directly.
+> **Python:** `tstrans` ships `py.typed` type stubs for every module (including `klv`), so editors and `mypy` resolve these types directly.
 
 Pick the decode entry point that fits your situation: `decode` for
 general-purpose decoding (verifies checksum, accepts any UL); reach for
@@ -49,7 +49,7 @@ typed:    klv::st0601 (UAS Datalink LS, 142 of 143 items typed or structured)
           klv::st1010 (SDCC-FLP — error covariance pack)
           klv::st1204 (MIIS Core Identifier)
 
-substrate: klv::pack            (Iter, RawField, OwnedRawField)
+substrate: klv::pack            (RawField, OwnedRawField)
            klv::length          (BER short/long, BER-OID)
            klv::imapb           (ST 1201.5 int↔float)
            klv::checksum        (16-bit running-sum)
@@ -62,9 +62,9 @@ you're working with a custom local set, debugging a capture byte by byte,
 or translating fields without committing to a typed shape — anything
 where "give me the next `(tag, len, value)` triple" is the right
 abstraction. The substrate types are deliberately small and zero-copy
-where the borrow checker allows; `pack::Iter::local_set(buf)` walks a
-body without allocating, and `RawField<'a>` borrows its `value` slice
-straight from the input buffer.
+where the borrow checker allows; the `klv::length` BER readers walk a
+body without allocating (see "Substrate walking" below), and
+`RawField<'a>` borrows its `value` slice straight from the input buffer.
 
 The typed layer is the right entry point for production decoding and
 encoding of ST 0601 / ST 0605 / ST 0903. `klv::st0601::UasDatalinkLs` is
@@ -92,8 +92,9 @@ referenced as MISB ST 0107). Each byte has a documented role:
   accessor `st0601_version_byte()` returns the raw byte for legacy interop.
   ST 0601.8-19 forbids non-zero values in new developments.
 
-The `klv::universal_label` module exposes well-known constants —
-`ST_0601_LS`, `PRECISION_TIMESTAMP_PACK_UL` — and a
+`UniversalLabel` carries well-known associated constants —
+`UniversalLabel::ST_0601_LS`, `UniversalLabel::PRECISION_TIMESTAMP_PACK_UL`,
+`UniversalLabel::SECURITY_LS_UL` — and a
 family check: `is_st0601_family()` returns true when the label belongs
 to the ST 0601 family. The check validates bytes 0-12 against the
 canonical prefix (universal designator + ST 0601 set kind) and requires
@@ -195,7 +196,7 @@ caller doesn't have to spell out the partial-presence cases.
 > **Python:** the typed sets are frozen dataclasses — attribute
 > assignment raises `FrozenInstanceError`. Use
 > `record.with_(sensor_lat_deg=33.5)` to get an updated copy (a thin
-> `dataclasses.replace` wrapper on the core four sets plus `RvtLs`; unknown names raise
+> `dataclasses.replace` wrapper on the core four sets plus `RvtLs` and `CoreId`; unknown names raise
 > `TypeError` and construction-time validation re-runs on the copy).
 > To stream typed ST 0601 records straight from a file with their PTS,
 > use `tstrans.io.iter_uas_datalink(path)`; on a `DemuxEvent.Metadata`
@@ -240,8 +241,9 @@ IMAPB twin of its own; see its rustdoc for the disambiguation from the
 
 ### The ST 0601 long tail
 
-The MISB full-tag-compliance arc took `UasDatalinkLs` from 52 to 142 of
-the 143 active ST 0601.19 items. The newly-typed field families:
+`UasDatalinkLs` types 142 of the 143 active ST 0601.19 items (Item 66,
+deprecated, stays `unknown` pass-through). The field families beyond the
+core sensor / platform / frame-center items:
 atmospheric/wind (Items 35–38, 49, 53–55), target location plus error
 estimates (Items 40–46), extended platform state (51–52, 56–58, 64,
 92–93), alternate platform (67–69, 71, 76, 105), sensor velocity
@@ -602,7 +604,8 @@ microseconds) rather than sampling the wall clock internally — per §1,
 CoT generated from a replayed file must be byte-identical to CoT
 generated live, so nothing about the output may depend on when the
 conversion runs. `CotConfig` carries the configurable pieces (platform
-`type`, `producer` XML-attribute name, `how`, geoid undulation).
+`type`, `update_interval_us` for the `stale` time, `producer` XML-attribute
+name, `how`, geoid undulation).
 
 ```rust
 use tst_core::klv::st0601::UasDatalinkLs;
@@ -793,10 +796,12 @@ schemes to map a bounded floating-point range into a fixed-width
 integer on the wire. The typed layer applies the right scheme per tag
 based on the spec — callers don't normally call either directly.
 
-- `klv::st0601::mapping` (`LinearRange` — `U16Range` / `U32Range` /
-  `S16Range` / `S32Range`). Uniform linear mapping with step
-  `(max - min) / 2^bits`. This is what every ranged tag in the typed
-  ST 0601 table currently uses (see
+- `LinearRange` (crate-internal, in `klv::st0601::tags`; the table's
+  `U8Range` / `U16Range` / `I16Range` / `U32Range` / `I32Range` encodings).
+  Uniform linear mapping with step `(max - min) / (2^bits − 1)` for unsigned
+  items and `(max - min) / (2^bits − 2)` for signed ones, whose INT_MIN is
+  reserved. This is what the fixed-width ranged tags in the typed
+  ST 0601 table use (see
   [../crates/tst-core/src/klv/st0601/tags.rs](/crates/tst-core/src/klv/st0601/tags.rs)).
 - `klv::imapb` (ST 1201.5 IMAPB). Power-of-two-aligned scale factor
   with INT_MIN reserved as INVALID — a different scheme; not
@@ -828,18 +833,19 @@ Three steps to take a captured `.ts`, pull the KLV out, and decode it.
    cargo run -p tst-examples --example extract_klv -- capture.ts /tmp/klv_out
    ```
 
-   The second argument is a filename prefix; the example writes files
-   into the input file's parent directory as `<prefix>_NNNN.klv`
-   (`enumerate()`-indexed, 4-digit zero-padded — so the first blob is
-   `_0000.klv`). Passing an absolute path as the prefix (e.g.
-   `/tmp/klv_out`) works on Unix because `Path::join` replaces the base
-   when the second argument is absolute — the files land in `/tmp/` as
-   `/tmp/klv_out_0000.klv`, `/tmp/klv_out_0001.klv`, ...
+   The second argument is a filename prefix (default: the input file's
+   stem); the example writes files into the input file's parent directory
+   as `<prefix>_NNNN_<kind>.klv`, where `NNNN` is a 4-digit zero-padded
+   index from 0 and `<kind>` is `sync` (AU-cell KLV, stream_type 0x15),
+   `async` (PrivateData KLV) or `unknown`. Passing an absolute path as the
+   prefix (e.g. `/tmp/klv_out`) works on Unix because `Path::join` replaces
+   the base when the second argument is absolute — the files land in
+   `/tmp/` as `/tmp/klv_out_0000_async.klv`, `/tmp/klv_out_0001_async.klv`, ...
 
 2. Decode one blob through the strictness ladder:
 
    ```bash
-   cargo run -p tst-examples --example klv_decode_file -- /tmp/klv_out_0000.klv
+   cargo run -p tst-examples --example klv_decode_file -- /tmp/klv_out_0000_async.klv
    ```
 
    The example tries `decode_strict_compliance` first and walks down to

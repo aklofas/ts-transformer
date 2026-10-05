@@ -92,3 +92,5 @@ Only examples explicitly invoked via `cargo run -p tst-examples --example <name>
 | `mux_with_webvtt_subtitles` | [Inject WebVTT POI cues](/docs/cookbook/operations/inject-webvtt-cues.md) |
 | `pair_klv_pipeline` | [Pair sync-KLV via `Pairer` (Realtime)](/docs/cookbook/pairing/pairer-realtime.md) |
 | `parse_audio_frames` | [Pull sample rate and channel count](/docs/cookbook/codecs/extract-audio-format.md) |
+| `recv_rtsp_h264` | [Ingest H.264 from an RTSP camera](/docs/cookbook/receiving/recv-rtsp-h264-to-ts.md) |
+| `send_tcp` | [Send MPEG-TS over TCP](/docs/cookbook/sending/tcp.md) |

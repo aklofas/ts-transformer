@@ -13,7 +13,7 @@ when `VideoCodec::H266` is configured. The push contract is identical to
 H.264 / H.265 — Annex-B framing on `push_video`, one PES per call. Only
 the codec flag and the SPS / PPS / VPS bytes change.
 
-The recipe below mirrors recipe 9 (H.265 + sync KLV) — flip the codec to
+The recipe below mirrors [Mux H.265 + sync KLV](/docs/cookbook/muxing/mux-h265-with-klv.md) — flip the codec to
 `VideoCodec::H266` and feed H.266 NAL bytes (NAL types 14 / 15 / 16 for
 VPS / SPS / PPS).
 

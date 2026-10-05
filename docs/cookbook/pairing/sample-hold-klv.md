@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     while let Some(e) = d.next_event() {
         match e {
             DemuxEvent::Metadata { pts, kind: MetadataKind::KlvAsync, payload, .. } => {
-                last_klv = Some((pts, payload));
+                last_klv = Some((pts.as_ticks(), payload));
             }
             DemuxEvent::Sample { payload: SamplePayload::Video { .. }, pts: _frame_pts, .. } => {
                 // Use last_klv if available, regardless of how stale.

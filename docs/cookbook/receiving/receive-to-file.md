@@ -8,7 +8,7 @@
 
 Reach for this when archiving a stream or building a test fixture from a live producer. `Listener::accept` returns a connected `Socket`; the recv loop drains until `ConnectionBroken`.
 
-A 1500-byte buffer comfortably fits SRT's default 1316-byte payload, so each `recv` returns one whole message. The three-arm match handles data, clean close, and defensive timeout.
+A 1500-byte buffer comfortably fits SRT's default 1316-byte payload, so each `recv` returns one whole message. The match handles data, the end of the connection (`ConnectionBroken`), and a defensive timeout.
 
 ```rust,no_run
 use tst_srt::ListenerBuilder;

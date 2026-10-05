@@ -26,12 +26,11 @@ let tx = RistTransportBuilder::new("rist://10.0.0.5:9000")?
     .profile(RistProfile::Simple)
     .buffer(Duration::from_millis(200))
     .connect()?;
-let cfg = MuxerConfig::builder()
-    // ... configure programs/streams as needed
-    .build()?;
-let mut sender = MuxSender::new(tx, cfg)?;
+// H.264 + async KLV; build a custom config with `MuxerConfig::builder()`.
+let cfg = MuxerConfig::default();
+let sender = MuxSender::new(tx, cfg)?;
 sender.send_video(&nal_bytes, pts, key_frame)?;
-sender.send_klv(&klv_bytes, pts)?;
+sender.send_klv(&klv_bytes, pts, /*metadata_service_id=*/ 0x00)?;
 ```
 
 **Important:** Simple Profile receivers REQUIRE an EVEN port (librist uses
@@ -69,8 +68,8 @@ doesn't carry encryption.
 
 Either encryption key forces the Main profile. `secret` on its own is
 enough — it selects AES-256, librist's own default. `aes-type` on its own
-is rejected at parse: naming a cipher without a PSK used to be accepted
-and then silently configure a **plaintext** link.
+is rejected at parse: a cipher without a PSK would otherwise configure a
+**plaintext** link.
 
 ## Verify with ffmpeg
 

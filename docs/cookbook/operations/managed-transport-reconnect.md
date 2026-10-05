@@ -15,7 +15,8 @@ In the default `ReconnectMode::Blocking` (what the snippet below builds) the sen
 ```rust,no_run
 use tst_core::mpegts::mux::MuxerConfig;
 use tst_pipeline::{
-    BackoffStrategy, ManagedTransport, MuxSender, OverflowPolicy, ReconnectPolicy, TransportError,
+    BackoffStrategy, BrokenCause, ManagedTransport, MuxSender, OverflowPolicy, ReconnectMode,
+    ReconnectPolicy, TransportError,
 };
 use tst_srt::{SocketBuilder, SrtTransport};
 use std::time::Duration;
@@ -27,7 +28,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         sb.latency(Duration::from_millis(120));
         let socket = sb
             .connect("127.0.0.1:9000")
-            .map_err(|e| TransportError::Broken(format!("connect failed: {e}")))?;
+            .map_err(|e| TransportError::Broken {
+                msg: format!("connect failed: {e}"),
+                errno_code: None,
+                cause: BrokenCause::Unspecified,
+            })?;
         Ok(SrtTransport::new(socket))
     };
     let initial = factory()?;
@@ -39,6 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         gap_buffer_capacity: 256,
         overflow_policy: OverflowPolicy::DropOldest,
+        mode: ReconnectMode::Blocking,
     };
     let managed = ManagedTransport::new(initial, factory, policy);
     let _sender = MuxSender::new(managed, MuxerConfig::default())?;

@@ -19,10 +19,11 @@
 The HLS publisher lives in its own crate, `tst-hls`. It is **segmenter
 first**: it takes pre-muxed MPEG-TS bytes (or elementary streams, through
 the `MuxPublisher` shell), cuts them into `.ts` segments on decodable
-boundaries, and maintains an RFC 8216 media playlist (`playlist.m3u8`) on
-disk. A built-in HTTP server that serves those files is an optional
-convenience for development and edge deployments — production deployments
-usually front the output directory with a real web server or CDN instead.
+boundaries, and maintains an RFC 8216 media playlist. Segments are written
+to the output directory as they close; the playlist is rendered from memory
+by the built-in HTTP server during the run and written to the directory as
+`playlist.m3u8` when the publisher finishes. Production deployments
+usually put a reverse proxy or CDN in front of the built-in server.
 
 The publisher plugs into the same `tst_core::publisher::Publisher` trait as
 any other segmented sink, so the `MuxPublisher` pipeline shell drives it the
@@ -41,6 +42,7 @@ Drive the publisher through `MuxPublisher`, pushing elementary streams:
 ```rust
 use std::time::Duration;
 use tst_core::mpegts::common::Pts90khz;
+use tst_core::mpegts::mux::MuxerConfig;
 use tst_core::publisher::Publisher;
 use tst_hls::{HlsMode, HlsPublisherBuilder};
 use tst_pipeline::MuxPublisher;
@@ -58,7 +60,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("serving http://{addr}/playlist.m3u8");
     }
 
-    let mut shell = MuxPublisher::with_config(publisher, mux_config)?;
+    // Default program: H.264 video + PrivateData KLV (the web-friendly carriage).
+    let shell = MuxPublisher::with_config(publisher, MuxerConfig::default())?;
+
+    // Your encoder's output: one Annex-B access unit and one KLV local set per tick.
+    let (nal_bytes, klv_bytes, pts): (Vec<u8>, Vec<u8>, i64) = (vec![0, 0, 0, 1, 0x65, 0xA5], vec![], 0);
 
     // send_video with key_frame=true cuts a new segment at the keyframe.
     shell.send_video(&nal_bytes, Pts90khz::new(pts), /* key_frame */ true)?;
@@ -121,8 +127,8 @@ pub.finish()
 | Mode | Playlist behavior | ENDLIST written? | Disk eviction? |
 |---|---|---|---|
 | `HlsMode::Live` | Rolling window (`playlist_window` newest segments visible) | Never during the run | Yes — segments rolled out of the window are deleted |
-| `HlsMode::Event` | Monotone-growing (no eviction) | On `finish` | No |
-| `HlsMode::Vod` | Written all at once when the stream ends | On `finish` | No |
+| `HlsMode::Event` | Monotone-growing (no eviction), `#EXT-X-PLAYLIST-TYPE:EVENT` | On `finish` | No |
+| `HlsMode::Vod` | Same as Event, tagged `#EXT-X-PLAYLIST-TYPE:VOD` | On `finish` | No |
 
 `Publisher::finish` writes the terminal playlist and tears the server down.
 For EVENT and VOD that is usually **not** what you want — the point of a VOD
@@ -144,19 +150,19 @@ In Python, `HlsPublisher.finish_serving()` returns the same
 
 ## Serving in production
 
-The built-in HTTP server is a **development and edge convenience**. It binds
-loopback (`127.0.0.1:8080`) by default; binding all interfaces (`0.0.0.0`)
-is an explicit choice you have to make, and even then the recommended
-production shapes are:
+The built-in HTTP server is the only place a live playlist is served from,
+so it is not meant to face clients directly. It binds loopback
+(`127.0.0.1:8080`) by default; binding all interfaces (`0.0.0.0`) is an
+explicit choice you have to make, and even then the recommended production
+shapes are:
 
-- **Front the `output_dir` with a static web server or CDN.** The publisher
-  only writes `segment_*.ts` and `playlist.m3u8` to a directory; point
-  nginx, Caddy, a media server, or a CDN origin at that directory and let it
-  serve the files. This is the highest-throughput, best-cached option and
-  needs no traffic through this process at all.
-- **Reverse-proxy the built-in server.** If you want the built-in server to
-  do the serving (e.g. at the edge), keep it on loopback and put nginx / a
-  media server in front for TLS termination, auth, and access control.
+- **Reverse-proxy the built-in server** — the shape for a live stream. Keep
+  it on loopback and put nginx / a media server / a CDN origin in front for
+  caching, TLS termination, auth, and access control.
+- **Serve a finished stream statically.** `segment_*.ts` files land in
+  `output_dir` as they close, but `playlist.m3u8` is written there only when
+  the publisher finishes — so a static web server or CDN pointed at the
+  directory can serve a completed EVENT / VOD stream, not a live one.
 - Enable `basic_auth` and/or `enable_tls` on the builder if the built-in
   server must face untrusted clients directly, but a reverse proxy is the
   more flexible option.

@@ -39,7 +39,8 @@ while let Some(ev) = demuxer.next_event() {
             }
             AudioCodec::Aac => {
                 for f in codec::aac::frames(&frames).filter_map(Result::ok) {
-                    println!("PID 0x{:04x} AAC {:?} {} Hz, {} ch", pid, f.profile, f.sample_rate_hz, f.channels);
+                    // `channels()` is None for a PCE-defined layout (channel_configuration 0).
+                    println!("PID 0x{:04x} AAC {:?} {} Hz, {:?} ch", pid, f.profile, f.sample_rate_hz, f.channels());
                 }
             }
             _ => {}

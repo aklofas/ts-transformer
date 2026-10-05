@@ -8,7 +8,7 @@
 
 Reach for this when the sender shells fit but the wire isn't SRT — UDP, file, in-memory test harness, your own protocol. `MuxSender`, `Sender`, and `RawSender` are all generic over `T: Transport`; implement the trait once and they all compose.
 
-The trait is four methods: `send_bytes`, `max_payload`, `is_alive`, `close`. Your impl needs to be `Send`, not `Sync` — the shells handle internal synchronization where required.
+The trait has four required methods: `send_bytes`, `max_payload`, `is_alive`, `close` (`cancel_handle` and `socket_stats` default to `None`). Your impl needs to be `Send`, not `Sync` — the shells handle internal synchronization where required.
 
 ```rust,no_run
 use tst_pipeline::{Transport, TransportError};

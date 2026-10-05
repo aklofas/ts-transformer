@@ -16,9 +16,9 @@ use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let passphrase = Passphrase::new("shared-secret-not-for-production")?;
-    // Bind the builder before chaining: mutators return `&mut Self` and
-    // `connect` takes `&self`, so a single fluent chain off the
-    // temporary `SocketBuilder::new()` would dangle. Bind, then step.
+    // Mutators return `&mut Self` and `connect` takes `&self`: a
+    // one-statement chain off `SocketBuilder::new()` also works, but a
+    // bound builder can be stepped and reused.
     let mut sb = SocketBuilder::new();
     sb.passphrase(passphrase);
     sb.key_length(KeyLength::Aes256);

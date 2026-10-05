@@ -4,7 +4,7 @@
 > **Who this is for:** You're building the receiver / processing side — parsing a live MPEG-TS stream (or a `.ts` file) into typed `DemuxEvent` items.
 
 > **You will learn:**
-> - The bytes-in / events-out model: `Demuxer::push_packet` and `Demuxer::pop_event`
+> - The bytes-in / events-out model: `Demuxer::feed` and `Demuxer::next_event`
 > - The four-tier `StrictMode` ladder (lenient → strict-by-spec)
 > - The `DemuxEvent` variants and what payload each carries
 > - How synchronous KLV gets auto-unwrapped from H.222.0 §2.12.4.2 AU cells
@@ -31,14 +31,14 @@ same vocabulary — `VideoCodec`, `KlvStreamType` ↔ `MetadataKind`, PSI
 cadence — but the demuxer's contract is bigger because it has to cope
 with the messy reality of real-world captures.
 
-> **Python:** `tstrans` ships `py.typed` type stubs for the core `io`/`codec`/`klv`/`mpegts` modules, so editors and `mypy` resolve these types directly.
+> **Python:** `tstrans` ships `py.typed` type stubs for every module (including `mpegts`), so editors and `mypy` resolve these types directly.
 
 **Decoupled pairing.** The demuxer does **NOT** pair sync-KLV records
 with video access units. Each KLV record and each video AU surfaces as
 an independent stream-tagged event with full timing info; pairing
 (nearest-PTS, sample-and-hold, multi-stream routing) is a consumer-domain
 decision. See "Pairing is a consumer concern" below and the three
-cookbook recipes (12, 13, 14) for the canonical patterns.
+pairing cookbook recipes for the canonical patterns.
 
 **Lenient by default.** Real-world ISR captures routinely omit
 `metadata_descriptor`, mix sync/async stream types incorrectly, or jump
@@ -70,12 +70,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     // Splitting it into NAL/OBU units is an opt-in call.
                     let (payload, _issues) = split_video(&raw, codec, av1_carriage.unwrap_or_default());
                     if let VideoPayload::Nals(nals) = payload {
-                        println!("video PID 0x{:04X} pts={pts} nals={}", stream.pid, nals.len());
+                        println!("video PID 0x{:04X} pts={} nals={}", stream.pid, pts.as_ticks(), nals.len());
                     }
                 }
             }
             DemuxEvent::Metadata { stream, pts, payload, .. } => {
-                println!("klv PID 0x{:04X} pts={pts} bytes={}", stream.pid, payload.len());
+                println!("klv PID 0x{:04X} pts={} bytes={}", stream.pid, pts.as_ticks(), payload.len());
             }
             _ => {}
         }
@@ -94,7 +94,7 @@ Runnable: [../examples/receiving/demux_to_events.rs](/examples/receiving/demux_t
 | `DemuxerConfigBuilder` | Fluent builder for the demuxer's options. Obtain via `DemuxerConfig::builder()`. |
 | `DemuxerConfig` | Plain struct of options if you'd rather build a config than chain. |
 | `DemuxEvent` | Top-level event enum: `ProgramMap`, `Sample`, `Metadata`, `Discontinuity`, `NonConformant`, `ReconnectDiscontinuity` (emitted only by `ManagedDemuxReceiver` after a reconnect; signals a hard byte-stream discontinuity). |
-| `StreamId` | `{ pid: u16, kind: StreamKind }` — identifies the source stream of every event. |
+| `StreamId` | `{ pid: u16, kind: StreamKind, program_number: u16 }` — identifies the source stream of every event. |
 | `StreamKind` | `Video(VideoCodec)`, `Audio(AudioCodec)`, `Subtitle(SubtitleCodec)`, `KlvSync { declared_link }`, `KlvAsync`, `Unknown(u8)`. |
 | `VideoCodec` | `H264`, `H265`, `H266`, `Av1`. |
 | `AudioCodec` | `Mp2`, `Aac` (ADTS), `AacLatm`, `Ac3`. Codec tag for typed dispatch; bitstream bytes ride on `SamplePayload::Audio.frames`. |
@@ -108,7 +108,7 @@ Runnable: [../examples/receiving/demux_to_events.rs](/examples/receiving/demux_t
 | `StreamInfo` | `{ pid, stream_type, kind, program_number, raw_descriptors: Vec<RawDescriptor> }` — one row per declared stream in the PMT. `raw_descriptors` carries the raw PMT per-stream descriptor TLVs (tag + data bytes), in PMT loop order. |
 | `KlvLink` | `{ klv_pid, video_pid, source: LinkSource }`. |
 | `LinkSource` | `Declared` (PMT `metadata_descriptor`), `Inferred` (single video + single KLV topology), `Override` (`DemuxerConfigBuilder::link_klv`). |
-| `NonConformantIssue` | `StreamTypeMismatchSyncOnAsyncPid`, `StreamTypeMismatchAsyncOnSyncPid`, `MissingMetadataDescriptor`, `PcrAnomaly { delta }`, `PsiChecksumMismatch { pid }`, `PusiMidPes`, `PidReusedAcrossPrograms { pid, programs }`, `SubtitleMissingDescriptor { pid }`, `SubtitleDescriptorMalformed { pid, tag }` (reserved — not currently emitted), `Other(String)`. |
+| `NonConformantIssue` | 38 variants; the common ones: `StreamTypeMismatchSyncOnAsyncPid`, `StreamTypeMismatchAsyncOnSyncPid`, `MissingMetadataDescriptor`, `PcrAnomaly { delta }`, `PtsAnomaly { delta }`, `PsiChecksumMismatch { pid }`, `PusiMidPes` (reserved — not currently emitted), `PidReusedAcrossPrograms { pid, programs }`, `SubtitleMissingDescriptor { pid }`, `SubtitleDescriptorMalformed { pid, tag }` (reserved — not currently emitted), `MultiCellAu { pid, dropped_bytes, reason }`, `CfiTolerated { .. }`, `Other(String)`. |
 | `DiscontinuityKind` | `ContinuityJump { expected, observed }`, `PesOversize { pid }`, `PesTotalOversize`, `AdaptationFieldFlag`. |
 | `StrictMode` | `Off` (default), `TimingOnly`, `DescriptorsOnly`, `Full`. |
 | `pts_to_duration(pts: Pts90khz) -> Duration` | Convenience: 90 kHz ticks to `std::time::Duration`. Diagnostic / test use. |
@@ -125,7 +125,7 @@ subtitle, or unknown) tagged by `StreamId` and `SamplePayload` variant.
 (`MetadataKind::KlvSyncAuCell`) and async bare-LS
 (`MetadataKind::KlvAsync`) — tagged with the KLV PTS and unwrapped
 payload. In the Python binding, `DemuxEvent.Klv` is a same-object
-deprecated alias for `DemuxEvent.Metadata` (removed at 1.0, PR #79);
+deprecated alias for `DemuxEvent.Metadata` (to be removed at 1.0);
 in Rust the variant is `Metadata` only. `DemuxEvent::Discontinuity` signals a CC
 jump or PES overflow on a specific PID. `DemuxEvent::NonConformant`
 surfaces a spec violation that the demuxer tolerated in lenient mode.
@@ -139,6 +139,7 @@ stream break; plain `Demuxer::next_event` never emits it.
 Demuxer::new()                                          -> Demuxer
 Demuxer::with_config(config: DemuxerConfig)            -> Demuxer
 Demuxer::feed(&mut self, bytes: &[u8])                  -> Result<(), DemuxError>
+Demuxer::feed_aligned(&mut self, pkt: &[u8; 188])       -> Result<(), DemuxError>
 Demuxer::next_event(&mut self)                          -> Option<DemuxEvent>
 Demuxer::flush(&mut self)                               -> ()
 Demuxer::reset_sync(&mut self)                          -> ()
@@ -147,9 +148,11 @@ Demuxer::reset_sync(&mut self)                          -> ()
 `feed` accepts arbitrary byte slices — the demuxer handles sync
 recovery internally. It can return `DemuxError::Unrecoverable` (no TS
 sync byte within the search window — ~6 KiB by default — which usually
-means the input isn't TS at all), `DemuxError::MalformedPes` (a PES
-header that doesn't validate), or `DemuxError::StrictRejection` (a
-strict-mode-rejected `NonConformant` issue surfaced as a fatal error).
+means the input isn't TS at all), `DemuxError::MalformedPes` /
+`DemuxError::MalformedPsi` (a PES header or PSI section that is
+structurally impossible), `DemuxError::StrictRejection` (a
+strict-mode-rejected `NonConformant` issue surfaced as a fatal error), or
+`DemuxError::SyncBufExhausted` (see the sync-ingress ceiling below).
 
 **Sync-ingress ceiling.** Before the demuxer acquires its first sync
 lock, `feed` buffers incoming bytes to scan for the `0x47` sync byte.
@@ -212,18 +215,20 @@ reassembly state. The classic case is a video PES with `PES_packet_length=0`
 (unbounded length, normal for AUs > 65535 bytes) which only commits when
 the next PES arrives — at end-of-file there is no next PES, so without
 `flush` the trailing AU vanishes silently. `flush` is idempotent and
-safe to call repeatedly. For live SRT receive, `pipeline::Receiver`
-auto-flushes on `Closed` — you only call `flush` directly when feeding
-finite inputs (file replay, test fixtures).
+safe to call repeatedly. For live receive, `DemuxReceiver` auto-flushes
+when the stream ends, the transport breaks, or the receiver is closed — you
+only call `flush` directly when feeding finite inputs (file replay, test
+fixtures).
 
-`reset_sync` discards the 188-byte syncer state and any in-flight PES
-reassembly — used by `ManagedDemuxReceiver` on reconnect to force a
-fresh `0x47` sync hunt on the first packet from the new transport.
-Reassembly tables (PAT/PMT, per-PID CC history, last PTS) are
-*preserved* across `reset_sync`; only the byte-level sync rail and any
-partial PES are dropped. Most direct callers should not need this —
-call it only when the byte stream is known to have a hard discontinuity
-that can't be diagnosed from PCR or CC alone.
+`reset_sync` drops all parse state — the sync buffer, PSI assemblers,
+the program/PMT topology, PES reassembly, CC/PCR/PTS tracking, and the
+pending event queue — so nothing from a dead connection splices into the
+next one. `ManagedDemuxReceiver` calls it on reconnect, which forces a
+fresh `0x47` sync hunt and a fresh PAT/PMT on the new transport. The
+`DemuxerConfig` and the stats counters are preserved (reset stats with
+`reset_stats`). Most direct callers should not need this — call it only
+when the byte stream is known to have a hard discontinuity that can't be
+diagnosed from PCR or CC alone.
 
 ```rust,no_run
 use tst_core::mpegts::demux::Demuxer;
@@ -253,9 +258,9 @@ on most live data.
 | Mode | Rejects | Use case |
 | --- | --- | --- |
 | `Off` (default) | nothing | Triage, real-world capture analysis, live receivers. |
-| `TimingOnly` | `PcrAnomaly`, `PusiMidPes` (vestigial — not currently emitted), `PsiChecksumMismatch` | Receivers paranoid about clock integrity but tolerant of encoder quirks. |
-| `DescriptorsOnly` | `StreamTypeMismatch{Sync,Async}OnPid`, `MissingMetadataDescriptor` | Spec-compliance gating: did the encoder declare its streams correctly? |
-| `Full` | every variant including future-added ones | CI-grade compliance test against a known-good encoder. |
+| `TimingOnly` | `PcrAnomaly`, `PtsAnomaly`, `MissingRequiredPts`, `PcrMalformed`, `PsiChecksumMismatch`, `PusiMidPes` (vestigial — not currently emitted) | Receivers paranoid about clock integrity but tolerant of encoder quirks. |
+| `DescriptorsOnly` | `StreamTypeMismatch{Sync,Async}OnPid`, `MissingMetadataDescriptor`, `SubtitleMissingDescriptor`, `SubtitleDescriptorAmbiguous` | Spec-compliance gating: did the encoder declare its streams correctly? |
+| `Full` | every variant including future-added ones, except a multi-section PAT (`PsiMultiSectionUnsupported` with `table_id 0x00`), which stays a surface-only event | CI-grade compliance test against a known-good encoder. |
 
 In strict mode, the rejected `NonConformant` event is still pushed onto
 the event queue *before* the error returns from `feed`. This means a
@@ -281,7 +286,7 @@ let _d = Demuxer::with_config(
 
 ## Override surface
 
-`DemuxerConfigBuilder` exposes four override knobs. Use them when the encoder
+`DemuxerConfigBuilder` exposes five override knobs. Use them when the encoder
 lies, when memory pressure matters, or when topology inference is
 ambiguous.
 
@@ -290,8 +295,8 @@ ambiguous.
 | `sync_buf_cap(bytes)` | Maximum bytes the demuxer holds unparsed across `feed` calls (the same buffer serves before and after sync lock). Default 4 MiB. A `feed` whose bytes would push the backlog past the cap returns `DemuxError::SyncBufExhausted` without copying them. | Single-shot `feed` of a large `.ts` file (> 4 MiB). Prefer the chunk-and-drain loop instead; see the "Sync-ingress ceiling" note above. |
 | `link_klv(klv_pid, video_pid)` | Force a `KlvLink` between two PIDs regardless of what the PMT declares. Surfaces as `LinkSource::Override` in the `klv_links` table. | The encoder doesn't emit `metadata_descriptor`, your topology has multiple video PIDs, and you know which KLV PID feeds which video. |
 | `treat_as(pid, kind)` | Override the demuxer's PMT-derived `StreamKind` for one PID. | Encoder advertises wrong `stream_type`; you know the real shape of the bytes. |
-| `pes_cap_per_pid(bytes)` | Maximum PES reassembly buffer per PID. Default 4 MiB. Exceeding this emits `Discontinuity::PesOversize { pid }` and drops the partial PES. | Memory-tight environments, or paranoia against runaway PES from a malformed encoder. |
-| `pes_cap_total(bytes)` | Aggregate cap across all PIDs. Default 64 MiB. Exceeding this emits `Discontinuity::PesTotalOversize` and drops. | Same as above but at the workspace level. |
+| `pes_cap_per_pid(bytes)` | Maximum PES reassembly buffer per PID. Default 4 MiB. Exceeding this emits `DiscontinuityKind::PesOversize { pid }` and drops the partial PES. | Memory-tight environments, or paranoia against runaway PES from a malformed encoder. |
+| `pes_cap_total(bytes)` | Aggregate cap across all PIDs. Default 64 MiB. Exceeding this emits `DiscontinuityKind::PesTotalOversize` and drops. | Same as above but at the workspace level. |
 
 ```rust,no_run
 use tst_core::mpegts::demux::{Demuxer, DemuxerConfig, StreamKind, VideoCodec};
@@ -345,7 +350,7 @@ every record (often thousands), the issue is coalesced to one event
 per (PID, PMT version) — re-arms on PMT version bump.
 
 **Continuity-counter jumps (CC discontinuities).** When the per-PID CC
-skips a value, the demuxer emits `Discontinuity::ContinuityJump
+skips a value, the demuxer emits `DiscontinuityKind::ContinuityJump
 { expected, observed }` and continues. PES reassembly state on that PID
 is preserved — the CC jump is a signal, not a teardown.
 
@@ -360,7 +365,7 @@ captures where a few packets dropped upstream split a PES across a gap.
 kept for non-exhaustive-enum binary-compatibility parity only.)
 
 **Oversize PES.** A PES grows past the per-PID or total cap. The demuxer
-drops the partial bytes, emits `Discontinuity::PesOversize { pid }` (or
+drops the partial bytes, emits `DiscontinuityKind::PesOversize { pid }` (or
 `PesTotalOversize`), and resumes on the next PUSI for that PID.
 
 **Garbage prefix bytes (scan / N-of-M confirm / locked).** When a stream
@@ -414,7 +419,7 @@ can forward it verbatim; callers reconstituting from split NALs prepend
 inner KLV LS at offset 5), peels the AU cell, and emits
 `MetadataKind::KlvSyncAuCell { metadata_service_id, sequence_number,
 cell_fragment_indication, decoder_config_flag,
-random_access_indicator }`. The event's `pts` is the PES PTS (per
+random_access_indicator, .. }`. The event's `pts` is the PES PTS (per
 § 2.12.4.1 — the AU cell carries no embedded timestamp). The
 `payload` is the inner KLV LS bytes — feed directly to
 `klv::st0601::decode`.
@@ -429,7 +434,7 @@ ship a bare KLV LS payload, with no AU cell wrap. The demuxer detects
 the actual shape (no 5-byte header), surfaces the bytes as
 `KlvAsync` with the PES PTS preserved on the parent event, and emits a
 `StreamTypeMismatchAsyncOnSyncPid` non-conformance event. This is why
-pairing recipes (cookbook § 12) match BOTH `KlvSyncAuCell` AND
+pairing recipes ([pair KLV by PTS](/docs/cookbook/pairing/pair-klv-by-pts.md)) match BOTH `KlvSyncAuCell` AND
 `KlvAsync` for sync-style consumers — many real captures present as
 the latter after wrap-peeling.
 
@@ -448,8 +453,9 @@ The AV1 case shares stream_type `0x06` with KLV-async; the demuxer
 disambiguates via the `registration_descriptor` `format_identifier`
 (`AV01` for AV1, `KLVA` for async KLV).
 
-**Unknown stream types.** PIDs with `stream_type` not in the
-`{0x1B, 0x24, 0x33, 0x06+AV01, 0x06+KLVA, 0x15}` set surface as
+**Unknown stream types.** PIDs whose `stream_type` (plus registration /
+subtitle descriptors on `0x06`) the demuxer does not classify as video,
+audio, subtitle or KLV surface as
 `SamplePayload::Unknown { stream_type, raw }`. The PES payload is
 preserved verbatim. Audio not declared via the recognized stream_type
 bytes also falls through here; use `treat_as` to route by-PID. See
@@ -483,7 +489,7 @@ or `0b01` (Last) for what are actually single complete KLV records.
 Empirically, this is the dominant industry mode: corpus-wide
 validation across multiple gimbaled-platform vendors (251 captures,
 37 GB) found ~99% of demuxer `NonConformant` events are
-`MalformedAuCellCfiTolerated`. No other public reference decoder
+`CfiTolerated`. No other public reference decoder
 enforces CFI either — MISB ST 1402.2 Appendix B lists the four bit
 patterns without semantic explanation, FFmpeg's `mpegtsenc.c` does
 not generate the 5-byte AU cell header at all, and GStreamer's
@@ -541,7 +547,7 @@ language codes — see the transmux guide in
 
 ```rust,no_run
 use tst_core::mpegts::demux::{DemuxEvent, Demuxer};
-use tst_core::mpegts::demux::psi::extract_user_label;
+use tst_core::mpegts::demux::low_level::extract_user_label;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut d = Demuxer::new();
@@ -609,8 +615,9 @@ with runnable examples:
   Two video PIDs, one metadata PID; both videos attach the same KLV
   state, no per-stream pairing logic.
 
-A potential `pipeline::pairing` opt-in helper module is captured in
-[project/deferred-features.md](/docs/project/deferred-features.md) — not part of this ship.
+For an opt-in library helper, `tst_pipeline::ext::pairing::Pairer`
+implements the nearest-PTS and sample-and-hold patterns — see the
+[pipeline guide](/docs/guides/pipeline.md#klv--video-pairing-tst_pipelineextpairing).
 
 ## Common pitfalls
 
@@ -625,9 +632,10 @@ end-of-file there is no next PES, so the trailing AU sits in the
 reassembler. Call `flush()` once you know no more bytes are coming
 (file replay, test fixture, end of `cargo run`'s `main`).
 
-**`flush()` not needed for live SRT receive.** `pipeline::Receiver`
-auto-flushes on `TransportError::Closed`. You only call `flush()`
-yourself when feeding the demuxer directly.
+**`flush()` not needed with `DemuxReceiver`.** `DemuxReceiver` flushes
+its demuxer when the transport reports end of stream, breaks, or is closed
+locally. You only call `flush()` yourself when feeding the demuxer
+directly.
 
 **Assuming the NAL units from `split_video` are Annex-B framed.** They aren't.
 `SamplePayload::Video.raw` *is* the Annex-B access unit (start codes intact) —
@@ -638,11 +646,11 @@ writing split NALs back to an Annex-B sink (or just forward `raw`, which is
 already framed). Pattern shown in
 [../examples/codec-parsing/extract_video_au.rs](/examples/codec-parsing/extract_video_au.rs).
 
-**Treating `Closed` as an error.** It isn't. `pipeline::Receiver` turns
-`TransportError::Closed` into iterator termination — the `for` loop
-simply ends after `Demuxer::flush` runs. `Broken` is the peer-disconnect
-error variant; `Closed` is clean EOF. See `srt_recv_typed.rs`'s
-"stream-end contract" doc-comment for the full discussion.
+**Treating `Closed` as an error.** It isn't. `DemuxReceiver` turns
+`TransportError::Closed` (the peer's clean end of stream, or the receiver's
+own `close()`) into iterator termination — the `for` loop simply ends after
+`Demuxer::flush` runs. `Broken` is the peer-disconnect error variant; a
+cancel (`TransportError::ExplicitClose`) surfaces as a `Closed`-kind error.
 
 **Matching only `KlvSyncAuCell` for sync pairing.** Production ISR
 captures often surface sync KLV as `KlvAsync` (encoder declares the
@@ -681,9 +689,10 @@ for event in receiver {
 ```
 
 `frames` holds the raw PES payload bytes — one or more codec frames
-concatenated. Per-frame splitting (sync-word scanning) is the
-caller's job today; future `codec::aac` / `codec::ac3` parsers will
-add typed split helpers (deferred).
+concatenated. Per-frame iteration is opt-in: `codec::mpegaudio::frames`
+and `codec::aac::frames` (ADTS) yield typed frames, and AAC-LATM / AC-3
+have header validators (`codec::aac::latm`, `codec::ac3::parse_syncframe`)
+— see the [codec guide](/docs/guides/codec.md#audio-frame-parsing).
 
 `pts` is in 90 kHz ticks (the MPEG-TS standard). `dts` is always
 `None` for audio (no B-frame reorder).
@@ -761,7 +770,7 @@ while let Some(e) = demux.next_event() {
             "subtitle PID 0x{:04x} codec={:?} pts={} bytes={}",
             stream.pid,
             codec,
-            pts,
+            pts.as_ticks(),
             payload.len()
         );
     }
@@ -799,18 +808,18 @@ Four runnable examples cover the demuxer's surface:
 - `cargo run -p tst-examples --example demux_to_events` — [examples/receiving/demux_to_events.rs](/examples/receiving/demux_to_events.rs)
   — file in, full event stream out. Triage-grade diagnostic.
 - `cargo run -p tst-examples --example srt_recv_typed` — [examples/receiving/srt_recv_typed.rs](/examples/receiving/srt_recv_typed.rs)
-  — bind a listener, wrap with `pipeline::Receiver`, drain typed events
+  — bind a listener, wrap with `pipeline::DemuxReceiver`, drain typed events
   from a live SRT peer.
 - `cargo run -p tst-examples --example pair_sync_klv` — [examples/pairing/pair_sync_klv.rs](/examples/pairing/pair_sync_klv.rs)
-  — nearest-PTS pairing of KLV records with video AUs (Cookbook §12).
+  — nearest-PTS pairing of KLV records with video AUs.
 - `cargo run -p tst-examples --example tee_disk_and_demux` — [examples/operations/tee_disk_and_demux.rs](/examples/operations/tee_disk_and_demux.rs)
   — `add_byte_sink` fan-out: write `.ts` to disk while consuming typed
   events, all in one pass.
 
-Two existing examples were also retrofitted to use `Demuxer` internally:
+Two more examples drive `Demuxer` directly:
 
 - `cargo run -p tst-examples --example extract_klv` — [examples/klv-metadata/extract_klv.rs](/examples/klv-metadata/extract_klv.rs)
-  — extract KLV records from a `.ts` capture (now `Demuxer`-driven).
+  — extract KLV records from a `.ts` capture.
 - `cargo run -p tst-examples --example extract_video_au` — [examples/codec-parsing/extract_video_au.rs](/examples/codec-parsing/extract_video_au.rs)
   — extract video access units, re-emit Annex-B framing.
 
@@ -872,8 +881,6 @@ first program.
 Each item below maps to an entry in
 [project/deferred-features.md](/docs/project/deferred-features.md).
 
-- **`tst_pipeline::ext::pairing` opt-in helper** — pairing stays consumer-side
-  via cookbook recipes; library-level helper is deferred.
 - **AV1 full Frame Header parser** — current `codec::av1::parse_frame_header_light`
   surfaces type / show flags only; per-frame size + reference management
   is decoder-scope and not in this slice.

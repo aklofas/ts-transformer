@@ -54,9 +54,10 @@ pub = mp.finish_into_publisher()
 pub.finish()
 ```
 
-Serve `playlist.m3u8` and the `segment_*.ts` files from `/var/cache/hls`
-via a static web server or CDN in production (the built-in server is a
-dev/edge convenience — see the [HLS guide](/docs/guides/hls.md)).
+In production put a reverse proxy or CDN in front of the built-in server:
+during the run the playlist is served from memory, and `playlist.m3u8` is
+written to `/var/cache/hls` only when the publisher finishes — see the
+[HLS guide](/docs/guides/hls.md#serving-in-production).
 
 ## Client (hls.js)
 

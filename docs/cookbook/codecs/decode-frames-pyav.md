@@ -8,7 +8,7 @@
 
 > **Note:** This is one of the few **Python** recipes — it integrates
 > [PyAV](https://pyav.org) (the FFmpeg Python binding: `pip install av`), which is
-> *not* a `tstrans` dependency. The rest of the cookbook is Rust.
+> *not* a `tstrans` dependency. Most of the cookbook is Rust.
 
 > **Related:**
 > - [languages/python.md](/docs/languages/python.md) — the `tstrans` Python surface

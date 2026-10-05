@@ -4,7 +4,7 @@
 
 > **Related:**
 > - [guides/mpegts-demux.md](/docs/guides/mpegts-demux.md) — why the demuxer surfaces KLV + video as independent events
-> - [guides/pipeline.md](/docs/guides/pipeline.md) — the `Pairer` helper (Recipes 24–27) for typed projection
+> - [guides/pipeline.md](/docs/guides/pipeline.md) — the `Pairer` helper for typed projection (the `Pairer` recipes in this section)
 > - [Example: `pair_sync_klv`](/examples/pairing/pair_sync_klv.rs)
 
 Reach for this when an encoder emits sync-KLV (PMT stream_type 0x15, H.222.0 § 2.12.4.2 `Metadata_AU_cell`) synchronized to video frames (one KLV per frame, KLV PES PTS = frame PTS) and you want to consume frame + telemetry as a paired record. By design, `mpegts::demux` does NOT pair sync-KLV with video AUs — it surfaces them as independent stream-tagged events with full timing info, and the pairing tolerance is consumer-domain knowledge. This recipe is the canonical nearest-PTS pattern.
@@ -33,11 +33,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         match e {
             DemuxEvent::Metadata {
                 pts,
-                kind: MetadataKind::KlvSyncAuCell | MetadataKind::KlvAsync,
+                kind: MetadataKind::KlvSyncAuCell { .. } | MetadataKind::KlvAsync,
                 payload,
                 ..
             } => {
-                history.push_back((pts, payload));
+                // Plain i64 ticks for the arithmetic below (Pts90khz is a newtype).
+                history.push_back((pts.as_ticks(), payload));
                 if history.len() > KLV_HISTORY_LEN {
                     history.pop_front();
                 }
@@ -47,6 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 payload: SamplePayload::Video { .. },
                 ..
             } => {
+                let pts = pts.as_ticks();
                 let nearest = history.iter().min_by_key(|(kpts, _)| (kpts - pts).abs());
                 match nearest {
                     Some((kpts, _)) if (kpts - pts).abs() <= PAIRING_TOLERANCE_TICKS => {
