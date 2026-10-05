@@ -64,9 +64,9 @@ use crate::url::RtpUrl;
 ///   ready receiver. `?pt=` is required; value 33 is rejected.
 /// - [`Self::listen_with`] — same, but from an already-parsed [`RtpUrl`].
 /// - `from_udp_socket_with` (`pub(crate)`) — wrap an already-bound socket;
-///   used by the RTSP session bridge (Task 11).
+///   used by the RTSP session bridge.
 /// - `from_mpsc_with_rtcp_drain` (`pub(crate)`) — wrap a TCP-interleaved mpsc
-///   channel; used by the RTSP session bridge (Task 11). Accepts the pump's
+///   channel; used by the RTSP session bridge. Accepts the pump's
 ///   RTCP channel so the pump never sees `Disconnected` on it (which would
 ///   kill the session at the first server RTCP Sender Report). Pass `None` for
 ///   `rtcp_rx` on paths where there is no RTCP channel.
@@ -191,7 +191,7 @@ impl H264Receiver {
     /// Wrap an already-bound socket. Sets the cancel-poll read timeout to
     /// match the rest of the recv-side machinery.
     ///
-    /// Used by Task 11's RTSP session bridge.
+    /// Used by the RTSP session bridge.
     pub(crate) fn from_udp_socket_with(
         sock: UdpSocket,
         config: H264DepayConfig,
@@ -232,7 +232,7 @@ impl H264Receiver {
     /// RTCP frames are discarded here; no RTCP processing is done on the
     /// H.264 path (v1 decision; see `docs/project/deferred-features.md`).
     ///
-    /// Used by Task 11's RTSP session bridge.
+    /// Used by the RTSP session bridge.
     pub(crate) fn from_mpsc_with_rtcp_drain(
         rx: std::sync::mpsc::Receiver<bytes::Bytes>,
         rtcp_rx: Option<std::sync::mpsc::Receiver<bytes::Bytes>>,
@@ -665,8 +665,8 @@ mod tests {
     }
 
     /// A stalled source (no packets, no disconnect) must not block
-    /// `recv_au_timeout` past its deadline — this is the field report's
-    /// stall-watchdog case. The session must stay usable afterward: a
+    /// `recv_au_timeout` past its deadline — the stall-watchdog case.
+    /// The session must stay usable afterward: a
     /// second timed wait still works, and a subsequent disconnect still
     /// surfaces as clean EOS (not swallowed by the deadline path).
     #[test]

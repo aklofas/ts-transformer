@@ -30,8 +30,7 @@ sha2         = { version = "0.10", default-features = false }
 # Already in the workspace lockfile via rustls; declared direct so auth.rs
 # can use ConstantTimeEq without a feature gate.
 subtle       = "2"
-# Phase 3: tokio drives the RtspServer Runtime (internal-only sync facade).
-# Same feature set Phase 2 used as a dev-dep — features carry over.
+# tokio drives the RtspServer Runtime (internal-only sync facade).
 # Optional: gated behind the `rtsp-server` feature so client-only consumers
 # (e.g. tst-uniffi mobile) build a tokio-free dependency tree.
 tokio        = { version = "1", features = ["rt-multi-thread", "net", "time", "io-util", "sync", "macros"], optional = true }
@@ -48,8 +47,8 @@ tracing      = { version = "0.1", default-features = false, features = ["std"] }
 socket2      = { workspace = true }
 
 # Raw setsockopt for multicast knobs not exposed on stable std::net::UdpSocket
-# in Rust 1.85: IPV6_MULTICAST_HOPS and IP_MULTICAST_IF. Unix-only; Phase 1
-# returns IfaceUnsupported on non-Unix platforms.
+# in Rust 1.85: IPV6_MULTICAST_HOPS and IP_MULTICAST_IF. Unix-only; the RTP
+# transport returns IfaceUnsupported on non-Unix platforms.
 [target.'cfg(unix)'.dependencies]
 libc       = { workspace = true }
 
@@ -64,7 +63,7 @@ default = ["rtsp-server"]
 # behind the sync facade.
 rtsp-server = ["dep:tokio", "dep:tokio-util"]
 # Enable client `rtsps://` support — sync rustls 0.23 directly (no
-# tokio-rustls), since the client is a sync facade per master spec. Tokio-free
+# tokio-rustls), since the client is a sync facade. Tokio-free
 # even with this feature on; pair with `rtsp-server-tls` for the server's TLS
 # acceptor.
 tls = [
@@ -99,7 +98,7 @@ optional = true
 version  = "0.7"
 optional = true
 
-# Server-side TLS (Phase 3 Task 11). tokio-rustls 0.26 wraps rustls 0.23
+# Server-side TLS. tokio-rustls 0.26 wraps rustls 0.23
 # and exposes a native tokio AsyncRead+AsyncWrite TlsStream + TlsAcceptor;
 # server-side handshake is `acceptor.accept(tcp).await` — no spawn_blocking
 # bridge needed.
@@ -114,14 +113,13 @@ proptest         = { workspace = true }
 # Used by server::tls unit tests (negative-path cert loading); matches the
 # `tempfile = "3"` pattern from tst-core.
 tempfile         = "3"
-# Self-signed cert + key generator for Wave F Task 24 TLS integration
+# Self-signed cert + key generator for the TLS integration
 # test fixture (`tests/fixtures/tls_certs.rs`). 0.13 is the highest
 # version verified against Rust 1.85 (workspace MSRV); 0.14 was released
 # 2025-09 and might also work but 0.13 is sufficient for our needs.
 rcgen            = "0.13"
-# tokio was dev-only in Phase 2 (loopback fixture); promoted to production
-# [dependencies] in Phase 3 for the RtspServer Runtime, then made optional
-# there (behind `rtsp-server`) so client-only builds get a tokio-free tree.
+# tokio is an optional production dependency (behind `rtsp-server`) so
+# client-only builds get a tokio-free tree.
 # Declared again here, unconditionally: `tests/fixtures/rtsp_loopback_server.rs`
 # is a hand-rolled tokio TCP fixture (NOT `tst_rtp::RtspServer` — it exists so
 # client tests don't test the client against our own server) used by several

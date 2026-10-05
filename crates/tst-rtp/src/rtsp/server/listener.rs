@@ -2,7 +2,7 @@
 //! bind URL, runs an async accept loop, and spawns
 //! `session::handle_connection` per accepted client. For `rtsps://`
 //! binds, the accepted TCP stream is handed to
-//! `tls::TlsServerConfig::accept` (lands at Task 11) before being
+//! `tls::TlsServerConfig::accept` before being
 //! passed to the per-session task.
 
 use std::sync::Arc;
@@ -144,10 +144,10 @@ pub(crate) async fn run_listener(state: Arc<ServerState>) -> Result<(), RtspServ
                                     // handshake-failure path, the handshake-timeout
                                     // path AND the normal session path.
                                     let _slot = slot;
-                                    // Bounded handshake (CORR-06): a peer that connects
-                                    // and never sends a ClientHello used to park this
+                                    // Bounded handshake: a peer that connects and never
+                                    // sends a ClientHello would otherwise park this
                                     // task — and its slot — forever; `max_sessions`
-                                    // such connects wedged the server at its cap.
+                                    // such connects would wedge the server at its cap.
                                     match tokio::time::timeout(handshake_timeout, cfg.accept(tcp)).await {
                                         Ok(Ok(tls_stream)) => {
                                             if let Err(e) = crate::rtsp::server::session::handle_connection_tls(st, tls_stream, peer).await {

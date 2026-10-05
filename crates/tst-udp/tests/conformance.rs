@@ -1,5 +1,5 @@
-//! WP-C1's transport conformance kit, run against loopback UDP (spec §3.5 /
-//! §6: every transport crate pins the one-cancel-outcome contract). Shape =
+//! The tst-core transport conformance kit, run against loopback UDP (every
+//! transport crate pins the one-cancel-outcome contract). Shape =
 //! `crates/tst-tcp/tests/conformance.rs` with a `std::net::UdpSocket` peer.
 //!
 //! Receiver factories bind port 0 and publish the port through a shared

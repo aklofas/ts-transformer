@@ -100,7 +100,7 @@ fn hls_extinf_is_media_derived_and_target_is_immutable() {
     let au = synthetic_h264_au();
     // GOP cadence: IDR@0, P@60000, P@120000, IDR@180000, P@240000, P@300000, IDR@360000.
     //
-    // Keyframes now BEGIN segments (cut-before-push): the closing segment is
+    // Keyframes BEGIN segments (cut-before-push): the closing segment is
     // cut when the NEXT keyframe arrives, with EXTINF = the full PTS span of
     // that segment (its own opening keyframe through the AU before the next).
     //   IDR@0:       stream head — opens seg0 at start 0, NO cut.
@@ -137,8 +137,8 @@ fn hls_extinf_is_media_derived_and_target_is_immutable() {
     );
     // Each non-degenerate segment carries a media-derived EXTINF of 2.000 s
     // (180000-tick PTS span — keyframe-to-keyframe, keyframe included since
-    // segments now begin with the IDR).  The old wall-clock code would have
-    // produced ~0.000 for fast ingestion.
+    // segments begin with the IDR). A wall-clock EXTINF would read ~0.000
+    // for fast ingestion.
     assert!(
         rendered.contains("#EXTINF:2.000,"),
         "expected a media-derived 2.000 s EXTINF, got:\n{rendered}"

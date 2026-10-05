@@ -188,8 +188,8 @@ pub(crate) extern "C" fn stats_trampoline(
 /// the stats interval lock-free on every loop tick (deliberately, so a
 /// late registration takes effect), while `rist_stats_callback_set` writes it
 /// under librist's `stats_lock` — registering after the thread is running is
-/// a data race (TSan-caught on the 2026-08-31 nightly, 4 tst-rist loopback
-/// tests). Pre-start registration is also how every librist reference tool
+/// a data race that TSan reports on the tst-rist loopback tests. Pre-start
+/// registration is also how every librist reference tool
 /// orders it; the interval propagates to receiver flows created later.
 ///
 /// Returns `(arc, raw)`: store `arc` in the transport for [`stats()`] snapshots,

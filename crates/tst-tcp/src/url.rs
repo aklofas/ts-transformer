@@ -10,8 +10,8 @@
 //! ## Caller URLs — IP literals and hostnames
 //!
 //! Caller URLs (no `?listen=1`) accept both IPv4/IPv6 literals and DNS
-//! hostnames. Resolution happens at connect time, never at parse time
-//! (DA-NET-9). For `tcps://`, TLS presents whatever name you dialed as the
+//! hostnames. Resolution happens at connect time, never at parse time.
+//! For `tcps://`, TLS presents whatever name you dialed as the
 //! SNI and verifies the server certificate against it:
 //!
 //! - If you dial an IP literal, the certificate must carry a matching
@@ -135,7 +135,7 @@ impl TcpUrl {
 
         // Listeners bind a socket — the host must be an IP literal. Callers
         // accept hostnames: resolution happens at connect time and TLS uses
-        // the name for SNI/verification (DA-NET-9).
+        // the name for SNI/verification.
         if listen && host.parse::<IpAddr>().is_err() {
             return Err(TcpUrlError::BadHost(host));
         }

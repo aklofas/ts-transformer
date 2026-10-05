@@ -107,7 +107,7 @@ pub struct UdpTransport {
     alive: Arc<AtomicBool>,
     /// Set by [`UdpCancelHandle::cancel`]; checked at `send_bytes` entry
     /// BEFORE `alive`, so a cancelled transport reports `ExplicitClose`
-    /// rather than `Closed` (spec §3.5, one cancel outcome).
+    /// rather than `Closed` (one cancel outcome).
     cancelled: Arc<AtomicBool>,
 }
 
@@ -225,7 +225,7 @@ impl Transport for UdpTransport {
                 Ok(())
             }
             // The send deadline ticked over (`WouldBlock` on Linux/macOS,
-            // `TimedOut` on Windows — CORR-24) or a signal interrupted the
+            // `TimedOut` on Windows) or a signal interrupted the
             // call: the datagram was NOT consumed, so this is retryable
             // Backpressure with the transport still alive.
             Err(e) if classify_send_error(&e) == SendClass::Transient => {
@@ -239,8 +239,7 @@ impl Transport for UdpTransport {
                 // `Transport` contract the state is undefined after any
                 // non-Backpressure error — latch dead so `is_alive()` tells
                 // the truth and later sends are `Closed`, the same as the
-                // TCP/RIST fatal arms (spec §3.5, UDP `is_alive` after
-                // Broken = false).
+                // TCP/RIST fatal arms.
                 self.stats.send_errors = self.stats.send_errors.saturating_add(1);
                 self.alive.store(false, Ordering::Release);
                 Err(TransportError::Broken {

@@ -1,4 +1,4 @@
-//! Phase 3 Wave F Task 25 — concurrent unicast clients.
+//! Concurrent unicast clients.
 
 use std::io::{Read, Write};
 use std::net::TcpStream;

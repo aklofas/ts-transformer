@@ -1,7 +1,7 @@
-//! Phase 3 Wave F Task 24 — server-side Basic auth integration tests.
+//! Server-side Basic auth integration tests.
 //!
 //! Exercises the `RtspServerBuilder::auth_basic` surface end-to-end
-//! against the Phase 2 `RtspClient`. Each test spins up a fresh tokio-
+//! against the `RtspClient`. Each test spins up a fresh tokio-
 //! backed `RtspServer` on a kernel-picked port, runs an RTSP request,
 //! and asserts on the response or returned error.
 

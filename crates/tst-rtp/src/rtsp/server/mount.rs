@@ -1,12 +1,11 @@
 //! Mount-handle surface — the public push API exposed to callers via
-//! `RtspServer::add_mount` and (Task 14) `add_multicast_mount`.
+//! `RtspServer::add_mount` and `add_multicast_mount`.
 //!
-//! v1 architecture (per sub-design §D1):
+//! Architecture:
 //! - One `Muxer` per mount (inside a `Mutex` for sync access from
 //!   thread-safe push methods).
 //! - One `broadcast::Sender<Bytes>` per mount fanning out TS bytes to
-//!   N peers' per-session subscriber tasks (Task 13 wires the
-//!   subscriber side).
+//!   N peers' per-session subscriber tasks.
 //! - `MountHandle` carries an `Arc<MountState>` + the registered mount
 //!   path string. Cloning the handle is cheap; multiple clones can push
 //!   from different threads.
@@ -25,8 +24,8 @@ use tst_core::mpegts::mux::{Muxer, MuxerConfig};
 /// Discriminant for mount type.
 ///
 /// `Unicast` mounts pair the broadcast fanout with per-session
-/// subscriber tasks (Task 13 wires the subscriber side); `Multicast`
-/// mounts use one shared UDP socket per group (Task 14 wires it).
+/// subscriber tasks; `Multicast` mounts use one shared UDP socket per
+/// group.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum MountKind {
@@ -44,17 +43,12 @@ pub enum MountKind {
 
 /// Internal per-mount state. Held inside `ServerState::mounts` as
 /// `Arc<MountState>`. Public surface is via `MountHandle` only.
-///
-/// Several fields land in subsequent tasks:
-/// - Task 13 (fanout) drives `fanout` subscribers.
-/// - Task 14 (multicast) constructs `MountKind::Multicast` variants.
-/// - Task 15 (push) makes `muxer` + `stats` write-through.
 pub(crate) struct MountState {
     pub(crate) path: String,
     pub(crate) kind: MountKind,
     pub(crate) muxer: Mutex<Muxer>,
     /// Broadcast sender — fanout target for serialized TS bytes. Subscribers
-    /// are created by Task 13's per-session subscriber task on PLAY.
+    /// are created by the per-session subscriber task on PLAY.
     pub(crate) fanout: broadcast::Sender<Bytes>,
     pub(crate) stats: Mutex<MountStatsInner>,
     /// Mount-level dropped-frame total, summed across all peers' fanout
@@ -77,8 +71,8 @@ pub(crate) struct MountStatsInner {
 
 impl MountState {
     /// Construct a fresh MountState from a MuxerConfig + MountKind +
-    /// fanout capacity. Task 14 routes here for multicast as well; for
-    /// now unicast is the only caller (via `RtspServer::add_mount`).
+    /// fanout capacity. Both `RtspServer::add_mount` (unicast) and
+    /// `RtspServer::add_multicast_mount` construct through here.
     pub(crate) fn new(
         path: impl Into<String>,
         kind: MountKind,
@@ -485,7 +479,7 @@ impl MountHandle {
 }
 
 /// Default RTP MPEG-TS payload size (7 × 188-byte TS packets). Matches
-/// the Phase 1 sender default.
+/// `DEFAULT_PKT_SIZE`.
 const RTP_PAYLOAD_SIZE: usize = 1316;
 
 /// Drain TS bytes from the locked muxer via `Muxer::pull` and broadcast
@@ -555,7 +549,7 @@ mod tests {
     fn mount_handle_peer_count_zero_initially() {
         let state = mock_unicast_mount_state();
         let handle = MountHandle { state };
-        // No subscribers until Task 13's per-session task subscribes.
+        // No subscribers until a per-session task subscribes.
         assert_eq!(handle.peer_count(), 0);
     }
 
@@ -586,7 +580,7 @@ mod tests {
         assert!(matches!(handle.mount_kind(), MountKind::Unicast));
     }
 
-    // ── push_* surface (Task 15) ──────────────────────────────────────────
+    // ── push_* surface ────────────────────────────────────────────────────
     //
     // Annex-B IDR with NAL type 5: `0x00 0x00 0x00 0x01 0x65 0xBB`. The
     // muxer's first pull on a fresh stream emits PAT + PMT + video TS

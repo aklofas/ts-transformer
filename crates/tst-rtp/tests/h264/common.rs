@@ -1,6 +1,6 @@
 //! Test-only RFC 6184 H.264 RTP payloader.
 //!
-//! Used as the generative partner to the WP-1 hand-built spec-byte unit tests.
+//! Used as the generative partner to the hand-built spec-byte unit tests.
 //! `packetize` produces standards-correct RTP packets so the integration tests
 //! can exercise the full `H264Receiver` path without a real encoder.
 

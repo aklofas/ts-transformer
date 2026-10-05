@@ -1,4 +1,4 @@
-//! Phase 3 Wave F Task 25 — lagging-peer behavior.
+//! Lagging-peer behavior.
 //!
 //! A slow/stalled peer must not block the muxer (or, by tokio broadcast's
 //! per-receiver cursor semantics, other peers). The producer pushes through a

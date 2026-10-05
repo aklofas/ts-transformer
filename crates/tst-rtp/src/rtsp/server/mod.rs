@@ -1,7 +1,5 @@
 //! RTSP server — accepts client connections, manages sessions, fans out
 //! one Muxer's TS bytes to N connected peers.
-//!
-//! Phase 3 — populated across Waves A through G.
 
 pub mod auth;
 pub mod fanout;

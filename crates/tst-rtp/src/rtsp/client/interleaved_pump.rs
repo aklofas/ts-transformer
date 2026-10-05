@@ -6,7 +6,7 @@
 //! - Binary on `rtp_channel`: validate the RTP header (dropping
 //!   structurally malformed frames), then push the **whole RTP packet**
 //!   (header intact) to `data_tx` (the `mpsc::Sender<Bytes>` paired with
-//!   the `mpsc::Receiver<Bytes>` that `RtpRecvTransport::from_mpsc_placeholder`
+//!   the `mpsc::Receiver<Bytes>` that `RtpRecvTransport::from_mpsc_with_rtcp`
 //!   consumes). PT policy and header stripping are the consumer's
 //!   responsibility (`RtpRecvTransport::recv_bytes`).
 //! - Binary on `rtcp_channel`: push payload to `rtcp_tx` (the RTCP
@@ -20,21 +20,20 @@
 //!   between main-thread requests, so queuing them would overflow the
 //!   bounded queue on any long receive-only session and fail it.
 //!
-//! Closes Phase 2 deferred fix 1 (client side). There is no
-//! server-side counterpart: the RTSP server never expects
+//! There is no server-side counterpart: the RTSP server never expects
 //! client→server `$`-frames (no ANNOUNCE/RECORD support), so it reads
 //! plain RTSP request bytes off the TCP stream directly
 //! (`rtsp::server::session`).
 //!
 //! # Wire-up status
 //!
-//! As of Phase 3 Wave H Task 4 (2026-05-26) the pump is wired into the
+//! The pump is wired into the
 //! TCP-interleaved SETUP path: `RtspClient::activate_interleaved_pump`
 //! (crate-private) spawns the pump as soon as a TCP-interleaved SETUP
 //! succeeds (so the pump is draining the wire before PLAY is sent), and
 //! [`RtspSession::into_recv_transport`](crate::rtsp::client::session::RtspSession::into_recv_transport)
 //! consumes the data-side `mpsc::Receiver<Bytes>` plumbed through
-//! `RtpRecvTransport::from_mpsc_placeholder` (crate-private). Once the
+//! `RtpRecvTransport::from_mpsc_with_rtcp` (crate-private). Once the
 //! pump is active, subsequent RTSP request/response exchanges
 //! (`RtspClient::send_and_read`, crate-private) write under the stream
 //! mutex but read the response from the pump's `ctrl_rx` (matched by
@@ -217,11 +216,10 @@ pub fn scan_rtsp_message_boundary(buf: &[u8]) -> RtspFrameBoundary {
 ///
 /// `reader` is any sync [`Read`] implementor. For plain TCP the caller
 /// passes a [`std::net::TcpStream::try_clone`]'d half. For TLS the
-/// caller passes a lock-and-read shim over the rustls session (Task 21
-/// lands the adapter).
+/// caller passes a lock-and-read shim over the rustls session.
 ///
 /// - `data_tx`: where whole RTP packets go (paired with
-///   `RtpRecvTransport::from_mpsc_placeholder`). Bounded
+///   `RtpRecvTransport::from_mpsc_with_rtcp`). Bounded
 ///   ([`DATA_QUEUE_BOUND`]); on overflow the newest frame is dropped and
 ///   `media_frames_dropped` ticks (non-blocking `try_send`, never wedges
 ///   the pump).
@@ -346,10 +344,10 @@ pub(crate) fn spawn_client_pump<R: Read + Send + 'static>(
                 // channel interleaves RTSP text frames with binary `$`-frames. A
                 // full u16 binary frame (65535-byte payload + 4-byte framing =
                 // 65539 B) and an RTSP response with a body up to 1 MiB are BOTH
-                // legitimate and no longer falsely rejected; only an
+                // legitimate and never falsely rejected; only an
                 // unterminated header run > 64 KiB or a bad/over-cap
-                // Content-Length closes the pump. (Closes the B1-flagged gap:
-                // the client pump header buffer was previously uncapped.)
+                // Content-Length closes the pump. An uncapped header buffer
+                // would let a peer grow `buf` without bound.
                 if pump_accumulation_exceeded(&buf) {
                     tracing::warn!(
                         target: "tst_rtp::client::pump",
@@ -732,9 +730,9 @@ mod tests {
         assert_eq!(stats.rtcp_frames_received.load(Ordering::Relaxed), 1);
     }
 
-    /// B7 (T3-PUMP-FRAME): a FULL u16 binary interleaved frame — 65535-byte
+    /// A FULL u16 binary interleaved frame — 65535-byte
     /// payload + 4-byte framing = 65539 B — must be ACCEPTED, not falsely
-    /// rejected. Before B7 the client pump capped `buf` at 64 KiB, closing the
+    /// rejected. A client pump that capped `buf` at 64 KiB would close the
     /// pump on any frame > ~65532 B. Mirrors the server pump's full-u16 test.
     #[test]
     fn pump_accepts_full_u16_binary_frame() {
@@ -783,15 +781,15 @@ mod tests {
         assert_eq!(stats.rtsp_messages_received.load(Ordering::Relaxed), 1);
     }
 
-    /// Regression (field report 2026-07-24): responses to keepalive
+    /// Regression: responses to keepalive
     /// OPTIONS pings (CSeq ≥ [`KEEPALIVE_CSEQ_BASE`]) must be consumed by
     /// the pump, NOT routed to the bounded ctrl queue — nothing drains
     /// that queue between main-thread requests, so on a receive-only
-    /// session the queued pings overflowed it after `CTRL_QUEUE_BOUND + 1`
+    /// session queued pings would overflow it after `CTRL_QUEUE_BOUND + 1`
     /// responses (16.5 minutes at the default 30 s cadence) and the flood
-    /// policy below killed the session, surfacing as a clean EOS. Feeding
+    /// policy below would kill the session, surfacing as a clean EOS. Feeding
     /// more responses than the queue can hold with NO consumer draining it
-    /// proves the pump no longer queues them.
+    /// proves the pump does not queue them.
     #[test]
     fn keepalive_responses_consumed_not_queued() {
         let n = CTRL_QUEUE_BOUND + 8;
@@ -941,7 +939,7 @@ mod tests {
         assert_eq!(stats.rtsp_messages_received.load(Ordering::Relaxed), 1);
     }
 
-    /// B1 review Minor #3: an RTSP response on the interleaved channel that
+    /// An RTSP response on the interleaved channel that
     /// declares a malformed/oversized Content-Length must CLOSE the pump (not
     /// silently coerce to a 0-length body and desync, nor buffer toward an
     /// uncapped body). Mirrors the server pump's close-on-bad-CL policy at this
@@ -980,11 +978,11 @@ mod tests {
         }
     }
 
-    /// B2: an RTSP response that never terminates (no `CRLFCRLF`) must NOT
+    /// An RTSP response that never terminates (no `CRLFCRLF`) must NOT
     /// drive the pump to buffer unboundedly — the buffer cap closes the pump
-    /// once accumulation exceeds `MAX_RTSP_MESSAGE_BYTES`. This is the
-    /// B1-flagged gap: the client pump header buffer was previously uncapped,
-    /// so a peer that never sends CRLFCRLF could grow `buf` without bound.
+    /// once accumulation exceeds `MAX_RTSP_MESSAGE_BYTES`. With an uncapped
+    /// header buffer a peer that never sends CRLFCRLF could grow `buf`
+    /// without bound.
     #[test]
     fn pump_closes_on_unterminated_header_flood() {
         // 128 KiB of header-junk with no CRLFCRLF terminator — well over the
@@ -1078,7 +1076,7 @@ mod tests {
         f
     }
 
-    /// B4 / T1-RTSP-RTP — an interleaved RTP frame carrying a CSRC list
+    /// An interleaved RTP frame carrying a CSRC list
     /// (CC>0), a header extension (X=1), and trailing padding (P=1) must
     /// decode successfully at the pump (structural gate) and be delivered
     /// as a whole packet. CSRC/extension skipping and padding trimming
@@ -1128,7 +1126,7 @@ mod tests {
         assert_eq!(stats.malformed_frames.load(Ordering::Relaxed), 0);
     }
 
-    /// B4: an interleaved RTP frame with a structurally malformed RTP header
+    /// An interleaved RTP frame with a structurally malformed RTP header
     /// (here: a truncated extension — X=1 but no extension bytes present)
     /// must be dropped and counter-ticked, never fed to the demuxer.
     #[test]
@@ -1167,7 +1165,7 @@ mod tests {
         interleaved_frame(channel, &rtp)
     }
 
-    /// B3 / T1-RTSP-QUEUE — adversarial: a fast producer flooding the
+    /// Adversarial: a fast producer flooding the
     /// media (RTP) channel while the consumer never drains must NOT grow
     /// memory without bound. The bounded `data_tx` caps retained frames at
     /// `DATA_QUEUE_BOUND`; everything beyond is dropped-newest and ticks
@@ -1218,7 +1216,7 @@ mod tests {
         );
     }
 
-    /// B3 / T1-RTSP-QUEUE — adversarial: an RTCP flood with an absent
+    /// Adversarial: an RTCP flood with an absent
     /// consumer must FAIL the session (control-plane traffic is never
     /// silently dropped). Once the bounded RTCP queue fills, the pump
     /// exits and ticks `malformed_frames`. Note: `rr` is kept alive (so
@@ -1260,7 +1258,7 @@ mod tests {
         );
     }
 
-    /// B3 / T1-RTSP-QUEUE — adversarial: an RTSP control-response flood
+    /// Adversarial: an RTSP control-response flood
     /// with an absent main thread must FAIL the session rather than buffer
     /// unbounded. Once the bounded ctrl queue fills, the pump exits.
     #[test]
@@ -1323,10 +1321,10 @@ mod tests {
         let _ = handle.join();
     }
 
-    /// Regression guard for the 2026-05-28 CI hang in
-    /// `client_setup_with_transport_tcp_round_trips_ts` (both Linux gates,
-    /// run 26602244548): the pump holds the stream mutex across each
-    /// blocking ~100 ms read, so without yielding to `write_gate` an
+    /// Regression guard for a hang in
+    /// `client_setup_with_transport_tcp_round_trips_ts`: the pump holds the
+    /// stream mutex across each blocking ~100 ms read, so without yielding
+    /// to `write_gate` an
     /// in-session control write (PLAY/PAUSE) is starved indefinitely on a
     /// contended runner. This asserts the pump STOPS reading while the gate
     /// is set — the precondition that lets a control writer acquire the

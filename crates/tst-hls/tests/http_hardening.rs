@@ -147,7 +147,7 @@ fn non_get_methods_rejected() {
 }
 
 // ---------------------------------------------------------------------------
-// Task 8: finished state + finish_serving
+// Finished state + finish_serving
 // ---------------------------------------------------------------------------
 
 /// VOD publisher with 2 segments: after `finish_serving()` the served playlist

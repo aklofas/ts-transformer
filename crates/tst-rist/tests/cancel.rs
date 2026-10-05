@@ -1,5 +1,5 @@
-//! Cross-thread cancel contract for `RistTransport` / `RistRecvTransport`
-//! (deep review #4 Arc 2, WP-D). Same shape as `crates/tst-udp/tests/cancel.rs`.
+//! Cross-thread cancel contract for `RistTransport` / `RistRecvTransport`.
+//! Same shape as `crates/tst-udp/tests/cancel.rs`.
 //!
 //! Ports are hardcoded EVEN values (Simple profile = RTP on `port` + RTCP on
 //! `port + 1`, `rist.c:866`), distinct from `loopback.rs` (33010–33026) and
@@ -48,7 +48,8 @@ fn connect(port: u16) -> Option<tst_rist::RistTransport> {
 }
 
 /// A cancelled sender's NEXT send is `ExplicitClose`; `is_alive()` reads
-/// false. RED on the pre-WP-D tree: `cancel_handle()` is `None`.
+/// false. If the transport does not expose its cancel latch through the
+/// trait, `cancel_handle()` is `None`.
 #[test]
 fn send_after_cancel_loopback_is_explicit_close() {
     let _serial = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
@@ -98,7 +99,8 @@ enum Parked {
 /// Bound 2 s (20 ticks) on the test thread — a failure bound, not an
 /// elapsed-time assert (see the UDP twin for the reasoning); the worker's
 /// own 10 s deadline guarantees the binary exits even if the cancel is
-/// never observed. RED on the pre-WP-D tree: `cancel_handle()` is `None`.
+/// never observed. If the transport does not expose its cancel latch
+/// through the trait, `cancel_handle()` is `None`.
 #[test]
 fn recv_cancel_from_other_thread_loopback_returns_explicit_close() {
     let _serial = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
@@ -158,7 +160,7 @@ fn recv_cancel_from_other_thread_loopback_returns_explicit_close() {
 }
 
 /// `close()` from the owning thread stays `Closed` on the receive side and
-/// destroys the librist context (the pre-Arc-2 contract, unchanged).
+/// destroys the librist context.
 #[test]
 fn recv_after_close_loopback_is_closed() {
     let _serial = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
@@ -176,11 +178,11 @@ fn recv_after_close_loopback_is_closed() {
     assert!(!handle.is_cancelled());
 }
 
-/// X-CORR-07 (the kit row `empty_recv_is_noop`): `recv_bytes(&mut [])` is
+/// The kit row `empty_recv_is_noop`: `recv_bytes(&mut [])` is
 /// `Ok(0)` and the transport stays alive. (That no librist tick is spent
 /// follows from the guard's placement but is not asserted here; the kit's
 /// `empty_recv_is_noop` row is the behavioural pin.)
-/// RED on the pre-WP-D tree: the call waits out a 100 ms
+/// Without the empty-buffer guard the call waits out a 100 ms
 /// `rist_receiver_data_read2` tick and returns `Backpressure`.
 #[test]
 fn recv_empty_buffer_loopback_is_noop() {

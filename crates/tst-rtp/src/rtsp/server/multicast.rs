@@ -1,6 +1,6 @@
 //! Multicast mount specialization — single shared UDP socket sending
 //! to a multicast group, fed by the mount's broadcast channel. Per-client
-//! per-session tasks do NOT spawn per-peer fanout (Task 13's design is
+//! per-session tasks do NOT spawn per-peer fanout (the per-peer fanout is
 //! unicast-only); they just increment a counter so MountStats::peer_count
 //! reflects the number of clients that SETUP'd against the multicast
 //! mount.
@@ -91,7 +91,7 @@ pub(crate) async fn build_multicast_send_socket(
         }
         SocketAddr::V6(_) => {
             // Tokio's UdpSocket doesn't expose set_multicast_hops_v6 on
-            // Rust 1.85 stable. Phase 1 uses libc::setsockopt for this;
+            // Rust 1.85 stable. The std-socket UDP path uses libc::setsockopt for this;
             // we replicate via std::os::fd::AsRawFd.
             #[cfg(unix)]
             {
@@ -130,7 +130,7 @@ pub(crate) async fn build_multicast_send_socket(
 
     // Optional interface binding. IPv4 only for v1. Stable std/tokio
     // don't expose `set_multicast_if_v4` on tokio's UdpSocket in Rust
-    // 1.85 (tracking issue rust-lang/rust#92517) — Phase 1 uses libc
+    // 1.85 (tracking issue rust-lang/rust#92517) — the std-socket UDP path uses libc
     // setsockopt for the same knob on std::net::UdpSocket; we mirror it
     // here on tokio's wrapper via AsRawFd.
     if let Some(iface_str) = iface {
@@ -326,7 +326,7 @@ mod tests {
     #[tokio::test]
     async fn build_multicast_send_socket_rejects_unicast() {
         // 10.0.0.1 isn't multicast — but we don't validate at the bind
-        // step; that's MulticastGroup::parse's job (Wave A T2).
+        // step; that's MulticastGroup::parse's job.
         // The function just sets the multicast knobs which are no-ops
         // for unicast send. So this test verifies the function still
         // succeeds (it would only fail on bind / setsockopt errors).
@@ -338,8 +338,8 @@ mod tests {
     }
 
     // Setting IP_MULTICAST_IF to the loopback address is permitted on both Unix
-    // (libc) and Windows (socket2) — CI `diag_win_multicast` confirmed Winsock
-    // returns Ok for IP_MULTICAST_IF=127.0.0.1, so this runs on all platforms.
+    // (libc) and Windows (socket2) — Winsock returns Ok for
+    // IP_MULTICAST_IF=127.0.0.1, so this runs on all platforms.
     #[tokio::test]
     async fn build_multicast_with_iface_v4() {
         let group: SocketAddr = "239.0.0.1:5004".parse().unwrap();
@@ -349,11 +349,9 @@ mod tests {
         assert!(res.is_ok());
     }
 
-    /// IPv6 `iface=` now means an interface NAME, not an IP literal.
-    /// Passing an IP literal (which is what the pre-T2 behavior
-    /// effectively rejected with InvalidMulticastGroup) must still
-    /// fail — but now via the if_nametoindex path, since no real iface
-    /// is named `::1`.
+    /// IPv6 `iface=` means an interface NAME, not an IP literal.
+    /// Passing an IP literal must fail via the if_nametoindex path,
+    /// since no real iface is named `::1`.
     #[cfg(unix)]
     #[tokio::test]
     async fn build_multicast_v6_rejects_ip_literal_as_iface_name() {

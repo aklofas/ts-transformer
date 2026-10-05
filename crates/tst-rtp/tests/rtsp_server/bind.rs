@@ -1,6 +1,6 @@
-//! Phase 3 Task 22 — RtspServer bind / start / stop / cancel-handle
-//! lifecycle integration tests. No RTP/RTCP flow exercised here;
-//! T23-T26 cover the actual streaming paths.
+//! RtspServer bind / start / stop / cancel-handle lifecycle integration
+//! tests. No RTP/RTCP flow exercised here; the loopback, multicast and
+//! client tests cover the actual streaming paths.
 
 use tst_rtp::{RtspServer, RtspServerBuilder, RtspServerError};
 

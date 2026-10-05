@@ -1,4 +1,4 @@
-//! Task A2: the `?recv_timeout=<ms>` URL knob on `RtspUrl` must reach the
+//! The `?recv_timeout=<ms>` URL knob on `RtspUrl` must reach the
 //! `RtpRecvTransport` returned by `RtspSession::into_recv_transport` — not
 //! just the raw `rtp://` construction path covered in `transport.rs`'s
 //! unit tests.

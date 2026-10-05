@@ -1,4 +1,4 @@
-//! Regression tests for send-side stalls after a partial write (CORR-22 / Q6).
+//! Regression tests for send-side stalls after a partial write.
 //!
 //! Under a stalled peer the kernel send buffer fills. A single `send_bytes`
 //! message can be partially committed to the wire, after which the next
@@ -82,9 +82,9 @@ fn peer_panic_or(handle: thread::JoinHandle<()>, msg: &str) -> ! {
     }
 }
 
-/// CORR-22 / Q6 RED: a peer that stops reading for 500 ms (five write
-/// timeouts) and then resumes must receive one contiguous byte stream. On
-/// `9b3fe2ee` the first `send_bytes` returns
+/// A peer that stops reading for 500 ms (five write timeouts) and then
+/// resumes must receive one contiguous byte stream. If a partial write is
+/// torn down instead, the first `send_bytes` returns
 /// `Broken { msg: "partial write then WouldBlock (N/32768 bytes); …" }` and
 /// the `expect` below fires.
 #[test]
@@ -150,23 +150,24 @@ fn partial_write_stall_loopback_stream_stays_contiguous() {
 
 /// The remainder loop is bounded by cancel: against a peer that NEVER reads,
 /// a `cancel()` from another thread ends the parked `send_bytes` with
-/// `Closed` within a couple of poll ticks and leaves the transport dead. On
-/// `9b3fe2ee` the send returns `Broken { msg: "partial write …" }` long
-/// before the cancel lands, so the `Closed` match fails.
+/// `Closed` within a couple of poll ticks and leaves the transport dead. If
+/// a partial write is torn down instead, the send returns
+/// `Broken { msg: "partial write …" }` long before the cancel lands, so the
+/// `Closed` match fails.
 ///
-/// DEVIATION from the brief (see the WP-4b report): loopback's TCP receive
+/// Why the sender loops instead of priming a fixed amount: loopback's TCP receive
 /// window is negotiated at accept time, *before* the peer's `SO_RCVBUF`
 /// shrink takes effect, and how much of it survives the shrink is racy —
 /// empirically anywhere from ~64 KiB to well beyond that before a send
 /// against this never-reading peer first blocks. A fixed one- or two-chunk
-/// prime (what the brief's literal test does) is absorbed by that window
-/// often enough to make the test flaky on this box. Instead the sender
+/// prime is absorbed by that window often enough to make the test flaky.
+/// Instead the sender
 /// loop below just keeps pushing the same chunk, retrying `Backpressure`
 /// (the crate's documented retryable outcome) exactly like a real caller
 /// would, until the window genuinely closes — whichever chunk straddles
 /// that boundary is the one that commits a partial prefix and parks inside
-/// `write_loop`'s new alive-check, so the test still pins Task 4b.1's fix
-/// regardless of exactly how large the free burst turns out to be. Every
+/// `write_loop`'s alive-check, so the test pins that check regardless of
+/// exactly how large the free burst turns out to be. Every
 /// call, parked or not, starts with the crate's own entry check
 /// (`send_bytes` returns `Closed` immediately once `alive` is false), so
 /// the loop is bounded by `cancel()` either way.

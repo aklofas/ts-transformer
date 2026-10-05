@@ -1,14 +1,14 @@
 //! Server-side TLS handshake for `rtsps://` listeners.
 //!
 //! Uses tokio-rustls 0.26 (built on rustls 0.23) for the async handshake.
-//! Server-side analog to `crate::rtsp::client::tls` from Phase 2.
+//! Server-side analog to `crate::rtsp::client::tls`.
 //!
 //! Feature-gated behind `rtsp-server-tls` — entire module compiles to
 //! nothing when the feature is off.
 //!
 //! Why tokio-rustls (server) vs sync rustls (client): the client is a
-//! sync facade per master spec, so it drives the rustls state machine
-//! manually via `read_tls`/`write_tls`. The Phase 3 server is
+//! sync facade, so it drives the rustls state machine
+//! manually via `read_tls`/`write_tls`. The server is
 //! fundamentally async (tokio Runtime), and native async TLS via
 //! `TlsAcceptor::accept` is much cleaner than wiring sync rustls into
 //! tokio via `spawn_blocking`.

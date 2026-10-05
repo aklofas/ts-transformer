@@ -79,7 +79,7 @@ fn user_agent_is_sent_in_requests() {
     );
 }
 
-/// CORR-26: `request_timeout` bounds the wait for a response. The peer
+/// `request_timeout` bounds the wait for a response. The peer
 /// accepts the TCP connection and never answers — before the fix
 /// `describe()` parked forever (the only deadline in the client was the
 /// 500 ms TEARDOWN bound inside `Drop`) and `RtspError::Timeout` had no
@@ -131,7 +131,7 @@ fn request_timeout_bounds_a_silent_peer() {
     server.join().unwrap();
 }
 
-/// Post-Arc-1 review finding: `request_timeout` deadline arithmetic must not
+/// `request_timeout` deadline arithmetic must not
 /// panic when `t` is too large to add to `Instant::now()`. Before the fix,
 /// both `send_and_read` (the producer behind every request method, incl.
 /// `options()`) and `teardown()` computed the deadline as

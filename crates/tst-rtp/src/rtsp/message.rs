@@ -121,7 +121,7 @@ pub(crate) fn content_length_from_header_text(header_text: &str) -> Result<usize
 ///   terminated message declares a bad/over-cap `Content-Length`, the peer is
 ///   hostile. A legitimate body up to [`MAX_RTSP_BODY_BYTES`] (1 MiB) is *not*
 ///   rejected (the pump awaits it). This keeps the unterminated-header DoS bound
-///   at a tight 64 KiB — coherent with B2 — rather than the loose
+///   at a tight 64 KiB — coherent with the client response cap — rather than the loose
 ///   header+body sum.
 pub(crate) fn pump_accumulation_exceeded(buf: &[u8]) -> bool {
     if buf.first() == Some(&b'$') {
@@ -139,11 +139,11 @@ pub(crate) fn pump_accumulation_exceeded(buf: &[u8]) -> bool {
 /// `send_and_read` non-pump loop and the server session request loop, so the
 /// two agree byte-for-byte:
 ///
-/// - **Phase 1** — no `CRLFCRLF` terminator yet: the headers are still
+/// - **Before the terminator** — no `CRLFCRLF` yet: the headers are still
 ///   accumulating. If they have already exceeded [`MAX_RTSP_MESSAGE_BYTES`]
 ///   (64 KiB) without terminating, the peer is malformed/adversarial →
 ///   [`RtspFraming::HeadersTooLong`]. Otherwise [`RtspFraming::NeedMore`].
-/// - **Phase 2** — terminator seen: parse the (already-bounded) `Content-Length`
+/// - **After the terminator** — `CRLFCRLF` seen: parse the (already-bounded) `Content-Length`
 ///   via the strict shared scanner. A malformed/duplicate/over-cap
 ///   (> [`MAX_RTSP_BODY_BYTES`]) value is fatal →
 ///   [`RtspFraming::BadContentLength`]. Otherwise the exact end is
@@ -167,13 +167,13 @@ pub(crate) enum RtspFraming {
 /// `Content-Length` and must not be read toward EOF).
 pub(crate) fn rtsp_frame_decision(buf: &[u8]) -> RtspFraming {
     let Some(header_end) = buf.windows(4).position(|w| w == b"\r\n\r\n") else {
-        // Phase 1: still accumulating headers.
+        // Before the terminator: still accumulating headers.
         if buf.len() > MAX_RTSP_MESSAGE_BYTES {
             return RtspFraming::HeadersTooLong;
         }
         return RtspFraming::NeedMore;
     };
-    // Phase 2: parse the declared body length via the strict shared scanner.
+    // After the terminator: parse the declared body length via the strict shared scanner.
     let Ok(header_text) = core::str::from_utf8(&buf[..header_end]) else {
         return RtspFraming::BadContentLength("non-UTF8 RTSP headers");
     };
@@ -817,7 +817,7 @@ mod tests {
         assert!(matches!(e, RtspError::BadResponse { .. }));
     }
 
-    // --- B1: strict Content-Length (adversarial) ---
+    // --- Strict Content-Length (adversarial) ---
 
     #[test]
     fn parse_rejects_unparseable_content_length() {
@@ -857,10 +857,10 @@ mod tests {
         assert!(matches!(e, RtspError::BadResponse { .. }));
     }
 
-    /// CORR-05: a 401 whose `WWW-Authenticate` arrives as two header lines
+    /// A 401 whose `WWW-Authenticate` arrives as two header lines
     /// (Digest first, Basic second — RFC 7235 §4.1) must not collapse to
-    /// the LAST line. Before the fix the `HashMap` insert was last-wins:
-    /// only the Basic line survived and `build_authorization` put
+    /// the LAST line. With a last-wins `HashMap` insert only the Basic
+    /// line would survive and `build_authorization` would put
     /// `user:password` on the wire base64-encoded.
     #[test]
     fn two_line_www_authenticate_keeps_digest() {
@@ -969,7 +969,7 @@ mod tests {
         assert!(content_length_from_header_text("Content-Length: 5\r\nContent-Length: 0").is_err());
     }
 
-    /// B1 review Minor #1: the scanner must tokenize on `\r\n` exactly like the
+    /// The scanner must tokenize on `\r\n` exactly like the
     /// HashMap parsers — a bare-`\n`-delimited `Content-Length` is NOT a header
     /// line, so it must NOT be picked up (otherwise scanner-vs-HashMap-parser
     /// disagree → parser-differential smuggle seed).
@@ -990,7 +990,7 @@ mod tests {
         assert!(!resp.headers.contains_key("content-length"));
     }
 
-    /// B1 review Minor #2: Content-Length is RFC 7826 `1*DIGIT`; a leading `+`
+    /// Content-Length is RFC 7826 `1*DIGIT`; a leading `+`
     /// (which `usize::from_str` would accept) must be rejected.
     #[test]
     fn content_length_rejects_leading_plus() {
@@ -1002,7 +1002,7 @@ mod tests {
         assert!(RtspRequest::parse(req).is_err());
     }
 
-    // --- B6: reject CR/LF/NUL/control bytes in header names and values
+    // --- Reject CR/LF/NUL/control bytes in header names and values
     // (RTSP header/request injection — the "User-Agent CRLF injection") ---
 
     /// A header VALUE carrying a CRLF + an injected header must be rejected
@@ -1244,7 +1244,7 @@ mod request_parse_tests {
         assert!(wire.windows(4).any(|w| w == b"\r\n\r\n"));
     }
 
-    // --- B1: strict Content-Length (adversarial) ---
+    // --- Strict Content-Length (adversarial) ---
 
     #[test]
     fn request_rejects_unparseable_content_length() {
@@ -1280,7 +1280,7 @@ mod request_parse_tests {
         assert!(matches!(e, RtspError::BadResponse { .. }));
     }
 
-    /// CORR-05, request side: a repeated list header is joined, not last-wins.
+    /// Request side: a repeated list header is joined, not last-wins.
     #[test]
     fn request_joins_repeated_list_header() {
         let raw = b"OPTIONS rtsp://x/y RTSP/1.0\r\nCSeq: 1\r\nRequire: a\r\nRequire: b\r\n\r\n";

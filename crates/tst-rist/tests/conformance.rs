@@ -1,4 +1,4 @@
-//! WP-C1's transport conformance kit over librist loopback (spec §3.5 / §6).
+//! The tst-core transport conformance kit over librist loopback.
 //! Shape = `crates/tst-tcp/tests/conformance.rs` with a librist peer.
 //!
 //! Three librist facts shape the factories:
@@ -31,7 +31,7 @@
 //! (send + recv) and `peer_eof_is_not_a_cancel` (recv only) print visible skip
 //! lines: after `connect_with_config` the only fatal `rist_sender_data_write`
 //! code is the zero-length payload, which `send_bytes` refuses before librist
-//! sees it (CORR-04), and `rist_receiver_data_read2` only fails on a
+//! sees it, and `rist_receiver_data_read2` only fails on a
 //! null/non-receiver ctx, which `close()`'s `alive` check pre-empts. Those
 //! latch lines are unit-pinned by `transport::tests` /
 //! `recv::tests::close_destroys_ctx_even_when_already_dead` via
@@ -81,7 +81,7 @@ fn rist_send_contract_loopback() {
     kit::assert_send_rows(
         // No receiver: a librist sender needs no peer to enqueue.
         || sender_to(next_port(&NEXT_SEND_PORT, 33098)),
-        // No fatal write code is reachable after connect (CORR-04) — the
+        // No fatal write code is reachable after connect — the
         // kit prints its skip line; the latch is unit-pinned in transport.rs.
         BrokenSource::<RistTransport>::NotProducible,
         SendOptions {

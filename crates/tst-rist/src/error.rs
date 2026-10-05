@@ -25,7 +25,9 @@ pub enum RistError {
     PeerCreateFailed,
 }
 
-/// Flat error-kind projection for future C ABI mapping (A5/W4).
+/// Flat error-kind projection with a stable numeric code per variant.
+/// The bindings do not read it; they map `RistError` through
+/// `BindingError` (see `binding_kind.rs`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 #[repr(u32)]

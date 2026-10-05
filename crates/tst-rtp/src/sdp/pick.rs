@@ -117,8 +117,8 @@ mod tests {
         assert_eq!(m.media, "application");
     }
 
-    /// RFC 2250 §2 shape: `m=video` with PT=33 (emitted by tst-rtp server
-    /// since DA-RTP-8). pick_mp2t must accept this too.
+    /// RFC 2250 §2 shape: `m=video` with PT=33 (what the tst-rtp server
+    /// emits). pick_mp2t must accept this too.
     #[test]
     fn picks_unique_mp2t_video_shape() {
         let sdp = Sdp {

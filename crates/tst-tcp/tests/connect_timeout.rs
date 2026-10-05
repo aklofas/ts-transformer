@@ -1,6 +1,6 @@
-//! Review 9 (int R9-06): a `tcps://` connect that ran out `connect_timeout`
-//! was `TcpError::Io` (TCP_IO, -30) while `tcp://` reported
-//! `ConnectTimeout` (TCP_CONNECT_TIMEOUT, -32). Linux-only: the
+//! A `tcps://` connect that runs out `connect_timeout` must report
+//! `ConnectTimeout` (TCP_CONNECT_TIMEOUT, -32) like `tcp://`; without the
+//! shared mapping it was `TcpError::Io` (TCP_IO, -30). Linux-only: the
 //! deterministic timeout needs a listener whose accept queue is full
 //! (`listen(0)` + unaccepted clients) so the next SYN is dropped
 //! (`net.ipv4.tcp_abort_on_overflow = 0`, the default) and the caller's

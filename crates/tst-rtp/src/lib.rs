@@ -11,15 +11,16 @@
 //!   flow with a dynamic payload type. Use [`H264Receiver`] (direct UDP) or the
 //!   RTSP path [`RtspClient::setup_h264_auto`] → [`RtspSession::into_h264_receiver`].
 //!
-//! Both shapes share the RTSP/1.0 client (Phase 2) and server (Phase 3) for
+//! Both shapes share the RTSP/1.0 client and server for
 //! negotiated unicast / multicast / TCP-interleaved sessions. RTSP/2.0 (RFC 7826)
 //! requests are handled on the RFC 7826-compatible subset shared with RTSP/1.0;
 //! the server does not implement RTSP/2.0-only features (e.g. pipelining,
-//! REDIRECT, per-request timeouts). As of Phase 4 Stage 3, RTCP RR/SR ingest is
-//! wired on the TCP-interleaved (RFC 7826 §14) client path: peer RR
-//! populates `socket_stats().packets_lost_send` from the cumulative-lost
-//! field and `socket_stats().rtt_us` from the RR-after-SR calculation
-//! (RFC 3550 §6.4.1). UDP-side RTCP ingest is deferred.
+//! REDIRECT, per-request timeouts). RTCP RR/SR ingest is wired on the
+//! TCP-interleaved (RFC 7826 §14) client path: peer RR populates
+//! `socket_stats().packets_lost_send` from the cumulative-lost field;
+//! `socket_stats().rtt_us` stays 0 (the RFC 3550 §6.4.1 RTT calculation,
+//! `rtcp::ingest::compute_rtt_us`, is not wired into ingest). UDP-side RTCP
+//! ingest is deferred.
 //!
 //! This crate provides the RTP-specific concrete types. The
 //! [`Transport`](tst_core::transport::Transport) /

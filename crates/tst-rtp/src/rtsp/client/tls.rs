@@ -6,8 +6,7 @@
 //! internal `Stream` enum (crate-private), so the per-method code stays
 //! oblivious to whether the bytes go through plain TCP or TLS.
 //!
-//! Why sync rustls (not tokio-rustls): the master spec at
-//! `docs/specs/2026-05-25-tst-rtp-design.md` mandates a sync RTSP client
+//! Why sync rustls (not tokio-rustls): the RTSP client is sync by design
 //! (std::thread + std::net). rustls 0.23 supports this directly via the
 //! `read_tls`/`write_tls` + `process_new_packets` low-level API.
 

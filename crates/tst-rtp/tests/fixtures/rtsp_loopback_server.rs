@@ -49,7 +49,8 @@ pub struct FixtureConfig {
     /// unauthorized ones get 401 + challenge and are NOT counted in the
     /// OPTIONS counters. Models servers that challenge keepalive pings;
     /// the default (false) mirrors our own `RtspServer`, which never
-    /// auth-gates OPTIONS (PR #82 lockout design).
+    /// auth-gates OPTIONS (it is the connectivity probe, and OPTIONS never
+    /// resets the 3-strike auth-failure lockout).
     pub challenge_options: bool,
 }
 

@@ -51,8 +51,7 @@ impl TlsStream {
     /// of a socket with unread receive data with RST instead of FIN (Windows
     /// at `shutdown`, Linux at `close`), and a RST can overtake and purge the
     /// `close_notify` just written, so the peer sees a reset
-    /// (`BrokenCause::Unspecified`) rather than a clean EOF. Seen on the
-    /// windows-msvc CI leg (2026-09-14, 2026-10-02).
+    /// (`BrokenCause::Unspecified`) rather than a clean EOF.
     pub(crate) fn shutdown(&mut self) {
         match self {
             Self::Client(s) => {
@@ -104,7 +103,7 @@ where
 /// - hostname → `dnsName` SAN
 /// - IP literal → `iPAddress` SAN
 ///
-/// Resolution to a socket address happens at connect time (DA-NET-9).
+/// Resolution to a socket address happens at connect time.
 pub fn connect_tls(url: &TcpUrl, cfg: &SocketConfig) -> Result<TcpTransport, TcpError> {
     let mut roots = rustls::RootCertStore::empty();
 

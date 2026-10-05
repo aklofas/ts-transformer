@@ -34,7 +34,7 @@ pub struct TcpListener {
     /// constant's doc for why).
     alive: Arc<AtomicBool>,
     /// Set only by [`TcpCancelHandle::cancel`] / [`Self::close`] — the cancel
-    /// latch the handle reports, kept apart from `alive` (WP-C1).
+    /// latch the handle reports, kept apart from `alive`.
     cancelled: Arc<AtomicBool>,
     #[cfg(feature = "tls")]
     tls_config: Option<Arc<rustls::ServerConfig>>,
@@ -65,10 +65,9 @@ impl TcpListener {
         Self::from_parsed(&parsed)
     }
 
-    /// Bind from an already-parsed `TcpUrl`. Skips the format-then-reparse
-    /// round trip `TcpListenerBuilder::build` used to go through — a source
-    /// of the class of bug where a field the formatter forgets to re-emit
-    /// silently vanishes on `build()`.
+    /// Bind from an already-parsed `TcpUrl`. Skips a format-then-reparse
+    /// round trip, in which a field the formatter forgets to re-emit would
+    /// silently vanish on `build()`.
     pub(crate) fn from_parsed(parsed: &crate::url::TcpUrl) -> Result<Self, TcpError> {
         if !parsed.listen {
             return Err(TcpError::InvalidConfig(
@@ -133,7 +132,7 @@ impl TcpListener {
     ///
     /// A cancelled listener's parked/later `accept_blocking` keeps returning
     /// [`TcpError::Closed`] — the `TcpError` layer carries no cancel variant,
-    /// and a listener is not a `Transport` (WP-C2 decision), so the
+    /// and a listener is not a `Transport`, so the
     /// `ExplicitClose` the transports report has no home here. Ask
     /// [`Self::cancel_handle`] for a handle and read its `is_cancelled()` to
     /// tell a cancel from a plain close.
@@ -163,9 +162,8 @@ impl TcpListener {
                     // connection and this call noticing it, so it has to be
                     // short enough that the added latency doesn't eat into
                     // a caller's own I/O deadline on the freshly accepted
-                    // connection (CORR-12 review: a TLS handshake's first
-                    // write occasionally raced past its ~100 ms deadline
-                    // when this used the 100 ms interval).
+                    // connection (a TLS handshake's first write can race
+                    // past its ~100 ms deadline at a 100 ms interval).
                     std::thread::sleep(ACCEPT_POLL_INTERVAL);
                 }
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => { /* EINTR: retry */ }

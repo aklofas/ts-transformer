@@ -1,4 +1,4 @@
-//! Pre-release blocker regression test: RTSP server must not buffer
+//! Regression test: the RTSP server must not buffer
 //! unboundedly when a client announces a huge Content-Length.
 //!
 //! Scenario: an unauthenticated client sends an OPTIONS request with a
@@ -10,7 +10,7 @@
 //! After the fix the server rejects the request as soon as the headers
 //! terminate (CRLFCRLF): the body-aware two-phase cap parses the declared
 //! `Content-Length` and finds it over the `MAX_RTSP_BODY_BYTES` (1 MiB) cap
-//! in Phase 2, so the 413 fires before the 128 KiB of junk is ever read.
+//! once the headers terminate, so the 413 fires before the 128 KiB of junk is ever read.
 //! This test verifies the 413 arrives promptly rather than the server
 //! keeping the connection indefinitely open.
 
@@ -24,8 +24,8 @@ use tst_rtp::RtspServer;
 /// `Content-Length: 2000000000` (well over the 1 MiB `MAX_RTSP_BODY_BYTES`
 /// cap), push 128 KiB of junk, then read and assert that the server sent a
 /// 413 response (or connection closed) rather than staying silent and
-/// accumulating bytes. The over-cap Content-Length is rejected in Phase 2 of
-/// the body-aware cap as soon as the header block terminates, so the junk is
+/// accumulating bytes. The over-cap Content-Length is rejected by the
+/// body-aware cap as soon as the header block terminates, so the junk is
 /// never consumed.
 #[test]
 fn oversized_content_length_gets_413_response() {
@@ -40,9 +40,8 @@ fn oversized_content_length_gets_413_response() {
     // soon as it rejects a header block, and on macOS a setsockopt on a
     // socket the peer has already reset fails with EINVAL (the protocol
     // control block is gone) — setting the read timeout only AFTER the
-    // request/junk write was this file's CI flake (3x on macos-arm64 in
-    // 2026-08-31..09-04, every one `set_read_timeout` -> "Invalid
-    // argument" within ~10ms, i.e. the 413+close had already landed).
+    // request/junk write flakes on macos-arm64 (`set_read_timeout` ->
+    // "Invalid argument" within ~10ms, i.e. the 413+close had already landed).
     tcp.set_write_timeout(Some(Duration::from_secs(5))).unwrap();
     tcp.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
 
@@ -51,7 +50,7 @@ fn oversized_content_length_gets_413_response() {
     tcp.write_all(request).unwrap();
 
     // Write 128 KiB of junk. The server never reads it: the over-cap
-    // Content-Length above is rejected in Phase 2 the instant the header
+    // Content-Length above is rejected the instant the header
     // CRLFCRLF is seen, so the 413 fires before this body matters. (The junk
     // is kept only to exercise the write path / prove the server isn't
     // silently buffering it.)
@@ -95,8 +94,8 @@ fn oversized_content_length_gets_413_response() {
                     || e.kind() == std::io::ErrorKind::TimedOut =>
             {
                 // The server has not responded within the read timeout —
-                // this means it is silently accumulating bytes (pre-fix
-                // behavior). Treat this as the failing case.
+                // this means it is silently accumulating bytes. Treat this
+                // as the failing case.
                 break;
             }
             Err(_) => {
@@ -134,14 +133,14 @@ fn oversized_content_length_gets_413_response() {
     server.stop().ok();
 }
 
-/// B7 cap-coherence: a VALID request with a large but in-bounds body
+/// Cap coherence: a VALID request with a large but in-bounds body
 /// (100 KiB, well under the 1 MiB MAX_RTSP_BODY_BYTES) must be ACCEPTED and
 /// dispatched normally (200 OK), NOT falsely rejected at the 64 KiB header cap.
 ///
-/// Before B7 the server session loop capped the whole request (headers + body)
-/// at 64 KiB before parsing, so any request whose body pushed the buffer past
-/// 64 KiB got a wrongful 413. The body-aware two-phase cap (header cap 64 KiB
-/// separately, then header + Content-Length up to 1 MiB) fixes this.
+/// A session loop that capped the whole request (headers + body) at 64 KiB
+/// before parsing would give any request whose body pushed the buffer past
+/// 64 KiB a wrongful 413. The body-aware two-phase cap (header cap 64 KiB
+/// separately, then header + Content-Length up to 1 MiB) prevents this.
 #[test]
 fn valid_large_body_request_is_accepted() {
     let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
@@ -192,7 +191,7 @@ fn valid_large_body_request_is_accepted() {
     server.stop().ok();
 }
 
-/// B7 cap-coherence: a request declaring a body LARGER than 1 MiB
+/// Cap coherence: a request declaring a body LARGER than 1 MiB
 /// (MAX_RTSP_BODY_BYTES) must still be rejected with 413 (or the connection
 /// closed). The body-aware cap rejects an over-cap Content-Length up front
 /// rather than reading toward an unbounded body.
@@ -252,14 +251,13 @@ fn over_cap_body_request_gets_413() {
 /// A cap-violating request queued directly behind a valid one, both
 /// arriving in the same server-side read — a real client pipelining two
 /// requests, or a follow-up oversized request that lands right after a
-/// good one. Regression for a gap Copilot flagged reviewing PR #229
-/// (deep-review-4 WP-4a): the CORR-25 drain loop in `serve_requests`
+/// good one. Regression: the drain loop in `serve_requests`
 /// stops draining at the first non-`Complete` framing outcome and falls
 /// through to the outer loop's blocking socket read, so a
 /// `HeadersTooLong` / `BadContentLength` head already sitting in `buf`
 /// got no 413 until the NEXT read — which, once the client has sent
 /// everything it's going to send and is just awaiting responses, never
-/// comes — or the pre-SETUP 30 s idle timeout. `reject_if_over_cap` now also runs
+/// comes — or the pre-SETUP 30 s idle timeout. `reject_if_over_cap` also runs
 /// right after the drain loop, so the oversized head is rejected the
 /// moment it becomes the buffer head instead of waiting on a read that
 /// isn't coming.
@@ -305,9 +303,10 @@ fn pipelined_over_cap_head_gets_413_without_another_read() {
     );
 
     // Read the second response. The 2 s read timeout is the discriminator:
-    // pre-fix, the oversized second head sits unrejected until the pre-SETUP
-    // 30 s idle timeout closes the connection, so this read times out. Post-fix
-    // the 413 fires immediately after the drain loop, well inside 2 s.
+    // without the post-drain check, the oversized second head sits unrejected
+    // until the pre-SETUP 30 s idle timeout closes the connection, so this
+    // read times out. With it the 413 fires immediately after the drain loop,
+    // well inside 2 s.
     let start = Instant::now();
     buf.clear();
     let mut got_413 = false;

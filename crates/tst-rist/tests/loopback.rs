@@ -8,11 +8,10 @@
 //! ~800-1500ms — so we sleep before the first send and use a retry loop
 //! on the recv side that tolerates Backpressure timeouts.
 //!
-//! Runs on Windows too (un-gated 2026-07-26): this file was gated off
-//! windows-msvc from 2026-05-29 because vendored librist ≤ 0.2.16 hung ~14s+
-//! in `rist_destroy` on Windows teardown and delivered no data. Both bugs are
-//! fixed upstream in librist 0.2.18 (CI diagnostic run 30136835805: teardown
-//! 10–31 ms, full delivery, both Simple and Main+AES-256 profiles).
+//! Runs on Windows too: librist ≤ 0.2.16 hung ~14s+ in `rist_destroy` on
+//! Windows teardown and delivered no data; both bugs are fixed upstream in
+//! librist 0.2.18 (teardown 10–31 ms, full delivery, both Simple and
+//! Main+AES-256 profiles).
 
 use std::sync::Mutex;
 use std::sync::mpsc;
@@ -203,11 +202,11 @@ fn main_profile_aes256_loopback_round_trip() {
 
 /// A foreign RIST sender may bundle more bytes per block than our
 /// configured pkt_size — RIST rides RTP over UDP, so anything up to the
-/// 16-bit datagram ceiling is legal on the wire. Before the
-/// recv-ceiling fix, max_payload() returned pkt_size (1316 default), so
-/// a buffer sized from it sent every oversize block into the
-/// DropOversize arm: silent stream loss (packets_dropped ticked, data
-/// gone). The recv-side ceiling must accept any legal block.
+/// 16-bit datagram ceiling is legal on the wire. If max_payload()
+/// returned pkt_size (1316 default), a buffer sized from it would send
+/// every oversize block into the DropOversize arm: silent stream loss
+/// (packets_dropped ticked, data gone). The recv-side ceiling must accept
+/// any legal block.
 #[test]
 fn oversize_foreign_block_delivered_not_dropped() {
     let _serial = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
@@ -269,7 +268,7 @@ fn oversize_foreign_block_delivered_not_dropped() {
     );
 }
 
-/// IPv6 round-trip through the CORR-09 fix: `native_endpoint` renders the
+/// IPv6 round-trip: `native_endpoint` renders the
 /// peer/bind URL via `SocketAddr`'s `Display`, which brackets IPv6, so
 /// librist's `udpsocket_parse_url` sees `[::1]:port` instead of splitting a
 /// bare `::1:port` at the first colon into host "" + port 0.
@@ -280,11 +279,10 @@ fn oversize_foreign_block_delivered_not_dropped() {
 /// address (`rist.c`'s `rist_receiver_peer_create` dereferences the RTCP
 /// peer's `peer_ssrc` field before its own null check, and the RTCP peer's
 /// re-derived bind URL fails to come up as IPv6). That bug is orthogonal to
-/// CORR-09 (it reproduces with a hand-built bracketed URL too, and the
+/// the bracketing (it reproduces with a hand-built bracketed URL too, and the
 /// sender side's `rist_sender_peer_create` has no equivalent bug — it checks
-/// for null first) and out of scope for this fix; see the task report for
-/// the full repro. Main Profile multiplexes RTCP into the data socket and
-/// never takes that path, so it exercises the bracket fix without tripping
+/// for null first). Main Profile multiplexes RTCP into the data socket and
+/// never takes that path, so it exercises the bracketing without tripping
 /// the unrelated crash.
 ///
 /// Not run on Windows: vendored librist 0.2.20 parses the bracketed bind URL
@@ -370,9 +368,8 @@ fn ipv6_loopback_round_trip() {
 /// `rist_receiver_peer_create`), and that null case is reachable for an IPv6
 /// bind — SIGSEGV. `listen_with_config` must refuse this combination BEFORE
 /// any librist context or peer creation (never reaching `rist_receiver_create`),
-/// not let the process crash. This must NOT be run without the guard: prior to the fix,
-/// this exact profile+URL combination segfaults the whole test process (see
-/// the task report for the gdb-verified repro), so there is no "assert it
+/// not let the process crash. This must NOT be run without the guard: without it,
+/// this exact profile+URL combination segfaults the whole test process, so there is no "assert it
 /// panics" fallback here — the guard is the only safe way to exercise this.
 ///
 /// No `ipv6_loopback_available()` probe: the guard refuses before any socket
@@ -403,15 +400,16 @@ fn ipv6_loopback_available() -> bool {
     std::net::UdpSocket::bind("[::1]:0").is_ok()
 }
 
-/// CORR-04 live guard: a burst with no receiver must never latch the sender
+/// Live guard: a burst with no receiver must never latch the sender
 /// dead. Every result is either `Ok` or the queue-full `Backpressure {
 /// errno_code: Some(-2) }`; `is_alive()` stays true throughout. This does
 /// NOT assert that `-2` occurs — librist's 524,288-entry sender queue is
 /// drained by its protocol thread whether or not a peer answers, so a
 /// 20,000-packet burst normally never fills it; the `-2` mapping itself is
 /// pinned by `transport::tests::classify_write_rc_maps_librist_namespace`.
-/// On the pre-fix tree this test only fails if the queue does fill (then
-/// `Broken { errno_code: Some(-2) }` trips the panic below).
+/// If queue-full were latched as `Broken`, this test would fail only when
+/// the queue does fill (then `Broken { errno_code: Some(-2) }` trips the
+/// panic below).
 #[test]
 fn send_burst_without_receiver_never_latches_broken() {
     let _serial = SERIAL.lock().unwrap_or_else(|p| p.into_inner());

@@ -1,6 +1,5 @@
 //! Cancellation primitive for the `RtpTransport` / `RtpRecvTransport`
-//! send/recv UDP socket wrappers (defined in the `transport` module,
-//! Task 7+).
+//! send/recv UDP socket wrappers (defined in the `transport` module).
 //!
 //! **Stability: Stable** — see the
 //! [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
@@ -9,8 +8,8 @@
 //! timeout (`UdpSocket::set_read_timeout` / `set_write_timeout`); on each
 //! timeout they check this `AtomicBool` and either continue or return
 //! `TransportError::ExplicitClose`. This mirrors `tst-srt`'s
-//! `SRTO_RCVTIMEO`/`SNDTIMEO` pattern — see `feedback_repo_standalone_guardrail.md`
-//! and `crates/tst-srt/src/socket.rs` for the libsrt-side precedent.
+//! `SRTO_RCVTIMEO`/`SNDTIMEO` pattern — see `crates/tst-srt/src/socket.rs`
+//! for the libsrt-side precedent.
 //!
 //! Cancel is `Send + Sync` so consumers can stash it in an
 //! `Arc<dyn TransportCancel>` and share across worker threads.
@@ -56,7 +55,7 @@ impl TransportCancel for RtpCancelHandle {
     }
 }
 
-/// Cancel handle for an `RtspServer` (introduced in Phase 3 Task 7).
+/// Cancel handle for an `RtspServer`.
 ///
 /// `cancel()` is the HARD cancel — equivalent to a SIGKILL on the
 /// server's tokio Runtime tasks: the listener stops accepting new
@@ -81,7 +80,7 @@ pub struct RtspServerCancelHandle {
 #[cfg(feature = "rtsp-server")]
 impl RtspServerCancelHandle {
     /// Construct a fresh handle. Internal — `RtspServer::from_builder`
-    /// (Task 7) creates one and exposes it via `cancel_handle()`.
+    /// creates one and exposes it via `cancel_handle()`.
     pub(crate) fn new() -> Self {
         Self {
             cancel: Arc::new(AtomicBool::new(false)),

@@ -1,9 +1,9 @@
-//! Review 9 (int R9-02): a viewer that leaves WITHOUT TEARDOWN (crash, link
-//! loss, kill) in the client-default UDP mode left the server streaming
-//! RTP to the dead address and holding its UDP port pair until the server
-//! was dropped — `ServerSessionState` had no `Drop`, dropping the fanout
-//! `JoinHandle` detached the task, and an unconnected UDP `send_to` to a
-//! closed port never errors.
+//! A viewer that leaves WITHOUT TEARDOWN (crash, link loss, kill) in the
+//! client-default UDP mode must not leave the server streaming RTP to a
+//! dead address. Without the session `Drop` it would, holding the UDP port
+//! pair until the server was dropped: dropping the fanout `JoinHandle`
+//! detaches the task, and an unconnected UDP `send_to` to a closed port
+//! never errors.
 
 use std::net::{TcpStream, UdpSocket};
 use std::time::{Duration, Instant};

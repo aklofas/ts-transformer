@@ -1,4 +1,4 @@
-//! Phase 3 Wave F Task 23 — session keepalive interaction.
+//! Session keepalive interaction.
 //!
 //! The keepalive contract under test: a client may emit additional
 //! `OPTIONS` requests on the control TCP after SETUP to refresh the
@@ -8,7 +8,7 @@
 //! These tests use manual `client.options()` calls rather than the
 //! automatic [`RtspClient::spawn_keepalive_if_needed`] background
 //! thread — the background variant is already covered by
-//! `rtsp_client_keepalive.rs`. The point here is the *server* side:
+//! `rtsp_client/keepalive.rs`. The point here is the *server* side:
 //! it accepts repeated OPTIONS across the lifetime of a session.
 
 use std::time::Duration;

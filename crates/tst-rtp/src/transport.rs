@@ -4,9 +4,8 @@
 //! **Stability: Stable** — see the
 //! [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
 //!
-//! Phase 1 ships only the UDP data plane; RTSP control plane (Phase 2)
-//! is what makes negotiated transports work. For now, sender + receiver
-//! agree on a fixed `host:port` and use it directly.
+//! The UDP data plane; the RTSP control plane lives in `rtsp`. On this
+//! path sender + receiver agree on a fixed `host:port` and use it directly.
 
 use std::io;
 use std::net::{IpAddr, SocketAddr, UdpSocket};
@@ -52,12 +51,12 @@ fn udp_err_to_connect(e: io::Error) -> ConnectError {
 ///
 /// # `SocketStats` field mapping
 ///
-/// | [`SocketStats`] field | Phase 1 source |
+/// | [`SocketStats`] field | Source |
 /// |---|---|
 /// | `bytes_sent` | Local counter, ticks per successful `send_bytes` |
 /// | `packets_sent` | Local counter, ticks per RTP packet |
 /// | `bytes_received` / `packets_received` | 0 (this is the send half) |
-/// | `rtt_us` | 0 — RTCP RR/SR ingestion is deferred past Phase 1 |
+/// | `rtt_us` | 0 — RTCP RR/SR ingestion is not implemented on the send side |
 /// | `packets_lost_send` | 0 — same; would come from RTCP RR fraction-lost |
 /// | `link_bandwidth_bps` | 0 — RTP has no link estimate |
 /// | All other fields | 0 |
@@ -66,8 +65,8 @@ fn udp_err_to_connect(e: io::Error) -> ConnectError {
 ///
 /// For send-side `Broken`, `errno_code` carries the OS `errno` from the
 /// underlying `sendto` call (`EAGAIN`=11, `EHOSTUNREACH`=113,
-/// `ECONNREFUSED`=111 on Linux). `Backpressure` is not produced in
-/// Phase 1 — UDP either accepts the datagram or surfaces an error.
+/// `ECONNREFUSED`=111 on Linux). `Backpressure` is not produced — UDP
+/// either accepts the datagram or surfaces an error.
 pub struct RtpTransport {
     socket: Option<UdpSocket>,
     /// Max UDP datagram budget (RTP header + TS bundle), set from
@@ -79,9 +78,8 @@ pub struct RtpTransport {
     ssrc: u32,
     next_seq: u16,
     cancel: Arc<RtpCancelHandle>,
-    /// Local stats — bytes_sent / packets_sent only in Phase 1; the
-    /// RTCP-derived fields stay zero per the master spec's SocketStats
-    /// table.
+    /// Local stats — bytes_sent / packets_sent only; the RTCP-derived
+    /// fields stay zero (see the `SocketStats` table above).
     bytes_sent: u64,
     packets_sent: u64,
     /// Companion RTCP socket bound on `port + 1` per RFC 3550 §11.
@@ -91,8 +89,8 @@ pub struct RtpTransport {
     #[allow(dead_code)]
     rtcp_socket: Option<UdpSocket>,
     /// RTCP-derived counters, shared with the reporter thread (which
-    /// ticks `sr_packets_sent` on each SR emission) and any Task-8
-    /// ingest path.
+    /// ticks `sr_packets_sent` on each SR emission). Nothing ingests peer
+    /// RTCP on the send side.
     rtcp_stats: Arc<Mutex<RtcpStats>>,
     /// Background SR-emitter handle. Dropping this cancels + joins
     /// the reporter thread. Held only for its `Drop` side effect.
@@ -140,10 +138,10 @@ impl RtpTransport {
     /// `sender_octet_count`, `rtp_timestamp`, and `ntp_timestamp` are all
     /// zero). As such it is **NOT RFC 3550-conformant** and must not be
     /// relied on by peers for sender-side reception statistics. Enabling it
-    /// is only useful for exercising the RTCP socket-pair plumbing. RTCP
-    /// *reception* (ingesting peer SR/RR into [`Self::rtcp_stats`] and the
-    /// projected [`SocketStats`] fields) is a separate, working path and is
-    /// not affected by this toggle.
+    /// is only useful for exercising the RTCP socket-pair plumbing. The
+    /// send side does not ingest peer RTCP: [`Self::rtcp_stats`] only
+    /// counts emitted SRs, and [`SocketStats`] leaves the RTCP-derived
+    /// fields at 0 (RTCP reception lives on the receive side).
     pub fn connect_with_rtcp(url: &RtpUrl, rtcp_enabled: bool) -> Result<Self, ConnectError> {
         if url.pt.is_some() {
             return Err(ConnectError::PayloadTypeParam);
@@ -223,14 +221,9 @@ impl RtpTransport {
             };
             let rtcp_target = SocketAddr::new(peer.ip(), rtcp_companion_port);
             Some(RtcpReporterHandle::spawn(move || {
-                // Phase 2 v1: SR carries running totals snapshot.
-                // Real bytes_sent / packets_sent live on the
-                // transport — for the v1 reporter we emit a
-                // minimal SR (counters zero) + SDES CNAME. Full
-                // SR counter wire-up happens in Phase 2 Task 14
-                // (integration). The reporter thread + socket
-                // pair are what Task 10 retrofits — the SR's
-                // counters are a follow-up.
+                // A minimal SR (counters zero) + SDES CNAME: the real
+                // bytes_sent / packets_sent live on the transport and
+                // are not wired into the reporter.
                 let sr = crate::rtcp::SenderReport {
                     ssrc,
                     ntp_timestamp: 0,
@@ -295,8 +288,8 @@ pub enum ConnectError {
     MissingPayloadTypeParam,
     #[error("URL parse failed: {0}")]
     Url(#[from] RtpUrlError),
-    /// `RtpUrl::host` couldn't be parsed as a literal IP. Phase 1
-    /// doesn't do DNS resolution — callers can pre-resolve and pass the
+    /// `RtpUrl::host` couldn't be parsed as a literal IP. The RTP
+    /// transport doesn't do DNS resolution — callers can pre-resolve and pass the
     /// literal.
     #[error("host '{host}' is not a literal IPv4/IPv6 address: {detail}")]
     HostNotLiteral { host: String, detail: String },
@@ -427,10 +420,10 @@ pub(crate) const MPSC_PUMP_DISCONNECTED: &str = "interleaved pump bridge disconn
 
 /// Inner data source for [`RtpRecvTransport`].
 ///
-/// `Udp` — the Phase 1 default: read UDP datagrams off a bound socket
+/// `Udp` — the default: read UDP datagrams off a bound socket
 /// and strip the RTP header in `recv_bytes`.
 ///
-/// `Mpsc` — the TCP-interleaved bridge introduced in Phase 2 Task 17:
+/// `Mpsc` — the TCP-interleaved bridge:
 /// the interleaved pump background thread parses `$<ch><len><data>`
 /// frames off the RTSP control TCP and pushes **whole RTP packets**
 /// (header intact) through the mpsc channel. `recv_bytes` decodes the
@@ -789,7 +782,7 @@ impl RtpRecvTransport {
         };
         let ssrc = url.ssrc.unwrap_or_else(random_u32);
         let rtcp_stats = Arc::new(Mutex::new(RtcpStats::default()));
-        // Spawn the RR-emitter thread when RTCP is enabled. v1: target
+        // Spawn the RR-emitter thread when RTCP is enabled. The target
         // is symmetric — RTP-port + 1 of the peer we last received
         // from. With no peer seen yet, target the URL's host:port+1
         // (the symmetric assumption for a known-destination receiver).
@@ -804,10 +797,8 @@ impl RtpRecvTransport {
             let stats_clone = rtcp_stats.clone();
             // For non-multicast, the URL host is the address we
             // bound to — so the symmetric RTCP target is host:port+1.
-            // For multicast, there's no per-peer notion here; v1
-            // doesn't emit RR until a peer is observed (Task 8's
-            // ingest path lands that wiring). For now we still
-            // spawn the thread so the rr_packets_sent counter
+            // For multicast, there's no per-peer notion here; the
+            // thread is still spawned so the rr_packets_sent counter
             // ticks deterministically against the URL host.
             //
             // Guard: url.port 65535 has no valid companion port.
@@ -1055,7 +1046,7 @@ impl RtpRecvTransport {
     /// retrying inside the receive loop, but each retry re-checks the
     /// same absolute deadline rather than extending it.
     ///
-    /// An empty `buf` returns `Ok(Some(0))` immediately (X-CORR-07).
+    /// An empty `buf` returns `Ok(Some(0))` immediately.
     pub fn recv_timeout(
         &mut self,
         buf: &mut [u8],
@@ -1086,7 +1077,7 @@ impl RtpRecvTransport {
         buf: &mut [u8],
         deadline: Option<Instant>,
     ) -> Result<usize, TransportError> {
-        // X-CORR-07: an empty destination is a no-op — return before the
+        // An empty destination is a no-op — return before the
         // liveness check and before touching the source, so it can neither
         // park nor be reported as "buf too small" (which latches dead).
         if buf.is_empty() {
@@ -1129,7 +1120,7 @@ impl RtpRecvTransport {
                 }
                 Err(e @ TransportError::Broken { .. }) => {
                     // Hard error from the underlying source — mark transport
-                    // dead (same as both pre-refactor arms did) then propagate.
+                    // dead then propagate.
                     self.source = None;
                     return Err(e);
                 }
@@ -1146,9 +1137,8 @@ impl RtpRecvTransport {
                 }
                 Err(e) => return Err(e),
             };
-            // Count at wire-level, before validation — consistent with the
-            // pre-refactor UDP path (incremented on Ok(n) before RTP-header or
-            // MP2T-shape checks). Malformed-but-received packets are counted
+            // Count at wire-level, before the RTP-header and MP2T-shape
+            // checks. Malformed-but-received packets are counted
             // here; drops are tracked in `malformed_packets`.
             self.bytes_received = self.bytes_received.saturating_add(n as u64);
             self.packets_received = self.packets_received.saturating_add(1);
@@ -1186,7 +1176,7 @@ impl RtpRecvTransport {
                     cause: BrokenCause::Unspecified,
                 });
             }
-            // DA-RTP-5: RFC 2250 shape guard — payload must be non-empty,
+            // RFC 2250 shape guard — payload must be non-empty,
             // 188-byte aligned, and begin with 0x47. RTP-header validation
             // above already pinned PT=33 (MP2T); this catches a corrupt or
             // misaligned bundle.
@@ -1208,7 +1198,7 @@ impl RtpRecvTransport {
 impl RecvTransport for RtpRecvTransport {
     /// Receive the next valid MP2T bundle from the RTP stream.
     ///
-    /// # MP2T shape enforcement (DA-RTP-5)
+    /// # MP2T shape enforcement
     ///
     /// After stripping and validating the RTP header (V=2, PT=33), the payload
     /// is checked against RFC 2250 shape requirements before being returned:
@@ -1279,8 +1269,8 @@ impl RecvTransport for RtpRecvTransport {
         s.bytes_received = self.bytes_received;
         s.packets_received = self.packets_received;
         // Project RTCP-derived fields when ingest has populated them.
-        // Paths without an ingest thread (UDP today, mpsc-placeholder
-        // pre-T28) leave these at 0, matching prior behavior.
+        // Paths without an ingest thread (UDP, `from_mpsc_placeholder`)
+        // leave these at 0.
         if let Ok(rtcp) = self.rtcp_stats.lock() {
             s.rtt_us = rtcp.rtt_us;
             s.packets_lost_send = rtcp.cumulative_lost_send as u64;
@@ -1384,8 +1374,8 @@ mod tests {
 
     /// Build a minimal valid RTP packet (V=2, P=0, X=0, CC=0, PT=33)
     /// wrapping `payload`. Used by mpsc-path tests that feed whole RTP
-    /// packets into `from_mpsc_placeholder`, matching the pump's new
-    /// contract (the pump no longer strips the header before enqueuing).
+    /// packets into `from_mpsc_placeholder`, matching the pump's
+    /// contract (the pump does not strip the header before enqueuing).
     fn make_rtp_packet(payload: &[u8]) -> bytes::Bytes {
         use crate::packet::RtpHeader;
         let mut pkt = vec![0u8; RTP_HEADER_LEN];
@@ -1394,9 +1384,9 @@ mod tests {
         bytes::Bytes::from(pkt)
     }
 
-    /// Verify socket_stats() now returns Some(_) once Task 9 wires up
-    /// the local counters. bytes_sent / packets_sent advance through
-    /// the integration test in Task 14; here we just check the shape.
+    /// socket_stats() returns Some(_) on a live transport. bytes_sent /
+    /// packets_sent advance in the integration tests; here we just check
+    /// the shape.
     #[test]
     fn socket_stats_returns_some_when_alive() {
         let url = RtpUrl::parse("rtp://127.0.0.1:1").unwrap();
@@ -1404,13 +1394,13 @@ mod tests {
         let stats = t.socket_stats().expect("alive transport reports stats");
         assert_eq!(stats.bytes_sent, 0);
         assert_eq!(stats.packets_sent, 0);
-        // RTCP-derived fields should stay zero in Phase 1.
+        // RTCP-derived fields stay zero on the send side.
         assert_eq!(stats.rtt_us, 0);
         assert_eq!(stats.packets_lost_send, 0);
     }
 
     /// A quiet socket (no sender) must not block `recv_timeout` past its
-    /// deadline — the RTP-side counterpart of the field report's stall
+    /// deadline — the RTP-side counterpart of the quiet-peer stall
     /// case. Mirrors `tst-udp`'s `close_unblocks_recv_bytes_after_recv_timeout`
     /// shape: `Ok(None)` on expiry, transport still alive.
     #[test]
@@ -1440,7 +1430,7 @@ mod tests {
 
     /// Extreme timeout inputs are specified, not panics: ZERO expires at
     /// the first poll (`Ok(None)`); MAX saturates to "no deadline" via
-    /// `checked_add` (the old unchecked add panicked) — proven by a
+    /// `checked_add` (an unchecked add would panic) — proven by a
     /// delayed packet actually being received under a MAX timeout.
     #[test]
     fn rtp_recv_timeout_extreme_durations_never_panic() {
@@ -1554,8 +1544,8 @@ mod tests {
     /// `RtpRecvTransport` with a configured timeout surfaces
     /// `ShellErrorKind::Backpressure` on a stalled-but-healthy session
     /// (peer stops sending; no error, no EOS) — the shell's documented
-    /// Backpressure-on-recv-timeout path, previously reachable only on
-    /// SRT — and the same receiver keeps demuxing once bytes flow again.
+    /// Backpressure-on-recv-timeout path — and the same receiver keeps
+    /// demuxing once bytes flow again.
     /// A deadline-driven stall watchdog with no cancel thread.
     #[test]
     fn demux_receiver_surfaces_backpressure_then_keeps_demuxing() {
@@ -1790,7 +1780,7 @@ mod tests {
         assert!(t.is_alive(), "transport must stay alive after expiry");
     }
 
-    /// Task A2: the `?recv_timeout=<ms>` URL knob (parsed by A1) must arm
+    /// The `?recv_timeout=<ms>` URL knob (parsed by `RtpUrl`) must arm
     /// the transport with NO explicit `set_recv_timeout` call —
     /// `RtpRecvTransport::listen`'s URL path is the sibling of the
     /// builder/trait-level knob tests above, proving the query key alone
@@ -1862,11 +1852,10 @@ mod tests {
         accept_recv(recv);
     }
 
-    /// T30 — verify that an RR pushed onto the rtcp_rx channel of an
-    /// `RtpRecvTransport` built via `from_mpsc_with_rtcp` reaches the
-    /// ingest thread, populates `RtcpStats.cumulative_lost_send`, and
-    /// is projected into `socket_stats().packets_lost_send`. Closes
-    /// the Stage 3 RR-on-interleaved-channel deliverable.
+    /// An RR pushed onto the rtcp_rx channel of an `RtpRecvTransport`
+    /// built via `from_mpsc_with_rtcp` reaches the ingest thread,
+    /// populates `RtcpStats.cumulative_lost_send`, and is projected into
+    /// `socket_stats().packets_lost_send`.
     #[test]
     fn rr_on_rtcp_rx_populates_packets_lost_send() {
         use crate::rtcp::{ReceiverReport, ReportBlock};
@@ -1915,11 +1904,11 @@ mod tests {
         assert_eq!(s.rtt_us, 0);
     }
 
-    /// T30 — verify that SR + RR leave `rtt_us` at 0 after the ingest
-    /// thread processes both packets. RTT computation is deferred (see
-    /// `docs/project/deferred-features.md`); the previously-asserted
-    /// "non-zero rtt_us after SR→RR" was wrong because the anchor NTP
-    /// came from the PEER's SR (wrong clock domain for the formula).
+    /// SR + RR leave `rtt_us` at 0 after the ingest thread processes both
+    /// packets. RTT computation is deferred (see
+    /// `docs/project/deferred-features.md`): a non-zero RTT from SR→RR
+    /// here would be wrong, because the anchor NTP comes from the PEER's
+    /// SR (wrong clock domain for the formula).
     #[test]
     fn sr_then_rr_leaves_rtt_us_zero() {
         use crate::rtcp::{ReceiverReport, ReportBlock, SenderReport};
@@ -1993,7 +1982,7 @@ mod tests {
         );
     }
 
-    /// T30 — verify that a malformed RTCP packet (PT=201 but truncated)
+    /// A malformed RTCP packet (PT=201 but truncated)
     /// increments `rtcp_stats().rr_parse_errors` and does NOT crash
     /// or corrupt the other stats.
     #[test]
@@ -2065,10 +2054,10 @@ mod tests {
         );
     }
 
-    // --- DA-RTP-5: MP2T payload shape validation ---
+    // --- MP2T payload shape validation ---
     //
     // These tests drive the recv path via the mpsc seam (from_mpsc_placeholder).
-    // Since the pump now pushes whole RTP packets, tests feed whole packets
+    // The pump pushes whole RTP packets, so tests feed whole packets
     // (built with make_rtp_packet) rather than raw payload bytes directly.
     // The mpsc path is representative because the UDP path shares
     // is_valid_mp2t_payload and the same RTP header decode logic.
@@ -2242,16 +2231,15 @@ mod tests {
         );
     }
 
-    /// Regression: full-MTU RTP truncation (pre-existing bug shipped in
-    /// v0.2.0). A conformant peer sending a full 7×188 MP2T bundle emits a
-    /// 1328-byte datagram (12-byte RTP header + 1316-byte payload) — larger
-    /// than the old `pkt_size`-sized (1316 B) recv scratch, so
-    /// `UdpSocket::recv` silently truncated it: corrupt delivery in v0.2.0,
-    /// silent drop once the DA-RTP-5 shape guard landed. The scratch is now
+    /// Regression: full-MTU RTP truncation. A conformant peer sending a
+    /// full 7×188 MP2T bundle emits a 1328-byte datagram (12-byte RTP
+    /// header + 1316-byte payload) — larger than a `pkt_size`-sized
+    /// (1316 B) recv scratch, which `UdpSocket::recv` would silently
+    /// truncate (and the shape guard would then drop). The scratch is
     /// sized to `RECV_SCRATCH_LEN` (the UDP datagram ceiling), so the whole
     /// payload must arrive intact with `malformed_packets == 0`.
     ///
-    /// Pre-fix this test HANGS rather than failing cleanly: the truncated
+    /// With a short scratch this test HANGS rather than failing cleanly: the truncated
     /// payload fails the shape guard, is dropped, and `recv_bytes` blocks
     /// waiting for a next packet that never comes (harness timeout catches
     /// a regression).
@@ -2348,7 +2336,7 @@ mod tests {
         assert_eq!(t.rtp_stats().malformed_packets, 0);
     }
 
-    /// B4 / T1-RTSP-RTP (transport level) — a whole RTP packet with CSRC list
+    /// Transport level: a whole RTP packet with CSRC list
     /// (CC>0), header extension (X=1), and trailing padding (P=1) arriving on
     /// the mpsc path must have ONLY the true TS payload reach the caller —
     /// CSRC words and extension skipped, padding trimmed. The pump delivers
@@ -2486,10 +2474,10 @@ mod tests {
         );
     }
 
-    /// Normative table row "is_alive after cancel = false" (spec §3.5, the
-    /// two N cells): once a cancel has been observed by an op, the transport
-    /// must stop claiming it is alive. Before the fix `is_alive` read
-    /// `source.is_some()` and the ExplicitClose arm never cleared it.
+    /// "is_alive after cancel = false": once a cancel has been observed by
+    /// an op, the transport must stop claiming it is alive. An `is_alive`
+    /// that read only `source.is_some()` would stay true, because the
+    /// ExplicitClose arm does not clear the source.
     #[test]
     fn recv_is_alive_is_false_once_a_cancel_is_observed() {
         let mut t = RtpRecvTransport::listen("rtp://127.0.0.1:0").unwrap();
@@ -2509,8 +2497,8 @@ mod tests {
         );
     }
 
-    /// X-CORR-07 for RTP: an empty destination returns `Ok(0)` at once and
-    /// touches nothing (before the fix it parked waiting for a datagram).
+    /// An empty destination returns `Ok(0)` at once and touches nothing;
+    /// without the guard it parks waiting for a datagram.
     #[test]
     fn recv_empty_buffer_is_a_noop() {
         let mut t = RtpRecvTransport::listen("rtp://127.0.0.1:0").unwrap();

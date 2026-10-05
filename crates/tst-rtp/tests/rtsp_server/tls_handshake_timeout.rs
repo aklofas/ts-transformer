@@ -1,5 +1,5 @@
-//! CORR-06: the `rtsps://` TLS handshake has a deadline. A connection that
-//! is accepted but never sends a ClientHello used to hold its
+//! The `rtsps://` TLS handshake has a deadline. Without it a connection that
+//! is accepted but never sends a ClientHello held its
 //! `active_sessions` slot until the peer went away — `max_sessions` silent
 //! connects (no auth needed) wedged the server at its cap for good.
 

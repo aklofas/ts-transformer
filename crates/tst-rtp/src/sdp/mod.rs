@@ -262,7 +262,7 @@ mod phase3_build_for_mount_tests {
         assert_eq!(crlf_count, 8);
     }
 
-    // --- DA-RTP-8 conventional SDP shape tests ---
+    // --- Conventional SDP shape tests ---
 
     /// RFC 2250 §2 mandates `m=video` for MP2T streams; `m=application`
     /// is non-standard and breaks many third-party RTSP players.

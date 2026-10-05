@@ -1,13 +1,13 @@
 //! `rtp://host:port?key=value&...` URL parsing, plus `rtsp://` and
-//! `rtsps://` URL parsing for the Phase 2 RTSP client.
+//! `rtsps://` URL parsing for the RTSP client.
 //!
 //! **Stability: Stable** — see the
 //! [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
 //!
-//! Built on the scheme-neutral [`tst_core::url::common`] helpers from
-//! Plan #97. The `rtp://` shape is parsed by [`RtpUrl`]; the
+//! Built on the scheme-neutral [`tst_core::url::common`] helpers. The
+//! `rtp://` shape is parsed by [`RtpUrl`]; the
 //! `rtsp://` / `rtsps://` shapes are parsed by [`RtspUrl`] (consumed by
-//! the Phase 2 RTSP client; see `crate::rtsp`).
+//! the RTSP client; see `crate::rtsp`).
 //!
 //! Supported `rtp://` query keys:
 //!
@@ -102,7 +102,7 @@ pub enum UrlError {
     Syntax(#[from] CoreUrlError),
     /// Scheme was not `rtp` (e.g., user passed an `srt://` URL by
     /// mistake). `rtsp://` / `rtsps://` rejected here too — they are
-    /// parsed by a separate Phase 2 module.
+    /// parsed by [`RtspUrl`].
     #[error("expected 'rtp' scheme, got '{got}'")]
     WrongScheme { got: String },
     /// `rtp://` requires a port. We do not pick a default.
@@ -120,8 +120,8 @@ pub enum UrlError {
     #[error("invalid pkt_size '{got}': {detail}")]
     BadPktSize { got: String, detail: String },
     /// `?pkt_size=` supplied to a receive-side entry point. The knob is
-    /// send-side only since the recv-ceiling change (PR #97): receive
-    /// buffers size to the transport's deliverable ceiling automatically.
+    /// send-side only: receive buffers size to the transport's
+    /// deliverable ceiling automatically.
     #[error(
         "pkt_size is a send-side knob; receive buffers size to the transport's deliverable ceiling automatically — remove ?pkt_size= from receiver URLs"
     )]
@@ -368,7 +368,7 @@ pub enum RtspTransportPref {
 
 /// Parsed `rtsp://` or `rtsps://` URL.
 ///
-/// Constructed by [`RtspUrl::parse`]; consumed by the Phase 2 RTSP
+/// Constructed by [`RtspUrl::parse`]; consumed by the RTSP
 /// client (`RtspClient::connect_with`).
 #[derive(Debug, Clone)]
 pub struct RtspUrl {
@@ -510,7 +510,7 @@ impl RtspUrl {
             host: parsed.host.to_string(),
             port,
             path: parsed.path.to_string(),
-            // Userinfo is percent-decoded (CORR-21): `parse_url` hands it
+            // Userinfo is percent-decoded: `parse_url` hands it
             // over verbatim; the encoded form is the only way to put
             // `@ : / ? #` in a credential and every other RTSP client decodes.
             username: parsed
@@ -673,7 +673,7 @@ mod tests {
 
     #[test]
     fn rejects_rtsp_scheme() {
-        // RTSP is a separate Phase 2 surface, not parsed by RtpUrl.
+        // RTSP is a separate surface, not parsed by RtpUrl.
         let err = RtpUrl::parse("rtsp://camera.lan/path").unwrap_err();
         assert!(matches!(err, UrlError::WrongScheme { .. }));
     }
@@ -879,10 +879,10 @@ mod rtsp_tests {
         assert!(u.password.is_some());
     }
 
-    /// CORR-21: userinfo is percent-decoded like every other RTSP client
+    /// Userinfo is percent-decoded like every other RTSP client
     /// (ffmpeg / VLC / GStreamer) — a password containing `@ : / ? #` can
-    /// only be expressed encoded, and the encoded form used to be hashed
-    /// verbatim into the Digest response → `AuthFailed` with no diagnostic.
+    /// only be expressed encoded, and hashing the encoded form verbatim
+    /// into the Digest response gives `AuthFailed` with no diagnostic.
     #[test]
     fn rtsp_url_credentials_are_percent_decoded() {
         use secrecy::ExposeSecret;

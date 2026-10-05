@@ -10,9 +10,7 @@
 //! mid-PLAY, UDP recv errors) bubble through the transport's normal
 //! `TransportError::Broken` path.
 //!
-//! Total variants: 18 (Phase 2 master-spec 12 + Url + NoMp2tMedia +
-//! MultipleMp2tMedia + NoH264Media + MultipleH264Media +
-//! UnsupportedPacketizationMode).
+//! Total variants: 18.
 
 use std::io;
 
@@ -27,7 +25,7 @@ use crate::url::UrlError;
 #[non_exhaustive]
 pub enum RtspError {
     /// Socket-level I/O on the control channel (connect refused,
-    /// connection reset, etc.). Mirrors Phase 1's
+    /// connection reset, etc.). Mirrors
     /// [`crate::ConnectError::Io`] but scoped to the RTSP TCP connection.
     #[error("RTSP I/O error: {0:?}")]
     Io(io::ErrorKind),
@@ -99,14 +97,14 @@ pub enum RtspError {
 
     /// `DESCRIBE` returned an SDP that contains no `m=` line with PT=33
     /// (MP2T, RFC 3551 §6). Only emitted by
-    /// `RtspClient::setup_mp2t_auto` (lands Wave B); explicit
+    /// `RtspClient::setup_mp2t_auto`; explicit
     /// `setup(&media)` does not consult MP2T-ness.
     #[error("no MPEG-TS m-line in SDP (no payload type 33)")]
     NoMp2tMedia,
 
     /// `DESCRIBE` returned an SDP with multiple `m=` lines containing
     /// PT=33. Caller should fall back to explicit
-    /// `RtspClient::setup` (lands Wave B) with a chosen media line.
+    /// `RtspClient::setup` with a chosen media line.
     #[error("multiple MPEG-TS m-lines in SDP ({count} found)")]
     MultipleMp2tMedia { count: usize },
 
@@ -143,7 +141,7 @@ pub enum RtspError {
     InvalidHeader { detail: &'static str },
 
     /// URL parsing failed before any RTSP exchange. Wraps the
-    /// underlying [`crate::RtpUrlError`] from Phase 1.
+    /// underlying [`crate::RtpUrlError`].
     #[error("RTSP URL parse error: {0}")]
     Url(#[from] UrlError),
 }
@@ -154,8 +152,7 @@ impl From<io::Error> for RtspError {
     }
 }
 
-/// Failure shape for `RtspServer` (introduced in Phase 3 Task 7)
-/// lifecycle and configuration. Per-session errors (one client
+/// Failure shape for `RtspServer` lifecycle and configuration. Per-session errors (one client
 /// misbehaving) do NOT surface here — they are logged via
 /// `tracing::warn!` and the session closes; the server keeps running.
 #[derive(Debug, thiserror::Error)]
@@ -212,7 +209,7 @@ pub enum RtspServerError {
     Shutdown,
 }
 
-/// Failure shape for `MountHandle` (introduced in Phase 3 Wave C) push methods.
+/// Failure shape for `MountHandle` push methods.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum MountError {

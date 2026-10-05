@@ -97,12 +97,11 @@ fn loopback_pair() -> (TcpTransport, std::net::TcpStream) {
     (client, server)
 }
 
-/// WP-C1: `is_cancelled()` is the CANCEL latch, never a liveness proxy.
+/// `is_cancelled()` is the CANCEL latch, never a liveness proxy.
 ///
-/// `TcpCancelHandle::is_cancelled()` used to be `!alive`, and tst-tcp drops
-/// `alive` on a clean peer EOF as well as on a cancel. Once the binding
-/// layer's `Owned::is_cancelled` ORs the transport's latch in (WP-C1), that
-/// spelling would relabel every clean TCP peer EOF as a caller cancel —
+/// tst-tcp drops `alive` on a clean peer EOF as well as on a cancel. The
+/// binding layer's `Owned::is_cancelled` ORs the transport's latch in, so an
+/// `is_cancelled()` spelled `!alive` would relabel every clean TCP peer EOF as a caller cancel —
 /// `TST_E_CLOSED` instead of `TST_E_END_OF_STREAM` at the C ABI, and the
 /// same one-kind shift in Python and the JVM. Pinned here at the crate
 /// level; the `peer_eof_is_not_a_cancel` conformance-kit row generalises it.
@@ -145,7 +144,7 @@ fn peer_eof_is_not_a_cancel() {
     assert!(client.cancel_handle().is_cancelled());
 }
 
-/// CORR-08: `TcpCancelHandle` must be reachable through both trait objects
+/// `TcpCancelHandle` must be reachable through both trait objects
 /// (`Transport::cancel_handle` / `RecvTransport::cancel_handle`), not just
 /// the inherent `TcpTransport::cancel_handle` method — generic shells and
 /// the managed wrappers only ever hold a `dyn Transport`/`dyn RecvTransport`.
@@ -273,7 +272,7 @@ impl Drop for HeldPeer {
     }
 }
 
-/// CORR-11: a peer that closes cleanly (FIN) must leave the transport dead.
+/// A peer that closes cleanly (FIN) must leave the transport dead.
 ///
 /// `recv_bytes` reports the EOF as `Broken`, so the connection is over — but
 /// before the fix only the *send* path stored `alive = false`, leaving
@@ -313,7 +312,7 @@ fn peer_eof_marks_transport_dead() {
     );
 }
 
-/// CORR-11 twin: a *fatal read error* (not a clean EOF) must also leave the
+/// Twin of the above: a *fatal read error* (not a clean EOF) must also leave the
 /// transport dead. `SO_LINGER 0` on the peer turns its close into an RST, so
 /// the client's next read fails with `ECONNRESET` — the terminal `Err(e)` arm
 /// of `recv_bytes` rather than the `Ok(0)` arm covered above.
@@ -365,7 +364,7 @@ fn fatal_read_error_marks_transport_dead() {
     );
 }
 
-/// X-CORR-07 / Q5 (E07): an empty destination must be a no-op, not a fake
+/// An empty destination must be a no-op, not a fake
 /// EOF. `TcpStream::read(&mut [])` returns `Ok(0)` on an OPEN peer, and the
 /// `Ok(0)` arm of `recv_bytes` used to read that as a peer FIN — latching
 /// `alive = false` and returning `Broken { cause: CleanEof }` while the peer
@@ -394,10 +393,9 @@ fn empty_recv_does_not_fake_eof() {
     assert!(buf[..n].iter().all(|&b| b == 0x47));
 }
 
-/// CORR-12: a `TcpListener` parked in `accept_blocking` must be
-/// unblockable from another thread. On `9b3fe2ee` this does not compile
-/// (`no method named cancel_handle found for struct TcpListener`) and the
-/// accept is a bare blocking `accept(2)` with no cancel path at any layer.
+/// A `TcpListener` parked in `accept_blocking` must be unblockable from
+/// another thread; without the listener cancel handle the accept is a bare
+/// blocking `accept(2)` with no cancel path at any layer.
 #[test]
 fn listener_cancel_handle_unblocks_parked_accept() {
     let listener = TcpListener::bind("127.0.0.1:0".parse().unwrap()).unwrap();

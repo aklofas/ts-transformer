@@ -1,6 +1,6 @@
-//! Phase 3 Task 22 — add_mount / add_multicast_mount / MountHandle
-//! surface integration tests. No RTP/RTCP flow exercised here;
-//! T23-T26 cover the actual streaming paths.
+//! add_mount / add_multicast_mount / MountHandle surface integration
+//! tests. No RTP/RTCP flow exercised here; the loopback, multicast and
+//! client tests cover the actual streaming paths.
 
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};

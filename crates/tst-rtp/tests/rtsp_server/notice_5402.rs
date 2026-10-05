@@ -1,4 +1,4 @@
-//! Phase 3 Wave H Task 3 — RFC 7826 §13.5.1 Notice 5402
+//! RFC 7826 §13.5.1 Notice 5402
 //! ("Server-Initiated TEARDOWN") wire delivery.
 //!
 //! Drives a raw TCP client through OPTIONS / DESCRIBE / SETUP / PLAY
@@ -175,18 +175,15 @@ fn stop_sends_notice_5402_announce_to_active_session() {
     drop(server);
 }
 
-/// Regression test for the Phase 4 Stage 3 follow-up: after
-/// `server.stop()` returns, the per-session TCP write half is
+/// After `server.stop()` returns, the per-session TCP write half is
 /// explicitly shut down (FIN sent), so the client's next read
 /// observes EOF promptly instead of timing out.
 ///
-/// Before the follow-up, the per-session task's cancellation dropped
-/// only the read half — the write half stayed open through Arc clones
-/// held by `state.sessions` and the fanout task, so the client's pump
-/// kept timing out on reads until its own teardown deadline. This
-/// test pins the EOF-arrives-promptly behavior so future regressions
-/// (anyone removing the explicit shutdown loop in `stop()`) trip the
-/// test.
+/// Cancelling the per-session task drops only the read half — the write
+/// half stays open through Arc clones held by `state.sessions` and the
+/// fanout task — so without the explicit shutdown loop in `stop()` the
+/// client's pump keeps timing out on reads until its own teardown
+/// deadline. This test pins the EOF-arrives-promptly behavior.
 #[test]
 fn stop_shuts_down_per_session_write_half_so_client_sees_eof_promptly() {
     let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
@@ -228,7 +225,7 @@ fn stop_shuts_down_per_session_write_half_so_client_sees_eof_promptly() {
             Ok(0) => break, // FIN observed — fix is working.
             Ok(_) => {
                 // The notice 5402 ANNOUNCE arrived first; keep reading
-                // until we hit FIN (which the follow-up fix guarantees).
+                // until we hit FIN (which the explicit shutdown guarantees).
                 continue;
             }
             Err(e)

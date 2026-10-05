@@ -53,8 +53,7 @@ fn keepalive_thread_pings_within_session_timeout() {
         panic!("no OPTIONS ping seen within 10 s; got: {total}");
     });
 
-    // Build the client. RtspClientBuilder is Task 16 (parallel land);
-    // until that merges, drive the keepalive via the lower-level
+    // Build the client and drive the keepalive via the lower-level
     // `spawn_keepalive_if_needed` helper directly.
     let url = format!("rtsp://127.0.0.1:{port}/test");
     let mut client = tst_rtp::RtspClient::connect(&url).unwrap();
@@ -75,7 +74,7 @@ fn keepalive_thread_pings_within_session_timeout() {
 /// consume it by its CSeq (≥ 1_000_000 = the keepalive range) and keep
 /// reading — returning it would misattribute it as the response to
 /// whatever request the caller just sent. Here the stale keepalive 200
-/// carries no `Public:` header, so pre-fix `options()` returned an empty
+/// carries no `Public:` header, so a misattributing `options()` would return an empty
 /// method list from the wrong response.
 #[test]
 fn stale_keepalive_response_not_misattributed_in_non_pump_mode() {

@@ -1,6 +1,6 @@
 //! TLS loopback test: `tcps://` hostname dial verifies against a dnsName-SAN cert.
 //!
-//! This is the integration test for DA-NET-9: the client dials by *hostname*
+//! The client dials by *hostname*
 //! (`localhost`) and rustls verifies the server certificate's `dnsName` SAN.
 //!
 //! The positive-path cert carries ONLY a `dnsName` SAN for `localhost` (no
@@ -79,7 +79,7 @@ fn echo_server(listener: TcpListener) -> thread::JoinHandle<()> {
 /// by *hostname* (`localhost`) and the server certificate carries that name
 /// as a `dnsName` SAN (with NO `iPAddress` SAN).
 ///
-/// This is the core assertion of DA-NET-9: hostname SNI works end-to-end.
+/// The core assertion: hostname SNI works end-to-end.
 /// If `tls.rs` reverted to the old IP-string server-name form (presenting the
 /// resolved `127.0.0.1` for SNI), this test would fail with a certificate
 /// mismatch error because the cert has no `iPAddress` SAN.
@@ -106,7 +106,7 @@ fn tcps_hostname_loopback_handshake_and_roundtrip() {
     // Spawn echo server — accepts once, echoes 4 bytes, exits.
     let srv = echo_server(listener);
 
-    // --- THE POINT OF DA-NET-9 ---
+    // --- THE POINT OF THIS TEST ---
     // Dial by *hostname*. The cert has ONLY a dnsName SAN for "localhost"
     // (no iPAddress SAN). rustls must accept the handshake because the SNI
     // ("localhost") matches the dnsName SAN. An old IP-based SNI would present
@@ -189,7 +189,7 @@ fn tcps_ip_dial_against_dns_only_cert_loopback_fails() {
 }
 
 // ---------------------------------------------------------------------------
-// CORR-10: explicit close on a TLS transport is visible to the peer
+// Explicit close on a TLS transport is visible to the peer
 // ---------------------------------------------------------------------------
 
 /// `Transport::close` on a `tcps://` transport must terminate the peer's read,
@@ -241,7 +241,7 @@ fn tcps_explicit_close_loopback_ends_the_peer_read() {
     // outcome of Transport::send_bytes (the slice is intact), and this send
     // is what drives the lazy TLS handshake — completing it can need more
     // than one 100 ms write-timeout tick if the server's own accept happens
-    // to land inside its (also ~100 ms) non-blocking poll window (CORR-12).
+    // to land inside its (also ~100 ms) non-blocking poll window.
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     loop {
         match client.send_bytes(b"ping") {
@@ -304,10 +304,9 @@ fn tcps_explicit_close_loopback_ends_the_peer_read() {
 /// down with unread receive data is answered by the kernel with RST instead of
 /// FIN (Windows at `shutdown`, Linux at `close`), and a RST can overtake and
 /// purge the `close_notify` we just wrote, so the peer sees a reset
-/// (`BrokenCause::Unspecified`) instead of a clean EOF. Seen twice on the
-/// windows-msvc leg (2026-09-14, 2026-10-02) as
-/// `tcps_explicit_close_loopback_ends_the_peer_read` failing. The fix drains
-/// the already-received records before the alert; this test pins it on the
+/// (`BrokenCause::Unspecified`) instead of a clean EOF; on windows-msvc
+/// that fails `tcps_explicit_close_loopback_ends_the_peer_read`. The close
+/// drains the already-received records before the alert; this test pins it on the
 /// shape that trips the kernel on every platform (close + drop), with the
 /// peer's read deliberately late so the drop has landed before it looks.
 #[test]
