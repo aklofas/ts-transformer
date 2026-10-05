@@ -107,7 +107,7 @@ impl Shutdown {
 /// already lives in one: `ManagedTransport::{attempts,reconnects,
 /// reconnecting}_handle` hand those three out individually, so a binding
 /// can poll them after the transport has moved into a sender shell without
-/// holding — or knowing about — the rest of this state (ARCH-08). Every
+/// holding — or knowing about — the rest of this state. Every
 /// use site reads through `Deref` unchanged.
 #[derive(Debug)]
 pub(crate) struct ManagedShared {
@@ -427,7 +427,7 @@ pub(crate) fn worker_run<T: Transport>(ctx: WorkerCtx<T>) {
                 // no caller. Surface as an abnormal give-up so the next
                 // send reports Broken instead of queuing forever. Store
                 // the abnormal flag FIRST, matching the guard's Drop
-                // order (Finding A): otherwise a send_bytes landing
+                // order: otherwise a send_bytes landing
                 // between the two stores could observe gave_up = true
                 // with gave_up_abnormal still false and report the wrong
                 // (budget) message for this poison abort.
@@ -454,8 +454,8 @@ pub(crate) fn worker_run<T: Transport>(ctx: WorkerCtx<T>) {
             let step = {
                 let Ok(mut transport_guard) = ctx.inner.lock() else {
                     // Inner lock poisoned mid-drain — same abnormal
-                    // give-up (and the same abnormal-first store order,
-                    // Finding A) as the reconnect-phase poison path above.
+                    // give-up (and the same abnormal-first store order) as
+                    // the reconnect-phase poison path above.
                     ctx.shared.gave_up_abnormal.store(true, Ordering::Release);
                     ctx.shared.gave_up.store(true, Ordering::Release);
                     return;
@@ -475,7 +475,7 @@ pub(crate) fn worker_run<T: Transport>(ctx: WorkerCtx<T>) {
                         // the send gate does next (possibly a brand-new
                         // worker), not to this one — see ActiveClearGuard's
                         // doc for why an unconditional re-clear on Drop
-                        // would clobber that ownership handoff (Finding B).
+                        // would clobber that ownership handoff.
                         ctx.shared.bg_active.store(false, Ordering::Release);
                         active_guard.skip.store(true, Ordering::Release);
                         DrainPlan::Empty

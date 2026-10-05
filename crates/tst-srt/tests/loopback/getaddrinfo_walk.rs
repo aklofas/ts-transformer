@@ -1,5 +1,4 @@
 //! Verifies connect/bind walk past failing resolved addresses.
-//! Audit Issues 3 + 10.
 
 use std::net::ToSocketAddrs;
 use std::time::Duration;

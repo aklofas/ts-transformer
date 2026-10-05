@@ -352,13 +352,12 @@ fn cancel_completes_while_the_background_worker_drain_is_parked() {
     );
 }
 
-/// X-CORR-01, close half: `close()` joins the background worker, so a
-/// worker parked inside an inner `send_bytes` (holding `inner` and
-/// `gap`) has to be woken by close itself — the shutdown signal only
-/// interrupts a backoff wait, not a transport call. Before the fix,
-/// close() stored `closed`, signalled, and joined: the join never
-/// completed until the test's rescue gate released the worker, and the
-/// inner's cancel handle never fired at all.
+/// Close half: `close()` joins the background worker, so a worker parked
+/// inside an inner `send_bytes` (holding `inner` and `gap`) has to be
+/// woken by close itself — the shutdown signal only interrupts a backoff
+/// wait, not a transport call. A close() that only stores `closed`,
+/// signals, and joins never completes the join until the test's rescue
+/// gate releases the worker, and the inner's cancel handle never fires.
 ///
 /// Shape: close runs on its own thread with a bounded wait (a hung join
 /// surfaces as `closed_in_time == false`, never as a wedged test), the
@@ -424,11 +423,11 @@ fn close_wakes_background_drain() {
     );
 }
 
-/// X-CORR-01, Drop half: `Drop` is signal-and-detach (it must never
-/// block), so the detached worker only ever exits if something wakes its
-/// parked inner send. Before the fix Drop signalled shutdown and fired
-/// nothing — the worker kept its Arcs and its transport, parked forever
-/// (until the test's rescue gate). The verdict is the same as for close:
+/// Drop half: `Drop` is signal-and-detach (it must never block), so the
+/// detached worker only ever exits if something wakes its parked inner
+/// send. A Drop that signals shutdown and fires nothing leaves the worker
+/// holding its Arcs and its transport, parked forever (until the test's
+/// rescue gate). The verdict is the same as for close:
 /// the live inner's cancel handle fires before the rescue gate opens.
 #[test]
 fn drop_wakes_background_drain() {

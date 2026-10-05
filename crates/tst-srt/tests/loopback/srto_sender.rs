@@ -1,4 +1,4 @@
-//! Verifies SRTO_SENDER=1 is set when role=Sender. Audit Issue 2.
+//! SRTO_SENDER=1 is set whenever the role is Sender.
 
 use std::ffi::c_int;
 use std::time::Duration;

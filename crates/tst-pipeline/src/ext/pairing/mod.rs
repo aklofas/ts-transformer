@@ -38,8 +38,8 @@
 //!   videos buffered pre-wrap will force-emit as `UnpairedVideo` once
 //!   the wait window closes. Long-session callers who care about
 //!   continuity-across-wrap should either restart the pairer at the
-//!   wrap boundary or use a higher-level monotone PTS source. Since PR
-//!   #195 this holds only when `DemuxerConfig::unwrap_timestamps` is
+//!   wrap boundary or use a higher-level monotone PTS source. This holds
+//!   only when `DemuxerConfig::unwrap_timestamps` is
 //!   `false` (the default); with it enabled — reachable here through
 //!   `PairingDemuxerConfig.demuxer` — the emitted timeline is unwrapped
 //!   and the pairer's saturating i64 arithmetic handles the extended
@@ -58,9 +58,8 @@
 //! # Cross-language wrappers
 //!
 //! Shipped in Python (`tstrans.pipeline`) and JVM (`org.tstrans.pipeline.Pairer`).
-//! C ABI / UniFFI exposure is deferred to the future receiver-surface
-//! plan. The Rust types in this module are designed to translate
-//! cleanly when that plan lands; [`PairingDemuxer`] is the byte-feeding
+//! C ABI / UniFFI exposure is not shipped yet. The Rust types in this
+//! module are designed to translate cleanly to it; [`PairingDemuxer`] is the byte-feeding
 //! surface those bindings consume (no `DemuxEvent` crosses the FFI
 //! boundary).
 //!
@@ -192,7 +191,7 @@ pub(super) fn pts_distance(a: Pts90khz, b: Pts90khz) -> i64 {
 /// | Kotlin | Drain via `flush()`, then `close()` (`use { }`) — same native-handle lifecycle as Java |
 /// | Swift | `deinit` calls drop; explicit `flush()` before exit to drain trailing outputs |
 /// | Python | `pairer.flush()` at end-of-stream; let GC reclaim |
-/// | C | (deferred to per-binding plan — pairer C ABI not yet shipped) |
+/// | C | (pairer C ABI not shipped yet) |
 pub struct Pairer {
     state: PairerState,
     stats: PairerStats,

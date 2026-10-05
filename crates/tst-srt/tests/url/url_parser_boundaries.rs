@@ -1,4 +1,4 @@
-//! Boundary-value tests for the URL parser. Per spec §8.4.
+//! Boundary-value tests for the URL parser.
 
 use tst_srt::{SrtUrl, UrlError};
 

@@ -315,7 +315,7 @@ fn x_sendtimeout_query() {
 
 #[test]
 fn x_unknown_extension_rejects() {
-    // x- prefix is reserved but not a free-for-all (spec §4.2).
+    // x- prefix is reserved but not a free-for-all.
     let e = SrtUrl::parse("srt://1.2.3.4:9000?x-foo=bar").unwrap_err();
     assert!(matches!(e, UrlError::UnknownKey { ref key } if key == "x-foo"));
 }
@@ -429,7 +429,7 @@ fn last_occurrence_wins_on_duplicate_keys() {
 fn adapter_rejected_as_unsupported() {
     // "adapter" is not in libsrt's vocabulary table per the apps source,
     // and it has no SocketBuilder counterpart in this library. Reject as
-    // UnknownKey (spec §4.4 — adapter is rejected for v1).
+    // UnknownKey.
     let e = SrtUrl::parse("srt://1.2.3.4:9000?adapter=192.168.1.5").unwrap_err();
     assert!(matches!(e, UrlError::UnknownKey { ref key } if key == "adapter"));
 }

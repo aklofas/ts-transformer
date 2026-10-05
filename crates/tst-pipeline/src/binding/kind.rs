@@ -45,7 +45,7 @@ use tst_core::transport::TransportError;
 /// code in -48..=-1 and must equal the discriminant for C-numbered kinds.
 macro_rules! kinds {
     ( $( $(#[$doc:meta])* $variant:ident = $code:literal => $name:literal, $member:literal, $proj:literal ; )+ ) => {
-        /// The one error-kind table shared by every binding (spec §3.3).
+        /// The one error-kind table shared by every binding.
         ///
         /// **Stability: Provisional** — see the
         /// [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
@@ -75,8 +75,8 @@ macro_rules! kinds {
                 match self { $( Self::$variant => $name, )+ }
             }
 
-            /// The kind's name as the bindings resolve it (the kind rule, spec
-            /// §3.3): [`Self::variant_name`] with the domain prefix removed
+            /// The kind's name as the bindings resolve it (the kind rule):
+            /// [`Self::variant_name`] with the domain prefix removed
             /// (`UdpIo` → `IO`, what `getattr(UdpErrorKind, …)` /
             /// `GetStaticField(UdpException$Kind, …)` looks up); equal to
             /// `variant_name()` for cross-domain kinds. NOT unique across
@@ -337,7 +337,7 @@ impl core::fmt::Display for BindingError {
 
 impl std::error::Error for BindingError {}
 
-/// The error a K7 wildcard arm produces: a variant of a `#[non_exhaustive]`
+/// The error a wildcard arm produces: a variant of a `#[non_exhaustive]`
 /// upstream enum that this table does not map yet. Loud on purpose — the
 /// `scripts/check/rust/kind-table-coverage.sh` rail fails before such a
 /// variant can reach a user, so this string only ever appears if the rail
@@ -373,7 +373,7 @@ fn map_mux_kind(k: MuxErrorKind) -> BindingErrorKind {
     }
 }
 
-/// K4: the four `MuxError` variants C already numbers precisely keep their
+/// The four `MuxError` variants C already numbers precisely keep their
 /// own kinds; everything else folds to `MuxError::kind()`, whose per-variant
 /// coverage the compiler pins inside tst-core (its match has no wildcard).
 /// Both matches HERE need one (`MuxError` and `MuxErrorKind` are
@@ -398,9 +398,9 @@ impl From<MuxError> for BindingError {
     }
 }
 
-/// Every `DemuxError` variant, 1:1 (K3). Wildcard required (K7); the
+/// Every `DemuxError` variant, 1:1. Wildcard required; the
 /// kind-table rail greps every variant before it.
-/// `None` is the K7 wildcard arm — the one place that decides a variant
+/// `None` is the wildcard arm — the one place that decides a variant
 /// is unmapped, so a deliberate `=> Internal` row keeps its own detail.
 fn map_demux(e: &DemuxError) -> Option<BindingErrorKind> {
     match e {
@@ -430,9 +430,9 @@ impl From<DemuxError> for BindingError {
     }
 }
 
-/// The six KLV-decode buckets (K3), byte-for-byte the routing at
+/// The six KLV-decode buckets, byte-for-byte the routing at
 /// `bindings/python/src/klv.rs:97-121` / `bindings/jvm/src/error.rs:138-163`.
-/// `None` is the K7 wildcard arm — the one place that decides a variant
+/// `None` is the wildcard arm — the one place that decides a variant
 /// is unmapped, so a deliberate `=> Internal` row keeps its own detail.
 fn map_klv_decode(e: &KlvDecodeError) -> Option<BindingErrorKind> {
     match e {
@@ -486,7 +486,7 @@ impl From<KlvDecodeError> for BindingError {
 /// klv module raises it directly): `TruncatedField` is a truncated set,
 /// every other field failure is malformed bytes
 /// (`bindings/python/src/klv.rs:140-141`, table rows 67 + 72).
-/// `None` is the K7 wildcard arm — the one place that decides a variant
+/// `None` is the wildcard arm — the one place that decides a variant
 /// is unmapped, so a deliberate `=> Internal` row keeps its own detail.
 fn map_klv_field(e: &KlvFieldError) -> Option<BindingErrorKind> {
     match e {
@@ -521,8 +521,8 @@ impl From<KlvFieldError> for BindingError {
     }
 }
 
-/// Every `KlvEncodeError` variant, 1:1 (K3).
-/// `None` is the K7 wildcard arm — the one place that decides a variant
+/// Every `KlvEncodeError` variant, 1:1.
+/// `None` is the wildcard arm — the one place that decides a variant
 /// is unmapped, so a deliberate `=> Internal` row keeps its own detail.
 fn map_klv_encode(e: &KlvEncodeError) -> Option<BindingErrorKind> {
     match e {
@@ -572,8 +572,8 @@ impl From<KlvEncodeError> for BindingError {
     }
 }
 
-/// Every `CodecParseError` variant, 1:1 (K3).
-/// `None` is the K7 wildcard arm — the one place that decides a variant
+/// Every `CodecParseError` variant, 1:1.
+/// `None` is the wildcard arm — the one place that decides a variant
 /// is unmapped, so a deliberate `=> Internal` row keeps its own detail.
 fn map_codec(e: &CodecParseError) -> Option<BindingErrorKind> {
     match e {
@@ -660,7 +660,7 @@ impl<E: core::fmt::Display> From<CloseFailure<E>> for BindingError {
     }
 }
 
-/// `ShellErrorKind` is a projection of the table (spec §3.3). Exhaustive:
+/// `ShellErrorKind` is a projection of the table. Exhaustive:
 /// both enums live in this crate, so a new `ShellErrorKind` variant is a
 /// compile error here until it is given a kind.
 impl From<ShellErrorKind> for BindingErrorKind {
@@ -680,7 +680,7 @@ impl From<ShellErrorKind> for BindingErrorKind {
 /// also being given a message: a second match would be invisible to
 /// `scripts/check/rust/kind-table-coverage.sh` (it reads this function), and a
 /// variant with an arm here but none there would silently become `Internal`.
-/// `None` is the K7 wildcard — the one place that decides a variant is
+/// `None` is the wildcard — the one place that decides a variant is
 /// unmapped, so a deliberate `=> Internal` row would keep its own detail.
 fn map_transport(e: &TransportError) -> Option<(BindingErrorKind, String)> {
     match e {
@@ -700,11 +700,11 @@ fn map_transport(e: &TransportError) -> Option<(BindingErrorKind, String)> {
     }
 }
 
-/// Kind of a `TransportError`. `ExplicitClose` projects to `Closed` (spec
-/// §3.3, confirmed 2026-09-17): C has no cancelled code and its numbers are
-/// frozen; the detail string carries the distinction. A variant `map_transport`
-/// does not map yet classifies as [`BindingErrorKind::Internal`]; use the
-/// `From` impl when the detail string matters, it says so explicitly.
+/// Kind of a `TransportError`. `ExplicitClose` projects to `Closed`: C has
+/// no cancelled code and its numbers are frozen; the detail string carries
+/// the distinction. A variant `map_transport` does not map yet classifies
+/// as [`BindingErrorKind::Internal`]; use the `From` impl when the detail
+/// string matters, it says so explicitly.
 pub fn kind_of_transport(e: &TransportError) -> BindingErrorKind {
     map_transport(e)
         .map(|(kind, _)| kind)
@@ -731,9 +731,9 @@ impl From<TsFramingError> for BindingError {
     }
 }
 
-// Shell-error structs project by `source` (K6) — the same split Python and
-// the JVM already apply — so `MuxSender::send_video(bad NAL)` is
-// INVALID_NAL, not the coarser INPUT_MALFORMED the C shell path emitted.
+// Shell-error structs project by `source` — the same split Python and the
+// JVM apply — so `MuxSender::send_video(bad NAL)` is INVALID_NAL, not the
+// coarser INPUT_MALFORMED.
 // The source enums are in-crate, so these matches are exhaustive.
 
 impl From<MuxSenderError> for BindingError {
@@ -800,12 +800,11 @@ impl From<RawReceiverError> for BindingError {
 }
 
 /// `MuxPublisher<P>`'s error, generic over the sink error `E` (tst-hls's
-/// `HlsError` in practice — its `From<HlsError>` lives in tst-hls, Task
-/// A2.5, so this impl needs only `E: Into<BindingError>`). By source
-/// (K6): a muxer rejection is the mux kind (today's Python folded it into
-/// `HlsErrorKind.INVALID_CONFIG`), the sink's error is its own kind,
-/// `Closed` (shell consumed via `finish`) is `Closed` (today's Python said
-/// `FINISHED`), `LockPoisoned` is `Internal`. In-crate enum → exhaustive.
+/// `HlsError` in practice — its `From<HlsError>` lives in tst-hls, so this
+/// impl needs only `E: Into<BindingError>`). Projected by `source`: a muxer
+/// rejection is the mux kind (not `HlsErrorKind.INVALID_CONFIG`), the
+/// sink's error is its own kind, `Closed` (shell consumed via `finish`) is
+/// `Closed` (not `FINISHED`), `LockPoisoned` is `Internal`. In-crate enum → exhaustive.
 impl<E> From<MuxPublisherError<E>> for BindingError
 where
     E: Into<BindingError> + std::error::Error + Send + Sync + 'static,
@@ -1124,7 +1123,7 @@ mod tests {
             );
             assert!(k.is_c_frozen());
         }
-        // C codes that are deliberately NOT discriminants (K2), in two groups.
+        // C codes that are deliberately NOT discriminants, in two groups.
         //
         // Reserved and never produced — no `TstError` producer exists:
         //   -28 UdpPayloadTooLarge, -29 UdpIfaceUnsupported,

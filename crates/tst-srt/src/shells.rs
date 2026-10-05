@@ -1,12 +1,11 @@
-//! URL → managed shell in one call: the `from_url` family (Arc 2 WP-A3,
-//! ARCH-01).
+//! URL → managed shell in one call: the `from_url` family.
 //!
 //! **Stability: Provisional** — see the
 //! [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
 //!
-//! Each function composes what the C, Python and JVM bindings each used
-//! to compose by hand: build the reconnect factory from the parsed
-//! [`SrtUrl`] (caller → [`SrtUrl::connect`], listener →
+//! Each function composes, once for the C, Python and JVM bindings: build
+//! the reconnect factory from the parsed [`SrtUrl`] (caller →
+//! [`SrtUrl::connect`], listener →
 //! [`SrtUrl::accept_one`] through the managed transport's
 //! [`FactoryCancel`] slot), open the initial transport the same way, wrap
 //! it in the managed decorator, wrap THAT in the shell, and hand back the
@@ -125,7 +124,7 @@ fn recv_handles(managed: &ManagedRecvTransport<SrtTransport>) -> ManagedHandles 
     ManagedHandles {
         // Always `Some` by construction — `ManagedRecvTransport::cancel_handle`
         // builds a `ManagedRecvCancel` unconditionally. This is the ONE
-        // `.expect` the ≥ 16 binding sites used to carry each.
+        // `.expect`, so no binding site carries its own.
         cancel: managed
             .cancel_handle()
             .expect("ManagedRecvTransport::cancel_handle is always Some"),

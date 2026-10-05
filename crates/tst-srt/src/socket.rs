@@ -503,9 +503,8 @@ fn buf_bytes_to_i32(name: &str, n: u32) -> Result<i32, OptionError> {
 /// ceiling of ~37.7 MB, hit silently by anything larger. Read the
 /// effective value back and warn on a shortfall beyond the benign
 /// one-packet floor-division rounding, naming the knob that actually
-/// lifts the ceiling — this silent clamp cost an integrator a debugging
-/// session (2026-08-03 field ask). Callers must apply `SRTO_MSS` and
-/// `SRTO_FC` BEFORE calling this — both feed the conversion above.
+/// lifts the ceiling. Callers must apply `SRTO_MSS` and `SRTO_FC` BEFORE
+/// calling this — both feed the conversion above.
 fn set_rcvbuf_checked(
     handle: srt_sys::SRTSOCKET,
     requested: u32,
@@ -1368,7 +1367,7 @@ mod tests {
         };
 
         // Simulate an accepted handle that inherited non-blocking mode from
-        // the listener (the exact state a raced accept_timeout probe used to
+        // the listener (the exact state a raced accept_timeout probe can
         // leave behind).
         super::set_bool(accepted, srt_sys::SRT_SOCKOPT_SRTO_RCVSYN, false)
             .expect("set_bool RCVSYN=false on a live accepted handle");
@@ -1422,10 +1421,10 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
-    // DA-SRT-4: perf_to_stats must preserve sub-millisecond RTT precision.
+    // perf_to_stats must preserve sub-millisecond RTT precision.
     // libsrt's CBytePerfMon.msRTT is a float in milliseconds (e.g. 1.5 ms).
-    // The old code used Duration::from_millis(1.5 as u64) = 1ms (truncated).
-    // The fix uses Duration::from_micros((1.5 * 1000.0) as u64) = 1500µs.
+    // Duration::from_millis(1.5 as u64) truncates to 1ms;
+    // Duration::from_micros((1.5 * 1000.0) as u64) keeps 1500µs.
     #[test]
     fn perf_to_stats_preserves_sub_ms_rtt() {
         let mut p: srt_sys::CBytePerfMon = unsafe { std::mem::zeroed() };

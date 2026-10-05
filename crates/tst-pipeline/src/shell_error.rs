@@ -174,7 +174,7 @@ pub(crate) enum Direction {
 /// Compute the shell-kind for a `MuxError`. Used by `MuxSender`'s
 /// `From<MuxError>` impl. **Every MuxError variant is matched explicitly**
 /// — the CI ratchet `scripts/check/rust/pipeline-kind-classification.sh`
-/// (Task 10) will enforce no variant escapes through a wildcard.
+/// enforces that no variant escapes through a wildcard.
 pub(crate) fn kind_from_mux(e: &MuxError) -> ShellErrorKind {
     use ShellErrorKind::*;
     match e {
@@ -277,7 +277,7 @@ pub(crate) fn kind_from_demux(e: &DemuxError) -> ShellErrorKind {
 ///
 /// No wildcard needed: TsFramingError is defined in the same crate as
 /// this helper, so Rust treats the #[non_exhaustive] match as exhaustive
-/// in-crate. (TsFramingError received #[non_exhaustive] in Wave 2.3.)
+/// in-crate.
 pub(crate) fn kind_from_framing(e: &TsFramingError) -> ShellErrorKind {
     use ShellErrorKind::*;
     match e {
@@ -383,7 +383,7 @@ mod tests {
         );
     }
 
-    /// D5 follow-up: `errno_code_from_transport` extracts the field from
+    /// `errno_code_from_transport` extracts the field from
     /// the carrying variants and returns `None` for non-carrying ones.
     #[test]
     fn errno_code_from_transport_extracts_from_carrying_variants() {

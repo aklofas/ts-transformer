@@ -1,21 +1,21 @@
-//! WP-C1: a peer disconnect must NOT latch `SrtCancelHandle::is_cancelled()`.
+//! A peer disconnect must NOT latch `SrtCancelHandle::is_cancelled()`.
 //!
-//! `is_cancelled()` used to read the `CANCELLED` sentinel in the handle's
-//! atomic — i.e. "the closer has run". But the closer also runs on the
-//! OWNER's teardown: `Socket::drop` fires the handle, and `SrtTransport`
-//! drops its `Option<Socket>` on every peer-break path (`transport.rs`
-//! recv `:280/:294/:313`, send `:193/:201/:225`). So a peer that simply
-//! went away latched the same bit a caller's `cancel()` does.
+//! The closer behind the handle also runs on the OWNER's teardown:
+//! `Socket::drop` fires the handle, and `SrtTransport` drops its
+//! `Option<Socket>` on every peer-break path (`transport.rs`). An
+//! `is_cancelled()` that read the "closer has run" sentinel would latch
+//! for a peer that simply went away — the same bit a caller's `cancel()`
+//! sets.
 //!
-//! That is load-bearing, not cosmetic: once `Owned::is_cancelled` ORs the
-//! transport's latch in (WP-C1), `record_recv_error`'s
-//! `broken_is_eos && !cancelled` guard stops firing and every clean SRT
-//! end-of-stream is reported as a caller close — `TST_E_CLOSED` (−7)
-//! instead of `TST_E_END_OF_STREAM` (−12) at the C ABI, and the same
-//! one-kind shift in Python and the JVM. Four `tst-c` receiving tests
-//! caught it.
+//! That is load-bearing, not cosmetic: `Owned::is_cancelled` ORs the
+//! transport's latch in, so `record_recv_error`'s
+//! `broken_is_eos && !cancelled` guard would stop firing and every clean
+//! SRT end-of-stream would be reported as a caller close — `TST_E_CLOSED`
+//! (−7) instead of `TST_E_END_OF_STREAM` (−12) at the C ABI, and the same
+//! one-kind shift in Python and the JVM. Four `tst-c` receiving tests pin
+//! it.
 //!
-//! The fix splits the two: `SrtCancelHandle::cancel()` (the caller path)
+//! So the two are split: `SrtCancelHandle::cancel()` (the caller path)
 //! latches; `close_without_cancel()` (owner teardown: both `Drop` impls)
 //! closes and wakes without latching.
 

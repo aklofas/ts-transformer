@@ -160,9 +160,9 @@ impl<P: Publisher> MuxPublisher<P> {
         // A keyframe BEGINS the next segment. Flush everything already muxed
         // into the closing segment, cut (EXTINF = exact PTS span
         // start..this keyframe), then re-emit PSI so the new segment opens
-        // PAT → PMT → IDR (RFC 8216 independent decodability). The pre-fix
-        // order pushed first and cut after, which put the IDR at the TAIL of
-        // the closing segment (DA-NET-1).
+        // PAT → PMT → IDR (RFC 8216 independent decodability). Pushing first
+        // and cutting after would put the IDR at the TAIL of the closing
+        // segment.
         if key_frame && inner.segment_start_pts.is_some() {
             Self::drain_locked(&mut inner)?;
             let start = inner.segment_start_pts.unwrap_or(pts);
@@ -542,7 +542,7 @@ mod tests {
         }
     }
 
-    /// DA-PIPE-5: after the inner mutex is poisoned by a mid-mutation panic,
+    /// After the inner mutex is poisoned by a mid-mutation panic,
     /// every public method must NOT panic:
     ///   - fallible send/cut methods → `Err(MuxPublisherError::LockPoisoned)`
     ///   - infallible stats methods → return a value without panicking

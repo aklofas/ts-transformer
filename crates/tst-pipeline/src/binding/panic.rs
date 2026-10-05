@@ -1,9 +1,8 @@
 //! Panic isolation shared by every binding's outer boundary.
 //!
-//! `tst-c`'s `ffi_catch` and `tst-jni`'s `jni_catch` each carried a private
-//! copy of the payload-to-string helper and of the
-//! `catch_unwind(AssertUnwindSafe(f))` shape; this module is the single
-//! definition both delegate to (Arc 2 §3.1 `panic.rs`).
+//! The payload-to-string helper and the `catch_unwind(AssertUnwindSafe(f))`
+//! shape, defined once: `tst-c`'s `ffi_catch` and `tst-jni`'s `jni_catch`
+//! both delegate here.
 
 use std::panic::AssertUnwindSafe;
 
@@ -19,8 +18,8 @@ use std::panic::AssertUnwindSafe;
 /// plus `detail`) and never re-enters state the closure may have torn —
 /// `Owned::with_mut` hands the closure a `&mut T` borrowed from a guard
 /// that lives OUTSIDE this boundary, so the mutex is not poisoned; what
-/// happens to the slot is `Owned`'s decision (spec Arc 2 §3.2 as amended:
-/// a mutator panic drops `T`, a reader panic keeps it).
+/// happens to the slot is `Owned`'s decision (a mutator panic drops `T`, a
+/// reader panic keeps it).
 pub fn catch<R>(f: impl FnOnce() -> R) -> Result<R, String> {
     std::panic::catch_unwind(AssertUnwindSafe(f)).map_err(|p| payload_message(&*p))
 }
@@ -28,8 +27,7 @@ pub fn catch<R>(f: impl FnOnce() -> R) -> Result<R, String> {
 /// Best-effort detail string from a `catch_unwind` payload: the `&'static
 /// str` of a literal `panic!`, the `String` of a formatted one, or the
 /// fixed text `"non-string panic payload"` for anything else
-/// (`panic_any`). Byte-identical to the strings `tst-c` and `tst-jni`
-/// produced before Arc 2, so their error-detail tests are unchanged.
+/// (`panic_any`). The bindings' error-detail tests pin these exact strings.
 pub fn payload_message(payload: &(dyn core::any::Any + Send)) -> String {
     if let Some(s) = payload.downcast_ref::<&'static str>() {
         String::from(*s)

@@ -11,20 +11,18 @@
 //! `no_std` sender/receiver shells.
 //!
 //! - [`handles`] — [`ManagedHandles`], the five lock-free observers a
-//!   binding collects at open time (spec §3.4): cancel, stream-end reason,
+//!   binding collects at open time: cancel, stream-end reason,
 //!   successful rebuilds, factory attempts, reconnect-in-progress. No
 //!   `Option`s — the transport crate's `from_url` family builds it once.
-//! - [`kind`] — [`BindingErrorKind`]: the one error-kind table (spec Arc 2
-//!   §3.3) every binding resolves its per-domain kind name from,
-//!   discriminated by the frozen C `TST_E_*` codes, plus [`BindingError`]
-//!   = kind + detail.
+//! - [`kind`] — [`BindingErrorKind`]: the one error-kind table every
+//!   binding resolves its per-domain kind name from, discriminated by the
+//!   frozen C `TST_E_*` codes, plus [`BindingError`] = kind + detail.
 //! - [`owned`] — [`Owned<T, S>`](owned::Owned): `Mutex<Option<T>>` slot +
 //!   lock-free cancel + construction-time snapshot, with the poison and
-//!   panic policy of spec Arc 2 §3.2 (readers recover, mutators refuse; a
-//!   panic inside a closure is reported, never poisons the mutex).
+//!   panic policy (readers recover, mutators refuse; a panic inside a
+//!   closure is reported, never poisons the mutex).
 //! - [`mod@panic`] — `catch_unwind` + payload-to-string, once, for every
-//!   binding's outer boundary (`ffi_catch` / `jni_catch` delegate here
-//!   once the bindings re-point in Arc 2 WP-B).
+//!   binding's outer boundary (`ffi_catch` / `jni_catch` delegate here).
 //! - [`shells`] — [`Close`] for the seven pipeline shells, and
 //!   [`SendHalf`] / [`RecvHalf`] for raw transports. These live here
 //!   because the orphan rule forbids the binding crates from writing them.

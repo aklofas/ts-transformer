@@ -1,5 +1,5 @@
 //! Verifies the `info_span!`/`info!` lifetime events on each of the
-//! six pipeline shells (Task 2.4.6 of the Phase 2 DX plan).
+//! six pipeline shells.
 //!
 //! Each shell opens an `info_span!` in its constructor and emits an
 //! `info!` event there ("<Shell> opened"); on `Drop` it re-enters the

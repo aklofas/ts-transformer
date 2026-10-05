@@ -426,7 +426,7 @@ mod tests {
         assert!(t.cancel_handle().is_none());
     }
 
-    /// D5 follow-up: `ShellError::errno_code()` reaches through the
+    /// `ShellError::errno_code()` reaches through the
     /// typed source tree and returns the inner TransportError's
     /// `errno_code` field. Other ShellError types share this shape.
     #[test]

@@ -1,15 +1,14 @@
 //! Verifies that `recv_buf_bytes` / `send_buf_bytes` pass byte values verbatim
-//! to SRTO_RCVBUF / SRTO_SNDBUF (DA-SRT-1).
+//! to SRTO_RCVBUF / SRTO_SNDBUF.
 //!
-//! The field names were previously `recv_buf_packets` / `send_buf_packets`,
-//! implying packet counts. libsrt stores these options in bytes internally
-//! (converting to buffer-slot counts via MSS-28 division with a 32-slot
-//! floor). Setting 1 048 576 bytes is not 1 048 576 packets.
+//! The values are bytes, not packet counts: libsrt stores these options in
+//! bytes internally (converting to buffer-slot counts via MSS-28 division with
+//! a 32-slot floor). Setting 1 048 576 bytes is not 1 048 576 packets.
 //!
 //! This test connects a real socket, sets large byte values, reads them back
 //! via srt_getsockflag, and asserts the returned value is in the byte range
-//! (≥ 1 MB, not ≤ 32 — which would be libsrt's minimum if the old value
-//! had been interpreted as a packet count and divided by MSS).
+//! (≥ 1 MB, not ≤ 32 — which would be libsrt's minimum if the value were
+//! interpreted as a packet count and divided by MSS).
 
 use std::ffi::c_int;
 use std::time::Duration;
@@ -63,8 +62,7 @@ fn recv_buf_bytes_and_send_buf_bytes_are_byte_scaled() {
 
     // Keep the accepted peer alive across the option reads: dropping it
     // closes the far side, and once libsrt notices, getsockopt on this
-    // socket starts failing — a race first hit under ASan's slower timing
-    // (nightly 2026-08-20).
+    // socket starts failing — a race ASan's slower timing exposes.
     let peer = accept.join();
 
     let handle = socket.raw_handle();

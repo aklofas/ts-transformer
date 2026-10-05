@@ -251,13 +251,12 @@ fn background_dropoldest_evicts_and_counts_deterministically() {
     assert_eq!(s.gap_len, 0);
 }
 
-/// Fix round 1 (review finding I1): a worker that unwinds — e.g. a
-/// user-supplied `factory()` that panics on `unwrap()` during DNS/socket
-/// setup — must not leave `bg_active` stuck true. Pre-fix that would wedge
-/// every future send into the enqueue-and-return-Ok branch forever, with
-/// no replacement worker ever able to spawn: unbounded silent loss
-/// reported as healthy. The panic below is expected to print to captured
-/// test output.
+/// A worker that unwinds — e.g. a user-supplied `factory()` that panics on
+/// `unwrap()` during DNS/socket setup — must not leave `bg_active` stuck
+/// true. A stuck flag would wedge every future send into the
+/// enqueue-and-return-Ok branch forever, with no replacement worker ever able
+/// to spawn: unbounded silent loss reported as healthy. The panic below is
+/// expected to print to captured test output.
 #[test]
 fn background_worker_panic_recovers_via_abnormal_give_up() {
     let rig = Rig::new();
@@ -315,13 +314,12 @@ fn background_worker_panic_recovers_via_abnormal_give_up() {
     assert!(stats.stats().unwrap().reconnect_successes >= 1);
 }
 
-/// Fix round 2 (review finding B): `ActiveClearGuard`'s `Drop` must not
-/// unconditionally re-clear `bg_active` after the Empty-exit already
-/// cleared it in place under the gap lock. If a worker's `Drop` runs
-/// *after* a fresh cycle has already spawned a replacement (bg_active =
-/// true again), an unconditional re-clear would clobber that fresh
-/// cycle's ownership: the newer worker ends up "unowned", a later
-/// `send_bytes` sees `!bg_active` with a non-empty gap and spawns YET
+/// `ActiveClearGuard`'s `Drop` must not unconditionally re-clear `bg_active`
+/// after the Empty-exit already cleared it in place under the gap lock. If a
+/// worker's `Drop` runs *after* a fresh cycle has already spawned a
+/// replacement (bg_active = true again), an unconditional re-clear would
+/// clobber that fresh cycle's ownership: the newer worker ends up "unowned",
+/// a later `send_bytes` sees `!bg_active` with a non-empty gap and spawns YET
 /// ANOTHER worker on top of it, and that `spawn_worker`'s `prev.join()`
 /// blocks on the still-live worker — under `max_attempts: None` and a
 /// persisting outage, forever.
@@ -702,8 +700,8 @@ fn oversized_after_ceiling_shrink_drops_and_counts_instead_of_wedging() {
 }
 
 // ---------------------------------------------------------------------
-// Parked-inner-send rig (post-Arc-1 review, finding "background drain
-// holds the gap lock across one inner send").
+// Parked-inner-send rig: the background drain must not hold the gap lock
+// across one inner send.
 //
 // A real sink can park a single `send_bytes` indefinitely: tst-tcp's
 // write loop keeps writing after partial progress until the peer drains
@@ -854,12 +852,13 @@ fn gated_rig(policy: ReconnectPolicy) -> GatedRig {
     }
 }
 
-/// Post-Arc-1 review (High): the drain loop used to hold BOTH `inner` and
-/// `gap` across one inner `send_bytes`. Against a sink that stops
-/// draining, that one call is unbounded — so `stats()` (which needs
-/// `gap`) and the producer's `send_bytes` (which needed `inner` for its
-/// size pre-check) both stalled for as long as the peer sulked, making
-/// the documented Background contract ("send always enqueues") false.
+/// The drain loop must not hold `inner` or `gap` across one inner
+/// `send_bytes` that `stats()` or the producer waits on. Against a sink
+/// that stops draining, that one call is unbounded — so `stats()` (which
+/// needs `gap`) and the producer's `send_bytes` (whose size pre-check
+/// would need `inner`) would both stall for as long as the peer sulks,
+/// making the documented Background contract ("send always enqueues")
+/// false.
 ///
 /// Completion is proven by latch-and-poll — each call runs on its own
 /// helper thread and its result is `recv_timeout`-ed with a generous

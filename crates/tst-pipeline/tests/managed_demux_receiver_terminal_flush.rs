@@ -1,8 +1,8 @@
 //! `ManagedDemuxReceiver` must flush pending PES reassembly state on the
 //! `Closed` (cancel / cross-thread close) path exactly as the plain
-//! `DemuxReceiver` does (`demux_receiver_terminal_flush.rs`). Since the
-//! managed Python/JVM receivers close cancel-first, every managed close
-//! used to drop the partial final video AU that the plain shell surfaces.
+//! `DemuxReceiver` does (`demux_receiver_terminal_flush.rs`). The managed
+//! Python/JVM receivers close cancel-first, so without that flush every
+//! managed close drops the partial final video AU the plain shell surfaces.
 //!
 //! Helpers mirror `demux_receiver_terminal_flush.rs` (each tst-pipeline
 //! test binary carries its own small fixture set).
@@ -135,8 +135,8 @@ impl RecvTransport for CancelThenBroken {
     }
 }
 
-/// CORR-08: the managed shell's `Closed` arm returned without flushing —
-/// AU 12 (bounded only by a flush) was lost on every cancel-first close.
+/// The managed shell's `Closed` arm must flush: without it AU 12 (bounded
+/// only by a flush) is lost on every cancel-first close.
 #[test]
 fn managed_demux_receiver_flushes_final_video_au_on_cancel() {
     let cancel_cell: Arc<Mutex<Option<Arc<dyn TransportCancel + Send + Sync>>>> =

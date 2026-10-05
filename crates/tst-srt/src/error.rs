@@ -570,11 +570,10 @@ impl RejectReason {
 ///
 /// Matches the exact libsrt errno (`SRT_ETIMEOUT`, 6003 — what a
 /// blocking call raises when `SRTO_RCVTIMEO`/`SRTO_SNDTIMEO`/
-/// `SRTO_CONNTIMEO` expires) rather than the error message text. The
-/// previous implementation substring-matched "timeout"/"timed out",
-/// which libsrt does not treat as a stable API — any upstream rewording
-/// would have silently turned timeouts into generic errors (flagged by
-/// the interop-evidence arc, 2026-08-03).
+/// `SRTO_CONNTIMEO` expires) rather than the error message text.
+/// Substring-matching "timeout"/"timed out" is not an option: libsrt does
+/// not treat its message text as a stable API, so any upstream rewording
+/// would silently turn timeouts into generic errors.
 pub(crate) fn is_timeout(raw: &RawError) -> bool {
     raw.code == srt_sys::SRT_ERRNO_SRT_ETIMEOUT
 }
@@ -1197,9 +1196,9 @@ mod tests {
         let _ = MuxError::SubtitlePidUsedAsPcrPid { pid: 0x400 };
     }
 
-    // SRT_ECONNREJ = 1002 → major 1 → SrtErrno::Setup. Before the fix,
-    // classify_connect_error with a Setup-category raw + BadSecret reason
-    // fell through to Other because the gate only checked SrtErrno::Connection.
+    // SRT_ECONNREJ = 1002 → major 1 → SrtErrno::Setup. A gate that only
+    // checks SrtErrno::Connection makes classify_connect_error with a
+    // Setup-category raw + BadSecret reason fall through to Other.
     #[test]
     fn setup_category_reject_maps_to_rejected_badsecret() {
         let raw = RawError {
@@ -1269,7 +1268,7 @@ mod tests {
         }
     }
 
-    // DA-SRT-2: a blocking connect that exhausts SRTO_CONNTIMEO raises
+    // A blocking connect that exhausts SRTO_CONNTIMEO raises
     // SRT_ENOSERVER (major Setup) and sets RejectReason::Timeout.  The
     // documented ConnectError::TimedOut must be returned, not Rejected.
     #[test]

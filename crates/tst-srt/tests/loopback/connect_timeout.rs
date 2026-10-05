@@ -1,4 +1,4 @@
-//! Verifies SRTO_CONNTIMEO is honored. Audit Issue 15.
+//! Verifies SRTO_CONNTIMEO is honored.
 
 use std::time::{Duration, Instant};
 use tst_srt::SocketBuilder;

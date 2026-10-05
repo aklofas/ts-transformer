@@ -1,5 +1,5 @@
-//! WP-C1 — the tst-core transport conformance kit over live SRT loopback
-//! pairs (spec §3.5). One listener per test; every factory call dials it from
+//! The tst-core transport conformance kit over live SRT loopback pairs.
+//! One listener per test; every factory call dials it from
 //! a helper thread while this thread accepts, and the accepted socket is kept
 //! in `peer` so the connection outlives the row (`drop_peer` is the
 //! `break_wire` of the `not_alive_after_broken` and `peer_eof_is_not_a_cancel`
@@ -7,13 +7,14 @@
 //! surfaces as a `Backpressure` tick every 200 ms, which the kit's park loops
 //! retry.
 //!
-//! `peer_eof_is_not_a_cancel` is the row the WP-C1 SRT latch split exists
-//! for. `SrtCancelHandle::is_cancelled()` used to read the "closer has run"
-//! sentinel, which `Socket::drop` sets on every transport error path that
-//! retires a dead socket — so a peer that merely went away was
-//! indistinguishable from a caller cancel, and every clean SRT end-of-stream
-//! was reported as a caller close at the C ABI (`TST_E_CLOSED` for
-//! `TST_E_END_OF_STREAM`). This row runs it against a real peer close.
+//! `peer_eof_is_not_a_cancel` is the row the SRT cancel latch is kept
+//! separate from the "closer has run" sentinel for: `Socket::drop` sets
+//! that sentinel on every transport error path that retires a dead socket,
+//! so an `is_cancelled()` that read it would make a peer that merely went
+//! away indistinguishable from a caller cancel, and every clean SRT
+//! end-of-stream would be reported as a caller close at the C ABI
+//! (`TST_E_CLOSED` for `TST_E_END_OF_STREAM`). This row runs it against a
+//! real peer close.
 
 #[macro_use]
 #[path = "common/mod.rs"]
@@ -89,11 +90,10 @@ struct Pair {
     /// Pre-obtained at bind, fired by `Drop` — including on an unwind out of
     /// a failed row. libsrt's GC can prune a broken not-yet-accepted
     /// connection from the accept queue, leaving a blocking `accept()` parked
-    /// forever (`reference_libsrt_accept_queue_prune_hang`, PR #231); a
-    /// listener handle obtained BEFORE the listener moves anywhere is the
-    /// sanctioned wake. Our `connect()` accepts against a caller thread that
-    /// stays alive, so the hazard should not arise — this guard is what makes
-    /// "should not" not matter.
+    /// forever; a listener handle obtained BEFORE the listener moves anywhere
+    /// is the sanctioned wake. Our `connect()` accepts against a caller
+    /// thread that stays alive, so the hazard should not arise — this guard
+    /// is what makes "should not" not matter.
     accept_cancel: tst_core::SrtCancelHandle,
 }
 
@@ -191,7 +191,7 @@ fn srt_recv_contract_all_but_the_cancel_rows() {
     let pair = Arc::new(Pair::bind());
     let breaker = Arc::clone(&pair);
     // `peer_eof_is_not_a_cancel` runs here, against a real `srt_close` from
-    // the accepted peer — the WP-C1 latch split's reason for existing.
+    // the accepted peer — the reason the cancel latch is kept separate.
     kit::assert_recv_rows(
         || pair.connect(),
         |b| pair.feed(b),

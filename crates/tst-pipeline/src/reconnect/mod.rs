@@ -332,7 +332,7 @@ impl ManagedStatsHandle {
 /// counting them; they are not counted as dropped), as they do after a
 /// cancel through the wrapper's own handle.
 ///
-/// # Lock poisoning policy (post-Wave-6.F)
+/// # Lock poisoning policy
 ///
 /// - **Inner-transport lock** (poisoned mid-mutation):
 ///   - `send_bytes`: returns `TransportError::Broken { .. }`. Caller can
@@ -439,7 +439,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
     /// invocation, either mode, successful or not (the value
     /// [`ManagedTransportStats::reconnect_attempts`] snapshots), exposed as
     /// a lock-free `Arc` so a binding can read it after this transport has
-    /// moved into a sender shell (ARCH-08). Obtain **before** the move;
+    /// moved into a sender shell. Obtain **before** the move;
     /// read with `.load(Ordering::Relaxed)`, the ordering the bump and
     /// [`ManagedStatsHandle::stats`] already use for it — the counter is a
     /// statistic and publishes nothing, unlike
@@ -514,7 +514,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
     /// ring cursors); proceeding would silently drop queued bytes. Caught by
     /// `tst-c`'s `ffi_catch` as `TST_E_PANIC_CAUGHT` (-11). The
     /// recoverable-path lock poison (the inner-transport mutex) instead
-    /// returns `Err(TransportError::Broken { .. })` — see Task 3 sites.
+    /// returns `Err(TransportError::Broken { .. })`.
     fn send_managed(&self, bytes: &[u8]) -> Result<(), TransportError> {
         if self.closed.load(std::sync::atomic::Ordering::Acquire) {
             return Err(self.latched_error());
@@ -652,20 +652,16 @@ impl<T: Transport + 'static> ManagedTransport<T> {
         }
 
         // Try the new bytes if the transport is still alive after drain.
-        // Plan B mutex sweep (recoverable path): poisoned inner lock means
-        // a previous panic happened while another caller held this lock.
-        // Route to TransportError::Broken so the caller's reconnect logic
-        // (or shell-level error propagation) tears down the wrapper.
-        // Precedent: plan #45.
+        // A poisoned inner lock means a previous panic happened while
+        // another caller held this lock. Route to TransportError::Broken so
+        // the caller's reconnect logic (or shell-level error propagation)
+        // tears down the wrapper.
         //
         // Scope-wrap: transport_guard MUST drop before any path reaches
         // self.reconnect_and_drain() further down — that function also
         // acquires self.inner.lock(), and std::sync::Mutex is not
-        // reentrant. The previous shape used an anonymous MutexGuard
-        // (which dropped at if-let scrutinee end); converting to a named
-        // binding introduced a deadlock on any successful-reconnect path.
-        // Final-review caught this; existing tests didn't because all
-        // tests use always-failing factories.
+        // reentrant. Holding it deadlocks only a successful-reconnect path,
+        // which a test with an always-failing factory never takes.
         let mut inner_cancelled = false;
         {
             let mut transport_guard = self.inner.lock().map_err(|_| TransportError::Broken {
@@ -679,7 +675,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                     Err(TransportError::Backpressure { errno_code, .. }) => {
                         // Backpressure is recoverable without reconnect — propagate.
                         // Caller may retry the same bytes. Forward the inner
-                        // errno_code (D5 follow-up): the wrapper does not have its
+                        // errno_code: the wrapper does not have its
                         // own libsrt origin, so the only meaningful errno_code on
                         // this path is the one the inner transport supplied.
                         return Err(TransportError::Backpressure {
@@ -699,7 +695,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                         inner_cancelled = true;
                     }
                     Err(_) => {
-                        // Phase 1: Unknown future variant — treat as broken and reconnect.
+                        // Unknown future variant — treat as broken and reconnect.
                         // Fall through to reconnect path.
                     }
                 }
@@ -713,10 +709,10 @@ impl<T: Transport + 'static> ManagedTransport<T> {
 
         // Inner is broken/closed. Queue this message and attempt reconnect.
         //
-        // Validate-1 C2 (Codex PIPE-01): `OverflowPolicy::Reject` is a
-        // correctness-over-freshness contract — when the gap buffer is full,
-        // the caller has explicitly asked us to refuse new bytes rather than
-        // evict queued ones. Surface `GapBufferError::Full` as
+        // `OverflowPolicy::Reject` is a correctness-over-freshness contract —
+        // when the gap buffer is full, the caller has explicitly asked us to
+        // refuse new bytes rather than evict queued ones. Surface
+        // `GapBufferError::Full` as
         // `TransportError::Backpressure { msg: "gap buffer full", errno_code: None }` so the caller's
         // shell maps it to `ShellErrorKind::Backpressure` (and `tst-c` to
         // `TST_E_BUFFER_FULL`) instead of silently dropping the bytes. We
@@ -728,12 +724,11 @@ impl<T: Transport + 'static> ManagedTransport<T> {
         // `enqueue` (it evicts and pushes) so this path is unchanged for
         // that policy.
         let queued = {
-            // Plan B mutex sweep (documented panic): gap-accumulator is
-            // invariant-critical. A poisoned lock means a previous panic
-            // happened while modifying the buffer's invariants (length
-            // tracking, ring cursors); proceeding would silently lose
-            // bytes. Panic with BUG: prefix per the FFI panic-isolation
-            // convention (plan #50); tst-c's ffi_catch wraps to
+            // The gap-accumulator is invariant-critical. A poisoned lock
+            // means a previous panic happened while modifying the buffer's
+            // invariants (length tracking, ring cursors); proceeding would
+            // silently lose bytes. Panic with BUG: prefix per the FFI
+            // panic-isolation convention; tst-c's ffi_catch wraps to
             // TST_E_PANIC_CAUGHT (-11). See enclosing send_managed's
             // /// # Panics rustdoc for the contract.
             let mut gap = self
@@ -817,10 +812,9 @@ impl<T: Transport + 'static> ManagedTransport<T> {
     /// if the gap-buffer mutex has been poisoned. See `send_managed`'s
     /// `# Panics` section for the full rationale.
     fn drain_gap_if_alive(&self) -> Result<(), TransportError> {
-        // Plan B mutex sweep (recoverable path): poisoned inner lock means
-        // a previous panic happened while another caller held this lock.
-        // Route to TransportError::Broken so the reconnect loop or higher
-        // shell tears down the wrapper. Precedent: plan #45.
+        // A poisoned inner lock means a previous panic happened while
+        // another caller held this lock. Route to TransportError::Broken so
+        // the reconnect loop or higher shell tears down the wrapper.
         let mut transport_guard = self.inner.lock().map_err(|_| TransportError::Broken {
             msg: "reconnect: inner lock poisoned during drain peek".into(),
             errno_code: None,
@@ -829,9 +823,8 @@ impl<T: Transport + 'static> ManagedTransport<T> {
         let Some(transport) = transport_guard.as_mut() else {
             return Ok(()); // can't drain without a transport
         };
-        // Plan B mutex sweep (documented panic): gap-accumulator is
-        // invariant-critical. See Step 4.1 / send_managed /// # Panics
-        // rustdoc for rationale.
+        // The gap-accumulator is invariant-critical. See send_managed's
+        // `# Panics` rustdoc for the rationale.
         let mut gap = self
             .gap
             .lock()
@@ -842,7 +835,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                     gap.pop_front();
                 }
                 Err(TransportError::Backpressure { errno_code, .. }) => {
-                    // D5 follow-up: forward inner errno_code.
+                    // Forward the inner errno_code.
                     return Err(TransportError::Backpressure {
                         msg: "drain backpressure".into(),
                         errno_code,
@@ -851,7 +844,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                 Err(TransportError::Broken {
                     errno_code, cause, ..
                 }) => {
-                    // D5 follow-up: forward inner errno_code (and its cause);
+                    // Forward the inner errno_code (and its cause);
                     // the wrapper doesn't have its own SRT origin.
                     // Un-publish the dead inner's wake handle along with the
                     // inner it belongs to: nothing can be woken until the
@@ -946,11 +939,10 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                     ) {
                         Install::Installed => {}
                         Install::Closed => return Err(self.latched_error()),
-                        // Plan B mutex sweep (recoverable path): poisoned
-                        // inner lock means a previous panic left the wrapper
-                        // in an unknown state. Route to TransportError::Broken;
-                        // the caller's shell propagates the error and may
-                        // surface a TST_E_TRANSPORT (-8). Precedent: plan #45.
+                        // A poisoned inner lock means a previous panic left
+                        // the wrapper in an unknown state. Route to
+                        // TransportError::Broken; the caller's shell propagates
+                        // the error and may surface a TST_E_TRANSPORT (-8).
                         Install::InnerPoisoned => {
                             return Err(TransportError::Broken {
                                 msg: "reconnect: inner lock poisoned during new-inner install"
@@ -960,7 +952,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                             });
                         }
                     }
-                    // Drain the gap buffer, then re-check the latch (CORR-11):
+                    // Drain the gap buffer, then re-check the latch:
                     // a cancel that lands DURING this drain makes a real
                     // socket fail the in-flight send with a wire-looking
                     // `Broken` — the caller asked for the close, so report
@@ -1075,7 +1067,7 @@ impl<T: Transport + 'static> Transport for ManagedTransport<T> {
     }
 
     fn is_alive(&self) -> bool {
-        // The wrapper's own latch first (CORR-10): after close()/cancel()
+        // The wrapper's own latch first: after close()/cancel()
         // every send is terminal (`Closed` / `ExplicitClose` — see
         // `latched_error`), whatever the inner says — a plain
         // `SrtTransport` keeps answering `socket.is_some()` after its fd
@@ -1102,9 +1094,9 @@ impl<T: Transport + 'static> Transport for ManagedTransport<T> {
 
     fn close(&mut self) {
         // Latch, wake the backoff wait, AND fire the live inner's wake
-        // handle BEFORE the join below (X-CORR-01): a worker parked inside
+        // handle BEFORE the join below: a worker parked inside
         // an inner `send_bytes` only returns — so the join only completes —
-        // once that handle fires. Signalling alone left close() waiting on
+        // once that handle fires. Signalling alone would leave close() waiting on
         // the transport's own timeout (or forever, for a channel/socket
         // with none).
         self.terminal_signal();
@@ -1169,7 +1161,7 @@ impl<T: Transport> Drop for ManagedTransport<T> {
         // Without this, a max_attempts: None worker would retry forever
         // after the transport is gone.
         //
-        // The wake handle is fired too (X-CORR-01): a worker parked
+        // The wake handle is fired too: a worker parked
         // inside an inner `send_bytes` has no "next check" until that
         // send returns, and only the inner's cancel handle can return it.
         // Non-blocking here rests on the `TransportCancel` contract (an
@@ -1180,7 +1172,7 @@ impl<T: Transport> Drop for ManagedTransport<T> {
 }
 
 /// The one terminal transition shared by `ManagedTransport::close`,
-/// its `Drop`, and `ManagedCancel::cancel` (X-CORR-01 / X-SIMP-02):
+/// its `Drop`, and `ManagedCancel::cancel`:
 ///
 /// 1. latch `closed` — every send path and both reconnect loops exit at
 ///    their next check;
@@ -1272,7 +1264,7 @@ impl TransportCancel for ManagedCancel {
     }
     fn is_cancelled(&self) -> bool {
         // The slot latches in `terminal_signal`, i.e. on cancel() AND on the
-        // wrapper's own close()/Drop (one terminal transition, X-CORR-01).
+        // wrapper's own close()/Drop (one terminal transition).
         // Documented on the trait: where close() is implemented by firing the
         // same handle, is_cancelled() reads true after that close() too.
         self.active.is_cancelled()
@@ -1358,13 +1350,12 @@ mod cancel_tests {
         // max_payload(), is_alive(), and close() all take a non-panicking
         // path.
         //
-        // max_payload()'s CONTRACT CHANGED with the post-Arc-1 review fix:
-        // it no longer consults `inner` at all (locking invariant 4 — the
+        // max_payload() does not consult `inner` at all (locking invariant 4 — the
         // drain worker holds that lock across one unbounded inner send,
         // and RawSender/MuxSender call max_payload() per send), so it is
         // poison-IMMUNE rather than poison-defaulting, and keeps reporting
         // the cached ceiling of the last installed inner. Asserting
-        // SRT_TS_BUNDLE_BYTES here would now be asserting that a poisoned
+        // SRT_TS_BUNDLE_BYTES here would be asserting that a poisoned
         // lock silently shrinks the caller's send budget — the opposite of
         // the guarantee. is_alive() and close() DO still take the lock and
         // keep their safe-default-on-poison behavior.
@@ -1588,7 +1579,7 @@ mod cancel_tests {
         assert_eq!(s1.gap_len, 0, "gap drained by the successful reconnect");
     }
 
-    /// ARCH-08 / spec §3.4: the three lock-free observers `ManagedHandles`
+    /// The three lock-free observers `ManagedHandles`
     /// carries for a sender read the SAME counters `stats_handle()`
     /// snapshots — obtained before the transport moves into a shell.
     #[test]
@@ -1657,8 +1648,8 @@ mod cancel_tests {
 
     /// The handles must never queue behind the `inner` mutex: a binding
     /// polls them from a watchdog thread while the sender thread is parked
-    /// inside the reconnect loop holding that lock (the A1.5 shape —
-    /// bounded failing watchdog, no wall-clock assert). The *values* are
+    /// inside the reconnect loop holding that lock (bounded failing
+    /// watchdog, no wall-clock assert). The *values* are
     /// the load-bearing part: the in-flight attempt is already visible,
     /// which pins the bump BEFORE the factory call — the placement a
     /// binding's reconnect dashboard depends on.
@@ -1839,9 +1830,9 @@ mod cancel_tests {
         assert_eq!(stats.stats().expect("no poison").gap_len, 1);
     }
 
-    /// CORR-10: the wrapper latches `closed` on cancel (and every later
-    /// `send_bytes` returns `Closed`), but `is_alive()` asked only the
-    /// background flag and the inner. `NoopT` is always alive and has no
+    /// `is_alive()` reads the `closed` latch the wrapper sets on cancel (and
+    /// every later `send_bytes` returns `Closed`); asking only the background
+    /// flag and the inner reports a cancelled wrapper alive. `NoopT` is always alive and has no
     /// cancel handle — the exact shape of a real `SrtTransport`, whose
     /// `is_alive` is `socket.is_some()` and stays true after the cancel
     /// handle closes the fd.

@@ -308,15 +308,14 @@ fn exit_note(in_flight: usize) {
 /// holds the first or second for the whole call (core.cpp:3695, ~6986)
 /// until the close wakes it. With a setsockopt before each close,
 /// `exit_with_parked_call::exit_is_clean_with_a_caller_parked_in_connect`
-/// hung for its full 12 s. So each serial close keeps its socket's
+/// hangs for its full 12 s. So each serial close keeps its socket's
 /// configured linger.
 ///
 /// If the ceiling expires with operations still in flight, `srt_cleanup()`
-/// runs anyway. That is what happened before this guard existed, with the
-/// same exposure: a thread still inside libsrt may crash or hang the
-/// exiting process. Skipping `srt_cleanup()` instead is not an option — it
-/// is a known crash after `main` under libsrt >= 1.5.6 (see
-/// [`crate::init`]).
+/// runs anyway, with the same exposure as having no guard at all: a thread
+/// still inside libsrt may crash or hang the exiting process. Skipping
+/// `srt_cleanup()` instead is not an option — it is a known crash after
+/// `main` under libsrt >= 1.5.6 (see [`crate::init`]).
 ///
 /// Called from the `extern "C"` exit handler, immediately before
 /// `srt_cleanup()`: nothing here may panic.
@@ -639,12 +638,12 @@ mod tests {
         );
     }
 
-    /// R7-01 (review #7, internal report): the ceiling warning used to go through
-    /// `tracing`. A `tracing_subscriber::fmt` layer formats into a
-    /// destructor-bearing thread-local; glibc runs thread-local
-    /// destructors BEFORE `atexit` handlers, so the first event emitted
-    /// from the exit handler on a thread that had logged before panicked
-    /// inside an `extern "C"` function and aborted the process. The
+    /// The ceiling warning must not go through `tracing`: a
+    /// `tracing_subscriber::fmt` layer formats into a destructor-bearing
+    /// thread-local; glibc runs thread-local destructors BEFORE `atexit`
+    /// handlers, so the first event emitted from the exit handler on a
+    /// thread that had logged before panics inside an `extern "C"`
+    /// function and aborts the process. The
     /// child must print the note and exit 0. The note assertion below is
     /// exercised on unix only: `std::process::exit` maps to Windows'
     /// `ExitProcess`, which skips the executable's `atexit` table

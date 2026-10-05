@@ -275,8 +275,8 @@ fn run_one(path: &Path) -> RunOutcome {
     // moment to clear TSBPD on the peer before we close. 1 s covers
     // the latency budget plus loopback transit on every platform.
     //
-    // Bumped from 500 ms in plan #66 — Darwin scheduling on Apple
-    // Silicon (macOS arm64) needs more headroom for the corpus test's
+    // Not 500 ms: Darwin scheduling on Apple Silicon (macOS arm64)
+    // needs more headroom for the corpus test's
     // burst pattern; the extra headroom is platform-stable.
     thread::sleep(Duration::from_secs(1));
     sender.close();

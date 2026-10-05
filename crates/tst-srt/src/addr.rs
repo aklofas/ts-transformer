@@ -54,11 +54,11 @@ pub(crate) fn from_sockaddr(os_addr: &OsSocketAddr) -> Result<SocketAddr, AddrEr
 /// parses, bracketing a bare IPv6 literal (`::1` → `[::1]:9000`).
 ///
 /// [`SrtUrl::parse`](crate::SrtUrl::parse) hands the host back with its
-/// brackets stripped, so a plain `format!("{host}:{port}")` produced
-/// `::1:9000` and every IPv6 `srt://` open failed to resolve (PR #188).
-/// One helper for every open path — the C, Python and JVM bindings each
-/// carried a private copy before it lived here. An already-bracketed
-/// host, an IPv4 literal and a hostname pass through unchanged.
+/// brackets stripped, so a plain `format!("{host}:{port}")` would produce
+/// `::1:9000`, which does not resolve for any IPv6 `srt://` open. One helper
+/// for every open path of the C, Python and JVM bindings. An
+/// already-bracketed host, an IPv4 literal and a hostname pass through
+/// unchanged.
 pub fn join_host_port(host: &str, port: u16) -> String {
     if host.contains(':') && !host.starts_with('[') {
         format!("[{host}]:{port}")

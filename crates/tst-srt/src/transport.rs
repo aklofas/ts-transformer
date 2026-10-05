@@ -180,7 +180,7 @@ impl SrtTransport {
     /// into an error — the NEXT op reports it.
     ///
     /// A genuine wire break that raced the cancel is reported as the
-    /// cancel (spec §11: the caller asked for the close, and the managed
+    /// cancel (the caller asked for the close, and the managed
     /// decorator treats both as terminal).
     ///
     /// Process exit counts as the cancel: the exit guard refuses the op
@@ -340,7 +340,7 @@ impl Transport for SrtTransport {
 impl tst_core::transport::RecvTransport for SrtTransport {
     fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
         use crate::error::RecvError;
-        // X-CORR-07: an empty destination is a no-op. libsrt rejects a
+        // An empty destination is a no-op. libsrt rejects a
         // zero-length receive (`MJ_NOTSUP`, core.cpp `if (len <= 0)`), which
         // the catch-all arm below would report as Broken and tear the socket
         // down — for a call that asked for nothing. Same guard tst-tcp
@@ -511,7 +511,7 @@ mod tests {
     #[ignore = "needs live SRT socket; covered by tests/cancellation_loopback.rs"]
     fn cancel_handle_some_when_alive() {}
 
-    /// validate-1 D5: ensure `SrtErrno::raw_code()` produces the libsrt
+    /// `SrtErrno::raw_code()` produces the libsrt
     /// MJ_* major-category integers the `errno_code` field on
     /// `TransportError::{Backpressure, Broken}` carries. Bindings that
     /// pattern-match on these codes need them stable across releases —
@@ -526,7 +526,7 @@ mod tests {
         assert_eq!(SrtErrno::Notsup.raw_code(), 5);
         assert_eq!(SrtErrno::Async.raw_code(), 6);
         assert_eq!(SrtErrno::PeerError.raw_code(), 7);
-        // D5 follow-up: Unknown(raw) folds back to the major category
+        // Unknown(raw) folds back to the major category
         // via `raw / 1000`. Bindings that match on `code <= 7` should
         // see 6 here, not the full encoded 6002. Callers that need the
         // raw sub-code can match `SrtErrno::Unknown(raw)` directly.
@@ -538,7 +538,7 @@ mod tests {
         assert_eq!(SrtErrno::Unknown(99999).raw_code(), 99);
     }
 
-    /// validate-1 D5: the transport error variants carry an optional
+    /// The transport error variants carry an optional
     /// errno code. Verify the field is constructible (non-SRT producers
     /// pass None) and round-trips through pattern destructuring.
     #[test]

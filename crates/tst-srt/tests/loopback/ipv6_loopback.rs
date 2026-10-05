@@ -1,9 +1,8 @@
-//! IPv6 loopback round-trip test for plan #29 Task 5.2 (audit Critical #11).
+//! IPv6 loopback round trip.
 //!
 //! Spawns a Listener bound on `[::1]:0`, connects a Socket to the
-//! discovered ephemeral port, sends a payload, recv'd. Confirms the new
-//! v4+v6 dispatch in tst_srt::addr (Task 5.1, commit 5c577d8) works
-//! against a real libsrt socket.
+//! discovered ephemeral port, sends a payload, recv'd. Confirms the
+//! v4+v6 dispatch in tst_srt::addr works against a real libsrt socket.
 
 use std::net::IpAddr;
 use std::time::Duration;

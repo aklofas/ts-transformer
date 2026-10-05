@@ -1,7 +1,7 @@
 //! A cancel that lands while a `ManagedRecvTransport` is waiting out its
 //! reconnect backoff must interrupt the wait, not ride it out — the
-//! receive-side counterpart of the send side's interruptible backoff
-//! (PR #158). With the default exponential policy the wait can be 10 s,
+//! receive-side counterpart of the send side's interruptible backoff.
+//! With the default exponential policy the wait can be 10 s,
 //! which is not "prompt" for a Ctrl-C.
 
 use std::sync::Arc;

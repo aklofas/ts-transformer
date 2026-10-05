@@ -1,8 +1,8 @@
-//! ARCH-08: the receive-side decorator counts factory CALLS (attempts)
-//! next to successful rebuilds (reconnects), so the bindings stop wrapping
-//! the factory in a counting closure of their own. The send side already
-//! counted both (`ManagedTransportStats::reconnect_attempts`); this makes
-//! the two sides symmetric and exposes the counter lock-free.
+//! The receive-side decorator counts factory CALLS (attempts) next to
+//! successful rebuilds (reconnects), so the bindings need no counting
+//! closure of their own. The send side counts both too
+//! (`ManagedTransportStats::reconnect_attempts`); the two sides are
+//! symmetric and the counter is exposed lock-free.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -147,7 +147,8 @@ fn managed_demux_receiver_exposes_the_transport_attempts_counter() {
 /// The handle is lock-free in the sense the bindings need: obtained before
 /// the decorator moves onto another thread, it stays readable while that
 /// thread is parked deep inside `recv_bytes` — the shape of a receive
-/// parked in libsrt that only a cancel can return (A1.5). The *value* is
+/// parked in libsrt that only a cancel can return (bounded failing
+/// watchdog, no wall-clock assert). The *value* is
 /// the load-bearing part: the in-flight attempt is already counted, which
 /// pins the bump BEFORE the factory call rather than after it.
 #[test]

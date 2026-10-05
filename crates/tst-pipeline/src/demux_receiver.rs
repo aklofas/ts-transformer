@@ -135,11 +135,9 @@ struct ReconnectEpoch {
 ///    `recv_event`'s underlying `next_packet` call within one libsrt
 ///    I/O cycle (~3-10 ms).
 ///
-/// C ABI for the receiver surface (`tst_demux_receiver_open` /
+/// C ABI for the receiver surface: `tst_demux_receiver_open` /
 /// `_recv_event` / `_close` / `_cancel` / `_get_stats` and the typed
-/// event arena) shipped via the receiver-surface plans (raw byte recv
-/// → TS-aligned recv → typed demux events). See
-/// `bindings/c/include/tstrans.h` for the C surface.
+/// event arena. See `bindings/c/include/tstrans.h` for the C surface.
 ///
 /// ## Per-language idiom
 ///

@@ -1,5 +1,5 @@
 //! `From<…> for tst_pipeline::binding::BindingError` for every tst-srt error
-//! type — the SRT rows of the one kind table (spec §3.3). Lives here, not in
+//! type — the SRT rows of the one kind table. Lives here, not in
 //! tst-pipeline, because tst-pipeline must not depend on transport crates;
 //! the orphan rule allows it (the source type is local).
 //!
@@ -8,8 +8,8 @@
 //! `BACKPRESSURE`, `IO`): `SrtError` is an umbrella over seven sub-enums whose
 //! leaf names (`System`, `Other`, `TimedOut` ×4) are not kinds. The routing is
 //! the one `bindings/python/src/srt/errors.rs` and `bindings/jvm/src/srt/errors.rs`
-//! agreed on, with two spec flips: `Backpressure` is `BACKPRESSURE` (was
-//! `WOULD_BLOCK`) and `TooLarge` is `TOO_LARGE` (was `CONFIG_INVALID`).
+//! agreed on, except that `Backpressure` is `BACKPRESSURE` (not
+//! `WOULD_BLOCK`) and `TooLarge` is `TOO_LARGE` (not `CONFIG_INVALID`).
 
 use crate::error::{
     AcceptError, BindError, ConnectError, IoError, OptionError, RecvError, SendError, SrtError,

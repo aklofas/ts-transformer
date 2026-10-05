@@ -1,5 +1,5 @@
 //! `SrtUrl::connect` / `SrtUrl::accept_one` — the one open path every
-//! binding composes through (Arc 2 WP-A3, ARCH-01). Requires libsrt
+//! binding composes through. Requires libsrt
 //! loopback. The accept tests park a thread on purpose, so every wait is
 //! bounded by [`WATCHDOG`] and FAILS on expiry instead of hanging.
 
@@ -84,10 +84,9 @@ fn connect_recv_round_trips_over_loopback() {
     t.close();
 }
 
-/// The #188 class, end-to-end half: `parse` strips the brackets
+/// IPv6 bracketing, end-to-end half: `parse` strips the brackets
 /// (`host == "::1"`), so the open path must put them back — an IPv6
-/// `srt://` URL has to connect and carry bytes, which is what PR #188
-/// fixed in the bindings' private joins.
+/// `srt://` URL has to connect and carry bytes.
 ///
 /// The bracketing *itself* is pinned by
 /// `tst_srt::addr::tests::join_host_port_brackets_bare_ipv6_only`, not
@@ -135,10 +134,9 @@ fn connect_ipv6_literal_round_trips() {
 /// exit — nextest's per-test timeout reaps it; the failure is already on
 /// record by then.)
 ///
-/// WP-C2 note: the outcome asserted here comes from
-/// `Listener::accept_one_cancellable`, which already reports
-/// `ExplicitClose` on cancel. C2 changes `SrtTransport::recv_bytes` /
-/// `send_bytes`, not the accept path — this test does not move.
+/// The outcome asserted here comes from `Listener::accept_one_cancellable`,
+/// which reports `ExplicitClose` on cancel — the accept path, not
+/// `SrtTransport::recv_bytes` / `send_bytes`.
 #[test]
 fn accept_one_cancelled_from_another_thread_returns_explicit_close() {
     require_loopback!();
@@ -176,7 +174,7 @@ fn accept_one_cancelled_from_another_thread_returns_explicit_close() {
 /// before the bind), then hold the connected socket open until the caller
 /// sends on the returned channel — closing it mid-flight lets libsrt's GC
 /// reap the listener-side accepted socket before `srt_accept` resolves it
-/// (the PR #231 prune class).
+/// (the libsrt accept-queue prune).
 ///
 /// `slot` is the accept's cancel slot, and giving up fires it BEFORE the
 /// panic: `accept_one` runs on the test's own thread with nothing else
@@ -251,8 +249,8 @@ fn accept_one_hands_back_a_connecting_peer() {
 /// yields `":PORT"`, which does not resolve, and the accept comes back
 /// `Broken { msg: "bind: …" }` instead of a peer.
 ///
-/// (Added beyond the WP-A3 brief's test list: no other test exercises
-/// this branch, and it is a documented contract of the method.)
+/// (No other test exercises this branch, and it is a documented contract
+/// of the method.)
 #[test]
 fn accept_one_with_empty_host_binds_the_wildcard() {
     require_loopback!();
@@ -282,9 +280,9 @@ fn accept_one_with_empty_host_binds_the_wildcard() {
 /// transport moves into a shell, wakes a parked recv from another thread,
 /// and still answers (as cancelled) after `close()`.
 ///
-/// The error the woken recv returns is `ExplicitClose` (WP-C2) — this test
-/// asserts only "returned with an error within the watchdog", so it did not
-/// move when that kind changed.
+/// The error the woken recv returns is `ExplicitClose` — this test asserts
+/// only "returned with an error within the watchdog", so it does not pin
+/// the kind.
 #[test]
 fn srt_cancel_handle_wakes_a_parked_recv_and_survives_close() {
     require_loopback!();
