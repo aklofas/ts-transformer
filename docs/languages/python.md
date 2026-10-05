@@ -15,11 +15,20 @@
 > - The Python-specific gotchas: GIL release, dataclass strictness, optional extras
 > - How this binding differs from the Rust core
 
+Start with installation and the first file examples below. For a specific
+task, jump to:
+
+- [Read a stream and handle events](#first-receive).
+- [Edit metadata while copying video unchanged](#transmux-edit-metadata-copy-everything-else).
+- [Send or receive over SRT](#srt-transport-tstranssrt),
+  [RTP/RTSP](#rtp-transport-tstransrtp), or [UDP, TCP, and RIST](#udp--tcp--rist-transports).
+- [Publish HLS](#hls-publisher-tstranshls).
+- [Pair video with metadata](#pipeline-pairing-tstranspipelinepairer).
+- [Analyze data with pandas and NumPy](#pandas--numpy-adapters).
+
 ## Install
 
-> **On PyPI.** `pip install tstrans` (v0.2.0+). To work from a source checkout
-> instead, build the wheel with `maturin` or run `maturin develop` in
-> `bindings/python/`.
+Install the package from PyPI:
 
 ```bash
 pip install tstrans
@@ -31,8 +40,8 @@ Optional extras:
 pip install 'tstrans[pandas]'   # pandas DataFrame adapters + NumPy snapshot views
 ```
 
-**Minimum Python is 3.10**, so the binding uses PEP 604 union syntax and
-`match` statements without compat hacks.
+**Python 3.10 or later is required.** To work from a source checkout,
+build the wheel with `maturin` or run `maturin develop` in `bindings/python/`.
 
 The compiled extension is imported as `tstrans._native`. Public API lives
 on `tstrans` and its topic submodules — `tstrans.io`, `tstrans.mpegts`,
@@ -47,20 +56,10 @@ on by default, on every platform (Linux, macOS, and Windows). The HLS publisher
 [HLS publisher](#hls-publisher-tstranshls) below); it is unavailable only
 in a `--no-default-features` source build that omits `hls`.
 
-> **Status:** `tstrans` ships the full surface — offline file inspection
-> + construction (`Demuxer` / `Muxer` / `MuxerFileSink`), typed KLV
-> decode + encode for ST 0601 / ST 0102 / ST 0605 / ST 0903 (with
-> `VTargetPack`), ST 0806 RVT, ST 1010 SDCC-FLP, and the ST 0805
-> KLV → CoT conversion layer, codec parsers for H.264 / H.265 / H.266 / AV1 / AAC /
-> MPEG-2 audio, optional pandas DataFrame adapters + NumPy snapshot views
-> via `pip install tstrans[pandas]`, the live transports
-> `tstrans.{srt,rtp,udp,tcp,rist}` (with RTSP client + server and SRT
-> auto-reconnect), the HLS publisher (`tstrans.hls`), and
-> `tstrans.pipeline.Pairer`.
-
 ## Hello world
 
-Read a `.ts` file and print the type of each event in five lines:
+Use an existing MPEG-TS file named `capture.ts` (or change the path below).
+This prints the type of each event as the file is read:
 
 ```python
 import tstrans
@@ -71,10 +70,13 @@ for event in tstrans.io.parse_file("capture.ts"):
 
 ## First send
 
-Build a single-program H.264 `.ts` file by pushing one access unit through
-the `Muxer`:
+Write H.264 video and KLV metadata to a `.ts` file. Supply `nal_bytes` as
+`bytes` containing one complete Annex-B access unit from your encoder. The
+snippet creates a KLV record with a fixed test timestamp; in an application,
+populate that record from your metadata source.
 
 ```python
+from tstrans.klv import UasDatalinkLs, encode_uas_datalink
 from tstrans.mpegts import (
     KlvStreamType,
     Muxer,
@@ -92,17 +94,16 @@ prog = (
 )
 cfg = MuxerConfigBuilder().add_program(prog).build()
 m = Muxer(cfg)
+klv_bytes = encode_uas_datalink(UasDatalinkLs(timestamp_us=0))
 
 with m.write_file("out.ts") as proxy:
     proxy.push_video(nal_bytes, pts=Pts90khz.from_raw(900_000))
     proxy.push_klv(klv_bytes, pts=Pts90khz.from_raw(900_000))
 ```
 
-`MuxerFileSink` (the object returned by `write_file`) is a context
-manager — `__exit__` flushes and finalizes the file; no explicit
-`close()` ceremony is needed. Note the pushes go through `proxy` (the
-object the `with` statement yields), not through `m` — only proxy
-pushes drain to the file as they go.
+`write_file` returns a context manager. Call `push_*` on the `proxy` yielded
+by the `with` statement so that each push writes its output to the file.
+Leaving the block flushes and finalizes the file automatically.
 
 When you need the TS bytes in memory rather than writing to a file, use
 `Muxer.pull()` directly. `pull` fills a preallocated `bytearray` and
@@ -1355,8 +1356,8 @@ print(pairer.stats())   # {'paired': N, 'unpaired_video': N, 'unpaired_klv': N, 
 The simplest form — `Pairer(video_pid, klv_pid)` — uses all defaults. To
 tolerate arrival skew, switch to Buffered mode by passing
 `mode=PairerMode.Buffered(max_lag=timedelta(milliseconds=200))` to
-`PairerConfig`; `flush()` is most load-bearing in Buffered mode, where
-buffered samples are held until the lag window closes. Call `flush()` at
+`PairerConfig`. Buffered mode holds samples until the lag window closes;
+`flush()` releases any samples still waiting when input ends. Call it at
 end-of-stream in **either** mode, though: it drains any unused KLV history as
 trailing `UnpairedKlv` (e.g. metadata that arrived after the last video access
 unit), so skipping it can drop tail metadata. `feed` and `flush`
@@ -1378,10 +1379,9 @@ counters without touching demuxer stats.
   every `push_*` through `proxy`. Only proxy pushes drain to the file;
   pushing on the original Muxer (`m.push_video(...)`) inside the block
   bypasses the per-push drain and raises `MuxError(BACKPRESSURE)` once
-  `buffer_packets` (default 10 000) accumulate — a footgun that only
-  fires in long push loops. The `__exit__` flushes + finalizes the
-  file. No explicit `close()` ceremony is needed (and a double-close on
-  the underlying handle would panic).
+  `buffer_packets` (default 10 000) accumulate. A short test may therefore
+  appear to work even though a longer stream fails. Leaving the `with`
+  block flushes and finalizes the file automatically.
 - **Video / Audio events are raw-first; parsing is opt-in.** A
   `DemuxEvent.Video` / `DemuxEvent.Audio` carries `.raw` (the exact encoded
   bytes). Call `ev.parse()` to get typed units: for H.264 / H.265 / H.266

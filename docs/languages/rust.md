@@ -36,7 +36,7 @@ Running `cargo` inside the workspace auto-uses 1.85 via rustup.
 
 | Crate         | Feature   | Default | Effect                                                           |
 | ------------- | --------- | ------- | ---------------------------------------------------------------- |
-| `srt-sys` (published as `tstrans-srt-sys`) | `mbedtls` | on | Vendored mbedTLS, `USE_ENCLIB=mbedtls`. Disable for unencrypted. |
+| `srt-sys` (published as `tstrans-srt-sys`) | `mbedtls` | on | Builds encryption support using mbedTLS. Set a passphrase on both peers to encrypt a connection. |
 | `tst-srt`     | `mbedtls` | on      | Propagates to `srt-sys/mbedtls`.                                 |
 | `tst-core`    | `std`     | on      | Standard library: file I/O, net helpers, JSON/TOML. Off = `#![no_std]` + `alloc` (see [embedded](/docs/languages/embedded.md)). |
 | `tst-core`    | `file`    | on      | File I/O helpers. `file` and `std` imply each other, so they switch on and off together. |
@@ -53,6 +53,11 @@ For the per-target support matrix, see
 
 The smallest useful thing: mux one H.264 access unit + one KLV blob into
 188-byte TS packets, entirely in memory — no SRT, no peer, no file.
+
+The short byte arrays below are synthetic placeholders. They demonstrate
+the push/pull API; they do not contain playable video or a valid ST 0601
+record. The [hello-world example](/examples/getting-started/hello_world.rs)
+shows how to build the KLV bytes from a typed record.
 
 ```rust
 use tst_core::mpegts::common::Pts90khz;
@@ -73,9 +78,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-That's the whole shape: build a `Muxer`, push typed payloads, pull TS
-bytes. Every other sender variant in this library is sugar over the same
-push/pull contract.
+The sequence is: configure a `Muxer`, push encoded payloads, then pull TS
+bytes. To send encoder output over a network, `MuxSender` combines these
+steps with a transport.
 
 ## First send
 

@@ -24,7 +24,7 @@ The C ABI ships as the `tst-c` crate in the workspace; its build emits the artif
 ### From source
 
 ```sh
-git clone https://github.com/aklofas/ts-transformer
+git clone --recurse-submodules https://github.com/aklofas/ts-transformer
 cd ts-transformer
 # Transports are opt-in features: srt, rtp, udp, tcp, hls, rist.
 SRT_FORCE_VENDORED=1 cargo build -p tst-c --release --features srt
@@ -81,7 +81,11 @@ See [`examples/getting-started/version_check.c`](../../bindings/c/examples/getti
 
 ## Hello world
 
-Build MPEG-TS in memory containing one H.264 access unit + one KLV record — no SRT, no files. The full example is at [`examples/getting-started/hello_world.c`](../../bindings/c/examples/getting-started/hello_world.c); the core is a dozen lines:
+Build MPEG-TS in memory using a synthetic H.264 payload and placeholder
+KLV bytes. This demonstrates packet construction; the output is not
+playable video or valid ST 0601 metadata. Save the code below as `hello.c`.
+The full example, including error checks, is at
+[`hello_world.c`](../../bindings/c/examples/getting-started/hello_world.c).
 
 ```c
 #include "tstrans.h"

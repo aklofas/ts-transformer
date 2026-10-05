@@ -52,8 +52,9 @@ files, across every one of the 12 canonical stream profiles the crate
 models (baseline H.264+KLV, H.265, H.266/VVC, AV1 in two PID-classification
 shapes, MISP timestamps, synchronous AU-cell KLV, sparse/tight PCR, PTS
 rollover, AAC audio, and a two-program stream). Each (transport-or-probe,
-peer, direction, profile) combination is one "cell," and every cell gets
-one of four verdicts:
+peer, direction, profile) combination is one "cell." The verdict describes
+whether that combination passed, failed, matched a known limitation, or
+could not run.
 
 Since 2026-09-14 every cell carries **realistic access-unit sizes**: the
 generator draws a GOP-structured stream — 28-52 KiB keyframes and 2-10 KiB
@@ -71,10 +72,39 @@ representative.
 
 | Verdict | Meaning |
 | --- | --- |
-| **PASS** | The cell's tier requirement held: a byte-for-byte match against the source (`transparent` tier, used for pure-relay tools/paths), or `tst-interop verify`'s profile invariants **and demuxer-independent wire oracles** (`remux` tier, used where the peer legitimately re-packetizes: video/KLV/audio event counts at or above a documented floor (`NOMINAL_COUNT_SLACK` = 70 % of nominal, the allowance for captures truncated at either end) **and, per media PID, the demuxer's event count against the raw reader's independent PES-start count (`wire_vs_demux_<pid>`: short by at most the events the capture explains ON THAT PID plus multiplex-wide resyncs — attributed injections, or under lossy judgement that PID's own discontinuities and non-conformances — and a fixed per-PID boundary allowance for the units a demuxer cannot emit before it has acquired PAT + PMT or after the capture's last PES; the check that makes the 70 % number a floor rather than the bar)**, correct video codec and KLV carriage kind, program count, rollover-aware monotonic PTS, plus per-profile wire-level properties — PCR cadence, AV1 carriage-mode discrimination, per-program media accounting, and an actually-observed PTS wrap, read directly off the bytes by a naive raw-TS parser independent of the demuxer under test — see "What each profile's oracle proves" below), or no error in the peer's own log (`n/a` tier, used for decode-only probes). |
+| **PASS** | The checks required for that cell's tier passed. The tiers and their checks are explained below. |
 | **EXPECTED-UNSUPPORTED** | A `FAIL` that matches a row in `expectations.toml` — a known, already-investigated gap (see below). |
 | **KNOWN-FLAKY** | A `FAIL` (or PASS) matching a row marked flaky rather than reliably-reproducing. |
 | **SKIPPED** | The peer tool wasn't installed on the runner. Never a silent pass. |
+
+**What a PASS establishes depends on the tier:**
+
+- **`transparent`** (relay paths): the received bytes match the source byte for byte.
+- **`remux`** (paths that may re-packetize): `tst-interop verify` checks the
+  media content and timing. An independent parser also checks the raw TS
+  bytes, so the result does not rely solely on the demuxer under test.
+- **`n/a`** (decode-only probes): the peer's log contains no error. This is
+  a narrower check than byte equality or the remux checks.
+
+For `remux`, video, KLV, and audio event counts must reach at least 70% of
+the nominal count (`NOMINAL_COUNT_SLACK`). This allows for captures that
+start or end partway through a stream. **That floor alone is not enough to
+pass.** For each media PID, `wire_vs_demux_<pid>` also compares the demuxer's
+event count with PES starts counted independently in the raw bytes.
+
+Any shortfall in that comparison must fit the permitted allowances. In
+strict mode, explained loss comes from attributed injections on that PID.
+In lossy mode, it instead comes from that PID's recorded discontinuities
+and non-conformances, which already include attributed events.
+Multiplex-wide resynchronizations and a fixed per-PID boundary allowance
+also contribute. The boundary allowance covers units before the demuxer
+acquires PAT/PMT and units left incomplete at the end of the capture.
+
+The remaining checks cover the video codec, KLV carriage kind, program
+count, and monotonic PTS with rollover handling. Depending on the profile,
+the raw-byte parser also checks PCR cadence, AV1 carriage mode, media
+counts per program, and an observed PTS wrap. See "What each profile's
+oracle proves" below for the individual checks.
 
 **Current census: 157 cells — 92 PASS, 0 FAIL, 65 EXPECTED-UNSUPPORTED, 0
 SKIPPED — measured at realistic access-unit sizes, and identical to the

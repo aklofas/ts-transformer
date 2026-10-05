@@ -1,5 +1,9 @@
 # Benchmarks + ceilings
 
+**No measured capacity results are published on this page yet.** The
+sections below describe the test method and how to reproduce it. Use
+measured results from your target system when choosing a deployment size.
+
 This page answers a deployment-planning question the interop matrix and the
 soak evidence don't: how big a system can I build on one machine before
 something gives out? The stress harness pushes each transport past the
