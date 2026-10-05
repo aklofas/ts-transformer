@@ -17,7 +17,7 @@ It is consumed in two contexts:
 | `targets/klv.dict` | libFuzzer dictionary for KLV decoders |
 | `targets/<name>.options` | Per-target libFuzzer options (e.g., `max_len`) |
 
-Committed synthetic seeds live canonically under `crates/<crate>/fuzz/seeds/<target>/` (single source of truth); `build.sh` zips them from there. Fixture-derived seeds (ST 0601 fixtures, plan #52 regression fixtures) are sourced from `crates/tst-core/tests/fixtures/`.
+Committed synthetic seeds live canonically under `crates/<crate>/fuzz/seeds/<target>/` (single source of truth); `build.sh` zips them from there. Fixture-derived seeds (ST 0601 fixtures, regression fixtures) are sourced from `crates/tst-core/tests/fixtures/`.
 
 ## Submission to google/oss-fuzz (one-time)
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Audit-2 hygiene: every top-level declaration in tstrans.h must start
+# Every top-level declaration in tstrans.h must start
 # at column 0 (no leading whitespace).
 #
 # Background: cbindgen 0.29.x emits single-line function declarations

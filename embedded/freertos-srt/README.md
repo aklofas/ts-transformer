@@ -110,7 +110,7 @@ NIC-ingress `srt-recv` — are CI hard-gates.
 | `lwip-loopback` | the FreeRTOS + lwIP + hi-res-clock substrate round-trips the golden over a UDP loopback socket |
 | `libsrt-smoke` | the cross-compiled libsrt boots its runtime (startup → socket → cleanup) on the substrate |
 | `loopback-arq` | SRT recovers the golden byte-exact under ~20% packet loss, plain and AES-128 with negotiated-KM assert |
-| `arq-connfail` | a caller pointed at a dead port fails fast with a labeled verdict (EMB-JOIN-1 regression gate) |
+| `arq-connfail` | a caller pointed at a dead port fails fast with a labeled verdict |
 | `fault-smoke` | a deliberate fault produces the labeled `FAIL[hardfault]` token and exits fast, not hangs |
 | `malloc-stress` | 4 tasks × 20000 malloc/free with per-block canaries + concurrent EH + per-task errno isolation |
 | `example` | a real-NIC SRT caller streams the golden to a host listener byte-exact, plain and AES-128 |

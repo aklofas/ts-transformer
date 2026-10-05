@@ -128,7 +128,7 @@ test = "diagnostic_dump_for_results_doc"
 crate = "tst-core"
 path = "crates/tst-core/tests/regression/av1_external_decoder.rs"
 class = "diagnostic"
-note = "Writes AV1 binding/interop artifacts + tool reports for docs/validate-1/13b-i2-av1-conformant-results.md; run on demand with --ignored."
+note = "Writes AV1 binding/interop artifacts + tool reports for the AV1 conformance results doc; run on demand with --ignored."
 
 [[skip]]
 test = "wave_i1_matrix_no_regression"

@@ -57,7 +57,7 @@ bash embedded/scripts/check/freertos-srt.sh exceptions     # C++ exceptions on F
 bash embedded/scripts/check/freertos-srt.sh lwip-loopback  # lwIP UDP loopback round-trip
 bash embedded/scripts/check/freertos-srt.sh libsrt-smoke   # cross-built libsrt boots
 bash embedded/scripts/check/freertos-srt.sh loopback-arq      # SRT ARQ + AES-128 over a lossy netif
-bash embedded/scripts/check/freertos-srt.sh arq-connfail      # caller at dead port fails fast with labeled verdict (EMB-JOIN-1)
+bash embedded/scripts/check/freertos-srt.sh arq-connfail      # caller at dead port fails fast with labeled verdict
 bash embedded/scripts/check/freertos-srt.sh example           # NIC egress to a host listener
 bash embedded/scripts/check/freertos-srt.sh srt-recv          # NIC ingress from a host caller, demuxed + verified on-device
 bash embedded/scripts/check/freertos-srt.sh fault-smoke       # deliberate fault produces labeled FAIL token + fast exit (gate asserts the failure)

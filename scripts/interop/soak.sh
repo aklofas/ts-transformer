@@ -7,9 +7,8 @@
 # published evidence (run-matrix.sh's transport/format matrix is the
 # "real tools, short runs" half).
 #
-# Topology (see docs/specs/2026-08-02-interop-evidence-and-live-tool-matrix.md
-# §7 for the design, and crates/tst-interop/src/report.rs's `soak`
-# module doc for the verdict shapes this run's evidence feeds):
+# Topology (see crates/tst-interop/src/report.rs's `soak` module doc for
+# the verdict shapes this run's evidence feeds):
 #   - `srt` leg: `tst-interop send --managed` (SRT, wrapped in
 #     `tst_pipeline::ManagedTransport` so a transport break reconnects)
 #     -> impairment proxy (a seeded PHASE SCHEDULE — see "Realism knobs"
@@ -90,10 +89,9 @@
 #
 # Every long-running process's stdout/stderr is redirected to
 # `--outdir/logs/*.log`; each PID is additionally recorded under
-# `--outdir/pids/*.pid` so `nohup bash soak.sh --outdir DIR &`
-# (Task 16's real 72h invocation) leaves behind a way to check on or
-# kill an in-progress run without needing this script's own job-control
-# state.
+# `--outdir/pids/*.pid` so `nohup bash soak.sh --outdir DIR &` (a real
+# multi-day invocation) leaves behind a way to check on or kill an
+# in-progress run without needing this script's own job-control state.
 #
 # # Running the soak on a fresh host
 #
@@ -668,10 +666,10 @@ fi
 echo "soak: profiles — srt=$SRT_PROFILE rist=$RIST_PROFILE (--profile $PROFILE, seed $SEED)" >&2
 
 # Declared BEFORE any evidence exists — `report soak` judges the run
-# against these, never against what the artifacts happen to span
-# (release-gate audit RLS-B09). `legs` carries the same declare-then-
-# check stance one level down: which profile each leg was launched with,
-# and which impairment schedule its proxy was given (`null` under
+# against these, never against what the artifacts happen to span. `legs`
+# carries the same declare-then-check stance one level down: which
+# profile each leg was launched with, and which impairment schedule its
+# proxy was given (`null` under
 # --fixed-impairment), checked afterwards against the recv report's own
 # `profile` field and the proxy's own schedule echo. `reconnect_mode`
 # is the mode the leg's MANAGED sender is launched with, checked against
@@ -842,8 +840,8 @@ sleep "$SRT_PROXY_WARMUP_S"
 # --no-klv-digest on every send/recv below: without it, both sides
 # accumulate one hex digest string per KLV record for the ENTIRE run
 # (needed for klv_set_sha256, an order-insensitive fingerprint that has
-# to sort every digest before hashing) — confirmed during Task 14's own
-# smoke run to cost ~3.6-5.7 MiB/h of RSS growth that's pure harness
+# to sort every digest before hashing) — confirmed to cost ~3.6-5.7 MiB/h
+# of RSS growth that's pure harness
 # bookkeeping, unrelated to the library code this soak measures, and
 # would otherwise swamp the RSS-slope evidence over 72h. The short
 # interop-matrix cells run-matrix.sh drives do NOT pass this flag —

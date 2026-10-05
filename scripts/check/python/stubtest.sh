@@ -8,11 +8,7 @@
 # `python-core` job right after `maturin develop --release` (tst-py's
 # transport features are default-on, so all ten modules import).
 #
-# History: core-only from v0.2.0 (#11) until 2026-09-08, when the transport
-# stubs were brought under the rail — they had drifted to 294 findings
-# (mostly missing @final / __init__-vs-__new__, plus real signature drift).
-#
-# 2026-09-10: worktree-aware. A linked `git worktree` has no
+# Worktree-aware. A linked `git worktree` has no
 # bindings/python/.venv, so this rail used to print SKIP there and the
 # pre-push sweep passed vacuously. Now:
 #   - the interpreter (mypy) falls back to the MAIN checkout's venv when this

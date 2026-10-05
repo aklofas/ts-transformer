@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Plan A5b Wave C T14 bash ratchet: the Python `Publisher` ABC's method
+# Bash ratchet: the Python `Publisher` ABC's method
 # list (from tstrans/hls.pyi) must mirror the Rust
 # `tst_core::publisher::Publisher` trait method list exactly.
 #

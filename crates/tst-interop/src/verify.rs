@@ -234,10 +234,9 @@ pub struct Tally {
     /// that flips it off, via `disable_klv_digest_tracking` — a
     /// multi-day soak run would otherwise accumulate one digest string
     /// per KLV record for the ENTIRE run (never cleared until `finish`
-    /// consumes it), an unbounded, harness-only allocation confirmed
-    /// during Task 14's smoke run to be the dominant contributor to
-    /// several MiB/hour of RSS growth that has nothing to do with the
-    /// library code the soak means to measure.
+    /// consumes it), an unbounded, harness-only allocation confirmed to be
+    /// the dominant contributor to several MiB/hour of RSS growth that has
+    /// nothing to do with the library code the soak means to measure.
     track_klv_digests: bool,
     audio_frames: u64,
     /// Per-`program_number` media counts — see [`ProgramCounts`].
@@ -3249,8 +3248,8 @@ mod tests {
         );
     }
 
-    /// R7-05 (review #7, internal report): the first chunk the fresh inner returns
-    /// is fed to the raw reader BEFORE the demuxer discards it and yields the
+    /// The first chunk the fresh inner returns is fed to the raw reader
+    /// BEFORE the demuxer discards it and yields the
     /// reconnect marker, so PCRs decoded from that chunk were stamped below
     /// the marker and an injection anchored at one of them read as "not
     /// arrived" — excused as reconnect loss even though the reset demuxer

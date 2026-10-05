@@ -455,8 +455,8 @@ fn pmt_streams(p: &Profile, inv: &Invariants, wire: &WireSummary) -> Vec<String>
     f
 }
 
-/// Oracle 7 (deep review #4 CORR-07, Q10): per media PID, the demuxer's
-/// event count against the raw reader's independent PES-start count.
+/// Oracle 7: per media PID, the demuxer's event count against the raw
+/// reader's independent PES-start count.
 ///
 /// [`crate::verify::NOMINAL_COUNT_SLACK`] (70 % of nominal) is a floor
 /// for truncated captures, not a count check: a demuxer silently
@@ -1072,8 +1072,8 @@ mod tests {
             "{f:?}"
         );
     }
-    /// CORR-07 / Q10: the wire-vs-demux floors, and the exact size of
-    /// the per-PID boundary allowance they subtract.
+    /// The wire-vs-demux floors, and the exact size of the per-PID boundary
+    /// allowance they subtract.
     ///
     /// Every profile repeats PSI every 100 ms, so the allowance is one
     /// tenth of a second of units plus the unflushed tail one: 4 on

@@ -34,7 +34,7 @@ ALLOWLIST=(
     "tst_get_last_error"
     "tst_get_last_error_str"
     "tst_clear_last_error"
-    # "tst_version" — removed in Wave 5.A; superseded by tst_get_version_*
+    # "tst_version" — removed; superseded by tst_get_version_*
     "tst_panic_recover"
 
     # --- version accessors (no Rust counterpart by design — read Cargo.toml /
@@ -121,7 +121,7 @@ ALLOWLIST=(
     "tst_raw_sender_get_stats"
     "tst_raw_sender_reset_stats"
 
-    # --- Phase 1 receiver surface open helpers (no direct Rust counterpart:
+    # --- receiver surface open helpers (no direct Rust counterpart:
     #     URL parsing + Box construction happen entirely in the C layer;
     #     there is no single Rust method that maps 1:1 to these entry points) ---
     "tst_raw_receiver_open"
@@ -129,7 +129,7 @@ ALLOWLIST=(
     "tst_managed_raw_receiver_open"
     "tst_managed_raw_receiver_open_listener"
 
-    # --- Phase 1 managed-wrapper entry points (ride the plain-side # C ABI
+    # --- managed-wrapper entry points (ride the plain-side # C ABI
     #     rustdoc cross-reference: ManagedRecvTransport calls through to
     #     the same underlying RawReceiver methods that carry the backfilled
     #     # C ABI blocks; adding duplicate cross-refs on the managed wrappers
@@ -143,7 +143,7 @@ ALLOWLIST=(
     "tst_managed_sender_cancel"
     "tst_managed_mux_sender_cancel"
 
-    # --- Phase 2 receiver surface open helpers (no direct Rust counterpart:
+    # --- receiver surface open helpers (no direct Rust counterpart:
     #     URL parsing + Box construction happen entirely in the C layer;
     #     there is no single Rust method that maps 1:1 to these entry points) ---
     "tst_receiver_open"
@@ -151,7 +151,7 @@ ALLOWLIST=(
     "tst_managed_receiver_open"
     "tst_managed_receiver_open_listener"
 
-    # --- Phase 2 managed-wrapper entry points (ride the plain-side # C ABI
+    # --- managed-wrapper entry points (ride the plain-side # C ABI
     #     rustdoc cross-reference on Receiver<R>::{next_packet, stats,
     #     reset_stats, close, cancel_handle}; adding duplicate cross-refs on
     #     the managed wrappers would not add useful information) ---
@@ -161,7 +161,7 @@ ALLOWLIST=(
     "tst_managed_receiver_get_stats"
     "tst_managed_receiver_reset_stats"
 
-    # --- Phase 3 demux-config-builder C wrappers (Rust uses
+    # --- demux-config-builder C wrappers (Rust uses
     #     DemuxerConfigBuilder methods, not 1:1 names) ---
     "tst_demux_config_new"
     "tst_demux_config_free"
@@ -179,7 +179,7 @@ ALLOWLIST=(
     #     Demuxer::close method to cross-ref) ---
     "tst_demuxer_close"
 
-    # --- Phase 3 mux-config descriptor wrappers (mirror existing
+    # --- mux-config descriptor wrappers (mirror existing
     #     tst_mux_config_set_*_descriptors / set_program_descriptors
     #     pattern: C-side TLV assembly + opaque-ptr forwarding) ---
     "tst_mux_config_add_video_descriptor"
@@ -188,7 +188,7 @@ ALLOWLIST=(
     "tst_mux_config_add_audio_descriptor"
     "tst_mux_config_add_subtitle_descriptor"
 
-    # --- Phase 3 receiver-surface open helpers (no direct Rust counterpart:
+    # --- receiver-surface open helpers (no direct Rust counterpart:
     #     URL parsing + Box construction happen entirely in the C layer;
     #     there is no single Rust method that maps 1:1 to these entry points) ---
     "tst_demux_receiver_open"
@@ -200,7 +200,7 @@ ALLOWLIST=(
     "tst_managed_demux_receiver_open_with_config"
     "tst_managed_demux_receiver_open_listener_with_config"
 
-    # --- Phase 3 plain demux-receiver entry points (ride the
+    # --- plain demux-receiver entry points (ride the
     #     DemuxReceiver<R>::{recv_event, stats, reset_stats, cancel_handle}
     #     methods — the C wrappers are thin pass-throughs; adding # C ABI
     #     cross-refs on each method individually would duplicate without
@@ -211,7 +211,7 @@ ALLOWLIST=(
     "tst_demux_receiver_reset_stats"
     "tst_demux_receiver_get_stream_stats"
 
-    # --- Phase 3 managed-demux-receiver entry points (ride the plain-side
+    # --- managed-demux-receiver entry points (ride the plain-side
     #     allowlist entries above + the ManagedRecvTransport wrapping) ---
     "tst_managed_demux_receiver_recv_event"
     "tst_managed_demux_receiver_cancel"
@@ -233,7 +233,7 @@ ALLOWLIST=(
     "tst_managed_raw_receiver_get_socket_stats"
     "tst_managed_demux_receiver_get_socket_stats"
 
-    # --- Phase 4 RTSP client builder entry points (tst-c–only wrappers:
+    # --- RTSP client builder entry points (tst-c–only wrappers:
     #     RtspClientBuilder uses consuming mut-self chain setters, making
     #     in-place C mutation impossible; the C wrappers store fields
     #     directly in TstRtspClientBuilder and reconstruct the Rust builder
@@ -248,7 +248,7 @@ ALLOWLIST=(
     "tst_rtsp_client_builder_auth_digest_sha256"
     "tst_rtsp_client_builder_free"
 
-    # --- Phase 4 RTP lifecycle entry points (open + close) ---
+    # --- RTP lifecycle entry points (open + close) ---
     #     The C-side concrete handle types (TstRtpSender, TstRtpReceiver,
     #     TstRtpMuxSender, TstRtpDemuxReceiver) are tst-c–only projections
     #     of the Rust pipeline types parameterized on RtpTransport /
@@ -263,7 +263,7 @@ ALLOWLIST=(
     "tst_rtp_demux_receiver_open"
     "tst_rtp_demux_receiver_close"
 
-    # --- Phase 4 RTP data-path entry points (Fix-C) ---
+    # --- RTP data-path entry points ---
     #     Same rationale as above — tst-c–only wrappers delegating to the
     #     same pipeline::Sender / Receiver / MuxSender / DemuxReceiver
     #     methods that the SRT variants call, but typed on RtpTransport.
@@ -512,7 +512,7 @@ ALLOWLIST=(
     "tst_rist_demux_receiver_get_stream_stats"
     "tst_rist_demux_receiver_reset_stats"
 
-    # --- Phase 4 RTSP session entry points (Task 6, Wave B) ---
+    # --- RTSP session entry points ---
     #     TstRtspSession is the C-language projection of (RtspClient, RtspSession)
     #     combined; into_demux_receiver bridges to the existing TstRtpDemuxReceiver.
     #     No 1:1 Rust method counterpart in tst-pipeline / tst-srt / tst-core.
@@ -523,7 +523,7 @@ ALLOWLIST=(
     "tst_rtsp_session_cancel"
     "tst_rtsp_session_into_demux_receiver"
 
-    # --- Phase 4 RTSP server entry points (Tasks 7-8, Wave B) ---
+    # --- RTSP server entry points ---
     #     TstRtspServerBuilder stores fields directly and reconstructs
     #     RtspServerBuilder at _start time. TstRtspServer wraps
     #     tst_rtp::RtspServer; TstRtspMountHandle wraps tst_rtp::MountHandle.
@@ -585,7 +585,7 @@ ALLOWLIST=(
     "tst_rtsp_mount_audio_handle"
     "tst_rtsp_mount_subtitle_handle"
 
-    # --- Task 8: Annex B <-> length-prefixed + parameter-set extraction
+    # --- Annex B <-> length-prefixed + parameter-set extraction
     #     (ABI 21). tst_annexb_to_length_prefixed has a real 1:1 cross-ref
     #     on nal_framing::annexb_to_length_prefixed, and
     #     tst_param_sets_extract on nal_framing::extract_parameter_sets
@@ -603,8 +603,7 @@ ALLOWLIST=(
 #
 # Portable read-into-array pattern (bash 3.2+, including macOS default
 # bash 3.2.57). `mapfile`/`readarray` are bash 4.0+ only and silently
-# fail with "command not found" on macOS — see
-# `feedback_bash_ratchets_macos_portability.md`.
+# fail with "command not found" on macOS.
 C_EXPORTS=()
 while IFS= read -r c_export; do
     C_EXPORTS+=("$c_export")

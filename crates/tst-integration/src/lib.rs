@@ -1,6 +1,6 @@
 //! Cross-binding integration test harness for ts-transformer.
 //!
-//! This crate is the "WS-5" cross-binding scenario harness.  It houses:
+//! This crate is the cross-binding scenario harness. It houses:
 //!
 //! - `scenarios/` — the scenario trait + pilot scenario implementations.
 //! - `scenarios/golden.rs` — the golden envelope + `CoreEvent` types.

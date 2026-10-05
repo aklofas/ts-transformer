@@ -13,8 +13,7 @@
 # This rail exists because the moves above are path-coupled and the literal
 # grep used during each move is BLIND to a few forms (slashless `cd crates/tst-c`,
 # relative `../tst-c-core` build triggers). This catches the literal-path class
-# at CI time so it can't silently rot. See memory project_bindings_relocation_shipped
-# + feedback_crate_move_relative_path_walks.
+# at CI time so it can't silently rot.
 #
 # CHANGELOG.md is exempt: it is an append-only history and its entries were
 # accurate at the time they were written.
@@ -77,11 +76,11 @@ PATTERN_VEND_NATIVE='vendor/(srt|mbedtls|librist)([/")`, .]|$)'
 # 2026-06-03 bash-ratchet reorg: the flat `scripts/check-<name>.sh` scripts
 # moved into per-group subdirectories (`scripts/check/<group>/<name>.sh`).
 # This class rotted silently for months (18 stale hits found across
-# bindings/python alone during the 2026-09-01 simplification audit) because
-# no rail caught the flat form once every script moved — this closes that
-# gap. `scripts/check-[a-z-]+\.sh` cannot collide with a current path: every
-# live rail script lives under `scripts/check/<group>/`, one path segment
-# deeper, so the flat form is unambiguously dead once matched.
+# bindings/python alone) because no rail caught the flat form once every
+# script moved — this closes that gap. `scripts/check-[a-z-]+\.sh` cannot
+# collide with a current path: every live rail script lives under
+# `scripts/check/<group>/`, one path segment deeper, so the flat form is
+# unambiguously dead once matched.
 PATTERN_RATCHET='scripts/check-[a-z-]+\.sh'
 
 # Exempt: CHANGELOG (history) and this script (it names the forbidden paths).

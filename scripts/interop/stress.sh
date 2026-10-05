@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Stress harness: find where each transport stops coping, then (Task 12)
-# hold a fraction of that load for a day. Where soak.sh asks "does a
+# Stress harness: find where each transport stops coping, then hold a
+# fraction of that load for a day. Where soak.sh asks "does a
 # fixed, realistic load survive 72 hours of impairment?", this script asks
 # "how much load does one box carry before a verdict fails?" — per
 # transport, on two axes, one step at a time — and hands every step to
@@ -1363,7 +1363,7 @@ run_step() {
 
 # sweep_axis <transport> <streams|bitrate> <load>... — run the ladder in
 # order and stop at its first failing step. LAST_PASS is bash's own record
-# for the hold's sizing (Task 12); `report stress` recomputes the
+# for the hold's sizing; `report stress` recomputes the
 # authoritative ceiling from the step results.
 declare -A LAST_PASS
 # step_over_memory_budget <transport> <load> — on the streams axis, with a

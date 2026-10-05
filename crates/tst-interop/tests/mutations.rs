@@ -416,8 +416,8 @@ fn zero_adts_syncword_after_first(bytes: &[u8], pid: u16) -> Vec<u8> {
     out
 }
 
-/// F-META-04: the ADTS check used to read only the first PES, so damage
-/// to every later frame passed.
+/// The ADTS check used to read only the first PES, so damage to every
+/// later frame passed.
 #[test]
 fn zeroed_adts_syncword_on_every_later_pes_fails_audio_codec() {
     let p = profiles::by_name("audio").unwrap();
@@ -482,11 +482,11 @@ fn a_dropped_video_packet_is_fatal_in_strict_and_counted_in_lossy() {
     assert_eq!(lossy.metrics.discontinuities, 1);
 }
 
-/// CORR-07: a demuxer that silently loses one record in four stays
-/// inside the 70 % count slack (23 of 30 >= 21), so before the
-/// `wire_vs_demux_*` oracle the only failure this mutation produced was
-/// the `nonconformant_event` the demuxer happened to report. The wire
-/// oracle must fail on the COUNT, independent of any event.
+/// A demuxer that silently loses one record in four stays inside the
+/// 70 % count slack (23 of 30 >= 21), so before the `wire_vs_demux_*`
+/// oracle the only failure this mutation produced was the
+/// `nonconformant_event` the demuxer happened to report. The wire oracle
+/// must fail on the COUNT, independent of any event.
 #[test]
 fn every_fourth_klv_record_lost_in_the_demuxer_fails_wire_vs_demux() {
     let p = profiles::by_name("baseline").unwrap();

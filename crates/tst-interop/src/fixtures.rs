@@ -898,7 +898,7 @@ mod tests {
         }
     }
 
-    /// The census oracle's exact identity (Task 10 consumes both halves):
+    /// The census oracle's exact identity:
     /// the tags a rich record actually carries on the wire are precisely
     /// the tags its seeded presence schedule declared, with no drift
     /// between the two tag lists.

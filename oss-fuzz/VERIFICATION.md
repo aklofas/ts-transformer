@@ -147,7 +147,7 @@ All 16 targets check_build = PASS.
 14 of 16 targets ran 1000 libFuzzer iterations without crash. 2 targets surfaced issues:
 
 - **demux_psi**: OOB slice at `psi.rs:90` — real library bug. See "Known issues" below.
-- **klv_st0903_decode**: round-trip assertion failure — harness logic mismatch with plan #46 encode semantics, NOT a library bug. See "Known issues" below.
+- **klv_st0903_decode**: round-trip assertion failure — harness logic mismatch with encode semantics, NOT a library bug. See "Known issues" below.
 
 `demux_feed` ran 10,000 iterations without crash — satisfies spec acceptance criterion #4:
 
@@ -172,9 +172,9 @@ Built with local source. Counts confirmed by Docker container inspection:
 
 Total: 39 files in $OUT.
 
-## Resolved issues — fixed in plan #54
+## Resolved issues
 
-Both bugs surfaced by plan #53's local 1k smoke pass have been fixed.
+Both bugs surfaced by the local 1k smoke pass have been fixed.
 The next local OSS-Fuzz fleet rebuild produces no crashes across the
 16 targets' 1k smoke runs.
 
@@ -188,10 +188,10 @@ The next local OSS-Fuzz fleet rebuild produces no crashes across the
 - **Tests:** Four new unit tests in `crates/tst-core/src/mpegts/demux/psi.rs`
   pin the new behavior at the boundary (section_length = 0 and at min - 1).
 
-### 2. `klv_st0903_decode` harness: round-trip vs. plan-#46 Tag-1 drop
+### 2. `klv_st0903_decode` harness: round-trip vs. Tag-1 drop
 
 - **Was:** Harness asserted `decoded_a == decoded_b` after `decode → encode → decode`,
-  but `klv::st0903::encode` deliberately drops Tag 1 (checksum) per plan #46,
+  but `klv::st0903::encode` deliberately drops Tag 1 (checksum),
   so a Tag-1-containing input would always trip the assert.
 - **Fix:** Normalize `.checksum = None` on both sides before the equality
   comparison.

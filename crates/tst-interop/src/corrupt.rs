@@ -1395,7 +1395,7 @@ impl<T: Transport> Transport for Corrupter<T> {
 
     fn close(&mut self) {
         if let Err(e) = self.log.flush() {
-            // Same latch as the per-line write arm (X-CORR-05): a
+            // Same latch as the per-line write arm: a
             // buffering writer can hold a whole line until this final
             // flush, so a failure HERE loses evidence exactly like a
             // failure there — and a lost `Dup` line is one the receiver
@@ -1550,7 +1550,7 @@ pub struct AttributionReport {
     /// ([`Signal::Resync`], which is not a `DemuxEvent`): garbage runs and
     /// destroyed sync bytes that tst-core re-syncs past without an event,
     /// by design. Reported separately so the evidence page does not
-    /// credit the receiver with the harness's own detection (META-13).
+    /// credit the receiver with the harness's own detection.
     #[serde(default)]
     pub detected_by_reader_only: u64,
     /// The same, per class name ([`Class::name`]).
@@ -2539,7 +2539,7 @@ impl Attribution {
                 }
             }
         }
-        // META-13: split the detection credit. A `Resync` is the
+        // Split the detection credit. A `Resync` is the
         // harness's raw reader noticing; everything else is the
         // receiver's own demuxer.
         if inj.detectable && st.detected {
@@ -2868,7 +2868,7 @@ impl Attribution {
                     Signal::Resync => {}
                 }
                 self.state_mut(i).detected = true;
-                // META-13: a resync is the harness's own raw reader
+                // A resync is the harness's own raw reader
                 // losing and regaining packet sync, not a `DemuxEvent`.
                 // Only the other signals are the receiver reporting.
                 if sig != Signal::Resync {
@@ -3307,7 +3307,7 @@ mod tests {
         }
     }
 
-    /// X-CORR-05, close-time half: a buffering writer can hold a whole
+    /// Close-time half: a buffering writer can hold a whole
     /// line until the final flush, so `Corrupter::close` discarding that
     /// flush error loses evidence exactly like the per-line write arm
     /// would. It must latch the same flag — and `report soak` must fail
@@ -3356,7 +3356,7 @@ mod tests {
         assert_eq!(logged.len() as u64, injections);
     }
 
-    /// X-CORR-05 (E05): a lost injection line is not necessarily an
+    /// A lost injection line is not necessarily an
     /// unexplained event later — a `Dup` obliges the receiver to notice
     /// nothing — so the tap must latch the failure into its own stats
     /// rather than rely on the receiver to trip over the gap.
@@ -4576,7 +4576,7 @@ mod tests {
     /// injection was lost in transit, so the damage never reached the
     /// receiver to be noticed.
     ///
-    /// The excusal survives X-CORR-04; the ATTRIBUTION does not. A signal
+    /// The excusal survives; the ATTRIBUTION does not. A signal
     /// of a class the injection cannot cause is no longer explained by it
     /// (`can_explain`), so the jump is unexplained — transport loss under
     /// lossy judgement, a discontinuity finding under strict — while
@@ -4668,8 +4668,8 @@ mod tests {
         );
     }
 
-    /// X-CORR-04 (E04): a continuity jump on a PID an injection never
-    /// touched is not that injection's evidence. Today `hit` places by
+    /// A continuity jump on a PID an injection never touched is not that
+    /// injection's evidence. Today `hit` places by
     /// window position alone, so the foreign jump is "attributed" and
     /// the `Drop` counts as detected.
     #[test]
@@ -4795,8 +4795,8 @@ mod tests {
         );
     }
 
-    /// META-13: a resync is the HARNESS's raw reader noticing, not the
-    /// receiver. A garbage run detected only by a resync is counted
+    /// A resync is the HARNESS's raw reader noticing, not the receiver.
+    /// A garbage run detected only by a resync is counted
     /// apart from a drop the demuxer itself reported.
     #[test]
     fn detection_credit_splits_reader_resyncs_from_demux_events() {
@@ -5411,8 +5411,8 @@ mod tests {
     /// an `approx` resolution's widened window can still produce.
     ///
     /// Both injections sit on the PSI PID because the excusal is
-    /// PID-constrained too (X-CORR-04): a gap on a PID an injection never
-    /// touched says nothing about whether ITS packet went missing, so
+    /// PID-constrained too: a gap on a PID an injection never touched says
+    /// nothing about whether ITS packet went missing, so
     /// only a jump the older injection could itself have suffered counts.
     #[test]
     fn a_foreign_cc_jump_in_the_window_still_excuses() {

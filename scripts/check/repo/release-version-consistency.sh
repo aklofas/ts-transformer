@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# REL-01 release-version-consistency ratchet.
+# Release-version-consistency ratchet.
 #
 # Asserts the project version is identical across every source-of-truth so a
 # git tag (e.g. v0.2.0) can never publish a Maven/PyPI artifact whose source

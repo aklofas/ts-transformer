@@ -81,7 +81,7 @@ DIR/
 Exit code is `report merge`'s: 0 iff every produced cell exactly matches
 `inventory.json`'s declared multiset (see "Inventory and shape" below) AND
 every `FAIL` matched a row in `expectations.toml`. That file now carries a
-real row for every genuine gap this matrix has surfaced (65 as of task 12,
+real row for every genuine gap this matrix has surfaced (65 so far,
 see "Known, already-evidenced gaps" below) — running the full matrix exits
 0. Any *new* `FAIL` an expectations row doesn't already cover still exits
 nonzero: see `report.rs`'s module doc for why an unmatched `FAIL` must
@@ -103,7 +103,7 @@ mechanism string by definition.
 
 - **Cell id**: transport-axis cells are `<transport>/<direction>-<peer>[-encrypted]`,
   e.g. `srt/us-to-ffmpeg`, `srt/tsp-to-us-encrypted`, `rtsp-serve/vlc-probe`.
-  Format-axis cells (task 12) add a third segment, the profile name:
+  Format-axis cells add a third segment, the profile name:
   `<axis>/<peer>/<profile>`, e.g. `decode/mpv/h266-klv`,
   `srt-live/tsp-to-us/baseline`. `report merge`'s expectations grammar
   treats the id's segment before the *first* `/` as the axis (`report
@@ -224,7 +224,7 @@ exist to document with a reason + reference, not something to paper over.
    `klv-sync`'s own 2-row variant below — see the "Affects" list at the
    end of this item for the exact profile names and the 5 profiles that
    fail *earlier*, for unrelated reasons, instead).**
-   ★Task 12 refined this finding: it is **not** primarily a PTS-loss bug
+   ★It is **not** primarily a PTS-loss bug
    as originally described — it is a **5-byte payload truncation** ffmpeg
    applies to every KLV PES packet it demuxes, independent of whether a
    PTS was ever present. Verified byte-for-byte with `tsp -P pes
@@ -346,7 +346,7 @@ exist to document with a reason + reference, not something to paper over.
    RIST (`rist/tsp-to-us`) and UDP (`udp/tsp-to-us`) is **byte-perfect**
    (PASS) in the same run — only the SRT direction shows the mismatch.
 
-   ★Task 12 investigated this twice (bounded investigation both rounds,
+   ★Investigated twice (bounded investigation both rounds,
    live SRT sessions with wall-clock instrumentation on both sides).
    **Round 1** ruled out a sender-side drain/linger problem:
    `tst-interop recv`'s `Teeing` tap (`crates/tst-interop/src/transport.rs`)
@@ -362,7 +362,7 @@ exist to document with a reason + reference, not something to paper over.
    (`crates/tst-interop/src/recv.rs`'s `seconds + POST_START_GRACE`
    window) closing the connection while `tsp` was still transmitting.
 
-   **Round 2 (fix-round re-review) tested that conclusion directly with
+   **Round 2 tested that conclusion directly with
    a script-only mitigation, and it disproves round 1's root cause.**
    Giving `tst-interop recv` a *much* longer window than the peer's
    actual content duration — `--seconds 10` (2s of extra margin) and
@@ -454,9 +454,9 @@ exist to document with a reason + reference, not something to paper over.
    shared `--seconds` budget for a margin call this close to the 70%
    floor, not a clear win.
 
-### Format axis: findings beyond `baseline` (task 12)
+### Format axis: findings beyond `baseline`
 
-Task 11 only ever exercised the `baseline` profile. Running the format
+Only the `baseline` profile had been exercised. Running the format
 axis's `srt-live/*` cells across all 12 profiles for the first time
 surfaced four more distinct, run-log-verified gaps — none of them the
 async-KLV truncation above, even though the symptom text sometimes looks
@@ -517,7 +517,7 @@ similar at a glance:
    cause as one of the AV1 symptoms above): ffmpeg's default
    single-best-stream auto-selection picks only its highest-ranked video
    stream, silently dropping the second program entirely (never
-   surfaced on task 11's `baseline`-only, single-program testing) — on
+   surfaced when testing was `baseline`-only, single-program) — on
    top of the usual KLV-payload-truncation finding on whichever
    program's data does get through. `srt-live/us-to-ffmpeg` (**does**
    have `-map 0`): the same "Error during demuxing: Input/output error"
@@ -1471,7 +1471,7 @@ alongside the totals. A compact capture carries no `klv_rich` block at all.
   contributes the source file (`gen`) and the final verification
   (`verify`), while VLC serves it over RTSP (`--sout
   '#rtp{sdp=rtsp://:PORT/s}'`) and ffmpeg pulls it. Wired from day one as
-  a likely `known_flaky` candidate for Task 12 — VLC's `--sout` RTSP
+  a likely `known_flaky` candidate — VLC's `--sout` RTSP
   serving is fiddly and this cell doesn't exercise this crate's own RTSP
   code at all either way.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# MSRV-consistency ratchet (deep-review-4 DEBT-19).
+# MSRV-consistency ratchet.
 #
 # The workspace pins ONE Rust toolchain in rust-toolchain.toml, but the same
 # version string is repeated at ~30 literal sites: [workspace.package]

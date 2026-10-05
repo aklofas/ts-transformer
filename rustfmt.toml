@@ -3,5 +3,5 @@ edition = "2024"
 # Keep `pub mod` declaration order as written. cbindgen emits items in
 # source-declaration order, so several `tst-c/src/*/mod.rs` files use a
 # deliberate non-alphabetical mod order to keep `tstrans.h` byte-identical
-# across reorgs. See plan #84 (Wave 5.C).
+# across reorgs.
 reorder_modules = false

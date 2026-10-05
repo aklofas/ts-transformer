@@ -39,7 +39,7 @@ klva                = "covered"   # KLV stream KLVA descriptor
 subtitle_descriptor = "covered"   # DVB subtitling / teletext descriptors
 registration        = "partial"
 
-# Known gaps to drive future scenario / fixture work (Tier D):
+# Known gaps to drive future scenario / fixture work:
 [gaps]
 notes = [
   "AV1 raw-OBU interop decode (not just binding-conformant carriage)",

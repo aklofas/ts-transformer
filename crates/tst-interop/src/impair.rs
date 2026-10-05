@@ -80,7 +80,7 @@ pub struct ImpairConfig {
     /// packet back long enough for N packets behind it to overtake it"),
     /// but the engine has no notion of packet rate, so it applies the
     /// value directly as milliseconds — the proxy driving this engine
-    /// (Task 9) is responsible for choosing a value that corresponds to
+    /// is responsible for choosing a value that corresponds to
     /// roughly N packet intervals for its own traffic rate. The engine
     /// itself only ever emits a `delay_ms` on [`Action::Forward`] /
     /// [`Action::DupForward`]; the actual out-of-order delivery is a side

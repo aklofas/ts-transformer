@@ -1,7 +1,7 @@
 //! RTSP H.264 → Muxer → `.ts` file gateway.
 //!
 //! Demonstrates the full RTSP H.264 ingest pipeline using the RFC 6184
-//! depacketizer (WP-2):
+//! depacketizer:
 //!
 //! 1. Connect to an RTSP server exposing a single H.264 m-line.
 //! 2. DESCRIBE — fetch the SDP to learn payload type and out-of-band

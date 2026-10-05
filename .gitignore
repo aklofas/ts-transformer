@@ -60,7 +60,7 @@ __pycache__/
 # fixtures are tracked in this repo.
 **/tests/fixtures/local/
 
-# Parallel-subagent worktrees (see CLAUDE.md feedback_per_subagent_worktree_for_parallel_code_changes.md)
+# Parallel-subagent worktrees (isolates each agent's working copy).
 /.worktrees/
 
 # Claude Code scratch directory (Agent isolation:"worktree" creates worktrees here)

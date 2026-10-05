@@ -1,4 +1,4 @@
-# cargo-deny configuration (deep-review-4 META-11).
+# cargo-deny configuration.
 #
 # Two checks run in CI (ci.yml job `deny`) and locally:
 #   cargo install cargo-deny --locked && cargo deny check advisories licenses
@@ -32,10 +32,9 @@ unmaintained = "workspace"
 ignore = [
     # pyo3 0.22.6 (tst-py). Both fixes are BREAKING for a 0.x crate (0.22 ->
     # 0.24.1 / 0.29.0): the whole tst-py binding is pinned to PyO3 0.22 by
-    # deliberate design (abi3-py310, Rust-2024 patterns — see
-    # reference_pyo3_0_22_rust_2024_patterns), and a binding-crate major-version
-    # bump is out of scope for a rails/CI-hygiene change (deep-review-4 WP-8
-    # touches no Rust code). Neither advisory is reachable from this crate's
+    # deliberate design (abi3-py310, Rust-2024 patterns), and a binding-crate
+    # major-version bump is out of scope for a rails/CI-hygiene change that
+    # touches no Rust code. Neither advisory is reachable from this crate's
     # own usage: `PyString::from_object` (RUSTSEC-2025-0020) is never called on
     # attacker-controlled, non-UTF8-terminated input here, and
     # `PyCFunction::new_closure` (RUSTSEC-2026-0177) is not used at all —
@@ -46,7 +45,8 @@ ignore = [
     # for loading TLS cert/key PEM files). Unmaintained advisory, no CVE — the
     # advisory's own text says "No safe upgrade is available!"; migrating to
     # rustls-pki-types' PemObject trait is a source-code change across five
-    # crates, out of scope for WP-8 (no Rust code).
+    # crates, out of scope for a rails/CI-hygiene change that touches no
+    # Rust code.
     { id = "RUSTSEC-2025-0134", reason = "no safe upgrade exists (per the advisory); the rustls-pki-types::PemObject migration is a source change across 5 crates, out of scope for a rails/CI-hygiene WP" },   # added 2026-09-15
     # time 0.3.41 (dev-dependency only, via rcgen — self-signed test cert
     # generation in tst-rtp/tst-tcp dev-deps, never shipped). The fix (>=0.3.47)

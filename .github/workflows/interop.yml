@@ -26,8 +26,8 @@ on:
       - 'crates/tst-interop/**'
       - 'scripts/interop/**'
       - '.github/workflows/interop.yml'
-      # deep-review-4 META-12: a demux/mux change used to reach main before
-      # ffmpeg/tsduck/GStreamer saw it (Monday cron). ~25 min warm; the
+      # A demux/mux change used to reach main before ffmpeg/tsduck/GStreamer
+      # saw it (Monday cron). ~25 min warm; the
       # census assert (157/92/0/65/0) now gates those PRs too.
       - 'crates/tst-core/src/mpegts/**'
 
@@ -150,13 +150,12 @@ jobs:
 
       - name: Cache cargo + build artifacts
         # Own key prefix (cargo-interop-): this is a --release build of a
-        # crate no other workflow builds, and the WP-SAN lesson (never let
-        # a differently-built native artifact hide behind another job's
-        # cache key) applies here too even though this job has no
-        # sanitizer instrumentation to protect against — a stale
-        # non-release target/ layout from a hypothetical future debug step
-        # in this same workflow must not collide with another workflow's
-        # cache either.
+        # crate no other workflow builds. Never let a differently-built
+        # native artifact hide behind another job's cache key — that
+        # applies here too even though this job has no sanitizer
+        # instrumentation to protect against: a stale non-release target/
+        # layout from a hypothetical future debug step in this same
+        # workflow must not collide with another workflow's cache either.
         uses: actions/cache@v5
         with:
           path: |
@@ -211,8 +210,8 @@ jobs:
             --seconds 10
 
       - name: Assert census completeness
-        # Fail-closed inventory check (release-gate audit RLS-B08 quick
-        # win): `report merge --inventory` enforces the per-cell identity
+        # Fail-closed inventory check: `report merge --inventory` enforces
+        # the per-cell identity
         # multiset (missing/duplicate/extra cells, undeclared skips, and
         # stale expectation rows all fail the merge itself, before this
         # step ever runs — see crates/tst-interop/src/report.rs); this

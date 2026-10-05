@@ -23,7 +23,7 @@
 # protocol is loom-verified upstream but uses ordering idioms TSan
 # cannot model (tokio-rs/tokio#2273 documents the fence-vs-TSan class).
 # Evidence: caught in local pre-push verification (never red in CI);
-# first CI run exercising this entry = the PR #126 branch dispatch,
+# first CI run exercising this entry = the dispatch adding it,
 # https://github.com/aklofas/ts-transformer/actions/runs/30140030852
 # The pattern is deliberately module-scoped, NOT
 # race:tokio* — task-harness frames appear in genuine app-race stacks
@@ -32,7 +32,7 @@
 # (delete the entry, dispatch the tsan job, re-add only if it re-fires).
 race:tokio::runtime::io::scheduled_io
 
-# 2026-08-19 — librist-internal races (tsan-native harvest, WP-SAN-5).
+# 2026-08-19 — librist-internal races (tsan-native harvest).
 # First TSan run over the sanitized native builds surfaced 5 reports in
 # 4 tst-rist live-loopback test processes; every RACING frame on both
 # sides sits inside librist C code — tst-rist Rust frames appear only as
@@ -51,13 +51,13 @@ race:tokio::runtime::io::scheduled_io
 # 0.2.18 (upstream-report candidates; distinct from the 0.2.18-fixed
 # teardown-hang class). Evidence: harvested in a local pre-CI run
 # (2026-08-19, 514/518 with the only failures being TSan exit codes from
-# these reports); first CI run exercising this block = the WP-SAN-5
-# branch dispatch, all 4 sanitizer jobs green:
+# these reports); first CI run exercising this block = the dispatch
+# adding it, all 4 sanitizer jobs green:
 # https://github.com/aklofas/ts-transformer/actions/runs/32334048232
 # Remove/re-test: on any librist bump — delete this block, dispatch
 # tsan-native, re-add only what re-fires.
-# 2026-09-03 re-test on librist 0.2.20 (the 0.2.20 bump, PR #168, skipped
-# this step): local tsan-native build with the block deleted, after the
+# Re-test on librist 0.2.20 (the 0.2.20 bump skipped this step): local
+# tsan-native build with the block deleted, after the
 # tst-rist register-before-start fix — classes 1 + 2 re-fire (3 reports:
 # rist_receiver_recv_data rist-common.c:642 vs receiver_pthread_dataout
 # rist-common.c:4538; ctx_del/evsocket_destroy libevsocket.c:92/352 vs
@@ -75,7 +75,7 @@ race:rist_sender_enqueue
 race:rist_sender_flow_statistics
 
 # 2026-09-16 — libsrt-internal race on the listener-closed exit of
-# srt_accept (PR #233 tsan-native, run 35175171152). After a cross-thread
+# srt_accept (tsan-native, run 35175171152). After a cross-thread
 # srt_close() wakes a parked accept — the sanctioned Listener::cancel_handle()
 # wake — CUDTUnited::accept reads the listener's config through its raw
 # CUDTSocket* (api.cpp:1310, `ls->core().m_config.bSynRecving` on the

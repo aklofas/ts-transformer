@@ -7,13 +7,12 @@
 # Gated by scripts/check/repo/ratchet-self-test.sh, which ci.yml runs on
 # linux-x86_64.
 #
-# The whole error-mapping coverage scaffold is gone as of Arc 2, and its
-# cases with it: the `rust` driver in WP-B1 (the C binding's per-transport
-# `*_error_to_code` converters were deleted for
-# `tst_pipeline::binding::BindingError`), the `py` / `pyarm` driver in WP-B2
-# (tst-py has no per-kind `make_<proto>_error` call sites or hand-written
-# per-variant mapper arms left to count), and the `java` rail in WP-B3 — at
-# which point `scripts/ratchets/lib/coverage.sh` and
+# The whole error-mapping coverage scaffold is gone: the `rust` driver (the
+# C binding's per-transport `*_error_to_code` converters were deleted for
+# `tst_pipeline::binding::BindingError`), the `py` / `pyarm` driver (tst-py
+# has no per-kind `make_<proto>_error` call sites or hand-written
+# per-variant mapper arms left to count), and the `java` rail — at which
+# point `scripts/ratchets/lib/coverage.sh` and
 # `scripts/ratchets/error-mapping.tsv` had no reader at all and went too.
 # What all three were guarding is now one Rust table:
 # `scripts/check/rust/kind-table-coverage.sh` plus
@@ -39,7 +38,7 @@ expect() { # <desc> <want_rc> <cmd...>
     fi
 }
 
-# ---- header rail: tool-failure fixtures (deep-review-4 X-META-01 / E12) ---
+# ---- header rail: tool-failure fixtures ----------------------------------
 # The rail must never print PASS when the generator failed, and must
 # distinguish "not installed locally" (SKIP, rc 0) from "not installed in
 # CI" (FAIL). Hermetic: a fixture header carries the two defines and one
@@ -175,11 +174,10 @@ expect "gil locks: an allowlist row without a reason fails"             1 env SG
 expect "gil locks: a scan that matches nothing fails closed"            1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/clean" SG_LOCK_ALLOWLIST="$tmp/gl/empty.tsv"     bash "$SG"
 
 # ---- gil locks: every lock spelling, and a lock inside a macro body -------
-# review #7, external report R7-03 = internal report R7-06: a line scanner
-# looking only for `.lock()` misses `.read()` / `.write()` / `.try_lock()` /
-# the UFCS forms, and a lock taken inside a macro_rules! body has no
-# enclosing `fn` the scanner can attribute it to — it must be a hard
-# failure, not a silent skip.
+# A line scanner looking only for `.lock()` misses `.read()` / `.write()` /
+# `.try_lock()` / the UFCS forms, and a lock taken inside a macro_rules!
+# body has no enclosing `fn` the scanner can attribute it to — it must be
+# a hard failure, not a silent skip.
 mkdir -p "$tmp/gl/rwlock" "$tmp/gl/macro"
 cat > "$tmp/gl/rwlock/shell.rs" <<'EOF'
 impl Publisher {
@@ -219,8 +217,8 @@ fn allowed() {
 EOF
 printf '%s\t%s\t%s\n' "$tmp/gl/macro/shell.rs" allowed 'SAFE has no holder that releases the GIL' > "$tmp/gl/macro-allow.tsv"
 
-# review #7 PR 271 reviewer finding: `fn` was never reset at a closing brace,
-# so a macro_rules! body AFTER a function inherited that function's name and
+# `fn` was never reset at a closing brace, so a macro_rules! body AFTER a
+# function inherited that function's name and
 # its allowlist row silently excused it. Here `allowed` comes FIRST (its own
 # closing `}` must clear `fn`) and the macro comes after; with only `allowed`
 # allowlisted, the macro's lock must still be a hard <unattributed:...>
@@ -243,7 +241,7 @@ expect "gil locks: a lock inside a macro body is refused, not skipped"    1 env 
 expect "gil locks: a macro body AFTER an allowlisted fn is not excused by that fn's row" 1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/macro-after-fn" SG_LOCK_ALLOWLIST="$tmp/gl/macro-after-fn-allow.tsv" bash "$SG"
 
 # ---- gil locks: a UFCS spelling's trailing "(" must stay paren-balanced ---
-# review #7 PR 271 Copilot finding: the UFCS forms end in "(" with an
+# The UFCS forms end in "(" with an
 # argument following, not a balanced "()" like the dotted spellings. Skipping
 # that "(" without counting it under-closes `at`/`wg` when its matching ")"
 # is later seen, so a second lock later in the SAME allow_threads block was

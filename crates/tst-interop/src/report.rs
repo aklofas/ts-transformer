@@ -1068,7 +1068,7 @@ pub mod stress;
 ///
 /// # RSS-growth harness artifact (`--no-klv-digest`)
 ///
-/// Task 14's own 1h smoke run found real, linear (not one-time-step)
+/// A 1h soak smoke run found real, linear (not one-time-step)
 /// RSS growth in every `send`/`recv` process — `proxy` (a plain UDP
 /// relay untouched by `tst-srt`/`tst-rist`) stayed flat at 0.0 KiB/h
 /// the whole run, while `send`/`recv` on both legs ranged ~3.6-5.7
@@ -1354,7 +1354,7 @@ pub mod soak {
     /// `soak.sh`'s declared run parameters, written to `soak-config.json`
     /// at launch — BEFORE any evidence exists — so `report soak` judges the
     /// run against what was configured, never against what the artifacts
-    /// happen to contain (release-gate audit RLS-B09).
+    /// happen to contain.
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct SoakConfig {
         pub expected_duration_s: f64,
@@ -3637,9 +3637,9 @@ pub mod soak {
             assert!(results.overall_pass);
         }
 
-        /// (Copilot PR-review fix regression) `expected_outage_windows`
-        /// must not count window 0: `soak.sh` deliberately launches the
-        /// proxy `outage_dur_s + 30` seconds ahead of send/recv
+        /// `expected_outage_windows` must not count window 0: `soak.sh`
+        /// deliberately launches the proxy `outage_dur_s + 30` seconds
+        /// ahead of send/recv
         /// specifically so window 0 (which always starts at the proxy's
         /// own `t=0`) never overlaps traffic that hasn't started yet.
         /// The 1h smoke's own real shape (outage_period_s=21600,
@@ -4085,9 +4085,9 @@ pub mod soak {
             );
         }
 
-        /// CORR-31(c): outage-window drops enter the observed rate but not
-        /// the expectation (the module doc's own "watch item"). Counted
-        /// apart, they leave both `d` and `n`.
+        /// Outage-window drops enter the observed rate but not the
+        /// expectation (the module doc's own "watch item"). Counted apart,
+        /// they leave both `d` and `n`.
         #[test]
         fn outage_window_drops_are_excluded_from_the_drop_rate_verdict() {
             let n = 10_000_000u64;
@@ -4985,9 +4985,9 @@ pub mod soak {
             assert!(v.detail.contains("96.0%"), "{}", v.detail);
         }
 
-        /// META-13: the detected verdict's detail names both halves of
-        /// the credit, so a reader can see what the receiver reported vs
-        /// what only the harness's raw reader caught.
+        /// The detected verdict's detail names both halves of the credit,
+        /// so a reader can see what the receiver reported vs what only the
+        /// harness's raw reader caught.
         #[test]
         fn corruption_detected_detail_splits_demux_from_reader_credit() {
             let mut inputs = corruption_inputs(500, 500, 480);
@@ -5034,9 +5034,9 @@ pub mod soak {
             assert!(!bad.overall_pass);
         }
 
-        /// X-CORR-05: 100 of 101 ingested clears the 99 % floor, so an
-        /// interior write failure passed `corruption_coverage` as if it
-        /// were a teardown tail read. The sender's own latch must fail it.
+        /// 100 of 101 ingested clears the 99 % floor, so an interior write
+        /// failure passed `corruption_coverage` as if it were a teardown
+        /// tail read. The sender's own latch must fail it.
         #[test]
         fn corruption_coverage_fails_when_the_sender_lost_a_log_line() {
             let mut inputs = corruption_inputs(101, 100, 100);
@@ -5228,11 +5228,10 @@ pub mod soak {
             );
         }
 
-        /// CORR-31(a) / Q12: under lossy judgement every corruption verdict
-        /// passes a leg whose findings were ALL written off as transport
-        /// loss. Both soak legs are ARQ, so excusals are bounded by the
-        /// outage schedule: `K x windows + C` with K = the profile's media
-        /// PIDs and C = 8.
+        /// Under lossy judgement every corruption verdict passes a leg whose
+        /// findings were ALL written off as transport loss. Both soak legs
+        /// are ARQ, so excusals are bounded by the outage schedule:
+        /// `K x windows + C` with K = the profile's media PIDs and C = 8.
         #[test]
         fn corruption_excusal_budget_fails_a_leg_that_excused_everything() {
             let mut inputs = corruption_inputs(500, 500, 480);
@@ -6158,9 +6157,9 @@ mod tests {
         )
     }
 
-    /// X-CORR-09 (E09): 157 declarations of ONE key satisfied the full
-    /// shape's cardinality check, and 157 produced copies of it would
-    /// have matched the multiset.
+    /// 157 declarations of ONE key satisfied the full shape's cardinality
+    /// check, and 157 produced copies of it would have matched the
+    /// multiset.
     #[test]
     fn parse_inventory_rejects_duplicate_declarations() {
         let same = vec![("udp/us-to-tsp", "baseline"); 157];

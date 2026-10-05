@@ -213,8 +213,7 @@ pub(crate) fn managed_teed_transport(
 ///
 /// A reconnect marker belongs where the discarded chunk began, not after
 /// it: the tee fed that chunk to the raw reader before the demuxer reset
-/// and yielded the marker (review #7, internal report R7-05; see
-/// [`transport::tee_take_chunk_start`]).
+/// and yielded the marker (see [`transport::tee_take_chunk_start`]).
 pub(crate) fn event_ordinal(
     tally: &mut Tally,
     tap: &Arc<Mutex<transport::TeeState>>,

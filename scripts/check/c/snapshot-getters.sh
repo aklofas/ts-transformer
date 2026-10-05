@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Arc 2 spec §3.2 / §8: nothing a caller can ask from a second thread may
-# wait behind the call the first thread is parked in. A blocked recv /
-# accept / send holds the shell slot for as long as it is parked, so a
-# reader that takes the slot waits with it — the hang PR #234 fixed in the
-# Python binding (five getters took the slot a parked accept/recv owned).
+# Nothing a caller can ask from a second thread may wait behind the call
+# the first thread is parked in. A blocked recv / accept / send holds the
+# shell slot for as long as it is parked, so a reader that takes the slot
+# waits with it — five Python-binding getters once took the slot a parked
+# accept/recv owned.
 #
 # Three checks, all fail-closed.
 #

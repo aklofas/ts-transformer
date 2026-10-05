@@ -347,7 +347,7 @@ impl RecvTransport for BoundedUdpRecv {
 
     fn cancel_handle(&self) -> Option<Arc<dyn TransportCancel + Send + Sync>> {
         // Qualified: `UdpRecvTransport` has an INHERENT `cancel_handle()`
-        // returning a concrete `UdpCancelHandle` (Arc 2 WP-D), which
+        // returning a concrete `UdpCancelHandle`, which
         // shadows the trait method in method-call position. Forwarding it
         // keeps the adapter honest — a real handle exists behind it.
         RecvTransport::cancel_handle(&self.inner)
@@ -436,7 +436,7 @@ impl Transport for GracefulRistClose {
 
     fn cancel_handle(&self) -> Option<Arc<dyn TransportCancel + Send + Sync>> {
         // Qualified: `RistTransport` has an INHERENT `cancel_handle()`
-        // returning a concrete `RistCancelHandle` (Arc 2 WP-D), which
+        // returning a concrete `RistCancelHandle`, which
         // shadows the trait method in method-call position.
         Transport::cancel_handle(&self.inner)
     }
@@ -676,7 +676,7 @@ pub(crate) fn tee_watch_reconnects(tap: &Arc<Mutex<TeeState>>, reconnects: Arc<A
 /// `DemuxEvent::ReconnectDiscontinuity`, but the tee has already fed it
 /// to the raw reader; stamping the marker with the reader's count at the
 /// event would put every PCR decoded from the discarded chunk before the
-/// marker (review #7, internal report R7-05).
+/// marker.
 pub(crate) fn tee_take_chunk_start(tap: &Arc<Mutex<TeeState>>) -> Option<u64> {
     tap.lock().expect("tee mutex poisoned").chunk_start.take()
 }

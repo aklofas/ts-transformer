@@ -1,9 +1,10 @@
-// malloc-stress — WP-EMB-1 regression proof for EMB-HEAP-1/EMB-ERRNO-1.
-// 4 equal-priority tasks hammer malloc/free with per-block canaries under
-// 1 kHz time-slicing, periodically throw/catch (the EH-alloc malloc path),
-// and cross-check per-task errno isolation. Any heap corruption or errno
+// malloc-stress — regression proof that malloc/free stays safe under
+// preemption and that per-task errno stays isolated. 4 equal-priority
+// tasks hammer malloc/free with per-block canaries under 1 kHz
+// time-slicing, periodically throw/catch (the EH-alloc malloc path), and
+// cross-check per-task errno isolation. Any heap corruption or errno
 // bleed prints a labeled FAIL and exits 1. main() also throws BEFORE the
-// scheduler starts (pre-scheduler EH bootstrap regression, NEW-EMB-2).
+// scheduler starts (pre-scheduler EH bootstrap regression).
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -60,7 +61,7 @@ static void collector_task(void *) {
 }
 
 int main() {
-    try { throw 1; } catch (int) {} // pre-scheduler EH bootstrap (NEW-EMB-2)
+    try { throw 1; } catch (int) {} // pre-scheduler EH bootstrap
     s_done = xSemaphoreCreateCounting(4, 0);
     if (!s_done) { printf("FAIL[s5_malloc_stress]: semaphore create\n"); fflush(stdout); _exit(1); }
     for (unsigned t = 0; t < 4; t++)

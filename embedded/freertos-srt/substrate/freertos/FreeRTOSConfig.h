@@ -65,8 +65,7 @@
 #define configUSE_POSIX_ERRNO                   1
 
 /* Per-task newlib _reent (errno, stdio state) + the retargeted newlib locks in
- * substrate/newlib_lock.c together make newlib safe under preemption
- * (EMB-HEAP-1 / EMB-ERRNO-1). */
+ * substrate/newlib_lock.c together make newlib safe under preemption. */
 #define configUSE_NEWLIB_REENTRANT              1
 #define configUSE_COUNTING_SEMAPHORES           1
 

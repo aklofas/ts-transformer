@@ -3,17 +3,14 @@
 # marked by `// ─── NAME ──────` dividers, and that every divider name is
 # unique.
 #
-# Plan B's add_section_dividers post-process is specified to emit 7
-# required sections (INTROSPECTION, MUX SENDER, TS SENDER, RAW SENDER,
-# DEMUX RECEIVER, TS RECEIVER, RAW RECEIVER) plus up to 3 conditional
-# sections (KLV, LIFETIME, OTHER) that only emit when non-empty. KLV
-# was added in Task 7 (ST 0601 KLV decode surface, ABI 21) — bumped
-# the upper bound from 9 to 10.
+# add_section_dividers's post-process is specified to emit 7 required
+# sections (INTROSPECTION, MUX SENDER, TS SENDER, RAW SENDER, DEMUX
+# RECEIVER, TS RECEIVER, RAW RECEIVER) plus up to 3 conditional sections
+# (KLV, LIFETIME, OTHER) that only emit when non-empty. KLV (ST 0601 KLV
+# decode surface, ABI 21) bumped the upper bound from 9 to 10.
 #
-# A regression here means add_section_dividers reverted to the
-# line-by-line transition-emission shape from before the Codex Wave 6
-# review fix (docs/refactor-1/_codex-wave-6-implementation-validation.md
-# Finding 1, 2026-05-19), which produces 16 dividers with 7 sections
+# A regression here means add_section_dividers reverted to a line-by-line
+# transition-emission shape, which produces 16 dividers with 7 sections
 # duplicated against cbindgen's name-sorted output.
 
 set -euo pipefail

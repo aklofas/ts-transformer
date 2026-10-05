@@ -30,8 +30,8 @@ Notes:
 
 ## tst-integration CI modes
 
-The cross-binding scenario harness crate (`crates/tst-integration`, shipped
-WS-5 2026-05-29) is Rust-canonical: Rust generates the goldens + `scenarios.toml`
+The cross-binding scenario harness crate (`crates/tst-integration`) is
+Rust-canonical: Rust generates the goldens + `scenarios.toml`
 manifest, and all three bindings consume that same committed set. As shipped,
 the three adapters run in these places (the `c`/`python` cargo features on
 `tst-integration` are reserved for future in-crate adapters but are currently

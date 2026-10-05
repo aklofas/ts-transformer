@@ -38,9 +38,9 @@ ALLOWLIST_PATTERNS=(
     'pub fn ber_(oid_)?len(_u64)?\b'                        # BER length helpers (Rust-only; u64 sibling same rationale)
     'pub fn pull\(&mut self, out: &mut \[u8\]\) -> usize'   # Muxer::pull (bytes-written, Read::read-shaped)
 
-    # Tuning-knob fields on pub config structs. Bucket (b) per Phase 1
-    # inventory: caller-supplied capacity / threshold, FFI wrappers convert
-    # at the C boundary. Keep usize for ergonomic Rust assignment; do not
+    # Tuning-knob fields on pub config structs (bucket (b)): caller-supplied
+    # capacity / threshold, FFI wrappers convert at the C boundary. Keep
+    # usize for ergonomic Rust assignment; do not
     # widen to u64 unless an FFI consumer reports breakage.
     'pub buffer_packets: usize'                             # MuxerConfig
     'pub gap_buffer_capacity: usize'                        # ReconnectPolicy

@@ -11,7 +11,7 @@
 #      below (constant returns with no internal locking, panics, or
 #      allocation).
 #
-# Why: extension of plan #96 Wave F finding #9. The existing
+# The existing
 # `scripts/check/c/lifecycle-ffi-catch-coverage.sh` only covers `_close` /
 # `_cancel` entries — `tst_demux_config_free` slipped past that
 # ratchet by being a `_free`. This ratchet enumerates *every*
@@ -51,8 +51,7 @@ is_allowlisted() {
 }
 
 # Step 1: enumerate every signature line. Bash 3.2-portable
-# read-into-array pattern (no `mapfile`/`readarray`, no `declare -A`)
-# per feedback_bash_ratchets_macos_portability.md.
+# read-into-array pattern (no `mapfile`/`readarray`, no `declare -A`).
 ENTRIES=()
 while IFS= read -r entry; do
     ENTRIES+=("$entry")

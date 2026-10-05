@@ -26,7 +26,7 @@
 #                         the value the 2026-09 bulk migration wrote into the
 #                         c:/python:/java: columns of every pre-existing row;
 #                         it is a TODO, not a claim. Replace it with a real
-#                         symbol, :deferred or :n/a when you audit the row.
+#                         symbol, :deferred or :n/a when you check the row.
 #   "<prefix>:deferred"   no twin in that binding today (a real, checked gap).
 #   "<prefix>:n/a"        no twin by design.
 # swift:/kotlin: are :deferred everywhere: tst-uniffi does not exist yet.
@@ -1201,7 +1201,7 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 item = "tst_core::RecvTransport::socket_stats"
 reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
 
-# tst_core::SrtCancelHandle graduated to [[surface]] in the tst-jni srt wave A
+# tst_core::SrtCancelHandle graduated to [[surface]] once the JVM SRT binding covered it.
 
 [[exempt]]
 item = "tst_core::Transport"
@@ -1273,7 +1273,7 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 
 [[exempt]]
 item = "tst_core::UasDatalinkLs::active_payload_ids"
-reason = "WP-B convenience iterator over the tag 139 active_payloads bitmask; exercised by st0601::tests::wpb_active_payload_ids_multi_byte_extends_upward"
+reason = "Convenience iterator over the tag 139 active_payloads bitmask; exercised by st0601::tests::wpb_active_payload_ids_multi_byte_extends_upward"
 
 [[exempt]]
 item = "tst_core::UasDatalinkLs::sensor_attitude"
@@ -2559,15 +2559,15 @@ tier = "A"
 
 [[exempt]]
 item = "tst_core::klv::imapb::ImapbSpecial::clone"
-reason = "derive-generated; covered indirectly by encode_imapb_special tests (REF-KLV-01)"
+reason = "derive-generated; covered indirectly by encode_imapb_special tests"
 
 [[exempt]]
 item = "tst_core::klv::imapb::ImapbSpecial::eq"
-reason = "derive-generated; covered indirectly by encode_imapb_special tests (REF-KLV-01)"
+reason = "derive-generated; covered indirectly by encode_imapb_special tests"
 
 [[exempt]]
 item = "tst_core::klv::imapb::ImapbSpecial::fmt"
-reason = "derive-generated; covered indirectly by encode_imapb_special tests (REF-KLV-01)"
+reason = "derive-generated; covered indirectly by encode_imapb_special tests"
 
 [[exempt]]
 item = "tst_core::klv::length::ber_len"
@@ -2603,15 +2603,15 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 
 [[exempt]]
 item = "tst_core::klv::length::ber_oid_len_u64"
-reason = "u64 sibling of ber_oid_len; encode-helper sizing (Rust-only, no FFI exposure); added WP-I/PR2 REF-KLV-04"
+reason = "u64 sibling of ber_oid_len; encode-helper sizing (Rust-only, no FFI exposure)"
 
 [[exempt]]
 item = "tst_core::klv::length::read_ber_oid_u64"
-reason = "u64 sibling of read_ber_oid; ST 0903 VMTI targetId; added WP-I/PR2 REF-KLV-04"
+reason = "u64 sibling of read_ber_oid; ST 0903 VMTI targetId"
 
 [[exempt]]
 item = "tst_core::klv::length::write_ber_oid_u64"
-reason = "u64 sibling of write_ber_oid; ST 0903 VMTI targetId; added WP-I/PR2 REF-KLV-04"
+reason = "u64 sibling of write_ber_oid; ST 0903 VMTI targetId"
 
 [[exempt]]
 item = "tst_core::klv::pack::OwnedRawField"
@@ -2723,63 +2723,63 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 
 [[exempt]]
 item = "tst_core::klv::st0601::IcingDetected::clone"
-reason = "derive impl for the WP-A tag 34 coded enum; wire-code pins + round-trips in st0601::tests"
+reason = "derive impl for the tag 34 coded enum; wire-code pins + round-trips in st0601::tests"
 
 [[exempt]]
 item = "tst_core::klv::st0601::IcingDetected::eq"
-reason = "derive impl for the WP-A tag 34 coded enum; wire-code pins + round-trips in st0601::tests"
+reason = "derive impl for the tag 34 coded enum; wire-code pins + round-trips in st0601::tests"
 
 [[exempt]]
 item = "tst_core::klv::st0601::IcingDetected::fmt"
-reason = "derive impl for the WP-A tag 34 coded enum; wire-code pins + round-trips in st0601::tests"
+reason = "derive impl for the tag 34 coded enum; wire-code pins + round-trips in st0601::tests"
 
 [[exempt]]
 item = "tst_core::klv::st0601::OperationalMode::clone"
-reason = "derive impl for the WP-A tag 77 coded enum; wire-code pins + round-trips in st0601::tests"
+reason = "derive impl for the tag 77 coded enum; wire-code pins + round-trips in st0601::tests"
 
 [[exempt]]
 item = "tst_core::klv::st0601::OperationalMode::eq"
-reason = "derive impl for the WP-A tag 77 coded enum; wire-code pins + round-trips in st0601::tests"
+reason = "derive impl for the tag 77 coded enum; wire-code pins + round-trips in st0601::tests"
 
 [[exempt]]
 item = "tst_core::klv::st0601::OperationalMode::fmt"
-reason = "derive impl for the WP-A tag 77 coded enum; wire-code pins + round-trips in st0601::tests"
+reason = "derive impl for the tag 77 coded enum; wire-code pins + round-trips in st0601::tests"
 
 [[exempt]]
 item = "tst_core::klv::st0601::SensorFovName::clone"
-reason = "derive impl for the WP-A tag 63 coded enum; wire-code pins + round-trips in st0601::tests"
+reason = "derive impl for the tag 63 coded enum; wire-code pins + round-trips in st0601::tests"
 
 [[exempt]]
 item = "tst_core::klv::st0601::SensorFovName::eq"
-reason = "derive impl for the WP-A tag 63 coded enum; wire-code pins + round-trips in st0601::tests"
+reason = "derive impl for the tag 63 coded enum; wire-code pins + round-trips in st0601::tests"
 
 [[exempt]]
 item = "tst_core::klv::st0601::SensorFovName::fmt"
-reason = "derive impl for the WP-A tag 63 coded enum; wire-code pins + round-trips in st0601::tests"
+reason = "derive impl for the tag 63 coded enum; wire-code pins + round-trips in st0601::tests"
 
 [[exempt]]
 item = "tst_core::klv::st0601::PlatformStatus::clone"
-reason = "derive impl for the WP-B tag 125 coded enum; wire-code pins + round-trips in st0601::tests"
+reason = "derive impl for the tag 125 coded enum; wire-code pins + round-trips in st0601::tests"
 
 [[exempt]]
 item = "tst_core::klv::st0601::PlatformStatus::eq"
-reason = "derive impl for the WP-B tag 125 coded enum; wire-code pins + round-trips in st0601::tests"
+reason = "derive impl for the tag 125 coded enum; wire-code pins + round-trips in st0601::tests"
 
 [[exempt]]
 item = "tst_core::klv::st0601::PlatformStatus::fmt"
-reason = "derive impl for the WP-B tag 125 coded enum; wire-code pins + round-trips in st0601::tests"
+reason = "derive impl for the tag 125 coded enum; wire-code pins + round-trips in st0601::tests"
 
 [[exempt]]
 item = "tst_core::klv::st0601::SensorControlMode::clone"
-reason = "derive impl for the WP-B tag 126 coded enum; wire-code pins + round-trips in st0601::tests"
+reason = "derive impl for the tag 126 coded enum; wire-code pins + round-trips in st0601::tests"
 
 [[exempt]]
 item = "tst_core::klv::st0601::SensorControlMode::eq"
-reason = "derive impl for the WP-B tag 126 coded enum; wire-code pins + round-trips in st0601::tests"
+reason = "derive impl for the tag 126 coded enum; wire-code pins + round-trips in st0601::tests"
 
 [[exempt]]
 item = "tst_core::klv::st0601::SensorControlMode::fmt"
-reason = "derive impl for the WP-B tag 126 coded enum; wire-code pins + round-trips in st0601::tests"
+reason = "derive impl for the tag 126 coded enum; wire-code pins + round-trips in st0601::tests"
 
 [[surface]]
 item = "tst_core::klv::st0601::ImageHorizonPixels"
@@ -2790,19 +2790,19 @@ tier = "A"
 
 [[exempt]]
 item = "tst_core::klv::st0601::ImageHorizonPixels::clone"
-reason = "derive impl for the WP-C tag 81 pack struct; exercised the same way"
+reason = "derive impl for the tag 81 pack struct; exercised the same way"
 
 [[exempt]]
 item = "tst_core::klv::st0601::ImageHorizonPixels::eq"
-reason = "derive impl for the WP-C tag 81 pack struct; exercised the same way"
+reason = "derive impl for the tag 81 pack struct; exercised the same way"
 
 [[exempt]]
 item = "tst_core::klv::st0601::ImageHorizonPixels::default"
-reason = "derive impl for the WP-C tag 81 pack struct; used by packs::parse_image_horizon's ..Default::default() base"
+reason = "derive impl for the tag 81 pack struct; used by packs::parse_image_horizon's ..Default::default() base"
 
 [[exempt]]
 item = "tst_core::klv::st0601::ImageHorizonPixels::fmt"
-reason = "derive impl for the WP-C tag 81 pack struct; exercised the same way"
+reason = "derive impl for the tag 81 pack struct; exercised the same way"
 
 [[surface]]
 item = "tst_core::klv::st0601::ControlCommand"
@@ -2813,15 +2813,15 @@ tier = "A"
 
 [[exempt]]
 item = "tst_core::klv::st0601::ControlCommand::clone"
-reason = "derive impl for the WP-C tag 115 pack struct; exercised the same way"
+reason = "derive impl for the tag 115 pack struct; exercised the same way"
 
 [[exempt]]
 item = "tst_core::klv::st0601::ControlCommand::eq"
-reason = "derive impl for the WP-C tag 115 pack struct; exercised the same way"
+reason = "derive impl for the tag 115 pack struct; exercised the same way"
 
 [[exempt]]
 item = "tst_core::klv::st0601::ControlCommand::fmt"
-reason = "derive impl for the WP-C tag 115 pack struct; exercised the same way"
+reason = "derive impl for the tag 115 pack struct; exercised the same way"
 
 [[surface]]
 item = "tst_core::klv::st0601::SdccFlpField"
@@ -2832,15 +2832,15 @@ tier = "A"
 
 [[exempt]]
 item = "tst_core::klv::st0601::SdccFlpField::clone"
-reason = "derive impl for the WP-C tag 102 pack struct; exercised the same way"
+reason = "derive impl for the tag 102 pack struct; exercised the same way"
 
 [[exempt]]
 item = "tst_core::klv::st0601::SdccFlpField::eq"
-reason = "derive impl for the WP-C tag 102 pack struct; exercised the same way"
+reason = "derive impl for the tag 102 pack struct; exercised the same way"
 
 [[exempt]]
 item = "tst_core::klv::st0601::SdccFlpField::fmt"
-reason = "derive impl for the WP-C tag 102 pack struct; exercised the same way"
+reason = "derive impl for the tag 102 pack struct; exercised the same way"
 
 [[surface]]
 item = "tst_core::klv::st0601::SensorFrameRate"
@@ -2851,15 +2851,15 @@ tier = "A"
 
 [[exempt]]
 item = "tst_core::klv::st0601::SensorFrameRate::clone"
-reason = "derive impl for the WP-C tag 127 pack struct; exercised the same way"
+reason = "derive impl for the tag 127 pack struct; exercised the same way"
 
 [[exempt]]
 item = "tst_core::klv::st0601::SensorFrameRate::eq"
-reason = "derive impl for the WP-C tag 127 pack struct; exercised the same way"
+reason = "derive impl for the tag 127 pack struct; exercised the same way"
 
 [[exempt]]
 item = "tst_core::klv::st0601::SensorFrameRate::fmt"
-reason = "derive impl for the WP-C tag 127 pack struct; exercised the same way"
+reason = "derive impl for the tag 127 pack struct; exercised the same way"
 
 [[surface]]
 item = "tst_core::klv::st0601::SensorFrameRate::fps"
@@ -2877,15 +2877,15 @@ tier = "A"
 
 [[exempt]]
 item = "tst_core::klv::st0601::MetadataSubstreamId::clone"
-reason = "derive impl for the WP-C tag 143 pack struct; exercised the same way"
+reason = "derive impl for the tag 143 pack struct; exercised the same way"
 
 [[exempt]]
 item = "tst_core::klv::st0601::MetadataSubstreamId::eq"
-reason = "derive impl for the WP-C tag 143 pack struct; exercised the same way"
+reason = "derive impl for the tag 143 pack struct; exercised the same way"
 
 [[exempt]]
 item = "tst_core::klv::st0601::MetadataSubstreamId::fmt"
-reason = "derive impl for the WP-C tag 143 pack struct; exercised the same way"
+reason = "derive impl for the tag 143 pack struct; exercised the same way"
 
 [[surface]]
 item = "tst_core::klv::st0601::CountryCodes"
@@ -2896,19 +2896,19 @@ tier = "A"
 
 [[exempt]]
 item = "tst_core::klv::st0601::CountryCodes::clone"
-reason = "derive impl for the WP-C tag 122 pack struct; exercised the same way"
+reason = "derive impl for the tag 122 pack struct; exercised the same way"
 
 [[exempt]]
 item = "tst_core::klv::st0601::CountryCodes::eq"
-reason = "derive impl for the WP-C tag 122 pack struct; exercised the same way"
+reason = "derive impl for the tag 122 pack struct; exercised the same way"
 
 [[exempt]]
 item = "tst_core::klv::st0601::CountryCodes::default"
-reason = "derive impl for the WP-C tag 122 pack struct; used by packs::parse_country_codes's ..CountryCodes::default() base"
+reason = "derive impl for the tag 122 pack struct; used by packs::parse_country_codes's ..CountryCodes::default() base"
 
 [[exempt]]
 item = "tst_core::klv::st0601::CountryCodes::fmt"
-reason = "derive impl for the WP-C tag 122 pack struct; exercised the same way"
+reason = "derive impl for the tag 122 pack struct; exercised the same way"
 
 [[surface]]
 item = "tst_core::klv::st0601::WavelengthRecord"
@@ -2919,15 +2919,15 @@ tier = "A"
 
 [[exempt]]
 item = "tst_core::klv::st0601::WavelengthRecord::clone"
-reason = "derive impl for the WP-C tag 128 pack struct; exercised the same way"
+reason = "derive impl for the tag 128 pack struct; exercised the same way"
 
 [[exempt]]
 item = "tst_core::klv::st0601::WavelengthRecord::eq"
-reason = "derive impl for the WP-C tag 128 pack struct; exercised the same way"
+reason = "derive impl for the tag 128 pack struct; exercised the same way"
 
 [[exempt]]
 item = "tst_core::klv::st0601::WavelengthRecord::fmt"
-reason = "derive impl for the WP-C tag 128 pack struct; exercised the same way"
+reason = "derive impl for the tag 128 pack struct; exercised the same way"
 
 [[surface]]
 item = "tst_core::klv::st0601::Location"
@@ -2938,19 +2938,19 @@ tier = "A"
 
 [[exempt]]
 item = "tst_core::klv::st0601::Location::clone"
-reason = "derive impl for the WP-C Location struct; exercised the same way"
+reason = "derive impl for the Location struct; exercised the same way"
 
 [[exempt]]
 item = "tst_core::klv::st0601::Location::eq"
-reason = "derive impl for the WP-C Location struct; exercised the same way"
+reason = "derive impl for the Location struct; exercised the same way"
 
 [[exempt]]
 item = "tst_core::klv::st0601::Location::default"
-reason = "derive impl for the WP-C Location struct; used by packs::parse_location's ..Location::default() base"
+reason = "derive impl for the Location struct; used by packs::parse_location's ..Location::default() base"
 
 [[exempt]]
 item = "tst_core::klv::st0601::Location::fmt"
-reason = "derive impl for the WP-C Location struct; exercised the same way"
+reason = "derive impl for the Location struct; exercised the same way"
 
 [[surface]]
 item = "tst_core::klv::st0601::AirbaseLocations"
@@ -2961,31 +2961,31 @@ tier = "A"
 
 [[exempt]]
 item = "tst_core::klv::st0601::AirbaseLocations::clone"
-reason = "derive impl for the WP-C tag 130 pack struct; exercised the same way"
+reason = "derive impl for the tag 130 pack struct; exercised the same way"
 
 [[exempt]]
 item = "tst_core::klv::st0601::AirbaseLocations::eq"
-reason = "derive impl for the WP-C tag 130 pack struct; exercised the same way"
+reason = "derive impl for the tag 130 pack struct; exercised the same way"
 
 [[exempt]]
 item = "tst_core::klv::st0601::AirbaseLocations::default"
-reason = "derive impl for the WP-C tag 130 pack struct; exercised the same way"
+reason = "derive impl for the tag 130 pack struct; exercised the same way"
 
 [[exempt]]
 item = "tst_core::klv::st0601::AirbaseLocations::fmt"
-reason = "derive impl for the WP-C tag 130 pack struct; exercised the same way"
+reason = "derive impl for the tag 130 pack struct; exercised the same way"
 
 [[exempt]]
 item = "tst_core::klv::st0601::PayloadType::clone"
-reason = "derive impl for the WP-C tag 138 Payload Type enum; wire-code pins + round-trips in st0601::tests::wpc_payload_list_vector"
+reason = "derive impl for the tag 138 Payload Type enum; wire-code pins + round-trips in st0601::tests::wpc_payload_list_vector"
 
 [[exempt]]
 item = "tst_core::klv::st0601::PayloadType::eq"
-reason = "derive impl for the WP-C tag 138 Payload Type enum; wire-code pins + round-trips in st0601::tests::wpc_payload_list_vector"
+reason = "derive impl for the tag 138 Payload Type enum; wire-code pins + round-trips in st0601::tests::wpc_payload_list_vector"
 
 [[exempt]]
 item = "tst_core::klv::st0601::PayloadType::fmt"
-reason = "derive impl for the WP-C tag 138 Payload Type enum; wire-code pins + round-trips in st0601::tests::wpc_payload_list_vector"
+reason = "derive impl for the tag 138 Payload Type enum; wire-code pins + round-trips in st0601::tests::wpc_payload_list_vector"
 
 [[surface]]
 item = "tst_core::klv::st0601::PayloadRecord"
@@ -2996,15 +2996,15 @@ tier = "A"
 
 [[exempt]]
 item = "tst_core::klv::st0601::PayloadRecord::clone"
-reason = "derive impl for the WP-C tag 138 pack struct; exercised the same way"
+reason = "derive impl for the tag 138 pack struct; exercised the same way"
 
 [[exempt]]
 item = "tst_core::klv::st0601::PayloadRecord::eq"
-reason = "derive impl for the WP-C tag 138 pack struct; exercised the same way"
+reason = "derive impl for the tag 138 pack struct; exercised the same way"
 
 [[exempt]]
 item = "tst_core::klv::st0601::PayloadRecord::fmt"
-reason = "derive impl for the WP-C tag 138 pack struct; exercised the same way"
+reason = "derive impl for the tag 138 pack struct; exercised the same way"
 
 [[surface]]
 item = "tst_core::klv::st0601::PayloadList"
@@ -3015,15 +3015,15 @@ tier = "A"
 
 [[exempt]]
 item = "tst_core::klv::st0601::PayloadList::clone"
-reason = "derive impl for the WP-C tag 138 pack struct; exercised the same way"
+reason = "derive impl for the tag 138 pack struct; exercised the same way"
 
 [[exempt]]
 item = "tst_core::klv::st0601::PayloadList::eq"
-reason = "derive impl for the WP-C tag 138 pack struct; exercised the same way"
+reason = "derive impl for the tag 138 pack struct; exercised the same way"
 
 [[exempt]]
 item = "tst_core::klv::st0601::PayloadList::fmt"
-reason = "derive impl for the WP-C tag 138 pack struct; exercised the same way"
+reason = "derive impl for the tag 138 pack struct; exercised the same way"
 
 [[surface]]
 item = "tst_core::klv::st0601::WeaponsStore"
@@ -3069,15 +3069,15 @@ tier = "A"
 
 [[exempt]]
 item = "tst_core::klv::st0601::WeaponsStore::clone"
-reason = "derive impl for the WP-C tag 140 pack struct; exercised the same way"
+reason = "derive impl for the tag 140 pack struct; exercised the same way"
 
 [[exempt]]
 item = "tst_core::klv::st0601::WeaponsStore::eq"
-reason = "derive impl for the WP-C tag 140 pack struct; exercised the same way"
+reason = "derive impl for the tag 140 pack struct; exercised the same way"
 
 [[exempt]]
 item = "tst_core::klv::st0601::WeaponsStore::fmt"
-reason = "derive impl for the WP-C tag 140 pack struct; exercised the same way"
+reason = "derive impl for the tag 140 pack struct; exercised the same way"
 
 [[surface]]
 item = "tst_core::klv::st0601::Waypoint"
@@ -3088,15 +3088,15 @@ tier = "A"
 
 [[exempt]]
 item = "tst_core::klv::st0601::Waypoint::clone"
-reason = "derive impl for the WP-C tag 141 pack struct; exercised the same way"
+reason = "derive impl for the tag 141 pack struct; exercised the same way"
 
 [[exempt]]
 item = "tst_core::klv::st0601::Waypoint::eq"
-reason = "derive impl for the WP-C tag 141 pack struct; exercised the same way"
+reason = "derive impl for the tag 141 pack struct; exercised the same way"
 
 [[exempt]]
 item = "tst_core::klv::st0601::Waypoint::fmt"
-reason = "derive impl for the WP-C tag 141 pack struct; exercised the same way"
+reason = "derive impl for the tag 141 pack struct; exercised the same way"
 
 [[surface]]
 item = "tst_core::klv::st0601::ViewDomain"
@@ -3107,19 +3107,19 @@ tier = "A"
 
 [[exempt]]
 item = "tst_core::klv::st0601::ViewDomain::clone"
-reason = "derive impl for the WP-C tag 142 pack struct; exercised the same way"
+reason = "derive impl for the tag 142 pack struct; exercised the same way"
 
 [[exempt]]
 item = "tst_core::klv::st0601::ViewDomain::eq"
-reason = "derive impl for the WP-C tag 142 pack struct; exercised the same way"
+reason = "derive impl for the tag 142 pack struct; exercised the same way"
 
 [[exempt]]
 item = "tst_core::klv::st0601::ViewDomain::default"
-reason = "derive impl for the WP-C tag 142 pack struct; exercised the same way"
+reason = "derive impl for the tag 142 pack struct; exercised the same way"
 
 [[exempt]]
 item = "tst_core::klv::st0601::ViewDomain::fmt"
-reason = "derive impl for the WP-C tag 142 pack struct; exercised the same way"
+reason = "derive impl for the tag 142 pack struct; exercised the same way"
 
 [[surface]]
 item = "tst_core::klv::st0601::ViewDomainPair"
@@ -3130,39 +3130,39 @@ tier = "A"
 
 [[exempt]]
 item = "tst_core::klv::st0601::ViewDomainPair::clone"
-reason = "derive impl for the WP-C tag 142 pair struct; exercised the same way"
+reason = "derive impl for the tag 142 pair struct; exercised the same way"
 
 [[exempt]]
 item = "tst_core::klv::st0601::ViewDomainPair::eq"
-reason = "derive impl for the WP-C tag 142 pair struct; exercised the same way"
+reason = "derive impl for the tag 142 pair struct; exercised the same way"
 
 [[exempt]]
 item = "tst_core::klv::st0601::ViewDomainPair::default"
-reason = "derive impl for the WP-C tag 142 pair struct; exercised the same way"
+reason = "derive impl for the tag 142 pair struct; exercised the same way"
 
 [[exempt]]
 item = "tst_core::klv::st0601::ViewDomainPair::fmt"
-reason = "derive impl for the WP-C tag 142 pair struct; exercised the same way"
+reason = "derive impl for the tag 142 pair struct; exercised the same way"
 
 [[exempt]]
 item = "tst_core::klv::st0601::OutOfRangePolicy::clone"
-reason = "added 2026-07-10 (WP-2 OutOfRangePolicy); exercised by st0601::mapping indicator_* unit tests + st0601::tests indicator round-trips"
+reason = "added 2026-07-10 (OutOfRangePolicy); exercised by st0601::mapping indicator_* unit tests + st0601::tests indicator round-trips"
 
 [[exempt]]
 item = "tst_core::klv::st0601::OutOfRangePolicy::default"
-reason = "added 2026-07-10 (WP-2 OutOfRangePolicy); exercised by st0601::mapping indicator_* unit tests + st0601::tests indicator round-trips"
+reason = "added 2026-07-10 (OutOfRangePolicy); exercised by st0601::mapping indicator_* unit tests + st0601::tests indicator round-trips"
 
 [[exempt]]
 item = "tst_core::klv::st0601::OutOfRangePolicy::eq"
-reason = "added 2026-07-10 (WP-2 OutOfRangePolicy); exercised by st0601::mapping indicator_* unit tests + st0601::tests indicator round-trips"
+reason = "added 2026-07-10 (OutOfRangePolicy); exercised by st0601::mapping indicator_* unit tests + st0601::tests indicator round-trips"
 
 [[exempt]]
 item = "tst_core::klv::st0601::OutOfRangePolicy::fmt"
-reason = "added 2026-07-10 (WP-2 OutOfRangePolicy); exercised by st0601::mapping indicator_* unit tests + st0601::tests indicator round-trips"
+reason = "added 2026-07-10 (OutOfRangePolicy); exercised by st0601::mapping indicator_* unit tests + st0601::tests indicator round-trips"
 
 [[exempt]]
 item = "tst_core::klv::st0601::encode_to_vec_with"
-reason = "added 2026-07-10 (WP-2 encode_to_vec_with); exercised by st0601::tests indicator_mode_round_trips_as_sentinel + len-invariance"
+reason = "added 2026-07-10 (encode_to_vec_with); exercised by st0601::tests indicator_mode_round_trips_as_sentinel + len-invariance"
 
 [[exempt]]
 item = "tst_core::klv::st0601::FieldOfView"
@@ -4051,7 +4051,7 @@ tier = "A"
 
 [[exempt]]
 item = "tst_core::mpegts::demux::DemuxerConfig::builder"
-reason = "DA-NAME-6 (2026-07-04): entry point mirroring MuxerConfig::builder(); graduate to [[surface]] as coverage is asserted"
+reason = "added 2026-07-04: entry point mirroring MuxerConfig::builder(); graduate to [[surface]] as coverage is asserted"
 
 [[exempt]]
 item = "tst_core::mpegts::demux::DemuxerConfigBuilder::au_cell_cap_per_pid"
@@ -4583,15 +4583,15 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 
 [[exempt]]
 item = "tst_core::mpegts::demux::event::PsiSyntaxKind::clone"
-reason = "derive impl; no direct binding method (REF-PSI-03 WP-D)"
+reason = "derive impl; no direct binding method"
 
 [[exempt]]
 item = "tst_core::mpegts::demux::event::PsiSyntaxKind::eq"
-reason = "derive impl; no direct binding method (REF-PSI-03 WP-D)"
+reason = "derive impl; no direct binding method"
 
 [[exempt]]
 item = "tst_core::mpegts::demux::event::PsiSyntaxKind::fmt"
-reason = "derive impl; no direct binding method (REF-PSI-03 WP-D)"
+reason = "derive impl; no direct binding method"
 
 [[exempt]]
 item = "tst_core::mpegts::demux::event::ProgramMap"
@@ -5450,11 +5450,11 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 
 [[exempt]]
 item = "tst_core::mpegts::mux::Muxer::push_video_wire_to"
-reason = "WP-B Task 7: wire-push entry point for transmux pass-through (AV1-01)"
+reason = "wire-push entry point for transmux pass-through"
 
 [[exempt]]
 item = "tst_core::mpegts::mux::Muxer::push_video_wire_to_with_dts"
-reason = "WP-B Task 7: PTS+DTS wire-push entry point for transmux pass-through (AV1-01)"
+reason = "PTS+DTS wire-push entry point for transmux pass-through"
 
 [[exempt]]
 item = "tst_core::mpegts::mux::Muxer::reset_stats"
@@ -5517,10 +5517,11 @@ bindings = ["python:MuxerConfigBuilder", "java:org.tstrans.mpegts.MuxerConfig.Bu
 tier = "A"
 
 # ---------------------------------------------------------------------------
-# tst-jni srt wave A: graduate the SRT type-level surface rows from the bulk
-# bootstrap [[exempt]] section. Only the top-level type items graduate here;
-# method-level rows (::connect, ::bind, ::accept, etc.) and the MuxSender /
-# DemuxReceiver / ManagedTransport shells stay exempt (sub-wave B/C territory).
+# Graduates the SRT type-level surface rows from the bulk bootstrap
+# [[exempt]] section once the JVM SRT binding covers them. Only the
+# top-level type items graduate here; method-level rows (::connect, ::bind,
+# ::accept, etc.) and the MuxSender / DemuxReceiver / ManagedTransport
+# shells stay exempt until their own bindings land.
 # ---------------------------------------------------------------------------
 
 [[surface]]
@@ -5994,12 +5995,12 @@ item = "tst_core::mpegts::stats::subtitle_codec_label"
 reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
 
 
-# io_classify (2026-09-14, WP-4b CORR-24): the shared TCP/UDP send-error
-# classifier. classify_send_error and its SendClass are consumed only via
-# the tst_core::net re-export (the send paths import
-# `tst_core::net::{SendClass, classify_send_error}`, not the io_classify
-# submodule path directly) — both paths are catalogued since cargo
-# public-api renders bare enum/fn declarations once per path.
+# io_classify (2026-09-14): the shared TCP/UDP send-error classifier.
+# classify_send_error and its SendClass are consumed only via the
+# tst_core::net re-export (the
+# send paths import `tst_core::net::{SendClass, classify_send_error}`, not
+# the io_classify submodule path directly) — both paths are catalogued since
+# cargo public-api renders bare enum/fn declarations once per path.
 [[surface]]
 kind = "rust"
 crate = "tst-core"
@@ -6055,7 +6056,7 @@ tier = "A"
 
 [[exempt]]
 item = "tst_core::net::udp_socket::ACCEPT_POLL_INTERVAL"
-reason = "CORR-12 fix-round-1 (2026-09-14, WP-4b): shorter accept-poll cadence for TcpListener::accept_blocking, consumed by crates/tst-tcp/src/listener.rs; not directly value-asserted by any test (the tst-tcp listener tests assert cancel/accept behaviour completes within a bounded window, not this exact constant), matching CANCEL_POLL_INTERVAL's own treatment below"
+reason = "added 2026-09-14: shorter accept-poll cadence for TcpListener::accept_blocking, consumed by crates/tst-tcp/src/listener.rs; not directly value-asserted by any test (the tst-tcp listener tests assert cancel/accept behaviour completes within a bounded window, not this exact constant), matching CANCEL_POLL_INTERVAL's own treatment below"
 
 [[exempt]]
 item = "tst_core::net::udp_socket::CANCEL_POLL_INTERVAL"
@@ -6151,7 +6152,7 @@ reason = "raw-first refactor 2026-06-08; graduate to [[surface]] as coverage is 
 
 [[exempt]]
 item = "tst_core::shared::SharedBytes::from_slice"
-reason = "DA-PERF-3 2026-07-02; avoids Box intermediary vs from_vec; graduate to [[surface]] once coverage is asserted"
+reason = "added 2026-07-02; avoids Box intermediary vs from_vec; graduate to [[surface]] once coverage is asserted"
 
 [[exempt]]
 item = "tst_core::shared::SharedBytes::slice"
@@ -6354,9 +6355,9 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 item = "tst_core::url::common::parse_url"
 reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
 
-# percent_decode: made pub for CORR-21 (deep-review-4 WP-4a) — RtspUrl::parse
-# decodes userinfo through it since parse_url itself returns userinfo
-# verbatim on a Stable-tier module. Dedicated coverage in both crates.
+# percent_decode: pub because RtspUrl::parse decodes userinfo through it —
+# parse_url itself returns userinfo verbatim on a Stable-tier module.
+# Dedicated coverage in both crates.
 [[surface]]
 kind = "rust"
 crate = "tst-core"
@@ -6398,7 +6399,7 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 item = "tst_core::url::parse_url"
 reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
 
-# tst_pipeline::BackoffStrategy graduated to [[surface]] in the tst-jni srt wave B
+# tst_pipeline::BackoffStrategy graduated to [[surface]] once the JVM SRT binding covered it.
 
 [[surface]]
 kind = "rust"
@@ -6437,8 +6438,9 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 item = "tst_pipeline::ByteSink"
 reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
 
-# tst_pipeline::DemuxReceiver graduated to [[surface]] in the tst-jni srt wave B;
-# the rtp convenience binding (org.tstrans.rtp.DemuxReceiver) was added in rtp wave B.
+# tst_pipeline::DemuxReceiver graduated to [[surface]] once the JVM SRT
+# binding covered it; the rtp convenience binding
+# (org.tstrans.rtp.DemuxReceiver) followed once the JVM RTP binding did too.
 [[surface]]
 kind = "rust"
 crate = "tst-pipeline"
@@ -6480,8 +6482,8 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 item = "tst_pipeline::GapBuffer::pop_front"
 reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
 
-# Graduated in the tst-jni srt sub-wave C: ManagedDemuxReceiver is the typed
-# managed-demux shell; the JVM mirror is org.tstrans.srt.ManagedDemuxReceiver.
+# ManagedDemuxReceiver is the typed managed-demux shell; graduated once the
+# JVM mirror org.tstrans.srt.ManagedDemuxReceiver existed.
 [[surface]]
 kind = "rust"
 crate = "tst-pipeline"
@@ -6491,8 +6493,8 @@ bindings = ["java:org.tstrans.srt.ManagedDemuxReceiver", "c:unaudited", "python:
 scenario_ids = []
 tier = "A"
 
-# Graduated in the tst-jni srt sub-wave C: ManagedRecvTransport backs the basic
-# managed recv shell; the JVM mirror is org.tstrans.srt.ManagedReceiver.
+# ManagedRecvTransport backs the basic managed recv shell; graduated once
+# the JVM mirror org.tstrans.srt.ManagedReceiver existed.
 [[surface]]
 kind = "rust"
 crate = "tst-pipeline"
@@ -6530,9 +6532,9 @@ bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred
 scenario_ids = []
 tier = "A"
 
-# Graduated in the tst-jni srt sub-wave C: ManagedTransport is the managed SEND
-# transport — both basic (org.tstrans.srt.ManagedSender) and mux
-# (org.tstrans.srt.ManagedMuxSender) JVM shells wrap it.
+# ManagedTransport is the managed SEND transport — both basic
+# (org.tstrans.srt.ManagedSender) and mux (org.tstrans.srt.ManagedMuxSender)
+# JVM shells wrap it.
 [[surface]]
 kind = "rust"
 crate = "tst-pipeline"
@@ -6546,8 +6548,9 @@ tier = "A"
 item = "tst_pipeline::MuxPublisher"
 reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
 
-# tst_pipeline::MuxSender graduated to [[surface]] in the tst-jni srt wave B;
-# the rtp convenience binding (org.tstrans.rtp.MuxSender) was added in rtp wave B.
+# tst_pipeline::MuxSender graduated to [[surface]] once the JVM SRT binding
+# covered it; the rtp convenience binding (org.tstrans.rtp.MuxSender)
+# followed once the JVM RTP binding did too.
 [[surface]]
 kind = "rust"
 crate = "tst-pipeline"
@@ -6561,7 +6564,7 @@ tier = "A"
 item = "tst_pipeline::MuxSenderStats"
 reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
 
-# tst_pipeline::OverflowPolicy graduated to [[surface]] in the tst-jni srt wave B
+# tst_pipeline::OverflowPolicy graduated to [[surface]] once the JVM SRT binding covered it.
 
 [[surface]]
 kind = "rust"
@@ -6604,13 +6607,13 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 item = "tst_pipeline::RawSender"
 reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
 
-# tst_pipeline::Receiver graduated to [[surface]] in the tst-jni srt wave A
+# tst_pipeline::Receiver graduated to [[surface]] once the JVM SRT binding covered it.
 
 [[exempt]]
 item = "tst_pipeline::ReceiverStats"
 reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
 
-# tst_pipeline::ReconnectPolicy graduated to [[surface]] in the tst-jni srt wave B
+# tst_pipeline::ReconnectPolicy graduated to [[surface]] once the JVM SRT binding covered it.
 
 [[surface]]
 kind = "rust"
@@ -6621,7 +6624,7 @@ bindings = ["java:org.tstrans.srt.ReconnectPolicy", "c:unaudited", "python:unaud
 scenario_ids = []
 tier = "A"
 
-# tst_pipeline::Sender graduated to [[surface]] in the tst-jni srt wave A
+# tst_pipeline::Sender graduated to [[surface]] once the JVM SRT binding covered it.
 
 [[exempt]]
 item = "tst_pipeline::SenderStats"
@@ -8359,10 +8362,9 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 item = "tst_rtp::builder::RtspClientBuilder::read_timeout"
 reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
 
-# request_timeout: per-request response deadline (CORR-26, deep-review-4
-# WP-4a) — the producer of RtspError::Timeout. Builder default-pin in
-# builder.rs plus a live silent-peer integration test in
-# tests/rtsp_client/builder_timeouts.rs.
+# request_timeout: per-request response deadline — the producer of
+# RtspError::Timeout. Builder default-pin in builder.rs plus a live
+# silent-peer integration test in tests/rtsp_client/builder_timeouts.rs.
 [[surface]]
 kind = "rust"
 crate = "tst-rtp"
@@ -8386,9 +8388,9 @@ scenario_ids = []
 tier = "A"
 
 # tcp_keepalive: OS-level SO_KEEPALIVE knob for the RTSP client control
-# socket (integrator defense-in-depth rider); builder unit test in
-# builder.rs plus an OS-observed apply test (SockRef::keepalive read-back)
-# in rtsp/client/mod.rs. URL twin `?tcp_keepalive=` tested in url.rs.
+# socket (integrator defense-in-depth); builder unit test in builder.rs plus
+# an OS-observed apply test (SockRef::keepalive read-back) in
+# rtsp/client/mod.rs. URL twin `?tcp_keepalive=` tested in url.rs.
 [[surface]]
 kind = "rust"
 crate = "tst-rtp"
@@ -9387,7 +9389,7 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 
 [[exempt]]
 item = "tst_rtp::rtsp::server::session::ServerSessionState::drop"
-reason = "added review 9 (R9-02) 2026-10-04: Drop cancels the per-peer fanout; server-internal type, catalogued like its RtspServer::drop sibling (exempt)"
+reason = "added 2026-10-04: Drop cancels the per-peer fanout; server-internal type, catalogued like its RtspServer::drop sibling (exempt)"
 
 [[exempt]]
 item = "tst_rtp::sdp::Sdp"
@@ -9738,143 +9740,143 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 
 [[exempt]]
 item = "tst_rtp::H264Depacketizer"
-reason = "WP-1 RFC 6184 depacketizer; graduate to [[surface]] in WP-2 when integration tests land"
+reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
 item = "tst_rtp::h264::H264Depacketizer"
-reason = "WP-1 RFC 6184 depacketizer; graduate to [[surface]] in WP-2 when integration tests land"
+reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
 item = "tst_rtp::h264::depacketizer::H264Au::clone"
-reason = "WP-1 RFC 6184 depacketizer; graduate to [[surface]] in WP-2 when integration tests land"
+reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
 item = "tst_rtp::h264::depacketizer::H264Au::fmt"
-reason = "WP-1 RFC 6184 depacketizer; graduate to [[surface]] in WP-2 when integration tests land"
+reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
 item = "tst_rtp::h264::depacketizer::H264Depacketizer"
-reason = "WP-1 RFC 6184 depacketizer; graduate to [[surface]] in WP-2 when integration tests land"
+reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
 item = "tst_rtp::h264::depacketizer::H264Depacketizer::feed"
-reason = "WP-1 RFC 6184 depacketizer; graduate to [[surface]] in WP-2 when integration tests land"
+reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
 item = "tst_rtp::h264::depacketizer::H264Depacketizer::flush"
-reason = "WP-1 RFC 6184 depacketizer; graduate to [[surface]] in WP-2 when integration tests land"
+reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
 item = "tst_rtp::h264::depacketizer::H264Depacketizer::new"
-reason = "WP-1 RFC 6184 depacketizer; graduate to [[surface]] in WP-2 when integration tests land"
+reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
 item = "tst_rtp::h264::depacketizer::H264Depacketizer::next_au"
-reason = "WP-1 RFC 6184 depacketizer; graduate to [[surface]] in WP-2 when integration tests land"
+reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
 item = "tst_rtp::h264::depacketizer::H264Depacketizer::stats"
-reason = "WP-1 RFC 6184 depacketizer; graduate to [[surface]] in WP-2 when integration tests land"
+reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
 item = "tst_rtp::h264::depacketizer::H264DepayConfig::clone"
-reason = "WP-1 RFC 6184 depacketizer; graduate to [[surface]] in WP-2 when integration tests land"
+reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
 item = "tst_rtp::h264::depacketizer::H264DepayConfig::default"
-reason = "WP-1 RFC 6184 depacketizer; graduate to [[surface]] in WP-2 when integration tests land"
+reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
 item = "tst_rtp::h264::depacketizer::H264DepayConfig::fmt"
-reason = "WP-1 RFC 6184 depacketizer; graduate to [[surface]] in WP-2 when integration tests land"
+reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
 item = "tst_rtp::h264::depacketizer::H264DepayStats::clone"
-reason = "WP-1 RFC 6184 depacketizer; graduate to [[surface]] in WP-2 when integration tests land"
+reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
 item = "tst_rtp::h264::depacketizer::H264DepayStats::default"
-reason = "WP-1 RFC 6184 depacketizer; graduate to [[surface]] in WP-2 when integration tests land"
+reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
 item = "tst_rtp::h264::depacketizer::H264DepayStats::eq"
-reason = "WP-1 RFC 6184 depacketizer; graduate to [[surface]] in WP-2 when integration tests land"
+reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
 item = "tst_rtp::h264::depacketizer::H264DepayStats::fmt"
-reason = "WP-1 RFC 6184 depacketizer; graduate to [[surface]] in WP-2 when integration tests land"
+reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
 item = "tst_rtp::h264::depacketizer::ParameterSetInjection::clone"
-reason = "WP-1 RFC 6184 depacketizer; graduate to [[surface]] in WP-2 when integration tests land"
+reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
 item = "tst_rtp::h264::depacketizer::ParameterSetInjection::default"
-reason = "WP-1 RFC 6184 depacketizer; graduate to [[surface]] in WP-2 when integration tests land"
+reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
 item = "tst_rtp::h264::depacketizer::ParameterSetInjection::eq"
-reason = "WP-1 RFC 6184 depacketizer; graduate to [[surface]] in WP-2 when integration tests land"
+reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
 item = "tst_rtp::h264::depacketizer::ParameterSetInjection::fmt"
-reason = "WP-1 RFC 6184 depacketizer; graduate to [[surface]] in WP-2 when integration tests land"
+reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
 item = "tst_rtp::h264::fmtp::H264FmtpParams::clone"
-reason = "WP-1 RFC 6184 depacketizer; graduate to [[surface]] in WP-2 when integration tests land"
+reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
 item = "tst_rtp::h264::fmtp::H264FmtpParams::eq"
-reason = "WP-1 RFC 6184 depacketizer; graduate to [[surface]] in WP-2 when integration tests land"
+reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
 item = "tst_rtp::h264::fmtp::H264FmtpParams::fmt"
-reason = "WP-1 RFC 6184 depacketizer; graduate to [[surface]] in WP-2 when integration tests land"
+reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
 item = "tst_rtp::h264::fmtp::H264FmtpParams::parse"
-reason = "WP-1 RFC 6184 depacketizer; graduate to [[surface]] in WP-2 when integration tests land"
+reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
 item = "tst_rtp::h264::fmtp::parse_rtpmap_h264"
-reason = "WP-1 RFC 6184 depacketizer; graduate to [[surface]] in WP-2 when integration tests land"
+reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
 item = "tst_rtp::h264::parse_rtpmap_h264"
-reason = "WP-1 RFC 6184 depacketizer; graduate to [[surface]] in WP-2 when integration tests land"
+reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
 item = "tst_rtp::parse_rtpmap_h264"
-reason = "WP-1 RFC 6184 depacketizer; graduate to [[surface]] in WP-2 when integration tests land"
+reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"
 
 [[exempt]]
 item = "tst_rtp::H264Receiver"
-reason = "WP-2 RFC 6184 receiver I/O shell; graduate to [[surface]] in WP-3 when bindings land"
+reason = "RFC 6184 receiver I/O shell; graduate to [[surface]] when bindings land"
 
 [[exempt]]
 item = "tst_rtp::h264::H264Receiver"
-reason = "WP-2 RFC 6184 receiver I/O shell; graduate to [[surface]] in WP-3 when bindings land"
+reason = "RFC 6184 receiver I/O shell; graduate to [[surface]] when bindings land"
 
 [[exempt]]
 item = "tst_rtp::h264::receiver::H264Receiver"
-reason = "WP-2 RFC 6184 receiver I/O shell; graduate to [[surface]] in WP-3 when bindings land"
+reason = "RFC 6184 receiver I/O shell; graduate to [[surface]] when bindings land"
 
 [[exempt]]
 item = "tst_rtp::h264::receiver::H264Receiver::cancel_handle"
-reason = "WP-2 RFC 6184 receiver I/O shell; graduate to [[surface]] in WP-3 when bindings land"
+reason = "RFC 6184 receiver I/O shell; graduate to [[surface]] when bindings land"
 
 [[exempt]]
 item = "tst_rtp::h264::receiver::H264Receiver::close"
-reason = "WP-2 RFC 6184 receiver I/O shell; graduate to [[surface]] in WP-3 when bindings land"
+reason = "RFC 6184 receiver I/O shell; graduate to [[surface]] when bindings land"
 
 [[exempt]]
 item = "tst_rtp::h264::receiver::H264Receiver::depay_stats"
-reason = "WP-2 RFC 6184 receiver I/O shell; graduate to [[surface]] in WP-3 when bindings land"
+reason = "RFC 6184 receiver I/O shell; graduate to [[surface]] when bindings land"
 
 [[exempt]]
 item = "tst_rtp::h264::receiver::H264Receiver::drop"
-reason = "WP-2 RFC 6184 receiver I/O shell; graduate to [[surface]] in WP-3 when bindings land"
+reason = "RFC 6184 receiver I/O shell; graduate to [[surface]] when bindings land"
 
 # end_reason: StreamEndReason accessor mirroring RtpRecvTransport::end_reason,
 # populated by RtspSession::into_h264_receiver; unit-tested for the plain-rtp://
@@ -9894,19 +9896,19 @@ tier = "A"
 
 [[exempt]]
 item = "tst_rtp::h264::receiver::H264Receiver::listen"
-reason = "WP-2 RFC 6184 receiver I/O shell; graduate to [[surface]] in WP-3 when bindings land"
+reason = "RFC 6184 receiver I/O shell; graduate to [[surface]] when bindings land"
 
 [[exempt]]
 item = "tst_rtp::h264::receiver::H264Receiver::listen_with"
-reason = "WP-2 RFC 6184 receiver I/O shell; graduate to [[surface]] in WP-3 when bindings land"
+reason = "RFC 6184 receiver I/O shell; graduate to [[surface]] when bindings land"
 
 [[exempt]]
 item = "tst_rtp::h264::receiver::H264Receiver::local_addr"
-reason = "WP-2 RFC 6184 receiver I/O shell; graduate to [[surface]] in WP-3 when bindings land"
+reason = "RFC 6184 receiver I/O shell; graduate to [[surface]] when bindings land"
 
 [[exempt]]
 item = "tst_rtp::h264::receiver::H264Receiver::recv_au"
-reason = "WP-2 RFC 6184 receiver I/O shell; graduate to [[surface]] in WP-3 when bindings land"
+reason = "RFC 6184 receiver I/O shell; graduate to [[surface]] when bindings land"
 
 # recv_au_timeout: new deadline-bounded stall-watchdog primitive, from an
 # integrator field report; dedicated test colocated in receiver.rs.
@@ -9921,7 +9923,7 @@ tier = "A"
 
 [[exempt]]
 item = "tst_rtp::h264::receiver::H264Receiver::rtp_stats"
-reason = "WP-2 RFC 6184 receiver I/O shell; graduate to [[surface]] in WP-3 when bindings land"
+reason = "RFC 6184 receiver I/O shell; graduate to [[surface]] when bindings land"
 
 # set_recv_timeout: persistent recv_au() deadline knob, mirroring
 # RtpRecvTransport::set_recv_timeout; dedicated tests colocated in
@@ -9943,31 +9945,31 @@ tier = "A"
 
 [[exempt]]
 item = "tst_rtp::h264::receiver::H264Receiver::socket_stats"
-reason = "WP-2 RFC 6184 receiver I/O shell; graduate to [[surface]] in WP-3 when bindings land"
+reason = "RFC 6184 receiver I/O shell; graduate to [[surface]] when bindings land"
 
 [[exempt]]
 item = "tst_rtp::H264Media"
-reason = "WP-2 RFC 6184 RTSP bridge; graduate to [[surface]] in WP-3 when bindings land"
+reason = "RFC 6184 RTSP bridge; graduate to [[surface]] when bindings land"
 
 [[exempt]]
 item = "tst_rtp::pick_h264"
-reason = "WP-2 RFC 6184 RTSP bridge; graduate to [[surface]] in WP-3 when bindings land"
+reason = "RFC 6184 RTSP bridge; graduate to [[surface]] when bindings land"
 
 [[exempt]]
 item = "tst_rtp::rtsp::client::RtspClient::setup_h264_auto"
-reason = "WP-2 RFC 6184 RTSP bridge; graduate to [[surface]] in WP-3 when bindings land"
+reason = "RFC 6184 RTSP bridge; graduate to [[surface]] when bindings land"
 
 [[exempt]]
 item = "tst_rtp::rtsp::client::session::RtspSession::into_h264_receiver"
-reason = "WP-2 RFC 6184 RTSP bridge; graduate to [[surface]] in WP-3 when bindings land"
+reason = "RFC 6184 RTSP bridge; graduate to [[surface]] when bindings land"
 
 [[exempt]]
 item = "tst_rtp::sdp::pick::H264Media"
-reason = "WP-2 RFC 6184 RTSP bridge; graduate to [[surface]] in WP-3 when bindings land"
+reason = "RFC 6184 RTSP bridge; graduate to [[surface]] when bindings land"
 
 [[exempt]]
 item = "tst_rtp::sdp::pick::pick_h264"
-reason = "WP-2 RFC 6184 RTSP bridge; graduate to [[surface]] in WP-3 when bindings land"
+reason = "RFC 6184 RTSP bridge; graduate to [[surface]] when bindings land"
 
 [[exempt]]
 item = "tst_srt::Congestion"
@@ -9977,7 +9979,7 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 item = "tst_srt::KeyLength"
 reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
 
-# tst_srt::Listener graduated to [[surface]] in the tst-jni srt wave A
+# tst_srt::Listener graduated to [[surface]] once the JVM SRT binding covered it.
 
 [[exempt]]
 item = "tst_srt::ListenerBuilder"
@@ -9995,9 +9997,9 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 item = "tst_srt::Passphrase"
 reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
 
-# tst_srt::Socket graduated to [[surface]] in the tst-jni srt wave A
+# tst_srt::Socket graduated to [[surface]] once the JVM SRT binding covered it.
 
-# tst_srt::SocketBuilder graduated to [[surface]] in the tst-jni srt wave A
+# tst_srt::SocketBuilder graduated to [[surface]] once the JVM SRT binding covered it.
 
 [[exempt]]
 item = "tst_srt::SrtTransport"
@@ -10093,7 +10095,7 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 
 [[exempt]]
 item = "tst_srt::builder::ListenerBuilder::recv_buf_bytes"
-reason = "renamed from recv_buf_packets (DA-SRT-1); bulk bootstrap 2026-06-03"
+reason = "renamed from recv_buf_packets; bulk bootstrap 2026-06-03"
 
 [[exempt]]
 item = "tst_srt::builder::ListenerBuilder::recv_latency"
@@ -10209,7 +10211,7 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 
 [[exempt]]
 item = "tst_srt::builder::SocketBuilder::recv_buf_bytes"
-reason = "renamed from recv_buf_packets (DA-SRT-1); bulk bootstrap 2026-06-03"
+reason = "renamed from recv_buf_packets; bulk bootstrap 2026-06-03"
 
 [[exempt]]
 item = "tst_srt::builder::SocketBuilder::recv_latency"
@@ -10225,7 +10227,7 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 
 [[exempt]]
 item = "tst_srt::builder::SocketBuilder::send_buf_bytes"
-reason = "renamed from send_buf_packets (DA-SRT-1); bulk bootstrap 2026-06-03"
+reason = "renamed from send_buf_packets; bulk bootstrap 2026-06-03"
 
 [[exempt]]
 item = "tst_srt::builder::SocketBuilder::send_timeout"
@@ -10849,7 +10851,7 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 
 [[exempt]]
 item = "tst_tcp::TcpCancelHandle"
-reason = "added DA-PY-1 2026-07-02; cancel handle for cooperative TCP shutdown"
+reason = "added 2026-07-02; cancel handle for cooperative TCP shutdown"
 
 [[exempt]]
 item = "tst_tcp::TcpTransportBuilder"
@@ -11153,7 +11155,7 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 
 [[exempt]]
 item = "tst_hls::publisher::HlsPublisher::cut_segment_with_duration"
-reason = "REF-HLS-03 WP-I/PR3; media-presentation EXTINF override; graduate to [[surface]] when HLS is ungated"
+reason = "Media-presentation EXTINF override; graduate to [[surface]] when HLS is ungated"
 
 [[exempt]]
 item = "tst_hls::publisher::HlsPublisher::finish"
@@ -11235,7 +11237,7 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 item = "tst_tcp::listener::TcpListener::bind"
 reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
 
-# CORR-12 (2026-09-14, WP-4b): cancellable accept_blocking.
+# Cancellable accept_blocking (2026-09-14).
 [[surface]]
 kind = "rust"
 crate = "tst-tcp"
@@ -11352,27 +11354,27 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 
 [[exempt]]
 item = "tst_tcp::transport::TcpTransport::cancel_handle"
-reason = "added DA-PY-1 2026-07-02; cancel handle for cooperative TCP shutdown"
+reason = "added 2026-07-02; cancel handle for cooperative TCP shutdown"
 
 [[exempt]]
 item = "tst_tcp::transport::TcpCancelHandle"
-reason = "added DA-PY-1 2026-07-02; cancel handle for cooperative TCP shutdown"
+reason = "added 2026-07-02; cancel handle for cooperative TCP shutdown"
 
 [[exempt]]
 item = "tst_tcp::transport::TcpCancelHandle::cancel"
-reason = "added DA-PY-1 2026-07-02; cancel handle for cooperative TCP shutdown"
+reason = "added 2026-07-02; cancel handle for cooperative TCP shutdown"
 
 [[exempt]]
 item = "tst_tcp::transport::TcpCancelHandle::is_cancelled"
-reason = "added DA-PY-1 2026-07-02; cancel handle for cooperative TCP shutdown"
+reason = "added 2026-07-02; cancel handle for cooperative TCP shutdown"
 
 [[exempt]]
 item = "tst_tcp::transport::TcpCancelHandle::clone"
-reason = "added DA-PY-1 2026-07-02; cancel handle for cooperative TCP shutdown"
+reason = "added 2026-07-02; cancel handle for cooperative TCP shutdown"
 
 [[exempt]]
 item = "tst_tcp::transport::TcpCancelHandle::fmt"
-reason = "added DA-PY-1 2026-07-02; cancel handle for cooperative TCP shutdown"
+reason = "added 2026-07-02; cancel handle for cooperative TCP shutdown"
 
 [[exempt]]
 item = "tst_tcp::url::TcpUrl"
@@ -11732,35 +11734,35 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 
 [[exempt]]
 item = "tst_core::mpegts::demux::AdaptationFieldKind::clone"
-reason = "derive impl; no direct binding method (REF-TS-02 WP-D)"
+reason = "derive impl; no direct binding method"
 
 [[exempt]]
 item = "tst_core::mpegts::demux::AdaptationFieldKind::eq"
-reason = "derive impl; no direct binding method (REF-TS-02 WP-D)"
+reason = "derive impl; no direct binding method"
 
 [[exempt]]
 item = "tst_core::mpegts::demux::AdaptationFieldKind::fmt"
-reason = "derive impl; no direct binding method (REF-TS-02 WP-D)"
+reason = "derive impl; no direct binding method"
 
 [[exempt]]
 item = "tst_core::klv::st0601::St0601SentinelMeaning::clone"
-reason = "derive impl for DA-KLV-4 sentinel enum; covered by mapping tests"
+reason = "derive impl for the sentinel enum; covered by mapping tests"
 
 [[exempt]]
 item = "tst_core::klv::st0601::St0601SentinelMeaning::eq"
-reason = "derive impl for DA-KLV-4 sentinel enum; covered by mapping tests"
+reason = "derive impl for the sentinel enum; covered by mapping tests"
 
 [[exempt]]
 item = "tst_core::klv::st0601::St0601SentinelMeaning::fmt"
-reason = "derive impl for DA-KLV-4 sentinel enum; covered by mapping tests"
+reason = "derive impl for the sentinel enum; covered by mapping tests"
 
 [[exempt]]
 item = "tst_core::klv::st0601::St0601SentinelMeaning::hash"
-reason = "derive impl for DA-KLV-4 sentinel enum; covered by mapping tests"
+reason = "derive impl for the sentinel enum; covered by mapping tests"
 
 [[exempt]]
 item = "tst_core::klv::st0601::st0601_sentinel_meaning"
-reason = "DA-KLV-4 sentinel meaning lookup; exercised by mapping::tests::sentinel_meaning_table"
+reason = "Sentinel meaning lookup; exercised by mapping::tests::sentinel_meaning_table"
 
 [[surface]]
 item = "tst_core::klv::st0601::validate_mismms"
@@ -12361,7 +12363,7 @@ item = "rist_sys::RIST_URL_PARAM_RTT_RESTORE"
 reason = "librist 0.2.20 bindgen surface growth 2026-08-30; graduate to [[surface]] as coverage is asserted"
 
 
-# --- Arc 2 WP-A1 (2026-09): tst_pipeline::binding — Owned handle state machine + panic helpers.
+# --- tst_pipeline::binding (2026-09) — Owned handle state machine + panic helpers. ---
 # Owning tests are the modules' own #[cfg(test)] blocks (same convention as tst_core::cancel).
 
 [[surface]]
@@ -12598,9 +12600,9 @@ bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred
 scenario_ids = []
 tier = "A"
 
-# --- Arc 2 WP-A2 (2026-09): tst_pipeline::binding::kind — the one BindingErrorKind
-# table, BindingError, and the kind_of_* classifiers. Owning tests are the
-# module's own #[cfg(test)] block (same convention as WP-A1 above).
+# --- tst_pipeline::binding::kind (2026-09) — the one BindingErrorKind table, ---
+# BindingError, and the kind_of_* classifiers. Owning tests are the
+# module's own #[cfg(test)] block (same convention as the binding module above).
 
 [[surface]]
 kind = "rust"
@@ -12827,7 +12829,7 @@ bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred
 scenario_ids = []
 tier = "A"
 
-# --- Arc 2 WP-A3: SRT open path + managed handles ----------------------
+# --- SRT open path + managed handles ------------------------------------
 # `ManagedHandles` is covered by its own in-module tests; the tst-srt open
 # path and the `from_url` family by the two loopback domains below.
 
@@ -12984,303 +12986,303 @@ bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred
 scenario_ids = []
 tier = "A"
 
-# --- WP-C1 (Arc 2 PR 7): TransportCancel::is_cancelled + the conformance kit ---
+# --- TransportCancel::is_cancelled + the conformance kit ----------------
 # The kit (`tst_core::transport::conformance`) is test infrastructure: it is
 # Provisional, std-only, and has no C/Python/JVM counterpart, so its items can
 # never carry binding columns. The cancel-handle rows sit alongside their
 # already-exempt siblings.
 [[exempt]]
 item = "tst_core::cancel::SrtCancelHandle::close_without_cancel"
-reason = "WP-C1: cancel-handle API, catalogued the same way as its siblings (SrtCancelHandle::cancel/::is_cancelled, TransportCancel::cancel) which are all exempt"
+reason = "Cancel-handle API, catalogued the same way as its siblings (SrtCancelHandle::cancel/::is_cancelled, TransportCancel::cancel) which are all exempt"
 
 [[exempt]]
 item = "tst_core::TransportCancel::is_cancelled"
-reason = "WP-C1: cancel-handle API, catalogued the same way as its siblings (SrtCancelHandle::cancel/::is_cancelled, TransportCancel::cancel) which are all exempt"
+reason = "Cancel-handle API, catalogued the same way as its siblings (SrtCancelHandle::cancel/::is_cancelled, TransportCancel::cancel) which are all exempt"
 
 [[exempt]]
 item = "tst_core::transport::conformance::assert_recv_contract"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::assert_recv_rows"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::assert_send_contract"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::assert_send_rows"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::BrokenSource"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::not_alive_after_broken_recv"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::not_alive_after_broken_send"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::PostCloseKind"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::PostCloseKind::clone"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::PostCloseKind::eq"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::PostCloseKind::fmt"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::probe_packet"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::recv_cancel_before_op_is_explicit_close"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::recv_cancel_during_park_is_explicit_close"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::recv_close_twice_is_ok"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::recv_empty_recv_is_noop"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::recv_is_cancelled_flips"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::recv_max_payload_ge_ceiling"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::recv_not_alive_after_cancel"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::RecvOptions"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::RecvOptions::clone"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::RecvOptions::default"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::RecvOptions::fmt"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::recv_peer_eof_is_not_a_cancel"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::recv_post_close_is_closed"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::RecvRow"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::RecvRow::ALL"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::RecvRow::all_except"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::RecvRow::clone"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::RecvRow::eq"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::RecvRow::fmt"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::RecvRow::name"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::send_cancel_before_op_is_explicit_close"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::send_cancel_during_park_is_explicit_close"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::send_close_twice_is_ok"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::send_is_cancelled_flips"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::send_not_alive_after_cancel"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::SendOptions"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::SendOptions::clone"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::SendOptions::default"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::SendOptions::fmt"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::SendPark"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::SendPark::clone"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::SendPark::eq"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::SendPark::fmt"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::send_post_close_is_closed"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::SendRow"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::SendRow::ALL"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::SendRow::all_except"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::SendRow::clone"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::SendRow::eq"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::SendRow::fmt"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::SendRow::name"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::conformance::WATCHDOG"
-reason = "WP-C1: `transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
+reason = "`transport::conformance` is test infrastructure (Provisional, std-only) — it has no binding surface to map, so there is no [[surface]] row to graduate to"
 
 [[exempt]]
 item = "tst_core::transport::TransportCancel::is_cancelled"
-reason = "WP-C1: cancel-handle API, catalogued the same way as its siblings (SrtCancelHandle::cancel/::is_cancelled, TransportCancel::cancel) which are all exempt"
+reason = "Cancel-handle API, catalogued the same way as its siblings (SrtCancelHandle::cancel/::is_cancelled, TransportCancel::cancel) which are all exempt"
 
 [[exempt]]
 item = "tst_pipeline::binding::owned::FlagCancel::is_cancelled"
-reason = "WP-C1: cancel-handle API, catalogued the same way as its siblings (SrtCancelHandle::cancel/::is_cancelled, TransportCancel::cancel) which are all exempt"
+reason = "Cancel-handle API, catalogued the same way as its siblings (SrtCancelHandle::cancel/::is_cancelled, TransportCancel::cancel) which are all exempt"
 
 [[exempt]]
 item = "tst_rist::recv::RistRecvTransport::cancel_handle"
-reason = "added Arc 2 WP-D 2026-09; cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
+reason = "added 2026-09: cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
 
 [[exempt]]
 item = "tst_rist::RistCancelHandle"
-reason = "added Arc 2 WP-D 2026-09; cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
+reason = "added 2026-09: cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
 
 [[exempt]]
 item = "tst_rist::transport::RistCancelHandle"
-reason = "added Arc 2 WP-D 2026-09; cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
+reason = "added 2026-09: cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
 
 [[exempt]]
 item = "tst_rist::transport::RistCancelHandle::cancel"
-reason = "added Arc 2 WP-D 2026-09; cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
+reason = "added 2026-09: cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
 
 [[exempt]]
 item = "tst_rist::transport::RistCancelHandle::clone"
-reason = "added Arc 2 WP-D 2026-09; cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
+reason = "added 2026-09: cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
 
 [[exempt]]
 item = "tst_rist::transport::RistCancelHandle::fmt"
-reason = "added Arc 2 WP-D 2026-09; cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
+reason = "added 2026-09: cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
 
 [[exempt]]
 item = "tst_rist::transport::RistCancelHandle::is_cancelled"
-reason = "added Arc 2 WP-D 2026-09; cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
+reason = "added 2026-09: cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
 
 [[exempt]]
 item = "tst_rist::transport::RistTransport::cancel_handle"
-reason = "added Arc 2 WP-D 2026-09; cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
+reason = "added 2026-09: cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
 
 [[exempt]]
 item = "tst_udp::recv::UdpRecvTransport::cancel_handle"
-reason = "added Arc 2 WP-D 2026-09; cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
+reason = "added 2026-09: cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
 
 [[exempt]]
 item = "tst_udp::transport::UdpCancelHandle"
-reason = "added Arc 2 WP-D 2026-09; cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
+reason = "added 2026-09: cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
 
 [[exempt]]
 item = "tst_udp::transport::UdpCancelHandle::cancel"
-reason = "added Arc 2 WP-D 2026-09; cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
+reason = "added 2026-09: cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
 
 [[exempt]]
 item = "tst_udp::transport::UdpCancelHandle::clone"
-reason = "added Arc 2 WP-D 2026-09; cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
+reason = "added 2026-09: cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
 
 [[exempt]]
 item = "tst_udp::transport::UdpCancelHandle::fmt"
-reason = "added Arc 2 WP-D 2026-09; cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
+reason = "added 2026-09: cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
 
 [[exempt]]
 item = "tst_udp::transport::UdpCancelHandle::is_cancelled"
-reason = "added Arc 2 WP-D 2026-09; cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
+reason = "added 2026-09: cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
 
 [[exempt]]
 item = "tst_udp::transport::UdpTransport::cancel_handle"
-reason = "added Arc 2 WP-D 2026-09; cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
+reason = "added 2026-09: cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
 
 [[exempt]]
 item = "tst_udp::UdpCancelHandle"
-reason = "added Arc 2 WP-D 2026-09; cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"
+reason = "added 2026-09: cancel handle for cross-thread UDP/RIST shutdown (catalogued like its SrtCancelHandle/TcpCancelHandle siblings, which are all exempt)"

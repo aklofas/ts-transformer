@@ -1,0 +1,18 @@
+# process-markers-allowlist.txt - domain-sense phrases no-process-markers.sh must not flag.
+# One entry per line: <path-regex><TAB><line-regex>; `*` as the path regex = any path.
+# A hit is suppressed only when BOTH its path and its line match (ripgrep regex syntax).
+# Add an entry only for a protocol/product sense of a word; never for a process use.
+*	(?i)\btier[- ][123abc]\b
+SECURITY\.md	\btriage\b
+oss-fuzz/README\.md	\btriage\b
+examples/.*\.rs	\btriage\b
+docs/guides/(mpegts-demux|pipeline)\.md	(?i)\btriage\b
+scripts/check/python/non-conformant-kind-coverage\.sh	\btriage\b
+crates/tst-core/tests/regression/subtitle_interop\.rs	\btriage\b
+embedded/freertos-srt/tests/fault-smoke/main\.cpp	\btriage\b
+docs/reference/compatibility\.md	Symbol-prefix audit
+docs/guides/pipeline\.md	audit-logged
+docs/project/deferred-features\.md	conformance-audit
+crates/tst-core/.*	Table A[0-9]\.[0-9]+\b
+crates/tst-pipeline/src/mux_publisher\.rs	pts\(K[0-9]\)
+(bindings/c/)?examples/.*	(?i)\blesson\b

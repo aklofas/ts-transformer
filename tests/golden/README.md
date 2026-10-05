@@ -1,9 +1,9 @@
 # Tier-B golden reference outputs
 
 This directory holds committed reference outputs against which
-`~/Projects/ts-transformer/scripts/release-validation.sh` diffs the output
-of external tools (`tsanalyze`, `tspsi`, `ffprobe`) run against a freshly
-muxed baseline `.ts` file.
+the maintainer's release-validation script (kept outside this repository)
+diffs the output of external tools (`tsanalyze`, `tspsi`, `ffprobe`) run
+against a freshly muxed baseline `.ts` file.
 
 ## Files
 
@@ -24,15 +24,10 @@ Goldens MUST be regenerated whenever any of the following change:
 - The `mux_to_file` example body
 - TS-packet payload synthesis logic in `tst_core::mpegts::mux`
 
-To refresh:
-
-```bash
-cd ~/Projects/ts-transformer
-./scripts/release-validation.sh --update-goldens
-```
-
-This re-runs steps 3, 4, 5 with stdout redirected into `ts-transformer/tests/golden/`,
-overwriting the existing files. Review the diff (`git diff tests/golden/`) before
+`release-validation.sh` is maintainer tooling that is not shipped in this
+repository; it re-runs steps 3, 4, 5 (invoked with `--update-goldens`) with
+stdout redirected into `ts-transformer/tests/golden/`, overwriting the
+existing files. Review the diff (`git diff tests/golden/`) before
 committing — every byte change must be intentional and explained in the commit
 message.
 

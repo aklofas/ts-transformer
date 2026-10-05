@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Plan #96 Wave G (Finding 12): every NonConformantIssue variant in
+# Every NonConformantIssue variant in
 # tst-core must appear explicitly in tst-py/src/mpegts.rs
 # `non_conformant_kind_name` mapper, AND every output kind string the
 # mapper produces must be a member of the Python `NonConformantKind`
@@ -24,8 +24,7 @@ PY_ENUM_FILE="$ROOT/bindings/python/python/tstrans/mpegts.py"
 # ----------------------------------------------------------------------
 # Step 1: extract every NonConformantIssue variant name.
 # ----------------------------------------------------------------------
-# Portable read-into-array pattern (bash 3.2+) per
-# `feedback_bash_ratchets_macos_portability.md` — no `mapfile`/`readarray`.
+# Portable read-into-array pattern (bash 3.2+) — no `mapfile`/`readarray`.
 variants=()
 while IFS= read -r v; do
     variants+=("$v")

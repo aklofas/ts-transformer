@@ -98,9 +98,8 @@ jobs:
       # PyO3/maturin-action runs maturin inside a manylinux container.
       # `before-script-linux` installs cmake (libsrt + mbedTLS need it
       # to build from source); the container base doesn't include it.
-      # `manylinux: 2_28` matches the spec at
-      # docs/specs/2026-05-22-tst-py-design.md and the manylinux baseline
-      # the rest of the project ratchets on.
+      # `manylinux: 2_28` matches the manylinux baseline the rest of the
+      # project ratchets on.
       - uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}

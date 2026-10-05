@@ -21,7 +21,7 @@ pub struct CellMetrics {
     /// `None` iff computed with `send`/`recv --no-klv-digest`: that flag
     /// skips accumulating a growing per-record digest list entirely
     /// (unbounded over a multi-day soak — ~4 MiB/h at 10 Hz KLV,
-    /// confirmed empirically during Task 14's smoke run) rather than
+    /// confirmed empirically during a soak smoke test) rather than
     /// just omitting the hash after the fact. `verify` never sets it
     /// (offline-file checks aren't multi-day, so the memory concern
     /// doesn't apply) and always produces `Some`.
@@ -311,7 +311,7 @@ mod tests {
     }
 
     /// The backlog stranded in the gap buffer at exit is read back as
-    /// written (review #7, internal report R7-03).
+    /// written.
     #[test]
     fn managed_send_records_the_gap_len_at_exit() {
         let json = ARCHIVED_MANAGED_SEND_REPORT.replace(

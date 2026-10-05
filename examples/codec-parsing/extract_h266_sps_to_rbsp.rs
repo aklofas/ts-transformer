@@ -10,7 +10,7 @@
 //! This tool walks the Annex-B byte stream, finds the first SPS NAL unit,
 //! strips the 4- or 3-byte start code and the 2-byte NAL header, then writes
 //! the remaining EBSP bytes verbatim to a `.bin` file for use as a unit-test
-//! fixture. This mirrors `extract_h265_sps_to_rbsp.rs` from plan #29.
+//! fixture. This mirrors `extract_h265_sps_to_rbsp.rs`.
 //!
 //! # EBSP vs RBSP — which does `parse_sps` expect?
 //!

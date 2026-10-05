@@ -12,7 +12,7 @@
 //!   cargo run -p tst-examples --example send_rtp
 //!
 //! There's no receiver here; the kernel happily sends UDP datagrams
-//! into the void. To see the bytes, run `recv_rtp` (Task 18) in
+//! into the void. To see the bytes, run `recv_rtp` in
 //! another terminal first.
 
 use std::error::Error;

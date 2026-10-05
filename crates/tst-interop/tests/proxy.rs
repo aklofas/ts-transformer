@@ -1060,8 +1060,7 @@ fn srt_round_trip_through_lossy_proxy_recovers_via_retransmission() {
     // second of trailing AUs silently vanishing) -- but exact equality
     // is ALSO wrong here, for a reason that is NOT the `GracefulSrtClose`/
     // POST_START_GRACE margin this test originally suspected. Isolated
-    // by experiment (see the arc's fix-round report for the full
-    // evidence chain):
+    // by experiment:
     //   1. Raising `transport::CLOSE_DRAIN` 300ms -> 1000ms did NOT
     //      change the deficit (10/10 runs each, always sent=150/
     //      received=149) -- rules out the send-side close margin.
