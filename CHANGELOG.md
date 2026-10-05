@@ -15,8 +15,6 @@ Nothing yet.
 
 ## [0.7.0] — 2026-10-05
 
-<!-- TODO(release): the date `2026-10-05` above is a placeholder; set it to the tag day and delete this comment (gate: `rg -n 'TODO\((release|harvest)' CHANGELOG.md docs/` prints nothing). -->
-
 Post-v0.6.0: deep review #4 Arc 2 — one binding layer (`tst_pipeline::binding`)
 under C, Python and the JVM, one error-kind table (`BindingErrorKind`), one
 cancel outcome on every transport — plus the remediation of deep reviews #5–#9
