@@ -257,6 +257,63 @@ fn tcps_stalled_handshake_loopback_is_connect_timeout() {
     );
 }
 
+/// A peer that keeps the handshake alive by dripping bytes — a plausible
+/// TLS record header followed by one payload byte every 50 ms, so rustls
+/// keeps waiting for the record to complete and every socket read
+/// succeeds before the 100 ms socket timeout can fire — must still be cut
+/// off at `connect_timeout`. The deadline has to be enforced per socket
+/// read, not only when a read times out: `ClientConnection::complete_io`
+/// loops internally until the handshake completes, so a deadline checked
+/// only between its calls never runs against a slow-drip peer (a review
+/// finding on the first version of the eager handshake).
+///
+/// The drip stops after 4 s (the server then closes), so a regression
+/// shows up as an `Io` error after ~4 s instead of `ConnectTimeout` at
+/// ~1 s — and the elapsed bound below is what catches it.
+///
+/// Test name contains "loopback" for nextest network group membership.
+#[test]
+fn tcps_slow_drip_handshake_loopback_is_connect_timeout() {
+    let (_dir, cert_path, _key_path) = gen_dns_only_cert();
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind drip listener");
+    let port = listener.local_addr().expect("local_addr").port();
+    let dripper = thread::spawn(move || {
+        use std::io::Write;
+        let (mut sock, _) = listener.accept().expect("accept");
+        // Handshake record header: content type 22, TLS 1.2 framing,
+        // length 4000 — rustls buffers the record until all 4000 bytes
+        // have arrived, and this peer never sends them all.
+        let _ = sock.write_all(&[0x16, 0x03, 0x03, 0x0F, 0xA0]);
+        let started = std::time::Instant::now();
+        while started.elapsed() < Duration::from_secs(4) {
+            if sock.write_all(&[0x00]).is_err() {
+                break; // the client gave up — the outcome under test
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+    });
+
+    let url = format!(
+        "tcps://localhost:{port}?connect_timeout=1&ca={}",
+        cert_path.display()
+    );
+    let started = std::time::Instant::now();
+    let result = TcpTransport::connect(&url);
+    let elapsed = started.elapsed();
+    dripper.join().expect("dripper thread panicked");
+
+    match result {
+        Err(TcpError::ConnectTimeout { seconds: 1 }) => {}
+        Err(other) => panic!("expected ConnectTimeout {{ seconds: 1 }}, got {other:?}"),
+        Ok(_) => panic!("a dripping handshake must not report a connected transport"),
+    }
+    assert!(
+        elapsed < Duration::from_millis(2500),
+        "connect must give up at connect_timeout even while bytes trickle in, took {elapsed:?}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Explicit close on a TLS transport is visible to the peer
 // ---------------------------------------------------------------------------
