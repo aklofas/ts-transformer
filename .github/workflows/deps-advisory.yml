@@ -1,0 +1,50 @@
+name: deps-advisory
+
+# Weekly native-dependency advisory check (TRUST PASS item 3). The six vendored
+# submodules (libsrt, librist, mbedTLS, FreeRTOS kernel, FreeRTOS-POSIX, lwIP)
+# are pinned by SHA and invisible to cargo-deny; this job resolves each pin to
+# its upstream tag and compares it against upstream releases, GitHub security
+# advisories and NVD. Each finding becomes ONE issue labelled
+# `dependency-advisory`, deduplicated by exact title against every open OR
+# closed issue with that label — closing an issue records the decision
+# ("stay on the 3.6 LTS line") and it is never reopened. A quiet week writes
+# only the step summary.
+#
+# This is the one workflow here with a write scope (`issues: write`); every
+# other workflow stays `contents: read`. It never commits.
+
+on:
+  schedule:
+    # Mondays 07:00 UTC — after ci-health (06:00) and interop (05:00), so the
+    # three weekly jobs never compete for runners.
+    - cron: '0 7 * * 1'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Print findings only; create no issues'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    name: Compare submodule pins against upstream
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        # No submodules: the pins are read from HEAD's tree with `git ls-tree`.
+
+      - name: Unit tests for the checker
+        run: python3 -m unittest scripts/dev/test_deps_advisory.py
+
+      - name: Check pins against releases, GHSA and NVD
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        run: |
+          python3 scripts/dev/deps_advisory.py \
+            ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '--dry-run' || '' }}
