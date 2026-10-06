@@ -1655,6 +1655,12 @@ pub struct AttributionReport {
     /// `injected` when comparing against the sender's total.
     #[serde(default)]
     pub history_skipped: u64,
+    /// Injections already in the log at attach that this receiver could
+    /// never have heard: stranded before its first anchor. Also counted
+    /// in `unresolved`; coverage judges a restarted leg against
+    /// `injected - history_unheard`.
+    #[serde(default)]
+    pub history_unheard: u64,
     pub resyncs: u64,
     pub injected_fraction: f64,
     pub attribution_window: u64,
@@ -1922,6 +1928,12 @@ pub struct Attribution {
     reconnects_seen: u64,
     lost_in_reconnect_gap: u64,
     history_skipped: u64,
+    /// How many injections `build` was handed: the batch already in the
+    /// log at attach. Absolute indices below it are history.
+    attach_len: usize,
+    /// Of that batch, the ones that stranded — see
+    /// [`AttributionReport::history_unheard`].
+    history_unheard: u64,
     unexplained_samples: Vec<String>,
     first_unexplained_nc: Option<String>,
     first_unexplained_disc: Option<String>,
@@ -2305,6 +2317,8 @@ impl Attribution {
             reconnects_seen: 0,
             lost_in_reconnect_gap: 0,
             history_skipped: 0,
+            attach_len: injections.len(),
+            history_unheard: 0,
             unexplained_samples: Vec::new(),
             first_unexplained_nc: None,
             first_unexplained_disc: None,
@@ -2633,6 +2647,7 @@ impl Attribution {
         }
         for k in 0..n {
             let (inj, st) = (self.inj[k], self.st[k]);
+            self.note_if_unheard(self.base + k, &st);
             // A retired injection's recovery window is necessarily closed:
             // `lo` only passed it once `resolved_at + max(window,
             // recovery_bound) + APPROX_SLACK < at`, and `at` is a receiver
@@ -2642,6 +2657,14 @@ impl Attribution {
         self.inj.drain(..n);
         self.st.drain(..n);
         self.base = keep_from;
+    }
+
+    /// Count an injection from the attach batch (absolute index `i`) that
+    /// stranded: history the receiver was never listening for.
+    fn note_if_unheard(&mut self, i: usize, st: &InjState) {
+        if i < self.attach_len && st.stranded && st.resolved_at.is_none() {
+            self.history_unheard += 1;
+        }
     }
 
     /// Fold one injection's verdict into the running counters.
@@ -3228,6 +3251,7 @@ impl Attribution {
         // via `prune`); this folds in whatever is still retained.
         for k in 0..self.inj.len() {
             let (inj, st) = (self.inj[k], self.st[k]);
+            self.note_if_unheard(self.base + k, &st);
             let closed = st
                 .resolved_at
                 .is_some_and(|r| r.saturating_add(self.recovery_bound) <= packets_total);
@@ -3270,6 +3294,7 @@ impl Attribution {
             reconnects_seen: self.reconnects_seen,
             lost_in_reconnect_gap: self.lost_in_reconnect_gap,
             history_skipped: self.history_skipped,
+            history_unheard: self.history_unheard,
             resyncs: self.resyncs,
             injected_fraction: self.logged as f64 / packets_total.max(1) as f64,
             attribution_window: self.window,
@@ -4407,6 +4432,78 @@ mod tests {
         let r = a.finish(2_000);
         assert_eq!(r.history_skipped, 904);
         assert_eq!(r.injected, 1);
+    }
+
+    /// A restarted receiver keeps the newest history in the log at attach,
+    /// but its first anchor is far past every one of them: they strand.
+    /// They stay `unresolved`, and are also named as history it could
+    /// never have heard, so coverage can judge only what it could.
+    #[test]
+    fn attach_history_stranded_before_the_first_anchor_is_unheard() {
+        let live = 1_000 + 10 * MAX_APPROX_TICKS;
+        let mut a = Attribution::lossy(
+            vec![
+                inj(1_000, 2, Class::Drop, 0x1011, true),
+                inj(1_000, 40, Class::Drop, 0x1011, true),
+                inj(1_000, 80, Class::Drop, 0x1011, true),
+                inj(live, 2, Class::Drop, 0x1011, true),
+            ],
+            &hdr(),
+        );
+        a.on_pcr(live, 10);
+        a.on_signal(13, Some(0x1011), Signal::ContinuityJump);
+        a.on_media(20, 0x1011);
+        let r = a.finish(2_000);
+        assert_eq!(r.history_unheard, 3, "{r:?}");
+        assert_eq!(r.resolved, 1);
+        assert_eq!(r.unresolved, 3);
+        assert_eq!(r.injected, 4);
+    }
+
+    /// Only the batch present at attach is history. An injection appended
+    /// later that strands is a live one the receiver failed to place.
+    #[test]
+    fn appended_injections_that_strand_are_not_history() {
+        let mut a = Attribution::lossy(vec![inj(400_000, 2, Class::Drop, 0x1011, true)], &hdr());
+        a.on_pcr(400_000, 10);
+        a.on_signal(13, Some(0x1011), Signal::ContinuityJump);
+        a.on_media(20, 0x1011);
+        let mut anchorless = inj(0, 0, Class::Drop, 0x1011, true);
+        anchorless.coord.pcr_base = None;
+        a.append(vec![
+            inj(
+                400_000 - 10 * MAX_APPROX_TICKS,
+                2,
+                Class::Drop,
+                0x1011,
+                true,
+            ),
+            anchorless,
+        ]);
+        let r = a.finish(2_000);
+        assert_eq!(r.unresolved, 2, "{r:?}");
+        assert_eq!(r.history_unheard, 0, "{r:?}");
+    }
+
+    /// A full restart history retires through `prune` long before
+    /// `finish`; the count must survive that.
+    #[test]
+    fn unheard_history_is_counted_when_it_is_pruned() {
+        let live = 1_000 + 10 * MAX_APPROX_TICKS;
+        let n = PRUNE_BATCH + 5;
+        let mut batch: Vec<Injection> = (0..n)
+            .map(|k| inj(1_000, k as u64, Class::Drop, 0x1011, true))
+            .collect();
+        batch.push(inj(live, 2, Class::Drop, 0x1011, true));
+        let mut a = Attribution::lossy(batch, &hdr());
+        a.on_pcr(live, 10);
+        a.on_signal(13, Some(0x1011), Signal::ContinuityJump);
+        a.on_media(20, 0x1011);
+        assert!(a.base >= PRUNE_BATCH, "the history was not pruned");
+        let r = a.finish(2_000);
+        assert_eq!(r.history_unheard, n as u64, "{r:?}");
+        assert_eq!(r.unresolved, n as u64);
+        assert_eq!(r.resolved, 1);
     }
 
     /// An injection appended mid-capture is judged like any other once a
