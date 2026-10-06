@@ -763,9 +763,23 @@ impl Reader {
                 .entry(info.pid)
                 .or_insert_with(|| TimestampSeries::new(retention, info.pid))
                 .push(base);
-            // `packets` was incremented just above, so this packet's own
-            // 0-based ordinal is one less — see `take_pcr_events`.
-            self.pcr_events.push((base, self.summary.packets - 1));
+            // An attribution anchor only from a PID the PMT declares as a
+            // PCR_PID (before the first PMT — a mid-stream attach — any PID
+            // is accepted). After a framing injection the hunt can accept a
+            // payload 0x47 whose bytes look like an adaptation field with
+            // the PCR flag set; that "PCR" is a random number, and as an
+            // anchor it stranded every injection pending behind it.
+            let declared = self.summary.programs.is_empty()
+                || self
+                    .summary
+                    .programs
+                    .values()
+                    .any(|p| p.pcr_pid == info.pid);
+            if declared {
+                // `packets` was incremented just above, so this packet's own
+                // 0-based ordinal is one less — see `take_pcr_events`.
+                self.pcr_events.push((base, self.summary.packets - 1));
+            }
         }
         if !info.has_payload {
             return Ok(());
@@ -1333,6 +1347,61 @@ mod tests {
         assert_eq!(got, want);
         // Drained: everything was taken, nothing is reported twice.
         assert!(r.take_pcr_events().is_empty());
+    }
+
+    /// Attribution anchors come from the PIDs the PMT declares as PCR_PID.
+    /// After a framing injection the hunt can lock on a payload 0x47 whose
+    /// "adaptation field" happens to carry the PCR flag; a PCR decoded from
+    /// such a packet on a PID that carries no PCR is noise, not an anchor.
+    #[test]
+    fn pcr_events_come_only_from_declared_pcr_pids() {
+        let p = crate::profiles::by_name("baseline").unwrap();
+        let path = scratch_path("pcrpid");
+        crate::r#gen::run(
+            p,
+            2.0,
+            &path,
+            crate::fixtures::KlvSet::Compact,
+            0,
+            crate::fixtures::AuSizeMode::Compact,
+        )
+        .unwrap();
+        let declared = summarize_file(&path)
+            .unwrap()
+            .programs
+            .values()
+            .next()
+            .unwrap()
+            .pcr_pid;
+        let bytes = std::fs::read(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        let mut r = Reader::new();
+        r.feed(&bytes).unwrap();
+        assert!(!r.take_pcr_events().is_empty(), "the fixture carries PCRs");
+
+        // A packet with an adaptation field carrying a PCR on the KLV PID.
+        let mut pkt = [0xFFu8; 188];
+        pkt[0] = 0x47;
+        pkt[1] = 0x10; // pusi 0, pid 0x1031
+        pkt[2] = 0x31;
+        pkt[3] = 0x30; // AF + payload, cc 0
+        pkt[4] = 7; // adaptation_field_length
+        pkt[5] = 0x10; // PCR flag
+        pkt[6..12].copy_from_slice(&[0x00, 0x00, 0x12, 0x34, 0x7E, 0x00]);
+        r.feed(&pkt).unwrap();
+        assert!(
+            r.take_pcr_events().is_empty(),
+            "a PCR on an undeclared PID must not become an anchor"
+        );
+
+        pkt[1] = (declared >> 8) as u8 & 0x1F;
+        pkt[2] = declared as u8;
+        r.feed(&pkt).unwrap();
+        assert_eq!(
+            r.take_pcr_events().len(),
+            1,
+            "the declared PCR PID still anchors"
+        );
     }
 
     #[test]
