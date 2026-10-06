@@ -9,6 +9,21 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — CI
+
+- **Weekly native-dependency advisory check** (`.github/workflows/deps-advisory.yml`,
+  `scripts/dev/deps_advisory.py`). The six vendored submodules (libsrt,
+  librist, mbedTLS, FreeRTOS kernel, FreeRTOS-POSIX, lwIP) are pinned by SHA
+  and invisible to `cargo-deny`; the job resolves each pin to its upstream tag
+  and compares it against upstream releases, GitHub security advisories and
+  NVD (by product CPE, for the libraries NVD tracks). Each finding — a newer
+  release in the pinned line, a newer major line, or an advisory whose version
+  bounds include the pin — becomes one issue labelled `dependency-advisory`,
+  deduplicated by exact title against every open or closed issue with that
+  label, so closing an issue records the decision and it is never reopened.
+  Pure logic is unit-tested (`scripts/dev/test_deps_advisory.py`, run by the
+  workflow first); `--dry-run` prints findings without touching issues.
+
 ### Changed — interop harness
 
 - **Stress and hold verdicts can no longer pass vacuously or over an aborted

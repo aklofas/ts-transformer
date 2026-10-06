@@ -30,6 +30,16 @@ release; they are not backported.
 | Latest release         | ✅        |
 | Older releases         | ❌ — upgrade to the latest release |
 
+## Vendored native dependencies
+
+libsrt, librist, mbedTLS and the embedded FreeRTOS / lwIP trees are git
+submodules pinned by SHA, outside what `cargo-deny` can see. A weekly
+GitHub Actions job (`.github/workflows/deps-advisory.yml`) resolves each pin
+to its upstream tag and compares it against upstream releases, GitHub
+security advisories and NVD; every finding becomes an issue labelled
+`dependency-advisory`. Security bumps of those pins ship like any other fix:
+on `main`, in the next release.
+
 ## Response expectations
 
 This is a single-maintainer project. You can expect an acknowledgment within
