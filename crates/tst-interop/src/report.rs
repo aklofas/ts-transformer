@@ -2795,7 +2795,8 @@ pub mod soak {
                             format!(
                                 "{leg_name}: sender logged {sent} injection(s){}, receiver ingested \
                                  {} of them ({:.1}%, floor {:.0}% = {min_ingested}), {} resolved to \
-                                 a receiver position ({:.1}%, floor {:.0}%)",
+                                 a receiver position ({:.1}%, floor {:.0}%), {} unresolved, {} \
+                                 anchor samples rejected",
                                 match sender {
                                     Some(c) if c.log_write_failed =>
                                         " (sender reported a corruption-log write failure — the \
@@ -2811,8 +2812,14 @@ pub mod soak {
                                 ingested_frac * 100.0,
                                 CORRUPTION_INGESTED_FLOOR * 100.0,
                                 a.resolved,
-                                resolved_frac * 100.0,
-                                CORRUPTION_RESOLVED_FLOOR * 100.0
+                                // Floored, not rounded: a run that resolved
+                                // 999 of 1000 is 99.9%, never "100.0%" —
+                                // rounding would hide the last unresolved
+                                // injection behind a false full mark.
+                                (resolved_frac * 1000.0).floor() / 10.0,
+                                CORRUPTION_RESOLVED_FLOOR * 100.0,
+                                a.unresolved,
+                                a.anchors_rejected
                             ),
                         ));
 
@@ -4988,6 +4995,29 @@ pub mod soak {
             let v = verdict(&r, "corruption_coverage_srt");
             assert!(v.pass, "{}", v.detail);
             assert!(v.detail.contains("96.0%"), "{}", v.detail);
+        }
+
+        /// 999 of 1000 resolved is 99.9%, never "100.0%" — the percentage
+        /// is floored, not rounded — and the unresolved count must be
+        /// named in the text, not left implicit in the percentage.
+        #[test]
+        fn coverage_detail_names_unresolved_and_never_rounds_to_full() {
+            // sent=1001 (not 1000) so the unrelated ingested-percentage
+            // field doesn't also land on a coincidental "100.0%" — this
+            // test is about the resolved stat alone.
+            let mut inputs = corruption_inputs(1001, 1000, 999);
+            inputs.legs[0]
+                .1
+                .recv_report
+                .metrics
+                .corruption_attribution
+                .as_mut()
+                .unwrap()
+                .unresolved = 1;
+            let r = build_soak_results(inputs).unwrap();
+            let v = verdict(&r, "corruption_coverage_srt");
+            assert!(v.detail.contains("1 unresolved"), "{}", v.detail);
+            assert!(!v.detail.contains("100.0%"), "{}", v.detail);
         }
 
         /// The detected verdict's detail names both halves of the credit,
