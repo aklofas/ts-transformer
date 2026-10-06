@@ -9,6 +9,21 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed — interop harness
+
+- **Streaming corruption-log tail; bounded reattach; no-data watcher armed
+  after the attach** (`tst-interop`, the evidence harness). `LogTail` now
+  reads the sender's log line by line through a `BufReader` (linear, carry
+  bounded by one line) instead of a whole-file carry drained from the front
+  per line (quadratic, archive resident). A receiver attaching to a log the
+  sender has written for hours keeps only the newest 4096 injections
+  (`REATTACH_HISTORY`), reported as `history_skipped` in the attribution
+  report; the older ones were unresolvable and the oldest sat past the
+  33-bit PCR half-range. Both receive loops start the 15 s no-data clock
+  after `attach_corruption_log` returns. Stress run 3's hold died at its 9th
+  receiver restart because that parse crossed the watcher; no library code
+  was involved.
+
 ### Changed — release tooling
 
 - **crates.io dry-run rehearsals no longer need the index to hold the in-tree
