@@ -94,6 +94,26 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (PR #309, 2026-10-05; the stress-run R2-F2 class) against the runner's
   64 KiB default. Test-only; no library change.
 
+### Fixed — srt
+
+- **`MaxBandwidth::Limited(n)` with `n > i64::MAX` is clamped to `i64::MAX`**
+  instead of wrapping through the `i64` cast: `Limited(u64::MAX)` used to
+  send `-1`, which libsrt reads as `Auto` (no cap), and any other wrapped
+  value was negative and refused by `srt_setsockopt`.
+
+### Testing
+
+- `tst-rtp`'s `tcp_interleaved_end_to_end_round_trips_ts_bytes` now pushes
+  an access unit through the mount and asserts a client-side `DemuxReceiver`
+  yields the same bytes over the `$`-framed interleaved path; it previously
+  asserted only that PLAY and teardown succeeded.
+- Example `send_pipeline_to_socket` puts video and KLV PTS on the same 90 kHz
+  clock (33 ms = 2 970 ticks); the video PTS was advancing 33 000 ticks per
+  frame while the KLV PTS advanced 2 970, so the two streams drifted apart
+  by 330 ms every frame.
+- `tst-c-core`'s `CHandle` `#[allow(dead_code)]` comments drop the plan-task
+  ids they carried; the consumer descriptions stay.
+
 ---
 
 ## [0.7.0] — 2026-10-05
