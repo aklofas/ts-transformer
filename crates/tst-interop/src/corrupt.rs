@@ -569,10 +569,16 @@ pub fn parse_log(text: &str) -> Result<(LogHeader, Vec<Injection>), String> {
 /// make, not something a reader can paper over by blocking.
 #[derive(Debug)]
 pub struct LogTail {
-    file: std::fs::File,
+    /// Buffered reader over the log file: each `poll` reads whatever the
+    /// writer has appended since, one `read_until('\n')` per line, so a
+    /// multi-hour archive a restarted receiver attaches to costs one
+    /// linear pass and no archive-sized buffer.
+    reader: std::io::BufReader<std::fs::File>,
     path: std::path::PathBuf,
     header: LogHeader,
-    /// Bytes read but not yet terminated by a newline.
+    /// Bytes of the trailing line the writer has not terminated yet
+    /// (`read_until` appends to it; it is taken whole once the newline
+    /// arrives). Never holds more than one line.
     carry: Vec<u8>,
     /// 1-based number of the next line, for error messages that name the
     /// same line the offline parser would.
@@ -589,9 +595,9 @@ impl LogTail {
         let name = || format!("corruption log {}", path.display());
         let file = std::fs::File::open(path).map_err(|e| format!("{}: {e}", name()))?;
         let mut tail = LogTail {
-            file,
+            reader: std::io::BufReader::with_capacity(64 * 1024, file),
             path: path.to_path_buf(),
-            // Replaced below; a placeholder keeps `read_more` usable.
+            // Replaced below; a placeholder keeps `next_complete_line` usable.
             header: LogHeader {
                 tap_version: TAP_VERSION,
                 seed: 0,
@@ -605,7 +611,6 @@ impl LogTail {
             carry: Vec::new(),
             next_line: 1,
         };
-        tail.read_more()?;
         match tail.next_complete_line()? {
             Some(LogLine::Header(h)) => {
                 tail.header = h;
@@ -627,7 +632,6 @@ impl LogTail {
 
     /// Injections appended since the previous call, in log order.
     pub fn poll(&mut self) -> Result<Vec<Injection>, String> {
-        self.read_more()?;
         let mut out = Vec::new();
         while let Some(line) = self.next_complete_line()? {
             match line {
@@ -643,27 +647,25 @@ impl LogTail {
         Ok(out)
     }
 
-    /// Append everything readable right now to `carry`.
-    fn read_more(&mut self) -> Result<(), String> {
-        use std::io::Read;
-        let mut buf = [0u8; 64 * 1024];
+    /// The next NEWLINE-TERMINATED line, parsed; `None` at the current end
+    /// of the file. A trailing unterminated line stays in `carry` for a
+    /// later poll (the writer is mid-line).
+    fn next_complete_line(&mut self) -> Result<Option<LogLine>, String> {
+        use std::io::BufRead;
         loop {
-            match self.file.read(&mut buf) {
-                Ok(0) => return Ok(()),
-                Ok(n) => self.carry.extend_from_slice(&buf[..n]),
-                Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            match self.reader.read_until(b'\n', &mut self.carry) {
+                Ok(0) => return Ok(None),
+                Ok(_) => {}
+                Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(e) => {
                     return Err(format!("corruption log {}: {e}", self.path.display()));
                 }
             }
-        }
-    }
-
-    /// Take the next NEWLINE-TERMINATED line out of `carry`, parsed. A
-    /// trailing unterminated line stays put for a later poll.
-    fn next_complete_line(&mut self) -> Result<Option<LogLine>, String> {
-        while let Some(nl) = self.carry.iter().position(|&b| b == b'\n') {
-            let raw: Vec<u8> = self.carry.drain(..=nl).collect();
+            if self.carry.last() != Some(&b'\n') {
+                // End of file inside a line: keep the bytes, report nothing.
+                return Ok(None);
+            }
+            let raw = std::mem::take(&mut self.carry);
             let n = self.next_line;
             self.next_line += 1;
             let text = std::str::from_utf8(&raw[..raw.len() - 1])
@@ -674,7 +676,6 @@ impl LogTail {
                 return Ok(Some(parsed));
             }
         }
-        Ok(None)
     }
 }
 
@@ -3255,6 +3256,81 @@ mod tests {
             seed: 7,
             geometry_scale: 1,
         }
+    }
+
+    /// A restarted receiver re-attaches to a log the sender has been
+    /// writing for hours. The tail must stream it: memory bounded by the
+    /// longest line, not the archive (the previous whole-file carry with a
+    /// front drain per line was quadratic and held the archive in RAM).
+    #[test]
+    fn log_tail_streams_an_archive_with_bounded_carry() {
+        let b = baseline_bytes(60.0, "tail-capacity");
+        let (_, text, _) = run_tap(&b, cfg(&Class::ALL, 10_000, 1000));
+        let mut lines = text.lines();
+        let header = lines.next().unwrap();
+        let first = lines.next().expect("fixture must inject");
+        let mut archive = format!("{header}\n");
+        for _ in 0..4096 {
+            archive.push_str(first);
+            archive.push('\n');
+        }
+        let path = std::env::temp_dir().join(format!(
+            "tst-interop-tail-capacity-{}-{}.jsonl",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, &archive).unwrap();
+        let mut tail = LogTail::open(&path).unwrap();
+        let history = tail.poll().unwrap();
+        let capacity = tail.carry.capacity();
+        assert!(tail.carry.is_empty());
+        drop(tail);
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(history.len(), 4096);
+        assert!(
+            capacity < first.len() * 2 + 2,
+            "carry must hold at most one line, got capacity {capacity} for a {}-byte archive",
+            archive.len()
+        );
+    }
+
+    /// The sender appends; a poll can land mid-line. The partial line is
+    /// held, never parsed, and comes back exactly once when terminated.
+    #[test]
+    fn partial_last_line_is_held_until_terminated() {
+        use std::io::Write;
+        let b = baseline_bytes(60.0, "tail-partial");
+        let (_, text, _) = run_tap(&b, cfg(&Class::ALL, 10_000, 1000));
+        let mut lines = text.lines();
+        let header = lines.next().unwrap();
+        let first = lines.next().expect("fixture must inject");
+        let path = std::env::temp_dir().join(format!(
+            "tst-interop-tail-partial-{}-{}.jsonl",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let (head, rest) = first.split_at(first.len() / 2);
+        std::fs::write(&path, format!("{header}\n{first}\n{head}")).unwrap();
+        let mut tail = LogTail::open(&path).unwrap();
+        assert_eq!(tail.poll().unwrap().len(), 1, "one complete line");
+        assert_eq!(tail.poll().unwrap().len(), 0, "the partial line is held");
+        assert!(!tail.carry.is_empty(), "held bytes live in carry");
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        writeln!(f, "{rest}").unwrap();
+        drop(f);
+        let got = tail.poll().unwrap();
+        drop(tail);
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(got.len(), 1, "the completed line arrives exactly once");
     }
 
     /// A log writer that refuses exactly one whole line: the `nth`
