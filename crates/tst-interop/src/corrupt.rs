@@ -122,6 +122,15 @@ pub const MAX_APPROX_TICKS: u64 = 4 * 9000;
 /// injections logged before the receiver sees the new clock.
 pub const MAX_FUTURE_TICKS: u64 = 1 << 31;
 
+/// Largest step between two consecutive ACCEPTED PCR anchors, in 90 kHz
+/// ticks (10 s). A real clock advances at most a few seconds between the
+/// anchors a receiver drains; a "PCR" decoded from a mis-framed packet is a
+/// uniform random 33-bit number. A sample further than this from the last
+/// accepted anchor is held as a candidate and becomes an anchor only when
+/// the NEXT sample agrees with it (a genuine discontinuity: the source
+/// restarted) — one bogus decode never re-anchors the attribution.
+pub const MAX_ANCHOR_JUMP_TICKS: u64 = 90_000 * 10;
+
 /// How many of the most recent `(pcr_base, at)` pairs [`Attribution`]
 /// keeps so an injection logged AFTER its anchor PCR already reached the
 /// receiver can still resolve against it — see [`Attribution::append`].
@@ -1667,6 +1676,10 @@ pub struct AttributionReport {
     /// it was judged with (pre-scaling reports read as [`APPROX_SLACK`]).
     #[serde(default = "default_approx_slack")]
     pub approx_slack: u64,
+    /// PCR samples held as implausible and never confirmed — decodes from
+    /// mis-framed packets.
+    #[serde(default)]
+    pub anchors_rejected: u64,
 }
 
 impl AttributionReport {
@@ -1920,6 +1933,12 @@ pub struct Attribution {
     /// [`Attribution::on_pcr`], oldest first — replayed by
     /// [`Attribution::append`].
     recent_pcrs: VecDeque<(u64, u64)>,
+    /// The last `(pcr_base, at)` [`Attribution::on_pcr`] accepted.
+    last_anchor: Option<(u64, u64)>,
+    /// A sample more than [`MAX_ANCHOR_JUMP_TICKS`] from `last_anchor`,
+    /// held until the next sample confirms or replaces it.
+    candidate_anchor: Option<(u64, u64)>,
+    anchors_rejected: u64,
 }
 
 /// Which PIDs the demuxer currently declares as a program's `PCR_PID`,
@@ -2285,6 +2304,9 @@ impl Attribution {
             first_unexplained_disc: None,
             seen_pcr: false,
             recent_pcrs: VecDeque::with_capacity(PCR_HISTORY),
+            last_anchor: None,
+            candidate_anchor: None,
+            anchors_rejected: 0,
         }
     }
 
@@ -2392,9 +2414,44 @@ impl Attribution {
     /// Those resolve approximately and are given one PCR interval of extra
     /// attribution window. An anchor further behind than that is stranded:
     /// the receiver was not listening (a reconnect outage), so the
-    /// injection stays unresolved and is never judged.
+    /// injection stays unresolved and is never judged. A sample more than
+    /// [`MAX_ANCHOR_JUMP_TICKS`] from the last accepted anchor is held as a
+    /// candidate rather than accepted outright — see [`MAX_ANCHOR_JUMP_TICKS`].
     pub fn on_pcr(&mut self, pcr_base: u64, at: u64) {
+        let near = |x: u64, y: u64| {
+            ticks_ahead(x, y) <= MAX_ANCHOR_JUMP_TICKS || ticks_ahead(y, x) <= MAX_ANCHOR_JUMP_TICKS
+        };
+        if let Some((prev, _)) = self.last_anchor {
+            if !near(pcr_base, prev) {
+                match self.candidate_anchor.take() {
+                    Some((cand_base, cand_at)) if near(pcr_base, cand_base) => {
+                        // Two consecutive samples agree on a clock far from
+                        // the last anchor: the clock really moved.
+                        self.accept_anchor(cand_base, cand_at);
+                        self.accept_anchor(pcr_base, at);
+                    }
+                    Some(_) => {
+                        self.anchors_rejected += 1;
+                        self.candidate_anchor = Some((pcr_base, at));
+                    }
+                    None => {
+                        self.candidate_anchor = Some((pcr_base, at));
+                    }
+                }
+                return;
+            }
+        }
+        if self.candidate_anchor.take().is_some() {
+            // The sample after a wild one is back on the old clock: the
+            // wild one was a bogus decode.
+            self.anchors_rejected += 1;
+        }
+        self.accept_anchor(pcr_base, at);
+    }
+
+    fn accept_anchor(&mut self, pcr_base: u64, at: u64) {
         self.seen_pcr = true;
+        self.last_anchor = Some((pcr_base, at));
         if self.recent_pcrs.len() == PCR_HISTORY {
             self.recent_pcrs.pop_front();
         }
@@ -3215,6 +3272,7 @@ impl Attribution {
             min_gap: self.min_gap,
             classes: self.classes,
             approx_slack: self.approx_slack,
+            anchors_rejected: self.anchors_rejected,
         }
     }
 }
@@ -5824,6 +5882,67 @@ mod tests {
             "the surviving injection is reachable"
         );
         assert!(r.undetected.is_empty());
+    }
+
+    /// A "PCR" decoded from a mis-framed packet (a framing injection's
+    /// aftermath) is a random 33-bit number. Fed as an anchor it stranded
+    /// every injection pending behind it. One implausible sample is held,
+    /// not accepted; the real anchor that follows resolves the injection.
+    #[test]
+    fn a_wild_pcr_sample_between_an_injection_and_its_anchor_is_not_an_anchor() {
+        let mut a = Attribution::lossy(
+            vec![inj(5_000_000, 3, Class::Garbage, 0x1011, true)],
+            &hdr(),
+        );
+        a.on_pcr(4_900_000, 100); // 1.1 s before the injection's base: accepted
+        a.on_pcr(3_000_000_000, 150); // 9 h away in one step: held as a candidate
+        a.on_pcr(5_000_000, 200); // the injection's own anchor
+        a.on_signal(204, Some(0x1011), Signal::ContinuityJump);
+        a.on_media(220, 0x1011);
+        let r = a.finish(2_000);
+        assert_eq!((r.resolved, r.unresolved), (1, 0));
+        assert_eq!(r.attributed_events, 1);
+        assert_eq!(r.anchors_rejected, 1);
+    }
+
+    /// A genuine clock discontinuity (the source restarted) is confirmed by
+    /// the next sample agreeing with the candidate: both become anchors.
+    #[test]
+    fn a_clock_jump_confirmed_by_the_next_sample_re_anchors() {
+        let mut a = Attribution::strict(
+            vec![inj(2_001_000_000, 2, Class::Drop, 0x1011, true)],
+            &hdr(),
+        );
+        a.on_pcr(1_000_000, 10);
+        a.on_pcr(2_001_000_000, 50); // ≈ 6.2 h jump: held
+        a.on_pcr(2_001_009_000, 60); // 100 ms later on the new clock: confirms
+        a.on_signal(53, Some(0x1011), Signal::ContinuityJump);
+        a.on_media(70, 0x1011);
+        let r = a.finish(2_000);
+        assert_eq!((r.resolved, r.unresolved), (1, 0));
+        assert_eq!(r.attributed_events, 1);
+        assert_eq!(
+            r.anchors_rejected, 0,
+            "a confirmed candidate was not rejected"
+        );
+    }
+
+    /// Two implausible samples that also disagree with each other (two
+    /// mis-framed packets in a row) anchor nothing; the plausible third one
+    /// resolves normally.
+    #[test]
+    fn two_disagreeing_wild_samples_anchor_nothing() {
+        let mut a = Attribution::lossy(vec![inj(5_000_000, 3, Class::Drop, 0x1011, true)], &hdr());
+        a.on_pcr(4_900_000, 100);
+        a.on_pcr(3_000_000_000, 150);
+        a.on_pcr(7_000_000_000, 160);
+        a.on_pcr(5_000_000, 200);
+        a.on_signal(204, Some(0x1011), Signal::ContinuityJump);
+        a.on_media(220, 0x1011);
+        let r = a.finish(2_000);
+        assert_eq!((r.resolved, r.unresolved), (1, 0));
+        assert_eq!(r.attributed_events, 1);
+        assert_eq!(r.anchors_rejected, 2);
     }
 
     /// A receiver that ingests injections logged long before it listened
