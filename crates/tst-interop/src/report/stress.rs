@@ -700,13 +700,20 @@ fn verdict_recv_invariants(streams: &[StreamArtifacts]) -> StepVerdict {
 }
 
 /// The three corruption verdicts of a step: coverage (every stream
-/// resolved ≥ 90 % of what it ingested and ingested ≥ 99 % of what the
-/// sender logged, counting history a restarted leg skipped), the declared
-/// rate against each log header, and the excused transport-loss counters
-/// against a budget — 0 on a sweep step (the link is clean, so an excused
-/// loss is a real drop the ceiling must not sit past) and the soak's
-/// outage-aware budget on the hold. Without a declared tap all three pass
-/// as not applicable.
+/// resolved ≥ 90 % of the injections it could have heard and ingested
+/// ≥ 99 % of what the sender logged, counting history a restarted leg
+/// skipped), the declared rate against each log header, and each leg's
+/// excused transport-loss counters against that leg's own budget — 0 on
+/// a sweep step (the link is clean, so an excused loss is a real drop the
+/// ceiling must not sit past) and the soak's outage-aware budget on the
+/// hold, with the outage term only on SRT legs (the hold's outages are
+/// SRT-only). Without a declared tap all three pass as not applicable.
+///
+/// "Could have heard" excludes `history_unheard`: a restarted receiver
+/// keeps the newest injections already in the log at attach, and every
+/// one of them predates its first PCR anchor, so it strands them. They
+/// stay `unresolved` in the receiver's report but are not held against
+/// its coverage.
 fn verdict_corruption(decl: &StepDeclaration, streams: &[StreamArtifacts]) -> Vec<StepVerdict> {
     let Some(rate) = decl.corrupt_rate_per_10k else {
         let na = |name: &str| StepVerdict {
@@ -727,7 +734,12 @@ fn verdict_corruption(decl: &StepDeclaration, streams: &[StreamArtifacts]) -> Ve
     const INGESTED_FLOOR: f64 = 0.99;
     let mut coverage_problems = Vec::new();
     let mut declared_problems = Vec::new();
-    let mut excused: u64 = 0;
+    let outage_windows = match (decl.outage_period_s, decl.outage_dur_s) {
+        (Some(p), Some(_)) if p > 0 => (decl.hold_s / p as f64).ceil() as u64,
+        _ => 0,
+    };
+    // (leg, excused, budget, the three counters) per stream.
+    let mut excused_legs: Vec<(&str, u64, u64, [u64; 3])> = Vec::new();
     let mut min_resolved = f64::INFINITY;
     for s in streams {
         let sent = s.send.corruption.as_ref().map_or(0, |c| c.injections);
@@ -741,24 +753,34 @@ fn verdict_corruption(decl: &StepDeclaration, streams: &[StreamArtifacts]) -> Ve
                 "{}: recv report carries no attribution (recv ran without --corruption-log?)",
                 s.leg
             ));
+            min_resolved = 0.0;
             continue;
         };
         let offered = a.injected.saturating_add(a.history_skipped);
         let min_ingested = (sent as f64 * INGESTED_FLOOR).ceil() as u64;
-        let resolved_frac = if a.injected == 0 {
+        // A leg that ingested injections but could hear none of them
+        // scores 0 here and fails the floor: it resolved nothing.
+        let judged = a.injected.saturating_sub(a.history_unheard);
+        let resolved_frac = if judged == 0 {
             0.0
         } else {
-            a.resolved as f64 / a.injected as f64
+            a.resolved as f64 / judged as f64
         };
         min_resolved = min_resolved.min(resolved_frac);
         if sent == 0 || log_failed || offered < min_ingested || resolved_frac < RESOLVED_FLOOR {
             coverage_problems.push(format!(
                 "{}: sender logged {sent}{}, receiver ingested {} (+{} skipped as history) of \
-                 them, {} resolved ({:.1}%, floor {:.0}%), {} unresolved, {} anchor samples rejected",
+                 them, {} never heard (history stranded before its first anchor), {} resolved \
+                 ({:.1}% of {judged}, floor {:.0}%), {} unresolved, {} anchor samples rejected",
                 s.leg,
-                if log_failed { " (log write failed)" } else { "" },
+                if log_failed {
+                    " (log write failed)"
+                } else {
+                    ""
+                },
                 a.injected,
                 a.history_skipped,
+                a.history_unheard,
                 a.resolved,
                 (resolved_frac * 1000.0).floor() / 10.0,
                 RESOLVED_FLOOR * 100.0,
@@ -772,27 +794,48 @@ fn verdict_corruption(decl: &StepDeclaration, streams: &[StreamArtifacts]) -> Ve
                 s.leg, a.rate_per_10k
             ));
         }
-        excused = excused
-            .saturating_add(a.unexplained_transport_loss)
-            .saturating_add(a.undetected_lost)
-            .saturating_add(a.unrecovered_lost);
+        let counters = [
+            a.unexplained_transport_loss,
+            a.undetected_lost,
+            a.unrecovered_lost,
+        ];
+        let excused = counters.iter().fold(0u64, |t, &c| t.saturating_add(c));
+        let budget = match decl.axis {
+            // One media PID set per leg: K = 2 (video + KLV). The hold's
+            // outages are SRT-only, so only an SRT leg earns the outage
+            // term; every leg gets the base and per-hour terms.
+            Axis::Hold => super::soak::excusal_budget(
+                2,
+                if s.leg.starts_with("srt-") {
+                    outage_windows
+                } else {
+                    0
+                },
+                decl.hold_s,
+                decl.hold_s,
+            ),
+            Axis::Streams | Axis::Bitrate => 0,
+        };
+        excused_legs.push((s.leg.as_str(), excused, budget, counters));
     }
-    let budget = match decl.axis {
-        Axis::Hold => {
-            let outage_windows = match (decl.outage_period_s, decl.outage_dur_s) {
-                (Some(p), Some(_)) if p > 0 => (decl.hold_s / p as f64).ceil() as u64,
-                _ => 0,
-            };
-            // One media PID set per held stream: K = 2 (video + KLV) each.
-            super::soak::excusal_budget(
-                2 * streams.len() as u64,
-                outage_windows,
-                decl.hold_s,
-                decl.hold_s,
+    // The verdict reports the WORST leg — the one furthest over (or least
+    // under) its own budget: `observed` is that leg's excused count and
+    // `threshold` its budget, so the verdict passes exactly when every leg
+    // is within its own budget.
+    let worst = excused_legs
+        .iter()
+        .max_by_key(|(_, e, b, _)| i128::from(*e) - i128::from(*b))
+        .map_or((0, 0), |&(_, e, b, _)| (e, b));
+    let over: Vec<String> = excused_legs
+        .iter()
+        .filter(|(_, e, b, _)| e > b)
+        .map(|(leg, e, b, [t, u, r])| {
+            format!(
+                "{leg}: {e} excused ({t} unexplained transport loss, {u} undetected lost, \
+                 {r} unrecovered lost) over budget {b}"
             )
-        }
-        Axis::Streams | Axis::Bitrate => 0,
-    };
+        })
+        .collect();
     vec![
         StepVerdict {
             name: "corruption_coverage".into(),
@@ -826,13 +869,26 @@ fn verdict_corruption(decl: &StepDeclaration, streams: &[StreamArtifacts]) -> Ve
         },
         StepVerdict {
             name: "transport_loss_excused".into(),
-            pass: excused <= budget,
-            observed: excused as f64,
-            threshold: budget as f64,
+            pass: over.is_empty(),
+            observed: worst.0 as f64,
+            threshold: worst.1 as f64,
             detail: format!(
-                "{excused} injection(s) excused as transport loss against budget {budget} ({})",
+                "{} ({})",
+                if over.is_empty() {
+                    format!(
+                        "every leg within its own budget: {}",
+                        excused_legs
+                            .iter()
+                            .map(|(leg, e, b, _)| format!("{leg} {e}/{b}"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                } else {
+                    over.join("; ")
+                },
                 match decl.axis {
-                    Axis::Hold => "the hold's outage-aware soak budget",
+                    Axis::Hold =>
+                        "the hold's per-leg soak budget; outage allowance on SRT legs only",
                     _ => "0: a sweep step's link is clean",
                 }
             ),
@@ -2144,9 +2200,14 @@ pub fn build_stress_results(
             .filter(|v| HARNESS_ENDINGS.contains(&v.as_str()))
             .collect();
         if !harness.is_empty() && axis.first_fail_verdicts != ["memory_budget"] {
+            let others: Vec<&str> = axis
+                .first_fail_verdicts
+                .iter()
+                .map(|v| v.as_str())
+                .filter(|v| !HARNESS_ENDINGS.contains(v))
+                .collect();
             limitations.push(format!(
-                "{}/{}: ended by {} at {} — a harness condition, not a transport verdict; \
-                 the ceiling is the last judgeable load, not a measured limit",
+                "{}/{}: ended by {} at {} — {}",
                 axis.transport,
                 axis_dir_name(axis.axis),
                 harness
@@ -2154,7 +2215,17 @@ pub fn build_stress_results(
                     .map(|s| s.as_str())
                     .collect::<Vec<_>>()
                     .join("+"),
-                axis.first_fail.map_or("?".to_string(), |n| n.to_string())
+                axis.first_fail.map_or("?".to_string(), |n| n.to_string()),
+                if others.is_empty() {
+                    "a harness condition, not a transport verdict; the ceiling is the last \
+                     judgeable load, not a measured limit"
+                        .to_string()
+                } else {
+                    format!(
+                        "a harness condition alongside {}; the ceiling is the last judgeable load",
+                        others.join("+")
+                    )
+                }
             ));
         }
         // Verdicts that failed but were declared recorded-not-gated: the
@@ -2925,11 +2996,119 @@ mod tests {
         let r = build_step_results(inp).unwrap();
         let v = verdict(&r, "transport_loss_excused");
         assert!(v.pass, "{}", v.detail);
-        assert!(
-            v.threshold >= 8.0,
-            "budget carries the base term, got {}",
-            v.threshold
-        );
+        // hold_s 600 against a 900 s period: one outage window. K = 2
+        // (video + KLV) × 1 window + base 8 + ⌈per-hour × 600/3600⌉ = 3.
+        assert_eq!(v.threshold, 13.0, "{}", v.detail);
+    }
+
+    /// Outages only ever hit SRT legs, so a UDP leg in the hold gets the
+    /// base and rate terms but no outage allowance — and is held to its
+    /// own budget, not a pool shared with every other leg.
+    #[test]
+    fn a_non_srt_leg_in_the_hold_gets_no_outage_allowance() {
+        for (excused, pass) in [(3, true), (11, true), (12, false)] {
+            let mut inp = inputs(1, 30);
+            inp.decl.axis = Axis::Hold;
+            inp.decl.outage_period_s = Some(900);
+            inp.decl.outage_dur_s = Some(30);
+            with_corruption(&mut inp, 5, 100, 100, 100);
+            inp.streams[0].leg = "udp-0".into();
+            inp.streams[0]
+                .recv
+                .metrics
+                .corruption_attribution
+                .as_mut()
+                .unwrap()
+                .undetected_lost = excused;
+            let r = build_step_results(inp).unwrap();
+            let v = verdict(&r, "transport_loss_excused");
+            assert_eq!(v.pass, pass, "{excused} excused: {}", v.detail);
+            assert_eq!(v.threshold, 11.0, "{}", v.detail);
+            if !pass {
+                assert!(v.detail.contains("udp-0"), "{}", v.detail);
+            }
+        }
+    }
+
+    /// The budget is per leg: one leg's spare allowance must not absorb
+    /// another leg's excess.
+    #[test]
+    fn excused_loss_is_budgeted_per_leg_not_pooled() {
+        let mut inp = inputs(2, 30);
+        inp.decl.axis = Axis::Hold;
+        inp.decl.outage_period_s = Some(900);
+        inp.decl.outage_dur_s = Some(30);
+        with_corruption(&mut inp, 5, 100, 100, 100);
+        // srt-0 at 0 and srt-1 at 20: the pool (26) would hold it, srt-1's
+        // own budget (13) does not.
+        inp.streams[1]
+            .recv
+            .metrics
+            .corruption_attribution
+            .as_mut()
+            .unwrap()
+            .undetected_lost = 20;
+        let r = build_step_results(inp).unwrap();
+        let v = verdict(&r, "transport_loss_excused");
+        assert!(!v.pass, "{}", v.detail);
+        assert!(v.detail.contains("srt-1"), "{}", v.detail);
+        assert!(!v.detail.contains("srt-0:"), "{}", v.detail);
+        assert_eq!(v.observed, 20.0);
+        assert_eq!(v.threshold, 13.0);
+    }
+
+    /// A restarted leg keeps the newest history in the log at attach, all
+    /// of which predates its first anchor. Coverage judges the injections
+    /// it could have heard, not that history.
+    #[test]
+    fn a_restarted_leg_resolves_its_live_injections() {
+        for (unheard, pass) in [(4_096, true), (0, false)] {
+            let mut inp = inputs(1, 30);
+            with_corruption(&mut inp, 5, 8_000, 7_896, 3_790);
+            let a = inp.streams[0]
+                .recv
+                .metrics
+                .corruption_attribution
+                .as_mut()
+                .unwrap();
+            a.history_skipped = 104;
+            a.history_unheard = unheard;
+            let r = build_step_results(inp).unwrap();
+            let v = verdict(&r, "corruption_coverage");
+            assert_eq!(v.pass, pass, "history_unheard {unheard}: {}", v.detail);
+        }
+    }
+
+    /// A stream that ingested injections but could hear none of them
+    /// resolved nothing it was offered: a FAIL, not a vacuous pass.
+    #[test]
+    fn a_leg_whose_whole_log_was_unheard_history_fails_coverage() {
+        let mut inp = inputs(1, 30);
+        with_corruption(&mut inp, 5, 100, 100, 0);
+        inp.streams[0]
+            .recv
+            .metrics
+            .corruption_attribution
+            .as_mut()
+            .unwrap()
+            .history_unheard = 100;
+        let r = build_step_results(inp).unwrap();
+        let v = verdict(&r, "corruption_coverage");
+        assert!(!v.pass, "{}", v.detail);
+        assert!(v.detail.contains("100 never heard"), "{}", v.detail);
+    }
+
+    /// A stream with no attribution at all is the worst coverage there
+    /// is, whatever the other streams resolved.
+    #[test]
+    fn a_stream_without_attribution_pins_observed_coverage_to_zero() {
+        let mut inp = inputs(2, 30);
+        with_corruption(&mut inp, 5, 100, 100, 100);
+        inp.streams[1].recv.metrics.corruption_attribution = None;
+        let r = build_step_results(inp).unwrap();
+        let v = verdict(&r, "corruption_coverage");
+        assert!(!v.pass, "{}", v.detail);
+        assert_eq!(v.observed, 0.0, "{}", v.detail);
     }
 
     #[test]
@@ -3804,12 +3983,58 @@ mod tests {
                 "unqualified harness endpoint: {failure}: {:?}",
                 r.limitations
             );
+            assert!(
+                r.limitations
+                    .iter()
+                    .any(|l| l.contains("a harness condition, not a transport verdict")),
+                "{:?}",
+                r.limitations
+            );
         }
+    }
+
+    /// A rung that failed a harness verdict AND a transport verdict did
+    /// not end on the harness alone: the limitation must not say so.
+    #[test]
+    fn mixed_harness_and_transport_ending_names_both() {
+        let steps = vec![
+            step_result(2, Axis::Streams, true, &[]),
+            step_result(
+                4,
+                Axis::Streams,
+                false,
+                &["cpu_headroom", "sample_coverage"],
+            ),
+        ];
+        let (ceiling, first_fail, first_fail_verdicts) = ceiling_of(&steps);
+        let r = build_stress_results(
+            vec![AxisResult {
+                transport: "srt".into(),
+                axis: Axis::Streams,
+                steps,
+                ceiling,
+                first_fail,
+                first_fail_verdicts,
+            }],
+            None,
+            None,
+            None,
+        );
+        let l = r
+            .limitations
+            .iter()
+            .find(|l| l.contains("sample_coverage"))
+            .unwrap_or_else(|| panic!("{:?}", r.limitations));
+        assert!(!l.contains("not a transport verdict"), "{l}");
+        assert!(
+            l.contains("a harness condition alongside cpu_headroom"),
+            "{l}"
+        );
     }
 
     #[test]
     fn aborted_required_hold_cannot_be_regenerated_as_pass() {
-        let out = temp_step_dir("r9-aborted-required-hold");
+        let out = temp_step_dir("aborted-required-hold");
         write(
             &out,
             "stress-config.json",
@@ -3844,7 +4069,7 @@ mod tests {
 
     #[test]
     fn a_declared_sweep_only_run_passes_without_a_hold() {
-        let out = temp_step_dir("r9-sweep-only");
+        let out = temp_step_dir("sweep-only");
         write(
             &out,
             "stress-config.json",
@@ -3865,7 +4090,7 @@ mod tests {
 
     #[test]
     fn a_declared_transport_with_a_missing_axis_fails() {
-        let out = temp_step_dir("r9-missing-axis");
+        let out = temp_step_dir("missing-axis");
         write(
             &out,
             "stress-config.json",
