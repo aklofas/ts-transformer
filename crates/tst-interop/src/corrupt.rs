@@ -112,6 +112,16 @@ pub const APPROX_SLACK: u64 = 128;
 /// means it is never judged.
 pub const MAX_APPROX_TICKS: u64 = 4 * 9000;
 
+/// How far AHEAD of the receiver's current PCR base a logged base may be
+/// and still be "not yet arrived" rather than history: half of the 33-bit
+/// counter's half-range (≈ 6.6 h). The log runs ahead of the wire by at
+/// most seconds, so anything further is an injection from before this
+/// receiver listened (a restarted leg re-reading the log) whose age wrapped
+/// the counter — stranded, so the cursor moves on. Known limit: a source
+/// clock that jumps FORWARD by more than this strands the few seconds of
+/// injections logged before the receiver sees the new clock.
+pub const MAX_FUTURE_TICKS: u64 = 1 << 31;
+
 /// How many of the most recent `(pcr_base, at)` pairs [`Attribution`]
 /// keeps so an injection logged AFTER its anchor PCR already reached the
 /// receiver can still resolve against it — see [`Attribution::append`].
@@ -2406,10 +2416,19 @@ impl Attribution {
             let ahead = ticks_ahead(pcr_base, b);
             if b != pcr_base {
                 if ahead >= 1 << 32 {
-                    // Anchored at a base still in the future; so is every
-                    // later injection, because logged coordinates are
-                    // ordered.
-                    break;
+                    // The counter says the injection's base is ahead of us.
+                    // Genuinely future (the log runs a little ahead of the
+                    // wire) only if it is ahead by a plausible amount; a
+                    // base "ahead" by more than MAX_FUTURE_TICKS is history
+                    // whose age wrapped the 33-bit counter.
+                    if ticks_ahead(b, pcr_base) <= MAX_FUTURE_TICKS {
+                        // Still in the future; so is every later injection,
+                        // because logged coordinates are ordered.
+                        break;
+                    }
+                    self.state_mut(i).stranded = true;
+                    self.next_unresolved += 1;
+                    continue;
                 }
                 if ahead > MAX_APPROX_TICKS {
                     // Permanently unresolvable — every later base is
@@ -5805,6 +5824,33 @@ mod tests {
             "the surviving injection is reachable"
         );
         assert!(r.undetected.is_empty());
+    }
+
+    /// A receiver that ingests injections logged long before it listened
+    /// (history from before a restart, or a unit test feeding one) must not
+    /// let the oldest block the live ones: a 14-hour-old anchor is past the
+    /// 33-bit PCR half-range, so the naive "ahead ⇒ still in the future"
+    /// test read it as future and stopped the cursor in front of it.
+    #[test]
+    fn old_restart_history_must_not_block_live_injections() {
+        let current = 14 * 3600 * 90_000u64;
+        let mut a = Attribution::lossy(
+            vec![
+                inj(1_000, 2, Class::Drop, 0x1011, true),
+                inj(current, 3, Class::Drop, 0x1011, true),
+            ],
+            &hdr(),
+        );
+        a.on_pcr(current, 10);
+        a.on_signal(14, Some(0x1011), Signal::ContinuityJump);
+        a.on_media(20, 0x1011);
+        let report = a.finish(2_000);
+        assert_eq!(report.resolved, 1, "current injection must be placed");
+        assert_eq!(
+            report.unresolved, 1,
+            "the ancient one is stranded, not waited for"
+        );
+        assert_eq!(report.attributed_events, 1);
     }
 
     #[test]
