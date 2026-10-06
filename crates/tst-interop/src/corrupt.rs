@@ -667,16 +667,16 @@ impl LogTail {
     /// Linear in the file; memory bounded by `keep_last`.
     pub fn skip_history(&mut self, keep_last: usize) -> Result<u64, String> {
         let mut kept: std::collections::VecDeque<Injection> =
-            std::collections::VecDeque::with_capacity(keep_last.min(REATTACH_HISTORY));
+            std::collections::VecDeque::with_capacity(keep_last);
         let mut skipped: u64 = 0;
         while let Some(line) = self.next_complete_line()? {
             match line {
                 LogLine::Injection(i) => {
-                    if kept.len() == keep_last {
+                    kept.push_back(i);
+                    while kept.len() > keep_last {
                         kept.pop_front();
                         skipped += 1;
                     }
-                    kept.push_back(i);
                 }
                 LogLine::Header(_) => {
                     return Err(format!(
@@ -4295,6 +4295,21 @@ mod tests {
         drop(tail);
         std::fs::remove_file(&path).unwrap();
         assert_eq!(kept.len(), 10);
+    }
+
+    /// `keep_last = 0` is a real input (a judgement to keep no history at
+    /// all), and the bound has to hold there too: every injection counts
+    /// as skipped and `held` never grows past empty.
+    #[test]
+    fn skip_history_zero_keeps_nothing() {
+        let (path, _) = archive_of(10, "skip-zero");
+        let mut tail = LogTail::open(&path).unwrap();
+        let skipped = tail.skip_history(0).unwrap();
+        assert!(tail.held.is_empty(), "keep_last=0 must hold nothing");
+        assert_eq!(tail.poll().unwrap().len(), 0, "nothing left to return");
+        drop(tail);
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(skipped, 10);
     }
 
     /// The skipped count rides in the report so a coverage check can add it
