@@ -158,19 +158,16 @@ impl Publisher for HlsPublisher {
 
 impl HlsPublisher {
     /// Shared terminal-state work for [`Publisher::finish`] and
-    /// [`Self::finish_serving`]: marks the segmenter finished, renders the
-    /// terminal playlist (with `#EXT-X-ENDLIST`), and writes it to disk.
-    /// Callers still own taking/shutting down the HTTP server.
+    /// [`Self::finish_serving`]: cuts any open segment (which rewrites the
+    /// non-terminal playlist, like every cut), marks the segmenter
+    /// finished, and writes the terminal playlist (with `#EXT-X-ENDLIST`)
+    /// to disk. Callers still own taking/shutting down the HTTP server.
     fn finalize_and_write(&mut self) -> Result<(), HlsError> {
         self.finished = true;
-        let (output_dir, final_pl) = {
-            let mut s = self.state.lock().expect("HlsPublisher poisoned");
-            s.segmenter.finalize()?;
-            s.finished = true;
-            let pl = playlist::render(&s.segmenter, true);
-            (s.segmenter.output_dir().to_path_buf(), pl)
-        };
-        std::fs::write(output_dir.join("playlist.m3u8"), &final_pl).map_err(HlsError::Io)
+        let mut s = self.state.lock().expect("HlsPublisher poisoned");
+        s.segmenter.finalize()?;
+        s.finished = true;
+        s.segmenter.write_playlist(true)
     }
 
     /// Like [`Publisher::finish`], but keeps the built-in HTTP server serving
@@ -269,6 +266,33 @@ mod tests {
         let pl = std::fs::read_to_string(dir.join("playlist.m3u8")).unwrap();
         assert!(pl.contains("#EXTM3U"));
         assert!(pl.contains("segment_00000.ts"));
+    }
+
+    #[test]
+    fn cut_writes_a_live_playlist_before_finish() {
+        let dir = tmpdir("live-pl");
+        let cfg = HlsConfig {
+            output_dir: dir.clone(),
+            mode: HlsMode::Event,
+            bind: "127.0.0.1:0".parse().unwrap(),
+            ..HlsConfig::default()
+        };
+        let mut p = HlsPublisher::with_config(cfg).unwrap();
+        p.push_ts(&[0x47u8; 376]).unwrap();
+        p.cut_segment().unwrap();
+        // An external static server (nginx, a CDN origin) can serve the
+        // stream while it runs: the playlist is on disk after the first cut.
+        let pl = std::fs::read_to_string(dir.join("playlist.m3u8")).unwrap();
+        assert!(pl.contains("segment_00000.ts"));
+        assert!(!pl.contains("#EXT-X-ENDLIST"), "not terminal before finish");
+        assert_eq!(pl, p.render_playlist(false));
+
+        p.finish().unwrap();
+        let pl = std::fs::read_to_string(dir.join("playlist.m3u8")).unwrap();
+        assert!(
+            pl.contains("#EXT-X-ENDLIST"),
+            "finish writes the terminal playlist"
+        );
     }
 
     #[test]
