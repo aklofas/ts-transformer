@@ -24,6 +24,20 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   receiver restart because that parse crossed the watcher; no library code
   was involved.
 
+- **Attribution anchors are plausible before they are anchors** (`tst-interop`,
+  the evidence harness). `Attribution::on_pcr` accepts a PCR sample only
+  within 10 s (`MAX_ANCHOR_JUMP_TICKS`) of the last accepted anchor; an
+  implausible sample is held and becomes an anchor only when the next sample
+  agrees with it, otherwise it is counted in the new `anchors_rejected`
+  report field. `rawts::Reader` records attribution anchors only from a
+  program's declared PCR PID once a PMT is known. A logged base more than
+  `MAX_FUTURE_TICKS` (≈ 6.6 h) "ahead" of the current base is history whose
+  age wrapped the 33-bit counter and is stranded instead of blocking every
+  later injection. A PSI checksum failure now explains a framing-class
+  injection (header, truncate, garbage) on a PSI PID. Together these close
+  the RC soak's eight unexplained RIST events and the half-range ordering
+  defect found by the pre-0.7.0 review; no library code was involved.
+
 ### Changed — release tooling
 
 - **crates.io dry-run rehearsals no longer need the index to hold the in-tree
