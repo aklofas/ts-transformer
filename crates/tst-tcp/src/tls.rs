@@ -166,10 +166,17 @@ pub fn connect_tls(url: &TcpUrl, cfg: &SocketConfig) -> Result<TcpTransport, Tcp
 /// [`TcpError::Tls`], and a peer that closes or resets mid-handshake is
 /// [`TcpError::Io`].
 ///
-/// Each socket-timeout tick (`WouldBlock` on Unix, `TimedOut` on Windows —
-/// the same pair `classify_send_error` treats as transient) is one poll of
-/// the deadline; rustls keeps its handshake state across them, so the loop
-/// simply resumes. `EINTR` is retried. The server half stays lazy
+/// The loop is one socket operation per iteration — flush what rustls
+/// wants written, then ONE `read_tls` — with the deadline checked every
+/// time round. `ClientConnection::complete_io` is deliberately not used:
+/// it loops internally until the handshake completes, so a deadline
+/// checked only between its calls never runs against a peer that keeps
+/// every read succeeding by dripping a byte inside each 100 ms socket
+/// timeout (a slow-loris handshake). Here a read that returns data and a
+/// read that times out (`WouldBlock` on Unix, `TimedOut` on Windows — the
+/// same pair `classify_send_error` treats as transient) both come back to
+/// the deadline check, so the budget is a wall-clock bound to within one
+/// socket-timeout tick. `EINTR` is retried. The server half stays lazy
 /// (`accept_tls`): an accept has no connect budget, and the server's
 /// handshake completes on its first I/O as before.
 fn complete_client_handshake(
@@ -181,28 +188,56 @@ fn complete_client_handshake(
     // `None` = no deadline: a budget too large to add to `now` (the URL
     // accepts any u64 seconds) means "wait as long as it takes".
     let deadline = Instant::now().checked_add(budget);
+    let timed_out = || TcpError::ConnectTimeout {
+        seconds: budget.as_secs(),
+    };
+    let is_tick = |e: &io::Error| {
+        matches!(
+            e.kind(),
+            io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+        )
+    };
     while conn.is_handshaking() {
-        match conn.complete_io(sock) {
-            Ok(_) => {}
-            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-            Err(e)
-                if matches!(
-                    e.kind(),
-                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-                ) =>
-            {
-                if deadline.is_some_and(|d| Instant::now() >= d) {
-                    return Err(TcpError::ConnectTimeout {
-                        seconds: budget.as_secs(),
-                    });
+        if deadline.is_some_and(|d| Instant::now() >= d) {
+            return Err(timed_out());
+        }
+        // Flush everything rustls has queued (ClientHello, Finished, …).
+        // A write that times out just comes back round to the deadline.
+        let mut flushed = true;
+        while conn.wants_write() {
+            match conn.write_tls(sock) {
+                Ok(_) => {}
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(e) if is_tick(&e) => {
+                    flushed = false;
+                    break;
+                }
+                Err(e) => return Err(TcpError::Io(e)),
+            }
+        }
+        if !flushed || !conn.wants_read() {
+            continue;
+        }
+        // One read, bounded by the socket's 100 ms receive timeout.
+        match conn.read_tls(sock) {
+            Ok(0) => {
+                return Err(TcpError::Io(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "peer closed the connection during the TLS handshake",
+                )));
+            }
+            Ok(_) => {
+                if let Err(e) = conn.process_new_packets() {
+                    // Let the alert rustls queued for the peer go out
+                    // (best effort), then report the TLS-level failure —
+                    // certificate verification, protocol violation, or an
+                    // alert from the peer.
+                    let _ = conn.write_tls(sock);
+                    return Err(TcpError::Tls(format!("TLS handshake failed: {e}")));
                 }
             }
-            // rustls reports a handshake-level failure (certificate
-            // verification, protocol violation, alert from the peer) as
-            // `InvalidData` wrapping its own error.
-            Err(e) if e.kind() == io::ErrorKind::InvalidData => {
-                return Err(TcpError::Tls(format!("TLS handshake failed: {e}")));
-            }
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) if is_tick(&e) => {}
             Err(e) => return Err(TcpError::Io(e)),
         }
     }
