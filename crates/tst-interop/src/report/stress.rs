@@ -2076,11 +2076,41 @@ fn max_hold_for_ceiling(ceiling: u32) -> u32 {
     ((0.7 * ceiling as f64).floor() as u32).max(1)
 }
 
+/// What `stress.sh` declared before launching, from `stress-config.json`
+/// (every other key there is ignored here).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct StressDeclaration {
+    #[serde(default)]
+    pub skip_hold: bool,
+    #[serde(default)]
+    pub transports: Vec<String>,
+}
+
+/// Verdict names stress.sh writes into `failing` when a step could not be
+/// judged (a worker died, the step timed out) or the sampler's coverage
+/// fell short: an axis ending on one of these ended on the HARNESS, not on
+/// a transport limit, and the page must say so.
+const HARNESS_ENDINGS: [&str; 5] = [
+    "step_unjudgeable",
+    "step_timeout",
+    "sample_coverage",
+    "hold_unjudgeable",
+    "hold_timeout",
+];
+
 /// Fold the sweep's `AxisResult`s and the optional hold into one
 /// verdict. Appends a `hold_sizing_declared` verdict to
 /// `hold.hold_verdicts` (and folds its failure into `hold.pass`) before
-/// computing `overall_pass`.
-pub fn build_stress_results(sweep: Vec<AxisResult>, hold: Option<HoldResults>) -> StressResults {
+/// computing `overall_pass`. `declared` is the run's `stress-config.json`
+/// (if any) and `failure` is the text of its `stress-FAILED` marker (if
+/// any) — both let the report catch a run the harness ended early rather
+/// than regenerate it as a silent pass.
+pub fn build_stress_results(
+    sweep: Vec<AxisResult>,
+    hold: Option<HoldResults>,
+    declared: Option<&StressDeclaration>,
+    failure: Option<&str>,
+) -> StressResults {
     let all_have_ceiling = sweep.iter().all(|a| a.ceiling.is_some());
     let mut limitations = Vec::new();
     for axis in &sweep {
@@ -2102,6 +2132,29 @@ pub fn build_stress_results(sweep: Vec<AxisResult>, hold: Option<HoldResults>) -
                 axis_dir_name(axis.axis),
                 axis.first_fail.map_or("?".to_string(), |n| n.to_string()),
                 axis.ceiling.map_or("no load".to_string(), |c| c.to_string())
+            ));
+        }
+        // An axis that ended because the harness itself could not judge or
+        // keep up (not a transport verdict) has its ceiling read as
+        // provisional too — distinct from the memory-budget case above,
+        // which is a real (box) limit.
+        let harness: Vec<&String> = axis
+            .first_fail_verdicts
+            .iter()
+            .filter(|v| HARNESS_ENDINGS.contains(&v.as_str()))
+            .collect();
+        if !harness.is_empty() && axis.first_fail_verdicts != ["memory_budget"] {
+            limitations.push(format!(
+                "{}/{}: ended by {} at {} — a harness condition, not a transport verdict; \
+                 the ceiling is the last judgeable load, not a measured limit",
+                axis.transport,
+                axis_dir_name(axis.axis),
+                harness
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join("+"),
+                axis.first_fail.map_or("?".to_string(), |n| n.to_string())
             ));
         }
         // Verdicts that failed but were declared recorded-not-gated: the
@@ -2224,7 +2277,40 @@ pub fn build_stress_results(sweep: Vec<AxisResult>, hold: Option<HoldResults>) -
         }
     }
 
-    let overall_pass = all_have_ceiling && hold.as_ref().map(|h| h.pass).unwrap_or(true);
+    let mut declared_ok = true;
+    if let Some(d) = declared {
+        for t in &d.transports {
+            for axis in [Axis::Streams, Axis::Bitrate] {
+                if !sweep.iter().any(|a| &a.transport == t && a.axis == axis) {
+                    declared_ok = false;
+                    limitations.push(format!(
+                        "{t}/{}: declared in stress-config.json but missing from the sweep tree",
+                        axis_dir_name(axis)
+                    ));
+                }
+            }
+        }
+        if !d.skip_hold && hold.is_none() {
+            declared_ok = false;
+            limitations.push(
+                "the hold was required (skip_hold: false) but there is no hold result — the run \
+                 ended before the hold was judged"
+                    .into(),
+            );
+        }
+    }
+    if let Some(text) = failure {
+        declared_ok = false;
+        let reason = text
+            .lines()
+            .find_map(|l| l.strip_prefix("reason="))
+            .unwrap_or("(no reason line)");
+        limitations.push(format!(
+            "run aborted (stress-FAILED): {reason} — partial salvage, not completed evidence"
+        ));
+    }
+    let overall_pass =
+        declared_ok && all_have_ceiling && hold.as_ref().map(|h| h.pass).unwrap_or(true);
     StressResults {
         sweep,
         hold,
@@ -2287,7 +2373,19 @@ pub fn run_stress(outdir: &std::path::Path) -> Result<StressResults, String> {
     } else {
         None
     };
-    let results = build_stress_results(sweep, hold);
+    let decl_path = outdir.join("stress-config.json");
+    let declared = if decl_path.exists() {
+        Some(read_json::<StressDeclaration>(&decl_path)?)
+    } else {
+        None
+    };
+    let failed_path = outdir.join("stress-FAILED");
+    let failure = if failed_path.exists() {
+        Some(read_to_string(&failed_path)?)
+    } else {
+        None
+    };
+    let results = build_stress_results(sweep, hold, declared.as_ref(), failure.as_deref());
     let out = outdir.join("stress-results.json");
     std::fs::write(
         &out,
@@ -3293,6 +3391,8 @@ mod tests {
                 first_fail_verdicts: vec![],
             }],
             None,
+            None,
+            None,
         );
         assert!(r.overall_pass);
         assert!(
@@ -3323,6 +3423,8 @@ mod tests {
                 first_fail: None,
                 first_fail_verdicts: vec![],
             }],
+            None,
+            None,
             None,
         );
         assert!(r.overall_pass, "recorded-not-gated never fails the run");
@@ -3369,7 +3471,7 @@ mod tests {
             hold_verdicts: vec![],
             pass: true,
         };
-        let r = build_stress_results(vec![axis], Some(hold));
+        let r = build_stress_results(vec![axis], Some(hold), None, None);
         let sizing = r
             .hold
             .as_ref()
@@ -3444,7 +3546,7 @@ mod tests {
             hold_verdicts: vec![],
             pass: true,
         };
-        let r = build_stress_results(vec![axis], Some(hold));
+        let r = build_stress_results(vec![axis], Some(hold), None, None);
         assert!(r.overall_pass);
         assert!(
             r.limitations
@@ -3476,6 +3578,8 @@ mod tests {
                 first_fail,
                 first_fail_verdicts: verdicts,
             }],
+            None,
+            None,
             None,
         );
         assert!(r.overall_pass, "a guarded axis still has a ceiling");
@@ -3523,7 +3627,7 @@ mod tests {
             hold_verdicts: vec![],
             pass: true,
         };
-        let r = build_stress_results(vec![axis.clone()], Some(hold.clone()));
+        let r = build_stress_results(vec![axis.clone()], Some(hold.clone()), None, None);
         assert!(!r.overall_pass, "7 > floor(0.7 × 8) = 5");
         let v = r
             .hold
@@ -3536,7 +3640,7 @@ mod tests {
 
         let mut ok = hold;
         ok.decl.n_hold.insert("srt".into(), 5);
-        let r = build_stress_results(vec![axis], Some(ok));
+        let r = build_stress_results(vec![axis], Some(ok), None, None);
         assert!(r.overall_pass);
     }
 
@@ -3597,7 +3701,12 @@ mod tests {
                 .clone()
         };
 
-        let r = build_stress_results(vec![srt.clone(), rist.clone()], Some(hold.clone()));
+        let r = build_stress_results(
+            vec![srt.clone(), rist.clone()],
+            Some(hold.clone()),
+            None,
+            None,
+        );
         let v = sizing(&r);
         assert!(v.pass, "{}", v.detail);
         assert!(r.hold.as_ref().unwrap().pass);
@@ -3617,7 +3726,7 @@ mod tests {
         // declaration error, not a limitation.
         let mut bad = hold.clone();
         bad.decl.excluded_transports = vec!["rist".into(), "srt".into()];
-        let r = build_stress_results(vec![srt.clone(), rist.clone()], Some(bad));
+        let r = build_stress_results(vec![srt.clone(), rist.clone()], Some(bad), None, None);
         let v = sizing(&r);
         assert!(!v.pass);
         assert!(
@@ -3629,7 +3738,7 @@ mod tests {
         // A swept transport that is neither held nor excluded went missing.
         let mut missing = hold;
         missing.decl.excluded_transports.clear();
-        let r = build_stress_results(vec![srt, rist], Some(missing));
+        let r = build_stress_results(vec![srt, rist], Some(missing), None, None);
         let v = sizing(&r);
         assert!(!v.pass);
         assert!(
@@ -3667,6 +3776,121 @@ mod tests {
         );
         assert!(out.join("stress-results.json").exists());
         std::fs::remove_dir_all(&out).unwrap();
+    }
+
+    #[test]
+    fn harness_ended_ceiling_must_carry_a_limitation() {
+        for failure in ["sample_coverage", "step_timeout", "step_unjudgeable"] {
+            let steps = vec![
+                step_result(2, Axis::Streams, true, &[]),
+                step_result(4, Axis::Streams, false, &[failure]),
+            ];
+            let (ceiling, first_fail, first_fail_verdicts) = ceiling_of(&steps);
+            let r = build_stress_results(
+                vec![AxisResult {
+                    transport: "srt".into(),
+                    axis: Axis::Streams,
+                    steps,
+                    ceiling,
+                    first_fail,
+                    first_fail_verdicts,
+                }],
+                None,
+                None,
+                None,
+            );
+            assert!(
+                r.limitations.iter().any(|l| l.contains(failure)),
+                "unqualified harness endpoint: {failure}: {:?}",
+                r.limitations
+            );
+        }
+    }
+
+    #[test]
+    fn aborted_required_hold_cannot_be_regenerated_as_pass() {
+        let out = temp_step_dir("r9-aborted-required-hold");
+        write(
+            &out,
+            "stress-config.json",
+            r#"{"skip_hold": false, "transports": ["srt"], "stream_ladder": [1], "scale_ladder": [1]}"#,
+        );
+        for (name, axis) in [("streams", Axis::Streams), ("bitrate", Axis::Bitrate)] {
+            write(
+                &out,
+                &format!("sweep/srt/{name}/1/step-results.json"),
+                &serde_json::to_string(&step_result(1, axis, true, &[])).unwrap(),
+            );
+        }
+        write(
+            &out,
+            "stress-FAILED",
+            "step=hold\nreason=hold worker died\n",
+        );
+        let r = run_stress(&out).unwrap();
+        std::fs::remove_dir_all(out).unwrap();
+        assert!(!r.overall_pass, "required failed hold vanished into PASS");
+        assert!(
+            r.limitations.iter().any(|l| l.contains("hold worker died")),
+            "{:?}",
+            r.limitations
+        );
+        assert!(
+            r.limitations.iter().any(|l| l.contains("no hold result")),
+            "{:?}",
+            r.limitations
+        );
+    }
+
+    #[test]
+    fn a_declared_sweep_only_run_passes_without_a_hold() {
+        let out = temp_step_dir("r9-sweep-only");
+        write(
+            &out,
+            "stress-config.json",
+            r#"{"skip_hold": true, "transports": ["srt"]}"#,
+        );
+        for (name, axis) in [("streams", Axis::Streams), ("bitrate", Axis::Bitrate)] {
+            write(
+                &out,
+                &format!("sweep/srt/{name}/1/step-results.json"),
+                &serde_json::to_string(&step_result(1, axis, true, &[])).unwrap(),
+            );
+        }
+        let r = run_stress(&out).unwrap();
+        std::fs::remove_dir_all(out).unwrap();
+        assert!(r.overall_pass, "{:?}", r.limitations);
+        assert!(!r.limitations.iter().any(|l| l.contains("no hold result")));
+    }
+
+    #[test]
+    fn a_declared_transport_with_a_missing_axis_fails() {
+        let out = temp_step_dir("r9-missing-axis");
+        write(
+            &out,
+            "stress-config.json",
+            r#"{"skip_hold": true, "transports": ["srt", "udp"]}"#,
+        );
+        write(
+            &out,
+            "sweep/srt/streams/1/step-results.json",
+            &serde_json::to_string(&step_result(1, Axis::Streams, true, &[])).unwrap(),
+        );
+        write(
+            &out,
+            "sweep/srt/bitrate/1/step-results.json",
+            &serde_json::to_string(&step_result(1, Axis::Bitrate, true, &[])).unwrap(),
+        );
+        let r = run_stress(&out).unwrap();
+        std::fs::remove_dir_all(out).unwrap();
+        assert!(!r.overall_pass);
+        assert!(
+            r.limitations
+                .iter()
+                .any(|l| l.contains("udp") && l.contains("missing")),
+            "{:?}",
+            r.limitations
+        );
     }
 
     const LOG: &str = "\
@@ -4684,7 +4908,7 @@ send: heartbeat elapsed_s=180 video_aus=5400 keyframes=180 klv_records=1800 audi
             hold_verdicts: vec![],
             pass: true,
         };
-        let r = build_stress_results(vec![axis], Some(hold));
+        let r = build_stress_results(vec![axis], Some(hold), None, None);
         let v = r
             .hold
             .as_ref()
