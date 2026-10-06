@@ -12,15 +12,18 @@
 # - tag push `v*` — preflight, then the real ordered publish.
 # - workflow_dispatch — full dry-run rehearsal (packages + verify-builds
 #   every crate in order, uploads nothing, needs no token).
-# - pull_request touching this file — same dry-run, so workflow
-#   regressions surface pre-merge.
+# - pull_request touching this file or the release scripts — same
+#   dry-run, so workflow regressions surface pre-merge.
 #
-# Dry-run caveat: rehearsals only fully pass while the workspace version
-# is a PUBLISHED version — after a release version sweep (pre-tag),
-# layer-2+ dry-runs fail dependency resolution because the index can't
-# satisfy the bumped `version =` keys yet. Expected; rehearse between
-# releases. The real tag publish is immune (layers land in order; cargo
-# >=1.85 waits for index propagation).
+# Dry-runs resolve internal deps from the TREE, not the index: the
+# "Point registry deps at the tree" step writes a `[patch.crates-io]`
+# table (scripts/release/dry-run-patch-config.sh) so a rehearsal passes
+# between a version sweep and its tag publish too — previously every
+# layer-2+ dry-run failed dependency resolution whenever the in-tree
+# version was ahead of the index, which made this check red on every PR
+# touching the workflow during release prep. The real tag publish never
+# gets the patch table (it must resolve against the registry; layers
+# land in order and cargo >=1.85 waits for index propagation).
 #
 # Token lifetime: OIDC-minted tokens live ~30 min and the full sequence
 # (two vendored-C verify builds included) can exceed that, so each layer
@@ -39,6 +42,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/crates-io.yml"
+      - "scripts/release/**"
 
 env:
   # Match the pin used elsewhere in the workspace.
@@ -110,6 +114,22 @@ jobs:
             echo "publish=0" >> "$GITHUB_OUTPUT"
             echo "mode: dry-run (${{ github.event_name }})"
           fi
+
+      - name: Point registry deps at the tree (dry-run only)
+        if: steps.meta.outputs.publish == '0'
+        # `cargo publish --dry-run` rewrites path deps to registry
+        # requirements and resolves them against the index, which cannot
+        # satisfy a bumped `version =` key before the tag publish. A
+        # config-level [patch.crates-io] makes the resolver take the
+        # in-tree copies instead (see the script header for the why and
+        # the one case it cannot cover — a stale pin, which the version
+        # rail above catches). The checkout-local .cargo/config.toml sits
+        # outside every crate root, so cargo's uncommitted-changes check
+        # ignores it. The real publish must never see this table.
+        run: |
+          mkdir -p .cargo
+          bash scripts/release/dry-run-patch-config.sh >> .cargo/config.toml
+          cat .cargo/config.toml
 
       # ---- Layer 1: the base of the dependency chain ------------------
       - name: Mint crates.io token (layer 1)

@@ -9,7 +9,19 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Nothing yet.
+### Changed — release tooling
+
+- **crates.io dry-run rehearsals no longer need the index to hold the in-tree
+  version.** `crates-io.yml` now writes a `[patch.crates-io]` table (new
+  `scripts/release/dry-run-patch-config.sh`, every publishable crate pointed
+  at its path) before the layered `cargo publish --dry-run` sequence — dry-run
+  mode only; the tag publish still resolves against the registry. Before
+  this, every layer-2+ rehearsal failed dependency resolution whenever a
+  release version sweep put the tree ahead of crates.io, so the workflow's
+  own PR check was red on every PR touching it during release prep (v0.7.0
+  prep: #308, #311). Verified by the full four-layer sequence at a bumped,
+  unpublished version. The `pull_request` trigger now also fires for
+  `scripts/release/**`.
 
 ---
 
