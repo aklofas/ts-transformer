@@ -26,7 +26,10 @@ pub struct SocketConfig {
     ///
     /// Applied per resolved address — a hostname that resolves to multiple
     /// addresses may take up to N× this value before the connection attempt
-    /// fails overall. Default: 10 s (see [`SocketConfig::connect_timeout_or_default`]).
+    /// fails overall. For `tcps://` the TLS handshake runs inside the connect
+    /// too, with its own budget of this value after the TCP connect; a
+    /// handshake that does not complete in time is `ConnectTimeout`.
+    /// Default: 10 s (see [`SocketConfig::connect_timeout_or_default`]).
     pub connect_timeout: Option<Duration>,
     /// Send-side payload chunk size; per-call max for `send_bytes`.
     /// Default 64 KiB (matches reasonable TCP send-buffer sizing).

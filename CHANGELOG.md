@@ -23,6 +23,23 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   unpublished version. The `pull_request` trigger now also fires for
   `scripts/release/**`.
 
+### Changed — tcp
+
+- **`tcps://` completes the TLS handshake inside `connect`**, under its own
+  `connect_timeout` budget after the TCP connect. A handshake that does not
+  finish in time is `ConnectTimeout` (the outcome an unanswered SYN gets), a
+  certificate or protocol rejection is `Tls`, and a peer that closes
+  mid-handshake is `Io` — all at connect, as the builder always documented.
+  Before this the handshake ran lazily inside the first send or recv: under
+  the 100 ms cancel-poll socket timeouts that first I/O returned a
+  zero-progress `Backpressure` whenever the server's reply took longer than
+  one tick, forever against a peer that accepted TCP but never spoke TLS, so
+  a managed sender believed it was connected and never reconnected, and a
+  rejected certificate surfaced on a "connected" transport. The server half
+  (`accept`) still completes on its first I/O. Callers that retried a
+  first-send `Backpressure` to drive the handshake need no change; a
+  returned transport is now ready for application data.
+
 ---
 
 ## [0.7.0] — 2026-10-05
