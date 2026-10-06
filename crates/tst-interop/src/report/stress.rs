@@ -369,13 +369,17 @@ pub struct StreamFigures {
     pub fds_max: BTreeMap<String, u64>,
     pub recv_video_aus: u64,
     pub send_video_aus: u64,
-    /// The receiver's bytes over its whole window, warm-up plus hold
-    /// (its `--seconds`), in Mb/s. For a leg that was restarted, the
-    /// receiver report covers only the last segment while the divisor
-    /// is the full run, so this
-    /// figure is understated by the same fraction `delivery_complete`
-    /// corrects for; it is recorded, never gated.
+    /// The receiver's bytes over `wire_window_s`, in Mb/s. Recorded,
+    /// never gated.
     pub wire_mbps: f64,
+    /// Seconds the receiver report covers: the whole run (warm-up + hold)
+    /// for a leg that ran throughout, the run minus its LAST restart for a
+    /// leg stress.sh restarted — a killed receiver writes no report, so the
+    /// surviving one covers only the final segment. `wire_mbps` divides by
+    /// this, and `report stress` names every leg whose window is shorter
+    /// than the run.
+    #[serde(default)]
+    pub wire_window_s: f64,
     pub reconnects: Option<u64>,
     /// Recorded from the proxy's stats, never gated: the sweep's link
     /// is clean and drop-rate judging belongs to soak.
@@ -602,7 +606,7 @@ pub fn build_step_results(inputs: StepInputs) -> Result<StepResults, String> {
     ));
     verdicts.push(verdict_sample_coverage(&decl, &rss, &streams));
 
-    let per_stream = stream_figures(&decl, &proc_groups, &rss_groups, &streams);
+    let per_stream = stream_figures(&decl, &proc_groups, &rss_groups, &streams, &restarts);
     // An ungated rss_slope verdict is the only kind that can fail
     // without failing the step; it is named by its (leg, process) so
     // the same rule that marked it decides here.
@@ -1394,6 +1398,7 @@ fn stream_figures(
     proc_groups: &Groups<'_, ProcSample>,
     rss_groups: &Groups<'_, RssSample>,
     streams: &[StreamArtifacts],
+    restarts: &[RestartEvent],
 ) -> Vec<StreamFigures> {
     streams
         .iter()
@@ -1425,6 +1430,16 @@ fn stream_figures(
                     rss_kb_p99.insert(process.clone(), v);
                 }
             }
+            let run_s = decl.warmup_s + decl.hold_s;
+            let last_restart = restarts
+                .iter()
+                .filter(|r| r.role == format!("{}-recv", s.leg))
+                .map(|r| r.elapsed_s)
+                .fold(None, |m: Option<f64>, t| Some(m.map_or(t, |m| m.max(t))));
+            let wire_window_s = match last_restart {
+                Some(t) if t < run_s => run_s - t,
+                _ => run_s,
+            };
             StreamFigures {
                 index: s.index,
                 leg,
@@ -1434,7 +1449,8 @@ fn stream_figures(
                 fds_max,
                 recv_video_aus: s.recv.metrics.video_aus,
                 send_video_aus: s.send.video_aus,
-                wire_mbps: s.recv.metrics.bytes as f64 * 8.0 / (decl.warmup_s + decl.hold_s) / 1e6,
+                wire_mbps: s.recv.metrics.bytes as f64 * 8.0 / wire_window_s / 1e6,
+                wire_window_s,
                 reconnects: s.recv.reconnects,
                 proxy_forwarded: s.proxy.as_ref().map(|p| p.forwarded),
                 proxy_dropped: s.proxy.as_ref().map(|p| p.dropped),
@@ -2177,6 +2193,19 @@ pub fn build_stress_results(sweep: Vec<AxisResult>, hold: Option<HoldResults>) -
                     .join(" ")
             ));
         }
+        let run_s = h.step.decl.warmup_s + h.step.decl.hold_s;
+        for ps in h
+            .step
+            .per_stream
+            .iter()
+            .filter(|ps| ps.wire_window_s > 0.0 && ps.wire_window_s < run_s)
+        {
+            limitations.push(format!(
+                "hold throughput for {} is its last segment only: {:.0} s of the {:.0} s run \
+                 (the receiver was restarted; earlier segments wrote no report)",
+                ps.leg, ps.wire_window_s, run_s
+            ));
+        }
         let pass = problems.is_empty();
         h.hold_verdicts.push(StepVerdict {
             name: "hold_sizing_declared".into(),
@@ -2395,6 +2424,34 @@ mod tests {
             "{}",
             r.per_stream[0].wire_mbps
         );
+    }
+
+    #[test]
+    fn restarted_receiver_rate_uses_its_actual_measurement_window() {
+        let mut inp = inputs(1, 30);
+        inp.restarts = vec![RestartEvent {
+            elapsed_s: 300.0,
+            role: "srt-0-recv".into(),
+        }];
+        inp.streams[0] = stream_artifacts(0, 18_000, 9_818);
+        inp.streams[0].recv.metrics.bytes = 45_000_000; // 1 Mb/s for 360 s
+        let r = build_step_results(inp).unwrap();
+        assert!(verdict(&r, "delivery_complete").pass);
+        assert!(
+            (r.per_stream[0].wire_mbps - 1.0).abs() < 1e-9,
+            "{}",
+            r.per_stream[0].wire_mbps
+        );
+        assert!((r.per_stream[0].wire_window_s - 360.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn an_unrestarted_receiver_keeps_the_whole_window() {
+        let mut inp = inputs(1, 30);
+        inp.streams[0].recv.metrics.bytes = 82_500_000;
+        let r = build_step_results(inp).unwrap();
+        assert!((r.per_stream[0].wire_window_s - 660.0).abs() < 1e-9);
+        assert!((r.per_stream[0].wire_mbps - 1.0).abs() < 1e-9);
     }
 
     #[test]
@@ -3340,6 +3397,64 @@ mod tests {
         assert!(old.predicted_mem_kb.is_none() && old.rss_kb_per_stream.is_empty());
     }
 
+    #[test]
+    fn a_restarted_leg_in_the_hold_is_a_limitation() {
+        let steps = vec![
+            step_result(8, Axis::Streams, true, &[]),
+            step_result(16, Axis::Streams, false, &["cpu_headroom"]),
+        ];
+        let axis = AxisResult {
+            transport: "srt".into(),
+            axis: Axis::Streams,
+            ceiling: Some(8),
+            first_fail: Some(16),
+            first_fail_verdicts: vec!["cpu_headroom".into()],
+            steps,
+        };
+        let mut hold_step = step_result(5, Axis::Hold, true, &[]);
+        hold_step.decl.warmup_s = 60.0;
+        hold_step.decl.hold_s = 600.0;
+        hold_step.per_stream = vec![StreamFigures {
+            index: 0,
+            leg: "srt-0".into(),
+            cpu_seconds: BTreeMap::new(),
+            rss_kb_p99: BTreeMap::new(),
+            threads_max: BTreeMap::new(),
+            fds_max: BTreeMap::new(),
+            recv_video_aus: 1,
+            send_video_aus: 1,
+            wire_mbps: 1.0,
+            wire_window_s: 360.0,
+            reconnects: Some(1),
+            proxy_forwarded: None,
+            proxy_dropped: None,
+        }];
+        let hold = HoldResults {
+            decl: HoldDeclaration {
+                n_hold: [("srt".to_string(), 5)].into(),
+                ceilings_declared: [("srt".to_string(), 8)].into(),
+                cpu_scale_factor: 1.0,
+                excluded_transports: vec![],
+                mem_scale_factor: 1.0,
+                predicted_mem_kb: None,
+                mem_budget_kb: None,
+                rss_kb_per_stream: BTreeMap::new(),
+            },
+            step: hold_step,
+            hold_verdicts: vec![],
+            pass: true,
+        };
+        let r = build_stress_results(vec![axis], Some(hold));
+        assert!(r.overall_pass);
+        assert!(
+            r.limitations
+                .iter()
+                .any(|l| l.contains("srt-0") && l.contains("360 s")),
+            "{:?}",
+            r.limitations
+        );
+    }
+
     /// A streams axis the memory guard ended is a measured box limit: the
     /// ceiling stands, the first failing load carries the single verdict
     /// `memory_budget`, and the run says so as a limitation.
@@ -3965,6 +4080,7 @@ send: heartbeat elapsed_s=180 video_aus=5400 keyframes=180 klv_records=1800 audi
             recv_video_aus: 0,
             send_video_aus: 0,
             wire_mbps: 0.0,
+            wire_window_s: 0.0,
             reconnects,
             proxy_forwarded: None,
             proxy_dropped: None,
