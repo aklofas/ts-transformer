@@ -199,13 +199,13 @@ mod owned {
     pub(crate) struct CHandle<T, S = ()>(Owned<T, S>);
 
     impl<T, S> CHandle<T, S> {
-        #[allow(dead_code)] // consumed by every `_open` (B1.4-B1.10)
+        #[allow(dead_code)] // consumed by every `_open`
         pub(crate) fn new(inner: T, cancel: Arc<dyn TransportCancel>, snapshot: S) -> Self {
             Self(Owned::new(inner, cancel, snapshot))
         }
 
         /// Receivers only: attach the end-reason cell read by `_end_reason`.
-        #[allow(dead_code)] // consumed by the receiver families (B1.5-B1.9)
+        #[allow(dead_code)] // consumed by the receiver families
         pub(crate) fn with_end_reason(self, h: RecvEndReasonHandle) -> Self {
             Self(self.0.with_end_reason(h))
         }
@@ -216,7 +216,7 @@ mod owned {
         /// `Panicked` → TST_E_PANIC_CAUGHT. As with the no_std `Handle`, a
         /// caught panic in a MUTATOR drops the inner (later calls are
         /// `Closed`); [`Self::with_inner_ref`] keeps it.
-        #[allow(dead_code)] // consumed by the data-path entry points (B1.5-B1.10)
+        #[allow(dead_code)] // consumed by the data-path entry points
         pub(crate) fn with_inner_mut(&self, f: impl FnOnce(&mut T) -> i32) -> i32 {
             match self.0.with_mut(f) {
                 Ok(rc) => rc,
@@ -226,7 +226,7 @@ mod owned {
 
         /// Reader twin of [`Self::with_inner_mut`] (recovers a poisoned lock,
         /// and a caught panic leaves the inner in place).
-        #[allow(dead_code)] // consumed by the stats/is_alive getters (B1.5-B1.10)
+        #[allow(dead_code)] // consumed by the stats/is_alive getters
         pub(crate) fn with_inner_ref(&self, f: impl FnOnce(&T) -> i32) -> i32 {
             match self.0.with_ref(f) {
                 Ok(rc) => rc,
@@ -236,12 +236,12 @@ mod owned {
 
         /// Lock-free: never touches the slot a parked call holds, so the
         /// cancel always reaches the call it must stop.
-        #[allow(dead_code)] // consumed by the `_cancel` entry points (B1.5-B1.10)
+        #[allow(dead_code)] // consumed by the `_cancel` entry points
         pub(crate) fn cancel(&self) {
             self.0.cancel();
         }
 
-        #[allow(dead_code)] // consumed by the recv-side CLOSED relabellers (B1.5-B1.9)
+        #[allow(dead_code)] // consumed by the recv-side CLOSED relabellers
         pub(crate) fn is_cancelled(&self) -> bool {
             self.0.is_cancelled()
         }
@@ -249,12 +249,12 @@ mod owned {
         /// Construction-constant state (side-channel handles, addresses).
         /// Getters that are constant after `_open` read HERE, never the slot
         /// (`scripts/check/c/snapshot-getters.sh`).
-        #[allow(dead_code)] // consumed by the snapshot-bearing families (B1.8/B1.9)
+        #[allow(dead_code)] // consumed by the snapshot-bearing families
         pub(crate) fn snapshot(&self) -> &S {
             self.0.snapshot()
         }
 
-        #[allow(dead_code)] // consumed by the `_end_reason` getters (B1.5-B1.9)
+        #[allow(dead_code)] // consumed by the `_end_reason` getters
         pub(crate) fn end_reason(&self) -> Option<RecvEndReason> {
             self.0.end_reason()
         }
@@ -265,7 +265,7 @@ mod owned {
         /// is recorded to last-error and otherwise swallowed; a second
         /// close is `Ok(())` in `Owned`. `From<CloseFailure<E>>` is the
         /// shared rendering (`Inner` → INTERNAL, `Panicked` → PANIC_CAUGHT).
-        #[allow(dead_code)] // consumed by the `_close` entry points (B1.5-B1.10)
+        #[allow(dead_code)] // consumed by the `_close` entry points
         pub(crate) fn close(&self) {
             if let Err(f) = self.0.close() {
                 record_binding_error(BindingError::from(f));
@@ -283,7 +283,7 @@ mod owned {
     /// ~22 call sites across every family need the resolution, and
     /// replacing it with `.expect()` would trade a safe fallback for a
     /// panic path.
-    #[allow(dead_code)] // consumed by the udp/rist `_open` paths (B1.7/B1.10)
+    #[allow(dead_code)] // consumed by the udp/rist `_open` paths
     pub(crate) fn cancel_or_latch(
         c: Option<Arc<dyn TransportCancel + Send + Sync>>,
     ) -> Arc<dyn TransportCancel> {

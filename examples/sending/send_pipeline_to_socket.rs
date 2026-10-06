@@ -62,20 +62,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     eprintln!("sending 5 synthetic frames + KLV to {addr}");
     for i in 0..5 {
-        // 33 ms wall-clock cadence ≈ 30 fps. PTS uses ms here (`i * 33_000`)
-        // and gets converted to the 90 kHz MPEG-TS clock for the KLV PES
-        // (`* 90 / 1000`); the muxer normalizes whatever scale `send_video`
-        // sees as the wall clock.
+        // 33 ms wall-clock cadence ≈ 30 fps. Both PTS values are on the
+        // 90 kHz MPEG-TS clock `Pts90khz` carries (33 ms = 2 970 ticks), and
+        // video and KLV share it: a receiver pairs a KLV packet with the
+        // frame whose PTS matches, so the two streams must advance on the
+        // same clock — a video PTS in some other unit would drift away from
+        // the metadata by a growing offset every frame.
+        let pts = Pts90khz::new(i * 2_970);
         let nal = synthetic_nal_au(500);
         let klv = synthetic_klv(64, i);
         // First frame is the key frame (i == 0) — drives the
         // `random_access_indicator` bit so a fresh receiver can attach.
-        sender.send_video(&nal, Pts90khz::new(i * 33_000), i == 0)?;
+        sender.send_video(&nal, pts, i == 0)?;
         // `metadata_service_id` goes into the AU cell header per H.222.0
         // §2.12.4.2 / ST 1402.2 App. B Table 2 for SynchronousMetadata
         // streams (stream_type 0x15); silently ignored for PrivateData
         // streams (0x06) like the one used here. The spec default is 0x00.
-        sender.send_klv(&klv, Pts90khz::new((i * 33_000) * 90 / 1000), 0x00)?;
+        sender.send_klv(&klv, pts, 0x00)?;
         std::thread::sleep(Duration::from_millis(33));
     }
     eprintln!("done. closing.");

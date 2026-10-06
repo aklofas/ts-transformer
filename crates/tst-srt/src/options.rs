@@ -145,7 +145,9 @@ pub enum MaxBandwidth {
     Auto,
     /// Sends the value as an absolute cap in bytes per second.
     /// `Limited(0)` (also what `?maxbw=0` produces) sends `0`, the same
-    /// relative-to-input behaviour as [`Self::Unlimited`].
+    /// relative-to-input behaviour as [`Self::Unlimited`]. A value above
+    /// `i64::MAX` is clamped to `i64::MAX` (the option is a signed 64-bit
+    /// integer; a wrapped cast would turn `u64::MAX` into `-1` = [`Self::Auto`]).
     Limited(u64),
 }
 
@@ -154,7 +156,7 @@ impl MaxBandwidth {
         match self {
             MaxBandwidth::Unlimited => 0,
             MaxBandwidth::Auto => -1,
-            MaxBandwidth::Limited(bps) => bps as i64,
+            MaxBandwidth::Limited(bps) => i64::try_from(bps).unwrap_or(i64::MAX),
         }
     }
 }
@@ -359,6 +361,24 @@ mod tests {
         assert_eq!(MaxBandwidth::Unlimited.as_libsrt_i64(), 0);
         assert_eq!(MaxBandwidth::Auto.as_libsrt_i64(), -1);
         assert_eq!(MaxBandwidth::Limited(1_000_000).as_libsrt_i64(), 1_000_000);
+    }
+
+    /// A cap above `i64::MAX` must clamp, never wrap: `Limited(u64::MAX)`
+    /// cast straight to `i64` is `-1`, which libsrt reads as `Auto`
+    /// ("infinite"), and any other wrapped value is negative and rejected
+    /// by `srt_setsockopt`. A caller asking for an absurdly large cap gets
+    /// the largest cap the option can carry.
+    #[test]
+    fn max_bandwidth_limited_above_i64_max_clamps() {
+        assert_eq!(MaxBandwidth::Limited(u64::MAX).as_libsrt_i64(), i64::MAX);
+        assert_eq!(
+            MaxBandwidth::Limited(i64::MAX as u64 + 1).as_libsrt_i64(),
+            i64::MAX
+        );
+        assert_eq!(
+            MaxBandwidth::Limited(i64::MAX as u64).as_libsrt_i64(),
+            i64::MAX
+        );
     }
 
     #[test]
