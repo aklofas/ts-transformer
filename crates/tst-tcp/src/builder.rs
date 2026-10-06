@@ -100,6 +100,8 @@ impl TcpTransportBuilder {
     ///
     /// Applied per resolved address — a hostname that resolves to multiple
     /// addresses may take up to N× this value before the overall attempt fails.
+    /// For `tcps://` the TLS handshake runs inside [`build`](Self::build) as
+    /// well, with its own budget of this value after the TCP connect.
     /// Default: 10 seconds.
     pub fn connect_timeout(&mut self, t: Duration) -> &mut Self {
         self.config.connect_timeout = Some(t);
@@ -111,9 +113,14 @@ impl TcpTransportBuilder {
     /// # Errors
     ///
     /// Returns [`TcpError`] if:
-    /// - The connection times out.
+    /// - The connection times out (`ConnectTimeout`) — for `tcps://` this
+    ///   includes a TLS handshake that does not complete within
+    ///   `connect_timeout` after the TCP connect.
     /// - The connection is refused or unreachable.
-    /// - TLS handshake fails (for `tcps://`).
+    /// - The TLS handshake fails (for `tcps://`: `Tls` for a certificate or
+    ///   protocol failure, `Io` for a peer that closes mid-handshake). The
+    ///   handshake completes inside `build`, so a returned transport is ready
+    ///   for application data.
     /// - The TLS feature is disabled but the URL used `tcps://`.
     pub fn build(self) -> Result<TcpTransport, TcpError> {
         TcpTransport::connect_with_config(&self.url, &self.config)

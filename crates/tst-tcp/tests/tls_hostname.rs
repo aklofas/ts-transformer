@@ -10,7 +10,11 @@
 //! - `tcps_hostname_loopback_handshake_and_roundtrip` — dials `localhost`
 //!   → cert has a matching `dnsName` → handshake succeeds.
 //! - `tcps_ip_dial_against_dns_only_cert_loopback_fails` — dials `127.0.0.1`
-//!   → cert has no `iPAddress` SAN → handshake fails on first I/O.
+//!   → cert has no `iPAddress` SAN → the connect itself fails (the client
+//!   handshake runs inside `connect`, under `connect_timeout`).
+//! - `tcps_stalled_handshake_loopback_is_connect_timeout` — the peer accepts
+//!   TCP but never speaks TLS → `ConnectTimeout`, not a first-send
+//!   `Backpressure`.
 //!
 //! The test binary is only compiled when the `tls` feature is active (the
 //! crate's default). Without TLS there is nothing to exercise.
@@ -23,6 +27,7 @@ use std::time::Duration;
 
 use tst_core::transport::{BrokenCause, RecvTransport, Transport, TransportError};
 use tst_tcp::config::SocketConfig;
+use tst_tcp::error::TcpError;
 use tst_tcp::url::TcpUrl;
 use tst_tcp::{TcpListener, TcpTransport};
 
@@ -116,22 +121,12 @@ fn tcps_hostname_loopback_handshake_and_roundtrip() {
     let mut client = TcpTransport::connect_with_config(&parsed, &SocketConfig::default())
         .expect("tcps connect (hostname dial must succeed with dnsName SAN)");
 
-    // Trigger the TLS handshake and exercise the full round-trip. The handshake
-    // runs inside this first send, under the 100 ms cancel-poll socket timeouts
-    // the connect applied; a loaded runner can stall the server's reply past
-    // one tick, which surfaces as a zero-progress Backpressure. That outcome is
-    // retryable per Transport::send_bytes (the slice is intact), so retry it
-    // within a bounded budget, as the sibling tests below do.
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    loop {
-        match client.send_bytes(b"ping") {
-            Ok(()) => break,
-            Err(TransportError::Backpressure { .. }) if std::time::Instant::now() < deadline => {
-                continue;
-            }
-            Err(e) => panic!("client send: {e:?}"),
-        }
-    }
+    // The handshake already completed inside `connect_with_config`, so the
+    // first send is an ordinary application write: no zero-progress
+    // `Backpressure` from a handshake read ticking over the 100 ms cancel-poll
+    // socket timeout (that was the lazy-handshake shape this test used to
+    // retry around).
+    client.send_bytes(b"ping").expect("client send");
 
     let mut buf = [0u8; 4];
     let n = client.recv_bytes(&mut buf).expect("client recv");
@@ -149,9 +144,12 @@ fn tcps_hostname_loopback_handshake_and_roundtrip() {
 /// carries *only* a `dnsName` SAN (for `localhost`, no `iPAddress` SAN),
 /// rustls MUST reject the handshake.
 ///
-/// The TLS handshake is lazy — it completes on the first I/O call, not at
-/// connect time. So we trigger it via `send_bytes` and assert that either
-/// the send or the subsequent `recv_bytes` returns an error.
+/// The client handshake runs inside `connect_with_config`, so the rejection
+/// is a connect error (`TcpError::Tls`, the certificate failure's own kind),
+/// not something that surfaces on a later send or recv. The connect used to
+/// return `Ok` with a lazy handshake and the error appeared on the first
+/// I/O; a reconnect wrapper then saw a "connected" transport fail on its
+/// first message instead of a connect failure it could count and back off.
 ///
 /// Test name contains "loopback" for nextest network group membership.
 #[test]
@@ -168,37 +166,94 @@ fn tcps_ip_dial_against_dns_only_cert_loopback_fails() {
 
     let port = listener.local_addr().expect("local_addr").port();
 
-    // Spawn an accept thread — the handshake failure closes the connection;
-    // the server side may surface an error which we intentionally ignore.
-    // Bind to a named variable so we can join on all paths (no thread leaks).
+    // Spawn an accept thread that drives the server half of the handshake
+    // with one read (the accepted transport's handshake runs on its first
+    // I/O): that is what presents the certificate for the client to reject.
+    // Dropping the accepted socket without any I/O would reset the unread
+    // ClientHello instead, and the client would see `Io(ConnectionReset)`.
+    // The read ends in the client's alert (an error we intentionally
+    // ignore). Bind to a named variable so we can join on all paths.
     let srv = thread::spawn(move || {
-        let _ = listener.accept_blocking();
+        if let Ok(mut conn) = listener.accept_blocking() {
+            let mut buf = [0u8; 4];
+            let _ = conn.recv_bytes(&mut buf);
+        }
     });
 
-    // Dial by IP literal against a cert that has no iPAddress SAN.
-    // The TCP connect itself succeeds (lazy handshake), so we expect Ok here.
+    // Dial by IP literal against a cert that has no iPAddress SAN: rustls
+    // rejects the certificate during the handshake, which `connect` runs.
     let dial_url = format!("tcps://127.0.0.1:{port}?ca={}", ca_path.display());
     let parsed = TcpUrl::parse(&dial_url).expect("URL parse");
-    let mut transport = TcpTransport::connect_with_config(&parsed, &SocketConfig::default())
-        .expect("TCP connect returns Ok (handshake is lazy — not yet triggered)");
-
-    // Trigger the handshake. The cert has no iPAddress SAN for 127.0.0.1
-    // so rustls must reject it. The error surfaces on send or recv.
-    let send_result = transport.send_bytes(b"ping");
-    let error_observed = if send_result.is_err() {
-        true
-    } else {
-        let mut buf = [0u8; 4];
-        transport.recv_bytes(&mut buf).is_err()
-    };
+    let result = TcpTransport::connect_with_config(&parsed, &SocketConfig::default());
 
     // Join before asserting so the server thread is always reaped, even if
     // the assertion below fires (no parked accept_blocking leaks on test fail).
     let _ = srv.join();
 
+    match result {
+        Err(TcpError::Tls(msg)) => assert!(
+            msg.to_lowercase().contains("certificate") || msg.to_lowercase().contains("handshake"),
+            "the Tls error must name the handshake/certificate failure, got: {msg}"
+        ),
+        Err(other) => panic!("expected TcpError::Tls at connect, got {other:?}"),
+        Ok(_) => panic!("IP-literal dial against a dnsName-only cert must fail at connect"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Negative test: a peer that accepts TCP but never speaks TLS
+// ---------------------------------------------------------------------------
+
+/// A `tcps://` connect whose TLS handshake never completes — the peer
+/// accepts the TCP connection and then stays silent (a plain-TCP service on
+/// the port, a firewall that proxies the SYN, a wedged TLS terminator) — must
+/// fail as `ConnectTimeout` after `connect_timeout`, the same outcome a
+/// SYN that is never answered gets. Before the handshake moved into
+/// `connect`, this connect returned `Ok` and every later send reported a
+/// zero-progress `Backpressure` forever (the handshake read ticking over the
+/// 100 ms socket timeout), so a managed sender believed it was connected and
+/// never reconnected.
+///
+/// The handshake gets its own `connect_timeout` budget after the TCP connect
+/// (`seconds: 1` here), and the whole connect must end well inside the 5 s
+/// bound below.
+///
+/// Test name contains "loopback" for nextest network group membership.
+#[test]
+fn tcps_stalled_handshake_loopback_is_connect_timeout() {
+    let (_dir, cert_path, _key_path) = gen_dns_only_cert();
+
+    // A plain TCP listener: it completes the kernel handshake and holds the
+    // socket open, but never answers the ClientHello.
+    let silent = std::net::TcpListener::bind("127.0.0.1:0").expect("bind silent listener");
+    let port = silent.local_addr().expect("local_addr").port();
+    let (done_tx, done_rx) = mpsc::channel::<()>();
+    let holder = thread::spawn(move || {
+        let held = silent.accept().map(|(s, _)| s);
+        // Keep the accepted socket open until the client has given up, so the
+        // client cannot see an EOF or reset instead of a timeout.
+        let _ = done_rx.recv_timeout(Duration::from_secs(10));
+        drop(held);
+    });
+
+    let url = format!(
+        "tcps://localhost:{port}?connect_timeout=1&ca={}",
+        cert_path.display()
+    );
+    let started = std::time::Instant::now();
+    let result = TcpTransport::connect(&url);
+    let elapsed = started.elapsed();
+    let _ = done_tx.send(());
+    holder.join().expect("holder thread panicked");
+
+    match result {
+        Err(TcpError::ConnectTimeout { seconds: 1 }) => {}
+        Err(other) => panic!("expected ConnectTimeout {{ seconds: 1 }}, got {other:?}"),
+        Ok(_) => panic!("a stalled TLS handshake must not report a connected transport"),
+    }
     assert!(
-        error_observed,
-        "IP-literal dial against a dnsName-only cert must fail on first I/O"
+        elapsed < Duration::from_secs(5),
+        "connect must give up at connect_timeout, took {elapsed:?}"
     );
 }
 
@@ -231,8 +286,8 @@ fn tcps_explicit_close_loopback_ends_the_peer_read() {
     .expect("TLS listener bind");
     let port = listener.local_addr().expect("local_addr after bind").port();
 
-    // Server: accept, consume the client's first payload (which is what drives
-    // the lazy handshake to completion) and report readiness, then park on a
+    // Server: accept, consume the client's first payload and report
+    // readiness, then park on a
     // second read. That second read is the observation point — it must end
     // once the client calls close(), not run out the 2 s deadline below.
     let (ready_tx, ready_rx) = mpsc::channel::<()>();
@@ -251,21 +306,10 @@ fn tcps_explicit_close_loopback_ends_the_peer_read() {
     let parsed = TcpUrl::parse(&dial_url).expect("URL parse");
     let mut client =
         TcpTransport::connect_with_config(&parsed, &SocketConfig::default()).expect("tcps connect");
-    // Retry a zero-progress Backpressure: it is the documented, retryable
-    // outcome of Transport::send_bytes (the slice is intact), and this send
-    // is what drives the lazy TLS handshake — completing it can need more
-    // than one 100 ms write-timeout tick if the server's own accept happens
-    // to land inside its (also ~100 ms) non-blocking poll window.
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    loop {
-        match client.send_bytes(b"ping") {
-            Ok(()) => break,
-            Err(TransportError::Backpressure { .. }) if std::time::Instant::now() < deadline => {
-                continue;
-            }
-            Err(e) => panic!("client send: {e:?}"),
-        }
-    }
+    // The client's handshake completed inside connect; this send is plain
+    // application data (the server's lazy half completed when its accept
+    // answered the ClientHello).
+    client.send_bytes(b"ping").expect("client send");
     ready_rx
         .recv_timeout(Duration::from_secs(5))
         .expect("server did not complete the TLS handshake");
@@ -357,16 +401,7 @@ fn tcps_close_then_drop_loopback_still_reaches_the_peer_as_close_notify() {
     let parsed = TcpUrl::parse(&dial_url).expect("URL parse");
     let mut client =
         TcpTransport::connect_with_config(&parsed, &SocketConfig::default()).expect("tcps connect");
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    loop {
-        match client.send_bytes(b"ping") {
-            Ok(()) => break,
-            Err(TransportError::Backpressure { .. }) if std::time::Instant::now() < deadline => {
-                continue;
-            }
-            Err(e) => panic!("client send: {e:?}"),
-        }
-    }
+    client.send_bytes(b"ping").expect("client send");
     ready_rx
         .recv_timeout(Duration::from_secs(5))
         .expect("server did not complete the TLS handshake");
@@ -391,11 +426,17 @@ fn tcps_close_then_drop_loopback_still_reaches_the_peer_as_close_notify() {
     }
 }
 
-/// The two edges of the same close path: closing a TLS transport *before* the
-/// lazy handshake has run (no keys yet, so `send_close_notify` has nothing to
+/// The two edges of the same close path: closing a TLS transport *before* its
+/// handshake has run (no keys yet, so `send_close_notify` has nothing to
 /// encrypt) and closing twice (the socket is already shut down the second
 /// time). Both must be quiet no-ops — `close()` is reached from the C ABI and
 /// the bindings, where a panic would abort the caller's process.
+///
+/// The client side can no longer be in that state (its handshake completes
+/// inside `connect`, or the connect fails), so the pre-handshake edge is
+/// exercised on the server's accepted transport: `accept_blocking` returns
+/// before the server half of the handshake has run (it runs on the first
+/// I/O), and this test closes it without ever doing any.
 #[test]
 fn tcps_close_loopback_before_handshake_and_twice_is_quiet() {
     let (_dir, cert_path, key_path) = gen_dns_only_cert();
@@ -409,20 +450,24 @@ fn tcps_close_loopback_before_handshake_and_twice_is_quiet() {
     .expect("TLS listener bind");
     let port = listener.local_addr().expect("local_addr after bind").port();
 
-    // The server only has to complete the TCP accept; the handshake never runs.
-    let srv = thread::spawn(move || {
-        let _ = listener.accept_blocking();
+    // The client dials in the background. Its handshake needs the server to
+    // answer, which this test never does: the connect ends in an error once
+    // the server closes the socket (or at connect_timeout), and that result
+    // is deliberately not asserted here.
+    let dial_url = format!(
+        "tcps://localhost:{port}?connect_timeout=2&ca={}",
+        ca_path.display()
+    );
+    let client = thread::spawn(move || {
+        let parsed = TcpUrl::parse(&dial_url).expect("URL parse");
+        let _ = TcpTransport::connect_with_config(&parsed, &SocketConfig::default());
     });
 
-    let dial_url = format!("tcps://localhost:{port}?ca={}", ca_path.display());
-    let parsed = TcpUrl::parse(&dial_url).expect("URL parse");
-    let mut client = TcpTransport::connect_with_config(&parsed, &SocketConfig::default())
-        .expect("tcps connect (handshake is lazy — not yet triggered)");
+    let mut accepted = listener.accept_blocking().expect("server accept");
+    Transport::close(&mut accepted);
+    Transport::close(&mut accepted);
+    assert!(!Transport::is_alive(&accepted), "close() must mark dead");
 
-    Transport::close(&mut client);
-    Transport::close(&mut client);
-    assert!(!Transport::is_alive(&client), "close() must mark dead");
-
-    drop(client);
-    let _ = srv.join();
+    drop(accepted);
+    client.join().expect("client thread panicked");
 }

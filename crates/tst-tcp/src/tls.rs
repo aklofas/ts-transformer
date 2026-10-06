@@ -3,6 +3,7 @@
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::sync::Arc;
+use std::time::Instant;
 
 use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, ClientConnection, ServerConfig, ServerConnection, StreamOwned};
@@ -141,9 +142,71 @@ pub fn connect_tls(url: &TcpUrl, cfg: &SocketConfig) -> Result<TcpTransport, Tcp
             .map_err(|e| crate::transport::map_connect_err(e, cfg))?;
     apply_knobs(&socket, cfg).map_err(TcpError::Io)?;
 
-    let stream = StreamOwned::new(conn, socket);
+    let mut stream = StreamOwned::new(conn, socket);
+    complete_client_handshake(&mut stream.conn, &mut stream.sock, cfg)?;
     let tls = TlsStream::Client(stream);
     Ok(TcpTransport::from_tls(tls, peer, cfg))
+}
+
+/// Drive the client half of the TLS handshake to completion inside
+/// `connect_tls`, under its own `connect_timeout` budget that starts after
+/// the TCP connect.
+///
+/// rustls otherwise completes the handshake lazily, inside the first
+/// `read`/`write` on the stream. Under the 100 ms cancel-poll socket
+/// timeouts `apply_knobs` sets, that first I/O returned a zero-progress
+/// `Backpressure` whenever the server's reply took longer than one tick —
+/// and did so forever against a peer that accepted TCP but never spoke TLS,
+/// so a managed sender believed it was connected and never reconnected,
+/// while a certificate rejection surfaced as a send/recv error on a
+/// "connected" transport. Running the handshake here gives every caller the
+/// connect-time outcome the builder documents: a handshake that does not
+/// finish in time is [`TcpError::ConnectTimeout`] (the same outcome an
+/// unanswered SYN gets), a TLS-level failure (certificate, protocol) is
+/// [`TcpError::Tls`], and a peer that closes or resets mid-handshake is
+/// [`TcpError::Io`].
+///
+/// Each socket-timeout tick (`WouldBlock` on Unix, `TimedOut` on Windows —
+/// the same pair `classify_send_error` treats as transient) is one poll of
+/// the deadline; rustls keeps its handshake state across them, so the loop
+/// simply resumes. `EINTR` is retried. The server half stays lazy
+/// (`accept_tls`): an accept has no connect budget, and the server's
+/// handshake completes on its first I/O as before.
+fn complete_client_handshake(
+    conn: &mut ClientConnection,
+    sock: &mut TcpStream,
+    cfg: &SocketConfig,
+) -> Result<(), TcpError> {
+    let budget = cfg.connect_timeout_or_default();
+    // `None` = no deadline: a budget too large to add to `now` (the URL
+    // accepts any u64 seconds) means "wait as long as it takes".
+    let deadline = Instant::now().checked_add(budget);
+    while conn.is_handshaking() {
+        match conn.complete_io(sock) {
+            Ok(_) => {}
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                ) =>
+            {
+                if deadline.is_some_and(|d| Instant::now() >= d) {
+                    return Err(TcpError::ConnectTimeout {
+                        seconds: budget.as_secs(),
+                    });
+                }
+            }
+            // rustls reports a handshake-level failure (certificate
+            // verification, protocol violation, alert from the peer) as
+            // `InvalidData` wrapping its own error.
+            Err(e) if e.kind() == io::ErrorKind::InvalidData => {
+                return Err(TcpError::Tls(format!("TLS handshake failed: {e}")));
+            }
+            Err(e) => return Err(TcpError::Io(e)),
+        }
+    }
+    Ok(())
 }
 
 /// Load a server certificate + key from PEM files.
