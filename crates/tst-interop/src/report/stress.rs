@@ -962,24 +962,38 @@ fn verdict_cpu_headroom(
     let mut total_cpu_s = 0.0;
     let mut usable = 0usize;
     let mut unusable = Vec::new();
+    let mut unmeasured = Vec::new();
     for ((leg, process), segs) in groups {
         let (cpu_s, missing) = segments_cpu_seconds(segs, decl.clk_tck);
-        if let Some(cpu_s) = cpu_s {
-            total_cpu_s += cpu_s;
-            usable += 1;
+        match cpu_s {
+            Some(cpu_s) => {
+                total_cpu_s += cpu_s;
+                usable += 1;
+            }
+            None => unmeasured.push(format!("{leg}/{process}")),
         }
         for pid in missing {
             unusable.push(format!("{leg}/{process} pid {pid}"));
         }
     }
     // Either case would report 0 % CPU from no measurement at all — a
-    // vacuous pass, so it fails instead.
+    // vacuous pass, so it fails instead. A group with no usable segment
+    // at all (every pid's ticks missing for the whole window) is also a
+    // failure even when other groups DO have a figure — otherwise that
+    // group's CPU silently drops out of the sum as if it used 0 %.
     let no_figure = if !window_s.is_finite() || window_s <= 0.0 {
         Some("post-warm-up window is empty — no CPU figure".to_string())
     } else if usable == 0 {
         Some(format!(
             "no process has 2 usable tick samples — no CPU figure: {}",
             unusable.join(", ")
+        ))
+    } else if !unmeasured.is_empty() {
+        Some(format!(
+            "missing CPU telemetry for the whole window: {} — unjudged, not 0 % CPU \
+             (short tails beside a measured segment are fine; a process with no measured \
+             segment is not)",
+            unmeasured.join(", ")
         ))
     } else {
         None
@@ -2873,6 +2887,24 @@ mod tests {
             "{}",
             v.detail
         );
+    }
+
+    /// Every expected process must have CPU ticks for the window; a sender
+    /// whose ticks are all missing is unjudged telemetry, not 0 % CPU.
+    #[test]
+    fn missing_sender_cpu_for_the_whole_window_is_not_zero_cpu() {
+        let mut inp = inputs(1, 30);
+        for row in &mut inp.proc {
+            if row.process == "send" {
+                row.utime_ticks = None;
+                row.stime_ticks = None;
+            }
+        }
+        let r = build_step_results(inp).unwrap();
+        assert!(verdict(&r, "sample_coverage").pass);
+        let v = verdict(&r, "cpu_headroom");
+        assert!(!v.pass, "{}", v.detail);
+        assert!(v.detail.contains("srt-0/send"), "{}", v.detail);
     }
 
     #[test]
