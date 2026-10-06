@@ -53,6 +53,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   other stale output. Without the `serve` feature the crate is now a
   complete live origin on disk.
 
+### Testing — interop proxy
+
+- **Every relay socket in `tst-interop`'s proxy tests asks for a 1 MiB
+  receive buffer** (the proxy's listen socket through `proxy::run`'s
+  `rcvbuf`, the knob stress.sh sizes from the keyframe burst, and the
+  transparent-relay destination socket), with the applied size logged. The
+  tests assert loss-free loopback UDP, which no OS guarantees once a
+  receiving socket's buffer is full and its reader is descheduled; on
+  windows-msvc that lost exactly one mid-stream datagram out of 500 once
+  (PR #309, 2026-10-05; the stress-run R2-F2 class) against the runner's
+  64 KiB default. Test-only; no library change.
+
 ---
 
 ## [0.7.0] — 2026-10-05
