@@ -2127,14 +2127,20 @@ fn expects(inj: &Tracked, sig: Signal) -> bool {
         // `OtherNonConformant` without it: a damaged section is rejected
         // before it can move a program's clock, so those classes cannot
         // cause a PCR jump.
-        Class::Header | Class::Truncate | Class::Garbage => matches!(
-            sig,
-            Signal::Resync
-                | Signal::ContinuityJump
-                | Signal::MalformedPes
-                | Signal::PcrAnomaly { .. }
-                | Signal::OtherNonConformant
-        ),
+        Class::Header | Class::Truncate | Class::Garbage => {
+            matches!(
+                sig,
+                Signal::Resync
+                    | Signal::ContinuityJump
+                    | Signal::MalformedPes
+                    | Signal::PcrAnomaly { .. }
+                    | Signal::OtherNonConformant
+            )
+            // A PAT/PMT cut or garbled inside its section reaches the
+            // demuxer as a section whose CRC fails: that checksum event is
+            // the receiver noticing this injection, not an unexplained one.
+            || (inj.psi && sig == Signal::PsiChecksum)
+        }
         Class::Drop => matches!(sig, Signal::ContinuityJump),
         // A broken section usually fails its CRC, but a flipped pointer
         // field or section-length can surface as a table-id / section
@@ -5012,6 +5018,33 @@ mod tests {
         let r = a.finish(10_000);
         assert_eq!(r.attributed_events, 1, "{r:?}");
         assert_eq!(r.undetected_count, 0, "{r:?}");
+    }
+
+    /// A PMT truncated inside its section reaches the demuxer as a section
+    /// whose CRC fails: `PsiChecksum` is the receiver noticing, and it must
+    /// count for a framing-class injection whose own PID is a PSI PID (six
+    /// RC-soak RIST events were "unexplained" for exactly this).
+    #[test]
+    fn a_framing_injection_on_a_psi_pid_is_noticed_by_a_psi_checksum() {
+        let mut pmt_cut = inj(1_000, 2, Class::Truncate, 0x1000, true);
+        pmt_cut.psi = true;
+        let mut a = Attribution::lossy(vec![pmt_cut], &hdr());
+        a.on_pcr(1_000, 10);
+        a.on_signal(16, Some(0x1000), Signal::PsiChecksum);
+        a.on_media(30, 0x1011);
+        let r = a.finish(2_000);
+        assert_eq!(r.attributed_events, 1);
+        assert_eq!(r.unexplained_total(), 0);
+        assert_eq!(r.undetected_total(), 0);
+
+        // The same signal on a NON-PSI framing injection is still not its
+        // expected effect (nothing in a media packet has a CRC to fail).
+        let mut a = Attribution::lossy(vec![inj(1_000, 2, Class::Truncate, 0x1011, true)], &hdr());
+        a.on_pcr(1_000, 10);
+        a.on_signal(16, Some(0x1011), Signal::PsiChecksum);
+        a.on_media(30, 0x1011);
+        let r = a.finish(2_000);
+        assert_eq!(r.attributed_events, 0);
     }
 
     /// Same PID, wrong class: a `Drop` can only surface as a continuity
