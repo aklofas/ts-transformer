@@ -9,6 +9,31 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed — interop harness
+
+- **Stress and hold verdicts can no longer pass vacuously or over an aborted
+  run** (`tst-interop`, the evidence harness). `report step|hold` gain
+  `corruption_coverage` (every stream carries an attribution; ingested plus
+  skipped history ≥ 99 % of what the sender logged; resolved ≥ 90 % of what
+  the receiver could hear — history a restarted receiver never heard is
+  reported as `history_unheard` and left out of the denominator),
+  `corruption_declared` (each log header's rate equals the declared rate) and
+  `transport_loss_excused` (per-leg excused-loss budget: 0 on a sweep step,
+  the soak's outage-aware budget on the hold, outage allowance for SRT legs
+  only), declared through a new `corrupt_rate_per_10k` in each step's
+  `config.json` that `stress.sh` writes from `CORRUPT_SPEC`. `cpu_headroom`
+  fails, naming the processes, when any expected process has no usable CPU
+  sample for the window. `StreamFigures.wire_window_s` records the receiver's
+  actual window (the run, or the run minus the leg's last restart) and
+  `wire_mbps` divides by it; a restarted leg adds a limitation line. `report
+  stress` reads `stress-config.json` and `stress-FAILED`: a required hold
+  without a result, a declared transport missing an axis or an abort marker
+  makes `overall_pass = false` with a limitation naming the cause, and an axis
+  ended by `step_unjudgeable`/`step_timeout`/`sample_coverage` carries a
+  limitation. The soak coverage detail names `unresolved` and floors its
+  percentage. Every new field carries `#[serde(default)]`; archived results
+  and configs still parse.
+
 ### Fixed — interop harness
 
 - **Streaming corruption-log tail; bounded reattach; no-data watcher armed
