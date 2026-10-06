@@ -667,6 +667,7 @@ fn write_healthy_step_dir(dir: &Path, streams: u32) {
         outage_period_s: None,
         outage_dur_s: None,
         restart_period_s: None,
+        corrupt_rate_per_10k: None,
     };
     std::fs::write(
         dir.join("config.json"),

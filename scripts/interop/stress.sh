@@ -949,6 +949,8 @@ write_provenance "$REPO_ROOT" "$OUTDIR/provenance.json" "$ARGV_JSON" "$ENV_JSON"
 PROFILE=baseline
 KLV_SET=rich
 CORRUPT_SPEC="rate=5"
+CORRUPT_RATE=$(sed -n 's/^rate=\([0-9]\+\)$/\1/p' <<<"$CORRUPT_SPEC")
+[[ -n "$CORRUPT_RATE" ]] || die "CORRUPT_SPEC must be rate=N, got: $CORRUPT_SPEC"
 # Receive-side latency budget for SRT and recovery buffer for RIST, in ms:
 # soak.sh's numbers and reasoning (sized for the hold's impairment
 # schedule; harmless on the sweep's clean link, and one value for both
@@ -1213,11 +1215,13 @@ write_step_declaration() {
     --argjson sample_cadence_s "$SAMPLE_CADENCE_S" --argjson nominal "$nominal" \
     --argjson managed "$([[ $managed -eq 1 ]] && echo true || echo false)" \
     --argjson udp_rcvbuf "$([[ "$transport" == udp ]] && udp_rcvbuf_for "$scale" | grep . || echo null)" \
+    --argjson corrupt_rate "$CORRUPT_RATE" \
     '{transport: $transport, axis: $axis, streams: $streams, au_scale: $au_scale,
       warmup_s: $warmup_s, hold_s: $hold_s, vcpus: $vcpus, clk_tck: $clk_tck,
       sample_cadence_s: $sample_cadence_s, nominal_mbps_per_stream: $nominal,
       managed: $managed, outage_period_s: null, outage_dur_s: null,
-      restart_period_s: null, udp_rcvbuf: $udp_rcvbuf}' >"$step_dir/config.json"
+      restart_period_s: null, udp_rcvbuf: $udp_rcvbuf,
+      corrupt_rate_per_10k: $corrupt_rate}' >"$step_dir/config.json"
 }
 
 # step_rss_kb_per_stream <transport> <load> — every process's RSS at the LAST
@@ -1597,13 +1601,15 @@ run_hold() {
     --argjson srt "$srt_json" --argjson restarts "$restart_json" \
     --argjson hop "$HOLD_OUTAGE_PERIOD_S" --argjson hod "$HOLD_OUTAGE_DUR_S" \
     --argjson hrp "$HOLD_RESTART_PERIOD_S" \
+    --argjson corrupt_rate "$CORRUPT_RATE" \
     '{transport: "all", axis: "hold", streams: $streams, au_scale: 1,
       warmup_s: $warmup_s, hold_s: $hold_s, vcpus: $vcpus, clk_tck: $clk_tck,
       sample_cadence_s: $sample_cadence_s, nominal_mbps_per_stream: $nominal,
       managed: true,
       outage_period_s: (if $srt then $hop else null end),
       outage_dur_s: (if $srt then $hod else null end),
-      restart_period_s: (if $restarts then $hrp else null end)}' >"$hold_dir/config.json"
+      restart_period_s: (if $restarts then $hrp else null end),
+      corrupt_rate_per_10k: $corrupt_rate}' >"$hold_dir/config.json"
   jq -n --argjson restarts "$(printf '%s\n' "${RESTART_INSTANTS[@]}" | jq -n '[inputs]')" \
     --argjson outages "$(printf '%s\n' "${OUTAGE_STARTS[@]}" | jq -n '[inputs]')" \
     --argjson warmup_s "$HOLD_WARMUP_S" --argjson hold_s "$HOLD_S" --argjson run_s "$HOLD_RUN_S" \

@@ -1193,7 +1193,12 @@ pub mod soak {
     /// ticked) falls back to the declared `expected_duration_s` rather
     /// than collapsing the rate term to zero and failing a leg for a
     /// telemetry gap.
-    fn excusal_budget(k: u64, outage_windows: u64, duration_s: f64, declared_s: f64) -> u64 {
+    pub(super) fn excusal_budget(
+        k: u64,
+        outage_windows: u64,
+        duration_s: f64,
+        declared_s: f64,
+    ) -> u64 {
         let hours = (if duration_s > 0.0 {
             duration_s
         } else {

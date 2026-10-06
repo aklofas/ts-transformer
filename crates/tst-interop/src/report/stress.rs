@@ -270,6 +270,11 @@ pub struct StepDeclaration {
     pub outage_period_s: Option<u64>,
     pub outage_dur_s: Option<u64>,
     pub restart_period_s: Option<u64>,
+    /// The corruption tap's rate stress.sh declared (`CORRUPT_SPEC`
+    /// `rate=N`, injections per 10 000 packets); `None` = no tap declared,
+    /// and the corruption verdicts pass as not applicable.
+    #[serde(default)]
+    pub corrupt_rate_per_10k: Option<u32>,
 }
 
 /// Pass/fail limits for one step. `rss_slope_kb_per_hour` defaults to
@@ -567,6 +572,7 @@ pub fn build_step_results(inputs: StepInputs) -> Result<StepResults, String> {
     let mut verdicts = Vec::new();
     verdicts.push(verdict_worker_exits(&worker_exits, &streams));
     verdicts.push(verdict_recv_invariants(&streams));
+    verdicts.extend(verdict_corruption(&decl, &streams));
     verdicts.push(verdict_delivery_complete(
         &streams,
         &restarts,
@@ -687,6 +693,147 @@ fn verdict_recv_invariants(streams: &[StreamArtifacts]) -> StepVerdict {
             failing.join("; ")
         },
     }
+}
+
+/// The three corruption verdicts of a step: coverage (every stream
+/// resolved ≥ 90 % of what it ingested and ingested ≥ 99 % of what the
+/// sender logged, counting history a restarted leg skipped), the declared
+/// rate against each log header, and the excused transport-loss counters
+/// against a budget — 0 on a sweep step (the link is clean, so an excused
+/// loss is a real drop the ceiling must not sit past) and the soak's
+/// outage-aware budget on the hold. Without a declared tap all three pass
+/// as not applicable.
+fn verdict_corruption(decl: &StepDeclaration, streams: &[StreamArtifacts]) -> Vec<StepVerdict> {
+    let Some(rate) = decl.corrupt_rate_per_10k else {
+        let na = |name: &str| StepVerdict {
+            name: name.into(),
+            pass: true,
+            observed: 0.0,
+            threshold: 0.0,
+            detail: "corruption tap not declared for this step (config.json corrupt_rate_per_10k)"
+                .into(),
+        };
+        return vec![
+            na("corruption_coverage"),
+            na("corruption_declared"),
+            na("transport_loss_excused"),
+        ];
+    };
+    const RESOLVED_FLOOR: f64 = 0.9;
+    const INGESTED_FLOOR: f64 = 0.99;
+    let mut coverage_problems = Vec::new();
+    let mut declared_problems = Vec::new();
+    let mut excused: u64 = 0;
+    let mut min_resolved = f64::INFINITY;
+    for s in streams {
+        let sent = s.send.corruption.as_ref().map_or(0, |c| c.injections);
+        let log_failed = s
+            .send
+            .corruption
+            .as_ref()
+            .is_some_and(|c| c.log_write_failed);
+        let Some(a) = s.recv.metrics.corruption_attribution.as_ref() else {
+            coverage_problems.push(format!(
+                "{}: recv report carries no attribution (recv ran without --corruption-log?)",
+                s.leg
+            ));
+            continue;
+        };
+        let offered = a.injected.saturating_add(a.history_skipped);
+        let min_ingested = (sent as f64 * INGESTED_FLOOR).ceil() as u64;
+        let resolved_frac = if a.injected == 0 {
+            0.0
+        } else {
+            a.resolved as f64 / a.injected as f64
+        };
+        min_resolved = min_resolved.min(resolved_frac);
+        if sent == 0 || log_failed || offered < min_ingested || resolved_frac < RESOLVED_FLOOR {
+            coverage_problems.push(format!(
+                "{}: sender logged {sent}{}, receiver ingested {} (+{} skipped as history) of \
+                 them, {} resolved ({:.1}%, floor {:.0}%), {} unresolved, {} anchor samples rejected",
+                s.leg,
+                if log_failed { " (log write failed)" } else { "" },
+                a.injected,
+                a.history_skipped,
+                a.resolved,
+                (resolved_frac * 1000.0).floor() / 10.0,
+                RESOLVED_FLOOR * 100.0,
+                a.unresolved,
+                a.anchors_rejected
+            ));
+        }
+        if a.rate_per_10k != rate {
+            declared_problems.push(format!(
+                "{}: log header rate {} per 10k, declared {rate}",
+                s.leg, a.rate_per_10k
+            ));
+        }
+        excused = excused
+            .saturating_add(a.unexplained_transport_loss)
+            .saturating_add(a.undetected_lost)
+            .saturating_add(a.unrecovered_lost);
+    }
+    let budget = match decl.axis {
+        Axis::Hold => {
+            let outage_windows = match (decl.outage_period_s, decl.outage_dur_s) {
+                (Some(p), Some(_)) if p > 0 => (decl.hold_s / p as f64).ceil() as u64,
+                _ => 0,
+            };
+            // One media PID set per held stream: K = 2 (video + KLV) each.
+            super::soak::excusal_budget(
+                2 * streams.len() as u64,
+                outage_windows,
+                decl.hold_s,
+                decl.hold_s,
+            )
+        }
+        Axis::Streams | Axis::Bitrate => 0,
+    };
+    vec![
+        StepVerdict {
+            name: "corruption_coverage".into(),
+            pass: coverage_problems.is_empty(),
+            observed: if min_resolved.is_finite() {
+                min_resolved
+            } else {
+                0.0
+            },
+            threshold: RESOLVED_FLOOR,
+            detail: if coverage_problems.is_empty() {
+                format!(
+                    "every stream ingested ≥ {:.0}% of the sender's injections and resolved ≥ {:.0}%",
+                    INGESTED_FLOOR * 100.0,
+                    RESOLVED_FLOOR * 100.0
+                )
+            } else {
+                coverage_problems.join("; ")
+            },
+        },
+        StepVerdict {
+            name: "corruption_declared".into(),
+            pass: declared_problems.is_empty(),
+            observed: declared_problems.len() as f64,
+            threshold: 0.0,
+            detail: if declared_problems.is_empty() {
+                format!("every log header carries the declared rate {rate} per 10k")
+            } else {
+                declared_problems.join("; ")
+            },
+        },
+        StepVerdict {
+            name: "transport_loss_excused".into(),
+            pass: excused <= budget,
+            observed: excused as f64,
+            threshold: budget as f64,
+            detail: format!(
+                "{excused} injection(s) excused as transport loss against budget {budget} ({})",
+                match decl.axis {
+                    Axis::Hold => "the hold's outage-aware soak budget",
+                    _ => "0: a sweep step's link is clean",
+                }
+            ),
+        },
+    ]
 }
 
 /// Upper bound on a stream's received ÷ expected AUs. Above it the
@@ -2139,6 +2286,7 @@ mod tests {
             outage_period_s: None,
             outage_dur_s: None,
             restart_period_s: None,
+            corrupt_rate_per_10k: None,
         }
     }
     fn thresholds() -> StepThresholds {
@@ -2478,6 +2626,141 @@ mod tests {
             .iter()
             .find(|v| v.name == name)
             .unwrap_or_else(|| panic!("no verdict {name}"))
+    }
+
+    fn attribution(injected: u64, resolved: u64, rate: u32) -> crate::corrupt::AttributionReport {
+        crate::corrupt::AttributionReport {
+            injected,
+            resolved,
+            unresolved: injected - resolved,
+            rate_per_10k: rate,
+            ..Default::default()
+        }
+    }
+    fn with_corruption(inp: &mut StepInputs, rate: u32, sent: u64, injected: u64, resolved: u64) {
+        inp.decl.corrupt_rate_per_10k = Some(rate);
+        for s in &mut inp.streams {
+            s.send.corruption = Some(crate::corrupt::CorruptionStats {
+                injections: sent,
+                ..Default::default()
+            });
+            s.recv.metrics.corruption_attribution = Some(attribution(injected, resolved, rate));
+        }
+    }
+
+    #[test]
+    fn no_declared_corruption_makes_the_verdicts_not_applicable() {
+        let r = build_step_results(inputs(1, 30)).unwrap();
+        for name in [
+            "corruption_coverage",
+            "corruption_declared",
+            "transport_loss_excused",
+        ] {
+            let v = verdict(&r, name);
+            assert!(v.pass, "{name}: {}", v.detail);
+            assert!(v.detail.contains("not declared"), "{name}: {}", v.detail);
+        }
+        assert!(r.pass);
+    }
+
+    /// A receiver that resolves nothing used to pass vacuously.
+    #[test]
+    fn a_receiver_that_resolves_nothing_fails_coverage() {
+        let mut inp = inputs(1, 30);
+        with_corruption(&mut inp, 5, 100, 100, 0);
+        let r = build_step_results(inp).unwrap();
+        let v = verdict(&r, "corruption_coverage");
+        assert!(!v.pass, "{}", v.detail);
+        assert!(v.detail.contains("100 unresolved"), "{}", v.detail);
+        assert!(r.failing.contains(&"corruption_coverage".to_string()));
+    }
+
+    #[test]
+    fn a_declared_tap_with_no_attribution_fails_coverage() {
+        let mut inp = inputs(1, 30);
+        inp.decl.corrupt_rate_per_10k = Some(5);
+        let r = build_step_results(inp).unwrap();
+        assert!(!verdict(&r, "corruption_coverage").pass);
+    }
+
+    /// A restarted leg ingested only the tail of the log; the skipped
+    /// history counts toward what it was offered.
+    #[test]
+    fn skipped_history_counts_toward_ingestion() {
+        let mut inp = inputs(1, 30);
+        with_corruption(&mut inp, 5, 1000, 96, 95);
+        inp.streams[0]
+            .recv
+            .metrics
+            .corruption_attribution
+            .as_mut()
+            .unwrap()
+            .history_skipped = 904;
+        let r = build_step_results(inp).unwrap();
+        assert!(
+            verdict(&r, "corruption_coverage").pass,
+            "{}",
+            verdict(&r, "corruption_coverage").detail
+        );
+    }
+
+    #[test]
+    fn declared_rate_must_match_the_log_header() {
+        let mut inp = inputs(1, 30);
+        with_corruption(&mut inp, 5, 100, 100, 100);
+        inp.streams[0]
+            .recv
+            .metrics
+            .corruption_attribution
+            .as_mut()
+            .unwrap()
+            .rate_per_10k = 50;
+        let r = build_step_results(inp).unwrap();
+        assert!(!verdict(&r, "corruption_declared").pass);
+    }
+
+    /// The sweep's link is clean: any excused transport loss is a real
+    /// drop the ceiling must not sit past.
+    #[test]
+    fn excused_loss_on_a_sweep_step_fails() {
+        let mut inp = inputs(1, 30);
+        with_corruption(&mut inp, 5, 100, 100, 100);
+        inp.streams[0]
+            .recv
+            .metrics
+            .corruption_attribution
+            .as_mut()
+            .unwrap()
+            .undetected_lost = 1;
+        let r = build_step_results(inp).unwrap();
+        let v = verdict(&r, "transport_loss_excused");
+        assert!(!v.pass, "{}", v.detail);
+        assert_eq!(v.threshold, 0.0);
+    }
+
+    /// The hold runs outages on purpose and gets the soak's budget.
+    #[test]
+    fn excused_loss_on_the_hold_is_budgeted() {
+        let mut inp = inputs(1, 30);
+        inp.decl.axis = Axis::Hold;
+        inp.decl.outage_period_s = Some(900);
+        inp.decl.outage_dur_s = Some(30);
+        with_corruption(&mut inp, 5, 100, 100, 100);
+        inp.streams[0]
+            .recv
+            .metrics
+            .corruption_attribution
+            .as_mut()
+            .unwrap()
+            .undetected_lost = 3;
+        let r = build_step_results(inp).unwrap();
+        let v = verdict(&r, "transport_loss_excused");
+        assert!(v.pass, "{}", v.detail);
+        assert!(
+            v.threshold >= 8.0,
+            "budget carries the base term, got {}",
+            v.threshold
+        );
     }
 
     #[test]
