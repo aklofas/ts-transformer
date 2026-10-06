@@ -161,7 +161,7 @@ pub const PRUNE_BATCH: usize = 1024;
 /// a corruption log the sender has been writing for a while — a hold's
 /// restarted leg. Older injections are ones this receiver never listened
 /// for (unresolvable, and the oldest would cross the 33-bit PCR half-range
-/// and block every later resolution); the newest 4096 span about an hour
+/// and block every later resolution); the newest 4096 span about two hours
 /// at the hold's rate (5 per 10 000 packets at ≈ 1 100 packets/s) — more
 /// than any transport buffer holds, so every injection still on the wire
 /// is kept. A first receiver attaches to an empty log and skips nothing.

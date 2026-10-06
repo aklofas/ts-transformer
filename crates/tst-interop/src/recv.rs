@@ -545,16 +545,6 @@ pub fn run_managed(
         ManagedDemuxReceiverConfig::default(),
     );
 
-    // A `None` cancel_handle would mean this managed transport can
-    // never be cancelled at all — `ManagedRecvTransport::cancel_handle`
-    // always returns `Some`, so this branch is unreachable in practice;
-    // not treated as a hard error since a future transport that
-    // legitimately has none shouldn't crash this function, just lose
-    // the safety net (the loop below would then rely solely on a
-    // reconnect eventually succeeding or the policy's own budget, and
-    // `max_attempts: None` never exhausts — a real regression, but one
-    // that would surface as an actual test hang, not a silent bug).
-
     let mut streaming = false;
     let mut tally = Tally::new();
     tally.set_klv_expect(klv);
@@ -576,6 +566,15 @@ pub fn run_managed(
     // concurrently, so a long reattach (a restarted leg reading a large log)
     // ate the no-data window and the watcher cancelled a healthy accept.
     let deadline: Arc<Mutex<Instant>> = Arc::new(Mutex::new(Instant::now() + NO_DATA_TIMEOUT));
+    // A `None` cancel_handle would mean this managed transport can
+    // never be cancelled at all — `ManagedRecvTransport::cancel_handle`
+    // always returns `Some`, so this branch is unreachable in practice;
+    // not treated as a hard error since a future transport that
+    // legitimately has none shouldn't crash this function, just lose
+    // the safety net (the loop below would then rely solely on a
+    // reconnect eventually succeeding or the policy's own budget, and
+    // `max_attempts: None` never exhausts — a real regression, but one
+    // that would surface as an actual test hang, not a silent bug).
     if let Some(cancel) = rx.cancel_handle() {
         let watcher_deadline = Arc::clone(&deadline);
         thread::spawn(move || {
