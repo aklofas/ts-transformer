@@ -275,8 +275,8 @@ def build_findings(dep: dict, pin_tag, pin_version, tags, advisories, cves, pin_
         out.append(Finding("release", f"deps: {name} {_fmt(newest[0])} released {pinned}",
                            f"Submodule `{path}` is pinned at `{pin_tag}`; upstream tag `{newest[1]}` "
                            f"is the newest release in the same line.\n\nReleases: {url}/releases\n\n"
-                           f"Bump recipe: `scripts/vendor-bump-rails.sh` (CLAUDE.md, vendor bump arc), "
-                           f"then dispatch `sanitizers.yml`."))
+                           f"After bumping the pin: full CI plus a `sanitizers.yml` dispatch (the native "
+                           f"sanitizer legs build the vendored tree)."))
     for line, newest_v in newer_lines(tags, pin_version):
         label = f"{line[0]}.x" if len(line) == 1 else f"0.{line[1]}.x"
         out.append(Finding("major-line", f"deps: {name} {label} line available {pinned}",
