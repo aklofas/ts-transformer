@@ -69,6 +69,38 @@ use tst_interop::report_types::CellMetrics;
 use tst_interop::verify::KlvExpect;
 use tst_interop::{profiles, proxy, recv, send};
 
+/// Receive-buffer size every UDP socket on a relay path in this file asks
+/// for: the proxy's listen socket (through `proxy::run`'s `rcvbuf`, the
+/// knob stress.sh sizes from the keyframe burst) and the destination
+/// socket a test drains.
+///
+/// These tests assert loss-free loopback UDP, which no OS guarantees: a
+/// datagram is dropped the moment the receiving socket's buffer is full
+/// and the reading thread has not been scheduled. On windows-msvc that
+/// happened once on PR #309 (2026-10-05) — 499/500 through the
+/// transparent relay, order intact, exactly `packet-0255` missing
+/// mid-stream — the same class as stress run 2's finding R2-F2 (a burst
+/// overflowing a default-sized receive buffer), on a runner whose
+/// default UDP buffer is 64 KiB and where a descheduled reader loses a
+/// paced 500-datagram stream's worth of headroom in one timeslice. 1 MiB
+/// is far above any burst here (500 datagrams of a dozen bytes, with
+/// per-datagram kernel accounting) and costs nothing; Linux silently
+/// clamps a request above `net.core.rmem_max`, so the applied size is
+/// read back and logged rather than asserted.
+const RELAY_RCVBUF: usize = 1 << 20;
+
+/// Apply [`RELAY_RCVBUF`] to a test's own receive socket, logging the
+/// size the OS actually applied (the proxy logs its own the same way).
+fn widen_rcvbuf(sock: &UdpSocket, what: &str) {
+    let sr = socket2::SockRef::from(sock);
+    sr.set_recv_buffer_size(RELAY_RCVBUF)
+        .unwrap_or_else(|e| panic!("{what}: set_recv_buffer_size({RELAY_RCVBUF}): {e}"));
+    let applied = sr
+        .recv_buffer_size()
+        .unwrap_or_else(|e| panic!("{what}: recv_buffer_size: {e}"));
+    eprintln!("{what}: rcvbuf requested={RELAY_RCVBUF} applied={applied}");
+}
+
 /// Ask the OS for an unused port via a throwaway UDP bind — mirrors
 /// `tests/loopback.rs::free_port` (this crate's convention: small
 /// per-test-file duplicated helpers rather than a shared test-utils
@@ -166,7 +198,7 @@ fn spawn_proxy(
                     let _ = tx.send(addr);
                 })),
                 Some(stop),
-                None,
+                Some(RELAY_RCVBUF),
             )
         })
     };
@@ -183,6 +215,7 @@ fn spawn_proxy(
 #[test]
 fn transparent_relay_preserves_order_and_bytes() {
     let dest_sock = UdpSocket::bind("127.0.0.1:0").expect("bind destination socket");
+    widen_rcvbuf(&dest_sock, "destination");
     dest_sock
         .set_read_timeout(Some(Duration::from_millis(200)))
         .expect("set_read_timeout");
