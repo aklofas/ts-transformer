@@ -102,6 +102,14 @@ fn attach_corruption_log(
             Err(_) => thread::sleep(Duration::from_millis(200)),
         }
     };
+    let skipped = tail.skip_history(corrupt::REATTACH_HISTORY)?;
+    if skipped > 0 {
+        eprintln!(
+            "recv: corruption log already held {skipped} older injection(s) at attach — \
+             skipped as history this receiver never listened for (kept the newest {})",
+            corrupt::REATTACH_HISTORY
+        );
+    }
     let injections = tail.poll()?;
     // The tier is fixed here rather than at `Tally::finish`: a lossy
     // capture's excusal has to be applied as each event arrives (see
@@ -112,6 +120,7 @@ fn attach_corruption_log(
     } else {
         corrupt::Attribution::lossy(injections, tail.header())
     });
+    tally.note_history_skipped(skipped);
     transport::tee_set_resync_mode(tap, true);
     Ok(tail)
 }
@@ -332,7 +341,6 @@ pub fn recv_over_transport(
     // demuxer silently mis-tallies `av1-klv-a`.
     let mut rx = DemuxReceiver::with_demux_options(teeing, profiles::demuxer_config(expect));
 
-    let mut deadline = Instant::now() + NO_DATA_TIMEOUT;
     let mut streaming = false;
     let mut closed = false;
     let mut tally = Tally::new();
@@ -344,6 +352,7 @@ pub fn recv_over_transport(
         Some(path) => Some(attach_corruption_log(&mut tally, &tap, path, strict)?),
         None => None,
     };
+    let mut deadline = Instant::now() + NO_DATA_TIMEOUT;
     let start = Instant::now();
     let mut events_seen: u64 = 0;
     let mut last_heartbeat = Instant::now();
@@ -536,31 +545,6 @@ pub fn run_managed(
         ManagedDemuxReceiverConfig::default(),
     );
 
-    // Shared deadline: the main thread (below) moves it once streaming
-    // starts; the watcher thread polls it and cancels once it passes.
-    // `Arc<Mutex<Instant>>` rather than a plain local — see this
-    // function's own doc comment for why a same-thread check alone
-    // can't bound a stuck reconnect loop.
-    let deadline: Arc<Mutex<Instant>> = Arc::new(Mutex::new(Instant::now() + NO_DATA_TIMEOUT));
-    if let Some(cancel) = rx.cancel_handle() {
-        let watcher_deadline = Arc::clone(&deadline);
-        thread::spawn(move || {
-            loop {
-                let d = *watcher_deadline.lock().expect("deadline mutex poisoned");
-                if Instant::now() >= d {
-                    cancel.cancel();
-                    return;
-                }
-                // 100ms poll granularity — matches this crate's other
-                // short polling intervals (e.g. `transport.rs`'s
-                // `UDP_RECV_POLL`); fine-grained enough that the extra
-                // shutdown latency it adds is negligible next to the
-                // backoff-sleep/accept-timeout bound described above,
-                // coarse enough not to spin.
-                thread::sleep(Duration::from_millis(100));
-            }
-        });
-    }
     // A `None` cancel_handle would mean this managed transport can
     // never be cancelled at all — `ManagedRecvTransport::cancel_handle`
     // always returns `Some`, so this branch is unreachable in practice;
@@ -587,6 +571,30 @@ pub fn run_managed(
         Some(path) => Some(attach_corruption_log(&mut tally, &tap, path, strict)?),
         None => None,
     };
+    // Armed only now, AFTER the corruption log is attached: the attach's own
+    // file-appears budget and the stream's no-data budget used to run
+    // concurrently, so a long reattach (a restarted leg reading a large log)
+    // ate the no-data window and the watcher cancelled a healthy accept.
+    let deadline: Arc<Mutex<Instant>> = Arc::new(Mutex::new(Instant::now() + NO_DATA_TIMEOUT));
+    if let Some(cancel) = rx.cancel_handle() {
+        let watcher_deadline = Arc::clone(&deadline);
+        thread::spawn(move || {
+            loop {
+                let d = *watcher_deadline.lock().expect("deadline mutex poisoned");
+                if Instant::now() >= d {
+                    cancel.cancel();
+                    return;
+                }
+                // 100ms poll granularity — matches this crate's other
+                // short polling intervals (e.g. `transport.rs`'s
+                // `UDP_RECV_POLL`); fine-grained enough that the extra
+                // shutdown latency it adds is negligible next to the
+                // backoff-sleep/accept-timeout bound described above,
+                // coarse enough not to spin.
+                thread::sleep(Duration::from_millis(100));
+            }
+        });
+    }
     let start = Instant::now();
     let mut events_seen: u64 = 0;
     let mut last_heartbeat = Instant::now();
