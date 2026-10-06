@@ -173,11 +173,13 @@ version string.
 
 **Rehearsal:** `workflow_dispatch` (or a PR touching the workflow file)
 runs the identical sequence as `cargo publish --dry-run` — packages and
-verify-builds everything, uploads nothing, needs no token. Caveat:
-rehearsals only fully pass while the workspace version is a *published*
-version; after a release version sweep (pre-tag), layer-2+ dry-runs fail
-dependency resolution because the index can't satisfy the bumped
-`version =` keys yet. Rehearse between releases, not after the sweep.
+verify-builds everything, uploads nothing, needs no token. The rehearsal
+resolves internal dependencies from the tree (a `[patch.crates-io]` table
+written by `scripts/release/dry-run-patch-config.sh`, dry-run only), so it
+also passes after a release version sweep, when the index cannot yet
+satisfy the bumped `version =` keys. To rehearse locally at such a
+version: `bash scripts/release/dry-run-patch-config.sh >> .cargo/config.toml`,
+run the layer script with `PUBLISH=0`, then delete `.cargo/config.toml`.
 
 ### Manual fallback (token-based)
 

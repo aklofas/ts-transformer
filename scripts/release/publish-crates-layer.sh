@@ -18,12 +18,14 @@
 # API = live → skip; 404 = not yet published → publish; anything else is a
 # hard error (never guess around a flaky index while holding a publish token).
 #
-# Dry-run caveat: at a version that is NOT fully published yet (i.e. after a
-# release version sweep, before the tag), layer-2+ dry-runs fail dependency
-# resolution — path deps carry `version =` keys the index can't satisfy yet.
-# Rehearse at a published version (any time between releases). The real tag
-# publish never hits this: layers land in order and cargo (>=1.85) waits for
-# index propagation of just-published deps.
+# Dry-run at an UNPUBLISHED version (after a release version sweep, before
+# the tag): the packaged crate's `version =` requirements cannot be met by
+# the index, so the caller must point them at the tree first — crates-io.yml
+# does that with a `[patch.crates-io]` table from dry-run-patch-config.sh;
+# locally, `bash scripts/release/dry-run-patch-config.sh >> .cargo/config.toml`
+# (delete it afterwards). The real tag publish never needs this: layers land
+# in order and cargo (>=1.85) waits for index propagation of just-published
+# deps.
 set -euo pipefail
 
 [[ $# -ge 1 ]] || { echo "usage: $0 <pkg> [<pkg>...]" >&2; exit 2; }
