@@ -3,11 +3,17 @@
 use std::collections::VecDeque;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crate::config::{HlsConfig, HlsMode};
 use crate::error::HlsError;
+
+/// The media playlist's on-disk name under `output_dir`.
+pub(crate) const PLAYLIST_FILENAME: &str = "playlist.m3u8";
+/// Staging name for the atomic playlist rewrite (see
+/// [`Segmenter::write_playlist`]); never served, purged on construction.
+const PLAYLIST_TMP_FILENAME: &str = "playlist.m3u8.tmp";
 
 /// One completed segment on disk.
 #[derive(Debug, Clone)]
@@ -71,7 +77,8 @@ impl Segmenter {
                 let name = entry.file_name();
                 let name_str = name.to_string_lossy();
                 if (name_str.starts_with("segment_") && name_str.ends_with(".ts"))
-                    || name_str == "playlist.m3u8"
+                    || name_str == PLAYLIST_FILENAME
+                    || name_str == PLAYLIST_TMP_FILENAME
                 {
                     let _ = std::fs::remove_file(entry.path());
                 }
@@ -247,10 +254,6 @@ impl Segmenter {
         known.then(|| self.config.output_dir.join(name))
     }
 
-    pub(crate) fn output_dir(&self) -> &Path {
-        &self.config.output_dir
-    }
-
     pub(crate) fn mode(&self) -> HlsMode {
         self.config.mode
     }
@@ -302,7 +305,26 @@ impl Segmenter {
         };
         self.history.push_back(segment);
         self.evict_if_needed()?;
-        Ok(())
+        // Every cut republishes the playlist on disk so an external static
+        // server (nginx, a CDN origin) can serve the stream while it runs,
+        // not only after `finish()`; the built-in server keeps rendering
+        // from memory. Written after eviction so the file never references
+        // a segment that is already in the grace queue.
+        self.write_playlist(false)
+    }
+
+    /// Render the playlist and replace `output_dir/playlist.m3u8` with it
+    /// atomically: the text goes to a staging file first and is renamed
+    /// into place, so a reader that opens the playlist mid-write (a static
+    /// web server racing a cut) sees either the previous or the new
+    /// complete playlist, never a truncated one (`rename(2)` replaces the
+    /// target in one step on POSIX; `MoveFileEx` with replace on Windows).
+    /// `is_final` appends `#EXT-X-ENDLIST` for EVENT/VOD — the finish path.
+    pub(crate) fn write_playlist(&self, is_final: bool) -> Result<(), HlsError> {
+        let text = crate::playlist::render(self, is_final);
+        let tmp = self.config.output_dir.join(PLAYLIST_TMP_FILENAME);
+        std::fs::write(&tmp, text).map_err(HlsError::Io)?;
+        std::fs::rename(&tmp, self.config.output_dir.join(PLAYLIST_FILENAME)).map_err(HlsError::Io)
     }
 
     fn evict_if_needed(&mut self) -> Result<(), HlsError> {
@@ -403,6 +425,75 @@ mod tests {
         s.cut().unwrap();
         assert!(dir.join("segment_00000.ts").exists());
         assert_eq!(s.segments_written(), 1);
+    }
+
+    #[test]
+    fn every_cut_rewrites_the_playlist_on_disk() {
+        let dir = tmpdir();
+        let cfg = HlsConfig {
+            output_dir: dir.clone(),
+            mode: HlsMode::Event,
+            ..HlsConfig::default()
+        };
+        let mut s = Segmenter::new(cfg).unwrap();
+        assert!(
+            !dir.join("playlist.m3u8").exists(),
+            "no playlist before the first cut"
+        );
+        for seq in 0..2u64 {
+            s.push_ts(&[0x47u8; 376]).unwrap();
+            s.cut().unwrap();
+            let on_disk = std::fs::read_to_string(dir.join("playlist.m3u8"))
+                .unwrap_or_else(|e| panic!("playlist missing after cut {seq}: {e}"));
+            assert_eq!(
+                on_disk,
+                crate::playlist::render(&s, false),
+                "on-disk playlist must equal the in-memory render after cut {seq}"
+            );
+            assert!(on_disk.contains(&format!("segment_{seq:05}.ts")));
+            assert!(!on_disk.contains("#EXT-X-ENDLIST"));
+            assert!(
+                !dir.join("playlist.m3u8.tmp").exists(),
+                "the atomic-rename temp file must not linger after cut {seq}"
+            );
+        }
+    }
+
+    #[test]
+    fn live_eviction_is_reflected_in_the_on_disk_playlist() {
+        let dir = tmpdir();
+        let cfg = HlsConfig {
+            output_dir: dir.clone(),
+            mode: HlsMode::Live,
+            segment_duration: Duration::from_secs(2),
+            playlist_window: 3,
+            ..HlsConfig::default()
+        };
+        let mut s = Segmenter::new(cfg).unwrap();
+        for _ in 0..6 {
+            s.push_ts(&[0x47u8; 188]).unwrap();
+            s.cut_with_duration(Some(Duration::from_secs(2))).unwrap();
+        }
+        let on_disk = std::fs::read_to_string(dir.join("playlist.m3u8")).unwrap();
+        assert_eq!(on_disk, crate::playlist::render(&s, false));
+        assert!(on_disk.contains("#EXT-X-MEDIA-SEQUENCE:3"));
+        assert!(!on_disk.contains("segment_00000.ts"));
+        assert!(on_disk.contains("segment_00005.ts"));
+    }
+
+    #[test]
+    fn stale_playlist_temp_file_is_purged_on_construction() {
+        let dir = tmpdir();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("playlist.m3u8.tmp"), b"stale").unwrap();
+        std::fs::write(dir.join("playlist.m3u8"), b"stale").unwrap();
+        let cfg = HlsConfig {
+            output_dir: dir.clone(),
+            ..HlsConfig::default()
+        };
+        let _s = Segmenter::new(cfg).unwrap();
+        assert!(!dir.join("playlist.m3u8.tmp").exists());
+        assert!(!dir.join("playlist.m3u8").exists());
     }
 
     #[test]

@@ -40,6 +40,19 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   first-send `Backpressure` to drive the handshake need no change; a
   returned transport is now ready for application data.
 
+### Changed — HLS
+
+- **`playlist.m3u8` is written to `output_dir` on every segment cut**, not
+  only by `finish()`. The write is atomic (staging file + rename), so a
+  static web server or CDN origin pointed at the directory serves the
+  stream while it runs — before this the directory held segments but no
+  playlist until the publisher finished, and only the built-in server (which
+  renders from memory) could serve a live stream. The finish path still
+  writes the terminal playlist (`#EXT-X-ENDLIST` for EVENT/VOD). A stale
+  `playlist.m3u8.tmp` left by a crash is purged on construction with the
+  other stale output. Without the `serve` feature the crate is now a
+  complete live origin on disk.
+
 ---
 
 ## [0.7.0] — 2026-10-05

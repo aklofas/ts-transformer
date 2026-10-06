@@ -20,10 +20,11 @@ The HLS publisher lives in its own crate, `tst-hls`. It is **segmenter
 first**: it takes pre-muxed MPEG-TS bytes (or elementary streams, through
 the `MuxPublisher` shell), cuts them into `.ts` segments on decodable
 boundaries, and maintains an RFC 8216 media playlist. Segments are written
-to the output directory as they close; the playlist is rendered from memory
-by the built-in HTTP server during the run and written to the directory as
-`playlist.m3u8` when the publisher finishes. Production deployments
-usually put a reverse proxy or CDN in front of the built-in server.
+to the output directory as they close, and `playlist.m3u8` is rewritten
+there on every cut (atomically, so a reader never sees a torn playlist);
+the built-in HTTP server renders the playlist from memory during the run.
+Production deployments usually put a reverse proxy or CDN in front of the
+built-in server, or point a static web server at the output directory.
 
 The publisher plugs into the same `tst_core::publisher::Publisher` trait as
 any other segmented sink, so the `MuxPublisher` pipeline shell drives it the
@@ -159,10 +160,12 @@ shapes are:
 - **Reverse-proxy the built-in server** — the shape for a live stream. Keep
   it on loopback and put nginx / a media server / a CDN origin in front for
   caching, TLS termination, auth, and access control.
-- **Serve a finished stream statically.** `segment_*.ts` files land in
-  `output_dir` as they close, but `playlist.m3u8` is written there only when
-  the publisher finishes — so a static web server or CDN pointed at the
-  directory can serve a completed EVENT / VOD stream, not a live one.
+- **Serve the output directory statically.** `segment_*.ts` files land in
+  `output_dir` as they close and `playlist.m3u8` is rewritten there on every
+  cut, so a static web server or CDN pointed at the directory serves the
+  stream live as well as after it finishes (the finish path writes the
+  terminal playlist with `#EXT-X-ENDLIST`). Serve with `Cache-Control:
+  no-cache` on the playlist, as for any live HLS origin.
 - Enable `basic_auth` and/or `enable_tls` on the builder if the built-in
   server must face untrusted clients directly, but a reverse proxy is the
   more flexible option.
