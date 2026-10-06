@@ -157,6 +157,16 @@ pub const MAX_SAMPLES: usize = 64;
 /// holds once a run is under way.
 pub const PRUNE_BATCH: usize = 1024;
 
+/// How many ALREADY-LOGGED injections a receiver keeps when it attaches to
+/// a corruption log the sender has been writing for a while — a hold's
+/// restarted leg. Older injections are ones this receiver never listened
+/// for (unresolvable, and the oldest would cross the 33-bit PCR half-range
+/// and block every later resolution); the newest 4096 span about an hour
+/// at the hold's rate (5 per 10 000 packets at ≈ 1 100 packets/s) — more
+/// than any transport buffer holds, so every injection still on the wire
+/// is kept. A first receiver attaches to an empty log and skips nothing.
+pub const REATTACH_HISTORY: usize = 4096;
+
 // ============================================================
 // Classes, config, parsing
 // ============================================================
@@ -583,6 +593,9 @@ pub struct LogTail {
     /// 1-based number of the next line, for error messages that name the
     /// same line the offline parser would.
     next_line: usize,
+    /// Injections kept by [`LogTail::skip_history`], returned by the next
+    /// [`LogTail::poll`] before anything appended later.
+    held: Vec<Injection>,
 }
 
 impl LogTail {
@@ -610,6 +623,7 @@ impl LogTail {
             },
             carry: Vec::new(),
             next_line: 1,
+            held: Vec::new(),
         };
         match tail.next_complete_line()? {
             Some(LogLine::Header(h)) => {
@@ -632,7 +646,7 @@ impl LogTail {
 
     /// Injections appended since the previous call, in log order.
     pub fn poll(&mut self) -> Result<Vec<Injection>, String> {
-        let mut out = Vec::new();
+        let mut out = std::mem::take(&mut self.held);
         while let Some(line) = self.next_complete_line()? {
             match line {
                 LogLine::Injection(i) => out.push(i),
@@ -645,6 +659,35 @@ impl LogTail {
             }
         }
         Ok(out)
+    }
+
+    /// Read every injection already in the log and keep only the newest
+    /// `keep_last` for the next `poll` (which returns them first, before
+    /// anything appended later). Returns how many older ones were skipped.
+    /// Linear in the file; memory bounded by `keep_last`.
+    pub fn skip_history(&mut self, keep_last: usize) -> Result<u64, String> {
+        let mut kept: std::collections::VecDeque<Injection> =
+            std::collections::VecDeque::with_capacity(keep_last.min(REATTACH_HISTORY));
+        let mut skipped: u64 = 0;
+        while let Some(line) = self.next_complete_line()? {
+            match line {
+                LogLine::Injection(i) => {
+                    if kept.len() == keep_last {
+                        kept.pop_front();
+                        skipped += 1;
+                    }
+                    kept.push_back(i);
+                }
+                LogLine::Header(_) => {
+                    return Err(format!(
+                        "corruption log {}: a second header line",
+                        self.path.display()
+                    ));
+                }
+            }
+        }
+        self.held = kept.into_iter().collect();
+        Ok(skipped)
     }
 
     /// The next NEWLINE-TERMINATED line, parsed; `None` at the current end
@@ -1588,6 +1631,11 @@ pub struct AttributionReport {
     /// that media before it, is never counted here. Lossy only.
     #[serde(default)]
     pub lost_in_reconnect_gap: u64,
+    /// Injections already in the log at attach that the receiver skipped as
+    /// history it never listened for ([`REATTACH_HISTORY`]); add to
+    /// `injected` when comparing against the sender's total.
+    #[serde(default)]
+    pub history_skipped: u64,
     pub resyncs: u64,
     pub injected_fraction: f64,
     pub attribution_window: u64,
@@ -1850,6 +1898,7 @@ pub struct Attribution {
     declared: DeclaredPcrPids,
     reconnects_seen: u64,
     lost_in_reconnect_gap: u64,
+    history_skipped: u64,
     unexplained_samples: Vec<String>,
     first_unexplained_nc: Option<String>,
     first_unexplained_disc: Option<String>,
@@ -2220,12 +2269,20 @@ impl Attribution {
             declared: DeclaredPcrPids::default(),
             reconnects_seen: 0,
             lost_in_reconnect_gap: 0,
+            history_skipped: 0,
             unexplained_samples: Vec::new(),
             first_unexplained_nc: None,
             first_unexplained_disc: None,
             seen_pcr: false,
             recent_pcrs: VecDeque::with_capacity(PCR_HISTORY),
         }
+    }
+
+    /// Injections the log held before this receiver attached and which it
+    /// deliberately did not ingest (see [`REATTACH_HISTORY`]); reported so
+    /// coverage can be judged against what the sender logged in total.
+    pub fn note_history_skipped(&mut self, n: u64) {
+        self.history_skipped = self.history_skipped.saturating_add(n);
     }
 
     /// Whether this attribution writes unexplained discontinuities off as
@@ -3130,6 +3187,7 @@ impl Attribution {
             pcr_anomalies_excused: self.pcr_anomalies_excused,
             reconnects_seen: self.reconnects_seen,
             lost_in_reconnect_gap: self.lost_in_reconnect_gap,
+            history_skipped: self.history_skipped,
             resyncs: self.resyncs,
             injected_fraction: self.logged as f64 / packets_total.max(1) as f64,
             attribution_window: self.window,
@@ -4179,6 +4237,78 @@ mod tests {
         std::fs::write(&path, b"{\"header\":{").unwrap();
         assert!(LogTail::open(&path).is_err());
         let _ = std::fs::remove_file(&path);
+    }
+
+    fn archive_of(n: usize, tag: &str) -> (std::path::PathBuf, usize) {
+        let b = baseline_bytes(60.0, tag);
+        let (_, text, _) = run_tap(&b, cfg(&Class::ALL, 10_000, 1000));
+        let mut lines = text.lines();
+        let header = lines.next().unwrap();
+        let first = lines.next().expect("fixture must inject");
+        let mut archive = format!("{header}\n");
+        for _ in 0..n {
+            archive.push_str(first);
+            archive.push('\n');
+        }
+        let path = std::env::temp_dir().join(format!(
+            "tst-interop-{tag}-{}-{}.jsonl",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, &archive).unwrap();
+        (path, first.len())
+    }
+
+    /// A receiver attaching to a log that already holds hours of injections
+    /// (a hold's restarted leg) keeps only the newest `keep_last`: older
+    /// anchors are ones it never listened for, and the oldest would sit
+    /// past the 33-bit PCR half-range and block resolution outright.
+    #[test]
+    fn skip_history_keeps_the_newest_injections() {
+        let (path, _) = archive_of(5000, "skip-history");
+        let mut tail = LogTail::open(&path).unwrap();
+        let skipped = tail.skip_history(4096).unwrap();
+        let kept = tail.poll().unwrap();
+        assert_eq!(
+            tail.poll().unwrap().len(),
+            0,
+            "nothing left after the kept tail"
+        );
+        drop(tail);
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(skipped, 904);
+        assert_eq!(kept.len(), 4096);
+    }
+
+    /// Fewer injections than the bound (every first receiver, which attaches
+    /// to a log the sender has barely started): nothing is skipped and the
+    /// order is kept.
+    #[test]
+    fn skip_history_keeps_everything_under_the_bound() {
+        let (path, _) = archive_of(10, "skip-small");
+        let mut tail = LogTail::open(&path).unwrap();
+        assert_eq!(tail.skip_history(4096).unwrap(), 0);
+        let kept = tail.poll().unwrap();
+        drop(tail);
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(kept.len(), 10);
+    }
+
+    /// The skipped count rides in the report so a coverage check can add it
+    /// back to what the receiver ingested.
+    #[test]
+    fn history_skipped_is_reported() {
+        let mut a = Attribution::lossy(vec![inj(1_000, 2, Class::Drop, 0x1011, true)], &hdr());
+        a.note_history_skipped(904);
+        a.on_pcr(1_000, 10);
+        a.on_signal(13, Some(0x1011), Signal::ContinuityJump);
+        a.on_media(20, 0x1011);
+        let r = a.finish(2_000);
+        assert_eq!(r.history_skipped, 904);
+        assert_eq!(r.injected, 1);
     }
 
     /// An injection appended mid-capture is judged like any other once a

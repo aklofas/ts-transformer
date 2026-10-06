@@ -763,6 +763,14 @@ impl Tally {
         }
     }
 
+    /// Pass a [`corrupt::LogTail::skip_history`] count through to the
+    /// attached attribution, so the final report carries it.
+    pub fn note_history_skipped(&mut self, n: u64) {
+        if let Some(a) = self.attribution.as_mut() {
+            a.note_history_skipped(n);
+        }
+    }
+
     /// Offer one event to the attached attribution: an error-class event
     /// as a signal, a media event as evidence of recovery, a reconnect
     /// marker as a gap, a PMT as the declaration of its `PCR_PID`.
