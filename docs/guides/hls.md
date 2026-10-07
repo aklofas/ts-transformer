@@ -33,8 +33,8 @@ shell muxes + segments + writes the playlist for you.
 
 `tst-hls` is supported: it ships default-on in the Python wheels
 (`tstrans.hls`) and behind the opt-in `hls` Cargo feature in the C binding
-(`TST_HAS_HLS`). The JVM binding does not yet expose it — see
-[deferred-features.md](/docs/project/deferred-features.md).
+(`TST_HAS_HLS`), and the JVM binding via `org.tstrans.hls` — see
+[Quickstart (Java)](#quickstart-java) below.
 
 ## Quickstart (Rust)
 

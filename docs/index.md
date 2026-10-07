@@ -32,7 +32,7 @@ policies cover [licensing](/README.md#license),
 | **[Rust](/docs/languages/rust.md)** | Mux/demux, typed KLV, all transports, and low-level APIs | Rust applications; direct access to the core |
 | **[C](/docs/languages/c.md)** | Mux/demux and transport APIs through `tstrans.h`; transports are build-time options | C/C++ applications or another language's native interface |
 | **[Python](/docs/languages/python.md)** | File processing, typed KLV, pandas adapters, live transports, HLS publishing, and pairing | Notebooks, data analysis, and streaming applications |
-| **[JVM](/docs/languages/jvm.md)** | Mux/demux, typed KLV, SRT, RTP/RTSP, and pairing; no UDP, TCP, RIST, or HLS binding | Java, Kotlin, Scala, or other JVM applications |
+| **[JVM](/docs/languages/jvm.md)** | Mux/demux, typed KLV, SRT, RTP/RTSP, HLS publishing, and pairing; no UDP, TCP, or RIST binding | Java, Kotlin, Scala, or other JVM applications |
 | **[Embedded](/docs/languages/embedded.md)** | `no_std` Rust core, offline C static library, and a FreeRTOS SRT reference port | Bare-metal or RTOS firmware |
 
 ## What kind of pages live here?

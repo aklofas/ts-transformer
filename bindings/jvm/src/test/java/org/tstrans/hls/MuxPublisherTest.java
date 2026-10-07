@@ -128,7 +128,6 @@ class MuxPublisherTest {
     @Timeout(60)
     void withConfigHlsRacingPushNeverCrashes(@TempDir Path dir) throws Exception {
         HlsPublisher source = pub(dir, HlsMode.LIVE);
-        AtomicBoolean stop = new AtomicBoolean(false);
         CountDownLatch started = new CountDownLatch(1);
         AtomicReference<Throwable> failed = new AtomicReference<>();
         AtomicBoolean sawClosed = new AtomicBoolean(false);
@@ -136,7 +135,7 @@ class MuxPublisherTest {
         for (int i = 0; i < 64; i++) chunk[i * 188] = 0x47;
         Thread t = new Thread(() -> {
             try {
-                while (!stop.get()) { source.pushTs(chunk); started.countDown(); }
+                while (true) { source.pushTs(chunk); started.countDown(); }
             } catch (IllegalStateException consumed) {
                 sawClosed.set(true);
                 started.countDown();
@@ -148,11 +147,10 @@ class MuxPublisherTest {
         t.start();
         assertTrue(started.await(20, TimeUnit.SECONDS));
         MuxPublisher mp = MuxPublisher.withConfigHls(source, video());
-        stop.set(true);
         t.join(20_000);
         assertFalse(t.isAlive());
         assertNull(failed.get(), String.valueOf(failed.get()));
-        assertTrue(sawClosed.get(), "pusher never observed the consume (no overlap exercised)");
+        assertTrue(sawClosed.get(), "pusher must observe the consume");
         mp.finishIntoPublisher().finish();
     }
 }

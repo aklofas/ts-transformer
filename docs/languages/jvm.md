@@ -30,7 +30,9 @@ jump to:
 - [Publish HLS](#hls-publishing-orgtstranshls).
 - [Pair video with metadata](#pipeline-pairing-orgtstranspipelinepairer).
 
-The JVM binding exposes SRT, RTP/RTSP, and HLS publishing. UDP, TCP, and RIST have no JVM binding; see [binding differences](#where-this-binding-differs-from-the-rust-core).
+The JVM binding exposes SRT, RTP/RTSP, and HLS publishing. UDP, TCP,
+and RIST have no JVM binding; see
+[binding differences](#where-this-binding-differs-from-the-rust-core).
 
 ## Install
 
@@ -2084,6 +2086,8 @@ Python binding's gaps.
   `BackoffStrategy` / `OverflowPolicy` types; the `Managed*` reconnect wrappers.
 - **rtp** — MPEG-TS-over-RTP transport + `MuxSender` / `DemuxReceiver` +
   RTSP client / server + `H264Receiver`.
+- **hls** — `HlsPublisher` + `MuxPublisher` HLS segmenter/server under
+  `org.tstrans.hls`.
 - **pipeline** — `org.tstrans.pipeline.Pairer` pairing shell.
 - **Packaging** — one fat JAR bundling the
   linux-x86_64 / linux-aarch64 / macos-arm64 / windows-x86_64
