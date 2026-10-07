@@ -25,24 +25,50 @@ public final class HlsPublisherBuilder {
 
     HlsPublisherBuilder() {}
 
-    /** HTTP server bind address, e.g. {@code "127.0.0.1:0"} for a kernel-picked port. */
+    /**
+     * HTTP server bind address, e.g. {@code "127.0.0.1:0"} for a kernel-picked port.
+     * If not called, the library binds {@code 127.0.0.1:8080}; a second publisher
+     * in the same process then fails with {@code BIND_FAILED}.
+     */
     public HlsPublisherBuilder bind(String addr) { this.bind = Objects.requireNonNull(addr, "addr"); return this; }
 
     /** Directory for {@code .ts} segments and {@code playlist.m3u8}. */
     public HlsPublisherBuilder outputDir(String path) { this.outputDir = Objects.requireNonNull(path, "path"); return this; }
 
-    /** Target segment duration in milliseconds. */
-    public HlsPublisherBuilder segmentDurationMs(long ms) { this.segmentDurationMs = ms; return this; }
+    /**
+     * Target segment duration in milliseconds.
+     *
+     * @throws IllegalArgumentException if {@code ms <= 0}
+     */
+    public HlsPublisherBuilder segmentDurationMs(long ms) {
+        if (ms <= 0) throw new IllegalArgumentException("segmentDurationMs must be > 0");
+        this.segmentDurationMs = ms;
+        return this;
+    }
 
     /**
      * Force-cut cap on an open segment's wall-clock age. {@code 0} leaves the
      * library default ({@code 2 × segmentDuration}); it does not reset an
      * earlier non-zero value.
+     *
+     * @throws IllegalArgumentException if {@code ms < 0}
      */
-    public HlsPublisherBuilder maxSegmentDurationMs(long ms) { if (ms != 0) this.maxSegmentDurationMs = ms; return this; }
+    public HlsPublisherBuilder maxSegmentDurationMs(long ms) {
+        if (ms < 0) throw new IllegalArgumentException("maxSegmentDurationMs must be >= 0");
+        if (ms != 0) this.maxSegmentDurationMs = ms;
+        return this;
+    }
 
-    /** Segments visible in a LIVE playlist. */
-    public HlsPublisherBuilder playlistWindow(int n) { this.playlistWindow = n; return this; }
+    /**
+     * Segments visible in a LIVE playlist.
+     *
+     * @throws IllegalArgumentException if {@code n < 0}
+     */
+    public HlsPublisherBuilder playlistWindow(int n) {
+        if (n < 0) throw new IllegalArgumentException("playlistWindow must be >= 0");
+        this.playlistWindow = n;
+        return this;
+    }
 
     /** Playlist mode. */
     public HlsPublisherBuilder mode(HlsMode mode) { this.mode = Objects.requireNonNull(mode, "mode"); return this; }

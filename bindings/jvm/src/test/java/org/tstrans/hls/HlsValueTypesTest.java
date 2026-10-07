@@ -25,8 +25,12 @@ class HlsValueTypesTest {
 
     @Test
     void publisherInterfaceMirrorsTheRustTrait() throws Exception {
+        // close() is AutoCloseable's quiet counterpart to finish(), not a trait
+        // method — filtered out here exactly as the mirror rail filters it.
         var names = java.util.Arrays.stream(Publisher.class.getDeclaredMethods())
-            .map(java.lang.reflect.Method::getName).sorted().toList();
+            .map(java.lang.reflect.Method::getName)
+            .filter(name -> !name.equals("close"))
+            .sorted().toList();
         assertEquals(java.util.List.of("cutSegment", "cutSegmentWithDuration", "finish", "pushTs", "stats"), names);
     }
 }

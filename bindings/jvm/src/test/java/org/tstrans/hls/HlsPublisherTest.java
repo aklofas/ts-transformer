@@ -112,12 +112,29 @@ class HlsPublisherTest {
         }
     }
 
+    /**
+     * Build with {@code b}, expecting it to fail with an {@link HlsException}. If it
+     * unexpectedly succeeds, closes the publisher (avoiding a leaked bound port +
+     * runtime threads) and fails the test.
+     */
+    static HlsException expectBuildFailure(HlsPublisherBuilder b) {
+        HlsPublisher p;
+        try {
+            p = b.build();
+        } catch (HlsException e) {
+            return e;
+        }
+        p.close();
+        fail("build unexpectedly succeeded");
+        return null; // unreachable
+    }
+
     @Test
     void bindFailedOnOccupiedPort(@TempDir Path dir) throws Exception {
         try (ServerSocket occupied = new ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress())) {
             int port = occupied.getLocalPort();
-            HlsException e = assertThrows(HlsException.class, () -> HlsPublisher.builder()
-                .bind("127.0.0.1:" + port).outputDir(dir.toString()).build());
+            HlsException e = expectBuildFailure(HlsPublisher.builder()
+                .bind("127.0.0.1:" + port).outputDir(dir.toString()));
             assertEquals(HlsException.Kind.BIND_FAILED, e.kind());
         }
     }
@@ -125,27 +142,27 @@ class HlsPublisherTest {
     @Test
     void invalidConfigRejectedAtBuild(@TempDir Path dir) {
         // LIVE needs playlist_window × segment_duration ≥ 3 × ceil(segment_duration).
-        HlsException e = assertThrows(HlsException.class, () -> HlsPublisher.builder()
+        HlsException e = expectBuildFailure(HlsPublisher.builder()
             .bind("127.0.0.1:0").outputDir(dir.toString())
-            .segmentDurationMs(1000).playlistWindow(1).mode(HlsMode.LIVE).build());
+            .segmentDurationMs(1000).playlistWindow(1).mode(HlsMode.LIVE));
         assertEquals(HlsException.Kind.INVALID_CONFIG, e.kind());
     }
 
     @Test
-    void unreadableCertIsTlsKind(@TempDir Path dir) {
-        // Adjusted under controller ruling (2): crates/tst-hls/src/tls.rs's
-        // load_server_config reads the cert file with std::fs::read(cert)
-        // .map_err(HlsError::Io) BEFORE any TLS-specific parsing, so a missing
-        // PEM file surfaces as HlsError::Io -> BindingErrorKind::HlsIo ->
-        // HlsException.Kind.IO, not TLS. tst-hls only raises HlsError::Tls
-        // once the file has been read and PEM/key parsing itself fails, which
-        // is not reachable with a missing file. Asserting IO here matches the
-        // library as it stands; tst-hls was not changed.
-        HlsException e = assertThrows(HlsException.class, () -> HlsPublisher.builder()
+    void missingCertFileIsIoKind(@TempDir Path dir) {
+        // tst-hls reads the PEM with map_err(HlsError::Io) before any TLS parsing,
+        // so a missing file is IO (TLS covers parse failures).
+        HlsException e = expectBuildFailure(HlsPublisher.builder()
             .bind("127.0.0.1:0").outputDir(dir.toString())
-            .enableTls(dir.resolve("missing.pem").toString(), dir.resolve("missing.key").toString())
-            .build());
+            .enableTls(dir.resolve("missing.pem").toString(), dir.resolve("missing.key").toString()));
         assertEquals(HlsException.Kind.IO, e.kind());
+    }
+
+    @Test
+    void cutSegmentWithDurationRejectsNegative(@TempDir Path dir) throws Exception {
+        try (HlsPublisher pub = open(dir)) {
+            assertThrows(IllegalArgumentException.class, () -> pub.cutSegmentWithDuration(-1));
+        }
     }
 
     @Test
@@ -169,6 +186,13 @@ class HlsPublisherTest {
                 .maxSegmentDurationMs(0).build()) {
             assertNotNull(b);
         }
+    }
+
+    @Test
+    void builderRejectsNegativeAndZeroInputs() {
+        assertThrows(IllegalArgumentException.class, () -> HlsPublisher.builder().segmentDurationMs(0));
+        assertThrows(IllegalArgumentException.class, () -> HlsPublisher.builder().maxSegmentDurationMs(-1));
+        assertThrows(IllegalArgumentException.class, () -> HlsPublisher.builder().playlistWindow(-1));
     }
 
     @Test

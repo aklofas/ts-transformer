@@ -179,9 +179,9 @@ pub(crate) const CODEC_KINDS: &[K] = &[
     K::CodecBufferTooSmall,
 ];
 /// `org.tstrans.HlsException.Kind`: the eight `HlsErrorKind` projections plus
-/// `Closed` (a consumed `MuxPublisher` shell) and `Internal` (a poisoned lock).
-/// The ten rows of `scripts/ratchets/kind-equivalence.tsv` whose JVM column
-/// this binding fills.
+/// `Closed` (a consumed `MuxPublisher` shell) and `Internal` (a poisoned lock,
+/// and `HlsError::Internal`). The ten rows of `scripts/ratchets/kind-equivalence.tsv`
+/// whose JVM column this binding fills.
 pub(crate) const HLS_KINDS: &[K] = &[
     K::HlsIo,
     K::HlsInvalidConfig,

@@ -31,7 +31,7 @@ rust_methods=$(awk '
 java_methods=$(awk '
   /^public interface Publisher/ { in_if = 1; next }
   in_if && /^}/ { in_if = 0 }
-  in_if && /^    [A-Za-z<>\[\]]+ [a-zA-Z]+\(/ {
+  in_if && /^    (default |static )?[A-Za-z<>\[\]]+ [a-zA-Z]+\(/ {
     line = $0
     sub(/\(.*$/, "", line)
     sub(/.* /, "", line)

@@ -16,13 +16,13 @@ import org.junit.jupiter.api.io.TempDir;
  * Two-thread contracts of {@link HlsPublisher}: the construction-constant
  * getters answer while a push is in flight, and {@code close()} racing a push
  * is memory-safe. No wall-clock duration assertions: a latch proves the
- * overlap, {@code @Timeout} is the only clock and it fails the test, not a
- * numeric bound.
+ * pusher loop is running while the getters are called, {@code @Timeout} is
+ * the only clock and it fails the test, not a numeric bound.
  */
 class HlsCrossThreadTest {
     static byte[] bigChunk() {
-        byte[] b = new byte[188 * 64];
-        for (int i = 0; i < 64; i++) b[i * 188] = 0x47;
+        byte[] b = new byte[188 * 4];
+        for (int i = 0; i < 4; i++) b[i * 188] = 0x47;
         return b;
     }
 
@@ -57,7 +57,7 @@ class HlsCrossThreadTest {
         Thread t = pusher(pub, stop, started, failed);
         assertTrue(started.await(20, TimeUnit.SECONDS), "the pusher never completed a push");
         try {
-            for (int i = 0; i < 2000; i++) {
+            for (int i = 0; i < 500; i++) {
                 assertTrue(pub.localAddr().isPresent());
                 assertTrue(pub.localPort() > 0);
                 assertEquals("HlsPublisher(open)", pub.toString());

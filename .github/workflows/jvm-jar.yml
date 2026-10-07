@@ -79,6 +79,10 @@ jobs:
         if: matrix.triple == 'linux-x86_64'
         run: bash scripts/check/jvm/jni-catch-coverage.sh
 
+      - name: check-jvm-publisher-interface-mirror
+        if: matrix.triple == 'linux-x86_64'
+        run: bash scripts/check/jvm/publisher-interface-mirror.sh
+
       # The dev-mode `test` task stages the cdylib into resources/native/<triple>/
       # already renamed to libtstjni.<ext>. Lay it out under native/ for upload.
       - name: Stage native lib for upload
