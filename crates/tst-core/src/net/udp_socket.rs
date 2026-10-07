@@ -88,6 +88,9 @@ pub fn bind_udp_socket_multicast(local: SocketAddr) -> io::Result<UdpSocket> {
 /// Shared by `tst-udp` and `tst-tcp` to avoid copying the same three-line
 /// `SockRef` pattern across every transport's socket-setup function. Only the
 /// `Some(n)` fields are applied; `None` leaves the OS default unchanged.
+/// Each applied value is read back, and a `tracing` warning is logged when
+/// the kernel granted less than requested (Linux clamps silently to
+/// `net.core.rmem_max` / `net.core.wmem_max`).
 ///
 /// # Platform trait bounds
 ///
@@ -121,11 +124,36 @@ fn apply_buffers(
 ) -> io::Result<()> {
     if let Some(n) = rcv {
         sr.set_recv_buffer_size(n)?;
+        warn_if_clamped("SO_RCVBUF", "net.core.rmem_max", n, sr.recv_buffer_size()?);
     }
     if let Some(n) = snd {
         sr.set_send_buffer_size(n)?;
+        warn_if_clamped("SO_SNDBUF", "net.core.wmem_max", n, sr.send_buffer_size()?);
     }
     Ok(())
+}
+
+/// Log a warning when the kernel granted less buffer than requested.
+///
+/// Linux stores twice the request (the extra half is bookkeeping overhead)
+/// and silently caps it at the `*mem_max` sysctl, so an honoured request
+/// reads back as `2 × requested`; anything below that was clamped. Other
+/// platforms store the value as given and refuse an oversize request with
+/// an error instead of clamping, so there the check is `< requested`.
+fn warn_if_clamped(opt: &str, sysctl: &str, requested: usize, effective: usize) {
+    let expected = if cfg!(any(target_os = "linux", target_os = "android")) {
+        requested.saturating_mul(2)
+    } else {
+        requested
+    };
+    if effective < expected {
+        tracing::warn!(
+            requested,
+            effective,
+            "{opt} clamped by the kernel: requested {requested} bytes, got {effective}; \
+             on Linux raise {sysctl} (e.g. `sysctl -w {sysctl}=16777216`)"
+        );
+    }
 }
 
 /// Apply multicast SEND-side knobs (TTL + iface).
@@ -336,4 +364,38 @@ pub fn apply_multicast_recv_join(
         }
     }
     Ok(())
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod buffer_clamp_tests {
+    use super::set_socket_buffers;
+    use std::net::UdpSocket;
+
+    fn rmem_max() -> usize {
+        std::fs::read_to_string("/proc/sys/net/core/rmem_max")
+            .expect("read net.core.rmem_max")
+            .trim()
+            .parse()
+            .expect("numeric rmem_max")
+    }
+
+    /// A request above `net.core.rmem_max` is clamped silently by Linux; the
+    /// helper reads the value back and logs a warning naming the sysctl.
+    #[test]
+    #[tracing_test::traced_test]
+    fn clamped_rcvbuf_logs_a_warning() {
+        let s = UdpSocket::bind("127.0.0.1:0").unwrap();
+        set_socket_buffers(&s, Some(rmem_max() * 4), None).unwrap();
+        assert!(logs_contain("SO_RCVBUF"));
+        assert!(logs_contain("net.core.rmem_max"));
+    }
+
+    /// A request the kernel honours logs nothing.
+    #[test]
+    #[tracing_test::traced_test]
+    fn honoured_rcvbuf_logs_nothing() {
+        let s = UdpSocket::bind("127.0.0.1:0").unwrap();
+        set_socket_buffers(&s, Some(64 * 1024), None).unwrap();
+        assert!(!logs_contain("SO_RCVBUF"));
+    }
 }
