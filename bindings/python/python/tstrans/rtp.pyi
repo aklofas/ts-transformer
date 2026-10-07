@@ -866,9 +866,13 @@ class RtpStats:
 
     `malformed_packets` — datagrams with an invalid RTP header, wrong payload
     type, or empty payload. Cumulative since `listen()`.
+
+    `source_rejected` — datagrams dropped because their peer IP did not match
+    the URL's `?source=` pin; 0 when no pin is set.
     """
 
     malformed_packets: int
+    source_rejected: int
 
     def __repr__(self) -> str: ...
 

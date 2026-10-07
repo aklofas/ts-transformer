@@ -5,7 +5,7 @@
 //! - `H264DepayConfig`       — frozen pyclass with kwargs ctor
 //! - `H264AccessUnit`        — frozen pyclass, get_all fields
 //! - `H264DepayStats`        — frozen pyclass, get_all 9 counters
-//! - `RtpStats`              — frozen pyclass, get_all (malformed_packets)
+//! - `RtpStats`              — frozen pyclass, get_all (malformed_packets, source_rejected)
 //! - `H264Receiver`          — blocking receiver; GIL released in recv_au
 //!   (`end_reason()` / `end_detail()` — see `crate::rtp::end_reason`)
 //!
@@ -337,15 +337,20 @@ impl PyH264DepayStats {
 /// `malformed_packets` — number of received datagrams with an invalid RTP
 /// header, wrong payload type, or empty payload. Cumulative since
 /// `listen()`.
+///
+/// `source_rejected` — datagrams dropped because their peer IP did not match
+/// the URL's `?source=` pin; 0 when no pin is set.
 #[pyclass(name = "RtpStats", module = "tstrans.rtp", frozen, get_all)]
 pub struct PyRtpStats {
     pub malformed_packets: u64,
+    pub source_rejected: u64,
 }
 
 impl PyRtpStats {
     fn from_rust(s: RtpStats) -> Self {
         Self {
             malformed_packets: s.malformed_packets,
+            source_rejected: s.source_rejected,
         }
     }
 }
@@ -353,7 +358,10 @@ impl PyRtpStats {
 #[pymethods]
 impl PyRtpStats {
     fn __repr__(&self) -> String {
-        format!("RtpStats(malformed_packets={})", self.malformed_packets)
+        format!(
+            "RtpStats(malformed_packets={}, source_rejected={})",
+            self.malformed_packets, self.source_rejected
+        )
     }
 }
 

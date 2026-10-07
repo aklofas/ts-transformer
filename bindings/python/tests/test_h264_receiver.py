@@ -327,7 +327,21 @@ def test_h264_receiver_stats_shape() -> None:
     # RtpStats has malformed_packets
     assert hasattr(rs, "malformed_packets")
     assert rs.malformed_packets == 0
+    # ... and source_rejected (0 with no ?source= pin)
+    assert rs.source_rejected == 0
 
     ss = rx.socket_stats()
     assert isinstance(ss, tstrans.rtp.SocketStats)
+    rx.close()
+
+
+def test_h264_receiver_source_pin_and_rcvbuf_url_keys() -> None:
+    """?source= and ?rcvbuf= reach the Rust receiver through the URL; a fresh
+    pinned receiver reports source_rejected == 0."""
+    rx = tstrans.rtp.H264Receiver.listen(
+        "rtp://127.0.0.1:0?pt=96&source=127.0.0.1&rcvbuf=256K"
+    )
+    rs = rx.rtp_stats()
+    assert rs.source_rejected == 0
+    assert "source_rejected=0" in repr(rs)
     rx.close()

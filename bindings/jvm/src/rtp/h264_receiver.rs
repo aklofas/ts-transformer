@@ -425,7 +425,8 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nDepayStats<'local>(
     })
 }
 
-/// `H264Receiver.nRtpStats(handle)` — RTP protocol-level malformed-packet counter.
+/// `H264Receiver.nRtpStats(handle)` — RTP protocol-level counters (malformed
+/// packets, source-pin rejections).
 /// Returns an `RtpStats` Java record.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nRtpStats<'local>(
@@ -445,8 +446,11 @@ pub extern "system" fn Java_org_tstrans_rtp_H264Receiver_nRtpStats<'local>(
         };
         match env.new_object(
             "org/tstrans/rtp/RtpStats",
-            "(J)V",
-            &[JValue::Long(s.malformed_packets as i64)],
+            "(JJ)V",
+            &[
+                JValue::Long(s.malformed_packets as i64),
+                JValue::Long(s.source_rejected as i64),
+            ],
         ) {
             Ok(o) => o.into_raw(),
             Err(e) => {
