@@ -22,6 +22,37 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Python raises `HlsError(FINISHED)`. New rail
   `scripts/check/jvm/publisher-interface-mirror.sh`.
 
+### Added — tst-rtp
+
+From an integrator field report: a `rtp://` receiver ingesting ~6 Mb/s on a
+small ARM board saw steady kernel UDP drops at the default socket buffer, and
+had to pin the sending host with a firewall rule.
+
+- **`?rcvbuf=` / `?sndbuf=` URL keys** — knob parity with `udp://`.
+  `rcvbuf` sizes `SO_RCVBUF` on the RTP receive socket (the RTCP companion
+  keeps the OS default), `sndbuf` sizes `SO_SNDBUF` on the send socket; both
+  accept the `udp://` spellings (`8M`, `512K`, `8388608`). New fields
+  `RtpUrl::rcvbuf` / `RtpUrl::sndbuf`. `H264Receiver::listen` honours
+  `rcvbuf` too. Python and JVM pick the keys up through the URL.
+- **Clamp warning** — the shared socket-buffer helper in `tst-core` now
+  reads the value back and logs a `tracing` warning when the kernel granted
+  less than requested (Linux clamps silently to `net.core.rmem_max` /
+  `net.core.wmem_max`). Applies to `udp://`, `tcp://` and `rtp://`.
+- **Opt-in `?source=<ip>` filter** on the receive path (`RtpRecvTransport`
+  and `H264Receiver`): only datagrams whose peer IP matches are accepted (the
+  port is not compared; IPv4-mapped IPv6 peers compare as IPv4). Others are
+  dropped silently and counted in the new `RtpStats::source_rejected`, also
+  mirrored on Python `tstrans.rtp.RtpStats.source_rejected` and JVM
+  `org.tstrans.rtp.RtpStats.sourceRejected()` (the JVM record's canonical
+  constructor gains a parameter). Literal IPs only. Without the key the
+  receive loop stays on plain `recv`. The C ABI has no `RtpStats` mirror yet,
+  so the counter is not visible from C.
+- **Side-rule errors** — a receive URL with `?sndbuf=` fails with
+  `RtpUrlError::RecvSndbuf`; a send URL with `?rcvbuf=` or `?source=` fails
+  with `RtpUrlError::SendRcvbuf` / `RtpUrlError::SendSource`, matching the
+  existing `RecvPktSize` rule. A malformed `rcvbuf` / `sndbuf` / `source`
+  value is `RtpUrlError::BadQuery` naming the key.
+
 ### Added — CI
 
 - **Weekly native-dependency advisory check** (`.github/workflows/deps-advisory.yml`,

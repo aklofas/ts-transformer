@@ -276,6 +276,16 @@ Diagnosis: `cat /proc/net/udp` (or `ss -unp`) — non-zero `drops` column on the
 
 Fix: set `SocketConfig::udp_recv_buffer_bytes = Some(12_500_000)` (or higher) for the receiver. For 100 ms RTT @ 25 Mbps, ~12.5 MB is the recommended floor. Linux clamps to `net.core.rmem_max` — raise with `sysctl -w net.core.rmem_max=33554432` if needed.
 
+**Kernel drops on a `udp://` or `rtp://` receiver with a slow consumer**
+
+A raw `udp://` or `rtp://` receiver has no retransmission, so a burst the kernel socket buffer cannot hold is lost for good: the demuxer reports continuity-counter gaps or corrupt frames, typically above a few Mb/s when the per-packet consumer is slow (a small board, a heavy decode step).
+
+Diagnosis: `ss -uamp` (look at the `d<N>` drop counter in `skmem`) or the `drops` column of `/proc/net/udp` on the receive port.
+
+Fix: raise the receive buffer on the URL, e.g. `rtp://0.0.0.0:5004?rcvbuf=8M` (same key on `udp://`). Linux clamps the request to `net.core.rmem_max`; a warning is logged when that happens — raise it with `sysctl -w net.core.rmem_max=16777216`.
+
+To accept datagrams from one sending host only, add `?source=<ip>` to the `rtp://` receive URL; datagrams from any other IP are dropped and counted in `RtpStats::source_rejected` (Python `source_rejected`, JVM `sourceRejected()`).
+
 ## All `UnpairedVideo`, zero `Paired`
 
 **Symptom:** Using `tst_pipeline::Pairer::with_config` with `PairerMode::Realtime`,
