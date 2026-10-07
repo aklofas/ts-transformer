@@ -34,7 +34,18 @@ public final class HlsPublisher extends NativeHandle implements Publisher {
     /** A fresh builder. */
     public static HlsPublisherBuilder builder() { return new HlsPublisherBuilder(); }
 
-    /** Package-private: {@link MuxPublisher#withConfigHls} claims the handle before its native. */
+    /**
+     * Package-private: {@link MuxPublisher#withConfigHls} reads the live handle
+     * without consuming it, so a config rejected before the native takes the
+     * publisher leaves this object fully usable.
+     */
+    long liveHandleForShell() { return requireOpen("HlsPublisher is closed"); }
+
+    /**
+     * Package-private: {@link MuxPublisher#withConfigHls} claims the handle
+     * only after the native call reports the shell was built successfully —
+     * the native's own registry take is the single atomic claim.
+     */
     long consumeHandleForShell() { return consumeHandle(); }
 
     @Override
