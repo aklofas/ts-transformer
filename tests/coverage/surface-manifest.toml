@@ -7138,9 +7138,21 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 item = "tst_core::cancel::CancelSlot::default"
 reason = "derive(Default); exercised through CancelSlot::new in crates/tst-core/src/cancel.rs"
 
-[[exempt]]
+# MuxPublisher<P> is generic, so cargo public-api's bracket truncation
+# collapses the struct line AND every one of its methods (with_config,
+# send_video, send_klv, send_audio, send_subtitle, send_data, send_video_misp,
+# cut_segment, finish, stats, publisher_stats) onto this one item key — there
+# is no per-method row to graduate separately. send_data and send_video_misp
+# have no binding twin in Python or JVM today and are deliberately absent from
+# the columns below; every other method's JVM/Python twin is named.
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
 item = "tst_pipeline::mux_publisher::MuxPublisher"
-reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
+owning_tests = ["bindings/jvm/src/test/java/org/tstrans/hls/MuxPublisherTest.java"]
+bindings = ["java:org.tstrans.hls.MuxPublisher", "java:org.tstrans.hls.MuxPublisher.withConfigHls", "java:org.tstrans.hls.MuxPublisher.sendVideo", "java:org.tstrans.hls.MuxPublisher.sendKlv", "java:org.tstrans.hls.MuxPublisher.sendAudio", "java:org.tstrans.hls.MuxPublisher.sendSubtitle", "java:org.tstrans.hls.MuxPublisher.cutSegment", "java:org.tstrans.hls.MuxPublisher.finishIntoPublisher", "java:org.tstrans.hls.MuxPublisher.stats", "java:org.tstrans.hls.MuxPublisher.publisherStats", "python:tstrans.hls.MuxPublisher", "python:tstrans.hls.MuxPublisher.with_config_hls", "python:tstrans.hls.MuxPublisher.send_video", "python:tstrans.hls.MuxPublisher.send_klv", "python:tstrans.hls.MuxPublisher.send_audio", "python:tstrans.hls.MuxPublisher.send_subtitle", "python:tstrans.hls.MuxPublisher.cut_segment", "python:tstrans.hls.MuxPublisher.finish_into_publisher", "python:tstrans.hls.MuxPublisher.stats", "python:tstrans.hls.MuxPublisher.publisher_stats", "c:unaudited", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
 
 [[exempt]]
 item = "tst_pipeline::mux_publisher::MuxPublisherError"

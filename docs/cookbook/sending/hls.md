@@ -60,6 +60,16 @@ let publisher = shell.finish()?;
 publisher.finish()?;  // writes final playlist + #EXT-X-ENDLIST (Event/Vod modes)
 ```
 
+### Java
+
+```java
+HlsPublisher pub = HlsPublisher.builder().outputDir("/var/cache/hls")
+    .segmentDurationMs(4000).maxSegmentDurationMs(8000).playlistWindow(6).mode(HlsMode.LIVE).build();
+pub.pushTs(tsPackets);          // whole 188-byte packets
+pub.cutSegment();               // at an IDR boundary
+try (HlsServerHandle h = pub.finishServing()) { /* terminal playlist stays fetchable */ }
+```
+
 ## Keep a completed VOD / EVENT playlist watchable
 
 `Publisher::finish` writes the terminal playlist and tears the server down —

@@ -27,10 +27,10 @@ jump to:
   [use RTP](#rtp-transport-orgtstransrtp).
 - [Connect to an RTSP source](#rtsp-client-orgtstransrtp) or
   [run an RTSP server](#rtsp-server-orgtstransrtp).
+- [Publish HLS](#hls-publishing-orgtstranshls).
 - [Pair video with metadata](#pipeline-pairing-orgtstranspipelinepairer).
 
-The JVM binding exposes SRT and RTP/RTSP. UDP, TCP, RIST, and HLS have no
-JVM binding; see [binding differences](#where-this-binding-differs-from-the-rust-core).
+The JVM binding exposes SRT, RTP/RTSP, and HLS publishing. UDP, TCP, and RIST have no JVM binding; see [binding differences](#where-this-binding-differs-from-the-rust-core).
 
 ## Install
 
@@ -1846,6 +1846,55 @@ no "no socket" code path once constructed.
 - **RTCP is not processed on the H.264 path.** No RR/SR is sent, and
   received RTCP is discarded.
 
+## HLS publishing (`org.tstrans.hls`)
+
+`HlsPublisher` segments pushed MPEG-TS to `.ts` files plus a rolling
+`playlist.m3u8` and serves them over a built-in HTTP(S) server;
+`MuxPublisher` owns a muxer and an `HlsPublisher` so you push elementary
+streams instead of TS bytes. Mirrors `tstrans.hls`.
+
+```java
+import org.tstrans.hls.HlsMode;
+import org.tstrans.hls.HlsPublisher;
+import org.tstrans.hls.MuxPublisher;
+import org.tstrans.mpegts.KlvStreamType;
+import org.tstrans.mpegts.MuxerConfig;
+import org.tstrans.mpegts.VideoCodec;
+
+HlsPublisher publisher = HlsPublisher.builder()
+    .bind("127.0.0.1:8080")            // loopback by default; front with a proxy to expose
+    .outputDir("/var/cache/hls")
+    .segmentDurationMs(4000)
+    .playlistWindow(6)
+    .mode(HlsMode.LIVE)
+    .build();
+System.out.println("serving http://" + publisher.localAddr().orElseThrow() + "/playlist.m3u8");
+
+MuxerConfig program = MuxerConfig.builder()
+    .programNumber(1).pmtPid(0x100)
+    .addVideo(0x101, VideoCodec.H264)
+    .addKlv(0x102, KlvStreamType.SYNCHRONOUS_METADATA, true)
+    .build();
+
+MuxPublisher shell = MuxPublisher.withConfigHls(publisher, program); // consumes `publisher`
+shell.sendVideo(annexBNal, pts, /*keyFrame=*/ true);   // a key frame cuts a segment
+shell.sendKlv(klvBytes, pts, 0);                        // raw LS bytes; AU-cell added by the muxer
+
+HlsPublisher back = shell.finishIntoPublisher();        // consumes the shell
+back.finish();                                          // or back.finishServing() to keep serving
+```
+
+Pre-muxed TS goes straight in with `publisher.pushTs(bytes)` (whole 188-byte
+packets, else `HlsException(UNALIGNED_PUSH_TS)`) and `cutSegment()` /
+`cutSegmentWithDuration(us)`. `finishServing()` returns an `HlsServerHandle`
+that keeps the terminal playlist fetchable until `shutdown()`.
+`HlsPublisher.builder().fromUrl("hls://127.0.0.1:8080?segment_duration=4")`
+seeds a builder from a URL; later setters overlay it. Basic auth
+(`basicAuth(user, pass)`) and HTTPS (`enableTls(certPem, keyPem)`) are on the
+builder. Errors are `HlsException` with `Kind` {`IO`, `INVALID_CONFIG`,
+`FINISHED`, `TLS`, `URL`, `BIND_FAILED`, `UNALIGNED_PUSH_TS`, `TLS_DISABLED`,
+`CLOSED`, `INTERNAL`}; a muxer rejection from `MuxPublisher` is a `MuxException`.
+
 ## Pipeline pairing (`org.tstrans.pipeline.Pairer`)
 
 MPEG-TS programs that carry synchronized KLV metadata (e.g. MISB ST 0601 UAS
@@ -1979,7 +2028,9 @@ Gotchas:
   `Builder`/`Socket`/`Listener`/`CancelHandle` + the `MuxSender`/
   `DemuxReceiver` convenience shells + the `Managed*` reconnect family),
   the `org.tstrans.rtp` RTP transport surface (`Sender`/`Receiver` +
-  `MuxSender`/`DemuxReceiver` + RTSP client/server), the
+  `MuxSender`/`DemuxReceiver` + RTSP client/server), the `org.tstrans.hls`
+  HLS publisher family (`HlsPublisher`/`HlsPublisherBuilder`/
+  `HlsServerHandle` + the `MuxPublisher` shell), the
   `org.tstrans.pipeline` pairing shell (`Pairer`), and the
   `org.tstrans.Version` bootstrap.
 - **JDK 17 baseline.** The examples use `instanceof` pattern matching, not
@@ -2004,6 +2055,11 @@ Gotchas:
   seen".** The C ABI has no nullable type in its getter shape, so it
   uses a `0` sentinel; this binding's boxed `Long` `null` is the honest
   absent value (same convention as Python's `None`).
+- **A finished or consumed HLS handle throws `IllegalStateException`**, like
+  every other closed handle here; Python raises `HlsError(FINISHED)` for the
+  same state. `HlsException.Kind.FINISHED` is still declared because the
+  Rust library can raise it. `close()` on `HlsPublisher` / `MuxPublisher` is
+  quiet (finish, errors dropped); `finish()` throws.
 
 The Rust page's "Where this binding differs from the Rust core" section
 treats Rust as the canonical surface; everything here is a subset of it.

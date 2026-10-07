@@ -67,15 +67,14 @@ mean **Deferred**. An entry whose feature has shipped must never read
 
 ## JVM HLS surface
 
-- **Status:** Not implemented. The HLS publisher is exposed in Rust, C
-  (`TST_HAS_HLS`), and Python (wheels ship it), but the JVM binding
-  (`tst-jni`) carries no HLS dependency and exposes no `HlsPublisher` /
-  `MuxPublisher` classes.
+- **Status:** SHIPPED (Unreleased; ships with the next tag). `org.tstrans.hls`
+  mirrors `tstrans.hls` class for class; the GIS demo site is the JVM
+  consumer the trigger waited for.
 - **Why deferred:** No JVM consumer has asked. The publisher surface maps
   mechanically onto the JNI patterns already used for the mux-sender family
   (builder + handle + `finish_serving` handle), so the port is bounded when
   a consumer arrives.
-- **Trigger to revisit:** A JVM consumer asks for HLS output.
+- **Trigger to revisit:** none — shipped.
 
 ## In-memory HLS `SegmentSink`
 
@@ -1963,8 +1962,8 @@ Entries whose feature shipped. Kept for the record (the decision that closed the
   - Segments open on a decodable boundary (PAT → PMT → IDR), so a joining
     player can decode the first segment it fetches.
 - See the [HLS guide](/docs/guides/hls.md) for the full surface, serving
-  guidance, KLV ride-along, and latency tuning. The JVM binding does not
-  yet expose HLS (see the "JVM HLS surface" entry in the ledger).
+  guidance, KLV ride-along, and latency tuning. The JVM binding exposes HLS
+  since this entry shipped (see the JVM guide).
 
 ### `klv::st0806` RVT typed layer — SHIPPED
 
