@@ -62,6 +62,7 @@ pub(crate) enum Domain {
     KlvDecode,
     KlvEncode,
     Codec,
+    Hls,
 }
 
 use BindingErrorKind as K;
@@ -177,9 +178,25 @@ pub(crate) const CODEC_KINDS: &[K] = &[
     K::CodecNalLengthOverflow,
     K::CodecBufferTooSmall,
 ];
+/// `org.tstrans.HlsException.Kind`: the eight `HlsErrorKind` projections plus
+/// `Closed` (a consumed `MuxPublisher` shell) and `Internal` (a poisoned lock).
+/// The ten rows of `scripts/ratchets/kind-equivalence.tsv` whose JVM column
+/// this binding fills.
+pub(crate) const HLS_KINDS: &[K] = &[
+    K::HlsIo,
+    K::HlsInvalidConfig,
+    K::HlsFinished,
+    K::HlsTls,
+    K::HlsUrl,
+    K::HlsBindFailed,
+    K::HlsUnalignedPushTs,
+    K::HlsTlsDisabled,
+    K::Closed,
+    K::Internal,
+];
 
 impl Domain {
-    pub(crate) const ALL: [Domain; 8] = [
+    pub(crate) const ALL: [Domain; 9] = [
         Domain::Srt,
         Domain::Rtp,
         Domain::Rtsp,
@@ -188,6 +205,7 @@ impl Domain {
         Domain::KlvDecode,
         Domain::KlvEncode,
         Domain::Codec,
+        Domain::Hls,
     ];
 
     /// JNI class name of the domain's exception.
@@ -201,6 +219,7 @@ impl Domain {
             Domain::KlvDecode => "org/tstrans/KlvDecodeException",
             Domain::KlvEncode => "org/tstrans/KlvEncodeException",
             Domain::Codec => "org/tstrans/CodecParseException",
+            Domain::Hls => "org/tstrans/HlsException",
         }
     }
 
@@ -217,6 +236,7 @@ impl Domain {
             Domain::KlvDecode => KLV_DECODE_KINDS,
             Domain::KlvEncode => KLV_ENCODE_KINDS,
             Domain::Codec => CODEC_KINDS,
+            Domain::Hls => HLS_KINDS,
         }
     }
 }
@@ -944,6 +964,7 @@ mod tests {
             (Domain::KlvDecode, 7),
             (Domain::KlvEncode, 11),
             (Domain::Codec, 15),
+            (Domain::Hls, 10),
         ] {
             let members: std::collections::BTreeSet<&str> =
                 d.kinds().iter().map(|k| k.name()).collect();
@@ -954,7 +975,7 @@ mod tests {
             );
             assert_eq!(members.len(), n, "{d:?}: {members:?}");
         }
-        assert_eq!(Domain::ALL.len(), 8);
+        assert_eq!(Domain::ALL.len(), 9);
     }
 
     /// A receiver shell's clean end of stream projects to a kind the SRT

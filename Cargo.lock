@@ -2040,6 +2040,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tst-core",
+ "tst-hls",
  "tst-pipeline",
  "tst-rtp",
  "tst-srt",
