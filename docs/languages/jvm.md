@@ -1621,6 +1621,8 @@ the iterator wraps it in an unchecked `RuntimeException`.
 > `NativeLoader.load()` verifies at load time that the JAR's enums carry every
 > kind the native library can raise.
 
+An `rtp://` receive URL also takes `?rcvbuf=` (kernel receive buffer, e.g. `8M` for high-bitrate streams) and `?source=<ip>` (accept datagrams from one sending host only); see [Performance and reliability](/docs/troubleshooting.md#performance-and-reliability).
+
 ## RTSP client (`org.tstrans.rtp`)
 
 Connect to an RTSP server, drive OPTIONS/DESCRIBE/SETUP/PLAY, and demux the RTP

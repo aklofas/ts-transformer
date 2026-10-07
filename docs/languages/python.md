@@ -936,6 +936,8 @@ URL accepts the same `?recv_timeout=` key; it carries through
 alive, unlike `CLOSED` or `BROKEN`. (`RtpErrorKind.TIMEOUT` remains as a
 deprecated alias of `BACKPRESSURE` for 0.7.x.)
 
+An `rtp://` receive URL also takes `?rcvbuf=` (kernel receive buffer, e.g. `8M` for high-bitrate streams) and `?source=<ip>` (accept datagrams from one sending host only); see [Performance and reliability](/docs/troubleshooting.md#performance-and-reliability).
+
 ### RTSP client
 
 `RtspClient.connect(config)` runs OPTIONS / DESCRIBE / SETUP / PLAY and

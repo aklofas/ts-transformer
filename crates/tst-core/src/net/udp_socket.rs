@@ -137,9 +137,11 @@ fn apply_buffers(
 ///
 /// Linux stores twice the request (the extra half is bookkeeping overhead)
 /// and silently caps it at the `*mem_max` sysctl, so an honoured request
-/// reads back as `2 × requested`; anything below that was clamped. Other
-/// platforms store the value as given and refuse an oversize request with
-/// an error instead of clamping, so there the check is `< requested`.
+/// reads back as `2 × requested`; anything below that was clamped. macOS
+/// stores the value as given and refuses a request above
+/// `kern.ipc.maxsockbuf` with `ENOBUFS` (surfaced as an error, not a
+/// clamp); Windows stores the value as given. There the check is
+/// `< requested`.
 fn warn_if_clamped(opt: &str, sysctl: &str, requested: usize, effective: usize) {
     let expected = if cfg!(any(target_os = "linux", target_os = "android")) {
         requested.saturating_mul(2)

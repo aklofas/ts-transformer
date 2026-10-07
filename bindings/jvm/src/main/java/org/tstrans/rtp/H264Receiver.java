@@ -42,7 +42,8 @@ import org.tstrans.RtpException;
  *       directly (not wrapped in a {@code TransportStats}). The Rust/Python surface
  *       has the same asymmetry — {@code H264Receiver.socket_stats()} returns a bare
  *       {@code SocketStats}; {@code DemuxReceiver.stats()} returns a combined view.
- *   <li>{@link #rtpStats()} — protocol-level anomaly counter (malformed packets).
+ *   <li>{@link #rtpStats()} — protocol-level counters (malformed packets, and
+ *       datagrams rejected by a {@code ?source=} pin).
  *   <li>{@link #depayStats()} — RFC 6184 depacketizer internals (AU counts, seq
  *       gaps, parameter-set updates).
  * </ul>

@@ -284,7 +284,7 @@ Diagnosis: `ss -uamp` (look at the `d<N>` drop counter in `skmem`) or the `drops
 
 Fix: raise the receive buffer on the URL, e.g. `rtp://0.0.0.0:5004?rcvbuf=8M` (same key on `udp://`). Linux clamps the request to `net.core.rmem_max`; a warning is logged when that happens — raise it with `sysctl -w net.core.rmem_max=16777216`.
 
-To accept datagrams from one sending host only, add `?source=<ip>` to the `rtp://` receive URL; datagrams from any other IP are dropped and counted in `RtpStats::source_rejected` (Python `source_rejected`, JVM `sourceRejected()`).
+To accept datagrams from one sending host only, add `?source=<ip>` to the `rtp://` receive URL; datagrams from any other IP are dropped silently on every receive path. The drop count is `RtpStats::source_rejected`, readable from `RtpRecvTransport::rtp_stats()` (Rust) and from `H264Receiver` `rtp_stats()` in Rust, Python and JVM (`rtpStats().sourceRejected()`). It is not yet surfaced through `DemuxReceiver` or the Python/JVM MPEG-TS receivers — the same gap `malformed_packets` has.
 
 ## All `UnpairedVideo`, zero `Paired`
 

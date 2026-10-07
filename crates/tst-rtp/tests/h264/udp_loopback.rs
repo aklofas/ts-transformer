@@ -349,3 +349,42 @@ fn h264_source_pin_drops_and_counts_other_peers() {
     assert_eq!(rx.rtp_stats().source_rejected, pkts.len() as u64);
     assert_eq!(rx.depay_stats().aus_emitted, 0);
 }
+
+/// `?source=` + `?rcvbuf=` on the elementary-RTP receiver: an AU sent from
+/// the pinned peer (127.0.0.1) is delivered byte-identical and nothing is
+/// counted as rejected. Runs on every platform (only 127.0.0.1 is used).
+#[test]
+fn h264_source_pin_delivers_the_pinned_peer() {
+    const PT: u8 = 96;
+    let mut config = H264DepayConfig::default();
+    config.parameter_set_injection = ParameterSetInjection::None;
+    config.initial_parameter_sets = Vec::new();
+    let mut rx = H264Receiver::listen_with(
+        &tst_rtp::RtpUrl::parse(&format!(
+            "rtp://127.0.0.1:0?pt={PT}&source=127.0.0.1&rcvbuf=1M"
+        ))
+        .unwrap(),
+        config,
+    )
+    .unwrap();
+    let dst = rx
+        .local_addr()
+        .expect("bound UDP receiver has a local addr");
+
+    let nalus = vec![vec![0x65, 0x88, 0x84, 0x21]];
+    let pkts = packetize(&[(0, nalus.clone())], 1400, 1, 0xDEAD_BEEF, PT);
+    let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
+    for p in &pkts {
+        tx.send_to(p, dst).unwrap();
+    }
+
+    // The packets are queued before the call; the marker bit on the last
+    // one completes the AU, so this returns without waiting out the bound.
+    let au = rx
+        .recv_au_timeout(std::time::Duration::from_secs(5))
+        .expect("recv must not fail")
+        .expect("AU from the pinned peer must be delivered");
+    assert_eq!(au.annexb, expected_annexb(&nalus));
+    assert_eq!(rx.rtp_stats().source_rejected, 0);
+    assert_eq!(rx.rtp_stats().malformed_packets, 0);
+}
