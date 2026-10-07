@@ -11,7 +11,7 @@ import org.tstrans.NativeLoader;
  * {@code tstrans.hls.HlsPublisher}; wraps {@code tst_hls::HlsPublisher}.
  *
  * <p><b>Lifecycle.</b> {@link #finish()} and {@link #finishServing()} consume the
- * publisher; {@link MuxPublisher#withConfigHls} consumes it too. Afterwards every
+ * publisher; {@code MuxPublisher#withConfigHls} consumes it too. Afterwards every
  * method throws {@link IllegalStateException} (the JVM-wide closed-handle
  * convention; Python raises {@code HlsError(FINISHED)} for the same state).
  * {@link #close()} is the quiet form: finish, errors dropped, idempotent.
@@ -85,13 +85,19 @@ public final class HlsPublisher extends NativeHandle implements Publisher {
         return nHlsStats(peekHandle());
     }
 
-    /** Bound server address as {@code "ip:port"}; empty if built without a server. */
+    /**
+     * Bound server address as {@code "ip:port"}; the library default is
+     * {@code 127.0.0.1:8080} when {@link HlsPublisherBuilder#bind} was not called.
+     */
     public Optional<String> localAddr() {
         ensureOpen("HlsPublisher is closed");
         return Optional.ofNullable(localAddr);
     }
 
-    /** Bound TCP port; {@code 0} if built without a server. */
+    /**
+     * Bound TCP port; the library default is {@code 8080} when
+     * {@link HlsPublisherBuilder#bind} was not called.
+     */
     public int localPort() {
         ensureOpen("HlsPublisher is closed");
         if (localAddr == null) return 0;

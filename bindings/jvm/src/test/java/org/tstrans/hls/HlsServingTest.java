@@ -2,6 +2,7 @@ package org.tstrans.hls;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -127,6 +128,10 @@ class HlsServingTest {
         HlsServerHandle h = pub.finishServing();
         int port = h.localPort();
         h.shutdown();
+        // The listener is gone: a GET against the old port fails to connect,
+        // proving shutdown() actually released it (not just cancelled a handle).
+        HttpClient c = HttpClient.newHttpClient();
+        assertThrows(IOException.class, () -> get(c, "http://127.0.0.1:" + port + "/playlist.m3u8", null));
         h.close();
         h.shutdown();
         assertThrows(IllegalStateException.class, h::localPort);

@@ -6,6 +6,7 @@ import java.util.Arrays;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.tstrans.internal.HlsProbe;
 
 class HlsErrorModelTest {
@@ -29,6 +30,7 @@ class HlsErrorModelTest {
 
     /** Every kind round-trips through the one Rust raise path (jni-test-hooks probe). */
     @Test
+    @EnabledIfSystemProperty(named = "tst.jniTestHooks", matches = "true")
     void everyKindRoundTripsFromRust() {
         for (HlsException.Kind k : HlsException.Kind.values()) {
             HlsException e = assertThrows(HlsException.class,

@@ -24,4 +24,7 @@ public interface Publisher extends AutoCloseable {
 
     /** Universal stats snapshot. */
     PublisherStats stats();
+
+    /** Quiet counterpart of {@link #finish()}: never throws; idempotent. */
+    @Override void close();
 }
