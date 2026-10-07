@@ -9,6 +9,19 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — JVM binding: HLS publishing (`org.tstrans.hls`)
+
+- **`org.tstrans.hls`** mirrors `tstrans.hls` class for class: `HlsPublisher`
+  (+ `HlsPublisherBuilder`, `HlsServerHandle` via `finishServing()`),
+  `MuxPublisher` (muxer + HLS sink; `withConfigHls` consumes the publisher,
+  `finishIntoPublisher` hands it back), the `Publisher` interface, `HlsMode`,
+  `PublisherStats` / `HlsStats` / `MuxPublisherStats`, and `HlsException`
+  with the same ten kinds C and Python report (the kind table's JVM column
+  is now total for HLS). Binding parity, no library change. A finished or
+  consumed handle throws `IllegalStateException` (the JVM convention) where
+  Python raises `HlsError(FINISHED)`. New rail
+  `scripts/check/jvm/publisher-interface-mirror.sh`.
+
 ### Added — CI
 
 - **Weekly native-dependency advisory check** (`.github/workflows/deps-advisory.yml`,

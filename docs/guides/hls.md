@@ -123,6 +123,41 @@ pub = mp.finish_into_publisher()   # recover the publisher to finish it cleanly
 pub.finish()
 ```
 
+## Quickstart (Java)
+
+The JVM surface mirrors the Rust and Python ones under `org.tstrans.hls`:
+
+```java
+import org.tstrans.hls.HlsMode;
+import org.tstrans.hls.HlsPublisher;
+import org.tstrans.hls.MuxPublisher;
+import org.tstrans.mpegts.KlvStreamType;
+import org.tstrans.mpegts.MuxerConfig;
+import org.tstrans.mpegts.VideoCodec;
+
+HlsPublisher publisher = HlsPublisher.builder()
+    .bind("127.0.0.1:8080")            // loopback by default; front with a proxy to expose
+    .outputDir("/var/cache/hls")
+    .segmentDurationMs(4000)
+    .playlistWindow(6)
+    .mode(HlsMode.LIVE)
+    .build();
+System.out.println("serving http://" + publisher.localAddr().orElseThrow() + "/playlist.m3u8");
+
+MuxerConfig program = MuxerConfig.builder()
+    .programNumber(1).pmtPid(0x100)
+    .addVideo(0x101, VideoCodec.H264)
+    .addKlv(0x102, KlvStreamType.SYNCHRONOUS_METADATA, true)
+    .build();
+
+MuxPublisher shell = MuxPublisher.withConfigHls(publisher, program); // consumes `publisher`
+shell.sendVideo(annexBNal, pts, /*keyFrame=*/ true);   // a key frame cuts a segment
+shell.sendKlv(klvBytes, pts, 0);                        // raw LS bytes; AU-cell added by the muxer
+
+HlsPublisher back = shell.finishIntoPublisher();        // consumes the shell
+back.finish();                                          // or back.finishServing() to keep serving
+```
+
 ## Modes and `finish_serving`
 
 | Mode | Playlist behavior | ENDLIST written? | Disk eviction? |
