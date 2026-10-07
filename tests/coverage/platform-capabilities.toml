@@ -83,6 +83,32 @@ Tier-A runner, not by an upstream bug or a code gap.
 """
 
 [[platform_skip]]
+file = "crates/tst-rtp/tests/rtp/loopback_unicast.rs"
+platform = "macos-arm64,windows-msvc"
+capability = "second_loopback_address"
+class = "portability"
+note = """
+Nothing is skipped: `source_pin_drops_and_counts_other_peers` runs on every
+platform. Only its mismatching-peer half is item-level
+`#[cfg(target_os = \"linux\")]`: it sends from 127.0.0.2, which Linux answers
+on (all of 127.0.0.0/8) but macOS and Windows do not bind by default. On those
+platforms the test still checks that the pinned 127.0.0.1 peer is delivered
+and that source_rejected stays 0.
+"""
+
+[[platform_skip]]
+file = "crates/tst-rtp/tests/h264/udp_loopback.rs"
+platform = "macos-arm64,windows-msvc"
+capability = "second_loopback_address"
+class = "portability"
+note = """
+`h264_source_pin_drops_and_counts_other_peers` is `#[cfg(target_os = \"linux\")]`:
+it sends from 127.0.0.2, which only Linux answers on by default (macOS and
+Windows bind 127.0.0.1 only). The MP2T twin in tests/rtp/loopback_unicast.rs
+covers the shared filter code on every platform with the pinned peer.
+"""
+
+[[platform_skip]]
 file = "crates/tst-rtp/tests/rtsp_server/interleaved_frame_boundary.rs"
 platform = "windows-msvc"
 capability = "tcp_fin_after_sd_send"
