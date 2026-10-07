@@ -34,6 +34,9 @@ public final class HlsPublisher extends NativeHandle implements Publisher {
     /** A fresh builder. */
     public static HlsPublisherBuilder builder() { return new HlsPublisherBuilder(); }
 
+    /** Package-private: {@link MuxPublisher#withConfigHls} claims the handle before its native. */
+    long consumeHandleForShell() { return consumeHandle(); }
+
     @Override
     public void pushTs(byte[] tsBytes) throws HlsException {
         ensureOpen("HlsPublisher is closed");
