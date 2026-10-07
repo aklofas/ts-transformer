@@ -2,12 +2,16 @@
 //! `tst_pipeline::MuxPublisher<tst_hls::HlsPublisher>` (a `Muxer` + the HLS
 //! sink in one shell). Ports tst-py's `bindings/python/src/hls/mux_publisher.rs`.
 //!
-//! `nWithConfigHls` CONSUMES the `HlsPublisher` handle (taken through
-//! `publisher::REGISTRY.close`, the same path `finish` uses) and builds the
-//! `MuxerConfig` through the shared parallel-array helper `MuxSender.nFromUrl`
-//! uses. `nFinishIntoPublisher` consumes the shell and re-registers the inner
-//! publisher as a fresh `HlsPublisher` handle. Sends take `&self` (the shell
-//! serialises internally), so they lease with the non-poisoning `with`.
+//! `nWithConfigHls` builds the `MuxerConfig` through the shared parallel-array
+//! helper `MuxSender.nFromUrl` uses FIRST, then CONSUMES the `HlsPublisher`
+//! handle (taken through `publisher::REGISTRY.close`, the same path `finish`
+//! uses) — that `close` is the single atomic claim, on both the Rust and the
+//! Java side: the Java caller passes its handle live and only zeroes it once
+//! this call has returned a nonzero shell handle, so a rejected config never
+//! consumes the publisher. `nFinishIntoPublisher` consumes the shell and
+//! re-registers the inner publisher as a fresh `HlsPublisher` handle. Sends
+//! take `&self` (the shell serialises internally), so they lease with the
+//! non-poisoning `with`.
 
 use std::sync::LazyLock;
 
@@ -60,8 +64,11 @@ fn build_mux_publisher_stats<'local>(
 }
 
 /// `nWithConfigHls(publisherHandle, ...programConfig...)` — consume the
-/// publisher, build the shell. The Java side has already zeroed the
-/// publisher's handle; a registry miss here is "already consumed".
+/// publisher, build the shell. The Java side passes the LIVE handle and
+/// zeroes it only after this returns nonzero, so the `REGISTRY_HLS.close`
+/// below is the single atomic claim; a registry miss here means a
+/// concurrent `close()`/`finish()`/`withConfigHls` on the same publisher won
+/// the race.
 #[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
 pub extern "system" fn Java_org_tstrans_hls_MuxPublisher_nWithConfigHls<'local>(
