@@ -9,6 +9,7 @@ use tst_pipeline::binding::{BindingError, BindingErrorKind};
 use crate::error::{Domain, throw_binding};
 
 /// `org.tstrans.HlsException(Kind.<kind.name()>, message)`.
+#[allow(dead_code)] // consumed by test_hooks.rs's HlsProbe.nRaise, built only under jni-test-hooks
 pub(crate) fn throw_hls(env: &mut JNIEnv, kind: BindingErrorKind, message: &str) {
     throw_binding(
         env,
@@ -22,7 +23,6 @@ pub(crate) fn throw_hls(env: &mut JNIEnv, kind: BindingErrorKind, message: &str)
 
 /// Any `tst_hls::HlsError` (incl. an `HlsUrlError` via `Into<HlsError>`)
 /// through the shared `From<HlsError> for BindingError`: the error's own kind.
-#[allow(dead_code)] // consumed by the publisher.rs / server_handle.rs native bodies (Tasks 3, 4)
 pub(crate) fn hls_error(env: &mut JNIEnv, e: impl Into<HlsError>) {
     throw_binding(env, Domain::Hls, &BindingError::from(e.into()));
 }
