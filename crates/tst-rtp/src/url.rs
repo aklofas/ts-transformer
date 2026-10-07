@@ -19,6 +19,9 @@
 //! | `ssrc` | u32 decimal or `0x`-prefixed hex | random |
 //! | `pt` | 1..=127, 33 rejected (MPEG-TS) | absent — required by `H264Receiver::listen` |
 //! | `recv_timeout` | positive integer milliseconds | absent — no deadline |
+//! | `rcvbuf` | `SO_RCVBUF` in bytes, `K`/`M` suffixes accepted (`8M` typical for high-bitrate streams); receive URLs only. Linux clamps to `net.core.rmem_max` — a warning is logged when clamped | OS default |
+//! | `sndbuf` | `SO_SNDBUF` in bytes, `K`/`M` suffixes accepted; send URLs only. Linux clamps to `net.core.wmem_max` — a warning is logged when clamped | OS default |
+//! | `source` | literal IPv4/IPv6 address; receive URLs only. Accept datagrams only from this IP (any source port); others are dropped and counted in `RtpStats::source_rejected` | absent — any peer |
 //!
 //! Supported `rtsp[s]://` query keys:
 //!
@@ -91,6 +94,19 @@ pub struct RtpUrl {
     /// Applied at transport construction; expiry surfaces as retryable
     /// `Backpressure`. Absent — the default — means no deadline.
     pub recv_timeout: Option<Duration>,
+    /// `?rcvbuf=N` — `SO_RCVBUF` for the RTP receive socket, in bytes
+    /// (`K`/`M` suffixes accepted). `None` keeps the OS default. Send-side
+    /// entry points reject `Some` with [`UrlError::SendRcvbuf`].
+    pub rcvbuf: Option<usize>,
+    /// `?sndbuf=N` — `SO_SNDBUF` for the RTP send socket, in bytes
+    /// (`K`/`M` suffixes accepted). `None` keeps the OS default.
+    /// Receive-side entry points reject `Some` with [`UrlError::RecvSndbuf`].
+    pub sndbuf: Option<usize>,
+    /// `?source=<ip>` — accept RTP datagrams only from this peer IP (the
+    /// source port is not checked). Others are dropped and counted in
+    /// `RtpStats::source_rejected`. `None` accepts any peer. Send-side
+    /// entry points reject `Some` with [`UrlError::SendSource`].
+    pub source: Option<IpAddr>,
 }
 
 /// Errors specific to parsing the `rtp://` URL form.
@@ -126,6 +142,17 @@ pub enum UrlError {
         "pkt_size is a send-side knob; receive buffers size to the transport's deliverable ceiling automatically — remove ?pkt_size= from receiver URLs"
     )]
     RecvPktSize,
+    /// `?sndbuf=` supplied to a receive-side entry point.
+    #[error("sndbuf is a send-side knob — remove ?sndbuf= from receiver URLs (use ?rcvbuf=)")]
+    RecvSndbuf,
+    /// `?rcvbuf=` supplied to a send-side entry point.
+    #[error("rcvbuf is a receive-side knob — remove ?rcvbuf= from sender URLs (use ?sndbuf=)")]
+    SendRcvbuf,
+    /// `?source=` supplied to a send-side entry point.
+    #[error(
+        "source is a receive-side filter (accept datagrams only from that IP) — remove ?source= from sender URLs"
+    )]
+    SendSource,
     /// `?ssrc=` couldn't be parsed as decimal or `0x`-prefixed hex.
     #[error("invalid ssrc '{got}': {detail}")]
     BadSsrc { got: String, detail: String },
@@ -187,6 +214,9 @@ impl RtpUrl {
         let mut ssrc = None;
         let mut pt = None;
         let mut recv_timeout = None;
+        let mut rcvbuf = None;
+        let mut sndbuf = None;
+        let mut source = None;
         for (k, v) in query.iter() {
             match k.as_ref() {
                 "ttl" => ttl = Some(parse_ttl(v.as_ref())?),
@@ -195,6 +225,9 @@ impl RtpUrl {
                 "ssrc" => ssrc = Some(parse_ssrc(v.as_ref())?),
                 "pt" => pt = Some(parse_pt(v.as_ref())?),
                 "recv_timeout" => recv_timeout = Some(parse_recv_timeout(v.as_ref())?),
+                "rcvbuf" => rcvbuf = Some(parse_byte_size("rcvbuf", v.as_ref())?),
+                "sndbuf" => sndbuf = Some(parse_byte_size("sndbuf", v.as_ref())?),
+                "source" => source = Some(parse_source(v.as_ref())?),
                 other => {
                     return Err(UrlError::UnknownKey {
                         got: other.to_string(),
@@ -211,6 +244,9 @@ impl RtpUrl {
             ssrc,
             pt,
             recv_timeout,
+            rcvbuf,
+            sndbuf,
+            source,
         })
     }
 }
@@ -245,6 +281,22 @@ fn parse_pkt_size(v: &str) -> Result<usize, UrlError> {
         });
     }
     Ok(n)
+}
+
+fn parse_byte_size(key: &str, v: &str) -> Result<usize, UrlError> {
+    tst_core::url::common::parse_byte_size(v).map_err(|_| UrlError::BadQuery {
+        key: key.to_string(),
+        value: v.to_string(),
+    })
+}
+
+/// `?source=` takes a literal IP only: the filter compares peer addresses,
+/// and a hostname would need a resolution policy this parser does not have.
+fn parse_source(v: &str) -> Result<IpAddr, UrlError> {
+    v.parse::<IpAddr>().map_err(|_| UrlError::BadQuery {
+        key: "source".to_string(),
+        value: v.to_string(),
+    })
 }
 
 fn parse_ssrc(v: &str) -> Result<u32, UrlError> {
@@ -807,6 +859,76 @@ mod tests {
     fn rtp_url_recv_timeout_bad_value_rejected() {
         let err = RtpUrl::parse("rtp://127.0.0.1:5004?recv_timeout=forever").unwrap_err();
         assert!(matches!(err, UrlError::BadRecvTimeout { .. }));
+    }
+
+    // ── ?rcvbuf= / ?sndbuf= / ?source= query key tests ──────────────────────
+
+    #[test]
+    fn rtp_url_rcvbuf_and_sndbuf_accept_byte_size_spellings() {
+        let u = RtpUrl::parse("rtp://0.0.0.0:7656?rcvbuf=8M").unwrap();
+        assert_eq!(u.rcvbuf, Some(8 * 1024 * 1024));
+        assert_eq!(u.sndbuf, None);
+        let u = RtpUrl::parse("rtp://0.0.0.0:7656?rcvbuf=8388608").unwrap();
+        assert_eq!(u.rcvbuf, Some(8_388_608));
+        let u = RtpUrl::parse("rtp://10.0.0.5:7656?sndbuf=512K").unwrap();
+        assert_eq!(u.sndbuf, Some(512 * 1024));
+        assert_eq!(u.rcvbuf, None);
+    }
+
+    #[test]
+    fn rtp_url_rcvbuf_bad_value_names_the_key() {
+        let err = RtpUrl::parse("rtp://0.0.0.0:7656?rcvbuf=lots").unwrap_err();
+        match err {
+            UrlError::BadQuery { key, value } => {
+                assert_eq!(key, "rcvbuf");
+                assert_eq!(value, "lots");
+            }
+            other => panic!("expected BadQuery for rcvbuf, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rtp_url_source_parses_ip_literals() {
+        let u = RtpUrl::parse("rtp://0.0.0.0:7656?source=10.0.0.5").unwrap();
+        assert_eq!(u.source, Some("10.0.0.5".parse::<IpAddr>().unwrap()));
+        let u = RtpUrl::parse("rtp://[::]:7656?source=fe80::1").unwrap();
+        assert_eq!(u.source, Some("fe80::1".parse::<IpAddr>().unwrap()));
+        let u = RtpUrl::parse("rtp://0.0.0.0:7656").unwrap();
+        assert_eq!(u.source, None);
+    }
+
+    #[test]
+    fn rtp_url_source_hostname_rejected_naming_the_key() {
+        let err = RtpUrl::parse("rtp://0.0.0.0:7656?source=sensor.local").unwrap_err();
+        match err {
+            UrlError::BadQuery { key, value } => {
+                assert_eq!(key, "source");
+                assert_eq!(value, "sensor.local");
+            }
+            other => panic!("expected BadQuery for source, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rtp_url_unknown_key_still_rejected_next_to_new_keys() {
+        let err = RtpUrl::parse("rtp://0.0.0.0:7656?rcvbuf=8M&rcvbuff=8M").unwrap_err();
+        assert!(
+            matches!(err, UrlError::UnknownKey { ref got } if got == "rcvbuff"),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn rtp_url_side_rule_errors_name_key_and_side() {
+        for (err, key, side) in [
+            (UrlError::RecvSndbuf, "sndbuf", "send"),
+            (UrlError::SendRcvbuf, "rcvbuf", "receive"),
+            (UrlError::SendSource, "source", "receive"),
+        ] {
+            let msg = err.to_string();
+            assert!(msg.contains(key), "{msg}");
+            assert!(msg.contains(side), "{msg}");
+        }
     }
 }
 

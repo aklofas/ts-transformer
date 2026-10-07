@@ -43,11 +43,11 @@
 //!
 //! Any other hard I/O error surfaces as `Err(TransportError::Broken {..})`.
 
-use std::net::{SocketAddr, UdpSocket};
+use std::net::{IpAddr, SocketAddr, UdpSocket};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tst_core::net::udp_socket::CANCEL_POLL_INTERVAL;
+use tst_core::net::udp_socket::{CANCEL_POLL_INTERVAL, set_socket_buffers};
 use tst_core::transport::{SocketStats, TransportError};
 
 use crate::cancel::RtpCancelHandle;
@@ -120,6 +120,11 @@ pub struct H264Receiver {
     bytes_received: u64,
     packets_received: u64,
     malformed_packets: u64,
+    /// `?source=` pin (canonical form); `None` keeps the receive loop on
+    /// plain `recv`. Set only by [`Self::listen_with`].
+    source_pin: Option<IpAddr>,
+    /// Datagrams dropped because their peer IP did not match `source_pin`.
+    source_rejected: u64,
     local_addr: Option<SocketAddr>,
     eos: bool,
     /// Persistent deadline for [`Self::recv_au`], set via
@@ -157,7 +162,8 @@ impl H264Receiver {
     ///
     /// Returns [`ConnectError::MissingPayloadTypeParam`] when `?pt=` is
     /// absent, [`ConnectError::Url`] on parse failure (including a `?pt=`
-    /// outside 1..=127 or equal to 33, and a receive-side `?pkt_size=`),
+    /// outside 1..=127 or equal to 33, and a receive-side `?pkt_size=` or
+    /// `?sndbuf=`),
     /// [`ConnectError::HostNotLiteral`] when the host is not a literal IP,
     /// or [`ConnectError::Io`] on bind failure.
     pub fn listen(url: &str) -> Result<Self, ConnectError> {
@@ -171,12 +177,19 @@ impl H264Receiver {
     /// # Errors
     ///
     /// Returns [`ConnectError::MissingPayloadTypeParam`] when `url.pt` is
-    /// `None`, [`ConnectError::Url`] when `url.pkt_size` is set (a
-    /// send-side knob), [`ConnectError::HostNotLiteral`] when the host is
-    /// not a literal IP, or [`ConnectError::Io`] on bind failure.
+    /// `None`, [`ConnectError::Url`] when `url.pkt_size` or `url.sndbuf` is
+    /// set (send-side knobs), [`ConnectError::HostNotLiteral`] when the host
+    /// is not a literal IP, or [`ConnectError::Io`] on bind failure.
+    ///
+    /// `url.rcvbuf` sizes the socket's `SO_RCVBUF`; `url.source` pins the
+    /// accepted peer IP (mismatches are counted in
+    /// [`RtpStats::source_rejected`]).
     pub fn listen_with(url: &RtpUrl, mut config: H264DepayConfig) -> Result<Self, ConnectError> {
         if url.pkt_size.is_some() {
             return Err(ConnectError::Url(crate::url::UrlError::RecvPktSize));
+        }
+        if url.sndbuf.is_some() {
+            return Err(ConnectError::Url(crate::url::UrlError::RecvSndbuf));
         }
         let pt = url.pt.ok_or(ConnectError::MissingPayloadTypeParam)?;
         config.payload_type = pt;
@@ -188,8 +201,10 @@ impl H264Receiver {
         })?;
         let local = SocketAddr::new(ip, url.port);
         let sock = UdpSocket::bind(local).map_err(ConnectError::Io)?;
+        set_socket_buffers(&sock, url.rcvbuf, None).map_err(ConnectError::Io)?;
         let mut receiver = Self::from_udp_socket_with(sock, config)?;
         receiver.set_recv_timeout(url.recv_timeout);
+        receiver.source_pin = url.source.map(|ip| ip.to_canonical());
         Ok(receiver)
     }
 
@@ -214,6 +229,8 @@ impl H264Receiver {
             bytes_received: 0,
             packets_received: 0,
             malformed_packets: 0,
+            source_pin: None,
+            source_rejected: 0,
             local_addr,
             eos: false,
             recv_timeout: None,
@@ -253,6 +270,8 @@ impl H264Receiver {
             bytes_received: 0,
             packets_received: 0,
             malformed_packets: 0,
+            source_pin: None,
+            source_rejected: 0,
             local_addr: None,
             eos: false,
             recv_timeout: None,
@@ -372,7 +391,12 @@ impl H264Receiver {
                 Some(s) => s,
                 None => return Err(TransportError::Closed),
             };
-            let raw_result = source.recv_raw(&mut self.scratch, &self.cancel, deadline);
+            let raw_result = source.recv_raw(
+                &mut self.scratch,
+                &self.cancel,
+                deadline,
+                self.source_pin.map(|ip| (ip, &mut self.source_rejected)),
+            );
             let n = match raw_result {
                 Ok(n) => n,
                 Err(TransportError::ExplicitClose) => {
@@ -440,6 +464,7 @@ impl H264Receiver {
     pub fn rtp_stats(&self) -> RtpStats {
         RtpStats {
             malformed_packets: self.malformed_packets,
+            source_rejected: self.source_rejected,
         }
     }
 

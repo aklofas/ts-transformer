@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use tst_core::net::udp_socket::{
     CANCEL_POLL_INTERVAL, apply_multicast_recv_join, apply_multicast_send_knobs,
-    bind_udp_socket_multicast,
+    bind_udp_socket_multicast, set_socket_buffers,
 };
 use tst_core::transport::{
     BrokenCause, RecvTransport, SocketStats, Transport, TransportCancel, TransportError,
@@ -146,6 +146,12 @@ impl RtpTransport {
         if url.pt.is_some() {
             return Err(ConnectError::PayloadTypeParam);
         }
+        if url.rcvbuf.is_some() {
+            return Err(ConnectError::Url(RtpUrlError::SendRcvbuf));
+        }
+        if url.source.is_some() {
+            return Err(ConnectError::Url(RtpUrlError::SendSource));
+        }
         let ip: IpAddr = url.host.parse().map_err(|e: std::net::AddrParseError| {
             ConnectError::HostNotLiteral {
                 host: url.host.clone(),
@@ -158,6 +164,7 @@ impl RtpTransport {
             IpAddr::V6(_) => "[::]:0".parse().unwrap(),
         };
         let socket = UdpSocket::bind(local).map_err(ConnectError::Io)?;
+        set_socket_buffers(&socket, None, url.sndbuf).map_err(ConnectError::Io)?;
         socket
             .set_write_timeout(Some(CANCEL_POLL_INTERVAL))
             .map_err(ConnectError::Io)?;
@@ -482,8 +489,15 @@ impl Source {
     ///
     /// # Side effects
     ///
-    /// `recv_raw` takes `&self` and performs no side effects on the source
-    /// or any counters. Callers are responsible for:
+    /// `source_pin` is `Some((ip, rejected))` when the receiver was built
+    /// with `?source=`: the UDP arm then reads with `recv_from`, drops any
+    /// datagram whose canonical peer IP differs from `ip` (the port is not
+    /// compared), ticks `*rejected`, and keeps looping with the same cancel
+    /// and deadline checks. `None` keeps the UDP arm on plain `recv`. The
+    /// mpsc arm ignores it (interleaved frames have no per-datagram peer).
+    ///
+    /// Apart from `*rejected`, `recv_raw` takes `&self` and performs no
+    /// side effects on the source or any counters. Callers are responsible for:
     /// - Ticking `bytes_received` / `packets_received` after `Ok`.
     /// - Clearing `self.source = None` after a `Broken` return.
     pub(crate) fn recv_raw(
@@ -491,6 +505,7 @@ impl Source {
         scratch: &mut [u8],
         cancel: &RtpCancelHandle,
         deadline: Option<Instant>,
+        mut source_pin: Option<(IpAddr, &mut u64)>,
     ) -> Result<usize, TransportError> {
         match self {
             Source::Udp(socket) => loop {
@@ -505,7 +520,18 @@ impl Source {
                         });
                     }
                 }
-                match socket.recv(scratch) {
+                let received = match source_pin.as_mut() {
+                    None => socket.recv(scratch),
+                    Some((pin, rejected)) => match socket.recv_from(scratch) {
+                        Ok((_, peer)) if peer.ip().to_canonical() != *pin => {
+                            **rejected = rejected.saturating_add(1);
+                            continue;
+                        }
+                        Ok((n, _)) => Ok(n),
+                        Err(e) => Err(e),
+                    },
+                };
+                match received {
                     Ok(0) => continue, // Zero-byte recv is meaningless on UDP; loop.
                     Ok(n) => return Ok(n),
                     Err(e)
@@ -603,6 +629,11 @@ pub struct RtpRecvTransport {
     packets_received: u64,
     /// Counter for RTP packets that failed the header check.
     malformed_packets: u64,
+    /// `?source=` pin, canonicalised (an IPv4-mapped IPv6 address compares
+    /// as its IPv4 form). `None` keeps the receive loop on plain `recv`.
+    source_pin: Option<IpAddr>,
+    /// Datagrams dropped because their peer IP did not match `source_pin`.
+    source_rejected: u64,
     /// Per-recv scratch, sized to [`RECV_SCRATCH_LEN`] — heap allocated
     /// once; holds one whole RTP packet (header + payload) per recv.
     scratch: Vec<u8>,
@@ -641,7 +672,7 @@ pub struct RtpRecvTransport {
 
 /// RTP-protocol-level stats separate from [`SocketStats`].
 ///
-/// Currently exposes only the malformed-packet counter. Future fields
+/// Exposes the malformed-packet and source-rejected counters. Future fields
 /// (out-of-order delta, gap counter, etc.) can be added under
 /// `#[non_exhaustive]` without breaking consumers.
 #[must_use]
@@ -655,6 +686,10 @@ pub struct RtpStats {
     /// MP2T payload fails RFC 2250 shape checks (not 188-byte aligned,
     /// missing `0x47` sync byte, or empty).
     pub malformed_packets: u64,
+    /// Datagrams dropped because their peer IP did not match the
+    /// `?source=` pin; 0 when no pin is set. Rejected datagrams are not
+    /// counted in [`SocketStats`] `bytes_received` / `packets_received`.
+    pub source_rejected: u64,
 }
 
 impl RtpRecvTransport {
@@ -698,6 +733,9 @@ impl RtpRecvTransport {
         if url.pkt_size.is_some() {
             return Err(ConnectError::Url(RtpUrlError::RecvPktSize));
         }
+        if url.sndbuf.is_some() {
+            return Err(ConnectError::Url(RtpUrlError::RecvSndbuf));
+        }
         if url.pt.is_some() {
             return Err(ConnectError::PayloadTypeParam);
         }
@@ -731,6 +769,9 @@ impl RtpRecvTransport {
         } else {
             UdpSocket::bind(local).map_err(ConnectError::Io)?
         };
+        // `?rcvbuf=` sizes the RTP socket only; the RTCP companion carries
+        // a few small reports per second and keeps the OS default.
+        set_socket_buffers(&socket, url.rcvbuf, None).map_err(ConnectError::Io)?;
         // For the multicast path this re-sets SO_RCVTIMEO to the same
         // value the helper already applied — redundant but harmless.
         socket
@@ -840,6 +881,8 @@ impl RtpRecvTransport {
             bytes_received: 0,
             packets_received: 0,
             malformed_packets: 0,
+            source_pin: url.source.map(|ip| ip.to_canonical()),
+            source_rejected: 0,
             scratch: vec![0u8; RECV_SCRATCH_LEN],
             rtcp_socket,
             rtcp_stats,
@@ -873,6 +916,8 @@ impl RtpRecvTransport {
             bytes_received: 0,
             packets_received: 0,
             malformed_packets: 0,
+            source_pin: None,
+            source_rejected: 0,
             scratch: vec![0u8; RECV_SCRATCH_LEN],
             rtcp_socket: None,
             rtcp_stats: Arc::new(Mutex::new(RtcpStats::default())),
@@ -907,6 +952,8 @@ impl RtpRecvTransport {
             bytes_received: 0,
             packets_received: 0,
             malformed_packets: 0,
+            source_pin: None,
+            source_rejected: 0,
             // Scratch holds one whole RTP packet (header + TS payload).
             // recv_raw (Source::Mpsc arm) copies the incoming Bytes into
             // scratch before recv_bytes decodes the header and strips the
@@ -951,6 +998,7 @@ impl RtpRecvTransport {
     pub fn rtp_stats(&self) -> RtpStats {
         RtpStats {
             malformed_packets: self.malformed_packets,
+            source_rejected: self.source_rejected,
         }
     }
 
@@ -1094,7 +1142,12 @@ impl RtpRecvTransport {
                 .source
                 .as_ref()
                 .expect("source checked above; cannot be None here")
-                .recv_raw(&mut self.scratch, &self.cancel, deadline);
+                .recv_raw(
+                    &mut self.scratch,
+                    &self.cancel,
+                    deadline,
+                    self.source_pin.map(|ip| (ip, &mut self.source_rejected)),
+                );
             let n = match raw_result {
                 Ok(n) => n,
                 Err(TransportError::Broken { ref msg, .. })
@@ -2527,5 +2580,57 @@ mod tests {
             !Transport::is_alive(&t),
             "is_alive() must read false once the cancel handle has fired"
         );
+    }
+
+    /// What the kernel reports for `SO_RCVBUF` / `SO_SNDBUF` after the same
+    /// request on a fresh control socket. Kernels differ (Linux doubles the
+    /// request and clamps to `net.core.rmem_max`; macOS and Windows store it
+    /// as given), so the transport's socket is compared against a control
+    /// socket rather than against a fixed number.
+    fn control_buffer_sizes(rcv: usize, snd: usize) -> (usize, usize, usize, usize) {
+        let c = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let sr = socket2::SockRef::from(&c);
+        let (rcv_default, snd_default) = (
+            sr.recv_buffer_size().unwrap(),
+            sr.send_buffer_size().unwrap(),
+        );
+        sr.set_recv_buffer_size(rcv).unwrap();
+        sr.set_send_buffer_size(snd).unwrap();
+        (
+            rcv_default,
+            sr.recv_buffer_size().unwrap(),
+            snd_default,
+            sr.send_buffer_size().unwrap(),
+        )
+    }
+
+    #[test]
+    fn rcvbuf_query_sizes_the_rtp_receive_socket() {
+        let (rcv_default, rcv_expected, _, _) = control_buffer_sizes(1 << 20, 1 << 20);
+        assert_ne!(
+            rcv_default, rcv_expected,
+            "a 1 MiB request must be distinguishable from the default on this host"
+        );
+        let url = RtpUrl::parse("rtp://127.0.0.1:0?rcvbuf=1M").unwrap();
+        let t = RtpRecvTransport::listen_with(&url).unwrap();
+        let Some(Source::Udp(sock)) = t.source.as_ref() else {
+            panic!("listen builds a UDP source");
+        };
+        let got = socket2::SockRef::from(sock).recv_buffer_size().unwrap();
+        assert_eq!(got, rcv_expected, "SO_RCVBUF not applied from ?rcvbuf=");
+    }
+
+    #[test]
+    fn sndbuf_query_sizes_the_rtp_send_socket() {
+        let (_, _, snd_default, snd_expected) = control_buffer_sizes(1 << 20, 1 << 20);
+        assert_ne!(
+            snd_default, snd_expected,
+            "a 1 MiB request must be distinguishable from the default on this host"
+        );
+        let url = RtpUrl::parse("rtp://127.0.0.1:5004?sndbuf=1M").unwrap();
+        let t = RtpTransport::connect_with(&url).unwrap();
+        let sock = t.socket.as_ref().expect("live transport holds its socket");
+        let got = socket2::SockRef::from(sock).send_buffer_size().unwrap();
+        assert_eq!(got, snd_expected, "SO_SNDBUF not applied from ?sndbuf=");
     }
 }

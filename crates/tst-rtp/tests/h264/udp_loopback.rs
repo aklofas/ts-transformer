@@ -301,3 +301,51 @@ fn h264_listen_rejects_pkt_size_query() {
         tst_rtp::ConnectError::Url(tst_rtp::RtpUrlError::RecvPktSize)
     ));
 }
+
+/// `?sndbuf=` is a send-side knob; the elementary-RTP receiver refuses it
+/// like the MP2T receive path does.
+#[test]
+fn h264_listen_rejects_sndbuf_query() {
+    let err = match tst_rtp::H264Receiver::listen("rtp://127.0.0.1:0?pt=96&sndbuf=1M") {
+        Err(e) => e,
+        Ok(_) => panic!("h264 recv URL with ?sndbuf= must be rejected"),
+    };
+    assert!(
+        matches!(
+            err,
+            tst_rtp::ConnectError::Url(tst_rtp::RtpUrlError::RecvSndbuf)
+        ),
+        "wrong error variant: {err:?}"
+    );
+}
+
+/// `?source=` on the elementary-RTP receiver drops datagrams from any other
+/// peer IP and counts them in `RtpStats::source_rejected`. Needs a second
+/// loopback address (127.0.0.2), which only Linux answers on by default.
+#[cfg(target_os = "linux")]
+#[test]
+fn h264_source_pin_drops_and_counts_other_peers() {
+    let mut rx = H264Receiver::listen("rtp://127.0.0.1:0?pt=96&source=127.0.0.1").unwrap();
+    let addr = rx
+        .local_addr()
+        .expect("bound UDP receiver has a local addr");
+
+    let foreign = UdpSocket::bind("127.0.0.2:0").expect("bind 127.0.0.2");
+    let pkts = packetize(&[(0, vec![vec![0x65, 1, 2, 3]])], 1400, 1, 0xDEAD_BEEF, 96);
+    for p in &pkts {
+        foreign.send_to(p, addr).unwrap();
+    }
+
+    // The foreign datagrams are already queued; a short deadline lets the
+    // receive loop drain and reject them, then return Backpressure.
+    let res = rx.recv_au_timeout(std::time::Duration::from_millis(300));
+    assert!(
+        matches!(
+            res,
+            Err(tst_core::transport::TransportError::Backpressure { .. })
+        ),
+        "no AU may be assembled from a rejected peer: {res:?}"
+    );
+    assert_eq!(rx.rtp_stats().source_rejected, pkts.len() as u64);
+    assert_eq!(rx.depay_stats().aus_emitted, 0);
+}
