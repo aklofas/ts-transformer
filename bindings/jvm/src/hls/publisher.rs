@@ -378,3 +378,26 @@ pub extern "system" fn Java_org_tstrans_hls_HlsPublisher_nClose<'local>(
         }
     })
 }
+
+/// `nFinishServing(handle)` — take + consume into an `HlsServerHandle`;
+/// returns the new server handle key, or `0` with a pending exception.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_tstrans_hls_HlsPublisher_nFinishServing<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+) -> jlong {
+    crate::panic::jni_catch(&mut env, 0, |env| match REGISTRY.close(handle as u64) {
+        Some(p) => match p.finish_serving() {
+            Ok(h) => super::server_handle::register(h),
+            Err(e) => {
+                hls_error(env, e);
+                0
+            }
+        },
+        None => {
+            throw_closed(env, "HlsPublisher");
+            0
+        }
+    })
+}
