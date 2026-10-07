@@ -24,6 +24,25 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Pure logic is unit-tested (`scripts/dev/test_deps_advisory.py`, run by the
   workflow first); `--dry-run` prints findings without touching issues.
 
+### Testing — flake hardening
+
+- **Three wall-clock-shaped tests no longer fail a working library on a
+  loaded runner.** Test-only; no library change. `tst-rtp
+  keepalive_honors_sub_200ms_interval` asserted `≥ 10` OPTIONS pings in a
+  1.5 s window and saw 9 twice on macOS (2026-10-05/06: a 25 ms sleep
+  stretched to ~167 ms under load); it now asserts the SHORTEST gap between
+  consecutive single-ping reads is under 150 ms, which a stretched sleeper
+  still produces dozens of times and the quantized 200 ms regime it pins
+  against can never produce once. `tst-srt
+  accept_timeout_returns_timed_out_when_no_connection` keeps its real
+  assertion (the 200 ms wait lasted ≥ 150 ms) and widens the sanity upper
+  bound from 1 s to 5 s (a macOS runner took 1.17 s, 2026-10-06). tst-c
+  `recv_side_reconnect_attempts_counts_attempts_not_successes` raises
+  `?conntimeo=` from 150 ms to 2 s so the FIRST connect, to a live loopback
+  listener, survives a loaded Windows runner (`open: connection timed out`,
+  2026-10-05); the one failing reconnect attempt it exists to count stays
+  bounded.
+
 ### Changed — interop harness
 
 - **Stress and hold verdicts can no longer pass vacuously or over an aborted
