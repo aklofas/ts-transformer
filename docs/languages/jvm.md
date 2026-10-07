@@ -1892,7 +1892,7 @@ packets, else `HlsException(UNALIGNED_PUSH_TS)`) and `cutSegment()` /
 that keeps the terminal playlist fetchable until `shutdown()`.
 `HlsPublisher.builder().fromUrl("hls://127.0.0.1:8080?segment_duration=4")`
 seeds a builder from a URL; later setters overlay it. Basic auth
-(`basicAuth(user, pass)`) and HTTPS (`enableTls(certPem, keyPem)`) are on the
+(`basicAuth(user, pass)`) and HTTPS (`enableTls(certPath, keyPath)`) are on the
 builder. Errors are `HlsException` with `Kind` {`IO`, `INVALID_CONFIG`,
 `FINISHED`, `TLS`, `URL`, `BIND_FAILED`, `UNALIGNED_PUSH_TS`, `TLS_DISABLED`,
 `CLOSED`, `INTERNAL`}; a muxer rejection from `MuxPublisher` is a `MuxException`.
