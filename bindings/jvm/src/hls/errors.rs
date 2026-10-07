@@ -32,7 +32,7 @@ pub(crate) fn hls_error(env: &mut JNIEnv, e: impl Into<HlsError>) {
 /// `MuxException` classifier; `Publisher(e)` is the inner HLS kind, `Closed`
 /// is `CLOSED`, `LockPoisoned` is `INTERNAL` — all via the shared
 /// `From<MuxPublisherError<E>>`.
-#[allow(dead_code)] // consumed by the mux_publisher.rs native bodies (Task 8)
+#[allow(dead_code)] // consumed by the mux_publisher.rs native bodies once MuxPublisher lands
 pub(crate) fn mux_publisher_error(env: &mut JNIEnv, e: MuxPublisherError<HlsError>) {
     match e {
         MuxPublisherError::Mux(m) => crate::mpegts::muxer::throw_mux_error(env, &m),
