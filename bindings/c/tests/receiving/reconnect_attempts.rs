@@ -66,11 +66,15 @@ fn recv_side_reconnect_attempts_counts_attempts_not_successes() {
     }
 
     // `?conntimeo=` bounds the failing reconnect: without it the attempt
-    // would wait out the sender preset's 15 s connect timeout.
+    // would wait out the sender preset's 15 s connect timeout. It also
+    // governs the FIRST connect, to the live listener above, and 150 ms
+    // was not enough for a loopback SRT handshake on a loaded Windows
+    // runner (`open: connection timed out`, 2026-10-05); 2 s leaves that
+    // handshake ample room while still bounding the one failing attempt.
     // `?x-recvtimeout=` bounds the receive itself so the loop below spins
     // instead of parking until libsrt's peer-idle timeout.
     let url = CString::new(format!(
-        "srt://127.0.0.1:{port}?conntimeo=150&x-recvtimeout=100"
+        "srt://127.0.0.1:{port}?conntimeo=2000&x-recvtimeout=100"
     ))
     .unwrap();
     let accepted = std::thread::spawn(move || listener.accept().ok().map(|(s, _)| s));

@@ -127,29 +127,46 @@ fn stale_keepalive_response_not_misattributed_in_non_pump_mode() {
 /// A sub-200 ms `keepalive_interval` override must be honored, not
 /// silently quantized up to the thread's cancel-poll granularity. The
 /// keepalive loop used to sleep a fixed 200 ms per cancel check, so any
-/// requested cadence below that floor degraded to ~200 ms — at a 25 ms
-/// request only ~7 pings fit in 1.5 s. Honoring the interval yields ~55;
-/// the ≥10 threshold separates the two regimes with wide margins on a
-/// loaded runner.
+/// requested cadence below that floor degraded to ~200 ms: in that
+/// regime NO two pings can ever reach the wire less than 200 ms apart.
+/// Honoring a 25 ms interval puts consecutive pings tens of ms apart.
+///
+/// The discriminator is therefore the SHORTEST inter-arrival gap the
+/// server observes, not a ping count over a wall-clock window. A count
+/// (`≥10 in 1.5 s`) flaked twice on macOS runners, which stretch short
+/// sleeps under load (saw 9 — a 25 ms request averaging 167 ms); a
+/// stretched sleeper still produces plenty of sub-150 ms gaps, whereas
+/// the quantized regime cannot produce even one. Only reads that carry
+/// exactly one ping bound a gap: a read holding several pings says only
+/// that the reader fell behind, so it breaks the chain instead of
+/// counting as evidence either way.
 #[test]
 fn keepalive_honors_sub_200ms_interval() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
 
-    // Count OPTIONS pings until the client drops (read returns EOF).
-    // No responses are written — the keepalive is write-only and the
-    // count is the only observable this test needs.
-    let h = std::thread::spawn(move || -> usize {
+    // Record (arrival instant, pings in that read) per read until the
+    // client drops (read returns EOF). No responses are written — the
+    // keepalive is write-only and the arrivals are the only observable
+    // this test needs.
+    let h = std::thread::spawn(move || -> Vec<(std::time::Instant, usize)> {
         let (mut sock, _) = listener.accept().unwrap();
         let mut buf = vec![0u8; 4096];
-        let mut total = String::new();
+        let mut reads = Vec::new();
         loop {
             match sock.read(&mut buf) {
                 Ok(0) | Err(_) => break,
-                Ok(n) => total.push_str(std::str::from_utf8(&buf[..n]).unwrap_or("")),
+                Ok(n) => {
+                    let at = std::time::Instant::now();
+                    let pings = std::str::from_utf8(&buf[..n])
+                        .unwrap_or("")
+                        .matches("OPTIONS rtsp")
+                        .count();
+                    reads.push((at, pings));
+                }
             }
         }
-        total.matches("OPTIONS rtsp").count()
+        reads
     });
 
     let url = format!("rtsp://127.0.0.1:{port}/test");
@@ -160,10 +177,19 @@ fn keepalive_honors_sub_200ms_interval() {
 
     std::thread::sleep(std::time::Duration::from_millis(1500));
     drop(client);
-    let pings = h.join().unwrap();
+    let reads = h.join().unwrap();
+    let pings: usize = reads.iter().map(|(_, n)| n).sum();
+    // Gaps between consecutive single-ping reads only (see the doc).
+    let gaps: Vec<std::time::Duration> = reads
+        .windows(2)
+        .filter(|w| w[0].1 == 1 && w[1].1 == 1)
+        .map(|w| w[1].0.duration_since(w[0].0))
+        .collect();
+    let shortest = gaps.iter().min().copied();
     assert!(
-        pings >= 10,
-        "expected ≥10 OPTIONS pings in 1.5 s at a 25 ms interval, saw {pings} \
-         (interval floor not honored)"
+        shortest.is_some_and(|g| g < std::time::Duration::from_millis(150)),
+        "expected consecutive OPTIONS pings under 150 ms apart at a 25 ms interval \
+         (the quantized 200 ms regime cannot produce one); saw {pings} pings, \
+         shortest single-ping gap {shortest:?}, gaps {gaps:?}"
     );
 }

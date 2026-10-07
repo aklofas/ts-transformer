@@ -21,8 +21,12 @@ fn accept_timeout_returns_timed_out_when_no_connection() {
     }
     // Must have actually waited at least most of the timeout.
     assert!(elapsed >= Duration::from_millis(150), "elapsed={elapsed:?}");
-    // But not absurdly long.
-    assert!(elapsed < Duration::from_millis(1000), "elapsed={elapsed:?}");
+    // But not absurdly long. The lower bound is the real assertion; this
+    // one only guards against the timeout being ignored outright, so it
+    // is deliberately loose: a loaded macOS runner took 1.17 s for this
+    // 200 ms wait (2026-10-06), and the old `< 1 s` bound read that as
+    // a failure.
+    assert!(elapsed < Duration::from_secs(5), "elapsed={elapsed:?}");
 }
 
 #[test]
