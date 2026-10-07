@@ -425,3 +425,126 @@ fn send_url_pkt_size_still_drives_send_budget() {
         "absent pkt_size resolves the 1316 default"
     );
 }
+
+// --- rcvbuf / sndbuf / source side rules (bind-time) ---
+
+/// `?sndbuf=` is a send-side knob: a receive URL carrying it is refused at
+/// bind time, the same way `?pkt_size=` is.
+#[test]
+fn recv_url_sndbuf_rejected() {
+    let err = match RtpRecvTransport::listen("rtp://127.0.0.1:0?sndbuf=1M") {
+        Err(e) => e,
+        Ok(_) => panic!("recv URL with ?sndbuf= must be rejected"),
+    };
+    assert!(
+        matches!(
+            err,
+            tst_rtp::ConnectError::Url(tst_rtp::RtpUrlError::RecvSndbuf)
+        ),
+        "wrong error variant: {err:?}"
+    );
+}
+
+/// `?rcvbuf=` is a receive-side knob: a send URL carrying it is refused.
+#[test]
+fn send_url_rcvbuf_rejected() {
+    let err = match RtpTransport::connect("rtp://127.0.0.1:5004?rcvbuf=1M") {
+        Err(e) => e,
+        Ok(_) => panic!("send URL with ?rcvbuf= must be rejected"),
+    };
+    assert!(
+        matches!(
+            err,
+            tst_rtp::ConnectError::Url(tst_rtp::RtpUrlError::SendRcvbuf)
+        ),
+        "wrong error variant: {err:?}"
+    );
+}
+
+/// `?source=` filters what a receiver accepts; a send URL carrying it is
+/// refused.
+#[test]
+fn send_url_source_rejected() {
+    let err = match RtpTransport::connect("rtp://127.0.0.1:5004?source=127.0.0.1") {
+        Err(e) => e,
+        Ok(_) => panic!("send URL with ?source= must be rejected"),
+    };
+    assert!(
+        matches!(
+            err,
+            tst_rtp::ConnectError::Url(tst_rtp::RtpUrlError::SendSource)
+        ),
+        "wrong error variant: {err:?}"
+    );
+}
+
+/// `?source=127.0.0.1` pins the peer IP: a datagram from 127.0.0.1 is
+/// delivered; one from 127.0.0.2 is dropped silently and counted in
+/// `RtpStats::source_rejected`.
+///
+/// Both datagrams are queued on the receive socket before `recv_bytes`
+/// runs, the mismatching one first, so a single call has to skip it to
+/// return the matching one. The mismatch half needs a second loopback
+/// address: Linux answers on all of 127.0.0.0/8, macOS and Windows only
+/// bind 127.0.0.1 by default, so that half runs on Linux only.
+#[test]
+fn source_pin_drops_and_counts_other_peers() {
+    use std::net::UdpSocket;
+
+    let base = free_rtp_port_base();
+    let mut recv =
+        RtpRecvTransport::listen(&format!("rtp://127.0.0.1:{base}?source=127.0.0.1")).unwrap();
+
+    #[cfg(target_os = "linux")]
+    {
+        let foreign = UdpSocket::bind("127.0.0.2:0").expect("bind 127.0.0.2");
+        foreign
+            .send_to(
+                &make_rtp_datagram(&synthetic_ts_packet(0x66)),
+                ("127.0.0.1", base),
+            )
+            .expect("send from 127.0.0.2");
+    }
+
+    let pinned = UdpSocket::bind("127.0.0.1:0").expect("bind 127.0.0.1");
+    let expected = synthetic_ts_packet(0x42);
+    pinned
+        .send_to(&make_rtp_datagram(&expected), ("127.0.0.1", base))
+        .expect("send from 127.0.0.1");
+
+    let mut buf = vec![0u8; 4096];
+    let n = recv
+        .recv_timeout(&mut buf, Duration::from_secs(5))
+        .expect("recv must not fail")
+        .expect("datagram from the pinned source must be delivered");
+    assert_eq!(&buf[..n], &expected[..], "payload mismatch");
+
+    let expected_rejected = if cfg!(target_os = "linux") { 1 } else { 0 };
+    assert_eq!(recv.rtp_stats().source_rejected, expected_rejected);
+    assert_eq!(recv.rtp_stats().malformed_packets, 0);
+    let stats = recv.socket_stats().expect("live transport reports stats");
+    assert_eq!(
+        stats.packets_received, 1,
+        "only the pinned-source datagram is delivered"
+    );
+}
+
+/// Without `?source=`, every peer is accepted and the counter stays 0.
+#[test]
+fn no_source_pin_accepts_any_peer() {
+    use std::net::UdpSocket;
+
+    let base = free_rtp_port_base();
+    let mut recv = RtpRecvTransport::listen(&format!("rtp://127.0.0.1:{base}")).unwrap();
+    let peer = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let expected = synthetic_ts_packet(0x17);
+    peer.send_to(&make_rtp_datagram(&expected), ("127.0.0.1", base))
+        .unwrap();
+    let mut buf = vec![0u8; 4096];
+    let n = recv
+        .recv_timeout(&mut buf, Duration::from_secs(5))
+        .expect("recv must not fail")
+        .expect("delivered");
+    assert_eq!(&buf[..n], &expected[..]);
+    assert_eq!(recv.rtp_stats().source_rejected, 0);
+}

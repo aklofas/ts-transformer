@@ -1393,6 +1393,7 @@ impl !core::panic::unwind_safe::RefUnwindSafe for tst_rtp::transport::RtpRecvTra
 impl !core::panic::unwind_safe::UnwindSafe for tst_rtp::transport::RtpRecvTransport
 #[non_exhaustive] pub struct tst_rtp::transport::RtpStats
 pub tst_rtp::transport::RtpStats::malformed_packets: u64
+pub tst_rtp::transport::RtpStats::source_rejected: u64
 impl core::clone::Clone for tst_rtp::transport::RtpStats
 pub fn tst_rtp::transport::RtpStats::clone(&self) -> tst_rtp::transport::RtpStats
 impl core::cmp::Eq for tst_rtp::transport::RtpStats
@@ -1521,6 +1522,9 @@ pub tst_rtp::url::UrlError::BadTtl::detail: alloc::string::String
 pub tst_rtp::url::UrlError::BadTtl::got: alloc::string::String
 pub tst_rtp::url::UrlError::MissingPort
 pub tst_rtp::url::UrlError::RecvPktSize
+pub tst_rtp::url::UrlError::RecvSndbuf
+pub tst_rtp::url::UrlError::SendRcvbuf
+pub tst_rtp::url::UrlError::SendSource
 pub tst_rtp::url::UrlError::Syntax(tst_core::url::common::UrlError)
 pub tst_rtp::url::UrlError::UnknownKey
 pub tst_rtp::url::UrlError::UnknownKey::got: alloc::string::String
@@ -1578,7 +1582,10 @@ pub tst_rtp::url::RtpUrl::iface: core::option::Option<alloc::string::String>
 pub tst_rtp::url::RtpUrl::pkt_size: core::option::Option<usize>
 pub tst_rtp::url::RtpUrl::port: u16
 pub tst_rtp::url::RtpUrl::pt: core::option::Option<u8>
+pub tst_rtp::url::RtpUrl::rcvbuf: core::option::Option<usize>
 pub tst_rtp::url::RtpUrl::recv_timeout: core::option::Option<core::time::Duration>
+pub tst_rtp::url::RtpUrl::sndbuf: core::option::Option<usize>
+pub tst_rtp::url::RtpUrl::source: core::option::Option<core::net::ip_addr::IpAddr>
 pub tst_rtp::url::RtpUrl::ssrc: core::option::Option<u32>
 pub tst_rtp::url::RtpUrl::ttl: core::option::Option<u8>
 impl tst_rtp::url::RtpUrl
@@ -1849,6 +1856,9 @@ pub tst_rtp::RtpUrlError::BadTtl::detail: alloc::string::String
 pub tst_rtp::RtpUrlError::BadTtl::got: alloc::string::String
 pub tst_rtp::RtpUrlError::MissingPort
 pub tst_rtp::RtpUrlError::RecvPktSize
+pub tst_rtp::RtpUrlError::RecvSndbuf
+pub tst_rtp::RtpUrlError::SendRcvbuf
+pub tst_rtp::RtpUrlError::SendSource
 pub tst_rtp::RtpUrlError::Syntax(tst_core::url::common::UrlError)
 pub tst_rtp::RtpUrlError::UnknownKey
 pub tst_rtp::RtpUrlError::UnknownKey::got: alloc::string::String
@@ -2602,6 +2612,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::builder::RtpSocketBuil
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::builder::RtpSocketBuilder
 #[non_exhaustive] pub struct tst_rtp::RtpStats
 pub tst_rtp::RtpStats::malformed_packets: u64
+pub tst_rtp::RtpStats::source_rejected: u64
 impl core::clone::Clone for tst_rtp::transport::RtpStats
 pub fn tst_rtp::transport::RtpStats::clone(&self) -> tst_rtp::transport::RtpStats
 impl core::cmp::Eq for tst_rtp::transport::RtpStats
@@ -2648,7 +2659,10 @@ pub tst_rtp::RtpUrl::iface: core::option::Option<alloc::string::String>
 pub tst_rtp::RtpUrl::pkt_size: core::option::Option<usize>
 pub tst_rtp::RtpUrl::port: u16
 pub tst_rtp::RtpUrl::pt: core::option::Option<u8>
+pub tst_rtp::RtpUrl::rcvbuf: core::option::Option<usize>
 pub tst_rtp::RtpUrl::recv_timeout: core::option::Option<core::time::Duration>
+pub tst_rtp::RtpUrl::sndbuf: core::option::Option<usize>
+pub tst_rtp::RtpUrl::source: core::option::Option<core::net::ip_addr::IpAddr>
 pub tst_rtp::RtpUrl::ssrc: core::option::Option<u32>
 pub tst_rtp::RtpUrl::ttl: core::option::Option<u8>
 impl tst_rtp::url::RtpUrl

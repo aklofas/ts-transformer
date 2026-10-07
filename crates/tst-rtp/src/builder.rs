@@ -52,6 +52,9 @@ impl RtpSocketBuilder {
                 ssrc: None,
                 pt: None,
                 recv_timeout: None,
+                rcvbuf: None,
+                sndbuf: None,
+                source: None,
             },
             rtcp: false,
         }
@@ -138,6 +141,9 @@ impl RtpRecvSocketBuilder {
                 ssrc: None,
                 pt: None,
                 recv_timeout: None,
+                rcvbuf: None,
+                sndbuf: None,
+                source: None,
             },
             rtcp: false,
         }
