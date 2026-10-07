@@ -55,6 +55,12 @@ tst-srt      = { path = "../../crates/tst-srt" }
 # the server's TLS acceptor from the client's `tls` feature.
 tst-rtp = { path = "../../crates/tst-rtp", default-features = false, features = ["tls", "rtsp-server-tls"] }
 
+# tst-hls backs org.tstrans.hls (HlsPublisher / MuxPublisher). `serve` (the
+# built-in hyper server + hls:// URL parsing) and `tls` (hlss://, rustls ring —
+# already linked for RTSPS) are both on, matching tst-py's wheels. Unconditional
+# like srt/rtp: one cdylib, every platform.
+tst-hls = { path = "../../crates/tst-hls", default-features = false, features = ["serve", "tls"] }
+
 # secrecy wraps RTSP auth passwords at the RtspClientBuilder::auth boundary
 # (mirrors tst-py's rtp feature: dep:secrecy). Workspace-pinned (0.10).
 secrecy = { workspace = true }

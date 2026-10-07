@@ -15,10 +15,10 @@ INPUT_MALFORMED	INPUT_MALFORMED	-3	-3	SrtErrorKind.INPUT_MALFORMED;MuxErrorKind.
 BACKPRESSURE	BACKPRESSURE	-4	-4	SrtErrorKind.BACKPRESSURE;RtpErrorKind.BACKPRESSURE;UdpErrorKind.BACKPRESSURE;TcpErrorKind.BACKPRESSURE;RistErrorKind.BACKPRESSURE;MuxErrorKind.BACKPRESSURE	ok	MuxException.Kind.BACKPRESSURE;SrtException.Kind.BACKPRESSURE;RtpException.Kind.BACKPRESSURE	ok
 KLV_TOO_LARGE	KLV_TOO_LARGE	-5	-5	MuxErrorKind.KLV_TOO_LARGE	ok	MuxException.Kind.KLV_TOO_LARGE	ok
 TOO_LARGE	TOO_LARGE	-6	-6	SrtErrorKind.TOO_LARGE;RtpErrorKind.TOO_LARGE;UdpErrorKind.TOO_LARGE;TcpErrorKind.TOO_LARGE;RistErrorKind.TOO_LARGE	ok	SrtException.Kind.TOO_LARGE;RtpException.Kind.TOO_LARGE	ok
-CLOSED	CLOSED	-7	-7	SrtErrorKind.CLOSED;RtpErrorKind.CLOSED;RtspErrorKind.CLOSED;UdpErrorKind.CLOSED;TcpErrorKind.CLOSED;HlsErrorKind.CLOSED;RistErrorKind.CLOSED	ok	SrtException.Kind.CLOSED;RtpException.Kind.CLOSED;RtspException.Kind.CLOSED	ok
+CLOSED	CLOSED	-7	-7	SrtErrorKind.CLOSED;RtpErrorKind.CLOSED;RtspErrorKind.CLOSED;UdpErrorKind.CLOSED;TcpErrorKind.CLOSED;HlsErrorKind.CLOSED;RistErrorKind.CLOSED	ok	SrtException.Kind.CLOSED;RtpException.Kind.CLOSED;RtspException.Kind.CLOSED;HlsException.Kind.CLOSED	ok
 BROKEN	BROKEN	-8	-8	SrtErrorKind.BROKEN;RtpErrorKind.BROKEN;UdpErrorKind.BROKEN;TcpErrorKind.BROKEN;RistErrorKind.BROKEN	ok	SrtException.Kind.BROKEN;RtpException.Kind.BROKEN	ok
 INVALID_USAGE	INVALID_USAGE	-9	-9	MuxErrorKind.INVALID_USAGE	ok	MuxException.Kind.INVALID_USAGE	ok
-INTERNAL	INTERNAL	-10	-10	HlsErrorKind.INTERNAL;MuxErrorKind.INTERNAL;KlvErrorKind.INTERNAL	ok	MuxException.Kind.INTERNAL;DemuxException.Kind.INTERNAL;KlvDecodeException.Kind.INTERNAL	ok
+INTERNAL	INTERNAL	-10	-10	HlsErrorKind.INTERNAL;MuxErrorKind.INTERNAL;KlvErrorKind.INTERNAL	ok	MuxException.Kind.INTERNAL;DemuxException.Kind.INTERNAL;KlvDecodeException.Kind.INTERNAL;HlsException.Kind.INTERNAL	ok
 # PANIC_CAUGHT: neither binding gives it an enum member — Python raises
 # pyo3_runtime.PanicException, the JVM a RuntimeException.
 PANIC_CAUGHT	PANIC_CAUGHT	-11	-11	-	ok	-	ok
@@ -45,10 +45,10 @@ TCP_IO	IO	-30	-30	TcpErrorKind.IO	ok	-	ok
 TCP_INVALID_CONFIG	INVALID_CONFIG	-31	-31	TcpErrorKind.INVALID_CONFIG	ok	-	ok
 TCP_CONNECT_TIMEOUT	CONNECT_TIMEOUT	-32	-32	TcpErrorKind.CONNECT_TIMEOUT	ok	-	ok
 TCP_TLS	TLS	-33	-33	TcpErrorKind.TLS	ok	-	ok
-HLS_IO	IO	-34	-34	HlsErrorKind.IO	ok	-	ok
-HLS_INVALID_CONFIG	INVALID_CONFIG	-35	-35	HlsErrorKind.INVALID_CONFIG	ok	-	ok
-HLS_FINISHED	FINISHED	-36	-36	HlsErrorKind.FINISHED	ok	-	ok
-HLS_TLS	TLS	-37	-37	HlsErrorKind.TLS	ok	-	ok
+HLS_IO	IO	-34	-34	HlsErrorKind.IO	ok	HlsException.Kind.IO	ok
+HLS_INVALID_CONFIG	INVALID_CONFIG	-35	-35	HlsErrorKind.INVALID_CONFIG	ok	HlsException.Kind.INVALID_CONFIG	ok
+HLS_FINISHED	FINISHED	-36	-36	HlsErrorKind.FINISHED	ok	HlsException.Kind.FINISHED	ok
+HLS_TLS	TLS	-37	-37	HlsErrorKind.TLS	ok	HlsException.Kind.TLS	ok
 RIST_FFI	FFI	-38	-38	RistErrorKind.FFI	ok	-	ok
 RIST_INVALID_CONFIG	INVALID_CONFIG	-39	-39	RistErrorKind.INVALID_CONFIG	ok	-	ok
 RIST_ENCRYPTION_DISABLED	ENCRYPTION_DISABLED	-41	-41	RistErrorKind.ENCRYPTION_DISABLED	ok	-	ok
@@ -59,10 +59,10 @@ SRT_IO	IO	-52	-8	SrtErrorKind.IO	ok	SrtException.Kind.IO	ok
 UDP_URL	URL	-53	-27	UdpErrorKind.URL	ok	-	ok
 TCP_URL	URL	-54	-31	TcpErrorKind.URL	ok	-	ok
 TCP_TLS_DISABLED	TLS_DISABLED	-55	-33	TcpErrorKind.TLS_DISABLED	ok	-	ok
-HLS_URL	URL	-56	-35	HlsErrorKind.URL	ok	-	ok
-HLS_BIND_FAILED	BIND_FAILED	-57	-34	HlsErrorKind.BIND_FAILED	ok	-	ok
-HLS_UNALIGNED_PUSH_TS	UNALIGNED_PUSH_TS	-58	-35	HlsErrorKind.UNALIGNED_PUSH_TS	ok	-	ok
-HLS_TLS_DISABLED	TLS_DISABLED	-59	-37	HlsErrorKind.TLS_DISABLED	ok	-	ok
+HLS_URL	URL	-56	-35	HlsErrorKind.URL	ok	HlsException.Kind.URL	ok
+HLS_BIND_FAILED	BIND_FAILED	-57	-34	HlsErrorKind.BIND_FAILED	ok	HlsException.Kind.BIND_FAILED	ok
+HLS_UNALIGNED_PUSH_TS	UNALIGNED_PUSH_TS	-58	-35	HlsErrorKind.UNALIGNED_PUSH_TS	ok	HlsException.Kind.UNALIGNED_PUSH_TS	ok
+HLS_TLS_DISABLED	TLS_DISABLED	-59	-37	HlsErrorKind.TLS_DISABLED	ok	HlsException.Kind.TLS_DISABLED	ok
 RIST_URL	URL	-60	-39	RistErrorKind.URL	ok	-	ok
 RIST_CONTEXT_CREATE_FAILED	CONTEXT_CREATE_FAILED	-61	-38	RistErrorKind.CONTEXT_CREATE_FAILED	ok	-	ok
 RIST_PEER_CREATE_FAILED	PEER_CREATE_FAILED	-62	-38	RistErrorKind.PEER_CREATE_FAILED	ok	-	ok

@@ -89,3 +89,52 @@ mod handle_probe {
         })
     }
 }
+
+/// `org.tstrans.internal.HlsProbe.nRaise(kind, message)` — raise an
+/// `HlsException` of the named Java member through the real throw path, so
+/// `HlsErrorModelTest.everyKindRoundTripsFromRust` pins the mapping.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_tstrans_internal_HlsProbe_nRaise<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    kind: jni::objects::JString<'local>,
+    message: jni::objects::JString<'local>,
+) {
+    use tst_pipeline::binding::BindingErrorKind as K;
+    crate::panic::jni_catch(&mut env, (), |env| {
+        let kind: String = match env.get_string(&kind) {
+            Ok(s) => s.into(),
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
+                return;
+            }
+        };
+        let message: String = match env.get_string(&message) {
+            Ok(s) => s.into(),
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
+                return;
+            }
+        };
+        let k = match kind.as_str() {
+            "IO" => K::HlsIo,
+            "INVALID_CONFIG" => K::HlsInvalidConfig,
+            "FINISHED" => K::HlsFinished,
+            "TLS" => K::HlsTls,
+            "URL" => K::HlsUrl,
+            "BIND_FAILED" => K::HlsBindFailed,
+            "UNALIGNED_PUSH_TS" => K::HlsUnalignedPushTs,
+            "TLS_DISABLED" => K::HlsTlsDisabled,
+            "CLOSED" => K::Closed,
+            "INTERNAL" => K::Internal,
+            other => {
+                let _ = env.throw_new(
+                    "java/lang/IllegalArgumentException",
+                    format!("HlsProbe: unknown kind {other}"),
+                );
+                return;
+            }
+        };
+        crate::hls::errors::throw_hls(env, k, &message);
+    })
+}
