@@ -5553,6 +5553,168 @@ tier = "A"
 
 [[surface]]
 kind = "rust"
+crate = "tst-hls"
+item = "tst_hls::HlsPublisher"
+owning_tests = ["crates/tst-hls/tests/hls_e2e.rs", "bindings/jvm/src/test/java/org/tstrans/hls/HlsPublisherTest.java"]
+bindings = ["java:org.tstrans.hls.HlsPublisher", "c:unaudited", "python:tstrans.hls.HlsPublisher", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-hls"
+item = "tst_hls::HlsPublisherBuilder"
+owning_tests = ["crates/tst-hls/tests/hls_e2e.rs", "bindings/jvm/src/test/java/org/tstrans/hls/HlsPublisherTest.java"]
+bindings = ["java:org.tstrans.hls.HlsPublisherBuilder", "c:unaudited", "python:tstrans.hls.HlsPublisherBuilder", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-hls"
+item = "tst_hls::HlsMode"
+owning_tests = ["bindings/jvm/src/test/java/org/tstrans/hls/HlsValueTypesTest.java"]
+bindings = ["java:org.tstrans.hls.HlsMode", "c:unaudited", "python:tstrans.hls.HlsMode", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-hls"
+item = "tst_hls::publisher::HlsPublisher::push_ts"
+owning_tests = ["bindings/jvm/src/test/java/org/tstrans/hls/HlsPublisherTest.java"]
+bindings = ["java:org.tstrans.hls.HlsPublisher.pushTs", "c:unaudited", "python:tstrans.hls.HlsPublisher.push_ts", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-hls"
+item = "tst_hls::publisher::HlsPublisher::cut_segment"
+owning_tests = ["bindings/jvm/src/test/java/org/tstrans/hls/HlsPublisherTest.java"]
+bindings = ["java:org.tstrans.hls.HlsPublisher.cutSegment", "c:unaudited", "python:tstrans.hls.HlsPublisher.cut_segment", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-hls"
+item = "tst_hls::publisher::HlsPublisher::cut_segment_with_duration"
+owning_tests = ["bindings/jvm/src/test/java/org/tstrans/hls/HlsPublisherTest.java"]
+bindings = ["java:org.tstrans.hls.HlsPublisher.cutSegmentWithDuration", "c:unaudited", "python:tstrans.hls.HlsPublisher.cut_segment_with_duration", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-hls"
+item = "tst_hls::publisher::HlsPublisher::finish"
+owning_tests = ["bindings/jvm/src/test/java/org/tstrans/hls/HlsPublisherTest.java"]
+bindings = ["java:org.tstrans.hls.HlsPublisher.finish", "c:unaudited", "python:tstrans.hls.HlsPublisher.finish", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-hls"
+item = "tst_hls::publisher::HlsPublisher::hls_stats"
+owning_tests = ["bindings/jvm/src/test/java/org/tstrans/hls/HlsPublisherTest.java"]
+bindings = ["java:org.tstrans.hls.HlsPublisher.hlsStats", "c:unaudited", "python:tstrans.hls.HlsPublisher.hls_stats", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-hls"
+item = "tst_hls::publisher::HlsPublisher::local_addr"
+owning_tests = ["bindings/jvm/src/test/java/org/tstrans/hls/HlsPublisherTest.java"]
+bindings = ["java:org.tstrans.hls.HlsPublisher.localAddr", "c:unaudited", "python:tstrans.hls.HlsPublisher.local_addr", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-hls"
+item = "tst_hls::publisher::HlsPublisher::render_playlist"
+owning_tests = ["bindings/jvm/src/test/java/org/tstrans/hls/HlsPublisherTest.java"]
+bindings = ["java:org.tstrans.hls.HlsPublisher.renderPlaylist", "c:unaudited", "python:tstrans.hls.HlsPublisher.render_playlist", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-hls"
+item = "tst_hls::publisher::HlsPublisher::stats"
+owning_tests = ["bindings/jvm/src/test/java/org/tstrans/hls/HlsPublisherTest.java"]
+bindings = ["java:org.tstrans.hls.HlsPublisher.stats", "c:unaudited", "python:tstrans.hls.HlsPublisher.stats", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-hls"
+item = "tst_hls::publisher::HlsPublisher::finish_serving"
+owning_tests = ["bindings/jvm/src/test/java/org/tstrans/hls/HlsServingTest.java"]
+bindings = ["java:org.tstrans.hls.HlsPublisher.finishServing", "c:unaudited", "python:tstrans.hls.HlsPublisher.finish_serving", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::publisher::Publisher"
+owning_tests = ["bindings/jvm/src/test/java/org/tstrans/hls/HlsValueTypesTest.java"]
+bindings = ["java:org.tstrans.hls.Publisher", "c:unaudited", "python:tstrans.hls.Publisher", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::publisher::Publisher::push_ts"
+owning_tests = ["bindings/jvm/src/test/java/org/tstrans/hls/HlsValueTypesTest.java"]
+bindings = ["java:org.tstrans.hls.Publisher.pushTs", "c:unaudited", "python:tstrans.hls.Publisher.push_ts", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::publisher::Publisher::cut_segment"
+owning_tests = ["bindings/jvm/src/test/java/org/tstrans/hls/HlsValueTypesTest.java"]
+bindings = ["java:org.tstrans.hls.Publisher.cutSegment", "c:unaudited", "python:tstrans.hls.Publisher.cut_segment", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::publisher::Publisher::cut_segment_with_duration"
+owning_tests = ["bindings/jvm/src/test/java/org/tstrans/hls/HlsValueTypesTest.java"]
+bindings = ["java:org.tstrans.hls.Publisher.cutSegmentWithDuration", "c:unaudited", "python:tstrans.hls.Publisher.cut_segment_with_duration", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::publisher::Publisher::finish"
+owning_tests = ["bindings/jvm/src/test/java/org/tstrans/hls/HlsValueTypesTest.java"]
+bindings = ["java:org.tstrans.hls.Publisher.finish", "c:unaudited", "python:tstrans.hls.Publisher.finish", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::publisher::Publisher::stats"
+owning_tests = ["bindings/jvm/src/test/java/org/tstrans/hls/HlsValueTypesTest.java"]
+bindings = ["java:org.tstrans.hls.Publisher.stats", "c:unaudited", "python:tstrans.hls.Publisher.stats", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
 crate = "tst-core"
 item = "tst_core::cancel::CancelSlot"
 owning_tests = ["crates/tst-core/src/cancel.rs", "crates/tst-pipeline/tests/managed_receive_cancel_factory.rs", "crates/tst-pipeline/tests/reconnect_cancel_parked_send.rs"]
@@ -6099,31 +6261,7 @@ item = "tst_core::net::udp_socket::set_multicast_if_v4"
 reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
 
 [[exempt]]
-item = "tst_core::publisher::Publisher"
-reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
 item = "tst_core::publisher::Publisher::Error"
-reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "tst_core::publisher::Publisher::cut_segment"
-reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "tst_core::publisher::Publisher::cut_segment_with_duration"
-reason = "defaulted trait method added HLS-03a 2026-06-22; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "tst_core::publisher::Publisher::finish"
-reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "tst_core::publisher::Publisher::push_ts"
-reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "tst_core::publisher::Publisher::stats"
 reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
 
 [[exempt]]
@@ -10998,18 +11136,6 @@ item = "tst_tcp::error::TcpErrorKind::hash"
 reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
 
 [[exempt]]
-item = "tst_hls::HlsMode"
-reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "tst_hls::HlsPublisher"
-reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "tst_hls::HlsPublisherBuilder"
-reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
 item = "tst_hls::HlsUrl"
 reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
 
@@ -11147,38 +11273,6 @@ reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asse
 
 [[exempt]]
 item = "tst_hls::publisher::HlsPublisher::Error"
-reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "tst_hls::publisher::HlsPublisher::cut_segment"
-reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "tst_hls::publisher::HlsPublisher::cut_segment_with_duration"
-reason = "Media-presentation EXTINF override; graduate to [[surface]] when HLS is ungated"
-
-[[exempt]]
-item = "tst_hls::publisher::HlsPublisher::finish"
-reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "tst_hls::publisher::HlsPublisher::hls_stats"
-reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "tst_hls::publisher::HlsPublisher::local_addr"
-reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "tst_hls::publisher::HlsPublisher::push_ts"
-reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "tst_hls::publisher::HlsPublisher::render_playlist"
-reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
-
-[[exempt]]
-item = "tst_hls::publisher::HlsPublisher::stats"
 reason = "bulk bootstrap 2026-06-03; graduate to [[surface]] as coverage is asserted"
 
 [[exempt]]
