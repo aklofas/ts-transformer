@@ -24,7 +24,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added — tst-rtp
 
-From an integrator field report: a `rtp://` receiver ingesting ~6 Mb/s on a
+From an integrator field report: an `rtp://` receiver ingesting ~6 Mb/s on a
 small ARM board saw steady kernel UDP drops at the default socket buffer, and
 had to pin the sending host with a firewall rule.
 
