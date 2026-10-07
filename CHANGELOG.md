@@ -41,12 +41,15 @@ had to pin the sending host with a firewall rule.
 - **Opt-in `?source=<ip>` filter** on the receive path (`RtpRecvTransport`
   and `H264Receiver`): only datagrams whose peer IP matches are accepted (the
   port is not compared; IPv4-mapped IPv6 peers compare as IPv4). Others are
-  dropped silently and counted in the new `RtpStats::source_rejected`, also
-  mirrored on Python `tstrans.rtp.RtpStats.source_rejected` and JVM
-  `org.tstrans.rtp.RtpStats.sourceRejected()` (the JVM record's canonical
-  constructor gains a parameter). Literal IPs only. Without the key the
-  receive loop stays on plain `recv`. The C ABI has no `RtpStats` mirror yet,
-  so the counter is not visible from C.
+  dropped silently and counted in the new `RtpStats::source_rejected`.
+  The counter is readable from `RtpRecvTransport::rtp_stats()` and from
+  `H264Receiver` `rtp_stats()` in Rust, Python
+  (`tstrans.rtp.RtpStats.source_rejected`) and JVM
+  (`org.tstrans.rtp.RtpStats.sourceRejected()`; the record's canonical
+  constructor gains a parameter). It is not yet surfaced through
+  `DemuxReceiver`, the Python/JVM MPEG-TS receivers or C — the same gap
+  `malformed_packets` already has. Literal IPs only. Without the key the
+  receive loop stays on plain `recv`.
 - **Side-rule errors** — a receive URL with `?sndbuf=` fails with
   `RtpUrlError::RecvSndbuf`; a send URL with `?rcvbuf=` or `?source=` fails
   with `RtpUrlError::SendRcvbuf` / `RtpUrlError::SendSource`, matching the

@@ -88,8 +88,9 @@ platform = "macos-arm64,windows-msvc"
 capability = "second_loopback_address"
 class = "portability"
 note = """
-Nothing is skipped: `source_pin_drops_and_counts_other_peers` runs on every
-platform. Only its mismatching-peer half is item-level
+Partial gate: only the foreign-peer (127.0.0.2) half is Linux-only; the
+pinned-peer delivery half runs everywhere. In
+`source_pin_drops_and_counts_other_peers` the mismatching-peer half is item-level
 `#[cfg(target_os = \"linux\")]`: it sends from 127.0.0.2, which Linux answers
 on (all of 127.0.0.0/8) but macOS and Windows do not bind by default. On those
 platforms the test still checks that the pinned 127.0.0.1 peer is delivered
