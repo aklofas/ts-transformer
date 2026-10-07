@@ -72,9 +72,9 @@ MuxerConfig program = MuxerConfig.builder()
     .addKlv(0x102, KlvStreamType.SYNCHRONOUS_METADATA, true)
     .build();
 
-// withConfigHls / sendVideo / sendKlv / finishIntoPublisher / finish all
-// declare checked HlsException (sendVideo/sendKlv also MuxException) —
-// catch both in real code.
+// withConfigHls, sendVideo, sendKlv, sendAudio, sendSubtitle and cutSegment
+// declare checked MuxException and HlsException; finishIntoPublisher and
+// finish declare HlsException — catch both in real code.
 MuxPublisher shell = MuxPublisher.withConfigHls(pub, program); // consumes `pub`
 
 shell.sendVideo(nalBytes, pts, keyFrame);  // keyFrame=true cuts a new segment
