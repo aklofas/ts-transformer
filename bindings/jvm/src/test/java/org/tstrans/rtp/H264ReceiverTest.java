@@ -280,6 +280,7 @@ class H264ReceiverTest {
             RtpStats rtp = rx.rtpStats();
             assertNotNull(rtp);
             assertEquals(0L, rtp.malformedPackets());
+            assertEquals(0L, rtp.sourceRejected());
 
             SocketStats sock = rx.socketStats();
             assertNotNull(sock);
