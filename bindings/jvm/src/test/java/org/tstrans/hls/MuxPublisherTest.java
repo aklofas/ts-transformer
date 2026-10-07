@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 import org.tstrans.HlsException;
+import org.tstrans.MuxException;
 import org.tstrans.mpegts.KlvStreamType;
 import org.tstrans.mpegts.MuxerConfig;
 import org.tstrans.mpegts.VideoCodec;
@@ -104,6 +105,17 @@ class MuxPublisherTest {
     }
 
     @Test
+    void badConfigLeavesPublisherUsable(@TempDir Path dir) throws Exception {
+        HlsPublisher source = pub(dir, HlsMode.LIVE);
+        MuxerConfig bad = MuxerConfig.builder().programNumber(0).pmtPid(0x100)
+            .addVideo(0x101, VideoCodec.H264).build();
+        assertThrows(MuxException.class, () -> MuxPublisher.withConfigHls(source, bad));
+        assertNotNull(source.stats(), "a rejected config must not consume the publisher");
+        source.finish();
+        assertTrue(Files.exists(dir.resolve("playlist.m3u8")));
+    }
+
+    @Test
     void closeWithoutFinishIsQuiet(@TempDir Path dir) throws Exception {
         MuxPublisher mp = MuxPublisher.withConfigHls(pub(dir, HlsMode.LIVE), video());
         mp.sendVideo(syntheticH264Idr(), 0L, true);
@@ -119,12 +131,14 @@ class MuxPublisherTest {
         AtomicBoolean stop = new AtomicBoolean(false);
         CountDownLatch started = new CountDownLatch(1);
         AtomicReference<Throwable> failed = new AtomicReference<>();
+        AtomicBoolean sawClosed = new AtomicBoolean(false);
         byte[] chunk = new byte[188 * 64];
         for (int i = 0; i < 64; i++) chunk[i * 188] = 0x47;
         Thread t = new Thread(() -> {
             try {
                 while (!stop.get()) { source.pushTs(chunk); started.countDown(); }
             } catch (IllegalStateException consumed) {
+                sawClosed.set(true);
                 started.countDown();
             } catch (Throwable t2) {
                 failed.set(t2); started.countDown();
@@ -138,6 +152,7 @@ class MuxPublisherTest {
         t.join(20_000);
         assertFalse(t.isAlive());
         assertNull(failed.get(), String.valueOf(failed.get()));
+        assertTrue(sawClosed.get(), "pusher never observed the consume (no overlap exercised)");
         mp.finishIntoPublisher().finish();
     }
 }

@@ -84,7 +84,10 @@ pub extern "system" fn Java_org_tstrans_hls_MuxPublisher_nWithConfigHls<'local>(
     data_desc_lens: JIntArray<'local>,
 ) -> jlong {
     crate::panic::jni_catch(&mut env, 0, |env| {
-        // Config FIRST so a bad program never consumes the publisher.
+        // Config FIRST: a rejected config returns before the take, so the
+        // publisher stays usable (the Java side now also reads the handle
+        // live and claims it only after this call succeeds — see
+        // MuxPublisher.withConfigHls).
         let cfg = match build_muxer_config_from_arrays(
             env,
             program_number,

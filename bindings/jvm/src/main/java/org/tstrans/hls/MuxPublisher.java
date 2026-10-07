@@ -11,11 +11,14 @@ import org.tstrans.mpegts.MuxerConfig;
  * MPEG-TS and feeds the HLS sink. Mirrors {@code tstrans.hls.MuxPublisher};
  * wraps {@code tst_pipeline::MuxPublisher<HlsPublisher>}.
  *
- * <p>{@link #withConfigHls} CONSUMES the publisher handle (it throws
- * {@link IllegalStateException} afterwards). {@link #finishIntoPublisher()}
- * consumes this shell and hands back a fresh {@link HlsPublisher} to
- * {@code finish()} or {@code finishServing()}. {@link #close()} finishes both
- * quietly. A {@code sendVideo} with {@code keyFrame=true} cuts a segment first.
+ * <p>{@link #withConfigHls} CONSUMES the publisher handle only once the native
+ * shell has actually been built (it throws {@link IllegalStateException}
+ * afterwards). A rejected program config leaves {@code publisher} fully
+ * usable — the handle is read, never claimed, until the native call succeeds.
+ * {@link #finishIntoPublisher()} consumes this shell and hands back a fresh
+ * {@link HlsPublisher} to {@code finish()} or {@code finishServing()}.
+ * {@link #close()} finishes both quietly. A {@code sendVideo} with
+ * {@code keyFrame=true} cuts a segment first.
  *
  * <p>Errors: a muxer rejection is a {@link MuxException}; everything else is an
  * {@link HlsException} (the inner publisher's kind, {@code CLOSED} for a
@@ -27,8 +30,14 @@ public final class MuxPublisher extends NativeHandle {
     private MuxPublisher(long h) { setHandle(h); }
 
     /**
-     * Build from a single-program config and an {@link HlsPublisher}, which is
-     * consumed.
+     * Build from a single-program config and an {@link HlsPublisher}. The
+     * publisher is read live (not consumed) going in: a {@link MuxException}
+     * from config validation leaves it fully usable, since the native side
+     * rejects the config before taking the publisher out of its registry. A
+     * publisher-side failure after that take is a different story — the
+     * publisher is already gone, and {@code publisher} itself becomes an
+     * unusable (but safely {@code IllegalStateException}-throwing) handle.
+     * Only a successful build claims the Java-side handle.
      *
      * @throws IllegalStateException if {@code publisher} was already consumed/finished
      * @throws MuxException if the muxer rejects the program config
@@ -36,8 +45,7 @@ public final class MuxPublisher extends NativeHandle {
      */
     public static MuxPublisher withConfigHls(HlsPublisher publisher, MuxerConfig programConfig)
             throws MuxException, HlsException {
-        long ph = publisher.consumeHandleForShell();
-        if (ph == 0) throw new IllegalStateException("HlsPublisher is closed");
+        long ph = publisher.liveHandleForShell();
         long h = nWithConfigHls(ph,
             programConfig.programNumber(), programConfig.pmtPid(), programConfig.pcrPid(),
             programConfig.pcrIntervalMs(), programConfig.psiIntervalMs(),
@@ -47,6 +55,9 @@ public final class MuxPublisher extends NativeHandle {
             programConfig.streamCarriesPts(),
             programConfig.dataDescBytes(), programConfig.dataDescLens());
         if (h == 0) throw new HlsException(HlsException.Kind.INTERNAL, "nWithConfigHls returned 0 without throwing");
+        // Only now — after the native's own registry take has already
+        // succeeded — claim the Java-side handle too.
+        publisher.consumeHandleForShell();
         return new MuxPublisher(h);
     }
 
@@ -123,6 +134,9 @@ public final class MuxPublisher extends NativeHandle {
     private static native void nSendSubtitle(long handle, byte[] payload, long pts)
         throws MuxException, HlsException;
     private static native void nCutSegment(long handle) throws MuxException, HlsException;
+    // Only HlsException is declared: MuxPublisher::finish() in tst-pipeline is
+    // infallible today (it cannot drain a muxer, so no Mux(...) path exists
+    // here), so mux_publisher_error can only route an HLS-side failure.
     private static native long nFinishIntoPublisher(long handle) throws HlsException;
     private static native MuxPublisherStats nStats(long handle);
     private static native PublisherStats nPublisherStats(long handle);
