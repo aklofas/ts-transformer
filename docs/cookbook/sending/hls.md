@@ -65,9 +65,23 @@ publisher.finish()?;  // writes final playlist + #EXT-X-ENDLIST (Event/Vod modes
 ```java
 HlsPublisher pub = HlsPublisher.builder().outputDir("/var/cache/hls")
     .segmentDurationMs(4000).maxSegmentDurationMs(8000).playlistWindow(6).mode(HlsMode.LIVE).build();
-pub.pushTs(tsPackets);          // whole 188-byte packets
-pub.cutSegment();               // at an IDR boundary
-try (HlsServerHandle h = pub.finishServing()) { /* terminal playlist stays fetchable */ }
+
+MuxerConfig program = MuxerConfig.builder()
+    .programNumber(1).pmtPid(0x100)
+    .addVideo(0x101, VideoCodec.H264)
+    .addKlv(0x102, KlvStreamType.SYNCHRONOUS_METADATA, true)
+    .build();
+
+// withConfigHls / sendVideo / sendKlv / finishIntoPublisher / finish all
+// declare checked HlsException (sendVideo/sendKlv also MuxException) —
+// catch both in real code.
+MuxPublisher shell = MuxPublisher.withConfigHls(pub, program); // consumes `pub`
+
+shell.sendVideo(nalBytes, pts, keyFrame);  // keyFrame=true cuts a new segment
+shell.sendKlv(klvBytes, pts, 0);
+
+HlsPublisher back = shell.finishIntoPublisher();
+back.finish();  // writes final playlist + #EXT-X-ENDLIST (Event/Vod modes)
 ```
 
 ## Keep a completed VOD / EVENT playlist watchable
@@ -81,6 +95,16 @@ an `HlsServerHandle`:
 let publisher = shell.finish()?;
 let handle = publisher.finish_serving()?;   // #EXT-X-ENDLIST written; server stays up
 println!("VOD at http://{}/playlist.m3u8", handle.local_addr());
+// ... hold the handle for as long as clients should be able to fetch ...
+handle.shutdown();
+```
+
+### Java
+
+```java
+HlsPublisher back = shell.finishIntoPublisher();
+HlsServerHandle handle = back.finishServing();  // #EXT-X-ENDLIST written; server stays up
+System.out.println("VOD at http://" + handle.localAddr() + "/playlist.m3u8");
 // ... hold the handle for as long as clients should be able to fetch ...
 handle.shutdown();
 ```

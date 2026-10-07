@@ -33,11 +33,11 @@ public final class MuxPublisher extends NativeHandle {
      * Build from a single-program config and an {@link HlsPublisher}. The
      * publisher is read live (not consumed) going in: a {@link MuxException}
      * from config validation leaves it fully usable, since the native side
-     * rejects the config before taking the publisher out of its registry. A
-     * publisher-side failure after that take is a different story — the
-     * publisher is already gone, and {@code publisher} itself becomes an
-     * unusable (but safely {@code IllegalStateException}-throwing) handle.
-     * Only a successful build claims the Java-side handle.
+     * rejects the config before taking the publisher out of its registry.
+     * Should a failure ever occur after the take, the publisher is gone and
+     * later calls on it throw {@code IllegalStateException}; today no such
+     * failure path exists. Only a successful build claims the Java-side
+     * handle.
      *
      * @throws IllegalStateException if {@code publisher} was already consumed/finished
      * @throws MuxException if the muxer rejects the program config

@@ -25,7 +25,8 @@ built-in server serves only a known set of files it wrote (no path traversal),
 binds loopback by default, and can keep serving a completed VOD/EVENT playlist
 via `finish_serving`. See the [HLS guide](/docs/guides/hls.md); fMP4/CMAF and
 LL-HLS remain deferred (`deferred-features.md`).
-The JVM binding has no HLS surface (deferred). Other
+The JVM binding exposes it as `org.tstrans.hls` (`HlsPublisher` +
+`MuxPublisher`). Other
 containers (MP4 / CMAF), other transports (RTMP / WebRTC), and raw elementary
 streams remain out of scope until a consumer asks. See
 `tests/coverage/TEST_CORPUS.md` for the parsing-side compliance ledger
@@ -654,7 +655,7 @@ covers.
 | `tst-pipeline` | ✅ Full | Composition layer — `MuxSender<T>` / `Sender<T>` / `RawSender<T>` / `DemuxReceiver<R>` / `Receiver<R>` / `RawReceiver<R>` shells; `ManagedTransport` reconnect wrapper; `Pairer` KLV↔video alignment. Decoupled from libsrt via the `Transport`/`RecvTransport` traits. |
 | `tst-c` | ✅ Full | cdylib + staticlib + cbindgen-generated `tstrans.h` + pkg-config. ABI version **0.22** (additive minor bumps). Multi-platform Tier 1 (Linux x86_64 + aarch64 + macOS arm64 + Windows MSVC all gating). |
 | `tst-py` | ✅ Full | PyO3 bindings, published to PyPI as **`tstrans`** (0.7.0). File I/O (inspect + offline build of `.ts`); typed KLV decode/encode for the core MISB sets (ST 0601 / 0102 / 0605 / 0903) plus ST 0806 / 1010 / 1204 and the ST 0805 KLV→CoT conversion layer; codec parsers; live UDP / TCP / RTP (incl. RTSP) / SRT / HLS / RIST transports + Pairer; TLS variants ship in the wheels (`tcps://` caller + listener, `rtsps://` client + server, HTTPS HLS) as does RIST PSK encryption; optional `[pandas]` extra for DataFrame + NumPy adapters. |
-| `tst-jni` | ✅ Full | JVM JAR for JDK 17+ consumers, distributed as `org.tstrans:tstrans-jvm` on Maven Central. Mirrors the Python surface package-for-package (`org.tstrans.{io,codec,klv,mpegts,rtp,srt,pipeline}`); RTP (incl. RTSP client + server) + SRT transports. |
+| `tst-jni` | ✅ Full | JVM JAR for JDK 17+ consumers, distributed as `org.tstrans:tstrans-jvm` on Maven Central. Mirrors the Python surface package-for-package (`org.tstrans.{io,codec,klv,mpegts,rtp,srt,hls,pipeline}`); RTP (incl. RTSP client + server) + SRT transports + HLS publishing (`org.tstrans.hls`). |
 | `tst-uniffi` | ⏳ Planned | iOS / Android via UniFFI (Swift / Kotlin). |
 
 For full build-target / CI gating coverage see "Build targets" at the top of this document.

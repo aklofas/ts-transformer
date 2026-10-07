@@ -65,17 +65,6 @@ mean **Deferred**. An entry whose feature has shipped must never read
 - **Trigger to revisit:** A target player exposes timed metadata only via
   ID3 frames (no raw private-data / emsg path).
 
-## JVM HLS surface
-
-- **Status:** SHIPPED (Unreleased; ships with the next tag). `org.tstrans.hls`
-  mirrors `tstrans.hls` class for class; the GIS demo site is the JVM
-  consumer the trigger waited for.
-- **Why deferred:** No JVM consumer has asked. The publisher surface maps
-  mechanically onto the JNI patterns already used for the mux-sender family
-  (builder + handle + `finish_serving` handle), so the port is bounded when
-  a consumer arrives.
-- **Trigger to revisit:** none — shipped.
-
 ## In-memory HLS `SegmentSink`
 
 - **Status:** Not implemented. `tst-hls` writes segments and the playlist
@@ -1963,7 +1952,14 @@ Entries whose feature shipped. Kept for the record (the decision that closed the
     player can decode the first segment it fetches.
 - See the [HLS guide](/docs/guides/hls.md) for the full surface, serving
   guidance, KLV ride-along, and latency tuning. The JVM binding exposes HLS
-  since this entry shipped (see the JVM guide).
+  since this entry shipped (see the
+  [JVM guide](/docs/languages/jvm.md#hls-publishing-orgtstranshls)).
+
+### JVM HLS surface — SHIPPED
+
+- **Status:** SHIPPED. `org.tstrans.hls` mirrors `tstrans.hls` class for
+  class; the GIS demo site's JVM backend was the consumer the trigger
+  waited for.
 
 ### `klv::st0806` RVT typed layer — SHIPPED
 

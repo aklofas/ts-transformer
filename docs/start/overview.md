@@ -47,7 +47,7 @@ Each placement uses the same primitives differently. The [`guides/`](/docs/guide
 - **Subtitles** — DVB subtitling, DVB teletext, CEA-708, WebVTT-in-TS.
 - **C bindings** (`tst-c`) — `cdylib` + `staticlib`, `tstrans.h` via cbindgen, `tstrans.pc` for pkg-config. Stable ABI versioned `TST_ABI_VERSION_MAJOR/MINOR`.
 - **Python bindings** (`tst-py`, on PyPI as `tstrans`) — offline `.ts` inspection/construction plus live UDP / TCP / RTP (incl. RTSP) / SRT / RIST and the HLS publisher; typed KLV decode/encode; raw-first `DemuxEvent.Video` / `DemuxEvent.Audio` (each carries the raw access-unit / frame bytes); optional pandas + NumPy adapters.
-- **JVM bindings** — `tst-jni`, distributed as `tstrans-jvm` (`org.tstrans`) on Maven Central. Mirrors the Python surface package-for-package for the offline, RTP and SRT parts (`org.tstrans.{io,codec,klv,mpegts,rtp,srt,pipeline}`); UDP, TCP, RIST and HLS have no JVM binding.
+- **JVM bindings** — `tst-jni`, distributed as `tstrans-jvm` (`org.tstrans`) on Maven Central. Mirrors the Python surface package-for-package for the offline, RTP, SRT, and HLS parts (`org.tstrans.{io,codec,klv,mpegts,rtp,srt,hls,pipeline}`); UDP, TCP and RIST have no JVM binding.
 
 ## Scope boundaries — and what to pair it with
 
