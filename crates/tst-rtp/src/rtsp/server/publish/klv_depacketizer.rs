@@ -26,20 +26,30 @@
 //!    a poisoned unit must still respond to a timestamp change, or a sender
 //!    that advances the timestamp without ever setting a marker (or whose
 //!    marker packet is lost) would wedge the depacketizer permanently.
-//! 4. **Sequence gap** (`delta != 1`; duplicates, `delta == 0`, are ignored):
-//!    the open unit is dropped. Whatever unit starts accumulating from this
-//!    point on — the gap-revealing packet itself — cannot be confirmed to
-//!    truly be a fresh KLVunit's first fragment (we cannot tell; RFC 6597
-//!    offers no way to know), so it is marked **poisoned**: it keeps
-//!    accumulating state (so later timestamp/marker boundaries are still
-//!    detected correctly, per rule 3) but its bytes are never buffered and,
-//!    when it reaches its own boundary, it is silently discarded — not
-//!    pushed to the ready queue, and not counted again. `units_dropped`
-//!    ticks exactly once per loss episode: dropping an open unit that is
-//!    *already* an empty poisoned placeholder (e.g. a second gap, or an
-//!    SSRC change, before the first poisoned placeholder ever reached a
-//!    boundary) does not tick again — there is nothing new being lost,
-//!    just the same ongoing episode continuing.
+//! 4. **Sequence gap** (`delta != 1`; duplicates, `delta == 0`, are ignored).
+//!    What the lost packets were decides the handling:
+//!    - **Inside the open unit** (the gap-revealing packet has the open
+//!      unit's timestamp): the open unit is dropped, and the rest of it —
+//!      the gap-revealing packet onward — is marked **poisoned**: it keeps
+//!      accumulating state (so later timestamp/marker boundaries are still
+//!      detected correctly, per rule 3) but its bytes are never buffered
+//!      and, when it reaches its own boundary, it is silently discarded —
+//!      not pushed to the ready queue, and not counted again, since it is
+//!      the remainder of the unit already counted. `units_dropped` ticks
+//!      exactly once per loss episode: dropping an open unit that is
+//!      *already* an empty poisoned placeholder (e.g. a second gap, or an
+//!      SSRC change, before the first poisoned placeholder ever reached a
+//!      boundary) does not tick again.
+//!    - **At a unit boundary** (no unit open, or the gap-revealing packet
+//!      starts a new timestamp): the lost packets may have been whole
+//!      units, the open unit's tail, or the new unit's head — RFC 6597
+//!      offers no way to tell. Both the open unit (if any) and the new unit
+//!      become **tentative**: each is confirmed when it closes by a
+//!      structural check (it must be whole KLV items — a key starting
+//!      `06 0E 2B 34` and a BER length its value exactly fills). A tentative
+//!      unit that passes is emitted; one that fails is dropped and counted
+//!      in `units_dropped`. So a lost single-packet unit costs that unit
+//!      only, not its intact neighbour.
 //! 5. **SSRC change**: a source restart. The open unit is dropped (ticking
 //!    `units_dropped` under the same single-tick-per-episode discipline as
 //!    rule 4) and sequence-number tracking resets; unlike rule 4, the
@@ -87,9 +97,9 @@ pub struct KlvUnit {
 pub(crate) struct KlvDepayStats {
     /// Number of complete, unpoisoned KLVunits emitted.
     pub(crate) units_emitted: u64,
-    /// Number of KLVunits discarded (sequence gap, SSRC change, or
-    /// oversize). Oversize drops are also counted in
-    /// `units_dropped_oversize`.
+    /// Number of KLVunits discarded (sequence gap, a unit bordering a gap
+    /// that fails the structural check, SSRC change, or oversize).
+    /// Oversize drops are also counted in `units_dropped_oversize`.
     pub(crate) units_dropped: u64,
     /// Number of KLVunits dropped specifically for exceeding
     /// [`MAX_KLV_UNIT_BYTES`]. Every oversize drop also increments
@@ -117,21 +127,27 @@ pub struct KlvDepacketizer {
     unit_buf: Vec<u8>,
     /// True if the open unit must be silently discarded (not emitted, not
     /// separately counted) at its next boundary — set when a sequence gap
-    /// starts a new unit whose first-fragment status cannot be confirmed
-    /// (rule 4), or when the open unit has already exceeded
-    /// [`MAX_KLV_UNIT_BYTES`] (rule 6). In both cases `unit_ts` is left
-    /// `Some` (the unit stays open) so timestamp/marker boundary detection
-    /// keeps working normally — only the bytes are abandoned.
+    /// falls inside the unit (rule 4), or when the open unit has already
+    /// exceeded [`MAX_KLV_UNIT_BYTES`] (rule 6). In both cases `unit_ts` is
+    /// left `Some` (the unit stays open) so timestamp/marker boundary
+    /// detection keeps working normally — only the bytes are abandoned.
     unit_poisoned: bool,
+    /// True if the open unit borders a sequence gap at a unit boundary
+    /// (rule 4) and must pass the structural check when it closes.
+    unit_tentative: bool,
     /// Last RTP sequence number seen (rule 4 gap/duplicate detection).
     last_seq: Option<u16>,
     /// Latched SSRC (rule 5 source-restart detection).
     ssrc: Option<u32>,
     /// Sticky poison to apply to the next unit opened. Set when a gap is
-    /// detected (rule 4) and consumed the moment a unit is next opened —
-    /// always within the same `feed` call, since a non-empty payload always
-    /// ends up opening or continuing a unit by the end of `feed`.
+    /// detected inside the open unit (rule 4) and consumed the moment a
+    /// unit is next opened — always within the same `feed` call, since a
+    /// non-empty payload always ends up opening or continuing a unit by
+    /// the end of `feed`.
     gap_pending: bool,
+    /// Like `gap_pending`, for a gap at a unit boundary: the next unit
+    /// opened is tentative (rule 4).
+    tentative_pending: bool,
     /// Fully reassembled units waiting to be consumed.
     ready: VecDeque<KlvUnit>,
     stats: KlvDepayStats,
@@ -150,9 +166,11 @@ impl KlvDepacketizer {
             unit_ts: None,
             unit_buf: Vec::new(),
             unit_poisoned: false,
+            unit_tentative: false,
             last_seq: None,
             ssrc: None,
             gap_pending: false,
+            tentative_pending: false,
             ready: VecDeque::new(),
             stats: KlvDepayStats::default(),
         }
@@ -173,6 +191,7 @@ impl KlvDepacketizer {
                 }
                 self.last_seq = None;
                 self.gap_pending = false;
+                self.tentative_pending = false;
                 self.ssrc = Some(header.ssrc);
             }
             Some(_) => {}
@@ -189,10 +208,19 @@ impl KlvDepacketizer {
                 return;
             }
             if delta != 1 {
-                if self.take_open() {
-                    self.stats.units_dropped += 1;
+                if self.unit_ts == Some(header.timestamp) {
+                    // The gap is inside the open unit.
+                    if self.take_open() {
+                        self.stats.units_dropped += 1;
+                    }
+                    self.gap_pending = true;
+                } else {
+                    // The gap is at a unit boundary: confirm both sides
+                    // structurally when they close. Rule 3 below closes the
+                    // open unit, if any, right away.
+                    self.unit_tentative = self.unit_ts.is_some();
+                    self.tentative_pending = true;
                 }
-                self.gap_pending = true;
             }
         }
         self.last_seq = Some(header.seq);
@@ -211,7 +239,9 @@ impl KlvDepacketizer {
         if self.unit_ts.is_none() {
             self.unit_ts = Some(header.timestamp);
             self.unit_poisoned = self.gap_pending;
+            self.unit_tentative = self.tentative_pending;
             self.gap_pending = false;
+            self.tentative_pending = false;
         }
 
         if self.unit_poisoned {
@@ -273,21 +303,29 @@ impl KlvDepacketizer {
         let was_poisoned = self.unit_poisoned;
         self.unit_buf = Vec::new();
         self.unit_poisoned = false;
+        self.unit_tentative = false;
         !was_poisoned
     }
 
     /// Complete the open unit, if any (rules 2 and 3). A poisoned unit
     /// (rule 4 or rule 6) is discarded silently — no ready push, no counter
     /// tick, since its one `units_dropped` tick already happened when it
-    /// was poisoned.
+    /// was poisoned. A tentative unit (rule 4) that is not whole KLV items
+    /// is discarded and counted.
     fn close_unit(&mut self) {
         let Some(rtp_timestamp) = self.unit_ts.take() else {
             return;
         };
         let poisoned = self.unit_poisoned;
+        let tentative = self.unit_tentative;
         let bytes = std::mem::take(&mut self.unit_buf);
         self.unit_poisoned = false;
+        self.unit_tentative = false;
         if poisoned {
+            return;
+        }
+        if tentative && !is_whole_klv_items(&bytes) {
+            self.stats.units_dropped += 1;
             return;
         }
         self.ready.push_back(KlvUnit {
@@ -296,6 +334,45 @@ impl KlvDepacketizer {
         });
         self.stats.units_emitted += 1;
     }
+}
+
+/// The SMPTE UL prefix every KLV key starts with (SMPTE 336M).
+const KLV_KEY_PREFIX: [u8; 4] = [0x06, 0x0E, 0x2B, 0x34];
+
+/// True when `bytes` is one or more whole KLV items back to back (RFC
+/// 6597 §4.1: a KLVunit carries every item presented at one time), each a
+/// 16-byte key starting with [`KLV_KEY_PREFIX`] and a BER length that its
+/// value exactly fills. A unit that lost its first or last fragment fails
+/// this: a tail does not start with a key, and a head is shorter than its
+/// length says.
+fn is_whole_klv_items(mut bytes: &[u8]) -> bool {
+    if bytes.is_empty() {
+        return false;
+    }
+    while !bytes.is_empty() {
+        if bytes.len() < 17 || bytes[..4] != KLV_KEY_PREFIX {
+            return false;
+        }
+        let first = bytes[16];
+        let (value_len, header_len) = if first < 0x80 {
+            (u64::from(first), 17)
+        } else {
+            let n = usize::from(first & 0x7F);
+            if n == 0 || n > 8 || bytes.len() < 17 + n {
+                return false; // indefinite, oversized or truncated length
+            }
+            let len = bytes[17..17 + n]
+                .iter()
+                .fold(0u64, |acc, &b| (acc << 8) | u64::from(b));
+            (len, 17 + n)
+        };
+        let rest = &bytes[header_len..];
+        if value_len > rest.len() as u64 {
+            return false;
+        }
+        bytes = &rest[value_len as usize..];
+    }
+    true
 }
 
 #[cfg(test)]
@@ -366,6 +443,110 @@ mod tests {
         assert_eq!(d.stats().units_dropped, 1);
         d.feed(&h(4, 2000, true), b"ok");
         assert_eq!(d.next_unit().unwrap().bytes, b"ok");
+    }
+
+    /// One whole KLV item: a 16-byte SMPTE UL key, a BER short-form
+    /// length, and a 3-byte value ending in `tag`.
+    fn item(tag: u8) -> Vec<u8> {
+        let mut v = vec![
+            0x06, 0x0E, 0x2B, 0x34, 0x02, 0x0B, 0x01, 0x01, 0x0E, 0x01, 0x03, 0x01, 0x01, 0x00,
+            0x00, 0x00,
+        ];
+        v.extend_from_slice(&[0x03, 0x41, 0x01, tag]);
+        v
+    }
+
+    #[test]
+    fn a_lost_packet_between_units_does_not_poison_the_next_intact_unit() {
+        // Single-packet units at seq 1, 3, 4; seq 2 (a whole unit) is lost.
+        let mut d = KlvDepacketizer::new();
+        d.feed(&h(1, 1000, true), &item(1));
+        d.feed(&h(3, 3000, true), &item(3));
+        d.feed(&h(4, 4000, true), &item(4));
+        let got: Vec<u32> = std::iter::from_fn(|| d.next_unit())
+            .map(|u| u.rtp_timestamp)
+            .collect();
+        assert_eq!(got, [1000, 3000, 4000]);
+        assert_eq!(d.stats().units_dropped, 0);
+    }
+
+    #[test]
+    fn a_unit_missing_its_first_fragment_is_dropped_and_counted() {
+        // Seq 2 was the first fragment of the unit at ts 3000, whose second
+        // fragment (marker) is seq 3: the tail alone is not a KLV item.
+        let whole = item(3);
+        let (_, tail) = whole.split_at(10);
+        let mut d = KlvDepacketizer::new();
+        d.feed(&h(1, 1000, true), &item(1));
+        d.feed(&h(3, 3000, true), tail);
+        d.feed(&h(4, 4000, true), &item(4));
+        let got: Vec<u32> = std::iter::from_fn(|| d.next_unit())
+            .map(|u| u.rtp_timestamp)
+            .collect();
+        assert_eq!(got, [1000, 4000]);
+        assert_eq!(d.stats().units_dropped, 1);
+    }
+
+    #[test]
+    fn a_unit_missing_its_last_fragment_is_dropped_and_counted() {
+        // A two-fragment unit at ts 1000 loses its marker fragment (seq 2);
+        // the next unit's packet reveals the gap with a new timestamp.
+        let whole = item(1);
+        let (head, _) = whole.split_at(10);
+        let mut d = KlvDepacketizer::new();
+        d.feed(&h(1, 1000, false), head);
+        d.feed(&h(3, 2000, true), &item(2));
+        assert_eq!(d.next_unit().unwrap().rtp_timestamp, 2000);
+        assert!(d.next_unit().is_none());
+        assert_eq!(d.stats().units_dropped, 1);
+    }
+
+    #[test]
+    fn a_markerless_unit_before_a_gap_is_kept_when_whole() {
+        // A sender that never sets the marker: each unit closes on the next
+        // timestamp. Seq 2 (ts 2000) is lost; the open unit at ts 1000 is
+        // a whole item, so it is kept.
+        let mut d = KlvDepacketizer::new();
+        d.feed(&h(1, 1000, false), &item(1));
+        d.feed(&h(3, 3000, false), &item(3));
+        d.feed(&h(4, 4000, false), &item(4));
+        let mut got: Vec<u32> = std::iter::from_fn(|| d.next_unit())
+            .map(|u| u.rtp_timestamp)
+            .collect();
+        got.extend(d.flush().map(|u| u.rtp_timestamp));
+        assert_eq!(got, [1000, 3000, 4000]);
+        assert_eq!(d.stats().units_dropped, 0);
+    }
+
+    #[test]
+    fn whole_klv_item_check() {
+        assert!(is_whole_klv_items(&item(1)));
+        let two = [item(1), item(2)].concat();
+        assert!(
+            is_whole_klv_items(&two),
+            "a KLVunit may carry several items"
+        );
+        // Long-form BER length (0x81 0x03).
+        let mut long = item(1);
+        long.splice(16..17, [0x81, 0x03]);
+        assert!(is_whole_klv_items(&long));
+        let mut short = item(1);
+        short.pop();
+        assert!(!is_whole_klv_items(&short), "value shorter than its length");
+        let mut extra = item(1);
+        extra.push(0);
+        assert!(!is_whole_klv_items(&extra), "trailing bytes");
+        assert!(!is_whole_klv_items(&item(1)[10..]), "no key prefix");
+        assert!(!is_whole_klv_items(&[]));
+        let mut huge = item(1);
+        huge.splice(
+            16..17,
+            [0x88, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF],
+        );
+        assert!(!is_whole_klv_items(&huge), "a length past the bytes");
+        let mut zero_n = item(1);
+        zero_n[16] = 0x80;
+        assert!(!is_whole_klv_items(&zero_n), "indefinite BER length");
     }
 
     #[test]
