@@ -35,6 +35,19 @@
 //! fallback re-establishes it. The fallback then anchors where the video
 //! line is at the restart, not at its start. The adapter detects the SSRC
 //! change and only feeds a track the sender reports of its current SSRC.
+//!
+//! A placed unit is not released at once: it waits until the video pushed
+//! into the muxer has reached its PTS ([`Aligner::on_video_muxed`]). KLV
+//! stamped at capture leads the encoder's output by the encoder latency,
+//! and a KLV PES muxed ahead of the video drags the muxer's PCR (written
+//! from the PTS of whatever is pushed) ahead of every video frame still to
+//! come, so a PCR-slaved player shows those frames late. Placed units
+//! leave in arrival order, so emission into the muxer stays in order.
+//! They share the hold budgets with the units still waiting for
+//! alignment, and a placed unit the video has not reached
+//! [`ALIGN_FALLBACK`] after its placement is dropped and counted: the
+//! wait is bounded, but generous next to any real encoder latency.
+//! [`Aligner::drain`] releases every placed unit regardless.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -47,12 +60,13 @@ use crate::rtcp::SenderReport;
 /// reports on both tracks before falling back to first-packet coincidence.
 pub(crate) const ALIGN_FALLBACK: Duration = Duration::from_secs(2);
 
-/// Maximum number of KLV units [`Aligner`] holds while waiting for
-/// alignment. Bounded, drop-oldest — see [`Aligner::on_klv_unit`].
+/// Maximum number of KLV units [`Aligner`] holds, waiting for alignment
+/// and placed but waiting for the video together. Bounded, drop-oldest —
+/// see [`Aligner::on_klv_unit`].
 pub(crate) const ALIGN_HOLD_MAX_UNITS: usize = 4096;
 
-/// Maximum total payload bytes [`Aligner`] holds while waiting for
-/// alignment, drop-oldest. With units capped at the muxer's KLV ceiling
+/// Maximum total payload bytes [`Aligner`] holds, waiting for alignment
+/// and placed but waiting for the video together, drop-oldest. With units capped at the muxer's KLV ceiling
 /// (`MAX_KLV_UNIT_BYTES`, about 64 KiB) this is the bound that binds for
 /// large units; [`ALIGN_HOLD_MAX_UNITS`] binds for small ones.
 pub(crate) const ALIGN_HOLD_MAX_BYTES: usize = 4 * 1024 * 1024;
@@ -131,6 +145,16 @@ struct Held {
     at: Instant,
 }
 
+/// A KLV unit placed on the video line, waiting for the video pushed into
+/// the muxer to reach its PTS.
+#[derive(Debug)]
+struct Placed {
+    unit: KlvUnit,
+    pts: i64,
+    /// When the unit was placed: the clock its age bound runs against.
+    at: Instant,
+}
+
 /// Places KLV units on the video track's PTS line using RTCP sender
 /// reports, with a first-packet-coincidence fallback. See the
 /// [module docs](self).
@@ -157,7 +181,7 @@ pub(crate) struct Aligner {
     /// known — from a sender-report pair or the first-packet-coincidence
     /// fallback.
     offset: Option<i64>,
-    /// KLV units the aligner discarded.
+    /// Unplaced KLV units the aligner discarded.
     dropped: u64,
     /// A video source restart cleared `video_origin`: the next origin
     /// is a re-anchor, so its fallback anchor is that AU's own RTP time.
@@ -167,6 +191,17 @@ pub(crate) struct Aligner {
     /// depacketizer keeps PTS monotonic across video restarts, so this
     /// stays meaningful across them.
     video_pts_max: Option<i64>,
+    /// Placed units waiting for the video to reach them, in arrival order.
+    /// Shares [`ALIGN_HOLD_MAX_UNITS`] and [`ALIGN_HOLD_MAX_BYTES`] with
+    /// `hold`; each waits at most [`ALIGN_FALLBACK`] from its placement.
+    placed: VecDeque<Placed>,
+    /// Sum of `placed`'s payload lengths.
+    placed_bytes: usize,
+    /// Highest video PTS pushed into the muxer, from
+    /// [`Self::on_video_muxed`]: placed units at or below it leave.
+    video_reach: Option<i64>,
+    /// Placed units the aligner discarded (budget or age).
+    dropped_placed: u64,
 }
 
 impl Aligner {
@@ -184,6 +219,10 @@ impl Aligner {
             dropped: 0,
             reanchor_next: false,
             video_pts_max: None,
+            placed: VecDeque::new(),
+            placed_bytes: 0,
+            video_reach: None,
+            dropped_placed: 0,
         }
     }
 
@@ -234,6 +273,12 @@ impl Aligner {
         if let (Some(o), Some(pts)) = (self.video_origin.as_mut(), self.video_pts_max) {
             o.fallback_anchor = o.unwrapped + pts;
         }
+    }
+
+    /// A video AU at `pts` reached the muxer. Placed units at or below
+    /// the highest such PTS may leave on the next [`Self::poll`].
+    pub(crate) fn on_video_muxed(&mut self, pts: i64) {
+        self.video_reach = Some(self.video_reach.map_or(pts, |r| r.max(pts)));
     }
 
     /// Record the video track's RTCP sender report and recompute the
@@ -314,18 +359,20 @@ impl Aligner {
         });
     }
 
-    /// Queue a KLV unit; returns every unit now placeable, in order, as
-    /// `(unit, pts_ticks)`. A unit is placeable once the video origin is
+    /// Queue a KLV unit; returns every unit now due, in order, as
+    /// `(unit, pts_ticks)`. A unit is placed once the video origin is
     /// known and either a sender-report pair or the two-second fallback has
     /// established an offset — at which point every held unit (this one
-    /// included) is drained in one pass.
+    /// included) is placed in one pass — and due once the video pushed into
+    /// the muxer has reached its PTS (see the [module docs](self)).
     ///
-    /// The hold is bounded drop-oldest at [`ALIGN_HOLD_MAX_UNITS`] units
-    /// and [`ALIGN_HOLD_MAX_BYTES`] bytes. While no video origin exists the
-    /// fallback cannot engage, so units older than [`ALIGN_FALLBACK`] are
-    /// evicted instead: a publisher that sends only KLV holds at most two
-    /// seconds of it (spec §4). Every unit dropped here counts in
-    /// [`Self::dropped`].
+    /// Held and placed units together are bounded drop-oldest at
+    /// [`ALIGN_HOLD_MAX_UNITS`] units and [`ALIGN_HOLD_MAX_BYTES`] bytes,
+    /// placed units first (they arrived first). While no video origin
+    /// exists the fallback cannot engage, so held units older than
+    /// [`ALIGN_FALLBACK`] are evicted instead: a publisher that sends only
+    /// KLV holds at most two seconds of it (spec §4). Every unit dropped
+    /// here counts in [`Self::dropped`].
     pub(crate) fn on_klv_unit(&mut self, u: KlvUnit, now: Instant) -> Vec<(KlvUnit, i64)> {
         let t_k = self.klv.unwrap(u.rtp_timestamp);
         self.klv_first.get_or_insert(t_k);
@@ -335,15 +382,22 @@ impl Aligner {
             t_k,
             at: now,
         });
-        while self.hold.len() > ALIGN_HOLD_MAX_UNITS || self.held_bytes > ALIGN_HOLD_MAX_BYTES {
+        while self.hold.len() + self.placed.len() > ALIGN_HOLD_MAX_UNITS
+            || self.held_bytes + self.placed_bytes > ALIGN_HOLD_MAX_BYTES
+        {
             self.drop_oldest();
         }
         self.release(now)
     }
 
-    /// Drop the oldest held unit, counting it.
+    /// Drop the oldest unit the aligner holds, counting it: the front of
+    /// `placed` if any (it arrived before everything in `hold`), else the
+    /// front of `hold`.
     fn drop_oldest(&mut self) {
-        if let Some(h) = self.hold.pop_front() {
+        if let Some(p) = self.placed.pop_front() {
+            self.placed_bytes -= p.unit.bytes.len();
+            self.dropped_placed += 1;
+        } else if let Some(h) = self.hold.pop_front() {
             self.held_bytes -= h.unit.bytes.len();
             self.dropped += 1;
         }
@@ -357,7 +411,9 @@ impl Aligner {
     }
 
     /// With no video origin there is no line to place on and no fallback
-    /// to wait for: evict held units older than [`ALIGN_FALLBACK`].
+    /// to wait for: evict held (unplaced) units older than
+    /// [`ALIGN_FALLBACK`]. Placed units have their own age bound, in
+    /// [`Self::take_due`].
     fn evict_stale(&mut self, now: Instant) {
         if self.video_origin.is_some() {
             return;
@@ -367,7 +423,9 @@ impl Aligner {
             .front()
             .is_some_and(|h| now.saturating_duration_since(h.at) >= ALIGN_FALLBACK)
         {
-            self.drop_oldest();
+            let h = self.hold.pop_front().expect("front exists");
+            self.held_bytes -= h.unit.bytes.len();
+            self.dropped += 1;
         }
     }
 
@@ -395,19 +453,56 @@ impl Aligner {
         }
     }
 
-    /// Place everything currently held, if alignment is known. Shared by
-    /// [`Self::on_klv_unit`], [`Self::poll`] and [`Self::drain`].
+    /// Place everything currently held, if alignment is known, then
+    /// return the placed units now due. Shared by [`Self::on_klv_unit`],
+    /// [`Self::poll`] and [`Self::drain`].
     fn release(&mut self, now: Instant) -> Vec<(KlvUnit, i64)> {
         self.evict_stale(now);
         self.maybe_engage_fallback(now);
+        self.place_held(now);
+        self.take_due(now)
+    }
+
+    /// Move every held unit to `placed`, if alignment is known.
+    fn place_held(&mut self, now: Instant) {
         let (Some(origin), Some(offset)) = (self.video_origin, self.offset) else {
-            return Vec::new();
+            return;
         };
+        self.placed_bytes += self.held_bytes;
         self.held_bytes = 0;
-        self.hold
-            .drain(..)
-            .map(|h| (h.unit, h.t_k + offset - origin.unwrapped))
-            .collect()
+        self.placed.extend(self.hold.drain(..).map(|h| Placed {
+            pts: h.t_k + offset - origin.unwrapped,
+            unit: h.unit,
+            at: now,
+        }));
+    }
+
+    /// Pop placed units from the front while the video pushed into the
+    /// muxer has reached them. A front unit it has not reached waits
+    /// (everything behind it too, keeping arrival order) until it is
+    /// [`ALIGN_FALLBACK`] old, then is dropped and counted.
+    fn take_due(&mut self, now: Instant) -> Vec<(KlvUnit, i64)> {
+        let mut due = Vec::new();
+        while let Some(p) = self.placed.front() {
+            let reached = self.video_reach.is_some_and(|r| p.pts <= r);
+            if !reached && now.saturating_duration_since(p.at) < ALIGN_FALLBACK {
+                break;
+            }
+            let p = self.placed.pop_front().expect("front exists");
+            self.placed_bytes -= p.unit.bytes.len();
+            if reached {
+                due.push((p.unit, p.pts));
+            } else {
+                tracing::debug!(
+                    target: "tst_rtp::server::publish",
+                    pts = p.pts,
+                    video = ?self.video_reach,
+                    "placed KLV unit never reached by the video; dropped"
+                );
+                self.dropped_placed += 1;
+            }
+        }
+        due
     }
 
     /// Place held units on elapsed time alone: the same step
@@ -425,27 +520,28 @@ impl Aligner {
         self.steps
     }
 
-    /// KLV units the aligner discarded, cumulative.
+    /// KLV units the aligner discarded, held or placed, cumulative.
     pub(crate) fn dropped(&self) -> u64 {
-        self.dropped
+        self.dropped + self.dropped_placed
     }
 
     /// Flush: place whatever is held, using the current mapping if one is
     /// already known, otherwise forcing the first-packet-coincidence
     /// fallback now (ignoring the [`ALIGN_FALLBACK`] window) so an
     /// end-of-stream flush doesn't lose units that never got a sender
-    /// report. While the video origin is unknown there is no line to place
-    /// anything on: every held unit is abandoned and counted in
-    /// [`Self::dropped`].
+    /// report, and release every placed unit whether or not the video has
+    /// reached it. While the video origin is unknown there is no line to
+    /// place anything on: every held unit is abandoned and counted in
+    /// [`Self::dropped`] (units already placed are still released).
     pub(crate) fn drain(&mut self, now: Instant) -> Vec<(KlvUnit, i64)> {
         if self.video_origin.is_none() {
             self.discard_held();
-            return Vec::new();
-        }
-        if self.offset.is_none() {
+        } else if self.offset.is_none() {
             self.engage_fallback();
         }
-        self.release(now)
+        self.place_held(now);
+        self.placed_bytes = 0;
+        self.placed.drain(..).map(|p| (p.unit, p.pts)).collect()
     }
 }
 
@@ -472,6 +568,15 @@ mod tests {
     }
 
     impl Aligner {
+        /// Test-only: an aligner whose video has already been pushed past
+        /// any PTS, so placed units come back at once. For tests of the
+        /// clock mapping; the hold behind the video has its own tests.
+        fn caught_up() -> Self {
+            let mut a = Aligner::new();
+            a.on_video_muxed(i64::MAX);
+            a
+        }
+
         /// Test-only: `on_klv_sr` followed by the private "place everything
         /// placeable" step that [`Aligner::on_klv_unit`] also runs, so a
         /// test can observe a sender-report pair's effect on already-held
@@ -488,7 +593,7 @@ mod tests {
 
     #[test]
     fn units_are_held_until_both_reports_then_placed_on_the_video_line() {
-        let mut a = Aligner::new();
+        let mut a = Aligner::caught_up();
         let t0 = Instant::now();
         a.on_video_au(90_000, 0); // video origin = 90 000 (PTS 0)
         assert!(a.on_klv_unit(unit(500_000), t0).is_empty(), "held");
@@ -504,7 +609,7 @@ mod tests {
 
     #[test]
     fn fallback_after_two_seconds_without_reports() {
-        let mut a = Aligner::new();
+        let mut a = Aligner::caught_up();
         let t0 = Instant::now();
         a.on_video_au(1_000, 0);
         assert!(a.on_klv_unit(unit(7_000), t0).is_empty());
@@ -516,7 +621,7 @@ mod tests {
 
     #[test]
     fn poll_releases_held_units_after_the_fallback() {
-        let mut a = Aligner::new();
+        let mut a = Aligner::caught_up();
         let t0 = Instant::now();
         a.on_video_au(1_000, 0);
         assert!(a.on_klv_unit(unit(7_000), t0).is_empty());
@@ -531,7 +636,7 @@ mod tests {
 
     #[test]
     fn a_later_report_pair_replaces_the_mapping_and_counts_a_step() {
-        let mut a = Aligner::new();
+        let mut a = Aligner::caught_up();
         let t0 = Instant::now();
         a.on_video_au(0, 0);
         a.on_video_sr(&sr(10, 0, 0));
@@ -547,7 +652,7 @@ mod tests {
 
     #[test]
     fn report_jitter_within_a_millisecond_is_not_a_step() {
-        let mut a = Aligner::new();
+        let mut a = Aligner::caught_up();
         let t0 = Instant::now();
         a.on_video_au(0, 0);
         a.on_video_sr(&sr(10, 0, 0));
@@ -566,7 +671,7 @@ mod tests {
 
     #[test]
     fn reports_after_the_fallback_switch_to_the_report_mapping_with_one_step() {
-        let mut a = Aligner::new();
+        let mut a = Aligner::caught_up();
         let t0 = Instant::now();
         a.on_video_au(1_000, 0);
         assert!(a.on_klv_unit(unit(7_000), t0).is_empty());
@@ -587,7 +692,7 @@ mod tests {
 
     #[test]
     fn hold_queue_is_bounded_drop_oldest() {
-        let mut a = Aligner::new();
+        let mut a = Aligner::caught_up();
         let t0 = Instant::now();
         a.on_video_au(0, 0);
         for i in 0..(ALIGN_HOLD_MAX_UNITS as u32 + 5) {
@@ -609,7 +714,7 @@ mod tests {
 
     #[test]
     fn hold_queue_is_bounded_in_bytes_drop_oldest() {
-        let mut a = Aligner::new();
+        let mut a = Aligner::caught_up();
         let t0 = Instant::now();
         a.on_video_au(0, 0);
         // 100 units of 60 000 bytes = 6 MB offered, all at one instant.
@@ -631,7 +736,7 @@ mod tests {
     fn klv_only_publisher_holds_at_most_two_seconds_and_counts_evictions() {
         // No video origin ever: the fallback cannot engage, so age bounds
         // the hold. One 50 000-byte unit every 100 ms for 10 s.
-        let mut a = Aligner::new();
+        let mut a = Aligner::caught_up();
         let t0 = Instant::now();
         for i in 0..100u32 {
             let now = t0 + Duration::from_millis(100 * u64::from(i));
@@ -649,7 +754,7 @@ mod tests {
 
     #[test]
     fn drain_without_a_video_origin_abandons_and_counts_held_units() {
-        let mut a = Aligner::new();
+        let mut a = Aligner::caught_up();
         let t0 = Instant::now();
         assert!(a.on_klv_unit(unit(1), t0).is_empty());
         assert!(a.on_klv_unit(unit(2), t0).is_empty());
@@ -666,7 +771,7 @@ mod tests {
     fn assert_exact_line_across_a_wrap(v0: u32, k0: u32) {
         let v = |t: u32| v0.wrapping_add(t * 90_000);
         let k = |t: u32| k0.wrapping_add(t * 90_000);
-        let mut a = Aligner::new();
+        let mut a = Aligner::caught_up();
         let now = Instant::now();
         a.on_video_au(v(0), 0);
         for t in 0..=200u32 {
@@ -699,7 +804,7 @@ mod tests {
 
     #[test]
     fn a_new_video_source_discards_the_stale_report_until_a_fresh_one() {
-        let mut a = Aligner::new();
+        let mut a = Aligner::caught_up();
         let t0 = Instant::now();
         a.on_video_au(10_000, 0);
         a.on_video_sr(&sr(100, 0, 10_000));
@@ -727,7 +832,7 @@ mod tests {
 
     #[test]
     fn a_new_video_source_drops_held_units_and_restarts_the_fallback() {
-        let mut a = Aligner::new();
+        let mut a = Aligner::caught_up();
         let t0 = Instant::now();
         a.on_video_au(10_000, 0);
         assert!(a.on_klv_unit(unit(1), t0).is_empty());
@@ -744,7 +849,7 @@ mod tests {
 
     #[test]
     fn a_new_klv_source_under_provisional_lands_on_the_video_line() {
-        let mut a = Aligner::new();
+        let mut a = Aligner::caught_up();
         let t0 = Instant::now();
         // The video line has reached PTS 369 000.
         a.on_video_au(1_000, 0);
@@ -781,7 +886,7 @@ mod tests {
 
     #[test]
     fn a_new_klv_source_drops_the_held_units_and_counts_them() {
-        let mut a = Aligner::new();
+        let mut a = Aligner::caught_up();
         let t0 = Instant::now();
         a.on_video_au(0, 0);
         assert!(a.on_klv_unit(unit(1), t0).is_empty());
@@ -794,7 +899,7 @@ mod tests {
 
     #[test]
     fn a_new_klv_source_waits_for_its_own_report() {
-        let mut a = Aligner::new();
+        let mut a = Aligner::caught_up();
         let t0 = Instant::now();
         a.on_video_au(0, 0);
         a.on_video_sr(&sr(10, 0, 0));
@@ -816,7 +921,7 @@ mod tests {
 
     #[test]
     fn a_new_video_sources_report_before_its_first_au_is_kept() {
-        let mut a = Aligner::new();
+        let mut a = Aligner::caught_up();
         let t0 = Instant::now();
         a.on_video_au(10_000, 0);
         a.on_video_sr(&sr(100, 0, 10_000));
@@ -840,7 +945,7 @@ mod tests {
 
     #[test]
     fn a_new_video_source_drops_held_units_at_the_change_and_reanchors_the_fallback() {
-        let mut a = Aligner::new();
+        let mut a = Aligner::caught_up();
         let t0 = Instant::now();
         a.on_video_au(10_000, 0);
         assert!(a.on_klv_unit(unit(1), t0).is_empty());
@@ -854,9 +959,141 @@ mod tests {
         assert_eq!(a.mode(), ClockAlignment::Provisional);
     }
 
+    /// An aligner with the video origin at RTP 0 and a report pair that
+    /// makes KLV RTP == video RTP: a unit's PTS is its RTP timestamp.
+    /// Nothing has been pushed to the muxer yet.
+    fn aligned_at_zero() -> Aligner {
+        let mut a = Aligner::new();
+        a.on_video_au(0, 0);
+        a.on_video_sr(&sr(10, 0, 0));
+        a.on_klv_sr(&sr(10, 0, 0));
+        a
+    }
+
+    #[test]
+    fn a_placed_unit_waits_for_the_pushed_video_to_reach_its_pts() {
+        let mut a = aligned_at_zero();
+        let t0 = Instant::now();
+        a.on_video_muxed(0);
+        // Stamped 500 ms ahead of the video pushed so far.
+        assert!(a.on_klv_unit(unit(45_000), t0).is_empty(), "waits");
+        assert_eq!(
+            a.mode(),
+            ClockAlignment::SenderReport,
+            "placed, not pending"
+        );
+        a.on_video_muxed(44_999);
+        assert!(a.poll(t0).is_empty());
+        a.on_video_muxed(45_000);
+        assert_eq!(a.poll(t0), vec![(unit(45_000), 45_000)]);
+        assert_eq!(a.dropped(), 0);
+    }
+
+    #[test]
+    fn a_placed_unit_waits_for_the_first_pushed_video() {
+        // The origin is known, but no AU has reached the muxer yet.
+        let mut a = aligned_at_zero();
+        let t0 = Instant::now();
+        assert!(a.on_klv_unit(unit(0), t0).is_empty());
+        a.on_video_muxed(0);
+        assert_eq!(a.poll(t0), vec![(unit(0), 0)]);
+    }
+
+    #[test]
+    fn placed_units_leave_in_arrival_order() {
+        let mut a = aligned_at_zero();
+        let t0 = Instant::now();
+        a.on_video_muxed(50_000);
+        // The first unit is ahead; the second, behind, waits behind it.
+        assert!(a.on_klv_unit(unit(100_000), t0).is_empty());
+        assert!(a.on_klv_unit(unit(10_000), t0).is_empty());
+        a.on_video_muxed(100_000);
+        assert_eq!(
+            a.poll(t0),
+            vec![(unit(100_000), 100_000), (unit(10_000), 10_000)]
+        );
+    }
+
+    #[test]
+    fn a_placed_unit_the_video_never_reaches_is_dropped_after_the_age_bound() {
+        let mut a = aligned_at_zero();
+        let t0 = Instant::now();
+        a.on_video_muxed(0);
+        assert!(a.on_klv_unit(unit(45_000), t0).is_empty());
+        assert!(
+            a.poll(t0 + ALIGN_FALLBACK - Duration::from_millis(1))
+                .is_empty()
+        );
+        assert_eq!(a.dropped(), 0, "slow video alone does not drop it");
+        assert!(a.poll(t0 + ALIGN_FALLBACK).is_empty());
+        assert_eq!(a.dropped(), 1, "aged out and counted");
+        a.on_video_muxed(90_000);
+        assert!(a.poll(t0 + ALIGN_FALLBACK).is_empty(), "gone");
+    }
+
+    #[test]
+    fn placed_and_unplaced_units_share_the_hold_budgets() {
+        let mut a = aligned_at_zero();
+        let t0 = Instant::now();
+        a.on_video_muxed(0);
+        let placed = ALIGN_HOLD_MAX_UNITS as u32 - 6;
+        for i in 0..placed {
+            assert!(a.on_klv_unit(unit(1_000 + i), t0).is_empty());
+        }
+        assert_eq!(a.dropped(), 0);
+        // A new KLV source: its units are unplaced until its own report.
+        a.on_klv_source_change();
+        for i in 0..10u32 {
+            assert!(a.on_klv_unit(unit(9_000_000 + i), t0).is_empty());
+        }
+        assert_eq!(a.hold.len() + a.placed.len(), ALIGN_HOLD_MAX_UNITS);
+        assert_eq!(a.dropped(), 4, "the oldest placed units");
+        assert_eq!(a.hold.len(), 10);
+        assert_eq!(a.placed.front().unwrap().unit.rtp_timestamp, 1_004);
+    }
+
+    #[test]
+    fn placed_units_count_toward_the_byte_budget() {
+        let mut a = aligned_at_zero();
+        let t0 = Instant::now();
+        a.on_video_muxed(0);
+        for i in 0..100u32 {
+            assert!(a.on_klv_unit(big_unit(1_000 + i, 60_000), t0).is_empty());
+            assert!(a.held_bytes + a.placed_bytes <= ALIGN_HOLD_MAX_BYTES);
+        }
+        let kept = ALIGN_HOLD_MAX_BYTES / 60_000;
+        assert_eq!(a.placed.len(), kept);
+        assert_eq!(a.dropped(), (100 - kept) as u64);
+    }
+
+    #[test]
+    fn drain_releases_placed_units_the_video_has_not_reached() {
+        let mut a = aligned_at_zero();
+        let t0 = Instant::now();
+        a.on_video_muxed(0);
+        assert!(a.on_klv_unit(unit(45_000), t0).is_empty());
+        assert_eq!(a.drain(t0), vec![(unit(45_000), 45_000)]);
+        assert_eq!(a.placed_bytes, 0);
+    }
+
+    #[test]
+    fn placed_units_outlive_a_video_source_change() {
+        // Placed units sit on the PTS line, which the depacketizer keeps
+        // continuous across a video restart: they still wait for it.
+        let mut a = aligned_at_zero();
+        let t0 = Instant::now();
+        a.on_video_muxed(0);
+        assert!(a.on_klv_unit(unit(45_000), t0).is_empty());
+        a.on_video_source_change();
+        assert_eq!(a.dropped(), 0);
+        a.on_video_au(7_000_000, 3_003);
+        a.on_video_muxed(45_000);
+        assert_eq!(a.poll(t0), vec![(unit(45_000), 45_000)]);
+    }
+
     #[test]
     fn rtp_timestamp_wrap_is_unwrapped() {
-        let mut a = Aligner::new();
+        let mut a = Aligner::caught_up();
         let t0 = Instant::now();
         a.on_video_au(u32::MAX - 1000, 0);
         a.on_video_sr(&sr(1, 0, u32::MAX - 1000));

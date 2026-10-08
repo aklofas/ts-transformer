@@ -25,7 +25,11 @@ const VIDEO_TS0: u32 = 1_000_000;
 const KLV_TS0: u32 = 500_000;
 /// KLV units every 100 ms on their own 90 kHz clock.
 const KLV_STEP: u32 = 9_000;
-const AUS: usize = 28;
+/// Video AUs the first two tests send: 100 at 3 003 ticks reach PTS
+/// 297 297 (3.3 s), past every KLV unit those tests place. The server
+/// releases a placed KLV unit only once the video has reached its PTS, so
+/// a unit placed beyond the last AU would wait for the end of the stream.
+const AUS: usize = 100;
 const NTP_SECS: u32 = 3_900_000_000;
 
 /// Video SR: NTP `NTP_SECS.0` ↔ video RTP `VIDEO_TS0 + 1000`.
@@ -209,7 +213,8 @@ fn klv_falls_back_to_provisional_alignment_without_sender_reports() {
     let mut app = DemuxReceiver::new(app_t);
 
     let (mut p, (v_rtp, v_rtcp), (k_rtp, k_rtcp)) = two_track_publisher(port);
-    for pkt in &h264_rtp_packets(AUS, VIDEO_PT, 7, VIDEO_SSRC, VIDEO_TS0) {
+    let video_packets = h264_rtp_packets(AUS, VIDEO_PT, 7, VIDEO_SSRC, VIDEO_TS0);
+    for pkt in &video_packets {
         p.send_frame(v_rtp, pkt);
     }
     let mut units = Vec::new();
@@ -234,9 +239,9 @@ fn klv_falls_back_to_provisional_alignment_without_sender_reports() {
 
     // Everything sent so far has been processed, and the KLV is held.
     let s = stats_when(&mount, Duration::from_secs(5), |s| {
-        s.rtp_packets_received == 30 + 5
+        s.rtp_packets_received == video_packets.len() as u64 + 5
     });
-    assert_eq!(s.rtp_packets_received, 35);
+    assert_eq!(s.rtp_packets_received, video_packets.len() as u64 + 5);
     assert_eq!(s.klv_units_emitted, 0, "KLV must be held without reports");
     assert_eq!(s.alignment, ClockAlignment::Pending);
 

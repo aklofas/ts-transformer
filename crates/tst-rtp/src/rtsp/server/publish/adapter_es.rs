@@ -11,9 +11,11 @@
 //!   a reader cannot decode them.
 //! - KLV: [`KlvDepacketizer`] → KLV units → [`Aligner`], which holds them
 //!   until the two tracks' clocks are related (RTCP sender reports, or a
-//!   two-second first-packet-coincidence fallback) and then returns each
-//!   with a PTS on the video line. A unit placed before the video origin
-//!   (negative PTS) is dropped: a TS PTS cannot be negative.
+//!   two-second first-packet-coincidence fallback), places each on the
+//!   video line, and returns it once a video AU at or past its PTS has
+//!   been muxed (KLV muxed ahead of the video would drag the PCR ahead of
+//!   the video frames still to come). A unit placed before the video
+//!   origin (negative PTS) is dropped: a TS PTS cannot be negative.
 //! - Both are pushed into one [`Muxer`] (program 1, PMT PID 0x1000,
 //!   video PID 0x100, KLV PID 0x101 as `PrivateData` with a PTS). After
 //!   each push the muxer is drained in bundles of at most
@@ -288,6 +290,7 @@ impl EsAdapter {
         match self.muxer.push_video(&au.annexb, au.pts, au.key_frame) {
             Ok(()) => {
                 self.seen_keyframe |= au.key_frame;
+                self.aligner.on_video_muxed(pts);
                 self.max_pts = self.max_pts.max(pts);
                 self.max_video_pts = Some(self.max_video_pts.map_or(pts, |m| m.max(pts)));
                 self.mount.tick(|s| {
@@ -1116,6 +1119,113 @@ mod tests {
         assert_eq!(s.alignment, ClockAlignment::SenderReport);
         assert_eq!(s.alignment_steps, 0);
         assert_eq!(s.ssrc_changes, 0);
+    }
+
+    /// `(pid, pcr, pts)` for every TS packet in `frames` (application-side
+    /// RTP packets, in emission order): the adaptation field's PCR base and
+    /// a PES header's PTS, both in 90 kHz ticks, where present. Read from
+    /// the bytes by hand: the demuxer reports neither PCR values nor where
+    /// in the stream a PES started.
+    fn ts_timing(frames: &[bytes::Bytes]) -> Vec<(u16, Option<i64>, Option<i64>)> {
+        let mut out = Vec::new();
+        for f in frames {
+            for p in f[RTP_HEADER_LEN..].chunks(188) {
+                let pid = (u16::from(p[1] & 0x1F) << 8) | u16::from(p[2]);
+                let control = (p[3] >> 4) & 0x3;
+                let mut at = 4;
+                let mut pcr = None;
+                if control & 0x2 != 0 {
+                    let len = usize::from(p[4]);
+                    if len >= 7 && p[5] & 0x10 != 0 {
+                        let b: Vec<i64> = p[6..11].iter().map(|&x| i64::from(x)).collect();
+                        pcr = Some(
+                            (b[0] << 25) | (b[1] << 17) | (b[2] << 9) | (b[3] << 1) | (b[4] >> 7),
+                        );
+                    }
+                    at = 5 + len;
+                }
+                let mut pts = None;
+                let pusi = p[1] & 0x40 != 0;
+                if control & 0x1 != 0
+                    && pusi
+                    && at + 14 <= p.len()
+                    && p[at..at + 3] == [0, 0, 1]
+                    && p[at + 7] & 0x80 != 0
+                {
+                    let b: Vec<i64> = p[at + 9..at + 14].iter().map(|&x| i64::from(x)).collect();
+                    pts = Some(
+                        (((b[0] >> 1) & 7) << 30)
+                            | (b[1] << 22)
+                            | ((b[2] >> 1) << 15)
+                            | (b[3] << 7)
+                            | (b[4] >> 1),
+                    );
+                }
+                out.push((pid, pcr, pts));
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn klv_stamped_ahead_of_the_video_waits_and_never_drags_the_pcr_ahead() {
+        let mount = PublishMountState::new("/p", 8);
+        let app_rx = mount.take_app_rx().unwrap();
+        let mut a = EsAdapter::new(mount.clone(), &video_track(), Some(&klv_track())).unwrap();
+        // One instant on both clocks: KLV RTP == video RTP.
+        a.on_rtcp(0, &sr(100, 0, 0));
+        a.on_rtcp(1, &sr(100, 0, 0));
+        // 60 AUs, 3 003 ticks apart; with every third AU a KLV unit stamped
+        // 500 ms (45 000 ticks) ahead of it, the way a capture-stamped KLV
+        // source leads the encoder's output.
+        let mut klv_sent = 0u16;
+        for i in 0..60u32 {
+            let header = if i == 0 { 0x65 } else { 0x41 };
+            a.on_rtp(
+                0,
+                &payload::single(1 + i as u16, 3_003 * i, header, 300, VIDEO_PT),
+            );
+            if i % 3 == 0 {
+                klv_sent += 1;
+                a.on_rtp(
+                    1,
+                    &klv_packet(klv_sent, 3_003 * i + 45_000, &klv_set(i as u8)),
+                );
+            }
+        }
+        let frames: Vec<bytes::Bytes> = app_rx.try_iter().collect();
+        let mut max_video: Option<i64> = None;
+        let mut klv_seen = 0;
+        for (pid, pcr, pts) in ts_timing(&frames) {
+            if let (VIDEO_PID, Some(p)) = (pid, pts) {
+                max_video = Some(max_video.map_or(p, |m| m.max(p)));
+            }
+            if let (KLV_PID, Some(p)) = (pid, pts) {
+                klv_seen += 1;
+                assert!(
+                    max_video.is_some_and(|v| p <= v),
+                    "KLV PES at PTS {p} ahead of the video muxed so far ({max_video:?})"
+                );
+            }
+            if let Some(pcr) = pcr {
+                let v = max_video.expect("a PCR before any video");
+                assert!(
+                    pcr <= v + 3_600,
+                    "PCR {pcr} more than one 40 ms PCR interval past the video ({v})"
+                );
+            }
+        }
+        // A unit leaves once an AU at or past its PTS is muxed. The last AU
+        // is at 177 177, which covers units with 3 003·i + 45 000 ≤ 177 177:
+        // i = 0, 3, …, 42, fifteen of the twenty.
+        assert_eq!(klv_seen, 15);
+        // The other five leave at the end of the stream.
+        a.flush();
+        let s = mount.stats_snapshot();
+        assert_eq!(
+            (s.klv_units_emitted, s.klv_units_dropped),
+            (u64::from(klv_sent), 0)
+        );
     }
 
     #[test]
