@@ -65,7 +65,8 @@ fn ok_response(req: &RtspRequest, session_id: Option<&str>) -> RtspResponse {
 /// Rejection codes:
 /// - 401 Unauthorized — auth check fails.
 /// - 455 Method Not Valid in This State — this session already has a
-///   publisher (one ANNOUNCE per connection; TEARDOWN first to replace it).
+///   publisher (one ANNOUNCE per connection; TEARDOWN first to replace it),
+///   or already holds reader state from a SETUP (one role per connection).
 /// - 400 Bad Request — missing/non-`application/sdp` Content-Type, an
 ///   empty body, or a structurally unusable SDP (`ShapeReject::BadRequest`).
 /// - 415 Unsupported Media Type — a well-formed SDP whose track
@@ -84,7 +85,9 @@ pub(crate) fn handle_announce(
     if let Err(c) = check_auth(req, state, session, "ANNOUNCE") {
         return c;
     }
-    if session.publish.is_some() {
+    // One role per connection: no second publisher, and no publisher on
+    // a connection that already set up (or is playing) as a reader.
+    if session.publish.is_some() || session.transport.is_some() || session.mount_path.is_some() {
         return handle_not_valid_in_state(req);
     }
     let ct = req
@@ -166,7 +169,7 @@ pub(crate) fn handle_announce(
 ///
 /// Rejection codes:
 /// - 455 Method Not Valid in This State — no ANNOUNCE has run on this
-///   session yet.
+///   session yet, or the named track is already set up.
 /// - 454 Session Not Found — the request carries a `Session:` header
 ///   that doesn't match the session id this publisher's first SETUP
 ///   already allocated (a later track's SETUP on the wrong connection).
@@ -201,9 +204,11 @@ pub(crate) fn handle_setup_record(
     // A later track's SETUP on this connection must name the session id
     // the first SETUP already allocated — the Session header is optional
     // on the first SETUP (no id exists yet) but must match once one does.
-    if let Some(sid) = session.session_id.clone() {
+    // The comparison is on the id token before any `;timeout=` parameter
+    // (RFC 2326 §12.37), which a client may echo back.
+    if let Some(sid) = session.session_id.as_deref() {
         if let Some(hdr) = req.headers.get("session") {
-            if hdr != &sid {
+            if hdr.split(';').next().unwrap_or("").trim() != sid {
                 return error_response(req, 454, "Session Not Found");
             }
         }
@@ -229,6 +234,15 @@ pub(crate) fn handle_setup_record(
     let Some(idx) = idx else {
         return error_response(req, 404, "Not Found");
     };
+    // A track is set up once. A second SETUP would orphan the first
+    // transport (and, after RECORD, a UDP track's new sockets would never
+    // get an ingest task).
+    if session.publish.as_ref().expect("checked Some above").tracks[idx]
+        .transport
+        .is_some()
+    {
+        return handle_not_valid_in_state(req);
+    }
 
     let (transport_response_header, track_transport) = match parsed.kind {
         RtspTransportKind::Udp => {
@@ -496,13 +510,8 @@ mod tests {
         );
         assert!(r.headers["session"].contains(";timeout="));
         assert!(s.session_id.is_some());
-        // `next_interleaved_pair`'s counter is a process-global allocator
-        // shared with the reader SETUP path (ruling: one counter across
-        // both directions), so the exact pair this test gets depends on
-        // how many other allocations already ran in this process — don't
-        // assert a literal value, only the allocator's own invariants
-        // (even base, consecutive companion) and that the response header
-        // echoes the same pair the session actually stored.
+        // The response header echoes the pair the session stored: an
+        // even base and its companion.
         let (rtp, rtcp) = match s.publish.as_ref().unwrap().tracks[0].transport {
             Some(TrackTransport::Interleaved { rtp, rtcp }) => (rtp, rtcp),
             ref other => panic!("expected an Interleaved transport, got {other:?}"),
@@ -753,5 +762,134 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
+    }
+
+    fn setup_record(uri: &str) -> RtspRequest {
+        let mut setup = req(RtspMethod::Setup, uri);
+        setup.headers.insert(
+            "transport".into(),
+            "RTP/AVP/TCP;unicast;interleaved=0-1;mode=record".into(),
+        );
+        setup
+    }
+
+    #[test]
+    fn setup_record_resolves_an_absolute_control_url_on_another_host() {
+        const SDP_ABS: &str = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=x\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=video 0 RTP/AVP 33\r\na=control:rtsp://example.invalid/pub/streamid=0\r\n";
+        let (st, _m) = state_with_publish_mount();
+        let mut s = ServerSessionState::new();
+        assert_eq!(
+            handle_announce(&announce("rtsp://h/pub", SDP_ABS), &st, &mut s).status,
+            200
+        );
+        let r = crate::rtsp::server::handlers::handle_setup(
+            &setup_record("rtsp://127.0.0.1/pub/streamid=0"),
+            &st,
+            &mut s,
+        );
+        assert_eq!(r.status, 200, "{:?}", r.headers);
+        assert_eq!(s.mount_path.as_deref(), Some("/pub"));
+    }
+
+    #[test]
+    fn setup_record_resolves_an_absolute_control_url_naming_the_mount_itself() {
+        // A single-track announce whose control is the aggregate URL: the
+        // SETUP names the mount URI, which must not resolve to its parent.
+        const SDP_ABS_MOUNT: &str = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=x\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=video 0 RTP/AVP 33\r\na=control:RTSP://example.invalid:554/pub/\r\n";
+        let (st, _m) = state_with_publish_mount();
+        let mut s = ServerSessionState::new();
+        handle_announce(&announce("rtsp://h/pub", SDP_ABS_MOUNT), &st, &mut s);
+        let r = crate::rtsp::server::handlers::handle_setup(
+            &setup_record("rtsp://127.0.0.1/pub"),
+            &st,
+            &mut s,
+        );
+        assert_eq!(r.status, 200, "{:?}", r.headers);
+        assert_eq!(s.mount_path.as_deref(), Some("/pub"));
+    }
+
+    #[test]
+    fn reader_setup_on_a_publisher_session_is_455() {
+        let (st, _m) = state_with_publish_mount();
+        let mut s = ServerSessionState::new();
+        handle_announce(&announce("rtsp://h/pub", SDP_MP2T), &st, &mut s);
+        let mut reader_setup = req(RtspMethod::Setup, "rtsp://h/pub");
+        reader_setup.headers.insert(
+            "transport".into(),
+            "RTP/AVP/TCP;unicast;interleaved=0-1".into(),
+        );
+        let r = crate::rtsp::server::handlers::handle_setup(&reader_setup, &st, &mut s);
+        assert_eq!(r.status, 455);
+        assert_eq!(s.session_id, None, "no reader session id minted");
+        assert!(s.transport.is_none());
+    }
+
+    #[test]
+    fn play_on_a_publisher_session_is_455() {
+        let (st, _m) = state_with_publish_mount();
+        let mut s = ServerSessionState::new();
+        handle_announce(&announce("rtsp://h/pub", SDP_MP2T), &st, &mut s);
+        let r = crate::rtsp::server::handlers::handle_setup(
+            &setup_record("rtsp://h/pub/streamid=0"),
+            &st,
+            &mut s,
+        );
+        assert_eq!(r.status, 200);
+        let mut play = req(RtspMethod::Play, "rtsp://h/pub");
+        play.headers
+            .insert("session".into(), s.session_id.clone().unwrap());
+        let r = crate::rtsp::server::handlers::handle_play(&play, &st, &mut s);
+        assert_eq!(r.status, 455);
+        assert!(s.fanout_handle.is_none());
+    }
+
+    #[test]
+    fn announce_on_a_reader_session_is_455() {
+        let (st, m) = state_with_publish_mount();
+        let mut s = ServerSessionState::new();
+        let mut reader_setup = req(RtspMethod::Setup, "rtsp://h/pub");
+        reader_setup.headers.insert(
+            "transport".into(),
+            "RTP/AVP/TCP;unicast;interleaved=0-1".into(),
+        );
+        assert_eq!(
+            crate::rtsp::server::handlers::handle_setup(&reader_setup, &st, &mut s).status,
+            200
+        );
+        let r = handle_announce(&announce("rtsp://h/pub", SDP_MP2T), &st, &mut s);
+        assert_eq!(r.status, 455);
+        assert!(s.publish.is_none());
+        assert!(m.publisher.lock().unwrap().is_none(), "slot not claimed");
+    }
+
+    #[test]
+    fn session_header_with_timeout_matches_and_a_set_up_track_is_not_set_up_twice() {
+        let (st, _m) = state_with_publish_mount();
+        let mut s = ServerSessionState::new();
+        handle_announce(&announce("rtsp://h/pub", SDP_MP2T), &st, &mut s);
+        let setup = setup_record("rtsp://h/pub/streamid=0");
+        let r = crate::rtsp::server::handlers::handle_setup(&setup, &st, &mut s);
+        assert_eq!(r.status, 200);
+        let sid = s.session_id.clone().unwrap();
+
+        // A Session header echoing `;timeout=60` names this session (not
+        // 454); the track is already set up, so the second SETUP is 455.
+        let mut again = setup.clone();
+        again
+            .headers
+            .insert("session".into(), format!("{sid};timeout=60"));
+        assert_eq!(
+            crate::rtsp::server::handlers::handle_setup(&again, &st, &mut s).status,
+            455
+        );
+        // A different id with the same parameter is still 454.
+        let mut wrong = setup.clone();
+        wrong
+            .headers
+            .insert("session".into(), "deadbeefdeadbeef;timeout=60".into());
+        assert_eq!(
+            crate::rtsp::server::handlers::handle_setup(&wrong, &st, &mut s).status,
+            454
+        );
     }
 }
