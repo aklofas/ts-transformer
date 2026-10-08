@@ -197,9 +197,10 @@ class RtspServerConfig:
     accept_unregistered_publishers: bool = False
     """Accept an ANNOUNCE on a path with no registered mount by creating
     a publish mount there on demand; `RtspServer.next_publisher()` hands
-    each one to the application. Off by default. Each on-demand
-    publisher can hold tens of MB, so configure `auth` and size
-    `max_sessions` before turning this on for a reachable port."""
+    each one to the application. Off by default. A connected
+    elementary publisher can hold about 46 MB at worst, about 4.6 GB at
+    this config's default `max_sessions` of 100, so configure `auth` and
+    size `max_sessions` before turning this on for a reachable port."""
 
     def __post_init__(self) -> None:
         if self.max_sessions <= 0:
