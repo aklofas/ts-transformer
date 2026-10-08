@@ -479,6 +479,84 @@ impl RtspServer {
         Ok(crate::rtsp::server::publish::PublishMountHandle { state: st })
     }
 
+    /// Remove the mount at `path`, of any kind, and free the path for a
+    /// later `add_mount` / `add_multicast_mount` / `add_publish_mount` (or
+    /// an on-demand ANNOUNCE).
+    ///
+    /// Every session on the mount, readers and a publish mount's
+    /// publisher alike, is sent the RFC 7826 §13.5.1 Notice 5402
+    /// ("Server-Initiated TEARDOWN") ANNOUNCE and then cancelled, as
+    /// [`Self::stop`] does for every session; each cancelled session closes
+    /// its connection. A reader's stream therefore ends because its
+    /// session ended. The Notice writes are best-effort and bounded at 1 s
+    /// per session; there is no drain wait.
+    ///
+    /// - A publish mount's application transport (see
+    ///   [`crate::rtsp::server::publish::PublishMountHandle::into_recv_transport`])
+    ///   ends: a parked or later `recv_bytes` on it returns
+    ///   `TransportError::Closed`. The mount's handles stay usable for
+    ///   `stats()` and `generation()`; no publisher reaches it again.
+    /// - A local mount's [`crate::rtsp::server::mount::MountHandle`] keeps
+    ///   accepting pushes, which reach nobody: no session can find the
+    ///   path any more. A mount added later at the same path is a new
+    ///   mount; the old handle does not feed it.
+    ///
+    /// This is also how an application removes idle on-demand mounts
+    /// (see [`RtspServerBuilder::accept_unregistered_publishers`]),
+    /// including one whose ANNOUNCE created it and then failed later in
+    /// the same request (for example a `500` while building the
+    /// elementary-stream re-muxer): that mount stays in the table, idle,
+    /// with its handle queued for [`Self::next_publisher`], until this
+    /// call removes it.
+    ///
+    /// A session whose SETUP on this mount is being answered while this
+    /// call runs may be missed by the Notice; it keeps its subscription to
+    /// the removed mount's fanout until it ends on its own.
+    ///
+    /// # Errors
+    /// - [`RtspServerError::MountNotFound`] — no mount is registered at
+    ///   `path`.
+    /// - [`RtspServerError::Shutdown`] — server stopped.
+    pub fn remove_mount(&self, path: &str) -> Result<(), RtspServerError> {
+        if self.state.shutdown.load(Ordering::Acquire) {
+            return Err(RtspServerError::Shutdown);
+        }
+        // Take the entry under the mounts lock only; the Notice writes and
+        // cancels below run with no server lock held.
+        let entry = self
+            .state
+            .mounts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(path)
+            .ok_or_else(|| RtspServerError::MountNotFound {
+                path: path.to_string(),
+            })?;
+        let sessions: Vec<Arc<ActiveSession>> = self
+            .state
+            .sessions
+            .lock()
+            .map(|g| {
+                g.iter()
+                    .filter(|s| {
+                        s.mount_path
+                            .lock()
+                            .is_ok_and(|m| m.as_deref() == Some(path))
+                    })
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.notify_and_cancel(&sessions);
+        match entry {
+            crate::rtsp::server::mount::MountEntry::Publish(m) => m.close(),
+            // The broadcast sender lives in `MountState`, which outstanding
+            // `MountHandle`s keep alive; readers ended with their sessions.
+            crate::rtsp::server::mount::MountEntry::Local(_) => {}
+        }
+        Ok(())
+    }
+
     /// Wait up to `timeout` for the next publish mount an ANNOUNCE created
     /// on demand (see
     /// [`RtspServerBuilder::accept_unregistered_publishers`]). Mounts come
@@ -789,84 +867,7 @@ impl RtspServer {
             .lock()
             .map(|g| g.clone())
             .unwrap_or_default();
-        // Send the Notice 5402 ANNOUNCE over each session's TCP control
-        // channel BEFORE cancelling. The write needs an async context
-        // (the write half lives behind a tokio AsyncMutex); we
-        // block-on the runtime to keep `stop()` sync. Each per-session
-        // write is bounded by a 1 s timeout so a stuck peer can't hang
-        // `stop()` indefinitely.
-        if let Some(rt) = self.runtime.as_ref() {
-            let bind_host = self.state.builder.bind_url.host.clone();
-            let bind_port = self
-                .state
-                .local_addr
-                .lock()
-                .ok()
-                .and_then(|g| *g)
-                .map(|a| a.port())
-                .unwrap_or(self.state.builder.bind_url.port);
-            let server_value = format!("tst-rtp/{}", env!("CARGO_PKG_VERSION"));
-            for s in &sessions {
-                let Some(mount_path) = s.mount_path.lock().ok().and_then(|g| g.clone()) else {
-                    continue;
-                };
-                let Some(session_id) = s.session_id.lock().ok().and_then(|g| g.clone()) else {
-                    continue;
-                };
-                let Some(write_half) = s.tcp_write.lock().ok().and_then(|g| g.clone()) else {
-                    continue;
-                };
-                let cseq = self.state.notice_cseq.fetch_add(1, Ordering::Relaxed);
-                let bytes = build_notice_5402_announce(
-                    &bind_host,
-                    bind_port,
-                    &mount_path,
-                    &session_id,
-                    cseq,
-                    &server_value,
-                );
-                let peer = s.peer;
-                rt.block_on(async {
-                    let write_fut = async {
-                        let mut guard = write_half.lock().await;
-                        guard.write_all(&bytes).await?;
-                        guard.flush().await
-                    };
-                    match tokio::time::timeout(Duration::from_secs(1), write_fut).await {
-                        Ok(Ok(())) => {
-                            tracing::info!(
-                                target: "tst_rtp::server",
-                                peer = %peer,
-                                "graceful shutdown: Notice 5402 ANNOUNCE sent"
-                            );
-                        }
-                        Ok(Err(e)) => {
-                            tracing::warn!(
-                                target: "tst_rtp::server",
-                                peer = %peer,
-                                error = %e,
-                                "graceful shutdown: Notice 5402 ANNOUNCE write failed"
-                            );
-                        }
-                        Err(_) => {
-                            tracing::warn!(
-                                target: "tst_rtp::server",
-                                peer = %peer,
-                                "graceful shutdown: Notice 5402 ANNOUNCE timed out"
-                            );
-                        }
-                    }
-                });
-            }
-        }
-        for s in &sessions {
-            tracing::info!(
-                target: "tst_rtp::server",
-                peer = %s.peer,
-                "graceful shutdown: signaling session"
-            );
-            s.cancel.cancel();
-        }
+        self.notify_and_cancel(&sessions);
         // End every publish mount's application transport: a parked (or
         // later) `recv_bytes` on it reads `Closed`. Idempotent with the
         // publisher session's own `end_publisher` on its way out.
@@ -937,6 +938,94 @@ impl RtspServer {
             }
         }
         Ok(())
+    }
+
+    /// Send the RFC 7826 §13.5.1 Notice 5402 ANNOUNCE over each of
+    /// `sessions`' TCP control channel, then cancel each session. Shared
+    /// by [`Self::stop`] (every session) and [`Self::remove_mount`] (the
+    /// sessions on one mount). Callers hold no server lock.
+    ///
+    /// Sessions without a `mount_path` or `session_id` yet (no completed
+    /// SETUP) or without a write half get no ANNOUNCE, only the cancel.
+    fn notify_and_cancel(&self, sessions: &[Arc<ActiveSession>]) {
+        // Send the Notice 5402 ANNOUNCE over each session's TCP control
+        // channel BEFORE cancelling. The write needs an async context
+        // (the write half lives behind a tokio AsyncMutex); we
+        // block-on the runtime to keep the caller sync. Each per-session
+        // write is bounded by a 1 s timeout so a stuck peer can't hang
+        // the caller indefinitely.
+        if let Some(rt) = self.runtime.as_ref() {
+            let bind_host = self.state.builder.bind_url.host.clone();
+            let bind_port = self
+                .state
+                .local_addr
+                .lock()
+                .ok()
+                .and_then(|g| *g)
+                .map(|a| a.port())
+                .unwrap_or(self.state.builder.bind_url.port);
+            let server_value = format!("tst-rtp/{}", env!("CARGO_PKG_VERSION"));
+            for s in sessions {
+                let Some(mount_path) = s.mount_path.lock().ok().and_then(|g| g.clone()) else {
+                    continue;
+                };
+                let Some(session_id) = s.session_id.lock().ok().and_then(|g| g.clone()) else {
+                    continue;
+                };
+                let Some(write_half) = s.tcp_write.lock().ok().and_then(|g| g.clone()) else {
+                    continue;
+                };
+                let cseq = self.state.notice_cseq.fetch_add(1, Ordering::Relaxed);
+                let bytes = build_notice_5402_announce(
+                    &bind_host,
+                    bind_port,
+                    &mount_path,
+                    &session_id,
+                    cseq,
+                    &server_value,
+                );
+                let peer = s.peer;
+                rt.block_on(async {
+                    let write_fut = async {
+                        let mut guard = write_half.lock().await;
+                        guard.write_all(&bytes).await?;
+                        guard.flush().await
+                    };
+                    match tokio::time::timeout(Duration::from_secs(1), write_fut).await {
+                        Ok(Ok(())) => {
+                            tracing::info!(
+                                target: "tst_rtp::server",
+                                peer = %peer,
+                                "Notice 5402 ANNOUNCE sent"
+                            );
+                        }
+                        Ok(Err(e)) => {
+                            tracing::warn!(
+                                target: "tst_rtp::server",
+                                peer = %peer,
+                                error = %e,
+                                "Notice 5402 ANNOUNCE write failed"
+                            );
+                        }
+                        Err(_) => {
+                            tracing::warn!(
+                                target: "tst_rtp::server",
+                                peer = %peer,
+                                "Notice 5402 ANNOUNCE timed out"
+                            );
+                        }
+                    }
+                });
+            }
+        }
+        for s in sessions {
+            tracing::info!(
+                target: "tst_rtp::server",
+                peer = %s.peer,
+                "server-initiated teardown: signaling session"
+            );
+            s.cancel.cancel();
+        }
     }
 
     /// Listener's bound address, populated once `start()` returns. `None`

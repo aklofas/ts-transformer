@@ -6,7 +6,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use tst_core::transport::{RecvTransport, TransportError};
-use tst_rtp::{RtpRecvTransport, RtspClient, RtspServer, RtspServerBuilder};
+use tst_rtp::{RtpRecvTransport, RtspClient, RtspServer, RtspServerBuilder, RtspServerError};
 
 use crate::fixtures::raw_rtsp_publisher::*;
 
@@ -196,4 +196,85 @@ fn idle_publisher_is_reaped_but_media_only_publisher_is_not() {
     );
     drop((pa, pb));
     server.stop().ok();
+}
+
+/// `remove_mount` on a publish mount with a recording publisher, a parked
+/// application `recv_bytes` and a PLAY reader: the publisher reads the
+/// Notice 5402 ANNOUNCE then EOF, the application transport reads
+/// `Closed`, the reader's stream ends, and the path is free again.
+#[test]
+fn remove_publish_mount_closes_app_transport_and_ends_sessions() {
+    let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+    let mount = server.add_publish_mount("/pub").unwrap();
+    server.start().unwrap();
+    let port = server.local_addr().unwrap().port();
+    let app = mount.clone().into_recv_transport().unwrap();
+
+    let mut reader =
+        RtspClient::connect(&format!("rtsp://127.0.0.1:{port}/pub?transport=tcp")).unwrap();
+    let sdp = reader.describe().unwrap();
+    let mut reader_t = reader.setup_mp2t_auto(&sdp).unwrap().into_recv_transport();
+    reader_t.set_recv_timeout(Some(Duration::from_secs(5)));
+    reader.play().unwrap();
+
+    let mut p = RawPublisher::connect(port);
+    record_interleaved(&mut p, "/pub");
+    let parked = park(app);
+    std::thread::sleep(Duration::from_millis(200)); // let it park (close-before-op ends the same way)
+
+    server.remove_mount("/pub").unwrap();
+
+    let (bytes, _eof) = p.read_until(b"Notice: 5402", Instant::now() + Duration::from_secs(5));
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(
+        text.contains("ANNOUNCE ") && text.contains("Notice: 5402"),
+        "publisher did not see the Notice 5402 ANNOUNCE: {text:?}"
+    );
+    let (rest, eof) = p.read_until(b"\0never\0", Instant::now() + Duration::from_secs(5));
+    assert!(
+        eof,
+        "publisher connection not closed after the notice (read {} more bytes)",
+        rest.len()
+    );
+
+    let r = parked
+        .recv_timeout(Duration::from_secs(5))
+        .expect("remove_mount woke the parked recv");
+    assert!(matches!(r, Err(TransportError::Closed)), "got {r:?}");
+    assert!(mount.publisher().is_none());
+
+    // The reader's stream ends (no publisher frames were sent, so the
+    // first non-data result is the end); a 5 s recv timeout would show
+    // up as `Backpressure`.
+    let mut buf = vec![0u8; 65536];
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let end = loop {
+        match reader_t.recv_bytes(&mut buf) {
+            Ok(_) if Instant::now() < deadline => continue,
+            other => break other,
+        }
+    };
+    assert!(
+        matches!(
+            end,
+            Err(TransportError::Closed) | Err(TransportError::Broken { .. })
+        ),
+        "reader stream did not end: {end:?}"
+    );
+
+    assert_eq!(server.stats().mounts, 0);
+    server
+        .add_publish_mount("/pub")
+        .expect("the path is free again");
+    server.stop().ok();
+}
+
+#[test]
+fn remove_mount_unknown_is_mount_not_found() {
+    let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+    let e = server.remove_mount("/nope").unwrap_err();
+    assert!(
+        matches!(&e, RtspServerError::MountNotFound { path } if path == "/nope"),
+        "got {e:?}"
+    );
 }

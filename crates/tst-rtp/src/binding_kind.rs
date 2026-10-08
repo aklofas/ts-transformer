@@ -66,6 +66,7 @@ impl From<RtspServerError> for BindingError {
             RtspServerError::InvalidMountPath { .. }
             | RtspServerError::InvalidMulticastGroup { .. }
             | RtspServerError::DuplicateMount { .. }
+            | RtspServerError::MountNotFound { .. }
             | RtspServerError::InvalidConfig { .. } => K::RtspMount,
             RtspServerError::AlreadyStarted
             | RtspServerError::NotStarted
@@ -217,6 +218,10 @@ mod tests {
         );
         assert_eq!(
             BindingError::from(RtspServerError::DuplicateMount { path: "/a".into() }).kind,
+            K::RtspMount
+        );
+        assert_eq!(
+            BindingError::from(RtspServerError::MountNotFound { path: "/a".into() }).kind,
             K::RtspMount
         );
         assert_eq!(

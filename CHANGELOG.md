@@ -31,6 +31,16 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   application's job; a cap on on-demand mounts, 256 then `503`, follows).
   Registered mounts are unaffected.
   `RtspServer::stop` wakes a waiting `next_publisher` with `Shutdown`.
+- `RtspServer::remove_mount(path)` removes a mount of any kind and frees
+  the path. Every reader and publisher session on it gets the Notice 5402
+  ANNOUNCE and is closed; a publish mount's application transport then
+  reads `Closed`. A local mount's `MountHandle` keeps accepting pushes,
+  which reach nobody. An unknown path returns the new
+  `RtspServerError::MountNotFound`. This is also the cleanup for an
+  on-demand mount whose ANNOUNCE created it and then failed later in the
+  same request (for example a `500` while building the re-muxer): that
+  mount stays in the table, idle, with its handle queued, until
+  `remove_mount`.
 - A second `into_recv_transport` on the same mount returns the new
   `RtspServerError::TransportTaken`. `PublishMountHandle::cancel` ends the
   application transport with `ExplicitClose`; `RtspServer::stop` ends it

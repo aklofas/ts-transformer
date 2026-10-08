@@ -214,6 +214,8 @@ pub tst_rtp::error::RtspServerError::InvalidMulticastGroup
 pub tst_rtp::error::RtspServerError::InvalidMulticastGroup::addr: alloc::string::String
 pub tst_rtp::error::RtspServerError::InvalidMulticastGroup::detail: alloc::string::String
 pub tst_rtp::error::RtspServerError::Io(core::io::error::ErrorKind)
+pub tst_rtp::error::RtspServerError::MountNotFound
+pub tst_rtp::error::RtspServerError::MountNotFound::path: alloc::string::String
 pub tst_rtp::error::RtspServerError::NotStarted
 pub tst_rtp::error::RtspServerError::Shutdown
 pub tst_rtp::error::RtspServerError::Tls(alloc::string::String)
@@ -1356,6 +1358,7 @@ pub fn tst_rtp::rtsp::server::RtspServer::bind_with(tst_rtp::url::RtspUrl) -> co
 pub fn tst_rtp::rtsp::server::RtspServer::cancel_handle(&self) -> tst_rtp::cancel::RtspServerCancelHandle
 pub fn tst_rtp::rtsp::server::RtspServer::local_addr(&self) -> core::option::Option<core::net::socket_addr::SocketAddr>
 pub fn tst_rtp::rtsp::server::RtspServer::next_publisher(&self, core::time::Duration) -> core::result::Result<core::option::Option<tst_rtp::PublishMountHandle>, tst_rtp::error::RtspServerError>
+pub fn tst_rtp::rtsp::server::RtspServer::remove_mount(&self, &str) -> core::result::Result<(), tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::RtspServer::start(&self) -> core::result::Result<(), tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::RtspServer::stats(&self) -> tst_rtp::rtsp::server::ServerStats
 pub fn tst_rtp::rtsp::server::RtspServer::stop(&self) -> core::result::Result<(), tst_rtp::error::RtspServerError>
@@ -2153,6 +2156,8 @@ pub tst_rtp::RtspServerError::InvalidMulticastGroup
 pub tst_rtp::RtspServerError::InvalidMulticastGroup::addr: alloc::string::String
 pub tst_rtp::RtspServerError::InvalidMulticastGroup::detail: alloc::string::String
 pub tst_rtp::RtspServerError::Io(core::io::error::ErrorKind)
+pub tst_rtp::RtspServerError::MountNotFound
+pub tst_rtp::RtspServerError::MountNotFound::path: alloc::string::String
 pub tst_rtp::RtspServerError::NotStarted
 pub tst_rtp::RtspServerError::Shutdown
 pub tst_rtp::RtspServerError::Tls(alloc::string::String)
@@ -3026,6 +3031,7 @@ pub fn tst_rtp::rtsp::server::RtspServer::bind_with(tst_rtp::url::RtspUrl) -> co
 pub fn tst_rtp::rtsp::server::RtspServer::cancel_handle(&self) -> tst_rtp::cancel::RtspServerCancelHandle
 pub fn tst_rtp::rtsp::server::RtspServer::local_addr(&self) -> core::option::Option<core::net::socket_addr::SocketAddr>
 pub fn tst_rtp::rtsp::server::RtspServer::next_publisher(&self, core::time::Duration) -> core::result::Result<core::option::Option<tst_rtp::PublishMountHandle>, tst_rtp::error::RtspServerError>
+pub fn tst_rtp::rtsp::server::RtspServer::remove_mount(&self, &str) -> core::result::Result<(), tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::RtspServer::start(&self) -> core::result::Result<(), tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::RtspServer::stats(&self) -> tst_rtp::rtsp::server::ServerStats
 pub fn tst_rtp::rtsp::server::RtspServer::stop(&self) -> core::result::Result<(), tst_rtp::error::RtspServerError>

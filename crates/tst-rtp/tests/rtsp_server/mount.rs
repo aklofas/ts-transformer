@@ -126,3 +126,56 @@ fn peer_count_zero_without_playing_clients() {
     server.start().unwrap();
     assert_eq!(mount.peer_count(), 0);
 }
+
+/// `remove_mount` on a local mount ends its PLAY reader's stream and frees
+/// the path; the caller's `MountHandle` keeps accepting pushes, which reach
+/// nobody.
+#[test]
+fn remove_local_mount_ends_readers_and_handle_pushes_reach_nobody() {
+    use std::time::{Duration, Instant};
+    use tst_core::transport::{RecvTransport, TransportError};
+    use tst_rtp::RtspClient;
+
+    let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+    let mount = server.add_mount("/live", make_muxer_cfg()).unwrap();
+    server.start().unwrap();
+    let port = server.local_addr().unwrap().port();
+
+    let mut reader =
+        RtspClient::connect(&format!("rtsp://127.0.0.1:{port}/live?transport=tcp")).unwrap();
+    let sdp = reader.describe().unwrap();
+    let mut reader_t = reader.setup_mp2t_auto(&sdp).unwrap().into_recv_transport();
+    reader_t.set_recv_timeout(Some(Duration::from_secs(5)));
+    reader.play().unwrap();
+
+    server.remove_mount("/live").unwrap();
+
+    // Nothing was pushed, so the first non-data result is the end; a 5 s
+    // recv timeout would show up as `Backpressure`.
+    let mut buf = vec![0u8; 65536];
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let end = loop {
+        match reader_t.recv_bytes(&mut buf) {
+            Ok(_) if Instant::now() < deadline => continue,
+            other => break other,
+        }
+    };
+    assert!(
+        matches!(
+            end,
+            Err(TransportError::Closed) | Err(TransportError::Broken { .. })
+        ),
+        "reader stream did not end: {end:?}"
+    );
+
+    let nal = [0x00u8, 0x00, 0x00, 0x01, 0x65, 0xBB];
+    mount
+        .push_video(&nal, Pts90khz::new(0), true)
+        .expect("a removed mount's handle still accepts pushes");
+    assert_eq!(mount.peer_count(), 0);
+    assert_eq!(server.stats().mounts, 0);
+    server
+        .add_mount("/live", make_muxer_cfg())
+        .expect("the path is free again");
+    server.stop().ok();
+}
