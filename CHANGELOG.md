@@ -71,13 +71,17 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   count. A mount whose transport has not been taken costs about 15 KB;
   taking the transport preallocates about 263 KB for its queue.
 - **`RtspServer::remove_mount(path)`** removes a mount of any kind and
-  frees the path. Every session that has completed a SETUP on it, reader
-  or publisher, gets the Notice 5402 ANNOUNCE and is closed; a publish
-  mount's application transport then reads `Closed`. A publisher between
-  ANNOUNCE and its first SETUP gets no Notice, loses its slot and is
-  refused at SETUP (`404`, or `455`/`461` if a publish/local mount was
-  registered at the path again); a publisher whose SETUP raced the
-  removal is refused at RECORD (`455`). A local mount's `MountHandle`
+  frees the path. A publish mount is closed as it leaves the table: its
+  application transport reads `Closed` and its publisher slot can never
+  be claimed again. Every session that has completed a SETUP on it,
+  reader or publisher, then gets the Notice 5402 ANNOUNCE and is closed.
+  A publisher between ANNOUNCE and its first SETUP gets no Notice, loses
+  its slot and is refused at SETUP (`404`, or `455`/`461` if a
+  publish/local mount was registered at the path again); a publisher
+  whose SETUP raced the removal is refused at RECORD (`455`), and an
+  ANNOUNCE that found the mount before the removal is refused (`403`).
+  A handle still queued for `next_publisher` stays queued; its transport
+  reads `Closed` at once. A local mount's `MountHandle`
   keeps accepting pushes, which reach nobody. An unknown path returns the
   new `RtspServerError::MountNotFound`. This is also the cleanup for an
   on-demand mount whose ANNOUNCE created it and then failed later in the

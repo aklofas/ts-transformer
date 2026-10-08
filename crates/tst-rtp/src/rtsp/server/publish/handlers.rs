@@ -512,10 +512,10 @@ mod tests {
         let r = handle_announce(&announce("rtsp://h/pub", SDP_MP2T), &st, &mut s);
         assert_eq!(r.status, 200);
         let p = s.publish.as_ref().unwrap();
-        let shape = m.publisher.lock().unwrap().as_ref().unwrap().shape;
+        let shape = m.publisher.lock().unwrap().info.as_ref().unwrap().shape;
         assert_eq!(shape, PublishShape::Mp2t);
         assert_eq!(p.tracks.len(), 1);
-        assert!(m.publisher.lock().unwrap().is_some());
+        assert!(m.publisher.lock().unwrap().info.is_some());
     }
 
     #[test]
@@ -526,10 +526,10 @@ mod tests {
         let r = handle_announce(&announce("rtsp://h/pub", SDP_ES), &st, &mut s);
         assert_eq!(r.status, 200);
         let p = s.publish.as_ref().unwrap();
-        let shape = m.publisher.lock().unwrap().as_ref().unwrap().shape;
+        let shape = m.publisher.lock().unwrap().info.as_ref().unwrap().shape;
         assert_eq!(shape, PublishShape::Elementary { klv: true });
         assert_eq!(p.tracks.len(), 2);
-        assert!(m.publisher.lock().unwrap().is_some());
+        assert!(m.publisher.lock().unwrap().info.is_some());
     }
 
     #[test]
@@ -670,6 +670,62 @@ mod tests {
     }
 
     #[test]
+    fn record_racing_remove_mount_is_455_once_the_entry_is_gone() {
+        // A publisher whose SETUP was answered before `remove_mount` took
+        // the entry, and whose session's mount mirror the sessions snapshot
+        // has not seen yet. Holding the `sessions` lock parks
+        // `remove_mount` at that snapshot: by then the mount must already
+        // be closed, so a RECORD arriving in the window is refused.
+        let server = crate::rtsp::server::RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+        let st = server.state.clone();
+        let m = super::super::mount::PublishMountState::new("/pub", 8, Default::default());
+        st.mounts
+            .lock()
+            .unwrap()
+            .insert("/pub".into(), MountEntry::Publish(m.clone()));
+        let mut s = ServerSessionState::new();
+        assert_eq!(
+            handle_announce(&announce("rtsp://h/pub", SDP_MP2T), &st, &mut s).status,
+            200
+        );
+        let mut setup = req(RtspMethod::Setup, "rtsp://h/pub/streamid=0");
+        setup.headers.insert(
+            "transport".into(),
+            "RTP/AVP/TCP;unicast;interleaved=0-1;mode=record".into(),
+        );
+        assert_eq!(
+            crate::rtsp::server::handlers::handle_setup(&setup, &st, &mut s).status,
+            200
+        );
+        let mut rec = req(RtspMethod::Record, "rtsp://h/pub");
+        rec.headers
+            .insert("session".into(), s.session_id.clone().unwrap());
+        let sessions = st.sessions.lock().unwrap();
+        std::thread::scope(|scope| {
+            let remover = scope.spawn(|| server.remove_mount("/pub"));
+            // Wait for the entry to leave the table and the slot to be
+            // released; the deadline only bounds a failure.
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while (st.mounts.lock().unwrap().contains_key("/pub")
+                || m.publisher.lock().unwrap().info.is_some())
+                && std::time::Instant::now() < deadline
+            {
+                std::thread::yield_now();
+            }
+            let r = handle_record(&rec, &st, &mut s);
+            let active = st
+                .publish_counters
+                .active_publishers
+                .load(std::sync::atomic::Ordering::Relaxed);
+            drop(sessions);
+            remover.join().unwrap().unwrap();
+            assert_eq!(r.status, 455, "RECORD after the entry left the table");
+            assert!(!s.publish.as_ref().unwrap().recording);
+            assert_eq!(active, 0);
+        });
+    }
+
+    #[test]
     fn state_errors_455_461_454() {
         let (st, _m) = state_with_publish_mount();
         let mut s = ServerSessionState::new();
@@ -803,7 +859,7 @@ mod tests {
         );
         assert_eq!(r.status, 200);
         assert!(s.publish.is_none());
-        assert!(m.publisher.lock().unwrap().is_none());
+        assert!(m.publisher.lock().unwrap().info.is_none());
         assert_eq!(m.generation.load(std::sync::atomic::Ordering::Relaxed), 1);
     }
 
@@ -997,7 +1053,10 @@ mod tests {
         let r = handle_announce(&announce("rtsp://h/pub", SDP_MP2T), &st, &mut s);
         assert_eq!(r.status, 455);
         assert!(s.publish.is_none());
-        assert!(m.publisher.lock().unwrap().is_none(), "slot not claimed");
+        assert!(
+            m.publisher.lock().unwrap().info.is_none(),
+            "slot not claimed"
+        );
     }
 
     #[test]
@@ -1058,7 +1117,7 @@ mod tests {
         let queued = rx.try_recv().expect("the new mount was queued");
         assert!(Arc::ptr_eq(&queued, &in_table));
         assert_eq!(queued.path, "/new");
-        assert!(queued.publisher.lock().unwrap().is_some());
+        assert!(queued.publisher.lock().unwrap().info.is_some());
         assert!(s.publish.is_some());
     }
 
