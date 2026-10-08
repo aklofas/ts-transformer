@@ -21,7 +21,8 @@ use crate::rtsp::message::{RtspRequest, RtspResponse};
 use crate::rtsp::server::ServerState;
 use crate::rtsp::server::handlers::{
     bind_server_udp_pair, check_auth, control_segment, error_response, extract_mount_path,
-    generate_session_id, handle_not_valid_in_state, next_interleaved_pair, server_header,
+    generate_session_id, handle_not_valid_in_state, last_path_segment, next_interleaved_pair,
+    server_header,
 };
 use crate::rtsp::server::mount::MountEntry;
 use crate::rtsp::server::session::ServerSessionState;
@@ -29,7 +30,7 @@ use crate::sdp::Sdp;
 
 use super::PublishShape;
 use super::adapter::{Mp2tAdapter, PublishAdapter};
-use super::mount::PublisherInfo;
+use super::mount::{PublishMountState, PublisherInfo};
 use super::session::{PublishSession, TrackTransport};
 use super::shape::{ShapeReject, classify_announce};
 
@@ -132,6 +133,15 @@ pub(crate) fn handle_announce(
             None => return error_response(req, 404, "Not Found"),
         }
     };
+    // Reject an `Elementary` shape BEFORE claiming the publisher slot —
+    // PR 2 of this arc replaces this with the real H.264(+KLV) adapter;
+    // today ANNOUNCE can only classify it, never feed it, so there is
+    // nothing to hold the slot for. Claiming it first and immediately
+    // freeing it would still bump the mount's generation and could 403 a
+    // concurrent well-formed ANNOUNCE for no reason (fix round 1 rider).
+    let PublishShape::Mp2t = announced.shape else {
+        return error_response(req, 415, "Unsupported Media Type");
+    };
     let info = PublisherInfo {
         peer: session.peer_addr,
         shape: announced.shape,
@@ -141,19 +151,10 @@ pub(crate) fn handle_announce(
     if !mount.try_begin_publisher(info) {
         return error_response(req, 403, "Forbidden");
     }
-    let adapter: Box<dyn PublishAdapter> = match announced.shape {
-        PublishShape::Mp2t => Box::new(Mp2tAdapter::new(
-            mount.clone(),
-            announced.tracks[0].payload_type,
-        )),
-        PublishShape::Elementary { .. } => {
-            // PR 2 of this arc replaces this arm with the real H.264(+KLV)
-            // adapter. For now, free the slot we just claimed rather than
-            // leave it held by a publisher nothing can ever drain.
-            mount.end_publisher();
-            return error_response(req, 415, "Unsupported Media Type");
-        }
-    };
+    let adapter: Box<dyn PublishAdapter> = Box::new(Mp2tAdapter::new(
+        mount.clone(),
+        announced.tracks[0].payload_type,
+    ));
     session.publish = Some(PublishSession::new(mount, announced, adapter));
     ok_response(req, None)
 }
@@ -181,8 +182,20 @@ pub(crate) fn handle_setup_record(
     session: &mut ServerSessionState,
     parsed: &TransportResponse,
     mount_path: &str,
+    routed_mount: &Arc<PublishMountState>,
 ) -> RtspResponse {
-    if session.publish.is_none() {
+    let Some(publish) = session.publish.as_ref() else {
+        return handle_not_valid_in_state(req);
+    };
+    // The caller (`handle_setup`) resolved `routed_mount` from the
+    // request URI's path — ordinarily that's exactly this session's
+    // announced mount, but `publisher_mount_path`'s announced-control
+    // matching derives the mount path from the URI's trailing segment,
+    // which a crafted or buggy request could point at a DIFFERENT
+    // registered publish mount while still matching this session's own
+    // announced control text. Never let a SETUP silently move this
+    // session's publisher onto another mount.
+    if !Arc::ptr_eq(routed_mount, &publish.mount) {
         return handle_not_valid_in_state(req);
     }
     // A later track's SETUP on this connection must name the session id
@@ -195,13 +208,25 @@ pub(crate) fn handle_setup_record(
             }
         }
     }
-    let segment = control_segment(&req.uri);
-    let Some(idx) = session
-        .publish
-        .as_mut()
-        .expect("checked Some above")
-        .track_for_control(segment)
-    else {
+    // Resolve the track: first by an exact match against whatever the
+    // SDP actually announced as `a=control` (handles any convention,
+    // e.g. gst-rtsp-server's bare `stream=0`); if that finds nothing
+    // (including when the announce had no `a=control` at all), fall
+    // back to the fixed-prefix `control_segment` resolution, which also
+    // covers the no-control, bare-mount-URI, single-track case the
+    // exact match cannot (a track with no announced control never
+    // matches an exact-text comparison).
+    let idx = last_path_segment(&req.uri)
+        .and_then(|seg| publish.track_for_raw_segment(seg))
+        .or_else(|| {
+            let segment = control_segment(&req.uri);
+            session
+                .publish
+                .as_mut()
+                .expect("checked Some above")
+                .track_for_control(segment)
+        });
+    let Some(idx) = idx else {
         return error_response(req, 404, "Not Found");
     };
 
@@ -423,18 +448,6 @@ mod tests {
         );
     }
 
-    // Asserts the exact allocated channel pair (0-1), which only holds
-    // when this test's process has never allocated an interleaved pair
-    // before — true under `cargo nextest` (this project's CI harness;
-    // see `.config/nextest.toml`'s own doc comment: "nextest runs each
-    // test in its own process"), since `next_interleaved_pair`'s counter
-    // is a process-global `static`. Under plain `cargo test --lib`
-    // (every test in one process, many threads) another TCP-interleaved
-    // SETUP test can win the race for channel 0 first, and this
-    // assertion fails nondeterministically-but-often — that is a known
-    // property of the shared allocator (ruling: both the reader and
-    // publisher SETUP paths intentionally share one counter), not a bug
-    // in this test or in `next_interleaved_pair`.
     #[test]
     fn setup_record_interleaved_then_record() {
         let (st, _m) = state_with_publish_mount();
@@ -454,10 +467,24 @@ mod tests {
         );
         assert!(r.headers["session"].contains(";timeout="));
         assert!(s.session_id.is_some());
-        assert!(matches!(
-            s.publish.as_ref().unwrap().tracks[0].transport,
-            Some(TrackTransport::Interleaved { rtp: 0, rtcp: 1 })
-        ));
+        // `next_interleaved_pair`'s counter is a process-global allocator
+        // shared with the reader SETUP path (ruling: one counter across
+        // both directions), so the exact pair this test gets depends on
+        // how many other allocations already ran in this process — don't
+        // assert a literal value, only the allocator's own invariants
+        // (even base, consecutive companion) and that the response header
+        // echoes the same pair the session actually stored.
+        let (rtp, rtcp) = match s.publish.as_ref().unwrap().tracks[0].transport {
+            Some(TrackTransport::Interleaved { rtp, rtcp }) => (rtp, rtcp),
+            ref other => panic!("expected an Interleaved transport, got {other:?}"),
+        };
+        assert_eq!(rtcp, rtp + 1, "companion channel must be rtp+1");
+        assert_eq!(rtp % 2, 0, "base channel must be even");
+        assert!(
+            r.headers["transport"].contains(&format!("interleaved={rtp}-{rtcp}")),
+            "response Transport header must echo the stored pair: {:?}",
+            r.headers
+        );
         let mut rec = req(RtspMethod::Record, "rtsp://h/pub");
         rec.headers
             .insert("session".into(), s.session_id.clone().unwrap());
@@ -537,6 +564,55 @@ mod tests {
             crate::rtsp::server::handlers::handle_setup(&setup4, &st, &mut s4).status,
             461
         );
+    }
+
+    #[test]
+    fn setup_record_on_a_different_mount_is_455() {
+        let (st, _m) = state_with_publish_mount();
+        let m2 = super::super::mount::PublishMountState::new("/pub2", 8);
+        st.mounts
+            .lock()
+            .unwrap()
+            .insert("/pub2".into(), MountEntry::Publish(m2));
+        let mut s = ServerSessionState::new();
+        handle_announce(&announce("rtsp://h/pub", SDP_MP2T), &st, &mut s);
+        // "streamid=0" is this session's own announced control, so
+        // `publisher_mount_path` resolves the mount path by stripping it
+        // from the URI — landing on "/pub2", a DIFFERENT publish mount
+        // than the one this session announced into. `handle_setup_record`
+        // must refuse rather than move the session's publisher there.
+        let mut setup = req(RtspMethod::Setup, "rtsp://h/pub2/streamid=0");
+        setup.headers.insert(
+            "transport".into(),
+            "RTP/AVP/TCP;unicast;interleaved=0-1;mode=record".into(),
+        );
+        let r = crate::rtsp::server::handlers::handle_setup(&setup, &st, &mut s);
+        assert_eq!(r.status, 455);
+        assert_eq!(s.mount_path, None);
+    }
+
+    #[test]
+    fn setup_record_resolves_gstreamer_stream_control() {
+        // gst-rtsp-server's convention: `a=control:stream=0`, resolved
+        // both by the generic `stream=` prefix now in `extract_mount_path`
+        // / `control_segment`, and (for any OTHER control convention) by
+        // `track_for_raw_segment`'s exact-match fallback.
+        const SDP_STREAM_CONTROL: &str = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=x\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=video 0 RTP/AVP 33\r\na=control:stream=0\r\n";
+        let (st, _m) = state_with_publish_mount();
+        let mut s = ServerSessionState::new();
+        handle_announce(&announce("rtsp://h/pub", SDP_STREAM_CONTROL), &st, &mut s);
+        let mut setup = req(RtspMethod::Setup, "rtsp://h/pub/stream=0");
+        setup.headers.insert(
+            "transport".into(),
+            "RTP/AVP/TCP;unicast;interleaved=0-1;mode=record".into(),
+        );
+        let r = crate::rtsp::server::handlers::handle_setup(&setup, &st, &mut s);
+        assert_eq!(r.status, 200, "{:?}", r.headers);
+        assert_eq!(s.mount_path.as_deref(), Some("/pub"));
+        assert!(matches!(
+            s.publish.as_ref().unwrap().tracks[0].transport,
+            Some(TrackTransport::Interleaved { .. })
+        ));
     }
 
     #[test]
