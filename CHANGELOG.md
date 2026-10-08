@@ -160,6 +160,32 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `tst_rtsp_publisher_info_t`, new enums `tst_rtsp_publish_shape` and
   `tst_rtsp_clock_alignment` (four variants). No new error codes.
 
+### Added — tst-py: RTSP publisher role
+
+- **`RtspServer.add_publish_mount(path)`** returns a `PublishMount`:
+  `mount_path()`, `peer_count()`, `generation()`, `publisher()`
+  (`PublisherInfo` with `peer`, `shape`, `klv`, `since_unix_ms`,
+  `generation`), `stats()` (`PublishMountStats`, every counter of the Rust
+  snapshot plus `alignment` as a `ClockAlignment`), `cancel()` and
+  `into_demux_receiver(demux_config=None)`, which returns the existing
+  `tstrans.rtp.DemuxReceiver`. The take is once across every handle to the
+  mount: a second call raises `RtspError(CLOSED)`. The receiver ends with
+  `StopIteration` once the mount is removed or the server stopped, and
+  raises `RtpError(CLOSED)` after a cancel.
+- **`RtspServerConfig.accept_unregistered_publishers`** (default `False`)
+  and **`RtspServer.next_publisher(timeout=None)`** hand out mounts an
+  ANNOUNCE created on demand; `None` on a timeout, `RtspError(SERVER)` once
+  the server stops (a parked call wakes on `stop()` or the `with` exit).
+  The wait releases the GIL and, with `timeout=None`, handles signals every
+  second, so Ctrl-C interrupts it.
+- **`RtspServer.remove_mount(path)`** removes a mount of any kind;
+  `RtspError(MOUNT)` when no mount is registered at the path.
+- **`ServerStats`** gains `active_publishers`,
+  `total_rtp_packets_received` and `total_rtp_bytes_received`.
+- New pure-Python `IntEnum`s `PublishShape` (`MP2T`, `ELEMENTARY`) and
+  `ClockAlignment` (`NOT_APPLICABLE`, `PENDING`, `PROVISIONAL`,
+  `SENDER_REPORT`), numbered as in the C ABI.
+
 ### Changed — tst-rtp: RTSP server
 
 - **`TransportResponse` gains a public `mode` field** (the Transport
