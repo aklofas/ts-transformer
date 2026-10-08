@@ -240,7 +240,7 @@ mod tests {
     /// 127.0.0.1, and return `(rtcp delivered, source_rejected)` once the
     /// datagram has been handled either way.
     async fn rtcp_from_loopback(peer_ip: &str) -> (u64, u64) {
-        let mount = PublishMountState::new("/p", 8);
+        let mount = PublishMountState::new("/p", 8, Default::default());
         let delivered = Arc::new(AtomicU64::new(0));
         let adapter: Arc<Mutex<Box<dyn PublishAdapter>>> =
             Arc::new(Mutex::new(Box::new(RtcpCounter(delivered.clone()))));
@@ -291,7 +291,7 @@ mod tests {
 
     #[tokio::test]
     async fn udp_ingest_relatches_a_same_ip_port_change_and_counts_garbage_as_malformed() {
-        let mount = PublishMountState::new("/p", 8);
+        let mount = PublishMountState::new("/p", 8, Default::default());
         let adapter: Arc<Mutex<Box<dyn PublishAdapter>>> =
             Arc::new(Mutex::new(Box::new(Mp2tAdapter::new(mount.clone(), 33))));
         let rtp = Arc::new(tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap());

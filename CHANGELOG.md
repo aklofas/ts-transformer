@@ -93,6 +93,20 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pair is free on its connection.
 - One connection holds one role: a reader SETUP or PLAY on a publisher's
   connection, or an ANNOUNCE on a reader's, answers `455`.
+- Publish mount stats: `PublishMountHandle::stats()` returns
+  `PublishMountStats` (RTP packets and bytes received, malformed and
+  source-rejected packets, frames emitted and dropped, access units and
+  KLV units emitted and dropped, alignment, `generation`, `peer_count` =
+  live PLAY readers), cumulative across publishers;
+  `PublishMountHandle::publisher()` returns the current publisher's
+  `PublisherInfo` (control-connection address, shape, start time,
+  generation). `ServerStats` gains `active_publishers` (mounts that have
+  a publisher now), `total_rtp_packets_received` and
+  `total_rtp_bytes_received` (across every publish mount, cumulative).
+  The server totals are relaxed counters beside each mount's own, so a
+  snapshot taken while packets arrive may differ from the mounts' sum by
+  the packets in flight. `ServerStats` is `#[non_exhaustive]`, so the new
+  fields are additive.
 
 ### Changed — tst-rtp: RTSP server
 

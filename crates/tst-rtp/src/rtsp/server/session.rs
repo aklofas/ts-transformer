@@ -764,6 +764,7 @@ mod session_tests {
                 active_sessions: std::sync::atomic::AtomicUsize::new(0),
                 total_rtp_packets_sent: std::sync::atomic::AtomicU64::new(0),
                 total_rtp_bytes_sent: std::sync::atomic::AtomicU64::new(0),
+                publish_counters: Default::default(),
                 started: std::sync::atomic::AtomicBool::new(true),
                 shutdown: std::sync::atomic::AtomicBool::new(false),
                 local_addr: std::sync::Mutex::new(None),
@@ -832,6 +833,7 @@ mod session_tests {
                 active_sessions: std::sync::atomic::AtomicUsize::new(0),
                 total_rtp_packets_sent: std::sync::atomic::AtomicU64::new(0),
                 total_rtp_bytes_sent: std::sync::atomic::AtomicU64::new(0),
+                publish_counters: Default::default(),
                 started: std::sync::atomic::AtomicBool::new(true),
                 shutdown: std::sync::atomic::AtomicBool::new(false),
                 local_addr: std::sync::Mutex::new(None),
@@ -896,6 +898,7 @@ mod session_tests {
             active_sessions: std::sync::atomic::AtomicUsize::new(0),
             total_rtp_packets_sent: std::sync::atomic::AtomicU64::new(0),
             total_rtp_bytes_sent: std::sync::atomic::AtomicU64::new(0),
+            publish_counters: Default::default(),
             started: std::sync::atomic::AtomicBool::new(true),
             shutdown: std::sync::atomic::AtomicBool::new(false),
             local_addr: std::sync::Mutex::new(None),
@@ -1244,7 +1247,7 @@ mod session_tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let state = crate::rtsp::server::test_state();
-        let mount = publish::mount::PublishMountState::new("/pub", 8);
+        let mount = publish::mount::PublishMountState::new("/pub", 8, Default::default());
         state
             .mounts
             .lock()
