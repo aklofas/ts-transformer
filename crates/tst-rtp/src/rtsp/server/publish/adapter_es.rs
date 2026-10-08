@@ -5,9 +5,9 @@
 //! The pipeline per packet:
 //!
 //! - Video: [`H264Depacketizer`] → access units. Every AU the
-//!   depacketizer emits is reported to the [`Aligner`] (its first one is
-//!   the video PTS origin, the same zero point as the depacketizer's own
-//!   PTS). AUs before the first IDR that reaches the muxer are dropped:
+//!   depacketizer emits reports the depacketizer's PTS zero (its RTP
+//!   timestamp minus its PTS) to the [`Aligner`] as the video origin, so
+//!   both tracks share one PTS line. AUs before the first IDR that reaches the muxer are dropped:
 //!   a reader cannot decode them.
 //! - KLV: [`KlvDepacketizer`] → KLV units → [`Aligner`], which holds them
 //!   until the two tracks' clocks are related (RTCP sender reports, or a
@@ -36,7 +36,6 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use bytes::{BufMut, BytesMut};
 use tst_core::error::MuxError;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{
@@ -44,11 +43,11 @@ use tst_core::mpegts::mux::{
 };
 
 use crate::h264::{H264Au, H264Depacketizer, H264DepayConfig, ParameterSetInjection};
-use crate::packet::{RTP_HEADER_LEN, RTP_PT_MP2T, RtpHeader};
+use crate::packet::{RTP_HEADER_LEN, RtpHeader};
 use crate::rtcp::SenderReport;
 use crate::rtsp::server::mount::RTP_PAYLOAD_SIZE;
 
-use super::adapter::PublishAdapter;
+use super::adapter::{PublishAdapter, synth_rtp_packet};
 use super::align::Aligner;
 use super::klv_depacketizer::{KlvDepacketizer, KlvUnit};
 use super::mount::{ClockAlignment, PublishMountState};
@@ -59,6 +58,19 @@ const PROGRAM_NUMBER: u16 = 1;
 const PMT_PID: u16 = 0x1000;
 const VIDEO_PID: u16 = 0x100;
 const KLV_PID: u16 = 0x101;
+
+/// Muxer queue cap, in TS packets, big enough for the largest AU the
+/// H.264 depacketizer can emit (its default `max_au_bytes`, 8 MiB): the
+/// muxer's own default (10 000 packets, about 1.84 MB) would refuse every
+/// AU between the two caps with `BufferFull`. Sized like the stress
+/// harness does, `max(10 000, (programs + 1) × ⌈largest AU / 184⌉)`, the
+/// `+ 1` covering PSI and adaptation-field overhead. The queue grows on
+/// demand and is drained after every push, so the cap costs no memory
+/// until such an AU arrives.
+fn muxer_buffer_packets() -> usize {
+    let largest_au = H264DepayConfig::default().max_au_bytes;
+    10_000.max((1 + 1) * largest_au.div_ceil(184))
+}
 
 /// RTCP packet type of a sender report (RFC 3550 §6.4.1).
 const RTCP_PT_SR: u8 = 200;
@@ -123,7 +135,8 @@ impl EsAdapter {
             prog.add_klv(KLV_PID, KlvStreamType::PrivateData, true);
         }
         let mut cfg = MuxerConfig::builder();
-        cfg.add_program(prog.build());
+        cfg.add_program(prog.build())
+            .buffer_packets(muxer_buffer_packets());
         Ok(Self::with_muxer(
             mount,
             video,
@@ -198,7 +211,14 @@ impl EsAdapter {
 
     /// Push one AU from the depacketizer.
     fn push_au(&mut self, au: H264Au) {
-        self.aligner.on_video_au(au.rtp_timestamp);
+        // The aligner's video origin must be the depacketizer's PTS zero:
+        // the RTP timestamp of the first AU it STARTED, which may have
+        // been dropped as poisoned (a stream joined mid-FU, a gap in the
+        // first AU). Derive it from this AU's timestamp and PTS rather
+        // than assuming the first emitted AU sits at PTS 0. Only the first
+        // call takes effect; later ones yield the same value.
+        self.aligner
+            .on_video_au(au.rtp_timestamp.wrapping_sub(au.pts.as_ticks() as u32));
         if !au.key_frame && !self.seen_keyframe {
             self.mount.tick(|s| s.aus_dropped += 1);
             return;
@@ -279,14 +299,13 @@ impl EsAdapter {
             if n == 0 {
                 break;
             }
-            let mut header = RtpHeader::new(self.seq, self.max_pts as u32, self.ssrc.unwrap_or(0));
-            header.payload_type = RTP_PT_MP2T;
+            let app = synth_rtp_packet(
+                self.seq,
+                self.max_pts as u32,
+                self.ssrc.unwrap_or(0),
+                &self.out[..n],
+            );
             self.seq = self.seq.wrapping_add(1);
-            let mut app = BytesMut::with_capacity(RTP_HEADER_LEN + n);
-            app.put_bytes(0, RTP_HEADER_LEN);
-            header.encode_into(&mut app[..RTP_HEADER_LEN]);
-            app.put_slice(&self.out[..n]);
-            let app = app.freeze();
             // Readers get a zero-copy slice of the application packet.
             self.mount.emit(app.slice(RTP_HEADER_LEN..), app);
         }
@@ -681,6 +700,60 @@ mod tests {
         assert_eq!((s.klv_units_emitted, s.klv_units_dropped), (1, 0));
         assert_eq!(s.alignment, ClockAlignment::SenderReport);
         assert_eq!(s.alignment_steps, 0);
+    }
+
+    #[test]
+    fn klv_aligns_to_the_depacketizers_zero_when_the_first_au_is_poisoned() {
+        let mount = PublishMountState::new("/p", 8);
+        let mut t = app_transport(&mount);
+        let mut a = EsAdapter::new(mount.clone(), &video_track(), Some(&klv_track())).unwrap();
+        a.on_rtcp(0, &sr(100, 0, 180_000));
+        a.on_rtcp(1, &sr(100, 1 << 31, 500_000));
+        // Joined mid-FU: the first packet is an IDR's tail fragment (no S
+        // bit, E bit + marker) at rtp 90 000. The depacketizer starts an AU
+        // there — its PTS zero — and then drops it as poisoned.
+        let zero_rtp: i64 = 90_000;
+        a.on_rtp(
+            0,
+            &payload::rtp(1, 90_000, VIDEO_PT, true, &[0x7C, 0x45, 0xAA]),
+        );
+        // A clean IDR one frame later is the first AU emitted.
+        let idr_rtp: i64 = 93_003;
+        a.on_rtp(0, &payload::single(2, 93_003, 0x65, 400, VIDEO_PT));
+        let body = klv_set(9);
+        a.on_rtp(1, &klv_packet(1, 500_000, &body));
+        a.flush();
+        // Spec: a KLV unit's PTS = (video rtp at the unit's NTP instant) −
+        // (rtp of the video PTS zero); the video AU's PTS = its rtp − the
+        // same zero. The unit sits at the KLV SR instant, ntp 100.5 s,
+        // where the video clock reads 180 000 + 0.5 s × 90 000.
+        let klv_video_rtp: i64 = 180_000 + 45_000;
+        let expected_rel = (klv_video_rtp - zero_rtp) - (idr_rtp - zero_rtp);
+        let d = demux_app(&mut t);
+        assert_eq!(d.video.len(), 1);
+        assert_eq!(d.klv.len(), 1);
+        assert_eq!(d.klv[0].1, body);
+        assert_eq!(d.klv[0].0.as_ticks() - d.video[0].as_ticks(), expected_rel);
+        let s = mount.stats_snapshot();
+        assert_eq!(
+            (s.aus_emitted, s.aus_dropped),
+            (1, 1),
+            "poisoned first AU counted"
+        );
+    }
+
+    #[test]
+    fn default_muxer_takes_an_au_above_its_stock_buffer() {
+        // 3 MB > the muxer's stock 10 000-packet (~1.84 MB) queue, < the
+        // depacketizer's 8 MiB AU cap.
+        let mount = PublishMountState::new("/p", 8);
+        let mut a = EsAdapter::new(mount.clone(), &video_track(), None).unwrap();
+        for p in payload::fragmented(1, 0, 0x65, 3_000_000, VIDEO_PT, 60_000) {
+            a.on_rtp(0, &p);
+        }
+        a.flush();
+        let s = mount.stats_snapshot();
+        assert_eq!((s.aus_emitted, s.aus_dropped), (1, 0));
     }
 
     #[test]

@@ -98,7 +98,8 @@ pub struct H264Au {
     pub annexb: Vec<u8>,
     /// 90 kHz decode-order timestamp derived from the RTP timestamp.
     ///
-    /// Zero-based at the first emitted AU; unwrapped across the 32-bit RTP
+    /// Zero-based at the first started AU (even one later dropped as
+    /// poisoned, so the first emitted AU need not read 0); unwrapped across the 32-bit RTP
     /// timestamp rollover. Because RTP timestamps reflect decode order, B-frame
     /// content produces non-monotonic PTS values — the depacketizer passes them
     /// through unaltered. DTS is not derivable from RTP; callers with B-frame
