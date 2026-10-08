@@ -191,6 +191,13 @@ fn klv_is_aligned_to_video_by_sender_reports() {
 /// (the first unit at the first video sample's PTS), and the mount
 /// reports `Provisional`. The publisher keeps sending a unit every 250 ms
 /// the way a live KLV source would, which is what drives the fallback.
+/// Then the reports arrive after all: the next unit lands on the report
+/// mapping, the mode becomes `SenderReport`, and the switch is one step
+/// (GStreamer's first RTCP interval is randomized, so this can happen).
+///
+/// The first phase assumes the server handles the first five units
+/// within two seconds of each other; a runner stalled longer than that
+/// would engage the fallback early and fail the "held" assertion.
 #[test]
 fn klv_falls_back_to_provisional_alignment_without_sender_reports() {
     let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
@@ -201,7 +208,7 @@ fn klv_falls_back_to_provisional_alignment_without_sender_reports() {
     app_t.set_recv_timeout(Some(Duration::from_secs(2)));
     let mut app = DemuxReceiver::new(app_t);
 
-    let (mut p, (v_rtp, _), (k_rtp, _)) = two_track_publisher(port);
+    let (mut p, (v_rtp, v_rtcp), (k_rtp, k_rtcp)) = two_track_publisher(port);
     for pkt in &h264_rtp_packets(AUS, VIDEO_PT, 7, VIDEO_SSRC, VIDEO_TS0) {
         p.send_frame(v_rtp, pkt);
     }
@@ -270,6 +277,28 @@ fn klv_falls_back_to_provisional_alignment_without_sender_reports() {
         );
         assert_eq!(payload, &units[j], "KLV unit {j} bytes");
     }
+
+    // The reports arrive late; the next unit follows them.
+    p.send_frame(v_rtcp, &sr_packet(VIDEO_SSRC, NTP_SECS, 0, VIDEO_SR.1));
+    p.send_frame(k_rtcp, &sr_packet(KLV_SSRC, NTP_SECS, 1 << 31, KLV_SR.1));
+    let j = units.len() as u32;
+    send_klv(&mut p, &mut units);
+    let s = stats_when(&mount, Duration::from_secs(5), |s| {
+        s.klv_units_emitted == sent + 1
+    });
+    assert_eq!(s.klv_units_emitted, sent + 1);
+    assert_eq!(s.alignment, ClockAlignment::SenderReport);
+    assert_eq!(s.alignment_steps, 1);
+    let events = demux_until_quiet(&mut app, Instant::now() + Duration::from_secs(20), "app");
+    let klv = klv_events(&events);
+    assert_eq!(klv.len(), 1);
+    let want = spec_klv_pts(KLV_TS0 + j * KLV_STEP);
+    assert!(
+        (klv[0].0 - video[0] - want).abs() <= 1,
+        "late-report KLV PTS {} past the first video sample, spec formula says {want}",
+        klv[0].0 - video[0]
+    );
+    assert_eq!(klv[0].1, units[j as usize]);
     assert_eq!(p.teardown("/pub"), 200);
     server.stop().ok();
 }
