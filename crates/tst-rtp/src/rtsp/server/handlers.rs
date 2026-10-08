@@ -345,18 +345,16 @@ pub(crate) fn absolute_control_path(control: &str) -> Option<String> {
     Some(normalize_mount_path(path, |_| false))
 }
 
-/// Allocate a fresh even/odd TCP-interleaved channel pair from the
-/// process-global allocator shared by the reader (this module's
-/// `handle_setup`) and publisher (`publish::handlers::handle_setup_record`)
-/// SETUP paths. A single shared counter across both directions is safe
-/// because channels are scoped per RTSP session on the wire — each
-/// client's TCP connection has its own interleaved namespace (see the
-/// allocator's original call site) — so there is no cross-session
-/// collision to avoid, only one allocator to avoid duplicating.
+/// Allocate a fresh even/odd TCP-interleaved channel pair for a reader
+/// SETUP from a process-global counter. Channels are scoped per RTSP
+/// connection on the wire, so a counter shared across sessions causes no
+/// collision. (A publisher SETUP instead honours the publisher's requested
+/// pair, per session: `PublishSession::interleaved_pair_for`.)
 ///
-/// `None` on exhaustion (the companion channel would overflow `u8`);
-/// callers map that to 500 — a server-side allocator exhaustion, not a
-/// client error.
+/// The base is always even (the counter steps by 2 from 0 and wraps
+/// modulo 256), so the companion never overflows and the `None` arm is
+/// unreachable today; callers keep mapping it to 500 so a future change
+/// to the stepping fails closed.
 pub(crate) fn next_interleaved_pair() -> Option<(u8, u8)> {
     static NEXT_CHANNEL: AtomicU8 = AtomicU8::new(0);
     let base = NEXT_CHANNEL.fetch_add(2, Ordering::Relaxed);
@@ -558,11 +556,10 @@ pub(crate) fn handle_setup(
             }
         }
         RtspTransportKind::TcpInterleaved => {
-            // Allocate a fresh even/odd channel pair from the shared
-            // allocator (also used by the publisher SETUP path) — see
+            // Allocate a fresh even/odd channel pair — see
             // `next_interleaved_pair`'s doc for why one process-global
-            // counter is safe across both directions. 500 on exhaustion:
-            // a server-side allocator problem, not a client error.
+            // counter is safe. 500 on exhaustion: a server-side allocator
+            // problem, not a client error.
             let Some((base, companion)) = next_interleaved_pair() else {
                 return error_response(req, 500, "Internal Server Error");
             };

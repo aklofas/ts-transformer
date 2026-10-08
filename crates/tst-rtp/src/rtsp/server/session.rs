@@ -1341,12 +1341,8 @@ mod session_tests {
     }
 
     /// The `(rtp, rtcp)` interleaved channel pair the SETUP response
-    /// actually allocated. `next_interleaved_pair` is a process-global
-    /// counter shared with every other SETUP in this test binary (see
-    /// its doc in `handlers.rs`), so a freshly ANNOUNCE'd/SETUP'd session
-    /// in this process cannot assume it got channels 0-1 — the pair must
-    /// be read back from the response, not assumed, or these tests would
-    /// be flaky under `cargo test` depending on what ran before them.
+    /// allocated. Read back rather than assumed, so these tests check what
+    /// the server said.
     fn interleaved_pair_of(response: &str) -> (u8, u8) {
         let transport = header_of(response, "Transport");
         let spec = transport
@@ -1385,9 +1381,8 @@ mod session_tests {
     }
 
     /// Drives ANNOUNCE → SETUP(mode=record) → RECORD over `c` and
-    /// returns the session id plus the actually-allocated `(rtp, rtcp)`
-    /// interleaved pair (see [`interleaved_pair_of`]'s doc for why this
-    /// cannot be assumed to be `0-1`).
+    /// returns the session id plus the allocated `(rtp, rtcp)`
+    /// interleaved pair.
     async fn announce_setup_record(c: &mut TcpStream) -> (String, (u8, u8)) {
         write_and_read(c, &announce_request("/pub", SDP_MP2T)).await;
         let r = write_and_read(c, &setup_record_request(3)).await;
@@ -1632,6 +1627,28 @@ mod session_tests {
         )
         .await;
         assert!(r.starts_with("RTSP/1.0 200"), "follow-up OPTIONS: {r}");
+        assert_eq!(mount.stats_snapshot().malformed_packets, 0);
+    }
+
+    /// A publisher that sends on the interleaved channels it requested,
+    /// without reading the SETUP answer, still has its frames routed: the
+    /// server honours a requested pair that is free in the session.
+    #[tokio::test]
+    async fn publisher_requested_interleaved_channels_are_honoured() {
+        let (server, mount) = state_with_publish_mount_and_listener().await;
+        let app = take_app(&mount);
+        let mut c = connect(&server).await;
+        write_and_read(&mut c, &announce_request("/pub", SDP_MP2T)).await;
+
+        // SETUP asking for 6-7, RECORD and a frame on channel 6 in one
+        // write: the frame is sent before either answer is read.
+        let rtp = rtp_mp2t_packet(1);
+        let mut wire = b"SETUP rtsp://h/pub/streamid=0 RTSP/1.0\r\nCSeq: 3\r\nTransport: RTP/AVP/TCP;unicast;interleaved=6-7;mode=record\r\n\r\nRECORD rtsp://h/pub RTSP/1.0\r\nCSeq: 4\r\n\r\n".to_vec();
+        wire.extend(frame(6, &rtp));
+        c.write_all(&wire).await.unwrap();
+        let r = read_responses(&mut c, 2).await;
+        assert!(r.contains("interleaved=6-7"), "{r}");
+        assert_eq!(app_recv(app).await, rtp[12..].to_vec());
         assert_eq!(mount.stats_snapshot().malformed_packets, 0);
     }
 }

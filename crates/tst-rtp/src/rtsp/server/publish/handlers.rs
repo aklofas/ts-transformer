@@ -21,8 +21,7 @@ use crate::rtsp::message::{RtspRequest, RtspResponse};
 use crate::rtsp::server::ServerState;
 use crate::rtsp::server::handlers::{
     bind_server_udp_pair, check_auth, control_segment, error_response, extract_mount_path,
-    generate_session_id, handle_not_valid_in_state, last_path_segment, next_interleaved_pair,
-    server_header,
+    generate_session_id, handle_not_valid_in_state, last_path_segment, server_header,
 };
 use crate::rtsp::server::mount::MountEntry;
 use crate::rtsp::server::session::ServerSessionState;
@@ -177,8 +176,8 @@ pub(crate) fn handle_announce(
 ///   track this ANNOUNCE declared.
 /// - 461 Unsupported Transport — a unicast UDP SETUP with no
 ///   `client_port=` (mirrors the reader path's same refusal).
-/// - 500 Internal Server Error — UDP bind failure, interleaved-channel
-///   allocator exhaustion, or `local_addr` not yet set.
+/// - 500 Internal Server Error — UDP bind failure, no free interleaved
+///   channel pair, or `local_addr` not yet set.
 pub(crate) fn handle_setup_record(
     req: &RtspRequest,
     state: &Arc<ServerState>,
@@ -273,7 +272,12 @@ pub(crate) fn handle_setup_record(
             )
         }
         RtspTransportKind::TcpInterleaved => {
-            let Some((base, companion)) = next_interleaved_pair() else {
+            let Some((base, companion)) = session
+                .publish
+                .as_ref()
+                .expect("checked Some above")
+                .interleaved_pair_for(parsed.interleaved)
+            else {
                 return error_response(req, 500, "Internal Server Error");
             };
             (

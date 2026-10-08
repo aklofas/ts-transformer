@@ -184,6 +184,33 @@ impl PublishSession {
             })
     }
 
+    /// The interleaved channel pair for a track's `mode=record` SETUP:
+    /// the publisher's `requested` pair when it has one that no other
+    /// track of this session uses (and whose two channels differ),
+    /// otherwise the lowest free even/odd pair. Channels are scoped to
+    /// this connection (RFC 2326 §10.12), so honouring the request costs
+    /// nothing and serves publishers that send on the channels they asked
+    /// for without reading the SETUP answer. `None` only if every pair is
+    /// taken, which four tracks cannot reach.
+    pub(crate) fn interleaved_pair_for(&self, requested: Option<(u8, u8)>) -> Option<(u8, u8)> {
+        let used: Vec<u8> = self
+            .tracks
+            .iter()
+            .filter_map(|t| match t.transport {
+                Some(TrackTransport::Interleaved { rtp, rtcp }) => Some([rtp, rtcp]),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        let free = |(a, b): (u8, u8)| a != b && !used.contains(&a) && !used.contains(&b);
+        requested.filter(|&p| free(p)).or_else(|| {
+            (0..=u8::MAX - 1)
+                .step_by(2)
+                .map(|a| (a, a + 1))
+                .find(|&p| free(p))
+        })
+    }
+
     /// Milliseconds since the process-wide media-liveness epoch. Shared
     /// by the session loop's interleaved `$`-frame arm and the UDP
     /// ingest tasks — both stamp [`Self::last_media_ms`] with this same
@@ -232,5 +259,43 @@ impl PublishSession {
 impl Drop for PublishSession {
     fn drop(&mut self) {
         self.end();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rtsp::server::publish::adapter::Mp2tAdapter;
+    use crate::rtsp::server::publish::shape::TrackKind;
+
+    fn two_track_session() -> PublishSession {
+        let mount = PublishMountState::new("/p", 8);
+        let track = |control: &str| AnnouncedTrack {
+            index: 0,
+            control: Some(control.into()),
+            payload_type: 33,
+            kind: TrackKind::Mp2t,
+            h264_fmtp: None,
+        };
+        let shape = AnnounceShape {
+            shape: super::super::PublishShape::Mp2t,
+            tracks: vec![track("a"), track("b")],
+        };
+        let adapter = Box::new(Mp2tAdapter::new(mount.clone(), 33));
+        PublishSession::new(mount, shape, adapter)
+    }
+
+    #[test]
+    fn interleaved_pair_honours_a_free_request_and_falls_back_to_the_lowest_free_pair() {
+        let mut s = two_track_session();
+        assert_eq!(s.interleaved_pair_for(Some((6, 7))), Some((6, 7)));
+        assert_eq!(s.interleaved_pair_for(None), Some((0, 1)));
+        s.tracks[0].transport = Some(TrackTransport::Interleaved { rtp: 0, rtcp: 1 });
+        // The second track asks for a pair the first already holds.
+        assert_eq!(s.interleaved_pair_for(Some((0, 1))), Some((2, 3)));
+        assert_eq!(s.interleaved_pair_for(Some((1, 2))), Some((2, 3)));
+        // A degenerate request (one channel for both) is not honoured.
+        assert_eq!(s.interleaved_pair_for(Some((4, 4))), Some((2, 3)));
+        assert_eq!(s.interleaved_pair_for(Some((8, 9))), Some((8, 9)));
     }
 }
