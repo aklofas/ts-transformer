@@ -63,7 +63,13 @@ use crate::packet::RtpHeader;
 
 /// Maximum accumulated size of one open KLVunit. See rule 6 in the
 /// [module docs](self).
-pub(crate) const MAX_KLV_UNIT_BYTES: usize = 1024 * 1024;
+///
+/// This is the publish muxer's own KLV ceiling: `Muxer::push_klv` refuses
+/// a `PrivateData` unit that carries a PTS once it overflows the 16-bit
+/// `PES_packet_length` (65 535 minus 3 bytes of PES header flags and 5 of
+/// PTS) with `MuxError::KlvTooLarge`. A larger unit could never be muxed,
+/// so it is dropped here instead of being reassembled and held first.
+pub(crate) const MAX_KLV_UNIT_BYTES: usize = u16::MAX as usize - 3 - 5;
 
 /// One fully reassembled KLVunit (RFC 6597 §4.1): the raw bytes of a single
 /// KLV Local Set or Universal Set encoding, plus the RTP timestamp shared by
@@ -403,7 +409,7 @@ mod tests {
         let chunk = vec![0u8; 65_000];
         for i in 0..17u16 {
             d.feed(&h(i, 1000, false), &chunk);
-        } // 17 × 65 000 > 1 MiB
+        } // 17 × 65 000 > MAX_KLV_UNIT_BYTES (two chunks already are)
         d.feed(&h(17, 1000, true), b"end");
         assert!(d.next_unit().is_none());
         assert_eq!(d.stats().units_dropped_oversize, 1);
