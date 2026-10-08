@@ -17,6 +17,7 @@ use super::mount::PublishMountState;
 use super::shape::{AnnounceShape, AnnouncedTrack};
 
 /// The transport a publisher's SETUP allocated for one announced track.
+#[derive(Debug)]
 pub(crate) enum TrackTransport {
     /// RFC 7826 §14 TCP-interleaved channel pair on the publisher's
     /// control connection.
@@ -96,6 +97,24 @@ impl PublishSession {
     /// RECORD (RFC 2326 §10.11 requires the stream to be set up first).
     pub(crate) fn all_tracks_set_up(&self) -> bool {
         self.tracks.iter().all(|t| t.transport.is_some())
+    }
+
+    /// Resolve a URI's raw trailing path segment against this session's
+    /// announced tracks' `control` values with an exact string match,
+    /// independent of whether `segment` looks like a recognized
+    /// `trackID=`/`streamid=`/`stream=` control segment — gst-rtsp-
+    /// server's `rtspclientsink` announces bare `a=control:stream=0`,
+    /// and other tools may use yet other conventions, so an exact match
+    /// against whatever the SDP actually said is the one check that
+    /// works for all of them. `None` when nothing matches; the caller
+    /// falls back to [`Self::track_for_control`]'s prefix-aware
+    /// resolution (which also covers the no-`a=control`,
+    /// bare-mount-URI, single-track case this exact match cannot — a
+    /// track with no announced control never matches here).
+    pub(crate) fn track_for_raw_segment(&self, segment: &str) -> Option<usize> {
+        self.tracks
+            .iter()
+            .position(|t| t.announced.control.as_deref() == Some(segment))
     }
 
     /// Resolve a SETUP URI's control segment (see

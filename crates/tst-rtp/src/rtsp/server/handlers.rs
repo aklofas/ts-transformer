@@ -215,6 +215,20 @@ pub(crate) fn handle_describe(
 /// perfectly valid mount. DESCRIBE, SETUP, and PLAY all go through this
 /// function, so the normalization is consistent across the whole session.
 pub(crate) fn extract_mount_path(uri: &str) -> String {
+    normalize_mount_path(uri, |seg| {
+        seg.starts_with("trackID=") || seg.starts_with("streamid=") || seg.starts_with("stream=")
+    })
+}
+
+/// Shared normalization for [`extract_mount_path`] and the publisher
+/// SETUP path's announced-`a=control`-aware mount-path derivation (see
+/// [`crate::rtsp::server::publish::handlers::handle_setup_record`]):
+/// strip scheme + authority, strip a trailing query string, then strip
+/// the last `/`-delimited path segment when `strip_last` says it's a
+/// per-media control segment (not part of the registered mount path)
+/// rather than part of the mount path itself, then normalize away a
+/// single trailing slash.
+fn normalize_mount_path(uri: &str, strip_last: impl FnOnce(&str) -> bool) -> String {
     // Strip scheme + authority if present.
     let path_start = if let Some(after_scheme) = uri.strip_prefix("rtsp://") {
         after_scheme
@@ -232,14 +246,15 @@ pub(crate) fn extract_mount_path(uri: &str) -> String {
     // Strip any trailing query string; v1 matches the bare path component
     // of the mount as registered.
     let path = path_start.split('?').next().unwrap_or(path_start);
-    // Strip trailing per-media control segments. SDP `a=control:trackID=N`
-    // (the canonical form per RFC 7826 §C.1.1) causes RtspClient to send
-    // SETUP `<base>/trackID=N`. SETUP matches against the base mount
-    // path; the trackID segment is per-media and not part of the
-    // registered mount.
+    // Strip a trailing per-media control segment, per `strip_last`. SDP
+    // `a=control:trackID=N` (the canonical form per RFC 7826 §C.1.1), or
+    // `a=control:stream=N` (gst-rtsp-server's convention), causes a SETUP
+    // URI of `<base>/trackID=N` or `<base>/stream=N`. SETUP matches
+    // against the base mount path; the control segment is per-media and
+    // not part of the registered mount.
     let path = if let Some(last_slash) = path.rfind('/') {
         let last_seg = &path[last_slash + 1..];
-        if last_seg.starts_with("trackID=") || last_seg.starts_with("streamid=") {
+        if strip_last(last_seg) {
             // Keep the leading slash if it's the only one (root mount)
             // by ensuring we don't strip to empty.
             if last_slash == 0 {
@@ -263,17 +278,53 @@ pub(crate) fn extract_mount_path(uri: &str) -> String {
     path.to_string()
 }
 
-/// The trailing per-media control segment of a SETUP URI, if any
-/// (`streamid=0`, `trackID=1`), or an absolute `a=control` URL's last
-/// segment. Used by the publisher SETUP path (`mode=record`) to resolve
-/// which announced track a given SETUP targets —
-/// [`extract_mount_path`] already strips this same segment when it
-/// locates the mount itself, so the two must agree on what counts as a
-/// control segment.
-pub(crate) fn control_segment(uri: &str) -> Option<&str> {
+/// The raw last `/`-delimited path segment of a request URI (scheme and
+/// authority, if present, are irrelevant — `rsplit('/')` finds the same
+/// trailing chunk either way), with no prefix check at all. `None` for
+/// an empty segment (e.g. a URI ending in `/`). Shared by
+/// [`control_segment`] (which additionally requires a recognized
+/// prefix) and the publisher SETUP path's exact-match-against-announced-
+/// `a=control` resolution, which needs the raw text regardless of
+/// whether it looks like `trackID=`/`streamid=`/`stream=`.
+pub(crate) fn last_path_segment(uri: &str) -> Option<&str> {
     let path = uri.split('?').next().unwrap_or(uri);
     let last = path.rsplit('/').next()?;
-    (last.starts_with("trackID=") || last.starts_with("streamid=")).then_some(last)
+    (!last.is_empty()).then_some(last)
+}
+
+/// The trailing per-media control segment of a SETUP URI, if any
+/// (`streamid=0`, `trackID=1`, `stream=0`). Used by the publisher SETUP
+/// path to resolve which announced track a given SETUP targets when the
+/// exact-match-against-announced-control resolution
+/// (`PublishSession::track_for_raw_segment`) doesn't apply —
+/// [`extract_mount_path`] strips the same recognized segment when it
+/// locates the mount itself, so the two must agree on what counts as
+/// one. This function only recognizes the three fixed prefixes above;
+/// an announced control using any other convention is resolved via the
+/// exact-match path instead; this one never inspects the announced
+/// value itself, so it has no notion of an absolute `a=control` URL.
+pub(crate) fn control_segment(uri: &str) -> Option<&str> {
+    let last = last_path_segment(uri)?;
+    (last.starts_with("trackID=") || last.starts_with("streamid=") || last.starts_with("stream="))
+        .then_some(last)
+}
+
+/// For a session that has already announced a publisher on this
+/// connection, try resolving `uri`'s mount path by matching its raw
+/// trailing path segment against this session's announced `a=control`
+/// values with an exact string match — handles any control-naming
+/// convention (gst-rtsp-server's `rtspclientsink` announces bare
+/// `a=control:stream=0`; other tools may use yet other text) that
+/// [`extract_mount_path`]'s fixed `trackID=`/`streamid=`/`stream=`
+/// prefix list doesn't recognize. `None` when this session isn't a
+/// publisher yet, or when nothing it announced matches the URI's
+/// trailing segment — the caller falls back to [`extract_mount_path`]
+/// in both cases.
+pub(crate) fn publisher_mount_path(uri: &str, session: &ServerSessionState) -> Option<String> {
+    let publish = session.publish.as_ref()?;
+    let last = last_path_segment(uri)?;
+    publish.track_for_raw_segment(last)?;
+    Some(normalize_mount_path(uri, |seg| seg == last))
 }
 
 /// Allocate a fresh even/odd TCP-interleaved channel pair from the
@@ -328,8 +379,14 @@ pub(crate) fn handle_setup(
         return challenge;
     }
 
-    // Look up the mount.
-    let mount_path = extract_mount_path(&req.uri);
+    // Look up the mount. A session that has already announced a
+    // publisher gets first crack at resolving the path via its own
+    // announced `a=control` values (handles non-standard control
+    // conventions like gst-rtsp-server's bare `stream=N`); anything else
+    // (a pre-ANNOUNCE SETUP, a reader, or a segment that doesn't match
+    // what this session announced) falls back to the fixed-prefix form.
+    let mount_path =
+        publisher_mount_path(&req.uri, session).unwrap_or_else(|| extract_mount_path(&req.uri));
     let mounts = match state.mounts.lock() {
         Ok(m) => m,
         Err(_) => return error_response(req, 500, "Internal Server Error"),
@@ -378,13 +435,14 @@ pub(crate) fn handle_setup(
     // a publish-mount reader needs no special casing past this match.
     let is_record = parsed.mode.as_deref() == Some("record");
     match (&mount, is_record) {
-        (MountEntry::Publish(_), true) => {
+        (MountEntry::Publish(m), true) => {
             return crate::rtsp::server::publish::handlers::handle_setup_record(
                 req,
                 state,
                 session,
                 &parsed,
                 &mount_path,
+                m,
             );
         }
         // A local (muxer-backed) mount never accepts a publisher.
