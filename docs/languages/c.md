@@ -355,7 +355,7 @@ Return codes worth branching on:
 | Code | Where | Meaning |
 |---|---|---|
 | `TST_E_BUFFER_FULL` (−4) | `tst_rtsp_server_next_publisher` | No mount arrived before the timeout; `*out` is NULL. Retry. Always the result when on-demand publishers are off. |
-| `TST_E_CLOSED` (−7) | every server entry point | The server is stopped. A `next_publisher` call parked on another thread wakes with it when `tst_rtsp_server_stop` runs. |
+| `TST_E_CLOSED` (−7) | every publisher-role server entry point (`add_publish_mount`, `next_publisher`, `remove_mount`) | The server is stopped. A `next_publisher` call parked on another thread wakes with it when `tst_rtsp_server_stop` runs. |
 | `TST_E_CLOSED` (−7) | `_into_demux_receiver`, then `tst_rtp_demux_receiver_next_event` | A second take of the mount's transport; or, on the receiver, an explicit cancel (`tst_rtsp_publish_mount_cancel` or `tst_rtp_demux_receiver_cancel`). |
 | `TST_E_END_OF_STREAM` (−12) | `tst_rtp_demux_receiver_next_event` | The mount was closed by `tst_rtsp_server_remove_mount` or `tst_rtsp_server_stop`; what was already queued is delivered first. |
 | `TST_E_RTSP_MOUNT` (−25) | `_add_publish_mount`, `_remove_mount` | Duplicate or invalid path, or no mount registered at the path. |

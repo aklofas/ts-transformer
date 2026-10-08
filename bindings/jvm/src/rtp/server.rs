@@ -749,8 +749,8 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nNextPublisher(
             return 0;
         };
         // Java validates `timeoutMs >= 0`; `max(0)` only guards a bypass.
-        // `None`: the deadline does not fit an `Instant` (Long.MAX_VALUE),
-        // so the call waits until a publisher arrives or the server ends.
+        // `None` only if the deadline does not fit an `Instant`; then the call
+        // waits until a publisher arrives or the server ends.
         let deadline = Instant::now().checked_add(Duration::from_millis(timeout_ms.max(0) as u64));
         loop {
             let slice = match deadline {
