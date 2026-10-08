@@ -326,7 +326,7 @@ void tst_rtsp_server_builder_accept_unregistered_publishers(struct TstRtspServer
 struct tst_rtsp_publish_mount_t *tst_rtsp_server_add_publish_mount(struct TstRtspServer *server, const char *path);
 int tst_rtsp_server_next_publisher(struct TstRtspServer *server, uint64_t timeout_ms, struct tst_rtsp_publish_mount_t **out);
 int tst_rtsp_server_remove_mount(struct TstRtspServer *server, const char *path);
-int tst_rtsp_server_local_addr(const struct TstRtspServer *server, char *buf, size_t len);
+int tst_rtsp_server_local_addr(const struct TstRtspServer *server, char *buf, size_t buf_len);
 int tst_rtsp_server_active_publishers(struct TstRtspServer *server, uint64_t *out);
 int tst_rtsp_server_total_rtp_packets_received(struct TstRtspServer *server, uint64_t *out);
 int tst_rtsp_server_total_rtp_bytes_received(struct TstRtspServer *server, uint64_t *out);
@@ -368,7 +368,7 @@ Rules the types do not enforce:
 - **Expired handles.** `next_publisher` can return a handle whose mount was removed while it waited in the queue. Its receiver reads `TST_E_END_OF_STREAM` at once.
 - **One `next_publisher` caller at a time.** Concurrent callers are served one at a time, so a call made while another waits can overrun its own timeout.
 - **Counters ride getters.** `tst_server_stats_t` keeps its layout; the publisher counters are out-parameter getters, and per-mount numbers are in `tst_rtsp_publish_mount_stats_t` (`alignment` is one of the four `tst_rtsp_clock_alignment` values). The mount getters keep working after the mount is closed.
-- **Port 0.** `tst_rtsp_server_local_addr` writes the bound address, NUL-terminated and truncated to fit (64 bytes holds any address), so a server built on port 0 can report the port the kernel picked.
+- **Port 0.** `tst_rtsp_server_local_addr` writes the bound address NUL-terminated and returns the bytes written, so a server built on port 0 can report the port the kernel picked. A buffer too small for the address plus its NUL is `TST_E_INVALID_CONFIG` ("buffer too small") and nothing is written; 64 bytes holds any address. `tst_hls_publisher_local_addr` follows the same convention.
 
 ffmpeg pushes elementary tracks and cannot push KLV over RTSP; GStreamer's `rtspclientsink` can push MPEG-TS or H.264 + KLV. The C example [`recv_rtsp_publish.c`](/bindings/c/examples/receiving/recv_rtsp_publish.c) runs the whole loop, with push commands in its header; the [publisher ingest recipe](/docs/cookbook/receiving/rtsp-publish-ingest.md) covers the same flow from Rust.
 

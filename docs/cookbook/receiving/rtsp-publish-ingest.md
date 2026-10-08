@@ -9,6 +9,7 @@
 > **Related:**
 > - [`/docs/languages/rust.md#rtsp-publisher-ingest`](/docs/languages/rust.md#rtsp-publisher-ingest): the API list, the accepted shapes and the stats
 > - [`examples/receiving/recv_rtsp_publish.rs`](/examples/receiving/recv_rtsp_publish.rs): runnable Rust twin with full commentary
+> - [`bindings/c/examples/receiving/recv_rtsp_publish.c`](/bindings/c/examples/receiving/recv_rtsp_publish.c): the C twin (`TST_HAS_RTP`), with the API list in [`/docs/languages/c.md#rtsp-publisher-ingest-tst_has_rtp`](/docs/languages/c.md#rtsp-publisher-ingest-tst_has_rtp)
 > - [Ingest H.264 from an RTSP camera and remux to MPEG-TS](/docs/cookbook/receiving/recv-rtsp-h264-to-ts.md): the pull direction, when the camera is the server
 > - [Receive MPEG-TS over UDP](/docs/cookbook/receiving/udp.md): a simpler path when the sender can push plain MPEG-TS
 > - [Deferred features](/docs/project/deferred-features.md): what the publisher role does not do yet
