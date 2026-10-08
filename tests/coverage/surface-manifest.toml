@@ -13395,105 +13395,206 @@ reason = "added 2026-09: cancel handle for cross-thread UDP/RIST shutdown (catal
 
 [[exempt]]
 item = "tst_rtp::ClockAlignment::clone"
-reason = "RTSP publisher role (MPEG-TS ingest), covered by crates/tst-rtp/tests/rtsp_server/publish/; graduate to [[surface]] when the binding twins land"
+reason = "derive impl; no direct binding method"
 
 [[exempt]]
 item = "tst_rtp::ClockAlignment::default"
-reason = "RTSP publisher role (MPEG-TS ingest), covered by crates/tst-rtp/tests/rtsp_server/publish/; graduate to [[surface]] when the binding twins land"
+reason = "Default impl (NotApplicable); no direct binding method"
 
 [[exempt]]
 item = "tst_rtp::ClockAlignment::eq"
-reason = "RTSP publisher role (MPEG-TS ingest), covered by crates/tst-rtp/tests/rtsp_server/publish/; graduate to [[surface]] when the binding twins land"
+reason = "derive impl; no direct binding method"
 
 [[exempt]]
 item = "tst_rtp::ClockAlignment::fmt"
-reason = "RTSP publisher role (MPEG-TS ingest), covered by crates/tst-rtp/tests/rtsp_server/publish/; graduate to [[surface]] when the binding twins land"
+reason = "derive impl; no direct binding method"
 
 [[exempt]]
 item = "tst_rtp::PublisherInfo::clone"
-reason = "RTSP publisher role (MPEG-TS ingest), covered by crates/tst-rtp/tests/rtsp_server/publish/; graduate to [[surface]] when the binding twins land"
+reason = "derive impl; no direct binding method"
 
 [[exempt]]
 item = "tst_rtp::PublisherInfo::fmt"
-reason = "RTSP publisher role (MPEG-TS ingest), covered by crates/tst-rtp/tests/rtsp_server/publish/; graduate to [[surface]] when the binding twins land"
+reason = "derive impl; no direct binding method"
 
-[[exempt]]
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::PublishMountStats"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/publish/stats.rs", "crates/tst-rtp/tests/rtsp_server/publish/es_h264_klv.rs"]
+bindings = ["c:tst_rtsp_publish_mount_stats_t", "python:PublishMountStats", "java:org.tstrans.rtp.PublishMountStats", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::PublisherInfo"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/publish/stats.rs", "crates/tst-rtp/tests/rtsp_server/publish/lifecycle.rs"]
+bindings = ["c:tst_rtsp_publisher_info_t", "python:PublisherInfo", "java:org.tstrans.rtp.PublisherInfo", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::PublishShape"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/publish/stats.rs"]
+bindings = ["c:tst_rtsp_publish_shape", "python:PublishShape", "java:org.tstrans.rtp.PublishShape", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::ClockAlignment"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/publish/es_h264_klv.rs", "crates/tst-rtp/tests/rtsp_server/publish/es_h264.rs"]
+bindings = ["c:tst_rtsp_clock_alignment", "python:ClockAlignment", "java:org.tstrans.rtp.ClockAlignment", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
 item = "tst_rtp::PublishMountHandle"
-reason = "RTSP publisher role (MPEG-TS ingest), covered by crates/tst-rtp/tests/rtsp_server/publish/; graduate to [[surface]] when the binding twins land"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/publish/lifecycle.rs", "crates/tst-rtp/tests/rtsp_server/publish/republish.rs"]
+bindings = ["c:tst_rtsp_publish_mount_t", "python:PublishMount", "java:org.tstrans.rtp.PublishMount", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
 
-[[exempt]]
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
 item = "tst_rtp::PublishMountHandle::cancel"
-reason = "RTSP publisher role (MPEG-TS ingest), covered by crates/tst-rtp/tests/rtsp_server/publish/; graduate to [[surface]] when the binding twins land"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/publish/lifecycle.rs"]
+bindings = ["c:tst_rtsp_publish_mount_cancel", "python:PublishMount.cancel", "java:org.tstrans.rtp.PublishMount.cancel", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
 
 [[exempt]]
 item = "tst_rtp::PublishMountHandle::clone"
-reason = "RTSP publisher role (MPEG-TS ingest), covered by crates/tst-rtp/tests/rtsp_server/publish/; graduate to [[surface]] when the binding twins land"
+reason = "derive impl; no direct binding method"
 
-[[exempt]]
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
 item = "tst_rtp::PublishMountHandle::generation"
-reason = "RTSP publisher role (MPEG-TS ingest), covered by crates/tst-rtp/tests/rtsp_server/publish/; graduate to [[surface]] when the binding twins land"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/publish/republish.rs", "crates/tst-rtp/tests/rtsp_server/publish/second_publisher.rs"]
+bindings = ["c:tst_rtsp_publish_mount_generation", "python:PublishMount.generation", "java:org.tstrans.rtp.PublishMount.generation", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
 
-[[exempt]]
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
 item = "tst_rtp::PublishMountHandle::into_recv_transport"
-reason = "RTSP publisher role (MPEG-TS ingest), covered by crates/tst-rtp/tests/rtsp_server/publish/; graduate to [[surface]] when the binding twins land"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/publish/lifecycle.rs", "crates/tst-rtp/tests/rtsp_server/publish/mp2t_udp.rs"]
+bindings = ["c:tst_rtsp_publish_mount_into_demux_receiver", "python:PublishMount.into_demux_receiver", "java:org.tstrans.rtp.PublishMount.intoDemuxReceiver", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
 
-[[exempt]]
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
 item = "tst_rtp::PublishMountHandle::mount_path"
-reason = "RTSP publisher role (MPEG-TS ingest), covered by crates/tst-rtp/tests/rtsp_server/publish/; graduate to [[surface]] when the binding twins land"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/publish/on_demand.rs"]
+bindings = ["c:tst_rtsp_publish_mount_path", "python:PublishMount.mount_path", "java:org.tstrans.rtp.PublishMount.mountPath", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
 
-[[exempt]]
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
 item = "tst_rtp::PublishMountHandle::peer_count"
-reason = "RTSP publisher role (MPEG-TS ingest), covered by crates/tst-rtp/tests/rtsp_server/publish/; graduate to [[surface]] when the binding twins land"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/publish/mp2t_interleaved.rs"]
+bindings = ["c:tst_rtsp_publish_mount_peer_count", "python:PublishMount.peer_count", "java:org.tstrans.rtp.PublishMount.peerCount", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
 
-[[exempt]]
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
 item = "tst_rtp::PublishMountHandle::publisher"
-reason = "RTSP publisher role (MPEG-TS ingest), covered by crates/tst-rtp/tests/rtsp_server/publish/; graduate to [[surface]] when the binding twins land"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/publish/lifecycle.rs", "crates/tst-rtp/tests/rtsp_server/publish/republish.rs"]
+bindings = ["c:tst_rtsp_publish_mount_publisher_info", "python:PublishMount.publisher", "java:org.tstrans.rtp.PublishMount.publisher", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
 
-[[exempt]]
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
 item = "tst_rtp::PublishMountHandle::stats"
-reason = "RTSP publisher role (MPEG-TS ingest), covered by crates/tst-rtp/tests/rtsp_server/publish/; graduate to [[surface]] when the binding twins land"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/publish/stats.rs", "crates/tst-rtp/tests/rtsp_server/publish/es_h264_klv.rs"]
+bindings = ["c:tst_rtsp_publish_mount_get_stats", "python:PublishMount.stats", "java:org.tstrans.rtp.PublishMount.stats", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
 
 [[exempt]]
 item = "tst_rtp::PublishMountStats::clone"
-reason = "RTSP publisher role (MPEG-TS ingest), covered by crates/tst-rtp/tests/rtsp_server/publish/; graduate to [[surface]] when the binding twins land"
+reason = "derive impl; no direct binding method"
 
 [[exempt]]
 item = "tst_rtp::PublishMountStats::default"
-reason = "RTSP publisher role (MPEG-TS ingest), covered by crates/tst-rtp/tests/rtsp_server/publish/; graduate to [[surface]] when the binding twins land"
+reason = "derive impl; no direct binding method"
 
 [[exempt]]
 item = "tst_rtp::PublishMountStats::fmt"
-reason = "RTSP publisher role (MPEG-TS ingest), covered by crates/tst-rtp/tests/rtsp_server/publish/; graduate to [[surface]] when the binding twins land"
+reason = "derive impl; no direct binding method"
 
-[[exempt]]
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
 item = "tst_rtp::rtsp::server::publish::PublishMountHandle"
-reason = "RTSP publisher role (MPEG-TS ingest), covered by crates/tst-rtp/tests/rtsp_server/publish/; graduate to [[surface]] when the binding twins land"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/publish/lifecycle.rs", "crates/tst-rtp/tests/rtsp_server/publish/republish.rs"]
+bindings = ["c:tst_rtsp_publish_mount_t", "python:PublishMount", "java:org.tstrans.rtp.PublishMount", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
 
 [[exempt]]
 item = "tst_rtp::rtsp::server::publish::PublishShape::clone"
-reason = "RTSP publisher role (MPEG-TS ingest), covered by crates/tst-rtp/tests/rtsp_server/publish/; graduate to [[surface]] when the binding twins land"
+reason = "derive impl; no direct binding method"
 
 [[exempt]]
 item = "tst_rtp::rtsp::server::publish::PublishShape::eq"
-reason = "RTSP publisher role (MPEG-TS ingest), covered by crates/tst-rtp/tests/rtsp_server/publish/; graduate to [[surface]] when the binding twins land"
+reason = "derive impl; no direct binding method"
 
 [[exempt]]
 item = "tst_rtp::rtsp::server::publish::PublishShape::fmt"
-reason = "RTSP publisher role (MPEG-TS ingest), covered by crates/tst-rtp/tests/rtsp_server/publish/; graduate to [[surface]] when the binding twins land"
+reason = "derive impl; no direct binding method"
 
-[[exempt]]
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
 item = "tst_rtp::rtsp::server::RtspServer::add_publish_mount"
-reason = "RTSP publisher role (MPEG-TS ingest), covered by crates/tst-rtp/tests/rtsp_server/publish/; graduate to [[surface]] when the binding twins land"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/publish/lifecycle.rs", "crates/tst-rtp/tests/rtsp_server/publish/mp2t_udp.rs"]
+bindings = ["c:tst_rtsp_server_add_publish_mount", "python:RtspServer.add_publish_mount", "java:org.tstrans.rtp.RtspServer.addPublishMount", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
 
-[[exempt]]
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
 item = "tst_rtp::builder::RtspServerBuilder::accept_unregistered_publishers"
-reason = "RTSP publisher role (MPEG-TS ingest), covered by crates/tst-rtp/tests/rtsp_server/publish/; graduate to [[surface]] when the binding twins land"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/publish/on_demand.rs"]
+bindings = ["c:tst_rtsp_server_builder_accept_unregistered_publishers", "python:RtspServerConfig.accept_unregistered_publishers", "java:org.tstrans.rtp.RtspServerConfig.Builder.acceptUnregisteredPublishers", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
 
-[[exempt]]
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
 item = "tst_rtp::rtsp::server::RtspServer::next_publisher"
-reason = "RTSP publisher role (MPEG-TS ingest), covered by crates/tst-rtp/tests/rtsp_server/publish/; graduate to [[surface]] when the binding twins land"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/publish/on_demand.rs"]
+bindings = ["c:tst_rtsp_server_next_publisher", "python:RtspServer.next_publisher", "java:org.tstrans.rtp.RtspServer.nextPublisher", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
 
-[[exempt]]
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
 item = "tst_rtp::rtsp::server::RtspServer::remove_mount"
-reason = "RTSP publisher role (MPEG-TS ingest), covered by crates/tst-rtp/tests/rtsp_server/publish/; graduate to [[surface]] when the binding twins land"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/publish/lifecycle.rs", "crates/tst-rtp/tests/rtsp_server/publish/stats.rs"]
+bindings = ["c:tst_rtsp_server_remove_mount", "python:RtspServer.remove_mount", "java:org.tstrans.rtp.RtspServer.removeMount", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
 
