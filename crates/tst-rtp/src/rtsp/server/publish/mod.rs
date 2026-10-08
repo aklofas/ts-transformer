@@ -13,6 +13,10 @@ pub(crate) mod session;
 pub(crate) mod shape;
 pub(crate) mod udp_ingest;
 
+// Hidden: `pub` only so the fuzz workspace's `rtp_klv_depacketize`
+// target reaches the depacketizer; not part of the supported surface.
+#[doc(hidden)]
+pub use klv_depacketizer::{KlvDepacketizer, KlvUnit};
 pub use mount::{ClockAlignment, PublishMountHandle, PublishMountStats, PublisherInfo};
 
 /// Wire shape a publisher announced (§1 classification table).

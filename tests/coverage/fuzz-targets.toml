@@ -116,6 +116,10 @@ name = "rtp_h264_depacketize"
 
 [[target]]
 crate = "tst-rtp"
+name = "rtp_klv_depacketize"
+
+[[target]]
+crate = "tst-rtp"
 name = "rtp_packet_decode"
 
 [[target]]

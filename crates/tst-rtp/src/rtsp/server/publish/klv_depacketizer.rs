@@ -69,7 +69,7 @@ pub(crate) const MAX_KLV_UNIT_BYTES: usize = 1024 * 1024;
 /// KLV Local Set or Universal Set encoding, plus the RTP timestamp shared by
 /// every packet that contributed to it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct KlvUnit {
+pub struct KlvUnit {
     pub(crate) bytes: Vec<u8>,
     pub(crate) rtp_timestamp: u32,
 }
@@ -102,7 +102,7 @@ pub(crate) struct KlvDepayStats {
 ///
 /// See the [module-level doc](self) for the full 7-rule state-machine
 /// contract.
-pub(crate) struct KlvDepacketizer {
+pub struct KlvDepacketizer {
     /// RTP timestamp of the open unit, if one is open.
     unit_ts: Option<u32>,
     /// Accumulated bytes for the open unit. Left empty for a unit poisoned
@@ -131,9 +131,15 @@ pub(crate) struct KlvDepacketizer {
     stats: KlvDepayStats,
 }
 
+impl Default for KlvDepacketizer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl KlvDepacketizer {
     /// Construct a new, empty depacketizer.
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             unit_ts: None,
             unit_buf: Vec::new(),
@@ -147,7 +153,7 @@ impl KlvDepacketizer {
     }
 
     /// Feed one RTP packet into the depacketizer.
-    pub(crate) fn feed(&mut self, header: &RtpHeader, payload: &[u8]) {
+    pub fn feed(&mut self, header: &RtpHeader, payload: &[u8]) {
         // ── Rule 7: empty payload is ignored outright ─────────────────────
         if payload.is_empty() {
             return;
@@ -225,14 +231,14 @@ impl KlvDepacketizer {
     }
 
     /// Pull the next completed KLVunit, if one is available.
-    pub(crate) fn next_unit(&mut self) -> Option<KlvUnit> {
+    pub fn next_unit(&mut self) -> Option<KlvUnit> {
         self.ready.pop_front()
     }
 
     /// Force completion of any open unit and return it.
     ///
     /// The caller should drain [`Self::next_unit`] before calling this.
-    pub(crate) fn flush(&mut self) -> Option<KlvUnit> {
+    pub fn flush(&mut self) -> Option<KlvUnit> {
         self.close_unit();
         self.ready.pop_front()
     }
