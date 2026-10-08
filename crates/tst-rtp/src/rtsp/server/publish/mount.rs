@@ -152,17 +152,30 @@ impl PublishMountState {
         });
     }
 
-    /// Claim the publisher slot. Returns `false` if another publisher
-    /// already holds it (the slot is exclusive — only one ANNOUNCE/RECORD
-    /// session may feed a mount at a time).
-    pub(crate) fn try_begin_publisher(&self, mut info: PublisherInfo) -> bool {
+    /// Claim the publisher slot. Returns the claimed slot's generation, or
+    /// `None` if another publisher already holds it (the slot is exclusive
+    /// — only one ANNOUNCE/RECORD session may feed a mount at a time).
+    pub(crate) fn try_begin_publisher(&self, mut info: PublisherInfo) -> Option<u64> {
         let mut g = self.publisher.lock().unwrap_or_else(|e| e.into_inner());
         if g.is_some() {
-            return false;
+            return None;
         }
-        info.generation = self.generation.load(Ordering::Relaxed);
+        let generation = self.generation.load(Ordering::Relaxed);
+        info.generation = generation;
         *g = Some(info);
-        true
+        Some(generation)
+    }
+
+    /// Whether the publisher slot is still held by the claim
+    /// [`Self::try_begin_publisher`] returned `generation` for. `false`
+    /// once that publisher ended or the mount was closed (`stop()`,
+    /// `remove_mount()`), even if another publisher has claimed it since.
+    pub(crate) fn holds_publisher(&self, generation: u64) -> bool {
+        self.publisher
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .is_some_and(|i| i.generation == generation)
     }
 
     /// Release the publisher slot (RECORD session ended). Bumps
@@ -487,13 +500,16 @@ mod tests {
     #[test]
     fn publisher_slot_is_exclusive_and_generation_counts_ends() {
         let m = PublishMountState::new("/p", 16);
-        assert!(m.try_begin_publisher(info(0)));
-        assert!(!m.try_begin_publisher(info(0)), "second publisher refused");
+        assert_eq!(m.try_begin_publisher(info(0)), Some(0));
+        assert!(
+            m.try_begin_publisher(info(0)).is_none(),
+            "second publisher refused"
+        );
         assert_eq!(m.generation.load(std::sync::atomic::Ordering::Relaxed), 0);
         m.end_publisher();
         assert_eq!(m.generation.load(std::sync::atomic::Ordering::Relaxed), 1);
         assert!(m.publisher.lock().unwrap().is_none());
-        assert!(m.try_begin_publisher(info(1)));
+        assert_eq!(m.try_begin_publisher(info(1)), Some(1));
     }
 
     #[test]
@@ -600,7 +616,7 @@ mod tests {
             .into_recv_transport()
             .unwrap();
         t.set_recv_timeout(Some(Duration::from_millis(150)));
-        assert!(m.try_begin_publisher(info(0)));
+        assert!(m.try_begin_publisher(info(0)).is_some());
         m.end_publisher();
         let mut buf = vec![0u8; 2048];
         assert!(

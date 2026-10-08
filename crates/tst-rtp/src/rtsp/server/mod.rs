@@ -490,8 +490,9 @@ impl RtspServer {
     /// later `add_mount` / `add_multicast_mount` / `add_publish_mount` (or
     /// an on-demand ANNOUNCE).
     ///
-    /// Every session on the mount, readers and a publish mount's
-    /// publisher alike, is sent the RFC 7826 §13.5.1 Notice 5402
+    /// Every session that has completed a SETUP on the mount, readers and
+    /// a publish mount's publisher alike, is sent the RFC 7826 §13.5.1
+    /// Notice 5402
     /// ("Server-Initiated TEARDOWN") ANNOUNCE and then cancelled, as
     /// [`Self::stop`] does for every session; each cancelled session closes
     /// its connection. A reader's stream therefore ends because its
@@ -516,9 +517,15 @@ impl RtspServer {
     /// with its handle queued for [`Self::next_publisher`], until this
     /// call removes it.
     ///
-    /// A session whose SETUP on this mount is being answered while this
-    /// call runs may be missed by the Notice; it keeps its subscription to
-    /// the removed mount's fanout until it ends on its own.
+    /// Sessions that have not completed a SETUP on the mount get no Notice
+    /// and are not cancelled. A publisher between its ANNOUNCE and its first
+    /// SETUP loses its publisher slot and is refused at SETUP (`404`; `455`
+    /// if a publish mount has been registered at the path again, `461` if
+    /// a local mount has). A SETUP answered while
+    /// this call runs can still complete: a reader then keeps its
+    /// subscription to the removed mount's fanout until it ends on its own,
+    /// and a publisher's RECORD is refused with `455` because the mount no
+    /// longer holds its publisher slot.
     ///
     /// # Errors
     /// - [`RtspServerError::MountNotFound`] — no mount is registered at
