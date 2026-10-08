@@ -139,9 +139,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   once stopped; `tst_rtsp_server_stop` wakes a parked call) and
   `tst_rtsp_server_remove_mount` (`TST_E_RTSP_MOUNT` for an unknown path).
 - **`tst_rtsp_server_local_addr`** writes the server's bound listen
-  address into a caller buffer, NUL-terminated and truncating, so a server
-  started on port `0` can report the port the kernel picked. `TST_E_CLOSED`
-  after `tst_rtsp_server_stop`.
+  address into a caller buffer, NUL-terminated, so a server started on
+  port `0` can report the port the kernel picked. Same convention as
+  `tst_hls_publisher_local_addr`: returns the bytes written (excluding the
+  NUL), `TST_E_INVALID_CONFIG` with a "buffer too small" message when the
+  address plus its NUL does not fit, `TST_E_CLOSED` after
+  `tst_rtsp_server_stop`.
 - **Publish-mount handle** `tst_rtsp_publish_mount_t`:
   `tst_rtsp_publish_mount_{path,peer_count,generation,get_stats,
   publisher_info,cancel,into_demux_receiver,free}`. The transport is

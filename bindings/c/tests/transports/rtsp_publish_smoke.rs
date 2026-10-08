@@ -599,8 +599,9 @@ fn rtsp_publish_null_arguments() {
 }
 
 /// `tst_rtsp_server_local_addr` reports the kernel-picked port of a `:0`
-/// bind, and a publisher can connect to it; NULL / zero-length arguments are
-/// `TST_E_INVALID_CONFIG` and a stopped server is `TST_E_CLOSED`.
+/// bind and returns the bytes written, and a publisher can connect to it;
+/// NULL arguments and a buffer too small for the address plus its NUL are
+/// `TST_E_INVALID_CONFIG`, and a stopped server is `TST_E_CLOSED`.
 #[test]
 fn rtsp_publish_server_local_addr() {
     let url = CString::new("rtsp://127.0.0.1:0").unwrap();
@@ -611,12 +612,12 @@ fn rtsp_publish_server_local_addr() {
 
     let mut buf = [0 as std::os::raw::c_char; 64];
     let rc = unsafe { tst_rtsp_server_local_addr(server, buf.as_mut_ptr(), buf.len()) };
-    assert_eq!(rc, 0, "local_addr: {rc}");
+    assert!(rc > 0, "local_addr: {rc}");
     let addr = unsafe { CStr::from_ptr(buf.as_ptr()) }
         .to_str()
         .unwrap()
         .to_owned();
-    assert!(!addr.is_empty());
+    assert_eq!(rc as usize, addr.len(), "returns the bytes written");
     let port: u16 = addr
         .strip_prefix("127.0.0.1:")
         .unwrap_or_else(|| panic!("unexpected address {addr:?}"))
@@ -641,6 +642,18 @@ fn rtsp_publish_server_local_addr() {
             inv
         );
         assert_eq!(tst_rtsp_server_local_addr(server, buf.as_mut_ptr(), 0), inv);
+        // Too small by one byte (no room for the NUL): refused, with the
+        // house "buffer too small" message.
+        let mut small = [0 as std::os::raw::c_char; 64];
+        assert_eq!(
+            tst_rtsp_server_local_addr(server, small.as_mut_ptr(), addr.len()),
+            inv
+        );
+        let msg = CStr::from_ptr(tstrans::error::tst_get_last_error_str())
+            .to_str()
+            .unwrap()
+            .to_owned();
+        assert!(msg.contains("buffer too small"), "last error: {msg:?}");
     }
 
     drop(tcp);

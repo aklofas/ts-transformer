@@ -524,7 +524,8 @@ pub const TST_ABI_VERSION_MAJOR: crate::c_types::c_int = 0;
 ///   `tst_rtsp_server_total_rtp_bytes_received`): `tst_server_stats_t` does
 ///   not change. `tst_rtsp_server_local_addr` writes the bound listen
 ///   address (the kernel-picked port for a `:0` bind) into a caller
-///   buffer, NUL-terminated and truncating. No new error codes. See
+///   buffer, NUL-terminated, returning the bytes written (the
+///   `tst_hls_publisher_local_addr` convention). No new error codes. See
 ///   `bindings/c/core/src/rtsp/server/publish.rs` and `stop.rs`.
 pub const TST_ABI_VERSION_MINOR: crate::c_types::c_int = 23;
 

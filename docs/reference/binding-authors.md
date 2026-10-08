@@ -524,8 +524,14 @@ baseline (by design)" for the full rationale.
         mount is registered at the path).
       - **`tst_rtsp_server_local_addr`** — the bound listen address
         (`"ip:port"`, the kernel-picked port for a `:0` bind) into a
-        caller buffer, NUL-terminated and truncating; `TST_E_CLOSED` after
-        `tst_rtsp_server_stop`.
+        caller buffer, NUL-terminated; returns the bytes written,
+        `TST_E_INVALID_CONFIG` ("buffer too small") when the address plus
+        its NUL does not fit, `TST_E_CLOSED` after `tst_rtsp_server_stop`.
+        Every `*_local_addr` getter in the C ABI
+        (`tst_hls_publisher_local_addr`, `tst_rtsp_server_local_addr`)
+        shares this convention: byte count on success, and a too-small
+        buffer is an error that writes nothing, never a silent
+        truncation.
       - New opaque handle `tst_rtsp_publish_mount_t` with
         `tst_rtsp_publish_mount_{path,peer_count,generation,get_stats,
         publisher_info,cancel,into_demux_receiver,free}`. The transport is

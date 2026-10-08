@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! tst_rtsp_server_get_stats(server, *out)   — snapshot aggregate counters
-//! tst_rtsp_server_local_addr(server, buf, len) — the bound listen address
+//! tst_rtsp_server_local_addr(server, buf, buf_len) — the bound listen address
 //! tst_rtsp_server_cancel_handle(server)     — obtain a hard-cancel handle
 //! tst_rtsp_cancel_handle_cancel(cancel)     — fire the hard cancel
 //! tst_rtsp_cancel_handle_free(cancel)       — drop the cancel handle
@@ -103,38 +103,42 @@ pub unsafe extern "C" fn tst_rtsp_server_get_stats(
     })
 }
 
-/// Write the server's bound listen address into `buf` as a NUL-terminated
-/// `"ip:port"` string (`"[v6]:port"` for IPv6).
+/// Write the server's bound listen address (`"ip:port"`, `"[v6]:port"` for
+/// IPv6) as a NUL-terminated string into `buf` (capacity `buf_len`).
 ///
 /// The address is the one the listener actually bound, so a server built
-/// on port `0` reports the port the kernel picked. When the address does
-/// not fit, it is truncated to `len - 1` bytes and still NUL-terminated
-/// (snprintf-style); 64 bytes holds any IPv4 or IPv6 socket address.
+/// on port `0` reports the port the kernel picked. 64 bytes holds any IPv4
+/// or IPv6 socket address.
 ///
-/// Returns `0`, `TST_E_INVALID_CONFIG` for a NULL `server` or `buf` or a
-/// `len` of 0, or `TST_E_CLOSED` after `tst_rtsp_server_stop` (the same
-/// code every other server getter returns once stopped).
+/// Same convention as `tst_hls_publisher_local_addr`: returns the number of
+/// bytes written **excluding** the NUL terminator on success, or a negative
+/// `TST_E_*` code: `TST_E_INVALID_CONFIG` if `server` or `buf` is NULL,
+/// `TST_E_INVALID_CONFIG` with a "buffer too small" message if `buf_len`
+/// cannot hold the address plus its NUL terminator (`buf_len == 0`
+/// included; nothing is written), or `TST_E_CLOSED` after
+/// `tst_rtsp_server_stop` (the code every other server getter returns once
+/// stopped).
 ///
 /// # Safety
 ///
 /// - `server` must be NULL or a live pointer from
 ///   `tst_rtsp_server_builder_start`.
-/// - `buf` must be NULL or writable for `len` bytes.
+/// - `buf` must be NULL or writable for `buf_len` bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_rtsp_server_local_addr(
     server: *const TstRtspServer,
     buf: *mut libc::c_char,
-    len: usize,
+    buf_len: usize,
 ) -> libc::c_int {
     ffi_catch(TstError::Internal as libc::c_int, || {
-        if buf.is_null() || len == 0 {
-            set_last_error(TstError::InvalidConfig, "buf is null or len is 0");
-            return TstError::InvalidConfig as libc::c_int;
-        }
         let Some(handle) = (unsafe { server.as_ref() }) else {
-            set_last_error(TstError::InvalidConfig, "server is null");
+            set_last_error(TstError::InvalidConfig, "null server pointer");
             return TstError::InvalidConfig as libc::c_int;
         };
+        if buf.is_null() {
+            set_last_error(TstError::InvalidConfig, "null buf pointer");
+            return TstError::InvalidConfig as libc::c_int;
+        }
         let guard = match handle.inner.lock() {
             Ok(g) => g,
             Err(_) => {
@@ -150,15 +154,28 @@ pub unsafe extern "C" fn tst_rtsp_server_local_addr(
             return TstError::Closed as libc::c_int;
         };
         let text = addr.to_string();
-        let n = text.len().min(len - 1);
-        // SAFETY: `buf` is writable for `len` bytes per the contract.
-        let dst = match unsafe { crate::ffi_slice::ffi_slice_mut(buf.cast::<u8>(), len, "buf") } {
+        let bytes = text.as_bytes();
+        // Need room for the string plus the trailing NUL.
+        if buf_len <= bytes.len() {
+            set_last_error(
+                TstError::InvalidConfig,
+                &format!(
+                    "buffer too small: need {} bytes (incl. NUL), have {buf_len}",
+                    bytes.len() + 1
+                ),
+            );
+            return TstError::InvalidConfig as libc::c_int;
+        }
+        // SAFETY: `buf` is writable for `buf_len` bytes per the contract,
+        // and `bytes.len() + 1 <= buf_len` from the guard above.
+        let dst = match unsafe { crate::ffi_slice::ffi_slice_mut(buf.cast::<u8>(), buf_len, "buf") }
+        {
             Ok(d) => d,
             Err(rc) => return rc,
         };
-        dst[..n].copy_from_slice(&text.as_bytes()[..n]);
-        dst[n] = 0;
-        TstError::Success as libc::c_int
+        dst[..bytes.len()].copy_from_slice(bytes);
+        dst[bytes.len()] = 0;
+        bytes.len() as libc::c_int
     })
 }
 
@@ -402,30 +419,32 @@ mod tests {
     }
 
     #[test]
-    fn local_addr_reports_bound_port_truncates_and_closes_after_stop() {
+    fn local_addr_reports_bound_port_and_rejects_small_buffers() {
         let server = start_test_server();
         assert!(!server.is_null());
         let mut buf = [0x7f as libc::c_char; 64];
         let rc = unsafe { tst_rtsp_server_local_addr(server, buf.as_mut_ptr(), buf.len()) };
-        assert_eq!(rc, TstError::Success as libc::c_int);
         let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) }
             .to_str()
             .unwrap()
             .to_owned();
+        assert_eq!(rc, s.len() as libc::c_int, "returns the bytes written");
         let port: u16 = s
             .strip_prefix("127.0.0.1:")
             .expect("loopback address")
             .parse()
             .unwrap();
         assert_ne!(port, 0, "the kernel-picked port, not the requested 0");
-        // Truncation: 5 bytes hold "127." + NUL.
-        let mut small = [0x7f as libc::c_char; 5];
-        let rc = unsafe { tst_rtsp_server_local_addr(server, small.as_mut_ptr(), small.len()) };
-        assert_eq!(rc, TstError::Success as libc::c_int);
-        let t = unsafe { std::ffi::CStr::from_ptr(small.as_ptr()) };
-        assert_eq!(t.to_str().unwrap(), "127.");
-        // NULL / zero-length arguments.
         let inv = TstError::InvalidConfig as libc::c_int;
+        // Exactly the string length: no room for the NUL, nothing written.
+        let mut small = [0x7f as libc::c_char; 64];
+        let rc = unsafe { tst_rtsp_server_local_addr(server, small.as_mut_ptr(), s.len()) };
+        assert_eq!(rc, inv);
+        assert!(small.iter().all(|&b| b == 0x7f as libc::c_char));
+        // One more byte fits.
+        let rc = unsafe { tst_rtsp_server_local_addr(server, small.as_mut_ptr(), s.len() + 1) };
+        assert_eq!(rc, s.len() as libc::c_int);
+        // NULL / zero-length arguments.
         assert_eq!(
             unsafe { tst_rtsp_server_local_addr(server, std::ptr::null_mut(), 64) },
             inv

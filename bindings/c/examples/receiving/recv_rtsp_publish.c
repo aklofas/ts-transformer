@@ -330,10 +330,13 @@ int main(int argc, char **argv) {
     }
 
     /* The bound address: with port 0 in the URL this is the only way to
-     * learn the port.  64 bytes holds any IPv4 or IPv6 address; a shorter
-     * buffer gets a truncated, still NUL-terminated string. */
+     * learn the port.  Success returns the bytes written (excluding the
+     * NUL), so test for a NEGATIVE result, not for nonzero.  64 bytes holds
+     * any IPv4 or IPv6 address; a buffer too small for the address plus its
+     * NUL is TST_E_INVALID_CONFIG and nothing is written (the same
+     * convention as tst_hls_publisher_local_addr). */
     char addr[64];
-    if (tst_rtsp_server_local_addr(server, addr, sizeof(addr)) != 0) {
+    if (tst_rtsp_server_local_addr(server, addr, sizeof(addr)) < 0) {
         fprintf(stderr, "local_addr: %s\n", tst_get_last_error_str());
         tst_rtsp_server_free(server);
         return 1;

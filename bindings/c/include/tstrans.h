@@ -307,7 +307,8 @@
  *   `tst_rtsp_server_total_rtp_bytes_received`): `tst_server_stats_t` does
  *   not change. `tst_rtsp_server_local_addr` writes the bound listen
  *   address (the kernel-picked port for a `:0` bind) into a caller
- *   buffer, NUL-terminated and truncating. No new error codes. See
+ *   buffer, NUL-terminated, returning the bytes written (the
+ *   `tst_hls_publisher_local_addr` convention). No new error codes. See
  *   `bindings/c/core/src/rtsp/server/publish.rs` and `stop.rs`.
  */
 #define TST_ABI_VERSION_MINOR 23
@@ -10863,25 +10864,29 @@ int tst_rtsp_server_get_stats(struct TstRtspServer *server, struct tst_server_st
 
 #if defined(TST_HAS_RTP)
 /**
- * Write the server's bound listen address into `buf` as a NUL-terminated
- * `"ip:port"` string (`"[v6]:port"` for IPv6).
+ * Write the server's bound listen address (`"ip:port"`, `"[v6]:port"` for
+ * IPv6) as a NUL-terminated string into `buf` (capacity `buf_len`).
  *
  * The address is the one the listener actually bound, so a server built
- * on port `0` reports the port the kernel picked. When the address does
- * not fit, it is truncated to `len - 1` bytes and still NUL-terminated
- * (snprintf-style); 64 bytes holds any IPv4 or IPv6 socket address.
+ * on port `0` reports the port the kernel picked. 64 bytes holds any IPv4
+ * or IPv6 socket address.
  *
- * Returns `0`, `TST_E_INVALID_CONFIG` for a NULL `server` or `buf` or a
- * `len` of 0, or `TST_E_CLOSED` after `tst_rtsp_server_stop` (the same
- * code every other server getter returns once stopped).
+ * Same convention as `tst_hls_publisher_local_addr`: returns the number of
+ * bytes written **excluding** the NUL terminator on success, or a negative
+ * `TST_E_*` code: `TST_E_INVALID_CONFIG` if `server` or `buf` is NULL,
+ * `TST_E_INVALID_CONFIG` with a "buffer too small" message if `buf_len`
+ * cannot hold the address plus its NUL terminator (`buf_len == 0`
+ * included; nothing is written), or `TST_E_CLOSED` after
+ * `tst_rtsp_server_stop` (the code every other server getter returns once
+ * stopped).
  *
  * # Safety
  *
  * - `server` must be NULL or a live pointer from
  *   `tst_rtsp_server_builder_start`.
- * - `buf` must be NULL or writable for `len` bytes.
+ * - `buf` must be NULL or writable for `buf_len` bytes.
  */
-int tst_rtsp_server_local_addr(const struct TstRtspServer *server, char *buf, size_t len);
+int tst_rtsp_server_local_addr(const struct TstRtspServer *server, char *buf, size_t buf_len);
 #endif
 
 #if defined(TST_HAS_RTP)
