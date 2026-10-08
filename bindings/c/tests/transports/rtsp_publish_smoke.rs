@@ -35,8 +35,9 @@ use tstrans::{
     tst_rtsp_server_active_publishers, tst_rtsp_server_add_publish_mount,
     tst_rtsp_server_builder_accept_unregistered_publishers, tst_rtsp_server_builder_new,
     tst_rtsp_server_builder_start, tst_rtsp_server_free, tst_rtsp_server_get_stats,
-    tst_rtsp_server_next_publisher, tst_rtsp_server_remove_mount, tst_rtsp_server_stop,
-    tst_rtsp_server_total_rtp_bytes_received, tst_rtsp_server_total_rtp_packets_received,
+    tst_rtsp_server_local_addr, tst_rtsp_server_next_publisher, tst_rtsp_server_remove_mount,
+    tst_rtsp_server_stop, tst_rtsp_server_total_rtp_bytes_received,
+    tst_rtsp_server_total_rtp_packets_received,
 };
 
 const SDP_MP2T: &str = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=publish\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=video 0 RTP/AVP 33\r\na=rtpmap:33 MP2T/90000\r\na=control:streamid=0\r\n";
@@ -46,8 +47,9 @@ const SDP_MP2T: &str = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=publish\r\nc=IN IP4
 // ---------------------------------------------------------------------------
 
 /// Start a server on a kernel-picked loopback port, retrying if the port is
-/// taken between the probe and the bind. Returns the server and its port
-/// (the C surface has no local-address getter, so the port is probed first).
+/// taken between the probe and the bind. Returns the server and its port.
+/// (`rtsp_publish_server_local_addr` covers the `:0` bind read back through
+/// `tst_rtsp_server_local_addr`.)
 fn start_server(accept_unregistered: bool) -> (*mut tstrans::TstRtspServer, u16) {
     for _ in 0..5 {
         let port = TcpListener::bind("127.0.0.1:0")
@@ -594,4 +596,59 @@ fn rtsp_publish_null_arguments() {
         tst_rtsp_publish_mount_free(m);
         tst_rtsp_server_free(server);
     }
+}
+
+/// `tst_rtsp_server_local_addr` reports the kernel-picked port of a `:0`
+/// bind, and a publisher can connect to it; NULL / zero-length arguments are
+/// `TST_E_INVALID_CONFIG` and a stopped server is `TST_E_CLOSED`.
+#[test]
+fn rtsp_publish_server_local_addr() {
+    let url = CString::new("rtsp://127.0.0.1:0").unwrap();
+    let b = unsafe { tst_rtsp_server_builder_new(url.as_ptr()) };
+    assert!(!b.is_null(), "builder_new failed");
+    let server = unsafe { tst_rtsp_server_builder_start(b) };
+    assert!(!server.is_null(), "start on :0 failed");
+
+    let mut buf = [0 as std::os::raw::c_char; 64];
+    let rc = unsafe { tst_rtsp_server_local_addr(server, buf.as_mut_ptr(), buf.len()) };
+    assert_eq!(rc, 0, "local_addr: {rc}");
+    let addr = unsafe { CStr::from_ptr(buf.as_ptr()) }
+        .to_str()
+        .unwrap()
+        .to_owned();
+    assert!(!addr.is_empty());
+    let port: u16 = addr
+        .strip_prefix("127.0.0.1:")
+        .unwrap_or_else(|| panic!("unexpected address {addr:?}"))
+        .parse()
+        .expect("numeric port");
+    assert_ne!(port, 0);
+
+    // The reported port is the live listener: a publisher reaches it.
+    let path = CString::new("/addr").unwrap();
+    let m = unsafe { tst_rtsp_server_add_publish_mount(server, path.as_ptr()) };
+    assert!(!m.is_null());
+    let (tcp, _ch) = publish_mp2t(port, "/addr");
+
+    let inv = TstError::InvalidConfig as i32;
+    unsafe {
+        assert_eq!(
+            tst_rtsp_server_local_addr(std::ptr::null(), buf.as_mut_ptr(), buf.len()),
+            inv
+        );
+        assert_eq!(
+            tst_rtsp_server_local_addr(server, std::ptr::null_mut(), 64),
+            inv
+        );
+        assert_eq!(tst_rtsp_server_local_addr(server, buf.as_mut_ptr(), 0), inv);
+    }
+
+    drop(tcp);
+    assert_eq!(unsafe { tst_rtsp_server_stop(server, 0) }, 0);
+    assert_eq!(
+        unsafe { tst_rtsp_server_local_addr(server, buf.as_mut_ptr(), buf.len()) },
+        TstError::Closed as i32
+    );
+    unsafe { tst_rtsp_publish_mount_free(m) };
+    unsafe { tst_rtsp_server_free(server) };
 }

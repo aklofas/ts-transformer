@@ -305,8 +305,10 @@
  *   (`tst_rtsp_server_active_publishers`,
  *   `tst_rtsp_server_total_rtp_packets_received`,
  *   `tst_rtsp_server_total_rtp_bytes_received`): `tst_server_stats_t` does
- *   not change. No new error codes. See
- *   `bindings/c/core/src/rtsp/server/publish.rs`.
+ *   not change. `tst_rtsp_server_local_addr` writes the bound listen
+ *   address (the kernel-picked port for a `:0` bind) into a caller
+ *   buffer, NUL-terminated and truncating. No new error codes. See
+ *   `bindings/c/core/src/rtsp/server/publish.rs` and `stop.rs`.
  */
 #define TST_ABI_VERSION_MINOR 23
 
@@ -10857,6 +10859,29 @@ struct tst_rtsp_cancel_handle_t *tst_rtsp_server_cancel_handle(struct TstRtspSer
  *   that is valid for this call. The caller retains ownership.
  */
 int tst_rtsp_server_get_stats(struct TstRtspServer *server, struct tst_server_stats_t *out);
+#endif
+
+#if defined(TST_HAS_RTP)
+/**
+ * Write the server's bound listen address into `buf` as a NUL-terminated
+ * `"ip:port"` string (`"[v6]:port"` for IPv6).
+ *
+ * The address is the one the listener actually bound, so a server built
+ * on port `0` reports the port the kernel picked. When the address does
+ * not fit, it is truncated to `len - 1` bytes and still NUL-terminated
+ * (snprintf-style); 64 bytes holds any IPv4 or IPv6 socket address.
+ *
+ * Returns `0`, `TST_E_INVALID_CONFIG` for a NULL `server` or `buf` or a
+ * `len` of 0, or `TST_E_CLOSED` after `tst_rtsp_server_stop` (the same
+ * code every other server getter returns once stopped).
+ *
+ * # Safety
+ *
+ * - `server` must be NULL or a live pointer from
+ *   `tst_rtsp_server_builder_start`.
+ * - `buf` must be NULL or writable for `len` bytes.
+ */
+int tst_rtsp_server_local_addr(const struct TstRtspServer *server, char *buf, size_t len);
 #endif
 
 #if defined(TST_HAS_RTP)

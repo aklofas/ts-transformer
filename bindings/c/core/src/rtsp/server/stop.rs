@@ -5,6 +5,7 @@
 //!
 //! ```text
 //! tst_rtsp_server_get_stats(server, *out)   — snapshot aggregate counters
+//! tst_rtsp_server_local_addr(server, buf, len) — the bound listen address
 //! tst_rtsp_server_cancel_handle(server)     — obtain a hard-cancel handle
 //! tst_rtsp_cancel_handle_cancel(cancel)     — fire the hard cancel
 //! tst_rtsp_cancel_handle_free(cancel)       — drop the cancel handle
@@ -98,6 +99,65 @@ pub unsafe extern "C" fn tst_rtsp_server_get_stats(
         // SAFETY: caller guarantees out is a valid, writable pointer.
         let dst = unsafe { &mut *out };
         fill_server_stats(dst, &snapshot);
+        TstError::Success as libc::c_int
+    })
+}
+
+/// Write the server's bound listen address into `buf` as a NUL-terminated
+/// `"ip:port"` string (`"[v6]:port"` for IPv6).
+///
+/// The address is the one the listener actually bound, so a server built
+/// on port `0` reports the port the kernel picked. When the address does
+/// not fit, it is truncated to `len - 1` bytes and still NUL-terminated
+/// (snprintf-style); 64 bytes holds any IPv4 or IPv6 socket address.
+///
+/// Returns `0`, `TST_E_INVALID_CONFIG` for a NULL `server` or `buf` or a
+/// `len` of 0, or `TST_E_CLOSED` after `tst_rtsp_server_stop` (the same
+/// code every other server getter returns once stopped).
+///
+/// # Safety
+///
+/// - `server` must be NULL or a live pointer from
+///   `tst_rtsp_server_builder_start`.
+/// - `buf` must be NULL or writable for `len` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tst_rtsp_server_local_addr(
+    server: *const TstRtspServer,
+    buf: *mut libc::c_char,
+    len: usize,
+) -> libc::c_int {
+    ffi_catch(TstError::Internal as libc::c_int, || {
+        if buf.is_null() || len == 0 {
+            set_last_error(TstError::InvalidConfig, "buf is null or len is 0");
+            return TstError::InvalidConfig as libc::c_int;
+        }
+        let Some(handle) = (unsafe { server.as_ref() }) else {
+            set_last_error(TstError::InvalidConfig, "server is null");
+            return TstError::InvalidConfig as libc::c_int;
+        };
+        let guard = match handle.inner.lock() {
+            Ok(g) => g,
+            Err(_) => {
+                set_last_error(TstError::Internal, "server mutex poisoned");
+                return TstError::Internal as libc::c_int;
+            }
+        };
+        // `local_addr()` is `None` only before the listener has bound,
+        // which `tst_rtsp_server_builder_start` waits out; treat it like
+        // a stopped server.
+        let Some(addr) = guard.as_ref().and_then(|s| s.local_addr()) else {
+            set_last_error(TstError::Closed, "server is stopped or freed");
+            return TstError::Closed as libc::c_int;
+        };
+        let text = addr.to_string();
+        let n = text.len().min(len - 1);
+        // SAFETY: `buf` is writable for `len` bytes per the contract.
+        let dst = match unsafe { crate::ffi_slice::ffi_slice_mut(buf.cast::<u8>(), len, "buf") } {
+            Ok(d) => d,
+            Err(rc) => return rc,
+        };
+        dst[..n].copy_from_slice(&text.as_bytes()[..n]);
+        dst[n] = 0;
         TstError::Success as libc::c_int
     })
 }
@@ -339,6 +399,55 @@ mod tests {
     fn null_server_cancel_handle_returns_null() {
         let ch = unsafe { tst_rtsp_server_cancel_handle(std::ptr::null_mut()) };
         assert!(ch.is_null());
+    }
+
+    #[test]
+    fn local_addr_reports_bound_port_truncates_and_closes_after_stop() {
+        let server = start_test_server();
+        assert!(!server.is_null());
+        let mut buf = [0x7f as libc::c_char; 64];
+        let rc = unsafe { tst_rtsp_server_local_addr(server, buf.as_mut_ptr(), buf.len()) };
+        assert_eq!(rc, TstError::Success as libc::c_int);
+        let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) }
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let port: u16 = s
+            .strip_prefix("127.0.0.1:")
+            .expect("loopback address")
+            .parse()
+            .unwrap();
+        assert_ne!(port, 0, "the kernel-picked port, not the requested 0");
+        // Truncation: 5 bytes hold "127." + NUL.
+        let mut small = [0x7f as libc::c_char; 5];
+        let rc = unsafe { tst_rtsp_server_local_addr(server, small.as_mut_ptr(), small.len()) };
+        assert_eq!(rc, TstError::Success as libc::c_int);
+        let t = unsafe { std::ffi::CStr::from_ptr(small.as_ptr()) };
+        assert_eq!(t.to_str().unwrap(), "127.");
+        // NULL / zero-length arguments.
+        let inv = TstError::InvalidConfig as libc::c_int;
+        assert_eq!(
+            unsafe { tst_rtsp_server_local_addr(server, std::ptr::null_mut(), 64) },
+            inv
+        );
+        assert_eq!(
+            unsafe { tst_rtsp_server_local_addr(server, buf.as_mut_ptr(), 0) },
+            inv
+        );
+        assert_eq!(
+            unsafe { tst_rtsp_server_local_addr(std::ptr::null(), buf.as_mut_ptr(), 64) },
+            inv
+        );
+        // After stop: CLOSED.
+        assert_eq!(
+            unsafe { tst_rtsp_server_stop(server, 0) },
+            TstError::Success as libc::c_int
+        );
+        assert_eq!(
+            unsafe { tst_rtsp_server_local_addr(server, buf.as_mut_ptr(), buf.len()) },
+            TstError::Closed as libc::c_int
+        );
+        unsafe { tst_rtsp_server_free(server) };
     }
 
     #[test]

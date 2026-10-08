@@ -522,6 +522,10 @@ baseline (by design)" for the full rationale.
         `tst_rtsp_server_stop` on another thread wakes a parked call) and
         **`tst_rtsp_server_remove_mount`** (`TST_E_RTSP_MOUNT` when no
         mount is registered at the path).
+      - **`tst_rtsp_server_local_addr`** — the bound listen address
+        (`"ip:port"`, the kernel-picked port for a `:0` bind) into a
+        caller buffer, NUL-terminated and truncating; `TST_E_CLOSED` after
+        `tst_rtsp_server_stop`.
       - New opaque handle `tst_rtsp_publish_mount_t` with
         `tst_rtsp_publish_mount_{path,peer_count,generation,get_stats,
         publisher_info,cancel,into_demux_receiver,free}`. The transport is

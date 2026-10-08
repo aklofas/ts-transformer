@@ -592,7 +592,9 @@ ALLOWLIST=(
     #     RtspServerBuilder::accept_unregistered_publishers, all in tst-rtp
     #     (not in tst-pipeline / tst-srt / tst-core). The three counter
     #     getters and the path getter / free are C-only.
+    #     tst_rtsp_server_local_addr delegates to RtspServer::local_addr.
     "tst_rtsp_server_builder_accept_unregistered_publishers"
+    "tst_rtsp_server_local_addr"
     "tst_rtsp_server_add_publish_mount"
     "tst_rtsp_server_next_publisher"
     "tst_rtsp_server_remove_mount"
