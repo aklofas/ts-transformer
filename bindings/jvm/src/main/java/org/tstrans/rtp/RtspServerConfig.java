@@ -126,7 +126,10 @@ public final class RtspServerConfig {
          * (default {@code false}). With it on, anyone who can reach the port, and pass
          * {@link #auth} when it is set, can create mounts. Up to 64 handles wait for
          * {@link RtspServer#nextPublisher(long)} and the server holds up to 256
-         * on-demand mounts; an ANNOUNCE past either bound answers {@code 503}.
+         * on-demand mounts; an ANNOUNCE past either bound answers {@code 503}. A
+         * connected elementary-track publisher can hold about 46 MB at worst, about
+         * 4.6 GB at the default {@code maxSessions} of 100, so set {@link #auth} and
+         * size {@code maxSessions} before enabling this on a reachable port.
          */
         public Builder acceptUnregisteredPublishers(boolean v) {
             this.acceptUnregisteredPublishers = v;

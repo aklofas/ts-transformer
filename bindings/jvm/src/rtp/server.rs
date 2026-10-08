@@ -8,7 +8,7 @@
 //! is no JNI-side async handling.
 
 use std::sync::{Arc, LazyLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use jni::JNIEnv;
 use jni::objects::{
@@ -325,8 +325,9 @@ fn with_server<R>(env: &mut JNIEnv, handle: jlong, f: impl FnOnce(&ServerInner) 
 /// non-poisoning [`with_server`]. `RtspServer`'s `Drop` is the hard-cancel +
 /// runtime-shutdown path (NOT the graceful `stop()`), so poisoning a torn
 /// mutator drops the registry's `Arc` without a double-panic-in-Drop hazard (a
-/// `nNextPublisher` still parked holds its own clone; `Drop` runs when it
-/// returns).
+/// `nNextPublisher` still parked holds its own clone until its current wait
+/// slice ends; it then finds the entry gone, drops the clone, which runs
+/// `Drop`, and ends with `RtspException(SERVER)`).
 ///
 /// # Mixed-use poisoning contract
 ///
@@ -716,6 +717,10 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nAddPublishMount<'local>(
     })
 }
 
+/// Longest single wait inside `nNextPublisher`; the server is re-leased
+/// between slices.
+const NEXT_PUBLISHER_SLICE: Duration = Duration::from_secs(1);
+
 /// `RtspServer.nNextPublisher(serverHandle, timeoutMs)` → the next on-demand
 /// `PublishMount` handle, `0` on a timeout, or 0 with a pending
 /// `RtspException(SERVER)` once the server stops (including while it waited).
@@ -725,6 +730,13 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nAddPublishMount<'local>(
 /// parks. Holding it would block `close()` (which must take the resource) and
 /// every other server native for the whole wait, and `close()` could then
 /// never run the `stop()` that wakes this call.
+///
+/// The wait runs in slices of at most [`NEXT_PUBLISHER_SLICE`], dropping the
+/// clone and re-leasing the server between slices. A registry entry that went
+/// away without a `stop()` (a poisoned mutator drops only the registry's
+/// `Arc`) therefore ends the call with `RtspException(SERVER)` within one
+/// slice, instead of the clone keeping the server alive for the whole
+/// timeout.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nNextPublisher(
     mut env: JNIEnv<'_>,
@@ -733,17 +745,40 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nNextPublisher(
     timeout_ms: jlong,
 ) -> jlong {
     crate::panic::jni_catch(&mut env, 0, |env| {
-        let Some(server) = with_server(env, server_handle, Arc::clone) else {
+        let Some(mut server) = with_server(env, server_handle, Arc::clone) else {
             return 0;
         };
         // Java validates `timeoutMs >= 0`; `max(0)` only guards a bypass.
-        let timeout = Duration::from_millis(timeout_ms.max(0) as u64);
-        match server.next_publisher(timeout) {
-            Ok(Some(h)) => super::publish::publish_mount_handle(h),
-            Ok(None) => 0,
-            Err(e) => {
-                server_error_to_jvm(env, e);
-                0
+        // `None`: the deadline does not fit an `Instant` (Long.MAX_VALUE),
+        // so the call waits until a publisher arrives or the server ends.
+        let deadline = Instant::now().checked_add(Duration::from_millis(timeout_ms.max(0) as u64));
+        loop {
+            let slice = match deadline {
+                Some(d) => d
+                    .saturating_duration_since(Instant::now())
+                    .min(NEXT_PUBLISHER_SLICE),
+                None => NEXT_PUBLISHER_SLICE,
+            };
+            match server.next_publisher(slice) {
+                Ok(Some(h)) => return super::publish::publish_mount_handle(h),
+                Ok(None) => {}
+                Err(e) => {
+                    server_error_to_jvm(env, e);
+                    return 0;
+                }
+            }
+            if deadline.is_some_and(|d| Instant::now() >= d) {
+                return 0;
+            }
+            // Drop this call's clone before re-leasing, so a server whose
+            // registry entry is gone is not kept alive by the wait itself.
+            drop(server);
+            match REGISTRY_SERVER.with(server_handle as u64, |s| Arc::clone(s)) {
+                Some(s) => server = s,
+                None => {
+                    server_error_to_jvm(env, RtspServerError::Shutdown);
+                    return 0;
+                }
             }
         }
     })

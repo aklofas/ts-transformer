@@ -1,11 +1,18 @@
 package org.tstrans.rtp;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
+
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
+import org.tstrans.RtspException;
 import org.tstrans.internal.PanicProbe;
 import org.tstrans.mpegts.MuxerConfig;
 import org.tstrans.mpegts.VideoCodec;
@@ -108,6 +115,66 @@ class RtspPanicPoisoningTest {
             assertThrows(IllegalStateException.class, s::stats);
         } finally {
             // close() on a poisoned server is a safe idempotent no-op.
+            s.close();
+        }
+    }
+
+    /**
+     * A poisoned server mutator drops only the registry's reference; a {@code
+     * nextPublisher(Long.MAX_VALUE)} parked on another thread holds its own. The
+     * native wait re-leases the server between bounded slices, so the parked call
+     * finds the entry gone and ends with {@link RtspException} {@code SERVER} instead
+     * of waiting forever.
+     */
+    @Test @Timeout(20)
+    void poisonedServerEndsAParkedNextPublisher() throws Exception {
+        RtspServer s = RtspServer.start(RtspServerConfig.builder()
+            .bindAddr("127.0.0.1:0").acceptUnregisteredPublishers(true).build());
+        AtomicReference<Throwable> error = new AtomicReference<>();
+        AtomicReference<Object> value = new AtomicReference<>();
+        Thread parked = new Thread(() -> {
+            try {
+                value.set(s.nextPublisher(Long.MAX_VALUE));
+            } catch (Throwable t) {
+                error.set(t);
+            }
+        });
+        parked.setDaemon(true);
+        try {
+            long raw = s.nativeHandleForTest();
+            parked.start();
+            // Poison only once the call is inside its native wait.
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (true) {
+                StackTraceElement[] st = parked.getStackTrace();
+                if (st.length > 0 && st[0].isNativeMethod()
+                        && st[0].getMethodName().equals("nNextPublisher")) {
+                    break;
+                }
+                if (!parked.isAlive()) {
+                    fail("nextPublisher returned before it parked: value " + value.get()
+                        + ", error " + error.get());
+                }
+                if (System.nanoTime() > deadline) {
+                    fail("the side thread never reached nNextPublisher");
+                }
+                Thread.sleep(5);
+            }
+
+            assertThrows(RuntimeException.class,
+                () -> PanicProbe.nForcePanicThroughServer(raw));
+
+            // Bounded join: one wait slice plus slack. Without the slicing the call
+            // never returns and this fails.
+            parked.join(TimeUnit.SECONDS.toMillis(10));
+            assertTrue(!parked.isAlive(),
+                "a parked nextPublisher outlived the poisoned server entry");
+            Throwable e = error.get();
+            assertTrue(e instanceof RtspException,
+                () -> "nextPublisher: expected RtspException(SERVER), got "
+                    + (e != null ? e : "value " + value.get()));
+            assertEquals(RtspException.Kind.SERVER, ((RtspException) e).kind());
+        } finally {
             s.close();
         }
     }
