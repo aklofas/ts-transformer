@@ -7,8 +7,9 @@
 //! and TEARDOWN/disconnect ends it — see [`PublishSession::end`] and its
 //! `Drop` twin.
 
-use std::sync::atomic::AtomicU64;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock, Mutex};
+use std::time::{Duration, Instant};
 
 use tokio_util::sync::CancellationToken;
 
@@ -54,10 +55,10 @@ pub(crate) struct PublishSession {
     /// spawns per `TrackTransport::Udp` track; unread until that lands.
     pub(crate) udp_cancel: CancellationToken,
     /// Instant-based millis of the last RTP packet accepted on any
-    /// track — written and read by Tasks 7/8's liveness checks, not by
-    /// this task. `AtomicU64` so a UDP ingest task (Task 8) can update
-    /// it without taking a lock.
-    #[allow(dead_code)]
+    /// track — written by the session loop's interleaved `$` arm (Task 7)
+    /// and (once that lands) Task 8's UDP ingest tasks; read by
+    /// [`Self::media_within`]. `AtomicU64` so a UDP ingest task can
+    /// update it without taking a lock.
     pub(crate) last_media_ms: Arc<AtomicU64>,
     /// Makes [`Self::end`] idempotent — TEARDOWN calls it explicitly and
     /// `Drop` calls it again on every exit path; the second call must be
@@ -65,6 +66,13 @@ pub(crate) struct PublishSession {
     /// publisher generation).
     ended: bool,
 }
+
+/// Process-wide epoch for [`PublishSession::now_ms`]. Values derived from
+/// it are only ever compared to each other (never persisted or sent over
+/// the wire), so an arbitrary fixed origin is fine; anchoring on
+/// [`Instant`] rather than [`std::time::SystemTime`] means a wall-clock
+/// adjustment can never make a liveness check go backwards.
+static MEDIA_CLOCK_EPOCH: LazyLock<Instant> = LazyLock::new(Instant::now);
 
 impl PublishSession {
     pub(crate) fn new(
@@ -136,9 +144,8 @@ impl PublishSession {
 
     /// Resolve an incoming RFC 7826 §14 `$<channel>` interleaved frame's
     /// channel number to its track, and whether it's the RTP or RTCP
-    /// channel of that track's pair. Read by Task 7's interleaved frame
-    /// dispatch — unused (and unreachable) until that lands.
-    #[allow(dead_code)]
+    /// channel of that track's pair. Read by the session loop's
+    /// interleaved frame dispatch.
     pub(crate) fn track_for_channel(&self, ch: u8) -> Option<(usize, bool)> {
         self.tracks
             .iter()
@@ -148,6 +155,30 @@ impl PublishSession {
                 Some(TrackTransport::Interleaved { rtcp, .. }) if rtcp == ch => Some((i, true)),
                 _ => None,
             })
+    }
+
+    /// Milliseconds since the process-wide media-liveness epoch. Shared
+    /// by the session loop's interleaved `$`-frame arm and Task 8's UDP
+    /// ingest tasks — both stamp [`Self::last_media_ms`] with this same
+    /// clock, so [`Self::media_within`] never compares values taken from
+    /// two different origins.
+    pub(crate) fn now_ms() -> u64 {
+        MEDIA_CLOCK_EPOCH.elapsed().as_millis() as u64
+    }
+
+    /// Whether RTP media arrived on this publisher within `d` of now.
+    /// Read by the session loop's idle-timeout arm: a TCP-interleaved
+    /// publisher's frames already re-arm the read-idle sleep by landing
+    /// as bytes on the control socket, but a UDP-transport publisher
+    /// sends its RTP on a different socket that read loop never
+    /// touches — this is what keeps that session alive instead. Never
+    /// "recent" before the first packet (`last_media_ms == 0`).
+    pub(crate) fn media_within(&self, d: Duration) -> bool {
+        let last = self.last_media_ms.load(Ordering::Relaxed);
+        if last == 0 {
+            return false;
+        }
+        Self::now_ms().saturating_sub(last) <= d.as_millis() as u64
     }
 
     /// End the publisher: flush whatever the adapter has pending, cancel
