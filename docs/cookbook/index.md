@@ -48,6 +48,7 @@ Start here if your job is producing MPEG-TS bytes: files, fixtures, multi-stream
 - **[Receive MPEG-TS over RIST](/docs/cookbook/receiving/rist.md)** — Bind URL form (`rist://@host:port`) with optional AES PSK decryption.
 - **[Receive into a file](/docs/cookbook/receiving/receive-to-file.md)** — Archive a stream or build a test fixture from a live producer.
 - **[Ingest H.264 from an RTSP camera and remux to MPEG-TS](/docs/cookbook/receiving/recv-rtsp-h264-to-ts.md)** — Bare H.264-over-RTP (RFC 6184) gateway pattern. Python-first; Rust example twin.
+- **[Accept RTSP publishers (ANNOUNCE / RECORD ingest)](/docs/cookbook/receiving/rtsp-publish-ingest.md)** — Encoders push to your `RtspServer` (ffmpeg `-f rtsp`, GStreamer `rtspclientsink`); each pushed stream arrives as MPEG-TS and is re-served to RTSP players.
 - **[Extract subtitle PES bytes from a captured `.ts` file](/docs/cookbook/receiving/extract-subtitle-pes.md)** — Discover subtitle codecs in a capture and read the cue text.
 
 ## 🔗 Pairing — align KLV with video frames
@@ -100,4 +101,5 @@ Only examples explicitly invoked via `cargo run -p tst-examples --example <name>
 | `pair_klv_pipeline` | [Pair sync-KLV via `Pairer` (Realtime)](/docs/cookbook/pairing/pairer-realtime.md) |
 | `parse_audio_frames` | [Pull sample rate and channel count](/docs/cookbook/codecs/extract-audio-format.md) |
 | `recv_rtsp_h264` | [Ingest H.264 from an RTSP camera](/docs/cookbook/receiving/recv-rtsp-h264-to-ts.md) |
+| `recv_rtsp_publish` | [Accept RTSP publishers](/docs/cookbook/receiving/rtsp-publish-ingest.md) |
 | `send_tcp` | [Send MPEG-TS over TCP](/docs/cookbook/sending/tcp.md) |

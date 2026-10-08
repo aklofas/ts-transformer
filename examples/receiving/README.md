@@ -2,7 +2,7 @@
 
 Receivers that pull TS bytes from a transport (SRT, UDP, TCP, RIST,
 RTP/RTSP, or file-replay) and either dump, demux, or re-mux them.
-Eleven examples, in read-order:
+Twelve examples, in read-order:
 
 ## 1. `srt_caller_dump.rs` — caller-mode SRT receiver
 
@@ -144,3 +144,21 @@ depacketizer) and pushes each recovered access unit through a `Muxer`
 to build a `.ts` file.
 
 Cookbook: [Receive RTSP H.264 into a `.ts` file](../../docs/cookbook/receiving/recv-rtsp-h264-to-ts.md).
+
+## 12. `recv_rtsp_publish.rs` — let encoders push into `RtspServer`
+
+```sh
+cargo run -p tst-examples --example recv_rtsp_publish
+ffmpeg -re -f lavfi -i testsrc=size=320x240:rate=15 -c:v libx264 \
+    -preset ultrafast -tune zerolatency -f rtsp rtsp://127.0.0.1:8554/demo
+```
+
+Diff from §10/§11: the roles invert. The application runs the RTSP
+server and publishers connect and push (ANNOUNCE / RECORD). With
+`accept_unregistered_publishers(true)` any announced name becomes a
+mount on demand; `next_publisher` hands each one back, and
+`into_recv_transport` feeds it to a `DemuxReceiver`. The header lists
+the ffmpeg (TCP, UDP) and GStreamer (MPEG-TS, H.264 + KLV) push
+commands; ffmpeg cannot push KLV.
+
+Cookbook: [Accept RTSP publishers (ANNOUNCE / RECORD ingest)](../../docs/cookbook/receiving/rtsp-publish-ingest.md).
