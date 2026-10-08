@@ -1057,6 +1057,7 @@ mod tests {
             #[cfg(feature = "rtsp-server-tls")]
             tls_config: std::sync::Mutex::new(None),
             startup_tx: std::sync::Mutex::new(None),
+            publish_queue_tx: std::sync::Mutex::new(None),
         })
     }
 
@@ -1138,6 +1139,7 @@ mod tests {
             #[cfg(feature = "rtsp-server-tls")]
             tls_config: std::sync::Mutex::new(None),
             startup_tx: std::sync::Mutex::new(None),
+            publish_queue_tx: std::sync::Mutex::new(None),
         });
         let req = make_req(RtspMethod::Describe, "rtsp://127.0.0.1:8554/live");
         let mut session = ServerSessionState::new();

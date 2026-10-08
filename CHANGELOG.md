@@ -17,8 +17,16 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`PublishMountHandle::into_recv_transport`, once per mount) carrying the
   publisher's MPEG-TS, and keeps serving PLAY readers. One publisher per
   mount (`403` to a second); the mount outlives publishers
-  (`PublishMountHandle::generation`). On-demand mounts and the bindings
-  follow in this release.
+  (`PublishMountHandle::generation`). The bindings follow in this release.
+- On-demand mounts: with `RtspServerBuilder::accept_unregistered_publishers(true)`
+  an ANNOUNCE on an unregistered path creates a publish mount there and
+  queues its handle for `RtspServer::next_publisher(timeout)`. The queue
+  holds 64 handles the application has not taken; an ANNOUNCE past that
+  answers `503` and creates nothing. Off by default (`404`). With it on,
+  anyone who can reach the port (and pass auth, when configured) can
+  create mounts, 64 at a time until the application takes them; registered
+  mounts are unaffected.
+  `RtspServer::stop` wakes a waiting `next_publisher` with `Shutdown`.
 - A second `into_recv_transport` on the same mount returns the new
   `RtspServerError::TransportTaken`. `PublishMountHandle::cancel` ends the
   application transport with `ExplicitClose`; `RtspServer::stop` ends it

@@ -62,6 +62,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::builder::RtspClientBui
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::builder::RtspClientBuilder
 pub struct tst_rtp::builder::RtspServerBuilder
 impl tst_rtp::builder::RtspServerBuilder
+pub fn tst_rtp::builder::RtspServerBuilder::accept_unregistered_publishers(&mut self, bool) -> &mut Self
 pub fn tst_rtp::builder::RtspServerBuilder::auth_basic(&mut self, &str, &str, secrecy::SecretString) -> &mut Self
 pub fn tst_rtp::builder::RtspServerBuilder::auth_digest_md5(&mut self, &str, &str, secrecy::SecretString) -> &mut Self
 pub fn tst_rtp::builder::RtspServerBuilder::auth_digest_sha256(&mut self, &str, &str, secrecy::SecretString) -> &mut Self
@@ -1354,6 +1355,7 @@ pub fn tst_rtp::rtsp::server::RtspServer::bind(&str) -> core::result::Result<Sel
 pub fn tst_rtp::rtsp::server::RtspServer::bind_with(tst_rtp::url::RtspUrl) -> core::result::Result<Self, tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::RtspServer::cancel_handle(&self) -> tst_rtp::cancel::RtspServerCancelHandle
 pub fn tst_rtp::rtsp::server::RtspServer::local_addr(&self) -> core::option::Option<core::net::socket_addr::SocketAddr>
+pub fn tst_rtp::rtsp::server::RtspServer::next_publisher(&self, core::time::Duration) -> core::result::Result<core::option::Option<tst_rtp::PublishMountHandle>, tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::RtspServer::start(&self) -> core::result::Result<(), tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::RtspServer::stats(&self) -> tst_rtp::rtsp::server::ServerStats
 pub fn tst_rtp::rtsp::server::RtspServer::stop(&self) -> core::result::Result<(), tst_rtp::error::RtspServerError>
@@ -3023,6 +3025,7 @@ pub fn tst_rtp::rtsp::server::RtspServer::bind(&str) -> core::result::Result<Sel
 pub fn tst_rtp::rtsp::server::RtspServer::bind_with(tst_rtp::url::RtspUrl) -> core::result::Result<Self, tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::RtspServer::cancel_handle(&self) -> tst_rtp::cancel::RtspServerCancelHandle
 pub fn tst_rtp::rtsp::server::RtspServer::local_addr(&self) -> core::option::Option<core::net::socket_addr::SocketAddr>
+pub fn tst_rtp::rtsp::server::RtspServer::next_publisher(&self, core::time::Duration) -> core::result::Result<core::option::Option<tst_rtp::PublishMountHandle>, tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::RtspServer::start(&self) -> core::result::Result<(), tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::RtspServer::stats(&self) -> tst_rtp::rtsp::server::ServerStats
 pub fn tst_rtp::rtsp::server::RtspServer::stop(&self) -> core::result::Result<(), tst_rtp::error::RtspServerError>
@@ -3039,6 +3042,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::server::RtspServ
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::server::RtspServer
 pub struct tst_rtp::RtspServerBuilder
 impl tst_rtp::builder::RtspServerBuilder
+pub fn tst_rtp::builder::RtspServerBuilder::accept_unregistered_publishers(&mut self, bool) -> &mut Self
 pub fn tst_rtp::builder::RtspServerBuilder::auth_basic(&mut self, &str, &str, secrecy::SecretString) -> &mut Self
 pub fn tst_rtp::builder::RtspServerBuilder::auth_digest_md5(&mut self, &str, &str, secrecy::SecretString) -> &mut Self
 pub fn tst_rtp::builder::RtspServerBuilder::auth_digest_sha256(&mut self, &str, &str, secrecy::SecretString) -> &mut Self

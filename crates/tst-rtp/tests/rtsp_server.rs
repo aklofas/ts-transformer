@@ -65,6 +65,8 @@ mod publish_lifecycle;
 mod publish_mp2t_interleaved;
 #[path = "rtsp_server/publish/mp2t_udp.rs"]
 mod publish_mp2t_udp;
+#[path = "rtsp_server/publish/on_demand.rs"]
+mod publish_on_demand;
 #[path = "rtsp_server/publish/republish.rs"]
 mod publish_republish;
 #[path = "rtsp_server/publish/rtsps_record.rs"]

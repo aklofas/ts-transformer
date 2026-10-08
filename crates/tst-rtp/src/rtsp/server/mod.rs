@@ -28,6 +28,15 @@ use crate::cancel::RtspServerCancelHandle;
 use crate::error::RtspServerError;
 use crate::url::RtspScheme;
 
+/// Bound of the on-demand publish-mount queue (see
+/// [`RtspServerBuilder::accept_unregistered_publishers`]): handles created
+/// by ANNOUNCE and not yet taken by [`RtspServer::next_publisher`]. An
+/// ANNOUNCE that would create one more answers `503`.
+pub(crate) const PUBLISH_QUEUE_BOUND: usize = 64;
+
+/// Queue item: a publish mount an ANNOUNCE created on demand.
+type PublishQueueItem = Arc<crate::rtsp::server::publish::mount::PublishMountState>;
+
 /// Internal server state shared between the listener task, per-session
 /// tasks, and mount handles. `Arc<ServerState>` lives as long as any
 /// task references it; cloning is cheap.
@@ -83,6 +92,14 @@ pub(crate) struct ServerState {
     /// errors instead of log-only silent death.
     pub(crate) startup_tx:
         std::sync::Mutex<Option<std::sync::mpsc::Sender<Result<SocketAddr, RtspServerError>>>>,
+    /// Producer side of the on-demand publish-mount queue, bounded at
+    /// [`PUBLISH_QUEUE_BOUND`]. The ANNOUNCE handler `try_send`s a mount
+    /// it creates while holding the `mounts` lock (lock order: `mounts`,
+    /// then this). `stop()` takes it, so a parked
+    /// [`RtspServer::next_publisher`] wakes with `Shutdown` and a later
+    /// on-demand ANNOUNCE answers `503`.
+    pub(crate) publish_queue_tx:
+        std::sync::Mutex<Option<std::sync::mpsc::SyncSender<PublishQueueItem>>>,
 }
 
 /// Lightweight per-session record kept on [`ServerState::sessions`] for
@@ -170,6 +187,9 @@ pub(crate) fn unregister_session(state: &Arc<ServerState>, entry: &Arc<ActiveSes
 pub struct RtspServer {
     pub(crate) state: Arc<ServerState>,
     pub(crate) runtime: Option<Runtime>,
+    /// Consumer side of the on-demand publish-mount queue, read by
+    /// [`Self::next_publisher`].
+    publish_queue_rx: std::sync::Mutex<std::sync::mpsc::Receiver<PublishQueueItem>>,
 }
 
 impl std::fmt::Debug for RtspServer {
@@ -195,7 +215,7 @@ impl std::fmt::Debug for RtspServer {
 /// `add_publish_mount`: must start with `/` and avoid the URL-reserved
 /// characters that would make the `extract_mount_path` lookup in
 /// `handlers.rs` ambiguous.
-fn validate_mount_path(path: &str) -> Result<(), RtspServerError> {
+pub(crate) fn validate_mount_path(path: &str) -> Result<(), RtspServerError> {
     if path.is_empty() || !path.starts_with('/') {
         return Err(RtspServerError::InvalidMountPath {
             detail: format!("path must start with '/'; got '{path}'"),
@@ -295,7 +315,29 @@ pub(crate) fn test_state() -> Arc<ServerState> {
         #[cfg(feature = "rtsp-server-tls")]
         tls_config: std::sync::Mutex::new(None),
         startup_tx: std::sync::Mutex::new(None),
+        publish_queue_tx: std::sync::Mutex::new(None),
     })
+}
+
+/// Test-only `ServerState` with `accept_unregistered_publishers` set to
+/// `accept` and a live on-demand queue; returns the queue's receiver.
+#[cfg(test)]
+pub(crate) fn test_state_on_demand(
+    accept: bool,
+) -> (
+    Arc<ServerState>,
+    std::sync::mpsc::Receiver<PublishQueueItem>,
+) {
+    let mut builder = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+    builder.accept_unregistered_publishers(accept);
+    let (tx, rx) = std::sync::mpsc::sync_channel(PUBLISH_QUEUE_BOUND);
+    let st = test_state();
+    let st = Arc::new(ServerState {
+        builder,
+        publish_queue_tx: std::sync::Mutex::new(Some(tx)),
+        ..Arc::try_unwrap(st).ok().expect("fresh test state")
+    });
+    (st, rx)
 }
 
 /// Shared test-only one-program H.264 `MuxerConfig` — the config a local
@@ -321,6 +363,8 @@ impl RtspServer {
             .thread_name("tst-rtp-server")
             .build()
             .map_err(|e| RtspServerError::Io(e.kind()))?;
+        let (publish_queue_tx, publish_queue_rx) =
+            std::sync::mpsc::sync_channel(PUBLISH_QUEUE_BOUND);
         let state = Arc::new(ServerState {
             builder: b,
             cancel_token: CancellationToken::new(),
@@ -337,10 +381,12 @@ impl RtspServer {
             #[cfg(feature = "rtsp-server-tls")]
             tls_config: std::sync::Mutex::new(None),
             startup_tx: std::sync::Mutex::new(None),
+            publish_queue_tx: std::sync::Mutex::new(Some(publish_queue_tx)),
         });
         Ok(Self {
             state,
             runtime: Some(runtime),
+            publish_queue_rx: std::sync::Mutex::new(publish_queue_rx),
         })
     }
 
@@ -431,6 +477,40 @@ impl RtspServer {
             crate::rtsp::server::mount::MountEntry::Publish(st.clone()),
         );
         Ok(crate::rtsp::server::publish::PublishMountHandle { state: st })
+    }
+
+    /// Wait up to `timeout` for the next publish mount an ANNOUNCE created
+    /// on demand (see
+    /// [`RtspServerBuilder::accept_unregistered_publishers`]). Mounts come
+    /// out in the order their ANNOUNCEs created them; the announcing
+    /// publisher already holds each one's publisher slot. Returns
+    /// `Ok(None)` when none arrived in time, and always does when the flag
+    /// is off.
+    ///
+    /// Concurrent callers are served one at a time, each mount to exactly
+    /// one of them.
+    ///
+    /// # Errors
+    /// - [`RtspServerError::Shutdown`] — the server was stopped, including
+    ///   while this call waited.
+    pub fn next_publisher(
+        &self,
+        timeout: Duration,
+    ) -> Result<Option<crate::rtsp::server::publish::PublishMountHandle>, RtspServerError> {
+        if self.state.shutdown.load(Ordering::Acquire) {
+            return Err(RtspServerError::Shutdown);
+        }
+        let rx = self
+            .publish_queue_rx
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        match rx.recv_timeout(timeout) {
+            Ok(state) => Ok(Some(crate::rtsp::server::publish::PublishMountHandle {
+                state,
+            })),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Ok(None),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(RtspServerError::Shutdown),
+        }
     }
 
     /// Register a multicast mount. The provided `group_url` is an
@@ -674,7 +754,9 @@ impl RtspServer {
     /// Every publish mount's application transport (see
     /// [`crate::rtsp::server::publish::PublishMountHandle::into_recv_transport`])
     /// is then ended: a parked or later `recv_bytes` on it returns
-    /// `TransportError::Closed`.
+    /// `TransportError::Closed`. A [`Self::next_publisher`] call waiting
+    /// on another thread wakes with [`RtspServerError::Shutdown`], and an
+    /// ANNOUNCE that would create an on-demand mount answers `503`.
     ///
     /// # Errors
     /// - [`RtspServerError::NotStarted`] if called before `start()`.
@@ -682,6 +764,16 @@ impl RtspServer {
         if !self.state.started.load(Ordering::Relaxed) {
             return Err(RtspServerError::NotStarted);
         }
+        // Close the on-demand queue first (idempotent): dropping its only
+        // sender wakes a parked `next_publisher` with `Disconnected` →
+        // `Shutdown`, and an on-demand ANNOUNCE racing the rest of `stop()`
+        // finds no sender and answers 503 instead of creating a mount the
+        // publish-mount close below would miss.
+        self.state
+            .publish_queue_tx
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
         if self.state.shutdown.swap(true, Ordering::AcqRel) {
             // Idempotent: already shut down.
             return Ok(());
