@@ -214,7 +214,9 @@ public final class RtspServer extends NativeHandle {
      * null}); the {@link PublishMount} stays usable for {@code stats()}. A local
      * mount's {@link MountHandle} keeps accepting pushes that reach nobody. This is
      * also how idle on-demand mounts are removed: they stay registered after their
-     * publisher leaves. Blocks for the Notice writes (at most 1 s per session).
+     * publisher leaves. Blocks for the Notice writes (at most 1 s per session), and
+     * other calls on this server object wait behind it meanwhile, as they do behind
+     * {@link #stop()}.
      *
      * @throws RtspException {@code MOUNT} when no mount is registered at {@code
      *     path}; {@code SERVER} if the server is stopped
