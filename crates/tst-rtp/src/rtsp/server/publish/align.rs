@@ -43,10 +43,12 @@
 //! from the PTS of whatever is pushed) ahead of every video frame still to
 //! come, so a PCR-slaved player shows those frames late. Placed units
 //! leave in arrival order, so emission into the muxer stays in order.
-//! They share the hold budgets with the units still waiting for
-//! alignment, and a placed unit the video has not reached
-//! [`ALIGN_FALLBACK`] after its placement is dropped and counted: the
-//! wait is bounded, but generous next to any real encoder latency.
+//! The KLV PID's PTS can therefore step backwards (after a KLV restart
+//! while units are waiting, or a backward report step), but it never
+//! runs ahead of the muxed video. Placed units share the hold budgets
+//! with the units still waiting for alignment, and a placed unit the
+//! video has not reached [`PLACED_WAIT_MAX`] after its placement is
+//! dropped and counted.
 //! [`Aligner::drain`] releases every placed unit regardless.
 
 use std::collections::VecDeque;
@@ -59,6 +61,17 @@ use crate::rtcp::SenderReport;
 /// How long [`Aligner`] waits, from the oldest held KLV unit, for sender
 /// reports on both tracks before falling back to first-packet coincidence.
 pub(crate) const ALIGN_FALLBACK: Duration = Duration::from_secs(2);
+
+/// How long a placed KLV unit waits for the video pushed into the muxer
+/// to reach its PTS before it is dropped and counted. Separate from
+/// [`ALIGN_FALLBACK`] and much longer: a KLV clock that disagrees with
+/// the video clock by seconds (GPS-stamped KLV, encoder-clocked video) or
+/// an encoder chain with seconds of latency puts KLV that far ahead, and
+/// must not lose all its metadata. Memory stays bounded by
+/// [`ALIGN_HOLD_MAX_UNITS`] and [`ALIGN_HOLD_MAX_BYTES`], and the PCR
+/// guarantee is unchanged: a unit still leaves only once the video has
+/// reached it (or is dropped).
+pub(crate) const PLACED_WAIT_MAX: Duration = Duration::from_secs(10);
 
 /// Maximum number of KLV units [`Aligner`] holds, waiting for alignment
 /// and placed but waiting for the video together. Bounded, drop-oldest —
@@ -193,7 +206,7 @@ pub(crate) struct Aligner {
     video_pts_max: Option<i64>,
     /// Placed units waiting for the video to reach them, in arrival order.
     /// Shares [`ALIGN_HOLD_MAX_UNITS`] and [`ALIGN_HOLD_MAX_BYTES`] with
-    /// `hold`; each waits at most [`ALIGN_FALLBACK`] from its placement.
+    /// `hold`; each waits at most [`PLACED_WAIT_MAX`] from its placement.
     placed: VecDeque<Placed>,
     /// Sum of `placed`'s payload lengths.
     placed_bytes: usize,
@@ -480,12 +493,12 @@ impl Aligner {
     /// Pop placed units from the front while the video pushed into the
     /// muxer has reached them. A front unit it has not reached waits
     /// (everything behind it too, keeping arrival order) until it is
-    /// [`ALIGN_FALLBACK`] old, then is dropped and counted.
+    /// [`PLACED_WAIT_MAX`] old, then is dropped and counted.
     fn take_due(&mut self, now: Instant) -> Vec<(KlvUnit, i64)> {
         let mut due = Vec::new();
         while let Some(p) = self.placed.front() {
             let reached = self.video_reach.is_some_and(|r| p.pts <= r);
-            if !reached && now.saturating_duration_since(p.at) < ALIGN_FALLBACK {
+            if !reached && now.saturating_duration_since(p.at) < PLACED_WAIT_MAX {
                 break;
             }
             let p = self.placed.pop_front().expect("front exists");
@@ -1020,15 +1033,18 @@ mod tests {
         let t0 = Instant::now();
         a.on_video_muxed(0);
         assert!(a.on_klv_unit(unit(45_000), t0).is_empty());
+        // Waiting past the 2 s alignment fallback is not an age-out: a KLV
+        // clock seconds ahead of the video keeps its metadata.
+        assert!(a.poll(t0 + ALIGN_FALLBACK).is_empty());
         assert!(
-            a.poll(t0 + ALIGN_FALLBACK - Duration::from_millis(1))
+            a.poll(t0 + PLACED_WAIT_MAX - Duration::from_millis(1))
                 .is_empty()
         );
         assert_eq!(a.dropped(), 0, "slow video alone does not drop it");
-        assert!(a.poll(t0 + ALIGN_FALLBACK).is_empty());
+        assert!(a.poll(t0 + PLACED_WAIT_MAX).is_empty());
         assert_eq!(a.dropped(), 1, "aged out and counted");
         a.on_video_muxed(90_000);
-        assert!(a.poll(t0 + ALIGN_FALLBACK).is_empty(), "gone");
+        assert!(a.poll(t0 + PLACED_WAIT_MAX).is_empty(), "gone");
     }
 
     #[test]

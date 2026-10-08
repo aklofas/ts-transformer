@@ -318,9 +318,10 @@ fn klv_falls_back_to_provisional_alignment_without_sender_reports() {
 /// where the video line is at the restart: before and after, every unit
 /// lands on its AU's PTS, and none is dropped.
 ///
-/// The `Pending` check after the restart assumes the server handles the
-/// new source's first unit within two seconds of the check; a runner
-/// stalled longer would engage the fallback first and fail it.
+/// The `Pending` check after the restart cannot be overtaken by the
+/// fallback: it engages only when a packet arrives, and none is sent
+/// before the check. A stalled runner can only miss the 5 s stats
+/// deadline.
 #[test]
 fn a_klv_source_restart_under_provisional_alignment_stays_on_the_video_line() {
     const NEW_KLV_SSRC: u32 = 0x3333_0003;

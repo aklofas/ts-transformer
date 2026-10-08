@@ -37,8 +37,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `RtspServer::stop` wakes a waiting `next_publisher` with `Shutdown`.
 - `RtspServer::remove_mount(path)` removes a mount of any kind and frees
   the path. Like `stop()` and dropping the server, it blocks the calling
-  thread and must not be called from inside a tokio runtime. Every session that has completed a SETUP on it, reader or
-  publisher, gets the Notice 5402 ANNOUNCE and is closed; a publish
+  thread and must not be called from inside a tokio runtime. Every
+  session that has completed a SETUP on it, reader or publisher, gets
+  the Notice 5402 ANNOUNCE and is closed; a publish
   mount's application transport then reads `Closed`. A publisher between
   ANNOUNCE and its first SETUP gets no Notice, loses its slot and is
   refused at SETUP (`404`, or `455`/`461` if a publish/local mount was
@@ -69,7 +70,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   2 s without them; `NotApplicable` for MP2T and video-only publishers).
   A placed KLV unit is muxed once the video has reached its PTS, so KLV
   stamped ahead of the video never drags the PCR ahead of the video
-  frames still to come; one the video has not reached 2 s after it was
+  frames still to come; one the video has not reached 10 s after it was
   placed is dropped and counted. Other track mixes answer `415`.
 - An SSRC change on an elementary publisher's video or KLV track (a
   source restart) restarts that track's depacketizer and KLV alignment:
