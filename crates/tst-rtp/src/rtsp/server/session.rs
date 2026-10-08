@@ -373,92 +373,89 @@ where
         };
         buf.extend_from_slice(&chunk[..n]);
 
-        // Publisher direction (RFC 2326 §10.12 interleaving): once a
-        // mode=record SETUP exists on this session, the stream may carry
-        // `$<ch><len>` frames between (and pipelined around) RTSP
-        // requests. Drain every complete frame at the buffer head before
-        // the RTSP framing below ever sees it — the 64 KiB unterminated-
-        // header cap must never fire on a `$`-headed buffer. An
-        // incomplete frame waits for the next read (`continue 'serve`
-        // skips straight back to the read above, bypassing the RTSP
-        // parse entirely for this iteration). Frames on unknown channels
-        // are counted and dropped (publisher bug or probe), never fatal.
-        if let Some(publish) = session.publish.as_ref() {
-            while buf.first() == Some(&b'$') {
-                match crate::rtsp::framing::parse_binary_frame_header(&buf) {
-                    None => break, // need more bytes
-                    Some((ch, total_len)) => {
-                        let payload = &buf[4..total_len];
-                        match publish.track_for_channel(ch) {
-                            Some((track, false)) => {
-                                publish
-                                    .adapter
-                                    .lock()
-                                    .unwrap_or_else(|e| e.into_inner())
-                                    .on_rtp(track, payload);
-                                publish
-                                    .last_media_ms
-                                    .store(PublishSession::now_ms(), Ordering::Relaxed);
-                            }
-                            Some((track, true)) => publish
+        // Process the buffer head until neither an interleaved frame nor
+        // a complete RTSP request can be taken from it. One loop, because
+        // the two interleave freely on a publisher's connection (RFC 2326
+        // §10.12): `[REQ][$frame][REQ]` can land in one read, and the
+        // frame between the requests must be drained before the second
+        // request is framed.
+        //
+        // - Publisher direction: once ANNOUNCE has put the session in
+        //   the publisher role, a `$`-headed buffer is an interleaved
+        //   frame. A complete one is routed to its track (unknown channels
+        //   are counted and dropped, never fatal) and the loop goes round
+        //   again; a partial one waits for the next read. The RTSP framing
+        //   below — and its 64 KiB unterminated-header cap — never sees a
+        //   `$`-headed buffer on a publisher session, so binary payload
+        //   (which may well contain `\r\n\r\n`) is never parsed as a
+        //   request.
+        //
+        // - RTSP direction: body-aware cap, coherent with the client
+        //   `send_and_read` loop and both interleaved pumps (all share
+        //   `rtsp_frame_decision` + the same MAX_RTSP_MESSAGE_BYTES /
+        //   MAX_RTSP_BODY_BYTES constants). A blanket "buf.len() > 64 KiB
+        //   → 413" cap would wrongly reject a valid request whose body
+        //   legitimately runs up to MAX_RTSP_BODY_BYTES (1 MiB). Instead:
+        //
+        //   Before the terminator (no CRLFCRLF yet): 413 only once the
+        //     *headers* exceed MAX_RTSP_MESSAGE_BYTES (64 KiB) — preserves
+        //     the unterminated-header DoS bound.
+        //   After the terminator (CRLFCRLF seen): parse the declared
+        //     Content-Length up front. An over-cap (> 1 MiB) / malformed /
+        //     duplicate value is a 413 NOW (don't read toward EOF). A
+        //     legitimate body up to 1 MiB is awaited in full; the exact
+        //     header + 4 + content_length ceiling bounds a peer dribbling
+        //     past its declared body.
+        //
+        //   The cap is checked on every pass, so an oversized pipelined
+        //   request whose entirety already arrived behind a good one gets
+        //   its 413 immediately rather than waiting on another socket read
+        //   (or the idle timeout) that may never come. A complete frame
+        //   that does not parse is answered — 501 for a method we don't
+        //   implement, 400 otherwise — and DRAINED, so a `SET_PARAMETER`
+        //   never wedges every request queued behind it until the idle
+        //   timeout. `NeedMore` loops back to read more (bounded: header
+        //   ≤ 64 KiB, body ≤ 1 MiB).
+        loop {
+            if let Some(publish) = session.publish.as_ref() {
+                if buf.first() == Some(&b'$') {
+                    let Some((ch, total_len)) =
+                        crate::rtsp::framing::parse_binary_frame_header(&buf)
+                    else {
+                        break; // partial frame: read more
+                    };
+                    let payload = &buf[4..total_len];
+                    match publish.track_for_channel(ch) {
+                        Some((track, false)) => {
+                            publish
                                 .adapter
                                 .lock()
                                 .unwrap_or_else(|e| e.into_inner())
-                                .on_rtcp(track, payload),
-                            None => publish.mount.tick(|s| s.malformed_packets += 1),
+                                .on_rtp(track, payload);
+                            publish
+                                .last_media_ms
+                                .store(PublishSession::now_ms(), Ordering::Relaxed);
                         }
-                        buf.drain(..total_len);
+                        Some((track, true)) => publish
+                            .adapter
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .on_rtcp(track, payload),
+                        None => publish.mount.tick(|s| s.malformed_packets += 1),
                     }
+                    buf.drain(..total_len);
+                    continue;
                 }
             }
-            if buf.first() == Some(&b'$') {
-                continue 'serve; // partial frame, read more
+
+            if reject_if_over_cap(&buf, peer, &write_half).await {
+                return Ok(());
             }
-        }
-
-        // Body-aware cap, coherent with the client `send_and_read` loop and
-        // both interleaved pumps (all four share `rtsp_frame_decision` + the
-        // same MAX_RTSP_MESSAGE_BYTES / MAX_RTSP_BODY_BYTES constants). A
-        // blanket "buf.len() > 64 KiB → 413" cap would wrongly reject a
-        // valid request whose body legitimately runs up to MAX_RTSP_BODY_BYTES
-        // (1 MiB). Instead:
-        //
-        //   Before the terminator (no CRLFCRLF yet): 413 only once the *headers* exceed
-        //     MAX_RTSP_MESSAGE_BYTES (64 KiB) — preserves the unterminated-
-        //     header DoS bound.
-        //   After the terminator (CRLFCRLF seen): parse the declared Content-Length up
-        //     front. An over-cap (> 1 MiB) / malformed / duplicate value is a
-        //     413 NOW (don't read toward EOF). A legitimate body up to 1 MiB is
-        //     awaited in full; the exact header + 4 + content_length ceiling
-        //     bounds a peer dribbling past its declared body.
-        //
-        // The decision is applied to the buffer head (`rtsp_frame_decision`
-        // assumes a buffer beginning with an RTSP message); pipelined requests
-        // are drained one at a time by the inner parse loop below, so the head
-        // is always either an in-progress request or empty.
-        //
-        // NeedMore / Complete fall through to parse complete request(s) below:
-        // a complete request is parsed + drained; NeedMore loops back to read
-        // more (bounded: header ≤ 64 KiB, body ≤ 1 MiB).
-        if reject_if_over_cap(&buf, peer, &write_half).await {
-            return Ok(());
-        }
-
-        // Parse complete request(s). Framing is decided FIRST: a
-        // frame that is complete but does not parse is answered — 501 for a
-        // method we don't implement, 400 otherwise — and DRAINED, so a
-        // `SET_PARAMETER` never wedges every request queued behind it
-        // until the idle timeout. An incomplete frame loops back to read.
-        // `while let`, not `loop { match … }`: every non-`Complete` framing
-        // outcome means "stop draining"; `NeedMore` then loops back to read
-        // more, while `HeadersTooLong` / `BadContentLength` on a pipelined
-        // head is caught by the `reject_if_over_cap` call right after this
-        // loop, so an already-buffered oversized second request gets its
-        // 413 immediately rather than waiting on another socket read (or
-        // the idle timeout) that may never come.
-        while let RtspFraming::Complete { total_len } =
-            crate::rtsp::message::rtsp_frame_decision(&buf)
-        {
+            let RtspFraming::Complete { total_len } =
+                crate::rtsp::message::rtsp_frame_decision(&buf)
+            else {
+                break; // NeedMore (empty buffer included): read more
+            };
             let (req, consumed) = match RtspRequest::parse(&buf[..total_len]) {
                 Ok(t) => t,
                 Err(e) => {
@@ -581,17 +578,6 @@ where
                 let _ = guard.shutdown().await;
                 return Ok(());
             }
-        }
-
-        // The drain loop above stops at the first non-`Complete` framing
-        // outcome. If that's a cap violation on the new buffer head (a
-        // pipelined request whose entirety already arrived in this read,
-        // e.g. reqA + an oversized reqB in one packet), answer 413 now
-        // instead of waiting for another socket read — which, for a
-        // client that has moved on to awaiting reqA's response, may not
-        // come until the idle timeout.
-        if reject_if_over_cap(&buf, peer, &write_half).await {
-            return Ok(());
         }
     }
     // Stop the fanout BEFORE shutting the write half so no RTP frame STARTS
@@ -1286,21 +1272,41 @@ mod session_tests {
     /// so this never has to tell a frame apart from a response — see the
     /// module doc on the `$` arm this test file exercises.
     async fn read_response(c: &mut TcpStream) -> String {
-        let mut buf = Vec::new();
-        let mut chunk = [0u8; 4096];
-        loop {
-            let n = c.read(&mut chunk).await.unwrap();
-            assert!(n > 0, "connection closed before a complete response");
-            buf.extend_from_slice(&chunk[..n]);
-            if buf.windows(4).any(|w| w == b"\r\n\r\n") {
-                break;
+        read_responses(c, 1).await
+    }
+
+    /// Read from `c` until `count` response heads (`CRLFCRLF`
+    /// terminators) have arrived, bounded at 5 s so a server that never
+    /// answers fails the test instead of hanging it. The responses these
+    /// tests provoke carry no body, so counting terminators counts
+    /// responses.
+    async fn read_responses(c: &mut TcpStream, count: usize) -> String {
+        let read = async {
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 4096];
+            loop {
+                let n = c.read(&mut chunk).await.unwrap();
+                assert!(n > 0, "connection closed before a complete response");
+                buf.extend_from_slice(&chunk[..n]);
+                if buf.windows(4).filter(|w| *w == b"\r\n\r\n").count() >= count {
+                    break;
+                }
             }
-        }
-        String::from_utf8_lossy(&buf).into_owned()
+            String::from_utf8_lossy(&buf).into_owned()
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(5), read)
+            .await
+            .expect("server answered within 5 s")
     }
 
     async fn write_and_read(c: &mut TcpStream, req: &str) -> String {
-        c.write_all(req.as_bytes()).await.unwrap();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            c.write_all(req.as_bytes()),
+        )
+        .await
+        .expect("request written within 5 s")
+        .unwrap();
         read_response(c).await
     }
 
@@ -1362,7 +1368,7 @@ mod session_tests {
     /// One RTP packet (PT 33, the MP2T adapter's expected PT for
     /// `SDP_MP2T`'s `m=video 0 RTP/AVP 33`) carrying `n` TS packets as
     /// its payload. Same shape as `publish::mount::tests::rtp_mp2t`
-    /// (private to that module, so re-declared here per the task brief).
+    /// (private to that module, so re-declared here).
     fn rtp_mp2t_packet(n: usize) -> Vec<u8> {
         let mut v = vec![0x80u8, 33, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1];
         for _ in 0..n {
@@ -1515,5 +1521,117 @@ mod session_tests {
         .unwrap();
         assert_eq!(got, rtp[12..].to_vec());
         assert_eq!(mount.stats_snapshot().rtp_packets_received, 1);
+    }
+
+    /// Take one payload from the application transport on a blocking
+    /// thread, bounded by a 5 s recv timeout so a frame that never
+    /// arrives fails the test instead of hanging it.
+    async fn app_recv(mut app: crate::transport::RtpRecvTransport) -> Vec<u8> {
+        use tst_core::transport::RecvTransport;
+        tokio::task::spawn_blocking(move || {
+            app.set_recv_timeout(Some(std::time::Duration::from_secs(5)));
+            let mut buf = vec![0u8; 4096];
+            let n = app.recv_bytes(&mut buf).expect("a frame reached the app");
+            buf.truncate(n);
+            buf
+        })
+        .await
+        .unwrap()
+    }
+
+    fn take_app(
+        mount: &Arc<publish::mount::PublishMountState>,
+    ) -> crate::transport::RtpRecvTransport {
+        publish::mount::PublishMountHandle {
+            state: mount.clone(),
+        }
+        .into_recv_transport()
+        .unwrap()
+    }
+
+    /// `[OPTIONS][$frame][OPTIONS]` in one write: the frame between the
+    /// two requests is drained before the second request is framed, so
+    /// both requests are answered 200 and the frame is delivered.
+    #[tokio::test]
+    async fn frame_pipelined_between_two_requests_is_delivered_and_both_answered() {
+        let (server, mount) = state_with_publish_mount_and_listener().await;
+        let app = take_app(&mount);
+        let mut c = connect(&server).await;
+        let (sid, (rtp_ch, _)) = announce_setup_record(&mut c).await;
+
+        let rtp = rtp_mp2t_packet(2);
+        let mut wire =
+            format!("OPTIONS rtsp://h/pub RTSP/1.0\r\nCSeq: 5\r\nSession: {sid}\r\n\r\n")
+                .into_bytes();
+        wire.extend(frame(rtp_ch, &rtp));
+        wire.extend_from_slice(
+            format!("OPTIONS rtsp://h/pub RTSP/1.0\r\nCSeq: 6\r\nSession: {sid}\r\n\r\n")
+                .as_bytes(),
+        );
+        c.write_all(&wire).await.unwrap();
+        let r = read_responses(&mut c, 2).await;
+        let statuses: Vec<&str> = r.lines().filter(|l| l.starts_with("RTSP/1.0 ")).collect();
+        assert_eq!(statuses, ["RTSP/1.0 200 OK", "RTSP/1.0 200 OK"], "{r}");
+        assert!(r.to_ascii_lowercase().contains("cseq: 5"), "{r}");
+        assert!(r.to_ascii_lowercase().contains("cseq: 6"), "{r}");
+        assert_eq!(app_recv(app).await, rtp[12..].to_vec());
+        assert_eq!(mount.stats_snapshot().rtp_packets_received, 1);
+    }
+
+    /// `[RECORD][$frame]` in one write, then silence: the frame behind
+    /// the request is routed in the same pass, not left in the buffer
+    /// until a next read that never comes.
+    #[tokio::test]
+    async fn frame_behind_record_is_delivered_without_a_further_read() {
+        let (server, mount) = state_with_publish_mount_and_listener().await;
+        let app = take_app(&mount);
+        let mut c = connect(&server).await;
+        write_and_read(&mut c, &announce_request("/pub", SDP_MP2T)).await;
+        let r = write_and_read(&mut c, &setup_record_request(3)).await;
+        assert!(r.starts_with("RTSP/1.0 200"), "SETUP: {r}");
+        let sid = session_id_of(&r);
+        let (rtp_ch, _) = interleaved_pair_of(&r);
+
+        let rtp = rtp_mp2t_packet(1);
+        let mut wire = format!("RECORD rtsp://h/pub RTSP/1.0\r\nCSeq: 4\r\nSession: {sid}\r\n\r\n")
+            .into_bytes();
+        wire.extend(frame(rtp_ch, &rtp));
+        c.write_all(&wire).await.unwrap();
+        let r = read_response(&mut c).await;
+        assert!(r.starts_with("RTSP/1.0 200"), "RECORD: {r}");
+        assert_eq!(app_recv(app).await, rtp[12..].to_vec());
+    }
+
+    /// A frame whose binary payload contains `\r\n\r\n` (and bytes that
+    /// are not UTF-8) positioned right after a request is routed as a
+    /// frame: no 400, no 413, and the connection stays framed for the
+    /// next request.
+    #[tokio::test]
+    async fn frame_payload_with_crlfcrlf_after_a_request_is_not_parsed_as_rtsp() {
+        let (server, mount) = state_with_publish_mount_and_listener().await;
+        let app = take_app(&mount);
+        let mut c = connect(&server).await;
+        let (sid, (rtp_ch, _)) = announce_setup_record(&mut c).await;
+
+        let mut rtp = rtp_mp2t_packet(1);
+        // Inside the TS packet body (after the 0x47 sync byte): a
+        // non-UTF-8 byte run, then the RTSP header terminator.
+        rtp[12 + 10..12 + 16].copy_from_slice(&[0xFF, 0xFE, b'\r', b'\n', b'\r', b'\n']);
+        let mut wire =
+            format!("OPTIONS rtsp://h/pub RTSP/1.0\r\nCSeq: 5\r\nSession: {sid}\r\n\r\n")
+                .into_bytes();
+        wire.extend(frame(rtp_ch, &rtp));
+        c.write_all(&wire).await.unwrap();
+        let r = read_response(&mut c).await;
+        assert!(r.starts_with("RTSP/1.0 200"), "OPTIONS: {r}");
+        assert_eq!(app_recv(app).await, rtp[12..].to_vec());
+
+        let r = write_and_read(
+            &mut c,
+            &format!("OPTIONS rtsp://h/pub RTSP/1.0\r\nCSeq: 6\r\nSession: {sid}\r\n\r\n"),
+        )
+        .await;
+        assert!(r.starts_with("RTSP/1.0 200"), "follow-up OPTIONS: {r}");
+        assert_eq!(mount.stats_snapshot().malformed_packets, 0);
     }
 }
