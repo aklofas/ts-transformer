@@ -87,9 +87,21 @@ const RTCP_PT_SR: u8 = 200;
 struct KlvTrack {
     index: usize,
     payload_type: u8,
+    /// The KLV track's current SSRC (see [`latch_ssrc`]).
+    ssrc: Option<u32>,
     depay: KlvDepacketizer,
     /// `depay.stats().units_dropped` already folded into the mount stats.
     dropped_seen: u64,
+}
+
+/// Latch `ssrc` as a track's current source. Returns `true` when it
+/// replaces a different one: a source restart. The first SSRC a track
+/// sees, from an RTP packet or a sender report (ffmpeg sends its first
+/// report before any media), latches without counting.
+fn latch_ssrc(current: &mut Option<u32>, ssrc: u32) -> bool {
+    let changed = current.is_some_and(|c| c != ssrc);
+    *current = Some(ssrc);
+    changed
 }
 
 /// Which announced track a packet's `track` index names.
@@ -104,6 +116,9 @@ pub(crate) struct EsAdapter {
     mount: Arc<PublishMountState>,
     video_index: usize,
     video_pt: u8,
+    /// The video track's current SSRC (see [`latch_ssrc`]); unlike
+    /// `ssrc`, it follows a source restart.
+    video_ssrc: Option<u32>,
     h264: H264Depacketizer,
     /// `h264.stats().aus_dropped` already folded into the mount stats.
     h264_dropped_seen: u64,
@@ -202,11 +217,13 @@ impl EsAdapter {
             mount,
             video_index: video.index,
             video_pt: video.payload_type,
+            video_ssrc: None,
             h264: H264Depacketizer::new(depay),
             h264_dropped_seen: 0,
             klv: klv.map(|t| KlvTrack {
                 index: t.index,
                 payload_type: t.payload_type,
+                ssrc: None,
                 depay: KlvDepacketizer::new(),
                 dropped_seen: 0,
             }),
@@ -439,14 +456,26 @@ impl PublishAdapter for EsAdapter {
             }
         };
         let payload = &packet[parsed.payload_offset..parsed.payload_end];
+        let ssrc = parsed.header.ssrc;
         match route {
             Route::Video => {
-                self.ssrc.get_or_insert(parsed.header.ssrc);
+                self.ssrc.get_or_insert(ssrc);
+                // A source restart: the depacketizer re-anchors on its own
+                // (keeping PTS monotonic); the aligner must forget the old
+                // source's clock before any of the new one's reports.
+                if latch_ssrc(&mut self.video_ssrc, ssrc) {
+                    self.aligner.on_video_source_change();
+                    self.mount.tick(|s| s.ssrc_changes += 1);
+                }
                 self.h264.feed(&parsed.header, payload);
                 self.drain_video();
             }
             Route::Klv => {
                 if let Some(k) = self.klv.as_mut() {
+                    if latch_ssrc(&mut k.ssrc, ssrc) {
+                        self.aligner.on_klv_source_change();
+                        self.mount.tick(|s| s.ssrc_changes += 1);
+                    }
                     k.depay.feed(&parsed.header, payload);
                 }
                 let now = (self.now)();
@@ -473,6 +502,27 @@ impl PublishAdapter for EsAdapter {
                 return;
             }
         };
+        // A report describes its sender's clock: only the track's current
+        // source may steer it. A report from any other SSRC (a restarted
+        // source whose first RTP packet has not arrived yet) is ignored.
+        let current = match self.route(track) {
+            Some(Route::Video) => &mut self.video_ssrc,
+            Some(Route::Klv) => match self.klv.as_mut() {
+                Some(k) => &mut k.ssrc,
+                None => return,
+            },
+            None => return,
+        };
+        if current.is_some_and(|c| c != sr.ssrc) {
+            tracing::debug!(
+                target: "tst_rtp::server::publish",
+                ssrc = sr.ssrc,
+                current = ?*current,
+                "RTCP sender report from a foreign SSRC; ignored"
+            );
+            return;
+        }
+        current.get_or_insert(sr.ssrc);
         match self.route(track) {
             Some(Route::Video) => self.aligner.on_video_sr(&sr),
             Some(Route::Klv) => self.aligner.on_klv_sr(&sr),
@@ -625,8 +675,11 @@ mod tests {
         payload::rtp(seq, ts, KLV_PT, true, body)
     }
     fn sr(ntp_secs: u64, ntp_frac: u32, rtp: u32) -> Vec<u8> {
+        sr_from(payload::SSRC, ntp_secs, ntp_frac, rtp)
+    }
+    fn sr_from(ssrc: u32, ntp_secs: u64, ntp_frac: u32, rtp: u32) -> Vec<u8> {
         SenderReport {
-            ssrc: payload::SSRC,
+            ssrc,
             ntp_timestamp: (ntp_secs << 32) | ntp_frac as u64,
             rtp_timestamp: rtp,
             sender_packet_count: 0,
@@ -635,6 +688,12 @@ mod tests {
         }
         .encode()
         .unwrap()
+    }
+
+    /// `pkt` re-stamped with `ssrc` (a restarted source).
+    fn with_ssrc(mut pkt: Vec<u8>, ssrc: u32) -> Vec<u8> {
+        pkt[8..12].copy_from_slice(&ssrc.to_be_bytes());
+        pkt
     }
 
     /// What the application side demuxed: video sample PTSs (pid 0x100)
@@ -972,6 +1031,91 @@ mod tests {
         a.flush();
         let s = mount.stats_snapshot();
         assert_eq!((s.klv_units_emitted, s.klv_units_dropped), (0, 3));
+    }
+
+    #[test]
+    fn a_klv_ssrc_change_drops_the_held_units_and_restarts_alignment() {
+        let mount = PublishMountState::new("/p", 8);
+        let mut t = app_transport(&mount);
+        let mut a = EsAdapter::new(mount.clone(), &video_track(), Some(&klv_track())).unwrap();
+        a.on_rtp(0, &payload::single(1, 1_000, 0x65, 400, VIDEO_PT));
+        a.on_rtp(0, &payload::single(2, 4_003, 0x41, 300, VIDEO_PT));
+        a.on_rtp(1, &klv_packet(1, 77_000, &klv_set(1)));
+        a.on_rtp(1, &klv_packet(2, 77_900, &klv_set(2)));
+        assert_eq!(mount.stats_snapshot().klv_units_dropped, 0, "held");
+        // The KLV payloader restarts: new SSRC, new random origin.
+        a.on_rtp(
+            1,
+            &with_ssrc(klv_packet(500, 3_000_000_000, &klv_set(3)), 0xBEEF),
+        );
+        a.on_rtp(
+            1,
+            &with_ssrc(klv_packet(501, 3_000_000_900, &klv_set(4)), 0xBEEF),
+        );
+        let s = mount.stats_snapshot();
+        assert_eq!(s.ssrc_changes, 1, "one change, however many packets follow");
+        assert_eq!(s.klv_units_dropped, 2, "the old source's held units");
+        assert_eq!(s.alignment, ClockAlignment::Pending);
+        // The fallback places the new source from its own first unit, at
+        // the video line's position at the restart (the P-frame, PTS
+        // 3 003), not at the line's start.
+        a.flush();
+        let d = demux_app(&mut t);
+        let rel: Vec<i64> = d
+            .klv
+            .iter()
+            .map(|(p, _)| p.as_ticks() - d.video[0].as_ticks())
+            .collect();
+        assert_eq!(rel, [3_003, 3_903]);
+        assert_eq!(mount.stats_snapshot().klv_units_emitted, 2);
+    }
+
+    #[test]
+    fn a_video_ssrc_change_is_counted_once() {
+        let mount = PublishMountState::new("/p", 8);
+        let mut a = EsAdapter::new(mount.clone(), &video_track(), None).unwrap();
+        a.on_rtp(0, &payload::single(1, 0, 0x65, 400, VIDEO_PT));
+        a.on_rtp(0, &payload::single(2, 3_003, 0x41, 300, VIDEO_PT));
+        for i in 0..3u16 {
+            let p = payload::single(
+                100 + i,
+                9_000_000 + 3_003 * u32::from(i),
+                0x41,
+                300,
+                VIDEO_PT,
+            );
+            a.on_rtp(0, &with_ssrc(p, 0xBEEF));
+        }
+        assert_eq!(mount.stats_snapshot().ssrc_changes, 1);
+    }
+
+    #[test]
+    fn a_sender_report_from_a_foreign_ssrc_is_ignored() {
+        // A new video source's report arriving before its first packet
+        // must not feed the current source's clock.
+        let mount = PublishMountState::new("/p", 8);
+        let mut t = app_transport(&mount);
+        let mut a = EsAdapter::new(mount.clone(), &video_track(), Some(&klv_track())).unwrap();
+        a.on_rtcp(0, &sr(100, 0, 180_000));
+        a.on_rtcp(1, &sr(100, 1 << 31, 500_000));
+        a.on_rtp(0, &payload::single(1, 90_000, 0x65, 400, VIDEO_PT));
+        a.on_rtp(1, &klv_packet(1, 500_000, &klv_set(1))); // PTS 135 000
+        // ntp 101.0 ↔ a new source's rtp 7 000 000: ignored.
+        a.on_rtcp(0, &sr_from(0xBEEF, 101, 0, 7_000_000));
+        // KLV 509 000 is 100 ms after the unit above: PTS 144 000.
+        a.on_rtp(1, &klv_packet(2, 509_000, &klv_set(2)));
+        a.flush();
+        let d = demux_app(&mut t);
+        let rel: Vec<i64> = d
+            .klv
+            .iter()
+            .map(|(p, _)| p.as_ticks() - d.video[0].as_ticks())
+            .collect();
+        assert_eq!(rel, [135_000, 144_000], "both on the original mapping");
+        let s = mount.stats_snapshot();
+        assert_eq!(s.alignment, ClockAlignment::SenderReport);
+        assert_eq!(s.alignment_steps, 0);
+        assert_eq!(s.ssrc_changes, 0);
     }
 
     #[test]

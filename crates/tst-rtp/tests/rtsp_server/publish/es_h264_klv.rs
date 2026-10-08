@@ -302,3 +302,105 @@ fn klv_falls_back_to_provisional_alignment_without_sender_reports() {
     assert_eq!(p.teardown("/pub"), 200);
     server.stop().ok();
 }
+
+/// The KLV payloader restarts mid-session under `Provisional` alignment
+/// (a new SSRC with a new random RTP origin) while video keeps flowing.
+/// The publisher sends one video AU and then one KLV unit every 100 ms,
+/// both tracks advancing [`H264_AU_STEP`] ticks per send, so first-packet
+/// coincidence puts every unit exactly on the PTS of the AU sent with it.
+/// The server counts one SSRC change, reads `Pending` until the fallback
+/// re-engages from the new source's first unit, and anchors that unit
+/// where the video line is at the restart: before and after, every unit
+/// lands on its AU's PTS, and none is dropped.
+///
+/// The `Pending` check after the restart assumes the server handles the
+/// new source's first unit within two seconds of the check; a runner
+/// stalled longer would engage the fallback first and fail it.
+#[test]
+fn a_klv_source_restart_under_provisional_alignment_stays_on_the_video_line() {
+    const NEW_KLV_SSRC: u32 = 0x3333_0003;
+    const NEW_KLV_TS0: u32 = 3_000_000_000;
+    let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+    let mount = server.add_publish_mount("/pub").unwrap();
+    server.start().unwrap();
+    let port = server.local_addr().unwrap().port();
+    let mut app_t = mount.clone().into_recv_transport().unwrap();
+    app_t.set_recv_timeout(Some(Duration::from_secs(2)));
+    let mut app = DemuxReceiver::new(app_t);
+
+    let (mut p, (v_rtp, _), (k_rtp, _)) = two_track_publisher(port);
+    // Whole AUs, in order: the payloader's packets grouped by timestamp.
+    let mut aus: Vec<Vec<Vec<u8>>> = Vec::new();
+    for pkt in h264_rtp_packets(200, VIDEO_PT, 7, VIDEO_SSRC, VIDEO_TS0) {
+        let au = ((u32::from_be_bytes(pkt[4..8].try_into().unwrap()) - VIDEO_TS0) / H264_AU_STEP)
+            as usize;
+        if aus.len() == au {
+            aus.push(Vec::new());
+        }
+        aus[au].push(pkt);
+    }
+    let mut aus = aus.into_iter().enumerate();
+    // `(AU index, unit bytes)` for every KLV unit sent.
+    let mut sent: Vec<(usize, Vec<u8>)> = Vec::new();
+    // One AU, then one KLV unit from `(ssrc, origin AU, origin ts)`.
+    let mut tick =
+        |p: &mut RawPublisher, sent: &mut Vec<(usize, Vec<u8>)>, src: (u32, usize, u32)| {
+            let (i, packets) = aus.next().expect("enough AUs for both phases");
+            for pkt in &packets {
+                p.send_frame(v_rtp, pkt);
+            }
+            let (ssrc, first_au, ts0) = src;
+            let unit = klv_unit(i as u32);
+            let ts = ts0.wrapping_add((i - first_au) as u32 * H264_AU_STEP);
+            p.send_frame(
+                k_rtp,
+                &klv_rtp_packet(900 + i as u16, ts, ssrc, KLV_PT, &unit),
+            );
+            sent.push((i, unit));
+            std::thread::sleep(Duration::from_millis(100));
+        };
+
+    // The first KLV source, until the fallback engages.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while mount.stats().alignment != ClockAlignment::Provisional {
+        assert!(Instant::now() < deadline, "never Provisional");
+        tick(&mut p, &mut sent, (KLV_SSRC, 0, KLV_TS0));
+    }
+    // The KLV payloader restarts.
+    let restart_au = sent.len();
+    tick(&mut p, &mut sent, (NEW_KLV_SSRC, restart_au, NEW_KLV_TS0));
+    let s = stats_when(&mount, Duration::from_secs(5), |s| s.ssrc_changes == 1);
+    assert_eq!(s.ssrc_changes, 1);
+    assert_eq!(s.alignment, ClockAlignment::Pending);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while mount.stats().alignment != ClockAlignment::Provisional {
+        assert!(
+            Instant::now() < deadline,
+            "never Provisional after the restart"
+        );
+        tick(&mut p, &mut sent, (NEW_KLV_SSRC, restart_au, NEW_KLV_TS0));
+    }
+    let total = sent.len() as u64;
+    let s = stats_when(&mount, Duration::from_secs(5), |s| {
+        s.klv_units_emitted == total
+    });
+    assert_eq!(s.klv_units_emitted, total, "every unit is released");
+    assert_eq!(s.klv_units_dropped, 0);
+    assert_eq!(s.ssrc_changes, 1);
+    assert_eq!(s.alignment, ClockAlignment::Provisional);
+
+    let events = demux_until_quiet(&mut app, Instant::now() + Duration::from_secs(20), "app");
+    let video = video_pts(&events);
+    let klv = klv_events(&events);
+    assert_eq!(klv.len(), sent.len(), "KLV units demuxed on PID 0x101");
+    for ((pts, payload), (au, unit)) in klv.iter().zip(&sent) {
+        assert_eq!(
+            pts - video[0],
+            *au as i64 * i64::from(H264_AU_STEP),
+            "KLV unit sent with AU {au} (restart at AU {restart_au})"
+        );
+        assert_eq!(payload, unit, "KLV unit sent with AU {au}");
+    }
+    assert_eq!(p.teardown("/pub"), 200);
+    server.stop().ok();
+}
