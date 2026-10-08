@@ -48,6 +48,10 @@ pub(crate) struct PublishTrack {
 /// from a successful ANNOUNCE until TEARDOWN or the session ends.
 pub(crate) struct PublishSession {
     pub(crate) mount: Arc<PublishMountState>,
+    /// Generation of the mount's publisher slot this session claimed at
+    /// ANNOUNCE; `handle_record` refuses once the mount no longer holds
+    /// it for this session (see `PublishMountState::holds_publisher`).
+    pub(crate) slot_generation: u64,
     /// Read in this module's own tests today; production reads it once
     /// stats reporting names the active shape.
     #[allow(dead_code)]
@@ -89,6 +93,7 @@ static MEDIA_CLOCK_EPOCH: LazyLock<Instant> = LazyLock::new(Instant::now);
 impl PublishSession {
     pub(crate) fn new(
         mount: Arc<PublishMountState>,
+        slot_generation: u64,
         announced: AnnounceShape,
         adapter: Box<dyn PublishAdapter>,
     ) -> Self {
@@ -104,6 +109,7 @@ impl PublishSession {
             .collect();
         Self {
             mount,
+            slot_generation,
             shape,
             tracks,
             recording: false,
@@ -281,7 +287,7 @@ mod tests {
             tracks: vec![track("a"), track("b")],
         };
         let adapter = Box::new(Mp2tAdapter::new(mount.clone(), 33));
-        PublishSession::new(mount, shape, adapter)
+        PublishSession::new(mount, 0, shape, adapter)
     }
 
     #[test]

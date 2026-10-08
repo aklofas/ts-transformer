@@ -148,6 +148,18 @@ fn remove_local_mount_ends_readers_and_handle_pushes_reach_nobody() {
     reader_t.set_recv_timeout(Some(Duration::from_secs(5)));
     reader.play().unwrap();
 
+    // A second mount with its own reader: removing `/live` must leave it alone.
+    let other = server.add_mount("/other", make_muxer_cfg()).unwrap();
+    let mut other_reader =
+        RtspClient::connect(&format!("rtsp://127.0.0.1:{port}/other?transport=tcp")).unwrap();
+    let other_sdp = other_reader.describe().unwrap();
+    let mut other_t = other_reader
+        .setup_mp2t_auto(&other_sdp)
+        .unwrap()
+        .into_recv_transport();
+    other_t.set_recv_timeout(Some(Duration::from_millis(500)));
+    other_reader.play().unwrap();
+
     server.remove_mount("/live").unwrap();
 
     // Nothing was pushed, so the first non-data result is the end; a 5 s
@@ -173,9 +185,29 @@ fn remove_local_mount_ends_readers_and_handle_pushes_reach_nobody() {
         .push_video(&nal, Pts90khz::new(0), true)
         .expect("a removed mount's handle still accepts pushes");
     assert_eq!(mount.peer_count(), 0);
-    assert_eq!(server.stats().mounts, 0);
+    assert_eq!(server.stats().mounts, 1);
+
+    // `/other`'s reader still receives: push an IDR per attempt until bytes
+    // arrive (its fanout subscription is in place once PLAY returned; the
+    // retry only absorbs scheduling), bounded by a deadline.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut pts = 0i64;
+    let got = loop {
+        other
+            .push_video(&nal, Pts90khz::new(pts), true)
+            .expect("push to /other");
+        pts += 3003;
+        match other_t.recv_bytes(&mut buf) {
+            Ok(n) if n > 0 => break n,
+            Err(TransportError::Backpressure { .. }) | Ok(_) if Instant::now() < deadline => {}
+            other_end => panic!("/other's reader ended after removing /live: {other_end:?}"),
+        }
+    };
+    assert!(got > 0);
     server
         .add_mount("/live", make_muxer_cfg())
         .expect("the path is free again");
     server.stop().ok();
+    let e = server.remove_mount("/live").unwrap_err();
+    assert!(matches!(e, RtspServerError::Shutdown), "got {e:?}");
 }

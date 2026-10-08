@@ -154,9 +154,9 @@ pub(crate) fn handle_announce(
         since: SystemTime::now(),
         generation: 0, // try_begin_publisher overwrites this with the mount's real value
     };
-    if !mount.try_begin_publisher(info) {
+    let Some(slot_generation) = mount.try_begin_publisher(info) else {
         return error_response(req, 403, "Forbidden");
-    }
+    };
     let adapter: Box<dyn PublishAdapter> = match announced.shape {
         PublishShape::Mp2t => Box::new(Mp2tAdapter::new(
             mount.clone(),
@@ -182,7 +182,12 @@ pub(crate) fn handle_announce(
             }
         }
     };
-    session.publish = Some(PublishSession::new(mount, announced, adapter));
+    session.publish = Some(PublishSession::new(
+        mount,
+        slot_generation,
+        announced,
+        adapter,
+    ));
     ok_response(req, None)
 }
 
@@ -411,7 +416,8 @@ pub(crate) fn handle_setup_record(
 /// Rejection codes:
 /// - 401 Unauthorized — auth check fails.
 /// - 455 Method Not Valid in This State — no publisher on this session,
-///   or its announced tracks aren't all SETUP yet.
+///   its announced tracks aren't all SETUP yet, or the mount no longer
+///   holds this session's publisher slot (removed or closed meanwhile).
 pub(crate) fn handle_record(
     req: &RtspRequest,
     state: &Arc<ServerState>,
@@ -424,6 +430,12 @@ pub(crate) fn handle_record(
         return handle_not_valid_in_state(req);
     };
     if !publish.all_tracks_set_up() {
+        return handle_not_valid_in_state(req);
+    }
+    // The mount released this session's publisher slot (`remove_mount` or
+    // `stop()` closed it while the session was between SETUP and RECORD):
+    // refuse rather than feed a mount nothing reads from.
+    if !publish.mount.holds_publisher(publish.slot_generation) {
         return handle_not_valid_in_state(req);
     }
     publish.recording = true;
@@ -621,6 +633,34 @@ mod tests {
         let r = handle_record(&rec, &st, &mut s);
         assert_eq!(r.status, 200);
         assert!(s.publish.as_ref().unwrap().recording);
+    }
+
+    #[test]
+    fn record_after_the_mount_released_the_slot_is_455() {
+        let (st, m) = state_with_publish_mount();
+        let mut s = ServerSessionState::new();
+        assert_eq!(
+            handle_announce(&announce("rtsp://h/pub", SDP_MP2T), &st, &mut s).status,
+            200
+        );
+        let mut setup = req(RtspMethod::Setup, "rtsp://h/pub/streamid=0");
+        setup.headers.insert(
+            "transport".into(),
+            "RTP/AVP/TCP;unicast;interleaved=0-1;mode=record".into(),
+        );
+        assert_eq!(
+            crate::rtsp::server::handlers::handle_setup(&setup, &st, &mut s).status,
+            200
+        );
+        // What `RtspServer::remove_mount` does to a publish mount: out of
+        // the table, then `close()`, which releases the publisher slot.
+        st.mounts.lock().unwrap().remove("/pub");
+        m.close();
+        let mut rec = req(RtspMethod::Record, "rtsp://h/pub");
+        rec.headers
+            .insert("session".into(), s.session_id.clone().unwrap());
+        assert_eq!(handle_record(&rec, &st, &mut s).status, 455);
+        assert!(!s.publish.as_ref().unwrap().recording);
     }
 
     #[test]

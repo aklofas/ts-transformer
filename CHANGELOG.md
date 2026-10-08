@@ -33,9 +33,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   unaffected and never count.
   `RtspServer::stop` wakes a waiting `next_publisher` with `Shutdown`.
 - `RtspServer::remove_mount(path)` removes a mount of any kind and frees
-  the path. Every reader and publisher session on it gets the Notice 5402
-  ANNOUNCE and is closed; a publish mount's application transport then
-  reads `Closed`. A local mount's `MountHandle` keeps accepting pushes,
+  the path. Every session that has completed a SETUP on it, reader or
+  publisher, gets the Notice 5402 ANNOUNCE and is closed; a publish
+  mount's application transport then reads `Closed`. A publisher between
+  ANNOUNCE and its first SETUP gets no Notice, loses its slot and is
+  refused at SETUP (`404`, or `455`/`461` if a publish/local mount was
+  registered at the path again); a
+  publisher whose SETUP raced the removal is refused at RECORD (`455`). A local mount's `MountHandle` keeps accepting pushes,
   which reach nobody. An unknown path returns the new
   `RtspServerError::MountNotFound`. This is also the cleanup for an
   on-demand mount whose ANNOUNCE created it and then failed later in the
