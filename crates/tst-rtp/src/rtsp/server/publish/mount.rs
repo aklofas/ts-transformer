@@ -223,21 +223,30 @@ impl PublishMountState {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct PublisherInfo {
+    /// Address of the publisher's RTSP control connection.
     pub peer: SocketAddr,
+    /// Wire shape the publisher's ANNOUNCE declared.
     pub shape: super::PublishShape,
+    /// When the ANNOUNCE claimed the mount.
     pub since: SystemTime,
+    /// The mount's publisher generation while this publisher holds it
+    /// (the count of publishers that ended on this mount before it).
     pub generation: u64,
 }
 
-/// Whether / how the publish mount's PTS/DTS have been aligned to a
-/// shared clock. `NotApplicable` until a later task's clock-alignment
-/// work lands (RTCP SR-anchored alignment); kept `#[non_exhaustive]` so
-/// that work can add variants without a breaking change.
+/// How a publish mount aligns the timestamps of its announced tracks to
+/// one clock. Only elementary shapes with a metadata track need it; an
+/// MP2T mount reads `NotApplicable`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ClockAlignment {
+    /// The mount's shape carries its own timing (MP2T), or no publisher
+    /// has announced tracks that need aligning.
     NotApplicable,
+    /// Tracks are aligned by first-packet coincidence because RTCP sender
+    /// reports for every track did not arrive in time.
     Provisional,
+    /// Tracks are aligned through RTCP sender reports (RFC 3550 §6.4.1).
     SenderReport,
 }
 
@@ -285,24 +294,43 @@ impl Default for PublishMountStatsInner {
     }
 }
 
-/// Snapshot of [`PublishMountHandle::stats`].
+/// Snapshot of [`PublishMountHandle::stats`]. Counters are cumulative
+/// over the mount's life, across publishers.
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
 pub struct PublishMountStats {
+    /// RTP packets received from publishers, counted before validation.
     pub rtp_packets_received: u64,
+    /// Bytes of those RTP packets, headers included.
     pub bytes_received: u64,
+    /// Packets dropped as unusable: not RTP, the wrong payload type, an
+    /// invalid MP2T payload, or an interleaved frame on an unknown channel.
     pub malformed_packets: u64,
+    /// UDP datagrams dropped because they came from an IP other than the
+    /// publisher's control connection.
     pub source_rejected: u64,
+    /// Frames emitted to the mount's sinks (PLAY readers and the
+    /// application transport).
     pub frames_emitted: u64,
+    /// Frames dropped because the application transport's queue was full.
     pub frames_dropped_app: u64,
+    /// Frames dropped across PLAY readers that lagged behind the fan-out.
     pub frames_dropped_readers: u64,
+    /// Access units emitted by an elementary-shape adapter.
     pub aus_emitted: u64,
+    /// Access units an elementary-shape adapter dropped.
     pub aus_dropped: u64,
+    /// KLV units emitted by an elementary-shape adapter.
     pub klv_units_emitted: u64,
+    /// KLV units an elementary-shape adapter dropped.
     pub klv_units_dropped: u64,
+    /// How the current publisher's tracks are aligned to one clock.
     pub alignment: ClockAlignment,
+    /// Times a new clock mapping replaced the previous one.
     pub alignment_steps: u64,
+    /// Publishers that have ended on this mount.
     pub generation: u64,
+    /// Live PLAY readers subscribed to the mount's fan-out.
     pub peer_count: usize,
 }
 
