@@ -164,7 +164,7 @@ shipping RTP/RTSP client + SRT) get a tokio-free dependency tree.
 
 | Feature | Default | Enables |
 | --- | --- | --- |
-| `rtsp-server` | ✅ on | `RtspServer` + mounts (the RTSP push server); pulls `tokio` + `tokio-util`. |
+| `rtsp-server` | ✅ on | `RtspServer` + mounts (the RTSP push server and publisher ingest: ANNOUNCE / RECORD into publish mounts); pulls `tokio` + `tokio-util`. |
 | `tls` | ❌ off | Client `rtsps://` (`RtspClient`) via sync rustls — no tokio either way. |
 | `rtsp-server-tls` | ❌ off | The server's `rtsps://` TLS acceptor (`tokio-rustls`); implies both `rtsp-server` and `tls` — Cargo has no other way to express "`tls` AND `rtsp-server`". |
 

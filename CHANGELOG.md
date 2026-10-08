@@ -11,93 +11,96 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added — tst-rtp: RTSP publisher role (ANNOUNCE / RECORD ingest), MP2T and elementary H.264 + KLV
 
-- `RtspServer::add_publish_mount(path)` registers a mount a publisher can
-  ANNOUNCE into (RFC 2326 §10.3), SETUP with `mode=record` (TCP-interleaved
-  or UDP) and RECORD. The mount hands the application an `RtpRecvTransport`
-  (`PublishMountHandle::into_recv_transport`, once per mount) carrying the
-  publisher's MPEG-TS, and keeps serving PLAY readers. One publisher per
-  mount (`403` to a second); the mount outlives publishers
-  (`PublishMountHandle::generation`). The bindings follow in this release.
-- On-demand mounts: with `RtspServerBuilder::accept_unregistered_publishers(true)`
-  an ANNOUNCE on an unregistered path creates a publish mount there and
-  queues its handle for `RtspServer::next_publisher(timeout)`. The queue
-  holds 64 handles the application has not taken; an ANNOUNCE past that
-  answers `503` and creates nothing. Off by default (`404`). With it on,
-  anyone who can reach the port (and pass auth, when configured) can
-  create mounts. The 64 bound counts only handles the application has not
-  yet taken: an on-demand mount stays in the mount table after its
-  publisher leaves and after its handle is taken or dropped, until the
-  application calls `remove_mount`. Removing idle names is the
-  application's job: the table holds at most 256 on-demand mounts, taken
-  or not, and an ANNOUNCE past that answers `503`. Registered mounts are
-  unaffected and never count. A mount whose transport has not been taken
-  costs about 15 KB; taking the transport preallocates about 263 KB for
-  its queue, which can hold up to about 8.7 MB if the application stops
-  reading it.
-  `RtspServer::stop` wakes a waiting `next_publisher` with `Shutdown`.
-- `RtspServer::remove_mount(path)` removes a mount of any kind and frees
-  the path. Like `stop()` and dropping the server, it blocks the calling
-  thread and must not be called from inside a tokio runtime. Every
-  session that has completed a SETUP on it, reader or publisher, gets
-  the Notice 5402 ANNOUNCE and is closed; a publish
-  mount's application transport then reads `Closed`. A publisher between
-  ANNOUNCE and its first SETUP gets no Notice, loses its slot and is
-  refused at SETUP (`404`, or `455`/`461` if a publish/local mount was
-  registered at the path again); a
-  publisher whose SETUP raced the removal is refused at RECORD (`455`). A local mount's `MountHandle` keeps accepting pushes,
-  which reach nobody. An unknown path returns the new
-  `RtspServerError::MountNotFound`. This is also the cleanup for an
-  on-demand mount whose ANNOUNCE created it and then failed later in the
-  same request (for example a `500` while building the re-muxer): that
-  mount stays in the table, idle, with its handle queued, until
-  `remove_mount`.
-- A second `into_recv_transport` on the same mount returns the new
-  `RtspServerError::TransportTaken`. `PublishMountHandle::cancel` ends the
-  application transport with `ExplicitClose`; `RtspServer::stop` ends it
-  with `Closed`; a publisher leaving does neither.
-- The publisher's MPEG-TS reaches the application and PLAY readers in
-  bundles of at most seven TS packets, whatever bundle size the publisher
-  sent. The application transport queues up to 6 577 bundles (about
-  8.7 MB) before dropping the newest (`PublishMountStats::frames_dropped_app`):
-  enough for one 8 MiB elementary access unit, which the server re-muxes
-  in a single burst.
-- Elementary-track publishers: one H.264 track (RFC 6184), optionally one
-  KLV track (RFC 6597 `smpte336m`), are re-muxed into MPEG-TS (video PID
-  0x100, KLV PID 0x101 async with PTS). KLV is placed on the video
-  timeline from the publisher's RTCP sender reports
-  (`PublishMountStats::alignment`: `Pending` while KLV is held,
-  `SenderReport` once both tracks' reports arrive, `Provisional` after
-  2 s without them; `NotApplicable` for MP2T and video-only publishers).
-  A placed KLV unit is muxed once the video has reached its PTS, so KLV
-  stamped ahead of the video never drags the PCR ahead of the video
-  frames still to come; one the video has not reached 10 s after it was
-  placed is dropped and counted. Other track mixes answer `415`.
-- An SSRC change on an elementary publisher's video or KLV track (a
-  source restart) restarts that track's depacketizer and KLV alignment:
-  KLV units held at that moment are dropped and counted, alignment reads
+- **Publish mounts.** `RtspServer::add_publish_mount(path)` registers a
+  mount a publisher can ANNOUNCE into (RFC 2326 §10.3), SETUP with
+  `mode=record` (TCP-interleaved or UDP) and RECORD (§10.11). The mount
+  hands the application an `RtpRecvTransport`
+  (`PublishMountHandle::into_recv_transport`) carrying the publisher's
+  MPEG-TS, so `DemuxReceiver` reads it unchanged, and keeps serving PLAY
+  readers from the same bytes. One publisher per mount: a second ANNOUNCE
+  on a live mount answers `403` and the first keeps streaming. The mount
+  outlives publishers: when one ends, `PublishMountHandle::generation`
+  goes up by one and the application transport stays open and silent
+  until the next.
+- **Accepted shapes.** One MPEG-TS track (RFC 2250, `MP2T/90000` or static
+  PT 33) passes through. One H.264 track (RFC 6184), optionally with one
+  KLV track (RFC 6597 `smpte336m`), is re-muxed into MPEG-TS (video PID
+  0x100, KLV PID 0x101 async with PTS), starting at the first keyframe.
+  An H.264 or KLV track must announce a 90000 clock rate (RFC 6184
+  mandates it for H.264). Any other track mix or rate answers `415`.
+- **KLV placement.** KLV is placed on the video timeline from the
+  publisher's RTCP sender reports (`PublishMountStats::alignment`:
+  `Pending` while KLV is held, `SenderReport` once both tracks' reports
+  arrive, `Provisional` after 2 s without them; `NotApplicable` for MP2T
+  and video-only publishers). A placed KLV unit is muxed once the video
+  has reached its PTS, so KLV stamped ahead of the video never drags the
+  PCR ahead of the video frames still to come; one the video has not
+  reached 10 s after it was placed is dropped and counted.
+- **Source restarts.** An SSRC change on an elementary publisher's video
+  or KLV track restarts that track's depacketizer and KLV alignment: KLV
+  units held at that moment are dropped and counted, alignment reads
   `Pending` until fresh sender reports or the fallback re-establish it,
   and the fallback places the new source where the video line is at the
   restart. Sender reports are taken only from a track's current SSRC.
   `PublishMountStats::ssrc_changes` counts each change.
-- An H.264 or KLV track must announce a 90000 clock rate (RFC 6184
-  mandates it for H.264); any other rate answers `415`.
-- B-frame publishers: the re-muxed TS carries PTS only; a DTS-deriving
-  reorder window is deferred. Each AU that arrives below a PTS already
-  muxed (a B-frame) is still muxed and counted in
-  `PublishMountStats::aus_reordered`.
-- A UDP publisher's RTP and RTCP are admitted only from its RTSP control
-  connection's IP; the source port is learned from the first valid packet
-  and may change. Datagrams from other IPs, RTCP included, are counted in
-  `PublishMountStats::source_rejected`.
-- A TCP-interleaved publisher gets the channel pair it asked for when that
-  pair is free on its connection.
-- One connection holds one role: a reader SETUP or PLAY on a publisher's
-  connection, or an ANNOUNCE on a reader's, answers `455`.
-- Publish mount stats: `PublishMountHandle::stats()` returns
-  `PublishMountStats` (RTP packets and bytes received, malformed and
-  source-rejected packets, frames emitted and dropped, access units and
-  KLV units emitted and dropped, alignment, `generation`, `peer_count` =
-  live PLAY readers), cumulative across publishers;
+- **B-frame publishers.** The re-muxed TS carries PTS only. Each access
+  unit that arrives below a PTS already muxed (a B-frame) is still muxed
+  and counted in `PublishMountStats::aus_reordered`. A DTS-deriving
+  reorder window is a deferred-features entry.
+- **Transport rules.** A UDP publisher's RTP and RTCP are admitted only
+  from its RTSP control connection's IP; the source port is learned from
+  the first valid packet and may change. Datagrams from other IPs, RTCP
+  included, are counted in `PublishMountStats::source_rejected`. A
+  TCP-interleaved publisher gets the channel pair it asked for when that
+  pair is free on its connection. One connection holds one role: a reader
+  SETUP or PLAY on a publisher's connection, or an ANNOUNCE on a reader's,
+  answers `455`.
+- **On-demand mounts.** With
+  `RtspServerBuilder::accept_unregistered_publishers(true)` an ANNOUNCE on
+  an unregistered path creates a publish mount there and queues its handle
+  for `RtspServer::next_publisher(timeout)`, which returns `Ok(None)` when
+  the timeout passes and `Shutdown` once `stop()` runs (a waiting call
+  wakes). Off by default (`404`). With it on, anyone who can reach the
+  port (and pass auth, when configured) can create mounts. The queue holds
+  64 handles the application has not taken; an ANNOUNCE past that answers
+  `503` and creates nothing. An on-demand mount stays in the mount table
+  after its publisher leaves and after its handle is taken or dropped,
+  until the application calls `remove_mount`: removing idle names is the
+  application's job. The table holds at most 256 on-demand mounts, taken
+  or not, and an ANNOUNCE past that answers `503`. Registered mounts never
+  count. A mount whose transport has not been taken costs about 15 KB;
+  taking the transport preallocates about 263 KB for its queue.
+- **`RtspServer::remove_mount(path)`** removes a mount of any kind and
+  frees the path. Every session that has completed a SETUP on it, reader
+  or publisher, gets the Notice 5402 ANNOUNCE and is closed; a publish
+  mount's application transport then reads `Closed`. A publisher between
+  ANNOUNCE and its first SETUP gets no Notice, loses its slot and is
+  refused at SETUP (`404`, or `455`/`461` if a publish/local mount was
+  registered at the path again); a publisher whose SETUP raced the
+  removal is refused at RECORD (`455`). A local mount's `MountHandle`
+  keeps accepting pushes, which reach nobody. An unknown path returns the
+  new `RtspServerError::MountNotFound`. This is also the cleanup for an
+  on-demand mount whose ANNOUNCE created it and then failed later in the
+  same request (for example a `500` while building the re-muxer): that
+  mount stays in the table, idle, with its handle queued, until
+  `remove_mount`. Like `stop()` and dropping the server, it blocks the
+  calling thread and must not be called from inside a tokio runtime.
+- **Application transport.** `into_recv_transport` is take-once per
+  mount: a second call, from any clone of the handle, returns the new
+  `RtspServerError::TransportTaken` (binding kind `Closed`).
+  `PublishMountHandle::cancel` ends the transport with `ExplicitClose`;
+  `remove_mount` and `stop()` end it with `Closed`; a publisher leaving
+  does neither. The publisher's MPEG-TS reaches the application and PLAY
+  readers in bundles of at most seven TS packets, whatever bundle size
+  the publisher sent. The application transport queues up to 6 577
+  bundles (about 8.7 MB) before dropping the newest
+  (`PublishMountStats::frames_dropped_app`): enough for one 8 MiB
+  elementary access unit, which the server re-muxes in a single burst.
+- **Stats.** `PublishMountHandle::stats()` returns `PublishMountStats`
+  (RTP packets and bytes received, malformed and source-rejected packets,
+  frames emitted and dropped, access units and KLV units emitted and
+  dropped, `aus_reordered`, alignment, `ssrc_changes`, `generation`,
+  `peer_count` = live PLAY readers), cumulative across publishers;
   `PublishMountHandle::publisher()` returns the current publisher's
   `PublisherInfo` (control-connection address, shape, start time,
   generation). `ServerStats` gains `active_publishers` (mounts that have
@@ -107,6 +110,16 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   snapshot taken while packets arrive may differ from the mounts' sum by
   the packets in flight. `ServerStats` is `#[non_exhaustive]`, so the new
   fields are additive.
+- **Example and docs.** New Rust example `receiving/recv_rtsp_publish.rs`
+  (on-demand mounts, a `DemuxReceiver` per publisher, per-mount stats;
+  the header lists ffmpeg and GStreamer push commands), cookbook recipe
+  [Accept RTSP publishers](docs/cookbook/receiving/rtsp-publish-ingest.md),
+  and an "RTSP publisher ingest" section in the Rust language guide.
+  ffmpeg pushes elementary H.264 only and cannot push KLV over RTSP; the
+  recipe gives the GStreamer and SRT/UDP alternatives. Deferred-features
+  entries cover RTCP receiver reports to publishers, audio and H.265
+  elementary publishers, separate publisher credentials, and `rcvbuf` on
+  publisher UDP sockets.
 
 ### Changed — tst-rtp: RTSP server
 

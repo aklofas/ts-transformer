@@ -368,6 +368,109 @@ while let Some(au) = rx.recv_au()? {
   received RTCP is discarded. See
   [`/docs/project/deferred-features.md`](/docs/project/deferred-features.md).
 
+## RTSP publisher ingest
+
+`RtspServer` also accepts publishers: an encoder connects and pushes with
+ANNOUNCE / SETUP `mode=record` / RECORD (RFC 2326 §10.3, §10.11), over
+TCP-interleaved or UDP. The application reads each pushed stream as MPEG-TS
+through an `RtpRecvTransport`, so `DemuxReceiver` works unchanged, and the
+same mount re-serves PLAY readers.
+
+Nothing new to install: this is part of `tst-rtp`'s default-on `rtsp-server`
+feature. Run the example and push to it with ffmpeg:
+
+```bash
+cargo run -p tst-examples --example recv_rtsp_publish
+ffmpeg -re -f lavfi -i testsrc=size=320x240:rate=15 -c:v libx264 \
+    -preset ultrafast -tune zerolatency -f rtsp rtsp://127.0.0.1:8554/demo
+```
+
+The example is at
+[`examples/receiving/recv_rtsp_publish.rs`](/examples/receiving/recv_rtsp_publish.rs);
+the cookbook recipe is
+[Accept RTSP publishers](/docs/cookbook/receiving/rtsp-publish-ingest.md).
+
+### API
+
+| Item | Notes |
+|---|---|
+| `RtspServerBuilder::accept_unregistered_publishers(bool)` | Off by default (an ANNOUNCE on an unknown path answers `404`). On: the ANNOUNCE creates a publish mount and queues its handle. |
+| `RtspServer::add_publish_mount(path)` | Registers a name up front and returns its `PublishMountHandle`. |
+| `RtspServer::next_publisher(timeout)` | Takes the next on-demand mount; `Ok(None)` when the timeout passes; `Err(Shutdown)` after `stop()`. |
+| `RtspServer::remove_mount(path)` | Removes a mount of any kind: every session on it gets the server-initiated TEARDOWN notice and is closed, and the path is freed. `MountNotFound` for an unknown path. |
+| `RtspServer::stats()` | `ServerStats` with `active_publishers`, `total_rtp_packets_received`, `total_rtp_bytes_received`. |
+| `PublishMountHandle` | Cheap `Clone`. `mount_path()`, `peer_count()` (PLAY readers), `generation()`, `publisher()`, `stats()`, `cancel()`, `into_recv_transport()`. |
+| `PublisherInfo` | The current publisher: `peer` (control-connection address), `shape`, `since`, `generation`. |
+| `PublishShape` | `Mp2t` or `Elementary { klv }`. |
+| `ClockAlignment` | `NotApplicable`, `Pending`, `Provisional`, `SenderReport`; see the stats below. |
+
+### Accepted shapes
+
+| Announced tracks | Application receives |
+|---|---|
+| One MPEG-TS track (`MP2T/90000`, or static payload type 33) | The publisher's TS bytes, unchanged |
+| One H.264 track (`H264/90000`) | TS re-muxed by the server, video on PID 0x100 |
+| H.264 plus one KLV track (`smpte336m/90000`) | TS re-muxed by the server, video on PID 0x100, KLV on PID 0x101 (async, with PTS) |
+
+Any other announce answers `415`: audio, H.265, two video tracks, KLV
+without video, or an H.264 or KLV track whose clock rate is not 90000.
+ffmpeg pushes the H.264 shape only and refuses KLV (`Unsupported codec
+klv`); to push KLV, use GStreamer (`rtpmp2tpay`, or `rtph264pay` plus
+`rtpklvpay`) or send the TS over SRT or UDP.
+
+### Rules worth knowing
+
+- **One publisher per mount.** A second ANNOUNCE on a mount with a live
+  publisher answers `403`; the first keeps streaming. When a publisher ends,
+  the mount idles and `generation()` goes up by one. The application
+  transport stays open and silent, and the next publisher feeds it.
+- **`into_recv_transport` is take-once per mount.** A second call, from any
+  clone of the handle, returns `RtspServerError::TransportTaken` (the
+  bindings report it as the `Closed` kind). Clone the handle before
+  consuming it if you want `stats()` and `publisher()` afterwards.
+- **How the transport ends.** `PublishMountHandle::cancel()` ends it with
+  `TransportError::ExplicitClose` and leaves readers and the publisher
+  alone. `remove_mount` and `stop()` end it with `TransportError::Closed`,
+  which `DemuxReceiver` reports as end of stream. A publisher leaving does
+  neither.
+- **Idle names expire only through `remove_mount`.** An on-demand mount
+  stays in the table after its publisher leaves and after its handle is
+  dropped. At most 64 on-demand handles wait for `next_publisher` and at
+  most 256 on-demand mounts exist; an ANNOUNCE past either bound answers
+  `503`. Registered mounts never count. `remove_mount`, like `stop()`,
+  blocks the calling thread: never call it from inside a tokio runtime.
+- **One role per connection.** A reader SETUP or PLAY on a publisher's
+  connection, or an ANNOUNCE on a reader's, answers `455`.
+- **One credential set.** Readers and publishers authenticate against the
+  server's single `auth_basic` / `auth_digest_*` credential.
+
+### Stats
+
+`PublishMountHandle::stats()` returns `PublishMountStats`, cumulative over
+the mount's life across publishers:
+
+- `rtp_packets_received`, `bytes_received`, `malformed_packets`, and
+  `source_rejected` (UDP datagrams from an IP other than the publisher's
+  control connection).
+- `frames_emitted`, `frames_dropped_app` (the application queue was full:
+  it holds one maximum-size 8 MiB access unit, re-muxed, so it fills only
+  when the application stops reading) and `frames_dropped_readers`.
+- `aus_emitted`, `aus_dropped` (including access units before the first
+  keyframe) and `aus_reordered`: nonzero means the publisher sends
+  B-frames, which the re-muxed TS carries with a PTS and no DTS.
+- `klv_units_emitted`, `klv_units_dropped`, `ssrc_changes`.
+- `alignment`: how KLV is placed on the video clock. `NotApplicable` for
+  MPEG-TS and video-only publishers, `Pending` while KLV is held,
+  `SenderReport` once RTCP sender reports for both tracks arrived,
+  `Provisional` after two seconds without them (first-packet coincidence).
+  `alignment_steps` counts mapping replacements.
+- `generation` and `peer_count` (live PLAY readers).
+
+What the publisher role leaves out (RTCP receiver reports, audio and H.265
+tracks, separate publisher credentials, `rcvbuf` on publisher sockets, DTS
+for B-frames) is listed in
+[`/docs/project/deferred-features.md`](/docs/project/deferred-features.md).
+
 ## Where to go next
 
 - [`/docs/start/concepts.md`](/docs/start/concepts.md) — the conceptual

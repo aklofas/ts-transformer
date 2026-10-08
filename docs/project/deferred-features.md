@@ -1505,6 +1505,60 @@ mean **Deferred**. An entry whose feature has shipped must never read
   frames on a B-frame push (for example ffmpeg with libx264's default
   presets, or `-c copy` of a B-frame source).
 
+## RTCP receiver reports to RTSP publishers
+
+- **Status:** Deferred. A publisher pushing into `RtspServer` (ANNOUNCE /
+  RECORD) gets no RTCP receiver reports back. The server reads the
+  publisher's RTCP sender reports, which place KLV on the video clock, and
+  ignores every other RTCP packet.
+- **Why deferred:** Sending reports needs per-track loss and jitter
+  accounting on the ingest path, and nothing consumes it today. A
+  TCP-interleaved push has no packet loss to report, and the publishers
+  tested (ffmpeg) stream without them.
+- **Trigger to revisit:** A publisher that adapts its bitrate from
+  receiver reports, or one that ends a session when it receives none.
+
+## Audio and H.265 elementary RTSP publishers
+
+- **Status:** Deferred. A publisher's elementary tracks are accepted as
+  one H.264 track (RFC 6184), optionally with one KLV track (RFC 6597).
+  An announce carrying audio, H.265, or any other track mix answers
+  `415 Unsupported Media Type`. An MPEG-TS-over-RTP publisher may carry
+  any of these inside its TS.
+- **Why deferred:** Each elementary codec needs its own RTP depacketizer
+  feeding the server's re-muxer (RFC 7798 for H.265, RFC 3640 or
+  RFC 6416 for AAC), and audio adds a second clock to align with the
+  video beside the KLV one. H.264 plus KLV is the shape camera and
+  gimbal-payload encoders push, and MPEG-TS over RTP covers the rest.
+- **Trigger to revisit:** A publisher that can push only H.265 or audio
+  as elementary tracks and cannot be switched to MPEG-TS over RTP.
+
+## Separate publisher credentials on `RtspServer`
+
+- **Status:** Deferred. Readers and publishers authenticate against the
+  server's single credential set (`auth_basic` / `auth_digest_*`). There
+  is no way to let a client PLAY without also letting it ANNOUNCE.
+- **Why deferred:** A second credential set means a role-aware auth
+  check on every method and a builder surface for it in all three
+  bindings. A deployment that needs the split today can run publish
+  mounts and reader mounts on two servers with different credentials.
+- **Trigger to revisit:** A deployment that must expose reading publicly
+  while restricting who can publish on the same port.
+
+## `rcvbuf` on publisher UDP sockets
+
+- **Status:** Deferred. The UDP sockets `RtspServer` binds for a
+  publisher's `mode=record` SETUP use the operating system's default
+  receive buffer. There is no knob to raise it, unlike `rtp://` and
+  `udp://` receivers (`?rcvbuf=`).
+- **Why deferred:** The server binds these sockets per SETUP, so the knob
+  belongs on the server builder rather than a URL, and no publisher
+  push has needed it yet. Publishers that push over TCP-interleaved are
+  unaffected.
+- **Trigger to revisit:** Kernel UDP receive drops on a publisher's RTP
+  socket (for example a high-bitrate push to a small board), visible as
+  missing access units with `aus_dropped` rising.
+
 ## ST 0604 Commercial Time Stamp (UTC wall-clock SEI, `payloadType=21`)
 
 - **Status:** Deferred. The library's ST 0604 support covers the MISP
