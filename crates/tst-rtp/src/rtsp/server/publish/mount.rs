@@ -190,7 +190,13 @@ impl PublishMountState {
     /// application side isn't attempted at all (see [`AppSide::taken`])
     /// — `frames_emitted` still counts the frame (readers got it), but
     /// `frames_dropped_app` does not, since nothing was dropped.
+    ///
+    /// `frames_emitted` is counted before the frame is offered to either
+    /// sink, so an application that has read a frame always sees it
+    /// counted; `frames_dropped_app` is counted after the full channel
+    /// refused it.
     pub(crate) fn emit(&self, ts: Bytes, rtp: Bytes) {
+        self.tick(|s| s.frames_emitted += 1);
         let _ = self.fanout.send(ts); // no readers → Err, fine
         let dropped = match &self.app.lock().unwrap_or_else(|e| e.into_inner()).tx {
             Some(tx) => matches!(
@@ -200,12 +206,9 @@ impl PublishMountState {
             // Not taken yet, or closed: nothing to count.
             None => false,
         };
-        self.tick(|s| {
-            s.frames_emitted += 1;
-            if dropped {
-                s.frames_dropped_app += 1;
-            }
-        });
+        if dropped {
+            self.tick(|s| s.frames_dropped_app += 1);
+        }
     }
 
     /// Claim the publisher slot. Returns the claimed slot's generation, or
