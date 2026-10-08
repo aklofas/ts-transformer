@@ -108,8 +108,8 @@ run of 2026-10-03" below.
 - vCPUs: 8
 - Memory: 15.3 GiB
 - Toolchain: rustc 1.85.1 (4eb161250 2025-03-15)
-- Source: `3a3f964f5c6b` (v0.6.0-669-g3a3f964f)
-- Recorded: 2026-10-03T07:14:04Z
+- Source: `9bb728e1484b` (v0.7.0-24-g9bb728e1)
+- Recorded: 2026-10-06T16:25:42Z
 
 ### Stream scaling
 
@@ -117,69 +117,78 @@ run of 2026-10-03" below.
 
 | N | CPU/stream (cores) | RSS/stream p99 (MiB) | threads max | fds max | wire Mb/s | pass |
 |---|---|---|---|---|---|---|
-| 1 | 0.033 | 26.1 | 6 | 5 | 1.9 | pass |
-| 2 | 0.031 | 26.5 | 6 | 5 | 3.8 | pass |
-| 4 | 0.028 | 26.4 | 6 | 5 | 7.5 | pass |
-| 8 | 0.020 | 26.5 | 6 | 5 | 15.1 | pass |
-| 16 | 0.016 | 26.4 | 6 | 5 | 30.1 | pass |
-| 32 | 0.016 | 26.4 | 6 | 5 | 60.2 | pass |
-| 64 | 0.016 | 26.4 | 6 | 5 | 120.4 | pass |
-| 128 | 0.017 | 26.5 | 6 | 5 | 240.8 | pass |
+| 1 | 0.031 | 26.1 | 6 | 5 | 1.9 | pass |
+| 2 | 0.030 | 26.2 | 6 | 5 | 3.8 | pass |
+| 4 | 0.027 | 26.2 | 6 | 5 | 7.5 | pass |
+| 8 | 0.019 | 26.2 | 6 | 5 | 15.1 | pass |
+| 16 | 0.015 | 26.2 | 6 | 5 | 30.1 | pass |
+| 32 | 0.014 | 26.1 | 6 | 5 | 60.2 | pass |
+| 64 | 0.015 | 26.1 | 6 | 5 | 120.4 | pass |
+| 128 | 0.016 | 26.1 | 6 | 5 | 240.8 | pass |
+| 256 | 0.017 | 26.1 | 6 | 5 | 481.6 | pass |
+| 512 | 0.000 | 0.0 | 0 | 0 | 0.0 | fail |
 
 Per-stream figures are averages over the step's streams.
 
-Ceiling: top of ladder (128), not a measured limit
+Ceiling: 256 streams — ended by memory_budget
 
 #### RIST
 
 | N | CPU/stream (cores) | RSS/stream p99 (MiB) | threads max | fds max | wire Mb/s | pass |
 |---|---|---|---|---|---|---|
-| 1 | 0.024 | 26.5 | 3 | 5 | 1.9 | pass |
-| 2 | 0.022 | 26.4 | 3 | 5 | 3.8 | pass |
-| 4 | 0.020 | 26.4 | 3 | 5 | 7.5 | pass |
-| 8 | 0.018 | 26.5 | 3 | 5 | 15.1 | pass |
-| 16 | 0.014 | 26.4 | 3 | 5 | 30.2 | pass |
-| 32 | 0.012 | 26.4 | 3 | 5 | 60.3 | pass |
-| 64 | 0.013 | 26.3 | 3 | 5 | 120.6 | pass |
-| 128 | 0.014 | 26.3 | 3 | 5 | 241.2 | pass |
+| 1 | 0.023 | 26.0 | 3 | 5 | 1.9 | pass |
+| 2 | 0.021 | 26.3 | 3 | 5 | 3.8 | pass |
+| 4 | 0.019 | 26.2 | 3 | 5 | 7.5 | pass |
+| 8 | 0.016 | 26.1 | 3 | 5 | 15.1 | pass |
+| 16 | 0.013 | 26.2 | 3 | 5 | 30.2 | pass |
+| 32 | 0.011 | 26.2 | 3 | 5 | 60.3 | pass |
+| 64 | 0.012 | 26.1 | 3 | 5 | 120.6 | pass |
+| 128 | 0.013 | 26.1 | 3 | 5 | 241.2 | pass |
+| 256 | 0.014 | 26.1 | 3 | 5 | 482.4 | pass |
+| 512 | 0.000 | 0.0 | 0 | 0 | 0.0 | fail |
 
 Per-stream figures are averages over the step's streams.
 
-Ceiling: top of ladder (128), not a measured limit
+Ceiling: 256 streams — ended by memory_budget
 
 #### UDP
 
 | N | CPU/stream (cores) | RSS/stream p99 (MiB) | threads max | fds max | wire Mb/s | pass |
 |---|---|---|---|---|---|---|
-| 1 | 0.008 | 22.5 | 1 | 5 | 1.9 | pass |
-| 2 | 0.007 | 22.1 | 1 | 5 | 3.8 | pass |
-| 4 | 0.007 | 22.2 | 1 | 5 | 7.5 | pass |
-| 8 | 0.007 | 21.9 | 1 | 5 | 15.1 | pass |
-| 16 | 0.007 | 22.0 | 1 | 5 | 30.2 | pass |
-| 32 | 0.006 | 22.1 | 1 | 5 | 60.3 | pass |
-| 64 | 0.006 | 22.1 | 1 | 5 | 120.6 | pass |
-| 128 | 0.005 | 22.1 | 1 | 5 | 241.2 | pass |
+| 1 | 0.007 | 22.0 | 1 | 5 | 1.9 | pass |
+| 2 | 0.006 | 21.8 | 1 | 5 | 3.8 | pass |
+| 4 | 0.006 | 21.8 | 1 | 5 | 7.5 | pass |
+| 8 | 0.006 | 21.9 | 1 | 5 | 15.1 | pass |
+| 16 | 0.006 | 21.9 | 1 | 5 | 30.2 | pass |
+| 32 | 0.006 | 21.9 | 1 | 5 | 60.3 | pass |
+| 64 | 0.005 | 21.9 | 1 | 5 | 120.6 | pass |
+| 128 | 0.005 | 21.8 | 1 | 5 | 241.2 | pass |
+| 256 | 0.005 | 21.8 | 1 | 5 | 482.4 | pass |
+| 512 | 0.000 | 0.0 | 0 | 0 | 0.0 | fail |
 
 Per-stream figures are averages over the step's streams.
 
-Ceiling: top of ladder (128), not a measured limit
+Ceiling: 256 streams — ended by memory_budget
 
 #### TCP
 
 | N | CPU/stream (cores) | RSS/stream p99 (MiB) | threads max | fds max | wire Mb/s | pass |
 |---|---|---|---|---|---|---|
-| 1 | 0.005 | 16.1 | 1 | 5 | 1.9 | pass |
-| 2 | 0.005 | 16.1 | 1 | 5 | 3.8 | pass |
-| 4 | 0.005 | 16.0 | 1 | 5 | 7.5 | pass |
-| 8 | 0.005 | 16.1 | 1 | 5 | 15.1 | pass |
-| 16 | 0.005 | 16.1 | 1 | 5 | 30.2 | pass |
-| 32 | 0.004 | 16.0 | 1 | 5 | 60.3 | pass |
-| 64 | 0.004 | 16.1 | 1 | 5 | 120.6 | pass |
-| 128 | 0.004 | 16.1 | 1 | 5 | 241.2 | pass |
+| 1 | 0.005 | 15.7 | 1 | 5 | 1.9 | pass |
+| 2 | 0.005 | 15.8 | 1 | 5 | 3.8 | pass |
+| 4 | 0.005 | 15.7 | 1 | 5 | 7.5 | pass |
+| 8 | 0.004 | 15.7 | 1 | 5 | 15.1 | pass |
+| 16 | 0.004 | 15.7 | 1 | 5 | 30.2 | pass |
+| 32 | 0.004 | 15.7 | 1 | 5 | 60.3 | pass |
+| 64 | 0.004 | 15.7 | 1 | 5 | 120.6 | pass |
+| 128 | 0.004 | 15.7 | 1 | 5 | 241.2 | pass |
+| 256 | 0.003 | 15.7 | 1 | 5 | 482.4 | pass |
+| 512 | 0.003 | 15.7 | 1 | 5 | 964.9 | pass |
+| 1024 | 0.000 | 0.0 | 0 | 0 | 0.0 | fail |
 
 Per-stream figures are averages over the step's streams.
 
-Ceiling: top of ladder (128), not a measured limit
+Ceiling: 512 streams — ended by memory_budget
 
 ### Single-stream throughput
 
@@ -187,40 +196,41 @@ Ceiling: top of ladder (128), not a measured limit
 
 | scale | declared Mb/s | observed Mb/s | CPU (cores) | pass |
 |---|---|---|---|---|
-| 1 | 1.7 | 1.9 | 0.033 | pass |
-| 2 | 3.4 | 3.7 | 0.036 | pass |
-| 4 | 6.8 | 7.3 | 0.042 | pass |
-| 8 | 13.6 | 14.4 | 0.054 | pass |
-| 16 | 27.2 | 28.8 | 0.078 | pass |
-| 32 | 54.4 | 57.5 | 0.128 | pass |
-| 64 | 108.8 | 115.0 | 0.231 | fail |
+| 1 | 1.7 | 1.9 | 0.032 | pass |
+| 2 | 3.4 | 3.7 | 0.034 | pass |
+| 4 | 6.8 | 7.3 | 0.039 | pass |
+| 8 | 13.6 | 14.4 | 0.051 | pass |
+| 16 | 27.2 | 28.8 | 0.076 | pass |
+| 32 | 54.4 | 57.5 | 0.123 | pass |
+| 64 | 108.8 | 115.0 | 0.225 | pass |
 
-Ceiling: 32 scale — ended by rss_slope_srt-0_send
+Ceiling: top of ladder (64), not a measured limit
 
 #### RIST
 
 | scale | declared Mb/s | observed Mb/s | CPU (cores) | pass |
 |---|---|---|---|---|
-| 1 | 1.7 | 1.9 | 0.024 | pass |
-| 2 | 3.4 | 3.7 | 0.027 | pass |
-| 4 | 6.8 | 7.3 | 0.032 | pass |
-| 8 | 13.6 | 14.5 | 0.044 | pass |
-| 16 | 27.2 | 28.8 | 0.068 | pass |
-| 32 | 54.4 | 57.6 | 0.124 | fail |
+| 1 | 1.7 | 1.9 | 0.023 | pass |
+| 2 | 3.4 | 3.7 | 0.025 | pass |
+| 4 | 6.8 | 7.3 | 0.031 | pass |
+| 8 | 13.6 | 14.5 | 0.042 | pass |
+| 16 | 27.2 | 28.8 | 0.064 | pass |
+| 32 | 54.4 | 57.6 | 0.116 | pass |
+| 64 | 108.8 | 113.4 | 0.235 | fail |
 
-Ceiling: 16 scale — ended by rss_slope_rist-0_recv
+Ceiling: 32 scale — ended by transport_loss_excused
 
 #### UDP
 
 | scale | declared Mb/s | observed Mb/s | CPU (cores) | pass |
 |---|---|---|---|---|
-| 1 | 1.7 | 1.9 | 0.009 | pass |
+| 1 | 1.7 | 1.9 | 0.007 | pass |
 | 2 | 3.4 | 3.7 | 0.009 | pass |
-| 4 | 6.8 | 7.3 | 0.014 | pass |
-| 8 | 13.6 | 14.5 | 0.023 | pass |
-| 16 | 27.2 | 28.8 | 0.036 | pass |
-| 32 | 54.4 | 57.6 | 0.066 | pass |
-| 64 | 108.8 | 115.1 | 0.127 | fail |
+| 4 | 6.8 | 7.3 | 0.013 | pass |
+| 8 | 13.6 | 14.5 | 0.021 | pass |
+| 16 | 27.2 | 28.8 | 0.035 | pass |
+| 32 | 54.4 | 57.6 | 0.065 | pass |
+| 64 | 108.8 | 115.1 | 0.126 | fail |
 
 Ceiling: 32 scale — ended by rss_slope_udp-0_send
 
@@ -228,27 +238,89 @@ Ceiling: 32 scale — ended by rss_slope_udp-0_send
 
 | scale | declared Mb/s | observed Mb/s | CPU (cores) | pass |
 |---|---|---|---|---|
-| 1 | 1.7 | 1.9 | 0.006 | pass |
-| 2 | 3.4 | 3.7 | 0.007 | pass |
+| 1 | 1.7 | 1.9 | 0.005 | pass |
+| 2 | 3.4 | 3.7 | 0.006 | pass |
 | 4 | 6.8 | 7.3 | 0.009 | pass |
-| 8 | 13.6 | 14.5 | 0.015 | pass |
-| 16 | 27.2 | 28.8 | 0.025 | pass |
-| 32 | 54.4 | 57.6 | 0.044 | fail |
+| 8 | 13.6 | 14.5 | 0.014 | pass |
+| 16 | 27.2 | 28.8 | 0.023 | pass |
+| 32 | 54.4 | 57.6 | 0.042 | fail |
 
 Ceiling: 16 scale — ended by rss_slope_tcp-0_send
 
 ### The hold
 
-No hold in this run.
+| transport | N | aggregate Mb/s |
+|---|---|---|
+| srt | 41 | 74.5 |
+| rist | 41 | 77.0 |
+| udp | 41 | 77.1 |
+| tcp | 83 | 156.0 |
+
+| name | observed | threshold | pass |
+|---|---|---|---|
+| worker_exits | 36 | 0 | fail |
+| recv_invariants | 36 | 0 | fail |
+| corruption_coverage | 0.965 | 0.9 | pass |
+| corruption_declared | 0 | 0 | pass |
+| transport_loss_excused | 6 | 392 | pass |
+| delivery_complete | 0.964 | 0.7 | pass |
+| cpu_headroom | 0.23 | 0.8 | pass |
+| sample_coverage | 0.997 | 0.9 | pass |
+| reconnect_count | 96 | 95 | pass |
+| peer_restart_recovery | 12 | 12 | pass |
+| queue_depth_p99 | 0 | 230.4 | pass |
+| gap_drains_after_outage | 3895 | 3895 | pass |
+| hold_sizing_declared | 0 | 0 | pass |
+
+| class | transport role | n | pass | fail | max observed | threshold |
+|---|---|---|---|---|---|---|
+| rss_slope | srt send | 41 | 41 | 0 | 23.049 | 1024 |
+| rss_slope | srt recv | 41 | 41 | 0 | 292.067 | 1024 |
+| rss_slope | srt proxy | 41 | 41 | 0 | 11.562 | 1024 |
+| rss_slope | rist send | 41 | 41 | 0 | 224.166 | 1024 |
+| rss_slope | rist recv | 41 | 41 | 0 | 15.214 | 1024 |
+| rss_slope | rist proxy | 41 | 41 | 0 | 3.163 | 1024 |
+| rss_slope | udp send | 41 | 41 | 0 | 3.328 | 1024 |
+| rss_slope | udp recv | 41 | 41 | 0 | 4.704 | 1024 |
+| rss_slope | udp proxy | 41 | 41 | 0 | 0.752 | 1024 |
+| rss_slope | tcp send | 83 | 83 | 0 | 2.43 | 1024 |
+| rss_slope | tcp recv | 83 | 83 | 0 | 8.148 | 1024 |
+| fd_count_flat | srt send | 41 | 41 | 0 | 0 | 2 |
+| fd_count_flat | srt recv | 41 | 41 | 0 | 0 | 2 |
+| fd_count_flat | srt proxy | 41 | 41 | 0 | 0 | 2 |
+| fd_count_flat | rist send | 41 | 41 | 0 | 0 | 2 |
+| fd_count_flat | rist recv | 41 | 41 | 0 | 0 | 2 |
+| fd_count_flat | rist proxy | 41 | 41 | 0 | 0 | 2 |
+| fd_count_flat | udp send | 41 | 41 | 0 | 0 | 2 |
+| fd_count_flat | udp recv | 41 | 41 | 0 | 0 | 2 |
+| fd_count_flat | udp proxy | 41 | 41 | 0 | 0 | 2 |
+| fd_count_flat | tcp send | 83 | 83 | 0 | 0 | 2 |
+| fd_count_flat | tcp recv | 83 | 83 | 0 | 0 | 2 |
+| thread_count_flat | srt send | 41 | 41 | 0 | 0 | 1 |
+| thread_count_flat | srt recv | 41 | 41 | 0 | 0 | 1 |
+| thread_count_flat | srt proxy | 41 | 41 | 0 | 0 | 1 |
+| thread_count_flat | rist send | 41 | 41 | 0 | 0 | 1 |
+| thread_count_flat | rist recv | 41 | 41 | 0 | 0 | 1 |
+| thread_count_flat | rist proxy | 41 | 41 | 0 | 0 | 1 |
+| thread_count_flat | udp send | 41 | 41 | 0 | 0 | 1 |
+| thread_count_flat | udp recv | 41 | 41 | 0 | 0 | 1 |
+| thread_count_flat | udp proxy | 41 | 41 | 0 | 0 | 1 |
+| thread_count_flat | tcp send | 83 | 83 | 0 | 0 | 1 |
+| thread_count_flat | tcp recv | 83 | 83 | 0 | 0 | 1 |
+
+Per-process rows are rolled up; the full list is `hold/step-results.json` in the archive.
 
 ### Limitations
 
-- rist/bitrate: rss_slope_rist-0_send over its allowance at step 1, step 2, step 4, step 8, step 16, step 32 — recorded, not gated (declared rss_slope_ungated; the hold gates it)
-- rist/streams: never failed — the ceiling is the top of the ladder, not a measured limit
-- rist/streams: rss_slope over its allowance for 128 processes matching `rist-*_send` (per-process list in stress-results.json) — recorded, not gated (declared rss_slope_ungated; the hold gates it)
-- srt/streams: never failed — the ceiling is the top of the ladder, not a measured limit
-- tcp/streams: never failed — the ceiling is the top of the ladder, not a measured limit
-- udp/streams: never failed — the ceiling is the top of the ladder, not a measured limit
+- rist/bitrate: rss_slope_rist-0_send over its allowance at step 1, step 2, step 4, step 8, step 16, step 32, step 64 — recorded, not gated (declared rss_slope_ungated; the hold gates it)
+- rist/streams: ended by the memory budget at 512 — the box's memory, not a transport verdict; 256 is the last load that fit
+- rist/streams: rss_slope over its allowance for 255 processes matching `rist-*_send` (per-process list in stress-results.json) — recorded, not gated (declared rss_slope_ungated; the hold gates it)
+- srt/bitrate: never failed — the ceiling is the top of the ladder, not a measured limit
+- srt/streams: ended by the memory budget at 512 — the box's memory, not a transport verdict; 256 is the last load that fit
+- tcp/streams: ended by the memory budget at 1024 — the box's memory, not a transport verdict; 512 is the last load that fit
+- udp/streams: ended by the memory budget at 512 — the box's memory, not a transport verdict; 256 is the last load that fit
+- hold scaled to 32% by memory: predicted 34831 MB vs budget 10990 MB (n_hold rist=41 srt=41 tcp=83 udp=41)
+- hold throughput for srt-0 is its last segment only: 6810 s of the 86460 s run (the receiver was restarted; earlier segments wrote no report)
 <!-- bench:end -->
 
 ## Measured: stress run of 2026-10-03

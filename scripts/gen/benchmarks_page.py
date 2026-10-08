@@ -171,6 +171,18 @@ def _bitrate_table(entry: dict) -> str:
 
 _HOLD_STREAM_HEADER = ["transport", "N", "aggregate Mb/s"]
 _HOLD_VERDICT_HEADER = ["name", "observed", "threshold", "pass"]
+_HOLD_ROLLUP_HEADER = ["class", "transport role", "n", "pass", "fail", "max observed", "threshold"]
+
+# A hold names three per-process verdict classes once per stream's
+# send/recv/proxy process (`rss_slope_srt-17_send`, `fd_count_flat_tcp-4_recv`,
+# …) — hundreds to low thousands of rows at a few hundred streams. These
+# collapse into one row per (class, transport, role); the named verdicts
+# (worker_exits, cpu_headroom, …) still render one row each.
+_PERPROC_VERDICT = re.compile(
+    r"^(?P<cls>rss_slope|fd_count_flat|thread_count_flat)_(?P<transport>[a-z]+)-\d+_(?P<role>send|recv|proxy)$"
+)
+_PERPROC_CLASS_ORDER = ["rss_slope", "fd_count_flat", "thread_count_flat"]
+_PERPROC_ROLE_ORDER = ["send", "recv", "proxy"]
 
 
 def _hold_stream_table(hold: dict) -> str:
@@ -185,17 +197,65 @@ def _hold_stream_table(hold: dict) -> str:
     return _table(_HOLD_STREAM_HEADER, rows)
 
 
-def _hold_verdict_table(hold: dict) -> str:
-    rows = []
+def _split_hold_verdicts(hold: dict) -> tuple[list[dict], dict[tuple[str, str, str], list[dict]]]:
+    """Split the hold's verdicts into the named ones (one row each) and the
+    per-process ones, grouped by (class, transport, role) for the rollup."""
+    named = []
+    groups: dict[tuple[str, str, str], list[dict]] = {}
     for v in hold["step"]["verdicts"] + hold["hold_verdicts"]:
+        m = _PERPROC_VERDICT.match(v["name"])
+        if not m:
+            named.append(v)
+            continue
+        groups.setdefault((m["cls"], m["transport"], m["role"]), []).append(v)
+    return named, groups
+
+
+def _hold_verdict_table(named: list[dict]) -> str:
+    rows = []
+    for v in named:
         rows.append([v["name"], _g(v["observed"]), _g(v["threshold"]), _passfail(v["pass"])])
     return _table(_HOLD_VERDICT_HEADER, rows)
+
+
+def _hold_rollup_table(groups: dict[tuple[str, str, str], list[dict]]) -> str:
+    def sort_key(key: tuple[str, str, str]):
+        cls, transport, role = key
+        return (
+            _PERPROC_CLASS_ORDER.index(cls) if cls in _PERPROC_CLASS_ORDER else len(_PERPROC_CLASS_ORDER),
+            TRANSPORT_ORDER.index(transport) if transport in TRANSPORT_ORDER else len(TRANSPORT_ORDER),
+            _PERPROC_ROLE_ORDER.index(role) if role in _PERPROC_ROLE_ORDER else len(_PERPROC_ROLE_ORDER),
+        )
+
+    rows = []
+    for key in sorted(groups, key=sort_key):
+        cls, transport, role = key
+        items = groups[key]
+        n_pass = sum(1 for it in items if it["pass"])
+        rows.append([
+            cls,
+            f"{transport} {role}",
+            str(len(items)),
+            str(n_pass),
+            str(len(items) - n_pass),
+            _g(max(it["observed"] for it in items)),
+            _g(items[0]["threshold"]),
+        ])
+    return _table(_HOLD_ROLLUP_HEADER, rows)
 
 
 def _hold_section(hold: dict | None) -> str:
     if hold is None:
         return "No hold in this run.\n"
-    return _hold_stream_table(hold) + "\n" + _hold_verdict_table(hold)
+    named, groups = _split_hold_verdicts(hold)
+    sections = [_hold_stream_table(hold), _hold_verdict_table(named)]
+    if groups:
+        sections.append(_hold_rollup_table(groups))
+        sections.append(
+            "Per-process rows are rolled up; the full list is `hold/step-results.json` "
+            "in the archive.\n"
+        )
+    return "\n".join(sections)
 
 
 # A limitation line is `<axis>: <item>; <item>; … — <note>`. When more than
