@@ -42,8 +42,9 @@ pub(crate) enum ShapeReject {
 }
 
 /// The encoding name of `pt` from this media's `a=rtpmap`, lowercased
-/// (`"h264"`, `"mp2t"`, `"smpte336m"`), or `None` when absent.
-fn rtpmap_encoding(media: &SdpMedia, pt: u8) -> Option<String> {
+/// (`"h264"`, `"mp2t"`, `"smpte336m"`), and its clock rate when it parses,
+/// or `None` when there is no `a=rtpmap` for `pt`.
+fn rtpmap_encoding(media: &SdpMedia, pt: u8) -> Option<(String, Option<u32>)> {
     media.attributes.iter().find_map(|(k, v)| {
         if !k.eq_ignore_ascii_case("rtpmap") {
             return None;
@@ -53,9 +54,17 @@ fn rtpmap_encoding(media: &SdpMedia, pt: u8) -> Option<String> {
         if pt_str.parse::<u8>().ok()? != pt {
             return None;
         }
-        Some(rest.split('/').next()?.trim().to_ascii_lowercase())
+        let mut parts = rest.split('/');
+        let name = parts.next()?.trim().to_ascii_lowercase();
+        let rate = parts.next().and_then(|r| r.trim().parse::<u32>().ok());
+        Some((name, rate))
     })
 }
+
+/// The clock rate the elementary adapter assumes for H.264 (RFC 6184
+/// §8.2.1 mandates it) and KLV (its aligner and fallback count KLV ticks
+/// at the video rate).
+const ELEMENTARY_CLOCK_RATE: u32 = 90_000;
 
 fn classify_track(index: usize, m: &SdpMedia) -> Result<AnnouncedTrack, ShapeReject> {
     let pt = *m
@@ -68,10 +77,15 @@ fn classify_track(index: usize, m: &SdpMedia) -> Result<AnnouncedTrack, ShapeRej
         ));
     }
     let enc = rtpmap_encoding(m, pt);
-    let kind = match (pt, enc.as_deref()) {
-        (33, None) | (_, Some("mp2t")) => TrackKind::Mp2t,
-        (_, Some("h264")) => TrackKind::H264,
-        (_, Some("smpte336m")) => TrackKind::Klv,
+    let kind = match (pt, enc.as_ref().map(|(n, r)| (n.as_str(), *r))) {
+        (33, None) | (_, Some(("mp2t", _))) => TrackKind::Mp2t,
+        (_, Some(("h264", Some(ELEMENTARY_CLOCK_RATE)))) => TrackKind::H264,
+        (_, Some(("smpte336m", Some(ELEMENTARY_CLOCK_RATE)))) => TrackKind::Klv,
+        (_, Some(("h264" | "smpte336m", _))) => {
+            return Err(ShapeReject::Unsupported(
+                "H264 or smpte336m clock rate is not 90000",
+            ));
+        }
         _ => {
             return Err(ShapeReject::Unsupported(
                 "payload type is not MP2T, H264 or smpte336m",
@@ -209,6 +223,21 @@ mod tests {
             "m=application 0 RTP/AVP 97\na=rtpmap:97 smpte336m/90000\na=control:a\n",
             "m=video 0 RTP/AVP 96\na=control:a\n", // dynamic PT, no rtpmap (ffmpeg's KLV track shape)
             "m=video 0 RTP/AVP 33\na=control:a\nm=application 0 RTP/AVP 97\na=rtpmap:97 smpte336m/90000\na=control:b\n",
+        ] {
+            let s = sdp(&format!("{HEAD}{body}"));
+            assert!(
+                matches!(classify_announce(&s), Err(ShapeReject::Unsupported(_))),
+                "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn elementary_clock_rates_other_than_90000_are_415() {
+        for body in [
+            "m=video 0 RTP/AVP 96\na=rtpmap:96 H264/90000\na=control:a\nm=application 0 RTP/AVP 97\na=rtpmap:97 smpte336m/1000\na=control:b\n",
+            "m=video 0 RTP/AVP 96\na=rtpmap:96 H264/48000\na=control:a\n",
+            "m=video 0 RTP/AVP 96\na=rtpmap:96 H264\na=control:a\n",
         ] {
             let s = sdp(&format!("{HEAD}{body}"));
             assert!(

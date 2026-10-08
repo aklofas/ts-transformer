@@ -27,6 +27,14 @@
 //! [`crate::transport::RtpRecvTransport`] does not read it; the TS PES
 //! headers carry the real timing.
 //!
+//! B-frame publishers: RTP timestamps are presentation times sent in
+//! decode order, so a B-frame arrives with a PTS below an AU already
+//! muxed. Each such AU is counted in `aus_reordered` and still muxed, with
+//! its PTS only: the muxer derives no DTS and paces its PCR from the PTS,
+//! so the re-muxed TS is not conformant for B-frame streams and a
+//! PCR-slaved player may show those frames late. A reorder window that
+//! derives DTS is deferred.
+//!
 //! Nothing here fails outward. A packet that does not parse, carries the
 //! wrong payload type, or names an unknown track counts as
 //! `malformed_packets`; an AU or KLV unit the muxer refuses (for example
@@ -116,6 +124,9 @@ pub(crate) struct EsAdapter {
     ssrc: Option<u32>,
     /// Highest PTS pushed into the muxer — the synthesized RTP timestamp.
     max_pts: i64,
+    /// Highest video PTS pushed into the muxer; an AU below it is a
+    /// reordered (B-frame) AU.
+    max_video_pts: Option<i64>,
     out: Box<[u8; RTP_PAYLOAD_SIZE]>,
     /// Time source for the aligner's fallback window: `Instant::now`
     /// outside tests.
@@ -201,6 +212,7 @@ impl EsAdapter {
             seq: 0,
             ssrc: None,
             max_pts: 0,
+            max_video_pts: None,
             out: Box::new([0u8; RTP_PAYLOAD_SIZE]),
             now: Box::new(Instant::now),
         }
@@ -248,11 +260,19 @@ impl EsAdapter {
             self.mount.tick(|s| s.aus_dropped += 1);
             return;
         }
+        let pts = au.pts.as_ticks();
+        let reordered = self.max_video_pts.is_some_and(|m| pts < m);
         match self.muxer.push_video(&au.annexb, au.pts, au.key_frame) {
             Ok(()) => {
                 self.seen_keyframe |= au.key_frame;
-                self.max_pts = self.max_pts.max(au.pts.as_ticks());
-                self.mount.tick(|s| s.aus_emitted += 1);
+                self.max_pts = self.max_pts.max(pts);
+                self.max_video_pts = Some(self.max_video_pts.map_or(pts, |m| m.max(pts)));
+                self.mount.tick(|s| {
+                    s.aus_emitted += 1;
+                    if reordered {
+                        s.aus_reordered += 1;
+                    }
+                });
                 self.drain_muxer();
             }
             Err(e) => {
@@ -674,6 +694,7 @@ mod tests {
         let s = mount.stats_snapshot();
         assert_eq!(s.aus_dropped, 1);
         assert_eq!(s.aus_emitted, 4);
+        assert_eq!(s.aus_reordered, 0);
         assert_eq!(s.malformed_packets, 0);
         assert_eq!(s.rtp_packets_received, 5);
     }
@@ -890,6 +911,28 @@ mod tests {
             a.muxer.push_klv(&vec![0u8; max + 1], Pts90khz::new(0), 0),
             Err(MuxError::KlvTooLarge { .. })
         ));
+    }
+
+    #[test]
+    fn b_frames_are_counted_as_reordered_and_still_muxed() {
+        // Decode order I P B B P B B (presentation 0 3 1 2 6 4 5, in 3003
+        // ticks): every B arrives below a PTS already muxed.
+        let mount = PublishMountState::new("/p", 8);
+        let mut t = app_transport(&mount);
+        let mut a = EsAdapter::new(mount.clone(), &video_track(), None).unwrap();
+        let order = [0u32, 3, 1, 2, 6, 4, 5];
+        for (i, &p) in order.iter().enumerate() {
+            let header = if i == 0 { 0x65 } else { 0x41 };
+            a.on_rtp(
+                0,
+                &payload::single(1 + i as u16, 9_000 + 3003 * p, header, 300, VIDEO_PT),
+            );
+        }
+        a.flush();
+        let s = mount.stats_snapshot();
+        assert_eq!(s.aus_emitted, 7);
+        assert_eq!(s.aus_reordered, 4, "the four B-frames");
+        assert_eq!(demux_app(&mut t).video.len(), 7);
     }
 
     #[test]

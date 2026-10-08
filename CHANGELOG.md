@@ -33,6 +33,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`PublishMountStats::alignment`; `Provisional` after 2 s without
   reports). An ANNOUNCE of this shape, answered `415` until now, is
   accepted; other track mixes still answer `415`.
+- An H.264 or KLV track must announce a 90000 clock rate (RFC 6184
+  mandates it for H.264); any other rate answers `415`.
+- B-frame publishers: the re-muxed TS carries PTS only; a DTS-deriving
+  reorder window is deferred. Each AU that arrives below a PTS already
+  muxed (a B-frame) is still muxed and counted in
+  `PublishMountStats::aus_reordered`.
 - A UDP publisher's RTP and RTCP are admitted only from its RTSP control
   connection's IP; the source port is learned from the first valid packet
   and may change. Datagrams from other IPs, RTCP included, are counted in
