@@ -213,7 +213,7 @@ impl Aligner {
     }
 
     /// Place everything currently held, if alignment is known. Shared by
-    /// [`Self::on_klv_unit`] and the test-only
+    /// [`Self::on_klv_unit`], [`Self::poll`] and the test-only
     /// `on_klv_sr_then_release`/[`Self::drain`] flush path.
     fn release(&mut self, now: Instant) -> Vec<(KlvUnit, i64)> {
         self.maybe_engage_fallback(now);
@@ -227,6 +227,13 @@ impl Aligner {
             placed.push((u, pts));
         }
         placed
+    }
+
+    /// Place held units on elapsed time alone: the same step
+    /// [`Self::on_klv_unit`] runs, without queueing a new unit, so the
+    /// [`ALIGN_FALLBACK`] window can expire while only video arrives.
+    pub(crate) fn poll(&mut self, now: Instant) -> Vec<(KlvUnit, i64)> {
+        self.release(now)
     }
 
     pub(crate) fn mode(&self) -> ClockAlignment {
@@ -316,6 +323,21 @@ mod tests {
         let placed = a.on_klv_unit(unit(7_900), t0 + ALIGN_FALLBACK + Duration::from_millis(1));
         // first-packet coincidence: first klv unit ↔ pts 0; second is 900 ticks later
         assert_eq!(placed, vec![(unit(7_000), 0), (unit(7_900), 900)]);
+        assert_eq!(a.mode(), ClockAlignment::Provisional);
+    }
+
+    #[test]
+    fn poll_releases_held_units_after_the_fallback() {
+        let mut a = Aligner::new();
+        let t0 = Instant::now();
+        a.on_video_au(1_000);
+        assert!(a.on_klv_unit(unit(7_000), t0).is_empty());
+        assert!(
+            a.poll(t0 + ALIGN_FALLBACK - Duration::from_millis(1))
+                .is_empty()
+        );
+        let placed = a.poll(t0 + ALIGN_FALLBACK + Duration::from_millis(1));
+        assert_eq!(placed, vec![(unit(7_000), 0)]);
         assert_eq!(a.mode(), ClockAlignment::Provisional);
     }
 
