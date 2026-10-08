@@ -9,6 +9,17 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — tst-rtp: RTSP publisher role (ANNOUNCE / RECORD ingest), MP2T
+
+- `RtspServer::add_publish_mount(path)` registers a mount a publisher can
+  ANNOUNCE into (RFC 2326 §10.3), SETUP with `mode=record` (TCP-interleaved
+  or UDP) and RECORD. The mount hands the application an `RtpRecvTransport`
+  (`PublishMountHandle::into_recv_transport`, once per mount) carrying the
+  publisher's MPEG-TS, and keeps serving PLAY readers. One publisher per
+  mount (`403` to a second); the mount outlives publishers
+  (`PublishMountHandle::generation`). Elementary-track publishers,
+  on-demand mounts and the bindings follow in this release.
+
 ### Added — JVM binding: HLS publishing (`org.tstrans.hls`)
 
 - **`org.tstrans.hls`** mirrors `tstrans.hls` class for class: `HlsPublisher`
