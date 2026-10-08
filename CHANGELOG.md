@@ -228,6 +228,19 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and `streamid=N`. A reader mount registered with a path that literally
   ends in such a segment (`/x/stream=1`) no longer resolves.
 
+### Fixed — tst-rtp: RTSP publisher role
+
+- **No PCR jump when an elementary publisher's KLV clock is unusable.**
+  When a publisher ended, the server muxed every KLV unit still waiting
+  for the video at its placed PTS, however far ahead of the video that
+  was. A publisher whose KLV RTP timestamps do not advance (GStreamer's
+  `rtpklvpay` fed KLV without PTS) left units placed thousands of seconds
+  ahead, and the re-muxed TS's PCR jumped by that much for every PLAY
+  reader and the application transport. At the end of a publisher the
+  server now releases only units within 10 s (the placed-unit wait bound)
+  of the last muxed video PTS; the rest are dropped and counted in
+  `PublishMountStats::klv_units_dropped`.
+
 ### Added — JVM binding: HLS publishing (`org.tstrans.hls`)
 
 - **`org.tstrans.hls`** mirrors `tstrans.hls` class for class: `HlsPublisher`
