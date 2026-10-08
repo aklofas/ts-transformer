@@ -391,17 +391,31 @@ The SRT sender whose receiver was restarted twelve times (**F4**) slopes at
 Aggregate wire throughput over the hold was 384.6 Mb/s at 0.23 of the
 host's 8 vCPUs.
 
-The hold's overall verdict is nevertheless FAIL: 36 of the 206 receivers
-(33 SRT, 2 TCP, 1 UDP; no RIST) ended their 24 hours with
-corruption-attribution gaps — 85 events in total that the harness's
-attribution engine could not charge to a logged injection, plus 9
-injections it expected to see an event for and did not. That is about 8
-per million injections. The shape of the events (a resync or PAT checksum
-with the nearest logged injection one to several thousand packets earlier)
-is the one the 0.7.0 release-candidate soak analysis showed to be a
-harness attribution artefact, but this run's residue has not yet been
-triaged (finding R4-F2), so this page does not cite the hold as a 24-hour
-PASS. The resource measurements above stand on their own.
+The hold's `recv_invariants` and `worker_exits` verdicts nevertheless
+FAILED: 36 of the 206 receivers (33 SRT, 2 TCP, 1 UDP; no RIST) ended
+their 24 hours with corruption-attribution gaps — 85 events the harness's
+attribution engine could not charge to a logged injection, plus 10
+injections it expected to see an event for and did not, against
+7.40 million injections run over the hold. That is about 11.5 per million
+overall (53 on SRT, 1.7 on TCP, 1.4 on UDP, 0 on RIST).
+
+A same-day analysis traced every one of those events to the test harness's
+attribution engine, not to the library, a transport, or a proxy. 75 sit at
+SRT outage seams — phase 834–869 s of each 900-second outage window —
+where the engine holds the post-reconnect PCR clock jump as an
+unconfirmed candidate anchor until a second PCR agrees, leaving anything
+injected in that window unresolved when its own event fires; this is why
+only SRT receivers failed this way. The other 10 — the only non-SRT
+failures, at a uniform 0.5 per million injections — come from the raw
+reader's sync-byte hunt false-locking just inside a PCR packet whose very
+next packet had a flipped sync byte, discarding a good anchor and
+resolving the injection one PCR interval late. The one unrecovered
+injection comes from a reconnect-gap excusal keyed to media on any PID
+rather than the injection's own. The `recv_invariants` FAIL is cited here
+as that harness verdict defect (finding R4-F2), not as an overall 24-hour
+PASS and not as a product finding; a passing attribution verdict needs a
+re-run after the harness fix. The resource measurements above stand on
+their own.
 
 ## Measured: stress run of 2026-10-03
 
