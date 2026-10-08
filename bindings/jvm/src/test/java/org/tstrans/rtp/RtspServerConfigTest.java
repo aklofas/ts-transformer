@@ -17,6 +17,16 @@ class RtspServerConfigTest {
         assertEquals(2000, c.gracefulShutdownDrainMs());
         assertTrue(c.tlsCert().isEmpty());
         assertTrue(c.tlsKey().isEmpty());
+        assertFalse(c.acceptUnregisteredPublishers());
+    }
+
+    @Test
+    void acceptUnregisteredPublishersRoundTrips() {
+        RtspServerConfig on = RtspServerConfig.builder().acceptUnregisteredPublishers(true).build();
+        assertTrue(on.acceptUnregisteredPublishers());
+        assertTrue(on.toString().contains("acceptUnregisteredPublishers=true"));
+        RtspServerConfig off = RtspServerConfig.builder().acceptUnregisteredPublishers(false).build();
+        assertFalse(off.acceptUnregisteredPublishers());
     }
 
     @Test
@@ -114,11 +124,14 @@ class RtspServerConfigTest {
 
     @Test
     void serverStatsRecordRoundTrips() {
-        ServerStats s = new ServerStats(1L, 2L, 3L, 4L);
+        ServerStats s = new ServerStats(1L, 2L, 3L, 4L, 5L, 6L, 7L);
         assertEquals(1L, s.activeSessions());
         assertEquals(2L, s.totalRtpPacketsSent());
         assertEquals(3L, s.totalRtpBytesSent());
         assertEquals(4L, s.mounts());
+        assertEquals(5L, s.activePublishers());
+        assertEquals(6L, s.totalRtpPacketsReceived());
+        assertEquals(7L, s.totalRtpBytesReceived());
     }
 
     @Test

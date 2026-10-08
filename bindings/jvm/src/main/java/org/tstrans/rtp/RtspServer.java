@@ -1,5 +1,6 @@
 package org.tstrans.rtp;
 
+import java.util.Optional;
 import org.tstrans.MuxException;
 import org.tstrans.NativeHandle;
 import org.tstrans.NativeLoader;
@@ -15,7 +16,13 @@ import org.tstrans.mpegts.MuxerConfig;
  * <p><b>Closing:</b> {@link #close()} performs a graceful stop (RFC 7826 §13.5.1
  * Notice 5402 server-initiated teardown of active sessions) then frees the native
  * server. Use try-with-resources. {@link #stop(long)} is the explicit graceful
- * shutdown; {@link #cancelHandle()} returns a cross-thread hard-cancel.
+ * shutdown; {@link #cancelHandle()} returns a cross-thread hard-cancel. Only
+ * {@code stop()} and {@code close()} end publish mounts' receivers and wake a
+ * parked {@link #nextPublisher(long)}; the hard cancel does neither.
+ *
+ * <p><b>Publisher role:</b> {@link #addPublishMount(String)}, {@link
+ * #nextPublisher(long)} and {@link #removeMount(String)} accept encoders that push
+ * into the server with ANNOUNCE / RECORD; see {@link PublishMount}.
  *
  * <p><b>Failure isolation (rare):</b> if an internal panic occurs during a mutating
  * server operation (e.g. {@link #addUnicastMount} / {@link #stop}), the server entry
@@ -63,7 +70,8 @@ public final class RtspServer extends NativeHandle {
             config.maxSessions(), config.sessionTimeoutSecs(),
             config.fanoutCapacity(), config.gracefulShutdownDrainMs(),
             authScheme, realm, user, password,
-            config.tlsCert().orElse(null), config.tlsKey().orElse(null));
+            config.tlsCert().orElse(null), config.tlsKey().orElse(null),
+            config.acceptUnregisteredPublishers());
         if (h == 0) {
             throw new RtspException(RtspException.Kind.SERVER,
                 "nStart returned 0 without throwing");
@@ -150,6 +158,72 @@ public final class RtspServer extends NativeHandle {
         return new MountHandle(h);
     }
 
+    /**
+     * Register a publish mount under {@code path}: the server accepts ANNOUNCE /
+     * RECORD on it, and the returned {@link PublishMount} hands the received MPEG-TS
+     * to the application ({@link PublishMount#intoDemuxReceiver()}) while PLAY
+     * readers on the same path are re-served from it.
+     *
+     * @throws RtspException {@code MOUNT} for an invalid or duplicate path; {@code
+     *     SERVER} if the server is stopped
+     */
+    public PublishMount addPublishMount(String path) throws RtspException {
+        ensureOpen();
+        long h = nAddPublishMount(peekHandle(), java.util.Objects.requireNonNull(path, "path"));
+        if (h == 0) {
+            throw new RtspException(RtspException.Kind.MOUNT,
+                "nAddPublishMount returned 0 without throwing");
+        }
+        return new PublishMount(h);
+    }
+
+    /**
+     * Wait up to {@code timeoutMs} for the next publish mount an ANNOUNCE created on
+     * demand ({@link RtspServerConfig#acceptUnregisteredPublishers()}). The
+     * announcing publisher already holds the returned mount. Mounts come out in
+     * ANNOUNCE order, each to exactly one caller.
+     *
+     * <p>Returns empty when the timeout passes, and always does when on-demand
+     * publishers are off. The wait holds no lock on this object: {@link #stats()},
+     * {@link #close()} and every other method answer while it is parked, and {@link
+     * #stop()} or {@link #close()} from another thread wakes it with {@code SERVER}.
+     *
+     * <p>Concurrent callers are served one at a time, so a call made while another
+     * waits can return later than its own {@code timeoutMs}. The returned mount can
+     * already have been removed by {@link #removeMount(String)} while it waited in
+     * the queue: its receiver then reads end of stream at once; treat it as expired.
+     *
+     * @param timeoutMs how long to wait, in milliseconds ({@code 0} polls)
+     * @throws IllegalArgumentException if {@code timeoutMs} is negative
+     * @throws RtspException {@code SERVER} once the server has stopped, including
+     *     while this call waited
+     */
+    public Optional<PublishMount> nextPublisher(long timeoutMs) throws RtspException {
+        if (timeoutMs < 0) {
+            throw new IllegalArgumentException("timeoutMs must be >= 0; got " + timeoutMs);
+        }
+        ensureOpen();
+        long h = nNextPublisher(peekHandle(), timeoutMs);
+        return h == 0 ? Optional.empty() : Optional.of(new PublishMount(h));
+    }
+
+    /**
+     * Remove the mount at {@code path}, of any kind, and free the path. A publish
+     * mount's publisher is sent the RTSP Notice 5402 and disconnected, and its
+     * {@link DemuxReceiver} reads end of stream ({@code recvEvent()} returns {@code
+     * null}); the {@link PublishMount} stays usable for {@code stats()}. A local
+     * mount's {@link MountHandle} keeps accepting pushes that reach nobody. This is
+     * also how idle on-demand mounts are removed: they stay registered after their
+     * publisher leaves. Blocks for the Notice writes (at most 1 s per session).
+     *
+     * @throws RtspException {@code MOUNT} when no mount is registered at {@code
+     *     path}; {@code SERVER} if the server is stopped
+     */
+    public void removeMount(String path) throws RtspException {
+        ensureOpen();
+        nRemoveMount(peekHandle(), java.util.Objects.requireNonNull(path, "path"));
+    }
+
     /** Cross-thread hard-cancel handle. @throws IllegalStateException if closed. */
     public RtspServerCancelHandle cancelHandle() {
         ensureOpen();
@@ -158,7 +232,11 @@ public final class RtspServer extends NativeHandle {
         return new RtspServerCancelHandle(h);
     }
 
-    /** Graceful stop (best-effort) then free the native server. Idempotent. */
+    /**
+     * Graceful stop (best-effort) then free the native server. Idempotent. The stop
+     * ends every publish mount's receiver (end of stream) and wakes a parked {@link
+     * #nextPublisher(long)} with {@code SERVER}.
+     */
     @Override public void close() { super.close(); }
 
     // Package-private: preserves the accessibility level expected by same-package tests
@@ -177,12 +255,19 @@ public final class RtspServer extends NativeHandle {
 
     private static native long nStart(String bindAddr, long maxSessions, long sessionTimeoutSecs,
         long fanoutCapacity, long gracefulShutdownDrainMs, int authScheme, String authRealm,
-        String authUser, String authPassword, String tlsCert, String tlsKey)
+        String authUser, String authPassword, String tlsCert, String tlsKey,
+        boolean acceptUnregisteredPublishers)
         throws RtspException;
     private static native ServerStats nStats(long handle);
     private static native String nLocalAddr(long handle);
     private static native void nStop(long handle, long drainMs) throws RtspException;
     private static native long nCancelHandle(long handle);
+    private static native long nAddPublishMount(long serverHandle, String path)
+        throws RtspException;
+    private static native long nNextPublisher(long serverHandle, long timeoutMs)
+        throws RtspException;
+    private static native void nRemoveMount(long serverHandle, String path)
+        throws RtspException;
     private static native void nClose(long handle);
     private static native long nAddUnicastMount(long serverHandle, String path,
         int programNumber, int pmtPid, int pcrPid, int pcrIntervalMs, int psiIntervalMs,
