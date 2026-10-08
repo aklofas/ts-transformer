@@ -38,6 +38,10 @@ pub struct TransportResponse {
     pub interleaved: Option<(u8, u8)>,
     /// `ssrc=` parameter from the Transport header, if present.
     pub ssrc: Option<u32>,
+    /// `mode=` parameter, lowercased and with surrounding quotes
+    /// stripped (ffmpeg sends `mode=record`; RFC 2326 shows
+    /// `mode="PLAY"`). `None` when absent — a reader's SETUP omits it.
+    pub mode: Option<String>,
 }
 
 /// Parse a `Transport:` header value (server response OR client SETUP
@@ -72,6 +76,7 @@ pub fn parse_transport_response(header_value: &str) -> Result<TransportResponse,
     let mut client_port = None;
     let mut interleaved = None;
     let mut ssrc = None;
+    let mut mode = None;
     for part in header_value.split(';') {
         let part = part.trim();
         // Split the `key=value` once; match the key case-insensitively
@@ -87,6 +92,10 @@ pub fn parse_transport_response(header_value: &str) -> Result<TransportResponse,
             "client_port" => client_port = Some(parse_u16_pair(value)?),
             "interleaved" => interleaved = Some(parse_u8_pair(value)?),
             "ssrc" => ssrc = u32::from_str_radix(value, 16).ok(),
+            // Quotes stripped (RFC 2326 shows `mode="PLAY"`; ffmpeg sends
+            // the bare `mode=record`), lowercased so callers can compare
+            // against the one case-normalized literal "record".
+            "mode" => mode = Some(value.trim_matches('"').to_ascii_lowercase()),
             _ => {}
         }
     }
@@ -96,6 +105,7 @@ pub fn parse_transport_response(header_value: &str) -> Result<TransportResponse,
         client_port,
         interleaved,
         ssrc,
+        mode,
     })
 }
 
@@ -273,6 +283,19 @@ mod tests {
         let t = parse_transport_response(h).unwrap();
         assert_eq!(t.kind, RtspTransportKind::TcpInterleaved);
         assert_eq!(t.interleaved, Some((0, 1)));
+    }
+
+    #[test]
+    fn mode_record_is_parsed_case_insensitively() {
+        let t =
+            parse_transport_response("RTP/AVP/TCP;unicast;interleaved=0-1;MODE=RECORD").unwrap();
+        assert_eq!(t.mode.as_deref(), Some("record"));
+        // RFC 2326 §12.39 example form: quoted value.
+        let t2 = parse_transport_response("RTP/AVP;unicast;client_port=1-2;mode=\"PLAY\"").unwrap();
+        assert_eq!(t2.mode.as_deref(), Some("play"));
+        // Absent — a reader's SETUP omits it.
+        let t3 = parse_transport_response("RTP/AVP/TCP;unicast;interleaved=0-1").unwrap();
+        assert_eq!(t3.mode, None);
     }
 
     #[test]

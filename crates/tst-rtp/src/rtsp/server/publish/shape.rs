@@ -6,12 +6,7 @@ use crate::sdp::{Sdp, SdpMedia};
 
 pub(crate) const MAX_ANNOUNCE_TRACKS: usize = 4;
 
-// classify_announce and the types around it are only reached through this
-// module's own tests until the publish handlers (a later task in this arc)
-// call classify_announce from ANNOUNCE handling — hence #[allow(dead_code)]
-// on the chain below, which stays harmless once that call lands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub(crate) enum TrackKind {
     Mp2t,
     H264,
@@ -19,24 +14,30 @@ pub(crate) enum TrackKind {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub(crate) struct AnnouncedTrack {
+    /// SDP media index. The publisher handlers (Task 6) resolve tracks
+    /// by position in `tracks: Vec<_>` and by `control` instead — this
+    /// field is kept for diagnostics and stays unread until something
+    /// needs the original SDP media ordinal.
+    #[allow(dead_code)]
     pub(crate) index: usize,
     pub(crate) control: Option<String>,
     pub(crate) payload_type: u8,
     pub(crate) kind: TrackKind,
+    /// Read only by this module's own tests until the `Elementary`
+    /// shape has a real adapter (PR 2 of this arc) that consults the
+    /// H.264 fmtp params.
+    #[allow(dead_code)]
     pub(crate) h264_fmtp: Option<H264FmtpParams>,
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub(crate) struct AnnounceShape {
     pub(crate) shape: PublishShape,
     pub(crate) tracks: Vec<AnnouncedTrack>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub(crate) enum ShapeReject {
     /// 400 — structurally unusable (no media, >4 tracks, control ids missing/duplicated).
     BadRequest(&'static str),
@@ -46,7 +47,6 @@ pub(crate) enum ShapeReject {
 
 /// The encoding name of `pt` from this media's `a=rtpmap`, lowercased
 /// (`"h264"`, `"mp2t"`, `"smpte336m"`), or `None` when absent.
-#[allow(dead_code)]
 fn rtpmap_encoding(media: &SdpMedia, pt: u8) -> Option<String> {
     media.attributes.iter().find_map(|(k, v)| {
         if !k.eq_ignore_ascii_case("rtpmap") {
@@ -61,7 +61,6 @@ fn rtpmap_encoding(media: &SdpMedia, pt: u8) -> Option<String> {
     })
 }
 
-#[allow(dead_code)]
 fn classify_track(index: usize, m: &SdpMedia) -> Result<AnnouncedTrack, ShapeReject> {
     let pt = *m
         .payload_types
@@ -93,7 +92,6 @@ fn classify_track(index: usize, m: &SdpMedia) -> Result<AnnouncedTrack, ShapeRej
     })
 }
 
-#[allow(dead_code)]
 pub(crate) fn classify_announce(sdp: &Sdp) -> Result<AnnounceShape, ShapeReject> {
     if sdp.media.is_empty() {
         return Err(ShapeReject::BadRequest("SDP has no m= line"));

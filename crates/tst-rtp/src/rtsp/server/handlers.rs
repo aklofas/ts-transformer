@@ -1,7 +1,11 @@
 //! RTSP request handlers — dispatched from `session.rs`'s per-session
 //! state machine. Shared helpers (`server_header`, `error_response`,
 //! `challenge_response`), OPTIONS, DESCRIBE, SETUP, PLAY, PAUSE,
-//! TEARDOWN, and GET_PARAMETER are all fully implemented.
+//! TEARDOWN, and GET_PARAMETER are all fully implemented. ANNOUNCE and
+//! RECORD (publisher direction) are implemented in
+//! [`super::publish::handlers`]; `handle_setup` routes a `mode=record`
+//! SETUP there too, and `handle_teardown`/`handle_pause` have publisher
+//! arms below.
 
 use std::collections::HashMap;
 use std::net::{SocketAddr, UdpSocket as StdUdpSocket};
@@ -13,6 +17,7 @@ use bytes::Bytes;
 use crate::rtsp::message::{RtspRequest, RtspResponse};
 use crate::rtsp::server::ServerState;
 use crate::rtsp::server::auth::{AuthVerifyError, build_challenge_header, verify_authorization};
+use crate::rtsp::server::mount::MountEntry;
 use crate::rtsp::server::session::ServerSessionState;
 
 /// `Server:` header value for outbound responses.
@@ -72,7 +77,7 @@ pub(crate) fn challenge_response(
 /// Verify auth for an authenticated request. Returns `Ok(())` if auth
 /// is either not required or successfully verified; returns the
 /// challenge response (401) if auth is required and failed.
-fn check_auth(
+pub(crate) fn check_auth(
     req: &RtspRequest,
     state: &Arc<ServerState>,
     session: &mut ServerSessionState,
@@ -209,7 +214,7 @@ pub(crate) fn handle_describe(
 /// appends a trailing slash to the DESCRIBE URI would get a 404 for a
 /// perfectly valid mount. DESCRIBE, SETUP, and PLAY all go through this
 /// function, so the normalization is consistent across the whole session.
-fn extract_mount_path(uri: &str) -> String {
+pub(crate) fn extract_mount_path(uri: &str) -> String {
     // Strip scheme + authority if present.
     let path_start = if let Some(after_scheme) = uri.strip_prefix("rtsp://") {
         after_scheme
@@ -258,18 +263,55 @@ fn extract_mount_path(uri: &str) -> String {
     path.to_string()
 }
 
+/// The trailing per-media control segment of a SETUP URI, if any
+/// (`streamid=0`, `trackID=1`), or an absolute `a=control` URL's last
+/// segment. Used by the publisher SETUP path (`mode=record`) to resolve
+/// which announced track a given SETUP targets —
+/// [`extract_mount_path`] already strips this same segment when it
+/// locates the mount itself, so the two must agree on what counts as a
+/// control segment.
+pub(crate) fn control_segment(uri: &str) -> Option<&str> {
+    let path = uri.split('?').next().unwrap_or(uri);
+    let last = path.rsplit('/').next()?;
+    (last.starts_with("trackID=") || last.starts_with("streamid=")).then_some(last)
+}
+
+/// Allocate a fresh even/odd TCP-interleaved channel pair from the
+/// process-global allocator shared by the reader (this module's
+/// `handle_setup`) and publisher (`publish::handlers::handle_setup_record`)
+/// SETUP paths. A single shared counter across both directions is safe
+/// because channels are scoped per RTSP session on the wire — each
+/// client's TCP connection has its own interleaved namespace (see the
+/// allocator's original call site) — so there is no cross-session
+/// collision to avoid, only one allocator to avoid duplicating.
+///
+/// `None` on exhaustion (the companion channel would overflow `u8`);
+/// callers map that to 500 — a server-side allocator exhaustion, not a
+/// client error.
+pub(crate) fn next_interleaved_pair() -> Option<(u8, u8)> {
+    static NEXT_CHANNEL: AtomicU8 = AtomicU8::new(0);
+    let base = NEXT_CHANNEL.fetch_add(2, Ordering::Relaxed);
+    base.checked_add(1).map(|companion| (base, companion))
+}
+
 /// SETUP handler — RFC 7826 §10.4 / RFC 2326 §12.10. Auth-gated.
 /// Allocates per-session transport (UDP socket pair or interleaved
 /// channel pair); returns 200 with Session + Transport response.
+///
+/// A `mode=record` SETUP against a publish mount is routed to
+/// [`super::publish::handlers::handle_setup_record`] instead — see the
+/// `(MountEntry, is_record)` match right after the Transport header is
+/// parsed, below.
 ///
 /// Rejection codes:
 /// - 401 Unauthorized — auth check fails (via `check_auth`).
 /// - 404 Not Found — mount path not registered.
 /// - 400 Bad Request — Transport header missing or malformed.
 /// - 461 Unsupported Transport — TCP-interleaved against a multicast
-///   mount (RFC 7826 §13.3).
-/// - 500 Internal Server Error — UDP socket bind failure or poisoned
-///   mutex.
+///   mount (RFC 7826 §13.3), or `mode=record` against a local
+///   (muxer-backed) mount — only a publish mount accepts a publisher.
+/// - 500 Internal Server Error — UDP socket bind failure, interleaved
+///   channel allocator exhaustion, or poisoned mutex.
 ///
 /// On 200, mutates `session` with: `session_id`, `mount_path`,
 /// `transport`, and either `udp_sockets` (unicast UDP) or
@@ -297,14 +339,6 @@ pub(crate) fn handle_setup(
         None => return error_response(req, 404, "Not Found"),
     };
     drop(mounts);
-
-    // A publish mount re-serves PLAY readers from its publisher's TS
-    // bytes, but a reader's SETUP against it isn't wired yet — Task 6
-    // installs the real behaviour (today's rejection is temporary, not
-    // a permanent "no readers" rule).
-    if mount.as_publish().is_some() {
-        return error_response(req, 461, "Unsupported Transport");
-    }
 
     // Parse the Transport request header. The wire response stays a bare
     // 400 either way (a client gains nothing from the distinction); the
@@ -335,6 +369,30 @@ pub(crate) fn handle_setup(
                 return error_response(req, 400, "Bad Request");
             }
         };
+
+    // Route a publisher's SETUP (`mode=record`) to the publish handlers;
+    // a reader's SETUP (no `mode=`, or any value other than "record")
+    // falls through to the existing unicast/multicast allocation below —
+    // `MountEntry`'s accessors (`fanout`/`is_multicast`/...) already
+    // treat a publish mount and a local mount uniformly for readers, so
+    // a publish-mount reader needs no special casing past this match.
+    let is_record = parsed.mode.as_deref() == Some("record");
+    match (&mount, is_record) {
+        (MountEntry::Publish(_), true) => {
+            return crate::rtsp::server::publish::handlers::handle_setup_record(
+                req,
+                state,
+                session,
+                &parsed,
+                &mount_path,
+            );
+        }
+        // A local (muxer-backed) mount never accepts a publisher.
+        (MountEntry::Local(_), true) => {
+            return error_response(req, 461, "Unsupported Transport");
+        }
+        (MountEntry::Publish(_), false) | (MountEntry::Local(_), false) => {}
+    }
 
     // Per RFC 7826 §13.3: TCP-interleaved is incompatible with multicast.
     let is_multicast = mount.is_multicast();
@@ -415,20 +473,13 @@ pub(crate) fn handle_setup(
             }
         }
         RtspTransportKind::TcpInterleaved => {
-            // Allocate a fresh even/odd channel pair per session. v1
-            // uses a process-global atomic counter — sufficient since
-            // channels are per-session-scope on the wire (each client's
-            // TCP connection has its own interleaved namespace).
-            static NEXT_CHANNEL: AtomicU8 = AtomicU8::new(0);
-            let base = NEXT_CHANNEL.fetch_add(2, Ordering::Relaxed);
-            // base+1 is the RTCP companion channel; base==255 (or an odd
-            // base after wrap) would overflow u8. Reject rather than
-            // wrapping to channel 0 (same +1 companion bug class as the
-            // UDP port pairs). 500 — this is a server-side allocator
-            // exhaustion, not a client error.
-            let companion = match base.checked_add(1) {
-                Some(c) => c,
-                None => return error_response(req, 500, "Internal Server Error"),
+            // Allocate a fresh even/odd channel pair from the shared
+            // allocator (also used by the publisher SETUP path) — see
+            // `next_interleaved_pair`'s doc for why one process-global
+            // counter is safe across both directions. 500 on exhaustion:
+            // a server-side allocator problem, not a client error.
+            let Some((base, companion)) = next_interleaved_pair() else {
+                return error_response(req, 500, "Internal Server Error");
             };
             session.interleaved_channels = Some((base, companion));
             transport_response_header =
@@ -466,7 +517,7 @@ pub(crate) fn handle_setup(
 /// Generate a 16-hex-char session ID. Per RFC 7826 §17.3.2, session IDs
 /// must be at least 8 characters; 16 hex is generous and avoids
 /// collisions across concurrent SETUPs.
-fn generate_session_id() -> String {
+pub(crate) fn generate_session_id() -> String {
     let mut buf = [0u8; 8];
     if getrandom::getrandom(&mut buf).is_err() {
         // Fallback: timestamp-based. getrandom only fails on platforms
@@ -495,7 +546,7 @@ fn generate_session_id() -> String {
 /// Returns `(rtp_socket, rtcp_socket, rtp_port)`. Each socket is wrapped
 /// as `Arc<tokio::net::UdpSocket>` so it can be cloned into the
 /// per-peer fan-out task.
-fn bind_server_udp_pair(
+pub(crate) fn bind_server_udp_pair(
     bind_ip: std::net::IpAddr,
 ) -> Result<
     (
@@ -744,6 +795,13 @@ fn play_response_ok(
 /// a fresh fanout task; the `peer_cancel` token is replaced after
 /// cancellation since `CancellationToken` doesn't auto-reset.
 ///
+/// A publisher session (`session.publish.is_some()`) answers 200 with no
+/// fanout retire — PAUSE on the publisher direction has no RFC 7826
+/// analogue (RECORD has no PAUSE semantics defined); we just acknowledge
+/// it and keep recording state untouched, matching how `handle_setup`'s
+/// publisher branch and `handle_record` otherwise ignore the reader-only
+/// fanout machinery entirely.
+///
 /// Rejection codes:
 /// - 401 Unauthorized — auth check fails.
 /// - 454 Session Not Found — PAUSE before SETUP.
@@ -758,6 +816,21 @@ pub(crate) fn handle_pause(
     let Some(session_id) = session.session_id.clone() else {
         return error_response(req, 454, "Session Not Found");
     };
+    if session.publish.is_some() {
+        let mut headers = HashMap::new();
+        if let Some(cseq) = req.headers.get("cseq") {
+            headers.insert("cseq".into(), cseq.clone());
+        }
+        headers.insert("server".into(), server_header());
+        headers.insert("session".into(), session_id);
+        return RtspResponse {
+            version: req.version,
+            status: 200,
+            reason: "OK".into(),
+            headers,
+            body: Bytes::new(),
+        };
+    }
     // Retire the current fanout task. The session's `peer_cancel` was
     // passed into `spawn_peer_fanout` at PLAY; cancelling it exits the
     // task at its next frame boundary. Replace with a fresh token so a
@@ -807,6 +880,13 @@ pub(crate) fn handle_teardown(
         return challenge;
     }
     let session_id = session.session_id.clone().unwrap_or_default();
+    // End the publisher before touching the reader-fanout fields below —
+    // `PublishSession::end` flushes the adapter, cancels any UDP ingest
+    // tasks, and frees the mount's publisher slot (bumping its
+    // generation) so a fresh ANNOUNCE can claim it right away.
+    if let Some(mut p) = session.publish.take() {
+        p.end();
+    }
     // Retire, don't `abort()` — the 200 OK is written on the same
     // connection before FIN and must not land inside a half-written
     // interleaved frame (see `ServerSessionState::retire_fanout`).

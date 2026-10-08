@@ -68,8 +68,11 @@ pub(crate) struct PublishMountState {
     /// `SyncSender` is indistinguishable from a wire failure and the
     /// transport would report `Broken`, not `Closed`.
     app_end_reason: EndReasonSlot,
-    publisher: Mutex<Option<PublisherInfo>>,
-    generation: AtomicU64,
+    /// `pub(crate)` so the publisher handlers' own test module
+    /// (`publish::handlers::tests`, a sibling of this module) can assert
+    /// directly on the slot and generation counter.
+    pub(crate) publisher: Mutex<Option<PublisherInfo>>,
+    pub(crate) generation: AtomicU64,
     stats: Mutex<PublishMountStatsInner>,
     /// Mount-level dropped-frame total for PLAY readers lagging behind
     /// the fanout — mirrors `MountState::frames_dropped`. Lives outside
@@ -105,13 +108,14 @@ impl PublishMountState {
         })
     }
 
-    // `emit`, `try_begin_publisher`, `end_publisher`, `close`, and `tick`
-    // are reached today only through this module's own tests — the
-    // publisher ingest adapter (Task 5 of this arc) calls `emit` and
-    // `try_begin_publisher`/`end_publisher` from the RECORD session
-    // lifecycle, and `remove_mount` (Task 16) calls `close`. `tick` is
-    // every one of those methods' shared stats-mutation path. The
-    // `#[allow(dead_code)]` on each stays harmless once those calls land.
+    // `emit`, `close`, and `tick` are reached today only through this
+    // module's own tests — the publisher ingest adapter (Tasks 7/8 of
+    // this arc, once RTP/RTCP packets actually flow) calls `emit`, and
+    // `remove_mount` (Task 16) calls `close`. `tick` is `emit`'s shared
+    // stats-mutation path. `try_begin_publisher`/`end_publisher` are now
+    // reached from `handle_announce` / `PublishSession::end` (Task 6).
+    // The `#[allow(dead_code)]` on the remaining three stays harmless
+    // once their calls land.
     /// One frame to both sinks. `ts` = TS payload for readers; `rtp` =
     /// whole RTP packet (PT 33) for the app. A full application channel
     /// drops `rtp` (newest) and ticks `frames_dropped_app`; the reader
@@ -150,7 +154,6 @@ impl PublishMountState {
     /// Claim the publisher slot. Returns `false` if another publisher
     /// already holds it (the slot is exclusive — only one ANNOUNCE/RECORD
     /// session may feed a mount at a time).
-    #[allow(dead_code)]
     pub(crate) fn try_begin_publisher(&self, mut info: PublisherInfo) -> bool {
         let mut g = self.publisher.lock().unwrap_or_else(|e| e.into_inner());
         if g.is_some() {
@@ -166,7 +169,6 @@ impl PublishMountState {
     /// date; does NOT close the application transport — a reader
     /// waiting on `into_recv_transport`'s output just sees the stream
     /// idle until the next publisher begins.
-    #[allow(dead_code)]
     pub(crate) fn end_publisher(&self) {
         let mut g = self.publisher.lock().unwrap_or_else(|e| e.into_inner());
         if g.take().is_some() {
