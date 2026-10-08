@@ -390,7 +390,12 @@ pub struct PublishMountStats {
     pub aus_reordered: u64,
     /// KLV units emitted by an elementary-shape adapter.
     pub klv_units_emitted: u64,
-    /// KLV units an elementary-shape adapter dropped.
+    /// KLV units an elementary-shape adapter dropped: damaged or oversize
+    /// on the wire, past the hold's bounds (4 096 units or 4 MiB, held
+    /// for alignment and waiting for the video together; two seconds
+    /// without a video track, or two seconds placed but not reached by
+    /// the video), held at a source restart, placed before the video's
+    /// first frame, or refused by the muxer.
     pub klv_units_dropped: u64,
     /// How the current publisher's tracks are aligned to one clock.
     pub alignment: ClockAlignment,
