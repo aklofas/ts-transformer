@@ -70,6 +70,10 @@ impl From<RtspServerError> for BindingError {
             RtspServerError::AlreadyStarted
             | RtspServerError::NotStarted
             | RtspServerError::Shutdown => K::RtspServer,
+            // Same one-cancel-outcome kind as `RtspError::LocalCancel`: a
+            // publish mount's application transport was already taken by
+            // another clone of the handle, not a wire failure.
+            RtspServerError::TransportTaken => K::Closed,
         };
         BindingError::new(kind, e.to_string())
     }
@@ -222,6 +226,10 @@ mod tests {
         assert_eq!(
             BindingError::from(RtspServerError::Shutdown).kind,
             K::RtspServer
+        );
+        assert_eq!(
+            BindingError::from(RtspServerError::TransportTaken).kind,
+            K::Closed
         );
         assert_eq!(BindingError::from(MountError::Closed).kind, K::RtspMount);
         assert_eq!(

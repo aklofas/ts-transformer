@@ -21,6 +21,8 @@ use tokio::sync::broadcast;
 
 use tst_core::mpegts::mux::{Muxer, MuxerConfig};
 
+use super::publish::mount::PublishMountState;
+
 /// Discriminant for mount type.
 ///
 /// `Unicast` mounts pair the broadcast fanout with per-session
@@ -92,6 +94,83 @@ impl MountState {
             stats: Mutex::new(MountStatsInner::default()),
             frames_dropped: Arc::new(AtomicU64::new(0)),
         }))
+    }
+}
+
+/// One entry in `ServerState::mounts` — either a muxer-backed local mount
+/// (`add_mount` / `add_multicast_mount`) or a publish mount (`add_publish_mount`)
+/// fed by an ANNOUNCE/RECORD publisher. `handle_describe` / `handle_setup` /
+/// `handle_play` read through the accessors below instead of matching the
+/// variant directly, so the two mount kinds share one lookup path.
+#[derive(Clone)]
+pub(crate) enum MountEntry {
+    Local(Arc<MountState>),
+    Publish(Arc<PublishMountState>),
+}
+
+impl MountEntry {
+    /// The broadcast fanout carrying serialized TS bytes — a local
+    /// mount's muxer output, or a publish mount's re-served publisher
+    /// input. PLAY readers subscribe to this for either kind.
+    pub(crate) fn fanout(&self) -> &broadcast::Sender<Bytes> {
+        match self {
+            MountEntry::Local(m) => &m.fanout,
+            MountEntry::Publish(m) => &m.fanout,
+        }
+    }
+
+    /// Mount-level dropped-frame total for PLAY readers (see
+    /// [`MountState::frames_dropped`] / `PublishMountState::frames_dropped_readers`).
+    pub(crate) fn frames_dropped(&self) -> Arc<AtomicU64> {
+        match self {
+            MountEntry::Local(m) => m.frames_dropped.clone(),
+            MountEntry::Publish(m) => m.frames_dropped_readers.clone(),
+        }
+    }
+
+    /// A publish mount is never multicast — ANNOUNCE/RECORD targets a
+    /// single unicast path; the publisher's bytes still re-serve
+    /// unicast PLAY readers through [`Self::fanout`].
+    pub(crate) fn is_multicast(&self) -> bool {
+        match self {
+            MountEntry::Local(m) => matches!(m.kind, MountKind::Multicast { .. }),
+            MountEntry::Publish(_) => false,
+        }
+    }
+
+    /// `Some(group)` for a local multicast mount; `None` for a local
+    /// unicast mount or any publish mount.
+    pub(crate) fn multicast_group(&self) -> Option<SocketAddr> {
+        match self {
+            MountEntry::Local(m) => match &m.kind {
+                MountKind::Multicast { group, .. } => Some(*group),
+                MountKind::Unicast => None,
+            },
+            MountEntry::Publish(_) => None,
+        }
+    }
+
+    /// `Some(ttl)` for a local multicast mount; `None` otherwise. Paired
+    /// with [`Self::multicast_group`] by `handle_setup` to rebuild the
+    /// `Transport:` response header without matching on `MountKind`.
+    pub(crate) fn multicast_ttl(&self) -> Option<u8> {
+        match self {
+            MountEntry::Local(m) => match &m.kind {
+                MountKind::Multicast { ttl, .. } => Some(*ttl),
+                MountKind::Unicast => None,
+            },
+            MountEntry::Publish(_) => None,
+        }
+    }
+
+    /// The publish-mount state, if this entry is one. `handle_setup`
+    /// uses this to refuse a reader's SETUP against a publish mount
+    /// (Task 6 installs the real behaviour).
+    pub(crate) fn as_publish(&self) -> Option<&Arc<PublishMountState>> {
+        match self {
+            MountEntry::Publish(p) => Some(p),
+            MountEntry::Local(_) => None,
+        }
     }
 }
 

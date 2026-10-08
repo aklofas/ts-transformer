@@ -11,6 +11,8 @@ pub(crate) mod session;
 pub(crate) mod shape;
 pub(crate) mod udp_ingest;
 
+pub use mount::{ClockAlignment, PublishMountHandle, PublishMountStats, PublisherInfo};
+
 /// Wire shape a publisher announced (§1 classification table).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
