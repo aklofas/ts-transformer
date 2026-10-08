@@ -76,7 +76,9 @@ const KLV_PID: u16 = 0x101;
 /// harness does, `max(10 000, (programs + 1) × ⌈largest AU / 184⌉)`, the
 /// `+ 1` covering PSI and adaptation-field overhead. The queue grows on
 /// demand and is drained after every push, so the cap costs no memory
-/// until such an AU arrives.
+/// until such an AU arrives. After one does, the muxer keeps the memory
+/// for the publisher's life: neither its packet queue (about 17 MB at the
+/// cap) nor its PES scratch buffer (about 8 MiB) shrinks once drained.
 fn muxer_buffer_packets() -> usize {
     let largest_au = H264DepayConfig::default().max_au_bytes;
     10_000.max((1 + 1) * largest_au.div_ceil(184))

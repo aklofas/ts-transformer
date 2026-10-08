@@ -508,7 +508,8 @@ mod tests {
         let r = handle_announce(&announce("rtsp://h/pub", SDP_MP2T), &st, &mut s);
         assert_eq!(r.status, 200);
         let p = s.publish.as_ref().unwrap();
-        assert_eq!(p.shape, PublishShape::Mp2t);
+        let shape = m.publisher.lock().unwrap().as_ref().unwrap().shape;
+        assert_eq!(shape, PublishShape::Mp2t);
         assert_eq!(p.tracks.len(), 1);
         assert!(m.publisher.lock().unwrap().is_some());
     }
@@ -521,7 +522,8 @@ mod tests {
         let r = handle_announce(&announce("rtsp://h/pub", SDP_ES), &st, &mut s);
         assert_eq!(r.status, 200);
         let p = s.publish.as_ref().unwrap();
-        assert_eq!(p.shape, PublishShape::Elementary { klv: true });
+        let shape = m.publisher.lock().unwrap().as_ref().unwrap().shape;
+        assert_eq!(shape, PublishShape::Elementary { klv: true });
         assert_eq!(p.tracks.len(), 2);
         assert!(m.publisher.lock().unwrap().is_some());
     }
