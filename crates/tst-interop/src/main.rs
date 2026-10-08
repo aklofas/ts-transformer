@@ -12,7 +12,7 @@ use tst_interop::recv;
 use tst_interop::report;
 use tst_interop::send;
 use tst_interop::serve;
-use tst_interop::verify::{self, KlvExpect};
+use tst_interop::verify::{self, KlvExpect, WireLayout};
 
 fn usage() -> String {
     "usage: tst-interop <subcommand> [options...]
@@ -26,7 +26,8 @@ Subcommands:
             [--seed N] turn on the seeded TS corruption tap; --au-sizes
             realistic [--au-scale N] scales the realistic AU payload sizes)
   recv      Receive test data from endpoint (--corruption-log PATH judges the
-            capture against a `send --corrupt` peer's log — start recv FIRST)
+            capture against a `send --corrupt` peer's log — start recv FIRST;
+            --remuxed skips the generator-layout oracles for a re-muxed capture)
   verify    Verify interop test results
   proxy     UDP impairment relay (loss/dup/reorder/jitter/scheduled outage;
             --schedule seed=N,phases=K,phase_s=DUR walks a seeded phase
@@ -602,7 +603,7 @@ fn run_send(args: &[String]) -> ! {
 }
 
 /// `recv --url URL --expect PROFILE --seconds N [--json OUT]
-/// [--managed] [--no-klv-digest] [--strict]
+/// [--managed] [--no-klv-digest] [--strict] [--remuxed]
 /// [--klv-set compact|rich] [--klv-seed N] [--corruption-log PATH]`
 ///
 /// Builds a live transport from `URL` and receives `N` seconds of
@@ -633,6 +634,15 @@ fn run_send(args: &[String]) -> ! {
 /// event — for lossless transparent-tier cells; default `Lossy` counts
 /// them (in `VerifyReport.metrics.discontinuities`) without failing.
 /// `NonConformant` events always fail, in either mode.
+///
+/// `--remuxed` judges a capture that crossed a re-muxer, which keeps the
+/// content but lays the multiplex out its own way: the `rtsp-publish://`
+/// mount re-muxes an elementary H.264 + KLV push onto its own PIDs, with
+/// KLV as `PrivateData`. Only the oracles keyed on the generator's layout
+/// are skipped (PIDs, PMT stream types and descriptors, KLV carriage kind,
+/// wire-vs-demux per PID — the list is `verify::REMUXED_SKIPPED_ORACLES`);
+/// every content oracle still runs, and the report names what it skipped
+/// in `skipped_oracles`. Not combinable with `--managed`.
 ///
 /// `--klv-set rich` / `--klv-seed N` must MATCH what the sender's
 /// `gen`/`send` used: the report then gains `metrics.klv_rich` plus the
@@ -669,6 +679,7 @@ fn run_recv(args: &[String]) -> ! {
     let mut managed = false;
     let mut no_klv_digest = false;
     let mut strict = false;
+    let mut remuxed = false;
     let mut klv_set = KlvSet::Compact;
     let mut klv_seed: u64 = 0;
     let mut corruption_log: Option<PathBuf> = None;
@@ -702,6 +713,10 @@ fn run_recv(args: &[String]) -> ! {
             }
             "--strict" => {
                 strict = true;
+                i += 1;
+            }
+            "--remuxed" => {
+                remuxed = true;
                 i += 1;
             }
             "--klv-set" => {
@@ -744,9 +759,19 @@ fn run_recv(args: &[String]) -> ! {
         std::process::exit(2);
     });
 
+    if remuxed && managed {
+        eprintln!("recv: --remuxed cannot be combined with --managed");
+        std::process::exit(2);
+    }
+
     let klv = KlvExpect {
         set: klv_set,
         seed: klv_seed,
+    };
+    let layout = if remuxed {
+        WireLayout::Remuxed
+    } else {
+        WireLayout::Generator
     };
     let report = if managed {
         recv::run_managed(
@@ -769,6 +794,7 @@ fn run_recv(args: &[String]) -> ! {
             strict,
             klv,
             corruption_log.as_deref(),
+            layout,
         )
     }
     .unwrap_or_else(|e| {

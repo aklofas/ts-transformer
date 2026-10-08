@@ -44,7 +44,7 @@ jobs:
   interop-matrix:
     name: interop matrix (linux-x86_64)
     runs-on: ubuntu-latest
-    # Worst-case budget: 157 cells at the run-matrix.sh default of 10s
+    # Worst-case budget: 159 cells at the run-matrix.sh default of 10s
     # each, plus per-cell settle/timeout margin (lib.sh's cell_timeout)
     # and a --release build of tst-interop's native-linking dependency
     # chain (tst-srt + tst-rist, i.e. vendored libsrt/librist/mbedTLS).
@@ -112,10 +112,14 @@ jobs:
         #     not an input-file reason. (av1-klv-*/h266-klv need no
         #     decoder: GStreamer 1.24 wires no AV1-in-TS / VVC playbin
         #     path, and the cells pass silently — see lib.sh.)
+        #   - gstreamer1.0-rtsp: rtspclientsink, the RTSP publisher the
+        #     rtsp-publish/gst-push-* cells push with. Same load-bearing
+        #     shape as plugins-bad: without it gst-launch-1.0 is present,
+        #     so `have()` does not skip, and the pipeline fails to build.
         #   - jq: required by run-matrix.sh/lib.sh's own JSON handling
         #     (README.md).
         run: |
-          sudo apt-get -o Acquire::Retries=5 install -y ffmpeg vlc mpv gstreamer1.0-tools gstreamer1.0-plugins-bad gstreamer1.0-plugins-base-apps gstreamer1.0-libav jq
+          sudo apt-get -o Acquire::Retries=5 install -y ffmpeg vlc mpv gstreamer1.0-tools gstreamer1.0-plugins-bad gstreamer1.0-plugins-base-apps gstreamer1.0-libav gstreamer1.0-rtsp jq
 
       - name: Install TSDuck
         # Not in Ubuntu's apt repos — install the pinned upstream .deb
@@ -170,7 +174,7 @@ jobs:
 
       - name: cargo build --release -p tst-interop
         # --release: run-matrix.sh's $BIN points at target/release/tst-interop
-        # (a live 157-cell matrix needs the muxer/demuxer at real speed, not
+        # (a live 159-cell matrix needs the muxer/demuxer at real speed, not
         # a debug build). SRT/RIST_FORCE_VENDORED: this runner has no
         # system libsrt/librist, so pkg-config would already fall through
         # to vendored — set explicitly anyway, matching every other
@@ -218,7 +222,7 @@ jobs:
         # step is the second line, re-checking the merged report's own
         # numbers so a `report merge` that somehow wrote a truncated
         # census still can't slip through as green. The advertised shape
-        # is the full 157-cell census with ZERO tool-missing skips (the
+        # is the full 159-cell census with ZERO tool-missing skips (the
         # 12 gst-play cells were the last skip class, enabled 2026-08-20
         # — see the peer-tools install step) and ZERO stale expectation
         # rows; anything else fails this job.
@@ -237,13 +241,13 @@ jobs:
           skipped=$(jq '.summary.skipped_tool_missing' "$RUNNER_TEMP/interop/results.json")
           stale=$(jq '.summary.stale_expectations | length' "$RUNNER_TEMP/interop/results.json")
           au_sizes=$(jq -r '.meta.au_sizes' "$RUNNER_TEMP/interop/results.json")
-          if [ "$shape" != "full-157" ] || [ "$declared" != "157" ] || [ "$skips" != "0" ] \
-             || [ "$total" != "157" ] || [ "$skipped" != "0" ] || [ "$stale" != "0" ] \
+          if [ "$shape" != "full-159" ] || [ "$declared" != "159" ] || [ "$skips" != "0" ] \
+             || [ "$total" != "159" ] || [ "$skipped" != "0" ] || [ "$stale" != "0" ] \
              || [ "$au_sizes" != "realistic" ]; then
             echo "::error::census mismatch: shape=$shape declared=$declared allowed_skips=$skips total=$total skipped=$skipped stale=$stale au_sizes=$au_sizes"
             exit 1
           fi
-          echo "census complete: full-157 declared and produced at realistic AU sizes, 0 skips, 0 stale rows"
+          echo "census complete: full-159 declared and produced at realistic AU sizes, 0 skips, 0 stale rows"
 
       - name: Publish step summary
         # Re-render with --github-summary so the verdict table appears

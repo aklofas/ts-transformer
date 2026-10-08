@@ -571,7 +571,7 @@ pub struct InventoryCell {
 }
 
 /// `inventory.json`: the exact cell multiset a run intends to produce,
-/// plus the knobs that shaped it. `shape` is `full-157` only when no
+/// plus the knobs that shaped it. `shape` is `full-159` only when no
 /// `--cells`/`--profiles` narrowing was given (the advertised census);
 /// anything else is `subset` and the evidence page may not cite it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -605,14 +605,14 @@ pub struct InventorySummary {
     pub allowed_skips: Vec<String>,
 }
 
-pub const SHAPE_FULL: &str = "full-157";
+pub const SHAPE_FULL: &str = "full-159";
 pub const SHAPE_SUBSET: &str = "subset";
 
-/// The declared cell count a `full-157` inventory must have — the number
+/// The declared cell count a `full-159` inventory must have — the number
 /// embedded in [`SHAPE_FULL`]'s own name, enforced here so a caller can't
 /// claim the advertised full census while actually declaring some other
 /// count under that label.
-pub const FULL_SHAPE_CELL_COUNT: usize = 157;
+pub const FULL_SHAPE_CELL_COUNT: usize = 159;
 
 pub fn parse_inventory(text: &str) -> Result<Inventory, String> {
     let inv: Inventory = serde_json::from_str(text).map_err(|e| format!("inventory.json: {e}"))?;
@@ -631,8 +631,8 @@ pub fn parse_inventory(text: &str) -> Result<Inventory, String> {
     }
     // Every declared (id, profile) exactly once: the merge compares
     // multisets, so a duplicated declaration would be satisfied by a
-    // duplicated result — 157 copies of one cell must never pass as
-    // the full census just because there are 157 of them.
+    // duplicated result — 159 copies of one cell must never pass as
+    // the full census just because there are 159 of them.
     let mut seen = std::collections::BTreeSet::new();
     for c in &inv.cells {
         if !seen.insert((c.id.as_str(), c.profile.as_str())) {
@@ -3211,6 +3211,7 @@ pub mod soak {
                 metrics: cell_metrics(video_aus),
                 reconnects: None,
                 profile: None,
+                skipped_oracles: Vec::new(),
             }
         }
 
@@ -6172,10 +6173,10 @@ mod tests {
     #[test]
     fn parse_inventory_rejects_full_shape_with_wrong_count() {
         let e = parse_inventory(
-            r#"{"shape":"full-157","seconds_per_cell":10,"cells_glob":"*","profiles":[],"cells":[{"id":"a","profile":"baseline"}],"allowed_skips":[],"tools":{}}"#,
+            r#"{"shape":"full-159","seconds_per_cell":10,"cells_glob":"*","profiles":[],"cells":[{"id":"a","profile":"baseline"}],"allowed_skips":[],"tools":{}}"#,
         )
         .unwrap_err();
-        assert!(e.contains("157"), "{e}");
+        assert!(e.contains("159"), "{e}");
         assert!(e.contains('1'), "{e}"); // the actual declared count, 1, should be named
     }
 
@@ -6192,13 +6193,13 @@ mod tests {
         )
     }
 
-    /// 157 declarations of ONE key satisfied the full shape's cardinality
-    /// check, and 157 produced copies of it would have matched the
+    /// 159 declarations of ONE key satisfied the full shape's cardinality
+    /// check, and 159 produced copies of it would have matched the
     /// multiset.
     #[test]
     fn parse_inventory_rejects_duplicate_declarations() {
-        let same = vec![("udp/us-to-tsp", "baseline"); 157];
-        let e = parse_inventory(&inventory_json("full-157", &same, &["baseline"])).unwrap_err();
+        let same = vec![("udp/us-to-tsp", "baseline"); 159];
+        let e = parse_inventory(&inventory_json("full-159", &same, &["baseline"])).unwrap_err();
         assert!(
             e.contains("duplicate declared cell") && e.contains("udp/us-to-tsp (baseline)"),
             "{e}"
@@ -6232,10 +6233,10 @@ mod tests {
         ))
         .unwrap_err();
         assert!(e.contains("unknown profile") && e.contains("bogus"), "{e}");
-        // 157 distinct keys but a full shape that only lists one profile.
-        let ids: Vec<String> = (0..157).map(|i| format!("udp/cell-{i}")).collect();
+        // 159 distinct keys but a full shape that only lists one profile.
+        let ids: Vec<String> = (0..159).map(|i| format!("udp/cell-{i}")).collect();
         let cells: Vec<(&str, &str)> = ids.iter().map(|s| (s.as_str(), "baseline")).collect();
-        let e = parse_inventory(&inventory_json("full-157", &cells, &["baseline"])).unwrap_err();
+        let e = parse_inventory(&inventory_json("full-159", &cells, &["baseline"])).unwrap_err();
         assert!(e.contains("must list every profile"), "{e}");
     }
 

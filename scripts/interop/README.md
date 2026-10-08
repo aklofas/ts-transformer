@@ -4,7 +4,7 @@
 traffic with real third-party tools (ffmpeg, TSDuck's `tsp`, GStreamer, VLC,
 mpv) over live network sessions AND local per-profile analyzer/decode
 probes on this box, across every transport this crate supports (SRT, RIST,
-UDP, TCP, HLS, RTSP) and every one of the 12 canonical stream profiles
+UDP, TCP, HLS, RTSP, including the RTSP publisher role) and every one of the 12 canonical stream profiles
 (`crates/tst-interop/src/profiles.rs`), and writes one evidence JSON file
 per "cell" (one peer, one direction, one transport-or-local-probe, one
 optional variant like encryption or profile).
@@ -151,6 +151,16 @@ mechanism string by definition.
     proves" table for the full oracle-to-profile mapping, and
     `crates/tst-interop/tests/mutations.rs` for the proof each oracle
     actually bites (one mutation per oracle, offline, no network).
+    A remux cell whose peer goes through a **re-muxer that picks its own
+    PIDs** (`rtsp-publish/gst-push-es-klv`: the RTSP
+    publish mount re-muxes video onto PID 0x100 and KLV onto 0x101 as
+    `PrivateData`) runs `recv --remuxed`, which skips only the oracles
+    keyed on the generator's layout (per-PID wire media, PMT stream types
+    and descriptors, KLV carriage kind, per-PID wire-vs-demux, PTS wrap
+    on the video PID, audio and AV1 carriage) and lists them in the recv
+    report's `skipped_oracles`. Every content oracle still runs: AU,
+    keyframe and KLV counts, the KLV set digest, codec, programs and
+    PMTs seen, PTS monotonicity, PCR cadence, non-conformant events.
   - `n/a` — decode-only probes (`rtsp-serve/vlc-probe`, every format-axis
     `decode/*` cell) with no capture file to compare against anything;
     PASS means "no error/fatal marker in the peer's own log" (plus mpv's
@@ -165,7 +175,7 @@ Before running any cell, `run-matrix.sh` makes a declare pass — every cell
 shape is invoked once per `--profiles` entry with `DECLARE_ONLY=1`, which
 records the id it would run and returns immediately without touching the
 network — and writes the resulting exact `{id, profile}` multiset to
-`inventory.json` in `--outdir`. That file's `shape` field is `full-157`
+`inventory.json` in `--outdir`. That file's `shape` field is `full-159`
 iff `--cells` is the default `*` and `--profiles` is the default full
 12-profile list; any narrowing of either flag makes it `subset`.
 `inventory.json` also carries `cells_glob`, `profiles`, `allowed_skips`,
@@ -183,12 +193,12 @@ list of exact cell ids or `prefix/*` globs); `interop.yml` never passes
 it, so a CI run must produce every declared cell for real. Because
 `shape`, `declared_cells`, and `allowed_skips` are all part of the same
 fail-closed check as everything else, **the published evidence page may
-only cite a `full-157` run with an empty `allowed_skips`** — a `subset`
+only cite a `full-159` run with an empty `allowed_skips`** — a `subset`
 run (any `--cells`/`--profiles` narrowing) proves less than the
-advertised census and isn't evidence of it, and a `full-157` run that
+advertised census and isn't evidence of it, and a `full-159` run that
 used `--allowed-skips` to tolerate a missing peer tool didn't actually
 produce the full census either (`interop.yml` enforces both: it asserts
-`allowed_skips | length == 0` alongside `shape == "full-157"`).
+`allowed_skips | length == 0` alongside `shape == "full-159"`).
 
 ## Known, already-evidenced gaps (read before re-chasing these)
 
@@ -204,8 +214,9 @@ unusually small access units. The sections below are therefore unchanged
 by the size regime, and each still carries the tool version it was
 harvested against.
 
-**Transport axis** (the 25 `srt`/`udp`/`rist`/`tcp`/`hls`/`rtsp-*` cells,
-run against the `baseline` profile only): a full local run (`--seconds 8`,
+**Transport axis** (the 25 `srt`/`udp`/`rist`/`tcp`/`hls`/`rtsp-serve`/
+`rtsp-consume` cells, run against the `baseline` profile only; the two
+`rtsp-publish/*` cells added later have their own section below): a full local run (`--seconds 8`,
 every peer tool installed) is stable at **8 PASS / 17 FAIL / 0 SKIPPED**,
 reproduced identically across independent runs (including a re-run in Task
 12, after the `tst-pipeline` "flush pending PES on terminal receive
@@ -526,6 +537,50 @@ similar at a glance:
    private-data PIDs — this codebase's own send side confirms both
    programs' full 480 video AUs / 160 KLV records were pushed correctly
    first.
+
+### Transport axis: the RTSP publisher cells
+
+The two `rtsp-publish/*` cells point a real publisher at `tst-interop
+recv --url rtsp-publish://127.0.0.1:<port>/mount`, a harness-only scheme
+that binds an `RtspServer` with one publish mount and judges what the
+mount delivers. `recv` starts first; a publisher that ends leaves the
+mount open and silent, so the capture ends on `recv`'s own deadline.
+
+| Cell | Publisher | Tier | Judged |
+|---|---|---|---|
+| `rtsp-publish/gst-push-mp2t` | GStreamer `tsparse ! rtspclientsink` (MP2T, PT 33) | transparent | `baseline`, byte-identical |
+| `rtsp-publish/gst-push-es-klv` | GStreamer `tsdemux` H.264 + KLV `! rtspclientsink` | remux | `klv-sync`, `--remuxed` |
+
+`rtspclientsink` payloads its input itself (it picks `rtpmp2tpay`,
+`rtph264pay`, `rtpklvpay` by caps); putting a payloader in front of it
+fails to link. `gst-push-es-klv` pushes a `klv-sync` file it generates
+itself, not the baseline one: KLV over RTP needs a per-unit timestamp,
+and baseline's asynchronous KLV PES carries no PTS, so `tsdemux` hands
+`rtpklvpay` untimed buffers and every KLV RTP packet carries one
+timestamp (observed: all 80 packets of an 8 s clip on one value), which
+the server cannot place on the video timeline. The cell is still recorded
+under `baseline`, the axis it belongs to.
+
+10. **No ffmpeg publisher cell: ffmpeg cannot publish this harness's
+    stream, and cannot publish KLV over RTSP at all.** ffmpeg's RTP/RTSP
+    muxer reads the picture size from the H.264 SPS and refuses a stream
+    whose SPS yields none: with the generator's minimal SPS it stops
+    with `[rtsp] dimensions not set` / `Could not write header` before
+    OPTIONS (ffmpeg version 6.1.1-3ubuntu5). Swapping in a real x264
+    Baseline 1280x720 SPS does let ffmpeg publish (240 of 240 AUs, 0
+    non-conformant, over TCP-interleaved and over UDP, judged
+    `--remuxed`), but it also makes every H.264 `decode/*` probe start
+    decoding the synthetic slice payloads, and 25 decode cells fail on
+    it (ffplay and mpv `error while decoding MB 0 0`, gst-play's display
+    sink, VLC's video output). The generator keeps its SPS. Separately,
+    ffmpeg's RTSP muxer has no KLV payloader: given a KLV stream it
+    aborts before SETUP with `[rtp] Unsupported codec klv`. ffmpeg
+    publisher evidence is therefore manual: hand-run ffmpeg pushes from a
+    libx264 source (the commands in
+    `examples/receiving/recv_rtsp_publish.rs` and the publisher-ingest
+    cookbook recipe), and ffmpeg's captured ANNOUNCE SDP, which the
+    `tst-rtp` publisher tests replay (`SDP_H264` in
+    `crates/tst-rtp/tests/fixtures/raw_rtsp_publisher.rs`).
 
 ## Multi-day soak (`soak.sh`)
 

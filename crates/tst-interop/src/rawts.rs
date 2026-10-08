@@ -1131,6 +1131,7 @@ mod tests {
                         0.7,
                         mode,
                         &crate::oracles::Explained::default(),
+                        crate::verify::WireLayout::Generator,
                     ),
                     crate::oracles::check(
                         p,
@@ -1141,6 +1142,7 @@ mod tests {
                         0.7,
                         mode,
                         &crate::oracles::Explained::default(),
+                        crate::verify::WireLayout::Generator,
                     ),
                     "{profile} in {mode:?}"
                 );

@@ -611,6 +611,7 @@ fn healthy_recv_report(video_aus: u64) -> VerifyReport {
         metrics: healthy_cell_metrics(video_aus),
         reconnects: None,
         profile: None,
+        skipped_oracles: Vec::new(),
     }
 }
 

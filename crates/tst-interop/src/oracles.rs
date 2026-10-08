@@ -12,7 +12,7 @@ use tst_core::mpegts::mux::Av1CarriageMode;
 
 use crate::profiles::{Invariants, KlvMode, Profile};
 use crate::rawts::WireSummary;
-use crate::verify::{self, ProgramCounts, VerifyMode};
+use crate::verify::{self, ProgramCounts, VerifyMode, WireLayout};
 
 const PTS_WRAP: u64 = 1 << 33;
 const PCR_LOWER_SLACK_MS: f64 = 0.5;
@@ -58,6 +58,13 @@ impl Explained {
 }
 
 /// Run all seven wire-level oracles and concatenate their failures.
+///
+/// Under [`WireLayout::Remuxed`] only the layout-independent parts run:
+/// the per-program AU / KLV floors, PCR cadence and "a PMT was seen for
+/// every program". Everything keyed on the generator's PIDs (wire media
+/// per PID, PMT stream types and descriptors, audio and AV1 carriage,
+/// PTS wrap on the video PID, wire-vs-demux per PID) is skipped — see
+/// [`crate::verify::REMUXED_SKIPPED_ORACLES`].
 /// `explained` is what a corruption log and the capture's own
 /// discontinuity/non-conformance tallies account for, per PID — see
 /// `wire_vs_demux` (private; `--document-private-items` renders it).
@@ -74,15 +81,25 @@ pub fn check(
     slack: f64,
     mode: VerifyMode,
     explained: &Explained,
+    layout: WireLayout,
 ) -> Vec<String> {
     let mut f = Vec::new();
-    f.extend(program_accounting(inv, wire, per_program, seconds, slack));
-    f.extend(audio(inv, wire, seconds));
+    f.extend(program_accounting(
+        inv,
+        wire,
+        per_program,
+        seconds,
+        slack,
+        layout,
+    ));
     f.extend(pcr_interval(inv, wire, mode));
-    f.extend(av1_carriage(inv, wire));
-    f.extend(pts_wrap(p, inv, wire, seconds));
-    f.extend(pmt_streams(p, inv, wire));
-    f.extend(wire_vs_demux(p, inv, wire, per_program, mode, explained));
+    f.extend(pmt_streams(p, inv, wire, layout));
+    if layout == WireLayout::Generator {
+        f.extend(audio(inv, wire, seconds));
+        f.extend(av1_carriage(inv, wire));
+        f.extend(pts_wrap(p, inv, wire, seconds));
+        f.extend(wire_vs_demux(p, inv, wire, per_program, mode, explained));
+    }
     f
 }
 
@@ -95,6 +112,7 @@ fn program_accounting(
     per_program: &BTreeMap<u16, ProgramCounts>,
     seconds: f64,
     slack: f64,
+    layout: WireLayout,
 ) -> Vec<String> {
     let mut f = Vec::new();
     let min_video = verify::min_count(inv.min_video_aus_per_sec, seconds, slack);
@@ -115,7 +133,7 @@ fn program_accounting(
             ));
         }
         let pk = |pid: u16| wire.packets_per_pid.get(&pid).copied().unwrap_or(0);
-        if pk(ep.video_pid) == 0 || pk(ep.klv_pid) == 0 {
+        if layout == WireLayout::Generator && (pk(ep.video_pid) == 0 || pk(ep.klv_pid) == 0) {
             f.push(format!(
                 "program_{n}_wire_media: video PID {} {} pkts, KLV PID {} {} pkts",
                 ep.video_pid,
@@ -380,7 +398,12 @@ fn pts_wrap(p: &Profile, inv: &Invariants, wire: &WireSummary, seconds: f64) -> 
 /// PID carries a `KLVA` registration descriptor (plus `metadata`
 /// (0x26) + `metadata_STD` (0x27) descriptors for sync carriage); the
 /// AV1 PID carries an `AV01` registration descriptor.
-fn pmt_streams(p: &Profile, inv: &Invariants, wire: &WireSummary) -> Vec<String> {
+fn pmt_streams(
+    p: &Profile,
+    inv: &Invariants,
+    wire: &WireSummary,
+    layout: WireLayout,
+) -> Vec<String> {
     let mut f = Vec::new();
     for ep in &inv.programs {
         let Some(prog) = wire.programs.get(&ep.program_number) else {
@@ -390,6 +413,11 @@ fn pmt_streams(p: &Profile, inv: &Invariants, wire: &WireSummary) -> Vec<String>
             ));
             continue;
         };
+        // A re-muxer picks its own PIDs: only the program's presence is
+        // the generator's to demand.
+        if layout == WireLayout::Remuxed {
+            continue;
+        }
         let find = |pid: u16| prog.streams.iter().find(|s| s.pid == pid);
         // video
         match find(ep.video_pid) {
@@ -636,7 +664,14 @@ mod tests {
         let slack = crate::verify::NOMINAL_COUNT_SLACK;
 
         let empty_prog2 = program_counts(&[(1, 90, 30), (2, 0, 0)]);
-        let f = program_accounting(&inv, &wire, &empty_prog2, seconds, slack);
+        let f = program_accounting(
+            &inv,
+            &wire,
+            &empty_prog2,
+            seconds,
+            slack,
+            WireLayout::Generator,
+        );
         assert!(
             f.iter().any(|s| s.starts_with("program_2_video_floor")),
             "{f:?}"
@@ -647,7 +682,7 @@ mod tests {
         );
 
         let healthy = program_counts(&[(1, 90, 30), (2, 90, 30)]);
-        let f2 = program_accounting(&inv, &wire, &healthy, seconds, slack);
+        let f2 = program_accounting(&inv, &wire, &healthy, seconds, slack, WireLayout::Generator);
         assert!(f2.is_empty(), "{f2:?}");
     }
 
@@ -663,6 +698,7 @@ mod tests {
             &counts,
             3.0,
             crate::verify::NOMINAL_COUNT_SLACK,
+            WireLayout::Generator,
         );
         assert!(
             f.iter().any(|s| s.starts_with("program_2_wire_media")),
@@ -976,7 +1012,7 @@ mod tests {
                 stream(0x1031, 0x06, Some(*b"KLVA"), &[0x05]),
             ],
         );
-        assert!(pmt_streams(baseline, &inv, &ok).is_empty());
+        assert!(pmt_streams(baseline, &inv, &ok, WireLayout::Generator).is_empty());
 
         let wrong_video_type = wire_with_program(
             1,
@@ -987,7 +1023,7 @@ mod tests {
                 stream(0x1031, 0x06, Some(*b"KLVA"), &[0x05]),
             ],
         );
-        let f = pmt_streams(baseline, &inv, &wrong_video_type);
+        let f = pmt_streams(baseline, &inv, &wrong_video_type, WireLayout::Generator);
         assert!(
             f.iter().any(|s| s.starts_with("pmt_stream_type_4113")),
             "{f:?}"
@@ -1002,7 +1038,12 @@ mod tests {
                 stream(0x1031, 0x06, None, &[]),
             ],
         );
-        let f = pmt_streams(baseline, &inv, &missing_klv_registration);
+        let f = pmt_streams(
+            baseline,
+            &inv,
+            &missing_klv_registration,
+            WireLayout::Generator,
+        );
         assert!(
             f.iter().any(|s| s.starts_with("pmt_descriptor_4145")),
             "{f:?}"
@@ -1019,7 +1060,7 @@ mod tests {
                 stream(0x1031, 0x15, Some(*b"KLVA"), &[]),
             ],
         );
-        let f = pmt_streams(sync, &inv_sync, &missing_sync_tags);
+        let f = pmt_streams(sync, &inv_sync, &missing_sync_tags, WireLayout::Generator);
         assert!(
             f.iter().any(|s| s.starts_with("pmt_descriptor_4145")),
             "{f:?}"
@@ -1034,7 +1075,7 @@ mod tests {
                 stream(0x1031, 0x15, Some(*b"KLVA"), &[0x26, 0x27]),
             ],
         );
-        assert!(pmt_streams(sync, &inv_sync, &sync_ok).is_empty());
+        assert!(pmt_streams(sync, &inv_sync, &sync_ok, WireLayout::Generator).is_empty());
     }
 
     #[test]
@@ -1044,7 +1085,7 @@ mod tests {
 
         // No PMT at all for program 1.
         let no_pmt = WireSummary::default();
-        let f = pmt_streams(audio_profile, &inv, &no_pmt);
+        let f = pmt_streams(audio_profile, &inv, &no_pmt, WireLayout::Generator);
         assert!(
             f.iter().any(|s| s.starts_with("pmt_missing_program_1")),
             "{f:?}"
@@ -1065,7 +1106,12 @@ mod tests {
                 stream(audio_pid, 0x03, None, &[]),
             ],
         );
-        let f = pmt_streams(audio_profile, &inv, &wrong_audio_type);
+        let f = pmt_streams(
+            audio_profile,
+            &inv,
+            &wrong_audio_type,
+            WireLayout::Generator,
+        );
         assert!(
             f.iter()
                 .any(|s| s.starts_with(&format!("pmt_stream_type_{audio_pid}"))),
