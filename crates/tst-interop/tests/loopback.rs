@@ -36,7 +36,7 @@ use std::time::{Duration, Instant};
 use tst_core::transport::{BrokenCause, Transport, TransportError};
 
 use tst_interop::fixtures::{AuSizeMode, KlvSet};
-use tst_interop::verify::KlvExpect;
+use tst_interop::verify::{KlvExpect, WireLayout};
 use tst_interop::{profiles, recv, send, transport};
 
 /// Shared by both cells — long enough to clear the 70%-of-nominal count
@@ -739,6 +739,7 @@ fn srt_baseline_loopback_round_trips_and_matches() {
                 false,
                 KlvExpect::compact(),
                 None,
+                WireLayout::Generator,
             )
         })
     };
@@ -789,6 +790,7 @@ fn srt_realistic_au_sizes_round_trip_and_match() {
                 false,
                 KlvExpect::compact(),
                 None,
+                WireLayout::Generator,
             )
         })
     };

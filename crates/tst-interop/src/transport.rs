@@ -40,7 +40,9 @@
 //! URL's `x-recvtimeout` still wins if set); UDP gets `BoundedUdpRecv`,
 //! which drives `UdpRecvTransport`'s own `recv_timeout` escape hatch
 //! (its trait-level `recv_bytes` blocks indefinitely by design — see
-//! that type's own rustdoc). **TCP has no equivalent knob anywhere in
+//! that type's own rustdoc). `rtsp-publish` gets the same 200 ms recv
+//! timeout on the publish mount's `RtpRecvTransport` (see
+//! `RtspPublishListener`). **TCP has no equivalent knob anywhere in
 //! its public API** (no read-timeout field on `tst_tcp::config::
 //! SocketConfig`), so a TCP recv cell that never sees more data and
 //! never closes/breaks the connection would hang the deadline loop.

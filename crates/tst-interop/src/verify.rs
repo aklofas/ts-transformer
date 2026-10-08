@@ -44,6 +44,43 @@ pub enum VerifyMode {
     Lossy,
 }
 
+/// Whose TS layout the capture is judged against.
+///
+/// `Generator` (the default) holds the capture to the exact multiplex
+/// `gen`/`send` build for the profile: its PIDs, PMT entries, stream
+/// types and KLV carriage. `Remuxed` is for a capture that crossed a
+/// re-muxer which keeps the CONTENT but lays the multiplex out its own
+/// way (the RTSP publish mount re-muxes an elementary H.264 + KLV push
+/// onto its own PIDs, with KLV as `PrivateData`): every oracle keyed on
+/// the generator's layout is skipped and named in
+/// `VerifyReport::skipped_oracles`, and every content oracle still runs
+/// — AU, keyframe and KLV counts (whole-capture and per program), the
+/// KLV set digest, codec, programs seen, PMT seen, PTS monotonicity, PCR
+/// cadence and non-conformant events.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WireLayout {
+    #[default]
+    Generator,
+    Remuxed,
+}
+
+/// The verdicts a [`WireLayout::Remuxed`] judgement skips, as the
+/// failure-string prefixes they would otherwise carry. Recorded in
+/// `VerifyReport::skipped_oracles` so the relaxation is declared in the
+/// report, never silent.
+pub const REMUXED_SKIPPED_ORACLES: &[&str] = &[
+    "program_wire_media",
+    "pmt_stream_type",
+    "pmt_descriptor",
+    "wire_vs_demux",
+    "pts_wrap",
+    "av1_carriage_wire",
+    "audio_codec_adts",
+    "audio_cadence",
+    "audio_pts_step",
+    "klv_carriage",
+];
+
 /// Which KLV record set the capture under judgement was generated with,
 /// and — for [`KlvSet::Rich`] — the seed its presence schedule was drawn
 /// from. A receiver cannot infer either from the wire: the rich census
@@ -288,6 +325,8 @@ pub struct Tally {
     /// What KLV record set this capture is expected to carry. Compact
     /// (the default) means `CellMetrics::klv_rich` comes back `None`.
     klv_expect: KlvExpect,
+    /// Whose layout the capture is judged against — see [`WireLayout`].
+    layout: WireLayout,
     /// What the rich oracles made of the records so far — see
     /// [`KlvRichMetrics`]. Untouched unless `klv_expect.set` is
     /// [`KlvSet::Rich`].
@@ -358,6 +397,7 @@ impl Tally {
             first_nonconformant: None,
             attribution: None,
             klv_expect: KlvExpect::compact(),
+            layout: WireLayout::Generator,
             rich: KlvRichMetrics::default(),
             rich_first_decode: None,
             rich_first_census: None,
@@ -401,6 +441,12 @@ impl Tally {
     /// `KlvRichMetrics::records` implies it saw them all.
     pub fn set_klv_expect(&mut self, expect: KlvExpect) {
         self.klv_expect = expect;
+    }
+
+    /// Judge the capture against `layout` — see [`WireLayout`]. Only
+    /// read by [`Tally::finish`], so it may be set at any time before it.
+    pub fn set_wire_layout(&mut self, layout: WireLayout) {
+        self.layout = layout;
     }
 
     /// Stop accumulating per-record KLV digests — see
@@ -1023,7 +1069,7 @@ impl Tally {
                 self.klv_records, inv.min_klv_per_sec, slack * 100.0
             ));
         }
-        if self.klv_records > 0 {
+        if self.klv_records > 0 && self.layout == WireLayout::Generator {
             let expected_carriage = expected_klv_carriage(p.klv);
             if self.klv_carriage_seen != HashSet::from([expected_carriage]) {
                 failures.push(format!(
@@ -1187,6 +1233,7 @@ impl Tally {
             slack,
             mode,
             &explained,
+            self.layout,
         ));
 
         // A compact capture has no presence schedule to judge, so it
@@ -1239,6 +1286,13 @@ impl Tally {
             // Same post-hoc shape: `recv` stamps its `--expect` here, an
             // offline `verify` leaves it unset (see the field's own doc).
             profile: None,
+            skipped_oracles: match self.layout {
+                WireLayout::Generator => Vec::new(),
+                WireLayout::Remuxed => REMUXED_SKIPPED_ORACLES
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+            },
         }
     }
 }
@@ -1298,12 +1352,27 @@ pub fn verify_bytes_with_corruption(
     klv: KlvExpect,
     log: Option<&(LogHeader, Vec<Injection>)>,
 ) -> VerifyReport {
+    verify_bytes_with_layout(bytes, p, seconds, mode, klv, log, WireLayout::Generator)
+}
+
+/// [`verify_bytes_with_corruption`], judged against `layout` — see
+/// [`WireLayout`].
+pub fn verify_bytes_with_layout(
+    bytes: &[u8],
+    p: &Profile,
+    seconds: f64,
+    mode: VerifyMode,
+    klv: KlvExpect,
+    log: Option<&(LogHeader, Vec<Injection>)>,
+    layout: WireLayout,
+) -> VerifyReport {
     // Built per-profile (never `Demuxer::new()`/`DemuxerConfig::default()`)
     // — see `profiles::demuxer_config`'s doc comment for the av1-klv-a
     // finding this closes.
     let mut demux = Demuxer::with_config(profiles::demuxer_config(p));
     let mut tally = Tally::new();
     tally.set_klv_expect(klv);
+    tally.set_wire_layout(layout);
     // Independent wire-level reader, fed the exact same bytes as the
     // demuxer — see `rawts`'s module doc for why it shares no code with
     // `Demuxer`.
@@ -3098,6 +3167,144 @@ mod tests {
     // The shapes `corrupt.rs` refuses to excuse, driven through
     // `Tally::finish` so the assertion is on the OUTCOME: whether any
     // verdict of the report still fails. Each asserts the report fails.
+
+    /// `baseline`'s content (the generator's AUs and KLV records on its
+    /// own schedule) muxed the way the RTSP publish mount re-muxes an
+    /// elementary push: its own PIDs (PMT 0x1000, video 0x100, KLV 0x101)
+    /// and KLV as `PrivateData` WITH a PTS, where the generator's
+    /// baseline carries none.
+    fn remuxed_baseline_bytes(seconds: f64) -> Vec<u8> {
+        use tst_core::mpegts::mux::{
+            KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec as MuxCodec,
+        };
+        let p = profiles::by_name("baseline").expect("baseline profile must exist");
+        let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+        prog.add_video(0x100, MuxCodec::H264);
+        prog.add_klv(0x101, KlvStreamType::PrivateData, true);
+        let mut b = MuxerConfig::builder();
+        b.add_program(prog.build());
+        b.pcr_interval_ms(p.pcr_interval_ms);
+        b.psi_interval_ms(p.psi_interval_ms);
+        let mut mux = Muxer::new(b.build().expect("valid config")).expect("valid muxer");
+        let video = mux.video_handles()[0];
+        let klv = mux.klv_handles()[0];
+        let (_, events) = crate::schedule::build_schedule(p, seconds);
+        let mut out = Vec::new();
+        let mut buf = [0u8; 1316];
+        for (pts_ticks, event) in events {
+            let pts = Pts90khz::new(pts_ticks);
+            match event {
+                crate::schedule::Event::Video { frame_idx } => {
+                    let (au, key) =
+                        fixtures::video_au_sized(p.video, frame_idx, fixtures::AuSizeMode::Compact);
+                    mux.push_video_to(video, &au, pts, key).expect("push video");
+                }
+                crate::schedule::Event::Klv { seq } => {
+                    let rec = fixtures::klv_record_for(KlvSet::Compact, 0, seq).expect("record");
+                    mux.push_klv_to(klv, &rec, pts, 0).expect("push klv");
+                }
+                crate::schedule::Event::Audio { .. } => unreachable!("baseline has no audio"),
+            }
+            loop {
+                let n = mux.pull(&mut buf);
+                if n == 0 {
+                    break;
+                }
+                out.extend_from_slice(&buf[..n]);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn a_remuxed_layout_fails_the_generator_judgement_and_passes_the_remuxed_one() {
+        let p = profiles::by_name("baseline").expect("baseline profile must exist");
+        let bytes = remuxed_baseline_bytes(4.0);
+        let judge = |layout| {
+            verify_bytes_with_layout(
+                &bytes,
+                p,
+                4.0,
+                VerifyMode::Lossy,
+                KlvExpect::compact(),
+                None,
+                layout,
+            )
+        };
+
+        let full = judge(WireLayout::Generator);
+        assert!(!full.pass);
+        for verdict in [
+            "program_1_wire_media",
+            "pmt_stream_type_4113",
+            "pmt_stream_type_4145",
+        ] {
+            assert!(
+                full.failures.iter().any(|f| f.starts_with(verdict)),
+                "{verdict} missing from {:?}",
+                full.failures
+            );
+        }
+        assert!(full.skipped_oracles.is_empty());
+
+        let remuxed = judge(WireLayout::Remuxed);
+        assert!(remuxed.pass, "failures: {:?}", remuxed.failures);
+        assert_eq!(remuxed.metrics.video_aus, full.metrics.video_aus);
+        assert_eq!(remuxed.metrics.klv_records, full.metrics.klv_records);
+        assert_eq!(
+            remuxed.skipped_oracles,
+            REMUXED_SKIPPED_ORACLES
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_remuxed_judgement_still_fails_on_lost_content() {
+        // Keep only the first half of the capture: the content floors
+        // must still fail it, layout relaxation or not.
+        let p = profiles::by_name("baseline").expect("baseline profile must exist");
+        let bytes = remuxed_baseline_bytes(4.0);
+        let half = &bytes[..(bytes.len() / 2 / 188) * 188];
+        let report = verify_bytes_with_layout(
+            half,
+            p,
+            4.0,
+            VerifyMode::Lossy,
+            KlvExpect::compact(),
+            None,
+            WireLayout::Remuxed,
+        );
+        assert!(!report.pass);
+        assert!(
+            report.failures.iter().any(|f| f.starts_with("video AUs")),
+            "{:?}",
+            report.failures
+        );
+    }
+
+    #[test]
+    fn a_remuxed_judgement_keeps_requiring_a_pmt() {
+        let p = profiles::by_name("baseline").expect("baseline profile must exist");
+        let report = verify_bytes_with_layout(
+            &[],
+            p,
+            4.0,
+            VerifyMode::Lossy,
+            KlvExpect::compact(),
+            None,
+            WireLayout::Remuxed,
+        );
+        assert!(
+            report
+                .failures
+                .iter()
+                .any(|f| f.starts_with("pmt_missing_program_1")),
+            "{:?}",
+            report.failures
+        );
+    }
 
     fn finish_baseline(t: Tally, mode: VerifyMode, wire: &WireSummary) -> VerifyReport {
         t.finish(

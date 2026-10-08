@@ -64,24 +64,28 @@ ffmpeg -re -i in.mp4 -c:v libx264 -preset ultrafast -tune zerolatency \
 ffmpeg -re -i in.mp4 -c:v libx264 -preset ultrafast -tune zerolatency \
     -f rtsp -rtsp_transport udp rtsp://127.0.0.1:8554/demo
 
-# GStreamer, MPEG-TS over RTP (video + KLV muxed by the publisher;
-# to be verified in the interop matrix):
+# GStreamer, MPEG-TS over RTP (video + KLV muxed by the publisher).
+# rtspclientsink payloads its input itself: feed it the TS, and it
+# picks rtpmp2tpay and announces MP2T/90000 (payload type 33).
 gst-launch-1.0 filesrc location=in.ts ! tsparse set-timestamps=true \
-    ! rtpmp2tpay ! rtspclientsink location=rtsp://127.0.0.1:8554/demo
+    ! rtspclientsink location=rtsp://127.0.0.1:8554/demo
 
-# GStreamer, elementary H.264 + KLV (two tracks, re-muxed by the server;
-# to be verified in the interop matrix):
+# GStreamer, elementary H.264 + KLV (two tracks, re-muxed by the server).
+# rtspclientsink picks rtph264pay and rtpklvpay for these caps. The KLV
+# PES packets must carry a PTS (synchronous KLV does): without one,
+# tsdemux emits untimed KLV and every KLV RTP packet gets the same
+# timestamp, which the server cannot place on the video timeline.
 gst-launch-1.0 filesrc location=in.ts ! tsdemux name=d \
-    d. ! queue ! h264parse ! rtph264pay ! s.sink_0 \
-    d. ! queue ! meta/x-klv ! rtpklvpay ! s.sink_1 \
+    d. ! queue ! h264parse ! s.sink_0 \
+    d. ! queue ! meta/x-klv ! s.sink_1 \
     rtspclientsink name=s location=rtsp://127.0.0.1:8554/demo
 ```
 
 **KLV caveat.** ffmpeg cannot push KLV over RTSP. Its RTSP muxer announces
 elementary tracks only, never MPEG-TS, and it stops with
 `Unsupported codec klv` when the input carries a KLV stream. To get KLV into a
-publish mount, push MPEG-TS from GStreamer `rtpmp2tpay`, or push H.264 with a
-`rtpklvpay` track, or send the TS over SRT or UDP instead of RTSP.
+publish mount, push MPEG-TS from GStreamer (`rtpmp2tpay`), or push H.264 with a
+KLV track (`rtpklvpay`), or send the TS over SRT or UDP instead of RTSP.
 
 ---
 

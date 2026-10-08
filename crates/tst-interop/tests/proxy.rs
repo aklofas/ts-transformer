@@ -66,7 +66,7 @@ use std::time::{Duration, Instant};
 
 use tst_interop::impair::ImpairConfig;
 use tst_interop::report_types::CellMetrics;
-use tst_interop::verify::KlvExpect;
+use tst_interop::verify::{KlvExpect, WireLayout};
 use tst_interop::{profiles, proxy, recv, send};
 
 /// Receive-buffer size every UDP socket on a relay path in this file asks
@@ -1053,6 +1053,7 @@ fn srt_round_trip_through_lossy_proxy_recovers_via_retransmission() {
                 false,
                 KlvExpect::compact(),
                 None,
+                WireLayout::Generator,
             )
         })
     };

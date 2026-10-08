@@ -4,8 +4,9 @@
 # `tsp`, GStreamer, VLC, mpv) over live SRT/RIST/UDP/TCP/HLS/RTSP
 # sessions AND local per-profile analyzer/decode probes on this box,
 # and write one evidence JSON file per cell, across two axes:
-#   - transport axis: 25 cells, pinned to the "baseline" profile
-#     (srt/udp/rist/tcp/hls/rtsp — the transport-axis inventory).
+#   - transport axis: 27 cells, pinned to the "baseline" profile
+#     (srt/udp/rist/tcp/hls/rtsp/rtsp-publish — the transport-axis
+#     inventory).
 #   - format axis: analyze/{ffprobe,tsanalyze,tsp-analyze}/<profile>,
 #     decode/{ffplay,vlc,mpv,gst-play}/<profile>, and
 #     srt-live/{us-to-ffmpeg,ffmpeg-to-us,us-to-tsp,tsp-to-us}/<profile>,
@@ -33,7 +34,7 @@
 #                      scales off this (see lib.sh's cell_timeout).
 #   --cells GLOB       bash-glob filter over cell ids (default "*", i.e.
 #                      every cell). Cell ids look like
-#                      "<transport>/<direction>-<peer>[-encrypted]" (25
+#                      "<transport>/<direction>-<peer>[-encrypted]" (27
 #                      transport-axis cells, e.g. "srt/us-to-ffmpeg") or
 #                      "<axis>/<peer>/<profile>" (format-axis cells, e.g.
 #                      "decode/mpv/h266-klv") — pass 'srt/*' to run just
@@ -45,7 +46,7 @@
 #                      Only the format axis scales with this list — the
 #                      transport axis always runs against "baseline"
 #                      regardless of what's listed (see the per-profile
-#                      loop below for why: the 25-cell transport-axis
+#                      loop below for why: the 27-cell transport-axis
 #                      inventory was designed and evidenced against "baseline"
 #                      only; scaling it by profile too would multiply
 #                      that count for no new signal the format axis
@@ -88,7 +89,7 @@
 # per --profiles entry with DECLARE_ONLY=1 (each shape records the id
 # it WOULD run and returns immediately) and writes the resulting exact
 # {id, profile} multiset to DIR/inventory.json, whose `shape` field is
-# "full-157" iff --cells is the default "*" AND --profiles is the
+# "full-159" iff --cells is the default "*" AND --profiles is the
 # default full 12-profile list, else "subset". `tst-interop report
 # merge` is handed this file via --inventory and hard-fails (exit 2, no
 # results.json written) if the cells actually produced don't exactly
@@ -359,16 +360,42 @@ run_send_peer_recv() {
   fi
 }
 
-# run_peer_send_recv <id> <peer> <tier> <our_url> -- <peer_cmd...>
+# run_peer_send_recv <id> <peer> <tier> <our_url> [--remuxed] [--expect P] -- <peer_cmd...>
 #
 # The peer pushes (from $GEN_FILE, already baked into peer_cmd by the
 # caller); we listen/receive over <our_url>. Verdict: our recv must
 # produce a JSON report and PASS its own profile-invariant check; a
 # "transparent" tier additionally requires our received stream_sha256
 # to equal $GEN_FILE's own (pre-computed in $GEN_STREAM_SHA).
+#
+# --remuxed passes `recv --remuxed`: the capture crossed a re-muxer that
+# keeps the content but picks its own PIDs, so recv skips the
+# generator-layout oracles and lists them in its report's
+# `skipped_oracles` (the cell's log records the flag on the recv line).
+# --expect P judges the capture against profile P instead of $PROFILE,
+# for a cell whose peer pushes a file of another profile; the cell is
+# still recorded under $PROFILE, the axis it belongs to.
 run_peer_send_recv() {
   local id=$1 peer=$2 tier=$3 our_url=$4
   shift 4
+  local expect_profile=$PROFILE
+  local -a recv_extra=()
+  while [[ $# -gt 0 && "$1" != "--" ]]; do
+    case "$1" in
+      --remuxed)
+        recv_extra+=(--remuxed)
+        shift
+        ;;
+      --expect)
+        expect_profile=$2
+        shift 2
+        ;;
+      *)
+        echo "run_peer_send_recv: unknown option: $1" >&2
+        exit 2
+        ;;
+    esac
+  done
   [[ "${1:-}" == "--" ]] && shift
   local -a peer_cmd=("$@")
 
@@ -385,7 +412,7 @@ run_peer_send_recv() {
   budget=$(cell_timeout "$SECONDS_ARG")
 
   echo "=== cell: $id (tier=$tier, profile=$PROFILE) ===" >>"$log"
-  echo "--- us: recv (listening on $our_url) ---" >>"$log"
+  echo "--- us: recv (listening on $our_url, expect $expect_profile${recv_extra[*]:+, ${recv_extra[*]}}) ---" >>"$log"
 
   local recv_json="$WORK/$(slug "$id")-recv.json"
   # --strict only for the transparent (byte-identical) tier: a lossy/
@@ -396,8 +423,8 @@ run_peer_send_recv() {
   local -a strict=()
   [[ "$tier" == "transparent" ]] && strict=(--strict)
   timeout --kill-after=5 "${budget}s" \
-    "$BIN" recv --url "$our_url" --expect "$PROFILE" --seconds "$SECONDS_ARG" --json "$recv_json" \
-    "${strict[@]}" \
+    "$BIN" recv --url "$our_url" --expect "$expect_profile" --seconds "$SECONDS_ARG" --json "$recv_json" \
+    "${strict[@]}" "${recv_extra[@]}" \
     >>"$log" 2>&1 &
   local recv_pid=$!
   sleep "$SETTLE"
@@ -1042,6 +1069,61 @@ rtsp_cells() {
   fi
 }
 
+# The peer PUBLISHES (RTSP ANNOUNCE + RECORD) into our RtspServer's
+# publish mount; `recv` judges what the mount delivers. The harness-only
+# `rtsp-publish://host:port/mount` scheme binds the server inside `recv`
+# itself, so run_peer_send_recv's recv-first ordering is exactly the
+# shape these need. A publisher that ends leaves the mount open and
+# silent: the capture ends on recv's own deadline, not on TEARDOWN.
+rtsp_publish_cells() {
+  local port
+
+  # ffmpeg has no cell here. Its RTSP muxer cannot publish this
+  # harness's stream: it reads the picture size from the H.264 SPS, the
+  # generator's minimal SPS yields none, and the muxer stops with
+  # "dimensions not set" before OPTIONS (ffmpeg 6.1.1-3ubuntu5). A real
+  # SPS makes every decode/* probe start decoding the synthetic slices
+  # and fail, so the generator keeps its SPS and ffmpeg's publisher
+  # evidence stays manual — see README.md's gap item 10.
+
+  # rtspclientsink payloads its input itself (it picks rtpmp2tpay /
+  # rtph264pay / rtpklvpay by caps); a payloader's RTP output does not
+  # link into it. RFC 2250 MP2T (PT 33) passthrough: the server hands
+  # the TS packets on untouched, so the whole stream must arrive
+  # byte-identical.
+  port=$(free_port tcp)
+  run_peer_send_recv "rtsp-publish/gst-push-mp2t" gst-launch-1.0 transparent \
+    "rtsp-publish://127.0.0.1:$port/mount" -- \
+    gst-launch-1.0 filesrc "location=$GEN_FILE" ! tsparse set-timestamps=true ! \
+    rtspclientsink "location=rtsp://127.0.0.1:$port/mount" protocols=tcp
+
+  # Elementary streams: H.264 (RFC 6184) + KLV (RFC 6597) on one
+  # session, re-muxed by the server onto its own PIDs (video 0x100, KLV
+  # 0x101 as PrivateData with a PTS), so the cell is judged `--remuxed`:
+  # every content oracle runs, the generator-layout ones are skipped and
+  # named in the recv report's `skipped_oracles`. KLV over RTP needs a
+  # per-unit timestamp, and baseline's asynchronous KLV PES carries no PTS:
+  # tsdemux would hand rtpklvpay untimed buffers, every KLV RTP packet
+  # would carry one timestamp, and the server could not place the units
+  # on the video timeline. So this cell pushes a klv-sync file (same
+  # H.264 video, KLV in PES with a PTS), generated here, and judges the
+  # capture against klv-sync, still recorded on the baseline axis. The
+  # server re-muxes KLV as PrivateData, so the carriage-kind check is
+  # one of the layout oracles `--remuxed` skips.
+  local es_src="$WORK/rtsp-publish_gst-push-es-klv-src.ts"
+  if [[ -z "${DECLARE_ONLY:-}" ]] && cell_selected "rtsp-publish/gst-push-es-klv"; then
+    timeout --kill-after=5 "$(cell_timeout "$SECONDS_ARG")s" \
+      "$BIN" gen --profile klv-sync --seconds "$SECONDS_ARG" --out "$es_src" --au-sizes "$AU_SIZES"
+  fi
+  port=$(free_port tcp)
+  run_peer_send_recv "rtsp-publish/gst-push-es-klv" gst-launch-1.0 remux \
+    "rtsp-publish://127.0.0.1:$port/mount" --remuxed --expect klv-sync -- \
+    gst-launch-1.0 filesrc "location=$es_src" ! tsdemux name=d \
+    d. ! queue ! h264parse ! s.sink_0 \
+    d. ! queue ! meta/x-klv ! s.sink_1 \
+    rtspclientsink name=s "location=rtsp://127.0.0.1:$port/mount" protocols=tcp
+}
+
 # ---------------------------------------------------------------------
 # Format-axis per-profile groups
 # ---------------------------------------------------------------------
@@ -1149,6 +1231,7 @@ run_axes_for_profile() {
   # precisely (analyze/decode/srt-live are the per-profile probes).
   if [[ "$PROFILE" == "baseline" ]]; then
     srt_cells; udp_cells; rist_cells; tcp_cells; hls_cells; rtsp_cells
+    rtsp_publish_cells
   fi
 
   # Format axis: every listed profile.
@@ -1227,7 +1310,7 @@ if [[ -n "$ALLOWED_SKIPS_ARG" ]]; then
 fi
 
 SHAPE=subset
-[[ "$CELLS_GLOB" == "*" && "$PROFILES_ARG" == "$ALL_PROFILE_NAMES" ]] && SHAPE=full-157
+[[ "$CELLS_GLOB" == "*" && "$PROFILES_ARG" == "$ALL_PROFILE_NAMES" ]] && SHAPE=full-159
 jq -n --arg shape "$SHAPE" --arg seconds "$SECONDS_ARG" --arg cells_glob "$CELLS_GLOB" \
   --arg profiles "$PROFILES_ARG" --rawfile tsv "$INVENTORY_TSV" \
   --argjson tools "$(tool_versions_json)" --argjson allowed_skips "$ALLOWED_SKIPS_JSON" \
@@ -1237,8 +1320,8 @@ jq -n --arg shape "$SHAPE" --arg seconds "$SECONDS_ARG" --arg cells_glob "$CELLS
     allowed_skips: $allowed_skips, tools: $tools}' >"$OUTDIR/inventory.json"
 declared=$(jq '.cells | length' "$OUTDIR/inventory.json")
 echo "run-matrix: declared $declared cell(s), shape=$SHAPE" >&2
-if [[ "$SHAPE" == "full-157" && "$declared" != "157" ]]; then
-  echo "run-matrix: FATAL: full shape declared $declared cells, expected 157 — a cell shape changed without this check being updated" >&2
+if [[ "$SHAPE" == "full-159" && "$declared" != "159" ]]; then
+  echo "run-matrix: FATAL: full shape declared $declared cells, expected 159 — a cell shape changed without this check being updated" >&2
   exit 2
 fi
 

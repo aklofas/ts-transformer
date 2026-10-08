@@ -256,6 +256,13 @@ pub struct VerifyReport {
     /// evidence names the wrong wire shape.
     #[serde(default)]
     pub profile: Option<String>,
+    /// Verdicts this judgement deliberately did not run, by failure-string
+    /// prefix: `recv --remuxed` (`verify::WireLayout::Remuxed`) skips the
+    /// generator-layout oracles and lists them here, so a pass that never
+    /// checked PIDs or PMT stream types says so in the report itself.
+    /// Empty (and omitted from the JSON) for a full judgement.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skipped_oracles: Vec<String>,
 }
 
 #[cfg(test)]

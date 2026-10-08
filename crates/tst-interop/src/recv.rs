@@ -22,7 +22,7 @@ use crate::profiles::{self, Profile};
 use crate::rawts::WireSummary;
 use crate::report_types::VerifyReport;
 use crate::transport::{self, Teeing};
-use crate::verify::{self, KlvExpect, Tally, VerifyMode};
+use crate::verify::{self, KlvExpect, Tally, VerifyMode, WireLayout};
 
 /// How long to wait for the FIRST demuxed event before giving up
 /// entirely — the sender never connected or never sent anything at all
@@ -279,6 +279,12 @@ pub(crate) fn event_ordinal(
 /// `klv` says which KLV record set the sender generated — see
 /// [`crate::verify::KlvExpect`]. `KlvExpect::compact()` (the default)
 /// leaves the rich decode oracles off.
+///
+/// `layout` says whose multiplex layout the capture is held to — see
+/// [`WireLayout`]. `WireLayout::Remuxed` is for a capture that crossed a
+/// re-muxer (the `rtsp-publish://` mount's elementary-stream path) and
+/// skips only the oracles keyed on the generator's PIDs, naming them in
+/// `VerifyReport::skipped_oracles`.
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     url: &str,
@@ -289,9 +295,10 @@ pub fn run(
     strict: bool,
     klv: KlvExpect,
     corruption_log: Option<&Path>,
+    layout: WireLayout,
 ) -> Result<VerifyReport, String> {
     let transport = transport::make_recv(url)?;
-    let report = recv_over_transport(
+    let report = recv_over_transport_with_layout(
         transport,
         expect,
         seconds,
@@ -299,6 +306,7 @@ pub fn run(
         strict,
         klv,
         corruption_log,
+        layout,
     )?;
     if let Some(target) = json_out {
         write_json(target, &report)?;
@@ -341,6 +349,30 @@ pub fn recv_over_transport(
     klv: KlvExpect,
     corruption_log: Option<&Path>,
 ) -> Result<VerifyReport, String> {
+    recv_over_transport_with_layout(
+        transport,
+        expect,
+        seconds,
+        no_klv_digest,
+        strict,
+        klv,
+        corruption_log,
+        WireLayout::Generator,
+    )
+}
+
+/// [`recv_over_transport`], judged against `layout` — see [`run`].
+#[allow(clippy::too_many_arguments)]
+pub fn recv_over_transport_with_layout(
+    transport: Box<dyn RecvTransport>,
+    expect: &Profile,
+    seconds: f64,
+    no_klv_digest: bool,
+    strict: bool,
+    klv: KlvExpect,
+    corruption_log: Option<&Path>,
+    layout: WireLayout,
+) -> Result<VerifyReport, String> {
     let (teeing, tap) = Teeing::new(transport);
     // Built per-profile, not `DemuxReceiver::new` — see
     // `profiles::demuxer_config`'s doc comment for why a default-config
@@ -351,6 +383,7 @@ pub fn recv_over_transport(
     let mut closed = false;
     let mut tally = Tally::new();
     tally.set_klv_expect(klv);
+    tally.set_wire_layout(layout);
     if no_klv_digest {
         tally.disable_klv_digest_tracking();
     }
