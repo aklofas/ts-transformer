@@ -123,21 +123,33 @@ impl PublishSession {
     }
 
     /// Resolve a URI's raw trailing path segment against this session's
-    /// announced tracks' `control` values with an exact string match,
-    /// independent of whether `segment` looks like a recognized
-    /// `trackID=`/`streamid=`/`stream=` control segment — gst-rtsp-
-    /// server's `rtspclientsink` announces bare `a=control:stream=0`,
-    /// and other tools may use yet other conventions, so an exact match
-    /// against whatever the SDP actually said is the one check that
-    /// works for all of them. `None` when nothing matches; the caller
-    /// falls back to [`Self::track_for_control`]'s prefix-aware
-    /// resolution (which also covers the no-`a=control`,
-    /// bare-mount-URI, single-track case this exact match cannot — a
-    /// track with no announced control never matches here).
+    /// announced tracks' `control` values, independent of whether
+    /// `segment` looks like a recognized `trackID=`/`streamid=`/`stream=`
+    /// control segment — gst-rtsp-server's `rtspclientsink` announces
+    /// bare `a=control:stream=0`, and other tools may use yet other
+    /// conventions. A relative control value matches by exact text. An
+    /// absolute `rtsp(s)://` control value matches when its path's last
+    /// segment equals `segment`; the host is ignored, because a
+    /// publisher writes its own view of the server's address. An absolute
+    /// value whose path is the mount itself (a single-track announce
+    /// naming the aggregate URL) never matches here: stripping its last
+    /// segment would name the mount's parent. `None` when nothing
+    /// matches; the caller falls back to [`Self::track_for_control`]'s
+    /// prefix-aware resolution, which also covers the no-`a=control`,
+    /// bare-mount-URI, single-track case.
     pub(crate) fn track_for_raw_segment(&self, segment: &str) -> Option<usize> {
+        use crate::rtsp::server::handlers::{absolute_control_path, last_path_segment};
         self.tracks
             .iter()
-            .position(|t| t.announced.control.as_deref() == Some(segment))
+            .position(|t| match t.announced.control.as_deref() {
+                None => false,
+                Some(control) => match absolute_control_path(control) {
+                    Some(path) => {
+                        path != self.mount.path && last_path_segment(&path) == Some(segment)
+                    }
+                    None => control == segment,
+                },
+            })
     }
 
     /// Resolve a SETUP URI's control segment (see

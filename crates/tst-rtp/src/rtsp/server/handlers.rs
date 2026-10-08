@@ -292,17 +292,17 @@ pub(crate) fn last_path_segment(uri: &str) -> Option<&str> {
     (!last.is_empty()).then_some(last)
 }
 
-/// The trailing per-media control segment of a SETUP URI, if any
-/// (`streamid=0`, `trackID=1`, `stream=0`). Used by the publisher SETUP
-/// path to resolve which announced track a given SETUP targets when the
-/// exact-match-against-announced-control resolution
-/// (`PublishSession::track_for_raw_segment`) doesn't apply —
-/// [`extract_mount_path`] strips the same recognized segment when it
-/// locates the mount itself, so the two must agree on what counts as
-/// one. This function only recognizes the three fixed prefixes above;
-/// an announced control using any other convention is resolved via the
-/// exact-match path instead; this one never inspects the announced
-/// value itself, so it has no notion of an absolute `a=control` URL.
+/// The trailing per-media control segment of a SETUP URI when it uses one
+/// of the three recognized prefixes (`trackID=`, `streamid=`, `stream=`),
+/// else `None`. [`extract_mount_path`] strips exactly these segments when
+/// it locates the mount, so the two agree on what counts as one.
+///
+/// The publisher SETUP path tries `PublishSession::track_for_raw_segment`
+/// first, which matches the URI's raw last segment against what the SDP
+/// announced: a relative `a=control` value by exact text, an absolute
+/// `rtsp(s)://` value by its path's last segment. This function is the
+/// fallback after that, used by `PublishSession::track_for_control` for
+/// the single-track announce whose SETUP names the bare mount URI.
 pub(crate) fn control_segment(uri: &str) -> Option<&str> {
     let last = last_path_segment(uri)?;
     (last.starts_with("trackID=") || last.starts_with("streamid=") || last.starts_with("stream="))
@@ -312,10 +312,13 @@ pub(crate) fn control_segment(uri: &str) -> Option<&str> {
 /// For a session that has already announced a publisher on this
 /// connection, try resolving `uri`'s mount path by matching its raw
 /// trailing path segment against this session's announced `a=control`
-/// values with an exact string match — handles any control-naming
-/// convention (gst-rtsp-server's `rtspclientsink` announces bare
-/// `a=control:stream=0`; other tools may use yet other text) that
-/// [`extract_mount_path`]'s fixed `trackID=`/`streamid=`/`stream=`
+/// values (see `PublishSession::track_for_raw_segment`: exact text for a
+/// relative value, the path's last segment for an absolute `rtsp(s)://`
+/// value) and, on a match, taking the URI's path minus that segment.
+/// Handles any control-naming convention (gst-rtsp-server's
+/// `rtspclientsink` announces bare `a=control:stream=0`; other tools may
+/// use yet other text, or a full URL naming their own view of the host)
+/// that [`extract_mount_path`]'s fixed `trackID=`/`streamid=`/`stream=`
 /// prefix list doesn't recognize. `None` when this session isn't a
 /// publisher yet, or when nothing it announced matches the URI's
 /// trailing segment — the caller falls back to [`extract_mount_path`]
@@ -325,6 +328,21 @@ pub(crate) fn publisher_mount_path(uri: &str, session: &ServerSessionState) -> O
     let last = last_path_segment(uri)?;
     publish.track_for_raw_segment(last)?;
     Some(normalize_mount_path(uri, |seg| seg == last))
+}
+
+/// The normalized path of an absolute `rtsp://` / `rtsps://` `a=control`
+/// value (scheme matched case-insensitively, authority and query
+/// dropped, a trailing `/` stripped), or `None` for a relative value. A
+/// publisher writes its own view of the server's address into an
+/// absolute control URL, so only the path is meaningful to the server.
+pub(crate) fn absolute_control_path(control: &str) -> Option<String> {
+    let rest = ["rtsp://", "rtsps://"].iter().find_map(|scheme| {
+        let head = control.get(..scheme.len())?;
+        head.eq_ignore_ascii_case(scheme)
+            .then(|| &control[scheme.len()..])
+    })?;
+    let path = rest.find('/').map(|i| &rest[i..]).unwrap_or("/");
+    Some(normalize_mount_path(path, |_| false))
 }
 
 /// Allocate a fresh even/odd TCP-interleaved channel pair from the
@@ -358,6 +376,9 @@ pub(crate) fn next_interleaved_pair() -> Option<(u8, u8)> {
 /// - 401 Unauthorized — auth check fails (via `check_auth`).
 /// - 404 Not Found — mount path not registered.
 /// - 400 Bad Request — Transport header missing or malformed.
+/// - 455 Method Not Valid in This State — a reader-direction SETUP (no
+///   `mode=record`) on a session that announced a publisher; one
+///   connection holds one role.
 /// - 461 Unsupported Transport — TCP-interleaved against a multicast
 ///   mount (RFC 7826 §13.3), or `mode=record` against a local
 ///   (muxer-backed) mount — only a publish mount accepts a publisher.
@@ -450,6 +471,12 @@ pub(crate) fn handle_setup(
             return error_response(req, 461, "Unsupported Transport");
         }
         (MountEntry::Publish(_), false) | (MountEntry::Local(_), false) => {}
+    }
+    // One role per session: a connection that announced a publisher
+    // cannot also become a reader (the session registry, and through it
+    // `stop()`'s notice, names one mount per session).
+    if session.publish.is_some() {
+        return handle_not_valid_in_state(req);
     }
 
     // Per RFC 7826 §13.3: TCP-interleaved is incompatible with multicast.
@@ -662,6 +689,8 @@ pub(crate) fn bind_server_udp_pair(
 /// - 454 Session Not Found — `session.session_id` is None (PLAY before
 ///   SETUP), or the SETUP-allocated transport is missing for a unicast
 ///   mount.
+/// - 455 Method Not Valid in This State — the session announced a
+///   publisher (one role per connection).
 /// - 404 Not Found — mount disappeared between SETUP and PLAY (rare).
 /// - 500 Internal Server Error — mounts mutex poisoned, or required
 ///   UDP socket pair missing despite the transport being UDP.
@@ -690,6 +719,10 @@ pub(crate) fn handle_play(
 ) -> RtspResponse {
     if let Err(challenge) = check_auth(req, state, session, "PLAY") {
         return challenge;
+    }
+    // A publisher session never plays (one role per session).
+    if session.publish.is_some() {
+        return handle_not_valid_in_state(req);
     }
     let Some(session_id) = session.session_id.clone() else {
         return error_response(req, 454, "Session Not Found");
