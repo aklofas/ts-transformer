@@ -115,6 +115,9 @@ pub(crate) struct EsAdapter {
     /// Highest PTS pushed into the muxer — the synthesized RTP timestamp.
     max_pts: i64,
     out: Box<[u8; RTP_PAYLOAD_SIZE]>,
+    /// Time source for the aligner's fallback window: `Instant::now`
+    /// outside tests.
+    now: Box<dyn Fn() -> Instant + Send>,
 }
 
 impl EsAdapter {
@@ -196,7 +199,15 @@ impl EsAdapter {
             ssrc: None,
             max_pts: 0,
             out: Box::new([0u8; RTP_PAYLOAD_SIZE]),
+            now: Box::new(Instant::now),
         }
+    }
+
+    /// Test-only: replace the time source, so a test can advance a fake
+    /// clock through the aligner's fallback window.
+    #[cfg(test)]
+    fn set_clock(&mut self, now: impl Fn() -> Instant + Send + 'static) {
+        self.now = Box::new(now);
     }
 
     fn route(&self, track: usize) -> Option<Route> {
@@ -219,6 +230,16 @@ impl EsAdapter {
         // call takes effect; later ones yield the same value.
         self.aligner
             .on_video_au(au.rtp_timestamp.wrapping_sub(au.pts.as_ticks() as u32));
+        self.mux_au(au);
+        // Held KLV may be due on elapsed time alone (the aligner's
+        // fallback window) while only video arrives.
+        let placed = self.aligner.poll((self.now)());
+        self.place_klv(placed);
+    }
+
+    /// Mux one AU, or drop it when it precedes the first IDR or the muxer
+    /// refuses it.
+    fn mux_au(&mut self, au: H264Au) {
         if !au.key_frame && !self.seen_keyframe {
             self.mount.tick(|s| s.aus_dropped += 1);
             return;
@@ -395,7 +416,8 @@ impl PublishAdapter for EsAdapter {
                 if let Some(k) = self.klv.as_mut() {
                     k.depay.feed(&parsed.header, payload);
                 }
-                self.drain_klv(Instant::now());
+                let now = (self.now)();
+                self.drain_klv(now);
             }
         }
         self.sync_stats();
@@ -432,7 +454,7 @@ impl PublishAdapter for EsAdapter {
             self.push_au(au);
         }
         self.drain_video();
-        let now = Instant::now();
+        let now = (self.now)();
         self.drain_klv(now);
         if let Some(unit) = self.klv.as_mut().and_then(|k| k.depay.flush()) {
             let placed = self.aligner.on_klv_unit(unit, now);
@@ -778,6 +800,38 @@ mod tests {
         let s = mount.stats_snapshot();
         assert_eq!(s.klv_units_emitted, 2);
         assert_eq!(s.alignment, ClockAlignment::Provisional);
+    }
+
+    #[test]
+    fn held_klv_is_emitted_once_the_fallback_expires_while_only_video_flows() {
+        use std::sync::Mutex;
+        // One KLV unit, no sender reports, then video only: the fallback
+        // must fire on elapsed time, not wait for another KLV unit.
+        let mount = PublishMountState::new("/p", 8);
+        let mut t = app_transport(&mount);
+        let mut a = EsAdapter::new(mount.clone(), &video_track(), Some(&klv_track())).unwrap();
+        let t0 = Instant::now();
+        let clock = Arc::new(Mutex::new(t0));
+        let c = clock.clone();
+        a.set_clock(move || *c.lock().unwrap());
+        a.on_rtp(0, &payload::single(1, 1_000, 0x65, 400, VIDEO_PT));
+        a.on_rtp(1, &klv_packet(1, 77_000, &klv_set(1)));
+        assert_eq!(mount.stats_snapshot().klv_units_emitted, 0, "held");
+        // 30 video AUs at 100 ms of simulated time each: 3 s > the window.
+        for i in 1..=30u16 {
+            *clock.lock().unwrap() = t0 + Duration::from_millis(100 * u64::from(i));
+            a.on_rtp(
+                0,
+                &payload::single(1 + i, 1_000 + 9_000 * u32::from(i), 0x41, 300, VIDEO_PT),
+            );
+        }
+        let s = mount.stats_snapshot();
+        assert_eq!(s.klv_units_emitted, 1, "released without any further KLV");
+        assert_eq!(s.alignment, ClockAlignment::Provisional);
+        let d = demux_app(&mut t);
+        assert_eq!(d.klv.len(), 1);
+        assert_eq!(d.klv[0].1, klv_set(1));
+        assert_eq!(d.klv[0].0.as_ticks() - d.video[0].as_ticks(), 0);
     }
 
     #[test]
