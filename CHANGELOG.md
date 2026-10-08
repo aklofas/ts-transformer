@@ -69,7 +69,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   application's job. The table holds at most 256 on-demand mounts, taken
   or not, and an ANNOUNCE past that answers `503`. Registered mounts never
   count. A mount whose transport has not been taken costs about 15 KB;
-  taking the transport preallocates about 263 KB for its queue.
+  taking the transport preallocates about 263 KB for its queue. A
+  connected elementary publisher can hold about 46 MB at worst (8 MiB
+  access unit, about 17 MB re-muxer queue, 8 MiB PES scratch, 4 MiB KLV
+  hold, 8.7 MB application queue), about 2.9 GB at the default 64
+  sessions: auth and `max_sessions` are the knobs.
 - **`RtspServer::remove_mount(path)`** removes a mount of any kind and
   frees the path. A publish mount is closed as it leaves the table: its
   application transport reads `Closed` and its publisher slot can never

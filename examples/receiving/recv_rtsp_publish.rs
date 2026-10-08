@@ -41,11 +41,13 @@
 //!     -c:v libx264 -preset ultrafast -tune zerolatency \
 //!     -f rtsp -rtsp_transport udp rtsp://127.0.0.1:8554/demo
 //!
-//! # GStreamer, MPEG-TS over RTP (video + KLV muxed by the publisher):
+//! # GStreamer, MPEG-TS over RTP (video + KLV muxed by the publisher;
+//! # to be verified in the interop matrix):
 //! gst-launch-1.0 filesrc location=in.ts ! tsparse set-timestamps=true \
 //!     ! rtpmp2tpay ! rtspclientsink location=rtsp://127.0.0.1:8554/demo
 //!
-//! # GStreamer, elementary H.264 + KLV (two tracks, re-muxed by the server):
+//! # GStreamer, elementary H.264 + KLV (two tracks, re-muxed by the server;
+//! # to be verified in the interop matrix):
 //! gst-launch-1.0 filesrc location=in.ts ! tsdemux name=d \
 //!     d. ! queue ! h264parse ! rtph264pay ! s.sink_0 \
 //!     d. ! queue ! meta/x-klv ! rtpklvpay ! s.sink_1 \

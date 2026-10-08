@@ -643,6 +643,15 @@ impl RtspServerBuilder {
     /// default `fanout_capacity`); taking the transport preallocates about
     /// 263 KB for the application queue, which can hold up to about 8.7 MB
     /// of frames if the application stops reading it.
+    ///
+    /// A connected publisher costs far more than its mount. An elementary
+    /// (H.264, optionally with KLV) publisher can hold about 46 MB at
+    /// worst: an 8 MiB access unit in the depacketizer, about 17 MB in the
+    /// re-muxer's queue, 8 MiB of PES scratch, 4 MiB of held KLV and the
+    /// 8.7 MB application queue. At the default
+    /// [`max_sessions`](Self::max_sessions) of 64 that is about 2.9 GB.
+    /// Configure auth, and size `max_sessions` to the memory you can give
+    /// publishers, before turning this on for a reachable port.
     pub fn accept_unregistered_publishers(&mut self, yes: bool) -> &mut Self {
         self.accept_unregistered_publishers = yes;
         self
