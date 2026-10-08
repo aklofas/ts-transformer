@@ -247,7 +247,7 @@ fn stats(m: *const tstrans::TstRtspPublishMount) -> TstRtspPublishMountStats {
 /// A registered publish mount end to end: the application takes the
 /// transport, a publisher pushes five MP2T packets, the demux receiver sees
 /// the program, the mount's and the server's counters move, and
-/// `remove_mount` ends the receiver with CLOSED.
+/// `remove_mount` ends the receiver with END_OF_STREAM.
 #[test]
 fn rtsp_publish_mount_end_to_end() {
     let (server, port) = start_server(false);
@@ -437,11 +437,20 @@ fn rtsp_publish_next_publisher_on_demand_and_stop_wakes_parked_call() {
     // Park a call on another thread, then stop the server from this one.
     let addr = server as usize;
     let (tx, rx) = std::sync::mpsc::channel();
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
     let parked = std::thread::spawn(move || {
         let mut out: *mut tstrans::TstRtspPublishMount = 0x1 as *mut _;
+        ready_tx.send(()).unwrap();
         let rc = unsafe { tst_rtsp_server_next_publisher(addr as *mut _, 30_000, &mut out) };
         tx.send((rc, out.is_null())).unwrap();
     });
+    ready_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("parked thread started");
+    // Ordering aid only (not asserted): give the side thread time to enter
+    // the wait, so the stop below exercises the wake path rather than the
+    // already-stopped check.
+    std::thread::sleep(Duration::from_millis(200));
     assert_eq!(unsafe { tst_rtsp_server_stop(server, 0) }, 0);
     let (rc, out_null) = rx
         .recv_timeout(Duration::from_secs(10))

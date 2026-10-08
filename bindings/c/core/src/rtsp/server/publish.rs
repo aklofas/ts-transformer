@@ -210,7 +210,8 @@ pub unsafe extern "C" fn tst_rtsp_server_add_publish_mount(
 ///   This is always the result when on-demand publishers are off.
 /// - `TST_E_CLOSED` with `*out = NULL` once the server is stopped, including
 ///   when `tst_rtsp_server_stop` runs on another thread while this call
-///   waits: the stop wakes it.
+///   waits: the stop wakes it. A call that `stop` wakes may also run the
+///   server's final teardown before returning.
 ///
 /// Mounts come out in the order their ANNOUNCEs created them, each to
 /// exactly one caller. Concurrent callers are served one at a time, so a
@@ -584,7 +585,7 @@ pub unsafe extern "C" fn tst_rtsp_publish_mount_cancel(
 ///   `tst_rtp_demux_receiver_cancel` (an explicit cancel);
 /// - `TST_E_END_OF_STREAM`, once what was already queued has drained, after
 ///   [`tst_rtsp_server_remove_mount`], `tst_rtsp_server_stop`, or
-///   `tst_rtsp_server_free` (the mount was closed).
+///   `tst_rtsp_server_free` (with no call in flight): the mount was closed.
 ///
 /// A take on a mount already closed by `remove_mount` or `stop` (but never
 /// taken) still succeeds, and the receiver reads `TST_E_END_OF_STREAM` at
