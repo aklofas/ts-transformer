@@ -186,6 +186,35 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `ClockAlignment` (`NOT_APPLICABLE`, `PENDING`, `PROVISIONAL`,
   `SENDER_REPORT`), numbered as in the C ABI.
 
+### Added — tst-jni: RTSP publisher role
+
+- **`RtspServer.addPublishMount(path)`** returns a `PublishMount`:
+  `mountPath()`, `peerCount()`, `generation()`, `publisher()`
+  (`Optional<PublisherInfo>`; record `peer`, `shape`, `klv`, `sinceUnixMs`,
+  `generation`), `stats()` (record `PublishMountStats`, every counter of the
+  Rust snapshot in Rust order plus `alignment` as a `ClockAlignment`),
+  `cancel()` and `intoDemuxReceiver()` / `intoDemuxReceiver(DemuxerConfig)`,
+  which return the existing `org.tstrans.rtp.DemuxReceiver`. The take is once
+  across every handle to the mount: a second call throws
+  `RtspException(CLOSED)`. The take does not consume the `PublishMount`, and
+  `close()` frees only the wrapper. The receiver's `recvEvent()` returns
+  `null` (end of stream) once the mount is removed or the server stopped, and
+  throws `RtpException(CLOSED)` after a cancel.
+- **`RtspServerConfig.acceptUnregisteredPublishers`** (default `false`) and
+  **`RtspServer.nextPublisher(timeoutMs)`** hand out mounts an ANNOUNCE
+  created on demand; `Optional.empty()` on a timeout,
+  `RtspException(SERVER)` once the server stops (a parked call wakes on
+  `stop()` or `close()`). The wait holds no lock on the server object, so its
+  other methods answer from other threads meanwhile.
+- **`RtspServer.removeMount(path)`** removes a mount of any kind;
+  `RtspException(MOUNT)` when no mount is registered at the path.
+- **`ServerStats`** gains `activePublishers`, `totalRtpPacketsReceived` and
+  `totalRtpBytesReceived`. It is a record, so code that calls its
+  constructor must pass the three new components.
+- New enums `PublishShape` (`MP2T`, `ELEMENTARY`) and `ClockAlignment`
+  (`NOT_APPLICABLE`, `PENDING`, `PROVISIONAL`, `SENDER_REPORT`), declared in
+  the C ABI's order.
+
 ### Changed — tst-rtp: RTSP server
 
 - **`TransportResponse` gains a public `mode` field** (the Transport
