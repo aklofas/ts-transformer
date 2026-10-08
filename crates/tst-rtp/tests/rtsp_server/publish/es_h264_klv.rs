@@ -256,7 +256,11 @@ fn klv_falls_back_to_provisional_alignment_without_sender_reports() {
     let video = video_pts(&events);
     assert!(video.len() >= 10, "only {} video samples", video.len());
     let klv = klv_events(&events);
-    assert!(!klv.is_empty(), "no KLV reached the app");
+    assert_eq!(
+        klv.len(),
+        sent as usize,
+        "every released KLV unit is demuxed on PID 0x101"
+    );
     for (j, (pts, payload)) in klv.iter().enumerate() {
         // First-packet coincidence: unit 0 ↔ the video origin.
         assert_eq!(
