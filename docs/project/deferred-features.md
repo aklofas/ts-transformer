@@ -1499,7 +1499,8 @@ mean **Deferred**. An entry whose feature has shipped must never read
   depth and stamp it with the sorted PTS sequence
   (`push_video_to_with_dts`). The depth is not signalled in RTP and can
   change mid-stream, and the window adds latency to every frame. Camera
-  and drone encoders publishing over RTSP typically send no B-frames.
+  and gimbal-payload encoders publishing over RTSP typically send no
+  B-frames.
 - **Trigger to revisit:** A consumer whose player stalls or shows late
   frames on a B-frame push (for example ffmpeg with libx264's default
   presets, or `-c copy` of a B-frame source).
