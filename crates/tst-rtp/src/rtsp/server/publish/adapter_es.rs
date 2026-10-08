@@ -807,6 +807,57 @@ mod tests {
     }
 
     #[test]
+    fn a_3mb_idr_reaches_a_draining_application_whole() {
+        // The muxer emits a whole AU as ~2 300 bundles in one burst; the
+        // application drains concurrently through a DemuxReceiver, as a
+        // real application thread would. Nothing may be dropped.
+        use tst_pipeline::{DemuxReceiver, ShellErrorKind};
+        const IDR_LEN: usize = 3_000_000;
+        let mount = PublishMountState::new("/p", 8);
+        let mut t = app_transport(&mount);
+        t.set_recv_timeout(Some(Duration::from_secs(5)));
+        let reader = std::thread::spawn(move || {
+            let mut rx = DemuxReceiver::new(t);
+            let mut video: Vec<Vec<u8>> = Vec::new();
+            while video.len() < 2 {
+                match rx.recv_event() {
+                    Ok(Some(DemuxEvent::Sample {
+                        stream,
+                        payload: tst_core::mpegts::demux::SamplePayload::Video { raw, .. },
+                        ..
+                    })) if stream.pid == 0x100 => video.push(raw.to_vec()),
+                    Ok(Some(_)) => {}
+                    Ok(None) => break,
+                    Err(e) if e.kind == ShellErrorKind::Backpressure => break,
+                    Err(e) => panic!("app demux: {e:?}"),
+                }
+            }
+            video
+        });
+        let mut a = EsAdapter::new(mount.clone(), &video_track(), None).unwrap();
+        let idr = payload::fragmented(1, 0, 0x65, IDR_LEN, VIDEO_PT, 1400);
+        let next_seq = 1 + idr.len() as u16;
+        for p in &idr {
+            a.on_rtp(0, p);
+        }
+        // A P slice completes the IDR's PES for the demuxer, and one more
+        // completes the P slice's.
+        a.on_rtp(0, &payload::single(next_seq, 3003, 0x41, 300, VIDEO_PT));
+        a.on_rtp(0, &payload::single(next_seq + 1, 6006, 0x41, 300, VIDEO_PT));
+        let video = reader.join().unwrap();
+        let s = mount.stats_snapshot();
+        assert_eq!(s.frames_dropped_app, 0, "frames dropped mid-IDR");
+        assert_eq!(s.aus_emitted, 3);
+        assert!(!video.is_empty(), "no video sample reached the application");
+        let nalu = payload::nalu(0x65, IDR_LEN);
+        assert!(
+            video[0].ends_with(&nalu) && video[0].len() <= IDR_LEN + 64,
+            "the IDR sample is {} bytes, not the whole {IDR_LEN}-byte IDR",
+            video[0].len()
+        );
+    }
+
+    #[test]
     fn held_klv_is_placed_and_emitted_on_flush() {
         // No sender reports and the publisher ends inside the fallback
         // window: flush forces first-packet coincidence.

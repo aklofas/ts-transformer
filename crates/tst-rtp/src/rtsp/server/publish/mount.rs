@@ -80,15 +80,11 @@ pub(crate) struct PublishMountState {
 impl PublishMountState {
     /// Construct a fresh `PublishMountState`. `fanout_capacity` sizes
     /// the PLAY-reader broadcast (mirrors `MountState::new`); the
-    /// application-facing bridge is sized at
-    /// [`crate::rtsp::client::interleaved_pump::DATA_QUEUE_BOUND`] — the
-    /// same bound the RTSP client's interleaved pump uses for its data
-    /// channel, so a publish mount's backpressure behavior (drop-newest
-    /// past the bound, never block the publisher) matches that path.
+    /// application-facing bridge is sized at [`app_queue_bound`] frames
+    /// (drop-newest past the bound, never block the publisher).
     pub(crate) fn new(path: &str, fanout_capacity: usize) -> Arc<Self> {
         let (fanout, _rx) = tokio::sync::broadcast::channel(fanout_capacity.max(1));
-        let (tx, rx) =
-            std::sync::mpsc::sync_channel(crate::rtsp::client::interleaved_pump::DATA_QUEUE_BOUND);
+        let (tx, rx) = std::sync::mpsc::sync_channel(app_queue_bound());
         Arc::new(Self {
             path: path.to_string(),
             fanout,
@@ -219,6 +215,23 @@ impl PublishMountState {
     }
 }
 
+/// Bound of a publish mount's application-facing channel, in frames.
+///
+/// An elementary publisher's muxer emits a whole access unit in one
+/// synchronous burst, so the channel must hold the largest AU the H.264
+/// depacketizer emits (its default `max_au_bytes`, 8 MiB) even when the
+/// application thread is not scheduled during the burst: the AU's TS
+/// packets (⌈8 MiB / 184⌉ = 45 591) in 7-packet frames is 6 513 frames,
+/// plus 64 frames of headroom for PSI, PCR and KLV — 6 577 frames, about
+/// 8.7 MB of 1 328-byte RTP packets when full. The queue holds only what
+/// the application has not read yet, so a draining application never
+/// approaches it.
+pub(crate) fn app_queue_bound() -> usize {
+    let max_au = crate::h264::H264DepayConfig::default().max_au_bytes;
+    let frame_packets = crate::rtsp::server::mount::RTP_PAYLOAD_SIZE / 188;
+    max_au.div_ceil(184).div_ceil(frame_packets) + 64
+}
+
 /// Which publisher currently (or most recently) holds the mount's
 /// publisher slot.
 #[derive(Debug, Clone)]
@@ -316,6 +329,9 @@ pub struct PublishMountStats {
     /// application transport).
     pub frames_emitted: u64,
     /// Frames dropped because the application transport's queue was full.
+    /// The queue holds 6 577 frames (about 8.7 MB): one maximum-size
+    /// (8 MiB) elementary access unit, re-muxed, plus headroom. It fills
+    /// only when the application stops reading.
     pub frames_dropped_app: u64,
     /// Frames dropped across PLAY readers that lagged behind the fan-out.
     pub frames_dropped_readers: u64,
@@ -515,10 +531,17 @@ mod tests {
         let h = PublishMountHandle { state: m.clone() };
         let _t = h.clone().into_recv_transport().unwrap(); // nobody drains
         let pkt = rtp_mp2t(1);
-        for _ in 0..(crate::rtsp::client::interleaved_pump::DATA_QUEUE_BOUND + 3) {
+        for _ in 0..(app_queue_bound() + 3) {
             m.emit(pkt.slice(12..), pkt.clone());
         }
         assert_eq!(m.stats.lock().unwrap().frames_dropped_app, 3);
+    }
+
+    #[test]
+    fn app_queue_holds_one_maximum_au() {
+        // 8 MiB of H.264 in 184-byte TS payloads, 7 packets a frame, + 64.
+        assert_eq!(app_queue_bound(), 45_591usize.div_ceil(7) + 64);
+        assert_eq!(app_queue_bound(), 6_577);
     }
 
     #[test]
