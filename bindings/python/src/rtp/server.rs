@@ -8,14 +8,15 @@
 //!
 //! GIL release boundaries:
 //! - `start`, `stop`, `add_unicast_mount`, `add_multicast_mount`,
-//!   every `MountHandle.push_*` — wrap Rust work in `py.allow_threads`.
+//!   `add_publish_mount`, `next_publisher`, `remove_mount`, every
+//!   `MountHandle.push_*` — wrap Rust work in `py.allow_threads`.
 //! - Dataclass construction, `__enter__`/`__exit__`, `cancel_handle`,
 //!   `stats`, handle getters — no release (pure Python or sub-microsecond).
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use pyo3::intern;
 use pyo3::prelude::*;
@@ -31,6 +32,7 @@ use crate::mux::{
     PySubtitleStreamHandle, PyVideoStreamHandle, py_pts90khz,
 };
 use crate::raise::{RTSP, raise};
+use crate::rtp::publish::PyPublishMount;
 use tst_pipeline::binding::{BindingError, BindingErrorKind};
 
 // ---------------------------------------------------------------------------
@@ -124,13 +126,36 @@ impl PyServerStats {
         self.inner.mounts
     }
 
+    /// Publish mounts that currently have a publisher.
+    #[getter]
+    pub fn active_publishers(&self) -> usize {
+        self.inner.active_publishers
+    }
+
+    /// Cumulative RTP packets received from publishers across every
+    /// publish mount.
+    #[getter]
+    pub fn total_rtp_packets_received(&self) -> u64 {
+        self.inner.total_rtp_packets_received
+    }
+
+    /// Cumulative bytes of those RTP packets, headers included.
+    #[getter]
+    pub fn total_rtp_bytes_received(&self) -> u64 {
+        self.inner.total_rtp_bytes_received
+    }
+
     fn __repr__(&self) -> String {
         format!(
-            "ServerStats(active_sessions={}, mounts={}, total_rtp_packets_sent={}, total_rtp_bytes_sent={})",
+            "ServerStats(active_sessions={}, mounts={}, total_rtp_packets_sent={}, total_rtp_bytes_sent={}, \
+             active_publishers={}, total_rtp_packets_received={}, total_rtp_bytes_received={})",
             self.inner.active_sessions,
             self.inner.mounts,
             self.inner.total_rtp_packets_sent,
             self.inner.total_rtp_bytes_sent,
+            self.inner.active_publishers,
+            self.inner.total_rtp_packets_received,
+            self.inner.total_rtp_bytes_received,
         )
     }
 }
@@ -649,7 +674,8 @@ impl PyRtspServer {
                         .fanout_capacity(cfg.fanout_capacity)
                         .graceful_shutdown_drain(Duration::from_millis(
                             cfg.graceful_shutdown_drain_ms,
-                        ));
+                        ))
+                        .accept_unregistered_publishers(cfg.accept_unregistered_publishers);
                     // Wire the cert + key paths through before build().
                     // start() loads these synchronously and fails typed
                     // on bad paths (the guard above just gives nicer
@@ -753,6 +779,99 @@ impl PyRtspServer {
             .allow_threads(move || server.add_multicast_mount(&path_owned, muxer_cfg, &url))
             .map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;
         Ok(PyMountHandle { inner: res })
+    }
+
+    /// Register a publish mount under `path`: the server accepts
+    /// ANNOUNCE / RECORD on it, and the returned `PublishMount` hands the
+    /// received MPEG-TS to the application (`into_demux_receiver`) while
+    /// PLAY readers on the same path are re-served from it.
+    ///
+    /// Errors:
+    /// - `RtspError(MOUNT)` for an invalid or duplicate path.
+    /// - `RtspError(SERVER)` if the server has been stopped.
+    pub fn add_publish_mount(&self, py: Python<'_>, path: &str) -> PyResult<PyPublishMount> {
+        let server = self.inner.clone();
+        let path_owned = path.to_string();
+        let handle = py
+            .allow_threads(move || server.add_publish_mount(&path_owned))
+            .map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;
+        Ok(PyPublishMount::new(handle))
+    }
+
+    /// Wait for the next publish mount an ANNOUNCE created on demand
+    /// (`RtspServerConfig.accept_unregistered_publishers=True`). The
+    /// announcing publisher already holds the returned mount.
+    ///
+    /// `timeout` is in seconds; `None` waits until a mount arrives or the
+    /// server stops. Returns `None` when the timeout passes, and always
+    /// does when the flag is off. The GIL is released while waiting, and
+    /// the wait is sliced into 1 s steps between which pending signals are
+    /// handled, so Ctrl-C interrupts a parked call.
+    ///
+    /// Concurrent callers are served one at a time, each mount to exactly
+    /// one of them, so a call made while another waits can return later
+    /// than its own `timeout`. The returned mount can already have been
+    /// removed by `remove_mount` while it waited in the queue: its
+    /// `DemuxReceiver` then ends at once.
+    ///
+    /// Errors:
+    /// - `RtspError(SERVER)` once the server has stopped, including while
+    ///   this call waited.
+    /// - `ValueError` for a negative or NaN `timeout`.
+    #[pyo3(signature = (timeout = None))]
+    pub fn next_publisher(
+        &self,
+        py: Python<'_>,
+        timeout: Option<f64>,
+    ) -> PyResult<Option<PyPublishMount>> {
+        const SLICE: Duration = Duration::from_secs(1);
+        // `None` → no deadline. A finite timeout too large for an
+        // `Instant` waits like `None`.
+        let deadline = match timeout {
+            None => None,
+            Some(t) if t.is_nan() || t < 0.0 => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "next_publisher timeout must be None or >= 0 seconds; got {t}"
+                )));
+            }
+            Some(t) => Duration::try_from_secs_f64(t)
+                .ok()
+                .and_then(|d| Instant::now().checked_add(d)),
+        };
+        loop {
+            let wait = match deadline {
+                None => SLICE,
+                Some(d) => d.saturating_duration_since(Instant::now()).min(SLICE),
+            };
+            let server = self.inner.clone();
+            let got = py
+                .allow_threads(move || server.next_publisher(wait))
+                .map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;
+            if let Some(handle) = got {
+                return Ok(Some(PyPublishMount::new(handle)));
+            }
+            if deadline.is_some_and(|d| Instant::now() >= d) {
+                return Ok(None);
+            }
+            py.check_signals()?;
+        }
+    }
+
+    /// Remove the mount at `path`, of any kind, and free the path. A
+    /// publish mount's publisher is sent the Notice 5402 teardown and its
+    /// `DemuxReceiver` stops iterating (`StopIteration`); the `PublishMount`
+    /// stays usable for `stats()`. A local mount's `MountHandle` keeps
+    /// accepting pushes that reach nobody. Also how idle on-demand mounts
+    /// are removed.
+    ///
+    /// Errors:
+    /// - `RtspError(MOUNT)` when no mount is registered at `path`.
+    /// - `RtspError(SERVER)` if the server has been stopped.
+    pub fn remove_mount(&self, py: Python<'_>, path: &str) -> PyResult<()> {
+        let server = self.inner.clone();
+        let path_owned = path.to_string();
+        py.allow_threads(move || server.remove_mount(&path_owned))
+            .map_err(|e| raise(py, &RTSP, BindingError::from(e)))
     }
 
     /// Snapshot of aggregate server stats.
@@ -863,6 +982,7 @@ struct ServerConfigExtract {
     auth: Option<AuthExtract>,
     tls_cert: Option<String>,
     tls_key: Option<String>,
+    accept_unregistered_publishers: bool,
 }
 
 impl ServerConfigExtract {
@@ -895,6 +1015,9 @@ impl ServerConfigExtract {
 
         let tls_cert = extract_optional_string(obj, "tls_cert")?;
         let tls_key = extract_optional_string(obj, "tls_key")?;
+        let accept_unregistered_publishers: bool = obj
+            .getattr(intern!(py, "accept_unregistered_publishers"))?
+            .extract()?;
 
         Ok(Self {
             bind_url,
@@ -905,6 +1028,7 @@ impl ServerConfigExtract {
             auth,
             tls_cert,
             tls_key,
+            accept_unregistered_publishers,
         })
     }
 }
