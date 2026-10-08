@@ -96,10 +96,11 @@ and one subdirectory per sweep step with that step's raw logs and samples.
 
 ## Measured results
 
-The block below is generated from the 2026-10-03 run's sweep steps. Its
-hold section reads "No hold in this run" because the hold ended early and
-wrote no results file; what the hold did measure is under "Measured: stress
-run of 2026-10-03" below.
+The block below is generated from the 2026-10-06 run's sweep steps and
+24-hour hold. What the run found, including why the hold's own verdict is a
+FAIL, is under "Measured: stress run of 2026-10-06" below. The earlier
+2026-10-03 run's hold ended early and wrote no results file; what it did
+measure is under "Measured: stress run of 2026-10-03" below that.
 
 <!-- bench:begin -->
 ### Reference machine
@@ -322,6 +323,85 @@ Per-process rows are rolled up; the full list is `hold/step-results.json` in the
 - hold scaled to 32% by memory: predicted 34831 MB vs budget 10990 MB (n_hold rist=41 srt=41 tcp=83 udp=41)
 - hold throughput for srt-0 is its last segment only: 6810 s of the 86460 s run (the receiver was restarted; earlier segments wrote no report)
 <!-- bench:end -->
+
+## Measured: stress run of 2026-10-06
+
+The run used tree `9bb728e1` (`v0.7.0-24-g9bb728e1`) on the reference
+machine above (8 vCPU, 16 077 016 kB), with seed 11, all four transports,
+an RSS-slope threshold of 1024 KB/hour, and the RIST sender recorded, not
+gated, in sweep steps.
+The sweep ran from 2026-10-06T16:25Z to 2026-10-07T04:42Z (12 h 17 m),
+climbing the stream ladder to 1024 with a step memory guard that skips any
+rung predicted to exceed 0.70 of the box's memory.
+
+**Stream count.** All four transports stopped at a memory ceiling rather
+than a transport verdict. SRT and RIST both stopped at 256 streams (the 512
+rung was skipped, predicted at 17.07 GB and 17.12 GB against the 11.25 GB
+budget), UDP likewise stopped at 256 (predicted at approximately 17 GB),
+and TCP reached 512 before its 1024 rung was skipped at a predicted
+20.6 GB. In every case the number is the box's memory, not a transport
+verdict. Average RSS per stream (sender, proxy and receiver together)
+stayed flat across the whole ladder: about 26.1 MiB for SRT and RIST,
+21.9 MiB for UDP, and 15.7 MiB for TCP. At 256 streams each transport
+carried about 482 Mb/s on the wire; TCP's extra rung at 512 streams carried
+about 965 Mb/s. Measured as cores per stream at the ceiling, SRT used
+0.017, RIST 0.014, UDP 0.005, and TCP 0.003.
+
+**Per-stream bitrate.** The last passing `--au-scale` rung on one stream:
+
+| Transport | Ceiling (scale) | Declared rate at the ceiling | Ended at | Ended by |
+|---|---|---|---|---|
+| SRT | 64 | 108.8 Mb/s | — | never failed — the top of the ladder, not a measured limit |
+| RIST | 32 | 54.4 Mb/s | 64 | `transport_loss_excused`, 4781 unexplained transport-loss events against a budget of 0 |
+| UDP | 32 | 54.4 Mb/s | 64 | `rss_slope_udp-0_send`, 10 227 KB/h against 6 827 allowed |
+| TCP | 16 | 27.2 Mb/s | 32 | `rss_slope_tcp-0_send`, 8 855 KB/h against 6 827 allowed |
+
+RIST's failing rung was real packet loss — librist logged "Lost N packets"
+once a second against a 16 MiB receiver buffer, not a harness artefact.
+This is a configuration ceiling: librist's default recovery bitrate cap
+(`recovery_maxbitrate`, 100 Mb/s, exposed as `?recovery_maxbitrate=` /
+`?bandwidth=`) is below the 108.8 Mb/s rung; the transport was not
+re-measured with the cap raised.
+
+UDP and TCP failed the same way run 3 did, by the same figures to the KB:
+each axis ended on its memory-slope verdict alone, with delivery, CPU,
+descriptor and thread verdicts passing at the failing rung. The allowance
+is the 1024 KB/hour threshold scaled to the step's judged window, so a
+one-time rise while buffers grow to a higher rate fails it. These ceilings
+mark where a 10-minute step stops being able to tell warm-up from growth,
+not where a transport stops delivering — and both figures reproducing run
+3's exactly is that same deterministic warm-up plateau, not a regression.
+
+**The hold.** The sweep found a streams ceiling on every transport, so the
+hold was sized from the memory budget rather than the CPU budget: 41 SRT +
+41 RIST + 41 UDP + 83 TCP = 206 streams (535 processes), at a CPU scale of
+0.74 and a memory scale of 0.32. It ran its full 86 400 seconds under the
+soak's impairment schedule — a 30-second outage on every SRT proxy every 15
+minutes, and the SRT receiver `srt-0` restarted every 2 hours (12 of 12
+scheduled restarts ran; every old process exited on SIGTERM on schedule,
+including the ninth restart, where run 3 died).
+
+Every resource and liveness verdict passed. All 535 processes' RSS slopes
+stayed under the 1024 KB/hour allowance — the largest anywhere was
+292 KB/h, on the restarted receiver `srt-0`, judged per restarted pid —
+file descriptor and thread counts stayed flat on every process, and the
+reconnect, queue-depth, restart-recovery and gap-drain verdicts all passed.
+The SRT sender whose receiver was restarted twelve times (**F4**) slopes at
+23.0 KB/h over 86 340 seconds; the 41 SRT senders span 2.4–23.0 KB/h.
+Aggregate wire throughput over the hold was 384.6 Mb/s at 0.23 of the
+host's 8 vCPUs.
+
+The hold's overall verdict is nevertheless FAIL: 36 of the 206 receivers
+(33 SRT, 2 TCP, 1 UDP; no RIST) ended their 24 hours with
+corruption-attribution gaps — 85 events in total that the harness's
+attribution engine could not charge to a logged injection, plus 9
+injections it expected to see an event for and did not. That is about 8
+per million injections. The shape of the events (a resync or PAT checksum
+with the nearest logged injection one to several thousand packets earlier)
+is the one the 0.7.0 release-candidate soak analysis showed to be a
+harness attribution artefact, but this run's residue has not yet been
+triaged (finding R4-F2), so this page does not cite the hold as a 24-hour
+PASS. The resource measurements above stand on their own.
 
 ## Measured: stress run of 2026-10-03
 
