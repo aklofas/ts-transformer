@@ -18,7 +18,7 @@ and the inferred event positions below). Re-run either script yourself to reprod
 # Build the interop driver (native deps: vendored libsrt + librist + mbedTLS).
 SRT_FORCE_VENDORED=1 RIST_FORCE_VENDORED=1 cargo build --release -p tst-interop
 
-# Full transport + format matrix (157 cells; ~8s/cell locally is what
+# Full transport + format matrix (159 cells; ~8s/cell locally is what
 # produced the census below — see scripts/interop/README.md for the
 # full cell/tier/profile vocabulary and per-axis `--cells` filtering).
 # Every cell runs realistic access-unit sizes by default; pass
@@ -47,7 +47,8 @@ impairment proxy.
 
 `run-matrix.sh` exchanges synthetic MPEG-TS/KLV traffic with real
 third-party tools over live network sessions (SRT, RIST, UDP, TCP, HLS,
-RTSP), plus runs local decode/analyze probes against the same synthetic
+RTSP, including GStreamer publishing into the RTSP server's publisher
+role), plus runs local decode/analyze probes against the same synthetic
 files, across every one of the 12 canonical stream profiles the crate
 models (baseline H.264+KLV, H.265, H.266/VVC, AV1 in two PID-classification
 shapes, MISP timestamps, synchronous AU-cell KLV, sparse/tight PCR, PTS
@@ -106,9 +107,26 @@ the raw-byte parser also checks PCR cadence, AV1 carriage mode, media
 counts per program, and an observed PTS wrap. See "What each profile's
 oracle proves" below for the individual checks.
 
-**Current census: 157 cells — 92 PASS, 0 FAIL, 65 EXPECTED-UNSUPPORTED, 0
-SKIPPED — measured at realistic access-unit sizes, and identical to the
-census the same matrix produced at compact sizes.** Every one of the 92
+**Current census: 159 cells — 94 PASS, 0 FAIL, 65 EXPECTED-UNSUPPORTED, 0
+SKIPPED — measured at realistic access-unit sizes**
+([run 37858440566](https://github.com/aklofas/ts-transformer/actions/runs/37858440566),
+`workflow_dispatch`, 2026-10-08 at `945911d4`, `--seconds 10`, shape
+`full-159`, empty allowed-skip list, no stale expectation). The two cells
+added on 2026-10-08 both pass. Each has a GStreamer `rtspclientsink`
+publishing into `tst-interop recv`'s RTSP publish mount:
+`rtsp-publish/gst-push-mp2t` (MPEG-TS over RTP, byte-identical end to
+end) and `rtsp-publish/gst-push-es-klv` (H.264 + KLV as two RTP tracks,
+re-muxed by the server, judged with `recv --remuxed`: the server's own
+PIDs, every content oracle, and a KLV set digest equal to the source's).
+The other 157 cells kept their verdicts: no expectation row was added or
+edited. There is no ffmpeg publisher cell. ffmpeg's RTSP muxer cannot
+publish the harness's synthetic stream (`dimensions not set` from its
+minimal SPS) and cannot publish KLV over RTSP at all; see
+[`scripts/interop/README.md`](/scripts/interop/README.md) gap item 10.
+
+**The 157-cell census before that addition (92 PASS, 0 FAIL, 65
+EXPECTED-UNSUPPORTED, 0 SKIPPED) was identical at realistic and at compact
+access-unit sizes.** Every one of the 92
 passing cells still passes on roughly six times the payload per access
 unit, and every one of the 65 documented gaps reproduced on the mechanism
 its `expectations.toml` row already names: the 2026-09-14 re-validation
@@ -154,12 +172,16 @@ local dev-box state, no vendored corpus) via
 weekly on a schedule (Mondays 05:00 UTC), on every `workflow_dispatch`, and
 on any PR touching `crates/tst-interop/`, `scripts/interop/`,
 `crates/tst-core/src/mpegts/`, or the workflow file itself. The verified run cited above is
+[run 37858440566](https://github.com/aklofas/ts-transformer/actions/runs/37858440566)
+(the 2026-10-08 `workflow_dispatch` at `945911d4`, the first run with the
+RTSP publisher cells), which completed `success` with the
+census-completeness assert, the 159 / 94 / 0 / 65 / 0 census, and 159
+per-cell result records with zero `FAIL` and no expectation drift: all 65
+documented-gap rows reproduced. The first public run at realistic
+access-unit sizes,
 [run 34830892357](https://github.com/aklofas/ts-transformer/actions/runs/34830892357)
-(the 2026-09-14 `workflow_dispatch` at `dc912eea` — the first public run at realistic
-access-unit sizes — completed `success` with the census-completeness
-assert, the 157 / 92 / 0 / 65 / 0 census, and 157 per-cell result records
-with zero `FAIL` and no expectation drift: all 65 documented-gap rows
-reproduced. The last compact-size run,
+(2026-09-14 at `dc912eea`, the 157 / 92 / 0 / 65 / 0 census), the last
+compact-size run,
 [33359181955](https://github.com/aklofas/ts-transformer/actions/runs/33359181955)
 (the 2026-08-31 weekly `schedule` run at `73ae1ced`, same census), the
 gst-play-enablement run
@@ -326,7 +348,7 @@ and did the stream produce media again afterwards
 (`corruption_recovered`). The tap is **on by default on both soak legs**,
 and the 0.7.0 release soak below carried these verdicts end to end over
 72 hours. None of the
-157 interop-matrix cells inject corruption — the census above is a pristine
+159 interop-matrix cells inject corruption — the census above is a pristine
 stream throughout.
 
 **One-hour smoke run (2026-08-03, seed 1, `recv --managed` now on the SRT
@@ -410,7 +432,7 @@ can check the run did what it said it would.
   conditions CHANGE rather than one synthetic average.
 - **Distinct per-leg stream profiles.** The two legs draw two different
   profiles from the seed instead of both running `baseline` forever, so a
-  long run also covers a codec/carriage/cadence shape the 157-cell matrix
+  long run also covers a codec/carriage/cadence shape the 159-cell matrix
   only sees for five seconds at a time. Profiles drawn and soak-exercised
   so far: `klv-sync` and `audio` at seed 3, and `baseline` and `pcr-sparse`
   at seed 7, all in smokes; then `pts-rollover` (SRT) and `klv-sync` (RIST)

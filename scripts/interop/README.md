@@ -561,6 +561,14 @@ timestamp (observed: all 80 packets of an 8 s clip on one value), which
 the server cannot place on the video timeline. The cell is still recorded
 under `baseline`, the axis it belongs to.
 
+Both cells passed on their first CI run,
+[run 37858440566](https://github.com/aklofas/ts-transformer/actions/runs/37858440566)
+(2026-10-08), whose full census is 159 cells: 94 PASS, 0 FAIL, 65
+EXPECTED-UNSUPPORTED, 0 SKIPPED, no stale expectation. Locally (GStreamer
+1.24.2, `--seconds 8`) the elementary cell received 240 of 240 video AUs
+and 80 of 80 KLV records with a KLV set digest equal to the source's, and
+0 non-conformant events.
+
 10. **No ffmpeg publisher cell: ffmpeg cannot publish this harness's
     stream, and cannot publish KLV over RTSP at all.** ffmpeg's RTP/RTSP
     muxer reads the picture size from the H.264 SPS and refuses a stream
@@ -1069,7 +1077,7 @@ offline from an archived capture plus its log
 (`verify::verify_bytes_with_corruption`).
 
 **Corruption is a soak and offline-test feature: no matrix cell injects.**
-`run-matrix.sh` never passes `--corrupt`, so all 157 cells run a pristine
+`run-matrix.sh` never passes `--corrupt`, so all 159 cells run a pristine
 stream and the census is unaffected by anything in this section.
 
 ### Grammar
@@ -1353,7 +1361,7 @@ configuration nuisance: it means the records on the wire are not the ones the
 sender was supposed to emit.
 
 **The matrix stays compact: no cell sends rich records.** `--klv-set` defaults
-to `compact` everywhere and `run-matrix.sh` never passes it, so all 157 cells
+to `compact` everywhere and `run-matrix.sh` never passes it, so all 159 cells
 carry the byte-identical 4-tag, 50-byte record their expectations were
 validated against. That matters most for the `KLV records: got 0` expectation
 rows above: they document third-party peers dropping or mangling KLV carriage
