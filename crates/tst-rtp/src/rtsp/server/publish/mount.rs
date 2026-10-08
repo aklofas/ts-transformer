@@ -27,6 +27,13 @@ use crate::transport::RtpRecvTransport;
 /// only.
 pub(crate) struct PublishMountState {
     pub(crate) path: String,
+    /// Created by an ANNOUNCE on an unregistered path (see
+    /// `RtspServerBuilder::accept_unregistered_publishers`), not by
+    /// `add_publish_mount`. Only these count toward
+    /// [`crate::rtsp::server::ON_DEMAND_MOUNT_CAP`], counted under the
+    /// mounts lock, so removing the entry from the table is what frees a
+    /// slot.
+    pub(crate) on_demand: bool,
     /// Broadcast sender — TS payload bytes, re-serving PLAY readers.
     /// Fed by [`Self::emit`]'s `ts` argument, same as a muxer-backed
     /// mount's `MountState::fanout`.
@@ -83,10 +90,21 @@ impl PublishMountState {
     /// application-facing bridge is sized at [`app_queue_bound`] frames
     /// (drop-newest past the bound, never block the publisher).
     pub(crate) fn new(path: &str, fanout_capacity: usize) -> Arc<Self> {
+        Self::build(path, fanout_capacity, false)
+    }
+
+    /// [`Self::new`] for a mount an ANNOUNCE creates on demand
+    /// (`on_demand` set).
+    pub(crate) fn new_on_demand(path: &str, fanout_capacity: usize) -> Arc<Self> {
+        Self::build(path, fanout_capacity, true)
+    }
+
+    fn build(path: &str, fanout_capacity: usize, on_demand: bool) -> Arc<Self> {
         let (fanout, _rx) = tokio::sync::broadcast::channel(fanout_capacity.max(1));
         let (tx, rx) = std::sync::mpsc::sync_channel(app_queue_bound());
         Arc::new(Self {
             path: path.to_string(),
+            on_demand,
             fanout,
             app_tx: Mutex::new(Some(tx)),
             app_rx: Mutex::new(Some(rx)),

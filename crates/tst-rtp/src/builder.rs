@@ -632,11 +632,13 @@ impl RtspServerBuilder {
     /// 64 bound counts only handles the application has not yet taken: an
     /// on-demand mount stays in the mount table after its publisher leaves
     /// and after its handle is taken or dropped, until the application
-    /// calls `remove_mount`. Removing idle names is the application's job;
-    /// a cap on on-demand mounts (256, then `503`) follows. Mounts
-    /// registered with
+    /// calls
+    /// [`RtspServer::remove_mount`](crate::rtsp::server::RtspServer::remove_mount).
+    /// Removing idle names is the application's job: the table holds at
+    /// most 256 on-demand mounts, taken or not, and an ANNOUNCE that would
+    /// create a 257th answers `503`. Mounts registered with
     /// [`RtspServer::add_publish_mount`](crate::rtsp::server::RtspServer::add_publish_mount)
-    /// are unaffected.
+    /// are unaffected and never count.
     pub fn accept_unregistered_publishers(&mut self, yes: bool) -> &mut Self {
         self.accept_unregistered_publishers = yes;
         self

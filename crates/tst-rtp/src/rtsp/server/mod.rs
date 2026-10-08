@@ -34,6 +34,13 @@ use crate::url::RtspScheme;
 /// ANNOUNCE that would create one more answers `503`.
 pub(crate) const PUBLISH_QUEUE_BOUND: usize = 64;
 
+/// Cap on on-demand publish mounts in the mount table (see
+/// [`RtspServerBuilder::accept_unregistered_publishers`]), whether or not
+/// their handles were taken: an ANNOUNCE that would create one more
+/// answers `503`. Mounts registered with [`RtspServer::add_publish_mount`]
+/// never count.
+pub(crate) const ON_DEMAND_MOUNT_CAP: usize = 256;
+
 /// Queue item: a publish mount an ANNOUNCE created on demand.
 type PublishQueueItem = Arc<crate::rtsp::server::publish::mount::PublishMountState>;
 

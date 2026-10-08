@@ -74,8 +74,9 @@ fn ok_response(req: &RtspRequest, session_id: Option<&str>) -> RtspResponse {
 /// - 404 Not Found — mount path not registered (and on-demand mounts
 ///   are off, or the path is not one a mount could be registered under).
 /// - 503 Service Unavailable — on-demand mounts are on but the queue of
-///   mounts the application has not taken yet is full, or the server is
-///   stopping; no mount is created.
+///   mounts the application has not taken yet is full, the table already
+///   holds the cap of on-demand mounts, or the server is stopping; no
+///   mount is created.
 /// - 461 Unsupported Transport — the mount exists but is a local
 ///   (muxer-backed) mount, which never accepts a publisher.
 /// - 403 Forbidden — the mount already has a publisher.
@@ -188,7 +189,9 @@ pub(crate) fn handle_announce(
 /// Create an on-demand publish mount at `path`, queue its handle for
 /// [`crate::rtsp::server::RtspServer::next_publisher`], and only then insert
 /// it into `mounts`, so a full (or closed) queue leaves no orphan mount
-/// behind. Returns `None` when the queue refused it.
+/// behind. Returns `None` when the table already holds
+/// [`crate::rtsp::server::ON_DEMAND_MOUNT_CAP`] on-demand mounts or the
+/// queue refused it.
 ///
 /// The caller holds the `mounts` lock across the lookup that found no
 /// entry and this insert, and `try_send` never blocks, so two ANNOUNCEs
@@ -200,7 +203,19 @@ fn create_on_demand_mount(
     mounts: &mut HashMap<String, MountEntry>,
     path: &str,
 ) -> Option<Arc<PublishMountState>> {
-    let m = PublishMountState::new(path, state.builder.fanout_capacity);
+    let on_demand = mounts
+        .values()
+        .filter(|e| matches!(e, MountEntry::Publish(m) if m.on_demand))
+        .count();
+    if on_demand >= crate::rtsp::server::ON_DEMAND_MOUNT_CAP {
+        tracing::debug!(
+            target: "tst_rtp::server::publish",
+            path,
+            "on-demand mount refused: on-demand mount cap reached"
+        );
+        return None;
+    }
+    let m = PublishMountState::new_on_demand(path, state.builder.fanout_capacity);
     let queued = state
         .publish_queue_tx
         .lock()
@@ -1026,6 +1041,40 @@ mod tests {
         let mut s = ServerSessionState::new();
         assert_eq!(
             handle_announce(&announce("rtsp://h/overflow", SDP_MP2T), &st, &mut s).status,
+            200
+        );
+    }
+
+    #[test]
+    fn on_demand_mount_cap_is_503_until_a_mount_is_removed() {
+        let (st, rx) = crate::rtsp::server::test_state_on_demand(true);
+        // A registered publish mount never counts toward the cap.
+        st.mounts.lock().unwrap().insert(
+            "/registered".into(),
+            MountEntry::Publish(PublishMountState::new("/registered", 8)),
+        );
+        for i in 0..crate::rtsp::server::ON_DEMAND_MOUNT_CAP {
+            let mut s = ServerSessionState::new();
+            let uri = format!("rtsp://h/p{i}");
+            assert_eq!(
+                handle_announce(&announce(&uri, SDP_MP2T), &st, &mut s).status,
+                200,
+                "announce {i}"
+            );
+            // Take each handle so the queue bound never fires first.
+            rx.try_recv().expect("queued");
+        }
+        let mut s = ServerSessionState::new();
+        let r = handle_announce(&announce("rtsp://h/over", SDP_MP2T), &st, &mut s);
+        assert_eq!(r.status, 503);
+        assert!(s.publish.is_none());
+        assert!(!st.mounts.lock().unwrap().contains_key("/over"));
+        assert!(rx.try_recv().is_err(), "nothing queued for a refused mount");
+        // What `RtspServer::remove_mount` does to the table frees a slot.
+        assert!(st.mounts.lock().unwrap().remove("/p0").is_some());
+        let mut s = ServerSessionState::new();
+        assert_eq!(
+            handle_announce(&announce("rtsp://h/over", SDP_MP2T), &st, &mut s).status,
             200
         );
     }
