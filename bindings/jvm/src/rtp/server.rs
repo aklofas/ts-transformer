@@ -1,10 +1,13 @@
 //! `org.tstrans.rtp` RTSP SERVER JNI surface — `RtspServer`, `MountHandle`,
-//! `RtspServerCancelHandle`. Ports tst-py's `bindings/python/src/rtp/server.rs`.
-//! The underlying `tst_rtp::rtsp::server::RtspServer` owns a tokio Runtime; it is
-//! held in a per-type leased [`HandleRegistry`] (not a raw box), and there is no
-//! JNI-side async handling.
+//! `RtspServerCancelHandle`, and the publisher-role server methods
+//! (`addPublishMount` / `nextPublisher` / `removeMount`; the `PublishMount`
+//! natives are in `publish.rs`). Ports tst-py's
+//! `bindings/python/src/rtp/server.rs`. The underlying
+//! `tst_rtp::rtsp::server::RtspServer` owns a tokio Runtime; it is held, behind
+//! an `Arc`, in a per-type leased [`HandleRegistry`] (not a raw box), and there
+//! is no JNI-side async handling.
 
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use jni::JNIEnv;
@@ -104,15 +107,21 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspServerCancelHandle_nClose(
 // RtspServer lifecycle.
 // ---------------------------------------------------------------------------
 
-type ServerInner = RustRtspServer;
+/// The server behind an `Arc`: `nNextPublisher` clones it out of a short lease
+/// and parks with no registry lock held, so `close`, `stats` and every other
+/// server native stay answerable while it waits. Every server method takes
+/// `&self`.
+type ServerInner = Arc<RustRtspServer>;
 
 /// Per-type leased-handle registry for `org.tstrans.rtp.RtspServer`. Registered
 /// with a cancel hook (a HARD cancel via the server's own independent
 /// `RtspServerCancelHandle`) so a `close` racing any server op wakes it before
-/// the resource is taken for teardown.
+/// the resource is taken for teardown. The hard cancel neither ends publish
+/// mounts' application transports nor wakes a parked `next_publisher`; `nClose`
+/// runs `stop()` after it, and that does both.
 static REGISTRY_SERVER: LazyLock<HandleRegistry<ServerInner>> = LazyLock::new(HandleRegistry::new);
 
-/// Build the Java `org.tstrans.rtp.ServerStats` record. Ctor `(JJJJ)V`.
+/// Build the Java `org.tstrans.rtp.ServerStats` record. Ctor `(JJJJJJJ)V`.
 fn build_server_stats<'local>(
     env: &mut JNIEnv<'local>,
     s: &RustServerStats,
@@ -120,12 +129,15 @@ fn build_server_stats<'local>(
     env.ensure_local_capacity(4)?;
     env.new_object(
         "org/tstrans/rtp/ServerStats",
-        "(JJJJ)V",
+        "(JJJJJJJ)V",
         &[
             JValue::Long(s.active_sessions as i64),
             JValue::Long(s.total_rtp_packets_sent as i64),
             JValue::Long(s.total_rtp_bytes_sent as i64),
             JValue::Long(s.mounts as i64),
+            JValue::Long(s.active_publishers as i64),
+            JValue::Long(s.total_rtp_packets_received as i64),
+            JValue::Long(s.total_rtp_bytes_received as i64),
         ],
     )
 }
@@ -175,6 +187,7 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nStart<'local>(
     auth_password: JString<'local>,
     tls_cert: JString<'local>,
     tls_key: JString<'local>,
+    accept_unregistered_publishers: jboolean,
 ) -> jlong {
     crate::panic::jni_catch(&mut env, 0, |env| {
         let bind: String = match env.get_string(&bind_addr) {
@@ -247,7 +260,8 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nStart<'local>(
                 .fanout_capacity(fanout_capacity.max(0) as usize)
                 .graceful_shutdown_drain(Duration::from_millis(
                     graceful_shutdown_drain_ms.max(0) as u64
-                ));
+                ))
+                .accept_unregistered_publishers(accept_unregistered_publishers != 0);
             if let Some((scheme, realm, user, pass)) = auth.as_ref() {
                 let secret = SecretString::from(pass.clone());
                 match scheme {
@@ -285,7 +299,9 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nStart<'local>(
         // `RtspServerCancelHandle` (own Arc<AtomicBool>), wiring `close` to wake any
         // racing server op before the resource is taken for teardown.
         let cancel = server.cancel_handle();
-        REGISTRY_SERVER.insert_with_cancel(server, Some(Box::new(move || cancel.cancel()))) as jlong
+        REGISTRY_SERVER
+            .insert_with_cancel(Arc::new(server), Some(Box::new(move || cancel.cancel())))
+            as jlong
     })
 }
 
@@ -305,10 +321,12 @@ fn with_server<R>(env: &mut JNIEnv, handle: jlong, f: impl FnOnce(&ServerInner) 
 /// Like [`with_server`] but POISONS the entry if `f` panics (drop the torn
 /// server + remove the entry, re-raising so the outer `jni_catch` still throws;
 /// a later op then leases `None` → `IllegalStateException`). Use ONLY for the
-/// mutating server natives (`stop`, `add_*_mount`); getters stay on the
+/// mutating server natives (`stop`, `add_*_mount`, `remove_mount`); getters stay on the
 /// non-poisoning [`with_server`]. `RtspServer`'s `Drop` is the hard-cancel +
 /// runtime-shutdown path (NOT the graceful `stop()`), so poisoning a torn
-/// mutator drops the server without a double-panic-in-Drop hazard.
+/// mutator drops the registry's `Arc` without a double-panic-in-Drop hazard (a
+/// `nNextPublisher` still parked holds its own clone; `Drop` runs when it
+/// returns).
 ///
 /// # Mixed-use poisoning contract
 ///
@@ -414,8 +432,11 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nCancelHandle(
 }
 
 /// `RtspServer.nClose(handle)` — best-effort graceful stop (swallow NotStarted),
-/// then drop the box (Drop runs hard-cancel + runtime shutdown). Mirrors tst-py
-/// `__exit__`.
+/// then drop the registry's `Arc` (the last one runs `Drop`: hard-cancel +
+/// runtime shutdown). Mirrors tst-py `__exit__`. The `stop()` is load-bearing
+/// for the publisher role: it ends every publish mount's application transport
+/// (a bound `DemuxReceiver` reads end of stream) and wakes a parked
+/// `nextPublisher` with `SERVER`, which the hard cancel alone does not.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nClose(
     mut env: JNIEnv<'_>,
@@ -649,6 +670,107 @@ pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nAddMulticastMount<'local
                 server_error_to_jvm(env, e);
                 0
             }
+        }
+    })
+}
+
+// ── Publisher role: addPublishMount / nextPublisher / removeMount ───────────
+
+/// Read a non-null `JString`; on failure throw `RuntimeException` and return `None`.
+fn read_path(env: &mut JNIEnv, path: &JString) -> Option<String> {
+    match env.get_string(path) {
+        Ok(s) => Some(s.into()),
+        Err(e) => {
+            let _ = env.throw_new("java/lang/RuntimeException", e.to_string());
+            None
+        }
+    }
+}
+
+/// `RtspServer.nAddPublishMount(serverHandle, path)` → `PublishMount` handle, or
+/// 0 with a pending `RtspException` (`MOUNT` for an invalid or duplicate path,
+/// `SERVER` once stopped).
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nAddPublishMount<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    server_handle: jlong,
+    path: JString<'local>,
+) -> jlong {
+    crate::panic::jni_catch(&mut env, 0, |env| {
+        let Some(path_str) = read_path(env, &path) else {
+            return 0;
+        };
+        let Some(res) = with_server_poisoning(env, server_handle, |server| {
+            server.add_publish_mount(&path_str)
+        }) else {
+            return 0;
+        };
+        match res {
+            Ok(h) => super::publish::publish_mount_handle(h),
+            Err(e) => {
+                server_error_to_jvm(env, e);
+                0
+            }
+        }
+    })
+}
+
+/// `RtspServer.nNextPublisher(serverHandle, timeoutMs)` → the next on-demand
+/// `PublishMount` handle, `0` on a timeout, or 0 with a pending
+/// `RtspException(SERVER)` once the server stops (including while it waited).
+///
+/// The wait runs WITHOUT the registry lease: the server's `Arc` is cloned out
+/// under a short lease and the lease is released before `next_publisher`
+/// parks. Holding it would block `close()` (which must take the resource) and
+/// every other server native for the whole wait, and `close()` could then
+/// never run the `stop()` that wakes this call.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nNextPublisher(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    server_handle: jlong,
+    timeout_ms: jlong,
+) -> jlong {
+    crate::panic::jni_catch(&mut env, 0, |env| {
+        let Some(server) = with_server(env, server_handle, Arc::clone) else {
+            return 0;
+        };
+        // Java validates `timeoutMs >= 0`; `max(0)` only guards a bypass.
+        let timeout = Duration::from_millis(timeout_ms.max(0) as u64);
+        match server.next_publisher(timeout) {
+            Ok(Some(h)) => super::publish::publish_mount_handle(h),
+            Ok(None) => 0,
+            Err(e) => {
+                server_error_to_jvm(env, e);
+                0
+            }
+        }
+    })
+}
+
+/// `RtspServer.nRemoveMount(serverHandle, path)` — remove a mount of any kind.
+/// `RtspException(MOUNT)` when no mount is registered at `path`, `SERVER` once
+/// stopped. Blocks for the Notice 5402 writes to the mount's sessions (bounded
+/// at 1 s per session).
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_tstrans_rtp_RtspServer_nRemoveMount<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    server_handle: jlong,
+    path: JString<'local>,
+) {
+    crate::panic::jni_catch(&mut env, (), |env| {
+        let Some(path_str) = read_path(env, &path) else {
+            return;
+        };
+        let Some(res) =
+            with_server_poisoning(env, server_handle, |server| server.remove_mount(&path_str))
+        else {
+            return;
+        };
+        if let Err(e) = res {
+            server_error_to_jvm(env, e);
         }
     })
 }

@@ -26,6 +26,7 @@ public final class RtspServerConfig {
     private final long gracefulShutdownDrainMs;
     private final String tlsCert;   // nullable; PEM cert-chain FILE PATH
     private final String tlsKey;    // nullable; PEM private-key FILE PATH
+    private final boolean acceptUnregisteredPublishers;
 
     private RtspServerConfig(Builder b) {
         this.bindAddr = b.bindAddr;
@@ -36,6 +37,7 @@ public final class RtspServerConfig {
         this.gracefulShutdownDrainMs = b.gracefulShutdownDrainMs;
         this.tlsCert = b.tlsCert;
         this.tlsKey = b.tlsKey;
+        this.acceptUnregisteredPublishers = b.acceptUnregisteredPublishers;
     }
 
     /** Config with the default field set, bound to {@code bindAddr}. */
@@ -61,6 +63,13 @@ public final class RtspServerConfig {
     /** PEM private-key file path for an {@code rtsps://} bind, if set. */
     public Optional<String> tlsKey() { return Optional.ofNullable(tlsKey); }
 
+    /**
+     * Whether an ANNOUNCE to an unregistered path creates a publish mount on demand,
+     * handed out by {@link RtspServer#nextPublisher(long)}. Default {@code false}
+     * (such an ANNOUNCE answers {@code 404}).
+     */
+    public boolean acceptUnregisteredPublishers() { return acceptUnregisteredPublishers; }
+
     @Override public String toString() {
         return "RtspServerConfig(bindAddr=" + bindAddr
             + ", auth=" + (auth != null ? "<auth>" : "None")
@@ -69,7 +78,8 @@ public final class RtspServerConfig {
             + ", fanoutCapacity=" + fanoutCapacity
             + ", gracefulShutdownDrainMs=" + gracefulShutdownDrainMs
             + ", tlsCert=" + (tlsCert != null ? tlsCert : "None")
-            + ", tlsKey=" + (tlsKey != null ? tlsKey : "None") + ")";
+            + ", tlsKey=" + (tlsKey != null ? tlsKey : "None")
+            + ", acceptUnregisteredPublishers=" + acceptUnregisteredPublishers + ")";
     }
 
     /** Builder for {@link RtspServerConfig}. Defaults match tst-py. */
@@ -82,6 +92,7 @@ public final class RtspServerConfig {
         private long gracefulShutdownDrainMs = 2000;
         private String tlsCert;
         private String tlsKey;
+        private boolean acceptUnregisteredPublishers;
 
         private Builder() {}
 
@@ -109,6 +120,18 @@ public final class RtspServerConfig {
 
         /** PEM private-key file path ({@code rtsps://} binds). Set with {@link #tlsCert}. */
         public Builder tlsKey(String pemPath) { this.tlsKey = pemPath; return this; }
+
+        /**
+         * Let an ANNOUNCE to an unregistered path create a publish mount on demand
+         * (default {@code false}). With it on, anyone who can reach the port, and pass
+         * {@link #auth} when it is set, can create mounts. Up to 64 handles wait for
+         * {@link RtspServer#nextPublisher(long)} and the server holds up to 256
+         * on-demand mounts; an ANNOUNCE past either bound answers {@code 503}.
+         */
+        public Builder acceptUnregisteredPublishers(boolean v) {
+            this.acceptUnregisteredPublishers = v;
+            return this;
+        }
 
         public RtspServerConfig build() {
             if (maxSessions <= 0)
