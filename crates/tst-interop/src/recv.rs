@@ -241,6 +241,12 @@ pub(crate) fn event_ordinal(
 /// invariants. Writes the same [`VerifyReport`] as JSON to `json_out`
 /// (or stdout for `"-"`) when given.
 ///
+/// `url` takes every scheme `transport::make_recv` dispatches, including
+/// the harness-only `rtsp-publish://host:port/mount`: `recv` then runs an
+/// RTSP server with one publish mount and judges whatever an external
+/// publisher RECORDs into it. A publisher that ends leaves the mount open
+/// and silent, so the capture still ends on this loop's own deadline.
+///
 /// `no_klv_digest` skips the per-record digest accumulation
 /// `CellMetrics::klv_set_sha256` needs — that field comes back `None`
 /// instead. See its own doc comment for why a multi-day soak run needs

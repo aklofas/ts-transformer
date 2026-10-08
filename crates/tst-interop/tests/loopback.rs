@@ -1,6 +1,7 @@
 //! Network-loopback round-trip tests for `send`/`recv`'s URL transport
 //! dispatch: udp cell (byte-transparent loopback) + srt cell (reliable
-//! caller/listener loopback).
+//! caller/listener loopback) + rtsp-publish cell (a raw RTSP publisher
+//! RECORDs into the harness-only publish listener).
 //!
 //! This binary's name (`loopback`) puts it in the `network` nextest
 //! test-group (`.config/nextest.toml`), which caps each test at a hard
@@ -27,9 +28,12 @@
 //! - All thread joins are timeout-bounded (`join_with_timeout`), never
 //!   a bare `.join()`.
 
-use std::net::UdpSocket;
+use std::io::{Read, Write};
+use std::net::{Shutdown, TcpListener, TcpStream, UdpSocket};
 use std::thread;
 use std::time::{Duration, Instant};
+
+use tst_core::transport::{BrokenCause, Transport, TransportError};
 
 use tst_interop::fixtures::{AuSizeMode, KlvSet};
 use tst_interop::verify::KlvExpect;
@@ -924,5 +928,245 @@ fn srt_managed_recv_returns_after_peer_never_reconnects() {
         report.profile.as_deref(),
         Some("baseline"),
         "a managed recv must record the profile it judged against"
+    );
+}
+
+/// A minimal RTSP *publisher* (ANNOUNCE / SETUP `mode=record` / RECORD
+/// over TCP-interleaved, RFC 2326 §10.3 / §10.11 / §10.12) shaped as a
+/// send-side [`Transport`], so `send::send_over_transport` can push a
+/// whole profile stream through it: every `send_bytes` chunk (a whole
+/// number of TS packets, at most `max_payload`) leaves as one PT 33
+/// (MP2T/90000, RFC 2250) RTP packet in one interleaved frame. Blocking
+/// std socket, every control read bounded by a 2 s read timeout.
+struct RecordPublisher {
+    stream: TcpStream,
+    channel: u8,
+    seq: u16,
+    started: Instant,
+    open: bool,
+}
+
+/// One PT 33 track under `a=control:streamid=0`.
+const SDP_MP2T: &str = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=publish\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=video 0 RTP/AVP 33\r\na=rtpmap:33 MP2T/90000\r\na=control:streamid=0\r\n";
+
+/// Seven TS packets: the RFC 2250 bundle every MP2T RTP sender uses.
+const BUNDLE: usize = 7 * 188;
+
+impl RecordPublisher {
+    /// Connect to `port` and run ANNOUNCE + interleaved SETUP + RECORD on
+    /// `mount`, asserting a 200 for each.
+    fn record(port: u16, mount: &str) -> Self {
+        let stream = TcpStream::connect(("127.0.0.1", port)).expect("publisher connects");
+        stream.set_nodelay(true).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut p = Self {
+            stream,
+            channel: 0,
+            seq: 0,
+            started: Instant::now(),
+            open: true,
+        };
+        let uri = format!("rtsp://127.0.0.1:{port}{mount}");
+        let announce = format!(
+            "ANNOUNCE {uri} RTSP/1.0\r\nCSeq: 1\r\nContent-Type: application/sdp\r\nContent-Length: {}\r\n\r\n{SDP_MP2T}",
+            SDP_MP2T.len()
+        );
+        assert_eq!(status_of(&p.exchange(&announce)), 200, "ANNOUNCE");
+        let setup = format!(
+            "SETUP {uri}/streamid=0 RTSP/1.0\r\nCSeq: 2\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\n\r\n"
+        );
+        let r = p.exchange(&setup);
+        assert_eq!(status_of(&r), 200, "SETUP: {r}");
+        let session = header(&r, "Session")
+            .split(';')
+            .next()
+            .unwrap()
+            .trim()
+            .to_string();
+        // Use the channel the server granted, not the one asked for.
+        p.channel = header(&r, "Transport")
+            .split(';')
+            .find_map(|kv| kv.trim().strip_prefix("interleaved="))
+            .and_then(|v| v.split('-').next())
+            .and_then(|v| v.parse().ok())
+            .expect("SETUP response names an interleaved channel");
+        let record = format!("RECORD {uri} RTSP/1.0\r\nCSeq: 3\r\nSession: {session}\r\n\r\n");
+        assert_eq!(status_of(&p.exchange(&record)), 200, "RECORD");
+        p
+    }
+
+    /// Write `req`, return the response head (through the blank line).
+    /// None of the three responses carries a body.
+    fn exchange(&mut self, req: &str) -> String {
+        self.stream
+            .write_all(req.as_bytes())
+            .expect("request written");
+        let mut head = Vec::new();
+        let mut byte = [0u8; 1];
+        while !head.ends_with(b"\r\n\r\n") {
+            let n = self.stream.read(&mut byte).expect("response read");
+            assert!(n == 1, "server closed mid-response: {head:?}");
+            head.push(byte[0]);
+        }
+        String::from_utf8(head).expect("ASCII response head")
+    }
+}
+
+fn status_of(response: &str) -> u16 {
+    response
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(|| panic!("no status line in {response:?}"))
+}
+
+/// Value of header `name` (case-insensitive) in a response head.
+fn header<'a>(response: &'a str, name: &str) -> &'a str {
+    response
+        .lines()
+        .find_map(|l| {
+            let (k, v) = l.split_once(':')?;
+            k.trim().eq_ignore_ascii_case(name).then(|| v.trim())
+        })
+        .unwrap_or_else(|| panic!("no {name} header in {response:?}"))
+}
+
+impl Transport for RecordPublisher {
+    fn send_bytes(&mut self, msg: &[u8]) -> Result<(), TransportError> {
+        if !self.open {
+            return Err(TransportError::Closed);
+        }
+        // 90 kHz media clock from the publisher's own start; the MP2T
+        // payload carries its own timing, the RTP timestamp only has to
+        // be monotonic.
+        let ts = (self.started.elapsed().as_micros() * 9 / 100) as u32;
+        let rtp_len = 12 + msg.len();
+        let mut frame = Vec::with_capacity(4 + rtp_len);
+        frame.push(b'$');
+        frame.push(self.channel);
+        frame.extend_from_slice(&u16::try_from(rtp_len).unwrap().to_be_bytes());
+        frame.extend_from_slice(&[0x80, 33]);
+        frame.extend_from_slice(&self.seq.to_be_bytes());
+        frame.extend_from_slice(&ts.to_be_bytes());
+        frame.extend_from_slice(&0x5453_5450u32.to_be_bytes());
+        frame.extend_from_slice(msg);
+        self.seq = self.seq.wrapping_add(1);
+        self.stream
+            .write_all(&frame)
+            .map_err(|e| TransportError::Broken {
+                msg: e.to_string(),
+                errno_code: None,
+                cause: BrokenCause::Unspecified,
+            })
+    }
+
+    fn max_payload(&self) -> usize {
+        BUNDLE
+    }
+
+    fn is_alive(&self) -> bool {
+        self.open
+    }
+
+    fn close(&mut self) {
+        if std::mem::replace(&mut self.open, false) {
+            let _ = self.stream.shutdown(Shutdown::Both);
+        }
+    }
+}
+
+/// `rtsp-publish://` end to end: `make_recv` starts a publish listener,
+/// a raw RTSP publisher RECORDs a whole baseline-profile stream into it
+/// over TCP-interleaved, and the receive loop judges what came out of the
+/// mount's application transport. Interleaved TCP is lossless and
+/// ordered, so the capture must pass AND be byte-identical to what the
+/// publisher's muxer sent.
+#[test]
+fn rtsp_publish_listener_receives_a_recorded_stream() {
+    let profile = profiles::by_name("baseline").expect("baseline profile must exist");
+
+    // Port 0 is unusable here (the publisher must know the port), so pick
+    // one with a throwaway TCP bind. The race between the probe's drop
+    // and the server's bind is tiny; on a lost race, try another port.
+    let (port, recv_transport) = (0..5)
+        .find_map(|_| {
+            let port = TcpListener::bind("127.0.0.1:0")
+                .and_then(|l| l.local_addr())
+                .expect("probe port")
+                .port();
+            match transport::make_recv(&format!("rtsp-publish://127.0.0.1:{port}/cam")) {
+                Ok(t) => Some((port, t)),
+                Err(e) if e.contains("bind address in use") => None,
+                Err(e) => panic!("rtsp-publish listener: {e}"),
+            }
+        })
+        .expect("a free port within five probes");
+
+    // Pre-obtained so a hung receive loop can be woken before the test
+    // fails (see the join below).
+    let cancel = recv_transport
+        .cancel_handle()
+        .expect("the publish listener exposes its transport's cancel handle");
+    let recv_handle = thread::spawn(move || {
+        recv::recv_over_transport(
+            recv_transport,
+            profile,
+            SECONDS,
+            false,
+            false,
+            KlvExpect::compact(),
+            None,
+        )
+    });
+
+    // The server is already listening (`make_recv` started it), so the
+    // publisher can connect straight away.
+    let publisher = RecordPublisher::record(port, "/cam");
+    let send_metrics = send::send_over_transport(
+        profile,
+        Box::new(publisher),
+        SECONDS,
+        false,
+        AuSizeMode::Compact,
+        KlvSet::Compact,
+        0,
+        None,
+        None,
+    )
+    .expect("publishing over RECORD must succeed");
+
+    // Bounded join; on a timeout, cancel the parked receive first so the
+    // failure does not leave a thread parked behind it.
+    let deadline = Instant::now() + Duration::from_secs(12);
+    while !recv_handle.is_finished() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+    if !recv_handle.is_finished() {
+        cancel.cancel();
+        panic!("the receive loop did not finish within its bound");
+    }
+    let recv_report = recv_handle
+        .join()
+        .expect("receive thread panicked")
+        .expect("recv_over_transport must succeed");
+
+    assert!(
+        recv_report.pass,
+        "recv failures: {:?}",
+        recv_report.failures
+    );
+    assert_eq!(
+        send_metrics.stream_sha256, recv_report.metrics.stream_sha256,
+        "an interleaved RECORD must deliver the publisher's TS bytes unchanged"
+    );
+    assert_eq!(
+        send_metrics.bytes, recv_report.metrics.bytes,
+        "sent and received byte counts must match"
+    );
+    assert_eq!(
+        send_metrics.klv_set_sha256, recv_report.metrics.klv_set_sha256,
+        "sent and received KLV record sets must match"
     );
 }
