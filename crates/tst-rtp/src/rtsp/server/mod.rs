@@ -185,7 +185,11 @@ pub(crate) fn unregister_session(state: &Arc<ServerState>, entry: &Arc<ActiveSes
 ///
 /// 1. **Drop** — fires the hard-cancel path: all per-session tasks abort
 ///    at their next poll, the runtime is shut down with a 5 s budget.
-///    Implicit; no acknowledgement to connected clients.
+///    Implicit; no acknowledgement to connected clients. Every publish
+///    mount's application transport (see
+///    [`crate::rtsp::server::publish::PublishMountHandle::into_recv_transport`])
+///    ends with `TransportError::Closed`, as with [`Self::stop`], even
+///    while a clone of its handle is still alive.
 /// 2. **Graceful — `stop()`** — sends an RTSP Notice (5402) to each
 ///    active session, allows up to
 ///    `RtspServerBuilder::graceful_shutdown_drain` for in-flight RTP to
@@ -922,22 +926,7 @@ impl RtspServer {
         // End every publish mount's application transport: a parked (or
         // later) `recv_bytes` on it reads `Closed`. Idempotent with the
         // publisher session's own `end_publisher` on its way out.
-        let publish_mounts: Vec<_> = self
-            .state
-            .mounts
-            .lock()
-            .map(|g| {
-                g.values()
-                    .filter_map(|m| match m {
-                        crate::rtsp::server::mount::MountEntry::Publish(p) => Some(p.clone()),
-                        crate::rtsp::server::mount::MountEntry::Local(_) => None,
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        for m in &publish_mounts {
-            m.close();
-        }
+        self.close_publish_mounts();
         // Also fire the global cancel so the listener stops accepting
         // new connections and any per-task observers exit promptly.
         self.state.cancel_token.cancel();
@@ -1079,6 +1068,28 @@ impl RtspServer {
         }
     }
 
+    /// `close()` every publish mount in the table: snapshot them under the
+    /// mounts lock, release it, then close each (synchronous, never
+    /// blocks). Used by [`Self::stop`] and `Drop`.
+    fn close_publish_mounts(&self) {
+        let publish_mounts: Vec<_> = self
+            .state
+            .mounts
+            .lock()
+            .map(|g| {
+                g.values()
+                    .filter_map(|m| match m {
+                        crate::rtsp::server::mount::MountEntry::Publish(p) => Some(p.clone()),
+                        crate::rtsp::server::mount::MountEntry::Local(_) => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        for m in &publish_mounts {
+            m.close();
+        }
+    }
+
     /// Listener's bound address, populated once `start()` returns. `None`
     /// before `start()` is called, or before the listener task gets
     /// scheduled (rare race; spin-wait in `start()` makes this
@@ -1088,7 +1099,9 @@ impl RtspServer {
     }
 
     /// Hard-cancel handle. Cloning is cheap; multiple holders can race
-    /// the cancel call (idempotent).
+    /// the cancel call (idempotent). Cancelling it does not end publish
+    /// mounts' application transports; [`Self::stop`] and dropping the
+    /// server do.
     pub fn cancel_handle(&self) -> RtspServerCancelHandle {
         self.state.hard_cancel.clone()
     }
@@ -1121,6 +1134,17 @@ impl RtspServer {
 
 impl Drop for RtspServer {
     fn drop(&mut self) {
+        // End the publish side first, without blocking: no new on-demand
+        // mount can be queued, and every publish mount's application
+        // transport reads `Closed` (it outlives the server whenever a
+        // handle clone is alive, so the runtime shutdown alone would leave
+        // it parked, or reading `Broken` once the last handle drops).
+        self.state
+            .publish_queue_tx
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        self.close_publish_mounts();
         // Hard-cancel path on Drop — graceful shutdown blocks too long
         // for an implicit Drop.
         self.state.hard_cancel.cancel();
@@ -1221,6 +1245,44 @@ mod runtime_tests {
         let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
         drop(server);
         // No panic / hang means shutdown_timeout completed cleanly.
+    }
+
+    #[test]
+    fn drop_ends_a_publish_transport_with_closed_while_a_handle_clone_lives() {
+        use tst_core::transport::{RecvTransport, TransportError};
+        let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+        let handle = server.add_publish_mount("/p").unwrap();
+        let keep = handle.clone(); // kept for stats(), as the docs suggest
+        let mut t = handle.into_recv_transport().unwrap();
+        // The timeout only bounds a failure.
+        t.set_recv_timeout(Some(Duration::from_secs(5)));
+        let parked = std::thread::spawn(move || {
+            let mut buf = vec![0u8; 2048];
+            let parked = t.recv_bytes(&mut buf).map(|_| ());
+            let next = t.recv_bytes(&mut buf).map(|_| ());
+            (parked, next)
+        });
+        drop(server);
+        let (parked, next) = parked.join().unwrap();
+        assert!(matches!(parked, Err(TransportError::Closed)), "{parked:?}");
+        assert!(matches!(next, Err(TransportError::Closed)), "{next:?}");
+        drop(keep);
+    }
+
+    #[test]
+    fn drop_ends_a_publish_transport_with_closed_when_no_handle_lives() {
+        use tst_core::transport::{RecvTransport, TransportError};
+        let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+        let mut t = server
+            .add_publish_mount("/p")
+            .unwrap()
+            .into_recv_transport()
+            .unwrap();
+        t.set_recv_timeout(Some(Duration::from_secs(5)));
+        drop(server);
+        let mut buf = vec![0u8; 2048];
+        let r = t.recv_bytes(&mut buf);
+        assert!(matches!(r, Err(TransportError::Closed)), "{r:?}");
     }
 
     #[test]

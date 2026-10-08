@@ -93,8 +93,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   mount: a second call, from any clone of the handle, returns the new
   `RtspServerError::TransportTaken` (binding kind `Closed`).
   `PublishMountHandle::cancel` ends the transport with `ExplicitClose`;
-  `remove_mount` and `stop()` end it with `Closed`; a publisher leaving
-  does neither. The publisher's MPEG-TS reaches the application and PLAY
+  `remove_mount`, `stop()` and dropping the server end it with `Closed`,
+  even while a clone of the handle is alive; a publisher leaving does
+  neither. The publisher's MPEG-TS reaches the application and PLAY
   readers in bundles of at most seven TS packets, whatever bundle size
   the publisher sent. The application transport queues up to 6 577
   bundles (about 8.7 MB) before dropping the newest
