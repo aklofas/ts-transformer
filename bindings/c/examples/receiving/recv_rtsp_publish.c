@@ -413,12 +413,18 @@ int main(int argc, char **argv) {
             if (slot->rx == NULL) {
                 fprintf(stderr, "[%s] into_demux_receiver: %s\n", slot->path,
                         tst_get_last_error_str());
+                /* Nobody can read this mount now, so remove it for the same
+                 * reason as the MAX_MOUNTS branch above: a registered mount
+                 * nobody drains keeps its publisher pushing into nothing. */
+                tst_rtsp_server_remove_mount(server, slot->path);
                 tst_rtsp_publish_mount_free(mount);
                 continue;
             }
             if (pthread_create(&slot->thread, NULL, demux_thread, slot) != 0) {
                 fprintf(stderr, "[%s] pthread_create failed\n", slot->path);
                 tst_rtp_demux_receiver_close(slot->rx);
+                /* No thread will drain the mount: remove it (see above). */
+                tst_rtsp_server_remove_mount(server, slot->path);
                 tst_rtsp_publish_mount_free(mount);
                 continue;
             }
