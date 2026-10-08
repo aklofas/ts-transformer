@@ -1022,7 +1022,8 @@ with RtspServer.start(cfg) as server:
 
 `RtspServerConfig` is a frozen dataclass (`bind_addr`, `auth`,
 `max_sessions`, `session_timeout_secs`, `fanout_capacity`,
-`graceful_shutdown_drain_ms`, `tls_cert`, `tls_key`). For an `rtsps://`
+`graceful_shutdown_drain_ms`, `tls_cert`, `tls_key`,
+`accept_unregistered_publishers`). For an `rtsps://`
 server, bind `bind_addr="rtsps://host:port"` and set `tls_cert` /
 `tls_key` to PEM certificate-chain / private-key file paths (set
 together, or `__post_init__` raises `ValueError`; unreadable paths raise
@@ -1030,6 +1031,94 @@ together, or `__post_init__` raises `ValueError`; unreadable paths raise
 `auth=BasicAuth("user", "pass", "realm")` — the realm is required
 server-side. `server.cancel_handle()` returns an `RtspServerCancelHandle`
 for an immediate hard teardown that bypasses the drain window.
+
+### RTSP publisher ingest
+
+The server's publisher role lets an encoder push into it with ANNOUNCE /
+SETUP `mode=record` / RECORD. Each pushed stream reaches the application as
+MPEG-TS through an ordinary `tstrans.rtp.DemuxReceiver`, and the same mount
+keeps serving PLAY readers from the published bytes. A publish mount accepts
+one publisher at a time, in one of two shapes (`PublishShape`):
+
+- `MP2T`: one MPEG-TS-over-RTP track. The bytes pass through.
+- `ELEMENTARY`: H.264 with an optional KLV track. The server re-muxes them
+  into one program (video PID 0x100, KLV PID 0x101).
+
+```python
+from tstrans.mpegts import DemuxEvent
+from tstrans.rtp import RtspServer, RtspServerConfig
+
+cfg = RtspServerConfig(bind_addr="0.0.0.0:8554")
+with RtspServer.start(cfg) as server:
+    mount = server.add_publish_mount("/cam1")      # PublishMount
+    with mount.into_demux_receiver() as rx:        # take-once
+        # Quiet until a publisher records. Ends (StopIteration) when another
+        # thread calls server.remove_mount("/cam1") or server.stop().
+        for ev in rx:
+            if isinstance(ev, DemuxEvent.Video):
+                ...
+```
+
+The surface:
+
+- `RtspServer.add_publish_mount(path) -> PublishMount` registers a path up
+  front. An ANNOUNCE to any other path answers `404`.
+- `RtspServerConfig(accept_unregistered_publishers=True)` lets an ANNOUNCE to
+  an unregistered path create a publish mount on demand, and
+  `RtspServer.next_publisher(timeout=None) -> PublishMount | None` hands each
+  one out, in ANNOUNCE order, to exactly one caller. Up to 64 handles wait in
+  that queue and the server holds up to 256 on-demand mounts; an ANNOUNCE
+  past either bound answers `503`. Anyone who can reach the port can create
+  mounts, so set `auth` where that matters.
+- `RtspServer.remove_mount(path)` removes a mount of any kind. A live
+  publisher gets the RTSP Notice 5402 and is disconnected. On-demand mounts
+  stay registered after their publisher leaves until this removes them.
+- `PublishMount` methods: `mount_path()`, `peer_count()` (PLAY readers),
+  `generation()` (publishers that have ended on the mount), `publisher() ->
+  PublisherInfo | None`, `stats() -> PublishMountStats`, `cancel()`,
+  `into_demux_receiver(demux_config=None)`. The object stays usable after
+  the transport is taken, after `remove_mount` and after the server stops.
+- `PublisherInfo` fields: `peer` (`"ip:port"`), `shape`, `klv`,
+  `since_unix_ms`, `generation`.
+- `PublishMountStats` mirrors every counter of the Rust snapshot, including
+  `source_rejected`, `aus_reordered`, `ssrc_changes`, and `alignment` (a
+  `ClockAlignment`: `NOT_APPLICABLE`, `PENDING`, `PROVISIONAL` or
+  `SENDER_REPORT`).
+- `ServerStats` adds `active_publishers`, `total_rtp_packets_received` and
+  `total_rtp_bytes_received`.
+
+How each call ends:
+
+| Call | Outcome | Meaning |
+|---|---|---|
+| `next_publisher(timeout)` | `None` | No mount arrived in time. Always the result when on-demand publishers are off. |
+| `next_publisher`, `add_publish_mount`, `remove_mount` | `RtspError(SERVER)` | The server is stopped. A `next_publisher` parked on another thread wakes with it when `stop()` or the `with` exit runs. |
+| `add_publish_mount`, `remove_mount` | `RtspError(MOUNT)` | Duplicate or invalid path, or no mount registered at the path. |
+| `into_demux_receiver` | `RtspError(CLOSED)` | The mount's transport was already taken, through this or any other handle to the mount. |
+| iterating the receiver | `StopIteration` | End of stream: the mount was removed or the server stopped. What was already queued is delivered first. |
+| iterating the receiver | `RtpError(CLOSED)` | The application cancelled it: `PublishMount.cancel()` or `DemuxReceiver.close()`. |
+
+Rules the types do not enforce:
+
+- **Take-once transport.** The receiver outlives publisher churn: between
+  publishers it stays open and silent, and the next publisher's bytes arrive
+  as ordinary continuity discontinuities.
+- **Stop, not the hard cancel, ends the mounts.** `stop()` and the `with`
+  exit end every publish mount's receiver and wake a parked
+  `next_publisher`. `cancel_handle().cancel()` does neither.
+- **`next_publisher` blocking.** It releases the GIL while it waits. With
+  `timeout=None` it waits until a mount arrives or the server stops, in 1 s
+  slices that handle pending signals, so Ctrl-C interrupts it. Concurrent
+  callers are served one at a time, so a call made while another waits can
+  return later than its own `timeout`.
+- **Expired handles.** `next_publisher` can return a mount that
+  `remove_mount` removed while its handle waited in the queue. Its receiver
+  ends at once.
+
+ffmpeg pushes elementary tracks and cannot push KLV over RTSP; GStreamer's
+`rtspclientsink` can push MPEG-TS or H.264 + KLV. The
+[publisher ingest recipe](/docs/cookbook/receiving/rtsp-publish-ingest.md)
+covers the same flow from Rust.
 
 ### H.264-over-RTP ingest (RFC 6184)
 
