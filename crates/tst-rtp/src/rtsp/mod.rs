@@ -7,6 +7,7 @@
 pub mod auth;
 pub mod client;
 pub(crate) mod digest;
+pub mod framing;
 pub mod message;
 #[cfg(feature = "rtsp-server")]
 pub mod server;

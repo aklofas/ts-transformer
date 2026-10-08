@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use tst_rtp::rtsp::client::interleaved_pump::{
+use tst_rtp::rtsp::framing::{
     RtspFrameBoundary, parse_binary_frame_header, scan_rtsp_message_boundary,
 };
 
