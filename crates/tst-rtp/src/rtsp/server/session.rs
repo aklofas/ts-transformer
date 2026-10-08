@@ -500,6 +500,12 @@ where
                     RtspMethod::Options | RtspMethod::GetParameter => {
                         // Non-auth-gated: do not touch the failure counter.
                     }
+                    RtspMethod::Announce | RtspMethod::Record => {
+                        // `dispatch` always answers 455 for these today (the
+                        // real handlers land in a later task), so this arm
+                        // can't be reached yet; that task decides which
+                        // group they join once a 2xx is possible.
+                    }
                 }
             }
             if req.method == RtspMethod::Teardown && response.status == 200 {
@@ -603,8 +609,10 @@ fn dispatch(
     match req.method {
         RtspMethod::Options => handlers::handle_options(req, state),
         RtspMethod::Describe => handlers::handle_describe(req, state, session),
+        RtspMethod::Announce => handlers::handle_not_valid_in_state(req),
         RtspMethod::Setup => handlers::handle_setup(req, state, session),
         RtspMethod::Play => handlers::handle_play(req, state, session),
+        RtspMethod::Record => handlers::handle_not_valid_in_state(req),
         RtspMethod::Pause => handlers::handle_pause(req, state, session),
         RtspMethod::Teardown => handlers::handle_teardown(req, state, session),
         RtspMethod::GetParameter => handlers::handle_get_parameter(req, state, session),

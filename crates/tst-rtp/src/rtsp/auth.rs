@@ -329,8 +329,10 @@ pub(crate) fn method_token(method: RtspMethod) -> &'static str {
     match method {
         RtspMethod::Options => "OPTIONS",
         RtspMethod::Describe => "DESCRIBE",
+        RtspMethod::Announce => "ANNOUNCE",
         RtspMethod::Setup => "SETUP",
         RtspMethod::Play => "PLAY",
+        RtspMethod::Record => "RECORD",
         RtspMethod::Pause => "PAUSE",
         RtspMethod::Teardown => "TEARDOWN",
         RtspMethod::GetParameter => "GET_PARAMETER",
