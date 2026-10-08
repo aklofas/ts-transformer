@@ -7,6 +7,7 @@ pub mod handlers;
 pub mod listener;
 pub mod mount;
 pub mod multicast;
+pub mod publish;
 pub mod session;
 #[cfg(feature = "rtsp-server-tls")]
 pub mod tls;

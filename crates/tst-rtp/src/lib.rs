@@ -101,6 +101,8 @@ pub use error::{MountError, RtspServerError};
 #[cfg(feature = "rtsp-server")]
 pub use rtsp::server::mount::{MountHandle, MountKind, MountStats};
 #[cfg(feature = "rtsp-server")]
+pub use rtsp::server::publish::PublishShape;
+#[cfg(feature = "rtsp-server")]
 pub use rtsp::server::{RtspServer, ServerStats};
 pub use url::MulticastGroup;
 
