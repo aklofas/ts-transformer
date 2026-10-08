@@ -13,12 +13,34 @@ use std::net::TcpStream;
 use std::time::{Duration, Instant};
 
 use tst_core::mpegts::common::Pts90khz;
+use tst_core::mpegts::demux::DemuxEvent;
 use tst_core::mpegts::mux::Muxer;
+use tst_core::transport::RecvTransport;
+use tst_pipeline::{DemuxReceiver, ShellErrorKind};
 
+use tst_core::klv::st0601::{self, UasDatalinkLs};
+use tst_rtp::SenderReport;
+
+use super::h264_payloader::{build_rtp_packet, packetize};
 use super::raw_rtsp::{header, make_muxer_cfg, request, session_id};
 
 /// A single PT 33 (MP2T/90000, RFC 2250) track, `a=control:streamid=0`.
 pub const SDP_MP2T: &str = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=publish\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=video 0 RTP/AVP 33\r\na=rtpmap:33 MP2T/90000\r\na=control:streamid=0\r\n";
+
+/// The SPS/PPS pair ffmpeg announced in the spec's appendix A capture
+/// (`sprop-parameter-sets`), shared by [`SDP_H264`] and [`SDP_H264_KLV`].
+pub const SPROP_SPS_B64: &str = "Z/QADJGWgUH7ARAAAAMAEAAAAwHg8UKq";
+pub const SPROP_PPS_B64: &str = "aM4PGSA=";
+
+/// ffmpeg's RTSP-muxer shape (spec appendix A, `-rtsp_transport tcp|udp`):
+/// one H.264 track, dynamic PT 96, parameter sets out of band in
+/// `sprop-parameter-sets`, `a=control:streamid=0`.
+pub const SDP_H264: &str = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=No Name\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\na=tool:libavformat 60.16.100\r\nm=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\na=fmtp:96 packetization-mode=1; sprop-parameter-sets=Z/QADJGWgUH7ARAAAAMAEAAAAwHg8UKq,aM4PGSA=; profile-level-id=F4000C\r\na=control:streamid=0\r\n";
+
+/// GStreamer `rtspclientsink` shape for an elementary H.264 + KLV push: the
+/// same video track as [`SDP_H264`] under `a=control:stream=0`, plus an
+/// RFC 6597 KLV track (`smpte336m/90000`, PT 97) under `a=control:stream=1`.
+pub const SDP_H264_KLV: &str = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=Session streamed with GStreamer\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\na=fmtp:96 packetization-mode=1; sprop-parameter-sets=Z/QADJGWgUH7ARAAAAMAEAAAAwHg8UKq,aM4PGSA=; profile-level-id=F4000C\r\na=control:stream=0\r\nm=application 0 RTP/AVP 97\r\na=rtpmap:97 smpte336m/90000\r\na=control:stream=1\r\n";
 
 /// Plain TCP or (with `tls`) a rustls client stream over TCP.
 enum Stream {
@@ -152,6 +174,19 @@ impl RawPublisher {
     /// SETUP `mode=record` over TCP-interleaved. Returns the status and,
     /// on 200, the RTP channel the SERVER allocated (its `interleaved=`).
     pub fn setup_interleaved(&mut self, mount: &str, control: &str) -> (u16, Option<u8>) {
+        let (status, pair) = self.setup_interleaved_pair(mount, control);
+        (status, pair.map(|(rtp, _)| rtp))
+    }
+
+    /// [`Self::setup_interleaved`] returning the whole `(rtp, rtcp)`
+    /// channel pair the server allocated. Every SETUP asks for `0-1`; a
+    /// second track's SETUP on the same session gets whatever pair the
+    /// server picks instead, which is why callers read it back.
+    pub fn setup_interleaved_pair(
+        &mut self,
+        mount: &str,
+        control: &str,
+    ) -> (u16, Option<(u8, u8)>) {
         let r = self.exchange(
             "SETUP",
             &format!("{mount}/{control}"),
@@ -163,9 +198,11 @@ impl RawPublisher {
             return (status, None);
         }
         self.session = Some(session_id(&r));
-        let ch = transport_param(header(&r, "Transport"), "interleaved")
-            .and_then(|v| v.split('-').next()?.parse().ok());
-        (status, ch)
+        let pair = transport_param(header(&r, "Transport"), "interleaved").and_then(|v| {
+            let (a, b) = v.split_once('-')?;
+            Some((a.parse().ok()?, b.parse().ok()?))
+        });
+        (status, pair)
     }
 
     /// SETUP `mode=record` over UDP announcing `client_port`. Returns the
@@ -198,6 +235,12 @@ impl RawPublisher {
     /// RECORD; returns the status code.
     pub fn record(&mut self, mount: &str) -> u16 {
         status_of(&self.exchange("RECORD", mount, "", ""))
+    }
+
+    /// RECORD with `Range: npt=0.000-`, the way ffmpeg sends it (spec
+    /// appendix A); returns the status code.
+    pub fn record_from_start(&mut self, mount: &str) -> u16 {
+        status_of(&self.exchange("RECORD", mount, "Range: npt=0.000-\r\n", ""))
     }
 
     /// TEARDOWN; returns the status code.
@@ -298,4 +341,104 @@ pub fn ts_fixture_packets(n: usize) -> Vec<Vec<u8>> {
         i += 1;
     }
     out
+}
+
+/// RTP timestamp step between the synthetic AUs of [`h264_rtp_packets`]
+/// (29.97 fps at 90 kHz).
+pub const H264_AU_STEP: u32 = 3003;
+
+/// Size of the synthetic IDR NALU in [`h264_rtp_packets`]: over the
+/// 1400-byte payload budget, so the IDR travels as FU-A fragments.
+pub const H264_IDR_LEN: usize = 3000;
+
+/// Size of each synthetic P-slice NALU in [`h264_rtp_packets`].
+pub const H264_P_LEN: usize = 300;
+
+/// A synthetic NALU: `header`, then `len - 1` non-zero body bytes (no zero
+/// byte, so no start-code emulation once Annex-B framed).
+fn synthetic_nalu(header: u8, len: usize, salt: usize) -> Vec<u8> {
+    let mut n = vec![header];
+    n.extend((1..len).map(|i| ((i + salt) % 251) as u8 | 1));
+    n
+}
+
+/// `n` H.264 access units as RFC 6184 RTP packets through the shared test
+/// payloader (MTU 1400): AU 0 an IDR slice (`0x65`, [`H264_IDR_LEN`]
+/// bytes, so FU-A fragmented), then P slices (`0x41`, [`H264_P_LEN`]
+/// bytes, single-NALU packets). AU `i` carries RTP timestamp
+/// `ts0 + i × H264_AU_STEP`; the last packet of each AU has the marker
+/// bit. No in-band SPS/PPS: they travel in the SDP's
+/// `sprop-parameter-sets`, as ffmpeg sends them.
+pub fn h264_rtp_packets(n: usize, pt: u8, seq0: u16, ssrc: u32, ts0: u32) -> Vec<Vec<u8>> {
+    let aus: Vec<(u32, Vec<Vec<u8>>)> = (0..n)
+        .map(|i| {
+            let ts = ts0.wrapping_add(i as u32 * H264_AU_STEP);
+            let nalu = if i == 0 {
+                synthetic_nalu(0x65, H264_IDR_LEN, i)
+            } else {
+                synthetic_nalu(0x41, H264_P_LEN, i)
+            };
+            (ts, vec![nalu])
+        })
+        .collect();
+    packetize(&aus, 1400, seq0, ssrc, pt)
+}
+
+/// One RFC 6597 KLV RTP packet carrying a whole KLV unit, marker set (the
+/// marker closes the unit).
+pub fn klv_rtp_packet(seq: u16, ts: u32, ssrc: u32, pt: u8, bytes: &[u8]) -> Vec<u8> {
+    build_rtp_packet(seq, ts, ssrc, pt, true, bytes)
+}
+
+/// A real ST 0601 local set (UL, BER length, TLVs, checksum) from the
+/// tst-core encoder; `seq` varies the timestamp and heading so units are
+/// told apart.
+pub fn klv_unit(seq: u32) -> Vec<u8> {
+    let record = UasDatalinkLs {
+        timestamp_us: Some(1_700_000_000_000_000 + u64::from(seq) * 100_000),
+        platform_heading_deg: Some(f64::from(seq % 360)),
+        sensor_lat_deg: Some(38.5 + f64::from(seq) * 1e-4),
+        sensor_lon_deg: Some(-121.5 - f64::from(seq) * 1e-4),
+        ..Default::default()
+    };
+    st0601::encode_to_vec(&record).expect("ST 0601 encodes")
+}
+
+/// A 28-byte RTCP sender report (PT 200, no report blocks): NTP
+/// `ntp_secs.ntp_frac` (32.32) ↔ RTP timestamp `rtp`.
+pub fn sr_packet(ssrc: u32, ntp_secs: u32, ntp_frac: u32, rtp: u32) -> Vec<u8> {
+    SenderReport {
+        ssrc,
+        ntp_timestamp: (u64::from(ntp_secs) << 32) | u64::from(ntp_frac),
+        rtp_timestamp: rtp,
+        sender_packet_count: 0,
+        sender_octet_count: 0,
+        report_blocks: vec![],
+    }
+    .encode()
+    .expect("SR encodes")
+}
+
+/// Every event `rx` yields until its transport has been quiet for one
+/// whole recv timeout (the caller sets it with `set_recv_timeout`; the
+/// shells report the expiry as `Backpressure`), the stream ends, or
+/// `deadline` passes. Call it after the publisher has sent everything:
+/// quiet then means "all of it has been demuxed". The demuxer holds a
+/// PID's last PES until the next one starts, so the newest sample of an
+/// unbounded video PES may not be among the events.
+pub fn demux_until_quiet<R: RecvTransport>(
+    rx: &mut DemuxReceiver<R>,
+    deadline: Instant,
+    who: &str,
+) -> Vec<DemuxEvent> {
+    let mut events = Vec::new();
+    while Instant::now() < deadline {
+        match rx.recv_event() {
+            Ok(Some(ev)) => events.push(ev),
+            Ok(None) => break,
+            Err(e) if e.kind == ShellErrorKind::Backpressure => break,
+            Err(e) => panic!("{who}: demux failed after {} events: {e:?}", events.len()),
+        }
+    }
+    events
 }
