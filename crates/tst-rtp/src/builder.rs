@@ -638,7 +638,11 @@ impl RtspServerBuilder {
     /// most 256 on-demand mounts, taken or not, and an ANNOUNCE that would
     /// create a 257th answers `503`. Mounts registered with
     /// [`RtspServer::add_publish_mount`](crate::rtsp::server::RtspServer::add_publish_mount)
-    /// are unaffected and never count.
+    /// are unaffected and never count. An on-demand mount whose transport
+    /// has not been taken costs about 15 KB (its reader broadcast at the
+    /// default `fanout_capacity`); taking the transport preallocates about
+    /// 263 KB for the application queue, which can hold up to about 8.7 MB
+    /// of frames if the application stops reading it.
     pub fn accept_unregistered_publishers(&mut self, yes: bool) -> &mut Self {
         self.accept_unregistered_publishers = yes;
         self

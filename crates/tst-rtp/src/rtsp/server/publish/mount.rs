@@ -10,7 +10,7 @@
 //! binding's receiver work against a publish mount unchanged.
 
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
@@ -20,6 +20,28 @@ use crate::cancel::RtpCancelHandle;
 use crate::error::RtspServerError;
 use crate::rtsp::client::end_reason::{EndReasonSlot, StreamEndReason};
 use crate::transport::RtpRecvTransport;
+
+/// The application side of a publish mount, under one lock so a take and
+/// a close never interleave.
+#[derive(Default)]
+struct AppSide {
+    /// Producer side of the channel: `None` until [`PublishMountState::take_app_rx`]
+    /// creates the channel, and again once [`PublishMountState::close`] has
+    /// run — a dropped `SyncSender` is what makes the receiver observe
+    /// `Disconnected`.
+    tx: Option<std::sync::mpsc::SyncSender<Bytes>>,
+    /// The receiver has been handed out; a second take returns `None`
+    /// (`RtspServerError::TransportTaken`). [`PublishMountState::emit`]
+    /// sends nothing before the take: a late `into_recv_transport()`
+    /// caller must not read a backlog queued before it took the transport
+    /// (possibly from an earlier publisher generation), and no frame
+    /// counts in `frames_dropped_app` — there was no queue to drop from.
+    taken: bool,
+    /// [`PublishMountState::close`] has run: a later take builds a
+    /// channel whose sender is already dropped, so the transport reads
+    /// `Closed`.
+    closed: bool,
+}
 
 /// Internal per-mount state for a publish mount. Held inside
 /// `ServerState::mounts` as `Arc<PublishMountState>` (via
@@ -38,33 +60,21 @@ pub(crate) struct PublishMountState {
     /// Fed by [`Self::emit`]'s `ts` argument, same as a muxer-backed
     /// mount's `MountState::fanout`.
     pub(crate) fanout: tokio::sync::broadcast::Sender<Bytes>,
-    /// Producer side of the application-facing bridge. `None` once
-    /// [`Self::close`] has run — a dropped `SyncSender` is what makes
-    /// the mpsc receiver observe `Disconnected`.
-    ///
-    /// Read only by [`Self::emit`] (the publisher ingest adapter) and
-    /// [`Self::close`] (server `stop()` and `remove_mount()`).
-    app_tx: Mutex<Option<std::sync::mpsc::SyncSender<Bytes>>>,
-    /// Consumer side of the application-facing bridge. Taken exactly
-    /// once by [`PublishMountHandle::into_recv_transport`] — a second
-    /// call sees `None` and returns `RtspServerError::TransportTaken`.
-    app_rx: Mutex<Option<std::sync::mpsc::Receiver<Bytes>>>,
+    /// The application-facing bridge: a bounded mpsc channel of
+    /// [`app_queue_bound`] frames, allocated by [`Self::take_app_rx`]
+    /// (about 263 KB preallocated) rather than here, so a mount whose
+    /// transport is never taken (an idle on-demand mount) costs only its
+    /// reader broadcast. See [`AppSide`].
+    app: Mutex<AppSide>,
     /// Shared with every `RtpRecvTransport` built from this mount (there
-    /// is at most one live at a time, enforced by `app_rx` being
-    /// take-once) so [`PublishMountHandle::cancel`] can wake a parked
-    /// `recv_bytes` from any thread, exactly like a real
+    /// is at most one live at a time, enforced by the take-once
+    /// [`AppSide::taken`]) so [`PublishMountHandle::cancel`] can wake a
+    /// parked `recv_bytes` from any thread, exactly like a real
     /// TCP-interleaved transport's cancel handle.
     app_cancel: Arc<RtpCancelHandle>,
-    /// Set once [`Self::take_app_rx`] has handed out the receiver.
-    /// [`Self::emit`] gates its application-side send on this flag — a
-    /// late `into_recv_transport()` caller must not read a backlog
-    /// queued before it took the transport (possibly from an earlier
-    /// publisher generation). Before the take, `emit` feeds only the
-    /// reader fanout and never ticks `frames_dropped_app`.
-    app_taken: AtomicBool,
     /// Shared with the `RtpRecvTransport` built from this mount so
-    /// [`Self::close`] can record `CleanTeardown` before dropping
-    /// `app_tx` — the same first-writer-wins remap
+    /// [`Self::close`] can record `CleanTeardown` before dropping the
+    /// channel's sender — the same first-writer-wins remap
     /// `recv_bytes_inner` already applies to the RTSP client's
     /// interleaved pump disconnecting cleanly (see
     /// `interleaved_pump.rs`'s `Ok(0)` arm). Without this, a dropped
@@ -87,8 +97,9 @@ pub(crate) struct PublishMountState {
 impl PublishMountState {
     /// Construct a fresh `PublishMountState`. `fanout_capacity` sizes
     /// the PLAY-reader broadcast (mirrors `MountState::new`); the
-    /// application-facing bridge is sized at [`app_queue_bound`] frames
-    /// (drop-newest past the bound, never block the publisher).
+    /// application-facing bridge, created when the transport is taken, is
+    /// sized at [`app_queue_bound`] frames (drop-newest past the bound,
+    /// never block the publisher).
     pub(crate) fn new(path: &str, fanout_capacity: usize) -> Arc<Self> {
         Self::build(path, fanout_capacity, false)
     }
@@ -101,15 +112,12 @@ impl PublishMountState {
 
     fn build(path: &str, fanout_capacity: usize, on_demand: bool) -> Arc<Self> {
         let (fanout, _rx) = tokio::sync::broadcast::channel(fanout_capacity.max(1));
-        let (tx, rx) = std::sync::mpsc::sync_channel(app_queue_bound());
         Arc::new(Self {
             path: path.to_string(),
             on_demand,
             fanout,
-            app_tx: Mutex::new(Some(tx)),
-            app_rx: Mutex::new(Some(rx)),
+            app: Mutex::new(AppSide::default()),
             app_cancel: RtpCancelHandle::new(),
-            app_taken: AtomicBool::new(false),
             app_end_reason: EndReasonSlot::default(),
             publisher: Mutex::new(None),
             generation: AtomicU64::new(0),
@@ -125,25 +133,20 @@ impl PublishMountState {
     /// task tracks its drops via `frames_dropped_readers`, same as a
     /// muxer-backed mount).
     ///
-    /// Before [`Self::take_app_rx`] has run, the application side isn't
-    /// attempted at all (see `app_taken`'s doc) — `frames_emitted` still
-    /// counts the frame (readers got it), but `frames_dropped_app` does
-    /// not, since nothing was dropped: there was no queue to drop from.
+    /// Before [`Self::take_app_rx`] has run there is no channel and the
+    /// application side isn't attempted at all (see [`AppSide::taken`])
+    /// — `frames_emitted` still counts the frame (readers got it), but
+    /// `frames_dropped_app` does not, since nothing was dropped.
     pub(crate) fn emit(&self, ts: Bytes, rtp: Bytes) {
         let _ = self.fanout.send(ts); // no readers → Err, fine
-        let dropped = self.app_taken.load(Ordering::Acquire)
-            && match self
-                .app_tx
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .as_ref()
-            {
-                Some(tx) => matches!(
-                    tx.try_send(rtp),
-                    Err(std::sync::mpsc::TrySendError::Full(_))
-                ),
-                None => false, // closed: the app side is gone, nothing to count
-            };
+        let dropped = match &self.app.lock().unwrap_or_else(|e| e.into_inner()).tx {
+            Some(tx) => matches!(
+                tx.try_send(rtp),
+                Err(std::sync::mpsc::TrySendError::Full(_))
+            ),
+            // Not taken yet, or closed: nothing to count.
+            None => false,
+        };
         self.tick(|s| {
             s.frames_emitted += 1;
             if dropped {
@@ -190,18 +193,26 @@ impl PublishMountState {
         }
     }
 
-    /// Take the consumer side of the application-facing bridge. Used by
-    /// [`PublishMountHandle::into_recv_transport`] — take-once, so a
-    /// second call (from another clone of the handle) sees `None`.
+    /// Create the application-facing bridge and take its consumer side.
+    /// Used by [`PublishMountHandle::into_recv_transport`] — take-once, so
+    /// a second call (from another clone of the handle) sees `None`. After
+    /// [`Self::close`] the channel's sender is dropped at once, so the
+    /// receiver reads a disconnect.
     pub(crate) fn take_app_rx(&self) -> Option<std::sync::mpsc::Receiver<Bytes>> {
-        let rx = self.app_rx.lock().unwrap_or_else(|e| e.into_inner()).take();
-        if rx.is_some() {
-            self.app_taken.store(true, Ordering::Release);
+        let mut app = self.app.lock().unwrap_or_else(|e| e.into_inner());
+        if app.taken {
+            return None;
         }
-        rx
+        app.taken = true;
+        let (tx, rx) = std::sync::mpsc::sync_channel(app_queue_bound());
+        if !app.closed {
+            app.tx = Some(tx);
+        }
+        Some(rx)
     }
 
-    /// Permanently close the application transport: drops `app_tx` so a
+    /// Permanently close the application transport: drops the channel's
+    /// sender (and makes a later take build one already dropped) so a
     /// parked (or future) `recv_bytes` on the transport this mount
     /// handed out observes a clean disconnect, reported as
     /// `TransportError::Closed` — not `Broken` — because
@@ -213,8 +224,18 @@ impl PublishMountState {
     /// stays attached across publisher churn).
     pub(crate) fn close(&self) {
         self.app_end_reason.record(StreamEndReason::CleanTeardown);
-        self.app_tx.lock().unwrap_or_else(|e| e.into_inner()).take();
+        {
+            let mut app = self.app.lock().unwrap_or_else(|e| e.into_inner());
+            app.closed = true;
+            app.tx = None;
+        }
         self.end_publisher();
+    }
+
+    /// Test-only: whether the application-facing channel exists.
+    #[cfg(test)]
+    pub(crate) fn app_channel_allocated(&self) -> bool {
+        self.app.lock().unwrap().tx.is_some()
     }
 
     /// Mutate the stats accumulator under its mutex.
@@ -571,6 +592,42 @@ mod tests {
         let s = m.stats_snapshot();
         assert_eq!(s.frames_dropped_app, 0);
         assert_eq!(s.frames_emitted, 6);
+    }
+
+    #[test]
+    fn the_application_channel_is_allocated_when_the_transport_is_taken() {
+        let m = PublishMountState::new_on_demand("/p", 16);
+        assert!(
+            !m.app_channel_allocated(),
+            "an untaken mount holds no channel"
+        );
+        m.emit(rtp_mp2t(1).slice(12..), rtp_mp2t(1));
+        assert!(!m.app_channel_allocated(), "emitting allocates nothing");
+        let _t = PublishMountHandle { state: m.clone() }
+            .into_recv_transport()
+            .unwrap();
+        assert!(m.app_channel_allocated());
+        m.close();
+        assert!(!m.app_channel_allocated(), "close releases it");
+    }
+
+    #[test]
+    fn close_before_the_take_still_ends_the_transport_with_closed() {
+        let m = PublishMountState::new("/p", 16);
+        m.close();
+        let h = PublishMountHandle { state: m.clone() };
+        let mut t = h.clone().into_recv_transport().unwrap();
+        m.emit(rtp_mp2t(1).slice(12..), rtp_mp2t(1));
+        let mut buf = vec![0u8; 2048];
+        assert!(matches!(
+            t.recv_bytes(&mut buf),
+            Err(TransportError::Closed)
+        ));
+        assert!(matches!(
+            h.into_recv_transport(),
+            Err(crate::error::RtspServerError::TransportTaken)
+        ));
+        assert_eq!(m.stats_snapshot().frames_dropped_app, 0);
     }
 
     #[test]
