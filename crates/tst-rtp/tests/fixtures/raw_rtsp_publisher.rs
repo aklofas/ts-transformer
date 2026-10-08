@@ -4,9 +4,9 @@
 //! by a 2 s read timeout, the control exchange through
 //! [`super::raw_rtsp::request`].
 //!
-//! The server allocates interleaved channels and UDP server ports itself
-//! (the channel counter is process-global), so the SETUP helpers return
-//! what the server's `Transport:` header says — never assume `0-1`.
+//! The SETUP helpers return what the server's `Transport:` header says
+//! (the interleaved channel pair it granted, its UDP server ports) rather
+//! than assuming them, so the tests check what the server answered.
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
