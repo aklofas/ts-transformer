@@ -56,7 +56,7 @@
  * Minor version of the C ABI contract. See [`TST_ABI_VERSION_MAJOR`]
  * for the bump policy.
  *
- * Cbindgen emits this as `#define TST_ABI_VERSION_MINOR 22` in the
+ * Cbindgen emits this as `#define TST_ABI_VERSION_MINOR 23` in the
  * generated header. Runtime accessor: [`tst_get_abi_version_minor`].
  *
  * History (additive bumps only — major stays at 0 pre-1.0):
@@ -291,8 +291,24 @@
  *   `tst_{udp,tcp,rtp,rist}_mux_sender_finish`. No new C types, no new
  *   error codes. See `bindings/c/core/src/tcp/`, `demux_config.rs`, and
  *   the shell parity matrix in `docs/reference/binding-authors.md`.
+ * - `23`: additive; the RTSP server's publisher role, all `TST_HAS_RTP`.
+ *   `tst_rtsp_server_builder_accept_unregistered_publishers`;
+ *   `tst_rtsp_server_add_publish_mount`, `tst_rtsp_server_next_publisher`
+ *   (`TST_E_BUFFER_FULL` on a timeout, `TST_E_CLOSED` once stopped),
+ *   `tst_rtsp_server_remove_mount` (`TST_E_RTSP_MOUNT` when unknown); a new
+ *   opaque handle `tst_rtsp_publish_mount_t` with
+ *   `tst_rtsp_publish_mount_{path,peer_count,generation,get_stats,
+ *   publisher_info,cancel,into_demux_receiver,free}`; new structs
+ *   `tst_rtsp_publish_mount_stats_t` and `tst_rtsp_publisher_info_t`, new
+ *   enums `tst_rtsp_publish_shape` and `tst_rtsp_clock_alignment`. The
+ *   server's publisher counters ride getters
+ *   (`tst_rtsp_server_active_publishers`,
+ *   `tst_rtsp_server_total_rtp_packets_received`,
+ *   `tst_rtsp_server_total_rtp_bytes_received`): `tst_server_stats_t` does
+ *   not change. No new error codes. See
+ *   `bindings/c/core/src/rtsp/server/publish.rs`.
  */
-#define TST_ABI_VERSION_MINOR 22
+#define TST_ABI_VERSION_MINOR 23
 
 #define TST_CODEC_KIND_AUDIO 3
 
@@ -311,6 +327,13 @@
  * `tst_get_last_error()` for the negative `TST_E_*` code.
  */
 #define TST_INVALID_STREAM_HANDLE UINT32_MAX
+
+#if defined(TST_HAS_RTP)
+/**
+ * Capacity of `tst_rtsp_publisher_info_t.peer`, NUL included.
+ */
+#define TST_RTSP_PEER_ADDR_LEN 64
+#endif
 
 #define TST_ST0601_TAG_CORNER_LAT_P1 82
 
@@ -495,6 +518,65 @@ typedef enum tst_overflow_policy {
   TST_OVERFLOW_POLICY_DROP_OLDEST = 0,
   TST_OVERFLOW_POLICY_REJECT = 1,
 } tst_overflow_policy;
+
+#if defined(TST_HAS_RTP)
+/**
+ * How a publish mount aligns its announced tracks to one clock
+ * (`tst_rtsp_clock_alignment`). Mirrors `tst_rtp::ClockAlignment`.
+ */
+typedef enum tst_rtsp_clock_alignment {
+#if defined(TST_HAS_RTP)
+  /**
+   * Nothing to align: an MP2T or video-only publisher, or no publisher
+   * has announced yet.
+   */
+  TST_RTSP_CLOCK_ALIGNMENT_NOT_APPLICABLE = 0,
+#endif
+#if defined(TST_HAS_RTP)
+  /**
+   * A KLV track was announced but its clock is not yet related to the
+   * video clock; KLV units are held until it is.
+   */
+  TST_RTSP_CLOCK_ALIGNMENT_PENDING = 1,
+#endif
+#if defined(TST_HAS_RTP)
+  /**
+   * Tracks aligned by first-packet coincidence (RTCP sender reports did
+   * not arrive in time).
+   */
+  TST_RTSP_CLOCK_ALIGNMENT_PROVISIONAL = 2,
+#endif
+#if defined(TST_HAS_RTP)
+  /**
+   * Tracks aligned through RTCP sender reports (RFC 3550 section 6.4.1).
+   */
+  TST_RTSP_CLOCK_ALIGNMENT_SENDER_REPORT = 3,
+#endif
+} tst_rtsp_clock_alignment;
+#endif
+
+#if defined(TST_HAS_RTP)
+/**
+ * Wire shape a publisher announced (`tst_rtsp_publish_shape`). Mirrors
+ * `tst_rtp::PublishShape`; the elementary shape's KLV flag travels in
+ * `tst_rtsp_publisher_info_t.klv`.
+ */
+typedef enum tst_rtsp_publish_shape {
+#if defined(TST_HAS_RTP)
+  /**
+   * One MPEG-TS-over-RTP track (RFC 2250, `MP2T/90000`).
+   */
+  TST_RTSP_PUBLISH_SHAPE_MP2T = 0,
+#endif
+#if defined(TST_HAS_RTP)
+  /**
+   * Elementary tracks: one H.264 (RFC 6184) video track, optionally one
+   * KLV (RFC 6597) track.
+   */
+  TST_RTSP_PUBLISH_SHAPE_ELEMENTARY = 1,
+#endif
+} tst_rtsp_publish_shape;
+#endif
 
 typedef enum tst_ts_framing_mode {
   TST_TS_FRAMING_MODE_RECOVER = 0,
@@ -1564,6 +1646,20 @@ typedef struct TstRtspMountHandle TstRtspMountHandle;
 
 #if defined(TST_HAS_RTP)
 /**
+ * Opaque handle for an RTSP publish mount (the `tst_rtsp_publish_mount_t`
+ * C type).
+ *
+ * Obtained from `tst_rtsp_server_add_publish_mount` or
+ * `tst_rtsp_server_next_publisher`; freed with
+ * `tst_rtsp_publish_mount_free`. The mount itself lives in the server:
+ * freeing this handle never removes or closes it
+ * (`tst_rtsp_server_remove_mount` does).
+ */
+typedef struct tst_rtsp_publish_mount_t tst_rtsp_publish_mount_t;
+#endif
+
+#if defined(TST_HAS_RTP)
+/**
  * Opaque handle for a started RTSP server.
  *
  * Obtained from [`super::start::tst_rtsp_server_builder_start`]. Freed (with
@@ -1573,6 +1669,12 @@ typedef struct TstRtspMountHandle TstRtspMountHandle;
  * The inner `Mutex<Option<…>>` gives close-idempotence: after `_stop` or
  * `_free` the `Option` is `None` and subsequent calls return `TST_E_CLOSED`.
  * This mirrors the `TstRtspSession` shape used in the client surface.
+ *
+ * The server is held in an `Arc` so the calls that block on it
+ * (`tst_rtsp_server_next_publisher`, `tst_rtsp_server_remove_mount`) clone
+ * it and release the `Mutex` before they wait: a call parked in
+ * `next_publisher` must not hold the lock `tst_rtsp_server_stop` needs to
+ * wake it.
  */
 typedef struct TstRtspServer TstRtspServer;
 #endif
@@ -2440,6 +2542,82 @@ typedef struct tst_mount_stats_t {
   uint64_t peer_count;
   uint64_t frames_dropped_total;
 } tst_mount_stats_t;
+
+#if defined(TST_HAS_RTP)
+/**
+ * Per-publish-mount stats snapshot (`tst_rtsp_publish_mount_stats_t`),
+ * filled by `tst_rtsp_publish_mount_get_stats`. Every field of
+ * `tst_rtp::PublishMountStats`, in its order; counters are cumulative over
+ * the mount's life, across publishers. Size 136 B.
+ *
+ * - `rtp_packets_received` / `bytes_received`: RTP packets from publishers
+ *   (headers included in the bytes), counted before validation.
+ * - `malformed_packets`: dropped as unusable (not RTP, wrong payload type,
+ *   invalid MP2T payload, unknown interleaved channel).
+ * - `source_rejected`: UDP datagrams from an IP other than the publisher's
+ *   control connection.
+ * - `frames_emitted`: frames emitted to PLAY readers and the application
+ *   transport.
+ * - `frames_dropped_app`: frames dropped because the application
+ *   transport's queue was full (the application stopped reading).
+ * - `frames_dropped_readers`: frames dropped across lagging PLAY readers.
+ * - `aus_emitted` / `aus_dropped` / `aus_reordered`: access units of an
+ *   elementary publisher muxed, dropped, and muxed with a PTS below an
+ *   earlier one (a publisher sending B-frames).
+ * - `klv_units_emitted` / `klv_units_dropped`: KLV units of an elementary
+ *   publisher.
+ * - `alignment`: how the current publisher's tracks are aligned.
+ * - `alignment_steps`: times a new clock mapping replaced the previous one.
+ * - `ssrc_changes`: source restarts on an elementary publisher's tracks.
+ * - `generation`: publishers that have ended on this mount.
+ * - `peer_count`: live PLAY readers on the mount.
+ */
+typedef struct tst_rtsp_publish_mount_stats_t {
+  uint64_t rtp_packets_received;
+  uint64_t bytes_received;
+  uint64_t malformed_packets;
+  uint64_t source_rejected;
+  uint64_t frames_emitted;
+  uint64_t frames_dropped_app;
+  uint64_t frames_dropped_readers;
+  uint64_t aus_emitted;
+  uint64_t aus_dropped;
+  uint64_t aus_reordered;
+  uint64_t klv_units_emitted;
+  uint64_t klv_units_dropped;
+  enum tst_rtsp_clock_alignment alignment;
+  uint64_t alignment_steps;
+  uint64_t ssrc_changes;
+  uint64_t generation;
+  uint64_t peer_count;
+} tst_rtsp_publish_mount_stats_t;
+#endif
+
+#if defined(TST_HAS_RTP)
+/**
+ * The publisher holding a publish mount (`tst_rtsp_publisher_info_t`),
+ * filled by `tst_rtsp_publish_mount_publisher_info`.
+ *
+ * - `present`: false when no publisher holds the mount; every other field
+ *   is then zero.
+ * - `shape` / `klv`: the wire shape the publisher announced; `klv` is true
+ *   for an elementary publisher that announced a KLV track.
+ * - `generation`: the mount's publisher generation while this publisher
+ *   holds it.
+ * - `since_unix_ms`: when the publisher's ANNOUNCE claimed the mount, in
+ *   milliseconds since the Unix epoch.
+ * - `peer`: the publisher's control-connection address
+ *   (`ip:port`, `[v6]:port`), NUL-terminated, truncated to fit.
+ */
+typedef struct tst_rtsp_publisher_info_t {
+  bool present;
+  enum tst_rtsp_publish_shape shape;
+  bool klv;
+  uint64_t generation;
+  uint64_t since_unix_ms;
+  char peer[TST_RTSP_PEER_ADDR_LEN];
+} tst_rtsp_publisher_info_t;
+#endif
 
 /**
  * `repr(C)` mirror of `tst_rtp::ServerStats` — aggregate server stats
@@ -6743,6 +6921,36 @@ void tst_rtsp_mount_handle_free(struct TstRtspMountHandle *handle);
 
 #if defined(TST_HAS_RTP)
 /**
+ * End the application side of the mount: a demux receiver taken from it,
+ * parked or not, reads `TST_E_CLOSED` (the same outcome as
+ * `tst_rtp_demux_receiver_cancel`). Does not affect the publisher or
+ * PLAY readers, and does not remove the mount. Idempotent.
+ *
+ * Returns `0` or `TST_E_INVALID_CONFIG` for a NULL handle.
+ *
+ * # Safety
+ *
+ * `mount` must be NULL or a live publish-mount handle.
+ */
+int tst_rtsp_publish_mount_cancel(struct tst_rtsp_publish_mount_t *mount);
+#endif
+
+#if defined(TST_HAS_RTP)
+/**
+ * Free a publish-mount handle. Never closes or removes the mount, which
+ * lives in the server: use [`tst_rtsp_server_remove_mount`] for that. A
+ * demux receiver taken from the mount keeps working. NULL is a no-op.
+ *
+ * # Safety
+ *
+ * `mount` must be NULL or a live publish-mount handle, not used again
+ * after this call.
+ */
+void tst_rtsp_publish_mount_free(struct tst_rtsp_publish_mount_t *mount);
+#endif
+
+#if defined(TST_HAS_RTP)
+/**
  * Free a builder without starting the server.
  *
  * Use this on error paths where the builder was partially configured and
@@ -10039,6 +10247,134 @@ tst_video_stream_handle_t tst_rtsp_mount_video_handle(const struct TstRtspMountH
 
 #if defined(TST_HAS_RTP)
 /**
+ * Publishers that have ended on the mount, into `*out`. Works on a closed
+ * mount.
+ *
+ * Returns `0` or `TST_E_INVALID_CONFIG` for a NULL argument.
+ *
+ * # Safety
+ *
+ * As [`tst_rtsp_publish_mount_peer_count`].
+ */
+int tst_rtsp_publish_mount_generation(const struct tst_rtsp_publish_mount_t *mount, uint64_t *out);
+#endif
+
+#if defined(TST_HAS_RTP)
+/**
+ * Snapshot the mount's stats into `*out` (see
+ * `tst_rtsp_publish_mount_stats_t`). Works on a closed mount.
+ *
+ * Returns `0` or `TST_E_INVALID_CONFIG` for a NULL argument.
+ *
+ * # Safety
+ *
+ * `mount` must be NULL or a live publish-mount handle; `out` must be NULL
+ * or a writable `tst_rtsp_publish_mount_stats_t`.
+ */
+
+int tst_rtsp_publish_mount_get_stats(const struct tst_rtsp_publish_mount_t *mount,
+                                     struct tst_rtsp_publish_mount_stats_t *out);
+#endif
+
+#if defined(TST_HAS_RTP)
+/**
+ * Take the mount's transport and return a `tst_rtp_demux_receiver_t` over
+ * it, ready for `tst_rtp_demux_receiver_next_event`.
+ *
+ * The transport is take-once across every handle to the mount: a second
+ * call returns NULL with `TST_E_CLOSED`. The mount handle stays valid for
+ * the getters and [`tst_rtsp_publish_mount_free`].
+ *
+ * The receiver outlives publisher churn: between publishers it is open and
+ * silent. It ends in one of two ways:
+ * - `TST_E_CLOSED` after [`tst_rtsp_publish_mount_cancel`] or
+ *   `tst_rtp_demux_receiver_cancel` (an explicit cancel);
+ * - `TST_E_END_OF_STREAM`, once what was already queued has drained, after
+ *   [`tst_rtsp_server_remove_mount`], `tst_rtsp_server_stop`, or
+ *   `tst_rtsp_server_free` (the mount was closed).
+ *
+ * A take on a mount already closed by `remove_mount` or `stop` (but never
+ * taken) still succeeds, and the receiver reads `TST_E_END_OF_STREAM` at
+ * once. The server's hard cancel (`tst_rtsp_cancel_handle_cancel`) does not
+ * end it.
+ *
+ * `demux_cfg` may be NULL (default options). Returns NULL with last-error
+ * on failure; free the receiver with `tst_rtp_demux_receiver_close`.
+ *
+ * # Safety
+ *
+ * - `mount` must be NULL or a live publish-mount handle.
+ * - `demux_cfg` must be NULL or a live pointer from
+ *   `tst_demux_config_new`.
+ */
+
+struct TstRtpDemuxReceiver *tst_rtsp_publish_mount_into_demux_receiver(struct tst_rtsp_publish_mount_t *mount,
+                                                                       const struct tst_demux_config_t *demux_cfg);
+#endif
+
+#if defined(TST_HAS_RTP)
+/**
+ * The mount path, NUL-terminated. Borrowed: valid until
+ * [`tst_rtsp_publish_mount_free`] frees this handle. NULL (last-error
+ * `TST_E_INVALID_CONFIG`) for a NULL handle.
+ *
+ * # Safety
+ *
+ * `mount` must be NULL or a live publish-mount handle.
+ */
+const char *tst_rtsp_publish_mount_path(const struct tst_rtsp_publish_mount_t *mount);
+#endif
+
+#if defined(TST_HAS_RTP)
+/**
+ * Live PLAY readers on the mount, into `*out`. Works on a closed mount.
+ *
+ * Returns `0` or `TST_E_INVALID_CONFIG` for a NULL argument.
+ *
+ * # Safety
+ *
+ * `mount` must be NULL or a live publish-mount handle; `out` must be NULL
+ * or a writable `uint64_t`.
+ */
+int tst_rtsp_publish_mount_peer_count(const struct tst_rtsp_publish_mount_t *mount, uint64_t *out);
+#endif
+
+#if defined(TST_HAS_RTP)
+/**
+ * The publisher currently holding the mount, into `*out` (see
+ * `tst_rtsp_publisher_info_t`). `out->present` is false, and every other
+ * field zero, when no publisher holds it.
+ *
+ * Returns `0` or `TST_E_INVALID_CONFIG` for a NULL argument.
+ *
+ * # Safety
+ *
+ * `mount` must be NULL or a live publish-mount handle; `out` must be NULL
+ * or a writable `tst_rtsp_publisher_info_t`.
+ */
+
+int tst_rtsp_publish_mount_publisher_info(const struct tst_rtsp_publish_mount_t *mount,
+                                          struct tst_rtsp_publisher_info_t *out);
+#endif
+
+#if defined(TST_HAS_RTP)
+/**
+ * Publish mounts that currently have a publisher, into `*out`.
+ *
+ * A counter beside `tst_server_stats_t` (whose layout does not change).
+ * Returns `0`, `TST_E_INVALID_CONFIG` for a NULL argument, or
+ * `TST_E_CLOSED` after `tst_rtsp_server_stop`.
+ *
+ * # Safety
+ *
+ * `server` must be NULL or a live server pointer; `out` must be NULL or a
+ * writable `uint64_t`.
+ */
+int tst_rtsp_server_active_publishers(struct TstRtspServer *server, uint64_t *out);
+#endif
+
+#if defined(TST_HAS_RTP)
+/**
  * Register a **multicast** mount on a started RTSP server.
  *
  * After a successful call, the server spawns a background task that drains
@@ -10087,6 +10423,34 @@ struct TstRtspMountHandle *tst_rtsp_server_add_multicast_mount(struct TstRtspSer
 
 #if defined(TST_HAS_RTP)
 /**
+ * Register a publish mount at `path` on a started server.
+ *
+ * The server then accepts ANNOUNCE / RECORD against `path` from one
+ * publisher at a time; the mount re-serves PLAY readers from the published
+ * TS bytes, and the application reads them through
+ * [`tst_rtsp_publish_mount_into_demux_receiver`].
+ *
+ * `path` must start with `/`, must not contain URL-reserved characters such
+ * as `?` or `#`, and must not already be registered.
+ *
+ * Returns a non-NULL handle (free it with [`tst_rtsp_publish_mount_free`])
+ * or NULL with last-error set: `TST_E_INVALID_CONFIG` for a NULL argument,
+ * `TST_E_RTSP_MOUNT` for an invalid or duplicate path, `TST_E_CLOSED`
+ * after `tst_rtsp_server_stop`.
+ *
+ * # Safety
+ *
+ * - `server` must be NULL or a live pointer from
+ *   `tst_rtsp_server_builder_start`.
+ * - `path` must be NULL or a NUL-terminated string valid for this call.
+ */
+
+struct tst_rtsp_publish_mount_t *tst_rtsp_server_add_publish_mount(struct TstRtspServer *server,
+                                                                   const char *path);
+#endif
+
+#if defined(TST_HAS_RTP)
+/**
  * Register a **unicast** mount on a started RTSP server.
  *
  * After a successful call, connecting clients that send an RTSP SETUP
@@ -10121,6 +10485,35 @@ struct TstRtspMountHandle *tst_rtsp_server_add_multicast_mount(struct TstRtspSer
 struct TstRtspMountHandle *tst_rtsp_server_add_unicast_mount(struct TstRtspServer *server,
                                                              const char *path,
                                                              const struct tst_mux_config_t *mux_cfg);
+#endif
+
+#if defined(TST_HAS_RTP)
+/**
+ * Let an ANNOUNCE to an unregistered path create a publish mount on
+ * demand. Each such mount is handed out once by
+ * `tst_rtsp_server_next_publisher`; the announcing publisher already holds
+ * it. Default: false (an ANNOUNCE to an unregistered path answers `404`).
+ *
+ * Security: with this on, anyone who can reach the port (and pass its
+ * auth, when configured) can create mounts. An on-demand mount stays in the
+ * server after its publisher leaves, until `tst_rtsp_server_remove_mount`
+ * removes it; at most 256 exist at once, and an ANNOUNCE that would create
+ * one more answers `503`. A connected elementary-track publisher can hold
+ * about 46 MB, so configure auth and size
+ * `tst_rtsp_server_builder_max_sessions` before enabling this on a
+ * reachable port.
+ *
+ * Must be called before `tst_rtsp_server_builder_start`. A NULL `builder`
+ * sets last-error `TST_E_INVALID_CONFIG`.
+ *
+ * # Safety
+ *
+ * `builder` must be NULL or returned by `tst_rtsp_server_builder_new`, not
+ * yet freed or consumed.
+ */
+
+void tst_rtsp_server_builder_accept_unregistered_publishers(struct TstRtspServerBuilder *builder,
+                                                            bool accept);
 #endif
 
 #if defined(TST_HAS_RTP)
@@ -10468,6 +10861,78 @@ int tst_rtsp_server_get_stats(struct TstRtspServer *server, struct tst_server_st
 
 #if defined(TST_HAS_RTP)
 /**
+ * Wait up to `timeout_ms` for the next publish mount an ANNOUNCE created
+ * on demand (see `tst_rtsp_server_builder_accept_unregistered_publishers`).
+ *
+ * Returns:
+ * - `0` with `*out` set to a new handle (free it with
+ *   [`tst_rtsp_publish_mount_free`]); the announcing publisher already
+ *   holds the mount.
+ * - `TST_E_BUFFER_FULL` (-4, the retryable backpressure code) with
+ *   `*out = NULL` when no mount arrived in time.
+ *   This is always the result when on-demand publishers are off.
+ * - `TST_E_CLOSED` with `*out = NULL` once the server is stopped, including
+ *   when `tst_rtsp_server_stop` runs on another thread while this call
+ *   waits: the stop wakes it.
+ *
+ * Mounts come out in the order their ANNOUNCEs created them, each to
+ * exactly one caller. Concurrent callers are served one at a time, so a
+ * call made while another waits can wait longer than its own timeout.
+ *
+ * The returned handle can name a mount that
+ * [`tst_rtsp_server_remove_mount`] already removed while it waited in the
+ * queue; a demux receiver taken from it then reads `TST_E_END_OF_STREAM`
+ * at once. Treat it as already expired.
+ *
+ * The server's hard cancel (`tst_rtsp_cancel_handle_cancel`) does not wake
+ * this call; `tst_rtsp_server_stop` does. Do not call
+ * `tst_rtsp_server_free` while another thread is inside this call: stop
+ * the server first, let the call return, then free.
+ *
+ * # Safety
+ *
+ * - `server` must be NULL or a live pointer from
+ *   `tst_rtsp_server_builder_start`.
+ * - `out` must be NULL or a writable `tst_rtsp_publish_mount_t*` slot.
+ */
+
+int tst_rtsp_server_next_publisher(struct TstRtspServer *server,
+                                   uint64_t timeout_ms,
+                                   struct tst_rtsp_publish_mount_t **out);
+#endif
+
+#if defined(TST_HAS_RTP)
+/**
+ * Remove the mount at `path`, of any kind, and free the path for reuse.
+ *
+ * A publish mount is closed: its publisher is sent RTSP Notice 5402
+ * ("Server-Initiated TEARDOWN") and disconnected, its PLAY readers end
+ * with their sessions, and a demux receiver taken from it reads
+ * `TST_E_END_OF_STREAM` once it has drained what was already queued. Its
+ * `tst_rtsp_publish_mount_t` handles stay valid for the getters and
+ * [`tst_rtsp_publish_mount_free`]. A unicast or multicast mount's handle
+ * keeps accepting pushes, which reach nobody.
+ *
+ * This is how an application removes idle on-demand mounts; freeing a
+ * handle does not.
+ *
+ * Blocks for the Notice writes (bounded at 1 s per session).
+ *
+ * Returns `0`, `TST_E_RTSP_MOUNT` when no mount is registered at `path`,
+ * `TST_E_INVALID_CONFIG` for a NULL argument, or `TST_E_CLOSED` after
+ * `tst_rtsp_server_stop`.
+ *
+ * # Safety
+ *
+ * - `server` must be NULL or a live pointer from
+ *   `tst_rtsp_server_builder_start`.
+ * - `path` must be NULL or a NUL-terminated string valid for this call.
+ */
+int tst_rtsp_server_remove_mount(struct TstRtspServer *server, const char *path);
+#endif
+
+#if defined(TST_HAS_RTP)
+/**
  * Graceful shutdown — two-phase (stop then free).
  *
  * 1. For each active session: sends RFC 7826 §13.5.1 Notice 5402
@@ -10494,6 +10959,35 @@ int tst_rtsp_server_get_stats(struct TstRtspServer *server, struct tst_server_st
  *   `tst_rtsp_server_builder_start`.
  */
 int tst_rtsp_server_stop(struct TstRtspServer *server, uint32_t _drain_ms);
+#endif
+
+#if defined(TST_HAS_RTP)
+/**
+ * Bytes of the RTP packets counted by
+ * [`tst_rtsp_server_total_rtp_packets_received`], headers included, into
+ * `*out`.
+ *
+ * Same return codes as [`tst_rtsp_server_active_publishers`].
+ *
+ * # Safety
+ *
+ * As [`tst_rtsp_server_active_publishers`].
+ */
+int tst_rtsp_server_total_rtp_bytes_received(struct TstRtspServer *server, uint64_t *out);
+#endif
+
+#if defined(TST_HAS_RTP)
+/**
+ * RTP packets received from publishers across every publish mount,
+ * cumulative over the server's life, into `*out`.
+ *
+ * Same return codes as [`tst_rtsp_server_active_publishers`].
+ *
+ * # Safety
+ *
+ * As [`tst_rtsp_server_active_publishers`].
+ */
+int tst_rtsp_server_total_rtp_packets_received(struct TstRtspServer *server, uint64_t *out);
 #endif
 
 #if defined(TST_HAS_RTP)

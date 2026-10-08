@@ -425,6 +425,9 @@ pub struct TstRtspServerBuilder {
     /// [`Self::tls_cert_pem`]: stored but unusable in this build;
     /// presence makes `build_server` refuse.
     pub(crate) tls_key_pem: Option<Vec<u8>>,
+    /// Whether an ANNOUNCE to an unregistered path creates a publish mount
+    /// on demand. Default: false.
+    pub(crate) accept_unregistered_publishers: bool,
 }
 
 #[cfg(feature = "rtp")]
@@ -454,6 +457,7 @@ impl TstRtspServerBuilder {
             graceful_shutdown_drain_ms: 100,
             tls_cert_pem: None,
             tls_key_pem: None,
+            accept_unregistered_publishers: false,
         })
     }
 
@@ -517,6 +521,7 @@ impl TstRtspServerBuilder {
         b.graceful_shutdown_drain(Duration::from_millis(
             self.graceful_shutdown_drain_ms as u64,
         ));
+        b.accept_unregistered_publishers(self.accept_unregistered_publishers);
 
         // TLS bytes: tst-c has no `rtsp-server-tls` cargo feature, so
         // tst-rtp's `RtspServerBuilder::tls_cert` is compiled out of this

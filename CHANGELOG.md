@@ -130,6 +130,29 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   elementary publishers, separate publisher credentials, and `rcvbuf` on
   publisher UDP sockets.
 
+### Added — tst-c: RTSP publisher role (C ABI 0.23)
+
+- **Server entry points** (`TST_HAS_RTP`):
+  `tst_rtsp_server_builder_accept_unregistered_publishers`,
+  `tst_rtsp_server_add_publish_mount`, `tst_rtsp_server_next_publisher`
+  (`TST_E_BUFFER_FULL` with `*out = NULL` on a timeout, `TST_E_CLOSED`
+  once stopped; `tst_rtsp_server_stop` wakes a parked call) and
+  `tst_rtsp_server_remove_mount` (`TST_E_RTSP_MOUNT` for an unknown path).
+- **Publish-mount handle** `tst_rtsp_publish_mount_t`:
+  `tst_rtsp_publish_mount_{path,peer_count,generation,get_stats,
+  publisher_info,cancel,into_demux_receiver,free}`. The transport is
+  take-once and feeds the existing `tst_rtp_demux_receiver_*` calls; it
+  ends with `TST_E_CLOSED` on a cancel and `TST_E_END_OF_STREAM` once the
+  mount is removed or the server stopped. Freeing the handle never closes
+  the mount.
+- **Counters via getters, new structs only.** The server's publisher
+  counters are `tst_rtsp_server_active_publishers`,
+  `tst_rtsp_server_total_rtp_packets_received` and
+  `tst_rtsp_server_total_rtp_bytes_received`; `tst_server_stats_t` keeps
+  its layout. New structs `tst_rtsp_publish_mount_stats_t` and
+  `tst_rtsp_publisher_info_t`, new enums `tst_rtsp_publish_shape` and
+  `tst_rtsp_clock_alignment` (four variants). No new error codes.
+
 ### Changed — tst-rtp: RTSP server
 
 - **`TransportResponse` gains a public `mode` field** (the Transport

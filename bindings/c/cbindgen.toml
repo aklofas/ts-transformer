@@ -192,6 +192,13 @@ include = [
     "TstMountStats",
     # RTSP server cancel handle (rtp feature)
     "TstRtspCancelHandle",
+    # RTSP publisher role (rtp feature, ABI 23)
+    "TstRtspPublishMount",
+    "TstRtspPublishMountStats",
+    "TstRtspPublisherInfo",
+    "TstRtspPublishShape",
+    "TstRtspClockAlignment",
+    "TST_RTSP_PEER_ADDR_LEN",
     # ST 0601 KLV decode surface (ABI 21, unconditional)
     "TstSt0601",
     "TstSt0601Geometry",
@@ -291,6 +298,14 @@ include = [
 "TstMountStats"             = "tst_mount_stats_t"
 # RTSP server cancel handle
 "TstRtspCancelHandle"       = "tst_rtsp_cancel_handle_t"
+# RTSP publisher role (ABI 23): opaque handle + snapshot structs take the
+# _t suffix; the enums do not, so prefix_with_name yields clean
+# TST_RTSP_PUBLISH_SHAPE_* / TST_RTSP_CLOCK_ALIGNMENT_* variants
+"TstRtspPublishMount"       = "tst_rtsp_publish_mount_t"
+"TstRtspPublishMountStats"  = "tst_rtsp_publish_mount_stats_t"
+"TstRtspPublisherInfo"      = "tst_rtsp_publisher_info_t"
+"TstRtspPublishShape"       = "tst_rtsp_publish_shape"
+"TstRtspClockAlignment"     = "tst_rtsp_clock_alignment"
 # ST 0601 KLV decode surface (ABI 21)
 "TstSt0601"                 = "tst_st0601_t"
 "TstSt0601Geometry"         = "tst_st0601_geometry_t"

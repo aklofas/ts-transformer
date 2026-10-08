@@ -13,7 +13,7 @@
 //! transport surfaces are gated on the `rtp` cargo feature. The
 //! offline byte-feeding `tst_demuxer_*` surface is unconditional (no
 //! feature gate), as is the offline `tst_muxer_*` surface (un-gated from
-//! `srt` in ABI 0.9). ABI minor is `0.22` (see [`TST_ABI_VERSION_MINOR`]).
+//! `srt` in ABI 0.9). ABI minor is `0.23` (see [`TST_ABI_VERSION_MINOR`]).
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![allow(clippy::missing_safety_doc)] // every extern "C" fn has a /// header documenting the contract
@@ -193,6 +193,31 @@ pub use rtp::{tst_rtp_mux_sender_open, tst_rtp_sender_open};
 pub use rtsp::client::builder::tst_rtsp_client_builder_new;
 #[cfg(feature = "rtp")]
 pub use rtsp::server::builder::tst_rtsp_server_builder_new;
+// RTSP server lifecycle + publisher role (ABI 23), re-exported flat for the
+// `transports::rtsp_publish_smoke` integration test.
+#[cfg(feature = "rtp")]
+pub use rtsp::server::builder::tst_rtsp_server_builder_accept_unregistered_publishers;
+#[cfg(feature = "rtp")]
+pub use rtsp::server::publish::{
+    tst_rtsp_publish_mount_cancel, tst_rtsp_publish_mount_free, tst_rtsp_publish_mount_generation,
+    tst_rtsp_publish_mount_get_stats, tst_rtsp_publish_mount_into_demux_receiver,
+    tst_rtsp_publish_mount_path, tst_rtsp_publish_mount_peer_count,
+    tst_rtsp_publish_mount_publisher_info, tst_rtsp_server_active_publishers,
+    tst_rtsp_server_add_publish_mount, tst_rtsp_server_next_publisher,
+    tst_rtsp_server_remove_mount, tst_rtsp_server_total_rtp_bytes_received,
+    tst_rtsp_server_total_rtp_packets_received,
+};
+#[cfg(feature = "rtp")]
+pub use rtsp::server::start::tst_rtsp_server_builder_start;
+#[cfg(feature = "rtp")]
+pub use rtsp::server::stop::{
+    tst_rtsp_server_free, tst_rtsp_server_get_stats, tst_rtsp_server_stop,
+};
+#[cfg(feature = "rtp")]
+pub use rtsp::server::types::{
+    TST_RTSP_PEER_ADDR_LEN, TstRtspClockAlignment, TstRtspPublishMount, TstRtspPublishMountStats,
+    TstRtspPublishShape, TstRtspPublisherInfo, TstRtspServer,
+};
 #[cfg(feature = "srt")]
 pub use sender::ts_sender::tst_sender_open;
 
@@ -247,7 +272,7 @@ pub const TST_ABI_VERSION_MAJOR: crate::c_types::c_int = 0;
 /// Minor version of the C ABI contract. See [`TST_ABI_VERSION_MAJOR`]
 /// for the bump policy.
 ///
-/// Cbindgen emits this as `#define TST_ABI_VERSION_MINOR 22` in the
+/// Cbindgen emits this as `#define TST_ABI_VERSION_MINOR 23` in the
 /// generated header. Runtime accessor: [`tst_get_abi_version_minor`].
 ///
 /// History (additive bumps only — major stays at 0 pre-1.0):
@@ -482,7 +507,23 @@ pub const TST_ABI_VERSION_MAJOR: crate::c_types::c_int = 0;
 ///   `tst_{udp,tcp,rtp,rist}_mux_sender_finish`. No new C types, no new
 ///   error codes. See `bindings/c/core/src/tcp/`, `demux_config.rs`, and
 ///   the shell parity matrix in `docs/reference/binding-authors.md`.
-pub const TST_ABI_VERSION_MINOR: crate::c_types::c_int = 22;
+/// - `23`: additive; the RTSP server's publisher role, all `TST_HAS_RTP`.
+///   `tst_rtsp_server_builder_accept_unregistered_publishers`;
+///   `tst_rtsp_server_add_publish_mount`, `tst_rtsp_server_next_publisher`
+///   (`TST_E_BUFFER_FULL` on a timeout, `TST_E_CLOSED` once stopped),
+///   `tst_rtsp_server_remove_mount` (`TST_E_RTSP_MOUNT` when unknown); a new
+///   opaque handle `tst_rtsp_publish_mount_t` with
+///   `tst_rtsp_publish_mount_{path,peer_count,generation,get_stats,
+///   publisher_info,cancel,into_demux_receiver,free}`; new structs
+///   `tst_rtsp_publish_mount_stats_t` and `tst_rtsp_publisher_info_t`, new
+///   enums `tst_rtsp_publish_shape` and `tst_rtsp_clock_alignment`. The
+///   server's publisher counters ride getters
+///   (`tst_rtsp_server_active_publishers`,
+///   `tst_rtsp_server_total_rtp_packets_received`,
+///   `tst_rtsp_server_total_rtp_bytes_received`): `tst_server_stats_t` does
+///   not change. No new error codes. See
+///   `bindings/c/core/src/rtsp/server/publish.rs`.
+pub const TST_ABI_VERSION_MINOR: crate::c_types::c_int = 23;
 
 // =========================================================================
 // Runtime version accessors
